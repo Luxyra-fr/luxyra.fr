@@ -1973,6 +1973,7 @@ function cancelAppt(id){
   if(!a)return;
   if(a.st==="done"){delAppt(id);return;}
   a.st="canc";
+  if(typeof saveAppointment==="function")saveAppointment(a);
   cM();go("planning");
 }
 
@@ -2330,6 +2331,7 @@ function saveTVA(){
   if(isNaN(val)||val<0||val>30){alert("Taux invalide");return;}
   SALON_CONFIG.tauxTVA=val;
   if(window.SALON)window.SALON.tauxTVA=val;
+  if(typeof saveSalonConfig==="function")saveSalonConfig();
   auditLog("CONFIG_TVA","Taux TVA modifie: "+val+"%");
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
@@ -2867,6 +2869,7 @@ function doEditProd(id){
   p.stk=parseInt(document.getElementById("epStk").value)||0;
   p.stkMin=parseInt(document.getElementById("epStkMin").value)||0;
   p.cc=document.getElementById("epCC").checked;
+  if(typeof saveProduct==="function")saveProduct(p);
   cM();go("products");
 }
 
@@ -2920,6 +2923,7 @@ function doAddProd(){
     cc:document.getElementById("npCC").checked,
     img:document.getElementById("npImg").value||""
   });
+  if(typeof saveProduct==="function")saveProduct(PRODS[PRODS.length-1]);
   cM();go("products");
 }
 
@@ -3728,6 +3732,7 @@ function aAp(){
     return;
   }
   var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,st:"conf",met:""};if(window._rdvPhases)rdvObj.phases=window._rdvPhases;window._rdvPhases=null;AP.push(rdvObj);
+  if(typeof saveAppointment==="function")saveAppointment(rdvObj);
   window._rdvSvcId=null;window._rdvPassage=null;
   cM();go("planning");
 }
@@ -3736,6 +3741,7 @@ function confirmPendingRdv(){
   var r=window._pendingRdv;
   if(!r)return;
   var rdvObj2={id:U(),cId:r.cId,sId:r.sId,stId:r.stId,date:r.date,time:r.time,pr:r.pr,st:"conf",met:""};if(r.phases)rdvObj2.phases=r.phases;AP.push(rdvObj2);
+  if(typeof saveAppointment==="function")saveAppointment(rdvObj2);
   
   window._pendingRdv=null;
   cM();go("planning");
@@ -3859,6 +3865,7 @@ function aCl(){
   var no=document.getElementById("mno")?document.getElementById("mno").value.trim():"";
   var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:"",cp:"",ville:"",ddn:"",cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:false,emOk:false,fiches:[]};
   CL.push(newCl);
+  if(typeof saveClient==="function")saveClient(newCl);
   // If we came from caisse, go back to caisse with this new client
   if(window._fromCaisse){
     window._fromCaisse=false;
@@ -3886,7 +3893,9 @@ function aGi(){
   var m=document.getElementById("gm").value.trim();
   if(!v||!f||!m){alert("Remplir les champs");return;}
   var e=new Date(TD);e.setFullYear(e.getFullYear()+1);
-  GC.push({id:U(),val:v,from:f,to:document.getElementById("gt").value.trim(),msg:m,cr:TD,exp:dS(e),used:0,st:"active"});
+  var _newGC={id:U(),val:v,from:f,to:document.getElementById("gt").value.trim(),msg:m,cr:TD,exp:dS(e),used:0,st:"active",code:"BC-"+Date.now().toString(36),rem:v};
+  GC.push(_newGC);
+  if(typeof saveGiftCard==="function")saveGiftCard(_newGC);
   cM();go("gifts");
 }
 
@@ -4383,6 +4392,7 @@ function doFinalPay(method){
         AP[i].ts=tsNow;
         // NF525: chain this ticket
         chainTicket(AP[i]);
+        if(typeof saveAppointment==="function")saveAppointment(AP[i]);
         break;
       }
     }
@@ -4392,13 +4402,14 @@ function doFinalPay(method){
     // NF525: chain this ticket
     chainTicket(newTk);
     AP.push(newTk);
+    if(typeof saveAppointment==="function")saveAppointment(newTk);
   }
   
   // NF525: audit log
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
   
   // Update client fidelity
-  if(_tk.cId){var cl=gC(_tk.cId);if(cl)cl.fid=(cl.fid||0)+1;}
+  if(_tk.cId){var cl=gC(_tk.cId);if(cl){cl.fid=(cl.fid||0)+1;if(typeof saveClient==="function")saveClient(cl);}}
   
   // Decrement stock for products sold
   _tk.items.forEach(function(it){
@@ -4406,6 +4417,7 @@ function doFinalPay(method){
       for(var i=0;i<PRODS.length;i++){
         if(PRODS[i].id===it.prodId){
           PRODS[i].stk=Math.max(0,PRODS[i].stk-it.qty);
+          if(typeof saveProduct==="function")saveProduct(PRODS[i]);
           break;
         }
       }
@@ -4450,6 +4462,7 @@ function saveFicheTechDetail(cId){
   var sty=T[0];
   if(!cl.fiches)cl.fiches=[];
   cl.fiches.push({txt:texte,date:TD,collab:sty?sty.n:""});
+  if(typeof saveClient==="function")saveClient(cl);
   cM();go("detail");
 }
 
@@ -4894,6 +4907,7 @@ function doModifTicket(id,isPast){
         var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,pr:newPr||old.pr,st:"done",met:newMet||old.met,tkNum:tkN,modifFrom:old.tkNum||"--",modifMotif:motif};
         chainTicket(newModTk);
         AP.push(newModTk);
+        if(typeof saveAppointment==="function")saveAppointment(newModTk);
         auditLog("TICKET_MODIF","Ancien #"+(old.tkNum||"--")+" -> Nouveau #"+tkN+" - "+motif);
       }else{
         old.pr=newPr||old.pr;if(newSId)old.sId=newSId;old.stId=newStId||old.stId;old.met=newMet||old.met;old.modifMotif=motif;old.modifDate=TD;
@@ -5148,7 +5162,7 @@ function cloturerJournee(){
   c.hashAlgo="SHA-256";
   sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){c.hash=h;});
   window.LOCKED_DAYS[TD]=true;
-  window.CLOTURES.push(c);auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
+  window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
 }
 function exportAudit(){
   var csv="ID;Date;User;Action;Detail\n";window.AUDIT_LOG.forEach(function(l){csv+=l.id+";"+l.ts+";"+l.user+";"+l.action+";"+l.detail.replace(/;/g,",")+"\n";});
