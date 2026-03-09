@@ -327,12 +327,12 @@ async function saveClient(client) {
     actif: client.actif, points_fidelite: client.fid,
     sms_ok: client.smsOk, email_ok: client.emOk, fiches: client.fiches || []
   };
-  // UUID = update, sinon insert
-  if (client.id && client.id.length > 10) {
+  // UUID = update, local ID = insert
+  if (client.id && client.id.indexOf("-") > 0 && client.id.length > 30) {
     await _sb.from("clients").update(data).eq("id", client.id);
   } else {
     var res = await _sb.from("clients").insert(data).select().single();
-    if (res.data) client.id = res.data.id; // remplacer l'id local par l'UUID
+    if (res.data) client.id = res.data.id;
   }
 }
 
@@ -341,7 +341,7 @@ async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
   var data = {
     salon_id: _salonId,
-    client_id: appt.cId, service_id: appt.sId, collab_id: appt.stId,
+    client_id: (appt.cId && appt.cId.indexOf("-") > 0 && appt.cId.length > 30) ? appt.cId : null, service_id: appt.sId, collab_id: appt.stId,
     date_rdv: appt.date, heure: appt.time, prix: appt.pr,
     brut_total: appt.brutTotal || null, remise: appt.remise || 0,
     status: appt.st, mode_paiement: appt.met || "",
@@ -351,7 +351,7 @@ async function saveAppointment(appt) {
     a_phases: appt.aPhases || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
   };
-  if (appt.id && appt.id.length > 10) {
+  if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
     await _sb.from("appointments").update(data).eq("id", appt.id);
   } else {
     var res = await _sb.from("appointments").insert(data).select().single();
@@ -393,7 +393,7 @@ async function saveGiftCard(gc) {
     code: gc.code, date_creation: gc.cr, date_expiration: gc.exp,
     utilise: gc.used, restant: gc.rem, status: gc.st
   };
-  if (gc.id && gc.id.length > 10) {
+  if (gc.id && gc.id.indexOf("-") > 0 && gc.id.length > 30) {
     await _sb.from("cartes_cadeaux").update(data).eq("id", gc.id);
   } else {
     var res = await _sb.from("cartes_cadeaux").insert(data).select().single();
