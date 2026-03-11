@@ -4603,19 +4603,69 @@ function askFidThenFiche(idx){
   if(!cl){askFidThenFiche(idx+1);return;}
   if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
   var seuil=window.FIDCONF.seuil||10;var rem=window.FIDCONF.remise||10;
+  var nbCl=ids.length;
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:36px;margin-bottom:8px">\ud83c\udfc5</div>';
   h+='<h2>Fid\u00e9lit\u00e9</h2>';
+  if(nbCl>1)h+='<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Client '+(idx+1)+'/'+nbCl+'</div>';
   h+='<div style="font-size:15px;margin-bottom:6px"><strong>'+cName(cl)+'</strong></div>';
-  h+='<div style="font-size:14px;margin-bottom:4px">Passages: <strong>'+cl.fid+' / '+seuil+'</strong></div>';
+  h+='<div style="font-size:14px;margin-bottom:4px">Passages: <strong>'+(cl.fid||0)+' / '+seuil+'</strong></div>';
   var reste2=seuil-(cl.fid||0);
   if(reste2>0)h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Encore '+reste2+' avant '+rem+'%</div>';
   else h+='<div style="font-size:13px;color:var(--green);font-weight:700;margin-bottom:14px">Remise '+rem+'% acquise!</div>';
   h+='<div style="display:flex;gap:8px">';
-  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFidThenFiche('+(idx+1)+')">Non</button>';
-  h+='<button class="btn bg" style="flex:1;padding:12px" onclick="var cc=gC(\''+cl.id+'\');cc.fid=(cc.fid||0)+1;if(typeof saveClient===\'function\')saveClient(cc);askFidThenFiche('+(idx+1)+')">+1 passage</button>';
+  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFicheForClient('+idx+')">Non</button>';
+  h+='<button class="btn bg" style="flex:1;padding:12px" onclick="var cc=gC(\''+cl.id+'\');cc.fid=(cc.fid||0)+1;if(typeof saveClient===\'function\')saveClient(cc);askFicheForClient('+idx+')">+1 passage</button>';
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
+}
+
+// After fidelity prompt, ask fiche technique for same client
+function askFicheForClient(idx){
+  var ids=window._tkFidClients||[];
+  if(idx>=ids.length){cM();go("home");return;}
+  var cId=ids[idx];var cl=gC(cId);
+  if(!cl){askFidThenFiche(idx+1);return;}
+  var has=cl.fiches&&cl.fiches.length?"mettre \u00e0 jour":"cr\u00e9er";
+  var nbCl=ids.length;
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h+='<div style="font-size:36px;margin-bottom:8px">\ud83d\udcdd</div>';
+  h+='<h2>Fiche technique</h2>';
+  if(nbCl>1)h+='<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Client '+(idx+1)+'/'+nbCl+'</div>';
+  h+='<div style="font-size:14px;margin-bottom:14px">'+has+' une fiche pour <strong>'+cName(cl)+'</strong> ?</div>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFidThenFiche('+(idx+1)+')">Non</button>';
+  h+='<button class="btn bg" style="flex:1;padding:12px" onclick="doFicheForClient(\''+cId+'\','+idx+')">Oui</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+function doFicheForClient(cId,idx){
+  var cl=gC(cId);if(!cl){askFidThenFiche(idx+1);return;}
+  var sty=gT(_tk?_tk.stId:null)||T[0];
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
+  h+='<h2>\ud83d\udcdd Fiche technique</h2>';
+  h+='<div style="font-weight:700;margin-bottom:4px">'+cName(cl)+'</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">'+fmt(TD)+' \u2022 par '+(sty?sty.n:"")+'</div>';
+  h+='<textarea id="ftMC" rows="10" style="width:100%;font-size:14px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical" placeholder="Saisir les informations..."></textarea>';
+  h+='<div style="display:flex;gap:8px;margin-top:12px">';
+  h+='<button class="btn" style="flex:1" onclick="askFidThenFiche('+(idx+1)+')">Passer</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="saveFicheMC(\''+cId+'\','+(idx+1)+')">Enregistrer</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+  setTimeout(function(){var el=document.getElementById("ftMC");if(el)el.focus();},100);
+}
+
+function saveFicheMC(cId,nextIdx){
+  var cl=gC(cId);if(!cl){askFidThenFiche(nextIdx);return;}
+  var txt=document.getElementById("ftMC").value;
+  if(txt.trim()){
+    var sty=gT(_tk?_tk.stId:null)||T[0];
+    if(!cl.fiches)cl.fiches=[];
+    cl.fiches.push({txt:txt,date:TD,collab:sty?sty.n:""});
+    if(typeof saveClient==="function")saveClient(cl);
+  }
+  askFidThenFiche(nextIdx);
 }
 
 function askFicheTech(cId){
@@ -4743,16 +4793,30 @@ function showTicket(method,total){
   h+='<div style="font-size:11px;margin-top:6px">Ticket N\u00b0'+tkN+' \u2014 '+fmt(TD)+'</div>';
   h+='<div style="font-size:11px">'+(sty?sty.n:"")+'</div>';
   h+='</div>';
-  h+='<div style="padding:10px 0;border-bottom:1px dashed var(--border)">';
-  h+='<div style="font-size:12px">Client: <strong>'+(cl?cName(cl):"Client de passage")+'</strong></div></div>';
-  
-  // Items
-  for(var i=0;i<_tk.items.length;i++){
-    var it=_tk.items[i];
-    var lt=it.price*it.qty-it.remise;
-    h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px dotted var(--border2)">';
-    h+='<span>'+it.name+(it.qty>1?' x'+it.qty:'')+'</span><span style="font-weight:700">'+lt.toFixed(2)+' \u20ac</span></div>';
-    if(it.remise>0)h+='<div style="font-size:11px;color:var(--green);text-align:right">Remise -'+it.remise.toFixed(2)+' \u20ac</div>';
+  // Per-client items with fidelity
+  if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
+  var _fMax=window.FIDCONF.seuil||10;
+  var clients2=_tk.clients||[{id:_tk.cId,pt:_tk.passType}];
+  for(var tci=0;tci<clients2.length;tci++){
+    var tcl=clients2[tci].id?gC(clients2[tci].id):null;
+    var tclN=tcl?cName(tcl):(clients2[tci].pt==="H"?"Passage homme":clients2[tci].pt==="E"?"Passage enfant":"Passage femme");
+    h+='<div style="padding:6px 0;border-bottom:1px dashed var(--border)">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="font-size:12px;font-weight:700">'+tclN+'</div>';
+    if(tcl)h+='<div style="font-size:10px;color:var(--gold);font-weight:700">\ud83c\udfc5 '+(tcl.fid||0)+'/'+_fMax+'</div>';
+    h+='</div>';
+    var hasAny=false;
+    for(var ti2=0;ti2<_tk.items.length;ti2++){
+      var it=_tk.items[ti2];
+      if((it.ci||0)!==tci)continue;
+      hasAny=true;
+      var lt=it.price*it.qty-it.remise;
+      h+='<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px">';
+      h+='<span>  '+it.name+(it.qty>1?' x'+it.qty:'')+'</span><span style="font-weight:700">'+lt.toFixed(2)+' \u20ac</span></div>';
+      if(it.remise>0)h+='<div style="font-size:10px;color:var(--green);text-align:right">-'+it.remise.toFixed(2)+' \u20ac</div>';
+    }
+    if(!hasAny)h+='<div style="font-size:10px;color:#999;padding:2px 0">  (aucune prestation)</div>';
+    h+='</div>';
   }
   if(_tk.remise>0)h+='<div style="font-size:11px;color:var(--green);text-align:right;padding:4px 0">Remise ticket -'+_tk.remise.toFixed(2)+' \u20ac</div>';
   
