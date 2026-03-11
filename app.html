@@ -1442,6 +1442,27 @@ var SVCCOLORS={
   "Homme":{bg:"#fff3cd",border:"#d4a017",text:"#6b4f00"}
 };
 function getSvcColor(cat){return SVCCOLORS[cat]||{bg:"#f0f0f0",border:"#999",text:"#333"};}
+// Color helper: generate bg and text from a border/main color
+function colorFromHex(hex){
+  var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  var bg="rgba("+r+","+g+","+b+",.12)";
+  var lum=(r*299+g*587+b*114)/1000;
+  var text=lum>128?"#"+Math.round(r*.4).toString(16).padStart(2,"0")+Math.round(g*.4).toString(16).padStart(2,"0")+Math.round(b*.4).toString(16).padStart(2,"0"):hex;
+  return {bg:bg,border:hex,text:text};
+}
+function setCatColor(cat,hex){
+  SVCCOLORS[cat]=colorFromHex(hex);
+  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  go("settings");
+}
+// Product category colors
+if(!window.PRODCOLORS)window.PRODCOLORS={};
+function getProdColor(cat){return window.PRODCOLORS[cat]||{bg:"#f0f0f0",border:"#999",text:"#333"};}
+function setProdCatColor(cat,hex){
+  window.PRODCOLORS[cat]=colorFromHex(hex);
+  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  go("products");
+}
 var ABSENCES=[];
 var APP_BG="https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80";
 var SLOT=15,SLOT_H=28;
@@ -2122,7 +2143,12 @@ function rSettings(){
       var cat=CATS[ci];
       var svcs=SVC.filter(function(s){return s.cat===cat});
       if(!svcs.length)continue;
-      h+='<div class="card"><div class="ct">'+cat+'</div>';
+      var catCol=SVCCOLORS[cat]||{bg:"#f0f0f0",border:"#999",text:"#333"};
+      h+='<div class="card"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">';
+      h+='<div style="width:18px;height:18px;border-radius:5px;background:'+catCol.bg+';border:2px solid '+catCol.border+'"></div>';
+      h+='<div class="ct" style="flex:1;margin:0">'+cat+'</div>';
+      h+='<input type="color" value="'+catCol.border+'" style="width:28px;height:28px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="setCatColor(\''+cat.replace(/'/g,"\\'")+'\',this.value)" title="Couleur de la cat\u00e9gorie">';
+      h+='</div>';
       for(var si=0;si<svcs.length;si++){
         var s=svcs[si];
         var td=svcTotalDur(s);
@@ -2753,9 +2779,11 @@ function rProducts(){
   h+='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center">';
   h+='<div class="tab'+(aPCat==="all"?" on":"")+'" onclick="aPCat=\'all\';go(\'products\')">Tous</div>';
   for(var i=0;i<PCATS.length;i++){
-    h+='<div class="tab'+(aPCat===PCATS[i]?" on":"")+'" onclick="aPCat=\''+PCATS[i].replace(/'/g,"\\'")+'\';go(\'products\')">'+PCATS[i]+'</div>';
+    var _pc=getProdColor(PCATS[i]);
+    h+='<div class="tab'+(aPCat===PCATS[i]?" on":"")+'" onclick="aPCat=\''+PCATS[i].replace(/'/g,"\\'")+'\';go(\'products\')" style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:'+_pc.border+'"></span>'+PCATS[i]+'</div>';
   }
   h+='<button class="btn bs" style="font-size:11px" onclick="addProdCat()">+ Cat.</button>';
+  h+='<button class="btn bs" style="font-size:11px" onclick="editProdColors()">🎨</button>';
   h+='</div>';
   
   // Alerts stock bas
@@ -2948,6 +2976,22 @@ function doAddProd(){
   });
   if(typeof saveProduct==="function")saveProduct(PRODS[PRODS.length-1]);
   cM();go("products");
+}
+
+function editProdColors(){
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>🎨 Couleurs des catégories produits</h2>';
+  for(var i=0;i<PCATS.length;i++){
+    var pc=getProdColor(PCATS[i]);
+    var catEsc=PCATS[i].replace(/'/g,"\\'");
+    htm+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(0,0,0,.08)">';
+    htm+='<div style="width:24px;height:24px;border-radius:6px;background:'+pc.border+'"></div>';
+    htm+='<div style="flex:1;font-weight:700;font-size:14px">'+PCATS[i]+'</div>';
+    htm+='<input type="color" value="'+pc.border+'" style="width:36px;height:30px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="setProdCatColor(\''+catEsc+'\',this.value)">';
+    htm+='</div>';
+  }
+  htm+='<button class="btn bg bk" style="margin-top:14px;width:100%" onclick="cM()">Fermer</button>';
+  htm+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
 function addProdCat(){

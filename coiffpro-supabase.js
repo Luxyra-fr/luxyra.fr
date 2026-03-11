@@ -39,20 +39,35 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 // Afficher l'écran de login
 function showLoginScreen() {
   var el = document.getElementById("app") || document.body;
+  // Use the same background as the app if available
+  var bgStyle = "";
+  if (typeof APP_BG !== "undefined" && APP_BG) {
+    bgStyle = "background-image:url(" + APP_BG + ");background-size:cover;background-position:center;";
+  }
   var h = "";
-  h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a);font-family:var(--f1,sans-serif)">';
-  h += '<div style="background:var(--bg2,#111827);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:32px;max-width:380px;width:100%">';
-  h += '<div style="text-align:center;margin-bottom:24px"><div style="font-size:32px;font-weight:900;color:var(--gold,#d4a843)">CoiffPro</div>';
-  h += '<div style="font-size:13px;color:var(--text3,#64748b)">Connectez-vous à votre salon</div></div>';
-  h += '<div id="loginError" style="display:none;background:rgba(248,113,113,.1);color:#f87171;padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>';
-  h += '<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2,#94a3b8);display:block;margin-bottom:4px">Email</label>';
-  h += '<input id="loginEmail" type="email" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:var(--bg3,#1a2035);color:var(--text,#e2e8f0);font-size:14px;outline:none" placeholder="email@salon.fr"></div>';
-  h += '<div style="margin-bottom:20px"><label style="font-size:12px;color:var(--text2,#94a3b8);display:block;margin-bottom:4px">Mot de passe</label>';
-  h += '<input id="loginPass" type="password" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:var(--bg3,#1a2035);color:var(--text,#e2e8f0);font-size:14px;outline:none" placeholder="••••••••"></div>';
-  h += '<button onclick="doLogin()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold,#d4a843);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer;margin-bottom:10px">Se connecter</button>';
-  h += '<div style="text-align:center;margin-top:12px;font-size:12px;color:var(--text3,#64748b)">Pas encore de compte ? Contactez votre éditeur CoiffPro.</div>';
-  h += '<div style="text-align:center;margin-top:8px"><a href="#" onclick="doResetPwd()" style="font-size:12px;color:var(--text3,#64748b)">Mot de passe oublié ?</a></div>';
+  h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' + bgStyle + 'font-family:var(--f1,sans-serif);position:relative">';
+  h += '<div style="position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)"></div>';
+  h += '<div style="position:relative;z-index:1;background:rgba(20,20,30,.85);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:36px 28px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">';
+  h += '<div style="text-align:center;margin-bottom:28px">';
+  // Logo if available
+  var logoEl = document.getElementById("hlogo");
+  if (logoEl && logoEl.src) {
+    h += '<img src="' + logoEl.src + '" style="height:64px;border-radius:14px;margin-bottom:12px;box-shadow:0 4px 16px rgba(0,0,0,.3)"><br>';
+  }
+  h += '<div style="font-size:28px;font-weight:900;color:var(--gold,#d4a843);letter-spacing:-0.5px">CoiffPro</div>';
+  h += '<div style="font-size:13px;color:rgba(255,255,255,.5);margin-top:4px">Connectez-vous à votre salon</div></div>';
+  h += '<div id="loginError" style="display:none;background:rgba(248,113,113,.15);color:#f87171;padding:10px;border-radius:10px;font-size:13px;margin-bottom:14px;text-align:center"></div>';
+  h += '<div style="margin-bottom:14px"><label style="font-size:12px;color:rgba(255,255,255,.5);display:block;margin-bottom:5px;font-weight:600">Email</label>';
+  h += '<input id="loginEmail" type="email" style="width:100%;padding:12px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.08);color:#fff;font-size:15px;outline:none" placeholder="email@salon.fr"></div>';
+  h += '<div style="margin-bottom:22px"><label style="font-size:12px;color:rgba(255,255,255,.5);display:block;margin-bottom:5px;font-weight:600">Mot de passe</label>';
+  h += '<input id="loginPass" type="password" style="width:100%;padding:12px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.08);color:#fff;font-size:15px;outline:none" placeholder="••••••••" onkeydown="if(event.key===\'Enter\')doLogin()"></div>';
+  h += '<button onclick="doLogin()" style="width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,var(--gold,#d4a843),#b8960f);color:#000;font-weight:800;font-size:16px;border:none;cursor:pointer;box-shadow:0 4px 16px rgba(212,168,67,.3);transition:transform .15s" onmouseover="this.style.transform=\'translateY(-1px)\'" onmouseout="this.style.transform=\'none\'">Se connecter</button>';
+  h += '<div style="text-align:center;margin-top:16px;font-size:12px;color:rgba(255,255,255,.35)">Pas encore de compte ? Contactez votre éditeur CoiffPro.</div>';
+  h += '<div style="text-align:center;margin-top:8px"><a href="#" onclick="doResetPwd()" style="font-size:12px;color:rgba(255,255,255,.35);text-decoration:none">Mot de passe oublié ?</a></div>';
   h += '</div></div>';
+  // Hide the header
+  var hdr = document.getElementById("hdr");
+  if (hdr) hdr.style.display = "none";
   el.innerHTML = h;
 }
 
@@ -291,6 +306,9 @@ async function loadSalonData() {
 
   // Lancer l'app !
   console.log("CoiffPro: Données chargées depuis Supabase (" + CL.length + " clients, " + AP.length + " RDV, " + PRODS.length + " produits)");
+  // Show header again after login
+  var hdr = document.getElementById("hdr");
+  if (hdr) hdr.style.display = "";
   initApp(); // ← appelle la fonction d'init existante de l'app
 }
 
