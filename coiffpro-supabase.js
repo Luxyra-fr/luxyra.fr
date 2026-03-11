@@ -262,6 +262,7 @@ async function loadSalonData() {
         items: a.items || [], comment: a.comment || "",
         aPhases: a.a_phases || [],
         clients: a.clients || [],
+        fromCaisse: a.from_caisse || false,
         cancelled: a.cancelled, cancelReason: a.cancel_reason
       };
     });
@@ -385,6 +386,7 @@ async function saveAppointment(appt) {
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
     clients: appt.clients || [],
+    from_caisse: appt.fromCaisse || false,
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
   };
   if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
