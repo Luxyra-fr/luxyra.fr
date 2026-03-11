@@ -1641,8 +1641,11 @@ function rPlanning(){
   h+='<button style="border:none;background:rgba(255,255,255,.15);color:#fff;padding:8px;border-radius:8px;cursor:pointer;font-size:16px" onclick="go(\'planning\')" title="Actualiser">\u21bb</button>';
   h+='</div>';
   h+='<div style="text-align:center;font-family:var(--f1);font-size:18px;font-weight:700;color:#fff;margin-bottom:10px;text-shadow:0 2px 6px rgba(0,0,0,.5)">'+label+'</div>';
-  h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
-  h+='<button class="btn bg" style="flex:1;padding:10px;font-size:13px;font-weight:700" onclick="oM(\'appt\')">+ Nouveau RDV</button>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">';
+  h+='<button class="btn bg" style="flex:2;padding:10px;font-size:13px;font-weight:700" onclick="oM(\'appt\')">+ Nouveau RDV</button>';
+  h+='<button class="btn" style="padding:10px 12px;font-size:16px;background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)" onclick="showAddPause()" title="Pause">\u23f8</button>';
+  h+='<button class="btn" style="padding:10px 12px;font-size:16px;background:var(--red-bg);color:var(--red);border:1px solid var(--red)" onclick="showAddAbsence()" title="Absence / Cong\u00e9">\ud83d\udeab</button>';
+  h+='<button class="btn" style="padding:10px 12px;font-size:16px;background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2)" onclick="printPlanning()" title="Imprimer">\ud83d\udda8</button>';
   h+='</div>';
   if(!hrs){
     h+='<div class="card" style="text-align:center;padding:30px"><div style="font-size:36px;margin-bottom:8px">\ud83d\udeab</div><div style="font-family:var(--f1);color:var(--text2)">Salon ferm\u00e9 le '+DF[dow].toLowerCase()+'</div></div>';
@@ -1755,7 +1758,113 @@ function rPlanning(){
 }
 
 function nD(d){if(d===0)calD=new Date(TD);else calD=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+d);go("planning");}
-function clickSlot(stId,time){oM('appt',{stId:stId,time:time});}
+
+// === PLANNING HELPERS: Pause, Absence, Print ===
+
+function showAddPause(){showAddPauseAt(T[0]?T[0].id:1,"12:00");}
+function showAddPauseAt(stId,time){
+  var dk=dS(calD);
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()">';
+  h+='<h2>\u23f8 Ajouter une pause</h2>';
+  h+='<div class="fg"><label>Collaborateur</label><select id="pauseSt">';
+  for(var i=0;i<T.length;i++)h+='<option value="'+T[i].id+'"'+(T[i].id===stId?" selected":"")+'>'+T[i].n+'</option>';
+  h+='</select></div>';
+  h+='<div style="display:flex;gap:10px">';
+  h+='<div class="fg" style="flex:1"><label>D\u00e9but</label><input type="time" id="pauseFrom" value="'+time+'"></div>';
+  h+='<div class="fg" style="flex:1"><label>Dur\u00e9e (min)</label><input type="number" id="pauseDur" value="60" min="15" step="15"></div>';
+  h+='</div>';
+  h+='<div class="fg"><label>Motif</label><select id="pauseLabel"><option value="Pause d\u00e9jeuner">Pause d\u00e9jeuner</option><option value="Pause">Pause</option><option value="Rendez-vous perso">RDV perso</option><option value="Autre">Autre</option></select></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  h+='<button class="btn" style="flex:1;background:var(--orange);color:#fff;font-weight:700" onclick="doAddPause()">Ajouter la pause</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function doAddPause(){
+  var stId=+document.getElementById("pauseSt").value;
+  var from=document.getElementById("pauseFrom").value;
+  var dur=+document.getElementById("pauseDur").value||60;
+  var label=document.getElementById("pauseLabel").value||"Pause";
+  var dk=dS(calD);
+  var pauseAppt={id:U(),cId:"pause",sId:null,stId:stId,date:dk,time:from,pr:0,st:"pause",met:"",aPhases:[{t:"p",d:dur,l:label}]};
+  AP.push(pauseAppt);
+  if(typeof saveAppointment==="function")saveAppointment(pauseAppt);
+  cM();go("planning");
+}
+
+function showAddAbsence(){showAddAbsenceAt(T[0]?T[0].id:1);}
+function showAddAbsenceAt(stId){
+  var dk=dS(calD);
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()">';
+  h+='<h2>\ud83d\udeab Absence / Cong\u00e9</h2>';
+  h+='<div class="fg"><label>Collaborateur</label><select id="absSt">';
+  for(var i=0;i<T.length;i++)h+='<option value="'+T[i].id+'"'+(T[i].id===stId?" selected":"")+'>'+T[i].n+'</option>';
+  h+='</select></div>';
+  h+='<div style="display:flex;gap:10px">';
+  h+='<div class="fg" style="flex:1"><label>Date d\u00e9but</label><input type="date" id="absFrom" value="'+dk+'"></div>';
+  h+='<div class="fg" style="flex:1"><label>Date fin</label><input type="date" id="absTo" value="'+dk+'"></div>';
+  h+='</div>';
+  h+='<div class="fg"><label>Type</label><select id="absType">';
+  h+='<option value="absent">Absence</option><option value="conge">Cong\u00e9 pay\u00e9</option><option value="maladie">Maladie</option><option value="formation">Formation</option><option value="rtt">RTT</option>';
+  h+='</select></div>';
+  h+='<div class="fg"><label>Motif (optionnel)</label><input id="absLabel" placeholder=""></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  h+='<button class="btn" style="flex:1;background:var(--red);color:#fff;font-weight:700" onclick="doAddAbsence()">Enregistrer</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function doAddAbsence(){
+  var stId=+document.getElementById("absSt").value;
+  var from=document.getElementById("absFrom").value;
+  var to=document.getElementById("absTo").value;
+  var type=document.getElementById("absType").value;
+  var label=document.getElementById("absLabel").value||type;
+  if(!window.ABSENCES)window.ABSENCES=[];
+  var d=new Date(from+"T12:00:00");
+  var end=new Date(to+"T12:00:00");
+  while(d<=end){
+    var dd=dS(d);
+    ABSENCES.push({stId:stId,date:dd,type:type,label:label});
+    d.setDate(d.getDate()+1);
+  }
+  cM();go("planning");
+}
+
+function printPlanning(){
+  var w=window.open("","_blank","width=900,height=700");
+  if(!w)return;
+  var wrap=document.querySelector(".pg-wrap");
+  if(!wrap){alert("Pas de planning visible");return;}
+  var dk=dS(calD);var dow=calD.getDay();
+  var label=DF[dow]+" "+calD.getDate()+" "+MO[calD.getMonth()];
+  var css="body{font-family:sans-serif;padding:20px;background:#fff;}h1{font-size:18px;text-align:center;margin-bottom:16px;}.pg-wrap{overflow:visible!important;border:1px solid #ddd;border-radius:8px;}.pg-grid{display:flex;}.pg-col{flex:1;border-left:1px solid #ddd;}.pg-colhead{padding:8px;text-align:center;border-bottom:2px solid #999;font-weight:700;font-size:13px;}.pg-timecol{flex:0 0 50px;}.pg-block{position:absolute;border-radius:4px;padding:2px 4px;font-size:10px;overflow:hidden;border-left:3px solid;}.pg-pause{position:absolute;font-size:9px;opacity:.6;}.pg-now-line,.pg-dropline,.pg-ghost{display:none;}.pg-absent{position:absolute;inset:0;background:#f9f9f9;display:flex;align-items:center;justify-content:center;font-size:12px;color:#bbb;}.pg-slots{position:relative;}.pg-tslot{height:28px;font-size:10px;text-align:right;padding:2px 4px;border-bottom:1px solid #f0f0f0;}.pg-tslot.hr{border-top:1px solid #ccc;font-weight:700;}.pg-slot{height:28px;border-bottom:1px solid #f8f8f8;}.pg-slot::after{display:none!important;}.pg-summary{display:flex;gap:8px;margin-top:12px;}.pg-summary .ps-card{flex:1;border:1px solid #ddd;border-radius:8px;padding:8px;text-align:center;}.pg-summary .ps-name{font-weight:700;font-size:12px;}.pg-summary .ps-info{font-size:11px;color:#888;}.pg-summary .ps-ca{font-weight:800;font-size:14px;color:#c8a84e;}img{border-radius:50%;}";
+  var hh="<html><head><title>Planning "+label+"</title><style>"+css+"</style></head><body>";
+  hh+="<h1>"+SALON_CONFIG.nom+" \u2014 Planning du "+label+"</h1>";
+  hh+=wrap.outerHTML;
+  var sum=document.querySelector(".pg-summary");
+  if(sum)hh+=sum.outerHTML;
+  hh+="</body></html>";
+  w.document.write(hh);w.document.close();
+  setTimeout(function(){w.print();},400);
+}
+function clickSlot(stId,time){
+  // Show context menu like LS Coiffure
+  var sty=gT(stId);
+  var styN=sty?sty.n:"";
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:340px">';
+  h+='<div style="text-align:center;margin-bottom:14px">';
+  h+='<div style="font-size:13px;color:var(--text3)">'+styN+' \u2014 '+time+'</div>';
+  h+='<div style="font-weight:800;font-size:16px;margin-top:4px">Que souhaitez-vous faire ?</div></div>';
+  // Options
+  h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  h+='<button style="padding:14px;border-radius:10px;border:none;background:var(--gold);color:#fff;font-weight:700;font-size:15px;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:center" onclick="cM();oM(\'appt\',{stId:'+stId+',time:\''+time+'\'})"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Nouveau RDV</button>';
+  h+='<button style="padding:14px;border-radius:10px;border:none;background:var(--orange-bg);color:var(--orange);font-weight:700;font-size:15px;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:center" onclick="cM();showAddPauseAt('+stId+',\''+time+'\')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg> Pause</button>';
+  h+='<button style="padding:14px;border-radius:10px;border:none;background:var(--red-bg);color:var(--red);font-weight:700;font-size:15px;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:center" onclick="cM();showAddAbsenceAt('+stId+')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> Absence / Cong\u00e9</button>';
+  h+='<button style="padding:14px;border-radius:10px;border:none;background:rgba(0,0,0,.04);color:var(--text2);font-weight:600;font-size:14px;cursor:pointer" onclick="cM()">Annuler</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
 
 // === DRAG & DROP ENGINE ===
 var _drag={active:false,aid:null,ghost:null,startY:0,startX:0,el:null,timer:null,moved:false};
