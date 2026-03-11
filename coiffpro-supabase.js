@@ -94,11 +94,11 @@ async function doSignup() {
     nom: "Mon Salon",
     status: "trial",
     plan: "essential"
-  }).select().single();
+  }).select();
 
   if (salonResult.error) { showLoginError("Erreur création salon : " + salonResult.error.message); return; }
 
-  _salonId = salonResult.data.id;
+  _salonId = salonResult.data[0].id;
 
   // Créer 2 collaborateurs par défaut
   await _sb.from("collaborateurs").insert([
@@ -149,10 +149,10 @@ async function loadSalonData() {
   if (!_sb || !_userId) { startOffline(); return; }
 
   // 1. Charger le salon
-  var sRes = await _sb.from("salons").select("*").eq("user_id", _userId).single();
-  if (sRes.error || !sRes.data) { showLoginError("Salon introuvable"); return; }
+  var sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
+  if (sRes.error || !sRes.data || sRes.data.length === 0) { showLoginError("Salon introuvable"); return; }
 
-  var salon = sRes.data;
+  var salon = sRes.data[0];
   _salonId = salon.id;
   _isOnline = true;
 
@@ -331,8 +331,8 @@ async function saveClient(client) {
   if (client.id && client.id.indexOf("-") > 0 && client.id.length > 30) {
     await _sb.from("clients").update(data).eq("id", client.id);
   } else {
-    var res = await _sb.from("clients").insert(data).select().single();
-    if (res.data) client.id = res.data.id;
+    var res = await _sb.from("clients").insert(data).select();
+    if (res.data && res.data[0]) client.id = res.data[0].id;
   }
 }
 
@@ -354,8 +354,8 @@ async function saveAppointment(appt) {
   if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
     await _sb.from("appointments").update(data).eq("id", appt.id);
   } else {
-    var res = await _sb.from("appointments").insert(data).select().single();
-    if (res.data) appt.id = res.data.id;
+    var res = await _sb.from("appointments").insert(data).select();
+    if (res.data && res.data[0]) appt.id = res.data[0].id;
   }
 }
 
@@ -375,12 +375,12 @@ async function saveProduct(prod) {
     if (check.data && check.data.length > 0) {
       await _sb.from("produits").update(data).eq("id", prod.id);
     } else {
-      var res = await _sb.from("produits").insert(data).select().single();
-      if (res.data) prod.id = res.data.id;
+      var res = await _sb.from("produits").insert(data).select();
+      if (res.data && res.data[0]) prod.id = res.data[0].id;
     }
   } else {
-    var res = await _sb.from("produits").insert(data).select().single();
-    if (res.data) prod.id = res.data.id;
+    var res = await _sb.from("produits").insert(data).select();
+    if (res.data && res.data[0]) prod.id = res.data[0].id;
   }
 }
 
@@ -396,8 +396,8 @@ async function saveGiftCard(gc) {
   if (gc.id && gc.id.indexOf("-") > 0 && gc.id.length > 30) {
     await _sb.from("cartes_cadeaux").update(data).eq("id", gc.id);
   } else {
-    var res = await _sb.from("cartes_cadeaux").insert(data).select().single();
-    if (res.data) gc.id = res.data.id;
+    var res = await _sb.from("cartes_cadeaux").insert(data).select();
+    if (res.data && res.data[0]) gc.id = res.data[0].id;
   }
 }
 
@@ -414,8 +414,8 @@ async function saveCloture(clot) {
     cumul_annee_ca: clot.cumulAnCA || 0, cumul_annee_tickets: clot.cumulAnTk || 0,
     hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256"
   };
-  var res = await _sb.from("clotures").insert(data).select().single();
-  if (res.data) clot.id = res.data.id;
+  var res = await _sb.from("clotures").insert(data).select();
+  if (res.data && res.data[0]) clot.id = res.data[0].id;
 }
 
 // Sauvegarder une entrée d'audit
@@ -456,12 +456,12 @@ async function saveCollaborateurs() {
       if (check.data && check.data.length > 0) {
         await _sb.from("collaborateurs").update(data).eq("id", c.id);
       } else {
-        var res = await _sb.from("collaborateurs").insert(data).select().single();
-        if (res.data) c.id = res.data.id;
+        var res = await _sb.from("collaborateurs").insert(data).select();
+        if (res.data && res.data[0]) c.id = res.data[0].id;
       }
     } else {
-      var res = await _sb.from("collaborateurs").insert(data).select().single();
-      if (res.data) c.id = res.data.id;
+      var res = await _sb.from("collaborateurs").insert(data).select();
+      if (res.data && res.data[0]) c.id = res.data[0].id;
     }
   }
 }

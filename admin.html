@@ -257,8 +257,8 @@ async function doAdminLogin() {
   _adminUserId = result.data.user.id;
 
   // Vérifier que c'est bien un admin
-  var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).single();
-  if (adminCheck.error || !adminCheck.data) {
+  var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).limit(1);
+  if (adminCheck.error || !adminCheck.data || adminCheck.data.length === 0) {
     showAdminLoginError("Ce compte n'est pas administrateur.");
     await _adminSb.auth.signOut();
     return;
@@ -378,7 +378,7 @@ async function adminUpdateSalon(salonId, data) {
   await _adminSb.from("salons").update(data).eq("id", salonId);
   // Log admin action
   await _adminSb.from("admin_log").insert({
-    admin_user_id: (await _adminSb.from("admin_users").select("id").eq("user_id", _adminUserId).single()).data.id,
+    admin_user_id: ((await _adminSb.from("admin_users").select("id").eq("user_id", _adminUserId).limit(1)).data[0]||{}).id,
     salon_id: salonId,
     action: Object.keys(data).join(","),
     details: JSON.stringify(data)
@@ -408,8 +408,8 @@ async function checkAdminSession() {
   var session = await _adminSb.auth.getSession();
   if (session.data && session.data.session) {
     _adminUserId = session.data.session.user.id;
-    var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).single();
-    if (adminCheck.data) {
+    var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).limit(1);
+    if (adminCheck.data && adminCheck.data.length > 0) {
       _adminIsOnline = true;
       await loadAdminData();
       return;
@@ -817,13 +817,13 @@ async function doCreateSalon(){
   var salonRes=await _adminSb.from("salons").insert({
     user_id:newUserId, nom:nom, ville:ville, email:email, tel:tel,
     plan:plan, status:status, trial_end:trialEnd
-  }).select().single();
+  }).select();
 
   if(salonRes.error){
     var el=document.getElementById("addSalonError");if(el){el.style.display="block";el.textContent="Erreur salon: "+salonRes.error.message;}return;
   }
 
-  var newSalonId=salonRes.data.id;
+  var newSalonId=salonRes.data[0].id;
 
   // 3. Créer 2 collaborateurs par défaut
   await _adminSb.from("collaborateurs").insert([
@@ -833,7 +833,7 @@ async function doCreateSalon(){
 
   // 4. Log admin
   await _adminSb.from("admin_log").insert({
-    admin_user_id:(await _adminSb.from("admin_users").select("id").eq("user_id",_adminUserId).single()).data.id,
+    admin_user_id:((await _adminSb.from("admin_users").select("id").eq("user_id",_adminUserId).limit(1)).data[0]||{}).id,
     salon_id:newSalonId,
     action:"CREATE_SALON",
     details:"Salon "+nom+" créé - plan "+plan+" - email "+email
