@@ -4547,6 +4547,7 @@ function doFinalPay(method){
         AP[i].brutTotal=brutTotal;
         AP[i].remise=totalRemise;
         AP[i].items=savedItems;
+        AP[i].clients=_tk.clients||[];
         AP[i].tkNum=tkN;
         AP[i].ts=tsNow;
         // NF525: chain this ticket
@@ -4963,6 +4964,15 @@ function rTickets(){
     var a=done[i];
     var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
     var clN=cl?cName(cl):passageName(a.cId);
+    // Show all clients if multi-client ticket
+    if(a.clients&&a.clients.length>1){
+      var clNames=[];
+      for(var ci3=0;ci3<a.clients.length;ci3++){
+        var c3=a.clients[ci3].id?gC(a.clients[ci3].id):null;
+        clNames.push(c3?cName(c3):(a.clients[ci3].pt==="H"?"Passage H":a.clients[ci3].pt==="E"?"Passage E":"Passage F"));
+      }
+      clN=clNames.join(" + ");
+    }
     totalMontant+=a.pr;
     h+='<tr style="border-bottom:1px solid var(--border2);'+(i%2===0?"background:var(--bg);":"")+'">';
     h+='<td style="padding:8px"><span class="badge b1" style="font-size:10px">\u2714</span></td>';
@@ -4987,7 +4997,9 @@ function exportTicketsCSV(){
   var csv="Date;Heure;Collaborateur;Client;Prestation;Montant;Paiement\n";
   done.forEach(function(a){
     var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
-    csv+=a.date+";"+a.time+";"+(sty?sty.n:"")+";"+(cl?cName(cl):"Passage")+";"+(sv?sv.n:"")+";"+a.pr.toFixed(2)+";"+a.met+"\n";
+    var csvClN=cl?cName(cl):"Passage";
+    if(a.clients&&a.clients.length>1){var cn3=[];for(var cc3=0;cc3<a.clients.length;cc3++){var c33=a.clients[cc3].id?gC(a.clients[cc3].id):null;cn3.push(c33?cName(c33):"Passage");}csvClN=cn3.join(" + ");}
+    csv+=a.date+";"+a.time+";"+(sty?sty.n:"")+";"+csvClN+";"+(sv?sv.n:"")+";"+a.pr.toFixed(2)+";"+a.met+"\n";
   });
   try{
     var blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
@@ -5002,58 +5014,77 @@ function exportTicketsCSV(){
 function reprintTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
-  var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId);
-  var svN=sv?sv.n:"Prestation";
+  var sty=gT(a.stId);
+  if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
+  var fidMax=window.FIDCONF.seuil||10;
   
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
-  htm+='<h2>D\u00e9tail du ticket n\u00b0'+(a.tkNum||"--")+'</h2>';
+  htm+='<h2>Ticket n\u00b0'+(a.tkNum||"--")+' \u2014 '+fmt(a.date)+' '+a.time+'</h2>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Collaborateur: <strong>'+(sty?sty.n:"")+'</strong> \u2022 '+a.met+'</div>';
   
-  // Table header
-  htm+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:6px">';
-  htm+='<tr style="border-bottom:2px solid var(--border)"><td style="padding:6px;font-weight:600">D\u00e9signation</td><td style="font-weight:600">Prix de Vente</td><td style="font-weight:600">Total</td></tr>';
-  htm+='<tr style="font-size:11px;color:var(--text3)"><td style="padding:2px 6px"><i>Collaborateur</i></td><td><i>Remise</i></td><td></td></tr>';
+  // Rebuild clients list
+  var clients3=a.clients&&a.clients.length>0?a.clients:[{id:a.cId,pt:null}];
+  var items3=a.items&&a.items.length>0?a.items:[{name:gS(a.sId)?gS(a.sId).n:"Prestation",price:a.pr,qty:1,remise:0,ci:0}];
   
-  // Line item
-  htm+='<tr style="border-top:1px solid var(--border2)"><td style="padding:8px 6px;font-weight:700;font-size:14px">'+svN.toUpperCase()+'</td>';
-  htm+='<td style="font-size:14px">'+a.pr.toFixed(2)+' \u20ac</td>';
-  htm+='<td style="font-size:14px;font-weight:700">'+a.pr.toFixed(2)+' \u20ac</td></tr>';
-  
-  // Sub-info: service detail + collaborator
-  if(sv&&sv.phases){
-    for(var pi=0;pi<sv.phases.length;pi++){
-      var ph=sv.phases[pi];
-      if(ph.t==="w")htm+='<tr><td colspan="3" style="padding:2px 6px;font-style:italic;color:var(--text3);font-size:12px">'+ph.l+'</td></tr>';
+  // Per-client display
+  for(var ci3=0;ci3<clients3.length;ci3++){
+    var tcl3=clients3[ci3].id?gC(clients3[ci3].id):null;
+    var tclN3=tcl3?cName(tcl3):(clients3[ci3].pt==="H"?"Passage homme":clients3[ci3].pt==="E"?"Passage enfant":"Passage femme");
+    
+    htm+='<div style="padding:8px 0;border-bottom:1px solid var(--border2)">';
+    htm+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+    htm+='<div style="font-weight:800;font-size:14px">'+tclN3+'</div>';
+    if(tcl3)htm+='<div style="font-size:11px;color:var(--gold);font-weight:700">\ud83c\udfc5 '+(tcl3.fid||0)+'/'+fidMax+'</div>';
+    htm+='</div>';
+    
+    // Items for this client
+    var clientTotal=0;
+    for(var ii3=0;ii3<items3.length;ii3++){
+      var it3=items3[ii3];
+      if((it3.ci||0)!==ci3)continue;
+      var lt3=it3.price*it3.qty-(it3.remise||0);
+      clientTotal+=lt3;
+      htm+='<div style="display:flex;justify-content:space-between;padding:4px 8px;font-size:13px">';
+      htm+='<span>'+it3.name+(it3.qty>1?" x"+it3.qty:"")+'</span>';
+      htm+='<span style="font-weight:700">'+lt3.toFixed(2)+' \u20ac</span></div>';
+      if(it3.remise>0)htm+='<div style="font-size:11px;color:var(--green);text-align:right;padding-right:8px">Remise -'+it3.remise.toFixed(2)+' \u20ac</div>';
     }
+    if(clientTotal>0)htm+='<div style="text-align:right;font-size:12px;color:var(--text3);padding:2px 8px">Sous-total: '+clientTotal.toFixed(2)+' \u20ac</div>';
+    htm+='</div>';
   }
-  htm+='<tr><td colspan="3" style="padding:4px 6px;font-style:italic;font-size:13px">'+(sty?sty.n:"")+'</td></tr>';
   
-  // Total row
-  htm+='<tr style="background:var(--pink-bg)"><td style="padding:10px 6px;font-weight:800;font-size:15px">Total</td>';
-  htm+='<td style="font-weight:700;font-size:14px">'+a.pr.toFixed(2)+' \u20ac</td>';
-  htm+='<td style="font-weight:800;font-size:15px">'+a.pr.toFixed(2)+' \u20ac</td></tr>';
-  htm+='</table>';
+  // Global remise
+  if(a.remise>0)htm+='<div style="font-size:12px;color:var(--green);text-align:right;padding:6px 0">Remise globale -'+a.remise.toFixed(2)+' \u20ac</div>';
   
-  // Payment method
-  htm+='<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:15px;border-top:1px solid var(--border)">';
-  htm+='<span style="font-weight:700">'+a.met+'</span>';
-  htm+='<span style="font-weight:700">'+a.pr.toFixed(2)+' \u20ac</span></div>';
+  // Total
+  htm+='<div style="display:flex;justify-content:space-between;padding:14px 0;font-weight:900;font-size:18px;border-top:2px solid var(--text);margin-top:6px">';
+  htm+='<span>TOTAL TTC</span><span>'+a.pr.toFixed(2)+' \u20ac</span></div>';
   
-  // Client info
-  htm+='<div style="padding:8px 0;font-size:13px;color:var(--text2);border-top:1px solid var(--border2)">Client: <strong>'+clN+'</strong></div>';
-  htm+='<div style="font-size:12px;color:var(--text3)">'+fmt(a.date)+' \u00e0 '+a.time+'</div>';
+  // TVA
+  if(window.SHOW_TVA_TICKET){
+    var txR=SALON_CONFIG.tauxTVA||20;
+    var htR=Math.round(a.pr/(1+txR/100)*100)/100;
+    var tvaR=Math.round((a.pr-htR)*100)/100;
+    htm+='<div style="font-size:11px;color:var(--text3);border-top:1px dashed var(--border);padding:4px 0">';
+    htm+='<div style="display:flex;justify-content:space-between"><span>HT</span><span>'+htR.toFixed(2)+' \u20ac</span></div>';
+    htm+='<div style="display:flex;justify-content:space-between"><span>TVA '+txR+'%</span><span>'+tvaR.toFixed(2)+' \u20ac</span></div></div>';
+  }
   
-  // Action buttons (like LS Coiffure)
+  // Payment
+  htm+='<div style="display:flex;justify-content:space-between;padding:10px 0;font-size:14px;border-top:1px solid var(--border)">';
+  htm+='<span style="font-weight:700">'+a.met+'</span><span style="font-weight:700">'+a.pr.toFixed(2)+' \u20ac</span></div>';
+  
+  // NF525 info
+  if(a.hash)htm+='<div style="font-size:10px;color:var(--text3);margin-top:4px;word-break:break-all">Hash: '+a.hash.slice(0,16)+'...</div>';
+  
+  // Buttons
   htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:var(--pink);color:#fff;font-weight:700;padding:12px" onclick="deleteTicket(\''+a.id+'\')">Supprimer</button>';
   htm+='<button class="btn" style="flex:1;background:var(--bg);font-weight:600;padding:12px" onclick="cM()">Fermer</button>';
+  htm+='<button class="btn" style="flex:1" onclick="doPrintSingleTicket(\''+a.id+'\')">Imprimer</button>';
   htm+='</div>';
   htm+='<div style="display:flex;gap:8px;margin-top:8px">';
   htm+='<button class="btn" style="flex:1;background:var(--pink);color:#fff;font-weight:700;padding:12px" onclick="modifReglement(\''+a.id+'\')">Modifier r\u00e8glement</button>';
-  htm+='<button class="btn" style="flex:1;background:var(--pink);color:#fff;font-weight:700;padding:12px" onclick="modifTicket(\''+a.id+'\')">Modifier</button>';
   htm+='</div>';
-  htm+='<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" style="flex:1" onclick="doPrintSingleTicket(this.dataset.id)" data-id="'+a.id+'">Imprimer</button><button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailSingleTicket(this.dataset.id)" data-id="'+a.id+'">Email</button></div>';
-  
   htm+='</div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
