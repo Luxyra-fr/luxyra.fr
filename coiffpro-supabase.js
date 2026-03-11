@@ -348,7 +348,7 @@ async function saveAppointment(appt) {
     ticket_num: appt.tkNum || null, hash: appt.hash || "",
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: appt.items || [], comment: appt.comment || "",
-    a_phases: appt.aPhases || [],
+    a_phases: appt.aPhases || appt.phases || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
   };
   if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
