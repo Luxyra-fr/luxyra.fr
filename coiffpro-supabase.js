@@ -39,13 +39,18 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 // Afficher l'écran de login
 function showLoginScreen() {
   var el = document.getElementById("app") || document.body;
-  // Use the same background as the app if available
-  var bgStyle = "";
-  if (typeof APP_BG !== "undefined" && APP_BG) {
-    bgStyle = "background-image:url(" + APP_BG + ");background-size:cover;background-position:center;";
+  // Apply bg to body-level appBg div so it covers the full viewport
+  var bgEl = document.getElementById("appBg");
+  if (bgEl) {
+    if (typeof APP_BG !== "undefined" && APP_BG) {
+      bgEl.style.backgroundImage = "url(" + APP_BG + ")";
+    } else {
+      bgEl.style.backgroundImage = "url(https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80)";
+    }
+    bgEl.style.opacity = "1";
   }
   var h = "";
-  h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' + bgStyle + 'font-family:var(--f1,sans-serif);position:relative">';
+  h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:var(--f1,sans-serif);position:relative">';
   h += '<div style="position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)"></div>';
   h += '<div style="position:relative;z-index:1;background:rgba(20,20,30,.85);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:36px 28px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">';
   h += '<div style="text-align:center;margin-bottom:28px">';
@@ -193,6 +198,18 @@ async function loadSalonData() {
   SALON_CONFIG.couleurSecondaire = salon.couleur_secondaire || "#1a1a1a";
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
+
+  // Restore planning/display config
+  if (salon.config_json) {
+    try {
+      var cfg = typeof salon.config_json === "string" ? JSON.parse(salon.config_json) : salon.config_json;
+      if (cfg.slot) SLOT = cfg.slot;
+      if (cfg.slot_h) SLOT_H = cfg.slot_h;
+      if (cfg.bg_url) APP_BG = cfg.bg_url;
+      if (cfg.bg_opacity) window._bgOp = cfg.bg_opacity;
+      if (cfg.theme) window._currentTheme = cfg.theme;
+    } catch(e) { console.warn("config_json parse error", e); }
+  }
 
   // 3. Charger collaborateurs → T[]
   var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
@@ -456,7 +473,14 @@ async function saveSalonConfig() {
     tva: SALON_CONFIG.tva, couleur_primaire: SALON_CONFIG.couleurPrimaire,
     couleur_secondaire: SALON_CONFIG.couleurSecondaire,
     taux_tva: SALON_CONFIG.tauxTVA,
-    show_tva_ticket: window.SHOW_TVA_TICKET
+    show_tva_ticket: window.SHOW_TVA_TICKET,
+    config_json: JSON.stringify({
+      slot: typeof SLOT !== "undefined" ? SLOT : 15,
+      slot_h: typeof SLOT_H !== "undefined" ? SLOT_H : 28,
+      bg_url: typeof APP_BG !== "undefined" ? APP_BG : "",
+      bg_opacity: window._bgOp || 100,
+      theme: window._currentTheme || ""
+    })
   }).eq("id", _salonId);
 }
 
