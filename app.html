@@ -4131,6 +4131,7 @@ function showCaisse(){
       // Add buttons for THIS client
       h+='<div style="display:flex;gap:4px;padding:4px 14px 10px;border-bottom:2px solid var(--border2)">';
       h+='<button style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:rgba(0,0,0,.03);cursor:pointer;color:#333" onclick="tkAddService(null,'+ci2+')">+ Service</button>';
+      h+='<button style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:rgba(0,0,0,.03);cursor:pointer;color:#333" onclick="tkAddService(null,'+ci2+')">+ Forfait</button>';
       h+='<button style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid var(--border);border-radius:6px;background:rgba(0,0,0,.03);cursor:pointer;color:#333" onclick="tkAddProduct(null,'+ci2+')">+ Produit</button>';
       h+='</div>';
     }
@@ -4933,8 +4934,8 @@ function rTickets(){
   }
   var h='<div class="card">';
   h+='<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">';
-  h+='<div class="fg" style="flex:1;min-width:120px"><label>Date de d\u00e9but</label><input type="date" value="'+tkDateFrom+'" onchange="tkDateFrom=this.value"></div>';
-  h+='<div class="fg" style="flex:1;min-width:120px"><label>Date de fin</label><input type="date" value="'+tkDateTo+'" onchange="tkDateTo=this.value"></div>';
+  h+='<div class="fg" style="flex:1;min-width:120px"><label style="color:rgba(255,255,255,.8)!important;text-shadow:none!important">Date de d\u00e9but</label><input type="date" value="'+tkDateFrom+'" onchange="tkDateFrom=this.value"></div>';
+  h+='<div class="fg" style="flex:1;min-width:120px"><label style="color:rgba(255,255,255,.8)!important;text-shadow:none!important">Date de fin</label><input type="date" value="'+tkDateTo+'" onchange="tkDateTo=this.value"></div>';
   h+='<button class="btn bg" style="padding:12px 20px" onclick="go(\'tickets\')">\ud83d\udd0d</button>';
   h+='<button class="btn" style="padding:12px 16px;background:var(--green-bg);color:var(--green);font-weight:700" onclick="exportTicketsCSV()">Excel</button>';
   h+='</div>';
@@ -4955,16 +4956,12 @@ function rTickets(){
   
   h+='<div style="font-weight:700;font-size:15px;margin-bottom:10px">'+done.length+' r\u00e9sultats</div>';
   
-  // Table
-  h+='<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
-  h+='<tr style="background:var(--bg);font-weight:700;text-align:left"><td style="padding:8px">Statut</td><td>Date<br><i style="font-weight:400">Heure</i></td><td>Collaborateur<br><i style="font-weight:400">Client</i></td><td style="text-align:right">Montant</td><td></td></tr>';
-  
+  // Ticket cards (readable on dark bg)
   var totalMontant=0;
   for(var i=0;i<done.length;i++){
     var a=done[i];
     var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
     var clN=cl?cName(cl):passageName(a.cId);
-    // Show all clients if multi-client ticket
     if(a.clients&&a.clients.length>1){
       var clNames=[];
       for(var ci3=0;ci3<a.clients.length;ci3++){
@@ -4974,19 +4971,27 @@ function rTickets(){
       clN=clNames.join(" + ");
     }
     totalMontant+=a.pr;
-    h+='<tr style="border-bottom:1px solid var(--border2);'+(i%2===0?"background:var(--bg);":"")+'">';
-    h+='<td style="padding:8px"><span class="badge b1" style="font-size:10px">\u2714</span></td>';
-    h+='<td>'+fmt(a.date)+'<br><i style="color:var(--text3)">'+a.time+'</i></td>';
-    h+='<td>'+(sty?sty.n:"")+'<br><i style="color:var(--text3)">'+clN+'</i></td>';
-    h+='<td style="text-align:right;font-weight:700">'+a.pr.toFixed(2)+' \u20ac</td>';
-    h+='<td><button class="btn bs" style="font-size:10px;padding:4px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8</button></td>';
-    h+='</tr>';
+    var itemsSum="";
+    if(a.items&&a.items.length>0){for(var ii4=0;ii4<Math.min(a.items.length,3);ii4++){if(ii4>0)itemsSum+=", ";itemsSum+=a.items[ii4].name;}if(a.items.length>3)itemsSum+="...";}
+    else if(sv){itemsSum=sv.n;}
+    
+    h+='<div class="card" style="margin-bottom:8px;padding:12px;cursor:pointer;border-left:4px solid '+(sty?sty.c:"var(--gold)")+'" onclick="reprintTicket(\''+a.id+'\')">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+    h+='<div style="flex:1">';
+    h+='<div style="font-weight:800;font-size:14px;color:#fff">N\u00b0'+(a.tkNum||"--")+' \u2014 '+fmt(a.date)+' '+a.time+'</div>';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.7);margin-top:2px">'+(sty?sty.n:"")+'</div>';
+    h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin-top:2px">'+clN+'</div>';
+    if(itemsSum)h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+itemsSum+'</div>';
+    h+='</div>';
+    h+='<div style="text-align:right;flex-shrink:0">';
+    h+='<div style="font-weight:800;font-size:16px;color:#fff">'+a.pr.toFixed(2)+' \u20ac</div>';
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+a.met+'</div>';
+    h+='</div></div></div>';
   }
-  h+='</table></div>';
   
   // Total bar
-  h+='<div style="display:flex;justify-content:space-between;padding:14px;background:var(--gold-bg2);border-radius:10px;margin-top:12px;font-weight:800">';
-  h+='<span>TOTAL</span><span>'+totalMontant.toFixed(2)+' \u20ac</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:14px;background:var(--gold-bg2);border-radius:10px;margin-top:12px;font-weight:800;color:#fff;font-size:16px">';
+  h+='<span>TOTAL ('+done.length+' tickets)</span><span>'+totalMontant.toFixed(2)+' \u20ac</span></div>';
   
   return h;
 }
