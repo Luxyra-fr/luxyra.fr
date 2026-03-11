@@ -1529,7 +1529,7 @@ function checkConflict(stId, date, time, svcId, excludeId){
         // Two blocks overlap if one starts before the other ends and vice versa
         if(newBlocks[ni].start<exBlocks[xi].end && newBlocks[ni].end>exBlocks[xi].start){
           var cl=gC(existing[ei].cId);
-          var clN=cl?cName(cl):passageName(a.cId);
+          var clN=cl?cName(cl):passageName(existing[ei].cId);
           var exSv=gS(existing[ei].sId);
           conflicts.push({
             appt:existing[ei],
@@ -1653,7 +1653,11 @@ function rPlanning(){
       var a=sa[j],sv=gS(a.sId),cl=gC(a.cId);
       var colors=getSvcColor(sv?sv.cat:"Coupe");
       var aPhases=a.aPhases||(sv?sv.phases:null);
-      if(!aPhases||!aPhases.length)continue;
+      if(!aPhases||!aPhases.length){
+        // Generate default phase from service total duration or 30min default
+        var defDur=sv?svcTotalDur(sv):30;if(defDur<=0)defDur=30;
+        aPhases=[{t:"w",d:defDur,l:sv?sv.n:"RDV"}];
+      }
       var startM=toM(a.time),cur=startM;
       for(var pi=0;pi<aPhases.length;pi++){
         var ph=aPhases[pi];
@@ -3750,7 +3754,7 @@ function aAp(){
     showConflictAlert(conflicts,"confirmPendingRdv()");
     return;
   }
-  var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,st:"conf",met:""};if(window._rdvPhases)rdvObj.phases=window._rdvPhases;window._rdvPhases=null;AP.push(rdvObj);
+  var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,st:"conf",met:""};if(window._rdvPhases)rdvObj.aPhases=window._rdvPhases;window._rdvPhases=null;AP.push(rdvObj);
   if(typeof saveAppointment==="function")saveAppointment(rdvObj);
   window._rdvSvcId=null;window._rdvPassage=null;
   cM();go("planning");
@@ -3759,7 +3763,7 @@ function aAp(){
 function confirmPendingRdv(){
   var r=window._pendingRdv;
   if(!r)return;
-  var rdvObj2={id:U(),cId:r.cId,sId:r.sId,stId:r.stId,date:r.date,time:r.time,pr:r.pr,st:"conf",met:""};if(r.phases)rdvObj2.phases=r.phases;AP.push(rdvObj2);
+  var rdvObj2={id:U(),cId:r.cId,sId:r.sId,stId:r.stId,date:r.date,time:r.time,pr:r.pr,st:"conf",met:""};if(r.aPhases||r.phases)rdvObj2.aPhases=r.aPhases||r.phases;AP.push(rdvObj2);
   if(typeof saveAppointment==="function")saveAppointment(rdvObj2);
   
   window._pendingRdv=null;
