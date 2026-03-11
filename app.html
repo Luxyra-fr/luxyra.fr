@@ -2568,21 +2568,30 @@ function rDetail(){
     h+='</div>';
   }
   else if(clTab==="fidel"){
-    var maxFid=10,pctFid=Math.min(c.fid/maxFid*100,100);
+    if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
+    var maxFid=window.FIDCONF.seuil||10;
+    var remisePct=window.FIDCONF.remise||10;
+    var pctFid=Math.min(c.fid/maxFid*100,100);
     var reste=maxFid-c.fid;
     h+='<div class="card"><div class="ct">Programme de fid\u00e9lit\u00e9</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:8px">Defaut : Programme initial</div>';
     h+='<div style="font-size:14px;margin-bottom:4px">Points fid\u00e9lit\u00e9</div>';
-    h+='<div style="font-size:28px;font-family:var(--f1);font-weight:800;margin-bottom:12px">'+c.fid+'</div>';
-    if(reste>0)h+='<div style="font-size:15px;margin-bottom:16px">Il reste encore <strong>'+reste+' passages</strong> avant d\u0027obtenir <strong>10% de remise</strong></div>';
-    else h+='<div style="font-size:15px;margin-bottom:16px;color:var(--green);font-weight:700">\ud83c\udf89 Remise de 10% acquise !</div>';
+    h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
+    h+='<button class="btn" style="width:40px;height:40px;font-size:22px;border-radius:50%;padding:0" onclick="var cc=gC(\''+c.id+'\');cc.fid=Math.max(0,cc.fid-1);if(typeof saveClient===\'function\')saveClient(cc);go(\'detail\')">\u2212</button>';
+    h+='<div style="font-size:28px;font-family:var(--f1);font-weight:800;min-width:50px;text-align:center">'+c.fid+'</div>';
+    h+='<button class="btn" style="width:40px;height:40px;font-size:22px;border-radius:50%;padding:0" onclick="var cc=gC(\''+c.id+'\');cc.fid=(cc.fid||0)+1;if(typeof saveClient===\'function\')saveClient(cc);go(\'detail\')">+</button>';
+    h+='</div>';
+    if(reste>0)h+='<div style="font-size:15px;margin-bottom:16px">Il reste encore <strong>'+reste+' passages</strong> avant d\u0027obtenir <strong>'+remisePct+'% de remise</strong></div>';
+    else h+='<div style="font-size:15px;margin-bottom:16px;color:var(--green);font-weight:700">\ud83c\udf89 Remise de '+remisePct+'% acquise !</div>';
     // Visual card grid
     h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;max-width:250px;margin:0 auto">';
     for(var i=0;i<maxFid;i++){
       h+='<div style="aspect-ratio:1;border:2px solid '+(i<c.fid?"var(--gold)":"var(--border2)")+';border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;background:'+(i<c.fid?"var(--gold-bg)":"var(--white)")+'">';
       h+=(i<c.fid?"\u2714":"")+'</div>';
     }
-    h+='</div></div>';
+    h+='</div>';
+    h+='<div style="margin-top:14px;text-align:center"><button class="btn bs" style="font-size:12px" onclick="var nv=prompt(\'Nombre de passages fid\u00e9lit\u00e9 :\',gC(\''+c.id+'\').fid);if(nv!==null){var cc=gC(\''+c.id+'\');cc.fid=Math.max(0,parseInt(nv)||0);if(typeof saveClient===\'function\')saveClient(cc);go(\'detail\')}">Modifier manuellement</button></div>';
+    h+='</div>';
   }
   else if(clTab==="rgpd"){
     h+='<div class="card"><div class="ct">Consentements RGPD</div>';
@@ -3021,14 +3030,15 @@ function rGifts(){
   for(var i=0;i<GC.length;i++){
     var g=GC[i];
     h+='<div class="card" style="background:linear-gradient(135deg,#fffdf4,#faf3dc);border:2px solid var(--gold-light);text-align:center;padding:18px">';
-    h+='<div style="font-size:30px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+g.val+'€</div>';
-    h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">De <strong>'+g.from+'</strong>'+(g.to?" \u2192 "+g.to:"")+'</div>';
+    h+='<div style="font-size:30px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+g.val+'\u20ac</div>';
+    h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">De <strong>'+g.from+'</strong>'+(g.to?' \u2192 '+g.to:'')+'</div>';
     h+='<div style="font-size:12px;color:var(--text2);margin-top:3px;font-style:italic">"'+g.msg+'"</div>';
+    h+='<div style="font-size:12px;color:#666;margin-top:4px;font-weight:700;letter-spacing:1px">Code : '+g.code+'</div>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u00b7 Expire '+fmt(g.exp)+'</div>';
     h+='<div style="margin-top:6px">';
-    if(g.st==="used")h+='<span class="badge b3">Utilis\u00e9</span>';
-    else if(g.used>0)h+='<span class="badge b2">Partiel '+g.used+'€/'+g.val+'€</span>';
-    else h+='<span class="badge b1">Actif \u2014 '+g.val+'€</span>';
+    if(g.st==="used"||g.rem<=0)h+='<span class="badge b3">Utilis\u00e9</span>';
+    else if(g.rem<g.val)h+='<span class="badge b2">Partiel \u2014 Reste '+(g.rem||0).toFixed(2)+'\u20ac / '+g.val+'\u20ac</span>';
+    else h+='<span class="badge b1">Actif \u2014 '+g.val+'\u20ac</span>';
     h+='</div></div>';
   }
   return h;
@@ -4078,10 +4088,30 @@ function showCaisse(){
     h+='<div style="font-weight:700;font-size:13px">'+clName+'</div></div>';
     if(cl){
       var bc=0;
-      h+='<div style="font-size:12px;color:var(--text3)">\ud83c\udf81 Bon Cadeau (0)<br>0 \u20ac disponible</div>';
+      // Count active gift cards for this client
+      GC.forEach(function(g){if(g.to&&(g.to===cName(cl))&&g.rem>0&&g.st!=="used")bc+=g.rem;});
+      h+='<div style="font-size:12px;color:var(--text3)">\ud83c\udf81 Bon Cadeau<br>'+bc.toFixed(2)+' \u20ac dispo.</div>';
     }else if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")>=0){
       h+='<button class="btn" style="padding:8px 14px;font-size:12px;background:var(--blue-bg);color:var(--blue);font-weight:700;white-space:nowrap" onclick="convertPassageToClient()">+ Cr\u00e9er sa fiche</button>';
     }
+    h+='</div>';
+    
+    // Extra clients (multi-client ticket)
+    if(_tk.extraClients&&_tk.extraClients.length>0){
+      for(var ec=0;ec<_tk.extraClients.length;ec++){
+        var ecl=gC(_tk.extraClients[ec]);
+        if(!ecl)continue;
+        var ecIni=(ecl.nom?ecl.nom[0]:"")+(ecl.pre?ecl.pre[0]:"");
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border2);background:rgba(196,76,122,.05)">';
+        h+='<div class="avatar" style="margin:0;width:36px;height:36px;font-size:12px;flex-shrink:0">'+ecIni+'</div>';
+        h+='<div style="flex:1"><div style="font-size:11px;color:var(--text3)">Client suppl\u00e9mentaire</div>';
+        h+='<div style="font-weight:700;font-size:13px">'+cName(ecl)+'</div></div>';
+        h+='<button class="btn bs" style="font-size:11px;color:var(--red);padding:4px 8px" onclick="_tk.extraClients.splice('+ec+',1);showCaisse()">\u2716</button></div>';
+      }
+    }
+    // Add extra client button
+    h+='<div style="padding:8px 14px;border-bottom:1px solid var(--border2)">';
+    h+='<button class="btn bs" style="font-size:12px;width:100%" onclick="showAddExtraClient()">+ Ajouter un autre client \u00e0 cette facture</button>';
     h+='</div>';
     
     // Items list
@@ -4218,6 +4248,36 @@ function pickTkClient(cId,passType){
   _tk.passType=passType||null;
   _tk.step=3;
   showCaisse();
+}
+
+function showAddExtraClient(){
+  var h2='<div class="mbox"><h2>Ajouter un client</h2>';
+  h2+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Ce client sera associ\u00e9 \u00e0 la m\u00eame facture.</div>';
+  h2+='<input id="extraClSearch" placeholder="\ud83d\udd0d Rechercher un client" oninput="filterExtraClients(this.value)" style="width:100%;margin-bottom:10px">';
+  h2+='<div id="extraClList" style="max-height:300px;overflow-y:auto">';
+  var sorted=CL.slice().sort(function(a,b){return(a.nom+a.pre).localeCompare(b.nom+b.pre)});
+  for(var i=0;i<sorted.length;i++){
+    var c=sorted[i];
+    // Skip if already main or extra client
+    if(c.id===_tk.cId)continue;
+    if(_tk.extraClients&&_tk.extraClients.indexOf(c.id)>=0)continue;
+    h2+='<div class="li excl-item" onclick="pickExtraClient(\''+c.id+'\')" style="cursor:pointer;padding:10px 0;border-bottom:1px solid var(--border2)">'+c.nom+' '+c.pre+'</div>';
+  }
+  h2+='</div>';
+  h2+='<button class="btn bk" style="margin-top:10px" onclick="cM();showCaisse()">Annuler</button>';
+  h2+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();showCaisse()"><div onclick="event.stopPropagation()">'+h2+'</div></div>';
+  setTimeout(function(){var el=document.getElementById("extraClSearch");if(el)el.focus();},100);
+}
+function filterExtraClients(q){
+  var items=document.querySelectorAll('.excl-item');
+  q=q.toLowerCase();
+  items.forEach(function(el){el.style.display=el.textContent.toLowerCase().indexOf(q)>=0?'':'none';});
+}
+function pickExtraClient(cId){
+  if(!_tk.extraClients)_tk.extraClients=[];
+  if(_tk.extraClients.indexOf(cId)<0)_tk.extraClients.push(cId);
+  cM();showCaisse();
 }
 
 function filterTkClients(q){
@@ -4407,7 +4467,7 @@ function doBonPay(){
   var code=document.getElementById("bcCode").value.trim().toUpperCase();
   if(!code){_tk.step=5;showCaisse();return;}
     var bon=null;
-  for(var i=0;i<GC.length;i++){if(GC[i].code===code&&GC[i].rem>0){bon=GC[i];break;}}
+  for(var i=0;i<GC.length;i++){if(GC[i].code&&GC[i].code.toUpperCase()===code&&GC[i].rem>0&&GC[i].st!=="used"){bon=GC[i];break;}}
   if(!bon){
     var htm3='<div class="mbox" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">\u274c</div><div style="font-size:16px;font-weight:700;margin-bottom:14px">Bon cadeau introuvable ou sold\u00e9</div><button class="btn bg bk" onclick="_tk.step=5;showCaisse()">Retour</button></div>';
     document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm3+'</div></div>';
@@ -4417,6 +4477,10 @@ function doBonPay(){
   var resteDu=total-(_tk.paid||0);
   var use=Math.min(bon.rem,resteDu);
   bon.rem-=use;
+  bon.used=(bon.used||0)+use;
+  if(bon.rem<=0){bon.st="used";bon.rem=0;}
+  // Persist gift card update
+  if(typeof saveGiftCard==="function")saveGiftCard(bon);
   if(!_tk.payments)_tk.payments=[];
   _tk.payments.push({method:"Bon cadeau "+code,amount:use});
   _tk.paid=(_tk.paid||0)+use;
@@ -4468,7 +4532,7 @@ function doFinalPay(method){
     }
   }else{
     // Direct caisse sale (no RDV) -> create new ticket entry
-    var newTk={id:U(),cId:_tk.cId||"passage",sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
+    var newTk={id:U(),cId:_tk.cId||"passage",sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,extraClients:_tk.extraClients||[]};
     // NF525: chain this ticket
     chainTicket(newTk);
     AP.push(newTk);
@@ -4478,8 +4542,14 @@ function doFinalPay(method){
   // NF525: audit log
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
   
-  // Update client fidelity
-  if(_tk.cId){var cl=gC(_tk.cId);if(cl){cl.fid=(cl.fid||0)+1;if(typeof saveClient==="function")saveClient(cl);}}
+  // Update client fidelity — ask before adding passage
+  if(_tk.cId){
+    var cl=gC(_tk.cId);
+    if(cl){
+      window._pendingFidClient=cl;
+      window._pendingShowTicket={metStr:_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):metStr,total:total};
+    }
+  }
   
   // Decrement stock for products sold
   _tk.items.forEach(function(it){
@@ -4494,7 +4564,27 @@ function doFinalPay(method){
     }
   });
   
-  showTicket(_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):metStr,total);
+  // Show fidelity prompt if applicable, then ticket
+  if(window._pendingFidClient){
+    var fcl=window._pendingFidClient;
+    var fInfo=window._pendingShowTicket;
+    var fh='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+    fh+='<div style="font-size:36px;margin-bottom:10px">\ud83c\udfc5</div>';
+    fh+='<h2>Fid\u00e9lit\u00e9</h2>';
+    fh+='<div style="font-size:14px;margin-bottom:6px"><strong>'+cName(fcl)+'</strong> a actuellement <strong>'+fcl.fid+' passage(s)</strong></div>';
+    if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
+    var seuilF=window.FIDCONF.seuil||10;
+    var resteF=seuilF-(fcl.fid||0);
+    if(resteF>0)fh+='<div style="font-size:13px;color:var(--text2);margin-bottom:16px">Encore '+resteF+' passage(s) avant la remise</div>';
+    else fh+='<div style="font-size:13px;color:var(--green);font-weight:700;margin-bottom:16px">Remise acquise !</div>';
+    fh+='<div style="display:flex;gap:10px;justify-content:center">';
+    fh+='<button class="btn bg" style="padding:12px 20px" onclick="var cc=gC(\''+fcl.id+'\');cc.fid=(cc.fid||0)+1;if(typeof saveClient===\'function\')saveClient(cc);window._pendingFidClient=null;showTicket(\''+fInfo.metStr.replace(/'/g,"\\'")+'\','+fInfo.total+')">Oui, ajouter 1 passage</button>';
+    fh+='<button class="btn" style="padding:12px 20px" onclick="window._pendingFidClient=null;showTicket(\''+fInfo.metStr.replace(/'/g,"\\'")+'\','+fInfo.total+')">Non</button>';
+    fh+='</div></div></div>';
+    document.getElementById("modal").innerHTML=fh;
+  }else{
+    showTicket(_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):metStr,total);
+  }
 }
 function askFicheTech(cId){
   var cl=gC(cId);if(!cl){cM();go("home");return;}
