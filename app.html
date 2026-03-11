@@ -2595,7 +2595,9 @@ function rDetail(){
       h+='<div style="aspect-ratio:1;border:2px solid '+(i<c.fid?"var(--gold)":"var(--border2)")+';border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;background:'+(i<c.fid?"var(--gold-bg)":"var(--white)")+'">';
       h+=(i<c.fid?"\u2714":"")+'</div>';
     }
-    h+='</div></div>';
+    h+='</div>';
+    h+='<div style="text-align:center;margin-top:14px"><button class="btn" style="padding:10px 20px;font-size:13px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.2)" onclick="var nv=prompt(\'Modifier le nombre de passages :\',gC(\''+c.id+'\').fid);if(nv!==null){var cc=gC(\''+c.id+'\');cc.fid=Math.max(0,parseInt(nv)||0);if(typeof saveClient===\'function\')saveClient(cc);go(\'detail\')}">\u270f\ufe0f Modifier manuellement</button></div>';
+    h+='</div>';
   }
   else if(clTab==="rgpd"){
     h+='<div class="card"><div class="ct">Consentements RGPD</div>';
@@ -4565,25 +4567,18 @@ function doFinalPay(method){
   // NF525: audit log
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
   
-  // Increment fidelity for all clients with items BEFORE showing ticket
+  // Collect clients for fidelity + fiche prompts (shown after ticket)
   window._tkFidClients=[];
   if(_tk.clients){
     for(var fci=0;fci<_tk.clients.length;fci++){
       var fcc=_tk.clients[fci];
       if(fcc.id&&(!fcc.id.indexOf||fcc.id.indexOf("passage")<0)){
         var hasIt=_tk.items.some(function(it){return(it.ci||0)===fci});
-        if(hasIt){
-          window._tkFidClients.push(fcc.id);
-          // Auto-increment fidelity
-          var fcl=gC(fcc.id);
-          if(fcl){fcl.fid=(fcl.fid||0)+1;if(typeof saveClient==="function")saveClient(fcl);}
-        }
+        if(hasIt)window._tkFidClients.push(fcc.id);
       }
     }
   }else if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")<0){
     window._tkFidClients=[_tk.cId];
-    var fcl2=gC(_tk.cId);
-    if(fcl2){fcl2.fid=(fcl2.fid||0)+1;if(typeof saveClient==="function")saveClient(fcl2);}
   }
   
   // Decrement stock for products sold
@@ -4601,12 +4596,30 @@ function doFinalPay(method){
   
   showTicket(_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):metStr,total);
 }
-// askFidThenFiche now just routes to next client's fiche (fidelity already done)
-function askFidThenFiche(idx){
+// Per-client flow: fidelity prompt -> fiche technique -> next client
+function askFidForClient(idx){
   if(!idx)idx=0;
   var ids=window._tkFidClients||[];
   if(idx>=ids.length){cM();go("home");return;}
-  askFicheForClient(idx);
+  var cl=gC(ids[idx]);
+  if(!cl){askFidForClient(idx+1);return;}
+  if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
+  var seuil=window.FIDCONF.seuil||10;var rem=window.FIDCONF.remise||10;
+  var nbCl=ids.length;
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h+='<div style="font-size:36px;margin-bottom:8px">\ud83c\udfc5</div>';
+  h+='<h2>Fid\u00e9lit\u00e9</h2>';
+  if(nbCl>1)h+='<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Client '+(idx+1)+'/'+nbCl+'</div>';
+  h+='<div style="font-size:15px;margin-bottom:6px"><strong>'+cName(cl)+'</strong></div>';
+  h+='<div style="font-size:14px;margin-bottom:4px">Passages actuels: <strong>'+(cl.fid||0)+' / '+seuil+'</strong></div>';
+  var reste2=seuil-(cl.fid||0);
+  if(reste2>0)h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Encore '+reste2+' avant la remise de '+rem+'%</div>';
+  else h+='<div style="font-size:13px;color:var(--green);font-weight:700;margin-bottom:14px">Remise '+rem+'% acquise!</div>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFicheForClient('+idx+')">Non</button>';
+  h+='<button class="btn bg" style="flex:1;padding:12px" onclick="var cc=gC(\''+cl.id+'\');cc.fid=(cc.fid||0)+1;if(typeof saveClient===\'function\')saveClient(cc);askFicheForClient('+idx+')">Oui, +1 passage</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
 }
 
 // After fidelity prompt, ask fiche technique for same client
@@ -4614,7 +4627,7 @@ function askFicheForClient(idx){
   var ids=window._tkFidClients||[];
   if(idx>=ids.length){cM();go("home");return;}
   var cId=ids[idx];var cl=gC(cId);
-  if(!cl){askFidThenFiche(idx+1);return;}
+  if(!cl){askFidForClient(idx+1);return;}
   var has=cl.fiches&&cl.fiches.length?"mettre \u00e0 jour":"cr\u00e9er";
   var nbCl=ids.length;
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
@@ -4623,14 +4636,14 @@ function askFicheForClient(idx){
   if(nbCl>1)h+='<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Client '+(idx+1)+'/'+nbCl+'</div>';
   h+='<div style="font-size:14px;margin-bottom:14px">'+has+' une fiche pour <strong>'+cName(cl)+'</strong> ?</div>';
   h+='<div style="display:flex;gap:8px">';
-  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFidThenFiche('+(idx+1)+')">Non</button>';
+  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFidForClient('+(idx+1)+')">Non</button>';
   h+='<button class="btn bg" style="flex:1;padding:12px" onclick="doFicheForClient(\''+cId+'\','+idx+')">Oui</button>';
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
 
 function doFicheForClient(cId,idx){
-  var cl=gC(cId);if(!cl){askFidThenFiche(idx+1);return;}
+  var cl=gC(cId);if(!cl){askFidForClient(idx+1);return;}
   var sty=gT(_tk?_tk.stId:null)||T[0];
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2>\ud83d\udcdd Fiche technique</h2>';
@@ -4638,7 +4651,7 @@ function doFicheForClient(cId,idx){
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">'+fmt(TD)+' \u2022 par '+(sty?sty.n:"")+'</div>';
   h+='<textarea id="ftMC" rows="10" style="width:100%;font-size:14px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical" placeholder="Saisir les informations..."></textarea>';
   h+='<div style="display:flex;gap:8px;margin-top:12px">';
-  h+='<button class="btn" style="flex:1" onclick="askFidThenFiche('+(idx+1)+')">Passer</button>';
+  h+='<button class="btn" style="flex:1" onclick="askFidForClient('+(idx+1)+')">Passer</button>';
   h+='<button class="btn bg" style="flex:1" onclick="saveFicheMC(\''+cId+'\','+(idx+1)+')">Enregistrer</button>';
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
@@ -4646,7 +4659,7 @@ function doFicheForClient(cId,idx){
 }
 
 function saveFicheMC(cId,nextIdx){
-  var cl=gC(cId);if(!cl){askFidThenFiche(nextIdx);return;}
+  var cl=gC(cId);if(!cl){askFidForClient(nextIdx);return;}
   var txt=document.getElementById("ftMC").value;
   if(txt.trim()){
     var sty=gT(_tk?_tk.stId:null)||T[0];
@@ -4654,7 +4667,7 @@ function saveFicheMC(cId,nextIdx){
     cl.fiches.push({txt:txt,date:TD,collab:sty?sty.n:""});
     if(typeof saveClient==="function")saveClient(cl);
   }
-  askFidThenFiche(nextIdx);
+  askFidForClient(nextIdx);
 }
 
 function askFicheTech(cId){
@@ -4825,7 +4838,7 @@ function showTicket(method,total){
   h+='<div style="display:flex;gap:8px;margin-top:10px">';
   h+='<button class="btn bg" style="flex:1" onclick="printTicketReceipt()">\ud83d\udda8 Imprimer</button>';h+='<button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailTicket()">\u2709 Email</button>';
   if(window._tkFidClients&&window._tkFidClients.length>0){
-    h+='<button class="btn" style="flex:1" onclick="askFicheForClient(0)">Fermer</button></div>';
+    h+='<button class="btn" style="flex:1" onclick="askFidForClient(0)">Fermer</button></div>';
   }else{
     h+='<button class="btn" style="flex:1" onclick="cM();go(\'home\')">Fermer</button></div>';
   }
