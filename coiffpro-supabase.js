@@ -385,15 +385,30 @@ async function saveAppointment(appt) {
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
-    clients: appt.clients || [],
-    from_caisse: appt.fromCaisse || false,
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
   };
+  // Add new fields (may not exist in DB yet)
+  try { data.clients = appt.clients || []; } catch(e) {}
+  try { data.from_caisse = appt.fromCaisse || false; } catch(e) {}
+  
+  var result;
   if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
-    await _sb.from("appointments").update(data).eq("id", appt.id);
+    result = await _sb.from("appointments").update(data).eq("id", appt.id);
   } else {
-    var res = await _sb.from("appointments").insert(data).select();
-    if (res.data && res.data[0]) appt.id = res.data[0].id;
+    result = await _sb.from("appointments").insert(data).select();
+    if (result.data && result.data[0]) appt.id = result.data[0].id;
+  }
+  // If failed (likely missing columns), retry without new fields
+  if (result && result.error) {
+    console.warn("saveAppointment retry without new fields:", result.error.message);
+    delete data.clients;
+    delete data.from_caisse;
+    if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
+      await _sb.from("appointments").update(data).eq("id", appt.id);
+    } else {
+      var res2 = await _sb.from("appointments").insert(data).select();
+      if (res2.data && res2.data[0]) appt.id = res2.data[0].id;
+    }
   }
 }
 
@@ -467,7 +482,7 @@ async function saveAuditEntry(action, detail) {
 // Sauvegarder la config du salon
 async function saveSalonConfig() {
   if (!_isOnline || !_salonId) return;
-  await _sb.from("salons").update({
+  var data = {
     nom: SALON_CONFIG.nom, sous_titre: SALON_CONFIG.sousTitre,
     logo: SALON_CONFIG.logo, adresse: SALON_CONFIG.adresse,
     cp: SALON_CONFIG.cp, ville: SALON_CONFIG.ville,
@@ -476,8 +491,11 @@ async function saveSalonConfig() {
     tva: SALON_CONFIG.tva, couleur_primaire: SALON_CONFIG.couleurPrimaire,
     couleur_secondaire: SALON_CONFIG.couleurSecondaire,
     taux_tva: SALON_CONFIG.tauxTVA,
-    show_tva_ticket: window.SHOW_TVA_TICKET,
-    config_json: JSON.stringify({
+    show_tva_ticket: window.SHOW_TVA_TICKET
+  };
+  // Try adding config_json (may not exist in DB yet)
+  try {
+    data.config_json = JSON.stringify({
       slot: typeof SLOT !== "undefined" ? SLOT : 15,
       slot_h: typeof SLOT_H !== "undefined" ? SLOT_H : 28,
       bg_url: typeof APP_BG !== "undefined" ? APP_BG : "",
@@ -486,8 +504,15 @@ async function saveSalonConfig() {
       fidconf: window.FIDCONF || {seuil:10, remise:10},
       pay_active: window.PAY_ACTIVE || {},
       fond_caisse: window.CAISSE_DATA ? window.CAISSE_DATA.fond : 200
-    })
-  }).eq("id", _salonId);
+    });
+  } catch(e) {}
+  var result = await _sb.from("salons").update(data).eq("id", _salonId);
+  // If failed, retry without config_json
+  if (result && result.error) {
+    console.warn("saveSalonConfig retry:", result.error.message);
+    delete data.config_json;
+    await _sb.from("salons").update(data).eq("id", _salonId);
+  }
 }
 
 // Sauvegarder les collaborateurs
