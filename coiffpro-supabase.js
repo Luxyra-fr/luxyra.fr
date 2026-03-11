@@ -261,6 +261,7 @@ async function loadSalonData() {
         tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
         items: a.items || [], comment: a.comment || "",
         aPhases: a.a_phases || [],
+        clients: a.clients || [],
         cancelled: a.cancelled, cancelReason: a.cancel_reason
       };
     });
@@ -383,6 +384,7 @@ async function saveAppointment(appt) {
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
+    clients: appt.clients || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
   };
   if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
