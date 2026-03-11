@@ -39,18 +39,13 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 // Afficher l'écran de login
 function showLoginScreen() {
   var el = document.getElementById("app") || document.body;
-  // Apply bg to body-level appBg div so it covers the full viewport
-  var bgEl = document.getElementById("appBg");
-  if (bgEl) {
-    if (typeof APP_BG !== "undefined" && APP_BG) {
-      bgEl.style.backgroundImage = "url(" + APP_BG + ")";
-    } else {
-      bgEl.style.backgroundImage = "url(https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80)";
-    }
-    bgEl.style.opacity = "1";
+  // Use the same background as the app if available
+  var bgStyle = "";
+  if (typeof APP_BG !== "undefined" && APP_BG) {
+    bgStyle = "background-image:url(" + APP_BG + ");background-size:cover;background-position:center;";
   }
   var h = "";
-  h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:var(--f1,sans-serif);position:relative">';
+  h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;' + bgStyle + 'font-family:var(--f1,sans-serif);position:relative">';
   h += '<div style="position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)"></div>';
   h += '<div style="position:relative;z-index:1;background:rgba(20,20,30,.85);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:36px 28px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">';
   h += '<div style="text-align:center;margin-bottom:28px">';
@@ -199,7 +194,7 @@ async function loadSalonData() {
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
 
-  // Restore planning/display config
+  // Restore config_json settings
   if (salon.config_json) {
     try {
       var cfg = typeof salon.config_json === "string" ? JSON.parse(salon.config_json) : salon.config_json;
@@ -208,6 +203,9 @@ async function loadSalonData() {
       if (cfg.bg_url) APP_BG = cfg.bg_url;
       if (cfg.bg_opacity) window._bgOp = cfg.bg_opacity;
       if (cfg.theme) window._currentTheme = cfg.theme;
+      if (cfg.fidconf) window.FIDCONF = cfg.fidconf;
+      if (cfg.pay_active) window.PAY_ACTIVE = cfg.pay_active;
+      if (cfg.fond_caisse !== undefined) { if(!window.CAISSE_DATA)window.CAISSE_DATA={}; window.CAISSE_DATA.fond = cfg.fond_caisse; }
     } catch(e) { console.warn("config_json parse error", e); }
   }
 
@@ -479,7 +477,10 @@ async function saveSalonConfig() {
       slot_h: typeof SLOT_H !== "undefined" ? SLOT_H : 28,
       bg_url: typeof APP_BG !== "undefined" ? APP_BG : "",
       bg_opacity: window._bgOp || 100,
-      theme: window._currentTheme || ""
+      theme: window._currentTheme || "",
+      fidconf: window.FIDCONF || {seuil:10, remise:10},
+      pay_active: window.PAY_ACTIVE || {},
+      fond_caisse: window.CAISSE_DATA ? window.CAISSE_DATA.fond : 200
     })
   }).eq("id", _salonId);
 }
