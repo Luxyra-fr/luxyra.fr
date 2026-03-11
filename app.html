@@ -4530,7 +4530,7 @@ function doFinalPay(method){
   _tk.items.forEach(function(it){brutTotal+=it.price*it.qty;itemRemises+=(it.remise||0);});
   var globalRemise=_tk.remise||0;
   var totalRemise=itemRemises+globalRemise;
-  var savedItems=_tk.items.map(function(it){return{name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:!!it.isProd};});
+  var savedItems=_tk.items.map(function(it){return{name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:!!it.isProd,ci:it.ci||0};});
   var tsNow=new Date().toISOString();
   
   tkN++;
@@ -4555,7 +4555,7 @@ function doFinalPay(method){
     }
   }else{
     // Direct caisse sale (no RDV) -> create new ticket entry
-    var newTk={id:U(),cId:_tk.cId||"passage",sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
+    var newTk={id:U(),cId:_tk.cId||"passage",clients:_tk.clients||[],sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
     // NF525: chain this ticket
     chainTicket(newTk);
     AP.push(newTk);
@@ -4565,20 +4565,26 @@ function doFinalPay(method){
   // NF525: audit log
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
   
-  // Collect all clients with items for fidelity + fiche technique
+  // Increment fidelity for all clients with items BEFORE showing ticket
   window._tkFidClients=[];
   if(_tk.clients){
     for(var fci=0;fci<_tk.clients.length;fci++){
       var fcc=_tk.clients[fci];
       if(fcc.id&&(!fcc.id.indexOf||fcc.id.indexOf("passage")<0)){
         var hasIt=_tk.items.some(function(it){return(it.ci||0)===fci});
-        if(hasIt)window._tkFidClients.push(fcc.id);
+        if(hasIt){
+          window._tkFidClients.push(fcc.id);
+          // Auto-increment fidelity
+          var fcl=gC(fcc.id);
+          if(fcl){fcl.fid=(fcl.fid||0)+1;if(typeof saveClient==="function")saveClient(fcl);}
+        }
       }
     }
   }else if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")<0){
     window._tkFidClients=[_tk.cId];
+    var fcl2=gC(_tk.cId);
+    if(fcl2){fcl2.fid=(fcl2.fid||0)+1;if(typeof saveClient==="function")saveClient(fcl2);}
   }
-  window._pendingFidClient=window._tkFidClients.length?gC(window._tkFidClients[0]):null;
   
   // Decrement stock for products sold
   _tk.items.forEach(function(it){
@@ -4595,29 +4601,12 @@ function doFinalPay(method){
   
   showTicket(_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):metStr,total);
 }
+// askFidThenFiche now just routes to next client's fiche (fidelity already done)
 function askFidThenFiche(idx){
   if(!idx)idx=0;
   var ids=window._tkFidClients||[];
   if(idx>=ids.length){cM();go("home");return;}
-  var cl=gC(ids[idx]);
-  if(!cl){askFidThenFiche(idx+1);return;}
-  if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
-  var seuil=window.FIDCONF.seuil||10;var rem=window.FIDCONF.remise||10;
-  var nbCl=ids.length;
-  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
-  h+='<div style="font-size:36px;margin-bottom:8px">\ud83c\udfc5</div>';
-  h+='<h2>Fid\u00e9lit\u00e9</h2>';
-  if(nbCl>1)h+='<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Client '+(idx+1)+'/'+nbCl+'</div>';
-  h+='<div style="font-size:15px;margin-bottom:6px"><strong>'+cName(cl)+'</strong></div>';
-  h+='<div style="font-size:14px;margin-bottom:4px">Passages: <strong>'+(cl.fid||0)+' / '+seuil+'</strong></div>';
-  var reste2=seuil-(cl.fid||0);
-  if(reste2>0)h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Encore '+reste2+' avant '+rem+'%</div>';
-  else h+='<div style="font-size:13px;color:var(--green);font-weight:700;margin-bottom:14px">Remise '+rem+'% acquise!</div>';
-  h+='<div style="display:flex;gap:8px">';
-  h+='<button class="btn" style="flex:1;padding:12px" onclick="askFicheForClient('+idx+')">Non</button>';
-  h+='<button class="btn bg" style="flex:1;padding:12px" onclick="var cc=gC(\''+cl.id+'\');cc.fid=(cc.fid||0)+1;if(typeof saveClient===\'function\')saveClient(cc);askFicheForClient('+idx+')">+1 passage</button>';
-  h+='</div></div></div>';
-  document.getElementById("modal").innerHTML=h;
+  askFicheForClient(idx);
 }
 
 // After fidelity prompt, ask fiche technique for same client
@@ -4835,10 +4824,8 @@ function showTicket(method,total){
   
   h+='<div style="display:flex;gap:8px;margin-top:10px">';
   h+='<button class="btn bg" style="flex:1" onclick="printTicketReceipt()">\ud83d\udda8 Imprimer</button>';h+='<button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailTicket()">\u2709 Email</button>';
-  if(window._pendingFidClient){
-    h+='<button class="btn" style="flex:1" onclick="askFidThenFiche(0)">Fermer</button></div>';
-  }else if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")<0){
-    h+='<button class="btn" style="flex:1" onclick="askFicheTech(\''+_tk.cId+'\')">Fermer</button></div>';
+  if(window._tkFidClients&&window._tkFidClients.length>0){
+    h+='<button class="btn" style="flex:1" onclick="askFicheForClient(0)">Fermer</button></div>';
   }else{
     h+='<button class="btn" style="flex:1" onclick="cM();go(\'home\')">Fermer</button></div>';
   }
@@ -5181,7 +5168,12 @@ function doModifTicket(id,isPast){
 function doPrintSingleTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
-  _tk={items:[{name:gS(a.sId)?gS(a.sId).n:"Prestation",price:a.pr,qty:1,remise:0}],cId:a.cId,stId:a.stId,remise:0,payments:[{method:a.met,amount:a.pr}]};
+  // Clear fidelity/fiche flags so re-viewing a ticket doesn't re-ask
+  window._tkFidClients=[];
+  _tk={items:[{name:gS(a.sId)?gS(a.sId).n:"Prestation",price:a.pr,qty:1,remise:0}],cId:a.cId,stId:a.stId,remise:0,payments:[{method:a.met,amount:a.pr}],clients:[{id:a.cId,pt:null}]};
+  // Restore multi-client items if saved
+  if(a.items){_tk.items=a.items.map(function(it){return{name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,ci:it.ci||0};});}
+  if(a.extraClients){for(var ec=0;ec<a.extraClients.length;ec++){_tk.clients.push({id:a.extraClients[ec],pt:null});}}
   showTicket(a.met,a.pr);
 }
 
