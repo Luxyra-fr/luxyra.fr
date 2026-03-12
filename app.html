@@ -1037,7 +1037,22 @@ function printClotureZ(){
 
 
 function loadWP(input){if(!input.files||!input.files[0])return;var r=new FileReader();r.onload=function(e){APP_BG=e.target.result;var bg=document.getElementById('appBg');if(bg)bg.style.backgroundImage='url('+APP_BG+')';};r.readAsDataURL(input.files[0]);}
-function addCollab(){var n=prompt("Nom:");if(!n)return;var ini=n.split(" ").map(function(w){return w.charAt(0).toUpperCase();}).join("").slice(0,2);var cols=["#c44c7a","#4a85b5","#2d9a5e","#d48a1a","#8050a8"];var nid=T.length?Math.max.apply(null,T.map(function(t){return t.id;}))+1:1;T.push({id:nid,n:n,i:ini,c:cols[T.length%cols.length],img:"",hrs:{0:null,1:{o:"09:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}}});if(typeof saveCollaborateurs==="function")saveCollaborateurs();go("settings");}
+function addCollab(){
+  var n=prompt("Nom du collaborateur:");if(!n)return;
+  var ini=n.split(" ").map(function(w){return w.charAt(0).toUpperCase();}).join("").slice(0,2);
+  var cols=["#c44c7a","#4a85b5","#2d9a5e","#d48a1a","#8050a8"];
+  var defHrs={0:null,1:{o:"09:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}};
+  var newC={id:0,n:n,i:ini,c:cols[T.length%cols.length],img:"",hrs:defHrs};
+  // Insert directly to Supabase first, get the real ID
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("collaborateurs").insert({salon_id:_salonId,nom:n,initiales:ini,couleur:newC.c,img:"",horaires:defHrs}).select().then(function(r){
+      if(r.data&&r.data[0]){newC.id=r.data[0].id;}
+      T.push(newC);go("settings");
+    });
+  }else{
+    newC.id=Date.now();T.push(newC);go("settings");
+  }
+}
 function drawTimeLine(){document.querySelectorAll('.pg-now-line').forEach(function(el){el.remove();});var now=new Date();var nowM=now.getHours()*60+now.getMinutes();if(dS(calD)!==TD)return;var wrap=document.querySelector('.pg-wrap');if(!wrap)return;var slots=wrap.querySelectorAll('.pg-slots');var tslots=wrap.querySelectorAll('.pg-tslot');if(!tslots.length||!slots.length)return;var firstHr=null;tslots.forEach(function(ts){if(!firstHr&&ts.textContent.indexOf('h')>=0)firstHr=parseInt(ts.textContent);});if(firstHr===null)return;var topPx=((nowM-firstHr*60)/SLOT)*SLOT_H;if(topPx<0||topPx>slots[0].offsetHeight)return;slots.forEach(function(sl){var l=document.createElement('div');l.className='pg-now-line';l.style.top=topPx+'px';sl.appendChild(l);});}
 function clearStyImg(idx){T[idx].img="";if(typeof saveCollaborateurs==="function")saveCollaborateurs();go("settings");}
 function loadStylistImg(idx,input){
@@ -1354,7 +1369,7 @@ function go(pg,arg){
     else if(pg==="accounting")app.innerHTML=rAccounting();
     else if(pg==="stats"){app.innerHTML=rStats();setTimeout(rAffl,50);}
     else if(pg==="caisse")app.innerHTML=rCaisse();
-    else if(pg==="settings")app.innerHTML=rSettings();
+    else if(pg==="settings"){var scrollY=window.scrollY;app.innerHTML=rSettings();setTimeout(function(){window.scrollTo(0,scrollY);},10);}
     else if(pg==="tickets")app.innerHTML=rTickets();
     else if(pg==="caisseGestion")app.innerHTML=rCaisseGestion();
     else if(pg==="pendingTk")app.innerHTML=rPendingTk();
@@ -2237,10 +2252,7 @@ function saveSalonInfo(){
   var salonNameEl=document.getElementById("salonName");
   if(salonNameEl)salonNameEl.textContent=SALON_CONFIG.nom;
   // Update header logo if custom logo set
-  if(S.logo){
-    var hlogo=document.getElementById("hlogo");
-    if(hlogo)hlogo.src=S.logo;
-  }
+  if(S.logo){var hl=document.getElementById("hlogo");if(hl)hl.src=S.logo;}
   // Save to Supabase
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   // Confirmation
@@ -2466,7 +2478,7 @@ function rSettings(){
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos du salon</div><div class="card">';
     // Logo preview + upload
-    var logoPreview=S.logo||document.getElementById("hlogo").src;
+    var logoPreview=S.logo||(document.getElementById("hlogo")||{}).src||"";
     h+='<div style="text-align:center;margin-bottom:16px">';
     h+='<img id="salonLogoPreview" src="'+logoPreview+'" style="width:80px;height:80px;border-radius:16px;object-fit:cover;border:2px solid var(--gold-bg2);margin-bottom:8px"><br>';
     h+='<div class="fg"><label>Logo du salon (URL ou cliquez pour charger)</label>';
@@ -3702,7 +3714,7 @@ function printGiftThemed(gcId,themeId){
   if(!g)return;cM();
   var salon=SALON_CONFIG;
   var w=window.open("","_blank","width=850,height=550");if(!w)return;
-  var logoSrc=SALON_CONFIG.logo||(document.getElementById("hlogo")?document.getElementById("hlogo").src:"");
+  var logoSrc=SALON_CONFIG.logo||(document.getElementById("hlogo")?(document.getElementById("hlogo")||{}).src||"":"");
   var scopeLabel=!g.scope||g.scope==="tout"?"Prestations & Produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
   var isOff=g.isOffert||g.payMethod==="Offert";
   var isMultiUsage=(!g.scope||g.scope==="tout");
