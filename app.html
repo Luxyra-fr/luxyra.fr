@@ -3091,8 +3091,14 @@ function doAddProdCat(){
 function deleteGiftCardLocal(gcId){
   // Remove from local array
   for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){GC.splice(i,1);break;}}
-  // Delete from Supabase via the supabase module function
-  if(typeof deleteGiftCard==="function"){deleteGiftCard(gcId);}
+  // Delete from Supabase DIRECTLY (not via external module)
+  try{
+    if(typeof _sb!=="undefined"&&_sb){
+      _sb.from("cartes_cadeaux").delete().eq("id",gcId).then(function(res){
+        console.log("Bon "+gcId+" supprim\u00e9 de Supabase",res);
+      }).catch(function(err){console.error("Erreur suppression bon:",err);});
+    }
+  }catch(e){console.error("Erreur suppression:",e);}
   go("gifts");
 }
 
@@ -3129,9 +3135,22 @@ function exportGiftRegister(){
 
 function purgeAllGifts(){
   if(!confirm("Supprimer TOUS les bons cadeaux ?\nCette action est irr\u00e9versible !"))return;
-  if(typeof purgeAllGiftCards==="function"){
-    purgeAllGiftCards().then(function(){GC.length=0;go("gifts");});
-  }else{
+  // Delete ALL from Supabase DIRECTLY
+  try{
+    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+      _sb.from("cartes_cadeaux").delete().eq("salon_id",_salonId).then(function(res){
+        console.log("Tous les bons supprim\u00e9s de Supabase",res);
+        GC.length=0;
+        go("gifts");
+      }).catch(function(err){
+        console.error("Erreur purge bons:",err);
+        GC.length=0;go("gifts");
+      });
+    }else{
+      GC.length=0;go("gifts");
+    }
+  }catch(e){
+    console.error("Erreur purge:",e);
     GC.length=0;go("gifts");
   }
 }
@@ -3536,7 +3555,11 @@ function doVoidGift(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
   var oldRem=g.rem;g.st="voided";g.rem=0;
-  if(typeof saveGiftCard==="function")saveGiftCard(g);
+  // Save to Supabase directly
+  if(typeof saveGiftCard==="function"){saveGiftCard(g);}
+  else if(typeof _sb!=="undefined"&&_sb){
+    _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("id",gcId);
+  }
   auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Val:"+g.val.toFixed(2)+"E - Solde annul\u00e9:"+oldRem.toFixed(2)+"E");
   cM();go("gifts");
 }
