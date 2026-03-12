@@ -274,7 +274,16 @@ async function loadSalonData() {
       return {
         id: g.id, val: Number(g.valeur), from: g.de, to: g.pour, msg: g.message,
         cr: g.date_creation, exp: g.date_expiration,
-        used: Number(g.utilise), st: g.status, code: g.code, rem: Number(g.restant)
+        used: Number(g.utilise), st: g.status, code: g.code, rem: Number(g.restant),
+        scope: g.scope || "tout",
+        gcNum: g.gc_num || null,
+        payMethod: g.pay_method || null,
+        isOffert: g.is_offert || false,
+        ht: Number(g.ht) || 0,
+        tva: Number(g.tva) || 0,
+        tvaRate: Number(g.tva_rate) || 0.20,
+        history: g.history || [],
+        tkNum: g.tk_num || null
       };
     });
   }
@@ -411,7 +420,16 @@ async function saveGiftCard(gc) {
     salon_id: _salonId,
     valeur: gc.val, de: gc.from, pour: gc.to, message: gc.msg,
     code: gc.code, date_creation: gc.cr, date_expiration: gc.exp,
-    utilise: gc.used, restant: gc.rem, status: gc.st
+    utilise: gc.used, restant: gc.rem, status: gc.st,
+    scope: gc.scope || "tout",
+    gc_num: gc.gcNum || null,
+    pay_method: gc.payMethod || null,
+    is_offert: gc.isOffert || false,
+    ht: gc.ht || 0,
+    tva: gc.tva || 0,
+    tva_rate: gc.tvaRate || 0.20,
+    history: gc.history || [],
+    tk_num: gc.tkNum || null
   };
   if (gc.id && gc.id.indexOf("-") > 0 && gc.id.length > 30) {
     await _sb.from("cartes_cadeaux").update(data).eq("id", gc.id);
@@ -499,6 +517,21 @@ async function deleteClient(clientId) {
 async function deleteProduct(productId) {
   if (!_isOnline || !_salonId) return;
   await _sb.from("produits").delete().eq("id", productId);
+}
+
+// Supprimer un bon cadeau
+async function deleteGiftCard(gcId) {
+  if (!_isOnline || !_salonId) return;
+  await _sb.from("cartes_cadeaux").delete().eq("id", gcId);
+  // Also remove from local array
+  for (var i = 0; i < GC.length; i++) { if (GC[i].id === gcId) { GC.splice(i, 1); break; } }
+}
+
+// Purger TOUS les bons cadeaux du salon
+async function purgeAllGiftCards() {
+  if (!_isOnline || !_salonId) return;
+  await _sb.from("cartes_cadeaux").delete().eq("salon_id", _salonId);
+  GC.length = 0;
 }
 
 
