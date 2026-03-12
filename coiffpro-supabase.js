@@ -492,15 +492,14 @@ async function saveCollaborateurs() {
       salon_id: _salonId, nom: c.n, initiales: c.i,
       couleur: c.c, img: c.img || "", horaires: c.hrs || {}
     };
-    if (c.id && typeof c.id === "number") {
-      var check = await _sb.from("collaborateurs").select("id").eq("id", c.id).eq("salon_id", _salonId);
-      if (check.data && check.data.length > 0) {
-        await _sb.from("collaborateurs").update(data).eq("id", c.id);
-      } else {
-        var res = await _sb.from("collaborateurs").insert(data).select();
-        if (res.data && res.data[0]) c.id = res.data[0].id;
-      }
+    // Check if this is a Supabase UUID (string with dashes) or a local number id
+    var isUUID = (typeof c.id === "string" && c.id.indexOf("-") > 0 && c.id.length > 30);
+    var isLocalNum = (typeof c.id === "number");
+    if (isUUID) {
+      // Already in Supabase → UPDATE
+      await _sb.from("collaborateurs").update(data).eq("id", c.id);
     } else {
+      // New collab → INSERT
       var res = await _sb.from("collaborateurs").insert(data).select();
       if (res.data && res.data[0]) c.id = res.data[0].id;
     }
