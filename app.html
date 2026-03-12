@@ -3089,12 +3089,13 @@ function doAddProdCat(){
 // === GIFTS ===
 function rGifts(){
   var h='';
-  // Stats bar
-  var totalActif=0,totalUsed=0,nbActif=0,nbUsed=0,nbExpired=0;
+  // Stats
+  var totalActif=0,totalUsed=0,nbActif=0,nbUsed=0,nbExpired=0,nbVoided=0;
   GC.forEach(function(g){
     var rem=g.rem!==undefined?g.rem:g.val;
     var isExp=g.exp&&g.exp<TD;
-    if(g.st==="used"||rem<=0){nbUsed++;totalUsed+=g.val;}
+    if(g.st==="voided"){nbVoided++;}
+    else if(g.st==="used"||rem<=0){nbUsed++;totalUsed+=g.val;}
     else if(isExp){nbExpired++;}
     else{nbActif++;totalActif+=rem;}
   });
@@ -3103,125 +3104,271 @@ function rGifts(){
   h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--orange)">'+nbUsed+'</div><div style="font-size:11px;color:var(--text3)">Utilis\u00e9s</div><div style="font-size:13px;font-weight:700;color:var(--orange)">'+totalUsed.toFixed(0)+' \u20ac</div></div>';
   h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--red)">'+nbExpired+'</div><div style="font-size:11px;color:var(--text3)">Expir\u00e9s</div></div>';
   h+='</div>';
-  // Action buttons
   h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
   h+='<button class="btn bg bk" style="flex:1;font-size:14px;padding:14px;border-radius:12px" onclick="oM(\u0027gift\u0027)">\ud83c\udf81 Vendre un bon cadeau</button>';
   h+='<button class="btn" style="padding:14px 18px;border-radius:12px;font-size:14px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d</button>';
   h+='</div>';
-  // Tabs
   if(!window._gcTab)window._gcTab="actifs";
   h+='<div class="tabs" style="margin-bottom:14px">';
   h+='<div class="tab'+(window._gcTab==="actifs"?" on":"")+'" onclick="window._gcTab=\u0027actifs\u0027;go(\u0027gifts\u0027)">Actifs ('+nbActif+')</div>';
   h+='<div class="tab'+(window._gcTab==="uses"?" on":"")+'" onclick="window._gcTab=\u0027uses\u0027;go(\u0027gifts\u0027)">Utilis\u00e9s ('+nbUsed+')</div>';
   h+='<div class="tab'+(window._gcTab==="expired"?" on":"")+'" onclick="window._gcTab=\u0027expired\u0027;go(\u0027gifts\u0027)">Expir\u00e9s ('+nbExpired+')</div>';
   h+='<div class="tab'+(window._gcTab==="tous"?" on":"")+'" onclick="window._gcTab=\u0027tous\u0027;go(\u0027gifts\u0027)">Tous</div></div>';
-  // Filter
   var filtered=GC.filter(function(g){
     var rem=g.rem!==undefined?g.rem:g.val;
     var isExp=g.exp&&g.exp<TD;
+    if(g.st==="voided")return window._gcTab==="tous";
     if(window._gcTab==="actifs")return g.st!=="used"&&rem>0&&!isExp;
     if(window._gcTab==="uses")return g.st==="used"||rem<=0;
     if(window._gcTab==="expired")return isExp&&g.st!=="used"&&rem>0;
     return true;
   });
-  // Sort by date desc
   filtered.sort(function(a,b){return(b.cr||"").localeCompare(a.cr||"");});
-  if(!filtered.length){
-    h+='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.5)"><div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>Aucun bon cadeau dans cette cat\u00e9gorie</div>';
-    return h;
-  }
+  if(!filtered.length){h+='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.5)"><div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>Aucun bon cadeau</div>';return h;}
   for(var i=0;i<filtered.length;i++){
     var g=filtered[i];
     var rem=g.rem!==undefined?g.rem:g.val;
     var isUsed=g.st==="used"||rem<=0;
-    var isExpired=g.exp&&g.exp<TD;
-    var isPartial=!isUsed&&rem<g.val;
+    var isVoided=g.st==="voided";
+    var isExpired=g.exp&&g.exp<TD&&!isUsed&&!isVoided;
+    var isPartial=!isUsed&&!isVoided&&rem<g.val&&rem>0;
     var pct=g.val>0?((g.val-rem)/g.val*100):0;
-    // Card
+    var hdrBg=isVoided?"#555":isUsed?"#888":isExpired?"#c43838":"linear-gradient(135deg,#c8a84e,#d4b95e)";
+    // Scope label
+    var scopeLabel=!g.scope||g.scope==="tout"?"Prestations & Produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
     h+='<div style="margin-bottom:12px;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.2)">';
-    // Header bar
-    var headerBg=isUsed?"#888":isExpired?"#c43838":"linear-gradient(135deg,#c8a84e,#d4b95e)";
-    h+='<div style="background:'+headerBg+';color:#fff;padding:10px 18px;display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="background:'+hdrBg+';color:#fff;padding:10px 18px;display:flex;justify-content:space-between;align-items:center">';
     h+='<div><span style="font-weight:800;font-size:11px;letter-spacing:2px">BON CADEAU</span>';
     if(g.gcNum)h+='<span style="margin-left:8px;font-size:11px;opacity:.8">N\u00b0'+g.gcNum+'</span>';
-    h+='</div>';
-    h+='<span style="font-size:11px;font-weight:600">'+SALON_CONFIG.nom+'</span></div>';
-    // Body
-    h+='<div style="background:linear-gradient(135deg,'+(isUsed?"#e8e8e8,#ddd":"#fffef8,#fdf5e0")+');padding:18px;text-align:center">';
-    h+='<div style="font-size:38px;font-weight:900;font-family:var(--f1);color:'+(isUsed?"#bbb":"#c8a84e")+'">'+(g.val||0).toFixed(0)+' \u20ac</div>';
-    // Progress bar for partial use
+    h+='</div><span style="font-size:11px;font-weight:600">'+scopeLabel+'</span></div>';
+    h+='<div style="background:linear-gradient(135deg,'+(isUsed||isVoided?"#e8e8e8,#ddd":"#fffef8,#fdf5e0")+');padding:18px;text-align:center">';
+    h+='<div style="font-size:36px;font-weight:900;font-family:var(--f1);color:'+(isUsed||isVoided?"#bbb":"#c8a84e")+'">'+(g.val||0).toFixed(0)+' \u20ac</div>';
+    if(g.ht)h+='<div style="font-size:11px;color:#aaa;margin-top:2px">HT: '+g.ht.toFixed(2)+' \u20ac \u2022 TVA: '+(g.tva||0).toFixed(2)+' \u20ac</div>';
     if(isPartial||isUsed){
-      h+='<div style="margin:10px auto;max-width:200px;height:6px;border-radius:3px;background:#e0e0e0;overflow:hidden"><div style="height:100%;border-radius:3px;background:'+(isUsed?"#888":"#c8a84e")+';width:'+pct+'%"></div></div>';
-      h+='<div style="font-size:14px;font-weight:800;color:'+(isUsed?"#999":"#d48a1a")+'">Utilis\u00e9 : '+(g.val-rem).toFixed(2)+' \u20ac'+(isPartial?' \u2022 Reste : '+rem.toFixed(2)+' \u20ac':'')+'</div>';
+      h+='<div style="margin:8px auto;max-width:180px;height:5px;border-radius:3px;background:#e0e0e0;overflow:hidden"><div style="height:100%;border-radius:3px;background:'+(isUsed?"#888":"#c8a84e")+';width:'+pct+'%"></div></div>';
+      h+='<div style="font-size:13px;font-weight:800;color:'+(isUsed?"#999":"#d48a1a")+'">Utilis\u00e9: '+(g.val-rem).toFixed(2)+' \u20ac'+(isPartial?' \u2022 Reste: '+rem.toFixed(2)+' \u20ac':'')+'</div>';
     }
-    h+='<div style="margin-top:10px;font-size:14px;color:#444">De <strong>'+(g.from||"")+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg&&g.msg!=="Bon cadeau")h+='<div style="font-size:13px;color:#888;margin-top:4px;font-style:italic">\u201c'+g.msg+'\u201d</div>';
-    if(g.scope&&g.scope!=="tout")h+='<div style="font-size:11px;margin-top:6px;padding:3px 10px;display:inline-block;border-radius:12px;background:#e3f2fd;color:#1565c0;font-weight:700">'+(g.scope==="prestations"?"Prestations":"Produits")+' uniquement</div>';
-    h+='<div style="margin-top:10px;font-size:17px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.05);display:inline-block;padding:8px 18px;border-radius:10px;border:1px dashed #c8a84e">'+g.code+'</div>';
-    h+='<div style="font-size:11px;color:#aaa;margin-top:8px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+'</div>';
-    // Status badge
-    h+='<div style="margin-top:8px">';
-    if(isUsed)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fde8e8;color:#c43838;font-weight:700">Utilis\u00e9</span>';
-    else if(isExpired)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fde8e8;color:#c43838;font-weight:700">Expir\u00e9</span>';
-    else if(isPartial)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fdf2e4;color:#d48a1a;font-weight:700">Partiellement utilis\u00e9</span>';
-    else h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#e6f7ee;color:#2d9a5e;font-weight:700">Actif</span>';
+    h+='<div style="margin-top:8px;font-size:14px;color:#444">De <strong>'+(g.from||"?")+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
+    if(g.msg&&g.msg.length>0)h+='<div style="font-size:13px;color:#888;margin-top:3px;font-style:italic">\u201c'+g.msg+'\u201d</div>';
+    h+='<div style="margin-top:8px;font-size:16px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.05);display:inline-block;padding:6px 16px;border-radius:10px;border:1px dashed #c8a84e">'+g.code+'</div>';
+    h+='<div style="font-size:11px;color:#aaa;margin-top:6px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+(g.payMethod?' \u2022 Pay\u00e9 par '+g.payMethod:'')+'</div>';
+    // Status
+    h+='<div style="margin-top:6px">';
+    if(isVoided)h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#e0e0e0;color:#666;font-weight:700">Annul\u00e9</span>';
+    else if(isUsed)h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#fde8e8;color:#c43838;font-weight:700">Utilis\u00e9</span>';
+    else if(isExpired)h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#fde8e8;color:#c43838;font-weight:700">Expir\u00e9</span>';
+    else if(isPartial)h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#fdf2e4;color:#d48a1a;font-weight:700">Partiel</span>';
+    else h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#e6f7ee;color:#2d9a5e;font-weight:700">Actif</span>';
     h+='</div>';
-    // Usage history
+    // History
     if(g.history&&g.history.length){
-      h+='<div style="margin-top:10px;text-align:left;background:rgba(0,0,0,.03);border-radius:8px;padding:8px 12px">';
-      h+='<div style="font-size:11px;font-weight:700;color:#999;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Historique</div>';
-      for(var hi=0;hi<g.history.length;hi++){
-        var hu=g.history[hi];
-        h+='<div style="font-size:12px;color:#555;padding:2px 0">'+fmt(hu.date)+' \u2022 -'+hu.amount.toFixed(2)+' \u20ac'+(hu.tkNum?' \u2022 Ticket #'+hu.tkNum:'')+'</div>';
-      }
+      h+='<div style="margin-top:8px;text-align:left;background:rgba(0,0,0,.03);border-radius:8px;padding:6px 10px">';
+      h+='<div style="font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px">Utilisations</div>';
+      for(var hi=0;hi<g.history.length;hi++){var hu=g.history[hi];h+='<div style="font-size:11px;color:#555;padding:1px 0">'+fmt(hu.date)+' -'+hu.amount.toFixed(2)+'\u20ac'+(hu.tkNum?' Tk#'+hu.tkNum:'')+'</div>';}
       h+='</div>';
     }
-    // Actions
-    if(!isUsed){
-      h+='<div style="margin-top:12px;display:flex;gap:8px;justify-content:center">';
-      h+='<button style="padding:10px 18px;border:1px solid #c8a84e;border-radius:8px;background:transparent;color:#c8a84e;font-weight:700;font-size:13px;cursor:pointer" onclick="chooseGiftTheme(\u0027'+g.id+'\u0027)">\ud83c\udfa8 Imprimer</button>';
-      if(!isExpired)h+='<button style="padding:10px 18px;border:1px solid #c43838;border-radius:8px;background:transparent;color:#c43838;font-weight:700;font-size:13px;cursor:pointer" onclick="confirmVoidGift(\u0027'+g.id+'\u0027)">\u274c Annuler</button>';
+    // Actions row
+    if(!isUsed&&!isVoided){
+      h+='<div style="margin-top:10px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap">';
+      h+='<button style="padding:8px 14px;border:1px solid #c8a84e;border-radius:8px;background:transparent;color:#c8a84e;font-weight:700;font-size:12px;cursor:pointer" onclick="chooseGiftTheme(\u0027'+g.id+'\u0027)">\ud83d\udda8 Imprimer</button>';
+      h+='<button style="padding:8px 14px;border:1px solid #4a85b5;border-radius:8px;background:transparent;color:#4a85b5;font-weight:700;font-size:12px;cursor:pointer" onclick="editGift(\u0027'+g.id+'\u0027)">\u270f\ufe0f Modifier</button>';
+      if(!isExpired)h+='<button style="padding:8px 14px;border:1px solid #c43838;border-radius:8px;background:transparent;color:#c43838;font-weight:700;font-size:12px;cursor:pointer" onclick="confirmVoidGift(\u0027'+g.id+'\u0027)">\u274c Annuler</button>';
       h+='</div>';
     }
     h+='</div></div>';
   }
   return h;
 }
+
+function editGift(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()">';
+  h+='<h2>\u270f\ufe0f Modifier le bon '+g.code+'</h2>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<div class="fg" style="flex:1"><label>Acheteur</label><input id="egFrom" value="'+(g.from||"")+'"></div>';
+  h+='<div class="fg" style="flex:1"><label>B\u00e9n\u00e9ficiaire</label><input id="egTo" value="'+(g.to||"")+'"></div></div>';
+  h+='<div class="fg"><label>Message</label><input id="egMsg" value="'+(g.msg||"")+'"></div>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="egScope"><option value="tout"'+(g.scope==="tout"||!g.scope?" selected":"")+'>Tout</option><option value="prestations"'+(g.scope==="prestations"?" selected":"")+'>Prestations</option><option value="produits"'+(g.scope==="produits"?" selected":"")+'>Produits</option></select></div>';
+  h+='<div class="fg" style="flex:1"><label>Expiration</label><input type="date" id="egExp" value="'+(g.exp||"")+'"></div></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1" onclick="cM()">Annuler</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="saveEditGift(\u0027'+gcId+'\u0027)">Enregistrer</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function saveEditGift(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  g.from=(document.getElementById("egFrom")||{}).value||g.from;
+  g.to=(document.getElementById("egTo")||{}).value||"";
+  g.msg=(document.getElementById("egMsg")||{}).value||"";
+  g.scope=(document.getElementById("egScope")||{}).value||"tout";
+  g.exp=(document.getElementById("egExp")||{}).value||g.exp;
+  if(typeof saveGiftCard==="function")saveGiftCard(g);
+  auditLog("MODIFICATION_BON_CADEAU","Bon "+g.code+" modifi\u00e9");
+  cM();go("gifts");
+}
+
 function chooseGiftTheme(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
-  h+='<h2 style="text-align:center">\ud83c\udfa8 Imprimer le bon cadeau</h2>';
-  h+='<div style="font-size:13px;color:#888;text-align:center;margin-bottom:16px">'+g.code+' \u2022 '+g.val.toFixed(0)+' \u20ac</div>';
-  // Theme grid
-  var themes=[
-    {id:"luxeNoir",name:"Luxe Noir & Or",ico:"\u2728",preview:"bg:linear-gradient(135deg,#0a0a0a,#1a1a2e);color:#c8a84e"},
-    {id:"noel",name:"No\u00ebl",ico:"\ud83c\udf84",preview:"bg:linear-gradient(135deg,#1b4332,#2d6a4f);color:#ffd700"},
-    {id:"stValentin",name:"Saint-Valentin",ico:"\u2764\ufe0f",preview:"bg:linear-gradient(135deg,#7b1033,#c44c7a);color:#ffd6e7"},
-    {id:"feteMeres",name:"F\u00eate des M\u00e8res",ico:"\ud83c\udf38",preview:"bg:linear-gradient(135deg,#fce4ec,#f8bbd0);color:#c44c7a"},
-    {id:"printemps",name:"Printemps",ico:"\ud83c\udf3c",preview:"bg:linear-gradient(135deg,#e8f5e9,#c8e6c9);color:#2e7d32"},
-    {id:"anniversaire",name:"Anniversaire",ico:"\ud83c\udf82",preview:"bg:linear-gradient(135deg,#311b92,#7c4dff);color:#ffd54f"},
-    {id:"elegance",name:"\u00c9l\u00e9gance Rose",ico:"\ud83c\udf39",preview:"bg:linear-gradient(135deg,#fdf2f8,#fce7f3);color:#be185d"},
-    {id:"classique",name:"Classique",ico:"\ud83d\udcdc",preview:"bg:#ffffff;color:#333;border:2px solid #c8a84e"}
-  ];
-  h+='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">';
+  h+='<h2 style="text-align:center">\ud83d\udda8 Imprimer '+g.code+'</h2>';
+  h+='<div style="font-size:13px;color:#888;text-align:center;margin-bottom:16px">'+g.val.toFixed(0)+' \u20ac \u2022 '+(g.from||"?")+''+(g.to?' \u2192 '+g.to:'')+'</div>';
+  var themes=getGiftThemes();
+  h+='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px">';
   for(var i=0;i<themes.length;i++){
     var t=themes[i];
-    var pstyle=t.preview.replace("bg:","background:");
-    h+='<div style="cursor:pointer;border-radius:16px;overflow:hidden;border:2px solid rgba(0,0,0,.08);transition:transform .15s;box-shadow:0 2px 10px rgba(0,0,0,.08)" onclick="printGiftThemed(\u0027'+gcId+'\u0027,\u0027'+t.id+'\u0027)">';
-    h+='<div style="'+pstyle+';padding:20px 12px;text-align:center">';
-    h+='<div style="font-size:28px;margin-bottom:4px">'+t.ico+'</div>';
-    h+='<div style="font-size:11px;font-weight:800;letter-spacing:2px;opacity:.7">BON CADEAU</div>';
-    h+='<div style="font-size:26px;font-weight:900;margin:4px 0">'+g.val.toFixed(0)+' \u20ac</div>';
+    h+='<div style="cursor:pointer;border-radius:14px;overflow:hidden;border:2px solid rgba(0,0,0,.08);box-shadow:0 2px 12px rgba(0,0,0,.08);transition:transform .15s" onclick="printGiftThemed(\u0027'+gcId+'\u0027,\u0027'+t.id+'\u0027)">';
+    h+='<div style="background:'+t.prevBg+';padding:18px 10px;text-align:center;min-height:90px;display:flex;flex-direction:column;align-items:center;justify-content:center">';
+    h+='<div style="font-size:10px;font-weight:800;letter-spacing:2px;color:'+t.prevTxt+';opacity:.7;margin-bottom:2px">BON CADEAU</div>';
+    h+='<div style="font-family:Playfair Display,serif;font-size:28px;font-weight:900;color:'+t.prevTxt+'">'+g.val.toFixed(0)+' \u20ac</div>';
+    if(t.prevDeco)h+='<div style="font-size:12px;margin-top:4px;opacity:.5;color:'+t.prevTxt+'">'+t.prevDeco+'</div>';
     h+='</div>';
-    h+='<div style="padding:8px;background:#fff;text-align:center">';
-    h+='<div style="font-size:13px;font-weight:700;color:#333">'+t.name+'</div>';
-    h+='</div></div>';
+    h+='<div style="padding:6px;background:#fff;text-align:center"><div style="font-size:12px;font-weight:700;color:#333">'+t.name+'</div></div></div>';
   }
   h+='</div>';
   h+='<button class="btn" style="width:100%" onclick="cM()">Annuler</button>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
+}
+
+function getGiftThemes(){
+  return [
+    {id:"luxeNoir",name:"Luxe Noir & Or",prevBg:"linear-gradient(135deg,#0a0a0a,#1a1a2e)",prevTxt:"#c8a84e",prevDeco:"\u2726 \u2726 \u2726"},
+    {id:"noel",name:"No\u00ebl",prevBg:"linear-gradient(135deg,#14412a,#2d6a4f)",prevTxt:"#ffd700",prevDeco:"\u2744 \u2744 \u2744"},
+    {id:"stValentin",name:"Saint-Valentin",prevBg:"linear-gradient(135deg,#7b1033,#c44c7a)",prevTxt:"#ffd6e7",prevDeco:"\u2665 \u2665 \u2665"},
+    {id:"feteMeres",name:"F\u00eate des M\u00e8res",prevBg:"linear-gradient(135deg,#fce4ec,#f8bbd0)",prevTxt:"#c44c7a",prevDeco:"\ud83c\udf38 \ud83c\udf39 \ud83c\udf3a"},
+    {id:"printemps",name:"Printemps Frais",prevBg:"linear-gradient(135deg,#e8f5e9,#c8e6c9)",prevTxt:"#2e7d32",prevDeco:"\ud83c\udf3c \ud83c\udf3b \ud83c\udf3c"},
+    {id:"anniversaire",name:"Anniversaire",prevBg:"linear-gradient(135deg,#311b92,#7c4dff)",prevTxt:"#ffd54f",prevDeco:"\ud83c\udf89 \ud83c\udf82 \ud83c\udf89"},
+    {id:"roseGold",name:"\u00c9l\u00e9gance Ros\u00e9",prevBg:"linear-gradient(135deg,#fdf2f8,#fce7f3)",prevTxt:"#be185d",prevDeco:"\u2022 \u2726 \u2022"},
+    {id:"classique",name:"Classique",prevBg:"linear-gradient(135deg,#fff,#f8f6f0)",prevTxt:"#333",prevDeco:""}
+  ];
+}
+
+function getGiftPrintCSS(themeId){
+  var base='@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Dancing+Script:wght@400;600;700&family=Great+Vibes&family=Nunito:wght@400;600;700;800&display=swap");*{margin:0;padding:0;box-sizing:border-box}body{font-family:Nunito,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e0e0e0;padding:20px}@media print{body{background:#fff;padding:0}.gc{box-shadow:none!important}.no-print{display:none!important}}';
+  var t={};
+  if(themeId==="luxeNoir"){
+    t.card="width:560px;border:3px solid #c8a84e;border-radius:0;overflow:hidden;box-shadow:0 15px 50px rgba(0,0,0,.4)";
+    t.header="background:linear-gradient(135deg,#c8a84e,#e6d590,#c8a84e);padding:16px 30px;display:flex;justify-content:space-between;align-items:center";
+    t.headerTxt="color:#0a0a0a";
+    t.body="background:linear-gradient(180deg,#0a0a0a,#12121f,#0a0a0a);padding:50px 40px;text-align:center";
+    t.deco1="\u2022 \u2726 \u2022 \u2726 \u2022 \u2726 \u2022 \u2726 \u2022";t.decoStyle="color:#c8a84e;font-size:14px;letter-spacing:10px;opacity:.35;margin-bottom:20px";
+    t.label="font-family:Playfair Display,serif;font-size:12px;letter-spacing:6px;color:#c8a84e;text-transform:uppercase";
+    t.amount="font-family:Playfair Display,serif;font-size:80px;font-weight:900;color:#c8a84e;line-height:1;margin:12px 0;text-shadow:0 4px 30px rgba(200,168,78,.25)";
+    t.euro="font-size:36px";
+    t.names="font-size:16px;color:#d5c9a8;margin:20px 0;font-weight:300;letter-spacing:1px";
+    t.msg="font-family:Cormorant Garamond,serif;font-size:20px;color:rgba(200,168,78,.5);font-style:italic;margin:14px 0";
+    t.code="font-family:monospace;font-size:22px;font-weight:800;letter-spacing:6px;color:#c8a84e;border:2px solid rgba(200,168,78,.25);display:inline-block;padding:12px 30px;margin:20px 0";
+    t.scope="font-size:11px;color:rgba(200,168,78,.4);margin-top:6px";
+    t.footer="background:rgba(200,168,78,.06);padding:14px 30px;text-align:center;font-size:10px;color:rgba(200,168,78,.35);line-height:2;border-top:1px solid rgba(200,168,78,.12)";
+  }else if(themeId==="noel"){
+    t.card="width:560px;border:3px solid #d4a038;border-radius:0;overflow:hidden;box-shadow:0 15px 50px rgba(0,0,0,.3)";
+    t.header="background:linear-gradient(135deg,#d4a038,#e6c560,#d4a038);padding:14px 28px;display:flex;justify-content:space-between;align-items:center";
+    t.headerTxt="color:#14412a";
+    t.body="background:linear-gradient(180deg,#14412a,#1b5e3a,#14412a);padding:45px 40px;text-align:center;position:relative;overflow:hidden";
+    t.deco1="\u2744\ufe0f \u2744\ufe0f \u2744\ufe0f \u2744\ufe0f \u2744\ufe0f \u2744\ufe0f \u2744\ufe0f";t.decoStyle="font-size:16px;letter-spacing:8px;opacity:.2;margin-bottom:16px";
+    t.label="font-family:Dancing Script,cursive;font-size:26px;color:#ffd700;margin-bottom:4px";
+    t.labelText="Joyeuses F\u00eates";
+    t.amount="font-family:Playfair Display,serif;font-size:72px;font-weight:900;color:#ffd700;line-height:1;margin:10px 0;text-shadow:0 3px 20px rgba(255,215,0,.2)";
+    t.euro="font-size:32px";
+    t.names="font-size:15px;color:#a8d5ba;margin:16px 0;letter-spacing:.5px";
+    t.msg="font-family:Dancing Script,cursive;font-size:22px;color:rgba(255,215,0,.6);margin:12px 0";
+    t.code="font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:#ffd700;border:2px solid rgba(255,215,0,.25);display:inline-block;padding:10px 26px;margin:16px 0;border-radius:8px";
+    t.scope="font-size:11px;color:rgba(255,255,255,.3);margin-top:6px";
+    t.footer="background:rgba(0,0,0,.15);padding:12px 28px;text-align:center;font-size:10px;color:rgba(255,255,255,.3);line-height:2;border-top:1px solid rgba(212,160,56,.15)";
+  }else if(themeId==="stValentin"){
+    t.card="width:560px;border:3px solid #ffd6e7;border-radius:0;overflow:hidden;box-shadow:0 15px 50px rgba(0,0,0,.3)";
+    t.header="background:linear-gradient(135deg,#ff6b9d,#e91e63,#ff6b9d);padding:14px 28px;display:flex;justify-content:space-between;align-items:center";
+    t.headerTxt="color:#fff";
+    t.body="background:linear-gradient(180deg,#6b0f2a,#8e2040,#6b0f2a);padding:45px 40px;text-align:center";
+    t.deco1="\u2665 \u2665 \u2665 \u2665 \u2665 \u2665 \u2665";t.decoStyle="color:#ff6b9d;font-size:14px;letter-spacing:10px;opacity:.3;margin-bottom:16px";
+    t.label="font-family:Great Vibes,cursive;font-size:32px;color:#ffd6e7;margin-bottom:6px";
+    t.labelText="Avec tout mon amour";
+    t.amount="font-family:Playfair Display,serif;font-size:72px;font-weight:900;color:#ffd6e7;line-height:1;margin:10px 0;text-shadow:0 3px 20px rgba(255,214,231,.15)";
+    t.euro="font-size:32px";
+    t.names="font-size:15px;color:#f8bbd0;margin:16px 0";
+    t.msg="font-family:Cormorant Garamond,serif;font-size:20px;color:rgba(255,214,231,.5);font-style:italic;margin:14px 0";
+    t.code="font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:#ffd6e7;border:2px solid rgba(255,214,231,.25);display:inline-block;padding:10px 26px;margin:16px 0;border-radius:20px";
+    t.scope="font-size:11px;color:rgba(255,255,255,.3);margin-top:6px";
+    t.footer="background:rgba(0,0,0,.15);padding:12px;text-align:center;font-size:10px;color:rgba(255,255,255,.25);line-height:2";
+  }else if(themeId==="feteMeres"){
+    t.card="width:560px;border:3px solid #e91e63;border-radius:20px;overflow:hidden;box-shadow:0 15px 50px rgba(233,30,99,.15)";
+    t.header="background:linear-gradient(135deg,#e91e63,#c44c7a,#e91e63);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-radius:17px 17px 0 0";
+    t.headerTxt="color:#fff";
+    t.body="background:linear-gradient(180deg,#fce4ec,#fff0f5,#fce4ec);padding:45px 40px;text-align:center";
+    t.deco1="\ud83c\udf3a \ud83c\udf37 \ud83c\udf39 \ud83c\udf37 \ud83c\udf3a";t.decoStyle="font-size:20px;letter-spacing:8px;margin-bottom:12px";
+    t.label="font-family:Dancing Script,cursive;font-size:30px;color:#c44c7a;margin-bottom:6px";
+    t.labelText="Bonne F\u00eate Maman";
+    t.amount="font-family:Playfair Display,serif;font-size:68px;font-weight:900;color:#c44c7a;line-height:1;margin:10px 0";
+    t.euro="font-size:30px";
+    t.names="font-size:15px;color:#666;margin:14px 0";
+    t.msg="font-family:Cormorant Garamond,serif;font-size:18px;color:#c44c7a;font-style:italic;margin:12px 0";
+    t.code="font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#c44c7a;border:2px dashed #c44c7a;display:inline-block;padding:8px 24px;margin:14px 0;border-radius:12px;background:rgba(196,76,122,.04)";
+    t.scope="font-size:11px;color:#c44c7a;opacity:.5;margin-top:6px";
+    t.footer="background:rgba(196,76,122,.04);padding:12px;text-align:center;font-size:10px;color:#999;line-height:2;border-top:1px solid rgba(196,76,122,.1);border-radius:0 0 17px 17px";
+  }else if(themeId==="printemps"){
+    t.card="width:560px;border:3px solid #7cb342;border-radius:20px;overflow:hidden;box-shadow:0 15px 50px rgba(124,179,66,.15)";
+    t.header="background:linear-gradient(135deg,#558b2f,#7cb342,#558b2f);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-radius:17px 17px 0 0";
+    t.headerTxt="color:#fff";
+    t.body="background:linear-gradient(180deg,#e8f5e9,#f1f8e9,#e8f5e9);padding:45px 40px;text-align:center";
+    t.deco1="\ud83c\udf3c \ud83c\udf3b \ud83c\udf37 \ud83c\udf3b \ud83c\udf3c";t.decoStyle="font-size:20px;letter-spacing:6px;margin-bottom:12px";
+    t.label="font-size:12px;letter-spacing:5px;color:#558b2f;text-transform:uppercase";
+    t.amount="font-family:Playfair Display,serif;font-size:68px;font-weight:900;color:#2e7d32;line-height:1;margin:12px 0";
+    t.euro="font-size:30px";
+    t.names="font-size:15px;color:#555;margin:14px 0";
+    t.msg="font-family:Cormorant Garamond,serif;font-size:18px;color:#558b2f;font-style:italic;margin:12px 0";
+    t.code="font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#2e7d32;border:2px dashed #7cb342;display:inline-block;padding:8px 24px;margin:14px 0;border-radius:12px;background:rgba(85,139,47,.04)";
+    t.scope="font-size:11px;color:#558b2f;opacity:.5;margin-top:6px";
+    t.footer="background:rgba(85,139,47,.04);padding:12px;text-align:center;font-size:10px;color:#888;line-height:2;border-top:1px solid rgba(85,139,47,.1);border-radius:0 0 17px 17px";
+  }else if(themeId==="anniversaire"){
+    t.card="width:560px;border:3px solid #ffd54f;border-radius:0;overflow:hidden;box-shadow:0 15px 50px rgba(0,0,0,.3)";
+    t.header="background:linear-gradient(135deg,#ffd54f,#ffca28,#ffd54f);padding:14px 28px;display:flex;justify-content:space-between;align-items:center";
+    t.headerTxt="color:#311b92";
+    t.body="background:linear-gradient(180deg,#311b92,#4527a0,#311b92);padding:45px 40px;text-align:center";
+    t.deco1="\ud83c\udf89 \ud83c\udf82 \ud83c\udf81 \ud83c\udf82 \ud83c\udf89";t.decoStyle="font-size:22px;letter-spacing:8px;margin-bottom:12px";
+    t.label="font-family:Dancing Script,cursive;font-size:28px;color:#ce93d8;margin-bottom:4px";
+    t.labelText="Joyeux Anniversaire";
+    t.amount="font-family:Playfair Display,serif;font-size:72px;font-weight:900;color:#ffd54f;line-height:1;margin:10px 0;text-shadow:0 3px 15px rgba(255,213,79,.2)";
+    t.euro="font-size:32px";
+    t.names="font-size:15px;color:#e1bee7;margin:16px 0";
+    t.msg="font-size:16px;color:rgba(255,213,79,.5);font-style:italic;margin:12px 0";
+    t.code="font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:#ffd54f;border:2px solid rgba(255,213,79,.3);display:inline-block;padding:10px 26px;margin:16px 0;border-radius:8px";
+    t.scope="font-size:11px;color:rgba(255,255,255,.3);margin-top:6px";
+    t.footer="background:rgba(0,0,0,.15);padding:12px;text-align:center;font-size:10px;color:rgba(255,255,255,.25);line-height:2";
+  }else if(themeId==="roseGold"){
+    t.card="width:560px;border:2px solid #be185d;border-radius:20px;overflow:hidden;box-shadow:0 15px 50px rgba(190,24,93,.1)";
+    t.header="background:linear-gradient(135deg,#be185d,#e91e63,#be185d);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-radius:18px 18px 0 0";
+    t.headerTxt="color:#fff";
+    t.body="background:linear-gradient(180deg,#fdf2f8,#fce7f3,#fdf2f8);padding:45px 40px;text-align:center";
+    t.deco1="\u2022 \u2726 \u2022 \u2726 \u2022";t.decoStyle="color:rgba(190,24,93,.2);font-size:14px;letter-spacing:12px;margin-bottom:14px";
+    t.label="font-family:Cormorant Garamond,serif;font-size:15px;letter-spacing:5px;color:#be185d;text-transform:uppercase";
+    t.amount="font-family:Playfair Display,serif;font-size:68px;font-weight:900;color:#be185d;line-height:1;margin:12px 0";
+    t.euro="font-size:30px";
+    t.names="font-size:15px;color:#555;margin:14px 0";
+    t.msg="font-family:Cormorant Garamond,serif;font-size:20px;color:#be185d;font-style:italic;margin:12px 0";
+    t.code="font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#be185d;border:2px solid rgba(190,24,93,.2);display:inline-block;padding:8px 24px;margin:14px 0;border-radius:12px;background:rgba(190,24,93,.03)";
+    t.scope="font-size:11px;color:rgba(190,24,93,.4);margin-top:6px";
+    t.footer="background:rgba(190,24,93,.03);padding:12px;text-align:center;font-size:10px;color:#999;line-height:2;border-top:1px solid rgba(190,24,93,.08);border-radius:0 0 18px 18px";
+  }else{
+    t.card="width:560px;border:2px solid #c8a84e;border-radius:4px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.1)";
+    t.header="background:linear-gradient(135deg,#c8a84e,#d4b95e,#c8a84e);padding:14px 28px;display:flex;justify-content:space-between;align-items:center";
+    t.headerTxt="color:#fff";
+    t.body="background:#fff;padding:45px 40px;text-align:center";
+    t.deco1="";t.decoStyle="";
+    t.label="font-size:12px;letter-spacing:5px;color:#c8a84e;text-transform:uppercase";
+    t.amount="font-family:Playfair Display,serif;font-size:64px;font-weight:900;color:#333;line-height:1;margin:14px 0";
+    t.euro="font-size:28px";
+    t.names="font-size:15px;color:#555;margin:14px 0";
+    t.msg="font-size:16px;color:#888;font-style:italic;margin:12px 0";
+    t.code="font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#333;border:2px solid #c8a84e;display:inline-block;padding:8px 24px;margin:16px 0";
+    t.scope="font-size:11px;color:#aaa;margin-top:6px";
+    t.footer="background:#fafafa;padding:12px;text-align:center;font-size:10px;color:#aaa;line-height:2;border-top:1px solid #eee";
+  }
+  return {base:base,t:t};
 }
 
 function printGiftThemed(gcId,themeId){
@@ -3230,185 +3377,33 @@ function printGiftThemed(gcId,themeId){
   var salon=SALON_CONFIG;
   var rem=g.rem!==undefined?g.rem:g.val;
   var w=window.open("","_blank","width=800,height=600");if(!w)return;
-
-  // Build the full themed HTML for each theme
-  var css='@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Dancing+Script:wght@400;600;700&family=Nunito:wght@400;600;700;800&display=swap");';
-  css+='*{margin:0;padding:0;box-sizing:border-box}';
-  css+='body{font-family:"Nunito",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e8e8e8;padding:20px}';
-  css+='.gc{width:580px;border-radius:0;overflow:hidden;position:relative}';
-  css+='@media print{body{background:#fff;padding:0;min-height:auto}.gc{box-shadow:none;width:100%;max-width:580px}.no-print{display:none!important}}';
-
-  var body='';
-  if(themeId==="luxeNoir"){
-    css+='.gc{background:#0a0a0a;border:3px solid #c8a84e}';
-    css+='.gc-inner{padding:0}';
-    css+='.gc-top{background:linear-gradient(135deg,#c8a84e 0%,#e6d590 50%,#c8a84e 100%);padding:16px 30px;display:flex;justify-content:space-between;align-items:center}';
-    css+='.gc-body{padding:50px 40px;text-align:center;background:linear-gradient(180deg,#0a0a0a 0%,#151520 50%,#0a0a0a 100%);position:relative}';
-    css+='.gc-ornament{color:#c8a84e;font-size:16px;letter-spacing:12px;opacity:.4;margin-bottom:20px}';
-    css+='.gc-label{font-family:"Playfair Display",serif;font-size:13px;letter-spacing:6px;color:#c8a84e;text-transform:uppercase;margin-bottom:8px}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:72px;font-weight:900;color:#c8a84e;line-height:1;margin:10px 0;text-shadow:0 2px 20px rgba(200,168,78,.3)}';
-    css+='.gc-euro{font-size:36px;vertical-align:super}';
-    css+='.gc-names{font-size:16px;color:#e0d5c0;margin:20px 0;font-weight:300;letter-spacing:1px}';
-    css+='.gc-msg{font-family:"Cormorant Garamond",serif;font-size:18px;color:rgba(200,168,78,.6);font-style:italic;margin:16px 0}';
-    css+='.gc-code{font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:#c8a84e;border:2px solid rgba(200,168,78,.3);display:inline-block;padding:10px 28px;margin:20px 0}';
-    css+='.gc-footer{background:rgba(200,168,78,.08);padding:14px 30px;text-align:center;font-size:11px;color:rgba(200,168,78,.4);line-height:1.8;border-top:1px solid rgba(200,168,78,.15)}';
-    body='<div class="gc-inner"><div class="gc-top"><span style="font-family:Playfair Display,serif;font-size:14px;font-weight:800;letter-spacing:4px;color:#0a0a0a">BON CADEAU</span><span style="font-size:12px;font-weight:700;color:#0a0a0a">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div class="gc-ornament">\u2022 \u2726 \u2022 \u2726 \u2022 \u2726 \u2022 \u2726 \u2022</div>';
-    body+='<div class="gc-label">Valeur</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+'<span class="gc-euro">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' \u2014 Pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">\u00ab '+g.msg+' \u00bb</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='<div class="gc-ornament">\u2022 \u2726 \u2022 \u2726 \u2022 \u2726 \u2022 \u2726 \u2022</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 Montant: '+g.val.toFixed(2)+' \u20ac TTC';
-    if(g.scope&&g.scope!=="tout")body+=' \u2022 '+(g.scope==="prestations"?"Prestations":"Produits")+' uniquement';
-    body+='<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'');
-    if(salon.siret)body+='<br>SIRET: '+salon.siret;
-    body+='<br>Ce bon est nominatif, non remboursable et non \u00e9changeable contre esp\u00e8ces.</div></div>';
-
-  }else if(themeId==="noel"){
-    css+='.gc{background:#14412a;border:3px solid #d4a038}';
-    css+='.gc-top{background:linear-gradient(135deg,#d4a038,#e6c560);padding:14px 28px;display:flex;justify-content:space-between;align-items:center}';
-    css+='.gc-body{padding:40px;text-align:center;background:linear-gradient(180deg,#1b4332,#2d6a4f,#1b4332);position:relative;overflow:hidden}';
-    css+='.gc-snow{position:absolute;top:0;left:0;right:0;font-size:18px;letter-spacing:8px;opacity:.15;line-height:2;pointer-events:none;color:#fff}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:68px;font-weight:900;color:#ffd700;line-height:1;margin:16px 0;text-shadow:0 3px 15px rgba(255,215,0,.3)}';
-    css+='.gc-label{font-size:13px;letter-spacing:5px;color:#d4a038;text-transform:uppercase;margin-bottom:6px}';
-    css+='.gc-names{font-size:15px;color:#c8e6c9;margin:16px 0;letter-spacing:1px}';
-    css+='.gc-msg{font-family:"Dancing Script",cursive;font-size:22px;color:#ffd700;margin:16px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#ffd700;border:2px solid rgba(255,215,0,.3);display:inline-block;padding:8px 24px;margin:16px 0;border-radius:8px}';
-    css+='.gc-footer{background:rgba(0,0,0,.2);padding:12px 28px;text-align:center;font-size:11px;color:rgba(255,255,255,.35);line-height:1.8;border-top:1px solid rgba(212,160,56,.2)}';
-    body='<div class="gc-top"><span style="font-family:Playfair Display,serif;font-size:13px;font-weight:800;letter-spacing:4px;color:#1b4332">\ud83c\udf84 BON CADEAU \ud83c\udf84</span><span style="font-size:11px;font-weight:700;color:#1b4332">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div class="gc-snow">\u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744 \u2744</div>';
-    body+='<div style="position:relative;z-index:1"><div class="gc-label">Joyeuses F\u00eates</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:32px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">'+g.msg+'</div>';
-    body+='<div class="gc-code">'+g.code+'</div></div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC';
-    if(g.scope&&g.scope!=="tout")body+=' \u2022 '+(g.scope==="prestations"?"Prestations":"Produits");
-    body+='<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'');
-    if(salon.siret)body+='<br>SIRET: '+salon.siret;
-    body+='<br>Non remboursable, non \u00e9changeable.</div>';
-
-  }else if(themeId==="stValentin"){
-    css+='.gc{background:#7b1033;border:3px solid #ffd6e7}';
-    css+='.gc-top{background:linear-gradient(135deg,#ff6b9d,#c44c7a);padding:14px 28px;display:flex;justify-content:space-between;align-items:center}';
-    css+='.gc-body{padding:40px;text-align:center;background:linear-gradient(180deg,#7b1033,#9e1b4d,#7b1033)}';
-    css+='.gc-hearts{font-size:16px;letter-spacing:10px;opacity:.3;margin-bottom:16px}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:68px;font-weight:900;color:#ffd6e7;line-height:1;margin:14px 0;text-shadow:0 3px 20px rgba(255,214,231,.2)}';
-    css+='.gc-label{font-family:"Dancing Script",cursive;font-size:28px;color:#ff9ec4;margin-bottom:8px}';
-    css+='.gc-names{font-size:15px;color:#fce4ec;margin:14px 0}';
-    css+='.gc-msg{font-family:"Cormorant Garamond",serif;font-size:18px;color:rgba(255,214,231,.6);font-style:italic;margin:12px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#ffd6e7;border:2px solid rgba(255,214,231,.3);display:inline-block;padding:8px 24px;margin:16px 0;border-radius:20px}';
-    css+='.gc-footer{background:rgba(0,0,0,.2);padding:12px;text-align:center;font-size:10px;color:rgba(255,255,255,.3);line-height:1.8}';
-    body='<div class="gc-top"><span style="font-size:12px;font-weight:800;letter-spacing:4px;color:#fff">BON CADEAU</span><span style="font-size:11px;font-weight:700;color:#fff">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div class="gc-hearts">\u2665 \u2665 \u2665 \u2665 \u2665 \u2665 \u2665</div>';
-    body+='<div class="gc-label">Avec tout mon amour</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:32px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">\u00ab '+g.msg+' \u00bb</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='<div class="gc-hearts">\u2665 \u2665 \u2665 \u2665 \u2665 \u2665 \u2665</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'')+'<br>Non remboursable, non \u00e9changeable.</div>';
-
-  }else if(themeId==="feteMeres"){
-    css+='.gc{background:#fff0f5;border:3px solid #c44c7a;border-radius:20px}';
-    css+='.gc-top{background:linear-gradient(135deg,#c44c7a,#e91e63);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-radius:17px 17px 0 0}';
-    css+='.gc-body{padding:40px;text-align:center;background:linear-gradient(180deg,#fce4ec,#fff0f5,#fce4ec)}';
-    css+='.gc-flowers{font-size:22px;letter-spacing:10px;margin-bottom:14px}';
-    css+='.gc-label{font-family:"Dancing Script",cursive;font-size:30px;color:#c44c7a;margin-bottom:10px}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:64px;font-weight:900;color:#c44c7a;line-height:1;margin:10px 0}';
-    css+='.gc-names{font-size:15px;color:#666;margin:14px 0}';
-    css+='.gc-msg{font-family:"Cormorant Garamond",serif;font-size:18px;color:#c44c7a;font-style:italic;margin:12px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#c44c7a;border:2px dashed #c44c7a;display:inline-block;padding:8px 24px;margin:16px 0;border-radius:12px;background:rgba(196,76,122,.05)}';
-    css+='.gc-footer{background:rgba(196,76,122,.06);padding:12px;text-align:center;font-size:10px;color:#999;line-height:1.8;border-top:1px solid rgba(196,76,122,.15);border-radius:0 0 17px 17px}';
-    body='<div class="gc-top"><span style="font-size:12px;font-weight:800;letter-spacing:4px;color:#fff">\ud83c\udf38 BON CADEAU \ud83c\udf38</span><span style="font-size:11px;font-weight:700;color:#fff">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div class="gc-flowers">\ud83c\udf3a \ud83c\udf37 \ud83c\udf39 \ud83c\udf3b \ud83c\udf3a</div>';
-    body+='<div class="gc-label">Bonne F\u00eate Maman</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:28px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">'+g.msg+'</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'')+'<br>Non remboursable, non \u00e9changeable.</div>';
-
-  }else if(themeId==="printemps"){
-    css+='.gc{background:#f1f8e9;border:3px solid #7cb342;border-radius:20px}';
-    css+='.gc-top{background:linear-gradient(135deg,#558b2f,#7cb342);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-radius:17px 17px 0 0}';
-    css+='.gc-body{padding:40px;text-align:center;background:linear-gradient(180deg,#e8f5e9,#f1f8e9,#e8f5e9)}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:64px;font-weight:900;color:#2e7d32;line-height:1;margin:14px 0}';
-    css+='.gc-label{font-size:12px;letter-spacing:5px;color:#558b2f;text-transform:uppercase}';
-    css+='.gc-names{font-size:15px;color:#555;margin:14px 0}';
-    css+='.gc-msg{font-family:"Cormorant Garamond",serif;font-size:18px;color:#558b2f;font-style:italic;margin:12px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#2e7d32;border:2px dashed #7cb342;display:inline-block;padding:8px 24px;margin:16px 0;border-radius:12px;background:rgba(85,139,47,.05)}';
-    css+='.gc-footer{background:rgba(85,139,47,.06);padding:12px;text-align:center;font-size:10px;color:#888;line-height:1.8;border-top:1px solid rgba(85,139,47,.15);border-radius:0 0 17px 17px}';
-    body='<div class="gc-top"><span style="font-size:12px;font-weight:800;letter-spacing:4px;color:#fff">\ud83c\udf3c BON CADEAU</span><span style="font-size:11px;font-weight:700;color:#fff">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div style="font-size:22px;letter-spacing:8px;margin-bottom:10px">\ud83c\udf3c \ud83c\udf3b \ud83c\udf37 \ud83c\udf3b \ud83c\udf3c</div>';
-    body+='<div class="gc-label">Bon cadeau</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:28px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">'+g.msg+'</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'')+'<br>Non remboursable, non \u00e9changeable.</div>';
-
-  }else if(themeId==="anniversaire"){
-    css+='.gc{background:#311b92;border:3px solid #ffd54f}';
-    css+='.gc-top{background:linear-gradient(135deg,#ffd54f,#ffca28);padding:14px 28px;display:flex;justify-content:space-between;align-items:center}';
-    css+='.gc-body{padding:40px;text-align:center;background:linear-gradient(180deg,#311b92,#4527a0,#311b92)}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:68px;font-weight:900;color:#ffd54f;line-height:1;margin:14px 0;text-shadow:0 3px 15px rgba(255,213,79,.2)}';
-    css+='.gc-label{font-family:"Dancing Script",cursive;font-size:28px;color:#ce93d8;margin-bottom:8px}';
-    css+='.gc-names{font-size:15px;color:#e1bee7;margin:14px 0}';
-    css+='.gc-msg{font-size:16px;color:rgba(255,213,79,.5);font-style:italic;margin:12px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#ffd54f;border:2px solid rgba(255,213,79,.3);display:inline-block;padding:8px 24px;margin:16px 0;border-radius:8px}';
-    css+='.gc-footer{background:rgba(0,0,0,.2);padding:12px;text-align:center;font-size:10px;color:rgba(255,255,255,.3);line-height:1.8}';
-    body='<div class="gc-top"><span style="font-size:12px;font-weight:800;letter-spacing:4px;color:#311b92">\ud83c\udf82 BON CADEAU</span><span style="font-size:11px;font-weight:700;color:#311b92">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div style="font-size:24px;letter-spacing:8px;margin-bottom:10px">\ud83c\udf89 \ud83c\udf82 \ud83c\udf81 \ud83c\udf82 \ud83c\udf89</div>';
-    body+='<div class="gc-label">Joyeux Anniversaire</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:32px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">\u00ab '+g.msg+' \u00bb</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'')+'<br>Non remboursable, non \u00e9changeable.</div>';
-
-  }else if(themeId==="elegance"){
-    css+='.gc{background:#fdf2f8;border:2px solid #be185d;border-radius:20px}';
-    css+='.gc-top{background:linear-gradient(135deg,#be185d,#e91e63);padding:14px 28px;display:flex;justify-content:space-between;align-items:center;border-radius:18px 18px 0 0}';
-    css+='.gc-body{padding:40px;text-align:center;background:linear-gradient(180deg,#fdf2f8,#fce7f3,#fdf2f8)}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:64px;font-weight:900;color:#be185d;line-height:1;margin:14px 0}';
-    css+='.gc-label{font-family:"Cormorant Garamond",serif;font-size:16px;letter-spacing:4px;color:#be185d;text-transform:uppercase}';
-    css+='.gc-names{font-size:15px;color:#555;margin:14px 0}';
-    css+='.gc-msg{font-family:"Cormorant Garamond",serif;font-size:20px;color:#be185d;font-style:italic;margin:12px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#be185d;border:2px solid rgba(190,24,93,.2);display:inline-block;padding:8px 24px;margin:16px 0;border-radius:12px;background:rgba(190,24,93,.04)}';
-    css+='.gc-footer{background:rgba(190,24,93,.04);padding:12px;text-align:center;font-size:10px;color:#999;line-height:1.8;border-top:1px solid rgba(190,24,93,.1);border-radius:0 0 18px 18px}';
-    body='<div class="gc-top"><span style="font-size:12px;font-weight:800;letter-spacing:4px;color:#fff">\ud83c\udf39 BON CADEAU</span><span style="font-size:11px;font-weight:700;color:#fff">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div style="font-size:14px;letter-spacing:12px;color:rgba(190,24,93,.2);margin-bottom:14px">\u2022 \u2726 \u2022 \u2726 \u2022</div>';
-    body+='<div class="gc-label">Bon cadeau</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:28px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">\u00ab '+g.msg+' \u00bb</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'')+'<br>Non remboursable, non \u00e9changeable.</div>';
-
-  }else{
-    // Classique
-    css+='.gc{background:#fff;border:2px solid #c8a84e;border-radius:4px}';
-    css+='.gc-top{background:linear-gradient(135deg,#c8a84e,#d4b95e);padding:14px 28px;display:flex;justify-content:space-between;align-items:center}';
-    css+='.gc-body{padding:40px;text-align:center;background:#fff}';
-    css+='.gc-amount{font-family:"Playfair Display",serif;font-size:60px;font-weight:900;color:#333;line-height:1;margin:14px 0}';
-    css+='.gc-label{font-size:12px;letter-spacing:5px;color:#c8a84e;text-transform:uppercase}';
-    css+='.gc-names{font-size:15px;color:#555;margin:14px 0}';
-    css+='.gc-msg{font-size:16px;color:#888;font-style:italic;margin:12px 0}';
-    css+='.gc-code{font-family:monospace;font-size:18px;font-weight:800;letter-spacing:4px;color:#333;border:2px solid #c8a84e;display:inline-block;padding:8px 24px;margin:16px 0}';
-    css+='.gc-footer{background:#fafafa;padding:12px;text-align:center;font-size:10px;color:#aaa;line-height:1.8;border-top:1px solid #eee}';
-    body='<div class="gc-top"><span style="font-size:12px;font-weight:800;letter-spacing:4px;color:#fff">BON CADEAU</span><span style="font-size:11px;font-weight:700;color:#fff">'+salon.nom+'</span></div>';
-    body+='<div class="gc-body"><div class="gc-label">Bon cadeau</div>';
-    body+='<div class="gc-amount">'+g.val.toFixed(0)+' <span style="font-size:28px">\u20ac</span></div>';
-    body+='<div class="gc-names">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-    if(g.msg)body+='<div class="gc-msg">\u00ab '+g.msg+' \u00bb</div>';
-    body+='<div class="gc-code">'+g.code+'</div>';
-    body+='</div><div class="gc-footer">Valable jusqu\u2019au '+g.exp+' \u2022 '+g.val.toFixed(2)+' \u20ac TTC<br>'+salon.nom+(salon.adr?' \u2022 '+salon.adr:'')+(salon.tel?' \u2022 '+salon.tel:'')+'<br>Non remboursable, non \u00e9changeable.</div>';
-  }
-
-  var hh='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Cadeau '+g.code+' - '+salon.nom+'</title><style>'+css+'</style></head><body><div class="gc">'+body+'</div><div class="no-print" style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:12px 30px;font-size:16px;font-weight:700;background:#c8a84e;color:#fff;border:none;border-radius:8px;cursor:pointer">Imprimer</button></div></body></html>';
+  var d=getGiftPrintCSS(themeId);
+  var t=d.t;
+  var scopeLabel=!g.scope||g.scope==="tout"?"Prestations et produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
+  var hh='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Cadeau '+g.code+'</title><style>'+d.base+'</style></head><body>';
+  hh+='<div class="gc" style="'+t.card+'">';
+  hh+='<div style="'+t.header+'"><span style="font-family:Playfair Display,serif;font-size:13px;font-weight:800;letter-spacing:4px;'+t.headerTxt+'">BON CADEAU'+(g.gcNum?' <span style="font-weight:400;font-size:11px">N\u00b0'+g.gcNum+'</span>':'')+'</span><span style="font-size:11px;font-weight:700;'+t.headerTxt+'">'+salon.nom+'</span></div>';
+  hh+='<div style="'+t.body+'">';
+  if(t.deco1)hh+='<div style="'+t.decoStyle+'">'+t.deco1+'</div>';
+  hh+='<div style="'+t.label+'">'+(t.labelText||"Bon Cadeau")+'</div>';
+  hh+='<div style="'+t.amount+'">'+g.val.toFixed(0)+' <span style="'+t.euro+'">\u20ac</span></div>';
+  hh+='<div style="'+t.names+'">De <strong>'+(g.from||"")+'</strong>'+(g.to?' \u2014 Pour <strong>'+g.to+'</strong>':'')+'</div>';
+  if(g.msg&&g.msg.length>0)hh+='<div style="'+t.msg+'">\u00ab '+g.msg+' \u00bb</div>';
+  hh+='<div style="'+t.code+'">'+g.code+'</div>';
+  hh+='<div style="'+t.scope+'">'+scopeLabel+'</div>';
+  if(t.deco1)hh+='<div style="'+t.decoStyle+'">'+t.deco1+'</div>';
+  hh+='</div>';
+  hh+='<div style="'+t.footer+'">';
+  hh+='Valable jusqu\u2019au <strong>'+g.exp+'</strong> \u2022 Montant: '+g.val.toFixed(2)+' \u20ac TTC';
+  if(g.ht)hh+=' (HT: '+g.ht.toFixed(2)+'\u20ac)';
+  hh+='<br>'+salon.nom;
+  if(salon.adr)hh+=' \u2022 '+salon.adr;
+  if(salon.tel)hh+=' \u2022 '+salon.tel;
+  if(salon.siret)hh+='<br>SIRET: '+salon.siret;
+  hh+='<br>Ce bon est nominatif, non remboursable et non \u00e9changeable contre des esp\u00e8ces.';
+  hh+='</div></div>';
+  hh+='<div class="no-print" style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:14px 40px;font-size:16px;font-weight:700;background:#c8a84e;color:#fff;border:none;border-radius:10px;cursor:pointer;box-shadow:0 4px 15px rgba(200,168,78,.3)">Imprimer</button></div>';
+  hh+='</body></html>';
   w.document.write(hh);w.document.close();
   setTimeout(function(){w.focus();},300);
 }
@@ -3420,51 +3415,38 @@ function confirmVoidGift(gcId){
   h+='<div style="font-size:48px;margin-bottom:10px">\u26a0\ufe0f</div>';
   h+='<h2 style="color:var(--red)!important">Annuler ce bon cadeau ?</h2>';
   h+='<div style="font-size:15px;margin-bottom:6px"><strong>'+g.code+'</strong> \u2022 '+g.val.toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">Le bon sera marqu\u00e9 comme annul\u00e9 et ne pourra plus \u00eatre utilis\u00e9.<br>Un avoir pourra \u00eatre cr\u00e9\u00e9 si n\u00e9cessaire.</div>';
-  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="cM()">Non, garder</button>';
-  h+='<button class="btn" style="flex:1;background:var(--red)!important;color:#fff!important" onclick="doVoidGift(\u0027'+gcId+'\u0027)">Oui, annuler le bon</button></div>';
+  h+='<div style="font-size:13px;color:#888;margin-bottom:16px">Le bon sera d\u00e9finitivement annul\u00e9 et trac\u00e9 en comptabilit\u00e9.</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="cM()">Non</button>';
+  h+='<button class="btn" style="flex:1;background:var(--red)!important;color:#fff!important" onclick="doVoidGift(\u0027'+gcId+'\u0027)">Oui, annuler</button></div>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
 }
-
 function doVoidGift(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
-  var oldRem=g.rem;
-  g.st="voided";g.rem=0;
+  var oldRem=g.rem;g.st="voided";g.rem=0;
   if(typeof saveGiftCard==="function")saveGiftCard(g);
-  auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Valeur initiale: "+g.val.toFixed(2)+"E - Solde annul\u00e9: "+oldRem.toFixed(2)+"E");
+  auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Val:"+g.val.toFixed(2)+"E - Solde annul\u00e9:"+oldRem.toFixed(2)+"E");
   cM();go("gifts");
 }
-
-function printGiftCard(gcId){
-  chooseGiftTheme(gcId);
-}
-
+function printGiftCard(gcId){chooseGiftTheme(gcId);}
 function searchGiftByCode(){
   var code=(document.getElementById("gsCode").value||"").trim().toUpperCase();
-  if(!code){return;}
+  if(!code)return;
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].code.toUpperCase()===code){g=GC[i];break;}}
   var res=document.getElementById("gsResult");
-  if(!g){res.innerHTML='<div style="text-align:center;padding:14px;color:var(--red)"><strong>\u274c Aucun bon trouv\u00e9 avec ce code</strong></div>';return;}
+  if(!g){res.innerHTML='<div style="text-align:center;padding:14px;color:#c43838"><strong>\u274c Aucun bon trouv\u00e9</strong></div>';return;}
   var rem=g.rem!==undefined?g.rem:g.val;
   var isUsed=g.st==="used"||rem<=0;
-  var isExp=g.exp&&g.exp<TD;
-  var h='<div style="padding:14px;border-radius:14px;border:2px solid '+(isUsed?"#c43838":isExp?"#d48a1a":"#c8a84e")+';background:'+(isUsed?"#fde8e8":isExp?"#fdf2e4":"#fffef8")+';text-align:center">';
+  var h='<div style="padding:14px;border-radius:14px;border:2px solid '+(isUsed?"#c43838":"#c8a84e")+';background:'+(isUsed?"#fde8e8":"#fffef8")+';text-align:center">';
   h+='<div style="font-size:28px;font-weight:900;color:'+(isUsed?"#c43838":"#c8a84e")+'">'+g.val.toFixed(0)+' \u20ac</div>';
   if(!isUsed&&rem<g.val)h+='<div style="font-size:14px;font-weight:700;color:#d48a1a">Reste: '+rem.toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:13px;color:#555;margin:6px 0">De <strong>'+g.from+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
-  h+='<div style="font-size:12px;color:#888">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+'</div>';
-  var status=isUsed?"Utilis\u00e9":isExp?"Expir\u00e9":g.st==="voided"?"Annul\u00e9":"Actif";
-  var stCol=isUsed||g.st==="voided"?"#c43838":isExp?"#d48a1a":"#2d9a5e";
-  h+='<div style="margin-top:6px"><span style="font-size:12px;padding:3px 10px;border-radius:12px;background:'+stCol+'22;color:'+stCol+';font-weight:700">'+status+'</span></div>';
-  h+='</div>';
+  h+='<div style="font-size:13px;color:#555;margin:6px 0">'+(g.from||"")+''+(g.to?' \u2192 '+g.to:'')+'</div>';
+  h+='<div style="font-size:12px;color:#888">'+fmt(g.cr)+' \u2192 '+fmt(g.exp)+'</div>';
+  var st=g.st==="voided"?"Annul\u00e9":isUsed?"Utilis\u00e9":"Actif";
+  h+='<div style="margin-top:4px;font-size:12px;font-weight:700;color:'+(isUsed?"#c43838":"#2d9a5e")+'">'+st+'</div></div>';
   res.innerHTML=h;
 }
-
-
-
-// === CAISSE ===
 function rCaisse(){
   // Check if caisse already opened today
   var _co=window._caisseOpenDate===TD;
