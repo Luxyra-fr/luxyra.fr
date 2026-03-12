@@ -280,7 +280,10 @@ async function loadSalonData() {
         }
         if (!exists) {
           var dur = r.duree || 60;
-          var phases = [{t:"w", d: dur, l: r.svcNom}];
+          // Get real phases from the service definition
+          var realSvc = null;
+          for (var si = 0; si < SVC.length; si++) { if (SVC[si].id === r.svcId) { realSvc = SVC[si]; break; } }
+          var phases = realSvc && realSvc.phases && realSvc.phases.length > 0 ? realSvc.phases : [{t:"w", d: dur, l: r.svcNom}];
           AP.push({
             id: "online_" + r.id,
             onlineId: r.id,

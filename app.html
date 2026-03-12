@@ -706,23 +706,31 @@ function addNotif(type,title,detail,data){
 function showNotifs(){
   // Inject RDV online as notifications
   if(!window.NOTIFS)window.NOTIFS=[];
+  var now48=new Date().getTime()-48*3600000;// 48h ago
   if(window.RDV_ONLINE){
     window.RDV_ONLINE.forEach(function(r){
+      // Skip old confirmed/done (>48h)
+      if((r.status==="done")&&r.createdAt&&new Date(r.createdAt).getTime()<now48)return;
       var exists=false;
       for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].rdvOnlineId===r.id){exists=true;break;}}
       if(!exists){
         window.NOTIFS.unshift({
           id:"ro_"+r.id,rdvOnlineId:r.id,type:"rdv_online",
-          title:"\ud83d\udcc5 RDV en ligne"+(r.status==="pending"?" (en attente)":" (confirm\u00e9)"),
+          title:"\ud83d\udcc5 RDV en ligne"+(r.status==="pending"?" (en attente)":r.status==="confirmed"?" (confirm\u00e9)":" (termin\u00e9)"),
           detail:r.nom+(r.prenom?" "+r.prenom:"")+" \u2022 "+r.svcNom+" \u2022 "+r.date+" "+r.heure+(r.tel?" \u2022 "+r.tel:"")+(r.message?" \u2022 "+r.message:""),
           ts:r.createdAt||new Date().toISOString(),
-          seen:r.status==="done",
+          seen:false,
           confirmed:r.status==="done",
           onlineRdv:r
         });
       }
     });
   }
+  // Clean old read notifications (>48h and seen)
+  window.NOTIFS=window.NOTIFS.filter(function(n){
+    if(n.seen&&n.confirmed&&n.ts){return new Date(n.ts).getTime()>now48;}
+    return true;
+  });
   var notifs=window.NOTIFS||[];
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2>\ud83d\udd14 Notifications</h2>';
@@ -745,7 +753,10 @@ function showNotifs(){
       h+='</div></div>';
     }
   }
-  h+='<button class="btn bk" style="margin-top:14px" onclick="cM()">Fermer</button></div></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn bk" style="flex:1" onclick="cM()">Fermer</button>';
+  if(notifs.some(function(n){return n.seen&&n.confirmed;}))h+='<button class="btn bs" style="font-size:12px" onclick="clearReadNotifs()">Effacer les lues</button>';
+  h+='</div></div></div>';
   notifs.forEach(function(n){n.seen=true;});
   document.getElementById("modal").innerHTML=h;
 }
@@ -770,6 +781,13 @@ function confirmNotif(id){
     }
   }
   showNotifs();
+  updateNotifBadge();
+}
+function clearReadNotifs(){
+  if(!window.NOTIFS)return;
+  window.NOTIFS=window.NOTIFS.filter(function(n){return!n.seen||!n.confirmed;});
+  showNotifs();
+  updateNotifBadge();
 }
 function markAllNotifsRead(){
   if(!window.NOTIFS)return;
