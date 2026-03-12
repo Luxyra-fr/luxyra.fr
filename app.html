@@ -3087,6 +3087,17 @@ function doAddProdCat(){
 
 
 // === GIFTS ===
+
+function deleteGiftCard(gcId){
+  // Remove from local array
+  for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){GC.splice(i,1);break;}}
+  // Delete from Supabase
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("cartes_cadeaux").delete().eq("id",gcId).then(function(){console.log("Gift card deleted from DB");});
+  }
+  go("gifts");
+}
+
 function rGifts(){
   var h='';
   // Stats
@@ -3237,17 +3248,18 @@ function chooseGiftTheme(gcId){
 
 function getGiftThemes(){
   return [
-    {id:"luxeNoir",name:"Luxe Noir & Or",prevBg:"linear-gradient(135deg,#0a0a0a,#1a1a2e)",prevTxt:"#c8a84e",prevDeco:"\u2726 \u2726 \u2726"},
+    {id:"luxeNoir",name:"Luxe Noir & Or",prevBg:"linear-gradient(135deg,#0a0a0a,#1a1a2e)",prevTxt:"#c8a84e",prevDeco:"\u2726 \u25c6 \u2726"},
     {id:"noel",name:"No\u00ebl",prevBg:"linear-gradient(135deg,#14412a,#2d6a4f)",prevTxt:"#ffd700",prevDeco:"\u2744 \u2744 \u2744"},
-    {id:"stValentin",name:"Saint-Valentin",prevBg:"linear-gradient(135deg,#7b1033,#c44c7a)",prevTxt:"#ffd6e7",prevDeco:"\u2665 \u2665 \u2665"},
+    {id:"stValentin",name:"Saint-Valentin",prevBg:"linear-gradient(135deg,#6b0f2a,#c44c7a)",prevTxt:"#ffd6e7",prevDeco:"\u2665 \u2665 \u2665"},
     {id:"feteMeres",name:"F\u00eate des M\u00e8res",prevBg:"linear-gradient(135deg,#fce4ec,#f8bbd0)",prevTxt:"#c44c7a",prevDeco:"\ud83c\udf38 \ud83c\udf39 \ud83c\udf3a"},
-    {id:"printemps",name:"Printemps Frais",prevBg:"linear-gradient(135deg,#e8f5e9,#c8e6c9)",prevTxt:"#2e7d32",prevDeco:"\ud83c\udf3c \ud83c\udf3b \ud83c\udf3c"},
     {id:"anniversaire",name:"Anniversaire",prevBg:"linear-gradient(135deg,#311b92,#7c4dff)",prevTxt:"#ffd54f",prevDeco:"\ud83c\udf89 \ud83c\udf82 \ud83c\udf89"},
     {id:"roseGold",name:"\u00c9l\u00e9gance Ros\u00e9",prevBg:"linear-gradient(135deg,#fdf2f8,#fce7f3)",prevTxt:"#be185d",prevDeco:"\u2022 \u2726 \u2022"},
-    {id:"classique",name:"Classique",prevBg:"linear-gradient(135deg,#fff,#f8f6f0)",prevTxt:"#333",prevDeco:""}
+    {id:"printemps",name:"Printemps",prevBg:"linear-gradient(135deg,#e8f5e9,#c8e6c9)",prevTxt:"#2e7d32",prevDeco:"\ud83c\udf3c \ud83c\udf3b \ud83c\udf3c"},
+    {id:"ete",name:"\u00c9t\u00e9 Dor\u00e9",prevBg:"linear-gradient(135deg,#fff8e1,#ffe0b2)",prevTxt:"#e65100",prevDeco:"\u2600\ufe0f"},
+    {id:"classique",name:"Classique",prevBg:"linear-gradient(135deg,#fff,#f8f6f0)",prevTxt:"#333",prevDeco:""},
+    {id:"midnight",name:"Midnight Blue",prevBg:"linear-gradient(135deg,#0d1b2a,#1b2838)",prevTxt:"#90caf9",prevDeco:"\u2727 \u2727 \u2727"}
   ];
 }
-
 function getGiftPrintCSS(themeId){
   var base='@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Dancing+Script:wght@400;600;700&family=Great+Vibes&family=Nunito:wght@400;600;700;800&display=swap");*{margin:0;padding:0;box-sizing:border-box}body{font-family:Nunito,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e0e0e0;padding:20px}@media print{body{background:#fff;padding:0}.gc{box-shadow:none!important}.no-print{display:none!important}}';
   var t={};
@@ -3375,34 +3387,77 @@ function printGiftThemed(gcId,themeId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;cM();
   var salon=SALON_CONFIG;
-  var rem=g.rem!==undefined?g.rem:g.val;
-  var w=window.open("","_blank","width=800,height=600");if(!w)return;
-  var d=getGiftPrintCSS(themeId);
-  var t=d.t;
-  var scopeLabel=!g.scope||g.scope==="tout"?"Prestations et produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
-  var hh='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Cadeau '+g.code+'</title><style>'+d.base+'</style></head><body>';
-  hh+='<div class="gc" style="'+t.card+'">';
-  hh+='<div style="'+t.header+'"><span style="font-family:Playfair Display,serif;font-size:13px;font-weight:800;letter-spacing:4px;'+t.headerTxt+'">BON CADEAU'+(g.gcNum?' <span style="font-weight:400;font-size:11px">N\u00b0'+g.gcNum+'</span>':'')+'</span><span style="font-size:11px;font-weight:700;'+t.headerTxt+'">'+salon.nom+'</span></div>';
-  hh+='<div style="'+t.body+'">';
-  if(t.deco1)hh+='<div style="'+t.decoStyle+'">'+t.deco1+'</div>';
-  hh+='<div style="'+t.label+'">'+(t.labelText||"Bon Cadeau")+'</div>';
-  hh+='<div style="'+t.amount+'">'+g.val.toFixed(0)+' <span style="'+t.euro+'">\u20ac</span></div>';
-  hh+='<div style="'+t.names+'">De <strong>'+(g.from||"")+'</strong>'+(g.to?' \u2014 Pour <strong>'+g.to+'</strong>':'')+'</div>';
-  if(g.msg&&g.msg.length>0)hh+='<div style="'+t.msg+'">\u00ab '+g.msg+' \u00bb</div>';
-  hh+='<div style="'+t.code+'">'+g.code+'</div>';
-  hh+='<div style="'+t.scope+'">'+scopeLabel+'</div>';
-  if(t.deco1)hh+='<div style="'+t.decoStyle+'">'+t.deco1+'</div>';
+  var w=window.open("","_blank","width=800,height=500");if(!w)return;
+  // Get logo from header
+  var logoEl=document.getElementById("hlogo");
+  var logoSrc=logoEl?logoEl.src:"";
+  var scopeLabel=!g.scope||g.scope==="tout"?"Prestations & Produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
+  // Theme configs: [cardBg,cardBorder,cardRadius,leftBg,leftBorder,nameCol,subCol,logoBorder,rightBg,labelCol,amountCol,amountShadow,namesCol,msgCol,msgFont,codeCol,codeBorder,codeBg,codeRadius,scopeCol,footCol,footBorder,watermark,waterCol,deco1,decoCol]
+  var T={
+    luxeNoir:["#0a0a0a","2px solid #c8a84e","0","linear-gradient(180deg,#0f0f14,#0a0a0a)","1px solid rgba(200,168,78,.12)","#c8a84e","#c8a84e","2px solid rgba(200,168,78,.3)","radial-gradient(ellipse at 70% 50%,#151520,#0a0a0a)","#c8a84e","#c8a84e","0 4px 30px rgba(200,168,78,.2)","#c8b89a","rgba(200,168,78,.45)","Cormorant Garamond,serif","#c8a84e","1.5px solid rgba(200,168,78,.2)","transparent","0","rgba(200,168,78,.35)","rgba(200,168,78,.3)","1px solid rgba(200,168,78,.08)","","","✦ ◆ ✦ ◆ ✦ ◆ ✦","#c8a84e"],
+    noel:["#14412a","2px solid #d4a038","0","linear-gradient(180deg,#1b5e3a,#14412a)","1px solid rgba(212,160,56,.12)","#ffd700","#a8d5ba","2px solid rgba(255,215,0,.3)","linear-gradient(180deg,#14412a,#1b5e3a,#14412a)","#d4a038","#ffd700","0 2px 20px rgba(255,215,0,.15)","#a8d5ba","rgba(255,215,0,.6)","Dancing Script,cursive","#ffd700","1.5px solid rgba(255,215,0,.2)","rgba(255,215,0,.04)","8px","rgba(255,255,255,.25)","rgba(255,255,255,.25)","1px solid rgba(212,160,56,.1)","❄","rgba(255,255,255,.04)","",""],
+    stValentin:["#6b0f2a","2px solid #ffd6e7","0","linear-gradient(180deg,#7b1033,#6b0f2a)","1px solid rgba(255,214,231,.1)","#ffd6e7","#f8bbd0","2px solid rgba(255,214,231,.3)","radial-gradient(ellipse at 60% 50%,rgba(142,32,64,.4),#6b0f2a)","#ff6b9d","#ffd6e7","0 2px 20px rgba(255,214,231,.1)","#f8bbd0","rgba(255,214,231,.5)","Great Vibes,cursive","#ffd6e7","1.5px solid rgba(255,214,231,.2)","transparent","30px","rgba(255,255,255,.25)","rgba(255,255,255,.2)","0","♥","rgba(255,107,157,.04)","♥ ♥ ♥ ♥ ♥","#ff6b9d"],
+    feteMeres:["#fff0f5","2px solid #e91e63","20px","linear-gradient(180deg,#fce4ec,#fff0f5)","1px solid rgba(233,30,99,.08)","#c44c7a","#e91e63","2px solid rgba(233,30,99,.2)","linear-gradient(180deg,#fce4ec,#fff0f5)","#e91e63","#c44c7a","none","#666","#e91e63","Dancing Script,cursive","#c44c7a","2px dashed #e91e63","rgba(233,30,99,.03)","12px","#e91e63","#999","1px solid rgba(233,30,99,.08)","","","🌺 🌷 🌹 🌷 🌺",""],
+    anniversaire:["#311b92","2px solid #ffd54f","0","linear-gradient(180deg,#4527a0,#311b92)","1px solid rgba(255,213,79,.1)","#ffd54f","#ce93d8","2px solid rgba(255,213,79,.3)","linear-gradient(180deg,#311b92,#4527a0,#311b92)","#ce93d8","#ffd54f","0 2px 15px rgba(255,213,79,.15)","#e1bee7","rgba(255,213,79,.5)","Dancing Script,cursive","#ffd54f","1.5px solid rgba(255,213,79,.25)","transparent","8px","rgba(255,255,255,.25)","rgba(255,255,255,.2)","0","🎉","rgba(255,255,255,.04)","🎉 🎂 🎁 🎂 🎉",""],
+    roseGold:["#fdf2f8","2px solid #be185d","20px","linear-gradient(180deg,#fce7f3,#fdf2f8)","1px solid rgba(190,24,93,.06)","#be185d","#e91e63","2px solid rgba(190,24,93,.15)","linear-gradient(135deg,#fdf2f8,#fce7f3)","#be185d","#be185d","none","#555","rgba(190,24,93,.6)","Cormorant Garamond,serif","#be185d","1.5px solid rgba(190,24,93,.15)","rgba(190,24,93,.03)","12px","rgba(190,24,93,.4)","#999","1px solid rgba(190,24,93,.06)","","","✿ ✦ ✿","#be185d"],
+    printemps:["#f1f8e9","2px solid #7cb342","20px","linear-gradient(180deg,#e8f5e9,#f1f8e9)","1px solid rgba(124,179,66,.08)","#2e7d32","#558b2f","2px solid rgba(124,179,66,.2)","linear-gradient(135deg,#f1f8e9,#e8f5e9)","#558b2f","#2e7d32","none","#555","#558b2f","Cormorant Garamond,serif","#2e7d32","2px dashed #7cb342","rgba(85,139,47,.03)","12px","#558b2f","#888","1px solid rgba(85,139,47,.08)","","","🌼 🌻 🌷 🌻 🌼",""],
+    ete:["linear-gradient(135deg,#fff8e1,#fff3e0)","2px solid #f57c00","16px","linear-gradient(180deg,#fff3e0,#fff8e1)","1px solid rgba(245,124,0,.08)","#e65100","#f57c00","2px solid rgba(245,124,0,.2)","linear-gradient(135deg,#fff8e1,#ffe0b2)","#f57c00","#e65100","none","#555","rgba(245,124,0,.7)","Dancing Script,cursive","#e65100","1.5px solid rgba(245,124,0,.2)","rgba(245,124,0,.04)","12px","#f57c00","#999","1px solid rgba(245,124,0,.06)","","","☀️",""],
+    classique:["#fff","2px solid #c8a84e","4px","#fff","1px solid rgba(200,168,78,.12)","#333","#c8a84e","2px solid rgba(200,168,78,.2)","#fff","#c8a84e","#333","none","#555","#888","Georgia,serif","#333","2px solid #c8a84e","transparent","0","#c8a84e","#aaa","1px solid rgba(200,168,78,.1)","","","",""],
+    midnight:["linear-gradient(135deg,#0d1b2a,#1b2838)","2px solid #64b5f6","0","linear-gradient(180deg,#1b2838,#0d1b2a)","1px solid rgba(100,181,246,.1)","#90caf9","#64b5f6","2px solid rgba(100,181,246,.3)","linear-gradient(180deg,#0d1b2a,#1b2838)","#64b5f6","#e3f2fd","0 2px 20px rgba(100,181,246,.12)","#90caf9","rgba(100,181,246,.5)","Cormorant Garamond,serif","#90caf9","1.5px solid rgba(100,181,246,.2)","rgba(100,181,246,.04)","8px","#64b5f6","rgba(100,181,246,.3)","1px solid rgba(100,181,246,.08)","","","✧ ✧ ✧","#64b5f6"]
+  };
+  var t=T[themeId]||T.classique;
+  var fonts='@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400&family=Great+Vibes&family=Dancing+Script:wght@400;600;700&family=Nunito:wght@400;600;700;800&display=swap");';
+  var css=fonts+'*{margin:0;padding:0;box-sizing:border-box}body{font-family:Nunito,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e0e0e0;padding:20px}';
+  css+='.gc{width:680px;display:grid;grid-template-columns:1fr 1.4fr;position:relative;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35);background:'+t[0]+';border:'+t[1]+';border-radius:'+t[2]+'}';
+  // Inner border for luxe/classique
+  if(themeId==="luxeNoir"||themeId==="classique")css+='.gc::before{content:"";position:absolute;inset:6px;border:1px solid rgba(200,168,78,.12);pointer-events:none;z-index:2}';
+  // Watermark
+  if(t[22])css+='.gc::after{content:"'+t[22]+' '.repeat(80)+'";position:absolute;inset:0;font-size:14px;line-height:2.5;letter-spacing:6px;color:'+t[23]+';pointer-events:none;word-break:break-all;padding:20px;z-index:0}';
+  css+='.left{display:flex;flex-direction:column;justify-content:center;align-items:center;padding:30px;background:'+t[3]+';border-right:'+t[4]+';position:relative;z-index:1}';
+  css+='.logo{width:72px;height:72px;border-radius:16px;object-fit:cover;margin-bottom:12px;border:'+t[7]+'}';
+  css+='.sname{font-family:Playfair Display,serif;font-size:16px;font-weight:700;letter-spacing:2px;text-align:center;color:'+t[5]+'}';
+  css+='.ssub{font-size:9px;letter-spacing:4px;text-transform:uppercase;text-align:center;margin-top:3px;color:'+t[6]+';opacity:.6}';
+  css+='.right{display:flex;flex-direction:column;justify-content:center;align-items:center;padding:28px 32px;text-align:center;background:'+t[8]+';position:relative;z-index:1}';
+  css+='.label{font-size:10px;letter-spacing:5px;text-transform:uppercase;font-weight:800;color:'+t[9]+';margin-bottom:6px}';
+  css+='.amt{font-family:Playfair Display,serif;font-size:66px;font-weight:900;line-height:.85;margin:8px 0;color:'+t[10]+';text-shadow:'+t[11]+'}';
+  css+='.amt .e{font-size:28px}';
+  css+='.nms{font-size:13px;margin:10px 0;font-weight:300;color:'+t[12]+'}';
+  css+='.msg{font-style:italic;font-size:14px;color:'+t[13]+';margin:8px 20px;font-family:'+t[14]+'}';
+  css+='.cd{display:inline-block;margin:12px 0;padding:8px 22px;font-family:monospace;font-size:17px;font-weight:800;letter-spacing:5px;color:'+t[15]+';border:'+t[16]+';background:'+t[17]+';border-radius:'+t[18]+'}';
+  css+='.sc{font-size:9px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;color:'+t[19]+';opacity:.5}';
+  css+='.vld{font-size:9px;margin-top:4px;color:'+t[19]+';opacity:.3}';
+  css+='.foot{position:absolute;bottom:0;left:0;right:0;padding:8px 20px;font-size:8px;text-align:center;line-height:1.6;color:'+t[20]+';opacity:.5;border-top:'+t[21]+';z-index:1}';
+  css+='.deco{font-size:12px;letter-spacing:10px;opacity:.25;margin:6px 0;color:'+(t[25]||t[10])+'}';
+  css+='@media print{body{background:#fff;padding:0}.gc{box-shadow:none;max-width:680px}.no-print{display:none!important}}';
+  var hh='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Cadeau '+g.code+'</title><style>'+css+'</style></head><body><div class="gc">';
+  // Left: logo
+  hh+='<div class="left">';
+  if(t[24])hh+='<div class="deco" style="position:absolute;top:14px">'+t[24]+'</div>';
+  hh+='<img class="logo" src="'+logoSrc+'">';
+  hh+='<div class="sname">'+salon.nom+'</div>';
+  if(salon.sousTitre)hh+='<div class="ssub">'+salon.sousTitre+'</div>';
+  if(t[24])hh+='<div class="deco" style="position:absolute;bottom:14px">'+t[24]+'</div>';
   hh+='</div>';
-  hh+='<div style="'+t.footer+'">';
-  hh+='Valable jusqu\u2019au <strong>'+g.exp+'</strong> \u2022 Montant: '+g.val.toFixed(2)+' \u20ac TTC';
-  if(g.ht)hh+=' (HT: '+g.ht.toFixed(2)+'\u20ac)';
-  hh+='<br>'+salon.nom;
-  if(salon.adr)hh+=' \u2022 '+salon.adr;
+  // Right: content
+  hh+='<div class="right">';
+  if(t[24])hh+='<div class="deco">'+t[24]+'</div>';
+  hh+='<div class="label">Carte Cadeau'+(g.gcNum?' N\u00b0'+g.gcNum:'')+'</div>';
+  hh+='<div class="amt">'+g.val.toFixed(0)+' <span class="e">\u20ac</span></div>';
+  hh+='<div class="nms">De <strong>'+(g.from||"")+'</strong>'+(g.to?' \u2014 Pour <strong>'+g.to+'</strong>':'')+'</div>';
+  if(g.msg&&g.msg.length>0)hh+='<div class="msg">\u00ab '+g.msg+' \u00bb</div>';
+  hh+='<div class="cd">'+g.code+'</div>';
+  hh+='<div class="sc">'+scopeLabel+'</div>';
+  hh+='<div class="vld">Valable jusqu\u2019au '+g.exp+'</div>';
+  if(t[24])hh+='<div class="deco">'+t[24]+'</div>';
+  hh+='</div>';
+  // Footer
+  hh+='<div class="foot">'+salon.nom;
+  if(salon.adr||salon.adresse)hh+=' \u2022 '+(salon.adr||salon.adresse);
   if(salon.tel)hh+=' \u2022 '+salon.tel;
-  if(salon.siret)hh+='<br>SIRET: '+salon.siret;
-  hh+='<br>Ce bon est nominatif, non remboursable et non \u00e9changeable contre des esp\u00e8ces.';
-  hh+='</div></div>';
-  hh+='<div class="no-print" style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:14px 40px;font-size:16px;font-weight:700;background:#c8a84e;color:#fff;border:none;border-radius:10px;cursor:pointer;box-shadow:0 4px 15px rgba(200,168,78,.3)">Imprimer</button></div>';
+  if(salon.siret)hh+=' \u2022 SIRET: '+salon.siret;
+  hh+=' \u2022 Non remboursable, non \u00e9changeable.</div>';
+  hh+='</div>';
+  hh+='<div class="no-print" style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:14px 40px;font-size:16px;font-weight:700;background:#c8a84e;color:#fff;border:none;border-radius:10px;cursor:pointer;box-shadow:0 4px 15px rgba(200,168,78,.3)">\ud83d\udda8 Imprimer</button></div>';
   hh+='</body></html>';
   w.document.write(hh);w.document.close();
   setTimeout(function(){w.focus();},300);
@@ -3413,12 +3468,13 @@ function confirmVoidGift(gcId){
   if(!g)return;
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:48px;margin-bottom:10px">\u26a0\ufe0f</div>';
-  h+='<h2 style="color:var(--red)!important">Annuler ce bon cadeau ?</h2>';
-  h+='<div style="font-size:15px;margin-bottom:6px"><strong>'+g.code+'</strong> \u2022 '+g.val.toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:13px;color:#888;margin-bottom:16px">Le bon sera d\u00e9finitivement annul\u00e9 et trac\u00e9 en comptabilit\u00e9.</div>';
-  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="cM()">Non</button>';
-  h+='<button class="btn" style="flex:1;background:var(--red)!important;color:#fff!important" onclick="doVoidGift(\u0027'+gcId+'\u0027)">Oui, annuler</button></div>';
-  h+='</div></div>';
+  h+='<h2 style="color:var(--red)!important">Bon '+g.code+'</h2>';
+  h+='<div style="font-size:15px;margin-bottom:6px">'+g.val.toFixed(2)+' \u20ac'+(g.from?' \u2022 '+g.from:'')+'</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">';
+  h+='<button class="btn" style="background:var(--orange)!important;color:#fff!important;padding:14px" onclick="doVoidGift(\u0027'+gcId+'\u0027)">\ud83d\udeab Annuler (garder en historique compta)</button>';
+  h+='<button class="btn" style="background:var(--red)!important;color:#fff!important;padding:14px" onclick="if(confirm(\u0027Supprimer d\u00e9finitivement ?\u0027)){cM();deleteGiftCard(\u0027'+gcId+'\u0027)}">\ud83d\uddd1 Supprimer d\u00e9finitivement</button>';
+  h+='<button class="btn" style="padding:14px" onclick="cM()">Retour</button>';
+  h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
 function doVoidGift(gcId){
@@ -4189,6 +4245,7 @@ function oM(type,pf){
     h+='<div class="fg" style="flex:1"><label>Dur\u00e9e de validit\u00e9</label><select id="gexp"><option value="12">12 mois (standard)</option><option value="6">6 mois</option><option value="18">18 mois</option><option value="24">24 mois</option></select></div>';
     h+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="gscope"><option value="tout">Tout (prestations + produits)</option><option value="prestations">Prestations uniquement</option><option value="produits">Produits uniquement</option></select></div></div>';
     h+='<div class="fg"><label>Mode de paiement</label><select id="gpay"><option value="CB">Carte bancaire</option><option value="Especes">Esp\u00e8ces</option><option value="Cheque">Ch\u00e8que</option><option value="Virement">Virement bancaire</option></select></div>';
+    h+='<div class="fg"><label>Code du bon (unique)</label><div style="display:flex;gap:8px"><input id="gcode" placeholder="Ex: NOEL2026-001" style="flex:1;font-size:16px;font-weight:700;letter-spacing:2px;text-transform:uppercase"><button class="btn bs" style="padding:10px 14px;white-space:nowrap" onclick="document.getElementById(\'gcode\').value=\'BC-\'+String(Date.now()).slice(-6).toUpperCase()">Auto</button></div></div>';
     h+='<button class="btn bg bk" style="margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="aGi()">\u2705 Encaisser et cr\u00e9er le bon</button>';
   }
   else if(type==="giftSearch"){
@@ -4405,7 +4462,8 @@ function aGi(){
     GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});
   }
   var gcNum=window._gcSeq++;
-  var code="BC-"+String(gcNum).padStart(4,"0");
+  var code=(document.getElementById("newBcCode")?document.getElementById("newBcCode").value.trim().toUpperCase():"")||"BC-"+String(gcNum).padStart(4,"0");
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
   // TVA calculation (20% standard for gift cards = prestation de service)
   var tvaRate=0.20;
   var ht=v/(1+tvaRate);
@@ -4810,6 +4868,7 @@ function handleTkOption(idx){
     htm4+='<div style="display:flex;gap:8px">';
     htm4+='<div class="fg" style="flex:1"><label>Validit\u00e9</label><select id="newBcExp"><option value="12">12 mois</option><option value="6">6 mois</option><option value="18">18 mois</option><option value="24">24 mois</option></select></div>';
     htm4+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="newBcScope"><option value="tout">Tout</option><option value="prestations">Prestations</option><option value="produits">Produits</option></select></div></div>';
+    htm4+='<div class="fg"><label>Code du bon</label><div style="display:flex;gap:8px"><input id="newBcCode" placeholder="Ex: NOEL2026-001" style="flex:1;font-size:15px;font-weight:700;letter-spacing:2px;text-transform:uppercase"><button class="btn bs" style="padding:8px 12px;white-space:nowrap" onclick="document.getElementById(\'newBcCode\').value=\'BC-\'+String(Date.now()).slice(-6).toUpperCase()">Auto</button></div></div>';
     htm4+='<div style="display:flex;gap:8px;margin-top:14px">';
     htm4+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=3;showCaisse()">Annuler</button>';
     htm4+='<button class="btn bg" style="flex:1" onclick="doCreateBon()">Cr\u00e9er le bon</button>';
@@ -4841,7 +4900,8 @@ function doCreateBon(){
   // Sequential numbering
   if(!window._gcSeq){window._gcSeq=1;GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});}
   var gcNum=window._gcSeq++;
-  var code="BC-"+String(gcNum).padStart(4,"0");
+  var code=(document.getElementById("newBcCode")?document.getElementById("newBcCode").value.trim().toUpperCase():"")||"BC-"+String(gcNum).padStart(4,"0");
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
   var expD=new Date();expD.setMonth(expD.getMonth()+expM);
   var tvaRate=0.20;var ht=montant/(1+tvaRate);var tva=montant-ht;
   var ng={id:U(),code:code,val:montant,ht:ht,tva:tva,tvaRate:tvaRate,rem:montant,date:TD,from:from.trim(),to:to.trim(),msg:msg.trim(),cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,history:[]};
@@ -4913,7 +4973,8 @@ function finalizePay(method){
       }
       htm2+='<div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text3)">ou saisir un code :</div>';
     }else{htm2+='<div style="font-size:13px;color:var(--text3);margin-bottom:10px">Saisir le code :</div>';}
-    htm2+='<input type="text" id="bcCode" placeholder="BC-XXXXXX" style="text-align:center;font-size:18px;font-weight:700;padding:14px;text-transform:uppercase;margin-top:6px">';
+    htm2+='<input type="text" id="bcCode" placeholder="Tapez ou scannez le code du bon" style="text-align:center;font-size:18px;font-weight:700;padding:14px;text-transform:uppercase;margin-top:6px" autofocus>';
+    htm2+='<div style="font-size:11px;color:#999;margin-top:4px;text-align:center">\ud83d\udcf1 Passez le code-barres devant la scanette</div>';
     htm2+='<div style="display:flex;gap:8px;margin-top:14px">';
     htm2+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
     htm2+='<button class="btn bg" style="flex:1" onclick="doBonPay()">Valider</button>';
