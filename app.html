@@ -1334,7 +1334,7 @@ function go(pg,arg){
   var logoSrc=logo?logo.src:"";
   
   if(pg==="home"){
-    hdr.innerHTML='<img src="'+logoSrc+'" alt="Logo" id="hlogo" style="height:42px;border-radius:6px"><div id="htitle"><h1>'+SALON_CONFIG.nom+'</h1><small>'+new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+'</small></div><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:22px;cursor:pointer;padding:8px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:50%;min-width:18px;height:18px;align-items:center;justify-content:center"></span></button>';
+    hdr.innerHTML='<img src="'+logoSrc+'" alt="Logo" id="hlogo" style="height:42px;border-radius:6px"><div id="htitle"><h1>'+SALON_CONFIG.nom+'</h1><small>'+new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+'</small></div><div style="display:flex;align-items:center;gap:4px"><button onclick="go(\'settings\')" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:22px;cursor:pointer;padding:8px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:50%;min-width:18px;height:18px;align-items:center;justify-content:center"></span></button></div>';
   }else{
     var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Prestations",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis"};
     hdr.innerHTML='<button class="back-btn" onclick="go(\'home\')">←</button><div><h1>'+(titles[pg]||"")+'</h1></div>';
@@ -1408,113 +1408,73 @@ var ICO={
 function rHome(){
   var h='';
   var today=TD;
-  
-  // === COMPUTE ALL DATA ===
+  var tvaR=SALON_CONFIG.tauxTVA||20;
+  // Data
   var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled;});
   var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
   var doneCount=done.length;
   var remaining=AP.filter(function(a){return a.st==="conf"&&a.date===today;});
   var remainCA=0;remaining.forEach(function(a){var sv=gS(a.sId);if(sv)remainCA+=sv.p;});
   var remainCount=remaining.length;
-  var totalCA=doneCA+remainCA;
-  var totalCount=doneCount+remainCount;
-  // CA services vs products
+  var totalCA=doneCA+remainCA;var totalCount=doneCount+remainCount;
+  var totalHT=totalCA/(1+tvaR/100);
   var caServices=0,caProducts=0;
-  done.forEach(function(a){
-    if(a.items){a.items.forEach(function(it){if(it.isProd)caProducts+=(it.price*it.qty-it.remise);else caServices+=(it.price*it.qty-it.remise);});}
-    else{caServices+=a.pr;}
-  });
-  // New clients today
+  done.forEach(function(a){if(a.items){a.items.forEach(function(it){if(it.isProd)caProducts+=(it.price*it.qty-(it.remise||0));else caServices+=(it.price*it.qty-(it.remise||0));});}else{caServices+=a.pr;}});
   var newClients=0;
-  var todayAppts=AP.filter(function(a){return a.date===today&&a.st!=="canc"&&!a.cancelled;});
-  todayAppts.forEach(function(a){
+  AP.filter(function(a){return a.date===today&&a.st!=="canc"&&!a.cancelled;}).forEach(function(a){
     if(a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0){
-      var past=AP.filter(function(b){return b.cId===a.cId&&b.date<today&&b.st==="done"&&!b.cancelled;});
-      if(past.length===0)newClients++;
+      if(AP.filter(function(b){return b.cId===a.cId&&b.date<today&&b.st==="done"&&!b.cancelled;}).length===0)newClients++;
     }
   });
-  // Per collaborator
   var perSty={};
   done.forEach(function(a){var sty=gT(a.stId);var n=sty?sty.n:"?";if(!perSty[n])perSty[n]={ca:0,nb:0};perSty[n].ca+=a.pr;perSty[n].nb++;});
   var styNames=Object.keys(perSty);
-  
-  // === GOLD ACCENT STYLES ===
-  var goldBorder="border:1.5px solid rgba(200,168,78,.25)";
-  var goldBg="background:rgba(200,168,78,.06)";
-  var darkCard="background:rgba(10,10,20,.9);border:1.5px solid rgba(200,168,78,.2);border-radius:16px;overflow:hidden";
-  
-  // === CA DASHBOARD CARD ===
-  h+='<div style="'+darkCard+';margin-bottom:16px">';
-  
-  // Header bar
-  h+='<div style="background:linear-gradient(135deg,#c8a84e,#d4b95e,#c8a84e);padding:12px 18px;display:flex;justify-content:space-between;align-items:center">';
-  h+='<div style="font-family:var(--f1);font-size:14px;font-weight:800;letter-spacing:2px;color:#0a0a0a">CHIFFRE D\u0027AFFAIRES</div>';
-  h+='<div style="font-size:11px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})+'</div>';
+
+  // === DASHBOARD ===
+  h+='<div style="border:2px solid #c8a84e;border-radius:14px;overflow:hidden;margin-bottom:12px;background:#0a0a0a">';
+  // Gold header
+  h+='<div style="background:linear-gradient(135deg,#c8a84e,#d4b95e,#c8a84e);padding:7px 14px;display:flex;justify-content:space-between;align-items:center">';
+  h+='<span style="font-family:var(--f1);font-size:11px;font-weight:800;letter-spacing:3px;color:#0a0a0a">CA DU JOUR</span>';
+  h+='<span style="font-size:10px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'</span>';
   h+='</div>';
-  
-  // Main amount row
-  h+='<div style="padding:24px 20px 16px;text-align:center;background:radial-gradient(ellipse at 50% 30%,rgba(200,168,78,.08),transparent)">';
-  h+='<div style="font-size:11px;letter-spacing:4px;color:rgba(200,168,78,.5);text-transform:uppercase;margin-bottom:6px">Total de la journ\u00e9e</div>';
-  h+='<div style="font-family:var(--f1);font-size:48px;font-weight:900;background:linear-gradient(180deg,#e8d994,#c8a84e,#a87e3e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1">'+totalCA.toFixed(2)+'<span style="font-size:22px;-webkit-text-fill-color:#c8a84e"> \u20ac</span></div>';
-  h+='<div style="font-size:13px;color:rgba(200,168,78,.6);margin-top:6px">'+totalCount+' visite'+(totalCount>1?"s":"")+'</div>';
-  // Ornament
-  h+='<div style="display:flex;align-items:center;gap:10px;margin:14px auto;max-width:200px"><div style="flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,78,.2))"></div><span style="color:rgba(200,168,78,.25);font-size:10px">\u2726</span><div style="flex:1;height:1px;background:linear-gradient(90deg,rgba(200,168,78,.2),transparent)"></div></div>';
+  // Total
+  h+='<div style="padding:12px 14px 8px;text-align:center">';
+  h+='<div style="font-family:var(--f1);font-size:36px;font-weight:900;color:#c8a84e;line-height:1">'+totalCA.toFixed(2)+' \u20ac <span style="font-size:12px;color:rgba(200,168,78,.5)">TTC</span></div>';
+  h+='<div style="font-size:12px;color:rgba(200,168,78,.4);margin-top:2px">HT : '+totalHT.toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:13px;color:#fff;margin-top:3px;font-weight:700">'+totalCount+' client'+(totalCount>1?"s":"")+'</div>';
   h+='</div>';
-  
-  // 2 rows of stats
-  h+='<div style="padding:0 14px 14px">';
-  
-  // Row 1: Réalisé / À venir
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">';
-  // Réalisé
-  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:14px;text-align:center">';
-  h+='<div style="font-size:10px;letter-spacing:2px;color:var(--green);text-transform:uppercase;font-weight:800;margin-bottom:6px">\u2705 R\u00e9alis\u00e9</div>';
-  h+='<div style="font-family:var(--f1);font-size:26px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' <span style="font-size:14px;color:var(--text3)">\u20ac</span></div>';
-  h+='<div style="font-size:11px;color:var(--text3)">'+doneCount+' client'+(doneCount>1?"s":"")+'</div></div>';
-  // À venir
-  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:14px;text-align:center">';
-  h+='<div style="font-size:10px;letter-spacing:2px;color:var(--blue);text-transform:uppercase;font-weight:800;margin-bottom:6px">\u23f3 \u00c0 venir</div>';
-  h+='<div style="font-family:var(--f1);font-size:26px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' <span style="font-size:14px;color:var(--text3)">\u20ac</span></div>';
-  h+='<div style="font-size:11px;color:var(--text3)">'+remainCount+' RDV</div></div>';
+  // Grid 2x2
+  h+='<div style="padding:0 8px 8px;display:grid;grid-template-columns:1fr 1fr;gap:6px">';
+  h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:10px;padding:8px;text-align:center">';
+  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:11px;color:var(--green);font-weight:700">\u2705 R\u00e9alis\u00e9 \u2022 '+doneCount+' client'+(doneCount>1?"s":"")+'</div></div>';
+  h+='<div style="background:rgba(74,133,181,.08);border:1px solid rgba(74,133,181,.2);border-radius:10px;padding:8px;text-align:center">';
+  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:11px;color:var(--blue);font-weight:700">\u23f3 \u00c0 venir \u2022 '+remainCount+' RDV</div></div>';
+  h+='<div style="background:rgba(200,168,78,.05);border:1px solid rgba(200,168,78,.15);border-radius:10px;padding:8px;text-align:center">';
+  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:11px;color:var(--pink);font-weight:700">\u2702\ufe0f Services</div></div>';
+  h+='<div style="background:rgba(200,168,78,.05);border:1px solid rgba(200,168,78,.15);border-radius:10px;padding:8px;text-align:center">';
+  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:11px;color:var(--orange);font-weight:700">\ud83d\udecd Produits</div></div>';
   h+='</div>';
-  
-  // Row 2: Services / Produits / Nouveaux clients
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">';
-  // CA Services
-  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
-  h+='<div style="font-size:9px;letter-spacing:1px;color:var(--pink);text-transform:uppercase;font-weight:800;margin-bottom:4px">\u2702\ufe0f Services</div>';
-  h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac</div></div>';
-  // CA Produits
-  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
-  h+='<div style="font-size:9px;letter-spacing:1px;color:var(--orange);text-transform:uppercase;font-weight:800;margin-bottom:4px">\ud83d\udecd Produits</div>';
-  h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac</div></div>';
-  // Nouveaux clients
-  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
-  h+='<div style="font-size:9px;letter-spacing:1px;color:var(--purple);text-transform:uppercase;font-weight:800;margin-bottom:4px">\u2728 Nouveaux</div>';
-  h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+newClients+'</div>';
-  h+='<div style="font-size:10px;color:var(--text3)">client'+(newClients>1?"s":"")+'</div></div>';
-  h+='</div>';
-  
-  // Row 3: Per collaborator
-  if(styNames.length>0){
-    h+='<div style="display:grid;grid-template-columns:repeat('+Math.min(styNames.length,3)+',1fr);gap:10px;margin-bottom:10px">';
-    for(var si=0;si<styNames.length;si++){
-      var sn=styNames[si],sd=perSty[sn];
-      h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
-      h+='<div style="font-size:10px;color:var(--gold);font-weight:700;margin-bottom:4px">'+sn+'</div>';
-      h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+sd.ca.toFixed(0)+' \u20ac</div>';
-      h+='<div style="font-size:10px;color:var(--text3)">'+sd.nb+' client'+(sd.nb>1?"s":"")+'</div></div>';
-    }
-    h+='</div>';
+  // Row: Nveaux clients + collabs
+  h+='<div style="padding:0 8px 8px;display:flex;gap:6px">';
+  h+='<div style="flex:1;background:rgba(128,80,168,.08);border:1px solid rgba(128,80,168,.2);border-radius:10px;padding:8px;text-align:center">';
+  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+newClients+'</div>';
+  h+='<div style="font-size:11px;color:var(--purple);font-weight:700">\u2728 Nvx clients ayant pris RDV</div></div>';
+  for(var si=0;si<styNames.length;si++){var sn=styNames[si],sd=perSty[sn];
+    h+='<div style="flex:1;background:rgba(200,168,78,.05);border:1px solid rgba(200,168,78,.15);border-radius:10px;padding:8px;text-align:center">';
+    h+='<div style="font-size:16px;font-weight:900;color:#fff">'+sd.ca.toFixed(0)+' \u20ac</div>';
+    h+='<div style="font-size:11px;color:var(--gold);font-weight:700">'+sn+' \u2022 '+sd.nb+' cl.</div></div>';
   }
-  
-  // Cloture button
-  h+='<button onclick="doCloture()" style="width:100%;padding:14px;background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.2);color:var(--gold);font-weight:800;font-size:14px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--f2);letter-spacing:1px">'+ICO.cloture+' CL\u00d4TURE DE LA JOURN\u00c9E</button>';
-  
-  h+='</div></div>';
-  
-  // === NAVIGATION TILES ===
-  h+='<div class="sec" style="margin-top:8px">Mon salon</div><div class="tiles">';
+  h+='</div>';
+  // Cloture
+  h+='<div style="padding:0 8px 8px"><button onclick="doCloture()" style="width:100%;padding:10px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:800;font-size:12px;border-radius:10px;cursor:pointer;font-family:var(--f2);letter-spacing:1px">'+ICO.cloture+' CL\u00d4TURE DE LA JOURN\u00c9E</button></div>';
+  h+='</div>';
+
+  // === TILES (no settings tile) ===
+  h+='<div class="sec" style="margin-top:4px">Mon salon</div><div class="tiles">';
   h+='<div class="tile" onclick="go(\'planning\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.planning+'</div><div class="tl">Planning</div></div>';
   h+='<div class="tile" onclick="go(\'caisse\')"><div class="ti" style="background:var(--green-bg);color:var(--green)">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
   h+='<div class="tile" onclick="go(\'clients\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
@@ -1524,12 +1484,9 @@ function rHome(){
   h+='<div class="tile" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
   h+='<div class="tile" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.caisse+'</div><div class="tl">Caisse</div><div style="font-size:18px;color:var(--text3)">\u2304</div></div>';
   h+='<div class="tile" onclick="go(\'stats\')"><div class="ti" style="background:var(--purple-bg);color:var(--purple)">'+ICO.stats+'</div><div class="tl">Rapports</div></div>';
-  h+='<div class="tile" onclick="go(\'settings\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.settings+'</div><div class="tl">Param\u00e8tres</div></div>';
   h+='</div>';
-  
   return h;
 }
-
 
 // === PLANNING ===
 var SVCCOLORS={
