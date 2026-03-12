@@ -2273,6 +2273,71 @@ function deleteCollabFromDB(collabId){
   // DO NOT call saveCollaborateurs here - it would re-insert the remaining collabs
 }
 
+function toggleSvcOnline(svcId,on){
+  var SC=window.SITE_CONFIG;if(!SC)return;
+  if(!SC.servicesEnLigne)SC.servicesEnLigne=[];
+  if(on){if(SC.servicesEnLigne.indexOf(svcId)<0)SC.servicesEnLigne.push(svcId);}
+  else{SC.servicesEnLigne=SC.servicesEnLigne.filter(function(id){return id!==svcId;});}
+  saveSiteConfig();
+}
+function toggleProdOnline(prodId,on){
+  var SC=window.SITE_CONFIG;if(!SC)return;
+  if(!SC.produitsEnLigne)SC.produitsEnLigne=[];
+  if(on){if(SC.produitsEnLigne.indexOf(prodId)<0)SC.produitsEnLigne.push(prodId);}
+  else{SC.produitsEnLigne=SC.produitsEnLigne.filter(function(id){return id!==prodId;});}
+  saveSiteConfig();
+}
+function saveSiteConfig(){
+  var SC=window.SITE_CONFIG;if(!SC)return;
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    var data={
+      salon_id:_salonId,
+      site_actif:SC.siteActif,
+      reservation_active:SC.reservationActive,
+      boutique_active:SC.boutiqueActive,
+      acompte_obligatoire:SC.acompteObligatoire,
+      acompte_montant:SC.acompteMontant,
+      acompte_type:SC.acompteType,
+      delai_min_heures:SC.delaiMinH,
+      delai_max_jours:SC.delaiMaxJ,
+      creneau_intervalle:SC.creneauMin,
+      confirmation_auto:SC.confirmAuto,
+      services_en_ligne:SC.servicesEnLigne,
+      produits_en_ligne:SC.produitsEnLigne,
+      message_accueil:SC.msgAccueil,
+      message_confirmation:SC.msgConfirmation,
+      updated_at:new Date().toISOString()
+    };
+    // Upsert: try update first, then insert
+    _sb.from("site_config").update(data).eq("salon_id",_salonId).then(function(r){
+      if(!r.data||r.data.length===0){
+        _sb.from("site_config").insert(data).then(function(r2){
+          console.log("[SITE CONFIG] Inserted",r2.error?r2.error.message:"OK");
+        });
+      }else{
+        console.log("[SITE CONFIG] Updated OK");
+      }
+    });
+  }
+}
+function loadSiteConfig(){
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1).then(function(r){
+      if(r.data&&r.data[0]){
+        var d=r.data[0];
+        window.SITE_CONFIG={
+          siteActif:d.site_actif,reservationActive:d.reservation_active,boutiqueActive:d.boutique_active,
+          acompteObligatoire:d.acompte_obligatoire,acompteMontant:Number(d.acompte_montant),acompteType:d.acompte_type,
+          delaiMinH:d.delai_min_heures,delaiMaxJ:d.delai_max_jours,creneauMin:d.creneau_intervalle,
+          confirmAuto:d.confirmation_auto,servicesEnLigne:d.services_en_ligne||[],produitsEnLigne:d.produits_en_ligne||[],
+          msgAccueil:d.message_accueil||"",msgConfirmation:d.message_confirmation||""
+        };
+        console.log("[SITE CONFIG] Loaded",window.SITE_CONFIG);
+      }
+    });
+  }
+}
+
 function rSettings(){
   var settTab=window._settTab||"main";
   var h='';
@@ -2292,7 +2357,8 @@ function rSettings(){
       {k:"equipe",i:"\ud83d\udc65",t:"\u00c9quipe",d:"Noms et couleurs des coiffeuses"},
       {k:"planning",i:"\ud83d\udcc5",t:"Affichage planning",d:"Intervalle, hauteur des cr\u00e9neaux"},
       {k:"fond",i:"\ud83c\udfa8",t:"Apparence",d:"Fond d\u0027\u00e9cran, th\u00e8me"},
-      {k:"salon",i:"\ud83c\udfe0",t:"Infos du salon",d:"Nom, adresse, t\u00e9l\u00e9phone"},
+      {k:"salon",i:"\ud83c\udfe0",t:"Infos du salon",d:"Nom, adresse, t\u00e9l\u00e9phone, logo"},
+      {k:"siteweb",i:"\ud83c\udf10",t:"Site en ligne",d:"R\u00e9servation, boutique, activation"},
       {k:"fidelite",i:"\ud83c\udfc5",t:"Fid\u00e9lit\u00e9",d:"Programme de fid\u00e9lit\u00e9 clients"},
       {k:"caisse",i:"\ud83d\udcb0",t:"Caisse & paiements",d:"Modes de paiement, TVA"},
       {k:"nf525",i:"\ud83d\udee1",t:"NF525",d:"Audit, chaines, clotures Z"}
@@ -2501,6 +2567,73 @@ function rSettings(){
     h+='</div>';
     // Save button
     h+='<button class="btn bg bk" style="width:100%;margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="saveSalonInfo()">\u2705 Enregistrer les infos salon</button>';
+  }
+  
+  else if(settTab==="siteweb"){
+    if(!window.SITE_CONFIG)window.SITE_CONFIG={siteActif:false,reservationActive:false,boutiqueActive:false,acompteObligatoire:false,acompteMontant:10,acompteType:"fixe",delaiMinH:2,delaiMaxJ:30,creneauMin:15,confirmAuto:false,servicesEnLigne:[],produitsEnLigne:[],msgAccueil:"Bienvenue ! Prenez rendez-vous en quelques clics.",msgConfirmation:"Votre demande a bien \u00e9t\u00e9 envoy\u00e9e."};
+    var SC=window.SITE_CONFIG;
+    h+='<div class="sec">\ud83c\udf10 Site en ligne</div>';
+    
+    // Activation toggles
+    h+='<div class="card">';
+    h+='<div class="ct" style="margin-bottom:12px">Activation</div>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-weight:700;font-size:14px">\ud83c\udf10 Site vitrine</span><input type="checkbox" '+(SC.siteActif?"checked":"")+' onchange="window.SITE_CONFIG.siteActif=this.checked;saveSiteConfig()"></label>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-weight:700;font-size:14px">\ud83d\udcc5 R\u00e9servation en ligne</span><input type="checkbox" '+(SC.reservationActive?"checked":"")+' onchange="window.SITE_CONFIG.reservationActive=this.checked;saveSiteConfig()"></label>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;cursor:pointer"><span style="font-weight:700;font-size:14px">\ud83d\udecd Boutique en ligne (Click & Collect)</span><input type="checkbox" '+(SC.boutiqueActive?"checked":"")+' onchange="window.SITE_CONFIG.boutiqueActive=this.checked;saveSiteConfig()"></label>';
+    h+='</div>';
+    
+    // URL du site
+    if(typeof _salonId!=="undefined"&&_salonId){
+      h+='<div class="card"><div class="ct">Lien du site</div>';
+      var siteUrl=window.location.origin+"/site.html?s="+_salonId;
+      h+='<div style="display:flex;gap:8px;align-items:center;margin-top:8px">';
+      h+='<input id="siteUrlField" value="'+siteUrl+'" readonly style="flex:1;font-size:12px;padding:10px;background:var(--bg);border-radius:8px;color:var(--gold)">';
+      h+='<button class="btn bs" style="font-size:12px;white-space:nowrap" onclick="navigator.clipboard.writeText(document.getElementById(\'siteUrlField\').value);this.textContent=\'Copi\u00e9 !\'">Copier</button>';
+      h+='</div></div>';
+    }
+    
+    // Réservation config
+    h+='<div class="card"><div class="ct">\ud83d\udcc5 Configuration r\u00e9servation</div>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border2);cursor:pointer;font-size:14px"><span>Acompte obligatoire</span><input type="checkbox" '+(SC.acompteObligatoire?"checked":"")+' onchange="window.SITE_CONFIG.acompteObligatoire=this.checked;saveSiteConfig()"></label>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">';
+    h+='<div class="fg"><label>Montant acompte</label><input type="number" value="'+SC.acompteMontant+'" min="0" style="text-align:center" onchange="window.SITE_CONFIG.acompteMontant=+this.value;saveSiteConfig()"></div>';
+    h+='<div class="fg"><label>Type</label><select onchange="window.SITE_CONFIG.acompteType=this.value;saveSiteConfig()"><option value="fixe"'+(SC.acompteType==="fixe"?" selected":"")+'>Fixe (\u20ac)</option><option value="pourcentage"'+(SC.acompteType==="pourcentage"?" selected":"")+'>Pourcentage (%)</option></select></div>';
+    h+='</div>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border2);cursor:pointer;font-size:14px;margin-top:8px"><span>Confirmation automatique</span><input type="checkbox" '+(SC.confirmAuto?"checked":"")+' onchange="window.SITE_CONFIG.confirmAuto=this.checked;saveSiteConfig()"></label>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">';
+    h+='<div class="fg"><label>D\u00e9lai min (heures avant)</label><input type="number" value="'+SC.delaiMinH+'" min="0" style="text-align:center" onchange="window.SITE_CONFIG.delaiMinH=+this.value;saveSiteConfig()"></div>';
+    h+='<div class="fg"><label>R\u00e9sa max (jours)</label><input type="number" value="'+SC.delaiMaxJ+'" min="1" style="text-align:center" onchange="window.SITE_CONFIG.delaiMaxJ=+this.value;saveSiteConfig()"></div>';
+    h+='</div>';
+    h+='<div class="fg" style="margin-top:10px"><label>Intervalle cr\u00e9neaux (min)</label><select onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option></select></div>';
+    h+='</div>';
+    
+    // Services réservables en ligne
+    h+='<div class="card"><div class="ct">\u2702\ufe0f Prestations r\u00e9servables en ligne</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">D\u00e9cochez les prestations que vous ne voulez pas proposer en ligne.</div>';
+    var allSvcOn=!SC.servicesEnLigne||SC.servicesEnLigne.length===0;
+    for(var si=0;si<SVC.length;si++){
+      var sv=SVC[si];
+      var isOn=allSvcOn||SC.servicesEnLigne.indexOf(sv.id)>=0;
+      h+='<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer"><input type="checkbox" '+(isOn?"checked":"")+' onchange="toggleSvcOnline('+sv.id+',this.checked)"> '+sv.n+' <span style="color:var(--gold);font-weight:700;margin-left:auto">'+sv.p+' \u20ac</span></label>';
+    }
+    h+='</div>';
+    
+    // Produits vendables en ligne
+    h+='<div class="card"><div class="ct">\ud83d\udecd Produits en Click & Collect</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Cochez les produits disponibles \u00e0 la vente en ligne.</div>';
+    var allProdOn=!SC.produitsEnLigne||SC.produitsEnLigne.length===0;
+    for(var pi=0;pi<PRODS.length;pi++){
+      var pr=PRODS[pi];
+      var isPOn=allProdOn||SC.produitsEnLigne.indexOf(pr.id)>=0;
+      h+='<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer"><input type="checkbox" '+(isPOn?"checked":"")+' onchange="toggleProdOnline('+pr.id+',this.checked)"> '+pr.n+' <span style="color:var(--gold);font-weight:700;margin-left:auto">'+pr.p+' \u20ac</span></label>';
+    }
+    h+='</div>';
+    
+    // Messages personnalisables
+    h+='<div class="card"><div class="ct">\u270d\ufe0f Messages</div>';
+    h+='<div class="fg"><label>Message d\'accueil du site</label><textarea rows="2" onchange="window.SITE_CONFIG.msgAccueil=this.value;saveSiteConfig()">'+SC.msgAccueil+'</textarea></div>';
+    h+='<div class="fg"><label>Message apr\u00e8s r\u00e9servation</label><textarea rows="2" onchange="window.SITE_CONFIG.msgConfirmation=this.value;saveSiteConfig()">'+SC.msgConfirmation+'</textarea></div>';
+    h+='</div>';
   }
   
   else if(settTab==="fidelite"){
@@ -6568,6 +6701,9 @@ function applyTheme(k,c,c2){
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   go("settings");
 }
+
+// Load site config on init
+if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){loadSiteConfig();},1000);
 
 // App init — called by coiffpro-supabase.js after login, or directly if offline
 function initApp(){
