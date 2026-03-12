@@ -269,6 +269,10 @@ async function loadSalonData() {
     // Restaurer le dernier hash pour le chaînage
     var doneH = AP.filter(function(a) { return a.hash; });
     if (doneH.length) _lastTicketHash = doneH[0].hash || "00000000";
+    // Restaurer le numéro de ticket max
+    var maxTkN = 0;
+    AP.forEach(function(a) { if (a.tkNum && a.tkNum > maxTkN) maxTkN = a.tkNum; });
+    if (maxTkN > 0) tkN = maxTkN;
   }
 
   // 7. Charger produits → PRODS[]
