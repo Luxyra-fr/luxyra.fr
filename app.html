@@ -1407,24 +1407,126 @@ var ICO={
 };
 function rHome(){
   var h='';
-  h+='<div class="sec">Gestion du salon</div><div class="tiles">';
-  h+='<div class="tile" onclick="go(\'clients\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
-  h+='<div class="tile" onclick="go(\'products\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.products+'</div><div class="tl">Produits</div></div>';
-  h+='<div class="tile" onclick="go(\'services\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.services+'</div><div class="tl">Services</div></div>';
-  h+='<div class="tile" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.caisse+'</div><div class="tl">Gestion de la caisse</div><div style="font-size:18px;color:var(--text3)">\u2304</div></div>';
-  h+='<div class="tile" onclick="go(\'stats\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.stats+'</div><div class="tl">Rapports</div></div>';
+  var today=TD;
+  
+  // === COMPUTE ALL DATA ===
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled;});
+  var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
+  var doneCount=done.length;
+  var remaining=AP.filter(function(a){return a.st==="conf"&&a.date===today;});
+  var remainCA=0;remaining.forEach(function(a){var sv=gS(a.sId);if(sv)remainCA+=sv.p;});
+  var remainCount=remaining.length;
+  var totalCA=doneCA+remainCA;
+  var totalCount=doneCount+remainCount;
+  // CA services vs products
+  var caServices=0,caProducts=0;
+  done.forEach(function(a){
+    if(a.items){a.items.forEach(function(it){if(it.isProd)caProducts+=(it.price*it.qty-it.remise);else caServices+=(it.price*it.qty-it.remise);});}
+    else{caServices+=a.pr;}
+  });
+  // New clients today
+  var newClients=0;
+  var todayAppts=AP.filter(function(a){return a.date===today&&a.st!=="canc"&&!a.cancelled;});
+  todayAppts.forEach(function(a){
+    if(a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0){
+      var past=AP.filter(function(b){return b.cId===a.cId&&b.date<today&&b.st==="done"&&!b.cancelled;});
+      if(past.length===0)newClients++;
+    }
+  });
+  // Per collaborator
+  var perSty={};
+  done.forEach(function(a){var sty=gT(a.stId);var n=sty?sty.n:"?";if(!perSty[n])perSty[n]={ca:0,nb:0};perSty[n].ca+=a.pr;perSty[n].nb++;});
+  var styNames=Object.keys(perSty);
+  
+  // === GOLD ACCENT STYLES ===
+  var goldBorder="border:1.5px solid rgba(200,168,78,.25)";
+  var goldBg="background:rgba(200,168,78,.06)";
+  var darkCard="background:rgba(10,10,20,.9);border:1.5px solid rgba(200,168,78,.2);border-radius:16px;overflow:hidden";
+  
+  // === CA DASHBOARD CARD ===
+  h+='<div style="'+darkCard+';margin-bottom:16px">';
+  
+  // Header bar
+  h+='<div style="background:linear-gradient(135deg,#c8a84e,#d4b95e,#c8a84e);padding:12px 18px;display:flex;justify-content:space-between;align-items:center">';
+  h+='<div style="font-family:var(--f1);font-size:14px;font-weight:800;letter-spacing:2px;color:#0a0a0a">CHIFFRE D\u0027AFFAIRES</div>';
+  h+='<div style="font-size:11px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})+'</div>';
   h+='</div>';
-  h+='<div class="sec" style="margin-top:20px">Ma comptabilit\u00e9</div><div class="tiles">';
-  h+='<div class="tile" onclick="showCAInstantane()"><div class="ti" style="background:var(--gold-bg2);color:var(--gold)">'+ICO.ca+'</div><div class="tl">CA instantan\u00e9</div></div>';
-  h+='<div class="tile" onclick="doCloture()"><div class="ti" style="background:var(--gold-bg2);color:var(--gold)">'+ICO.cloture+'</div><div class="tl">Cl\u00f4ture</div></div>';
+  
+  // Main amount row
+  h+='<div style="padding:24px 20px 16px;text-align:center;background:radial-gradient(ellipse at 50% 30%,rgba(200,168,78,.08),transparent)">';
+  h+='<div style="font-size:11px;letter-spacing:4px;color:rgba(200,168,78,.5);text-transform:uppercase;margin-bottom:6px">Total de la journ\u00e9e</div>';
+  h+='<div style="font-family:var(--f1);font-size:48px;font-weight:900;background:linear-gradient(180deg,#e8d994,#c8a84e,#a87e3e);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1">'+totalCA.toFixed(2)+'<span style="font-size:22px;-webkit-text-fill-color:#c8a84e"> \u20ac</span></div>';
+  h+='<div style="font-size:13px;color:rgba(200,168,78,.6);margin-top:6px">'+totalCount+' visite'+(totalCount>1?"s":"")+'</div>';
+  // Ornament
+  h+='<div style="display:flex;align-items:center;gap:10px;margin:14px auto;max-width:200px"><div style="flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,78,.2))"></div><span style="color:rgba(200,168,78,.25);font-size:10px">\u2726</span><div style="flex:1;height:1px;background:linear-gradient(90deg,rgba(200,168,78,.2),transparent)"></div></div>';
   h+='</div>';
-  h+='<div class="sec" style="margin-top:20px">Mes clients</div><div class="tiles">';
+  
+  // 2 rows of stats
+  h+='<div style="padding:0 14px 14px">';
+  
+  // Row 1: Réalisé / À venir
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">';
+  // Réalisé
+  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:14px;text-align:center">';
+  h+='<div style="font-size:10px;letter-spacing:2px;color:var(--green);text-transform:uppercase;font-weight:800;margin-bottom:6px">\u2705 R\u00e9alis\u00e9</div>';
+  h+='<div style="font-family:var(--f1);font-size:26px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' <span style="font-size:14px;color:var(--text3)">\u20ac</span></div>';
+  h+='<div style="font-size:11px;color:var(--text3)">'+doneCount+' client'+(doneCount>1?"s":"")+'</div></div>';
+  // À venir
+  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:14px;text-align:center">';
+  h+='<div style="font-size:10px;letter-spacing:2px;color:var(--blue);text-transform:uppercase;font-weight:800;margin-bottom:6px">\u23f3 \u00c0 venir</div>';
+  h+='<div style="font-family:var(--f1);font-size:26px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' <span style="font-size:14px;color:var(--text3)">\u20ac</span></div>';
+  h+='<div style="font-size:11px;color:var(--text3)">'+remainCount+' RDV</div></div>';
+  h+='</div>';
+  
+  // Row 2: Services / Produits / Nouveaux clients
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">';
+  // CA Services
+  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
+  h+='<div style="font-size:9px;letter-spacing:1px;color:var(--pink);text-transform:uppercase;font-weight:800;margin-bottom:4px">\u2702\ufe0f Services</div>';
+  h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac</div></div>';
+  // CA Produits
+  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
+  h+='<div style="font-size:9px;letter-spacing:1px;color:var(--orange);text-transform:uppercase;font-weight:800;margin-bottom:4px">\ud83d\udecd Produits</div>';
+  h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac</div></div>';
+  // Nouveaux clients
+  h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
+  h+='<div style="font-size:9px;letter-spacing:1px;color:var(--purple);text-transform:uppercase;font-weight:800;margin-bottom:4px">\u2728 Nouveaux</div>';
+  h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+newClients+'</div>';
+  h+='<div style="font-size:10px;color:var(--text3)">client'+(newClients>1?"s":"")+'</div></div>';
+  h+='</div>';
+  
+  // Row 3: Per collaborator
+  if(styNames.length>0){
+    h+='<div style="display:grid;grid-template-columns:repeat('+Math.min(styNames.length,3)+',1fr);gap:10px;margin-bottom:10px">';
+    for(var si=0;si<styNames.length;si++){
+      var sn=styNames[si],sd=perSty[sn];
+      h+='<div style="'+goldBg+';'+goldBorder+';border-radius:12px;padding:12px;text-align:center">';
+      h+='<div style="font-size:10px;color:var(--gold);font-weight:700;margin-bottom:4px">'+sn+'</div>';
+      h+='<div style="font-family:var(--f1);font-size:20px;font-weight:900;color:#fff">'+sd.ca.toFixed(0)+' \u20ac</div>';
+      h+='<div style="font-size:10px;color:var(--text3)">'+sd.nb+' client'+(sd.nb>1?"s":"")+'</div></div>';
+    }
+    h+='</div>';
+  }
+  
+  // Cloture button
+  h+='<button onclick="doCloture()" style="width:100%;padding:14px;background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.2);color:var(--gold);font-weight:800;font-size:14px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--f2);letter-spacing:1px">'+ICO.cloture+' CL\u00d4TURE DE LA JOURN\u00c9E</button>';
+  
+  h+='</div></div>';
+  
+  // === NAVIGATION TILES ===
+  h+='<div class="sec" style="margin-top:8px">Mon salon</div><div class="tiles">';
   h+='<div class="tile" onclick="go(\'planning\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.planning+'</div><div class="tl">Planning</div></div>';
-  h+='<div class="tile" onclick="go(\'caisse\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
+  h+='<div class="tile" onclick="go(\'caisse\')"><div class="ti" style="background:var(--green-bg);color:var(--green)">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
+  h+='<div class="tile" onclick="go(\'clients\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
+  h+='<div class="tile" onclick="go(\'services\')"><div class="ti" style="background:var(--purple-bg);color:var(--purple)">'+ICO.services+'</div><div class="tl">Services</div></div>';
+  h+='<div class="tile" onclick="go(\'products\')"><div class="ti" style="background:var(--orange-bg);color:var(--orange)">'+ICO.products+'</div><div class="tl">Produits</div></div>';
+  h+='<div class="tile" onclick="go(\'gifts\')"><div class="ti" style="background:var(--gold-bg2);color:var(--gold)">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
   h+='<div class="tile" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
-  h+='<div class="tile" onclick="go(\'gifts\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
+  h+='<div class="tile" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.caisse+'</div><div class="tl">Caisse</div><div style="font-size:18px;color:var(--text3)">\u2304</div></div>';
+  h+='<div class="tile" onclick="go(\'stats\')"><div class="ti" style="background:var(--purple-bg);color:var(--purple)">'+ICO.stats+'</div><div class="tl">Rapports</div></div>';
   h+='<div class="tile" onclick="go(\'settings\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.settings+'</div><div class="tl">Param\u00e8tres</div></div>';
   h+='</div>';
+  
   return h;
 }
 
