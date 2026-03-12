@@ -3095,6 +3095,38 @@ function deleteGiftCardLocal(gcId){
   if(typeof deleteGiftCard==="function"){deleteGiftCard(gcId);}
   go("gifts");
 }
+
+function exportGiftRegister(){
+  var sep=";";
+  var lines=["N\u00b0;Code;Montant TTC;HT;TVA;Taux TVA;Type;Scope;Acheteur;B\u00e9n\u00e9ficiaire;Message;Date cr\u00e9ation;Date expiration;Statut;Utilis\u00e9;Reste;Mode paiement;N\u00b0 Ticket;Compte comptable"];
+  for(var i=0;i<GC.length;i++){
+    var g=GC[i];
+    var rem=g.rem!==undefined?g.rem:g.val;
+    var isOffert=g.isOffert||g.payMethod==="Offert";
+    var type=isOffert?"Offert":"Vendu";
+    var status=g.st==="voided"?"Annul\u00e9":g.st==="used"||rem<=0?"Utilis\u00e9":"Actif";
+    var compte=isOffert?"6234 (Cadeaux)":"4191 (Avances clients)";
+    if(g.st==="used"||rem<=0)compte="701 (Ventes prestations)";
+    var isMulti=(!g.scope||g.scope==="tout");
+    var htVal=isMulti?"N/A (multi-usages)":(g.ht||0).toFixed(2);
+    var tvaVal=isMulti?"N/A":(g.tva||0).toFixed(2);
+    var tvaRate=isMulti?"N/A":((g.tvaRate||0.20)*100).toFixed(0)+"%";
+    lines.push([
+      g.gcNum||"",g.code,(g.val||0).toFixed(2),htVal,tvaVal,tvaRate,
+      type,g.scope||"tout",g.from||"",g.to||"",'"'+(g.msg||"").replace(/"/g,'""')+'"',
+      g.cr||"",g.exp||"",status,(g.used||0).toFixed(2),rem.toFixed(2),
+      g.payMethod||"",g.tkNum||"",compte
+    ].join(sep));
+  }
+  var csv="\uFEFF"+lines.join("\n");
+  var blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a");
+  a.href=url;a.download="registre_bons_cadeaux_"+TD+".csv";
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function purgeAllGifts(){
   if(!confirm("Supprimer TOUS les bons cadeaux ?\nCette action est irr\u00e9versible !"))return;
   if(typeof purgeAllGiftCards==="function"){
@@ -3124,7 +3156,8 @@ function rGifts(){
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
   h+='<button class="btn" style="flex:1;font-size:14px;padding:14px;border-radius:12px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d Rechercher un bon</button>';
-  h+='<button class="btn" style="padding:14px 18px;border-radius:12px;font-size:12px;color:var(--red);border-color:var(--red)" onclick="purgeAllGifts()">\ud83d\uddd1 Tout effacer</button>';
+  h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:12px" onclick="exportGiftRegister()">\ud83d\udcc4 Export CSV</button>';
+  h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:12px;color:var(--red);border-color:var(--red)" onclick="purgeAllGifts()">\ud83d\uddd1 Purger</button>';
   h+='</div>';
   h+='<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text3)">\ud83d\udca1 Pour cr\u00e9er un bon cadeau, passez par <strong>Encaissement</strong> \u2192 menu \u22ee \u2192 Nouveau bon cadeau</div>';
   if(!window._gcTab)window._gcTab="actifs";
@@ -3179,6 +3212,10 @@ function rGifts(){
     else if(isPartial)h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#fdf2e4;color:#d48a1a;font-weight:700">Partiel</span>';
     else h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#e6f7ee;color:#2d9a5e;font-weight:700">Actif</span>';
     h+='</div>';
+    // Compta info
+    var isOff=g.isOffert||g.payMethod==="Offert";
+    var compteInfo=isOff?"Charge 6234 (cadeaux)":((g.st==="used"||(g.rem!==undefined&&g.rem<=0))?"CA reconnu (701)":"Avance client (4191)");
+    h+='<div style="font-size:10px;color:#888;margin-top:4px;font-style:italic">\ud83d\udcca '+compteInfo+'</div>';
     // History
     if(g.history&&g.history.length){
       h+='<div style="margin-top:8px;text-align:left;background:rgba(0,0,0,.03);border-radius:8px;padding:6px 10px">';
@@ -3459,11 +3496,21 @@ function printGiftThemed(gcId,themeId){
   if(t[24])hh+='<div class="deco">'+t[24]+'</div>';
   hh+='</div>';
   // Footer
+  // Legal footer with TVA distinction
+  var isMultiUsage=(!g.scope||g.scope==="tout");
+  var tvaLine=isMultiUsage?"Bon multi-usages (art. 256 ter CGI) \u2014 TVA applicable lors de l\u2019utilisation.":"Bon \u00e0 usage unique (art. 256 ter CGI) \u2014 TVA "+(g.tvaRate?Math.round(g.tvaRate*100):20)+"% incluse.";
+  var isOffert=g.isOffert||g.payMethod==="Offert";
   hh+='<div class="foot">'+salon.nom;
   if(salon.adr||salon.adresse)hh+=' \u2022 '+(salon.adr||salon.adresse);
   if(salon.tel)hh+=' \u2022 '+salon.tel;
-  if(salon.siret)hh+=' \u2022 SIRET: '+salon.siret;
-  hh+=' \u2022 Non remboursable, non \u00e9changeable.</div>';
+  if(salon.siret)hh+='<br>SIRET: '+salon.siret;
+  if(salon.tva)hh+=' \u2022 TVA: '+salon.tva;
+  hh+='<br>'+tvaLine;
+  if(g.tkNum)hh+=' \u2022 R\u00e9f. ticket: #'+g.tkNum;
+  if(isOffert)hh+='<br>Bon offert \u00e0 titre gracieux \u2014 Aucun r\u00e8glement per\u00e7u.';
+  hh+='<br>Utilisable en une ou plusieurs fois. Non remboursable, non \u00e9changeable contre esp\u00e8ces.';
+  hh+='<br>Sous r\u00e9serve des dispositions l\u00e9gales en vigueur.';
+  hh+='</div>';
   hh+='</div>';
   hh+='<div class="no-print" style="text-align:center;margin-top:20px"><button onclick="window.print()" style="padding:14px 40px;font-size:16px;font-weight:700;background:#c8a84e;color:#fff;border:none;border-radius:10px;cursor:pointer;box-shadow:0 4px 15px rgba(200,168,78,.3)">\ud83d\udda8 Imprimer</button></div>';
   hh+='</body></html>';
@@ -4483,8 +4530,10 @@ function aGi(){
   tkN++;
   var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:T[0]?T[0].id:1,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN};
   chainTicket(tk);AP.push(tk);
+  ng.tkNum=tk.tkNum; // Store ticket ref on the bon
   if(typeof saveAppointment==="function")saveAppointment(tk);
-  auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+") - "+pay+" - De:"+f+(t?" Pour:"+t:""));
+  var isMultiU=(!scope||scope==="tout");
+  auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC"+(isMultiU?" (multi-usages, TVA diff\u00e9r\u00e9e)":" (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+")")+" - "+pay+" - Compte 4191 (avance client) - De:"+f+(t?" Pour:"+t:""));
   // Success screen with print option
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>';
@@ -4964,7 +5013,7 @@ function doCreateFreeBon(){
   var ng={id:U(),code:code,val:montant,ht:0,tva:0,tvaRate:0,rem:montant,date:TD,from:"Salon (offert)",to:to.trim(),msg:"Bon offert",cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,payMethod:"Offert",history:[],isOffert:true};
   GC.push(ng);
   if(typeof saveGiftCard==="function")saveGiftCard(ng);
-  auditLog("BON_CADEAU_OFFERT","Bon offert "+code+" N\u00b0"+gcNum+" - "+montant.toFixed(2)+"E - Pour: "+to+" - Pas de facturation");
+  auditLog("BON_CADEAU_OFFERT","Bon offert "+code+" N\u00b0"+gcNum+" - "+montant.toFixed(2)+"E - Pour: "+to+" - Charge 6234 (cadeaux/échantillons) - Pas de facturation");
   cM();
   _tk.step=3;showCaisse();
   // Flash
@@ -5059,7 +5108,7 @@ function doBonPay(){
   bon.used=(bon.used||0)+use;
   if(!bon.history)bon.history=[];
   bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
-  if(bon.rem<=0){bon.st="used";bon.rem=0;}
+  if(bon.rem<=0){bon.st="used";bon.rem=0;auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E - Transfert compte 4191 \u2192 701 (CA reconnu)");}
   if(typeof saveGiftCard==="function")saveGiftCard(bon);
   auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Utilisé: "+use.toFixed(2)+"E - Reste: "+bon.rem.toFixed(2)+"E");
   if(!_tk.payments)_tk.payments=[];
