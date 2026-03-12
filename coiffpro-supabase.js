@@ -372,6 +372,13 @@ async function loadSalonData() {
   var hdr = document.getElementById("hdr");
   if (hdr) hdr.style.display = "";
   initApp(); // ← appelle la fonction d'init existante de l'app
+  // Update notification badge after data is loaded
+  setTimeout(function() {
+    if (typeof updateNotifBadge === "function") updateNotifBadge();
+    // Also show pending count in console
+    var pending = (window.RDV_ONLINE || []).filter(function(r) { return r.status === "pending"; });
+    if (pending.length > 0) console.log("CoiffPro: " + pending.length + " RDV en ligne en attente de confirmation !");
+  }, 500);
 }
 
 function showSuspendedScreen(status) {

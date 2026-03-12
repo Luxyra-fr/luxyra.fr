@@ -716,8 +716,8 @@ function showNotifs(){
           title:"\ud83d\udcc5 RDV en ligne"+(r.status==="pending"?" (en attente)":" (confirm\u00e9)"),
           detail:r.nom+(r.prenom?" "+r.prenom:"")+" \u2022 "+r.svcNom+" \u2022 "+r.date+" "+r.heure+(r.tel?" \u2022 "+r.tel:"")+(r.message?" \u2022 "+r.message:""),
           ts:r.createdAt||new Date().toISOString(),
-          seen:r.status==="confirmed"||r.status==="done",
-          confirmed:r.status==="confirmed"||r.status==="done",
+          seen:r.status==="done",
+          confirmed:r.status==="done",
           onlineRdv:r
         });
       }
@@ -1462,7 +1462,16 @@ var ICO={
 function updateNotifBadge(){
   var count=0;
   if(window.RDV_ONLINE){
-    count+=window.RDV_ONLINE.filter(function(r){return r.status==="pending";}).length;
+    // Count pending + recently confirmed (last 24h) as unseen
+    var now=new Date().getTime();
+    count+=window.RDV_ONLINE.filter(function(r){
+      if(r.status==="pending")return true;
+      if(r.status==="confirmed"&&r.createdAt){
+        var age=(now-new Date(r.createdAt).getTime())/3600000;
+        return age<24;// Show for 24h
+      }
+      return false;
+    }).length;
   }
   if(window.NOTIFS){
     count+=window.NOTIFS.filter(function(n){return!n.seen&&!n.rdvOnlineId;}).length;
