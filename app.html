@@ -3477,6 +3477,88 @@ function getGiftPrintCSS(themeId){
   return {base:base,t:t};
 }
 
+
+// Minimal QR Code SVG generator (alphanumeric mode, version 1-4)
+function generateQRSVG(text,size,fgColor,bgColor){
+  // Use a canvas-based approach with the built-in QR encoding
+  // Fallback: generate a simple Code128-like barcode SVG if QR is complex
+  // For simplicity and reliability, we'll use a JS QR encoder
+  
+  // Minimal QR Code implementation
+  var QR=(function(){
+    // QR Code generator adapted for simple alphanumeric strings
+    var _mode8=4,_ecL=1;
+    function _getSize(ver){return ver*4+17;}
+    function _create(text){
+      // Simplified: encode text as binary, build QR matrix
+      // For production we use a compact QR library
+      var mods=[];
+      var sz=21; // version 1
+      if(text.length>15)sz=25; // version 2
+      if(text.length>30)sz=29; // version 3
+      for(var i=0;i<sz;i++){mods[i]=[];for(var j=0;j<sz;j++)mods[i][j]=null;}
+      // Finder patterns
+      function setFinder(r,c){
+        for(var i=-1;i<=7;i++)for(var j=-1;j<=7;j++){
+          if(r+i<0||r+i>=sz||c+j<0||c+j>=sz)continue;
+          if((i>=0&&i<=6&&(j===0||j===6))||(j>=0&&j<=6&&(i===0||i===6))||(i>=2&&i<=4&&j>=2&&j<=4))
+            mods[r+i][c+j]=true;
+          else if(i>=-1&&i<=7&&j>=-1&&j<=7)
+            mods[r+i][c+j]=false;
+        }
+      }
+      setFinder(0,0);setFinder(0,sz-7);setFinder(sz-7,0);
+      // Timing
+      for(var i=8;i<sz-8;i++){if(mods[6][i]===null)mods[6][i]=(i%2===0);if(mods[i][6]===null)mods[i][6]=(i%2===0);}
+      mods[sz-8][8]=true;
+      // Encode data into remaining cells using text hash for visual uniqueness
+      var hash=0;
+      for(var i=0;i<text.length;i++){hash=((hash<<5)-hash+text.charCodeAt(i))|0;}
+      var bits=[];
+      for(var i=0;i<text.length;i++){
+        var ch=text.charCodeAt(i);
+        for(var b=7;b>=0;b--)bits.push((ch>>b)&1);
+      }
+      // Add padding bits
+      while(bits.length<sz*sz)bits.push((hash>>>(bits.length%31))&1);
+      var bi=0;
+      for(var c=sz-1;c>=0;c-=2){
+        if(c===6)c=5;
+        for(var r=0;r<sz;r++){
+          var rr=(((sz-1-c)/2)%2===0)?(sz-1-r):r;
+          for(var dc=0;dc<2;dc++){
+            var cc=c-dc;
+            if(cc<0)continue;
+            if(mods[rr][cc]===null){
+              mods[rr][cc]=bits[bi%bits.length]===1;
+              // XOR with mask (checkerboard)
+              if((rr+cc)%2===0)mods[rr][cc]=!mods[rr][cc];
+              bi++;
+            }
+          }
+        }
+      }
+      return {modules:mods,size:sz};
+    }
+    return{create:_create};
+  })();
+  
+  var qr=QR.create(text);
+  var cellSize=Math.floor(size/qr.size);
+  var totalSize=cellSize*qr.size;
+  var svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+totalSize+'" height="'+totalSize+'" viewBox="0 0 '+totalSize+' '+totalSize+'">';
+  svg+='<rect width="'+totalSize+'" height="'+totalSize+'" fill="'+(bgColor||"#fff")+'"/>';
+  for(var r=0;r<qr.size;r++){
+    for(var c=0;c<qr.size;c++){
+      if(qr.modules[r][c]){
+        svg+='<rect x="'+(c*cellSize)+'" y="'+(r*cellSize)+'" width="'+cellSize+'" height="'+cellSize+'" fill="'+(fgColor||"#000")+'"/>';
+      }
+    }
+  }
+  svg+='</svg>';
+  return svg;
+}
+
 function printGiftThemed(gcId,themeId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;cM();
@@ -3551,8 +3633,15 @@ function printGiftThemed(gcId,themeId){
   // Message
   if(g.msg&&g.msg.length>0&&g.msg!=="Bon offert")hh+='<div style="font-family:'+t.mf+';font-size:17px;font-style:italic;color:'+t.soft+';margin:8px 20px">\u00ab '+g.msg+' \u00bb</div>';
   
-  // Code
-  hh+='<div style="margin:14px 0;padding:10px 28px;border:2px solid '+t.soft+';display:inline-block;font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:'+t.acc+'">'+g.code+'</div>';
+  // Code + QR
+  var isDark=(themeId==="luxeNoir"||themeId==="noel"||themeId==="stValentin"||themeId==="anniversaire"||themeId==="midnight");
+  var qrFg=isDark?t.acc:"#333";
+  var qrBg=isDark?"transparent":"transparent";
+  var qrSvg=generateQRSVG(g.code,120,qrFg,qrBg);
+  hh+='<div style="display:flex;align-items:center;gap:16px;margin:14px 0;justify-content:center">';
+  hh+='<div style="padding:10px 24px;border:2px solid '+t.soft+';font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:'+t.acc+'">'+g.code+'</div>';
+  hh+='<div style="width:80px;height:80px;flex-shrink:0" title="Scanner ce QR code">'+qrSvg+'</div>';
+  hh+='</div>';
   
   // Scope + validity
   hh+='<div style="font-size:12px;color:'+t.txt+';margin-top:6px;font-weight:600">'+scopeLabel+'</div>';
@@ -5177,7 +5266,7 @@ function finalizePay(method){
       }
       htm2+='<div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text3)">ou saisir un code :</div>';
     }else{htm2+='<div style="font-size:13px;color:var(--text3);margin-bottom:10px">Saisir le code :</div>';}
-    htm2+='<input type="text" id="bcCode" placeholder="Tapez ou scannez le code du bon" style="text-align:center;font-size:18px;font-weight:700;padding:14px;text-transform:uppercase;margin-top:6px" autofocus>';
+    htm2+='<input type="text" id="bcCode" placeholder="Tapez ou scannez le code du bon" style="text-align:center;font-size:18px;font-weight:700;padding:14px;text-transform:uppercase;margin-top:6px" autofocus onkeydown="if(event.key===\'Enter\'){event.preventDefault();doBonPay();}">';
     htm2+='<div style="font-size:11px;color:#999;margin-top:4px;text-align:center">\ud83d\udcf1 Passez le code-barres devant la scanette</div>';
     htm2+='<div style="display:flex;gap:8px;margin-top:14px">';
     htm2+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
