@@ -39,12 +39,7 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 // Afficher l'écran de login
 function showLoginScreen() {
   var el = document.getElementById("app") || document.body;
-  var bgEl = document.getElementById("appBg");
-  if (bgEl) {
-    if (typeof APP_BG !== "undefined" && APP_BG) bgEl.style.backgroundImage = "url(" + APP_BG + ")";
-    else bgEl.style.backgroundImage = "url(https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80)";
-    bgEl.style.opacity = "1";
-  }
+  var bgEl=document.getElementById("appBg");if(bgEl){if(typeof APP_BG!=="undefined"&&APP_BG)bgEl.style.backgroundImage="url("+APP_BG+")";else bgEl.style.backgroundImage="url(https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80)";bgEl.style.opacity="1";}
   var h = "";
   h += '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:var(--f1,sans-serif);position:relative">';
   h += '<div style="position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(4px)"></div>';
@@ -194,21 +189,7 @@ async function loadSalonData() {
   SALON_CONFIG.couleurSecondaire = salon.couleur_secondaire || "#1a1a1a";
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
-
-  // Restore config_json
-  if (salon.config_json) {
-    try {
-      var cfg = typeof salon.config_json === "string" ? JSON.parse(salon.config_json) : salon.config_json;
-      if (cfg.slot) SLOT = cfg.slot;
-      if (cfg.slot_h) SLOT_H = cfg.slot_h;
-      if (cfg.bg_url) APP_BG = cfg.bg_url;
-      if (cfg.bg_opacity) window._bgOp = cfg.bg_opacity;
-      if (cfg.theme) window._currentTheme = cfg.theme;
-      if (cfg.fidconf) window.FIDCONF = cfg.fidconf;
-      if (cfg.pay_active) window.PAY_ACTIVE = cfg.pay_active;
-      if (cfg.fond_caisse !== undefined) { if(!window.CAISSE_DATA)window.CAISSE_DATA={}; window.CAISSE_DATA.fond = cfg.fond_caisse; }
-    } catch(e) { console.warn("config_json parse error", e); }
-  }
+  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}}catch(e){}}
 
   // 3. Charger collaborateurs → T[]
   var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
@@ -261,18 +242,14 @@ async function loadSalonData() {
         tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
         items: a.items || [], comment: a.comment || "",
         aPhases: a.a_phases || [],
-        clients: a.clients || [],
-        fromCaisse: a.from_caisse || false,
+        clients: a.clients || [], fromCaisse: a.from_caisse || false,
         cancelled: a.cancelled, cancelReason: a.cancel_reason
       };
     });
-    // Restaurer le dernier hash pour le chaînage
+    // Restaurer le dernier hash + tkN
     var doneH = AP.filter(function(a) { return a.hash; });
     if (doneH.length) _lastTicketHash = doneH[0].hash || "00000000";
-    // Restaurer le numéro de ticket max
-    var maxTkN = 0;
-    AP.forEach(function(a) { if (a.tkNum && a.tkNum > maxTkN) maxTkN = a.tkNum; });
-    if (maxTkN > 0) tkN = maxTkN;
+    var maxTkN=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>maxTkN)maxTkN=a.tkNum;});if(maxTkN>0)tkN=maxTkN;
   }
 
   // 7. Charger produits → PRODS[]
@@ -391,29 +368,15 @@ async function saveAppointment(appt) {
     a_phases: appt.aPhases || appt.phases || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
   };
-  // Add new fields (may not exist in DB yet)
-  try { data.clients = appt.clients || []; } catch(e) {}
-  try { data.from_caisse = appt.fromCaisse || false; } catch(e) {}
-  
-  var result;
+  try{data.clients=appt.clients||[];data.from_caisse=appt.fromCaisse||false;}catch(e){}
+  var r;
   if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
-    result = await _sb.from("appointments").update(data).eq("id", appt.id);
+    r=await _sb.from("appointments").update(data).eq("id", appt.id);
   } else {
-    result = await _sb.from("appointments").insert(data).select();
-    if (result.data && result.data[0]) appt.id = result.data[0].id;
+    r=await _sb.from("appointments").insert(data).select();
+    if (r.data && r.data[0]) appt.id = r.data[0].id;
   }
-  // If failed (likely missing columns), retry without new fields
-  if (result && result.error) {
-    console.warn("saveAppointment retry without new fields:", result.error.message);
-    delete data.clients;
-    delete data.from_caisse;
-    if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
-      await _sb.from("appointments").update(data).eq("id", appt.id);
-    } else {
-      var res2 = await _sb.from("appointments").insert(data).select();
-      if (res2.data && res2.data[0]) appt.id = res2.data[0].id;
-    }
-  }
+  if(r&&r.error){delete data.clients;delete data.from_caisse;if(appt.id&&appt.id.indexOf("-")>0&&appt.id.length>30){await _sb.from("appointments").update(data).eq("id",appt.id);}else{var r2=await _sb.from("appointments").insert(data).select();if(r2.data&&r2.data[0])appt.id=r2.data[0].id;}}
 }
 
 // Sauvegarder un produit
@@ -497,26 +460,9 @@ async function saveSalonConfig() {
     taux_tva: SALON_CONFIG.tauxTVA,
     show_tva_ticket: window.SHOW_TVA_TICKET
   };
-  // Try adding config_json (may not exist in DB yet)
-  try {
-    data.config_json = JSON.stringify({
-      slot: typeof SLOT !== "undefined" ? SLOT : 15,
-      slot_h: typeof SLOT_H !== "undefined" ? SLOT_H : 28,
-      bg_url: typeof APP_BG !== "undefined" ? APP_BG : "",
-      bg_opacity: window._bgOp || 100,
-      theme: window._currentTheme || "",
-      fidconf: window.FIDCONF || {seuil:10, remise:10},
-      pay_active: window.PAY_ACTIVE || {},
-      fond_caisse: window.CAISSE_DATA ? window.CAISSE_DATA.fond : 200
-    });
-  } catch(e) {}
-  var result = await _sb.from("salons").update(data).eq("id", _salonId);
-  // If failed, retry without config_json
-  if (result && result.error) {
-    console.warn("saveSalonConfig retry:", result.error.message);
-    delete data.config_json;
-    await _sb.from("salons").update(data).eq("id", _salonId);
-  }
+  try{data.config_json=JSON.stringify({slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200});}catch(e){}
+  var r=await _sb.from("salons").update(data).eq("id", _salonId);
+  if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
 }
 
 // Sauvegarder les collaborateurs
