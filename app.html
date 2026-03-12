@@ -3600,10 +3600,19 @@ function doVoidGift(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
   var oldRem=g.rem;g.st="voided";g.rem=0;
-  // Save to Supabase directly
+  // Save to Supabase - try BOTH methods
   if(typeof saveGiftCard==="function"){saveGiftCard(g);}
-  else if(typeof _sb!=="undefined"&&_sb){
-    _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("id",gcId);
+  // Also direct update as backup
+  if(typeof _sb!=="undefined"&&_sb){
+    _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("id",gcId).then(function(r){
+      console.log("[GC VOID] Direct update:",r.status,r.error?r.error.message:"OK");
+    });
+    // Also try by code
+    if(g.code&&typeof _salonId!=="undefined"&&_salonId){
+      _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("salon_id",_salonId).eq("code",g.code).then(function(r){
+        console.log("[GC VOID] By code:",r.status,r.error?r.error.message:"OK");
+      });
+    }
   }
   auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Val:"+g.val.toFixed(2)+"E - Solde annul\u00e9:"+oldRem.toFixed(2)+"E");
   cM();go("gifts");
@@ -4828,7 +4837,7 @@ function showCaisse(){
     h+='<button style="flex:1;padding:16px;font-size:14px;font-weight:700;border:none;background:#7ab3c4;color:#fff;cursor:pointer" onclick="tkAddProduct()">\u2795 Produits</button>';
     h+='</div>';
     // Options
-    var opts=["Remise ticket","\ud83c\udf81 Vendre un bon cadeau","\ud83c\udf81 Offrir un bon cadeau","Cr\u00e9er un devis","Mettre en attente","Rechercher un devis ou ticket en attente","Abandon ticket"];
+    var opts=["Remise ticket","\ud83c\udf81 Vendre un bon cadeau","Cr\u00e9er un devis","Mettre en attente","Rechercher un devis ou ticket en attente","Abandon ticket"];
     for(var i=0;i<opts.length;i++){
       h+='<button style="padding:16px;font-size:14px;font-weight:600;border:none;background:'+(i%2===0?"#d5dde3":"#e1e8ec")+';cursor:pointer;text-align:center;color:var(--text)" onclick="handleTkOption('+i+')">'+opts[i]+'</button>';
     }
@@ -5016,34 +5025,15 @@ function handleTkOption(idx){
     document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm4+'</div></div>';
     setTimeout(function(){var el=document.getElementById("newBcVal");if(el)el.focus();},100);
   }else if(idx===2){
-    // Offrir un bon cadeau (jeu concours, asso, cadeau salon)
-    var htm5='<div class="mbox"><h2 style="color:var(--gold)">\ud83c\udf81 Offrir un bon cadeau</h2>';
-    htm5+='<div style="font-size:13px;color:#666;margin-bottom:14px">Bon gratuit (jeu concours, association, geste commercial).\nNon factur\u00e9, trac\u00e9 en comptabilit\u00e9 comme offert.</div>';
-    htm5+='<div class="fg"><label>Montant du bon</label>';
-    htm5+='<div style="display:flex;gap:6px;margin-bottom:8px">';
-    [10,20,30,50].forEach(function(a){htm5+='<button class="btn bs" style="flex:1;padding:8px 0;font-size:13px;font-weight:800" onclick="document.getElementById(\'freeBcVal\').value='+a+'">'+a+'\u20ac</button>';});
-    htm5+='</div>';
-    htm5+='<input type="number" id="freeBcVal" placeholder="Montant" style="text-align:center;font-size:20px;font-weight:700;padding:14px"></div>';
-    htm5+='<div class="fg"><label>B\u00e9n\u00e9ficiaire / motif</label><input id="freeBcTo" placeholder="Gagnant jeu concours, association..."></div>';
-    htm5+='<div class="fg"><label>Code du bon</label><div style="display:flex;gap:8px"><input id="freeBcCode" placeholder="CONCOURS-001" style="flex:1;font-size:15px;font-weight:700;letter-spacing:2px;text-transform:uppercase"><button class="btn bs" style="padding:8px 12px;white-space:nowrap" onclick="document.getElementById(\'freeBcCode\').value=\'OFF-\'+String(Date.now()).slice(-6).toUpperCase()">Auto</button></div></div>';
-    htm5+='<div style="display:flex;gap:8px">';
-    htm5+='<div class="fg" style="flex:1"><label>Validit\u00e9</label><select id="freeBcExp"><option value="6">6 mois</option><option value="12" selected>12 mois</option></select></div>';
-    htm5+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="freeBcScope"><option value="tout">Tout</option><option value="prestations">Prestations</option><option value="produits">Produits</option></select></div></div>';
-    htm5+='<div style="display:flex;gap:8px;margin-top:14px">';
-    htm5+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=3;showCaisse()">Annuler</button>';
-    htm5+='<button class="btn bg" style="flex:1" onclick="doCreateFreeBon()">Cr\u00e9er le bon offert</button>';
-    htm5+='</div></div>';
-    document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm5+'</div></div>';
-  }else if(idx===3){
     // Creer un devis depuis le ticket en cours
     saveAsDevis();
-  }else if(idx===4){
+  }else if(idx===3){
     // Mettre en attente
     savePendingTicket();
-  }else if(idx===5){
+  }else if(idx===4){
     // Rechercher devis ou ticket en attente
     go("pendingTk");
-  }else if(idx===6){
+  }else if(idx===5){
     // Abandon
     showAbandonConfirm();
   }
