@@ -486,20 +486,26 @@ async function saveSalonConfig() {
 // Sauvegarder les collaborateurs
 async function saveCollaborateurs() {
   if (!_isOnline || !_salonId) return;
+  // First, get all existing collab IDs from Supabase for this salon
+  var existing = await _sb.from("collaborateurs").select("id").eq("salon_id", _salonId);
+  var dbIds = {};
+  if (existing.data) {
+    for (var e = 0; e < existing.data.length; e++) {
+      dbIds[existing.data[e].id] = true;
+    }
+  }
+  // Now save each collab
   for (var i = 0; i < T.length; i++) {
     var c = T[i];
     var data = {
       salon_id: _salonId, nom: c.n, initiales: c.i,
       couleur: c.c, img: c.img || "", horaires: c.hrs || {}
     };
-    // Check if this is a Supabase UUID (string with dashes) or a local number id
-    var isUUID = (typeof c.id === "string" && c.id.indexOf("-") > 0 && c.id.length > 30);
-    var isLocalNum = (typeof c.id === "number");
-    if (isUUID) {
-      // Already in Supabase → UPDATE
+    if (c.id && dbIds[c.id]) {
+      // Exists in DB → UPDATE
       await _sb.from("collaborateurs").update(data).eq("id", c.id);
     } else {
-      // New collab → INSERT
+      // New → INSERT
       var res = await _sb.from("collaborateurs").insert(data).select();
       if (res.data && res.data[0]) c.id = res.data[0].id;
     }
