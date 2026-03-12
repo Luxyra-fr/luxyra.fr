@@ -3316,6 +3316,13 @@ function saveEditGift(gcId){
   cM();go("gifts");
 }
 
+
+function printByCode(code){
+  var gcId=null;
+  for(var i=0;i<GC.length;i++){if(GC[i].code===code){gcId=GC[i].id;break;}}
+  if(gcId)chooseGiftTheme(gcId);
+}
+
 function chooseGiftTheme(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
@@ -4726,7 +4733,7 @@ function aGi(){
   if(m&&m!=="Bon cadeau")h2+='<div style="font-size:13px;color:#888;font-style:italic;margin:4px 0">\u201c'+m+'\u201d</div>';
   h2+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Expire '+fmt(dS(e))+' \u2022 '+pay+(scope!=="tout"?' \u2022 '+(scope==="prestations"?"Prestations":"Produits")+' uniquement':'')+'</div>';
   h2+='<div style="display:flex;gap:8px">';
-  h2+='<button class="btn bg" style="flex:1;padding:14px" onclick="chooseGiftTheme(\u0027'+ng.id+'\u0027)">\ud83c\udfa8 Imprimer</button>';
+  h2+='<button class="btn bg" style="flex:1;padding:14px" onclick="printByCode(\u0027'+code+'\u0027)">\ud83c\udfa8 Imprimer</button>';
   h2+='<button class="btn" style="flex:1;padding:14px" onclick="cM();go(\u0027gifts\u0027)">Fermer</button>';
   h2+='</div></div></div>';
   document.getElementById("modal").innerHTML=h2;
@@ -5174,9 +5181,17 @@ function doOffrirBon(){
   var expD=new Date();expD.setMonth(expD.getMonth()+expM);
   var ng={id:U(),code:code,val:montant,ht:0,tva:0,tvaRate:0,rem:montant,date:TD,from:"Salon (offert)",to:to.trim(),msg:"Bon offert",cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,payMethod:"Offert",history:[],isOffert:true};
   GC.push(ng);
-  if(typeof saveGiftCard==="function")saveGiftCard(ng);
   auditLog("BON_CADEAU_OFFERT","Bon offert "+code+" N\u00b0"+gcNum+" - "+montant.toFixed(2)+"E - Pour: "+to+" - Charge 6234");
-  cM();go("gifts");
+  cM();
+  // Save and wait for UUID before rendering
+  if(typeof saveGiftCard==="function"){
+    var p=saveGiftCard(ng);
+    if(p&&typeof p.then==="function"){
+      p.then(function(){go("gifts");});
+    }else{
+      setTimeout(function(){go("gifts");},500);
+    }
+  }else{go("gifts");}
   var notif=document.createElement("div");
   notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#4a85b5;color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)";
   notif.textContent="\ud83c\udf81 Bon offert "+code+" cr\u00e9\u00e9 ("+montant.toFixed(0)+"\u20ac)";
@@ -5254,24 +5269,40 @@ function finalizePay(method){
   var resteDu=total-(_tk.paid||0);
   
   if(method==="Bon cadeau"){
-    var actifs=GC.filter(function(g){return g.st!=="used"&&(g.rem!==undefined?g.rem:g.val)>0&&!(g.exp&&g.exp<TD);});
+    var actifs=GC.filter(function(g){return g.st!=="used"&&g.st!=="voided"&&(g.rem!==undefined?g.rem:g.val)>0&&!(g.exp&&g.exp<TD);});
     var htm2='<div class="mbox"><h2 style="color:var(--gold)">\ud83c\udf81 Bon cadeau</h2>';
-    if(actifs.length>0){
-      htm2+='<div style="font-size:13px;color:var(--text3);margin-bottom:10px">Bons disponibles :</div>';
-      for(var bi=0;bi<actifs.length;bi++){var bg=actifs[bi];var brem=bg.rem!==undefined?bg.rem:bg.val;
-        htm2+='<div style="padding:12px;margin-bottom:8px;border-radius:10px;cursor:pointer;background:linear-gradient(135deg,#fffef8,#fdf5e0);border:2px solid #c8a84e;text-align:center" onclick="doBonPayDirect(this.dataset.code)" data-code="'+bg.code+'">';
-        htm2+='<div style="font-weight:800;font-size:18px;color:#c8a84e">'+brem.toFixed(2)+' \u20ac</div>';
-        htm2+='<div style="font-size:14px;font-weight:700;letter-spacing:1px;color:#333;margin-top:2px">'+bg.code+'</div>';
-        htm2+='<div style="font-size:11px;color:#888;margin-top:2px">'+(bg.to||bg.from)+' \u2022 Expire '+bg.exp+'</div></div>';
-      }
-      htm2+='<div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text3)">ou saisir un code :</div>';
-    }else{htm2+='<div style="font-size:13px;color:var(--text3);margin-bottom:10px">Saisir le code :</div>';}
-    htm2+='<input type="text" id="bcCode" placeholder="Tapez ou scannez le code du bon" style="text-align:center;font-size:18px;font-weight:700;padding:14px;text-transform:uppercase;margin-top:6px" autofocus onkeydown="if(event.key===\'Enter\'){event.preventDefault();doBonPay();}">';
-    htm2+='<div style="font-size:11px;color:#999;margin-top:4px;text-align:center">\ud83d\udcf1 Passez le code-barres devant la scanette</div>';
-    htm2+='<div style="display:flex;gap:8px;margin-top:14px">';
+    // Scan field FIRST (priority)
+    htm2+='<div style="font-size:13px;color:#666;margin-bottom:8px;text-align:center">Scannez le QR code ou tapez le code</div>';
+    htm2+='<input type="text" id="bcCode" placeholder="Code du bon..." style="text-align:center;font-size:20px;font-weight:800;padding:16px;text-transform:uppercase;letter-spacing:2px" autofocus onkeydown="if(event.key===\'Enter\'){event.preventDefault();doBonPay();}">';
+    htm2+='<div style="display:flex;gap:8px;margin-top:10px">';
     htm2+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
     htm2+='<button class="btn bg" style="flex:1" onclick="doBonPay()">Valider</button>';
-    htm2+='</div></div>';
+    htm2+='</div>';
+    // Show available bons below (collapsed if many)
+    if(actifs.length>0){
+      var showMax=3;
+      htm2+='<div style="margin-top:16px;border-top:1px solid rgba(0,0,0,.08);padding-top:12px">';
+      htm2+='<div style="font-size:12px;color:#888;margin-bottom:8px;text-align:center">Ou s\u00e9lectionnez un bon actif :</div>';
+      for(var bi=0;bi<Math.min(actifs.length,showMax);bi++){var bg=actifs[bi];var brem=bg.rem!==undefined?bg.rem:bg.val;
+        htm2+='<div style="display:flex;align-items:center;padding:10px;margin-bottom:6px;border-radius:10px;cursor:pointer;background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.08)" onclick="doBonPayDirect(this.dataset.code)" data-code="'+bg.code+'">';
+        htm2+='<div style="min-width:50px;font-weight:800;font-size:16px;color:#c8a84e">'+brem.toFixed(0)+'\u20ac</div>';
+        htm2+='<div style="flex:1"><div style="font-family:monospace;font-weight:700;font-size:13px;color:#333">'+bg.code+'</div>';
+        htm2+='<div style="font-size:11px;color:#888">'+(bg.to||bg.from||"")+' \u2022 Exp. '+bg.exp+'</div></div></div>';
+      }
+      if(actifs.length>showMax){
+        htm2+='<div style="text-align:center;font-size:12px;color:#888;cursor:pointer;padding:8px" onclick="document.getElementById(\'bcMoreBons\').style.display=\'block\';this.style.display=\'none\'">Voir '+(actifs.length-showMax)+' autres bons \u25bc</div>';
+        htm2+='<div id="bcMoreBons" style="display:none">';
+        for(var bi=showMax;bi<actifs.length;bi++){var bg=actifs[bi];var brem=bg.rem!==undefined?bg.rem:bg.val;
+          htm2+='<div style="display:flex;align-items:center;padding:10px;margin-bottom:6px;border-radius:10px;cursor:pointer;background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.08)" onclick="doBonPayDirect(this.dataset.code)" data-code="'+bg.code+'">';
+          htm2+='<div style="min-width:50px;font-weight:800;font-size:16px;color:#c8a84e">'+brem.toFixed(0)+'\u20ac</div>';
+          htm2+='<div style="flex:1"><div style="font-family:monospace;font-weight:700;font-size:13px;color:#333">'+bg.code+'</div>';
+          htm2+='<div style="font-size:11px;color:#888">'+(bg.to||bg.from||"")+' \u2022 Exp. '+bg.exp+'</div></div></div>';
+        }
+        htm2+='</div>';
+      }
+      htm2+='</div>';
+    }
+    htm2+='</div>';
     document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm2+'</div></div>';
     return;
   }
