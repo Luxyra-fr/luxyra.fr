@@ -3149,22 +3149,58 @@ function doAddProdCat(){
 
 // === GIFTS ===
 function rGifts(){
-  var h='<button class="btn bg bk" style="margin-bottom:14px" onclick="oM(\'gift\')">+ Nouveau bon cadeau</button>';
-  for(var i=0;i<GC.length;i++){
-    var g=GC[i];
-    h+='<div class="card" style="background:linear-gradient(135deg,#fffdf4,#faf3dc);border:2px solid var(--gold-light);text-align:center;padding:18px">';
-    h+='<div style="font-size:30px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+g.val+'€</div>';
-    h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">De <strong>'+g.from+'</strong>'+(g.to?" \u2192 "+g.to:"")+'</div>';
-    h+='<div style="font-size:12px;color:var(--text2);margin-top:3px;font-style:italic">"'+g.msg+'"</div>';
-    h+='<div style="font-size:13px;color:#555;margin-top:6px;font-weight:800;letter-spacing:1px;background:rgba(255,255,255,.3);display:inline-block;padding:3px 10px;border-radius:6px">'+g.code+'</div>';
-    h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u00b7 Expire '+fmt(g.exp)+'</div>';
+  var h='<button class="btn bg bk" style="margin-bottom:14px" onclick="oM(\'gift\')">+ Vendre un bon cadeau</button>';
+  if(!window._gcTab)window._gcTab="actifs";
+  h+='<div class="tabs" style="margin-bottom:14px">';
+  h+='<div class="tab'+(window._gcTab==="actifs"?" on":"")+'" onclick="window._gcTab=\'actifs\';go(\'gifts\')">Actifs</div>';
+  h+='<div class="tab'+(window._gcTab==="uses"?" on":"")+'" onclick="window._gcTab=\'uses\';go(\'gifts\')">Utilis\u00e9s</div>';
+  h+='<div class="tab'+(window._gcTab==="tous"?" on":"")+'" onclick="window._gcTab=\'tous\';go(\'gifts\')">Tous</div>';
+  h+='</div>';
+  var filtered=GC.filter(function(g){
+    if(window._gcTab==="actifs")return g.st!=="used"&&g.rem>0;
+    if(window._gcTab==="uses")return g.st==="used"||g.rem<=0;
+    return true;
+  });
+  if(!filtered.length){h+='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.5);font-style:italic">Aucun bon cadeau</div>';return h;}
+  for(var i=0;i<filtered.length;i++){
+    var g=filtered[i];
+    var isExpired=g.exp&&g.exp<TD;
+    var isUsed=g.st==="used"||g.rem<=0;
+    var isPartial=!isUsed&&g.rem<g.val;
+    h+='<div class="card" style="background:linear-gradient(135deg,'+(isUsed?"#f5f5f5,#eee":"#fffdf4,#faf3dc")+');border:2px solid '+(isUsed?"#ddd":"var(--gold-light)")+';padding:0;overflow:hidden;margin-bottom:12px">';
+    h+='<div style="background:'+(isUsed?"#999":isExpired?"var(--red)":"linear-gradient(135deg,var(--gold),var(--gold-light))")+';color:#fff;padding:8px 16px;display:flex;justify-content:space-between;align-items:center">';
+    h+='<div style="font-weight:800;font-size:11px;letter-spacing:2px">BON CADEAU</div>';
+    h+='<div style="font-weight:700;font-size:11px">'+SALON_CONFIG.nom+'</div></div>';
+    h+='<div style="padding:16px;text-align:center">';
+    h+='<div style="font-size:36px;font-weight:900;font-family:var(--f1);color:'+(isUsed?"#bbb":"var(--gold)")+'">'+g.val.toFixed(0)+' \u20ac</div>';
+    if(isPartial)h+='<div style="font-size:14px;color:var(--orange);font-weight:700;margin-top:2px">Reste '+(g.rem||0).toFixed(2)+' \u20ac</div>';
+    h+='<div style="margin-top:8px;font-size:14px;color:#555">De <strong>'+g.from+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
+    if(g.msg)h+='<div style="font-size:12px;color:#888;margin-top:3px;font-style:italic">\u201c'+g.msg+'\u201d</div>';
+    if(g.scope&&g.scope!=="tout")h+='<div style="font-size:11px;margin-top:4px;color:var(--blue);font-weight:700">Valable sur : '+(g.scope==="prestations"?"Prestations":"Produits")+' uniquement</div>';
+    h+='<div style="margin-top:10px;font-size:15px;font-weight:800;letter-spacing:2px;color:#333;background:rgba(0,0,0,.06);display:inline-block;padding:6px 14px;border-radius:8px">'+g.code+'</div>';
+    h+='<div style="font-size:11px;color:#aaa;margin-top:6px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+'</div>';
     h+='<div style="margin-top:6px">';
-    if(g.st==="used")h+='<span class="badge b3">Utilis\u00e9</span>';
-    else if(g.rem<g.val)h+='<span class="badge b2">Reste '+(g.rem||0).toFixed(2)+'€/'+g.val+'€</span>';
-    else h+='<span class="badge b1">Actif \u2014 '+g.val+'€</span>';
+    if(isUsed)h+='<span class="badge b3">Utilis\u00e9</span>';
+    else if(isExpired)h+='<span class="badge b3">Expir\u00e9</span>';
+    else if(isPartial)h+='<span class="badge b2">Partiel</span>';
+    else h+='<span class="badge b1">Actif</span>';
+    h+='</div>';
+    if(!isUsed)h+='<div style="margin-top:10px"><button class="btn bs" style="font-size:12px" onclick="printGiftCard(\''+g.id+'\')">\ud83d\udda8 Imprimer</button></div>';
     h+='</div></div>';
   }
   return h;
+}
+function printGiftCard(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  var w=window.open("","_blank","width=600,height=400");if(!w)return;
+  var css='body{margin:0;font-family:Georgia,serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f5;}.card{width:500px;background:linear-gradient(135deg,#fffdf4,#faf3dc);border:3px solid #c8a84e;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.15);}.top{background:linear-gradient(135deg,#c8a84e,#d4b95e);color:#fff;padding:12px 20px;display:flex;justify-content:space-between;}.top .l{font-size:14px;font-weight:800;letter-spacing:3px;text-transform:uppercase;}.top .r{font-size:13px;font-weight:700;}.bd{padding:30px;text-align:center;}.amt{font-size:48px;font-weight:900;color:#c8a84e;margin:10px 0;}.who{font-size:16px;color:#555;margin:8px 0;}.msg{font-size:14px;color:#888;font-style:italic;margin:8px 0;}.code{font-size:18px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.06);display:inline-block;padding:8px 20px;border-radius:8px;margin:14px 0;}.inf{font-size:11px;color:#aaa;margin-top:10px;}';
+  var h='<html><head><title>Bon Cadeau</title><style>'+css+'</style></head><body><div class="card"><div class="top"><div class="l">Bon Cadeau</div><div class="r">'+SALON_CONFIG.nom+'</div></div><div class="bd"><div class="amt">'+g.val.toFixed(0)+' \u20ac</div><div class="who">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
+  if(g.msg)h+='<div class="msg">\u201c'+g.msg+'\u201d</div>';
+  h+='<div class="code">'+g.code+'</div><div class="inf">Valable jusqu\'au '+g.exp+'</div>';
+  if(g.scope&&g.scope!=="tout")h+='<div class="inf">Valable sur : '+(g.scope==="prestations"?"les prestations":"les produits")+' uniquement</div>';
+  h+='<div class="inf">'+SALON_CONFIG.nom+(SALON_CONFIG.tel?' \u2022 '+SALON_CONFIG.tel:'')+'</div></div></div></body></html>';
+  w.document.write(h);w.document.close();setTimeout(function(){w.print();},300);
 }
 
 // === CAISSE ===
@@ -3898,12 +3934,20 @@ function oM(type,pf){
     h+='<button class="btn bg bk" style="margin-top:12px" onclick="aCl()">Ajouter le client</button>';
   }
   else if(type==="gift"){
-    h+='<h2>\uD83C\uDF81 Nouveau bon cadeau</h2>';
-    h+='<div class="fg"><label>Valeur (\u20ac) *</label><input id="gv" type="number" placeholder="50"></div>';
-    h+='<div class="fg"><label>Offert par *</label><input id="gf" placeholder="Nom"></div>';
-    h+='<div class="fg"><label>Offert \u00e0</label><input id="gt" placeholder="B\u00e9n\u00e9ficiaire (facultatif)"></div>';
-    h+='<div class="fg"><label>Message *</label><input id="gm" placeholder="Joyeux anniversaire !"></div>';
-    h+='<button class="btn bg bk" style="margin-top:12px" onclick="aGi()">Cr\u00e9er le bon</button>';
+    h+='<h2>\ud83c\udf81 Vendre un bon cadeau</h2>';
+    h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Le bon sera encaiss\u00e9 TTC et ajout\u00e9 aux bons actifs.</div>';
+    h+='<div class="fg"><label>Montant TTC (\u20ac) *</label><input id="gv" type="number" placeholder="50" style="font-size:20px;text-align:center;padding:14px;font-weight:700"></div>';
+    h+='<div style="display:flex;gap:10px">';
+    h+='<div class="fg" style="flex:1"><label>Offert par *</label><input id="gf" placeholder="Nom de l\'acheteur"></div>';
+    h+='<div class="fg" style="flex:1"><label>Pour (optionnel)</label><input id="gt" placeholder="B\u00e9n\u00e9ficiaire"></div>';
+    h+='</div>';
+    h+='<div class="fg"><label>Message</label><input id="gm" placeholder="Joyeux anniversaire !" value="Bon cadeau"></div>';
+    h+='<div style="display:flex;gap:10px">';
+    h+='<div class="fg" style="flex:1"><label>Validit\u00e9</label><select id="gexp"><option value="12">12 mois</option><option value="6">6 mois</option><option value="18">18 mois</option><option value="24">24 mois</option></select></div>';
+    h+='<div class="fg" style="flex:1"><label>Valable sur</label><select id="gscope"><option value="tout">Tout (prestations + produits)</option><option value="prestations">Prestations uniquement</option><option value="produits">Produits uniquement</option></select></div>';
+    h+='</div>';
+    h+='<div class="fg"><label>Mode de paiement</label><select id="gpay"><option value="CB">Carte Bancaire</option><option value="Esp\u00e8ces">Esp\u00e8ces</option><option value="Ch\u00e8que">Ch\u00e8que</option><option value="Virement">Virement</option></select></div>';
+    h+='<button class="btn bg bk" style="margin-top:14px;padding:16px;font-size:16px" onclick="aGi()">Encaisser et cr\u00e9er le bon</button>';
   }
   
   h+='</div></div>';
@@ -4100,13 +4144,44 @@ function aCl(){
 function aGi(){
   var v=parseFloat(document.getElementById("gv").value);
   var f=document.getElementById("gf").value.trim();
-  var m=document.getElementById("gm").value.trim();
-  if(!v||!f||!m){alert("Remplir les champs");return;}
-  var e=new Date(TD);e.setFullYear(e.getFullYear()+1);
-  var _newGC={id:U(),val:v,from:f,to:document.getElementById("gt").value.trim(),msg:m,cr:TD,exp:dS(e),used:0,st:"active",code:"BC-"+Date.now().toString(36),rem:v};
+  var m=document.getElementById("gm").value.trim()||"Bon cadeau";
+  var pay=document.getElementById("gpay").value||"CB";
+  var expMonths=parseInt(document.getElementById("gexp").value)||12;
+  var scope=document.getElementById("gscope").value||"tout";
+  if(!v||!f){alert("Remplir le montant et le nom");return;}
+  
+  // Calculate expiry
+  var e=new Date();e.setMonth(e.getMonth()+expMonths);
+  var expDate=e.getFullYear()+"-"+String(e.getMonth()+1).padStart(2,"0")+"-"+String(e.getDate()).padStart(2,"0");
+  
+  // Create the gift card
+  var code="BC-"+Date.now().toString(36).toUpperCase();
+  var _newGC={id:U(),val:v,from:f,to:document.getElementById("gt").value.trim(),msg:m,cr:TD,exp:expDate,used:0,st:"active",code:code,rem:v,scope:scope,payMethod:pay};
   GC.push(_newGC);
   if(typeof saveGiftCard==="function")saveGiftCard(_newGC);
-  cM();go("gifts");
+  
+  // Create a ticket for the sale (so it appears in accounting)
+  TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+  tkN++;
+  var saleTk={id:U(),cId:"passage",sId:null,stId:T[0]?T[0].id:1,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN,fromCaisse:true};
+  chainTicket(saleTk);
+  AP.push(saleTk);
+  if(typeof saveAppointment==="function")saveAppointment(saleTk);
+  auditLog("VENTE_BON_CADEAU","Bon "+code+" - "+v.toFixed(2)+"E - "+pay);
+  
+  // Show confirmation with print option
+  var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h2+='<div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>';
+  h2+='<h2 style="color:var(--gold)">Bon cadeau cr\u00e9\u00e9 !</h2>';
+  h2+='<div style="font-size:28px;font-weight:900;font-family:var(--f1);color:var(--gold);margin:10px 0">'+v.toFixed(0)+' \u20ac</div>';
+  h2+='<div style="font-size:15px;font-weight:800;letter-spacing:2px;margin:10px 0;color:#333;background:rgba(0,0,0,.06);display:inline-block;padding:8px 20px;border-radius:8px">'+code+'</div>';
+  h2+='<div style="font-size:13px;color:var(--text2);margin:8px 0">De <strong>'+f+'</strong>'+(document.getElementById("gt").value.trim()?' pour <strong>'+document.getElementById("gt").value.trim()+'</strong>':'')+'</div>';
+  h2+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Valable jusqu\'au '+fmt(expDate)+' \u2022 Encaiss\u00e9 par '+pay+'</div>';
+  h2+='<div style="display:flex;gap:8px">';
+  h2+='<button class="btn bg" style="flex:1;padding:14px" onclick="printGiftCard(\''+_newGC.id+'\')">Imprimer le bon</button>';
+  h2+='<button class="btn" style="flex:1;padding:14px" onclick="cM();go(\'gifts\')">Fermer</button>';
+  h2+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h2;
 }
 
 
@@ -4630,6 +4705,25 @@ function doBonPay(){
   }
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
   var resteDu=total-(_tk.paid||0);
+  // Check scope restriction
+  if(bon.scope&&bon.scope!=="tout"){
+    var hasWrongScope=false;
+    _tk.items.forEach(function(it){
+      if(bon.scope==="prestations"&&it.isProd)hasWrongScope=true;
+      if(bon.scope==="produits"&&!it.isProd)hasWrongScope=true;
+    });
+    if(hasWrongScope){
+      var htm4='<div class="mbox" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">⚠️</div><div style="font-size:14px;font-weight:700;margin-bottom:14px">Ce bon est valable uniquement sur les '+(bon.scope==="prestations"?"prestations":"produits")+'</div><button class="btn bg bk" onclick="_tk.step=5;showCaisse()">Retour</button></div>';
+      document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm4+'</div></div>';
+      return;
+    }
+  }
+  // Check expiry
+  if(bon.exp&&bon.exp<TD){
+    var htm5='<div class="mbox" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">⚠️</div><div style="font-size:14px;font-weight:700;margin-bottom:14px">Ce bon cadeau a expiré le '+fmt(bon.exp)+'</div><button class="btn bg bk" onclick="_tk.step=5;showCaisse()">Retour</button></div>';
+    document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm5+'</div></div>';
+    return;
+  }
   var use=Math.min(bon.rem,resteDu);
   bon.rem-=use;
   bon.used=(bon.used||0)+use;
