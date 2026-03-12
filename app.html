@@ -3088,15 +3088,22 @@ function doAddProdCat(){
 
 // === GIFTS ===
 
-function deleteGiftCard(gcId){
+function deleteGiftCardLocal(gcId){
   // Remove from local array
   for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){GC.splice(i,1);break;}}
-  // Delete from Supabase
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("cartes_cadeaux").delete().eq("id",gcId).then(function(){console.log("Gift card deleted from DB");});
-  }
+  // Delete from Supabase via the supabase module function
+  if(typeof deleteGiftCard==="function"){deleteGiftCard(gcId);}
   go("gifts");
 }
+function purgeAllGifts(){
+  if(!confirm("Supprimer TOUS les bons cadeaux ?\nCette action est irr\u00e9versible !"))return;
+  if(typeof purgeAllGiftCards==="function"){
+    purgeAllGiftCards().then(function(){GC.length=0;go("gifts");});
+  }else{
+    GC.length=0;go("gifts");
+  }
+}
+
 
 function rGifts(){
   var h='';
@@ -3116,9 +3123,10 @@ function rGifts(){
   h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--red)">'+nbExpired+'</div><div style="font-size:11px;color:var(--text3)">Expir\u00e9s</div></div>';
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
-  h+='<button class="btn bg bk" style="flex:1;font-size:14px;padding:14px;border-radius:12px" onclick="oM(\u0027gift\u0027)">\ud83c\udf81 Vendre un bon cadeau</button>';
-  h+='<button class="btn" style="padding:14px 18px;border-radius:12px;font-size:14px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d</button>';
+  h+='<button class="btn" style="flex:1;font-size:14px;padding:14px;border-radius:12px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d Rechercher un bon</button>';
+  h+='<button class="btn" style="padding:14px 18px;border-radius:12px;font-size:12px;color:var(--red);border-color:var(--red)" onclick="purgeAllGifts()">\ud83d\uddd1 Tout effacer</button>';
   h+='</div>';
+  h+='<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text3)">\ud83d\udca1 Pour cr\u00e9er un bon cadeau, passez par <strong>Encaissement</strong> \u2192 menu \u22ee \u2192 Nouveau bon cadeau</div>';
   if(!window._gcTab)window._gcTab="actifs";
   h+='<div class="tabs" style="margin-bottom:14px">';
   h+='<div class="tab'+(window._gcTab==="actifs"?" on":"")+'" onclick="window._gcTab=\u0027actifs\u0027;go(\u0027gifts\u0027)">Actifs ('+nbActif+')</div>';
@@ -3162,7 +3170,7 @@ function rGifts(){
     h+='<div style="margin-top:8px;font-size:14px;color:#444">De <strong>'+(g.from||"?")+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
     if(g.msg&&g.msg.length>0)h+='<div style="font-size:13px;color:#888;margin-top:3px;font-style:italic">\u201c'+g.msg+'\u201d</div>';
     h+='<div style="margin-top:8px;font-size:16px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.05);display:inline-block;padding:6px 16px;border-radius:10px;border:1px dashed #c8a84e">'+g.code+'</div>';
-    h+='<div style="font-size:11px;color:#aaa;margin-top:6px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+(g.payMethod?' \u2022 Pay\u00e9 par '+g.payMethod:'')+'</div>';
+    h+='<div style="font-size:11px;color:#aaa;margin-top:6px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+(g.payMethod==='Offert'?' \u2022 <span style="color:var(--blue);font-weight:700">OFFERT</span>':(g.payMethod?' \u2022 Pay\u00e9 par '+g.payMethod:''))+'</div>';
     // Status
     h+='<div style="margin-top:6px">';
     if(isVoided)h+='<span style="font-size:11px;padding:3px 10px;border-radius:12px;background:#e0e0e0;color:#666;font-weight:700">Annul\u00e9</span>';
@@ -3472,7 +3480,7 @@ function confirmVoidGift(gcId){
   h+='<div style="font-size:15px;margin-bottom:6px">'+g.val.toFixed(2)+' \u20ac'+(g.from?' \u2022 '+g.from:'')+'</div>';
   h+='<div style="display:flex;flex-direction:column;gap:10px;margin-top:16px">';
   h+='<button class="btn" style="background:var(--orange)!important;color:#fff!important;padding:14px" onclick="doVoidGift(\u0027'+gcId+'\u0027)">\ud83d\udeab Annuler (garder en historique compta)</button>';
-  h+='<button class="btn" style="background:var(--red)!important;color:#fff!important;padding:14px" onclick="if(confirm(\u0027Supprimer d\u00e9finitivement ?\u0027)){cM();deleteGiftCard(\u0027'+gcId+'\u0027)}">\ud83d\uddd1 Supprimer d\u00e9finitivement</button>';
+  h+='<button class="btn" style="background:var(--red)!important;color:#fff!important;padding:14px" onclick="if(confirm(\u0027Supprimer d\u00e9finitivement ?\u0027)){cM();deleteGiftCardLocal(\u0027'+gcId+'\u0027)}">\ud83d\uddd1 Supprimer d\u00e9finitivement</button>';
   h+='<button class="btn" style="padding:14px" onclick="cM()">Retour</button>';
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
@@ -4688,7 +4696,7 @@ function showCaisse(){
     h+='<button style="flex:1;padding:16px;font-size:14px;font-weight:700;border:none;background:#7ab3c4;color:#fff;cursor:pointer" onclick="tkAddProduct()">\u2795 Produits</button>';
     h+='</div>';
     // Options
-    var opts=["Remise ticket","Nouveau bon cadeau","Cr\u00e9er un devis","Mettre en attente","Rechercher un devis ou ticket en attente","Abandon ticket"];
+    var opts=["Remise ticket","\ud83c\udf81 Vendre un bon cadeau","\ud83c\udf81 Offrir un bon cadeau","Cr\u00e9er un devis","Mettre en attente","Rechercher un devis ou ticket en attente","Abandon ticket"];
     for(var i=0;i<opts.length;i++){
       h+='<button style="padding:16px;font-size:14px;font-weight:600;border:none;background:'+(i%2===0?"#d5dde3":"#e1e8ec")+';cursor:pointer;text-align:center;color:var(--text)" onclick="handleTkOption('+i+')">'+opts[i]+'</button>';
     }
@@ -4876,15 +4884,34 @@ function handleTkOption(idx){
     document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm4+'</div></div>';
     setTimeout(function(){var el=document.getElementById("newBcVal");if(el)el.focus();},100);
   }else if(idx===2){
+    // Offrir un bon cadeau (jeu concours, asso, cadeau salon)
+    var htm5='<div class="mbox"><h2 style="color:var(--gold)">\ud83c\udf81 Offrir un bon cadeau</h2>';
+    htm5+='<div style="font-size:13px;color:#666;margin-bottom:14px">Bon gratuit (jeu concours, association, geste commercial).\nNon factur\u00e9, trac\u00e9 en comptabilit\u00e9 comme offert.</div>';
+    htm5+='<div class="fg"><label>Montant du bon</label>';
+    htm5+='<div style="display:flex;gap:6px;margin-bottom:8px">';
+    [10,20,30,50].forEach(function(a){htm5+='<button class="btn bs" style="flex:1;padding:8px 0;font-size:13px;font-weight:800" onclick="document.getElementById(\'freeBcVal\').value='+a+'">'+a+'\u20ac</button>';});
+    htm5+='</div>';
+    htm5+='<input type="number" id="freeBcVal" placeholder="Montant" style="text-align:center;font-size:20px;font-weight:700;padding:14px"></div>';
+    htm5+='<div class="fg"><label>B\u00e9n\u00e9ficiaire / motif</label><input id="freeBcTo" placeholder="Gagnant jeu concours, association..."></div>';
+    htm5+='<div class="fg"><label>Code du bon</label><div style="display:flex;gap:8px"><input id="freeBcCode" placeholder="CONCOURS-001" style="flex:1;font-size:15px;font-weight:700;letter-spacing:2px;text-transform:uppercase"><button class="btn bs" style="padding:8px 12px;white-space:nowrap" onclick="document.getElementById(\'freeBcCode\').value=\'OFF-\'+String(Date.now()).slice(-6).toUpperCase()">Auto</button></div></div>';
+    htm5+='<div style="display:flex;gap:8px">';
+    htm5+='<div class="fg" style="flex:1"><label>Validit\u00e9</label><select id="freeBcExp"><option value="6">6 mois</option><option value="12" selected>12 mois</option></select></div>';
+    htm5+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="freeBcScope"><option value="tout">Tout</option><option value="prestations">Prestations</option><option value="produits">Produits</option></select></div></div>';
+    htm5+='<div style="display:flex;gap:8px;margin-top:14px">';
+    htm5+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=3;showCaisse()">Annuler</button>';
+    htm5+='<button class="btn bg" style="flex:1" onclick="doCreateFreeBon()">Cr\u00e9er le bon offert</button>';
+    htm5+='</div></div>';
+    document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm5+'</div></div>';
+  }else if(idx===3){
     // Creer un devis depuis le ticket en cours
     saveAsDevis();
-  }else if(idx===3){
+  }else if(idx===4){
     // Mettre en attente
     savePendingTicket();
-  }else if(idx===4){
+  }else if(idx===5){
     // Rechercher devis ou ticket en attente
     go("pendingTk");
-  }else if(idx===5){
+  }else if(idx===6){
     // Abandon
     showAbandonConfirm();
   }
@@ -4918,6 +4945,34 @@ function doCreateBon(){
   notif.textContent="\ud83c\udf81 Bon "+code+" cr\u00e9\u00e9 ("+montant.toFixed(0)+"\u20ac) - ajout\u00e9 au ticket";
   document.body.appendChild(notif);
   setTimeout(function(){notif.remove();},3000);
+}
+
+
+function doCreateFreeBon(){
+  var montant=parseFloat(document.getElementById("freeBcVal").value)||0;
+  if(montant<=0){alert("Indiquez un montant");return;}
+  var to=(document.getElementById("freeBcTo")||{}).value||"Offert";
+  var code=(document.getElementById("freeBcCode")||{}).value.trim().toUpperCase();
+  if(!code)code="OFF-"+String(Date.now()).slice(-6).toUpperCase();
+  // Check unique
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
+  var expM=parseInt((document.getElementById("freeBcExp")||{}).value)||12;
+  var scope=(document.getElementById("freeBcScope")||{}).value||"tout";
+  if(!window._gcSeq){window._gcSeq=1;GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});}
+  var gcNum=window._gcSeq++;
+  var expD=new Date();expD.setMonth(expD.getMonth()+expM);
+  var ng={id:U(),code:code,val:montant,ht:0,tva:0,tvaRate:0,rem:montant,date:TD,from:"Salon (offert)",to:to.trim(),msg:"Bon offert",cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,payMethod:"Offert",history:[],isOffert:true};
+  GC.push(ng);
+  if(typeof saveGiftCard==="function")saveGiftCard(ng);
+  auditLog("BON_CADEAU_OFFERT","Bon offert "+code+" N\u00b0"+gcNum+" - "+montant.toFixed(2)+"E - Pour: "+to+" - Pas de facturation");
+  cM();
+  _tk.step=3;showCaisse();
+  // Flash
+  var notif=document.createElement("div");
+  notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#4a85b5;color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)";
+  notif.textContent="\ud83c\udf81 Bon offert "+code+" cr\u00e9\u00e9 ("+montant.toFixed(0)+"\u20ac) - NON factur\u00e9";
+  document.body.appendChild(notif);
+  setTimeout(function(){notif.remove();},4000);
 }
 
 function showAbandonConfirm(){
