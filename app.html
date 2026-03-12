@@ -3089,16 +3089,26 @@ function doAddProdCat(){
 // === GIFTS ===
 
 function deleteGiftCardLocal(gcId){
-  // Remove from local array
-  for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){GC.splice(i,1);break;}}
-  // Delete from Supabase DIRECTLY (not via external module)
-  try{
-    if(typeof _sb!=="undefined"&&_sb){
-      _sb.from("cartes_cadeaux").delete().eq("id",gcId).then(function(res){
-        console.log("Bon "+gcId+" supprim\u00e9 de Supabase",res);
-      }).catch(function(err){console.error("Erreur suppression bon:",err);});
+  // Find the bon to get its code (more reliable than local ID)
+  var gcCode=null;
+  for(var i=0;i<GC.length;i++){
+    if(GC[i].id===gcId){gcCode=GC[i].code;GC.splice(i,1);break;}
+  }
+  // Delete from Supabase — try by id AND by code
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    // Attempt 1: by UUID id
+    _sb.from("cartes_cadeaux").delete().eq("id",gcId).then(function(r){
+      console.log("[GC DELETE] by id:",r.status,r.error?r.error.message:"OK");
+    });
+    // Attempt 2: by code + salon_id (guaranteed unique combo)
+    if(gcCode){
+      _sb.from("cartes_cadeaux").delete().eq("salon_id",_salonId).eq("code",gcCode).then(function(r){
+        console.log("[GC DELETE] by code "+gcCode+":",r.status,r.error?r.error.message:"OK");
+      });
     }
-  }catch(e){console.error("Erreur suppression:",e);}
+  }else{
+    console.warn("[GC DELETE] _sb or _salonId not available — offline mode");
+  }
   go("gifts");
 }
 
@@ -3134,23 +3144,38 @@ function exportGiftRegister(){
 }
 
 function purgeAllGifts(){
-  if(!confirm("Supprimer TOUS les bons cadeaux ?\nCette action est irr\u00e9versible !"))return;
-  // Delete ALL from Supabase DIRECTLY
-  try{
-    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-      _sb.from("cartes_cadeaux").delete().eq("salon_id",_salonId).then(function(res){
-        console.log("Tous les bons supprim\u00e9s de Supabase",res);
-        GC.length=0;
-        go("gifts");
-      }).catch(function(err){
-        console.error("Erreur purge bons:",err);
+  if(!confirm("Supprimer TOUS les bons cadeaux ?\nCette action est d\u00e9finitive !"))return;
+  if(!confirm("Deuxi\u00e8me confirmation : TOUT effacer ?"))return;
+  
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    console.log("[GC PURGE] Suppression de tous les bons pour salon:",_salonId);
+    // Method 1: delete all by salon_id
+    _sb.from("cartes_cadeaux").delete().eq("salon_id",_salonId).then(function(r){
+      console.log("[GC PURGE] Résultat:",r.status,r.statusText,r.error?r.error.message:"OK",r.data);
+      if(r.error){
+        // Method 2: If RLS blocks bulk delete, delete one by one
+        console.log("[GC PURGE] Tentative suppression un par un...");
+        var promises=[];
+        for(var i=0;i<GC.length;i++){
+          (function(gid,gcode){
+            promises.push(
+              _sb.from("cartes_cadeaux").delete().eq("salon_id",_salonId).eq("code",gcode).then(function(r2){
+                console.log("[GC PURGE] "+gcode+":",r2.error?r2.error.message:"OK");
+              })
+            );
+          })(GC[i].id,GC[i].code);
+        }
+        Promise.all(promises).then(function(){
+          console.log("[GC PURGE] Terminé (un par un)");
+          GC.length=0;go("gifts");
+        });
+      }else{
+        console.log("[GC PURGE] Bulk delete OK");
         GC.length=0;go("gifts");
-      });
-    }else{
-      GC.length=0;go("gifts");
-    }
-  }catch(e){
-    console.error("Erreur purge:",e);
+      }
+    });
+  }else{
+    console.warn("[GC PURGE] Pas de connexion Supabase — suppression locale uniquement");
     GC.length=0;go("gifts");
   }
 }
@@ -3178,7 +3203,10 @@ function rGifts(){
   h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:12px" onclick="exportGiftRegister()">\ud83d\udcc4 Export CSV</button>';
   h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:12px;color:var(--red);border-color:var(--red)" onclick="purgeAllGifts()">\ud83d\uddd1 Purger</button>';
   h+='</div>';
-  h+='<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text3)">\ud83d\udca1 Pour cr\u00e9er un bon cadeau, passez par <strong>Encaissement</strong> \u2192 menu \u22ee \u2192 Nouveau bon cadeau</div>';
+  h+='<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text3)">\ud83d\udca1 Cr\u00e9er un bon : <strong>Encaissement</strong> \u2192 menu \u22ee \u2192 Nouveau bon cadeau</div>';
+  // Debug: show Supabase connection state
+  var sbOk=typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId;
+  h+='<div style="font-size:10px;color:'+(sbOk?"var(--green)":"var(--red)")+';margin-bottom:10px">'+(sbOk?"\u2705 Connect\u00e9 \u00e0 Supabase (salon: "+_salonId.substring(0,8)+"...)":"\u274c Hors ligne \u2014 suppressions non persistantes")+'</div>';
   if(!window._gcTab)window._gcTab="actifs";
   h+='<div class="tabs" style="margin-bottom:14px">';
   h+='<div class="tab'+(window._gcTab==="actifs"?" on":"")+'" onclick="window._gcTab=\u0027actifs\u0027;go(\u0027gifts\u0027)">Actifs ('+nbActif+')</div>';
