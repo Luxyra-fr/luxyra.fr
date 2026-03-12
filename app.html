@@ -2143,6 +2143,55 @@ function confirmPendingMove(){
 
 
 // === SETTINGS ===
+
+function handleLogoUpload(input){
+  if(!input.files||!input.files[0])return;
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var dataUrl=e.target.result;
+    window.SALON.logo=dataUrl;
+    var preview=document.getElementById("salonLogoPreview");
+    if(preview)preview.src=dataUrl;
+    var urlInput=document.getElementById("salonLogoUrl");
+    if(urlInput)urlInput.value="(image charg\u00e9e)";
+  };
+  reader.readAsDataURL(input.files[0]);
+}
+
+function saveSalonInfo(){
+  var S=window.SALON;
+  if(!S)return;
+  // Update SALON_CONFIG
+  SALON_CONFIG.nom=S.nom||SALON_CONFIG.nom;
+  SALON_CONFIG.sousTitre=S.sousTitre||"";
+  SALON_CONFIG.adresse=S.adr||"";
+  SALON_CONFIG.cp=S.cp||"";
+  SALON_CONFIG.ville=S.ville||"";
+  SALON_CONFIG.tel=S.tel||"";
+  SALON_CONFIG.email=S.email||"";
+  SALON_CONFIG.siret=S.siret||"";
+  SALON_CONFIG.tva=S.tva||"";
+  SALON_CONFIG.logo=S.logo||"";
+  // Also shortcut fields used by bons
+  SALON_CONFIG.adr=SALON_CONFIG.adresseComplete();
+  // Update header
+  var salonNameEl=document.getElementById("salonName");
+  if(salonNameEl)salonNameEl.textContent=SALON_CONFIG.nom;
+  // Update header logo if custom logo set
+  if(S.logo){
+    var hlogo=document.getElementById("hlogo");
+    if(hlogo)hlogo.src=S.logo;
+  }
+  // Save to Supabase
+  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  // Confirmation
+  var notif=document.createElement("div");
+  notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#2d9a5e;color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)";
+  notif.textContent="\u2705 Infos salon enregistr\u00e9es";
+  document.body.appendChild(notif);
+  setTimeout(function(){notif.remove();},3000);
+}
+
 function rSettings(){
   var settTab=window._settTab||"main";
   var h='';
@@ -2344,10 +2393,22 @@ function rSettings(){
   }
   
   else if(settTab==="salon"){
-    if(!window.SALON)window.SALON={nom:SALON_CONFIG.nomComplet(),adr:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,tel:SALON_CONFIG.tel,email:SALON_CONFIG.email,siret:SALON_CONFIG.siret,tva:SALON_CONFIG.tva};
+    if(!window.SALON)window.SALON={nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||""};
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos du salon</div><div class="card">';
+    // Logo preview + upload
+    var logoPreview=S.logo||document.getElementById("hlogo").src;
+    h+='<div style="text-align:center;margin-bottom:16px">';
+    h+='<img id="salonLogoPreview" src="'+logoPreview+'" style="width:80px;height:80px;border-radius:16px;object-fit:cover;border:2px solid var(--gold-bg2);margin-bottom:8px"><br>';
+    h+='<div class="fg"><label>Logo du salon (URL ou cliquez pour charger)</label>';
+    h+='<input id="salonLogoUrl" value="'+(S.logo||"")+'" placeholder="https://... ou collez une image base64" onchange="window.SALON.logo=this.value;document.getElementById(\'salonLogoPreview\').src=this.value||document.getElementById(\'hlogo\').src">';
+    h+='</div>';
+    h+='<div style="display:flex;gap:8px;justify-content:center;margin-top:6px">';
+    h+='<label class="btn bs" style="font-size:12px;cursor:pointer;padding:8px 14px">\ud83d\udcf7 Charger une image<input type="file" accept="image/*" style="display:none" onchange="handleLogoUpload(this)"></label>';
+    h+='<button class="btn bs" style="font-size:12px;padding:8px 14px" onclick="window.SALON.logo=\'\';document.getElementById(\'salonLogoUrl\').value=\'\';document.getElementById(\'salonLogoPreview\').src=document.getElementById(\'hlogo\').src">Logo par d\u00e9faut</button>';
+    h+='</div></div>';
     h+='<div class="fg"><label>Nom du salon</label><input value="'+S.nom+'" onchange="window.SALON.nom=this.value"></div>';
+    h+='<div class="fg"><label>Sous-titre</label><input value="'+(S.sousTitre||"")+'" placeholder="by Amandine J., Institut de beaut\u00e9..." onchange="window.SALON.sousTitre=this.value"></div>';
     h+='<div class="fg"><label>Adresse</label><input value="'+S.adr+'" onchange="window.SALON.adr=this.value"></div>';
     h+='<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
     h+='<div class="fg"><label>CP</label><input value="'+S.cp+'" onchange="window.SALON.cp=this.value"></div>';
@@ -2355,8 +2416,10 @@ function rSettings(){
     h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input value="'+S.tel+'" onchange="window.SALON.tel=this.value"></div>';
     h+='<div class="fg"><label>Email</label><input value="'+S.email+'" onchange="window.SALON.email=this.value"></div>';
     h+='<div class="fg"><label>SIRET</label><input value="'+S.siret+'" onchange="window.SALON.siret=this.value"></div>';
-    h+='<div class="fg"><label>N\u00b0 TVA</label><input value="'+S.tva+'" onchange="window.SALON.tva=this.value"></div>';
+    h+='<div class="fg"><label>N\u00b0 TVA intracommunautaire</label><input value="'+S.tva+'" onchange="window.SALON.tva=this.value"></div>';
     h+='</div>';
+    // Save button
+    h+='<button class="btn bg bk" style="width:100%;margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="saveSalonInfo()">\u2705 Enregistrer les infos salon</button>';
   }
   
   else if(settTab==="fidelite"){
@@ -3571,8 +3634,7 @@ function printGiftThemed(gcId,themeId){
   if(!g)return;cM();
   var salon=SALON_CONFIG;
   var w=window.open("","_blank","width=850,height=550");if(!w)return;
-  var logoEl=document.getElementById("hlogo");
-  var logoSrc=logoEl?logoEl.src:"";
+  var logoSrc=SALON_CONFIG.logo||(document.getElementById("hlogo")?document.getElementById("hlogo").src:"");
   var scopeLabel=!g.scope||g.scope==="tout"?"Prestations & Produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
   var isOff=g.isOffert||g.payMethod==="Offert";
   var isMultiUsage=(!g.scope||g.scope==="tout");
