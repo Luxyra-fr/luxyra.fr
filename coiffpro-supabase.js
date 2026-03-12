@@ -252,6 +252,60 @@ async function loadSalonData() {
     var maxTkN=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>maxTkN)maxTkN=a.tkNum;});if(maxTkN>0)tkN=maxTkN;
   }
 
+  // 6b. Charger RDV en ligne → window.RDV_ONLINE[]
+  var today = new Date().toISOString().slice(0,10);
+  var roRes = await _sb.from("rdv_online").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
+  if (roRes.data) {
+    window.RDV_ONLINE = roRes.data.map(function(r) {
+      return {
+        id: r.id, salonId: r.salon_id,
+        nom: r.client_nom, prenom: r.client_prenom, tel: r.client_tel, email: r.client_email,
+        svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
+        collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
+        date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
+        duree: r.duree_minutes,
+        acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye,
+        status: r.status, message: r.message,
+        createdAt: r.created_at, confirmedAt: r.confirmed_at,
+        isOnline: true
+      };
+    });
+    // Merge pending+confirmed into AP for planning display
+    window.RDV_ONLINE.forEach(function(r) {
+      if (r.status === "pending" || r.status === "confirmed") {
+        // Check if already in AP (avoid duplicates)
+        var exists = false;
+        for (var i = 0; i < AP.length; i++) {
+          if (AP[i].onlineId === r.id) { exists = true; break; }
+        }
+        if (!exists) {
+          var dur = r.duree || 60;
+          var phases = [{t:"w", d: dur, l: r.svcNom}];
+          AP.push({
+            id: "online_" + r.id,
+            onlineId: r.id,
+            cId: null,
+            sId: r.svcId,
+            stId: r.collabId,
+            date: r.date,
+            time: r.heure,
+            pr: r.svcPrix,
+            st: r.status === "confirmed" ? "conf" : "conf",
+            items: [{name: r.svcNom, price: r.svcPrix, qty: 1, remise: 0}],
+            comment: "RDV EN LIGNE - " + r.nom + (r.prenom ? " " + r.prenom : "") + " - " + r.tel + (r.message ? " - " + r.message : ""),
+            aPhases: phases,
+            isOnline: true,
+            onlineStatus: r.status,
+            clientName: r.nom + (r.prenom ? " " + r.prenom : "")
+          });
+        }
+      }
+    });
+    console.log("CoiffPro: " + window.RDV_ONLINE.length + " RDV en ligne chargés");
+  } else {
+    window.RDV_ONLINE = [];
+  }
+
   // 7. Charger produits → PRODS[]
   var prRes = await _sb.from("produits").select("*").eq("salon_id", _salonId).order("nom");
   if (prRes.data) {
@@ -437,6 +491,15 @@ async function saveGiftCard(gc) {
     var res = await _sb.from("cartes_cadeaux").insert(data).select();
     if (res.data && res.data[0]) gc.id = res.data[0].id;
   }
+}
+
+// Confirmer/annuler un RDV en ligne
+async function updateRdvOnline(rdvId, status, reason) {
+  if (!_isOnline || !_salonId) return;
+  var data = { status: status };
+  if (status === "confirmed") data.confirmed_at = new Date().toISOString();
+  if (status === "cancelled") { data.cancelled_at = new Date().toISOString(); data.cancel_reason = reason || ""; }
+  await _sb.from("rdv_online").update(data).eq("id", rdvId);
 }
 
 // Sauvegarder une clôture Z

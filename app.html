@@ -177,6 +177,7 @@ body{max-width:100%;margin:0 auto;}
 .pg-slot::after{content:attr(data-time);position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:10px;color:rgba(0,0,0,.2);font-weight:600;opacity:0;transition:opacity .15s;pointer-events:none;}
 .pg-slot:hover::after{opacity:1;color:rgba(0,0,0,.4);}
 
+.online-badge{display:inline-block;font-size:9px;font-weight:800;letter-spacing:1px;padding:2px 6px;border-radius:6px;background:#c8a84e;color:#0a0a0a;margin-left:4px;vertical-align:middle}
 </style>
 </head>
 <body>
@@ -703,6 +704,25 @@ function addNotif(type,title,detail,data){
   window.NOTIFS.unshift({id:U(),ts:new Date().toISOString(),type:type,title:title,detail:detail,data:data||null,seen:false,confirmed:false});
 }
 function showNotifs(){
+  // Inject RDV online as notifications
+  if(!window.NOTIFS)window.NOTIFS=[];
+  if(window.RDV_ONLINE){
+    window.RDV_ONLINE.forEach(function(r){
+      var exists=false;
+      for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].rdvOnlineId===r.id){exists=true;break;}}
+      if(!exists){
+        window.NOTIFS.unshift({
+          id:"ro_"+r.id,rdvOnlineId:r.id,type:"rdv_online",
+          title:"\ud83d\udcc5 RDV en ligne"+(r.status==="pending"?" (en attente)":" (confirm\u00e9)"),
+          detail:r.nom+(r.prenom?" "+r.prenom:"")+" \u2022 "+r.svcNom+" \u2022 "+r.date+" "+r.heure+(r.tel?" \u2022 "+r.tel:"")+(r.message?" \u2022 "+r.message:""),
+          ts:r.createdAt||new Date().toISOString(),
+          seen:r.status==="confirmed"||r.status==="done",
+          confirmed:r.status==="confirmed"||r.status==="done",
+          onlineRdv:r
+        });
+      }
+    });
+  }
   var notifs=window.NOTIFS||[];
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2>\ud83d\udd14 Notifications</h2>';
@@ -731,6 +751,24 @@ function showNotifs(){
 }
 function confirmNotif(id){
   if(!window.NOTIFS)return;
+  for(var i=0;i<window.NOTIFS.length;i++){
+    if(window.NOTIFS[i].id===id){
+      window.NOTIFS[i].confirmed=true;window.NOTIFS[i].seen=true;
+      // If it's an online RDV, confirm it in Supabase
+      if(window.NOTIFS[i].rdvOnlineId){
+        var rdvId=window.NOTIFS[i].rdvOnlineId;
+        if(typeof updateRdvOnline==="function")updateRdvOnline(rdvId,"confirmed");
+        // Update local state
+        if(window.RDV_ONLINE){
+          for(var j=0;j<window.RDV_ONLINE.length;j++){
+            if(window.RDV_ONLINE[j].id===rdvId){window.RDV_ONLINE[j].status="confirmed";break;}
+          }
+        }
+        window.NOTIFS[i].title="\ud83d\udcc5 RDV en ligne (confirm\u00e9)";
+      }
+      break;
+    }
+  }
   showNotifs();
 }
 function markAllNotifsRead(){
@@ -1420,6 +1458,53 @@ var ICO={
   gifts:_ico('<polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/>'),
   settings:_ico('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>')
 };
+
+function updateNotifBadge(){
+  var count=0;
+  if(window.RDV_ONLINE){
+    count+=window.RDV_ONLINE.filter(function(r){return r.status==="pending";}).length;
+  }
+  if(window.NOTIFS){
+    count+=window.NOTIFS.filter(function(n){return!n.seen&&!n.rdvOnlineId;}).length;
+  }
+  var badge=document.getElementById("notifBadge");
+  if(badge){
+    if(count>0){badge.style.display="flex";badge.textContent=count;}
+    else{badge.style.display="none";}
+  }
+}
+// Check for new RDV online every 30 seconds
+setInterval(function(){
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    var today=new Date().toISOString().slice(0,10);
+    _sb.from("rdv_online").select("id,status,client_nom,service_nom,date_rdv,heure_rdv,created_at").eq("salon_id",_salonId).eq("status","pending").then(function(r){
+      if(r.data&&r.data.length>0){
+        var newCount=0;
+        r.data.forEach(function(rdv){
+          if(!window.RDV_ONLINE)window.RDV_ONLINE=[];
+          var exists=false;
+          for(var i=0;i<window.RDV_ONLINE.length;i++){if(window.RDV_ONLINE[i].id===rdv.id){exists=true;break;}}
+          if(!exists){
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,svcNom:rdv.service_nom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,status:"pending",createdAt:rdv.created_at,isOnline:true});
+            newCount++;
+          }
+        });
+        if(newCount>0){
+          updateNotifBadge();
+          // Flash notification
+          var notif=document.createElement("div");
+          notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#c8a84e;color:#0a0a0a;padding:14px 24px;border-radius:12px;font-weight:800;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(200,168,78,.4);cursor:pointer";
+          notif.textContent="\ud83d\udcc5 "+newCount+" nouveau"+(newCount>1?"x":"")+" RDV en ligne !";
+          notif.onclick=function(){notif.remove();showNotifs();};
+          document.body.appendChild(notif);
+          setTimeout(function(){if(notif.parentNode)notif.remove();},8000);
+        }
+      }
+      updateNotifBadge();
+    });
+  }
+},30000);
+
 function rHome(){
   var h='';
   var today=TD;
@@ -6701,6 +6786,9 @@ function applyTheme(k,c,c2){
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   go("settings");
 }
+
+// Update notification badge
+setTimeout(function(){updateNotifBadge();},2000);
 
 // Load site config on init
 if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){loadSiteConfig();},1000);
