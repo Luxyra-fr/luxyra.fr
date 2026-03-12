@@ -91,6 +91,13 @@ input:focus,select:focus{border-color:var(--gold);}
 .mbox th{color:#555!important;background:rgba(0,0,0,.04)!important;border-color:rgba(0,0,0,.1)!important;}
 .mbox td{color:#1a1a2e!important;border-color:rgba(0,0,0,.08)!important;}
 .mbox svg text{fill:#1a1a2e!important;}
+
+.mbox .li{background:rgba(0,0,0,.04)!important;border:1px solid rgba(0,0,0,.1)!important;color:#1a1a2e!important;transition:background .15s;}
+.mbox .li:active,.mbox .li:hover{background:rgba(0,0,0,.1)!important;}
+.mbox .li .ln{color:#1a1a2e!important;}
+.mbox .li .ls{color:#666!important;}
+.mbox .li .lp{color:var(--gold)!important;}
+
 .mbox .sb{background:rgba(0,0,0,.04)!important;border-color:rgba(0,0,0,.1)!important;}
 .mbox .sb .sv{color:#1a1a2e!important;}
 .mbox .sb .sl{color:#666!important;}
@@ -3081,59 +3088,251 @@ function doAddProdCat(){
 
 // === GIFTS ===
 function rGifts(){
-  var h='<button class="btn bg bk" style="margin-bottom:14px;font-size:15px;padding:14px" onclick="oM(\u0027gift\u0027)">\ud83c\udf81 Vendre un bon cadeau</button>';
+  var h='';
+  // Stats bar
+  var totalActif=0,totalUsed=0,nbActif=0,nbUsed=0,nbExpired=0;
+  GC.forEach(function(g){
+    var rem=g.rem!==undefined?g.rem:g.val;
+    var isExp=g.exp&&g.exp<TD;
+    if(g.st==="used"||rem<=0){nbUsed++;totalUsed+=g.val;}
+    else if(isExp){nbExpired++;}
+    else{nbActif++;totalActif+=rem;}
+  });
+  h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">';
+  h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--green)">'+nbActif+'</div><div style="font-size:11px;color:var(--text3)">Actifs</div><div style="font-size:13px;font-weight:700;color:var(--green)">'+totalActif.toFixed(0)+' \u20ac</div></div>';
+  h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--orange)">'+nbUsed+'</div><div style="font-size:11px;color:var(--text3)">Utilis\u00e9s</div><div style="font-size:13px;font-weight:700;color:var(--orange)">'+totalUsed.toFixed(0)+' \u20ac</div></div>';
+  h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--red)">'+nbExpired+'</div><div style="font-size:11px;color:var(--text3)">Expir\u00e9s</div></div>';
+  h+='</div>';
+  // Action buttons
+  h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
+  h+='<button class="btn bg bk" style="flex:1;font-size:14px;padding:14px;border-radius:12px" onclick="oM(\u0027gift\u0027)">\ud83c\udf81 Vendre un bon cadeau</button>';
+  h+='<button class="btn" style="padding:14px 18px;border-radius:12px;font-size:14px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d</button>';
+  h+='</div>';
+  // Tabs
   if(!window._gcTab)window._gcTab="actifs";
   h+='<div class="tabs" style="margin-bottom:14px">';
-  h+='<div class="tab'+(window._gcTab==="actifs"?" on":"")+'" onclick="window._gcTab=\u0027actifs\u0027;go(\u0027gifts\u0027)">Actifs</div>';
-  h+='<div class="tab'+(window._gcTab==="uses"?" on":"")+'" onclick="window._gcTab=\u0027uses\u0027;go(\u0027gifts\u0027)">Utilis\u00e9s</div>';
+  h+='<div class="tab'+(window._gcTab==="actifs"?" on":"")+'" onclick="window._gcTab=\u0027actifs\u0027;go(\u0027gifts\u0027)">Actifs ('+nbActif+')</div>';
+  h+='<div class="tab'+(window._gcTab==="uses"?" on":"")+'" onclick="window._gcTab=\u0027uses\u0027;go(\u0027gifts\u0027)">Utilis\u00e9s ('+nbUsed+')</div>';
+  h+='<div class="tab'+(window._gcTab==="expired"?" on":"")+'" onclick="window._gcTab=\u0027expired\u0027;go(\u0027gifts\u0027)">Expir\u00e9s ('+nbExpired+')</div>';
   h+='<div class="tab'+(window._gcTab==="tous"?" on":"")+'" onclick="window._gcTab=\u0027tous\u0027;go(\u0027gifts\u0027)">Tous</div></div>';
+  // Filter
   var filtered=GC.filter(function(g){
-    if(window._gcTab==="actifs")return g.st!=="used"&&(g.rem!==undefined?g.rem:g.val)>0;
-    if(window._gcTab==="uses")return g.st==="used"||(g.rem!==undefined&&g.rem<=0);
+    var rem=g.rem!==undefined?g.rem:g.val;
+    var isExp=g.exp&&g.exp<TD;
+    if(window._gcTab==="actifs")return g.st!=="used"&&rem>0&&!isExp;
+    if(window._gcTab==="uses")return g.st==="used"||rem<=0;
+    if(window._gcTab==="expired")return isExp&&g.st!=="used"&&rem>0;
     return true;
   });
-  if(!filtered.length){h+='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.5)"><div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>Aucun bon cadeau</div>';return h;}
+  // Sort by date desc
+  filtered.sort(function(a,b){return(b.cr||"").localeCompare(a.cr||"");});
+  if(!filtered.length){
+    h+='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.5)"><div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>Aucun bon cadeau dans cette cat\u00e9gorie</div>';
+    return h;
+  }
   for(var i=0;i<filtered.length;i++){
     var g=filtered[i];
     var rem=g.rem!==undefined?g.rem:g.val;
     var isUsed=g.st==="used"||rem<=0;
     var isExpired=g.exp&&g.exp<TD;
     var isPartial=!isUsed&&rem<g.val;
-    h+='<div style="margin-bottom:14px;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.2)">';
-    h+='<div style="background:'+(isUsed?"#888":isExpired?"#c43838":"linear-gradient(135deg,#c8a84e,#d4b95e)")+';color:#fff;padding:10px 18px;display:flex;justify-content:space-between">';
-    h+='<span style="font-weight:800;font-size:11px;letter-spacing:2px">BON CADEAU</span>';
+    var pct=g.val>0?((g.val-rem)/g.val*100):0;
+    // Card
+    h+='<div style="margin-bottom:12px;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.2)">';
+    // Header bar
+    var headerBg=isUsed?"#888":isExpired?"#c43838":"linear-gradient(135deg,#c8a84e,#d4b95e)";
+    h+='<div style="background:'+headerBg+';color:#fff;padding:10px 18px;display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><span style="font-weight:800;font-size:11px;letter-spacing:2px">BON CADEAU</span>';
+    if(g.gcNum)h+='<span style="margin-left:8px;font-size:11px;opacity:.8">N\u00b0'+g.gcNum+'</span>';
+    h+='</div>';
     h+='<span style="font-size:11px;font-weight:600">'+SALON_CONFIG.nom+'</span></div>';
-    h+='<div style="background:linear-gradient(135deg,'+(isUsed?"#e8e8e8,#ddd":"#fffef8,#fdf5e0")+');padding:20px;text-align:center">';
-    h+='<div style="font-size:40px;font-weight:900;font-family:var(--f1);color:'+(isUsed?"#bbb":"#c8a84e")+'">'+(g.val||0).toFixed(0)+' \u20ac</div>';
-    if(isPartial)h+='<div style="font-size:15px;color:#d48a1a;font-weight:800;margin-top:4px">Reste : '+rem.toFixed(2)+' \u20ac</div>';
-    h+='<div style="margin-top:10px;font-size:15px;color:#444">De <strong>'+g.from+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
+    // Body
+    h+='<div style="background:linear-gradient(135deg,'+(isUsed?"#e8e8e8,#ddd":"#fffef8,#fdf5e0")+');padding:18px;text-align:center">';
+    h+='<div style="font-size:38px;font-weight:900;font-family:var(--f1);color:'+(isUsed?"#bbb":"#c8a84e")+'">'+(g.val||0).toFixed(0)+' \u20ac</div>';
+    // Progress bar for partial use
+    if(isPartial||isUsed){
+      h+='<div style="margin:10px auto;max-width:200px;height:6px;border-radius:3px;background:#e0e0e0;overflow:hidden"><div style="height:100%;border-radius:3px;background:'+(isUsed?"#888":"#c8a84e")+';width:'+pct+'%"></div></div>';
+      h+='<div style="font-size:14px;font-weight:800;color:'+(isUsed?"#999":"#d48a1a")+'">Utilis\u00e9 : '+(g.val-rem).toFixed(2)+' \u20ac'+(isPartial?' \u2022 Reste : '+rem.toFixed(2)+' \u20ac':'')+'</div>';
+    }
+    h+='<div style="margin-top:10px;font-size:14px;color:#444">De <strong>'+(g.from||"")+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
     if(g.msg&&g.msg!=="Bon cadeau")h+='<div style="font-size:13px;color:#888;margin-top:4px;font-style:italic">\u201c'+g.msg+'\u201d</div>';
     if(g.scope&&g.scope!=="tout")h+='<div style="font-size:11px;margin-top:6px;padding:3px 10px;display:inline-block;border-radius:12px;background:#e3f2fd;color:#1565c0;font-weight:700">'+(g.scope==="prestations"?"Prestations":"Produits")+' uniquement</div>';
-    h+='<div style="margin-top:12px;font-size:17px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.05);display:inline-block;padding:8px 18px;border-radius:10px;border:1px dashed #c8a84e">'+g.code+'</div>';
-    h+='<div style="font-size:11px;color:#aaa;margin-top:8px">'+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+'</div>';
+    h+='<div style="margin-top:10px;font-size:17px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.05);display:inline-block;padding:8px 18px;border-radius:10px;border:1px dashed #c8a84e">'+g.code+'</div>';
+    h+='<div style="font-size:11px;color:#aaa;margin-top:8px">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+'</div>';
+    // Status badge
     h+='<div style="margin-top:8px">';
     if(isUsed)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fde8e8;color:#c43838;font-weight:700">Utilis\u00e9</span>';
     else if(isExpired)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fde8e8;color:#c43838;font-weight:700">Expir\u00e9</span>';
-    else if(isPartial)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fdf2e4;color:#d48a1a;font-weight:700">Partiel</span>';
+    else if(isPartial)h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#fdf2e4;color:#d48a1a;font-weight:700">Partiellement utilis\u00e9</span>';
     else h+='<span style="font-size:12px;padding:4px 12px;border-radius:12px;background:#e6f7ee;color:#2d9a5e;font-weight:700">Actif</span>';
     h+='</div>';
-    if(!isUsed)h+='<div style="margin-top:12px"><button style="padding:10px 20px;border:1px solid #c8a84e;border-radius:8px;background:transparent;color:#c8a84e;font-weight:700;font-size:13px;cursor:pointer" onclick="printGiftCard(this.dataset.gid)" data-gid="'+g.id+'">\ud83d\udda8 Imprimer</button></div>';
+    // Usage history
+    if(g.history&&g.history.length){
+      h+='<div style="margin-top:10px;text-align:left;background:rgba(0,0,0,.03);border-radius:8px;padding:8px 12px">';
+      h+='<div style="font-size:11px;font-weight:700;color:#999;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Historique</div>';
+      for(var hi=0;hi<g.history.length;hi++){
+        var hu=g.history[hi];
+        h+='<div style="font-size:12px;color:#555;padding:2px 0">'+fmt(hu.date)+' \u2022 -'+hu.amount.toFixed(2)+' \u20ac'+(hu.tkNum?' \u2022 Ticket #'+hu.tkNum:'')+'</div>';
+      }
+      h+='</div>';
+    }
+    // Actions
+    if(!isUsed){
+      h+='<div style="margin-top:12px;display:flex;gap:8px;justify-content:center">';
+      h+='<button style="padding:10px 18px;border:1px solid #c8a84e;border-radius:8px;background:transparent;color:#c8a84e;font-weight:700;font-size:13px;cursor:pointer" onclick="chooseGiftTheme(\u0027'+g.id+'\u0027)">\ud83c\udfa8 Imprimer</button>';
+      if(!isExpired)h+='<button style="padding:10px 18px;border:1px solid #c43838;border-radius:8px;background:transparent;color:#c43838;font-weight:700;font-size:13px;cursor:pointer" onclick="confirmVoidGift(\u0027'+g.id+'\u0027)">\u274c Annuler</button>';
+      h+='</div>';
+    }
     h+='</div></div>';
   }
   return h;
 }
-function printGiftCard(gcId){
+function chooseGiftTheme(gcId){
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h+='<h2>\ud83c\udfa8 Choisir un design</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">S\u00e9lectionnez un th\u00e8me pour le bon cadeau</div>';
+  var themes=[
+    {id:"chic",name:"Chic \u2728",desc:"Or & \u00e9l\u00e9gance",bg:"linear-gradient(135deg,#1a1a2e,#2d2d44)",accent:"#c8a84e",text:"#fff",border:"#c8a84e",font:"Georgia,serif"},
+    {id:"noel",name:"No\u00ebl \ud83c\udf84",desc:"Festif & chaleureux",bg:"linear-gradient(135deg,#1b4332,#2d6a4f)",accent:"#d4a038",text:"#fff",border:"#d4a038",font:"Georgia,serif"},
+    {id:"stvalentin",name:"St-Valentin \u2764\ufe0f",desc:"Romantique & doux",bg:"linear-gradient(135deg,#8e2040,#c44c7a)",accent:"#ffd6e7",text:"#fff",border:"#ffd6e7",font:"Georgia,serif"},
+    {id:"fetedesmeres",name:"F\u00eate des M\u00e8res \ud83c\udf38",desc:"Floral & tendre",bg:"linear-gradient(135deg,#f8e8ee,#fce4ec)",accent:"#c44c7a",text:"#333",border:"#c44c7a",font:"Georgia,serif"},
+    {id:"printemps",name:"Printemps \ud83c\udf3c",desc:"Frais & lumineux",bg:"linear-gradient(135deg,#e8f5e9,#fff8e1)",accent:"#558b2f",text:"#333",border:"#8bc34a",font:"Georgia,serif"},
+    {id:"anniversaire",name:"Anniversaire \ud83c\udf82",desc:"Joyeux & color\u00e9",bg:"linear-gradient(135deg,#4a148c,#7b1fa2)",accent:"#ffd54f",text:"#fff",border:"#ffd54f",font:"Georgia,serif"},
+    {id:"classique",name:"Classique \ud83d\udcdc",desc:"Simple & sobre",bg:"#fff",accent:"#333",text:"#333",border:"#ddd",font:"Georgia,serif"},
+    {id:"luxe",name:"Luxe \ud83d\udc8e",desc:"Noir & or",bg:"linear-gradient(135deg,#0a0a0a,#1a1a1a)",accent:"#c8a84e",text:"#c8a84e",border:"#c8a84e",font:"Playfair Display,Georgia,serif"}
+  ];
+  h+='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">';
+  for(var i=0;i<themes.length;i++){
+    var t=themes[i];
+    h+='<div style="cursor:pointer;border-radius:14px;overflow:hidden;border:2px solid rgba(0,0,0,.1);transition:transform .15s" onclick="printGiftThemed(\u0027'+gcId+'\u0027,\u0027'+t.id+'\u0027)">';
+    h+='<div style="background:'+t.bg+';padding:16px 10px;text-align:center">';
+    h+='<div style="font-size:14px;font-weight:800;color:'+t.accent+'">BON CADEAU</div>';
+    h+='<div style="font-size:22px;font-weight:900;color:'+t.text+';opacity:.6;margin:4px 0">50 \u20ac</div>';
+    h+='</div>';
+    h+='<div style="padding:8px;background:#fff;text-align:center">';
+    h+='<div style="font-size:13px;font-weight:700;color:#333">'+t.name+'</div>';
+    h+='<div style="font-size:11px;color:#888">'+t.desc+'</div>';
+    h+='</div></div>';
+  }
+  h+='</div>';
+  h+='<button class="btn" style="width:100%" onclick="cM()">Annuler</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+function printGiftThemed(gcId,themeId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
-  var w=window.open("","_blank","width=600,height=400");if(!w)return;
-  var css='body{margin:0;font-family:Georgia,serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f5}.c{width:500px;background:linear-gradient(135deg,#fffdf4,#faf3dc);border:3px solid #c8a84e;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.15)}.t{background:linear-gradient(135deg,#c8a84e,#d4b95e);color:#fff;padding:12px 20px;display:flex;justify-content:space-between}.b{padding:30px;text-align:center}.a{font-size:48px;font-weight:900;color:#c8a84e;margin:10px 0}.ww{font-size:16px;color:#555;margin:8px 0}.mm{font-size:14px;color:#888;font-style:italic;margin:8px 0}.k{font-size:18px;font-weight:800;letter-spacing:3px;color:#333;background:rgba(0,0,0,.06);display:inline-block;padding:8px 20px;border-radius:8px;margin:14px 0}.ii{font-size:11px;color:#aaa;margin-top:10px}';
-  var hh='<html><head><title>Bon Cadeau</title><style>'+css+'</style></head><body><div class="c"><div class="t"><span style="font-size:14px;font-weight:800;letter-spacing:3px">BON CADEAU</span><span style="font-size:13px;font-weight:700">'+SALON_CONFIG.nom+'</span></div><div class="b"><div class="a">'+g.val.toFixed(0)+' \u20ac</div><div class="ww">De <strong>'+g.from+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
-  if(g.msg&&g.msg!=="Bon cadeau")hh+='<div class="mm">'+g.msg+'</div>';
-  hh+='<div class="k">'+g.code+'</div><div class="ii">Valable jusqu\u0027au '+g.exp+'</div>';
-  if(g.scope&&g.scope!=="tout")hh+='<div class="ii">Valable sur '+(g.scope==="prestations"?"les prestations":"les produits")+' uniquement</div>';
-  hh+='<div class="ii">'+SALON_CONFIG.nom+(SALON_CONFIG.tel?' \u2022 '+SALON_CONFIG.tel:'')+'</div></div></div></body></html>';
-  w.document.write(hh);w.document.close();setTimeout(function(){w.print();},300);
+  cM();
+  var themes={
+    chic:{bg:"linear-gradient(135deg,#1a1a2e,#2d2d44)",hdr:"linear-gradient(135deg,#c8a84e,#d4b95e)",accent:"#c8a84e",text:"#fff",body:"#1a1a2e",card:"rgba(255,255,255,.08)",msgCol:"rgba(255,255,255,.6)",border:"1px solid rgba(200,168,78,.3)",pattern:""},
+    noel:{bg:"linear-gradient(135deg,#1b4332,#2d6a4f)",hdr:"linear-gradient(135deg,#d4a038,#e6b94a)",accent:"#d4a038",text:"#fff",body:"#1b4332",card:"rgba(255,255,255,.08)",msgCol:"rgba(255,255,255,.6)",border:"1px solid rgba(212,160,56,.3)",pattern:"\u2744\ufe0f"},
+    stvalentin:{bg:"linear-gradient(135deg,#8e2040,#c44c7a)",hdr:"linear-gradient(135deg,#ffd6e7,#ffb6c1)",accent:"#ffd6e7",text:"#fff",body:"#8e2040",card:"rgba(255,255,255,.1)",msgCol:"rgba(255,255,255,.7)",border:"1px solid rgba(255,214,231,.3)",pattern:"\u2764\ufe0f"},
+    fetedesmeres:{bg:"linear-gradient(135deg,#fce4ec,#f8bbd0)",hdr:"linear-gradient(135deg,#c44c7a,#e91e63)",accent:"#c44c7a",text:"#333",body:"#fff0f5",card:"rgba(196,76,122,.06)",msgCol:"#888",border:"1px solid rgba(196,76,122,.2)",pattern:"\ud83c\udf38"},
+    printemps:{bg:"linear-gradient(135deg,#e8f5e9,#f1f8e9)",hdr:"linear-gradient(135deg,#558b2f,#7cb342)",accent:"#558b2f",text:"#333",body:"#f8fdf5",card:"rgba(85,139,47,.06)",msgCol:"#666",border:"1px solid rgba(85,139,47,.2)",pattern:"\ud83c\udf3c"},
+    anniversaire:{bg:"linear-gradient(135deg,#4a148c,#7b1fa2)",hdr:"linear-gradient(135deg,#ffd54f,#ffca28)",accent:"#ffd54f",text:"#fff",body:"#4a148c",card:"rgba(255,255,255,.1)",msgCol:"rgba(255,255,255,.6)",border:"1px solid rgba(255,213,79,.3)",pattern:"\ud83c\udf82"},
+    classique:{bg:"#fff",hdr:"linear-gradient(135deg,#333,#555)",accent:"#333",text:"#333",body:"#fff",card:"rgba(0,0,0,.03)",msgCol:"#888",border:"1px solid #ddd",pattern:""},
+    luxe:{bg:"linear-gradient(135deg,#0a0a0a,#1a1a1a)",hdr:"linear-gradient(135deg,#c8a84e,#e6d590)",accent:"#c8a84e",text:"#c8a84e",body:"#0a0a0a",card:"rgba(200,168,78,.08)",msgCol:"rgba(200,168,78,.5)",border:"1px solid rgba(200,168,78,.25)",pattern:"\u2728"}
+  };
+  var th=themes[themeId]||themes.chic;
+  var w=window.open("","_blank","width=700,height=500");
+  if(!w)return;
+  var salon=SALON_CONFIG;
+  var rem=g.rem!==undefined?g.rem:g.val;
+  var css='@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700;800;900&family=Nunito:wght@400;600;700;800&display=swap");';
+  css+='*{margin:0;padding:0;box-sizing:border-box}';
+  css+='body{font-family:Nunito,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f5f5;padding:20px}';
+  css+='.gc{width:550px;border-radius:20px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.2);border:'+th.border+'}';
+  css+='.gc-hdr{background:'+th.hdr+';color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center}';
+  css+='.gc-body{background:'+th.bg+';padding:40px 30px;text-align:center;position:relative}';
+  css+='.gc-amount{font-family:"Playfair Display",serif;font-size:64px;font-weight:900;color:'+th.accent+';margin:10px 0}';
+  css+='.gc-code{font-size:20px;font-weight:800;letter-spacing:4px;color:'+th.text+';background:'+th.card+';display:inline-block;padding:10px 24px;border-radius:12px;margin:16px 0;border:1px dashed '+th.accent+'}';
+  css+='.gc-msg{font-size:15px;color:'+th.msgCol+';font-style:italic;margin:10px 0}';
+  css+='.gc-info{font-size:12px;color:'+th.msgCol+';margin-top:16px;line-height:1.8}';
+  css+='.gc-footer{background:'+th.card+';padding:12px 24px;text-align:center;font-size:11px;color:'+th.msgCol+';border-top:'+th.border+'}';
+  css+='.gc-pattern{font-size:20px;letter-spacing:6px;opacity:.3;margin-bottom:10px}';
+  css+='@media print{body{background:#fff;padding:0;min-height:auto}.gc{box-shadow:none;width:100%;max-width:550px}}';
+  var hh='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bon Cadeau - '+salon.nom+'</title><style>'+css+'</style></head><body>';
+  hh+='<div class="gc">';
+  // Header
+  hh+='<div class="gc-hdr"><div><span style="font-size:13px;font-weight:800;letter-spacing:3px">BON CADEAU</span>';
+  if(g.gcNum)hh+='<span style="margin-left:10px;font-size:11px;opacity:.7">N\u00b0'+g.gcNum+'</span>';
+  hh+='</div><span style="font-size:12px;font-weight:700">'+salon.nom+'</span></div>';
+  // Body
+  hh+='<div class="gc-body">';
+  if(th.pattern)hh+='<div class="gc-pattern">'+th.pattern+' '+th.pattern+' '+th.pattern+' '+th.pattern+' '+th.pattern+'</div>';
+  hh+='<div class="gc-amount">'+g.val.toFixed(0)+' \u20ac</div>';
+  hh+='<div style="font-size:16px;color:'+th.text+'">De <strong>'+(g.from||"")+'</strong>'+(g.to?' pour <strong>'+g.to+'</strong>':'')+'</div>';
+  if(g.msg&&g.msg!=="Bon cadeau")hh+='<div class="gc-msg">\u201c'+g.msg+'\u201d</div>';
+  hh+='<div class="gc-code">'+g.code+'</div>';
+  hh+='<div class="gc-info">';
+  hh+='Valable jusqu\u0027au <strong>'+g.exp+'</strong><br>';
+  if(g.scope&&g.scope!=="tout")hh+='Utilisable sur '+(g.scope==="prestations"?"les prestations":"les produits")+' uniquement<br>';
+  hh+='Montant initial : '+g.val.toFixed(2)+' \u20ac TTC';
+  if(rem<g.val)hh+=' \u2022 Solde restant : '+rem.toFixed(2)+' \u20ac';
+  hh+='</div></div>';
+  // Footer with salon info
+  hh+='<div class="gc-footer">';
+  hh+=salon.nom;
+  if(salon.adr)hh+=' \u2022 '+salon.adr;
+  if(salon.tel)hh+=' \u2022 '+salon.tel;
+  if(salon.siret)hh+='<br>SIRET: '+salon.siret;
+  hh+='<br>Ce bon est nominatif, non remboursable et non \u00e9changeable contre de l\u0027argent.';
+  hh+='</div></div></body></html>';
+  w.document.write(hh);w.document.close();
+  setTimeout(function(){w.print();},400);
 }
+
+function confirmVoidGift(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h+='<div style="font-size:48px;margin-bottom:10px">\u26a0\ufe0f</div>';
+  h+='<h2 style="color:var(--red)!important">Annuler ce bon cadeau ?</h2>';
+  h+='<div style="font-size:15px;margin-bottom:6px"><strong>'+g.code+'</strong> \u2022 '+g.val.toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">Le bon sera marqu\u00e9 comme annul\u00e9 et ne pourra plus \u00eatre utilis\u00e9.<br>Un avoir pourra \u00eatre cr\u00e9\u00e9 si n\u00e9cessaire.</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1" onclick="cM()">Non, garder</button>';
+  h+='<button class="btn" style="flex:1;background:var(--red)!important;color:#fff!important" onclick="doVoidGift(\u0027'+gcId+'\u0027)">Oui, annuler le bon</button></div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+function doVoidGift(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  var oldRem=g.rem;
+  g.st="voided";g.rem=0;
+  if(typeof saveGiftCard==="function")saveGiftCard(g);
+  auditLog("ANNULATION_BON_CADEAU","Bon "+g.code+" - Valeur initiale: "+g.val.toFixed(2)+"E - Solde annul\u00e9: "+oldRem.toFixed(2)+"E");
+  cM();go("gifts");
+}
+
+function printGiftCard(gcId){
+  chooseGiftTheme(gcId);
+}
+
+function searchGiftByCode(){
+  var code=(document.getElementById("gsCode").value||"").trim().toUpperCase();
+  if(!code){return;}
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].code.toUpperCase()===code){g=GC[i];break;}}
+  var res=document.getElementById("gsResult");
+  if(!g){res.innerHTML='<div style="text-align:center;padding:14px;color:var(--red)"><strong>\u274c Aucun bon trouv\u00e9 avec ce code</strong></div>';return;}
+  var rem=g.rem!==undefined?g.rem:g.val;
+  var isUsed=g.st==="used"||rem<=0;
+  var isExp=g.exp&&g.exp<TD;
+  var h='<div style="padding:14px;border-radius:14px;border:2px solid '+(isUsed?"#c43838":isExp?"#d48a1a":"#c8a84e")+';background:'+(isUsed?"#fde8e8":isExp?"#fdf2e4":"#fffef8")+';text-align:center">';
+  h+='<div style="font-size:28px;font-weight:900;color:'+(isUsed?"#c43838":"#c8a84e")+'">'+g.val.toFixed(0)+' \u20ac</div>';
+  if(!isUsed&&rem<g.val)h+='<div style="font-size:14px;font-weight:700;color:#d48a1a">Reste: '+rem.toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:13px;color:#555;margin:6px 0">De <strong>'+g.from+'</strong>'+(g.to?' \u2192 <strong>'+g.to+'</strong>':'')+'</div>';
+  h+='<div style="font-size:12px;color:#888">Cr\u00e9\u00e9 '+fmt(g.cr)+' \u2022 Expire '+fmt(g.exp)+'</div>';
+  var status=isUsed?"Utilis\u00e9":isExp?"Expir\u00e9":g.st==="voided"?"Annul\u00e9":"Actif";
+  var stCol=isUsed||g.st==="voided"?"#c43838":isExp?"#d48a1a":"#2d9a5e";
+  h+='<div style="margin-top:6px"><span style="font-size:12px;padding:3px 10px;border-radius:12px;background:'+stCol+'22;color:'+stCol+';font-weight:700">'+status+'</span></div>';
+  h+='</div>';
+  res.innerHTML=h;
+}
+
+
 
 // === CAISSE ===
 function rCaisse(){
@@ -3860,17 +4059,31 @@ function oM(type,pf){
   }
   else if(type==="gift"){
     h+='<h2 style="color:var(--gold)">\ud83c\udf81 Vendre un bon cadeau</h2>';
-    h+='<div style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:14px">Le bon sera encaiss\u00e9 TTC et ajout\u00e9 aux bons actifs.</div>';
-    h+='<div class="fg"><label>Montant TTC (\u20ac)</label><input id="gv" type="number" placeholder="50" style="font-size:24px;text-align:center;padding:16px;font-weight:800"></div>';
+    h+='<div style="font-size:13px;color:#666;margin-bottom:16px">Le bon sera encaiss\u00e9 TTC et un re\u00e7u g\u00e9n\u00e9r\u00e9.</div>';
+    // Quick amount buttons
+    h+='<div class="fg"><label>Montant TTC</label>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
+    var quickAmts=[20,30,50,75,100];
+    for(var qa=0;qa<quickAmts.length;qa++){
+      h+='<button class="btn bs" style="flex:1;padding:10px 0;font-size:14px;font-weight:800" onclick="document.getElementById(\'gv\').value='+quickAmts[qa]+'">'+quickAmts[qa]+' \u20ac</button>';
+    }
+    h+='</div>';
+    h+='<input id="gv" type="number" placeholder="Autre montant" style="font-size:22px;text-align:center;padding:14px;font-weight:800"></div>';
     h+='<div style="display:flex;gap:10px">';
-    h+='<div class="fg" style="flex:1"><label>Acheteur</label><input id="gf" placeholder="Nom"></div>';
-    h+='<div class="fg" style="flex:1"><label>Pour</label><input id="gt" placeholder="Destinataire"></div></div>';
-    h+='<div class="fg"><label>Message</label><input id="gm" value="Bon cadeau" placeholder="Joyeux anniversaire"></div>';
+    h+='<div class="fg" style="flex:1"><label>Acheteur (nom)</label><input id="gf" placeholder="Qui ach\u00e8te ?"></div>';
+    h+='<div class="fg" style="flex:1"><label>B\u00e9n\u00e9ficiaire</label><input id="gt" placeholder="Pour qui ?"></div></div>';
+    h+='<div class="fg"><label>Message personnalis\u00e9</label><input id="gm" value="" placeholder="Joyeux anniversaire, Joyeux No\u00ebl..."></div>';
     h+='<div style="display:flex;gap:10px">';
-    h+='<div class="fg" style="flex:1"><label>Validit\u00e9</label><select id="gexp"><option value="12">12 mois</option><option value="6">6 mois</option><option value="18">18 mois</option><option value="24">24 mois</option></select></div>';
-    h+='<div class="fg" style="flex:1"><label>Valable sur</label><select id="gscope"><option value="tout">Tout</option><option value="prestations">Prestations</option><option value="produits">Produits</option></select></div></div>';
-    h+='<div class="fg"><label>Paiement</label><select id="gpay"><option value="CB">CB</option><option value="Especes">Esp\u00e8ces</option><option value="Cheque">Ch\u00e8que</option><option value="Virement">Virement</option></select></div>';
-    h+='<button class="btn bg bk" style="margin-top:14px;padding:16px;font-size:16px" onclick="aGi()">Encaisser et cr\u00e9er le bon</button>';
+    h+='<div class="fg" style="flex:1"><label>Dur\u00e9e de validit\u00e9</label><select id="gexp"><option value="12">12 mois (standard)</option><option value="6">6 mois</option><option value="18">18 mois</option><option value="24">24 mois</option></select></div>';
+    h+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="gscope"><option value="tout">Tout (prestations + produits)</option><option value="prestations">Prestations uniquement</option><option value="produits">Produits uniquement</option></select></div></div>';
+    h+='<div class="fg"><label>Mode de paiement</label><select id="gpay"><option value="CB">Carte bancaire</option><option value="Especes">Esp\u00e8ces</option><option value="Cheque">Ch\u00e8que</option><option value="Virement">Virement bancaire</option></select></div>';
+    h+='<button class="btn bg bk" style="margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="aGi()">\u2705 Encaisser et cr\u00e9er le bon</button>';
+  }
+  else if(type==="giftSearch"){
+    h+='<h2>\ud83d\udd0d Rechercher un bon cadeau</h2>';
+    h+='<div class="fg"><label>Code du bon</label><input id="gsCode" placeholder="BC-XXXXXX" style="text-transform:uppercase;font-size:18px;text-align:center;padding:14px;font-weight:700;letter-spacing:2px"></div>';
+    h+='<button class="btn bg bk" style="margin-top:10px;padding:14px;width:100%" onclick="searchGiftByCode()">Rechercher</button>';
+    h+='<div id="gsResult" style="margin-top:14px"></div>';
   }
   
   h+='</div></div>';
@@ -4068,14 +4281,24 @@ function aGi(){
   var v=parseFloat(document.getElementById("gv").value);
   if(!v||v<=0){alert("Indiquez un montant");return;}
   var f=document.getElementById("gf").value.trim()||"Client";
-  var m=document.getElementById("gm").value.trim()||"Bon cadeau";
+  var m=document.getElementById("gm").value.trim()||"";
   var t=document.getElementById("gt").value.trim();
   var pay=document.getElementById("gpay")?document.getElementById("gpay").value:"CB";
   var expM=document.getElementById("gexp")?parseInt(document.getElementById("gexp").value):12;
   var scope=document.getElementById("gscope")?document.getElementById("gscope").value:"tout";
   var e=new Date();e.setMonth(e.getMonth()+(expM||12));
-  var code="BC-"+Date.now().toString(36).toUpperCase();
-  var ng={id:U(),val:v,from:f,to:t,msg:m,cr:TD,exp:dS(e),used:0,st:"active",code:code,rem:v,scope:scope,payMethod:pay};
+  // Sequential numbering
+  if(!window._gcSeq){
+    window._gcSeq=1;
+    GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});
+  }
+  var gcNum=window._gcSeq++;
+  var code="BC-"+String(gcNum).padStart(4,"0");
+  // TVA calculation (20% standard for gift cards = prestation de service)
+  var tvaRate=0.20;
+  var ht=v/(1+tvaRate);
+  var tva=v-ht;
+  var ng={id:U(),val:v,ht:ht,tva:tva,tvaRate:tvaRate,from:f,to:t,msg:m,cr:TD,exp:dS(e),used:0,st:"active",code:code,rem:v,scope:scope,payMethod:pay,gcNum:gcNum,history:[]};
   GC.push(ng);
   if(typeof saveGiftCard==="function")saveGiftCard(ng);
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
@@ -4083,16 +4306,19 @@ function aGi(){
   var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:T[0]?T[0].id:1,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN};
   chainTicket(tk);AP.push(tk);
   if(typeof saveAppointment==="function")saveAppointment(tk);
-  auditLog("VENTE_BON_CADEAU","Bon "+code+" - "+v.toFixed(2)+"E - "+pay);
+  auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+") - "+pay+" - De:"+f+(t?" Pour:"+t:""));
+  // Success screen with print option
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>';
   h2+='<h2 style="color:var(--gold)">Bon cadeau cr\u00e9\u00e9 !</h2>';
-  h2+='<div style="font-size:32px;font-weight:900;color:var(--gold);margin:10px 0">'+v.toFixed(0)+' \u20ac</div>';
+  h2+='<div style="font-size:32px;font-weight:900;color:var(--gold);margin:10px 0">'+v.toFixed(0)+' \u20ac <span style="font-size:14px;font-weight:600;color:#888">TTC</span></div>';
+  h2+='<div style="font-size:12px;color:#999;margin-bottom:8px">HT: '+ht.toFixed(2)+' \u20ac \u2022 TVA ('+Math.round(tvaRate*100)+'%): '+tva.toFixed(2)+' \u20ac</div>';
   h2+='<div style="font-size:17px;font-weight:800;letter-spacing:2px;margin:10px 0;background:rgba(0,0,0,.06);display:inline-block;padding:8px 20px;border-radius:8px">'+code+'</div>';
   h2+='<div style="font-size:13px;color:var(--text2);margin:8px 0">De <strong>'+f+'</strong>'+(t?' pour <strong>'+t+'</strong>':'')+'</div>';
-  h2+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Expire '+fmt(dS(e))+' \u2022 '+pay+'</div>';
+  if(m&&m!=="Bon cadeau")h2+='<div style="font-size:13px;color:#888;font-style:italic;margin:4px 0">\u201c'+m+'\u201d</div>';
+  h2+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Expire '+fmt(dS(e))+' \u2022 '+pay+(scope!=="tout"?' \u2022 '+(scope==="prestations"?"Prestations":"Produits")+' uniquement':'')+'</div>';
   h2+='<div style="display:flex;gap:8px">';
-  h2+='<button class="btn bg" style="flex:1;padding:14px" onclick="printGiftCard(this.dataset.gid)" data-gid="'+ng.id+'">Imprimer</button>';
+  h2+='<button class="btn bg" style="flex:1;padding:14px" onclick="chooseGiftTheme(\u0027'+ng.id+'\u0027)">\ud83c\udfa8 Imprimer</button>';
   h2+='<button class="btn" style="flex:1;padding:14px" onclick="cM();go(\u0027gifts\u0027)">Fermer</button>';
   h2+='</div></div></div>';
   document.getElementById("modal").innerHTML=h2;
@@ -4165,18 +4391,29 @@ function showCaisse(){
   }
   else if(_tk.step===2){
     // === STEP 2: Choose client ===
-    h+='<div style="text-align:center;padding:14px;font-size:16px;font-weight:700">Choix du client</div>';
-    h+='<div style="text-align:center;margin-bottom:12px"><button class="btn bg" style="padding:10px 24px;font-size:14px" onclick="window._fromCaisse=true;oM(\'client\')">Nouveau client</button></div>';
-    h+='<div style="padding:0 14px"><input id="tkSearch" placeholder="\ud83d\udd0d Rechercher un client" oninput="filterTkClients(this.value)" style="width:100%"></div>';
-    h+='<div id="tkClientList" style="padding:10px 14px;max-height:400px;overflow-y:auto">';
-    // Clients de passage
-    h+='<div class="li" onclick="pickTkClient(null,\'F\')" style="cursor:pointer;padding:14px 0;border-bottom:1px solid var(--border2)">1-Client de passage femme</div>';
-    h+='<div class="li" onclick="pickTkClient(null,\'H\')" style="cursor:pointer;padding:14px 0;border-bottom:1px solid var(--border2)">1-Client de passage homme</div>';
-    h+='<div class="li" onclick="pickTkClient(null,\'E\')" style="cursor:pointer;padding:14px 0;border-bottom:1px solid var(--border2)">1-Client de passage enfant</div>';
+    h+='<div style="text-align:center;padding:16px 14px 8px;font-size:18px;font-weight:800;font-family:var(--f1)">Choix du client</div>';
+    h+='<div style="text-align:center;margin-bottom:14px"><button class="btn bg" style="padding:12px 28px;font-size:14px;border-radius:25px" onclick="window._fromCaisse=true;oM(\'client\')">\u2795 Nouveau client</button></div>';
+    h+='<div style="padding:0 14px;margin-bottom:10px"><input id="tkSearch" placeholder="\ud83d\udd0d Rechercher un client" oninput="filterTkClients(this.value)" style="width:100%;background:rgba(0,0,0,.06)!important;border:1px solid rgba(0,0,0,.12)!important;border-radius:12px;padding:12px 16px;font-size:14px;color:#1a1a2e!important"></div>';
+    h+='<div id="tkClientList" style="padding:6px 14px;max-height:400px;overflow-y:auto">';
+    // Clients de passage - styled as colored chips
+    var passages=[{k:"F",l:"Cliente de passage",ico:"\ud83d\udc69",col:"#e91e63"},{k:"H",l:"Client de passage",ico:"\ud83d\udc68",col:"#2196f3"},{k:"E",l:"Enfant de passage",ico:"\ud83e\uddd2",col:"#ff9800"}];
+    for(var p=0;p<passages.length;p++){
+      var pp=passages[p];
+      h+='<div class="tkc-item" onclick="pickTkClient(null,\''+pp.k+'\')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:6px;border-radius:12px;background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.08);transition:background .15s">';
+      h+='<div style="width:40px;height:40px;border-radius:50%;background:'+pp.col+';display:flex;align-items:center;justify-content:center;font-size:20px">'+pp.ico+'</div>';
+      h+='<span style="font-weight:600;font-size:14px;color:#1a1a2e">'+pp.l+'</span></div>';
+    }
+    // Separator
+    h+='<div style="border-top:1px solid rgba(0,0,0,.08);margin:10px 0;padding-top:6px;font-size:11px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px">Clients enregistr\u00e9s</div>';
     var sorted=CL.slice().sort(function(a,b){return(a.nom+a.pre).localeCompare(b.nom+b.pre)});
     for(var i=0;i<sorted.length;i++){
       var c=sorted[i];
-      h+='<div class="li tkc-item" onclick="pickTkClient(\''+c.id+'\')" style="cursor:pointer;padding:14px 0;border-bottom:1px solid var(--border2)">'+c.nom+' '+c.pre+'</div>';
+      var ini=(c.pre?c.pre[0]:"")+(c.nom?c.nom[0]:"");
+      h+='<div class="tkc-item" onclick="pickTkClient(\''+c.id+'\')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:4px;border-radius:12px;background:rgba(0,0,0,.03);border:1px solid rgba(0,0,0,.06);transition:background .15s">';
+      h+='<div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--gold),var(--gold-light));display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff">'+ini.toUpperCase()+'</div>';
+      h+='<div><div style="font-weight:700;font-size:14px;color:#1a1a2e">'+c.nom+' '+c.pre+'</div>';
+      if(c.tel)h+='<div style="font-size:12px;color:#888">'+c.tel+'</div>';
+      h+='</div></div>';
     }
     h+='</div>';
   }
@@ -4558,8 +4795,11 @@ function doBonPay(){
   var use=Math.min(bon.rem,resteDu);
   bon.rem-=use;
   bon.used=(bon.used||0)+use;
+  if(!bon.history)bon.history=[];
+  bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
   if(bon.rem<=0){bon.st="used";bon.rem=0;}
   if(typeof saveGiftCard==="function")saveGiftCard(bon);
+  auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Utilisé: "+use.toFixed(2)+"E - Reste: "+bon.rem.toFixed(2)+"E");
   if(!_tk.payments)_tk.payments=[];
   _tk.payments.push({method:"Bon cadeau "+code,amount:use});
   _tk.paid=(_tk.paid||0)+use;
