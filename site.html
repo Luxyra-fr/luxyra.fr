@@ -117,12 +117,43 @@ body{font-family:var(--f2);background:var(--bg);color:var(--text);min-height:100
 .footer-name{font-family:var(--f1);font-size:18px;color:var(--gold);margin-bottom:4px}
 .footer-info{font-size:12px;color:var(--text3);line-height:1.8}
 
+/* CLIENT ACCOUNT */
+.auth-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px}
+.auth-box{background:var(--bg3);border:2px solid var(--gold);border-radius:20px;padding:32px 24px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto}
+.auth-box h2{font-family:var(--f1);font-size:24px;color:var(--gold);text-align:center;margin-bottom:6px}
+.auth-box .sub{font-size:13px;color:var(--text2);text-align:center;margin-bottom:20px}
+.auth-box .err{background:rgba(196,56,56,.1);border:1px solid rgba(196,56,56,.2);color:#f87171;padding:10px;border-radius:8px;font-size:13px;text-align:center;margin-bottom:12px;display:none}
+.auth-switch{text-align:center;margin-top:16px;font-size:13px;color:var(--text3)}
+.auth-switch a{color:var(--gold);cursor:pointer;font-weight:700}
+
+/* Client dashboard */
+.dash-header{display:flex;align-items:center;gap:14px;padding:20px 0;border-bottom:1px solid rgba(200,168,78,.1);margin-bottom:20px}
+.dash-avatar{width:56px;height:56px;border-radius:50%;background:var(--gold);color:#0a0a0a;display:flex;align-items:center;justify-content:center;font-family:var(--f1);font-size:22px;font-weight:800;flex-shrink:0}
+.dash-name{font-family:var(--f1);font-size:20px;font-weight:700}
+.dash-email{font-size:12px;color:var(--text3)}
+.dash-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
+.dash-stat{background:var(--bg3);border:1px solid rgba(200,168,78,.1);border-radius:12px;padding:14px;text-align:center}
+.dash-stat .num{font-family:var(--f1);font-size:24px;font-weight:900;color:var(--gold)}
+.dash-stat .lbl{font-size:11px;color:var(--text3);margin-top:2px}
+.rdv-card{background:var(--bg3);border:1px solid rgba(200,168,78,.08);border-radius:12px;padding:14px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.rdv-date{min-width:50px;text-align:center}
+.rdv-date .d{font-family:var(--f1);font-size:22px;font-weight:800;color:var(--gold)}
+.rdv-date .m{font-size:10px;color:var(--text3);text-transform:uppercase}
+.rdv-info{flex:1}.rdv-info .svc{font-weight:700;font-size:14px}.rdv-info .det{font-size:12px;color:var(--text2)}
+.rdv-status{font-size:11px;font-weight:700;padding:4px 10px;border-radius:8px}
+.rdv-status.pending{background:rgba(212,138,26,.1);color:#d48a1a}
+.rdv-status.confirmed{background:rgba(45,154,94,.1);color:#2d9a5e}
+.rdv-status.done{background:rgba(200,168,78,.1);color:var(--gold)}
+.rdv-status.cancelled{background:rgba(196,56,56,.1);color:#c43838}
+.fid-bar{height:10px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden;margin:8px 0}
+.fid-bar .fill{height:100%;border-radius:5px;background:var(--gold);transition:width .5s}
+
 /* Responsive */
 @media(max-width:600px){.fg-row{grid-template-columns:1fr}.h-links{gap:6px}.h-links a{font-size:10px;padding:6px 10px}.collab-grid{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
-<div id="root">
+<div id="root"><div id="authModal"></div>
   <div class="loading" id="loadingScreen">
     <div class="spin"></div>
     <div style="font-size:14px;color:var(--text3)">Chargement du salon...</div>
@@ -134,6 +165,10 @@ body{font-family:var(--f2);background:var(--bg);color:var(--text);min-height:100
 // COIFFPRO — Site vitrine dynamique
 // Lit les données du salon depuis Supabase via l'URL
 // ============================================================
+
+// Client state
+var CLIENT=null; // logged in client
+var CLIENT_RDVS=[];
 
 var SB_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
@@ -148,6 +183,9 @@ var SALON={},COLLABS=[],SERVICES=[],PRODUCTS=[],HORAIRES={},SITE_CFG={};
 var RDV_EXISTING=[];
 var booking={svcId:null,svc:null,collabId:null,collab:null,date:null,time:null};
 var calMonth=new Date().getMonth(),calYear=new Date().getFullYear();
+
+// Try to restore client session
+loadClientSession();
 
 if(!salonId){showError("Aucun salon sp\u00e9cifi\u00e9. V\u00e9rifiez le lien.");}
 else{loadSalon();}
@@ -215,6 +253,110 @@ async function loadSalon(){
 function showError(msg){
   document.getElementById("root").innerHTML='<div class="error-page"><h2>Oups</h2><p style="color:var(--text2)">'+msg+'</p></div>';
 }
+
+// ============================================================
+// CLIENT AUTH
+// ============================================================
+
+async function hashPassword(pass){
+  var enc=new TextEncoder().encode(pass);
+  var hash=await crypto.subtle.digest('SHA-256',enc);
+  return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+
+function showAuthModal(mode){
+  var isLogin=mode==="login";
+  var h='<div class="auth-modal" onclick="closeAuth()">';
+  h+='<div class="auth-box" onclick="event.stopPropagation()">';
+  h+='<h2>'+(isLogin?"Connexion":"Cr\u00e9er un compte")+'</h2>';
+  h+='<div class="sub">'+(isLogin?"Connectez-vous pour r\u00e9server":"Inscrivez-vous pour prendre rendez-vous en ligne")+'</div>';
+  h+='<div class="err" id="authErr"></div>';
+  if(!isLogin){
+    h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="aRegNom" required></div>';
+    h+='<div class="fg"><label>Pr\u00e9nom</label><input id="aRegPre"></div></div>';
+    h+='<div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
+  }
+  h+='<div class="fg"><label>Email *</label><input id="aEmail" type="email" required></div>';
+  h+='<div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div>';
+  if(!isLogin)h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="aPass2" type="password" required></div>';
+  h+='<button class="btn btn-gold" style="width:100%;padding:16px;font-size:15px;margin-top:12px" onclick="'+(isLogin?'doClientLogin()':'doClientRegister()')+'">'+(isLogin?"Se connecter":"Cr\u00e9er mon compte")+'</button>';
+  h+='<div class="auth-switch">'+(isLogin?'Pas encore de compte ? <a onclick="showAuthModal(\'register\')">S\'inscrire</a>':'D\u00e9j\u00e0 un compte ? <a onclick="showAuthModal(\'login\')">Se connecter</a>')+'</div>';
+  h+='</div></div>';
+  document.getElementById("authModal").innerHTML=h;
+}
+function closeAuth(){document.getElementById("authModal").innerHTML="";}
+function showAuthError(msg){var el=document.getElementById("authErr");if(el){el.textContent=msg;el.style.display="block";}}
+
+async function doClientRegister(){
+  var nom=document.getElementById("aRegNom").value.trim();
+  var pre=(document.getElementById("aRegPre")||{}).value||"";
+  var tel=document.getElementById("aRegTel").value.trim();
+  var email=document.getElementById("aEmail").value.trim().toLowerCase();
+  var pass=document.getElementById("aPass").value;
+  var pass2=document.getElementById("aPass2").value;
+  if(!nom||!tel||!email||!pass){showAuthError("Remplissez tous les champs obligatoires");return;}
+  if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
+  if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
+  var hash=await hashPassword(pass);
+  // Check if email already exists
+  var check=await sb.from("clients_online").select("id").eq("salon_id",salonId).eq("email",email);
+  if(check.data&&check.data.length>0){showAuthError("Un compte existe d\u00e9j\u00e0 avec cet email");return;}
+  var r=await sb.from("clients_online").insert({
+    salon_id:salonId,email:email,password_hash:hash,
+    nom:nom,prenom:pre.trim(),telephone:tel
+  }).select();
+  if(r.error){showAuthError(r.error.message);return;}
+  if(r.data&&r.data[0]){
+    CLIENT=r.data[0];
+    saveClientSession();
+    closeAuth();
+    renderSite();
+  }
+}
+
+async function doClientLogin(){
+  var email=document.getElementById("aEmail").value.trim().toLowerCase();
+  var pass=document.getElementById("aPass").value;
+  if(!email||!pass){showAuthError("Remplissez email et mot de passe");return;}
+  var hash=await hashPassword(pass);
+  var r=await sb.from("clients_online").select("*").eq("salon_id",salonId).eq("email",email).eq("password_hash",hash);
+  if(!r.data||r.data.length===0){showAuthError("Email ou mot de passe incorrect");return;}
+  CLIENT=r.data[0];
+  // Update last login
+  sb.from("clients_online").update({last_login:new Date().toISOString()}).eq("id",CLIENT.id);
+  saveClientSession();
+  closeAuth();
+  renderSite();
+}
+
+function doClientLogout(){
+  CLIENT=null;CLIENT_RDVS=[];
+  try{sessionStorage.removeItem("cp_client");}catch(e){}
+  renderSite();
+}
+
+function saveClientSession(){
+  try{sessionStorage.setItem("cp_client",JSON.stringify({id:CLIENT.id,email:CLIENT.email,nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone,points_fidelite:CLIENT.points_fidelite,total_visites:CLIENT.total_visites}));}catch(e){}
+}
+function loadClientSession(){
+  try{var d=sessionStorage.getItem("cp_client");if(d){CLIENT=JSON.parse(d);return true;}}catch(e){}
+  return false;
+}
+
+async function loadClientRDVs(){
+  if(!CLIENT)return;
+  var r=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_online_id",CLIENT.id).order("date_rdv",{ascending:false});
+  if(r.data)CLIENT_RDVS=r.data;
+  // Also load by email as fallback
+  var r2=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_email",CLIENT.email).order("date_rdv",{ascending:false});
+  if(r2.data){
+    r2.data.forEach(function(rdv){
+      var exists=false;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdv.id){exists=true;break;}}
+      if(!exists)CLIENT_RDVS.push(rdv);
+    });
+  }
+}
+
 
 function renderSite(){
   var adr=SALON.adresse+(SALON.cp?", "+SALON.cp:"")+(SALON.ville?" "+SALON.ville:"");
@@ -287,6 +429,41 @@ function renderSite(){
   }
   h+='</div></div>';
   
+  // === PAGE DASHBOARD ===
+  if(CLIENT){
+    h+='<div class="page" id="page-dashboard">';
+    h+='<div class="dash-header">';
+    var ini=((CLIENT.prenom||"")[0]||"")+((CLIENT.nom||"")[0]||"");
+    h+='<div class="dash-avatar">'+ini.toUpperCase()+'</div>';
+    h+='<div><div class="dash-name">'+(CLIENT.prenom||"")+" "+CLIENT.nom+'</div>';
+    h+='<div class="dash-email">'+CLIENT.email+'</div></div>';
+    h+='<button class="btn btn-outline" style="margin-left:auto;font-size:12px;padding:8px 16px" onclick="doClientLogout()">D\u00e9connexion</button>';
+    h+='</div>';
+    // Stats
+    h+='<div class="dash-stats">';
+    h+='<div class="dash-stat"><div class="num">'+(CLIENT.total_visites||0)+'</div><div class="lbl">Visites</div></div>';
+    h+='<div class="dash-stat"><div class="num">'+(CLIENT.points_fidelite||0)+'</div><div class="lbl">Points fid\u00e9lit\u00e9</div></div>';
+    var fidSeuil=10;// default
+    var fidPct=Math.min(100,Math.round((CLIENT.points_fidelite||0)/fidSeuil*100));
+    h+='<div class="dash-stat"><div class="num">'+fidPct+'%</div><div class="lbl">Prochaine remise</div><div class="fid-bar"><div class="fill" style="width:'+fidPct+'%"></div></div></div>';
+    h+='</div>';
+    // CTA
+    if(SITE_CFG.resa)h+='<button class="btn btn-gold" style="width:100%;padding:14px;margin-bottom:20px" onclick="showPage(\'booking\')">Prendre rendez-vous</button>';
+    // RDV history
+    h+='<div style="font-family:var(--f1);font-size:18px;font-weight:700;margin-bottom:12px">Mes rendez-vous</div>';
+    h+='<div id="dashRdvList"><div style="text-align:center;color:var(--text3);padding:20px">Chargement...</div></div>';
+    // Profile section
+    h+='<div style="font-family:var(--f1);font-size:18px;font-weight:700;margin:24px 0 12px">Mes informations</div>';
+    h+='<div class="card">';
+    h+='<div class="fg"><label>Nom</label><input value="'+CLIENT.nom+'" onchange="CLIENT.nom=this.value"></div>';
+    h+='<div class="fg"><label>Pr\u00e9nom</label><input value="'+(CLIENT.prenom||"")+'" onchange="CLIENT.prenom=this.value"></div>';
+    h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input value="'+(CLIENT.telephone||"")+'" onchange="CLIENT.telephone=this.value"></div>';
+    h+='<div class="fg"><label>Email</label><input value="'+CLIENT.email+'" disabled style="opacity:.5"></div>';
+    h+='<button class="btn btn-gold" style="width:100%;margin-top:12px;padding:12px" onclick="saveClientProfile()">Enregistrer</button>';
+    h+='</div>';
+    h+='</div>';
+  }
+
   // === PAGE BOOKING ===
   if(SITE_CFG.resa){
     h+='<div class="page" id="page-booking">';
@@ -302,7 +479,9 @@ function renderSite(){
   h+='<br>Propuls\u00e9 par CoiffPro</div></div>';
   
   document.getElementById("root").innerHTML=h;
-  if(SITE_CFG.resa)renderBookingStep1();
+  if(SITE_CFG.resa){if(!CLIENT){showAuthModal('login');}else{renderBookingStep1();}}
+  // Load dashboard data if logged in
+  if(CLIENT)setTimeout(function(){loadDashboardRdvs();},500);
 }
 
 function showPage(id){
@@ -311,7 +490,7 @@ function showPage(id){
   document.querySelectorAll('.h-links a').forEach(function(a){a.classList.remove('active');});
   event.target.classList.add('active');
   window.scrollTo(0,0);
-  if(id==='booking')renderBookingStep1();
+  if(id==='booking'){if(!CLIENT){showAuthModal('login');return;}renderBookingStep1();}
 }
 
 // ============================================================
@@ -507,8 +686,9 @@ function renderBookingStep4(){
   h+='</div>';
   
   // Form
-  h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="bkNom" required></div><div class="fg"><label>Pr\u00e9nom</label><input id="bkPre"></div></div>';
-  h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="bkTel" type="tel" required></div><div class="fg"><label>Email</label><input id="bkEmail" type="email"></div></div>';
+  var cNom=CLIENT?CLIENT.nom:"",cPre=CLIENT?(CLIENT.prenom||""):"",cTel=CLIENT?(CLIENT.telephone||""):"",cEm=CLIENT?CLIENT.email:"";
+  h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="bkNom" required value="'+cNom+'"></div><div class="fg"><label>Pr\u00e9nom</label><input id="bkPre" value="'+cPre+'"></div></div>';
+  h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="bkTel" type="tel" required value="'+cTel+'"></div><div class="fg"><label>Email</label><input id="bkEmail" type="email" value="'+cEm+'"></div></div>';
   h+='<div class="fg"><label>Message (optionnel)</label><textarea id="bkMsg" rows="2" placeholder="Pr\u00e9cisions, souhaits..."></textarea></div>';
   
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
@@ -533,6 +713,7 @@ async function submitBooking(){
   var data={
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
+    client_online_id:CLIENT?CLIENT.id:null,
     service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
@@ -560,6 +741,36 @@ async function submitBooking(){
   }catch(e){
     alert("Erreur: "+e.message);
   }
+}
+
+// Save client profile
+async function saveClientProfile(){
+  if(!CLIENT)return;
+  await sb.from("clients_online").update({nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone}).eq("id",CLIENT.id);
+  saveClientSession();
+  alert("Informations mises \u00e0 jour !");
+}
+
+// Load dashboard RDV list
+async function loadDashboardRdvs(){
+  await loadClientRDVs();
+  var el=document.getElementById("dashRdvList");if(!el)return;
+  if(!CLIENT_RDVS.length){el.innerHTML='<div style="text-align:center;color:var(--text3);padding:20px">Aucun rendez-vous pour le moment</div>';return;}
+  var h='';
+  var mois=["Jan","F\u00e9v","Mar","Avr","Mai","Jun","Jul","Ao\u00fb","Sep","Oct","Nov","D\u00e9c"];
+  for(var i=0;i<CLIENT_RDVS.length;i++){
+    var r=CLIENT_RDVS[i];
+    var dp=r.date_rdv?r.date_rdv.split("-"):["","",""];
+    var stCls=r.status==="pending"?"pending":r.status==="confirmed"?"confirmed":r.status==="done"?"done":"cancelled";
+    var stTxt=r.status==="pending"?"En attente":r.status==="confirmed"?"Confirm\u00e9":r.status==="done"?"Termin\u00e9":"Annul\u00e9";
+    h+='<div class="rdv-card">';
+    h+='<div class="rdv-date"><div class="d">'+parseInt(dp[2])+'</div><div class="m">'+mois[parseInt(dp[1])-1]+'</div></div>';
+    h+='<div class="rdv-info"><div class="svc">'+r.service_nom+'</div>';
+    h+='<div class="det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+(r.collaborateur_nom?" \u2022 "+r.collaborateur_nom:"")+" \u2022 "+r.service_prix+"\u20ac"+'</div></div>';
+    h+='<div class="rdv-status '+stCls+'">'+stTxt+'</div>';
+    h+='</div>';
+  }
+  el.innerHTML=h;
 }
 
 // Helpers
