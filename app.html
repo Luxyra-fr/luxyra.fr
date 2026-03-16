@@ -2885,7 +2885,7 @@ function rSettings(){
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Intervalles</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option></select></div>';
     h+='</div></div>';
     
-    // === FIDÉLITÉ ===
+    // === PRESTATIONS EN LIGNE ===
     h+='<div class="card"><div class="ct">\u2702\ufe0f Prestations r\u00e9servables en ligne</div>';
     h+='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">D\u00e9cochez les prestations non disponibles en ligne.</div>';
     var allSvcOn=!SC.servicesEnLigne||SC.servicesEnLigne.length===0;
@@ -6155,42 +6155,103 @@ function showTicket(method,total){
   var cl=_tk.cId?gC(_tk.cId):null;
   var clName2=cl?cName(cl):passageName(_tk.cId);
   var sty=gT(_tk.stId);
-  var h='<div class="mbg"><div class="mbox" style="font-family:monospace;max-width:320px;background:#fff">';
-  h+='<div style="text-align:center;border-bottom:2px dashed var(--border);padding-bottom:12px">';
-  h+='<div style="font-weight:900;font-size:16px;letter-spacing:1px">'+SALON_CONFIG.nom.toUpperCase()+'</div>';
-  h+='<div style="font-size:11px">'+SALON_CONFIG.sousTitre+'</div>';
-  h+='<div style="font-size:11px">'+SALON_CONFIG.adresseComplete()+'</div>';
-  h+='<div style="font-size:11px;margin-top:6px">Ticket N\u00b0'+tkN+' \u2014 '+fmt(TD)+'</div>';
-  h+='<div style="font-size:11px">'+(sty?sty.n:"")+'</div>';
+  var txTk=SALON_CONFIG.tauxTVA||20;
+  var htTk=Math.round(total/(1+txTk/100)*100)/100;
+  var tvaTk=Math.round((total-htTk)*100)/100;
+  var now=new Date();
+  var timeStr=now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  
+  var h='<div class="mbg"><div class="mbox" style="font-family:\'Courier New\',monospace;max-width:340px;background:#fff;color:#000;padding:20px;font-size:12px;line-height:1.5">';
+  
+  // Header salon
+  h+='<div style="text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px">';
+  h+='<div style="font-weight:900;font-size:14px;letter-spacing:1px">'+SALON_CONFIG.nom+'</div>';
+  if(SALON_CONFIG.sousTitre)h+='<div style="font-size:11px">'+SALON_CONFIG.sousTitre+'</div>';
+  h+='<div style="font-size:11px">'+SALON_CONFIG.adresse+'</div>';
+  h+='<div style="font-size:11px">'+(SALON_CONFIG.cp||"")+' '+(SALON_CONFIG.ville||"")+' - France</div>';
   h+='</div>';
-  h+='<div style="padding:10px 0;border-bottom:1px dashed var(--border)">';
-  h+='<div style="font-size:12px">Client: <strong>'+(cl?cName(cl):"Client de passage")+'</strong></div></div>';
+  
+  // Ticket number + date
+  h+='<div style="text-align:center;margin-bottom:8px">';
+  h+='<div style="font-size:12px">Ticket de vente Num\u00e9ro <strong>'+tkN+'</strong> du '+fmt(TD)+' \u00e0</div>';
+  h+='<div style="font-size:12px">'+timeStr+'</div>';
+  h+='</div>';
+  
+  // Client
+  if(cl)h+='<div style="margin-bottom:8px;font-size:12px"><strong>'+cl.nom.toUpperCase()+' '+cl.pre+'</strong>'+(cl.ph?' ('+cl.ph+')':'')+'</div>';
+  else h+='<div style="margin-bottom:8px;font-size:12px"><strong>Client de passage</strong></div>';
+  
+  // Items table header
+  h+='<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px">';
+  h+='<tr style="border-top:1px solid #000;border-bottom:1px solid #000"><th style="text-align:left;padding:4px 0">Qt\u00e9</th><th style="text-align:left">D\u00e9signation</th><th style="text-align:right">TTC</th></tr>';
   
   // Items
   for(var i=0;i<_tk.items.length;i++){
     var it=_tk.items[i];
-    var lt=it.price*it.qty-it.remise;
-    h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px dotted var(--border2)">';
-    h+='<span>'+it.name+(it.qty>1?' x'+it.qty:'')+'</span><span style="font-weight:700">'+lt.toFixed(2)+' \u20ac</span></div>';
-    if(it.remise>0)h+='<div style="font-size:11px;color:var(--green);text-align:right">Remise -'+it.remise.toFixed(2)+' \u20ac</div>';
+    if(it.isSep)continue;
+    var lt=it.price*it.qty-(it.remise||0);
+    h+='<tr style="border-bottom:1px solid #ccc"><td style="padding:3px 0;vertical-align:top">'+it.qty+'</td>';
+    h+='<td style="padding:3px 4px;font-weight:700">'+it.name.toUpperCase()+'</td>';
+    h+='<td style="text-align:right;padding:3px 0">'+lt.toFixed(2)+'</td></tr>';
+    // Sub-items: if it's a service, show the components
+    var sv=it.sId?gS(it.sId):null;
+    if(sv&&sv.phases&&sv.phases.length>1){
+      for(var pi=0;pi<sv.phases.length;pi++){
+        if(sv.phases[pi].l)h+='<tr><td></td><td style="padding:1px 4px;font-size:10px;font-style:italic;color:#666">'+sv.phases[pi].l+'</td><td></td></tr>';
+      }
+    }
+    if(it.remise>0)h+='<tr><td></td><td style="font-size:10px;color:#666;padding:1px 4px">Remise</td><td style="text-align:right;font-size:10px;color:#666">-'+it.remise.toFixed(2)+'</td></tr>';
   }
-  if(_tk.remise>0)h+='<div style="font-size:11px;color:var(--green);text-align:right;padding:4px 0">Remise ticket -'+_tk.remise.toFixed(2)+' \u20ac</div>';
+  if(_tk.remise>0)h+='<tr><td>1</td><td style="font-weight:700">REMISE TICKET</td><td style="text-align:right">-'+_tk.remise.toFixed(2)+'</td></tr>';
+  h+='</table>';
   
-  h+='<div style="display:flex;justify-content:space-between;padding:12px 0;font-weight:900;font-size:18px;border-top:2px solid var(--text);margin-top:8px"><span>TOTAL TTC</span><span>'+total.toFixed(2)+' \u20ac</span></div>';
-  if(window.SHOW_TVA_TICKET){
-  var txTk=SALON_CONFIG.tauxTVA||20;
-  var htTk=Math.round(total/(1+txTk/100)*100)/100;
-  var tvaTk=Math.round((total-htTk)*100)/100;
-  h+='<div style="padding:4px 0;font-size:11px;color:var(--text3);border-top:1px dashed var(--border)">';
-  h+='<div style="display:flex;justify-content:space-between"><span>HT</span><span>'+htTk.toFixed(2)+' \u20ac</span></div>';
-  h+='<div style="display:flex;justify-content:space-between"><span>TVA '+txTk+'%</span><span>'+tvaTk.toFixed(2)+' \u20ac</span></div>';
+  // Total HT
+  h+='<div style="display:flex;justify-content:space-between;font-weight:900;font-size:13px;border-top:2px solid #000;padding-top:6px"><span>Total HT :</span><span>'+htTk.toFixed(2)+'</span></div>';
+  
+  // TVA breakdown
+  h+='<table style="width:100%;font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000"><tr style="font-weight:700"><td></td><td style="text-align:center">TVA</td><td style="text-align:center">HT</td><td style="text-align:right">TTC</td></tr>';
+  h+='<tr><td>1 - TVA '+txTk+'%</td><td style="text-align:center">'+tvaTk.toFixed(2)+' \u20ac</td><td style="text-align:center">'+htTk.toFixed(2)+' \u20ac</td><td style="text-align:right">'+total.toFixed(2)+' \u20ac</td></tr></table>';
+  
+  // Total TTC
+  h+='<div style="display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000"><span>Total TTC :</span><span>'+total.toFixed(2)+'</span></div>';
+  
+  // Payment method(s)
+  h+='<div style="padding:6px 0;font-size:12px">';
+  if(_tk.payments&&_tk.payments.length>0){
+    for(var pi2=0;pi2<_tk.payments.length;pi2++){
+      var pay=_tk.payments[pi2];
+      h+='<div style="display:flex;justify-content:space-between"><span>Pay\u00e9 en '+pay.method+' :</span><span>'+pay.amount.toFixed(2)+'</span></div>';
+    }
+  }else{
+    h+='<div style="display:flex;justify-content:space-between"><span>Pay\u00e9 en '+method+' :</span><span>'+total.toFixed(2)+'</span></div>';
+  }
   h+='</div>';
-  }
-  h+='<div style="padding:6px 0;font-size:12px;border-top:1px dashed var(--border)">R\u00e8glement: <strong>'+method+'</strong></div>';
-  h+='<div style="text-align:center;padding:10px 0;font-size:11px;color:var(--text3)">Merci de votre visite !</div>';
   
-  h+='<div style="display:flex;gap:8px;margin-top:10px">';
-  h+='<button class="btn bg" style="flex:1" onclick="printTicketReceipt()">\ud83d\udda8 Imprimer</button>';h+='<button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailTicket()">\u2709 Email</button>';
+  // Fidélité
+  if(cl){
+    var SC=window.SITE_CONFIG||{};
+    var fidSeuil=SC.fideliteSeuil||10;
+    var reste=Math.max(0,fidSeuil-(cl.fid||0));
+    if(reste>0)h+='<div style="font-size:11px;padding:4px 0;border-top:1px solid #ccc">Il vous reste '+reste+' points avant la remise fid\u00e9lit\u00e9</div>';
+    else h+='<div style="font-size:11px;padding:4px 0;border-top:1px solid #ccc;font-weight:700">\ud83c\udf89 Remise fid\u00e9lit\u00e9 acquise !</div>';
+  }
+  
+  // Collaborateur
+  h+='<div style="font-size:11px;padding:4px 0">Service effectu\u00e9 par '+(sty?sty.n:"")+'</div>';
+  
+  // Legal
+  h+='<div style="font-size:10px;padding-top:6px;border-top:1px solid #ccc;color:#666">';
+  if(SALON_CONFIG.siret)h+='SIRET '+SALON_CONFIG.siret;
+  if(SALON_CONFIG.tva)h+=' - TVA Intracom '+SALON_CONFIG.tva;
+  h+='<br>(NF525) CoiffPro</div>';
+  
+  // Horodatage
+  h+='<div style="font-size:10px;color:#999;margin-top:6px">\u00c9dit\u00e9 le '+now.toLocaleDateString("fr-FR")+' \u00e0 '+now.toLocaleTimeString("fr-FR")+'</div>';
+  
+  // Buttons
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn bg" style="flex:1;color:#000" onclick="printTicketReceipt()">\ud83d\udda8 Imprimer</button>';
+  h+='<button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailTicket()">\u2709 Email</button>';
   if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")<0){
     h+='<button class="btn" style="flex:1" onclick="askFicheTech(\''+_tk.cId+'\')">Fermer</button></div>';
   }else{
