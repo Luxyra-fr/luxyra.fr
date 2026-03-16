@@ -152,6 +152,21 @@ body{font-family:var(--f2);background:var(--bg);color:var(--text);min-height:100
 .fid-bar{height:10px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden;margin:8px 0}
 .fid-bar .fill{height:100%;border-radius:5px;background:var(--gold);transition:width .5s}
 
+/* BOUTIQUE */
+.prod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.prod-card{background:var(--bg3);border:1px solid rgba(200,168,78,.08);border-radius:14px;overflow:hidden;transition:all .3s}
+.prod-card:hover{border-color:rgba(200,168,78,.25);transform:translateY(-2px)}
+.prod-img{width:100%;aspect-ratio:1;background:rgba(200,168,78,.04);display:flex;align-items:center;justify-content:center;font-size:48px;color:var(--text3)}
+.prod-img img{width:100%;height:100%;object-fit:cover}
+.prod-body{padding:14px}
+.prod-name{font-weight:700;font-size:14px;margin-bottom:2px}
+.prod-cat{font-size:11px;color:var(--text3)}
+.prod-price{font-family:var(--f1);font-size:20px;font-weight:800;color:var(--gold);margin-top:6px}
+.prod-btn{width:100%;margin-top:10px;padding:10px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);color:var(--gold);font-weight:700;font-size:13px;border-radius:8px;cursor:pointer;transition:all .2s}
+.prod-btn:hover{background:var(--gold);color:#0a0a0a}
+.cart-float{position:fixed;bottom:20px;right:20px;background:var(--gold);color:#0a0a0a;padding:14px 24px;border-radius:14px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 4px 20px rgba(200,168,78,.4);z-index:50;display:flex;align-items:center;gap:8px}
+.cart-count{background:#0a0a0a;color:var(--gold);width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px}
+
 /* Responsive */
 @media(max-width:600px){.fg-row{grid-template-columns:1fr}.h-links{gap:6px}.h-links a{font-size:10px;padding:6px 10px}.collab-grid{grid-template-columns:repeat(2,1fr)}}
 </style>
@@ -471,7 +486,45 @@ function renderSite(){
   }
   h+='</div></div>';
   
-  // === PAGE DASHBOARD ===
+  // === PAGE BOUTIQUE ===
+  if(SITE_CFG.boutique){
+    h+='<div class="page" id="page-boutique">';
+    h+='<div class="sec">Nos produits</div><div class="gold-sep"></div>';
+    h+='<p class="sec-sub">Commandez en ligne et r\u00e9cup\u00e9rez au salon</p>';
+    var shopProds=PRODUCTS.filter(function(p){
+      if(SITE_CFG.prodOnline&&SITE_CFG.prodOnline.length>0)return SITE_CFG.prodOnline.indexOf(p.id)>=0;
+      return true;
+    });
+    if(!shopProds.length){
+      h+='<div style="text-align:center;padding:40px;color:var(--text3)">Aucun produit disponible pour le moment</div>';
+    }else{
+      // Group by category
+      var prodCats={};shopProds.forEach(function(p){if(!prodCats[p.cat])prodCats[p.cat]=[];prodCats[p.cat].push(p);});
+      for(var cat in prodCats){
+        h+='<div style="font-family:var(--f1);font-size:18px;font-weight:700;color:var(--gold);margin:20px 0 10px">'+cat+'</div>';
+        h+='<div class="prod-grid">';
+        prodCats[cat].forEach(function(p){
+          h+='<div class="prod-card">';
+          if(p.img)h+='<div class="prod-img"><img src="'+p.img+'" loading="lazy"></div>';
+          else h+='<div class="prod-img">\ud83e\uddf4</div>';
+          h+='<div class="prod-body">';
+          h+='<div class="prod-name">'+p.n+'</div>';
+          h+='<div class="prod-cat">'+p.cat+'</div>';
+          h+='<div class="prod-price">'+p.p.toFixed(2)+' \u20ac</div>';
+          h+='<button class="prod-btn" onclick="addToCart('+p.id+')">Ajouter au panier</button>';
+          h+='</div></div>';
+        });
+        h+='</div>';
+      }
+    }
+    h+='</div>';
+  }
+
+  // Cart floating button (shown when items in cart)
+  h+='<div id="cartFloat" class="cart-float" style="display:none" onclick="showCart()">\ud83d\uded2 Panier <span class="cart-count" id="cartCount">0</span></div>';
+
+  
+    // === PAGE DASHBOARD ===
   if(CLIENT){
     h+='<div class="page" id="page-dashboard">';
     h+='<div class="dash-header">';
@@ -817,6 +870,93 @@ async function loadDashboardRdvs(){
     h+='</div>';
   }
   el.innerHTML=h;
+}
+
+// ============================================================
+// CART / BOUTIQUE
+// ============================================================
+var CART=[];
+
+function addToCart(prodId){
+  var prod=null;for(var i=0;i<PRODUCTS.length;i++){if(PRODUCTS[i].id===prodId){prod=PRODUCTS[i];break;}}
+  if(!prod)return;
+  var existing=null;for(var i=0;i<CART.length;i++){if(CART[i].id===prodId){existing=CART[i];break;}}
+  if(existing){existing.qty++;}
+  else{CART.push({id:prod.id,n:prod.n,p:prod.p,qty:1,cat:prod.cat});}
+  updateCartBadge();
+  // Toast
+  var toast=document.createElement("div");
+  toast.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--gold);color:#0a0a0a;padding:10px 20px;border-radius:10px;font-weight:700;font-size:13px;z-index:999;box-shadow:0 4px 16px rgba(200,168,78,.3)";
+  toast.textContent="\u2705 "+prod.n+" ajout\u00e9 au panier";
+  document.body.appendChild(toast);
+  setTimeout(function(){toast.remove();},2000);
+}
+
+function updateCartBadge(){
+  var total=0;CART.forEach(function(c){total+=c.qty;});
+  var el=document.getElementById("cartFloat");
+  var cnt=document.getElementById("cartCount");
+  if(el){el.style.display=total>0?"flex":"none";}
+  if(cnt)cnt.textContent=total;
+}
+
+function showCart(){
+  if(!CART.length){alert("Votre panier est vide");return;}
+  var total=0;CART.forEach(function(c){total+=c.p*c.qty;});
+  var h='<div class="auth-modal" onclick="closeCart()">';
+  h+='<div class="auth-box" onclick="event.stopPropagation()" style="max-width:450px">';
+  h+='<h2>\ud83d\uded2 Mon panier</h2>';
+  for(var i=0;i<CART.length;i++){
+    var c=CART[i];
+    h+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)">';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">'+c.n+'</div><div style="font-size:12px;color:var(--text3)">'+c.cat+'</div></div>';
+    h+='<div style="display:flex;align-items:center;gap:8px">';
+    h+='<button onclick="cartQty('+i+',-1)" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:none;color:var(--text);cursor:pointer;font-size:16px">\u2212</button>';
+    h+='<span style="font-weight:700;min-width:20px;text-align:center">'+c.qty+'</span>';
+    h+='<button onclick="cartQty('+i+',1)" style="width:28px;height:28px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:none;color:var(--text);cursor:pointer;font-size:16px">+</button>';
+    h+='</div>';
+    h+='<div style="font-family:var(--f1);font-weight:700;color:var(--gold);min-width:60px;text-align:right">'+(c.p*c.qty).toFixed(2)+' \u20ac</div>';
+    h+='</div>';
+  }
+  h+='<div style="display:flex;justify-content:space-between;padding:14px 0;font-size:18px;font-weight:800;border-top:2px solid var(--gold);margin-top:8px"><span>Total</span><span style="color:var(--gold)">'+total.toFixed(2)+' \u20ac</span></div>';
+  h+='<button class="btn btn-gold" style="width:100%;padding:14px;font-size:15px;margin-top:12px" onclick="submitOrder()">Commander (retrait au salon)</button>';
+  h+='<button class="btn btn-outline" style="width:100%;padding:10px;font-size:13px;margin-top:8px" onclick="closeCart()">Continuer mes achats</button>';
+  h+='</div></div>';
+  document.getElementById("authModal").innerHTML=h;
+}
+
+function closeCart(){document.getElementById("authModal").innerHTML="";}
+
+function cartQty(idx,delta){
+  CART[idx].qty+=delta;
+  if(CART[idx].qty<=0)CART.splice(idx,1);
+  updateCartBadge();
+  if(CART.length)showCart();else closeCart();
+}
+
+async function submitOrder(){
+  if(!CLIENT){showAuthModal("login");return;}
+  var total=0;var items=[];
+  CART.forEach(function(c){total+=c.p*c.qty;items.push({produit_id:c.id,nom:c.n,prix:c.p,qty:c.qty});});
+  var data={
+    salon_id:salonId,
+    client_nom:CLIENT.nom+(CLIENT.prenom?" "+CLIENT.prenom:""),
+    client_tel:CLIENT.telephone||"",
+    client_email:CLIENT.email,
+    items:items,total:total,
+    status:"pending"
+  };
+  var r=await sb.from("commandes_online").insert(data).select();
+  if(r.error){alert("Erreur: "+r.error.message);return;}
+  CART=[];updateCartBadge();
+  var h='<div class="auth-modal" onclick="closeCart()">';
+  h+='<div class="auth-box" onclick="event.stopPropagation()" style="text-align:center">';
+  h+='<div style="font-size:48px;margin-bottom:12px">\u2705</div>';
+  h+='<h2 style="color:var(--green)">Commande envoy\u00e9e !</h2>';
+  h+='<p style="color:var(--text2);margin-top:8px">Votre commande de '+total.toFixed(2)+' \u20ac a \u00e9t\u00e9 transmise au salon. Nous vous pr\u00e9viendrons quand elle sera pr\u00eate \u00e0 retirer.</p>';
+  h+='<button class="btn btn-gold" style="margin-top:16px;padding:12px 32px" onclick="closeCart()">Fermer</button>';
+  h+='</div></div>';
+  document.getElementById("authModal").innerHTML=h;
 }
 
 // Helpers
