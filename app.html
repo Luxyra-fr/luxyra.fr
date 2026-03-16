@@ -709,8 +709,8 @@ function showNotifs(){
   var now48=new Date().getTime()-48*3600000;// 48h ago
   if(window.RDV_ONLINE){
     window.RDV_ONLINE.forEach(function(r){
-      // Skip old confirmed/done (>48h)
-      if((r.status==="done")&&r.createdAt&&new Date(r.createdAt).getTime()<now48)return;
+      // Skip done RDV entirely (they've been acknowledged)
+      if(r.status==="done")return;
       var exists=false;
       for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].rdvOnlineId===r.id){exists=true;break;}}
       if(window._dismissedNotifs&&window._dismissedNotifs[r.id])exists=true;
@@ -784,27 +784,35 @@ function confirmNotif(id){
   showNotifs();
   updateNotifBadge();
 }
+function saveDismissed(){try{sessionStorage.setItem("_dismissed",JSON.stringify(window._dismissedNotifs||{}));}catch(e){}}
+function loadDismissed(){try{var d=sessionStorage.getItem("_dismissed");if(d)window._dismissedNotifs=JSON.parse(d);}catch(e){}}
+loadDismissed();
+
 function clearReadNotifs(){
   if(!window.NOTIFS)return;
-  // Track dismissed online RDV IDs so they don't get re-injected
   if(!window._dismissedNotifs)window._dismissedNotifs={};
   window.NOTIFS.forEach(function(n){
-    if(n.seen&&n.rdvOnlineId)window._dismissedNotifs[n.rdvOnlineId]=true;
+    if(n.seen&&n.rdvOnlineId){
+      window._dismissedNotifs[n.rdvOnlineId]=true;
+      // Mark as seen in Supabase so it doesn't come back after page reload
+      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
+    }
   });
   window.NOTIFS=window.NOTIFS.filter(function(n){return!n.seen;});
-  showNotifs();
-  updateNotifBadge();
+  saveDismissed();showNotifs();updateNotifBadge();
 }
 function markAllNotifsRead(){
   if(!window.NOTIFS)return;
   if(!window._dismissedNotifs)window._dismissedNotifs={};
   window.NOTIFS.forEach(function(n){
     n.seen=true;n.confirmed=true;
-    if(n.rdvOnlineId)window._dismissedNotifs[n.rdvOnlineId]=true;
+    if(n.rdvOnlineId){
+      window._dismissedNotifs[n.rdvOnlineId]=true;
+      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
+    }
   });
   window.NOTIFS=[];
-  updateNotifBadge();
-  showNotifs();
+  saveDismissed();updateNotifBadge();showNotifs();
 }
 function simulateOnlineRdv(cn,sv,d,t){addNotif("rdv_online","Nouveau RDV en ligne",cn+" - "+sv+" le "+d+" a "+t,{});}
 function simulateOnlinePurchase(cn,pr,am){addNotif("produit_online","Commande Click \& Collect",cn+" a commande "+pr+" ("+am.toFixed(2)+"\u20ac)",{});}
@@ -1492,15 +1500,10 @@ var ICO={
 function updateNotifBadge(){
   var count=0;
   if(window.RDV_ONLINE){
-    // Count pending + recently confirmed (last 24h) as unseen
-    var now=new Date().getTime();
     count+=window.RDV_ONLINE.filter(function(r){
-      if(r.status==="pending")return true;
-      if(r.status==="confirmed"&&r.createdAt){
-        var age=(now-new Date(r.createdAt).getTime())/3600000;
-        return age<24;// Show for 24h
-      }
-      return false;
+      if(r.status==="done")return false;
+      if(window._dismissedNotifs&&window._dismissedNotifs[r.id])return false;
+      return r.status==="pending"||r.status==="confirmed";
     }).length;
   }
   if(window.NOTIFS){
