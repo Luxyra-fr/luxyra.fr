@@ -2410,6 +2410,22 @@ function uploadSiteImg(input,field){
   };
   reader.readAsDataURL(input.files[0]);
 }
+function uploadSiteGallery(input){
+  if(!input.files||!input.files.length)return;
+  if(!window.SITE_CONFIG.photosSalon)window.SITE_CONFIG.photosSalon=[];
+  var loaded=0,total=input.files.length;
+  for(var i=0;i<total;i++){
+    (function(file){
+      var reader=new FileReader();
+      reader.onload=function(e){
+        window.SITE_CONFIG.photosSalon.push(e.target.result);
+        loaded++;
+        if(loaded===total){saveSiteConfig();go("settings");}
+      };
+      reader.readAsDataURL(file);
+    })(input.files[i]);
+  }
+}
 
 function toggleSvcOnline(svcId,on){
   var SC=window.SITE_CONFIG;if(!SC)return;
@@ -2452,7 +2468,8 @@ function saveSiteConfig(){
       couleur_secondaire:SC.couleur2||"#0a0a0a",
       style_theme:SC.theme||"dark_gold",
       photo_hero:SC.photoHero||"",
-      photo_salon:SC.photoSalon||"",
+      photo_salon:SC.photosSalon&&SC.photosSalon.length?SC.photosSalon[0]:"",
+      photos_salon:SC.photosSalon||[],
       description_salon:SC.descSalon||"",
       slogan:SC.slogan||"",
       fidelite_active:SC.fideliteActive!==false,
@@ -2488,7 +2505,7 @@ function loadSiteConfig(){
           msgAccueil:d.message_accueil||"",msgConfirmation:d.message_confirmation||"",
           couleur:d.couleur_primaire||"#c8a84e",couleur2:d.couleur_secondaire||"#0a0a0a",
           theme:d.style_theme||"dark_gold",
-          photoHero:d.photo_hero||"",photoSalon:d.photo_salon||"",descSalon:d.description_salon||"",slogan:d.slogan||"",
+          photoHero:d.photo_hero||"",photoSalon:d.photo_salon||"",photosSalon:d.photos_salon||[],descSalon:d.description_salon||"",slogan:d.slogan||"",
           fideliteActive:d.fidelite_active!==false,fideliteSeuil:d.fidelite_seuil||10,
           fideliteType:d.fidelite_type||"pourcentage",fideliteValeur:Number(d.fidelite_valeur)||10
         };
@@ -2766,13 +2783,24 @@ function rSettings(){
     
     // Th\u00e8me
     h+='<div style="margin-top:12px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Th\u00e8me du site</label>';
-    var themes=[["dark_gold","\ud83c\udf1f Sombre & Or","Luxe, \u00e9l\u00e9gant"],["dark_rose","\ud83c\udf39 Sombre & Ros\u00e9","F\u00e9minin, raffin\u00e9"],["dark_blue","\ud83d\udca0 Sombre & Bleu","Moderne, \u00e9pur\u00e9"],["light_classic","\u2600\ufe0f Clair & Or","Classique, lumineux"],["light_pink","\ud83c\udf38 Clair & Rose","Doux, accueillant"],["light_green","\ud83c\udf3f Clair & Vert","Nature, zen"]];
+    var themes=[
+      ["dark_gold","\ud83c\udf1f","Sombre & Or","Luxe, \u00e9l\u00e9gant","#0a0a0a","#c8a84e"],
+      ["dark_rose","\ud83c\udf39","Sombre & Ros\u00e9","F\u00e9minin, raffin\u00e9","#0a0a0a","#c44c7a"],
+      ["dark_blue","\ud83d\udca0","Sombre & Bleu","Moderne, \u00e9pur\u00e9","#0a0a14","#64b5f6"],
+      ["light_classic","\u2600\ufe0f","Clair & Or","Classique, lumineux","#f8f6f0","#c8a84e"],
+      ["light_pink","\ud83c\udf38","Clair & Rose","Doux, accueillant","#fdf2f8","#c44c7a"],
+      ["light_green","\ud83c\udf3f","Clair & Vert","Nature, zen","#f1f8e9","#2e7d32"]
+    ];
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
     for(var ti=0;ti<themes.length;ti++){
       var t=themes[ti],sel=SC.theme===t[0];
-      h+='<div onclick="window.SITE_CONFIG.theme=\''+t[0]+'\';saveSiteConfig();go(\'settings\')" style="padding:12px;border-radius:10px;cursor:pointer;border:2px solid '+(sel?"var(--gold)":"rgba(200,168,78,.1)")+';background:'+(sel?"rgba(200,168,78,.06)":"var(--bg)")+';text-align:center">';
-      h+='<div style="font-size:14px;font-weight:700">'+t[1]+'</div>';
-      h+='<div style="font-size:11px;color:var(--text3)">'+t[2]+'</div></div>';
+      var cBg=t[4],cAccent=t[5],isDark=cBg.charAt(1)<'5';
+      var cText=isDark?"#fff":"#1a1a2e";
+      var cSub=isDark?"rgba(255,255,255,.5)":"rgba(0,0,0,.4)";
+      h+='<div onclick="window.SITE_CONFIG.theme=\''+t[0]+'\';saveSiteConfig();go(\'settings\')" style="padding:12px;border-radius:10px;cursor:pointer;border:2px solid '+(sel?cAccent:"rgba(200,168,78,.1)")+';background:'+cBg+';text-align:center;'+(sel?"box-shadow:0 0 12px "+cAccent+"40;":"")+'">';
+      h+='<div style="font-size:20px;margin-bottom:4px">'+t[1]+'</div>';
+      h+='<div style="font-size:13px;font-weight:700;color:'+cText+'">'+t[2]+'</div>';
+      h+='<div style="font-size:11px;color:'+cSub+'">'+t[3]+'</div></div>';
     }
     h+='</div></div>';
     
@@ -2783,6 +2811,24 @@ function rSettings(){
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Couleur de fond</label>';
     h+='<div style="display:flex;align-items:center;gap:8px"><input type="color" value="'+(SC.couleur2||"#0a0a0a")+'" style="width:48px;height:40px;border:none;cursor:pointer;border-radius:8px" onchange="window.SITE_CONFIG.couleur2=this.value;saveSiteConfig()"><span style="font-size:12px;color:var(--text3)">'+(SC.couleur2||"#0a0a0a")+'</span></div></div>';
     h+='</div>';
+    // Fond style
+    if(!SC.fondStyle)SC.fondStyle="uni";
+    h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Style de fond</label>';
+    h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">';
+    var fonds=[
+      ["uni","Uni",""],
+      ["brume","Brume","radial-gradient(ellipse at 30% 20%,rgba(200,168,78,.06),transparent 50%),radial-gradient(ellipse at 70% 80%,rgba(200,168,78,.04),transparent 50%)"],
+      ["gradient","D\u00e9grad\u00e9","linear-gradient(180deg,rgba(200,168,78,.08),transparent 40%,transparent 60%,rgba(200,168,78,.04))"],
+      ["grain","Grain\u00e9",""],
+      ["brume_rose","Brume ros\u00e9e","radial-gradient(ellipse at 30% 20%,rgba(196,76,122,.06),transparent 50%),radial-gradient(ellipse at 70% 80%,rgba(196,76,122,.04),transparent 50%)"],
+      ["brume_bleu","Brume bleue","radial-gradient(ellipse at 30% 20%,rgba(100,181,246,.06),transparent 50%),radial-gradient(ellipse at 70% 80%,rgba(100,181,246,.04),transparent 50%)"]
+    ];
+    for(var fi=0;fi<fonds.length;fi++){
+      var f=fonds[fi],fSel=SC.fondStyle===f[0];
+      h+='<div onclick="window.SITE_CONFIG.fondStyle=\''+f[0]+'\';saveSiteConfig();go(\'settings\')" style="padding:10px;border-radius:8px;cursor:pointer;text-align:center;border:2px solid '+(fSel?"var(--gold)":"rgba(200,168,78,.1)")+';background:var(--bg)">';
+      h+='<div style="font-size:12px;font-weight:700">'+f[1]+'</div></div>';
+    }
+    h+='</div></div>';
     
     // Slogan
     h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Slogan</label>';
