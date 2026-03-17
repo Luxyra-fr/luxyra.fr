@@ -186,6 +186,7 @@ body{max-width:100%;margin:0 auto;}
 <script src="supabase.min.js"></script>
 <script src="coiffpro-supabase.js"></script>
 <script>
+console.log("CoiffPro v5.1 - patched 17/03/2026");
 
 var SALON_CONFIG={nom:"CoiffPro",sousTitre:"Gestion Salon",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"#c8a84e",couleurSecondaire:"#1a1a1a",devise:"\u20ac",tauxTVA:20,version:"v5"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
@@ -784,11 +785,11 @@ function confirmNotif(id){
   showNotifs();
   updateNotifBadge();
 }
-function saveDismissed(){try{localStorage.setItem("_dismissed",JSON.stringify(window._dismissedNotifs||{}));}catch(e){}}
-function loadDismissed(){try{var d=localStorage.getItem("_dismissed");if(d)window._dismissedNotifs=JSON.parse(d);}catch(e){}}
+function saveDismissed(){try{localStorage.setItem("_dismissed_notifs",JSON.stringify(window._dismissedNotifs||{}));}catch(e){}}
+function loadDismissed(){try{var d=localStorage.getItem("_dismissed_notifs");if(d)window._dismissedNotifs=JSON.parse(d);}catch(e){}}
 loadDismissed();
-function persistNotifs(){try{localStorage.setItem("_NOTIFS",JSON.stringify(window.NOTIFS||[]));}catch(e){}}
-function loadPersistedNotifs(){try{var d=localStorage.getItem("_NOTIFS");if(d){var arr=JSON.parse(d);if(arr&&arr.length>0)window.NOTIFS=arr;}}catch(e){}}
+function persistNotifs(){try{localStorage.setItem("_cp_notifs",JSON.stringify(window.NOTIFS||[]));}catch(e){}}
+function loadPersistedNotifs(){try{var d=localStorage.getItem("_cp_notifs");if(d){var arr=JSON.parse(d);if(arr&&arr.length>0)window.NOTIFS=arr;}}catch(e){}}
 loadPersistedNotifs();
 
 
@@ -2024,22 +2025,26 @@ function doAddAbsence(){
 var _drag={active:false,aid:null,ghost:null,startY:0,startX:0,el:null,timer:null,moved:false};
 
 function initDrag(){
-  // Use event delegation - attach ONCE to #app, works for all blocks including new ones
-  var app=document.getElementById('app');
-  if(!app||app._dragInit)return;
-  app._dragInit=true;
-  app.addEventListener('mousedown',function(e){
+  var appEl=document.getElementById('app');
+  if(!appEl)return;
+  // Remove old delegation handlers if any
+  if(window._dragMouseHandler)appEl.removeEventListener('mousedown',window._dragMouseHandler);
+  if(window._dragTouchHandler)appEl.removeEventListener('touchstart',window._dragTouchHandler);
+  // Create new handlers with event delegation
+  window._dragMouseHandler=function(e){
     var bl=e.target.closest('.pg-block[data-aid]');
-    if(bl)dragStart(e,bl);
-  });
-  app.addEventListener('touchstart',function(e){
+    if(bl){e._delegateEl=bl;dragStart(e);}
+  };
+  window._dragTouchHandler=function(e){
     var bl=e.target.closest('.pg-block[data-aid]');
-    if(bl)dragStart(e,bl);
-  },{passive:false});
+    if(bl){e._delegateEl=bl;dragStart(e);}
+  };
+  appEl.addEventListener('mousedown',window._dragMouseHandler);
+  appEl.addEventListener('touchstart',window._dragTouchHandler,{passive:false});
 }
 
-function dragStart(e,el){
-  if(!el)el=e.currentTarget;
+function dragStart(e){
+  var el=e._delegateEl||e.currentTarget;
   _drag.aid=el.getAttribute('data-aid');
   _drag.el=el;
   _drag.moved=false;
