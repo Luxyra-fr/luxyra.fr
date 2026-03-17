@@ -1356,6 +1356,8 @@ var SVC=[
 {id:71,n:"Coupe couronne",p:15,cat:"Homme",phases:[{t:"w",d:30,l:"Coupe couronne"}]},
 {id:72,n:"Coupe tondeuse",p:11,cat:"Homme",phases:[{t:"w",d:20,l:"Tondeuse"}]}
 ];
+var FORFAITS=[];
+
 var CATS=["Coupe","Brushing","Coloration","M\u00e8ches","Soins","Permanente","Homme"];
 
 var PRODS=[
@@ -1625,7 +1627,7 @@ function rHome(){
   h+='<div class="tile" onclick="go(\'planning\')"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.planning+'</div><div class="tl">Planning</div></div>';
   h+='<div class="tile" onclick="go(\'caisse\')"><div class="ti" style="background:var(--green-bg);color:var(--green)">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
   h+='<div class="tile" onclick="go(\'clients\')"><div class="ti" style="background:var(--pink-bg);color:var(--pink)">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
-  h+='<div class="tile" onclick="go(\'services\')"><div class="ti" style="background:var(--purple-bg);color:var(--purple)">'+ICO.services+'</div><div class="tl">Services</div></div>';
+  h+='<div class="tile" onclick="go(\'services\')"><div class="ti" style="background:var(--purple-bg);color:var(--purple)">'+ICO.services+'</div><div class="tl">Prestations</div></div>';
   h+='<div class="tile" onclick="go(\'products\')"><div class="ti" style="background:var(--orange-bg);color:var(--orange)">'+ICO.products+'</div><div class="tl">Produits</div></div>';
   h+='<div class="tile" onclick="go(\'gifts\')"><div class="ti" style="background:var(--gold-bg2);color:var(--gold)">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
   h+='<div class="tile" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="background:var(--blue-bg);color:var(--blue)">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
@@ -3270,16 +3272,140 @@ function rDetail(){
 
 
 // === SERVICES ===
+
+
+function saveForfaitsToSupabase(){
+  try{localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}catch(e){}
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
+      var cfg={};
+      if(r.data&&r.data[0]&&r.data[0].config_json){try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}}
+      cfg.forfaits=FORFAITS;
+      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
+    });
+  }
+}
+
+function rForfaits(){
+  var h='';
+  if(!FORFAITS.length){
+    h+='<div style="text-align:center;padding:40px;color:rgba(255,255,255,.4)"><div style="font-size:48px;margin-bottom:10px">\ud83d\udce6</div>';
+    h+='<div style="font-size:15px;font-weight:700;margin-bottom:6px">Aucun forfait</div>';
+    h+='<div style="font-size:13px;margin-bottom:16px">Cr\u00e9ez des packs combinant plusieurs prestations \u00e0 prix r\u00e9duit.</div></div>';
+  }
+  for(var i=0;i<FORFAITS.length;i++){
+    var f=FORFAITS[i];
+    var svcNames=[];var totalIndiv=0;
+    if(f.services){f.services.forEach(function(sid){var sv=gS(sid);if(sv){svcNames.push(sv.n);totalIndiv+=sv.p;}});}
+    var eco=totalIndiv-f.p;
+    h+='<div class="card" style="display:flex;align-items:center;gap:10px">';
+    h+='<div style="flex:1;min-width:0">';
+    h+='<div style="font-weight:700;font-size:14px">'+f.n+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+(svcNames.join(' + ')||'Aucune prestation')+'</div>';
+    if(eco>0)h+='<div style="font-size:11px;color:var(--green);font-weight:700;margin-top:2px">\u00c9conomie client: '+eco.toFixed(0)+'\u20ac</div>';
+    h+='</div>';
+    h+='<div style="text-align:right;flex-shrink:0">';
+    h+='<div style="font-size:20px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+f.p+'\u20ac</div>';
+    if(totalIndiv>f.p)h+='<div style="font-size:11px;color:var(--text3);text-decoration:line-through">'+totalIndiv+'\u20ac</div>';
+    h+='<div style="display:flex;gap:4px;margin-top:4px;justify-content:flex-end">';
+    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px" onclick="editForfait('+i+')">\u270f\ufe0f</button>';
+    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px;color:var(--red)" onclick="deleteForfait('+i+')">\ud83d\uddd1</button>';
+    h+='</div></div></div>';
+  }
+  h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent" onclick="addForfait()">';
+  h+='<div style="font-size:28px;opacity:.4">+</div>';
+  h+='<div style="font-size:13px;color:var(--text3);font-weight:600">Cr\u00e9er un forfait</div></div>';
+  return h;
+}
+
+function addForfait(){
+  var htm='<div class="mbox"><h2>\ud83d\udce6 Nouveau forfait</h2>';
+  htm+='<div class="fg"><label>Nom du forfait *</label><input id="nfName" placeholder="Ex: Pack Couleur + Coupe + Brushing"></div>';
+  htm+='<div class="fg"><label>Prix forfait (\u20ac) *</label><input type="number" id="nfPrice" min="0" step="1" value="60" style="font-size:18px;text-align:center;padding:14px"></div>';
+  htm+='<div class="fg"><label>Prestations incluses</label>';
+  htm+='<div id="nfSvcList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px;padding:6px">';
+  for(var i=0;i<SVC.length;i++){
+    var s=SVC[i];
+    htm+='<label style="display:flex;align-items:center;gap:8px;padding:6px;cursor:pointer;border-bottom:1px solid var(--border2)"><input type="checkbox" value="'+s.id+'" class="nfSvcCb"><span style="flex:1;font-size:13px">'+s.n+'</span><span style="font-size:12px;color:var(--gold);font-weight:700">'+s.p+'\u20ac</span></label>';
+  }
+  htm+='</div></div>';
+  htm+='<div class="fg"><label>Dur\u00e9e totale (min)</label><input type="number" id="nfDur" min="5" step="5" value="60" style="text-align:center"></div>';
+  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doAddForfait()">Cr\u00e9er</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+function doAddForfait(){
+  var name=document.getElementById("nfName").value.trim();
+  var price=parseFloat(document.getElementById("nfPrice").value)||0;
+  var dur=parseInt(document.getElementById("nfDur").value)||60;
+  if(!name||!price)return;
+  var svcs=[];document.querySelectorAll(".nfSvcCb:checked").forEach(function(cb){svcs.push(+cb.value);});
+  var id=FORFAITS.length?Math.max.apply(null,FORFAITS.map(function(f){return f.id||0;}))+1:1;
+  FORFAITS.push({id:id,n:name,p:price,services:svcs,dur:dur,phases:[{t:"w",d:dur,l:name}]});
+  saveForfaitsToSupabase();
+  cM();go("services");
+}
+
+function editForfait(idx){
+  var f=FORFAITS[idx];if(!f)return;
+  var htm='<div class="mbox"><h2>\u270f\ufe0f Modifier forfait</h2>';
+  htm+='<div class="fg"><label>Nom</label><input id="efName" value="'+f.n+'"></div>';
+  htm+='<div class="fg"><label>Prix (\u20ac)</label><input type="number" id="efPrice" min="0" step="1" value="'+f.p+'" style="font-size:18px;text-align:center;padding:14px"></div>';
+  htm+='<div class="fg"><label>Prestations incluses</label>';
+  htm+='<div id="efSvcList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px;padding:6px">';
+  for(var i=0;i<SVC.length;i++){
+    var s=SVC[i];
+    var checked=f.services&&f.services.indexOf(s.id)>=0;
+    htm+='<label style="display:flex;align-items:center;gap:8px;padding:6px;cursor:pointer;border-bottom:1px solid var(--border2)"><input type="checkbox" value="'+s.id+'" class="efSvcCb"'+(checked?' checked':'')+'><span style="flex:1;font-size:13px">'+s.n+'</span><span style="font-size:12px;color:var(--gold);font-weight:700">'+s.p+'\u20ac</span></label>';
+  }
+  htm+='</div></div>';
+  htm+='<div class="fg"><label>Dur\u00e9e (min)</label><input type="number" id="efDur" min="5" step="5" value="'+(f.dur||60)+'" style="text-align:center"></div>';
+  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doEditForfait('+idx+')">Valider</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+function doEditForfait(idx){
+  var f=FORFAITS[idx];if(!f)return;
+  f.n=document.getElementById("efName").value.trim()||f.n;
+  f.p=parseFloat(document.getElementById("efPrice").value)||f.p;
+  f.dur=parseInt(document.getElementById("efDur").value)||f.dur;
+  f.services=[];document.querySelectorAll(".efSvcCb:checked").forEach(function(cb){f.services.push(+cb.value);});
+  f.phases=[{t:"w",d:f.dur,l:f.n}];
+  saveForfaitsToSupabase();
+  cM();go("services");
+}
+
+function deleteForfait(idx){
+  if(!confirm("Supprimer ce forfait ?"))return;
+  FORFAITS.splice(idx,1);
+  saveForfaitsToSupabase();
+  go("services");
+}
+
 function rServices(){
   var h='';
+  // Main tabs: Prestations | Forfaits
+  if(!window._svcTab)window._svcTab='prestations';
+  h+='<div style="display:flex;gap:0;margin-bottom:14px;border-bottom:2px solid rgba(255,255,255,.1)">';
+  h+='<button style="flex:1;padding:12px;font-size:14px;font-weight:800;border:none;background:'+(window._svcTab==='prestations'?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(window._svcTab==='prestations'?'#0a0a0a':'#fff')+';cursor:pointer;border-radius:10px 10px 0 0;font-family:var(--f1);border:1px solid '+(window._svcTab==='prestations'?'var(--gold)':'rgba(255,255,255,.1)')+'" onclick="window._svcTab=\'prestations\';go(\'services\')">\u2702\ufe0f Prestations</button>';
+  h+='<button style="flex:1;padding:12px;font-size:14px;font-weight:800;border:none;background:'+(window._svcTab==='forfaits'?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(window._svcTab==='forfaits'?'#0a0a0a':'#fff')+';cursor:pointer;border-radius:10px 10px 0 0;font-family:var(--f1);border:1px solid '+(window._svcTab==='forfaits'?'var(--gold)':'rgba(255,255,255,.1)')+'" onclick="window._svcTab=\'forfaits\';go(\'services\')">\ud83d\udce6 Forfaits</button>';
+  h+='</div>';
+  
+  if(window._svcTab==='forfaits'){return h+rForfaits();}
+  
   // Category tabs + add category button
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap">';
   for(var i=0;i<CATS.length;i++){
-    h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[i]+'</div>';
+    h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';\'services\')">'+CATS[i]+'</div>';
   }
   h+='<button class="btn bs" style="font-size:12px;padding:6px 10px" onclick="addCategory()">+ Cat\u00e9gorie</button>';
   h+='</div>';
-  
   // Services in selected category
   var svcs=SVC.filter(function(s){return s.cat===aCat});
   
@@ -5671,12 +5797,45 @@ function showCaisse(){
 }
 
 // === ADD SERVICE FOR SPECIFIC CLIENT (multi-client) ===
+
+function tkAddForfait(){
+  var h2='<div style="background:rgba(16,16,20,.96);color:#fff;border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;padding:0;max-width:500px;width:100%">';
+  h2+='<div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);font-size:16px;font-weight:800;font-family:var(--f1);color:#fff">\ud83d\udce6 Choisir un forfait</div>';
+  h2+='<div style="max-height:50vh;overflow-y:auto;padding:6px 0">';
+  if(!FORFAITS.length){
+    h2+='<div style="padding:30px;text-align:center;color:rgba(255,255,255,.3)">Aucun forfait cr\u00e9\u00e9.<br>Allez dans Prestations \u2192 Forfaits pour en cr\u00e9er.</div>';
+  }
+  for(var i=0;i<FORFAITS.length;i++){
+    var f=FORFAITS[i];
+    var svcNames=[];if(f.services){f.services.forEach(function(sid){var sv=gS(sid);if(sv)svcNames.push(sv.n);});}
+    h2+='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)" onclick="doAddTkForfait('+i+')">';
+    h2+='<div style="flex:1"><div style="font-size:14px;font-weight:600;color:#fff">'+f.n+'</div>';
+    h2+='<div style="font-size:11px;color:rgba(255,255,255,.4)">'+(svcNames.join(', ')||'')+'</div></div>';
+    h2+='<div style="font-family:var(--f1);font-weight:800;font-size:16px;color:var(--gold)">'+f.p+' \u20ac</div></div>';
+  }
+  h2+='</div>';
+  h2+='<div style="padding:10px 16px;border-top:1px solid rgba(255,255,255,.08)"><button style="width:100%;padding:12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:14px;cursor:pointer" onclick="showCaisse()">Retour</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+h2+'</div></div>';
+}
+
+function doAddTkForfait(idx){
+  var f=FORFAITS[idx];if(!f)return;
+  var ni={sId:null,name:f.n,price:f.p,qty:1,remise:0,isForfait:true,forfaitId:f.id};
+  if(window._tkAddForClient){
+    var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}
+    if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}
+    else{_tk.items.push(ni);}
+    window._tkAddForClient=null;
+  }else{_tk.items.push(ni);}
+  showCaisse();
+}
+
 function tkAddServiceFor(forCId){
   window._tkAddForClient=forCId;
   tkAddService();
 }
 
-function showAddMenu(){var h='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;color:#fff;padding:20px;max-width:400px;width:100%;text-align:center">';h+='<div style="font-family:var(--f1);font-size:16px;font-weight:800;color:var(--gold);margin-bottom:16px">Que souhaitez-vous ajouter ?</div>';h+='<div style="display:flex;flex-direction:column;gap:8px">';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u2702\ufe0f</span><span style="flex:1;text-align:left">Prestation</span></button>';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udce6</span><span style="flex:1;text-align:left">Forfait</span></button>';h+='<button onclick="tkAddProduct()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83e\uddf4</span><span style="flex:1;text-align:left">Produit</span></button>';h+='</div>';h+='<button style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button>';h+='</div>';document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()" style="display:flex;justify-content:center">'+h+'</div></div>';}
+function showAddMenu(){var h='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;color:#fff;padding:20px;max-width:400px;width:100%;text-align:center">';h+='<div style="font-family:var(--f1);font-size:16px;font-weight:800;color:var(--gold);margin-bottom:16px">Que souhaitez-vous ajouter ?</div>';h+='<div style="display:flex;flex-direction:column;gap:8px">';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u2702\ufe0f</span><span style="flex:1;text-align:left">Prestation</span></button>';h+='<button onclick="tkAddForfait()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udce6</span><span style="flex:1;text-align:left">Forfait</span></button>';h+='<button onclick="tkAddProduct()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83e\uddf4</span><span style="flex:1;text-align:left">Produit</span></button>';h+='</div>';h+='<button style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button>';h+='</div>';document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()" style="display:flex;justify-content:center">'+h+'</div></div>';}
 
 
 function convertPassageToClient(){
@@ -7244,6 +7403,19 @@ if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){loadSiteConfig();},1000);
 
 // App init — called by coiffpro-supabase.js after login, or directly if offline
 function initApp(){
+  // Load forfaits from localStorage
+  try{var ff=localStorage.getItem("_cp_forfaits");if(ff)FORFAITS=JSON.parse(ff);}catch(e){}
+  // Also try to load from Supabase config_json (async)
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
+      if(r.data&&r.data[0]&&r.data[0].config_json){
+        try{
+          var cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;
+          if(cfg.forfaits&&cfg.forfaits.length>0){FORFAITS=cfg.forfaits;localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}
+        }catch(e){}
+      }
+    });
+  }
   // Apply salon theme color
   if(SALON_CONFIG.couleurPrimaire&&SALON_CONFIG.couleurPrimaire!=="var(--gold)"){
     applyTheme(null,SALON_CONFIG.couleurPrimaire,null);
