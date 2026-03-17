@@ -787,8 +787,8 @@ function confirmNotif(id){
 function saveDismissed(){try{localStorage.setItem("_dismissed",JSON.stringify(window._dismissedNotifs||{}));}catch(e){}}
 function loadDismissed(){try{var d=localStorage.getItem("_dismissed");if(d)window._dismissedNotifs=JSON.parse(d);}catch(e){}}
 loadDismissed();
-function persistNotifs(){try{localStorage.setItem("NOTIFS",JSON.stringify(window.NOTIFS||[]));}catch(e){}}
-function loadPersistedNotifs(){try{var d=localStorage.getItem("NOTIFS");if(d){var n=JSON.parse(d);if(n&&n.length)window.NOTIFS=n;}}catch(e){}}
+function persistNotifs(){try{localStorage.setItem("_NOTIFS",JSON.stringify(window.NOTIFS||[]));}catch(e){}}
+function loadPersistedNotifs(){try{var d=localStorage.getItem("_NOTIFS");if(d){var arr=JSON.parse(d);if(arr&&arr.length>0)window.NOTIFS=arr;}}catch(e){}}
 loadPersistedNotifs();
 
 
@@ -1440,7 +1440,7 @@ function go(pg,arg){
   
   try{
     if(pg==="home")app.innerHTML=rHome();
-    else if(pg==="planning"){app.innerHTML=rPlanning();setTimeout(function(){initDrag();drawTimeLine();},100);}
+    else if(pg==="planning"){app.innerHTML=rPlanning();initDrag();setTimeout(drawTimeLine,100);}
     else if(pg==="clients")app.innerHTML=rClients();
     else if(pg==="detail")app.innerHTML=rDetail();
     else if(pg==="services")app.innerHTML=rServices();
@@ -2024,19 +2024,22 @@ function doAddAbsence(){
 var _drag={active:false,aid:null,ghost:null,startY:0,startX:0,el:null,timer:null,moved:false};
 
 function initDrag(){
-  var blocks=document.querySelectorAll('.pg-block[data-aid]');
-  blocks.forEach(function(el){
-    // Remove old listeners first to avoid doubling
-    el.removeEventListener('touchstart',dragStart);
-    el.removeEventListener('mousedown',dragStart);
-    // Re-attach
-    el.addEventListener('touchstart',dragStart,{passive:false});
-    el.addEventListener('mousedown',dragStart);
+  // Use event delegation - attach ONCE to #app, works for all blocks including new ones
+  var app=document.getElementById('app');
+  if(!app||app._dragInit)return;
+  app._dragInit=true;
+  app.addEventListener('mousedown',function(e){
+    var bl=e.target.closest('.pg-block[data-aid]');
+    if(bl)dragStart(e,bl);
   });
+  app.addEventListener('touchstart',function(e){
+    var bl=e.target.closest('.pg-block[data-aid]');
+    if(bl)dragStart(e,bl);
+  },{passive:false});
 }
 
-function dragStart(e){
-  var el=e.currentTarget;
+function dragStart(e,el){
+  if(!el)el=e.currentTarget;
   _drag.aid=el.getAttribute('data-aid');
   _drag.el=el;
   _drag.moved=false;
@@ -2155,7 +2158,7 @@ function dragEnd(e){
 function reprendre(id){for(var i=0;i<AP.length;i++){if(AP[i].id===id){oM("appt",{cId:AP[i].cId,stId:AP[i].stId,time:AP[i].time});return;}}}
 function updateRdvDay(){}
 function clickAppt(id){
-  if(_drag&&_drag.active){return;}
+  if(_drag&&_drag.active)return;
   if(_drag&&_drag.justDragged){_drag.justDragged=false;return;}
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
