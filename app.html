@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>CoiffPro v5.4</title>
+<title>CoiffPro v5.5</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -186,7 +186,7 @@ body{max-width:100%;margin:0 auto;}
 <script src="supabase.min.js"></script>
 <script src="coiffpro-supabase.js"></script>
 <script>
-console.log("COIFFPRO v5.4");
+console.log("COIFFPRO v5.5");
 
 var SALON_CONFIG={nom:"CoiffPro",sousTitre:"Gestion Salon",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"#c8a84e",couleurSecondaire:"#1a1a1a",devise:"\u20ac",tauxTVA:20,version:"v5"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
@@ -796,7 +796,7 @@ function clearReadNotifs(){
     if(n.seen&&n.rdvOnlineId){
       window._dismissedNotifs[n.rdvOnlineId]=true;
       // Mark as seen in Supabase so it doesn't come back after page reload
-      if(typeof _sb!=="undefined"&&_sb){_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId).then(function(r){if(r.error)console.error("dismiss err",r.error);});}
+      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
     }
   });
   window.NOTIFS=window.NOTIFS.filter(function(n){return!n.seen;});
@@ -809,7 +809,7 @@ function markAllNotifsRead(){
     n.seen=true;n.confirmed=true;
     if(n.rdvOnlineId){
       window._dismissedNotifs[n.rdvOnlineId]=true;
-      if(typeof _sb!=="undefined"&&_sb){_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId).then(function(r){if(r.error)console.error("dismiss err",r.error);});}
+      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
     }
   });
   window.NOTIFS=[];
@@ -1878,7 +1878,7 @@ function rPlanning(){
     h+='</div>';
     h+='<div class="pg-slots" style="height:'+gridH+'px;position:relative">';
     // Background slots
-    for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" data-slot-stid="'+sty.id+'" data-slot-time="'+tm+'"></div>';}
+    for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" data-slot-stid="'+sty.id+'" data-slot-time="'+tm+'" ></div>';}
     
     // Collect ALL work blocks for this stylist to detect overlaps
     var allWork=[];
@@ -1912,7 +1912,7 @@ function rPlanning(){
           var colW=myBlock?100/myBlock.maxCol:100;
           var leftPct=myBlock?myBlock.col*colW:0;
           var _ttip=(cl?cName(cl):"")+"\n"+(sv?sv.n:"")+"\n"+a.time+" - "+(a.pr||0)+"\u20ac"+"\n"+(sty?sty.n:"")+"\n"+(a.st==="done"?"Encaisse":"Confirme");
-          h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'" title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+'" data-click-id="'+a.id+'">';
+          h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'" title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+'" data-click-id="'+a.id+'" >';
           h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId))+'</div>';
           h+='<div class="pb-svc">'+ph.l.toUpperCase()+'</div>';
           if(hPx>=50)h+='<div class="pb-badge" style="background:'+(a.st==="done"?"var(--green-bg);color:var(--green)":"var(--blue-bg);color:var(--blue)")+'">'+(a.st==="done"?"Fait":"Confirm\u00e9")+'</div>';
@@ -2021,45 +2021,29 @@ function doAddAbsence(){
 var _drag={active:false,aid:null,ghost:null,startY:0,startX:0,el:null,timer:null,moved:false};
 
 function initDrag(){
-  var appEl=document.getElementById('app');
-  if(!appEl)return;
-  // Remove old handlers
-  if(window._planClickH)appEl.removeEventListener('click',window._planClickH);
-  if(window._planMouseH)appEl.removeEventListener('mousedown',window._planMouseH);
-  if(window._planTouchH)appEl.removeEventListener('touchstart',window._planTouchH);
+  var a=document.getElementById('app');
+  if(!a)return;
+  if(window._pCH)a.removeEventListener('click',window._pCH,true);
+  if(window._pMH)a.removeEventListener('mousedown',window._pMH);
+  if(window._pTH)a.removeEventListener('touchstart',window._pTH);
   
-  // CLICK handler: handles both pg-block clicks and pg-slot clicks
-  window._planClickH=function(e){
-    // If drag just happened, ignore
+  // Click delegation (capture phase to beat any other handler)
+  window._pCH=function(e){
     if(_drag&&_drag.active)return;
     if(_drag&&_drag.justDragged){_drag.justDragged=false;return;}
-    // Check pg-block first (higher priority)
-    var bl=e.target.closest('.pg-block[data-click-id]');
-    if(bl){
-      e.stopPropagation();
-      clickAppt(bl.getAttribute('data-click-id'));
-      return;
-    }
-    // Then check pg-slot
-    var sl=e.target.closest('.pg-slot[data-slot-stid]');
-    if(sl){
-      clickSlot(parseInt(sl.getAttribute('data-slot-stid')),sl.getAttribute('data-slot-time'));
-      return;
-    }
+    var bl=e.target.closest('[data-click-id]');
+    if(bl){e.stopPropagation();e.preventDefault();clickAppt(bl.getAttribute('data-click-id'));return;}
+    var sl=e.target.closest('[data-slot-stid]');
+    if(sl){e.stopPropagation();clickSlot(parseInt(sl.getAttribute('data-slot-stid')),sl.getAttribute('data-slot-time'));return;}
   };
-  appEl.addEventListener('click',window._planClickH);
+  a.addEventListener('click',window._pCH,true);
   
-  // DRAG handlers (mousedown/touchstart for long-press drag)
-  window._planMouseH=function(e){
-    var bl=e.target.closest('.pg-block[data-aid]');
-    if(bl){e._bl=bl;dragStart(e);}
-  };
-  window._planTouchH=function(e){
-    var bl=e.target.closest('.pg-block[data-aid]');
-    if(bl){e._bl=bl;dragStart(e);}
-  };
-  appEl.addEventListener('mousedown',window._planMouseH);
-  appEl.addEventListener('touchstart',window._planTouchH,{passive:false});
+  // Drag (long press)
+  window._pMH=function(e){var bl=e.target.closest('.pg-block[data-aid]');if(bl){e._bl=bl;dragStart(e);}};
+  window._pTH=function(e){var bl=e.target.closest('.pg-block[data-aid]');if(bl){e._bl=bl;dragStart(e);}};
+  a.addEventListener('mousedown',window._pMH);
+  a.addEventListener('touchstart',window._pTH,{passive:false});
+  console.log('initDrag: delegation ready, blocks='+document.querySelectorAll('[data-click-id]').length);
 }
 
 function dragStart(e){
@@ -2182,6 +2166,7 @@ function dragEnd(e){
 function reprendre(id){for(var i=0;i<AP.length;i++){if(AP[i].id===id){oM("appt",{cId:AP[i].cId,stId:AP[i].stId,time:AP[i].time});return;}}}
 function updateRdvDay(){}
 function clickAppt(id){
+  console.log("clickAppt called:",id);
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
@@ -5734,29 +5719,28 @@ function filterTkClients(q){
 
 function tkAddService(){
   if(!window._tkSvcCat)window._tkSvcCat=CATS[0]||"";
-  var h2='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;padding:0;max-width:500px;width:100%;color:#fff">';
-  h2+='<div style="padding:14px 16px;border-bottom:1px solid var(--border2);font-size:16px;font-weight:800;font-family:var(--f1)">Ajouter une prestation</div>';
-  // Category tabs
-  h2+='<div style="display:flex;overflow-x:auto;border-bottom:1px solid var(--border2);background:var(--bg)">';
+  var dk='background:rgba(16,16,20,.96);color:#fff;border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0';
+  var h2='<div style="'+dk+';padding:0;max-width:500px;width:100%">';
+  h2+='<div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);font-size:16px;font-weight:800;font-family:var(--f1);color:#fff">Ajouter une prestation</div>';
+  h2+='<div style="display:flex;overflow-x:auto;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);gap:2px;padding:0 4px">';
   for(var ci=0;ci<CATS.length;ci++){
     var isCur=window._tkSvcCat===CATS[ci];
-    h2+='<button onclick="window._tkSvcCat=\''+CATS[ci].replace(/'/g,"\\'")+'\';tkAddService()" style="padding:10px 16px;font-size:12px;font-weight:'+(isCur?"800":"500")+';border:none;background:'+(isCur?"var(--gold)":"transparent")+';color:'+(isCur?"#0a0a0a":"var(--text3)")+';cursor:pointer;white-space:nowrap;border-radius:'+(isCur?"8px 8px 0 0":"0")+'">'+CATS[ci]+'</button>';
+    h2+='<button onclick="window._tkSvcCat=\''+CATS[ci].replace(/'/g,"\\'")+'\';tkAddService()" style="padding:10px 14px;font-size:12px;font-weight:'+(isCur?"800":"600")+';border:none;background:'+(isCur?"#c8a84e":"transparent")+';color:'+(isCur?"#0a0a0a":"rgba(255,255,255,.6)")+';cursor:pointer;white-space:nowrap;border-radius:'+(isCur?"8px 8px 0 0":"0")+'">'+CATS[ci]+'</button>';
   }
   h2+='</div>';
-  // Services in selected category
   h2+='<div style="max-height:50vh;overflow-y:auto;padding:6px 0">';
   var svcs=SVC.filter(function(s){return s.cat===window._tkSvcCat});
   for(var si=0;si<svcs.length;si++){
     var s=svcs[si];
     var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
-    h2+='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid var(--border2);transition:background .15s" onclick="doAddTkSvc('+s.id+')" onmouseover="this.style.background=\'rgba(200,168,78,.06)\'" onmouseout="this.style.background=\'transparent\'">';
-    h2+='<div style="flex:1"><div style="font-size:14px;font-weight:600">'+s.n+'</div>';
-    h2+='<div style="font-size:11px;color:var(--text3)">'+(dur||30)+' min</div></div>';
-    h2+='<div style="font-family:var(--f1);font-weight:800;font-size:16px;color:var(--gold)">'+s.p+' \u20ac</div></div>';
+    h2+='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)" onclick="doAddTkSvc('+s.id+')">';
+    h2+='<div style="flex:1"><div style="font-size:14px;font-weight:600;color:#fff">'+s.n+'</div>';
+    h2+='<div style="font-size:11px;color:rgba(255,255,255,.4)">'+(dur||30)+' min</div></div>';
+    h2+='<div style="font-family:var(--f1);font-weight:800;font-size:16px;color:#c8a84e">'+s.p+' \u20ac</div></div>';
   }
-  if(!svcs.length)h2+='<div style="padding:30px;text-align:center;color:var(--text3)">Aucune prestation dans cette cat\u00e9gorie</div>';
+  if(!svcs.length)h2+='<div style="padding:30px;text-align:center;color:rgba(255,255,255,.3)">Aucune prestation dans cette cat\u00e9gorie</div>';
   h2+='</div>';
-  h2+='<div style="padding:10px 16px;border-top:1px solid var(--border2)"><button class="btn bk" style="width:100%" onclick="showCaisse()">Retour</button></div></div>';
+  h2+='<div style="padding:10px 16px;border-top:1px solid rgba(255,255,255,.08)"><button style="width:100%;padding:12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:14px;cursor:pointer" onclick="showCaisse()">Retour</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+h2+'</div></div>';
 }
 
@@ -5768,20 +5752,20 @@ function doAddTkSvc(svcId){
 }
 
 function tkAddProduct(){
-  var h2='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;padding:20px;max-width:500px;width:100%;color:#fff"><h2 style="font-family:var(--f1);color:#c8a84e;margin-bottom:12px">Ajouter un produit</h2>';
+  var h2='<div style="background:rgba(16,16,20,.96);color:#fff;border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;padding:20px;max-width:500px;width:100%"><h2 style="font-family:var(--f1);color:#c8a84e;margin-bottom:12px">Ajouter un produit</h2>';
   h2+='<div style="max-height:60vh;overflow-y:auto">';
   var pCats={};PRODS.forEach(function(p){if(!pCats[p.cat])pCats[p.cat]=[];pCats[p.cat].push(p);});
   for(var cat in pCats){
-    h2+='<div class="ct" style="margin-top:10px">'+cat+'</div>';
+    h2+='<div style="margin-top:12px;font-family:var(--f1);font-size:14px;font-weight:700;color:#c8a84e">'+cat+'</div>';
     for(var i=0;i<pCats[cat].length;i++){
       var p=pCats[cat][i];
       var idx=PRODS.indexOf(p);
-      h2+='<div class="li" style="cursor:pointer;padding:10px 0;border-bottom:1px solid var(--border2)" onclick="doAddTkProd('+idx+')">';
-      h2+='<div style="flex:1;font-size:14px">'+p.n+'</div>';
-      h2+='<div style="font-weight:700;font-size:14px">'+p.p.toFixed(2)+' \u20ac</div></div>';
+      h2+='<div style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)" onclick="doAddTkProd('+idx+')">';
+      h2+='<div style="flex:1;font-size:14px;color:#fff">'+p.n+'</div>';
+      h2+='<div style="font-weight:800;font-size:14px;color:#c8a84e;font-family:var(--f1)">'+p.p.toFixed(2)+' \u20ac</div></div>';
     }
   }
-  h2+='</div><button class="btn bk" style="margin-top:10px" onclick="showCaisse()">Retour</button></div>';
+  h2+='</div><button style="width:100%;margin-top:10px;padding:12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+h2+'</div></div>';
 }
 
@@ -5794,7 +5778,7 @@ function doAddTkProd(idx){
 
 function addItemRemise(idx){
   var it=_tk.items[idx];
-  var htm='<div class="mbox" style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);color:#fff"><h2 style="color:#c8a84e">Remise sur '+it.name+'</h2>';
+  var htm='<div class="mbox" style="background:rgba(16,16,20,.96)!important;border:1px solid rgba(255,255,255,.1);color:#fff!important"><h2 style="color:#c8a84e!important">Remise sur '+it.name+'</h2>';
   htm+='<div style="text-align:center;font-size:14px;margin-bottom:14px">Prix unitaire: <strong>'+it.price.toFixed(2)+' \u20ac</strong></div>';
   htm+='<div style="display:flex;gap:10px;justify-content:center;margin-bottom:16px">';
   htm+='<button class="btn bg" style="flex:1;padding:16px" onclick="applyRemise('+idx+',\'eur\')">Remise en \u20ac</button>';
@@ -5989,7 +5973,7 @@ function doCreateFreeBon(){
 }
 
 function showAbandonConfirm(){
-  var h='<div class="mbox" style="text-align:center;background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);color:#fff"><h2 style="color:#c8a84e">Abandonner ce ticket ?</h2>';
+  var h='<div class="mbox" style="text-align:center;background:rgba(16,16,20,.96)!important;border:1px solid rgba(255,255,255,.1);color:#fff!important"><h2 style="color:#c8a84e!important">Abandonner ce ticket ?</h2>';
   h+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;margin-bottom:14px">Enregistre dans le journal NF525.</div>';
   h+='<div class="fg"><label>Motif</label><input id="abMotif" placeholder="Motif abandon..."></div>';
   h+='<div style="display:flex;gap:8px;margin-top:14px">';
@@ -6169,7 +6153,7 @@ function doFinalPay(method){
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
   
   // Update client fidelity
-  if(!_tk.extraClients||!_tk.extraClients.length){if(_tk.cId){var cl=gC(_tk.cId);if(cl){cl.fid=(cl.fid||0)+1;if(typeof saveClient==="function")saveClient(cl);}}}
+  if(_tk.cId){var cl=gC(_tk.cId);if(cl){cl.fid=(cl.fid||0)+1;if(typeof saveClient==="function")saveClient(cl);}}
   
   // Decrement stock for products sold
   _tk.items.forEach(function(it){
