@@ -186,6 +186,8 @@ body{max-width:100%;margin:0 auto;}
 <script src="supabase.min.js"></script>
 <script src="coiffpro-supabase.js"></script>
 <script>
+console.log("=== CoiffPro v5.2 ===");
+window._CP_VERSION="5.2";
 console.log("CoiffPro v5.1 - patched 17/03/2026");
 
 var SALON_CONFIG={nom:"CoiffPro",sousTitre:"Gestion Salon",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"#c8a84e",couleurSecondaire:"#1a1a1a",devise:"\u20ac",tauxTVA:20,version:"v5"};
@@ -766,7 +768,13 @@ function confirmNotif(id){
   if(!window.NOTIFS)return;
   for(var i=0;i<window.NOTIFS.length;i++){
     if(window.NOTIFS[i].id===id){
-      window.NOTIFS[i].confirmed=true;window.NOTIFS[i].seen=true;persistNotifs();
+      window.NOTIFS[i].confirmed=true;window.NOTIFS[i].seen=true;
+        // Also mark in RDV_ONLINE
+        if(window.NOTIFS[i].rdvOnlineId&&window.RDV_ONLINE){
+          for(var ri=0;ri<window.RDV_ONLINE.length;ri++){
+            if(window.RDV_ONLINE[ri].id===window.NOTIFS[i].rdvOnlineId)window.RDV_ONLINE[ri].status="done";
+          }
+        }persistNotifs();
       // If it's an online RDV, confirm it in Supabase
       if(window.NOTIFS[i].rdvOnlineId){
         var rdvId=window.NOTIFS[i].rdvOnlineId;
@@ -799,11 +807,17 @@ function clearReadNotifs(){
   window.NOTIFS.forEach(function(n){
     if(n.seen&&n.rdvOnlineId){
       window._dismissedNotifs[n.rdvOnlineId]=true;
-      // Mark as seen in Supabase so it doesn't come back after page reload
-      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
+      // Mark as done in Supabase - with confirmation
+      if(typeof _sb!=="undefined"&&_sb){
+        _sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId).then(function(res){
+          if(res.error)console.error("Failed to dismiss notif in Supabase:",res.error);
+        });
+      }
     }
   });
   window.NOTIFS=window.NOTIFS.filter(function(n){return!n.seen;});
+  // Also remove from RDV_ONLINE so they don't get re-injected
+  if(window.RDV_ONLINE){window.RDV_ONLINE=window.RDV_ONLINE.filter(function(r){return!window._dismissedNotifs[r.id];});}
   saveDismissed();persistNotifs();showNotifs();updateNotifBadge();
 }
 function markAllNotifsRead(){
@@ -817,6 +831,7 @@ function markAllNotifsRead(){
     }
   });
   window.NOTIFS=[];
+  if(window.RDV_ONLINE){window.RDV_ONLINE=window.RDV_ONLINE.filter(function(r){return!window._dismissedNotifs[r.id];});}
   saveDismissed();updateNotifBadge();showNotifs();
 }
 function simulateOnlineRdv(cn,sv,d,t){addNotif("rdv_online","Nouveau RDV en ligne",cn+" - "+sv+" le "+d+" a "+t,{});}
