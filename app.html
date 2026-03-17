@@ -3293,8 +3293,8 @@ function rForfaits(){
     h+='<div style="font-size:15px;font-weight:700;margin-bottom:6px">Aucun forfait</div>';
     h+='<div style="font-size:13px;margin-bottom:16px">Cr\u00e9ez des packs combinant plusieurs prestations \u00e0 prix r\u00e9duit.</div></div>';
   }
-  for(var i=0;i<FORFAITS.length;i++){
-    var f=FORFAITS[i];
+  for(var i=0;i<filteredForf.length;i++){
+    var f=filteredForf[i];var fIdx=FORFAITS.indexOf(f);
     var svcNames=[];var totalIndiv=0;
     if(f.services){f.services.forEach(function(sid){var sv=gS(sid);if(sv){svcNames.push(sv.n);totalIndiv+=sv.p;}});}
     var eco=totalIndiv-f.p;
@@ -3308,8 +3308,8 @@ function rForfaits(){
     h+='<div style="font-size:20px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+f.p+'\u20ac</div>';
     if(totalIndiv>f.p)h+='<div style="font-size:11px;color:var(--text3);text-decoration:line-through">'+totalIndiv+'\u20ac</div>';
     h+='<div style="display:flex;gap:4px;margin-top:4px;justify-content:flex-end">';
-    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px" onclick="editForfait('+i+')">\u270f\ufe0f</button>';
-    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px;color:var(--red)" onclick="deleteForfait('+i+')">\ud83d\uddd1</button>';
+    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px" onclick="editForfait('+fIdx+')">\u270f\ufe0f</button>';
+    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px;color:var(--red)" onclick="deleteForfait('+fIdx+')">\ud83d\uddd1</button>';
     h+='</div></div></div>';
   }
   h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent" onclick="addForfait()">';
@@ -3329,6 +3329,9 @@ function addForfait(){
     htm+='<label style="display:flex;align-items:center;gap:8px;padding:6px;cursor:pointer;border-bottom:1px solid var(--border2)"><input type="checkbox" value="'+s.id+'" class="nfSvcCb"><span style="flex:1;font-size:13px">'+s.n+'</span><span style="font-size:12px;color:var(--gold);font-weight:700">'+s.p+'\u20ac</span></label>';
   }
   htm+='</div></div>';
+  htm+='<div class="fg"><label>Cat\u00e9gorie</label><select id="nfCat">';
+  for(var ci=0;ci<CATS.length;ci++)htm+='<option value="'+CATS[ci]+'">'+CATS[ci]+'</option>';
+  htm+='</select></div>';
   htm+='<div class="fg"><label>Dur\u00e9e totale (min)</label><input type="number" id="nfDur" min="5" step="5" value="60" style="text-align:center"></div>';
   htm+='<div style="display:flex;gap:8px;margin-top:14px">';
   htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
@@ -3344,7 +3347,8 @@ function doAddForfait(){
   if(!name||!price)return;
   var svcs=[];document.querySelectorAll(".nfSvcCb:checked").forEach(function(cb){svcs.push(+cb.value);});
   var id=FORFAITS.length?Math.max.apply(null,FORFAITS.map(function(f){return f.id||0;}))+1:1;
-  FORFAITS.push({id:id,n:name,p:price,services:svcs,dur:dur,phases:[{t:"w",d:dur,l:name}]});
+  var cat=(document.getElementById("nfCat")||{}).value||CATS[0]||"";
+  FORFAITS.push({id:id,n:name,p:price,cat:cat,services:svcs,dur:dur,phases:[{t:"w",d:dur,l:name}]});
   saveForfaitsToSupabase();
   cM();go("services");
 }
@@ -3362,6 +3366,9 @@ function editForfait(idx){
     htm+='<label style="display:flex;align-items:center;gap:8px;padding:6px;cursor:pointer;border-bottom:1px solid var(--border2)"><input type="checkbox" value="'+s.id+'" class="efSvcCb"'+(checked?' checked':'')+'><span style="flex:1;font-size:13px">'+s.n+'</span><span style="font-size:12px;color:var(--gold);font-weight:700">'+s.p+'\u20ac</span></label>';
   }
   htm+='</div></div>';
+  htm+='<div class="fg"><label>Cat\u00e9gorie</label><select id="efCat">';
+  for(var ci=0;ci<CATS.length;ci++)htm+='<option value="'+CATS[ci]+'"'+(f.cat===CATS[ci]?' selected':'')+'>'+CATS[ci]+'</option>';
+  htm+='</select></div>';
   htm+='<div class="fg"><label>Dur\u00e9e (min)</label><input type="number" id="efDur" min="5" step="5" value="'+(f.dur||60)+'" style="text-align:center"></div>';
   htm+='<div style="display:flex;gap:8px;margin-top:14px">';
   htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
@@ -3375,6 +3382,7 @@ function doEditForfait(idx){
   f.n=document.getElementById("efName").value.trim()||f.n;
   f.p=parseFloat(document.getElementById("efPrice").value)||f.p;
   f.dur=parseInt(document.getElementById("efDur").value)||f.dur;
+  f.cat=(document.getElementById("efCat")||{}).value||f.cat;
   f.services=[];document.querySelectorAll(".efSvcCb:checked").forEach(function(cb){f.services.push(+cb.value);});
   f.phases=[{t:"w",d:f.dur,l:f.n}];
   saveForfaitsToSupabase();
@@ -5805,8 +5813,8 @@ function tkAddForfait(){
   if(!FORFAITS.length){
     h2+='<div style="padding:30px;text-align:center;color:rgba(255,255,255,.3)">Aucun forfait cr\u00e9\u00e9.<br>Allez dans Prestations \u2192 Forfaits pour en cr\u00e9er.</div>';
   }
-  for(var i=0;i<FORFAITS.length;i++){
-    var f=FORFAITS[i];
+  for(var i=0;i<filteredForf.length;i++){
+    var f=filteredForf[i];var fIdx=FORFAITS.indexOf(f);
     var svcNames=[];if(f.services){f.services.forEach(function(sid){var sv=gS(sid);if(sv)svcNames.push(sv.n);});}
     h2+='<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)" onclick="doAddTkForfait('+i+')">';
     h2+='<div style="flex:1"><div style="font-size:14px;font-weight:600;color:#fff">'+f.n+'</div>';
@@ -7405,6 +7413,15 @@ if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){loadSiteConfig();},1000);
 function initApp(){
   // Load forfaits from localStorage
   try{var ff=localStorage.getItem("_cp_forfaits");if(ff)FORFAITS=JSON.parse(ff);}catch(e){}
+  // Auto-populate forfaits from services (except Soins) if empty
+  if(!FORFAITS.length&&SVC.length>0){
+    var fId=1;
+    SVC.forEach(function(s){
+      if(s.cat==="Soins")return;
+      FORFAITS.push({id:fId++,n:s.n,p:s.p,cat:s.cat,services:[s.id],dur:0,phases:s.phases?JSON.parse(JSON.stringify(s.phases)):[]});
+    });
+    if(FORFAITS.length){try{localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}catch(e){}}
+  }
   // Also try to load from Supabase config_json (async)
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
