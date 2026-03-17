@@ -3325,6 +3325,13 @@ function rForfaits(){
   h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent" onclick="addForfait()">';
   h+='<div style="font-size:28px;opacity:.4">+</div>';
   h+='<div style="font-size:13px;color:var(--text3);font-weight:600">Cr\u00e9er un forfait</div></div>';
+  // Delete category for forfaits
+  if(window._forfCat!=='all'){
+    var fInCat=FORFAITS.filter(function(f){return f.cat===window._forfCat;});
+    if(fInCat.length===0){
+      h+='<div style="margin-top:12px;text-align:center"><button class="btn bs" style="color:var(--red)" onclick="deleteForfaitCategory()">\ud83d\uddd1 Supprimer la cat\u00e9gorie \u00ab'+window._forfCat+'\u00bb</button></div>';
+    }
+  }
   return h;
 }
 function addForfait(){
@@ -3398,11 +3405,25 @@ function doEditForfait(idx){
   cM();go("services");
 }
 
-function deleteForfait(idx){
-  if(!confirm("Supprimer ce forfait ?"))return;
-  FORFAITS.splice(idx,1);
-  saveForfaitsToSupabase();
+function deleteForfaitCategory(){
+  var cat=window._forfCat;
+  var fInCat=FORFAITS.filter(function(f){return f.cat===cat;});
+  if(fInCat.length>0){alert("Videz d'abord les forfaits de cette categorie");return;}
+  // Remove category from CATS if no services use it either
+  var svcInCat=SVC.filter(function(s){return s.cat===cat;});
+  if(svcInCat.length===0){
+    CATS=CATS.filter(function(c){return c!==cat;});
+  }
+  window._forfCat='all';
   go("services");
+}
+
+function deleteForfait(idx){
+  var f=FORFAITS[idx];if(!f)return;
+  showConfirmDelete("Supprimer "+f.n+" ?",f.p+"\u20ac",function(){FORFAITS.splice(idx,1);
+  saveForfaitsToSupabase();
+  cM();go("services");
+  });
 }
 
 function rServices(){
@@ -3410,8 +3431,8 @@ function rServices(){
   // Main tabs: Prestations | Forfaits
   if(!window._svcTab)window._svcTab='prestations';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">';
-  h+='<button style="flex:1;padding:12px;font-size:14px;font-weight:800;border:none;background:'+(window._svcTab==='prestations'?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(window._svcTab==='prestations'?'#0a0a0a':'#fff')+';cursor:pointer;border-radius:10px 10px 0 0;font-family:var(--f1);border:1px solid '+(window._svcTab==='prestations'?'var(--gold)':'rgba(255,255,255,.1)')+'" onclick="window._svcTab=\'prestations\';go(\'services\')">\u2702\ufe0f Services</button>';
-  h+='<button style="flex:1;padding:12px;font-size:14px;font-weight:800;border:none;background:'+(window._svcTab==='forfaits'?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(window._svcTab==='forfaits'?'#0a0a0a':'#fff')+';cursor:pointer;border-radius:10px 10px 0 0;font-family:var(--f1);border:1px solid '+(window._svcTab==='forfaits'?'var(--gold)':'rgba(255,255,255,.1)')+'" onclick="window._svcTab=\'forfaits\';go(\'services\')">\ud83d\udce6 Forfaits</button>';
+  h+='<button style="flex:1;padding:12px;font-size:14px;font-weight:800;border:none;background:'+(window._svcTab==='prestations'?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(window._svcTab==='prestations'?'#0a0a0a':'rgba(255,255,255,.35)')+';cursor:pointer;border-radius:10px 10px 0 0;font-family:var(--f1);border:1px solid '+(window._svcTab==='prestations'?'var(--gold)':'rgba(255,255,255,.1)')+'" onclick="window._svcTab=\'prestations\';go(\'services\')">\u2702\ufe0f Services</button>';
+  h+='<button style="flex:1;padding:12px;font-size:14px;font-weight:800;border:none;background:'+(window._svcTab==='forfaits'?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(window._svcTab==='forfaits'?'#0a0a0a':'rgba(255,255,255,.35)')+';cursor:pointer;border-radius:10px 10px 0 0;font-family:var(--f1);border:1px solid '+(window._svcTab==='forfaits'?'var(--gold)':'rgba(255,255,255,.1)')+'" onclick="window._svcTab=\'forfaits\';go(\'services\')">\ud83d\udce6 Forfaits</button>';
   h+='</div>';
   
   if(window._svcTab==='forfaits'){return h+rForfaits();}
@@ -3419,7 +3440,7 @@ function rServices(){
   // Category tabs + add category button
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap">';
   for(var i=0;i<CATS.length;i++){
-    h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';\'services\')">'+CATS[i]+'</div>';
+    h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[i]+'</div>';
   }
   h+='<button class="btn bs" style="font-size:12px;padding:6px 10px" onclick="addCategory()">+ Cat\u00e9gorie</button>';
   h+='</div>';
@@ -3462,9 +3483,13 @@ function rServices(){
   h+='</div>';
   
   // Category actions
+  h+='<div style="margin-top:12px;text-align:center">';
   if(svcs.length===0){
-    h+='<button class="btn bs" style="color:var(--red);margin-top:8px" onclick="deleteCategory()">Supprimer la cat\u00e9gorie "'+aCat+'"</button>';
+    h+='<button class="btn bs" style="color:var(--red)" onclick="deleteCategory()">\ud83d\uddd1 Supprimer la cat\u00e9gorie \u00ab'+aCat+'\u00bb</button>';
+  }else{
+    h+='<button class="btn bs" style="color:var(--red);opacity:.6" onclick="alert(\'Videz d\\\\u0027abord les prestations de cette cat\u00e9gorie\')">\ud83d\uddd1 Supprimer \u00ab'+aCat+'\u00bb ('+svcs.length+' prestations)</button>';
   }
+  h+='</div>';
   
   return h;
 }
@@ -3528,15 +3553,7 @@ function doEditService(id){
 
 function deleteService(id){
   var sv=gS(id);if(!sv)return;
-  var htm='<div class="mbox" style="text-align:center">';
-  htm+='<div style="font-size:36px;margin-bottom:10px">\u26a0\ufe0f</div>';
-  htm+='<h2>Supprimer ?</h2>';
-  htm+='<div style="font-size:14px;margin-bottom:14px">Supprimer la prestation<br><strong>'+sv.n+'</strong> ('+sv.p+'\u20ac) ?</div>';
-  htm+='<div style="display:flex;gap:8px">';
-  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-  htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="doDeleteService('+id+')">Supprimer</button>';
-  htm+='</div></div>';
-  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  showConfirmDelete("Supprimer "+sv.n+" ?",sv.p+"\u20ac",function(){SVC=SVC.filter(function(s){return s.id!==id});if(typeof saveSalonConfig==="function")saveSalonConfig();cM();go("services");});
 }
 
 function doDeleteService(id){
@@ -3563,12 +3580,24 @@ function doAddCategory(){
   cM();go("services");
 }
 
+
+function showConfirmDelete(title,detail,onConfirm){
+  window._confirmAction=onConfirm;
+  var h='<div class="mbox" style="text-align:center">';
+  h+='<div style="font-size:36px;margin-bottom:10px">\ud83d\uddd1\ufe0f</div>';
+  h+='<h2>'+title+'</h2>';
+  if(detail)h+='<div style="font-size:14px;margin-bottom:16px;color:var(--text2)">'+detail+'</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1" onclick="cM()">Annuler</button>';
+  h+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="if(window._confirmAction)window._confirmAction()">Supprimer</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
 function deleteCategory(){
   var svcs=SVC.filter(function(s){return s.cat===aCat});
   if(svcs.length>0)return;
-  CATS=CATS.filter(function(c){return c!==aCat});
-  aCat=CATS[0]||"";
-  go("services");
+  showConfirmDelete("Supprimer la cat\u00e9gorie \u00ab"+aCat+"\u00bb ?","",function(){CATS=CATS.filter(function(c){return c!==aCat});aCat=CATS[0]||"";cM();go("services");});
 }
 
 
