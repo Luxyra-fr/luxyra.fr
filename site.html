@@ -773,7 +773,28 @@ function formatDate(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStar
 function selectDate(dateStr){
   booking.date=dateStr;booking.time=null;
   renderBookingStep3();
-  // Render time slots
+  window._bkSelHour=undefined;
+  renderTimeSlots(dateStr);
+}
+
+function isSlotTaken(date,time,duration,collabId){
+  var slotStart=toMin(time),slotEnd=slotStart+duration;
+  for(var i=0;i<RDV_EXISTING.length;i++){
+    var r=RDV_EXISTING[i];
+    if(r.date_rdv!==date)continue;
+    if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;// Different collab
+    if(!r.heure)continue;
+    var rStart=toMin(r.heure);
+    // Estimate duration from phases or default 60min
+    var rDur=60;
+    if(r.a_phases){var td=0;r.a_phases.forEach(function(p){td+=p.d||0;});if(td>0)rDur=td;}
+    var rEnd=rStart+rDur;
+    if(slotStart<rEnd&&slotEnd>rStart)return true;// Overlap
+  }
+  return false;
+}
+
+function renderTimeSlots(dateStr){
   var dt=new Date(dateStr);
   var dow=dt.getDay();
   var hrs=HORAIRES[dow];
@@ -833,23 +854,6 @@ function selectDate(dateStr){
   if(!hasAny)h+='<div style="text-align:center;padding:20px;color:var(--text3)">Aucun cr\u00e9neau disponible ce jour</div>';
   h+='</div>';
   document.getElementById("timeSlotsArea").innerHTML=h;
-}
-
-function isSlotTaken(date,time,duration,collabId){
-  var slotStart=toMin(time),slotEnd=slotStart+duration;
-  for(var i=0;i<RDV_EXISTING.length;i++){
-    var r=RDV_EXISTING[i];
-    if(r.date_rdv!==date)continue;
-    if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;// Different collab
-    if(!r.heure)continue;
-    var rStart=toMin(r.heure);
-    // Estimate duration from phases or default 60min
-    var rDur=60;
-    if(r.a_phases){var td=0;r.a_phases.forEach(function(p){td+=p.d||0;});if(td>0)rDur=td;}
-    var rEnd=rStart+rDur;
-    if(slotStart<rEnd&&slotEnd>rStart)return true;// Overlap
-  }
-  return false;
 }
 
 function selectTime(time){
