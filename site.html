@@ -780,35 +780,58 @@ function selectDate(dateStr){
   if(booking.collab&&booking.collab.hrs)hrs=booking.collab.hrs[dow];
   if(!hrs){document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Ferm\u00e9 ce jour</div>';return;}
   
-  var interval=SITE_CFG.interval||15;
+  var interval=15;
   var startM=toMin(hrs.o),endM=toMin(hrs.c);
   var dur=booking.duration||30;
-  var slots=[];
+  var now=new Date();
+  var minDelay=(SITE_CFG.delaiMin||2)*60;
+  
+  // Build available hours
+  var hours={};
   for(var m=startM;m+dur<=endM;m+=interval){
+    var hr=Math.floor(m/60);
+    if(!hours[hr])hours[hr]={available:0,total:0,slots:[]};
     var timeStr=fromMin(m);
     var isTaken=isSlotTaken(dateStr,timeStr,dur,booking.collabId);
-    slots.push({time:timeStr,taken:isTaken});
+    var slotDt=new Date(dateStr+"T"+timeStr);
+    var tooSoon=(slotDt-now)/60000<minDelay;
+    var avail=!isTaken&&!tooSoon;
+    hours[hr].total++;
+    if(avail)hours[hr].available++;
+    hours[hr].slots.push({time:timeStr,taken:isTaken||tooSoon});
   }
   
-  // Check min delay
-  var now=new Date();
-  var minDelay=(SITE_CFG.delaiMin||2)*60;// minutes
+  var selectedHour=window._bkSelHour;
   
-  var h='<div style="margin-top:20px"><div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:10px">Cr\u00e9neaux disponibles :</div>';
-  h+='<div class="slots-grid">';
-  var hasAvailable=false;
-  for(var i=0;i<slots.length;i++){
-    var s=slots[i];
-    // Check if too soon
-    var slotDt=new Date(dateStr+"T"+s.time);
-    var diffMin=(slotDt-now)/60000;
-    var tooSoon=diffMin<minDelay;
-    var cls="slot"+(s.taken||tooSoon?" taken":"");
-    if(!s.taken&&!tooSoon)hasAvailable=true;
-    h+='<div class="'+cls+'" onclick="selectTime(\''+s.time+'\')">'+s.time+'</div>';
+  var h='<div style="margin-top:20px">';
+  h+='<div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:10px">Choisissez l\u0027heure :</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:8px">';
+  var hasAny=false;
+  for(var hr in hours){
+    var hd=hours[hr];
+    var isSel=selectedHour===parseInt(hr);
+    var noSlots=hd.available===0;
+    var style="padding:12px 8px;border-radius:10px;text-align:center;font-weight:700;font-size:15px;cursor:pointer;border:2px solid "+(isSel?"var(--gold)":noSlots?"rgba(255,255,255,.05)":"rgba(255,255,255,.12)")+";background:"+(isSel?"rgba(200,168,78,.15)":noSlots?"rgba(255,255,255,.02)":"rgba(255,255,255,.04)")+";color:"+(noSlots?"rgba(255,255,255,.2)":"#fff")+";pointer-events:"+(noSlots?"none":"auto");
+    h+='<div style="'+style+'" onclick="window._bkSelHour='+hr+';renderTimeSlots(\''+dateStr+'\')">';
+    h+=hr+'h';
+    if(!noSlots){h+='<div style="font-size:10px;font-weight:400;color:var(--gold);margin-top:2px">'+hd.available+' dispo</div>';hasAny=true;}
+    h+='</div>';
   }
-  if(!hasAvailable)h+='<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text3)">Aucun cr\u00e9neau disponible ce jour</div>';
-  h+='</div></div>';
+  h+='</div>';
+  
+  // Show minute slots for selected hour
+  if(selectedHour!==undefined&&hours[selectedHour]){
+    h+='<div style="margin-top:16px"><div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:8px">'+selectedHour+'h - Choisissez le cr\u00e9neau :</div>';
+    h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">';
+    hours[selectedHour].slots.forEach(function(s){
+      var cls=s.taken?"background:rgba(255,255,255,.02);color:rgba(255,255,255,.15);pointer-events:none;border-color:rgba(255,255,255,.05)":"background:rgba(45,154,94,.08);border-color:rgba(45,154,94,.3);color:#2d9a5e;cursor:pointer";
+      h+='<div style="padding:14px 8px;border-radius:10px;text-align:center;font-weight:800;font-size:16px;border:2px solid transparent;'+cls+'" onclick="'+(s.taken?"":"selectTime(\'"+s.time+"\')")+'">'+s.time+'</div>';
+    });
+    h+='</div></div>';
+  }
+  
+  if(!hasAny)h+='<div style="text-align:center;padding:20px;color:var(--text3)">Aucun cr\u00e9neau disponible ce jour</div>';
+  h+='</div>';
   document.getElementById("timeSlotsArea").innerHTML=h;
 }
 
