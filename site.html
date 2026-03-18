@@ -169,6 +169,14 @@ body{font-family:var(--f2);background:var(--bg);color:var(--text);min-height:100
 
 /* Responsive */
 @media(max-width:600px){.fg-row{grid-template-columns:1fr}.h-links{gap:6px}.h-links a{font-size:10px;padding:6px 10px}.collab-grid{grid-template-columns:repeat(2,1fr)}}
+
+.btn-sm{padding:8px 14px;font-size:12px;font-weight:700;border-radius:8px;cursor:pointer;border:none;transition:all .2s;}
+.btn-outline{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#fff;}
+.btn-outline:hover{background:rgba(255,255,255,.1);border-color:var(--gold);}
+.btn-danger{background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.2);color:#ef5350;}
+.btn-danger:hover{background:rgba(239,83,80,.2);}
+.modify-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:999;display:flex;align-items:center;justify-content:center;padding:20px;}
+.modify-box{background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px;max-width:420px;width:100%;padding:24px;color:#fff;}
 </style>
 </head>
 <body>
@@ -924,16 +932,147 @@ async function loadDashboardRdvs(){
     var r=CLIENT_RDVS[i];
     var dp=r.date_rdv?r.date_rdv.split("-"):["","",""];
     var stCls=r.status==="pending"?"pending":r.status==="confirmed"?"confirmed":r.status==="done"?"done":"cancelled";
-    var stTxt=r.status==="pending"?"En attente":r.status==="confirmed"?"Confirm\u00e9":r.status==="done"?"Termin\u00e9":"Annul\u00e9";
+    var stTxt=r.status==="pending"?"En attente":r.status==="confirmed"?"Confirm\u00e9":r.status==="done"?"Termin\u00e9":r.status==="cancelled"?"Annul\u00e9":"Annul\u00e9";
+    if(r.modification_demandee&&r.modification_status==="pending"){stTxt="\u270f\ufe0f Modification demand\u00e9e";stCls="pending";}
     h+='<div class="rdv-card">';
     h+='<div class="rdv-date"><div class="d">'+parseInt(dp[2])+'</div><div class="m">'+mois[parseInt(dp[1])-1]+'</div></div>';
     h+='<div class="rdv-info"><div class="svc">'+r.service_nom+'</div>';
     h+='<div class="det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+(r.collaborateur_nom?" \u2022 "+r.collaborateur_nom:"")+" \u2022 "+r.service_prix+"\u20ac"+'</div></div>';
     h+='<div class="rdv-status '+stCls+'">'+stTxt+'</div>';
     h+='</div>';
+    // Action buttons for future confirmed/pending RDVs
+    if((r.status==="pending"||r.status==="confirmed")&&r.date_rdv>=new Date().toISOString().slice(0,10)){
+      h+='<div class="rdv-actions" style="display:flex;gap:8px;padding:0 12px 12px;margin-top:-4px">';
+      h+='<button class="btn-sm btn-outline" onclick="askModifyRdv(\''+r.id+'\')">\u270f\ufe0f Demander une modification</button>';
+      h+='<button class="btn-sm btn-danger" onclick="askCancelRdv(\''+r.id+'\')">Annuler ce RDV</button>';
+      h+='</div>';
+    }
   }
   el.innerHTML=h;
 }
+
+
+async function askModifyRdv(rdvId){
+  var rdv=null;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdvId){rdv=CLIENT_RDVS[i];break;}}
+  if(!rdv)return;
+  
+  var h='<div class="modify-modal" onclick="this.remove()">';
+  h+='<div class="modify-box" onclick="event.stopPropagation()">';
+  h+='<h2 style="font-family:var(--f1);color:var(--gold);margin-bottom:4px">Demander une modification</h2>';
+  h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'+rdv.service_nom+' \u2022 '+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'')+' le '+rdv.date_rdv+'</div>';
+  
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Nouvelle date souhait\u00e9e</label>';
+  h+='<input type="date" id="modifDate" value="'+rdv.date_rdv+'" min="'+new Date().toISOString().slice(0,10)+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
+  
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Nouvel horaire souhait\u00e9</label>';
+  h+='<input type="time" id="modifTime" value="'+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'09:00')+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
+  
+  h+='<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Message (optionnel)</label>';
+  h+='<textarea id="modifMsg" rows="2" placeholder="Ex: Je pr\u00e9f\u00e8re le matin si possible..." style="width:100%;padding:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:13px;resize:none"></textarea></div>';
+  
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button class="btn-sm btn-outline" style="flex:1;padding:14px" onclick="this.closest(\'.modify-modal\').remove()">Annuler</button>';
+  h+='<button class="btn-sm" style="flex:1;padding:14px;background:var(--gold);color:#0a0a0a;font-weight:800" onclick="doModifyRequest(\''+rdvId+'\')">Envoyer la demande</button>';
+  h+='</div></div></div>';
+  
+  document.body.insertAdjacentHTML('beforeend',h);
+}
+
+async function doModifyRequest(rdvId){
+  var newDate=document.getElementById("modifDate").value;
+  var newTime=document.getElementById("modifTime").value;
+  var msg=document.getElementById("modifMsg").value.trim();
+  if(!newDate||!newTime){alert("Choisissez une date et un horaire");return;}
+  
+  // Check availability of the new slot
+  var rdv=null;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdvId){rdv=CLIENT_RDVS[i];break;}}
+  if(!rdv)return;
+  var dur=rdv.duree_minutes||60;
+  if(isSlotTaken(newDate,newTime,dur,rdv.collaborateur_id)){
+    alert("Ce cr\u00e9neau n'est pas disponible. Veuillez choisir un autre horaire.");
+    return;
+  }
+  
+  // Save modification request to Supabase
+  try{
+    await sb.from("rdv_online").update({
+      modification_demandee:true,
+      modification_date:newDate,
+      modification_heure:newTime,
+      modification_message:msg||null,
+      modification_status:"pending"
+    }).eq("id",rdvId);
+    
+    // Close modal and show success
+    document.querySelector(".modify-modal").remove();
+    var toast=document.createElement("div");
+    toast.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#2d9a5e;color:#fff;padding:14px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.3);text-align:center";
+    toast.innerHTML="\u2705 Demande de modification envoy\u00e9e<br><small style=\"font-weight:400;opacity:.8\">Le salon vous contactera pour confirmer</small>";
+    document.body.appendChild(toast);
+    setTimeout(function(){toast.remove();},4000);
+    loadDashboardRdvs();
+  }catch(e){alert("Erreur lors de l'envoi. R\u00e9essayez.");}
+}
+
+async function askCancelRdv(rdvId){
+  var rdv=null;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdvId){rdv=CLIENT_RDVS[i];break;}}
+  if(!rdv)return;
+  
+  // Check cancellation policy
+  var policy=SITE_CFG.politiqueAnnul||"48h";
+  var policyHours=parseInt(policy)||48;
+  var rdvDate=new Date(rdv.date_rdv+"T"+(rdv.heure_rdv||"09:00"));
+  var now=new Date();
+  var hoursUntil=(rdvDate-now)/(1000*60*60);
+  var canCancel=hoursUntil>=policyHours;
+  
+  var h='<div class="modify-modal" onclick="this.remove()">';
+  h+='<div class="modify-box" onclick="event.stopPropagation()">';
+  h+='<h2 style="font-family:var(--f1);color:#ef5350;margin-bottom:4px">Annuler ce rendez-vous ?</h2>';
+  h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'+rdv.service_nom+' \u2022 '+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'')+' le '+rdv.date_rdv+'</div>';
+  
+  if(!canCancel){
+    h+='<div style="background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.2);border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;color:#ef5350">';
+    h+='\u26a0\ufe0f L\u0027annulation n\u0027est possible que '+policyHours+'h avant le rendez-vous. Contactez le salon directement pour toute modification.';
+    h+='</div>';
+    h+='<button class="btn-sm btn-outline" style="width:100%;padding:14px" onclick="this.closest(\'.modify-modal\').remove()">Compris</button>';
+  }else{
+    if(rdv.acompte_paye){
+      h+='<div style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.2);border-radius:10px;padding:14px;margin-bottom:12px;font-size:13px;color:#d4a843">';
+      h+='\ud83d\udcb3 Un acompte de '+Number(rdv.acompte_montant).toFixed(0)+'\u20ac a \u00e9t\u00e9 vers\u00e9. '+(SITE_CFG.remboursementAnnul?'Il sera rembours\u00e9.':'Il ne sera pas rembours\u00e9 selon la politique du salon.');
+      h+='</div>';
+    }
+    h+='<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Motif (optionnel)</label>';
+    h+='<textarea id="cancelMsg" rows="2" placeholder="Raison de l\u0027annulation..." style="width:100%;padding:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:13px;resize:none"></textarea></div>';
+    h+='<div style="display:flex;gap:8px">';
+    h+='<button class="btn-sm btn-outline" style="flex:1;padding:14px" onclick="this.closest(\'.modify-modal\').remove()">Retour</button>';
+    h+='<button class="btn-sm btn-danger" style="flex:1;padding:14px;font-weight:800" onclick="doCancelRdv(\''+rdvId+'\')">Confirmer l\u0027annulation</button>';
+    h+='</div>';
+  }
+  h+='</div></div>';
+  document.body.insertAdjacentHTML('beforeend',h);
+}
+
+async function doCancelRdv(rdvId){
+  var msg=(document.getElementById("cancelMsg")||{}).value||"";
+  try{
+    await sb.from("rdv_online").update({
+      status:"cancelled",
+      cancel_reason:msg,
+      cancelled_at:new Date().toISOString(),
+      cancelled_by:"client"
+    }).eq("id",rdvId);
+    
+    document.querySelector(".modify-modal").remove();
+    var toast=document.createElement("div");
+    toast.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#ef5350;color:#fff;padding:14px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.3)";
+    toast.textContent="Rendez-vous annul\u00e9";
+    document.body.appendChild(toast);
+    setTimeout(function(){toast.remove();},3000);
+    loadDashboardRdvs();
+  }catch(e){alert("Erreur. R\u00e9essayez.");}
+}
+
 
 // ============================================================
 // CART / BOUTIQUE
