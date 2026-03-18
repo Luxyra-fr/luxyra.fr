@@ -5595,27 +5595,52 @@ function showAcompteForm(apptId){
   var sv=gS(a.sId);
   var curA=a.acompte||0;
   var total=a.pr||0;
+  window._acompteApptId=apptId;
+  window._acompteTotal=total;
+  if(!window._acompteMode)window._acompteMode="CB";
+  
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
   htm+='<h2>\ud83d\udcb3 Acompte</h2>';
-  htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:"Prestation")+' \u2014 '+total.toFixed(2)+' \u20ac</div>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:"Prestation")+' \u2014 <strong>'+total.toFixed(2)+' \u20ac</strong></div>';
+  
   if(curA>0){
     htm+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#2d9a5e;font-weight:700">Acompte actuel: '+curA.toFixed(2)+' \u20ac ('+(a.acompteMode||"")+' le '+(a.acompteDate?fmt(a.acompteDate):"")+')</div>';
   }
-  htm+='<div class="fg"><label>Montant (\u20ac)</label><input type="number" id="acompteAmount" min="0" step="1" value="'+(curA||Math.round(total*0.3))+'" style="font-size:20px;text-align:center;padding:14px"></div>';
-  htm+='<div class="fg"><label>Mode de paiement</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px" id="acomptePayBtns">';
-  var modes=[["CB","\ud83d\udcb3 CB"],["Especes","\ud83d\udcb5 Esp\u00e8ces"],["Cheque","\ud83d\udcdd Ch\u00e8que"],["Virement","\ud83c\udfe6 Virement"]];
-  for(var mi=0;mi<modes.length;mi++){
-    htm+='<button class="btn" style="padding:12px;font-size:13px;font-weight:700;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)" onclick="document.querySelectorAll(\'#acomptePayBtns .btn\').forEach(function(b){b.style.borderColor=\'rgba(255,255,255,.1)\';b.style.background=\'rgba(255,255,255,.06)\'});this.style.borderColor=\'var(--gold)\';this.style.background=\'rgba(200,168,78,.1)\';window._acompteMode=\''+modes[mi][0]+'\'">'+modes[mi][1]+'</button>';
+  
+  // Quick percentage buttons
+  htm+='<div class="fg"><label>Montant rapide</label>';
+  htm+='<div style="display:flex;gap:6px;margin-bottom:8px">';
+  var pcts=[10,20,30,50];
+  for(var pi=0;pi<pcts.length;pi++){
+    var pctVal=Math.round(total*pcts[pi]/100);
+    htm+='<button style="flex:1;padding:10px 4px;font-size:12px;font-weight:800;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer" onclick="document.getElementById(\'acompteAmount\').value='+pctVal+'">'+pcts[pi]+'%<br><small style=\"font-weight:400;opacity:.6\">'+pctVal+'\u20ac</small></button>';
   }
   htm+='</div></div>';
-  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="clickAppt(\''+apptId+'\')">Annuler</button>';
-  htm+='<button class="btn bg" style="flex:1" onclick="doSaveAcompte(\''+apptId+'\')">Valider</button>';
-  if(curA>0)htm+='<button class="btn" style="background:rgba(239,83,80,.1);color:#ef5350;padding:8px 14px" onclick="doRemoveAcompte(\''+apptId+'\')">Supprimer</button>';
+  
+  // Custom amount
+  htm+='<div class="fg"><label>Ou montant libre (\u20ac)</label>';
+  htm+='<input type="number" id="acompteAmount" min="0" max="'+total+'" step="1" value="'+(curA||Math.round(total*0.3))+'" style="font-size:20px;text-align:center;padding:14px"></div>';
+  
+  // Payment mode
+  htm+='<div class="fg"><label>Mode de paiement</label>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  var modes=[["CB","\ud83d\udcb3 CB"],["Especes","\ud83d\udcb5 Esp\u00e8ces"],["Cheque","\ud83d\udcdd Ch\u00e8que"],["Virement","\ud83c\udfe6 Virement"]];
+  for(var mi=0;mi<modes.length;mi++){
+    var isSel=window._acompteMode===modes[mi][0];
+    htm+='<button style="padding:12px;font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;border:1.5px solid '+(isSel?"var(--gold)":"rgba(255,255,255,.1)")+';background:'+(isSel?"rgba(200,168,78,.1)":"rgba(255,255,255,.04)")+';color:#fff" onclick="window._acompteMode=\''+modes[mi][0]+'\';showAcompteForm(\''+apptId+'\')">'+modes[mi][1]+'</button>';
+  }
   htm+='</div></div>';
-  document.getElementById("modal").innerHTML='<div class="mbg" onclick="clickAppt(\''+apptId+'\')"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
-  window._acompteMode=window._acompteMode||"CB";
-  setTimeout(function(){var btns=document.querySelectorAll("#acomptePayBtns .btn");if(btns[0]){btns[0].style.borderColor="var(--gold)";btns[0].style.background="rgba(200,168,78,.1)";}},50);
+  
+  // Buttons
+  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM();clickAppt(\''+apptId+'\')">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doSaveAcompte(\''+apptId+'\')">\u2705 Valider l\u0027acompte</button>';
+  htm+='</div>';
+  if(curA>0){
+    htm+='<button style="width:100%;margin-top:8px;padding:10px;border:1px solid rgba(239,83,80,.2);border-radius:10px;background:rgba(239,83,80,.06);color:#ef5350;font-size:12px;font-weight:700;cursor:pointer" onclick="doRemoveAcompte(\''+apptId+'\')">Supprimer l\u0027acompte</button>';
+  }
+  htm+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();clickAppt(\''+apptId+'\')"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
 function doSaveAcompte(apptId){
