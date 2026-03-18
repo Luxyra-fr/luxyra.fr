@@ -725,6 +725,20 @@ function showNotifs(){
       var exists=false;
       for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].rdvOnlineId===r.id){exists=true;break;}}
       if(window._dismissedNotifs&&window._dismissedNotifs[r.id])exists=true;
+      // Check for modification requests
+      if(r.modification_demandee&&r.modification_status==="pending"){
+        var modExists=false;
+        for(var mi=0;mi<window.NOTIFS.length;mi++){if(window.NOTIFS[mi].id==="mod_"+r.id){modExists=true;break;}}
+        if(!modExists&&!window._dismissedNotifs["mod_"+r.id]){
+          window.NOTIFS.unshift({
+            id:"mod_"+r.id,rdvOnlineId:r.id,type:"modification",
+            title:"\u270f\ufe0f Demande de modification",
+            detail:r.nom+(r.prenom?" "+r.prenom:"")+" souhaite d\u00e9placer son RDV au "+r.modification_date+" \u00e0 "+r.modification_heure+(r.modification_message?" - "+r.modification_message:""),
+            ts:new Date().toISOString(),seen:false,confirmed:false,
+            onlineRdv:r,modifData:{date:r.modification_date,heure:r.modification_heure,msg:r.modification_message}
+          });
+        }
+      }
       if(!exists){
         window.NOTIFS.unshift({
           id:"ro_"+r.id,rdvOnlineId:r.id,type:"rdv_online",
@@ -1557,7 +1571,7 @@ setInterval(function(){
           var exists=false;
           for(var i=0;i<window.RDV_ONLINE.length;i++){if(window.RDV_ONLINE[i].id===rdv.id){exists=true;break;}}
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,svcNom:rdv.service_nom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,status:"pending",createdAt:rdv.created_at,isOnline:true});
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,svcNom:rdv.service_nom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,status:"pending",createdAt:rdv.created_at,isOnline:true,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status});
             newCount++;
           }
         });
@@ -2259,6 +2273,15 @@ function clickAppt(id){
   htm+='<div style="color:var(--gold);font-weight:700;font-size:13px;margin-top:12px;margin-bottom:4px">Commentaire</div>';
   htm+='<textarea rows="3" style="width:100%;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px;font-size:13px;font-family:var(--f2)" onchange="updApptComment(\''+a.id+'\',this.value)">'+(a.comment||"")+'</textarea>';
   
+  // Acompte section
+  if(a.acompte&&a.acompte>0){
+    htm+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:10px;padding:10px 14px;margin-top:12px;display:flex;justify-content:space-between;align-items:center">';
+    htm+='<div><div style="font-size:11px;color:rgba(255,255,255,.5)">Acompte vers\u00e9</div><div style="font-size:16px;font-weight:800;color:#2d9a5e">'+a.acompte.toFixed(2)+' \u20ac</div></div>';
+    htm+='<div style="font-size:11px;color:rgba(255,255,255,.4)">'+(a.acompteMode||"")+'<br>'+(a.acompteDate?fmt(a.acompteDate):"")+'</div></div>';
+  }
+  if(a.st==="conf"){
+    htm+='<button class="btn" style="width:100%;margin-top:8px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:700;font-size:13px" onclick="showAcompteForm(\''+a.id+'\')">\ud83d\udcb3 '+(a.acompte>0?'Modifier l\u0027acompte':'Encaisser un acompte')+'</button>';
+  }
   // Buttons row 1
   htm+='<div style="display:flex;gap:8px;margin-top:12px">';
   if(a.st==="conf"&&!a.isOnline)htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);font-weight:700" onclick="reprendre(\''+a.id+'\')">Reprendre RDV</button>';
@@ -5565,6 +5588,64 @@ var PAY_METHODS=["CB","Especes","Cheque","Bon cadeau"];
 // Override encaisser to show payment choice
 // === FULL ENCAISSEMENT FLOW (LS Coiffure style) ===
 var _tk={step:0,stId:null,cId:null,items:[],comment:"",remise:0};
+
+function showAcompteForm(apptId){
+  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
+  if(!a)return;
+  var sv=gS(a.sId);
+  var curA=a.acompte||0;
+  var total=a.pr||0;
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
+  htm+='<h2>\ud83d\udcb3 Acompte</h2>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:"Prestation")+' \u2014 '+total.toFixed(2)+' \u20ac</div>';
+  if(curA>0){
+    htm+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#2d9a5e;font-weight:700">Acompte actuel: '+curA.toFixed(2)+' \u20ac ('+(a.acompteMode||"")+' le '+(a.acompteDate?fmt(a.acompteDate):"")+')</div>';
+  }
+  htm+='<div class="fg"><label>Montant (\u20ac)</label><input type="number" id="acompteAmount" min="0" step="1" value="'+(curA||Math.round(total*0.3))+'" style="font-size:20px;text-align:center;padding:14px"></div>';
+  htm+='<div class="fg"><label>Mode de paiement</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px" id="acomptePayBtns">';
+  var modes=[["CB","\ud83d\udcb3 CB"],["Especes","\ud83d\udcb5 Esp\u00e8ces"],["Cheque","\ud83d\udcdd Ch\u00e8que"],["Virement","\ud83c\udfe6 Virement"]];
+  for(var mi=0;mi<modes.length;mi++){
+    htm+='<button class="btn" style="padding:12px;font-size:13px;font-weight:700;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)" onclick="document.querySelectorAll(\'#acomptePayBtns .btn\').forEach(function(b){b.style.borderColor=\'rgba(255,255,255,.1)\';b.style.background=\'rgba(255,255,255,.06)\'});this.style.borderColor=\'var(--gold)\';this.style.background=\'rgba(200,168,78,.1)\';window._acompteMode=\''+modes[mi][0]+'\'">'+modes[mi][1]+'</button>';
+  }
+  htm+='</div></div>';
+  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="clickAppt(\''+apptId+'\')">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doSaveAcompte(\''+apptId+'\')">Valider</button>';
+  if(curA>0)htm+='<button class="btn" style="background:rgba(239,83,80,.1);color:#ef5350;padding:8px 14px" onclick="doRemoveAcompte(\''+apptId+'\')">Supprimer</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="clickAppt(\''+apptId+'\')"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  window._acompteMode=window._acompteMode||"CB";
+  setTimeout(function(){var btns=document.querySelectorAll("#acomptePayBtns .btn");if(btns[0]){btns[0].style.borderColor="var(--gold)";btns[0].style.background="rgba(200,168,78,.1)";}},50);
+}
+
+function doSaveAcompte(apptId){
+  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
+  if(!a)return;
+  var amount=parseFloat(document.getElementById("acompteAmount").value)||0;
+  if(amount<=0){clickAppt(apptId);return;}
+  a.acompte=amount;
+  a.acompteMode=window._acompteMode||"CB";
+  a.acompteDate=TD;
+  if(typeof saveAppointment==="function")saveAppointment(a);
+  var htm='<div class="mbox" style="text-align:center">';
+  htm+='<div style="font-size:48px;margin-bottom:10px">\u2705</div>';
+  htm+='<h2>Acompte enregistr\u00e9</h2>';
+  htm+='<div style="font-size:24px;font-weight:800;color:var(--gold);margin:10px 0">'+amount.toFixed(2)+' \u20ac</div>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(window._acompteMode||"")+" \u2014 "+fmt(TD)+'</div>';
+  htm+='<button class="btn bg" style="width:100%" onclick="clickAppt(\''+apptId+'\')">OK</button>';
+  htm+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+function doRemoveAcompte(apptId){
+  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
+  if(!a)return;
+  showConfirmDelete("Supprimer l\u0027acompte de "+a.acompte.toFixed(2)+" \u20ac ?","",function(){
+    a.acompte=0;a.acompteMode="";a.acompteDate="";
+    if(typeof saveAppointment==="function")saveAppointment(a);
+    cM();clickAppt(apptId);
+  });
+}
 
 function mD(id){
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){
