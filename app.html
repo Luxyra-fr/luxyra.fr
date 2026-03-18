@@ -1665,16 +1665,48 @@ function updateNotifBadge(){
 setInterval(function(){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     var today=new Date().toISOString().slice(0,10);
-    _sb.from("rdv_online").select("id,status,client_nom,service_nom,date_rdv,heure_rdv,created_at").eq("salon_id",_salonId).eq("status","pending").then(function(r){
+    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
         var newCount=0;
         r.data.forEach(function(rdv){
           if(!window.RDV_ONLINE)window.RDV_ONLINE=[];
-          var exists=false;
-          for(var i=0;i<window.RDV_ONLINE.length;i++){if(window.RDV_ONLINE[i].id===rdv.id){exists=true;break;}}
+          var exists=false;var existIdx=-1;
+          for(var i=0;i<window.RDV_ONLINE.length;i++){if(window.RDV_ONLINE[i].id===rdv.id){exists=true;existIdx=i;break;}}
+          if(exists){
+            // Update existing entry with fresh data
+            var upd=window.RDV_ONLINE[existIdx];
+            upd.status=rdv.status;upd.modification_demandee=rdv.modification_demandee;
+            upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
+            upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
+            upd.cancelled_by=rdv.cancelled_by;upd.cancel_reason=rdv.cancel_reason;
+          }
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,svcNom:rdv.service_nom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,status:"pending",createdAt:rdv.created_at,isOnline:true,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status});
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at});
             newCount++;
+          }
+          // Check for modification requests from polling
+          if(rdv.modification_demandee&&rdv.modification_status==="pending"){
+            var modEx=false;for(var mi2=0;mi2<window.NOTIFS.length;mi2++){if(window.NOTIFS[mi2].id==="mod_"+rdv.id){modEx=true;break;}}
+            if(!modEx&&!(window._dismissedNotifs&&window._dismissedNotifs["mod_"+rdv.id])){
+              window.NOTIFS.unshift({id:"mod_"+rdv.id,rdvOnlineId:rdv.id,type:"modification",
+                title:"\u270f\ufe0f Demande de modification",
+                detail:(rdv.client_nom||"")+" souhaite d\u00e9placer au "+rdv.modification_date+" \u00e0 "+rdv.modification_heure+(rdv.modification_message?" - "+rdv.modification_message:""),
+                ts:new Date().toISOString(),seen:false,confirmed:false,
+                onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null},
+                modifData:{date:rdv.modification_date,heure:rdv.modification_heure,msg:rdv.modification_message}
+              });newCount++;
+            }
+          }
+          // Check for client cancellations from polling
+          if(rdv.status==="cancelled"&&rdv.cancelled_by==="client"){
+            var canEx=false;for(var ci4=0;ci4<window.NOTIFS.length;ci4++){if(window.NOTIFS[ci4].id==="can_"+rdv.id){canEx=true;break;}}
+            if(!canEx&&!(window._dismissedNotifs&&window._dismissedNotifs["can_"+rdv.id])){
+              window.NOTIFS.unshift({id:"can_"+rdv.id,rdvOnlineId:rdv.id,type:"cancel_client",
+                title:"\u274c RDV annul\u00e9 par le client",
+                detail:(rdv.client_nom||"")+" a annul\u00e9 son RDV du "+rdv.date_rdv+" "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+(rdv.cancel_reason?" - "+rdv.cancel_reason:""),
+                ts:rdv.cancelled_at||new Date().toISOString(),seen:false,confirmed:false
+              });newCount++;
+            }
           }
         });
         if(newCount>0){
