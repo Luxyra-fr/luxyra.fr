@@ -989,6 +989,8 @@ async function submitWithStripe(){
   h+='</div>';
   
   h+='<div style="margin-top:16px">';
+  h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Titulaire de la carte</label>';
+  h+='<input type="text" id="stripeCardName" value="'+(pb.nom+' '+(pb.pre||'')).trim()+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div id="stripeCardElement" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:14px;min-height:44px"></div>';
   h+='<div id="stripeError" style="color:#ef5350;font-size:12px;margin-top:6px;min-height:18px"></div>';
   h+='</div>';
@@ -1033,7 +1035,8 @@ async function processStripePayment(){
   
   // For now in test mode: create a token and simulate success
   try{
-    var result=await stripe.createToken(window._stripeCard,{name:pb.nom+" "+(pb.pre||"")});
+    var cardName=document.getElementById("stripeCardName").value.trim()||pb.nom;
+    var result=await stripe.createToken(window._stripeCard,{name:cardName});
     
     if(result.error){
       document.getElementById("stripeError").textContent=result.error.message;
@@ -1086,8 +1089,9 @@ async function processStripePayment(){
     h+='</div>';
     
     // Send email receipt if email provided
+    h+='<button class="btn btn-outline" onclick="printAcompteReceipt(\''+booking.svc.n+'\','+acompte+',\''+booking.date+'\',\''+booking.time+'\',\''+brand+'\',\''+last4+'\')" style="margin-top:12px">\ud83d\udda8 Imprimer le re\u00e7u</button>';
     if(pb.email){
-      h+='<p style="font-size:13px;color:var(--text3)">Un re\u00e7u a \u00e9t\u00e9 envoy\u00e9 \u00e0 '+pb.email+'</p>';
+      h+='<p style="font-size:13px;color:var(--text3);margin-top:8px">Re\u00e7u disponible pour '+pb.email+'</p>';
     }
     
     h+='<button class="btn btn-gold" onclick="renderBookingStep1()" style="margin-top:16px">Nouveau rendez-vous</button>';
@@ -1201,6 +1205,30 @@ async function doCancelRdv(rdvId){
     document.body.appendChild(toast);setTimeout(function(){toast.remove();},3000);
     loadDashboardRdvs();
   }catch(e){alert("Erreur. R\u00e9essayez.");}
+}
+
+
+function printAcompteReceipt(svcName,amount,date,time,brand,last4){
+  var w=window.open("","_blank","width=360,height=500");if(!w)return;
+  var h="<html><head><meta name='color-scheme' content='light'><title>Recu acompte</title>";
+  h+="<style>html{color-scheme:light}*{color:#000!important}body{font-family:monospace;padding:15px;max-width:320px;margin:0 auto;font-size:12px;color:#000;background:#fff;}h1{font-size:14px;text-align:center;margin:0;}p{margin:3px 0;text-align:center;}.line{display:flex;justify-content:space-between;padding:3px 0;}.sep{border-top:1px dashed #999;margin:8px 0;}.bold{font-weight:900;font-size:14px;}</style></head><body>";
+  h+="<h1>"+SALON.nom.toUpperCase()+"</h1>";
+  h+="<p>"+(SALON.adresse||"")+" "+(SALON.cp||"")+" "+(SALON.ville||"")+"</p>";
+  if(SALON.tel)h+="<p>Tel: "+SALON.tel+"</p>";
+  h+="<div class='sep'></div>";
+  h+="<p class='bold'>RECU ACOMPTE</p>";
+  h+="<p>"+formatDateFR(date)+"</p>";
+  h+="<div class='sep'></div>";
+  h+="<div class='line'><span>Prestation</span><span>"+svcName+"</span></div>";
+  h+="<div class='line'><span>RDV prevu</span><span>"+formatDateFR(date)+" "+time+"</span></div>";
+  h+="<div class='sep'></div>";
+  h+="<div class='line bold'><span>ACOMPTE</span><span>"+amount.toFixed(2)+" EUR</span></div>";
+  h+="<div class='line'><span>Carte</span><span>"+brand.toUpperCase()+" **** "+last4+"</span></div>";
+  h+="<div class='sep'></div>";
+  h+="<p style='font-size:10px;color:#666'>Paiement en ligne securise par Stripe</p>";
+  h+="</body></html>";
+  w.document.write(h);w.document.close();
+  setTimeout(function(){w.print();},300);
 }
 
 // ============================================================
