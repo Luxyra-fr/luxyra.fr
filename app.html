@@ -721,6 +721,48 @@ function addNotif(type,title,detail,data){
   if(!window.NOTIFS)window.NOTIFS=[];
   window.NOTIFS.unshift({id:U(),ts:new Date().toISOString(),type:type,title:title,detail:detail,data:data||null,seen:false,confirmed:false});
 }
+async function acceptModification(notifId){
+  var n=null;for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].id===notifId){n=window.NOTIFS[i];break;}}
+  if(!n||!n.modifData)return;
+  var rdvId=n.rdvOnlineId;
+  // Update rdv_online in Supabase
+  if(typeof _sb!=="undefined"&&_sb){
+    await _sb.from("rdv_online").update({
+      date_rdv:n.modifData.date,
+      heure_rdv:n.modifData.heure,
+      modification_status:"accepted",
+      modification_demandee:false
+    }).eq("id",rdvId);
+  }
+  // Update local AP entry
+  for(var ai=0;ai<AP.length;ai++){
+    if(AP[ai].onlineId===rdvId){
+      AP[ai].date=n.modifData.date;
+      AP[ai].time=n.modifData.heure;
+      if(typeof saveAppointment==="function")saveAppointment(AP[ai]);
+      break;
+    }
+  }
+  n.confirmed=true;n.seen=true;
+  n.title="\u2705 Modification accept\u00e9e";
+  showNotifs();updateNotifBadge();
+}
+
+async function refuseModification(notifId){
+  var n=null;for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].id===notifId){n=window.NOTIFS[i];break;}}
+  if(!n)return;
+  var rdvId=n.rdvOnlineId;
+  if(typeof _sb!=="undefined"&&_sb){
+    await _sb.from("rdv_online").update({
+      modification_status:"refused",
+      modification_demandee:false
+    }).eq("id",rdvId);
+  }
+  n.confirmed=true;n.seen=true;
+  n.title="\u274c Modification refus\u00e9e";
+  showNotifs();updateNotifBadge();
+}
+
 function showNotifs(){
   // Inject RDV online as notifications
   if(!window.NOTIFS)window.NOTIFS=[];
@@ -732,6 +774,19 @@ function showNotifs(){
       var exists=false;
       for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].rdvOnlineId===r.id){exists=true;break;}}
       if(window._dismissedNotifs&&window._dismissedNotifs[r.id])exists=true;
+      // Check for client cancellations
+      if(r.status==="cancelled"&&r.cancelled_by==="client"){
+        var canExists=false;
+        for(var ci2=0;ci2<window.NOTIFS.length;ci2++){if(window.NOTIFS[ci2].id==="can_"+r.id){canExists=true;break;}}
+        if(!canExists&&!window._dismissedNotifs["can_"+r.id]){
+          window.NOTIFS.unshift({
+            id:"can_"+r.id,rdvOnlineId:r.id,type:"cancel_client",
+            title:"\u274c RDV annul\u00e9 par le client",
+            detail:r.nom+(r.prenom?" "+r.prenom:"")+" a annul\u00e9 son RDV du "+r.date+" "+r.heure+" - "+(r.svcNom||"")+(r.cancel_reason?" - Motif: "+r.cancel_reason:""),
+            ts:r.cancelled_at||new Date().toISOString(),seen:false,confirmed:false
+          });
+        }
+      }
       // Check for modification requests
       if(r.modification_demandee&&r.modification_status==="pending"){
         var modExists=false;
@@ -773,7 +828,7 @@ function showNotifs(){
     if(unr.length>0){h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:14px;font-weight:700;color:var(--red)">'+unr.length+' non lue'+(unr.length>1?'s':'')+'</span><button class="btn bs" style="font-size:12px" onclick="markAllNotifsRead()">Tout effacer</button></div>';}
     for(var i=0;i<Math.min(notifs.length,30);i++){
       var n=notifs[i];
-      var icon=n.type==="rdv_online"?"\ud83d\udcc5":n.type==="produit_online"?"\ud83d\uded2":n.type==="google_reserve"?"\ud83c\udf10":"\ud83d\udd14";
+      var icon=n.type==="rdv_online"?"\ud83d\udcc5":n.type==="modification"?"\u270f\ufe0f":n.type==="cancel_client"?"\u274c":n.type==="new_client_online"?"\ud83d\udc64":n.type==="produit_online"?"\ud83d\uded2":n.type==="google_reserve"?"\ud83c\udf10":"\ud83d\udd14";
       var bgS=n.seen?"":"background:var(--gold-bg);";
       h+='<div style="display:flex;gap:10px;padding:12px;border-bottom:1px solid var(--border2);'+bgS+'border-radius:8px;margin-bottom:4px">';
       h+='<div style="font-size:22px;flex-shrink:0">'+icon+'</div>';
@@ -781,8 +836,20 @@ function showNotifs(){
       h+='<div style="font-size:13px;color:var(--text2);margin-top:2px">'+n.detail+'</div>';
       h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">'+n.ts.slice(0,16).replace("T"," ")+'</div></div>';
       h+='<div style="flex-shrink:0">';
-      if(!n.confirmed)h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
-      else h+='<span style="font-size:11px;color:var(--green);font-weight:600">\u2714 Confirm\u00e9</span>';
+      if(n.type==="modification"&&!n.confirmed){
+        h+='<div style="display:flex;flex-direction:column;gap:4px">';
+        h+='<button class="btn bg bs" style="font-size:10px;padding:4px 8px;background:var(--green-bg);color:var(--green)" onclick="acceptModification(\''+n.id+'\')">\u2714 Accepter</button>';
+        h+='<button class="btn bs" style="font-size:10px;padding:4px 8px;background:rgba(239,83,80,.1);color:#ef5350" onclick="refuseModification(\''+n.id+'\')">\u2716 Refuser</button>';
+        h+='</div>';
+      }else if(n.type==="cancel_client"&&!n.confirmed){
+        h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
+      }else if(n.type==="new_client_online"&&!n.confirmed){
+        h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
+      }else if(!n.confirmed){
+        h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
+      }else{
+        h+='<span style="font-size:11px;color:var(--green);font-weight:600">\u2714 Confirm\u00e9</span>';
+      }
       h+='</div></div>';
     }
   }
@@ -7774,6 +7841,28 @@ function setupRealtime(){
     .on("postgres_changes",{event:"*",schema:"public",table:"clients",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: client change",payload.eventType);
       reloadFromSupabase("clients");
+    })
+    .on("postgres_changes",{event:"INSERT",schema:"public",table:"clients_online",filter:"salon_id=eq."+_salonId},function(payload){
+      console.log("Realtime: new client online",payload.new);
+      var nc=payload.new;
+      if(nc){
+        // Add notification
+        window.NOTIFS.unshift({
+          id:"ncl_"+nc.id,type:"new_client_online",
+          title:"\ud83d\udc64 Nouveau client en ligne",
+          detail:(nc.prenom||"")+" "+nc.nom+" - "+nc.email+(nc.telephone?" - "+nc.telephone:""),
+          ts:new Date().toISOString(),seen:false,confirmed:false
+        });
+        updateNotifBadge();
+        // Auto-create in CL (local clients) if not exists
+        var exists=false;
+        for(var ci3=0;ci3<CL.length;ci3++){if(CL[ci3].em===nc.email){exists=true;break;}}
+        if(!exists){
+          var newClient={id:U(),nom:nc.nom,pre:nc.prenom||"",ph:nc.telephone||"",em:nc.email,genre:"F",fid:0,notes:"Client inscrit en ligne"};
+          CL.push(newClient);
+          if(typeof saveClient==="function")saveClient(newClient);
+        }
+      }
     })
     .subscribe(function(status){
       console.log("Realtime status:",status);

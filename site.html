@@ -390,7 +390,7 @@ async function doClientRegister(){
   var r=await sb.from("clients_online").insert({
     salon_id:salonId,email:email,password_hash:hash,
     nom:nom,prenom:pre.trim(),telephone:tel
-  }).select();
+  ,email_verified:false,verification_code:Math.random().toString(36).slice(2,8).toUpperCase()}).select();
   if(r.error){showAuthError(r.error.message);return;}
   if(r.data&&r.data[0]){
     CLIENT=r.data[0];
@@ -936,6 +936,25 @@ async function loadDashboardRdvs(){
     h+='<div class="det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+(r.collaborateur_nom?" \u2022 "+r.collaborateur_nom:"")+" \u2022 "+r.service_prix+"\u20ac"+'</div></div>';
     h+='<div class="rdv-status '+stCls+'">'+stTxt+'</div>';
     h+='</div>';
+    // Payment status
+    if(r.acompte_paye&&r.acompte_montant>0){
+      h+='<div style="padding:0 12px 6px;font-size:12px;color:#2d9a5e;font-weight:700">\ud83d\udcb3 Acompte '+Number(r.acompte_montant).toFixed(0)+'\u20ac pay\u00e9'+(r.stripe_last4?' ('+r.stripe_brand+' ****'+r.stripe_last4+')':'')+'</div>';
+    }
+    // Modification request status
+    if(r.modification_demandee&&r.modification_status==="pending"){
+      h+='<div style="padding:0 12px 6px;font-size:12px;color:#e17055;font-weight:700">\u270f\ufe0f Modification demand\u00e9e - en attente de confirmation</div>';
+    }else if(r.modification_demandee&&r.modification_status==="accepted"){
+      h+='<div style="padding:0 12px 6px;font-size:12px;color:#2d9a5e;font-weight:700">\u2705 Modification accept\u00e9e</div>';
+    }else if(r.modification_demandee&&r.modification_status==="refused"){
+      h+='<div style="padding:0 12px 6px;font-size:12px;color:#ef5350;font-weight:700">\u274c Modification refus\u00e9e</div>';
+    }
+    // Action buttons for future RDVs
+    if((r.status==="pending"||r.status==="confirmed")&&r.date_rdv>=new Date().toISOString().slice(0,10)){
+      h+='<div style="display:flex;gap:8px;padding:0 12px 12px">';
+      h+='<button class="btn-sm btn-outline" onclick="askModifyRdv(\''+r.id+'\')">\u270f\ufe0f Modifier</button>';
+      h+='<button class="btn-sm btn-danger" onclick="askCancelRdv(\''+r.id+'\')">Annuler</button>';
+      h+='</div>';
+    }
   }
   el.innerHTML=h;
 }
