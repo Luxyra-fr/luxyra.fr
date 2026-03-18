@@ -729,7 +729,7 @@ function showNotifs(){
         window.NOTIFS.unshift({
           id:"ro_"+r.id,rdvOnlineId:r.id,type:"rdv_online",
           title:"\ud83d\udcc5 RDV en ligne"+(r.status==="pending"?" (en attente)":r.status==="confirmed"?" (confirm\u00e9)":" (termin\u00e9)"),
-          detail:r.nom+(r.prenom?" "+r.prenom:"")+" \u2022 "+r.svcNom+" \u2022 "+r.date+" "+r.heure+(r.tel?" \u2022 "+r.tel:"")+(r.message?" \u2022 "+r.message:""),
+          detail:r.nom+(r.prenom?" "+r.prenom:"")+" \u2022 "+r.svcNom+" \u2022 "+r.date+" "+r.heure+(r.tel?" \u2022 "+r.tel:"")+(r.acomptePaye&&r.acompte>0?" \u2022 \ud83d\udcb3 Acompte "+r.acompte.toFixed(0)+"\u20ac pay\u00e9":"")+(r.message?" \u2022 "+r.message:""),
           ts:r.createdAt||new Date().toISOString(),
           seen:false,
           confirmed:r.status==="done",
@@ -788,6 +788,19 @@ function confirmNotif(id){
           }
         }
         window.NOTIFS[i].title="\ud83d\udcc5 RDV en ligne (confirm\u00e9)";
+        // Transfer acompte from online RDV to planning entry
+        var onRdv=window.NOTIFS[i].onlineRdv;
+        if(onRdv&&onRdv.acomptePaye&&onRdv.acompte>0){
+          for(var ai=0;ai<AP.length;ai++){
+            if(AP[ai].onlineId===rdvId){
+              AP[ai].acompte=onRdv.acompte;
+              AP[ai].acompteMode="En ligne (Stripe)";
+              AP[ai].acompteDate=onRdv.createdAt?onRdv.createdAt.slice(0,10):TD;
+              if(typeof saveAppointment==="function")saveAppointment(AP[ai]);
+              break;
+            }
+          }
+        }
       }
       break;
     }
@@ -1928,10 +1941,13 @@ function rPlanning(){
           var colW=myBlock?100/myBlock.maxCol:100;
           var leftPct=myBlock?myBlock.col*colW:0;
           var _ttip=(cl?cName(cl):"")+"\n"+(sv?sv.n:"")+"\n"+a.time+" - "+(a.pr||0)+"\u20ac"+"\n"+(sty?sty.n:"")+"\n"+(a.st==="done"?"Encaisse":"Confirme");
-          h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'" title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+'" onclick="clickAppt(\''+a.id+'\')">';
+          h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+'  title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+'" onclick="clickAppt(\''+a.id+'\')">';
           h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId))+'</div>';
           h+='<div class="pb-svc">'+ph.l.toUpperCase()+'</div>';
-          if(hPx>=50)h+='<div class="pb-badge" style="background:'+(a.st==="done"?"var(--green-bg);color:var(--green)":"var(--blue-bg);color:var(--blue)")+'">'+(a.st==="done"?"Fait":"Confirm\u00e9")+'</div>';
+          if(hPx>=50){
+            if(a.isOnline)h+='<div class="pb-badge" style="background:rgba(108,92,231,.15);color:#a29bfe">\ud83c\udf10 En ligne</div>';
+            else h+='<div class="pb-badge" style="background:'+(a.st==="done"?"var(--green-bg);color:var(--green)":"var(--blue-bg);color:var(--blue)")+'">'+(a.st==="done"?"Fait":"Confirm\u00e9")+'</div>';
+          }
           h+='</div>';
         }else{
           // Pause: shown as light indicator, NOT blocking
@@ -2054,7 +2070,8 @@ function dragStart(e){
   _drag.startY=pt.clientY;
   // Long press: 300ms to start drag
   _drag.timer=setTimeout(function(){
-    _drag.active=true;
+    if(bl&&bl.getAttribute("data-nodrag")){return;}
+      _drag.active=true;
     el.classList.add('dragging');
     // Create ghost
     var g=document.createElement('div');
@@ -2207,8 +2224,12 @@ function clickAppt(id){
   // Date/time + action icons
   htm+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   htm+='<div style="flex:1;font-weight:700;font-size:15px">'+label+'</div>';
-  htm+='<button class="btn bs" title="Modifier heure" onclick="editApptTime(\''+a.id+'\')">\u270f\ufe0f</button>';
-  htm+='<button class="btn bs" title="Supprimer" style="color:#ef5350" onclick="delAppt(\''+a.id+'\')">\ud83d\uddd1\ufe0f</button>';
+  if(!a.isOnline){
+    htm+='<button class="btn bs" title="Modifier heure" onclick="editApptTime(\''+a.id+'\')">\u270f\ufe0f</button>';
+    htm+='<button class="btn bs" title="Supprimer" style="color:#ef5350" onclick="delAppt(\''+a.id+'\')">\ud83d\uddd1\ufe0f</button>';
+  }else{
+    htm+='<div style="font-size:11px;color:#a29bfe;font-weight:700">\ud83c\udf10 R\u00e9serv\u00e9 en ligne</div>';
+  }
   htm+='<button class="btn bs" title="Encaisser" onclick="mD(\''+a.id+'\')">\u20ac</button>';
   htm+='</div>';
   
@@ -2240,14 +2261,15 @@ function clickAppt(id){
   
   // Buttons row 1
   htm+='<div style="display:flex;gap:8px;margin-top:12px">';
-  if(a.st==="conf")htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);font-weight:700" onclick="reprendre(\''+a.id+'\')">Reprendre RDV</button>';
+  if(a.st==="conf"&&!a.isOnline)htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);font-weight:700" onclick="reprendre(\''+a.id+'\')">Reprendre RDV</button>';
   if(a.st==="conf")htm+='<button class="btn bg" style="flex:1" onclick="mD(\''+a.id+'\')">\ud83d\udcb0 Encaisser</button>';
   if(a.st==="done")htm+='<div style="flex:1;text-align:center"><span class="badge b1" style="font-size:14px;padding:8px 20px">\u2714 Encaiss\u00e9 ('+a.met+')</span></div>';
   htm+='</div>';
   
   // Buttons row 2
   htm+='<div style="display:flex;gap:8px;margin-top:8px">';
-  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="cancelAppt(\''+a.id+'\')">Annuler RDV</button>';
+  if(!a.isOnline)htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="cancelAppt(\''+a.id+'\')">Annuler RDV</button>';
+  else htm+='<button class="btn" style="flex:1;background:rgba(108,92,231,.08);color:#a29bfe;font-size:12px" disabled>\ud83d\udd12 Modifiable par le client</button>';
   htm+='<button class="btn bg" style="flex:1" onclick="cM();go(\'planning\')">Valider</button>';
   htm+='</div>';
   htm+='</div>';
@@ -3005,7 +3027,7 @@ function rSettings(){
   else if(settTab==="caisse"){
     h+='<div class="sec">\ud83d\udcb0 Caisse & paiements</div><div class="card">';
     h+='<div class="ct">Modes de paiement actifs</div>';
-    var defMethods=["Esp\u00e8ces","Ch\u00e8que","Carte Bancaire","Bon cadeau","Virement Bancaire","Acompte","Autre"];
+    var defMethods=["Esp\u00e8ces","Ch\u00e8que","Carte Bancaire","Bon cadeau","Virement Bancaire","Autre"];
     if(!window.PAY_ACTIVE)window.PAY_ACTIVE={};
     defMethods.forEach(function(m){
       if(window.PAY_ACTIVE[m]===undefined)window.PAY_ACTIVE[m]=true;
@@ -5813,7 +5835,8 @@ function showCaisse(){
   // ==================== STEP 5: R\u00e8glement ====================
   else if(_tk.step===5){
     var total=0;_tk.items.forEach(function(it){if(!it.isSep)total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
-    var resteDu=total-(_tk.paid||0);
+    var acompteDeduct=_tk.acompte||0;
+    var resteDu=total-(_tk.paid||0)-acompteDeduct;
 
     // Progress
     h+='<div style="display:flex;gap:4px;padding:14px 16px 0">';
@@ -5853,8 +5876,8 @@ function showCaisse(){
         {l:"Carte Bancaire",k:"CB",ico:"\ud83d\udcb3"},
         {l:"Ch\u00e8que",k:"Ch\u00e8que",ico:"\ud83d\udcdd"},
         {l:"Bon cadeau",k:"Bon cadeau",ico:"\ud83c\udf81"},
-        {l:"Virement",k:"Virement",ico:"\ud83c\udfe6"},
-        {l:"Acompte",k:"Acompte",ico:"\ud83d\udccc"}
+        {l:"Virement",k:"Virement",ico:"\ud83c\udfe6"}
+        
       ];
       for(var mi=0;mi<methods.length;mi++){
         var m=methods[mi];
