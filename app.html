@@ -5656,6 +5656,7 @@ function doSaveAcompte(apptId){
   if(!a.items)a.items=[];
   a.items=a.items.filter(function(it){return !it.isAcompteData;});
   a.items.push({isAcompteData:true,acompte:amount,acompteMode:window._acompteMode||"CB",acompteDate:TD});
+  console.log("Saving acompte:",a.id,"items:",JSON.stringify(a.items));
   if(typeof saveAppointment==="function")saveAppointment(a);
   // NF525: generate acompte ticket
   var sv=gS(a.sId);var cl=gC(a.cId);var sty=gT(a.stId);
@@ -7707,6 +7708,33 @@ function initApp(){
   // Apply salon theme color
   if(SALON_CONFIG.couleurPrimaire&&SALON_CONFIG.couleurPrimaire!=="var(--gold)"){
     applyTheme(null,SALON_CONFIG.couleurPrimaire,null);
+  }
+  // Restore acompte data from items (persisted in Supabase)
+  AP.forEach(function(ap){
+    if(ap.items&&!ap.acompte){
+      for(var ii=0;ii<ap.items.length;ii++){
+        if(ap.items[ii].isAcompteData){
+          ap.acompte=ap.items[ii].acompte;
+          ap.acompteMode=ap.items[ii].acompteMode;
+          ap.acompteDate=ap.items[ii].acompteDate;
+          break;
+        }
+      }
+    }
+  });
+  // Auto-apply acompte from online RDVs
+  if(window.RDV_ONLINE){
+    window.RDV_ONLINE.forEach(function(r){
+      if(r.acomptePaye&&r.acompte>0){
+        for(var ai=0;ai<AP.length;ai++){
+          if(AP[ai].onlineId===r.id&&!AP[ai].acompte){
+            AP[ai].acompte=r.acompte;
+            AP[ai].acompteMode="En ligne (Stripe)";
+            AP[ai].acompteDate=r.createdAt?r.createdAt.slice(0,10):TD;
+          }
+        }
+      }
+    });
   }
   go("home");
   if(SALON_CONFIG.logo){var _hl=document.getElementById("hlogo");if(_hl)_hl.src=SALON_CONFIG.logo;}
