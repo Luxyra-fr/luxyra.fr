@@ -5652,6 +5652,21 @@ function doSaveAcompte(apptId){
   a.acompteMode=window._acompteMode||"CB";
   a.acompteDate=TD;
   if(typeof saveAppointment==="function")saveAppointment(a);
+  // NF525: generate acompte ticket
+  var sv=gS(a.sId);var cl=gC(a.cId);var sty=gT(a.stId);
+  var tkNum=nextTicketNum();
+  var acompteTicket={
+    id:U(),date:TD,time:frM(Math.floor(new Date().getHours()*60+new Date().getMinutes())),
+    stId:a.stId,cId:a.cId,
+    pr:amount,st:"done",met:window._acompteMode||"CB",
+    items:[{name:"Acompte - "+(sv?sv.n:"Prestation"),price:amount,qty:1,remise:0,isAcompte:true}],
+    comment:"Acompte pour RDV du "+fmt(a.date)+" a "+a.time,
+    tkNum:tkNum,isAcompte:true,apptId:apptId,
+    fromCaisse:true
+  };
+  AP.push(acompteTicket);
+  if(typeof saveAppointment==="function")saveAppointment(acompteTicket);
+  auditLog("ACOMPTE","Acompte "+amount.toFixed(2)+"E ("+window._acompteMode+") pour RDV "+apptId+" - Ticket #"+tkNum);
   var htm='<div class="mbox" style="text-align:center">';
   htm+='<div style="font-size:48px;margin-bottom:10px">\u2705</div>';
   htm+='<h2>Acompte enregistr\u00e9</h2>';
@@ -5672,6 +5687,11 @@ function doRemoveAcompte(apptId){
   });
 }
 
+
+function nextTicketNum(){
+  var max=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>max)max=a.tkNum;});
+  return max+1;
+}
 function mD(id){
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:48px;margin-bottom:10px">\ud83d\udd12</div><h2>Journee cloturee</h2><div style="font-size:14px;margin-bottom:14px">Impossible d\u0027encaisser apres la cloture Z.</div><button class="btn bg bk" onclick="cM()">Fermer</button></div></div>';return;
@@ -5680,7 +5700,8 @@ function mD(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var sv=gS(a.sId);
-  _tk={step:3,stId:a.stId,cId:a.cId,items:[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}],comment:"",remise:0,apptId:id};
+  var acomp=a.acompte||0;
+  _tk={step:3,stId:a.stId,cId:a.cId,items:[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}],comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||""};
   cM();
   showCaisse();
 }
@@ -6618,7 +6639,12 @@ function printTicketReceipt(){
   for(var i=0;i<_tk.items.length;i++){var it=_tk.items[i];var lt=it.price*it.qty-it.remise;h+="<div class=\"line\"><span>"+it.name+(it.qty>1?" x"+it.qty:"")+"</span><span>"+lt.toFixed(2)+" \u20ac</span></div>";if(it.remise>0)h+="<p style=\"text-align:right;color:green\">Remise -"+it.remise.toFixed(2)+" \u20ac</p>";}
   if(_tk.remise>0)h+="<p style=\"text-align:right;color:green\">Remise ticket -"+_tk.remise.toFixed(2)+" \u20ac</p>";
   h+="<div class=\"sep2\"></div>";
-  h+="<div class=\"line bold\"><span>TOTAL TTC</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
+  if(_tk.acompte&&_tk.acompte>0){
+      h+="<div class=\"line\"><span>Acompte vers\u00e9 ("+(_tk.acompteMode||"")+") </span><span>-"+_tk.acompte.toFixed(2)+" \u20ac</span></div>";
+      h+="<div class=\"sep\"></div>";
+      h+="<div class=\"line bold\"><span>RESTE PAY\u00c9</span><span>"+(total-_tk.acompte).toFixed(2)+" \u20ac</span></div>";
+    }
+    h+="<div class=\"line bold\"><span>TOTAL TTC</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
   // TVA on ticket
   if(window.SHOW_TVA_TICKET){
   var txT=SALON_CONFIG.tauxTVA||20;
