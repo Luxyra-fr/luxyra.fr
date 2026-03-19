@@ -2019,10 +2019,11 @@ function rPlanning(){
   h+='<button style="border:none;background:rgba(255,255,255,.15);color:#fff;padding:8px;border-radius:8px;cursor:pointer;font-size:14px" onclick="go(\u0027planning\u0027)">\u21bb</button>';
   h+='</div>';
   // Day count selector
-  h+='<div style="display:flex;align-items:center;gap:4px;margin-bottom:10px;justify-content:center">';
+  h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;justify-content:center;flex-wrap:wrap">';
+  var dayLabels=["1 jour","2 jours","3 jours","4 jours","5 jours","6 jours","7 jours"];
   for(var di=1;di<=7;di++){
     var isSel=nd===di;
-    h+='<button onclick="window._planDays='+di+';go(\'planning\')" style="width:32px;height:32px;border-radius:8px;border:1px solid '+(isSel?'var(--gold)':'rgba(255,255,255,.12)')+';background:'+(isSel?'var(--gold)':'rgba(255,255,255,.05)')+';color:'+(isSel?'#0a0a0a':'rgba(255,255,255,.5)')+';font-size:12px;font-weight:'+(isSel?'800':'500')+';cursor:pointer">'+di+'j</button>';
+    h+='<button onclick="window._planDays='+di+';go(\'planning\')" style="padding:8px 14px;border-radius:20px;border:1.5px solid '+(isSel?'var(--gold)':'rgba(255,255,255,.15)')+';background:'+(isSel?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(isSel?'#0a0a0a':'rgba(255,255,255,.5)')+';font-size:13px;font-weight:'+(isSel?'800':'600')+';cursor:pointer">'+di+'j</button>';
   }
   h+='</div>';
   if(nd===1){
@@ -2038,91 +2039,24 @@ function rPlanning(){
     // Single day: classic view with stylist columns
     h+=rPlanningDay(calD,false);
   } else {
-    // Multi-day: days side-by-side in a horizontal grid
-    // Calculate common time range across all days
-    var allEarliest=1440,allLatest=0,anyDayOpen=false;
-    for(var dayOff=0;dayOff<nd;dayOff++){
-      var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
-      var ddow=dd.getDay();
-      for(var hi=0;hi<T.length;hi++){
-        var shrs=T[hi].hrs?T[hi].hrs[ddow]:H[ddow];
-        if(shrs){anyDayOpen=true;var so=toM(shrs.o),sc=toM(shrs.c);if(so<allEarliest)allEarliest=so;if(sc>allLatest)allLatest=sc;}
-      }
-    }
-    if(!anyDayOpen){allEarliest=540;allLatest=1140;}
-    var mgs=Math.floor(allEarliest/60)*60,mge=Math.ceil(allLatest/60)*60;
-    var mTotalSlots=(mge-mgs)/SLOT;
-    var mGridH=mTotalSlots*SLOT_H;
-    h+='<div class="pg-wrap"><div class="pg-grid">';
-    // Time column
-    h+='<div class="pg-timecol"><div class="pg-timehead" style="height:50px">Heure</div><div class="pg-slots">';
-    for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'">'+(isH?hh+'h':'')+'</div>';}
-    h+='</div></div>';
-    // One column per day
+    // Multi-day: each day rendered as full planning (time + stylists) stacked
     for(var dayOff=0;dayOff<nd;dayOff++){
       var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
       var ddk=dS(dd),ddow=dd.getDay();
-      var ddHrs=H[ddow];
-      var dayLabel=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
       var isToday=ddk===TD;
+      var dayLbl=DF[ddow]+" "+dd.getDate()+" "+MO[dd.getMonth()];
       var dayLocked=window.LOCKED_DAYS&&window.LOCKED_DAYS[ddk];
-      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
-      var dayRdvCount=dayApts.length;
+      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&!a.fromCaisse});
       var dayCA=0;dayApts.forEach(function(a){dayCA+=a.pr||0;});
-      h+='<div class="pg-col" style="min-width:'+(nd<=3?'120px':nd<=5?'90px':'70px')+'">';
-      // Day header
-      h+='<div class="pg-colhead" style="height:50px;font-size:12px;padding:6px 4px;'+(isToday?'background:rgba(200,168,78,.15);border-bottom:2px solid var(--gold);':'')+(dayLocked?'opacity:.5;':'')+(ddHrs?'':'opacity:.4;')+'">';
-      h+='<div style="font-weight:800;font-size:13px;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLabel+'</div>';
-      h+='<div style="font-size:10px;color:#888;margin-top:1px">'+dayRdvCount+' RDV'+(dayCA>0?' \u00b7 '+dayCA.toFixed(0)+'\u20ac':'')+'</div>';
+      // Day separator header
+      h+='<div onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 14px;margin:'+(dayOff>0?'16px':'0')+' 0 8px;border-radius:12px;background:'+(isToday?'linear-gradient(135deg,rgba(200,168,78,.15),rgba(200,168,78,.08))':'rgba(255,255,255,.04)')+';border:1px solid '+(isToday?'rgba(200,168,78,.3)':'rgba(255,255,255,.08)')+'">';
+      h+='<div style="font-family:var(--f1);font-size:15px;font-weight:800;color:'+(isToday?'var(--gold)':'#fff')+'">'+dayLbl+(dayLocked?' \ud83d\udd12':'')+'</div>';
+      h+='<span style="flex:1"></span>';
+      h+='<div style="font-size:12px;color:rgba(255,255,255,.5)">'+dayApts.length+' RDV'+(dayCA>0?' \u00b7 '+dayCA.toFixed(0)+'\u20ac':'')+'</div>';
       h+='</div>';
-      h+='<div class="pg-slots" style="height:'+mGridH+'px;position:relative">';
-      if(!ddHrs){
-        h+='<div class="pg-absent">Ferm\u00e9</div>';
-      } else {
-        // Background slots
-        for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'"></div>';}
-        // Render RDVs stacked
-        var allWork=[];
-        for(var j=0;j<dayApts.length;j++){
-          var blocks=getWorkBlocks(dayApts[j]);
-          blocks.forEach(function(b){allWork.push(b);});
-        }
-        var laid=layoutBlocks(allWork);
-        for(var j=0;j<dayApts.length;j++){
-          var a=dayApts[j],sv=gS(a.sId),cl=gC(a.cId);
-          var colors=getSvcColor(sv?sv.cat:"Coupe");
-          var sty=gT(a.stId);
-          var aPhases=a.aPhases||(sv?sv.phases:null);
-          if(!aPhases||!aPhases.length){var defDur=sv?svcTotalDur(sv):30;if(defDur<=0)defDur=30;aPhases=[{t:"w",d:defDur,l:sv?sv.n:"RDV"}];}
-          var startM=toM(a.time),cur=startM;
-          for(var pi=0;pi<aPhases.length;pi++){
-            var ph=aPhases[pi];
-            var topPx=((cur-mgs)/SLOT)*SLOT_H;
-            var hPx=(ph.d/SLOT)*SLOT_H;
-            if(ph.t==="w"){
-              var myBlock=null;for(var bi=0;bi<laid.length;bi++){if(laid[bi].a===a&&laid[bi].start===cur){myBlock=laid[bi];break;}}
-              var colW=myBlock?100/myBlock.maxCol:100;
-              var leftPct=myBlock?myBlock.col*colW:0;
-              var _ttip=(cl?cName(cl):passageName(a.cId))+"\n"+(sv?sv.n:"")+"\n"+a.time+(sty?" - "+sty.n:"");
-              h+='<div class="pg-block" data-aid="'+a.id+'" title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+';font-size:10px" onclick="clickAppt(\''+a.id+'\')">';
-              h+='<div class="pb-name" style="font-size:11px">'+(cl?cName(cl).split(" ")[0]:passageName(a.cId).split(" ")[0])+'</div>';
-              h+='<div class="pb-svc" style="font-size:9px">'+ph.l+'</div>';
-              if(sty&&hPx>=40)h+='<div style="font-size:8px;opacity:.7;margin-top:1px">'+sty.n+'</div>';
-              h+='</div>';
-            } else {
-              h+='<div class="pg-pause" style="top:'+topPx+'px;height:'+Math.max(hPx-2,10)+'px;left:0;width:100%;opacity:.3;pointer-events:none;font-size:9px">\u23f8</div>';
-            }
-            cur+=ph.d;
-          }
-        }
-        // Grey zones before/after hours
-        var dOpen=toM(ddHrs.o),dClose=toM(ddHrs.c);
-        if(dOpen>mgs){var grH=((dOpen-mgs)/SLOT)*SLOT_H;h+='<div style="position:absolute;top:0;left:0;right:0;height:'+grH+'px;background:repeating-linear-gradient(45deg,rgba(200,200,200,.15),rgba(200,200,200,.15) 5px,rgba(200,200,200,.05) 5px,rgba(200,200,200,.05) 10px);z-index:2;pointer-events:none"></div>';}
-        if(dClose<mge){var grTop=((dClose-mgs)/SLOT)*SLOT_H;h+='<div style="position:absolute;top:'+grTop+'px;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,rgba(200,200,200,.15),rgba(200,200,200,.15) 5px,rgba(200,200,200,.05) 5px,rgba(200,200,200,.05) 10px);z-index:2;pointer-events:none"></div>';}
-      }
-      h+='</div></div>';
+      // Render full day grid with all collaborators
+      h+=rPlanningDay(dd,false);
     }
-    h+='</div></div>';
   }
   return h;
 }
