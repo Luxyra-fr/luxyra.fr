@@ -2018,12 +2018,11 @@ function rPlanning(){
   h+='<input type="date" value="'+dk+'" onchange="calD=new Date(this.value+\u0027T12:00:00\u0027);go(\u0027planning\u0027)" style="padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.15);color:#fff;font-size:12px;width:auto">';
   h+='<button style="border:none;background:rgba(255,255,255,.15);color:#fff;padding:8px;border-radius:8px;cursor:pointer;font-size:14px" onclick="go(\u0027planning\u0027)">\u21bb</button>';
   h+='</div>';
-  // Day count selector
-  h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;justify-content:center;flex-wrap:wrap">';
-  var dayLabels=["1 jour","2 jours","3 jours","4 jours","5 jours","6 jours","7 jours"];
+  // Day count selector - segmented control style
+  h+='<div style="display:flex;align-items:center;gap:0;margin-bottom:10px;justify-content:center;background:rgba(255,255,255,.06);border-radius:12px;border:1px solid rgba(255,255,255,.1);overflow:hidden">';
   for(var di=1;di<=7;di++){
     var isSel=nd===di;
-    h+='<button onclick="window._planDays='+di+';go(\'planning\')" style="padding:8px 14px;border-radius:20px;border:1.5px solid '+(isSel?'var(--gold)':'rgba(255,255,255,.15)')+';background:'+(isSel?'var(--gold)':'rgba(255,255,255,.06)')+';color:'+(isSel?'#0a0a0a':'rgba(255,255,255,.5)')+';font-size:13px;font-weight:'+(isSel?'800':'600')+';cursor:pointer">'+di+'j</button>';
+    h+='<button onclick="window._planDays='+di+';go(\'planning\')" style="flex:1;padding:10px 0;border:none;background:'+(isSel?'var(--gold)':'transparent')+';color:'+(isSel?'#0a0a0a':'rgba(255,255,255,.45)')+';font-size:14px;font-weight:'+(isSel?'800':'600')+';cursor:pointer;border-right:1px solid rgba(255,255,255,.08)">'+di+'j</button>';
   }
   h+='</div>';
   if(nd===1){
@@ -2036,27 +2035,105 @@ function rPlanning(){
   h+='</div>';
   // Render planning
   if(nd===1){
-    // Single day: classic view with stylist columns
     h+=rPlanningDay(calD,false);
   } else {
-    // Multi-day: each day rendered as full planning (time + stylists) stacked
+    // Multi-day side-by-side: time col + for each day a group of stylist sub-columns
+    var allEarliest=1440,allLatest=0,anyDayOpen=false;
+    for(var dayOff=0;dayOff<nd;dayOff++){
+      var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
+      var ddow=dd.getDay();
+      for(var hi=0;hi<T.length;hi++){
+        var shrs=T[hi].hrs?T[hi].hrs[ddow]:H[ddow];
+        if(shrs){anyDayOpen=true;var so=toM(shrs.o),sc=toM(shrs.c);if(so<allEarliest)allEarliest=so;if(sc>allLatest)allLatest=sc;}
+      }
+    }
+    if(!anyDayOpen){allEarliest=540;allLatest=1140;}
+    var mgs=Math.floor(allEarliest/60)*60,mge=Math.ceil(allLatest/60)*60;
+    var mTotalSlots=(mge-mgs)/SLOT;
+    var mGridH=mTotalSlots*SLOT_H;
+    var colMinW=nd<=2?'90px':nd<=3?'70px':nd<=5?'55px':'45px';
+
+    h+='<div class="pg-wrap"><div style="display:flex;min-width:'+(nd*T.length*55+50)+'px">';
+    // Time column
+    h+='<div class="pg-timecol"><div class="pg-timehead" style="height:75px">Heure</div><div class="pg-slots">';
+    for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'">'+(isH?hh+'h':'')+'</div>';}
+    h+='</div></div>';
+
     for(var dayOff=0;dayOff<nd;dayOff++){
       var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
       var ddk=dS(dd),ddow=dd.getDay();
+      var ddHrs=H[ddow];
       var isToday=ddk===TD;
-      var dayLbl=DF[ddow]+" "+dd.getDate()+" "+MO[dd.getMonth()];
-      var dayLocked=window.LOCKED_DAYS&&window.LOCKED_DAYS[ddk];
-      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&!a.fromCaisse});
-      var dayCA=0;dayApts.forEach(function(a){dayCA+=a.pr||0;});
-      // Day separator header
-      h+='<div onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 14px;margin:'+(dayOff>0?'16px':'0')+' 0 8px;border-radius:12px;background:'+(isToday?'linear-gradient(135deg,rgba(200,168,78,.15),rgba(200,168,78,.08))':'rgba(255,255,255,.04)')+';border:1px solid '+(isToday?'rgba(200,168,78,.3)':'rgba(255,255,255,.08)')+'">';
-      h+='<div style="font-family:var(--f1);font-size:15px;font-weight:800;color:'+(isToday?'var(--gold)':'#fff')+'">'+dayLbl+(dayLocked?' \ud83d\udd12':'')+'</div>';
-      h+='<span style="flex:1"></span>';
-      h+='<div style="font-size:12px;color:rgba(255,255,255,.5)">'+dayApts.length+' RDV'+(dayCA>0?' \u00b7 '+dayCA.toFixed(0)+'\u20ac':'')+'</div>';
+      var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
+      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
+
+      // Day group
+      h+='<div style="display:flex;border-left:2px solid '+(isToday?'var(--gold)':'rgba(0,0,0,.15)')+'">';
+
+      if(!ddHrs){
+        h+='<div class="pg-col" style="min-width:'+colMinW+'"><div class="pg-colhead" style="height:75px;opacity:.4;font-size:11px;cursor:pointer" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')"><div style="font-weight:800;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLbl+'</div><div style="font-size:9px;color:#999;margin-top:2px">Ferm\u00e9</div></div>';
+        h+='<div class="pg-slots" style="height:'+mGridH+'px;position:relative"><div class="pg-absent" style="font-size:11px">Ferm\u00e9</div></div></div>';
+      } else {
+        for(var ti=0;ti<T.length;ti++){
+          var sty=T[ti];
+          var sa=dayApts.filter(function(a){return a.stId===sty.id});
+          var isAbs=ABSENCES.some(function(ab){return ab.date===ddk&&ab.stId===sty.id});
+          var styAvail=!getBlockedSlots(sty.id,ddk).some(function(b){return b.type==="conge"||b.type==="absent"||b.type==="repos";});
+          h+='<div class="pg-col" style="min-width:'+colMinW+';border-left:'+(ti>0?'1px solid rgba(0,0,0,.06)':'none')+'">';
+          h+='<div class="pg-colhead" style="height:75px;padding:4px;font-size:10px;cursor:pointer;'+(isToday?'background:rgba(200,168,78,.1);':'')+(styAvail?'':'opacity:.5;background:var(--red-bg);')+'" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')">';
+          if(ti===0){h+='<div style="font-weight:800;font-size:11px;color:'+(isToday?'var(--gold)':'#1a1a1a')+';white-space:nowrap">'+dayLbl+'</div>';}
+          else{h+='<div style="font-size:9px;color:rgba(0,0,0,.15)">\u00b7</div>';}
+          h+='<div style="width:22px;height:22px;border-radius:50%;background:'+sty.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;margin:2px auto 0">'+sty.i+'</div>';
+          h+='<div style="font-size:8px;font-weight:700;color:#555;margin-top:1px">'+sty.n+'</div>';
+          h+='</div>';
+          h+='<div class="pg-slots" style="height:'+mGridH+'px;position:relative">';
+
+          if(!styAvail||isAbs){
+            var bSlots=getBlockedSlots(sty.id,ddk);
+            var absLabel=bSlots.length&&bSlots[0].label?bSlots[0].label:"Absent";
+            h+='<div class="pg-absent" style="font-size:9px">'+absLabel+'</div>';
+          } else {
+            for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\')"></div>';}
+            var allWork=[];
+            for(var j=0;j<sa.length;j++){var blocks=getWorkBlocks(sa[j]);blocks.forEach(function(b){allWork.push(b);});}
+            var laid=layoutBlocks(allWork);
+            for(var j=0;j<sa.length;j++){
+              var a=sa[j],sv=gS(a.sId),cl=gC(a.cId);
+              var colors=getSvcColor(sv?sv.cat:"Coupe");
+              var aPhases=a.aPhases||(sv?sv.phases:null);
+              if(!aPhases||!aPhases.length){var defDur=sv?svcTotalDur(sv):30;if(defDur<=0)defDur=30;aPhases=[{t:"w",d:defDur,l:sv?sv.n:"RDV"}];}
+              var startM=toM(a.time),cur=startM;
+              for(var pi=0;pi<aPhases.length;pi++){
+                var ph=aPhases[pi];
+                var topPx=((cur-mgs)/SLOT)*SLOT_H;
+                var hPx=(ph.d/SLOT)*SLOT_H;
+                if(ph.t==="w"){
+                  var myBlock=null;for(var bi=0;bi<laid.length;bi++){if(laid[bi].a===a&&laid[bi].start===cur){myBlock=laid[bi];break;}}
+                  var colW=myBlock?100/myBlock.maxCol:100;
+                  var leftPct=myBlock?myBlock.col*colW:0;
+                  h+='<div class="pg-block" data-aid="'+a.id+'" title="'+(cl?cName(cl):"")+' - '+(sv?sv.n:"")+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+'" onclick="clickAppt(\''+a.id+'\')">';
+                  h+='<div class="pb-name" style="font-size:10px">'+(cl?cName(cl).split(" ")[0]:"")+'</div>';
+                  h+='<div class="pb-svc" style="font-size:8px">'+ph.l+'</div>';
+                  h+='</div>';
+                } else {
+                  h+='<div class="pg-pause" style="top:'+topPx+'px;height:'+Math.max(hPx-2,10)+'px;left:0;width:100%;opacity:.3;pointer-events:none;font-size:8px">\u23f8</div>';
+                }
+                cur+=ph.d;
+              }
+            }
+            var styHrsD=sty.hrs?sty.hrs[ddow]:H[ddow];
+            if(styHrsD){
+              var styOpen=toM(styHrsD.o),styClose=toM(styHrsD.c);
+              if(styOpen>mgs){var grH=((styOpen-mgs)/SLOT)*SLOT_H;h+='<div style="position:absolute;top:0;left:0;right:0;height:'+grH+'px;background:repeating-linear-gradient(45deg,rgba(200,200,200,.12),rgba(200,200,200,.12) 4px,transparent 4px,transparent 8px);z-index:2;pointer-events:none"></div>';}
+              if(styClose<mge){var grTop=((styClose-mgs)/SLOT)*SLOT_H;h+='<div style="position:absolute;top:'+grTop+'px;left:0;right:0;bottom:0;background:repeating-linear-gradient(45deg,rgba(200,200,200,.12),rgba(200,200,200,.12) 4px,transparent 4px,transparent 8px);z-index:2;pointer-events:none"></div>';}
+            }
+          }
+          h+='</div></div>';
+        }
+      }
       h+='</div>';
-      // Render full day grid with all collaborators
-      h+=rPlanningDay(dd,false);
     }
+    h+='</div></div>';
   }
   return h;
 }
