@@ -139,9 +139,9 @@ body{max-width:100%;margin:0 auto;}
 .pg-blocked{position:absolute;left:2px;right:2px;background:repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(196,56,56,.08) 4px,rgba(196,56,56,.08) 8px);border:1px dashed rgba(196,56,56,.3);border-radius:6px;z-index:1;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--red);font-weight:600;pointer-events:none;}
 .pg-timehead{padding:0 4px;text-align:center;font-size:12px;color:#666;font-weight:600;background:rgba(245,245,245,.9);border-bottom:2px solid #ccc;height:75px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;}
 .pg-slots{position:relative;}
-.pg-tslot{height:28px;font-size:12px;color:#666;font-weight:800;text-align:right;padding:2px 6px 0;border-bottom:1px solid #ddd;display:flex;align-items:flex-start;justify-content:flex-end;}
+.pg-tslot{font-size:12px;color:#666;font-weight:800;text-align:right;padding:2px 6px 0;border-bottom:1px solid #ddd;display:flex;align-items:flex-start;justify-content:flex-end;}
 .pg-tslot.hr{border-top:2px solid #888;border-bottom:1px solid #ddd;font-weight:800;color:#333;}
-.pg-slot{height:28px;border-bottom:1px solid #ddd;cursor:pointer;}
+.pg-slot{border-bottom:1px solid #ddd;cursor:pointer;}
 .pg-slot.hr{border-top:2px solid #888;border-bottom:1px solid #ddd;}
 .pg-slot:hover{background:rgba(200,168,78,.08);}
 .pg-block{position:absolute;border-radius:6px;padding:3px 6px;font-size:11px;line-height:1.25;overflow:hidden;z-index:5;cursor:grab;border-left:4px solid;box-shadow:0 1px 4px rgba(0,0,0,.12);user-select:none;-webkit-user-select:none;}
@@ -2074,15 +2074,32 @@ function rPlanning(){
   h+='<button class="btn" style="padding:10px 14px;font-size:13px;font-weight:700;background:rgba(244,67,54,.1);color:#f44336;border:1px solid rgba(244,67,54,.25);border-radius:10px;display:flex;align-items:center;gap:6px" onclick="showAddAbsence()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Absence</button>';
   h+='<button class="btn" style="padding:10px 14px;font-size:13px;font-weight:700;background:rgba(33,150,243,.1);color:#2196f3;border:1px solid rgba(33,150,243,.25);border-radius:10px;display:flex;align-items:center;gap:6px" onclick="showAddConge()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Cong\u00e9</button>';
   h+='</div>';
+  // Zoom controls
+  h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;justify-content:center">';
+  h+='<span style="font-size:12px;color:rgba(255,255,255,.5)">Zoom</span>';
+  h+='<button onclick="if(SLOT_H>16){SLOT_H-=4;go(\'planning\')}" style="width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2212</button>';
+  h+='<div style="font-size:13px;font-weight:700;color:var(--gold);min-width:40px;text-align:center">'+SLOT_H+'px</div>';
+  h+='<button onclick="if(SLOT_H<60){SLOT_H+=4;go(\'planning\')}" style="width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>';
+  h+='</div>';
   // Render planning
   if(nd===1){
     h+=rPlanningDay(calD,false);
   } else {
-    // Multi-day side-by-side: time col + for each day a group of stylist sub-columns
-    var allEarliest=1440,allLatest=0,anyDayOpen=false;
-    for(var dayOff=0;dayOff<nd;dayOff++){
+    // Multi-day side-by-side
+    // Collect the days to display (skip closed if filter on, but always show nd open days)
+    var daysToShow=[];
+    var maxScan=nd+14; // scan up to 14 extra days to find enough open ones
+    for(var dayOff=0;dayOff<maxScan&&daysToShow.length<nd;dayOff++){
       var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
       var ddow=dd.getDay();
+      var ddHrs=H[ddow];
+      if(!ddHrs&&window._hideClosedDays) continue;
+      daysToShow.push(dd);
+    }
+    // Common time range
+    var allEarliest=1440,allLatest=0,anyDayOpen=false;
+    for(var di=0;di<daysToShow.length;di++){
+      var ddow=daysToShow[di].getDay();
       for(var hi=0;hi<T.length;hi++){
         var shrs=T[hi].hrs?T[hi].hrs[ddow]:H[ddow];
         if(shrs){anyDayOpen=true;var so=toM(shrs.o),sc=toM(shrs.c);if(so<allEarliest)allEarliest=so;if(sc>allLatest)allLatest=sc;}
@@ -2093,23 +2110,19 @@ function rPlanning(){
     var mTotalSlots=(mge-mgs)/SLOT;
     var mGridH=mTotalSlots*SLOT_H;
 
-
     h+='<div class="pg-wrap"><div style="display:flex;width:100%">';
     // Time column
     h+='<div class="pg-timecol"><div class="pg-timehead" style="height:75px">Heure</div><div class="pg-slots">';
-    for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'">'+(isH?hh+'h':'')+'</div>';}
+    for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px">'+(isH?hh+'h':'')+'</div>';}
     h+='</div></div>';
 
-    for(var dayOff=0;dayOff<nd;dayOff++){
-      var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
+    for(var dayIdx=0;dayIdx<daysToShow.length;dayIdx++){
+      var dd=daysToShow[dayIdx];
       var ddk=dS(dd),ddow=dd.getDay();
       var ddHrs=H[ddow];
       var isToday=ddk===TD;
       var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
       var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
-
-      // Skip closed days if filter is on
-      if(!ddHrs&&window._hideClosedDays) continue;
 
       // Day group - each stylist sub-col is flex:1, so use T.length sub-cols for open days
       // For closed days, use T.length sub-cols too (merged visually) to keep same width
@@ -2152,7 +2165,7 @@ function rPlanning(){
             var absLabel=bSlots.length&&bSlots[0].label?bSlots[0].label:"Absent";
             h+='<div class="pg-absent" style="font-size:9px">'+absLabel+'</div>';
           } else {
-            for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+ddk+'\')"></div>';}
+            for(var s=0;s<mTotalSlots;s++){var m=mgs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div style="height:'+SLOT_H+'px" class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+ddk+'\')"></div>';}
             var allWork=[];
             for(var j=0;j<sa.length;j++){var blocks=getWorkBlocks(sa[j]);blocks.forEach(function(b){allWork.push(b);});}
             var laid=layoutBlocks(allWork);
@@ -2224,7 +2237,7 @@ function rPlanningDay(dateObj,showDayHeader){
   h+='<div class="pg-wrap"><div class="pg-grid">';
   // Time column
   h+='<div class="pg-timecol"><div class="pg-timehead">Heure</div><div class="pg-slots">';
-  for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'">'+(isH?hh+'h':'')+'</div>';}
+  for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px">'+(isH?hh+'h':'')+'</div>';}
   h+='</div></div>';
   // One column per stylist
   for(var ti=0;ti<T.length;ti++){
@@ -2240,7 +2253,7 @@ function rPlanningDay(dateObj,showDayHeader){
     h+='</div>';
     h+='<div class="pg-slots" style="height:'+gridH+'px;position:relative">';
     // Background slots
-    for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+dk+'\')"></div>';}
+    for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+dk+'\')"></div>';}
     
     // Collect ALL work blocks for this stylist to detect overlaps
     var allWork=[];
