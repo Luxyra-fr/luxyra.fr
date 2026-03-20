@@ -834,17 +834,32 @@ function isSlotTaken(date,time,duration,collabId){
   var slotStart=toMin(time),slotEnd=slotStart+duration;
   // Check blocked slots (absences, pauses, congés)
   if(isCollabBlocked(date,collabId,slotStart,slotEnd))return true;
-  // Check existing appointments
+  // Check existing appointments - only WORK blocks (pauses are free)
   for(var i=0;i<RDV_EXISTING.length;i++){
     var r=RDV_EXISTING[i];
     if(r.date_rdv!==date)continue;
     if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;
     if(!r.heure)continue;
     var rStart=toMin(r.heure);
-    var rDur=60;
-    if(r.a_phases){var td=0;r.a_phases.forEach(function(p){td+=p.d||0;});if(td>0)rDur=td;}
-    var rEnd=rStart+rDur;
-    if(slotStart<rEnd&&slotEnd>rStart)return true;
+    // Get work blocks only (skip pause phases)
+    if(r.a_phases&&r.a_phases.length){
+      var cur=rStart;
+      for(var pi=0;pi<r.a_phases.length;pi++){
+        var ph=r.a_phases[pi];
+        if(ph.t==="w"){
+          // Work phase: check overlap
+          var wEnd=cur+(ph.d||30);
+          if(slotStart<wEnd&&slotEnd>cur)return true;
+        }
+        cur+=(ph.d||0);
+      }
+    } else {
+      // No phases: use total duration as single work block
+      var rDur=60;
+      if(r.a_phases){var td=0;r.a_phases.forEach(function(p){td+=p.d||0;});if(td>0)rDur=td;}
+      var rEnd=rStart+rDur;
+      if(slotStart<rEnd&&slotEnd>rStart)return true;
+    }
   }
   return false;
 }
