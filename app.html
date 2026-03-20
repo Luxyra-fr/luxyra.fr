@@ -1401,6 +1401,8 @@ function saveAbsences(){
       _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
     });
   }
+  // Also update site_config for online booking
+  if(typeof saveSiteConfig==="function")saveSiteConfig();
 }
 function removeAbsence(idx){
   if(!window.ABSENCES||idx<0||idx>=window.ABSENCES.length)return;
@@ -3141,6 +3143,9 @@ function saveSiteConfig(){
       fidelite_seuil:SC.fideliteSeuil||10,
       fidelite_type:SC.fideliteType||"pourcentage",
       fidelite_valeur:SC.fideliteValeur||10,
+      absences:window.ABSENCES||[],
+      collaborateurs:T.map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null};}),
+      horaires_salon:H,
       updated_at:new Date().toISOString()
     };
     // Upsert using Supabase native upsert
@@ -8612,6 +8617,54 @@ function initApp(){
 // If no Supabase module loaded, start directly
 if(typeof checkSession==="undefined"){initApp();}
 setInterval(function(){var el=document.getElementById("liveClock");if(el)el.textContent=new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});},1000);
+// ============================================================
+// SAVE APPOINTMENT TO SUPABASE (if not already defined externally)
+// ============================================================
+if(typeof saveAppointment==="undefined"){
+  window.saveAppointment=function(appt){
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return Promise.resolve();
+    var data={
+      id:appt.id,
+      salon_id:_salonId,
+      client_id:appt.cId||null,
+      service_id:appt.sId||null,
+      collab_id:appt.stId||null,
+      date_rdv:appt.date,
+      heure:appt.time,
+      prix:appt.pr||0,
+      status:appt.st||"conf",
+      mode_paiement:appt.met||"",
+      ticket_num:appt.tkNum||null,
+      items:appt.items||[],
+      comment:appt.comment||"",
+      a_phases:appt.aPhases||[],
+      cancelled:appt.cancelled||false,
+      from_caisse:appt.fromCaisse||false
+    };
+    return _sb.from("appointments").upsert(data,{onConflict:"id"}).then(function(r){
+      if(r.error)console.error("[SAVE APPT]",r.error.message);
+      else console.log("[SAVE APPT] OK",appt.id);
+    });
+  };
+}
+
+// SAVE COLLABORATEURS (if not already defined externally)
+if(typeof saveCollaborateurs==="undefined"){
+  window.saveCollaborateurs=function(){
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
+    // Save collaborateurs to salons config_json
+    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
+      var cfg={};
+      if(r.data&&r.data[0]&&r.data[0].config_json){try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}}
+      cfg.collaborateurs=T;
+      cfg.horaires=H;
+      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
+    });
+    // Also update site_config for online booking
+    if(typeof saveSiteConfig==="function")saveSiteConfig();
+  };
+}
+
 // ============================================================
 // REALTIME SYNC - auto-update when another device makes changes
 // ============================================================
