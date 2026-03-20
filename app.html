@@ -9379,6 +9379,48 @@ async function reloadFromSupabase(table){
     else if(table==="rdv_online"){
       var r=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(50);
       if(r.data){
+        // Check for new notifications BEFORE updating RDV_ONLINE
+        var oldIds={};(window.RDV_ONLINE||[]).forEach(function(o){oldIds[o.id]=o;});
+        
+        r.data.forEach(function(rdv){
+          var old=oldIds[rdv.id];
+          // New online RDV
+          if(!old&&rdv.status!=="cancelled"){
+            var nId="rdv_"+rdv.id;
+            var nEx=false;for(var ni=0;ni<window.NOTIFS.length;ni++){if(window.NOTIFS[ni].id===nId){nEx=true;break;}}
+            if(!nEx&&!(window._dismissedNotifs&&window._dismissedNotifs[nId])){
+              window.NOTIFS.unshift({id:nId,rdvOnlineId:rdv.id,type:"new_rdv_online",
+                title:"\ud83c\udf10 Nouveau RDV en ligne",
+                detail:(rdv.client_prenom||"")+" "+(rdv.client_nom||"")+" \u2014 "+(rdv.service_nom||"")+" le "+rdv.date_rdv+" \u00e0 "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):""),
+                ts:new Date().toISOString(),seen:false,confirmed:false});
+            }
+          }
+          // Modification request
+          if(rdv.modification_demandee&&rdv.modification_status==="pending"){
+            var mId="mod_"+rdv.id;
+            var mEx=false;for(var mi=0;mi<window.NOTIFS.length;mi++){if(window.NOTIFS[mi].id===mId){mEx=true;break;}}
+            if(!mEx&&!(window._dismissedNotifs&&window._dismissedNotifs[mId])){
+              window.NOTIFS.unshift({id:mId,rdvOnlineId:rdv.id,type:"modification",
+                title:"\u270f\ufe0f Demande de modification",
+                detail:(rdv.client_nom||"")+" souhaite d\u00e9placer au "+rdv.modification_date+" \u00e0 "+rdv.modification_heure,
+                ts:new Date().toISOString(),seen:false,confirmed:false,
+                onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null},
+                modifData:{date:rdv.modification_date,heure:rdv.modification_heure,msg:rdv.modification_message}});
+            }
+          }
+          // Client cancellation
+          if(rdv.status==="cancelled"&&rdv.cancelled_by==="client"){
+            var cId2="can_"+rdv.id;
+            var cEx=false;for(var ci=0;ci<window.NOTIFS.length;ci++){if(window.NOTIFS[ci].id===cId2){cEx=true;break;}}
+            if(!cEx&&!(window._dismissedNotifs&&window._dismissedNotifs[cId2])){
+              window.NOTIFS.unshift({id:cId2,rdvOnlineId:rdv.id,type:"cancel_client",
+                title:"\u274c RDV annul\u00e9 par le client",
+                detail:(rdv.client_nom||"")+" a annul\u00e9 son RDV du "+rdv.date_rdv+(rdv.cancel_reason?" \u2014 "+rdv.cancel_reason:""),
+                ts:new Date().toISOString(),seen:false,confirmed:false});
+            }
+          }
+        });
+        
         window.RDV_ONLINE=r.data.map(function(r){
           return{id:r.id,nom:r.client_nom,prenom:r.client_prenom,tel:r.client_tel,
             svcId:r.service_id,svcNom:r.service_nom,svcPrix:Number(r.service_prix),
