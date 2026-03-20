@@ -1929,25 +1929,35 @@ function getWorkBlocks(a){
 function isStylistAvailable(stId, date, timeStr){
   var sty=gT(stId);if(!sty)return false;
   var d=new Date(date);var dow=d.getDay();
-  // Check individual hours
   var hrs=sty.hrs?sty.hrs[dow]:H[dow];
-  if(!hrs)return false; // day off
+  if(!hrs)return false;
   var m=toM(timeStr);
-  if(m<toM(hrs.o)||m>=toM(hrs.c))return false; // outside hours
-  // Check absences
+  if(m<toM(hrs.o)||m>=toM(hrs.c))return false;
   if(window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
       var ab=window.ABSENCES[i];
       if(ab.stId!==stId)continue;
-      if(ab.type==="conge"||ab.type==="absent_jour"){
-        if(ab.dateFrom<=date&&ab.dateTo>=date)return false;
-      }else if(ab.type==="absent_heures"||ab.type==="pause"){
-        if(ab.date===date&&m>=toM(ab.from)&&m<toM(ab.to))return false;
+      var aType=ab.type||"absent";
+      if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
+        if((ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)||(ab.date===date&&!ab.from))return false;
+      }
+      if((aType==="absent_heures"||aType==="pause")&&ab.date===date&&ab.from&&ab.to){
+        if(m>=toM(ab.from)&&m<toM(ab.to))return false;
       }
     }
   }
   return true;
 }
+
+function isStylistBlockedDuring(stId, date, startMin, endMin){
+  var blocks=getBlockedSlots(stId, date);
+  for(var i=0;i<blocks.length;i++){
+    var bStart=toM(blocks[i].from),bEnd=toM(blocks[i].to);
+    if(startMin<bEnd&&endMin>bStart)return blocks[i];
+  }
+  return null;
+}
+
 
 // Get blocked slots for a stylist on a day (returns array of {from,to,label,type})
 function getBlockedSlots(stId, date){
@@ -1981,42 +1991,42 @@ function getAbsColor(type){
   if(type==="conge")return{bg:"rgba(33,150,243,.12)",stripe:"rgba(33,150,243,.2)",border:"rgba(33,150,243,.35)",text:"#2196f3"};
   if(type==="maladie")return{bg:"rgba(255,152,0,.12)",stripe:"rgba(255,152,0,.2)",border:"rgba(255,152,0,.35)",text:"#ff9800"};
   if(type==="formation")return{bg:"rgba(156,39,176,.1)",stripe:"rgba(156,39,176,.18)",border:"rgba(156,39,176,.3)",text:"#9c27b0"};
+  if(type==="pause")return{bg:"rgba(255,152,0,.08)",stripe:"rgba(255,152,0,.12)",border:"rgba(255,152,0,.25)",text:"#ff9800"};
   if(type==="repos")return{bg:"rgba(150,150,150,.1)",stripe:"rgba(150,150,150,.15)",border:"rgba(150,150,150,.2)",text:"#999"};
   return{bg:"rgba(244,67,54,.12)",stripe:"rgba(244,67,54,.2)",border:"rgba(244,67,54,.35)",text:"#f44336"};
 }
 
-// Check if a new RDV conflicts with existing ones (work blocks only, pauses ignored)
+// Check if a new RDV conflicts with existing ones OR blocked slots (pauses, absences)
 function checkConflict(stId, date, time, svcId, excludeId){
-  // First check if stylist is available at all
   if(!isStylistAvailable(stId, date, time)){
     return [{appt:null,clientName:"INDISPONIBLE",svcName:gT(stId)?gT(stId).n+" indisponible":"Indisponible",time:time,overlapStart:toM(time),overlapEnd:toM(time)+30}];
   }
   var sv=gS(svcId);
   var fakeAppt={sId:svcId,time:time,stId:stId};
   var newBlocks=getWorkBlocks(fakeAppt);
-  // Get all existing appts for this stylist on this date
+  var conflicts=[];
+  // Check full duration against blocked slots (pauses, absences)
+  for(var ni=0;ni<newBlocks.length;ni++){
+    var blocked=isStylistBlockedDuring(stId, date, newBlocks[ni].start, newBlocks[ni].end);
+    if(blocked){
+      conflicts.push({appt:null,clientName:"INDISPONIBLE",svcName:blocked.label||"Indisponible",time:time,overlapStart:newBlocks[ni].start,overlapEnd:newBlocks[ni].end});
+      break;
+    }
+  }
+  // Check against existing appointments
   var existing=AP.filter(function(a){
     return a.date===date && a.stId===stId && a.st!=="canc" && (!a.cancelled) && a.id!==excludeId;
   });
-  var conflicts=[];
   for(var ei=0;ei<existing.length;ei++){
     var exBlocks=getWorkBlocks(existing[ei]);
     for(var ni=0;ni<newBlocks.length;ni++){
       for(var xi=0;xi<exBlocks.length;xi++){
-        // Two blocks overlap if one starts before the other ends and vice versa
         if(newBlocks[ni].start<exBlocks[xi].end && newBlocks[ni].end>exBlocks[xi].start){
           var cl=gC(existing[ei].cId);
           var clN=cl?cName(cl):passageName(existing[ei].cId);
           var exSv=gS(existing[ei].sId);
-          conflicts.push({
-            appt:existing[ei],
-            clientName:clN,
-            svcName:exSv?exSv.n:"Prestation",
-            time:existing[ei].time,
-            overlapStart:Math.max(newBlocks[ni].start, exBlocks[xi].start),
-            overlapEnd:Math.min(newBlocks[ni].end, exBlocks[xi].end)
-          });
-          break; // one overlap per existing appt is enough
+          conflicts.push({appt:existing[ei],clientName:clN,svcName:exSv?exSv.n:"Prestation",time:existing[ei].time,overlapStart:Math.max(newBlocks[ni].start,exBlocks[xi].start),overlapEnd:Math.min(newBlocks[ni].end,exBlocks[xi].end)});
+          break;
         }
       }
     }
@@ -2107,8 +2117,8 @@ function rPlanning(){
   }
   h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
   h+='<button class="btn bg" style="flex:2;padding:10px;font-size:13px;font-weight:700" onclick="oM(\u0027appt\u0027)">+ Nouveau RDV</button>';
-  h+='<button class="btn" style="padding:10px 14px;font-size:13px;font-weight:700;background:rgba(255,152,0,.12);color:#ff9800;border:1px solid rgba(255,152,0,.3);border-radius:10px;display:flex;align-items:center;gap:6px" onclick="showAddPause()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>Pause</button>';
-  h+='<button class="btn" style="padding:10px 14px;font-size:13px;font-weight:700;background:rgba(244,67,54,.1);color:#f44336;border:1px solid rgba(244,67,54,.25);border-radius:10px;display:flex;align-items:center;gap:6px" onclick="showAddAbsence()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Absence / Cong\u00e9</button>';
+  h+='<button class="btn" style="padding:10px 14px;font-size:13px;font-weight:700;background:rgba(30,30,35,.9);color:#ff9800;border:1.5px solid rgba(255,152,0,.4);border-radius:10px;display:flex;align-items:center;gap:6px" onclick="showAddPause()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>Pause</button>';
+  h+='<button class="btn" style="padding:10px 14px;font-size:13px;font-weight:700;background:rgba(30,30,35,.9);color:#f44336;border:1.5px solid rgba(244,67,54,.4);border-radius:10px;display:flex;align-items:center;gap:6px" onclick="showAddAbsence()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Absence / Cong\u00e9</button>';
   h+='</div>';
   // Zoom controls
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;justify-content:center">';
@@ -2339,6 +2349,19 @@ function rPlanningDay(dateObj,showDayHeader){
         cur+=ph.d;
       }
     }
+    // Render pauses from ABSENCES
+    var styPauses=ABSENCES.filter(function(ab){return ab.stId===sty.id&&ab.date===dk&&ab.type==="pause"&&ab.from&&ab.to;});
+    for(var pi=0;pi<styPauses.length;pi++){
+      var pau=styPauses[pi];
+      var pStartM=toM(pau.from),pEndM=toM(pau.to);
+      var pTopPx=((pStartM-gs)/SLOT)*SLOT_H;
+      var pHPx=((pEndM-pStartM)/SLOT)*SLOT_H;
+      var pIdx=ABSENCES.indexOf(pau);
+      h+='<div style="position:absolute;top:'+pTopPx+'px;left:0;right:0;height:'+Math.max(pHPx-2,SLOT_H-2)+'px;border-radius:6px;background:rgba(255,152,0,.2);background-image:repeating-linear-gradient(135deg,rgba(255,152,0,.15),rgba(255,152,0,.15) 5px,transparent 5px,transparent 10px);border:2px solid rgba(255,152,0,.5);display:flex;align-items:center;justify-content:center;flex-direction:column;font-size:11px;color:#e65100;font-weight:800;z-index:6;cursor:pointer;box-sizing:border-box;pointer-events:all" onclick="event.stopPropagation();manageAbsence('+sty.id+',\''+dk+'\')">';
+      h+='\u23f8 '+(pau.label||pau.motif||"Pause");
+      if(pHPx>=35)h+='<div style="font-size:9px;font-weight:600;opacity:.7">'+pau.from+' \u2192 '+pau.to+'</div>';
+      h+='</div>';
+    }
     // Show unavailable zones
     var styHrs=sty.hrs?sty.hrs[dateObj.getDay()]:H[dateObj.getDay()];
     if(!styHrs||isAbs){
@@ -2451,7 +2474,10 @@ function showAddPauseAt(stId,time){
 function doAddPause(){
   var stId=+document.getElementById("pauseSt").value,from=document.getElementById("pauseFrom").value;
   var dur=+document.getElementById("pauseDur").value||60,label=document.getElementById("pauseLabel").value||"Pause";
-  AP.push({id:U(),cId:"pause",sId:null,stId:stId,date:dS(calD),time:from,pr:0,st:"pause",met:"",aPhases:[{t:"p",d:dur,l:label}]});
+  var toMin=toM(from)+dur;
+  var toTime=String(Math.floor(toMin/60)).padStart(2,"0")+":"+String(toMin%60).padStart(2,"0");
+  ABSENCES.push({stId:stId,date:dS(calD),type:"pause",from:from,to:toTime,label:label,motif:label});
+  saveAbsences();
   cM();go("planning");
 }
 function showAddAbsence(){showAddAbsenceAt(T[0]?T[0].id:1,"absent");}
