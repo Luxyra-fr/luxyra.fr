@@ -2019,12 +2019,21 @@ function rPlanning(){
   h+='<button style="border:none;background:rgba(255,255,255,.15);color:#fff;padding:8px;border-radius:8px;cursor:pointer;font-size:14px" onclick="go(\u0027planning\u0027)">\u21bb</button>';
   h+='</div>';
   // Day count selector - opaque segmented control
-  h+='<div style="display:flex;align-items:center;gap:0;margin-bottom:10px;background:rgba(30,30,35,.9);border-radius:12px;border:1px solid rgba(255,255,255,.15);overflow:hidden">';
+  h+='<div style="display:flex;align-items:center;gap:0;margin-bottom:8px;background:rgba(30,30,35,.9);border-radius:12px;border:1px solid rgba(255,255,255,.15);overflow:hidden">';
   for(var di=1;di<=7;di++){
     var isSel=nd===di;
     h+='<button onclick="window._planDays='+di+';go(\'planning\')" style="flex:1;padding:12px 0;border:none;background:'+(isSel?'var(--gold)':'transparent')+';color:'+(isSel?'#0a0a0a':'#fff')+';font-size:15px;font-weight:'+(isSel?'800':'600')+';cursor:pointer;border-right:1px solid rgba(255,255,255,.1)">'+di+'j</button>';
   }
   h+='</div>';
+  // Hide closed days toggle (only in multi-day)
+  if(nd>1){
+    var hideClosed=window._hideClosedDays||false;
+    h+='<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:10px">';
+    h+='<button onclick="window._hideClosedDays=!window._hideClosedDays;go(\'planning\')" style="display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:8px;border:1px solid '+(hideClosed?'var(--gold)':'rgba(255,255,255,.12)')+';background:'+(hideClosed?'rgba(200,168,78,.12)':'rgba(255,255,255,.04)')+';color:'+(hideClosed?'var(--gold)':'rgba(255,255,255,.5)')+';font-size:12px;font-weight:600;cursor:pointer">';
+    h+='<div style="width:16px;height:16px;border-radius:4px;border:1.5px solid '+(hideClosed?'var(--gold)':'rgba(255,255,255,.25)')+';display:flex;align-items:center;justify-content:center;font-size:10px">'+(hideClosed?'\u2713':'')+'</div>';
+    h+='Masquer jours ferm\u00e9s</button>';
+    h+='</div>';
+  }
   if(nd===1){
     h+='<div style="text-align:center;font-family:var(--f1);font-size:18px;font-weight:700;color:#fff;margin-bottom:10px;text-shadow:0 2px 6px rgba(0,0,0,.5)">'+label+'</div>';
   }
@@ -2067,12 +2076,26 @@ function rPlanning(){
       var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
       var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
 
-      // Day group - flex:1 to fill width equally
-      h+='<div style="display:flex;flex:1;border-left:2px solid '+(isToday?'var(--gold)':'rgba(0,0,0,.15)')+'">';
+      // Skip closed days if filter is on
+      if(!ddHrs&&window._hideClosedDays) continue;
+
+      // Day group - each stylist sub-col is flex:1, so use T.length sub-cols for open days
+      // For closed days, use T.length sub-cols too (merged visually) to keep same width
+      h+='<div style="display:flex;flex:'+T.length+';border-left:2px solid '+(isToday?'var(--gold)':'rgba(0,0,0,.15)')+'">';
 
       if(!ddHrs){
-        h+='<div class="pg-col" style="flex:1"><div class="pg-colhead" style="height:75px;opacity:.4;font-size:11px;cursor:pointer" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')"><div style="font-weight:800;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLbl+'</div><div style="font-size:9px;color:#999;margin-top:2px">Ferm\u00e9</div></div>';
-        h+='<div class="pg-slots" style="height:'+mGridH+'px;position:relative"><div class="pg-absent" style="font-size:11px">Ferm\u00e9</div></div></div>';
+        // Closed day: render T.length empty flex:1 cols merged visually
+        for(var ti=0;ti<T.length;ti++){
+          h+='<div class="pg-col" style="flex:1">';
+          if(ti===0){
+            h+='<div class="pg-colhead" style="height:75px;opacity:.4;font-size:11px;cursor:pointer" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')"><div style="font-weight:800;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLbl+'</div><div style="font-size:9px;color:#999;margin-top:2px">Ferm\u00e9</div></div>';
+          } else {
+            h+='<div class="pg-colhead" style="height:75px;opacity:.2"></div>';
+          }
+          h+='<div class="pg-slots" style="height:'+mGridH+'px;position:relative">';
+          if(ti===0) h+='<div class="pg-absent" style="font-size:11px;width:'+(T.length*100)+'%">Ferm\u00e9</div>';
+          h+='</div></div>';
+        }
       } else {
         for(var ti=0;ti<T.length;ti++){
           var sty=T[ti];
