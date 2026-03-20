@@ -2529,12 +2529,17 @@ function dragEnd(e){
   
   if(!_drag.active){_drag.active=false;return;}
   
+  // CRITICAL: Set justDragged immediately to block any click events
+  _drag.justDragged=true;
+  setTimeout(function(){_drag.justDragged=false;},500);
+  
   // Remove ghost and droplines
   if(_drag.ghost){_drag.ghost.remove();_drag.ghost=null;}
   document.querySelectorAll('.pg-dropline').forEach(function(l){l.remove();});
   if(_drag.el){_drag.el.classList.remove('dragging');}
+  _drag.active=false;
   
-  if(!_drag.moved){_drag.active=false;return;}
+  if(!_drag.moved){return;}
   
   // Calculate drop position
   var pt=e.changedTouches?e.changedTouches[0]:e;
@@ -2610,13 +2615,15 @@ function dragEnd(e){
       }
     }
   }
-  _drag.active=false;
 }
 
 function reprendre(id){for(var i=0;i<AP.length;i++){if(AP[i].id===id){oM("appt",{cId:AP[i].cId,stId:AP[i].stId,time:AP[i].time});return;}}}
 function updateRdvDay(){}
 function clickAppt(id){
-  if(_drag&&_drag.justDragged){_drag.justDragged=false;return;}
+  // Block clicks during or right after drag
+  if(_drag&&(_drag.active||_drag.justDragged)){_drag.justDragged=false;return;}
+  // Block if confirmation modal is showing
+  if(window._pendingDrag)return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
@@ -2820,14 +2827,25 @@ function saveApptTime(id){
 }
 function confirmPendingDrag(){
   var m=window._pendingDrag;if(!m)return;
+  var countBefore=AP.length;
+  var found=false;
   for(var i=0;i<AP.length;i++){
     if(AP[i].id===m.id){
       AP[i].time=m.time;
       AP[i].stId=m.stId;
       if(m.date)AP[i].date=m.date;
       if(typeof saveAppointment==="function")saveAppointment(AP[i]);
+      found=true;
       break;
     }
+  }
+  // Safety: verify no RDV was lost
+  if(AP.length!==countBefore){
+    console.error("[DRAG SAFETY] AP count changed! Before:"+countBefore+" After:"+AP.length);
+    alert("Erreur: un RDV a \u00e9t\u00e9 perdu pendant le d\u00e9placement. V\u00e9rifiez le planning.");
+  }
+  if(!found){
+    console.error("[DRAG SAFETY] RDV "+m.id+" not found in AP");
   }
   window._pendingDrag=null;
   cM();go("planning");
