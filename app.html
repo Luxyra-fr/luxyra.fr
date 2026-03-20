@@ -1173,7 +1173,7 @@ function printClotureZ(){
   done.forEach(function(a){
     var cl=gC(a.cId);var hr=(a.ts||"").slice(11,16)||"--:--";
     var remInfo=a.remise>0?" <span style=\"color:#c00;font-size:9px\">(-"+a.remise.toFixed(0)+")</span>":"";
-    h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+(cl?cName(cl):passageName(a.cId))+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
+    h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+(cl?cName(cl):passageName(a.cId,a.sId))+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
   });
   h+="</table>";
   
@@ -1587,12 +1587,16 @@ function gS(id){for(var i=0;i<SVC.length;i++)if(SVC[i].id===id)return SVC[i];ret
 function gT(id){for(var i=0;i<T.length;i++)if(T[i].id===id)return T[i];return null;}
 function gC(id){for(var i=0;i<CL.length;i++)if(CL[i].id===id)return CL[i];return null;}
 function cName(c){return c?(c.nom+" "+c.pre):"";}
-function passageName(cId){
+function passageName(cId,sId){
   if(!cId)return"Passage";
   if(cId==="passage-F")return"\ud83d\udc69 Passage Femme";
   if(cId==="passage-H")return"\ud83d\udc68 Passage Homme";
   if(cId==="passage-E")return"\ud83e\uddd2 Passage Enfant";
-  if(cId==="passage")return"Passage";
+  if(cId==="passage"){
+    // Try to guess from service category
+    if(sId){var sv=gS(sId);if(sv&&sv.cat){if(sv.cat==="Homme"||sv.cat==="Barbier")return"\ud83d\udc68 Passage Homme";if(sv.cat==="Enfants")return"\ud83e\uddd2 Passage Enfant";}}
+    return"\ud83d\udc69 Passage";
+  }
   var cl=gC(cId);return cl?cName(cl):"Passage";
 }
 function fmt(d){return new Date(d).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});}
@@ -2028,7 +2032,7 @@ function checkConflict(stId, date, time, svcId, excludeId){
       for(var xi=0;xi<exBlocks.length;xi++){
         if(newBlocks[ni].start<exBlocks[xi].end && newBlocks[ni].end>exBlocks[xi].start){
           var cl=gC(existing[ei].cId);
-          var clN=cl?cName(cl):passageName(existing[ei].cId);
+          var clN=cl?cName(cl):passageName(existing[ei].cId,existing[ei].sId);
           var exSv=gS(existing[ei].sId);
           conflicts.push({appt:existing[ei],clientName:clN,svcName:exSv?exSv.n:"Prestation",time:existing[ei].time,overlapStart:Math.max(newBlocks[ni].start,exBlocks[xi].start),overlapEnd:Math.min(newBlocks[ni].end,exBlocks[xi].end)});
           break;
@@ -2361,9 +2365,9 @@ function rPlanningDay(dateObj,showDayHeader){
           var colW=myBlock?100/myBlock.maxCol:100;
           var leftPct=myBlock?myBlock.col*colW:0;
           var _htip=Math.round((a.pr||0)*100/(100+(SALON_CONFIG.tauxTVA||20))*100)/100;
-          var _ttip=(cl?cName(cl):passageName(a.cId))+"\n"+(sv?sv.n:"")+"\n"+sty.n+"\n\u23f1 "+totalDur+"min ("+a.time+" \u2192 "+endTime+")\n"+(a.pr||0).toFixed(2)+"\u20ac TTC / "+_htip.toFixed(2)+"\u20ac HT\n"+(a.st==="done"?"\u2705 Encaiss\u00e9 ("+a.met+")":"\u2714 Confirm\u00e9");
+          var _ttip=(cl?cName(cl):passageName(a.cId,a.sId))+"\n"+(sv?sv.n:"")+"\n"+sty.n+"\n\u23f1 "+totalDur+"min ("+a.time+" \u2192 "+endTime+")\n"+(a.pr||0).toFixed(2)+"\u20ac TTC / "+_htip.toFixed(2)+"\u20ac HT\n"+(a.st==="done"?"\u2705 Encaiss\u00e9 ("+a.met+")":"\u2714 Confirm\u00e9");
           h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+'  title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+colors.bg+';border-color:'+colors.border+';color:'+colors.text+'" onclick="clickAppt(\''+a.id+'\')">';
-          h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId))+'</div>';
+          h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
           h+='<div class="pb-svc">'+ph.l.toUpperCase()+'</div>';
           if(hPx>=50){
             if(a.isOnline)h+='<div class="pb-badge" style="background:rgba(108,92,231,.15);color:#a29bfe">\ud83c\udf10 En ligne</div>';
@@ -2513,7 +2517,7 @@ function printPlanning(){
         var htP=Math.round((a.pr||0)*100/(100+txTVA)*100)/100;
         h+='<div class="rdv-row">';
         h+='<div class="rdv-time">'+a.time+' \u2192 '+endT+'</div>';
-        h+='<div class="rdv-client">'+(cl?cName(cl):passageName(a.cId))+'</div>';
+        h+='<div class="rdv-client">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
         h+='<div class="rdv-svc">'+(sv?sv.n:"")+'</div>';
         h+='<div class="rdv-dur">'+td+'min</div>';
         h+='<div class="rdv-price">'+(a.pr||0).toFixed(0)+'\u20ac</div>';
@@ -2703,6 +2707,9 @@ function initDrag(){
 function dragStart(e){
   var el=e.currentTarget;
   if(el.getAttribute("data-nodrag"))return;
+  // Block drag on encaissé or cancelled RDV
+  var aid=el.getAttribute('data-aid');
+  if(aid){for(var _di=0;_di<AP.length;_di++){if(AP[_di].id===aid){if(AP[_di].st==="done"||AP[_di].st==="canc")return;break;}}}
   // Don't preventDefault here - let quick taps pass through to onclick
   e.stopPropagation();
   _drag.aid=el.getAttribute('data-aid');
@@ -2844,7 +2851,7 @@ function dragEnd(e){
         // Show confirmation modal
         var htm='<div class="mbg" onclick="cM();go(\'planning\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
         htm+='<h2 style="color:var(--gold)">D\u00e9placer ce RDV ?</h2>';
-        htm+='<div style="font-size:14px;margin-bottom:6px;font-weight:700">'+(cl?cName(cl):passageName(dragAppt.cId))+'</div>';
+        htm+='<div style="font-size:14px;margin-bottom:6px;font-weight:700">'+(cl?cName(cl):passageName(dragAppt.cId,dragAppt.sId))+'</div>';
         htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:'RDV')+'</div>';
         htm+='<div style="display:flex;gap:10px;justify-content:center;margin-bottom:14px">';
         htm+='<div style="flex:1;padding:10px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15)">';
@@ -3956,7 +3963,7 @@ function rDetail(){
     h+='<div class="card"><div class="ct">Informations personnelles</div>';
     h+='<div class="fg"><label>Date de cr\u00e9ation</label><input value="'+c.cr+'" disabled style="background:var(--bg)"></div>';
     h+='<div class="fg"><label>Date de naissance</label><input type="date" value="'+(c.ddn||"")+'" onchange="gC(\''+c.id+'\').ddn=this.value"></div>';
-    h+='<div class="fg"><label>Type de client</label><select onchange="gC(\''+c.id+'\').sex=this.value"><option value="F"'+(c.sex==="F"?" selected":"")+'>Femme</option><option value="H"'+(c.sex==="H"?" selected":"")+'>Homme</option></select></div>';
+    h+='<div class="fg"><label>Type de client</label><select onchange="gC(\''+c.id+'\').sex=this.value;gC(\''+c.id+'\').genre=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"><option value="F"'+(c.sex==="F"?" selected":"")+'>Femme</option><option value="H"'+(c.sex==="H"?" selected":"")+'>Homme</option><option value="E"'+((c.sex==="E"||c.genre==="E")?" selected":"")+'>Enfant</option></select></div>';
     h+='<div class="fg"><label>Collaborateur habituel</label><select onchange="gC(\''+c.id+'\').collab=+this.value">';
     for(var ti=0;ti<T.length;ti++)h+='<option value="'+T[ti].id+'"'+(c.collab===T[ti].id?" selected":"")+'>'+T[ti].n+'</option>';
     h+='</select></div>';
@@ -5763,8 +5770,12 @@ function rStats(){
   dn.forEach(function(a){
     var cl=a.cId?gC(a.cId):null;
     var sv=gS(a.sId);var cat=sv?sv.cat:"";
-    if(cat==="Homme"){caH+=a.pr*taxR;nbH++;}
-    else if(cl&&cl.genre==="E"){caE+=a.pr*taxR;nbE++;}
+    // Check service category first
+    if(cat==="Homme"||cat==="Barbier"){caH+=a.pr*taxR;nbH++;}
+    // Then check passage type
+    else if(a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
+    else if(a.cId==="passage-E"||(cl&&cl.genre==="E")){caE+=a.pr*taxR;nbE++;}
+    else if(cat==="Enfants"){caE+=a.pr*taxR;nbE++;}
     else{caF+=a.pr*taxR;nbF++;}
   });
   var panF=nbF?caF/nbF:0,panH=nbH?caH/nbH:0,panE=nbE?caE/nbE:0;
@@ -5783,7 +5794,7 @@ function rStats(){
   
   // Daily data
   var dayData={};
-  dn.forEach(function(a){if(!dayData[a.date])dayData[a.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[a.date].pr+=a.pr*taxR;var sv=gS(a.sId);var cl2=a.cId?gC(a.cId):null;if(sv&&sv.cat==="Homme")dayData[a.date].h+=a.pr*taxR;else if(cl2&&cl2.genre==="E")dayData[a.date].e+=a.pr*taxR;else dayData[a.date].f+=a.pr*taxR;});
+  dn.forEach(function(a){if(!dayData[a.date])dayData[a.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[a.date].pr+=a.pr*taxR;var sv=gS(a.sId);var cl2=a.cId?gC(a.cId):null;var cat2=sv?sv.cat:"";if(cat2==="Homme"||cat2==="Barbier"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;else if(cat2==="Enfants"||a.cId==="passage-E"||(cl2&&cl2.genre==="E"))dayData[a.date].e+=a.pr*taxR;else dayData[a.date].f+=a.pr*taxR;});
   ps.forEach(function(p){if(!dayData[p.date])dayData[p.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[p.date].pd+=p.pr*taxR;});
   var days=Object.keys(dayData).sort();
   
@@ -6042,7 +6053,7 @@ function oM(type,pf){
     h+='<div class="fg"><label>Nom *</label><input id="mnom" placeholder="DUPONT" style="text-transform:uppercase"></div>';
     h+='<div class="fg"><label>Pr\u00e9nom *</label><input id="mpre" placeholder="Marie"></div>';
     h+='<div style="display:flex;gap:10px">';
-    h+='<div class="fg" style="flex:1"><label>Type</label><select id="msex"><option value="F">Femme</option><option value="H">Homme</option></select></div>';
+    h+='<div class="fg" style="flex:1"><label>Type</label><select id="msex"><option value="F">Femme</option><option value="H">Homme</option><option value="E">Enfant</option></select></div>';
     h+='<div class="fg" style="flex:1"><label>Date de naissance</label><input type="date" id="mddn" placeholder="JJ/MM/AAAA"></div>';
     h+='</div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input id="mp" placeholder="06 XX XX XX XX"></div>';
@@ -7558,7 +7569,7 @@ function doFinalPay(method){
     }
   }else{
     // Direct caisse sale (no RDV) -> create new ticket entry
-    var newTk={id:U(),cId:_tk.cId||"passage",fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
+    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
     // NF525: chain this ticket
     chainTicket(newTk);
     AP.push(newTk);
@@ -7920,7 +7931,7 @@ function rTickets(){
   for(var i=0;i<done.length;i++){
     var a=done[i];
     var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
-    var clN=cl?cName(cl):passageName(a.cId);
+    var clN=cl?cName(cl):passageName(a.cId,a.sId);
     totalMontant+=a.pr;
     h+='<tr style="border-bottom:1px solid var(--border2);'+(i%2===0?"background:var(--bg);":"")+'">';
     h+='<td style="padding:8px"><span class="badge b1" style="font-size:10px">\u2714</span></td>';
@@ -7961,7 +7972,7 @@ function reprintTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId);
+  var clN=cl?cName(cl):passageName(a.cId,a.sId);
   var svN=sv?sv.n:"Prestation";
   
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
@@ -8075,7 +8086,7 @@ function modifTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId);
+  var clN=cl?cName(cl):passageName(a.cId,a.sId);
   var styN=sty?sty.n:"--";
   var isPast=a.date!==TD;
   
