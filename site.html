@@ -246,8 +246,10 @@ async function loadSalon(){
         photoHero:d.photo_hero||"",photoSalon:d.photo_salon||"",photosSalon:d.photos_salon||[],descSalon:d.description_salon||"",slogan:d.slogan||"",
         fidActive:d.fidelite_active!==false,fidSeuil:d.fidelite_seuil||10,
         fidType:d.fidelite_type||"pourcentage",fidValeur:Number(d.fidelite_valeur)||10,
-        fondStyle:d.fond_style||"uni"
-
+        fondStyle:d.fond_style||"uni",
+        absences:d.absences||[],
+        collaborateurs:d.collaborateurs||[],
+        horaires_salon:d.horaires_salon||null
       };
     }
     // Apply theme colors
@@ -305,6 +307,15 @@ async function loadSalon(){
     // 3. Collaborateurs
     var tc=await sb.from("collaborateurs").select("*").eq("salon_id",salonId);
     if(tc.data)COLLABS=tc.data.map(function(c){return{id:c.id,n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{}};});
+    // Override with site_config collaborateurs if available (more up-to-date with individual hours)
+    if(SITE_CFG.collaborateurs&&SITE_CFG.collaborateurs.length>0){
+      SITE_CFG.collaborateurs.forEach(function(sc){
+        var found=false;
+        for(var ci=0;ci<COLLABS.length;ci++){
+          if(COLLABS[ci].id===sc.id){COLLABS[ci].hrs=sc.hrs||COLLABS[ci].hrs;found=true;break;}
+        }
+      });
+    }
     
     // 4. Services
     var sv=await sb.from("services").select("*").eq("salon_id",salonId).order("nom");
@@ -334,8 +345,9 @@ async function loadSalon(){
       });
     }
     
-    // Horaires from salon config or first collab
-    if(SALON.config&&SALON.config.horaires)HORAIRES=SALON.config.horaires;
+    // Horaires from site_config, salon config, or first collab
+    if(SITE_CFG.horaires_salon)HORAIRES=SITE_CFG.horaires_salon;
+    else if(SALON.config&&SALON.config.horaires)HORAIRES=SALON.config.horaires;
     else if(COLLABS.length>0&&COLLABS[0].hrs)HORAIRES=COLLABS[0].hrs;
     else HORAIRES={0:null,1:{o:"14:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}};
     
@@ -755,14 +767,17 @@ function renderCalendar(){
     var isPast=dt<today;
     var isTooFar=dt>maxDate;
     var isClosed=!hrs;
+    // Check if collaborator has full-day absence on this date
+    var dateKey=formatDate(dt);
+    var isAbsent=!isClosed&&booking.collabId&&isCollabDayOff(dateKey,booking.collabId);
     var isToday=dt.getTime()===today.getTime();
-    var isSelected=booking.date&&booking.date===formatDate(dt);
+    var isSelected=booking.date&&booking.date===dateKey;
     var cls="cal-day";
     if(isToday)cls+=" today";
     if(isSelected)cls+=" selected";
     if(isPast||isTooFar)cls+=" disabled";
-    if(isClosed)cls+=" off";
-    h+='<div class="'+cls+'" onclick="selectDate(\''+formatDate(dt)+'\')">'+d+'</div>';
+    if(isClosed||isAbsent)cls+=" off";
+    h+='<div class="'+cls+'" onclick="selectDate(\''+dateKey+'\')">'+d+(isAbsent?'<div style="font-size:7px;color:var(--red);margin-top:-2px">Indispo.</div>':'')+'</div>';
   }
   h+='</div>';
   return h;
@@ -777,19 +792,59 @@ function selectDate(dateStr){
   renderTimeSlots(dateStr);
 }
 
+function isCollabBlocked(date,collabId,slotStart,slotEnd){
+  // Check if collaborator is blocked by absence/pause/congé during [slotStart,slotEnd)
+  var absences=SITE_CFG.absences||[];
+  for(var i=0;i<absences.length;i++){
+    var ab=absences[i];
+    // Filter by collaborator
+    if(collabId&&ab.stId&&ab.stId!==collabId)continue;
+    if(!collabId&&ab.stId)continue;// No collab selected but absence is for specific one
+    var aType=ab.type||"absent";
+    // Full-day blocks: congé, absent, maladie, formation
+    if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
+      if(ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)return true;
+      if(ab.date===date&&!ab.from)return true;
+    }
+    // Hourly blocks: pause, absent_heures
+    if((aType==="pause"||aType==="absent_heures")&&ab.date===date&&ab.from&&ab.to){
+      var bStart=toMin(ab.from),bEnd=toMin(ab.to);
+      if(slotStart<bEnd&&slotEnd>bStart)return true;
+    }
+  }
+  return false;
+}
+
+function isCollabDayOff(date,collabId){
+  // Check if collaborator has a full-day absence (congé, absent, maladie, formation)
+  var absences=SITE_CFG.absences||[];
+  for(var i=0;i<absences.length;i++){
+    var ab=absences[i];
+    if(collabId&&ab.stId&&ab.stId!==collabId)continue;
+    var aType=ab.type||"absent";
+    if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
+      if(ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)return true;
+      if(ab.date===date&&!ab.from)return true;
+    }
+  }
+  return false;
+}
+
 function isSlotTaken(date,time,duration,collabId){
   var slotStart=toMin(time),slotEnd=slotStart+duration;
+  // Check blocked slots (absences, pauses, congés)
+  if(isCollabBlocked(date,collabId,slotStart,slotEnd))return true;
+  // Check existing appointments
   for(var i=0;i<RDV_EXISTING.length;i++){
     var r=RDV_EXISTING[i];
     if(r.date_rdv!==date)continue;
-    if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;// Different collab
+    if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;
     if(!r.heure)continue;
     var rStart=toMin(r.heure);
-    // Estimate duration from phases or default 60min
     var rDur=60;
     if(r.a_phases){var td=0;r.a_phases.forEach(function(p){td+=p.d||0;});if(td>0)rDur=td;}
     var rEnd=rStart+rDur;
-    if(slotStart<rEnd&&slotEnd>rStart)return true;// Overlap
+    if(slotStart<rEnd&&slotEnd>rStart)return true;
   }
   return false;
 }
@@ -800,6 +855,10 @@ function renderTimeSlots(dateStr){
   var hrs=HORAIRES[dow];
   if(booking.collab&&booking.collab.hrs)hrs=booking.collab.hrs[dow];
   if(!hrs){document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Ferm\u00e9 ce jour</div>';return;}
+  // Check if collaborator is on full-day absence
+  if(booking.collabId&&isCollabDayOff(dateStr,booking.collabId)){
+    document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Collaborateur indisponible ce jour</div>';return;
+  }
   
   var interval=15;
   var startM=toMin(hrs.o),endM=toMin(hrs.c);
@@ -910,6 +969,15 @@ async function submitBooking(){
   var msg=document.getElementById("bkMsg").value.trim();
   
   var dur=booking.duration||30;
+  // Double-check availability before submitting
+  if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
+    alert("Ce cr\u00e9neau n'est plus disponible. Veuillez choisir un autre horaire.");
+    renderTimeSlots(booking.date);return;
+  }
+  if(booking.collabId&&isCollabDayOff(booking.date,booking.collabId)){
+    alert("Ce collaborateur est indisponible ce jour. Veuillez choisir un autre jour.");
+    return;
+  }
   var acompte=0;
   if(SITE_CFG.acompte){acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(booking.svc.p*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;}
   
