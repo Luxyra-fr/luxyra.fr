@@ -2449,17 +2449,20 @@ function initDrag(){
 function dragStart(e){
   var el=e.currentTarget;
   if(el.getAttribute("data-nodrag"))return;
+  e.preventDefault();
+  e.stopPropagation();
   _drag.aid=el.getAttribute('data-aid');
   _drag.el=el;
   _drag.moved=false;
+  _drag.cancelled=false;
   var pt=e.touches?e.touches[0]:e;
   _drag.startX=pt.clientX;
   _drag.startY=pt.clientY;
-  // Long press: 150ms to start drag (faster for responsiveness)
+  // Block all clickAppt during drag
+  window._dragInProgress=true;
   _drag.timer=setTimeout(function(){
     _drag.active=true;
     el.classList.add('dragging');
-    // Create ghost
     var g=document.createElement('div');
     g.className='pg-ghost';
     g.style.background=el.style.background;
@@ -2470,9 +2473,7 @@ function dragStart(e){
     g.style.top=(pt.clientY-20)+'px';
     document.body.appendChild(g);
     _drag.ghost=g;
-    // Prevent scroll
     document.body.style.overflow='hidden';
-    // Haptic feedback on mobile
     if(navigator.vibrate)navigator.vibrate(30);
   },150);
   document.addEventListener('touchmove',dragMove,{passive:false});
@@ -2527,11 +2528,7 @@ function dragEnd(e){
   document.removeEventListener('mouseup',dragEnd);
   document.body.style.overflow='';
   
-  if(!_drag.active){_drag.active=false;return;}
-  
-  // CRITICAL: Set justDragged immediately to block any click events
-  _drag.justDragged=true;
-  setTimeout(function(){_drag.justDragged=false;},500);
+  if(!_drag.active){_drag.active=false;window._dragInProgress=false;return;}
   
   // Remove ghost and droplines
   if(_drag.ghost){_drag.ghost.remove();_drag.ghost=null;}
@@ -2539,7 +2536,14 @@ function dragEnd(e){
   if(_drag.el){_drag.el.classList.remove('dragging');}
   _drag.active=false;
   
-  if(!_drag.moved){return;}
+  if(!_drag.moved){
+    // Was not a real drag, allow click after short delay
+    setTimeout(function(){window._dragInProgress=false;},200);
+    return;
+  }
+  
+  // Keep _dragInProgress=true until modal is shown, then release after 500ms
+  setTimeout(function(){window._dragInProgress=false;},500);
   
   // Calculate drop position
   var pt=e.changedTouches?e.changedTouches[0]:e;
@@ -2620,9 +2624,8 @@ function dragEnd(e){
 function reprendre(id){for(var i=0;i<AP.length;i++){if(AP[i].id===id){oM("appt",{cId:AP[i].cId,stId:AP[i].stId,time:AP[i].time});return;}}}
 function updateRdvDay(){}
 function clickAppt(id){
-  // Block clicks during or right after drag
-  if(_drag&&(_drag.active||_drag.justDragged)){_drag.justDragged=false;return;}
-  // Block if confirmation modal is showing
+  // CRITICAL: Block ALL clicks during/after drag operations
+  if(window._dragInProgress)return;
   if(window._pendingDrag)return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
@@ -8521,32 +8524,50 @@ async function reloadFromSupabase(table){
       var today=new Date().toISOString().slice(0,10);
       var r=await _sb.from("appointments").select("*").eq("salon_id",_salonId).gte("date_rdv",today).order("date_rdv");
       if(r.data){
-        // Merge new data - keep items not in the response, update existing
-        var newIds={};
-        r.data.forEach(function(a){newIds[a.id]=true;});
-        // Remove appointments from today onwards that are no longer in DB
-        AP=AP.filter(function(a){return a.date<today||newIds[a.id]||a.fromCaisse;});
-        // Update/add
-        r.data.forEach(function(a){
-          var existing=null;
-          for(var i=0;i<AP.length;i++){if(AP[i].id===a.id){existing=AP[i];break;}}
-          var mapped={
-            id:a.id,cId:a.client_id,sId:a.service_id,stId:a.collab_id,
-            date:a.date_rdv,time:a.heure,pr:Number(a.prix),
-            st:a.status,met:a.mode_paiement,
-            tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
-            aPhases:a.a_phases||[],
-            cancelled:a.cancelled,fromCaisse:a.from_caisse||false
-          };
-          // Restore acompte from items
-          if(mapped.items){
-            mapped.items.forEach(function(it){
-              if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}
-            });
+        // SAFE MERGE: update existing, add new from DB, but NEVER remove local appointments
+        // Build map of DB appointments
+        var dbMap={};
+        r.data.forEach(function(a){dbMap[a.id]=a;});
+        // Update existing AP entries that exist in DB
+        for(var i=0;i<AP.length;i++){
+          if(dbMap[AP[i].id]){
+            var a=dbMap[AP[i].id];
+            // Only update if not currently being dragged
+            if(window._pendingDrag&&window._pendingDrag.id===AP[i].id) continue;
+            var mapped={
+              id:a.id,cId:a.client_id,sId:a.service_id,stId:a.collab_id,
+              date:a.date_rdv,time:a.heure,pr:Number(a.prix),
+              st:a.status,met:a.mode_paiement,
+              tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
+              aPhases:a.a_phases||[],
+              cancelled:a.cancelled,fromCaisse:a.from_caisse||false
+            };
+            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}});}
+            Object.assign(AP[i],mapped);
+            delete dbMap[a.id]; // processed
           }
-          if(existing){Object.assign(existing,mapped);}
-          else{AP.push(mapped);}
-        });
+          // If AP[i] is NOT in DB but is local (date >= today), keep it! Never remove.
+        }
+        // Add new DB entries not yet in local AP
+        for(var dbId in dbMap){
+          var a=dbMap[dbId];
+          var alreadyLocal=false;
+          for(var j=0;j<AP.length;j++){if(AP[j].id===a.id){alreadyLocal=true;break;}}
+          if(!alreadyLocal){
+            var mapped={
+              id:a.id,cId:a.client_id,sId:a.service_id,stId:a.collab_id,
+              date:a.date_rdv,time:a.heure,pr:Number(a.prix),
+              st:a.status,met:a.mode_paiement,
+              tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
+              aPhases:a.a_phases||[],
+              cancelled:a.cancelled,fromCaisse:a.from_caisse||false
+            };
+            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}});}
+            AP.push(mapped);
+          }
+        }
+        // Only remove cancelled appointments that DB confirms are cancelled
+        // NEVER remove an appointment that exists locally but not in DB
       }
     }
     else if(table==="rdv_online"){
