@@ -511,16 +511,26 @@ async function doMktLogin(){
   var pass=document.getElementById("mktPass").value;
   if(!email||!pass){showMktAuthErr("Remplissez email et mot de passe");return;}
   var hash=await hashPasswordMkt(pass);
+  console.log("[LOGIN] email:",email,"hash:",hash);
   try{
-    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
-    var data=await r.json();
-    if(!Array.isArray(data)||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
+    var url=SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email);
+    console.log("[LOGIN] URL:",url);
+    var r=await fetch(url,{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
+    console.log("[LOGIN] status:",r.status);
+    var raw=await r.text();
+    console.log("[LOGIN] raw:",raw.slice(0,300));
+    var data;try{data=JSON.parse(raw);}catch(pe){showMktAuthErr("Parse error: "+raw.slice(0,80));return;}
+    if(!Array.isArray(data)){showMktAuthErr("R\u00e9ponse: "+JSON.stringify(data).slice(0,80));return;}
+    if(data.length===0){showMktAuthErr("Aucun compte avec cet email");return;}
     var user=data[0];
-    if(user.password_hash!==hash){showMktAuthErr("Email ou mot de passe incorrect");return;}
+    console.log("[LOGIN] DB hash:",user.password_hash);
+    console.log("[LOGIN] Computed:",hash);
+    console.log("[LOGIN] Match:",user.password_hash===hash);
+    if(user.password_hash!==hash){showMktAuthErr("Mot de passe incorrect (hash mismatch)");return;}
     MKT_CLIENT=user;
     fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
     saveMktSession();closeMktAuth();render();
-  }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
+  }catch(e){console.error("[LOGIN]",e);showMktAuthErr("Erreur: "+e.message);}
 }
 
 // ========== MES RENDEZ-VOUS CROSS-SALONS ==========
