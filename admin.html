@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
-<title>CoiffPro Admin</title>
+<title>BeautyPro Admin</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -194,7 +194,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
     <div class="sb-item" onclick="nav('nf525')"><span class="icon">🛡️</span>NF525 / RGPD</div>
   </div>
   <div class="sb-footer">
-    <div><strong>CoiffPro Admin</strong> v2.0</div>
+    <div><strong>BeautyPro Admin</strong> v2.0</div>
     <div style="font-family:var(--mono)">Alexandre J. — 2026</div>
     <div style="margin-top:6px"><span id="onlineStatus" style="font-size:10px"></span></div>
     <button onclick="doAdminLogout()" style="margin-top:8px;width:100%;padding:6px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text3);font-size:12px;cursor:pointer;font-family:var(--f1)">🚪 Déconnexion</button>
@@ -209,7 +209,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
   <div class="detail-panel" id="detailPanel" onclick="event.stopPropagation()"></div>
 </div>
 
-<script src="supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ===== SUPABASE CONFIG =====
 var ADMIN_SUPABASE_URL = "https://kxdgjtvrkwugbifgppai.supabase.co";
@@ -240,7 +240,7 @@ function showAdminLogin() {
   h += '<div style="margin-bottom:20px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mot de passe</label>';
   h += '<input id="adminPass" type="password" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="••••••••" onkeydown="if(event.key===\'Enter\')doAdminLogin()"></div>';
   h += '<button onclick="doAdminLogin()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Se connecter</button>';
-  h += '<div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text3)">Accès réservé à l\'éditeur CoiffPro</div>';
+  h += '<div style="text-align:center;margin-top:16px;font-size:11px;color:var(--text3)">Accès réservé à l\'éditeur BeautyPro</div>';
   h += '</div></div>';
   el.innerHTML = h;
 }
@@ -257,8 +257,8 @@ async function doAdminLogin() {
   _adminUserId = result.data.user.id;
 
   // Vérifier que c'est bien un admin
-  var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).limit(1);
-  if (adminCheck.error || !adminCheck.data || adminCheck.data.length === 0) {
+  var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).single();
+  if (adminCheck.error || !adminCheck.data) {
     showAdminLoginError("Ce compte n'est pas administrateur.");
     await _adminSb.auth.signOut();
     return;
@@ -292,6 +292,9 @@ async function loadAdminData() {
       var colors = ["#c9a227","#7d3c98","#2d8cf0","#e67e22","#e74c3c","#1abc9c","#9b59b6","#34495e"];
       var hash = 0; for (var i = 0; i < (s.salon_id||"").length; i++) hash = (s.salon_id||"").charCodeAt(i) + ((hash << 5) - hash);
       var color = colors[Math.abs(hash) % colors.length];
+      // Extract metier from config_json if available
+      var metier="coiffure";
+      if(s.config_json){try{var cfg=typeof s.config_json==="string"?JSON.parse(s.config_json):s.config_json;metier=cfg.metier||"coiffure";}catch(e){}}
 
       return {
         id: s.salon_id,
@@ -311,9 +314,21 @@ async function loadAdminData() {
         tickets: Number(s.nb_tickets) || 0,
         ca: Number(s.ca_total) || 0,
         collabs: Number(s.nb_collabs) || 0,
+        metier: metier,
         color: color
       };
     });
+  }
+  // Fallback: load metier from salons table if not in view
+  if(SALONS.length>0&&!res.data[0].config_json){
+    var cfgRes=await _adminSb.from("salons").select("id,config_json");
+    if(cfgRes.data){
+      var cfgMap={};cfgRes.data.forEach(function(c){
+        var m="coiffure";if(c.config_json){try{var cfg=typeof c.config_json==="string"?JSON.parse(c.config_json):c.config_json;m=cfg.metier||"coiffure";}catch(e){}}
+        cfgMap[c.id]=m;
+      });
+      SALONS.forEach(function(s){if(cfgMap[s.id])s.metier=cfgMap[s.id];});
+    }
   }
 
   // Générer les alertes dynamiquement
@@ -378,7 +393,7 @@ async function adminUpdateSalon(salonId, data) {
   await _adminSb.from("salons").update(data).eq("id", salonId);
   // Log admin action
   await _adminSb.from("admin_log").insert({
-    admin_user_id: ((await _adminSb.from("admin_users").select("id").eq("user_id", _adminUserId).limit(1)).data[0]||{}).id,
+    admin_user_id: (await _adminSb.from("admin_users").select("id").eq("user_id", _adminUserId).single()).data.id,
     salon_id: salonId,
     action: Object.keys(data).join(","),
     details: JSON.stringify(data)
@@ -402,14 +417,14 @@ async function checkAdminSession() {
     // Pas de Supabase configuré → bloquer l'accès
     var el = document.getElementById("mainContent");
     document.querySelector(".sidebar").style.display = "none";
-    el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">🔒</div><h2 style="color:var(--gold);margin-bottom:12px">CoiffPro Admin</h2><p style="color:var(--text2);margin-bottom:8px">Le panel admin nécessite une connexion à Supabase.</p><p style="color:var(--text3);font-size:13px">Configurez ADMIN_SUPABASE_URL et ADMIN_SUPABASE_KEY dans le code source, puis rechargez la page.</p></div></div>';
+    el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">🔒</div><h2 style="color:var(--gold);margin-bottom:12px">BeautyPro Admin</h2><p style="color:var(--text2);margin-bottom:8px">Le panel admin nécessite une connexion à Supabase.</p><p style="color:var(--text3);font-size:13px">Configurez ADMIN_SUPABASE_URL et ADMIN_SUPABASE_KEY dans le code source, puis rechargez la page.</p></div></div>';
     return;
   }
   var session = await _adminSb.auth.getSession();
   if (session.data && session.data.session) {
     _adminUserId = session.data.session.user.id;
-    var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).limit(1);
-    if (adminCheck.data && adminCheck.data.length > 0) {
+    var adminCheck = await _adminSb.from("admin_users").select("*").eq("user_id", _adminUserId).single();
+    if (adminCheck.data) {
       _adminIsOnline = true;
       await loadAdminData();
       return;
@@ -603,7 +618,9 @@ function buildSalonRows(list,filter){
   list.forEach(function(s){
     if(filter!=="all"&&s.status!==filter)return;
     h+='<tr>';
-    h+='<td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+getInitials(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+s.ville+'</div></div></div></td>';
+    var metierIcos={coiffure:"\u2702\ufe0f",barbier:"\ud83d\udc88",esthetique:"\ud83d\udc86",ongles:"\ud83d\udc85",bien_etre:"\ud83e\uddd8"};
+    var mIco=metierIcos[s.metier]||"\u2702\ufe0f";
+    h+='<td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+getInitials(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+mIco+' '+s.ville+'</div></div></div></td>';
     h+='<td>'+planBadge(s.plan)+'</td>';
     h+='<td>'+statusBadge(s.status)+'</td>';
     h+='<td>'+s.clients+'</td>';
@@ -745,7 +762,7 @@ function actionSalon(id,action){
 
 function emailSalon(id){
   var s=getSalon(id);if(!s)return;
-  window.open("mailto:"+s.email+"?subject=CoiffPro - Votre abonnement","_blank");
+  window.open("mailto:"+s.email+"?subject=BeautyPro - Votre abonnement","_blank");
 }
 
 function addSalonModal(){
@@ -762,6 +779,16 @@ function addSalonModal(){
   h+='<input id="newSalonPass" type="text" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none;font-family:var(--mono)" placeholder="Minimum 6 caractères" value="'+generatePassword()+'"></div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Téléphone</label>';
   h+='<input id="newSalonTel" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="03 87 ..."></div>';
+  // Métier selector
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Corps de m\u00e9tier *</label>';
+  h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px" id="metierGrid">';
+  var metiers=[{k:"coiffure",l:"Coiffure",ico:"\u2702\ufe0f"},{k:"barbier",l:"Barbier",ico:"\ud83d\udc88"},{k:"esthetique",l:"Esth\u00e9tique",ico:"\ud83d\udc86"},{k:"ongles",l:"Ongles",ico:"\ud83d\udc85"},{k:"bien_etre",l:"Bien-\u00eatre",ico:"\ud83e\uddd8"}];
+  for(var mi=0;mi<metiers.length;mi++){var mt=metiers[mi];
+    h+='<button type="button" onclick="pickMetier(this,\''+mt.k+'\')" data-metier="'+mt.k+'" class="metier-btn" style="padding:10px 6px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);cursor:pointer;text-align:center'+(mi===0?';border-color:var(--gold);background:rgba(200,168,78,.1)':'')+'">';
+    h+='<div style="font-size:20px">'+mt.ico+'</div>';
+    h+='<div style="font-size:11px;font-weight:700;color:var(--text)">'+mt.l+'</div></button>';
+  }
+  h+='</div><input type="hidden" id="newSalonMetier" value="coiffure"></div>';
   h+='<div style="display:flex;gap:10px;margin-bottom:16px"><div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Plan</label>';
   h+='<select id="newSalonPlan" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px">';
   h+='<option value="essential">Essentiel (19€/mois)</option><option value="pro" selected>Pro (39€/mois)</option><option value="premium">Premium (59€/mois)</option></select></div>';
@@ -773,6 +800,12 @@ function addSalonModal(){
   h+='</div></div>';
   document.getElementById("detailOverlay").innerHTML=h;
   document.getElementById("detailOverlay").classList.add("open");
+}
+
+function pickMetier(el,key){
+  document.querySelectorAll(".metier-btn").forEach(function(b){b.style.borderColor="var(--border)";b.style.background="var(--bg3)";});
+  el.style.borderColor="var(--gold)";el.style.background="rgba(200,168,78,.1)";
+  document.getElementById("newSalonMetier").value=key;
 }
 
 function generatePassword(){
@@ -791,6 +824,7 @@ async function doCreateSalon(){
   var tel=document.getElementById("newSalonTel").value.trim();
   var plan=document.getElementById("newSalonPlan").value;
   var status=document.getElementById("newSalonStatus").value;
+  var metier=document.getElementById("newSalonMetier")?document.getElementById("newSalonMetier").value:"coiffure";
 
   if(!nom||!email||!pass){
     var el=document.getElementById("addSalonError");if(el){el.style.display="block";el.textContent="Nom, email et mot de passe sont obligatoires.";}return;
@@ -816,24 +850,27 @@ async function doCreateSalon(){
   var trialEnd=status==="trial"?new Date(Date.now()+14*24*60*60*1000).toISOString():null;
   var salonRes=await _adminSb.from("salons").insert({
     user_id:newUserId, nom:nom, ville:ville, email:email, tel:tel,
-    plan:plan, status:status, trial_end:trialEnd
-  }).select();
+    plan:plan, status:status, trial_end:trialEnd, metier:metier,
+    config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})
+  }).select().single();
 
   if(salonRes.error){
     var el=document.getElementById("addSalonError");if(el){el.style.display="block";el.textContent="Erreur salon: "+salonRes.error.message;}return;
   }
 
-  var newSalonId=salonRes.data[0].id;
+  var newSalonId=salonRes.data.id;
 
-  // 3. Créer 2 collaborateurs par défaut
+  // 3. Créer 2 collaborateurs par défaut selon le métier
+  var collabLabels={coiffure:["Coiffeur 1","Coiffeur 2"],barbier:["Barbier 1","Barbier 2"],esthetique:["Praticienne 1","Praticienne 2"],ongles:["Proth\u00e9siste 1","Proth\u00e9siste 2"],bien_etre:["Praticien 1","Praticien 2"]};
+  var clabs=collabLabels[metier]||collabLabels.coiffure;
   await _adminSb.from("collaborateurs").insert([
-    {salon_id:newSalonId,nom:"Coiffeur 1",initiales:"C1",couleur:"#c9a227"},
-    {salon_id:newSalonId,nom:"Coiffeur 2",initiales:"C2",couleur:"#7d3c98"}
+    {salon_id:newSalonId,nom:clabs[0],initiales:clabs[0].slice(0,2).toUpperCase(),couleur:"#c9a227"},
+    {salon_id:newSalonId,nom:clabs[1],initiales:clabs[1].slice(0,2).toUpperCase(),couleur:"#7d3c98"}
   ]);
 
   // 4. Log admin
   await _adminSb.from("admin_log").insert({
-    admin_user_id:((await _adminSb.from("admin_users").select("id").eq("user_id",_adminUserId).limit(1)).data[0]||{}).id,
+    admin_user_id:(await _adminSb.from("admin_users").select("id").eq("user_id",_adminUserId).single()).data.id,
     salon_id:newSalonId,
     action:"CREATE_SALON",
     details:"Salon "+nom+" créé - plan "+plan+" - email "+email
@@ -963,7 +1000,7 @@ function renderStripe(){
 
 // ===== SETTINGS =====
 function renderSettings(){
-  var h='<div class="topbar"><h1>Paramètres <span>Configuration CoiffPro</span></h1></div>';
+  var h='<div class="topbar"><h1>Paramètres <span>Configuration BeautyPro</span></h1></div>';
 
   h+='<div class="settings-grid">';
 
