@@ -106,7 +106,7 @@ a{color:var(--gold);text-decoration:none}
 <script>
 // Supabase
 var SB_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
-var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDIzNjMxNzAsImV4cCI6MjA1NzkzOTE3MH0.d4lMKOasHYxsJvJCrWKG_e2PvJqeAp0cXCOsSQMHHSI";
+var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 
 var SALONS=[];
 var REVIEWS={};
@@ -511,26 +511,16 @@ async function doMktLogin(){
   var pass=document.getElementById("mktPass").value;
   if(!email||!pass){showMktAuthErr("Remplissez email et mot de passe");return;}
   var hash=await hashPasswordMkt(pass);
-  console.log("[LOGIN] email:",email,"hash:",hash);
   try{
-    var url=SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email);
-    console.log("[LOGIN] URL:",url);
-    var r=await fetch(url,{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
-    console.log("[LOGIN] status:",r.status);
-    var raw=await r.text();
-    console.log("[LOGIN] raw:",raw.slice(0,300));
-    var data;try{data=JSON.parse(raw);}catch(pe){showMktAuthErr("Parse error: "+raw.slice(0,80));return;}
-    if(!Array.isArray(data)){showMktAuthErr("R\u00e9ponse: "+JSON.stringify(data).slice(0,80));return;}
-    if(data.length===0){showMktAuthErr("Aucun compte avec cet email");return;}
+    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
+    var data=await r.json();
+    if(!Array.isArray(data)||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
     var user=data[0];
-    console.log("[LOGIN] DB hash:",user.password_hash);
-    console.log("[LOGIN] Computed:",hash);
-    console.log("[LOGIN] Match:",user.password_hash===hash);
-    if(user.password_hash!==hash){showMktAuthErr("Mot de passe incorrect (hash mismatch)");return;}
+    if(user.password_hash!==hash){showMktAuthErr("Email ou mot de passe incorrect");return;}
     MKT_CLIENT=user;
     fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
     saveMktSession();closeMktAuth();render();
-  }catch(e){console.error("[LOGIN]",e);showMktAuthErr("Erreur: "+e.message);}
+  }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
 }
 
 // ========== MES RENDEZ-VOUS CROSS-SALONS ==========
