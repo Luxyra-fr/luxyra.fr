@@ -164,8 +164,37 @@ function getDemoSalons(){
   ];
 }
 
+var MKT_CLIENT=null;
+
+async function hashPasswordMkt(pass){
+  var enc=new TextEncoder().encode(pass);
+  var hash=await crypto.subtle.digest('SHA-256',enc);
+  return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+function loadMktSession(){try{var d=sessionStorage.getItem("bp_client");if(d){MKT_CLIENT=JSON.parse(d);}}catch(e){}}
+function saveMktSession(){try{sessionStorage.setItem("bp_client",JSON.stringify(MKT_CLIENT));}catch(e){}}
+function mktLogout(){MKT_CLIENT=null;try{sessionStorage.removeItem("bp_client");}catch(e){}render();}
+loadMktSession();
+
 function render(){
   var h='';
+  // Topbar with auth
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--bg2)">';
+  h+='<div style="font-family:var(--f2);font-size:18px;font-weight:900;color:var(--gold);cursor:pointer" onclick="resetFilters()"><svg width="22" height="22" viewBox="0 0 32 32" style="vertical-align:middle;margin-right:4px"><circle cx="16" cy="16" r="15" fill="none" stroke="#c8a84e" stroke-width="1.5"/><text x="16" y="21" text-anchor="middle" font-family="serif" font-size="18" font-weight="900" fill="#c8a84e">B</text></svg>BeautyPro</div>';
+  if(MKT_CLIENT){
+    h+='<div style="display:flex;align-items:center;gap:10px">';
+    h+='<button onclick="showMyRdvs()" style="padding:6px 14px;border-radius:8px;border:1px solid var(--gold-border);background:var(--gold-bg);color:var(--gold);font-weight:700;font-size:12px;cursor:pointer">\ud83d\udcc5 Mes RDV</button>';
+    h+='<div style="font-size:13px;color:var(--text2)">\ud83d\udc64 '+(MKT_CLIENT.prenom||MKT_CLIENT.nom)+'</div>';
+    h+='<button onclick="mktLogout()" style="padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text3);font-size:11px;cursor:pointer">D\u00e9connexion</button>';
+    h+='</div>';
+  } else {
+    h+='<div style="display:flex;gap:8px">';
+    h+='<button onclick="showMktAuth(false)" style="padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Connexion</button>';
+    h+='<button onclick="showMktAuth(true)" style="padding:6px 14px;border-radius:8px;border:none;background:var(--gold);color:#000;font-size:12px;font-weight:700;cursor:pointer">Cr\u00e9er un compte</button>';
+    h+='</div>';
+  }
+  h+='</div>';
+  
   // Hero
   h+='<div class="hero">';
   h+='<div class="hero-logo"><svg width="32" height="32" viewBox="0 0 32 32" style="vertical-align:middle;margin-right:6px"><circle cx="16" cy="16" r="15" fill="none" stroke="#c8a84e" stroke-width="1.5"/><text x="16" y="21" text-anchor="middle" font-family="Playfair Display,serif" font-size="18" font-weight="900" fill="#c8a84e">B</text></svg>BeautyPro</div>';
@@ -413,6 +442,134 @@ async function loadReviews(){
 // Init
 loadSalons();
 loadReviews();
+
+function resetFilters(){FILTER={q:"",city:"",type:"all"};render();}
+
+// ========== AUTH SYSTEM ==========
+function showMktAuth(isRegister){
+  var h='<div class="detail-overlay" onclick="closeMktAuth()">';
+  h+='<div class="detail-sheet" onclick="event.stopPropagation()" style="max-width:420px;border-radius:20px;margin:auto">';
+  h+='<div style="padding:24px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2 style="font-size:20px">'+(isRegister?"Cr\u00e9er un compte":"Connexion")+'</h2><button onclick="closeMktAuth()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">\u2715</button></div>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">'+(isRegister?"Un seul compte pour r\u00e9server dans tous les salons BeautyPro":"Connectez-vous \u00e0 votre compte BeautyPro")+'</div>';
+  h+='<div id="mktAuthErr" style="display:none;background:rgba(248,113,113,.1);color:#f87171;padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>';
+  if(isRegister){
+    h+='<div style="display:flex;gap:8px;margin-bottom:10px"><div style="flex:1"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Nom *</label><input id="mktNom" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Pr\u00e9nom</label><input id="mktPre" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div></div>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:10px"><div style="flex:1"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">T\u00e9l\u00e9phone *</label><input id="mktTel" type="tel" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Date de naissance</label><input id="mktDdn" type="date" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div></div>';
+  }
+  h+='<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Email *</label><input id="mktEmail" type="email" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div>';
+  h+='<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Mot de passe *</label><input id="mktPass" type="password" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div>';
+  if(isRegister){
+    h+='<div style="margin-bottom:10px"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Confirmer le mot de passe *</label><input id="mktPass2" type="password" style="width:100%;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px"></div>';
+    h+='<div style="padding:8px 0;border-top:1px solid var(--border);margin-top:4px">';
+    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;color:var(--text2)"><input type="checkbox" id="mktSms" checked> \ud83d\udcf1 J\u0027accepte de recevoir des SMS</label>';
+    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;color:var(--text2)"><input type="checkbox" id="mktEm" checked> \u2709\ufe0f J\u0027accepte de recevoir des emails</label>';
+    h+='</div>';
+  }
+  h+='<button onclick="'+(isRegister?"doMktRegister()":"doMktLogin()")+'" style="width:100%;padding:14px;border-radius:10px;background:var(--gold);color:#000;font-weight:800;font-size:15px;border:none;cursor:pointer;margin-top:12px">'+(isRegister?"Cr\u00e9er mon compte":"Se connecter")+'</button>';
+  h+='<div style="text-align:center;margin-top:12px;font-size:13px;color:var(--text3)">';
+  if(isRegister)h+='D\u00e9j\u00e0 un compte ? <a href="#" onclick="event.preventDefault();closeMktAuth();showMktAuth(false)" style="color:var(--gold);font-weight:600">Se connecter</a>';
+  else h+='Pas encore de compte ? <a href="#" onclick="event.preventDefault();closeMktAuth();showMktAuth(true)" style="color:var(--gold);font-weight:600">S\u0027inscrire</a>';
+  h+='</div>';
+  h+='</div></div></div>';
+  var el=document.createElement("div");el.id="mktAuthOverlay";el.innerHTML=h;
+  document.body.appendChild(el);
+}
+function closeMktAuth(){var el=document.getElementById("mktAuthOverlay");if(el)el.remove();}
+function showMktAuthErr(msg){var el=document.getElementById("mktAuthErr");if(el){el.textContent=msg;el.style.display="block";}}
+
+async function doMktRegister(){
+  var nom=document.getElementById("mktNom").value.trim();
+  var pre=document.getElementById("mktPre")?document.getElementById("mktPre").value.trim():"";
+  var tel=document.getElementById("mktTel").value.trim();
+  var ddn=document.getElementById("mktDdn")?document.getElementById("mktDdn").value:"";
+  var email=document.getElementById("mktEmail").value.trim().toLowerCase();
+  var pass=document.getElementById("mktPass").value;
+  var pass2=document.getElementById("mktPass2").value;
+  if(!nom||!tel||!email||!pass){showMktAuthErr("Remplissez tous les champs obligatoires");return;}
+  if(pass.length<6){showMktAuthErr("Mot de passe : 6 caract\u00e8res minimum");return;}
+  if(pass!==pass2){showMktAuthErr("Les mots de passe ne correspondent pas");return;}
+  var smsOk=document.getElementById("mktSms")?document.getElementById("mktSms").checked:false;
+  var emOk=document.getElementById("mktEm")?document.getElementById("mktEm").checked:false;
+  var hash=await hashPasswordMkt(pass);
+  try{
+    var check=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=id&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY}});
+    var existing=await check.json();
+    if(existing&&existing.length>0){showMktAuthErr("Un compte existe d\u00e9j\u00e0 avec cet email. Connectez-vous.");return;}
+    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro",{method:"POST",headers:{"apikey":SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"},body:JSON.stringify({email:email,password_hash:hash,nom:nom,prenom:pre,telephone:tel,date_naissance:ddn||null,sms_ok:smsOk,email_ok:emOk,email_verified:false})});
+    var data=await r.json();
+    if(data&&data.length>0){MKT_CLIENT=data[0];saveMktSession();closeMktAuth();render();}
+    else if(data&&data.id){MKT_CLIENT=data;saveMktSession();closeMktAuth();render();}
+    else{showMktAuthErr("Erreur lors de la cr\u00e9ation du compte");}
+  }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
+}
+
+async function doMktLogin(){
+  var email=document.getElementById("mktEmail").value.trim().toLowerCase();
+  var pass=document.getElementById("mktPass").value;
+  if(!email||!pass){showMktAuthErr("Remplissez email et mot de passe");return;}
+  var hash=await hashPasswordMkt(pass);
+  try{
+    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email)+"&password_hash=eq."+encodeURIComponent(hash),{headers:{"apikey":SB_KEY}});
+    var data=await r.json();
+    if(!data||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
+    MKT_CLIENT=data[0];
+    fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
+    saveMktSession();closeMktAuth();render();
+  }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
+}
+
+// ========== MES RENDEZ-VOUS CROSS-SALONS ==========
+async function showMyRdvs(){
+  if(!MKT_CLIENT)return;
+  var h='<div class="detail-overlay" onclick="closeMyRdvs()">';
+  h+='<div class="detail-sheet" onclick="event.stopPropagation()" style="max-width:500px;border-radius:20px;margin:auto">';
+  h+='<div style="padding:24px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2 style="font-size:20px">\ud83d\udcc5 Mes rendez-vous</h2><button onclick="closeMyRdvs()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">\u2715</button></div>';
+  h+='<div id="myRdvContent" style="text-align:center;padding:20px;color:var(--text3)">Chargement...</div>';
+  h+='</div></div></div>';
+  var el=document.createElement("div");el.id="myRdvsOverlay";el.innerHTML=h;
+  document.body.appendChild(el);
+  // Load all RDVs for this client across all salons
+  try{
+    var r=await fetch(SB_URL+"/rest/v1/rdv_online?select=*,salons(nom,ville,config_json)&client_beautypro_id=eq."+MKT_CLIENT.id+"&order=date_rdv.desc&limit=20",{headers:{"apikey":SB_KEY}});
+    var rdvs=await r.json();
+    // Fallback: also by email
+    var r2=await fetch(SB_URL+"/rest/v1/rdv_online?select=*,salons(nom,ville,config_json)&client_email=eq."+encodeURIComponent(MKT_CLIENT.email)+"&order=date_rdv.desc&limit=20",{headers:{"apikey":SB_KEY}});
+    var rdvs2=await r2.json();
+    if(Array.isArray(rdvs2)){rdvs2.forEach(function(r){var ex=false;if(Array.isArray(rdvs)){rdvs.forEach(function(x){if(x.id===r.id)ex=true;});}if(!ex&&Array.isArray(rdvs))rdvs.push(r);});}
+    renderMyRdvs(Array.isArray(rdvs)?rdvs:[]);
+  }catch(e){
+    var el2=document.getElementById("myRdvContent");
+    if(el2)el2.innerHTML='<div style="color:#f87171">Erreur de chargement</div>';
+  }
+}
+function closeMyRdvs(){var el=document.getElementById("myRdvsOverlay");if(el)el.remove();}
+
+function renderMyRdvs(rdvs){
+  var el=document.getElementById("myRdvContent");if(!el)return;
+  if(!rdvs.length){el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Aucun rendez-vous pour le moment</div>';return;}
+  var mois=["Jan","F\u00e9v","Mar","Avr","Mai","Jun","Jul","Ao\u00fb","Sep","Oct","Nov","D\u00e9c"];
+  var h='';
+  rdvs.forEach(function(r){
+    var dp=r.date_rdv?r.date_rdv.split("-"):["","",""];
+    var salonNom=r.salons?r.salons.nom:"Salon";
+    var stColors={pending:"#fb923c",confirmed:"#4ade80",done:"#60a5fa",cancelled:"#f87171"};
+    var stLabels={pending:"En attente",confirmed:"Confirm\u00e9",done:"Termin\u00e9",cancelled:"Annul\u00e9"};
+    var col=stColors[r.status]||"#888";
+    var lbl=stLabels[r.status]||r.status;
+    h+='<div style="display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)">';
+    h+='<div style="text-align:center;min-width:44px"><div style="font-size:20px;font-weight:900;line-height:1">'+parseInt(dp[2])+'</div><div style="font-size:11px;color:var(--text3)">'+mois[parseInt(dp[1])-1]+'</div></div>';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">'+r.service_nom+'</div>';
+    h+='<div style="font-size:12px;color:var(--text2)">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+' \u2022 '+salonNom+'</div></div>';
+    h+='<div style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;background:'+col+'18;color:'+col+'">'+lbl+'</div>';
+    h+='</div>';
+  });
+  el.innerHTML=h;
+}
+
 </script>
 </body>
 </html>

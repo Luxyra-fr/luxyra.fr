@@ -381,7 +381,8 @@ function showAuthModal(mode){
   if(!isLogin){
     h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="aRegNom" required></div>';
     h+='<div class="fg"><label>Pr\u00e9nom</label><input id="aRegPre"></div></div>';
-    h+='<div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
+    h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
+    h+='<div class="fg"><label>Date de naissance</label><input id="aRegDdn" type="date"></div></div>';
   }
   h+='<div class="fg"><label>Email *</label><input id="aEmail" type="email" required></div>';
   h+='<div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div>';
@@ -404,6 +405,7 @@ async function doClientRegister(){
   var nom=document.getElementById("aRegNom").value.trim();
   var pre=(document.getElementById("aRegPre")||{}).value||"";
   var tel=document.getElementById("aRegTel").value.trim();
+  var ddn=document.getElementById("aRegDdn")?document.getElementById("aRegDdn").value:"";
   var email=document.getElementById("aEmail").value.trim().toLowerCase();
   var pass=document.getElementById("aPass").value;
   var pass2=document.getElementById("aPass2").value;
@@ -411,19 +413,27 @@ async function doClientRegister(){
   if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
   var hash=await hashPassword(pass);
-  // Check if email already exists
-  var check=await sb.from("clients_online").select("id").eq("salon_id",salonId).eq("email",email);
-  if(check.data&&check.data.length>0){showAuthError("Un compte existe d\u00e9j\u00e0 avec cet email");return;}
   var smsOk=document.getElementById("aRegSms")?document.getElementById("aRegSms").checked:false;
   var emOk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
-  var r=await sb.from("clients_online").insert({
-    salon_id:salonId,email:email,password_hash:hash,
+  
+  // Check if email already exists in global accounts
+  var check=await sb.from("clients_beautypro").select("id").eq("email",email);
+  if(check.data&&check.data.length>0){showAuthError("Un compte BeautyPro existe d\u00e9j\u00e0 avec cet email. Connectez-vous.");return;}
+  
+  // Create global BeautyPro account
+  var r=await sb.from("clients_beautypro").insert({
+    email:email,password_hash:hash,
     nom:nom,prenom:pre.trim(),telephone:tel,
-    sms_ok:smsOk,email_ok:emOk
-  ,email_verified:false,verification_code:Math.random().toString(36).slice(2,8).toUpperCase()}).select();
+    date_naissance:ddn||null,
+    sms_ok:smsOk,email_ok:emOk,
+    email_verified:false,
+    verification_code:Math.random().toString(36).slice(2,8).toUpperCase()
+  }).select();
   if(r.error){showAuthError(r.error.message);return;}
   if(r.data&&r.data[0]){
     CLIENT=r.data[0];
+    // Auto-create link to this salon
+    await ensureClientSalon(CLIENT.id);
     saveClientSession();
     closeAuth();
     renderSite();
@@ -435,14 +445,31 @@ async function doClientLogin(){
   var pass=document.getElementById("aPass").value;
   if(!email||!pass){showAuthError("Remplissez email et mot de passe");return;}
   var hash=await hashPassword(pass);
-  var r=await sb.from("clients_online").select("*").eq("salon_id",salonId).eq("email",email).eq("password_hash",hash);
+  // Login against global BeautyPro accounts (no salon_id filter)
+  var r=await sb.from("clients_beautypro").select("*").eq("email",email).eq("password_hash",hash);
   if(!r.data||r.data.length===0){showAuthError("Email ou mot de passe incorrect");return;}
   CLIENT=r.data[0];
   // Update last login
-  sb.from("clients_online").update({last_login:new Date().toISOString()}).eq("id",CLIENT.id);
+  sb.from("clients_beautypro").update({last_login:new Date().toISOString()}).eq("id",CLIENT.id);
+  // Auto-create link to this salon if not exists
+  await ensureClientSalon(CLIENT.id);
   saveClientSession();
   closeAuth();
   renderSite();
+}
+
+async function ensureClientSalon(clientId){
+  // Create client_salon relationship if it doesn't exist for this salon
+  if(!salonId)return;
+  var check=await sb.from("client_salon").select("id").eq("client_id",clientId).eq("salon_id",salonId);
+  if(!check.data||check.data.length===0){
+    await sb.from("client_salon").insert({
+      client_id:clientId,
+      salon_id:salonId,
+      sms_ok:CLIENT.sms_ok||false,
+      email_ok:CLIENT.email_ok||false
+    });
+  }
 }
 
 function doClientLogout(){
@@ -461,9 +488,10 @@ function loadClientSession(){
 
 async function loadClientRDVs(){
   if(!CLIENT)return;
-  var r=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_online_id",CLIENT.id).order("date_rdv",{ascending:false});
+  // Primary: query by client_beautypro_id
+  var r=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_beautypro_id",CLIENT.id).order("date_rdv",{ascending:false});
   if(r.data)CLIENT_RDVS=r.data;
-  // Also load by email as fallback
+  // Fallback: also load by email (for old bookings before migration)
   var r2=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_email",CLIENT.email).order("date_rdv",{ascending:false});
   if(r2.data){
     r2.data.forEach(function(rdv){
@@ -1008,7 +1036,7 @@ async function submitBooking(){
   var data={
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
-    client_online_id:CLIENT?CLIENT.id:null,
+    client_online_id:CLIENT?CLIENT.id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
     service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
@@ -1041,7 +1069,7 @@ async function submitBooking(){
 // Save client profile
 async function saveClientProfile(){
   if(!CLIENT)return;
-  await sb.from("clients_online").update({nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone}).eq("id",CLIENT.id);
+  await sb.from("clients_beautypro").update({nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone}).eq("id",CLIENT.id);
   saveClientSession();
   alert("Informations mises \u00e0 jour !");
 }
@@ -1183,7 +1211,7 @@ async function processStripePayment(){
     var data={
       salon_id:salonId,
       client_nom:pb.nom,client_prenom:pb.pre,client_tel:pb.tel,client_email:pb.email,
-      client_online_id:CLIENT?CLIENT.id:null,
+      client_online_id:CLIENT?CLIENT.id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
       service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
