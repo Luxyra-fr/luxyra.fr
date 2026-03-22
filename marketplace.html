@@ -123,7 +123,7 @@ var TYPES=[
 
 async function loadSalons(){
   try{
-    var resp=await fetch(SB_URL+"/rest/v1/salons_public?select=id,nom,metier,config_json,note_moyenne,nb_avis&apikey="+SB_KEY,{headers:{"apikey":SB_KEY}});
+    var resp=await fetch(SB_URL+"/rest/v1/salons_public?select=id,nom,metier,config_json,note_moyenne,nb_avis&apikey="+SB_KEY,{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     if(!resp.ok)throw new Error(resp.status);
     var data=await resp.json();
     SALONS=data.map(function(s){
@@ -393,7 +393,7 @@ async function submitReview(salonId){
   try{
     await fetch(SB_URL+"/rest/v1/avis_salon",{
       method:"POST",
-      headers:{"apikey":SB_KEY,"Content-Type":"application/json","Prefer":"return=minimal"},
+      headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=minimal"},
       body:JSON.stringify({salon_id:salonId,nom:name,note:note,texte:text,date:new Date().toISOString().slice(0,10)})
     });
   }catch(e){console.error(e);}
@@ -415,7 +415,7 @@ async function submitReview(salonId){
 
 async function loadReviews(){
   try{
-    var resp=await fetch(SB_URL+"/rest/v1/avis_salon?select=salon_id,nom,note,texte,date&order=date.desc&limit=200&apikey="+SB_KEY,{headers:{"apikey":SB_KEY}});
+    var resp=await fetch(SB_URL+"/rest/v1/avis_salon?select=salon_id,nom,note,texte,date&order=date.desc&limit=200&apikey="+SB_KEY,{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     if(!resp.ok)throw new Error(resp.status);
     var data=await resp.json();
     if(Array.isArray(data)){
@@ -495,10 +495,10 @@ async function doMktRegister(){
   var emOk=document.getElementById("mktEm")?document.getElementById("mktEm").checked:false;
   var hash=await hashPasswordMkt(pass);
   try{
-    var check=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=id&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY}});
+    var check=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=id&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     var existing=await check.json();
     if(existing&&existing.length>0){showMktAuthErr("Un compte existe d\u00e9j\u00e0 avec cet email. Connectez-vous.");return;}
-    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro",{method:"POST",headers:{"apikey":SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"},body:JSON.stringify({email:email,password_hash:hash,nom:nom,prenom:pre,telephone:tel,date_naissance:ddn||null,sms_ok:smsOk,email_ok:emOk,email_verified:false})});
+    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro",{method:"POST",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"},body:JSON.stringify({email:email,password_hash:hash,nom:nom,prenom:pre,telephone:tel,date_naissance:ddn||null,sms_ok:smsOk,email_ok:emOk,email_verified:false})});
     var data=await r.json();
     if(data&&data.length>0){MKT_CLIENT=data[0];saveMktSession();closeMktAuth();render();}
     else if(data&&data.id){MKT_CLIENT=data;saveMktSession();closeMktAuth();render();}
@@ -512,11 +512,13 @@ async function doMktLogin(){
   if(!email||!pass){showMktAuthErr("Remplissez email et mot de passe");return;}
   var hash=await hashPasswordMkt(pass);
   try{
-    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email)+"&password_hash=eq."+encodeURIComponent(hash),{headers:{"apikey":SB_KEY}});
+    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     var data=await r.json();
-    if(!data||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
-    MKT_CLIENT=data[0];
-    fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
+    if(!Array.isArray(data)||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
+    var user=data[0];
+    if(user.password_hash!==hash){showMktAuthErr("Email ou mot de passe incorrect");return;}
+    MKT_CLIENT=user;
+    fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
     saveMktSession();closeMktAuth();render();
   }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
 }
@@ -534,10 +536,10 @@ async function showMyRdvs(){
   document.body.appendChild(el);
   // Load all RDVs for this client across all salons
   try{
-    var r=await fetch(SB_URL+"/rest/v1/rdv_online?select=*,salons(nom,ville,config_json)&client_beautypro_id=eq."+MKT_CLIENT.id+"&order=date_rdv.desc&limit=20",{headers:{"apikey":SB_KEY}});
+    var r=await fetch(SB_URL+"/rest/v1/rdv_online?select=*,salons(nom,ville,config_json)&client_beautypro_id=eq."+MKT_CLIENT.id+"&order=date_rdv.desc&limit=20",{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     var rdvs=await r.json();
     // Fallback: also by email
-    var r2=await fetch(SB_URL+"/rest/v1/rdv_online?select=*,salons(nom,ville,config_json)&client_email=eq."+encodeURIComponent(MKT_CLIENT.email)+"&order=date_rdv.desc&limit=20",{headers:{"apikey":SB_KEY}});
+    var r2=await fetch(SB_URL+"/rest/v1/rdv_online?select=*,salons(nom,ville,config_json)&client_email=eq."+encodeURIComponent(MKT_CLIENT.email)+"&order=date_rdv.desc&limit=20",{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     var rdvs2=await r2.json();
     if(Array.isArray(rdvs2)){rdvs2.forEach(function(r){var ex=false;if(Array.isArray(rdvs)){rdvs.forEach(function(x){if(x.id===r.id)ex=true;});}if(!ex&&Array.isArray(rdvs))rdvs.push(r);});}
     renderMyRdvs(Array.isArray(rdvs)?rdvs:[]);
