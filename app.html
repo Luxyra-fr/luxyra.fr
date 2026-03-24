@@ -202,7 +202,7 @@ body{max-width:100%;margin:0 auto;}
 <div class="app-bg" id="appBg"></div>
 <div class="header" id="hdr" style="display:none"></div><div id="app"></div><div id="modal"></div>
 <script src="supabase.min.js"></script>
-<script src="luxyra-supabase.js"></script>
+<script>document.write('<script src="luxyra-supabase.js?v='+new Date().toISOString().slice(0,10)+'"><\/script>');</script>
 <script>
 console.log("COIFFPRO v6.3");
 
@@ -3218,19 +3218,23 @@ async function saveSubdomain(){
   if(!sub||sub.length<3){statusEl.innerHTML='\u274c Minimum 3 caract\u00e8res (lettres, chiffres, tirets)';statusEl.style.color="#f87171";return;}
   if(sub.length>30){statusEl.innerHTML='\u274c Maximum 30 caract\u00e8res';statusEl.style.color="#f87171";return;}
   statusEl.innerHTML="V\u00e9rification...";statusEl.style.color="var(--text3)";
-  // Check availability
   try{
-    var check=await _sb.from("salons").select("id").eq("subdomain",sub);
+    // Check availability
+    var check=await _sb.from("salons").select("id,subdomain").eq("subdomain",sub);
+    console.log("CHECK result:",JSON.stringify(check));
+    if(check.error){statusEl.innerHTML='\u274c Erreur v\u00e9rif: '+check.error.message;statusEl.style.color="#f87171";return;}
     if(check.data&&check.data.length>0&&check.data[0].id!==_salonId){
-      statusEl.innerHTML='\u274c "'+sub+'.luxyra.fr" est d\u00e9j\u00e0 pris. Essayez un autre nom.';statusEl.style.color="#f87171";return;
+      statusEl.innerHTML='\u274c "'+sub+'.luxyra.fr" est d\u00e9j\u00e0 pris.';statusEl.style.color="#f87171";return;
     }
     // Save
-    var upd=await _sb.from("salons").update({subdomain:sub}).eq("id",_salonId);
-    if(upd.error){statusEl.innerHTML='\u274c Erreur : '+upd.error.message;statusEl.style.color="#f87171";return;}
+    console.log("Saving subdomain",sub,"for salon",_salonId);
+    var upd=await _sb.from("salons").update({subdomain:sub}).eq("id",_salonId).select();
+    console.log("UPDATE result:",JSON.stringify(upd));
+    if(upd.error){statusEl.innerHTML='\u274c Erreur save: '+upd.error.message;statusEl.style.color="#f87171";return;}
     window.SALON.subdomain=sub;
     statusEl.innerHTML='\u2705 Enregistr\u00e9 ! Votre site : <a href="https://'+sub+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+sub+'.luxyra.fr</a>';
     statusEl.style.color="#4ade80";
-  }catch(e){statusEl.innerHTML='\u274c Erreur r\u00e9seau';statusEl.style.color="#f87171";}
+  }catch(e){console.error("saveSubdomain ERROR:",e);statusEl.innerHTML='\u274c Erreur: '+e.message;statusEl.style.color="#f87171";}
 }
 
 function saveSalonInfo(){
