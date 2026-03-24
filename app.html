@@ -3211,6 +3211,28 @@ function handleLogoUpload(input){
   reader.readAsDataURL(input.files[0]);
 }
 
+// Save subdomain choice
+async function saveSubdomain(){
+  var sub=document.getElementById("subdomainField").value.trim().toLowerCase().replace(/[^a-z0-9-]/g,"");
+  var statusEl=document.getElementById("subdomainStatus");
+  if(!sub||sub.length<3){statusEl.innerHTML='\u274c Minimum 3 caract\u00e8res (lettres, chiffres, tirets)';statusEl.style.color="#f87171";return;}
+  if(sub.length>30){statusEl.innerHTML='\u274c Maximum 30 caract\u00e8res';statusEl.style.color="#f87171";return;}
+  statusEl.innerHTML="V\u00e9rification...";statusEl.style.color="var(--text3)";
+  // Check availability
+  try{
+    var check=await _sb.from("salons").select("id").eq("subdomain",sub);
+    if(check.data&&check.data.length>0&&check.data[0].id!==_salonId){
+      statusEl.innerHTML='\u274c "'+sub+'.luxyra.fr" est d\u00e9j\u00e0 pris. Essayez un autre nom.';statusEl.style.color="#f87171";return;
+    }
+    // Save
+    var upd=await _sb.from("salons").update({subdomain:sub}).eq("id",_salonId);
+    if(upd.error){statusEl.innerHTML='\u274c Erreur : '+upd.error.message;statusEl.style.color="#f87171";return;}
+    window.SALON.subdomain=sub;
+    statusEl.innerHTML='\u2705 Enregistr\u00e9 ! Votre site : <a href="https://'+sub+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+sub+'.luxyra.fr</a>';
+    statusEl.style.color="#4ade80";
+  }catch(e){statusEl.innerHTML='\u274c Erreur r\u00e9seau';statusEl.style.color="#f87171";}
+}
+
 function saveSalonInfo(){
   var S=window.SALON;
   if(!S)return;
@@ -3568,7 +3590,7 @@ function rSettings(){
   }
   
   else if(settTab==="salon"){
-    if(!window.SALON)window.SALON={nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||""};
+    if(!window.SALON)window.SALON={nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||""};
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos établissement</div><div class="card">';
     // Logo preview + upload
@@ -3619,14 +3641,28 @@ function rSettings(){
     }
     h+='</div>';
     
-    // URL du site
+    // URL du site + sous-domaine
     if(typeof _salonId!=="undefined"&&_salonId){
-      h+='<div class="card"><div class="ct">Lien de votre site</div>';
+      h+='<div class="card"><div class="ct">Adresse de votre site</div>';
+      // Sous-domaine personnalisé
+      var curSub=window.SALON&&window.SALON.subdomain||"";
+      h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Choisissez votre adresse personnalis\u00e9e</label>';
+      h+='<div style="display:flex;align-items:center;gap:0;margin-bottom:8px">';
+      h+='<input id="subdomainField" value="'+curSub+'" placeholder="mon-etablissement" style="flex:1;padding:12px;font-size:14px;background:var(--bg);border:1px solid rgba(200,168,78,.15);border-radius:10px 0 0 10px;color:var(--gold);outline:none" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9-]/g,&quot;&quot;)">';
+      h+='<div style="padding:12px 14px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-left:none;border-radius:0 10px 10px 0;font-size:13px;color:var(--text3);white-space:nowrap">.luxyra.fr</div>';
+      h+='</div>';
+      h+='<div id="subdomainStatus" style="font-size:11px;color:var(--text3);margin-bottom:10px">'+(curSub?'\u2705 Votre site : <a href="https://'+curSub+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+curSub+'.luxyra.fr</a>':'Tapez le nom souhait\u00e9 pour votre site')+'</div>';
+      h+='<button class="btn bs" style="font-size:13px;padding:10px 20px" onclick="saveSubdomain()">Enregistrer</button>';
+      h+='</div>';
+      // Lien direct (fallback)
       var siteUrl=window.location.origin+"/site.html?s="+_salonId;
-      h+='<div style="margin-top:8px;display:flex;gap:8px;align-items:center">';
-      h+='<input id="siteUrlField" value="'+siteUrl+'" readonly style="flex:1;font-size:12px;padding:12px;background:var(--bg);border-radius:10px;color:var(--gold);border:1px solid rgba(200,168,78,.15)">';
-      h+='<button class="btn bs" style="font-size:12px;white-space:nowrap;padding:12px 16px" onclick="navigator.clipboard.writeText(document.getElementById(\'siteUrlField\').value);this.textContent=\'Copi\u00e9 !\';var b=this;setTimeout(function(){b.textContent=\'Copier\'},2000)">Copier</button>';
+      h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06)">';
+      h+='<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:6px">Lien direct (fonctionne toujours)</label>';
+      h+='<div style="display:flex;gap:8px;align-items:center">';
+      h+='<input id="siteUrlField" value="'+siteUrl+'" readonly style="flex:1;font-size:11px;padding:10px;background:var(--bg);border-radius:10px;color:var(--text3);border:1px solid rgba(255,255,255,.06)">';
+      h+='<button class="btn bs" style="font-size:11px;white-space:nowrap;padding:10px 14px" onclick="navigator.clipboard.writeText(document.getElementById(\'siteUrlField\').value);this.textContent=\'Copi\u00e9 !\';var b=this;setTimeout(function(){b.textContent=\'Copier\'},2000)">Copier</button>';
       h+='</div></div>';
+      h+='</div>';
     }
     
     // === PERSONNALISATION VISUELLE ===
