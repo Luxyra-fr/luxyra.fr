@@ -1,4 +1,4 @@
-var CACHE_NAME = 'luxyra-v7';
+var CACHE_NAME = 'luxyra-v8';
 
 self.addEventListener('install', function(e) {
   self.skipWaiting();
@@ -17,11 +17,15 @@ self.addEventListener('activate', function(e) {
   );
 });
 
+self.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', function(e) {
-  // Network first - always fetch fresh, cache as fallback only
   e.respondWith(
     fetch(e.request).then(function(response) {
-      // Cache the fresh response
       if (response.status === 200 && e.request.method === 'GET') {
         var clone = response.clone();
         caches.open(CACHE_NAME).then(function(cache) {
@@ -30,7 +34,6 @@ self.addEventListener('fetch', function(e) {
       }
       return response;
     }).catch(function() {
-      // Offline fallback
       return caches.match(e.request);
     })
   );
