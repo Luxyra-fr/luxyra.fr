@@ -121,7 +121,7 @@ async function doResetPwd() {
   if (!_sb) return;
   var email = document.getElementById("loginEmail").value.trim();
   if (!email) { showLoginError("Entrez votre email d'abord"); return; }
-  var result = await _sb.auth.resetPasswordForEmail(email);
+  var result = await _sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/reset-password.html' });
   if (result.error) { showLoginError(result.error.message); }
   else { showLoginError("Email de réinitialisation envoyé !"); }
 }
