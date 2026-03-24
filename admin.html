@@ -186,6 +186,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
     <div class="sb-item active" onclick="nav('dashboard')"><span class="icon">📊</span>Dashboard</div>
     <div class="sb-item" onclick="nav('salons')"><span class="icon">💇</span>Établissements<span class="sb-badge" id="badgeSalons"></span></div>
     <div class="sb-item" onclick="nav('alerts')"><span class="icon">🔔</span>Alertes<span class="sb-badge" id="badgeAlerts"></span></div>
+    <div class="sb-item" onclick="nav('demandes')"><span class="icon">📩</span>Demandes<span class="sb-badge" id="badgeDemandes"></span></div>
     <div class="sb-section">Finances</div>
     <div class="sb-item" onclick="nav('revenue')"><span class="icon">💰</span>Revenus</div>
     <div class="sb-item" onclick="nav('stripe')"><span class="icon">💳</span>Stripe</div>
@@ -194,7 +195,7 @@ tr:hover td{background:rgba(255,255,255,.02);}
     <div class="sb-item" onclick="nav('nf525')"><span class="icon">🛡️</span>NF525 / RGPD</div>
   </div>
   <div class="sb-footer">
-    <div><strong>Luxyra Admin</strong> v2.0</div>
+    <div><strong>Luxyra Admin</strong> v3.0</div>
     <div style="font-family:var(--mono)">Alexandre J. — 2026</div>
     <div style="margin-top:6px"><span id="onlineStatus" style="font-size:10px"></span></div>
     <button onclick="doAdminLogout()" style="margin-top:8px;width:100%;padding:6px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text3);font-size:12px;cursor:pointer;font-family:var(--f1)">🚪 Déconnexion</button>
@@ -237,7 +238,7 @@ function showAdminLogin() {
   h += '<div style="font-size:12px;color:var(--text3);font-family:var(--mono);letter-spacing:2px">ADMIN PANEL</div></div>';
   h += '<div id="adminLoginError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>';
   h += '<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Email admin</label>';
-  h += '<input id="adminEmail" type="email" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="contact@luxyra.fr"></div>';
+  h += '<input id="adminEmail" type="email" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="support@luxyra.fr"></div>';
   h += '<div style="margin-bottom:20px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mot de passe</label>';
   h += '<input id="adminPass" type="password" style="width:100%;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="••••••••" onkeydown="if(event.key===\'Enter\')doAdminLogin()"></div>';
   h += '<button onclick="doAdminLogin()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Se connecter</button>';
@@ -387,6 +388,7 @@ async function loadAdminData() {
   document.querySelector(".sidebar").style.display = "flex";
   document.getElementById("mainContent").style.marginLeft = "";
   render();
+  loadDemandes();
 }
 
 // ===== ADMIN ACTIONS (Supabase) =====
@@ -531,7 +533,7 @@ function renderDashboard(){
   SALONS.forEach(function(s){totalClients+=s.clients;totalTickets+=s.tickets;totalCA+=s.ca;});
 
   var h='<div class="topbar"><h1>Dashboard <span>Vue d\'ensemble</span></h1>';
-  h+='<div class="topbar-actions"><button class="tb-btn primary" onclick="addSalonModal()">+ Nouveau salon</button></div></div>';
+  h+='<div class="topbar-actions"><button class="tb-btn primary" onclick="addSalonModal()">+ Nouvel établissement</button></div></div>';
 
   // KPIs
   h+='<div class="kpi-row">';
@@ -595,12 +597,12 @@ function renderDashboard(){
 
 // ===== SALONS =====
 function renderSalons(){
-  var h='<div class="topbar"><h1>Salons <span>'+SALONS.length+' comptes</span></h1>';
-  h+='<div class="topbar-actions"><button class="tb-btn primary" onclick="addSalonModal()">+ Nouveau salon</button></div></div>';
+  var h='<div class="topbar"><h1>Établissements <span>'+SALONS.length+' comptes</span></h1>';
+  h+='<div class="topbar-actions"><button class="tb-btn primary" onclick="addSalonModal()">+ Nouvel établissement</button></div></div>';
 
-  h+='<div class="search-box"><span>🔍</span><input id="searchInput" placeholder="Rechercher un salon..." oninput="filterSalons()"></div>';
+  h+='<div class="search-box"><span>🔍</span><input id="searchInput" placeholder="Rechercher..." oninput="filterSalons()"></div>';
 
-  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">💇 Liste des salons</div>';
+  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">💇 Liste des établissements</div>';
   h+='<div class="table-filter">';
   var filters=[{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"}];
   filters.forEach(function(f){
@@ -730,7 +732,7 @@ function actionSalon(id,action){
       adminUpdateSalon(id, {trial_end: d.toISOString()});
     }
     else if(action==="change_plan"){ alert("Changement de plan → à connecter via Stripe"); }
-    else if(action==="remind"){ alert("Email de relance envoyé à " + s.email + " (à connecter)"); }
+    else if(action==="remind"){ alert("Relance envoyée à " + s.email + " (à connecter)"); }
     else if(action==="reset_pwd"){
       _adminSb.auth.resetPasswordForEmail(s.email).then(function(){
         alert("Lien de réinitialisation envoyé à " + s.email);
@@ -746,9 +748,9 @@ function actionSalon(id,action){
   var msgs={
     "extend_trial":"Essai de "+s.nom+" prolongé de 7 jours !",
     "change_plan":"Changement de plan pour "+s.nom+" — fonctionnalité Stripe à connecter",
-    "remind":"Email de relance envoyé à "+s.email,
-    "reactivate":"Salon "+s.nom+" réactivé !",
-    "suspend":"Salon "+s.nom+" suspendu.",
+    "remind":"Relance envoyée à "+s.email,
+    "reactivate":"Établissement "+s.nom+" réactivé !",
+    "suspend":"Établissement "+s.nom+" suspendu.",
     "reset_pwd":"Lien de réinitialisation envoyé à "+s.email,
     "export_data":"Export RGPD de "+s.nom+" en cours de génération...",
     "delete":"⚠️ Suppression de "+s.nom+" — confirmation requise (non implémenté en démo)"
@@ -769,14 +771,14 @@ function emailSalon(id){
 
 function addSalonModal(){
   var h='<div class="mbg" onclick="closeModal()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:480px;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:24px;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:300;max-height:90vh;overflow-y:auto">';
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">+ Nouveau salon</h2><button onclick="closeModal()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">✕</button></div>';
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">+ Nouvel établissement</h2><button onclick="closeModal()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">✕</button></div>';
   h+='<div id="addSalonError" style="display:none;background:var(--red-bg);color:var(--red);padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>';
-  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nom du salon *</label>';
-  h+='<input id="newSalonNom" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="Ex: Excellence Coiffure"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nom *</label>';
+  h+='<input id="newSalonNom" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="Ex: Excellence Coiffure, Institut Zen..."></div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Ville</label>';
   h+='<input id="newSalonVille" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="Ex: Sarreguemines"></div>';
-  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Email du salon (= identifiant de connexion) *</label>';
-  h+='<input id="newSalonEmail" type="email" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="contact@salon.fr"></div>';
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Email (= identifiant de connexion) *</label>';
+  h+='<input id="newSalonEmail" type="email" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none" placeholder="contact@monactivite.fr"></div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mot de passe initial *</label>';
   h+='<input id="newSalonPass" type="text" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none;font-family:var(--mono)" placeholder="Minimum 6 caractères" value="'+generatePassword()+'"></div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Téléphone</label>';
@@ -793,12 +795,12 @@ function addSalonModal(){
   h+='</div><input type="hidden" id="newSalonMetier" value="coiffure"></div>';
   h+='<div style="display:flex;gap:10px;margin-bottom:16px"><div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Plan</label>';
   h+='<select id="newSalonPlan" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px">';
-  h+='<option value="essential">Essentiel (19€/mois)</option><option value="pro" selected>Pro (39€/mois)</option><option value="premium">Premium (59€/mois)</option></select></div>';
+  h+='<option value="essential">Essentiel (14,99€/mois)</option><option value="pro" selected>Pro (24,99€/mois)</option></select></div>';
   h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Statut</label>';
   h+='<select id="newSalonStatus" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px">';
   h+='<option value="trial">Essai 14j</option><option value="active">Actif</option></select></div></div>';
-  h+='<button onclick="doCreateSalon()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Créer le salon</button>';
-  h+='<div style="margin-top:12px;font-size:11px;color:var(--text3);text-align:center">Le salon recevra un email de confirmation avec ses identifiants.</div>';
+  h+='<button onclick="doCreateSalon()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Créer le compte</button>';
+  h+='<div style="margin-top:12px;font-size:11px;color:var(--text3);text-align:center">Le professionnel recevra un email de confirmation avec ses identifiants.</div>';
   h+='</div></div>';
   document.getElementById("detailOverlay").innerHTML=h;
   document.getElementById("detailOverlay").classList.add("open");
@@ -848,7 +850,7 @@ async function doCreateSalon(){
   }
   var newUserId=authRes.data.user.id;
 
-  // 2. Créer le salon
+  // 2. Créer le compte
   var trialEnd=status==="trial"?new Date(Date.now()+14*24*60*60*1000).toISOString():null;
   var salonRes=await _adminSb.from("salons").insert({
     user_id:newUserId, nom:nom, ville:ville, email:email, tel:tel,
@@ -875,12 +877,12 @@ async function doCreateSalon(){
     admin_user_id:(await _adminSb.from("admin_users").select("id").eq("user_id",_adminUserId).single()).data.id,
     salon_id:newSalonId,
     action:"CREATE_SALON",
-    details:"Salon "+nom+" créé - plan "+plan+" - email "+email
+    details:"Établissement "+nom+" créé - plan "+plan+" - email "+email
   });
 
   // 5. Fermer et recharger
   closeModal();
-  alert("Salon \""+nom+"\" créé avec succès !\n\nIdentifiants :\nEmail : "+email+"\nMot de passe : "+pass+"\n\nCommuniquez ces identifiants au salon.");
+  alert("Établissement \""+nom+"\" créé avec succès !\n\nIdentifiants :\nEmail : "+email+"\nMot de passe : "+pass+"\n\nCommuniquez ces identifiants au professionnel.");
   await loadAdminData();
 }
 
@@ -919,7 +921,7 @@ function renderRevenue(){
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtMoney(mrr)+'</div><div class="kpi-sub">Mensuel : '+fmtMoney(mrrMonthly)+' | Annuel : '+fmtMoney(mrrAnnual)+'</div><div class="kpi-icon">💰</div></div>';
   h+='<div class="kpi"><div class="kpi-label">ARR (projection annuelle)</div><div class="kpi-value" style="color:var(--green)">'+fmtMoney(arr)+'</div><div class="kpi-sub">Basé sur le MRR actuel</div><div class="kpi-icon">📈</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Revenu moyen / salon</div><div class="kpi-value">'+fmtMoney(Math.round(mrr/Math.max(1,SALONS.filter(function(s){return s.status==="active";}).length)))+'</div><div class="kpi-sub">ARPU mensuel</div><div class="kpi-icon">💇</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Revenu moyen / compte</div><div class="kpi-value">'+fmtMoney(Math.round(mrr/Math.max(1,SALONS.filter(function(s){return s.status==="active";}).length)))+'</div><div class="kpi-sub">ARPU mensuel</div><div class="kpi-icon">💇</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Commission Stripe estimée</div><div class="kpi-value" style="color:var(--red)">~'+fmtMoney(Math.round(mrr*0.014+SALONS.filter(function(s){return s.status==="active";}).length*0.25))+'</div><div class="kpi-sub">1.4% + 0.25€ par transaction</div><div class="kpi-icon">💳</div></div>';
   h+='</div>';
 
@@ -941,8 +943,8 @@ function renderRevenue(){
 
   // Simulation
   h+='<div class="chart-card"><div class="chart-title">🔮 Simulation de croissance</div>';
-  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Projection si tu ajoutes 5 salons Pro / mois :</div>';
-  var projections=[{m:"Mois 3",s:15,rev:15*39},{m:"Mois 6",s:30,rev:30*39},{m:"Mois 12",s:60,rev:60*39},{m:"Mois 24",s:120,rev:120*39}];
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Projection si tu ajoutes 5 comptes Pro / mois :</div>';
+  var projections=[{m:"Mois 3",s:15,rev:Math.round(15*24.99)},{m:"Mois 6",s:30,rev:Math.round(30*24.99)},{m:"Mois 12",s:60,rev:Math.round(60*24.99)},{m:"Mois 24",s:120,rev:Math.round(120*24.99)}];
   var maxP=projections[projections.length-1].rev;
   projections.forEach(function(p){
     var pct=Math.round(p.rev/maxP*100);
@@ -967,7 +969,7 @@ function renderStripe(){
   h+='<div style="font-size:12px;color:var(--text3)">→ <span style="font-family:var(--mono)">stripe.com</span> — inscription gratuite, activation en quelques jours</div></div>';
   h+='<div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:12px">';
   h+='<div style="font-weight:700;margin-bottom:6px">2. Créer les 3 produits + 6 prix</div>';
-  h+='<div style="font-size:12px;color:var(--text3)">→ Essentiel (19€/mois + 182€/an), Pro (39€/mois + 374€/an), Premium (59€/mois + 566€/an)</div></div>';
+  h+='<div style="font-size:12px;color:var(--text3)">→ Essentiel (14,99€/mois), Pro (24,99€/mois)</div></div>';
   h+='<div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:12px">';
   h+='<div style="font-weight:700;margin-bottom:6px">3. Configurer le Checkout + Customer Portal</div>';
   h+='<div style="font-size:12px;color:var(--text3)">→ Le salon choisit un plan → redirigé vers Stripe Checkout → paiement → retour sur l\'app</div></div>';
@@ -1028,17 +1030,17 @@ function renderSettings(){
   // Editeur
   h+='<div class="settings-card"><h3>🏢 Éditeur (toi)</h3>';
   h+='<div class="sf-row"><div class="sf-label">Nom éditeur</div><input class="sf-input" value="Alexandre J."></div>';
-  h+='<div class="sf-row"><div class="sf-label">Email support</div><input class="sf-input" value="contact@luxyra.fr"></div>';
+  h+='<div class="sf-row"><div class="sf-label">Email support</div><input class="sf-input" value="support@luxyra.fr"></div>';
   h+='<div class="sf-row"><div class="sf-label">SIRET éditeur</div><input class="sf-input" value="" placeholder="À renseigner"></div>';
-  h+='<div class="sf-row"><div class="sf-label">Version app</div><input class="sf-input" value="v5.0" disabled></div>';
+  h+='<div class="sf-row"><div class="sf-label">Version app</div><input class="sf-input" value="v6.3" disabled></div>';
   h+='</div>';
 
   // Notifications
   h+='<div class="settings-card"><h3>🔔 Notifications</h3>';
-  h+='<div class="sf-row"><div><div class="sf-label">Email sur nouveau salon</div></div><span style="color:var(--green);font-weight:700">Activé</span></div>';
+  h+='<div class="sf-row"><div><div class="sf-label">Nouveau compte créé</div></div><span style="color:var(--green);font-weight:700">Activé</span></div>';
   h+='<div class="sf-row"><div><div class="sf-label">Email sur paiement échoué</div></div><span style="color:var(--green);font-weight:700">Activé</span></div>';
   h+='<div class="sf-row"><div><div class="sf-label">Email hebdo récap</div></div><span style="color:var(--green);font-weight:700">Activé</span></div>';
-  h+='<div class="sf-row"><div><div class="sf-label">Alerte salon inactif</div><div class="sf-desc">Après 30 jours sans connexion</div></div><span style="color:var(--green);font-weight:700">Activé</span></div>';
+  h+='<div class="sf-row"><div><div class="sf-label">Alerte établissement inactif</div><div class="sf-desc">Après 30 jours sans connexion</div></div><span style="color:var(--green);font-weight:700">Activé</span></div>';
   h+='</div>';
 
   h+='</div>';
@@ -1100,6 +1102,94 @@ function renderNF525(){
   h+='</div>';
 
   return h;
+}
+
+
+// ===== DEMANDES D'ESSAI =====
+var DEMANDES=[];
+
+async function loadDemandes(){
+  if(!_adminSb||!_adminIsOnline)return;
+  try{
+    var r=await _adminSb.from("demandes_essai").select("*").order("created_at",{ascending:false});
+    if(r.data)DEMANDES=r.data;
+    var badge=document.getElementById("badgeDemandes");
+    var newCount=DEMANDES.filter(function(d){return d.status==="new";}).length;
+    if(badge)badge.textContent=newCount>0?newCount:"";
+  }catch(e){}
+}
+
+function renderDemandes(){
+  var h='<div class="topbar"><h1>Demandes d\u2019essai <span>'+DEMANDES.length+' demandes</span></h1></div>';
+  
+  if(!DEMANDES.length){
+    h+='<div class="chart-card" style="text-align:center;padding:40px"><div style="font-size:36px;margin-bottom:12px">\ud83d\udce9</div><div style="color:var(--text3)">Aucune demande pour le moment.<br>Les demandes du formulaire sur luxyra.fr apparaitront ici.</div></div>';
+    return h;
+  }
+  
+  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">\ud83d\udce9 Demandes depuis le site vitrine</div></div>';
+  h+='<div style="overflow-x:auto"><table><tr><th>Date</th><th>\u00c9tablissement</th><th>Contact</th><th>Email</th><th>T\u00e9l</th><th>Ville</th><th>M\u00e9tier</th><th>Plan</th><th>Statut</th><th>Actions</th></tr>';
+  
+  DEMANDES.forEach(function(d){
+    var dt=d.created_at?new Date(d.created_at).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"—";
+    var stColor=d.status==="new"?"var(--gold)":d.status==="contacted"?"var(--blue)":"var(--green)";
+    var stLabel=d.status==="new"?"\u2728 Nouveau":d.status==="contacted"?"\ud83d\udcde Contact\u00e9":"\u2705 Trait\u00e9";
+    h+='<tr style="'+(d.status==="new"?"font-weight:600;":"")+'">';
+    h+='<td style="font-size:11px;font-family:var(--mono)">'+dt+'</td>';
+    h+='<td>'+((d.nom_salon||d.nom_etablissement)||"—")+'</td>';
+    h+='<td>'+(d.nom_contact||"—")+'</td>';
+    h+='<td><a href="mailto:'+(d.email||"")+'" style="color:var(--gold)">'+(d.email||"—")+'</a></td>';
+    h+='<td>'+(d.telephone||"—")+'</td>';
+    h+='<td>'+(d.ville||"—")+'</td>';
+    h+='<td>'+(d.metier||"—")+'</td>';
+    h+='<td>'+(d.plan||"—")+'</td>';
+    h+='<td><span style="color:'+stColor+';font-size:12px;font-weight:700">'+stLabel+'</span></td>';
+    h+='<td><div class="td-actions">';
+    if(d.status==="new")h+='<button class="td-btn" onclick="updateDemande(\''+d.id+'\',\'contacted\')" title="Marquer contact\u00e9">\ud83d\udcde</button>';
+    if(d.status!=="done")h+='<button class="td-btn" onclick="updateDemande(\''+d.id+'\',\'done\')" title="Marquer trait\u00e9">\u2705</button>';
+    h+='<button class="td-btn" onclick="createFromDemande(\''+d.id+'\')" title="Cr\u00e9er le compte">\u2795</button>';
+    h+='</div></td>';
+    h+='</tr>';
+  });
+  h+='</table></div></div>';
+  
+  if(DEMANDES.some(function(d){return d.message;})){
+    h+='<div class="chart-card"><div class="chart-title">\ud83d\udcac Messages</div>';
+    DEMANDES.filter(function(d){return d.message;}).forEach(function(d){
+      h+='<div style="padding:10px;background:var(--bg3);border-radius:8px;margin-bottom:8px"><div style="font-weight:700;font-size:13px">'+((d.nom_salon||d.nom_etablissement)||"")+'</div><div style="font-size:12px;color:var(--text2);margin-top:4px">'+d.message+'</div></div>';
+    });
+    h+='</div>';
+  }
+  
+  return h;
+}
+
+async function updateDemande(id,status){
+  if(!_adminSb)return;
+  await _adminSb.from("demandes_essai").update({status:status}).eq("id",id);
+  await loadDemandes();
+  render();
+}
+
+function createFromDemande(id){
+  var d=DEMANDES.find(function(x){return x.id===id;});
+  if(!d)return;
+  addSalonModal();
+  setTimeout(function(){
+    var el;
+    el=document.getElementById("newSalonNom");if(el)el.value=d.nom_salon||d.nom_etablissement||"";
+    el=document.getElementById("newSalonVille");if(el)el.value=d.ville||"";
+    el=document.getElementById("newSalonEmail");if(el)el.value=d.email||"";
+    el=document.getElementById("newSalonTel");if(el)el.value=d.telephone||"";
+    if(d.metier){
+      var btn=document.querySelector('[data-metier="'+d.metier+'"]');
+      if(btn)pickMetier(btn,d.metier);
+    }
+    if(d.plan){
+      el=document.getElementById("newSalonPlan");
+      if(el)el.value=d.plan==="pro"?"pro":"essential";
+    }
+  },200);
 }
 
 // ===== INIT =====
