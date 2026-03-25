@@ -38,6 +38,7 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 
 // Afficher l'écran de login
 function showLoginScreen() {
+  if(window._dbg)window._dbg("showLoginScreen appelé");
   var el = document.getElementById("app") || document.body;
   var bgEl=document.getElementById("appBg");if(bgEl){if(typeof APP_BG!=="undefined"&&APP_BG)bgEl.style.backgroundImage="url("+APP_BG+")";else bgEl.style.backgroundImage="url(https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80)";bgEl.style.opacity="1";}
   var h = "";
@@ -137,6 +138,7 @@ async function doLogout() {
 
 // Check session on load
 async function checkSession() {
+  if(window._dbg)window._dbg("checkSession démarré");
   if (!_sb) { startOffline(); return; }
   var result = await _sb.auth.getSession();
   if (result.data && result.data.session) {
@@ -153,6 +155,7 @@ async function checkSession() {
 // ============================================================
 
 async function loadSalonData() {
+  if(window._dbg)window._dbg("loadSalonData démarré");
   if (!_sb || !_userId) { startOffline(); return; }
 
   // 1. Charger le salon
@@ -372,6 +375,7 @@ async function loadSalonData() {
   // Show header again after login
   var hdr = document.getElementById("hdr");
   if (hdr) hdr.style.display = "";
+  if(window._dbg)window._dbg("Plan="+SALON_CONFIG.plan+", status="+salon.status+", salonId="+_salonId);
   initApp(); // ← appelle la fonction d'init existante de l'app
   // Update notification badge after data is loaded
   setTimeout(function() {
@@ -383,6 +387,7 @@ async function loadSalonData() {
 }
 
 function showSuspendedScreen(status) {
+  if(window._dbg)window._dbg("SUSPENDU: "+status);
   var el = document.getElementById("app") || document.body;
   var msg = status === "suspended" ? "Votre abonnement est suspendu suite à un défaut de paiement." : "Votre abonnement a été résilié.";
   el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a)"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2 style="color:#f87171;margin-bottom:12px">Compte ' + status + '</h2><p style="color:#94a3b8;margin-bottom:20px">' + msg + '</p><a href="https://billing.stripe.com/p/login/XXXXX" style="display:inline-block;padding:12px 24px;background:#d4a843;color:#000;border-radius:10px;font-weight:700;text-decoration:none">Gérer mon abonnement</a><br><button onclick="doLogout()" style="margin-top:12px;background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button></div></div>';
@@ -390,6 +395,7 @@ function showSuspendedScreen(status) {
 
 // Mode hors ligne (pas de Supabase configuré)
 function startOffline() {
+  if(window._dbg)window._dbg("MODE HORS LIGNE");
   _isOnline = false;
   // Bloquer l'accès sans Supabase
   var el = document.getElementById("app") || document.body;
@@ -655,6 +661,7 @@ function auditLogWrapper(action, detail) {
 
 // Au chargement de la page, vérifier la session
 document.addEventListener("DOMContentLoaded", function() {
+  if(window._dbg)window._dbg("DOMContentLoaded - luxyra-supabase.js chargé");
   // Remplacer auditLog par le wrapper si la fonction existe
   if (typeof window.auditLog === "function") {
     _originalAuditLog = window.auditLog;
