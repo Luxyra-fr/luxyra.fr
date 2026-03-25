@@ -185,6 +185,7 @@ async function loadSalonData() {
   SALON_CONFIG.couleurSecondaire = salon.couleur_secondaire || "#1a1a1a";
   SALON_CONFIG.subdomain = salon.subdomain || "";
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
+  SALON_CONFIG.plan = salon.plan || "essential";
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
   if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}}catch(e){}}
 
