@@ -216,13 +216,77 @@ SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.c
 
 // ===== PLAN PRO GATING =====
 function isPro(){return SALON_CONFIG.plan==="pro";}
+var STRIPE_PK="pk_test_51TCS0eBkCMmoNdL5Jfy6EMw64lAQ1rZ4NsMj7DXsvGMyjMvX8HdtregidLWFDViS59KRJmZVnPWUbNLMcL2PFKTw002d1ntJFA";
+var STRIPE_API="/api/stripe";
+
 function showUpgradeModal(feature){
   var f=feature||"cette fonctionnalité";
   var el=document.createElement("div");el.className="upgrade-overlay";el.id="upgradeModal";
   el.onclick=function(e){if(e.target===el)el.remove();};
-  el.innerHTML='<div class="upgrade-box"><div style="font-size:40px;margin-bottom:12px">🔒</div><div style="font-size:20px;font-weight:800;margin-bottom:8px">Fonctionnalité Pro</div><div style="font-size:14px;color:#94a3b8;margin-bottom:20px;line-height:1.6"><strong style="color:#d4a843">'+f+'</strong> est disponible avec le forfait Pro à <strong style="color:#d4a843">24,99€/mois</strong>.</div><div style="display:flex;flex-direction:column;gap:8px"><a href="mailto:support@luxyra.fr?subject=Passer%20en%20Pro%20-%20'+encodeURIComponent(SALON_CONFIG.nom)+'" style="display:block;padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;text-align:center;text-decoration:none">Passer en Pro →</a><button onclick="this.closest(\'.upgrade-overlay\').remove()" style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;font-family:var(--f1)">Plus tard</button></div></div>';
+  el.innerHTML='<div class="upgrade-box">'
+    +'<div style="font-size:40px;margin-bottom:12px">💎</div>'
+    +'<div style="font-size:20px;font-weight:800;margin-bottom:8px">Passez en Pro</div>'
+    +'<div style="font-size:14px;color:#94a3b8;margin-bottom:6px;line-height:1.6"><strong style="color:#d4a843">'+f+'</strong> est disponible avec le forfait Pro.</div>'
+    +'<div style="font-size:28px;font-weight:900;color:#d4a843;margin-bottom:4px;font-family:var(--mono)">24,99€<span style="font-size:14px;color:#94a3b8;font-weight:400">/mois</span></div>'
+    +'<div style="font-size:12px;color:#5a6578;margin-bottom:20px">Site vitrine • Réservation en ligne • Marketplace • SMS rappels • Email marketing</div>'
+    +'<div style="display:flex;flex-direction:column;gap:8px">'
+    +'<button onclick="startCheckout(\'pro\')" style="padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer" id="upgradeBtn">Passer en Pro →</button>'
+    +'<button onclick="this.closest(\'.upgrade-overlay\').remove()" style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;font-family:var(--f1)">Plus tard</button>'
+    +'</div></div>';
   document.body.appendChild(el);
 }
+
+async function startCheckout(plan){
+  var btn=document.getElementById("upgradeBtn");
+  if(btn){btn.textContent="Chargement...";btn.disabled=true;}
+  try{
+    var res=await fetch(window.location.origin+STRIPE_API+"/create-checkout",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:window._salonId||"",plan:plan,email:SALON_CONFIG.email||""})
+    });
+    var data=await res.json();
+    if(data.url){
+      window.location.href=data.url;
+    }else{
+      alert("Erreur : "+(data.error||"Impossible de créer la session de paiement"));
+      if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+    }
+  }catch(e){
+    alert("Erreur de connexion. Vérifiez votre internet.");
+    if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+  }
+}
+
+// Gérer le retour de Stripe Checkout
+(function(){
+  var params=new URLSearchParams(window.location.search);
+  if(params.get("checkout")==="success"){
+    var plan=params.get("plan")||"pro";
+    SALON_CONFIG.plan=plan;
+    setTimeout(function(){
+      alert("Félicitations ! Votre abonnement "+plan.charAt(0).toUpperCase()+plan.slice(1)+" est activé. Toutes les fonctionnalités sont débloquées !");
+      window.history.replaceState({},"",window.location.pathname);
+    },500);
+  }else if(params.get("checkout")==="cancel"){
+    window.history.replaceState({},"",window.location.pathname);
+  }
+})();
+
+// Customer Portal (gérer son abonnement)
+async function openCustomerPortal(){
+  try{
+    var res=await fetch(window.location.origin+STRIPE_API+"/portal",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:window._salonId||""})
+    });
+    var data=await res.json();
+    if(data.url)window.location.href=data.url;
+    else alert("Pas d'abonnement trouvé");
+  }catch(e){alert("Erreur de connexion");}
+}
+
 function proGate(feature){if(isPro())return true;showUpgradeModal(feature);return false;}
 SALON_CONFIG._defaultLogo="data:image/webp;base64,UklGRsoCAABXRUJQVlA4IL4CAADQDACdASoqACoAPlEmkEYjoiGhI4kAcAoJZQC98JXJPtuueASPl+TzOsgRMGvGz9Nf9L3Av1J/5XXN/ZJJJ9N5h5XLY9LqGFboTA6YQGYRIY4cxDR0vRaWNRypCQ9zUcCkClx4gGJbuyDZEMJ/3gAA/vVj/Fh/SqNagRWSN2U5c7xkAYTmvJjJ9+qw81H/eAPE8cL7wHIcTiAlCABUIEWSRggNSFbml//Ts6ApP312IohCpMcxxvoLZgMqX8VgaV+iLwGliUrfojoaTFSaFDdQJtlzKzoY8E7e/x17RTnHrIdh8qEZReQ9uYll7OfD1kUM0zBkSg7gdI/GIBGb44QCNddZUkw4sQ+Umsq0IHJWMa0h+uOoMAeqmb2aaBFRL2Uj+XW+1+3/+jQv3/V/vIYs8a6KASy6H12zJ6dsBo5pjDcmKvFgcTN1e2ztM0tv9VIY9mRo5VemJTG73r0HXxpTUf8RYIeqvG8Cxci4iqOAOTjqaXUa+hGpwUz/0d63ZMCMfqwmzgyy5MIFoNkY+VY+v3/Lfdfv/Ex/mvkcAjtKnebadhURwE0+JBF71NegSMCnTiEagoPlF3wzdrsgoQIhlUek3YpTbRTLIv+4kVB42i1hEWoZYYVKYv1LOG+NO1+g4QqpZFOIvBtUukt6t+v8EFD5btAGps/ReQaGR7phgtvzkGxWi1X8QuQ3RJ00jaCM3S43Lu+DWsGmrCv/elTAQfMTLIX6LscIKG+03SqH+zp8wHhw+XMJ3qsjiQGYKT96461jOcjzTjNaRnjaC+tgxBPNf5WTT8KL/DU0Cq/V6KuP29QfWsBlOiDPv5j9tKugwtV+zlp1ueoxBn4HcOcdmomE6ekCU6mU8Q/EJrU9EPExkUEfS27z3WNfM5QWQyDCqG4HSYsuoItzZnBz9w8uThAiVuK/mslU02gAAAA=";
 // Multi-métiers: adapt l'app selon le domaine du salon
@@ -3434,7 +3498,14 @@ function rSettings(){
     h+='<div class="card" style="display:flex;align-items:center;gap:14px;border:1px solid '+(isPro()?'rgba(212,168,67,.3)':'rgba(96,165,250,.3)')+';margin-bottom:16px">';
     h+='<div style="font-size:28px">'+(isPro()?'💎':'📋')+'</div>';
     h+='<div style="flex:1"><div style="font-weight:700;font-size:15px">Forfait '+(isPro()?'<span style="color:var(--gold)">Pro</span>':'<span style="color:var(--blue)">Essentiel</span>')+'</div>';
-    h+='<div style="font-size:12px;color:var(--text3)">'+(isPro()?'24,99€/mois — Toutes les fonctionnalités':'14,99€/mois — <a href="#" onclick="showUpgradeModal(\'Pro\');return false" style="color:var(--gold)">Passer en Pro →</a>')+'</div></div></div>';
+    if(isPro()){
+      h+='<div style="font-size:12px;color:var(--text3)">24,99€/mois — Toutes les fonctionnalités</div></div>';
+      h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:12px;padding:8px 14px;white-space:nowrap">Gérer mon abo</button>';
+    }else{
+      h+='<div style="font-size:12px;color:var(--text3)">14,99€/mois</div></div>';
+      h+='<button onclick="showUpgradeModal(\'Pro\')" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">Passer en Pro →</button>';
+    }
+    h+='</div>';
 
     var sections=[
       {k:"horaires",i:"\ud83d\udd54",t:"Horaires",d:"Ouverture, fermeture par jour"},
@@ -10114,26 +10185,9 @@ function refreshCurrentView(){
 
 // Register Service Worker for PWA
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js?v='+new Date().toISOString().slice(0,10)).then(function(reg){
-    setInterval(function(){reg.update();},60000);
-    reg.addEventListener('updatefound',function(){
-      var nw=reg.installing;
-      nw.addEventListener('statechange',function(){
-        if(nw.state==='installed'&&navigator.serviceWorker.controller){
-          var banner=document.createElement('div');
-          banner.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--gold);color:#0a0a0a;padding:12px 20px;border-radius:12px;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3);display:flex;align-items:center;gap:12px';
-          var btn=document.createElement('button');
-          btn.style.cssText='background:#0a0a0a;color:var(--gold);border:none;padding:8px 16px;border-radius:8px;font-weight:800;cursor:pointer';
-          btn.textContent='Mettre \u00e0 jour';
-          btn.addEventListener('click',function(){if(reg.waiting)reg.waiting.postMessage({type:"SKIP_WAITING"});window.location.reload(true);});
-          banner.innerHTML='\u2728 Nouvelle version disponible ';
-          banner.appendChild(btn);
-          document.body.appendChild(banner);
-        }
-      });
-    });
+  navigator.serviceWorker.register('sw.js').then(function(reg){
+    setInterval(function(){reg.update();},300000);
   });
-  navigator.serviceWorker.addEventListener('controllerchange',function(){window.location.reload();});
 }
 </script>
 </body>
