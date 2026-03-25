@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Luxyra Admin</title>
+<title>Luxyra Admin v4.0</title>
 <link rel="icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -137,7 +137,7 @@ tr:hover{background:rgba(255,255,255,.02)}
     <div class="sb-item" onclick="nav('nf525')"><span class="icon">🛡️</span>NF525 / RGPD</div>
   </div>
   <div class="sb-footer">
-    <div><strong>Luxyra Admin</strong> v3.0</div>
+    <div><strong>Luxyra Admin</strong> v4.0</div>
     <div style="font-family:var(--mono)">Alexandre J. — 2026</div>
     <div style="margin-top:6px"><span id="onlineStatus" style="font-size:10px"></span></div>
     <button onclick="doAdminLogout()" style="margin-top:8px;width:100%;padding:6px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text3);font-size:12px;cursor:pointer;font-family:var(--f1)">🚪 Déconnexion</button>
@@ -167,6 +167,7 @@ function gPlan(id){return PLANS.find(function(p){return p.id===id;})||PLANS[0];}
 function gSalon(id){return SALONS.find(function(s){return s.id===id;});}
 function planB(p){var pl=gPlan(p);return '<span class="badge badge-'+(p==="pro"?"gold":"blue")+'">'+pl.nom+'</span>';}
 function statusB(s){var m={active:{c:"green",l:"Actif"},trial:{c:"orange",l:"Essai"},past_due:{c:"red",l:"Impayé"},suspended:{c:"red",l:"Suspendu"}};var x=m[s]||{c:"blue",l:s};return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
+function verifB(v){var m={pending:{c:"orange",l:"En attente"},verified:{c:"green",l:"Vérifié"},rejected:{c:"red",l:"Rejeté"},incomplete:{c:"blue",l:"Incomplet"}};var x=m[v]||m.pending;return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
 function dBetween(a,b){return Math.ceil((new Date(b)-new Date(a))/(864e5));}
 
 // ===== AUTH =====
@@ -217,7 +218,15 @@ async function loadData(){
     if(r.data){
       SALONS=r.data.map(function(s,i){
         var cfg={};try{cfg=JSON.parse(s.config_json||"{}");}catch(e){}
-        return{id:s.id,nom:s.nom||"Sans nom",ville:s.ville||"",email:s.email||"",tel:s.tel||"",siret:s.siret||"",
+        return{id:s.id,nom:s.nom||"Sans nom",ville:s.ville||"",email:s.email||"",tel:s.tel||"",
+          siret:s.siret||"",siren:s.siren||"",tva:s.tva_intra||"",
+          gerantNom:s.gerant_nom||"",gerantPrenom:s.gerant_prenom||"",
+          adresse:s.adresse||"",cp:s.cp||"",formeJur:s.forme_juridique||"",
+          verif:s.verification_status||"pending",
+          docKbis:s.documents_kbis||"",docId:s.documents_id||"",
+          verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
+          userId:s.user_id||"",
+          stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
           plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",
           subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
@@ -279,6 +288,7 @@ function render(){
 function rDashboard(){
   var active=SALONS.filter(function(s){return s.status==="active";}).length;
   var trial=SALONS.filter(function(s){return s.status==="trial";}).length;
+  var pendingV=SALONS.filter(function(s){return s.verif!=="verified";}).length;
   var mrr=0;SALONS.forEach(function(s){if(s.status==="active"||s.status==="past_due")mrr+=gPlan(s.plan).prix;});
   var h='<div class="topbar"><h1>Dashboard <span>Vue d’ensemble</span></h1></div>';
   h+='<div class="kpi-row">';
@@ -286,6 +296,7 @@ function rDashboard(){
   h+='<div class="kpi"><div class="kpi-label">Actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements actifs</div><div class="kpi-icon">✅</div></div>';
   h+='<div class="kpi"><div class="kpi-label">En essai</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
   h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
+  if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non vérifiés</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents à contrôler</div><div class="kpi-icon">📋</div></div>';
   h+='</div>';
   var nd=DEMANDES.filter(function(d){return d.status==="new";});
   if(nd.length){
@@ -308,10 +319,10 @@ function rSalons(){
   var h='<div class="topbar"><h1>Établissements <span>'+SALONS.length+' comptes</span></h1><div><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
   h+='<div class="search-box"><span>🔍</span><input id="sSearch" placeholder="Rechercher..." oninput="filterS()"></div>';
   h+='<div class="table-wrap"><div class="table-header"><div class="table-title">🏠 Liste</div><div class="table-filter">';
-  [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"}].forEach(function(f){
+  [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"},{k:"pending",l:"⏳ Non vérifiés"}].forEach(function(f){
     h+='<button class="tf-btn'+(curFilter===f.k?" active":"")+'" onclick="setF(&#39;'+f.k+'&#39;)">'+f.l+'</button>';
   });
-  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Clients</th><th>Collabs</th><th>Sous-domaine</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
+  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Vérif.</th><th>Clients</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
   return h;
 }
 
@@ -319,14 +330,14 @@ function buildRows(list,f){
   var mI={coiffure:"✂️",barbier:"💈",esthetique:"💆",ongles:"💅",bien_etre:"🧘"};
   var h="";
   list.forEach(function(s){
-    if(f!=="all"&&s.status!==f)return;
+    if(f!=="all"&&f!=="pending"&&s.status!==f)return;
+    if(f==="pending"&&s.verif==="verified")return;
     h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+'</div></div></div></td>';
-    h+='<td>'+planB(s.plan)+'</td><td>'+statusB(s.status)+'</td><td>'+s.clients+'</td><td>'+s.collabs+'</td>';
-    h+='<td style="font-size:11px;font-family:var(--mono)">'+(s.subdomain?'<a href="https://'+s.subdomain+'.luxyra.fr" target="_blank">'+s.subdomain+'</a>':'—')+'</td>';
+    h+='<td>'+planB(s.plan)+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
   });
-  if(!h)h='<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
+  if(!h)h='<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
   return h;
 }
 
@@ -340,21 +351,58 @@ function filterS(){
 // ===== DETAIL =====
 function openD(id){
   var s=gSalon(id);if(!s)return;
+  window._curSalonId=id;
   var h='<div class="dp-header"><h2 style="font-size:20px">'+s.nom+'</h2><button class="dp-close" onclick="closeDetail()">✕</button></div>';
-  h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n" style="color:var(--green)">'+fmtM(s.ca)+'</div><div class="l">CA</div></div></div>';
-  h+='<div class="dp-section"><div class="dp-label">Informations</div>';
-  h+='<div class="dp-field"><span class="k">Ville</span><span class="v">'+s.ville+'</span></div>';
+  h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
+
+  // VERIFICATION
+  if(s.verif!=="verified"){
+    h+='<div class="dp-section" style="background:var(--orange-bg);border-radius:10px;padding:12px"><div class="dp-label">Vérification requise</div>';
+    h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="dp-btn success" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;verified&#39;)">✅ Valider</button><button class="dp-btn" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;incomplete&#39;)">📝 Incomplet</button><button class="dp-btn danger" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;rejected&#39;)">❌ Rejeter</button></div></div>';
+  }
+
+  // INFO LEGALES
+  h+='<div class="dp-section"><div class="dp-label">🏢 Informations légales</div>';
+  [["Gérant",s.gerantPrenom+" "+s.gerantNom],["Forme juridique",s.formeJur],["SIRET",s.siret],["SIREN",s.siren],["TVA Intra.",s.tva]].forEach(function(f){
+    h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+(f[1]&&f[1].trim()?f[1]:'<span style="color:var(--text3);font-style:italic">—</span>')+'</span></div>';
+  });
+  h+='<button class="dp-btn" style="margin-top:8px" onclick="editLegal(&#39;'+s.id+'&#39;)">✏️ Modifier infos légales</button></div>';
+
+  // COORDONNEES
+  h+='<div class="dp-section"><div class="dp-label">📍 Coordonnées</div>';
+  h+='<div class="dp-field"><span class="k">Adresse</span><span class="v">'+(s.adresse||"—")+'</span></div>';
+  h+='<div class="dp-field"><span class="k">CP / Ville</span><span class="v">'+(s.cp?s.cp+" ":"")+s.ville+'</span></div>';
   h+='<div class="dp-field"><span class="k">Email</span><span class="v">'+s.email+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Tél</span><span class="v">'+s.tel+'</span></div>';
-  h+='<div class="dp-field"><span class="k">SIRET</span><span class="v">'+(s.siret||"Non renseigné")+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Tél</span><span class="v">'+(s.tel||"—")+'</span></div>';
   h+='<div class="dp-field"><span class="k">Métier</span><span class="v">'+s.metier+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Sous-domaine</span><span class="v">'+(s.subdomain?'<a href="https://'+s.subdomain+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+s.subdomain+'.luxyra.fr</a>':'Non configuré')+'</span></div></div>';
-  h+='<div class="dp-section"><div class="dp-label">Abonnement</div>';
+  h+='<div class="dp-field"><span class="k">Sous-domaine</span><span class="v">'+(s.subdomain?'<a href="https://'+s.subdomain+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+s.subdomain+'.luxyra.fr</a>':'—')+'</span></div></div>';
+
+  // DOCUMENTS
+  h+='<div class="dp-section"><div class="dp-label">📄 Documents</div>';
+  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="'+s.docKbis+'" target="_blank" style="color:var(--green)">✅ Reçu</a>':'<span style="color:var(--orange)">⏳ En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pièce d\u2019identité</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green)">✅ Reçue</a>':'<span style="color:var(--orange)">⏳ En attente</span>')+'</span></div></div>';
+
+  // ABONNEMENT + STRIPE
+  h+='<div class="dp-section"><div class="dp-label">💳 Abonnement</div>';
   h+='<div class="dp-field"><span class="k">Plan</span><span class="v">'+planB(s.plan)+'</span></div>';
   h+='<div class="dp-field"><span class="k">Statut</span><span class="v">'+statusB(s.status)+'</span></div>';
   h+='<div class="dp-field"><span class="k">Inscrit le</span><span class="v">'+fmtD(s.created)+'</span></div>';
   if(s.trialEnd){var days=dBetween(new Date().toISOString().slice(0,10),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
+  if(s.stripeCust)h+='<div class="dp-field"><span class="k">Stripe</span><span class="v"><a href="https://dashboard.stripe.com/test/customers/'+s.stripeCust+'" target="_blank" style="color:var(--gold);font-size:11px">Voir dans Stripe ↗</a></span></div>';
   h+='</div>';
+
+  // TECHNIQUE
+  h+='<div class="dp-section"><div class="dp-label">⚙️ Technique</div>';
+  h+='<div class="dp-field"><span class="k">Salon ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+s.id.slice(0,18)+'...</span></div>';
+  h+='<div class="dp-field"><span class="k">User ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+(s.userId?s.userId.slice(0,18)+'...':'—')+'</span></div>';
+  h+='<button class="dp-btn" style="margin-top:6px" onclick="editUserId(&#39;'+s.id+'&#39;)">🔑 Changer user_id</button></div>';
+
+  // NOTES
+  h+='<div class="dp-section"><div class="dp-label">📝 Notes internes</div>';
+  h+='<textarea id="dpNotes" style="width:100%;height:60px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px;font-size:12px;font-family:var(--f1);resize:vertical">'+(s.notesAdmin||"")+'</textarea>';
+  h+='<button class="dp-btn" style="margin-top:6px" onclick="saveNotes(&#39;'+s.id+'&#39;)">💾 Enregistrer</button></div>';
+
+  // ACTIONS
   h+='<div class="dp-section"><div class="dp-label">Actions</div><div class="dp-actions">';
   if(s.status==="trial")h+='<button class="dp-btn success" onclick="actS(&#39;'+s.id+'&#39;,&#39;extend&#39;)">⏰ +7j essai</button>';
   if(s.status==="active"||s.status==="trial")h+='<button class="dp-btn" onclick="actS(&#39;'+s.id+'&#39;,&#39;plan&#39;)">📦 Changer plan</button>';
@@ -386,7 +434,7 @@ function addModal(){
   var h='<div class="mbg" onclick="closeMod()"><div class="mbox" onclick="event.stopPropagation()">';
   h+='<div style="display:flex;justify-content:space-between;margin-bottom:20px"><h2 style="font-size:18px">+ Nouvel établissement</h2><button onclick="closeMod()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">✕</button></div>';
   h+='<div id="addErr" style="display:none;background:var(--red-bg);color:var(--red);padding:10px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>';
-  var fields=[["nNom","Nom *","Ex: Excellence Coiffure","text"],["nVille","Ville","Sarreguemines","text"],["nEmail","Email (identifiant) *","contact@monactivite.fr","email"],["nPass","Mot de passe *","Min 6 caractères","text"],["nTel","Téléphone","03 87 ...","text"]];
+  var fields=[["nNom","Nom de l\u2019établissement *","Ex: Excellence Coiffure","text"],["nGerant","Nom du gérant","Dupont Jean","text"],["nSiret","SIRET","12345678901234","text"],["nAdresse","Adresse","20 rue Nationale","text"],["nCpVille","Code postal / Ville","57200 Sarreguemines","text"],["nEmail","Email (identifiant) *","contact@monactivite.fr","email"],["nPass","Mot de passe *","Min 6 caractères","text"],["nTel","Téléphone","03 87 ...","text"]];
   fields.forEach(function(f){
     h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">'+f[1]+'</label>';
     h+='<input id="'+f[0]+'" type="'+f[3]+'" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px;outline:none'+(f[0]==="nPass"?";font-family:var(--mono)":"")+'" placeholder="'+f[2]+'"'+(f[0]==="nPass"?' value="'+genPwd()+'"':'')+'></div>';
@@ -409,7 +457,13 @@ function pickM(el,k){document.querySelectorAll(".mbtn").forEach(function(b){b.st
 function closeMod(){document.getElementById("detailOverlay").classList.remove("open");}
 
 async function doCreate(){
-  var nom=document.getElementById("nNom").value.trim(),ville=document.getElementById("nVille").value.trim(),email=document.getElementById("nEmail").value.trim(),pass=document.getElementById("nPass").value,tel=document.getElementById("nTel").value.trim(),plan=document.getElementById("nPlan").value,status=document.getElementById("nStatus").value,metier=document.getElementById("nMetier").value;
+  var nom=document.getElementById("nNom").value.trim(),email=document.getElementById("nEmail").value.trim(),pass=document.getElementById("nPass").value,tel=(document.getElementById("nTel").value||"").trim(),plan=document.getElementById("nPlan").value,status=document.getElementById("nStatus").value,metier=document.getElementById("nMetier").value;
+  var gerant=(document.getElementById("nGerant")||{value:""}).value.trim();
+  var siret=(document.getElementById("nSiret")||{value:""}).value.trim();
+  var adresse=(document.getElementById("nAdresse")||{value:""}).value.trim();
+  var cpVille=(document.getElementById("nCpVille")||{value:""}).value.trim();
+  var cp="",ville="";if(cpVille){var _m=cpVille.match(/^(\d{5})\s*(.*)$/);if(_m){cp=_m[1];ville=_m[2];}else{ville=cpVille;}}
+  var gNom="",gPrenom="";if(gerant){var _g=gerant.split(" ");gNom=_g[0]||"";gPrenom=_g.slice(1).join(" ")||"";}
   if(!nom||!email||!pass){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Nom, email et mot de passe obligatoires.";}return;}
   if(pass.length<6){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Mot de passe : 6 caractères minimum.";}return;}
   if(!_sb||!_online){alert("Non connecté");return;}
@@ -421,7 +475,7 @@ async function doCreate(){
   var uid=ar.data.user.id;
 
   var te=status==="trial"?new Date(Date.now()+14*864e5).toISOString():null;
-  var sr=await _sb.from("salons").insert({user_id:uid,nom:nom,ville:ville,email:email,tel:tel,plan:plan,status:status,trial_end:te,metier:metier,config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})}).select().single();
+  var sr=await _sb.from("salons").insert({user_id:uid,nom:nom,ville:ville,cp:cp,adresse:adresse,email:email,tel:tel,siret:siret,gerant_nom:gNom,gerant_prenom:gPrenom,plan:plan,status:status,trial_end:te,metier:metier,verification_status:"pending",config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})}).select().single();
   if(sr.error){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Erreur: "+sr.error.message;}return;}
 
   var sid=sr.data.id;
@@ -465,9 +519,10 @@ function createFromDem(id){
   setTimeout(function(){
     var el;
     el=document.getElementById("nNom");if(el)el.value=d.nom_salon||d.nom_etablissement||"";
-    el=document.getElementById("nVille");if(el)el.value=d.ville||"";
+    el=document.getElementById("nCpVille");if(el)el.value=(d.cp?d.cp+" ":"")+(d.ville||"");
     el=document.getElementById("nEmail");if(el)el.value=d.email||"";
     el=document.getElementById("nTel");if(el)el.value=d.telephone||"";
+    el=document.getElementById("nGerant");if(el)el.value=d.nom_contact||"";
     if(d.metier){var btn=document.querySelector('[data-m="'+d.metier+'"]');if(btn)pickM(btn,d.metier);}
     if(d.plan){el=document.getElementById("nPlan");if(el)el.value=d.plan==="pro"?"pro":"essential";}
   },200);
@@ -548,6 +603,71 @@ function rNF525(){
   h+='<div class="card"><h3>🇪🇺 RGPD</h3><div style="font-size:13px;color:var(--text2);line-height:2">';
   ["DPA (Data Processing Agreement)","Registre des traitements","Chiffrement AES-256 + TLS 1.3","Droit à l’effacement","Droit à la portabilité (JSON/CSV)","Notification CNIL sous 72h"].forEach(function(c){h+='<div>📝 '+c+'</div>';});
   h+='</div></div>';return h;
+}
+
+// ===== EDIT LEGAL INFO =====
+function editLegal(id){
+  var s=gSalon(id);if(!s)return;
+  var h='<div class="mbg" onclick="closeMod()"><div class="mbox" onclick="event.stopPropagation()">';
+  h+='<div style="display:flex;justify-content:space-between;margin-bottom:20px"><h2 style="font-size:18px">🏢 Informations légales</h2><button onclick="closeMod()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">✕</button></div>';
+  var fs=[["elGerantNom","Nom du gérant",s.gerantNom],["elGerantPrenom","Prénom du gérant",s.gerantPrenom],["elFormeJur","Forme juridique (SARL, SAS, EI, micro...)",s.formeJur],["elSiret","SIRET (14 chiffres)",s.siret],["elSiren","SIREN (9 chiffres)",s.siren],["elTva","N° TVA Intracommunautaire",s.tva],["elAdresse","Adresse",s.adresse],["elCp","Code postal",s.cp],["elVille","Ville",s.ville],["elTel","Téléphone",s.tel]];
+  fs.forEach(function(f){
+    h+='<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">'+f[1]+'</label><input id="'+f[0]+'" value="'+(f[2]||"")+'" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;outline:none"></div>';
+  });
+  h+='<button onclick="doSaveLegal(&#39;'+id+'&#39;)" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:14px;border:none;cursor:pointer">💾 Enregistrer</button>';
+  h+='</div></div>';
+  document.getElementById("detailOverlay").innerHTML=h;
+}
+
+async function doSaveLegal(id){
+  if(!_sb||!_online)return;
+  var data={
+    gerant_nom:document.getElementById("elGerantNom").value.trim(),
+    gerant_prenom:document.getElementById("elGerantPrenom").value.trim(),
+    forme_juridique:document.getElementById("elFormeJur").value.trim(),
+    siret:document.getElementById("elSiret").value.trim(),
+    siren:document.getElementById("elSiren").value.trim(),
+    tva_intra:document.getElementById("elTva").value.trim(),
+    adresse:document.getElementById("elAdresse").value.trim(),
+    cp:document.getElementById("elCp").value.trim(),
+    ville:document.getElementById("elVille").value.trim(),
+    tel:document.getElementById("elTel").value.trim()
+  };
+  await _sb.from("salons").update(data).eq("id",id);
+  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"EDIT_LEGAL",details:JSON.stringify(data)});
+  await loadData();closeMod();render();openD(id);
+}
+
+// ===== VERIFICATION =====
+async function verifSalon(id,status){
+  if(!_sb||!_online)return;
+  var data={verification_status:status};
+  if(status==="verified"){data.verified_at=new Date().toISOString();data.verified_by=_uid;}
+  await _sb.from("salons").update(data).eq("id",id);
+  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"VERIFY_"+status.toUpperCase(),details:""});
+  await loadData();render();openD(id);
+}
+
+// ===== EDIT USER ID =====
+function editUserId(id){
+  var s=gSalon(id);if(!s)return;
+  var newId=prompt("User ID actuel :\n"+(s.userId||"aucun")+"\n\nNouveau user_id (UUID auth) :",s.userId||"");
+  if(newId===null)return;
+  if(newId&&newId.length>30){doEditUserId(id,newId);}
+  else{alert("User ID invalide (doit être un UUID)");}
+}
+
+async function doEditUserId(id,newUid){
+  await _sb.from("salons").update({user_id:newUid}).eq("id",id);
+  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"CHANGE_USER_ID",details:"new="+newUid});
+  await loadData();render();openD(id);
+}
+
+// ===== SAVE NOTES =====
+async function saveNotes(id){
+  var n=document.getElementById("dpNotes");if(!n)return;
+  await _sb.from("salons").update({notes_admin:n.value}).eq("id",id);
+  alert("Notes enregistrées !");
 }
 
 checkSession();
