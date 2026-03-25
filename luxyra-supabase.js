@@ -140,13 +140,16 @@ async function doLogout() {
 async function checkSession() {
   if(window._dbg)window._dbg("checkSession démarré");
   if (!_sb) { startOffline(); return; }
+  try{
   var result = await _sb.auth.getSession();
+  if(window._dbg)window._dbg("Session: "+(result.data&&result.data.session?"OUI, uid="+result.data.session.user.id:"NON"));
   if (result.data && result.data.session) {
     _userId = result.data.session.user.id;
     await loadSalonData();
   } else {
     showLoginScreen();
   }
+  }catch(err){if(window._dbg)window._dbg("CRASH checkSession: "+err.message);showLoginScreen();}
 }
 
 
@@ -156,10 +159,13 @@ async function checkSession() {
 
 async function loadSalonData() {
   if(window._dbg)window._dbg("loadSalonData démarré");
-  if (!_sb || !_userId) { startOffline(); return; }
+  if (!_sb || !_userId) { if(window._dbg)window._dbg("ABORT: _sb="+!!_sb+" _userId="+_userId);startOffline(); return; }
+  try{
+  if(window._dbg)window._dbg("Query salon pour userId="+_userId);
 
   // 1. Charger le salon
   var sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
+  if(window._dbg)window._dbg("Résultat: err="+(sRes.error?sRes.error.message:"non")+", data="+(sRes.data?sRes.data.length:"null"));
   if (sRes.error || !sRes.data || sRes.data.length === 0) { showLoginError("Salon introuvable"); return; }
 
   var salon = sRes.data[0];
@@ -393,6 +399,7 @@ async function loadSalonData() {
     var pending = (window.RDV_ONLINE || []).filter(function(r) { return r.status === "pending"; });
     if (pending.length > 0) console.log("Luxyra: " + pending.length + " RDV en ligne en attente de confirmation !");
   }, 500);
+  }catch(err){if(window._dbg)window._dbg("CRASH loadSalonData: "+err.message);console.error("loadSalonData error:",err);}
 }
 
 function showSuspendedScreen(status) {
