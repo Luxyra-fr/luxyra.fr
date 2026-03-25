@@ -205,7 +205,7 @@ async function loadSalonData() {
   var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId).order("id");
   if (svcRes.data) {
     SVC = svcRes.data.map(function(s) {
-      return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, phases: s.phases || [] };
+      return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
     });
     // Recalculer CATS
     var catSet = {};
@@ -559,6 +559,31 @@ async function saveSalonConfig() {
 }
 
 // Sauvegarder les collaborateurs
+// Sauvegarder les services
+async function saveServices() {
+  if (!_sb || !_salonId) return;
+  for (var i = 0; i < SVC.length; i++) {
+    var s = SVC[i];
+    var data = {
+      salon_id: _salonId, nom: s.n, prix: s.p,
+      categorie: s.cat, phases: s.phases || [],
+      show_site: s.showSite !== false, book_online: s.bookOnline !== false
+    };
+    if (typeof s.id === "number" && s.id > 0) {
+      var check = await _sb.from("services").select("id").eq("id", s.id).eq("salon_id", _salonId);
+      if (check.data && check.data.length > 0) {
+        await _sb.from("services").update(data).eq("id", s.id);
+      } else {
+        var res = await _sb.from("services").insert(data).select();
+        if (res.data && res.data[0]) s.id = res.data[0].id;
+      }
+    } else {
+      var res = await _sb.from("services").insert(data).select();
+      if (res.data && res.data[0]) s.id = res.data[0].id;
+    }
+  }
+}
+
 async function saveCollaborateurs() {
   if (!_isOnline || !_salonId) return;
   // First, get all existing collab IDs from Supabase for this salon
