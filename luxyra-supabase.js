@@ -38,7 +38,6 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 
 // Afficher l'écran de login
 function showLoginScreen() {
-  if(window._dbg)window._dbg("showLoginScreen appelé");
   var el = document.getElementById("app") || document.body;
   var bgEl=document.getElementById("appBg");if(bgEl){if(typeof APP_BG!=="undefined"&&APP_BG)bgEl.style.backgroundImage="url("+APP_BG+")";else bgEl.style.backgroundImage="url(https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80)";bgEl.style.opacity="1";}
   var h = "";
@@ -138,18 +137,16 @@ async function doLogout() {
 
 // Check session on load
 async function checkSession() {
-  if(window._dbg)window._dbg("checkSession démarré");
   if (!_sb) { startOffline(); return; }
   try{
   var result = await _sb.auth.getSession();
-  if(window._dbg)window._dbg("Session: "+(result.data&&result.data.session?"OUI, uid="+result.data.session.user.id:"NON"));
   if (result.data && result.data.session) {
     _userId = result.data.session.user.id;
     await loadSalonData();
   } else {
     showLoginScreen();
   }
-  }catch(err){if(window._dbg)window._dbg("CRASH checkSession: "+err.message);showLoginScreen();}
+  }catch(err){showLoginScreen();}
 }
 
 
@@ -158,28 +155,23 @@ async function checkSession() {
 // ============================================================
 
 async function loadSalonData() {
-  if(window._dbg)window._dbg("loadSalonData démarré");
-  if (!_sb || !_userId) { if(window._dbg)window._dbg("ABORT: _sb="+!!_sb+" _userId="+_userId);startOffline(); return; }
+  if (!_sb || !_userId) { startOffline(); return; }
   try{
-  if(window._dbg)window._dbg("Query salon pour userId="+_userId);
 
   // 1. Charger le salon
   var sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
-  if(window._dbg)window._dbg("Résultat: err="+(sRes.error?sRes.error.message:"non")+", data="+(sRes.data?sRes.data.length:"null"));
   if (sRes.error || !sRes.data || sRes.data.length === 0) { showLoginError("Salon introuvable"); return; }
 
   var salon = sRes.data[0];
   _salonId = salon.id;
   _isOnline = true;
 
-  if(window._dbg)window._dbg("Salon trouvé: "+salon.nom+", plan="+salon.plan+", status="+salon.status);
   // Vérifier statut abonnement
   if (salon.status === "suspended" || salon.status === "cancelled") {
     showSuspendedScreen(salon.status);
     return;
   }
 
-  if(window._dbg)window._dbg("Status OK, mapping config");
   // 2. Mapper vers SALON_CONFIG (format existant de l'app)
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
   SALON_CONFIG.sousTitre = salon.sous_titre || "";
@@ -200,7 +192,6 @@ async function loadSalonData() {
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
   if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}}catch(e){}}
 
-  if(window._dbg)window._dbg("Config mappé, charge collabs");
   // 3. Charger collaborateurs → T[]
   var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
   if (tRes.data) {
@@ -210,7 +201,6 @@ async function loadSalonData() {
     });
   }
 
-  if(window._dbg)window._dbg("Collabs chargés: "+T.length);
   // 4. Charger services → SVC[]
   var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId).order("id");
   if (svcRes.data) {
@@ -223,7 +213,6 @@ async function loadSalonData() {
     CATS = Object.keys(catSet);
   }
 
-  if(window._dbg)window._dbg("Services chargés: "+SVC.length);
   // 5. Charger clients → CL[]
   var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom");
   if (clRes.data) {
@@ -241,7 +230,6 @@ async function loadSalonData() {
     });
   }
 
-  if(window._dbg)window._dbg("Clients chargés: "+CL.length);
   // 6. Charger rendez-vous/tickets → AP[]
   var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(500);
   if (apRes.data) {
@@ -322,7 +310,6 @@ async function loadSalonData() {
     window.RDV_ONLINE = [];
   }
 
-  if(window._dbg)window._dbg("RDV chargés: "+AP.length);
   // 7. Charger produits → PRODS[]
   var prRes = await _sb.from("produits").select("*").eq("salon_id", _salonId).order("nom");
   if (prRes.data) {
@@ -338,7 +325,6 @@ async function loadSalonData() {
     PCATS = Object.keys(pcatSet);
   }
 
-  if(window._dbg)window._dbg("Produits chargés: "+PRODS.length);
   // 8. Charger cartes cadeaux → GC[]
   var gcRes = await _sb.from("cartes_cadeaux").select("*").eq("salon_id", _salonId).order("date_creation", { ascending: false });
   if (gcRes.data) {
@@ -376,7 +362,6 @@ async function loadSalonData() {
     });
   }
 
-  if(window._dbg)window._dbg("Cadeaux chargés");
   // 10. Charger audit log → window.AUDIT_LOG[]
   var auRes = await _sb.from("audit_log").select("*").eq("salon_id", _salonId).order("timestamp_action", { ascending: false }).limit(500);
   if (auRes.data) {
@@ -390,7 +375,6 @@ async function loadSalonData() {
   // Show header again after login
   var hdr = document.getElementById("hdr");
   if (hdr) hdr.style.display = "";
-  if(window._dbg)window._dbg("Plan="+SALON_CONFIG.plan+", status="+salon.status+", salonId="+_salonId);
   initApp(); // ← appelle la fonction d'init existante de l'app
   // Update notification badge after data is loaded
   setTimeout(function() {
@@ -399,11 +383,10 @@ async function loadSalonData() {
     var pending = (window.RDV_ONLINE || []).filter(function(r) { return r.status === "pending"; });
     if (pending.length > 0) console.log("Luxyra: " + pending.length + " RDV en ligne en attente de confirmation !");
   }, 500);
-  }catch(err){if(window._dbg)window._dbg("CRASH loadSalonData: "+err.message);console.error("loadSalonData error:",err);}
+  }catch(err){console.error("loadSalonData error:",err);}
 }
 
 function showSuspendedScreen(status) {
-  if(window._dbg)window._dbg("SUSPENDU: "+status);
   var el = document.getElementById("app") || document.body;
   var msg = status === "suspended" ? "Votre abonnement est suspendu suite à un défaut de paiement." : "Votre abonnement a été résilié.";
   el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a)"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2 style="color:#f87171;margin-bottom:12px">Compte ' + status + '</h2><p style="color:#94a3b8;margin-bottom:20px">' + msg + '</p><a href="https://billing.stripe.com/p/login/XXXXX" style="display:inline-block;padding:12px 24px;background:#d4a843;color:#000;border-radius:10px;font-weight:700;text-decoration:none">Gérer mon abonnement</a><br><button onclick="doLogout()" style="margin-top:12px;background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button></div></div>';
@@ -411,7 +394,6 @@ function showSuspendedScreen(status) {
 
 // Mode hors ligne (pas de Supabase configuré)
 function startOffline() {
-  if(window._dbg)window._dbg("MODE HORS LIGNE");
   _isOnline = false;
   // Bloquer l'accès sans Supabase
   var el = document.getElementById("app") || document.body;
@@ -677,7 +659,6 @@ function auditLogWrapper(action, detail) {
 
 // Au chargement de la page, vérifier la session
 document.addEventListener("DOMContentLoaded", function() {
-  if(window._dbg)window._dbg("DOMContentLoaded - luxyra-supabase.js chargé");
   // Remplacer auditLog par le wrapper si la fonction existe
   if (typeof window.auditLog === "function") {
     _originalAuditLog = window.auditLog;
