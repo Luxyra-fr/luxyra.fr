@@ -166,12 +166,14 @@ async function loadSalonData() {
   _salonId = salon.id;
   _isOnline = true;
 
+  if(window._dbg)window._dbg("Salon trouvé: "+salon.nom+", plan="+salon.plan+", status="+salon.status);
   // Vérifier statut abonnement
   if (salon.status === "suspended" || salon.status === "cancelled") {
     showSuspendedScreen(salon.status);
     return;
   }
 
+  if(window._dbg)window._dbg("Status OK, mapping config");
   // 2. Mapper vers SALON_CONFIG (format existant de l'app)
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
   SALON_CONFIG.sousTitre = salon.sous_titre || "";
@@ -192,6 +194,7 @@ async function loadSalonData() {
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
   if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}}catch(e){}}
 
+  if(window._dbg)window._dbg("Config mappé, charge collabs");
   // 3. Charger collaborateurs → T[]
   var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
   if (tRes.data) {
@@ -201,6 +204,7 @@ async function loadSalonData() {
     });
   }
 
+  if(window._dbg)window._dbg("Collabs chargés: "+T.length);
   // 4. Charger services → SVC[]
   var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId).order("id");
   if (svcRes.data) {
@@ -213,6 +217,7 @@ async function loadSalonData() {
     CATS = Object.keys(catSet);
   }
 
+  if(window._dbg)window._dbg("Services chargés: "+SVC.length);
   // 5. Charger clients → CL[]
   var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom");
   if (clRes.data) {
@@ -230,6 +235,7 @@ async function loadSalonData() {
     });
   }
 
+  if(window._dbg)window._dbg("Clients chargés: "+CL.length);
   // 6. Charger rendez-vous/tickets → AP[]
   var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(500);
   if (apRes.data) {
@@ -310,6 +316,7 @@ async function loadSalonData() {
     window.RDV_ONLINE = [];
   }
 
+  if(window._dbg)window._dbg("RDV chargés: "+AP.length);
   // 7. Charger produits → PRODS[]
   var prRes = await _sb.from("produits").select("*").eq("salon_id", _salonId).order("nom");
   if (prRes.data) {
@@ -325,6 +332,7 @@ async function loadSalonData() {
     PCATS = Object.keys(pcatSet);
   }
 
+  if(window._dbg)window._dbg("Produits chargés: "+PRODS.length);
   // 8. Charger cartes cadeaux → GC[]
   var gcRes = await _sb.from("cartes_cadeaux").select("*").eq("salon_id", _salonId).order("date_creation", { ascending: false });
   if (gcRes.data) {
@@ -362,6 +370,7 @@ async function loadSalonData() {
     });
   }
 
+  if(window._dbg)window._dbg("Cadeaux chargés");
   // 10. Charger audit log → window.AUDIT_LOG[]
   var auRes = await _sb.from("audit_log").select("*").eq("salon_id", _salonId).order("timestamp_action", { ascending: false }).limit(500);
   if (auRes.data) {
