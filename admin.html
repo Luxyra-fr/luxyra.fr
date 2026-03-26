@@ -423,7 +423,10 @@ async function actS(id,act){
   else if(act==="extend"){var d=new Date(s.trialEnd||new Date());d.setDate(d.getDate()+7);await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id);alert("⏰ Essai prolongé de 7 jours");}
   else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!confirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?"))return;await _sb.from("salons").update({plan:np}).eq("id",id);alert("📦 Plan changé en "+np);}
   else if(act==="reset"){await _sb.auth.resetPasswordForEmail(s.email);alert("🔑 Lien de réinitialisation envoyé à "+s.email);return;}
-  else if(act==="delete"){if(!confirm("ATTENTION : Supprimer définitivement "+s.nom+" et TOUTES ses données ?"))return;await _sb.from("salons").delete().eq("id",id);alert("🗑️ Salon supprimé");closeDetail();}
+  else if(act==="delete"){if(!confirm("ATTENTION : Supprimer définitivement "+s.nom+" et TOUTES ses données ?"))return;
+    // Supprimer le compte auth via Worker
+    if(s.userId){try{await fetch("/api/admin/delete-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:s.userId})});}catch(e){}}
+    await _sb.from("salons").delete().eq("id",id);alert("🗑️ Salon et compte utilisateur supprimés");closeDetail();}
   await loadData();render();if(act!=="delete")openD(id);
 }
 
@@ -457,6 +460,8 @@ function pickM(el,k){document.querySelectorAll(".mbtn").forEach(function(b){b.st
 function closeMod(){document.getElementById("detailOverlay").classList.remove("open");}
 
 async function doCreate(){
+  var btn=event.target;btn.disabled=true;btn.textContent="\u23f3 Cr\u00e9ation en cours...";
+  try{
   var nom=document.getElementById("nNom").value.trim(),email=document.getElementById("nEmail").value.trim(),pass=document.getElementById("nPass").value,tel=(document.getElementById("nTel").value||"").trim(),plan=document.getElementById("nPlan").value,status=document.getElementById("nStatus").value,metier=document.getElementById("nMetier").value;
   var gerant=(document.getElementById("nGerant")||{value:""}).value.trim();
   var siret=(document.getElementById("nSiret")||{value:""}).value.trim();
@@ -464,36 +469,29 @@ async function doCreate(){
   var cpVille=(document.getElementById("nCpVille")||{value:""}).value.trim();
   var cp="",ville="";if(cpVille){var _m=cpVille.match(/^(\d{5})\s*(.*)$/);if(_m){cp=_m[1];ville=_m[2];}else{ville=cpVille;}}
   var gNom="",gPrenom="";if(gerant){var _g=gerant.split(" ");gNom=_g[0]||"";gPrenom=_g.slice(1).join(" ")||"";}
-  if(!nom||!email||!pass){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Nom, email et mot de passe obligatoires.";}return;}
-  if(pass.length<6){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Mot de passe : 6 caractères minimum.";}return;}
-  if(!_sb||!_online){alert("Non connecté");return;}
-
-  // Client TEMPORAIRE pour ne pas déconnecter l’admin
+  if(!nom||!email||!pass){alert("Nom, email et mot de passe obligatoires.");btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
+  if(pass.length<6){alert("Mot de passe : 6 caract\u00e8res minimum.");btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
+  if(!_sb||!_online){alert("Non connect\u00e9");btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
   var tmp=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
   var ar=await tmp.auth.signUp({email:email,password:pass,options:{data:{role:"salon"}}});
-  if(ar.error){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Erreur: "+ar.error.message;}return;}
+  if(ar.error){alert("Erreur : "+ar.error.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
   var uid=ar.data.user.id;
-
   var te=status==="trial"?new Date(Date.now()+14*864e5).toISOString():null;
   var sr=await _sb.from("salons").insert({user_id:uid,nom:nom,ville:ville,cp:cp,adresse:adresse,email:email,tel:tel,siret:siret,gerant_nom:gNom,gerant_prenom:gPrenom,plan:plan,status:status,trial_end:te,metier:metier,verification_status:"pending",config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})}).select().single();
-  if(sr.error){var e=document.getElementById("addErr");if(e){e.style.display="block";e.textContent="Erreur: "+sr.error.message;}return;}
-
+  if(sr.error){alert("Erreur : "+sr.error.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
   var sid=sr.data.id;
-  var cl={coiffure:["Coiffeur 1","Coiffeur 2"],barbier:["Barbier 1","Barbier 2"],esthetique:["Praticienne 1","Praticienne 2"],ongles:["Prothésiste 1","Prothésiste 2"],bien_etre:["Praticien 1","Praticien 2"]};
+  var cl={coiffure:["Coiffeur 1","Coiffeur 2"],barbier:["Barbier 1","Barbier 2"],esthetique:["Praticienne 1","Praticienne 2"],ongles:["Proth\u00e9siste 1","Proth\u00e9siste 2"],bien_etre:["Praticien 1","Praticien 2"]};
   var c=cl[metier]||cl.coiffure;
   await _sb.from("collaborateurs").insert([{salon_id:sid,nom:c[0],initiales:c[0].slice(0,2).toUpperCase(),couleur:"#c9a227"},{salon_id:sid,nom:c[1],initiales:c[1].slice(0,2).toUpperCase(),couleur:"#7d3c98"}]);
   await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:sid,action:"CREATE_SALON",details:nom+" - "+plan+" - "+email});
-
-  // Copy password to clipboard
+  closeMod();
   try{navigator.clipboard.writeText(pass);}catch(e){}
-  
-  // Open email client with credentials
   var subject="Bienvenue sur Luxyra - Vos identifiants";
-  var body="Bonjour,\n\nVotre compte Luxyra a été créé avec succès !\n\nVoici vos identifiants de connexion :\n\nURL : https://luxyra.fr/app\nEmail : "+email+"\nMot de passe : "+pass+"\n\nNous vous recommandons de changer votre mot de passe dès votre première connexion.\n\nÀ bientôt,\nL'équipe Luxyra";
+  var body="Bonjour,\n\nVotre compte Luxyra a \u00e9t\u00e9 cr\u00e9\u00e9 avec succ\u00e8s !\n\nVoici vos identifiants de connexion :\n\nURL : https://luxyra.fr/app\nEmail : "+email+"\nMot de passe : "+pass+"\n\nNous vous recommandons de changer votre mot de passe d\u00e8s votre premi\u00e8re connexion.\n\n\u00c0 bient\u00f4t,\nL\u2019\u00e9quipe Luxyra";
   window.open("mailto:"+email+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body));
-  
-  alert("Établissement " + nom + " créé !\n\nIdentifiants :\nEmail : " + email + "\nMot de passe : " + pass + "\n\n✅ Mot de passe copié dans le presse-papier\n✉️ Email pré-rempli ouvert dans votre messagerie");
-  await loadData();render();
+  alert("\u2705 \u00c9tablissement " + nom + " cr\u00e9\u00e9 !\n\nIdentifiants :\nEmail : " + email + "\nMot de passe : " + pass + "\n\n\ud83d\udccb Mot de passe copi\u00e9\n\u2709\ufe0f Email pr\u00e9-rempli ouvert");
+  await loadData();await loadDemandes();render();
+  }catch(err){alert("Erreur inattendue : "+err.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";}
 }
 
 // ===== DEMANDES =====
@@ -693,6 +691,8 @@ async function saveNotes(id){
 }
 
 checkSession();
+// Auto-refresh demandes toutes les 30s
+setInterval(async function(){if(_online&&_sb){await loadDemandes();var b=document.getElementById("badgeDemandes");if(b){var n=DEMANDES.filter(function(d){return d.status==="new";}).length;b.textContent=n>0?n:"";}}},30000);
 </script>
 </body>
 </html>
