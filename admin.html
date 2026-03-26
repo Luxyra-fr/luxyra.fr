@@ -418,12 +418,12 @@ function closeDetail(){document.getElementById("detailOverlay").classList.remove
 
 async function actS(id,act){
   var s=gSalon(id);if(!s||!_online)return;
-  if(act==="suspend")await _sb.from("salons").update({status:"suspended"}).eq("id",id);
-  else if(act==="reactivate")await _sb.from("salons").update({status:"active"}).eq("id",id);
-  else if(act==="extend"){var d=new Date(s.trialEnd||new Date());d.setDate(d.getDate()+7);await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id);}
-  else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";await _sb.from("salons").update({plan:np}).eq("id",id);}
-  else if(act==="reset"){await _sb.auth.resetPasswordForEmail(s.email);alert("Lien envoyé à "+s.email);return;}
-  else if(act==="delete"){if(!confirm("ATTENTION : Supprimer définitivement "+s.nom+" et TOUTES ses données ?"))return;await _sb.from("salons").delete().eq("id",id);closeDetail();}
+  if(act==="suspend"){await _sb.from("salons").update({status:"suspended"}).eq("id",id);alert("⛔ Salon suspendu");}
+  else if(act==="reactivate"){await _sb.from("salons").update({status:"active"}).eq("id",id);alert("✅ Salon réactivé");}
+  else if(act==="extend"){var d=new Date(s.trialEnd||new Date());d.setDate(d.getDate()+7);await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id);alert("⏰ Essai prolongé de 7 jours");}
+  else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!confirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?"))return;await _sb.from("salons").update({plan:np}).eq("id",id);alert("📦 Plan changé en "+np);}
+  else if(act==="reset"){await _sb.auth.resetPasswordForEmail(s.email);alert("🔑 Lien de réinitialisation envoyé à "+s.email);return;}
+  else if(act==="delete"){if(!confirm("ATTENTION : Supprimer définitivement "+s.nom+" et TOUTES ses données ?"))return;await _sb.from("salons").delete().eq("id",id);alert("🗑️ Salon supprimé");closeDetail();}
   await loadData();render();if(act!=="delete")openD(id);
 }
 
@@ -506,12 +506,24 @@ function rDemandes(){
     if(d.status==="new")h+='<button class="td-btn" onclick="updDem(&#39;'+d.id+'&#39;,&#39;contacted&#39;)" title="Contacté">📞</button>';
     if(d.status!=="done")h+='<button class="td-btn" onclick="updDem(&#39;'+d.id+'&#39;,&#39;done&#39;)" title="Traité">✅</button>';
     h+='<button class="td-btn" onclick="createFromDem(&#39;'+d.id+'&#39;)" title="Créer compte">➕</button>';
+    h+='<button class="td-btn" onclick="delDem(&#39;'+d.id+'&#39;)" title="Supprimer" style="color:var(--red)">🗑️</button>';
     h+='</div></td></tr>';
   });
   h+='</table></div></div>';return h;
 }
 
-async function updDem(id,st){await _sb.from("demandes_essai").update({status:st}).eq("id",id);await loadDemandes();render();}
+async function updDem(id,st){
+  await _sb.from("demandes_essai").update({status:st}).eq("id",id);
+  var labels={contacted:"📞 Marqué comme contacté",done:"✅ Marqué comme traité"};
+  alert(labels[st]||"Statut mis à jour");
+  await loadDemandes();render();
+}
+
+async function delDem(id){
+  if(!confirm("Supprimer cette demande ?"))return;
+  await _sb.from("demandes_essai").delete().eq("id",id);
+  await loadDemandes();render();
+}
 
 function createFromDem(id){
   var d=DEMANDES.find(function(x){return x.id===id;});if(!d)return;
@@ -645,6 +657,8 @@ async function verifSalon(id,status){
   if(status==="verified"){data.verified_at=new Date().toISOString();data.verified_by=_uid;}
   await _sb.from("salons").update(data).eq("id",id);
   await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"VERIFY_"+status.toUpperCase(),details:""});
+  var labels={verified:"✅ Salon vérifié !",incomplete:"📝 Marqué comme incomplet",rejected:"❌ Salon rejeté"};
+  alert(labels[status]||"Statut mis à jour");
   await loadData();render();openD(id);
 }
 
