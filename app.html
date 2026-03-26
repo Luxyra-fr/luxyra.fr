@@ -228,12 +228,19 @@ function showUpgradeModal(feature){
     +'<div style="font-size:20px;font-weight:800;margin-bottom:8px">Passez en Pro</div>'
     +'<div style="font-size:14px;color:#94a3b8;margin-bottom:6px;line-height:1.6"><strong style="color:#d4a843">'+f+'</strong> est disponible avec le forfait Pro.</div>'
     +'<div style="font-size:28px;font-weight:900;color:#d4a843;margin-bottom:4px;font-family:var(--mono)">24,99€<span style="font-size:14px;color:#94a3b8;font-weight:400">/mois</span></div>'
-    +'<div style="font-size:12px;color:#5a6578;margin-bottom:20px">Site vitrine • Réservation en ligne • Marketplace • SMS rappels • Email marketing</div>'
+    +'<div style="font-size:12px;color:#5a6578;margin-bottom:16px">Site vitrine • Réservation en ligne • Marketplace • SMS rappels • Email marketing</div>'
+    +'<label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px;cursor:pointer;font-size:12px;color:#94a3b8;line-height:1.4"><input type="checkbox" id="cgvCheck" style="margin-top:2px;flex-shrink:0"> J\u2019accepte les <a href="https://luxyra.fr/cgv" target="_blank" style="color:#d4a843;text-decoration:underline">Conditions Générales de Vente</a> et la <a href="https://luxyra.fr/politique-confidentialite" target="_blank" style="color:#d4a843;text-decoration:underline">Politique de confidentialité</a></label>'
     +'<div style="display:flex;flex-direction:column;gap:8px">'
-    +'<button onclick="startCheckout(\'pro\')" style="padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer" id="upgradeBtn">Passer en Pro →</button>'
+    +'<button onclick="checkCgvAndPay(\'pro\')" style="padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer" id="upgradeBtn">Passer en Pro →</button>'
     +'<button onclick="this.closest(\'.upgrade-overlay\').remove()" style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;font-family:var(--f1)">Plus tard</button>'
     +'</div></div>';
   document.body.appendChild(el);
+}
+
+function checkCgvAndPay(plan){
+  var cb=document.getElementById("cgvCheck");
+  if(!cb||!cb.checked){alert("Veuillez accepter les Conditions Générales de Vente pour continuer.");return;}
+  startCheckout(plan);
 }
 
 async function startCheckout(plan){
@@ -1668,6 +1675,7 @@ if(!window.CLOTURES)window.CLOTURES=[];if(window.SHOW_TVA_TICKET===undefined)win
 if(!window.LOCKED_DAYS)window.LOCKED_DAYS={};
 try{var _ld=localStorage.getItem("_cp_locked");if(_ld){var _ldp=JSON.parse(_ld);for(var _lk in _ldp)window.LOCKED_DAYS[_lk]=_ldp[_lk];}}catch(e){}
 if(!window.AUDIT_LOG)window.AUDIT_LOG=[];
+if(!window.PACKS_CLIENTS)window.PACKS_CLIENTS=[];
 if(!window.CAISSE_DATA)window.CAISSE_DATA={fond:200,coffreEsp:0,coffreChq:0,remisesBanque:[],retraits:[],pieces:[],misesAuCoffre:[]};
 var _lastTicketHash="00000000";
 (function(){var doneH=AP.filter(function(a){return a.hash;});if(doneH.length){_lastTicketHash=doneH[doneH.length-1].hash||"00000000";}})();
@@ -4253,7 +4261,7 @@ function rDetail(){
   h+='</div></div>';
 
   // Tabs
-  var tabs=[{k:"infos",l:"Infos",i:"\ud83d\udc64"},{k:"cheveu",l:"Cheveux",i:"\ud83d\udc87"},{k:"histo",l:"Histo.",i:"\ud83d\udcde"},{k:"fiche",l:"Fiche T",i:"\u270f\ufe0f"},{k:"fidel",l:"Fid\u00e9lit\u00e9",i:"\ud83c\udfc5"},{k:"rgpd",l:"RGPD",i:"\u2709\ufe0f"},{k:"ca",l:"C.A.",i:"\ud83d\udcca"}];
+  var tabs=[{k:"infos",l:"Infos",i:"\ud83d\udc64"},{k:"cheveu",l:"Cheveux",i:"\ud83d\udc87"},{k:"histo",l:"Histo.",i:"\ud83d\udcde"},{k:"fiche",l:"Fiche T",i:"\u270f\ufe0f"},{k:"packs",l:"Packs",i:"\ud83c\udf9f\ufe0f"},{k:"fidel",l:"Fid\u00e9lit\u00e9",i:"\ud83c\udfc5"},{k:"rgpd",l:"RGPD",i:"\u2709\ufe0f"},{k:"ca",l:"C.A.",i:"\ud83d\udcca"}];
   h+='<div class="tabs" style="margin:12px 0">';
   for(var i=0;i<tabs.length;i++){
     h+='<div class="tab'+(clTab===tabs[i].k?" on":"")+'" onclick="clTab=\''+tabs[i].k+'\';go(\'detail\')" style="font-size:11px;padding:6px 10px">'+tabs[i].i+' '+tabs[i].l+'</div>';
@@ -4324,6 +4332,38 @@ function rDetail(){
     }
     h+='</div>';
   }
+  else if(clTab==="packs"){
+    var pks=(window.PACKS_CLIENTS||[]).filter(function(p){return p.clientId===c.id;});
+    var actifs=pks.filter(function(p){return p.status==="active";});
+    var termines=pks.filter(function(p){return p.status==="completed";});
+    h+='<div class="card"><div class="ct">\ud83c\udf9f\ufe0f Packs / Abonnements actifs</div>';
+    if(!actifs.length){
+      h+='<div style="text-align:center;padding:20px;color:var(--text3)">Aucun pack actif</div>';
+    }
+    actifs.forEach(function(pk){
+      var pct=Math.round(pk.used/pk.total*100);
+      h+='<div style="padding:12px 0;border-bottom:1px solid var(--border2)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-weight:700;font-size:14px">'+pk.nom+'</div>';
+      h+='<div style="font-size:12px;color:var(--text3)">Achet\u00e9 le '+pk.dateAchat+'</div></div>';
+      h+='<div style="text-align:right"><div style="font-size:18px;font-weight:800;color:var(--gold)">'+(pk.total-pk.used)+'<span style="font-size:12px;color:var(--text3)"> / '+pk.total+'</span></div>';
+      h+='<div style="font-size:11px;color:var(--text3)">s\u00e9ances restantes</div></div></div>';
+      h+='<div style="margin-top:8px;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,var(--gold),var(--green));border-radius:3px"></div></div>';
+      h+='<button class="btn bg" style="width:100%;margin-top:8px;padding:10px;font-size:13px" onclick="validatePackSeance(\''+pk.id+'\')">\u2705 Valider une s\u00e9ance</button>';
+      h+='</div>';
+    });
+    h+='<button class="btn bg" style="width:100%;margin-top:12px;padding:12px;font-size:14px" onclick="showAddPack(\''+c.id+'\')">+ Vendre un pack</button>';
+    h+='</div>';
+    if(termines.length){
+      h+='<div class="card"><div class="ct" style="color:var(--text3)">\u2705 Packs termin\u00e9s</div>';
+      termines.forEach(function(pk){
+        h+='<div style="padding:8px 0;border-bottom:1px solid var(--border2);font-size:13px;color:var(--text3)">';
+        h+='<span style="font-weight:600">'+pk.nom+'</span> \u2014 '+pk.total+' s\u00e9ances \u2014 '+pk.prix+'\u20ac \u2014 '+pk.dateAchat;
+        h+='</div>';
+      });
+      h+='</div>';
+    }
+  }
   else if(clTab==="fidel"){
     if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
     var maxFid=window.FIDCONF.seuil||10;var remisePct=window.FIDCONF.remise||10;
@@ -4382,16 +4422,70 @@ function rDetail(){
 // === SERVICES ===
 
 
-function saveForfaitsToSupabase(){
-  try{localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}catch(e){}
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
-      var cfg={};
-      if(r.data&&r.data[0]&&r.data[0].config_json){try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}}
-      cfg.forfaits=FORFAITS;
-      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
-    });
+// ===== PACKS / ABONNEMENTS =====
+function showAddPack(cId){
+  var c=gC(cId);if(!c)return;
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83c\udf9f\ufe0f Vendre un pack</h2>';
+  htm+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Client : <strong>'+cName(c)+'</strong></div>';
+  htm+='<div class="fg"><label>Nom du pack *</label><input id="pkName" placeholder="Ex: Pack 5 coupes, Cure 10 s\u00e9ances..."></div>';
+  htm+='<div class="fg"><label>Prestation li\u00e9e</label><select id="pkPrest"><option value="">Aucune (libre)</option>';
+  SVC.forEach(function(s){htm+='<option value="'+s.id+'">'+s.n+' ('+s.p+'\u20ac)</option>';});
+  htm+='</select></div>';
+  htm+='<div class="fg"><label>Nombre de s\u00e9ances *</label><input type="number" id="pkTotal" min="2" max="100" value="5" style="font-size:18px;text-align:center;padding:14px"></div>';
+  htm+='<div class="fg"><label>Prix total du pack (\u20ac) *</label><input type="number" id="pkPrix" min="0" step="1" value="" style="font-size:18px;text-align:center;padding:14px" placeholder="Ex: 120"></div>';
+  htm+='<div class="fg"><label>Date d\u0027expiration (optionnel)</label><input type="date" id="pkExp"></div>';
+  htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px;padding:10px;background:var(--bg3);border-radius:8px">\ud83d\udca1 Le client paye le pack en une fois. \u00c0 chaque visite, vous validez une s\u00e9ance depuis sa fiche.</div>';
+  htm+='<div style="display:flex;gap:8px">';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doAddPack(\''+cId+'\')">Vendre ce pack</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+function doAddPack(cId){
+  var c=gC(cId);if(!c)return;
+  var name=document.getElementById("pkName").value.trim();
+  var total=parseInt(document.getElementById("pkTotal").value)||0;
+  var prix=parseFloat(document.getElementById("pkPrix").value)||0;
+  var exp=document.getElementById("pkExp").value||null;
+  var prestEl=document.getElementById("pkPrest");
+  var prestId=prestEl?parseInt(prestEl.value)||null:null;
+  var prestNom=prestId?((gS(prestId)||{}).n||""):"";
+  if(!name||total<2||prix<=0){alert("Nom, nombre de s\u00e9ances (min 2) et prix obligatoires");return;}
+  var pack={
+    id:null,clientId:cId,clientNom:cName(c),nom:name,
+    prestId:prestId,prestNom:prestNom,
+    total:total,used:0,prix:prix,
+    dateAchat:TD,dateExp:exp,ticketNum:"",status:"active"
+  };
+  if(!window.PACKS_CLIENTS)window.PACKS_CLIENTS=[];
+  window.PACKS_CLIENTS.push(pack);
+  if(typeof savePack==="function")savePack(pack);
+  auditLog("PACK_VENDU",name+" x"+total+" \u00e0 "+cName(c)+" pour "+prix+"\u20ac");
+  cM();
+  // Cr\u00e9er un ticket automatique pour le paiement
+  alert("\u2705 Pack \""+name+"\" vendu \u00e0 "+cName(c)+" !\n\n"+total+" s\u00e9ances pour "+prix+"\u20ac\n\nPensez \u00e0 encaisser le paiement.");
+  go("detail");
+}
+
+function validatePackSeance(packId){
+  var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
+  if(!pk){alert("Pack introuvable");return;}
+  if(pk.used>=pk.total){alert("Ce pack est termin\u00e9 ("+pk.total+"/"+pk.total+" s\u00e9ances utilis\u00e9es)");return;}
+  if(!confirm("Valider 1 s\u00e9ance du pack \""+pk.nom+"\" ?\n\nS\u00e9ance "+(pk.used+1)+" / "+pk.total))return;
+  if(typeof usePackSeance==="function"){
+    usePackSeance(packId);
+  } else {
+    pk.used=(pk.used||0)+1;
+    if(pk.used>=pk.total)pk.status="completed";
   }
+  auditLog("PACK_SEANCE","S\u00e9ance "+pk.used+"/"+pk.total+" - "+pk.nom+" ("+pk.clientNom+")");
+  go("detail");
+}
+
+function saveForfaitsToSupabase(){
+  if(typeof saveForfaits==="function"){saveForfaits();}
+  else{try{localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}catch(e){}}
 }
 
 function rForfaits(){
@@ -4528,7 +4622,9 @@ function deleteForfaitCategory(){
 
 function deleteForfait(idx){
   var f=FORFAITS[idx];if(!f)return;
-  showConfirmDelete("Supprimer "+f.n+" ?",f.p+"\u20ac",function(){FORFAITS.splice(idx,1);
+  showConfirmDelete("Supprimer "+f.n+" ?",f.p+"\u20ac",function(){
+  if(typeof deleteForfaitFromDb==="function")deleteForfaitFromDb(f.id);
+  FORFAITS.splice(idx,1);
   saveForfaitsToSupabase();
   cM();go("services");
   });

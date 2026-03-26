@@ -166,10 +166,31 @@ async function loadSalonData() {
   _salonId = salon.id;
   _isOnline = true;
 
+  // Minimum config pour les écrans de blocage
+  SALON_CONFIG.nom = salon.nom || "Mon Salon";
+  SALON_CONFIG.email = salon.email || "";
+  SALON_CONFIG.plan = salon.plan || "essential";
+
   // Vérifier statut abonnement
   if (salon.status === "suspended" || salon.status === "cancelled") {
     showSuspendedScreen(salon.status);
     return;
+  }
+
+  // Vérifier expiration essai
+  if (salon.status === "trial" && salon.trial_end) {
+    var now = new Date();
+    var end = new Date(salon.trial_end);
+    var daysLeft = Math.ceil((end - now) / 86400000);
+    window._trialDaysLeft = daysLeft;
+    window._trialEnd = salon.trial_end;
+    if (daysLeft < 0) {
+      showTrialExpiredScreen(salon);
+      return;
+    }
+  } else {
+    window._trialDaysLeft = null;
+    window._trialEnd = null;
   }
 
   // 2. Mapper vers SALON_CONFIG (format existant de l'app)
@@ -370,6 +391,24 @@ async function loadSalonData() {
     });
   }
 
+  // 11. Charger forfaits → FORFAITS[]
+  var fRes = await _sb.from("forfaits").select("*").eq("salon_id", _salonId).order("id");
+  if (fRes.data && fRes.data.length > 0) {
+    FORFAITS = fRes.data.map(function(f) {
+      return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false };
+    });
+  }
+
+  // 12. Charger packs clients → window.PACKS_CLIENTS[]
+  var pkRes = await _sb.from("packs_clients").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
+  if (pkRes.data) {
+    window.PACKS_CLIENTS = pkRes.data.map(function(p) {
+      return { id: p.id, clientId: p.client_id, clientNom: p.client_nom, nom: p.nom, prestId: p.prestation_id, prestNom: p.prestation_nom, total: p.total_seances, used: p.seances_utilisees, prix: Number(p.prix_total), dateAchat: p.date_achat, dateExp: p.date_expiration, ticketNum: p.ticket_num, status: p.status };
+    });
+  } else {
+    window.PACKS_CLIENTS = [];
+  }
+
   // Lancer l'app !
   console.log("Luxyra: Données chargées depuis Supabase (" + CL.length + " clients, " + AP.length + " RDV, " + PRODS.length + " produits)");
   // Show header again after login
@@ -389,7 +428,36 @@ async function loadSalonData() {
 function showSuspendedScreen(status) {
   var el = document.getElementById("app") || document.body;
   var msg = status === "suspended" ? "Votre abonnement est suspendu suite à un défaut de paiement." : "Votre abonnement a été résilié.";
-  el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a)"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2 style="color:#f87171;margin-bottom:12px">Compte ' + status + '</h2><p style="color:#94a3b8;margin-bottom:20px">' + msg + '</p><a href="https://billing.stripe.com/p/login/XXXXX" style="display:inline-block;padding:12px 24px;background:#d4a843;color:#000;border-radius:10px;font-weight:700;text-decoration:none">Gérer mon abonnement</a><br><button onclick="doLogout()" style="margin-top:12px;background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button></div></div>';
+  el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a)"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2 style="color:#f87171;margin-bottom:12px">Compte ' + status + '</h2><p style="color:#94a3b8;margin-bottom:20px">' + msg + '</p><button onclick="openCustomerPortal()" style="display:inline-block;padding:12px 24px;background:#d4a843;color:#000;border-radius:10px;font-weight:700;border:none;cursor:pointer;font-size:15px">Gérer mon abonnement</button><br><button onclick="doLogout()" style="margin-top:12px;background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button></div></div>';
+  document.getElementById("hdr").style.display="none";
+}
+
+function showTrialExpiredScreen(salon) {
+  var el = document.getElementById("app") || document.body;
+  document.getElementById("hdr").style.display="none";
+  el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a)">'+
+    '<div style="text-align:center;max-width:440px;padding:32px">'+
+    '<div style="font-size:56px;margin-bottom:16px">⏰</div>'+
+    '<h2 style="color:var(--gold,#d4a843);margin-bottom:8px;font-size:24px">Votre essai est terminé</h2>'+
+    '<p style="color:#94a3b8;margin-bottom:24px;font-size:15px;line-height:1.6">Merci d\u2019avoir testé Luxyra !<br>Pour continuer à utiliser toutes les fonctionnalités, choisissez votre formule.</p>'+
+    '<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;justify-content:center">'+
+    '<div style="flex:1;min-width:180px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:14px;padding:20px;text-align:center">'+
+    '<div style="font-size:12px;color:#60a5fa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ESSENTIEL</div>'+
+    '<div style="font-size:28px;font-weight:800;color:#fff">14,99\u20ac<span style="font-size:14px;color:#94a3b8">/mois</span></div>'+
+    '<div style="font-size:11px;color:#94a3b8;margin-top:8px">Planning \u2022 Encaissement \u2022 Clients</div>'+
+    '<button onclick="checkCgvAndPay(\'essential\')" style="margin-top:12px;width:100%;padding:10px;border-radius:10px;background:#60a5fa;color:#fff;font-weight:700;border:none;cursor:pointer;font-size:13px">Choisir Essentiel</button>'+
+    '</div>'+
+    '<div style="flex:1;min-width:180px;background:rgba(212,168,67,.08);border:1.5px solid rgba(212,168,67,.3);border-radius:14px;padding:20px;text-align:center;position:relative">'+
+    '<div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#d4a843;color:#000;font-size:9px;font-weight:800;padding:3px 10px;border-radius:50px;letter-spacing:1px">RECOMMANDÉ</div>'+
+    '<div style="font-size:12px;color:#d4a843;font-weight:700;letter-spacing:1px;margin-bottom:8px">PRO</div>'+
+    '<div style="font-size:28px;font-weight:800;color:#fff">24,99\u20ac<span style="font-size:14px;color:#94a3b8">/mois</span></div>'+
+    '<div style="font-size:11px;color:#94a3b8;margin-top:8px">Tout Essentiel + Site \u2022 Résa \u2022 SMS</div>'+
+    '<button onclick="checkCgvAndPay(\'pro\')" style="margin-top:12px;width:100%;padding:10px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;border:none;cursor:pointer;font-size:13px">Choisir Pro</button>'+
+    '</div>'+
+    '</div>'+
+    '<label style="display:flex;align-items:flex-start;gap:8px;margin:16px 0 12px;cursor:pointer;font-size:11px;color:#94a3b8;line-height:1.4;text-align:left"><input type="checkbox" id="cgvCheck" style="margin-top:2px;flex-shrink:0"> J\u2019accepte les <a href="https://luxyra.fr/cgv" target="_blank" style="color:#d4a843">CGV</a> et la <a href="https://luxyra.fr/politique-confidentialite" target="_blank" style="color:#d4a843">Politique de confidentialit\u00e9</a></label>'+
+    '<button onclick="doLogout()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button>'+
+    '</div></div>';
 }
 
 // Mode hors ligne (pas de Supabase configuré)
@@ -582,6 +650,77 @@ async function saveServices() {
       if (res.data && res.data[0]) s.id = res.data[0].id;
     }
   }
+}
+
+// Sauvegarder les forfaits
+async function saveForfaits() {
+  if (!_sb || !_salonId) return;
+  for (var i = 0; i < FORFAITS.length; i++) {
+    var f = FORFAITS[i];
+    var data = {
+      salon_id: _salonId, nom: f.n, prix: f.p,
+      categorie: f.cat, services: f.services || [],
+      phases: f.phases || [],
+      show_site: f.showSite !== false, book_online: f.bookOnline !== false
+    };
+    if (typeof f.id === "number" && f.id > 0) {
+      var check = await _sb.from("forfaits").select("id").eq("id", f.id).eq("salon_id", _salonId);
+      if (check.data && check.data.length > 0) {
+        await _sb.from("forfaits").update(data).eq("id", f.id);
+      } else {
+        var res = await _sb.from("forfaits").insert(data).select();
+        if (res.data && res.data[0]) f.id = res.data[0].id;
+      }
+    } else {
+      var res = await _sb.from("forfaits").insert(data).select();
+      if (res.data && res.data[0]) f.id = res.data[0].id;
+    }
+  }
+  // Also save to localStorage as backup
+  try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(e) {}
+}
+
+// Sauvegarder un pack client (achat ou validation séance)
+async function savePack(pack) {
+  if (!_sb || !_salonId) return;
+  var data = {
+    salon_id: _salonId,
+    client_id: pack.clientId || "",
+    client_nom: pack.clientNom || "",
+    nom: pack.nom,
+    prestation_id: pack.prestId || null,
+    prestation_nom: pack.prestNom || "",
+    total_seances: pack.total,
+    seances_utilisees: pack.used || 0,
+    prix_total: pack.prix,
+    date_achat: pack.dateAchat,
+    date_expiration: pack.dateExp || null,
+    ticket_num: pack.ticketNum || "",
+    status: pack.status || "active"
+  };
+  if (pack.id) {
+    await _sb.from("packs_clients").update(data).eq("id", pack.id);
+  } else {
+    var res = await _sb.from("packs_clients").insert(data).select();
+    if (res.data && res.data[0]) pack.id = res.data[0].id;
+  }
+}
+
+// Valider une séance d'un pack
+async function usePackSeance(packId) {
+  if (!_sb) return;
+  var pk = (window.PACKS_CLIENTS || []).find(function(p) { return p.id === packId; });
+  if (!pk) return;
+  pk.used = (pk.used || 0) + 1;
+  if (pk.used >= pk.total) pk.status = "completed";
+  await _sb.from("packs_clients").update({ seances_utilisees: pk.used, status: pk.status }).eq("id", packId);
+  return pk;
+}
+
+// Supprimer un forfait
+async function deleteForfaitFromDb(forfaitId) {
+  if (!_sb || !_salonId) return;
+  await _sb.from("forfaits").delete().eq("id", forfaitId).eq("salon_id", _salonId);
 }
 
 async function saveCollaborateurs() {
