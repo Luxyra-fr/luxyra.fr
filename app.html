@@ -8530,212 +8530,51 @@ function saveFicheTech(cId){
 }
 
 function printTicketReceipt(){
-  var cl=_tk.cId?gC(_tk.cId):null;
-  var clN=cl?cName(cl):passageName(_tk.cId);
-  var sty=gT(_tk.stId);
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
   var metStr=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"CB";
-  // Mark as printed (for DUPLICATA tracking)
   if(_tk.apptId){for(var pi2=0;pi2<AP.length;pi2++){if(AP[pi2].id===_tk.apptId){AP[pi2].printed=true;if(typeof saveAppointment==="function")saveAppointment(AP[pi2]);break;}}}
-  var w=window.open("","_blank","width=320,height=500");
-  if(!w)return;
-  var h="<html><head><title>Ticket</title><style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th{color:#000!important;background:transparent!important}body{font-family:monospace;padding:10px;max-width:300px;margin:0 auto;font-size:12px;color:#000!important;background:#fff!important}@media print{*{color:#000!important;background:transparent!important}body{background:#fff!important}}h1{font-size:14px;text-align:center;margin:0;}p{margin:2px 0;text-align:center;}.line{display:flex;justify-content:space-between;padding:3px 0;}.sep{border-top:1px dashed #999;margin:6px 0;}.sep2{border-top:2px solid #000;margin:6px 0;}.bold{font-weight:900;font-size:14px;}</style></head><body>";
-  h+="<h1>"+SALON_CONFIG.nom.toUpperCase()+"</h1><p>"+SALON_CONFIG.sousTitre+"</p><p>"+SALON_CONFIG.adresseComplete()+"</p><p>T\u00e9l: "+SALON_CONFIG.tel+"</p>";
-  h+="<div class=\"sep\"></div>";
-  h+="<p>Ticket N\u00b0"+tkN+" - "+fmt(TD)+"</p>";
-  h+="<p>Collaborateur: "+(sty?sty.n:"")+"</p>";
-  h+="<p>Client: "+clN+"</p>";
-  h+="<div class=\"sep\"></div>";
-  for(var i=0;i<_tk.items.length;i++){var it=_tk.items[i];var lt=it.price*it.qty-it.remise;h+="<div class=\"line\"><span>"+it.name+(it.qty>1?" x"+it.qty:"")+"</span><span>"+lt.toFixed(2)+" \u20ac</span></div>";if(it.remise>0)h+="<p style=\"text-align:right;color:green\">Remise -"+it.remise.toFixed(2)+" \u20ac</p>";}
-  if(_tk.remise>0)h+="<p style=\"text-align:right;color:green\">Remise ticket -"+_tk.remise.toFixed(2)+" \u20ac</p>";
-  h+="<div class=\"sep2\"></div>";
-  if(_tk.acompte&&_tk.acompte>0){
-      h+="<div class=\"line\"><span>Acompte vers\u00e9 ("+(_tk.acompteMode||"")+")</span><span>-"+_tk.acompte.toFixed(2)+" \u20ac</span></div>";
-      // Find the acompte ticket number
-      var acompTk=null;for(var ati=0;ati<AP.length;ati++){if(AP[ati].isAcompte&&AP[ati].apptId===_tk.apptId&&AP[ati].tkNum){acompTk=AP[ati].tkNum;break;}}
-      if(acompTk)h+="<div class=\"line\" style=\"font-size:10px\"><span>R\u00e9f. ticket acompte</span><span>#"+acompTk+"</span></div>";
-      h+="<div class=\"sep\"></div>";
-      h+="<div class=\"line bold\"><span>RESTE PAY\u00c9</span><span>"+(total-_tk.acompte).toFixed(2)+" \u20ac</span></div>";
-    }
-    h+="<div class=\"line bold\"><span>TOTAL TTC</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
-  // TVA on ticket
-  if(window.SHOW_TVA_TICKET){
-  var txT=SALON_CONFIG.tauxTVA||20;
-  var tkHT=Math.round(total/(1+txT/100)*100)/100;
-  var tkTVA=Math.round((total-tkHT)*100)/100;
-  h+="<div class=\"sep\"></div>";
-  h+="<div class=\"line\" style=\"font-size:10px\"><span>Total HT</span><span>"+tkHT.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class=\"line\" style=\"font-size:10px\"><span>TVA "+txT+"%</span><span>"+tkTVA.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class=\"line\" style=\"font-size:10px\"><span>Total TTC</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
-  }
-  if(txT===0)h+="<p style=\"font-size:9px\">TVA non applicable - Art. 293B du CGI</p>";
-  h+="<div class=\"sep\"></div>";
-  h+="<p>R\u00e8glement: "+metStr+"</p>";
-  // Fidelity info on ticket
-  var fidResults=_tk._fidResults||{};
-  var scFid=window.SITE_CONFIG||{};
-  var fSeuil=scFid.fideliteSeuil||10;
-  var fType=scFid.fideliteType||"pourcentage";
-  var fVal=scFid.fideliteValeur||10;
-  var fU=fType==="pourcentage"?"%":"\u20ac";
-  var fidKeys=Object.keys(fidResults);
-  if(fidKeys.length>0){
-    h+="<div class=\"sep\"></div>";
-    fidKeys.forEach(function(fCid){
-      var fCl=gC(fCid);var fr=fidResults[fCid];
-      if(!fCl)return;
-      if(fr.action==="discount"){
-        h+="<p style=\"font-weight:900\">\ud83c\udfc6 Remise "+fVal+fU+" bonus fid\u00e9lit\u00e9"+(fidKeys.length>1?" ("+cName(fCl)+")":"")+" : -"+fr.amount.toFixed(2)+" \u20ac</p>";
-        h+="<p style=\"font-size:10px\">Compteur fid\u00e9lit\u00e9 remis \u00e0 "+fCl.fid+"</p>";
-      } else if(fr.action==="add"){
-        h+="<p style=\"font-size:10px\">\u2b50 "+(fidKeys.length>1?cName(fCl)+" : ":"")+"Fid\u00e9lit\u00e9 "+fCl.fid+" / "+fSeuil+"</p>";
-        var reste=fSeuil-fCl.fid;
-        if(reste>0)h+="<p style=\"font-size:10px\">Encore "+reste+" point"+(reste>1?"s":"")+" avant remise de "+fVal+fU+"</p>";
-        else h+="<p style=\"font-weight:700;font-size:10px\">\ud83c\udf89 Remise de "+fVal+fU+" bonus fid\u00e9lit\u00e9 \u00e0 votre prochain passage !</p>";
-      }
-    });
-  }
-  if(SALON_CONFIG.siret)h+="<p style=\"font-size:10px;color:#666\">SIRET: "+SALON_CONFIG.siret+"</p>";
-  h+="<div class=\"sep\"></div>";
-  h+="<p>Merci de votre visite !</p>";
-  h+="<p style=\"font-size:10px;color:#999\">"+SALON_CONFIG.siteWeb+"</p>";
+  var now=new Date();
+  var tempA={
+    id:_tk.apptId||"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items[0]?_tk.items[0].sId:null,
+    date:TD,time:now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
+    pr:total,met:metStr,items:_tk.items,remise:_tk.remise||0,
+    acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||"",
+    payments:_tk.payments||null,tkNum:tkN
+  };
+  var w=window.open("","_blank","width=380,height=650");if(!w)return;
+  var h="<html><head><title>Ticket #"+tkN+"</title>";
+  h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;background:#fff!important}";
+  h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>";
+  h+=buildTicketHTML(tempA, false);
   h+="</body></html>";
-  w.document.write(h);w.document.close();w.print();
+  w.document.write(h);w.document.close();
+  setTimeout(function(){w.print();},500);
 }
 
 function showTicket(method,total){
-  var cl=_tk.cId?gC(_tk.cId):null;
-  var clName2=cl?cName(cl):passageName(_tk.cId);
-  var sty=gT(_tk.stId);
-  var txTk=SALON_CONFIG.tauxTVA||20;
-  var htTk=Math.round(total/(1+txTk/100)*100)/100;
-  var tvaTk=Math.round((total-htTk)*100)/100;
+  // Build a temporary ticket object from _tk for buildTicketHTML
+  var metStr=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):(method||"CB");
   var now=new Date();
-  var timeStr=now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  
+  var tempA={
+    id:_tk.apptId||"temp",
+    cId:_tk.cId,
+    stId:_tk.stId,
+    sId:_tk.items[0]?_tk.items[0].sId:null,
+    date:TD,
+    time:now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
+    pr:total,
+    met:metStr,
+    items:_tk.items,
+    remise:_tk.remise||0,
+    acompte:_tk.acompte||0,
+    acompteMode:_tk.acompteMode||"",
+    payments:_tk.payments||null,
+    tkNum:tkN
+  };
+
   var h='<div class="mbg"><div class="ticket-receipt" style="font-family:\'Courier New\',monospace;max-width:340px;padding:20px;font-size:12px;line-height:1.5;border-radius:16px;margin:auto;max-height:90vh;overflow-y:auto" onclick="event.stopPropagation()">';
-  
-  // Header salon
-  h+='<div style="text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px">';
-  h+='<div style="font-weight:900;font-size:14px;letter-spacing:1px">'+SALON_CONFIG.nom+'</div>';
-  if(SALON_CONFIG.sousTitre)h+='<div style="font-size:11px">'+SALON_CONFIG.sousTitre+'</div>';
-  h+='<div style="font-size:11px">'+SALON_CONFIG.adresse+'</div>';
-  h+='<div style="font-size:11px">'+(SALON_CONFIG.cp||"")+' '+(SALON_CONFIG.ville||"")+' - France</div>';
-  h+='</div>';
-  
-  // Ticket number + date
-  h+='<div style="text-align:center;margin-bottom:8px">';
-  h+='<div style="font-size:12px">Ticket de vente Num\u00e9ro <strong>'+tkN+'</strong> du '+fmt(TD)+' \u00e0</div>';
-  h+='<div style="font-size:12px">'+timeStr+'</div>';
-  h+='</div>';
-  
-  // Client
-  if(cl)h+='<div style="margin-bottom:8px;font-size:12px"><strong>'+cl.nom.toUpperCase()+' '+cl.pre+'</strong>'+(cl.ph?' ('+cl.ph+')':'')+'</div>';
-  else h+='<div style="margin-bottom:8px;font-size:12px"><strong>Client de passage</strong></div>';
-  
-  // Items table header
-  h+='<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px">';
-  h+='<tr style="border-top:1px solid #000;border-bottom:1px solid #000"><th style="text-align:left;padding:4px 0">Quantit\u00e9</th><th style="text-align:left">D\u00e9signation</th><th style="text-align:right">TTC</th></tr>';
-  
-  // Items (with multi-client names)
-  for(var i=0;i<_tk.items.length;i++){
-    var it=_tk.items[i];
-    if(it.isSep){
-      var sepName=it.name.replace(/---/g,"").trim();
-      if(it.sepCId){var sepCl=gC(it.sepCId);if(sepCl)sepName=cName(sepCl);}
-      h+='<tr><td colspan="3" style="padding:6px 0 2px;font-weight:900;border-top:1px dashed #999;font-size:11px">\u25b6 '+sepName+'</td></tr>';
-      continue;
-    }
-    var lt=it.price*it.qty-(it.remise||0);
-    h+='<tr style="border-bottom:1px solid #ccc"><td style="padding:3px 0;vertical-align:top">'+it.qty+'</td>';
-    h+='<td style="padding:3px 4px;font-weight:700">'+it.name.toUpperCase()+'</td>';
-    h+='<td style="text-align:right;padding:3px 0">'+lt.toFixed(2)+'</td></tr>';
-    // Sub-items: if it's a service, show the components
-    var sv=it.sId?gS(it.sId):null;
-    if(sv&&sv.phases&&sv.phases.length>1){
-      for(var pi=0;pi<sv.phases.length;pi++){
-        if(sv.phases[pi].l)h+='<tr><td></td><td style="padding:1px 4px;font-size:10px;font-style:italic;color:#666">'+sv.phases[pi].l+'</td><td></td></tr>';
-      }
-    }
-    if(it.remise>0)h+='<tr><td></td><td style="font-size:10px;color:#666;padding:1px 4px">Remise</td><td style="text-align:right;font-size:10px;color:#666">-'+it.remise.toFixed(2)+'</td></tr>';
-  }
-  if(_tk.remise>0)h+='<tr><td>1</td><td style="font-weight:700">REMISE TICKET</td><td style="text-align:right">-'+_tk.remise.toFixed(2)+'</td></tr>';
-  h+='</table>';
-  
-  // Total HT
-  h+='<div style="display:flex;justify-content:space-between;font-weight:900;font-size:13px;border-top:2px solid #000;padding-top:6px"><span>Total HT :</span><span>'+htTk.toFixed(2)+'</span></div>';
-  
-  // TVA breakdown
-  h+='<table style="width:100%;font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000"><tr style="font-weight:700"><td></td><td style="text-align:center">TVA</td><td style="text-align:center">HT</td><td style="text-align:right">TTC</td></tr>';
-  h+='<tr><td>1 - TVA '+txTk+'%</td><td style="text-align:center">'+tvaTk.toFixed(2)+' \u20ac</td><td style="text-align:center">'+htTk.toFixed(2)+' \u20ac</td><td style="text-align:right">'+total.toFixed(2)+' \u20ac</td></tr></table>';
-  
-  // Total TTC
-  h+='<div style="display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000"><span>Total TTC :</span><span>'+total.toFixed(2)+'</span></div>';
-  
-  // Payment method(s)
-  h+='<div style="padding:6px 0;font-size:12px">';
-  if(_tk.payments&&_tk.payments.length>0){
-    for(var pi2=0;pi2<_tk.payments.length;pi2++){
-      var pay=_tk.payments[pi2];
-      h+='<div style="display:flex;justify-content:space-between"><span>Pay\u00e9 en '+pay.method+' :</span><span>'+pay.amount.toFixed(2)+'</span></div>';
-    }
-  }else{
-    h+='<div style="display:flex;justify-content:space-between"><span>Pay\u00e9 en '+method+' :</span><span>'+total.toFixed(2)+'</span></div>';
-  }
-  h+='</div>';
-  
-  // Fidélité par client
-  var fidResults2=_tk._fidResults||{};
-  var SC2=window.SITE_CONFIG||{};
-  var fidSeuil2=SC2.fideliteSeuil||10;
-  var fidType2=SC2.fideliteType||"pourcentage";
-  var fidVal2=SC2.fideliteValeur||10;
-  var fidU2=fidType2==="pourcentage"?"%":"\u20ac";
-  // Collect all clients
-  var allFidClients=[];
-  if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")<0)allFidClients.push(_tk.cId);
-  if(_tk.items){_tk.items.forEach(function(it){if(it.isSep&&it.sepCId&&it.sepCId.indexOf("passage")<0&&allFidClients.indexOf(it.sepCId)<0)allFidClients.push(it.sepCId);});}
-  if(SC2.fideliteActive!==false&&allFidClients.length>0){
-    h+='<div style="border-top:1px solid #ccc;padding:8px 0;font-size:11px">';
-    h+='<div style="font-weight:900;text-align:center;margin-bottom:6px">\u2b50 PROGRAMME FIDELITE \u2b50</div>';
-    allFidClients.forEach(function(fCid){
-      var fCl=gC(fCid);if(!fCl)return;
-      var pts=fCl.fid||0;
-      var reste=fidSeuil2-pts;
-      var fr=fidResults2[fCid];
-      h+='<div style="margin:4px 0;padding:4px 0;border-bottom:1px dotted #ccc">';
-      if(allFidClients.length>1)h+='<div style="font-weight:700">'+cName(fCl)+' :</div>';
-      if(fr&&fr.action==="discount"){
-        h+='<div>\ud83c\udfc6 <strong>Remise de '+fidVal2+fidU2+' appliqu\u00e9e : -'+fr.amount.toFixed(2)+' \u20ac</strong></div>';
-        h+='<div>Compteur fid\u00e9lit\u00e9 remis \u00e0 '+pts+'</div>';
-      } else if(pts>=fidSeuil2){
-        h+='<div>\ud83c\udfc6 '+pts+' / '+fidSeuil2+' points</div>';
-        h+='<div style="font-weight:700">\ud83c\udf89 Remise de '+fidVal2+fidU2+' acquise ! Applicable d\u00e8s votre prochaine visite.</div>';
-      } else {
-        h+='<div>\u2b50 '+pts+' / '+fidSeuil2+' points</div>';
-        var barW=Math.round(pts/fidSeuil2*100);
-        h+='<div style="background:#eee;height:8px;border-radius:4px;margin:3px 0"><div style="background:#000;height:100%;width:'+barW+'%;border-radius:4px"></div></div>';
-        if(reste>0)h+='<div>Plus que '+reste+' point'+(reste>1?"s":"")+" avant votre remise de "+fidVal2+fidU2+' !</div>';
-      }
-      h+='</div>';
-    });
-    h+='</div>';
-  } else if(cl&&SC2.fideliteActive!==false){
-    h+='<div style="font-size:11px;padding:4px 0;border-top:1px solid #ccc">\u2b50 Fid\u00e9lit\u00e9 : '+(cl.fid||0)+' / '+fidSeuil2+' points</div>';
-  }
-  
-  // Collaborateur
-  h+='<div style="font-size:11px;padding:4px 0">Service effectu\u00e9 par '+(sty?sty.n:"")+'</div>';
-  
-  // Legal
-  h+='<div style="font-size:10px;padding-top:6px;border-top:1px solid #ccc;color:#666">';
-  if(SALON_CONFIG.siret)h+='SIRET '+SALON_CONFIG.siret;
-  if(SALON_CONFIG.tva)h+=' - TVA Intracom '+SALON_CONFIG.tva;
-  h+='<br>(NF525) Luxyra</div>';
-  
-  // Horodatage
-  h+='<div style="font-size:10px;color:#999;margin-top:6px">\u00c9dit\u00e9 le '+now.toLocaleDateString("fr-FR")+' \u00e0 '+now.toLocaleTimeString("fr-FR")+'</div>';
-  
+  h+=buildTicketHTML(tempA, false);
+
   // Buttons
   h+='<div style="display:flex;gap:8px;margin-top:14px">';
   h+='<button class="btn bg" style="flex:1;color:#000" onclick="printTicketReceipt()">\ud83d\udda8 Imprimer</button>';
@@ -8748,7 +8587,7 @@ function showTicket(method,total){
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
 }
-
+  
 function loadProdImg(id,input){
   if(!input.files||!input.files[0])return;
   var reader=new FileReader();
@@ -9062,61 +8901,53 @@ function exportTicketsCSV(){
   }
 }
 
-function reprintTicket(id){
-  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
-  if(!a)return;
-  var isDuplicate=a.printed||false;
+// ===== TICKET FORMAT UNIQUE (NF525) — utilisé partout =====
+function buildTicketHTML(a, isDuplicate){
   var cl=gC(a.cId),sty=gT(a.stId);
   var clN=cl?cName(cl):passageName(a.cId,a.sId);
   var total=a.pr;
   var txTVA=SALON_CONFIG.tauxTVA||20;
   var ht=Math.round(total/(1+txTVA/100)*100)/100;
   var tva=Math.round((total-ht)*100)/100;
-  if(isDuplicate)auditLog("DUPLICATA_TICKET","R\u00e9impression ticket #"+(a.tkNum||"--"));
-  a.printed=true;if(typeof saveAppointment==="function")saveAppointment(a);
-  
-  var w=window.open("","_blank","width=350,height=600");if(!w)return;
-  var h="<html><head><title>Ticket #"+(a.tkNum||"")+"</title>";
-  h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,td,th{color:#000!important;background:transparent!important}body{font-family:monospace;padding:10px;max-width:320px;margin:0 auto;font-size:12px;background:#fff!important}";
-  h+="h1{font-size:14px;text-align:center;margin:0}p{margin:2px 0;text-align:center}";
-  h+=".sep{border-top:1px dashed #999;margin:6px 0}.sep2{border-top:2px solid #000;margin:6px 0}";
-  h+=".line{display:flex;justify-content:space-between;padding:3px 0}.bold{font-weight:900;font-size:14px}";
-  h+=".dup{text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px}";
-  h+="table{width:100%;border-collapse:collapse}th{text-align:left;padding:4px 0;border-top:1px solid #000;border-bottom:1px solid #000;font-size:11px}td{padding:3px 0;font-size:11px}";
-  h+="@media print{body{padding:5px;font-size:10px}}</style></head><body>";
-  
-  if(isDuplicate)h+="<div class=\"dup\">DUPLICATA</div>";
-  
+
+  var h="";
+  // DUPLICATA
+  if(isDuplicate)h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA</div>";
+
   // En-tête salon
-  h+="<h1>"+SALON_CONFIG.nom.toUpperCase()+"</h1>";
-  if(SALON_CONFIG.sousTitre)h+="<p>"+SALON_CONFIG.sousTitre+"</p>";
-  h+="<p>"+SALON_CONFIG.adresse+"</p>";
-  h+="<p>"+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||"")+"</p>";
-  if(SALON_CONFIG.tel)h+="<p>T\u00e9l: "+SALON_CONFIG.tel+"</p>";
-  h+="<div class=\"sep\"></div>";
-  
+  h+="<div style=\"text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px\">";
+  h+="<div style=\"font-weight:900;font-size:14px;letter-spacing:1px\">"+SALON_CONFIG.nom.toUpperCase()+"</div>";
+  if(SALON_CONFIG.sousTitre)h+="<div style=\"font-size:11px\">"+SALON_CONFIG.sousTitre+"</div>";
+  h+="<div style=\"font-size:11px\">"+SALON_CONFIG.adresse+"</div>";
+  h+="<div style=\"font-size:11px\">"+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||"")+"</div>";
+  if(SALON_CONFIG.tel)h+="<div style=\"font-size:11px\">T\u00e9l: "+SALON_CONFIG.tel+"</div>";
+  h+="</div>";
+
   // Numéro ticket + date
-  h+="<p style=\"font-weight:900;font-size:13px\">Ticket de vente N\u00b0"+(a.tkNum||"--")+"</p>";
-  h+="<p>"+fmt(a.date)+" \u00e0 "+a.time+"</p>";
-  h+="<p>Collaborateur: "+(sty?sty.n:"")+"</p>";
-  h+="<p>Client: "+clN+"</p>";
-  h+="<div class=\"sep\"></div>";
-  
-  // Tableau articles (with multi-client names)
-  h+="<table><tr><th>Qt\u00e9</th><th>D\u00e9signation</th><th style=\"text-align:right\">TTC</th></tr>";
+  h+="<div style=\"text-align:center;margin-bottom:8px\">";
+  h+="<div style=\"font-weight:900;font-size:13px\">Ticket de vente N\u00b0"+(a.tkNum||"--")+"</div>";
+  h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+a.time+"</div>";
+  h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
+  h+="<div style=\"font-size:12px\">Client: "+clN+"</div>";
+  h+="</div>";
+
+  // Tableau articles
+  h+="<table style=\"width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px\">";
+  h+="<tr style=\"border-top:1px solid #000;border-bottom:1px solid #000\"><th style=\"text-align:left;padding:4px 0\">Quantit\u00e9</th><th style=\"text-align:left\">D\u00e9signation</th><th style=\"text-align:right\">TTC</th></tr>";
   if(a.items&&a.items.length){
     for(var ii=0;ii<a.items.length;ii++){
       var it=a.items[ii];
       if(it.isSep){
-        // Multi-client separator: show client name as section
         var sepName=it.name.replace(/---/g,"").trim();
         if(it.sepCId){var sepCl=gC(it.sepCId);if(sepCl)sepName=cName(sepCl);}
         h+="<tr><td colspan=\"3\" style=\"padding:6px 0 2px;font-weight:900;border-top:1px dashed #999;font-size:11px\">\u25b6 "+sepName+"</td></tr>";
         continue;
       }
       var lt=it.price*it.qty-(it.remise||0);
-      h+="<tr><td>"+it.qty+"</td><td style=\"font-weight:700\">"+it.name.toUpperCase()+"</td><td style=\"text-align:right\">"+lt.toFixed(2)+"</td></tr>";
-      if(it.remise>0)h+="<tr><td></td><td style=\"font-size:10px;color:#666\">Remise</td><td style=\"text-align:right;font-size:10px;color:#666\">-"+it.remise.toFixed(2)+"</td></tr>";
+      h+="<tr style=\"border-bottom:1px solid #ccc\"><td style=\"padding:3px 0;vertical-align:top\">"+it.qty+"</td>";
+      h+="<td style=\"padding:3px 4px;font-weight:700\">"+it.name.toUpperCase()+"</td>";
+      h+="<td style=\"text-align:right;padding:3px 0\">"+lt.toFixed(2)+"</td></tr>";
+      if(it.remise>0)h+="<tr><td></td><td style=\"font-size:10px;color:#666;padding:1px 4px\">Remise</td><td style=\"text-align:right;font-size:10px;color:#666\">-"+it.remise.toFixed(2)+"</td></tr>";
     }
   } else {
     var sv=gS(a.sId);
@@ -9124,27 +8955,35 @@ function reprintTicket(id){
   }
   if(a.remise>0)h+="<tr><td>1</td><td style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+a.remise.toFixed(2)+"</td></tr>";
   h+="</table>";
-  
-  // Total HT/TVA/TTC
-  h+="<div class=\"sep2\"></div>";
-  h+="<div class=\"line\" style=\"font-size:11px\"><span>Total HT :</span><span>"+ht.toFixed(2)+" \u20ac</span></div>";
-  h+="<table style=\"font-size:10px;margin:4px 0;border-top:1px solid #000;border-bottom:1px solid #000\"><tr style=\"font-weight:700\"><td></td><td style=\"text-align:center\">TVA</td><td style=\"text-align:center\">HT</td><td style=\"text-align:right\">TTC</td></tr>";
-  h+="<tr><td>TVA "+txTVA+"%</td><td style=\"text-align:center\">"+tva.toFixed(2)+"</td><td style=\"text-align:center\">"+ht.toFixed(2)+"</td><td style=\"text-align:right\">"+total.toFixed(2)+"</td></tr></table>";
-  if(txTVA===0)h+="<p style=\"font-size:9px\">TVA non applicable - Art. 293B du CGI</p>";
-  
-  // Total TTC gros
-  h+="<div class=\"line bold\" style=\"padding:8px 0;border-bottom:1px solid #000\"><span>Total TTC :</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
-  
+
+  // Total HT
+  h+="<div style=\"display:flex;justify-content:space-between;font-weight:900;font-size:13px;border-top:2px solid #000;padding-top:6px\"><span>Total HT :</span><span>"+ht.toFixed(2)+"</span></div>";
+
+  // Ventilation TVA
+  h+="<table style=\"width:100%;font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000\"><tr style=\"font-weight:700\"><td></td><td style=\"text-align:center\">TVA</td><td style=\"text-align:center\">HT</td><td style=\"text-align:right\">TTC</td></tr>";
+  h+="<tr><td>TVA "+txTVA+"%</td><td style=\"text-align:center\">"+tva.toFixed(2)+" \u20ac</td><td style=\"text-align:center\">"+ht.toFixed(2)+" \u20ac</td><td style=\"text-align:right\">"+total.toFixed(2)+" \u20ac</td></tr></table>";
+  if(txTVA===0)h+="<p style=\"font-size:9px;text-align:center\">TVA non applicable - Art. 293B du CGI</p>";
+
+  // Total TTC
+  h+="<div style=\"display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000\"><span>Total TTC :</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
+
   // Acompte
   if(a.acompte>0){
-    h+="<div class=\"line\" style=\"font-size:11px\"><span>Acompte d\u00e9duit ("+(a.acompteMode||"")+")</span><span>-"+a.acompte.toFixed(2)+" \u20ac</span></div>";
-    h+="<div class=\"line bold\"><span>RESTE PAY\u00c9</span><span>"+(total-a.acompte).toFixed(2)+" \u20ac</span></div>";
+    h+="<div style=\"display:flex;justify-content:space-between;font-size:11px;padding:3px 0\"><span>Acompte d\u00e9duit ("+(a.acompteMode||"")+")</span><span>-"+a.acompte.toFixed(2)+" \u20ac</span></div>";
+    h+="<div style=\"display:flex;justify-content:space-between;font-weight:900;font-size:14px;padding:3px 0\"><span>RESTE PAY\u00c9</span><span>"+(total-a.acompte).toFixed(2)+" \u20ac</span></div>";
   }
-  
+
   // Règlement
-  h+="<div class=\"sep\"></div>";
-  h+="<div class=\"line\"><span>R\u00e8glement :</span><span>"+(a.met||"")+"</span></div>";
-  
+  h+="<div style=\"border-top:1px dashed #999;margin:6px 0\"></div>";
+  if(a.payments&&a.payments.length>0){
+    for(var pi2=0;pi2<a.payments.length;pi2++){
+      var pay=a.payments[pi2];
+      h+="<div style=\"display:flex;justify-content:space-between;font-size:12px;padding:2px 0\"><span>Pay\u00e9 en "+pay.method+" :</span><span>"+pay.amount.toFixed(2)+"</span></div>";
+    }
+  } else {
+    h+="<div style=\"display:flex;justify-content:space-between;font-size:12px;padding:3px 0\"><span>R\u00e8glement :</span><span>"+(a.met||"")+"</span></div>";
+  }
+
   // Fidélité par client
   var SC=window.SITE_CONFIG||{};
   var fidActive=SC.fideliteActive!==false;
@@ -9153,46 +8992,61 @@ function reprintTicket(id){
   var fVal=SC.fideliteValeur||10;
   var fU=fType==="pourcentage"?"%":"\u20ac";
   if(fidActive){
-    // Collect all clients from ticket
     var fidClients=[];
     if(a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0)fidClients.push(a.cId);
     if(a.items){a.items.forEach(function(it){if(it.isSep&&it.sepCId&&it.sepCId.indexOf("passage")<0&&fidClients.indexOf(it.sepCId)<0)fidClients.push(it.sepCId);});}
     if(fidClients.length>0){
-      h+="<div class=\"sep\"></div>";
-      h+="<p style=\"font-weight:900;font-size:11px;text-align:center;margin-bottom:4px\">\u2b50 PROGRAMME FIDELITE \u2b50</p>";
+      h+="<div style=\"border-top:1px solid #ccc;padding:8px 0;font-size:11px\">";
+      h+="<div style=\"font-weight:900;text-align:center;margin-bottom:6px\">\u2b50 PROGRAMME FIDELITE \u2b50</div>";
       fidClients.forEach(function(fCid){
         var fCl=gC(fCid);if(!fCl)return;
         var pts=fCl.fid||0;
         var reste=fSeuil-pts;
         h+="<div style=\"margin:4px 0;padding:4px 0;border-bottom:1px dotted #ccc\">";
-        if(fidClients.length>1)h+="<p style=\"font-weight:700;font-size:11px\">"+cName(fCl)+" :</p>";
+        if(fidClients.length>1)h+="<div style=\"font-weight:700\">"+cName(fCl)+" :</div>";
         if(pts>=fSeuil){
-          h+="<p style=\"font-size:11px;font-weight:900\">\ud83c\udfc6 "+pts+" / "+fSeuil+" points</p>";
-          h+="<p style=\"font-size:10px\">\ud83c\udf89 Remise de "+fVal+fU+" acquise !</p>";
-          h+="<p style=\"font-size:10px\">Applicable d\u00e8s votre prochaine visite.</p>";
+          h+="<div>\ud83c\udfc6 "+pts+" / "+fSeuil+" points</div>";
+          h+="<div style=\"font-weight:700\">\ud83c\udf89 Remise de "+fVal+fU+" acquise ! Applicable d\u00e8s votre prochaine visite.</div>";
         } else {
-          h+="<p style=\"font-size:11px\">\u2b50 "+pts+" / "+fSeuil+" points</p>";
+          h+="<div>\u2b50 "+pts+" / "+fSeuil+" points</div>";
           var barW=Math.round(pts/fSeuil*100);
           h+="<div style=\"background:#eee;height:8px;border-radius:4px;margin:3px 0\"><div style=\"background:#000;height:100%;width:"+barW+"%;border-radius:4px\"></div></div>";
-          if(reste>0)h+="<p style=\"font-size:10px\">Plus que "+reste+" point"+(reste>1?"s":"")+" avant votre remise de "+fVal+fU+" !</p>";
+          if(reste>0)h+="<div>Plus que "+reste+" point"+(reste>1?"s":"")+" avant votre remise de "+fVal+fU+" !</div>";
         }
         h+="</div>";
       });
+      h+="</div>";
     }
   }
-  
-  // Mentions légales
-  h+="<div class=\"sep\"></div>";
-  if(SALON_CONFIG.siret)h+="<p style=\"font-size:10px\">SIRET: "+SALON_CONFIG.siret+"</p>";
-  if(SALON_CONFIG.tva)h+="<p style=\"font-size:10px\">N\u00b0 TVA: "+SALON_CONFIG.tva+"</p>";
-  h+="<p style=\"font-size:10px\">Logiciel: Luxyra - contact@luxyra.fr</p>";
-  h+="<p style=\"font-size:9px;color:#999\">Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</p>";
-  
-  // Bouton imprimer
-  h+="<div style=\"text-align:center;margin-top:16px\" class=\"no-print\"><button onclick=\"window.print()\" style=\"padding:12px 32px;font-size:14px;font-weight:700;background:#d4a843;color:#000;border:none;border-radius:10px;cursor:pointer\">\ud83d\udda8 Imprimer</button></div>";
-  h+="<style>@media print{.no-print{display:none!important}}</style>";
+
+  // Mentions légales NF525
+  h+="<div style=\"border-top:1px dashed #999;margin:6px 0\"></div>";
+  h+="<div style=\"text-align:center;font-size:10px;color:#666\">";
+  if(SALON_CONFIG.siret)h+="<div>SIRET: "+SALON_CONFIG.siret+"</div>";
+  if(SALON_CONFIG.tva)h+="<div>N\u00b0 TVA: "+SALON_CONFIG.tva+"</div>";
+  h+="<div>Logiciel certifi\u00e9 NF525</div>";
+  h+="<div>Luxyra - contact@luxyra.fr</div>";
+  h+="<div style=\"font-size:9px;color:#999\">Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</div>";
+  h+="</div>";
+
+  return h;
+}
+
+function reprintTicket(id){
+  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
+  if(!a)return;
+  var isDuplicate=a.printed||false;
+  if(isDuplicate)auditLog("DUPLICATA_TICKET","R\u00e9impression ticket #"+(a.tkNum||"--"));
+  a.printed=true;if(typeof saveAppointment==="function")saveAppointment(a);
+
+  var w=window.open("","_blank","width=380,height=650");if(!w)return;
+  var h="<html><head><title>Ticket #"+(a.tkNum||"")+"</title>";
+  h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;background:#fff!important}";
+  h+="table{width:100%;border-collapse:collapse}@media print{.no-print{display:none!important}body{padding:5px}}</style></head><body>";
+  h+=buildTicketHTML(a, isDuplicate);
   h+="</body></html>";
   w.document.write(h);w.document.close();
+  setTimeout(function(){w.print();},500);
 }
 
 function deleteTicket(id){
