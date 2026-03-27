@@ -500,7 +500,7 @@ function toggleNotif(el,field){
 async function loadMyRdvs(){
   if(!CLIENT)return;
   try{
-    // Get RDVs with salon name
+    // Get RDVs from rdv_online with salon name
     var r=await api("rdv_online?select=*,salons(nom)&client_beautypro_id=eq."+CLIENT.id+"&order=date_rdv.desc&limit=50");
     var data=await r.json();
     if(Array.isArray(data)){
@@ -510,6 +510,43 @@ async function loadMyRdvs(){
     var r2=await api("rdv_online?select=*,salons(nom)&client_email=eq."+encodeURIComponent(CLIENT.email)+"&order=date_rdv.desc&limit=50");
     var data2=await r2.json();
     if(Array.isArray(data2)){data2.forEach(function(d){d.salon_nom=d.salons?d.salons.nom:"";var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===d.id)ex=true;});if(!ex)CLIENT_RDVS.push(d);});}
+    
+    // Also load direct POS tickets from appointments table
+    try{
+      // Try by client_email first (new column)
+      var r4=await api("appointments?select=*,salons(nom)&client_email=eq."+encodeURIComponent(CLIENT.email)+"&status=eq.done&order=date_rdv.desc&limit=50");
+      var appts=await r4.json();
+      if(!Array.isArray(appts))appts=[];
+      // Also try by client_id (UUID-based clients)
+      if(CLIENT.id&&CLIENT.id.length>30){
+        var r5=await api("appointments?select=*,salons(nom)&client_id=eq."+CLIENT.id+"&status=eq.done&order=date_rdv.desc&limit=50");
+        var appts2=await r5.json();
+        if(Array.isArray(appts2)){appts2.forEach(function(a2){var dup=false;appts.forEach(function(x){if(x.id===a2.id)dup=true;});if(!dup)appts.push(a2);});}
+      }
+      appts.forEach(function(a){
+        var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===a.id)ex=true;});
+        if(!ex){
+          var itemName="Prestation";var itemPrice=a.prix||0;
+          if(a.items&&a.items.length){
+            var names=[];
+            a.items.forEach(function(it){if(!it.isSep&&it.name)names.push(it.name);});
+            if(names.length)itemName=names.join(", ");
+            var first=a.items.find(function(it){return !it.isSep;});if(first)itemPrice=first.price||0;
+          }
+          CLIENT_RDVS.push({
+            id:a.id,salon_id:a.salon_id,salon_nom:a.salons?a.salons.nom:"",
+            date_rdv:a.date_rdv,heure_rdv:a.heure,
+            service_nom:itemName,service_prix:a.prix||itemPrice,
+            collaborateur_nom:a.collab_name||"",status:"done",
+            items:a.items,ticket_num:a.ticket_num,
+            acompte_montant:0,_fromPOS:true
+          });
+        }
+      });
+    }catch(e3){}
+    
+    // Sort by date desc
+    CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
     render();
   }catch(e){}
 }

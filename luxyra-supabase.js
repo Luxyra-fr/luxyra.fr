@@ -536,6 +536,10 @@ async function saveClient(client) {
 // Sauvegarder un rendez-vous/ticket
 async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
+  // Resolve client email and collab name for compte client lookup
+  var clEmail = null, collabName = null;
+  if (appt.cId && typeof gC === "function") { var cl = gC(appt.cId); if (cl && cl.em) clEmail = cl.em; }
+  if (appt.stId && typeof gT === "function") { var st = gT(appt.stId); if (st && st.n) collabName = st.n; }
   var data = {
     salon_id: _salonId,
     client_id: (appt.cId && appt.cId.indexOf("-") > 0 && appt.cId.length > 30) ? appt.cId : null, service_id: appt.sId, collab_id: appt.stId,
@@ -546,7 +550,8 @@ async function saveAppointment(appt) {
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
-    cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || ""
+    cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || "",
+    client_email: clEmail, collab_name: collabName
   };
   try{data.clients=appt.clients||[];data.from_caisse=appt.fromCaisse||false;}catch(e){}
   var r;
@@ -556,7 +561,7 @@ async function saveAppointment(appt) {
     r=await _sb.from("appointments").insert(data).select();
     if (r.data && r.data[0]) appt.id = r.data[0].id;
   }
-  if(r&&r.error){delete data.clients;delete data.from_caisse;if(appt.id&&appt.id.indexOf("-")>0&&appt.id.length>30){await _sb.from("appointments").update(data).eq("id",appt.id);}else{var r2=await _sb.from("appointments").insert(data).select();if(r2.data&&r2.data[0])appt.id=r2.data[0].id;}}
+  if(r&&r.error){delete data.clients;delete data.from_caisse;delete data.client_email;delete data.collab_name;if(appt.id&&appt.id.indexOf("-")>0&&appt.id.length>30){await _sb.from("appointments").update(data).eq("id",appt.id);}else{var r2=await _sb.from("appointments").insert(data).select();if(r2.data&&r2.data[0])appt.id=r2.data[0].id;}}
 }
 
 // Sauvegarder un produit

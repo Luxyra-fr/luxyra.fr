@@ -646,26 +646,7 @@ function delDevis(idx){
 }
 
 // Email actions that use current modal state
-function emailTicket(){
-  // Get current ticket data from _tk
-  if(!_tk)return;
-  var cl=_tk.cId?gC(_tk.cId):null;
-  var email=cl?cl.em:"";
-  var subject="Votre ticket - "+SALON_CONFIG.nom+"";
-  var body="Bonjour"+(cl?" "+cl.pre:"")+",\n\nVoici votre ticket de caisse:\n\n";
-  var total=0;
-  _tk.items.forEach(function(it){
-    body+=it.name+" - "+it.price.toFixed(2)+" EUR\n";
-    total+=it.price*it.qty-it.remise;
-  });
-  total-=_tk.remise||0;
-  body+="\nTOTAL: "+total.toFixed(2)+" EUR\n";
-  if(_tk.payments)body+="Reglement: "+_tk.payments.map(function(p){return p.method}).join(" + ")+"\n";
-  body+="\nMerci de votre visite !";
-  var mailto="mailto:"+(email||"")+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body+"\n\n---\n"+SALON_CONFIG.nomComplet()+"\n"+SALON_CONFIG.adresseComplete()+"\nTel: "+SALON_CONFIG.tel+"\n"+SALON_CONFIG.siteWeb+"");
-  window.open(mailto,"_blank");
-  
-}
+// emailTicket is now at line ~8806 with Brevo support
 
 function emailCurrentDevis(){
   // Uses window._currentDevisIdx set when printing
@@ -3957,7 +3938,7 @@ function rSettings(){
   
   else if(settTab==="sms"){
     if(!isPro()){showUpgradeModal("SMS & Marketing");window._settTab=null;go("settings");return h;}
-    if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\n\u00c0 bient\u00f4t !"};
+    if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\n\u00c0 bient\u00f4t !",confirmSms:true,confirmEmail:true,confirmSmsTexte:"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",confirmEmailTexte:"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}"};
     var smsC=window.SMS_CONFIG;
 
     // Solde SMS
@@ -3993,6 +3974,22 @@ function rSettings(){
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\u2709\ufe0f Rappels Email actifs</span><input type="checkbox" '+(smsC.rappelEmail?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelEmail=this.checked;saveSmsConfig()"></label>';
     h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message email rappel</label>';
     h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.rappelEmailTexte=this.value;saveSmsConfig()">'+(smsC.rappelEmailTexte||"")+'</textarea>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
+    h+='</div>';
+
+    // Confirmation RDV
+    h+='<div class="sec" style="margin-top:16px">\u2705 Confirmation de rendez-vous</div>';
+    h+='<div class="card">';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:12px">Envoi automatique d\u2019une confirmation apr\u00e8s chaque prise de RDV en ligne.</div>';
+    // Confirmation SMS
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\ud83d\udcf2 Confirmation par <strong>SMS</strong></span><input type="checkbox" '+(smsC.confirmSms?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.confirmSms=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message SMS de confirmation</label>';
+    h+='<textarea style="width:100%;height:60px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.confirmSmsTexte=this.value;saveSmsConfig()">'+(smsC.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !")+'</textarea>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
+    // Confirmation Email
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\u2709\ufe0f Confirmation par <strong>Email</strong></span><input type="checkbox" '+(smsC.confirmEmail?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.confirmEmail=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message email de confirmation</label>';
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.confirmEmailTexte=this.value;saveSmsConfig()">'+(smsC.confirmEmailTexte||"Bonjour {prenom},\\n\\nVotre rendez-vous est confirm\u00e9 :\\n\u2022 Date : {date} \u00e0 {heure}\\n\u2022 Prestation : {prestation}\\n\u2022 Avec : {collab}\\n\\n\u00c0 bient\u00f4t !\\n{salon}")+'</textarea>';
     h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
     h+='</div>';
 
@@ -4536,10 +4533,20 @@ function rForfaits(){
     h+='<button class="btn bs" style="font-size:11px;padding:4px 8px;color:var(--red)" onclick="deleteService('+s.id+')">\ud83d\uddd1</button>';
     h+='</div></div></div>';
   }
-  // Button to create a new forfait (goes to new service modal)
-  h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent" onclick="window._newSvcMultiPhase=true;newService()">';
+  // Button to create a new forfait
+  h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent" onclick="addForfaitService()">';
   h+='<div style="font-size:28px;opacity:.4">+</div>';
   h+='<div style="font-size:13px;color:var(--text3);font-weight:600">Nouveau forfait (multi-\u00e9tapes)</div></div>';
+  // Category management
+  h+='<div style="display:flex;gap:8px;margin-top:12px;justify-content:center">';
+  h+='<button class="btn bs" style="font-size:12px;padding:6px 10px" onclick="addCategory()">+ Famille</button>';
+  if(window._forfCat!=="all"){
+    var fInCat=SVC.filter(function(s){return s.phases&&s.phases.length>1&&s.cat===window._forfCat;});
+    if(fInCat.length===0){
+      h+='<button class="btn bs" style="font-size:12px;padding:6px 10px;color:var(--red)" onclick="if(confirm(\'Supprimer la famille '+window._forfCat.replace(/'/g,"\\'")+' ?\')){CATS=CATS.filter(function(c){return c!==window._forfCat;});window._forfCat=\'all\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'services\');}">\ud83d\uddd1 Supprimer \u00ab'+window._forfCat+'\u00bb</button>';
+    }
+  }
+  h+='</div>';
   return h;
 }
 function addForfait(){
@@ -4709,9 +4716,23 @@ function rServices(){
   return h;
 }
 
+function addForfaitService(){
+  // Pre-fill with 2 work phases + 1 pause (typical forfait)
+  window._newSvcPhases=[
+    {t:"w",d:30,l:"Phase 1"},
+    {t:"p",d:20},
+    {t:"w",d:30,l:"Phase 2"}
+  ];
+  window._newSvcName=null;
+  window._newSvcPrice=null;
+  window._svcTab="forfaits";
+  addService();
+}
+
 function addService(){
   if(!window._newSvcPhases)window._newSvcPhases=[{t:"w",d:30,l:"Travail"}];
-  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\u2702\ufe0f Nouvelle prestation</h2>';
+  var isForfait=window._newSvcPhases&&window._newSvcPhases.length>1;
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>'+(isForfait?"\ud83d\udce6 Nouveau forfait":"\u2702\ufe0f Nouvelle prestation")+'</h2>';
   htm+='<div class="fg"><label>Nom *</label><input id="nsName" placeholder="Ex: Couleur coupe brushing mi-long" value="'+(window._newSvcName||'')+'"></div>';
   htm+='<div class="fg"><label>Prix (\u20ac) *</label><input type="number" id="nsPrice" min="0" step="1" value="'+(window._newSvcPrice||30)+'" style="font-size:18px;text-align:center;padding:14px"></div>';
   htm+='<div class="fg"><label>Famille</label><select id="nsCat">';
@@ -4765,6 +4786,8 @@ function doAddService(){
   var bookOnline=document.getElementById("nsBookOnline")?document.getElementById("nsBookOnline").checked:true;
   SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline});
   aCat=cat;
+  // Go back to forfaits tab if multi-phase
+  if(phases.length>1)window._svcTab="forfaits";
   window._newSvcPhases=null;window._newSvcName=null;window._newSvcPrice=null;
   if(typeof saveServices==="function")saveServices();
   cM();go("services");
@@ -4772,7 +4795,9 @@ function doAddService(){
 
 function editService(id){
   var sv=gS(id);if(!sv)return;
-  var htm='<div class="mbox"><h2>Modifier la prestation</h2>';
+  var isForf=sv.phases&&sv.phases.length>1;
+  if(!window._editSvcPhases)window._editSvcPhases=JSON.parse(JSON.stringify(sv.phases||[{t:"w",d:30,l:sv.n}]));
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>'+(isForf?"\ud83d\udce6 Modifier le forfait":"\u2702\ufe0f Modifier la prestation")+'</h2>';
   htm+='<div class="fg"><label>Nom</label><input id="esName" value="'+sv.n+'"></div>';
   htm+='<div class="fg"><label>Prix (\u20ac)</label><input type="number" id="esPrice" value="'+sv.p+'" min="0" step="1" style="font-size:18px;text-align:center;padding:14px"></div>';
   htm+='<div class="fg"><label>Cat\u00e9gorie</label><select id="esCat">';
@@ -4783,8 +4808,29 @@ function editService(id){
   htm+='<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border2);border-radius:10px;cursor:pointer;font-size:12px"><input type="checkbox" id="esShowSite" '+(sv.showSite!==false?"checked":"")+'>\ud83c\udf10 Visible sur le site</label>';
   htm+='<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border2);border-radius:10px;cursor:pointer;font-size:12px"><input type="checkbox" id="esBookOnline" '+(sv.bookOnline!==false?"checked":"")+'>\ud83d\udcc5 R\u00e9servable en ligne</label>';
   htm+='</div>';
+  // Phases builder
+  htm+='<div style="margin-top:12px;border:1px solid var(--border2);border-radius:10px;padding:10px">';
+  htm+='<div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px">\u00c9tapes de travail & pauses</div>';
+  var totalD=0;
+  for(var pi=0;pi<window._editSvcPhases.length;pi++){
+    var ph=window._editSvcPhases[pi];totalD+=ph.d;
+    var isW=ph.t==="w";
+    htm+='<div style="display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid var(--border2)">';
+    htm+='<span style="font-size:16px">'+(isW?"\u2702\ufe0f":"\u23f8")+'</span>';
+    htm+='<span style="font-size:12px;font-weight:700;color:'+(isW?"var(--green)":"var(--orange)")+';width:50px">'+(isW?"Travail":"Pause")+'</span>';
+    if(isW)htm+='<input value="'+(ph.l||"")+'" placeholder="Nom" style="flex:1;padding:4px;font-size:12px" onchange="window._editSvcPhases['+pi+'].l=this.value">';
+    else htm+='<span style="flex:1;font-size:11px;color:var(--orange);font-style:italic">Pause technique</span>';
+    htm+='<input type="number" value="'+ph.d+'" min="5" step="5" style="width:45px;padding:4px;font-size:12px;text-align:center" onchange="window._editSvcPhases['+pi+'].d=+this.value;editService('+id+')">min';
+    htm+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:4px" onclick="window._editSvcPhases.splice('+pi+',1);editService('+id+')">\u2716</button>';
+    htm+='</div>';
+  }
+  htm+='<div style="font-size:12px;font-weight:700;text-align:right;margin-top:4px">Dur\u00e9e totale: '+totalD+' min</div>';
+  htm+='<div style="display:flex;gap:6px;margin-top:8px">';
+  htm+='<button class="btn bs" style="flex:1;font-size:11px;padding:6px" onclick="window._editSvcPhases.push({t:\'w\',d:15,l:\'Travail\'});editService('+id+')">+ Phase travail</button>';
+  htm+='<button class="btn bs" style="flex:1;font-size:11px;padding:6px;background:var(--orange-bg);color:var(--orange)" onclick="window._editSvcPhases.push({t:\'p\',d:20});editService('+id+')">+ Pause technique</button>';
+  htm+='</div></div>';
   htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="window._editSvcPhases=null;cM()">Annuler</button>';
   htm+='<button class="btn bg" style="flex:1" onclick="doEditService('+id+')">Enregistrer</button>';
   htm+='</div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
@@ -4798,14 +4844,18 @@ function doEditService(id){
   sv.cat=newCat;
   sv.showSite=document.getElementById("esShowSite")?document.getElementById("esShowSite").checked:true;
   sv.bookOnline=document.getElementById("esBookOnline")?document.getElementById("esBookOnline").checked:true;
+  if(window._editSvcPhases)sv.phases=JSON.parse(JSON.stringify(window._editSvcPhases));
+  window._editSvcPhases=null;
   aCat=newCat;
+  if(sv.phases&&sv.phases.length>1)window._svcTab="forfaits";
   if(typeof saveServices==="function")saveServices();
   cM();go("services");
 }
 
 function deleteService(id){
   var sv=gS(id);if(!sv)return;
-  showConfirmDelete("Supprimer "+sv.n+" ?",sv.p+"\u20ac",function(){SVC=SVC.filter(function(s){return s.id!==id});if(typeof saveSalonConfig==="function")saveSalonConfig();cM();go("services");});
+  var wasForfait=sv.phases&&sv.phases.length>1;
+  showConfirmDelete("Supprimer "+sv.n+" ?",sv.p+"\u20ac",function(){SVC=SVC.filter(function(s){return s.id!==id});if(wasForfait)window._svcTab="forfaits";if(typeof saveSalonConfig==="function")saveSalonConfig();cM();go("services");});
 }
 
 function doDeleteService(id){
@@ -8553,11 +8603,21 @@ function showTicket(method,total){
     tkNum:tkN
   };
 
-  var h='<div class="mbg"><div class="ticket-receipt" style="font-family:\'Courier New\',monospace;max-width:340px;padding:20px;font-size:12px;line-height:1.5;border-radius:16px;margin:auto;max-height:90vh;overflow-y:auto" onclick="event.stopPropagation()">';
-  h+=buildTicketHTML(tempA, false);
+  // Find the actual ticket ID in AP (just created)
+  var lastTkId=_tk.apptId||"";
+  if(!lastTkId){
+    for(var lti=AP.length-1;lti>=0;lti--){
+      if(AP[lti].tkNum===tkN){lastTkId=AP[lti].id;break;}
+    }
+  }
 
-  // Buttons
-  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  var h='<div class="mbg"><div style="max-width:380px;margin:auto;max-height:95vh;overflow-y:auto" onclick="event.stopPropagation()">';
+  h+='<div class="ticket-receipt" style="font-family:\'Courier New\',monospace;padding:20px;font-size:12px;line-height:1.5;border-radius:16px 16px 0 0">';
+  h+=buildTicketHTML(tempA, false);
+  h+='</div>';
+
+  // Buttons OUTSIDE ticket-receipt (so colors are not overridden)
+  h+='<div style="display:flex;gap:8px;padding:14px 20px;background:var(--card);border-radius:0 0 16px 16px">';
   h+='<button class="btn bg" style="flex:1;color:#000" onclick="printTicketReceipt()">\ud83d\udda8 Imprimer</button>';
   h+='<button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailTicket()">\u2709 Email</button>';
   if(_tk.cId&&_tk.cId.indexOf&&_tk.cId.indexOf("passage")<0){
@@ -8637,8 +8697,12 @@ function closeCM(){var m=document.getElementById("caisseMenuDrop");if(m)m.remove
 // === GESTION DES TICKETS (like LS Coiffure image 3) ===
 var tkDateFrom="",tkDateTo="",tkPayFilter="all";
 function rTickets(){
-  var _now=new Date();var _tod=_now.getFullYear()+"-"+String(_now.getMonth()+1).padStart(2,"0")+"-"+String(_now.getDate()).padStart(2,"0");
-  if(!tkDateFrom){var d7=new Date(_now);d7.setDate(d7.getDate()-7);tkDateFrom=dS(d7);}
+  // Force recalculate today
+  var _now=new Date();
+  TD=_now.getFullYear()+"-"+String(_now.getMonth()+1).padStart(2,"0")+"-"+String(_now.getDate()).padStart(2,"0");
+  var _tod=TD;
+  // Reset dates to include today
+  if(!tkDateFrom||tkDateFrom>_tod){var d7=new Date(_now);d7.setDate(d7.getDate()-7);tkDateFrom=dS(d7);}
   tkDateTo=_tod;
   var h='<div class="card" style="background:rgba(18,18,28,.9);border:1px solid rgba(200,168,78,.2);border-radius:14px;padding:16px;backdrop-filter:blur(12px)">';
   h+='<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">';
@@ -8656,7 +8720,7 @@ function rTickets(){
   
   // Filter tickets
   var done=AP.filter(function(a){
-    if(a.st!=="done"&&!a.cancelled)return false;
+    if(!a.tkNum&&a.st!=="done"&&!a.cancelled)return false;
     if(a.date<tkDateFrom||a.date>tkDateTo)return false;
     if(tkPayFilter!=="all"&&a.met&&a.met.indexOf(tkPayFilter)<0)return false;
     return true;
@@ -8725,8 +8789,22 @@ function rTickets(){
 }
 
 function emailTicket(id){
-  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
-  if(!a)return;
+  var a=null;
+  // Try to find in AP by id
+  if(id){for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}}
+  // Fallback: find by tkNum
+  if(!a&&typeof tkN!=="undefined"&&tkN){for(var i2=AP.length-1;i2>=0;i2--){if(AP[i2].tkNum===tkN){a=AP[i2];break;}}}
+  // Last fallback: build from _tk
+  if(!a&&_tk){
+    var now2=new Date();
+    var metStr2=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
+    a={id:"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items[0]?_tk.items[0].sId:null,
+       date:TD,time:now2.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
+       pr:0,met:metStr2,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--"};
+    var tot2=0;_tk.items.forEach(function(it){tot2+=it.price*it.qty-(it.remise||0);});tot2-=(_tk.remise||0);
+    a.pr=tot2;
+  }
+  if(!a){alert("Ticket introuvable");return;}
   var cl=gC(a.cId);
   var email=cl?cl.em:"";
   var clN=cl?cName(cl):passageName(a.cId,a.sId);
@@ -8749,8 +8827,21 @@ function emailTicket(id){
 }
 
 async function sendTicketByEmail(id){
-  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
-  if(!a)return;
+  var a=null;
+  // Search in AP by id
+  if(id&&id!=="temp"){for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}}
+  // Fallback: find by tkNum
+  if(!a&&typeof tkN!=="undefined"&&tkN){for(var i2=AP.length-1;i2>=0;i2--){if(AP[i2].tkNum===tkN){a=AP[i2];break;}}}
+  // Last fallback: build from _tk
+  if(!a&&_tk){
+    var now3=new Date();
+    var metStr3=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
+    a={id:"temp",cId:_tk.cId,stId:_tk.stId,date:TD,time:now3.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
+       pr:0,met:metStr3,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||""};
+    var tot3=0;_tk.items.forEach(function(it){tot3+=it.price*it.qty-(it.remise||0);});tot3-=(_tk.remise||0);
+    a.pr=tot3;
+  }
+  if(!a){alert("Ticket introuvable");return;}
   var cl=gC(a.cId),sty=gT(a.stId);
   if(!cl||!cl.em){alert("Pas d\u2019email pour ce client");return;}
   var btn=document.getElementById("btnSendBrevo");
@@ -8769,7 +8860,15 @@ async function sendTicketByEmail(id){
         ticketNum:a.tkNum||"--",
         ticketDate:fmt(a.date),
         ticketHeure:a.time,
-        items:a.items||[],
+        items:(a.items||[]).map(function(it){
+          if(it.isSep)return it;
+          var enriched={name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:it.isProd};
+          var sv=it.sId?gS(it.sId):null;
+          if(sv&&sv.phases&&sv.phases.length>1){
+            enriched.phases=sv.phases.filter(function(p){return p.t==="w"&&p.l;}).map(function(p){return p.l;});
+          }
+          return enriched;
+        }),
         total:a.pr,
         reglement:a.met||"",
         siret:SALON_CONFIG.siret||"",
@@ -8930,6 +9029,19 @@ function buildTicketHTML(a, isDuplicate){
       h+="<tr style=\"border-bottom:1px solid #ccc\"><td style=\"padding:3px 0;vertical-align:top\">"+it.qty+"</td>";
       h+="<td style=\"padding:3px 4px;font-weight:700\">"+it.name.toUpperCase()+"</td>";
       h+="<td style=\"text-align:right;padding:3px 0\">"+lt.toFixed(2)+"</td></tr>";
+      // Forfait: show phases detail
+      var sv2=it.sId?gS(it.sId):null;
+      if(sv2&&sv2.phases&&sv2.phases.length>1){
+        var phNames=[];
+        for(var pi3=0;pi3<sv2.phases.length;pi3++){
+          if(sv2.phases[pi3].t==="w"&&sv2.phases[pi3].l)phNames.push(sv2.phases[pi3].l);
+        }
+        if(phNames.length){
+          for(var pni=0;pni<phNames.length;pni++){
+            h+="<tr><td></td><td colspan=\"2\" style=\"font-size:10px;font-style:italic;color:#666;padding:1px 4px\">\u2022 "+phNames[pni]+"</td></tr>";
+          }
+        }
+      }
       if(it.remise>0)h+="<tr><td></td><td style=\"font-size:10px;color:#666;padding:1px 4px\">Remise</td><td style=\"text-align:right;font-size:10px;color:#666\">-"+it.remise.toFixed(2)+"</td></tr>";
     }
   } else {
@@ -9311,7 +9423,7 @@ function doRemiseBanque(){
 
 // === MARKETING PAGE ===
 function rMarketing(){
-  if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\\n\u00c0 bient\u00f4t !"};
+  if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\\n\u00c0 bient\u00f4t !",confirmSms:true,confirmEmail:true};
   if(!window.MKT_TAB)window.MKT_TAB="campagnes";
   var tab=window.MKT_TAB;
   var smsC=window.SMS_CONFIG;
@@ -10484,7 +10596,10 @@ if(typeof saveAppointment==="undefined"){
       comment:appt.comment||"",
       a_phases:appt.aPhases||[],
       cancelled:appt.cancelled||false,
-      from_caisse:appt.fromCaisse||false
+      from_caisse:appt.fromCaisse||false,
+      client_email:(function(){var c=typeof gC==="function"?gC(appt.cId):null;return c&&c.em?c.em:null;})(),
+      client_name:(function(){var c=typeof gC==="function"?gC(appt.cId):null;return c?((c.nom||"")+" "+(c.pre||"")).trim():null;})(),
+      collab_name:(function(){var t=typeof gT==="function"?gT(appt.stId):null;return t?t.n:null;})()
     };
     return _sb.from("appointments").upsert(data,{onConflict:"id"}).then(function(r){
       if(r.error)console.error("[SAVE APPT]",r.error.message);
