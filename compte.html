@@ -329,6 +329,23 @@ async function emailReceipt(rdvId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   if(!CLIENT||!CLIENT.email){alert("Aucun email enregistr\u00e9 sur votre compte.");return;}
   var btn=event.target;if(btn){btn.textContent="\u23f3 Envoi...";btn.disabled=true;}
+
+  // Fetch salon details for the ticket
+  var salon={nom:rdv.salon_nom||"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",tauxTVA:20};
+  try{
+    var sr=await api("salons?select=nom,config_json&id=eq."+rdv.salon_id);
+    var sd=await sr.json();
+    if(Array.isArray(sd)&&sd[0]){
+      var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
+      salon.nom=cfg.nom||sd[0].nom||"Salon";
+      salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
+      salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";salon.tauxTVA=cfg.tauxTVA||20;
+    }
+  }catch(e){}
+
+  // Generate ticket HTML (same format as downloadReceipt)
+  var ticketHtml=buildCompteTicketHTML(rdv,salon);
+
   try{
     var resp=await fetch("/api/email/ticket",{
       method:"POST",
@@ -336,21 +353,78 @@ async function emailReceipt(rdvId){
       body:JSON.stringify({
         clientEmail:CLIENT.email,
         clientName:(CLIENT.prenom||"")+" "+(CLIENT.nom||""),
-        salonName:rdv.salon_nom||"Salon",
-        ticketNum:"RDV-"+rdvId.slice(0,8),
-        ticketDate:rdv.date_rdv,
-        ticketHeure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"",
-        items:[{name:rdv.service_nom,price:Number(rdv.service_prix)||0,qty:1,remise:0}],
-        total:Number(rdv.service_prix)||0,
-        reglement:rdv.acompte_paye?"Acompte en ligne":"Sur place",
-        collaborateur:rdv.collaborateur_nom||""
+        salonName:salon.nom,
+        ticketNum:rdv.ticket_num||("RDV-"+rdvId.slice(0,8)),
+        ticketHtml:ticketHtml
       })
     });
     var data=await resp.json();
     if(data.success)alert("\u2705 Ticket envoy\u00e9 \u00e0 "+CLIENT.email);
-    else alert("\u274c Erreur lors de l\u0027envoi");
+    else alert("\u274c Erreur lors de l\u0027envoi: "+(data.error||""));
   }catch(e){alert("\u274c Erreur de connexion");}
   if(btn){btn.textContent="\u2709 Recevoir par email";btn.disabled=false;}
+}
+
+// Build ticket HTML for compte client (shared between downloadReceipt and emailReceipt)
+function buildCompteTicketHTML(rdv,salon){
+  var txTVA=salon.tauxTVA||20;
+  var ttc=Number(rdv.service_prix)||0;
+  var ht=Math.round(ttc*100/(100+txTVA)*100)/100;
+  var tva=Math.round((ttc-ht)*100)/100;
+  var dp=rdv.date_rdv?rdv.date_rdv.split("-"):["2026","01","01"];
+  var dateFR=dp[2]+"/"+dp[1]+"/"+dp[0];
+  var acompte=Number(rdv.acompte_montant)||0;
+
+  var h="";
+  // DUPLICATA
+  h+="<div style='text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px'>DUPLICATA</div>";
+  // En-t\u00eate salon
+  h+="<div style='text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px'>";
+  h+="<div style='font-weight:900;font-size:14px;letter-spacing:1px'>"+salon.nom.toUpperCase()+"</div>";
+  h+="<div style='font-size:11px'>"+salon.adresse+"</div>";
+  h+="<div style='font-size:11px'>"+(salon.cp||"")+" "+(salon.ville||"")+"</div>";
+  if(salon.tel)h+="<div style='font-size:11px'>T\u00e9l: "+salon.tel+"</div>";
+  h+="</div>";
+  // Ticket info
+  h+="<div style='text-align:center;margin-bottom:8px'>";
+  h+="<div style='font-weight:900;font-size:13px'>Ticket de vente N\u00b0"+(rdv.ticket_num||"--")+"</div>";
+  h+="<div style='font-size:12px'>"+dateFR+" \u00e0 "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+"</div>";
+  if(rdv.collaborateur_nom)h+="<div style='font-size:12px'>Collaborateur: "+rdv.collaborateur_nom+"</div>";
+  h+="<div style='font-size:12px'>Client: "+(CLIENT.prenom||"")+" "+(CLIENT.nom||"")+"</div>";
+  h+="</div>";
+  // Articles
+  h+="<table style='width:100%;border-collapse:collapse'><tr style='border-top:1px solid #000;border-bottom:1px solid #000'><th style='text-align:left;padding:4px 0;font-size:11px'>Quantit\u00e9</th><th style='text-align:left;font-size:11px'>D\u00e9signation</th><th style='text-align:right;font-size:11px'>TTC</th></tr>";
+  if(rdv.items&&rdv.items.length){
+    rdv.items.forEach(function(it){
+      if(it.isSep){h+="<tr><td colspan='3' style='padding:6px 0 2px;font-weight:900;border-top:1px dashed #999;font-size:11px'>\u25b6 "+(it.name||"").replace(/---/g,"").trim()+"</td></tr>";return;}
+      var lt=(it.price||0)*(it.qty||1)-(it.remise||0);
+      h+="<tr style='border-bottom:1px solid #ccc'><td style='padding:3px 0'>"+(it.qty||1)+"</td><td style='padding:3px 4px;font-weight:700'>"+(it.name||"").toUpperCase()+"</td><td style='text-align:right;padding:3px 0'>"+lt.toFixed(2)+"</td></tr>";
+    });
+  }else{
+    h+="<tr><td>1</td><td style='font-weight:700'>"+(rdv.service_nom||"").toUpperCase()+"</td><td style='text-align:right'>"+ttc.toFixed(2)+"</td></tr>";
+  }
+  h+="</table>";
+  // HT
+  h+="<div style='display:flex;justify-content:space-between;font-weight:900;font-size:13px;border-top:2px solid #000;padding-top:6px'><span>Total HT :</span><span>"+ht.toFixed(2)+"</span></div>";
+  // TVA
+  h+="<table style='font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000;width:100%;border-collapse:collapse'><tr style='font-weight:700'><td></td><td style='text-align:center'>TVA</td><td style='text-align:center'>HT</td><td style='text-align:right'>TTC</td></tr>";
+  h+="<tr><td>TVA "+txTVA+"%</td><td style='text-align:center'>"+tva.toFixed(2)+" \u20ac</td><td style='text-align:center'>"+ht.toFixed(2)+" \u20ac</td><td style='text-align:right'>"+ttc.toFixed(2)+" \u20ac</td></tr></table>";
+  // TTC
+  h+="<div style='display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000'><span>Total TTC :</span><span>"+ttc.toFixed(2)+" \u20ac</span></div>";
+  // Acompte
+  if(acompte>0){
+    h+="<div style='display:flex;justify-content:space-between;font-size:11px;padding:3px 0'><span>Acompte d\u00e9duit</span><span>-"+acompte.toFixed(2)+" \u20ac</span></div>";
+    h+="<div style='display:flex;justify-content:space-between;font-weight:900;font-size:14px;padding:3px 0'><span>RESTE PAY\u00c9</span><span>"+(ttc-acompte).toFixed(2)+" \u20ac</span></div>";
+  }
+  // NF525
+  h+="<div style='border-top:1px dashed #999;margin:8px 0'></div>";
+  h+="<div style='text-align:center;font-size:10px;color:#666'>";
+  if(salon.siret)h+="<div>SIRET: "+salon.siret+"</div>";
+  if(salon.tva)h+="<div>N\u00b0 TVA: "+salon.tva+"</div>";
+  h+="<div>Logiciel certifi\u00e9 NF525</div><div>Luxyra - contact@luxyra.fr</div>";
+  h+="<div style='font-size:9px;color:#999'>Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</div>";
+  h+="<div style='font-weight:700;margin-top:4px'>COPIE ELECTRONIQUE - DUPLICATA</div></div>";
+  return h;
 }
 
 function renderProfileTab(){
@@ -512,37 +586,41 @@ async function loadMyRdvs(){
     if(Array.isArray(data2)){data2.forEach(function(d){d.salon_nom=d.salons?d.salons.nom:"";var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===d.id)ex=true;});if(!ex)CLIENT_RDVS.push(d);});}
     
     // Also load direct POS tickets from appointments table
+    // Strategy: find client records in salons' clients table matching our email, then load their appointments
     try{
-      // Try by client_email first (new column)
-      var r4=await api("appointments?select=*,salons(nom)&client_email=eq."+encodeURIComponent(CLIENT.email)+"&status=eq.done&order=date_rdv.desc&limit=50");
-      var appts=await r4.json();
-      if(!Array.isArray(appts))appts=[];
-      // Also try by client_id (UUID-based clients)
-      if(CLIENT.id&&CLIENT.id.length>30){
-        var r5=await api("appointments?select=*,salons(nom)&client_id=eq."+CLIENT.id+"&status=eq.done&order=date_rdv.desc&limit=50");
-        var appts2=await r5.json();
-        if(Array.isArray(appts2)){appts2.forEach(function(a2){var dup=false;appts.forEach(function(x){if(x.id===a2.id)dup=true;});if(!dup)appts.push(a2);});}
-      }
-      appts.forEach(function(a){
-        var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===a.id)ex=true;});
-        if(!ex){
-          var itemName="Prestation";var itemPrice=a.prix||0;
-          if(a.items&&a.items.length){
-            var names=[];
-            a.items.forEach(function(it){if(!it.isSep&&it.name)names.push(it.name);});
-            if(names.length)itemName=names.join(", ");
-            var first=a.items.find(function(it){return !it.isSep;});if(first)itemPrice=first.price||0;
-          }
-          CLIENT_RDVS.push({
-            id:a.id,salon_id:a.salon_id,salon_nom:a.salons?a.salons.nom:"",
-            date_rdv:a.date_rdv,heure_rdv:a.heure,
-            service_nom:itemName,service_prix:a.prix||itemPrice,
-            collaborateur_nom:a.collab_name||"",status:"done",
-            items:a.items,ticket_num:a.ticket_num,
-            acompte_montant:0,_fromPOS:true
-          });
+      var r3=await api("clients?select=id,salon_id&email=eq."+encodeURIComponent(CLIENT.email));
+      var clientRecords=await r3.json();
+      if(Array.isArray(clientRecords)&&clientRecords.length>0){
+        for(var ci=0;ci<clientRecords.length;ci++){
+          var cr=clientRecords[ci];
+          try{
+            var r4=await api("appointments?select=*,salons(nom)&client_id=eq."+cr.id+"&status=eq.done&order=date_rdv.desc&limit=30");
+            var appts=await r4.json();
+            if(Array.isArray(appts)){
+              appts.forEach(function(a){
+                var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===a.id)ex=true;});
+                if(!ex){
+                  var itemName="Prestation";var itemPrice=a.prix||0;
+                  if(a.items&&a.items.length){
+                    var names=[];
+                    a.items.forEach(function(it){if(!it.isSep&&it.name)names.push(it.name);});
+                    if(names.length)itemName=names.join(", ");
+                    var first=a.items.find(function(it){return !it.isSep;});if(first)itemPrice=first.price||0;
+                  }
+                  CLIENT_RDVS.push({
+                    id:a.id,salon_id:a.salon_id,salon_nom:a.salons?a.salons.nom:"",
+                    date_rdv:a.date_rdv,heure_rdv:a.heure,
+                    service_nom:itemName,service_prix:a.prix||itemPrice,
+                    collaborateur_nom:a.collab_name||"",status:"done",
+                    items:a.items,ticket_num:a.ticket_num,
+                    acompte_montant:0,_fromPOS:true
+                  });
+                }
+              });
+            }
+          }catch(e4){}
         }
-      });
+      }
     }catch(e3){}
     
     // Sort by date desc
@@ -690,8 +768,7 @@ async function submitCancelRdv(rdvId){
 async function downloadReceipt(rdvId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   
-  // Fetch salon details for proper receipt header
-  var salon={nom:"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",version:"v6.3"};
+  var salon={nom:rdv.salon_nom||"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",sousTitre:"",tauxTVA:20};
   try{
     var sr=await api("salons?select=nom,config_json&id=eq."+rdv.salon_id);
     var sd=await sr.json();
@@ -700,82 +777,19 @@ async function downloadReceipt(rdvId){
       salon.nom=cfg.nom||sd[0].nom||"Salon";
       salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
       salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";
-      salon.version=cfg.version||"v6.3";
+      salon.sousTitre=cfg.sousTitre||"";salon.tauxTVA=cfg.tauxTVA||20;
     }
   }catch(e){}
   
-  var txTVA=20;
-  var ttc=Number(rdv.service_prix)||0;
-  var ht=Math.round(ttc*100/(100+txTVA)*100)/100;
-  var tva=Math.round((ttc-ht)*100)/100;
-  var dp=rdv.date_rdv?rdv.date_rdv.split("-"):["2026","01","01"];
-  var dateFR=dp[2]+"/"+dp[1]+"/"+dp[0];
-  var acompte=Number(rdv.acompte_montant)||0;
-  
   var w=window.open("","_blank","width=380,height=700");if(!w)return;
-  var h="<!DOCTYPE html><html><head><meta charset='utf-8'><title>Re\u00e7u - "+salon.nom+"</title>";
-  h+="<style>*{margin:0;padding:0;box-sizing:border-box;font-family:'Courier New',monospace;color:#000}";
-  h+="body{padding:15px;max-width:340px;margin:0 auto;font-size:12px;background:#fff}";
-  h+="h1{font-size:14px;text-align:center;margin:0}";
-  h+=".sep{border-top:1px dashed #999;margin:8px 0}.sep2{border-top:2px solid #000;margin:8px 0}";
-  h+=".line{display:flex;justify-content:space-between;padding:3px 0}.bold{font-weight:900;font-size:14px}";
-  h+="p{margin:2px 0;text-align:center}.small{font-size:9px;color:#666}";
-  h+=".dup{text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px}";
-  h+="@media print{body{padding:5px;font-size:10px}}</style></head><body>";
-  
-  // DUPLICATA banner (always for client-side receipt since salon already has original)
-  h+="<div class='dup'>DUPLICATA</div>";
-  
-  // Header salon
-  h+="<h1>"+salon.nom.toUpperCase()+"</h1>";
-  if(salon.adresse)h+="<p>"+salon.adresse+"</p>";
-  if(salon.cp||salon.ville)h+="<p>"+salon.cp+" "+salon.ville+"</p>";
-  if(salon.tel)h+="<p>T\u00e9l: "+salon.tel+"</p>";
-  if(salon.siret)h+="<p style='font-size:10px'>SIRET: "+salon.siret+"</p>";
-  if(salon.tva)h+="<p style='font-size:10px'>N\u00b0 TVA: "+salon.tva+"</p>";
-  h+="<div class='sep2'></div>";
-  
-  // Ticket info
-  h+="<p class='bold'>RE\u00c7U DE PRESTATION</p>";
-  h+="<p>"+dateFR+" \u00e0 "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+"</p>";
-  h+="<div class='sep'></div>";
-  
-  // Client + Collaborateur
-  h+="<div class='line'><span>Client</span><span>"+(CLIENT.prenom||"")+" "+(CLIENT.nom||"")+"</span></div>";
-  if(rdv.collaborateur_nom)h+="<div class='line'><span>Collaborateur</span><span>"+rdv.collaborateur_nom+"</span></div>";
-  h+="<div class='sep'></div>";
-  
-  // Prestation
-  h+="<div class='line'><span>"+rdv.service_nom+"</span><span>"+ttc.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class='sep2'></div>";
-  
-  // Totaux
-  h+="<div class='line bold'><span>TOTAL TTC</span><span>"+ttc.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class='sep'></div>";
-  h+="<div class='line' style='font-size:11px'><span>Total HT</span><span>"+ht.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class='line' style='font-size:11px'><span>TVA "+txTVA+"%</span><span>"+tva.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class='line' style='font-size:11px'><span>Total TTC</span><span>"+ttc.toFixed(2)+" \u20ac</span></div>";
-  
-  // Acompte
-  if(acompte>0){
-    h+="<div class='sep'></div>";
-    h+="<div class='line' style='font-size:11px'><span>Acompte vers\u00e9</span><span>-"+acompte.toFixed(2)+" \u20ac</span></div>";
-    h+="<div class='line bold'><span>RESTE D\u00db</span><span>"+(ttc-acompte).toFixed(2)+" \u20ac</span></div>";
-  }
-  
-  h+="<div class='sep'></div>";
-  h+="<p>Merci de votre visite !</p>";
-  h+="<div class='sep'></div>";
-  
-  // Legal footer
-  h+="<p class='small'>Logiciel: Luxyra "+salon.version+"</p>";
-  if(salon.siret)h+="<p class='small'>SIRET: "+salon.siret+"</p>";
-  h+="<p class='small'>CERTIFICATION NF525</p>";
-  h+="<p class='small'>Art. 286-I-3\u00b0 bis du CGI - A conserver 6 ans minimum</p>";
+  var h="<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ticket "+salon.nom+" N\u00b0"+(rdv.ticket_num||"")+"</title>";
+  h+="<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;color:#000;background:#fff}";
+  h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>";
+  h+=buildCompteTicketHTML(rdv,salon);
   h+="</body></html>";
   
   w.document.write(h);w.document.close();
-  setTimeout(function(){w.print();},300);
+  setTimeout(function(){w.print();},500);
 }
 
 function closePopup(id){var el=document.getElementById(id);if(el)el.remove();}

@@ -1014,6 +1014,23 @@ function confirmNotif(id){
             }
           }
         }
+        // Send confirmation SMS/Email to client
+        var onRdvC=onRdvData||onRdv;
+        if(onRdvC){
+          var cVars={prenom:onRdvC.prenom||"",nom:onRdvC.nom||"",
+            heure:onRdvC.heure||"",date:fmt(onRdvC.date),
+            prestation:onRdvC.svcNom||"",salon:SALON_CONFIG.nom,
+            collab:onRdvC.collabNom||""};
+          var cfgC=window.SMS_CONFIG||{};
+          if(cfgC.confirmSms&&onRdvC.tel){
+            var smsTxt=buildSmsText(cfgC.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} est confirm\u00e9.",cVars);
+            sendSms(onRdvC.tel,smsTxt);
+          }
+          if(cfgC.confirmEmail&&onRdvC.email){
+            var emailTxt=buildSmsText(cfgC.confirmEmailTexte||"Bonjour {prenom},\\nVotre rendez-vous est confirm\u00e9.\\n\u00c0 bient\u00f4t !\\n{salon}",cVars);
+            sendEmail(onRdvC.email,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt);
+          }
+        }
       }
       break;
     }
@@ -6682,6 +6699,7 @@ function aAp(){
   window._rdvSvcId=null;window._rdvPassage=null;
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});}
+  sendRdvConfirmation(rdvObj);
 }
 
 function confirmPendingRdv(){
@@ -6691,6 +6709,7 @@ function confirmPendingRdv(){
   window._pendingRdv=null;
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj2).then(function(){go("planning");}).catch(function(){});}
+  sendRdvConfirmation(rdvObj2);
 }
 
 function aApAndNew(){
@@ -8828,16 +8847,14 @@ function emailTicket(id){
 
 async function sendTicketByEmail(id){
   var a=null;
-  // Search in AP by id
   if(id&&id!=="temp"){for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}}
-  // Fallback: find by tkNum
   if(!a&&typeof tkN!=="undefined"&&tkN){for(var i2=AP.length-1;i2>=0;i2--){if(AP[i2].tkNum===tkN){a=AP[i2];break;}}}
-  // Last fallback: build from _tk
   if(!a&&_tk){
     var now3=new Date();
     var metStr3=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
     a={id:"temp",cId:_tk.cId,stId:_tk.stId,date:TD,time:now3.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-       pr:0,met:metStr3,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||""};
+       pr:0,met:metStr3,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||"",
+       payments:_tk.payments||null,acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||""};
     var tot3=0;_tk.items.forEach(function(it){tot3+=it.price*it.qty-(it.remise||0);});tot3-=(_tk.remise||0);
     a.pr=tot3;
   }
@@ -8846,6 +8863,15 @@ async function sendTicketByEmail(id){
   if(!cl||!cl.em){alert("Pas d\u2019email pour ce client");return;}
   var btn=document.getElementById("btnSendBrevo");
   if(btn){btn.textContent="\u23f3 Envoi en cours...";btn.style.opacity=".5";btn.onclick=null;}
+
+  // Generate IDENTICAL ticket HTML using buildTicketHTML (same as print/screen)
+  var ticketBody=buildTicketHTML(a, true); // true = DUPLICATA
+  var fullHtml="<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ticket "+SALON_CONFIG.nom+" N\u00b0"+(a.tkNum||"")+"</title>";
+  fullHtml+="<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;color:#000;background:#fff}";
+  fullHtml+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>";
+  fullHtml+=ticketBody;
+  fullHtml+="</body></html>";
+
   try{
     var res=await fetch("/api/email/ticket",{
       method:"POST",
@@ -8855,28 +8881,8 @@ async function sendTicketByEmail(id){
         clientName:cName(cl),
         salonName:SALON_CONFIG.nom,
         salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",
-        salonTel:SALON_CONFIG.tel,
-        salonAdresse:(SALON_CONFIG.adresse||"")+" "+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||""),
         ticketNum:a.tkNum||"--",
-        ticketDate:fmt(a.date),
-        ticketHeure:a.time,
-        items:(a.items||[]).map(function(it){
-          if(it.isSep)return it;
-          var enriched={name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:it.isProd};
-          var sv=it.sId?gS(it.sId):null;
-          if(sv&&sv.phases&&sv.phases.length>1){
-            enriched.phases=sv.phases.filter(function(p){return p.t==="w"&&p.l;}).map(function(p){return p.l;});
-          }
-          return enriched;
-        }),
-        total:a.pr,
-        reglement:a.met||"",
-        siret:SALON_CONFIG.siret||"",
-        tva:SALON_CONFIG.tauxTVA||20,
-        tvaIntra:SALON_CONFIG.tva||"",
-        collaborateur:sty?sty.n:"",
-        ticketHash:a.hash?a.hash.slice(0,16):"",
-        ticketPrevHash:a.prevHash?a.prevHash.slice(0,8):""
+        ticketHtml:fullHtml
       })
     });
     var data=await res.json();
@@ -8898,51 +8904,21 @@ async function sendTicketByEmail(id){
 
 function downloadTicketPDF(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
-  if(!a)return;
-  var cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId,a.sId);
-  var total=a.pr;
-  var txTVA=SALON_CONFIG.tauxTVA||20;
-  var ht=Math.round(total/(1+txTVA/100)*100)/100;
-  var tva=Math.round((total-ht)*100)/100;
-  var w=window.open("","_blank","width=380,height=650");if(!w)return;
-  var h="<html><head><title>Ticket "+SALON_CONFIG.nom+" N\u00b0"+(a.tkNum||"")+"</title>";
-  h+="<style>html{color-scheme:light!important}*{color:#000!important;background:transparent!important;margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:20px;max-width:320px;margin:0 auto;font-size:12px;background:#fff!important}";
-  h+="h1{font-size:14px;text-align:center}p{margin:2px 0;text-align:center;font-size:12px}.sep{border-top:1px dashed #999;margin:8px 0}.sep2{border-top:2px solid #000;margin:8px 0}";
-  h+=".line{display:flex;justify-content:space-between;padding:3px 0}.bold{font-weight:900;font-size:14px}";
-  h+="table{width:100%;border-collapse:collapse}th{text-align:left;padding:4px 0;border-top:1px solid #000;border-bottom:1px solid #000;font-size:11px}td{padding:3px 0;font-size:11px}";
-  h+=".no-print{margin-top:20px;text-align:center}@media print{.no-print{display:none!important}}</style></head><body>";
-  h+="<h1>"+SALON_CONFIG.nom.toUpperCase()+"</h1>";
-  if(SALON_CONFIG.sousTitre)h+="<p>"+SALON_CONFIG.sousTitre+"</p>";
-  h+="<p>"+SALON_CONFIG.adresse+"</p><p>"+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||"")+"</p>";
-  if(SALON_CONFIG.tel)h+="<p>T\u00e9l: "+SALON_CONFIG.tel+"</p>";
-  h+="<div class=\"sep\"></div>";
-  h+="<p style=\"font-weight:900;font-size:13px\">Ticket de vente N\u00b0"+(a.tkNum||"--")+"</p>";
-  h+="<p>"+fmt(a.date)+" \u00e0 "+a.time+"</p>";
-  h+="<p>Collaborateur: "+(sty?sty.n:"")+"</p>";
-  h+="<p>Client: "+clN+"</p>";
-  h+="<div class=\"sep\"></div>";
-  h+="<table><tr><th>Qt\u00e9</th><th>D\u00e9signation</th><th style=\"text-align:right\">TTC</th></tr>";
-  if(a.items&&a.items.length){
-    for(var ii=0;ii<a.items.length;ii++){
-      var it=a.items[ii];
-      if(it.isSep){var sn=it.name.replace(/---/g,"").trim();if(it.sepCId){var sc=gC(it.sepCId);if(sc)sn=cName(sc);}h+="<tr><td colspan=\"3\" style=\"padding:6px 0 2px;font-weight:900;border-top:1px dashed #999;font-size:11px\">\u25b6 "+sn+"</td></tr>";continue;}
-      var lt=it.price*it.qty-(it.remise||0);
-      h+="<tr><td>"+it.qty+"</td><td style=\"font-weight:700\">"+it.name.toUpperCase()+"</td><td style=\"text-align:right\">"+lt.toFixed(2)+"</td></tr>";
-      if(it.remise>0)h+="<tr><td></td><td style=\"font-size:10px\">Remise</td><td style=\"text-align:right;font-size:10px\">-"+it.remise.toFixed(2)+"</td></tr>";
-    }
+  if(!a&&_tk){
+    var now4=new Date();
+    var metStr4=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
+    a={id:"temp",cId:_tk.cId,stId:_tk.stId,date:TD,time:now4.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
+       pr:0,met:metStr4,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||"",
+       payments:_tk.payments||null,acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||""};
+    var tot4=0;_tk.items.forEach(function(it){tot4+=it.price*it.qty-(it.remise||0);});tot4-=(_tk.remise||0);
+    a.pr=tot4;
   }
-  if(a.remise>0)h+="<tr><td>1</td><td style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+a.remise.toFixed(2)+"</td></tr>";
-  h+="</table>";
-  h+="<div class=\"sep2\"></div>";
-  h+="<div class=\"line bold\"><span>Total TTC :</span><span>"+total.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class=\"line\" style=\"font-size:11px\"><span>HT :</span><span>"+ht.toFixed(2)+" \u20ac</span></div>";
-  h+="<div class=\"line\" style=\"font-size:11px\"><span>TVA "+txTVA+"% :</span><span>"+tva.toFixed(2)+" \u20ac</span></div>";
-  if(txTVA===0)h+="<p style=\"font-size:9px\">TVA non applicable - Art. 293B du CGI</p>";
-  h+="<div class=\"sep\"></div>";
-  h+="<div class=\"line\"><span>R\u00e8glement :</span><span>"+(a.met||"")+"</span></div>";
-  if(SALON_CONFIG.siret)h+="<p style=\"font-size:10px\">SIRET: "+SALON_CONFIG.siret+"</p>";
-  h+="<p style=\"font-size:10px\">Logiciel: Luxyra - contact@luxyra.fr</p>";
+  if(!a)return;
+  var w=window.open("","_blank","width=380,height=650");if(!w)return;
+  var h="<html><head><meta charset='utf-8'><title>Ticket "+SALON_CONFIG.nom+" N\u00b0"+(a.tkNum||"")+"</title>";
+  h+="<style>html{color-scheme:light!important}*,body,div,span,p,td,th,tr{color:#000!important;background:transparent!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;background:#fff!important}";
+  h+="table{width:100%;border-collapse:collapse}.no-print{margin-top:20px;text-align:center}@media print{.no-print{display:none!important}body{padding:5px}}</style></head><body>";
+  h+=buildTicketHTML(a, true);
   h+="<div class=\"no-print\">";
   h+="<p style=\"font-size:13px;font-weight:700;margin-bottom:10px\">Pour enregistrer en PDF :</p>";
   h+="<button onclick=\"window.print()\" style=\"padding:14px 32px;font-size:14px;font-weight:700;background:#d4a843;color:#000;border:none;border-radius:10px;cursor:pointer\">Imprimer / Enregistrer PDF</button>";
@@ -9588,6 +9564,36 @@ function saveSmsConfig(){
 }
 function buildSmsText(template,vars){
   return template.replace(/\{prenom\}/g,vars.prenom||"").replace(/\{nom\}/g,vars.nom||"").replace(/\{heure\}/g,vars.heure||"").replace(/\{date\}/g,vars.date||"").replace(/\{prestation\}/g,vars.prestation||"").replace(/\{salon\}/g,vars.salon||SALON_CONFIG.nom).replace(/\{collab\}/g,vars.collab||"");
+}
+
+// === CONFIRMATION RDV (SMS + Email) ===
+async function sendRdvConfirmation(rdvObj){
+  var cfg=window.SMS_CONFIG;if(!cfg)return;
+  var cl=gC(rdvObj.cId);if(!cl)return;
+  var sv=gS(rdvObj.sId);
+  var sty=gT(rdvObj.stId);
+  var vars={
+    prenom:cl.pre||"",nom:cl.nom||"",
+    heure:rdvObj.time||"",date:fmt(rdvObj.date),
+    prestation:sv?sv.n:"Prestation",
+    salon:SALON_CONFIG.nom,
+    collab:sty?sty.n:""
+  };
+  // SMS confirmation
+  if(cfg.confirmSms&&cl.ph&&cl.smsOk!==false){
+    var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} est confirm\u00e9.",vars);
+    sendSms(cl.ph,smsTxt).then(function(r){
+      if(r.ok)auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS \u00e0 ..."+cl.ph.slice(-4));
+    });
+  }
+  // Email confirmation
+  if(cfg.confirmEmail&&cl.em&&cl.emOk!==false){
+    var emailTxt=buildSmsText(cfg.confirmEmailTexte||"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}",vars);
+    var subject="Confirmation de votre rendez-vous - "+SALON_CONFIG.nom;
+    sendEmail(cl.em,subject,emailTxt).then(function(r){
+      if(r.ok)auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email \u00e0 "+cl.em.slice(0,3)+"***");
+    });
+  }
 }
 async function sendSms(phone,message){
   // Check credits
