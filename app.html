@@ -293,6 +293,14 @@ async function startCheckout(plan){
   }else if(params.get("checkout")==="cancel"){
     window.history.replaceState({},"",window.location.pathname);
   }
+  // SMS pack purchase success
+  if(params.get("sms_pack")==="success"){
+    var qty=params.get("qty")||"";
+    setTimeout(function(){
+      alert("\u2705 Pack SMS achet\u00e9 ! "+qty+" SMS ajout\u00e9s \u00e0 votre solde.\nRechargez la page pour voir votre nouveau solde.");
+      window.history.replaceState({},"",window.location.pathname);
+    },500);
+  }
 })();
 
 // Customer Portal (gérer son abonnement)
@@ -9462,15 +9470,45 @@ function doRemiseBanque(){
 
 // === MARKETING PAGE ===
 function rMarketing(){
-  if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",provider:"",apiKey:"",sender:"",emailProvider:"",emailApiKey:"",emailFrom:"",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\\n\u00c0 bient\u00f4t !"};
+  if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\\n\u00c0 bient\u00f4t !"};
   if(!window.MKT_TAB)window.MKT_TAB="campagnes";
   var tab=window.MKT_TAB;
   var smsC=window.SMS_CONFIG;
+  var smsCreds=window.SMS_CREDITS||0;
+  var smsUsed=window.SMS_USED||0;
   var h='';
+  
+  // === CREDIT BALANCE BANNER ===
+  h+='<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">';
+  // SMS credits
+  h+='<div style="flex:1;min-width:160px;padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(76,175,80,.15),rgba(76,175,80,.05));border:1px solid rgba(76,175,80,.2)">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+  h+='<div><div style="font-size:11px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px;font-weight:700">\ud83d\udcf1 Cr\u00e9dits SMS</div>';
+  h+='<div style="font-size:28px;font-weight:900;color:#4caf50">'+smsCreds+'</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">'+smsUsed+' utilis\u00e9s</div></div>';
+  if(smsCreds<=10)h+='<div style="padding:6px 12px;background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.3);border-radius:8px;font-size:11px;color:#ef5350;font-weight:700">'+(smsCreds===0?"\u26a0 \u00c9puis\u00e9":"\u26a0 Bient\u00f4t \u00e9puis\u00e9")+'</div>';
+  h+='</div></div>';
+  // Email (illimité)
+  h+='<div style="flex:1;min-width:160px;padding:16px;border-radius:14px;background:linear-gradient(135deg,rgba(33,150,243,.15),rgba(33,150,243,.05));border:1px solid rgba(33,150,243,.2)">';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px;font-weight:700">\u2709\ufe0f Emails</div>';
+  h+='<div style="font-size:28px;font-weight:900;color:#2196f3">Illimit\u00e9</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">Inclus dans votre abonnement</div>';
+  h+='</div>';
+  h+='</div>';
+  
+  // === BUY SMS PACKS ===
+  h+='<div style="padding:14px;border-radius:12px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+  h+='<div style="flex:1;min-width:160px"><div style="font-size:13px;font-weight:700;color:var(--gold)">Besoin de plus de SMS ?</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.4)">30 SMS offerts chaque mois avec le plan Pro</div></div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+  h+='<button onclick="buySMSPack(100)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">100 SMS \u2014 7,99\u20ac</button>';
+  h+='<button onclick="buySMSPack(250)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">250 SMS \u2014 18,99\u20ac</button>';
+  h+='<button onclick="buySMSPack(500)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">500 SMS \u2014 35,99\u20ac</button>';
+  h+='</div></div>';
   
   // Tabs
   h+='<div style="display:flex;gap:0;margin-bottom:16px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.1)">';
-  var tabs=[{k:"campagnes",l:"\ud83d\udce3 Campagnes",ico:""},{k:"rappels",l:"\ud83d\udd14 Rappels RDV",ico:""},{k:"config",l:"\u2699\ufe0f Configuration",ico:""}];
+  var tabs=[{k:"campagnes",l:"\ud83d\udce3 Campagnes"},{k:"rappels",l:"\ud83d\udd14 Rappels RDV"},{k:"config",l:"\u2699\ufe0f Configuration"}];
   for(var i=0;i<tabs.length;i++){
     var t=tabs[i];var isSel=tab===t.k;
     h+='<button onclick="window.MKT_TAB=\''+t.k+'\';go(\'marketing\')" style="flex:1;padding:12px 8px;font-size:12px;font-weight:700;border:none;cursor:pointer;'+(isSel?"background:var(--gold);color:#000":"background:rgba(255,255,255,.04);color:rgba(255,255,255,.6)")+'">'+t.l+'</button>';
@@ -9582,35 +9620,56 @@ function buildSmsText(template,vars){
   return template.replace(/\{prenom\}/g,vars.prenom||"").replace(/\{nom\}/g,vars.nom||"").replace(/\{heure\}/g,vars.heure||"").replace(/\{date\}/g,vars.date||"").replace(/\{prestation\}/g,vars.prestation||"").replace(/\{salon\}/g,vars.salon||SALON_CONFIG.nom).replace(/\{collab\}/g,vars.collab||"");
 }
 async function sendSms(phone,message){
-  var cfg=window.SMS_CONFIG;if(!cfg||!cfg.provider||!cfg.apiKey){console.warn("[SMS] Non configur\u00e9");return{ok:false,error:"non_configure"};}
+  // Check credits
+  var creds=window.SMS_CREDITS||0;
+  if(creds<=0){alert("\u26a0 Plus de cr\u00e9dits SMS ! Contactez Luxyra pour recharger.");return{ok:false,error:"no_credits"};}
   var cleanPhone=phone.replace(/[\s\.\-]/g,"");
   if(cleanPhone.startsWith("0"))cleanPhone="+33"+cleanPhone.slice(1);
   if(!cleanPhone.startsWith("+"))cleanPhone="+33"+cleanPhone;
   try{
-    var url,headers,body;
-    if(cfg.provider==="brevo"){
-      url="https://api.brevo.com/v3/transactionalSMS/sms";
-      headers={"Content-Type":"application/json","api-key":cfg.apiKey};
-      body=JSON.stringify({type:"transactional",sender:cfg.sender||SALON_CONFIG.nom,recipient:cleanPhone,content:message});
-    } else if(cfg.provider==="twilio"){
-      var parts=cfg.apiKey.split(":");
-      url="https://api.twilio.com/2010-04-01/Accounts/"+parts[0]+"/Messages.json";
-      headers={"Content-Type":"application/x-www-form-urlencoded","Authorization":"Basic "+btoa(cfg.apiKey)};
-      body="From="+(cfg.sender||"")+"\u0026To="+encodeURIComponent(cleanPhone)+"\u0026Body="+encodeURIComponent(message);
-    } else if(cfg.provider==="ovh"){
-      url="https://www.ovh.com/cgi-bin/sms/http2sms.cgi";
-      headers={};
-      body="account="+cfg.sender+"&login=api&password="+cfg.apiKey+"&from="+cfg.sender+"&to="+cleanPhone+"&message="+encodeURIComponent(message);
+    var resp=await fetch("/api/sms/custom",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({telephone:cleanPhone,message:message,salonName:SALON_CONFIG.nom})
+    });
+    var data=await resp.json();
+    if(data.success){
+      // Decrement local credits
+      window.SMS_CREDITS=Math.max(0,(window.SMS_CREDITS||0)-1);
+      window.SMS_USED=(window.SMS_USED||0)+1;
+      // Update Supabase
+      if(typeof _sb!=="undefined"&&_salonId){
+        _sb.from("salons").update({sms_credits:window.SMS_CREDITS,sms_used:window.SMS_USED}).eq("id",_salonId);
+        _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:message.slice(0,50)});
+      }
+      auditLog("SMS_ENVOYE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - OK - Cr\u00e9dits restants: "+window.SMS_CREDITS);
+      return{ok:true};
+    }else{
+      auditLog("SMS_ERREUR","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+(data.error||"Erreur"));
+      return{ok:false,error:data.error||"Erreur envoi"};
     }
-    var resp=await fetch(url,{method:"POST",headers:headers,body:body});
-    var ok=resp.ok;
-    auditLog("SMS_ENVOYE","T\u00e9l: "+cleanPhone.slice(-4)+" - "+(ok?"OK":"ERREUR "+resp.status));
-    return{ok:ok};
   }catch(e){
     console.error("[SMS]",e);
-    auditLog("SMS_ERREUR","T\u00e9l: "+cleanPhone.slice(-4)+" - "+e.message);
+    auditLog("SMS_ERREUR","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+e.message);
     return{ok:false,error:e.message};
   }
+}
+async function sendEmailViaWorker(to,toName,subject,htmlContent){
+  try{
+    var resp=await fetch("/api/email/custom",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({to:to,toName:toName,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"support@luxyra.fr",subject:subject,htmlContent:htmlContent})
+    });
+    var data=await resp.json();
+    if(data.success){
+      if(typeof _sb!=="undefined"&&_salonId){
+        _sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:to,content:subject});
+      }
+      return{ok:true};
+    }
+    return{ok:false,error:data.error||"Erreur"};
+  }catch(e){return{ok:false,error:e.message};}
 }
 function testSms(){
   var phone=prompt("Num\u00e9ro de t\u00e9l\u00e9phone pour le test :");
@@ -9703,6 +9762,28 @@ function testEmail(){
     if(r.ok)alert("\u2705 Email test envoy\u00e9 !");
     else alert("\u274c Erreur : "+(r.error||"V\u00e9rifiez votre configuration"));
   });
+}
+
+async function buySMSPack(qty){
+  var prices={100:"7,99",250:"18,99",500:"35,99"};
+  var priceDisplay=prices[qty]||"?";
+  if(!confirm("Acheter "+qty+" SMS pour "+priceDisplay+"\u20ac ?"))return;
+  try{
+    var res=await fetch("/api/stripe/create-checkout",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        salon_id:window._salonId||"",
+        email:SALON_CONFIG.email||"",
+        plan:"sms_"+qty
+      })
+    });
+    var data=await res.json();
+    if(data.url){window.open(data.url,"_blank");}
+    else{alert("\u274c Erreur: "+(data.error||"Impossible de cr\u00e9er la session de paiement"));}
+  }catch(e){
+    alert("\u274c Erreur de connexion: "+e.message);
+  }
 }
 
 function openCampaignV2(type){

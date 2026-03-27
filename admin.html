@@ -230,7 +230,9 @@ async function loadData(){
           plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",
           subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
-          trialEnd:s.trial_end,color:colors[i%colors.length]};
+          trialEnd:s.trial_end,color:colors[i%colors.length],
+          smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,
+          isFree:s.is_free||false,freeUntil:s.free_until};
       });
       for(var i=0;i<SALONS.length;i++){
         try{
@@ -333,7 +335,7 @@ function buildRows(list,f){
     if(f!=="all"&&f!=="pending"&&s.status!==f)return;
     if(f==="pending"&&s.verif==="verified")return;
     h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+'</div></div></div></td>';
-    h+='<td>'+planB(s.plan)+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
+    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
   });
@@ -391,11 +393,35 @@ function openD(id){
   if(s.stripeCust)h+='<div class="dp-field"><span class="k">Stripe</span><span class="v"><a href="https://dashboard.stripe.com/test/customers/'+s.stripeCust+'" target="_blank" style="color:var(--gold);font-size:11px">Voir dans Stripe ↗</a></span></div>';
   h+='</div>';
 
+  // PLAN GRATUIT
+  h+='<div class="dp-section"><div class="dp-label">🎁 Plan offert</div>';
+  h+='<div class="dp-field"><span class="k">Gratuit\u00e9</span><span class="v"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="dpFree" '+(s.isFree?'checked':'')+'> <span style="font-weight:700;color:'+(s.isFree?'var(--green)':'var(--text2)')+'">Plan offert'+(s.isFree?' \u2705':'')+'</span></label></span></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:8px">';
+  h+='<div style="flex:1"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Plan offert</label><select id="dpFreePlan" style="width:100%;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px"><option value="essential"'+(s.plan==="essential"?" selected":"")+'>Essentiel</option><option value="pro"'+(s.plan==="pro"?" selected":"")+'>Pro</option></select></div>';
+  h+='<div style="flex:1"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Dur\u00e9e</label><select id="dpFreeDur" style="width:100%;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px"><option value="unlimited"'+((!s.freeUntil)?" selected":"")+'>Illimit\u00e9e</option><option value="1m">1 mois</option><option value="3m">3 mois</option><option value="6m">6 mois</option><option value="1y">1 an</option></select></div>';
+  h+='</div>';
+  h+='<button class="dp-btn success" style="margin-top:8px;width:100%" onclick="saveFreePlan(&#39;'+s.id+'&#39;)">💾 Enregistrer le plan offert</button>';
+  h+='</div>';
+
   // TECHNIQUE
   h+='<div class="dp-section"><div class="dp-label">⚙️ Technique</div>';
   h+='<div class="dp-field"><span class="k">Salon ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+s.id.slice(0,18)+'...</span></div>';
   h+='<div class="dp-field"><span class="k">User ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+(s.userId?s.userId.slice(0,18)+'...':'—')+'</span></div>';
   h+='<button class="dp-btn" style="margin-top:6px" onclick="editUserId(&#39;'+s.id+'&#39;)">🔑 Changer user_id</button></div>';
+
+  // SMS CREDITS
+  h+='<div class="dp-section"><div class="dp-label">\ud83d\udcf1 Cr\u00e9dits SMS</div>';
+  h+='<div class="dp-field"><span class="k">Solde actuel</span><span class="v" style="font-size:18px;font-weight:900;color:var(--accent)">'+(s.smsCredits||0)+' SMS</span></div>';
+  h+='<div class="dp-field"><span class="k">Offerts/mois</span><span class="v">'+(s.plan==="pro"?s.smsMonthlyFree||30:"0 (Essentiel)")+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Dernier reset</span><span class="v">'+fmtD(s.smsLastReset)+'</span></div>';
+  h+='<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
+  h+='<button class="dp-btn success" onclick="addSmsCredits(&#39;'+s.id+'&#39;,30)">+30 SMS</button>';
+  h+='<button class="dp-btn success" onclick="addSmsCredits(&#39;'+s.id+'&#39;,100)">+100 SMS</button>';
+  h+='<button class="dp-btn success" onclick="addSmsCredits(&#39;'+s.id+'&#39;,250)">+250 SMS</button>';
+  h+='<button class="dp-btn success" onclick="addSmsCredits(&#39;'+s.id+'&#39;,500)">+500 SMS</button>';
+  h+='<button class="dp-btn" onclick="addSmsCreditsCustom(&#39;'+s.id+'&#39;)">Autre montant</button>';
+  h+='<button class="dp-btn" style="color:var(--orange)" onclick="resetSmsCredits(&#39;'+s.id+'&#39;)">Remettre \u00e0 0</button>';
+  h+='</div></div>';
 
   // NOTES
   h+='<div class="dp-section"><div class="dp-label">📝 Notes internes</div>';
@@ -709,6 +735,51 @@ async function saveNotes(id){
   var n=document.getElementById("dpNotes");if(!n)return;
   await _sb.from("salons").update({notes_admin:n.value}).eq("id",id);
   alert("Notes enregistrées !");
+}
+
+async function saveFreePlan(id){
+  var isFree=document.getElementById("dpFree").checked;
+  var plan=document.getElementById("dpFreePlan").value;
+  var dur=document.getElementById("dpFreeDur").value;
+  var freeUntil=null;
+  if(isFree&&dur!=="unlimited"){
+    var d=new Date();
+    if(dur==="1m")d.setMonth(d.getMonth()+1);
+    else if(dur==="3m")d.setMonth(d.getMonth()+3);
+    else if(dur==="6m")d.setMonth(d.getMonth()+6);
+    else if(dur==="1y")d.setFullYear(d.getFullYear()+1);
+    freeUntil=d.toISOString().slice(0,10);
+  }
+  var update={is_free:isFree,free_until:freeUntil};
+  if(isFree){update.plan=plan;update.status="active";update.trial_end=null;}
+  await _sb.from("salons").update(update).eq("id",id);
+  var s=gSalon(id);
+  if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
+  alert("\u2705 "+(isFree?"Plan "+plan+" offert"+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)"):"Plan gratuit d\u00e9sactiv\u00e9"));
+  openDetail(id);
+}
+
+async function addSmsCredits(id,nb){
+  var s=gSalon(id);if(!s)return;
+  var newCredits=(s.smsCredits||0)+nb;
+  await _sb.from("salons").update({sms_credits:newCredits}).eq("id",id);
+  s.smsCredits=newCredits;
+  alert("\u2705 "+nb+" SMS ajout\u00e9s. Nouveau solde: "+newCredits+" SMS");
+  openDetail(id);
+}
+
+async function addSmsCreditsCustom(id){
+  var nb=prompt("Nombre de SMS \u00e0 ajouter :");
+  if(!nb||isNaN(nb)||+nb<=0)return;
+  await addSmsCredits(id,+nb);
+}
+
+async function resetSmsCredits(id){
+  if(!confirm("Remettre le solde SMS \u00e0 0 ?"))return;
+  await _sb.from("salons").update({sms_credits:0}).eq("id",id);
+  var s=gSalon(id);if(s)s.smsCredits=0;
+  alert("\u2705 Solde SMS remis \u00e0 0");
+  openDetail(id);
 }
 
 checkSession();

@@ -177,8 +177,26 @@ async function loadSalonData() {
     return;
   }
 
-  // Vérifier expiration essai
-  if (salon.status === "trial" && salon.trial_end) {
+  // Vérifier si plan offert (gratuit)
+  if(salon.is_free){
+    // Check if free plan has expired
+    if(salon.free_until){
+      var freeEnd=new Date(salon.free_until);
+      if(new Date()>freeEnd){
+        // Free plan expired, revert to trial
+        salon.is_free=false;
+        _sb.from("salons").update({is_free:false}).eq("id",salon.id);
+      }
+    }
+    // If still free, skip trial/payment checks
+    if(salon.is_free){
+      window._trialDaysLeft=null;
+      window._trialEnd=null;
+    }
+  }
+
+  // Vérifier expiration essai (sauf plan offert)
+  if(!salon.is_free && salon.status === "trial" && salon.trial_end) {
     var now = new Date();
     var end = new Date(salon.trial_end);
     var daysLeft = Math.ceil((end - now) / 86400000);
@@ -211,7 +229,26 @@ async function loadSalonData() {
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
   SALON_CONFIG.plan = salon.plan || "essential";
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
-  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}}catch(e){}}
+  // SMS credits
+  window.SMS_CREDITS = salon.sms_credits || 0;
+  window.SMS_USED = salon.sms_used || 0;
+  window.IS_FREE_PLAN = salon.is_free || false;
+  window.FREE_UNTIL = salon.free_until || null;
+
+  // Monthly SMS reset for Pro plans (30 free/month)
+  if(salon.plan==="pro"){
+    var today=new Date().toISOString().slice(0,10);
+    var lastReset=salon.sms_last_reset||"";
+    var resetMonth=lastReset?lastReset.slice(0,7):"";
+    var currentMonth=today.slice(0,7);
+    if(resetMonth!==currentMonth){
+      // New month: add 30 free SMS
+      var newCredits=(salon.sms_credits||0)+30;
+      window.SMS_CREDITS=newCredits;
+      _sb.from("salons").update({sms_credits:newCredits,sms_last_reset:today}).eq("id",salon.id);
+    }
+  }
+  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;}catch(e){}}
 
   // 3. Charger collaborateurs → T[]
   var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
