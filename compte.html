@@ -290,7 +290,9 @@ function renderTicketsTab(){
   h+='<div class="section"><div class="section-title">\ud83c\udfab Mes tickets ('+done.length+')</div>';
   
   if(!done.length){
-    h+='<div class="empty"><div class="ico">\ud83c\udfab</div>Aucun ticket de caisse<br><span style="font-size:12px;color:var(--text3)">Vos tickets appara\u00eetront ici apr\u00e8s chaque visite</span></div>';
+    h+='<div class="empty"><div class="ico">\ud83c\udfab</div>Aucun ticket de caisse<br><span style="font-size:12px;color:var(--text3)">Vos tickets appara\u00eetront ici apr\u00e8s chaque visite</span>';
+    h+='<div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;font-size:11px;color:var(--text3)">Recherche par email : <strong>'+CLIENT.email+'</strong><br>Ouvrez la console (F12) pour voir les d\u00e9tails de la recherche.</div>';
+    h+='</div>';
   }
 
   done.forEach(function(r){
@@ -587,19 +589,23 @@ async function loadMyRdvs(){
     
     // Load POS tickets via Worker (bypasses RLS)
     try{
+      console.log("[Tickets] Fetching POS tickets for email:", CLIENT.email);
       var r3=await fetch("/api/client/tickets",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({email:CLIENT.email})
       });
       var tkData=await r3.json();
+      console.log("[Tickets] Worker response:", JSON.stringify(tkData).slice(0,500));
       if(tkData&&Array.isArray(tkData.tickets)){
+        console.log("[Tickets] Found "+tkData.tickets.length+" POS tickets");
         tkData.tickets.forEach(function(t){
           var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===t.id)ex=true;});
           if(!ex)CLIENT_RDVS.push(t);
         });
       }
-    }catch(e3){}
+      if(tkData&&tkData.error){console.error("[Tickets] Worker error:",tkData.error);}
+    }catch(e3){console.error("[Tickets] Fetch error:",e3);}
     
     // Sort by date desc
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});

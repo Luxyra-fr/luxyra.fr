@@ -6699,7 +6699,7 @@ function aAp(){
   window._rdvSvcId=null;window._rdvPassage=null;
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});}
-  sendRdvConfirmation(rdvObj);
+  setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
 }
 
 function confirmPendingRdv(){
@@ -6709,7 +6709,7 @@ function confirmPendingRdv(){
   window._pendingRdv=null;
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj2).then(function(){go("planning");}).catch(function(){});}
-  sendRdvConfirmation(rdvObj2);
+  setTimeout(function(){sendRdvConfirmation(rdvObj2);},300);
 }
 
 function aApAndNew(){
@@ -9567,11 +9567,49 @@ function buildSmsText(template,vars){
 }
 
 // === CONFIRMATION RDV (SMS + Email) ===
-async function sendRdvConfirmation(rdvObj){
-  var cfg=window.SMS_CONFIG;if(!cfg)return;
+function sendRdvConfirmation(rdvObj){
+  var cl=gC(rdvObj.cId);if(!cl)return;
+  var hasPh=cl.ph&&cl.ph.length>5;
+  var hasEm=cl.em&&cl.em.indexOf("@")>0;
+  if(!hasPh&&!hasEm)return; // no way to contact
+
+  var sv=gS(rdvObj.sId);
+  var sty=gT(rdvObj.stId);
+  var clN=cName(cl);
+  var svcN=sv?sv.n:"Prestation";
+
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-width:400px">';
+  h+='<h2 style="color:var(--gold)">\u2709 Confirmation de RDV</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Envoyer une confirmation \u00e0 <strong>'+clN+'</strong> pour :<br>';
+  h+='<strong>'+svcN+'</strong> le <strong>'+fmt(rdvObj.date)+'</strong> \u00e0 <strong>'+rdvObj.time+'</strong>';
+  if(sty)h+=' avec <strong>'+sty.n+'</strong>';
+  h+='</div>';
+
+  h+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
+  if(hasEm){
+    h+='<button onclick="doSendConfirm(\'email\',\''+rdvObj.id+'\')" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);color:var(--gold);font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px"><span style="font-size:20px">\u2709\ufe0f</span><span style="flex:1;text-align:left">Envoyer par email<br><span style="font-size:11px;font-weight:400;opacity:.7">'+cl.em+'</span></span></button>';
+  }
+  if(hasPh){
+    h+='<button onclick="doSendConfirm(\'sms\',\''+rdvObj.id+'\')" style="padding:14px;border-radius:10px;border:1px solid rgba(33,150,243,.3);background:rgba(33,150,243,.1);color:#2196f3;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px"><span style="font-size:20px">\ud83d\udcf2</span><span style="flex:1;text-align:left">Envoyer par SMS<br><span style="font-size:11px;font-weight:400;opacity:.7">'+cl.ph+'</span></span></button>';
+  }
+  if(hasEm&&hasPh){
+    h+='<button onclick="doSendConfirm(\'both\',\''+rdvObj.id+'\')" style="padding:14px;border-radius:10px;border:1px solid rgba(76,175,80,.3);background:rgba(76,175,80,.1);color:#4caf50;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px"><span style="font-size:20px">\u2705</span><span style="flex:1;text-align:left">Envoyer les deux</span></button>';
+  }
+  h+='</div>';
+  h+='<button onclick="cM()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer">Ne pas envoyer</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+
+  // Store rdv data for doSendConfirm
+  window._confirmRdv=rdvObj;
+}
+
+async function doSendConfirm(mode,rdvId){
+  var rdvObj=window._confirmRdv;if(!rdvObj)return;
   var cl=gC(rdvObj.cId);if(!cl)return;
   var sv=gS(rdvObj.sId);
   var sty=gT(rdvObj.stId);
+  var cfg=window.SMS_CONFIG||{};
   var vars={
     prenom:cl.pre||"",nom:cl.nom||"",
     heure:rdvObj.time||"",date:fmt(rdvObj.date),
@@ -9579,21 +9617,26 @@ async function sendRdvConfirmation(rdvObj){
     salon:SALON_CONFIG.nom,
     collab:sty?sty.n:""
   };
-  // SMS confirmation
-  if(cfg.confirmSms&&cl.ph&&cl.smsOk!==false){
-    var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} est confirm\u00e9.",vars);
-    sendSms(cl.ph,smsTxt).then(function(r){
-      if(r.ok)auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS \u00e0 ..."+cl.ph.slice(-4));
-    });
+  var sent=[];
+  cM();
+
+  if(mode==="sms"||mode==="both"){
+    if(cl.ph){
+      var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",vars);
+      var r=await sendSms(cl.ph,smsTxt);
+      if(r&&r.ok){sent.push("SMS");auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS OK");}
+    }
   }
-  // Email confirmation
-  if(cfg.confirmEmail&&cl.em&&cl.emOk!==false){
-    var emailTxt=buildSmsText(cfg.confirmEmailTexte||"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}",vars);
-    var subject="Confirmation de votre rendez-vous - "+SALON_CONFIG.nom;
-    sendEmail(cl.em,subject,emailTxt).then(function(r){
-      if(r.ok)auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email \u00e0 "+cl.em.slice(0,3)+"***");
-    });
+  if(mode==="email"||mode==="both"){
+    if(cl.em){
+      var emailTxt=buildSmsText(cfg.confirmEmailTexte||"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}",vars);
+      var r2=await sendEmail(cl.em,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt);
+      if(r2&&r2.ok){sent.push("Email");auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email OK");}
+    }
   }
+  window._confirmRdv=null;
+  if(sent.length)alert("\u2705 Confirmation envoy\u00e9e ("+sent.join(" + ")+")");
+  else alert("\u274c Erreur lors de l\u2019envoi");
 }
 async function sendSms(phone,message){
   // Check credits
