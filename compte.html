@@ -585,41 +585,19 @@ async function loadMyRdvs(){
     var data2=await r2.json();
     if(Array.isArray(data2)){data2.forEach(function(d){d.salon_nom=d.salons?d.salons.nom:"";var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===d.id)ex=true;});if(!ex)CLIENT_RDVS.push(d);});}
     
-    // Also load direct POS tickets from appointments table
-    // Strategy: find client records in salons' clients table matching our email, then load their appointments
+    // Load POS tickets via Worker (bypasses RLS)
     try{
-      var r3=await api("clients?select=id,salon_id&email=eq."+encodeURIComponent(CLIENT.email));
-      var clientRecords=await r3.json();
-      if(Array.isArray(clientRecords)&&clientRecords.length>0){
-        for(var ci=0;ci<clientRecords.length;ci++){
-          var cr=clientRecords[ci];
-          try{
-            var r4=await api("appointments?select=*,salons(nom)&client_id=eq."+cr.id+"&status=eq.done&order=date_rdv.desc&limit=30");
-            var appts=await r4.json();
-            if(Array.isArray(appts)){
-              appts.forEach(function(a){
-                var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===a.id)ex=true;});
-                if(!ex){
-                  var itemName="Prestation";var itemPrice=a.prix||0;
-                  if(a.items&&a.items.length){
-                    var names=[];
-                    a.items.forEach(function(it){if(!it.isSep&&it.name)names.push(it.name);});
-                    if(names.length)itemName=names.join(", ");
-                    var first=a.items.find(function(it){return !it.isSep;});if(first)itemPrice=first.price||0;
-                  }
-                  CLIENT_RDVS.push({
-                    id:a.id,salon_id:a.salon_id,salon_nom:a.salons?a.salons.nom:"",
-                    date_rdv:a.date_rdv,heure_rdv:a.heure,
-                    service_nom:itemName,service_prix:a.prix||itemPrice,
-                    collaborateur_nom:a.collab_name||"",status:"done",
-                    items:a.items,ticket_num:a.ticket_num,
-                    acompte_montant:0,_fromPOS:true
-                  });
-                }
-              });
-            }
-          }catch(e4){}
-        }
+      var r3=await fetch("/api/client/tickets",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({email:CLIENT.email})
+      });
+      var tkData=await r3.json();
+      if(tkData&&Array.isArray(tkData.tickets)){
+        tkData.tickets.forEach(function(t){
+          var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===t.id)ex=true;});
+          if(!ex)CLIENT_RDVS.push(t);
+        });
       }
     }catch(e3){}
     
