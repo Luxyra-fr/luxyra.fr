@@ -199,9 +199,19 @@ function renderRdvTab(){
   var stClasses={pending:"st-pending",confirmed:"st-confirmed",done:"st-done",cancelled:"st-cancelled"};
   
   var today=new Date().toISOString().slice(0,10);
-  var upcoming=CLIENT_RDVS.filter(function(r){return r.date_rdv>=today&&r.status!=="cancelled";});
+  var upcoming=CLIENT_RDVS.filter(function(r){return r.date_rdv>=today&&r.status!=="cancelled"&&r.status!=="done";});
   var past=CLIENT_RDVS.filter(function(r){return (r.date_rdv<today&&r.status!=="cancelled")||r.status==="done";});
   var cancelled=CLIENT_RDVS.filter(function(r){return r.status==="cancelled";});
+  // Override status label for past confirmed → Terminé
+  function getStatusLabel(r){
+    if(r.status==="done")return "Termin\u00e9";
+    if(r.date_rdv<today&&r.status!=="cancelled")return "Termin\u00e9";
+    return stLabels[r.status]||r.status;
+  }
+  function getStatusClass(r){
+    if(r.status==="done"||(r.date_rdv<today&&r.status!=="cancelled"))return "st-done";
+    return stClasses[r.status]||"";
+  }
   
   // --- UPCOMING ---
   h+='<div class="section"><div class="section-title">\ud83d\udcc5 \u00c0 venir ('+upcoming.length+')</div>';
@@ -214,7 +224,7 @@ function renderRdvTab(){
       h+='<div class="rdv-info"><div class="rdv-svc">'+r.service_nom+'</div>';
       h+='<div class="rdv-det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+' \u2022 '+(r.collaborateur_nom||"")+' \u2022 '+r.service_prix+'\u20ac</div>';
       h+='<div class="rdv-salon">\ud83c\udfe0 '+(r.salon_nom||"Salon")+'</div></div>';
-      h+='<div class="rdv-status '+(stClasses[r.status]||"")+'">'+(stLabels[r.status]||r.status)+'</div>';
+      h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
       h+='</div>';
       // Modification pending notice
       if(r.modification_demandee&&r.modification_status==="pending"){
@@ -249,7 +259,7 @@ function renderRdvTab(){
       h+='<div class="rdv-info"><div class="rdv-svc">'+r.service_nom+'</div>';
       h+='<div class="rdv-det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+' \u2022 '+r.service_prix+'\u20ac</div>';
       h+='<div class="rdv-salon">\ud83c\udfe0 '+(r.salon_nom||"Salon")+'</div></div>';
-      h+='<div class="rdv-status '+(stClasses[r.status]||"")+'">'+(stLabels[r.status]||r.status)+'</div>';
+      h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
       h+='</div>';
       if(r.status==="done"||r.status==="confirmed"){
         h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);text-align:right">';
@@ -285,14 +295,18 @@ function renderRdvTab(){
 function renderTicketsTab(){
   var h='';
   var mois=["Jan","F\u00e9v","Mar","Avr","Mai","Jun","Jul","Ao\u00fb","Sep","Oct","Nov","D\u00e9c"];
-  var done=CLIENT_RDVS.filter(function(r){return r.status==="done";}).sort(function(a,b){return a.date_rdv>b.date_rdv?-1:1;});
+  var today=new Date().toISOString().slice(0,10);
+  var done=CLIENT_RDVS.filter(function(r){
+    if(r.status==="done")return true;
+    // Past confirmed = effectué (salon n'a pas mis à jour le statut online)
+    if((r.status==="confirmed"||r.status==="pending")&&r.date_rdv<today)return true;
+    return false;
+  }).sort(function(a,b){return a.date_rdv>b.date_rdv?-1:1;});
   
   h+='<div class="section"><div class="section-title">\ud83c\udfab Mes tickets ('+done.length+')</div>';
   
   if(!done.length){
-    h+='<div class="empty"><div class="ico">\ud83c\udfab</div>Aucun ticket de caisse<br><span style="font-size:12px;color:var(--text3)">Vos tickets appara\u00eetront ici apr\u00e8s chaque visite</span>';
-    h+='<div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;font-size:11px;color:var(--text3)">Recherche par email : <strong>'+CLIENT.email+'</strong><br>Ouvrez la console (F12) pour voir les d\u00e9tails de la recherche.</div>';
-    h+='</div>';
+    h+='<div class="empty"><div class="ico">\ud83c\udfab</div>Aucun ticket de caisse<br><span style="font-size:12px;color:var(--text3)">Vos tickets appara\u00eetront ici apr\u00e8s chaque visite</span></div>';
   }
 
   done.forEach(function(r){
@@ -434,7 +448,11 @@ function renderProfileTab(){
   h+='<div class="fg-row"><div class="fg"><label>Nom</label><input id="pNom" value="'+(CLIENT.nom||"")+'"></div>';
   h+='<div class="fg"><label>Pr\u00e9nom</label><input id="pPre" value="'+(CLIENT.prenom||"")+'"></div></div>';
   h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone</label><input id="pTel" value="'+(CLIENT.telephone||"")+'"></div>';
-  h+='<div class="fg"><label>Date de naissance</label><input id="pDdn" type="date" value="'+(CLIENT.date_naissance||"")+'"></div></div>';
+  h+='<div class="fg"><label>Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="M"'+(CLIENT.genre==="M"?" selected":"")+'>Homme</option><option value=""'+(!CLIENT.genre?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
+  h+='<div class="fg"><label>Date de naissance</label><input id="pDdn" type="date" value="'+(CLIENT.date_naissance||"")+'"></div>';
+  h+='<div class="fg"><label>Adresse</label><input id="pAdr" value="'+(CLIENT.adresse||"")+'" placeholder="Num\u00e9ro et rue"></div>';
+  h+='<div class="fg-row"><div class="fg"><label>Code postal</label><input id="pCp" value="'+(CLIENT.cp||"")+'" placeholder="57200"></div>';
+  h+='<div class="fg"><label>Ville</label><input id="pVille" value="'+(CLIENT.ville||"")+'" placeholder="Sarreguemines"></div></div>';
   h+='<div class="fg"><label>Email</label><input id="pEmail" value="'+CLIENT.email+'" disabled style="opacity:.5"></div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-bottom:12px">Pour changer d\u0027email, contactez le support.</div>';
   h+='<button class="btn btn-gold" onclick="saveProfile()">Enregistrer les modifications</button>';
@@ -540,9 +558,13 @@ async function saveProfile(){
   var pre=document.getElementById("pPre").value.trim();
   var tel=document.getElementById("pTel").value.trim();
   var ddn=document.getElementById("pDdn").value;
+  var genre=document.getElementById("pGenre")?document.getElementById("pGenre").value:"";
+  var adr=document.getElementById("pAdr")?document.getElementById("pAdr").value.trim():"";
+  var cp=document.getElementById("pCp")?document.getElementById("pCp").value.trim():"";
+  var ville=document.getElementById("pVille")?document.getElementById("pVille").value.trim():"";
   try{
-    await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,updated_at:new Date().toISOString()})});
-    CLIENT.nom=nom.toUpperCase();CLIENT.prenom=pre;CLIENT.telephone=tel;CLIENT.date_naissance=ddn;
+    await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre,adresse:adr,cp:cp,ville:ville,updated_at:new Date().toISOString()})});
+    CLIENT.nom=nom.toUpperCase();CLIENT.prenom=pre;CLIENT.telephone=tel;CLIENT.date_naissance=ddn;CLIENT.genre=genre;CLIENT.adresse=adr;CLIENT.cp=cp;CLIENT.ville=ville;
     saveSession();
     var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--green)";el.textContent="\u2705 Profil mis \u00e0 jour";}
   }catch(e){var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--red)";el.textContent="Erreur";}}
@@ -589,23 +611,19 @@ async function loadMyRdvs(){
     
     // Load POS tickets via Worker (bypasses RLS)
     try{
-      console.log("[Tickets] Fetching POS tickets for email:", CLIENT.email);
       var r3=await fetch("/api/client/tickets",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({email:CLIENT.email})
       });
       var tkData=await r3.json();
-      console.log("[Tickets] Worker response:", JSON.stringify(tkData).slice(0,500));
       if(tkData&&Array.isArray(tkData.tickets)){
-        console.log("[Tickets] Found "+tkData.tickets.length+" POS tickets");
         tkData.tickets.forEach(function(t){
           var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===t.id)ex=true;});
           if(!ex)CLIENT_RDVS.push(t);
         });
       }
-      if(tkData&&tkData.error){console.error("[Tickets] Worker error:",tkData.error);}
-    }catch(e3){console.error("[Tickets] Fetch error:",e3);}
+    }catch(e3){}
     
     // Sort by date desc
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});

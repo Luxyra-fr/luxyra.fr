@@ -981,11 +981,37 @@ function confirmNotif(id){
           var matchedCl=null;
           for(var cli=0;cli<CL.length;cli++){
             if((onRdvData.tel&&CL[cli].ph===onRdvData.tel)||(onRdvData.email&&CL[cli].em===onRdvData.email)){
-              clExists=true;matchedCl=CL[cli];break;
+              clExists=true;matchedCl=CL[cli];
+              // Update existing client with any missing info from online profile
+              var updated=false;
+              if(!matchedCl.ph&&onRdvData.tel){matchedCl.ph=onRdvData.tel;updated=true;}
+              if(!matchedCl.em&&onRdvData.email){matchedCl.em=onRdvData.email;updated=true;}
+              if(!matchedCl.ddn&&onRdvData.ddn){matchedCl.ddn=onRdvData.ddn;updated=true;}
+              if(!matchedCl.adr&&onRdvData.adresse){matchedCl.adr=onRdvData.adresse;updated=true;}
+              if(!matchedCl.cp&&onRdvData.cp){matchedCl.cp=onRdvData.cp;updated=true;}
+              if(!matchedCl.ville&&onRdvData.ville){matchedCl.ville=onRdvData.ville;updated=true;}
+              if(updated&&typeof saveClient==="function")saveClient(matchedCl);
+              break;
             }
           }
           if(!clExists&&(onRdvData.nom||onRdvData.prenom)){
-            var newCl={id:U(),nom:onRdvData.nom||"",pre:onRdvData.prenom||"",ph:onRdvData.tel||"",em:onRdvData.email||"",genre:"F",fid:0,notes:"Client en ligne"};
+            var newCl={
+              id:U(),
+              nom:(onRdvData.nom||"").toUpperCase(),
+              pre:onRdvData.prenom||"",
+              sex:onRdvData.genre||"F",
+              ph:onRdvData.tel||"",
+              em:onRdvData.email||"",
+              ddn:onRdvData.ddn||"",
+              adr:onRdvData.adresse||"",
+              cp:onRdvData.cp||"",
+              ville:onRdvData.ville||"",
+              fid:0,
+              smsOk:true,
+              emOk:true,
+              actif:true,
+              no:"Client en ligne - Inscription le "+fmt(TD)
+            };
             CL.push(newCl);
             if(typeof saveClient==="function")saveClient(newCl);
             matchedCl=newCl;
@@ -10819,7 +10845,17 @@ async function reloadFromSupabase(table){
               window.NOTIFS.unshift({id:nId,rdvOnlineId:rdv.id,type:"new_rdv_online",
                 title:"\ud83c\udf10 Nouveau RDV en ligne",
                 detail:(rdv.client_prenom||"")+" "+(rdv.client_nom||"")+" \u2014 "+(rdv.service_nom||"")+" le "+rdv.date_rdv+" \u00e0 "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):""),
-                ts:new Date().toISOString(),seen:false,confirmed:false});
+                ts:new Date().toISOString(),seen:false,confirmed:false,
+                onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,
+                  tel:rdv.client_tel,email:rdv.client_email,
+                  genre:rdv.client_genre||"",ddn:rdv.client_ddn||"",
+                  adresse:rdv.client_adresse||"",cp:rdv.client_cp||"",ville:rdv.client_ville||"",
+                  svcNom:rdv.service_nom,svcPrix:rdv.service_prix,
+                  collabNom:rdv.collaborateur_nom,
+                  date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,
+                  acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,
+                  createdAt:rdv.created_at}
+              });
             }
           }
           // Modification request
