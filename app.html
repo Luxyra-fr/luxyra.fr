@@ -8905,14 +8905,61 @@ function emailTicket(id){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:400px">';
   h+='<h2 style="color:var(--gold)">\u2709\ufe0f Envoyer le ticket #'+(a.tkNum||"--")+'</h2>';
   h+='<div style="font-size:13px;color:var(--text2);margin-bottom:16px">Client : <strong>'+clN+'</strong>'+(email?' ('+email+')':' \u2014 Pas d\u2019email enregistr\u00e9')+'</div>';
+  if(!email){
+    h+='<div style="padding:16px;background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.2);border-radius:10px;color:#ef5350;font-size:13px;margin-bottom:12px">\u26a0 Aucun email enregistr\u00e9 pour ce client. Ajoutez son email dans sa fiche client.</div>';
+  }
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  if(email){
+    h+='<button id="btnSendBrevo" onclick="sendTicketByEmail(\''+a.id+'\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(200,168,78,.3);border-radius:12px;background:rgba(200,168,78,.12);cursor:pointer;color:var(--gold);display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u2709\ufe0f</span><span style="flex:1;text-align:left">Envoyer par email au client</span></button>';
+    h+='<div style="font-size:11px;color:var(--text3);margin:-4px 0 4px;text-align:left;padding-left:44px">Email envoy\u00e9 automatiquement \u00e0 '+email+'</div>';
+  }
   h+='<button onclick="downloadTicketPDF(\''+a.id+'\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcc4</span><span style="flex:1;text-align:left">T\u00e9l\u00e9charger le ticket en PDF</span></button>';
-  h+='<div style="font-size:11px;color:var(--text3);margin:-4px 0 4px;text-align:left;padding-left:44px">Enregistrez le PDF puis joignez-le \u00e0 votre email</div>';
-  h+='<button onclick="openEmailTicket(\''+a.id+'\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u2709\ufe0f</span><span style="flex:1;text-align:left">Ouvrir l\u2019email pr\u00e9-rempli</span></button>';
   h+='</div>';
   h+='<button onclick="cM()" style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer">Fermer</button>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
+}
+
+async function sendTicketByEmail(id){
+  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
+  if(!a)return;
+  var cl=gC(a.cId),sty=gT(a.stId);
+  if(!cl||!cl.em){alert("Pas d\u2019email pour ce client");return;}
+  var btn=document.getElementById("btnSendBrevo");
+  if(btn){btn.textContent="\u23f3 Envoi en cours...";btn.style.opacity=".5";btn.onclick=null;}
+  try{
+    var res=await fetch("/api/email/ticket",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        clientEmail:cl.em,
+        clientName:cName(cl),
+        salonName:SALON_CONFIG.nom,
+        salonEmail:SALON_CONFIG.email||"support@luxyra.fr",
+        salonTel:SALON_CONFIG.tel,
+        salonAdresse:(SALON_CONFIG.adresse||"")+" "+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||""),
+        ticketNum:a.tkNum||"--",
+        ticketDate:fmt(a.date),
+        ticketHeure:a.time,
+        items:a.items||[],
+        total:a.pr,
+        reglement:a.met||"",
+        siret:SALON_CONFIG.siret||"",
+        tva:SALON_CONFIG.tauxTVA||20
+      })
+    });
+    var data=await res.json();
+    if(data.success){
+      cM();
+      alert("\u2705 Email envoy\u00e9 avec succ\u00e8s \u00e0 "+cl.em);
+    }else{
+      alert("\u274c Erreur: "+(data.error||data.result?.message||"Erreur inconnue"));
+      if(btn){btn.textContent="\u2709\ufe0f Envoyer par email au client";btn.style.opacity="1";btn.onclick=function(){sendTicketByEmail(id);};}
+    }
+  }catch(e){
+    alert("\u274c Erreur de connexion: "+e.message);
+    if(btn){btn.textContent="\u2709\ufe0f Envoyer par email au client";btn.style.opacity="1";btn.onclick=function(){sendTicketByEmail(id);};}
+  }
 }
 
 function downloadTicketPDF(id){
