@@ -376,13 +376,29 @@ async function loadSalonData() {
         id: p.id, n: p.nom, p: Number(p.prix), pa: Number(p.prix_achat || 0),
         cat: p.categorie, cb: p.code_barre, stk: p.stock, stkMin: p.stock_min,
         cc: p.coup_coeur, img: p.img || "",
-        forSale: p.for_sale !== false, forUse: p.for_use || false
+        forSale: p.for_sale !== false, forUse: p.for_use || false,
+        fournisseurId: p.fournisseur_id || null,
+        datePeremption: p.date_peremption || null,
+        paoMois: p.pao_mois || null,
+        dateOuverture: p.date_ouverture || null
       };
     });
     var pcatSet = {};
     PRODS.forEach(function(p) { if (p.cat) pcatSet[p.cat] = true; });
     PCATS = Object.keys(pcatSet);
   }
+
+  // 7b. Charger fournisseurs → FOURNISSEURS[]
+  window.FOURNISSEURS = [];
+  try {
+    var fRes = await _sb.from("fournisseurs").select("*").eq("salon_id", _salonId).order("nom");
+    if (fRes.data) {
+      window.FOURNISSEURS = fRes.data.map(function(f) {
+        return { id: f.id, nom: f.nom, email: f.email || "", tel: f.telephone || "",
+                 representant: f.representant || "", delai: f.delai_livraison || 7, notes: f.notes || "" };
+      });
+    }
+  } catch(e) { console.log("[FOURNISSEURS] Skip:", e.message); }
 
   // 8. Charger cartes cadeaux → GC[]
   var gcRes = await _sb.from("cartes_cadeaux").select("*").eq("salon_id", _salonId).order("date_creation", { ascending: false });
@@ -586,7 +602,11 @@ async function saveProduct(prod) {
     categorie: prod.cat, code_barre: prod.cb || "",
     stock: prod.stk, stock_min: prod.stkMin,
     coup_coeur: prod.cc || false, img: prod.img || "",
-    for_sale: prod.forSale !== false, for_use: prod.forUse || false
+    for_sale: prod.forSale !== false, for_use: prod.forUse || false,
+    fournisseur_id: prod.fournisseurId || null,
+    date_peremption: prod.datePeremption || null,
+    pao_mois: prod.paoMois || null,
+    date_ouverture: prod.dateOuverture || null
   };
   if (typeof prod.id === "number" && prod.id > 0) {
     // Check if exists in Supabase
@@ -834,6 +854,50 @@ async function purgeAllGiftCards() {
   GC.length = 0;
 }
 
+
+// ============================================================
+// FOURNISSEURS CRUD
+// ============================================================
+async function saveFournisseur(f) {
+  if (!_isOnline || !_salonId) return;
+  var data = { salon_id: _salonId, nom: f.nom, email: f.email || "", telephone: f.tel || "",
+               representant: f.representant || "", delai_livraison: f.delai || 7, notes: f.notes || "" };
+  if (f.id && String(f.id).indexOf("-") > 0) {
+    await _sb.from("fournisseurs").update(data).eq("id", f.id);
+  } else {
+    var res = await _sb.from("fournisseurs").insert(data).select();
+    if (res.data && res.data[0]) f.id = res.data[0].id;
+  }
+}
+async function deleteFournisseur(fId) {
+  if (!_isOnline || !_salonId) return;
+  // Unlink products first
+  await _sb.from("produits").update({ fournisseur_id: null }).eq("fournisseur_id", fId).eq("salon_id", _salonId);
+  await _sb.from("fournisseurs").delete().eq("id", fId).eq("salon_id", _salonId);
+}
+
+// ============================================================
+// MOUVEMENTS STOCK
+// ============================================================
+async function logMouvementStock(prodId, prodNom, type, qty, stkAvant, stkApres, ref, note) {
+  if (!_isOnline || !_salonId) return;
+  try {
+    await _sb.from("mouvements_stock").insert({
+      salon_id: _salonId, produit_id: prodId, produit_nom: prodNom,
+      type: type, quantite: qty, stock_avant: stkAvant, stock_apres: stkApres,
+      reference: ref || null, note: note || null
+    });
+  } catch(e) { console.error("[MVT STOCK]", e.message); }
+}
+async function getMouvementsStock(prodId, limit) {
+  if (!_isOnline || !_salonId) return [];
+  try {
+    var r = await _sb.from("mouvements_stock").select("*")
+      .eq("salon_id", _salonId).eq("produit_id", prodId)
+      .order("created_at", { ascending: false }).limit(limit || 50);
+    return r.data || [];
+  } catch(e) { return []; }
+}
 
 // ============================================================
 // HOOKS — À injecter dans le code existant de l'app

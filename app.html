@@ -322,6 +322,270 @@ console.log("LUXYRA v6.3");
   window.alert=function(msg){window.toast(msg);};
 })();
 
+
+// ===== BARCODE SCANNER (CAMERA) =====
+var _scannerActive=false;
+function openBarcodeScanner(callback){
+  if(_scannerActive)return;
+  // Check if BarcodeDetector is available
+  if(!("BarcodeDetector" in window)){
+    // Fallback: manual input
+    var code=prompt("Scanner non disponible sur cet appareil.\nEntrez le code-barre manuellement :");
+    if(code&&code.trim())callback(code.trim());
+    return;
+  }
+  _scannerActive=true;
+  var detector=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"]});
+  var overlay=document.createElement("div");
+  overlay.id="scanOverlay";
+  overlay.style.cssText="position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center";
+  var topBar=document.createElement("div");
+  topBar.style.cssText="position:absolute;top:0;left:0;right:0;padding:16px;display:flex;justify-content:space-between;align-items:center;z-index:2;background:linear-gradient(180deg,rgba(0,0,0,.8),transparent)";
+  topBar.innerHTML='<div style="color:#fff;font-size:16px;font-weight:700">\ud83d\udcf7 Scanner un code-barre</div><button onclick="closeBarcodeScanner()" style="padding:10px 20px;border-radius:10px;background:rgba(255,255,255,.2);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer">\u2716 Fermer</button>';
+  overlay.appendChild(topBar);
+  var video=document.createElement("video");
+  video.style.cssText="width:100%;height:100%;object-fit:cover";
+  video.setAttribute("playsinline","");
+  video.setAttribute("autoplay","");
+  overlay.appendChild(video);
+  // Scan zone indicator
+  var zone=document.createElement("div");
+  zone.style.cssText="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:280px;height:120px;border:3px solid var(--gold,#c8a84e);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.5)";
+  overlay.appendChild(zone);
+  var hint=document.createElement("div");
+  hint.style.cssText="position:absolute;bottom:80px;left:0;right:0;text-align:center;color:#fff;font-size:15px;font-weight:600";
+  hint.textContent="Placez le code-barre dans le cadre";
+  overlay.appendChild(hint);
+  document.body.appendChild(overlay);
+  var stream=null;
+  var scanning=true;
+  navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}}}).then(function(s){
+    stream=s;video.srcObject=s;video.play();
+    var scanLoop=function(){
+      if(!scanning)return;
+      detector.detect(video).then(function(barcodes){
+        if(barcodes.length>0&&scanning){
+          scanning=false;
+          var code=barcodes[0].rawValue;
+          hint.textContent="\u2705 "+code;
+          hint.style.color="#4caf50";
+          zone.style.borderColor="#4caf50";
+          setTimeout(function(){
+            closeBarcodeScanner();
+            callback(code);
+          },500);
+        }else{
+          requestAnimationFrame(scanLoop);
+        }
+      }).catch(function(){requestAnimationFrame(scanLoop);});
+    };
+    requestAnimationFrame(scanLoop);
+  }).catch(function(err){
+    closeBarcodeScanner();
+    toast("Cam\u00e9ra non accessible: "+err.message,"error");
+  });
+  window._scannerStream=stream;
+  window._scannerOverlay=overlay;
+  window._scannerScanning=function(){return scanning;};
+  window._scannerStop=function(){scanning=false;};
+}
+function closeBarcodeScanner(){
+  _scannerActive=false;
+  if(window._scannerStop)window._scannerStop();
+  if(window._scannerStream){
+    window._scannerStream.getTracks().forEach(function(t){t.stop();});
+    window._scannerStream=null;
+  }
+  var ov=document.getElementById("scanOverlay");
+  if(ov)ov.remove();
+}
+
+
+// ===== PRODUCT MOVEMENT HISTORY =====
+async function showProdHistory(prodId){
+  var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===prodId){p=PRODS[i];break;}}
+  if(!p)return;
+  var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto"><div style="max-width:500px;margin:0 auto;padding:20px;min-height:100vh">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+  h+='<h2 style="color:#ce93d8;margin:0">\ud83d\udcca '+p.n+'</h2>';
+  h+='<button onclick="cM()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">\u2190 Retour</button>';
+  h+='</div>';
+  h+='<div style="font-size:14px;color:var(--text3);margin-bottom:16px">Stock actuel: <strong style="color:#fff">'+p.stk+'</strong> \u2022 Cat\u00e9gorie: '+p.cat+'</div>';
+  h+='<div id="prodHistContent" style="font-size:13px;color:var(--text3);text-align:center;padding:40px">Chargement...</div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+  // Load movements
+  if(typeof getMouvementsStock==="function"){
+    var mvts=await getMouvementsStock(prodId,100);
+    var hc='';
+    if(!mvts.length){hc='<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:36px;margin-bottom:8px">\ud83d\udce6</div>Aucun mouvement enregistr\u00e9</div>';}
+    else{
+      for(var i=0;i<mvts.length;i++){
+        var m=mvts[i];
+        var d=new Date(m.created_at);
+        var dateStr=d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"});
+        var timeStr=d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+        var icon=m.type==="entree"?"\ud83d\udce5":m.type==="sortie"?"\ud83d\udce4":m.type==="vente"?"\ud83d\uded2":m.type==="inventaire"?"\ud83d\udccb":"\ud83d\udce6";
+        var color=m.type==="entree"?"#66bb6a":m.type==="sortie"?"#ef5350":m.type==="vente"?"#64b5f6":m.type==="inventaire"?"var(--gold)":"#aaa";
+        var label=m.type==="entree"?"Entr\u00e9e stock":m.type==="sortie"?"Sortie stock":m.type==="vente"?"Vente":m.type==="inventaire"?"Inventaire":m.type;
+        var qtyTxt=m.quantite>0?"+"+m.quantite:String(m.quantite);
+        hc+='<div style="display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--border2);align-items:flex-start">';
+        hc+='<div style="font-size:20px;flex-shrink:0">'+icon+'</div>';
+        hc+='<div style="flex:1;min-width:0">';
+        hc+='<div style="font-size:14px;font-weight:700;color:'+color+'">'+label+'</div>';
+        hc+='<div style="font-size:12px;color:var(--text3)">'+dateStr+' \u00e0 '+timeStr+'</div>';
+        if(m.reference)hc+='<div style="font-size:11px;color:rgba(255,255,255,.4)">'+m.reference+'</div>';
+        hc+='</div>';
+        hc+='<div style="flex-shrink:0;text-align:right">';
+        hc+='<div style="font-size:16px;font-weight:800;color:'+color+'">'+qtyTxt+'</div>';
+        hc+='<div style="font-size:11px;color:var(--text3)">'+m.stock_avant+' \u2192 '+m.stock_apres+'</div>';
+        hc+='</div></div>';
+      }
+    }
+    var el=document.getElementById("prodHistContent");if(el)el.innerHTML=hc;
+  }else{
+    document.getElementById("prodHistContent").innerHTML='<div style="color:var(--text3)">Historique non disponible hors connexion</div>';
+  }
+}
+
+// ===== FOURNISSEUR MANAGEMENT =====
+function showFournisseurManagement(){
+  var fList=window.FOURNISSEURS||[];
+  var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto"><div style="max-width:500px;margin:0 auto;padding:20px;min-height:100vh">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">';
+  h+='<h2 style="color:var(--gold);margin:0">\ud83c\udfe2 Fournisseurs</h2>';
+  h+='<button onclick="cM()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">\u2190 Retour</button>';
+  h+='</div>';
+  if(!fList.length)h+='<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:36px;margin-bottom:8px">\ud83c\udfe2</div>Aucun fournisseur. Ajoutez-en un.</div>';
+  for(var i=0;i<fList.length;i++){
+    var f=fList[i];
+    h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:14px;margin-bottom:8px">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+    h+='<div><div style="font-size:15px;font-weight:700;color:#fff">'+f.nom+'</div>';
+    if(f.representant)h+='<div style="font-size:12px;color:var(--text3)">Contact: '+f.representant+'</div>';
+    if(f.email)h+='<div style="font-size:12px;color:var(--text3)">\u2709 '+f.email+'</div>';
+    if(f.tel)h+='<div style="font-size:12px;color:var(--text3)">\ud83d\udcde '+f.tel+'</div>';
+    h+='</div>';
+    h+='<div style="display:flex;gap:4px">';
+    h+='<button class="btn bs" style="font-size:11px" onclick="editFournisseur(\''+f.id+'\')">\u270f\ufe0f</button>';
+    h+='<button class="btn bs" style="font-size:11px;color:var(--red)" onclick="doDeleteFournisseur(\''+f.id+'\')">\u2716</button>';
+    h+='</div></div>';
+    // Count products
+    var cnt=PRODS.filter(function(p){return p.fournisseurId===f.id;}).length;
+    if(cnt)h+='<div style="font-size:11px;color:var(--gold);margin-top:6px">'+cnt+' produit(s) li\u00e9(s)</div>';
+    h+='</div>';
+  }
+  h+='<button class="btn bg" style="width:100%;margin-top:12px;padding:14px;font-size:15px" onclick="addFournisseur()">\u2795 Ajouter un fournisseur</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function addFournisseur(){
+  var h='<div style="position:fixed;inset:0;z-index:9999;background:#0a0a0e;overflow-y:auto;padding:20px"><div style="max-width:400px;margin:0 auto">';
+  h+='<h2 style="color:var(--gold)">\ud83c\udfe2 Nouveau fournisseur</h2>';
+  h+='<div class="fg"><label>Nom *</label><input id="nfNom" placeholder="Ex: L\'Or\u00e9al Professionnel"></div>';
+  h+='<div class="fg"><label>Email</label><input id="nfEmail" type="email" placeholder="commandes@fournisseur.fr"></div>';
+  h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input id="nfTel" placeholder="01 23 45 67 89"></div>';
+  h+='<div class="fg"><label>Repr\u00e9sentant / Contact</label><input id="nfRep" placeholder="Nom du commercial"></div>';
+  h+='<div class="fg"><label>D\u00e9lai livraison (jours)</label><input type="number" id="nfDelai" value="7" min="1"></div>';
+  h+='<div class="fg"><label>Notes</label><textarea id="nfNotes" rows="2" placeholder="Infos, r\u00e9f\u00e9rences..."></textarea></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="showFournisseurManagement()">Annuler</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="doAddFournisseur()">Cr\u00e9er</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function doAddFournisseur(){
+  var nom=document.getElementById("nfNom").value.trim();
+  if(!nom){toast("Nom obligatoire","warning");return;}
+  var f={nom:nom,email:document.getElementById("nfEmail").value.trim(),tel:document.getElementById("nfTel").value.trim(),
+         representant:document.getElementById("nfRep").value.trim(),delai:parseInt(document.getElementById("nfDelai").value)||7,
+         notes:document.getElementById("nfNotes").value.trim()};
+  if(!window.FOURNISSEURS)window.FOURNISSEURS=[];
+  window.FOURNISSEURS.push(f);
+  if(typeof saveFournisseur==="function")saveFournisseur(f);
+  toast("Fournisseur "+nom+" ajout\u00e9","success");
+  showFournisseurManagement();
+}
+function editFournisseur(fId){
+  var f=null;var fList=window.FOURNISSEURS||[];
+  for(var i=0;i<fList.length;i++){if(fList[i].id===fId){f=fList[i];break;}}
+  if(!f)return;
+  var h='<div style="position:fixed;inset:0;z-index:9999;background:#0a0a0e;overflow-y:auto;padding:20px"><div style="max-width:400px;margin:0 auto">';
+  h+='<h2 style="color:var(--gold)">\u270f\ufe0f '+f.nom+'</h2>';
+  h+='<div class="fg"><label>Nom *</label><input id="efNom" value="'+f.nom+'"></div>';
+  h+='<div class="fg"><label>Email</label><input id="efEmail" value="'+(f.email||'')+'"></div>';
+  h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input id="efTel" value="'+(f.tel||'')+'"></div>';
+  h+='<div class="fg"><label>Repr\u00e9sentant</label><input id="efRep" value="'+(f.representant||'')+'"></div>';
+  h+='<div class="fg"><label>D\u00e9lai livraison (jours)</label><input type="number" id="efDelai" value="'+(f.delai||7)+'"></div>';
+  h+='<div class="fg"><label>Notes</label><textarea id="efNotes" rows="2">'+(f.notes||'')+'</textarea></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="showFournisseurManagement()">Annuler</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="doEditFournisseur(\''+fId+'\')">Enregistrer</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function doEditFournisseur(fId){
+  var fList=window.FOURNISSEURS||[];
+  for(var i=0;i<fList.length;i++){
+    if(fList[i].id===fId){
+      fList[i].nom=document.getElementById("efNom").value.trim()||fList[i].nom;
+      fList[i].email=document.getElementById("efEmail").value.trim();
+      fList[i].tel=document.getElementById("efTel").value.trim();
+      fList[i].representant=document.getElementById("efRep").value.trim();
+      fList[i].delai=parseInt(document.getElementById("efDelai").value)||7;
+      fList[i].notes=document.getElementById("efNotes").value.trim();
+      if(typeof saveFournisseur==="function")saveFournisseur(fList[i]);
+      toast("Fournisseur mis \u00e0 jour","success");
+      break;
+    }
+  }
+  showFournisseurManagement();
+}
+function doDeleteFournisseur(fId){
+  if(!confirm("Supprimer ce fournisseur ?"))return;
+  var fList=window.FOURNISSEURS||[];
+  window.FOURNISSEURS=fList.filter(function(f){return f.id!==fId;});
+  // Unlink products
+  PRODS.forEach(function(p){if(p.fournisseurId===fId){p.fournisseurId=null;if(typeof saveProduct==="function")saveProduct(p);}});
+  if(typeof deleteFournisseur==="function")deleteFournisseur(fId);
+  toast("Fournisseur supprim\u00e9","success");
+  showFournisseurManagement();
+}
+
+// ===== PAO / PEREMPTION ALERTS =====
+function getPeremptionAlerts(){
+  var alerts=[];
+  var today=new Date().toISOString().slice(0,10);
+  PRODS.forEach(function(p){
+    // Fixed expiry date
+    if(p.datePeremption){
+      var daysLeft=Math.ceil((new Date(p.datePeremption)-new Date())/86400000);
+      if(daysLeft<0)alerts.push({prod:p,type:"expire",msg:"Expir\u00e9 depuis "+Math.abs(daysLeft)+" jour(s)",urgent:true});
+      else if(daysLeft<=30)alerts.push({prod:p,type:"expire_soon",msg:"Expire dans "+daysLeft+" jour(s)",urgent:daysLeft<=7});
+    }
+    // PAO check
+    if(p.paoMois&&p.dateOuverture){
+      var expDate=new Date(p.dateOuverture);
+      expDate.setMonth(expDate.getMonth()+p.paoMois);
+      var daysLeftPao=Math.ceil((expDate-new Date())/86400000);
+      if(daysLeftPao<0)alerts.push({prod:p,type:"pao_expire",msg:"PAO d\u00e9pass\u00e9e depuis "+Math.abs(daysLeftPao)+" jour(s) (ouvert le "+new Date(p.dateOuverture).toLocaleDateString("fr-FR")+")",urgent:true});
+      else if(daysLeftPao<=30)alerts.push({prod:p,type:"pao_soon",msg:"PAO expire dans "+daysLeftPao+" jour(s)",urgent:daysLeftPao<=7});
+    }
+  });
+  return alerts;
+}
+
+// ===== INVENTAIRE TOURNANT =====
+var _invTournantActive=false;
+function getInvTournantProducts(){
+  // Pick 5 products: prioritize those not checked recently, high value, high ecart history
+  var sorted=PRODS.slice().sort(function(a,b){
+    // Sort by last inventory date (oldest first), then by value (highest first)
+    return (b.pa||0)*b.stk-(a.pa||0)*a.stk;
+  });
+  return sorted.slice(0,5);
+}
+
 var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.3",subdomain:"",plan:"essential"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
@@ -5137,10 +5401,25 @@ function rProducts(){
   h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
   h+='<button onclick="showInventoryHistory()" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(156,39,176,.4);background:#1a0d1e;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">';
   h+='<span style="font-size:18px">\ud83d\udcca</span><span style="font-size:13px;font-weight:700;color:#ce93d8">Historique inventaires</span></button>';
+  h+='<button onclick="showFournisseurManagement()" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:#1a1608;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">';
+  h+='<span style="font-size:18px">\ud83c\udfe2</span><span style="font-size:13px;font-weight:700;color:var(--gold)">Fournisseurs</span></button>';
   h+='</div>';
+  // PAO/Peremption alerts
+  var _paoAlerts=getPeremptionAlerts();
+  if(_paoAlerts.length>0){
+    h+='<div class="card" style="background:#1a0a0a;border:1px solid rgba(244,67,54,.3);padding:12px 14px;font-size:13px;margin-bottom:8px">';
+    h+='<div style="font-weight:700;color:#ef5350;margin-bottom:6px">\u23f3 Alertes p\u00e9remption ('+_paoAlerts.length+')</div>';
+    for(var ai=0;ai<Math.min(_paoAlerts.length,5);ai++){
+      var _pa=_paoAlerts[ai];
+      h+='<div style="color:'+(_pa.urgent?"#ef5350":"#ff9800")+';font-size:12px;padding:2px 0">\u2022 '+_pa.prod.n+' \u2014 '+_pa.msg+'</div>';
+    }
+    if(_paoAlerts.length>5)h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">... et '+(_paoAlerts.length-5)+' autre(s)</div>';
+    h+='</div>';
+  }
   // Search + scanner
   h+='<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
-  h+='<input id="prodScan" placeholder="\ud83d\udd0d Recherche ou scan code-barre..." style="flex:1" oninput="filterProds(this.value)" onkeydown="if(event.key===\'Enter\')scanProd(this.value)">';
+  h+='<input id="prodScan" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1" oninput="filterProds(this.value)" onkeydown="if(event.key===\'Enter\')scanProd(this.value)">';
+  h+='<button class="btn bs" style="font-size:18px;padding:8px 12px" onclick="openBarcodeScanner(function(c){scanProd(c)})">\ud83d\udcf7</button>';
   h+='<button class="btn bs" onclick="prodView=prodView===\'grid\'?\'list\':\'grid\';go(\'products\')">'+(prodView==="grid"?"\u2630":"\u25a6")+'</button>';
   h+='</div>';
   
@@ -5196,6 +5475,7 @@ function rProducts(){
       if(p.forSale!==false)typeBadges+='<span style="font-size:9px;background:rgba(76,175,80,.15);color:#4caf50;padding:1px 5px;border-radius:4px">Revente</span> ';
       if(p.forUse)typeBadges+='<span style="font-size:9px;background:rgba(33,150,243,.15);color:#2196f3;padding:1px 5px;border-radius:4px">Consommable</span>';
       if(typeBadges)h+='<div style="margin-top:3px">'+typeBadges+'</div>';
+      if(p.fournisseurId){var _fn="";var _fl=window.FOURNISSEURS||[];for(var fi=0;fi<_fl.length;fi++){if(_fl[fi].id===p.fournisseurId){_fn=_fl[fi].nom;break;}}if(_fn)h+='<div style="font-size:9px;color:rgba(255,255,255,.4);margin-top:2px">\ud83c\udfe2 '+_fn+'</div>';}
       h+='<div style="display:flex;gap:4px;margin-top:6px;justify-content:center">';
       
       h+='<button class="btn bs" style="font-size:11px" onclick="editProd('+p.id+')">\u270f\ufe0f</button>';
@@ -5244,7 +5524,8 @@ function renderConsumption(){
   h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">Scannez ou s\u00e9lectionnez les produits utilis\u00e9s, puis validez.</div>';
   // Search/scan bar
   h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
-  h+='<input id="consoSearch" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1" oninput="filterConsoList(this.value)" onkeydown="if(event.key===\'Enter\'){addConsoByCode(this.value);this.value=\'\';}">';
+  h+='<input id="consoSearch" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1;font-size:15px;padding:12px" oninput="filterConsoList(this.value)" onkeydown="if(event.key===\'Enter\'){addConsoByCode(this.value);this.value=\'\';}">';
+  h+='<button onclick="openBarcodeScanner(function(c){addConsoByCode(c)})" style="padding:12px 16px;border-radius:10px;border:1px solid rgba(244,67,54,.3);background:rgba(244,67,54,.1);color:#ef5350;font-size:20px;cursor:pointer">\ud83d\udcf7</button>';
   h+='</div>';
   // Quick select by category
   h+='<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">';
@@ -5320,9 +5601,11 @@ function validateConsumption(){
     var c=_consumptionList[i];
     for(var j=0;j<PRODS.length;j++){
       if(PRODS[j].id===c.id){
+        var _stkBefore2=PRODS[j].stk;
         PRODS[j].stk=Math.max(0,PRODS[j].stk-c.qty);
         summary.push(c.name+" : -"+c.qty+" (reste "+PRODS[j].stk+")");
         if(typeof saveProduct==="function")saveProduct(PRODS[j]);
+        if(typeof logMouvementStock==="function")logMouvementStock(PRODS[j].id,c.name,"sortie",c.qty,_stkBefore2,PRODS[j].stk,"Consommation");
         break;
       }
     }
@@ -5346,6 +5629,7 @@ function renderStockEntry(){
   // Search/scan bar
   h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
   h+='<input id="entrySearch" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1;font-size:15px;padding:12px" oninput="filterEntryList(this.value)" onkeydown="if(event.key===\'Enter\'){addEntryByCode(this.value);this.value=\'\';}">';
+  h+='<button onclick="openBarcodeScanner(function(c){addEntryByCode(c)})" style="padding:12px 16px;border-radius:10px;border:1px solid rgba(76,175,80,.3);background:rgba(76,175,80,.1);color:#66bb6a;font-size:20px;cursor:pointer">\ud83d\udcf7</button>';
   h+='</div>';
   // Quick category filter
   h+='<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">';
@@ -5421,9 +5705,11 @@ function validateStockEntry(){
     var c=_stockEntryList[i];
     for(var j=0;j<PRODS.length;j++){
       if(PRODS[j].id===c.id){
+        var _stkBefore=PRODS[j].stk;
         PRODS[j].stk+=c.qty;
         summary.push(c.name+" : +"+c.qty+" (total "+PRODS[j].stk+")");
         if(typeof saveProduct==="function")saveProduct(PRODS[j]);
+        if(typeof logMouvementStock==="function")logMouvementStock(PRODS[j].id,c.name,"entree",c.qty,_stkBefore,PRODS[j].stk,"R\u00e9ception commande");
         break;
       }
     }
@@ -5462,7 +5748,8 @@ function renderInventory(){
   }
   h+='</div>';
   // Scan bar
-  h+='<div style="padding:10px 20px"><input id="invScan" placeholder="\ud83d\udd0d Scanner ou rechercher..." style="width:100%" oninput="filterInvList(this.value)" onkeydown="if(event.key===\'Enter\'){focusInvByCode(this.value);this.value=\'\';}"></div>';
+  h+='<div style="padding:10px 20px;display:flex;gap:8px"><input id="invScan" placeholder="\ud83d\udd0d Scanner ou rechercher..." style="flex:1;font-size:15px;padding:10px" oninput="filterInvList(this.value)" onkeydown="if(event.key===\'Enter\'){focusInvByCode(this.value);this.value=\'\';}">';
+  h+='<button onclick="openBarcodeScanner(function(c){focusInvByCode(c)})" style="padding:10px 16px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);color:var(--gold);font-size:20px;cursor:pointer">\ud83d\udcf7</button></div>';
   // Product list
   h+='<div id="invList" style="padding:0 20px 10px">';
   var items=_inventoryCat==="all"?_inventoryData:_inventoryData.filter(function(d){return d.cat===_inventoryCat;});
@@ -5543,8 +5830,10 @@ function validateInventory(){
     // Update PRODS
     for(var j=0;j<PRODS.length;j++){
       if(PRODS[j].id===d.id){
+        var _stkBefore3=PRODS[j].stk;
         PRODS[j].stk=d.real;
         if(typeof saveProduct==="function")saveProduct(PRODS[j]);
+        if(typeof logMouvementStock==="function"&&_stkBefore3!==d.real)logMouvementStock(PRODS[j].id,d.name,"inventaire",d.real-_stkBefore3,_stkBefore3,d.real,"Inventaire");
         break;
       }
     }
@@ -5766,6 +6055,20 @@ function editProd(id){
   htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
   htm+='<div class="fg"><label>Stock actuel</label><input type="number" id="epStk" value="'+p.stk+'" min="0" style="text-align:center;font-size:18px;padding:12px"></div>';
   htm+='<div class="fg"><label>Alerte stock min</label><input type="number" id="epStkMin" value="'+p.stkMin+'" min="0" style="text-align:center;font-size:18px;padding:12px"></div></div>';
+  // Fournisseur
+  htm+='<div class="fg"><label>Fournisseur</label><select id="epFourn"><option value="">Aucun</option>';
+  var _fList=window.FOURNISSEURS||[];
+  for(var fi=0;fi<_fList.length;fi++)htm+='<option value="'+_fList[fi].id+'"'+(p.fournisseurId===_fList[fi].id?' selected':'')+'>'+_fList[fi].nom+'</option>';
+  htm+='</select></div>';
+  // Peremption + PAO (optional)
+  htm+='<div style="margin-top:8px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
+  htm+='<div style="font-size:12px;color:#ff9800;font-weight:700;margin-bottom:8px">\u23f3 P\u00e9remption (facultatif)</div>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  htm+='<div class="fg"><label>Date expiration</label><input type="date" id="epPeremption" value="'+(p.datePeremption||'')+'"></div>';
+  htm+='<div class="fg"><label>PAO (mois apr\u00e8s ouverture)</label><input type="number" id="epPAO" value="'+(p.paoMois||'')+'" placeholder="Ex: 12" min="1"></div></div>';
+  htm+='<div class="fg"><label>Date ouverture</label><input type="date" id="epDateOuv" value="'+(p.dateOuverture||'')+'"></div>';
+  htm+='</div>';
+  // Type de produit
   htm+='<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
   htm+='<div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:8px">Type de produit</div>';
   htm+='<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:6px"><input type="checkbox" id="epForSale" '+(p.forSale!==false?'checked':'')+'>\ud83d\uded2 Disponible à la vente (apparaît en caisse)</label>';
@@ -5777,7 +6080,9 @@ function editProd(id){
   htm+='<div style="margin-top:10px;padding:10px;background:var(--green-bg);border-radius:8px;text-align:center;font-size:13px">';
   htm+='Prix vente HT: <strong>'+_epVHT.toFixed(2)+' \u20ac</strong> \u2022 Achat HT: <strong>'+p.pa.toFixed(2)+' \u20ac</strong><br>';
   htm+='Marge: <strong style="color:'+(_epM>0?"var(--green)":"var(--red)")+'">'+_epM.toFixed(2)+' \u20ac</strong> ('+(p.pa>0?Math.round(_epM/p.pa*100):0)+'%)</div>';
-  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  // Movement history button
+  htm+='<button class="btn" style="width:100%;margin-top:14px;background:rgba(156,39,176,.1);border:1px solid rgba(156,39,176,.3);color:#ce93d8;font-weight:700" onclick="showProdHistory('+p.id+')">\ud83d\udcca Historique des mouvements</button>';
+  htm+='<div style="display:flex;gap:8px;margin-top:8px">';
   htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
   htm+='<button class="btn" style="background:var(--red);color:#fff;padding:10px 16px" onclick="deleteProd('+p.id+')">Supprimer</button>';
   htm+='<button class="btn bg" style="flex:1" onclick="doEditProd('+p.id+')">Enregistrer</button>';
@@ -5798,6 +6103,10 @@ function doEditProd(id){
   p.cc=document.getElementById("epCC").checked;
   p.forSale=document.getElementById("epForSale").checked;
   p.forUse=document.getElementById("epForUse").checked;
+  p.fournisseurId=document.getElementById("epFourn").value||null;
+  p.datePeremption=document.getElementById("epPeremption").value||null;
+  p.paoMois=parseInt(document.getElementById("epPAO").value)||null;
+  p.dateOuverture=document.getElementById("epDateOuv").value||null;
   if(typeof saveProduct==="function")saveProduct(p);
   cM();go("products");
 }
@@ -5821,12 +6130,30 @@ function addProd(){
   htm+='<div class="fg"><label>Prix vente TTC (\u20ac)</label><input type="number" id="npPrice" value="15" min="0" step="0.5" style="text-align:center;font-size:16px;padding:12px"></div>';
   htm+='<div class="fg"><label>Prix achat HT (\u20ac)</label><input type="number" id="npPA" value="7" min="0" step="0.5" style="text-align:center;font-size:16px;padding:12px"></div></div>';
   htm+='<div class="fg"><label>Code-barre</label><input id="npCB" placeholder="Scanner avec douchette ou saisir"></div>';
+  htm+='<div class="fg"><label>Fournisseur</label><select id="npFourn"><option value="">Aucun</option>';
+  var _fList2=window.FOURNISSEURS||[];
+  for(var fi2=0;fi2<_fList2.length;fi2++)htm+='<option value="'+_fList2[fi2].id+'">'+_fList2[fi2].nom+'</option>';
+  htm+='</select></div>';
   htm+='<div class="fg"><label>Cat\u00e9gorie</label><select id="npCat">';
   for(var i=0;i<PCATS.length;i++)htm+='<option value="'+PCATS[i]+'">'+PCATS[i]+'</option>';
   htm+='</select></div>';
   htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
   htm+='<div class="fg"><label>Stock initial</label><input type="number" id="npStk" value="5" min="0" style="text-align:center"></div>';
   htm+='<div class="fg"><label>Alerte stock min</label><input type="number" id="npStkMin" value="2" min="0" style="text-align:center"></div></div>';
+  // Fournisseur
+  htm+='<div class="fg"><label>Fournisseur</label><select id="epFourn"><option value="">Aucun</option>';
+  var _fList=window.FOURNISSEURS||[];
+  for(var fi=0;fi<_fList.length;fi++)htm+='<option value="'+_fList[fi].id+'"'+(p.fournisseurId===_fList[fi].id?' selected':'')+'>'+_fList[fi].nom+'</option>';
+  htm+='</select></div>';
+  // Peremption + PAO (optional)
+  htm+='<div style="margin-top:8px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
+  htm+='<div style="font-size:12px;color:#ff9800;font-weight:700;margin-bottom:8px">\u23f3 P\u00e9remption (facultatif)</div>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  htm+='<div class="fg"><label>Date expiration</label><input type="date" id="epPeremption" value="'+(p.datePeremption||'')+'"></div>';
+  htm+='<div class="fg"><label>PAO (mois apr\u00e8s ouverture)</label><input type="number" id="epPAO" value="'+(p.paoMois||'')+'" placeholder="Ex: 12" min="1"></div></div>';
+  htm+='<div class="fg"><label>Date ouverture</label><input type="date" id="epDateOuv" value="'+(p.dateOuverture||'')+'"></div>';
+  htm+='</div>';
+  // Type de produit
   htm+='<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
   htm+='<div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:8px">Type de produit</div>';
   htm+='<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:6px"><input type="checkbox" id="npForSale" checked>\ud83d\uded2 Disponible à la vente (apparaît en caisse)</label>';
@@ -5857,6 +6184,7 @@ function doAddProd(){
     cc:document.getElementById("npCC").checked,
     forSale:document.getElementById("npForSale").checked,
     forUse:document.getElementById("npForUse").checked,
+    fournisseurId:document.getElementById("npFourn").value||null,
     img:document.getElementById("npImg").value||"" 
   });
   if(typeof saveProduct==="function")saveProduct(PRODS[PRODS.length-1]);
@@ -9201,8 +9529,10 @@ function doFinalPayExecute(method){
     if(it.prodId){
       for(var i=0;i<PRODS.length;i++){
         if(PRODS[i].id===it.prodId){
+          var _stkB4=PRODS[i].stk;
           PRODS[i].stk=Math.max(0,PRODS[i].stk-it.qty);
           if(typeof saveProduct==="function")saveProduct(PRODS[i]);
+          if(typeof logMouvementStock==="function")logMouvementStock(PRODS[i].id,it.name,"vente",it.qty,_stkB4,PRODS[i].stk,"Ticket #"+tkN);
           break;
         }
       }
