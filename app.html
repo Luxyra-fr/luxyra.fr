@@ -3247,8 +3247,9 @@ function delAppt(id){
     h+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="doDelAppt(\''+id+'\')">Confirmer</button></div></div>';
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
   }else{
-    // Unpaid RDV: just remove, no NF525 constraint
+    // Unpaid RDV: just cancel
     a.st="canc";
+    if(typeof saveAppointment==="function")saveAppointment(a);
     cM();go("planning");
   }
 }
@@ -9644,6 +9645,7 @@ async function doSendConfirm(mode,rdvId){
     collab:sty?sty.n:""
   };
   var sent=[];
+  var errors=[];
   cM();
 
   if(mode==="sms"||mode==="both"){
@@ -9651,6 +9653,7 @@ async function doSendConfirm(mode,rdvId){
       var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",vars);
       var r=await sendSms(cl.ph,smsTxt);
       if(r&&r.ok){sent.push("SMS");auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS OK");}
+      else{errors.push("SMS: "+(r&&r.error?r.error:"erreur"));}
     }
   }
   if(mode==="email"||mode==="both"){
@@ -9658,11 +9661,13 @@ async function doSendConfirm(mode,rdvId){
       var emailTxt=buildSmsText(cfg.confirmEmailTexte||"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}",vars);
       var r2=await sendEmail(cl.em,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt);
       if(r2&&r2.ok){sent.push("Email");auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email OK");}
+      else{errors.push("Email: "+(r2&&r2.error?r2.error:"erreur inconnue"));}
     }
   }
   window._confirmRdv=null;
-  if(sent.length)alert("\u2705 Confirmation envoy\u00e9e ("+sent.join(" + ")+")");
-  else alert("\u274c Erreur lors de l\u2019envoi");
+  if(sent.length&&!errors.length)alert("\u2705 Confirmation envoy\u00e9e ("+sent.join(" + ")+")");
+  else if(sent.length&&errors.length)alert("\u2705 "+sent.join(" + ")+" envoy\u00e9(s)\n\u274c "+errors.join("\n"));
+  else alert("\u274c Erreur : "+errors.join("\n"));
 }
 async function sendSms(phone,message){
   // Check credits
