@@ -138,14 +138,17 @@ async function loadSalons(){
         cp:cfg.cp||"",
         ville:cfg.ville||"",
         tel:cfg.tel||"",
+        email:cfg.email||"",
         photo:cfg.photoSalon||cfg.photoHero||"",
         logo:cfg.logo||"",
-        slogan:cfg.slogan||"",
+        slogan:cfg.slogan||cfg.sousTitre||"",
         note:s.note_moyenne||0,
         nbAvis:s.nb_avis||0,
         online:cfg.siteActif||false,
         tags:cfg.tags||[],
-        siteId:s.id
+        siteId:s.id,
+        fidconf:cfg.fidconf||null,
+        tauxTVA:cfg.tauxTVA||20
       };
     });
   }catch(e){
@@ -270,6 +273,7 @@ function render(){
       for(var ti=0;ti<Math.min(s.tags.length,3);ti++)h+='<span'+(ti===0?' class="top"':'')+'>'+s.tags[ti]+'</span>';
       h+='</div>';
     }
+    if(s.fidconf&&s.fidconf.seuil>0)h+='<div style="font-size:10px;color:var(--gold);margin-top:6px">\ud83c\udf1f Fid\u00e9lit\u00e9 : -'+s.fidconf.remise+(s.fidconf.type==="percent"?"%":"\u20ac")+' apr\u00e8s '+s.fidconf.seuil+' visites</div>';
     if(s.online)h+='<div class="salon-cta">R\u00e9server en ligne</div>';
     h+='</div></div>';
   }
@@ -305,8 +309,24 @@ function genStars(n){
   return h;
 }
 
-function openSalon(id){
+async function openSalon(id){
   var s=SALONS.find(function(x){return x.id===id;});if(!s)return;
+  // Show loading
+  var loadEl=document.createElement("div");loadEl.id="detailOverlay";
+  loadEl.innerHTML='<div class="detail-overlay" onclick="closeDetail()"><div class="detail-sheet" onclick="event.stopPropagation()" style="display:flex;align-items:center;justify-content:center;min-height:300px"><div style="text-align:center;color:var(--text3)"><div style="font-size:36px;margin-bottom:8px">\u23f3</div>Chargement de '+s.nom+'...</div></div></div>';
+  document.body.appendChild(loadEl);
+  // Load real services + collabs
+  var services=[],collabs=[];
+  try{
+    var sR=await fetch(SB_URL+"/rest/v1/services?select=nom,prix,categorie,phases,show_site,book_online&salon_id=eq."+id+"&show_site=eq.true&order=categorie,nom",{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
+    if(sR.ok){var sd=await sR.json();if(Array.isArray(sd))services=sd;}
+  }catch(e){}
+  try{
+    var cR=await fetch(SB_URL+"/rest/v1/collaborateurs?select=nom,initiales,couleur,horaires&salon_id=eq."+id+"&order=nom",{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
+    if(cR.ok){var cd=await cR.json();if(Array.isArray(cd))collabs=cd;}
+  }catch(e){}
+  // Remove loading, show real detail
+  loadEl.remove();
   var typeLabel=TYPES.find(function(t){return t.k===s.type;})||TYPES[0];
   var defaultImgs2={coiffure:"https://images.unsplash.com/photo-1560066984-138dadb4c035?w=600&h=300&fit=crop",barbier:"https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=600&h=300&fit=crop",esthetique:"https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=600&h=300&fit=crop",ongles:"https://images.unsplash.com/photo-1604654894610-df63bc536371?w=600&h=300&fit=crop",bien_etre:"https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=600&h=300&fit=crop"};
   var img=s.photo||(defaultImgs2[s.type]||defaultImgs2.coiffure);
@@ -331,6 +351,68 @@ function openSalon(id){
   // CTA
   if(s.online){
     h+='<a href="site.html?s='+s.siteId+'" target="_blank" style="display:block;text-align:center;padding:14px;background:var(--gold);color:#000;border-radius:12px;font-weight:800;font-size:15px;margin-bottom:16px">R\u00e9server en ligne \u2192</a>';
+  }
+  
+  // === SERVICES (real data) ===
+  if(services.length){
+    h+='<div style="margin-bottom:20px">';
+    h+='<h3 style="font-size:16px;margin-bottom:10px">\u2702\ufe0f Prestations</h3>';
+    var cats={};services.forEach(function(sv){var c=sv.categorie||"Autres";if(!cats[c])cats[c]=[];cats[c].push(sv);});
+    for(var cat in cats){
+      h+='<div style="font-size:11px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:12px 0 6px">'+cat+'</div>';
+      cats[cat].forEach(function(sv){
+        var dur=0;if(sv.phases&&sv.phases.length){sv.phases.forEach(function(p){dur+=p.d||0;});}
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">';
+        h+='<div><div style="font-weight:600;font-size:14px">'+sv.nom+'</div>';
+        if(dur>0)h+='<div style="font-size:11px;color:var(--text3)">\u23f1 '+dur+' min</div>';
+        h+='</div>';
+        h+='<div style="font-weight:800;color:var(--gold);font-size:15px">'+Number(sv.prix).toFixed(0)+'\u20ac</div>';
+        h+='</div>';
+      });
+    }
+    h+='</div>';
+  }
+  
+  // === EQUIPE ===
+  if(collabs.length){
+    h+='<div style="margin-bottom:20px">';
+    h+='<h3 style="font-size:16px;margin-bottom:10px">\ud83d\udc65 L\u0027\u00e9quipe</h3>';
+    h+='<div style="display:flex;gap:10px;flex-wrap:wrap">';
+    collabs.forEach(function(c){
+      h+='<div style="text-align:center;padding:10px 14px;background:rgba(255,255,255,.03);border-radius:12px;border:1px solid var(--border)">';
+      h+='<div style="width:44px;height:44px;border-radius:50%;background:'+(c.couleur||"var(--gold)")+';display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:14px;margin:0 auto 6px">'+(c.initiales||c.nom.slice(0,2).toUpperCase())+'</div>';
+      h+='<div style="font-size:12px;font-weight:700">'+c.nom+'</div></div>';
+    });
+    h+='</div></div>';
+  }
+  
+  // === HORAIRES ===
+  if(collabs.length&&collabs[0].horaires){
+    h+='<div style="margin-bottom:20px">';
+    h+='<h3 style="font-size:16px;margin-bottom:10px">\ud83d\udd54 Horaires</h3>';
+    var hrs=collabs[0].horaires;
+    var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+    for(var di=0;di<7;di++){
+      var dh=hrs[di]||hrs[String(di)];
+      var isOpen=dh&&dh.o&&dh.c;
+      h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">';
+      h+='<span style="font-weight:'+(di===new Date().getDay()?'800':'400')+';color:'+(di===new Date().getDay()?'var(--gold)':'var(--text2)')+'">'+jours[di]+'</span>';
+      h+='<span style="color:'+(isOpen?'var(--text)':'var(--text3)')+'">'+(isOpen?dh.o+' - '+dh.c:'Ferm\u00e9')+'</span>';
+      h+='</div>';
+    }
+    h+='</div>';
+  }
+  
+  // === FIDELITE ===
+  if(s.fidconf&&s.fidconf.seuil>0){
+    h+='<div style="margin-bottom:20px;padding:16px;background:linear-gradient(135deg,rgba(200,168,78,.08),rgba(200,168,78,.02));border:1px solid rgba(200,168,78,.15);border-radius:14px">';
+    h+='<h3 style="font-size:16px;margin-bottom:8px;color:var(--gold)">\ud83c\udf1f Programme fid\u00e9lit\u00e9</h3>';
+    var fUnit=s.fidconf.type==="percent"?"%":"\u20ac";
+    h+='<div style="font-size:14px;color:var(--text2)">Apr\u00e8s <strong style="color:#fff">'+s.fidconf.seuil+' visites</strong>, obtenez <strong style="color:var(--gold)">'+s.fidconf.remise+fUnit+' de r\u00e9duction</strong> !</div>';
+    if(MKT_CLIENT){
+      h+='<div style="margin-top:10px;font-size:12px;color:var(--text3)">Connectez-vous \u00e0 votre <a href="compte.html">espace client</a> pour voir vos points.</div>';
+    }
+    h+='</div>';
   }
   
   // Reviews section
