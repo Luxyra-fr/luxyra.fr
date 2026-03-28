@@ -1077,8 +1077,8 @@ function confirmNotif(id){
             sendSms(onRdvC.tel,smsTxt);
           }
           if(cfgC.confirmEmail&&onRdvC.email){
-            var emailTxt=buildSmsText(cfgC.confirmEmailTexte||"Bonjour {prenom},\\nVotre rendez-vous est confirm\u00e9.\\n\u00c0 bient\u00f4t !\\n{salon}",cVars);
-            sendEmail(onRdvC.email,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt,((onRdvC.prenom||"")+" "+(onRdvC.nom||"")).trim());
+            var onlineHtml=buildRdvEmailHTML("confirm",cVars);
+            sendEmailViaWorker(onRdvC.email,((onRdvC.prenom||"")+" "+(onRdvC.nom||"")).trim(),"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,onlineHtml);
           }
         }
       }
@@ -9658,6 +9658,110 @@ function sendRdvConfirmation(rdvObj){
   window._confirmRdv=rdvObj;
 }
 
+// Build professional HTML email for RDV confirmation & reminders
+function buildRdvEmailHTML(type,vars){
+  var isRappel=type==="rappel";
+  var gold="#c8a84e";var darkBg="#0a0a0a";var cardBg="#141418";var borderC="#2a2a30";
+  var logo=SALON_CONFIG.logo||"";
+  var salonNom=SALON_CONFIG.nom||"";
+  var salonAdr=(SALON_CONFIG.adresse||"")+(SALON_CONFIG.cp?" "+SALON_CONFIG.cp:"")+(SALON_CONFIG.ville?" "+SALON_CONFIG.ville:"");
+  var salonTel=SALON_CONFIG.tel||"";
+  var salonEmail=SALON_CONFIG.email||"contact@luxyra.fr";
+
+  var title=isRappel?"Rappel de votre rendez-vous":"Votre rendez-vous est confirm\u00e9";
+  var subtitle=isRappel?"N\u2019oubliez pas votre rendez-vous demain":"Nous avons le plaisir de confirmer votre rendez-vous";
+  var icon=isRappel?"\u23f0":"\u2714\ufe0f";
+  var iconBg=isRappel?"#1a2940":"#1a2e1a";
+  var iconBorder=isRappel?"rgba(33,150,243,.3)":"rgba(76,175,80,.3)";
+
+  var h='<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">';
+  h+='<title>'+title+' - '+salonNom+'</title></head>';
+  h+='<body style="margin:0;padding:0;background:'+darkBg+';font-family:Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">';
+  h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:'+darkBg+'">';
+  h+='<tr><td align="center" style="padding:24px 16px">';
+  h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto">';
+
+  // Header with logo
+  h+='<tr><td style="padding:24px 0;text-align:center">';
+  if(logo){
+    h+='<img src="'+logo+'" alt="'+salonNom+'" style="height:60px;border-radius:12px;margin-bottom:12px;display:inline-block"><br>';
+  }
+  h+='<div style="font-size:24px;font-weight:800;color:'+gold+';letter-spacing:2px;font-family:Georgia,serif">'+salonNom.toUpperCase()+'</div>';
+  h+='</td></tr>';
+
+  // Gold separator
+  h+='<tr><td style="padding:0 40px"><div style="height:2px;background:linear-gradient(90deg,transparent,'+gold+',transparent)"></div></td></tr>';
+
+  // Status badge
+  h+='<tr><td style="padding:28px 0 8px;text-align:center">';
+  h+='<div style="display:inline-block;background:'+iconBg+';border:1px solid '+iconBorder+';border-radius:50px;padding:8px 24px;font-size:14px;font-weight:700;color:#fff">';
+  h+=icon+' '+title+'</div></td></tr>';
+
+  // Greeting
+  h+='<tr><td style="padding:8px 24px 20px;text-align:center;font-size:15px;color:rgba(255,255,255,.65);line-height:1.6">';
+  h+='Bonjour'+(vars.prenom?' <strong style="color:#fff">'+vars.prenom+'</strong>':'')+',<br>'+subtitle+'.</td></tr>';
+
+  // RDV details card
+  h+='<tr><td style="padding:0 20px">';
+  h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:'+cardBg+';border:1px solid '+borderC+';border-radius:16px;overflow:hidden">';
+
+  // Date & heure row
+  h+='<tr><td style="padding:20px 24px 12px">';
+  h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>';
+  h+='<td width="50%" style="padding-right:8px">';
+  h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">\ud83d\udcc5 Date</div>';
+  h+='<div style="font-size:16px;font-weight:700;color:#fff">'+vars.date+'</div>';
+  h+='</td><td width="50%" style="padding-left:8px">';
+  h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">\ud83d\udd50 Heure</div>';
+  h+='<div style="font-size:16px;font-weight:700;color:#fff">'+vars.heure+'</div>';
+  h+='</td></tr></table></td></tr>';
+
+  // Separator inside card
+  h+='<tr><td style="padding:0 24px"><div style="height:1px;background:'+borderC+'"></div></td></tr>';
+
+  // Prestation
+  h+='<tr><td style="padding:12px 24px">';
+  h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">\u2702\ufe0f Prestation</div>';
+  h+='<div style="font-size:15px;font-weight:600;color:#fff">'+vars.prestation+'</div>';
+  h+='</td></tr>';
+
+  // Collab (if any)
+  if(vars.collab){
+    h+='<tr><td style="padding:0 24px"><div style="height:1px;background:'+borderC+'"></div></td></tr>';
+    h+='<tr><td style="padding:12px 24px 20px">';
+    h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">\ud83d\udc87 Avec</div>';
+    h+='<div style="font-size:15px;font-weight:600;color:#fff">'+vars.collab+'</div>';
+    h+='</td></tr>';
+  }else{
+    h+='<tr><td style="padding:0 0 8px"></td></tr>';
+  }
+
+  h+='</table></td></tr>'; // end card
+
+  // Info text
+  if(isRappel){
+    h+='<tr><td style="padding:20px 24px;text-align:center;font-size:13px;color:rgba(255,255,255,.5);line-height:1.5">';
+    h+='En cas d\u2019emp\u00eachement, merci de nous pr\u00e9venir le plus t\u00f4t possible.</td></tr>';
+  }else{
+    h+='<tr><td style="padding:20px 24px;text-align:center;font-size:13px;color:rgba(255,255,255,.5);line-height:1.5">';
+    h+='Si vous devez modifier ou annuler votre rendez-vous,<br>n\u2019h\u00e9sitez pas \u00e0 nous contacter.</td></tr>';
+  }
+
+  // Gold separator
+  h+='<tr><td style="padding:8px 40px 16px"><div style="height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,78,.3),transparent)"></div></td></tr>';
+
+  // Footer
+  h+='<tr><td style="padding:0 24px 32px;text-align:center">';
+  if(salonAdr) h+='<div style="font-size:12px;color:rgba(255,255,255,.35);margin-bottom:4px">\ud83d\udccd '+salonAdr+'</div>';
+  if(salonTel) h+='<div style="font-size:12px;color:rgba(255,255,255,.35);margin-bottom:4px">\ud83d\udcde '+salonTel+'</div>';
+  h+='<div style="font-size:12px;color:rgba(255,255,255,.35);margin-bottom:12px">\u2709\ufe0f '+salonEmail+'</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.2)">Envoy\u00e9 via <span style="color:'+gold+'">Luxyra</span></div>';
+  h+='</td></tr>';
+
+  h+='</table></td></tr></table></body></html>';
+  return h;
+}
+
 async function doSendConfirm(mode,rdvId){
   var rdvObj=window._confirmRdv;if(!rdvObj)return;
   var cl=gC(rdvObj.cId);if(!cl)return;
@@ -9685,8 +9789,8 @@ async function doSendConfirm(mode,rdvId){
   }
   if(mode==="email"||mode==="both"){
     if(cl.em){
-      var emailTxt=buildSmsText(cfg.confirmEmailTexte||"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}",vars);
-      var r2=await sendEmail(cl.em,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt,cName(cl));
+      var emailHtml=buildRdvEmailHTML("confirm",vars);
+      var r2=await sendEmailViaWorker(cl.em,cName(cl),"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailHtml);
       if(r2&&r2.ok){sent.push("Email");auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email OK");}
       else{errors.push("Email: "+(r2&&r2.error?r2.error:"erreur inconnue"));}
     }
@@ -9801,8 +9905,8 @@ function checkSmsReminders(){
     if(cfg.rappelEmail&&a.date===tomorrowStr&&cl.emOk&&cl.em){
       var keyEm="em24_"+a.id;
       if(!window._smsSent[keyEm]){
-        var emBody=buildSmsText(cfg.rappelEmailTexte||cfg.rappelTexte24h,vars);
-        sendEmail(cl.em,"Rappel RDV - "+SALON_CONFIG.nom,emBody,cName(cl));
+        var rappelHtml=buildRdvEmailHTML("rappel",vars);
+        sendEmailViaWorker(cl.em,cName(cl),"Rappel : votre rendez-vous demain - "+SALON_CONFIG.nom,rappelHtml);
         window._smsSent[keyEm]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
       }
