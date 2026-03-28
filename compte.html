@@ -264,8 +264,9 @@ function renderRdvTab(){
       h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
       h+='</div>';
       if(r.status==="done"||r.status==="confirmed"){
-        h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);text-align:right">';
-        h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udcc4 T\u00e9l\u00e9charger le re\u00e7u</button>';
+        h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end">';
+        if(r.salon_id&&r.service_nom)h+='<button onclick="rebookRdv(\''+r.salon_id+'\',\''+encodeURIComponent(r.service_nom)+'\',\''+encodeURIComponent(r.salon_nom||"")+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udd01 Reprendre ce RDV</button>';
+        h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udcc4 Re\u00e7u</button>';
         h+='</div>';
       }
       h+='</div>';
@@ -301,7 +302,24 @@ async function loadFidelite(){
   try{
     var r=await api("fidelite_client?select=*&client_beautypro_id=eq."+CLIENT.id+"&order=derniere_visite.desc");
     var data=await r.json();
-    if(Array.isArray(data))FIDELITE_DATA=data;
+    if(Array.isArray(data)){
+      // Enrich with salon fidconf
+      for(var fi=0;fi<data.length;fi++){
+        try{
+          var sr=await api("salons?select=config_json&id=eq."+data[fi].salon_id);
+          var sd=await sr.json();
+          if(Array.isArray(sd)&&sd[0]){
+            var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
+            if(cfg.fidconf){
+              data[fi].seuil_fidelite=cfg.fidconf.seuil||10;
+              data[fi].remise_fidelite=cfg.fidconf.remise||10;
+              data[fi].remise_type=cfg.fidconf.type||"amount";
+            }
+          }
+        }catch(e){}
+      }
+      FIDELITE_DATA=data;
+    }
     _fideliteLoaded=true;
   }catch(e){console.log("Fidelite load error:",e);}
 }
@@ -336,9 +354,10 @@ function renderFideliteTab(){
   h+='<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px">Par \u00e9tablissement</div>';
   FIDELITE_DATA.forEach(function(f){
     var pct=0;
-    // Assume seuil of 10 for now (salon-specific thresholds would need more data)
-    var seuil=10;
+    var seuil=f.seuil_fidelite||10;
     pct=Math.min(100,Math.round((f.points||0)/seuil*100));
+    var remise=f.remise_fidelite||10;
+    var remUnit=f.remise_type==="percent"?"%":"\u20ac";
     h+='<div class="card" style="margin-bottom:8px">';
     h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
     h+='<div><div style="font-weight:700;font-size:14px">'+(f.salon_nom||"Salon")+'</div>';
@@ -347,7 +366,7 @@ function renderFideliteTab(){
     h+='</div>';
     // Progress bar
     h+='<div style="height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--gold);border-radius:4px"></div></div>';
-    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px;text-align:right">'+pct+'% vers la r\u00e9compense</div>';
+    h+='<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:4px"><span>R\u00e9compense : -'+remise+remUnit+'</span><span>'+pct+'%</span></div>';
     h+='</div>';
   });
   
@@ -385,11 +404,24 @@ function renderTicketsTab(){
     h+='</div>';
     h+='<div style="text-align:right"><div style="font-size:18px;font-weight:900;color:#fff">'+ttc.toFixed(2)+' \u20ac</div></div>';
     h+='</div>';
-    // Détail
-    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:8px">';
-    h+='\u2702\ufe0f '+r.service_nom;
-    if(r.collaborateur_nom)h+=' \u2022 par '+r.collaborateur_nom;
-    h+='</div>';
+    // Détail - all items (services + products)
+    if(r.items&&r.items.length>1){
+      h+='<div style="margin-bottom:8px">';
+      r.items.forEach(function(it){
+        if(it.isSep)return;
+        var icon=it.isProd?"\ud83d\uded2":"\u2702\ufe0f";
+        var price=(it.price||0)*(it.qty||1)-(it.remise||0);
+        h+='<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;color:var(--text2)">';
+        h+='<span>'+icon+' '+(it.name||"")+(it.qty>1?" x"+it.qty:"")+'</span>';
+        h+='<span style="font-weight:700">'+price.toFixed(2)+' \u20ac</span></div>';
+      });
+      h+='</div>';
+    }else{
+      h+='<div style="font-size:13px;color:var(--text2);margin-bottom:8px">';
+      h+='\u2702\ufe0f '+r.service_nom;
+      if(r.collaborateur_nom)h+=' \u2022 par '+r.collaborateur_nom;
+      h+='</div>';
+    }
     // Acompte
     var acompte=Number(r.acompte_montant)||0;
     if(acompte>0){
@@ -857,6 +889,15 @@ async function downloadReceipt(rdvId){
   
   w.document.write(h);w.document.close();
   setTimeout(function(){w.print();},500);
+}
+
+function rebookRdv(salonId,serviceNom,salonNom){
+  // Open salon's booking page with service pre-selected
+  var svcName=decodeURIComponent(serviceNom);
+  var sName=decodeURIComponent(salonNom);
+  // Try to open the salon's site.html booking page
+  window.open("site.html?s="+salonId+"&book="+encodeURIComponent(svcName),"_blank");
+  showToast("\ud83d\udd01 Redirection vers "+sName+" pour r\u00e9server...");
 }
 
 function closePopup(id){var el=document.getElementById(id);if(el)el.remove();}
