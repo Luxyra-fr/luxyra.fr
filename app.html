@@ -2211,7 +2211,7 @@ function go(pg,arg){
   if(!logoSrc)logoSrc=SALON_CONFIG._defaultLogo||"";
   
   if(pg==="home"){
-    hdr.style.display="";hdr.innerHTML='<img src="'+logoSrc+'" alt="Logo" id="hlogo" style="height:42px;border-radius:6px"><div id="htitle"><h1>'+SALON_CONFIG.nom+'</h1><small>'+new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div><div style="display:flex;align-items:center;gap:4px"><button onclick="go(\'settings\')" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:22px;cursor:pointer;padding:8px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:50%;min-width:18px;height:18px;align-items:center;justify-content:center"></span></button></div>';
+    hdr.style.display="";hdr.innerHTML='<img src="'+logoSrc+'" alt="Logo" id="hlogo" style="height:42px;border-radius:6px"><div id="htitle"><h1>'+SALON_CONFIG.nom+'</h1><small>'+new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div><div style="display:flex;align-items:center;gap:4px"><button onclick="location.reload()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button><button onclick="go(\'settings\')" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:22px;cursor:pointer;padding:8px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:50%;min-width:18px;height:18px;align-items:center;justify-content:center"></span></button></div>';
   }else{
     var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Services et Forfaits",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis",marketing:"Marketing"};
     hdr.style.display="";hdr.innerHTML='<button class="back-btn" onclick="goBack()">←</button><div><h1>'+(titles[pg]||"")+'</h1></div>';
@@ -2500,11 +2500,14 @@ function setCatColor(cat,hex){
 }
 // Product category colors
 if(!window.PRODCOLORS)window.PRODCOLORS={};
-// Default product category colors
+// Load saved product colors from localStorage (immediate, before Supabase async load)
+try{var _lpc=localStorage.getItem("_lx_prodcolors");if(_lpc){window.PRODCOLORS=JSON.parse(_lpc);}}catch(e){}
+// Default product category colors (only fill missing)
 (function(){var _dpc={"Fibreclinix":{border:"#e67e22"},"Blond Me":{border:"#f1c40f"},"L'Or\u00e9al":{border:"#8e44ad"},"Osis+":{border:"#2980b9"},"Silhouette":{border:"#1abc9c"},"R-Two":{border:"#e74c3c"},"Red One":{border:"#c0392b"},"Scalp Clinix":{border:"#27ae60"}};for(var k in _dpc){if(!window.PRODCOLORS[k])window.PRODCOLORS[k]=colorFromHex(_dpc[k].border);}})();
 function getProdColor(cat){return window.PRODCOLORS[cat]||{bg:"#f0f0f0",border:"#999",text:"#333"};}
 function setProdCatColor(cat,hex){
   window.PRODCOLORS[cat]=colorFromHex(hex);
+  try{localStorage.setItem("_lx_prodcolors",JSON.stringify(window.PRODCOLORS));}catch(e){}
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   go("products");
 }
@@ -5525,19 +5528,18 @@ function rProducts(){
   if(aPCat!=="all")prods=prods.filter(function(p){return p.cat===aPCat;});
   
   if(prodView==="grid"){
-    h+='<div id="prodGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    h+='<div id="prodGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px">';
     for(var i=0;i<prods.length;i++){
       var p=prods[i];
       var stkColor=p.stk<=0?"var(--red)":p.stk<=p.stkMin?"var(--orange)":"var(--green)";
       var stkLabel=p.stk<=0?"\u2717 Rupture":p.stk<=p.stkMin?"\u26a0 Stock bas ("+p.stk+")":"\u2713 "+p.stk+" en stock";
-      h+='<div class="card prod-item" style="text-align:center;padding:12px 8px;background:rgba(20,20,30,.95);backdrop-filter:none">';
-      if(p.img)h+='<div style="width:60px;height:60px;border-radius:10px;margin:0 auto 6px;background:url('+p.img+') center/cover no-repeat;border:1px solid var(--border2)"></div>';
-      else h+='<div style="width:60px;height:60px;border-radius:10px;margin:0 auto 6px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text3);border:1px solid var(--border2)">\ud83d\udcf7</div>';
-      h+='<div style="font-size:13px;font-weight:700;margin-bottom:4px;min-height:32px">'+p.n+'</div>';
-      h+='<div style="font-size:18px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+p.p.toFixed(2)+'\u20ac</div>';
+      h+='<div class="card prod-item" style="text-align:center;padding:8px 6px;background:rgba(20,20,30,.95);backdrop-filter:none">';
+      if(p.img)h+='<div style="width:40px;height:40px;border-radius:8px;margin:0 auto 4px;background:url('+p.img+') center/cover no-repeat;border:1px solid var(--border2)"></div>';
+      else h+='<div style="width:40px;height:40px;border-radius:8px;margin:0 auto 4px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--text3);border:1px solid var(--border2)">\ud83d\udcf7</div>';
+      h+='<div style="font-size:12px;font-weight:700;margin-bottom:2px;min-height:28px;line-height:1.2">'+p.n+'</div>';
+      h+='<div style="font-size:15px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+p.p.toFixed(2)+'\u20ac</div>';
       var _pVenteHT=p.p/(1+SALON_CONFIG.tauxTVA/100);var _pMarge=_pVenteHT-p.pa;
-      h+='<div style="font-size:10px;color:var(--text3)">Vente TTC: '+p.p.toFixed(2)+'\u20ac \u2022 HT: '+_pVenteHT.toFixed(2)+'\u20ac</div>';
-      h+='<div style="font-size:10px;color:var(--text3)">Achat HT: '+p.pa.toFixed(2)+'\u20ac \u2022 Marge: <span style="color:'+(_pMarge>0?"var(--green)":"var(--red)")+'">'+_pMarge.toFixed(2)+'\u20ac</span></div>';
+      h+='<div style="font-size:9px;color:var(--text3)">HT: '+_pVenteHT.toFixed(2)+'\u20ac \u2022 Marge: <span style="color:'+(_pMarge>0?"var(--green)":"var(--red)")+'">'+_pMarge.toFixed(2)+'\u20ac</span></div>';
       h+='<div style="font-size:11px;margin-top:3px;color:'+stkColor+';font-weight:600">'+stkLabel+'</div>';
       if(p.cc)h+='<div style="font-size:10px;color:var(--blue);margin-top:2px">\ud83d\uded2 Click \& Collect</div>';
       var typeBadges='';
@@ -5545,9 +5547,9 @@ function rProducts(){
       if(p.forUse)typeBadges+='<span style="font-size:9px;background:rgba(33,150,243,.15);color:#2196f3;padding:1px 5px;border-radius:4px">Consommable</span>';
       if(typeBadges)h+='<div style="margin-top:3px">'+typeBadges+'</div>';
       if(p.fournisseurId){var _fn="";var _fl=window.FOURNISSEURS||[];for(var fi=0;fi<_fl.length;fi++){if(_fl[fi].id===p.fournisseurId){_fn=_fl[fi].nom;break;}}if(_fn)h+='<div style="font-size:9px;color:rgba(255,255,255,.4);margin-top:2px">\ud83c\udfe2 '+_fn+'</div>';}
-      h+='<div style="display:flex;gap:4px;margin-top:6px;justify-content:center">';
+      h+='<div style="display:flex;gap:4px;margin-top:4px;justify-content:center">';
       
-      h+='<button class="btn bs" style="font-size:11px" onclick="editProd('+p.id+')">\u270f\ufe0f</button>';
+      h+='<button class="btn bs" style="font-size:10px;padding:3px 8px" onclick="editProd('+p.id+')">\u270f\ufe0f</button>';
       h+='</div></div>';
     }
     h+='</div>';
