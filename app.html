@@ -1078,7 +1078,7 @@ function confirmNotif(id){
           }
           if(cfgC.confirmEmail&&onRdvC.email){
             var emailTxt=buildSmsText(cfgC.confirmEmailTexte||"Bonjour {prenom},\\nVotre rendez-vous est confirm\u00e9.\\n\u00c0 bient\u00f4t !\\n{salon}",cVars);
-            sendEmail(onRdvC.email,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt);
+            sendEmail(onRdvC.email,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt,((onRdvC.prenom||"")+" "+(onRdvC.nom||"")).trim());
           }
         }
       }
@@ -9686,7 +9686,7 @@ async function doSendConfirm(mode,rdvId){
   if(mode==="email"||mode==="both"){
     if(cl.em){
       var emailTxt=buildSmsText(cfg.confirmEmailTexte||"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}",vars);
-      var r2=await sendEmail(cl.em,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt);
+      var r2=await sendEmail(cl.em,"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailTxt,cName(cl));
       if(r2&&r2.ok){sent.push("Email");auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email OK");}
       else{errors.push("Email: "+(r2&&r2.error?r2.error:"erreur inconnue"));}
     }
@@ -9802,7 +9802,7 @@ function checkSmsReminders(){
       var keyEm="em24_"+a.id;
       if(!window._smsSent[keyEm]){
         var emBody=buildSmsText(cfg.rappelEmailTexte||cfg.rappelTexte24h,vars);
-        sendEmail(cl.em,"Rappel RDV - "+SALON_CONFIG.nom,emBody);
+        sendEmail(cl.em,"Rappel RDV - "+SALON_CONFIG.nom,emBody,cName(cl));
         window._smsSent[keyEm]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
       }
@@ -9810,12 +9810,12 @@ function checkSmsReminders(){
   });
 }
 
-async function sendEmail(to,subject,body){
+async function sendEmail(to,subject,body,toName){
   try{
     var resp=await fetch("/api/email/custom",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({to:to,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,htmlContent:"<div style=\"font-family:sans-serif;max-width:500px;margin:0 auto\">"+body.replace(/\n/g,"<br>")+"</div>",textContent:body})
+      body:JSON.stringify({to:to,toName:toName||to,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,htmlContent:"<div style=\"font-family:sans-serif;max-width:500px;margin:0 auto\">"+body.replace(/\n/g,"<br>")+"</div>",textContent:body})
     });
     var data=await resp.json();
     console.log("[EMAIL] sendEmail to:",to,"status:",resp.status,"result:",JSON.stringify(data).slice(0,200));
@@ -9960,7 +9960,7 @@ function sendCampaignV2(){
       var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
       var ps=[];
       if(doSms&&hasSms&&cl.smsOk&&cl.ph)ps.push(sendSms(cl.ph,txt).then(function(r){if(r.ok)smsSent++;else errors++;}));
-      if(doEmail&&hasEmail&&cl.emOk&&cl.em)ps.push(sendEmail(cl.em,subject,txt).then(function(r){if(r.ok)emailSent++;else errors++;}));
+      if(doEmail&&hasEmail&&cl.emOk&&cl.em)ps.push(sendEmail(cl.em,subject,txt,cName(cl)).then(function(r){if(r.ok)emailSent++;else errors++;}));
       return Promise.all(ps);
     });
   });
