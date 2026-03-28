@@ -5116,19 +5116,23 @@ function rProducts(){
   h+='<div class="tab'+(prodTypeFilter==="use"?" on":"")+'" onclick="prodTypeFilter=\'use\';go(\'products\')" style="display:flex;align-items:center;gap:4px">\ud83e\uddea Consommable ('+nbUse+')</div>';
   h+='</div>';
   // Action buttons (top, big, visible)
-  h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
-  h+='<button onclick="showQuickConsumption()" style="flex:1;padding:14px 10px;border-radius:12px;border:2px solid #2196f3;background:#0d1b2a;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:24px;margin-bottom:4px">\ud83e\uddea</div>';
-  h+='<div style="font-size:14px;font-weight:800;color:#64b5f6">Consommation</div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Produits utilis\u00e9s</div></button>';
-  h+='<button onclick="showInventory()" style="flex:1;padding:14px 10px;border-radius:12px;border:2px solid var(--gold);background:#1a1608;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:24px;margin-bottom:4px">\ud83d\udccb</div>';
-  h+='<div style="font-size:14px;font-weight:800;color:var(--gold)">Inventaire</div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Compter le stock</div></button>';
-  h+='<button onclick="addProd()" style="flex:1;padding:14px 10px;border-radius:12px;border:2px solid rgba(76,175,80,.5);background:#0a1a0d;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:24px;margin-bottom:4px">\u2795</div>';
-  h+='<div style="font-size:14px;font-weight:800;color:#66bb6a">Ajouter</div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Nouveau produit</div></button>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
+  h+='<button onclick="showStockEntry()" style="padding:14px 10px;border-radius:12px;border:2px solid #4caf50;background:#0a1a0d;cursor:pointer;text-align:center">';
+  h+='<div style="font-size:22px;margin-bottom:3px">\ud83d\udce5</div>';
+  h+='<div style="font-size:13px;font-weight:800;color:#66bb6a">Entr\u00e9e stock</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">R\u00e9ception commande</div></button>';
+  h+='<button onclick="showQuickConsumption()" style="padding:14px 10px;border-radius:12px;border:2px solid #f44336;background:#1a0a0a;cursor:pointer;text-align:center">';
+  h+='<div style="font-size:22px;margin-bottom:3px">\ud83d\udce4</div>';
+  h+='<div style="font-size:13px;font-weight:800;color:#ef5350">Sortie stock</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Produits consomm\u00e9s</div></button>';
+  h+='<button onclick="showInventory()" style="padding:14px 10px;border-radius:12px;border:2px solid var(--gold);background:#1a1608;cursor:pointer;text-align:center">';
+  h+='<div style="font-size:22px;margin-bottom:3px">\ud83d\udccb</div>';
+  h+='<div style="font-size:13px;font-weight:800;color:var(--gold)">Inventaire</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Compter le stock</div></button>';
+  h+='<button onclick="addProd()" style="padding:14px 10px;border-radius:12px;border:2px solid rgba(255,255,255,.2);background:#0e0e14;cursor:pointer;text-align:center">';
+  h+='<div style="font-size:22px;margin-bottom:3px">\u2795</div>';
+  h+='<div style="font-size:13px;font-weight:800;color:#aaa">Ajouter</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.5);margin-top:2px">Nouveau produit</div></button>';
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
   h+='<button onclick="showInventoryHistory()" style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(156,39,176,.4);background:#1a0d1e;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">';
@@ -5329,6 +5333,107 @@ function validateConsumption(){
   toast("Stock mis \u00e0 jour !\n"+summary.join("\n"),"success");
 }
 
+// ===== STOCK ENTRY (RECEPTION COMMANDE) =====
+var _stockEntryList=[];
+function showStockEntry(){
+  _stockEntryList=[];
+  renderStockEntry();
+}
+function renderStockEntry(){
+  var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto;padding:16px"><div style="max-width:500px;margin:0 auto">';
+  h+='<h2 style="color:#66bb6a">\ud83d\udce5 Entr\u00e9e de stock</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">Scannez ou s\u00e9lectionnez les produits re\u00e7us, puis validez.</div>';
+  // Search/scan bar
+  h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
+  h+='<input id="entrySearch" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1;font-size:15px;padding:12px" oninput="filterEntryList(this.value)" onkeydown="if(event.key===\'Enter\'){addEntryByCode(this.value);this.value=\'\';}">';
+  h+='</div>';
+  // Quick category filter
+  h+='<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">';
+  h+='<div class="tab on" onclick="filterEntryList(\'\');document.getElementById(\'entrySearch\').value=\'\'">Tous</div>';
+  for(var i=0;i<PCATS.length;i++){
+    h+='<div class="tab" onclick="filterEntryList(\''+PCATS[i]+'\')" style="font-size:11px">'+PCATS[i]+'</div>';
+  }
+  h+='</div>';
+  // Product grid
+  h+='<div id="entryGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:14px;max-height:200px;overflow-y:auto">';
+  for(var i=0;i<PRODS.length;i++){
+    var p=PRODS[i];
+    var inList=_stockEntryList.find(function(c){return c.id===p.id;});
+    var bg=inList?"rgba(76,175,80,.2)":"rgba(255,255,255,.04)";
+    var bdr=inList?"rgba(76,175,80,.5)":"rgba(255,255,255,.08)";
+    h+='<div class="entry-item" data-cat="'+p.cat+'" data-name="'+(p.n+" "+p.cat+" "+(p.cb||"")).toLowerCase()+'" onclick="toggleEntryItem('+p.id+')" style="padding:12px 8px;border-radius:10px;background:'+bg+';border:1px solid '+bdr+';cursor:pointer;text-align:center;transition:all .15s">';
+    h+='<div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:3px">'+p.n+'</div>';
+    h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">Stock: '+p.stk+'</div>';
+    if(inList)h+='<div style="font-size:11px;color:#66bb6a;font-weight:800;margin-top:2px">+'+inList.qty+' re\u00e7u(s)</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  // Current entry list
+  if(_stockEntryList.length>0){
+    h+='<div style="border-top:1px solid var(--border2);padding-top:12px;margin-bottom:12px">';
+    h+='<div style="font-size:13px;font-weight:700;color:#66bb6a;margin-bottom:8px">\ud83d\udce6 Produits re\u00e7us ('+_stockEntryList.length+')</div>';
+    for(var j=0;j<_stockEntryList.length;j++){
+      var c=_stockEntryList[j];
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:10px;background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.15);border-radius:10px;margin-bottom:4px">';
+      h+='<div style="flex:1;font-size:14px;font-weight:600">'+c.name+'</div>';
+      h+='<button onclick="_stockEntryList['+j+'].qty=Math.max(1,_stockEntryList['+j+'].qty-1);renderStockEntry()" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border2);background:var(--bg);color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2212</button>';
+      h+='<span style="font-size:18px;font-weight:800;color:#66bb6a;min-width:28px;text-align:center">'+c.qty+'</span>';
+      h+='<button onclick="_stockEntryList['+j+'].qty++;renderStockEntry()" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border2);background:var(--bg);color:#fff;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>';
+      h+='<button onclick="_stockEntryList.splice('+j+',1);renderStockEntry()" style="width:32px;height:32px;border-radius:8px;border:1px solid rgba(244,67,54,.2);background:rgba(244,67,54,.08);color:var(--red);font-size:14px;cursor:pointer">\u2716</button>';
+      h+='</div>';
+    }
+    h+='</div>';
+  }
+  // Buttons
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button class="btn" style="flex:1;padding:14px;font-size:15px;background:rgba(255,255,255,.06);border:1px solid var(--border2)" onclick="cM()">Annuler</button>';
+  if(_stockEntryList.length>0)h+='<button class="btn" style="flex:1;padding:14px;font-size:15px;background:#1b5e20;color:#fff;border:none;font-weight:700" onclick="validateStockEntry()">\u2705 Valider (+'+_stockEntryList.reduce(function(s,c){return s+c.qty;},0)+' produits)</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+  setTimeout(function(){var el=document.getElementById("entrySearch");if(el)el.focus();},100);
+}
+function toggleEntryItem(id){
+  var idx=-1;for(var i=0;i<_stockEntryList.length;i++){if(_stockEntryList[i].id===id){idx=i;break;}}
+  if(idx>=0){_stockEntryList[idx].qty++;}
+  else{var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){p=PRODS[i];break;}}if(p)_stockEntryList.push({id:p.id,name:p.n,qty:1});}
+  renderStockEntry();
+}
+function addEntryByCode(code){
+  code=code.trim();if(!code)return;
+  var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].cb===code){p=PRODS[i];break;}}
+  if(!p){for(var i=0;i<PRODS.length;i++){if(PRODS[i].n.toLowerCase().indexOf(code.toLowerCase())>=0){p=PRODS[i];break;}}}
+  if(p){toggleEntryItem(p.id);}else{toast("Produit non trouv\u00e9 : "+code,"warning");}
+}
+function filterEntryList(q){
+  q=q.toLowerCase();
+  var items=document.querySelectorAll(".entry-item");
+  items.forEach(function(el){
+    var cat=el.getAttribute("data-cat")||"";
+    var name=el.getAttribute("data-name")||"";
+    if(!q)el.style.display="";
+    else el.style.display=(name.indexOf(q)>=0||cat.toLowerCase().indexOf(q)>=0)?"":"none";
+  });
+}
+function validateStockEntry(){
+  if(!_stockEntryList.length)return;
+  var summary=[];
+  for(var i=0;i<_stockEntryList.length;i++){
+    var c=_stockEntryList[i];
+    for(var j=0;j<PRODS.length;j++){
+      if(PRODS[j].id===c.id){
+        PRODS[j].stk+=c.qty;
+        summary.push(c.name+" : +"+c.qty+" (total "+PRODS[j].stk+")");
+        if(typeof saveProduct==="function")saveProduct(PRODS[j]);
+        break;
+      }
+    }
+  }
+  if(typeof auditLog==="function")auditLog("ENTREE_STOCK","R\u00e9ception de "+_stockEntryList.length+" produits");
+  _stockEntryList=[];
+  cM();go("products");
+  toast("Stock mis \u00e0 jour !\n"+summary.join("\n"),"success");
+}
+
 // ===== INVENTORY =====
 var _inventoryData=[];
 var _inventoryCat="all";
@@ -5427,10 +5532,12 @@ function validateInventory(){
   var filled=_inventoryData.filter(function(d){return d.real!==null;});
   if(!filled.length)return;
   var ecarts=[];
+  var allDetails=[];
   var totalEcart=0;
   for(var i=0;i<filled.length;i++){
     var d=filled[i];
     var diff=d.real-d.theoretical;
+    var _pa=0;for(var k=0;k<PRODS.length;k++){if(PRODS[k].id===d.id){_pa=PRODS[k].pa||0;break;}}allDetails.push({name:d.name,cat:d.cat,old:d.theoretical,new_val:d.real,diff:diff,pa:_pa});
     if(diff!==0)ecarts.push({name:d.name,old:d.theoretical,new_val:d.real,diff:diff});
     totalEcart+=diff;
     // Update PRODS
@@ -5453,7 +5560,7 @@ function validateInventory(){
       nb_produits:filled.length,
       nb_ecarts:ecarts.length,
       ecart_total:totalEcart,
-      details:ecarts
+      details:allDetails
     }).then(function(r){
       if(r.error){console.error("[INVENTAIRE] Erreur sauvegarde:",r.error.message);toast("Inventaire valid\u00e9 mais erreur sauvegarde historique: "+r.error.message,"warning");}
       else{console.log("[INVENTAIRE] Sauvegard\u00e9 OK");}
@@ -5506,18 +5613,21 @@ async function showInventoryHistory(){
       if(inv.ecart_total!==0&&inv.ecart_total!==null){
         html+='<div style="font-size:12px;color:var(--text3);margin-bottom:8px">\u00c9cart total: <strong style="color:'+(inv.ecart_total>=0?"#64b5f6":"var(--red)")+'">'+(inv.ecart_total>=0?"+":"")+inv.ecart_total+' unit\u00e9(s)</strong></div>';
       }
-      // Detail of ecarts
+      // Detail of ALL products
       if(details.length>0){
-        html+='<div style="background:rgba(255,255,255,.02);border-radius:8px;padding:8px 10px;margin-bottom:10px">';
-        for(var j=0;j<Math.min(details.length,10);j++){
+        html+='<div style="background:rgba(255,255,255,.02);border-radius:8px;padding:8px 10px;margin-bottom:10px;max-height:300px;overflow-y:auto">';
+        html+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:11px;font-weight:700;color:var(--gold);border-bottom:1px solid var(--border2)">';
+        html+='<span>Produit</span><span>Th\u00e9o. \u2192 R\u00e9el \u2022 \u00c9cart</span></div>';
+        for(var j=0;j<details.length;j++){
           var e=details[j];
-          var diffColor=e.diff>0?"#64b5f6":"var(--red)";
-          html+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid rgba(255,255,255,.04)">';
-          html+='<span style="color:rgba(255,255,255,.7)">'+e.name+'</span>';
-          html+='<span><span style="color:var(--text3)">'+e.old+' \u2192 '+e.new_val+'</span> <strong style="color:'+diffColor+'">'+(e.diff>0?"+":"")+e.diff+'</strong></span>';
+          var diffColor=e.diff===0?"var(--green)":e.diff>0?"#64b5f6":"var(--red)";
+          var diffTxt=e.diff===0?"\u2713":(e.diff>0?"+":"")+e.diff;
+          var rowBg=e.diff!==0?"rgba(255,255,255,.02)":"transparent";
+          html+='<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:12px;border-bottom:1px solid rgba(255,255,255,.03);background:'+rowBg+'">';
+          html+='<span style="color:rgba(255,255,255,.8);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+e.name+'</span>';
+          html+='<span style="flex-shrink:0;margin-left:8px"><span style="color:var(--text3)">'+e.old+' \u2192 '+e.new_val+'</span> <strong style="color:'+diffColor+';min-width:30px;display:inline-block;text-align:right">'+diffTxt+'</strong></span>';
           html+='</div>';
         }
-        if(details.length>10)html+='<div style="font-size:11px;color:var(--text3);padding-top:4px;text-align:center">... et '+(details.length-10)+' autre(s)</div>';
         html+='</div>';
       }
       // Buttons
@@ -5562,23 +5672,39 @@ function exportInventoryPDF(idx){
   if(inv.ecart_total!==0&&inv.ecart_total!==null)html+="<strong>\u00c9cart total :</strong> "+(inv.ecart_total>=0?"+":"")+inv.ecart_total+" unit\u00e9(s)<br>";
   html+="</div>";
   // Results
-  if(inv.nb_ecarts===0){
-    html+="<div style='padding:16px;background:#e8f5e9!important;border-radius:8px;text-align:center;font-weight:700;color:#2e7d32!important;font-size:15px'>\u2705 Inventaire conforme \u2014 aucun \u00e9cart</div>";
-  }else{
-    html+="<h2>D\u00c9TAIL DES \u00c9CARTS</h2>";
-    html+="<table><tr><th>Produit</th><th>Stock th\u00e9orique</th><th>Stock r\u00e9el</th><th>\u00c9cart</th></tr>";
-    for(var i=0;i<details.length;i++){
-      var e=details[i];
-      var cls=e.diff===0?"ok":e.diff>0?"pos":"neg";
-      html+="<tr><td>"+e.name+"</td><td style='text-align:center'>"+e.old+"</td><td style='text-align:center'>"+e.new_val+"</td><td style='text-align:center' class='"+cls+"'><strong>"+(e.diff>0?"+":"")+e.diff+"</strong></td></tr>";
-    }
-    html+="</table>";
+  // Inventory number
+  html+="<div style='font-size:12px;color:#666;margin-bottom:12px'>R\u00e9f\u00e9rence : INV-"+d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")+"-"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0")+"</div>";
+  html+="<h2>D\u00c9TAIL COMPLET DE L\u2019INVENTAIRE</h2>";
+  html+="<table><tr><th>Produit</th><th>Cat\u00e9gorie</th><th>P.A. HT</th><th>Th\u00e9o.</th><th>R\u00e9el</th><th>\u00c9cart</th><th>Valeur stock HT</th></tr>";
+  var totalValeur=0;var totalValeurTheo=0;
+  for(var i=0;i<details.length;i++){
+    var e=details[i];
+    var cls=e.diff===0?"ok":e.diff>0?"pos":"neg";
+    var diffTxt=e.diff===0?"\u2713":(e.diff>0?"+":"")+e.diff;
+    var pa=e.pa||0;
+    var valeur=pa*e.new_val;
+    totalValeur+=valeur;
+    totalValeurTheo+=pa*e.old;
+    html+="<tr><td>"+e.name+"</td><td style='font-size:10px;color:#666'>"+(e.cat||"")+"</td><td style='text-align:right'>"+pa.toFixed(2)+" \u20ac</td><td style='text-align:center'>"+e.old+"</td><td style='text-align:center'>"+e.new_val+"</td><td style='text-align:center' class='"+cls+"'><strong>"+diffTxt+"</strong></td><td style='text-align:right;font-weight:600'>"+valeur.toFixed(2)+" \u20ac</td></tr>";
   }
+  html+="<tr style='border-top:2px solid #000;font-weight:900'><td colspan='6' style='text-align:right;padding:8px'>TOTAL VALORISATION STOCK HT</td><td style='text-align:right;font-size:14px'>"+totalValeur.toFixed(2)+" \u20ac</td></tr>";
+  if(totalValeurTheo!==totalValeur){
+    var ecartVal=totalValeur-totalValeurTheo;
+    html+="<tr><td colspan='6' style='text-align:right;padding:4px 8px;font-size:11px;color:#666'>\u00c9cart de valorisation</td><td style='text-align:right;font-size:12px;color:"+(ecartVal>=0?"#1565c0":"#c62828")+"'>"+(ecartVal>=0?"+":"")+ecartVal.toFixed(2)+" \u20ac</td></tr>";
+  }
+  html+="</table>";
+  if(inv.nb_ecarts===0){
+    html+="<div style='padding:12px;background:#e8f5e9!important;border-radius:8px;text-align:center;font-weight:700;color:#2e7d32!important;margin-top:10px'>\u2705 Inventaire conforme \u2014 aucun \u00e9cart</div>";
+  }
+  // TVA note
+  html+="<div style='font-size:10px;color:#999;margin-top:12px'>Valorisation en prix d\u2019achat HT. TVA applicable : "+SALON_CONFIG.tauxTVA+"%</div>";
   // Signature area
-  html+="<div style='margin-top:40px;display:flex;justify-content:space-between'>";
-  html+="<div style='border-top:1px solid #000;width:200px;padding-top:4px;font-size:11px'>Signature responsable</div>";
-  html+="<div style='border-top:1px solid #000;width:200px;padding-top:4px;font-size:11px;text-align:right'>Date : "+new Date().toLocaleDateString("fr-FR")+"</div>";
+  html+="<div style='margin-top:30px;display:flex;justify-content:space-between'>";
+  html+="<div><div style='border-top:1px solid #000;width:200px;padding-top:4px;font-size:11px'>Signature responsable</div></div>";
+  html+="<div style='text-align:right'><div style='border-top:1px solid #000;width:200px;padding-top:4px;font-size:11px'>Date : "+new Date().toLocaleDateString("fr-FR")+"</div></div>";
   html+="</div>";
+  html+="<div style='margin-top:20px;font-size:9px;color:#bbb;text-align:center;border-top:1px solid #eee;padding-top:8px'>";
+  html+=SALON_CONFIG.nom+" \u2022 SIRET "+(SALON_CONFIG.siret||"Non renseign\u00e9")+" \u2022 "+SALON_CONFIG.adresseComplete()+"<br>Document g\u00e9n\u00e9r\u00e9 par Luxyra le "+new Date().toLocaleDateString("fr-FR")+" \u00e0 "+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+"</div>";
   // Print button
   html+="<div class='no-print'><button onclick='window.print()' style='padding:14px 32px;font-size:14px;font-weight:700;background:#c8a84e;color:#000;border:none;border-radius:10px;cursor:pointer'>Imprimer / Enregistrer PDF</button>";
   html+="<p style='font-size:11px;color:#999;margin-top:8px'>Choisissez \u00ab Enregistrer au format PDF \u00bb dans la fen\u00eatre d'impression</p></div>";
