@@ -22,8 +22,8 @@ if(navigator.serviceWorker){navigator.serviceWorker.getRegistrations().then(func
 :root{
 --gold:#c8a84e;--gold-light:#d4b95e;--gold-bg:rgba(200,168,78,.1);--gold-bg2:rgba(200,168,78,.18);
 --bg:rgba(255,255,255,.04);--white:#fff;--text:#fff;--text2:rgba(255,255,255,.75);--text3:rgba(255,255,255,.5);--border:rgba(255,255,255,.1);--border2:rgba(255,255,255,.06);
---green:#2d9a5e;--green-bg:#e6f7ee;--orange:#d48a1a;--orange-bg:#fdf2e4;--red:#c43838;--red-bg:#fde8e8;
---blue:#4a85b5;--blue-bg:#e8f1fa;--purple:#8050a8;--purple-bg:#f3ecfa;--pink:#e91e63;--pink-bg:#fce4ee;
+--green:#2d9a5e;--green-bg:rgba(45,154,94,.15);--orange:#d48a1a;--orange-bg:rgba(212,138,26,.15);--red:#c43838;--red-bg:rgba(196,56,56,.15);
+--blue:#4a85b5;--blue-bg:rgba(74,133,181,.15);--purple:#8050a8;--purple-bg:rgba(128,80,168,.15);--pink:#e91e63;--pink-bg:rgba(233,30,99,.15);
 --accent:var(--gold);--accent2:#d4b95e;--accent-bg:var(--gold-bg);
 --f1:'Playfair Display',serif;--f2:'Nunito',sans-serif;
 --sh:0 2px 8px rgba(0,0,0,.06);--sh2:0 4px 16px rgba(0,0,0,.1);--r:14px;
@@ -346,6 +346,35 @@ console.log("LUXYRA v6.3");
 })();
 
 
+// ===== CUSTOM CONFIRM MODAL =====
+window._confirmCb=null;
+window.confirm=function(msg){
+  // For inline confirms in onclick, we need sync behavior
+  // Store callback and show modal
+  return _syncConfirm(msg);
+};
+var _syncConfirmResult=null;
+function _syncConfirm(msg){
+  // Can't truly make async confirm sync, so we use a different approach
+  // Replace with showConfirm for async flow
+  return _origConfirm(msg);
+}
+var _origConfirm=window.confirm;
+// Async confirm for proper usage
+function showConfirm(msg,onYes,onNo){
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px" onclick="cM()">';
+  h+='<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid rgba(255,255,255,.1);border-radius:16px;padding:28px;max-width:380px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">';
+  h+='<div style="font-size:36px;margin-bottom:12px">\u26a0\ufe0f</div>';
+  h+='<div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:8px;line-height:1.4">'+msg.replace(/\n/g,"<br>")+'</div>';
+  h+='<div style="display:flex;gap:10px;margin-top:20px">';
+  h+='<button class="btn btn-ghost btn-lg" style="flex:1" onclick="cM();if(window._confirmNo)window._confirmNo()">Annuler</button>';
+  h+='<button class="btn btn-danger btn-lg" style="flex:1" onclick="cM();if(window._confirmYes)window._confirmYes()">Confirmer</button>';
+  h+='</div></div></div>';
+  window._confirmYes=onYes||null;
+  window._confirmNo=onNo||null;
+  document.getElementById("modal").innerHTML=h;
+}
+
 // ===== BARCODE SCANNER (CAMERA) =====
 var _scannerActive=false;
 function openBarcodeScanner(callback){
@@ -636,7 +665,7 @@ function doEditFournisseur(fId){
   showFournisseurManagement();
 }
 function doDeleteFournisseur(fId){
-  if(!confirm("Supprimer ce fournisseur ?"))return;
+  showConfirm("Supprimer ce fournisseur ?",function(){
   var fList=window.FOURNISSEURS||[];
   window.FOURNISSEURS=fList.filter(function(f){return f.id!==fId;});
   // Unlink products
@@ -644,6 +673,7 @@ function doDeleteFournisseur(fId){
   if(typeof deleteFournisseur==="function")deleteFournisseur(fId);
   toast("Fournisseur supprim\u00e9","success");
   showFournisseurManagement();
+  });
 }
 
 // ===== PAO / PEREMPTION ALERTS =====
@@ -1635,17 +1665,17 @@ function doConfirmCloture(){
   h+='<div style="text-align:center;font-size:10px;color:var(--text3);padding:8px 0">Hash: '+c.hash+'</div>';
   h+='</div>';
   // Mise au coffre confirmation
-  h+='<div style="background:var(--green-bg);padding:12px;border-radius:10px;margin-top:12px;font-size:13px;text-align:center">';
-  h+='<strong>\u2705 Mise au coffre effectu\u00e9e</strong><br>';
+  h+='<div style="background:rgba(45,154,94,.15);border:1px solid rgba(45,154,94,.3);padding:12px;border-radius:10px;margin-top:12px;font-size:13px;text-align:center;color:#fff">';
+  h+='<strong style="color:#66bb6a">\u2705 Mise au coffre effectu\u00e9e</strong><br>';
   if(espCoffre>0)h+='Esp\u00e8ces: '+espCoffre.toFixed(2)+' \u20ac<br>';
   if(chqCoffre>0)h+='Ch\u00e8ques: '+chqCoffre.toFixed(2)+' \u20ac';
   if(espCoffre===0&&chqCoffre===0)h+='Aucun esp\u00e8ces/ch\u00e8ques';
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-top:12px">';
-  h+='<button class="btn" style="flex:1;background:var(--bg)" onclick="printClotureZ()">\ud83d\udda8 Imprimer</button>';
-  h+='<button class="btn" style="flex:1;background:var(--blue-bg);color:var(--blue)" onclick="emailClotureZ()">\u2709 Email</button>';
+  h+='<button class="btn btn-ghost" style="flex:1" onclick="printClotureZ()">\ud83d\udda8 Imprimer</button>';
+  h+='<button class="btn btn-outline-blue" style="flex:1" onclick="emailClotureZ()">\u2709 Email</button>';
   h+='</div>';
-  h+='<button class="btn bg bk" style="width:100%;margin-top:8px;padding:14px;font-size:15px" onclick="cM();go(\'home\')">Fermer</button>';
+  h+='<button class="btn btn-gold btn-lg" style="width:100%;margin-top:8px" onclick="cM();go(\'home\')">Fermer</button>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
 }
@@ -4132,7 +4162,7 @@ function rSettings(){
         }
       }
       h+='<button class="btn bs" style="margin-top:8px;font-size:12px" onclick="addAbsence('+st2.id+')">+ Cong\u00e9 / Absence / Pause</button>';
-      if(T.length>1)h+='<button class="btn bs" style="margin-top:8px;font-size:12px;color:var(--red);margin-left:8px" onclick="if(confirm(\'Supprimer ce collaborateur ?\')){{var delId=T['+ti+'].id;T.splice('+ti+',1);deleteCollabFromDB(delId);go(\'settings\')}}">Supprimer</button>';
+      if(T.length>1)h+='<button class="btn bs" style="margin-top:8px;font-size:12px;color:var(--red);margin-left:8px" onclick="showConfirm(\'Supprimer ce collaborateur ?\',function(){var delId=T['+ti+'].id;T.splice('+ti+',1);deleteCollabFromDB(delId);go(\'settings\')})">Supprimer</button>';
       h+='</div>';
     }
     h+='<button class="btn bg" style="width:100%;padding:14px;margin-top:10px" onclick="addCollab()">+ Ajouter collaborateur</button>';
@@ -4441,7 +4471,7 @@ function rSettings(){
     h+='</div>';
     
     var fidU=fidType==="pourcentage"?"%":" \u20ac";
-    h+='<div style="margin-top:14px;padding:16px;background:var(--green-bg);border-radius:12px;text-align:center;font-size:15px">Apr\u00e8s <strong>'+fidSeuil+' passages</strong>, le client obtient <strong>'+fidVal+fidU+' de remise</strong></div>';
+    h+='<div style="margin-top:14px;padding:16px;background:rgba(45,154,94,.12);border:1px solid rgba(45,154,94,.25);border-radius:12px;text-align:center;font-size:15px;color:#fff">Apr\u00e8s <strong>'+fidSeuil+' passages</strong>, le client obtient <strong>'+fidVal+fidU+' de remise</strong></div>';
     h+='</div>';
   }
   
@@ -4539,7 +4569,7 @@ function rSettings(){
     h+='</div>';
     h+='<div class="card" style="margin-top:14px;border-left:4px solid var(--green)"><div class="ct">\ud83d\udcc4 Attestation de conformit\u00e9</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">G\u00e9n\u00e8re l\u0027attestation officielle de conformit\u00e9 NF525 \u00e0 remettre au client du salon. Ce document atteste que Luxyra respecte les 4 conditions l\u00e9gales.</div>';
-    h+='<button class="btn" style="width:100%;padding:12px;background:var(--green-bg);color:var(--green);font-weight:700;font-size:14px" onclick="genererAttestation()">\ud83d\udcc4 G\u00e9n\u00e9rer attestation PDF</button>';
+    h+='<button class="btn btn-outline-green" style="width:100%;padding:12px;font-size:14px" onclick="genererAttestation()">\ud83d\udcc4 G\u00e9n\u00e9rer attestation PDF</button>';
     h+='</div>';
   }
   else if(settTab==="caisse"){
@@ -4977,15 +5007,16 @@ function validatePackSeance(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
   if(!pk){alert("Pack introuvable");return;}
   if(pk.used>=pk.total){alert("Ce pack est termin\u00e9 ("+pk.total+"/"+pk.total+" s\u00e9ances utilis\u00e9es)");return;}
-  if(!confirm("Valider 1 s\u00e9ance du pack \""+pk.nom+"\" ?\n\nS\u00e9ance "+(pk.used+1)+" / "+pk.total))return;
-  if(typeof usePackSeance==="function"){
-    usePackSeance(packId);
-  } else {
-    pk.used=(pk.used||0)+1;
-    if(pk.used>=pk.total)pk.status="completed";
-  }
-  auditLog("PACK_SEANCE","S\u00e9ance "+pk.used+"/"+pk.total+" - "+pk.nom+" ("+pk.clientNom+")");
-  go("detail");
+  showConfirm("Valider 1 s\u00e9ance du pack \""+pk.nom+"\" ?\nS\u00e9ance "+(pk.used+1)+" / "+pk.total,function(){
+    if(typeof usePackSeance==="function"){
+      usePackSeance(packId);
+    } else {
+      pk.used=(pk.used||0)+1;
+      if(pk.used>=pk.total)pk.status="completed";
+    }
+    auditLog("PACK_SEANCE","S\u00e9ance "+pk.used+"/"+pk.total+" - "+pk.nom+" ("+pk.clientNom+")");
+    go("detail");
+  });
 }
 
 function saveForfaitsToSupabase(){
@@ -5052,7 +5083,7 @@ function rForfaits(){
   if(window._forfCat!=="all"){
     var fInCat=SVC.filter(function(s){return s.phases&&s.phases.length>1&&s.cat===window._forfCat;});
     if(fInCat.length===0){
-      h+='<button class="btn bs" style="font-size:12px;padding:6px 10px;color:var(--red)" onclick="if(confirm(\'Supprimer la famille '+window._forfCat.replace(/'/g,"\\'")+' ?\')){CATS=CATS.filter(function(c){return c!==window._forfCat;});window._forfCat=\'all\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'services\');}">\ud83d\uddd1 Supprimer \u00ab'+window._forfCat+'\u00bb</button>';
+      h+='<button class="btn btn-danger btn-sm" onclick="showConfirm(\'Supprimer la famille '+window._forfCat.replace(/'/g,"\\'")+' ?\',function(){CATS=CATS.filter(function(c){return c!==window._forfCat;});window._forfCat=\'all\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'services\');})">\ud83d\uddd1 Supprimer \u00ab'+window._forfCat+'\u00bb</button>';
     }
   }
   h+='</div>';
@@ -5156,9 +5187,9 @@ function rServices(){
   var h='';
   // Main tabs: Services vs Forfaits
   if(!window._svcTab)window._svcTab="services";
-  h+='<div style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border2)">';
-  h+='<button onclick="window._svcTab=\'services\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:transparent;color:'+(window._svcTab==="services"?"var(--gold)":"var(--text3)")+';border-bottom:2px solid '+(window._svcTab==="services"?"var(--gold)":"transparent")+'">\u2702\ufe0f Services</button>';
-  h+='<button onclick="window._svcTab=\'forfaits\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:transparent;color:'+(window._svcTab==="forfaits"?"var(--gold)":"var(--text3)")+';border-bottom:2px solid '+(window._svcTab==="forfaits"?"var(--gold)":"transparent")+'">\ud83d\udce6 Forfaits</button>';
+  h+='<div style="display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid var(--border2);background:rgba(10,10,14,.95);border-radius:10px 10px 0 0;padding:4px 4px 0">';
+  h+='<button onclick="window._svcTab=\'services\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:'+(window._svcTab==="services"?"rgba(200,168,78,.15)":"transparent")+';color:'+(window._svcTab==="services"?"var(--gold)":"rgba(255,255,255,.5)")+';border-bottom:2px solid '+(window._svcTab==="services"?"var(--gold)":"transparent")+'">\u2702\ufe0f Services</button>';
+  h+='<button onclick="window._svcTab=\'forfaits\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:'+(window._svcTab==="forfaits"?"rgba(200,168,78,.15)":"transparent")+';color:'+(window._svcTab==="forfaits"?"var(--gold)":"rgba(255,255,255,.5)")+';border-bottom:2px solid '+(window._svcTab==="forfaits"?"var(--gold)":"transparent")+'">\ud83d\udce6 Forfaits</button>';
   h+='</div>';
   if(window._svcTab==="forfaits") return h+rForfaits();
   // Familles (catégories)
@@ -6166,9 +6197,9 @@ function editProd(id){
   htm+='<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="epCC" '+(p.cc?'checked':'')+'>Disponible en Click \& Collect</label></div>';
   // Marge info
   var _epVHT=p.p/(1+SALON_CONFIG.tauxTVA/100);var _epM=_epVHT-p.pa;
-  htm+='<div style="margin-top:10px;padding:10px;background:var(--green-bg);border-radius:8px;text-align:center;font-size:13px">';
-  htm+='Prix vente HT: <strong>'+_epVHT.toFixed(2)+' \u20ac</strong> \u2022 Achat HT: <strong>'+p.pa.toFixed(2)+' \u20ac</strong><br>';
-  htm+='Marge: <strong style="color:'+(_epM>0?"var(--green)":"var(--red)")+'">'+_epM.toFixed(2)+' \u20ac</strong> ('+(p.pa>0?Math.round(_epM/p.pa*100):0)+'%)</div>';
+  htm+='<div style="margin-top:10px;padding:12px;background:rgba(45,154,94,.12);border:1px solid rgba(45,154,94,.3);border-radius:10px;text-align:center;font-size:13px;color:#fff">';
+  htm+='<span style="color:rgba(255,255,255,.7)">Vente HT:</span> <strong style="color:#fff">'+_epVHT.toFixed(2)+' \u20ac</strong> \u2022 <span style="color:rgba(255,255,255,.7)">Achat HT:</span> <strong style="color:#fff">'+p.pa.toFixed(2)+' \u20ac</strong><br>';
+  htm+='<span style="color:rgba(255,255,255,.7)">Marge:</span> <strong style="font-size:16px;color:'+(_epM>0?"#66bb6a":"#ef5350")+'">'+_epM.toFixed(2)+' \u20ac</strong> <span style="color:rgba(255,255,255,.5)">('+(p.pa>0?Math.round(_epM/p.pa*100):0)+'%)</span></div>';
   // Movement history button
   htm+='<button class="btn btn-outline-blue btn-sm" style="width:100%;margin-top:14px" onclick="showProdHistory('+p.id+')">\ud83d\udcca Historique des mouvements</button>';
   htm+='<div style="display:flex;gap:8px;margin-top:8px">';
@@ -6201,9 +6232,12 @@ function doEditProd(id){
 }
 
 function deleteProd(id){
-  if(!confirm("Supprimer ce produit ?"))return;
-  PRODS=PRODS.filter(function(p){return p.id!==id;});
-  cM();go("products");
+  showConfirm("Supprimer ce produit ?",function(){
+    PRODS=PRODS.filter(function(p){return p.id!==id;});
+    if(typeof deleteProduct==="function")deleteProduct(id);
+    cM();go("products");
+    toast("Produit supprim\u00e9","success");
+  });
 }
 
 function addProd(){
@@ -6388,8 +6422,7 @@ function exportGiftRegister(){
 }
 
 function purgeAllGifts(){
-  if(!confirm("Supprimer TOUS les bons cadeaux ?\nCette action est d\u00e9finitive !"))return;
-  if(!confirm("Deuxi\u00e8me confirmation : TOUT effacer ?"))return;
+  showConfirm("Supprimer TOUS les bons cadeaux ?\nCette action est d\u00e9finitive !",function(){
   
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     console.log("[GC PURGE] Suppression de tous les bons pour salon:",_salonId);
@@ -6422,6 +6455,7 @@ function purgeAllGifts(){
     console.warn("[GC PURGE] Pas de connexion Supabase — suppression locale uniquement");
     GC.length=0;go("gifts");
   }
+  });
 }
 
 
@@ -8821,6 +8855,35 @@ function usePackInTicket(packId){
   showCaisse();
 }
 
+// ===== CUSTOM CONFIRM MODAL =====
+window._confirmCb=null;
+window.confirm=function(msg){
+  // For inline confirms in onclick, we need sync behavior
+  // Store callback and show modal
+  return _syncConfirm(msg);
+};
+var _syncConfirmResult=null;
+function _syncConfirm(msg){
+  // Can't truly make async confirm sync, so we use a different approach
+  // Replace with showConfirm for async flow
+  return _origConfirm(msg);
+}
+var _origConfirm=window.confirm;
+// Async confirm for proper usage
+function showConfirm(msg,onYes,onNo){
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px" onclick="cM()">';
+  h+='<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid rgba(255,255,255,.1);border-radius:16px;padding:28px;max-width:380px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">';
+  h+='<div style="font-size:36px;margin-bottom:12px">\u26a0\ufe0f</div>';
+  h+='<div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:8px;line-height:1.4">'+msg.replace(/\n/g,"<br>")+'</div>';
+  h+='<div style="display:flex;gap:10px;margin-top:20px">';
+  h+='<button class="btn btn-ghost btn-lg" style="flex:1" onclick="cM();if(window._confirmNo)window._confirmNo()">Annuler</button>';
+  h+='<button class="btn btn-danger btn-lg" style="flex:1" onclick="cM();if(window._confirmYes)window._confirmYes()">Confirmer</button>';
+  h+='</div></div></div>';
+  window._confirmYes=onYes||null;
+  window._confirmNo=onNo||null;
+  document.getElementById("modal").innerHTML=h;
+}
+
 // ===== BARCODE SCANNER LISTENER =====
 (function(){
   var _scanBuf="";var _scanTimer=null;
@@ -9945,7 +10008,7 @@ function rTickets(){
   h+='<div class="fg" style="flex:1;min-width:120px"><label>Date de d\u00e9but</label><input type="date" value="'+tkDateFrom+'" onchange="tkDateFrom=this.value"></div>';
   h+='<div class="fg" style="flex:1;min-width:120px"><label>Date de fin</label><input type="date" value="'+tkDateTo+'" onchange="tkDateTo=this.value"></div>';
   h+='<button class="btn bg" style="padding:12px 20px" onclick="go(\'tickets\')">\ud83d\udd0d</button>';
-  h+='<button class="btn" style="padding:12px 16px;background:var(--green-bg);color:var(--green);font-weight:700" onclick="exportTicketsCSV()">Excel</button>';
+  h+='<button class="btn btn-outline-green" style="padding:12px 16px" onclick="exportTicketsCSV()">Excel</button>';
   h+='</div>';
   h+='<div class="fg" style="margin-bottom:0"><label>Mode de paiement</label><select onchange="tkPayFilter=this.value;go(\'tickets\')">';
   h+='<option value="all">Tous</option>';
@@ -10516,7 +10579,7 @@ function rCaisseGestion(){
     h+='<div style="text-align:center;font-size:32px;font-weight:800;font-family:var(--f1);color:var(--gold);margin:14px 0">'+espTot.toFixed(2)+' \u20ac</div>';
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;margin-bottom:12px">';
     h+='<div style="padding:8px;background:var(--bg);border-radius:8px;text-align:center"><div style="color:var(--text3)">Fond</div><strong>'+CD.fond.toFixed(2)+' \u20ac</strong></div>';
-    h+='<div style="padding:8px;background:var(--green-bg);border-radius:8px;text-align:center"><div style="color:var(--text3)">Encaiss\u00e9</div><strong style="color:var(--green)">+'+espEnc.toFixed(2)+' \u20ac</strong></div>';
+    h+='<div style="padding:8px;background:rgba(45,154,94,.12);border:1px solid rgba(45,154,94,.25);border-radius:8px;text-align:center"><div style="color:rgba(255,255,255,.6)">Encaiss\u00e9</div><strong style="color:#66bb6a">+'+espEnc.toFixed(2)+' \u20ac</strong></div>';
     h+='<div style="padding:8px;background:var(--orange-bg);border-radius:8px;text-align:center"><div style="color:var(--text3)">Au coffre</div><strong style="color:var(--orange)">-'+espCof.toFixed(2)+' \u20ac</strong></div>';
     h+='<div style="padding:8px;border:1px solid var(--border2);border-radius:8px;text-align:center"><div style="color:var(--text3)">Sorties/Entr\u00e9es</div><strong>'+(mvAjouts-mvRetraits>=0?"+":"")+(mvAjouts-mvRetraits).toFixed(2)+' \u20ac</strong></div>';
     h+='</div>';
@@ -10528,7 +10591,7 @@ function rCaisseGestion(){
     h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Chaque mouvement g\u00e9n\u00e8re une pi\u00e8ce de caisse num\u00e9rot\u00e9e (NF525)</div>';
     h+='<div style="display:flex;gap:8px;margin-bottom:10px">';
     h+='<button class="btn" style="flex:1;font-size:13px;padding:12px;background:var(--red-bg);color:var(--red);font-weight:700" onclick="newMouvement(\'sortie\')">\u2796 Sortie</button>';
-    h+='<button class="btn" style="flex:1;font-size:13px;padding:12px;background:var(--green-bg);color:var(--green);font-weight:700" onclick="newMouvement(\'entree\')">\u2795 Entr\u00e9e</button>';
+    h+='<button class="btn btn-outline-green" style="flex:1;font-size:13px;padding:12px" onclick="newMouvement(\'entree\')">\u2795 Entr\u00e9e</button>';
     h+='</div>';
     var mvToday=CD.mouvements.filter(function(m){return m.date===TD;});
     if(!mvToday.length)h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucun mouvement aujourd\u0027hui</div>';
@@ -11103,23 +11166,24 @@ function testEmail(){
 async function buySMSPack(qty){
   var prices={100:"7,99",250:"18,99",500:"35,99"};
   var priceDisplay=prices[qty]||"?";
-  if(!confirm("Acheter "+qty+" SMS pour "+priceDisplay+"\u20ac ?"))return;
-  try{
-    var res=await fetch("/api/stripe/create-checkout",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        salon_id:window._salonId||"",
-        email:SALON_CONFIG.email||"",
-        plan:"sms_"+qty
-      })
-    });
-    var data=await res.json();
-    if(data.url){window.open(data.url,"_blank");}
-    else{alert("\u274c Erreur: "+(data.error||"Impossible de cr\u00e9er la session de paiement"));}
-  }catch(e){
-    alert("\u274c Erreur de connexion: "+e.message);
-  }
+  showConfirm("Acheter "+qty+" SMS pour "+priceDisplay+"\u20ac ?",async function(){
+    try{
+      var res=await fetch("/api/stripe/create-checkout",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          salon_id:window._salonId||"",
+          email:SALON_CONFIG.email||"",
+          plan:"sms_"+qty
+        })
+      });
+      var data=await res.json();
+      if(data.url){window.open(data.url,"_blank");}
+      else{toast("\u274c Erreur: "+(data.error||"Impossible de cr\u00e9er la session de paiement"),"error");}
+    }catch(e){
+      toast("\u274c Erreur de connexion: "+e.message,"error");
+    }
+  });
 }
 
 function openCampaignV2(type){
