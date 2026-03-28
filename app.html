@@ -7462,6 +7462,104 @@ function rStats(){
   h+="</select></div>";
   h+="<div id=\"afflContent\"></div></div>";
   
+  // ===== 9. STATISTIQUES PRODUITS =====
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;color:var(--gold)">\ud83d\udce6 Statistiques Produits</div>';
+  
+  // Calculate product stats from done appointments
+  var prodSales={};var totalProdCA=0;var totalServCA=0;
+  dn.forEach(function(a){
+    if(a.items){a.items.forEach(function(it){
+      if(it.isProd){
+        var rev=it.price*it.qty-(it.remise||0);
+        totalProdCA+=rev;
+        var key=it.name||"Produit";
+        if(!prodSales[key])prodSales[key]={name:key,qty:0,ca:0,prodId:it.prodId};
+        prodSales[key].qty+=it.qty;
+        prodSales[key].ca+=rev;
+      }else if(!it.isSep){
+        totalServCA+=it.price*it.qty-(it.remise||0);
+      }
+    });}else{totalServCA+=a.pr;}
+  });
+  var prodList=Object.values(prodSales).sort(function(a,b){return b.ca-a.ca;});
+  
+  // 9a. CA Produits vs Services
+  var totalCA2=totalProdCA+totalServCA;
+  var pctProd=totalCA2>0?Math.round(totalProdCA/totalCA2*100):0;
+  var pctServ=totalCA2>0?100-pctProd:0;
+  h+='<div style="margin-bottom:16px">';
+  h+='<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:6px"><span>Prestations '+pctServ+'%</span><span>Produits '+pctProd+'%</span></div>';
+  h+='<div style="height:16px;background:rgba(255,255,255,.08);border-radius:8px;overflow:hidden;display:flex">';
+  if(pctServ>0)h+='<div style="width:'+pctServ+'%;background:var(--gold);border-radius:8px 0 0 8px"></div>';
+  if(pctProd>0)h+='<div style="width:'+pctProd+'%;background:#64b5f6;border-radius:0 8px 8px 0"></div>';
+  h+='</div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-top:4px"><span>'+totalServCA.toFixed(2)+' \u20ac TTC</span><span>'+totalProdCA.toFixed(2)+' \u20ac TTC</span></div>';
+  h+='</div>';
+  
+  // 9b. Top 10 produits vendus
+  h+='<div style="font-weight:700;font-size:12px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Top produits vendus</div>';
+  if(!prodList.length)h+='<div style="color:var(--text3);font-size:13px;padding:12px 0">Aucune vente de produit sur cette p\u00e9riode</div>';
+  var maxCA=prodList.length?prodList[0].ca:1;
+  for(var pi3=0;pi3<Math.min(prodList.length,10);pi3++){
+    var ps2=prodList[pi3];
+    var barW=maxCA>0?Math.max(5,Math.round(ps2.ca/maxCA*100)):5;
+    h+='<div style="margin-bottom:6px">';
+    h+='<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="color:#fff;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(pi3+1)+'. '+ps2.name+'</span><span style="flex-shrink:0;color:var(--gold);font-weight:800;margin-left:8px">'+ps2.ca.toFixed(2)+' \u20ac</span></div>';
+    h+='<div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:8px;background:rgba(255,255,255,.06);border-radius:4px"><div style="height:100%;width:'+barW+'%;background:#64b5f6;border-radius:4px"></div></div><span style="font-size:11px;color:var(--text3);flex-shrink:0">'+ps2.qty+' vendu(s)</span></div>';
+    h+='</div>';
+  }
+  
+  // 9c. Valeur du stock
+  var stockValHT=0;var stockValTTC=0;
+  PRODS.forEach(function(p){stockValHT+=(p.pa||0)*p.stk;stockValTTC+=p.p*p.stk;});
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">';
+  h+='<div style="background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);border-radius:10px;padding:12px;text-align:center">';
+  h+='<div style="font-size:10px;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock HT</div>';
+  h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValHT.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--text3)">'+PRODS.length+' r\u00e9f\u00e9rences</div></div>';
+  h+='<div style="background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:10px;padding:12px;text-align:center">';
+  h+='<div style="font-size:10px;color:#64b5f6;font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock TTC</div>';
+  h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValTTC.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--text3)">Marge potentielle: '+(stockValTTC-stockValHT).toFixed(0)+' \u20ac</div></div>';
+  h+='</div>';
+  
+  // 9d. Marge par catégorie
+  h+='<div style="font-weight:700;font-size:12px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:.5px">Marges par cat\u00e9gorie</div>';
+  var catMarges={};
+  PRODS.forEach(function(p){
+    if(!catMarges[p.cat])catMarges[p.cat]={cat:p.cat,valHT:0,valTTC:0,count:0};
+    catMarges[p.cat].valHT+=(p.pa||0)*p.stk;
+    catMarges[p.cat].valTTC+=p.p*p.stk;
+    catMarges[p.cat].count++;
+  });
+  var catList=Object.values(catMarges).sort(function(a,b){return (b.valTTC-b.valHT)-(a.valTTC-a.valHT);});
+  if(!catList.length)h+='<div style="color:var(--text3);font-size:13px">Aucune donn\u00e9e</div>';
+  for(var ci3=0;ci3<catList.length;ci3++){
+    var cm=catList[ci3];
+    var margeCat=cm.valTTC-cm.valHT;
+    var margePct=cm.valHT>0?Math.round(margeCat/cm.valHT*100):0;
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px">';
+    h+='<div style="flex:1"><span style="font-weight:700;color:#fff">'+cm.cat+'</span> <span style="font-size:11px;color:var(--text3)">('+cm.count+' produits)</span></div>';
+    h+='<div style="flex-shrink:0;text-align:right"><span style="color:var(--gold);font-weight:800">'+margeCat.toFixed(0)+' \u20ac</span> <span style="font-size:11px;color:'+(margePct>=50?"var(--green)":"var(--orange)")+'">'+margePct+'%</span></div>';
+    h+='</div>';
+  }
+  
+  // 9e. Stock dormant (no sales in period)
+  var soldIds={};prodList.forEach(function(ps2){if(ps2.prodId)soldIds[ps2.prodId]=true;});
+  var dormant=PRODS.filter(function(p){return p.forSale!==false&&p.stk>0&&!soldIds[p.id];});
+  if(dormant.length>0){
+    h+='<div style="font-weight:700;font-size:12px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:.5px;color:var(--orange)">\u26a0 Stock dormant (aucune vente sur la p\u00e9riode)</div>';
+    for(var di=0;di<Math.min(dormant.length,10);di++){
+      var dp=dormant[di];
+      h+='<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border2)">';
+      h+='<span style="color:rgba(255,255,255,.6)">'+dp.n+' ('+dp.cat+')</span>';
+      h+='<span style="color:var(--orange)">'+dp.stk+' en stock \u2022 '+(dp.p*dp.stk).toFixed(0)+' \u20ac immobilis\u00e9s</span>';
+      h+='</div>';
+    }
+    if(dormant.length>10)h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">... et '+(dormant.length-10)+' autre(s)</div>';
+  }
+  h+='</div>';
+  
   return h;
 }
 
