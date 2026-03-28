@@ -564,6 +564,18 @@ async function saveAppointment(appt) {
   if(r&&r.error){delete data.clients;delete data.from_caisse;delete data.client_email;delete data.collab_name;if(appt.id&&appt.id.indexOf("-")>0&&appt.id.length>30){await _sb.from("appointments").update(data).eq("id",appt.id);}else{var r2=await _sb.from("appointments").insert(data).select();if(r2.data&&r2.data[0])appt.id=r2.data[0].id;}}
 }
 
+// Supprimer un RDV non-encaissé de la base
+async function deleteAppointmentFromDb(apptId) {
+  if (!_isOnline || !_salonId || !apptId) return;
+  try {
+    if (apptId.indexOf("-") > 0 && apptId.length > 30) {
+      var r = await _sb.from("appointments").delete().eq("id", apptId).eq("salon_id", _salonId);
+      if (r.error) console.error("[DEL APPT] Erreur:", r.error.message);
+      else console.log("[DEL APPT] OK", apptId);
+    }
+  } catch(e) { console.error("[DEL APPT] Exception:", e.message); }
+}
+
 // Sauvegarder un produit
 async function saveProduct(prod) {
   if (!_isOnline || !_salonId) return;
