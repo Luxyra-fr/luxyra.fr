@@ -375,7 +375,8 @@ async function loadSalonData() {
       return {
         id: p.id, n: p.nom, p: Number(p.prix), pa: Number(p.prix_achat || 0),
         cat: p.categorie, cb: p.code_barre, stk: p.stock, stkMin: p.stock_min,
-        cc: p.coup_coeur, img: p.img || ""
+        cc: p.coup_coeur, img: p.img || "",
+        forSale: p.for_sale !== false, forUse: p.for_use || false
       };
     });
     var pcatSet = {};
@@ -584,7 +585,8 @@ async function saveProduct(prod) {
     nom: prod.n, prix: prod.p, prix_achat: prod.pa || 0,
     categorie: prod.cat, code_barre: prod.cb || "",
     stock: prod.stk, stock_min: prod.stkMin,
-    coup_coeur: prod.cc || false, img: prod.img || ""
+    coup_coeur: prod.cc || false, img: prod.img || "",
+    for_sale: prod.forSale !== false, for_use: prod.forUse || false
   };
   if (typeof prod.id === "number" && prod.id > 0) {
     // Check if exists in Supabase
