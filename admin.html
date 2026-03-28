@@ -227,7 +227,7 @@ async function loadData(){
           verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
           userId:s.user_id||"",
           stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
-          plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",
+          plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",modeActivite:s.mode_activite||"salon",
           subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
           trialEnd:s.trial_end,color:colors[i%colors.length],
@@ -334,7 +334,7 @@ function buildRows(list,f){
   list.forEach(function(s){
     if(f!=="all"&&f!=="pending"&&s.status!==f)return;
     if(f==="pending"&&s.verif==="verified")return;
-    h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+'</div></div></div></td>';
+    h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
@@ -473,6 +473,8 @@ function addModal(){
     h+='<button type="button" onclick="pickM(this,&#39;'+m[0]+'&#39;)" data-m="'+m[0]+'" class="mbtn" style="padding:10px 6px;border-radius:10px;border:1.5px solid '+(i===0?"var(--gold)":"var(--border)")+';background:'+(i===0?"rgba(200,168,78,.1)":"var(--bg3)")+';cursor:pointer;text-align:center"><div style="font-size:20px">'+m[2]+'</div><div style="font-size:11px;font-weight:700;color:var(--text)">'+m[1]+'</div></button>';
   });
   h+='</div><input type="hidden" id="nMetier" value="coiffure"></div>';
+  // Mode activite
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Mode d\u0027activit\u00e9</label><select id="nMode" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px"><option value="salon">\ud83c\udfe0 En \u00e9tablissement</option><option value="domicile">\ud83d\ude97 \u00c0 domicile</option><option value="mixte">\ud83d\udd00 Mixte</option></select></div>';
   h+='<div style="display:flex;gap:10px;margin-bottom:16px"><div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Plan</label><select id="nPlan" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px"><option value="essential">Essentiel (14,99€)</option><option value="pro" selected>Pro (24,99€)</option></select></div>';
   h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Statut</label><select id="nStatus" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:14px"><option value="trial">Essai 14j</option><option value="active">Actif</option></select></div></div>';
   h+='<button onclick="doCreate()" style="width:100%;padding:12px;border-radius:10px;background:var(--gold);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Créer le compte</button>';
@@ -489,6 +491,7 @@ async function doCreate(){
   var btn=event.target;btn.disabled=true;btn.textContent="\u23f3 Cr\u00e9ation en cours...";
   try{
   var nom=document.getElementById("nNom").value.trim(),email=document.getElementById("nEmail").value.trim(),pass=document.getElementById("nPass").value,tel=(document.getElementById("nTel").value||"").trim(),plan=document.getElementById("nPlan").value,status=document.getElementById("nStatus").value,metier=document.getElementById("nMetier").value;
+  var modeAct=(document.getElementById("nMode")||{value:"salon"}).value;
   var gerant=(document.getElementById("nGerant")||{value:""}).value.trim();
   var siret=(document.getElementById("nSiret")||{value:""}).value.trim();
   var adresse=(document.getElementById("nAdresse")||{value:""}).value.trim();
@@ -503,7 +506,7 @@ async function doCreate(){
   if(ar.error){alert("Erreur : "+ar.error.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
   var uid=ar.data.user.id;
   var te=status==="trial"?new Date(Date.now()+14*864e5).toISOString():null;
-  var sr=await _sb.from("salons").insert({user_id:uid,nom:nom,ville:ville,cp:cp,adresse:adresse,email:email,tel:tel,siret:siret,gerant_nom:gNom,gerant_prenom:gPrenom,plan:plan,status:status,trial_end:te,metier:metier,verification_status:"pending",config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})}).select().single();
+  var sr=await _sb.from("salons").insert({user_id:uid,nom:nom,ville:ville,cp:cp,adresse:adresse,email:email,tel:tel,siret:siret,gerant_nom:gNom,gerant_prenom:gPrenom,plan:plan,status:status,trial_end:te,metier:metier,mode_activite:modeAct,verification_status:"pending",config_json:JSON.stringify({nom:nom,ville:ville,tel:tel,metier:metier})}).select().single();
   if(sr.error){alert("Erreur : "+sr.error.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";return;}
   var sid=sr.data.id;
   var cl={coiffure:["Coiffeur 1","Coiffeur 2"],barbier:["Barbier 1","Barbier 2"],esthetique:["Praticienne 1","Praticienne 2"],ongles:["Proth\u00e9siste 1","Proth\u00e9siste 2"],bien_etre:["Praticien 1","Praticien 2"]};

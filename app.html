@@ -2264,7 +2264,7 @@ function go(pg,arg){
   if(!logoSrc)logoSrc=SALON_CONFIG._defaultLogo||"";
   
   if(pg==="home"){
-    hdr.style.display="";hdr.innerHTML='<img src="'+logoSrc+'" alt="Logo" id="hlogo" style="height:42px;border-radius:6px"><div id="htitle"><h1>'+SALON_CONFIG.nom+'</h1><small>'+new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div><div style="display:flex;align-items:center;gap:4px"><button onclick="location.reload()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button><button onclick="go(\'settings\')" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:22px;cursor:pointer;padding:8px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:50%;min-width:18px;height:18px;align-items:center;justify-content:center"></span></button></div>';
+    hdr.style.display="";hdr.innerHTML='<img src="'+logoSrc+'" alt="Logo" id="hlogo" style="height:42px;border-radius:6px"><div id="htitle"><h1>'+(getMetierConfig?getMetierConfig().icon+' ':'')+SALON_CONFIG.nom+'</h1><small>'+(SALON_CONFIG.modeActivite==="domicile"?"\ud83d\ude97 \u00c0 domicile \u2022 ":SALON_CONFIG.modeActivite==="mixte"?"\ud83d\udd00 Mixte \u2022 ":"")+new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div><div style="display:flex;align-items:center;gap:4px"><button onclick="location.reload()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button><button onclick="go(\'settings\')" style="background:none;border:none;font-size:20px;cursor:pointer;padding:8px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:22px;cursor:pointer;padding:8px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:50%;min-width:18px;height:18px;align-items:center;justify-content:center"></span></button></div>';
   }else{
     var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Services et Forfaits",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis",marketing:"Marketing"};
     hdr.style.display="";hdr.innerHTML='<button class="back-btn" onclick="goBack()">←</button><div><h1>'+(titles[pg]||"")+'</h1></div>';
@@ -2537,6 +2537,8 @@ var SVCCOLORS={
   "Coiffage":{bg:"rgba(171,71,188,.3)",border:"#ab47bc",text:"#4a148c"},
   "Balayage":{bg:"rgba(38,166,154,.3)",border:"#26a69a",text:"#004d40"}
 };
+// Load saved SVCCOLORS from localStorage (immediate, before Supabase)
+try{var _lsc2=localStorage.getItem("_lx_svccolors");if(_lsc2){var _parsed=JSON.parse(_lsc2);for(var _k in _parsed)SVCCOLORS[_k]=_parsed[_k];}}catch(e){}
 function getSvcColor(cat){return SVCCOLORS[cat]||{bg:"rgba(158,158,158,.3)",border:"#9e9e9e",text:"#424242"};}
 // Color helper: generate bg and text from a border/main color
 function colorFromHex(hex){
@@ -3769,7 +3771,7 @@ function editApptTime(id){
   var htm='<div class="mbox"><h2>Modifier l\u0027heure</h2>';
   htm+='<div class="fg"><label>Date</label><input type="date" id="eaDate" value="'+a.date+'"></div>';
   htm+='<div class="fg"><label>Heure</label><input type="time" id="eaTime" value="'+a.time+'"></div>';
-  htm+='<div class="fg"><label>Coiffeuse</label><select id="eaSt">';
+  htm+='<div class="fg"><label>'+getCollabLabel()+'</label><select id="eaSt">';
   for(var i=0;i<T.length;i++)htm+='<option value="'+T[i].id+'"'+(a.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
   htm+='</select></div>';
   htm+='<button class="btn bg bk" style="margin-top:10px" onclick="saveApptTime(\''+a.id+'\')">Valider</button>';
@@ -4054,8 +4056,9 @@ function rSettings(){
     h+='</div>';
 
     var sections=[
+      {k:"etablissement",i:"\ud83c\udfe2",t:"\u00c9tablissement",d:"M\u00e9tier, mode d\u0027activit\u00e9, coordonn\u00e9es"},
       {k:"horaires",i:"\ud83d\udd54",t:"Horaires",d:"Ouverture, fermeture par jour"},
-      {k:"equipe",i:"\ud83d\udc65",t:"\u00c9quipe",d:"Noms et couleurs des coiffeuses"},
+      {k:"equipe",i:"\ud83d\udc65",t:"\u00c9quipe",d:"Noms et couleurs "+getMetierConfig().collabLabel.toLowerCase()+"s"},
       {k:"planning",i:"\ud83d\udcc5",t:"Affichage planning",d:"Intervalle, hauteur des cr\u00e9neaux"},
       {k:"fond",i:"\ud83c\udfa8",t:"Apparence",d:"Fond d\u0027\u00e9cran, th\u00e8me"},
       {k:"salon",i:"\ud83c\udfe0",t:"Infos établissement",d:"Nom, adresse, t\u00e9l\u00e9phone, logo"},
@@ -4093,6 +4096,39 @@ function rSettings(){
     return h;
   }
   
+  if(settTab==="etablissement"){
+    var mc=getMetierConfig();
+    h+='<div class="sec">\ud83c\udfe2 \u00c9tablissement</div>';
+    // Metier
+    h+='<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px">M\u00e9tier / Activit\u00e9</div>';
+    var metiers=[["coiffure","\u2702\ufe0f Salon de coiffure"],["barbier","\ud83d\udc88 Barbershop"],["esthetique","\ud83d\udc86 Institut de beaut\u00e9"],["ongles","\ud83d\udc85 Salon d\u0027ongles"],["bien_etre","\ud83e\uddd8 Centre bien-\u00eatre"]];
+    for(var mi=0;mi<metiers.length;mi++){
+      var sel=SALON_CONFIG.metier===metiers[mi][0];
+      h+='<label style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:'+(sel?"rgba(200,168,78,.1)":"transparent")+';border:1px solid '+(sel?"var(--gold)":"transparent")+'">';
+      h+='<input type="radio" name="metier" value="'+metiers[mi][0]+'"'+(sel?" checked":"")+' onchange="SALON_CONFIG.metier=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')">';
+      h+='<span style="font-size:14px">'+metiers[mi][1]+'</span></label>';
+    }
+    h+='</div>';
+    // Mode activite
+    h+='<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px">Mode d\u0027activit\u00e9</div>';
+    var modes=[["salon","\ud83c\udfe0 En \u00e9tablissement (salon, institut...)"],["domicile","\ud83d\ude97 \u00c0 domicile uniquement"],["mixte","\ud83d\udd00 Mixte (\u00e9tablissement + domicile)"]];
+    for(var di=0;di<modes.length;di++){
+      var dsel=(SALON_CONFIG.modeActivite||"salon")===modes[di][0];
+      h+='<label style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:'+(dsel?"rgba(200,168,78,.1)":"transparent")+';border:1px solid '+(dsel?"var(--gold)":"transparent")+'">';
+      h+='<input type="radio" name="modeAct" value="'+modes[di][0]+'"'+(dsel?" checked":"")+' onchange="SALON_CONFIG.modeActivite=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')">';
+      h+='<span style="font-size:14px">'+modes[di][1]+'</span></label>';
+    }
+    // Domicile options
+    if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
+      h+='<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
+      h+='<div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:8px">\ud83d\ude97 Param\u00e8tres domicile</div>';
+      h+='<div class="fg"><label>Zone de d\u00e9placement (km)</label><input type="number" value="'+(SALON_CONFIG.zoneDeplacementKm||0)+'" min="0" onchange="SALON_CONFIG.zoneDeplacementKm=parseInt(this.value)||0;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+      h+='<div class="fg"><label>Frais de d\u00e9placement (\u20ac)</label><input type="number" value="'+(SALON_CONFIG.fraisDeplacement||0)+'" min="0" step="0.5" onchange="SALON_CONFIG.fraisDeplacement=parseFloat(this.value)||0;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+      h+='</div>';
+    }
+    h+='</div>';
+    return h;
+  }
   if(settTab==="horaires"){
     h+='<div class="sec">\ud83d\udd54 Horaires</div><div class="card">';
     var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
@@ -4638,7 +4674,7 @@ function saveTVA(){
 function editPhases(svcId){
   var sv=gS(svcId);if(!sv)return;
   var htm='<div class="mbox"><h2>\u270f\ufe0f '+sv.n+'</h2>';
-  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">\u00c9ditez les phases de travail et de pause. Pendant les pauses, la coiffeuse est libre pour une autre cliente.</div>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">\u00c9ditez les phases de travail et de pause. Pendant les pauses, le/la professionnel(le) est libre.</div>';
   htm+='<div id="phList">';
   for(var i=0;i<sv.phases.length;i++){
     var ph=sv.phases[i];
@@ -4648,7 +4684,7 @@ function editPhases(svcId){
     htm+='<option value="p"'+(ph.t==="p"?' selected':'')+'>Pause</option></select>';
     htm+='<input type="number" value="'+ph.d+'" min="5" step="5" style="width:55px;padding:5px;font-size:13px;text-align:center" onchange="gS('+svcId+').phases['+i+'].d=+this.value">min';
     if(ph.t==="w")htm+='<input value="'+(ph.l||"")+'" placeholder="Nom" style="flex:1;padding:5px;font-size:12px" onchange="gS('+svcId+').phases['+i+'].l=this.value">';
-    else htm+='<span style="flex:1;font-size:12px;color:var(--orange);font-style:italic">Coiffeuse libre</span>';
+    else htm+='<span style="flex:1;font-size:12px;color:var(--orange);font-style:italic">Professionnel(le) libre</span>';
     htm+='<button class="btn bs" style="color:var(--red);padding:4px 8px" onclick="gS('+svcId+').phases.splice('+i+',1);editPhases('+svcId+')">\u2716</button>';
     htm+='</div>';
   }
@@ -5285,7 +5321,7 @@ function addService(){
   // Phases builder
   htm+='<div style="margin-top:12px;border:1px solid var(--border2);border-radius:10px;padding:10px">';
   htm+='<div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px">Phases de travail & pauses</div>';
-  htm+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pendant les pauses, la coiffeuse est libre pour une autre cliente.</div>';
+  htm+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Pendant les pauses, le/la professionnel(le) est libre.</div>';
   var totalD=0;
   for(var pi=0;pi<window._newSvcPhases.length;pi++){
     var ph=window._newSvcPhases[pi];totalD+=ph.d;
@@ -5294,7 +5330,7 @@ function addService(){
     htm+='<span style="font-size:16px">'+(isW?"\u2702\ufe0f":"\u23f8")+'</span>';
     htm+='<span style="font-size:12px;font-weight:700;color:'+(isW?"var(--green)":"var(--orange)")+';width:50px">'+(isW?"Travail":"Pause")+'</span>';
     if(isW)htm+='<input value="'+(ph.l||"")+'" placeholder="Nom" style="flex:1;padding:4px;font-size:12px" onchange="window._newSvcPhases['+pi+'].l=this.value;window._newSvcName=document.getElementById(\'nsName\').value;window._newSvcPrice=document.getElementById(\'nsPrice\').value">';
-    else htm+='<span style="flex:1;font-size:11px;color:var(--orange);font-style:italic">Coiffeuse libre</span>';
+    else htm+='<span style="flex:1;font-size:11px;color:var(--orange);font-style:italic">Professionnel(le) libre</span>';
     htm+='<input type="number" value="'+ph.d+'" min="5" step="5" style="width:45px;padding:4px;font-size:12px;text-align:center" onchange="window._newSvcName=document.getElementById(\'nsName\').value;window._newSvcPrice=document.getElementById(\'nsPrice\').value;window._newSvcPhases['+pi+'].d=+this.value;addService()">min';
     htm+='<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:4px" onclick="window._newSvcName=document.getElementById(\'nsName\').value;window._newSvcPrice=document.getElementById(\'nsPrice\').value;window._newSvcPhases.splice('+pi+',1);addService()">\u2716</button>';
     htm+='</div>';
@@ -10496,7 +10532,7 @@ function modifTicket(id){
   htm+='<div class="fg"><label>Prestation</label><select id="mtSvc">';
   for(var ci=0;ci<CATS.length;ci++){var svcs=SVC.filter(function(s){return s.cat===CATS[ci]});for(var si=0;si<svcs.length;si++){var s=svcs[si];htm+='<option value="'+s.id+'"'+(a.sId===s.id?' selected':'')+'>'+s.n+'</option>';}}
   htm+='</select></div>';
-  htm+='<div class="fg"><label>Coiffeuse</label><select id="mtSt">';
+  htm+='<div class="fg"><label>'+getCollabLabel()+'</label><select id="mtSt">';
   for(var i=0;i<T.length;i++)htm+='<option value="'+T[i].id+'"'+(a.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
   htm+='</select></div>';
   htm+='<div class="fg"><label>Paiement</label><select id="mtMet">';
@@ -11812,7 +11848,7 @@ function genererAttestation(){
   h+="<div class=\"section\"><h3>\u00c9diteur du logiciel</h3>";
   h+="<div class=\"grid\">";
   h+="<span>Logiciel :</span><strong>Luxyra "+salon.version+"</strong>";
-  h+="<span>Type :</span><strong>Gestion et caisse salon de coiffure</strong>";
+  h+="<span>Type :</span><strong>Gestion et caisse "+getMetierConfig().label.toLowerCase()+"</strong>";
   h+="<span>\u00c9diteur :</span><strong>Luxyra SAS</strong>";
   h+="<span>Date d'attestation :</span><strong>"+dateStr+"</strong>";
   h+="</div></div>";

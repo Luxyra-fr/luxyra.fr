@@ -55,6 +55,7 @@ a{color:var(--gold);text-decoration:none}
 .salon-img{height:160px;background-size:cover;background-position:center;position:relative}
 .salon-img .badge{position:absolute;top:10px;left:10px;padding:4px 10px;border-radius:20px;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase}
 .salon-img .badge.online{background:rgba(78,200,122,.2);color:#4ec87a;backdrop-filter:blur(8px)}
+.salon-img .badge.domicile{background:rgba(96,165,250,.2);color:#60a5fa;backdrop-filter:blur(8px)}
 .salon-img .badge.new{background:rgba(155,109,255,.2);color:#9b6dff;backdrop-filter:blur(8px)}
 .salon-body{padding:14px}
 .salon-name{font-size:16px;font-weight:800;margin-bottom:4px}
@@ -123,7 +124,7 @@ var TYPES=[
 
 async function loadSalons(){
   try{
-    var resp=await fetch(SB_URL+"/rest/v1/salons_public?select=id,nom,metier,config_json,note_moyenne,nb_avis&apikey="+SB_KEY,{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
+    var resp=await fetch(SB_URL+"/rest/v1/salons_public?select=id,nom,metier,mode_activite,config_json,note_moyenne,nb_avis&apikey="+SB_KEY,{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     if(!resp.ok)throw new Error(resp.status);
     var data=await resp.json();
     SALONS=data.map(function(s){
@@ -131,7 +132,7 @@ async function loadSalons(){
       return{
         id:s.id,
         nom:cfg.nom||s.nom||"Salon",
-        type:s.metier||cfg.metier||"coiffure",
+        type:s.metier||cfg.metier||"coiffure",modeActivite:s.mode_activite||cfg.mode_activite||"salon",
         adresse:cfg.adresse||"",
         cp:cfg.cp||"",
         ville:cfg.ville||"",
@@ -160,7 +161,8 @@ function getDemoSalons(){
     {id:"demo3",nom:"Institut Zen",type:"esthetique",adresse:"8 place du March\u00e9",cp:"57200",ville:"Sarreguemines",tel:"",photo:"",logo:"",slogan:"Soins du visage et du corps",note:4.9,nbAvis:63,online:true,tags:["Soin visage","\u00c9pilation","Maquillage"],prestations:[],horaires:null,siteId:"demo3"},
     {id:"demo4",nom:"Nail Art Studio",type:"ongles",adresse:"5 rue des Vosges",cp:"57200",ville:"Sarreguemines",tel:"",photo:"",logo:"",slogan:"Manucure, p\u00e9dicure, nail art",note:4.7,nbAvis:35,online:false,tags:["Gel","Semi-permanent","Nail art"],prestations:[],horaires:null,siteId:"demo4"},
     {id:"demo5",nom:"Bulle de S\u00e9r\u00e9nit\u00e9",type:"bien_etre",adresse:"12 avenue de la Gare",cp:"57200",ville:"Sarreguemines",tel:"",photo:"",logo:"",slogan:"Massages et relaxation",note:4.9,nbAvis:51,online:true,tags:["Massage","Relaxation","Shiatsu"],prestations:[],horaires:null,siteId:"demo5"},
-    {id:"demo6",nom:"L\u0027Atelier Coiffure",type:"coiffure",adresse:"3 rue de Bitche",cp:"57230",ville:"Bitche",tel:"",photo:"",logo:"",slogan:"Cr\u00e9ativit\u00e9 et tendances",note:4.5,nbAvis:19,online:true,tags:["M\u00e8ches","Lissage","Coupe femme"],prestations:[],horaires:null,siteId:"demo6"}
+    {id:"demo6",nom:"L\u0027Atelier Coiffure",type:"coiffure",adresse:"3 rue de Bitche",cp:"57230",ville:"Bitche",tel:"",photo:"",logo:"",slogan:"Cr\u00e9ativit\u00e9 et tendances",note:4.5,nbAvis:19,online:true,tags:["M\u00e8ches","Lissage","Coupe femme"],prestations:[],horaires:null,siteId:"demo6"},
+    {id:"demo7",nom:"Marie Beaut\u00e9 \u00e0 Domicile",type:"esthetique",modeActivite:"domicile",adresse:"",cp:"57200",ville:"Sarreguemines",tel:"",photo:"",logo:"",slogan:"Soins \u00e0 domicile, je me d\u00e9place !",note:4.8,nbAvis:24,online:true,tags:["Soin visage","Massage","\u00c9pilation"],prestations:[],horaires:null,siteId:"demo7"}
   ];
 }
 
@@ -224,7 +226,8 @@ function render(){
   
   // Filter salons
   var filtered=SALONS.filter(function(s){
-    if(FILTER.type!=="all"&&s.type!==FILTER.type)return false;
+    if(FILTER.type==="domicile"&&s.modeActivite!=="domicile"&&s.modeActivite!=="mixte")return false;
+    else if(FILTER.type!=="all"&&FILTER.type!=="domicile"&&s.type!==FILTER.type)return false;
     if(FILTER.city){var c=FILTER.city.toLowerCase();if(s.ville.toLowerCase().indexOf(c)<0&&s.cp.indexOf(c)<0)return false;}
     if(FILTER.q){var q=FILTER.q.toLowerCase();if(s.nom.toLowerCase().indexOf(q)<0&&s.slogan.toLowerCase().indexOf(q)<0)return false;}
     return true;
@@ -252,11 +255,14 @@ function render(){
     h+='<div class="salon-card" onclick="openSalon(\''+s.id+'\')">';
     h+='<div class="salon-img" style="background-image:url('+img+')">';
     if(s.online)h+='<div class="badge online">\ud83c\udf10 R\u00e9servation en ligne</div>';
+    if(s.modeActivite==="domicile")h+='<div class="badge domicile" style="'+(s.online?"top:36px;":"")+'">🚗 \u00c0 domicile</div>';
+    else if(s.modeActivite==="mixte")h+='<div class="badge domicile" style="'+(s.online?"top:36px;":"")+'">🔀 Salon + Domicile</div>';
     h+='</div>';
     h+='<div class="salon-body">';
     h+='<div class="salon-type">'+typeLabel.ico+' '+typeLabel.l+'</div>';
     h+='<div class="salon-name">'+s.nom+'</div>';
-    h+='<div class="salon-addr">\ud83d\udccd '+s.adresse+' '+s.cp+' '+s.ville+'</div>';
+    if(s.modeActivite==="domicile")h+='<div class="salon-addr">\ud83d\ude97 Se d\u00e9place \u00e0 '+s.ville+'</div>';
+    else h+='<div class="salon-addr">\ud83d\udccd '+s.adresse+' '+s.cp+' '+s.ville+'</div>';
     h+='<div class="salon-rating">'+stars+' <span class="rating-num">'+(s.note||4.5).toFixed(1)+'</span><span class="rating-count">('+(s.nbAvis||0)+' avis)</span></div>';
     if(s.tags.length){
       h+='<div class="salon-tags">';

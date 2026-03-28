@@ -228,6 +228,10 @@ async function loadSalonData() {
   SALON_CONFIG.subdomain = salon.subdomain || "";
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
   SALON_CONFIG.plan = salon.plan || "essential";
+  SALON_CONFIG.metier = salon.metier || "coiffure";
+  SALON_CONFIG.modeActivite = salon.mode_activite || "salon";
+  SALON_CONFIG.zoneDeplacementKm = salon.zone_deplacement_km || 0;
+  SALON_CONFIG.fraisDeplacement = salon.frais_deplacement || 0;
   if (salon.show_tva_ticket !== undefined) window.SHOW_TVA_TICKET = salon.show_tva_ticket;
   // SMS credits
   window.SMS_CREDITS = salon.sms_credits || 0;
@@ -695,6 +699,10 @@ async function saveSalonConfig() {
     tva: SALON_CONFIG.tva, couleur_primaire: SALON_CONFIG.couleurPrimaire,
     couleur_secondaire: SALON_CONFIG.couleurSecondaire,
     taux_tva: SALON_CONFIG.tauxTVA,
+    metier: SALON_CONFIG.metier || "coiffure",
+    mode_activite: SALON_CONFIG.modeActivite || "salon",
+    zone_deplacement_km: SALON_CONFIG.zoneDeplacementKm || 0,
+    frais_deplacement: SALON_CONFIG.fraisDeplacement || 0,
     show_tva_ticket: window.SHOW_TVA_TICKET
   };
   try{data.config_json=JSON.stringify({slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,prodcolors:window.PRODCOLORS||{},svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},sms_config:window.SMS_CONFIG||{}});}catch(e){}
@@ -897,6 +905,77 @@ async function getMouvementsStock(prodId, limit) {
       .order("created_at", { ascending: false }).limit(limit || 50);
     return r.data || [];
   } catch(e) { return []; }
+}
+
+// ============================================================
+// SYNC: rdv_online client → salon clients table
+// ============================================================
+async function syncClientFromOnlineRdv(rdvData) {
+  if (!_isOnline || !_salonId) return null;
+  // Check if client already exists by email or beautypro_id
+  var email = rdvData.client_email || "";
+  var bpId = rdvData.client_beautypro_id || null;
+  var existing = null;
+  if (bpId) {
+    var r = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("client_beautypro_id", bpId).limit(1);
+    if (r.data && r.data.length) existing = r.data[0];
+  }
+  if (!existing && email) {
+    var r2 = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("email", email).limit(1);
+    if (r2.data && r2.data.length) existing = r2.data[0];
+  }
+  if (!existing && rdvData.client_telephone) {
+    var r3 = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("telephone", rdvData.client_telephone).limit(1);
+    if (r3.data && r3.data.length) existing = r3.data[0];
+  }
+  if (existing) {
+    // Link beautypro_id if not set
+    if (bpId && !existing.client_beautypro_id) {
+      await _sb.from("clients").update({ client_beautypro_id: bpId }).eq("id", existing.id);
+    }
+    return existing.id;
+  }
+  // Create new client
+  var newClient = {
+    salon_id: _salonId,
+    nom: rdvData.client_nom || "",
+    prenom: rdvData.client_prenom || "",
+    telephone: rdvData.client_telephone || "",
+    email: email,
+    client_beautypro_id: bpId,
+    genre: rdvData.client_genre || "F",
+    date_naissance: rdvData.client_ddn || null,
+    created_at: new Date().toISOString()
+  };
+  var res = await _sb.from("clients").insert(newClient).select();
+  if (res.data && res.data[0]) return res.data[0].id;
+  return null;
+}
+
+// Update fidelite_client cross-salon table
+async function updateFideliteClient(bpId, salonId, salonNom) {
+  if (!_isOnline || !bpId) return;
+  try {
+    var r = await _sb.from("fidelite_client").select("*").eq("client_beautypro_id", bpId).eq("salon_id", salonId).limit(1);
+    if (r.data && r.data.length) {
+      var f = r.data[0];
+      await _sb.from("fidelite_client").update({
+        visites: (f.visites || 0) + 1,
+        points: (f.points || 0) + 1,
+        derniere_visite: new Date().toISOString().slice(0, 10),
+        updated_at: new Date().toISOString()
+      }).eq("id", f.id);
+    } else {
+      await _sb.from("fidelite_client").insert({
+        client_beautypro_id: bpId,
+        salon_id: salonId,
+        salon_nom: salonNom || SALON_CONFIG.nom,
+        points: 1,
+        visites: 1,
+        derniere_visite: new Date().toISOString().slice(0, 10)
+      });
+    }
+  } catch(e) { console.log("[FIDELITE]", e.message); }
 }
 
 // ============================================================

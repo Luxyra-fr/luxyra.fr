@@ -178,12 +178,14 @@ function renderDashboard(){
   h+='<div class="tab-bar">';
   h+='<div class="tab'+(TAB==="rdv"?" active":"")+'" onclick="TAB=\'rdv\';render()">\ud83d\udcc5 Mes RDV</div>';
   h+='<div class="tab'+(TAB==="tickets"?" active":"")+'" onclick="TAB=\'tickets\';render()">\ud83c\udfab Tickets</div>';
+  h+='<div class="tab'+(TAB==="fidelite"?" active":"")+'" onclick="TAB=\'fidelite\';render()">\ud83c\udf1f Fid\u00e9lit\u00e9</div>';
   h+='<div class="tab'+(TAB==="profile"?" active":"")+'" onclick="TAB=\'profile\';render()">\ud83d\udc64 Profil</div>';
   h+='<div class="tab'+(TAB==="settings"?" active":"")+'" onclick="TAB=\'settings\';render()">\u2699\ufe0f R\u00e9glages</div>';
   h+='</div>';
   
   if(TAB==="rdv")h+=renderRdvTab();
   else if(TAB==="tickets")h+=renderTicketsTab();
+  else if(TAB==="fidelite")h+=renderFideliteTab();
   else if(TAB==="profile")h+=renderProfileTab();
   else if(TAB==="settings")h+=renderSettingsTab();
   
@@ -287,6 +289,69 @@ function renderRdvTab(){
     h+='</div>';
   }
   
+  return h;
+}
+
+// --- FIDELITE TAB ---
+var FIDELITE_DATA=[];
+var _fideliteLoaded=false;
+
+async function loadFidelite(){
+  if(!CLIENT||_fideliteLoaded)return;
+  try{
+    var r=await api("fidelite_client?select=*&client_beautypro_id=eq."+CLIENT.id+"&order=derniere_visite.desc");
+    var data=await r.json();
+    if(Array.isArray(data))FIDELITE_DATA=data;
+    _fideliteLoaded=true;
+  }catch(e){console.log("Fidelite load error:",e);}
+}
+
+function renderFideliteTab(){
+  var h='';
+  h+='<div class="section"><div class="section-title">\ud83c\udf1f Mes points fid\u00e9lit\u00e9</div>';
+  
+  if(!_fideliteLoaded){
+    loadFidelite().then(function(){render();});
+    h+='<div class="card" style="text-align:center;padding:30px;color:var(--text3)">Chargement...</div>';
+    h+='</div>';
+    return h;
+  }
+  
+  if(!FIDELITE_DATA.length){
+    h+='<div class="empty"><div class="ico">\ud83c\udf1f</div>Aucun point fid\u00e9lit\u00e9<br><span style="font-size:12px;color:var(--text3)">Vos points appara\u00eetront ici apr\u00e8s chaque visite</span></div>';
+    h+='</div>';
+    return h;
+  }
+  
+  // Total points
+  var totalPoints=0;var totalVisites=0;
+  FIDELITE_DATA.forEach(function(f){totalPoints+=(f.points||0);totalVisites+=(f.visites||0);});
+  
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">';
+  h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--gold)">'+totalPoints+'</div><div style="font-size:12px;color:var(--text3)">Points totaux</div></div>';
+  h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--blue)">'+totalVisites+'</div><div style="font-size:12px;color:var(--text3)">Visites totales</div></div>';
+  h+='</div>';
+  
+  // Per salon
+  h+='<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px">Par \u00e9tablissement</div>';
+  FIDELITE_DATA.forEach(function(f){
+    var pct=0;
+    // Assume seuil of 10 for now (salon-specific thresholds would need more data)
+    var seuil=10;
+    pct=Math.min(100,Math.round((f.points||0)/seuil*100));
+    h+='<div class="card" style="margin-bottom:8px">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    h+='<div><div style="font-weight:700;font-size:14px">'+(f.salon_nom||"Salon")+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3)">'+(f.visites||0)+' visite(s) \u2022 Derni\u00e8re: '+(f.derniere_visite||"\u2014")+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:22px;font-weight:900;color:var(--gold)">'+(f.points||0)+'</div><div style="font-size:10px;color:var(--text3)">points</div></div>';
+    h+='</div>';
+    // Progress bar
+    h+='<div style="height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--gold);border-radius:4px"></div></div>';
+    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px;text-align:right">'+pct+'% vers la r\u00e9compense</div>';
+    h+='</div>';
+  });
+  
+  h+='</div>';
   return h;
 }
 
@@ -809,7 +874,7 @@ function showMsg(id,msg,color){var el=document.getElementById(id);if(el){el.styl
 // Init
 if(window.location.hash==="#register"&&!CLIENT)PAGE="register";
 render();
-if(CLIENT)loadMyRdvs();
+if(CLIENT){loadMyRdvs();loadFidelite();}
 </script>
 </body>
 </html>
