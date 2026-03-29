@@ -803,14 +803,25 @@ async function loadMySalons(){
 
 // ========== DELETE ACCOUNT ==========
 function confirmDeleteAccount(){
-  var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px" onclick="document.getElementById(\'delModal\').remove()">';
-  h+='<div onclick="event.stopPropagation()" style="background:var(--bg2);border:1px solid rgba(248,113,113,.2);border-radius:20px;padding:24px;max-width:400px;width:100%;text-align:center">';
-  h+='<div style="font-size:40px;margin-bottom:8px">\u26a0\ufe0f</div>';
-  h+='<h2 style="color:var(--red);margin-bottom:8px">Supprimer votre compte</h2>';
-  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:16px;text-align:left">Cette action va :<br>\u2022 Supprimer votre compte Luxyra<br>\u2022 Supprimer vos donn\u00e9es personnelles<br>\u2022 Anonymiser vos r\u00e9servations pass\u00e9es<br>\u2022 Cette action est <strong>irr\u00e9versible</strong></div>';
-  h+='<div style="margin-bottom:14px"><input id="delConfirm" placeholder="Tapez SUPPRIMER pour confirmer" style="width:100%;padding:12px;border-radius:8px;border:1px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:14px;font-weight:700;text-align:center"></div>';
-  h+='<div style="display:flex;gap:8px"><button onclick="document.getElementById(\'delModal\').remove()" style="flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text);font-weight:600;cursor:pointer">Annuler</button>';
-  h+='<button onclick="doDeleteAccount()" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--red);color:#fff;font-weight:700;cursor:pointer">Supprimer d\u00e9finitivement</button></div>';
+  var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px" onclick="document.getElementById(\'delModal\').remove()">';
+  h+='<div onclick="event.stopPropagation()" style="background:var(--bg2);border:1px solid rgba(248,113,113,.2);border-radius:20px;padding:28px;max-width:440px;width:100%">';
+  h+='<div style="text-align:center;margin-bottom:16px"><div style="font-size:48px;margin-bottom:8px">\u26a0\ufe0f</div>';
+  h+='<h2 style="color:var(--red);margin-bottom:4px;font-size:20px">Supprimer votre compte</h2>';
+  h+='<div style="font-size:12px;color:var(--text3)">'+CLIENT.email+'</div></div>';
+  h+='<div style="background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.15);border-radius:12px;padding:16px;margin-bottom:16px">';
+  h+='<div style="font-size:13px;font-weight:700;color:#ef5350;margin-bottom:8px">Cette action est d\u00e9finitive et irr\u00e9versible.</div>';
+  h+='<div style="font-size:13px;color:var(--text2);line-height:1.8">';
+  h+='\u274c Votre compte Luxyra sera supprim\u00e9<br>';
+  h+='\u274c Vos donn\u00e9es personnelles (nom, adresse, t\u00e9l\u00e9phone) seront effac\u00e9es<br>';
+  h+='\u274c Vos fiches clients dans tous les salons seront anonymis\u00e9es<br>';
+  h+='\u274c Vos points de fid\u00e9lit\u00e9 seront perdus dans tous les salons<br>';
+  h+='\u274c Vos r\u00e9servations en ligne seront anonymis\u00e9es<br>';
+  h+='\u2139\ufe0f Les tickets de caisse seront conserv\u00e9s (obligation l\u00e9gale)</div></div>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;text-align:center">Pour confirmer, tapez <strong style="color:var(--red)">SUPPRIMER</strong> ci-dessous :</div>';
+  h+='<div style="margin-bottom:16px"><input id="delConfirm" placeholder="SUPPRIMER" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:15px;font-weight:700;text-align:center;letter-spacing:2px"></div>';
+  h+='<div style="display:flex;gap:10px">';
+  h+='<button onclick="document.getElementById(\'delModal\').remove()" style="flex:1;padding:14px;border-radius:12px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;cursor:pointer;font-size:14px">Annuler</button>';
+  h+='<button onclick="doDeleteAccount()" style="flex:1;padding:14px;border-radius:12px;border:none;background:#ef5350;color:#fff;font-weight:700;cursor:pointer;font-size:14px">\ud83d\uddd1 Supprimer</button></div>';
   h+='</div></div>';
   var el=document.createElement("div");el.id="delModal";el.innerHTML=h;document.body.appendChild(el);
 }
@@ -819,8 +830,13 @@ async function doDeleteAccount(){
   var confirm=document.getElementById("delConfirm");
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="var(--red)";confirm.focus();return;}
   try{
+    var email=CLIENT.email;
     // Anonymize rdv_online
     await api("rdv_online?client_beautypro_id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({client_beautypro_id:null,client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""})});
+    // Anonymize appointments in all salons
+    await api("clients?email=eq."+encodeURIComponent(email),{method:"PATCH",body:JSON.stringify({nom:"ANONYME",prenom:"",telephone:"",email:"",adresse:"",cp:"",ville:"",date_naissance:null,notes:"",actif:false})});
+    // Delete fidelite_client
+    await api("fidelite_client?client_beautypro_id=eq."+encodeURIComponent(email),{method:"DELETE"});
     // Delete client_salon links
     await api("client_salon?client_id=eq."+CLIENT.id,{method:"DELETE"});
     // Delete the account
