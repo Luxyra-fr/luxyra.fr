@@ -4755,20 +4755,27 @@ function rClients(){
 function rgpdDeleteClient(cId){
   var cl=gC(cId);if(!cl)return;
   var name=cName(cl);
-  var htm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:400px">';
-  htm+='<div style="font-size:36px;margin-bottom:8px">\u26a0\ufe0f</div>';
-  htm+='<h2 style="color:#ef5350">Suppression RGPD</h2>';
-  htm+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+name+'</div>';
-  htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px;text-align:left">';
-  htm+='Cette action est <strong>irr\u00e9versible</strong>. Elle va :<br>';
-  htm+='\u2022 Supprimer le nom, pr\u00e9nom, t\u00e9l\u00e9phone, email, date de naissance<br>';
-  htm+='\u2022 Anonymiser les tickets encaiss\u00e9s (remplac\u00e9 par "Client anonymis\u00e9")<br>';
-  htm+='\u2022 Supprimer les fiches techniques et l\u0027historique client<br>';
-  htm+='\u2022 Conserver les montants des tickets (obligation fiscale NF525)</div>';
-  htm+='<div style="margin-bottom:14px"><input type="text" id="rgpdConfirm" placeholder="Tapez SUPPRIMER pour confirmer" style="width:100%;padding:12px;border-radius:8px;border:1px solid rgba(244,67,54,.3);text-align:center;font-weight:700;font-size:14px"></div>';
-  htm+='<div style="display:flex;gap:8px">';
-  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button>';
-  htm+='<button class="btn" style="flex:1;background:#ef5350;color:#fff;font-weight:700" onclick="doRgpdDelete(\''+cId+'\')">Confirmer la suppression</button>';
+  var htm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:440px">';
+  htm+='<div style="text-align:center;margin-bottom:16px"><div style="font-size:48px;margin-bottom:8px">\u26a0\ufe0f</div>';
+  htm+='<h2 style="color:#ef5350;margin-bottom:4px;font-size:20px">Suppression RGPD</h2>';
+  htm+='<div style="font-size:14px;font-weight:700">'+name+'</div>';
+  if(cl.em)htm+='<div style="font-size:12px;color:rgba(255,255,255,.4)">'+cl.em+'</div>';
+  htm+='</div>';
+  htm+='<div style="background:rgba(244,67,54,.06);border:1px solid rgba(244,67,54,.15);border-radius:12px;padding:16px;margin-bottom:16px">';
+  htm+='<div style="font-size:13px;font-weight:700;color:#ef5350;margin-bottom:8px">Cette action est d\u00e9finitive et irr\u00e9versible.</div>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.6);line-height:1.8">';
+  htm+='\u274c La fiche client sera supprim\u00e9e de votre \u00e9tablissement<br>';
+  htm+='\u274c Les donn\u00e9es personnelles (nom, t\u00e9l\u00e9phone, email, adresse) seront effac\u00e9es<br>';
+  htm+='\u274c Les fiches techniques et notes seront supprim\u00e9es<br>';
+  htm+='\u274c Les points de fid\u00e9lit\u00e9 seront perdus pour votre \u00e9tablissement<br>';
+  htm+='\u274c Les r\u00e9servations en ligne seront anonymis\u00e9es<br>';
+  htm+='\u2139\ufe0f Les tickets de caisse seront anonymis\u00e9s mais conserv\u00e9s (obligation fiscale NF525)<br>';
+  htm+='\u2139\ufe0f Le compte client Luxyra et les donn\u00e9es dans d\u0027autres salons ne sont pas affect\u00e9s</div></div>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px;text-align:center">Pour confirmer, tapez <strong style="color:#ef5350">SUPPRIMER</strong> ci-dessous :</div>';
+  htm+='<div style="margin-bottom:16px"><input type="text" id="rgpdConfirm" placeholder="SUPPRIMER" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(244,67,54,.3);text-align:center;font-weight:700;font-size:15px;letter-spacing:2px"></div>';
+  htm+='<div style="display:flex;gap:10px">';
+  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);font-size:14px;padding:14px" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn" style="flex:1;background:#ef5350;color:#fff;font-weight:700;font-size:14px;padding:14px" onclick="doRgpdDelete(\''+cId+'\')">\ud83d\uddd1 Supprimer</button>';
   htm+='</div></div></div>';
   document.getElementById("modal").innerHTML=htm;
 }
@@ -4777,17 +4784,26 @@ function doRgpdDelete(cId){
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="#ef5350";confirm.focus();return;}
   var cl=gC(cId);if(!cl)return;
   var name=cName(cl);
+  var email=cl.em||"";
   // Anonymize tickets (NF525: keep amounts, remove personal data)
   for(var i=0;i<AP.length;i++){
     if(AP[i].cId===cId){AP[i].cId="anonyme";AP[i].comment="";if(typeof saveAppointment==="function")saveAppointment(AP[i]);}
   }
   // Remove from CL
   for(var i=CL.length-1;i>=0;i--){if(CL[i].id===cId){CL.splice(i,1);break;}}
-  // Delete from Supabase
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    // Delete client from salon
     _sb.from("clients").delete().eq("id",cId).eq("salon_id",_salonId);
+    // Delete fidelite_client for this salon
+    if(email){
+      _sb.from("fidelite_client").delete().eq("client_beautypro_id",email).eq("salon_id",_salonId);
+    }
+    // Anonymize rdv_online for this salon
+    if(email){
+      _sb.from("rdv_online").update({client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""}).eq("client_email",email).eq("salon_id",_salonId);
+    }
   }
-  auditLog("RGPD_EFFACEMENT","Client "+name+" (ID:"+cId+") - Donn\u00e9es personnelles supprim\u00e9es, tickets anonymis\u00e9s");
+  auditLog("RGPD_EFFACEMENT","Client "+name+" (ID:"+cId+") - Donn\u00e9es personnelles supprim\u00e9es, tickets anonymis\u00e9s, fid\u00e9lit\u00e9 supprim\u00e9e");
   cM();go("clients");
 }
 function exportClientData(cId){
@@ -9630,12 +9646,11 @@ function doFinalPay(method){
       clientIds.push(it.sepCId);
     }
   });
-  // Filter: only clients with prestations
+  // Filter: only show fid popup if ticket has at least one prestation (not product-only)
+  var ticketHasPrestation=_tk.items.some(function(it){return !it.prodId&&!it.isSep;});
+  if(!ticketHasPrestation){doFinalPayExecute(method);return;}
   clientIds=clientIds.filter(function(cId){
     var cl=gC(cId);if(!cl)return false;
-    // Check if client has a prestation in the ticket
-    var hasP=false;
-    if(_tk.items.some(function(it){return !it.isProd&&!it.isSep;}))hasP=true;
     return true;
   });
   
@@ -9819,8 +9834,11 @@ function doFinalPayExecute(method){
     var _fCl=gC(_tk.cId);
     if(_fCl&&typeof updateFideliteClient==="function"){
       var _bpId=_fCl.clientBeautyproId||_fCl.em||null;
+      // Only count visit if ticket has at least one prestation (not product-only)
+      var hasPrestation=false;
+      if(_tk.items){for(var fi=0;fi<_tk.items.length;fi++){if(!_tk.items[fi].prodId){hasPrestation=true;break;}}}
       if(_bpId){
-        updateFideliteClient(_bpId,window._salonId,SALON_CONFIG.nom,_fCl.fid||0);
+        updateFideliteClient(_bpId,window._salonId,SALON_CONFIG.nom,_fCl.fid||0,hasPrestation);
       }
     }
   }
