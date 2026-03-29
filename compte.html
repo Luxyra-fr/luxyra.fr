@@ -675,9 +675,20 @@ async function saveProfile(){
     await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville,updated_at:new Date().toISOString()})});
     CLIENT.nom=nom.toUpperCase();CLIENT.prenom=pre;CLIENT.telephone=tel;CLIENT.date_naissance=ddn;CLIENT.genre=genre;CLIENT.adresse=adr;CLIENT.cp=cp;CLIENT.ville=ville;
     saveSession();
-    // 2. Sync to ALL salon client records with same email
+    // 2. Sync to ALL salon client records with same email (only non-empty fields)
     try{
-      await api("clients?email=eq."+encodeURIComponent(CLIENT.email),{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,sexe:genre||null,adresse:adr,cp:cp,ville:ville})});
+      var syncObj={};
+      if(nom)syncObj.nom=nom.toUpperCase();
+      if(pre)syncObj.prenom=pre;
+      if(tel)syncObj.telephone=tel;
+      if(ddn)syncObj.date_naissance=ddn;
+      if(genre)syncObj.sexe=genre;
+      if(adr)syncObj.adresse=adr;
+      if(cp)syncObj.cp=cp;
+      if(ville)syncObj.ville=ville;
+      if(Object.keys(syncObj).length){
+        await api("clients?email=eq."+encodeURIComponent(CLIENT.email),{method:"PATCH",body:JSON.stringify(syncObj)});
+      }
     }catch(e2){console.log("Sync salons:",e2);}
     var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--green)";el.textContent="\u2705 Profil mis \u00e0 jour dans tous vos salons";}
   }catch(e){var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--red)";el.textContent="Erreur";}}

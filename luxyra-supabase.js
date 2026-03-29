@@ -555,13 +555,24 @@ async function saveClient(client) {
   }
   // Cross-salon sync: update all client records + compte with same email
   if (client.em) {
-    var syncClients = { nom: client.nom, prenom: client.pre, telephone: client.ph, sexe: client.sex, adresse: client.adr, cp: client.cp, ville: client.ville, date_naissance: client.ddn, sms_ok: client.smsOk, email_ok: client.emOk };
-    var syncBp = { nom: client.nom, prenom: client.pre, telephone: client.ph, genre: client.sex, adresse: client.adr, cp: client.cp, ville: client.ville, date_naissance: client.ddn, sms_ok: client.smsOk, email_ok: client.emOk };
+    var syncClients = {}, syncBp = {};
+    if (client.nom) { syncClients.nom = client.nom; syncBp.nom = client.nom; }
+    if (client.pre) { syncClients.prenom = client.pre; syncBp.prenom = client.pre; }
+    if (client.ph) { syncClients.telephone = client.ph; syncBp.telephone = client.ph; }
+    if (client.sex) { syncClients.sexe = client.sex; syncBp.genre = client.sex; }
+    if (client.adr) { syncClients.adresse = client.adr; syncBp.adresse = client.adr; }
+    if (client.cp) { syncClients.cp = client.cp; syncBp.cp = client.cp; }
+    if (client.ville) { syncClients.ville = client.ville; syncBp.ville = client.ville; }
+    if (client.ddn) { syncClients.date_naissance = client.ddn; syncBp.date_naissance = client.ddn; }
+    if (client.smsOk !== undefined) { syncClients.sms_ok = client.smsOk; syncBp.sms_ok = client.smsOk; }
+    if (client.emOk !== undefined) { syncClients.email_ok = client.emOk; syncBp.email_ok = client.emOk; }
     try {
-      // Update other salons' client records
-      await _sb.from("clients").update(syncClients).eq("email", client.em).neq("id", client.id);
-      // Update clients_beautypro (compte client)
-      await _sb.from("clients_beautypro").update(syncBp).eq("email", client.em);
+      if (Object.keys(syncClients).length) {
+        await _sb.from("clients").update(syncClients).eq("email", client.em).neq("id", client.id);
+      }
+      if (Object.keys(syncBp).length) {
+        await _sb.from("clients_beautypro").update(syncBp).eq("email", client.em);
+      }
     } catch(e) { console.log("[SYNC]", e.message); }
   }
 }
