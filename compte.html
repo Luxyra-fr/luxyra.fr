@@ -309,6 +309,21 @@ async function loadFidelite(){
       var d2=await r2.json();
       if(Array.isArray(d2)&&d2.length)FIDELITE_DATA=d2;
     }
+    // Fetch CURRENT fidconf from each salon (not stale values from last visit)
+    for(var fi=0;fi<FIDELITE_DATA.length;fi++){
+      try{
+        var sr=await api("salons?select=config_json&id=eq."+FIDELITE_DATA[fi].salon_id);
+        var sd=await sr.json();
+        if(Array.isArray(sd)&&sd[0]){
+          var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
+          if(cfg.fidconf){
+            FIDELITE_DATA[fi].seuil_fidelite=cfg.fidconf.seuil||10;
+            FIDELITE_DATA[fi].remise_fidelite=cfg.fidconf.remise||10;
+            FIDELITE_DATA[fi].remise_type=cfg.fidconf.type||"amount";
+          }
+        }
+      }catch(e){}
+    }
     _fideliteLoaded=true;
   }catch(e){console.log("Fidelite load error:",e);}
 }
