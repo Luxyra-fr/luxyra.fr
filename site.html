@@ -1095,12 +1095,22 @@ async function loadDashboardFidelite(){
     if(r.data&&r.data[0]){
       pts=r.data[0].points||0;
       vis=r.data[0].visites||0;
-      seuil=r.data[0].seuil_fidelite||10;
-      remise=r.data[0].remise_fidelite||10;
-      remType=r.data[0].remise_type||"amount";
     }
+    // Get CURRENT fidconf from salon config_json
+    try{
+      var sr=await sb.from("salons").select("config_json").eq("id",salonId).limit(1);
+      if(sr.data&&sr.data[0]){
+        var cfg=typeof sr.data[0].config_json==="string"?JSON.parse(sr.data[0].config_json):sr.data[0].config_json||{};
+        if(cfg.fidconf){
+          seuil=cfg.fidconf.seuil||10;
+          remise=cfg.fidconf.remise||10;
+          remType=cfg.fidconf.type||"amount";
+        }
+      }
+    }catch(e2){}
     var pct=Math.min(100,Math.round(pts/seuil*100));
     var remUnit=remType==="percent"?"%":"\u20ac";
+    var remaining=Math.max(0,seuil-pts);
     var el;
     el=document.getElementById("dashVisites");if(el)el.textContent=vis;
     el=document.getElementById("dashPoints");if(el)el.textContent=pts+"/"+seuil;
