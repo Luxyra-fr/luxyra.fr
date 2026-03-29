@@ -560,7 +560,7 @@ function renderProfileTab(){
   h+='<div class="fg-row"><div class="fg"><label>Nom</label><input id="pNom" value="'+(CLIENT.nom||"")+'"></div>';
   h+='<div class="fg"><label>Pr\u00e9nom</label><input id="pPre" value="'+(CLIENT.prenom||"")+'"></div></div>';
   h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone</label><input id="pTel" value="'+(CLIENT.telephone||"")+'"></div>';
-  h+='<div class="fg"><label>Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="M"'+(CLIENT.genre==="M"?" selected":"")+'>Homme</option><option value=""'+(!CLIENT.genre?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
+  h+='<div class="fg"><label>Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="H"'+((CLIENT.genre==="H"||CLIENT.genre==="M")?" selected":"")+'>Homme</option><option value="E"'+(CLIENT.genre==="E"?" selected":"")+'>Enfant</option><option value=""'+(!CLIENT.genre||CLIENT.genre===""?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
   h+='<div class="fg"><label>Date de naissance</label><input id="pDdn" type="date" value="'+(CLIENT.date_naissance||"")+'"></div>';
   h+='<div class="fg"><label>Adresse</label><input id="pAdr" value="'+(CLIENT.adresse||"")+'" placeholder="Num\u00e9ro et rue"></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal</label><input id="pCp" value="'+(CLIENT.cp||"")+'" placeholder="57200"></div>';
@@ -672,7 +672,7 @@ async function saveProfile(){
   var ville=document.getElementById("pVille")?document.getElementById("pVille").value.trim():"";
   try{
     // 1. Save to clients_beautypro (main profile)
-    await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre,adresse:adr,cp:cp,ville:ville,updated_at:new Date().toISOString()})});
+    await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville,updated_at:new Date().toISOString()})});
     CLIENT.nom=nom.toUpperCase();CLIENT.prenom=pre;CLIENT.telephone=tel;CLIENT.date_naissance=ddn;CLIENT.genre=genre;CLIENT.adresse=adr;CLIENT.cp=cp;CLIENT.ville=ville;
     saveSession();
     // 2. Sync to ALL salon client records with same email
@@ -704,7 +704,12 @@ function toggleNotif(el,field){
   el.classList.toggle("on");
   CLIENT[field]=!isOn;saveSession();
   var body={};body[field]=!isOn;
+  // Save to clients_beautypro (main profile)
   api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify(body)});
+  // Sync to ALL salon client records with same email
+  try{
+    api("clients?email=eq."+encodeURIComponent(CLIENT.email),{method:"PATCH",body:JSON.stringify(body)});
+  }catch(e){}
 }
 
 // ========== LOAD DATA ==========
