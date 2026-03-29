@@ -426,21 +426,25 @@ async function emailReceipt(rdvId){
   if(!CLIENT||!CLIENT.email){alert("Aucun email enregistr\u00e9 sur votre compte.");return;}
   var btn=event.target;if(btn){btn.textContent="\u23f3 Envoi...";btn.disabled=true;}
 
-  // Fetch salon details for the ticket
-  var salon={nom:rdv.salon_nom||"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",tauxTVA:20};
-  try{
-    var sr=await api("salons?select=nom,config_json&id=eq."+rdv.salon_id);
-    var sd=await sr.json();
-    if(Array.isArray(sd)&&sd[0]){
-      var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
-      salon.nom=cfg.nom||sd[0].nom||"Salon";
-      salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
-      salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";salon.tauxTVA=cfg.tauxTVA||20;
-    }
-  }catch(e){}
-
-  // Generate ticket HTML (same format as downloadReceipt)
-  var ticketHtml=buildCompteTicketHTML(rdv,salon);
+  // Use stored ticket HTML if available, otherwise generate
+  var ticketHtml;
+  if(rdv.ticket_html){
+    ticketHtml=rdv.ticket_html;
+  }else{
+    var salon={nom:rdv.salon_nom||"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",tauxTVA:20};
+    try{
+      var sr=await api("salons?select=nom,config_json&id=eq."+rdv.salon_id);
+      var sd=await sr.json();
+      if(Array.isArray(sd)&&sd[0]){
+        var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
+        salon.nom=cfg.nom||sd[0].nom||"Salon";
+        salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
+        salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";salon.tauxTVA=cfg.tauxTVA||20;
+      }
+    }catch(e){}
+    ticketHtml=buildCompteTicketHTML(rdv,salon);
+  }
+  var salonNomEmail=rdv.salon_nom||"Salon";
 
   try{
     var resp=await fetch("/api/email/ticket",{
@@ -449,7 +453,7 @@ async function emailReceipt(rdvId){
       body:JSON.stringify({
         clientEmail:CLIENT.email,
         clientName:(CLIENT.prenom||"")+" "+(CLIENT.nom||""),
-        salonName:salon.nom,
+        salonName:salonNomEmail,
         ticketNum:rdv.ticket_num||("RDV-"+rdvId.slice(0,8)),
         ticketHtml:ticketHtml
       })
@@ -850,24 +854,33 @@ async function submitCancelRdv(rdvId){
 async function downloadReceipt(rdvId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   
-  var salon={nom:rdv.salon_nom||"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",sousTitre:"",tauxTVA:20};
-  try{
-    var sr=await api("salons?select=nom,config_json&id=eq."+rdv.salon_id);
-    var sd=await sr.json();
-    if(Array.isArray(sd)&&sd[0]){
-      var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
-      salon.nom=cfg.nom||sd[0].nom||"Salon";
-      salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
-      salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";
-      salon.sousTitre=cfg.sousTitre||"";salon.tauxTVA=cfg.tauxTVA||20;
-    }
-  }catch(e){}
+  var salonNom=rdv.salon_nom||"Salon";
+  var ticketNum=rdv.ticket_num||"";
   
   var w=window.open("","_blank","width=380,height=700");if(!w)return;
-  var h="<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ticket "+salon.nom+" N\u00b0"+(rdv.ticket_num||"")+"</title>";
+  var h="<!DOCTYPE html><html><head><meta charset='utf-8'><title>Ticket "+salonNom+" N\u00b0"+ticketNum+"</title>";
   h+="<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;color:#000;background:#fff}";
   h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>";
-  h+=buildCompteTicketHTML(rdv,salon);
+  
+  // Use stored ticket HTML (exact same as printed at checkout) if available
+  if(rdv.ticket_html){
+    h+=rdv.ticket_html;
+  }else{
+    // Fallback to generated ticket
+    var salon={nom:salonNom,adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",sousTitre:"",tauxTVA:20};
+    try{
+      var sr=await api("salons?select=nom,config_json&id=eq."+rdv.salon_id);
+      var sd=await sr.json();
+      if(Array.isArray(sd)&&sd[0]){
+        var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
+        salon.nom=cfg.nom||sd[0].nom||"Salon";
+        salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
+        salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";
+        salon.sousTitre=cfg.sousTitre||"";salon.tauxTVA=cfg.tauxTVA||20;
+      }
+    }catch(e){}
+    h+=buildCompteTicketHTML(rdv,salon);
+  }
   h+="</body></html>";
   
   w.document.write(h);w.document.close();
