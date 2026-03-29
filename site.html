@@ -672,12 +672,11 @@ function renderSite(){
     h+='<button class="btn btn-outline" style="margin-left:auto;font-size:12px;padding:8px 16px" onclick="doClientLogout()">D\u00e9connexion</button>';
     h+='</div>';
     // Stats
+    // Stats - will be updated async
     h+='<div class="dash-stats">';
-    h+='<div class="dash-stat"><div class="num">'+(CLIENT.total_visites||0)+'</div><div class="lbl">Visites</div></div>';
-    h+='<div class="dash-stat"><div class="num">'+(CLIENT.points_fidelite||0)+'</div><div class="lbl">Points fid\u00e9lit\u00e9</div></div>';
-    var fidSeuil=SITE_CFG.fidSeuil||10;
-    var fidPct=Math.min(100,Math.round((CLIENT.points_fidelite||0)/fidSeuil*100));
-    h+='<div class="dash-stat"><div class="num">'+fidPct+'%</div><div class="lbl">Prochaine remise</div><div class="fid-bar"><div class="fill" style="width:'+fidPct+'%"></div></div></div>';
+    h+='<div class="dash-stat"><div class="num" id="dashVisites">...</div><div class="lbl">Visites</div></div>';
+    h+='<div class="dash-stat"><div class="num" id="dashPoints">...</div><div class="lbl">Points fid\u00e9lit\u00e9</div></div>';
+    h+='<div class="dash-stat"><div class="num" id="dashPct">...</div><div class="lbl">Prochaine remise</div><div class="fid-bar"><div class="fill" id="dashFidBar" style="width:0%"></div></div></div>';
     h+='</div>';
     // CTA
     if(SITE_CFG.resa)h+='<button class="btn btn-gold" style="width:100%;padding:14px;margin-bottom:20px" onclick="showPage(\'booking\')">Prendre rendez-vous</button>';
@@ -711,7 +710,7 @@ function renderSite(){
   h+='<br>Propuls\u00e9 par <a href=\"mailto:contact@luxyra.fr\" style=\"color:var(--gold);text-decoration:none\">Luxyra</a></div></div>';
   
   var rootEl=document.getElementById("root");if(rootEl)rootEl.innerHTML=h;
-  if(CLIENT)setTimeout(function(){loadDashboardRdvs();},500);
+  if(CLIENT)setTimeout(function(){loadDashboardRdvs();loadDashboardFidelite();},500);
 }
 
 function showPage(id){
@@ -1088,6 +1087,25 @@ async function saveClientProfile(){
 }
 
 // Load dashboard RDV list
+async function loadDashboardFidelite(){
+  if(!CLIENT||!salonId)return;
+  try{
+    var r=await sb.from("fidelite_client").select("*").eq("client_beautypro_id",CLIENT.email).eq("salon_id",salonId).limit(1);
+    var pts=0,vis=0,seuil=10;
+    if(r.data&&r.data[0]){
+      pts=r.data[0].points||0;
+      vis=r.data[0].visites||0;
+      seuil=r.data[0].seuil_fidelite||10;
+    }
+    var pct=Math.min(100,Math.round(pts/seuil*100));
+    var el;
+    el=document.getElementById("dashVisites");if(el)el.textContent=vis;
+    el=document.getElementById("dashPoints");if(el)el.textContent=pts;
+    el=document.getElementById("dashPct");if(el)el.textContent=pct+"%";
+    el=document.getElementById("dashFidBar");if(el)el.style.width=pct+"%";
+  }catch(e){console.log("Fidelite load error",e);}
+}
+
 async function loadDashboardRdvs(){
   await loadClientRDVs();
   var el=document.getElementById("dashRdvList");if(!el)return;
