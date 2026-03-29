@@ -10167,6 +10167,9 @@ function emailTicket(id){
   if(!email){
     h+='<div style="padding:16px;background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.2);border-radius:10px;color:#ef5350;font-size:13px;margin-bottom:12px">\u26a0 Aucun email enregistr\u00e9 pour ce client. Ajoutez son email dans sa fiche client.</div>';
   }
+  if(cl&&!cl.emOk){
+    h+='<div style="padding:16px;background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.2);border-radius:10px;color:#ff9800;font-size:13px;margin-bottom:12px">\u26a0 Ce client a refus\u00e9 la r\u00e9ception d\u0027emails (RGPD). Modifiez son consentement dans sa fiche avant d\u0027envoyer.</div>';
+  }
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
   if(email){
     h+='<button id="btnSendBrevo" onclick="sendTicketByEmail(\''+a.id+'\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(200,168,78,.3);border-radius:12px;background:rgba(200,168,78,.12);cursor:pointer;color:var(--gold);display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u2709\ufe0f</span><span style="flex:1;text-align:left">Envoyer par email au client</span></button>';
@@ -10195,6 +10198,7 @@ async function sendTicketByEmail(id){
   if(!a){alert("Ticket introuvable");return;}
   var cl=gC(a.cId),sty=gT(a.stId);
   if(!cl||!cl.em){alert("Pas d\u2019email pour ce client");return;}
+  if(!cl.emOk){alert("\u26a0 Ce client a refus\u00e9 les emails (RGPD). Modifiez son consentement dans sa fiche client.");return;}
   console.log("[EMAIL] Envoi \u00e0:",cl.em,"Client:",cName(cl),"Ticket:",a.tkNum,"SalonEmail:",SALON_CONFIG.email);
   var btn=document.getElementById("btnSendBrevo");
   if(btn){btn.textContent="\u23f3 Envoi en cours...";btn.style.opacity=".5";btn.onclick=null;}
@@ -11061,20 +11065,22 @@ async function doSendConfirm(mode,rdvId){
   cM();
 
   if(mode==="sms"||mode==="both"){
-    if(cl.ph){
+    if(cl.ph&&cl.smsOk!==false){
       var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",vars);
       var r=await sendSms(cl.ph,smsTxt);
       if(r&&r.ok){sent.push("SMS");auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS OK");}
       else{errors.push("SMS: "+(r&&r.error?r.error:"erreur"));}
     }
+    if(cl.ph&&cl.smsOk===false){errors.push("SMS: client a refus\u00e9 (RGPD)");}
   }
   if(mode==="email"||mode==="both"){
-    if(cl.em){
+    if(cl.em&&cl.emOk!==false){
       var emailHtml=buildRdvEmailHTML("confirm",vars);
       var r2=await sendEmailViaWorker(cl.em,cName(cl),"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,emailHtml);
       if(r2&&r2.ok){sent.push("Email");auditLog("CONFIRM_EMAIL","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - Email OK");}
       else{errors.push("Email: "+(r2&&r2.error?r2.error:"erreur inconnue"));}
     }
+    if(cl.em&&cl.emOk===false){errors.push("Email: client a refus\u00e9 (RGPD)");}
   }
   window._confirmRdv=null;
   if(sent.length&&!errors.length)alert("\u2705 Confirmation envoy\u00e9e ("+sent.join(" + ")+")");
