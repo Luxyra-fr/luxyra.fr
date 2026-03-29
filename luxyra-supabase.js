@@ -293,6 +293,20 @@ async function loadSalonData() {
     });
   }
 
+  // 5b. Sync fidelite points from fidelite_client (source of truth)
+  try {
+    var fidRes = await _sb.from("fidelite_client").select("client_beautypro_id,points").eq("salon_id", _salonId);
+    if (fidRes.data) {
+      fidRes.data.forEach(function(f) {
+        for (var ci = 0; ci < CL.length; ci++) {
+          if (CL[ci].em && CL[ci].em === f.client_beautypro_id) {
+            CL[ci].fid = f.points || 0;
+          }
+        }
+      });
+    }
+  } catch(e) {}
+
   // 6. Charger rendez-vous/tickets → AP[]
   var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(500);
   if (apRes.data) {
