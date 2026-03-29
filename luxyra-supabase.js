@@ -568,7 +568,7 @@ async function saveAppointment(appt) {
     date_rdv: appt.date, heure: appt.time, prix: appt.pr,
     brut_total: appt.brutTotal || null, remise: appt.remise || 0,
     status: appt.st, mode_paiement: appt.met || "",
-    ticket_num: appt.tkNum || null, hash: appt.hash || "",
+    ticket_num: appt.tkNum || null, ticket_html: appt.ticketHtml || null, hash: appt.hash || "",
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
