@@ -553,6 +553,16 @@ async function saveClient(client) {
     var res = await _sb.from("clients").insert(data).select();
     if (res.data && res.data[0]) client.id = res.data[0].id;
   }
+  // Cross-salon sync: update all client records + compte with same email
+  if (client.em) {
+    var syncData = { nom: client.nom, prenom: client.pre, telephone: client.ph, adresse: client.adr, cp: client.cp, ville: client.ville, date_naissance: client.ddn };
+    try {
+      // Update other salons' client records
+      await _sb.from("clients").update(syncData).eq("email", client.em).neq("id", client.id);
+      // Update clients_beautypro (compte client)
+      await _sb.from("clients_beautypro").update(syncData).eq("email", client.em);
+    } catch(e) { console.log("[SYNC]", e.message); }
+  }
 }
 
 // Sauvegarder un rendez-vous/ticket
