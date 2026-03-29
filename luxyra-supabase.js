@@ -555,12 +555,13 @@ async function saveClient(client) {
   }
   // Cross-salon sync: update all client records + compte with same email
   if (client.em) {
-    var syncData = { nom: client.nom, prenom: client.pre, telephone: client.ph, adresse: client.adr, cp: client.cp, ville: client.ville, date_naissance: client.ddn, sms_ok: client.smsOk, email_ok: client.emOk };
+    var syncClients = { nom: client.nom, prenom: client.pre, telephone: client.ph, sexe: client.sex, adresse: client.adr, cp: client.cp, ville: client.ville, date_naissance: client.ddn, sms_ok: client.smsOk, email_ok: client.emOk };
+    var syncBp = { nom: client.nom, prenom: client.pre, telephone: client.ph, genre: client.sex, adresse: client.adr, cp: client.cp, ville: client.ville, date_naissance: client.ddn, sms_ok: client.smsOk, email_ok: client.emOk };
     try {
       // Update other salons' client records
-      await _sb.from("clients").update(syncData).eq("email", client.em).neq("id", client.id);
+      await _sb.from("clients").update(syncClients).eq("email", client.em).neq("id", client.id);
       // Update clients_beautypro (compte client)
-      await _sb.from("clients_beautypro").update(syncData).eq("email", client.em);
+      await _sb.from("clients_beautypro").update(syncBp).eq("email", client.em);
     } catch(e) { console.log("[SYNC]", e.message); }
   }
 }
