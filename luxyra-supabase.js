@@ -575,6 +575,15 @@ async function saveClient(client) {
       }
     } catch(e) { console.log("[SYNC]", e.message); }
   }
+  // Sync fidelite_client.points when fid changes
+  if (client.em && client.fid !== undefined && _salonId) {
+    try {
+      var fr = await _sb.from("fidelite_client").select("id").eq("client_beautypro_id", client.em).eq("salon_id", _salonId).limit(1);
+      if (fr.data && fr.data[0]) {
+        await _sb.from("fidelite_client").update({ points: client.fid }).eq("id", fr.data[0].id);
+      }
+    } catch(e) { console.log("[FIDELITE SYNC]", e.message); }
+  }
 }
 
 // Sauvegarder un rendez-vous/ticket
