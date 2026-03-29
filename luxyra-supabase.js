@@ -287,7 +287,8 @@ async function loadSalonData() {
         no: c.notes, natChev: c.nature_cheveux, typeChev: c.type_cheveux,
         detChev: c.details_cheveux, collab: c.collab_pref,
         actif: c.actif, fid: c.points_fidelite,
-        smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || []
+        smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
+        clientBeautyproId: c.client_beautypro_id || null
       };
     });
   }
@@ -955,6 +956,7 @@ async function syncClientFromOnlineRdv(rdvData) {
 // Update fidelite_client cross-salon table
 async function updateFideliteClient(bpId, salonId, salonNom) {
   if (!_isOnline || !bpId) return;
+  var fidconf = window.FIDCONF || { seuil: 10, remise: 10 };
   try {
     var r = await _sb.from("fidelite_client").select("*").eq("client_beautypro_id", bpId).eq("salon_id", salonId).limit(1);
     if (r.data && r.data.length) {
@@ -963,6 +965,10 @@ async function updateFideliteClient(bpId, salonId, salonNom) {
         visites: (f.visites || 0) + 1,
         points: (f.points || 0) + 1,
         derniere_visite: new Date().toISOString().slice(0, 10),
+        salon_nom: salonNom || SALON_CONFIG.nom,
+        seuil_fidelite: fidconf.seuil || 10,
+        remise_fidelite: fidconf.remise || 10,
+        remise_type: fidconf.type || "amount",
         updated_at: new Date().toISOString()
       }).eq("id", f.id);
     } else {
@@ -972,7 +978,10 @@ async function updateFideliteClient(bpId, salonId, salonNom) {
         salon_nom: salonNom || SALON_CONFIG.nom,
         points: 1,
         visites: 1,
-        derniere_visite: new Date().toISOString().slice(0, 10)
+        derniere_visite: new Date().toISOString().slice(0, 10),
+        seuil_fidelite: fidconf.seuil || 10,
+        remise_fidelite: fidconf.remise || 10,
+        remise_type: fidconf.type || "amount"
       });
     }
   } catch(e) { console.log("[FIDELITE]", e.message); }
