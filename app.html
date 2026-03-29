@@ -805,6 +805,49 @@ async function openCustomerPortal(){
 }
 
 function proGate(feature){if(isPro())return true;showUpgradeModal(feature);return false;}
+
+function showSwitchPlanModal(){
+  var curPro=isPro();
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:500px">';
+  h+='<div style="text-align:center;margin-bottom:20px"><h2 style="color:var(--gold)">Changer de forfait</h2>';
+  h+='<div style="font-size:13px;color:var(--text3)">Forfait actuel : <strong>'+(curPro?'Pro 24,99\u20ac':'Essentiel 14,99\u20ac')+'</strong>/mois</div></div>';
+  // Essentiel card
+  h+='<div style="display:flex;flex-direction:column;gap:12px">';
+  h+='<div style="border:2px solid '+(curPro?'rgba(255,255,255,.1)':'var(--gold)')+';border-radius:14px;padding:18px;'+(curPro?'':'background:rgba(212,168,67,.06)')+'"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div><div style="font-size:16px;font-weight:800;color:'+(curPro?'var(--text)':'var(--gold)')+'">Essentiel</div><div style="font-size:22px;font-weight:900;color:var(--text)">14,99\u20ac<span style="font-size:13px;font-weight:400;color:var(--text3)">/mois</span></div></div>';
+  if(curPro)h+='<button onclick="doSwitchPlan(\'essential\')" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;font-size:13px;cursor:pointer">Passer en Essentiel</button>';
+  else h+='<div style="padding:8px 16px;border-radius:8px;background:var(--gold);color:#000;font-weight:700;font-size:12px">Actuel</div>';
+  h+='</div>';
+  h+='<div style="font-size:12px;color:var(--text3);line-height:1.8">Planning, clients, caisse NF525, tickets, fid\u00e9lit\u00e9.<br>Id\u00e9al pour les ind\u00e9pendants.</div></div>';
+  // Pro card
+  h+='<div style="border:2px solid '+(curPro?'var(--gold)':'rgba(255,255,255,.1)')+';border-radius:14px;padding:18px;'+(curPro?'background:rgba(212,168,67,.06)':'')+'"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div><div style="font-size:16px;font-weight:800;color:'+(curPro?'var(--gold)':'var(--text)')+'">Pro</div><div style="font-size:22px;font-weight:900;color:var(--text)">24,99\u20ac<span style="font-size:13px;font-weight:400;color:var(--text3)">/mois</span></div></div>';
+  if(!curPro)h+='<button onclick="doSwitchPlan(\'pro\')" style="padding:10px 20px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:13px;border:none;cursor:pointer">Passer en Pro</button>';
+  else h+='<div style="padding:8px 16px;border-radius:8px;background:var(--gold);color:#000;font-weight:700;font-size:12px">Actuel</div>';
+  h+='</div>';
+  h+='<div style="font-size:12px;color:var(--text3);line-height:1.8">Tout Essentiel + site vitrine, r\u00e9servation en ligne, paiement acompte, marketplace, SMS/emails automatiques.</div></div>';
+  h+='</div>';
+  h+='<button onclick="cM()" style="width:100%;margin-top:16px;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;cursor:pointer">Fermer</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+async function doSwitchPlan(plan){
+  var btn=event.target;btn.textContent="Chargement...";btn.style.opacity=".5";btn.onclick=null;
+  try{
+    var res=await fetch(window.location.origin+STRIPE_API+"/switch-plan",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:window._salonId||"",plan:plan})
+    });
+    var data=await res.json();
+    if(data.success){
+      alert("\u2705 Forfait chang\u00e9 en "+plan.toUpperCase()+" ! Rechargement...");
+      cM();location.reload();
+    }else{
+      alert("Erreur: "+(data.error||"Impossible de changer de forfait"));
+      btn.textContent="R\u00e9essayer";btn.style.opacity="1";btn.onclick=function(){doSwitchPlan(plan);};
+    }
+  }catch(e){alert("Erreur de connexion");btn.textContent="R\u00e9essayer";btn.style.opacity="1";}
+}
 SALON_CONFIG._defaultLogo="data:image/webp;base64,UklGRsoCAABXRUJQVlA4IL4CAADQDACdASoqACoAPlEmkEYjoiGhI4kAcAoJZQC98JXJPtuueASPl+TzOsgRMGvGz9Nf9L3Av1J/5XXN/ZJJJ9N5h5XLY9LqGFboTA6YQGYRIY4cxDR0vRaWNRypCQ9zUcCkClx4gGJbuyDZEMJ/3gAA/vVj/Fh/SqNagRWSN2U5c7xkAYTmvJjJ9+qw81H/eAPE8cL7wHIcTiAlCABUIEWSRggNSFbml//Ts6ApP312IohCpMcxxvoLZgMqX8VgaV+iLwGliUrfojoaTFSaFDdQJtlzKzoY8E7e/x17RTnHrIdh8qEZReQ9uYll7OfD1kUM0zBkSg7gdI/GIBGb44QCNddZUkw4sQ+Umsq0IHJWMa0h+uOoMAeqmb2aaBFRL2Uj+XW+1+3/+jQv3/V/vIYs8a6KASy6H12zJ6dsBo5pjDcmKvFgcTN1e2ztM0tv9VIY9mRo5VemJTG73r0HXxpTUf8RYIeqvG8Cxci4iqOAOTjqaXUa+hGpwUz/0d63ZMCMfqwmzgyy5MIFoNkY+VY+v3/Lfdfv/Ex/mvkcAjtKnebadhURwE0+JBF71NegSMCnTiEagoPlF3wzdrsgoQIhlUek3YpTbRTLIv+4kVB42i1hEWoZYYVKYv1LOG+NO1+g4QqpZFOIvBtUukt6t+v8EFD5btAGps/ReQaGR7phgtvzkGxWi1X8QuQ3RJ00jaCM3S43Lu+DWsGmrCv/elTAQfMTLIX6LscIKG+03SqH+zp8wHhw+XMJ3qsjiQGYKT96461jOcjzTjNaRnjaC+tgxBPNf5WTT8KL/DU0Cq/V6KuP29QfWsBlOiDPv5j9tKugwtV+zlp1ueoxBn4HcOcdmomE6ekCU6mU8Q/EJrU9EPExkUEfS27z3WNfM5QWQyDCqG4HSYsuoItzZnBz9w8uThAiVuK/mslU02gAAAA=";
 // Multi-métiers: adapt l'app selon le domaine du salon
 var METIER_CONFIG={
@@ -4051,9 +4094,10 @@ function rSettings(){
     if(isPro()){
       h+='<div style="font-size:12px;color:var(--text3)">24,99€/mois — Toutes les fonctionnalités</div></div>';
       h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:12px;padding:8px 14px;white-space:nowrap">Gérer mon abonnement</button>';
+      h+='<button onclick="showSwitchPlanModal()" style="margin-top:6px;padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:none;color:var(--text3);font-size:11px;cursor:pointer;white-space:nowrap">Changer de forfait</button>';
     }else{
       h+='<div style="font-size:12px;color:var(--text3)">14,99€/mois</div></div>';
-      h+='<button onclick="showUpgradeModal(\'Pro\')" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">Passer en Pro →</button>';
+      h+='<button onclick="showSwitchPlanModal()" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">Changer de forfait</button>';
     }
     h+='</div>';
 
