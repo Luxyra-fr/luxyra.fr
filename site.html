@@ -821,8 +821,29 @@ function renderCalendar(){
     var isPast=dt<today;
     var isTooFar=dt>maxDate;
     var isClosed=!hrs;
-    // Check if collaborator has full-day absence on this date
     var dateKey=formatDate(dt);
+    // Check exceptional closing (overrides open day)
+    var absences=SITE_CFG.absences||[];
+    var isExceptClosed=false;
+    var isExceptOpen=false;
+    for(var ai=0;ai<absences.length;ai++){
+      var ab=absences[ai];
+      if(ab.type==="fermeture_except"&&ab.date===dateKey){
+        if(!ab.stId||!booking.collabId||ab.stId===booking.collabId){isExceptClosed=true;break;}
+      }
+    }
+    // Check exceptional opening (overrides closed day)
+    if(isClosed){
+      for(var ai=0;ai<absences.length;ai++){
+        var ab=absences[ai];
+        if(ab.type==="ouverture_except"&&ab.date===dateKey&&ab.horaire_o&&ab.horaire_c){
+          if(!booking.collabId||ab.stId===booking.collabId){isExceptOpen=true;break;}
+        }
+      }
+    }
+    if(isExceptClosed)isClosed=true;
+    if(isExceptOpen)isClosed=false;
+    // Check if collaborator has full-day absence on this date
     var isAbsent=!isClosed&&booking.collabId&&isCollabDayOff(dateKey,booking.collabId);
     var isToday=dt.getTime()===today.getTime();
     var isSelected=booking.date&&booking.date===dateKey;
@@ -847,20 +868,23 @@ function selectDate(dateStr){
 }
 
 function isCollabBlocked(date,collabId,slotStart,slotEnd){
-  // Check if collaborator is blocked by absence/pause/congé during [slotStart,slotEnd)
   var absences=SITE_CFG.absences||[];
   for(var i=0;i<absences.length;i++){
     var ab=absences[i];
+    // Fermeture exceptionnelle (whole salon or specific collab)
+    if(ab.type==="fermeture_except"&&ab.date===date){
+      if(!ab.stId||!collabId||ab.stId===collabId)return true;
+    }
     // Filter by collaborator
     if(collabId&&ab.stId&&ab.stId!==collabId)continue;
-    if(!collabId&&ab.stId)continue;// No collab selected but absence is for specific one
+    if(!collabId&&ab.stId)continue;
     var aType=ab.type||"absent";
-    // Full-day blocks: congé, absent, maladie, formation
+    // Full-day blocks
     if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
       if(ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)return true;
       if(ab.date===date&&!ab.from)return true;
     }
-    // Hourly blocks: pause, absent_heures
+    // Hourly blocks
     if((aType==="pause"||aType==="absent_heures")&&ab.date===date&&ab.from&&ab.to){
       var bStart=toMin(ab.from),bEnd=toMin(ab.to);
       if(slotStart<bEnd&&slotEnd>bStart)return true;
@@ -870,10 +894,13 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
 }
 
 function isCollabDayOff(date,collabId){
-  // Check if collaborator has a full-day absence (congé, absent, maladie, formation)
   var absences=SITE_CFG.absences||[];
   for(var i=0;i<absences.length;i++){
     var ab=absences[i];
+    // Fermeture exceptionnelle
+    if(ab.type==="fermeture_except"&&ab.date===date){
+      if(!ab.stId||ab.stId===collabId)return true;
+    }
     if(collabId&&ab.stId&&ab.stId!==collabId)continue;
     var aType=ab.type||"absent";
     if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
@@ -923,6 +950,25 @@ function renderTimeSlots(dateStr){
   var dow=dt.getDay();
   var hrs=HORAIRES[dow];
   if(booking.collab&&booking.collab.hrs)hrs=booking.collab.hrs[dow];
+  // Check exceptional closing
+  var absences=SITE_CFG.absences||[];
+  for(var ai=0;ai<absences.length;ai++){
+    var ab=absences[ai];
+    if(ab.type==="fermeture_except"&&ab.date===dateStr){
+      if(!ab.stId||!booking.collabId||ab.stId===booking.collabId){
+        document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">'+(ab.motif||'Ferm\u00e9 exceptionnellement ce jour')+'</div>';return;
+      }
+    }
+  }
+  // Check exceptional opening (overrides closed day)
+  if(!hrs){
+    for(var ai=0;ai<absences.length;ai++){
+      var ab=absences[ai];
+      if(ab.type==="ouverture_except"&&ab.date===dateStr&&ab.horaire_o&&ab.horaire_c){
+        if(!booking.collabId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
+      }
+    }
+  }
   if(!hrs){document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Ferm\u00e9 ce jour</div>';return;}
   // Check if collaborator is on full-day absence
   if(booking.collabId&&isCollabDayOff(dateStr,booking.collabId)){
