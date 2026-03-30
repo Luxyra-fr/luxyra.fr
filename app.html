@@ -4122,7 +4122,8 @@ function rSettings(){
       {k:"caisse",i:"\ud83d\udcb0",t:"Caisse & paiements",d:"Modes de paiement, TVA"},
       {k:"sms",i:"\ud83d\udcf2",t:"SMS & Marketing",d:"Rappels RDV, campagnes SMS"},
       {k:"nf525",i:"\ud83d\udee1",t:"NF525",d:"Audit, chaines, clotures Z"},
-      {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"}
+      {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"},
+      {k:"documents",i:"\ud83d\udcc1",t:"Mes documents",d:"Kbis, pi\u00e8ce d\u2019identit\u00e9, v\u00e9rification"}
     ];
     for(var i=0;i<sections.length;i++){
       var s=sections[i];
@@ -4668,6 +4669,36 @@ function rSettings(){
     h+='<div class="card"><div style="font-size:13px;color:var(--text2);margin-bottom:14px">Historique des factures li\u00e9es \u00e0 votre abonnement Luxyra.</div>';
     h+='<div id="facturesListApp" style="text-align:center;color:var(--text3);padding:20px">\u23f3 Chargement...</div></div>';
     setTimeout(loadMesFactures,100);
+  }
+  else if(settTab==="documents"){
+    h+='<div class="sec">\ud83d\udcc1 Documents justificatifs</div>';
+    var verifStatus=SALON_CONFIG.verif||"pending";
+    var verifMap={pending:{ico:"\u23f3",txt:"En attente",col:"var(--orange)"},pending_review:{ico:"\ud83d\udd0d",txt:"En cours de v\u00e9rification",col:"var(--blue)"},verified:{ico:"\u2705",txt:"V\u00e9rifi\u00e9",col:"var(--green)"},rejected:{ico:"\u274c",txt:"Rejet\u00e9",col:"var(--red)"},incomplete:{ico:"\ud83d\udcdd",txt:"Incomplet",col:"var(--orange)"}};
+    var vs=verifMap[verifStatus]||verifMap.pending;
+    h+='<div class="card" style="border-left:4px solid '+vs.col+'"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:24px">'+vs.ico+'</span><div><div style="font-weight:800;color:'+vs.col+'">Statut : '+vs.txt+'</div><div style="font-size:12px;color:var(--text3)">Les documents sont v\u00e9rifi\u00e9s par l\u2019\u00e9quipe Luxyra sous 48h</div></div></div></div>';
+    // Kbis
+    h+='<div class="card"><div class="ct">\ud83c\udfe2 Extrait Kbis ou avis INSEE</div>';
+    if(SALON_CONFIG.docKbis){
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(45,154,94,.08);border-radius:8px"><span style="font-size:20px">\u2705</span><div style="flex:1"><div style="font-weight:700;color:var(--green)">Document re\u00e7u</div><a href="'+SALON_CONFIG.docKbis+'" target="_blank" style="font-size:12px;color:var(--gold)">Voir le document \u2197</a></div></div>';
+    }else{
+      h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Document de moins de 3 mois (PDF, JPG ou PNG, max 5 Mo)</div>';
+      h+='<input type="file" id="uploadKbis" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'kbis\',this)">';
+      h+='<button class="btn" style="width:100%;padding:14px;background:rgba(200,168,78,.08);border:2px dashed rgba(200,168,78,.3);color:var(--gold);font-weight:700" onclick="document.getElementById(\'uploadKbis\').click()">\ud83d\udcc4 S\u00e9lectionner le fichier</button>';
+    }
+    h+='</div>';
+    // Pièce identité
+    h+='<div class="card"><div class="ct">\ud83c\udd94 Pi\u00e8ce d\u2019identit\u00e9 du g\u00e9rant</div>';
+    if(SALON_CONFIG.docId){
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(45,154,94,.08);border-radius:8px"><span style="font-size:20px">\u2705</span><div style="flex:1"><div style="font-weight:700;color:var(--green)">Document re\u00e7u</div><a href="'+SALON_CONFIG.docId+'" target="_blank" style="font-size:12px;color:var(--gold)">Voir le document \u2197</a></div></div>';
+    }else{
+      h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Carte d\u2019identit\u00e9, passeport ou titre de s\u00e9jour en cours de validit\u00e9 (PDF, JPG ou PNG, max 5 Mo)</div>';
+      h+='<input type="file" id="uploadId" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id\',this)">';
+      h+='<button class="btn" style="width:100%;padding:14px;background:rgba(200,168,78,.08);border:2px dashed rgba(200,168,78,.3);color:var(--gold);font-weight:700" onclick="document.getElementById(\'uploadId\').click()">\ud83c\udd94 S\u00e9lectionner le fichier</button>';
+    }
+    h+='</div>';
+    if(SALON_CONFIG.docKbis&&SALON_CONFIG.docId&&verifStatus!=="verified"){
+      h+='<div class="card" style="background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.15)"><div style="font-size:13px;color:var(--blue);text-align:center">\ud83d\udd0d Vos documents sont en cours de v\u00e9rification. Vous recevrez une confirmation par email.</div></div>';
+    }
   }
   else if(settTab==="caisse"){
     h+='<div class="sec">\ud83d\udcb0 Caisse & paiements</div><div class="card">';
@@ -11705,6 +11736,30 @@ function cloturerJournee(){
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
   window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
+}
+async function uploadDoc(type,input){
+  if(!input.files||!input.files[0])return;
+  var file=input.files[0];
+  if(file.size>5*1024*1024){alert("Fichier trop volumineux (max 5 Mo)");input.value="";return;}
+  var ext=file.name.split(".").pop().toLowerCase();
+  if(["pdf","jpg","jpeg","png"].indexOf(ext)<0){alert("Format non accept\u00e9. Utilisez PDF, JPG ou PNG.");input.value="";return;}
+  try{
+    var path="documents/"+window._salonId+"/"+type+"_"+Date.now()+"."+ext;
+    var up=await _sb.storage.from("salon-documents").upload(path,file,{contentType:file.type});
+    if(up.error){alert("Erreur upload: "+up.error.message);return;}
+    var url=_sb.storage.from("salon-documents").getPublicUrl(path);
+    var col=type==="kbis"?"documents_kbis":"documents_id";
+    var update={};update[col]=url.data.publicUrl;
+    // Check if both docs now provided → set pending_review
+    if(type==="kbis"&&SALON_CONFIG.docId){update.verification_status="pending_review";}
+    if(type==="id"&&SALON_CONFIG.docKbis){update.verification_status="pending_review";}
+    await _sb.from("salons").update(update).eq("id",window._salonId);
+    if(type==="kbis")SALON_CONFIG.docKbis=url.data.publicUrl;
+    else SALON_CONFIG.docId=url.data.publicUrl;
+    if(SALON_CONFIG.docKbis&&SALON_CONFIG.docId)SALON_CONFIG.verif="pending_review";
+    alert("\u2705 Document envoy\u00e9 avec succ\u00e8s !");
+    go("settings");
+  }catch(e){alert("Erreur: "+e.message);}
 }
 async function loadMesFactures(){
   var el=document.getElementById("facturesListApp");if(!el)return;
