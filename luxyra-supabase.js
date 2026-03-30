@@ -999,16 +999,16 @@ async function syncClientFromOnlineRdv(rdvData) {
 }
 
 // Update fidelite_client cross-salon table
-async function updateFideliteClient(bpId, salonId, salonNom, currentFid) {
+async function updateFideliteClient(bpId, salonId, salonNom, currentFid, hasPrestation) {
   if (!_isOnline || !bpId) return;
   var fidconf = window.FIDCONF || { seuil: 10, remise: 10 };
   var pts = (typeof currentFid === "number") ? currentFid : null;
+  var countVisit = hasPrestation !== false;
   try {
     var r = await _sb.from("fidelite_client").select("*").eq("client_beautypro_id", bpId).eq("salon_id", salonId).limit(1);
     if (r.data && r.data.length) {
       var f = r.data[0];
-      await _sb.from("fidelite_client").update({
-        visites: (f.visites || 0) + 1,
+      var updateData = {
         points: pts !== null ? pts : (f.points || 0) + 1,
         derniere_visite: new Date().toISOString().slice(0, 10),
         salon_nom: salonNom || SALON_CONFIG.nom,
@@ -1016,14 +1016,16 @@ async function updateFideliteClient(bpId, salonId, salonNom, currentFid) {
         remise_fidelite: fidconf.remise || 10,
         remise_type: fidconf.type || "amount",
         updated_at: new Date().toISOString()
-      }).eq("id", f.id);
+      };
+      if (countVisit) updateData.visites = (f.visites || 0) + 1;
+      await _sb.from("fidelite_client").update(updateData).eq("id", f.id);
     } else {
       await _sb.from("fidelite_client").insert({
         client_beautypro_id: bpId,
         salon_id: salonId,
         salon_nom: salonNom || SALON_CONFIG.nom,
         points: pts !== null ? pts : 1,
-        visites: 1,
+        visites: countVisit ? 1 : 0,
         derniere_visite: new Date().toISOString().slice(0, 10),
         seuil_fidelite: fidconf.seuil || 10,
         remise_fidelite: fidconf.remise || 10,
