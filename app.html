@@ -1986,6 +1986,55 @@ function setStyDayOn(ti,dow){
   T[ti].hrs[dow]={o:"09:00",c:"18:00"};
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
+function addExceptFermeture(){
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udd12 Fermeture exceptionnelle</h2>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Fermer l\u2019\u00e9tablissement un jour normalement ouvert (jour f\u00e9ri\u00e9, travaux, etc.)</div>';
+  htm+='<div class="fg"><label>Date de fermeture *</label><input type="date" id="exFermDate" value="'+TD+'"></div>';
+  htm+='<div class="fg"><label>Motif</label><input id="exFermMotif" placeholder="Ex: Jour f\u00e9ri\u00e9, travaux..."></div>';
+  htm+='<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:12px;background:rgba(233,30,99,.08);border:1px solid rgba(233,30,99,.2);border-radius:10px;margin-bottom:14px"><input type="checkbox" id="exFermAll" checked> Tout l\u2019\u00e9tablissement (tous les collaborateurs)</label>';
+  htm+='<div id="exFermCollabDiv" style="display:none;margin-bottom:14px"><div style="font-size:12px;font-weight:700;margin-bottom:6px">Ou choisir un collaborateur :</div>';
+  for(var i=0;i<T.length;i++){htm+='<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer"><input type="radio" name="exFermCollab" value="'+T[i].id+'"> '+T[i].n+'</label>';}
+  htm+='</div>';
+  htm+='<script>document.getElementById("exFermAll").onchange=function(){document.getElementById("exFermCollabDiv").style.display=this.checked?"none":"block";};<\/script>';
+  htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn" style="flex:1;background:#e91e63;color:#fff;font-weight:700" onclick="doExceptFermeture()">Confirmer la fermeture</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+function doExceptFermeture(){
+  var d=document.getElementById("exFermDate").value;if(!d)return;
+  var motif=(document.getElementById("exFermMotif").value||"").trim()||"Fermeture exceptionnelle";
+  var allEtab=document.getElementById("exFermAll").checked;
+  var stId=null;
+  if(!allEtab){var sel=document.querySelector('input[name="exFermCollab"]:checked');if(sel)stId=+sel.value;}
+  if(!window.ABSENCES)window.ABSENCES=[];
+  window.ABSENCES.push({id:U(),stId:allEtab?null:stId,type:"fermeture_except",date:d,motif:motif});
+  saveAbsences();cM();go("settings");
+}
+function addExceptOuverture(){
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udd13 Ouverture exceptionnelle</h2>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Ouvrir un jour normalement ferm\u00e9 pour un collaborateur.</div>';
+  htm+='<div class="fg"><label>Date *</label><input type="date" id="exOuvDate" value="'+TD+'"></div>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  htm+='<div class="fg"><label>Ouverture *</label><input type="time" id="exOuvFrom" value="09:00"></div>';
+  htm+='<div class="fg"><label>Fermeture *</label><input type="time" id="exOuvTo" value="18:00"></div></div>';
+  htm+='<div class="fg"><label>Collaborateur *</label><select id="exOuvCollab" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">';
+  for(var i=0;i<T.length;i++){htm+='<option value="'+T[i].id+'">'+T[i].n+'</option>';}
+  htm+='</select></div>';
+  htm+='<div class="fg"><label>Motif</label><input id="exOuvMotif" placeholder="Ex: Rattrapage, \u00e9v\u00e9nement..."></div>';
+  htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn" style="flex:1;background:#00bcd4;color:#fff;font-weight:700" onclick="doExceptOuverture()">Confirmer l\u2019ouverture</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+function doExceptOuverture(){
+  var d=document.getElementById("exOuvDate").value;if(!d)return;
+  var fr=document.getElementById("exOuvFrom").value;var to=document.getElementById("exOuvTo").value;
+  if(!fr||!to){alert("Horaires obligatoires");return;}
+  var stId=+document.getElementById("exOuvCollab").value;
+  var motif=(document.getElementById("exOuvMotif").value||"").trim()||"Ouverture exceptionnelle";
+  if(!window.ABSENCES)window.ABSENCES=[];
+  window.ABSENCES.push({id:U(),stId:stId,type:"ouverture_except",date:d,horaire_o:fr,horaire_c:to,motif:motif});
+  saveAbsences();cM();go("settings");
+}
 function addAbsence(stId,preType){
   var sty=gT(stId);if(!sty)return;
   var defType=preType||"conge";
@@ -4283,6 +4332,35 @@ function rSettings(){
       h+='</div>';
     }
     h+='</div>';
+    // === EXCEPTIONS ===
+    h+='<div class="card" style="margin-top:14px"><div class="ct">\ud83d\udcc5 Jours exceptionnels</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">G\u00e9rez les fermetures (jours f\u00e9ri\u00e9s, travaux) et ouvertures exceptionnelles (jour normalement ferm\u00e9).</div>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
+    h+='<button class="btn" style="flex:1;padding:12px;background:rgba(233,30,99,.1);border:1px solid rgba(233,30,99,.3);color:#e91e63;font-weight:700;font-size:13px" onclick="addExceptFermeture()">\ud83d\udd12 Fermeture exceptionnelle</button>';
+    h+='<button class="btn" style="flex:1;padding:12px;background:rgba(0,188,212,.1);border:1px solid rgba(0,188,212,.3);color:#00bcd4;font-weight:700;font-size:13px" onclick="addExceptOuverture()">\ud83d\udd13 Ouverture exceptionnelle</button>';
+    h+='</div>';
+    var exceptions=(window.ABSENCES||[]).filter(function(a){return a.type==="fermeture_except"||a.type==="ouverture_except";});
+    if(exceptions.length){
+      exceptions.sort(function(a,b){return(a.date||"").localeCompare(b.date||"");});
+      for(var ei=0;ei<exceptions.length;ei++){
+        var ex=exceptions[ei];
+        var exIdx=window.ABSENCES.indexOf(ex);
+        var isFerm=ex.type==="fermeture_except";
+        var exCollab=ex.stId?gT(ex.stId):null;
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:10px;margin-bottom:6px;border-radius:10px;border:1px solid '+(isFerm?'rgba(233,30,99,.2)':'rgba(0,188,212,.2)')+';background:'+(isFerm?'rgba(233,30,99,.06)':'rgba(0,188,212,.06)')+'">';
+        h+='<div style="font-size:20px">'+(isFerm?'\ud83d\udd12':'\ud83d\udd13')+'</div>';
+        h+='<div style="flex:1">';
+        h+='<div style="font-weight:700;font-size:13px;color:'+(isFerm?'#e91e63':'#00bcd4')+'">'+(isFerm?'Fermeture':'Ouverture')+' \u2014 '+fmt(ex.date)+'</div>';
+        h+='<div style="font-size:11px;color:var(--text3)">'+(ex.motif||"")+(exCollab?' \u2022 '+exCollab.n:(!ex.stId&&isFerm?' \u2022 Tout l\u2019\u00e9tablissement':''))+'</div>';
+        if(!isFerm&&ex.horaire_o)h+='<div style="font-size:11px;color:var(--text2)">Horaires: '+ex.horaire_o+' \u2192 '+ex.horaire_c+'</div>';
+        h+='</div>';
+        h+='<button class="btn bs" style="font-size:10px;color:var(--red)" onclick="removeAbsence('+exIdx+');go(\'settings\')">Supprimer</button>';
+        h+='</div>';
+      }
+    }else{
+      h+='<div style="text-align:center;padding:16px;color:var(--text3);font-size:13px;font-style:italic">Aucune exception programm\u00e9e</div>';
+    }
+    h+='</div>';
   }
   
   else if(settTab==="prestations"){
@@ -4328,6 +4406,8 @@ function rSettings(){
           h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px">';
           if(ab.type==="conge")h+='<span>\ud83c\udfd6 Cong\u00e9: '+fmt(ab.dateFrom)+' \u2192 '+fmt(ab.dateTo)+'</span>';
           else if(ab.type==="absent_jour")h+='<span>\u274c Absent: '+fmt(ab.dateFrom)+' \u2192 '+fmt(ab.dateTo)+(ab.motif?" - "+ab.motif:"")+'</span>';
+          else if(ab.type==="fermeture_except")h+='<span>\ud83d\udd12 Fermeture: '+fmt(ab.date)+(ab.motif?" - "+ab.motif:"")+'</span>';
+          else if(ab.type==="ouverture_except")h+='<span>\ud83d\udd13 Ouverture: '+fmt(ab.date)+' '+ab.horaire_o+'-'+ab.horaire_c+(ab.motif?" - "+ab.motif:"")+'</span>';
           else h+='<span>\u23f8 '+(ab.type==="pause"?"Pause":"Absent")+': '+fmt(ab.date)+' '+ab.from+'-'+ab.to+(ab.motif?" - "+ab.motif:"")+'</span>';
           h+='<button class="btn bs" style="font-size:10px;color:var(--red)" onclick="removeAbsence('+window.ABSENCES.indexOf(ab)+')">X</button></div>';
         }
