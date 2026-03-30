@@ -239,6 +239,23 @@ async function loadSalonData() {
   window.IS_FREE_PLAN = salon.is_free || false;
   window.FREE_UNTIL = salon.free_until || null;
 
+  // Documents check (15 days after paid plan)
+  SALON_CONFIG.docKbis = salon.documents_kbis || "";
+  SALON_CONFIG.docId = salon.documents_id || "";
+  SALON_CONFIG.verif = salon.verification_status || "pending";
+  var hasAllDocs = salon.documents_kbis && salon.documents_id;
+  if (!salon.is_free && salon.status === "active" && !hasAllDocs) {
+    var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
+    if (subStart) {
+      var daysSinceSub = Math.floor((new Date() - new Date(subStart)) / 86400000);
+      window._docsMissing = true;
+      window._docsDeadlineDays = Math.max(0, 15 - daysSinceSub);
+      if (daysSinceSub > 15) {
+        window._docsBlocked = true;
+      }
+    }
+  }
+
   // Monthly SMS reset for Pro plans (30 free/month)
   if(salon.plan==="pro"){
     var today=new Date().toISOString().slice(0,10);
