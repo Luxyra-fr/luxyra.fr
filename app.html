@@ -2723,7 +2723,7 @@ function checkConflict(stId, date, time, svcId, excludeId){
   }
   // Check against existing appointments
   var existing=AP.filter(function(a){
-    return a.date===date && a.stId===stId && a.st!=="canc" && (!a.cancelled) && a.id!==excludeId;
+    return a.date===date && a.stId===stId && a.st!=="canc" && (!a.cancelled) && !a.fromCaisse && a.id!==excludeId;
   });
   for(var ei=0;ei<existing.length;ei++){
     var exBlocks=getWorkBlocks(existing[ei]);
@@ -5113,15 +5113,10 @@ function validatePackSeance(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
   if(!pk){alert("Pack introuvable");return;}
   if(pk.used>=pk.total){alert("Ce pack est termin\u00e9 ("+pk.total+"/"+pk.total+" s\u00e9ances utilis\u00e9es)");return;}
-  showConfirm("Valider 1 s\u00e9ance du pack \""+pk.nom+"\" ?\nS\u00e9ance "+(pk.used+1)+" / "+pk.total,function(){
-    if(typeof usePackSeance==="function"){
-      usePackSeance(packId);
-    } else {
-      pk.used=(pk.used||0)+1;
-      if(pk.used>=pk.total)pk.status="completed";
-    }
-    auditLog("PACK_SEANCE","S\u00e9ance "+pk.used+"/"+pk.total+" - "+pk.nom+" ("+pk.clientNom+")");
-    go("detail");
+  showConfirm("Valider 1 s\u00e9ance du pack \""+pk.nom+"\" ?\nS\u00e9ance "+(pk.used+1)+" / "+pk.total+"\n\nUn ticket sera g\u00e9n\u00e9r\u00e9 pour la tra\u00e7abilit\u00e9.",function(){
+    // Open caisse with pack item for proper ticket generation
+    _tk={step:1,stId:null,cId:pk.clientId,items:[],comment:"",remise:0};
+    usePackInTicket(packId);
   });
 }
 
@@ -9798,7 +9793,7 @@ function applyFidDiscount(amount,method){
 
 function doFinalPayExecute(method){
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
-  if(total<=0||!_tk.items.length){
+  if(total<0||!_tk.items.length){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">\u26a0\ufe0f</div><h2>Aucune prestation</h2><div style="font-size:14px;margin-bottom:14px">Ajoutez au moins une prestation ou un produit.</div><button class="btn bg bk" onclick="_tk.step=3;showCaisse()">Retour au ticket</button></div></div>';
     return;
   }
@@ -11163,6 +11158,8 @@ async function doSendConfirm(mode,rdvId){
   else alert("\u274c Erreur : "+errors.join("\n"));
 }
 async function sendSms(phone,message){
+  // Pro plan required for SMS
+  if(!isPro()){showUpgradeModal("SMS");return{ok:false,error:"pro_required"};}
   // Check credits
   var creds=window.SMS_CREDITS||0;
   if(creds<=0){
@@ -11240,6 +11237,7 @@ function testSms(){
 // Check and send reminders (called periodically)
 function checkSmsReminders(){
   var cfg=window.SMS_CONFIG;if(!cfg||!cfg.rappelActif)return;
+  var canSms=isPro(); // SMS requires Pro plan
   var now=new Date();
   var todayStr=dS(now);
   var tomorrowD=new Date(now);tomorrowD.setDate(tomorrowD.getDate()+1);
@@ -11256,7 +11254,7 @@ function checkSmsReminders(){
     // Rappel 24h: send today for tomorrow's appointments
     if(cfg.rappel24h&&a.date===tomorrowStr){
       var key24="24h_"+a.id;
-      if(!window._smsSent[key24]){
+      if(!window._smsSent[key24]&&canSms){
         var msg=buildSmsText(cfg.rappelTexte24h,vars);
         sendSms(cl.ph,msg);
         window._smsSent[key24]=true;
@@ -11270,7 +11268,7 @@ function checkSmsReminders(){
       var diff=apptMin-nowMin;
       if(diff>0&&diff<=120){
         var key2="2h_"+a.id;
-        if(!window._smsSent[key2]){
+        if(!window._smsSent[key2]&&canSms){
           var msg2=buildSmsText(cfg.rappelTexte2h,vars);
           sendSms(cl.ph,msg2);
           window._smsSent[key2]=true;
@@ -11278,7 +11276,7 @@ function checkSmsReminders(){
         }
       }
     }
-    // Email reminders (24h before)
+    // Email reminders (24h before) - available for all plans
     if(cfg.rappelEmail&&a.date===tomorrowStr&&cl.emOk&&cl.em){
       var keyEm="em24_"+a.id;
       if(!window._smsSent[keyEm]){
@@ -12326,7 +12324,16 @@ async function reloadFromSupabase(table){
         for(var dbId in dbMap){
           var a=dbMap[dbId];
           var alreadyLocal=false;
-          for(var j=0;j<AP.length;j++){if(AP[j].id===a.id){alreadyLocal=true;break;}}
+          for(var j=0;j<AP.length;j++){
+            // Match by UUID
+            if(AP[j].id===a.id){alreadyLocal=true;break;}
+            // Also match by date+time+collab to catch local entries not yet saved (race condition with realtime)
+            if(AP[j].id && AP[j].id.indexOf("-")<0 && AP[j].date===a.date_rdv && AP[j].time===a.heure && AP[j].stId===a.collab_id && AP[j].st!=="canc"){
+              // This is the same RDV created locally, update its ID to UUID
+              AP[j].id=a.id;
+              alreadyLocal=true;break;
+            }
+          }
           if(!alreadyLocal){
             var mapped={
               id:a.id,cId:a.client_id,sId:a.service_id,stId:a.collab_id,
