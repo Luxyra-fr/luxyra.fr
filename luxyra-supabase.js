@@ -244,7 +244,7 @@ async function loadSalonData() {
   SALON_CONFIG.docId = salon.documents_id || "";
   SALON_CONFIG.verif = salon.verification_status || "pending";
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
-  if (!salon.is_free && salon.status === "active" && !hasAllDocs) {
+  if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
     if (subStart) {
       var daysSinceSub = Math.floor((new Date() - new Date(subStart)) / 86400000);
