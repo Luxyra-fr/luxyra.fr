@@ -228,20 +228,31 @@ async function loadData(){
           userId:s.user_id||"",
           stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
           plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",modeActivite:s.mode_activite||"salon",
-          subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
+          subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,nbTickets:0,nbRdv:0,
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
           trialEnd:s.trial_end,color:colors[i%colors.length],
-          smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,
-          isFree:s.is_free||false,freeUntil:s.free_until};
+          smsCredits:s.sms_credits||0,smsUsed:s.sms_used||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,
+          isFree:s.is_free||false,freeUntil:s.free_until,contratSig:s.contrat_signature||null,cgvAt:s.cgv_accepted_at};
       });
-      for(var i=0;i<SALONS.length;i++){
+      // Load stats for each salon (parallel for speed)
+      var promises=SALONS.map(async function(salon){
         try{
-          var cl=await _sb.from("clients").select("id",{count:"exact",head:true}).eq("salon_id",SALONS[i].id);
-          if(cl.count!=null)SALONS[i].clients=cl.count;
-          var co=await _sb.from("collaborateurs").select("id",{count:"exact",head:true}).eq("salon_id",SALONS[i].id);
-          if(co.count!=null)SALONS[i].collabs=co.count;
-        }catch(e){}
-      }
+          var cl=await _sb.from("clients").select("id",{count:"exact",head:true}).eq("salon_id",salon.id);
+          if(cl.count!=null)salon.clients=cl.count;
+          var co=await _sb.from("collaborateurs").select("id",{count:"exact",head:true}).eq("salon_id",salon.id);
+          if(co.count!=null)salon.collabs=co.count;
+          // CA & tickets: sum prix of done appointments
+          var ap=await _sb.from("appointments").select("prix,status,date_rdv",{count:"exact"}).eq("salon_id",salon.id).eq("status","done");
+          if(ap.data){
+            salon.nbTickets=ap.data.length;
+            salon.ca=0;ap.data.forEach(function(a){salon.ca+=Number(a.prix)||0;});
+          }
+          // Total RDV (all statuses)
+          var rdv=await _sb.from("appointments").select("id",{count:"exact",head:true}).eq("salon_id",salon.id);
+          if(rdv.count!=null)salon.nbRdv=rdv.count;
+        }catch(e){console.log("[STATS]",salon.nom,e.message);}
+      });
+      await Promise.all(promises);
     }
     var bs=document.getElementById("badgeSalons");
     if(bs)bs.textContent=SALONS.length||"";
@@ -290,25 +301,57 @@ function render(){
 function rDashboard(){
   var active=SALONS.filter(function(s){return s.status==="active";}).length;
   var trial=SALONS.filter(function(s){return s.status==="trial";}).length;
+  var cancelled=SALONS.filter(function(s){return s.status==="cancelled"||s.status==="suspended";}).length;
   var pendingV=SALONS.filter(function(s){return s.verif!=="verified";}).length;
-  var mrr=0;SALONS.forEach(function(s){if(s.status==="active"||s.status==="past_due")mrr+=gPlan(s.plan).prix;});
-  var h='<div class="topbar"><h1>Dashboard <span>Vue d’ensemble</span></h1></div>';
+  var pastDue=SALONS.filter(function(s){return s.status==="past_due";}).length;
+  var mrr=0;SALONS.forEach(function(s){if((s.status==="active"||s.status==="past_due")&&!s.isFree)mrr+=gPlan(s.plan).prix;});
+  var arr=mrr*12;
+  var totalCA=0;SALONS.forEach(function(s){totalCA+=s.ca||0;});
+  var totalClients=0;SALONS.forEach(function(s){totalClients+=s.clients||0;});
+  var totalTickets=0;SALONS.forEach(function(s){totalTickets+=s.nbTickets||0;});
+  var totalSMS=0;SALONS.forEach(function(s){totalSMS+=s.smsUsed||0;});
+  var freeSalons=SALONS.filter(function(s){return s.isFree;}).length;
+  var proSalons=SALONS.filter(function(s){return s.plan==="pro";}).length;
+  var essSalons=SALONS.filter(function(s){return s.plan==="essential";}).length;
+  var churnRate=(active+cancelled)>0?Math.round(cancelled/(active+cancelled)*100):0;
+
+  var h='<div class="topbar"><h1>Dashboard <span>Vue d\u2019ensemble</span></h1></div>';
   h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">Établissements</div><div class="kpi-value" style="color:var(--blue)">'+SALONS.length+'</div><div class="kpi-sub">Total inscrits</div><div class="kpi-icon">🏠</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements actifs</div><div class="kpi-icon">✅</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">En essai</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
-  if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non vérifiés</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents à contrôler</div><div class="kpi-icon">📋</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">\u00c9tablissements</div><div class="kpi-value" style="color:var(--blue)">'+SALONS.length+'</div><div class="kpi-sub">'+proSalons+' Pro \u2022 '+essSalons+' Essentiel'+(freeSalons?' \u2022 '+freeSalons+' Offerts':'')+'</div><div class="kpi-icon">\ud83c\udfe0</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">'+trial+' en essai'+(pastDue?' \u2022 <span style="color:var(--red)">'+pastDue+' impay\u00e9</span>':'')+'</div><div class="kpi-icon">\u2705</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">ARR: '+fmtM(arr)+'</div><div class="kpi-icon">\ud83d\udcb0</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Churn</div><div class="kpi-value" style="color:'+(churnRate>10?'var(--red)':churnRate>5?'var(--orange)':'var(--green)')+'">'+churnRate+'%</div><div class="kpi-sub">'+cancelled+' annul\u00e9/suspendu</div><div class="kpi-icon">\ud83d\udcc9</div></div>';
   h+='</div>';
+  h+='<div class="kpi-row">';
+  h+='<div class="kpi"><div class="kpi-label">CA total g\u00e9n\u00e9r\u00e9</div><div class="kpi-value" style="color:var(--green)">'+fmtM(totalCA)+'</div><div class="kpi-sub">Par tous les salons</div><div class="kpi-icon">\ud83d\udcb5</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Clients</div><div class="kpi-value">'+totalClients+'</div><div class="kpi-sub">Total fichiers clients</div><div class="kpi-icon">\ud83d\udc65</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Tickets</div><div class="kpi-value">'+totalTickets+'</div><div class="kpi-sub">Encaiss\u00e9s</div><div class="kpi-icon">\ud83c\udfab</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">SMS envoy\u00e9s</div><div class="kpi-value">'+totalSMS+'</div><div class="kpi-sub">Total plateforme</div><div class="kpi-icon">\ud83d\udcf1</div></div>';
+  if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non v\u00e9rifi\u00e9s</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents \u00e0 contr\u00f4ler</div><div class="kpi-icon">\ud83d\udccb</div></div>';
+  h+='</div>';
+  var topCA=SALONS.slice().sort(function(a,b){return(b.ca||0)-(a.ca||0);}).slice(0,5).filter(function(s){return s.ca>0;});
+  if(topCA.length){
+    h+='<div class="card"><h3>\ud83c\udfc6 Top salons par CA</h3>';
+    topCA.forEach(function(s,i){
+      var pct=topCA[0].ca>0?Math.round(s.ca/topCA[0].ca*100):0;
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">';
+      h+='<div style="width:24px;font-size:14px;font-weight:900;color:var(--gold)">#'+(i+1)+'</div>';
+      h+='<div class="td-avatar" style="background:'+s.color+';width:32px;height:32px;font-size:11px">'+ini(s.nom)+'</div>';
+      h+='<div style="flex:1"><div style="font-weight:700;font-size:13px">'+s.nom+'</div>';
+      h+='<div style="height:4px;border-radius:2px;background:rgba(255,255,255,.06);margin-top:4px"><div style="height:100%;width:'+pct+'%;border-radius:2px;background:var(--gold)"></div></div></div>';
+      h+='<div style="font-family:var(--mono);font-weight:700;color:var(--gold);font-size:14px">'+fmtM(s.ca)+'</div></div>';
+    });
+    h+='</div>';
+  }
   var nd=DEMANDES.filter(function(d){return d.status==="new";});
   if(nd.length){
-    h+='<div class="card"><h3>📩 Nouvelles demandes ('+nd.length+')</h3>';
+    h+='<div class="card"><h3>\ud83d\udce9 Nouvelles demandes ('+nd.length+')</h3>';
     nd.slice(0,5).forEach(function(d){
-      h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span><strong>'+(d.nom_salon||d.nom_etablissement||"?")+'</strong> — '+(d.ville||"")+'</span><span style="color:var(--text3)">'+fmtD(d.created_at)+'</span></div>';
+      h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span><strong>'+(d.nom_salon||d.nom_etablissement||"?")+'</strong> \u2014 '+(d.ville||"")+'</span><span style="color:var(--text3)">'+fmtD(d.created_at)+'</span></div>';
     });
     h+='<button class="tb-btn" style="margin-top:12px" onclick="nav(&#39;demandes&#39;)">Voir toutes les demandes</button></div>';
   }
-  h+='<div class="card"><h3>🏠 Derniers inscrits</h3>';
+  h+='<div class="card"><h3>\ud83c\udfe0 Derniers inscrits</h3>';
   SALONS.slice().sort(function(a,b){return new Date(b.created)-new Date(a.created);}).slice(0,5).forEach(function(s){
     h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+s.ville+'</div></div></div><div>'+planB(s.plan)+' '+statusB(s.status)+'</div></div>';
   });
@@ -324,7 +367,7 @@ function rSalons(){
   [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"},{k:"pending",l:"⏳ Non vérifiés"}].forEach(function(f){
     h+='<button class="tf-btn'+(curFilter===f.k?" active":"")+'" onclick="setF(&#39;'+f.k+'&#39;)">'+f.l+'</button>';
   });
-  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Vérif.</th><th>Clients</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
+  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Clients</th><th>CA</th><th>Tickets</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
   return h;
 }
 
@@ -335,11 +378,11 @@ function buildRows(list,f){
     if(f!=="all"&&f!=="pending"&&s.status!==f)return;
     if(f==="pending"&&s.verif==="verified")return;
     h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
-    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
+    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+s.clients+'</td><td style="font-family:var(--mono);font-size:12px;color:var(--gold)">'+fmtM(s.ca)+'</td><td>'+s.nbTickets+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
   });
-  if(!h)h='<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
+  if(!h)h='<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
   return h;
 }
 
@@ -354,8 +397,19 @@ function filterS(){
 function openD(id){
   var s=gSalon(id);if(!s)return;
   window._curSalonId=id;
-  var h='<div class="dp-header"><h2 style="font-size:20px">'+s.nom+'</h2><button class="dp-close" onclick="closeDetail()">✕</button></div>';
-  h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
+  var h='<div class="dp-header"><h2 style="font-size:20px">'+s.nom+'</h2><button class="dp-close" onclick="closeDetail()">\u2715</button></div>';
+  h+='<div class="dp-stats">';
+  h+='<div class="dp-stat"><div class="n" style="color:var(--gold)">'+fmtM(s.ca)+'</div><div class="l">CA g\u00e9n\u00e9r\u00e9</div></div>';
+  h+='<div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div>';
+  h+='<div class="dp-stat"><div class="n">'+s.nbTickets+'</div><div class="l">Tickets</div></div>';
+  h+='<div class="dp-stat"><div class="n">'+s.nbRdv+'</div><div class="l">RDV total</div></div>';
+  h+='<div class="dp-stat"><div class="n" style="color:var(--green)">'+s.collabs+'</div><div class="l">Collabs</div></div>';
+  h+='</div>';
+  // Activity info
+  h+='<div class="dp-section" style="padding:8px 12px;background:rgba(255,255,255,.02);border-radius:8px;margin-bottom:8px;font-size:12px;color:var(--text3);display:flex;justify-content:space-between">';
+  h+='<span>Derni\u00e8re activit\u00e9: '+fmtD(s.lastLogin)+'</span>';
+  h+='<span>'+verifB(s.verif)+'</span>';
+  h+='</div>';
 
   // VERIFICATION
   if(s.verif!=="verified"){
@@ -383,6 +437,22 @@ function openD(id){
   h+='<div class="dp-section"><div class="dp-label">📄 Documents</div>';
   h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="'+s.docKbis+'" target="_blank" style="color:var(--green)">✅ Reçu</a>':'<span style="color:var(--orange)">⏳ En attente</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">Pièce d\u2019identité</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green)">✅ Reçue</a>':'<span style="color:var(--orange)">⏳ En attente</span>')+'</span></div></div>';
+
+  // CONTRAT & SIGNATURE
+  h+='<div class="dp-section"><div class="dp-label">\u270d\ufe0f Contrat</div>';
+  if(s.contratSig){
+    try{var sig=typeof s.contratSig==="string"?JSON.parse(s.contratSig):s.contratSig;
+    h+='<div class="dp-field"><span class="k">Signataire</span><span class="v">'+(sig.signataire||"\u2014")+'</span></div>';
+    h+='<div class="dp-field"><span class="k">Sign\u00e9 le</span><span class="v" style="color:var(--green)">'+fmtD(sig.date)+'</span></div>';
+    h+='<div class="dp-field"><span class="k">Hash SHA-256</span><span class="v" style="font-family:var(--mono);font-size:10px;word-break:break-all">'+(sig.contrat_hash||"\u2014").slice(0,32)+'...</span></div>';
+    h+='<div style="margin-top:6px;padding:8px;border-radius:6px;background:rgba(45,154,94,.08);font-size:11px;color:var(--green);font-weight:700">\u2705 Contrat sign\u00e9 \u00e9lectroniquement</div>';
+    }catch(e){h+='<div style="color:var(--text3);font-size:12px">Donn\u00e9es de signature invalides</div>';}
+  }else if(s.cgvAt){
+    h+='<div class="dp-field"><span class="k">CGV accept\u00e9es</span><span class="v" style="color:var(--green)">'+fmtD(s.cgvAt)+'</span></div>';
+  }else{
+    h+='<div style="color:var(--orange);font-size:12px;font-weight:700">\u26a0\ufe0f Contrat non sign\u00e9</div>';
+  }
+  h+='</div>';
 
   // ABONNEMENT + STRIPE
   h+='<div class="dp-section"><div class="dp-label">💳 Abonnement</div>';
@@ -634,7 +704,7 @@ function rRevenue(){
 // ===== PACKS SMS =====
 function rSMS(){
   var h='<div class="topbar"><h1>Packs SMS <span>Gestion des crédits</span></h1></div>';
-  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">50 SMS inclus</div><div class="kpi-value" style="color:var(--green)">Pro</div><div class="kpi-sub">Dans le forfait Pro</div></div></div>';
+  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">30 SMS offerts/mois</div><div class="kpi-value" style="color:var(--green)">Pro</div><div class="kpi-sub">Dans le forfait Pro</div></div></div>';
   h+='<div class="card"><h3>📱 Packs disponibles</h3>';
   [{q:100,p:7.99,m:37},{q:250,p:18.99,m:34},{q:500,p:35.99,m:31}].forEach(function(x){
     h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+x.m+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
@@ -759,7 +829,7 @@ async function saveFreePlan(id){
   var s=gSalon(id);
   if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
   alert("\u2705 "+(isFree?"Plan "+plan+" offert"+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)"):"Plan gratuit d\u00e9sactiv\u00e9"));
-  openDetail(id);
+  openD(id);
 }
 
 async function addSmsCredits(id,nb){
@@ -768,7 +838,7 @@ async function addSmsCredits(id,nb){
   await _sb.from("salons").update({sms_credits:newCredits}).eq("id",id);
   s.smsCredits=newCredits;
   alert("\u2705 "+nb+" SMS ajout\u00e9s. Nouveau solde: "+newCredits+" SMS");
-  openDetail(id);
+  openD(id);
 }
 
 async function addSmsCreditsCustom(id){
@@ -782,7 +852,7 @@ async function resetSmsCredits(id){
   await _sb.from("salons").update({sms_credits:0}).eq("id",id);
   var s=gSalon(id);if(s)s.smsCredits=0;
   alert("\u2705 Solde SMS remis \u00e0 0");
-  openDetail(id);
+  openD(id);
 }
 
 checkSession();
