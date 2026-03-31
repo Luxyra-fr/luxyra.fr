@@ -356,19 +356,19 @@ async function loadSalon(){
     var pr=await sb.from("produits").select("*").eq("salon_id",salonId).order("nom");
     if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.image||"",stk:p.stock||0,cc:p.click_collect};});
     
-    // 6. Existing appointments (next 30 days for availability)
+    // 6. Existing appointments (via Worker - bypasses RLS)
     var today=new Date().toISOString().slice(0,10);
     var maxDate=new Date();maxDate.setDate(maxDate.getDate()+(SITE_CFG.delaiMax||30));
-    var ap=await sb.from("appointments").select("date_rdv,heure,collab_id,service_id,status,a_phases,cancelled").eq("salon_id",salonId).gte("date_rdv",today).lte("date_rdv",maxDate.toISOString().slice(0,10));
-    if(ap.data)RDV_EXISTING=ap.data.filter(function(a){return a.status!=="canc"&&!a.cancelled;});
-    
-    // 7. Online RDV (pending/confirmed)
-    var ro=await sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,duree_minutes,status").eq("salon_id",salonId).gte("date_rdv",today);
-    if(ro.data){
-      ro.data.filter(function(r){return r.status!=="cancelled";}).forEach(function(r){
-        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
-      });
-    }
+    try{
+      var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:maxDate.toISOString().slice(0,10)})});
+      var avData=await avRes.json();
+      if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
+      if(avData.rdv_online){
+        avData.rdv_online.filter(function(r){return r.status!=="cancelled";}).forEach(function(r){
+          RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
+        });
+      }
+    }catch(e){console.log("Availability load error:",e);}
     
     // Horaires from site_config, salon config, or first collab
     if(SITE_CFG.horaires_salon)HORAIRES=SITE_CFG.horaires_salon;
@@ -1101,6 +1101,21 @@ function renderBookingStep4(){
   document.getElementById("bookingFlow").innerHTML=h;
 }
 
+// Refresh RDV_EXISTING from DB before critical checks (prevents stale data double-booking)
+async function refreshRDV(){
+  try{
+    var today=new Date().toISOString().slice(0,10);
+    var maxD=new Date();maxD.setDate(maxD.getDate()+(SITE_CFG.delaiMax||30));
+    var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:maxD.toISOString().slice(0,10)})});
+    var avData=await avRes.json();
+    if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
+    else{RDV_EXISTING=[];}
+    if(avData.rdv_online){avData.rdv_online.filter(function(r){return r.status!=="cancelled";}).forEach(function(r){
+      RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
+    });}
+  }catch(e){console.log("refreshRDV:",e);}
+}
+
 async function submitBooking(){
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
@@ -1110,6 +1125,8 @@ async function submitBooking(){
   var msg=document.getElementById("bkMsg").value.trim();
   
   var dur=booking.duration||30;
+  // Refresh availability from DB before submitting (prevents stale data)
+  await refreshRDV();
   // Double-check availability before submitting
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
     alert("Ce cr\u00e9neau n'est plus disponible. Veuillez choisir un autre horaire.");
@@ -1125,7 +1142,7 @@ async function submitBooking(){
   var data={
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
-    client_online_id:CLIENT?CLIENT.id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
+    client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
     service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
@@ -1308,6 +1325,14 @@ async function processStripePayment(){
   var pb=window._pendingBooking;
   var acompte=pb.acompte;
   
+  // Refresh availability from DB before payment
+  var dur=booking.duration||30;
+  await refreshRDV();
+  if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
+    document.getElementById("stripeError").textContent="Ce créneau n'est plus disponible. Veuillez choisir un autre horaire.";
+    btn.disabled=false;btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";return;
+  }
+  
   // Create PaymentIntent via Supabase Edge Function or direct API
   // For TEST MODE: we simulate the payment and mark it as paid
   // In production, you need a server-side endpoint to create PaymentIntents
@@ -1335,7 +1360,7 @@ async function processStripePayment(){
     var data={
       salon_id:salonId,
       client_nom:pb.nom,client_prenom:pb.pre,client_tel:pb.tel,client_email:pb.email,
-      client_online_id:CLIENT?CLIENT.id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
+      client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
       service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
