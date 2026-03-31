@@ -2253,6 +2253,38 @@ function showCAInstantane(){
 
 
 var H={0:null,1:{o:"14:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}};
+// Get effective hours for a date, considering exceptional closings/openings
+function getEffectiveHrs(date,stId){
+  var d=new Date(date+'T12:00:00');var dow=d.getDay();
+  var hrs=stId?((gT(stId)||{}).hrs||{})[dow]||H[dow]:H[dow];
+  if(!window.ABSENCES)return hrs;
+  // Check fermeture_except first
+  for(var i=0;i<window.ABSENCES.length;i++){
+    var ab=window.ABSENCES[i];
+    if(ab.type==="fermeture_except"&&ab.date===date){
+      if(ab.stId===null||ab.stId===stId)return null; // closed
+    }
+  }
+  // Check ouverture_except if normally closed
+  if(!hrs){
+    for(var i=0;i<window.ABSENCES.length;i++){
+      var ab=window.ABSENCES[i];
+      if(ab.type==="ouverture_except"&&ab.date===date&&ab.horaire_o&&ab.horaire_c){
+        if(!stId||ab.stId===stId)return{o:ab.horaire_o,c:ab.horaire_c};
+      }
+    }
+  }
+  return hrs;
+}
+function getExceptLabel(date){
+  if(!window.ABSENCES)return null;
+  for(var i=0;i<window.ABSENCES.length;i++){
+    var ab=window.ABSENCES[i];
+    if(ab.date===date&&ab.type==="fermeture_except")return ab.motif||"Ferm\u00e9";
+    if(ab.date===date&&ab.type==="ouverture_except")return ab.motif||"Ouverture except.";
+  }
+  return null;
+}
 var DF=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
 var MO=["Janvier","F\u00e9vrier","Mars","Avril","Mai","Juin","Juillet","Ao\u00fbt","Septembre","Octobre","Novembre","D\u00e9cembre"];
 var TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
@@ -2983,7 +3015,7 @@ function rPlanning(){
     for(var dayOff=0;dayOff<maxScan&&daysToShow.length<nd;dayOff++){
       var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+dayOff);
       var ddow=dd.getDay();
-      var ddHrs=H[ddow];
+      var ddHrs=getEffectiveHrs(dS(dd));
       if(!ddHrs&&window._hideClosedDays) continue;
       daysToShow.push(dd);
     }
@@ -2992,7 +3024,7 @@ function rPlanning(){
     for(var di=0;di<daysToShow.length;di++){
       var ddow=daysToShow[di].getDay();
       for(var hi=0;hi<T.length;hi++){
-        var shrs=T[hi].hrs?T[hi].hrs[ddow]:H[ddow];
+        var shrs=getEffectiveHrs(dS(daysToShow[di]),T[hi].id);
         if(shrs){anyDayOpen=true;var so=toM(shrs.o),sc=toM(shrs.c);if(so<allEarliest)allEarliest=so;if(sc>allLatest)allLatest=sc;}
       }
     }
@@ -3010,7 +3042,8 @@ function rPlanning(){
     for(var dayIdx=0;dayIdx<daysToShow.length;dayIdx++){
       var dd=daysToShow[dayIdx];
       var ddk=dS(dd),ddow=dd.getDay();
-      var ddHrs=H[ddow];
+      var ddHrs=getEffectiveHrs(ddk);
+      var exceptLabel=getExceptLabel(ddk);
       var isToday=ddk===TD;
       var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
       var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&a.st!=="pause"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
@@ -3024,7 +3057,7 @@ function rPlanning(){
         for(var ti=0;ti<T.length;ti++){
           h+='<div class="pg-col" style="flex:1">';
           if(ti===0){
-            h+='<div class="pg-colhead" style="height:75px;opacity:.4;font-size:11px;cursor:pointer" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')"><div style="font-weight:800;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLbl+'</div><div style="font-size:9px;color:#999;margin-top:2px">Ferm\u00e9</div></div>';
+            h+='<div class="pg-colhead" style="height:75px;opacity:.4;font-size:11px;cursor:pointer" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')"><div style="font-weight:800;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLbl+'</div><div style="font-size:9px;color:'+(exceptLabel?'#e91e63':'#999')+';margin-top:2px">'+(exceptLabel||'Ferm\u00e9')+'</div></div>';
           } else {
             h+='<div class="pg-colhead" style="height:75px;opacity:.2"></div>';
           }
@@ -3095,7 +3128,7 @@ function rPlanning(){
               var mpH=((mpEnd-mpStart)/SLOT)*SLOT_H;
               h+='<div style="position:absolute;top:'+mpTop+'px;left:0;right:0;height:'+Math.max(mpH-2,SLOT_H-2)+'px;border-radius:4px;background:rgba(255,152,0,.2);background-image:repeating-linear-gradient(135deg,rgba(255,152,0,.15),rgba(255,152,0,.15) 4px,transparent 4px,transparent 8px);border:2px solid rgba(255,152,0,.5);display:flex;align-items:center;justify-content:center;font-size:8px;color:#e65100;font-weight:800;z-index:6;pointer-events:all;cursor:pointer;box-sizing:border-box" onclick="event.stopPropagation();manageAbsence('+sty.id+',\''+ddk+'\')">\u23f8</div>';
             }
-            var styHrsD=sty.hrs?sty.hrs[ddow]:H[ddow];
+            var styHrsD=getEffectiveHrs(ddk,sty.id);
             if(styHrsD){
               var styOpen=toM(styHrsD.o),styClose=toM(styHrsD.c);
               if(styOpen>mgs){var grH=((styOpen-mgs)/SLOT)*SLOT_H;h+='<div style="position:absolute;top:0;left:0;right:0;height:'+grH+'px;background:repeating-linear-gradient(45deg,rgba(180,180,180,.3),rgba(180,180,180,.3) 4px,transparent 4px,transparent 8px);z-index:2;pointer-events:none"></div>';}
@@ -3123,13 +3156,14 @@ function rPlanningDay(dateObj,showDayHeader){
   // Calculate grid time range
   var earliestO=1440,latestC=0,anyOpen=false;
   for(var hi=0;hi<T.length;hi++){
-    var shrs=T[hi].hrs?T[hi].hrs[dow]:H[dow];
+    var shrs=getEffectiveHrs(dk,T[hi].id);
     if(shrs){anyOpen=true;var so=toM(shrs.o),sc=toM(shrs.c);if(so<earliestO)earliestO=so;if(sc>latestC)latestC=sc;}
   }
   var hrs=anyOpen?{o:Math.floor(earliestO/60)+":"+("0"+earliestO%60).slice(-2),c:Math.floor(latestC/60)+":"+("0"+latestC%60).slice(-2)}:H[dow];
   var dayA=AP.filter(function(a){return a.date===dk&&a.st!=="canc"&&a.st!=="pause"&&!a.fromCaisse&&!(a.st==="done"&&a.items&&a.items.length>0&&!a.sId)}).sort(function(a,b){return a.time<b.time?-1:1});
   if(!hrs){
-    h+='<div class="card" style="text-align:center;padding:20px"><div style="font-size:28px;margin-bottom:6px">\ud83d\udeab</div><div style="font-family:var(--f1);color:var(--text2);font-size:13px">Ferm\u00e9 le '+DF[dow].toLowerCase()+'</div></div>';
+    var exceptMsg=getExceptLabel(dk);
+    h+='<div class="card" style="text-align:center;padding:20px"><div style="font-size:28px;margin-bottom:6px">\ud83d\udeab</div><div style="font-family:var(--f1);color:'+(exceptMsg?'#e91e63':'var(--text2)')+';font-size:13px">'+(exceptMsg||'Ferm\u00e9 le '+DF[dow].toLowerCase())+'</div></div>';
     return h;
   }
   var openM=toM(hrs.o),closeM=toM(hrs.c);
@@ -3221,7 +3255,7 @@ function rPlanningDay(dateObj,showDayHeader){
       h+='</div>';
     }
     // Show unavailable zones
-    var styHrs=sty.hrs?sty.hrs[dateObj.getDay()]:H[dateObj.getDay()];
+    var styHrs=getEffectiveHrs(dk,sty.id);
     if(!styHrs||isAbs){
       var bSlots=getBlockedSlots(sty.id,dk);
       var absLabel="Absent";
@@ -3277,7 +3311,7 @@ function printPlanning(){
     for(var off=0;off<maxScan&&days.length<nd;off++){
       var dd=new Date(calD.getFullYear(),calD.getMonth(),calD.getDate()+off);
       var ddow=dd.getDay();
-      var ddHrs=H[ddow];
+      var ddHrs=getEffectiveHrs(dS(dd));
       if(!ddHrs&&window._hideClosedDays)continue;
       days.push(dd);
     }
@@ -9062,6 +9096,9 @@ function showCaisse(){
         h+='<span style="font-weight:700;font-size:12px;color:#fff">'+m.l+'</span></button>';
       }
       h+='</div></div>';
+    }else{
+      // Total is 0 or fully paid → validate button
+      h+='<div style="padding:14px"><button onclick="finalizePay(\'S\u00e9ance abonnement\')" style="width:100%;padding:16px;font-size:16px;font-weight:800;border:none;border-radius:12px;background:linear-gradient(135deg,#2d9a5e,#1b7a3e);color:#fff;cursor:pointer">\u2705 Valider le ticket \u00e0 0,00 \u20ac</button></div>';
     }
 
     // Bottom
@@ -11420,7 +11457,12 @@ function checkSmsReminders(){
   var tomorrowD=new Date(now);tomorrowD.setDate(tomorrowD.getDate()+1);
   var tomorrowStr=dS(tomorrowD);
   
-  if(!window._smsSent)window._smsSent={};
+  if(!window._smsSent){
+    try{window._smsSent=JSON.parse(localStorage.getItem("_cp_sms_sent"))||{};}catch(e){window._smsSent={};}
+    // Clean old entries (older than 3 days)
+    var cutoff=new Date();cutoff.setDate(cutoff.getDate()-3);var cutStr=dS(cutoff);
+    for(var k in window._smsSent){if(k.indexOf("_")<0)continue;var parts=k.split("_");if(parts.length<2)continue;}
+  }
   
   AP.forEach(function(a){
     if(a.st==="canc"||a.st==="done"||a.cancelled)return;
