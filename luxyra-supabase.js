@@ -195,6 +195,19 @@ async function loadSalonData() {
     }
   }
 
+  // Handle Stripe checkout return BEFORE trial check
+  // (webhook may not have fired yet when user returns)
+  var _urlParams = new URLSearchParams(window.location.search);
+  if(_urlParams.get("checkout") === "success"){
+    var _checkoutPlan = _urlParams.get("plan") || "pro";
+    // Force update salon in DB (webhook backup)
+    salon.plan = _checkoutPlan;
+    salon.status = "active";
+    window._trialDaysLeft = null;
+    window._trialEnd = null;
+    _sb.from("salons").update({plan: _checkoutPlan, status: "active"}).eq("id", salon.id);
+  }
+
   // Vérifier expiration essai (sauf plan offert)
   if(!salon.is_free && salon.status === "trial" && salon.trial_end) {
     var now = new Date();
@@ -202,10 +215,8 @@ async function loadSalonData() {
     var daysLeft = Math.ceil((end - now) / 86400000);
     window._trialDaysLeft = daysLeft;
     window._trialEnd = salon.trial_end;
-    if (daysLeft < 0) {
-      showTrialExpiredScreen(salon);
-      return;
-    }
+    // Blocking is handled in initApp() via isTrialExpired()
+    // Don't return here — initApp must run for Stripe checkout return to work
   } else {
     window._trialDaysLeft = null;
     window._trialEnd = null;
@@ -545,7 +556,7 @@ function showTrialExpiredScreen(salon) {
     '<button onclick="checkCgvAndPay(\'pro\')" style="margin-top:12px;width:100%;padding:10px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;border:none;cursor:pointer;font-size:13px">Choisir Pro</button>'+
     '</div>'+
     '</div>'+
-    '<label style="display:flex;align-items:flex-start;gap:8px;margin:16px 0 12px;cursor:pointer;font-size:11px;color:#94a3b8;line-height:1.4;text-align:left"><input type="checkbox" id="cgvCheck" style="margin-top:2px;flex-shrink:0"> J\u2019accepte les <a href="https://luxyra.fr/cgv" target="_blank" style="color:#d4a843">CGV</a> et la <a href="https://luxyra.fr/politique-confidentialite" target="_blank" style="color:#d4a843">Politique de confidentialit\u00e9</a></label>'+
+    '<label style="display:flex;align-items:flex-start;gap:8px;margin:16px 0 12px;cursor:pointer;font-size:11px;color:#94a3b8;line-height:1.4;text-align:left"><input type="checkbox" id="cgvCheck" style="margin-top:2px;flex-shrink:0"> J\u2019accepte les <a href="/cgv" target="_blank" style="color:#d4a843">CGV</a> et la <a href="/confidentialite" target="_blank" style="color:#d4a843">Politique de confidentialit\u00e9</a></label>'+
     '<button onclick="doLogout()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button>'+
     '</div></div>';
 }
