@@ -1,4 +1,4 @@
-// Luxyra SW v12 — Self-destruct: supprime tous les caches et se désinscrit
+// Luxyra SW v13 — Minimal pass-through (no cache, PWA install only)
 self.addEventListener('install', function() { self.skipWaiting(); });
 self.addEventListener('activate', function(e) {
   e.waitUntil(
@@ -6,11 +6,10 @@ self.addEventListener('activate', function(e) {
       return Promise.all(k.map(function(n) { return caches.delete(n); }));
     }).then(function() {
       return self.clients.claim();
-    }).then(function() {
-      return self.registration.unregister();
     })
   );
 });
+// No caching — all requests go to network directly
 self.addEventListener('fetch', function(e) {
   e.respondWith(fetch(e.request));
 });

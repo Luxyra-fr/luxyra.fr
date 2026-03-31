@@ -262,6 +262,16 @@ async function loadSalon(){
         horaires_salon:d.horaires_salon||null
       };
     }
+    // FIX M7: Fallback absences from salon config_json if site_config empty
+    if((!SITE_CFG.absences||!SITE_CFG.absences.length)){
+      try{
+        var cfgRes=await sb.from("salons").select("config_json").eq("id",salonId).limit(1);
+        if(cfgRes.data&&cfgRes.data[0]&&cfgRes.data[0].config_json){
+          var cfg2=typeof cfgRes.data[0].config_json==="string"?JSON.parse(cfgRes.data[0].config_json):cfgRes.data[0].config_json;
+          if(cfg2.absences&&cfg2.absences.length)SITE_CFG.absences=cfg2.absences;
+        }
+      }catch(e){console.log("Absences fallback:",e);}
+    }
     // Check if site is active (Worker sets this to false when plan is Essential)
     if(SITE_CFG.actif===false){
       showError("Ce site n'est pas disponible actuellement.");
@@ -349,14 +359,14 @@ async function loadSalon(){
     // 6. Existing appointments (next 30 days for availability)
     var today=new Date().toISOString().slice(0,10);
     var maxDate=new Date();maxDate.setDate(maxDate.getDate()+(SITE_CFG.delaiMax||30));
-    var ap=await sb.from("appointments").select("date_rdv,heure,collab_id,service_id,status,a_phases").eq("salon_id",salonId).gte("date_rdv",today).lte("date_rdv",maxDate.toISOString().slice(0,10));
-    if(ap.data)RDV_EXISTING=ap.data.filter(function(a){return a.status!=="canc";});
+    var ap=await sb.from("appointments").select("date_rdv,heure,collab_id,service_id,status,a_phases,cancelled").eq("salon_id",salonId).gte("date_rdv",today).lte("date_rdv",maxDate.toISOString().slice(0,10));
+    if(ap.data)RDV_EXISTING=ap.data.filter(function(a){return a.status!=="canc"&&!a.cancelled;});
     
     // 7. Online RDV (pending/confirmed)
     var ro=await sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,duree_minutes,status").eq("salon_id",salonId).gte("date_rdv",today);
     if(ro.data){
       ro.data.filter(function(r){return r.status!=="cancelled";}).forEach(function(r){
-        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf"});
+        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
       });
     }
     
@@ -384,6 +394,9 @@ async function hashPassword(pass){
   var enc=new TextEncoder().encode(pass);
   var hash=await crypto.subtle.digest('SHA-256',enc);
   return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+async function hashPasswordSalted(email, pass){
+  return await hashPassword(email.toLowerCase().trim() + ":" + pass);
 }
 
 function showAuthModal(mode){
@@ -427,7 +440,7 @@ async function doClientRegister(){
   if(!nom||!tel||!email||!pass){showAuthError("Remplissez tous les champs obligatoires");return;}
   if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
-  var hash=await hashPassword(pass);
+  var hash=await hashPasswordSalted(email, pass);
   var smsOk=document.getElementById("aRegSms")?document.getElementById("aRegSms").checked:false;
   var emOk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
   
@@ -459,14 +472,19 @@ async function doClientLogin(){
   var email=document.getElementById("aEmail").value.trim().toLowerCase();
   var pass=document.getElementById("aPass").value;
   if(!email||!pass){showAuthError("Remplissez email et mot de passe");return;}
-  var hash=await hashPassword(pass);
-  // Login against global Luxyra accounts (no salon_id filter)
-  var r=await sb.from("clients_beautypro").select("*").eq("email",email).eq("password_hash",hash);
-  if(!r.data||r.data.length===0){showAuthError("Email ou mot de passe incorrect");return;}
-  CLIENT=r.data[0];
-  // Update last login
+  var saltedHash=await hashPasswordSalted(email, pass);
+  var unsaltedHash=await hashPassword(pass);
+  // Try salted hash first
+  var r=await sb.from("clients_beautypro").select("*").eq("email",email).eq("password_hash",saltedHash);
+  if(!r.data||r.data.length===0){
+    // Fallback: try unsalted hash (old accounts)
+    r=await sb.from("clients_beautypro").select("*").eq("email",email).eq("password_hash",unsaltedHash);
+    if(!r.data||r.data.length===0){showAuthError("Email ou mot de passe incorrect");return;}
+    // Auto-upgrade old hash to salted
+    sb.from("clients_beautypro").update({password_hash:saltedHash}).eq("id",r.data[0].id);
+  }
+  CLIENT=r.data[0];CLIENT.password_hash=saltedHash;
   sb.from("clients_beautypro").update({last_login:new Date().toISOString()}).eq("id",CLIENT.id);
-  // Auto-create link to this salon if not exists
   await ensureClientSalon(CLIENT.id);
   saveClientSession();
   closeAuth();
@@ -536,7 +554,7 @@ function renderSite(){
   if(SITE_CFG.boutique)h+='<a href="#" onclick="showPage(\'boutique\')">\ud83d\udecd Boutique</a>';
   if(CLIENT){
     h+='<a href="#" onclick="showPage(\'dashboard\')">\ud83d\udc64 '+(CLIENT.prenom||CLIENT.nom)+'</a>';
-    h+='<a href="compte.html" style="font-size:10px">\u2699\ufe0f Compte</a>';
+    h+='<a href="/compte.html" style="font-size:10px">\u2699\ufe0f Compte</a>';
     if(SITE_CFG.resa)h+='<a href="#" onclick="showPage(\'booking\')" style="background:var(--gold);color:#0a0a0a;font-weight:800">R\u00e9server</a>';
   }else{
     h+='<a href="#" onclick="showAuthModal(\'login\')">\ud83d\udd12 Connexion</a>';
@@ -923,29 +941,29 @@ function isSlotTaken(date,time,duration,collabId){
   var slotStart=toMin(time),slotEnd=slotStart+duration;
   // Check blocked slots (absences, pauses, congés)
   if(isCollabBlocked(date,collabId,slotStart,slotEnd))return true;
-  // Check existing appointments - only WORK blocks (pauses are free)
+  // Check existing appointments - check WORK blocks including delegated phases
   for(var i=0;i<RDV_EXISTING.length;i++){
     var r=RDV_EXISTING[i];
     if(r.date_rdv!==date)continue;
-    if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;
     if(!r.heure)continue;
     var rStart=toMin(r.heure);
-    // Get work blocks only (skip pause phases)
     if(r.a_phases&&r.a_phases.length){
       var cur=rStart;
       for(var pi=0;pi<r.a_phases.length;pi++){
         var ph=r.a_phases[pi];
         if(ph.t==="w"){
-          // Work phase: check overlap
+          var phCollab=ph.stId||r.collab_id;
+          // Skip phases not for this collaborator
+          if(collabId&&phCollab&&phCollab!==collabId){cur+=(ph.d||0);continue;}
           var wEnd=cur+(ph.d||30);
           if(slotStart<wEnd&&slotEnd>cur)return true;
         }
         cur+=(ph.d||0);
       }
     } else {
-      // No phases: use total duration as single work block
+      // No phases: check main collab only
+      if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;
       var rDur=60;
-      if(r.a_phases){var td=0;r.a_phases.forEach(function(p){td+=p.d||0;});if(td>0)rDur=td;}
       var rEnd=rStart+rDur;
       if(slotStart<rEnd&&slotEnd>rStart)return true;
     }
@@ -1118,6 +1136,8 @@ async function submitBooking(){
   try{
     var r=await sb.from("rdv_online").insert(data).select();
     if(r.error){alert("Erreur: "+r.error.message);return;}
+    // Immediately block this slot from being rebooked
+    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:booking.svc.n}]});
     // Success
     var confirmMsg=SITE_CFG.msgConfirm||"Votre demande a bien \u00e9t\u00e9 envoy\u00e9e.";
     var h='<div class="success-page">';
@@ -1249,7 +1269,7 @@ async function submitWithStripe(){
   
   h+='<div style="margin-top:16px">';
   h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Titulaire de la carte</label>';
-  h+='<input type="text" id="stripeCardName" value="'+(pb.nom+' '+(pb.pre||'')).trim()+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
+  h+='<input type="text" id="stripeCardName" value="'+(nom+' '+(pre||'')).trim()+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div id="stripeCardElement" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:14px;min-height:44px"></div>';
   h+='<div id="stripeError" style="color:#ef5350;font-size:12px;margin-top:6px;min-height:18px"></div>';
   h+='</div>';
@@ -1333,6 +1353,8 @@ async function processStripePayment(){
       return;
     }
     
+    // SUCCESS - block slot from being rebooked
+    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:booking.svc.n}]});
     // SUCCESS - show confirmation with payment receipt
     var h='<div class="success-page">';
     h+='<div class="ico">\u2705</div>';

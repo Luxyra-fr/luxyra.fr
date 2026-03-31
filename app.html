@@ -12,7 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
-if(navigator.serviceWorker){navigator.serviceWorker.getRegistrations().then(function(r){r.forEach(function(w){w.unregister()})});caches.keys().then(function(k){k.forEach(function(n){caches.delete(n)})})}
+if(navigator.serviceWorker){navigator.serviceWorker.register('/sw.js').catch(function(){});}
 </script>
 <meta name="apple-mobile-web-app-title" content="Luxyra">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -414,7 +414,7 @@ function openBarcodeScanner(callback){
   var stream=null;
   var scanning=true;
   navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1280},height:{ideal:720}}}).then(function(s){
-    stream=s;video.srcObject=s;video.play();
+    stream=s;window._scannerStream=s;video.srcObject=s;video.play();
     var scanLoop=function(){
       if(!scanning)return;
       detector.detect(video).then(function(barcodes){
@@ -438,7 +438,6 @@ function openBarcodeScanner(callback){
     closeBarcodeScanner();
     toast("Cam\u00e9ra non accessible: "+err.message,"error");
   });
-  window._scannerStream=stream;
   window._scannerOverlay=overlay;
   window._scannerScanning=function(){return scanning;};
   window._scannerStop=function(){scanning=false;};
@@ -719,7 +718,7 @@ SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.c
 // ===== PLAN PRO GATING =====
 function isPro(){return SALON_CONFIG.plan==="pro";}
 function isEssential(){return SALON_CONFIG.plan==="essential";}
-function hasActiveSubscription(){return SALON_CONFIG.plan==="pro"||SALON_CONFIG.plan==="essential";}
+function hasActiveSubscription(){return window._trialDaysLeft===null||window._trialDaysLeft===undefined;}
 function isTrialExpired(){
   if(hasActiveSubscription())return false;
   if(window._trialDaysLeft===null||window._trialDaysLeft===undefined)return false;
@@ -1348,7 +1347,7 @@ function emailDevis(idx){
   body+="\nTOTAL: "+dv.total.toFixed(2)+" EUR\n";
   if(dv.notes)body+="\nNotes: "+dv.notes+"\n";
   body+="\nCe devis est valable 30 jours.";
-  body+="\n\n---\n"+SALON_CONFIG.nomComplet()+"\n"+SALON_CONFIG.adresseComplete()+"\nTel: "+SALON_CONFIG.tel+"\n"+SALON_CONFIG.siteWeb+"";
+  body+="\n\n---\n"+SALON_CONFIG.nomComplet()+"\n"+SALON_CONFIG.adresseComplete()+"\nTel: "+SALON_CONFIG.tel+"\n"+(SALON_CONFIG.siteWeb||"")+"";
   var mailto="mailto:"+email+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
   window.open(mailto,"_blank");
 }
@@ -1466,7 +1465,7 @@ function sendDocEmail(encodedSubject, encodedBody, encodedTo){
   var salon=""+SALON_CONFIG.nomComplet()+"";
   var addr=SALON_CONFIG.adresseComplete();
   var tel=SALON_CONFIG.tel;
-  var fullBody=body+"\n\n---\n"+salon+"\n"+addr+"\nTel: "+tel+"\n"+SALON_CONFIG.siteWeb+"";
+  var fullBody=body+"\n\n---\n"+salon+"\n"+addr+"\nTel: "+tel+"\n"+(SALON_CONFIG.siteWeb||"")+"";
   var mailto="mailto:"+to+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(fullBody);
   window.open(mailto,"_blank");
   
@@ -2617,25 +2616,8 @@ var FORFAITS=[];
 
 var CATS=["Coupe","Brushing","Coloration","M\u00e8ches","Soins","Permanente","Homme"];
 
-var PRODS=[
-{id:1,n:"Coffret absolut repair",p:28,pa:14,cat:"L'Or\u00e9al",cb:"3474637153564",stk:4,stkMin:2,cc:true,img:"",forSale:true,forUse:false},
-{id:2,n:"Coffret metal detox",p:33,pa:16.5,cat:"L'Or\u00e9al",cb:"3474637154271",stk:3,stkMin:2,cc:true,img:"",forSale:true,forUse:false},
-{id:3,n:"Coffret vitamino color",p:28,pa:14,cat:"L'Or\u00e9al",cb:"3474637155988",stk:2,stkMin:2,cc:true,img:"",forSale:true,forUse:false},
-{id:4,n:"Baume couleur FC 250ml",p:25,pa:12,cat:"Fibreclinix",cb:"4045787963151",stk:5,stkMin:2,cc:true,img:"",forSale:true,forUse:true},
-{id:5,n:"Masque couleur FC 250ml",p:32,pa:16,cat:"Fibreclinix",cb:"4045787963168",stk:3,stkMin:2,cc:true,img:"",forSale:true,forUse:true},
-{id:6,n:"Shampoing hydratant FC",p:17,pa:8.5,cat:"Fibreclinix",cb:"4045787963175",stk:6,stkMin:3,cc:true,img:"",forSale:true,forUse:true},
-{id:7,n:"Shampoing R-Two 250ml",p:11,pa:5.5,cat:"R-Two",cb:"4045787964110",stk:8,stkMin:3,cc:false,img:"",forSale:true,forUse:true},
-{id:8,n:"Masque R-Two 200ml",p:16.5,pa:8,cat:"R-Two",cb:"4045787964127",stk:4,stkMin:2,cc:false,img:"",forSale:true,forUse:true},
-{id:9,n:"BM baume nutritif 250ml",p:25,pa:12.5,cat:"Blond Me",cb:"4045787965513",stk:3,stkMin:2,cc:true,img:"",forSale:true,forUse:false},
-{id:10,n:"BM masque violet 200ml",p:27,pa:13.5,cat:"Blond Me",cb:"4045787965520",stk:2,stkMin:2,cc:true,img:"",forSale:true,forUse:false},
-{id:11,n:"Dust it 10g",p:11,pa:5,cat:"Osis+",cb:"4045787320015",stk:7,stkMin:3,cc:false,img:"",forSale:true,forUse:false},
-{id:12,n:"Freeze pump 200ml",p:11,pa:5,cat:"Osis+",cb:"4045787320022",stk:5,stkMin:3,cc:false,img:"",forSale:true,forUse:false},
-{id:13,n:"Laque blanche 300ml",p:10,pa:5,cat:"Silhouette",cb:"4045787330014",stk:4,stkMin:2,cc:false,img:"",forSale:true,forUse:false},
-{id:14,n:"Laque noir 500ml",p:13.5,pa:6.5,cat:"Silhouette",cb:"4045787330021",stk:3,stkMin:2,cc:false,img:"",forSale:true,forUse:false},
-{id:15,n:"Green matte wax",p:8,pa:3.5,cat:"Red One",cb:"8697926001215",stk:10,stkMin:4,cc:false,img:"",forSale:true,forUse:false},
-{id:16,n:"Shampoing anti chute SC",p:17,pa:8.5,cat:"Scalp Clinix",cb:"4045787966015",stk:2,stkMin:2,cc:true,img:"",forSale:true,forUse:true}
-];
-var PCATS=["Fibreclinix","Blond Me","L'Or\u00e9al","Osis+","Silhouette","R-Two","Red One","Scalp Clinix"];
+var PRODS=[];
+var PCATS=[];
 
 var CL=[];
 
@@ -2678,7 +2660,7 @@ function dB(a,b){return Math.floor((new Date(b)-new Date(a))/864e5);}
 function dS(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function frM(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
 function toM(t){var p=t.split(":");return parseInt(p[0])*60+parseInt(p[1]);}
-function esc(s){return s.replace(/'/g,"\\'").replace(/"/g,"&quot;");}
+function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/'/g,"&#39;").replace(/"/g,"&quot;");}
 
 // Set date in header
 var _hdEl=document.getElementById("hdate");if(_hdEl)_hdEl.textContent=new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
@@ -2802,7 +2784,7 @@ function updateNotifBadge(){
   }
 }
 // Check for new RDV online every 30 seconds
-setInterval(function(){
+window._rdvPollInterval=setInterval(function(){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     var today=new Date().toISOString().slice(0,10);
     _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
@@ -3508,7 +3490,7 @@ function rPlanningDay(dateObj,showDayHeader){
   // One column per stylist
   for(var ti=0;ti<T.length;ti++){
     var sty=T[ti];
-    var sa=dayA.filter(function(a){return a.stId===sty.id});
+    var sa=dayA.filter(function(a){if(a.stId===sty.id)return true;var _ph=a.aPhases||(gS(a.sId)?gS(a.sId).phases:null);if(_ph){for(var _pi=0;_pi<_ph.length;_pi++){if(_ph[_pi].stId===sty.id)return true;}}return false;});
     var isAbs=ABSENCES.some(function(ab){return ab.date===dk&&ab.stId===sty.id&&ab.type!=="pause"&&ab.type!=="absent_heures"});
     var styAvail=!getBlockedSlots(sty.id,dk).some(function(b){return b.type==="conge"||b.type==="absent"||b.type==="repos";});
     h+='<div class="pg-col" data-stid="'+sty.id+'" data-date="'+dk+'"><div class="pg-colhead" style="'+(styAvail?"":"opacity:.5;background:var(--red-bg);")+'">';
@@ -3521,11 +3503,13 @@ function rPlanningDay(dateObj,showDayHeader){
     // Background slots
     for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+dk+'\')"></div>';}
     
-    // Collect ALL work blocks for this stylist to detect overlaps
+    // Collect work blocks for this stylist only (handles delegated phases)
     var allWork=[];
     for(var j=0;j<sa.length;j++){
-      var blocks=getWorkBlocks(sa[j]);
-      blocks.forEach(function(b){allWork.push(b);});
+      var _a2=sa[j],_sv2=gS(_a2.sId),_ph2=_a2.aPhases||(_sv2?_sv2.phases:null);
+      if(!_ph2||!_ph2.length){if(_a2.stId===sty.id){var _dd=_sv2?svcTotalDur(_sv2):30;allWork.push({start:toM(_a2.time),end:toM(_a2.time)+(_dd||30),a:_a2});}continue;}
+      var _cur2=toM(_a2.time);
+      for(var _pi2=0;_pi2<_ph2.length;_pi2++){var _p2=_ph2[_pi2];var _pStId=_p2.stId||_a2.stId;if(_p2.t==="w"&&_pStId===sty.id){allWork.push({start:_cur2,end:_cur2+_p2.d,a:_a2,label:_p2.l});}_cur2+=_p2.d;}
     }
     var laid=layoutBlocks(allWork);
     
@@ -3545,6 +3529,8 @@ function rPlanningDay(dateObj,showDayHeader){
       var endTime=String(Math.floor(endM/60)).padStart(2,"0")+":"+String(endM%60).padStart(2,"0");
       for(var pi=0;pi<aPhases.length;pi++){
         var ph=aPhases[pi];
+        var _phOwner=ph.t==="w"?(ph.stId||a.stId):a.stId;
+        if(_phOwner!==sty.id){cur+=ph.d;continue;}
         var topPx=((cur-gs)/SLOT)*SLOT_H;
         var hPx=(ph.d/SLOT)*SLOT_H;
         if(ph.t==="w"){
@@ -9037,7 +9023,7 @@ function aGi(){
 
 // === V4: Payment + Ticket + Loyalty ===
 var payId="";
-var tkN=103;//1077;
+var tkN=0;
 var ticketId="";
 var accMf2="";
 var PAY_METHODS=["CB","Especes","Cheque","Bon cadeau"];
@@ -10593,10 +10579,15 @@ function doFinalPayExecute(method){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">\u26a0\ufe0f</div><h2>Aucune prestation</h2><div style="font-size:14px;margin-bottom:14px">Ajoutez au moins une prestation ou un produit.</div><button class="btn bg bk" onclick="_tk.step=3;showCaisse()">Retour au ticket</button></div></div>';
     return;
   }
-  var resteDu2=total-(_tk.paid||0);
-  if(method!=="done"){
+  var acompteDeduct=_tk.acompte||0;
+  var resteDu2=total-(_tk.paid||0)-acompteDeduct;
+  if(method!=="done"&&resteDu2>0){
     if(!_tk.payments)_tk.payments=[];
     _tk.payments.push({method:method,amount:resteDu2});
+    _tk.paid=(_tk.paid||0)+resteDu2+acompteDeduct;
+  }else if(method!=="done"){
+    if(!_tk.payments)_tk.payments=[];
+    _tk.payments.push({method:method,amount:0});
     _tk.paid=total;
   }
   var metStr=_tk.payments?_tk.payments.map(function(p){return p.method}).join(" + "):(method||"CB");
@@ -12404,12 +12395,19 @@ function simpleHash(str){return sha256Sync(str);}
 // _lastTicketHash already initialized above
 function chainTicket(ticket){
   var data="TK|"+ticket.tkNum+"|"+ticket.date+"|"+ticket.time+"|"+ticket.pr.toFixed(2)+"|"+ticket.met+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret;
-  ticket.hash=sha256Sync(data);
   ticket.prevHash=_lastTicketHash;
   ticket.hashAlgo="SHA-256";
+  // Use sync hash immediately for UI
+  ticket.hash=sha256Sync(data);
   _lastTicketHash=ticket.hash;
-  // Upgrade async in background
-  sha256Async(data).then(function(h){ticket.hash=h;_lastTicketHash=h;});
+  // Upgrade to real SHA-256 and RE-SAVE to ensure DB has correct hash
+  sha256Async(data).then(function(h){
+    if(h!==ticket.hash){
+      ticket.hash=h;
+      _lastTicketHash=h;
+      if(typeof saveAppointment==="function")saveAppointment(ticket);
+    }
+  });
   return ticket;
 }
 function cancelSecureTicket(id,motif){
@@ -12495,7 +12493,7 @@ function cloturerJournee(){
   c.cumulAnnuel=cumulAn;
   c.hash=sha256Sync("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret);
   c.hashAlgo="SHA-256";
-  sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){c.hash=h;});
+  sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){if(h!==c.hash){c.hash=h;if(typeof saveCloture==="function")saveCloture(c);}});
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
   window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
@@ -13077,80 +13075,9 @@ function initApp(){
 if(typeof checkSession==="undefined"){initApp();}
 setInterval(function(){var el=document.getElementById("liveClock");if(el)el.textContent=new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});},1000);
 // ============================================================
-// SAVE APPOINTMENT TO SUPABASE (if not already defined externally)
+// SAVE FUNCTIONS: defined in luxyra-supabase.js (loads before app.html)
+// Dead fallback code removed (Q2 cleanup)
 // ============================================================
-if(typeof saveAppointment==="undefined"){
-  window.saveAppointment=function(appt){
-    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return Promise.resolve();
-    var data={
-      id:appt.id,
-      salon_id:_salonId,
-      client_id:appt.cId||null,
-      service_id:appt.sId||null,
-      collab_id:appt.stId||null,
-      date_rdv:appt.date,
-      heure:appt.time,
-      prix:appt.pr||0,
-      status:appt.st||"conf",
-      mode_paiement:appt.met||"",
-      ticket_num:appt.tkNum||null,
-      items:appt.items||[],
-      comment:appt.comment||"",
-      a_phases:appt.aPhases||[],
-      cancelled:appt.cancelled||false,
-      from_caisse:appt.fromCaisse||false,
-      lieu:appt.lieu||null,
-      adresse_domicile:appt.adresse||null,
-      client_email:(function(){var c=typeof gC==="function"?gC(appt.cId):null;return c&&c.em?c.em:null;})(),
-      client_name:(function(){var c=typeof gC==="function"?gC(appt.cId):null;return c?((c.nom||"")+" "+(c.pre||"")).trim():null;})(),
-      collab_name:(function(){var t=typeof gT==="function"?gT(appt.stId):null;return t?t.n:null;})()
-    };
-    return _sb.from("appointments").upsert(data,{onConflict:"id"}).then(function(r){
-      if(r.error)console.error("[SAVE APPT]",r.error.message);
-      else console.log("[SAVE APPT] OK",appt.id);
-    });
-  };
-}
-
-// SAVE COLLABORATEURS (if not already defined externally)
-if(typeof saveCollaborateurs==="undefined"){
-  window.saveCollaborateurs=function(){
-    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
-    // Save collaborateurs to salons config_json
-    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
-      var cfg={};
-      if(r.data&&r.data[0]&&r.data[0].config_json){try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}}
-      cfg.collaborateurs=T;
-      cfg.horaires=H;
-      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
-    });
-    // Also update site_config for online booking
-    if(typeof saveSiteConfig==="function")saveSiteConfig();
-  };
-}
-
-// SAVE CLIENT (if not already defined externally)
-if(typeof saveClient==="undefined"){
-  window.saveClient=function(cl){
-    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return Promise.resolve();
-    var data={
-      id:cl.id,
-      salon_id:_salonId,
-      nom:cl.nom||"",
-      prenom:cl.pre||"",
-      sexe:cl.sex||"",
-      telephone:cl.ph||"",
-      email:cl.em||"",
-      date_naissance:cl.ddn||null,
-      fidelite:cl.fid||0,
-      notes:cl.notes||"",
-      genre:cl.genre||"F"
-    };
-    return _sb.from("clients").upsert(data,{onConflict:"id"}).then(function(r){
-      if(r.error)console.error("[SAVE CLIENT]",r.error.message);
-    });
-  };
-}
 
 // ============================================================
 // REALTIME SYNC - auto-update when another device makes changes
@@ -13207,7 +13134,8 @@ async function reloadFromSupabase(table){
   try{
     if(table==="appointments"){
       var today=new Date().toISOString().slice(0,10);
-      var r=await _sb.from("appointments").select("*").eq("salon_id",_salonId).gte("date_rdv",today).order("date_rdv");
+      var past30=new Date();past30.setDate(past30.getDate()-30);var past30Str=past30.toISOString().slice(0,10);
+      var r=await _sb.from("appointments").select("*").eq("salon_id",_salonId).gte("date_rdv",past30Str).order("date_rdv");
       if(r.data){
         // SAFE MERGE: update existing, add new from DB, but NEVER remove local appointments
         // Build map of DB appointments
@@ -13337,9 +13265,14 @@ async function reloadFromSupabase(table){
       if(r.data){
         CL=r.data.map(function(c){
           return{id:c.id,nom:c.nom,pre:c.prenom,sex:c.sexe,
-            ph:c.telephone,em:c.email,ddn:c.date_naissance,
-            fid:c.fidelite||0,cr:c.created_at,notes:c.notes||"",
-            genre:c.genre||"F"};
+            ph:c.telephone,ph2:c.telephone2,em:c.email,
+            adr:c.adresse,cp:c.cp,ville:c.ville,ddn:c.date_naissance,
+            cr:c.created_at?c.created_at.slice(0,10):"",
+            no:c.notes,natChev:c.nature_cheveux,typeChev:c.type_cheveux,
+            detChev:c.details_cheveux,collab:c.collab_pref,
+            actif:c.actif,fid:c.points_fidelite||0,
+            smsOk:c.sms_ok,emOk:c.email_ok,fiches:c.fiches||[],
+            clientBeautyproId:c.client_beautypro_id||null};
         });
       }
     }
@@ -13360,12 +13293,8 @@ function refreshCurrentView(){
 }
 
 // Register Service Worker for PWA
-// Nettoyer les anciens Service Workers
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.getRegistrations().then(function(regs){
-    regs.forEach(function(r){r.unregister();});
-  });
-  caches.keys().then(function(k){k.forEach(function(n){caches.delete(n);});});
+  navigator.serviceWorker.register('/sw.js').catch(function(e){console.log('SW register:',e);});
 }
 </script>
 </body>

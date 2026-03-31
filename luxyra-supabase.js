@@ -82,39 +82,8 @@ async function doLogin() {
   await loadSalonData();
 }
 
-// Signup
-async function doSignup() {
-  if (!_sb) { showLoginError("Erreur de connexion au serveur"); return; }
-  var email = document.getElementById("loginEmail").value.trim();
-  var pass = document.getElementById("loginPass").value;
-  if (!email || !pass) { showLoginError("Remplissez email et mot de passe"); return; }
-  if (pass.length < 6) { showLoginError("Le mot de passe doit faire au moins 6 caractères"); return; }
-
-  var result = await _sb.auth.signUp({ email: email, password: pass });
-  if (result.error) { showLoginError(result.error.message); return; }
-
-  _userId = result.data.user.id;
-
-  // Créer le salon
-  var salonResult = await _sb.from("salons").insert({
-    user_id: _userId,
-    nom: "Mon Salon",
-    status: "trial",
-    plan: "essential"
-  }).select();
-
-  if (salonResult.error) { showLoginError("Erreur création salon : " + salonResult.error.message); return; }
-
-  _salonId = salonResult.data[0].id;
-
-  // Créer 2 collaborateurs par défaut
-  await _sb.from("collaborateurs").insert([
-    { salon_id: _salonId, nom: "Coiffeur 1", initiales: "C1", couleur: "#c9a227" },
-    { salon_id: _salonId, nom: "Coiffeur 2", initiales: "C2", couleur: "#7d3c98" }
-  ]);
-
-  await loadSalonData();
-}
+// Signup — handled by inscription.html (4-step flow with SIRET, contrat, etc.)
+// doSignup() removed — was dead code creating incomplete salons without SIRET/contrat
 
 // Reset password
 async function doResetPwd() {
@@ -132,6 +101,9 @@ async function doLogout() {
   _salonId = null;
   _userId = null;
   _isOnline = false;
+  // Cleanup polling and realtime
+  if(window._rdvPollInterval){clearInterval(window._rdvPollInterval);window._rdvPollInterval=null;}
+  if(window._realtimeChannel&&_sb){try{_sb.removeChannel(window._realtimeChannel);}catch(e){}window._realtimeChannel=null;}
   showLoginScreen();
 }
 
@@ -196,16 +168,18 @@ async function loadSalonData() {
   }
 
   // Handle Stripe checkout return BEFORE trial check
-  // (webhook may not have fired yet when user returns)
+  // FIX W2: Do NOT update DB from client (anyone can fake ?checkout=success)
+  // Only skip the trial-block UI temporarily — the webhook will update the DB
   var _urlParams = new URLSearchParams(window.location.search);
   if(_urlParams.get("checkout") === "success"){
     var _checkoutPlan = _urlParams.get("plan") || "pro";
-    // Force update salon in DB (webhook backup)
+    // Temporarily treat as active in memory (UI only, NOT saved to DB)
     salon.plan = _checkoutPlan;
     salon.status = "active";
     window._trialDaysLeft = null;
     window._trialEnd = null;
-    _sb.from("salons").update({plan: _checkoutPlan, status: "active"}).eq("id", salon.id);
+    // DO NOT write to DB — webhook is the only trusted source
+    // Old vulnerable code removed: _sb.from("salons").update({plan, status}).eq("id", salon.id)
   }
 
   // Vérifier expiration essai (sauf plan offert)
@@ -287,7 +261,7 @@ async function loadSalonData() {
   if (tRes.data) {
     T = tRes.data.map(function(c) {
       return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
-               hrs: c.horaires || {} };
+               hrs: c.horaires || {}, pause: c.pause || null };
     });
   }
 
@@ -896,7 +870,8 @@ async function saveCollaborateurs() {
     var c = T[i];
     var data = {
       salon_id: _salonId, nom: c.n, initiales: c.i,
-      couleur: c.c, img: c.img || "", horaires: c.hrs || {}
+      couleur: c.c, img: c.img || "", horaires: c.hrs || {},
+      pause: c.pause || null
     };
     if (c.id && dbIds[c.id]) {
       // Exists in DB → UPDATE

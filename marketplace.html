@@ -178,6 +178,9 @@ async function hashPasswordMkt(pass){
   var hash=await crypto.subtle.digest('SHA-256',enc);
   return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
 }
+async function hashPasswordMktSalted(email, pass){
+  return await hashPasswordMkt(email.toLowerCase().trim() + ":" + pass);
+}
 function loadMktSession(){try{var d=localStorage.getItem("lx_account");if(d){MKT_CLIENT=JSON.parse(d);}}catch(e){}}
 function saveMktSession(){try{localStorage.setItem("lx_account",JSON.stringify(MKT_CLIENT));}catch(e){}}
 function mktLogout(){MKT_CLIENT=null;try{localStorage.removeItem("lx_account");sessionStorage.removeItem("lx_client");}catch(e){}render();}
@@ -414,7 +417,7 @@ async function openSalon(id){
     var fUnit=s.fidconf.type==="percent"?"%":"\u20ac";
     h+='<div style="font-size:14px;color:var(--text2)">Apr\u00e8s <strong style="color:#fff">'+s.fidconf.seuil+' visites</strong>, obtenez <strong style="color:var(--gold)">'+s.fidconf.remise+fUnit+' de r\u00e9duction</strong> !</div>';
     if(MKT_CLIENT){
-      h+='<div style="margin-top:10px;font-size:12px;color:var(--text3)">Connectez-vous \u00e0 votre <a href="compte.html">espace client</a> pour voir vos points.</div>';
+      h+='<div style="margin-top:10px;font-size:12px;color:var(--text3)">Connectez-vous \u00e0 votre <a href="/compte.html">espace client</a> pour voir vos points.</div>';
     }
     h+='</div>';
   }
@@ -589,7 +592,7 @@ async function doMktRegister(){
   if(pass!==pass2){showMktAuthErr("Les mots de passe ne correspondent pas");return;}
   var smsOk=document.getElementById("mktSms")?document.getElementById("mktSms").checked:false;
   var emOk=document.getElementById("mktEm")?document.getElementById("mktEm").checked:false;
-  var hash=await hashPasswordMkt(pass);
+  var hash=await hashPasswordMktSalted(email, pass);
   try{
     var check=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=id&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     var existing=await check.json();
@@ -606,14 +609,22 @@ async function doMktLogin(){
   var email=document.getElementById("mktEmail").value.trim().toLowerCase();
   var pass=document.getElementById("mktPass").value;
   if(!email||!pass){showMktAuthErr("Remplissez email et mot de passe");return;}
-  var hash=await hashPasswordMkt(pass);
+  var saltedHash=await hashPasswordMktSalted(email, pass);
+  var unsaltedHash=await hashPasswordMkt(pass);
   try{
     var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
     var data=await r.json();
     if(!Array.isArray(data)||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
     var user=data[0];
-    if(user.password_hash!==hash){showMktAuthErr("Email ou mot de passe incorrect");return;}
-    MKT_CLIENT=user;
+    if(user.password_hash===saltedHash){
+      // OK salted
+    }else if(user.password_hash===unsaltedHash){
+      // Old hash — auto-upgrade
+      fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+user.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({password_hash:saltedHash})});
+    }else{
+      showMktAuthErr("Email ou mot de passe incorrect");return;
+    }
+    MKT_CLIENT=user;MKT_CLIENT.password_hash=saltedHash;
     fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
     saveMktSession();closeMktAuth();render();
   }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}

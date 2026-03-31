@@ -97,6 +97,10 @@ async function sha256(pass){
   var hash=await crypto.subtle.digest('SHA-256',enc);
   return Array.from(new Uint8Array(hash)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
 }
+// FIX I7: Salted hash (email as salt) — prevents rainbow table attacks
+async function sha256Salted(email, pass){
+  return await sha256(email.toLowerCase().trim() + ":" + pass);
+}
 function api(path,opts){return fetch(SB_URL+"/rest/v1/"+path,Object.assign({headers:HDR},opts||{}));}
 
 // Session
@@ -124,10 +128,10 @@ function render(){
   var h='';
   // Topbar
   h+='<div class="topbar">';
-  h+='<a href="marketplace.html" class="logo"><img src="data:image/webp;base64,UklGRmQBAABXRUJQVlA4IFgBAAAwBwCdASocABwAPlEkj0WjoiEUBAA4BQSygFqNepnz7s+gG+S/NaRCkYmB1gF7Roipp5K0kA8htR3BKJappviwSQAA/k/0x2J6ijzZRhFs1r/5IDhiviqddOMQjtxK+mECTpmtlJrL1i0jTjZMcDd3aHBbEnEJp6yuBDLm2Oec4P+NnKccQ82fzzXfcUxIKkh4+RoxhXFqbq3TDtkq7zri4vtjuE/fjPrXflEh/isGryE4tgUyK/WiFE4GzQCmqPKIHjsp6hECRADPeyjkGod311jak0D11hk+7Sm2RpPqZ62pIWtl6oauPytG//F+bbtaApcXNGS0YydK83qhfJXid++U6/27A4lltV1T85xLits5k8fkr+TZ2AK7V6VgkHct1bGROHjcciObP6nPX0wVQngXHbJkbV9Y9T9F5OB6h3e6nzv0wXZILWcZdOtSfqu5WGZ8KbPAAA==" style="width:22px;height:22px;border-radius:4px" alt="L">Luxyra</a>';
+  h+='<a href="/marketplace.html" class="logo"><img src="data:image/webp;base64,UklGRmQBAABXRUJQVlA4IFgBAAAwBwCdASocABwAPlEkj0WjoiEUBAA4BQSygFqNepnz7s+gG+S/NaRCkYmB1gF7Roipp5K0kA8htR3BKJappviwSQAA/k/0x2J6ijzZRhFs1r/5IDhiviqddOMQjtxK+mECTpmtlJrL1i0jTjZMcDd3aHBbEnEJp6yuBDLm2Oec4P+NnKccQ82fzzXfcUxIKkh4+RoxhXFqbq3TDtkq7zri4vtjuE/fjPrXflEh/isGryE4tgUyK/WiFE4GzQCmqPKIHjsp6hECRADPeyjkGod311jak0D11hk+7Sm2RpPqZ62pIWtl6oauPytG//F+bbtaApcXNGS0YydK83qhfJXid++U6/27A4lltV1T85xLits5k8fkr+TZ2AK7V6VgkHct1bGROHjcciObP6nPX0wVQngXHbJkbV9Y9T9F5OB6h3e6nzv0wXZILWcZdOtSfqu5WGZ8KbPAAA==" style="width:22px;height:22px;border-radius:4px" alt="L">Luxyra</a>';
   if(CLIENT){
     h+='<div style="display:flex;align-items:center;gap:8px">';
-    h+='<a href="marketplace.html" style="padding:9px 20px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:800;font-size:12px;text-decoration:none;cursor:pointer;box-shadow:0 2px 10px rgba(212,168,67,.3);letter-spacing:.3px">\ud83d\udd0d Trouver un salon</a>';
+    h+='<a href="/marketplace.html" style="padding:9px 20px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:800;font-size:12px;text-decoration:none;cursor:pointer;box-shadow:0 2px 10px rgba(212,168,67,.3);letter-spacing:.3px">\ud83d\udd0d Trouver un salon</a>';
     h+='<button onclick="logout()" style="padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text3);font-size:12px;cursor:pointer">D\u00e9connexion</button>';
     h+='</div>';
   }
@@ -263,7 +267,7 @@ function renderRdvTab(){
       h+='</div></div>';
     });
   } else {
-    h+='<div class="empty"><div class="ico">\ud83d\udcc5</div>Aucun rendez-vous \u00e0 venir<br><a href="marketplace.html" style="font-size:13px">Trouver un salon</a></div>';
+    h+='<div class="empty"><div class="ico">\ud83d\udcc5</div>Aucun rendez-vous \u00e0 venir<br><a href="/marketplace.html" style="font-size:13px">Trouver un salon</a></div>';
   }
   h+='</div>';
   
@@ -637,13 +641,22 @@ async function doLogin(){
   var email=document.getElementById("lEmail").value.trim().toLowerCase();
   var pass=document.getElementById("lPass").value;
   if(!email||!pass){showErr("loginErr","Remplissez email et mot de passe");return;}
-  var hash=await sha256(pass);
+  var saltedHash=await sha256Salted(email, pass);
+  var unsaltedHash=await sha256(pass);
   try{
     var r=await api("clients_beautypro?select=*&email=eq."+encodeURIComponent(email));
     var data=await r.json();
     if(!Array.isArray(data)||!data.length){showErr("loginErr","Aucun compte avec cet email");return;}
-    if(data[0].password_hash!==hash){showErr("loginErr","Mot de passe incorrect");return;}
-    CLIENT=data[0];PAGE="dashboard";TAB="rdv";
+    var stored=data[0].password_hash;
+    if(stored===saltedHash){
+      // Salted hash matches — good
+    }else if(stored===unsaltedHash){
+      // Old unsalted hash matches — silently upgrade to salted
+      api("clients_beautypro?id=eq."+data[0].id,{method:"PATCH",body:JSON.stringify({password_hash:saltedHash})});
+    }else{
+      showErr("loginErr","Mot de passe incorrect");return;
+    }
+    CLIENT=data[0];CLIENT.password_hash=saltedHash;PAGE="dashboard";TAB="rdv";
     api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({last_login:new Date().toISOString()})});
     saveSession();loadMyRdvs();render();
   }catch(e){showErr("loginErr","Erreur r\u00e9seau");}
@@ -663,7 +676,7 @@ async function doRegister(){
   if(!cgu){showErr("regErr","Vous devez accepter les CGU");return;}
   if(pass.length<6){showErr("regErr","Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showErr("regErr","Les mots de passe ne correspondent pas");return;}
-  var hash=await sha256(pass);
+  var hash=await sha256Salted(email, pass);
   var smsOk=document.getElementById("rSms").checked;
   var emOk=document.getElementById("rEm").checked;
   try{
@@ -720,9 +733,11 @@ async function changePassword(){
   if(!old||!nw){showMsg("passMsg","Remplissez tous les champs","var(--red)");return;}
   if(nw.length<6){showMsg("passMsg","6 caract\u00e8res minimum","var(--red)");return;}
   if(nw!==nw2){showMsg("passMsg","Les mots de passe ne correspondent pas","var(--red)");return;}
-  var oldHash=await sha256(old);
-  if(oldHash!==CLIENT.password_hash){showMsg("passMsg","Mot de passe actuel incorrect","var(--red)");return;}
-  var newHash=await sha256(nw);
+  // FIX I7: Try salted hash first, then unsalted for backward compat
+  var oldSalted=await sha256Salted(CLIENT.email, old);
+  var oldUnsalted=await sha256(old);
+  if(oldSalted!==CLIENT.password_hash&&oldUnsalted!==CLIENT.password_hash){showMsg("passMsg","Mot de passe actuel incorrect","var(--red)");return;}
+  var newHash=await sha256Salted(CLIENT.email, nw);
   await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({password_hash:newHash})});
   CLIENT.password_hash=newHash;saveSession();
   showMsg("passMsg","\u2705 Mot de passe modifi\u00e9","var(--green)");
