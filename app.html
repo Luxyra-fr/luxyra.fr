@@ -2225,7 +2225,7 @@ function doExceptFermeture(){
   var motif=(document.getElementById("exFermMotif").value||"").trim()||"Fermeture exceptionnelle";
   var allEtab=document.getElementById("exFermAll").checked;
   var stId=null;
-  if(!allEtab){var sel=document.querySelector('input[name="exFermCollab"]:checked');if(sel){stId=sel.value;if(typeof T[0].id==='number')stId=Number(stId);}}
+  if(!allEtab){var sel=document.querySelector('input[name="exFermCollab"]:checked');if(sel)stId=+sel.value;}
   if(!window.ABSENCES)window.ABSENCES=[];
   window.ABSENCES.push({id:U(),stId:allEtab?null:stId,type:"fermeture_except",date:d,motif:motif});
   saveAbsences();cM();go("settings");
@@ -2249,7 +2249,7 @@ function doExceptOuverture(){
   var d=document.getElementById("exOuvDate").value;if(!d)return;
   var fr=document.getElementById("exOuvFrom").value;var to=document.getElementById("exOuvTo").value;
   if(!fr||!to){alert("Horaires obligatoires");return;}
-  var stId=document.getElementById("exOuvCollab").value;if(T.length&&typeof T[0].id==="number")stId=Number(stId);
+  var stId=+document.getElementById("exOuvCollab").value;
   var motif=(document.getElementById("exOuvMotif").value||"").trim()||"Ouverture exceptionnelle";
   if(!window.ABSENCES)window.ABSENCES=[];
   window.ABSENCES.push({id:U(),stId:stId,type:"ouverture_except",date:d,horaire_o:fr,horaire_c:to,motif:motif});
@@ -3801,7 +3801,7 @@ function showAddPauseAt(stId,time){
   document.getElementById("modal").innerHTML=h;
 }
 function doAddPause(){
-  var stId=document.getElementById("pauseSt").value;if(T.length&&typeof T[0].id==="number")stId=Number(stId);var from=document.getElementById("pauseFrom").value;
+  var stId=+document.getElementById("pauseSt").value,from=document.getElementById("pauseFrom").value;
   var dur=+document.getElementById("pauseDur").value||60,label=document.getElementById("pauseLabel").value||"Pause";
   var toMin=toM(from)+dur;
   var toTime=String(Math.floor(toMin/60)).padStart(2,"0")+":"+String(toMin%60).padStart(2,"0");
@@ -3861,7 +3861,7 @@ function pickAbsType(type){
   }
 }
 function doAddAbsence(){
-  var stId=document.getElementById("absSt").value;if(T.length&&typeof T[0].id==="number")stId=Number(stId);var from=document.getElementById("absFrom").value,to=document.getElementById("absTo").value;
+  var stId=+document.getElementById("absSt").value,from=document.getElementById("absFrom").value,to=document.getElementById("absTo").value;
   var type=document.getElementById("absType").value;
   var motif=document.getElementById("absMotif")?document.getElementById("absMotif").value.trim():"";
   var label=type+(motif?" - "+motif:"");
@@ -4140,7 +4140,7 @@ function clickAppt(id){
         var phSty=gT(phStId);
         htm+='<div style="width:90px;font-size:11px;font-weight:700;color:'+(phSty?phSty.c:'#fff')+'">'+(phSty?phSty.n:'')+'</div>';
       } else {
-        htm+='<select style="width:90px;padding:4px;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff" onchange="updApptPhaseCollab(\''+a.id+'\','+i+',this.value)">';
+        htm+='<select style="width:90px;padding:4px;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff" onchange="updApptPhaseCollab(\''+a.id+'\','+i+',+this.value)">';
         for(var ti=0;ti<T.length;ti++){htm+='<option value="'+T[ti].id+'"'+(T[ti].id===phStId?' selected':'')+' style="color:#000;background:#fff">'+T[ti].n+'</option>';}
         htm+='</select>';
       }
@@ -4242,7 +4242,6 @@ function updApptPhase(id,idx,val){
 }
 function updApptPhaseCollab(id,idx,stId){
   // Convert stId to match T[].id type (integer from Supabase, string from select)
-  if(T.length&&typeof T[0].id==="number"){var n=Number(stId);if(!isNaN(n))stId=n;}
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   if(a.st==="done"){alert("RDV encaiss\u00e9 \u2014 modification impossible.");clickAppt(id);return;}
@@ -4264,7 +4263,9 @@ function updApptPhaseCollab(id,idx,stId){
     a.stId=stId;
   }
   if(typeof saveAppointment==="function")saveAppointment(a);
-  clickAppt(id);
+  // Re-render planning so the block moves to the correct collab column
+  go("planning");
+  setTimeout(function(){clickAppt(id);},100);
 }
 function updApptComment(id,val){
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){AP[i].comment=val;if(typeof saveAppointment==="function")saveAppointment(AP[i]);break;}}
@@ -8926,7 +8927,7 @@ function renderRdvPhases(){
     var color=isWork?"var(--gold)":"var(--orange)";
     h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid var(--border2)">';
     h+='<div style="flex:1;font-weight:700;font-size:12px;color:'+color+'">'+label+'</div>';
-    h+='<select style="width:100px;padding:6px;font-size:12px" onchange="var v=this.value;if(T.length&&typeof T[0].id===\'number\')v=Number(v);window._rdvPhases['+i+'].stId=v">';
+    h+='<select style="width:100px;padding:6px;font-size:12px" onchange="window._rdvPhases['+i+'].stId=+this.value">';
     for(var ti=0;ti<T.length;ti++){h+='<option value="'+T[ti].id+'"'+(ph.stId===T[ti].id||(!ph.stId&&T[ti].id===defSt)?" selected":"")+'>'+T[ti].n+'</option>';}
     h+='</select>';
     h+='<select style="width:80px;padding:6px;font-size:12px;text-align:center" onchange="window._rdvPhases['+i+'].d=+this.value">';
