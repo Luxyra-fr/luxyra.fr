@@ -179,7 +179,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadData();loadDemandes();document.querySelector(".sidebar").style.display="flex";render();return;}
+      if(c.data){_online=true;await loadData();loadDemandes();loadInscriptions();document.querySelector(".sidebar").style.display="flex";render();return;}
     }
   }catch(e){}
   showLogin();
@@ -306,7 +306,7 @@ function rDashboard(){
   var active=SALONS.filter(function(s){return s.status==="active";}).length;
   var trial=SALONS.filter(function(s){return s.status==="trial";}).length;
   var pendingV=SALONS.filter(function(s){return s.verif!=="verified";}).length;
-  var mrr=0;SALONS.forEach(function(s){if(s.status==="active"||s.status==="past_due")mrr+=gPlan(s.plan).prix;});
+  var mrr=0;SALONS.forEach(function(s){if((s.status==="active"||s.status==="past_due")&&!s.isFree)mrr+=gPlan(s.plan).prix;});
   var h='<div class="topbar"><h1>Dashboard <span>Vue d’ensemble</span></h1></div>';
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">Établissements</div><div class="kpi-value" style="color:var(--blue)">'+SALONS.length+'</div><div class="kpi-sub">Total inscrits</div><div class="kpi-icon">🏠</div></div>';
@@ -724,7 +724,7 @@ function rAlerts(){
 
 // ===== REVENUS =====
 function rRevenue(){
-  var mrr=0;SALONS.forEach(function(s){if(s.status==="active"||s.status==="past_due")mrr+=gPlan(s.plan).prix;});
+  var mrr=0;SALONS.forEach(function(s){if((s.status==="active"||s.status==="past_due")&&!s.isFree)mrr+=gPlan(s.plan).prix;});
   var arr=mrr*12;var ac=SALONS.filter(function(s){return s.status==="active";}).length;
   var h='<div class="topbar"><h1>Revenus <span>Analyse financière</span></h1></div>';
   h+='<div class="kpi-row">';
@@ -749,7 +749,7 @@ function rRevenue(){
 // ===== PACKS SMS =====
 function rSMS(){
   var h='<div class="topbar"><h1>Packs SMS <span>Gestion des crédits</span></h1></div>';
-  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">50 SMS inclus</div><div class="kpi-value" style="color:var(--green)">Pro</div><div class="kpi-sub">Dans le forfait Pro</div></div></div>';
+  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">30 SMS offerts</div><div class="kpi-value" style="color:var(--green)">Pro</div><div class="kpi-sub">Dans le forfait Pro</div></div></div>';
   h+='<div class="card"><h3>📱 Packs disponibles</h3>';
   [{q:100,p:7.99,m:37},{q:250,p:18.99,m:34},{q:500,p:35.99,m:31}].forEach(function(x){
     h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+x.m+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
@@ -874,7 +874,7 @@ async function saveFreePlan(id){
   var s=gSalon(id);
   if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
   alert("\u2705 "+(isFree?"Plan "+plan+" offert"+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)"):"Plan gratuit d\u00e9sactiv\u00e9"));
-  openDetail(id);
+  openD(id);
 }
 
 async function addSmsCredits(id,nb){
@@ -883,7 +883,7 @@ async function addSmsCredits(id,nb){
   await _sb.from("salons").update({sms_credits:newCredits}).eq("id",id);
   s.smsCredits=newCredits;
   alert("\u2705 "+nb+" SMS ajout\u00e9s. Nouveau solde: "+newCredits+" SMS");
-  openDetail(id);
+  openD(id);
 }
 
 async function addSmsCreditsCustom(id){
@@ -897,7 +897,7 @@ async function resetSmsCredits(id){
   await _sb.from("salons").update({sms_credits:0}).eq("id",id);
   var s=gSalon(id);if(s)s.smsCredits=0;
   alert("\u2705 Solde SMS remis \u00e0 0");
-  openDetail(id);
+  openD(id);
 }
 
 checkSession();
