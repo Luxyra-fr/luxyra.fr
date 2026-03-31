@@ -43,6 +43,7 @@ input:focus,select:focus{border-color:var(--gold);}
 
 #app{padding:16px;}
 .app-content{max-width:900px;margin:0 auto;}
+@media(min-width:768px){.home-grid{grid-template-columns:1fr 1fr!important;align-items:start}}
 .sec{font-family:var(--f1);font-size:20px;font-weight:900;margin:20px 0 12px;padding-left:4px;color:#fff;text-shadow:0 2px 8px #000,0 0 20px rgba(0,0,0,.5);}
 .sec:first-child{margin-top:8px;}
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
@@ -865,6 +866,14 @@ var METIER_CONFIG={
   bien_etre:{label:"Centre bien-\u00eatre",collabLabel:"Praticienne",collabLabelM:"Praticien",icon:"\ud83e\uddd8",defaultCats:["Massage","Relaxation","R\u00e9flexologie","Shiatsu","Soin \u00e9nerg\u00e9tique","M\u00e9ditation"]}
 };
 function getMetierConfig(){return METIER_CONFIG[SALON_CONFIG.metier||"coiffure"]||METIER_CONFIG.coiffure;}
+function calcFraisDeplacement(distKm){
+  var mode=SALON_CONFIG.modeActivite;
+  if(mode!=="domicile"&&mode!=="mixte")return 0;
+  var dom=SALON_CONFIG.domicile;if(!dom)return 0;
+  if(dom.type==="gratuit")return 0;
+  if(dom.type==="km"){var kmFacturable=Math.max(0,distKm-(dom.gratuitKm||0));return Math.round(kmFacturable*(dom.prixKm||0.5)*100)/100;}
+  return dom.forfait||0; // forfait
+}
 function getCollabLabel(){var mc=getMetierConfig();return mc.collabLabel;}
 document.addEventListener("DOMContentLoaded",function(){var el=document.getElementById("salonName");if(el)el.textContent=SALON_CONFIG.nom;});
 
@@ -2168,6 +2177,69 @@ function removeAbsence(idx){
   window.ABSENCES.splice(idx,1);
   saveAbsences();
 }
+function addFormuleCouleur(cId){
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83c\udfa8 Nouvelle formule couleur</h2>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  htm+='<div class="fg"><label>Date *</label><input type="date" id="fmDate" value="'+TD+'"></div>';
+  htm+='<div class="fg"><label>Marque *</label><input id="fmMarque" list="fmMarqueList" placeholder="Schwarzkopf, L\'Or\u00e9al..."><datalist id="fmMarqueList"><option value="Schwarzkopf Igora"><option value="L\'Or\u00e9al Inoa"><option value="L\'Or\u00e9al Majirel"><option value="Wella Koleston"><option value="Goldwell Topchic"><option value="Revlon Revlonissimo"><option value="Kerat\u00e9a"></datalist></div></div>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  htm+='<div class="fg"><label>Num\u00e9ro / Ton</label><input id="fmNumero" placeholder="Ex: 7-0, 6.1, 9/73..."></div>';
+  htm+='<div class="fg"><label>Oxydant</label><input id="fmOxydant" list="fmOxList" placeholder="Ex: 6%, 9%, 12%..."><datalist id="fmOxList"><option value="3% (10 vol.)"><option value="6% (20 vol.)"><option value="9% (30 vol.)"><option value="12% (40 vol.)"></datalist></div></div>';
+  htm+='<div class="fg"><label>M\u00e9lange / Recette</label><input id="fmMelange" placeholder="Ex: 50g 7-0 + 25g 6-1 + 75ml oxy 6%"></div>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  htm+='<div class="fg"><label>Temps de pose (min)</label><input type="number" id="fmTemps" min="1" value="30"></div>';
+  htm+='<div class="fg"><label>Zone d\u2019application</label><input id="fmZone" placeholder="Racines, longueurs, tout..."></div></div>';
+  htm+='<div class="fg"><label>R\u00e9sultat / Notes</label><textarea id="fmNotes" rows="2" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" placeholder="R\u00e9sultat obtenu, ajustements pour la prochaine fois..."></textarea></div>';
+  htm+='<div style="display:flex;gap:8px;margin-top:10px">';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doAddFormule(\''+cId+'\')">Enregistrer</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+function doAddFormule(cId){
+  var cl=gC(cId);if(!cl)return;
+  var marque=(document.getElementById("fmMarque").value||"").trim();
+  var date=document.getElementById("fmDate").value;
+  if(!marque||!date){alert("Marque et date obligatoires");return;}
+  if(!cl.formules)cl.formules=[];
+  cl.formules.push({
+    date:date,
+    marque:marque,
+    numero:(document.getElementById("fmNumero").value||"").trim(),
+    oxydant:(document.getElementById("fmOxydant").value||"").trim(),
+    melange:(document.getElementById("fmMelange").value||"").trim(),
+    tempsPose:+(document.getElementById("fmTemps").value||30),
+    zone:(document.getElementById("fmZone").value||"").trim(),
+    notes:(document.getElementById("fmNotes").value||"").trim()
+  });
+  if(typeof saveClient==="function")saveClient(cl);
+  cM();go("detail");
+}
+function addClientPhoto(cId,input,label){
+  if(!input.files||!input.files[0])return;
+  var file=input.files[0];
+  if(file.size>2*1024*1024){alert("Photo trop lourde (max 2 Mo). Essayez avec une photo plus petite.");input.value="";return;}
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var cl=gC(cId);if(!cl)return;
+    if(!cl.photos)cl.photos=[];
+    // Resize image to max 400px for storage
+    var img=new Image();
+    img.onload=function(){
+      var max=400;var w=img.width,h=img.height;
+      if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
+      var canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+      canvas.getContext("2d").drawImage(img,0,0,w,h);
+      var data=canvas.toDataURL("image/jpeg",0.7);
+      cl.photos.push({date:TD,label:label||"",data:data});
+      if(typeof saveClient==="function")saveClient(cl);
+      go("detail");
+    };
+    img.src=e.target.result;
+  };
+  reader.readAsDataURL(file);
+  input.value="";
+}
 
 function showCAInstantane(){
   var today=TD;
@@ -2624,75 +2696,62 @@ function rHome(){
   var caPrevMois=caPasseMois+caFuturMois;
   var rdvPrevMois=rdvPasseMois+rdvFuturMois;
 
-  // === DASHBOARD ===
-  h+='<div style="border:2px solid var(--gold);border-radius:14px;overflow:hidden;margin-bottom:12px;background:#0a0a0a">';
+  // === HOME LAYOUT: 2 columns on PC ===
+  h+='<div style="display:grid;grid-template-columns:1fr;gap:12px" class="home-grid">';
+  
+  // === LEFT: DASHBOARD ===
+  h+='<div class="home-ca">';
+  h+='<div style="border:2px solid var(--gold);border-radius:14px;overflow:hidden;background:#0a0a0a">';
   // Gold header
-  h+='<div style="background:linear-gradient(135deg,var(--gold),var(--gold-light),var(--gold));padding:8px 16px;display:flex;justify-content:space-between;align-items:center">';
-  h+='<span style="font-family:var(--f1);font-size:12px;font-weight:800;letter-spacing:3px;color:#0a0a0a">CA DU JOUR</span>';
-  h+='<span style="font-size:11px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'</span>';
+  h+='<div style="background:linear-gradient(135deg,var(--gold),var(--gold-light),var(--gold));padding:6px 14px;display:flex;justify-content:space-between;align-items:center">';
+  h+='<span style="font-family:var(--f1);font-size:11px;font-weight:800;letter-spacing:3px;color:#0a0a0a">CA DU JOUR</span>';
+  h+='<span style="font-size:10px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'</span>';
   h+='</div>';
-  // Total
-  h+='<div style="padding:14px 16px 10px;text-align:center">';
-  h+='<div style="font-family:var(--f1);font-size:40px;font-weight:900;color:var(--gold);line-height:1">'+totalCA.toFixed(2)+' \u20ac <span style="font-size:13px;color:var(--gold);opacity:.5">TTC</span></div>';
-  h+='<div style="font-size:13px;color:var(--gold);opacity:.4;margin-top:2px">HT : '+totalHT.toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:14px;color:#fff;margin-top:4px;font-weight:700">'+totalCount+' client'+(totalCount>1?"s":"")+'</div>';
+  // Total compact
+  h+='<div style="padding:10px 14px 6px;text-align:center">';
+  h+='<div style="font-family:var(--f1);font-size:32px;font-weight:900;color:var(--gold);line-height:1">'+totalCA.toFixed(2)+' \u20ac <span style="font-size:11px;color:var(--gold);opacity:.5">TTC</span></div>';
+  h+='<div style="font-size:11px;color:var(--gold);opacity:.4">HT : '+totalHT.toFixed(2)+' \u20ac \u2022 '+totalCount+' client'+(totalCount>1?"s":"")+'</div>';
   h+='</div>';
-  // Grid 2x2
-  h+='<div style="padding:0 10px 8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">';
-  h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:10px;padding:10px;text-align:center">';
-  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(doneCA/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:12px;color:var(--green);font-weight:700">\u2705 R\u00e9alis\u00e9 \u2022 '+doneCount+' cl.</div></div>';
-  h+='<div style="background:rgba(74,133,181,.08);border:1px solid rgba(74,133,181,.2);border-radius:10px;padding:10px;text-align:center">';
-  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(remainCA/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:12px;color:var(--blue);font-weight:700">\u23f3 \u00c0 venir \u2022 '+remainCount+' RDV</div></div>';
-  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:10px;text-align:center">';
-  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(caServices/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:12px;color:var(--pink);font-weight:700">\u2702\ufe0f Services</div></div>';
-  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:10px;text-align:center">';
-  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(caProducts/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:12px;color:var(--orange);font-weight:700">\ud83d\udecd Produits</div></div>';
+  // Grid 2x2 compact
+  h+='<div style="padding:0 8px 6px;display:grid;grid-template-columns:1fr 1fr;gap:4px">';
+  h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:8px;padding:6px;text-align:center">';
+  h+='<div style="font-size:15px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--green);font-weight:700">\u2705 R\u00e9alis\u00e9 \u2022 '+doneCount+' cl.</div></div>';
+  h+='<div style="background:rgba(74,133,181,.08);border:1px solid rgba(74,133,181,.2);border-radius:8px;padding:6px;text-align:center">';
+  h+='<div style="font-size:15px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--blue);font-weight:700">\u23f3 \u00c0 venir \u2022 '+remainCount+'</div></div>';
+  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:8px;padding:6px;text-align:center">';
+  h+='<div style="font-size:15px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--pink);font-weight:700">\u2702\ufe0f Services</div></div>';
+  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:8px;padding:6px;text-align:center">';
+  h+='<div style="font-size:15px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--orange);font-weight:700">\ud83d\udecd Produits</div></div>';
   h+='</div>';
-  // === CA PRÉVISIONNEL DU MOIS ===
-  h+='<div style="margin:0 10px 8px;background:linear-gradient(135deg,rgba(156,39,176,.1),rgba(103,58,183,.08));border:1.5px solid rgba(156,39,176,.25);border-radius:12px;padding:12px">';
-  h+='<div style="text-align:center;font-size:11px;font-weight:800;letter-spacing:2px;color:rgba(206,147,216,.7);text-transform:uppercase;margin-bottom:6px">\ud83d\udcc8 CA Pr\u00e9visionnel \u2014 '+moisStr+'</div>';
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">';
-  // Réalisé ce mois
-  h+='<div><div style="font-size:18px;font-weight:900;color:#ce93d8">'+caPasseMois.toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caPasseMois/(1+tvaR/100)).toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:rgba(206,147,216,.6);font-weight:700">\u2705 R\u00e9alis\u00e9</div></div>';
-  // Prévisionnel (future booked)
-  h+='<div><div style="font-size:18px;font-weight:900;color:#b39ddb">'+caFuturMois.toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caFuturMois/(1+tvaR/100)).toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:rgba(179,157,219,.6);font-weight:700">\ud83d\udcc5 RDV \u00e0 venir</div></div>';
-  // Total prévisionnel
-  h+='<div style="background:rgba(255,255,255,.05);border-radius:8px;padding:4px"><div style="font-size:20px;font-weight:900;color:#fff">'+caPrevMois.toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caPrevMois/(1+tvaR/100)).toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:var(--gold);font-weight:700">\ud83c\udfaf Total pr\u00e9v.</div></div>';
-  h+='</div>';
-  h+='<div style="text-align:center;font-size:10px;color:rgba(255,255,255,.25);margin-top:6px">'+rdvPasseMois+' r\u00e9alis\u00e9'+(rdvPasseMois>1?'s':'')+' + '+rdvFuturMois+' \u00e0 venir = '+rdvPrevMois+' RDV</div>';
-  h+='</div>';
-  // Row: Nveaux clients + collabs
-  h+='<div style="padding:0 8px 8px;display:flex;gap:6px">';
-  h+='<div style="flex:1;background:rgba(128,80,168,.08);border:1px solid rgba(128,80,168,.2);border-radius:10px;padding:8px;text-align:center">';
-  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+newClients+'</div>';
-  h+='<div style="font-size:11px;color:var(--purple);font-weight:700">\u2728 Nouveaux clients ayant pris RDV</div></div>';
+  // Prévisionnel compact
+  h+='<div style="margin:0 8px 6px;background:rgba(156,39,176,.08);border:1px solid rgba(156,39,176,.2);border-radius:8px;padding:8px">';
+  h+='<div style="text-align:center;font-size:9px;font-weight:800;letter-spacing:2px;color:rgba(206,147,216,.6);text-transform:uppercase;margin-bottom:4px">\ud83d\udcc8 Pr\u00e9visionnel '+moisStr+'</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;text-align:center">';
+  h+='<div><div style="font-size:14px;font-weight:900;color:#ce93d8">'+caPasseMois.toFixed(0)+' \u20ac</div><div style="font-size:9px;color:rgba(206,147,216,.5)">\u2705 R\u00e9alis\u00e9</div></div>';
+  h+='<div><div style="font-size:14px;font-weight:900;color:#b39ddb">'+caFuturMois.toFixed(0)+' \u20ac</div><div style="font-size:9px;color:rgba(179,157,219,.5)">\ud83d\udcc5 \u00c0 venir</div></div>';
+  h+='<div style="background:rgba(255,255,255,.05);border-radius:6px;padding:2px"><div style="font-size:16px;font-weight:900;color:#fff">'+caPrevMois.toFixed(0)+' \u20ac</div><div style="font-size:9px;color:var(--gold)">\ud83c\udfaf Total</div></div>';
+  h+='</div></div>';
+  // Collabs row + clôture
+  h+='<div style="padding:0 8px 6px;display:flex;gap:4px">';
+  h+='<div style="flex:1;background:rgba(128,80,168,.08);border:1px solid rgba(128,80,168,.2);border-radius:8px;padding:6px;text-align:center">';
+  h+='<div style="font-size:14px;font-weight:900;color:#fff">'+newClients+'</div>';
+  h+='<div style="font-size:9px;color:var(--purple);font-weight:700">\u2728 Nv. clients</div></div>';
   for(var si=0;si<styNames.length;si++){var sn=styNames[si],sd=perSty[sn];
-    h+='<div style="flex:1;background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:8px;text-align:center">';
-    h+='<div style="font-size:16px;font-weight:900;color:#fff">'+sd.ca.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-    h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(sd.ca/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-    h+='<div style="font-size:11px;color:var(--gold);font-weight:700">'+sn+' \u2022 '+sd.nb+' cl.</div></div>';
+    h+='<div style="flex:1;background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:8px;padding:6px;text-align:center">';
+    h+='<div style="font-size:14px;font-weight:900;color:#fff">'+sd.ca.toFixed(0)+' \u20ac</div>';
+    h+='<div style="font-size:9px;color:var(--gold);font-weight:700">'+sn+' \u2022 '+sd.nb+'</div></div>';
   }
   h+='</div>';
-  // Cloture
-  h+='<div style="padding:0 8px 8px"><button onclick="doCloture()" style="width:100%;padding:10px;background:var(--gold-bg);border:1px solid var(--gold-bg2);color:var(--gold);font-weight:800;font-size:12px;border-radius:10px;cursor:pointer;font-family:var(--f2);letter-spacing:1px">'+ICO.cloture+' CL\u00d4TURE DE LA JOURN\u00c9E</button></div>';
-  h+='</div>';
-
-  // === TILES (no settings tile) ===
-  h+='<div class="sec" style="margin-top:4px">Mon salon</div><div class="tiles">';
+  h+='<div style="padding:0 8px 8px"><button onclick="doCloture()" style="width:100%;padding:8px;background:var(--gold-bg);border:1px solid var(--gold-bg2);color:var(--gold);font-weight:800;font-size:11px;border-radius:8px;cursor:pointer;font-family:var(--f2);letter-spacing:1px">'+ICO.cloture+' CL\u00d4TURE</button></div>';
+  h+='</div></div>';
+  
+  // === RIGHT: TILES ===
+  h+='<div class="home-tiles">';
+  h+='<div class="sec" style="margin-top:0">Mon salon</div><div class="tiles">';
   h+='<div class="tile gt-blue" onclick="go(\'planning\')"><div class="ti" style="color:#fff">'+ICO.planning+'</div><div class="tl">Planning</div></div>';
   h+='<div class="tile gt-green" onclick="go(\'caisse\')"><div class="ti" style="color:#fff">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
   h+='<div class="tile gt-pink" onclick="go(\'clients\')"><div class="ti" style="color:#fff">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
@@ -2710,7 +2769,7 @@ function rHome(){
   }else{
   h+='<div class="tile tile-locked" style="background:linear-gradient(135deg,#00897b,#26a69a)" onclick="showUpgradeModal(\'SMS & Email Marketing\')"><span class="lock-badge">PRO</span><div class="ti" style="color:#fff">\ud83d\udce3</div><div class="tl">Marketing</div></div>';
   }
-  h+='</div>';
+  h+='</div>'; // close .tiles
   if(!isPro()){
     h+='<div onclick="showUpgradeModal(\'toutes les fonctionnalités Pro\')" style="margin-top:12px;cursor:pointer;background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.2);border-radius:14px;padding:16px;display:flex;align-items:center;gap:14px">';
     h+='<div style="font-size:28px">💎</div>';
@@ -2718,6 +2777,8 @@ function rHome(){
     h+='<div style="font-size:12px;color:var(--text3)">Site vitrine, réservation en ligne, marketplace, SMS & marketing</div></div>';
     h+='<div style="font-size:18px;color:var(--gold)">→</div></div>';
   }
+  h+='</div>'; // close .home-tiles
+  h+='</div>'; // close .home-grid
   return h;
 }
 
@@ -3274,7 +3335,8 @@ function rPlanningDay(dateObj,showDayHeader){
           h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
           h+='<div class="pb-svc">'+ph.l.toUpperCase()+'</div>';
           if(hPx>=50){
-            if(a.isOnline)h+='<div class="pb-badge" style="background:rgba(108,92,231,.4);color:#fff;font-weight:800">\ud83c\udf10 En ligne</div>';
+            if(a.lieu==="domicile")h+='<div class="pb-badge" style="background:rgba(255,152,0,.15);color:#ff9800">\ud83d\ude97 Domicile</div>';
+            else if(a.isOnline)h+='<div class="pb-badge" style="background:rgba(108,92,231,.4);color:#fff;font-weight:800">\ud83c\udf10 En ligne</div>';
             else if(a.acompte&&a.acompte>0&&a.st!=="done")h+='<div class="pb-badge" style="background:rgba(45,154,94,.15);color:#2d9a5e">\ud83d\udcb3 Acompte '+a.acompte+'\u20ac</div>';
             else h+='<div class="pb-badge" style="background:'+(a.st==="done"?"var(--green-bg);color:var(--green)":"var(--blue-bg);color:var(--blue)")+'">'+(a.st==="done"?"\u2714 Encaiss\u00e9":(a.isOnline?"\u2714 Confirm\u00e9":"\ud83d\udcc5 Pr\u00e9vu"))+'</div>';
           }
@@ -3891,6 +3953,16 @@ function clickAppt(id){
   htm+='<div style="color:var(--gold);font-weight:700;font-size:13px;margin-top:12px;margin-bottom:4px">Commentaire</div>';
   htm+='<textarea rows="3" style="width:100%;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px;font-size:13px;font-family:var(--f2)" onchange="updApptComment(\''+a.id+'\',this.value)">'+(a.comment||"")+'</textarea>';
   
+  // Domicile address
+  if(a.lieu==="domicile"){
+    htm+='<div style="background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.2);border-radius:10px;padding:10px 14px;margin-top:10px">';
+    htm+='<div style="display:flex;align-items:center;justify-content:space-between">';
+    htm+='<div><div style="font-size:11px;color:#ff9800;font-weight:700">\ud83d\ude97 \u00c0 domicile</div>';
+    htm+='<div style="font-size:13px;color:#fff;font-weight:600;margin-top:2px">'+(a.adresse||"Adresse non renseign\u00e9e")+'</div></div>';
+    if(a.adresse){htm+='<a href="https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(a.adresse)+'" target="_blank" style="padding:8px 12px;background:rgba(255,152,0,.15);border:1px solid rgba(255,152,0,.3);border-radius:8px;font-size:11px;font-weight:700;color:#ff9800;text-decoration:none;white-space:nowrap">\ud83d\uddfa\ufe0f Maps</a>';}
+    htm+='</div></div>';
+  }
+  
   // Acompte section
   if(a.acompte&&a.acompte>0){
     htm+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:10px;padding:10px 14px;margin-top:12px;display:flex;justify-content:space-between;align-items:center">';
@@ -4385,10 +4457,36 @@ function rSettings(){
     h+='</div>';
     // Domicile options
     if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
-      h+='<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
-      h+='<div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:8px">\ud83d\ude97 Param\u00e8tres domicile</div>';
-      h+='<div class="fg"><label>Zone de d\u00e9placement (km)</label><input type="number" value="'+(SALON_CONFIG.zoneDeplacementKm||0)+'" min="0" onchange="SALON_CONFIG.zoneDeplacementKm=parseInt(this.value)||0;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
-      h+='<div class="fg"><label>Frais de d\u00e9placement (\u20ac)</label><input type="number" value="'+(SALON_CONFIG.fraisDeplacement||0)+'" min="0" step="0.5" onchange="SALON_CONFIG.fraisDeplacement=parseFloat(this.value)||0;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+      if(!SALON_CONFIG.domicile)SALON_CONFIG.domicile={type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:5};
+      var dom=SALON_CONFIG.domicile;
+      h+='<div style="margin-top:12px;padding:14px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
+      h+='<div style="font-size:13px;color:var(--gold);font-weight:800;margin-bottom:10px">\ud83d\ude97 D\u00e9placement \u00e0 domicile</div>';
+      // Zone
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">';
+      h+='<div class="fg" style="margin-bottom:0"><label>Zone couverte (km)</label><input type="number" value="'+(dom.zone||20)+'" min="1" max="100" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.zone=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+      h+='<div class="fg" style="margin-bottom:0"><label>Gratuit jusqu\u0027\u00e0 (km)</label><input type="number" value="'+(dom.gratuitKm||0)+'" min="0" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.gratuitKm=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+      h+='</div>';
+      // Tarification type
+      h+='<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:6px">Mode de tarification</div>';
+      var domTypes=[["forfait","\ud83d\udcb0","Forfait fixe"],["km","\ud83d\udecf\ufe0f","Prix au km"],["gratuit","\ud83c\udd93","Gratuit"]];
+      h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">';
+      for(var dti=0;dti<domTypes.length;dti++){
+        var dt=domTypes[dti];var dtSel=(dom.type||"forfait")===dt[0];
+        h+='<div onclick="SALON_CONFIG.domicile.type=\''+dt[0]+'\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')" style="padding:10px 6px;border-radius:8px;cursor:pointer;text-align:center;background:'+(dtSel?'rgba(200,168,78,.12)':'rgba(255,255,255,.03)')+';border:2px solid '+(dtSel?'var(--gold)':'rgba(255,255,255,.08)')+'">';
+        h+='<div style="font-size:18px">'+dt[1]+'</div>';
+        h+='<div style="font-size:10px;font-weight:700;color:'+(dtSel?'var(--gold)':'rgba(255,255,255,.5)')+'">'+dt[2]+'</div></div>';
+      }
+      h+='</div>';
+      // Price fields based on type
+      if(dom.type==="forfait"){
+        h+='<div class="fg" style="margin-bottom:0"><label>Montant forfait (\u20ac)</label><input type="number" value="'+(dom.forfait||15)+'" min="0" step="0.5" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.forfait=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+      }else if(dom.type==="km"){
+        h+='<div class="fg" style="margin-bottom:0"><label>Prix par km (\u20ac/km)</label><input type="number" value="'+(dom.prixKm||0.5)+'" min="0" step="0.1" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.prixKm=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+        var exKm=10;var exPrix=Math.max(0,(exKm-(dom.gratuitKm||0)))*dom.prixKm;
+        h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Ex: '+exKm+' km = '+exPrix.toFixed(2)+' \u20ac'+(dom.gratuitKm>0?' ('+dom.gratuitKm+' km gratuits)':'')+'</div>';
+      }else{
+        h+='<div style="font-size:12px;color:var(--green);padding:8px;text-align:center">\u2705 D\u00e9placement gratuit dans la zone couverte</div>';
+      }
       h+='</div>';
     }
     h+='</div>';
@@ -5158,7 +5256,14 @@ function rDetail(){
   h+='</div></div>';
 
   // Tabs
-  var tabs=[{k:"infos",l:"Infos",i:"\ud83d\udc64"},{k:"cheveu",l:"Cheveux",i:"\ud83d\udc87"},{k:"histo",l:"Historique",i:"\ud83d\udcde"},{k:"fiche",l:"Fiche T",i:"\u270f\ufe0f"},{k:"packs",l:"Abos",i:"\ud83c\udf9f\ufe0f"},{k:"fidel",l:"Fid\u00e9lit\u00e9",i:"\ud83c\udfc5"},{k:"rgpd",l:"RGPD",i:"\u2709\ufe0f"},{k:"ca",l:"C.A.",i:"\ud83d\udcca"}];
+  // Dynamic tabs per métier
+  var met=SALON_CONFIG.metier||"coiffure";
+  var tabs=[{k:"infos",l:"Infos",i:"\ud83d\udc64"}];
+  if(met==="coiffure"||met==="barbier")tabs.push({k:"cheveu",l:"Cheveux",i:"\ud83d\udc87"});
+  else if(met==="esthetique")tabs.push({k:"peau",l:"Peau",i:"\ud83e\uddf4"});
+  else if(met==="ongles")tabs.push({k:"ongles",l:"Ongles",i:"\ud83d\udc85"});
+  else if(met==="bien_etre")tabs.push({k:"bienetre",l:"Bien-\u00eatre",i:"\ud83e\uddd8"});
+  tabs.push({k:"photos",l:"Photos",i:"\ud83d\udcf7"},{k:"histo",l:"Historique",i:"\ud83d\udcde"},{k:"fiche",l:"Fiche T",i:"\u270f\ufe0f"},{k:"packs",l:"Abos",i:"\ud83c\udf9f\ufe0f"},{k:"fidel",l:"Fid\u00e9lit\u00e9",i:"\ud83c\udfc5"},{k:"rgpd",l:"RGPD",i:"\u2709\ufe0f"},{k:"ca",l:"C.A.",i:"\ud83d\udcca"});
   h+='<div class="tabs" style="margin:12px 0">';
   for(var i=0;i<tabs.length;i++){
     h+='<div class="tab'+(clTab===tabs[i].k?" on":"")+'" onclick="clTab=\''+tabs[i].k+'\';go(\'detail\')" style="font-size:11px;padding:6px 10px">'+tabs[i].i+' '+tabs[i].l+'</div>';
@@ -5188,14 +5293,136 @@ function rDetail(){
     h+='</div>';
   }
   else if(clTab==="cheveu"){
-    h+='<div class="card"><div class="ct">Informations capillaires</div>';
-    h+='<div class="fg"><label>Nature des cheveux</label><select onchange="gC(\''+c.id+'\').natChev=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">';
+    var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
+    h+='<div class="card"><div class="ct">\ud83d\udc87 Informations capillaires</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    h+='<div class="fg"><label>Nature</label><select onchange="'+_s("natChev","this.value")+'">';
     ["","Normaux","Secs","Gras","Mixtes","Color\u00e9s","M\u00e9ch\u00e9s","D\u00e9color\u00e9s"].forEach(function(v){h+='<option value="'+v+'"'+(c.natChev===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
     h+='</select></div>';
-    h+='<div class="fg"><label>Type de cheveux</label><select onchange="gC(\''+c.id+'\').typeChev=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">';
+    h+='<div class="fg"><label>Type</label><select onchange="'+_s("typeChev","this.value")+'">';
     ["","Fins","Normaux","\u00c9pais","Boucl\u00e9s","Cr\u00e9pus","Lisses","Ondul\u00e9s"].forEach(function(v){h+='<option value="'+v+'"'+(c.typeChev===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
     h+='</select></div>';
-    h+='<div class="fg"><label>D\u00e9tails</label><textarea rows="5" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:14px" onchange="gC(\''+c.id+'\').detChev=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">'+(c.detChev||"")+'</textarea></div>';
+    h+='<div class="fg"><label>Longueur</label><select onchange="'+_s("longueurChev","this.value")+'">';
+    ["","Tr\u00e8s court","Court","Mi-long","Long","Tr\u00e8s long"].forEach(function(v){h+='<option value="'+v+'"'+(c.longueurChev===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>\u00c9tat cuir chevelu</label><select onchange="'+_s("cuirChev","this.value")+'">';
+    ["","Normal","Sec","Gras","Pellicules","Sensible","Irrité"].forEach(function(v){h+='<option value="'+v+'"'+(c.cuirChev===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div></div>';
+    h+='<div class="fg"><label>\u26a0\ufe0f Allergies / Sensibilit\u00e9s</label><input value="'+(c.allergiesChev||"")+'" placeholder="Test m\u00e8che effectu\u00e9, PPD, ammoniac..." onchange="'+_s("allergiesChev","this.value")+'"></div>';
+    h+='<div class="fg"><label>D\u00e9tails / Notes</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detChev","this.value")+'">'+(c.detChev||"")+'</textarea></div>';
+    h+='</div>';
+    // Historique formules couleur
+    if(!c.formules)c.formules=[];
+    h+='<div class="card" style="margin-top:10px"><div class="ct">\ud83c\udfa8 Historique formules couleur</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Gardez une trace de chaque formule appliqu\u00e9e.</div>';
+    if(c.formules.length){
+      for(var fi=c.formules.length-1;fi>=0;fi--){
+        var fm=c.formules[fi];
+        h+='<div style="padding:10px;margin-bottom:6px;border-radius:8px;background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.15)">';
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+        h+='<span style="font-size:12px;font-weight:700;color:var(--gold)">'+fmt(fm.date)+'</span>';
+        h+='<button class="btn bs" style="font-size:9px;color:var(--red);padding:2px 6px" onclick="gC(\''+c.id+'\').formules.splice('+fi+',1);if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'));go(\'detail\')">X</button></div>';
+        h+='<div style="font-size:12px;color:var(--text2)"><strong>'+fm.marque+'</strong> \u2022 '+(fm.numero||"")+'</div>';
+        if(fm.melange)h+='<div style="font-size:11px;color:var(--text3)">M\u00e9lange: '+fm.melange+'</div>';
+        h+='<div style="font-size:11px;color:var(--text3)">'+(fm.oxydant?'Oxydant: '+fm.oxydant+' ':'')+(fm.tempsPose?'\u23f1 '+fm.tempsPose+' min':'')+'</div>';
+        if(fm.notes)h+='<div style="font-size:11px;color:var(--text3);font-style:italic;margin-top:2px">'+fm.notes+'</div>';
+        h+='</div>';
+      }
+    }else{
+      h+='<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px;font-style:italic">Aucune formule enregistr\u00e9e</div>';
+    }
+    h+='<button class="btn bs" style="width:100%;margin-top:8px;font-size:12px;padding:10px" onclick="addFormuleCouleur(\''+c.id+'\')">\u2795 Ajouter une formule</button>';
+    h+='</div>';
+  }
+  else if(clTab==="peau"){
+    var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
+    h+='<div class="card"><div class="ct">\ud83e\uddf4 Informations peau</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    h+='<div class="fg"><label>Type de peau</label><select onchange="'+_s("typePeau","this.value")+'">';
+    ["","Normale","S\u00e8che","Grasse","Mixte","Sensible","D\u00e9shydrat\u00e9e","Mature"].forEach(function(v){h+='<option value="'+v+'"'+(c.typePeau===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Phototype (Fitzpatrick)</label><select onchange="'+_s("phototype","this.value")+'">';
+    ["","I - Tr\u00e8s clair","II - Clair","III - Interm\u00e9diaire","IV - Mat","V - Brun","VI - Tr\u00e8s fonc\u00e9"].forEach(function(v){h+='<option value="'+v+'"'+(c.phototype===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Probl\u00e8mes cutan\u00e9s</label><select onchange="'+_s("pbPeau","this.value")+'">';
+    ["","Aucun","Acn\u00e9","Rosac\u00e9e","Eczema","Couperose","Taches pigmentaires","Rides/Ridules","Pores dilat\u00e9s"].forEach(function(v){h+='<option value="'+v+'"'+(c.pbPeau===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>\u00c9tat pilosit\u00e9</label><select onchange="'+_s("pilosite","this.value")+'">';
+    ["","Faible","Normale","Dense","Tr\u00e8s dense"].forEach(function(v){h+='<option value="'+v+'"'+(c.pilosite===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div></div>';
+    h+='<div class="fg"><label>Zones d\u0027\u00e9pilation habituelles</label><input value="'+(c.zonesEpil||"")+'" placeholder="Jambes, maillot, aisselles, visage..." onchange="'+_s("zonesEpil","this.value")+'"></div>';
+    h+='<div class="fg"><label>\u26a0\ufe0f Allergies / Contre-indications</label><input value="'+(c.allergiesPeau||"")+'" placeholder="Parab\u00e8nes, latex, cire..." onchange="'+_s("allergiesPeau","this.value")+'"></div>';
+    h+='<div class="fg"><label>Date du dernier soin</label><input type="date" value="'+(c.dernierSoinPeau||"")+'" onchange="'+_s("dernierSoinPeau","this.value")+'"></div>';
+    h+='<div class="fg"><label>D\u00e9tails / Notes peau</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detPeau","this.value")+'">'+(c.detPeau||"")+'</textarea></div>';
+    h+='</div>';
+  }
+  else if(clTab==="ongles"){
+    var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
+    h+='<div class="card"><div class="ct">\ud83d\udc85 Informations ongles</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    h+='<div class="fg"><label>\u00c9tat des ongles</label><select onchange="'+_s("etatOngles","this.value")+'">';
+    ["","Normaux","Cassants","Mous","D\u00e9doubl\u00e9s","Stri\u00e9s","\u00c9pais","Fins"].forEach(function(v){h+='<option value="'+v+'"'+(c.etatOngles===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Forme pr\u00e9f\u00e9r\u00e9e</label><select onchange="'+_s("formeOngles","this.value")+'">';
+    ["","Carr\u00e9","Rond","Ovale","Amande","Stiletto","Coffin/Ballerina","Squoval"].forEach(function(v){h+='<option value="'+v+'"'+(c.formeOngles===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Taille capsules</label><select onchange="'+_s("tailleCapsules","this.value")+'">';
+    ["","XS","S","M","L","XL","Sur mesure"].forEach(function(v){h+='<option value="'+v+'"'+(c.tailleCapsules===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Technique pr\u00e9f\u00e9r\u00e9e</label><select onchange="'+_s("techniqueOngles","this.value")+'">';
+    ["","Gel UV","Semi-permanent","Acrylique","R\u00e9sine","Vernis classique","Nail art"].forEach(function(v){h+='<option value="'+v+'"'+(c.techniqueOngles===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div></div>';
+    h+='<div class="fg"><label>\ud83c\udfa8 Couleurs pr\u00e9f\u00e9r\u00e9es</label><input value="'+(c.couleursOngles||"")+'" placeholder="Rose nude, rouge, french, noir..." onchange="'+_s("couleursOngles","this.value")+'"></div>';
+    h+='<div class="fg"><label>\u26a0\ufe0f Allergies / Contre-indications</label><input value="'+(c.allergiesOngles||"")+'" placeholder="Gel UV, acrylique, ac\u00e9tone..." onchange="'+_s("allergiesOngles","this.value")+'"></div>';
+    h+='<div class="fg"><label>D\u00e9tails / Notes ongles</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detOngles","this.value")+'">'+(c.detOngles||"")+'</textarea></div>';
+    h+='</div>';
+  }
+  else if(clTab==="bienetre"){
+    var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
+    h+='<div class="card"><div class="ct">\ud83e\uddd8 Informations bien-\u00eatre</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    h+='<div class="fg"><label>Objectif principal</label><select onchange="'+_s("objectifBE","this.value")+'">';
+    ["","Relaxation","Anti-stress","Douleurs musculaires","Circulation","Sommeil","R\u00e9cup\u00e9ration sportive","\u00c9quilibre \u00e9nerg\u00e9tique"].forEach(function(v){h+='<option value="'+v+'"'+(c.objectifBE===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Pression pr\u00e9f\u00e9r\u00e9e</label><select onchange="'+_s("pressionBE","this.value")+'">';
+    ["","L\u00e9g\u00e8re","Mod\u00e9r\u00e9e","Forte","Tr\u00e8s forte","Variable selon zones"].forEach(function(v){h+='<option value="'+v+'"'+(c.pressionBE===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Dur\u00e9e pr\u00e9f\u00e9r\u00e9e</label><select onchange="'+_s("dureeBE","this.value")+'">';
+    ["","30 min","45 min","60 min","90 min","120 min"].forEach(function(v){h+='<option value="'+v+'"'+(c.dureeBE===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div>';
+    h+='<div class="fg"><label>Fr\u00e9quence souhait\u00e9e</label><select onchange="'+_s("frequenceBE","this.value")+'">';
+    ["","1x/semaine","2x/mois","1x/mois","Ponctuel"].forEach(function(v){h+='<option value="'+v+'"'+(c.frequenceBE===v?" selected":"")+'>'+(!v?"--":v)+'</option>';});
+    h+='</select></div></div>';
+    h+='<div class="fg"><label>Zones sensibles / \u00e0 \u00e9viter</label><input value="'+(c.zonesSensibles||"")+'" placeholder="Dos, cervicales, pieds..." onchange="'+_s("zonesSensibles","this.value")+'"></div>';
+    h+='<div class="fg"><label>\u26a0\ufe0f Contre-indications m\u00e9dicales</label><input value="'+(c.contrIndBE||"")+'" placeholder="Grossesse, probl\u00e8me cardiaque, phl\u00e9bite..." onchange="'+_s("contrIndBE","this.value")+'"></div>';
+    h+='<div class="fg"><label>D\u00e9tails / Notes</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detBE","this.value")+'">'+(c.detBE||"")+'</textarea></div>';
+    h+='</div>';
+  }
+  else if(clTab==="photos"){
+    if(!c.photos)c.photos=[];
+    h+='<div class="card"><div class="ct">\ud83d\udcf7 Galerie photos avant / apr\u00e8s</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Ajoutez des photos pour suivre l\u2019\u00e9volution du client. Les photos sont stock\u00e9es localement en base64.</div>';
+    if(c.photos.length){
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:12px">';
+      for(var phi=c.photos.length-1;phi>=0;phi--){
+        var ph=c.photos[phi];
+        h+='<div style="position:relative;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.3)">';
+        h+='<img src="'+ph.data+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block">';
+        h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.8));padding:6px 8px">';
+        h+='<div style="font-size:9px;color:rgba(255,255,255,.7);font-weight:700">'+fmt(ph.date)+'</div>';
+        if(ph.label)h+='<div style="font-size:8px;color:var(--gold)">'+ph.label+'</div>';
+        h+='</div>';
+        h+='<button onclick="gC(\''+c.id+'\').photos.splice('+phi+',1);if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'));go(\'detail\')" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);border:none;color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2716</button>';
+        h+='</div>';
+      }
+      h+='</div>';
+    }else{
+      h+='<div style="text-align:center;padding:20px;color:var(--text3);font-size:12px;font-style:italic">Aucune photo</div>';
+    }
+    h+='<div style="display:flex;gap:8px">';
+    h+='<label style="flex:1;padding:12px;border-radius:10px;border:2px dashed rgba(200,168,78,.3);background:rgba(200,168,78,.06);cursor:pointer;text-align:center;font-size:13px;font-weight:700;color:var(--gold)">\ud83d\udcf7 Ajouter une photo<input type="file" accept="image/*" style="display:none" onchange="addClientPhoto(\''+c.id+'\',this,\'avant\')"></label>';
+    h+='<label style="flex:1;padding:12px;border-radius:10px;border:2px dashed rgba(74,222,128,.3);background:rgba(74,222,128,.06);cursor:pointer;text-align:center;font-size:13px;font-weight:700;color:#4ade80">\u2705 Photo apr\u00e8s<input type="file" accept="image/*" style="display:none" onchange="addClientPhoto(\''+c.id+'\',this,\'apr\\u00e8s\')"></label>';
+    h+='</div>';
     h+='</div>';
   }
   else if(clTab==="histo"){
@@ -8196,6 +8423,22 @@ function oM(type,pf){
     // Preview
     h+='<div id="depi"></div>';
     
+    // Domicile: address field
+    if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
+      h+='<div style="margin-top:10px;padding:12px;background:rgba(255,152,0,.06);border:1px solid rgba(255,152,0,.15);border-radius:10px">';
+      h+='<div style="font-size:12px;font-weight:700;color:#ff9800;margin-bottom:6px">\ud83d\ude97 Lieu du rendez-vous</div>';
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">';
+      var isDom=SALON_CONFIG.modeActivite==="domicile";
+      h+='<button id="rdvLieuSalon" onclick="setRdvLieu(\'salon\')" style="padding:8px;border-radius:8px;cursor:pointer;text-align:center;font-size:12px;font-weight:700;border:2px solid '+(isDom?'rgba(255,255,255,.08)':'var(--gold)')+';background:'+(isDom?'rgba(255,255,255,.03)':'rgba(200,168,78,.12)')+';color:'+(isDom?'rgba(255,255,255,.5)':'var(--gold)')+'">\ud83c\udfe0 En \u00e9tablissement</button>';
+      h+='<button id="rdvLieuDom" onclick="setRdvLieu(\'domicile\')" style="padding:8px;border-radius:8px;cursor:pointer;text-align:center;font-size:12px;font-weight:700;border:2px solid '+(isDom?'var(--gold)':'rgba(255,255,255,.08)')+';background:'+(isDom?'rgba(200,168,78,.12)':'rgba(255,255,255,.03)')+';color:'+(isDom?'var(--gold)':'rgba(255,255,255,.5)')+'">\ud83d\ude97 \u00c0 domicile</button>';
+      h+='</div>';
+      h+='<div id="rdvAdresseWrap" style="display:'+(isDom?'block':'none')+'">';
+      h+='<input type="text" id="rdvAdresse" placeholder="Adresse du client..." style="width:100%;font-size:13px;padding:10px">';
+      h+='</div>';
+      h+='<input type="hidden" id="rdvLieu" value="'+(isDom?'domicile':'salon')+'">';
+      h+='</div>';
+    }
+    
     // Buttons
     h+='<div style="display:flex;gap:8px;margin-top:14px">';
     h+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);font-weight:700" onclick="cM()">Annuler</button>';
@@ -8298,11 +8541,17 @@ function aAp(){
   if(conflicts.length>0){
     // Store pending RDV data
     window._pendingRdv={cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,phases:window._rdvPhases};
+    var _pLieu=document.getElementById("rdvLieu");
+    if(_pLieu&&_pLieu.value==="domicile"){window._pendingRdv.lieu="domicile";window._pendingRdv.adresse=(document.getElementById("rdvAdresse")||{}).value||"";}
     window._rdvSvcId=null;window._rdvPassage=null;
     showConflictAlert(conflicts,"confirmPendingRdv()");
     return;
   }
-  var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,st:"conf",met:""};if(window._rdvPhases)rdvObj.aPhases=window._rdvPhases;window._rdvPhases=null;AP.push(rdvObj);
+  var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,st:"conf",met:""};if(window._rdvPhases)rdvObj.aPhases=window._rdvPhases;window._rdvPhases=null;
+  // Domicile
+  var lieuEl=document.getElementById("rdvLieu");
+  if(lieuEl&&lieuEl.value==="domicile"){rdvObj.lieu="domicile";rdvObj.adresse=(document.getElementById("rdvAdresse")||{}).value||"";}
+  AP.push(rdvObj);
   window._rdvSvcId=null;window._rdvPassage=null;
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});}
@@ -8312,7 +8561,9 @@ function aAp(){
 function confirmPendingRdv(){
   var r=window._pendingRdv;
   if(!r)return;
-  var rdvObj2={id:U(),cId:r.cId,sId:r.sId,stId:r.stId,date:r.date,time:r.time,pr:r.pr,st:"conf",met:""};if(r.aPhases||r.phases)rdvObj2.aPhases=r.aPhases||r.phases;AP.push(rdvObj2);
+  var rdvObj2={id:U(),cId:r.cId,sId:r.sId,stId:r.stId,date:r.date,time:r.time,pr:r.pr,st:"conf",met:""};if(r.aPhases||r.phases)rdvObj2.aPhases=r.aPhases||r.phases;
+  if(r.lieu)rdvObj2.lieu=r.lieu;if(r.adresse)rdvObj2.adresse=r.adresse;
+  AP.push(rdvObj2);
   window._pendingRdv=null;
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj2).then(function(){go("planning");}).catch(function(){});}
@@ -8330,6 +8581,26 @@ function aApAndNew(){
 }
 
 // RDV client helpers
+function setRdvLieu(lieu){
+  document.getElementById("rdvLieu").value=lieu;
+  var wrap=document.getElementById("rdvAdresseWrap");
+  var s=document.getElementById("rdvLieuSalon"),d=document.getElementById("rdvLieuDom");
+  if(lieu==="domicile"){
+    if(wrap)wrap.style.display="block";
+    if(s){s.style.borderColor="rgba(255,255,255,.08)";s.style.background="rgba(255,255,255,.03)";s.style.color="rgba(255,255,255,.5)";}
+    if(d){d.style.borderColor="var(--gold)";d.style.background="rgba(200,168,78,.12)";d.style.color="var(--gold)";}
+    // Auto-fill from selected client
+    var cId=document.getElementById("mc").value;
+    if(cId){var cl=gC(cId);if(cl){
+      var addr=[cl.adr||"",cl.cp||"",cl.ville||""].filter(Boolean).join(", ");
+      var inp=document.getElementById("rdvAdresse");if(inp&&!inp.value)inp.value=addr;
+    }}
+  }else{
+    if(wrap)wrap.style.display="none";
+    if(d){d.style.borderColor="rgba(255,255,255,.08)";d.style.background="rgba(255,255,255,.03)";d.style.color="rgba(255,255,255,.5)";}
+    if(s){s.style.borderColor="var(--gold)";s.style.background="rgba(200,168,78,.12)";s.style.color="var(--gold)";}
+  }
+}
 function filterRdvClients(q){
   var list=document.getElementById("rdvClientList");
   if(!list)return;
@@ -8916,6 +9187,9 @@ function showCaisse(){
     h+='<div style="display:flex;gap:4px">';
     h+='<button onclick="handleTkOption(0)" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);cursor:pointer;color:rgba(255,255,255,.6)">\ud83c\udff7 Remise ticket</button>';
     h+='<button onclick="handleTkOption(1)" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);cursor:pointer;color:rgba(255,255,255,.6)">\ud83c\udf81 Bon cadeau</button>';
+    if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
+      h+='<button onclick="addFraisDeplacement()" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);cursor:pointer;color:rgba(255,255,255,.6)">\ud83d\ude97 D\u00e9placement</button>';
+    }
     h+='</div>';
     // Big buttons
     h+='<button onclick="if(!_tk.items.filter(function(x){return !x.isSep}).length){return;}_tk.step=5;showCaisse()" style="width:100%;padding:14px;font-size:15px;font-weight:800;border:none;border-radius:10px;background:linear-gradient(135deg,var(--gold),#b8960f);color:#fff;cursor:pointer;letter-spacing:.5px">Encaissement '+total.toFixed(2)+' \u20ac</button>';
@@ -9645,6 +9919,32 @@ function doApplyRemise(idx,type){
   showCaisse();
 }
 
+function addFraisDeplacement(){
+  var dom=SALON_CONFIG.domicile||{type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:0};
+  if(dom.type==="gratuit"){
+    _tk.items.push({name:"\ud83d\ude97 D\u00e9placement (gratuit)",price:0,qty:1,remise:0,ci:0});
+    showCaisse();return;
+  }
+  if(dom.type==="forfait"){
+    var prix=dom.forfait||15;
+    var htm='<div class="mbox" style="text-align:center"><h2>\ud83d\ude97 Frais de d\u00e9placement</h2>';
+    htm+='<div style="font-size:24px;font-weight:900;color:var(--gold);margin:14px 0">'+prix.toFixed(2)+' \u20ac</div>';
+    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Forfait fixe</div>';
+    htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+    htm+='<button class="btn bg" style="flex:1" onclick="_tk.items.push({name:\'\\ud83d\\ude97 D\\u00e9placement (forfait)\',price:'+prix+',qty:1,remise:0,ci:0});cM();showCaisse()">Ajouter</button></div></div>';
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  }else{
+    // Prix au km
+    var htm='<div class="mbox"><h2>\ud83d\ude97 Frais de d\u00e9placement</h2>';
+    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Prix: '+(dom.prixKm||0.5)+' \u20ac/km'+(dom.gratuitKm>0?' ('+dom.gratuitKm+' km gratuits)':'')+'</div>';
+    htm+='<div class="fg"><label>Distance (km)</label><input type="number" id="deplKm" value="10" min="0" step="1" style="text-align:center;font-size:20px;font-weight:900;padding:14px" oninput="var km=+this.value;var prix=Math.max(0,(km-'+(dom.gratuitKm||0)+'))*'+(dom.prixKm||0.5)+';document.getElementById(\'deplPrix\').textContent=prix.toFixed(2)+\' \\u20ac\'"></div>';
+    var defPrix=Math.max(0,(10-(dom.gratuitKm||0)))*(dom.prixKm||0.5);
+    htm+='<div style="text-align:center;font-size:24px;font-weight:900;color:var(--gold);margin:10px 0" id="deplPrix">'+defPrix.toFixed(2)+' \u20ac</div>';
+    htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+    htm+='<button class="btn bg" style="flex:1" onclick="var km=+(document.getElementById(\'deplKm\').value||0);var prix=Math.max(0,(km-'+(dom.gratuitKm||0)+'))*'+(dom.prixKm||0.5)+';_tk.items.push({name:\'\\ud83d\\ude97 D\\u00e9placement \'+km+\' km\',price:Math.round(prix*100)/100,qty:1,remise:0,ci:0});cM();showCaisse()">Ajouter</button></div></div>';
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  }
+}
 function handleTkOption(idx){
   if(idx===0){
     // Remise ticket: choose EUR or %
@@ -12561,6 +12861,8 @@ if(typeof saveAppointment==="undefined"){
       a_phases:appt.aPhases||[],
       cancelled:appt.cancelled||false,
       from_caisse:appt.fromCaisse||false,
+      lieu:appt.lieu||null,
+      adresse_domicile:appt.adresse||null,
       client_email:(function(){var c=typeof gC==="function"?gC(appt.cId):null;return c&&c.em?c.em:null;})(),
       client_name:(function(){var c=typeof gC==="function"?gC(appt.cId):null;return c?((c.nom||"")+" "+(c.pre||"")).trim():null;})(),
       collab_name:(function(){var t=typeof gT==="function"?gT(appt.stId):null;return t?t.n:null;})()
@@ -12685,7 +12987,7 @@ async function reloadFromSupabase(table){
               st:a.status,met:a.mode_paiement,
               tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
               aPhases:a.a_phases||[],
-              cancelled:a.cancelled,fromCaisse:a.from_caisse||false
+              cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
             };
             if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}});}
             Object.assign(AP[i],mapped);
@@ -12714,7 +13016,7 @@ async function reloadFromSupabase(table){
               st:a.status,met:a.mode_paiement,
               tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
               aPhases:a.a_phases||[],
-              cancelled:a.cancelled,fromCaisse:a.from_caisse||false
+              cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
             };
             if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}});}
             AP.push(mapped);
