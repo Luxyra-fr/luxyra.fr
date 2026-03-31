@@ -93,7 +93,7 @@ a{color:var(--gold);text-decoration:none}
 <body>
 <div class="header">
   <div><div class="logo">LUXYRA</div><span class="logo-sub">LOGICIEL DE GESTION BEAUTÉ</span></div>
-  <a href="/compte.html" class="login-link">Déjà client ? Se connecter →</a>
+  <a href="/app.html" class="login-link">Déjà inscrit ? Se connecter →</a>
 </div>
 <div class="container" id="app"></div>
 <div class="footer">Luxyra © 2026 — Logiciel conforme NF525 — <a href="/cgv">CGV</a> — <a href="/confidentialite">Confidentialité</a> — <a href="/mentions">Mentions légales</a></div>
@@ -393,7 +393,9 @@ async function doSubmit(){
       }catch(e){console.log("site_config init:",e);}
     }
 
-    // Success
+    // Success — send welcome email + notify admin (non-blocking)
+    sendWelcomeEmail(DATA.email.trim(),DATA.gerantPrenom.trim(),DATA.nom.trim(),trialEnd);
+    sendAdminNotification(DATA.nom.trim(),DATA.gerantPrenom.trim()+" "+DATA.gerantNom.trim(),DATA.email.trim(),DATA.tel.trim(),DATA.ville.trim(),DATA.metier);
     STEP=4;render();
   }catch(e){
     showErr("Erreur inattendue: "+e.message);
@@ -446,6 +448,68 @@ function renderSuccess(){
   h+='<div style="margin-top:12px;font-size:12px;color:var(--text3)">Identifiant : <strong>'+esc(DATA.email)+'</strong></div>';
   h+='</div>';
   return h;
+}
+
+// === EMAIL DE BIENVENUE ===
+async function sendWelcomeEmail(email,prenom,salonNom,trialEnd){
+  try{
+    var endDate=trialEnd.toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
+    var html='<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#0a0a12;color:#e8e4dc;border-radius:16px;overflow:hidden">';
+    html+='<div style="background:linear-gradient(135deg,#c8a84e,#b8960f);padding:28px;text-align:center">';
+    html+='<div style="font-size:28px;font-weight:900;color:#000;letter-spacing:4px">LUXYRA</div>';
+    html+='<div style="font-size:12px;color:rgba(0,0,0,.6);letter-spacing:2px;margin-top:4px">LOGICIEL DE GESTION BEAUT\u00c9</div></div>';
+    html+='<div style="padding:32px">';
+    html+='<h1 style="color:#c8a84e;font-size:22px;margin-bottom:12px">Bienvenue '+prenom+' ! \ud83c\udf89</h1>';
+    html+='<p style="font-size:15px;line-height:1.8;margin-bottom:20px">Votre compte <strong>'+salonNom+'</strong> a \u00e9t\u00e9 cr\u00e9\u00e9 avec succ\u00e8s. Vous b\u00e9n\u00e9ficiez de <strong style="color:#c8a84e">14 jours d\u2019essai gratuit</strong> jusqu\u2019au '+endDate+'.</p>';
+    html+='<div style="background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.2);border-radius:12px;padding:20px;margin-bottom:24px">';
+    html+='<div style="font-weight:700;color:#c8a84e;margin-bottom:10px">\ud83d\udccc Pour bien d\u00e9marrer :</div>';
+    html+='<div style="font-size:14px;line-height:2">';
+    html+='1. <strong>Connectez-vous</strong> sur <a href="https://luxyra.fr/app.html" style="color:#c8a84e">luxyra.fr/app.html</a><br>';
+    html+='2. Configurez vos <strong>services, horaires, collaborateurs</strong><br>';
+    html+='3. Ajoutez vos <strong>premiers clients</strong><br>';
+    html+='4. Testez l\u2019<strong>encaissement</strong> (conforme NF525)<br>';
+    html+='5. Activez votre <strong>site vitrine</strong> et la <strong>r\u00e9servation en ligne</strong></div></div>';
+    html+='<div style="background:rgba(255,255,255,.05);border-radius:12px;padding:16px;margin-bottom:24px;font-size:13px;line-height:1.8">';
+    html+='<div style="font-weight:700;margin-bottom:6px">\ud83d\udcf1 Installer l\u2019appli sur votre t\u00e9l\u00e9phone/tablette :</div>';
+    html+='<strong>Android :</strong> Ouvrez luxyra.fr/app.html dans Chrome \u2192 Menu (\u22ee) \u2192 "Ajouter \u00e0 l\u2019\u00e9cran d\u2019accueil"<br>';
+    html+='<strong>iPhone/iPad :</strong> Ouvrez dans Safari \u2192 Partager (\u2b06) \u2192 "Sur l\u2019\u00e9cran d\u2019accueil"</div>';
+    html+='<div style="text-align:center;margin-bottom:24px">';
+    html+='<a href="https://luxyra.fr/app.html" style="display:inline-block;padding:14px 40px;background:linear-gradient(135deg,#c8a84e,#b8960f);color:#000;font-weight:800;font-size:15px;border-radius:10px;text-decoration:none">Acc\u00e9der \u00e0 mon espace \u2192</a></div>';
+    html+='<div style="font-size:12px;color:rgba(255,255,255,.35);text-align:center">Identifiant : <strong>'+email+'</strong><br>Besoin d\u2019aide ? <a href="mailto:support@luxyra.fr" style="color:#c8a84e">support@luxyra.fr</a></div>';
+    html+='</div>';
+    html+='<div style="padding:16px;text-align:center;font-size:11px;color:rgba(255,255,255,.2);border-top:1px solid rgba(255,255,255,.05)">';
+    html+='Luxyra \u2014 Logiciel conforme NF525 \u2022 H\u00e9bergement UE (Paris)<br>support@luxyra.fr \u2022 www.luxyra.fr</div></div>';
+    await fetch("/api/email/custom",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({to:email,toName:prenom,salonName:"Luxyra",salonEmail:"support@luxyra.fr",subject:"Bienvenue sur Luxyra \u2014 Votre essai gratuit est actif !",htmlContent:html})
+    });
+    console.log("[INSCRIPTION] Welcome email sent to "+email);
+  }catch(e){console.log("[INSCRIPTION] Welcome email error:",e);}
+}
+
+// === NOTIFICATION ADMIN ===
+async function sendAdminNotification(salon,gerant,email,tel,ville,metier){
+  try{
+    var metierLabels={coiffure:"Coiffure",barbier:"Barbier",esthetique:"Esth\u00e9tique",ongles:"Ongles",bien_etre:"Bien-\u00eatre"};
+    var html='<div style="font-family:Arial,sans-serif;padding:20px">';
+    html+='<h2 style="color:#c8a84e">\ud83c\udf89 Nouvelle inscription Luxyra !</h2>';
+    html+='<table style="border-collapse:collapse;width:100%;max-width:500px">';
+    html+='<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:700">\u00c9tablissement</td><td style="padding:8px;border-bottom:1px solid #eee">'+salon+'</td></tr>';
+    html+='<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:700">G\u00e9rant</td><td style="padding:8px;border-bottom:1px solid #eee">'+gerant+'</td></tr>';
+    html+='<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:700">Email</td><td style="padding:8px;border-bottom:1px solid #eee"><a href="mailto:'+email+'">'+email+'</a></td></tr>';
+    html+='<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:700">T\u00e9l</td><td style="padding:8px;border-bottom:1px solid #eee">'+tel+'</td></tr>';
+    html+='<tr><td style="padding:8px;border-bottom:1px solid #eee;font-weight:700">Ville</td><td style="padding:8px;border-bottom:1px solid #eee">'+ville+'</td></tr>';
+    html+='<tr><td style="padding:8px;font-weight:700">M\u00e9tier</td><td style="padding:8px">'+(metierLabels[metier]||metier)+'</td></tr>';
+    html+='</table>';
+    html+='<p style="margin-top:16px;font-size:13px;color:#888">Contrat sign\u00e9 num\u00e9riquement avec hash SHA-256.<br>Voir les d\u00e9tails dans <a href="https://luxyra.fr/admin.html" style="color:#c8a84e">l\u2019admin panel</a>.</p></div>';
+    await fetch("/api/email/custom",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({to:"contact@luxyra.fr",toName:"Alexandre",salonName:"Luxyra Admin",salonEmail:"support@luxyra.fr",subject:"\ud83c\udf89 Nouvelle inscription: "+salon+" ("+ville+")",htmlContent:html})
+    });
+    console.log("[INSCRIPTION] Admin notification sent");
+  }catch(e){console.log("[INSCRIPTION] Admin notification error:",e);}
 }
 
 // === HELPERS ===

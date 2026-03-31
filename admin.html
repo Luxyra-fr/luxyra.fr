@@ -71,7 +71,7 @@ tr:hover{background:rgba(255,255,255,.02)}
 .dp-panel{position:absolute;right:0;top:0;bottom:0;width:480px;max-width:100%;background:var(--bg2);border-left:1px solid var(--border);padding:24px;overflow-y:auto}
 .dp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .dp-close{background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:8px}
-.dp-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:10px;margin-bottom:20px}
+.dp-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
 .dp-stat{background:var(--bg3);border-radius:10px;padding:12px;text-align:center}
 .dp-stat .n{font-size:20px;font-weight:800;font-family:var(--mono)}
 .dp-stat .l{font-size:10px;color:var(--text3);margin-top:2px}
@@ -127,11 +127,11 @@ tr:hover{background:rgba(255,255,255,.02)}
   <div class="sb-nav">
     <div class="sb-item active" onclick="nav('dashboard')"><span class="icon">📊</span>Dashboard</div>
     <div class="sb-item" onclick="nav('salons')"><span class="icon">🏠</span>Établissements<span class="sb-badge" id="badgeSalons"></span></div>
+    <div class="sb-item" onclick="nav('inscriptions')"><span class="icon">📝</span>Inscriptions<span class="sb-badge" id="badgeInscrip"></span></div>
     <div class="sb-item" onclick="nav('demandes')"><span class="icon">📩</span>Demandes<span class="sb-badge" id="badgeDemandes"></span></div>
     <div class="sb-item" onclick="nav('alerts')"><span class="icon">🔔</span>Alertes<span class="sb-badge" id="badgeAlerts"></span></div>
     <div class="sb-section">Finances</div>
     <div class="sb-item" onclick="nav('revenue')"><span class="icon">💰</span>Revenus</div>
-    <div class="sb-item" onclick="nav('factures')"><span class="icon">🧾</span>Factures</div>
     <div class="sb-item" onclick="nav('sms')"><span class="icon">📱</span>Packs SMS</div>
     <div class="sb-section">Système</div>
     <div class="sb-item" onclick="nav('settings')"><span class="icon">⚙️</span>Paramètres</div>
@@ -156,7 +156,7 @@ tr:hover{background:rgba(255,255,255,.02)}
 var SUPABASE_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var _sb=null,_uid=null,_online=false;
-var SALONS=[],ALERTS=[],DEMANDES=[],FACTURES=[];
+var SALONS=[],ALERTS=[],DEMANDES=[],INSCRIPTIONS=[];
 var curPage="dashboard",curFilter="all";
 var PLANS=[{id:"essential",nom:"Essentiel",prix:14.99,couleur:"var(--blue)"},{id:"pro",nom:"Pro",prix:24.99,couleur:"var(--gold)"}];
 var colors=["#c9a227","#7d3c98","#2980b9","#27ae60","#e74c3c","#f39c12","#1abc9c","#e67e22"];
@@ -179,7 +179,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadData();loadDemandes();loadFactures();document.querySelector(".sidebar").style.display="flex";render();return;}
+      if(c.data){_online=true;await loadData();loadDemandes();document.querySelector(".sidebar").style.display="flex";render();return;}
     }
   }catch(e){}
   showLogin();
@@ -206,10 +206,10 @@ async function doLogin(){
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
-  await loadData();loadDemandes();loadFactures();render();
+  await loadData();loadDemandes();loadInscriptions();render();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
-async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];showLogin();}
+async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
 
 // ===== LOAD =====
 async function loadData(){
@@ -229,31 +229,21 @@ async function loadData(){
           userId:s.user_id||"",
           stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
           plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",modeActivite:s.mode_activite||"salon",
-          subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,nbTickets:0,nbRdv:0,
+          subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
           trialEnd:s.trial_end,color:colors[i%colors.length],
-          smsCredits:s.sms_credits||0,smsUsed:s.sms_used||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,
-          isFree:s.is_free||false,freeUntil:s.free_until,contratSig:s.contrat_signature||null,cgvAt:s.cgv_accepted_at};
+          smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,
+          isFree:s.is_free||false,freeUntil:s.free_until,
+          contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||""};
       });
-      // Load stats for each salon (parallel for speed)
-      var promises=SALONS.map(async function(salon){
+      for(var i=0;i<SALONS.length;i++){
         try{
-          var cl=await _sb.from("clients").select("id",{count:"exact",head:true}).eq("salon_id",salon.id);
-          if(cl.count!=null)salon.clients=cl.count;
-          var co=await _sb.from("collaborateurs").select("id",{count:"exact",head:true}).eq("salon_id",salon.id);
-          if(co.count!=null)salon.collabs=co.count;
-          // CA & tickets: sum prix of done appointments
-          var ap=await _sb.from("appointments").select("prix,status,date_rdv",{count:"exact"}).eq("salon_id",salon.id).eq("status","done");
-          if(ap.data){
-            salon.nbTickets=ap.data.length;
-            salon.ca=0;ap.data.forEach(function(a){salon.ca+=Number(a.prix)||0;});
-          }
-          // Total RDV (all statuses)
-          var rdv=await _sb.from("appointments").select("id",{count:"exact",head:true}).eq("salon_id",salon.id);
-          if(rdv.count!=null)salon.nbRdv=rdv.count;
-        }catch(e){console.log("[STATS]",salon.nom,e.message);}
-      });
-      await Promise.all(promises);
+          var cl=await _sb.from("clients").select("id",{count:"exact",head:true}).eq("salon_id",SALONS[i].id);
+          if(cl.count!=null)SALONS[i].clients=cl.count;
+          var co=await _sb.from("collaborateurs").select("id",{count:"exact",head:true}).eq("salon_id",SALONS[i].id);
+          if(co.count!=null)SALONS[i].collabs=co.count;
+        }catch(e){}
+      }
     }
     var bs=document.getElementById("badgeSalons");
     if(bs)bs.textContent=SALONS.length||"";
@@ -271,12 +261,16 @@ async function loadDemandes(){
   }catch(e){}
 }
 
-async function loadFactures(){
+async function loadInscriptions(){
   if(!_sb||!_online)return;
   try{
-    var r=await _sb.from("factures_luxyra").select("*").order("date_facture",{ascending:false}).limit(200);
-    if(r.data)FACTURES=r.data;
-  }catch(e){console.log("loadFactures",e);}
+    var r=await _sb.from("inscriptions_log").select("*").order("created_at",{ascending:false});
+    if(r.data)INSCRIPTIONS=r.data;
+    var b=document.getElementById("badgeInscrip");
+    // Show badge for inscriptions in last 7 days
+    var recent=INSCRIPTIONS.filter(function(i){return(new Date()-new Date(i.created_at))<7*86400000;}).length;
+    if(b)b.textContent=recent>0?recent:"";
+  }catch(e){console.log("inscriptions_log not found:",e);}
 }
 
 // ===== NAV =====
@@ -294,10 +288,10 @@ function render(){
   switch(curPage){
     case"dashboard":h=rDashboard();break;
     case"salons":h=rSalons();break;
+    case"inscriptions":h=rInscriptions();break;
     case"demandes":h=rDemandes();break;
     case"alerts":h=rAlerts();break;
     case"revenue":h=rRevenue();break;
-    case"factures":h=rFactures();break;
     case"sms":h=rSMS();break;
     case"settings":h=rSettings();break;
     case"nf525":h=rNF525();break;
@@ -311,77 +305,25 @@ function render(){
 function rDashboard(){
   var active=SALONS.filter(function(s){return s.status==="active";}).length;
   var trial=SALONS.filter(function(s){return s.status==="trial";}).length;
-  var cancelled=SALONS.filter(function(s){return s.status==="cancelled"||s.status==="suspended";}).length;
   var pendingV=SALONS.filter(function(s){return s.verif!=="verified";}).length;
-  var pastDue=SALONS.filter(function(s){return s.status==="past_due";}).length;
-  var mrr=0;SALONS.forEach(function(s){if((s.status==="active"||s.status==="past_due")&&!s.isFree)mrr+=gPlan(s.plan).prix;});
-  var arr=mrr*12;
-  var totalCA=0;SALONS.forEach(function(s){totalCA+=s.ca||0;});
-  var totalClients=0;SALONS.forEach(function(s){totalClients+=s.clients||0;});
-  var totalTickets=0;SALONS.forEach(function(s){totalTickets+=s.nbTickets||0;});
-  var totalSMS=0;SALONS.forEach(function(s){totalSMS+=s.smsUsed||0;});
-  var freeSalons=SALONS.filter(function(s){return s.isFree;}).length;
-  var proSalons=SALONS.filter(function(s){return s.plan==="pro";}).length;
-  var essSalons=SALONS.filter(function(s){return s.plan==="essential";}).length;
-  var churnRate=(active+cancelled)>0?Math.round(cancelled/(active+cancelled)*100):0;
-
-  var h='<div class="topbar"><h1>Dashboard <span>Vue d\u2019ensemble</span></h1></div>';
+  var mrr=0;SALONS.forEach(function(s){if(s.status==="active"||s.status==="past_due")mrr+=gPlan(s.plan).prix;});
+  var h='<div class="topbar"><h1>Dashboard <span>Vue d’ensemble</span></h1></div>';
   h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">\u00c9tablissements</div><div class="kpi-value" style="color:var(--blue)">'+SALONS.length+'</div><div class="kpi-sub">'+proSalons+' Pro \u2022 '+essSalons+' Essentiel'+(freeSalons?' \u2022 '+freeSalons+' Offerts':'')+'</div><div class="kpi-icon">\ud83c\udfe0</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">'+trial+' en essai'+(pastDue?' \u2022 <span style="color:var(--red)">'+pastDue+' impay\u00e9</span>':'')+'</div><div class="kpi-icon">\u2705</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">ARR: '+fmtM(arr)+'</div><div class="kpi-icon">\ud83d\udcb0</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Churn</div><div class="kpi-value" style="color:'+(churnRate>10?'var(--red)':churnRate>5?'var(--orange)':'var(--green)')+'">'+churnRate+'%</div><div class="kpi-sub">'+cancelled+' annul\u00e9/suspendu</div><div class="kpi-icon">\ud83d\udcc9</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Établissements</div><div class="kpi-value" style="color:var(--blue)">'+SALONS.length+'</div><div class="kpi-sub">Total inscrits</div><div class="kpi-icon">🏠</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements actifs</div><div class="kpi-icon">✅</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">En essai</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
+  if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non vérifiés</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents à contrôler</div><div class="kpi-icon">📋</div></div>';
   h+='</div>';
-  h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">CA total g\u00e9n\u00e9r\u00e9</div><div class="kpi-value" style="color:var(--green)">'+fmtM(totalCA)+'</div><div class="kpi-sub">Par tous les salons</div><div class="kpi-icon">\ud83d\udcb5</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Clients</div><div class="kpi-value">'+totalClients+'</div><div class="kpi-sub">Total fichiers clients</div><div class="kpi-icon">\ud83d\udc65</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Tickets</div><div class="kpi-value">'+totalTickets+'</div><div class="kpi-sub">Encaiss\u00e9s</div><div class="kpi-icon">\ud83c\udfab</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">SMS envoy\u00e9s</div><div class="kpi-value">'+totalSMS+'</div><div class="kpi-sub">Total plateforme</div><div class="kpi-icon">\ud83d\udcf1</div></div>';
-  if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non v\u00e9rifi\u00e9s</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents \u00e0 contr\u00f4ler</div><div class="kpi-icon">\ud83d\udccb</div></div>';
-  h+='</div>';
-  var topCA=SALONS.slice().sort(function(a,b){return(b.ca||0)-(a.ca||0);}).slice(0,5).filter(function(s){return s.ca>0;});
-  if(topCA.length){
-    h+='<div class="card"><h3>\ud83c\udfc6 Top salons par CA</h3>';
-    topCA.forEach(function(s,i){
-      var pct=topCA[0].ca>0?Math.round(s.ca/topCA[0].ca*100):0;
-      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">';
-      h+='<div style="width:24px;font-size:14px;font-weight:900;color:var(--gold)">#'+(i+1)+'</div>';
-      h+='<div class="td-avatar" style="background:'+s.color+';width:32px;height:32px;font-size:11px">'+ini(s.nom)+'</div>';
-      h+='<div style="flex:1"><div style="font-weight:700;font-size:13px">'+s.nom+'</div>';
-      h+='<div style="height:4px;border-radius:2px;background:rgba(255,255,255,.06);margin-top:4px"><div style="height:100%;width:'+pct+'%;border-radius:2px;background:var(--gold)"></div></div></div>';
-      h+='<div style="font-family:var(--mono);font-weight:700;color:var(--gold);font-size:14px">'+fmtM(s.ca)+'</div></div>';
-    });
-    h+='</div>';
-  }
   var nd=DEMANDES.filter(function(d){return d.status==="new";});
   if(nd.length){
-    h+='<div class="card"><h3>\ud83d\udce9 Nouvelles demandes ('+nd.length+')</h3>';
+    h+='<div class="card"><h3>📩 Nouvelles demandes ('+nd.length+')</h3>';
     nd.slice(0,5).forEach(function(d){
-      h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span><strong>'+(d.nom_salon||d.nom_etablissement||"?")+'</strong> \u2014 '+(d.ville||"")+'</span><span style="color:var(--text3)">'+fmtD(d.created_at)+'</span></div>';
+      h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span><strong>'+(d.nom_salon||d.nom_etablissement||"?")+'</strong> — '+(d.ville||"")+'</span><span style="color:var(--text3)">'+fmtD(d.created_at)+'</span></div>';
     });
     h+='<button class="tb-btn" style="margin-top:12px" onclick="nav(&#39;demandes&#39;)">Voir toutes les demandes</button></div>';
   }
-
-  // Trial expired - need follow-up
-  var today=new Date().toISOString().slice(0,10);
-  var trialExpired=SALONS.filter(function(s){return s.status==="trial"&&s.trialEnd&&s.trialEnd<today&&!s.isFree;});
-  if(trialExpired.length){
-    h+='<div class="card" style="border-left:4px solid var(--red)"><h3 style="color:var(--red)">\u26a0\ufe0f Essais expir\u00e9s sans abonnement ('+trialExpired.length+')</h3>';
-    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Ces \u00e9tablissements n\u2019ont pas souscrit apr\u00e8s leur essai. \u00c0 relancer ou supprimer.</div>';
-    trialExpired.forEach(function(s){
-      var daysAgo=dBetween(s.trialEnd,today);
-      h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">';
-      h+='<div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+s.email+' \u2022 Expir\u00e9 depuis '+daysAgo+'j</div></div></div>';
-      h+='<div style="display:flex;gap:6px">';
-      if(s.email)h+='<button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'?subject=Votre%20essai%20Luxyra&#39;)" title="Contacter">\u2709\ufe0f</button>';
-      h+='<button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="D\u00e9tails">\ud83d\udc41</button>';
-      h+='<button class="td-btn" style="color:var(--red)" onclick="actS(&#39;'+s.id+'&#39;,&#39;delete&#39;)" title="Supprimer">\ud83d\uddd1\ufe0f</button>';
-      h+='</div></div>';
-    });
-    h+='</div>';
-  }
-
-  h+='<div class="card"><h3>\ud83c\udfe0 Derniers inscrits</h3>';
+  h+='<div class="card"><h3>🏠 Derniers inscrits</h3>';
   SALONS.slice().sort(function(a,b){return new Date(b.created)-new Date(a.created);}).slice(0,5).forEach(function(s){
     h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+s.ville+'</div></div></div><div>'+planB(s.plan)+' '+statusB(s.status)+'</div></div>';
   });
@@ -397,7 +339,7 @@ function rSalons(){
   [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"},{k:"pending",l:"⏳ Non vérifiés"}].forEach(function(f){
     h+='<button class="tf-btn'+(curFilter===f.k?" active":"")+'" onclick="setF(&#39;'+f.k+'&#39;)">'+f.l+'</button>';
   });
-  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Clients</th><th>CA</th><th>Tickets</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
+  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Vérif.</th><th>Clients</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
   return h;
 }
 
@@ -408,11 +350,11 @@ function buildRows(list,f){
     if(f!=="all"&&f!=="pending"&&s.status!==f)return;
     if(f==="pending"&&s.verif==="verified")return;
     h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
-    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+s.clients+'</td><td style="font-family:var(--mono);font-size:12px;color:var(--gold)">'+fmtM(s.ca)+'</td><td>'+s.nbTickets+'</td>';
+    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
   });
-  if(!h)h='<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
+  if(!h)h='<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
   return h;
 }
 
@@ -427,19 +369,8 @@ function filterS(){
 function openD(id){
   var s=gSalon(id);if(!s)return;
   window._curSalonId=id;
-  var h='<div class="dp-header"><h2 style="font-size:20px">'+s.nom+'</h2><button class="dp-close" onclick="closeDetail()">\u2715</button></div>';
-  h+='<div class="dp-stats">';
-  h+='<div class="dp-stat"><div class="n" style="color:var(--gold)">'+fmtM(s.ca)+'</div><div class="l">CA g\u00e9n\u00e9r\u00e9</div></div>';
-  h+='<div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div>';
-  h+='<div class="dp-stat"><div class="n">'+s.nbTickets+'</div><div class="l">Tickets</div></div>';
-  h+='<div class="dp-stat"><div class="n">'+s.nbRdv+'</div><div class="l">RDV total</div></div>';
-  h+='<div class="dp-stat"><div class="n" style="color:var(--green)">'+s.collabs+'</div><div class="l">Collabs</div></div>';
-  h+='</div>';
-  // Activity info
-  h+='<div class="dp-section" style="padding:8px 12px;background:rgba(255,255,255,.02);border-radius:8px;margin-bottom:8px;font-size:12px;color:var(--text3);display:flex;justify-content:space-between">';
-  h+='<span>Derni\u00e8re activit\u00e9: '+fmtD(s.lastLogin)+'</span>';
-  h+='<span>'+verifB(s.verif)+'</span>';
-  h+='</div>';
+  var h='<div class="dp-header"><h2 style="font-size:20px">'+s.nom+'</h2><button class="dp-close" onclick="closeDetail()">✕</button></div>';
+  h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
 
   // VERIFICATION
   if(s.verif!=="verified"){
@@ -464,24 +395,15 @@ function openD(id){
   h+='<div class="dp-field"><span class="k">Sous-domaine</span><span class="v">'+(s.subdomain?'<a href="https://'+s.subdomain+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+s.subdomain+'.luxyra.fr</a>':'—')+'</span></div></div>';
 
   // DOCUMENTS
-  h+='<div class="dp-section"><div class="dp-label">📄 Documents</div>';
-  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="'+s.docKbis+'" target="_blank" style="color:var(--green)">✅ Reçu</a>':'<span style="color:var(--orange)">⏳ En attente</span>')+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Pièce d\u2019identité</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green)">✅ Reçue</a>':'<span style="color:var(--orange)">⏳ En attente</span>')+'</span></div></div>';
-
-  // CONTRAT & SIGNATURE
-  h+='<div class="dp-section"><div class="dp-label">\u270d\ufe0f Contrat</div>';
-  if(s.contratSig){
-    try{var sig=typeof s.contratSig==="string"?JSON.parse(s.contratSig):s.contratSig;
-    h+='<div class="dp-field"><span class="k">Signataire</span><span class="v">'+(sig.signataire||"\u2014")+'</span></div>';
-    h+='<div class="dp-field"><span class="k">Sign\u00e9 le</span><span class="v" style="color:var(--green)">'+fmtD(sig.date)+'</span></div>';
-    h+='<div class="dp-field"><span class="k">Hash SHA-256</span><span class="v" style="font-family:var(--mono);font-size:10px;word-break:break-all">'+(sig.contrat_hash||"\u2014").slice(0,32)+'...</span></div>';
-    h+='<div style="margin-top:6px;padding:8px;border-radius:6px;background:rgba(45,154,94,.08);font-size:11px;color:var(--green);font-weight:700">\u2705 Contrat sign\u00e9 \u00e9lectroniquement</div>';
-    }catch(e){h+='<div style="color:var(--text3);font-size:12px">Donn\u00e9es de signature invalides</div>';}
-  }else if(s.cgvAt){
-    h+='<div class="dp-field"><span class="k">CGV accept\u00e9es</span><span class="v" style="color:var(--green)">'+fmtD(s.cgvAt)+'</span></div>';
-  }else{
-    h+='<div style="color:var(--orange);font-size:12px;font-weight:700">\u26a0\ufe0f Contrat non sign\u00e9</div>';
+  h+='<div class="dp-section"><div class="dp-label">\ud83d\udcc4 Documents</div>';
+  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="'+s.docKbis+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7ue \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">V\u00e9rification</span><span class="v" style="color:'+(s.verif==="verified"?"var(--green)":s.verif==="pending_review"?"var(--gold)":"var(--orange)")+'"><strong>'+(s.verif==="verified"?"\u2705 V\u00e9rifi\u00e9":s.verif==="pending_review"?"\ud83d\udd0d \u00c0 v\u00e9rifier":"\u23f3 En attente des documents")+'</strong></span></div>';
+  if(s.docKbis&&s.docId&&s.verif!=="verified"){
+    h+='<button class="dp-btn success" style="width:100%;margin-top:8px" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;verified&#39;)">\u2705 Valider les documents</button>';
   }
+  // Contrat signature
+  h+='<div class="dp-field" style="margin-top:8px"><span class="k">Contrat</span><span class="v"><button class="dp-btn" style="font-size:11px" onclick="showSalonContrat(&#39;'+s.id+'&#39;)">\ud83d\udcdd Voir la signature</button></span></div>';
   h+='</div>';
 
   // ABONNEMENT + STRIPE
@@ -493,25 +415,15 @@ function openD(id){
   if(s.stripeCust)h+='<div class="dp-field"><span class="k">Stripe</span><span class="v"><a href="https://dashboard.stripe.com/test/customers/'+s.stripeCust+'" target="_blank" style="color:var(--gold);font-size:11px">Voir dans Stripe ↗</a></span></div>';
   h+='</div>';
 
-  // PLAN & PROMOTIONS
-  h+='<div class="dp-section"><div class="dp-label">\ud83c\udf81 Plan & Promotions</div>';
-  if(s.isFree){
-    h+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.2);border-radius:10px;padding:12px;margin-bottom:10px">';
-    h+='<div style="font-size:14px;font-weight:800;color:var(--green)">\u2705 Plan '+planB(s.plan)+' OFFERT</div>';
-    if(s.freeUntil)h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">Jusqu\u2019au '+fmtD(s.freeUntil)+'</div>';
-    else h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">Dur\u00e9e illimit\u00e9e</div>';
-    h+='<button class="dp-btn danger" style="margin-top:8px" onclick="removeFreePlan(&#39;'+s.id+'&#39;)">\u274c Retirer le plan offert</button>';
-    h+='</div>';
-  }else{
-    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Offrir un acc\u00e8s gratuit (partenaire, promo, test, 100 premiers clients...)</div>';
-    h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
-    h+='<select id="dpFreePlan" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px"><option value="essential">Essentiel</option><option value="pro">Pro</option></select>';
-    h+='<select id="dpFreeDur" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px"><option value="1m">1 mois</option><option value="3m">3 mois</option><option value="6m">6 mois</option><option value="1y">1 an</option><option value="unlimited">Illimit\u00e9</option></select>';
-    h+='</div>';
-    h+='<button class="dp-btn success" style="width:100%" onclick="offerFreePlan(&#39;'+s.id+'&#39;)">\ud83c\udf81 Offrir ce plan gratuitement</button>';
-  }
+  // PLAN GRATUIT
+  h+='<div class="dp-section"><div class="dp-label">🎁 Plan offert</div>';
+  h+='<div class="dp-field"><span class="k">Gratuit\u00e9</span><span class="v"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="dpFree" '+(s.isFree?'checked':'')+'> <span style="font-weight:700;color:'+(s.isFree?'var(--green)':'var(--text2)')+'">Plan offert'+(s.isFree?' \u2705':'')+'</span></label></span></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:8px">';
+  h+='<div style="flex:1"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Plan offert</label><select id="dpFreePlan" style="width:100%;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px"><option value="essential"'+(s.plan==="essential"?" selected":"")+'>Essentiel</option><option value="pro"'+(s.plan==="pro"?" selected":"")+'>Pro</option></select></div>';
+  h+='<div style="flex:1"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Dur\u00e9e</label><select id="dpFreeDur" style="width:100%;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px"><option value="unlimited"'+((!s.freeUntil)?" selected":"")+'>Illimit\u00e9e</option><option value="1m">1 mois</option><option value="3m">3 mois</option><option value="6m">6 mois</option><option value="1y">1 an</option></select></div>';
   h+='</div>';
-
+  h+='<button class="dp-btn success" style="margin-top:8px;width:100%" onclick="saveFreePlan(&#39;'+s.id+'&#39;)">💾 Enregistrer le plan offert</button>';
+  h+='</div>';
 
   // TECHNIQUE
   h+='<div class="dp-section"><div class="dp-label">⚙️ Technique</div>';
@@ -521,7 +433,7 @@ function openD(id){
 
   // SMS CREDITS
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcf1 Cr\u00e9dits SMS</div>';
-  h+='<div class="dp-field"><span class="k">Solde actuel</span><span class="v" style="font-size:18px;font-weight:900;color:var(--gold)">'+(s.smsCredits||0)+' SMS</span></div>';
+  h+='<div class="dp-field"><span class="k">Solde actuel</span><span class="v" style="font-size:18px;font-weight:900;color:var(--accent)">'+(s.smsCredits||0)+' SMS</span></div>';
   h+='<div class="dp-field"><span class="k">Offerts/mois</span><span class="v">'+(s.plan==="pro"?s.smsMonthlyFree||30:"0 (Essentiel)")+'</span></div>';
   h+='<div class="dp-field"><span class="k">Dernier reset</span><span class="v">'+fmtD(s.smsLastReset)+'</span></div>';
   h+='<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
@@ -654,6 +566,99 @@ async function doCreate(){
   }catch(err){alert("Erreur inattendue : "+err.message);btn.disabled=false;btn.textContent="Cr\u00e9er le compte";}
 }
 
+// ===== INSCRIPTIONS =====
+function rInscriptions(){
+  var h='<div class="topbar"><h1>Inscriptions <span>'+INSCRIPTIONS.length+' comptes cr\u00e9\u00e9s</span></h1></div>';
+  if(!INSCRIPTIONS.length)return h+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:36px;margin-bottom:12px">\ud83d\udcdd</div><div style="color:var(--text3)">Aucune inscription. Les nouvelles inscriptions apparaitront ici automatiquement.</div></div>';
+  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">\ud83d\udcdd Inscriptions (auto-enregistr\u00e9es \u00e0 la cr\u00e9ation du compte)</div></div>';
+  h+='<div style="overflow-x:auto"><table><tr><th>Date</th><th>\u00c9tablissement</th><th>G\u00e9rant</th><th>Email</th><th>T\u00e9l</th><th>Ville</th><th>M\u00e9tier</th><th>Forme jur.</th><th>Contrat</th></tr>';
+  INSCRIPTIONS.forEach(function(ins){
+    var dt=ins.created_at?new Date(ins.created_at).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"—";
+    h+='<tr>';
+    h+='<td style="font-size:11px;font-family:var(--mono);white-space:nowrap">'+dt+'</td>';
+    h+='<td style="font-weight:700">'+(ins.nom_salon||"—")+'</td>';
+    h+='<td>'+(ins.gerant||"—")+'</td>';
+    h+='<td><a href="mailto:'+(ins.email||"")+'" style="color:var(--gold)">'+(ins.email||"—")+'</a></td>';
+    h+='<td>'+(ins.telephone||"—")+'</td>';
+    h+='<td>'+(ins.ville||"—")+'</td>';
+    h+='<td>'+(ins.metier||"—")+'</td>';
+    h+='<td>'+(ins.forme_juridique||"—")+'</td>';
+    h+='<td>';
+    if(ins.contrat_hash){
+      h+='<span style="color:var(--green);font-size:12px;font-weight:700;cursor:pointer" onclick="showContratHash(&#39;'+ins.contrat_hash+'&#39;,&#39;'+(ins.gerant||"")+'&#39;,&#39;'+(ins.nom_salon||"")+'&#39;,&#39;'+(ins.email||"")+'&#39;,&#39;'+(ins.created_at||"")+'&#39;)" title="Cliquer pour voir le hash">\u2705 Sign\u00e9</span>';
+    }else{
+      h+='<span style="color:var(--orange);font-size:12px">\u26a0\ufe0f Non sign\u00e9</span>';
+    }
+    h+='</td></tr>';
+  });
+  h+='</table></div></div>';
+
+  // Documents r\u00e9capitulatif
+  var docsNeeded=SALONS.filter(function(s){return s.status==="active"&&s.stripeSub&&(!s.docKbis||!s.docId);});
+  var docsPending=SALONS.filter(function(s){return s.verif==="pending_review";});
+  if(docsNeeded.length||docsPending.length){
+    h+='<div class="card"><h3>\ud83d\udcc1 Documents \u00e0 contr\u00f4ler</h3>';
+    if(docsPending.length){
+      h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin-bottom:8px">\ud83d\udd0d '+docsPending.length+' en attente de v\u00e9rification</div>';
+      docsPending.forEach(function(s){
+        h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">';
+        h+='<div><strong>'+s.nom+'</strong> <span style="font-size:12px;color:var(--text3)">'+s.ville+'</span></div>';
+        h+='<div style="display:flex;gap:6px">';
+        if(s.docKbis)h+='<a href="'+s.docKbis+'" target="_blank" style="padding:4px 10px;border-radius:6px;background:rgba(45,154,94,.1);color:var(--green);font-size:11px;font-weight:700;text-decoration:none">\ud83d\udcc4 Kbis</a>';
+        if(s.docId)h+='<a href="'+s.docId+'" target="_blank" style="padding:4px 10px;border-radius:6px;background:rgba(45,154,94,.1);color:var(--green);font-size:11px;font-weight:700;text-decoration:none">\ud83c\udd94 Pi\u00e8ce ID</a>';
+        h+='<button class="td-btn" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;verified&#39;)" style="color:var(--green)" title="Valider">\u2705</button>';
+        h+='</div></div>';
+      });
+    }
+    if(docsNeeded.length){
+      h+='<div style="font-size:13px;color:var(--orange);font-weight:700;margin:12px 0 8px">\u26a0\ufe0f '+docsNeeded.length+' abonn\u00e9(s) sans documents</div>';
+      docsNeeded.forEach(function(s){
+        h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">';
+        h+='<span><strong>'+s.nom+'</strong> — '+s.email+'</span>';
+        h+='<span style="color:var(--orange);font-size:12px">'+(s.docKbis?'\u2705 Kbis':'\u274c Kbis')+' '+(s.docId?'\u2705 ID':'\u274c ID')+'</span>';
+        h+='</div>';
+      });
+    }
+    h+='</div>';
+  }
+  return h;
+}
+
+function showContratHash(hash,gerant,salon,email,date){
+  var d=date?new Date(date).toLocaleString("fr-FR"):"—";
+  alert("PREUVE DE SIGNATURE DU CONTRAT\n\nSignataire : "+gerant+"\n\u00c9tablissement : "+salon+"\nEmail : "+email+"\nDate : "+d+"\n\nHash SHA-256 :\n"+hash);
+}
+
+function showSalonContrat(salonId){
+  var s=SALONS.find(function(x){return x.id===salonId;});
+  if(!s){alert("Salon non trouv\u00e9");return;}
+  var sig=null;
+  try{sig=typeof s.contratSignature==="string"?JSON.parse(s.contratSignature):s.contratSignature;}catch(e){}
+  if(!sig){alert("Aucune signature de contrat enregistr\u00e9e pour cet \u00e9tablissement.");return;}
+  var h='<div style="position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">';
+  h+='<div style="background:var(--bg2);border:2px solid rgba(212,168,67,.3);border-radius:20px;padding:28px;max-width:500px;width:100%">';
+  h+='<h2 style="color:var(--gold);font-size:18px;margin-bottom:16px">\ud83d\udcdd Preuve de signature du contrat</h2>';
+  h+='<div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px">';
+  h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--text3)">Signataire</span><strong>'+(sig.signataire||"\u2014")+'</strong></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--text3)">\u00c9tablissement</span><strong>'+(sig.etablissement||"\u2014")+'</strong></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--text3)">Email</span><strong>'+(sig.email||"\u2014")+'</strong></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--text3)">Date de signature</span><strong>'+(sig.date?new Date(sig.date).toLocaleString("fr-FR"):"\u2014")+'</strong></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="color:var(--text3)">CGV accept\u00e9es</span><strong style="color:var(--green)">'+(sig.cgv_accepted?"\u2714 Oui":"\u274c Non")+'</strong></div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px"><span style="color:var(--text3)">Confidentialit\u00e9</span><strong style="color:var(--green)">'+(sig.confidentialite_accepted?"\u2714 Oui":"\u274c Non")+'</strong></div>';
+  h+='</div>';
+  h+='<div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:16px">';
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:4px">Hash SHA-256 du contrat :</div>';
+  h+='<div style="font-size:10px;font-family:var(--mono);color:var(--gold);word-break:break-all">'+(sig.contrat_hash||"\u2014")+'</div>';
+  h+='</div>';
+  if(s.contratAcceptedAt){
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:16px">Contrat accept\u00e9 le : <strong>'+new Date(s.contratAcceptedAt).toLocaleString("fr-FR")+'</strong></div>';
+  }
+  h+='<button onclick="this.closest(\'div[style]\').remove()" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-weight:700;cursor:pointer">Fermer</button>';
+  h+='</div></div>';
+  var el=document.createElement("div");el.innerHTML=h;
+  document.body.appendChild(el.firstChild);
+}
+
 // ===== DEMANDES =====
 function rDemandes(){
   var h='<div class="topbar"><h1>Demandes d’essai <span>'+DEMANDES.length+'</span></h1></div>';
@@ -744,7 +749,7 @@ function rRevenue(){
 // ===== PACKS SMS =====
 function rSMS(){
   var h='<div class="topbar"><h1>Packs SMS <span>Gestion des crédits</span></h1></div>';
-  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">30 SMS offerts/mois</div><div class="kpi-value" style="color:var(--green)">Pro</div><div class="kpi-sub">Dans le forfait Pro</div></div></div>';
+  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">50 SMS inclus</div><div class="kpi-value" style="color:var(--green)">Pro</div><div class="kpi-sub">Dans le forfait Pro</div></div></div>';
   h+='<div class="card"><h3>📱 Packs disponibles</h3>';
   [{q:100,p:7.99,m:37},{q:250,p:18.99,m:34},{q:500,p:35.99,m:31}].forEach(function(x){
     h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+x.m+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
@@ -765,95 +770,6 @@ function rSettings(){
   h+='<div class="settings-card"><h3>🔔 Notifications</h3>';
   ["Nouveau compte","Paiement échoué","Récap hebdo","Établissement inactif"].forEach(function(n){h+='<div class="sf-row"><div class="sf-label">'+n+'</div><span style="color:var(--green);font-weight:700">Activé</span></div>';});
   h+='</div></div>';return h;
-}
-
-// ===== FACTURES =====
-function rFactures(){
-  var totalHT=0;FACTURES.forEach(function(f){totalHT+=Number(f.montant_ht)||0;});
-  var thisMonth=new Date().toISOString().slice(0,7);
-  var monthHT=0;FACTURES.forEach(function(f){if((f.date_facture||"").slice(0,7)===thisMonth)monthHT+=Number(f.montant_ht)||0;});
-  var h='<div class="topbar"><h1>Factures <span>Facturation Luxyra</span></h1></div>';
-  h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">Factures \u00e9mises</div><div class="kpi-value" style="color:var(--blue)">'+FACTURES.length+'</div><div class="kpi-sub">Total</div><div class="kpi-icon">\ud83e\uddfe</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">CA factur\u00e9 HT</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(totalHT)+'</div><div class="kpi-sub">Cumul</div><div class="kpi-icon">\ud83d\udcb0</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Ce mois</div><div class="kpi-value" style="color:var(--green)">'+fmtM(monthHT)+'</div><div class="kpi-sub">'+thisMonth+'</div><div class="kpi-icon">\ud83d\udcc5</div></div>';
-  h+='</div>';
-  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">\ud83e\uddfe Liste des factures</div></div>';
-  h+='<div style="overflow-x:auto"><table><tr><th>N\u00b0</th><th>Date</th><th>\u00c9tablissement</th><th>Plan</th><th>Montant</th><th>Paiement</th><th>Actions</th></tr>';
-  if(!FACTURES.length){
-    h+='<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Aucune facture. Les factures seront g\u00e9n\u00e9r\u00e9es automatiquement lors des paiements Stripe.</td></tr>';
-  }
-  FACTURES.forEach(function(f){
-    var salon=gSalon(f.salon_id);
-    var salonNom=salon?salon.nom:"Salon supprim\u00e9";
-    var planLabel=(f.plan==="pro"?"Pro":"Essentiel");
-    var modeLabel=f.mode_paiement==="sepa"?"SEPA":"CB";
-    h+='<tr>';
-    h+='<td style="font-family:var(--mono);font-weight:700;color:var(--gold);font-size:12px">'+f.numero+'</td>';
-    h+='<td style="font-size:12px">'+fmtD(f.date_facture)+'</td>';
-    h+='<td style="font-size:13px;font-weight:600">'+salonNom+'</td>';
-    h+='<td>'+planB(f.plan)+'</td>';
-    h+='<td style="font-family:var(--mono);font-weight:700">'+fmtM(Number(f.montant_ht))+'</td>';
-    h+='<td style="font-size:11px">'+modeLabel+'</td>';
-    h+='<td><button class="td-btn" onclick="viewFacture(\x27'+f.id+'\x27)" title="Voir / PDF">\ud83d\udcc4</button></td>';
-    h+='</tr>';
-  });
-  h+='</table></div></div>';
-  return h;
-}
-
-function viewFacture(id){
-  var f=FACTURES.find(function(x){return x.id===id;});
-  if(!f)return;
-  var salon=gSalon(f.salon_id);
-  var salonNom=salon?salon.nom:"";
-  var salonAddr=salon?(salon.adresse||""):"";
-  var salonCpVille=salon?((salon.cp||"")+" "+(salon.ville||"")):"";
-  var salonSiret=salon?(salon.siret||""):"";
-  var planLabel=(f.plan==="pro"?"Pro":"Essentiel");
-  var w=window.open("","_blank","width=800,height=700");
-  var html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Facture '+f.numero+'</title>';
-  html+='<style>body{font-family:Georgia,serif;color:#1a1a1a;padding:40px;max-width:700px;margin:0 auto;font-size:13px;line-height:1.6}';
-  html+='h1{font-size:20px;color:#333;margin-bottom:20px}';
-  html+='.header{display:flex;justify-content:space-between;margin-bottom:30px}';
-  html+='.col{flex:1}.col-r{text-align:right}';
-  html+='table{width:100%;border-collapse:collapse;margin:20px 0}';
-  html+='th{background:#f5f0e8;padding:8px 12px;text-align:left;font-size:12px;border-bottom:2px solid #c8a84e}';
-  html+='td{padding:8px 12px;border-bottom:1px solid #eee}';
-  html+='.total{text-align:right;font-size:16px;font-weight:bold;margin-top:20px}';
-  html+='.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;font-size:10px;color:#888;text-align:center}';
-  html+='@media print{body{padding:20px}}</style></head><body>';
-  html+='<div class="header"><div class="col">';
-  html+='<div style="font-size:24px;font-weight:900;color:#c8a84e;letter-spacing:2px">LUXYRA</div>';
-  html+='<div style="font-size:10px;color:#888;margin-top:2px">Alexandre Jensen</div>';
-  html+='<div style="font-size:10px;color:#888">SIRET 910 928 464 00023</div>';
-  html+='<div style="font-size:10px;color:#888">support@luxyra.fr</div>';
-  html+='</div><div class="col-r">';
-  html+='<h1>FACTURE</h1>';
-  html+='<div style="font-size:16px;font-weight:700;color:#c8a84e">'+f.numero+'</div>';
-  html+='<div style="margin-top:6px;font-size:12px">Date : '+fmtD(f.date_facture)+'</div>';
-  html+='</div></div>';
-  html+='<div style="background:#f9f7f2;border:1px solid #e8e0d0;border-radius:8px;padding:14px;margin-bottom:20px">';
-  html+='<div style="font-weight:700;font-size:13px">'+salonNom+'</div>';
-  if(salonAddr)html+='<div style="font-size:12px;color:#666">'+salonAddr+'</div>';
-  if(salonCpVille.trim())html+='<div style="font-size:12px;color:#666">'+salonCpVille+'</div>';
-  if(salonSiret)html+='<div style="font-size:11px;color:#888;margin-top:4px">SIRET : '+salonSiret+'</div>';
-  html+='</div>';
-  html+='<table><tr><th>Description</th><th>P\u00e9riode</th><th style="text-align:right">Montant</th></tr>';
-  html+='<tr><td>Abonnement Luxyra '+planLabel+' \u2014 Mensuel</td>';
-  html+='<td>'+(f.periode_debut?fmtD(f.periode_debut)+' au '+fmtD(f.periode_fin):'\u2014')+'</td>';
-  html+='<td style="text-align:right;font-weight:700">'+Number(f.montant_ht).toFixed(2)+' \u20ac</td></tr></table>';
-  html+='<div class="total">';
-  html+='<div>Total : '+Number(f.montant_ht).toFixed(2)+' \u20ac</div>';
-  html+='<div style="font-size:12px;color:#888">TVA non applicable, art. 293B du CGI</div>';
-  html+='<div style="font-size:18px;margin-top:6px;color:#c8a84e">Total TTC : '+Number(f.montant_ttc).toFixed(2)+' \u20ac</div>';
-  html+='</div>';
-  html+='<div style="margin-top:24px;font-size:11px;color:#888">Paiement : '+(f.mode_paiement==="sepa"?"Pr\u00e9l\u00e8vement SEPA":"Carte bancaire")+'</div>';
-  html+='<div class="footer">Luxyra \u2014 Alexandre Jensen \u2014 Micro-entrepreneur<br>SIRET 910 928 464 00023 \u2014 TVA non applicable, art. 293B du CGI<br>support@luxyra.fr \u2014 www.luxyra.fr</div>';
-  html+='</body></html>';
-  w.document.write(html);
-  w.document.close();
-  setTimeout(function(){w.print();},500);
 }
 
 // ===== NF525 =====
@@ -939,11 +855,12 @@ async function saveNotes(id){
   alert("Notes enregistrées !");
 }
 
-async function offerFreePlan(id){
+async function saveFreePlan(id){
+  var isFree=document.getElementById("dpFree").checked;
   var plan=document.getElementById("dpFreePlan").value;
   var dur=document.getElementById("dpFreeDur").value;
   var freeUntil=null;
-  if(dur!=="unlimited"){
+  if(isFree&&dur!=="unlimited"){
     var d=new Date();
     if(dur==="1m")d.setMonth(d.getMonth()+1);
     else if(dur==="3m")d.setMonth(d.getMonth()+3);
@@ -951,25 +868,13 @@ async function offerFreePlan(id){
     else if(dur==="1y")d.setFullYear(d.getFullYear()+1);
     freeUntil=d.toISOString().slice(0,10);
   }
-  var label=plan==="pro"?"Pro":"Essentiel";
-  var durLabel=freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)";
-  if(!confirm("Offrir le plan "+label+" gratuitement"+durLabel+" ?"))return;
-  await _sb.from("salons").update({is_free:true,free_until:freeUntil,plan:plan,status:"active",trial_end:null}).eq("id",id);
-  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"OFFER_FREE_PLAN",details:label+durLabel});
+  var update={is_free:isFree,free_until:freeUntil};
+  if(isFree){update.plan=plan;update.status="active";update.trial_end=null;}
+  await _sb.from("salons").update(update).eq("id",id);
   var s=gSalon(id);
-  if(s){s.isFree=true;s.freeUntil=freeUntil;s.plan=plan;s.status="active";}
-  alert("\u2705 Plan "+label+" offert"+durLabel);
-  openD(id);
-}
-
-async function removeFreePlan(id){
-  if(!confirm("Retirer le plan offert ? Le salon devra souscrire un abonnement payant."))return;
-  await _sb.from("salons").update({is_free:false,free_until:null}).eq("id",id);
-  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"REMOVE_FREE_PLAN",details:""});
-  var s=gSalon(id);
-  if(s){s.isFree=false;s.freeUntil=null;}
-  alert("\u274c Plan offert retir\u00e9");
-  openD(id);
+  if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
+  alert("\u2705 "+(isFree?"Plan "+plan+" offert"+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)"):"Plan gratuit d\u00e9sactiv\u00e9"));
+  openDetail(id);
 }
 
 async function addSmsCredits(id,nb){
@@ -978,7 +883,7 @@ async function addSmsCredits(id,nb){
   await _sb.from("salons").update({sms_credits:newCredits}).eq("id",id);
   s.smsCredits=newCredits;
   alert("\u2705 "+nb+" SMS ajout\u00e9s. Nouveau solde: "+newCredits+" SMS");
-  openD(id);
+  openDetail(id);
 }
 
 async function addSmsCreditsCustom(id){
@@ -992,7 +897,7 @@ async function resetSmsCredits(id){
   await _sb.from("salons").update({sms_credits:0}).eq("id",id);
   var s=gSalon(id);if(s)s.smsCredits=0;
   alert("\u2705 Solde SMS remis \u00e0 0");
-  openD(id);
+  openDetail(id);
 }
 
 checkSession();

@@ -718,22 +718,78 @@ SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.c
 
 // ===== PLAN PRO GATING =====
 function isPro(){return SALON_CONFIG.plan==="pro";}
+function isEssential(){return SALON_CONFIG.plan==="essential";}
+function hasActiveSubscription(){return SALON_CONFIG.plan==="pro"||SALON_CONFIG.plan==="essential";}
+function isTrialExpired(){
+  if(hasActiveSubscription())return false;
+  if(window._trialDaysLeft===null||window._trialDaysLeft===undefined)return false;
+  return window._trialDaysLeft<=0;
+}
 var STRIPE_PK="pk_test_51TCS0eBkCMmoNdL5Jfy6EMw64lAQ1rZ4NsMj7DXsvGMyjMvX8HdtregidLWFDViS59KRJmZVnPWUbNLMcL2PFKTw002d1ntJFA";
 var STRIPE_API="/api/stripe";
 
+// ========== MODAL CHOIX DE PLAN (bloquante ou non) ==========
+function showPlanChoiceModal(blocking){
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px">';
+  h+='<div style="background:#12141e;border:2px solid rgba(212,168,67,.3);border-radius:24px;padding:32px;max-width:520px;width:100%;text-align:center">';
+  if(blocking){
+    h+='<div style="font-size:48px;margin-bottom:12px">\u23f0</div>';
+    h+='<h2 style="color:var(--gold);font-size:22px;margin-bottom:8px">Votre essai gratuit est termin\u00e9</h2>';
+    h+='<div style="font-size:14px;color:rgba(255,255,255,.5);margin-bottom:24px;line-height:1.7">Pour continuer \u00e0 utiliser Luxyra, choisissez votre forfait.<br>Vos donn\u00e9es sont conserv\u00e9es.</div>';
+  }else{
+    h+='<div style="font-size:48px;margin-bottom:12px">\ud83d\udc8e</div>';
+    h+='<h2 style="color:var(--gold);font-size:22px;margin-bottom:8px">Passer en abonnement</h2>';
+    h+='<div style="font-size:14px;color:rgba(255,255,255,.5);margin-bottom:24px;line-height:1.7">Choisissez votre forfait. Sans engagement, r\u00e9siliez quand vous voulez.</div>';
+  }
+  // 2 plan cards
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px">';
+  // Essentiel
+  h+='<div style="border:2px solid rgba(96,165,250,.3);border-radius:16px;padding:20px;text-align:center;background:rgba(96,165,250,.04)">';
+  h+='<div style="font-size:13px;font-weight:800;color:#60a5fa;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">\ud83d\udccb Essentiel</div>';
+  h+='<div style="font-size:32px;font-weight:900;color:#fff;margin-bottom:4px">14,99\u20ac<span style="font-size:14px;color:rgba(255,255,255,.4)">/mois</span></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35);margin-bottom:14px;line-height:1.6">Planning, clients, caisse NF525, tickets, fid\u00e9lit\u00e9, bons cadeaux, stats</div>';
+  h+='<button onclick="checkCgvPlanAndPay(\'essential\')" style="width:100%;padding:12px;border-radius:10px;border:2px solid #60a5fa;background:rgba(96,165,250,.1);color:#60a5fa;font-weight:700;font-size:13px;cursor:pointer">Choisir Essentiel</button>';
+  h+='</div>';
+  // Pro
+  h+='<div style="border:2px solid rgba(212,168,67,.4);border-radius:16px;padding:20px;text-align:center;background:rgba(212,168,67,.06);position:relative">';
+  h+='<div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-size:9px;font-weight:900;padding:3px 12px;border-radius:20px;letter-spacing:1px">POPULAIRE</div>';
+  h+='<div style="font-size:13px;font-weight:800;color:var(--gold);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">\ud83d\udc8e Pro</div>';
+  h+='<div style="font-size:32px;font-weight:900;color:#fff;margin-bottom:4px">24,99\u20ac<span style="font-size:14px;color:rgba(255,255,255,.4)">/mois</span></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35);margin-bottom:14px;line-height:1.6">Tout Essentiel + site vitrine, r\u00e9servation en ligne, SMS, marketing, marketplace</div>';
+  h+='<button onclick="checkCgvPlanAndPay(\'pro\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:13px;cursor:pointer">Choisir Pro \u2192</button>';
+  h+='</div></div>';
+  // CGV checkbox
+  h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px;cursor:pointer;font-size:12px;color:rgba(255,255,255,.4);line-height:1.5;text-align:left"><input type="checkbox" id="cgvPlanCheck" style="margin-top:3px;flex-shrink:0;width:16px;height:16px"> <span>J\u2019accepte les <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> et la <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a></span></label>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.25);margin-bottom:12px">TVA non applicable, art. 293B du CGI \u2022 Sans engagement</div>';
+  if(!blocking){
+    h+='<button onclick="document.getElementById(\'planChoiceModal\').remove()" style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:transparent;color:rgba(255,255,255,.3);font-size:13px;cursor:pointer">Plus tard</button>';
+  }
+  h+='</div></div>';
+  var el=document.createElement("div");el.id="planChoiceModal";el.innerHTML=h;
+  document.body.appendChild(el);
+}
+
+function checkCgvPlanAndPay(plan){
+  var cb=document.getElementById("cgvPlanCheck");
+  if(!cb||!cb.checked){alert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.");return;}
+  startCheckout(plan);
+}
+
 function showUpgradeModal(feature){
-  var f=feature||"cette fonctionnalité";
+  var f=feature||"cette fonctionnalit\u00e9";
+  // If trial expired, show blocking plan choice
+  if(isTrialExpired()){showPlanChoiceModal(true);return;}
   var el=document.createElement("div");el.className="upgrade-overlay";el.id="upgradeModal";
   el.onclick=function(e){if(e.target===el)el.remove();};
   el.innerHTML='<div class="upgrade-box">'
-    +'<div style="font-size:40px;margin-bottom:12px">💎</div>'
+    +'<div style="font-size:40px;margin-bottom:12px">\ud83d\udc8e</div>'
     +'<div style="font-size:20px;font-weight:800;margin-bottom:8px">Passez en Pro</div>'
     +'<div style="font-size:14px;color:#94a3b8;margin-bottom:6px;line-height:1.6"><strong style="color:#d4a843">'+f+'</strong> est disponible avec le forfait Pro.</div>'
-    +'<div style="font-size:28px;font-weight:900;color:#d4a843;margin-bottom:4px;font-family:var(--mono)">24,99€<span style="font-size:14px;color:#94a3b8;font-weight:400">/mois</span></div>'
-    +'<div style="font-size:12px;color:#5a6578;margin-bottom:16px">Site vitrine • Réservation en ligne • Marketplace • SMS rappels • Email marketing</div>'
-    +'<label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px;cursor:pointer;font-size:12px;color:#94a3b8;line-height:1.5"><input type="checkbox" id="cgvCheck" style="margin-top:3px;flex-shrink:0;width:16px;height:16px"> <span>J\u2019accepte les <a href="https://luxyra.fr/cgv" target="_blank" style="color:#d4a843;text-decoration:underline">CGV</a> et la <a href="https://luxyra.fr/politique-confidentialite" target="_blank" style="color:#d4a843;text-decoration:underline">Politique de confidentialit\u00e9</a></span></label>'
+    +'<div style="font-size:28px;font-weight:900;color:#d4a843;margin-bottom:4px;font-family:var(--mono)">24,99\u20ac<span style="font-size:14px;color:#94a3b8;font-weight:400">/mois</span></div>'
+    +'<div style="font-size:12px;color:#5a6578;margin-bottom:16px">Site vitrine \u2022 R\u00e9servation en ligne \u2022 Marketplace \u2022 SMS rappels \u2022 Email marketing</div>'
+    +'<label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px;cursor:pointer;font-size:12px;color:#94a3b8;line-height:1.5"><input type="checkbox" id="cgvCheck" style="margin-top:3px;flex-shrink:0;width:16px;height:16px"> <span>J\u2019accepte les <a href="/cgv" target="_blank" style="color:#d4a843;text-decoration:underline">CGV</a> et la <a href="/confidentialite" target="_blank" style="color:#d4a843;text-decoration:underline">Politique de confidentialit\u00e9</a></span></label>'
     +'<div style="display:flex;flex-direction:column;gap:8px">'
-    +'<button onclick="checkCgvAndPay(\'pro\')" style="padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer" id="upgradeBtn">Passer en Pro →</button>'
+    +'<button onclick="checkCgvAndPay(\'pro\')" style="padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer" id="upgradeBtn">Passer en Pro \u2192</button>'
     +'<button onclick="this.closest(\'.upgrade-overlay\').remove()" style="padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:#94a3b8;font-size:13px;cursor:pointer;font-family:var(--f1)">Plus tard</button>'
     +'</div></div>';
   document.body.appendChild(el);
@@ -775,10 +831,10 @@ async function startCheckout(plan){
     SALON_CONFIG.plan=plan;
     window._trialDaysLeft=null;
     var _oldBanner=document.getElementById("trialBanner");if(_oldBanner)_oldBanner.remove();
-    setTimeout(function(){
-      alert("Félicitations ! Votre abonnement "+plan.charAt(0).toUpperCase()+plan.slice(1)+" est activé. Toutes les fonctionnalités sont débloquées !");
-      window.history.replaceState({},"",window.location.pathname);
-    },500);
+    var _oldPlan=document.getElementById("planChoiceModal");if(_oldPlan)_oldPlan.remove();
+    window.history.replaceState({},"",window.location.pathname);
+    // Show purge modal after short delay (let app load)
+    setTimeout(function(){showPostCheckoutPurgeModal(plan);},800);
   }else if(params.get("checkout")==="cancel"){
     window.history.replaceState({},"",window.location.pathname);
   }
@@ -791,6 +847,161 @@ async function startCheckout(plan){
     },500);
   }
 })();
+
+// ========== MODAL POST-CHECKOUT : PURGE DES DONNÉES DE TEST ==========
+function showPostCheckoutPurgeModal(plan){
+  // Count test data
+  var nbTickets=AP.filter(function(a){return a.st==="done"&&a.tkNum;}).length;
+  var nbClotures=window.CLOTURES?window.CLOTURES.length:0;
+  var nbDone=AP.filter(function(a){return a.st==="done";}).length;
+  var nbAnnul=AP.filter(function(a){return a.cancelled;}).length;
+  var hasTestData=nbTickets>0||nbClotures>0;
+
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px">';
+  h+='<div style="background:#12141e;border:2px solid rgba(212,168,67,.3);border-radius:24px;padding:32px;max-width:500px;width:100%;text-align:center">';
+  h+='<div style="font-size:48px;margin-bottom:12px">\u2705</div>';
+  h+='<h2 style="color:var(--gold);font-size:22px;margin-bottom:8px">Abonnement '+plan.charAt(0).toUpperCase()+plan.slice(1)+' activ\u00e9 !</h2>';
+  h+='<div style="font-size:14px;color:rgba(255,255,255,.5);margin-bottom:20px">Toutes les fonctionnalit\u00e9s sont d\u00e9bloqu\u00e9es.</div>';
+
+  if(hasTestData){
+    h+='<div style="background:rgba(239,83,80,.08);border:1.5px solid rgba(239,83,80,.2);border-radius:14px;padding:18px;margin-bottom:20px;text-align:left">';
+    h+='<div style="font-size:14px;font-weight:800;color:#ef5350;margin-bottom:10px">\u26a0\ufe0f Donn\u00e9es de test d\u00e9tect\u00e9es</div>';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.6);line-height:1.8">';
+    h+='Pendant votre essai, vous avez cr\u00e9\u00e9 :<br>';
+    if(nbTickets>0)h+='\u2022 <strong>'+nbTickets+' ticket'+(nbTickets>1?'s':'')+' de caisse</strong> (num\u00e9rot\u00e9s)<br>';
+    if(nbClotures>0)h+='\u2022 <strong>'+nbClotures+' cl\u00f4ture'+(nbClotures>1?'s':'')+' Z</strong><br>';
+    if(nbAnnul>0)h+='\u2022 <strong>'+nbAnnul+' annulation'+(nbAnnul>1?'s':'')+'</strong><br>';
+    h+='</div>';
+    h+='<div style="font-size:12px;color:#ef5350;font-weight:700;margin-top:10px;line-height:1.6">';
+    h+='Ces donn\u00e9es de test faussent votre comptabilit\u00e9 et la cha\u00eene NF525.<br>';
+    h+='<strong>Nous recommandons fortement de les purger</strong> pour d\u00e9marrer avec une base propre.';
+    h+='</div></div>';
+
+    h+='<div style="display:flex;flex-direction:column;gap:10px">';
+    h+='<button onclick="confirmPurgeTestData()" style="width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,#ef5350,#c62828);color:#fff;font-weight:800;font-size:15px;border:none;cursor:pointer">\ud83d\uddd1 Purger les donn\u00e9es de test</button>';
+    h+='<button onclick="document.getElementById(\'purgeModal\').remove();go(\'home\')" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:rgba(255,255,255,.4);font-size:13px;cursor:pointer">Conserver les donn\u00e9es (non recommand\u00e9)</button>';
+    h+='<div style="font-size:10px;color:rgba(255,255,255,.2);margin-top:4px">Les clients, services, param\u00e8tres et \u00e9quipe sont toujours conserv\u00e9s.</div>';
+    h+='</div>';
+  }else{
+    h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:12px;padding:14px;margin-bottom:20px;font-size:14px;color:#4ade80">\u2705 Aucune donn\u00e9e de test d\u00e9tect\u00e9e. Votre comptabilit\u00e9 est propre.</div>';
+    h+='<button onclick="document.getElementById(\'purgeModal\').remove();go(\'home\')" style="width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:15px;border:none;cursor:pointer">Commencer \u2192</button>';
+  }
+  h+='</div></div>';
+  var el=document.createElement("div");el.id="purgeModal";el.innerHTML=h;
+  document.body.appendChild(el);
+}
+
+// ========== CONFIRMATION PURGE ==========
+function confirmPurgeTestData(){
+  var nbTickets=AP.filter(function(a){return a.st==="done"&&a.tkNum;}).length;
+  var nbClotures=window.CLOTURES?window.CLOTURES.length:0;
+  var h='<div style="position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.95);display:flex;align-items:center;justify-content:center;padding:20px">';
+  h+='<div style="background:#1a0a0a;border:3px solid #ef5350;border-radius:20px;padding:32px;max-width:440px;width:100%;text-align:center">';
+  h+='<div style="font-size:48px;margin-bottom:12px">\u26a0\ufe0f</div>';
+  h+='<h2 style="color:#ef5350;font-size:20px;margin-bottom:12px">Confirmer la purge</h2>';
+  h+='<div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:8px;line-height:1.7">';
+  h+='Cette action va <strong style="color:#ef5350">supprimer d\u00e9finitivement</strong> :';
+  h+='</div>';
+  h+='<div style="background:rgba(239,83,80,.1);border-radius:10px;padding:14px;margin-bottom:16px;text-align:left;font-size:13px;color:rgba(255,255,255,.7);line-height:2">';
+  h+='\u274c '+nbTickets+' ticket'+(nbTickets>1?'s':'')+' de caisse (num\u00e9rotation remise \u00e0 z\u00e9ro)<br>';
+  h+='\u274c '+nbClotures+' cl\u00f4ture'+(nbClotures>1?'s':'')+' Z (cha\u00eene hash r\u00e9initialis\u00e9e)<br>';
+  h+='\u274c Tous les RDV encaiss\u00e9s<br>';
+  h+='\u274c Mouvements de caisse et journaux<br>';
+  h+='<div style="margin-top:8px;color:#4ade80">\u2705 Conserv\u00e9s : clients, services, \u00e9quipe, param\u00e8tres, horaires</div>';
+  h+='</div>';
+  h+='<div style="font-size:12px;color:rgba(255,255,255,.3);margin-bottom:16px">Action irr\u00e9versible. Tapez PURGER pour confirmer.</div>';
+  h+='<input type="text" id="purgeConfirmInput" placeholder="Tapez PURGER" style="width:100%;padding:12px;border:2px solid rgba(239,83,80,.3);border-radius:10px;background:rgba(255,255,255,.05);color:#fff;font-size:16px;font-weight:800;text-align:center;letter-spacing:4px;margin-bottom:14px">';
+  h+='<div style="display:flex;gap:10px">';
+  h+='<button onclick="document.getElementById(\'purgeConfirm\').remove()" style="flex:1;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:rgba(255,255,255,.4);font-size:13px;cursor:pointer">Annuler</button>';
+  h+='<button onclick="executePurge()" style="flex:1;padding:12px;border-radius:10px;background:#ef5350;color:#fff;font-weight:800;font-size:13px;border:none;cursor:pointer" id="purgeExecBtn">\ud83d\uddd1 Purger</button>';
+  h+='</div></div></div>';
+  var el=document.createElement("div");el.id="purgeConfirm";el.innerHTML=h;
+  document.body.appendChild(el);
+}
+
+// ========== EXÉCUTION DE LA PURGE ==========
+async function executePurge(){
+  var inp=document.getElementById("purgeConfirmInput");
+  if(!inp||inp.value.trim().toUpperCase()!=="PURGER"){
+    alert("Veuillez taper PURGER pour confirmer.");return;
+  }
+  var btn=document.getElementById("purgeExecBtn");
+  if(btn){btn.textContent="Purge en cours...";btn.disabled=true;btn.style.opacity=".5";}
+
+  try{
+    // 1. Delete done appointments from Supabase
+    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+      await _sb.from("appointments").delete().eq("salon_id",_salonId).eq("status","done");
+      // Also delete cancelled ones
+      await _sb.from("appointments").delete().eq("salon_id",_salonId).eq("cancelled",true);
+      console.log("[PURGE] Appointments purged from Supabase");
+    }
+
+    // 2. Clear local done/cancelled appointments (keep future conf ones)
+    AP=AP.filter(function(a){return a.st!=="done"&&!a.cancelled;});
+    // Reset all tkNum on remaining (shouldn't have any)
+    AP.forEach(function(a){delete a.tkNum;});
+
+    // 3. Clear clotures Z
+    window.CLOTURES=[];
+    window.LOCKED_DAYS={};
+
+    // 4. Clear CAISSE_DATA movements
+    window.CAISSE_DATA={fond:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,coffreEsp:0,coffreChq:0,remisesBanque:[],retraits:[],mouvements:[],misesAuCoffre:[],pieces:[]};
+
+    // 5. Clear localStorage caches
+    try{
+      localStorage.removeItem("_cp_locked");
+      localStorage.removeItem("_cp_clotures");
+      localStorage.removeItem("_cp_caisse");
+      localStorage.removeItem("_cp_sms_sent");
+      // Keep: _cp_forfaits, _cp_absences (config data)
+    }catch(e){}
+
+    // 6. Save clean state to Supabase config_json
+    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+      var r=await _sb.from("salons").select("config_json").eq("id",_salonId).limit(1);
+      var cfg={};
+      if(r.data&&r.data[0]&&r.data[0].config_json){
+        try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}
+      }
+      // Reset transactional data, keep config
+      cfg.clotures=[];
+      cfg.locked_days={};
+      cfg.caisse_data=window.CAISSE_DATA;
+      delete cfg.derniere_cloture;
+      await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
+      console.log("[PURGE] Config_json cleaned in Supabase");
+    }
+
+    // 7. Log the purge (for audit - this is the ONLY trace)
+    if(typeof auditLog==="function")auditLog("PURGE_TEST_DATA","Purge des donn\u00e9es de test effectu\u00e9e lors du passage en abonnement. Compteurs remis \u00e0 z\u00e9ro.");
+
+    // 8. Show success and reload
+    var pm=document.getElementById("purgeConfirm");if(pm)pm.remove();
+    var pm2=document.getElementById("purgeModal");if(pm2)pm2.remove();
+
+    var h2='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:20px">';
+    h2+='<div style="background:#12141e;border:2px solid rgba(45,154,94,.4);border-radius:20px;padding:32px;max-width:400px;width:100%;text-align:center">';
+    h2+='<div style="font-size:48px;margin-bottom:12px">\u2705</div>';
+    h2+='<h2 style="color:#4ade80;font-size:20px;margin-bottom:12px">Purge termin\u00e9e !</h2>';
+    h2+='<div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:8px;line-height:1.7">';
+    h2+='Toutes les donn\u00e9es de test ont \u00e9t\u00e9 supprim\u00e9es.<br>';
+    h2+='Votre comptabilit\u00e9 repart \u00e0 z\u00e9ro :<br>';
+    h2+='<strong style="color:#4ade80">Ticket #1 \u2022 Cl\u00f4ture Z #1</strong>';
+    h2+='</div>';
+    h2+='<div style="font-size:12px;color:rgba(255,255,255,.3);margin-bottom:16px">Vos clients, services, \u00e9quipe et param\u00e8tres sont intacts.</div>';
+    h2+='<button onclick="location.reload()" style="width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:800;font-size:15px;border:none;cursor:pointer">D\u00e9marrer Luxyra \u2192</button>';
+    h2+='</div></div>';
+    var el2=document.createElement("div");el2.innerHTML=h2;
+    document.body.appendChild(el2);
+
+  }catch(e){
+    console.error("[PURGE] Error:",e);
+    alert("Erreur lors de la purge : "+e.message+"\nContactez support@luxyra.fr");
+    if(btn){btn.textContent="\ud83d\uddd1 R\u00e9essayer";btn.disabled=false;btn.style.opacity="1";}
+  }
+}
 
 // Customer Portal (gérer son abonnement)
 async function openCustomerPortal(){
@@ -827,7 +1038,7 @@ function showSwitchPlanModal(){
   h+='</div>';
   h+='<div style="font-size:12px;color:var(--text3);line-height:1.8">Tout Essentiel + site vitrine, r\u00e9servation en ligne, paiement acompte, marketplace, SMS/emails automatiques.</div></div>';
   h+='</div>';
-  h+='<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="cgvCheckSwitch" style="width:18px;height:18px"> J\u0027accepte les <a href="cgv.html" target="_blank" style="color:var(--gold)">Conditions G\u00e9n\u00e9rales de Vente</a></label>';
+  h+='<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="cgvCheckSwitch" style="width:18px;height:18px"> J\u0027accepte les <a href="/cgv" target="_blank" style="color:var(--gold)">Conditions G\u00e9n\u00e9rales de Vente</a></label>';
   h+='<button onclick="cM()" style="width:100%;margin-top:12px;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;cursor:pointer">Fermer</button>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
@@ -4385,21 +4596,32 @@ function rSettings(){
     h+='<div class="sec">Paramètres</div>';
     
     // Plan info
+    if(!hasActiveSubscription()&&window._trialDaysLeft!==null){
+      // Trial mode
+      var dLeft=window._trialDaysLeft||0;
+      h+='<div class="card" style="display:flex;align-items:center;gap:14px;border:1px solid '+(dLeft<=3?'rgba(239,83,80,.3)':'rgba(212,168,67,.3)')+';margin-bottom:16px">';
+      h+='<div style="font-size:28px">'+(dLeft<=0?'\u23f0':'\u2728')+'</div>';
+      h+='<div style="flex:1"><div style="font-weight:700;font-size:15px">'+(dLeft<=0?'<span style="color:#ef5350">Essai termin\u00e9</span>':'<span style="color:var(--gold)">Essai gratuit</span>')+'</div>';
+      h+='<div style="font-size:12px;color:var(--text3)">'+(dLeft>0?dLeft+' jour'+(dLeft>1?'s':'')+' restant'+(dLeft>1?'s':''):'Choisissez un forfait pour continuer')+'</div></div>';
+      h+='<button onclick="showPlanChoiceModal(false)" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">S\u2019abonner</button>';
+      h+='</div>';
+    }else{
     h+='<div class="card" style="display:flex;align-items:center;gap:14px;border:1px solid '+(isPro()?'rgba(212,168,67,.3)':'rgba(96,165,250,.3)')+';margin-bottom:16px">';
-    h+='<div style="font-size:28px">'+(isPro()?'💎':'📋')+'</div>';
+    h+='<div style="font-size:28px">'+(isPro()?'\ud83d\udc8e':'\ud83d\udccb')+'</div>';
     h+='<div style="flex:1"><div style="font-weight:700;font-size:15px">Forfait '+(isPro()?'<span style="color:var(--gold)">Pro</span>':'<span style="color:var(--blue)">Essentiel</span>')+'</div>';
     if(isPro()){
-      h+='<div style="font-size:12px;color:var(--text3)">24,99€/mois — Toutes les fonctionnalités</div></div>';
-      h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:12px;padding:8px 14px;white-space:nowrap">Gérer mon abonnement</button>';
+      h+='<div style="font-size:12px;color:var(--text3)">24,99\u20ac/mois \u2014 Toutes les fonctionnalit\u00e9s</div></div>';
+      h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:12px;padding:8px 14px;white-space:nowrap">G\u00e9rer mon abonnement</button>';
       h+='<button onclick="showSwitchPlanModal()" style="margin-top:6px;padding:6px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:none;color:var(--text3);font-size:11px;cursor:pointer;white-space:nowrap">Changer de forfait</button>';
     }else{
-      h+='<div style="font-size:12px;color:var(--text3)">14,99€/mois</div></div>';
+      h+='<div style="font-size:12px;color:var(--text3)">14,99\u20ac/mois</div></div>';
       h+='<div style="display:flex;flex-direction:column;gap:6px">';
       h+='<button onclick="showSwitchPlanModal()" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">Changer de forfait</button>';
-      h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:11px;padding:6px 14px;white-space:nowrap">Gérer mon abonnement</button>';
+      h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:11px;padding:6px 14px;white-space:nowrap">G\u00e9rer mon abonnement</button>';
       h+='</div>';
     }
     h+='</div>';
+    }
 
     var sections=[
       {k:"etablissement",i:"\ud83c\udfe2",t:"\u00c9tablissement",d:"M\u00e9tier, mode d\u0027activit\u00e9, coordonn\u00e9es"},
@@ -12805,8 +13027,10 @@ function initApp(){
     });
   }
   go("home");
-  // Trial banner
-  if(window._trialDaysLeft!==null&&window._trialDaysLeft>=0&&SALON_CONFIG.plan!=="pro"&&SALON_CONFIG.plan!=="essential"){
+  // Trial: blocking modal if expired, banner if still running
+  if(isTrialExpired()){
+    showPlanChoiceModal(true);
+  }else if(window._trialDaysLeft!==null&&window._trialDaysLeft>=0&&!hasActiveSubscription()){
     var _tb=document.createElement("div");
     var _dLeft=window._trialDaysLeft;
     var _urgent=_dLeft<=3;
@@ -12814,7 +13038,7 @@ function initApp(){
     _tb.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9998;padding:8px 16px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:13px;font-weight:600;flex-wrap:wrap;"+(_urgent?"background:linear-gradient(90deg,#dc2626,#b91c1c);color:#fff":"background:linear-gradient(90deg,#d4a843,#b8960f);color:#000");
     _tb.innerHTML=(_urgent?"\u26a0\ufe0f ":"\u23f0 ")+
       "Essai gratuit : <strong>"+_dLeft+" jour"+(_dLeft>1?"s":"")+"</strong> restant"+(_dLeft>1?"s":"")+
-      "<button onclick=\"showUpgradeModal('toutes les fonctionnalit\\u00e9s')\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:12px;"+(_urgent?"background:#fff;color:#dc2626":"background:#000;color:#d4a843")+"\">S\\u2019abonner</button>";
+      "<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:12px;"+(_urgent?"background:#fff;color:#dc2626":"background:#000;color:#d4a843")+"\">S\u2019abonner maintenant</button>";
     document.body.appendChild(_tb);
     var _hdr=document.getElementById("hdr");if(_hdr)_hdr.style.marginTop="36px";
     document.getElementById("app").style.paddingTop="36px";
