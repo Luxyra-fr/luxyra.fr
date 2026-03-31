@@ -2607,37 +2607,73 @@ function rHome(){
   done.forEach(function(a){var sty=gT(a.stId);var n=sty?sty.n:"?";if(!perSty[n])perSty[n]={ca:0,nb:0};perSty[n].ca+=a.pr;perSty[n].nb++;});
   var styNames=Object.keys(perSty);
 
+  // === CA PRÉVISIONNEL DU MOIS ===
+  var nowD=new Date(today);
+  var moisStr=nowD.toLocaleDateString("fr-FR",{month:"long",year:"numeric"});
+  var firstOfMonth=nowD.getFullYear()+"-"+String(nowD.getMonth()+1).padStart(2,"0")+"-01";
+  var lastDay=new Date(nowD.getFullYear(),nowD.getMonth()+1,0).getDate();
+  var lastOfMonth=nowD.getFullYear()+"-"+String(nowD.getMonth()+1).padStart(2,"0")+"-"+String(lastDay).padStart(2,"0");
+  // Past: done CA from 1st to today (inclusive)
+  var caPasseMois=0;var rdvPasseMois=0;
+  AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=firstOfMonth&&a.date<=today;}).forEach(function(a){caPasseMois+=a.pr;rdvPasseMois++;});
+  // Future: confirmed RDV from tomorrow to end of month
+  var caFuturMois=0;var rdvFuturMois=0;
+  AP.filter(function(a){return a.st==="conf"&&!a.cancelled&&a.date>today&&a.date<=lastOfMonth;}).forEach(function(a){var sv=gS(a.sId);if(sv)caFuturMois+=sv.p;rdvFuturMois++;});
+  // Also add today's remaining
+  caFuturMois+=remainCA;rdvFuturMois+=remainCount;
+  var caPrevMois=caPasseMois+caFuturMois;
+  var rdvPrevMois=rdvPasseMois+rdvFuturMois;
+
   // === DASHBOARD ===
   h+='<div style="border:2px solid var(--gold);border-radius:14px;overflow:hidden;margin-bottom:12px;background:#0a0a0a">';
   // Gold header
-  h+='<div style="background:linear-gradient(135deg,var(--gold),var(--gold-light),var(--gold));padding:7px 14px;display:flex;justify-content:space-between;align-items:center">';
-  h+='<span style="font-family:var(--f1);font-size:11px;font-weight:800;letter-spacing:3px;color:#0a0a0a">CA DU JOUR</span>';
-  h+='<span style="font-size:10px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'</span>';
+  h+='<div style="background:linear-gradient(135deg,var(--gold),var(--gold-light),var(--gold));padding:8px 16px;display:flex;justify-content:space-between;align-items:center">';
+  h+='<span style="font-family:var(--f1);font-size:12px;font-weight:800;letter-spacing:3px;color:#0a0a0a">CA DU JOUR</span>';
+  h+='<span style="font-size:11px;font-weight:700;color:#0a0a0a">'+new Date(today).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'</span>';
   h+='</div>';
   // Total
-  h+='<div style="padding:12px 14px 8px;text-align:center">';
-  h+='<div style="font-family:var(--f1);font-size:36px;font-weight:900;color:var(--gold);line-height:1">'+totalCA.toFixed(2)+' \u20ac <span style="font-size:12px;color:var(--gold);opacity:.5">TTC</span></div>';
-  h+='<div style="font-size:12px;color:var(--gold);opacity:.4;margin-top:2px">HT : '+totalHT.toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:13px;color:#fff;margin-top:3px;font-weight:700">'+totalCount+' client'+(totalCount>1?"s":"")+'</div>';
+  h+='<div style="padding:14px 16px 10px;text-align:center">';
+  h+='<div style="font-family:var(--f1);font-size:40px;font-weight:900;color:var(--gold);line-height:1">'+totalCA.toFixed(2)+' \u20ac <span style="font-size:13px;color:var(--gold);opacity:.5">TTC</span></div>';
+  h+='<div style="font-size:13px;color:var(--gold);opacity:.4;margin-top:2px">HT : '+totalHT.toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:14px;color:#fff;margin-top:4px;font-weight:700">'+totalCount+' client'+(totalCount>1?"s":"")+'</div>';
   h+='</div>';
   // Grid 2x2
-  h+='<div style="padding:0 8px 8px;display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-  h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:10px;padding:8px;text-align:center">';
-  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(doneCA/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:11px;color:var(--green);font-weight:700">\u2705 R\u00e9alis\u00e9 \u2022 '+doneCount+' client'+(doneCount>1?"s":"")+'</div></div>';
-  h+='<div style="background:rgba(74,133,181,.08);border:1px solid rgba(74,133,181,.2);border-radius:10px;padding:8px;text-align:center">';
-  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(remainCA/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:11px;color:var(--blue);font-weight:700">\u23f3 \u00c0 venir \u2022 '+remainCount+' RDV</div></div>';
-  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:8px;text-align:center">';
-  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caServices/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:11px;color:var(--pink);font-weight:700">\u2702\ufe0f Services</div></div>';
-  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:8px;text-align:center">';
-  h+='<div style="font-size:16px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
-  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caProducts/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:11px;color:var(--orange);font-weight:700">\ud83d\udecd Produits</div></div>';
+  h+='<div style="padding:0 10px 8px;display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:10px;padding:10px;text-align:center">';
+  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+doneCA.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(doneCA/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:12px;color:var(--green);font-weight:700">\u2705 R\u00e9alis\u00e9 \u2022 '+doneCount+' cl.</div></div>';
+  h+='<div style="background:rgba(74,133,181,.08);border:1px solid rgba(74,133,181,.2);border-radius:10px;padding:10px;text-align:center">';
+  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+remainCA.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(remainCA/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:12px;color:var(--blue);font-weight:700">\u23f3 \u00c0 venir \u2022 '+remainCount+' RDV</div></div>';
+  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:10px;text-align:center">';
+  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(caServices/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:12px;color:var(--pink);font-weight:700">\u2702\ufe0f Services</div></div>';
+  h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:10px;text-align:center">';
+  h+='<div style="font-size:18px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(caProducts/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
+  h+='<div style="font-size:12px;color:var(--orange);font-weight:700">\ud83d\udecd Produits</div></div>';
+  h+='</div>';
+  // === CA PRÉVISIONNEL DU MOIS ===
+  h+='<div style="margin:0 10px 8px;background:linear-gradient(135deg,rgba(156,39,176,.1),rgba(103,58,183,.08));border:1.5px solid rgba(156,39,176,.25);border-radius:12px;padding:12px">';
+  h+='<div style="text-align:center;font-size:11px;font-weight:800;letter-spacing:2px;color:rgba(206,147,216,.7);text-transform:uppercase;margin-bottom:6px">\ud83d\udcc8 CA Pr\u00e9visionnel \u2014 '+moisStr+'</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">';
+  // Réalisé ce mois
+  h+='<div><div style="font-size:18px;font-weight:900;color:#ce93d8">'+caPasseMois.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caPasseMois/(1+tvaR/100)).toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:rgba(206,147,216,.6);font-weight:700">\u2705 R\u00e9alis\u00e9</div></div>';
+  // Prévisionnel (future booked)
+  h+='<div><div style="font-size:18px;font-weight:900;color:#b39ddb">'+caFuturMois.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caFuturMois/(1+tvaR/100)).toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:rgba(179,157,219,.6);font-weight:700">\ud83d\udcc5 RDV \u00e0 venir</div></div>';
+  // Total prévisionnel
+  h+='<div style="background:rgba(255,255,255,.05);border-radius:8px;padding:4px"><div style="font-size:20px;font-weight:900;color:#fff">'+caPrevMois.toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">HT : '+(caPrevMois/(1+tvaR/100)).toFixed(0)+' \u20ac</div>';
+  h+='<div style="font-size:10px;color:var(--gold);font-weight:700">\ud83c\udfaf Total pr\u00e9v.</div></div>';
+  h+='</div>';
+  h+='<div style="text-align:center;font-size:10px;color:rgba(255,255,255,.25);margin-top:6px">'+rdvPasseMois+' r\u00e9alis\u00e9'+(rdvPasseMois>1?'s':'')+' + '+rdvFuturMois+' \u00e0 venir = '+rdvPrevMois+' RDV</div>';
   h+='</div>';
   // Row: Nveaux clients + collabs
   h+='<div style="padding:0 8px 8px;display:flex;gap:6px">';
@@ -2775,6 +2811,10 @@ function isStylistAvailable(stId, date, timeStr){
   }
   if(!hrs)return false;
   if(m<toM(hrs.o)||m>=toM(hrs.c))return false;
+  // Check recurring pause
+  if(sty.pause&&sty.pause.o&&sty.pause.c){
+    if(m>=toM(sty.pause.o)&&m<toM(sty.pause.c))return false;
+  }
   // Check regular absences
   if(window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
@@ -2829,6 +2869,10 @@ function getBlockedSlots(stId, date){
     }
   }
   if(!hrs){blocks.push({from:"00:00",to:"23:59",label:"Jour de repos",type:"repos"});return blocks;}
+  // Check recurring pause
+  if(sty.pause&&sty.pause.o&&sty.pause.c){
+    blocks.push({from:sty.pause.o,to:sty.pause.c,label:"Pause",type:"pause"});
+  }
   // Check regular absences
   if(window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
@@ -4203,7 +4247,7 @@ function saveSiteConfig(){
       fidelite_type:SC.fideliteType||"pourcentage",
       fidelite_valeur:SC.fideliteValeur||10,
       absences:window.ABSENCES||[],
-      collaborateurs:T.map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null};}),
+      collaborateurs:T.map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null,pause:t.pause||null};}),
       horaires_salon:H,
       updated_at:new Date().toISOString()
     };
@@ -4317,25 +4361,28 @@ function rSettings(){
   if(settTab==="etablissement"){
     var mc=getMetierConfig();
     h+='<div class="sec">\ud83c\udfe2 \u00c9tablissement</div>';
-    // Metier
+    // Metier - compact grid
     h+='<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px">M\u00e9tier / Activit\u00e9</div>';
-    var metiers=[["coiffure","\u2702\ufe0f Salon de coiffure"],["barbier","\ud83d\udc88 Barbershop"],["esthetique","\ud83d\udc86 Institut de beaut\u00e9"],["ongles","\ud83d\udc85 Salon d\u0027ongles"],["bien_etre","\ud83e\uddd8 Centre bien-\u00eatre"]];
+    var metiers=[["coiffure","\u2702\ufe0f","Salon de coiffure"],["barbier","\ud83d\udc88","Barbershop"],["esthetique","\ud83d\udc86","Institut de beaut\u00e9"],["ongles","\ud83d\udc85","Salon d\u0027ongles"],["bien_etre","\ud83e\uddd8","Centre bien-\u00eatre"]];
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px">';
     for(var mi=0;mi<metiers.length;mi++){
       var sel=SALON_CONFIG.metier===metiers[mi][0];
-      h+='<label style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:'+(sel?"rgba(200,168,78,.1)":"transparent")+';border:1px solid '+(sel?"var(--gold)":"transparent")+'">';
-      h+='<input type="radio" name="metier" value="'+metiers[mi][0]+'"'+(sel?" checked":"")+' onchange="SALON_CONFIG.metier=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')">';
-      h+='<span style="font-size:14px">'+metiers[mi][1]+'</span></label>';
+      h+='<div onclick="SALON_CONFIG.metier=\''+metiers[mi][0]+'\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')" style="padding:12px 8px;border-radius:10px;cursor:pointer;text-align:center;background:'+(sel?"rgba(200,168,78,.12)":"rgba(255,255,255,.03)")+';border:2px solid '+(sel?"var(--gold)":"rgba(255,255,255,.08)")+';transition:all .15s">';
+      h+='<div style="font-size:22px;margin-bottom:4px">'+metiers[mi][1]+'</div>';
+      h+='<div style="font-size:11px;font-weight:700;color:'+(sel?"var(--gold)":"rgba(255,255,255,.5)")+'">'+metiers[mi][2]+'</div></div>';
     }
-    h+='</div>';
-    // Mode activite
+    h+='</div></div>';
+    // Mode activite - compact grid
     h+='<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px">Mode d\u0027activit\u00e9</div>';
-    var modes=[["salon","\ud83c\udfe0 En \u00e9tablissement (salon, institut...)"],["domicile","\ud83d\ude97 \u00c0 domicile uniquement"],["mixte","\ud83d\udd00 Mixte (\u00e9tablissement + domicile)"]];
+    var modes=[["salon","\ud83c\udfe0","En \u00e9tablissement"],["domicile","\ud83d\ude97","\u00c0 domicile"],["mixte","\ud83d\udd00","Mixte"]];
+    h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
     for(var di=0;di<modes.length;di++){
       var dsel=(SALON_CONFIG.modeActivite||"salon")===modes[di][0];
-      h+='<label style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;background:'+(dsel?"rgba(200,168,78,.1)":"transparent")+';border:1px solid '+(dsel?"var(--gold)":"transparent")+'">';
-      h+='<input type="radio" name="modeAct" value="'+modes[di][0]+'"'+(dsel?" checked":"")+' onchange="SALON_CONFIG.modeActivite=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')">';
-      h+='<span style="font-size:14px">'+modes[di][1]+'</span></label>';
+      h+='<div onclick="SALON_CONFIG.modeActivite=\''+modes[di][0]+'\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')" style="padding:12px 8px;border-radius:10px;cursor:pointer;text-align:center;background:'+(dsel?"rgba(200,168,78,.12)":"rgba(255,255,255,.03)")+';border:2px solid '+(dsel?"var(--gold)":"rgba(255,255,255,.08)")+';transition:all .15s">';
+      h+='<div style="font-size:22px;margin-bottom:4px">'+modes[di][1]+'</div>';
+      h+='<div style="font-size:11px;font-weight:700;color:'+(dsel?"var(--gold)":"rgba(255,255,255,.5)")+'">'+modes[di][2]+'</div></div>';
     }
+    h+='</div>';
     // Domicile options
     if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
       h+='<div style="margin-top:12px;padding:12px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:10px">';
@@ -4429,6 +4476,20 @@ function rSettings(){
         }else{
           h+='<div style="grid-column:span 2;color:var(--text3);font-style:italic;display:flex;justify-content:space-between;align-items:center"><span>Repos</span><button class="btn bs" style="font-size:10px" onclick="setStyDayOn('+ti+','+dj+')">Activer</button></div>';
         }
+      }
+      h+='</div>';
+      // Pause quotidienne récurrente
+      var stPause=st2.pause||null;
+      h+='<div style="font-weight:700;font-size:13px;margin-top:12px;margin-bottom:6px">\u2615 Pause quotidienne</div>';
+      h+='<div style="display:flex;align-items:center;gap:8px;font-size:12px">';
+      if(stPause){
+        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.o=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()">';
+        h+='<span style="color:var(--text3)">\u00e0</span>';
+        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.c=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()">';
+        h+='<button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="delete T['+ti+'].pause;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();go(\'settings\')">Supprimer</button>';
+      }else{
+        h+='<span style="color:var(--text3);font-style:italic;flex:1">Aucune pause d\u00e9finie</span>';
+        h+='<button class="btn bs" style="font-size:10px" onclick="T['+ti+'].pause={o:\'12:00\',c:\'13:00\'};if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();go(\'settings\')">+ Ajouter</button>';
       }
       h+='</div>';
       // Absences for this stylist
@@ -4852,30 +4913,36 @@ function rSettings(){
     }
   }
   else if(settTab==="caisse"){
-    h+='<div class="sec">\ud83d\udcb0 Caisse & paiements</div><div class="card">';
-    h+='<div class="ct">Modes de paiement actifs</div>';
+    h+='<div class="sec">\ud83d\udcb0 Caisse & paiements</div>';
+    // Modes de paiement - compact grid
+    h+='<div class="card"><div class="ct">Modes de paiement actifs</div>';
     var defMethods=["Esp\u00e8ces","Ch\u00e8que","Carte Bancaire","Bon cadeau","Virement Bancaire","Autre"];
     if(!window.PAY_ACTIVE)window.PAY_ACTIVE={};
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">';
     defMethods.forEach(function(m){
       if(window.PAY_ACTIVE[m]===undefined)window.PAY_ACTIVE[m]=true;
-      h+='<label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border2);font-size:14px;cursor:pointer">';
-      h+='<input type="checkbox" '+(window.PAY_ACTIVE[m]?'checked':'')+' onchange="window.PAY_ACTIVE[\''+m+'\']=this.checked"> '+m+'</label>';
+      h+='<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px;cursor:pointer;background:'+(window.PAY_ACTIVE[m]?'rgba(45,154,94,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(window.PAY_ACTIVE[m]?'rgba(45,154,94,.2)':'rgba(255,255,255,.06)')+'">';
+      h+='<input type="checkbox" '+(window.PAY_ACTIVE[m]?'checked':'')+' onchange="window.PAY_ACTIVE[\''+m+'\']=this.checked;go(\'settings\')"> '+m+'</label>';
     });
+    h+='</div></div>';
+    // Fond de caisse + TVA side by side
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">';
+    h+='<div class="card" style="margin-bottom:0"><div class="ct">Fond de caisse</div>';
+    h+='<div style="display:flex;gap:6px;align-items:center">';
+    h+='<input type="number" id="fondCaisseInput" value="'+(window.CAISSE_DATA?window.CAISSE_DATA.fond:200)+'" min="0" step="10" style="flex:1;text-align:center;font-size:16px;font-weight:800;padding:10px">';
+    h+='<span style="font-size:13px;color:var(--text3)">\u20ac</span></div>';
+    h+='<button class="btn bg" style="width:100%;margin-top:8px;padding:10px;font-weight:700;font-size:12px" onclick="saveFondCaisse()">Valider</button>';
     h+='</div>';
-    h+='<div class="card" style="margin-top:14px"><div class="ct">Fond de caisse</div>';
-    h+='<div style="font-size:13px;color:var(--text3);margin-bottom:8px">Montant fixe permanent dans le tiroir-caisse. Non modifiable depuis la gestion de caisse.</div>';
-    h+='<div class="fg"><label>Montant (\u20ac)</label><input type="number" id="fondCaisseInput" value="'+(window.CAISSE_DATA?window.CAISSE_DATA.fond:200)+'" min="0" step="10" style="text-align:center;font-size:18px;padding:12px"></div>';
-    h+='<button class="btn bg" style="width:100%;margin-top:10px;padding:12px;font-weight:700" onclick="saveFondCaisse()">Valider</button>';
-    h+='</div>';
-    h+='<div class="card" style="margin-top:14px"><div class="ct">R\u00e9glage TVA</div>';
-    h+='<div style="font-size:13px;color:var(--text3);margin-bottom:8px">Taux de TVA appliqu\u00e9 sur les prestations et produits. Utilis\u00e9 pour les bandes Z et tickets.</div>';
-    h+='<div class="fg"><label>Taux de TVA (%)</label><input type="number" id="tvaInput" value="'+(SALON_CONFIG.tauxTVA||20)+'" min="0" max="30" step="0.1" style="text-align:center;font-size:18px;padding:12px"></div>';
-    h+='<div style="font-size:12px;color:var(--text3);margin-top:6px">France m\u00e9tropole : 20% | DOM : variable | Micro-entreprise non assujettie : 0%</div>';
-    h+='<button class="btn bg" style="width:100%;margin-top:10px;padding:12px;font-weight:700" onclick="saveTVA()">Valider le taux</button>';
-    h+='</div>';
-    h+='<div class="card" style="margin-top:14px"><div class="ct">Affichage TVA sur tickets</div>';
-    h+='<div style="font-size:13px;color:var(--text3);margin-bottom:8px">Afficher la ventilation TVA (HT / TVA / TTC) sur les tickets remis aux clients.</div>';
-    h+='<label style="display:flex;align-items:center;gap:10px;padding:10px 0;font-size:14px;cursor:pointer"><input type="checkbox" '+(window.SHOW_TVA_TICKET?'checked':'')+' onchange="window.SHOW_TVA_TICKET=this.checked"> Afficher TVA sur les tickets</label>';
+    h+='<div class="card" style="margin-bottom:0"><div class="ct">Taux TVA</div>';
+    h+='<div style="display:flex;gap:6px;align-items:center">';
+    h+='<input type="number" id="tvaInput" value="'+(SALON_CONFIG.tauxTVA||20)+'" min="0" max="30" step="0.1" style="flex:1;text-align:center;font-size:16px;font-weight:800;padding:10px">';
+    h+='<span style="font-size:13px;color:var(--text3)">%</span></div>';
+    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">M\u00e9tropole: 20% | Micro: 0%</div>';
+    h+='<button class="btn bg" style="width:100%;margin-top:8px;padding:10px;font-weight:700;font-size:12px" onclick="saveTVA()">Valider</button>';
+    h+='</div></div>';
+    // TVA sur tickets
+    h+='<div class="card" style="margin-top:10px">';
+    h+='<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer"><input type="checkbox" '+(window.SHOW_TVA_TICKET?'checked':'')+' onchange="window.SHOW_TVA_TICKET=this.checked"> Afficher TVA (HT/TVA/TTC) sur les tickets clients</label>';
     h+='</div>';
   }
 
