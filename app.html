@@ -4222,9 +4222,9 @@ function clickAppt(id){
 
 // Appointment editing helpers
 function getApptPhases(a){
-  if(a.aPhases)return a.aPhases;
+  if(a.aPhases&&a.aPhases.length)return a.aPhases;
   var sv=gS(a.sId);
-  if(sv&&sv.phases){
+  if(sv&&sv.phases&&sv.phases.length){
     // Deep copy so edits are per-appointment
     a.aPhases=JSON.parse(JSON.stringify(sv.phases));
     return a.aPhases;
@@ -4252,14 +4252,15 @@ async function updApptPhaseCollab(id,idx,stId){
   var phStart=toM(a.time);
   for(var pi=0;pi<idx;pi++)phStart+=ph[pi].d;
   var phEnd=phStart+ph[idx].d;
-  // Check if new collaborator is available during this phase
+  // Warn if collaborator has a conflict, but don't block (salon owner decides)
   var blocked=isStylistBlockedDuring(stId,a.date,phStart,phEnd);
   if(blocked){
     var blockedName=gT(stId)?gT(stId).n:"Ce collaborateur";
     var phStartH=String(Math.floor(phStart/60)).padStart(2,"0")+":"+String(phStart%60).padStart(2,"0");
     var phEndH=String(Math.floor(phEnd/60)).padStart(2,"0")+":"+String(phEnd%60).padStart(2,"0");
-    alert(blockedName+" est indisponible de "+phStartH+" à "+phEndH+" ("+(blocked.label||"Indisponible")+")");
-    go("planning");setTimeout(function(){clickAppt(id);},150);return;
+    if(!confirm(blockedName+" est normalement indisponible de "+phStartH+" à "+phEndH+" ("+( blocked.label||"Indisponible")+").\n\nAssigner quand même ?")){
+      go("planning");setTimeout(function(){clickAppt(id);},150);return;
+    }
   }
   ph[idx].stId=stId;
   // If it's the first work phase, also update main stId (determines column)
