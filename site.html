@@ -272,6 +272,15 @@ async function loadSalon(){
         }
       }catch(e){console.log("Absences fallback:",e);}
     }
+    // Load cartes d'abonnement config from config_json
+    window.SITE_CARTES_ABO=[];
+    try{
+      var cfgCA=await sb.from("salons").select("config_json").eq("id",salonId).limit(1);
+      if(cfgCA.data&&cfgCA.data[0]&&cfgCA.data[0].config_json){
+        var cfgParsed=typeof cfgCA.data[0].config_json==="string"?JSON.parse(cfgCA.data[0].config_json):cfgCA.data[0].config_json;
+        if(cfgParsed.cartes_abo&&cfgParsed.cartes_abo.length)window.SITE_CARTES_ABO=cfgParsed.cartes_abo;
+      }
+    }catch(e){}
     // Check if site is active (Worker sets this to false when plan is Essential)
     if(SITE_CFG.actif===false){
       showError("Ce site n'est pas disponible actuellement.");
@@ -540,6 +549,7 @@ async function loadClientRDVs(){
 
 
 function renderSite(){
+  if(CLIENT)checkClientCarteAbo();
   var adr=SALON.adresse+(SALON.cp?", "+SALON.cp:"")+(SALON.ville?" "+SALON.ville:"");
   var h='';
   // Header
@@ -1086,6 +1096,31 @@ function renderBookingStep4(){
   }
   h+='</div>';
   
+  // Carte d'abonnement suggestion (if salon has cards and client has none)
+  if(window.SITE_CARTES_ABO&&window.SITE_CARTES_ABO.length>0&&!CLIENT_CARTE_ABO){
+    var bestCA=window.SITE_CARTES_ABO[0];
+    var potEco=Math.round(svc.p*bestCA.remiseServices/100*100)/100;
+    h+='<div style="margin:16px 0;padding:16px;background:linear-gradient(135deg,rgba(200,168,78,.1),rgba(200,168,78,.03));border:1.5px solid rgba(200,168,78,.25);border-radius:14px">';
+    h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">';
+    h+='<div style="font-size:24px">\ud83d\udcb3</div>';
+    h+='<div style="font-weight:800;font-size:15px;color:var(--gold)">Carte d\u2019abonnement disponible !</div></div>';
+    h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:10px">Souscrivez \u00e0 la carte <strong style="color:#fff">'+bestCA.nom+'</strong> pour <strong style="color:var(--gold)">'+bestCA.tarif+' \u20ac</strong> et b\u00e9n\u00e9ficiez de :</div>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:10px">';
+    h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(255,255,255,.04);border-radius:10px;border:1px solid rgba(255,255,255,.08)"><div style="font-size:20px;font-weight:900;color:var(--gold)">-'+bestCA.remiseServices+'%</div><div style="font-size:10px;color:var(--text3)">sur les services</div></div>';
+    h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(255,255,255,.04);border-radius:10px;border:1px solid rgba(255,255,255,.08)"><div style="font-size:20px;font-weight:900;color:var(--gold)">-'+bestCA.remiseForfaits+'%</div><div style="font-size:10px;color:var(--text3)">sur les forfaits</div></div>';
+    h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(76,175,80,.08);border-radius:10px;border:1px solid rgba(76,175,80,.15)"><div style="font-size:20px;font-weight:900;color:#4caf50">'+bestCA.duree+'</div><div style="font-size:10px;color:var(--text3)">mois</div></div>';
+    h+='</div>';
+    if(potEco>0)h+='<div style="font-size:12px;color:var(--text3);text-align:center">\ud83d\udca1 Sur cette prestation, vous auriez \u00e9conomis\u00e9 <strong style="color:#4caf50">'+potEco.toFixed(2)+' \u20ac</strong>. Demandez votre carte lors de votre visite !</div>';
+    h+='</div>';
+  }
+  // Active carte badge
+  if(CLIENT_CARTE_ABO){
+    h+='<div style="margin:12px 0;padding:12px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);border-radius:10px;display:flex;align-items:center;gap:10px">';
+    h+='<div style="font-size:20px">\ud83d\udcb3</div>';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#4caf50">Carte '+CLIENT_CARTE_ABO.carteNom+' active</div>';
+    h+='<div style="font-size:11px;color:var(--text3)">-'+CLIENT_CARTE_ABO.remiseServices+'% sur les services \u2022 \u00c9conomies cumul\u00e9es : '+(CLIENT_CARTE_ABO.eco||0).toFixed(0)+' \u20ac</div></div></div>';
+  }
+
   // Form
   var cNom=CLIENT?CLIENT.nom:"",cPre=CLIENT?(CLIENT.prenom||""):"",cTel=CLIENT?(CLIENT.telephone||""):"",cEm=CLIENT?CLIENT.email:"";
   h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="bkNom" required value="'+cNom+'"></div><div class="fg"><label>Pr\u00e9nom</label><input id="bkPre" value="'+cPre+'"></div></div>';
@@ -1652,6 +1687,23 @@ function closeLightbox(){document.getElementById("authModal").innerHTML="";}
 // Helpers
 function toMin(t){var p=t.split(":");return parseInt(p[0])*60+parseInt(p[1]);}
 function fromMin(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
+// === Carte d'abonnement (site) ===
+var CLIENT_CARTE_ABO=null;
+async function checkClientCarteAbo(){
+  CLIENT_CARTE_ABO=null;
+  if(!CLIENT||!salonId)return;
+  try{
+    var r=await sb.from("cartes_abo_clients").select("*").eq("salon_id",salonId).eq("client_id",CLIENT.id).eq("status","active").limit(1);
+    if(r.data&&r.data[0]){
+      var c=r.data[0];
+      var today=new Date().toISOString().slice(0,10);
+      if(!c.date_expiration||c.date_expiration>=today){
+        CLIENT_CARTE_ABO={id:c.id,carteNom:c.carte_nom,remiseServices:Number(c.remise_services),remiseForfaits:Number(c.remise_forfaits),dateExp:c.date_expiration,eco:Number(c.economies_totales)||0};
+      }
+    }
+  }catch(e){}
+}
+
 function formatDateFR(ds){if(!ds)return"";var p=ds.split("-");var dt=new Date(p[0],p[1]-1,p[2]);var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];var mois=["janvier","f\u00e9vrier","mars","avril","mai","juin","juillet","ao\u00fbt","septembre","octobre","novembre","d\u00e9cembre"];return jours[dt.getDay()]+" "+p[2]+" "+mois[dt.getMonth()]+" "+p[0];}
 </script>
 </body>
