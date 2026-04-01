@@ -200,6 +200,7 @@ function renderDashboard(){
   h+='<div class="tab'+(TAB==="rdv"?" active":"")+'" onclick="TAB=\'rdv\';loadMyRdvs()">\ud83d\udcc5 Mes RDV</div>';
   h+='<div class="tab'+(TAB==="tickets"?" active":"")+'" onclick="TAB=\'tickets\';render()">\ud83c\udfab Tickets</div>';
   h+='<div class="tab'+(TAB==="fidelite"?" active":"")+'" onclick="TAB=\'fidelite\';render()">\ud83c\udf1f Fid\u00e9lit\u00e9</div>';
+  h+='<div class="tab'+(TAB==="cartes"?" active":"")+'" onclick="TAB=\'cartes\';render()">\ud83d\udcb3 Cartes</div>';
   h+='<div class="tab'+(TAB==="profile"?" active":"")+'" onclick="TAB=\'profile\';render()">\ud83d\udc64 Profil</div>';
   h+='<div class="tab'+(TAB==="settings"?" active":"")+'" onclick="TAB=\'settings\';render()">\u2699\ufe0f R\u00e9glages</div>';
   h+='</div>';
@@ -207,6 +208,7 @@ function renderDashboard(){
   if(TAB==="rdv")h+=renderRdvTab();
   else if(TAB==="tickets")h+=renderTicketsTab();
   else if(TAB==="fidelite")h+=renderFideliteTab();
+  else if(TAB==="cartes")h+=renderCartesTab();
   else if(TAB==="profile")h+=renderProfileTab();
   else if(TAB==="settings")h+=renderSettingsTab();
   
@@ -399,6 +401,108 @@ function renderFideliteTab(){
     }
     h+='</div>';
   });
+  
+  h+='</div>';
+  return h;
+}
+
+// --- CARTES D'ABONNEMENT TAB ---
+var CARTES_ABO_DATA=[];
+var _cartesLoaded=false;
+
+async function loadCartesAbo(){
+  if(!CLIENT||_cartesLoaded)return;
+  try{
+    // Fetch by client_id
+    var r=await api("cartes_abo_clients?select=*&client_id=eq."+CLIENT.id+"&order=created_at.desc");
+    var data=await r.json();
+    if(Array.isArray(data))CARTES_ABO_DATA=data;
+    // Also try by email if nothing found
+    if(!CARTES_ABO_DATA.length&&CLIENT.email){
+      var r2=await api("cartes_abo_clients?select=*&client_id=eq."+encodeURIComponent(CLIENT.email)+"&order=created_at.desc");
+      var d2=await r2.json();
+      if(Array.isArray(d2)&&d2.length)CARTES_ABO_DATA=d2;
+    }
+    // Enrich with salon name from salons_public
+    for(var ci=0;ci<CARTES_ABO_DATA.length;ci++){
+      if(!CARTES_ABO_DATA[ci].salon_nom){
+        try{
+          var sr=await api("salons_public?select=nom&id=eq."+CARTES_ABO_DATA[ci].salon_id);
+          var sd=await sr.json();
+          if(Array.isArray(sd)&&sd[0])CARTES_ABO_DATA[ci].salon_nom=sd[0].nom;
+        }catch(e){}
+      }
+    }
+    _cartesLoaded=true;
+  }catch(e){console.log("Cartes abo load error:",e);}
+}
+
+function renderCartesTab(){
+  var h='';
+  h+='<div class="section"><div class="section-title">\ud83d\udcb3 Mes cartes d\u2019abonnement</div>';
+  
+  if(!_cartesLoaded){
+    loadCartesAbo().then(function(){render();});
+    h+='<div class="card" style="text-align:center;padding:30px;color:var(--text3)">Chargement...</div>';
+    h+='</div>';
+    return h;
+  }
+  
+  if(!CARTES_ABO_DATA.length){
+    h+='<div class="empty"><div class="ico">\ud83d\udcb3</div>Aucune carte d\u2019abonnement<br><span style="font-size:12px;color:var(--text3)">Vos cartes appara\u00eetront ici apr\u00e8s souscription</span></div>';
+    h+='</div>';
+    return h;
+  }
+  
+  var today=new Date().toISOString().slice(0,10);
+  var actives=CARTES_ABO_DATA.filter(function(c){return c.status==="active"&&(!c.date_expiration||c.date_expiration>=today);});
+  var expirees=CARTES_ABO_DATA.filter(function(c){return c.status!=="active"||(c.date_expiration&&c.date_expiration<today);});
+  
+  // Total economies
+  var totalEco=0;
+  CARTES_ABO_DATA.forEach(function(c){totalEco+=Number(c.economies_totales)||0;});
+  
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">';
+  h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--gold)">'+actives.length+'</div><div style="font-size:12px;color:var(--text3)">Carte'+(actives.length>1?'s':'')+' active'+(actives.length>1?'s':'')+'</div></div>';
+  h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--green)">'+totalEco.toFixed(0)+' \u20ac</div><div style="font-size:12px;color:var(--text3)">\u00c9conomies totales</div></div>';
+  h+='</div>';
+  
+  // Active cards
+  if(actives.length){
+    h+='<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px">Cartes actives</div>';
+    actives.forEach(function(c){
+      var daysLeft=Math.max(0,Math.ceil((new Date(c.date_expiration)-new Date())/(1000*60*60*24)));
+      var eco=Number(c.economies_totales)||0;
+      h+='<div class="card" style="margin-bottom:10px;border-left:3px solid var(--gold)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      h+='<div><div style="font-weight:800;font-size:15px;color:var(--gold)">\ud83d\udcb3 '+c.carte_nom+'</div>';
+      h+='<div style="font-size:12px;color:var(--text3)">'+(c.salon_nom||"Salon")+' \u2022 Depuis le '+(c.date_achat||"\u2014")+'</div></div>';
+      h+='<div style="font-size:10px;font-weight:800;background:rgba(74,222,128,.1);color:var(--green);padding:4px 10px;border-radius:6px">ACTIVE</div></div>';
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">';
+      h+='<div style="text-align:center;padding:8px;background:rgba(255,255,255,.03);border-radius:8px"><div style="font-size:18px;font-weight:900">-'+(c.remise_services||0)+'%</div><div style="font-size:10px;color:var(--text3)">Services</div></div>';
+      h+='<div style="text-align:center;padding:8px;background:rgba(255,255,255,.03);border-radius:8px"><div style="font-size:18px;font-weight:900">-'+(c.remise_forfaits||0)+'%</div><div style="font-size:10px;color:var(--text3)">Forfaits</div></div>';
+      h+='<div style="text-align:center;padding:8px;background:rgba(74,222,128,.1);border-radius:8px"><div style="font-size:18px;font-weight:900;color:var(--green)">'+eco.toFixed(0)+'\u20ac</div><div style="font-size:10px;color:var(--text3)">\u00c9conomies</div></div>';
+      h+='</div>';
+      h+='<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3)">';
+      h+='<span>Expire le '+(c.date_expiration||"\u2014")+'</span>';
+      h+='<span>'+daysLeft+' jour'+(daysLeft>1?'s':'')+' restant'+(daysLeft>1?'s':'')+'</span></div>';
+      h+='</div>';
+    });
+  }
+  
+  // Expired/old cards
+  if(expirees.length){
+    h+='<div style="font-size:13px;font-weight:700;color:var(--text3);margin:16px 0 8px">Historique</div>';
+    expirees.forEach(function(c){
+      var eco=Number(c.economies_totales)||0;
+      h+='<div class="card" style="margin-bottom:6px;opacity:.6">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      h+='<div><div style="font-weight:700;font-size:13px">\ud83d\udcb3 '+c.carte_nom+'</div>';
+      h+='<div style="font-size:11px;color:var(--text3)">'+(c.salon_nom||"Salon")+' \u2022 '+(c.date_achat||"")+' \u2192 '+(c.date_expiration||"")+'</div></div>';
+      h+='<div style="text-align:right"><div style="font-size:14px;font-weight:800;color:var(--text3)">'+eco.toFixed(0)+'\u20ac \u00e9co.</div></div></div>';
+      h+='</div>';
+    });
+  }
   
   h+='</div>';
   return h;

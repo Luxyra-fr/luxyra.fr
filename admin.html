@@ -247,6 +247,12 @@ async function loadData(){
     }
     var bs=document.getElementById("badgeSalons");
     if(bs)bs.textContent=SALONS.length||"";
+    // Load cartes abo global stats
+    try{
+      var cac=await _sb.from("cartes_abo_clients").select("id,tarif,economies_totales,status",{count:"exact"}).eq("status","active");
+      window.ADMIN_CARTES_STATS={total:cac.count||0,eco:0,ca:0};
+      if(cac.data)cac.data.forEach(function(c){window.ADMIN_CARTES_STATS.eco+=(Number(c.economies_totales)||0);window.ADMIN_CARTES_STATS.ca+=(Number(c.tarif)||0);});
+    }catch(e){window.ADMIN_CARTES_STATS={total:0,eco:0,ca:0};}
   }catch(e){console.error(e);}
 }
 
@@ -314,6 +320,8 @@ function rDashboard(){
   h+='<div class="kpi"><div class="kpi-label">En essai</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
   h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
   if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non vérifiés</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents à contrôler</div><div class="kpi-icon">📋</div></div>';
+  var cs=window.ADMIN_CARTES_STATS||{total:0,eco:0,ca:0};
+  if(cs.total>0)h+='<div class="kpi"><div class="kpi-label">Cartes abo</div><div class="kpi-value" style="color:#4caf50">'+cs.total+'</div><div class="kpi-sub">Actives \u2022 CA: '+fmtM(cs.ca)+' \u2022 \u00c9co: '+fmtM(cs.eco)+'</div><div class="kpi-icon">\ud83d\udcb3</div></div>';
   h+='</div>';
   var nd=DEMANDES.filter(function(d){return d.status==="new";});
   if(nd.length){
@@ -444,6 +452,31 @@ function openD(id){
   h+='<button class="dp-btn" onclick="addSmsCreditsCustom(&#39;'+s.id+'&#39;)">Autre montant</button>';
   h+='<button class="dp-btn" style="color:var(--orange)" onclick="resetSmsCredits(&#39;'+s.id+'&#39;)">Remettre \u00e0 0</button>';
   h+='</div></div>';
+
+  // CARTES D'ABONNEMENT
+  h+='<div class="dp-section"><div class="dp-label">\ud83d\udcb3 Cartes d\u2019abonnement</div>';
+  h+='<div id="dpCartes_'+s.id+'" style="font-size:12px;color:var(--text3)">Chargement...</div></div>';
+  // Async load cartes for this salon
+  (async function(sId){
+    try{
+      var cr=await _sb.from("cartes_abo_clients").select("id,carte_nom,client_nom,tarif,economies_totales,date_expiration,status").eq("salon_id",sId);
+      var el=document.getElementById("dpCartes_"+sId);if(!el)return;
+      if(!cr.data||!cr.data.length){el.innerHTML='<div style="color:var(--text3);font-size:12px">Aucune carte vendue</div>';return;}
+      var actives=cr.data.filter(function(c){return c.status==="active";});
+      var totalCA=0;var totalEco=0;cr.data.forEach(function(c){totalCA+=Number(c.tarif)||0;totalEco+=Number(c.economies_totales)||0;});
+      var h2='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px">';
+      h2+='<div style="text-align:center;padding:6px;background:var(--bg3);border-radius:8px"><div style="font-size:18px;font-weight:800;color:var(--gold)">'+actives.length+'</div><div style="font-size:9px;color:var(--text3)">Actives</div></div>';
+      h2+='<div style="text-align:center;padding:6px;background:var(--bg3);border-radius:8px"><div style="font-size:18px;font-weight:800">'+totalCA.toFixed(0)+'\u20ac</div><div style="font-size:9px;color:var(--text3)">CA cartes</div></div>';
+      h2+='<div style="text-align:center;padding:6px;background:var(--bg3);border-radius:8px"><div style="font-size:18px;font-weight:800;color:#4caf50">'+totalEco.toFixed(0)+'\u20ac</div><div style="font-size:9px;color:var(--text3)">\u00c9co clients</div></div>';
+      h2+='</div>';
+      actives.forEach(function(c){
+        h2+='<div style="display:flex;justify-content:space-between;font-size:11px;padding:4px 0;border-bottom:1px solid var(--border)">';
+        h2+='<span>\ud83d\udcb3 <strong>'+c.carte_nom+'</strong> \u2014 '+(c.client_nom||"?")+'</span>';
+        h2+='<span style="color:var(--text3)">Exp. '+(c.date_expiration||"\u2014")+'</span></div>';
+      });
+      el.innerHTML=h2;
+    }catch(e){var el2=document.getElementById("dpCartes_"+sId);if(el2)el2.innerHTML='<div style="color:var(--text3);font-size:11px">Erreur chargement</div>';}
+  })(s.id);
 
   // NOTES
   h+='<div class="dp-section"><div class="dp-label">📝 Notes internes</div>';
