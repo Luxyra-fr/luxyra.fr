@@ -1031,17 +1031,22 @@ async function submitCancelRdv(rdvId){
   var reason=document.getElementById("cancelReason").value;
   if(!reason){alert("Veuillez indiquer un motif");return;}
   try{
-    await api("rdv_online?id=eq."+rdvId,{method:"PATCH",body:JSON.stringify({
-      status:"cancelled",
-      cancelled_by:"client",
-      cancel_reason:reason,
-      cancelled_at:new Date().toISOString()
-    })});
+    // Use worker endpoint (bypasses RLS with service key)
+    var res=await fetch("/api/rdv/cancel",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({rdv_id:rdvId,reason:reason,cancelled_by:"client"})
+    });
+    var data=await res.json();
+    if(!data.success){alert("Erreur: "+(data.error||"Annulation impossible"));return;}
     closePopup("cancelModal");
+    // Update local + force reload from DB
     var r=CLIENT_RDVS.find(function(x){return x.id===rdvId;});
     if(r){r.status="cancelled";}
     showToast("\u2705 Rendez-vous annul\u00e9");
     render();
+    // Reload from DB to ensure consistency
+    loadMyRdvs();
   }catch(e){alert("Erreur: "+e.message);}
 }
 
