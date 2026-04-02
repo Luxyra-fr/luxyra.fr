@@ -865,6 +865,15 @@ async function usePackSeance(packId) {
 // Sauvegarder une carte d'abonnement client
 async function saveCarteAboClient(carte) {
   if (!_sb || !_salonId) return;
+  // Always resolve email from clients table as cross-salon identifier (same pattern as fidelite)
+  if (!carte.clientBpId && carte.clientId) {
+    try {
+      var clLookup = await _sb.from("clients").select("email").eq("id", carte.clientId).limit(1);
+      if (clLookup.data && clLookup.data[0] && clLookup.data[0].email) {
+        carte.clientBpId = clLookup.data[0].email;
+      }
+    } catch(e) {}
+  }
   var data = {
     salon_id: _salonId,
     client_id: carte.clientId || "",
