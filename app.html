@@ -10112,6 +10112,7 @@ function doVenteCarteAbo(clientId,caIdx){
   window.CARTES_ABO_CLIENTS.push(carteClient);
   if(typeof saveCarteAboClient==="function")saveCarteAboClient(carteClient);
   auditLog("CARTE_ABO_VENDUE",ca.nom+" \u00e0 "+cName(c)+" pour "+ca.tarif+"\u20ac (expire "+dateExp+")");
+  sendCarteWelcome(clientId,carteClient);
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.");},500);
   cM();
   // Ouvrir la caisse avec la carte comme article
@@ -10156,6 +10157,7 @@ function doVenteCarteAboFromCaisse(caIdx){
   window.CARTES_ABO_CLIENTS.push(carteClient);
   if(typeof saveCarteAboClient==="function")saveCarteAboClient(carteClient);
   auditLog("CARTE_ABO_VENDUE",ca.nom+" \u00e0 "+cName(c)+" pour "+ca.tarif+"\u20ac");
+  sendCarteWelcome(cId,carteClient);
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email. La carte fonctionne ici, mais ne sera pas visible dans son espace client. Ajoutez un email dans sa fiche.");},500);
   // Ajouter la carte au ticket (prix fixe, jamais de remise)
   _tk.items.push({sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true});
@@ -11980,7 +11982,7 @@ function rMarketing(){
   
   // Tabs
   h+='<div style="display:flex;gap:0;margin-bottom:16px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.1)">';
-  var tabs=[{k:"campagnes",l:"\ud83d\udce3 Campagnes"},{k:"rappels",l:"\ud83d\udd14 Rappels RDV"},{k:"config",l:"\u2699\ufe0f Configuration"}];
+  var tabs=[{k:"campagnes",l:"\ud83d\udce3 Campagnes"},{k:"auto",l:"\ud83d\udcb3 Automatisations"},{k:"rappels",l:"\ud83d\udd14 Rappels RDV"},{k:"config",l:"\u2699\ufe0f Configuration"}];
   for(var i=0;i<tabs.length;i++){
     var t=tabs[i];var isSel=tab===t.k;
     h+='<button onclick="window.MKT_TAB=\''+t.k+'\';go(\'marketing\')" style="flex:1;padding:12px 8px;font-size:12px;font-weight:700;border:none;cursor:pointer;'+(isSel?"background:var(--gold);color:#000":"background:rgba(255,255,255,.04);color:rgba(255,255,255,.6)")+'">'+t.l+'</button>';
@@ -12033,6 +12035,57 @@ function rMarketing(){
       }
       h+='</div>';
     }
+  }
+  
+  else if(tab==="auto"){
+    // Init carte notification defaults in SMS_CONFIG
+    if(!smsC.carteWelcomeActif)smsC.carteWelcomeActif=false;
+    if(!smsC.carteWelcomeSms)smsC.carteWelcomeSms="{prenom}, bienvenue dans le programme {carte} ! \ud83d\udcb3 Profitez de -{remise}% sur vos prestations pendant {duree} mois chez {salon}.";
+    if(!smsC.carteWelcomeEmail)smsC.carteWelcomeEmail="Bonjour {prenom},\n\nF\u00e9licitations ! Votre carte {carte} est activ\u00e9e.\n\nVos avantages :\n\u2022 -{remise}% sur les services\n\u2022 Valable {duree} mois (jusqu\u2019au {date_exp})\n\n\u00c0 tr\u00e8s bient\u00f4t !\n{salon}";
+    if(!smsC.carteRappel30Actif)smsC.carteRappel30Actif=false;
+    if(!smsC.carteRappel30Sms)smsC.carteRappel30Sms="{prenom}, votre carte {carte} expire dans 30 jours. \ud83d\udcb3 Pensez \u00e0 la renouveler chez {salon} pour continuer \u00e0 profiter de vos remises !";
+    if(!smsC.carteRappel7Actif)smsC.carteRappel7Actif=false;
+    if(!smsC.carteRappel7Sms)smsC.carteRappel7Sms="{prenom}, votre carte {carte} expire dans 7 jours ! \u26a0 Renouvelez-la vite chez {salon}.";
+
+    h+='<div class="sec">\ud83d\udcb3 Notifications carte d\u2019abonnement</div>';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">Envoyez automatiquement des notifications par SMS et email \u00e0 vos clients porteurs de carte, via Brevo.</div>';
+
+    // Bienvenue carte
+    h+='<div class="card" style="margin-bottom:14px">';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83c\udf89 Bienvenue carte (achat)</span><input type="checkbox" '+(smsC.carteWelcomeActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.carteWelcomeActif=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="font-size:12px;color:rgba(255,255,255,.4);padding:6px 0">Envoy\u00e9 automatiquement quand un client ach\u00e8te une carte.</div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message SMS</label>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.carteWelcomeSms=this.value;saveSmsConfig()">'+smsC.carteWelcomeSms+'</textarea></div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message Email</label>';
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.carteWelcomeEmail=this.value;saveSmsConfig()">'+smsC.carteWelcomeEmail+'</textarea></div>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon} {carte} {tarif} {remise} {duree} {date_exp}</div>';
+    h+='</div>';
+
+    // Rappel 30 jours
+    h+='<div class="card" style="margin-bottom:14px">';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\u23f0 Rappel 30 jours avant expiration</span><input type="checkbox" '+(smsC.carteRappel30Actif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.carteRappel30Actif=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="font-size:12px;color:rgba(255,255,255,.4);padding:6px 0">SMS automatique 30 jours avant l\u2019expiration de la carte.</div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message SMS</label>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.carteRappel30Sms=this.value;saveSmsConfig()">'+smsC.carteRappel30Sms+'</textarea></div>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon} {carte} {date_exp} {economies}</div>';
+    h+='</div>';
+
+    // Rappel 7 jours
+    h+='<div class="card" style="margin-bottom:14px">';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\u26a0 Rappel 7 jours avant expiration</span><input type="checkbox" '+(smsC.carteRappel7Actif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.carteRappel7Actif=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="font-size:12px;color:rgba(255,255,255,.4);padding:6px 0">SMS automatique 7 jours avant l\u2019expiration de la carte.</div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message SMS</label>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.carteRappel7Sms=this.value;saveSmsConfig()">'+smsC.carteRappel7Sms+'</textarea></div>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon} {carte} {date_exp} {economies}</div>';
+    h+='</div>';
+
+    // Stats
+    var nbCartesActives=(window.CARTES_ABO_CLIENTS||[]).filter(function(c){return c.status==="active";}).length;
+    h+='<div class="card" style="border-left:4px solid #4caf50">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    h+='<div><div style="font-weight:700;font-size:14px">\ud83d\udcb3 '+nbCartesActives+' carte'+(nbCartesActives>1?'s':'')+' active'+(nbCartesActives>1?'s':'')+'</div>';
+    h+='<div style="font-size:12px;color:var(--text3)">Les notifications sont envoy\u00e9es via Brevo (SMS + Email)</div></div>';
+    h+='</div></div>';
   }
   
   else if(tab==="rappels"){
@@ -12747,6 +12800,85 @@ try{var _smsS=localStorage.getItem("_cp_sms_sent");if(_smsS)window._smsSent=JSON
 // Check reminders every 10 minutes
 setInterval(checkSmsReminders,600000);
 setTimeout(checkSmsReminders,30000);// First check after 30s
+
+// === CARTE D'ABONNEMENT NOTIFICATIONS (Brevo) ===
+function buildCarteNotifText(template,vars){
+  return template.replace(/\{prenom\}/g,vars.prenom||"").replace(/\{nom\}/g,vars.nom||"").replace(/\{salon\}/g,vars.salon||SALON_CONFIG.nom).replace(/\{carte\}/g,vars.carte||"").replace(/\{tarif\}/g,vars.tarif||"").replace(/\{remise\}/g,vars.remise||"").replace(/\{duree\}/g,vars.duree||"").replace(/\{date_exp\}/g,vars.date_exp||"").replace(/\{economies\}/g,vars.economies||"0");
+}
+
+function buildCarteEmailHTML(vars,bodyText){
+  var gold="#c8a84e";var salonNom=SALON_CONFIG.nom||"";
+  var h='<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0a0a0a;font-family:Arial,sans-serif">';
+  h+='<div style="max-width:500px;margin:0 auto;padding:20px">';
+  h+='<div style="text-align:center;padding:20px 0;border-bottom:1px solid #2a2a30">';
+  if(SALON_CONFIG.logo)h+='<img src="'+SALON_CONFIG.logo+'" style="height:40px;margin-bottom:8px" alt="">';
+  h+='<div style="font-size:22px;font-weight:800;color:'+gold+'">'+salonNom+'</div></div>';
+  h+='<div style="padding:24px 16px;background:#141418;border-radius:12px;margin:16px 0;border:1px solid #2a2a30">';
+  h+='<div style="text-align:center;font-size:36px;margin-bottom:12px">\ud83d\udcb3</div>';
+  h+='<div style="font-size:15px;color:#f5f5f7;line-height:1.7;text-align:center">'+bodyText.replace(/\n/g,"<br>")+'</div>';
+  h+='</div>';
+  h+='<div style="text-align:center;padding:16px;font-size:11px;color:#606070">';
+  h+=salonNom+'<br>'+(SALON_CONFIG.adresse||"")+(SALON_CONFIG.cp?" "+SALON_CONFIG.cp:"")+(SALON_CONFIG.ville?" "+SALON_CONFIG.ville:"");
+  if(SALON_CONFIG.tel)h+='<br>'+SALON_CONFIG.tel;
+  h+='</div></div></body></html>';
+  return h;
+}
+
+function sendCarteWelcome(clientId,carteClient){
+  var cfg=window.SMS_CONFIG;if(!cfg||!cfg.carteWelcomeActif)return;
+  var cl=gC(clientId);if(!cl)return;
+  var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom,carte:carteClient.carteNom,tarif:carteClient.tarif,remise:carteClient.remiseServices,duree:Math.round((new Date(carteClient.dateExp)-new Date(carteClient.dateAchat))/(1000*60*60*24*30)),date_exp:fmt(carteClient.dateExp)};
+  // SMS
+  if(cl.smsOk&&cl.ph&&cfg.carteWelcomeSms){
+    var txt=buildCarteNotifText(cfg.carteWelcomeSms,vars);
+    sendSms(cl.ph,txt);
+  }
+  // Email
+  if(cl.emOk&&cl.em&&cfg.carteWelcomeEmail){
+    var emailBody=buildCarteNotifText(cfg.carteWelcomeEmail,vars);
+    var emailHtml=buildCarteEmailHTML(vars,emailBody);
+    sendEmailViaWorker(cl.em,cName(cl),"Votre carte "+carteClient.carteNom+" est activ\u00e9e ! - "+SALON_CONFIG.nom,emailHtml);
+  }
+  auditLog("CARTE_NOTIF","Bienvenue carte envoy\u00e9 \u00e0 "+cName(cl)+" ("+carteClient.carteNom+")");
+}
+
+function checkCarteReminders(){
+  var cfg=window.SMS_CONFIG;if(!cfg)return;
+  var canSms=isPro();
+  var today=new Date();var todayStr=dS(today);
+  var d30=new Date(today);d30.setDate(d30.getDate()+30);var d30Str=dS(d30);
+  var d7=new Date(today);d7.setDate(d7.getDate()+7);var d7Str=dS(d7);
+  if(!window._carteSent){
+    try{window._carteSent=JSON.parse(localStorage.getItem("_lx_carte_sent"))||{};}catch(e){window._carteSent={};}
+  }
+  (window.CARTES_ABO_CLIENTS||[]).forEach(function(cc){
+    if(cc.status!=="active"||!cc.dateExp)return;
+    var cl=gC(cc.clientId);if(!cl)return;
+    var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom,carte:cc.carteNom,date_exp:fmt(cc.dateExp),economies:(cc.economiesTotales||0).toFixed(2)};
+    // Rappel 30j
+    if(cfg.carteRappel30Actif&&cc.dateExp<=d30Str&&cc.dateExp>d7Str){
+      var k30="ca30_"+cc.id;
+      if(!window._carteSent[k30]&&canSms&&cl.smsOk&&cl.ph&&cfg.carteRappel30Sms){
+        sendSms(cl.ph,buildCarteNotifText(cfg.carteRappel30Sms,vars));
+        window._carteSent[k30]=true;
+        try{localStorage.setItem("_lx_carte_sent",JSON.stringify(window._carteSent));}catch(e){}
+        auditLog("CARTE_RAPPEL_30","Rappel 30j envoy\u00e9 \u00e0 "+cName(cl)+" ("+cc.carteNom+", exp. "+cc.dateExp+")");
+      }
+    }
+    // Rappel 7j
+    if(cfg.carteRappel7Actif&&cc.dateExp<=d7Str&&cc.dateExp>todayStr){
+      var k7="ca7_"+cc.id;
+      if(!window._carteSent[k7]&&canSms&&cl.smsOk&&cl.ph&&cfg.carteRappel7Sms){
+        sendSms(cl.ph,buildCarteNotifText(cfg.carteRappel7Sms,vars));
+        window._carteSent[k7]=true;
+        try{localStorage.setItem("_lx_carte_sent",JSON.stringify(window._carteSent));}catch(e){}
+        auditLog("CARTE_RAPPEL_7","Rappel 7j envoy\u00e9 \u00e0 "+cName(cl)+" ("+cc.carteNom+", exp. "+cc.dateExp+")");
+      }
+    }
+  });
+}
+setInterval(checkCarteReminders,600000);
+setTimeout(checkCarteReminders,35000);
 
 function auditLog(action,detail){
   window.AUDIT_LOG.push({id:window.AUDIT_LOG.length+1,ts:new Date().toISOString(),user:T[0]?T[0].n:"Systeme",action:action,detail:detail});
