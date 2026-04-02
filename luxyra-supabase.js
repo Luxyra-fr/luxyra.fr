@@ -490,7 +490,7 @@ async function loadSalonData() {
     var caRes = await _sb.from("cartes_abo_clients").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
     if (caRes.data) {
       window.CARTES_ABO_CLIENTS = caRes.data.map(function(c) {
-        return { id: c.id, clientId: c.client_id, clientNom: c.client_nom, carteId: c.carte_id, carteNom: c.carte_nom, tarif: Number(c.tarif), remiseServices: Number(c.remise_services), remiseForfaits: Number(c.remise_forfaits), dateAchat: c.date_achat, dateExp: c.date_expiration, status: c.status || "active", ticketNum: c.ticket_num || "", economiesTotales: Number(c.economies_totales) || 0 };
+        return { id: c.id, clientId: c.client_id, clientBpId: c.client_beautypro_id || null, clientNom: c.client_nom, carteId: c.carte_id, carteNom: c.carte_nom, tarif: Number(c.tarif), remiseServices: Number(c.remise_services), remiseForfaits: Number(c.remise_forfaits), dateAchat: c.date_achat, dateExp: c.date_expiration, status: c.status || "active", ticketNum: c.ticket_num || "", economiesTotales: Number(c.economies_totales) || 0 };
       });
     } else {
       window.CARTES_ABO_CLIENTS = [];
@@ -868,6 +868,7 @@ async function saveCarteAboClient(carte) {
   var data = {
     salon_id: _salonId,
     client_id: carte.clientId || "",
+    client_beautypro_id: carte.clientBpId || null,
     client_nom: carte.clientNom || "",
     carte_id: carte.carteId || "",
     carte_nom: carte.carteNom || "",
