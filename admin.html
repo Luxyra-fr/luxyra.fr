@@ -224,7 +224,7 @@ async function loadData(){
           gerantNom:s.gerant_nom||"",gerantPrenom:s.gerant_prenom||"",
           adresse:s.adresse||"",cp:s.cp||"",formeJur:s.forme_juridique||"",
           verif:s.verification_status||"pending",
-          docKbis:s.documents_kbis||"",docId:s.documents_id||"",
+          docKbis:s.documents_kbis||"",docId:s.documents_id||"",docIdVerso:s.documents_id_verso||"",
           verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
           userId:s.user_id||"",
           stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
@@ -408,10 +408,14 @@ function openD(id){
   // DOCUMENTS
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcc4 Documents</div>';
   h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="'+s.docKbis+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7ue \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (verso)</span><span class="v">'+(s.docIdVerso?'<a href="'+s.docIdVerso+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--text3);font-style:italic">Non fourni</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">V\u00e9rification</span><span class="v" style="color:'+(s.verif==="verified"?"var(--green)":s.verif==="pending_review"?"var(--gold)":"var(--orange)")+'"><strong>'+(s.verif==="verified"?"\u2705 V\u00e9rifi\u00e9":s.verif==="pending_review"?"\ud83d\udd0d \u00c0 v\u00e9rifier":"\u23f3 En attente des documents")+'</strong></span></div>';
   if(s.docKbis&&s.docId&&s.verif!=="verified"){
     h+='<button class="dp-btn success" style="width:100%;margin-top:8px" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;verified&#39;)">\u2705 Valider les documents</button>';
+  }
+  if(s.docKbis||s.docId){
+    h+='<button class="dp-btn" style="width:100%;margin-top:6px;color:var(--orange)" onclick="resetDocs(&#39;'+s.id+'&#39;)">\ud83d\uddd1 R\u00e9initialiser tous les documents</button>';
   }
   // Contrat signature
   h+='<div class="dp-field" style="margin-top:8px"><span class="k">Contrat</span><span class="v"><button class="dp-btn" style="font-size:11px" onclick="showSalonContrat(&#39;'+s.id+'&#39;)">\ud83d\udcdd Voir la signature</button></span></div>';
@@ -858,6 +862,14 @@ async function doSaveLegal(id){
 }
 
 // ===== VERIFICATION =====
+async function resetDocs(id){
+  if(!confirm("\u26a0 Supprimer TOUS les documents de ce salon ?\n\nLe client devra les renvoyer. Le compte sera bloqu\u00e9 si le d\u00e9lai de 15 jours est d\u00e9pass\u00e9."))return;
+  await _sb.from("salons").update({documents_kbis:null,documents_id:null,documents_id_verso:null,verification_status:"pending",verified_at:null,verified_by:null,documents_uploaded_at:null}).eq("id",id);
+  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"DOCS_RESET",details:"Tous les documents supprim\u00e9s"});
+  alert("\ud83d\uddd1 Documents r\u00e9initialis\u00e9s");
+  await loadData();render();openD(id);
+}
+
 async function verifSalon(id,status){
   if(!_sb||!_online)return;
   var labels={verified:"\u2705 Valider les documents (d\u00e9blocage d\u00e9finitif)",pending:"\u23f3 Remettre en attente de v\u00e9rification",incomplete:"\ud83d\udcdd Marquer comme incomplet (le client devra renvoyer)",rejected:"\u274c Rejeter les documents (compte bloqu\u00e9)"};
