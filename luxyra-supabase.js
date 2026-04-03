@@ -144,9 +144,13 @@ async function loadSalonData() {
   SALON_CONFIG.plan = salon.plan || "essential";
 
   // Vérifier statut abonnement
-  if (salon.status === "suspended" || salon.status === "cancelled") {
+  if (salon.status === "suspended") {
     showSuspendedScreen(salon.status);
     return;
+  }
+  if (salon.status === "cancelled") {
+    // Allow app to load with basic config, then show re-subscribe modal
+    window._subscriptionCancelled = true;
   }
 
   // Vérifier si plan offert (gratuit)
