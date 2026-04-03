@@ -227,6 +227,7 @@ async function loadSalonData() {
   // Documents check (15 days after paid plan)
   SALON_CONFIG.docKbis = salon.documents_kbis || "";
   SALON_CONFIG.docId = salon.documents_id || "";
+  SALON_CONFIG.docIdVerso = salon.documents_id_verso || "";
   SALON_CONFIG.verif = salon.verification_status || "pending";
   SALON_CONFIG.docsUploadedAt = salon.documents_uploaded_at || "";
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
