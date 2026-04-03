@@ -185,6 +185,17 @@ async function loadSalonData() {
     // DO NOT write to DB — webhook is the only trusted source
     // Old vulnerable code removed: _sb.from("salons").update({plan, status}).eq("id", salon.id)
   }
+  
+  // Handle Stripe Connect return
+  if(_urlParams.get("connect") === "success"){
+    window._connectJustConfigured = true;
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+  if(_urlParams.get("connect") === "refresh"){
+    // Onboarding was interrupted — redirect to settings to retry
+    window._settTab = "connect";
+    window.history.replaceState({}, "", window.location.pathname);
+  }
 
   // Vérifier expiration essai (sauf plan offert)
   if(!salon.is_free && salon.status === "trial" && salon.trial_end) {
@@ -227,6 +238,10 @@ async function loadSalonData() {
   window.SMS_USED = salon.sms_used || 0;
   window.IS_FREE_PLAN = salon.is_free || false;
   window.FREE_UNTIL = salon.free_until || null;
+  
+  // Stripe Connect
+  SALON_CONFIG.connectId = salon.stripe_connect_id || "";
+  SALON_CONFIG.connectStatus = salon.stripe_connect_status || "not_started";
 
   // Documents check (15 days after paid plan)
   SALON_CONFIG.docKbis = salon.documents_kbis || "";

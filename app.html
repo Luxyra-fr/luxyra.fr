@@ -1016,6 +1016,91 @@ async function openCustomerPortal(){
   }catch(e){alert("Erreur de connexion");}
 }
 
+// === STRIPE CONNECT ===
+async function loadConnectStatus(){
+  var el=document.getElementById("connectStatusZone");if(!el)return;
+  try{
+    var res=await fetch(window.location.origin+STRIPE_API+"/connect-status",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:window._salonId||""})
+    });
+    var data=await res.json();
+    var h='';
+    if(data.status==="active"){
+      // Connected and active
+      h+='<div class="card" style="border-left:4px solid #4caf50">';
+      h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
+      h+='<div style="font-size:36px">\u2705</div>';
+      h+='<div><div style="font-weight:800;color:#4caf50;font-size:16px">Paiements en ligne actifs</div>';
+      h+='<div style="font-size:12px;color:var(--text3)">Vos clients peuvent payer en ligne. L\u2019argent arrive directement sur votre compte.</div></div></div>';
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">';
+      h+='<div style="text-align:center;padding:12px;background:rgba(76,175,80,.08);border-radius:10px"><div style="font-size:11px;color:var(--text3)">Encaissements</div><div style="font-weight:800;color:#4caf50">\u2705 Actif</div></div>';
+      h+='<div style="text-align:center;padding:12px;background:rgba(76,175,80,.08);border-radius:10px"><div style="font-size:11px;color:var(--text3)">Virements</div><div style="font-weight:800;color:#4caf50">\u2705 Actif</div></div></div>';
+      h+='<div style="display:flex;gap:8px">';
+      h+='<button onclick="openConnectDashboard()" class="btn" style="flex:1;padding:12px;background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:700">\ud83d\udcca Tableau de bord Stripe</button>';
+      h+='<button onclick="startConnectOnboard()" class="btn" style="padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text3);font-weight:700">\u2699 Modifier</button>';
+      h+='</div></div>';
+    }else if(data.status==="pending_verification"){
+      h+='<div class="card" style="border-left:4px solid var(--gold)">';
+      h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
+      h+='<div style="font-size:36px">\u23f3</div>';
+      h+='<div><div style="font-weight:800;color:var(--gold);font-size:16px">V\u00e9rification en cours</div>';
+      h+='<div style="font-size:12px;color:var(--text3)">Vos informations sont en cours de v\u00e9rification par Stripe. Cela peut prendre 1 \u00e0 2 jours.</div></div></div>';
+      h+='<button onclick="openConnectDashboard()" class="btn" style="width:100%;padding:12px;background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:700">Voir le statut sur Stripe</button>';
+      h+='</div>';
+    }else if(data.status==="incomplete"){
+      h+='<div class="card" style="border-left:4px solid #ff9800">';
+      h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
+      h+='<div style="font-size:36px">\ud83d\udcdd</div>';
+      h+='<div><div style="font-weight:800;color:#ff9800;font-size:16px">Configuration incompl\u00e8te</div>';
+      h+='<div style="font-size:12px;color:var(--text3)">Vous avez commenc\u00e9 la configuration mais ne l\u2019avez pas termin\u00e9e.</div></div></div>';
+      h+='<button onclick="startConnectOnboard()" class="btn bg" style="width:100%;padding:14px;font-weight:700;font-size:15px">Reprendre la configuration</button>';
+      h+='</div>';
+    }else{
+      // Not started
+      h+='<div class="card" style="text-align:center;padding:24px">';
+      h+='<div style="font-size:48px;margin-bottom:12px">\ud83d\udcb3</div>';
+      h+='<div style="font-weight:800;font-size:18px;margin-bottom:8px">Activez les paiements en ligne</div>';
+      h+='<div style="font-size:13px;color:var(--text3);margin-bottom:6px;line-height:1.6">Vos clients pourront payer leurs acomptes de r\u00e9servation et achats boutique en ligne.</div>';
+      h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin-bottom:20px">0% commission Luxyra \u2022 Seuls les frais Stripe (1,5% + 0,25\u20ac)</div>';
+      h+='<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;font-size:13px;text-align:left;max-width:320px;margin-left:auto;margin-right:auto">';
+      h+='<div style="display:flex;align-items:center;gap:10px">\u2705 <span>Argent directement sur votre compte bancaire</span></div>';
+      h+='<div style="display:flex;align-items:center;gap:10px">\u2705 <span>Virements automatiques quotidiens</span></div>';
+      h+='<div style="display:flex;align-items:center;gap:10px">\u2705 <span>Carte bancaire accept\u00e9e</span></div>';
+      h+='<div style="display:flex;align-items:center;gap:10px">\u2705 <span>Configuration en 5 minutes</span></div>';
+      h+='</div>';
+      h+='<button onclick="startConnectOnboard()" style="width:100%;padding:16px;border-radius:14px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:800;font-size:16px;border:none;cursor:pointer">Configurer mes paiements \u2192</button>';
+      h+='</div>';
+    }
+    el.innerHTML=h;
+  }catch(e){el.innerHTML='<div style="color:var(--red)">Erreur : '+e.message+'</div>';}
+}
+
+async function startConnectOnboard(){
+  try{
+    var btn=event.target;btn.textContent="Chargement...";btn.disabled=true;
+    var res=await fetch(window.location.origin+STRIPE_API+"/connect-onboard",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:window._salonId||"",email:SALON_CONFIG.email||"",salon_name:SALON_CONFIG.nom||""})
+    });
+    var data=await res.json();
+    if(data.url)window.location.href=data.url;
+    else{alert("Erreur : "+(data.error||"Impossible de d\u00e9marrer la configuration"));btn.textContent="R\u00e9essayer";btn.disabled=false;}
+  }catch(e){alert("Erreur de connexion");btn.textContent="R\u00e9essayer";btn.disabled=false;}
+}
+
+async function openConnectDashboard(){
+  try{
+    var res=await fetch(window.location.origin+STRIPE_API+"/connect-dashboard",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:window._salonId||""})
+    });
+    var data=await res.json();
+    if(data.url)window.open(data.url,"_blank");
+    else alert("Erreur : "+(data.error||"Compte non configur\u00e9"));
+  }catch(e){alert("Erreur de connexion");}
+}
+
 function proGate(feature){if(isPro())return true;showUpgradeModal(feature);return false;}
 
 function showSwitchPlanModal(){
@@ -4657,6 +4742,7 @@ function rSettings(){
       {k:"siteweb",i:"\ud83c\udf10",t:"Site en ligne",d:"R\u00e9servation, boutique, activation"},
       {k:"fidelite",i:"\ud83c\udfc5",t:"Options commerciales",d:"Fid\u00e9lit\u00e9, packs promo, cartes d\u2019abonnement"},
       {k:"caisse",i:"\ud83d\udcb0",t:"Caisse & paiements",d:"Modes de paiement, TVA"},
+      {k:"connect",i:"\ud83d\udcb3",t:"Paiements en ligne",d:"Stripe Connect, acomptes, boutique en ligne"},
       {k:"sms",i:"\ud83d\udcf2",t:"SMS & Marketing",d:"Rappels RDV, campagnes SMS"},
       {k:"nf525",i:"\ud83d\udee1",t:"NF525",d:"Audit, chaines, clotures Z"},
       {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"},
@@ -4664,7 +4750,7 @@ function rSettings(){
     ];
     for(var i=0;i<sections.length;i++){
       var s=sections[i];
-      var locked=!isPro()&&(s.k==="siteweb"||s.k==="sms");
+      var locked=!isPro()&&(s.k==="siteweb"||s.k==="sms"||s.k==="connect");
       if(locked){
         h+='<div class="card" style="cursor:pointer;display:flex;align-items:center;gap:14px;opacity:.5" onclick="showUpgradeModal(\''+s.t+'\')">';
         h+='<div style="font-size:28px;width:44px;text-align:center">'+s.i+'</div>';
@@ -5110,6 +5196,14 @@ function rSettings(){
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Intervalles</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option></select></div>';
     h+='</div></div>';
     
+  }
+  
+  else if(settTab==="connect"){
+    if(!isPro()){showUpgradeModal("Paiements en ligne");window._settTab=null;go("settings");return h;}
+    h+='<div class="sec">\ud83d\udcb3 Paiements en ligne</div>';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">Permettez \u00e0 vos clients de payer en ligne : acomptes de r\u00e9servation et achats boutique. L\u2019argent arrive directement sur votre compte bancaire. <strong style="color:var(--gold)">0% commission Luxyra</strong>, seuls les frais Stripe s\u2019appliquent (1,5% + 0,25\u20ac).</div>';
+    h+='<div id="connectStatusZone" style="text-align:center;padding:30px"><div style="font-size:32px;margin-bottom:8px">\u23f3</div><div style="color:var(--text3)">V\u00e9rification du statut...</div></div>';
+    setTimeout(loadConnectStatus,100);
   }
   
     else if(settTab==="fidelite"){
@@ -13635,6 +13729,14 @@ function initApp(){
     });
   }
   go("home");
+  // Connect onboarding just completed
+  if(window._connectJustConfigured){
+    window._settTab="connect";
+    go("settings");
+    setTimeout(function(){
+      alert("\u2705 Configuration des paiements termin\u00e9e ! V\u00e9rifiez le statut ci-dessous.");
+    },500);
+  }
   // Cancelled subscription: show re-subscribe modal
   if(window._subscriptionCancelled){
     var _cm='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px">';
