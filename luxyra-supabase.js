@@ -228,15 +228,39 @@ async function loadSalonData() {
   SALON_CONFIG.docKbis = salon.documents_kbis || "";
   SALON_CONFIG.docId = salon.documents_id || "";
   SALON_CONFIG.verif = salon.verification_status || "pending";
+  SALON_CONFIG.docsUploadedAt = salon.documents_uploaded_at || "";
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
-  if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
+  if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
     if (subStart) {
       var daysSinceSub = Math.floor((new Date() - new Date(subStart)) / 86400000);
-      window._docsMissing = true;
-      window._docsDeadlineDays = Math.max(0, 15 - daysSinceSub);
-      if (daysSinceSub > 15) {
+      if (!hasAllDocs) {
+        // No docs: block after 15 days
+        window._docsMissing = true;
+        window._docsDeadlineDays = Math.max(0, 15 - daysSinceSub);
+        if (daysSinceSub > 15) {
+          window._docsBlocked = true;
+        }
+      } else if (salon.verification_status === "verified") {
+        // Docs verified by admin: fully unblocked
+      } else if (salon.verification_status === "rejected") {
+        // Docs rejected: blocked
         window._docsBlocked = true;
+      } else {
+        // Docs uploaded but not yet verified: 48h grace period
+        var uploadedAt = salon.documents_uploaded_at ? new Date(salon.documents_uploaded_at) : null;
+        if (uploadedAt) {
+          var hoursSinceUpload = (new Date() - uploadedAt) / 3600000;
+          if (hoursSinceUpload > 48 && daysSinceSub > 15) {
+            window._docsBlocked = true;
+            window._docsGracePassed = true;
+          } else if (hoursSinceUpload <= 48) {
+            window._docsGrace = true;
+            window._docsGraceHoursLeft = Math.ceil(48 - hoursSinceUpload);
+          }
+        } else if (daysSinceSub > 15) {
+          window._docsBlocked = true;
+        }
       }
     }
   }

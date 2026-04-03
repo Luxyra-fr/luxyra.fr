@@ -13089,9 +13089,9 @@ async function uploadDoc(type,input){
     var url=_sb.storage.from("salon-documents").getPublicUrl(path);
     var col=type==="kbis"?"documents_kbis":"documents_id";
     var update={};update[col]=url.data.publicUrl;
-    // Check if both docs now provided → set pending_review
-    if(type==="kbis"&&SALON_CONFIG.docId){update.verification_status="pending_review";}
-    if(type==="id"&&SALON_CONFIG.docKbis){update.verification_status="pending_review";}
+    // Check if both docs now provided → set pending_review + timestamp for 48h grace
+    if(type==="kbis"&&SALON_CONFIG.docId){update.verification_status="pending_review";update.documents_uploaded_at=new Date().toISOString();}
+    if(type==="id"&&SALON_CONFIG.docKbis){update.verification_status="pending_review";update.documents_uploaded_at=new Date().toISOString();}
     await _sb.from("salons").update(update).eq("id",window._salonId);
     if(type==="kbis")SALON_CONFIG.docKbis=url.data.publicUrl;
     else SALON_CONFIG.docId=url.data.publicUrl;
@@ -13628,32 +13628,46 @@ function initApp(){
     var _dm='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:20px">';
     _dm+='<div style="background:#12141e;border:2px solid rgba(239,83,80,.3);border-radius:20px;padding:32px;max-width:460px;width:100%;text-align:center">';
     _dm+='<div style="font-size:48px;margin-bottom:12px">\u26a0\ufe0f</div>';
-    _dm+='<h2 style="color:#ef5350;font-size:20px;margin-bottom:8px">Compte bloqu\u00e9</h2>';
-    _dm+='<div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:20px;line-height:1.7">Vos <strong>documents justificatifs</strong> n\u2019ont pas \u00e9t\u00e9 fournis dans le d\u00e9lai de 15 jours. Envoyez-les ci-dessous pour d\u00e9bloquer votre compte.</div>';
-    // Upload Kbis
-    if(!SALON_CONFIG.docKbis){
-      _dm+='<div style="margin-bottom:12px;text-align:left">';
-      _dm+='<div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.7);margin-bottom:6px">\ud83c\udfe2 Extrait Kbis ou avis INSEE</div>';
-      _dm+='<input type="file" id="blockUploadKbis" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'kbis\',this);setTimeout(function(){location.reload();},3000)">';
-      _dm+='<button onclick="document.getElementById(\'blockUploadKbis\').click()" style="width:100%;padding:14px;border-radius:10px;border:2px dashed rgba(200,168,78,.3);background:rgba(200,168,78,.06);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer">\ud83d\udcc4 S\u00e9lectionner le fichier</button>';
-      _dm+='</div>';
+    if(window._docsGracePassed){
+      // Docs uploaded but 48h grace expired — admin hasn't validated
+      _dm+='<h2 style="color:#ef5350;font-size:20px;margin-bottom:8px">V\u00e9rification en cours</h2>';
+      _dm+='<div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:20px;line-height:1.7">Vos documents ont \u00e9t\u00e9 re\u00e7us mais n\u2019ont pas encore \u00e9t\u00e9 valid\u00e9s par notre \u00e9quipe. Le d\u00e9lai de 48h est d\u00e9pass\u00e9. Votre acc\u00e8s est temporairement suspendu.</div>';
+      _dm+='<div style="padding:14px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.15);border-radius:12px;margin-bottom:16px;font-size:13px;color:#64b5f6">\u2705 Kbis re\u00e7u<br>\u2705 Pi\u00e8ce d\u2019identit\u00e9 re\u00e7ue<br>\u23f3 Validation en attente</div>';
     } else {
-      _dm+='<div style="margin-bottom:12px;padding:10px;background:rgba(45,154,94,.08);border-radius:8px;font-size:13px;color:#4caf50;font-weight:700">\u2705 Kbis re\u00e7u</div>';
+      // No docs at all
+      _dm+='<h2 style="color:#ef5350;font-size:20px;margin-bottom:8px">Compte bloqu\u00e9</h2>';
+      _dm+='<div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:20px;line-height:1.7">Vos <strong>documents justificatifs</strong> n\u2019ont pas \u00e9t\u00e9 fournis dans le d\u00e9lai de 15 jours. Envoyez-les ci-dessous pour d\u00e9bloquer votre compte.</div>';
+      // Upload Kbis
+      if(!SALON_CONFIG.docKbis){
+        _dm+='<div style="margin-bottom:12px;text-align:left">';
+        _dm+='<div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.7);margin-bottom:6px">\ud83c\udfe2 Extrait Kbis ou avis INSEE</div>';
+        _dm+='<input type="file" id="blockUploadKbis" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'kbis\',this);setTimeout(function(){location.reload();},3000)">';
+        _dm+='<button onclick="document.getElementById(\'blockUploadKbis\').click()" style="width:100%;padding:14px;border-radius:10px;border:2px dashed rgba(200,168,78,.3);background:rgba(200,168,78,.06);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer">\ud83d\udcc4 S\u00e9lectionner le fichier</button>';
+        _dm+='</div>';
+      } else {
+        _dm+='<div style="margin-bottom:12px;padding:10px;background:rgba(45,154,94,.08);border-radius:8px;font-size:13px;color:#4caf50;font-weight:700">\u2705 Kbis re\u00e7u</div>';
+      }
+      // Upload ID
+      if(!SALON_CONFIG.docId){
+        _dm+='<div style="margin-bottom:16px;text-align:left">';
+        _dm+='<div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.7);margin-bottom:6px">\ud83c\udd94 Pi\u00e8ce d\u2019identit\u00e9 du g\u00e9rant</div>';
+        _dm+='<input type="file" id="blockUploadId" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id\',this);setTimeout(function(){location.reload();},3000)">';
+        _dm+='<button onclick="document.getElementById(\'blockUploadId\').click()" style="width:100%;padding:14px;border-radius:10px;border:2px dashed rgba(200,168,78,.3);background:rgba(200,168,78,.06);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer">\ud83c\udd94 S\u00e9lectionner le fichier</button>';
+        _dm+='</div>';
+      } else {
+        _dm+='<div style="margin-bottom:16px;padding:10px;background:rgba(45,154,94,.08);border-radius:8px;font-size:13px;color:#4caf50;font-weight:700">\u2705 Pi\u00e8ce d\u2019identit\u00e9 re\u00e7ue</div>';
+      }
+      _dm+='<div style="font-size:12px;color:rgba(255,255,255,.4);margin-bottom:16px">PDF, JPG ou PNG \u2022 5 Mo max \u2022 D\u00e9blocage temporaire 48h apr\u00e8s envoi</div>';
     }
-    // Upload ID
-    if(!SALON_CONFIG.docId){
-      _dm+='<div style="margin-bottom:16px;text-align:left">';
-      _dm+='<div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.7);margin-bottom:6px">\ud83c\udd94 Pi\u00e8ce d\u2019identit\u00e9 du g\u00e9rant</div>';
-      _dm+='<input type="file" id="blockUploadId" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id\',this);setTimeout(function(){location.reload();},3000)">';
-      _dm+='<button onclick="document.getElementById(\'blockUploadId\').click()" style="width:100%;padding:14px;border-radius:10px;border:2px dashed rgba(200,168,78,.3);background:rgba(200,168,78,.06);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer">\ud83c\udd94 S\u00e9lectionner le fichier</button>';
-      _dm+='</div>';
-    } else {
-      _dm+='<div style="margin-bottom:16px;padding:10px;background:rgba(45,154,94,.08);border-radius:8px;font-size:13px;color:#4caf50;font-weight:700">\u2705 Pi\u00e8ce d\u2019identit\u00e9 re\u00e7ue</div>';
-    }
-    _dm+='<div style="font-size:12px;color:rgba(255,255,255,.4);margin-bottom:16px">PDF, JPG ou PNG \u2022 5 Mo max \u2022 V\u00e9rification sous 48h</div>';
     _dm+='<button onclick="window.location.href=\u0027mailto:contact@luxyra.fr?subject=Documents%20-%20\u0027+encodeURIComponent(SALON_CONFIG.nom)" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;font-size:13px;cursor:pointer">Besoin d\u2019aide ? Contactez-nous</button>';
     _dm+='</div></div>';
     document.getElementById("modal").innerHTML=_dm;
+  }else if(window._docsGrace){
+    // 48h grace period: show info banner
+    var _gb=document.createElement("div");
+    _gb.style.cssText="position:fixed;bottom:0;left:0;right:0;z-index:9997;padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:12px;font-weight:600;background:rgba(33,150,243,.95);color:#fff;flex-wrap:wrap";
+    _gb.innerHTML='\u23f3 Documents re\u00e7us \u2014 <strong>V\u00e9rification en cours</strong> ('+window._docsGraceHoursLeft+'h restantes). Acc\u00e8s temporaire accord\u00e9.';
+    document.body.appendChild(_gb);
   }else if(window._docsMissing&&window._docsDeadlineDays!==undefined){
     var _db=document.createElement("div");
     var _urgent2=window._docsDeadlineDays<=5;
