@@ -1026,7 +1026,7 @@ function showSwitchPlanModal(){
   // Essentiel card
   h+='<div style="display:flex;flex-direction:column;gap:12px">';
   h+='<div style="border:2px solid '+(curPro?'rgba(255,255,255,.1)':'var(--gold)')+';border-radius:14px;padding:18px;'+(curPro?'':'background:rgba(212,168,67,.06)')+'"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div><div style="font-size:16px;font-weight:800;color:'+(curPro?'var(--text)':'var(--gold)')+'">Essentiel</div><div style="font-size:22px;font-weight:900;color:var(--text)">14,99\u20ac<span style="font-size:13px;font-weight:400;color:var(--text3)">/mois</span></div></div>';
-  if(curPro)h+='<button onclick="doSwitchPlan(\'essential\')" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;font-size:13px;cursor:pointer">Passer en Essentiel</button>';
+  if(curPro)h+='<button onclick="confirmDowngrade()" style="padding:10px 20px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;font-size:13px;cursor:pointer">Passer en Essentiel</button>';
   else h+='<div style="padding:8px 16px;border-radius:8px;background:var(--gold);color:#000;font-weight:700;font-size:12px">Actuel</div>';
   h+='</div>';
   h+='<div style="font-size:12px;color:var(--text3);line-height:1.8">Planning, clients, caisse NF525, tickets, fid\u00e9lit\u00e9.<br>Id\u00e9al pour les ind\u00e9pendants.</div></div>';
@@ -1043,10 +1043,32 @@ function showSwitchPlanModal(){
   document.getElementById("modal").innerHTML=h;
 }
 
+function confirmDowngrade(){
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-width:440px">';
+  h+='<div style="text-align:center;margin-bottom:16px"><div style="font-size:48px;margin-bottom:8px">\u26a0\ufe0f</div>';
+  h+='<h2 style="color:#ef5350">Passer en Essentiel ?</h2></div>';
+  h+='<div style="background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15);border-radius:12px;padding:16px;margin-bottom:16px;font-size:13px;color:var(--text2);line-height:1.8">';
+  h+='<div style="font-weight:700;color:#ef5350;margin-bottom:8px">Vous perdrez imm\u00e9diatement :</div>';
+  h+='\u274c Site vitrine et r\u00e9servation en ligne<br>';
+  h+='\u274c Marketing SMS et campagnes<br>';
+  h+='\u274c Marketplace<br>';
+  h+='\u274c Paiement acompte en ligne<br>';
+  h+='\u274c 30 SMS offerts par mois</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:16px">Le changement prend effet imm\u00e9diatement. Stripe appliquera un prorata sur votre prochaine facture.</div>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button onclick="cM()" style="flex:1;padding:14px;border-radius:12px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;cursor:pointer">Annuler</button>';
+  h+='<button onclick="cM();doSwitchPlan(\'essential\')" style="flex:1;padding:14px;border-radius:12px;border:none;background:#ef5350;color:#fff;font-weight:700;cursor:pointer">Confirmer le downgrade</button>';
+  h+='</div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
 async function doSwitchPlan(plan){
-  var cgv=document.getElementById("cgvCheckSwitch");
-  if(!cgv||!cgv.checked){alert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.");return;}
-  var btn=event.target;btn.textContent="Chargement...";btn.style.opacity=".5";btn.onclick=null;
+  // For upgrade: require CGV checkbox. For downgrade: confirmed via confirmDowngrade() modal
+  var isDowngrade=plan==="essential";
+  if(!isDowngrade){
+    var cgv=document.getElementById("cgvCheckSwitch");
+    if(!cgv||!cgv.checked){alert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.");return;}
+  }
   try{
     var res=await fetch(window.location.origin+STRIPE_API+"/switch-plan",{
       method:"POST",
@@ -1062,9 +1084,8 @@ async function doSwitchPlan(plan){
       cM();startCheckout(plan);
     }else{
       alert("Erreur: "+(data.error||"Impossible de changer de forfait"));
-      btn.textContent="R\u00e9essayer";btn.style.opacity="1";btn.onclick=function(){doSwitchPlan(plan);};
     }
-  }catch(e){alert("Erreur de connexion");btn.textContent="R\u00e9essayer";btn.style.opacity="1";}
+  }catch(e){alert("Erreur de connexion");}
 }
 SALON_CONFIG._defaultLogo="data:image/webp;base64,UklGRsoCAABXRUJQVlA4IL4CAADQDACdASoqACoAPlEmkEYjoiGhI4kAcAoJZQC98JXJPtuueASPl+TzOsgRMGvGz9Nf9L3Av1J/5XXN/ZJJJ9N5h5XLY9LqGFboTA6YQGYRIY4cxDR0vRaWNRypCQ9zUcCkClx4gGJbuyDZEMJ/3gAA/vVj/Fh/SqNagRWSN2U5c7xkAYTmvJjJ9+qw81H/eAPE8cL7wHIcTiAlCABUIEWSRggNSFbml//Ts6ApP312IohCpMcxxvoLZgMqX8VgaV+iLwGliUrfojoaTFSaFDdQJtlzKzoY8E7e/x17RTnHrIdh8qEZReQ9uYll7OfD1kUM0zBkSg7gdI/GIBGb44QCNddZUkw4sQ+Umsq0IHJWMa0h+uOoMAeqmb2aaBFRL2Uj+XW+1+3/+jQv3/V/vIYs8a6KASy6H12zJ6dsBo5pjDcmKvFgcTN1e2ztM0tv9VIY9mRo5VemJTG73r0HXxpTUf8RYIeqvG8Cxci4iqOAOTjqaXUa+hGpwUz/0d63ZMCMfqwmzgyy5MIFoNkY+VY+v3/Lfdfv/Ex/mvkcAjtKnebadhURwE0+JBF71NegSMCnTiEagoPlF3wzdrsgoQIhlUek3YpTbRTLIv+4kVB42i1hEWoZYYVKYv1LOG+NO1+g4QqpZFOIvBtUukt6t+v8EFD5btAGps/ReQaGR7phgtvzkGxWi1X8QuQ3RJ00jaCM3S43Lu+DWsGmrCv/elTAQfMTLIX6LscIKG+03SqH+zp8wHhw+XMJ3qsjiQGYKT96461jOcjzTjNaRnjaC+tgxBPNf5WTT8KL/DU0Cq/V6KuP29QfWsBlOiDPv5j9tKugwtV+zlp1ueoxBn4HcOcdmomE6ekCU6mU8Q/EJrU9EPExkUEfS27z3WNfM5QWQyDCqG4HSYsuoItzZnBz9w8uThAiVuK/mslU02gAAAA=";
 // Multi-métiers: adapt l'app selon le domaine du salon
