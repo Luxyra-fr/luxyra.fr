@@ -445,7 +445,16 @@ async function loadSalonData() {
         fournisseurId: p.fournisseur_id || null,
         datePeremption: p.date_peremption || null,
         paoMois: p.pao_mois || null,
-        dateOuverture: p.date_ouverture || null
+        dateOuverture: p.date_ouverture || null,
+        contenance: p.contenance || null,
+        cbSupp: p.code_barre_supp || null,
+        coefMulti: p.coef_multi != null ? Number(p.coef_multi) : null,
+        tvaTaux: p.tva_taux != null ? Number(p.tva_taux) : null,
+        promoActif: p.promo_actif || false,
+        promoPrix: p.promo_prix != null ? Number(p.promo_prix) : null,
+        promoDebut: p.promo_debut || null,
+        promoFin: p.promo_fin || null,
+        promoLabel: p.promo_label || null
       };
     });
     var pcatSet = {};
@@ -715,7 +724,16 @@ async function saveProduct(prod) {
     fournisseur_id: prod.fournisseurId || null,
     date_peremption: prod.datePeremption || null,
     pao_mois: prod.paoMois || null,
-    date_ouverture: prod.dateOuverture || null
+    date_ouverture: prod.dateOuverture || null,
+    contenance: prod.contenance || null,
+    code_barre_supp: prod.cbSupp || null,
+    coef_multi: prod.coefMulti || null,
+    tva_taux: prod.tvaTaux || null,
+    promo_actif: prod.promoActif || false,
+    promo_prix: prod.promoPrix || null,
+    promo_debut: prod.promoDebut || null,
+    promo_fin: prod.promoFin || null,
+    promo_label: prod.promoLabel || null
   };
   if (typeof prod.id === "number" && prod.id > 0) {
     // Check if exists in Supabase

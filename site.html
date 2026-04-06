@@ -363,7 +363,7 @@ async function loadSalon(){
     
     // 5. Products
     var pr=await sb.from("produits").select("*").eq("salon_id",salonId).order("nom");
-    if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.image||"",stk:p.stock||0,cc:p.click_collect};});
+    if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.image||"",stk:p.stock||0,cc:p.click_collect,contenance:p.contenance||null,promoActif:p.promo_actif||false,promoPrix:p.promo_prix!=null?Number(p.promo_prix):null,promoDebut:p.promo_debut||null,promoFin:p.promo_fin||null,promoLabel:p.promo_label||null};});
     
     // 6. Existing appointments (via Worker - bypasses RLS)
     var today=new Date().toISOString().slice(0,10);
@@ -710,13 +710,19 @@ function renderSite(){
         h+='<div style="font-family:var(--f1);font-size:18px;font-weight:700;color:var(--gold);margin:20px 0 10px">'+cat+'</div>';
         h+='<div class="prod-grid">';
         prodCats[cat].forEach(function(p){
-          h+='<div class="prod-card">';
+          var _isPromo=p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=new Date().toISOString().slice(0,10))&&(!p.promoFin||p.promoFin>=new Date().toISOString().slice(0,10));
+          h+='<div class="prod-card" style="position:relative">';
+          if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 -'+Math.round((1-p.promoPrix/p.p)*100)+'%</div>';
           if(p.img)h+='<div class="prod-img"><img src="'+p.img+'" loading="lazy"></div>';
           else h+='<div class="prod-img">\ud83e\uddf4</div>';
           h+='<div class="prod-body">';
-          h+='<div class="prod-name">'+p.n+'</div>';
+          h+='<div class="prod-name">'+p.n+(p.contenance?' <span style="font-size:11px;color:var(--text3);font-weight:400">\u2022 '+p.contenance+'</span>':'')+'</div>';
           h+='<div class="prod-cat">'+p.cat+'</div>';
-          h+='<div class="prod-price">'+p.p.toFixed(2)+' \u20ac</div>';
+          if(_isPromo){
+            h+='<div class="prod-price"><span style="font-size:13px;text-decoration:line-through;color:var(--text3);font-weight:400;margin-right:6px">'+p.p.toFixed(2)+' \u20ac</span><span style="color:#e91e63">'+p.promoPrix.toFixed(2)+' \u20ac</span></div>';
+          } else {
+            h+='<div class="prod-price">'+p.p.toFixed(2)+' \u20ac</div>';
+          }
           h+='<button class="prod-btn" onclick="addToCart('+p.id+')">Ajouter au panier</button>';
           h+='</div></div>';
         });
@@ -1667,9 +1673,13 @@ var CART=[];
 function addToCart(prodId){
   var prod=null;for(var i=0;i<PRODUCTS.length;i++){if(PRODUCTS[i].id===prodId){prod=PRODUCTS[i];break;}}
   if(!prod)return;
+  // Determine effective price (promo or normal)
+  var _today=new Date().toISOString().slice(0,10);
+  var _isPromo=prod.promoActif&&prod.promoPrix&&(!prod.promoDebut||prod.promoDebut<=_today)&&(!prod.promoFin||prod.promoFin>=_today);
+  var effPrice=_isPromo?prod.promoPrix:prod.p;
   var existing=null;for(var i=0;i<CART.length;i++){if(CART[i].id===prodId){existing=CART[i];break;}}
-  if(existing){existing.qty++;}
-  else{CART.push({id:prod.id,n:prod.n,p:prod.p,qty:1,cat:prod.cat});}
+  if(existing){existing.qty++;existing.p=effPrice;}
+  else{CART.push({id:prod.id,n:prod.n,p:effPrice,qty:1,cat:prod.cat,isPromo:_isPromo,prixNormal:prod.p});}
   updateCartBadge();
   // Toast
   var toast=document.createElement("div");
