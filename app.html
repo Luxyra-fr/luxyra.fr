@@ -6685,6 +6685,13 @@ function rProducts(){
   h+='<div style="font-size:18px">\u2795</div>';
   h+='<div style="font-size:11px;font-weight:800;color:#aaa;margin-top:2px">Ajouter produit</div></button>';
   h+='</div>';
+  // Bulk actions (LS Coiffure style)
+  h+='<div style="display:flex;gap:6px;margin-bottom:8px">';
+  h+='<button onclick="showBulkPriceUpdate()" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(76,175,80,.4);background:linear-gradient(135deg,rgba(76,175,80,.15),rgba(76,175,80,.05));cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
+  h+='<span style="font-size:14px">\ud83d\udcc8</span><span style="font-size:11px;font-weight:800;color:#66bb6a">Augmentations multiples</span></button>';
+  h+='<button onclick="showBulkDelete()" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(244,67,54,.4);background:linear-gradient(135deg,rgba(244,67,54,.15),rgba(244,67,54,.05));cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
+  h+='<span style="font-size:14px">\ud83d\uddd1\ufe0f</span><span style="font-size:11px;font-weight:800;color:#ef5350">Suppressions multiples</span></button>';
+  h+='</div>';
   h+='<div style="display:flex;gap:6px;margin-bottom:8px">';
   h+='<button onclick="showAllStockHistory()" style="flex:1;padding:7px;border-radius:8px;border:1px solid rgba(100,181,246,.3);background:#0d1520;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
   h+='<span style="font-size:14px">\ud83d\udcca</span><span style="font-size:11px;font-weight:700;color:#64b5f6">Mouvements stock</span></button>';
@@ -6815,12 +6822,25 @@ function filterProds(q){
 var _consumptionList=[];
 function showQuickConsumption(){
   _consumptionList=[];
+  if(!window._stockOutMotif)window._stockOutMotif="utilisation_salon";
   renderConsumption();
 }
 function renderConsumption(){
   var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto;padding:16px"><div style="max-width:500px;margin:0 auto">';
-  h+='<h2 style="color:#64b5f6">\ud83e\uddea Consommation du jour</h2>';
-  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">Scannez ou s\u00e9lectionnez les produits utilis\u00e9s, puis validez.</div>';
+  h+='<h2 style="color:#ef5350">\ud83d\udce4 Sortie de stock</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">S\u00e9lectionnez les produits sortis et le motif.</div>';
+  // Motif selector
+  h+='<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--text3);font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Motif de sortie</div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+  for(var mi=0;mi<STOCK_OUT_MOTIFS.length;mi++){
+    var m=STOCK_OUT_MOTIFS[mi];var sel=window._stockOutMotif===m.k;
+    h+='<button onclick="window._stockOutMotif=\''+m.k+'\';renderConsumption()" style="padding:8px 12px;border-radius:8px;border:1.5px solid '+(sel?m.c:"rgba(255,255,255,.1)")+';background:'+(sel?m.c+"33":"rgba(255,255,255,.04)")+';color:'+(sel?m.c:"rgba(255,255,255,.6)")+';font-size:12px;font-weight:'+(sel?"800":"600")+';cursor:pointer">'+m.l+'</button>';
+  }
+  h+='</div>';
+  // Hint for current motif
+  var curMotif=STOCK_OUT_MOTIFS.find(function(m){return m.k===window._stockOutMotif;});
+  if(curMotif&&curMotif.hint)h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;font-style:italic">'+curMotif.hint+'</div>';
+  h+='</div>';
   // Search/scan bar
   h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
   h+='<input id="consoSearch" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1;font-size:15px;padding:12px" oninput="filterConsoList(this.value)" onkeydown="if(event.key===\'Enter\'){addConsoByCode(this.value);this.value=\'\';}">';
@@ -6895,6 +6915,8 @@ function filterConsoList(q){
 }
 function validateConsumption(){
   if(!_consumptionList.length)return;
+  var motifKey=window._stockOutMotif||"utilisation_salon";
+  var motifObj=STOCK_OUT_MOTIFS.find(function(m){return m.k===motifKey;})||STOCK_OUT_MOTIFS[0];
   var summary=[];
   for(var i=0;i<_consumptionList.length;i++){
     var c=_consumptionList[i];
@@ -6904,12 +6926,12 @@ function validateConsumption(){
         PRODS[j].stk=Math.max(0,PRODS[j].stk-c.qty);
         summary.push(c.name+" : -"+c.qty+" (reste "+PRODS[j].stk+")");
         if(typeof saveProduct==="function")saveProduct(PRODS[j]);
-        if(typeof logMouvementStock==="function")logMouvementStock(PRODS[j].id,c.name,"sortie",c.qty,_stkBefore2,PRODS[j].stk,"Consommation");
+        if(typeof logMouvementStock==="function")logMouvementStock(PRODS[j].id,c.name,"sortie",c.qty,_stkBefore2,PRODS[j].stk,motifObj.l,null,motifKey,motifObj.l);
         break;
       }
     }
   }
-  if(typeof auditLog==="function")auditLog("CONSOMMATION","Consommation de "+_consumptionList.length+" produits");
+  if(typeof auditLog==="function")auditLog("SORTIE_STOCK","Sortie de "+_consumptionList.length+" produits ("+motifObj.l+")");
   _consumptionList=[];
   cM();go("products");
   toast("Stock mis \u00e0 jour !\n"+summary.join("\n"),"success");
@@ -6919,12 +6941,37 @@ function validateConsumption(){
 var _stockEntryList=[];
 function showStockEntry(){
   _stockEntryList=[];
+  if(!window._stockEntryMotif)window._stockEntryMotif="reapprovisionnement";
   renderStockEntry();
 }
+// Available motifs
+var STOCK_ENTRY_MOTIFS=[
+  {k:"reapprovisionnement",l:"\ud83d\udce6 R\u00e9approvisionnement",c:"#4caf50"},
+  {k:"retour_client",l:"\u21a9\ufe0f Retour client",c:"#2196f3"},
+  {k:"inventaire_plus",l:"\ud83d\udccb Ajustement inventaire (+)",c:"#9c27b0"},
+  {k:"autre_entree",l:"\u2139\ufe0f Autre",c:"#9e9e9e"}
+];
+var STOCK_OUT_MOTIFS=[
+  {k:"vente_magasin",l:"\ud83d\uded2 Vente magasin",c:"#e91e63"},
+  {k:"utilisation_salon",l:"\u2702\ufe0f Utilisation au salon",c:"#ff9800",hint:"Consomm\u00e9 en interne (non vendu)"},
+  {k:"casse",l:"\ud83d\udca5 Casse",c:"#f44336"},
+  {k:"vol",l:"\u26a0\ufe0f Vol",c:"#d32f2f"},
+  {k:"perime",l:"\u23f3 P\u00e9rim\u00e9",c:"#795548"},
+  {k:"inventaire_moins",l:"\ud83d\udccb Ajustement inventaire (-)",c:"#9c27b0"},
+  {k:"autre_sortie",l:"\u2139\ufe0f Autre",c:"#9e9e9e"}
+];
 function renderStockEntry(){
   var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto;padding:16px"><div style="max-width:500px;margin:0 auto">';
   h+='<h2 style="color:#66bb6a">\ud83d\udce5 Entr\u00e9e de stock</h2>';
   h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">Scannez ou s\u00e9lectionnez les produits re\u00e7us, puis validez.</div>';
+  // Motif selector
+  h+='<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--text3);font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Motif</div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+  for(var mi=0;mi<STOCK_ENTRY_MOTIFS.length;mi++){
+    var m=STOCK_ENTRY_MOTIFS[mi];var sel=window._stockEntryMotif===m.k;
+    h+='<button onclick="window._stockEntryMotif=\''+m.k+'\';renderStockEntry()" style="padding:8px 12px;border-radius:8px;border:1.5px solid '+(sel?m.c:"rgba(255,255,255,.1)")+';background:'+(sel?m.c+"33":"rgba(255,255,255,.04)")+';color:'+(sel?m.c:"rgba(255,255,255,.6)")+';font-size:12px;font-weight:'+(sel?"800":"600")+';cursor:pointer">'+m.l+'</button>';
+  }
+  h+='</div></div>';
   // Search/scan bar
   h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
   h+='<input id="entrySearch" placeholder="\ud83d\udd0d Recherche ou scan..." style="flex:1;font-size:15px;padding:12px" oninput="filterEntryList(this.value)" onkeydown="if(event.key===\'Enter\'){addEntryByCode(this.value);this.value=\'\';}">';
@@ -6999,6 +7046,8 @@ function filterEntryList(q){
 }
 function validateStockEntry(){
   if(!_stockEntryList.length)return;
+  var motifKey=window._stockEntryMotif||"reapprovisionnement";
+  var motifObj=STOCK_ENTRY_MOTIFS.find(function(m){return m.k===motifKey;})||STOCK_ENTRY_MOTIFS[0];
   var summary=[];
   for(var i=0;i<_stockEntryList.length;i++){
     var c=_stockEntryList[i];
@@ -7008,12 +7057,12 @@ function validateStockEntry(){
         PRODS[j].stk+=c.qty;
         summary.push(c.name+" : +"+c.qty+" (total "+PRODS[j].stk+")");
         if(typeof saveProduct==="function")saveProduct(PRODS[j]);
-        if(typeof logMouvementStock==="function")logMouvementStock(PRODS[j].id,c.name,"entree",c.qty,_stkBefore,PRODS[j].stk,"R\u00e9ception commande");
+        if(typeof logMouvementStock==="function")logMouvementStock(PRODS[j].id,c.name,"entree",c.qty,_stkBefore,PRODS[j].stk,motifObj.l,null,motifKey,motifObj.l);
         break;
       }
     }
   }
-  if(typeof auditLog==="function")auditLog("ENTREE_STOCK","R\u00e9ception de "+_stockEntryList.length+" produits");
+  if(typeof auditLog==="function")auditLog("ENTREE_STOCK","R\u00e9ception de "+_stockEntryList.length+" produits ("+motifObj.l+")");
   _stockEntryList=[];
   cM();go("products");
   toast("Stock mis \u00e0 jour !\n"+summary.join("\n"),"success");
@@ -7577,6 +7626,262 @@ function disableExpiredPromos(){
   });
   toast(count+" promo"+(count>1?"s":"")+" d\u00e9sactiv\u00e9e"+(count>1?"s":""),"success");
   cM();showAllPromos();
+}
+
+// === BULK PRICE UPDATE (Augmentations multiples) ===
+function showBulkPriceUpdate(){
+  if(!window._bulkSelected)window._bulkSelected={};
+  if(!window._bulkFilter)window._bulkFilter={cat:"all",fournisseur:"all"};
+  if(!window._bulkType)window._bulkType="percent";
+  if(!window._bulkValue)window._bulkValue=10;
+  if(!window._bulkOp)window._bulkOp="augmenter";
+  renderBulkPriceUpdate();
+}
+function renderBulkPriceUpdate(){
+  var filter=window._bulkFilter;
+  var filtered=PRODS.filter(function(p){
+    if(filter.cat!=="all"&&p.cat!==filter.cat)return false;
+    if(filter.fournisseur!=="all"&&String(p.fournisseurId||"")!==filter.fournisseur)return false;
+    return true;
+  });
+  var allSelected=filtered.length>0&&filtered.every(function(p){return window._bulkSelected[p.id];});
+  var selectedCount=filtered.filter(function(p){return window._bulkSelected[p.id];}).length;
+  
+  var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto;padding:16px"><div style="max-width:700px;margin:0 auto">';
+  h+='<h2 style="color:#66bb6a">\ud83d\udcc8 Augmentations / Diminutions multiples</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">S\u00e9lectionnez les produits puis appliquez une modification de prix en masse.</div>';
+  
+  // Filters
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">\ud83d\udd0d Filtres</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Cat\u00e9gorie</label>';
+  h+='<select onchange="window._bulkFilter.cat=this.value;renderBulkPriceUpdate()" style="width:100%;padding:8px">';
+  h+='<option value="all"'+(filter.cat==="all"?" selected":"")+'>Toutes les cat\u00e9gories</option>';
+  for(var i=0;i<PCATS.length;i++)h+='<option value="'+PCATS[i]+'"'+(filter.cat===PCATS[i]?" selected":"")+'>'+PCATS[i]+'</option>';
+  h+='</select></div>';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Fournisseur</label>';
+  h+='<select onchange="window._bulkFilter.fournisseur=this.value;renderBulkPriceUpdate()" style="width:100%;padding:8px">';
+  h+='<option value="all"'+(filter.fournisseur==="all"?" selected":"")+'>Tous</option>';
+  var _fL=window.FOURNISSEURS||[];
+  for(var fi=0;fi<_fL.length;fi++)h+='<option value="'+_fL[fi].id+'"'+(filter.fournisseur===String(_fL[fi].id)?" selected":"")+'>'+_fL[fi].nom+'</option>';
+  h+='</select></div>';
+  h+='</div></div>';
+  
+  // Modification controls
+  h+='<div style="background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.2);border-radius:12px;padding:14px;margin-bottom:14px">';
+  h+='<div style="font-size:11px;color:#66bb6a;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">\ud83d\udcb0 Modification \u00e0 appliquer</div>';
+  // Op selector
+  h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
+  h+='<button onclick="window._bulkOp=\'augmenter\';renderBulkPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(window._bulkOp==="augmenter"?"#66bb6a":"rgba(255,255,255,.1)")+';background:'+(window._bulkOp==="augmenter"?"rgba(76,175,80,.2)":"rgba(255,255,255,.04)")+';color:'+(window._bulkOp==="augmenter"?"#66bb6a":"rgba(255,255,255,.5)")+';font-weight:'+(window._bulkOp==="augmenter"?"800":"600")+';cursor:pointer;font-size:13px">\u2197\ufe0f Augmenter</button>';
+  h+='<button onclick="window._bulkOp=\'diminuer\';renderBulkPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(window._bulkOp==="diminuer"?"#ef5350":"rgba(255,255,255,.1)")+';background:'+(window._bulkOp==="diminuer"?"rgba(244,67,54,.2)":"rgba(255,255,255,.04)")+';color:'+(window._bulkOp==="diminuer"?"#ef5350":"rgba(255,255,255,.5)")+';font-weight:'+(window._bulkOp==="diminuer"?"800":"600")+';cursor:pointer;font-size:13px">\u2198\ufe0f Diminuer</button>';
+  h+='</div>';
+  // Type + value
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end">';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Type</label>';
+  h+='<select onchange="window._bulkType=this.value;renderBulkPriceUpdate()" style="width:100%;padding:10px">';
+  h+='<option value="percent"'+(window._bulkType==="percent"?" selected":"")+'>Pourcentage (%)</option>';
+  h+='<option value="amount"'+(window._bulkType==="amount"?" selected":"")+'>Montant fixe (\u20ac)</option>';
+  h+='</select></div>';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Valeur</label>';
+  h+='<input type="number" id="bulkValueInput" value="'+window._bulkValue+'" min="0" step="0.5" oninput="window._bulkValue=parseFloat(this.value)||0;updateBulkPreview()" style="width:100%;padding:10px;font-size:18px;font-weight:800;text-align:center"></div>';
+  h+='</div>';
+  // Preview
+  var previewProd=filtered.find(function(p){return window._bulkSelected[p.id];});
+  if(previewProd){
+    var newPrice=calcBulkNewPrice(previewProd.p,window._bulkOp,window._bulkType,window._bulkValue);
+    h+='<div id="bulkPreview" style="margin-top:10px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;font-size:12px"><div style="color:var(--text3)">Aper\u00e7u sur "'+previewProd.n+'":</div><div style="font-weight:800;color:#fff">'+previewProd.p.toFixed(2)+'\u20ac \u2192 <span style="color:'+(window._bulkOp==="augmenter"?"#66bb6a":"#ef5350")+'">'+newPrice.toFixed(2)+'\u20ac</span></div></div>';
+  }
+  h+='</div>';
+  
+  // Product selection
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px">\ud83d\udcdd Produits ('+selectedCount+'/'+filtered.length+' s\u00e9lectionn\u00e9s)</div>';
+  h+='<button onclick="bulkToggleAll('+!allSelected+')" style="padding:6px 12px;background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.3);border-radius:6px;color:#64b5f6;font-size:11px;font-weight:700;cursor:pointer">'+(allSelected?"Tout d\u00e9sel.":"Tout s\u00e9l.")+'</button>';
+  h+='</div>';
+  h+='<div style="max-height:280px;overflow-y:auto">';
+  if(!filtered.length)h+='<div style="text-align:center;color:var(--text3);padding:20px">Aucun produit avec ces filtres</div>';
+  for(var i=0;i<filtered.length;i++){
+    var p=filtered[i];
+    var isSel=!!window._bulkSelected[p.id];
+    var newP=calcBulkNewPrice(p.p,window._bulkOp,window._bulkType,window._bulkValue);
+    h+='<div onclick="bulkToggleProduct('+p.id+')" style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid var(--border2);cursor:pointer;background:'+(isSel?"rgba(76,175,80,.08)":"transparent")+'">';
+    h+='<div style="width:20px;height:20px;border-radius:4px;border:2px solid '+(isSel?"#66bb6a":"rgba(255,255,255,.2)")+';background:'+(isSel?"#66bb6a":"transparent")+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+(isSel?'<span style="color:#fff;font-size:14px;font-weight:900">\u2713</span>':'')+'</div>';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+p.n+'</div>';
+    h+='<div style="font-size:10px;color:var(--text3)">'+p.cat+'</div></div>';
+    h+='<div style="text-align:right;flex-shrink:0"><div style="font-size:13px;font-weight:700;color:#fff">'+p.p.toFixed(2)+'\u20ac</div>';
+    if(isSel)h+='<div style="font-size:11px;font-weight:700;color:'+(window._bulkOp==="augmenter"?"#66bb6a":"#ef5350")+'">\u2192 '+newP.toFixed(2)+'\u20ac</div>';
+    h+='</div>';
+    h+='</div>';
+  }
+  h+='</div></div>';
+  
+  // Action buttons
+  h+='<div style="display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:#0a0a0e">';
+  h+='<button class="btn btn-ghost" style="flex:1" onclick="window._bulkSelected={};cM()">Annuler</button>';
+  if(selectedCount>0)h+='<button class="btn" style="flex:2;background:'+(window._bulkOp==="augmenter"?"#66bb6a":"#ef5350")+';color:#fff;font-weight:800" onclick="applyBulkPriceUpdate()">\u2705 Appliquer sur '+selectedCount+' produit'+(selectedCount>1?"s":"")+'</button>';
+  h+='</div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function calcBulkNewPrice(currentPrice,op,type,value){
+  if(type==="percent"){
+    var factor=op==="augmenter"?(1+value/100):(1-value/100);
+    return Math.max(0,Math.round(currentPrice*factor*100)/100);
+  } else {
+    return Math.max(0,op==="augmenter"?currentPrice+value:currentPrice-value);
+  }
+}
+function bulkToggleProduct(id){
+  if(window._bulkSelected[id])delete window._bulkSelected[id];
+  else window._bulkSelected[id]=true;
+  renderBulkPriceUpdate();
+}
+function bulkToggleAll(select){
+  var filter=window._bulkFilter;
+  var filtered=PRODS.filter(function(p){
+    if(filter.cat!=="all"&&p.cat!==filter.cat)return false;
+    if(filter.fournisseur!=="all"&&String(p.fournisseurId||"")!==filter.fournisseur)return false;
+    return true;
+  });
+  if(select){
+    filtered.forEach(function(p){window._bulkSelected[p.id]=true;});
+  } else {
+    filtered.forEach(function(p){delete window._bulkSelected[p.id];});
+  }
+  renderBulkPriceUpdate();
+}
+function updateBulkPreview(){
+  // Quick preview update without full re-render
+  renderBulkPriceUpdate();
+}
+function applyBulkPriceUpdate(){
+  var ids=Object.keys(window._bulkSelected).filter(function(k){return window._bulkSelected[k];});
+  if(!ids.length)return;
+  var op=window._bulkOp,type=window._bulkType,value=window._bulkValue;
+  var msg=op==="augmenter"?"Augmenter":"Diminuer";
+  var unit=type==="percent"?value+"%":value+"\u20ac";
+  showConfirm(msg+" de "+unit+" le prix de "+ids.length+" produit"+(ids.length>1?"s":"")+" ?",function(){
+    var count=0;
+    ids.forEach(function(idStr){
+      var id=parseInt(idStr);
+      var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){p=PRODS[i];break;}}
+      if(!p)return;
+      p.p=calcBulkNewPrice(p.p,op,type,value);
+      if(typeof saveProduct==="function")saveProduct(p);
+      count++;
+    });
+    if(typeof auditLog==="function")auditLog("BULK_PRIX",msg+" "+unit+" sur "+count+" produits");
+    window._bulkSelected={};
+    cM();go("products");
+    toast(count+" produit"+(count>1?"s":"")+" mis \u00e0 jour","success");
+  });
+}
+
+// === BULK DELETE (Suppressions multiples) ===
+function showBulkDelete(){
+  if(!window._bulkDelSelected)window._bulkDelSelected={};
+  if(!window._bulkDelFilter)window._bulkDelFilter={cat:"all",fournisseur:"all"};
+  renderBulkDelete();
+}
+function renderBulkDelete(){
+  var filter=window._bulkDelFilter;
+  var filtered=PRODS.filter(function(p){
+    if(filter.cat!=="all"&&p.cat!==filter.cat)return false;
+    if(filter.fournisseur!=="all"&&String(p.fournisseurId||"")!==filter.fournisseur)return false;
+    return true;
+  });
+  var allSelected=filtered.length>0&&filtered.every(function(p){return window._bulkDelSelected[p.id];});
+  var selectedCount=filtered.filter(function(p){return window._bulkDelSelected[p.id];}).length;
+  
+  var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto;padding:16px"><div style="max-width:700px;margin:0 auto">';
+  h+='<h2 style="color:#ef5350">\ud83d\uddd1\ufe0f Suppressions multiples</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">S\u00e9lectionnez les produits \u00e0 supprimer d\u00e9finitivement.</div>';
+  
+  // Warning
+  h+='<div style="background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);border-radius:10px;padding:10px;margin-bottom:14px;font-size:12px;color:#ef5350"><strong>\u26a0\ufe0f Attention</strong> \u2014 Cette action est irr\u00e9versible. Les produits supprim\u00e9s ne pourront plus \u00eatre r\u00e9cup\u00e9r\u00e9s.</div>';
+  
+  // Filters
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">\ud83d\udd0d Filtres</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Cat\u00e9gorie</label>';
+  h+='<select onchange="window._bulkDelFilter.cat=this.value;renderBulkDelete()" style="width:100%;padding:8px">';
+  h+='<option value="all"'+(filter.cat==="all"?" selected":"")+'>Toutes</option>';
+  for(var i=0;i<PCATS.length;i++)h+='<option value="'+PCATS[i]+'"'+(filter.cat===PCATS[i]?" selected":"")+'>'+PCATS[i]+'</option>';
+  h+='</select></div>';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Fournisseur</label>';
+  h+='<select onchange="window._bulkDelFilter.fournisseur=this.value;renderBulkDelete()" style="width:100%;padding:8px">';
+  h+='<option value="all"'+(filter.fournisseur==="all"?" selected":"")+'>Tous</option>';
+  var _fL=window.FOURNISSEURS||[];
+  for(var fi=0;fi<_fL.length;fi++)h+='<option value="'+_fL[fi].id+'"'+(filter.fournisseur===String(_fL[fi].id)?" selected":"")+'>'+_fL[fi].nom+'</option>';
+  h+='</select></div>';
+  h+='</div></div>';
+  
+  // Product selection
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px">\ud83d\udcdd Produits ('+selectedCount+'/'+filtered.length+' s\u00e9lectionn\u00e9s)</div>';
+  h+='<button onclick="bulkDelToggleAll('+!allSelected+')" style="padding:6px 12px;background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.3);border-radius:6px;color:#64b5f6;font-size:11px;font-weight:700;cursor:pointer">'+(allSelected?"Tout d\u00e9sel.":"Tout s\u00e9l.")+'</button>';
+  h+='</div>';
+  h+='<div style="max-height:320px;overflow-y:auto">';
+  if(!filtered.length)h+='<div style="text-align:center;color:var(--text3);padding:20px">Aucun produit avec ces filtres</div>';
+  for(var i=0;i<filtered.length;i++){
+    var p=filtered[i];
+    var isSel=!!window._bulkDelSelected[p.id];
+    h+='<div onclick="bulkDelToggleProduct('+p.id+')" style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid var(--border2);cursor:pointer;background:'+(isSel?"rgba(244,67,54,.1)":"transparent")+'">';
+    h+='<div style="width:20px;height:20px;border-radius:4px;border:2px solid '+(isSel?"#ef5350":"rgba(255,255,255,.2)")+';background:'+(isSel?"#ef5350":"transparent")+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+(isSel?'<span style="color:#fff;font-size:14px;font-weight:900">\u2713</span>':'')+'</div>';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+p.n+'</div>';
+    h+='<div style="font-size:10px;color:var(--text3)">'+p.cat+' \u2022 Stock: '+p.stk+'</div></div>';
+    h+='<div style="text-align:right;flex-shrink:0;font-size:13px;font-weight:700;color:var(--gold)">'+p.p.toFixed(2)+'\u20ac</div>';
+    h+='</div>';
+  }
+  h+='</div></div>';
+  
+  // Action buttons
+  h+='<div style="display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:#0a0a0e">';
+  h+='<button class="btn btn-ghost" style="flex:1" onclick="window._bulkDelSelected={};cM()">Annuler</button>';
+  if(selectedCount>0)h+='<button class="btn" style="flex:2;background:#ef5350;color:#fff;font-weight:800" onclick="applyBulkDelete()">\ud83d\uddd1\ufe0f Supprimer '+selectedCount+' produit'+(selectedCount>1?"s":"")+'</button>';
+  h+='</div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function bulkDelToggleProduct(id){
+  if(window._bulkDelSelected[id])delete window._bulkDelSelected[id];
+  else window._bulkDelSelected[id]=true;
+  renderBulkDelete();
+}
+function bulkDelToggleAll(select){
+  var filter=window._bulkDelFilter;
+  var filtered=PRODS.filter(function(p){
+    if(filter.cat!=="all"&&p.cat!==filter.cat)return false;
+    if(filter.fournisseur!=="all"&&String(p.fournisseurId||"")!==filter.fournisseur)return false;
+    return true;
+  });
+  if(select){
+    filtered.forEach(function(p){window._bulkDelSelected[p.id]=true;});
+  } else {
+    filtered.forEach(function(p){delete window._bulkDelSelected[p.id];});
+  }
+  renderBulkDelete();
+}
+function applyBulkDelete(){
+  var ids=Object.keys(window._bulkDelSelected).filter(function(k){return window._bulkDelSelected[k];});
+  if(!ids.length)return;
+  showConfirm("Supprimer d\u00e9finitivement "+ids.length+" produit"+(ids.length>1?"s":"")+" ? Cette action est IRR\u00c9VERSIBLE.",function(){
+    var count=0;
+    ids.forEach(function(idStr){
+      var id=parseInt(idStr);
+      PRODS=PRODS.filter(function(p){return p.id!==id;});
+      if(typeof deleteProduct==="function")deleteProduct(id);
+      count++;
+    });
+    if(typeof auditLog==="function")auditLog("BULK_DELETE","Suppression de "+count+" produits");
+    window._bulkDelSelected={};
+    cM();go("products");
+    toast(count+" produit"+(count>1?"s":"")+" supprim\u00e9"+(count>1?"s":""),"success");
+  });
 }
 
 // Get effective price for a product (promo if active, normal otherwise)

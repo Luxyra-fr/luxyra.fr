@@ -1056,13 +1056,15 @@ async function deleteFournisseur(fId) {
 // ============================================================
 // MOUVEMENTS STOCK
 // ============================================================
-async function logMouvementStock(prodId, prodNom, type, qty, stkAvant, stkApres, ref, note) {
+async function logMouvementStock(prodId, prodNom, type, qty, stkAvant, stkApres, ref, note, motif, motifLabel) {
   if (!_isOnline || !_salonId) return;
   try {
     await _sb.from("mouvements_stock").insert({
       salon_id: _salonId, produit_id: prodId, produit_nom: prodNom,
       type: type, quantite: qty, stock_avant: stkAvant, stock_apres: stkApres,
-      reference: ref || null, note: note || null
+      reference: ref || null, note: note || null,
+      motif: motif || null, motif_label: motifLabel || null,
+      commentaire: note || null
     });
   } catch(e) { console.error("[MVT STOCK]", e.message); }
 }
