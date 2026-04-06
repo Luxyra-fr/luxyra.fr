@@ -179,13 +179,13 @@ body{max-width:100%;margin:0 auto;}
 .pg-slot{border-bottom:1px solid #bbb;cursor:pointer;}
 .pg-slot.hr{border-top:2.5px solid #666;border-bottom:1px solid #bbb;}
 .pg-slot:hover{background:rgba(200,168,78,.08);}
-.pg-block{position:absolute;border-radius:6px;padding:3px 6px;font-size:12px;line-height:1.3;overflow:hidden;z-index:5;cursor:grab;border-left:5px solid;box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;-webkit-user-select:none;color:#fff!important;}
+.pg-block{position:absolute;border-radius:6px;padding:3px 6px;font-size:12px;line-height:1.3;overflow:hidden;z-index:5;cursor:grab;border-left:5px solid;box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;-webkit-user-select:none;color:#1a1a1a!important;}
 .pg-block:active{cursor:grabbing;}
 .pg-block{box-sizing:border-box;padding-left:7px;padding-right:3px;}
-.pg-block .pb-name{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.5);}
-.pg-block .pb-svc{font-size:11px;opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);}
+.pg-block .pb-name{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#1a1a1a;}
+.pg-block .pb-svc{font-size:11px;opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#333;}
 .pg-block .pb-badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:8px;font-weight:800;margin-top:1px;}
-.pg-block .pb-time{font-size:10px;opacity:.8;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.3);}
+.pg-block .pb-time{font-size:10px;opacity:.8;color:#555;}
 /* RDV quick popup */
 #rdvPopup{display:none;position:fixed;z-index:250;background:rgba(16,16,22,.97);border:1.5px solid var(--gold);border-radius:14px;box-shadow:0 8px 32px rgba(0,0,0,.6);padding:12px 14px;min-width:240px;max-width:320px;color:#fff;font-size:13px;backdrop-filter:blur(12px);}
 #rdvPopup .rp-name{font-weight:800;font-size:15px;font-family:var(--f1);color:var(--gold);margin-bottom:4px;}
@@ -2761,13 +2761,9 @@ function gT(id){for(var i=0;i<T.length;i++)if(T[i].id===id)return T[i];return nu
 function gC(id){for(var i=0;i<CL.length;i++)if(CL[i].id===id)return CL[i];return null;}
 function cName(c){return c?(c.nom+" "+c.pre):"";}
 function passageName(cId,sId){
-  if(!cId)return"Client de passage";
-  if(cId==="passage-F")return"\ud83d\udc69 Client de passage femme";
-  if(cId==="passage-H")return"\ud83d\udc68 Client de passage homme";
-  if(cId==="passage-E")return"\ud83e\uddd2 Client de passage enfant";
-  if(cId==="passage"){
+  if(!cId||cId==="passage"){
     if(sId){var sv=gS(sId);if(sv&&sv.cat){if(sv.cat==="Homme"||sv.cat==="Barbier")return"\ud83d\udc68 Client de passage homme";if(sv.cat==="Enfants")return"\ud83e\uddd2 Client de passage enfant";}}
-    return"\ud83d\udc69 Client de passage";
+    return"\ud83d\udc69 Client de passage femme";
   }
   var cl=gC(cId);return cl?cName(cl):"Client de passage";
 }
@@ -3854,6 +3850,9 @@ function printPlanning(){
   setTimeout(function(){w.print();},400);
 }
 function clickSlot(stId,time,date){
+  // Save current view state to restore after RDV creation
+  window._savedCalD=new Date(calD.getTime());
+  window._savedPlanDays=window._planDays;
   if(date)calD=new Date(date+'T12:00:00');
   var dk=date||dS(calD);
   // Check if this slot is blocked by absence/pause/congé
@@ -4228,6 +4227,7 @@ function showRdvPopup(id,evt){
   if(a.comment)h+='<br>\ud83d\udcdd '+a.comment;
   h+='</div>';
   h+='<div class="rp-btns">';
+  h+='<button style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.5)" onclick="hideRdvPopup()">Fermer</button>';
   h+='<button style="background:rgba(200,168,78,.15);color:var(--gold)" onclick="hideRdvPopup();clickAppt(\''+a.id+'\')">Modifier</button>';
   if(a.st==="conf")h+='<button style="background:rgba(45,154,94,.15);color:#4caf50" onclick="hideRdvPopup();mD(\''+a.id+'\')">Encaisser</button>';
   if(a.st!=="done"&&!a.isOnline)h+='<button style="background:rgba(239,83,80,.12);color:#ef5350" onclick="hideRdvPopup();confirmCancelAppt(\''+a.id+'\')">Annuler</button>';
@@ -4421,7 +4421,7 @@ function clickAppt(id){
   } else {
     htm+='<button class="btn" style="flex:1;background:rgba(108,92,231,.08);color:#a29bfe;font-size:12px" disabled>\ud83d\udd12 Modifiable par le client</button>';
   }
-  htm+='<button class="btn bg" style="flex:1" onclick="cM();go(\'planning\')">Valider</button>';
+  htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.08);font-weight:700" onclick="cM();go(\'planning\')">\u25c0 Retour planning</button>';
   htm+='</div>';
   htm+='</div>';
   
@@ -8828,6 +8828,89 @@ function rStats(){
   }
   h+='</div>';
   
+  // 10. CA par prestation (top services)
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">\u2702\ufe0f CA par prestation</div>';
+  var svcCA={};
+  dn.forEach(function(a){
+    if(a.items){a.items.forEach(function(it){
+      if(!it.isProd&&!it.isSep){var key=it.name||"Prestation";if(!svcCA[key])svcCA[key]={name:key,qty:0,ca:0};svcCA[key].qty++;svcCA[key].ca+=it.price*it.qty-(it.remise||0);}
+    });}else{var sv2=gS(a.sId);var sn=sv2?sv2.n:"Prestation";if(!svcCA[sn])svcCA[sn]={name:sn,qty:0,ca:0};svcCA[sn].qty++;svcCA[sn].ca+=a.pr*taxR;}
+  });
+  var svcList=Object.values(svcCA).sort(function(a,b){return b.ca-a.ca;});
+  var maxSvcCA=svcList.length?svcList[0].ca:1;
+  if(!svcList.length)h+='<div style="color:var(--text3);font-size:13px">Aucune donn\u00e9e</div>';
+  for(var si2=0;si2<Math.min(svcList.length,15);si2++){
+    var ss=svcList[si2];
+    var sbW=maxSvcCA>0?Math.max(5,Math.round(ss.ca/maxSvcCA*100)):5;
+    h+='<div style="margin-bottom:6px">';
+    h+='<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(si2+1)+'. '+ss.name+'</span><span style="flex-shrink:0;color:var(--gold);font-weight:800;margin-left:8px">'+ss.ca.toFixed(2)+' \u20ac</span></div>';
+    h+='<div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:8px;background:rgba(255,255,255,.06);border-radius:4px"><div style="height:100%;width:'+sbW+'%;background:var(--gold);border-radius:4px"></div></div><span style="font-size:11px;color:var(--text3);flex-shrink:0">'+ss.qty+'x</span></div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  
+  // 11. Evolution mensuelle (6 derniers mois)
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">\ud83d\udcc8 \u00c9volution mensuelle</div>';
+  var moData=[];var nowM2=new Date(TD);
+  for(var mi=5;mi>=0;mi--){
+    var md=new Date(nowM2.getFullYear(),nowM2.getMonth()-mi,1);
+    var mk=md.getFullYear()+"-"+String(md.getMonth()+1).padStart(2,"0");
+    var mCA=0,mNb=0,mNewCl=0;
+    AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date.indexOf(mk)===0;}).forEach(function(a){mCA+=a.pr*taxR;mNb++;});
+    CL.forEach(function(c){if(c.cr&&c.cr.indexOf(mk)===0)mNewCl++;});
+    moData.push({k:mk,label:MO[md.getMonth()].slice(0,3)+" "+md.getFullYear(),ca:mCA,nb:mNb,newCl:mNewCl});
+  }
+  var maxMoCA=1;moData.forEach(function(m){if(m.ca>maxMoCA)maxMoCA=m.ca;});
+  h+='<div style="display:flex;gap:6px;align-items:flex-end;height:140px;margin-bottom:8px">';
+  for(var mi2=0;mi2<moData.length;mi2++){
+    var md2=moData[mi2];
+    var bH=maxMoCA>0?Math.max(4,Math.round(md2.ca/maxMoCA*120)):4;
+    var isCur=mi2===moData.length-1;
+    h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">';
+    h+='<div style="font-size:10px;font-weight:800;color:'+(isCur?'var(--gold)':'#fff')+';margin-bottom:4px">'+md2.ca.toFixed(0)+'\u20ac</div>';
+    h+='<div style="width:100%;height:'+bH+'px;background:'+(isCur?'linear-gradient(180deg,var(--gold),#b8960f)':'rgba(255,255,255,.15)')+';border-radius:6px 6px 0 0"></div>';
+    h+='<div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:center">'+md2.label+'</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  // Monthly details table
+  h+='<div style="font-size:11px;border-top:1px solid var(--border2);padding-top:8px">';
+  for(var mi3=moData.length-1;mi3>=0;mi3--){
+    var md3=moData[mi3];
+    h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border2)">';
+    h+='<span style="font-weight:600">'+md3.label+'</span>';
+    h+='<span style="color:var(--text3)">'+md3.nb+' RDV \u2022 '+md3.newCl+' nouveaux</span>';
+    h+='<span style="font-weight:800;color:var(--gold)">'+md3.ca.toFixed(0)+' \u20ac</span>';
+    h+='</div>';
+  }
+  h+='</div></div>';
+  
+  // 12. Taux de remplissage
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">\ud83d\udccb Taux de remplissage</div>';
+  var totalAvailMin=0,totalOccupMin=0;
+  var fillDays=Object.keys(dayData).sort();
+  fillDays.forEach(function(dk2){
+    var dd3=new Date(dk2+'T12:00:00');var dow2=dd3.getDay();
+    var hrs2=H[dow2];if(!hrs2)return;
+    var openMin=toM(hrs2.c)-toM(hrs2.o);
+    totalAvailMin+=openMin*T.length;
+    var dayAppts=dn.filter(function(a){return a.date===dk2;});
+    dayAppts.forEach(function(a){
+      var sv5=gS(a.sId);var phases5=a.aPhases||(sv5?sv5.phases:null);
+      if(!phases5||!phases5.length){totalOccupMin+=(sv5?svcTotalDur(sv5):30);}
+      else{phases5.forEach(function(p){if(p.t==="w")totalOccupMin+=p.d;});}
+    });
+  });
+  var fillRate=totalAvailMin>0?Math.round(totalOccupMin/totalAvailMin*100):0;
+  h+='<div style="text-align:center;margin-bottom:10px">';
+  h+='<div style="font-size:42px;font-weight:900;color:'+(fillRate>=70?'var(--green)':fillRate>=40?'var(--gold)':'var(--red)')+'">'+fillRate+'%</div>';
+  h+='<div style="font-size:12px;color:var(--text3)">'+Math.round(totalOccupMin/60)+'h occup\u00e9es sur '+Math.round(totalAvailMin/60)+'h disponibles</div>';
+  h+='</div>';
+  h+='<div style="height:16px;background:rgba(255,255,255,.08);border-radius:8px;overflow:hidden">';
+  h+='<div style="height:100%;width:'+fillRate+'%;background:'+(fillRate>=70?'var(--green)':fillRate>=40?'var(--gold)':'var(--red)')+';border-radius:8px;transition:width .3s"></div>';
+  h+='</div>';
+  h+='</div>';
+
   return h;
 }
 
@@ -9122,6 +9205,8 @@ function aAp(){
   if(lieuEl&&lieuEl.value==="domicile"){rdvObj.lieu="domicile";rdvObj.adresse=(document.getElementById("rdvAdresse")||{}).value||"";}
   AP.push(rdvObj);
   window._rdvSvcId=null;window._rdvPassage=null;
+  // Restore multi-day view if we came from it
+  if(window._savedCalD){calD=window._savedCalD;window._planDays=window._savedPlanDays||1;window._savedCalD=null;window._savedPlanDays=null;}
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});}
   setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
@@ -9134,6 +9219,8 @@ function confirmPendingRdv(){
   if(r.lieu)rdvObj2.lieu=r.lieu;if(r.adresse)rdvObj2.adresse=r.adresse;
   AP.push(rdvObj2);
   window._pendingRdv=null;
+  // Restore multi-day view if we came from it
+  if(window._savedCalD){calD=window._savedCalD;window._planDays=window._savedPlanDays||1;window._savedCalD=null;window._savedPlanDays=null;}
   cM();go("planning");
   if(typeof saveAppointment==="function"){saveAppointment(rdvObj2).then(function(){go("planning");}).catch(function(){});}
   setTimeout(function(){sendRdvConfirmation(rdvObj2);},300);
@@ -12331,6 +12418,52 @@ function rMarketing(){
     h+='<div><div style="font-weight:700;font-size:14px">\ud83d\udcb3 '+nbCartesActives+' carte'+(nbCartesActives>1?'s':'')+' active'+(nbCartesActives>1?'s':'')+'</div>';
     h+='<div style="font-size:12px;color:var(--text3)">Les notifications sont envoy\u00e9es automatiquement (SMS + Email)</div></div>';
     h+='</div></div>';
+    
+    // === RAPPELS CLIENTS AUTOMATIQUES ===
+    if(!smsC.anniActif)smsC.anniActif=false;
+    if(!smsC.anniSms)smsC.anniSms="Joyeux anniversaire {prenom} ! \ud83c\udf82 {salon} vous souhaite une merveilleuse journ\u00e9e. Profitez de -10% sur votre prochaine visite !";
+    if(!smsC.anniEmail)smsC.anniEmail="Joyeux anniversaire {prenom} !\n\nToute l\u2019\u00e9quipe de {salon} vous souhaite un tr\u00e8s bon anniversaire ! \ud83c\udf89\n\nPour c\u00e9l\u00e9brer, nous vous offrons -10% sur votre prochaine prestation.\n\n\u00c0 tr\u00e8s bient\u00f4t !\n{salon}";
+    if(!smsC.relanceActif)smsC.relanceActif=false;
+    if(!smsC.relanceJours)smsC.relanceJours=90;
+    if(!smsC.relanceSms)smsC.relanceSms="{prenom}, vous nous manquez ! \ud83d\udc87 \u00c7a fait un moment que nous ne vous avons pas vu(e). Prenez RDV chez {salon} pour retrouver votre plus belle coiffure !";
+    if(!smsC.relanceEmail)smsC.relanceEmail="Bonjour {prenom},\n\nCela fait un moment que nous n\u2019avons pas eu le plaisir de vous accueillir chez {salon} !\n\nVotre derni\u00e8re visite remonte \u00e0 plus de {jours} jours. N\u2019h\u00e9sitez pas \u00e0 prendre rendez-vous, nous serons ravis de vous retrouver.\n\n\u00c0 bient\u00f4t !\n{salon}";
+    
+    h+='<div class="sec" style="margin-top:20px">\ud83c\udf82 Rappels clients automatiques</div>';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">Envoyez automatiquement des SMS/emails pour les anniversaires et relancez les clients inactifs.</div>';
+    
+    // Anniversaires
+    h+='<div class="card" style="margin-bottom:14px">';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83c\udf82 Anniversaire client</span><input type="checkbox" '+(smsC.anniActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.anniActif=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="font-size:12px;color:rgba(255,255,255,.4);padding:6px 0">SMS + Email envoy\u00e9s automatiquement le jour de l\u2019anniversaire du client (si date de naissance renseign\u00e9e).</div>';
+    // Count clients with birthday
+    var nbWithBday=CL.filter(function(c){return c.ddn;}).length;
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">'+nbWithBday+' client'+(nbWithBday>1?'s':'')+' avec date de naissance renseign\u00e9e sur '+CL.length+'</div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\ud83d\udcf2 Message SMS</label>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.anniSms=this.value;saveSmsConfig()">'+smsC.anniSms+'</textarea></div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\u2709\ufe0f Message Email</label>';
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.anniEmail=this.value;saveSmsConfig()">'+smsC.anniEmail+'</textarea></div>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div>';
+    h+='</div>';
+    
+    // Relance clients inactifs
+    h+='<div class="card" style="margin-bottom:14px">';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83d\udc8c Relance clients inactifs</span><input type="checkbox" '+(smsC.relanceActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.relanceActif=this.checked;saveSmsConfig()"></label>';
+    h+='<div style="font-size:12px;color:rgba(255,255,255,.4);padding:6px 0">SMS + Email envoy\u00e9s aux clients qui ne sont pas venus depuis X jours (1 seul envoi par client).</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin:8px 0"><label style="font-size:13px;font-weight:700;flex-shrink:0">D\u00e9lai d\u2019inactivit\u00e9 :</label><input type="number" value="'+smsC.relanceJours+'" min="30" max="365" style="width:80px;text-align:center;padding:8px" onchange="window.SMS_CONFIG.relanceJours=+this.value;saveSmsConfig()"><span style="font-size:13px;color:var(--text3)">jours</span></div>';
+    // Count inactive clients
+    var nbInactifs=0;
+    CL.forEach(function(c){
+      var lastVisit=AP.filter(function(a){return a.cId===c.id&&a.st==="done";}).sort(function(a,b){return b.date>a.date?1:-1;});
+      if(lastVisit.length){var daysAgo=Math.floor((new Date(TD)-new Date(lastVisit[0].date))/864e5);if(daysAgo>=smsC.relanceJours)nbInactifs++;}
+      else if(c.cr){var daysSince=Math.floor((new Date(TD)-new Date(c.cr))/864e5);if(daysSince>=smsC.relanceJours)nbInactifs++;}
+    });
+    h+='<div style="font-size:11px;color:var(--orange);margin-bottom:8px">'+nbInactifs+' client'+(nbInactifs>1?'s':'')+' inactif'+(nbInactifs>1?'s':'')+' depuis '+smsC.relanceJours+' jours</div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\ud83d\udcf2 Message SMS</label>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.relanceSms=this.value;saveSmsConfig()">'+smsC.relanceSms+'</textarea></div>';
+    h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\u2709\ufe0f Message Email</label>';
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.relanceEmail=this.value;saveSmsConfig()">'+smsC.relanceEmail+'</textarea></div>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon} {jours}</div>';
+    h+='</div>';
   }
   
   else if(tab==="rappels"){
@@ -12740,6 +12873,59 @@ function checkSmsReminders(){
       }
     }
   });
+  
+  // === AUTO: Anniversaires ===
+  if(cfg.anniActif){
+    var todayMD=todayStr.slice(5); // "MM-DD"
+    CL.forEach(function(cl){
+      if(!cl.ddn)return;
+      var clMD=cl.ddn.slice(5); // "MM-DD"
+      if(clMD!==todayMD)return;
+      var keyAnni="anni_"+cl.id+"_"+todayStr;
+      if(window._smsSent[keyAnni])return;
+      var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom};
+      // SMS
+      if(cl.ph&&cl.smsOk&&canSms&&cfg.anniSms){
+        sendSms(cl.ph,buildSmsText(cfg.anniSms,vars));
+      }
+      // Email
+      if(cl.em&&cl.emOk&&cfg.anniEmail){
+        var body=cfg.anniEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon);
+        sendEmailViaWorker(cl.em,cName(cl),"\ud83c\udf82 Joyeux anniversaire ! - "+SALON_CONFIG.nom,"<div style='font-family:sans-serif;max-width:500px;margin:0 auto'>"+body.replace(/\n/g,"<br>")+"</div>");
+      }
+      window._smsSent[keyAnni]=true;
+      try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
+    });
+  }
+  
+  // === AUTO: Relance clients inactifs ===
+  if(cfg.relanceActif&&cfg.relanceJours){
+    var relanceKey="relance_run_"+todayStr;
+    if(!window._smsSent[relanceKey]){
+      CL.forEach(function(cl){
+        var keyRel="relance_"+cl.id;
+        if(window._smsSent[keyRel])return; // already sent once
+        var lastV=AP.filter(function(a){return a.cId===cl.id&&a.st==="done";}).sort(function(a,b){return b.date>a.date?1:-1;});
+        var daysInactive=9999;
+        if(lastV.length){daysInactive=Math.floor((new Date(todayStr)-new Date(lastV[0].date))/864e5);}
+        else if(cl.cr){daysInactive=Math.floor((new Date(todayStr)-new Date(cl.cr))/864e5);}
+        if(daysInactive<cfg.relanceJours)return;
+        var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom,jours:String(daysInactive)};
+        // SMS
+        if(cl.ph&&cl.smsOk&&canSms&&cfg.relanceSms){
+          sendSms(cl.ph,buildSmsText(cfg.relanceSms,vars));
+        }
+        // Email
+        if(cl.em&&cl.emOk&&cfg.relanceEmail){
+          var body=cfg.relanceEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon).replace(/\{jours\}/g,vars.jours);
+          sendEmailViaWorker(cl.em,cName(cl),"Vous nous manquez ! - "+SALON_CONFIG.nom,"<div style='font-family:sans-serif;max-width:500px;margin:0 auto'>"+body.replace(/\n/g,"<br>")+"</div>");
+        }
+        window._smsSent[keyRel]=true;
+      });
+      window._smsSent[relanceKey]=true;
+      try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
+    }
+  }
 }
 
 async function sendEmail(to,subject,body,toName){
