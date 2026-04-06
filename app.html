@@ -6702,11 +6702,11 @@ function rProducts(){
   h+='<button onclick="showAllStockHistory()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(100,181,246,.25);background:linear-gradient(180deg,rgba(100,181,246,.12),rgba(100,181,246,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#64b5f6;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(100,181,246,.22),rgba(100,181,246,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(100,181,246,.12),rgba(100,181,246,.04))\'">';
   h+='<span style="font-size:18px;line-height:1">\ud83d\udcca</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Mouvements</span></button>';
   h+='<button onclick="showInventoryHistory()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(156,39,176,.25);background:linear-gradient(180deg,rgba(156,39,176,.12),rgba(156,39,176,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ce93d8;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(156,39,176,.22),rgba(156,39,176,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(156,39,176,.12),rgba(156,39,176,.04))\'">';
-  h+='<span style="font-size:18px;line-height:1">\ud83d\udcdc</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Inventaires</span></button>';
+  h+='<span style="font-size:18px;line-height:1">\ud83d\udcdc</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Historique inv.</span></button>';
   h+='<button onclick="showFournisseurManagement()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(255,152,0,.25);background:linear-gradient(180deg,rgba(255,152,0,.12),rgba(255,152,0,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ffb74d;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(255,152,0,.22),rgba(255,152,0,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(255,152,0,.12),rgba(255,152,0,.04))\'">';
-  h+='<span style="font-size:18px;line-height:1">\ud83c\udfe2</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Fournis.</span></button>';
+  h+='<span style="font-size:18px;line-height:1">\ud83c\udfe2</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Fournisseurs</span></button>';
   h+='<button onclick="showBulkDelete()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(244,67,54,.25);background:linear-gradient(180deg,rgba(244,67,54,.12),rgba(244,67,54,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ef5350;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(244,67,54,.22),rgba(244,67,54,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(244,67,54,.12),rgba(244,67,54,.04))\'">';
-  h+='<span style="font-size:18px;line-height:1">\ud83d\uddd1\ufe0f</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Suppr.</span></button>';
+  h+='<span style="font-size:18px;line-height:1">\ud83d\uddd1\ufe0f</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Supprimer</span></button>';
   h+='</div>';
   // Mobile : 4 colonnes au lieu de 7
   h+='<style>@media (max-width:640px){#products-toolbar{grid-template-columns:repeat(4,1fr)!important}}</style>';
@@ -8043,17 +8043,93 @@ function doEditProd(id){
   var prd=document.getElementById("epPromoDebut");if(prd)p.promoDebut=prd.value||null;
   var prf=document.getElementById("epPromoFin");if(prf)p.promoFin=prf.value||null;
   var prl=document.getElementById("epPromoLabel");if(prl)p.promoLabel=prl.value.trim()||null;
-  // Log stock movement if quantity changed
-  if(p.stk!==_stkBefore&&typeof logMouvementStock==="function"){
+  // If stock changed → ask for motif before saving
+  if(p.stk!==_stkBefore){
     var diff=p.stk-_stkBefore;
-    var mvtType=diff>0?"entree":"sortie";
-    var mvtKey=diff>0?"ajustement_fiche":"ajustement_fiche";
-    var mvtLabel="\u270f\ufe0f Modification fiche produit";
-    logMouvementStock(p.id,p.n,mvtType,Math.abs(diff),_stkBefore,p.stk,mvtLabel,null,mvtKey,mvtLabel);
+    // Save other field changes first (without stock change), then ask motif
+    p.stk=_stkBefore; // revert stock temporarily
+    if(typeof saveProduct==="function")saveProduct(p);
+    // Now show motif modal for the stock change
+    askStockChangeMotif(p,_stkBefore,_stkBefore+diff,diff);
+    return;
   }
   if(typeof saveProduct==="function")saveProduct(p);
   window._epTab=null;
   cM();go("products");
+}
+
+// Ask for motif when stock changes from product fiche
+function askStockChangeMotif(p,stkBefore,stkAfter,diff){
+  var isEntree=diff>0;
+  var motifs=isEntree?STOCK_ENTRY_MOTIFS:STOCK_OUT_MOTIFS;
+  var defaultMotif=isEntree?"reapprovisionnement":"utilisation_salon";
+  if(!window._stkChangeMotif)window._stkChangeMotif=defaultMotif;
+  
+  var htm='<div class="mbox" style="max-width:480px">';
+  htm+='<h2 style="color:'+(isEntree?"#66bb6a":"#ef5350")+'">'+(isEntree?"\ud83d\udce5 Entr\u00e9e":"\ud83d\udce4 Sortie")+' de stock</h2>';
+  htm+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:10px;padding:12px;margin-bottom:14px">';
+  htm+='<div style="font-size:13px;color:var(--text3);margin-bottom:6px">Produit : <strong style="color:#fff">'+p.n+'</strong></div>';
+  htm+='<div style="display:flex;align-items:center;gap:10px;font-size:15px">';
+  htm+='<span style="color:var(--text3)">Stock : <strong style="color:#fff">'+stkBefore+'</strong></span>';
+  htm+='<span style="color:'+(isEntree?"#66bb6a":"#ef5350")+';font-weight:800">\u2192</span>';
+  htm+='<span style="color:'+(isEntree?"#66bb6a":"#ef5350")+';font-weight:800">'+stkAfter+'</span>';
+  htm+='<span style="margin-left:auto;font-size:18px;font-weight:900;color:'+(isEntree?"#66bb6a":"#ef5350")+'">'+(isEntree?"+":"")+diff+'</span>';
+  htm+='</div></div>';
+  
+  htm+='<div style="font-size:11px;color:var(--text3);font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">S\u00e9lectionnez le motif</div>';
+  htm+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">';
+  for(var mi=0;mi<motifs.length;mi++){
+    var m=motifs[mi];var sel=window._stkChangeMotif===m.k;
+    htm+='<button onclick="window._stkChangeMotif=\''+m.k+'\';askStockChangeMotif(window._stkChangePending.p,window._stkChangePending.before,window._stkChangePending.after,window._stkChangePending.diff)" style="padding:8px 12px;border-radius:8px;border:1.5px solid '+(sel?m.c:"rgba(255,255,255,.1)")+';background:'+(sel?m.c+"33":"rgba(255,255,255,.04)")+';color:'+(sel?m.c:"rgba(255,255,255,.6)")+';font-size:12px;font-weight:'+(sel?"800":"600")+';cursor:pointer">'+m.l+'</button>';
+  }
+  htm+='</div>';
+  
+  // Optional comment
+  htm+='<div class="fg"><label>Commentaire (facultatif)</label><textarea id="stkChangeNote" placeholder="Ex: r\u00e9ception facture #1234..." style="min-height:60px;font-size:13px"></textarea></div>';
+  
+  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  htm+='<button class="btn btn-ghost" style="flex:1" onclick="cancelStockChange()">Annuler</button>';
+  htm+='<button class="btn" style="flex:1;background:'+(isEntree?"#4caf50":"#f44336")+';color:#fff;font-weight:800" onclick="confirmStockChange()">\u2705 Valider</button>';
+  htm+='</div></div>';
+  
+  // Store pending change globally
+  window._stkChangePending={p:p,before:stkBefore,after:stkAfter,diff:diff};
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+function cancelStockChange(){
+  window._stkChangePending=null;
+  window._stkChangeMotif=null;
+  cM();
+  go("products");
+  toast("Modification du stock annul\u00e9e","warning");
+}
+
+function confirmStockChange(){
+  var pending=window._stkChangePending;
+  if(!pending)return;
+  var p=pending.p;
+  var diff=pending.diff;
+  var isEntree=diff>0;
+  var motifKey=window._stkChangeMotif||(isEntree?"reapprovisionnement":"utilisation_salon");
+  var motifs=isEntree?STOCK_ENTRY_MOTIFS:STOCK_OUT_MOTIFS;
+  var motifObj=motifs.find(function(m){return m.k===motifKey;})||motifs[0];
+  var noteEl=document.getElementById("stkChangeNote");
+  var note=noteEl?noteEl.value.trim():"";
+  
+  // Apply the stock change
+  p.stk=pending.after;
+  if(typeof saveProduct==="function")saveProduct(p);
+  if(typeof logMouvementStock==="function"){
+    logMouvementStock(p.id,p.n,isEntree?"entree":"sortie",Math.abs(diff),pending.before,pending.after,motifObj.l,note||null,motifKey,motifObj.l);
+  }
+  if(typeof auditLog==="function")auditLog(isEntree?"ENTREE_STOCK":"SORTIE_STOCK","Modif fiche : "+p.n+" "+(isEntree?"+":"-")+Math.abs(diff)+" ("+motifObj.l+")");
+  
+  window._stkChangePending=null;
+  window._stkChangeMotif=null;
+  window._epTab=null;
+  cM();go("products");
+  toast("Stock mis \u00e0 jour : "+(isEntree?"+":"")+diff,"success");
 }
 
 function deleteProd(id){
