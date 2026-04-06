@@ -3008,16 +3008,18 @@ function rHome(){
   h+='<div style="display:grid;grid-template-columns:1fr;gap:12px" class="home-grid">';
   h+='<div class="home-ca">';
   h+='<div style="border:2px solid var(--gold);border-radius:14px;overflow:hidden;margin-bottom:12px;background:#0a0a0a">';
-  // Gold header — clickable to expand/collapse
-  h+='<div style="background:linear-gradient(135deg,var(--gold),var(--gold-light),var(--gold));padding:8px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="var det=document.getElementById(\'caDetail\');var arr=document.getElementById(\'caArrow\');if(det.style.display===\'none\'){det.style.display=\'\';arr.textContent=\'▲\';try{localStorage.setItem(\'_lx_ca_open\',\'1\')}catch(e){}}else{det.style.display=\'none\';arr.textContent=\'▼\';try{localStorage.setItem(\'_lx_ca_open\',\'0\')}catch(e){}}">';
+  // Gold header — clickable to expand/collapse on mobile
+  var _isMobile=window.innerWidth<768;
+  h+='<div style="background:linear-gradient(135deg,var(--gold),var(--gold-light),var(--gold));padding:8px 16px;display:flex;justify-content:space-between;align-items:center;'+(_isMobile?'cursor:pointer':'')+'\"'+(_isMobile?' onclick="var det=document.getElementById(\'caDetail\');var arr=document.getElementById(\'caArrow\');if(det.style.display===\'none\'){det.style.display=\'\';arr.textContent=\'▲\';try{localStorage.setItem(\'_lx_ca_open\',\'1\')}catch(e){}}else{det.style.display=\'none\';arr.textContent=\'▼\';try{localStorage.setItem(\'_lx_ca_open\',\'0\')}catch(e){}}"':'')+'>';
   h+='<span style="font-family:var(--f1);font-size:12px;font-weight:800;letter-spacing:3px;color:#0a0a0a">CA DU JOUR</span>';
   h+='<div style="display:flex;align-items:center;gap:10px"><span style="font-family:var(--f1);font-size:18px;font-weight:900;color:#0a0a0a">'+totalCA.toFixed(2)+' \u20ac</span>';
   h+='<span style="font-size:11px;font-weight:700;color:#0a0a0a">'+totalCount+' client'+(totalCount>1?"s":"")+'</span>';
-  var _caOpen=true;try{_caOpen=localStorage.getItem("_lx_ca_open")!=="0";}catch(e){}
-  h+='<span id="caArrow" style="font-size:12px;color:#0a0a0a">'+(_caOpen?"\u25b2":"\u25bc")+'</span></div>';
+  var _caOpen=_isMobile?true:true;try{if(_isMobile)_caOpen=localStorage.getItem("_lx_ca_open")!=="0";}catch(e){}
+  if(_isMobile)h+='<span id="caArrow" style="font-size:12px;color:#0a0a0a">'+(_caOpen?"\u25b2":"\u25bc")+'</span>';
   h+='</div>';
-  // Collapsible detail
-  h+='<div id="caDetail" style="'+(_caOpen?'':'display:none')+'">';
+  h+='</div>';
+  // Collapsible detail (always visible on PC, collapsible on mobile)
+  h+='<div id="caDetail" style="'+((!_isMobile||_caOpen)?'':'display:none')+'">';
   // Total
   h+='<div style="padding:10px 16px 6px;text-align:center">';
   h+='<div style="font-family:var(--f1);font-size:32px;font-weight:900;color:var(--gold);line-height:1">'+totalCA.toFixed(2)+' \u20ac <span style="font-size:12px;color:var(--gold);opacity:.5">TTC</span></div>';
@@ -3186,7 +3188,9 @@ function isStylistAvailable(stId, date, timeStr){
     }
   }
   // Get normal hours or exceptional opening hours
-  var hrs=sty.hrs?sty.hrs[dow]:H[dow];
+  var hrs=null;
+  if(sty.hrs&&sty.hrs[dow]!==undefined&&sty.hrs[dow]!==null){hrs=sty.hrs[dow];}
+  else{hrs=H[dow]||null;}
   // Check for ouverture exceptionnelle (overrides closed day)
   if(!hrs&&window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
@@ -3246,7 +3250,13 @@ function getBlockedSlots(stId, date){
     }
   }
   // Get hours (normal or exceptional opening)
-  var hrs=sty.hrs?sty.hrs[dow]:H[dow];
+  // Use individual hours if set for this day, otherwise fall back to salon hours
+  var hrs=null;
+  if(sty.hrs&&sty.hrs[dow]!==undefined&&sty.hrs[dow]!==null){
+    hrs=sty.hrs[dow];
+  } else {
+    hrs=H[dow]||null;
+  }
   if(!hrs&&window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
       var ab=window.ABSENCES[i];
@@ -3541,7 +3551,7 @@ function rPlanning(){
                   var myBlock=null;for(var bi=0;bi<laid.length;bi++){if(laid[bi].a===a&&laid[bi].start===cur){myBlock=laid[bi];break;}}
                   var colW=myBlock?100/myBlock.maxCol:100;
                   var leftPct=myBlock?myBlock.col*colW:0;
-                  h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' title="'+(cl?cName(cl):"")+' - '+(sv?sv.n:"")+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':colors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':colors.border)+';color:'+(a.isOnline?'#2d1b69':colors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
+                  h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':colors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':colors.border)+';color:'+(a.isOnline?'#2d1b69':colors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
                   h+='<div class="pb-name" style="font-size:10px">'+(cl?cName(cl).split(" ")[0]:"")+'</div>';
                   h+='<div class="pb-svc" style="font-size:8px">'+ph.l+'</div>';
                   h+='</div>';
@@ -3662,7 +3672,7 @@ function rPlanningDay(dateObj,showDayHeader){
           var leftPct=myBlock?myBlock.col*colW:0;
           var _htip=Math.round((a.pr||0)*100/(100+(SALON_CONFIG.tauxTVA||20))*100)/100;
           var _ttip=(cl?cName(cl):passageName(a.cId,a.sId))+"\n"+(sv?sv.n:"")+"\n"+sty.n+"\n\u23f1 "+totalDur+"min ("+a.time+" \u2192 "+endTime+")\n"+(a.pr||0).toFixed(2)+"\u20ac TTC / "+_htip.toFixed(2)+"\u20ac HT\n"+(a.st==="done"?"\u2705 Encaiss\u00e9 ("+a.met+")":(a.isOnline?"\u2714 Confirm\u00e9 en ligne":"\ud83d\udcc5 Pr\u00e9vu"));
-          h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+'  title="'+_ttip+'" style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':colors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':colors.border)+';color:'+(a.isOnline?'#2d1b69':colors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
+          h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':colors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':colors.border)+';color:'+(a.isOnline?'#2d1b69':colors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
           h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
           h+='<div class="pb-svc">'+ph.l.toUpperCase()+'</div>';
           if(hPx>=50){
@@ -4400,7 +4410,7 @@ function clickAppt(id){
     // Encaissé: no cancel, no modify - NF525 locked
     htm+='<div style="flex:1;text-align:center;font-size:11px;color:rgba(255,255,255,.3);padding:8px">\ud83d\udd12 Ticket encaiss\u00e9 \u2014 Non modifiable</div>';
   } else if(!a.isOnline){
-    htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="cancelAppt(\''+a.id+'\')">Annuler RDV</button>';
+    htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="confirmCancelAppt(\''+a.id+'\')">Annuler RDV</button>';
   } else {
     htm+='<button class="btn" style="flex:1;background:rgba(108,92,231,.08);color:#a29bfe;font-size:12px" disabled>\ud83d\udd12 Modifiable par le client</button>';
   }
