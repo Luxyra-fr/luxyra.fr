@@ -397,7 +397,8 @@ function openBarcodeScanner(callback){
     return;
   }
   _scannerActive=true;
-  var detector=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"]});
+  // BARCODES ONLY - no QR codes
+  var detector=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","code_93","codabar","itf"]});
   var overlay=document.createElement("div");
   overlay.id="scanOverlay";
   overlay.style.cssText="position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center";
@@ -428,8 +429,10 @@ function openBarcodeScanner(callback){
       detector.detect(video).then(function(barcodes){
         if(barcodes.length>0&&scanning){
           scanning=false;
-          var code=barcodes[0].rawValue;
-          hint.textContent="\u2705 "+code;
+          var bc=barcodes[0];
+          var code=bc.rawValue;
+          var fmt=bc.format||"";
+          hint.textContent="\u2705 "+code+" ("+fmt+")";
           hint.style.color="#4caf50";
           zone.style.borderColor="#4caf50";
           setTimeout(function(){
@@ -517,7 +520,9 @@ function renderMvtList(mvts){
     var icon=m.type==="entree"?"\ud83d\udce5":m.type==="sortie"?"\ud83d\udce4":m.type==="vente"?"\ud83d\uded2":m.type==="inventaire"?"\ud83d\udccb":"\ud83d\udce6";
     var color=m.type==="entree"?"#66bb6a":m.type==="sortie"?"#ef5350":m.type==="vente"?"#64b5f6":m.type==="inventaire"?"var(--gold)":"#aaa";
     var label=m.type==="entree"?"Entr\u00e9e":m.type==="sortie"?"Sortie":m.type==="vente"?"Vente":m.type==="inventaire"?"Inventaire":m.type;
-    var qtyTxt=m.quantite>0?"+"+m.quantite:String(m.quantite);
+    var qtyAbs=Math.abs(m.quantite);
+    var qtySign=(m.type==="sortie"||m.type==="vente")?"-":"+";
+    var qtyTxt=qtySign+qtyAbs;
     html+='<div class="mvt-row" data-type="'+m.type+'" style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04);align-items:center">';
     html+='<div style="font-size:18px;flex-shrink:0">'+icon+'</div>';
     html+='<div style="flex:1;min-width:0">';
@@ -560,7 +565,9 @@ async function showProdHistory(prodId){
         var icon=m.type==="entree"?"\ud83d\udce5":m.type==="sortie"?"\ud83d\udce4":m.type==="vente"?"\ud83d\uded2":m.type==="inventaire"?"\ud83d\udccb":"\ud83d\udce6";
         var color=m.type==="entree"?"#66bb6a":m.type==="sortie"?"#ef5350":m.type==="vente"?"#64b5f6":m.type==="inventaire"?"var(--gold)":"#aaa";
         var label=m.type==="entree"?"Entr\u00e9e stock":m.type==="sortie"?"Sortie stock":m.type==="vente"?"Vente":m.type==="inventaire"?"Inventaire":m.type;
-        var qtyTxt=m.quantite>0?"+"+m.quantite:String(m.quantite);
+        var qtyAbs=Math.abs(m.quantite);
+        var qtySign=(m.type==="sortie"||m.type==="vente")?"-":"+";
+        var qtyTxt=qtySign+qtyAbs;
         hc+='<div style="display:flex;gap:10px;padding:12px 0;border-bottom:1px solid var(--border2);align-items:flex-start">';
         hc+='<div style="font-size:20px;flex-shrink:0">'+icon+'</div>';
         hc+='<div style="flex:1;min-width:0">';
@@ -6670,36 +6677,39 @@ function rProducts(){
   h+='<div class="tab'+(prodTypeFilter==="sale"?" on":"")+'" onclick="prodTypeFilter=\'sale\';go(\'products\')" style="display:flex;align-items:center;gap:4px">\ud83d\uded2 Revente ('+nbSale+')</div>';
   h+='<div class="tab'+(prodTypeFilter==="use"?" on":"")+'" onclick="prodTypeFilter=\'use\';go(\'products\')" style="display:flex;align-items:center;gap:4px">\ud83e\uddea Consommable ('+nbUse+')</div>';
   h+='</div>';
-  // Action buttons (top, big, visible)
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
-  h+='<button onclick="showStockEntry()" style="padding:8px 6px;border-radius:10px;border:1.5px solid #4caf50;background:#0a1a0d;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:18px">\ud83d\udce5</div>';
-  h+='<div style="font-size:11px;font-weight:800;color:#66bb6a;margin-top:2px">Entr\u00e9e</div></button>';
-  h+='<button onclick="showQuickConsumption()" style="padding:8px 6px;border-radius:10px;border:1.5px solid #f44336;background:#1a0a0a;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:18px">\ud83d\udce4</div>';
-  h+='<div style="font-size:11px;font-weight:800;color:#ef5350;margin-top:2px">Sortie</div></button>';
-  h+='<button onclick="showInventory()" style="padding:8px 6px;border-radius:10px;border:1.5px solid var(--gold);background:#1a1608;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:18px">\ud83d\udccb</div>';
-  h+='<div style="font-size:11px;font-weight:800;color:var(--gold);margin-top:2px">Inventaire</div></button>';
-  h+='<button onclick="addProd()" style="padding:8px 6px;border-radius:10px;border:1.5px solid rgba(255,255,255,.2);background:#0e0e14;cursor:pointer;text-align:center">';
-  h+='<div style="font-size:18px">\u2795</div>';
-  h+='<div style="font-size:11px;font-weight:800;color:#aaa;margin-top:2px">Ajouter produit</div></button>';
+  // === BARRE D'ACTIONS COMPACTE ET JOLIE ===
+  // Ligne 1 : Stock (Entrée / Sortie / Inventaire) — actions principales
+  h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">';
+  h+='<button onclick="showStockEntry()" style="padding:14px 8px;border-radius:14px;border:none;background:linear-gradient(135deg,#1b5e20,#2e7d32);cursor:pointer;text-align:center;box-shadow:0 4px 14px rgba(46,125,50,.25);transition:transform .15s" onmousedown="this.style.transform=\'scale(.96)\'" onmouseup="this.style.transform=\'scale(1)\'" onmouseleave="this.style.transform=\'scale(1)\'">';
+  h+='<div style="font-size:22px;line-height:1">\ud83d\udce5</div>';
+  h+='<div style="font-size:11px;font-weight:800;color:#fff;margin-top:4px;letter-spacing:.3px">Entr\u00e9e stock</div></button>';
+  h+='<button onclick="showQuickConsumption()" style="padding:14px 8px;border-radius:14px;border:none;background:linear-gradient(135deg,#b71c1c,#c62828);cursor:pointer;text-align:center;box-shadow:0 4px 14px rgba(198,40,40,.25);transition:transform .15s" onmousedown="this.style.transform=\'scale(.96)\'" onmouseup="this.style.transform=\'scale(1)\'" onmouseleave="this.style.transform=\'scale(1)\'">';
+  h+='<div style="font-size:22px;line-height:1">\ud83d\udce4</div>';
+  h+='<div style="font-size:11px;font-weight:800;color:#fff;margin-top:4px;letter-spacing:.3px">Sortie stock</div></button>';
+  h+='<button onclick="showInventory()" style="padding:14px 8px;border-radius:14px;border:none;background:linear-gradient(135deg,#5d4037,#795548);cursor:pointer;text-align:center;box-shadow:0 4px 14px rgba(121,85,72,.25);transition:transform .15s" onmousedown="this.style.transform=\'scale(.96)\'" onmouseup="this.style.transform=\'scale(1)\'" onmouseleave="this.style.transform=\'scale(1)\'">';
+  h+='<div style="font-size:22px;line-height:1">\ud83d\udccb</div>';
+  h+='<div style="font-size:11px;font-weight:800;color:#fff;margin-top:4px;letter-spacing:.3px">Inventaire</div></button>';
   h+='</div>';
-  // Bulk actions (LS Coiffure style)
-  h+='<div style="display:flex;gap:6px;margin-bottom:8px">';
-  h+='<button onclick="showBulkPriceUpdate()" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(76,175,80,.4);background:linear-gradient(135deg,rgba(76,175,80,.15),rgba(76,175,80,.05));cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
-  h+='<span style="font-size:14px">\ud83d\udcc8</span><span style="font-size:11px;font-weight:800;color:#66bb6a">Augmentations multiples</span></button>';
-  h+='<button onclick="showBulkDelete()" style="flex:1;padding:8px;border-radius:8px;border:1px solid rgba(244,67,54,.4);background:linear-gradient(135deg,rgba(244,67,54,.15),rgba(244,67,54,.05));cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
-  h+='<span style="font-size:14px">\ud83d\uddd1\ufe0f</span><span style="font-size:11px;font-weight:800;color:#ef5350">Suppressions multiples</span></button>';
+  
+  // Ligne 2 : Toolbar compacte (icônes + labels TOUJOURS visibles)
+  h+='<div id="products-toolbar" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:10px">';
+  h+='<button onclick="addProd()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:linear-gradient(180deg,rgba(200,168,78,.12),rgba(200,168,78,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--gold);transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(200,168,78,.22),rgba(200,168,78,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(200,168,78,.12),rgba(200,168,78,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\u2795</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Ajouter</span></button>';
+  h+='<button onclick="showBulkPriceUpdate()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(76,175,80,.25);background:linear-gradient(180deg,rgba(76,175,80,.12),rgba(76,175,80,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#66bb6a;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(76,175,80,.22),rgba(76,175,80,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(76,175,80,.12),rgba(76,175,80,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\ud83d\udcc8</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Prix</span></button>';
+  h+='<button onclick="showAllPromos()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(233,30,99,.25);background:linear-gradient(180deg,rgba(233,30,99,.12),rgba(233,30,99,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#e91e63;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(233,30,99,.22),rgba(233,30,99,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(233,30,99,.12),rgba(233,30,99,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\ud83c\udf89</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Promos</span></button>';
+  h+='<button onclick="showAllStockHistory()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(100,181,246,.25);background:linear-gradient(180deg,rgba(100,181,246,.12),rgba(100,181,246,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#64b5f6;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(100,181,246,.22),rgba(100,181,246,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(100,181,246,.12),rgba(100,181,246,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\ud83d\udcca</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Mouvements</span></button>';
+  h+='<button onclick="showInventoryHistory()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(156,39,176,.25);background:linear-gradient(180deg,rgba(156,39,176,.12),rgba(156,39,176,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ce93d8;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(156,39,176,.22),rgba(156,39,176,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(156,39,176,.12),rgba(156,39,176,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\ud83d\udcdc</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Inventaires</span></button>';
+  h+='<button onclick="showFournisseurManagement()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(255,152,0,.25);background:linear-gradient(180deg,rgba(255,152,0,.12),rgba(255,152,0,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ffb74d;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(255,152,0,.22),rgba(255,152,0,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(255,152,0,.12),rgba(255,152,0,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\ud83c\udfe2</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Fournis.</span></button>';
+  h+='<button onclick="showBulkDelete()" style="padding:10px 4px;border-radius:12px;border:1px solid rgba(244,67,54,.25);background:linear-gradient(180deg,rgba(244,67,54,.12),rgba(244,67,54,.04));cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#ef5350;transition:all .2s" onmouseover="this.style.background=\'linear-gradient(180deg,rgba(244,67,54,.22),rgba(244,67,54,.08))\'" onmouseout="this.style.background=\'linear-gradient(180deg,rgba(244,67,54,.12),rgba(244,67,54,.04))\'">';
+  h+='<span style="font-size:18px;line-height:1">\ud83d\uddd1\ufe0f</span><span style="font-size:10px;font-weight:700;letter-spacing:.2px">Suppr.</span></button>';
   h+='</div>';
-  h+='<div style="display:flex;gap:6px;margin-bottom:8px">';
-  h+='<button onclick="showAllStockHistory()" style="flex:1;padding:7px;border-radius:8px;border:1px solid rgba(100,181,246,.3);background:#0d1520;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
-  h+='<span style="font-size:14px">\ud83d\udcca</span><span style="font-size:11px;font-weight:700;color:#64b5f6">Mouvements stock</span></button>';
-  h+='<button onclick="showAllPromos()" style="flex:1;padding:7px;border-radius:8px;border:1px solid rgba(233,30,99,.3);background:#1a0d14;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
-  h+='<span style="font-size:14px">\ud83c\udf89</span><span style="font-size:11px;font-weight:700;color:#e91e63">Promotions</span></button>';
-  h+='<button onclick="showFournisseurManagement()" style="flex:1;padding:7px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:#1a1608;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
-  h+='<span style="font-size:14px">\ud83c\udfe2</span><span style="font-size:11px;font-weight:700;color:var(--gold)">Fournisseurs</span></button>';
-  h+='</div>';
+  // Mobile : 4 colonnes au lieu de 7
+  h+='<style>@media (max-width:640px){#products-toolbar{grid-template-columns:repeat(4,1fr)!important}}</style>';
   // PAO/Peremption alerts
   var _paoAlerts=getPeremptionAlerts();
   if(_paoAlerts.length>0){
@@ -7445,6 +7455,12 @@ function editProd(id){
     htm+='<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="epForUse" '+(p.forUse?'checked':'')+'>\ud83e\uddea Consommable (utilis\u00e9 en prestation)</label>';
     htm+='</div>';
     htm+='<div style="margin-top:8px"><label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="epCC" '+(p.cc?'checked':'')+'>Disponible en Click & Collect</label></div>';
+    // Boutique en ligne (description for site)
+    htm+='<div style="margin-top:14px;padding:14px;background:linear-gradient(135deg,rgba(33,150,243,.06),rgba(33,150,243,.02));border:1px solid rgba(33,150,243,.2);border-radius:12px">';
+    htm+='<div style="font-size:12px;color:#64b5f6;font-weight:800;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">\ud83c\udf10 Boutique en ligne</div>';
+    htm+='<div class="fg" style="margin:0"><label style="font-size:11px;color:rgba(255,255,255,.6)">Description affich\u00e9e sur le site de r\u00e9servation</label>';
+    htm+='<textarea id="epDescription" placeholder="Ex: Shampoing r\u00e9parateur enrichi en k\u00e9ratine, id\u00e9al pour cheveux ab\u00eem\u00e9s..." style="width:100%;min-height:90px;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:#fff;font-family:inherit;font-size:13px;resize:vertical">'+(p.description||"")+'</textarea>';
+    htm+='<div style="font-size:10px;color:var(--text3);margin-top:4px">Visible par les clients sur la page Click & Collect du site</div></div></div>';
   }
   else if(tab==="prix"){
     htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
@@ -7999,6 +8015,7 @@ async function loadProdHistorique(prodId){
 function doEditProd(id){
   var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){p=PRODS[i];break;}}
   if(!p)return;
+  var _stkBefore=p.stk;
   // Infos tab fields
   var nm=document.getElementById("epName");if(nm)p.n=nm.value.trim()||p.n;
   var ct=document.getElementById("epCat");if(ct)p.cat=ct.value;
@@ -8014,6 +8031,7 @@ function doEditProd(id){
   var pe=document.getElementById("epPeremption");if(pe)p.datePeremption=pe.value||null;
   var po=document.getElementById("epPAO");if(po)p.paoMois=parseInt(po.value)||null;
   var dou=document.getElementById("epDateOuv");if(dou)p.dateOuverture=dou.value||null;
+  var ds=document.getElementById("epDescription");if(ds)p.description=ds.value.trim()||null;
   // Prix tab fields
   var pp=document.getElementById("epPrice");if(pp)p.p=parseFloat(pp.value)||p.p;
   var pa=document.getElementById("epPA");if(pa)p.pa=parseFloat(pa.value)||p.pa;
@@ -8025,6 +8043,14 @@ function doEditProd(id){
   var prd=document.getElementById("epPromoDebut");if(prd)p.promoDebut=prd.value||null;
   var prf=document.getElementById("epPromoFin");if(prf)p.promoFin=prf.value||null;
   var prl=document.getElementById("epPromoLabel");if(prl)p.promoLabel=prl.value.trim()||null;
+  // Log stock movement if quantity changed
+  if(p.stk!==_stkBefore&&typeof logMouvementStock==="function"){
+    var diff=p.stk-_stkBefore;
+    var mvtType=diff>0?"entree":"sortie";
+    var mvtKey=diff>0?"ajustement_fiche":"ajustement_fiche";
+    var mvtLabel="\u270f\ufe0f Modification fiche produit";
+    logMouvementStock(p.id,p.n,mvtType,Math.abs(diff),_stkBefore,p.stk,mvtLabel,null,mvtKey,mvtLabel);
+  }
   if(typeof saveProduct==="function")saveProduct(p);
   window._epTab=null;
   cM();go("products");

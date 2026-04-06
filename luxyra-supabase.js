@@ -144,13 +144,9 @@ async function loadSalonData() {
   SALON_CONFIG.plan = salon.plan || "essential";
 
   // Vérifier statut abonnement
-  if (salon.status === "suspended") {
+  if (salon.status === "suspended" || salon.status === "cancelled") {
     showSuspendedScreen(salon.status);
     return;
-  }
-  if (salon.status === "cancelled") {
-    // Allow app to load with basic config, then show re-subscribe modal
-    window._subscriptionCancelled = true;
   }
 
   // Vérifier si plan offert (gratuit)
@@ -184,17 +180,6 @@ async function loadSalonData() {
     window._trialEnd = null;
     // DO NOT write to DB — webhook is the only trusted source
     // Old vulnerable code removed: _sb.from("salons").update({plan, status}).eq("id", salon.id)
-  }
-  
-  // Handle Stripe Connect return
-  if(_urlParams.get("connect") === "success"){
-    window._connectJustConfigured = true;
-    window.history.replaceState({}, "", window.location.pathname);
-  }
-  if(_urlParams.get("connect") === "refresh"){
-    // Onboarding was interrupted — redirect to settings to retry
-    window._settTab = "connect";
-    window.history.replaceState({}, "", window.location.pathname);
   }
 
   // Vérifier expiration essai (sauf plan offert)
@@ -238,49 +223,20 @@ async function loadSalonData() {
   window.SMS_USED = salon.sms_used || 0;
   window.IS_FREE_PLAN = salon.is_free || false;
   window.FREE_UNTIL = salon.free_until || null;
-  
-  // Stripe Connect
-  SALON_CONFIG.connectId = salon.stripe_connect_id || "";
-  SALON_CONFIG.connectStatus = salon.stripe_connect_status || "not_started";
 
   // Documents check (15 days after paid plan)
   SALON_CONFIG.docKbis = salon.documents_kbis || "";
   SALON_CONFIG.docId = salon.documents_id || "";
-  SALON_CONFIG.docIdVerso = salon.documents_id_verso || "";
   SALON_CONFIG.verif = salon.verification_status || "pending";
-  SALON_CONFIG.docsUploadedAt = salon.documents_uploaded_at || "";
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
-  if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id) {
+  if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
     if (subStart) {
       var daysSinceSub = Math.floor((new Date() - new Date(subStart)) / 86400000);
-      if (!hasAllDocs) {
-        // No docs: block after 15 days
-        window._docsMissing = true;
-        window._docsDeadlineDays = Math.max(0, 15 - daysSinceSub);
-        if (daysSinceSub > 15) {
-          window._docsBlocked = true;
-        }
-      } else if (salon.verification_status === "verified") {
-        // Docs verified by admin: fully unblocked
-      } else if (salon.verification_status === "rejected") {
-        // Docs rejected: blocked
+      window._docsMissing = true;
+      window._docsDeadlineDays = Math.max(0, 15 - daysSinceSub);
+      if (daysSinceSub > 15) {
         window._docsBlocked = true;
-      } else {
-        // Docs uploaded but not yet verified: 48h grace period
-        var uploadedAt = salon.documents_uploaded_at ? new Date(salon.documents_uploaded_at) : null;
-        if (uploadedAt) {
-          var hoursSinceUpload = (new Date() - uploadedAt) / 3600000;
-          if (hoursSinceUpload > 48 && daysSinceSub > 15) {
-            window._docsBlocked = true;
-            window._docsGracePassed = true;
-          } else if (hoursSinceUpload <= 48) {
-            window._docsGrace = true;
-            window._docsGraceHoursLeft = Math.ceil(48 - hoursSinceUpload);
-          }
-        } else if (daysSinceSub > 15) {
-          window._docsBlocked = true;
-        }
       }
     }
   }
@@ -298,7 +254,7 @@ async function loadSalonData() {
       _sb.from("salons").update({sms_credits:newCredits,sms_last_reset:today}).eq("id",salon.id);
     }
   }
-  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.cartes_abo){window.CARTES_ABO=cfg.cartes_abo;}if(cfg.domicile){SALON_CONFIG.domicile=cfg.domicile;}if(cfg.horaires&&Array.isArray(cfg.horaires)){H=cfg.horaires;}if(cfg.fond_ecran){window.APP_BG=cfg.fond_ecran;try{localStorage.setItem("_lx_bg",cfg.fond_ecran);}catch(e){}}}catch(e){}}
+  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}}catch(e){}}
 
   // 3. Charger collaborateurs → T[]
   var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
@@ -454,7 +410,8 @@ async function loadSalonData() {
         promoPrix: p.promo_prix != null ? Number(p.promo_prix) : null,
         promoDebut: p.promo_debut || null,
         promoFin: p.promo_fin || null,
-        promoLabel: p.promo_label || null
+        promoLabel: p.promo_label || null,
+        description: p.description || null
       };
     });
     var pcatSet = {};
@@ -536,19 +493,6 @@ async function loadSalonData() {
   } else {
     window.PACKS_CLIENTS = [];
   }
-
-  // 13. Charger cartes d'abonnement clients → window.CARTES_ABO_CLIENTS[]
-  if(!window.CARTES_ABO)window.CARTES_ABO=[];
-  try{
-    var caRes = await _sb.from("cartes_abo_clients").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
-    if (caRes.data) {
-      window.CARTES_ABO_CLIENTS = caRes.data.map(function(c) {
-        return { id: c.id, clientId: c.client_id, clientBpId: c.client_beautypro_id || null, clientNom: c.client_nom, carteId: c.carte_id, carteNom: c.carte_nom, tarif: Number(c.tarif), remiseServices: Number(c.remise_services), remiseForfaits: Number(c.remise_forfaits), dateAchat: c.date_achat, dateExp: c.date_expiration, status: c.status || "active", ticketNum: c.ticket_num || "", economiesTotales: Number(c.economies_totales) || 0 };
-      });
-    } else {
-      window.CARTES_ABO_CLIENTS = [];
-    }
-  }catch(e){window.CARTES_ABO_CLIENTS=[];}
 
   // Lancer l'app !
   console.log("Luxyra: Données chargées depuis Supabase (" + CL.length + " clients, " + AP.length + " RDV, " + PRODS.length + " produits)");
@@ -733,7 +677,8 @@ async function saveProduct(prod) {
     promo_prix: prod.promoPrix || null,
     promo_debut: prod.promoDebut || null,
     promo_fin: prod.promoFin || null,
-    promo_label: prod.promoLabel || null
+    promo_label: prod.promoLabel || null,
+    description: prod.description || null
   };
   if (typeof prod.id === "number" && prod.id > 0) {
     // Check if exists in Supabase
@@ -828,7 +773,7 @@ async function saveSalonConfig() {
     frais_deplacement: SALON_CONFIG.fraisDeplacement || 0,
     show_tva_ticket: window.SHOW_TVA_TICKET
   };
-  try{var _sc=window.SITE_CONFIG||{};data.config_json=JSON.stringify({nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,prodcolors:window.PRODCOLORS||{},svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},sms_config:window.SMS_CONFIG||{},cartes_abo:window.CARTES_ABO||[],domicile:SALON_CONFIG.domicile||null,horaires:typeof H!=="undefined"?H:[],fond_ecran:typeof APP_BG!=="undefined"?APP_BG:""});}catch(e){}
+  try{var _sc=window.SITE_CONFIG||{};data.config_json=JSON.stringify({nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,prodcolors:window.PRODCOLORS||{},svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},sms_config:window.SMS_CONFIG||{}});}catch(e){}
   var r=await _sb.from("salons").update(data).eq("id", _salonId);
   if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
 }
@@ -922,51 +867,6 @@ async function usePackSeance(packId) {
   if (pk.used >= pk.total) pk.status = "completed";
   await _sb.from("packs_clients").update({ seances_utilisees: pk.used, status: pk.status }).eq("id", packId);
   return pk;
-}
-
-// Sauvegarder une carte d'abonnement client
-async function saveCarteAboClient(carte) {
-  if (!_sb || !_salonId) return;
-  // Always resolve email from clients table as cross-salon identifier (same pattern as fidelite)
-  if (!carte.clientBpId && carte.clientId) {
-    try {
-      var clLookup = await _sb.from("clients").select("email").eq("id", carte.clientId).limit(1);
-      if (clLookup.data && clLookup.data[0] && clLookup.data[0].email) {
-        carte.clientBpId = clLookup.data[0].email;
-      }
-    } catch(e) {}
-  }
-  var data = {
-    salon_id: _salonId,
-    client_id: carte.clientId || "",
-    client_beautypro_id: carte.clientBpId || null,
-    client_nom: carte.clientNom || "",
-    carte_id: carte.carteId || "",
-    carte_nom: carte.carteNom || "",
-    tarif: carte.tarif || 0,
-    remise_services: carte.remiseServices || 0,
-    remise_forfaits: carte.remiseForfaits || 0,
-    date_achat: carte.dateAchat,
-    date_expiration: carte.dateExp || null,
-    status: carte.status || "active",
-    ticket_num: carte.ticketNum || "",
-    economies_totales: carte.economiesTotales || 0
-  };
-  if (carte.id) {
-    await _sb.from("cartes_abo_clients").update(data).eq("id", carte.id);
-  } else {
-    var res = await _sb.from("cartes_abo_clients").insert(data).select();
-    if (res.data && res.data[0]) carte.id = res.data[0].id;
-  }
-}
-
-// Mettre à jour les économies totales d'une carte client
-async function updateCarteAboEconomies(carteClientId, addedEconomies) {
-  if (!_sb) return;
-  var cc = (window.CARTES_ABO_CLIENTS || []).find(function(c) { return c.id === carteClientId; });
-  if (!cc) return;
-  cc.economiesTotales = (cc.economiesTotales || 0) + addedEconomies;
-  await _sb.from("cartes_abo_clients").update({ economies_totales: cc.economiesTotales }).eq("id", carteClientId);
 }
 
 // Supprimer un forfait
