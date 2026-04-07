@@ -465,6 +465,800 @@ function closeBarcodeScanner(){
 }
 
 
+// ============================================================
+// SYSTÈME OPÉRATEURS NF525
+// ============================================================
+var OPERATEURS = [];
+var CURRENT_OPERATOR = null; // {id, prenom, nom, role, permissions, ...}
+var _operatorLockTimer = null;
+var _operatorPinBuffer = "";
+var _operatorPinTarget = null;
+var _operatorPinCallback = null;
+var _operatorAdminOverrideUntil = 0; // timestamp jusqu'auquel admin override est valide
+var _operatorInactivityTimer = null;
+
+// Liste des sections de l'app pour le système de permissions
+var APP_SECTIONS = [
+  {key:"planning", label:"\ud83d\udcc5 Planning", desc:"Voir et g\u00e9rer les RDV"},
+  {key:"caisse", label:"\ud83d\udcb3 Caisse", desc:"Encaisser les clients"},
+  {key:"clients", label:"\ud83d\udc65 Clients", desc:"Fiches clients"},
+  {key:"products", label:"\ud83e\uddf4 Produits", desc:"Catalogue et stock"},
+  {key:"stats", label:"\ud83d\udcca Statistiques", desc:"CA et performances"},
+  {key:"compta", label:"\ud83d\udcb0 Comptabilit\u00e9", desc:"Cl\u00f4tures Z, exports"},
+  {key:"marketing", label:"\ud83d\udce3 Marketing", desc:"Campagnes, promos, fid\u00e9lit\u00e9"},
+  {key:"settings", label:"\u2699\ufe0f R\u00e9glages", desc:"Param\u00e8tres du salon"},
+  {key:"operateurs", label:"\ud83d\udc6a Op\u00e9rateurs", desc:"G\u00e9rer les comptes (admin)"},
+  {key:"see_other_planning", label:"\ud83d\udc41\ufe0f Voir le planning des autres", desc:"Sinon, voit uniquement ses propres RDV"},
+  {key:"cancel_rdv", label:"\u274c Annuler un RDV", desc:""},
+  {key:"refund", label:"\u21a9\ufe0f Rembourser", desc:"Rembourser un ticket"},
+  {key:"discount", label:"\ud83c\udf81 Appliquer une remise", desc:""},
+  {key:"open_drawer", label:"\ud83d\udcb5 Ouvrir le tiroir-caisse", desc:""},
+  {key:"see_prices_achat", label:"\ud83d\udd0d Voir les prix d'achat / marges", desc:""},
+  {key:"export_data", label:"\ud83d\udce4 Exporter des donn\u00e9es", desc:""},
+  {key:"manage_products", label:"\u270f\ufe0f Modifier produits / prix", desc:""},
+  {key:"manage_services", label:"\u270f\ufe0f Modifier services / forfaits", desc:""}
+];
+
+// Permissions par défaut selon le rôle
+function defaultPermissions(role) {
+  if (role === "admin") {
+    var p = {};
+    APP_SECTIONS.forEach(function(s){p[s.key]=true;});
+    return p;
+  }
+  // Collaborateur par défaut : caisse, planning, clients, ses RDV, encaisser
+  return {
+    planning: true, caisse: true, clients: true, products: true,
+    stats: false, compta: false, marketing: false, settings: false, operateurs: false,
+    see_other_planning: false, cancel_rdv: true, refund: false,
+    discount: true, open_drawer: true, see_prices_achat: false,
+    export_data: false, manage_products: false, manage_services: false
+  };
+}
+
+// Vérifier une permission
+function hasPermission(perm) {
+  if (!CURRENT_OPERATOR) return true; // mode legacy si pas d'opérateurs configurés
+  if (CURRENT_OPERATOR.role === "admin") return true;
+  if (Date.now() < _operatorAdminOverrideUntil) return true; // admin override actif
+  var perms = CURRENT_OPERATOR.permissions || {};
+  return perms[perm] === true;
+}
+
+// Charger tous les opérateurs au démarrage
+async function refreshOperateurs() {
+  if (typeof loadOperateurs !== "function") return;
+  OPERATEURS = await loadOperateurs();
+  // Si la table est vide → mode legacy, pas besoin de login
+  if (!OPERATEURS.length) {
+    CURRENT_OPERATOR = null;
+    return;
+  }
+  // Si déjà connecté en localStorage → restaurer
+  var saved = localStorage.getItem("lx_current_op");
+  if (saved) {
+    try {
+      var op = JSON.parse(saved);
+      var found = OPERATEURS.find(function(o){return o.id===op.id && o.actif;});
+      if (found) {
+        CURRENT_OPERATOR = found;
+        startInactivityTimer();
+        return;
+      }
+    } catch(e) {}
+  }
+  // Sinon afficher l'écran de sélection
+  showOperatorSelector();
+}
+
+// Sauvegarder l'opérateur en localStorage
+function saveCurrentOperator() {
+  if (CURRENT_OPERATOR) {
+    localStorage.setItem("lx_current_op", JSON.stringify({
+      id: CURRENT_OPERATOR.id,
+      prenom: CURRENT_OPERATOR.prenom,
+      nom: CURRENT_OPERATOR.nom,
+      role: CURRENT_OPERATOR.role
+    }));
+  } else {
+    localStorage.removeItem("lx_current_op");
+  }
+}
+
+// Écran de sélection d'opérateur (plein écran)
+function showOperatorSelector() {
+  if (!OPERATEURS.length) return;
+  var h = '<div id="opSelectorOverlay" style="position:fixed;inset:0;z-index:99998;background:linear-gradient(135deg,#0a0a0e,#14141c);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto">';
+  h += '<div style="text-align:center;margin-bottom:30px"><div style="font-family:var(--f1);font-size:28px;font-weight:900;color:var(--gold);letter-spacing:2px">'+(SALON_CONFIG && SALON_CONFIG.nom || "LUXYRA")+'</div>';
+  h += '<div style="font-size:13px;color:var(--text3);margin-top:6px;text-transform:uppercase;letter-spacing:2px">S\u00e9lectionnez votre profil</div></div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,140px));gap:16px;max-width:720px;justify-content:center">';
+  for (var i=0; i<OPERATEURS.length; i++) {
+    var op = OPERATEURS[i];
+    if (!op.actif) continue;
+    var locked = op.locked_until && new Date(op.locked_until) > new Date();
+    var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+    var roleLabel = op.role === "admin" ? "Admin" : "Collaborateur";
+    h += '<div onclick="'+(locked?'toast(\'Compte verrouill\\u00e9\',\'warning\')':'showPinPad(\''+op.id+'\')')+'" style="background:rgba(255,255,255,.04);border:2px solid '+(locked?"#f44336":"rgba(255,255,255,.08)")+';border-radius:18px;padding:20px 14px;text-align:center;cursor:pointer;transition:all .2s" onmouseover="this.style.transform=\'translateY(-4px)\';this.style.borderColor=\''+roleColor+'\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.borderColor=\''+(locked?"#f44336":"rgba(255,255,255,.08)")+'\'">';
+    h += '<div style="width:72px;height:72px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||(op.prenom||"?").charAt(0).toUpperCase())+'</div>';
+    h += '<div style="font-size:15px;font-weight:700;color:#fff">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
+    h += '<div style="font-size:10px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:4px">'+roleLabel+'</div>';
+    if (locked) h += '<div style="font-size:10px;color:#f44336;margin-top:4px">\ud83d\udd12 Verrouill\u00e9</div>';
+    h += '</div>';
+  }
+  h += '</div>';
+  h += '<div style="margin-top:30px;font-size:11px;color:var(--text3);text-align:center">NF525 \u2022 Identification op\u00e9rateur requise</div>';
+  h += '</div>';
+  // Append (don't replace existing modal)
+  var existing = document.getElementById("opSelectorOverlay");
+  if (existing) existing.remove();
+  var div = document.createElement("div");
+  div.innerHTML = h;
+  document.body.appendChild(div.firstChild);
+}
+
+// Pavé numérique PIN
+function showPinPad(operatorId, callback) {
+  var op = OPERATEURS.find(function(o){return o.id===operatorId;});
+  if (!op) return;
+  _operatorPinBuffer = "";
+  _operatorPinTarget = op;
+  _operatorPinCallback = callback || null;
+  renderPinPad();
+}
+
+function renderPinPad() {
+  var op = _operatorPinTarget;
+  if (!op) return;
+  var pinLen = op.pin_length || 4;
+  var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+  var h = '<div id="pinPadOverlay" style="position:fixed;inset:0;z-index:99999;background:rgba(10,10,14,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px">';
+  // Header
+  h += '<div style="text-align:center;margin-bottom:20px">';
+  h += '<div style="width:80px;height:80px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||"?")+'</div>';
+  h += '<div style="font-size:18px;font-weight:800;color:#fff">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
+  h += '<div style="font-size:11px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:4px">PIN '+pinLen+' chiffres</div>';
+  h += '</div>';
+  // Dots
+  h += '<div style="display:flex;gap:14px;margin-bottom:30px">';
+  for (var i=0; i<pinLen; i++) {
+    var filled = i < _operatorPinBuffer.length;
+    h += '<div style="width:18px;height:18px;border-radius:50%;border:2px solid '+roleColor+';background:'+(filled?roleColor:"transparent")+';transition:all .15s"></div>';
+  }
+  h += '</div>';
+  // Numpad
+  h += '<div style="display:grid;grid-template-columns:repeat(3,80px);gap:14px;max-width:280px">';
+  var nums = [1,2,3,4,5,6,7,8,9,"",0,"\u232b"];
+  for (var n=0; n<nums.length; n++) {
+    var v = nums[n];
+    if (v === "") {
+      h += '<div></div>';
+    } else if (v === "\u232b") {
+      h += '<button onclick="pinPadBackspace()" style="width:80px;height:80px;border-radius:50%;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#ef5350;font-size:22px;cursor:pointer;font-weight:700">\u232b</button>';
+    } else {
+      h += '<button onclick="pinPadPress('+v+')" style="width:80px;height:80px;border-radius:50%;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;font-size:26px;cursor:pointer;font-weight:700">'+v+'</button>';
+    }
+  }
+  h += '</div>';
+  h += '<button onclick="closePinPad()" style="margin-top:24px;padding:10px 24px;background:none;border:none;color:var(--text3);font-size:13px;cursor:pointer">\u2190 Retour</button>';
+  h += '</div>';
+  var existing = document.getElementById("pinPadOverlay");
+  if (existing) existing.remove();
+  var div = document.createElement("div");
+  div.innerHTML = h;
+  document.body.appendChild(div.firstChild);
+}
+
+function pinPadPress(n) {
+  if (!_operatorPinTarget) return;
+  var maxLen = _operatorPinTarget.pin_length || 4;
+  if (_operatorPinBuffer.length >= maxLen) return;
+  _operatorPinBuffer += String(n);
+  renderPinPad();
+  if (_operatorPinBuffer.length === maxLen) {
+    setTimeout(validatePinPad, 200);
+  }
+}
+function pinPadBackspace() {
+  _operatorPinBuffer = _operatorPinBuffer.slice(0, -1);
+  renderPinPad();
+}
+function closePinPad() {
+  _operatorPinBuffer = "";
+  _operatorPinTarget = null;
+  _operatorPinCallback = null;
+  var ov = document.getElementById("pinPadOverlay");
+  if (ov) ov.remove();
+}
+async function validatePinPad() {
+  if (!_operatorPinTarget) return;
+  var op = _operatorPinTarget;
+  var pin = _operatorPinBuffer;
+  var cb = _operatorPinCallback;
+  // Login attempt
+  var result = await operatorLogin(op.id, pin);
+  if (result.ok) {
+    closePinPad();
+    if (cb) {
+      // Callback mode (used for admin override)
+      cb(result.op);
+    } else {
+      // Normal login
+      CURRENT_OPERATOR = result.op;
+      saveCurrentOperator();
+      // Close selector overlay
+      var sel = document.getElementById("opSelectorOverlay");
+      if (sel) sel.remove();
+      startInactivityTimer();
+      toast("Bienvenue " + op.prenom + " !", "success");
+      // Refresh app to apply permissions
+      if (typeof go === "function" && typeof currentPage !== "undefined") go(currentPage || "home");
+    }
+  } else {
+    // Wrong PIN - shake effect
+    _operatorPinBuffer = "";
+    var pad = document.getElementById("pinPadOverlay");
+    if (pad) {
+      pad.style.animation = "shake .4s";
+      setTimeout(function(){pad.style.animation="";}, 400);
+    }
+    toast(result.error || "PIN incorrect", "error");
+    if (result.locked) {
+      setTimeout(function(){
+        closePinPad();
+        refreshOperateurs(); // refresh to show locked state
+      }, 1500);
+    } else {
+      renderPinPad();
+    }
+  }
+}
+
+// Demander élévation admin pour une action sensible
+function requireAdmin(actionLabel, callback) {
+  // Si déjà admin, exécuter direct
+  if (CURRENT_OPERATOR && CURRENT_OPERATOR.role === "admin") {
+    callback();
+    return;
+  }
+  // Si admin override actif, exécuter direct
+  if (Date.now() < _operatorAdminOverrideUntil) {
+    callback();
+    return;
+  }
+  // Trouver le premier admin
+  var admin = OPERATEURS.find(function(o){return o.role==="admin" && o.actif;});
+  if (!admin) {
+    toast("Aucun administrateur configur\u00e9", "error");
+    return;
+  }
+  // Show pin pad with admin
+  showPinPad(admin.id, function(op){
+    if (op && op.role === "admin") {
+      _operatorAdminOverrideUntil = Date.now() + 5*60*1000; // 5 min
+      toast("Acc\u00e8s administrateur accord\u00e9", "success");
+      callback();
+    }
+  });
+  // Customize the title temporarily
+  setTimeout(function(){
+    var pad = document.getElementById("pinPadOverlay");
+    if (pad) {
+      var hdr = pad.querySelector('div[style*="text-align:center"]');
+      if (hdr) {
+        var label = document.createElement("div");
+        label.style.cssText = "font-size:13px;color:#ff9800;margin-top:8px;padding:6px 12px;background:rgba(255,152,0,.1);border-radius:8px;display:inline-block";
+        label.innerHTML = "\ud83d\udd12 " + actionLabel;
+        hdr.appendChild(label);
+      }
+    }
+  }, 50);
+}
+
+// Déconnecter l'opérateur courant et afficher la sélection
+function operatorLogout() {
+  CURRENT_OPERATOR = null;
+  _operatorAdminOverrideUntil = 0;
+  saveCurrentOperator();
+  if (_operatorInactivityTimer) clearTimeout(_operatorInactivityTimer);
+  showOperatorSelector();
+}
+
+// Inactivité 5 minutes → re-demander PIN
+function startInactivityTimer() {
+  if (_operatorInactivityTimer) clearTimeout(_operatorInactivityTimer);
+  if (!CURRENT_OPERATOR) return;
+  _operatorInactivityTimer = setTimeout(function(){
+    if (CURRENT_OPERATOR) {
+      var op = CURRENT_OPERATOR;
+      CURRENT_OPERATOR = null;
+      _operatorAdminOverrideUntil = 0;
+      saveCurrentOperator();
+      toast("Verrouillage automatique apr\u00e8s 5 min", "warning");
+      showOperatorSelector();
+    }
+  }, 5*60*1000);
+}
+function resetInactivityTimer() {
+  if (CURRENT_OPERATOR) startInactivityTimer();
+}
+// Listen to user activity
+if (typeof document !== "undefined") {
+  ["click","touchstart","keydown"].forEach(function(ev){
+    document.addEventListener(ev, function(){resetInactivityTimer();}, {passive:true, capture:true});
+  });
+}
+
+// Bouton avatar dans le header → menu utilisateur
+function showOperatorMenu() {
+  if (!CURRENT_OPERATOR) return;
+  var op = CURRENT_OPERATOR;
+  var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+  var htm = '<div class="mbox" style="max-width:340px;text-align:center">';
+  htm += '<div style="width:90px;height:90px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 14px;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||"?")+'</div>';
+  htm += '<div style="font-size:18px;font-weight:800;color:#fff">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
+  htm += '<div style="font-size:11px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:4px">'+(op.role==="admin"?"Administrateur":"Collaborateur")+'</div>';
+  if (Date.now() < _operatorAdminOverrideUntil) {
+    var remain = Math.ceil((_operatorAdminOverrideUntil - Date.now())/1000);
+    htm += '<div style="font-size:11px;color:#ff9800;margin-top:6px">\ud83d\udd13 Override admin actif ('+Math.floor(remain/60)+'min '+(remain%60)+'s)</div>';
+  }
+  htm += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:18px">';
+  htm += '<button class="btn" style="background:rgba(255,255,255,.06)" onclick="cM();operatorLogout()">\ud83d\udd04 Changer d\'utilisateur</button>';
+  htm += '<button class="btn" style="background:rgba(255,255,255,.06)" onclick="cM();lockNow()">\ud83d\udd12 Verrouiller maintenant</button>';
+  htm += '<button class="btn btn-ghost" onclick="cM()">Fermer</button>';
+  htm += '</div></div>';
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+function lockNow() {
+  if (CURRENT_OPERATOR) {
+    CURRENT_OPERATOR = null;
+    _operatorAdminOverrideUntil = 0;
+    saveCurrentOperator();
+    showOperatorSelector();
+  }
+}
+
+// Update header avatar to show current operator
+function updateOperatorAvatar() {
+  var el = document.getElementById("opAvatarHeader");
+  if (!el) return;
+  if (!CURRENT_OPERATOR) {
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  var op = CURRENT_OPERATOR;
+  var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+  el.style.display = "";
+  el.innerHTML = '<button onclick="showOperatorMenu()" title="'+op.prenom+' ('+(op.role==="admin"?"Admin":"Collab")+')" style="width:34px;height:34px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';border:2px solid '+roleColor+';color:#fff;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;margin-right:6px;font-family:var(--f1)">'+(op.avatar_initials||op.prenom.charAt(0).toUpperCase())+'</button>';
+}
+
+// Section "Gestion des opérateurs" (admin only)
+function showOperateursManagement() {
+  if (!hasPermission("operateurs")) {
+    requireAdmin("Acc\u00e9der \u00e0 la gestion des op\u00e9rateurs", showOperateursManagement);
+    return;
+  }
+  var htm = '<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto"><div style="max-width:700px;margin:0 auto;padding:20px">';
+  htm += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">';
+  htm += '<h2 style="color:var(--gold);margin:0">\ud83d\udc6a Gestion des op\u00e9rateurs</h2>';
+  htm += '<button onclick="cM()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">\u2190 Retour</button>';
+  htm += '</div>';
+  htm += '<div style="font-size:13px;color:var(--text3);margin-bottom:16px">G\u00e9rez les comptes des personnes qui utilisent l\'application. Chaque op\u00e9rateur a son propre PIN et ses propres permissions.</div>';
+  htm += '<button onclick="editOperateur(null)" style="width:100%;padding:14px;background:linear-gradient(135deg,#c8a84e,#a08838);border:none;border-radius:12px;color:#0a0a0e;font-weight:800;font-size:14px;cursor:pointer;margin-bottom:14px">\u2795 Cr\u00e9er un op\u00e9rateur</button>';
+  // List operateurs
+  if (!OPERATEURS.length) {
+    htm += '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:48px;margin-bottom:12px">\ud83d\udc65</div>Aucun op\u00e9rateur configur\u00e9</div>';
+  } else {
+    for (var i=0; i<OPERATEURS.length; i++) {
+      var op = OPERATEURS[i];
+      var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+      var locked = op.locked_until && new Date(op.locked_until) > new Date();
+      htm += '<div style="display:flex;align-items:center;gap:14px;padding:14px;background:rgba(255,255,255,.04);border:1px solid '+(locked?"#f44336":"var(--border2)")+';border-radius:12px;margin-bottom:8px;cursor:pointer" onclick="editOperateur(\''+op.id+'\')">';
+      htm += '<div style="width:50px;height:50px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900;color:#fff;flex-shrink:0">'+(op.avatar_initials||"?")+'</div>';
+      htm += '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700;color:#fff">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
+      htm += '<div style="font-size:11px;color:'+roleColor+';font-weight:700;text-transform:uppercase">'+(op.role==="admin"?"Administrateur":"Collaborateur")+(op.actif?'':' \u2022 INACTIF')+'</div>';
+      if (locked) htm += '<div style="font-size:11px;color:#f44336">\ud83d\udd12 Verrouill\u00e9 ('+op.failed_attempts+'/5 erreurs)</div>';
+      else if (op.last_login_at) htm += '<div style="font-size:10px;color:var(--text3)">Derni\u00e8re connexion : '+new Date(op.last_login_at).toLocaleString("fr-FR")+'</div>';
+      htm += '</div>';
+      htm += '<div style="font-size:18px;color:var(--text3)">\u203a</div>';
+      htm += '</div>';
+    }
+  }
+  htm += '</div></div>';
+  document.getElementById("modal").innerHTML = htm;
+}
+
+// Créer / éditer un opérateur
+async function editOperateur(opId) {
+  var op = opId ? OPERATEURS.find(function(o){return o.id===opId;}) : null;
+  var isNew = !op;
+  var role = op ? op.role : "collaborateur";
+  var pinLen = role === "admin" ? 6 : 4;
+  
+  // Load coiffeurs for the link dropdown
+  var coiffeurs = (typeof T !== "undefined" && T) ? T : [];
+  
+  var htm = '<div class="mbox" style="max-width:480px;max-height:90vh;overflow-y:auto">';
+  htm += '<h2>'+(isNew?"\u2795 Nouvel op\u00e9rateur":"\u270f\ufe0f "+op.prenom)+'</h2>';
+  
+  // Avatar preview
+  var color = op ? op.avatar_color : "#c8a84e";
+  htm += '<div style="text-align:center;margin-bottom:14px">';
+  htm += '<div id="opAvatarPreview" style="width:80px;height:80px;border-radius:50%;background:'+color+';margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op?op.avatar_initials:"??")+'</div>';
+  htm += '<div style="display:flex;gap:6px;justify-content:center;margin-top:10px;flex-wrap:wrap">';
+  var colors = ["#c8a84e","#e91e63","#9c27b0","#3f51b5","#2196f3","#009688","#4caf50","#ff9800","#795548"];
+  colors.forEach(function(c){
+    htm += '<div onclick="document.getElementById(\'opAvatarPreview\').style.background=\''+c+'\';window._editOpColor=\''+c+'\'" style="width:24px;height:24px;border-radius:50%;background:'+c+';cursor:pointer;border:2px solid '+(c===color?"#fff":"transparent")+'"></div>';
+  });
+  htm += '</div></div>';
+  
+  htm += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  htm += '<div class="fg"><label>Pr\u00e9nom *</label><input id="opPrenom" value="'+(op?op.prenom:"")+'" oninput="updateOpAvatarInitials()"></div>';
+  htm += '<div class="fg"><label>Nom</label><input id="opNom" value="'+(op?(op.nom||""):"")+'" oninput="updateOpAvatarInitials()"></div>';
+  htm += '</div>';
+  
+  htm += '<div class="fg"><label>Email (facultatif)</label><input id="opEmail" type="email" value="'+(op?(op.email||""):"")+'"></div>';
+  
+  htm += '<div class="fg"><label>R\u00f4le</label>';
+  htm += '<select id="opRole" onchange="window._editOpRole=this.value">';
+  htm += '<option value="collaborateur"'+(role==="collaborateur"?" selected":"")+'>\ud83d\udc64 Collaborateur (PIN 4 chiffres)</option>';
+  htm += '<option value="admin"'+(role==="admin"?" selected":"")+'>\ud83d\udc51 Administrateur (PIN 6 chiffres)</option>';
+  htm += '</select></div>';
+  
+  // Lien optionnel avec un coiffeur du planning
+  if (coiffeurs.length) {
+    htm += '<div class="fg"><label>Li\u00e9 \u00e0 un coiffeur du planning (facultatif)</label>';
+    htm += '<select id="opCollabLink"><option value="">Aucun \u2014 op\u00e9rateur uniquement</option>';
+    for (var c=0; c<coiffeurs.length; c++) {
+      var ck = coiffeurs[c];
+      var sel = (op && op.collab_id === ck.id) ? " selected" : "";
+      htm += '<option value="'+ck.id+'"'+sel+'>'+ck.n+'</option>';
+    }
+    htm += '</select>';
+    htm += '<div style="font-size:11px;color:var(--text3);margin-top:4px">Si li\u00e9, les RDV r\u00e9alis\u00e9s par cet op\u00e9rateur seront attribu\u00e9s \u00e0 ce coiffeur.</div></div>';
+  }
+  
+  // PIN section
+  if (isNew) {
+    htm += '<div style="background:rgba(33,150,243,.06);border:1px solid rgba(33,150,243,.2);border-radius:10px;padding:12px;margin-top:8px">';
+    htm += '<div style="font-size:12px;color:#64b5f6;font-weight:700;margin-bottom:8px">\ud83d\udd11 PIN initial</div>';
+    htm += '<input id="opPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN ('+pinLen+' chiffres)" style="text-align:center;font-size:20px;letter-spacing:4px;font-weight:800">';
+    htm += '<div style="font-size:11px;color:var(--text3);margin-top:6px">L\'op\u00e9rateur pourra le changer apr\u00e8s sa premi\u00e8re connexion.</div></div>';
+  } else {
+    htm += '<button onclick="changeOpPinUI(\''+op.id+'\')" style="width:100%;padding:12px;background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.3);border-radius:10px;color:#ffb74d;font-weight:700;cursor:pointer;margin-top:8px">\ud83d\udd11 Changer le PIN</button>';
+    if (op.locked_until && new Date(op.locked_until) > new Date()) {
+      htm += '<button onclick="unlockOpUI(\''+op.id+'\')" style="width:100%;padding:12px;background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.3);border-radius:10px;color:#66bb6a;font-weight:700;cursor:pointer;margin-top:8px">\ud83d\udd13 D\u00e9bloquer le compte</button>';
+    }
+  }
+  
+  // Actions
+  htm += '<div style="display:flex;gap:8px;margin-top:16px">';
+  htm += '<button class="btn btn-ghost" style="flex:1" onclick="cM()">Annuler</button>';
+  if (!isNew) htm += '<button class="btn btn-danger btn-sm" onclick="deleteOpUI(\''+op.id+'\')">\ud83d\uddd1\ufe0f</button>';
+  htm += '<button class="btn btn-gold" style="flex:2" onclick="saveOperateurUI(\''+(op?op.id:"")+'\')">\u2705 '+(isNew?"Cr\u00e9er":"Enregistrer")+'</button>';
+  htm += '</div></div>';
+  
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  window._editOpColor = color;
+  window._editOpRole = role;
+}
+
+function updateOpAvatarInitials() {
+  var pr = (document.getElementById("opPrenom")||{}).value || "";
+  var nm = (document.getElementById("opNom")||{}).value || "";
+  var ini = ((pr[0]||"")+(nm[0]||"")).toUpperCase();
+  var av = document.getElementById("opAvatarPreview");
+  if (av) av.textContent = ini || "??";
+}
+
+async function saveOperateurUI(opId) {
+  var prenom = (document.getElementById("opPrenom")||{}).value.trim();
+  if (!prenom) { toast("Pr\u00e9nom requis", "warning"); return; }
+  var nom = (document.getElementById("opNom")||{}).value.trim();
+  var email = (document.getElementById("opEmail")||{}).value.trim();
+  var role = (document.getElementById("opRole")||{}).value;
+  var collabLink = document.getElementById("opCollabLink") ? (document.getElementById("opCollabLink").value || null) : null;
+  var color = window._editOpColor || "#c8a84e";
+  
+  if (!opId) {
+    // New operator
+    var pin = (document.getElementById("opPin")||{}).value.trim();
+    var pinLen = role === "admin" ? 6 : 4;
+    if (!/^[0-9]+$/.test(pin) || pin.length !== pinLen) {
+      toast("PIN invalide ("+pinLen+" chiffres)", "warning");
+      return;
+    }
+    var created = await createOperateur({
+      prenom: prenom, nom: nom, email: email,
+      role: role, pin: pin,
+      avatar_color: color,
+      permissions: defaultPermissions(role),
+      collab_id: collabLink ? parseInt(collabLink) : null
+    });
+    if (created) {
+      toast("Op\u00e9rateur cr\u00e9\u00e9", "success");
+      await refreshOperateurs();
+      cM();
+      showOperateursManagement();
+    } else {
+      toast("Erreur lors de la cr\u00e9ation", "error");
+    }
+  } else {
+    // Update existing
+    var ok = await updateOperateur(opId, {
+      prenom: prenom, nom: nom, email: email,
+      role: role,
+      avatar_color: color,
+      collab_id: collabLink ? parseInt(collabLink) : null
+    });
+    if (ok) {
+      toast("Op\u00e9rateur mis \u00e0 jour", "success");
+      await refreshOperateurs();
+      cM();
+      showOperateursManagement();
+    } else {
+      toast("Erreur lors de la mise \u00e0 jour", "error");
+    }
+  }
+}
+
+function changeOpPinUI(opId) {
+  var op = OPERATEURS.find(function(o){return o.id===opId;});
+  if (!op) return;
+  var pinLen = op.role === "admin" ? 6 : 4;
+  var newPin = prompt("Nouveau PIN ("+pinLen+" chiffres) :");
+  if (!newPin) return;
+  if (!/^[0-9]+$/.test(newPin) || newPin.length !== pinLen) {
+    toast("PIN invalide", "warning");
+    return;
+  }
+  changeOperateurPIN(opId, newPin).then(function(ok){
+    if (ok) { toast("PIN modifi\u00e9", "success"); refreshOperateurs(); }
+    else toast("Erreur", "error");
+  });
+}
+
+function unlockOpUI(opId) {
+  unlockOperateur(opId).then(function(ok){
+    if (ok) {
+      toast("Compte d\u00e9bloqu\u00e9", "success");
+      refreshOperateurs().then(function(){
+        cM();
+        showOperateursManagement();
+      });
+    }
+  });
+}
+
+function deleteOpUI(opId) {
+  showConfirm("Supprimer d\u00e9finitivement cet op\u00e9rateur ?", function(){
+    deleteOperateur(opId).then(function(ok){
+      if (ok) {
+        toast("Op\u00e9rateur supprim\u00e9", "success");
+        refreshOperateurs().then(function(){
+          cM();
+          showOperateursManagement();
+        });
+      }
+    });
+  });
+}
+
+// === FUSION ÉQUIPE + OPÉRATEURS — UI helpers ===
+
+// Créer un compte de connexion pour un coiffeur existant
+function createCollabAccountUI(collabId, collabName) {
+  var collab = T.find(function(c){return c.id===collabId;});
+  if (!collab) return;
+  // Modal de création rapide
+  var htm = '<div class="mbox" style="max-width:420px">';
+  htm += '<h2>\ud83d\udd10 Compte de connexion</h2>';
+  htm += '<div style="background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.2);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:#fff">';
+  htm += 'Cr\u00e9ation d\'un compte pour <strong>'+collab.n+'</strong></div>';
+  
+  htm += '<div class="fg"><label>R\u00f4le</label>';
+  htm += '<select id="newCollabRole" onchange="updatePinHint()">';
+  htm += '<option value="collaborateur">\ud83d\udc64 Collaborateur (PIN 4 chiffres)</option>';
+  htm += '<option value="admin">\ud83d\udc51 Administrateur (PIN 6 chiffres)</option>';
+  htm += '</select></div>';
+  
+  htm += '<div class="fg"><label id="pinLabel">PIN initial (4 chiffres)</label>';
+  htm += '<input id="newCollabPin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="\u2022\u2022\u2022\u2022" style="text-align:center;font-size:24px;letter-spacing:8px;font-weight:800;padding:14px"></div>';
+  
+  htm += '<div style="font-size:11px;color:var(--text3);margin-bottom:14px">Communiquez ce PIN \u00e0 '+collab.n+' \u2014 il pourra le changer apr\u00e8s sa premi\u00e8re connexion.</div>';
+  
+  htm += '<div style="display:flex;gap:8px">';
+  htm += '<button class="btn btn-ghost" style="flex:1" onclick="cM()">Annuler</button>';
+  htm += '<button class="btn btn-gold" style="flex:2" onclick="saveCollabAccount('+collabId+')">\u2705 Cr\u00e9er</button>';
+  htm += '</div></div>';
+  
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  setTimeout(function(){
+    var inp = document.getElementById("newCollabPin");
+    if (inp) inp.focus();
+  }, 100);
+}
+
+function updatePinHint() {
+  var role = document.getElementById("newCollabRole").value;
+  var label = document.getElementById("pinLabel");
+  var inp = document.getElementById("newCollabPin");
+  if (role === "admin") {
+    if (label) label.textContent = "PIN initial (6 chiffres)";
+    if (inp) { inp.maxLength = 6; inp.placeholder = "\u2022\u2022\u2022\u2022\u2022\u2022"; }
+  } else {
+    if (label) label.textContent = "PIN initial (4 chiffres)";
+    if (inp) { inp.maxLength = 4; inp.placeholder = "\u2022\u2022\u2022\u2022"; }
+  }
+}
+
+async function saveCollabAccount(collabId) {
+  var collab = T.find(function(c){return c.id===collabId;});
+  if (!collab) return;
+  var role = document.getElementById("newCollabRole").value;
+  var pin = document.getElementById("newCollabPin").value.trim();
+  var pinLen = role === "admin" ? 6 : 4;
+  if (!/^[0-9]+$/.test(pin) || pin.length !== pinLen) {
+    toast("PIN invalide ("+pinLen+" chiffres requis)", "warning");
+    return;
+  }
+  // Vérifier qu'aucun compte n'existe déjà pour ce coiffeur
+  var existing = OPERATEURS.find(function(o){return o.collab_id===collabId;});
+  if (existing) {
+    toast("Un compte existe d\u00e9j\u00e0 pour ce coiffeur", "warning");
+    return;
+  }
+  var nameParts = (collab.n||"").split(" ");
+  var prenom = nameParts[0] || collab.n;
+  var nom = nameParts.slice(1).join(" ") || "";
+  var created = await createOperateur({
+    prenom: prenom,
+    nom: nom,
+    role: role,
+    pin: pin,
+    avatar_color: collab.c || "#c8a84e",
+    permissions: defaultPermissions(role),
+    collab_id: collabId
+  });
+  if (created) {
+    toast("Compte cr\u00e9\u00e9 pour "+collab.n, "success");
+    await refreshOperateurs();
+    cM();
+    go("settings");
+  } else {
+    toast("Erreur lors de la cr\u00e9ation du compte", "error");
+  }
+}
+
+// Changer le rôle d'un opérateur lié à un coiffeur
+function changeOpRoleUI(opId, collabIndex) {
+  var op = OPERATEURS.find(function(o){return o.id===opId;});
+  if (!op) return;
+  var newRole = op.role === "admin" ? "collaborateur" : "admin";
+  var newPinLen = newRole === "admin" ? 6 : 4;
+  showConfirm("Changer le r\u00f4le en \""+(newRole==="admin"?"Administrateur":"Collaborateur")+"\" ?\n\nIl faudra red\u00e9finir un PIN \u00e0 "+newPinLen+" chiffres.", function(){
+    var newPin = prompt("Nouveau PIN \u00e0 "+newPinLen+" chiffres :");
+    if (!newPin) return;
+    if (!/^[0-9]+$/.test(newPin) || newPin.length !== newPinLen) {
+      toast("PIN invalide", "warning");
+      return;
+    }
+    updateOperateur(opId, {role: newRole, permissions: defaultPermissions(newRole)}).then(function(ok1){
+      if (!ok1) { toast("Erreur changement r\u00f4le", "error"); return; }
+      changeOperateurPIN(opId, newPin).then(function(ok2){
+        if (ok2) {
+          toast("R\u00f4le et PIN mis \u00e0 jour", "success");
+          refreshOperateurs().then(function(){go("settings");});
+        }
+      });
+    });
+  });
+}
+
+// Éditer les permissions d'un opérateur
+function editOpPermsUI(opId) {
+  var op = OPERATEURS.find(function(o){return o.id===opId;});
+  if (!op) return;
+  var perms = op.permissions || defaultPermissions(op.role);
+  var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+  
+  var htm = '<div class="mbox" style="max-width:520px;max-height:90vh;overflow-y:auto">';
+  htm += '<h2>\u2699\ufe0f Permissions de '+op.prenom+'</h2>';
+  htm += '<div style="background:rgba(255,255,255,.04);border-left:3px solid '+roleColor+';padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:12px;color:var(--text3)">';
+  if (op.role === "admin") {
+    htm += '\ud83d\udc51 <strong style="color:#c8a84e">Administrateur</strong> \u2014 acc\u00e8s complet \u00e0 toutes les fonctionnalit\u00e9s. Les permissions ci-dessous sont d\u00e9j\u00e0 toutes activ\u00e9es.';
+  } else {
+    htm += '\ud83d\udc64 <strong style="color:#64b5f6">Collaborateur</strong> \u2014 cochez les sections autoris\u00e9es. Les actions sensibles n\u00e9cessiteront le PIN admin.';
+  }
+  htm += '</div>';
+  
+  // Group sections by category
+  var sectionGroups = [
+    {title:"\ud83d\udcdc Sections principales", keys:["planning","caisse","clients","products","stats","compta","marketing","settings","operateurs"]},
+    {title:"\ud83d\udcc5 Planning", keys:["see_other_planning","cancel_rdv"]},
+    {title:"\ud83d\udcb3 Caisse & paiements", keys:["refund","discount","open_drawer"]},
+    {title:"\ud83d\udcca Donn\u00e9es sensibles", keys:["see_prices_achat","export_data","manage_products","manage_services"]}
+  ];
+  
+  for (var g=0; g<sectionGroups.length; g++) {
+    var grp = sectionGroups[g];
+    htm += '<div style="font-size:11px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">'+grp.title+'</div>';
+    for (var k=0; k<grp.keys.length; k++) {
+      var key = grp.keys[k];
+      var section = APP_SECTIONS.find(function(s){return s.key===key;});
+      if (!section) continue;
+      var checked = perms[key] === true;
+      var disabled = op.role === "admin"; // admin always all perms
+      htm += '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px;background:rgba(255,255,255,.03);border:1px solid var(--border2);border-radius:8px;margin-bottom:4px;cursor:pointer">';
+      htm += '<input type="checkbox" data-perm="'+key+'" '+(checked?"checked":"")+' '+(disabled?"disabled":"")+' style="width:20px;height:20px;flex-shrink:0;margin-top:1px">';
+      htm += '<div style="flex:1"><div style="font-size:13px;font-weight:700;color:#fff">'+section.label+'</div>';
+      if (section.desc) htm += '<div style="font-size:11px;color:var(--text3);margin-top:2px">'+section.desc+'</div>';
+      htm += '</div></label>';
+    }
+  }
+  
+  htm += '<div style="display:flex;gap:8px;margin-top:16px">';
+  htm += '<button class="btn btn-ghost" style="flex:1" onclick="cM()">Annuler</button>';
+  htm += '<button class="btn btn-gold" style="flex:2" onclick="savePermsUI(\''+opId+'\')">\u2705 Enregistrer</button>';
+  htm += '</div></div>';
+  
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+async function savePermsUI(opId) {
+  var checkboxes = document.querySelectorAll('input[data-perm]');
+  var perms = {};
+  checkboxes.forEach(function(cb){
+    perms[cb.getAttribute("data-perm")] = cb.checked;
+  });
+  var ok = await updateOperateur(opId, {permissions: perms});
+  if (ok) {
+    toast("Permissions enregistr\u00e9es", "success");
+    await refreshOperateurs();
+    cM();
+    go("settings");
+  } else {
+    toast("Erreur", "error");
+  }
+}
+
+// Supprimer le compte de connexion d'un coiffeur (mais garder le coiffeur)
+function removeCollabAccountUI(opId, collabId) {
+  showConfirm("Supprimer le compte de connexion ? Le coiffeur restera dans le planning mais ne pourra plus se connecter.", function(){
+    deleteOperateur(opId).then(function(ok){
+      if (ok) {
+        toast("Compte supprim\u00e9", "success");
+        refreshOperateurs().then(function(){go("settings");});
+      }
+    });
+  });
+}
+
+// Bandeau de configuration au démarrage si aucun opérateur
+function showOperateursSetupBanner() {
+  if (OPERATEURS.length > 0) return;
+  // Inject in header
+  var existing = document.getElementById("opSetupBanner");
+  if (existing) return;
+  var banner = document.createElement("div");
+  banner.id = "opSetupBanner";
+  banner.style.cssText = "background:linear-gradient(135deg,#ff9800,#f57c00);color:#fff;padding:10px 14px;text-align:center;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;position:sticky;top:0;z-index:100";
+  banner.innerHTML = '\u26a0\ufe0f NF525 \u2014 Configurez vos op\u00e9rateurs pour activer la tra\u00e7abilit\u00e9 conforme <span style="background:#fff;color:#f57c00;padding:4px 10px;border-radius:6px;font-weight:800">Configurer</span>';
+  banner.onclick = function(){ window._settTab="equipe"; if(typeof go==="function") go("settings"); };
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+function hideOperateursSetupBanner() {
+  var b = document.getElementById("opSetupBanner");
+  if (b) b.remove();
+}
+
+// CSS for shake animation
+(function(){
+  var s = document.createElement("style");
+  s.textContent = "@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-10px)}75%{transform:translateX(10px)}}";
+  document.head.appendChild(s);
+})();
+
 // ===== ALL STOCK MOVEMENTS HISTORY =====
 async function showAllStockHistory(){
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId){toast("Connexion requise","warning");return;}
@@ -2811,7 +3605,7 @@ function go(pg,arg){
   if(!logoSrc)logoSrc=SALON_CONFIG._defaultLogo||"";
   
   if(pg==="home"){
-    hdr.style.display="";hdr.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"><img src="'+logoSrc+'" alt="L" id="hlogo" style="height:32px;border-radius:6px;flex-shrink:0"><div style="min-width:0;overflow:hidden"><h1 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:16px">'+SALON_CONFIG.nom+'</h1><small style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:11px">'+(SALON_CONFIG.modeActivite==="domicile"?"\ud83d\ude97 ":SALON_CONFIG.modeActivite==="mixte"?"\ud83d\udd00 ":"")+new Date(TD).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div></div><div style="display:flex;align-items:center;gap:2px;flex-shrink:0"><button onclick="location.reload()" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button><button onclick="go(\'settings\')" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:6px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:0px;right:0px;background:var(--red);color:#fff;font-size:9px;font-weight:800;border-radius:50%;min-width:16px;height:16px;align-items:center;justify-content:center"></span></button></div>';
+    hdr.style.display="";hdr.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"><img src="'+logoSrc+'" alt="L" id="hlogo" style="height:32px;border-radius:6px;flex-shrink:0"><div style="min-width:0;overflow:hidden"><h1 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:16px">'+SALON_CONFIG.nom+'</h1><small style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:11px">'+(SALON_CONFIG.modeActivite==="domicile"?"\ud83d\ude97 ":SALON_CONFIG.modeActivite==="mixte"?"\ud83d\udd00 ":"")+new Date(TD).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div></div><div style="display:flex;align-items:center;gap:2px;flex-shrink:0"><div id="opAvatarHeader" style="display:none"></div><button onclick="location.reload()" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button><button onclick="go(\'settings\')" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:6px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:0px;right:0px;background:var(--red);color:#fff;font-size:9px;font-weight:800;border-radius:50%;min-width:16px;height:16px;align-items:center;justify-content:center"></span></button></div>';if(typeof updateOperatorAvatar==="function")updateOperatorAvatar();
   }else{
     var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Services et Forfaits",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis",marketing:"Marketing"};
     hdr.style.display="";hdr.innerHTML='<button class="back-btn" onclick="goBack()">←</button><div><h1>'+(titles[pg]||"")+'</h1></div>';
@@ -4863,7 +5657,7 @@ function rSettings(){
     var sections=[
       {k:"etablissement",i:"\ud83c\udfe2",t:"\u00c9tablissement",d:"M\u00e9tier, mode d\u0027activit\u00e9, coordonn\u00e9es"},
       {k:"horaires",i:"\ud83d\udd54",t:"Horaires",d:"Ouverture, fermeture par jour"},
-      {k:"equipe",i:"\ud83d\udc65",t:"\u00c9quipe",d:"Noms et couleurs "+getMetierConfig().collabLabel.toLowerCase()+"s"},
+      {k:"equipe",i:"\ud83d\udc65",t:"\u00c9quipe",d:"Noms, photos, horaires et comptes de connexion"},
       {k:"planning",i:"\ud83d\udcc5",t:"Affichage planning",d:"Intervalle, hauteur des cr\u00e9neaux"},
       {k:"fond",i:"\ud83c\udfa8",t:"Apparence",d:"Fond d\u0027\u00e9cran, th\u00e8me"},
       {k:"salon",i:"\ud83c\udfe0",t:"Infos établissement",d:"Nom, adresse, t\u00e9l\u00e9phone, logo"},
@@ -5080,6 +5874,35 @@ function rSettings(){
         }
       }
       h+='<button class="btn bs" style="margin-top:8px;font-size:12px" onclick="addAbsence('+st2.id+')">+ Cong\u00e9 / Absence / Pause</button>';
+      // ===== BLOC COMPTE DE CONNEXION (NF525) =====
+      var linkedOp = (typeof OPERATEURS!=="undefined") ? OPERATEURS.find(function(o){return o.collab_id===st2.id;}) : null;
+      h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">';
+      h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+      h+='<div style="font-size:13px;font-weight:800;color:var(--gold)">\ud83d\udd10 Compte de connexion</div>';
+      if(linkedOp){
+        var roleBadge = linkedOp.role==="admin" ? '<span style="background:rgba(200,168,78,.15);color:#c8a84e;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;text-transform:uppercase">Admin</span>' : '<span style="background:rgba(100,181,246,.15);color:#64b5f6;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;text-transform:uppercase">Collab</span>';
+        h+=roleBadge;
+        var locked = linkedOp.locked_until && new Date(linkedOp.locked_until) > new Date();
+        if(locked) h+='<span style="background:rgba(244,67,54,.15);color:#ef5350;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800">\ud83d\udd12 Verrouill\u00e9</span>';
+      } else {
+        h+='<span style="background:rgba(255,255,255,.06);color:var(--text3);padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700">Aucun compte</span>';
+      }
+      h+='</div>';
+      if(linkedOp){
+        h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">PIN '+(linkedOp.pin_length||4)+' chiffres'+(linkedOp.last_login_at?' \u2022 Derni\u00e8re connexion : '+new Date(linkedOp.last_login_at).toLocaleDateString("fr-FR"):'')+'</div>';
+        h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+        h+='<button class="btn bs" style="font-size:11px;padding:6px 12px" onclick="changeOpPinUI(\''+linkedOp.id+'\')">\ud83d\udd11 Changer PIN</button>';
+        h+='<button class="btn bs" style="font-size:11px;padding:6px 12px" onclick="changeOpRoleUI(\''+linkedOp.id+'\','+ti+')">\ud83d\udc51 R\u00f4le</button>';
+        h+='<button class="btn bs" style="font-size:11px;padding:6px 12px" onclick="editOpPermsUI(\''+linkedOp.id+'\')">\u2699\ufe0f Permissions</button>';
+        if(locked) h+='<button class="btn bs" style="font-size:11px;padding:6px 12px;color:#66bb6a" onclick="unlockOpUI(\''+linkedOp.id+'\')">\ud83d\udd13 D\u00e9bloquer</button>';
+        h+='<button class="btn bs" style="font-size:11px;padding:6px 12px;color:var(--red)" onclick="removeCollabAccountUI(\''+linkedOp.id+'\','+st2.id+')">\u2716 Supprimer compte</button>';
+        h+='</div>';
+      } else {
+        h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Cr\u00e9ez un compte pour que '+st2.n+' puisse se connecter \u00e0 l\'app avec un PIN.</div>';
+        h+='<button class="btn bs" style="font-size:12px;padding:8px 14px;background:rgba(76,175,80,.1);color:#66bb6a;border:1px solid rgba(76,175,80,.3)" onclick="createCollabAccountUI('+st2.id+',\''+(st2.n||"").replace(/'/g,"\\\\'")+'\')">\u2795 Cr\u00e9er un compte de connexion</button>';
+      }
+      h+='</div>';
+      // ===== FIN BLOC COMPTE =====
       if(T.length>1)h+='<button class="btn bs" style="margin-top:8px;font-size:12px;color:var(--red);margin-left:8px" onclick="showConfirm(\'Supprimer ce collaborateur ?\',function(){var delId=T['+ti+'].id;T.splice('+ti+',1);deleteCollabFromDB(delId);go(\'settings\')})">Supprimer</button>';
       h+='</div>';
     }
