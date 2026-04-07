@@ -167,16 +167,16 @@ body{max-width:100%;margin:0 auto;}
 .pg-wrap{background:rgba(255,255,255,.92);border:1px solid rgba(0,0,0,.1);border-radius:var(--r);box-shadow:var(--sh);overflow-x:auto;}
 .pg-grid{display:flex;min-width:360px;}
 .pg-timecol{flex:0 0 50px;background:rgba(245,245,245,.9);border-right:1px solid #ddd;}
-@media(max-width:768px){.pg-timecol{flex:0 0 36px;}.pg-timehead{font-size:10px!important;}.pg-tslot{font-size:9px!important;}.pg-colhead{height:60px!important;font-size:9px!important;padding:2px!important;}.header{padding:8px 10px;}.header img{height:32px!important;}.header h1{font-size:14px!important;}}
+@media(max-width:768px){.pg-timecol{flex:0 0 36px;}.pg-timehead{font-size:10px!important;height:60px!important;padding-bottom:2px!important;}.pg-tslot{font-size:9px!important;}.pg-colhead{height:60px!important;font-size:9px!important;padding:2px!important;}.header{padding:8px 10px;}.header img{height:32px!important;}.header h1{font-size:14px!important;}}
 .pg-col{flex:1;border-left:1px solid var(--border);position:relative;}
-.pg-colhead{padding:8px 4px;text-align:center;font-family:var(--f1);font-size:14px;font-weight:700;background:rgba(255,255,255,.6);border-bottom:2px solid #ccc;color:#1a1a1a;height:75px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;}
+.pg-colhead{padding:8px 4px;text-align:center;font-family:var(--f1);font-size:14px;font-weight:700;background:rgba(255,255,255,.6);border-bottom:2px solid #ccc;color:#1a1a1a;height:75px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;}
 .pg-colhead .hdot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle;}
 .pg-blocked{position:absolute;left:2px;right:2px;background:repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(196,56,56,.08) 4px,rgba(196,56,56,.08) 8px);border:1px dashed rgba(196,56,56,.3);border-radius:6px;z-index:1;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--red);font-weight:600;pointer-events:none;}
-.pg-timehead{padding:0 4px;text-align:center;font-size:12px;color:#666;font-weight:600;background:rgba(245,245,245,.9);border-bottom:2px solid #ccc;height:75px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;}
+.pg-timehead{padding:0 4px;text-align:center;font-size:12px;color:#666;font-weight:600;background:rgba(245,245,245,.9);border-bottom:2px solid #ccc;height:75px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;box-sizing:border-box;}
 .pg-slots{position:relative;}
-.pg-tslot{font-size:12px;color:#555;font-weight:800;text-align:right;padding:2px 6px 0;border-bottom:1px solid #bbb;display:flex;align-items:flex-start;justify-content:flex-end;}
+.pg-tslot{font-size:12px;color:#555;font-weight:800;text-align:right;padding:2px 6px 0;border-bottom:1px solid #bbb;display:flex;align-items:flex-start;justify-content:flex-end;box-sizing:border-box;}
 .pg-tslot.hr{border-top:2.5px solid #666;border-bottom:1px solid #bbb;font-weight:800;color:#222;}
-.pg-slot{border-bottom:1px solid #bbb;cursor:pointer;}
+.pg-slot{border-bottom:1px solid #bbb;cursor:pointer;box-sizing:border-box;}
 .pg-slot.hr{border-top:2.5px solid #666;border-bottom:1px solid #bbb;}
 .pg-slot:hover{background:rgba(200,168,78,.08);}
 .pg-block{position:absolute;border-radius:6px;padding:3px 6px;font-size:12px;line-height:1.3;overflow:hidden;z-index:5;cursor:grab;border-left:5px solid;box-shadow:0 2px 8px rgba(0,0,0,.35);user-select:none;-webkit-user-select:none;color:#1a1a1a!important;}
@@ -525,6 +525,24 @@ function hasPermission(perm) {
   return perms[perm] === true;
 }
 
+// NF525: retourne la liste des coiffeurs visibles selon les permissions
+// Si l'opérateur connecté est un collab sans "see_other_planning", il ne voit que ses RDV
+function getVisibleStylists() {
+  if (typeof T === "undefined" || !T) return [];
+  if (!CURRENT_OPERATOR) return T;
+  if (CURRENT_OPERATOR.role === "admin") return T;
+  if (Date.now() < _operatorAdminOverrideUntil) return T;
+  var perms = CURRENT_OPERATOR.permissions || {};
+  if (perms["see_other_planning"] === true) return T;
+  // Collab without see_other_planning: only show his linked stylist
+  if (CURRENT_OPERATOR.collab_id != null) {
+    var linked = T.filter(function(t){ return t.id === CURRENT_OPERATOR.collab_id; });
+    if (linked.length) return linked;
+  }
+  // Fallback: show all (don't break the app if collab not linked)
+  return T;
+}
+
 // Charger tous les opérateurs au démarrage
 async function refreshOperateurs() {
   if (typeof loadOperateurs !== "function") return;
@@ -568,27 +586,27 @@ function saveCurrentOperator() {
 // Écran de sélection d'opérateur (plein écran)
 function showOperatorSelector() {
   if (!OPERATEURS.length) return;
-  var h = '<div id="opSelectorOverlay" style="position:fixed;inset:0;z-index:99998;background:linear-gradient(135deg,#0a0a0e,#14141c);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto">';
-  h += '<div style="text-align:center;margin-bottom:30px"><div style="font-family:var(--f1);font-size:28px;font-weight:900;color:var(--gold);letter-spacing:2px">'+(SALON_CONFIG && SALON_CONFIG.nom || "LUXYRA")+'</div>';
-  h += '<div style="font-size:13px;color:var(--text3);margin-top:6px;text-transform:uppercase;letter-spacing:2px">S\u00e9lectionnez votre profil</div></div>';
-  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,140px));gap:16px;max-width:720px;justify-content:center">';
-  for (var i=0; i<OPERATEURS.length; i++) {
-    var op = OPERATEURS[i];
-    if (!op.actif) continue;
+  var h = '<div id="opSelectorOverlay" style="position:fixed;inset:0;z-index:99998;background:linear-gradient(135deg,#0a0a0e,#14141c);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;overflow-y:auto;box-sizing:border-box">';
+  h += '<div style="text-align:center;margin-bottom:24px;max-width:90vw"><div style="font-family:var(--f1);font-size:clamp(20px,6vw,28px);font-weight:900;color:var(--gold);letter-spacing:1px;line-height:1.2;word-wrap:break-word">'+(SALON_CONFIG && SALON_CONFIG.nom || "LUXYRA")+'</div>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-top:8px;text-transform:uppercase;letter-spacing:2px">S\u00e9lectionnez votre profil</div></div>';
+  // Grid centered, with auto-fit and proper centering
+  var activeOps = OPERATEURS.filter(function(o){return o.actif;});
+  h += '<div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;max-width:100%;width:100%;box-sizing:border-box;padding:0 8px">';
+  for (var i=0; i<activeOps.length; i++) {
+    var op = activeOps[i];
     var locked = op.locked_until && new Date(op.locked_until) > new Date();
     var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
     var roleLabel = op.role === "admin" ? "Admin" : "Collaborateur";
-    h += '<div onclick="'+(locked?'toast(\'Compte verrouill\\u00e9\',\'warning\')':'showPinPad(\''+op.id+'\')')+'" style="background:rgba(255,255,255,.04);border:2px solid '+(locked?"#f44336":"rgba(255,255,255,.08)")+';border-radius:18px;padding:20px 14px;text-align:center;cursor:pointer;transition:all .2s" onmouseover="this.style.transform=\'translateY(-4px)\';this.style.borderColor=\''+roleColor+'\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.borderColor=\''+(locked?"#f44336":"rgba(255,255,255,.08)")+'\'">';
-    h += '<div style="width:72px;height:72px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||(op.prenom||"?").charAt(0).toUpperCase())+'</div>';
-    h += '<div style="font-size:15px;font-weight:700;color:#fff">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
-    h += '<div style="font-size:10px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:4px">'+roleLabel+'</div>';
+    h += '<div onclick="'+(locked?'toast(\'Compte verrouill\\u00e9\',\'warning\')':'showPinPad(\''+op.id+'\')')+'" style="background:rgba(255,255,255,.04);border:2px solid '+(locked?"#f44336":"rgba(255,255,255,.08)")+';border-radius:18px;padding:18px 12px;text-align:center;cursor:pointer;transition:all .2s;width:140px;max-width:calc(50vw - 22px);box-sizing:border-box;flex-shrink:0">';
+    h += '<div style="width:64px;height:64px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 10px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||(op.prenom||"?").charAt(0).toUpperCase())+'</div>';
+    h += '<div style="font-size:14px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
+    h += '<div style="font-size:9px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+roleLabel+'</div>';
     if (locked) h += '<div style="font-size:10px;color:#f44336;margin-top:4px">\ud83d\udd12 Verrouill\u00e9</div>';
     h += '</div>';
   }
   h += '</div>';
-  h += '<div style="margin-top:30px;font-size:11px;color:var(--text3);text-align:center">NF525 \u2022 Identification op\u00e9rateur requise</div>';
+  h += '<div style="margin-top:24px;font-size:10px;color:var(--text3);text-align:center;padding:0 16px">NF525 \u2022 Identification op\u00e9rateur requise</div>';
   h += '</div>';
-  // Append (don't replace existing modal)
   var existing = document.getElementById("opSelectorOverlay");
   if (existing) existing.remove();
   var div = document.createElement("div");
@@ -2771,6 +2789,12 @@ function simulateGoogleReserve(cn,sv,d,t){addNotif("google_reserve","RDV Google 
 
 // === CRITICAL FUNCTIONS (early copy) ===
 function doCloture(){
+  if(typeof hasPermission==="function"&&!hasPermission("compta")){
+    if(typeof requireAdmin==="function"){requireAdmin("Cl\u00f4ture quotidienne (NF525)",function(){_doClotureDo();});return;}
+  }
+  _doClotureDo();
+}
+function _doClotureDo(){
   // Already clotured? Block
   // Also check CLOTURES array
   if(window.CLOTURES){for(var ci=0;ci<window.CLOTURES.length;ci++){if(window.CLOTURES[ci].date===TD){window.LOCKED_DAYS[TD]=true;break;}}}
@@ -3593,6 +3617,21 @@ function goBack(){
   go("home");
 }
 function go(pg,arg){
+  // === NF525 Permission check ===
+  // Map page → required permission
+  var _pagePerm={
+    planning:"planning", clients:"clients", detail:"clients",
+    services:"manage_services", products:"products", gifts:"caisse",
+    accounting:"compta", stats:"stats", marketing:"marketing",
+    caisse:"caisse", settings:"settings",
+    tickets:"caisse", caisseGestion:"caisse", pendingTk:"caisse",
+    devis:"caisse"
+  };
+  if(_pagePerm[pg]&&typeof hasPermission==="function"&&!hasPermission(_pagePerm[pg])){
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");
+    if(window._currentPage&&window._currentPage!==pg){return;}
+    pg="home";
+  }
   var _prevPage=window._currentPage;
   window._currentPage=pg;
   if(typeof saveCollaborateurs==="function"&&typeof _salonId!=="undefined"&&_salonId)saveCollaborateurs();
@@ -3605,7 +3644,7 @@ function go(pg,arg){
   if(!logoSrc)logoSrc=SALON_CONFIG._defaultLogo||"";
   
   if(pg==="home"){
-    hdr.style.display="";hdr.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"><img src="'+logoSrc+'" alt="L" id="hlogo" style="height:32px;border-radius:6px;flex-shrink:0"><div style="min-width:0;overflow:hidden"><h1 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:16px">'+SALON_CONFIG.nom+'</h1><small style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:11px">'+(SALON_CONFIG.modeActivite==="domicile"?"\ud83d\ude97 ":SALON_CONFIG.modeActivite==="mixte"?"\ud83d\udd00 ":"")+new Date(TD).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div></div><div style="display:flex;align-items:center;gap:2px;flex-shrink:0"><div id="opAvatarHeader" style="display:none"></div><button onclick="location.reload()" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button><button onclick="go(\'settings\')" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button><button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:6px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:0px;right:0px;background:var(--red);color:#fff;font-size:9px;font-weight:800;border-radius:50%;min-width:16px;height:16px;align-items:center;justify-content:center"></span></button></div>';if(typeof updateOperatorAvatar==="function")updateOperatorAvatar();
+    hdr.style.display="";hdr.innerHTML='<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden"><img src="'+logoSrc+'" alt="L" id="hlogo" style="height:32px;border-radius:6px;flex-shrink:0"><div style="min-width:0;overflow:hidden"><h1 style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:16px">'+SALON_CONFIG.nom+'</h1><small style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;font-size:11px">'+(SALON_CONFIG.modeActivite==="domicile"?"\ud83d\ude97 ":SALON_CONFIG.modeActivite==="mixte"?"\ud83d\udd00 ":"")+new Date(TD).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+'  <span id="liveClock" style="color:var(--gold);font-weight:800">'+new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})+'</span></small></div></div><div style="display:flex;align-items:center;gap:2px;flex-shrink:0"><div id="opAvatarHeader" style="display:none"></div><button onclick="location.reload()" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Actualiser">\ud83d\udd04</button>'+(typeof hasPermission!=="function"||hasPermission("settings")?'<button onclick="go(\'settings\')" style="background:none;border:none;font-size:18px;cursor:pointer;padding:6px;color:var(--text3)" title="Param\u00e8tres">\u2699\ufe0f</button>':'')+'<button onclick="showNotifs()" style="position:relative;background:none;border:none;font-size:20px;cursor:pointer;padding:6px">\ud83d\udd14<span id="notifBadge" style="display:none;position:absolute;top:0px;right:0px;background:var(--red);color:#fff;font-size:9px;font-weight:800;border-radius:50%;min-width:16px;height:16px;align-items:center;justify-content:center"></span></button></div>';if(typeof updateOperatorAvatar==="function")updateOperatorAvatar();
   }else{
     var titles={planning:"Planning",clients:"Clients",detail:"Client",services:"Services et Forfaits",products:"Boutique",gifts:"Bons cadeaux",accounting:"Comptabilit\u00e9",stats:"Statistiques",caisse:"Caisse",settings:"Param\u00e8tres",tickets:"Gestion des tickets",caisseGestion:"Gestion de la caisse",pendingTk:"Tickets en attente",devis:"Devis",marketing:"Marketing"};
     hdr.style.display="";hdr.innerHTML='<button class="back-btn" onclick="goBack()">←</button><div><h1>'+(titles[pg]||"")+'</h1></div>';
@@ -3879,22 +3918,26 @@ function rHome(){
   // === RIGHT: TILES ===
   h+='<div class="home-tiles">';
   h+='<div class="sec" style="margin-top:0">Mon salon</div><div class="tiles">';
-  h+='<div class="tile gt-blue" onclick="go(\'planning\')"><div class="ti" style="color:#fff">'+ICO.planning+'</div><div class="tl">Planning</div></div>';
-  h+='<div class="tile gt-green" onclick="go(\'caisse\')"><div class="ti" style="color:#fff">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
-  h+='<div class="tile gt-pink" onclick="go(\'clients\')"><div class="ti" style="color:#fff">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
-  h+='<div class="tile gt-purple" onclick="go(\'services\')"><div class="ti" style="color:#fff">'+ICO.services+'</div><div class="tl">Services et Forfaits</div></div>';
+  if(hasPermission("planning"))h+='<div class="tile gt-blue" onclick="go(\'planning\')"><div class="ti" style="color:#fff">'+ICO.planning+'</div><div class="tl">Planning</div></div>';
+  if(hasPermission("caisse"))h+='<div class="tile gt-green" onclick="go(\'caisse\')"><div class="ti" style="color:#fff">'+ICO.encaiss+'</div><div class="tl">Encaissement</div></div>';
+  if(hasPermission("clients"))h+='<div class="tile gt-pink" onclick="go(\'clients\')"><div class="ti" style="color:#fff">'+ICO.clients+'</div><div class="tl">Clients</div></div>';
+  if(hasPermission("manage_services"))h+='<div class="tile gt-purple" onclick="go(\'services\')"><div class="ti" style="color:#fff">'+ICO.services+'</div><div class="tl">Services et Forfaits</div></div>';
   var _prodAlerts=PRODS.filter(function(p){return p.stk<=p.stkMin;}).length;
-  h+='<div class="tile gt-orange" style="position:relative" onclick="go(\'products\')"><div class="ti" style="color:#fff">'+ICO.products+'</div><div class="tl">Produits</div>';
-  if(_prodAlerts>0)h+='<div style="position:absolute;top:6px;right:6px;background:var(--red);color:#fff;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">'+_prodAlerts+'</div>';
-  h+='</div>';
-  h+='<div class="tile gt-gold" onclick="go(\'gifts\')"><div class="ti" style="color:#fff">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
-  h+='<div class="tile gt-blue" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="color:#fff">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
-  h+='<div class="tile gt-pink" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="color:#fff">'+ICO.caisse+'</div><div class="tl">Caisse</div></div>';
-  h+='<div class="tile gt-purple" onclick="go(\'stats\')"><div class="ti" style="color:#fff">'+ICO.stats+'</div><div class="tl">Statistiques</div></div>';
-  if(isPro()){
-  h+='<div class="tile" style="background:linear-gradient(135deg,#00897b,#26a69a)" onclick="go(\'marketing\')"><div class="ti" style="color:#fff">\ud83d\udce3</div><div class="tl">Marketing</div></div>';
-  }else{
-  h+='<div class="tile tile-locked" style="background:linear-gradient(135deg,#00897b,#26a69a)" onclick="showUpgradeModal(\'SMS & Email Marketing\')"><span class="lock-badge">PRO</span><div class="ti" style="color:#fff">\ud83d\udce3</div><div class="tl">Marketing</div></div>';
+  if(hasPermission("products")){
+    h+='<div class="tile gt-orange" style="position:relative" onclick="go(\'products\')"><div class="ti" style="color:#fff">'+ICO.products+'</div><div class="tl">Produits</div>';
+    if(_prodAlerts>0)h+='<div style="position:absolute;top:6px;right:6px;background:var(--red);color:#fff;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">'+_prodAlerts+'</div>';
+    h+='</div>';
+  }
+  if(hasPermission("caisse"))h+='<div class="tile gt-gold" onclick="go(\'gifts\')"><div class="ti" style="color:#fff">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
+  if(hasPermission("planning"))h+='<div class="tile gt-blue" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="color:#fff">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
+  if(hasPermission("caisse"))h+='<div class="tile gt-pink" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="color:#fff">'+ICO.caisse+'</div><div class="tl">Caisse</div></div>';
+  if(hasPermission("stats"))h+='<div class="tile gt-purple" onclick="go(\'stats\')"><div class="ti" style="color:#fff">'+ICO.stats+'</div><div class="tl">Statistiques</div></div>';
+  if(hasPermission("marketing")){
+    if(isPro()){
+    h+='<div class="tile" style="background:linear-gradient(135deg,#00897b,#26a69a)" onclick="go(\'marketing\')"><div class="ti" style="color:#fff">\ud83d\udce3</div><div class="tl">Marketing</div></div>';
+    }else{
+    h+='<div class="tile tile-locked" style="background:linear-gradient(135deg,#00897b,#26a69a)" onclick="showUpgradeModal(\'SMS & Email Marketing\')"><span class="lock-badge">PRO</span><div class="ti" style="color:#fff">\ud83d\udce3</div><div class="tl">Marketing</div></div>';
+    }
   }
   h+='</div>'; // close .tiles
   if(!isPro()){
@@ -4272,6 +4315,8 @@ function rPlanning(){
     var mgs=Math.floor(allEarliest/60)*60,mge=Math.ceil(allLatest/60)*60;
     var mTotalSlots=(mge-mgs)/SLOT;
     var mGridH=mTotalSlots*SLOT_H;
+    // NF525: filtered stylists list based on operator permissions
+    var _visT=(typeof getVisibleStylists==="function")?getVisibleStylists():T;
 
     h+='<div class="pg-wrap"><div style="display:flex;width:100%">';
     // Time column
@@ -4288,13 +4333,13 @@ function rPlanning(){
       var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
       var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&a.st!=="pause"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
 
-      // Day group - each stylist sub-col is flex:1, so use T.length sub-cols for open days
-      // For closed days, use T.length sub-cols too (merged visually) to keep same width
-      h+='<div style="display:flex;flex:'+T.length+';border-left:2px solid '+(isToday?'var(--gold)':'rgba(0,0,0,.15)')+'">';
+      // Day group - each stylist sub-col is flex:1, so use _visT.length sub-cols for open days
+      // For closed days, use _visT.length sub-cols too (merged visually) to keep same width
+      h+='<div style="display:flex;flex:'+_visT.length+';border-left:2px solid '+(isToday?'var(--gold)':'rgba(0,0,0,.15)')+'">';
 
       if(!ddHrs){
-        // Closed day: render T.length empty flex:1 cols merged visually
-        for(var ti=0;ti<T.length;ti++){
+        // Closed day: render _visT.length empty flex:1 cols merged visually
+        for(var ti=0;ti<_visT.length;ti++){
           h+='<div class="pg-col" style="flex:1">';
           if(ti===0){
             h+='<div class="pg-colhead" style="height:75px;opacity:.4;font-size:11px;cursor:pointer" onclick="calD=new Date(\''+ddk+'T12:00:00\');window._planDays=1;go(\'planning\')"><div style="font-weight:800;color:'+(isToday?'var(--gold)':'#1a1a1a')+'">'+dayLbl+'</div><div style="font-size:9px;color:'+(exceptLabel?'#e91e63':'#999')+';margin-top:2px">'+(exceptLabel||'Ferm\u00e9')+'</div></div>';
@@ -4302,12 +4347,12 @@ function rPlanning(){
             h+='<div class="pg-colhead" style="height:75px;opacity:.2"></div>';
           }
           h+='<div class="pg-slots" style="height:'+mGridH+'px;position:relative">';
-          if(ti===0) h+='<div class="pg-absent" style="font-size:11px;width:'+(T.length*100)+'%">Ferm\u00e9</div>';
+          if(ti===0) h+='<div class="pg-absent" style="font-size:11px;width:'+(_visT.length*100)+'%">Ferm\u00e9</div>';
           h+='</div></div>';
         }
       } else {
-        for(var ti=0;ti<T.length;ti++){
-          var sty=T[ti];
+        for(var ti=0;ti<_visT.length;ti++){
+          var sty=_visT[ti];
           var sa=dayApts.filter(function(a){if(a.stId===sty.id)return true;var _ph=a.aPhases||(gS(a.sId)?gS(a.sId).phases:null);if(_ph){for(var _pi=0;_pi<_ph.length;_pi++){if(_ph[_pi].stId===sty.id)return true;}}return false;});
           var isAbs=ABSENCES.some(function(ab){return ab.date===ddk&&ab.stId===sty.id&&ab.type!=="pause"&&ab.type!=="absent_heures"});
           var styAvail=!getBlockedSlots(sty.id,ddk).some(function(b){return b.type==="conge"||b.type==="absent"||b.type==="repos";});
@@ -4420,9 +4465,10 @@ function rPlanningDay(dateObj,showDayHeader){
   h+='<div class="pg-timecol"><div class="pg-timehead">Heure</div><div class="pg-slots">';
   for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;h+='<div class="pg-tslot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px">'+(isH?hh+'h':'')+'</div>';}
   h+='</div></div>';
-  // One column per stylist
-  for(var ti=0;ti<T.length;ti++){
-    var sty=T[ti];
+  // One column per stylist (filtered by NF525 permissions)
+  var _visT=(typeof getVisibleStylists==="function")?getVisibleStylists():T;
+  for(var ti=0;ti<_visT.length;ti++){
+    var sty=_visT[ti];
     var sa=dayA.filter(function(a){if(a.stId===sty.id)return true;var _ph=a.aPhases||(gS(a.sId)?gS(a.sId).phases:null);if(_ph){for(var _pi=0;_pi<_ph.length;_pi++){if(_ph[_pi].stId===sty.id)return true;}}return false;});
     var isAbs=ABSENCES.some(function(ab){return ab.date===dk&&ab.stId===sty.id&&ab.type!=="pause"&&ab.type!=="absent_heures"});
     var styAvail=!getBlockedSlots(sty.id,dk).some(function(b){return b.type==="conge"||b.type==="absent"||b.type==="repos";});
@@ -5338,12 +5384,19 @@ function doDelAppt(id){
   cM();go("planning");
 }
 function cancelAppt(id){
+  if(typeof hasPermission==="function"&&!hasPermission("cancel_rdv")){
+    if(typeof requireAdmin==="function"){requireAdmin("Annuler un RDV",function(){_cancelApptDo(id);});return;}
+  }
+  _cancelApptDo(id);
+}
+function _cancelApptDo(id){
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
   if(!a)return;
   if(a.st==="done"){delAppt(id);return;}
   if(ai>=0)AP.splice(ai,1);
   if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
   else if(typeof saveAppointment==="function"){a.st="canc";saveAppointment(a);}
+  if(typeof auditLog==="function")auditLog("RDV_ANNULE","RDV "+id+" annul\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
   cM();go("planning");
 }
 
@@ -8956,9 +9009,16 @@ function confirmStockChange(){
 }
 
 function deleteProd(id){
+  if(typeof hasPermission==="function"&&!hasPermission("manage_products")){
+    if(typeof requireAdmin==="function"){requireAdmin("Supprimer un produit",function(){_deleteProdDo(id);});return;}
+  }
+  _deleteProdDo(id);
+}
+function _deleteProdDo(id){
   showConfirm("Supprimer ce produit ?",function(){
     PRODS=PRODS.filter(function(p){return p.id!==id;});
     if(typeof deleteProduct==="function")deleteProduct(id);
+    if(typeof auditLog==="function")auditLog("PRODUIT_SUPPR","Produit "+id+" supprim\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
     cM();go("products");
     toast("Produit supprim\u00e9","success");
   });
@@ -12860,6 +12920,11 @@ function doFinalPayExecute(method){
         AP[i].items=savedItems;
         AP[i].tkNum=tkN;
         AP[i].ts=tsNow;
+        // NF525: stocker l'opérateur qui a encaissé
+        if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
+          AP[i].operator_id=CURRENT_OPERATOR.id;
+          AP[i].operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
+        }
         // NF525: chain this ticket
         chainTicket(AP[i]);
         // Build ticket HTML and attach for Supabase storage
@@ -12875,6 +12940,11 @@ function doFinalPayExecute(method){
   }else{
     // Direct caisse sale (no RDV) -> create new ticket entry
     var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
+    // NF525: stocker l'opérateur qui a encaissé
+    if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
+      newTk.operator_id=CURRENT_OPERATOR.id;
+      newTk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
+    }
     // NF525: chain this ticket
     chainTicket(newTk);
     // Build ticket HTML and attach for Supabase storage
@@ -14947,7 +15017,10 @@ setInterval(checkCarteReminders,600000);
 setTimeout(checkCarteReminders,35000);
 
 function auditLog(action,detail){
-  window.AUDIT_LOG.push({id:window.AUDIT_LOG.length+1,ts:new Date().toISOString(),user:T[0]?T[0].n:"Systeme",action:action,detail:detail});
+  var _u="Syst\u00e8me";
+  if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){_u=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")+" ("+CURRENT_OPERATOR.role+")";}
+  else if(T[0]){_u=T[0].n;}
+  window.AUDIT_LOG.push({id:window.AUDIT_LOG.length+1,ts:new Date().toISOString(),user:_u,operator_id:(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?CURRENT_OPERATOR.id:null,action:action,detail:detail});
 }
 // SHA-256 via Web Crypto API (synchrone fallback + async)
 function sha256Sync(str){
@@ -14993,6 +15066,12 @@ function chainTicket(ticket){
   return ticket;
 }
 function cancelSecureTicket(id,motif){
+  if(typeof hasPermission==="function"&&!hasPermission("refund")){
+    if(typeof requireAdmin==="function"){requireAdmin("Annuler / rembourser un ticket",function(){_cancelSecureTicketDo(id,motif);});return;}
+  }
+  _cancelSecureTicketDo(id,motif);
+}
+function _cancelSecureTicketDo(id,motif){
   var orig=null;
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){orig=AP[i];break;}}
   if(!orig)return;
@@ -15012,6 +15091,11 @@ function cancelSecureTicket(id,motif){
     isCancel:true,cancelRef:orig.tkNum||orig.id,cancelMotif:motif,
     fromCaisse:true
   };
+  // NF525: opérateur qui annule
+  if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
+    cancelTicket.operator_id=CURRENT_OPERATOR.id;
+    cancelTicket.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
+  }
   chainTicket(cancelTicket);
   AP.push(cancelTicket);
   if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
@@ -15075,6 +15159,11 @@ function cloturerJournee(){
   c.cumulAnnuel=cumulAn;
   c.hash=sha256Sync("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret);
   c.hashAlgo="SHA-256";
+  // NF525: opérateur qui a effectué la clôture Z
+  if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
+    c.operator_id=CURRENT_OPERATOR.id;
+    c.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
+  }
   sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){if(h!==c.hash){c.hash=h;if(typeof saveCloture==="function")saveCloture(c);}});
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
