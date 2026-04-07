@@ -973,12 +973,18 @@ async function deleteFournisseur(fId) {
 async function logMouvementStock(prodId, prodNom, type, qty, stkAvant, stkApres, ref, note, motif, motifLabel) {
   if (!_isOnline || !_salonId) return;
   try {
+    var _opId = null, _opName = null;
+    if (typeof window !== "undefined" && window.CURRENT_OPERATOR) {
+      _opId = window.CURRENT_OPERATOR.id;
+      _opName = window.CURRENT_OPERATOR.prenom + (window.CURRENT_OPERATOR.nom ? " " + window.CURRENT_OPERATOR.nom : "");
+    }
     await _sb.from("mouvements_stock").insert({
       salon_id: _salonId, produit_id: prodId, produit_nom: prodNom,
       type: type, quantite: qty, stock_avant: stkAvant, stock_apres: stkApres,
       reference: ref || null, note: note || null,
       motif: motif || null, motif_label: motifLabel || null,
-      commentaire: note || null
+      commentaire: note || null,
+      operator_id: _opId, operator_name: _opName
     });
   } catch(e) { console.error("[MVT STOCK]", e.message); }
 }
