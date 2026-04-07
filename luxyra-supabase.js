@@ -507,6 +507,20 @@ async function loadSalonData() {
     var pending = (window.RDV_ONLINE || []).filter(function(r) { return r.status === "pending"; });
     if (pending.length > 0) console.log("Luxyra: " + pending.length + " RDV en ligne en attente de confirmation !");
   }, 500);
+  // NF525 : Charger les opérateurs et afficher l'écran de sélection si configurés
+  if (typeof refreshOperateurs === "function") {
+    setTimeout(function(){
+      refreshOperateurs().then(function(){
+        if (typeof showOperateursSetupBanner === "function" && (!OPERATEURS || !OPERATEURS.length)) {
+          showOperateursSetupBanner();
+        } else if (typeof hideOperateursSetupBanner === "function") {
+          hideOperateursSetupBanner();
+        }
+        // Refresh header to show avatar
+        if (typeof updateOperatorAvatar === "function") updateOperatorAvatar();
+      });
+    }, 600);
+  }
   }catch(err){console.error("loadSalonData error:",err);}
 }
 
@@ -976,6 +990,148 @@ async function getMouvementsStock(prodId, limit) {
       .order("created_at", { ascending: false }).limit(limit || 50);
     return r.data || [];
   } catch(e) { return []; }
+}
+
+// ============================================================
+// OPERATEURS NF525
+// ============================================================
+
+// Hash PIN avec salt unique par salon
+async function hashPIN(pin, salonId) {
+  var salt = "luxyra_op_" + salonId;
+  var msg = pin + ":" + salt;
+  var enc = new TextEncoder().encode(msg);
+  var hashBuf = await crypto.subtle.digest("SHA-256", enc);
+  var hashArr = Array.from(new Uint8Array(hashBuf));
+  return hashArr.map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+}
+
+// Charger tous les opérateurs du salon
+async function loadOperateurs() {
+  if (!_isOnline || !_salonId) return [];
+  try {
+    var r = await _sb.from("salon_operateurs").select("*").eq("salon_id", _salonId).order("created_at");
+    return r.data || [];
+  } catch(e) { console.error("[OP LOAD]", e.message); return []; }
+}
+
+// Créer un opérateur (avec hash du PIN)
+async function createOperateur(data) {
+  if (!_isOnline || !_salonId) return null;
+  try {
+    var pinHash = await hashPIN(data.pin, _salonId);
+    var initials = ((data.prenom||"")[0]||"") + ((data.nom||"")[0]||"");
+    var insert = {
+      salon_id: _salonId,
+      prenom: data.prenom,
+      nom: data.nom || "",
+      email: data.email || null,
+      avatar_color: data.avatar_color || "#c8a84e",
+      avatar_initials: initials.toUpperCase(),
+      role: data.role || "collaborateur",
+      pin_hash: pinHash,
+      pin_length: data.pin.length,
+      permissions: data.permissions || {},
+      collab_id: data.collab_id || null,
+      actif: true,
+      failed_attempts: 0,
+      created_by: (window.SALON_CONFIG && window.SALON_CONFIG.email) || null
+    };
+    var r = await _sb.from("salon_operateurs").insert(insert).select();
+    if (r.error) throw r.error;
+    return r.data && r.data[0] ? r.data[0] : null;
+  } catch(e) { console.error("[OP CREATE]", e.message); return null; }
+}
+
+// Mettre à jour un opérateur (sans toucher au PIN)
+async function updateOperateur(id, data) {
+  if (!_isOnline || !_salonId) return false;
+  try {
+    var update = {};
+    if (data.prenom != null) update.prenom = data.prenom;
+    if (data.nom != null) update.nom = data.nom;
+    if (data.email != null) update.email = data.email;
+    if (data.avatar_color != null) update.avatar_color = data.avatar_color;
+    if (data.role != null) update.role = data.role;
+    if (data.permissions != null) update.permissions = data.permissions;
+    if (data.collab_id !== undefined) update.collab_id = data.collab_id;
+    if (data.actif != null) update.actif = data.actif;
+    if (data.prenom != null || data.nom != null) {
+      var ini = ((data.prenom||"")[0]||"") + ((data.nom||"")[0]||"");
+      update.avatar_initials = ini.toUpperCase();
+    }
+    var r = await _sb.from("salon_operateurs").update(update).eq("id", id);
+    return !r.error;
+  } catch(e) { console.error("[OP UPDATE]", e.message); return false; }
+}
+
+// Changer le PIN d'un opérateur
+async function changeOperateurPIN(id, newPin) {
+  if (!_isOnline || !_salonId) return false;
+  try {
+    var pinHash = await hashPIN(newPin, _salonId);
+    var r = await _sb.from("salon_operateurs").update({
+      pin_hash: pinHash,
+      pin_length: newPin.length,
+      failed_attempts: 0,
+      locked_until: null
+    }).eq("id", id);
+    return !r.error;
+  } catch(e) { console.error("[OP PIN]", e.message); return false; }
+}
+
+// Supprimer un opérateur
+async function deleteOperateur(id) {
+  if (!_isOnline || !_salonId) return false;
+  try {
+    var r = await _sb.from("salon_operateurs").delete().eq("id", id);
+    return !r.error;
+  } catch(e) { console.error("[OP DEL]", e.message); return false; }
+}
+
+// Tenter login avec PIN — retourne {ok:true, op:...} ou {ok:false, error:..., locked:bool}
+async function operatorLogin(operatorId, pin) {
+  if (!_isOnline || !_salonId) return {ok:false, error:"Hors ligne"};
+  try {
+    var r = await _sb.from("salon_operateurs").select("*").eq("id", operatorId).limit(1);
+    if (!r.data || !r.data.length) return {ok:false, error:"Op\u00e9rateur introuvable"};
+    var op = r.data[0];
+    if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
+    if (op.locked_until && new Date(op.locked_until) > new Date()) {
+      return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true};
+    }
+    var pinHash = await hashPIN(pin, _salonId);
+    if (pinHash !== op.pin_hash) {
+      // Increment failed attempts
+      var fails = (op.failed_attempts || 0) + 1;
+      var update = {failed_attempts: fails};
+      if (fails >= 5) {
+        // Lock for 30 minutes
+        update.locked_until = new Date(Date.now() + 30*60*1000).toISOString();
+      }
+      await _sb.from("salon_operateurs").update(update).eq("id", operatorId);
+      return {ok:false, error:"PIN incorrect ("+fails+"/5)", locked:fails>=5};
+    }
+    // Success
+    await _sb.from("salon_operateurs").update({
+      failed_attempts: 0,
+      locked_until: null,
+      last_login_at: new Date().toISOString()
+    }).eq("id", operatorId);
+    return {ok:true, op:op};
+  } catch(e) { console.error("[OP LOGIN]", e.message); return {ok:false, error:e.message}; }
+}
+
+// Débloquer manuellement un opérateur (admin only)
+async function unlockOperateur(id) {
+  if (!_isOnline || !_salonId) return false;
+  try {
+    var r = await _sb.from("salon_operateurs").update({
+      failed_attempts: 0,
+      locked_until: null
+    }).eq("id", id);
+    return !r.error;
+  } catch(e) { return false; }
 }
 
 // ============================================================
