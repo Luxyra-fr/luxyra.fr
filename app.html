@@ -521,6 +521,12 @@ function hasPermission(perm) {
   if (!CURRENT_OPERATOR) return true; // mode legacy si pas d'opérateurs configurés
   if (CURRENT_OPERATOR.role === "admin") return true;
   if (Date.now() < _operatorAdminOverrideUntil) return true; // admin override actif
+  // BOOTSTRAP MODE: si aucun admin n'existe dans le salon, on laisse tout passer
+  // (permet de débloquer le 1er setup quand tous les comptes sont en collab)
+  if (typeof OPERATEURS !== "undefined" && OPERATEURS.length > 0) {
+    var hasAnyAdmin = OPERATEURS.some(function(o){return o.role === "admin" && o.actif;});
+    if (!hasAnyAdmin) return true;
+  }
   var perms = CURRENT_OPERATOR.permissions || {};
   return perms[perm] === true;
 }
@@ -532,6 +538,11 @@ function getVisibleStylists() {
   if (!CURRENT_OPERATOR) return T;
   if (CURRENT_OPERATOR.role === "admin") return T;
   if (Date.now() < _operatorAdminOverrideUntil) return T;
+  // BOOTSTRAP MODE: si aucun admin n'existe, montrer tout (premier setup)
+  if (typeof OPERATEURS !== "undefined" && OPERATEURS.length > 0) {
+    var hasAnyAdmin = OPERATEURS.some(function(o){return o.role === "admin" && o.actif;});
+    if (!hasAnyAdmin) return T;
+  }
   var perms = CURRENT_OPERATOR.permissions || {};
   if (perms["see_other_planning"] === true) return T;
   // Collab without see_other_planning: only show his linked stylist
@@ -547,6 +558,16 @@ function getVisibleStylists() {
 async function refreshOperateurs() {
   if (typeof loadOperateurs !== "function") return;
   OPERATEURS = await loadOperateurs();
+  // Toujours rafraîchir le bandeau de setup (apparaît/disparaît selon état admin)
+  try {
+    var noOps = !OPERATEURS || !OPERATEURS.length;
+    var hasAnyAdmin = OPERATEURS && OPERATEURS.some(function(o){return o.role === "admin" && o.actif;});
+    if (noOps || !hasAnyAdmin) {
+      if (typeof showOperateursSetupBanner === "function") showOperateursSetupBanner();
+    } else {
+      if (typeof hideOperateursSetupBanner === "function") hideOperateursSetupBanner();
+    }
+  } catch(e) {}
   // Si la table est vide → mode legacy, pas besoin de login
   if (!OPERATEURS.length) {
     CURRENT_OPERATOR = null;
@@ -1254,14 +1275,23 @@ function removeCollabAccountUI(opId, collabId) {
 
 // Bandeau de configuration au démarrage si aucun opérateur
 function showOperateursSetupBanner() {
-  if (OPERATEURS.length > 0) return;
+  // Show banner in 2 cases:
+  // 1. No operators at all
+  // 2. Operators exist but none of them is admin (bootstrap incomplete)
+  var noOps = OPERATEURS.length === 0;
+  var hasAnyAdmin = OPERATEURS.some(function(o){return o.role === "admin" && o.actif;});
+  if (!noOps && hasAnyAdmin) return;
   // Inject in header
   var existing = document.getElementById("opSetupBanner");
-  if (existing) return;
+  if (existing) existing.remove();
   var banner = document.createElement("div");
   banner.id = "opSetupBanner";
   banner.style.cssText = "background:linear-gradient(135deg,#ff9800,#f57c00);color:#fff;padding:10px 14px;text-align:center;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;position:sticky;top:0;z-index:100";
-  banner.innerHTML = '\u26a0\ufe0f NF525 \u2014 Configurez vos op\u00e9rateurs pour activer la tra\u00e7abilit\u00e9 conforme <span style="background:#fff;color:#f57c00;padding:4px 10px;border-radius:6px;font-weight:800">Configurer</span>';
+  if (noOps) {
+    banner.innerHTML = '\u26a0\ufe0f NF525 \u2014 Configurez vos op\u00e9rateurs pour activer la tra\u00e7abilit\u00e9 conforme <span style="background:#fff;color:#f57c00;padding:4px 10px;border-radius:6px;font-weight:800">Configurer</span>';
+  } else {
+    banner.innerHTML = '\u26a0\ufe0f NF525 \u2014 Aucun administrateur d\u00e9fini. Mode setup actif (acc\u00e8s complet temporaire). <span style="background:#fff;color:#f57c00;padding:4px 10px;border-radius:6px;font-weight:800">D\u00e9finir un admin</span>';
+  }
   banner.onclick = function(){ window._settTab="equipe"; if(typeof go==="function") go("settings"); };
   document.body.insertBefore(banner, document.body.firstChild);
 }

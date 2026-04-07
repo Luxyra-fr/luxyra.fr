@@ -511,7 +511,10 @@ async function loadSalonData() {
   if (typeof refreshOperateurs === "function") {
     setTimeout(function(){
       refreshOperateurs().then(function(){
-        if (typeof showOperateursSetupBanner === "function" && (!OPERATEURS || !OPERATEURS.length)) {
+        // Show banner if no operators OR no admin among them
+        var noOps = !OPERATEURS || !OPERATEURS.length;
+        var hasAnyAdmin = OPERATEURS && OPERATEURS.some(function(o){return o.role === "admin" && o.actif;});
+        if (typeof showOperateursSetupBanner === "function" && (noOps || !hasAnyAdmin)) {
           showOperateursSetupBanner();
         } else if (typeof hideOperateursSetupBanner === "function") {
           hideOperateursSetupBanner();
