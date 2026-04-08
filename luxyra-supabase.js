@@ -767,9 +767,15 @@ async function saveCloture(clot) {
 // Sauvegarder une entrée d'audit
 async function saveAuditEntry(action, detail) {
   if (!_isOnline || !_salonId) return;
-  await _sb.from("audit_log").insert({
+  var payload = {
     salon_id: _salonId, action: action, details: detail || ""
-  });
+  };
+  // NF525: joindre l'opérateur connecté si disponible
+  if (typeof window.CURRENT_OPERATOR !== "undefined" && window.CURRENT_OPERATOR) {
+    payload.operator_id = window.CURRENT_OPERATOR.id;
+    payload.operator_name = window.CURRENT_OPERATOR.prenom + (window.CURRENT_OPERATOR.nom ? " " + window.CURRENT_OPERATOR.nom : "");
+  }
+  await _sb.from("audit_log").insert(payload);
 }
 
 // Sauvegarder la config du salon
@@ -1264,6 +1270,7 @@ function auditLogWrapper(action, detail) {
   // Appeler l'original (ajoute dans window.AUDIT_LOG en mémoire)
   if (_originalAuditLog) _originalAuditLog(action, detail);
   // Sauver en base
+  console.log("[AUDIT] " + action + " - " + (detail || ""));
   saveAuditEntry(action, detail);
 }
 
@@ -1273,6 +1280,9 @@ document.addEventListener("DOMContentLoaded", function() {
   if (typeof window.auditLog === "function") {
     _originalAuditLog = window.auditLog;
     window.auditLog = auditLogWrapper;
+    console.log("[NF525] auditLog wrapper installé (persistance en base activée)");
+  } else {
+    console.warn("[NF525] auditLog non trouvée au DOMContentLoaded - les logs ne seront PAS persistés en base");
   }
   // Vérifier session
   checkSession();
