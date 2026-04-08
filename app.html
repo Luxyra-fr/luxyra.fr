@@ -9416,7 +9416,7 @@ function rGifts(){
   h+='<div class="card" style="text-align:center;padding:12px"><div style="font-size:22px;font-weight:900;color:var(--red)">'+nbExpired+'</div><div style="font-size:11px;color:var(--text3)">Expir\u00e9s</div></div>';
   h+='</div>';
   h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
-  h+='<button class="btn bg bk" style="flex:1;font-size:13px;padding:14px;border-radius:12px" onclick="oM(\u0027giftOffrir\u0027)">\ud83c\udf81 Offrir un bon</button>';
+  h+='<button class="btn bg bk" style="flex:1;font-size:13px;padding:14px;border-radius:12px" onclick="openOffrirBonUI()">\ud83c\udf81 Offrir un bon</button>';
   h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:14px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d</button>';
   h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:12px" onclick="exportGiftRegister()">\ud83d\udcc4 Export CSV</button>';
   h+='</div>';
@@ -10137,6 +10137,10 @@ function expCSV(){
 }
 
 function printBandeZ(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Imprimer la bande Z mensuelle",printBandeZ);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var mois=accM;var p=mois.split("-");var mLabel=MO[parseInt(p[1])-1]+" "+p[0];
   var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(mois)===0&&!a.cancelled;});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(mois)===0;});
@@ -10573,21 +10577,29 @@ function rStats(){
   // 9c. Valeur du stock
   var stockValHT=0;var stockValTTC=0;
   PRODS.forEach(function(p){stockValHT+=(p.pa||0)*p.stk;stockValTTC+=p.p*p.stk;});
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">';
-  h+='<div style="background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);border-radius:10px;padding:12px;text-align:center">';
-  h+='<div style="font-size:10px;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock HT</div>';
-  h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValHT.toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:var(--text3)">'+PRODS.length+' r\u00e9f\u00e9rences</div></div>';
-  h+='<div style="background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:10px;padding:12px;text-align:center">';
-  h+='<div style="font-size:10px;color:#64b5f6;font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock TTC</div>';
-  h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValTTC.toFixed(0)+' \u20ac</div>';
-  // NF525: masquer la marge potentielle si pas la permission see_prices_achat
+  // NF525: masquer les données sensibles de coûts si pas la permission see_prices_achat
   var _canSeeAchatStats = (typeof hasPermission!=="function") || hasPermission("see_prices_achat");
   if(_canSeeAchatStats){
-    h+='<div style="font-size:10px;color:var(--text3)">Marge potentielle: '+(stockValTTC-stockValHT).toFixed(0)+' \u20ac</div>';
+    // Affichage complet HT + TTC + Marge potentielle pour les autorisés
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">';
+    h+='<div style="background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);border-radius:10px;padding:12px;text-align:center">';
+    h+='<div style="font-size:10px;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock HT</div>';
+    h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValHT.toFixed(0)+' \u20ac</div>';
+    h+='<div style="font-size:10px;color:var(--text3)">'+PRODS.length+' r\u00e9f\u00e9rences</div></div>';
+    h+='<div style="background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:10px;padding:12px;text-align:center">';
+    h+='<div style="font-size:10px;color:#64b5f6;font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock TTC</div>';
+    h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValTTC.toFixed(0)+' \u20ac</div>';
+    h+='<div style="font-size:10px;color:var(--text3)">Marge potentielle: '+(stockValTTC-stockValHT).toFixed(0)+' \u20ac</div></div>';
+    h+='</div>';
+  } else {
+    // Affichage limité TTC uniquement pour les collabs sans permission
+    h+='<div style="margin-top:14px">';
+    h+='<div style="background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:10px;padding:12px;text-align:center">';
+    h+='<div style="font-size:10px;color:#64b5f6;font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock TTC</div>';
+    h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValTTC.toFixed(0)+' \u20ac</div>';
+    h+='<div style="font-size:10px;color:var(--text3)">'+PRODS.length+' r\u00e9f\u00e9rences</div></div>';
+    h+='</div>';
   }
-  h+='</div>';
-  h+='</div>';
   
   // 9d. Marge par catégorie (masqué si pas permission)
   if(_canSeeAchatStats){
@@ -12576,6 +12588,13 @@ function doAddTkProd(idx){
 }
 
 function addItemRemise(idx){
+  // NF525: vérifier la permission "discount" avant d'ouvrir le modal
+  if(typeof hasPermission==="function"&&!hasPermission("discount")){
+    if(typeof requireAdmin==="function"){
+      requireAdmin("Appliquer une remise",function(){addItemRemise(idx);});
+      return;
+    }
+  }
   var it=_tk.items[idx];
   var htm='<div class="mbox"><h2>Remise sur '+it.name+'</h2>';
   htm+='<div style="text-align:center;font-size:14px;margin-bottom:14px">Prix unitaire: <strong>'+it.price.toFixed(2)+' \u20ac</strong></div>';
@@ -12646,6 +12665,13 @@ function addFraisDeplacement(){
 }
 function handleTkOption(idx){
   if(idx===0){
+    // NF525: vérifier la permission "discount" avant même d'ouvrir le modal
+    if(typeof hasPermission==="function"&&!hasPermission("discount")){
+      if(typeof requireAdmin==="function"){
+        requireAdmin("Appliquer une remise sur le ticket",function(){handleTkOption(0);});
+        return;
+      }
+    }
     // Remise ticket: choose EUR or %
     var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});
     var htm='<div class="mbox"><h2>Remise sur le ticket</h2>';
@@ -12746,7 +12772,25 @@ function doCreateBon(){
 
 
 
+// NF525: wrapper qui vérifie la permission discount avant d'ouvrir le modal "Offrir un bon"
+function openOffrirBonUI(){
+  if(typeof hasPermission==="function"&&!hasPermission("discount")){
+    if(typeof requireAdmin==="function"){
+      requireAdmin("Offrir un bon cadeau",openOffrirBonUI);
+      return;
+    }
+  }
+  if(typeof oM==="function") oM("giftOffrir");
+}
+
 function doOffrirBon(){
+  // NF525: offrir un bon cadeau = remise commerciale déguisée, nécessite permission discount
+  if(typeof hasPermission==="function"&&!hasPermission("discount")){
+    if(typeof requireAdmin==="function"){
+      requireAdmin("Offrir un bon cadeau",doOffrirBon);
+      return;
+    }
+  }
   var montant=parseFloat((document.getElementById("fgv")||{}).value)||0;
   if(montant<=0){alert("Indiquez un montant");return;}
   var to=(document.getElementById("fgt")||{}).value||"Offert";
