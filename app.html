@@ -491,10 +491,9 @@ var APP_SECTIONS = [
   {key:"see_other_planning", label:"\ud83d\udc41\ufe0f Voir le planning des autres", desc:"Sinon, voit uniquement ses propres RDV"},
   {key:"cancel_rdv", label:"\u274c Annuler un RDV", desc:""},
   {key:"refund", label:"\u21a9\ufe0f Rembourser", desc:"Rembourser un ticket"},
-  {key:"discount", label:"\ud83c\udf81 Appliquer une remise", desc:""},
-  {key:"open_drawer", label:"\ud83d\udcb5 Ouvrir le tiroir-caisse", desc:""},
-  {key:"see_prices_achat", label:"\ud83d\udd0d Voir les prix d'achat / marges", desc:""},
-  {key:"export_data", label:"\ud83d\udce4 Exporter des donn\u00e9es", desc:""},
+  {key:"discount", label:"\ud83c\udf81 Appliquer une remise", desc:"Remises sur tickets ou produits"},
+  {key:"see_prices_achat", label:"\ud83d\udd0d Voir les prix d'achat / marges", desc:"Affichage des co\u00fbts dans les fiches produits"},
+  {key:"export_data", label:"\ud83d\udce4 Exporter des donn\u00e9es", desc:"Export CSV/PDF des tickets, clients, audit"},
   {key:"manage_products", label:"\u270f\ufe0f Modifier produits / prix", desc:""},
   {key:"manage_services", label:"\u270f\ufe0f Modifier services / forfaits", desc:""}
 ];
@@ -511,7 +510,7 @@ function defaultPermissions(role) {
     planning: true, caisse: true, clients: true, products: true,
     stats: false, compta: false, marketing: false, settings: false, operateurs: false,
     see_other_planning: false, cancel_rdv: true, refund: false,
-    discount: true, open_drawer: true, see_prices_achat: false,
+    discount: true, see_prices_achat: false,
     export_data: false, manage_products: false, manage_services: false
   };
 }
@@ -627,8 +626,19 @@ function showOperatorSelector() {
     var locked = op.locked_until && new Date(op.locked_until) > new Date();
     var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
     var roleLabel = op.role === "admin" ? "Admin" : "Collaborateur";
+    // Photo du coiffeur lié si disponible
+    var _opPhoto = null;
+    if (op.collab_id != null && typeof T !== "undefined" && T) {
+      var _opCid = String(op.collab_id);
+      var _linked = T.filter(function(t){return String(t.id) === _opCid;});
+      if (_linked.length && _linked[0].img) _opPhoto = _linked[0].img;
+    }
     h += '<div onclick="'+(locked?'toast(\'Compte verrouill\\u00e9\',\'warning\')':'showPinPad(\''+op.id+'\')')+'" style="background:rgba(255,255,255,.04);border:2px solid '+(locked?"#f44336":"rgba(255,255,255,.08)")+';border-radius:18px;padding:18px 12px;text-align:center;cursor:pointer;transition:all .2s;width:140px;max-width:calc(50vw - 22px);box-sizing:border-box;flex-shrink:0">';
-    h += '<div style="width:64px;height:64px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 10px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||(op.prenom||"?").charAt(0).toUpperCase())+'</div>';
+    if (_opPhoto) {
+      h += '<div style="width:64px;height:64px;border-radius:50%;margin:0 auto 10px;overflow:hidden;border:3px solid '+(op.avatar_color||roleColor)+'"><img src="'+_opPhoto+'" style="width:100%;height:100%;object-fit:cover;display:block"></div>';
+    } else {
+      h += '<div style="width:64px;height:64px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 10px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||(op.prenom||"?").charAt(0).toUpperCase())+'</div>';
+    }
     h += '<div style="font-size:14px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
     h += '<div style="font-size:9px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+roleLabel+'</div>';
     if (locked) h += '<div style="font-size:10px;color:#f44336;margin-top:4px">\ud83d\udd12 Verrouill\u00e9</div>';
@@ -659,10 +669,21 @@ function renderPinPad() {
   if (!op) return;
   var pinLen = op.pin_length || 4;
   var roleColor = op.role === "admin" ? "#c8a84e" : "#64b5f6";
+  // Photo du coiffeur lié si disponible
+  var _pinPhoto = null;
+  if (op.collab_id != null && typeof T !== "undefined" && T) {
+    var _pinCid = String(op.collab_id);
+    var _pinLinked = T.filter(function(t){return String(t.id) === _pinCid;});
+    if (_pinLinked.length && _pinLinked[0].img) _pinPhoto = _pinLinked[0].img;
+  }
   var h = '<div id="pinPadOverlay" style="position:fixed;inset:0;z-index:99999;background:rgba(10,10,14,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px">';
   // Header
   h += '<div style="text-align:center;margin-bottom:20px">';
-  h += '<div style="width:80px;height:80px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||"?")+'</div>';
+  if (_pinPhoto) {
+    h += '<div style="width:80px;height:80px;border-radius:50%;margin:0 auto 12px;overflow:hidden;border:3px solid '+(op.avatar_color||roleColor)+'"><img src="'+_pinPhoto+'" style="width:100%;height:100%;object-fit:cover;display:block"></div>';
+  } else {
+    h += '<div style="width:80px;height:80px;border-radius:50%;background:'+(op.avatar_color||roleColor)+';margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;font-family:var(--f1)">'+(op.avatar_initials||"?")+'</div>';
+  }
   h += '<div style="font-size:18px;font-weight:800;color:#fff">'+op.prenom+(op.nom?' '+op.nom:'')+'</div>';
   h += '<div style="font-size:11px;color:'+roleColor+';font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-top:4px">PIN '+pinLen+' chiffres</div>';
   h += '</div>';
@@ -1024,10 +1045,12 @@ async function saveOperateurUI(opId) {
   
   if (!opId) {
     // New operator
-    var pin = (document.getElementById("opPin")||{}).value.trim();
+    var pin = (document.getElementById("opPin")||{}).value;
+    // Nettoyage PIN: enlever tout caractère non numérique (espaces, etc.)
+    pin = String(pin||"").replace(/[^0-9]/g, "");
     var pinLen = role === "admin" ? 6 : 4;
-    if (!/^[0-9]+$/.test(pin) || pin.length !== pinLen) {
-      toast("PIN invalide ("+pinLen+" chiffres)", "warning");
+    if (pin.length !== pinLen) {
+      toast("PIN invalide : "+pin.length+" chiffres au lieu de "+pinLen, "warning");
       return;
     }
     var created = await createOperateur({
@@ -1041,7 +1064,9 @@ async function saveOperateurUI(opId) {
       toast("Op\u00e9rateur cr\u00e9\u00e9", "success");
       await refreshOperateurs();
       cM();
-      showOperateursManagement();
+      // Retour à la section Équipe où le nouvel opérateur apparaîtra dans la liste
+      window._settTab = "equipe";
+      if (typeof go === "function") go("settings");
     } else {
       toast("Erreur lors de la cr\u00e9ation", "error");
     }
@@ -1057,7 +1082,9 @@ async function saveOperateurUI(opId) {
       toast("Op\u00e9rateur mis \u00e0 jour", "success");
       await refreshOperateurs();
       cM();
-      showOperateursManagement();
+      // Retour à la section Équipe
+      window._settTab = "equipe";
+      if (typeof go === "function") go("settings");
     } else {
       toast("Erreur lors de la mise \u00e0 jour", "error");
     }
@@ -1088,7 +1115,8 @@ function unlockOpUI(opId) {
       toast("Compte d\u00e9bloqu\u00e9", "success");
       refreshOperateurs().then(function(){
         cM();
-        showOperateursManagement();
+        window._settTab = "equipe";
+        if (typeof go === "function") go("settings");
       });
     }
   });
@@ -1101,7 +1129,8 @@ function deleteOpUI(opId) {
         toast("Op\u00e9rateur supprim\u00e9", "success");
         refreshOperateurs().then(function(){
           cM();
-          showOperateursManagement();
+          window._settTab = "equipe";
+          if (typeof go === "function") go("settings");
         });
       }
     });
@@ -1243,7 +1272,7 @@ function editOpPermsUI(opId) {
   var sectionGroups = [
     {title:"\ud83d\udcdc Sections principales", keys:["planning","caisse","clients","products","stats","compta","marketing","settings","operateurs"]},
     {title:"\ud83d\udcc5 Planning", keys:["see_other_planning","cancel_rdv"]},
-    {title:"\ud83d\udcb3 Caisse & paiements", keys:["refund","discount","open_drawer"]},
+    {title:"\ud83d\udcb3 Caisse & paiements", keys:["refund","discount"]},
     {title:"\ud83d\udcca Donn\u00e9es sensibles", keys:["see_prices_achat","export_data","manage_products","manage_services"]}
   ];
   
@@ -5927,6 +5956,45 @@ function rSettings(){
   
   else if(settTab==="equipe"){
     h+='<div class="sec">\ud83d\udc65 \u00c9quipe</div>';
+    // Bouton pour créer un opérateur sans être un coiffeur (patron, gérant, comptable...)
+    h+='<div class="card" style="margin-bottom:12px;background:linear-gradient(135deg,rgba(200,168,78,.08),rgba(200,168,78,.02));border:1px solid rgba(200,168,78,.25)">';
+    h+='<div style="display:flex;align-items:center;gap:12px">';
+    h+='<div style="font-size:28px">\ud83d\udc54</div>';
+    h+='<div style="flex:1">';
+    h+='<div style="font-weight:800;font-size:14px;color:var(--gold);margin-bottom:2px">Compte gestionnaire</div>';
+    h+='<div style="font-size:11px;color:var(--text3);line-height:1.4">Pour les patrons, g\u00e9rants ou comptables qui utilisent l\'app sans figurer dans le planning</div>';
+    h+='</div>';
+    h+='<button class="btn bs" style="font-size:11px;padding:8px 14px;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.4);font-weight:700;white-space:nowrap" onclick="editOperateur(null)">+ Cr\u00e9er</button>';
+    h+='</div>';
+    h+='</div>';
+    // Liste des opérateurs non-liés à un coiffeur (gestionnaires)
+    if (typeof OPERATEURS !== "undefined" && OPERATEURS.length) {
+      var nonStaffOps = OPERATEURS.filter(function(o){return o.collab_id == null;});
+      if (nonStaffOps.length) {
+        h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">Gestionnaires sans planning</div>';
+        for (var no=0; no<nonStaffOps.length; no++) {
+          var nop = nonStaffOps[no];
+          var nopRoleColor = nop.role === "admin" ? "#c8a84e" : "#64b5f6";
+          var nopLocked = nop.locked_until && new Date(nop.locked_until) > new Date();
+          h+='<div class="card" style="margin-bottom:8px;padding:12px;display:flex;align-items:center;gap:12px">';
+          h+='<div style="width:44px;height:44px;border-radius:50%;background:'+(nop.avatar_color||nopRoleColor)+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900;flex-shrink:0">'+(nop.avatar_initials||nop.prenom.charAt(0).toUpperCase())+'</div>';
+          h+='<div style="flex:1;min-width:0">';
+          h+='<div style="font-size:14px;font-weight:700;color:#fff">'+nop.prenom+(nop.nom?' '+nop.nom:'')+'</div>';
+          h+='<div style="font-size:11px;color:'+nopRoleColor+';font-weight:700;text-transform:uppercase">'+(nop.role==="admin"?"Administrateur":"Collaborateur")+(nop.actif===false?' \u2022 INACTIF':'')+'</div>';
+          if (nopLocked) h+='<div style="font-size:11px;color:#f44336">\ud83d\udd12 Verrouill\u00e9</div>';
+          h+='</div>';
+          h+='<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">';
+          h+='<button class="btn bs" style="font-size:10px;padding:5px 10px" onclick="changeOpPinUI(\''+nop.id+'\')" title="Changer PIN">\ud83d\udd11</button>';
+          h+='<button class="btn bs" style="font-size:10px;padding:5px 10px" onclick="changeOpRoleUI(\''+nop.id+'\',-1)" title="R\u00f4le">\ud83d\udc51</button>';
+          h+='<button class="btn bs" style="font-size:10px;padding:5px 10px" onclick="editOpPermsUI(\''+nop.id+'\')" title="Permissions">\u2699\ufe0f</button>';
+          if (nopLocked) h+='<button class="btn bs" style="font-size:10px;padding:5px 10px;color:#66bb6a" onclick="unlockOpUI(\''+nop.id+'\')" title="D\u00e9bloquer">\ud83d\udd13</button>';
+          h+='<button class="btn bs" style="font-size:10px;padding:5px 10px;color:var(--red)" onclick="deleteOpUI(\''+nop.id+'\')" title="Supprimer">\u274c</button>';
+          h+='</div>';
+          h+='</div>';
+        }
+        h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">'+(typeof getCollabLabel==="function"?getCollabLabel()+'s du planning':'Coiffeurs du planning')+'</div>';
+      }
+    }
     for(var ti=0;ti<T.length;ti++){
       var st2=T[ti];
       h+='<div class="card" style="margin-bottom:12px">';
@@ -6409,7 +6477,7 @@ function rSettings(){
     // On prend les 20 premiers (= 20 plus récents)
     var logs=window.AUDIT_LOG.slice(0,20);
     if(!logs.length)h+='<div style="padding:20px;text-align:center;color:var(--text3);font-style:italic">Aucun evenement</div>';
-    for(var li=0;li<logs.length;li++){var l=logs[li];h+='<div style="padding:5px 0;border-bottom:1px solid var(--border2);font-size:12px"><div style="display:flex;justify-content:space-between"><strong>'+l.action+'</strong><span style="color:var(--text3)">'+(l.ts?l.ts.slice(0,16).replace("T"," "):"")+'</span></div><div style="color:var(--text2)">'+(l.detail||"")+'</div></div>';}
+    for(var li=0;li<logs.length;li++){var l=logs[li];var _tsStr="";if(l.ts){try{var _d=new Date(l.ts);_tsStr=_d.toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){_tsStr=l.ts.slice(0,16).replace("T"," ");}}h+='<div style="padding:5px 0;border-bottom:1px solid var(--border2);font-size:12px"><div style="display:flex;justify-content:space-between"><strong>'+l.action+'</strong><span style="color:var(--text3)">'+_tsStr+'</span></div><div style="color:var(--text2)">'+(l.detail||"")+'</div></div>';}
     h+='</div>';
     h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn bg" style="flex:1" onclick="exportAudit()">Exporter audit</button><button class="btn" style="flex:1;background:var(--bg)" onclick="exportAllData()">Exporter donnees</button></div>';
     h+='<div class="card" style="margin-top:14px;border-left:4px solid var(--gold)"><div class="ct">\ud83d\udcc1 Archivage annuel NF525</div>';
@@ -6680,6 +6748,10 @@ function doRgpdDelete(cId){
   cM();go("clients");
 }
 function exportClientData(cId){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter les donn\u00e9es client (RGPD)",function(){exportClientData(cId);});return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var cl=gC(cId);if(!cl)return;
   var ap=AP.filter(function(a){return a.cId===cId&&a.st==="done"&&!a.cancelled;});
   var data={
@@ -7716,7 +7788,10 @@ function rProducts(){
         h+='<div style="font-size:15px;font-weight:800;font-family:var(--f1);color:var(--gold)">'+p.p.toFixed(2)+'\u20ac</div>';
       }
       var _pVenteHT=p.p/(1+SALON_CONFIG.tauxTVA/100);var _pMarge=_pVenteHT-p.pa;
-      h+='<div style="font-size:9px;color:var(--text3)">HT: '+_pVenteHT.toFixed(2)+'\u20ac \u2022 Marge: <span style="color:'+(_pMarge>0?"var(--green)":"var(--red)")+'">'+_pMarge.toFixed(2)+'\u20ac</span></div>';
+      // NF525: masquer HT+Marge si pas la permission see_prices_achat
+      if(typeof hasPermission!=="function"||hasPermission("see_prices_achat")){
+        h+='<div style="font-size:9px;color:var(--text3)">HT: '+_pVenteHT.toFixed(2)+'\u20ac \u2022 Marge: <span style="color:'+(_pMarge>0?"var(--green)":"var(--red)")+'">'+_pMarge.toFixed(2)+'\u20ac</span></div>';
+      }
       h+='<div style="font-size:11px;margin-top:3px;color:'+stkColor+';font-weight:600">'+stkLabel+'</div>';
       if(p.cc)h+='<div style="font-size:10px;color:var(--blue);margin-top:2px">\ud83d\uded2 Click \& Collect</div>';
       var typeBadges='';
@@ -8228,6 +8303,10 @@ async function showInventoryHistory(){
 }
 
 function exportInventoryPDF(idx){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter l'inventaire PDF",function(){exportInventoryPDF(idx);});return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var inv=window._invHistoryData[idx];if(!inv)return;
   var d=new Date(inv.date);
   var dateStr=d.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
@@ -8351,6 +8430,13 @@ function editProd(id){
   
   // Tabs
   var tabs=[{k:"infos",l:"\u2702\ufe0f Infos"},{k:"prix",l:"\ud83d\udcb0 Prix"},{k:"promo",l:"\ud83c\udf89 Promo"},{k:"histo",l:"\ud83d\udd52 Historique"}];
+  // NF525: masquer l'onglet Prix si pas la permission see_prices_achat
+  var _canSeePrices = (typeof hasPermission!=="function") || hasPermission("see_prices_achat");
+  if(!_canSeePrices){
+    tabs = tabs.filter(function(t){return t.k!=="prix";});
+    // Si l'utilisateur était sur l'onglet prix, rediriger vers infos
+    if(tab==="prix") tab="infos";
+  }
   htm+='<div style="display:flex;border-bottom:2px solid var(--border2);margin-bottom:14px">';
   for(var ti=0;ti<tabs.length;ti++){
     var tt=tabs[ti],sel=tab===tt.k;
@@ -9240,6 +9326,10 @@ function deleteGiftCardLocal(gcId){
 }
 
 function exportGiftRegister(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le registre des bons cadeaux",exportGiftRegister);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var sep=";";
   var lines=["N\u00b0;Code;Montant TTC;HT;TVA;Taux TVA;Type;Scope;Acheteur;B\u00e9n\u00e9ficiaire;Message;Date cr\u00e9ation;Date expiration;Statut;Utilis\u00e9;Reste;Mode paiement;N\u00b0 Ticket;Compte comptable"];
   for(var i=0;i<GC.length;i++){
@@ -10032,6 +10122,10 @@ function rAccounting(){
 function chM(d){var p=accM.split("-").map(Number);var nd=new Date(p[0],p[1]-1+d,1);accM=nd.getFullYear()+"-"+String(nd.getMonth()+1).padStart(2,"0");go("accounting");}
 
 function expCSV(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal comptable",expCSV);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0});
   var ps2=PS.filter(function(p){return p.date.indexOf(accM)===0});
   var rows=["Date;Description;Type;Paiement;Montant"];
@@ -10487,28 +10581,35 @@ function rStats(){
   h+='<div style="background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:10px;padding:12px;text-align:center">';
   h+='<div style="font-size:10px;color:#64b5f6;font-weight:700;text-transform:uppercase;margin-bottom:4px">Valeur stock TTC</div>';
   h+='<div style="font-size:22px;font-weight:900;color:#fff">'+stockValTTC.toFixed(0)+' \u20ac</div>';
-  h+='<div style="font-size:10px;color:var(--text3)">Marge potentielle: '+(stockValTTC-stockValHT).toFixed(0)+' \u20ac</div></div>';
+  // NF525: masquer la marge potentielle si pas la permission see_prices_achat
+  var _canSeeAchatStats = (typeof hasPermission!=="function") || hasPermission("see_prices_achat");
+  if(_canSeeAchatStats){
+    h+='<div style="font-size:10px;color:var(--text3)">Marge potentielle: '+(stockValTTC-stockValHT).toFixed(0)+' \u20ac</div>';
+  }
+  h+='</div>';
   h+='</div>';
   
-  // 9d. Marge par catégorie
-  h+='<div style="font-weight:700;font-size:12px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:.5px">Marges par cat\u00e9gorie</div>';
-  var catMarges={};
-  PRODS.forEach(function(p){
-    if(!catMarges[p.cat])catMarges[p.cat]={cat:p.cat,valHT:0,valTTC:0,count:0};
-    catMarges[p.cat].valHT+=(p.pa||0)*p.stk;
-    catMarges[p.cat].valTTC+=p.p*p.stk;
-    catMarges[p.cat].count++;
-  });
-  var catList=Object.values(catMarges).sort(function(a,b){return (b.valTTC-b.valHT)-(a.valTTC-a.valHT);});
-  if(!catList.length)h+='<div style="color:var(--text3);font-size:13px">Aucune donn\u00e9e</div>';
-  for(var ci3=0;ci3<catList.length;ci3++){
-    var cm=catList[ci3];
-    var margeCat=cm.valTTC-cm.valHT;
-    var margePct=cm.valHT>0?Math.round(margeCat/cm.valHT*100):0;
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px">';
-    h+='<div style="flex:1"><span style="font-weight:700;color:#fff">'+cm.cat+'</span> <span style="font-size:11px;color:var(--text3)">('+cm.count+' produits)</span></div>';
-    h+='<div style="flex-shrink:0;text-align:right"><span style="color:var(--gold);font-weight:800">'+margeCat.toFixed(0)+' \u20ac</span> <span style="font-size:11px;color:'+(margePct>=50?"var(--green)":"var(--orange)")+'">'+margePct+'%</span></div>';
-    h+='</div>';
+  // 9d. Marge par catégorie (masqué si pas permission)
+  if(_canSeeAchatStats){
+    h+='<div style="font-weight:700;font-size:12px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:.5px">Marges par cat\u00e9gorie</div>';
+    var catMarges={};
+    PRODS.forEach(function(p){
+      if(!catMarges[p.cat])catMarges[p.cat]={cat:p.cat,valHT:0,valTTC:0,count:0};
+      catMarges[p.cat].valHT+=(p.pa||0)*p.stk;
+      catMarges[p.cat].valTTC+=p.p*p.stk;
+      catMarges[p.cat].count++;
+    });
+    var catList=Object.values(catMarges).sort(function(a,b){return (b.valTTC-b.valHT)-(a.valTTC-a.valHT);});
+    if(!catList.length)h+='<div style="color:var(--text3);font-size:13px">Aucune donn\u00e9e</div>';
+    for(var ci3=0;ci3<catList.length;ci3++){
+      var cm=catList[ci3];
+      var margeCat=cm.valTTC-cm.valHT;
+      var margePct=cm.valHT>0?Math.round(margeCat/cm.valHT*100):0;
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px">';
+      h+='<div style="flex:1"><span style="font-weight:700;color:#fff">'+cm.cat+'</span> <span style="font-size:11px;color:var(--text3)">('+cm.count+' produits)</span></div>';
+      h+='<div style="flex-shrink:0;text-align:right"><span style="color:var(--gold);font-weight:800">'+margeCat.toFixed(0)+' \u20ac</span> <span style="font-size:11px;color:'+(margePct>=50?"var(--green)":"var(--orange)")+'">'+margePct+'%</span></div>';
+      h+='</div>';
+    }
   }
   
   // 9e. Stock dormant (no sales in period)
@@ -12486,6 +12587,16 @@ function addItemRemise(idx){
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 function applyRemise(idx,type){
+  // NF525: vérifier la permission "discount"
+  if(typeof hasPermission==="function"&&!hasPermission("discount")){
+    if(typeof requireAdmin==="function"){
+      requireAdmin("Appliquer une remise",function(){_doApplyRemiseUI(idx,type);});
+      return;
+    }
+  }
+  _doApplyRemiseUI(idx,type);
+}
+function _doApplyRemiseUI(idx,type){
   var it=_tk.items[idx];
   var label=type==="eur"?"Remise en \u20ac":"Remise en %";
   var defVal=type==="eur"?(it.remise||0):0;
@@ -12727,6 +12838,16 @@ function addMultiClient(cId2){
 }
 
 function applyTkRemise(type){
+  // NF525: vérifier la permission "discount"
+  if(typeof hasPermission==="function"&&!hasPermission("discount")){
+    if(typeof requireAdmin==="function"){
+      requireAdmin("Appliquer une remise sur le ticket",function(){_doApplyTkRemiseUI(type);});
+      return;
+    }
+  }
+  _doApplyTkRemiseUI(type);
+}
+function _doApplyTkRemiseUI(type){
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});
   var label=type==="eur"?"Remise ticket en \u20ac":"Remise ticket en %";
   var htm='<div class="mbox"><h2>'+label+'</h2>';
@@ -13551,6 +13672,10 @@ function openEmailTicket(id){
 }
 
 function exportTicketsCSV(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter les tickets CSV",exportTicketsCSV);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var done=AP.filter(function(a){return a.st==="done"&&a.date>=tkDateFrom&&a.date<=tkDateTo;});
   if(tkPayFilter!=="all")done=done.filter(function(a){return a.met.indexOf(tkPayFilter)>=0;});
   var csv="Date;Heure;Collaborateur;Client;Prestation;Montant;Paiement\n";
@@ -15359,15 +15484,27 @@ function printFactureSalon(id){
 }
 
 function exportAudit(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal d'audit",exportAudit);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var csv="ID;Date;User;Action;Detail\n";window.AUDIT_LOG.forEach(function(l){csv+=l.id+";"+l.ts+";"+l.user+";"+l.action+";"+l.detail.replace(/;/g,",")+"\n";});
   var b=new Blob([csv],{type:"text/csv"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="audit_"+TD+".csv";a.click();
 }
 function exportAllData(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter toutes les donn\u00e9es",exportAllData);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var d={salon:window.SALON||{},tickets:AP.filter(function(a){return a.tkNum}),annul:AP.filter(function(a){return a.cancelled}),clotures:window.CLOTURES,audit:window.AUDIT_LOG,clients:CL,date:new Date().toISOString()};
   var b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="data_"+TD+".json";a.click();
 }
 
 function genererBandeMensuelle(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("G\u00e9n\u00e9rer la bande mensuelle",genererBandeMensuelle);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var month=document.getElementById("bandeMonth")?document.getElementById("bandeMonth").value:TD.slice(0,7);
   if(!month)return;
   var mois=month;
@@ -15466,6 +15603,10 @@ function genererBandeMensuelle(){
 }
 
 function archivageAnnuel(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("G\u00e9n\u00e9rer l'archive annuelle",archivageAnnuel);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
   var year=prompt("Annee a archiver (ex: 2025):",new Date().getFullYear()-1);
   if(!year||isNaN(year))return;
   year=String(year);
