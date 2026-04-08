@@ -11400,9 +11400,9 @@ function showCaisse(){
     // === TWO PANELS SIDE BY SIDE ===
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px 14px 8px">';
 
-    // LEFT: Qui encaisse ?
+    // LEFT: Coiffeur/Esthéticienne/etc. de la prestation
     h+='<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:14px">';
-    h+='<div style="text-align:center;font-family:var(--f1);font-size:13px;font-weight:700;color:var(--gold);margin-bottom:12px;letter-spacing:.5px">Qui encaisse ?</div>';
+    h+='<div style="text-align:center;font-family:var(--f1);font-size:13px;font-weight:700;color:var(--gold);margin-bottom:12px;letter-spacing:.5px">'+getCollabLabel()+' de la prestation</div>';
     h+='<div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">';
     for(var i=0;i<T.length;i++){
       var t=T[i];
@@ -12989,6 +12989,20 @@ function doFinalPayExecute(method){
   
   // NF525: audit log
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
+  
+  // NF525: log si l'opérateur qui encaisse n'est pas le coiffeur attribué
+  // (traçabilité des encaissements "pour un autre")
+  if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR&&_tk.stId){
+    var _opLinkedCollabId=CURRENT_OPERATOR.collab_id;
+    // Si l'opérateur est lié à un coiffeur, et que ce coiffeur n'est pas celui du ticket
+    // OU si l'opérateur n'est lié à aucun coiffeur (ex: réceptionniste)
+    if(_opLinkedCollabId==null||_opLinkedCollabId!==_tk.stId){
+      var _stSty=gT(_tk.stId);
+      var _stName=_stSty?_stSty.n:"?";
+      var _opName=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
+      auditLog("OPERATEUR_ENCAISSE_AUTRE","Ticket #"+tkN+" \u2014 "+_opName+" a encaiss\u00e9 "+total.toFixed(2)+"\u20ac attribu\u00e9 \u00e0 "+_stName);
+    }
+  }
   
   // Update client fidelity (multi-client support)
   var fidResults=_tk._fidResults||{};
