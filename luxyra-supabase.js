@@ -766,7 +766,10 @@ async function saveCloture(clot) {
 
 // Sauvegarder une entrée d'audit
 async function saveAuditEntry(action, detail) {
-  if (!_isOnline || !_salonId) return;
+  if (!_isOnline || !_salonId) {
+    console.warn("[AUDIT] saveAuditEntry skipped: _isOnline="+_isOnline+" _salonId="+_salonId);
+    return;
+  }
   var payload = {
     salon_id: _salonId, action: action, details: detail || ""
   };
@@ -775,7 +778,26 @@ async function saveAuditEntry(action, detail) {
     payload.operator_id = window.CURRENT_OPERATOR.id;
     payload.operator_name = window.CURRENT_OPERATOR.prenom + (window.CURRENT_OPERATOR.nom ? " " + window.CURRENT_OPERATOR.nom : "");
   }
-  await _sb.from("audit_log").insert(payload);
+  try {
+    var res = await _sb.from("audit_log").insert(payload);
+    if (res && res.error) {
+      console.error("[AUDIT] Erreur insert audit_log:", res.error.message || res.error, "payload:", payload);
+      // Retry sans operator_id/operator_name au cas où les colonnes n'existeraient pas
+      if (payload.operator_id) {
+        var fallback = {salon_id: _salonId, action: action, details: detail || ""};
+        var res2 = await _sb.from("audit_log").insert(fallback);
+        if (res2 && res2.error) {
+          console.error("[AUDIT] Erreur fallback insert:", res2.error.message || res2.error);
+        } else {
+          console.warn("[AUDIT] Insert réussi sans operator_id (colonnes peut-être manquantes)");
+        }
+      }
+    } else {
+      console.log("[AUDIT] Insert OK:", action);
+    }
+  } catch(e) {
+    console.error("[AUDIT] Exception saveAuditEntry:", e.message || e);
+  }
 }
 
 // Sauvegarder la config du salon
@@ -1264,7 +1286,7 @@ async function updateFideliteClient(bpId, salonId, salonNom, currentFid, hasPres
 // ============================================================
 
 // Wrapper : remplace l'ancienne fonction auditLog pour sauver aussi en base
-var _originalAuditLog = (typeof auditLog === "function") ? auditLog : null;
+var _originalAuditLog = null;
 
 function auditLogWrapper(action, detail) {
   // Appeler l'original (ajoute dans window.AUDIT_LOG en mémoire)
@@ -1274,15 +1296,35 @@ function auditLogWrapper(action, detail) {
   saveAuditEntry(action, detail);
 }
 
-// Au chargement de la page, vérifier la session
+// Installer le wrapper auditLog. Robuste : ré-appelable plusieurs fois.
+function installAuditWrapper() {
+  if (typeof window.auditLog !== "function") return false;
+  if (window.auditLog === auditLogWrapper) return true; // déjà installé
+  _originalAuditLog = window.auditLog;
+  window.auditLog = auditLogWrapper;
+  console.log("[NF525] auditLog wrapper installé (persistance en base activée)");
+  return true;
+}
+
+// Installation immédiate si possible
+if (typeof window.auditLog === "function") {
+  installAuditWrapper();
+}
+
+// Au chargement de la page, réessayer d'installer le wrapper + checkSession
 document.addEventListener("DOMContentLoaded", function() {
-  // Remplacer auditLog par le wrapper si la fonction existe
-  if (typeof window.auditLog === "function") {
-    _originalAuditLog = window.auditLog;
-    window.auditLog = auditLogWrapper;
-    console.log("[NF525] auditLog wrapper installé (persistance en base activée)");
-  } else {
-    console.warn("[NF525] auditLog non trouvée au DOMContentLoaded - les logs ne seront PAS persistés en base");
+  if (!installAuditWrapper()) {
+    // auditLog pas encore défini -> retry périodique pendant 3 secondes max
+    var retries = 0;
+    var retryInterval = setInterval(function(){
+      retries++;
+      if (installAuditWrapper() || retries > 30) {
+        clearInterval(retryInterval);
+        if (retries > 30 && typeof window.auditLog !== "function") {
+          console.error("[NF525] auditLog introuvable après 3s - les logs ne seront PAS persistés en base");
+        }
+      }
+    }, 100);
   }
   // Vérifier session
   checkSession();
