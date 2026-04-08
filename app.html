@@ -545,12 +545,21 @@ function getVisibleStylists() {
   }
   var perms = CURRENT_OPERATOR.permissions || {};
   if (perms["see_other_planning"] === true) return T;
-  // Collab without see_other_planning: only show his linked stylist
+  // Collab sans see_other_planning: filtrer sur son coiffeur lié
+  // IMPORTANT: coercer string/integer pour éviter mismatch Supabase
   if (CURRENT_OPERATOR.collab_id != null) {
-    var linked = T.filter(function(t){ return t.id === CURRENT_OPERATOR.collab_id; });
-    if (linked.length) return linked;
+    var opCollabId = String(CURRENT_OPERATOR.collab_id);
+    var linked = T.filter(function(t){ return String(t.id) === opCollabId; });
+    if (linked.length) {
+      console.log("[NF525] Planning filtré pour "+CURRENT_OPERATOR.prenom+": "+linked.length+" coiffeur(s) visible(s)");
+      return linked;
+    }
+    console.warn("[NF525] CURRENT_OPERATOR.collab_id="+opCollabId+" mais aucun coiffeur trouvé dans T. IDs disponibles:", T.map(function(t){return t.id+" ("+typeof t.id+")"}).join(", "));
+  } else {
+    console.warn("[NF525] CURRENT_OPERATOR n'est pas lié à un coiffeur (collab_id null). Permission see_other_planning:"+perms["see_other_planning"]);
   }
-  // Fallback: show all (don't break the app if collab not linked)
+  // Fallback permissif : si le lien coiffeur est cassé, on affiche tout
+  // pour ne pas bloquer l'utilisateur. Les logs console permettent de diagnostiquer.
   return T;
 }
 
@@ -729,8 +738,9 @@ async function validatePinPad() {
       if (sel) sel.remove();
       startInactivityTimer();
       toast("Bienvenue " + op.prenom + " !", "success");
-      // Refresh app to apply permissions
-      if (typeof go === "function" && typeof currentPage !== "undefined") go(currentPage || "home");
+      // Refresh app to apply permissions + update header avatar
+      if (typeof go === "function") go(window._currentPage || "home");
+      if (typeof updateOperatorAvatar === "function") setTimeout(updateOperatorAvatar, 50);
     }
   } else {
     // Wrong PIN - shake effect
@@ -950,7 +960,7 @@ async function editOperateur(opId) {
     htm += '<select id="opCollabLink"><option value="">Aucun \u2014 op\u00e9rateur uniquement</option>';
     for (var c=0; c<coiffeurs.length; c++) {
       var ck = coiffeurs[c];
-      var sel = (op && op.collab_id === ck.id) ? " selected" : "";
+      var sel = (op && op.collab_id != null && String(op.collab_id) === String(ck.id)) ? " selected" : "";
       htm += '<option value="'+ck.id+'"'+sel+'>'+ck.n+'</option>';
     }
     htm += '</select>';
@@ -1144,7 +1154,8 @@ async function saveCollabAccount(collabId) {
     return;
   }
   // Vérifier qu'aucun compte n'existe déjà pour ce coiffeur
-  var existing = OPERATEURS.find(function(o){return o.collab_id===collabId;});
+  var _collabIdStr = String(collabId);
+  var existing = OPERATEURS.find(function(o){return o.collab_id != null && String(o.collab_id) === _collabIdStr;});
   if (existing) {
     toast("Un compte existe d\u00e9j\u00e0 pour ce coiffeur", "warning");
     return;
@@ -5962,7 +5973,8 @@ function rSettings(){
       }
       h+='<button class="btn bs" style="margin-top:8px;font-size:12px" onclick="addAbsence('+st2.id+')">+ Cong\u00e9 / Absence / Pause</button>';
       // ===== BLOC COMPTE DE CONNEXION (NF525) =====
-      var linkedOp = (typeof OPERATEURS!=="undefined") ? OPERATEURS.find(function(o){return o.collab_id===st2.id;}) : null;
+      var _st2IdStr = String(st2.id);
+      var linkedOp = (typeof OPERATEURS!=="undefined") ? OPERATEURS.find(function(o){return o.collab_id != null && String(o.collab_id) === _st2IdStr;}) : null;
       h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">';
       h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
       h+='<div style="font-size:13px;font-weight:800;color:var(--gold)">\ud83d\udd10 Compte de connexion</div>';
@@ -12994,13 +13006,20 @@ function doFinalPayExecute(method){
   // (traçabilité des encaissements "pour un autre")
   if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR&&_tk.stId){
     var _opLinkedCollabId=CURRENT_OPERATOR.collab_id;
-    // Si l'opérateur est lié à un coiffeur, et que ce coiffeur n'est pas celui du ticket
-    // OU si l'opérateur n'est lié à aucun coiffeur (ex: réceptionniste)
-    if(_opLinkedCollabId==null||_opLinkedCollabId!==_tk.stId){
+    // IMPORTANT: coercer string/integer pour comparer correctement
+    var _opCollabStr=(_opLinkedCollabId!=null)?String(_opLinkedCollabId):null;
+    var _tkStIdStr=String(_tk.stId);
+    // Log si l'opérateur n'a pas de coiffeur lié (réceptionniste)
+    // OU si son coiffeur lié ne correspond pas au coiffeur du ticket
+    var _shouldLog=(_opCollabStr==null)||(_opCollabStr!==_tkStIdStr);
+    if(_shouldLog){
       var _stSty=gT(_tk.stId);
       var _stName=_stSty?_stSty.n:"?";
       var _opName=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
+      console.log("[NF525] OPERATEUR_ENCAISSE_AUTRE déclenché: "+_opName+" (collab_id="+_opCollabStr+") encaisse pour stId="+_tkStIdStr+" ("+_stName+")");
       auditLog("OPERATEUR_ENCAISSE_AUTRE","Ticket #"+tkN+" \u2014 "+_opName+" a encaiss\u00e9 "+total.toFixed(2)+"\u20ac attribu\u00e9 \u00e0 "+_stName);
+    } else {
+      console.log("[NF525] Encaissement normal (opérateur = coiffeur attribué), pas de log OPERATEUR_ENCAISSE_AUTRE");
     }
   }
   
