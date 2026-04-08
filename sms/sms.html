@@ -1,1 +1,456 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0A0A0E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Luxyra SMS">
+<title>Luxyra SMS Companion</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxODAiIGhlaWdodD0iMTgwIiB2aWV3Qm94PSIwIDAgMTgwIDE4MCI+PHJlY3Qgd2lkdGg9IjE4MCIgaGVpZ2h0PSIxODAiIGZpbGw9IiMwQTBBMEUiLz48dGV4dCB4PSI5MCIgeT0iMTIwIiBmb250LWZhbWlseT0ic2VyaWYiIGZvbnQtc2l6ZT0iMTIwIiBmb250LXdlaWdodD0iYm9sZCIgZmlsbD0iI0M4QTg0RSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+TDwvdGV4dD48L3N2Zz4=">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:#0A0A0E;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100vh;overscroll-behavior:none}
+body{padding:env(safe-area-inset-top,20px) 16px env(safe-area-inset-bottom,20px) 16px}
 
+.header{text-align:center;padding:12px 0 20px}
+.logo{font-size:28px;font-weight:800;color:#C8A84E;letter-spacing:4px}
+.subtitle{font-size:11px;color:#888;letter-spacing:2px;margin-top:2px;text-transform:uppercase}
+
+.status{background:#1A1A22;border-radius:12px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;font-size:14px}
+.status-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.status-dot.active{background:#4ADE80;box-shadow:0 0 10px #4ADE80;animation:pulse 2s infinite}
+.status-dot.inactive{background:#666}
+.status-dot.error{background:#EF4444}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.status-text{flex:1}
+.status-counter{font-size:11px;color:#888;margin-top:2px}
+
+.card{background:#1A1A22;border-radius:12px;padding:16px;margin-bottom:12px}
+.card-title{font-size:11px;color:#C8A84E;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;font-weight:600}
+
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:#888;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px}
+.field input,.field textarea{width:100%;background:#0A0A0E;border:1px solid #333;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-family:inherit}
+.field input:focus,.field textarea:focus{outline:none;border-color:#C8A84E}
+.field textarea{resize:vertical;min-height:60px;font-family:monospace;font-size:11px}
+
+.btn{display:block;width:100%;padding:16px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.5px;margin-bottom:8px;transition:transform 0.1s}
+.btn:active{transform:scale(0.98)}
+.btn-primary{background:#C8A84E;color:#000}
+.btn-primary:disabled{background:#4a3d1a;color:#888;cursor:not-allowed}
+.btn-danger{background:#6B1F1F;color:#fff}
+.btn-ghost{background:transparent;color:#C8A84E;border:1px solid #C8A84E}
+
+.queue{margin-top:16px}
+.queue-empty{text-align:center;padding:30px 20px;color:#666;font-size:13px}
+.sms-item{background:#1A1A22;border-radius:10px;padding:14px;margin-bottom:10px;border-left:3px solid #C8A84E}
+.sms-item.sending{border-left-color:#FCD34D}
+.sms-item.sent{border-left-color:#4ADE80;opacity:0.6}
+.sms-item.failed{border-left-color:#EF4444}
+.sms-phone{font-size:13px;color:#C8A84E;font-weight:600;margin-bottom:4px}
+.sms-context{display:inline-block;font-size:10px;color:#888;background:#0A0A0E;padding:2px 8px;border-radius:4px;margin-bottom:6px}
+.sms-message{font-size:13px;color:#ddd;line-height:1.5;margin-bottom:10px;word-wrap:break-word}
+.sms-actions{display:flex;gap:6px}
+.sms-btn{flex:1;padding:8px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.sms-btn-send{background:#C8A84E;color:#000}
+.sms-btn-skip{background:#333;color:#ccc}
+.sms-btn-retry{background:#6B1F1F;color:#fff}
+.sms-status{font-size:11px;color:#888;margin-top:4px;font-style:italic}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.stat{background:#1A1A22;border-radius:10px;padding:12px 8px;text-align:center}
+.stat-value{font-size:20px;font-weight:700;color:#C8A84E}
+.stat-label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1A1A22;color:#fff;padding:12px 20px;border-radius:8px;border:1px solid #C8A84E;font-size:13px;z-index:1000;box-shadow:0 4px 20px rgba(0,0,0,0.5);opacity:0;transition:opacity 0.3s}
+.toast.show{opacity:1}
+
+.hidden{display:none!important}
+.small{font-size:11px;color:#666;text-align:center;margin-top:16px;line-height:1.6}
+.small a{color:#C8A84E;text-decoration:none}
+
+details{background:#1A1A22;border-radius:10px;padding:12px;margin-bottom:12px}
+summary{cursor:pointer;font-size:12px;color:#C8A84E;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+details[open] summary{margin-bottom:12px}
+
+.toggle{display:flex;align-items:center;gap:10px;background:#1A1A22;padding:12px 16px;border-radius:10px;margin-bottom:12px;cursor:pointer}
+.toggle-switch{width:40px;height:22px;background:#333;border-radius:11px;position:relative;flex-shrink:0;transition:background 0.2s}
+.toggle-switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;background:#fff;border-radius:50%;transition:transform 0.2s}
+.toggle.on .toggle-switch{background:#C8A84E}
+.toggle.on .toggle-switch::after{transform:translateX(18px)}
+.toggle-label{flex:1;font-size:13px}
+.toggle-desc{font-size:11px;color:#888;margin-top:2px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">LUXYRA</div>
+  <div class="subtitle">SMS Companion</div>
+</div>
+
+<div class="status" id="statusBar">
+  <div class="status-dot inactive" id="statusDot"></div>
+  <div class="status-text">
+    <div id="statusText">Arrêté</div>
+    <div class="status-counter" id="statusCounter"></div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="stat-value" id="statPending">0</div><div class="stat-label">En attente</div></div>
+  <div class="stat"><div class="stat-value" id="statSent">0</div><div class="stat-label">Envoyés</div></div>
+  <div class="stat"><div class="stat-value" id="statFailed">0</div><div class="stat-label">Échecs</div></div>
+</div>
+
+<details id="configPanel">
+  <summary>⚙️ Configuration</summary>
+  <div class="field">
+    <label>URL Supabase</label>
+    <input type="url" id="cfgUrl" placeholder="https://xxx.supabase.co">
+  </div>
+  <div class="field">
+    <label>Anon Key</label>
+    <textarea id="cfgAnon" rows="2" placeholder="eyJhbGc..."></textarea>
+  </div>
+  <div class="field">
+    <label>Salon ID (UUID)</label>
+    <input type="text" id="cfgSalon" placeholder="e0cf27c7-...">
+  </div>
+  <div class="field">
+    <label>JWT utilisateur (optionnel, sinon anon key)</label>
+    <textarea id="cfgJwt" rows="2" placeholder="eyJhbGc..."></textarea>
+  </div>
+  <div class="field">
+    <label>Préfixe test</label>
+    <input type="text" id="cfgPrefix" placeholder="[TEST] " value="[TEST] ">
+  </div>
+  <button class="btn btn-ghost" onclick="saveConfig()">💾 Enregistrer</button>
+</details>
+
+<div class="toggle" id="autoOpenToggle" onclick="toggleAutoOpen()">
+  <div class="toggle-switch"></div>
+  <div>
+    <div class="toggle-label">Ouverture automatique</div>
+    <div class="toggle-desc">Ouvre l'app SMS dès qu'un message arrive</div>
+  </div>
+</div>
+
+<button class="btn btn-primary" id="startBtn" onclick="startService()">▶ DÉMARRER</button>
+<button class="btn btn-danger hidden" id="stopBtn" onclick="stopService()">■ ARRÊTER</button>
+
+<div class="queue" id="queue">
+  <div class="queue-empty">Aucun SMS en attente</div>
+</div>
+
+<div class="small">
+  💡 <b>Astuce</b> : Pour installer cette app, ouvre le menu de ton navigateur et choisis "Ajouter à l'écran d'accueil".<br>
+  Les SMS sont envoyés depuis ta carte SIM — ils utilisent ton forfait, pas les crédits Brevo.
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ==================== ÉTAT GLOBAL ====================
+const STORAGE_KEY = "luxyra_sms_companion_v1";
+let config = {
+  url: "",
+  anon: "",
+  salon: "",
+  jwt: "",
+  prefix: "[TEST] ",
+  autoOpen: true
+};
+let running = false;
+let pollTimer = null;
+let smsQueue = [];  // Liste des SMS en attente (en mémoire)
+let stats = { pending: 0, sent: 0, failed: 0 };
+let seenIds = new Set();  // Pour ne pas auto-ouvrir plusieurs fois le même SMS
+
+// ==================== INIT ====================
+window.addEventListener("DOMContentLoaded", () => {
+  loadConfig();
+  renderAutoOpenToggle();
+  
+  // Si la config est présente, démarre automatiquement
+  if (config.url && config.anon && config.salon) {
+    document.getElementById("configPanel").removeAttribute("open");
+  } else {
+    document.getElementById("configPanel").setAttribute("open", "");
+    toast("Configure d'abord Supabase ↑");
+  }
+});
+
+// ==================== CONFIG ====================
+function loadConfig() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      config = { ...config, ...JSON.parse(saved) };
+    }
+  } catch(e) { console.error(e); }
+  
+  document.getElementById("cfgUrl").value = config.url;
+  document.getElementById("cfgAnon").value = config.anon;
+  document.getElementById("cfgSalon").value = config.salon;
+  document.getElementById("cfgJwt").value = config.jwt;
+  document.getElementById("cfgPrefix").value = config.prefix;
+}
+
+function saveConfig() {
+  config.url = document.getElementById("cfgUrl").value.trim().replace(/\/$/, "");
+  config.anon = document.getElementById("cfgAnon").value.trim();
+  config.salon = document.getElementById("cfgSalon").value.trim();
+  config.jwt = document.getElementById("cfgJwt").value.trim();
+  config.prefix = document.getElementById("cfgPrefix").value;
+  
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  toast("✅ Configuration enregistrée");
+  
+  if (config.url && config.anon && config.salon) {
+    document.getElementById("configPanel").removeAttribute("open");
+  }
+}
+
+function toggleAutoOpen() {
+  config.autoOpen = !config.autoOpen;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  renderAutoOpenToggle();
+}
+
+function renderAutoOpenToggle() {
+  const t = document.getElementById("autoOpenToggle");
+  if (config.autoOpen) t.classList.add("on");
+  else t.classList.remove("on");
+}
+
+// ==================== SERVICE ====================
+function startService() {
+  if (!config.url || !config.anon || !config.salon) {
+    toast("⚠️ Configuration incomplète");
+    document.getElementById("configPanel").setAttribute("open", "");
+    return;
+  }
+  
+  running = true;
+  seenIds.clear();
+  document.getElementById("startBtn").classList.add("hidden");
+  document.getElementById("stopBtn").classList.remove("hidden");
+  updateStatus("active", "Actif — vérification toutes les 10s");
+  
+  // Premier poll immédiat, puis toutes les 10s
+  pollQueue();
+  pollTimer = setInterval(pollQueue, 10000);
+  toast("🟢 Service démarré");
+}
+
+function stopService() {
+  running = false;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
+  document.getElementById("startBtn").classList.remove("hidden");
+  document.getElementById("stopBtn").classList.add("hidden");
+  updateStatus("inactive", "Arrêté");
+  toast("⚫ Service arrêté");
+}
+
+// ==================== POLLING SUPABASE ====================
+async function pollQueue() {
+  if (!running) return;
+  
+  try {
+    const authToken = config.jwt || config.anon;
+    const url = `${config.url}/rest/v1/sms_queue?salon_id=eq.${config.salon}&status=eq.pending&order=created_at.asc&limit=20`;
+    
+    const res = await fetch(url, {
+      headers: {
+        "apikey": config.anon,
+        "Authorization": `Bearer ${authToken}`,
+        "Accept": "application/json"
+      }
+    });
+    
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("Poll error:", res.status, err);
+      updateStatus("error", `Erreur ${res.status} — vérifie config`);
+      return;
+    }
+    
+    const rows = await res.json();
+    smsQueue = rows;
+    stats.pending = rows.length;
+    updateStats();
+    updateStatus("active", `Actif — ${rows.length} en attente`);
+    renderQueue();
+    
+    // Auto-ouverture du premier SMS non encore vu
+    if (config.autoOpen && rows.length > 0) {
+      const firstUnseen = rows.find(r => !seenIds.has(r.id));
+      if (firstUnseen) {
+        seenIds.add(firstUnseen.id);
+        setTimeout(() => openSmsApp(firstUnseen), 500);
+      }
+    }
+  } catch(e) {
+    console.error(e);
+    updateStatus("error", "Erreur réseau");
+  }
+}
+
+// ==================== OUVERTURE APP SMS NATIVE ====================
+function openSmsApp(sms) {
+  const phone = sms.phone.replace(/\s/g, "");
+  const body = encodeURIComponent(config.prefix + sms.message);
+  
+  // iOS utilise "sms:NUMBER&body=" (avec &)
+  // Android utilise "sms:NUMBER?body=" (avec ?)
+  // On détecte la plateforme
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const separator = isIOS ? "&" : "?";
+  
+  const smsUrl = `sms:${phone}${separator}body=${body}`;
+  window.location.href = smsUrl;
+  
+  // Marquer comme "en cours d'envoi" dans la queue locale
+  markSms(sms.id, "sending");
+}
+
+// ==================== ACTIONS MANUELLES ====================
+async function confirmSent(id) {
+  await updateSmsStatus(id, "sent");
+  stats.sent++;
+  updateStats();
+  toast("✅ Marqué comme envoyé");
+  pollQueue();
+}
+
+async function markFailed(id) {
+  await updateSmsStatus(id, "failed", "Ignoré manuellement");
+  stats.failed++;
+  updateStats();
+  toast("❌ Marqué comme échec");
+  pollQueue();
+}
+
+function retrySms(sms) {
+  openSmsApp(sms);
+}
+
+// Appelé quand l'utilisateur veut envoyer manuellement sans auto-ouverture
+function sendNow(id) {
+  const sms = smsQueue.find(s => s.id === id);
+  if (sms) openSmsApp(sms);
+}
+
+// ==================== UPDATE SUPABASE ====================
+async function updateSmsStatus(id, status, errorMessage = null) {
+  const authToken = config.jwt || config.anon;
+  const body = { status };
+  if (status === "sent") body.sent_at = new Date().toISOString();
+  if (status === "sending") body.picked_at = new Date().toISOString();
+  if (errorMessage) body.error_message = errorMessage;
+  
+  try {
+    const res = await fetch(`${config.url}/rest/v1/sms_queue?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        "apikey": config.anon,
+        "Authorization": `Bearer ${authToken}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify(body)
+    });
+    return res.ok;
+  } catch(e) {
+    console.error("Update error:", e);
+    return false;
+  }
+}
+
+function markSms(id, status) {
+  const sms = smsQueue.find(s => s.id === id);
+  if (sms) sms._localStatus = status;
+  renderQueue();
+}
+
+// ==================== RENDU UI ====================
+function renderQueue() {
+  const container = document.getElementById("queue");
+  
+  if (smsQueue.length === 0) {
+    container.innerHTML = '<div class="queue-empty">Aucun SMS en attente</div>';
+    return;
+  }
+  
+  container.innerHTML = smsQueue.map(sms => {
+    const localStatus = sms._localStatus || "pending";
+    const statusClass = localStatus === "sending" ? "sending" : "";
+    const message = escapeHtml(sms.message);
+    const phone = escapeHtml(sms.phone);
+    const context = sms.context ? `<span class="sms-context">${escapeHtml(sms.context)}</span>` : "";
+    
+    let actions = "";
+    if (localStatus === "sending") {
+      actions = `
+        <div class="sms-status">📤 App SMS ouverte — clique Envoyer, puis reviens ici</div>
+        <div class="sms-actions">
+          <button class="sms-btn sms-btn-send" onclick="confirmSent(${sms.id})">✅ Envoyé</button>
+          <button class="sms-btn sms-btn-skip" onclick="markFailed(${sms.id})">❌ Échec</button>
+        </div>`;
+    } else {
+      actions = `
+        <div class="sms-actions">
+          <button class="sms-btn sms-btn-send" onclick="sendNow(${sms.id})">📤 Envoyer</button>
+          <button class="sms-btn sms-btn-skip" onclick="markFailed(${sms.id})">Ignorer</button>
+        </div>`;
+    }
+    
+    return `
+      <div class="sms-item ${statusClass}">
+        <div class="sms-phone">📱 ${phone}</div>
+        ${context}
+        <div class="sms-message">${escapeHtml(config.prefix)}${message}</div>
+        ${actions}
+      </div>`;
+  }).join("");
+}
+
+function updateStats() {
+  document.getElementById("statPending").textContent = stats.pending;
+  document.getElementById("statSent").textContent = stats.sent;
+  document.getElementById("statFailed").textContent = stats.failed;
+}
+
+function updateStatus(state, text) {
+  const dot = document.getElementById("statusDot");
+  dot.className = "status-dot " + state;
+  document.getElementById("statusText").textContent = text;
+}
+
+// ==================== UTILS ====================
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2500);
+}
+
+// Service worker pour installation PWA
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sms-sw.js").catch(() => {
+    // Pas grave si ça échoue, l'app marche quand même
+  });
+}
+</script>
+</body>
+</html>
