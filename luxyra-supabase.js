@@ -221,6 +221,9 @@ async function loadSalonData() {
   // SMS credits
   window.SMS_CREDITS = salon.sms_credits || 0;
   window.SMS_USED = salon.sms_used || 0;
+  // Mode SMS : brevo (API payante) ou native (app companion Android)
+  window.SMS_MODE = salon.sms_mode || 'brevo';
+  window.SMS_NATIVE_DEVICE_ID = salon.sms_native_device_id || null;
   window.IS_FREE_PLAN = salon.is_free || false;
   window.FREE_UNTIL = salon.free_until || null;
 
