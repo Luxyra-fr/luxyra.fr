@@ -14662,6 +14662,10 @@ async function doSendConfirm(mode,rdvId){
 async function sendSms(phone,message){
   // Pro plan required for SMS
   if(!isPro()){showUpgradeModal("SMS");return{ok:false,error:"pro_required"};}
+  // === ROUTING mode SMS : natif (app companion Android) ou brevo (API payante) ===
+  if((window.SMS_MODE||"brevo")==="native"){
+    return await sendSmsNative(phone,message);
+  }
   // Check credits
   var creds=window.SMS_CREDITS||0;
   if(creds<=0){
@@ -14712,6 +14716,47 @@ async function sendSms(phone,message){
   }catch(e){
     console.error("[SMS]",e);
     auditLog("SMS_ERREUR","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+e.message);
+    return{ok:false,error:e.message};
+  }
+}
+// === MODE SMS NATIF : envoi via app companion Android (SIM du téléphone) ===
+// Insère le SMS dans la queue Supabase, l'app companion le récupère et l'envoie via SmsManager
+async function sendSmsNative(phone,message){
+  var cleanPhone=phone.replace(/[\s\.\-]/g,"");
+  if(cleanPhone.startsWith("0"))cleanPhone="+33"+cleanPhone.slice(1);
+  if(!cleanPhone.startsWith("+"))cleanPhone="+33"+cleanPhone;
+  if(typeof _sb==="undefined"||!_salonId){
+    return{ok:false,error:"Supabase non initialis\u00e9"};
+  }
+  try{
+    var insertRes=await _sb.from("sms_queue").insert({
+      salon_id:_salonId,
+      phone:cleanPhone,
+      message:message,
+      status:"pending",
+      context:"luxyra_auto",
+      device_id:window.SMS_NATIVE_DEVICE_ID||null
+    }).select().single();
+    if(insertRes.error){
+      console.error("[SMS Native] Queue insert error:",insertRes.error);
+      auditLog("SMS_ERREUR_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+insertRes.error.message);
+      return{ok:false,error:"Queue: "+insertRes.error.message};
+    }
+    // Log dans messaging_log (comme pour Brevo) avec via='native'
+    try{
+      _sb.from("messaging_log").insert({
+        salon_id:_salonId,
+        type:"sms",
+        recipient:cleanPhone.slice(-4),
+        content:message.slice(0,50),
+        via:"native"
+      });
+    }catch(e){}
+    auditLog("SMS_ENVOYE_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - Queue ID: "+(insertRes.data&&insertRes.data.id));
+    return{ok:true,mode:"native",queueId:insertRes.data&&insertRes.data.id};
+  }catch(e){
+    console.error("[SMS Native]",e);
+    auditLog("SMS_ERREUR_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+e.message);
     return{ok:false,error:e.message};
   }
 }
