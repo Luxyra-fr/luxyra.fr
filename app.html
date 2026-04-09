@@ -2826,7 +2826,7 @@ function confirmNotif(id){
           var cfgC=window.SMS_CONFIG||{};
           if(cfgC.confirmSms&&onRdvC.tel){
             var smsTxt=buildSmsText(cfgC.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} est confirm\u00e9.",cVars);
-            sendSms(onRdvC.tel,smsTxt);
+            sendSms(onRdvC.tel,smsTxt,"confirmation_rdv");
           }
           if(cfgC.confirmEmail&&onRdvC.email){
             var onlineHtml=buildRdvEmailHTML("confirm",cVars);
@@ -14670,7 +14670,7 @@ async function doSendConfirm(mode,rdvId){
   if(mode==="sms"||mode==="both"){
     if(cl.ph&&cl.smsOk!==false){
       var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",vars);
-      var r=await sendSms(cl.ph,smsTxt);
+      var r=await sendSms(cl.ph,smsTxt,"confirmation_rdv");
       if(r&&r.ok){sent.push("SMS");auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS OK");}
       else{errors.push("SMS: "+(r&&r.error?r.error:"erreur"));}
     }
@@ -14698,12 +14698,12 @@ async function doSendConfirm(mode,rdvId){
   else if(sent.length&&errors.length)alert("\u2705 "+sent.join(" + ")+" envoy\u00e9(s)\n\u274c "+errors.join("\n"));
   else alert("\u274c Erreur : "+errors.join("\n"));
 }
-async function sendSms(phone,message){
+async function sendSms(phone,message,context){
   // Pro plan required for SMS
   if(!isPro()){showUpgradeModal("SMS");return{ok:false,error:"pro_required"};}
   // === ROUTING mode SMS : natif (app companion Android) ou brevo (API payante) ===
   if((window.SMS_MODE||"brevo")==="native"){
-    return await sendSmsNative(phone,message);
+    return await sendSmsNative(phone,message,context);
   }
   // Check credits
   var creds=window.SMS_CREDITS||0;
@@ -14760,7 +14760,7 @@ async function sendSms(phone,message){
 }
 // === MODE SMS NATIF : envoi via app companion Android (SIM du téléphone) ===
 // Insère le SMS dans la queue Supabase, l'app companion le récupère et l'envoie via SmsManager
-async function sendSmsNative(phone,message){
+async function sendSmsNative(phone,message,context){
   var cleanPhone=phone.replace(/[\s\.\-]/g,"");
   if(cleanPhone.startsWith("0"))cleanPhone="+33"+cleanPhone.slice(1);
   if(!cleanPhone.startsWith("+"))cleanPhone="+33"+cleanPhone;
@@ -14773,7 +14773,7 @@ async function sendSmsNative(phone,message){
       phone:cleanPhone,
       message:message,
       status:"pending",
-      context:"luxyra_auto",
+      context:context||"luxyra_auto",
       device_id:window.SMS_NATIVE_DEVICE_ID||null
     }).select().single();
     if(insertRes.error){
@@ -14788,7 +14788,8 @@ async function sendSmsNative(phone,message){
         type:"sms",
         recipient:cleanPhone.slice(-4),
         content:message.slice(0,50),
-        via:"native"
+        via:"native",
+        context:context||"luxyra_auto"
       });
     }catch(e){}
     auditLog("SMS_ENVOYE_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - Queue ID: "+(insertRes.data&&insertRes.data.id));
@@ -14857,6 +14858,13 @@ async function showSmsNativeLinkQR(){
     htm+='<div style="padding:10px 12px;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.2);border-radius:8px;margin-bottom:14px;font-size:11px;color:rgba(255,255,255,.6)">';
     htm+='\u23f1\ufe0f Ce QR code expire dans <strong id="qrCountdown">5:00</strong>. Actualisez si besoin.';
     htm+='</div>';
+    // Section token copiable (pour la version light de l'app Android)
+    htm+='<details style="margin-bottom:14px;text-align:left"><summary style="cursor:pointer;font-size:12px;color:var(--gold);padding:8px;text-align:center">\ud83d\udccb Pas de scanner ? Copier le token \u00e0 la place</summary>';
+    htm+='<div style="margin-top:10px;padding:12px;background:rgba(0,0,0,.3);border:1px solid var(--border2);border-radius:8px">';
+    htm+='<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Token \u00e0 copier</div>';
+    htm+='<textarea readonly id="linkTokenText" onclick="this.select()" style="width:100%;height:80px;font-family:monospace;font-size:10px;background:#000;color:var(--gold);border:1px solid var(--border2);border-radius:6px;padding:8px;resize:none;word-break:break-all">'+data.signed_token+'</textarea>';
+    htm+='<button class="btn" style="width:100%;margin-top:8px;padding:10px;background:var(--gold);color:#000;font-weight:700;border:none;border-radius:6px;cursor:pointer;font-size:12px" onclick="navigator.clipboard.writeText(document.getElementById(\'linkTokenText\').value).then(function(){alert(\'\u2705 Token copi\u00e9 !\')})">\ud83d\udccb Copier le token</button>';
+    htm+='</div></details>';
     htm+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,255,255,.05);color:var(--text3);border:1px solid var(--border2);border-radius:10px;cursor:pointer" onclick="cM();go(\'settings\')">Fermer (je scannerai plus tard)</button>';
     htm+='</div></div>';
     document.getElementById("modal").innerHTML=htm;
@@ -14937,7 +14945,7 @@ async function sendEmailViaWorker(to,toName,subject,htmlContent){
 function testSms(){
   var phone=prompt("Num\u00e9ro de t\u00e9l\u00e9phone pour le test :");
   if(!phone)return;
-  sendSms(phone,"Test SMS Luxyra - "+SALON_CONFIG.nom+" \u2714\ufe0f").then(function(r){
+  sendSms(phone,"Test SMS Luxyra - "+SALON_CONFIG.nom+" \u2714\ufe0f","test").then(function(r){
     if(r.ok){alert("\u2705 SMS test envoy\u00e9 !");go("marketing");}
     else alert("\u274c Erreur : "+(r.error||"V\u00e9rifiez votre configuration"));
   });
@@ -14969,7 +14977,7 @@ function checkSmsReminders(){
       var key24="24h_"+a.id;
       if(!window._smsSent[key24]&&canSms){
         var msg=buildSmsText(cfg.rappelTexte24h,vars);
-        sendSms(cl.ph,msg);
+        sendSms(cl.ph,msg,"rappel_24h");
         window._smsSent[key24]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
       }
@@ -14983,7 +14991,7 @@ function checkSmsReminders(){
         var key2="2h_"+a.id;
         if(!window._smsSent[key2]&&canSms){
           var msg2=buildSmsText(cfg.rappelTexte2h,vars);
-          sendSms(cl.ph,msg2);
+          sendSms(cl.ph,msg2,"rappel_2h");
           window._smsSent[key2]=true;
           try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
         }
@@ -15013,7 +15021,7 @@ function checkSmsReminders(){
       var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom};
       // SMS
       if(cl.ph&&cl.smsOk&&canSms&&cfg.anniSms){
-        sendSms(cl.ph,buildSmsText(cfg.anniSms,vars));
+        sendSms(cl.ph,buildSmsText(cfg.anniSms,vars),"anniversaire");
       }
       // Email
       if(cl.em&&cl.emOk&&cfg.anniEmail){
@@ -15040,7 +15048,7 @@ function checkSmsReminders(){
         var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom,jours:String(daysInactive)};
         // SMS
         if(cl.ph&&cl.smsOk&&canSms&&cfg.relanceSms){
-          sendSms(cl.ph,buildSmsText(cfg.relanceSms,vars));
+          sendSms(cl.ph,buildSmsText(cfg.relanceSms,vars),"relance");
         }
         // Email
         if(cl.em&&cl.emOk&&cfg.relanceEmail){
@@ -15243,7 +15251,7 @@ function sendCampaignV2(){
     chain=chain.then(function(){
       var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
       var ps=[];
-      if(doSms&&hasSms&&cl.smsOk&&cl.ph)ps.push(sendSms(cl.ph,txt).then(function(r){if(r.ok)smsSent++;else errors++;}));
+      if(doSms&&hasSms&&cl.smsOk&&cl.ph)ps.push(sendSms(cl.ph,txt,"marketing").then(function(r){if(r.ok)smsSent++;else errors++;}));
       if(doEmail&&hasEmail&&cl.emOk&&cl.em)ps.push(sendEmail(cl.em,subject,txt,cName(cl)).then(function(r){if(r.ok)emailSent++;else errors++;}));
       return Promise.all(ps);
     });
@@ -15349,7 +15357,7 @@ function sendCampaign(type){
   clients.forEach(function(cl){
     chain=chain.then(function(){
       var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
-      return sendSms(cl.ph,txt).then(function(r){if(r.ok)sent++;else errors++;});
+      return sendSms(cl.ph,txt,"marketing").then(function(r){if(r.ok)sent++;else errors++;});
     });
   });
   chain.then(function(){
@@ -15406,7 +15414,7 @@ function sendCarteWelcome(clientId,carteClient){
   // SMS
   if(cl.smsOk&&cl.ph&&cfg.carteWelcomeSms){
     var txt=buildCarteNotifText(cfg.carteWelcomeSms,vars);
-    sendSms(cl.ph,txt);
+    sendSms(cl.ph,txt,"carte_welcome");
   }
   // Email
   if(cl.emOk&&cl.em&&cfg.carteWelcomeEmail){
@@ -15435,7 +15443,7 @@ function checkCarteReminders(){
       var k30s="ca30s_"+cc.id;
       var k30e="ca30e_"+cc.id;
       if(!window._carteSent[k30s]&&canSms&&cl.smsOk&&cl.ph&&cfg.carteRappel30Sms){
-        sendSms(cl.ph,buildCarteNotifText(cfg.carteRappel30Sms,vars));
+        sendSms(cl.ph,buildCarteNotifText(cfg.carteRappel30Sms,vars),"carte_rappel_30j");
         window._carteSent[k30s]=true;
         auditLog("CARTE_RAPPEL_30","SMS 30j envoy\u00e9 \u00e0 "+cName(cl)+" ("+cc.carteNom+")");
       }
@@ -15452,7 +15460,7 @@ function checkCarteReminders(){
       var k7s="ca7s_"+cc.id;
       var k7e="ca7e_"+cc.id;
       if(!window._carteSent[k7s]&&canSms&&cl.smsOk&&cl.ph&&cfg.carteRappel7Sms){
-        sendSms(cl.ph,buildCarteNotifText(cfg.carteRappel7Sms,vars));
+        sendSms(cl.ph,buildCarteNotifText(cfg.carteRappel7Sms,vars),"carte_rappel_7j");
         window._carteSent[k7s]=true;
         auditLog("CARTE_RAPPEL_7","SMS 7j envoy\u00e9 \u00e0 "+cName(cl)+" ("+cc.carteNom+")");
       }
