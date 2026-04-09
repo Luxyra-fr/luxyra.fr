@@ -6411,6 +6411,45 @@ function rSettings(){
     h+='<button class="btn" style="background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3);font-weight:700;padding:10px 16px" onclick="go(\'marketing\')">Acheter des SMS</button>';
     h+='</div></div>';
 
+    // === Mode d'envoi SMS (brevo ou native via app Android) ===
+    var smsMode=window.SMS_MODE||"brevo";
+    var deviceLinked=!!window.SMS_NATIVE_DEVICE_ID;
+    h+='<div class="sec">\ud83d\udce1 Mode d\u2019envoi des SMS</div>';
+    h+='<div class="card" style="margin-bottom:16px">';
+    h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">Choisissez comment vos SMS sont envoy\u00e9s \u00e0 vos clients.</div>';
+    // Option Brevo
+    h+='<label style="display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px solid '+(smsMode==="brevo"?"rgba(200,168,78,.5)":"var(--border2)")+';border-radius:10px;margin-bottom:10px;cursor:pointer;background:'+(smsMode==="brevo"?"rgba(200,168,78,.05)":"transparent")+'">';
+    h+='<input type="radio" name="smsmode" value="brevo" '+(smsMode==="brevo"?"checked":"")+' onchange="setSmsMode(\'brevo\')" style="width:20px;height:20px;margin-top:2px;cursor:pointer">';
+    h+='<div style="flex:1">';
+    h+='<div style="font-size:14px;font-weight:700;color:#fff">\ud83d\udcbc Via Brevo (par d\u00e9faut)</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-top:4px">API professionnelle. Payant au SMS (compris dans votre solde).</div>';
+    h+='</div>';
+    h+='</label>';
+    // Option Native
+    h+='<label style="display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px solid '+(smsMode==="native"?"rgba(200,168,78,.5)":"var(--border2)")+';border-radius:10px;cursor:pointer;background:'+(smsMode==="native"?"rgba(200,168,78,.05)":"transparent")+'">';
+    h+='<input type="radio" name="smsmode" value="native" '+(smsMode==="native"?"checked":"")+' '+(deviceLinked?"":"disabled")+' onchange="setSmsMode(\'native\')" style="width:20px;height:20px;margin-top:2px;cursor:pointer">';
+    h+='<div style="flex:1">';
+    h+='<div style="font-size:14px;font-weight:700;color:'+(deviceLinked?"#fff":"var(--text3)")+'">\ud83d\udcf1 Depuis mon t\u00e9l\u00e9phone <span style="font-size:10px;background:rgba(76,175,80,.2);color:#4caf50;padding:2px 8px;border-radius:10px;font-weight:700;margin-left:6px">GRATUIT</span></div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-top:4px">Envoi via la SIM de votre t\u00e9l\u00e9phone Android. Illimit\u00e9, via votre forfait.</div>';
+    if(deviceLinked){
+      h+='<div style="font-size:11px;color:#4caf50;margin-top:8px;display:flex;align-items:center;gap:6px">\u2705 T\u00e9l\u00e9phone li\u00e9 \u2022 <span style="color:var(--text3)">Device: '+(window.SMS_NATIVE_DEVICE_ID||"").slice(0,12)+'...</span> \u2022 <a href="#" onclick="unlinkSmsDevice();return false" style="color:#ef5350;text-decoration:underline">D\u00e9lier</a></div>';
+    }else{
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Aucun t\u00e9l\u00e9phone li\u00e9 \u2014 cliquez ci-dessous pour connecter votre Android</div>';
+    }
+    h+='</div>';
+    h+='</label>';
+    // Bouton Scanner QR
+    if(!deviceLinked){
+      h+='<button class="btn" style="width:100%;margin-top:12px;padding:14px;background:linear-gradient(135deg,#C8A84E,#9C8038);color:#000;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:pointer" onclick="showSmsNativeLinkQR()">\ud83d\udcf2 Lier mon t\u00e9l\u00e9phone Android</button>';
+    }else{
+      h+='<button class="btn" style="width:100%;margin-top:12px;padding:12px;background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;font-size:13px;border:1px solid var(--border2);border-radius:10px;cursor:pointer" onclick="showSmsNativeLinkQR()">\ud83d\udd04 Relier un nouveau t\u00e9l\u00e9phone</button>';
+    }
+    // Info iPhone
+    h+='<div style="padding:10px 12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.15);border-radius:8px;margin-top:12px;font-size:11px;color:rgba(255,255,255,.6)">';
+    h+='\u2139\ufe0f <strong>Android uniquement</strong> \u2014 Les utilisateurs iPhone restent sur le mode Brevo (limitation technique d\u2019Apple).';
+    h+='</div>';
+    h+='</div>';
+
     // Rappels SMS
     h+='<div class="sec">\ud83d\udcf2 Rappels SMS automatiques</div>';
     h+='<div class="card">';
@@ -14758,6 +14797,124 @@ async function sendSmsNative(phone,message){
     console.error("[SMS Native]",e);
     auditLog("SMS_ERREUR_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+e.message);
     return{ok:false,error:e.message};
+  }
+}
+// === Change le mode SMS du salon (brevo ou native) ===
+async function setSmsMode(mode){
+  if(mode!=="brevo"&&mode!=="native"){alert("Mode invalide");return;}
+  if(mode==="native"&&!window.SMS_NATIVE_DEVICE_ID){
+    alert("Vous devez d'abord lier un t\u00e9l\u00e9phone Android.");
+    return;
+  }
+  try{
+    var res=await _sb.from("salons").update({sms_mode:mode}).eq("id",_salonId);
+    if(res.error){
+      alert("Erreur : "+res.error.message);
+      return;
+    }
+    window.SMS_MODE=mode;
+    auditLog("SMS_MODE_CHANGE","Nouveau mode : "+mode);
+    // Re-render la page settings pour afficher le nouvel \u00e9tat
+    if(typeof go==="function")go("settings");
+  }catch(e){
+    alert("Erreur r\u00e9seau : "+e.message);
+  }
+}
+// === Affiche le modal avec QR code pour lier un t\u00e9l\u00e9phone Android ===
+async function showSmsNativeLinkQR(){
+  // Loader pendant la g\u00e9n\u00e9ration du token
+  var loadingHtm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px"><div style="padding:40px 20px"><div style="font-size:32px;margin-bottom:12px">\u23f3</div><div style="font-size:14px;color:var(--text3)">G\u00e9n\u00e9ration du QR code...</div></div></div></div>';
+  document.getElementById("modal").innerHTML=loadingHtm;
+  
+  try{
+    var resp=await fetch("/api/sms/generate-link-token",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({salon_id:_salonId})
+    });
+    var data=await resp.json();
+    if(!data.success){
+      document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px"><div style="font-size:32px;margin-bottom:12px">\u274c</div><h3 style="color:#ef5350;margin-bottom:10px">Erreur</h3><div style="font-size:13px;color:var(--text3);margin-bottom:16px">'+(data.error||"Impossible de g\u00e9n\u00e9rer le QR code")+'</div><button class="btn" style="width:100%;padding:12px" onclick="cM()">Fermer</button></div></div>';
+      return;
+    }
+    // Afficher le QR code
+    var qrUrl=data.qr_url;
+    var encodedUrl=encodeURIComponent(qrUrl);
+    // Utilise l'API publique qrserver.com pour g\u00e9n\u00e9rer l'image QR (gratuit, sans cl\u00e9)
+    var qrImgUrl="https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=10&data="+encodedUrl;
+    
+    var htm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:440px">';
+    htm+='<div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:4px">\u00c9tape 1 sur 3</div>';
+    htm+='<h2 style="font-size:18px;margin-bottom:14px;color:#fff">Liez votre t\u00e9l\u00e9phone Android</h2>';
+    htm+='<div style="background:#fff;padding:14px;border-radius:12px;display:inline-block;margin-bottom:14px">';
+    htm+='<img src="'+qrImgUrl+'" alt="QR code" style="display:block;width:260px;height:260px">';
+    htm+='</div>';
+    htm+='<div style="font-size:13px;color:rgba(255,255,255,.7);line-height:1.6;margin-bottom:14px">';
+    htm+='1. Installez l\'app <strong style="color:var(--gold)">Luxyra SMS</strong> sur votre Android<br>';
+    htm+='2. Ouvrez l\'app et appuyez sur <strong style="color:var(--gold)">Scanner un QR code</strong><br>';
+    htm+='3. Pointez vers ce QR code';
+    htm+='</div>';
+    htm+='<div style="padding:10px 12px;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.2);border-radius:8px;margin-bottom:14px;font-size:11px;color:rgba(255,255,255,.6)">';
+    htm+='\u23f1\ufe0f Ce QR code expire dans <strong id="qrCountdown">5:00</strong>. Actualisez si besoin.';
+    htm+='</div>';
+    htm+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,255,255,.05);color:var(--text3);border:1px solid var(--border2);border-radius:10px;cursor:pointer" onclick="cM();go(\'settings\')">Fermer (je scannerai plus tard)</button>';
+    htm+='</div></div>';
+    document.getElementById("modal").innerHTML=htm;
+    
+    // Compte \u00e0 rebours visuel 5 minutes
+    var secondsLeft=data.expires_in_seconds||300;
+    var countdownEl=document.getElementById("qrCountdown");
+    var timer=setInterval(function(){
+      secondsLeft--;
+      if(secondsLeft<=0){
+        clearInterval(timer);
+        if(countdownEl)countdownEl.textContent="expir\u00e9";
+        return;
+      }
+      if(countdownEl){
+        var m=Math.floor(secondsLeft/60);
+        var s=secondsLeft%60;
+        countdownEl.textContent=m+":"+(s<10?"0":"")+s;
+      }
+    },1000);
+    
+    // Polling : v\u00e9rifier toutes les 3 secondes si l'app a bien scann\u00e9
+    var checkTimer=setInterval(async function(){
+      if(secondsLeft<=0){clearInterval(checkTimer);return;}
+      try{
+        var checkRes=await _sb.from("salons").select("sms_native_device_id,sms_native_linked_at").eq("id",_salonId).single();
+        if(checkRes.data&&checkRes.data.sms_native_device_id&&checkRes.data.sms_native_device_id!==window.SMS_NATIVE_DEVICE_ID){
+          // Nouveau device li\u00e9 !
+          clearInterval(timer);
+          clearInterval(checkTimer);
+          window.SMS_NATIVE_DEVICE_ID=checkRes.data.sms_native_device_id;
+          // Afficher succ\u00e8s
+          document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px"><div style="font-size:48px;margin-bottom:12px">\u2705</div><h2 style="color:#4caf50;margin-bottom:10px">T\u00e9l\u00e9phone li\u00e9 !</h2><div style="font-size:14px;color:rgba(255,255,255,.7);margin-bottom:20px">Votre t\u00e9l\u00e9phone Android est maintenant pr\u00eat \u00e0 envoyer les SMS.<br><br>Activez le mode <strong>Depuis mon t\u00e9l\u00e9phone</strong> pour commencer.</div><button class="btn" style="width:100%;padding:14px;background:#4caf50;color:#000;font-weight:800;border:none;border-radius:10px;cursor:pointer" onclick="cM();go(\'settings\')">Parfait !</button></div></div>';
+        }
+      }catch(e){}
+    },3000);
+  }catch(e){
+    console.error("[SMS Link]",e);
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px"><div style="font-size:32px;margin-bottom:12px">\u274c</div><h3 style="color:#ef5350;margin-bottom:10px">Erreur r\u00e9seau</h3><div style="font-size:13px;color:var(--text3);margin-bottom:16px">'+e.message+'</div><button class="btn" style="width:100%;padding:12px" onclick="cM()">Fermer</button></div></div>';
+  }
+}
+// === D\u00e9lier un t\u00e9l\u00e9phone Android ===
+async function unlinkSmsDevice(){
+  if(!confirm("D\u00e9lier votre t\u00e9l\u00e9phone Android ?\n\nLes SMS basculeront automatiquement en mode Brevo. Vous pourrez relier un autre t\u00e9l\u00e9phone quand vous voudrez."))return;
+  try{
+    var res=await _sb.from("salons").update({
+      sms_native_device_id:null,
+      sms_native_linked_at:null,
+      sms_mode:"brevo"
+    }).eq("id",_salonId);
+    if(res.error){alert("Erreur : "+res.error.message);return;}
+    window.SMS_NATIVE_DEVICE_ID=null;
+    window.SMS_MODE="brevo";
+    auditLog("SMS_DEVICE_UNLINKED","Mode revenu \u00e0 Brevo");
+    alert("\u2705 T\u00e9l\u00e9phone d\u00e9li\u00e9. Mode SMS : Brevo.");
+    if(typeof go==="function")go("settings");
+  }catch(e){
+    alert("Erreur r\u00e9seau : "+e.message);
   }
 }
 async function sendEmailViaWorker(to,toName,subject,htmlContent){
