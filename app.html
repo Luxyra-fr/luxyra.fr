@@ -14951,7 +14951,31 @@ function testSms(){
   });
 }
 // Check and send reminders (called periodically)
-function checkSmsReminders(){
+// Fix anti-doublons : vérifie dans messaging_log Supabase avant envoi pour éviter les renvois multi-onglets
+async function hasAlreadySent(context,phone,rdvId){
+  if(typeof _sb==="undefined"||!_salonId)return false;
+  try{
+    // On cherche un envoi du même context pour ce RDV dans les dernières 25h (couvre rappel_24h) ou 3h (rappel_2h)
+    var windowMs=context==="rappel_2h"?3*3600*1000:25*3600*1000;
+    var since=new Date(Date.now()-windowMs).toISOString();
+    var cleanPhone=phone.replace(/[\s\.\-]/g,"");
+    if(cleanPhone.startsWith("0"))cleanPhone="+33"+cleanPhone.slice(1);
+    var tail=cleanPhone.slice(-4);
+    var res=await _sb.from("messaging_log")
+      .select("id")
+      .eq("salon_id",_salonId)
+      .eq("type","sms")
+      .eq("context",context)
+      .eq("recipient",tail)
+      .gte("created_at",since)
+      .limit(1);
+    return res.data&&res.data.length>0;
+  }catch(e){
+    console.warn("[hasAlreadySent]",e);
+    return false; // en cas d'erreur on laisse passer, mieux que de bloquer tout
+  }
+}
+async function checkSmsReminders(){
   var cfg=window.SMS_CONFIG;if(!cfg||!cfg.rappelActif)return;
   var canSms=isPro(); // SMS requires Pro plan
   var now=new Date();
@@ -14966,9 +14990,10 @@ function checkSmsReminders(){
     for(var k in window._smsSent){if(k.indexOf("_")<0)continue;var parts=k.split("_");if(parts.length<2)continue;}
   }
   
-  AP.forEach(function(a){
-    if(a.st==="canc"||a.st==="done"||a.cancelled)return;
-    var cl=gC(a.cId);if(!cl||!cl.ph||!cl.smsOk)return;
+  for(var apIdx=0;apIdx<AP.length;apIdx++){
+    var a=AP[apIdx];
+    if(a.st==="canc"||a.st==="done"||a.cancelled)continue;
+    var cl=gC(a.cId);if(!cl||!cl.ph||!cl.smsOk)continue;
     var sv=gS(a.sId);var sty=gT(a.stId);
     var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,collab:sty?sty.n:""};
     
@@ -14976,8 +15001,12 @@ function checkSmsReminders(){
     if(cfg.rappel24h&&a.date===tomorrowStr){
       var key24="24h_"+a.id;
       if(!window._smsSent[key24]&&canSms){
-        var msg=buildSmsText(cfg.rappelTexte24h,vars);
-        sendSms(cl.ph,msg,"rappel_24h",(cl.pre||"")+" "+(cl.nom||""));
+        // Double vérification Supabase anti-doublon multi-onglets
+        var alreadySent24=await hasAlreadySent("rappel_24h",cl.ph,a.id);
+        if(!alreadySent24){
+          var msg=buildSmsText(cfg.rappelTexte24h,vars);
+          sendSms(cl.ph,msg,"rappel_24h",(cl.pre||"")+" "+(cl.nom||""));
+        }
         window._smsSent[key24]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
       }
@@ -14990,8 +15019,11 @@ function checkSmsReminders(){
       if(diff>0&&diff<=120){
         var key2="2h_"+a.id;
         if(!window._smsSent[key2]&&canSms){
-          var msg2=buildSmsText(cfg.rappelTexte2h,vars);
-          sendSms(cl.ph,msg2,"rappel_2h",(cl.pre||"")+" "+(cl.nom||""));
+          var alreadySent2=await hasAlreadySent("rappel_2h",cl.ph,a.id);
+          if(!alreadySent2){
+            var msg2=buildSmsText(cfg.rappelTexte2h,vars);
+            sendSms(cl.ph,msg2,"rappel_2h",(cl.pre||"")+" "+(cl.nom||""));
+          }
           window._smsSent[key2]=true;
           try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
         }
@@ -15001,13 +15033,24 @@ function checkSmsReminders(){
     if(cfg.rappelEmail&&a.date===tomorrowStr&&cl.emOk&&cl.em){
       var keyEm="em24_"+a.id;
       if(!window._smsSent[keyEm]){
-        var rappelHtml=buildRdvEmailHTML("rappel",vars);
-        sendEmailViaWorker(cl.em,cName(cl),"Rappel : votre rendez-vous demain - "+SALON_CONFIG.nom,rappelHtml);
+        // Anti-doublon email 24h : vérif Supabase
+        var alreadySentEm=false;
+        try{
+          var sinceE=new Date(Date.now()-25*3600*1000).toISOString();
+          var resE=await _sb.from("messaging_log").select("id").eq("salon_id",_salonId).eq("type","email").eq("context","rappel_24h").eq("recipient",cl.em).gte("created_at",sinceE).limit(1);
+          alreadySentEm=resE.data&&resE.data.length>0;
+        }catch(e){}
+        if(!alreadySentEm){
+          var rappelHtml=buildRdvEmailHTML("rappel",vars);
+          sendEmailViaWorker(cl.em,cName(cl),"Rappel : votre rendez-vous demain - "+SALON_CONFIG.nom,rappelHtml);
+          // Log dans messaging_log côté client pour tracer
+          try{_sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:cl.em,content:"Rappel 24h",context:"rappel_24h",client_nom:(cl.pre||"")+" "+(cl.nom||"")});}catch(e){}
+        }
         window._smsSent[keyEm]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
       }
     }
-  });
+  }
   
   // === AUTO: Anniversaires ===
   if(cfg.anniActif){
