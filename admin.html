@@ -441,6 +441,13 @@ async function loadShortcuts(){
     window.ADMIN_SHORTCUTS=ins.data||rows;
   }catch(e){console.warn('shortcuts',e);window.ADMIN_SHORTCUTS=[];}
 }
+// === DRAG & DROP / REORDER raccourcis Cockpit ===
+window.LX_SC_DRAG_IDX=null;
+function lxScDrag(e,idx){window.LX_SC_DRAG_IDX=idx;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(idx));}catch(_){}var el=e.currentTarget;el.style.opacity='0.4';}
+function lxScDragEnd(){var els=document.querySelectorAll('.lx-sc-card');els.forEach(function(el){el.style.opacity='';el.style.borderColor='';});window.LX_SC_DRAG_IDX=null;}
+function lxScDrop(e,toIdx){e.preventDefault();var fromIdx=window.LX_SC_DRAG_IDX;if(fromIdx===null||fromIdx===toIdx){lxScDragEnd();return;}var arr=window.ADMIN_SHORTCUTS||[];if(fromIdx<0||fromIdx>=arr.length||toIdx<0||toIdx>=arr.length){lxScDragEnd();return;}var moved=arr.splice(fromIdx,1)[0];arr.splice(toIdx,0,moved);window.ADMIN_SHORTCUTS=arr;lxScDragEnd();render();lxScSave();}
+function lxScMove(idx,delta){var arr=window.ADMIN_SHORTCUTS||[];var ni=idx+delta;if(ni<0||ni>=arr.length)return;var tmp=arr[idx];arr[idx]=arr[ni];arr[ni]=tmp;window.ADMIN_SHORTCUTS=arr;render();lxScSave();}
+async function lxScSave(){if(!_sb)return;var arr=window.ADMIN_SHORTCUTS||[];try{await Promise.all(arr.map(function(sc,i){return _sb.from('admin_shortcuts').update({position:i}).eq('id',sc.id);}));if(typeof toast==='function')toast('Ordre enregistré','success');}catch(e){console.warn('lxScSave',e);if(typeof toast==='function')toast('Erreur enregistrement ordre','error');}}
 function shortcutClick(url){
   if(url==='#new-salon'){addModal();return;}
   // Parse query string et appelle nav()
@@ -490,9 +497,19 @@ function rDashboard(){
   h+='</div>';
 
   // Raccourcis
-  h+='<div class="card" style="margin-top:16px"><h3>⚡ Raccourcis</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:8px">';
-  (window.ADMIN_SHORTCUTS||[]).forEach(function(sc){
-    h+='<button class="tb-btn" style="padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left" onclick="shortcutClick(\''+(sc.action_url||'').replace(/\x27/g,'\\\x27')+'\')"><span style="font-size:20px">'+(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+(sc.label||'')+'</span></button>';
+  var lxIsTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
+  h+='<div class="card" style="margin-top:16px"><h3>⚡ Raccourcis <span style="font-size:11px;color:var(--text3);font-weight:400;margin-left:8px">'+(lxIsTouch?'(↑↓ pour réordonner)':'(glisser-déposer pour réordonner)')+'</span></h3><div id="lxScGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:8px">';
+  (window.ADMIN_SHORTCUTS||[]).forEach(function(sc,idx){
+    var url=(sc.action_url||'').replace(/\x27/g,'\\\x27');
+    h+='<div class="lx-sc-card" data-idx="'+idx+'" data-id="'+sc.id+'" '+(lxIsTouch?'':'draggable="true" ondragstart="lxScDrag(event,'+idx+')" ondragover="event.preventDefault();this.style.borderColor=\'var(--gold)\'" ondragleave="this.style.borderColor=\'\'" ondrop="lxScDrop(event,'+idx+')" ondragend="lxScDragEnd()"')+' style="position:relative;border:2px solid transparent;border-radius:10px;transition:border-color .15s">';
+    h+='<button class="tb-btn" style="width:100%;padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;cursor:'+(lxIsTouch?'pointer':'grab')+'" onclick="shortcutClick(\''+url+'\')"><span style="font-size:20px">'+(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+(sc.label||'')+'</span></button>';
+    if(lxIsTouch){
+      h+='<div style="position:absolute;top:4px;right:4px;display:flex;flex-direction:column;gap:2px">';
+      if(idx>0)h+='<button onclick="event.stopPropagation();lxScMove('+idx+',-1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▲</button>';
+      if(idx<(window.ADMIN_SHORTCUTS||[]).length-1)h+='<button onclick="event.stopPropagation();lxScMove('+idx+',1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▼</button>';
+      h+='</div>';
+    }
+    h+='</div>';
   });
   h+='</div></div>';
 
@@ -574,7 +591,11 @@ async function loadChatThread(){
     var msgs=r.data||[];
     el.innerHTML=msgs.map(function(m){
       var mine=(m.sender==='admin');
-      return '<div style="align-self:'+(mine?'flex-end':'flex-start')+';max-width:75%;background:'+(mine?'var(--gold-bg2)':'var(--bg3)')+';color:var(--text);padding:8px 12px;border-radius:12px;font-size:13px"><div>'+(m.message||'').replace(/</g,'&lt;')+'</div><div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:right">'+fmtD(m.created_at)+'</div></div>';
+      var hh=new Date(m.created_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+      var dd=new Date(m.created_at).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'});
+      var ticks='';
+      if(mine){ticks=' <span style="color:'+(m.read_by_client?'var(--blue,#4fc3f7)':'var(--text3)')+';font-weight:700">'+(m.read_by_client?'✓✓':'✓')+'</span>';}
+      return '<div style="align-self:'+(mine?'flex-end':'flex-start')+';max-width:75%;background:'+(mine?'var(--gold-bg2)':'var(--bg3)')+';color:var(--text);padding:8px 12px;border-radius:12px;font-size:13px"><div>'+(m.message||'').replace(/</g,'&lt;')+'</div><div style="font-size:10px;color:var(--text2);margin-top:4px;text-align:right">'+dd+' '+hh+ticks+'</div></div>';
     }).join('');
     el.scrollTop=el.scrollHeight;
   }catch(e){el.innerHTML='<div style="color:var(--red);font-size:12px">Erreur chargement</div>';}
@@ -591,9 +612,14 @@ async function sendChatMsg(){
 function subscribeChatRealtime(){
   if(!_sb||window.CHAT_SUB)return;
   try{
-    window.CHAT_SUB=_sb.channel('admin-chat').on('postgres_changes',{event:'INSERT',schema:'public',table:'support_messages'},function(p){
-      loadChatConvs().then(function(){if(window._currentTab==='communication'&&window._currentSub==='chat'){if(window.CHAT_ACTIVE&&p.new&&p.new.conversation_id===window.CHAT_ACTIVE)loadChatThread();else render();}});
-    }).subscribe();
+    window.CHAT_SUB=_sb.channel('admin-chat')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'support_messages'},function(p){
+        loadChatConvs().then(function(){if(window._currentTab==='communication'&&window._currentSub==='chat'){if(window.CHAT_ACTIVE&&p.new&&p.new.conversation_id===window.CHAT_ACTIVE)loadChatThread();else render();}});
+      })
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'support_messages'},function(p){
+        if(window._currentTab==='communication'&&window._currentSub==='chat'&&window.CHAT_ACTIVE&&p.new&&p.new.conversation_id===window.CHAT_ACTIVE)loadChatThread();
+      })
+      .subscribe();
   }catch(e){}
 }
 
