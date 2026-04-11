@@ -225,6 +225,7 @@ async function loadData(){
           adresse:s.adresse||"",cp:s.cp||"",formeJur:s.forme_juridique||"",
           verif:s.verification_status||"pending",
           docKbis:s.documents_kbis||"",docId:s.documents_id||"",docIdVerso:s.documents_id_verso||"",
+          documents_locked:!!s.documents_locked,
           verifiedAt:s.verified_at,notesAdmin:s.notes_admin||"",
           userId:s.user_id||"",
           stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
@@ -412,6 +413,18 @@ function openD(id){
   h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (verso)</span><span class="v">'+(s.docIdVerso?'<a href="'+s.docIdVerso+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--text3);font-style:italic">Non fourni</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">V\u00e9rification</span><span class="v" style="color:'+(s.verif==="verified"?"var(--green)":s.verif==="pending_review"?"var(--gold)":"var(--orange)")+'"><strong>'+(s.verif==="verified"?"\u2705 V\u00e9rifi\u00e9":s.verif==="pending_review"?"\ud83d\udd0d \u00c0 v\u00e9rifier":"\u23f3 En attente des documents")+'</strong></span></div>';
+  // Verrouillage des documents
+  h+='<div class="dp-field"><span class="k">Verrouillage</span><span class="v">';
+  if(s.documents_locked){
+    h+='<span style="color:var(--green);font-weight:700">\ud83d\udd12 Verrouill\u00e9</span>';
+    h+='<button onclick="toggleDocLock(&#39;'+s.id+'&#39;,false)" style="padding:4px 10px;margin-left:8px;border-radius:6px;background:rgba(255,170,0,.15);color:#ffaa00;border:1px solid rgba(255,170,0,.3);font-size:11px;cursor:pointer;font-weight:700">\ud83d\udd13 D\u00e9verrouiller</button>';
+  }else{
+    h+='<span style="color:var(--orange)">\ud83d\udd13 Modifiable par le client</span>';
+    if(s.docKbis||s.docId){
+      h+='<button onclick="toggleDocLock(&#39;'+s.id+'&#39;,true)" style="padding:4px 10px;margin-left:8px;border-radius:6px;background:rgba(45,154,94,.15);color:var(--green);border:1px solid rgba(45,154,94,.3);font-size:11px;cursor:pointer;font-weight:700">\ud83d\udd12 Verrouiller</button>';
+    }
+  }
+  h+='</span></div>';
   if(s.docKbis&&s.docId&&s.verif!=="verified"){
     h+='<button class="dp-btn success" style="width:100%;margin-top:8px" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;verified&#39;)">\u2705 Valider les documents</button>';
   }
@@ -873,6 +886,17 @@ async function doSaveLegal(id){
 }
 
 // ===== VERIFICATION =====
+async function toggleDocLock(salonId,lock){
+  if(!_sb||!_online)return;
+  var msg=lock?"\ud83d\udd12 Verrouiller les documents de ce salon ?\n\nLe client ne pourra plus les remplacer tant que vous n'aurez pas d\u00e9verrouill\u00e9.":"\ud83d\udd13 D\u00e9verrouiller les documents ?\n\nLe client pourra les modifier librement.";
+  if(!confirm(msg))return;
+  var r=await _sb.from("salons").update({documents_locked:lock}).eq("id",salonId);
+  if(r&&r.error){alert("Erreur : "+r.error.message);return;}
+  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:salonId,action:lock?"DOCS_LOCKED":"DOCS_UNLOCKED",details:lock?"Documents verrouill\u00e9s":"Documents d\u00e9verrouill\u00e9s"});
+  alert(lock?"\u2705 Documents verrouill\u00e9s":"\ud83d\udd13 Documents d\u00e9verrouill\u00e9s");
+  await loadData();render();openD(salonId);
+}
+
 async function resetDocs(id){
   if(!confirm("\u26a0 Supprimer TOUS les documents de ce salon ?\n\nLe client devra les renvoyer. Le compte sera bloqu\u00e9 si le d\u00e9lai de 15 jours est d\u00e9pass\u00e9."))return;
   await _sb.from("salons").update({documents_kbis:null,documents_id:null,documents_id_verso:null,verification_status:"pending",verified_at:null,verified_by:null,documents_uploaded_at:null}).eq("id",id);
