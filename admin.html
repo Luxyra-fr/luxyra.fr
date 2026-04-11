@@ -152,7 +152,7 @@ var SUPABASE_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var _sb=null,_uid=null,_online=false;
 var SALONS=[],ALERTS=[],DEMANDES=[],INSCRIPTIONS=[];
-var curPage="dashboard",curFilter="all";
+var curPage="dashboard";window._currentTab="cockpit",curFilter="all";
 var PLANS=[{id:"essential",nom:"Essentiel",prix:14.99,couleur:"var(--blue)"},{id:"pro",nom:"Pro",prix:24.99,couleur:"var(--gold)"}];
 var colors=["#c9a227","#7d3c98","#2980b9","#27ae60","#e74c3c","#f39c12","#1abc9c","#e67e22"];
 
@@ -278,41 +278,48 @@ async function loadInscriptions(){
 
 // ===== NAV =====
 function nav(v){
-  // Router 6 onglets : mapping des anciens noms vers les nouvelles vues
-  var map={dashboard:'cockpit',alerts:'cockpit',revenue:'finances',sms:'finances',settings:'systeme',nf525:'systeme'};
-  var view=map[v]||v;
-  window._currentView=view;
-  window._currentSubview=v; // pour Finances/Système : sous-onglet ciblé
+  // Router 6 onglets — mapping vers les vues internes existantes
+  var subDefault={cockpit:'dashboard',finances:'revenue',systeme:'settings'};
+  var legacy2tab={dashboard:'cockpit',alerts:'cockpit',revenue:'finances',sms:'finances',settings:'systeme',nf525:'systeme'};
+  var tab=legacy2tab[v]||v;
+  var sub=(v in legacy2tab)?v:(subDefault[tab]||tab);
+  window._currentTab=tab;curPage=sub;
   document.querySelectorAll('.sb-item').forEach(function(e){e.classList.remove('active')});
-  var idx={cockpit:0,salons:1,inscriptions:2,demandes:3,finances:4,systeme:5}[view];
-  if(idx!=null){var items=document.querySelectorAll('.sb-item');if(items[idx])items[idx].classList.add('active')}
-  if(window.innerWidth<900)document.querySelector('.sidebar').classList.remove('open');
+  var idx={cockpit:0,salons:1,inscriptions:2,demandes:3,finances:4,systeme:5}[tab];
+  var items=document.querySelectorAll('.sb-item');
+  if(idx!=null&&items[idx])items[idx].classList.add('active');
+  if(window.innerWidth<900){var sb=document.querySelector('.sidebar');if(sb)sb.classList.remove('open');}
   render();
 }
 
 function render(){
-  var v=window._currentView||'cockpit';
-  var sub=window._currentSubview||v;
-  var c=document.getElementById('view');if(!c)return;
-  if(v==='cockpit'){rDashboard();}
-  else if(v==='salons'){rSalons();}
-  else if(v==='inscriptions'){rInscriptions();}
-  else if(v==='demandes'){rDemandes();}
-  else if(v==='finances'){
-    c.innerHTML='<div class="fin-tabs" style="display:flex;gap:8px;margin-bottom:16px"><button class="td-btn '+(sub==='sms'?'':'active')+'" onclick="window._currentSubview=\'revenue\';render()">💰 Revenus</button><button class="td-btn '+(sub==='sms'?'active':'')+'" onclick="window._currentSubview=\'sms\';render()">📱 SMS</button></div><div id="finView"></div>';
-    var orig=document.getElementById('view');var fin=document.getElementById('finView');
-    // rRevenue/rSMS écrivent dans #view → on swap temporairement
-    var realView=orig;orig.id='view-real';fin.id='view';
-    if(sub==='sms')rSMS();else rRevenue();
-    document.getElementById('view').id='finView';document.getElementById('view-real').id='view';
+  var tab=window._currentTab||'cockpit';
+  var h="";
+  if(tab==='cockpit'){
+    h=rDashboard();
+    h+='<div style="margin-top:24px">'+rAlerts()+'</div>';
+  } else if(tab==='salons'){h=rSalons();}
+  else if(tab==='inscriptions'){h=rInscriptions();}
+  else if(tab==='demandes'){h=rDemandes();}
+  else if(tab==='finances'){
+    var subF=(curPage==='sms')?'sms':'revenue';
+    h='<div style="display:flex;gap:8px;margin-bottom:16px">'
+     +'<button class="td-btn" style="'+(subF==='revenue'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'revenue\';render()">💰 Revenus</button>'
+     +'<button class="td-btn" style="'+(subF==='sms'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'sms\';render()">📱 SMS</button>'
+     +'</div>';
+    h+=(subF==='sms')?rSMS():rRevenue();
   }
-  else if(v==='systeme'){
-    c.innerHTML='<div class="fin-tabs" style="display:flex;gap:8px;margin-bottom:16px"><button class="td-btn '+(sub==='nf525'?'':'active')+'" onclick="window._currentSubview=\'settings\';render()">⚙️ Paramètres</button><button class="td-btn '+(sub==='nf525'?'active':'')+'" onclick="window._currentSubview=\'nf525\';render()">🛡️ NF525 / RGPD</button></div><div id="sysView"></div>';
-    var orig2=document.getElementById('view');var sys=document.getElementById('sysView');
-    orig2.id='view-real';sys.id='view';
-    if(sub==='nf525')rNF525();else rSettings();
-    document.getElementById('view').id='sysView';document.getElementById('view-real').id='view';
+  else if(tab==='systeme'){
+    var subS=(curPage==='nf525')?'nf525':'settings';
+    h='<div style="display:flex;gap:8px;margin-bottom:16px">'
+     +'<button class="td-btn" style="'+(subS==='settings'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'settings\';render()">⚙️ Paramètres</button>'
+     +'<button class="td-btn" style="'+(subS==='nf525'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'nf525\';render()">🛡️ NF525 / RGPD</button>'
+     +'</div>';
+    h+=(subS==='nf525')?rNF525():rSettings();
   }
+  var mc=document.getElementById("mainContent");if(mc)mc.innerHTML=h;
+  var st=document.getElementById("onlineStatus");
+  if(st)st.innerHTML=_online?'<span style="color:var(--green)">● Supabase connecté</span>':'<span style="color:var(--orange)">● Hors ligne</span>';
 }
 
 // ===== DASHBOARD =====
@@ -996,21 +1003,6 @@ async function resetSmsCredits(id){
 checkSession();
 // Auto-refresh demandes toutes les 30s
 setInterval(async function(){if(_online&&_sb){await loadDemandes();var b=document.getElementById("badgeDemandes");if(b){var n=DEMANDES.filter(function(d){return d.status==="new";}).length;b.textContent=n>0?n:"";}}},30000);
-
-// === COCKPIT : intégration rAlerts dans le dashboard ===
-(function(){
-  var _origDash=rDashboard;
-  window.rDashboard=function(){
-    _origDash();
-    var v=document.getElementById('view');if(!v)return;
-    var box=document.createElement('div');box.id='cockpitAlerts';box.style.marginTop='24px';
-    v.appendChild(box);
-    var realView=v;v.id='view-real';box.id='view';
-    try{rAlerts();}catch(e){console.error(e);}
-    document.getElementById('view').id='cockpitAlerts';
-    document.getElementById('view-real').id='view';
-  };
-})();
 </script>
 </body>
 </html>
