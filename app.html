@@ -3750,9 +3750,9 @@ function go(pg,arg){
     else if(pg==="gifts")app.innerHTML='<div class="app-content">'+rGifts()+'</div>';
     else if(pg==="accounting")app.innerHTML='<div class="app-content">'+rAccounting()+'</div>';
     else if(pg==="stats"){app.innerHTML='<div class="app-content">'+rStats()+'</div>';setTimeout(rAffl,50);}
-    else if(pg==="marketing"){if(!isPro()){showUpgradeModal("SMS & Email Marketing");return;}app.innerHTML='<div class="app-content">'+rMarketing()+'</div>';}
+    else if(pg==="marketing"){if(!isPro()){showUpgradeModal("SMS & Email Marketing");return;}var _smy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rMarketing()+'</div>';if(pg===_prevPage){window.scrollTo(0,_smy);requestAnimationFrame(function(){window.scrollTo(0,_smy);});}}
     else if(pg==="caisse")app.innerHTML=rCaisse();
-    else if(pg==="settings"){var _sy=window.scrollY;app.innerHTML='<div class="app-content">'+rSettings()+'</div>';window.scrollTo(0,_sy);requestAnimationFrame(function(){window.scrollTo(0,_sy);});}
+    else if(pg==="settings"){var _sy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rSettings()+'</div>';if(pg===_prevPage){window.scrollTo(0,_sy);requestAnimationFrame(function(){window.scrollTo(0,_sy);});}}
     else if(pg==="tickets")app.innerHTML='<div class="app-content">'+rTickets()+'</div>';
     else if(pg==="caisseGestion")app.innerHTML='<div class="app-content">'+rCaisseGestion()+'</div>';
     else if(pg==="pendingTk")app.innerHTML='<div class="app-content">'+rPendingTk()+'</div>';
@@ -4116,9 +4116,17 @@ function isStylistAvailable(stId, date, timeStr){
     }
   }
   // Get normal hours or exceptional opening hours
+  // FIX bug Manue : si la coiffeuse a des horaires perso configurés (sty.hrs existe),
+  // on respecte ses horaires même si null = jour fermé. Sinon fallback horaires salon.
   var hrs=null;
-  if(sty.hrs&&sty.hrs[dow]!==undefined&&sty.hrs[dow]!==null){hrs=sty.hrs[dow];}
-  else{hrs=H[dow]||null;}
+  var hasPersoHrs=sty.hrs&&typeof sty.hrs==="object"&&Object.keys(sty.hrs).length>0;
+  if(hasPersoHrs){
+    // Horaires perso actifs : null = jour fermé pour ce coiffeur
+    hrs=sty.hrs[dow]||null;
+  } else {
+    // Pas d'horaires perso : fallback horaires salon
+    hrs=H[dow]||null;
+  }
   // Check for ouverture exceptionnelle (overrides closed day)
   if(!hrs&&window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
@@ -4179,9 +4187,11 @@ function getBlockedSlots(stId, date){
   }
   // Get hours (normal or exceptional opening)
   // Use individual hours if set for this day, otherwise fall back to salon hours
+  // FIX bug Manue : si horaires perso configurés, null = fermé (pas fallback salon)
   var hrs=null;
-  if(sty.hrs&&sty.hrs[dow]!==undefined&&sty.hrs[dow]!==null){
-    hrs=sty.hrs[dow];
+  var hasPersoHrs2=sty.hrs&&typeof sty.hrs==="object"&&Object.keys(sty.hrs).length>0;
+  if(hasPersoHrs2){
+    hrs=sty.hrs[dow]||null;
   } else {
     hrs=H[dow]||null;
   }
@@ -14497,10 +14507,13 @@ function rMarketing(){
 function saveSmsConfig(){
   try{localStorage.setItem("_cp_sms_config",JSON.stringify(window.SMS_CONFIG));}catch(e){}
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
-      var cfg={};if(r.data&&r.data[0]&&r.data[0].config_json){try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}}
-      cfg.sms_config=window.SMS_CONFIG;
-      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
+    // FIX anti-race condition : on garde le config_json complet en mémoire
+    // et on écrit directement, sans select préalable. Si plusieurs saveSmsConfig
+    // s'enchaînent rapidement, ils écrivent tous le dernier état de window.SMS_CONFIG.
+    if(!window._SALON_CONFIG_JSON)window._SALON_CONFIG_JSON={};
+    window._SALON_CONFIG_JSON.sms_config=window.SMS_CONFIG;
+    _sb.from("salons").update({config_json:JSON.stringify(window._SALON_CONFIG_JSON)}).eq("id",_salonId).then(function(r){
+      if(r&&r.error)console.warn("[saveSmsConfig] Supabase error:",r.error);
     });
   }
 }
@@ -16200,9 +16213,19 @@ function initApp(){
       if(r.data&&r.data[0]&&r.data[0].config_json){
         try{
           var cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;
+          // Garder une copie complète en mémoire pour saveSmsConfig() (anti-race condition)
+          window._SALON_CONFIG_JSON=cfg;
           if(cfg.forfaits&&cfg.forfaits.length>0){FORFAITS=cfg.forfaits;localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}
           if(cfg.absences&&cfg.absences.length>0){window.ABSENCES=cfg.absences;localStorage.setItem("_cp_absences",JSON.stringify(window.ABSENCES));}
+          // Restaurer aussi sms_config si présent dans Supabase (au cas où localStorage est vide)
+          if(cfg.sms_config&&typeof cfg.sms_config==="object"){
+            window.SMS_CONFIG=cfg.sms_config;
+            try{localStorage.setItem("_cp_sms_config",JSON.stringify(window.SMS_CONFIG));}catch(e){}
+          }
         }catch(e){}
+      }else{
+        // Pas encore de config_json en base, on initialise vide
+        window._SALON_CONFIG_JSON={};
       }
     });
   }
