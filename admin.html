@@ -178,7 +178,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadData();loadDemandes();loadInscriptions();await loadShortcuts();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
+      if(c.data){_online=true;await loadData();loadDemandes();loadInscriptions();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
     }
   }catch(e){}
   showLogin();
@@ -205,7 +205,7 @@ async function doLogin(){
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
-  await loadData();loadDemandes();loadInscriptions();await loadShortcuts();bootRoute();
+  await loadData();loadDemandes();loadInscriptions();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
@@ -351,22 +351,24 @@ function render(){
   else if(tab==='finance'){
     h=subBar([{id:'revenus',label:'💰 Revenus'},{id:'clotures',label:'📋 Clôtures Z'},{id:'nf525',label:'🛡️ NF525'}]);
     if(sub==='nf525') h+=rNF525();
-    else if(sub==='clotures') h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">📋</div><div style="margin-top:12px;color:var(--text2)">Clôtures Z — à venir Livraison 2</div></div>';
+    else if(sub==='clotures') h+=rClotures();
     else h+=rRevenue();
   }
   else if(tab==='communication'){
     h=subBar([{id:'chat',label:'💬 Chat support'},{id:'sms',label:'📱 Packs SMS'},{id:'email',label:'✉️ Email'}]);
     if(sub==='sms') h+=rSMS();
-    else if(sub==='email') h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">✉️</div><div style="margin-top:12px;color:var(--text2)">Templates Email — à venir Livraison 2</div></div>';
-    else h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">💬</div><div style="margin-top:12px;color:var(--text2)">Chat support — à venir Livraison 2</div></div>';
+    else if(sub==='email') h+=rEmail();
+    else h+=rChat();
   }
   else if(tab==='analytics'){
     h=subBar([{id:'kpis',label:'📊 KPIs'},{id:'cohorts',label:'👥 Cohortes'},{id:'funnel',label:'🔻 Funnel'}]);
-    h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">📈</div><div style="margin-top:12px;color:var(--text2)">Analytics — à venir Livraison 2</div></div>';
+    h+=rAnalytics(sub);
   }
   else if(tab==='parametres'){
     h=subBar([{id:'admin',label:'👤 Admins'},{id:'legal',label:'⚖️ Légal'},{id:'system',label:'🔧 Système'}]);
-    h+=rSettings();
+    if(sub==='legal') h+=rLegalPage();
+    else if(sub==='system') h+=rSystemPage();
+    else h+=rSettings();
   }
   var mc=document.getElementById("mainContent");if(mc)mc.innerHTML=h;
   var st=document.getElementById("onlineStatus");
@@ -510,6 +512,176 @@ function rDashboard(){
     h+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span>'+e.icon+'</span><span style="flex:1">'+e.txt+'</span><span style="color:var(--text3);font-size:11px;font-family:var(--mono)">'+fmtD(e.date)+'</span></div>';
   });
   if(events.length===0)h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucune activité récente</div>';
+  h+='</div>';
+  return h;
+}
+
+// ===== LIVRAISON 2 — PAGES =====
+
+// Communication / Chat support
+window.CHAT_CONVS=[];window.CHAT_ACTIVE=null;window.CHAT_SUB=null;
+async function loadChatConvs(){
+  if(!_sb||!_online)return;
+  try{
+    var r=await _sb.from('support_conversations').select('*').order('last_message_at',{ascending:false});
+    window.CHAT_CONVS=r.data||[];
+    var unread=0;window.CHAT_CONVS.forEach(function(c){unread+=(c.unread_count_admin||0);});
+    window.ADMIN_UNREAD_CHAT=unread;
+    var b=document.getElementById('badgeChat');if(b)b.textContent=unread||"";
+  }catch(e){window.CHAT_CONVS=[];}
+}
+function rChat(){
+  var convs=window.CHAT_CONVS||[];
+  var h='<div class="topbar"><h1>Chat support <span>'+convs.length+' conversations</span></h1><button class="tb-btn" onclick="loadChatConvs().then(render)">🔄 Actualiser</button></div>';
+  h+='<div style="display:grid;grid-template-columns:320px 1fr;gap:16px;height:calc(100vh - 200px);min-height:500px">';
+  // Liste
+  h+='<div class="card" style="overflow-y:auto;padding:0">';
+  if(convs.length===0)h+='<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">Aucune conversation</div>';
+  convs.forEach(function(c){
+    var s=gSalon(c.salon_id);
+    var nom=s?s.nom:'Salon '+(c.salon_id||'').slice(0,8);
+    var act=(window.CHAT_ACTIVE===c.id);
+    var unread=c.unread_count_admin||0;
+    h+='<div onclick="openChatConv(\''+c.id+'\',\''+c.salon_id+'\')" style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:'+(act?'var(--gold-bg)':'transparent')+'"><div><div style="font-weight:'+(unread>0?'700':'500')+';font-size:13px">'+nom+'</div><div style="font-size:11px;color:var(--text3);margin-top:2px">'+fmtD(c.last_message_at)+'</div></div>'+(unread>0?'<span class="sb-badge">'+unread+'</span>':'')+'</div>';
+  });
+  h+='</div>';
+  // Thread
+  h+='<div class="card" style="display:flex;flex-direction:column;padding:0">';
+  if(!window.CHAT_ACTIVE){
+    h+='<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px">← Sélectionne une conversation</div>';
+  }else{
+    h+='<div id="chatThread" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px"></div>';
+    h+='<div style="border-top:1px solid var(--border);padding:12px;display:flex;gap:8px"><input id="chatInput" placeholder="Réponse..." style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:var(--f1);font-size:13px;outline:none" onkeydown="if(event.keyCode===13)sendChatMsg()"><button class="tb-btn primary" onclick="sendChatMsg()">Envoyer</button></div>';
+    setTimeout(loadChatThread,50);
+  }
+  h+='</div></div>';
+  return h;
+}
+async function openChatConv(convId,salonId){
+  window.CHAT_ACTIVE=convId;window.CHAT_ACTIVE_SALON=salonId;
+  // Mark all admin-unread as read
+  try{
+    await _sb.from('support_messages').update({read_by_admin:true}).eq('conversation_id',convId).eq('sender','client');
+    await _sb.from('support_conversations').update({unread_count_admin:0}).eq('id',convId);
+  }catch(e){}
+  await loadChatConvs();render();
+}
+async function loadChatThread(){
+  if(!window.CHAT_ACTIVE)return;
+  var el=document.getElementById('chatThread');if(!el)return;
+  try{
+    var r=await _sb.from('support_messages').select('*').eq('conversation_id',window.CHAT_ACTIVE).order('created_at',{ascending:true});
+    var msgs=r.data||[];
+    el.innerHTML=msgs.map(function(m){
+      var mine=(m.sender==='admin');
+      return '<div style="align-self:'+(mine?'flex-end':'flex-start')+';max-width:75%;background:'+(mine?'var(--gold-bg2)':'var(--bg3)')+';color:var(--text);padding:8px 12px;border-radius:12px;font-size:13px"><div>'+(m.message||'').replace(/</g,'&lt;')+'</div><div style="font-size:9px;color:var(--text3);margin-top:4px;text-align:right">'+fmtD(m.created_at)+'</div></div>';
+    }).join('');
+    el.scrollTop=el.scrollHeight;
+  }catch(e){el.innerHTML='<div style="color:var(--red);font-size:12px">Erreur chargement</div>';}
+}
+async function sendChatMsg(){
+  var i=document.getElementById('chatInput');if(!i||!i.value.trim()||!window.CHAT_ACTIVE)return;
+  var msg=i.value.trim();i.value='';
+  try{
+    await _sb.from('support_messages').insert({salon_id:window.CHAT_ACTIVE_SALON,conversation_id:window.CHAT_ACTIVE,sender:'admin',message:msg,read_by_admin:true,read_by_client:false});
+    await _sb.from('support_conversations').update({last_message_at:new Date().toISOString(),unread_count_client:1}).eq('id',window.CHAT_ACTIVE);
+    loadChatThread();
+  }catch(e){alert('Erreur envoi : '+e.message);}
+}
+function subscribeChatRealtime(){
+  if(!_sb||window.CHAT_SUB)return;
+  try{
+    window.CHAT_SUB=_sb.channel('admin-chat').on('postgres_changes',{event:'INSERT',schema:'public',table:'support_messages'},function(p){
+      loadChatConvs().then(function(){if(window._currentTab==='communication'&&window._currentSub==='chat'){if(window.CHAT_ACTIVE&&p.new&&p.new.conversation_id===window.CHAT_ACTIVE)loadChatThread();else render();}});
+    }).subscribe();
+  }catch(e){}
+}
+
+// Communication / Email — templates Brevo readonly
+function rEmail(){
+  var h='<div class="topbar"><h1>Templates Email <span>Brevo</span></h1></div>';
+  h+='<div class="card"><h3>📧 Templates configurés</h3>';
+  var templates=[
+    {id:'welcome',name:'Bienvenue inscription',desc:'Envoyé après création compte salon'},
+    {id:'trial_expiring',name:'Essai expirant',desc:'J-3 avant fin essai'},
+    {id:'invoice',name:'Facture mensuelle',desc:'Envoyé à chaque prélèvement Stripe'},
+    {id:'support_reply',name:'Réponse support',desc:'Notification quand admin répond au chat'},
+    {id:'rdv_confirm',name:'Confirmation RDV client',desc:'Envoyé via salon'}
+  ];
+  templates.forEach(function(t){
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)"><div><div style="font-weight:600;font-size:13px">'+t.name+'</div><div style="font-size:11px;color:var(--text3);margin-top:2px">'+t.desc+'</div></div><span class="badge badge-green" style="font-size:10px">Actif</span></div>';
+  });
+  h+='<div style="margin-top:16px;font-size:11px;color:var(--text3)">Édition des templates via <a href="https://app.brevo.com" target="_blank">app.brevo.com</a></div></div>';
+  return h;
+}
+
+// Analytics
+function rAnalytics(sub){
+  var totalC=0,totalCollabs=0;SALONS.forEach(function(s){totalC+=s.clients||0;totalCollabs+=s.collabs||0;});
+  var byPlan={essential:0,pro:0};SALONS.forEach(function(s){if(s.status==='active')byPlan[s.plan]=(byPlan[s.plan]||0)+1;});
+  var byMetier={};SALONS.forEach(function(s){byMetier[s.metier]=(byMetier[s.metier]||0)+1;});
+  var h='<div class="topbar"><h1>Analytics <span>'+(sub||'kpis')+'</span></h1></div>';
+  if(sub==='cohorts'||sub==='funnel'){
+    h+='<div class="card" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">'+(sub==='cohorts'?'👥':'🔻')+'</div><div style="margin-top:12px;color:var(--text2)">'+(sub==='cohorts'?'Cohortes':'Funnel')+' — Phase 2</div></div>';
+    return h;
+  }
+  h+='<div class="kpi-row">';
+  h+='<div class="kpi"><div class="kpi-label">Total clients</div><div class="kpi-value" style="color:var(--blue)">'+totalC+'</div><div class="kpi-sub">Tous salons confondus</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Total collaborateurs</div><div class="kpi-value" style="color:var(--gold)">'+totalCollabs+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Plan Essential</div><div class="kpi-value" style="color:var(--green)">'+(byPlan.essential||0)+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Plan Pro</div><div class="kpi-value" style="color:var(--purple)">'+(byPlan.pro||0)+'</div></div>';
+  h+='</div>';
+  h+='<div class="card"><h3>📊 Répartition par métier</h3>';
+  Object.keys(byMetier).forEach(function(k){
+    var pct=Math.round((byMetier[k]/SALONS.length)*100);
+    h+='<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+k+'</span><span style="color:var(--gold);font-family:var(--mono)">'+byMetier[k]+' ('+pct+'%)</span></div><div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--gold)"></div></div></div>';
+  });
+  h+='</div>';
+  return h;
+}
+
+// Finance / Clôtures Z
+async function loadClotures(){
+  try{var r=await _sb.from('z_closures').select('*').order('closure_date',{ascending:false}).limit(50);window.Z_CLOSURES=r.data||[];}catch(e){window.Z_CLOSURES=[];}
+}
+function rClotures(){
+  if(!window.Z_CLOSURES){loadClotures().then(render);return '<div style="padding:20px;color:var(--text3)">Chargement…</div>';}
+  var zs=window.Z_CLOSURES;
+  var today=new Date().toISOString().slice(0,10);
+  var todayZ=zs.filter(function(z){return (z.closure_date||'').slice(0,10)===today;});
+  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôtures</span></h1></div>';
+  h+='<div class="kpi-row">';
+  h+='<div class="kpi"><div class="kpi-label">Z aujourd\'hui</div><div class="kpi-value" style="color:var(--gold)">'+todayZ.length+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Total 50 derniers</div><div class="kpi-value" style="color:var(--blue)">'+zs.length+'</div></div>';
+  h+='</div>';
+  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Date</th><th>Salon</th><th>CA TTC</th><th>Tickets</th><th>Hash</th></tr><tbody>';
+  zs.forEach(function(z){
+    var s=gSalon(z.salon_id);
+    h+='<tr><td>'+fmtD(z.closure_date)+'</td><td>'+(s?s.nom:'?')+'</td><td style="font-family:var(--mono);color:var(--gold)">'+fmtM(z.total_ttc||0)+'</td><td>'+(z.nb_tickets||0)+'</td><td style="font-family:var(--mono);font-size:10px;color:var(--text3)">'+(z.hash||'').slice(0,12)+'…</td></tr>';
+  });
+  h+='</tbody></table></div></div>';
+  return h;
+}
+
+// Paramètres / Légal & Système
+function rLegalPage(){
+  var h='<div class="topbar"><h1>Légal <span>CGV / RGPD</span></h1></div>';
+  h+='<div class="card"><h3>📜 Documents légaux</h3>';
+  h+='<div style="display:grid;gap:8px;margin-top:12px">';
+  ['Mentions légales','CGV','CGU','Politique de confidentialité','DPA'].forEach(function(d){
+    h+='<div style="display:flex;justify-content:space-between;padding:10px;background:var(--bg3);border-radius:8px"><span style="font-size:13px">'+d+'</span><button class="tb-btn">Éditer</button></div>';
+  });
+  h+='</div></div>';
+  h+='<div class="card" style="margin-top:16px"><h3>⚖️ Conformité</h3><div style="font-size:12px;color:var(--text2);line-height:1.8">✅ NF525 (auto-certification)<br>✅ RGPD (registre des traitements à jour)<br>✅ Stockage chiffré Supabase EU<br>⏳ INFOCERT — non démarré</div></div>';
+  return h;
+}
+function rSystemPage(){
+  var h='<div class="topbar"><h1>Système <span>État services</span></h1></div>';
+  h+='<div class="kpi-row">';
+  h+='<div class="kpi"><div class="kpi-label">Supabase</div><div class="kpi-value" style="color:var(--green);font-size:18px">✓ OK</div><div class="kpi-sub">'+(SUPABASE_URL||'').replace('https://','').slice(0,30)+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Stripe</div><div class="kpi-value" style="color:var(--orange);font-size:18px">⚠ TEST</div><div class="kpi-sub">acct_1TCS0K…</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Brevo</div><div class="kpi-value" style="color:var(--green);font-size:18px">✓ OK</div><div class="kpi-sub">SMTP + SMS</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Realtime chat</div><div class="kpi-value" style="color:'+(window.CHAT_SUB?'var(--green)':'var(--text3)')+';font-size:18px">'+(window.CHAT_SUB?'✓ ON':'○ OFF')+'</div></div>';
   h+='</div>';
   return h;
 }
