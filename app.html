@@ -2997,16 +2997,17 @@ function printClotureZ(){
   
   var w=window.open("","_blank","width=460,height=900");if(!w)return;
   var h="<html><head><title>Bande Z #"+(c.num||"")+" - "+c.date+"</title>";
-  h+="<style>html{color-scheme:light}body{font-family:'Courier New',monospace;padding:15px;max-width:420px;margin:0 auto;font-size:11px;color:#000;background:#fff;}";
+  h+="<style>html{color-scheme:light!important;background:#fff!important}body{font-family:'Courier New',monospace;padding:15px;max-width:420px;margin:0 auto;font-size:11px;color:#000!important;background:#fff!important;}";
+  h+="*{color:#000!important;background:transparent!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}";
   h+="h1{font-size:16px;text-align:center;margin:0 0 2px;letter-spacing:2px;}";
   h+="h2{font-size:12px;margin:12px 0 4px;border-bottom:1px solid #000;padding-bottom:2px;text-transform:uppercase;}";
   h+=".line{display:flex;justify-content:space-between;padding:1px 0;}.sep{border-top:2px dashed #000;margin:8px 0;}";
   h+=".sep2{border-top:1px dashed #999;margin:5px 0;}.bold{font-weight:900;font-size:13px;}";
-  h+="p{margin:1px 0;text-align:center;}.small{font-size:9px;color:#666;}";
-  h+="table{width:100%;border-collapse:collapse;margin:2px 0;}td,th{padding:2px 4px;font-size:11px;font-family:'Courier New',monospace;text-align:left;}";
+  h+="p{margin:1px 0;text-align:center;}.small{font-size:9px;color:#666!important;}";
+  h+="table{width:100%;border-collapse:collapse;margin:2px 0;}td,th{padding:2px 4px;font-size:11px;font-family:'Courier New',monospace;text-align:left;color:#000!important;}";
   h+=".tr{text-align:right;}.tb{font-weight:900;}.tline td{border-top:1.5px solid #000;font-weight:900;padding-top:4px;}";
-  h+=".warn{background:#fff3cd;padding:4px;font-weight:700;text-align:center;margin:4px 0;}";
-  h+="@media print{body{padding:5px;font-size:10px;} *{color:#000!important;}}</style></head><body>";
+  h+=".warn{background:#fff3cd!important;padding:4px;font-weight:700;text-align:center;margin:4px 0;color:#000!important;}";
+  h+="@media print{html,body{background:#fff!important;color:#000!important;padding:5px;font-size:10px;}*{color:#000!important;background:transparent!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}.warn{background:#fff3cd!important;}}</style></head><body>";
   
   // ===== EN-TETE =====
   if(window._isReprint){h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA</div>";}
@@ -3179,7 +3180,7 @@ function printClotureZ(){
 
 
 
-function loadWP(input){if(!input.files||!input.files[0])return;var r=new FileReader();r.onload=function(e){APP_BG=e.target.result;var bg=document.getElementById('appBg');if(bg)bg.style.backgroundImage='url('+APP_BG+')';};r.readAsDataURL(input.files[0]);}
+function loadWP(input){if(!input.files||!input.files[0])return;var r=new FileReader();r.onload=function(e){APP_BG=e.target.result;var bg=document.getElementById('appBg');if(bg)bg.style.backgroundImage='url('+APP_BG+')';saveAppBg();};r.readAsDataURL(input.files[0]);}
 function addCollab(){
   var n=prompt("Nom du collaborateur:");if(!n)return;
   var ini=n.split(" ").map(function(w){return w.charAt(0).toUpperCase();}).join("").slice(0,2);
@@ -4085,6 +4086,18 @@ function setProdCatColor(cat,hex){
 }
 var ABSENCES=[];
 var APP_BG="https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80";
+try{var _bgSav=localStorage.getItem("_cp_app_bg");if(_bgSav!==null)APP_BG=_bgSav;}catch(e){}
+function saveAppBg(){
+  try{localStorage.setItem("_cp_app_bg",APP_BG||"");}catch(e){}
+  // Sauvegarde aussi dans Supabase config_json pour multi-device
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    if(!window._SALON_CONFIG_JSON)window._SALON_CONFIG_JSON={};
+    window._SALON_CONFIG_JSON.app_bg=APP_BG||"";
+    _sb.from("salons").update({config_json:JSON.stringify(window._SALON_CONFIG_JSON)}).eq("id",_salonId).then(function(r){
+      if(r&&r.error)console.warn("[saveAppBg]",r.error);
+    });
+  }
+}
 var SLOT=15,SLOT_H=28;
 
 // Get total duration of a service (sum of all phases)
@@ -6047,8 +6060,15 @@ function rSettings(){
         h+='<button class="btn bs" style="font-size:10px" onclick="T['+ti+'].pause={o:\'12:00\',c:\'13:00\'};if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();go(\'settings\')">+ Ajouter</button>';
       }
       h+='</div>';
-      // Absences for this stylist
-      var stAbs=window.ABSENCES?window.ABSENCES.filter(function(a){return a.stId===st2.id}):[]; 
+      // Absences for this stylist - filtre les ouvertures/fermetures exceptionnelles passées
+      var stAbs=window.ABSENCES?window.ABSENCES.filter(function(a){
+        if(a.stId!==st2.id&&!(a.type==="fermeture_except"&&a.stId===null))return false;
+        // Pour les exceptionnelles à date unique, masquer si la date est passée
+        if((a.type==="fermeture_except"||a.type==="ouverture_except"||a.type==="absent_heures"||a.type==="pause")&&a.date&&a.date<TD)return false;
+        // Pour les congés/absences à plage, masquer si dateTo est passée
+        if((a.type==="conge"||a.type==="absent_jour")&&a.dateTo&&a.dateTo<TD)return false;
+        return true;
+      }):[];
       if(stAbs.length>0){
         h+='<div style="font-weight:700;font-size:13px;margin-top:12px;margin-bottom:4px">Absences / Cong\u00e9s</div>';
         for(var ai=0;ai<stAbs.length;ai++){
@@ -6137,13 +6157,13 @@ function rSettings(){
     h+='<div class="card"><div class="ct">Fond d\u0027\u00e9cran</div>';
     h+='<div class="fg"><label style="color:#fff;font-weight:700">Charger depuis l\u0027appareil</label><label style="display:block;padding:16px;border:2px dashed rgba(255,255,255,.4);border-radius:12px;text-align:center;cursor:pointer;color:#fff;font-size:14px;font-weight:700;background:rgba(255,255,255,.08)"><span style="font-size:28px;display:block;margin-bottom:4px">\ud83d\udcf7</span>Choisir une photo<input type="file" accept="image/*" style="display:none" onchange="loadWP(this)"></label></div>';
     h+='<div class="fg"><label style="color:#fff">Ou URL</label>';
-    h+='<input value="'+(APP_BG||"")+'" placeholder="https://..." onchange="APP_BG=this.value;var bg=document.getElementById(\'appBg\');if(bg)bg.style.backgroundImage=\'url(\'+this.value+\')\'"></div>';
+    h+='<input value="'+(APP_BG||"")+'" placeholder="https://..." onchange="APP_BG=this.value;var bg=document.getElementById(\'appBg\');if(bg)bg.style.backgroundImage=\'url(\'+this.value+\')\';saveAppBg()"></div>';
     h+='<div style="margin-top:10px"><label style="color:#fff;font-weight:700">Opacit\u00e9 : <span id="opV">'+(window._bgOp||100)+'</span>%</label><input type="range" min="30" max="100" value="'+(window._bgOp||100)+'" style="width:100%;margin-top:6px" oninput="window._bgOp=+this.value;document.getElementById(\'opV\').textContent=this.value;document.getElementById(\'appBg\').style.opacity=this.value/100"></div>';
     h+='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">';
     var bgs=["https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80","https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=800&q=80","https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?w=800&q=80",""];
     var bgL=["Salon 1","Salon 2","Salon 3","Aucun"];
     for(var i=0;i<bgs.length;i++){
-      h+='<button class="btn bs" style="flex:1;min-width:70px" onclick="APP_BG=\''+bgs[i]+'\';var bg=document.getElementById(\'appBg\');if(bg)bg.style.backgroundImage=APP_BG?\'url(\'+APP_BG+\')\':\'none\';go(\'settings\')">'+bgL[i]+'</button>';
+      h+='<button class="btn bs" style="flex:1;min-width:70px" onclick="APP_BG=\''+bgs[i]+'\';var bg=document.getElementById(\'appBg\');if(bg)bg.style.backgroundImage=APP_BG?\'url(\'+APP_BG+\')\':\'none\';saveAppBg();go(\'settings\')">'+bgL[i]+'</button>';
     }
     h+='</div></div>';
   }
@@ -6552,6 +6572,19 @@ function rSettings(){
   }
   else if(settTab==="documents"){
     h+='<div class="sec">\ud83d\udcc1 Documents justificatifs</div>';
+    // Charger l'état du verrouillage depuis Supabase (async, refresh si différent)
+    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId&&!window._docLockChecked){
+      window._docLockChecked=true;
+      _sb.from("salons").select("documents_locked").eq("id",_salonId).limit(1).then(function(r){
+        if(r.data&&r.data[0]){
+          var newLock=!!r.data[0].documents_locked;
+          if(newLock!==!!SALON_CONFIG.documents_locked){
+            SALON_CONFIG.documents_locked=newLock;
+            if(window._currentPage==="settings")go("settings");
+          }
+        }
+      });
+    }
     var verifStatus=SALON_CONFIG.verif||"pending";
     var verifMap={pending:{ico:"\u23f3",txt:"En attente",col:"var(--orange)"},pending_review:{ico:"\ud83d\udd0d",txt:"En cours de v\u00e9rification",col:"var(--blue)"},verified:{ico:"\u2705",txt:"V\u00e9rifi\u00e9",col:"var(--green)"},rejected:{ico:"\u274c",txt:"Rejet\u00e9",col:"var(--red)"},incomplete:{ico:"\ud83d\udcdd",txt:"Incomplet",col:"var(--orange)"}};
     var vs=verifMap[verifStatus]||verifMap.pending;
@@ -6559,7 +6592,12 @@ function rSettings(){
     // Kbis
     h+='<div class="card"><div class="ct">\ud83c\udfe2 Extrait Kbis ou avis INSEE</div>';
     if(SALON_CONFIG.docKbis){
-      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="'+SALON_CONFIG.docKbis+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="clearDoc(\'kbis\')">Remplacer</button></div>';
+      if(SALON_CONFIG.documents_locked){
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\ud83d\udd12</span><a href="'+SALON_CONFIG.docKbis+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" disabled style="padding:4px 10px;font-size:11px;opacity:.4;cursor:not-allowed">Verrouill\u00e9</button></div>';
+        h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">\u2705 Valid\u00e9 par l\'administration. Pour mettre \u00e0 jour, contactez le support.</div>';
+      }else{
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="'+SALON_CONFIG.docKbis+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="clearDoc(\'kbis\')">Remplacer</button></div>';
+      }
     }else{
       h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Document de moins de 3 mois (PDF, JPG ou PNG, max 5 Mo)</div>';
       h+='<input type="file" id="uploadKbis" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'kbis\',this)">';
@@ -6572,7 +6610,11 @@ function rSettings(){
     // Recto
     h+='<div style="margin-bottom:8px"><div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:4px">Recto (obligatoire)</div>';
     if(SALON_CONFIG.docId){
-      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="'+SALON_CONFIG.docId+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="SALON_CONFIG.docId=\'\';go(\'settings\')">Remplacer</button></div>';
+      if(SALON_CONFIG.documents_locked){
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\ud83d\udd12</span><a href="'+SALON_CONFIG.docId+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" disabled style="padding:4px 10px;font-size:11px;opacity:.4;cursor:not-allowed">Verrouill\u00e9</button></div>';
+      }else{
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="'+SALON_CONFIG.docId+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="SALON_CONFIG.docId=\'\';go(\'settings\')">Remplacer</button></div>';
+      }
     }else{
       h+='<input type="file" id="uploadId" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id\',this)">';
       h+='<button class="btn" style="width:100%;padding:12px;background:rgba(200,168,78,.08);border:2px dashed rgba(200,168,78,.3);color:var(--gold);font-weight:700;font-size:13px" onclick="document.getElementById(\'uploadId\').click()">\ud83d\udcc4 S\u00e9lectionner le recto</button>';
@@ -6581,7 +6623,11 @@ function rSettings(){
     // Verso
     h+='<div><div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:4px">Verso (optionnel)</div>';
     if(SALON_CONFIG.docIdVerso){
-      h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="'+SALON_CONFIG.docIdVerso+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="SALON_CONFIG.docIdVerso=\'\';go(\'settings\')">Remplacer</button></div>';
+      if(SALON_CONFIG.documents_locked){
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\ud83d\udd12</span><a href="'+SALON_CONFIG.docIdVerso+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" disabled style="padding:4px 10px;font-size:11px;opacity:.4;cursor:not-allowed">Verrouill\u00e9</button></div>';
+      }else{
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="'+SALON_CONFIG.docIdVerso+'" target="_blank" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="SALON_CONFIG.docIdVerso=\'\';go(\'settings\')">Remplacer</button></div>';
+      }
     }else{
       h+='<input type="file" id="uploadIdVerso" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id_verso\',this)">';
       h+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,255,255,.03);border:2px dashed rgba(255,255,255,.1);color:var(--text3);font-weight:700;font-size:13px" onclick="document.getElementById(\'uploadIdVerso\').click()">\ud83d\udcc4 Ajouter le verso</button>';
@@ -16221,6 +16267,13 @@ function initApp(){
           if(cfg.sms_config&&typeof cfg.sms_config==="object"){
             window.SMS_CONFIG=cfg.sms_config;
             try{localStorage.setItem("_cp_sms_config",JSON.stringify(window.SMS_CONFIG));}catch(e){}
+          }
+          // Restaurer le fond d'écran
+          if(typeof cfg.app_bg!=="undefined"){
+            APP_BG=cfg.app_bg||"";
+            try{localStorage.setItem("_cp_app_bg",APP_BG);}catch(e){}
+            var _bgEl=document.getElementById("appBg");
+            if(_bgEl)_bgEl.style.backgroundImage=APP_BG?"url("+APP_BG+")":"none";
           }
         }catch(e){}
       }else{
