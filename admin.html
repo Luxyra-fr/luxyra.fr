@@ -68,7 +68,11 @@ tr:hover{background:rgba(255,255,255,.02)}
 .dp-overlay{position:fixed;inset:0;z-index:200;display:none}
 .dp-overlay.open{display:flex}
 .dp-bg{position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)}
-.dp-panel{position:absolute;right:0;top:0;bottom:0;width:480px;max-width:100%;background:var(--bg2);border-left:1px solid var(--border);padding:24px;overflow-y:auto}
+.dp-panel{position:absolute;right:0;top:0;bottom:0;width:480px;max-width:100%;background:var(--bg2);border-left:1px solid var(--border);padding:24px;overflow-y:auto;transform:translateX(100%);transition:transform .28s cubic-bezier(.2,.8,.2,1),width .28s cubic-bezier(.2,.8,.2,1)}
+.dp-overlay.open .dp-panel{transform:translateX(0)}
+.dp-overlay.fullscreen .dp-panel{width:100%;max-width:100%}
+.dp-expand{background:none;border:1px solid var(--border);color:var(--text2);font-size:14px;cursor:pointer;padding:6px 10px;border-radius:8px;margin-right:6px;transition:all .15s}
+.dp-expand:hover{border-color:var(--gold);color:var(--gold)}
 .dp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .dp-close{background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:8px}
 .dp-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}
@@ -125,12 +129,12 @@ tr:hover{background:rgba(255,255,255,.02)}
     </div>
   </div>
   <div class="sb-nav">
-    <div class="sb-item active" onclick="nav('cockpit')"><span class="icon">📊</span>Cockpit<span class="sb-badge" id="badgeAlerts"></span></div>
-    <div class="sb-item" onclick="nav('salons')"><span class="icon">🏠</span>Établissements<span class="sb-badge" id="badgeSalons"></span></div>
-    <div class="sb-item" onclick="nav('inscriptions')"><span class="icon">📝</span>Inscriptions<span class="sb-badge" id="badgeInscr"></span></div>
-    <div class="sb-item" onclick="nav('demandes')"><span class="icon">📩</span>Demandes<span class="sb-badge" id="badgeDemandes"></span></div>
-    <div class="sb-item" onclick="nav('finances')"><span class="icon">💰</span>Finances</div>
-    <div class="sb-item" onclick="nav('systeme')"><span class="icon">⚙️</span>Système</div>
+    <div class="sb-item active" data-tab="cockpit" onclick="nav('cockpit')"><span class="icon">📊</span>Cockpit<span class="sb-badge" id="badgeAlerts"></span></div>
+    <div class="sb-item" data-tab="salons" onclick="nav('salons','liste')"><span class="icon">🏠</span>Salons<span class="sb-badge" id="badgeSalons"></span></div>
+    <div class="sb-item" data-tab="finance" onclick="nav('finance','revenus')"><span class="icon">💰</span>Finance</div>
+    <div class="sb-item" data-tab="communication" onclick="nav('communication','chat')"><span class="icon">💬</span>Communication<span class="sb-badge" id="badgeChat"></span></div>
+    <div class="sb-item" data-tab="analytics" onclick="nav('analytics','kpis')"><span class="icon">📈</span>Analytics</div>
+    <div class="sb-item" data-tab="parametres" onclick="nav('parametres','admin')"><span class="icon">⚙️</span>Paramètres</div>
   </div>
   <div class="sb-footer">
     <div><strong>Luxyra Admin</strong> v4.0</div>
@@ -174,7 +178,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadData();loadDemandes();loadInscriptions();document.querySelector(".sidebar").style.display="flex";render();return;}
+      if(c.data){_online=true;await loadData();loadDemandes();loadInscriptions();await loadShortcuts();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
     }
   }catch(e){}
   showLogin();
@@ -201,7 +205,7 @@ async function doLogin(){
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
-  await loadData();loadDemandes();loadInscriptions();render();
+  await loadData();loadDemandes();loadInscriptions();await loadShortcuts();bootRoute();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
@@ -230,7 +234,7 @@ async function loadData(){
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
           trialEnd:s.trial_end,color:colors[i%colors.length],
           smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,
-          isFree:s.is_free||false,freeUntil:s.free_until,
+          isFree:s.is_free||false,freeUntil:s.free_until,customPrice:s.custom_price_amount,
           contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||""};
       });
       for(var i=0;i<SALONS.length;i++){
@@ -277,45 +281,92 @@ async function loadInscriptions(){
 }
 
 // ===== NAV =====
-function nav(v){
-  // Router 6 onglets — mapping vers les vues internes existantes
-  var subDefault={cockpit:'dashboard',finances:'revenue',systeme:'settings'};
-  var legacy2tab={dashboard:'cockpit',alerts:'cockpit',revenue:'finances',sms:'finances',settings:'systeme',nf525:'systeme'};
-  var tab=legacy2tab[v]||v;
-  var sub=(v in legacy2tab)?v:(subDefault[tab]||tab);
-  window._currentTab=tab;curPage=sub;
-  document.querySelectorAll('.sb-item').forEach(function(e){e.classList.remove('active')});
-  var idx={cockpit:0,salons:1,inscriptions:2,demandes:3,finances:4,systeme:5}[tab];
-  var items=document.querySelectorAll('.sb-item');
-  if(idx!=null&&items[idx])items[idx].classList.add('active');
+// Router 6 onglets v2 — nav(tab, sub) avec ?tab=&sub= et back/forward
+// Rétrocompat : anciens nav('dashboard'), nav('inscriptions'), nav('demandes'), nav('sms'), nav('nf525'), nav('settings'), nav('alerts'), nav('revenue'), nav('finances'), nav('systeme')
+var LEGACY_NAV={
+  dashboard:['cockpit',null], alerts:['cockpit',null],
+  inscriptions:['salons','inscriptions'], demandes:['salons','demandes'],
+  finances:['finance','revenus'], revenue:['finance','revenus'], nf525:['finance','nf525'],
+  sms:['communication','sms'],
+  systeme:['parametres','admin'], settings:['parametres','admin']
+};
+var DEFAULT_SUB={cockpit:null,salons:'liste',finance:'revenus',communication:'chat',analytics:'kpis',parametres:'admin'};
+function nav(tab, sub, _fromPop){
+  // Rétrocompat 1-arg : si tab est une clé legacy, on remappe
+  if(arguments.length===1 && LEGACY_NAV[tab]){var m=LEGACY_NAV[tab];tab=m[0];sub=m[1];}
+  if(!tab) tab='cockpit';
+  if(typeof sub==='undefined' || sub===null) sub=DEFAULT_SUB[tab]||null;
+  window._currentTab=tab; window._currentSub=sub; curPage=sub||tab;
+  // URL sync
+  if(!_fromPop){
+    try{
+      var qs='?tab='+encodeURIComponent(tab)+(sub?'&sub='+encodeURIComponent(sub):'');
+      history.pushState({tab:tab,sub:sub}, '', qs);
+    }catch(e){}
+  }
+  // Active state sidebar
+  document.querySelectorAll('.sb-item').forEach(function(e){
+    e.classList.toggle('active', e.getAttribute('data-tab')===tab);
+  });
   if(window.innerWidth<900){var sb=document.querySelector('.sidebar');if(sb)sb.classList.remove('open');}
   render();
+}
+window.addEventListener('popstate', function(e){
+  var s=e.state||{};
+  var p=new URLSearchParams(location.search);
+  nav(s.tab||p.get('tab')||'cockpit', s.sub||p.get('sub')||null, true);
+});
+function bootRoute(){
+  var p=new URLSearchParams(location.search);
+  var t=p.get('tab')||'cockpit';
+  var s=p.get('sub')||null;
+  nav(t, s, true);
+  // Replace state pour que back/forward fonctionne dès le premier changement
+  try{history.replaceState({tab:t,sub:s}, '', '?tab='+encodeURIComponent(t)+(s?'&sub='+encodeURIComponent(s):''));}catch(e){}
 }
 
 function render(){
   var tab=window._currentTab||'cockpit';
+  var sub=window._currentSub||DEFAULT_SUB[tab]||null;
   var h="";
+  // Helper sous-onglets
+  function subBar(items){
+    var x='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+    items.forEach(function(it){
+      var act=(sub===it.id);
+      x+='<button class="tb-btn" style="'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" onclick="nav(\''+tab+'\',\''+it.id+'\')">'+it.label+'</button>';
+    });
+    return x+'</div>';
+  }
   if(tab==='cockpit'){
     h=rDashboard();
     h+='<div style="margin-top:24px">'+rAlerts()+'</div>';
-  } else if(tab==='salons'){h=rSalons();}
-  else if(tab==='inscriptions'){h=rInscriptions();}
-  else if(tab==='demandes'){h=rDemandes();}
-  else if(tab==='finances'){
-    var subF=(curPage==='sms')?'sms':'revenue';
-    h='<div style="display:flex;gap:8px;margin-bottom:16px">'
-     +'<button class="td-btn" style="'+(subF==='revenue'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'revenue\';render()">💰 Revenus</button>'
-     +'<button class="td-btn" style="'+(subF==='sms'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'sms\';render()">📱 SMS</button>'
-     +'</div>';
-    h+=(subF==='sms')?rSMS():rRevenue();
   }
-  else if(tab==='systeme'){
-    var subS=(curPage==='nf525')?'nf525':'settings';
-    h='<div style="display:flex;gap:8px;margin-bottom:16px">'
-     +'<button class="td-btn" style="'+(subS==='settings'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'settings\';render()">⚙️ Paramètres</button>'
-     +'<button class="td-btn" style="'+(subS==='nf525'?'background:var(--gold-bg);border-color:var(--gold)':'')+'" onclick="curPage=\'nf525\';render()">🛡️ NF525 / RGPD</button>'
-     +'</div>';
-    h+=(subS==='nf525')?rNF525():rSettings();
+  else if(tab==='salons'){
+    h=subBar([{id:'liste',label:'🏠 Liste'},{id:'inscriptions',label:'📝 Inscriptions'},{id:'demandes',label:'📩 Demandes essai'}]);
+    if(sub==='inscriptions') h+=rInscriptions();
+    else if(sub==='demandes') h+=rDemandes();
+    else h+=rSalons();
+  }
+  else if(tab==='finance'){
+    h=subBar([{id:'revenus',label:'💰 Revenus'},{id:'clotures',label:'📋 Clôtures Z'},{id:'nf525',label:'🛡️ NF525'}]);
+    if(sub==='nf525') h+=rNF525();
+    else if(sub==='clotures') h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">📋</div><div style="margin-top:12px;color:var(--text2)">Clôtures Z — à venir Livraison 2</div></div>';
+    else h+=rRevenue();
+  }
+  else if(tab==='communication'){
+    h=subBar([{id:'chat',label:'💬 Chat support'},{id:'sms',label:'📱 Packs SMS'},{id:'email',label:'✉️ Email'}]);
+    if(sub==='sms') h+=rSMS();
+    else if(sub==='email') h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">✉️</div><div style="margin-top:12px;color:var(--text2)">Templates Email — à venir Livraison 2</div></div>';
+    else h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">💬</div><div style="margin-top:12px;color:var(--text2)">Chat support — à venir Livraison 2</div></div>';
+  }
+  else if(tab==='analytics'){
+    h=subBar([{id:'kpis',label:'📊 KPIs'},{id:'cohorts',label:'👥 Cohortes'},{id:'funnel',label:'🔻 Funnel'}]);
+    h+='<div class="kpi" style="text-align:center;padding:40px"><div style="font-size:40px;opacity:.3">📈</div><div style="margin-top:12px;color:var(--text2)">Analytics — à venir Livraison 2</div></div>';
+  }
+  else if(tab==='parametres'){
+    h=subBar([{id:'admin',label:'👤 Admins'},{id:'legal',label:'⚖️ Légal'},{id:'system',label:'🔧 Système'}]);
+    h+=rSettings();
   }
   var mc=document.getElementById("mainContent");if(mc)mc.innerHTML=h;
   var st=document.getElementById("onlineStatus");
@@ -323,33 +374,142 @@ function render(){
 }
 
 // ===== DASHBOARD =====
-function rDashboard(){
-  var active=SALONS.filter(function(s){return s.status==="active";}).length;
-  var trial=SALONS.filter(function(s){return s.status==="trial";}).length;
-  var pendingV=SALONS.filter(function(s){return s.verif!=="verified";}).length;
-  var mrr=0;SALONS.forEach(function(s){if((s.status==="active"||s.status==="past_due")&&!s.isFree)mrr+=gPlan(s.plan).prix;});
-  var h='<div class="topbar"><h1>Dashboard <span>Vue d’ensemble</span></h1></div>';
-  h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">Établissements</div><div class="kpi-value" style="color:var(--blue)">'+SALONS.length+'</div><div class="kpi-sub">Total inscrits</div><div class="kpi-icon">🏠</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements actifs</div><div class="kpi-icon">✅</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">En essai</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
-  if(pendingV>0)h+='<div class="kpi"><div class="kpi-label">Non vérifiés</div><div class="kpi-value" style="color:var(--red)">'+pendingV+'</div><div class="kpi-sub">Documents à contrôler</div><div class="kpi-icon">📋</div></div>';
-  var cs=window.ADMIN_CARTES_STATS||{total:0,eco:0,ca:0};
-  if(cs.total>0)h+='<div class="kpi"><div class="kpi-label">Cartes abo</div><div class="kpi-value" style="color:#4caf50">'+cs.total+'</div><div class="kpi-sub">Actives \u2022 CA: '+fmtM(cs.ca)+' \u2022 \u00c9co: '+fmtM(cs.eco)+'</div><div class="kpi-icon">\ud83d\udcb3</div></div>';
-  h+='</div>';
-  var nd=DEMANDES.filter(function(d){return d.status==="new";});
-  if(nd.length){
-    h+='<div class="card"><h3>📩 Nouvelles demandes ('+nd.length+')</h3>';
-    nd.slice(0,5).forEach(function(d){
-      h+='<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span><strong>'+(d.nom_salon||d.nom_etablissement||"?")+'</strong> — '+(d.ville||"")+'</span><span style="color:var(--text3)">'+fmtD(d.created_at)+'</span></div>';
-    });
-    h+='<button class="tb-btn" style="margin-top:12px" onclick="nav(&#39;demandes&#39;)">Voir toutes les demandes</button></div>';
+// ===== COCKPIT HELPERS =====
+// MRR par salon — logique : is_free actif → 0 ; sinon customPrice si non null sinon PLANS[plan].prix
+function mrrOf(s){
+  if(s.status!=='active'&&s.status!=='past_due')return 0;
+  if(s.isFree){
+    if(!s.freeUntil)return 0;
+    if(new Date(s.freeUntil)>new Date())return 0;
   }
-  h+='<div class="card"><h3>🏠 Derniers inscrits</h3>';
-  SALONS.slice().sort(function(a,b){return new Date(b.created)-new Date(a.created);}).slice(0,5).forEach(function(s){
-    h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+s.ville+'</div></div></div><div>'+planB(s.plan)+' '+statusB(s.status)+'</div></div>';
+  if(s.customPrice!=null&&s.customPrice!=='')return Number(s.customPrice)||0;
+  return gPlan(s.plan).prix||0;
+}
+function mrrTotal(){var t=0;SALONS.forEach(function(s){t+=mrrOf(s);});return t;}
+// MRR rétro 12 mois — pour chaque mois M, on simule "salons existants à fin M qui auraient payé"
+function mrr12(){
+  var out=[],now=new Date();
+  for(var i=11;i>=0;i--){
+    var d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    var endM=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
+    var t=0;
+    SALONS.forEach(function(s){
+      if(!s.created)return;
+      if(new Date(s.created)>endM)return;
+      // Approximation rétro : on applique mrrOf actuel si le salon existait
+      t+=mrrOf(s);
+    });
+    out.push({label:['Jan','Fév','Mar','Avr','Mai','Juin','Jui','Aoû','Sep','Oct','Nov','Déc'][d.getMonth()],value:t});
+  }
+  return out;
+}
+// SVG MRR 12 mois — noir/doré, sans Chart.js
+function svgMRR(data){
+  var W=720,H=200,P=32,n=data.length;
+  var max=Math.max.apply(null,data.map(function(d){return d.value;}));max=max||1;
+  var bw=(W-P*2)/n*0.7,gap=(W-P*2)/n*0.3;
+  var bars='',labels='',values='';
+  data.forEach(function(d,i){
+    var x=P+i*((W-P*2)/n)+gap/2;
+    var bh=(d.value/max)*(H-P*2);
+    var y=H-P-bh;
+    bars+='<rect x="'+x+'" y="'+y+'" width="'+bw+'" height="'+bh+'" rx="3" fill="url(#gold-grad)" opacity="0.85"><title>'+d.label+': '+fmtM(d.value)+'</title></rect>';
+    labels+='<text x="'+(x+bw/2)+'" y="'+(H-12)+'" text-anchor="middle" fill="var(--text3)" font-size="10" font-family="var(--mono)">'+d.label+'</text>';
+    if(d.value>0)values+='<text x="'+(x+bw/2)+'" y="'+(y-4)+'" text-anchor="middle" fill="var(--gold)" font-size="9" font-family="var(--mono)" font-weight="700">'+Math.round(d.value)+'</text>';
   });
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block"><defs><linearGradient id="gold-grad" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#d4a843"/><stop offset="1" stop-color="#b8960f"/></linearGradient></defs>'+bars+labels+values+'</svg>';
+}
+// Raccourcis
+window.ADMIN_SHORTCUTS=[];
+async function loadShortcuts(){
+  if(!_sb||!_uid)return;
+  try{
+    var r=await _sb.from('admin_shortcuts').select('*').eq('admin_user_id',_uid).order('position',{ascending:true});
+    if(r.data&&r.data.length){window.ADMIN_SHORTCUTS=r.data;return;}
+    // Seed initial
+    var seed=[
+      {label:'Nouveau salon',icon:'➕',action_url:'#new-salon',position:0},
+      {label:'Demandes en attente',icon:'📋',action_url:'?tab=salons&sub=inscriptions&filter=pending',position:1},
+      {label:'Essais expirant <7j',icon:'⏰',action_url:'?tab=salons&sub=liste&filter=trial-expiring',position:2},
+      {label:'Support non lu',icon:'💬',action_url:'?tab=communication&sub=chat&filter=unread',position:3},
+      {label:'Z du jour',icon:'📊',action_url:'?tab=finance&sub=clotures&date=today',position:4}
+    ];
+    var rows=seed.map(function(x){return Object.assign({admin_user_id:_uid},x);});
+    var ins=await _sb.from('admin_shortcuts').insert(rows).select();
+    window.ADMIN_SHORTCUTS=ins.data||rows;
+  }catch(e){console.warn('shortcuts',e);window.ADMIN_SHORTCUTS=[];}
+}
+function shortcutClick(url){
+  if(url==='#new-salon'){addModal();return;}
+  // Parse query string et appelle nav()
+  var q=url.replace(/^\?/,''),p={};
+  q.split('&').forEach(function(kv){var a=kv.split('=');p[a[0]]=decodeURIComponent(a[1]||'');});
+  nav(p.tab||'cockpit',p.sub||null);
+}
+
+function rDashboard(){
+  var now=new Date();
+  var active=SALONS.filter(function(s){return s.status==='active';}).length;
+  var trial=SALONS.filter(function(s){return s.status==='trial';}).length;
+  var pendingInscr=INSCRIPTIONS.filter(function(i){return (i.status||'pending')==='pending';}).length;
+  var unreadChat=window.ADMIN_UNREAD_CHAT||0;
+  var mrr=mrrTotal();
+  var caCum=mrr*12; // estimation annuelle
+  // À traiter aujourd'hui
+  var trialExp=SALONS.filter(function(s){
+    if(s.status!=='trial'||!s.trialEnd)return false;
+    var d=(new Date(s.trialEnd)-now)/86400000;
+    return d>=0&&d<3;
+  });
+  var pendingVerif=SALONS.filter(function(s){return s.verif==='pending_review';});
+  var todoCount=pendingInscr+unreadChat+trialExp.length+pendingVerif.length;
+
+  var h='<div class="topbar"><h1>Cockpit <span>Vue temps réel</span></h1><div style="font-size:12px;color:var(--text3);font-family:var(--mono)">'+fmtD(now.toISOString())+'</div></div>';
+  // KPIs (6)
+  h+='<div class="kpi-row">';
+  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Salons actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements en cours</div><div class="kpi-icon">✅</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">Essais en cours</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
+  h+='<div class="kpi" style="cursor:pointer" onclick="nav(\'salons\',\'inscriptions\')"><div class="kpi-label">Inscriptions pending</div><div class="kpi-value" style="color:var(--blue)">'+pendingInscr+'</div><div class="kpi-sub">À traiter</div><div class="kpi-icon">📝</div></div>';
+  h+='<div class="kpi" style="cursor:pointer" onclick="nav(\'communication\',\'chat\')"><div class="kpi-label">Support non lu</div><div class="kpi-value" style="color:'+(unreadChat>0?'var(--red)':'var(--text2)')+'">'+unreadChat+'</div><div class="kpi-sub">Messages clients</div><div class="kpi-icon">💬</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">CA cumulé estimé</div><div class="kpi-value" style="color:var(--purple)">'+fmtM(caCum)+'</div><div class="kpi-sub">Projection 12 mois</div><div class="kpi-icon">📈</div></div>';
+  h+='</div>';
+
+  // À traiter aujourd'hui
+  h+='<div class="card"><h3>🎯 À traiter aujourd’hui <span style="color:var(--text3);font-weight:500">('+todoCount+')</span></h3>';
+  if(todoCount===0){
+    h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">✨ Tout est à jour, rien à traiter.</div>';
+  }else{
+    if(pendingInscr>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'inscriptions\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📝</span><span style="flex:1"><strong>'+pendingInscr+'</strong> demande'+(pendingInscr>1?'s':'')+' d’inscription en attente</span><span style="color:var(--gold)">→</span></div>';
+    if(unreadChat>0)h+='<div class="todo-row" onclick="nav(\'communication\',\'chat\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">💬</span><span style="flex:1"><strong>'+unreadChat+'</strong> message'+(unreadChat>1?'s':'')+' support non lu</span><span style="color:var(--gold)">→</span></div>';
+    if(trialExp.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">⏰</span><span style="flex:1"><strong>'+trialExp.length+'</strong> essai'+(trialExp.length>1?'s':'')+' expire'+(trialExp.length>1?'nt':'')+' dans &lt;3j</span><span style="color:var(--gold)">→</span></div>';
+    if(pendingVerif.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;cursor:pointer"><span style="font-size:18px">🛡️</span><span style="flex:1"><strong>'+pendingVerif.length+'</strong> vérification'+(pendingVerif.length>1?'s':'')+' KBIS/ID en attente</span><span style="color:var(--gold)">→</span></div>';
+  }
+  h+='</div>';
+
+  // Raccourcis
+  h+='<div class="card" style="margin-top:16px"><h3>⚡ Raccourcis</h3><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:8px">';
+  (window.ADMIN_SHORTCUTS||[]).forEach(function(sc){
+    h+='<button class="tb-btn" style="padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left" onclick="shortcutClick(\''+(sc.action_url||'').replace(/\x27/g,'\\\x27')+'\')"><span style="font-size:20px">'+(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+(sc.label||'')+'</span></button>';
+  });
+  h+='</div></div>';
+
+  // Graphe MRR 12 mois
+  h+='<div class="card" style="margin-top:16px"><h3>📊 MRR — 12 derniers mois</h3>'+svgMRR(mrr12())+'</div>';
+
+  // Activité récente
+  h+='<div class="card" style="margin-top:16px"><h3>🕐 Activité récente</h3>';
+  var events=[];
+  SALONS.slice().sort(function(a,b){return new Date(b.created)-new Date(a.created);}).slice(0,3).forEach(function(s){
+    events.push({icon:'🏠',txt:'Nouveau salon : '+s.nom+' ('+s.ville+')',date:s.created});
+  });
+  INSCRIPTIONS.slice(0,2).forEach(function(i){
+    events.push({icon:'📝',txt:'Inscription : '+(i.nom_etablissement||i.email||'?'),date:i.created_at});
+  });
+  events.sort(function(a,b){return new Date(b.date)-new Date(a.date);}).slice(0,5).forEach(function(e){
+    h+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span>'+e.icon+'</span><span style="flex:1">'+e.txt+'</span><span style="color:var(--text3);font-size:11px;font-family:var(--mono)">'+fmtD(e.date)+'</span></div>';
+  });
+  if(events.length===0)h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucune activité récente</div>';
   h+='</div>';
   return h;
 }
@@ -392,7 +552,7 @@ function filterS(){
 function openD(id){
   var s=gSalon(id);if(!s)return;
   window._curSalonId=id;
-  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+s.nom+'</div><div style="font-size:11px;color:var(--text3)">'+(s.ville||"")+'</div></div></div><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div>';
+  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+s.nom+'</div><div style="font-size:11px;color:var(--text3)">'+(s.ville||"")+'</div></div></div><div style="display:flex;align-items:center"><button class="dp-expand" onclick="toggleDrawerFull()" title="Plein écran" id="dpExpandBtn">⛶</button><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div></div>';
   h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
 
   // VERIFICATION
@@ -539,33 +699,111 @@ function openD(id){
   document.getElementById("detailPanel").innerHTML=h;
   document.getElementById("detailOverlay").classList.add("open");
 }
-function closeDetail(){document.getElementById("detailOverlay").classList.remove("open");}
+function closeDetail(){
+  var ov=document.getElementById("detailOverlay");
+  if(!ov)return;
+  ov.classList.remove("open");
+  ov.classList.remove("fullscreen");
+  window._curSalonId=null;
+}
+function toggleDrawerFull(){
+  var ov=document.getElementById("detailOverlay");
+  if(!ov)return;
+  ov.classList.toggle("fullscreen");
+  var btn=document.getElementById("dpExpandBtn");
+  if(btn)btn.textContent=ov.classList.contains("fullscreen")?"⛶":"⛶";
+  if(btn)btn.title=ov.classList.contains("fullscreen")?"Réduire":"Plein écran";
+}
+// Escape ferme le drawer ou la modale
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'){
+    var ov=document.getElementById("detailOverlay");
+    if(ov&&ov.classList.contains("open"))closeDetail();
+  }
+});
 
 async function deleteSalonCascade(id){
-  // Purge cascade : enfants → parents. Try/catch par table pour tolérer les schémas variables.
+  // Cascade déterministe Phase 1 — ordre figé enfants → parents.
+  // Chaque étape try/catch indépendante pour ne pas bloquer la chaîne.
   if(!_online||!id)return{ok:false,err:"offline"};
-  var tables=[
-    "appointments","tickets","ticket_lines","cash_movements","z_closures",
-    "rdv_online","clients_online","clients_beautypro","photos_clients",
-    "sms_queue","sms_logs","email_logs","cartes_abonnement","cartes_passages",
-    "gift_cards","gift_transactions","loyalty_points","forfaits","forfait_phases",
-    "absences","horaires","collaborateurs","services","produits","stock_movements",
-    "inscriptions_log","webhook_events","nf525_events"
-  ];
-  var purged=[],failed=[];
-  for(var i=0;i<tables.length;i++){
-    var t=tables[i];
-    try{
-      var r=await _sb.from(t).delete().eq("salon_id",id);
-      if(r.error){failed.push(t+":"+r.error.message);}else{purged.push(t);}
-    }catch(e){failed.push(t+":"+(e.message||"err"));}
+  var s=gSalon(id);
+  var purged=[],failed=[],steps=[];
+  async function step(name,fn){
+    try{var r=await fn();if(r&&r.error){failed.push(name+':'+r.error.message);steps.push({name:name,ok:false,err:r.error.message});}
+    else{purged.push(name);steps.push({name:name,ok:true});}}
+    catch(e){failed.push(name+':'+(e.message||'err'));steps.push({name:name,ok:false,err:e.message||'err'});}
   }
-  // Suppression du salon lui-même
-  var rs=await _sb.from("salons").delete().eq("id",id);
-  if(rs.error)return{ok:false,err:"salons:"+rs.error.message,purged:purged,failed:failed};
-  // Note: la suppression du compte auth.users nécessite la service_role key (côté Edge Function)
-  // Ici on supprime juste les données métier. Le compte auth restera orphelin (à purger via cron ou manuellement).
-  return{ok:true,purged:purged,failed:failed};
+  // 1. support_messages
+  await step('support_messages',function(){return _sb.from('support_messages').delete().eq('salon_id',id);});
+  // 2. support_conversations
+  await step('support_conversations',function(){return _sb.from('support_conversations').delete().eq('salon_id',id);});
+  // 3. salon_promotions
+  await step('salon_promotions',function(){return _sb.from('salon_promotions').delete().eq('salon_id',id);});
+  // 4. salon_admin_notes
+  await step('salon_admin_notes',function(){return _sb.from('salon_admin_notes').delete().eq('salon_id',id);});
+  // 5. admin_shortcuts (où action_url référence ce salon — best effort, table indexée par admin_user_id)
+  // Pas de filtre salon_id sur cette table : on ne purge rien ici, c'est lié à l'admin pas au salon. Skip.
+  // 6. cartes_abo_clients
+  await step('cartes_abo_clients',function(){return _sb.from('cartes_abo_clients').delete().eq('salon_id',id);});
+  // 7. Tables métier (sécurité — appointments, tickets, etc.)
+  var metierTables=['appointments','tickets','ticket_lines','cash_movements','z_closures','rdv_online','clients_online','photos_clients','sms_queue','sms_logs','email_logs','cartes_abonnement','cartes_passages','gift_cards','gift_transactions','loyalty_points','forfaits','forfait_phases','absences','horaires','services','produits','stock_movements','webhook_events','nf525_events'];
+  for(var i=0;i<metierTables.length;i++){
+    var t=metierTables[i];
+    await step(t,(function(t){return function(){return _sb.from(t).delete().eq('salon_id',id);};})(t));
+  }
+  // 8. clients (clients_beautypro)
+  await step('clients_beautypro',function(){return _sb.from('clients_beautypro').delete().eq('salon_id',id);});
+  await step('clients',function(){return _sb.from('clients').delete().eq('salon_id',id);});
+  // 9. collaborateurs
+  await step('collaborateurs',function(){return _sb.from('collaborateurs').delete().eq('salon_id',id);});
+  // 10. admin_log (entrées du salon)
+  await step('admin_log',function(){return _sb.from('admin_log').delete().eq('salon_id',id);});
+  // 11. inscriptions_log (par email du salon)
+  if(s&&s.email){
+    await step('inscriptions_log',function(){return _sb.from('inscriptions_log').delete().eq('email',s.email);});
+  }
+  // 12. Storage : documents/{id}/*
+  try{
+    var list=await _sb.storage.from('salon-documents').list('documents/'+id);
+    if(list&&list.data&&list.data.length){
+      var paths=list.data.map(function(f){return 'documents/'+id+'/'+f.name;});
+      var rm=await _sb.storage.from('salon-documents').remove(paths);
+      if(rm&&rm.error){failed.push('storage:'+rm.error.message);steps.push({name:'storage',ok:false,err:rm.error.message});}
+      else{purged.push('storage('+paths.length+')');steps.push({name:'storage',ok:true,count:paths.length});}
+    }else{steps.push({name:'storage',ok:true,count:0});}
+  }catch(e){failed.push('storage:'+(e.message||'err'));steps.push({name:'storage',ok:false,err:e.message});}
+  // 13. salons (la ligne principale)
+  var rs=await _sb.from('salons').delete().eq('id',id);
+  if(rs.error)return{ok:false,err:'salons:'+rs.error.message,purged:purged,failed:failed,steps:steps};
+  steps.push({name:'salons',ok:true});
+  // 14. auth.admin.deleteUser via Worker (service_role côté serveur)
+  if(s&&s.userId){
+    try{
+      var r=await fetch('/api/admin/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:s.userId})});
+      steps.push({name:'auth.deleteUser',ok:r.ok});
+      if(!r.ok)failed.push('auth.deleteUser:'+r.status);
+    }catch(e){failed.push('auth.deleteUser:'+(e.message||'err'));steps.push({name:'auth.deleteUser',ok:false});}
+  }
+  // 15. Log final SALON_DELETED_CASCADE
+  try{
+    await _sb.from('admin_log').insert({admin_user_id:_uid,action:'SALON_DELETED_CASCADE',target_id:id,details:JSON.stringify({nom:s&&s.nom,email:s&&s.email,purged:purged.length,failed:failed.length,steps:steps})});
+  }catch(e){}
+  return{ok:true,purged:purged,failed:failed,steps:steps};
+}
+
+// Wrapper avec double confirmation — appelé depuis la fiche salon
+async function confirmDeleteSalon(id){
+  var s=gSalon(id);if(!s)return;
+  if(!confirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, documents, compte auth).\n\nContinuer ?'))return;
+  var word=prompt('Pour confirmer, tapez exactement le nom du salon :\n\n'+s.nom);
+  if(word!==s.nom){alert('❌ Nom incorrect, suppression annulée');return;}
+  var res=await deleteSalonCascade(id);
+  if(res.ok){
+    alert('🗑️ Salon supprimé\n\nÉtapes OK : '+res.purged.length+'\nÉchecs ignorés : '+res.failed.length+(res.failed.length?'\n\nDétails : '+res.failed.slice(0,5).join('\n'):''));
+    closeDetail();await loadData();render();
+  }else{
+    alert('❌ Erreur critique : '+res.err);
+  }
 }
 
 async function actS(id,act){
@@ -575,10 +813,7 @@ async function actS(id,act){
   else if(act==="extend"){var d=new Date(s.trialEnd||new Date());d.setDate(d.getDate()+7);await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id);alert("⏰ Essai prolongé de 7 jours");}
   else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!confirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?"))return;await _sb.from("salons").update({plan:np}).eq("id",id);alert("📦 Plan changé en "+np);}
   else if(act==="reset"){await _sb.auth.resetPasswordForEmail(s.email);alert("🔑 Lien de réinitialisation envoyé à "+s.email);return;}
-  else if(act==="delete"){if(!confirm("ATTENTION : Supprimer définitivement "+s.nom+" et TOUTES ses données ?"))return;
-    // Supprimer le compte auth via Worker
-    if(s.userId){try{await fetch("/api/admin/delete-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:s.userId})});}catch(e){}}
-    var res=await deleteSalonCascade(id);if(res.ok){alert("🗑️ Salon supprimé\n\nTables purgées : "+res.purged.length+(res.failed.length?"\nÉchecs (ignorés) : "+res.failed.length:""));closeDetail();}else{alert("❌ Erreur suppression : "+res.err);return;}}
+  else if(act==="delete"){await confirmDeleteSalon(id);return;}
   await loadData();render();if(act!=="delete")openD(id);
 }
 
