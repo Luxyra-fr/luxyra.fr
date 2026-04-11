@@ -125,17 +125,12 @@ tr:hover{background:rgba(255,255,255,.02)}
     </div>
   </div>
   <div class="sb-nav">
-    <div class="sb-item active" onclick="nav('dashboard')"><span class="icon">📊</span>Dashboard</div>
+    <div class="sb-item active" onclick="nav('cockpit')"><span class="icon">📊</span>Cockpit<span class="sb-badge" id="badgeAlerts"></span></div>
     <div class="sb-item" onclick="nav('salons')"><span class="icon">🏠</span>Établissements<span class="sb-badge" id="badgeSalons"></span></div>
-    <div class="sb-item" onclick="nav('inscriptions')"><span class="icon">📝</span>Inscriptions<span class="sb-badge" id="badgeInscrip"></span></div>
+    <div class="sb-item" onclick="nav('inscriptions')"><span class="icon">📝</span>Inscriptions<span class="sb-badge" id="badgeInscr"></span></div>
     <div class="sb-item" onclick="nav('demandes')"><span class="icon">📩</span>Demandes<span class="sb-badge" id="badgeDemandes"></span></div>
-    <div class="sb-item" onclick="nav('alerts')"><span class="icon">🔔</span>Alertes<span class="sb-badge" id="badgeAlerts"></span></div>
-    <div class="sb-section">Finances</div>
-    <div class="sb-item" onclick="nav('revenue')"><span class="icon">💰</span>Revenus</div>
-    <div class="sb-item" onclick="nav('sms')"><span class="icon">📱</span>Packs SMS</div>
-    <div class="sb-section">Système</div>
-    <div class="sb-item" onclick="nav('settings')"><span class="icon">⚙️</span>Paramètres</div>
-    <div class="sb-item" onclick="nav('nf525')"><span class="icon">🛡️</span>NF525 / RGPD</div>
+    <div class="sb-item" onclick="nav('finances')"><span class="icon">💰</span>Finances</div>
+    <div class="sb-item" onclick="nav('systeme')"><span class="icon">⚙️</span>Système</div>
   </div>
   <div class="sb-footer">
     <div><strong>Luxyra Admin</strong> v4.0</div>
@@ -282,31 +277,42 @@ async function loadInscriptions(){
 }
 
 // ===== NAV =====
-function nav(p){
-  curPage=p;
-  var items=document.querySelectorAll(".sb-item");
-  items.forEach(function(el){el.classList.remove("active");});
-  for(var i=0;i<items.length;i++){if(items[i].getAttribute("onclick")&&items[i].getAttribute("onclick").indexOf(p)>-1)items[i].classList.add("active");}
+function nav(v){
+  // Router 6 onglets : mapping des anciens noms vers les nouvelles vues
+  var map={dashboard:'cockpit',alerts:'cockpit',revenue:'finances',sms:'finances',settings:'systeme',nf525:'systeme'};
+  var view=map[v]||v;
+  window._currentView=view;
+  window._currentSubview=v; // pour Finances/Système : sous-onglet ciblé
+  document.querySelectorAll('.sb-item').forEach(function(e){e.classList.remove('active')});
+  var idx={cockpit:0,salons:1,inscriptions:2,demandes:3,finances:4,systeme:5}[view];
+  if(idx!=null){var items=document.querySelectorAll('.sb-item');if(items[idx])items[idx].classList.add('active')}
+  if(window.innerWidth<900)document.querySelector('.sidebar').classList.remove('open');
   render();
-  document.querySelector(".sidebar").classList.remove("open");
 }
 
 function render(){
-  var h="";
-  switch(curPage){
-    case"dashboard":h=rDashboard();break;
-    case"salons":h=rSalons();break;
-    case"inscriptions":h=rInscriptions();break;
-    case"demandes":h=rDemandes();break;
-    case"alerts":h=rAlerts();break;
-    case"revenue":h=rRevenue();break;
-    case"sms":h=rSMS();break;
-    case"settings":h=rSettings();break;
-    case"nf525":h=rNF525();break;
+  var v=window._currentView||'cockpit';
+  var sub=window._currentSubview||v;
+  var c=document.getElementById('view');if(!c)return;
+  if(v==='cockpit'){rDashboard();}
+  else if(v==='salons'){rSalons();}
+  else if(v==='inscriptions'){rInscriptions();}
+  else if(v==='demandes'){rDemandes();}
+  else if(v==='finances'){
+    c.innerHTML='<div class="fin-tabs" style="display:flex;gap:8px;margin-bottom:16px"><button class="td-btn '+(sub==='sms'?'':'active')+'" onclick="window._currentSubview=\'revenue\';render()">💰 Revenus</button><button class="td-btn '+(sub==='sms'?'active':'')+'" onclick="window._currentSubview=\'sms\';render()">📱 SMS</button></div><div id="finView"></div>';
+    var orig=document.getElementById('view');var fin=document.getElementById('finView');
+    // rRevenue/rSMS écrivent dans #view → on swap temporairement
+    var realView=orig;orig.id='view-real';fin.id='view';
+    if(sub==='sms')rSMS();else rRevenue();
+    document.getElementById('view').id='finView';document.getElementById('view-real').id='view';
   }
-  document.getElementById("mainContent").innerHTML=h;
-  var st=document.getElementById("onlineStatus");
-  if(st)st.innerHTML=_online?'<span style="color:var(--green)">● Supabase connecté</span>':'<span style="color:var(--orange)">● Hors ligne</span>';
+  else if(v==='systeme'){
+    c.innerHTML='<div class="fin-tabs" style="display:flex;gap:8px;margin-bottom:16px"><button class="td-btn '+(sub==='nf525'?'':'active')+'" onclick="window._currentSubview=\'settings\';render()">⚙️ Paramètres</button><button class="td-btn '+(sub==='nf525'?'active':'')+'" onclick="window._currentSubview=\'nf525\';render()">🛡️ NF525 / RGPD</button></div><div id="sysView"></div>';
+    var orig2=document.getElementById('view');var sys=document.getElementById('sysView');
+    orig2.id='view-real';sys.id='view';
+    if(sub==='nf525')rNF525();else rSettings();
+    document.getElementById('view').id='sysView';document.getElementById('view-real').id='view';
+  }
 }
 
 // ===== DASHBOARD =====
@@ -990,6 +996,21 @@ async function resetSmsCredits(id){
 checkSession();
 // Auto-refresh demandes toutes les 30s
 setInterval(async function(){if(_online&&_sb){await loadDemandes();var b=document.getElementById("badgeDemandes");if(b){var n=DEMANDES.filter(function(d){return d.status==="new";}).length;b.textContent=n>0?n:"";}}},30000);
+
+// === COCKPIT : intégration rAlerts dans le dashboard ===
+(function(){
+  var _origDash=rDashboard;
+  window.rDashboard=function(){
+    _origDash();
+    var v=document.getElementById('view');if(!v)return;
+    var box=document.createElement('div');box.id='cockpitAlerts';box.style.marginTop='24px';
+    v.appendChild(box);
+    var realView=v;v.id='view-real';box.id='view';
+    try{rAlerts();}catch(e){console.error(e);}
+    document.getElementById('view').id='cockpitAlerts';
+    document.getElementById('view-real').id='view';
+  };
+})();
 </script>
 </body>
 </html>
