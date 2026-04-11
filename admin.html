@@ -392,7 +392,7 @@ function filterS(){
 function openD(id){
   var s=gSalon(id);if(!s)return;
   window._curSalonId=id;
-  var h='<div class="dp-header"><h2 style="font-size:20px">'+s.nom+'</h2><button class="dp-close" onclick="closeDetail()">✕</button></div>';
+  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+s.nom+'</div><div style="font-size:11px;color:var(--text3)">'+(s.ville||"")+'</div></div></div><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div>';
   h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
 
   // VERIFICATION
@@ -541,6 +541,33 @@ function openD(id){
 }
 function closeDetail(){document.getElementById("detailOverlay").classList.remove("open");}
 
+async function deleteSalonCascade(id){
+  // Purge cascade : enfants → parents. Try/catch par table pour tolérer les schémas variables.
+  if(!_online||!id)return{ok:false,err:"offline"};
+  var tables=[
+    "appointments","tickets","ticket_lines","cash_movements","z_closures",
+    "rdv_online","clients_online","clients_beautypro","photos_clients",
+    "sms_queue","sms_logs","email_logs","cartes_abonnement","cartes_passages",
+    "gift_cards","gift_transactions","loyalty_points","forfaits","forfait_phases",
+    "absences","horaires","collaborateurs","services","produits","stock_movements",
+    "inscriptions_log","webhook_events","nf525_events"
+  ];
+  var purged=[],failed=[];
+  for(var i=0;i<tables.length;i++){
+    var t=tables[i];
+    try{
+      var r=await _sb.from(t).delete().eq("salon_id",id);
+      if(r.error){failed.push(t+":"+r.error.message);}else{purged.push(t);}
+    }catch(e){failed.push(t+":"+(e.message||"err"));}
+  }
+  // Suppression du salon lui-même
+  var rs=await _sb.from("salons").delete().eq("id",id);
+  if(rs.error)return{ok:false,err:"salons:"+rs.error.message,purged:purged,failed:failed};
+  // Note: la suppression du compte auth.users nécessite la service_role key (côté Edge Function)
+  // Ici on supprime juste les données métier. Le compte auth restera orphelin (à purger via cron ou manuellement).
+  return{ok:true,purged:purged,failed:failed};
+}
+
 async function actS(id,act){
   var s=gSalon(id);if(!s||!_online)return;
   if(act==="suspend"){await _sb.from("salons").update({status:"suspended"}).eq("id",id);alert("⛔ Salon suspendu");}
@@ -551,7 +578,7 @@ async function actS(id,act){
   else if(act==="delete"){if(!confirm("ATTENTION : Supprimer définitivement "+s.nom+" et TOUTES ses données ?"))return;
     // Supprimer le compte auth via Worker
     if(s.userId){try{await fetch("/api/admin/delete-user",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user_id:s.userId})});}catch(e){}}
-    await _sb.from("salons").delete().eq("id",id);alert("🗑️ Salon et compte utilisateur supprimés");closeDetail();}
+    var res=await deleteSalonCascade(id);if(res.ok){alert("🗑️ Salon supprimé\n\nTables purgées : "+res.purged.length+(res.failed.length?"\nÉchecs (ignorés) : "+res.failed.length:""));closeDetail();}else{alert("❌ Erreur suppression : "+res.err);return;}}
   await loadData();render();if(act!=="delete")openD(id);
 }
 
