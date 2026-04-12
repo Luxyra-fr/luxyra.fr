@@ -628,22 +628,32 @@ function rDashboard(){
 // ===== LIVRAISON 2 — PAGES =====
 
 // Communication / Chat support
-window.CHAT_CONVS=[];window.CHAT_ACTIVE=null;window.CHAT_SUB=null;
+window.CHAT_CONVS=[];window.CHAT_ACTIVE=null;window.CHAT_SUB=null;window.CHAT_FILTER='open';
 async function loadChatConvs(){
   if(!_sb||!_online)return;
   try{
-    var r=await _sb.from('support_conversations').select('*').order('last_message_at',{ascending:false});
+    var q=_sb.from('support_conversations').select('*').order('last_message_at',{ascending:false});
+    if(window.CHAT_FILTER==='open')q=q.eq('status','open');
+    else if(window.CHAT_FILTER==='resolved')q=q.eq('status','resolved');
+    var r=await q;
     window.CHAT_CONVS=r.data||[];
-    var unread=0;window.CHAT_CONVS.forEach(function(c){unread+=(c.unread_count_admin||0);});
+    var all=await _sb.from('support_conversations').select('unread_count_admin,status').eq('status','open');
+    var unread=0;(all.data||[]).forEach(function(c){unread+=(c.unread_count_admin||0);});
     window.ADMIN_UNREAD_CHAT=unread;
     var b=document.getElementById('badgeChat');if(b)b.textContent=unread||"";
   }catch(e){window.CHAT_CONVS=[];}
 }
 function rChat(){
   var convs=window.CHAT_CONVS||[];
-  var h='<div class="topbar"><h1>Chat support <span>'+convs.length+' conversations</span></h1><button class="tb-btn" onclick="loadChatConvs().then(render)">🔄 Actualiser</button></div>';
-  h+='<div style="display:grid;grid-template-columns:320px 1fr;gap:16px;height:calc(100vh - 200px);min-height:500px">';
-  // Liste
+  var f=window.CHAT_FILTER||'open';
+  var h='<div class="topbar"><h1>Chat support <span>'+convs.length+' conv.</span></h1><button class="tb-btn" onclick="loadChatConvs().then(render)">🔄 Actualiser</button></div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
+  [['open','En cours'],['resolved','Résolues'],['all','Toutes']].forEach(function(kv){
+    var act=(f===kv[0]);
+    h+='<button class="tb-btn'+(act?' primary':'')+'" onclick="window.CHAT_FILTER=\''+kv[0]+'\';loadChatConvs().then(render)">'+kv[1]+'</button>';
+  });
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:340px 1fr;gap:16px;height:calc(100vh - 240px);min-height:500px">';
   h+='<div class="card" style="overflow-y:auto;padding:0">';
   if(convs.length===0)h+='<div style="padding:24px;text-align:center;color:var(--text3);font-size:13px">Aucune conversation</div>';
   convs.forEach(function(c){
@@ -651,20 +661,41 @@ function rChat(){
     var nom=s?s.nom:'Salon '+(c.salon_id||'').slice(0,8);
     var act=(window.CHAT_ACTIVE===c.id);
     var unread=c.unread_count_admin||0;
-    h+='<div onclick="openChatConv(\''+c.id+'\',\''+c.salon_id+'\')" style="padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:'+(act?'var(--gold-bg)':'transparent')+'"><div><div style="font-weight:'+(unread>0?'700':'500')+';font-size:13px">'+nom+'</div><div style="font-size:11px;color:var(--text3);margin-top:2px">'+fmtD(c.last_message_at)+'</div></div>'+(unread>0?'<span class="sb-badge">'+unread+'</span>':'')+'</div>';
+    var tag=c.status==='resolved'?' <span style="background:var(--bg3);padding:1px 6px;border-radius:8px;font-size:10px;color:var(--text3)">résolu</span>':'';
+    var subj=c.subject?' · '+String(c.subject).slice(0,30):'';
+    h+='<div onclick="openChatConv(\''+c.id+'\',\''+c.salon_id+'\')" style="padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:'+(act?'var(--gold-bg)':'transparent')+'"><div style="min-width:0;flex:1"><div style="font-weight:'+(unread>0?'700':'500')+';font-size:13px">'+nom+tag+'</div><div style="font-size:11px;color:var(--text3);margin-top:2px">'+fmtD(c.last_message_at)+subj+'</div></div>'+(unread>0?'<span class="sb-badge">'+unread+'</span>':'')+'</div>';
   });
   h+='</div>';
-  // Thread
   h+='<div class="card" style="display:flex;flex-direction:column;padding:0">';
   if(!window.CHAT_ACTIVE){
     h+='<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px">← Sélectionne une conversation</div>';
   }else{
+    var curC=convs.find(function(c){return c.id===window.CHAT_ACTIVE;});
+    var isRes=curC&&curC.status==='resolved';
+    h+='<div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:12px;color:var(--text2);flex:1">'+((curC&&curC.subject)||'Conversation')+'</div>';
+    if(isRes)h+='<button class="tb-btn" onclick="reopenChatConv()">↻ Rouvrir</button>';
+    else h+='<button class="tb-btn" onclick="resolveChatConv()">✓ Marquer résolu</button>';
+    h+='</div>';
     h+='<div id="chatThread" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px"></div>';
-    h+='<div style="border-top:1px solid var(--border);padding:12px;display:flex;gap:8px"><input id="chatInput" placeholder="Réponse..." style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:var(--f1);font-size:13px;outline:none" onkeydown="if(event.keyCode===13)sendChatMsg()"><button class="tb-btn primary" onclick="sendChatMsg()">Envoyer</button></div>';
+    if(!isRes)h+='<div style="border-top:1px solid var(--border);padding:12px;display:flex;gap:8px"><input id="chatInput" placeholder="Réponse..." style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:var(--f1);font-size:13px;outline:none" onkeydown="if(event.keyCode===13)sendChatMsg()"><button class="tb-btn primary" onclick="sendChatMsg()">Envoyer</button></div>';
     setTimeout(loadChatThread,50);
   }
   h+='</div></div>';
   return h;
+}
+async function resolveChatConv(){
+  if(!window.CHAT_ACTIVE||!confirm('Marquer cette conversation comme résolue ?'))return;
+  try{
+    await _sb.from('support_conversations').update({status:'resolved',resolved_at:new Date().toISOString(),resolved_by:'admin'}).eq('id',window.CHAT_ACTIVE);
+    await loadChatConvs();render();
+  }catch(e){alert('Erreur : '+e.message);}
+}
+async function reopenChatConv(){
+  if(!window.CHAT_ACTIVE)return;
+  try{
+    await _sb.from('support_conversations').update({status:'open',resolved_at:null,resolved_by:null}).eq('id',window.CHAT_ACTIVE);
+    await loadChatConvs();render();
+  }catch(e){alert('Erreur : '+e.message);}
 }
 async function openChatConv(convId,salonId){
   window.CHAT_ACTIVE=convId;window.CHAT_ACTIVE_SALON=salonId;
