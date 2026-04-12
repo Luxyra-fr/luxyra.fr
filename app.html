@@ -16510,7 +16510,7 @@ function refreshCurrentView(){
 
   function renderGate(){
     $('lxChatTabs').style.display='none';$('lxChatNew').style.display='none';$('lxChatThread').style.display='none';
-    $('lxChatList').innerHTML='<div class="lxGate">🔒 Le support est réservé aux salons connectés.<br><a href="#inscription">Se connecter / S\'inscrire</a></div>';
+    $('lxChatList').innerHTML='<div class="lxGate">🔒 Le support est réservé aux salons connectés.<br><a href="/inscription.html">Se connecter / S\'inscrire</a></div>';
   }
 
   async function loadConvs(){
@@ -16567,15 +16567,15 @@ function refreshCurrentView(){
   }
 
   async function sendMsg(){
-    if(!isAuth()||!S.active)return;
+    if(!isAuth()||!S.active){console.log('lxChat sendMsg blocked: isAuth=',isAuth(),'active=',S.active);return;}
     var inp=$('lxChatInput'),btn=$('lxChatSend');
     var txt=(inp.value||'').trim();if(!txt)return;
     btn.disabled=true;
     try{
       var ins=await _sb.from('support_messages').insert({salon_id:_salonId,conversation_id:S.active.id,sender:'salon',message:txt,read_by_admin:false,read_by_client:true}).select().single();
-      if(ins.data)addBubble(ins.data);
-      inp.value='';
-    }catch(e){alert('Erreur envoi');}
+      if(ins.error){console.error('lxChat insert error:',ins.error);alert('Erreur envoi : '+ins.error.message);}
+      else if(ins.data){addBubble(ins.data);inp.value='';}
+    }catch(e){console.error('lxChat sendMsg exception:',e);alert('Erreur envoi : '+(e.message||e));}
     btn.disabled=false;inp.focus();
   }
 
@@ -16593,9 +16593,15 @@ function refreshCurrentView(){
   async function markResolved(){
     if(!S.active||!confirm('Marquer cette conversation comme résolue ?'))return;
     try{
-      await _sb.from('support_conversations').update({status:'resolved',resolved_at:new Date().toISOString(),resolved_by:'salon'}).eq('id',S.active.id);
-      S.active=null;S.tab='resolved';await loadConvs();renderList();
-    }catch(e){alert('Erreur');}
+      var up=await _sb.from('support_conversations').update({status:'resolved',resolved_at:new Date().toISOString(),resolved_by:'salon'}).eq('id',S.active.id).select().single();
+      if(up.error){console.error('lxChat resolve error:',up.error);alert('Erreur : '+up.error.message);return;}
+      // Force local state update even if realtime hasn't arrived yet
+      var idx=S.convs.findIndex(function(c){return c.id===S.active.id;});
+      if(idx>=0&&up.data)S.convs[idx]=up.data;
+      S.active=null;S.tab='resolved';
+      renderList();
+      loadConvs();
+    }catch(e){console.error('lxChat resolve exception:',e);alert('Erreur : '+(e.message||e));}
   }
 
   function openPanel(){
