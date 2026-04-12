@@ -16749,6 +16749,9 @@ async function renderPushSettings(){
 }
 function _injectPushCardInSettings(){
   var app=document.getElementById('app');if(!app)return;
+  // Only on main settings screen (not sub-sections)
+  var tab=window._settTab;
+  if(tab&&tab!=='main'){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);return;}
   if(document.getElementById('pushSettingsCard'))return;
   var c=document.querySelector('.app-content')||app;
   var d=document.createElement('div');
@@ -16759,7 +16762,26 @@ function _injectPushCardInSettings(){
   c.appendChild(d);
   renderPushSettings();
 }
-(function(){var _g=window.go;if(typeof _g==='function'){window.go=function(p){var r=_g.apply(this,arguments);if(p==='settings')setTimeout(_injectPushCardInSettings,150);return r;};}})();
+(function(){
+  var _g=window.go;
+  if(typeof _g==='function'){
+    window.go=function(p){
+      var r=_g.apply(this,arguments);
+      if(p==='settings')setTimeout(_injectPushCardInSettings,150);
+      else{var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
+      return r;
+    };
+  }
+  // Also intercept _settTab changes: remove card when entering a sub-section
+  var _lastTab=null;
+  setInterval(function(){
+    if(window._settTab!==_lastTab){
+      _lastTab=window._settTab;
+      if(_lastTab&&_lastTab!=='main'){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
+      else if((!_lastTab||_lastTab==='main')&&document.querySelector('.app-content')){setTimeout(_injectPushCardInSettings,100);}
+    }
+  },500);
+})();
 async function maybeShowPushBanner(){
   try{
     if(localStorage.getItem('lx_push_banner_dismissed')==='1')return;
