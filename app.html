@@ -16505,6 +16505,100 @@ function refreshCurrentView(){
   if(document.readyState==="complete")boot();else window.addEventListener("load",boot);
 })();
 
+// === CHANTIER 2 — PUSH SALON ===
+window.VAPID_PUBLIC_KEY='BAg80uDJxWmu1ltDdXbiQbAFEUXn4v5bfNRVbvT1jRh07y29Opxqksn8MeomA-3K-AhVwzxqVXM_UetPDpy2vaI';
+function _urlB64ToU8(b64){var pad='='.repeat((4-b64.length%4)%4);var s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');var raw=atob(s),out=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
+async function lxSalonPushStatus(){
+  if(!('Notification' in window)||!('serviceWorker' in navigator)||!('PushManager' in window))return 'unsupported';
+  if(Notification.permission==='denied')return 'denied';
+  if(Notification.permission==='default')return 'default';
+  try{
+    var reg=await navigator.serviceWorker.ready;
+    var sub=await reg.pushManager.getSubscription();
+    if(!sub)return 'granted_no_sub';
+    if(typeof _sb==='undefined'||!_salonId)return 'granted_no_sub';
+    var r=await _sb.from('push_subscriptions').select('id').eq('endpoint',sub.endpoint).eq('target_type','salon').eq('salon_id',_salonId).maybeSingle();
+    return r.data?'active':'granted_no_sub';
+  }catch(e){return 'error';}
+}
+async function lxSalonPushEnable(){
+  try{
+    if(!('serviceWorker' in navigator)){toast('Push non supporté','error');return;}
+    if(typeof _salonId==='undefined'||!_salonId){toast('Connexion requise','warning');return;}
+    var perm=await Notification.requestPermission();
+    if(perm!=='granted'){toast('Permission refusée','warning');return;}
+    var reg=await navigator.serviceWorker.ready;
+    var sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
+    var j=sub.toJSON();
+    var up=await _sb.from('push_subscriptions').upsert({endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,target_type:'salon',salon_id:_salonId,admin_user_id:null,last_used_at:new Date().toISOString()},{onConflict:'endpoint'}).select();
+    if(up.error)throw up.error;
+    try{localStorage.setItem('lx_push_banner_dismissed','1');}catch(e){}
+    toast('🔔 Notifications activées','success');
+    var b=document.getElementById('lxPushBanner');if(b)b.style.display='none';
+    if(typeof renderPushSettings==='function')renderPushSettings();
+  }catch(e){console.error('push enable',e);toast('Erreur activation','error');}
+}
+async function lxSalonPushDisable(){
+  try{
+    var reg=await navigator.serviceWorker.ready;
+    var sub=await reg.pushManager.getSubscription();
+    if(sub){
+      await _sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint).eq('target_type','salon').eq('salon_id',_salonId);
+      await sub.unsubscribe();
+    }
+    toast('Notifications désactivées','info');
+    if(typeof renderPushSettings==='function')renderPushSettings();
+  }catch(e){console.error('push disable',e);toast('Erreur','error');}
+}
+async function lxSalonPushTest(){
+  try{
+    var r=await _sb.functions.invoke('send-push',{body:{event_type:'admin_reply',title:'🧪 Test notification',body:'Si tu vois ça, tout fonctionne !',url:'https://luxyra.fr/app.html',target_salon_id:_salonId}});
+    if(r.error)throw r.error;
+    toast('Test envoyé ('+((r.data&&r.data.sent)||0)+')','success');
+  }catch(e){console.error('push test',e);toast('Erreur test','error');}
+}
+async function renderPushSettings(){
+  var z=document.getElementById('pushSettingsZone');if(!z)return;
+  var st=await lxSalonPushStatus();
+  var labels={unsupported:'❌ Non supporté',denied:'🚫 Bloqué (paramètres navigateur)',default:'⚪ Non configuré',granted_no_sub:'⚠️ Permission OK, pas abonné',active:'✅ Actif',error:'⚠️ Erreur'};
+  var h='<div style="margin-bottom:10px;font-size:13px">État : <strong>'+(labels[st]||st)+'</strong></div>';
+  if(st==='default'||st==='granted_no_sub')h+='<button class="btn bg bs" onclick="lxSalonPushEnable()">Activer</button>';
+  if(st==='active')h+='<button class="btn bs" onclick="lxSalonPushTest()" style="margin-right:6px">Tester</button><button class="btn bs" onclick="lxSalonPushDisable()">Désactiver</button>';
+  z.innerHTML=h;
+}
+function _injectPushCardInSettings(){
+  var app=document.getElementById('app');if(!app)return;
+  if(document.getElementById('pushSettingsCard'))return;
+  var c=document.querySelector('.app-content')||app;
+  var d=document.createElement('div');
+  d.id='pushSettingsCard';
+  d.className='card';
+  d.style.cssText='margin:12px;padding:14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px';
+  d.innerHTML='<h3 style="margin:0 0 10px;font-size:15px">🔔 Notifications push</h3><div id="pushSettingsZone">Chargement…</div>';
+  c.appendChild(d);
+  renderPushSettings();
+}
+(function(){var _g=window.go;if(typeof _g==='function'){window.go=function(p){var r=_g.apply(this,arguments);if(p==='settings')setTimeout(_injectPushCardInSettings,150);return r;};}})();
+async function maybeShowPushBanner(){
+  try{
+    if(localStorage.getItem('lx_push_banner_dismissed')==='1')return;
+    if(typeof _salonId==='undefined'||!_salonId)return;
+    var st=await lxSalonPushStatus();
+    if(st==='default'||st==='granted_no_sub'){
+      if(document.getElementById('lxPushBanner'))return;
+      var div=document.createElement('div');
+      div.id='lxPushBanner';
+      div.style.cssText='background:var(--gold-bg2);border:1px solid var(--gold);padding:10px 14px;margin:8px;border-radius:8px;display:flex;align-items:center;gap:10px;font-size:13px;z-index:100';
+      div.innerHTML='<span style="flex:1">🔔 Activez les notifications pour recevoir les alertes support</span><button class="btn bg bs" style="font-size:12px" onclick="lxSalonPushEnable()">Activer</button><button class="btn bs" style="font-size:12px;padding:4px 8px" onclick="document.getElementById(\'lxPushBanner\').style.display=\'none\';localStorage.setItem(\'lx_push_banner_dismissed\',\'1\')">✕</button>';
+      var hdr=document.getElementById('header');
+      if(hdr&&hdr.parentNode)hdr.parentNode.insertBefore(div,hdr.nextSibling);
+      else document.body.insertBefore(div,document.body.firstChild);
+    }
+  }catch(e){}
+}
+setTimeout(maybeShowPushBanner,4000);
+
 // Register Service Worker for PWA
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js',{scope:'/app'}).catch(function(e){console.log('SW register:',e);});
