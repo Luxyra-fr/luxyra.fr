@@ -16525,19 +16525,33 @@ async function lxSalonPushEnable(){
   try{
     if(!('serviceWorker' in navigator)){toast('Push non supporté','error');return;}
     if(typeof _salonId==='undefined'||!_salonId){toast('Connexion requise','warning');return;}
+    console.log('[push] step 1 - requesting permission');
     var perm=await Notification.requestPermission();
+    console.log('[push] step 1 OK, permission=',perm);
     if(perm!=='granted'){toast('Permission refusée','warning');return;}
+    console.log('[push] step 2 - waiting SW ready');
     var reg=await navigator.serviceWorker.ready;
+    console.log('[push] step 2 OK, scope=',reg.scope);
+    console.log('[push] step 3 - getSubscription');
     var sub=await reg.pushManager.getSubscription();
-    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
+    if(!sub){
+      console.log('[push] step 3b - subscribe');
+      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
+    }
+    console.log('[push] step 3 OK, endpoint=',sub.endpoint.slice(0,50));
     var j=sub.toJSON();
+    console.log('[push] step 4 - upsert DB, salon_id=',_salonId);
     var up=await _sb.from('push_subscriptions').upsert({endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,target_type:'salon',salon_id:_salonId,admin_user_id:null,last_used_at:new Date().toISOString()},{onConflict:'endpoint'}).select();
-    if(up.error)throw up.error;
+    if(up.error){console.error('[push] DB error:',up.error);throw up.error;}
+    console.log('[push] step 4 OK, inserted',up.data);
     try{localStorage.setItem('lx_push_banner_dismissed','1');}catch(e){}
     toast('🔔 Notifications activées','success');
     var b=document.getElementById('lxPushBanner');if(b)b.style.display='none';
     if(typeof renderPushSettings==='function')renderPushSettings();
-  }catch(e){console.error('push enable',e);toast('Erreur activation','error');}
+  }catch(e){
+    console.error('[push] enable FAIL:',e,e&&e.message,e&&e.code,e&&e.name);
+    toast('Erreur: '+(e&&(e.message||e.name||e.code)||'inconnue'),'error');
+  }
 }
 async function lxSalonPushDisable(){
   try{
@@ -16599,9 +16613,9 @@ async function maybeShowPushBanner(){
 }
 setTimeout(maybeShowPushBanner,4000);
 
-// Register Service Worker for PWA
+// Register Service Worker for PWA (scope / pour que /app.html soit couvert + push)
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js',{scope:'/app'}).catch(function(e){console.log('SW register:',e);});
+  navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(e){console.log('SW register:',e);});
 }
 </script>
 </body>
