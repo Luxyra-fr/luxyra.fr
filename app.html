@@ -7,12 +7,12 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Luxyra v6.3</title>
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="/manifest-app.json">
 <meta name="theme-color" content="#c8a84e">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
-if(navigator.serviceWorker){navigator.serviceWorker.register('/sw.js').catch(function(){});}
+if(navigator.serviceWorker){navigator.serviceWorker.register('/sw.js',{scope:'/app'}).catch(function(){});}
 </script>
 <meta name="apple-mobile-web-app-title" content="Luxyra">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -2591,9 +2591,13 @@ function buildClotureText(c){
 // Build plain text for cloture Z
 // === TICKETS EN ATTENTE + DEVIS ===
 // === NOTIFICATIONS ===
-function addNotif(type,title,detail,data){
-  if(!window.NOTIFS)window.NOTIFS=[];
-  window.NOTIFS.unshift({id:U(),ts:new Date().toISOString(),type:type,title:title,detail:detail,data:data||null,seen:false,confirmed:false});
+// === CHANTIER 1 — notifications DB-backed ===
+window.NOTIFS=[]; // kept for acceptModification/refuseModification compat (populated by showNotifs)
+window._notifBadgeCache={t:0,v:0};
+async function addNotif(type,title,detail,data){
+  try{if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
+    await _sb.from('notifications').insert({salon_id:_salonId,type:type,title:title,detail:detail||'',data:data||{}});
+  }catch(e){console.warn('addNotif',e);}
 }
 async function acceptModification(notifId){
   var n=null;for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].id===notifId){n=window.NOTIFS[i];break;}}
@@ -2637,241 +2641,58 @@ async function refuseModification(notifId){
   showNotifs();updateNotifBadge();
 }
 
-function showNotifs(){
-  // Inject RDV online as notifications
-  if(!window.NOTIFS)window.NOTIFS=[];
-  var now48=new Date().getTime()-48*3600000;// 48h ago
-  if(window.RDV_ONLINE){
-    window.RDV_ONLINE.forEach(function(r){
-      // Skip done RDV entirely (they've been acknowledged)
-      if(r.status==="done")return;
-      var exists=false;
-      for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].rdvOnlineId===r.id){exists=true;break;}}
-      if(window._dismissedNotifs&&window._dismissedNotifs[r.id])exists=true;
-      // Check for client cancellations
-      if(r.status==="cancelled"&&r.cancelled_by==="client"){
-        var canExists=false;
-        for(var ci2=0;ci2<window.NOTIFS.length;ci2++){if(window.NOTIFS[ci2].id==="can_"+r.id){canExists=true;break;}}
-        if(!canExists&&!window._dismissedNotifs["can_"+r.id]){
-          window.NOTIFS.unshift({
-            id:"can_"+r.id,rdvOnlineId:r.id,type:"cancel_client",
-            title:"\u274c RDV annul\u00e9 par le client",
-            detail:r.nom+(r.prenom?" "+r.prenom:"")+" a annul\u00e9 son RDV du "+r.date+" "+r.heure+" - "+(r.svcNom||"")+(r.cancel_reason?" - Motif: "+r.cancel_reason:""),
-            ts:r.cancelled_at||new Date().toISOString(),seen:false,confirmed:false
-          });
-        }
-      }
-      // Check for modification requests
-      if(r.modification_demandee&&r.modification_status==="pending"){
-        var modExists=false;
-        for(var mi=0;mi<window.NOTIFS.length;mi++){if(window.NOTIFS[mi].id==="mod_"+r.id){modExists=true;break;}}
-        if(!modExists&&!window._dismissedNotifs["mod_"+r.id]){
-          window.NOTIFS.unshift({
-            id:"mod_"+r.id,rdvOnlineId:r.id,type:"modification",
-            title:"\u270f\ufe0f Demande de modification",
-            detail:r.nom+(r.prenom?" "+r.prenom:"")+" souhaite d\u00e9placer son RDV au "+r.modification_date+" \u00e0 "+r.modification_heure+(r.modification_message?" - "+r.modification_message:""),
-            ts:new Date().toISOString(),seen:false,confirmed:false,
-            onlineRdv:r,modifData:{date:r.modification_date,heure:r.modification_heure,msg:r.modification_message}
-          });
-        }
-      }
-      if(!exists){
-        window.NOTIFS.unshift({
-          id:"ro_"+r.id,rdvOnlineId:r.id,type:"rdv_online",
-          title:"\ud83d\udcc5 RDV en ligne"+(r.status==="pending"?" (en attente)":r.status==="confirmed"?" (confirm\u00e9)":" (termin\u00e9)"),
-          detail:r.nom+(r.prenom?" "+r.prenom:"")+" \u2022 "+r.svcNom+" \u2022 "+r.date+" "+r.heure+(r.tel?" \u2022 "+r.tel:"")+(r.acomptePaye&&r.acompte>0?" \u2022 \ud83d\udcb3 Acompte "+r.acompte.toFixed(0)+"\u20ac pay\u00e9":"")+(r.message?" \u2022 "+r.message:""),
-          ts:r.createdAt||new Date().toISOString(),
-          seen:false,
-          confirmed:r.status==="done",
-          onlineRdv:r
-        });
-      }
+async function showNotifs(){
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId){mO('<div class="mbox"><h3>Notifications</h3><p>Connexion requise</p><button class="btn bg" onclick="cM()">OK</button></div>');return;}
+  try{
+    var r=await _sb.from('notifications').select('id,type,title,detail,data,read_at,created_at').eq('salon_id',_salonId).order('created_at',{ascending:false}).limit(50);
+    var rows=r.data||[];
+    window.NOTIFS=rows.map(function(n){
+      var d=n.data||{};
+      return {id:n.id, dbId:n.id, type:n.type, title:n.title, detail:n.detail||'', ts:n.created_at,
+        seen:!!n.read_at, confirmed:!!n.read_at,
+        rdvOnlineId:d.rdv_online_id||null, onlineRdv:d.onlineRdv||null, modifData:d.modifData||null};
     });
-  }
-  // Clean old read notifications (>48h and seen)
-  window.NOTIFS=window.NOTIFS.filter(function(n){
-    if(n.seen&&n.confirmed&&n.ts){return new Date(n.ts).getTime()>now48;}
-    return true;
-  });
-  var notifs=window.NOTIFS||[];
-  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
-  h+='<h2>\ud83d\udd14 Notifications</h2>';
-  if(!notifs.length){h+='<div style="padding:30px;text-align:center;color:var(--text3)"><div style="font-size:36px;margin-bottom:8px">\u2705</div>Aucune notification</div>';}
-  else{
-    var unr=notifs.filter(function(n){return!n.seen;});
-    if(unr.length>0){h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:14px;font-weight:700;color:var(--red)">'+unr.length+' non lue'+(unr.length>1?'s':'')+'</span><button class="btn bs" style="font-size:12px" onclick="markAllNotifsRead()">Tout effacer</button></div>';}
-    for(var i=0;i<Math.min(notifs.length,30);i++){
-      var n=notifs[i];
-      var icon=n.type==="rdv_online"?"\ud83d\udcc5":n.type==="modification"?"\u270f\ufe0f":n.type==="cancel_client"?"\u274c":n.type==="new_client_online"?"\ud83d\udc64":n.type==="produit_online"?"\ud83d\uded2":n.type==="google_reserve"?"\ud83c\udf10":"\ud83d\udd14";
-      var bgS=n.seen?"":"background:var(--gold-bg);";
-      h+='<div style="display:flex;gap:10px;padding:12px;border-bottom:1px solid var(--border2);'+bgS+'border-radius:8px;margin-bottom:4px">';
-      h+='<div style="font-size:22px;flex-shrink:0">'+icon+'</div>';
-      h+='<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:14px">'+n.title+'</div>';
-      h+='<div style="font-size:13px;color:var(--text2);margin-top:2px">'+n.detail+'</div>';
-      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">'+n.ts.slice(0,16).replace("T"," ")+'</div></div>';
-      h+='<div style="flex-shrink:0">';
-      if(n.type==="modification"&&!n.confirmed){
-        h+='<div style="display:flex;flex-direction:column;gap:4px">';
-        h+='<button class="btn bg bs" style="font-size:10px;padding:4px 8px;background:var(--green-bg);color:var(--green)" onclick="acceptModification(\''+n.id+'\')">\u2714 Accepter</button>';
-        h+='<button class="btn bs" style="font-size:10px;padding:4px 8px;background:rgba(239,83,80,.1);color:#ef5350" onclick="refuseModification(\''+n.id+'\')">\u2716 Refuser</button>';
+    var notifs=window.NOTIFS;
+    var unr=notifs.filter(function(n){return !n.seen;});
+    var h='<div class="mbox" style="max-width:500px"><h3>🔔 Notifications</h3>';
+    if(unr.length>0)h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:14px;font-weight:700;color:var(--red)">'+unr.length+' non lue'+(unr.length>1?'s':'')+'</span><button class="btn bs" style="font-size:12px" onclick="markAllNotifsRead()">Tout effacer</button></div>';
+    if(notifs.length===0)h+='<p style="color:var(--text3);text-align:center;padding:20px">Aucune notification</p>';
+    else{
+      h+='<div style="max-height:60vh;overflow-y:auto">';
+      notifs.forEach(function(n){
+        var bg=n.seen?'var(--bg3)':'var(--gold-bg2)';
+        h+='<div style="background:'+bg+';border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">';
+        h+='<div style="font-weight:700;margin-bottom:4px">'+(n.title||'')+'</div>';
+        if(n.detail)h+='<div style="font-size:12px;color:var(--text2);margin-bottom:6px">'+n.detail+'</div>';
+        h+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">'+new Date(n.ts).toLocaleString('fr-FR')+'</div>';
+        if(n.type==='rdv_online_modif'&&!n.seen){
+          h+='<div style="display:flex;gap:6px"><button class="btn bg bs" style="font-size:11px" onclick="acceptModification(\''+n.id+'\')">✓ Accepter</button><button class="btn bs" style="font-size:11px" onclick="refuseModification(\''+n.id+'\')">✗ Refuser</button></div>';
+        }else if(!n.seen){
+          h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">✔ Vu</button>';
+        }
         h+='</div>';
-      }else if(n.type==="cancel_client"&&!n.confirmed){
-        h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
-      }else if(n.type==="new_client_online"&&!n.confirmed){
-        h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
-      }else if(!n.confirmed){
-        h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">\u2714 Vu</button>';
-      }else{
-        h+='<span style="font-size:11px;color:var(--green);font-weight:600">\u2714 Confirm\u00e9</span>';
-      }
-      h+='</div></div>';
+      });
+      h+='</div>';
+      if(notifs.some(function(n){return n.seen;}))h+='<button class="btn bs" style="font-size:12px;margin-top:8px" onclick="clearReadNotifs()">Effacer les lues</button>';
     }
-  }
-  h+='<div style="display:flex;gap:8px;margin-top:14px">';
-  h+='<button class="btn bk" style="flex:1" onclick="cM()">Fermer</button>';
-  if(notifs.some(function(n){return n.seen&&n.confirmed;}))h+='<button class="btn bs" style="font-size:12px" onclick="clearReadNotifs()">Effacer les lues</button>';
-  h+='</div></div></div>';
-  notifs.forEach(function(n){n.seen=true;});
-  document.getElementById("modal").innerHTML=h;
+    h+='<button class="btn" style="width:100%;margin-top:8px" onclick="cM()">Fermer</button></div>';
+    mO(h);
+  }catch(e){console.error('showNotifs',e);toast('Erreur chargement notifs','error');}
 }
-function confirmNotif(id){
-  if(!window.NOTIFS)return;
-  for(var i=0;i<window.NOTIFS.length;i++){
-    if(window.NOTIFS[i].id===id){
-      window.NOTIFS[i].confirmed=true;window.NOTIFS[i].seen=true;
-      // If it's an online RDV, confirm it in Supabase
-      if(window.NOTIFS[i].rdvOnlineId){
-        var rdvId=window.NOTIFS[i].rdvOnlineId;
-        if(typeof updateRdvOnline==="function")updateRdvOnline(rdvId,"confirmed");
-        // Update local state
-        if(window.RDV_ONLINE){
-          for(var j=0;j<window.RDV_ONLINE.length;j++){
-            if(window.RDV_ONLINE[j].id===rdvId){window.RDV_ONLINE[j].status="confirmed";break;}
-          }
-        }
-        window.NOTIFS[i].title="\ud83d\udcc5 RDV en ligne (confirm\u00e9)";
-        // Auto-create client from online RDV data
-        var onRdvData=window.NOTIFS[i].onlineRdv;
-        if(onRdvData){
-          var clExists=false;
-          var matchedCl=null;
-          for(var cli=0;cli<CL.length;cli++){
-            if((onRdvData.tel&&CL[cli].ph===onRdvData.tel)||(onRdvData.email&&CL[cli].em===onRdvData.email)){
-              clExists=true;matchedCl=CL[cli];
-              // Update existing client with any missing info from online profile
-              var updated=false;
-              if(!matchedCl.ph&&onRdvData.tel){matchedCl.ph=onRdvData.tel;updated=true;}
-              if(!matchedCl.em&&onRdvData.email){matchedCl.em=onRdvData.email;updated=true;}
-              if(!matchedCl.ddn&&onRdvData.ddn){matchedCl.ddn=onRdvData.ddn;updated=true;}
-              if(!matchedCl.adr&&onRdvData.adresse){matchedCl.adr=onRdvData.adresse;updated=true;}
-              if(!matchedCl.cp&&onRdvData.cp){matchedCl.cp=onRdvData.cp;updated=true;}
-              if(!matchedCl.ville&&onRdvData.ville){matchedCl.ville=onRdvData.ville;updated=true;}
-              if(updated&&typeof saveClient==="function")saveClient(matchedCl);
-              break;
-            }
-          }
-          if(!clExists&&(onRdvData.nom||onRdvData.prenom)){
-            var newCl={
-              id:U(),
-              nom:(onRdvData.nom||"").toUpperCase(),
-              pre:onRdvData.prenom||"",
-              sex:onRdvData.genre||"F",
-              ph:onRdvData.tel||"",
-              em:onRdvData.email||"",
-              ddn:onRdvData.ddn||"",
-              adr:onRdvData.adresse||"",
-              cp:onRdvData.cp||"",
-              ville:onRdvData.ville||"",
-              fid:0,
-              smsOk:true,
-              emOk:true,
-              actif:true,
-              no:"Client en ligne - Inscription le "+fmt(TD)
-            };
-            CL.push(newCl);
-            if(typeof saveClient==="function")saveClient(newCl);
-            matchedCl=newCl;
-          }
-          // Link client to AP entry
-          if(matchedCl){
-            for(var ai2=0;ai2<AP.length;ai2++){
-              if(AP[ai2].onlineId===rdvId&&!AP[ai2].cId){
-                AP[ai2].cId=matchedCl.id;
-                if(typeof saveAppointment==="function")saveAppointment(AP[ai2]);
-                break;
-              }
-            }
-          }
-        }
-        // Transfer acompte from online RDV to planning entry
-        var onRdv=window.NOTIFS[i].onlineRdv;
-        if(onRdv&&onRdv.acomptePaye&&onRdv.acompte>0){
-          for(var ai=0;ai<AP.length;ai++){
-            if(AP[ai].onlineId===rdvId){
-              AP[ai].acompte=onRdv.acompte;
-              AP[ai].acompteMode="En ligne (Stripe)";
-              AP[ai].acompteDate=onRdv.createdAt?onRdv.createdAt.slice(0,10):TD;
-              if(typeof saveAppointment==="function")saveAppointment(AP[ai]);
-              break;
-            }
-          }
-        }
-        // Send confirmation SMS/Email to client
-        var onRdvC=onRdvData||onRdv;
-        if(onRdvC){
-          var cVars={prenom:onRdvC.prenom||"",nom:onRdvC.nom||"",
-            heure:onRdvC.heure||"",date:fmt(onRdvC.date),
-            prestation:onRdvC.svcNom||"",salon:SALON_CONFIG.nom,
-            collab:onRdvC.collabNom||""};
-          var cfgC=window.SMS_CONFIG||{};
-          if(cfgC.confirmSms&&onRdvC.tel){
-            var smsTxt=buildSmsText(cfgC.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} est confirm\u00e9.",cVars);
-            sendSms(onRdvC.tel,smsTxt,"confirmation_rdv",(onRdvC.prenom||"")+" "+(onRdvC.nom||""));
-          }
-          if(cfgC.confirmEmail&&onRdvC.email){
-            var onlineHtml=buildRdvEmailHTML("confirm",cVars);
-            sendEmailViaWorker(onRdvC.email,((onRdvC.prenom||"")+" "+(onRdvC.nom||"")).trim(),"Confirmation de votre rendez-vous - "+SALON_CONFIG.nom,onlineHtml);
-          }
-        }
-      }
-      break;
-    }
-  }
-  showNotifs();
-  updateNotifBadge();
+async function confirmNotif(id){
+  try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);}catch(e){}
+  window._notifBadgeCache.t=0;showNotifs();updateNotifBadge();
 }
-function saveDismissed(){try{localStorage.setItem("_dismissed",JSON.stringify(window._dismissedNotifs||{}));}catch(e){}}
-function loadDismissed(){try{var d=localStorage.getItem("_dismissed");if(d)window._dismissedNotifs=JSON.parse(d);}catch(e){}}
-loadDismissed();
-
-function clearReadNotifs(){
-  if(!window.NOTIFS)return;
-  if(!window._dismissedNotifs)window._dismissedNotifs={};
-  window.NOTIFS.forEach(function(n){
-    if(n.seen&&n.rdvOnlineId){
-      window._dismissedNotifs[n.rdvOnlineId]=true;
-      // Mark as seen in Supabase so it doesn't come back after page reload
-      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
-    }
-  });
-  window.NOTIFS=window.NOTIFS.filter(function(n){return!n.seen;});
-  saveDismissed();showNotifs();updateNotifBadge();
+async function clearReadNotifs(){
+  try{await _sb.from('notifications').delete().eq('salon_id',_salonId).not('read_at','is',null);}catch(e){}
+  window._notifBadgeCache.t=0;showNotifs();updateNotifBadge();
 }
-function markAllNotifsRead(){
-  if(!window.NOTIFS)return;
-  if(!window._dismissedNotifs)window._dismissedNotifs={};
-  window.NOTIFS.forEach(function(n){
-    n.seen=true;n.confirmed=true;
-    if(n.rdvOnlineId){
-      window._dismissedNotifs[n.rdvOnlineId]=true;
-      if(typeof _sb!=="undefined"&&_sb)_sb.from("rdv_online").update({status:"done"}).eq("id",n.rdvOnlineId);
-    }
-  });
-  window.NOTIFS=[];
-  saveDismissed();updateNotifBadge();showNotifs();
+async function markAllNotifsRead(){
+  try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('salon_id',_salonId).is('read_at',null);}catch(e){}
+  window._notifBadgeCache.t=0;updateNotifBadge();showNotifs();
 }
 function simulateOnlineRdv(cn,sv,d,t){addNotif("rdv_online","Nouveau RDV en ligne",cn+" - "+sv+" le "+d+" a "+t,{});}
-function simulateOnlinePurchase(cn,pr,am){addNotif("produit_online","Commande Click \& Collect",cn+" a commande "+pr+" ("+am.toFixed(2)+"\u20ac)",{});}
+function simulateOnlinePurchase(cn,pr,am){addNotif("produit_online","Commande Click & Collect",cn+" a commande "+pr+" ("+am.toFixed(2)+"€)",{});}
 function simulateGoogleReserve(cn,sv,d,t){addNotif("google_reserve","RDV Google Reserve",cn+" - "+sv+" le "+d+" a "+t,{source:"google"});}
 
 // === CRITICAL FUNCTIONS (early copy) ===
@@ -3805,23 +3626,21 @@ var ICO={
   settings:_ico('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>')
 };
 
-function updateNotifBadge(){
-  var count=0;
-  if(window.RDV_ONLINE){
-    count+=window.RDV_ONLINE.filter(function(r){
-      if(r.status==="done")return false;
-      if(window._dismissedNotifs&&window._dismissedNotifs[r.id])return false;
-      return r.status==="pending"||r.status==="confirmed";
-    }).length;
-  }
-  if(window.NOTIFS){
-    count+=window.NOTIFS.filter(function(n){return!n.seen&&!n.rdvOnlineId;}).length;
-  }
-  var badge=document.getElementById("notifBadge");
-  if(badge){
-    if(count>0){badge.style.display="flex";badge.textContent=count;}
-    else{badge.style.display="none";}
-  }
+async function updateNotifBadge(){
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
+    var now=Date.now();
+    if(now-window._notifBadgeCache.t<30000){
+      var _b=document.getElementById('notifBadge');
+      if(_b){var v=window._notifBadgeCache.v;if(v>0){_b.style.display='flex';_b.textContent=v;}else _b.style.display='none';}
+      return;
+    }
+    var r=await _sb.from('notifications').select('id',{count:'exact',head:true}).eq('salon_id',_salonId).is('read_at',null);
+    var count=r.count||0;
+    window._notifBadgeCache={t:now,v:count};
+    var _nb=document.getElementById('notifBadge');
+    if(_nb){if(count>0){_nb.style.display='flex';_nb.textContent=count;}else _nb.style.display='none';}
+  }catch(e){console.warn('updateNotifBadge',e);}
 }
 // Check for new RDV online every 30 seconds
 window._rdvPollInterval=setInterval(function(){
@@ -16448,6 +16267,9 @@ function setupRealtime(){
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
   
   // Subscribe to appointments changes
+  
+  try{_sb.channel('lx_notif_'+_salonId).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:'salon_id=eq.'+_salonId},function(){window._notifBadgeCache.t=0;updateNotifBadge();var m=document.getElementById('modal');if(m&&m.style.display!=='none'&&typeof showNotifs==='function'){var mb=m.querySelector('.mbox h3');if(mb&&mb.textContent.indexOf('Notifications')>=0)showNotifs();}}).subscribe();}catch(e){console.warn('lx_notif sub',e);}
+
   var channel=_sb.channel("salon_"+_salonId)
     .on("postgres_changes",{event:"*",schema:"public",table:"appointments",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: appointment change",payload.eventType);
@@ -16685,7 +16507,7 @@ function refreshCurrentView(){
 
 // Register Service Worker for PWA
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/sw.js').catch(function(e){console.log('SW register:',e);});
+  navigator.serviceWorker.register('/sw.js',{scope:'/app'}).catch(function(e){console.log('SW register:',e);});
 }
 </script>
 </body>
