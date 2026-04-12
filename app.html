@@ -5651,6 +5651,7 @@ function rSettings(){
       {k:"nf525",i:"\ud83d\udee1",t:"NF525",d:"Audit, chaines, clotures Z"},
       {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"},
       {k:"documents",i:"\ud83d\udcc1",t:"Mes documents",d:"Kbis, pi\u00e8ce d\u2019identit\u00e9, v\u00e9rification"},
+      {k:"notifspush",i:"\ud83d\udd14",t:"Notifications push",d:"Activation, test, d\u00e9sactivation"},
       {k:"support",i:"\ud83d\udcac",t:"Support Luxyra",d:"Nouvelle conversation, historique"}
     ];
     for(var i=0;i<sections.length;i++){
@@ -6461,6 +6462,11 @@ function rSettings(){
     if(SALON_CONFIG.docKbis&&SALON_CONFIG.docId&&verifStatus!=="verified"){
       h+='<div class="card" style="background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.15)"><div style="font-size:13px;color:var(--blue);text-align:center">\ud83d\udd0d Vos documents sont en cours de v\u00e9rification. Vous recevrez une confirmation par email.</div></div>';
     }
+  }
+  else if(settTab==="notifspush"){
+    h+='<div class="sec">\ud83d\udd14 Notifications push</div>';
+    h+='<div class="card" style="padding:16px"><div id="pushSettingsZone" style="font-size:13px;color:var(--text2)">Chargement…</div></div>';
+    setTimeout(function(){if(typeof renderPushSettings==='function')renderPushSettings();},100);
   }
   else if(settTab==="caisse"){
     h+='<div class="sec">\ud83d\udcb0 Caisse & paiements</div>';
@@ -16747,41 +16753,10 @@ async function renderPushSettings(){
   if(st==='active')h+='<button class="btn bs" onclick="lxSalonPushTest()" style="margin-right:6px">Tester</button><button class="btn bs" onclick="lxSalonPushDisable()">Désactiver</button>';
   z.innerHTML=h;
 }
-function _injectPushCardInSettings(){
-  var app=document.getElementById('app');if(!app)return;
-  // Only on main settings screen (not sub-sections)
-  var tab=window._settTab;
-  if(tab&&tab!=='main'){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);return;}
-  if(document.getElementById('pushSettingsCard'))return;
-  var c=document.querySelector('.app-content')||app;
-  var d=document.createElement('div');
-  d.id='pushSettingsCard';
-  d.className='card';
-  d.style.cssText='margin:12px;padding:14px;background:var(--bg2);border:1px solid var(--border);border-radius:10px';
-  d.innerHTML='<h3 style="margin:0 0 10px;font-size:15px">🔔 Notifications push</h3><div id="pushSettingsZone">Chargement…</div>';
-  c.appendChild(d);
-  renderPushSettings();
-}
-(function(){
-  var _g=window.go;
-  if(typeof _g==='function'){
-    window.go=function(p){
-      var r=_g.apply(this,arguments);
-      if(p==='settings')setTimeout(_injectPushCardInSettings,150);
-      else{var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
-      return r;
-    };
-  }
-  // Also intercept _settTab changes: remove card when entering a sub-section
-  var _lastTab=null;
-  setInterval(function(){
-    if(window._settTab!==_lastTab){
-      _lastTab=window._settTab;
-      if(_lastTab&&_lastTab!=='main'){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
-      else if((!_lastTab||_lastTab==='main')&&document.querySelector('.app-content')){setTimeout(_injectPushCardInSettings,100);}
-    }
-  },500);
-})();
+// Push notifications settings — now rendered as a dedicated sub-tab "notifspush"
+// (la tuile est dans la liste sections, le rendu se fait dans settings via _settTab)
+function _removeLegacyPushCard(){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
+setInterval(_removeLegacyPushCard,1000);
 async function maybeShowPushBanner(){
   try{
     if(localStorage.getItem('lx_push_banner_dismissed')==='1')return;
