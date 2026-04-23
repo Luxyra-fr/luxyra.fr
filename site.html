@@ -205,6 +205,22 @@ var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var sb=supabase.createClient(SB_URL,SB_KEY);
 var stripe=null;try{stripe=Stripe("pk_test_51TCS0KPk42Psx94TbtlODP1PLrlFAFznR35OuEjt2l1LcOywSXfj4oQUNdQCJcS4XajdSjVcDr0DLLT1B8ew2pXj005qIoOWVo");}catch(e){console.warn("Stripe not loaded",e);}
 
+// Traduit les erreurs Postgres (trigger + contraintes) en messages user-friendly
+function rdvErrorMessage(err){
+  if(!err)return "Erreur inconnue";
+  var m=err.message||String(err);
+  // Double booking unique constraint
+  if(/rdv_online_no_double_booking|duplicate key/i.test(m)) return "Ce créneau vient d'être réservé par quelqu'un d'autre. Choisissez un autre horaire.";
+  // Trigger validations : les messages sont déjà en français, on les renvoie tels quels
+  if(/Salon inexistant|ne contrib|n'accepte plus/i.test(m)) return m;
+  if(/Service (inexistant|n'est|n'appartient)/i.test(m)) return m;
+  if(/Collaborateur (inexistant|n'est|n'appartient)/i.test(m)) return m;
+  if(/Réservation trop (proche|lointaine)/i.test(m)) return m;
+  if(/Jour fermé|Horaire trop|fermé ce jour|Période d'absence|absent ce jour/i.test(m)) return m;
+  if(/acompte payé/i.test(m)) return "Erreur de paiement. Veuillez réessayer.";
+  return "Erreur : " + m;
+}
+
 // Get salon ID from URL
 var params=new URLSearchParams(window.location.search);
 var salonId=params.get("s")||params.get("salon")||window.__SALON_ID||"";
@@ -1215,7 +1231,7 @@ async function submitBooking(){
   
   try{
     var r=await sb.from("rdv_online").insert(data).select();
-    if(r.error){alert("Erreur: "+r.error.message);return;}
+    if(r.error){alert(rdvErrorMessage(r.error));await refreshRDV();renderTimeSlots(booking.date);return;}
     // Immediately block this slot from being rebooked
     RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:booking.svc.n}]});
     // Success
@@ -1358,7 +1374,7 @@ async function submitWithStripe(){
       status:"pending_payment",message:msg
     };
     var rdvRes=await sb.from("rdv_online").insert(rdvData).select();
-    if(rdvRes.error){alert("Erreur: "+rdvRes.error.message);return;}
+    if(rdvRes.error){alert(rdvErrorMessage(rdvRes.error));await refreshRDV();renderTimeSlots(booking.date);return;}
     var rdvId=rdvRes.data[0].id;
     
     // 2. Create Connect Checkout Session via worker
@@ -1487,7 +1503,7 @@ async function processStripePayment(){
     
     var r=await sb.from("rdv_online").insert(data).select();
     if(r.error){
-      document.getElementById("stripeError").textContent="Erreur: "+r.error.message;
+      document.getElementById("stripeError").textContent=rdvErrorMessage(r.error);
       btn.disabled=false;
       btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
       return;
