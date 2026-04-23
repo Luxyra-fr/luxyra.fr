@@ -231,6 +231,11 @@ async function loadSalonData() {
   SALON_CONFIG.docKbis = salon.documents_kbis || "";
   SALON_CONFIG.docId = salon.documents_id || "";
   SALON_CONFIG.verif = salon.verification_status || "pending";
+
+  // Stripe Connect status : nécessaire pour gater la feature acompte en ligne
+  // ("active" = KYC complet, salon peut recevoir des paiements directs)
+  SALON_CONFIG.stripeConnectStatus = salon.stripe_connect_status || "";
+  SALON_CONFIG.stripeConnectId = salon.stripe_connect_id || "";
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
   if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
