@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&display=swap" rel="stylesheet">
+<script src="bp-client.js"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -105,21 +106,31 @@ function api(path,opts){return fetch(SB_URL+"/rest/v1/"+path,Object.assign({head
 function fmtDate(d){if(!d)return"\u2014";try{return new Date(d).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});}catch(e){return d;}}
 
 // Session
-function saveSession(){try{localStorage.setItem("lx_account",JSON.stringify(CLIENT));}catch(e){}}
-function loadSession(){try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);PAGE="dashboard";}}catch(e){}}
-function logout(){CLIENT=null;CLIENT_RDVS=[];PAGE="login";try{localStorage.removeItem("lx_account");}catch(e){}render();}
+function saveSession(){
+  if(!CLIENT)return;
+  var safe={};for(var k in CLIENT){if(k!=="password_hash")safe[k]=CLIENT[k];}
+  try{localStorage.setItem("lx_account",JSON.stringify(safe));}catch(e){}
+}
+function loadSession(){
+  // Priorité au token BP (nouveau flow via edge functions)
+  if (window.BP && BP.hasSession()) {
+    var u=BP.getUser();
+    if(u){CLIENT=u;if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";return;}
+  }
+  // Fallback legacy localStorage
+  try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";}}catch(e){}
+}
+function logout(){CLIENT=null;CLIENT_RDVS=[];PAGE="login";BP.logout();try{localStorage.removeItem("lx_account");}catch(e){}render();}
 loadSession();
-// Refresh client data from Supabase (in case updated from app)
-if(CLIENT&&CLIENT.email){
-  api("clients_beautypro?email=eq."+encodeURIComponent(CLIENT.email)).then(function(r){return r.json();}).then(function(d){
-    if(Array.isArray(d)&&d[0]){
-      var fresh=d[0];
-      CLIENT.nom=fresh.nom||CLIENT.nom;CLIENT.prenom=fresh.prenom||CLIENT.prenom;
-      CLIENT.telephone=fresh.telephone||CLIENT.telephone;CLIENT.genre=fresh.genre||CLIENT.genre;
-      CLIENT.adresse=fresh.adresse||CLIENT.adresse;CLIENT.cp=fresh.cp||CLIENT.cp;
-      CLIENT.ville=fresh.ville||CLIENT.ville;CLIENT.date_naissance=fresh.date_naissance||CLIENT.date_naissance;
-      CLIENT.sms_ok=fresh.sms_ok;CLIENT.email_ok=fresh.email_ok;
+// Refresh client data via edge function (si session BP valide)
+if(CLIENT&&BP.hasSession()){
+  BP.get().then(function(res){
+    if(res.ok&&res.data&&res.data.user){
+      CLIENT=res.data.user;
       saveSession();render();
+    } else if (res.status===401){
+      // Session expirée → retour login
+      logout();
     }
   }).catch(function(e){});
 }
@@ -741,25 +752,10 @@ async function doLogin(){
   var email=document.getElementById("lEmail").value.trim().toLowerCase();
   var pass=document.getElementById("lPass").value;
   if(!email||!pass){showErr("loginErr","Remplissez email et mot de passe");return;}
-  var saltedHash=await sha256Salted(email, pass);
-  var unsaltedHash=await sha256(pass);
-  try{
-    var r=await api("clients_beautypro?select=*&email=eq."+encodeURIComponent(email));
-    var data=await r.json();
-    if(!Array.isArray(data)||!data.length){showErr("loginErr","Aucun compte avec cet email");return;}
-    var stored=data[0].password_hash;
-    if(stored===saltedHash){
-      // Salted hash matches — good
-    }else if(stored===unsaltedHash){
-      // Old unsalted hash matches — silently upgrade to salted
-      api("clients_beautypro?id=eq."+data[0].id,{method:"PATCH",body:JSON.stringify({password_hash:saltedHash})});
-    }else{
-      showErr("loginErr","Mot de passe incorrect");return;
-    }
-    CLIENT=data[0];CLIENT.password_hash=saltedHash;PAGE="dashboard";TAB="rdv";
-    api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({last_login:new Date().toISOString()})});
-    saveSession();loadMyRdvs();render();
-  }catch(e){showErr("loginErr","Erreur r\u00e9seau");}
+  var res=await BP.login(email,pass);
+  if(!res.ok){showErr("loginErr",res.data&&res.data.error?res.data.error:"Email ou mot de passe incorrect");return;}
+  CLIENT=res.data.user;PAGE="dashboard";TAB="rdv";
+  saveSession();loadMyRdvs();render();
 }
 
 async function doRegister(){
@@ -776,20 +772,11 @@ async function doRegister(){
   if(!cgu){showErr("regErr","Vous devez accepter les CGU");return;}
   if(pass.length<6){showErr("regErr","Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showErr("regErr","Les mots de passe ne correspondent pas");return;}
-  var hash=await sha256Salted(email, pass);
   var smsOk=document.getElementById("rSms").checked;
   var emOk=document.getElementById("rEm").checked;
-  try{
-    var check=await api("clients_beautypro?select=id&email=eq."+encodeURIComponent(email));
-    var ex=await check.json();
-    if(ex&&ex.length){showErr("regErr","Un compte existe d\u00e9j\u00e0. Connectez-vous.");return;}
-    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro",{method:"POST",headers:Object.assign({},HDR,{"Prefer":"return=representation"}),body:JSON.stringify({email:email,password_hash:hash,nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk})});
-    var data=await r.json();
-    if(Array.isArray(data)&&data.length)CLIENT=data[0];
-    else if(data&&data.id)CLIENT=data;
-    else{showErr("regErr","Erreur lors de la cr\u00e9ation");return;}
-    PAGE="dashboard";TAB="rdv";saveSession();render();
-  }catch(e){showErr("regErr","Erreur r\u00e9seau: "+e.message);}
+  var res=await BP.signup({email:email,password:pass,nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk});
+  if(!res.ok){showErr("regErr",res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation");return;}
+  CLIENT=res.data.user;PAGE="dashboard";TAB="rdv";saveSession();render();
 }
 
 // ========== PROFILE ACTIONS ==========
@@ -802,28 +789,26 @@ async function saveProfile(){
   var adr=document.getElementById("pAdr")?document.getElementById("pAdr").value.trim():"";
   var cp=document.getElementById("pCp")?document.getElementById("pCp").value.trim():"";
   var ville=document.getElementById("pVille")?document.getElementById("pVille").value.trim():"";
+  // 1. Save to clients_beautypro via edge function
+  var res=await BP.update({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville});
+  if(!res.ok){var el0=document.getElementById("profileMsg");if(el0){el0.style.display="block";el0.style.color="var(--red)";el0.textContent=res.data&&res.data.error?res.data.error:"Erreur";}return;}
+  CLIENT=res.data.user;saveSession();
+  // 2. Sync to ALL salon client records with same email (only non-empty fields)
   try{
-    // 1. Save to clients_beautypro (main profile)
-    await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville,updated_at:new Date().toISOString()})});
-    CLIENT.nom=nom.toUpperCase();CLIENT.prenom=pre;CLIENT.telephone=tel;CLIENT.date_naissance=ddn;CLIENT.genre=genre;CLIENT.adresse=adr;CLIENT.cp=cp;CLIENT.ville=ville;
-    saveSession();
-    // 2. Sync to ALL salon client records with same email (only non-empty fields)
-    try{
-      var syncObj={};
-      if(nom)syncObj.nom=nom.toUpperCase();
-      if(pre)syncObj.prenom=pre;
-      if(tel)syncObj.telephone=tel;
-      if(ddn)syncObj.date_naissance=ddn;
-      if(genre)syncObj.sexe=genre;
-      if(adr)syncObj.adresse=adr;
-      if(cp)syncObj.cp=cp;
-      if(ville)syncObj.ville=ville;
-      if(Object.keys(syncObj).length){
-        await api("clients?email=eq."+encodeURIComponent(CLIENT.email),{method:"PATCH",body:JSON.stringify(syncObj)});
-      }
-    }catch(e2){console.log("Sync salons:",e2);}
-    var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--green)";el.textContent="\u2705 Profil mis \u00e0 jour dans tous vos salons";}
-  }catch(e){var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--red)";el.textContent="Erreur";}}
+    var syncObj={};
+    if(nom)syncObj.nom=nom.toUpperCase();
+    if(pre)syncObj.prenom=pre;
+    if(tel)syncObj.telephone=tel;
+    if(ddn)syncObj.date_naissance=ddn;
+    if(genre)syncObj.sexe=genre;
+    if(adr)syncObj.adresse=adr;
+    if(cp)syncObj.cp=cp;
+    if(ville)syncObj.ville=ville;
+    if(Object.keys(syncObj).length){
+      await api("clients?email=eq."+encodeURIComponent(CLIENT.email),{method:"PATCH",body:JSON.stringify(syncObj)});
+    }
+  }catch(e2){console.log("Sync salons:",e2);}
+  var el=document.getElementById("profileMsg");if(el){el.style.display="block";el.style.color="var(--green)";el.textContent="\u2705 Profil mis \u00e0 jour dans tous vos salons";}
 }
 
 async function changePassword(){
@@ -833,13 +818,8 @@ async function changePassword(){
   if(!old||!nw){showMsg("passMsg","Remplissez tous les champs","var(--red)");return;}
   if(nw.length<6){showMsg("passMsg","6 caract\u00e8res minimum","var(--red)");return;}
   if(nw!==nw2){showMsg("passMsg","Les mots de passe ne correspondent pas","var(--red)");return;}
-  // FIX I7: Try salted hash first, then unsalted for backward compat
-  var oldSalted=await sha256Salted(CLIENT.email, old);
-  var oldUnsalted=await sha256(old);
-  if(oldSalted!==CLIENT.password_hash&&oldUnsalted!==CLIENT.password_hash){showMsg("passMsg","Mot de passe actuel incorrect","var(--red)");return;}
-  var newHash=await sha256Salted(CLIENT.email, nw);
-  await api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({password_hash:newHash})});
-  CLIENT.password_hash=newHash;saveSession();
+  var res=await BP.changePassword(old,nw);
+  if(!res.ok){showMsg("passMsg",res.data&&res.data.error?res.data.error:"Erreur","var(--red)");return;}
   showMsg("passMsg","\u2705 Mot de passe modifi\u00e9","var(--green)");
   document.getElementById("pOldPass").value="";document.getElementById("pNewPass").value="";document.getElementById("pNewPass2").value="";
 }
@@ -848,11 +828,11 @@ function toggleNotif(el,field){
   var isOn=el.classList.contains("on");
   el.classList.toggle("on");
   CLIENT[field]=!isOn;saveSession();
-  var body={};body[field]=!isOn;
-  // Save to clients_beautypro (main profile)
-  api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify(body)});
-  // Sync to ALL salon client records with same email
+  // Save via edge function
+  BP.toggleNotif(field,!isOn);
+  // Sync to ALL salon client records with same email (unchanged, reste en anon pour l'instant)
   try{
+    var body={};body[field]=!isOn;
     api("clients?email=eq."+encodeURIComponent(CLIENT.email),{method:"PATCH",body:JSON.stringify(body)});
   }catch(e){}
 }
@@ -946,7 +926,7 @@ async function doDeleteAccount(){
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="var(--red)";confirm.focus();return;}
   try{
     var email=CLIENT.email;
-    // Anonymize rdv_online
+    // Anonymize rdv_online (reste en anon pour l'instant)
     await api("rdv_online?client_beautypro_id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({client_beautypro_id:null,client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""})});
     // Anonymize appointments in all salons
     await api("clients?email=eq."+encodeURIComponent(email),{method:"PATCH",body:JSON.stringify({nom:"ANONYME",prenom:"",telephone:"",email:"",adresse:"",cp:"",ville:"",date_naissance:null,notes:"",actif:false})});
@@ -954,15 +934,16 @@ async function doDeleteAccount(){
     await api("fidelite_client?client_beautypro_id=eq."+encodeURIComponent(email),{method:"DELETE"});
     // Delete client_salon links
     await api("client_salon?client_id=eq."+CLIENT.id,{method:"DELETE"});
-    // Delete the account
-    await api("clients_beautypro?id=eq."+CLIENT.id,{method:"DELETE"});
+    // Delete the BP account via edge function
+    var res=await BP.delete();
+    if(!res.ok){alert("Erreur suppression compte: "+(res.data&&res.data.error?res.data.error:""));return;}
     logout();
   }catch(e){alert("Erreur: "+e.message);}
 }
 
 function removeCard(){
   CLIENT.stripe_pm=null;CLIENT.card_last4=null;CLIENT.card_exp=null;saveSession();
-  api("clients_beautypro?id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({stripe_pm:null,card_last4:null,card_exp:null})});
+  BP.removePayment();
   render();
 }
 

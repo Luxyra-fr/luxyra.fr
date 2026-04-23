@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Luxyra – Trouvez votre professionnel de beauté</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&display=swap" rel="stylesheet">
+<script src="bp-client.js"></script>
 <style>
 :root{
   --bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);
@@ -609,42 +610,18 @@ async function doMktRegister(){
   if(pass!==pass2){showMktAuthErr("Les mots de passe ne correspondent pas");return;}
   var smsOk=document.getElementById("mktSms")?document.getElementById("mktSms").checked:false;
   var emOk=document.getElementById("mktEm")?document.getElementById("mktEm").checked:false;
-  var hash=await hashPasswordMktSalted(email, pass);
-  try{
-    var check=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=id&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
-    var existing=await check.json();
-    if(existing&&existing.length>0){showMktAuthErr("Un compte existe d\u00e9j\u00e0 avec cet email. Connectez-vous.");return;}
-    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro",{method:"POST",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json","Prefer":"return=representation"},body:JSON.stringify({email:email,password_hash:hash,nom:nom,prenom:pre,telephone:tel,date_naissance:ddn||null,sms_ok:smsOk,email_ok:emOk,email_verified:false})});
-    var data=await r.json();
-    if(data&&data.length>0){MKT_CLIENT=data[0];saveMktSession();closeMktAuth();render();}
-    else if(data&&data.id){MKT_CLIENT=data;saveMktSession();closeMktAuth();render();}
-    else{showMktAuthErr("Erreur lors de la cr\u00e9ation du compte");}
-  }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
+  var res=await BP.signup({email:email,password:pass,nom:nom,prenom:pre,telephone:tel,date_naissance:ddn||null,sms_ok:smsOk,email_ok:emOk});
+  if(!res.ok){showMktAuthErr(res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation du compte");return;}
+  MKT_CLIENT=res.data.user;saveMktSession();closeMktAuth();render();
 }
 
 async function doMktLogin(){
   var email=document.getElementById("mktEmail").value.trim().toLowerCase();
   var pass=document.getElementById("mktPass").value;
   if(!email||!pass){showMktAuthErr("Remplissez email et mot de passe");return;}
-  var saltedHash=await hashPasswordMktSalted(email, pass);
-  var unsaltedHash=await hashPasswordMkt(pass);
-  try{
-    var r=await fetch(SB_URL+"/rest/v1/clients_beautypro?select=*&email=eq."+encodeURIComponent(email),{headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY}});
-    var data=await r.json();
-    if(!Array.isArray(data)||data.length===0){showMktAuthErr("Email ou mot de passe incorrect");return;}
-    var user=data[0];
-    if(user.password_hash===saltedHash){
-      // OK salted
-    }else if(user.password_hash===unsaltedHash){
-      // Old hash — auto-upgrade
-      fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+user.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({password_hash:saltedHash})});
-    }else{
-      showMktAuthErr("Email ou mot de passe incorrect");return;
-    }
-    MKT_CLIENT=user;MKT_CLIENT.password_hash=saltedHash;
-    fetch(SB_URL+"/rest/v1/clients_beautypro?id=eq."+MKT_CLIENT.id,{method:"PATCH",headers:{"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"},body:JSON.stringify({last_login:new Date().toISOString()})});
-    saveMktSession();closeMktAuth();render();
-  }catch(e){showMktAuthErr("Erreur r\u00e9seau: "+e.message);}
+  var res=await BP.login(email,pass);
+  if(!res.ok){showMktAuthErr(res.data&&res.data.error?res.data.error:"Email ou mot de passe incorrect");return;}
+  MKT_CLIENT=res.data.user;saveMktSession();closeMktAuth();render();
 }
 
 // ========== MES RENDEZ-VOUS CROSS-SALONS ==========
