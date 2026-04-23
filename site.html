@@ -1480,30 +1480,40 @@ async function processStripePayment(){
       return;
     }
     
-    // Token created successfully - in test mode this proves the card is valid
-    // Store the token ID for reference
+    // Token created successfully — la carte sera réellement débitée côté serveur via
+    // l'edge function rdv-charge-acompte (qui appelle Stripe Charges API avec la secret key)
     var tokenId=result.token.id;
     var last4=result.token.card.last4;
     var brand=result.token.card.brand;
-    
-    // Submit the booking with payment info
+
     var dur=booking.duration||30;
-    var data={
-      salon_id:salonId,
+    var rdvData={
       client_nom:pb.nom,client_prenom:pb.pre,client_tel:pb.tel,client_email:pb.email,
-      client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
+      client_beautypro_id:CLIENT?CLIENT.id:null,
       service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
-      acompte_montant:acompte,acompte_paye:true,
-      stripe_token:tokenId,stripe_last4:last4,stripe_brand:brand,
       status:SITE_CFG.autoConfirm?"confirmed":"pending",
       message:pb.msg
     };
-    
-    var r=await sb.from("rdv_online").insert(data).select();
-    if(r.error){
-      document.getElementById("stripeError").textContent=rdvErrorMessage(r.error);
+
+    var chargeResp;
+    try{
+      var r=await fetch(SB_URL+"/functions/v1/rdv-charge-acompte",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+        body:JSON.stringify({salon_id:salonId,stripe_token:tokenId,amount_eur:acompte,rdv_data:rdvData})
+      });
+      chargeResp=await r.json();
+      if(!r.ok){
+        document.getElementById("stripeError").textContent=chargeResp.error||"\u00c9chec du paiement";
+        btn.disabled=false;
+        btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+        if(chargeResp.refunded){await refreshRDV();renderTimeSlots(booking.date);}
+        return;
+      }
+    }catch(e){
+      document.getElementById("stripeError").textContent="Erreur r\u00e9seau pendant le paiement: "+e.message;
       btn.disabled=false;
       btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
       return;
