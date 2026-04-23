@@ -221,8 +221,22 @@ Alexandre applique dans `dash.cloudflare.com → Workers & Pages → luxyra-rout
 ### 🟠 Reste à faire (non bloquant)
 
 - [ ] (long terme) Migrer BP vers Supabase Auth pour avoir reset-password natif + email verif + OAuth
-- [x] **Stripe test-mode** : edge function `rdv-charge-acompte` déployée. Elle charge réellement la carte via Stripe Charges API côté serveur (secret key), puis insère `rdv_online` avec `acompte_paye=true` via service_role (bypass trigger). Refund auto si INSERT échoue (ex. double booking). Anti-tampering : vérifie que `amount_eur` correspond au tarif service × acompte% configuré.
-  - **⚠ À FAIRE PAR ALEXANDRE** : configurer le secret `STRIPE_SECRET_KEY` dans Supabase Dashboard → Edge Functions → Settings → Secrets. Valeur : la clé `sk_test_...` (ou `sk_live_...` en prod) qui correspond à la clé publique `pk_test_51TCS0K...` dans site.html line 206.
+- [x] **Stripe test-mode** : edge function `rdv-charge-acompte` déployée + configurée avec `STRIPE_SECRET_KEY` dans Supabase. Testée OK avec `tok_visa` → charge réel `ch_test_...` sur Stripe.
+
+### 💰 Architecture paiement (à NE PAS oublier)
+
+**Intention business** : les acomptes doivent arriver **directement sur le compte Stripe du salon** via Stripe Connect. Tant qu'un salon n'a pas `stripe_connect_status='active'`, ses acomptes tombent sur le compte Luxyra (flow Path B dégradé).
+
+- **Path A** — salon avec Connect active → Cloudflare Worker `/api/stripe/connect-payment` → $$ direct salon
+- **Path B** — salon sans Connect (ou `pending_verification`) → Supabase edge function `rdv-charge-acompte` → $$ sur compte Luxyra (temporaire)
+
+Le choix Path A vs B est fait automatiquement dans `site.html` (ligne ~1347 vs ~1395) en fonction de `SALON.connectStatus`.
+
+**Exemple actuel** : Excellence Coiffure (`e0cf27c7-...`) est en `pending_verification` → ses acomptes clients tombent sur le compte Luxyra. Alexandre doit soit (1) les reverser manuellement, (2) bloquer l'acompte online tant que Connect pas active.
+
+### 📘 Documentation passage live
+
+Fichier **`docs/PASSAGE_LIVE.md`** à la racine du repo : checklist complet des 3 valeurs à changer (Supabase secret, Cloudflare Worker secret, `pk_` dans site.html/marketplace.html), procédure, gestion Excellence Coiffure et autres salons pending, recommandations webhooks Stripe.
 - [ ] Extension : appliquer la même logique sur `appointments` (table RDV internes au salon) via un trigger similaire si des salons saisissent des RDV en double par erreur.
 
 ### ✅ HIBP (HaveIBeenPwned) — implémenté côté edge functions
