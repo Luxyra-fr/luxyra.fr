@@ -136,6 +136,7 @@ async function loadSalonData() {
 
   var salon = sRes.data[0];
   _salonId = salon.id;
+  window._salonId = salon.id; // expose explicitement pour app.html (startCheckout, etc.)
   _isOnline = true;
 
   // Minimum config pour les écrans de blocage
