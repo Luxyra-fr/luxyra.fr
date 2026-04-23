@@ -138,6 +138,35 @@
     return !!getToken();
   }
 
+  // Check HaveIBeenPwned via k-anonymity API (SHA-1, 5 premiers chars seulement envoyés)
+  // Returns true si le mdp est dans une fuite connue. Fail-open si API down.
+  async function bpCheckPasswordLeaked(password){
+    if(!password) return false;
+    try {
+      var enc = new TextEncoder().encode(password);
+      var hashBuf = await crypto.subtle.digest("SHA-1", enc);
+      var hashHex = Array.from(new Uint8Array(hashBuf))
+        .map(function(b){ return b.toString(16).padStart(2, "0"); })
+        .join("").toUpperCase();
+      var prefix = hashHex.slice(0, 5);
+      var suffix = hashHex.slice(5);
+      var r = await fetch("https://api.pwnedpasswords.com/range/" + prefix, {
+        headers: { "Add-Padding": "true" }
+      });
+      if(!r.ok) return false;
+      var text = await r.text();
+      var lines = text.split("\n");
+      for(var i = 0; i < lines.length; i++){
+        var parts = lines[i].trim().split(":");
+        if(parts[0] === suffix && parseInt(parts[1], 10) > 0) return true;
+      }
+      return false;
+    } catch(e) {
+      console.log("HIBP check failed:", e);
+      return false;
+    }
+  }
+
   // Expose globalement
   window.BP = {
     signup: bpSignup,
@@ -151,6 +180,7 @@
     logout: bpLogout,
     hasSession: bpHasSession,
     getUser: getUser,
-    getToken: getToken
+    getToken: getToken,
+    checkPasswordLeaked: bpCheckPasswordLeaked
   };
 })();
