@@ -1718,20 +1718,39 @@ function checkCgvAndPay(plan){
 async function startCheckout(plan){
   var btn=document.getElementById("upgradeBtn");
   if(btn){btn.textContent="Chargement...";btn.disabled=true;}
+
+  // Récupération robuste : window._salonId ou fallback sur _salonId global (module script)
+  var sid = window._salonId || (typeof _salonId !== "undefined" ? _salonId : "") || "";
+  var em  = (SALON_CONFIG && SALON_CONFIG.email) || "";
+
+  // Pré-check côté client pour message d'erreur clair (pas juste 'salon_id, plan, email requis')
+  if(!sid || !em || !plan){
+    var missing = [];
+    if(!sid) missing.push("identifiant du salon");
+    if(!em)  missing.push("email");
+    if(!plan)missing.push("forfait");
+    alert("Impossible de continuer : " + missing.join(", ") + " manquant. Rechargez la page et réessayez.");
+    console.error("[startCheckout] données manquantes", {salon_id:sid, plan:plan, email:em});
+    if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+    return;
+  }
+
   try{
     var res=await fetch(window.location.origin+STRIPE_API+"/create-checkout",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({salon_id:window._salonId||"",plan:plan,email:SALON_CONFIG.email||""})
+      body:JSON.stringify({salon_id:sid, plan:plan, email:em})
     });
     var data=await res.json();
     if(data.url){
       window.location.href=data.url;
     }else{
-      alert("Erreur : "+(data.error||"Impossible de créer la session de paiement"));
+      console.error("[startCheckout] Worker error", data);
+      alert("Erreur : " + (data.error || "Impossible de créer la session de paiement"));
       if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
     }
   }catch(e){
+    console.error("[startCheckout] network error", e);
     alert("Erreur de connexion. Vérifiez votre internet.");
     if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
   }
