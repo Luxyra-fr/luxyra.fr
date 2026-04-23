@@ -135,9 +135,31 @@ git log --oneline -20
 
 ## Déploiement
 
-**Cloudflare Pages** (à confirmer — possiblement Workers) connecté au repo GitHub. Tout push sur `main` déclenche un redeploy automatique. Alexandre gère Cloudflare manuellement.
+**Architecture réelle (important à ne PAS oublier)** :
 
-**Pour les modifs Cloudflare** : Claude donne les instructions précises (nom de variable, valeur, emplacement dans le dashboard) qu'Alexandre applique.
+```
+utilisateur → luxyra.fr
+               │
+               ▼
+     Cloudflare Worker "luxyra-router" (compte Contact@luxyra.fr)
+               │ fetch depuis…
+               ▼
+     GitHub Pages → https://luxyra-fr.github.io/...
+               │ hébergé par…
+               ▼
+     Repo GitHub Luxyra-fr/luxyra.fr (branche main)
+```
+
+**⚠️ GitHub Pages DOIT rester activé** (Settings → Pages → Deploy from a branch → main / root).
+Le Worker Cloudflare `luxyra-router` fetch ses fichiers depuis l'URL GitHub Pages
+(`luxyra-fr.github.io`). Si tu désactives GitHub Pages → le Worker renvoie 404
+sur tout luxyra.fr.
+
+**`.nojekyll` à la racine du repo** : empêche GitHub Pages de lancer Jekyll
+(qui plantait sur `CLAUDE.md` et les mails d'erreur). Le site est servi tel quel.
+
+**Pour les modifs Cloudflare Worker** : Claude donne les instructions précises,
+Alexandre applique dans `dash.cloudflare.com → Workers & Pages → luxyra-router`.
 
 ## Connecteurs MCP
 
