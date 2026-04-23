@@ -1,4 +1,4 @@
-// Luxyra SW v14 — pass-through + push notifications
+// Luxyra SW v15 — push notifications only (no fetch interception)
 self.addEventListener('install', function() { self.skipWaiting(); });
 
 self.addEventListener('activate', function(e) {
@@ -11,10 +11,10 @@ self.addEventListener('activate', function(e) {
   );
 });
 
-// No caching — all requests go to network directly
-self.addEventListener('fetch', function(e) {
-  e.respondWith(fetch(e.request));
-});
+// Pas de handler 'fetch' : on laisse le browser gérer toutes les requêtes
+// normalement. Intercepter pour juste refetch ne sert à rien et cause des
+// "Uncaught (in promise) TypeError: Failed to fetch" dès qu'une requête
+// échoue (timeout, extension qui bloque, etc).
 
 // --- Push reception ---
 self.addEventListener('push', function(e) {
