@@ -2632,43 +2632,201 @@ async function refuseModification(notifId){
   showNotifs();updateNotifBadge();
 }
 
-async function showNotifs(){
-  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId){mO('<div class="mbox"><h3>Notifications</h3><p>Connexion requise</p><button class="btn bg" onclick="cM()">OK</button></div>');return;}
+// ============================================================================
+// Notifications — UI refonte Luxyra
+// ============================================================================
+
+// Formatte un timestamp en durée relative FR ("à l'instant", "5 min", "2 h",
+// "hier", "il y a 3 j", "il y a 2 sem")
+function notifRelTime(ts){
+  if(!ts) return "";
+  var diff = (Date.now() - new Date(ts).getTime()) / 1000;
+  if(diff < 60) return "à l'instant";
+  if(diff < 3600) return Math.floor(diff/60) + " min";
+  if(diff < 86400) return Math.floor(diff/3600) + " h";
+  if(diff < 172800) return "hier";
+  if(diff < 604800) return "il y a " + Math.floor(diff/86400) + " j";
+  if(diff < 2592000) return "il y a " + Math.floor(diff/604800) + " sem";
+  return new Date(ts).toLocaleDateString("fr-FR",{day:"numeric",month:"short"});
+}
+
+// Map un type de notif vers {icon, color, label}
+function notifTypeMeta(type){
+  var map = {
+    "rdv_online_new":   {icon:"📅", color:"#4ade80", bg:"rgba(74,222,128,.12)", label:"Nouveau RDV"},
+    "rdv_online_modif": {icon:"✏️", color:"#fb923c", bg:"rgba(251,146,60,.12)", label:"Modification demandée"},
+    "rdv_online_cancel":{icon:"❌", color:"#f87171", bg:"rgba(248,113,113,.12)", label:"RDV annulé"},
+    "rdv_online":       {icon:"📅", color:"#4ade80", bg:"rgba(74,222,128,.12)", label:"RDV en ligne"},
+    "produit_online":   {icon:"🛍️", color:"#c084fc", bg:"rgba(192,132,252,.12)", label:"Commande"},
+    "google_reserve":   {icon:"🔗", color:"#60a5fa", bg:"rgba(96,165,250,.12)", label:"RDV Google"},
+    "acompte_paye":     {icon:"💰", color:"#fbbf24", bg:"rgba(251,191,36,.12)", label:"Acompte reçu"},
+    "support":          {icon:"💬", color:"#60a5fa", bg:"rgba(96,165,250,.12)", label:"Support"},
+  };
+  return map[type] || {icon:"🔔", color:"var(--text2)", bg:"rgba(255,255,255,.05)", label:"Notification"};
+}
+
+// Extraction robuste de l'id du RDV lié (le trigger Postgres stocke "rdv_id"
+// mais l'ancien code utilisait "rdv_online_id" ou "onlineRdv.id")
+function notifLinkedRdvId(n){
+  var d = n.data || {};
+  return d.rdv_id || d.rdv_online_id || (d.onlineRdv && d.onlineRdv.id) || null;
+}
+
+// State UI pour la vue notifs
+window._notifFilter = "all"; // "all" | "unread"
+
+async function showNotifs(filter){
+  if(filter) window._notifFilter = filter;
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId){
+    mO('<div class="mbox"><h3>Notifications</h3><p>Connexion requise</p><button class="btn bg" onclick="cM()">OK</button></div>');
+    return;
+  }
   try{
-    var r=await _sb.from('notifications').select('id,type,title,detail,data,read_at,created_at').eq('salon_id',_salonId).order('created_at',{ascending:false}).limit(50);
-    var rows=r.data||[];
-    window.NOTIFS=rows.map(function(n){
-      var d=n.data||{};
-      return {id:n.id, dbId:n.id, type:n.type, title:n.title, detail:n.detail||'', ts:n.created_at,
-        seen:!!n.read_at, confirmed:!!n.read_at,
-        rdvOnlineId:d.rdv_online_id||null, onlineRdv:d.onlineRdv||null, modifData:d.modifData||null};
+    var r = await _sb.from("notifications")
+      .select("id,type,title,detail,data,read_at,created_at")
+      .eq("salon_id",_salonId)
+      .order("created_at",{ascending:false})
+      .limit(100);
+    if(r.error) throw r.error;
+    var rows = r.data || [];
+
+    // Normalise + garde compat avec acceptModification / refuseModification
+    window.NOTIFS = rows.map(function(n){
+      var d = n.data || {};
+      return {
+        id: n.id,
+        dbId: n.id,
+        type: n.type,
+        title: n.title || "",
+        detail: n.detail || "",
+        ts: n.created_at,
+        data: d,
+        seen: !!n.read_at,
+        confirmed: !!n.read_at,
+        rdvOnlineId: notifLinkedRdvId(n),
+        onlineRdv: d.onlineRdv || null,
+        modifData: d.modifData || (d.modification ? {date:d.modification.date, heure:d.modification.heure} : null)
+      };
     });
-    var notifs=window.NOTIFS;
-    var unr=notifs.filter(function(n){return !n.seen;});
-    var h='<div class="mbox" style="max-width:500px"><h3>🔔 Notifications</h3>';
-    if(unr.length>0)h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:14px;font-weight:700;color:var(--red)">'+unr.length+' non lue'+(unr.length>1?'s':'')+'</span><button class="btn bs" style="font-size:12px" onclick="markAllNotifsRead()">Tout effacer</button></div>';
-    if(notifs.length===0)h+='<p style="color:var(--text3);text-align:center;padding:20px">Aucune notification</p>';
-    else{
-      h+='<div style="max-height:60vh;overflow-y:auto">';
-      notifs.forEach(function(n){
-        var bg=n.seen?'var(--bg3)':'var(--gold-bg2)';
-        h+='<div style="background:'+bg+';border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">';
-        h+='<div style="font-weight:700;margin-bottom:4px">'+(n.title||'')+'</div>';
-        if(n.detail)h+='<div style="font-size:12px;color:var(--text2);margin-bottom:6px">'+n.detail+'</div>';
-        h+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">'+new Date(n.ts).toLocaleString('fr-FR')+'</div>';
-        if(n.type==='rdv_online_modif'&&!n.seen){
-          h+='<div style="display:flex;gap:6px"><button class="btn bg bs" style="font-size:11px" onclick="acceptModification(\''+n.id+'\')">✓ Accepter</button><button class="btn bs" style="font-size:11px" onclick="refuseModification(\''+n.id+'\')">✗ Refuser</button></div>';
-        }else if(!n.seen){
-          h+='<button class="btn bg bs" style="font-size:11px;padding:4px 10px" onclick="confirmNotif(\''+n.id+'\')">✔ Vu</button>';
+
+    var notifs = window.NOTIFS;
+    var unreadCount = notifs.filter(function(x){return !x.seen;}).length;
+    var showList = window._notifFilter === "unread"
+      ? notifs.filter(function(x){return !x.seen;})
+      : notifs;
+
+    // Header
+    var h = '<div class="mbox" style="max-width:540px;max-height:85vh;display:flex;flex-direction:column;padding:0;overflow:hidden">';
+    h += '<div style="padding:18px 20px 0 20px">';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
+    h += '<h3 style="font-size:18px;font-weight:800;display:flex;align-items:center;gap:8px;margin:0">'
+       + '<span style="font-size:22px">🔔</span> Notifications'
+       + (unreadCount > 0 ? '<span style="background:var(--red,#f87171);color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:10px;line-height:1.4">'+unreadCount+'</span>' : '')
+       + '</h3>';
+    h += '<button onclick="cM()" style="background:none;border:none;color:var(--text2);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px">✕</button>';
+    h += '</div>';
+
+    // Tabs filtre
+    h += '<div style="display:flex;gap:4px;background:var(--bg3,rgba(255,255,255,.05));border-radius:10px;padding:4px;margin-bottom:14px">';
+    var tabBase = "flex:1;padding:8px 10px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;transition:all .15s";
+    var tabActive = "background:var(--gold,#c8a84e);color:#000;";
+    var tabInactive = "background:transparent;color:var(--text2);";
+    h += '<button onclick="showNotifs(\'all\')" style="'+tabBase+';'+(window._notifFilter==="all"?tabActive:tabInactive)+'">Toutes ('+notifs.length+')</button>';
+    h += '<button onclick="showNotifs(\'unread\')" style="'+tabBase+';'+(window._notifFilter==="unread"?tabActive:tabInactive)+'">Non lues ('+unreadCount+')</button>';
+    h += '</div>';
+    h += '</div>'; // fin header
+
+    // Liste scrollable
+    h += '<div style="flex:1;overflow-y:auto;padding:0 20px 12px 20px">';
+    if(showList.length === 0){
+      var emptyMsg = window._notifFilter === "unread" ? "Aucune notification non lue" : "Aucune notification";
+      h += '<div style="text-align:center;padding:48px 20px;color:var(--text3,#6b7280)">'
+        + '<div style="font-size:48px;opacity:.4;margin-bottom:10px">🔕</div>'
+        + '<div style="font-size:14px">'+emptyMsg+'</div></div>';
+    } else {
+      showList.forEach(function(n){
+        var meta = notifTypeMeta(n.type);
+        var seen = n.seen;
+        var rdvId = n.rdvOnlineId;
+
+        h += '<div style="background:'+(seen?"transparent":meta.bg)+';border:1px solid '+(seen?"var(--border,rgba(255,255,255,.08))":meta.color+"33")+';border-radius:12px;padding:14px;margin-bottom:10px;transition:all .15s">';
+
+        // Header card
+        h += '<div style="display:flex;gap:12px;align-items:flex-start">';
+        // Icône
+        h += '<div style="width:40px;height:40px;border-radius:10px;background:'+meta.bg+';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">'+meta.icon+'</div>';
+        // Contenu
+        h += '<div style="flex:1;min-width:0">';
+        h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:2px">';
+        h += '<div style="font-weight:700;font-size:14px;color:'+(seen?"var(--text2)":"var(--text)")+'">'+(n.title||meta.label)+'</div>';
+        h += '<div style="font-size:11px;color:var(--text3,#6b7280);white-space:nowrap;flex-shrink:0">'+notifRelTime(n.ts)+'</div>';
+        h += '</div>';
+        if(n.detail) h += '<div style="font-size:13px;color:var(--text2);line-height:1.4;margin-bottom:8px">'+n.detail+'</div>';
+
+        // Actions
+        var actions = [];
+        if(n.type === "rdv_online_modif" && !seen){
+          actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="acceptModification(\''+n.id+'\')">✓ Accepter</button>');
+          actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="refuseModification(\''+n.id+'\')">✗ Refuser</button>');
+        } else if(rdvId){
+          actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="openRdvFromNotif(\''+rdvId+'\',\''+n.id+'\')">Voir le RDV →</button>');
         }
-        h+='</div>';
+        if(!seen && n.type !== "rdv_online_modif"){
+          actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px;opacity:.7" onclick="confirmNotif(\''+n.id+'\')">Marquer lu</button>');
+        }
+        if(actions.length) h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+actions.join("")+'</div>';
+
+        h += '</div></div></div>';
       });
-      h+='</div>';
-      if(notifs.some(function(n){return n.seen;}))h+='<button class="btn bs" style="font-size:12px;margin-top:8px" onclick="clearReadNotifs()">Effacer les lues</button>';
     }
-    h+='<button class="btn" style="width:100%;margin-top:8px" onclick="cM()">Fermer</button></div>';
+    h += '</div>'; // fin liste
+
+    // Footer actions
+    if(notifs.length > 0){
+      h += '<div style="padding:12px 20px;border-top:1px solid var(--border,rgba(255,255,255,.08));display:flex;gap:8px">';
+      if(unreadCount > 0) h += '<button class="btn bs" style="flex:1;font-size:13px;padding:10px" onclick="markAllNotifsRead()">Tout marquer lu</button>';
+      if(notifs.some(function(x){return x.seen;})) h += '<button class="btn bs" style="flex:1;font-size:13px;padding:10px;opacity:.8" onclick="clearReadNotifs()">🗑 Effacer les lues</button>';
+      h += '</div>';
+    }
+
+    h += '</div>'; // fin mbox
     mO(h);
-  }catch(e){console.error('showNotifs',e);toast('Erreur chargement notifs','error');}
+  } catch(e){
+    console.error("showNotifs error", e);
+    mO('<div class="mbox" style="max-width:420px">'
+      + '<h3 style="display:flex;align-items:center;gap:8px">⚠️ Erreur</h3>'
+      + '<p style="color:var(--text2);font-size:14px;line-height:1.5">Impossible de charger les notifications pour le moment.</p>'
+      + '<p style="color:var(--text3);font-size:12px;background:var(--bg3);padding:8px;border-radius:8px;font-family:monospace;word-break:break-all">'+(e && e.message ? e.message : String(e))+'</p>'
+      + '<div style="display:flex;gap:8px;margin-top:10px">'
+      + '<button class="btn bs" style="flex:1" onclick="cM()">Fermer</button>'
+      + '<button class="btn bg bs" style="flex:1" onclick="showNotifs()">Réessayer</button>'
+      + '</div></div>');
+  }
+}
+
+// Navigation : clic sur "Voir le RDV" depuis une notif
+async function openRdvFromNotif(rdvId, notifId){
+  // Marquer la notif comme lue
+  if(notifId){ try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",notifId); }catch(_){} }
+  window._notifBadgeCache.t = 0; updateNotifBadge();
+  // Fermer le modal notifs
+  cM();
+  // Ouvrir l'agenda sur le bon jour — approche simple : go à l'agenda
+  // (le salon peut ensuite retrouver le RDV visuellement)
+  if(typeof go === "function") go("ag");
+  // Si on a accès au RDV pour scroller dessus :
+  try{
+    var rdv = null;
+    if(typeof _sb !== "undefined" && _sb){
+      var res = await _sb.from("rdv_online").select("date_rdv,heure_rdv,client_nom,client_prenom,status").eq("id", rdvId).single();
+      rdv = res.data;
+    }
+    if(rdv){
+      setTimeout(function(){
+        toast("RDV du " + rdv.date_rdv + " " + (rdv.heure_rdv||"").slice(0,5) + " — " + (rdv.client_prenom||"") + " " + (rdv.client_nom||""), "info");
+      }, 300);
+    }
+  }catch(_){}
 }
 async function confirmNotif(id){
   try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);}catch(e){}
