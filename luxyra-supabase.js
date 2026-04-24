@@ -472,6 +472,68 @@ async function loadSalonData() {
     });
   }
 
+  // 8.5. Charger tickets DB → window.TICKETS_DB[] (pour historique NF525 safe)
+  //       Les tickets restent dans AP[] pour l'UI existante, window.TICKETS_DB
+  //       sert de référence pour l'historique + réimpression fidèle via raw_data.
+  try {
+    var tkRes = await _sb.from("tickets").select("*")
+      .eq("salon_id", _salonId)
+      .order("num", { ascending: false })
+      .limit(500);
+    if (tkRes.data) {
+      window.TICKETS_DB = tkRes.data.map(function(t) {
+        var raw = (t.raw_data && typeof t.raw_data === "object") ? t.raw_data : {};
+        return Object.assign({}, raw, {
+          dbId: t.id, num: t.num, date: t.date_ticket,
+          time: (t.heure_ticket || "").toString().slice(0,5),
+          ts: t.ts_created,
+          cId: t.client_id || raw.cId || "passage",
+          clientNom: t.client_nom, clientPrenom: t.client_prenom,
+          stId: t.collaborateur_id, stNom: t.collaborateur_nom,
+          items: t.items || [],
+          brutTotal: Number(t.total_brut), remise: Number(t.total_remise),
+          pr: Number(t.total_ttc), totalHT: Number(t.total_ht),
+          totalTVA: Number(t.total_tva), tauxTVA: Number(t.taux_tva),
+          met: t.mode_paiement, paymentDetail: t.detail_paiement,
+          st: t.status === "cancelled" ? "cancelled" : "done",
+          cancelled: t.status === "cancelled",
+          tkNum: t.num, hash: t.hash, hashPrev: t.hash_prev,
+          locked: t.locked, clotureId: t.cloture_id,
+          notes: t.notes
+        });
+      });
+    } else {
+      window.TICKETS_DB = [];
+    }
+  } catch(e) { console.warn("[loadSalonData] tickets load skipped", e); window.TICKETS_DB = []; }
+
+  // 8.6. Charger devis DB → window.DEVIS[] (remplace le localStorage)
+  try {
+    var dvRes = await _sb.from("devis").select("*")
+      .eq("salon_id", _salonId)
+      .order("num", { ascending: false })
+      .limit(500);
+    if (dvRes.data) {
+      // Expirer automatiquement les devis périmés non marqués
+      _sb.rpc("devis_expire_overdue").catch(function(){});
+      window.DEVIS = dvRes.data.map(function(d) {
+        var raw = (d.raw_data && typeof d.raw_data === "object") ? d.raw_data : {};
+        return Object.assign({}, raw, {
+          dbId: d.id, num: d.num, date: d.date_devis, dateValidite: d.date_validite,
+          cId: d.client_id, clientName: d.client_nom || "",
+          clientPrenom: d.client_prenom, clientTel: d.client_tel, clientEmail: d.client_email,
+          items: d.items || [],
+          total: Number(d.total_ttc), totalHT: Number(d.total_ht), totalTVA: Number(d.total_tva),
+          tauxTVA: Number(d.taux_tva), totalBrut: Number(d.total_brut), remise: Number(d.total_remise),
+          status: d.status, sentAt: d.sent_at, acceptedAt: d.accepted_at,
+          refusedAt: d.refused_at, convertedAt: d.converted_at,
+          ticketId: d.ticket_id, stId: d.collaborateur_id, stNom: d.collaborateur_nom,
+          notes: d.notes || ""
+        });
+      });
+    }
+  } catch(e) { console.warn("[loadSalonData] devis load skipped", e); }
+
   // 9. Charger clôtures → window.CLOTURES[]
   var clotRes = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num");
   if (clotRes.data) {
@@ -785,6 +847,200 @@ async function saveGiftCard(gc) {
     var res = await _sb.from("cartes_cadeaux").insert(data).select();
     if (res.data && res.data[0]) gc.id = res.data[0].id;
   }
+}
+
+// ============================================================
+// TICKETS (NF525) — persistance DB avec hash chaîné
+// ============================================================
+
+// Map le mode de paiement local ("cb", "esp", "mixte-cb-esp", "cb+esp", etc.)
+// vers {mode_paiement, detail_paiement} pour la DB
+function _mapPayment(tk) {
+  var met = (tk.met || "cb").toLowerCase();
+  var detail = {};
+  var total = Number(tk.pr || 0);
+
+  // Si mixte / +, parser la répartition si fournie, sinon mettre tout sur le premier mode détecté
+  var isMixte = /mixte|\+|,/.test(met);
+  var modes = ["cb","esp","chq","bon","vir","aut"];
+
+  if (isMixte && tk.paymentDetail && typeof tk.paymentDetail === "object") {
+    // Format prévu : tk.paymentDetail = {cb: 20, esp: 10}
+    return { mode: "mixte", detail: tk.paymentDetail };
+  }
+  // Auto-detect : prend le premier mode dans la string
+  for (var i = 0; i < modes.length; i++) {
+    if (met.indexOf(modes[i]) >= 0) {
+      detail[modes[i]] = total;
+      return { mode: isMixte ? "mixte" : modes[i], detail: detail };
+    }
+  }
+  // Fallback
+  detail.aut = total;
+  return { mode: "aut", detail: detail };
+}
+
+// Persiste un ticket (créé dans app.html via AP.push) vers la DB tickets.
+// Safe à appeler plusieurs fois : check si le ticket existe déjà via (salon_id, num).
+async function saveTicketToDb(tk) {
+  if (!_isOnline || !_salonId || !tk) return null;
+  try {
+    var pay = _mapPayment(tk);
+    var dateStr = tk.date || new Date().toISOString().slice(0,10);
+    var timeStr = tk.time || new Date().toTimeString().slice(0,5);
+    if (timeStr.length === 5) timeStr = timeStr + ":00"; // HH:MM → HH:MM:SS
+
+    // Calcul TVA à partir du taux salon
+    var taux = Number(SALON_CONFIG.tauxTVA || 20);
+    var ttc = Number(tk.pr || 0);
+    var ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
+    var tva = Math.round((ttc - ht) * 100) / 100;
+
+    var data = {
+      salon_id: _salonId,
+      // num : laisser le trigger auto-calculer
+      date_ticket: dateStr,
+      heure_ticket: timeStr,
+      client_id: (typeof tk.cId === "string" && tk.cId.length === 36) ? tk.cId : null,
+      client_nom: tk.clientNom || null,
+      client_prenom: tk.clientPrenom || null,
+      collaborateur_id: tk.stId || null,
+      collaborateur_nom: tk.stNom || null,
+      items: tk.items || [],
+      total_brut: Number(tk.brutTotal || tk.pr || 0),
+      total_remise: Number(tk.remise || 0),
+      total_ttc: ttc,
+      total_ht: ht,
+      total_tva: tva,
+      taux_tva: taux,
+      mode_paiement: pay.mode,
+      detail_paiement: pay.detail,
+      status: tk.cancelled ? "cancelled" : "paid",
+      notes: tk.comment || null,
+      raw_data: tk  // backup complet pour réimpression fidèle
+    };
+
+    var res = await _sb.from("tickets").insert(data).select().single();
+    if (res.error) {
+      console.warn("[saveTicketToDb] insert error", res.error);
+      return null;
+    }
+    // Mettre à jour l'objet local avec le num généré par le trigger + l'id + le hash
+    if (res.data) {
+      tk.dbId = res.data.id;
+      if (!tk.tkNum) tk.tkNum = res.data.num;
+      tk.hash = res.data.hash;
+      tk.hashPrev = res.data.hash_prev;
+    }
+    return res.data;
+  } catch (e) {
+    console.error("[saveTicketToDb] unexpected", e);
+    return null;
+  }
+}
+
+// Marque un ticket comme annulé (status=cancelled) — alternative au DELETE interdit
+async function cancelTicketDb(ticketDbId, reason) {
+  if (!_isOnline || !ticketDbId) return;
+  try {
+    await _sb.from("tickets")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: reason || null })
+      .eq("id", ticketDbId);
+  } catch (e) { console.warn("[cancelTicketDb]", e); }
+}
+
+// Verrouille tous les tickets d'une clôture (post-clôture Z)
+async function lockTicketsForCloture(cloture) {
+  if (!_isOnline || !_salonId || !cloture || !cloture.date) return;
+  try {
+    await _sb.from("tickets")
+      .update({ locked: true, cloture_id: cloture.id || null })
+      .eq("salon_id", _salonId)
+      .eq("date_ticket", cloture.date)
+      .eq("locked", false);
+  } catch (e) { console.warn("[lockTicketsForCloture]", e); }
+}
+
+// ============================================================
+// DEVIS — persistance DB
+// ============================================================
+
+async function saveDevisToDb(dv) {
+  if (!_isOnline || !_salonId || !dv) return null;
+  try {
+    var taux = Number(SALON_CONFIG.tauxTVA || 20);
+    var ttc = Number(dv.total || 0);
+    var ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
+    var tva = Math.round((ttc - ht) * 100) / 100;
+
+    var data = {
+      salon_id: _salonId,
+      date_devis: dv.date || new Date().toISOString().slice(0,10),
+      client_id: (typeof dv.cId === "string" && dv.cId.length === 36) ? dv.cId : null,
+      client_nom: dv.clientNom || dv.clientName || null,
+      client_prenom: dv.clientPrenom || null,
+      client_tel: dv.clientTel || null,
+      client_email: dv.clientEmail || null,
+      items: dv.items || [],
+      total_brut: Number(dv.totalBrut || dv.total || 0),
+      total_remise: Number(dv.remise || 0),
+      total_ttc: ttc,
+      total_ht: ht,
+      total_tva: tva,
+      taux_tva: taux,
+      status: dv.status || "brouillon",
+      validite_jours: dv.validiteJours || 30,
+      notes: dv.notes || null,
+      collaborateur_id: dv.stId || null,
+      collaborateur_nom: dv.stNom || null,
+      raw_data: dv
+    };
+
+    if (dv.dbId) {
+      // Update existant
+      var upd = await _sb.from("devis").update(data).eq("id", dv.dbId).select().single();
+      if (upd.error) { console.warn("[saveDevisToDb] update error", upd.error); return null; }
+      return upd.data;
+    } else {
+      var ins = await _sb.from("devis").insert(data).select().single();
+      if (ins.error) { console.warn("[saveDevisToDb] insert error", ins.error); return null; }
+      if (ins.data) {
+        dv.dbId = ins.data.id;
+        if (!dv.num) dv.num = ins.data.num;
+        dv.dateValidite = ins.data.date_validite;
+      }
+      return ins.data;
+    }
+  } catch (e) {
+    console.error("[saveDevisToDb] unexpected", e);
+    return null;
+  }
+}
+
+async function updateDevisStatus(devisDbId, newStatus, ticketDbId) {
+  if (!_isOnline || !devisDbId) return;
+  try {
+    var patch = { status: newStatus };
+    if (ticketDbId) patch.ticket_id = ticketDbId;
+    await _sb.from("devis").update(patch).eq("id", devisDbId);
+  } catch (e) { console.warn("[updateDevisStatus]", e); }
+}
+
+async function deleteDevisDb(devisDbId) {
+  if (!_isOnline || !devisDbId) return;
+  try {
+    await _sb.from("devis").delete().eq("id", devisDbId);
+  } catch (e) { console.warn("[deleteDevisDb]", e); }
+}
+
+// Expose les fonctions globalement pour que app.html puisse les appeler
+if (typeof window !== "undefined") {
+  window.saveTicketToDb = saveTicketToDb;
+  window.cancelTicketDb = cancelTicketDb;
+  window.lockTicketsForCloture = lockTicketsForCloture;
+  window.saveDevisToDb = saveDevisToDb;
+  window.updateDevisStatus = updateDevisStatus;
+  window.deleteDevisDb = deleteDevisDb;
 }
 
 // Confirmer/annuler un RDV en ligne
