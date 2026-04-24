@@ -476,15 +476,44 @@ async function loadSalonData() {
   var clotRes = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num");
   if (clotRes.data) {
     window.CLOTURES = clotRes.data.map(function(c) {
-      return {
+      // raw_data = snapshot JSON complet (nouvelles clôtures). Fallback sur colonnes
+      // structurées pour la rétro-compat des anciennes clôtures.
+      var base = (c.raw_data && typeof c.raw_data === "object") ? c.raw_data : {};
+      var totalCA = Number(c.total_ca) || 0;
+      var totalHT = Number(c.total_ht) || 0;
+      var txTVA = base.txTVA || 20;
+      var totalPrest = base.totalPrest != null ? base.totalPrest : totalCA;
+      var totalProd  = base.totalProd  != null ? base.totalProd  : 0;
+      // Hydrater avec defaults safe pour empêcher les .toFixed() sur undefined dans l'UI
+      return Object.assign({
+        totalPrest: totalPrest,
+        totalProd:  totalProd,
+        totalTVA:   base.totalTVA   != null ? base.totalTVA   : (totalCA - totalHT),
+        txTVA:      txTVA,
+        prestHT:    base.prestHT    != null ? base.prestHT    : Math.round(totalPrest / (1 + txTVA/100) * 100) / 100,
+        prestTVA:   base.prestTVA   != null ? base.prestTVA   : Math.round((totalPrest - (totalPrest / (1 + txTVA/100))) * 100) / 100,
+        prodHT:     base.prodHT     != null ? base.prodHT     : Math.round(totalProd  / (1 + txTVA/100) * 100) / 100,
+        prodTVA:    base.prodTVA    != null ? base.prodTVA    : Math.round((totalProd  - (totalProd  / (1 + txTVA/100))) * 100) / 100,
+        totalRemises: base.totalRemises || 0,
+        brutTotalGlobal: base.brutTotalGlobal || totalCA,
+        totalAnnul: base.totalAnnul || 0,
+        tkMin: base.tkMin || 0, tkMax: base.tkMax || 0,
+        hPremier: base.hPremier || "--:--", hDernier: base.hDernier || "--:--",
+        panierMoyen: base.panierMoyen != null ? base.panierMoyen : (c.nb_tickets > 0 ? Math.round(totalCA / c.nb_tickets * 100) / 100 : 0),
+        details: base.details || {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0},
+        cumulMois: base.cumulMois || Number(c.cumul_mois_ca) || 0,
+        cumulAnnuel: base.cumulAnnuel || Number(c.cumul_annee_ca) || 0
+      }, base, {
+        // Ces clés écrasent les valeurs de base : on privilégie la DB pour les champs canoniques
         id: c.id, date: c.date_cloture, ts: c.timestamp_cloture, num: c.num,
-        totalCA: Number(c.total_ca), totalHT: Number(c.total_ht),
+        totalCA: totalCA, totalHT: totalHT,
         nbTickets: c.nb_tickets, nbAnnul: c.nb_annulations,
-        perPay: c.detail_paiements || {}, perSty: c.detail_collabs || {},
+        perPay: base.perPay || c.detail_paiements || {},
+        perSty: base.perSty || c.detail_collabs || {},
         cumulMoisCA: Number(c.cumul_mois_ca), cumulMoisTk: c.cumul_mois_tickets,
         cumulAnCA: Number(c.cumul_annee_ca), cumulAnTk: c.cumul_annee_tickets,
         hash: c.hash, hashAlgo: c.hash_algo
-      };
+      });
     });
   }
 
@@ -767,9 +796,21 @@ async function updateRdvOnline(rdvId, status, reason) {
   await _sb.from("rdv_online").update(data).eq("id", rdvId);
 }
 
-// Sauvegarder une clôture Z
+// Sauvegarder une clôture Z (persistance NF525 + raw_data pour réimpression fidèle)
 async function saveCloture(clot) {
   if (!_isOnline || !_salonId) return;
+  // Raw data : tous les champs de la clôture sauf ceux qui ne sont pas sérialisables.
+  // On exclut 'id' (réécrit après insert) et toute propriété non-sérialisable.
+  var raw = {};
+  try {
+    for (var k in clot) {
+      if (Object.prototype.hasOwnProperty.call(clot, k) && k !== "id") {
+        var v = clot[k];
+        if (typeof v !== "function" && typeof v !== "undefined") raw[k] = v;
+      }
+    }
+  } catch(e) { console.warn("[saveCloture] raw_data build failed", e); }
+
   var data = {
     salon_id: _salonId,
     date_cloture: clot.date, num: clot.num,
@@ -778,7 +819,8 @@ async function saveCloture(clot) {
     detail_paiements: clot.perPay || {}, detail_collabs: clot.perSty || {},
     cumul_mois_ca: clot.cumulMoisCA || 0, cumul_mois_tickets: clot.cumulMoisTk || 0,
     cumul_annee_ca: clot.cumulAnCA || 0, cumul_annee_tickets: clot.cumulAnTk || 0,
-    hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256"
+    hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256",
+    raw_data: raw
   };
   var res = await _sb.from("clotures").insert(data).select();
   if (res.data && res.data[0]) clot.id = res.data[0].id;
