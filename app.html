@@ -2176,7 +2176,7 @@ function savePendingTicket(){
   if(!_tk||!_tk.items||!_tk.items.length)return;
   var cl=_tk.cId?gC(_tk.cId):null;
   var sty=gT(_tk.stId);
-  window.PENDING_TK.push({
+  var pk={
     id:U(),
     date:TD,
     time:new Date().toTimeString().slice(0,5),
@@ -2187,10 +2187,11 @@ function savePendingTicket(){
     items:JSON.parse(JSON.stringify(_tk.items)),
     remise:_tk.remise||0,
     total:_tk.items.reduce(function(a,b){return a+b.price*b.qty-b.remise;},0)-(_tk.remise||0)
-  });
-  
+  };
+  window.PENDING_TK.push(pk);
+  // Persistance DB : survit à la fermeture de l'app / changement de device
+  if(typeof savePendingTkDb==="function")savePendingTkDb(pk);
   cM();
-
 go("home");
 }
 
@@ -2224,8 +2225,9 @@ function rPendingTk(){
 function resumePendingTk(idx){
   var pk=window.PENDING_TK[idx];if(!pk)return;
   _tk={step:3,stId:pk.stId,cId:pk.cId,items:JSON.parse(JSON.stringify(pk.items)),comment:"",remise:pk.remise};
+  // Suppression DB + local
+  if(pk.dbId && typeof deletePendingTkDb==="function")deletePendingTkDb(pk.dbId);
   window.PENDING_TK.splice(idx,1);
-  
   showCaisse();
 }
 
@@ -2233,13 +2235,16 @@ function dupPendingTk(idx){
   var pk=window.PENDING_TK[idx];if(!pk)return;
   var dup=JSON.parse(JSON.stringify(pk));
   dup.id=U();dup.date=TD;dup.time=new Date().toTimeString().slice(0,5);
+  delete dup.dbId; // reset pour forcer un nouvel insert DB
   window.PENDING_TK.push(dup);
+  // Persist la copie aussi
+  if(typeof savePendingTkDb==="function")savePendingTkDb(dup);
   go("pendingTk");
 }
 
 function delPendingTk(idx){
   var pk=window.PENDING_TK[idx];if(!pk)return;
-  
+  if(pk.dbId && typeof deletePendingTkDb==="function")deletePendingTkDb(pk.dbId);
   window.PENDING_TK.splice(idx,1);
   go("pendingTk");
 }

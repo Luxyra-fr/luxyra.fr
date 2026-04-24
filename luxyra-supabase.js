@@ -507,6 +507,34 @@ async function loadSalonData() {
     }
   } catch(e) { console.warn("[loadSalonData] tickets load skipped", e); window.TICKETS_DB = []; }
 
+  // 8.55. Charger tickets en attente → window.PENDING_TK (persistance DB)
+  try {
+    var pkRes = await _sb.from("tickets_attente").select("*")
+      .eq("salon_id", _salonId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (pkRes.data) {
+      window.PENDING_TK = pkRes.data.map(function(p) {
+        var raw = (p.raw_data && typeof p.raw_data === "object") ? p.raw_data : {};
+        return Object.assign({}, raw, {
+          dbId: p.id,
+          id: raw.id || p.local_id || p.id,
+          date: p.date_creation,
+          time: (p.heure_creation || "").toString().slice(0,5),
+          cId: p.client_id || raw.cId || "",
+          clientName: p.client_nom || raw.clientName || "",
+          stId: p.collaborateur_id || raw.stId,
+          styName: p.collaborateur_nom || raw.styName || "",
+          items: p.items || raw.items || [],
+          remise: Number(p.remise),
+          total: Number(p.total)
+        });
+      });
+    } else {
+      window.PENDING_TK = [];
+    }
+  } catch(e) { console.warn("[loadSalonData] tickets_attente load skipped", e); window.PENDING_TK = []; }
+
   // 8.6. Charger devis DB → window.DEVIS[] (remplace le localStorage)
   try {
     var dvRes = await _sb.from("devis").select("*")
@@ -1031,6 +1059,46 @@ async function deleteDevisDb(devisDbId) {
   try {
     await _sb.from("devis").delete().eq("id", devisDbId);
   } catch (e) { console.warn("[deleteDevisDb]", e); }
+}
+
+// ============================================================
+// TICKETS EN ATTENTE — persistance DB des brouillons non-encaissés
+// ============================================================
+
+async function savePendingTkDb(pk) {
+  if (!_isOnline || !_salonId || !pk) return null;
+  try {
+    var data = {
+      salon_id: _salonId,
+      local_id: pk.id || null,
+      date_creation: pk.date || new Date().toISOString().slice(0,10),
+      heure_creation: (pk.time && pk.time.length === 5) ? pk.time + ":00" : (pk.time || null),
+      client_id: (typeof pk.cId === "string" && pk.cId.length === 36) ? pk.cId : null,
+      client_nom: pk.clientName || null,
+      collaborateur_id: pk.stId || null,
+      collaborateur_nom: pk.styName || null,
+      items: pk.items || [],
+      remise: Number(pk.remise || 0),
+      total: Number(pk.total || 0),
+      raw_data: pk
+    };
+    var res = await _sb.from("tickets_attente").insert(data).select().single();
+    if (res.error) { console.warn("[savePendingTkDb]", res.error); return null; }
+    if (res.data) pk.dbId = res.data.id;
+    return res.data;
+  } catch (e) { console.error("[savePendingTkDb]", e); return null; }
+}
+
+async function deletePendingTkDb(pkDbId) {
+  if (!_isOnline || !pkDbId) return;
+  try {
+    await _sb.from("tickets_attente").delete().eq("id", pkDbId);
+  } catch (e) { console.warn("[deletePendingTkDb]", e); }
+}
+
+if (typeof window !== "undefined") {
+  window.savePendingTkDb = savePendingTkDb;
+  window.deletePendingTkDb = deletePendingTkDb;
 }
 
 // Expose les fonctions globalement pour que app.html puisse les appeler
