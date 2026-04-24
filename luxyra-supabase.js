@@ -132,7 +132,18 @@ async function loadSalonData() {
 
   // 1. Charger le salon
   var sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
-  if (sRes.error || !sRes.data || sRes.data.length === 0) { showLoginError("Salon introuvable"); return; }
+  if (sRes.error || !sRes.data || sRes.data.length === 0) {
+    // Session existe mais aucun salon lié au user → on déconnecte proprement
+    // (évite le "zombie state" où l'UI se charge sans données)
+    console.warn("[loadSalonData] Aucun salon trouvé pour user_id="+_userId+", déconnexion");
+    try{ await _sb.auth.signOut(); }catch(_){}
+    _userId = null;
+    _salonId = null;
+    window._salonId = null;
+    showLoginScreen();
+    setTimeout(function(){ showLoginError && showLoginError("Aucun salon lié à ce compte. Reconnectez-vous avec le bon email."); }, 150);
+    return;
+  }
 
   var salon = sRes.data[0];
   _salonId = salon.id;
