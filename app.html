@@ -2330,12 +2330,23 @@ function saveDevis(){
   var cl=cId?gC(cId):null;
   var notes=document.getElementById("dvNotes")?document.getElementById("dvNotes").value.trim():"";
   var total=0;window._dvItems.forEach(function(it){total+=it.price*it.qty;});
-  window.DEVIS.push({
+  var newDv={
     id:U(),date:TD,cId:cId,
     clientName:cl?cName(cl):passageName(_tk.cId,_tk.sId),
-    items:window._dvItems,
-    total:total,notes:notes
-  });
+    clientNom:cl?cName(cl):passageName(_tk.cId,_tk.sId),
+    clientTel:cl?cl.tel:null,clientEmail:cl?cl.em:null,
+    items:window._dvItems.map(function(it){return {name:it.name,price:it.price,qty:it.qty,sId:it.sId||null};}),
+    total:total,notes:notes,status:"brouillon"
+  };
+  window.DEVIS.push(newDv);
+  // NF525 : persiste en DB (num auto, date_validite auto +30j, status machine)
+  if(typeof saveDevisToDb==="function"){
+    saveDevisToDb(newDv).then(function(dbRow){
+      // dbId+num sont ré-assignés à newDv par saveDevisToDb
+      // Re-render pour afficher le num officiel
+      if(typeof go==="function"&&document.getElementById("app")&&window._curPage==="devis")go("devis");
+    });
+  }
   window._dvItems=[];
   cM();go("devis");
 }
@@ -2343,6 +2354,11 @@ function saveDevis(){
 function convertDevis(idx){
   var dv=window.DEVIS[idx];if(!dv)return;
   _tk={step:3,stId:T[0].id,cId:dv.cId,items:dv.items.map(function(it){return{sId:it.sId,name:it.name,price:it.price,qty:it.qty,remise:0};}),comment:"",remise:0};
+  // NF525 : marquer le devis comme 'converti' au lieu de le supprimer (traçabilité)
+  if(dv.dbId && typeof updateDevisStatus==="function"){
+    updateDevisStatus(dv.dbId, "converti");
+    dv.status = "converti";
+  }
   window.DEVIS.splice(idx,1);
   showCaisse();
 }
@@ -3003,6 +3019,32 @@ function printClotureZ(){
   c.hDernier        = c.hDernier || "--:--";
   if(!c.details || typeof c.details !== "object") c.details = {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0};
   ["cb","esp","chq","bon","vir","aut"].forEach(function(k){ c.details[k] = _n(c.details[k]); });
+
+  // FIX anciennes clôtures : si tous les modes sont à 0 mais qu'il y a des tickets,
+  // on reconstruit la ventilation depuis AP[] (tickets encaissés ce jour-là).
+  var sumDet = c.details.cb + c.details.esp + c.details.chq + c.details.bon + c.details.vir + c.details.aut;
+  if (sumDet === 0 && c.nbTickets > 0 && Array.isArray(AP)) {
+    try {
+      var ticketsDuJour = AP.filter(function(a){
+        return a.st === "done" && a.date === c.date && !a.cancelled;
+      });
+      ticketsDuJour.forEach(function(tk){
+        var m = String(tk.met || "").toLowerCase();
+        var montant = Number(tk.pr || 0);
+        // Paiement mixte "cb + esp" → split équitable si pas de détail, sinon tout au 1er mode
+        if (m.indexOf("cb") >= 0) c.details.cb += montant;
+        else if (m.indexOf("esp") >= 0) c.details.esp += montant;
+        else if (m.indexOf("ch") >= 0) c.details.chq += montant;
+        else if (m.indexOf("bon") >= 0) c.details.bon += montant;
+        else if (m.indexOf("vir") >= 0) c.details.vir += montant;
+        else c.details.aut += montant;
+      });
+      // Arrondir à 2 décimales
+      ["cb","esp","chq","bon","vir","aut"].forEach(function(k){
+        c.details[k] = Math.round(c.details[k] * 100) / 100;
+      });
+    } catch(_e) { /* silent */ }
+  }
   var CD=window.CAISSE_DATA||{fond:200,coffreEsp:0,coffreChq:0};
   var done=AP.filter(function(a){return a.st==="done"&&a.date===c.date&&!a.cancelled;});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===c.date;});
@@ -11426,6 +11468,7 @@ function aGi(){
   chainTicket(tk);AP.push(tk);
   ng.tkNum=tk.tkNum; // Store ticket ref on the bon
   if(typeof saveAppointment==="function")saveAppointment(tk);
+  if(typeof saveTicketToDb==="function")saveTicketToDb(tk); // NF525: table tickets DB avec hash chaîné
   var isMultiU=(!scope||scope==="tout");
   auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC"+(isMultiU?" (multi-usages, TVA diff\u00e9r\u00e9e)":" (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+")")+" - "+pay+" - Compte 4191 (avance client) - De:"+f+(t?" Pour:"+t:""));
   // Success screen with print option
@@ -11485,6 +11528,7 @@ function annulerAcompte(apptId){
       };
       AP.push(cancelTicket);
       if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
+      if(typeof saveTicketToDb==="function")saveTicketToDb(cancelTicket); // NF525
       auditLog("ANNUL_ACOMPTE","Annulation acompte "+oldAmount.toFixed(2)+"E pour RDV "+apptId+" - Ticket annulation #"+tkNum+" (ref #"+(origTkNum||"?")+")");
       
       // Clear acompte on the RDV
@@ -11588,6 +11632,7 @@ function doSaveAcompte(apptId){
   };
   AP.push(acompteTicket);
   if(typeof saveAppointment==="function")saveAppointment(acompteTicket);
+  if(typeof saveTicketToDb==="function")saveTicketToDb(acompteTicket); // NF525
   auditLog("ACOMPTE","Acompte "+amount.toFixed(2)+"E ("+window._acompteMode+") pour RDV "+apptId+" - Ticket #"+tkNum);
   var sv2=gS(a.sId);var cl2=gC(a.cId);var sty2=gT(a.stId);
   var htm='<div class="mbox" style="text-align:center">';
@@ -13312,6 +13357,7 @@ function doFinalPayExecute(method){
         // Build ticket HTML and attach for Supabase storage
         try{AP[i].ticketHtml=buildTicketHTML(AP[i],false);}catch(e){}
         if(typeof saveAppointment==="function")saveAppointment(AP[i]);
+        if(typeof saveTicketToDb==="function")saveTicketToDb(AP[i]); // NF525: table tickets DB
         // Update rdv_online status if this was an online booking
         if(AP[i].onlineId&&typeof _sb!=="undefined"&&_sb){
           try{_sb.from("rdv_online").update({status:"done"}).eq("id",AP[i].onlineId);}catch(e){}
@@ -13333,6 +13379,7 @@ function doFinalPayExecute(method){
     try{newTk.ticketHtml=buildTicketHTML(newTk,false);}catch(e){}
     AP.push(newTk);
     if(typeof saveAppointment==="function")saveAppointment(newTk);
+    if(typeof saveTicketToDb==="function")saveTicketToDb(newTk); // NF525: table tickets DB
   }
   
   // NF525: audit log
@@ -15793,7 +15840,10 @@ function cloturerJournee(){
   sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){if(h!==c.hash){c.hash=h;if(typeof saveCloture==="function")saveCloture(c);}});
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
-  window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
+  window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);
+  // NF525 : verrouille tous les tickets de la journée clôturée (trigger DB empêche toute modif)
+  if(typeof lockTicketsForCloture==="function") lockTicketsForCloture(c);
+  auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
 }
 async function clearDoc(type){
   if(!confirm("Supprimer ce document et en envoyer un nouveau ?"))return;
