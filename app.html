@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-02"></script>
+<script src="luxyra-supabase.js?v=20260425-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -2315,8 +2315,6 @@ function rDevis(){
     var status=dv.status||"brouillon";
     var canEncaisse=(status!=="converti"&&status!=="refuse"&&status!=="expire");
     var hasItems=dv.items&&dv.items.length;
-    var itemsLine=hasItems?dv.items.map(function(it){return (it.qty>1?it.qty+'\u00d7 ':'')+it.name;}).join(' \u2022 '):'';
-    if(itemsLine.length>80)itemsLine=itemsLine.slice(0,77)+'\u2026';
     var numStr=dv.num?'N\u00b0 '+String(dv.num).padStart(4,"0"):'';
 
     h+='<div style="padding:14px 16px;border-bottom:1px solid var(--border2)">';
@@ -2331,8 +2329,27 @@ function rDevis(){
     h+='</div>';
     h+='<div style="font-size:18px;font-weight:900;color:var(--gold);white-space:nowrap">'+dv.total.toFixed(2)+' \u20ac</div>';
     h+='</div>';
-    if(itemsLine){
-      h+='<div style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.4">'+itemsLine+'</div>';
+    // Items détaillés : nom + sous-prestations forfait si applicable
+    if(hasItems){
+      h+='<div style="margin-bottom:10px;padding:8px 10px;background:rgba(255,255,255,.02);border-radius:8px">';
+      for(var ii=0;ii<dv.items.length;ii++){
+        var dvit=dv.items[ii];
+        var prefix = dvit.qty>1 ? '<span style="color:var(--gold);font-weight:700">'+dvit.qty+'\u00d7</span> ' : '';
+        var unitPrice = (dvit.price||0).toFixed(2)+' \u20ac';
+        h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;font-size:12px;'+(ii>0?'margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.04)':'')+'">';
+        h+='<div style="flex:1;min-width:0">';
+        h+='<div style="font-weight:600;color:#eee">'+prefix+(dvit.name||'-')+'</div>';
+        var subs = (typeof _devisForfaitDetail === "function") ? _devisForfaitDetail(dvit) : [];
+        if(subs.length){
+          h+='<ul style="margin:3px 0 0 0;padding:0 0 0 10px;border-left:2px solid rgba(212,168,67,.4);list-style:none">';
+          subs.forEach(function(s){ h+='<li style="font-size:11px;color:var(--text3);padding:1px 0">\u2022 '+s+'</li>'; });
+          h+='</ul>';
+        }
+        h+='</div>';
+        h+='<div style="font-size:11px;color:var(--text3);white-space:nowrap;margin-left:10px">'+unitPrice+'</div>';
+        h+='</div>';
+      }
+      h+='</div>';
     }
     h+='<div style="display:flex;gap:8px;align-items:center">';
     // Imprimer (icon + label, clic droit / long press change format)
