@@ -3146,7 +3146,22 @@ function saveAsDevis(){
     var qty=it.qty||1;
     totalBrut += (it.price||0)*qty;
     totalRemise += (it.remise||0);
-    return {sId:it.sId, name:it.name, price:it.price, qty:qty, remise:it.remise||0};
+    // Préserve TOUS les champs qui permettent de reconstruire le détail forfait
+    // à l'impression / l'email : forfaitId, isForfait, forfaitIdx, phases,
+    // services. Sinon le helper _devisForfaitDetail ne retrouve plus rien.
+    return {
+      sId: it.sId,
+      name: it.name,
+      price: it.price,
+      qty: qty,
+      remise: it.remise||0,
+      isForfait: it.isForfait||false,
+      forfaitId: it.forfaitId||null,
+      forfaitIdx: (typeof it.forfaitIdx === "number") ? it.forfaitIdx : null,
+      phases: Array.isArray(it.phases) ? JSON.parse(JSON.stringify(it.phases)) : null,
+      services: Array.isArray(it.services) ? JSON.parse(JSON.stringify(it.services)) : null,
+      subServices: Array.isArray(it.subServices) ? JSON.parse(JSON.stringify(it.subServices)) : null
+    };
   });
   totalRemise += (_tk.remise||0);
   var total = totalBrut - totalRemise;
@@ -3173,6 +3188,11 @@ function saveAsDevis(){
   };
   window.DEVIS.unshift(newDv);
   cM();
+
+  // Le panier devient un devis : on évite que l'auto-save panier (cf go())
+  // ne crée DOUBLEMENT un pending ticket en plus du devis qu'on vient de
+  // sauvegarder. Reset _tk + flag _autoSaved pour neutraliser le filet.
+  _tk = null;
 
   if(typeof saveDevisToDb==="function"){
     saveDevisToDb(newDv).then(function(dbRow){
