@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-01"></script>
+<script src="luxyra-supabase.js?v=20260425-02"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -2326,16 +2326,16 @@ function rDevis(){
     h+='<div style="text-align:center;padding:80px 20px">';
     h+='<div style="font-size:48px;margin-bottom:12px;opacity:.4">\ud83d\udcc4</div>';
     h+='<div style="color:var(--text2);font-weight:600;margin-bottom:6px">Aucun devis</div>';
-    h+='<div style="color:var(--text3);font-size:13px;line-height:1.5">Cr\u00e9ez votre premier devis ci-dessous.</div>';
-    h+='<button onclick="newDevis()" style="margin-top:18px;padding:12px 22px;border:none;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer">+ Nouveau devis</button>';
+    h+='<div style="color:var(--text3);font-size:13px;line-height:1.6;max-width:340px;margin:0 auto">Les devis se cr\u00e9ent depuis la <strong style="color:#fff">caisse</strong> :<br>composez le panier puis "<strong style="color:var(--gold)">Plus d\u0027options</strong>" \u2192 "Cr\u00e9er un devis"</div>';
+    h+='<button onclick="go(\'caisse\')" style="margin-top:18px;padding:12px 22px;border:none;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer">\u2192 Aller en caisse</button>';
     h+='</div>';
     return h;
   }
 
-  // Filtres rapides + bouton nouveau
+  // Header compteur uniquement (pas de bouton "Nouveau devis" — création passe par la caisse)
   h+='<div style="padding:12px 16px;background:rgba(212,168,67,.06);border-bottom:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">';
   h+='<div style="font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">'+window.DEVIS.length+' devis</div>';
-  h+='<button onclick="newDevis()" style="padding:8px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:13px;cursor:pointer">+ Nouveau devis</button>';
+  h+='<div style="font-size:11px;color:var(--text3)">Cr\u00e9ation depuis la caisse</div>';
   h+='</div>';
 
   for(var i=0;i<window.DEVIS.length;i++){
@@ -2708,22 +2708,22 @@ function chooseDevisPrintFmt(idx){
 //  - utilise le dernier choix mémorisé en localStorage si présent
 //  - sinon, ouvre le sélecteur (1ère fois sur le device)
 // Pour changer le format après le 1er choix : clic droit sur le bouton imprimer.
-function printDevis(idx,fmt){
+function printDevis(idx,printFmt){
   var dv=window.DEVIS[idx];if(!dv)return;
   window._currentDevis=dv;window._currentDevisIdx=idx;
-  if(!fmt){
+  if(!printFmt){
     var last=null;try{last=localStorage.getItem("_lx_devis_print_fmt");}catch(e){}
     if(last==="a4"||last==="thermal"){
       // Format déjà choisi → impression directe sans modal
-      fmt=last;
+      printFmt=last;
     } else {
       // Première fois → sélecteur
       chooseDevisPrintFmt(idx);
       return;
     }
   }
-  try{localStorage.setItem("_lx_devis_print_fmt",fmt);}catch(e){}
-  if(fmt==="thermal"){return printDevisThermal(idx);}
+  try{localStorage.setItem("_lx_devis_print_fmt",printFmt);}catch(e){}
+  if(printFmt==="thermal"){return printDevisThermal(idx);}
   // Sinon : format A4 (ci-dessous)
   var w=window.open("","_blank","width=720,height=920");
   if(!w){alert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.");return;}
@@ -2742,10 +2742,11 @@ function printDevis(idx,fmt){
 
   // Validité
   var dateDev=dv.date||TD;
+  var validiteJours = Number(dv.validiteJours) > 0 ? Number(dv.validiteJours) : (Number(SALON_CONFIG.validiteDevis) > 0 ? Number(SALON_CONFIG.validiteDevis) : 30);
   var dateValidite=dv.dateValidite;
   if(!dateValidite){
     try{
-      var d=new Date(dateDev);d.setDate(d.getDate()+30);
+      var d=new Date(dateDev);d.setDate(d.getDate()+validiteJours);
       dateValidite=d.toISOString().slice(0,10);
     }catch(e){dateValidite=dateDev;}
   }
@@ -2923,7 +2924,7 @@ function printDevis(idx,fmt){
   // ============ Conditions ============
   h+="<div class='conditions'>";
   h+="<strong>Conditions :</strong><br>";
-  h+="• Devis valable 30 jours à compter de la date d'émission<br>";
+  h+="• Devis valable "+validiteJours+" jours à compter de la date d'émission<br>";
   h+="• Acompte de 30% à la réservation, solde le jour de la prestation<br>";
   h+="• Toute annulation à moins de 48h entraîne la perte de l'acompte";
   h+="</div>";
@@ -2964,8 +2965,9 @@ function printDevisThermal(idx){
   var showTVA=(typeof SHOW_TVA_TICKET!=="undefined")?SHOW_TVA_TICKET:!isAutoEntr;
 
   var dateDev=dv.date||TD;
+  var validiteJours = Number(dv.validiteJours) > 0 ? Number(dv.validiteJours) : (Number(SALON_CONFIG.validiteDevis) > 0 ? Number(SALON_CONFIG.validiteDevis) : 30);
   var dateValidite=dv.dateValidite;
-  if(!dateValidite){try{var d=new Date(dateDev);d.setDate(d.getDate()+30);dateValidite=d.toISOString().slice(0,10);}catch(e){dateValidite=dateDev;}}
+  if(!dateValidite){try{var d=new Date(dateDev);d.setDate(d.getDate()+validiteJours);dateValidite=d.toISOString().slice(0,10);}catch(e){dateValidite=dateDev;}}
   var numStr=dv.num?String(dv.num).padStart(4,"0"):("B"+(idx+1));
 
   var totalBrut=0,totalRemise=0;
@@ -2981,7 +2983,7 @@ function printDevisThermal(idx){
   var nomComplet=typeof SALON_CONFIG.nomComplet==="function"?SALON_CONFIG.nomComplet():SALON_CONFIG.nom;
   var siret=SALON_CONFIG.siret||"";
   var tvaIntra=SALON_CONFIG.tvaIntra||SALON_CONFIG.tva||"";
-  var logo=SALON_CONFIG.logo||"";
+  // Pas de logo en thermique : 80mm + impression mono = rendu déformé/sale.
 
   // Helper : ligne séparateur de tirets
   function sep(c){c=c||"-";var s="";for(var k=0;k<32;k++)s+=c;return s;}
@@ -3017,7 +3019,8 @@ function printDevisThermal(idx){
   h+="</style></head><body>";
 
   // ===== HEADER =====
-  if(logo)h+="<img src='"+logo+"' class='lg' alt=''>";
+  // Pas de logo en mode thermique (rendu dégradé sur imprimante 80mm).
+  // Le nom du salon en gras-grand fait office d'identification visuelle.
   h+="<div class='c b big'>"+nomComplet.toUpperCase()+"</div>";
   if(SALON_CONFIG.adresse)h+="<div class='c'>"+SALON_CONFIG.adresse+"</div>";
   if(SALON_CONFIG.cp||SALON_CONFIG.ville)h+="<div class='c'>"+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||"")+"</div>";
@@ -3106,7 +3109,7 @@ function printDevisThermal(idx){
   h+="<hr>";
   h+="<div class='cond b' style='text-transform:uppercase'>Conditions</div>";
   h+="<div class='cond'>";
-  h+="- Devis valable 30 jours<br>";
+  h+="- Devis valable "+validiteJours+" jours<br>";
   h+="- Acompte 30% a la reservation<br>";
   h+="- Solde le jour de la prestation<br>";
   h+="- Annulation -48h: perte acompte";
@@ -3145,20 +3148,158 @@ function emailDevis(idx){
   window.open(mailto,"_blank");
 }
 
+// Créer un devis depuis le panier en cours en caisse.
+// C'est LA seule entrée légitime pour créer un devis (cf. demande user :
+// "le devis doit être créé uniquement depuis la partie encaissement").
 function saveAsDevis(){
-  if(!_tk||!_tk.items||!_tk.items.length)return;
+  if(!_tk||!_tk.items||!_tk.items.length){
+    if(typeof toast==="function")toast("Ajoutez au moins une prestation","warning");
+    return;
+  }
   var cl=_tk.cId?gC(_tk.cId):null;
+  var clientNameStr = cl ? cName(cl) : "Client de passage";
   if(!window.DEVIS)window.DEVIS=[];
-  var total=0;
-  var items=_tk.items.map(function(it){total+=it.price*it.qty-it.remise;return{sId:it.sId,name:it.name,price:it.price,qty:it.qty};});
-  total-=(_tk.remise||0);
-  window.DEVIS.push({
-    id:U(),date:TD,
-    cId:_tk.cId||"",
-    clientName:cl?cName(cl):passageName(_tk.cId),
-    items:items,total:total,notes:""
+  var totalBrut=0,totalRemise=0;
+  var items=_tk.items.map(function(it){
+    var qty=it.qty||1;
+    totalBrut += (it.price||0)*qty;
+    totalRemise += (it.remise||0);
+    return {sId:it.sId, name:it.name, price:it.price, qty:qty, remise:it.remise||0};
   });
-  cM();go("devis");
+  totalRemise += (_tk.remise||0);
+  var total = totalBrut - totalRemise;
+
+  var validite = Number(SALON_CONFIG.validiteDevis) > 0 ? Number(SALON_CONFIG.validiteDevis) : 30;
+
+  var newDv={
+    id:U(),
+    date:TD,
+    cId:_tk.cId||"",
+    clientName:clientNameStr,
+    clientNom:clientNameStr,
+    clientTel:cl?cl.tel:null,
+    clientEmail:cl?cl.em:null,
+    items:items,
+    totalBrut:totalBrut,
+    remise:totalRemise,
+    total:total,
+    notes:_tk.comment||"",
+    status:"brouillon",
+    validiteJours:validite,
+    stId:_tk.stId||null,
+    stNom:gT&&gT(_tk.stId)?gT(_tk.stId).n:null
+  };
+  window.DEVIS.unshift(newDv);
+  cM();
+
+  if(typeof saveDevisToDb==="function"){
+    saveDevisToDb(newDv).then(function(dbRow){
+      if(!dbRow){
+        if(typeof toast==="function")toast("Erreur sauvegarde DB","error");
+        go("devis");
+        return;
+      }
+      // Devis sauvé. Proposer l'envoi par email + reset _tk + retour.
+      var idx = window.DEVIS.indexOf(newDv);
+      _showDevisCreatedModal(idx);
+    }).catch(function(err){
+      console.error("[saveAsDevis] DB error",err);
+      if(typeof toast==="function")toast("Erreur sauvegarde devis","error");
+      go("devis");
+    });
+  } else {
+    go("devis");
+  }
+}
+
+// Modal post-création : confirme + propose email + impression
+function _showDevisCreatedModal(idx){
+  var dv = window.DEVIS[idx];
+  if(!dv){ go("devis"); return; }
+  var clientEmail = dv.clientEmail || "";
+  var hasEmail = !!clientEmail;
+  var numStr = dv.num ? "N\u00b0 "+String(dv.num).padStart(4,"0") : "";
+
+  var h = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:400px">';
+  h += '<div style="font-size:48px;margin-bottom:8px">\u2705</div>';
+  h += '<h2 style="color:var(--gold);margin-bottom:6px">Devis enregistr\u00e9</h2>';
+  if(numStr) h += '<div style="font-size:13px;color:var(--text3);margin-bottom:4px">'+numStr+' \u00b7 '+dv.total.toFixed(2)+' \u20ac</div>';
+  h += '<div style="font-size:13px;color:var(--text3);margin-bottom:18px">Validit\u00e9 jusqu\u0027au '+(dv.dateValidite?fmt(dv.dateValidite):'+'+dv.validiteJours+'j')+'</div>';
+
+  h += '<div style="display:flex;flex-direction:column;gap:8px">';
+  // Email
+  if(hasEmail){
+    h += '<button onclick="cM();_devisSendEmail('+idx+')" style="padding:14px;border:none;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:center">';
+    h += '<span style="font-size:18px">\u2709\ufe0f</span><span>Envoyer \u00e0 '+clientEmail+'</span></button>';
+  } else {
+    h += '<button onclick="cM();_devisAskEmail('+idx+')" style="padding:14px;border:1px solid rgba(212,168,67,.4);border-radius:12px;background:rgba(212,168,67,.08);color:var(--gold);font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:center">';
+    h += '<span style="font-size:18px">\u2709\ufe0f</span><span>Envoyer par email</span></button>';
+  }
+  // Imprimer
+  h += '<button onclick="cM();printDevis('+idx+')" style="padding:14px;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:10px;justify-content:center">';
+  h += '<span style="font-size:18px">\ud83d\udda8\ufe0f</span><span>Imprimer</span></button>';
+  // Voir la liste
+  h += '<button onclick="cM();go(\'devis\')" style="padding:12px;border:none;border-radius:12px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.7);font-weight:600;cursor:pointer">Plus tard</button>';
+  h += '</div></div></div>';
+
+  document.getElementById("modal").innerHTML = h;
+}
+
+// Envoyer le devis par email — mailto direct si email connu
+function _devisSendEmail(idx){
+  var dv = window.DEVIS[idx];if(!dv)return;
+  var email = dv.clientEmail || "";
+  var subject = "Votre devis "+(dv.num?"N\u00b0 "+String(dv.num).padStart(4,"0")+" ":"")+"- "+SALON_CONFIG.nom;
+  var body = "Bonjour"+(dv.clientPrenom?" "+dv.clientPrenom:"")+",\n\n";
+  body += "Veuillez trouver ci-dessous votre devis :\n\n";
+  for(var i=0;i<dv.items.length;i++){
+    var it=dv.items[i];
+    body += "- "+(it.name||"-")+" "+(it.qty>1?"(x"+it.qty+") ":"")+": "+((it.price||0)*(it.qty||1)).toFixed(2)+" EUR\n";
+  }
+  if(dv.remise && dv.remise > 0) body += "Remise : -"+dv.remise.toFixed(2)+" EUR\n";
+  body += "\nTOTAL : "+dv.total.toFixed(2)+" EUR\n";
+  body += "\nDevis valable "+(dv.validiteJours||30)+" jours";
+  if(dv.dateValidite) body += " (jusqu\u0027au "+fmt(dv.dateValidite)+")";
+  body += ".";
+  if(dv.notes) body += "\n\nNotes : "+dv.notes;
+  body += "\n\nCordialement,\n"+SALON_CONFIG.nom;
+  if(SALON_CONFIG.adresse) body += "\n"+SALON_CONFIG.adresse+(SALON_CONFIG.cp?" "+SALON_CONFIG.cp:"")+(SALON_CONFIG.ville?" "+SALON_CONFIG.ville:"");
+  if(SALON_CONFIG.tel) body += "\nT\u00e9l : "+SALON_CONFIG.tel;
+  var mailto = "mailto:"+email+"?subject="+encodeURIComponent(subject)+"&body="+encodeURIComponent(body);
+  window.open(mailto,"_blank");
+  if(typeof toast==="function") toast("Email pr\u00e9par\u00e9","info");
+  setTimeout(function(){ go("devis"); }, 200);
+}
+
+// Demander l'email si client de passage / pas d'email connu
+function _devisAskEmail(idx){
+  var h = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:380px">';
+  h += '<h2 style="margin-bottom:6px">Email du client</h2>';
+  h += '<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Saisissez l\u0027adresse pour envoyer le devis</div>';
+  h += '<input id="_dvEmailInput" type="email" placeholder="client@example.fr" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;font-size:14px;margin-bottom:14px" onkeydown="if(event.key===\u0027Enter\u0027){_devisAskEmailValid('+idx+')}">';
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button onclick="cM();go(\'devis\')" style="flex:1;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Annuler</button>';
+  h += '<button onclick="_devisAskEmailValid('+idx+')" style="flex:1;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer">Envoyer</button>';
+  h += '</div></div></div>';
+  document.getElementById("modal").innerHTML = h;
+  setTimeout(function(){var el=document.getElementById("_dvEmailInput");if(el)el.focus();},80);
+}
+function _devisAskEmailValid(idx){
+  var el = document.getElementById("_dvEmailInput");
+  var email = el ? el.value.trim() : "";
+  if(!email || !/^.+@.+\..+$/.test(email)){
+    if(typeof toast==="function") toast("Email invalide","warning");
+    return;
+  }
+  var dv = window.DEVIS[idx];
+  if(dv){
+    dv.clientEmail = email;
+    if(dv.dbId && typeof _sb !== "undefined" && _sb){
+      try{ _sb.from("devis").update({client_email:email}).eq("id", dv.dbId); }catch(e){}
+    }
+  }
+  cM();
+  _devisSendEmail(idx);
 }
 
 function confirmDelDevis(idx){
@@ -7558,6 +7699,23 @@ function rSettings(){
     h+='<div class="card" style="margin-top:10px">';
     h+='<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer"><input type="checkbox" '+(window.SHOW_TVA_TICKET?'checked':'')+' onchange="window.SHOW_TVA_TICKET=this.checked"> Afficher TVA (HT/TVA/TTC) sur les tickets clients</label>';
     h+='</div>';
+
+    // Validité des devis
+    var _curVal = Number(SALON_CONFIG.validiteDevis) > 0 ? Number(SALON_CONFIG.validiteDevis) : 30;
+    var _opts = [15, 30, 45, 60, 90];
+    h+='<div class="card" style="margin-top:10px"><div class="ct">\ud83d\udcc4 Validit\u00e9 des devis</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Dur\u00e9e par d\u00e9faut affich\u00e9e sur vos devis (jours \u00e0 compter de la date d\u0027\u00e9mission)</div>';
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+    for(var _vi=0;_vi<_opts.length;_vi++){
+      var _v=_opts[_vi], _sel=(_curVal===_v);
+      h+='<button onclick="saveValiditeDevis('+_v+')" style="flex:1;min-width:60px;padding:10px;border-radius:10px;border:1.5px solid '+(_sel?"var(--gold)":"rgba(255,255,255,.1)")+';background:'+(_sel?"rgba(212,168,67,.12)":"rgba(255,255,255,.04)")+';color:'+(_sel?"var(--gold)":"#fff")+';font-weight:'+(_sel?700:600)+';cursor:pointer;font-size:13px">'+_v+' j</button>';
+    }
+    h+='</div>';
+    h+='<div style="margin-top:10px;display:flex;gap:6px;align-items:center">';
+    h+='<input type="number" id="customValidite" value="'+_curVal+'" min="1" max="365" style="flex:1;padding:10px;text-align:center;font-size:14px;font-weight:700">';
+    h+='<span style="font-size:12px;color:var(--text3)">jours</span>';
+    h+='<button class="btn bs" style="padding:10px 14px;font-size:12px" onclick="saveValiditeDevis(parseInt(document.getElementById(\'customValidite\').value)||30)">Personnalis\u00e9</button>';
+    h+='</div></div>';
   }
 
   return h;
@@ -7593,6 +7751,19 @@ function saveTVA(){
   h2+='<button class="btn bg bk" style="padding:12px;width:100%" onclick="cM()">OK</button>';
   h2+='</div></div>';
   document.getElementById("modal").innerHTML=h2;
+}
+
+// Validité des devis (jours). Sauvegardé dans SALON_CONFIG + config_json.
+function saveValiditeDevis(val){
+  val = parseInt(val,10);
+  if(isNaN(val) || val < 1 || val > 365){
+    if(typeof toast==="function") toast("Valeur invalide (1-365 jours)","warning");
+    return;
+  }
+  SALON_CONFIG.validiteDevis = val;
+  if(typeof saveSalonConfig === "function") saveSalonConfig();
+  if(typeof toast==="function") toast("Validit\u00e9 devis : "+val+" jours","success");
+  if(typeof go === "function") go("settings");
 }
 
 // Phase editor modal

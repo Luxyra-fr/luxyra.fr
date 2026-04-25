@@ -348,7 +348,9 @@ async function loadSalonData() {
       _sb.from("salons").update({sms_credits:newCredits,sms_last_reset:today}).eq("id",salon.id);
     }
   }
-  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}}catch(e){}}
+  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);}catch(e){}}
+  // Defaults if not loaded from cfg
+  if(!SALON_CONFIG.validiteDevis) SALON_CONFIG.validiteDevis = 30;
 
   // ============================================================
   // 2.5 — Pré-load PENDING_TK + DEVIS EN PRIORITÉ (avant tout
@@ -1084,7 +1086,7 @@ async function saveDevisToDb(dv) {
       total_tva: tva,
       taux_tva: taux,
       status: dv.status || "brouillon",
-      validite_jours: dv.validiteJours || 30,
+      validite_jours: dv.validiteJours || (Number(SALON_CONFIG.validiteDevis) > 0 ? Number(SALON_CONFIG.validiteDevis) : 30),
       notes: dv.notes || null,
       collaborateur_id: dv.stId || null,
       collaborateur_nom: dv.stNom || null,
@@ -1271,7 +1273,7 @@ async function saveSalonConfig() {
     frais_deplacement: SALON_CONFIG.fraisDeplacement || 0,
     show_tva_ticket: window.SHOW_TVA_TICKET
   };
-  try{var _sc=window.SITE_CONFIG||{};data.config_json=JSON.stringify({nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,prodcolors:window.PRODCOLORS||{},svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},sms_config:window.SMS_CONFIG||{}});}catch(e){}
+  try{var _sc=window.SITE_CONFIG||{};data.config_json=JSON.stringify({nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,prodcolors:window.PRODCOLORS||{},svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},sms_config:window.SMS_CONFIG||{},validite_devis:Number(SALON_CONFIG.validiteDevis)||30});}catch(e){}
   var r=await _sb.from("salons").update(data).eq("id", _salonId);
   if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
 }
