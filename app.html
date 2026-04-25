@@ -2643,6 +2643,59 @@ function cleanupPendingFromTk(){
 }
 window.cleanupPendingFromTk = cleanupPendingFromTk;
 
+// Helper unique pour reconstruire la liste des prestations incluses dans un
+// forfait, à partir d'un item de devis/ticket. Couvre tous les cas :
+//   - it.services / it.subServices : liste explicite d'objets {name|n|nom}
+//   - it.forfaitId : id du forfait dans FORFAITS[] (pattern actuel : sId=null,
+//     forfaitId set, isForfait=true)
+//   - it.sId pointant sur un forfait (ancien pattern, compat)
+//   - it.forfaitIdx : index dans FORFAITS[] (autre ancien pattern)
+//   - it.phases : fallback sur les labels de phases (multi-phases = forfait)
+function _devisForfaitDetail(it){
+  if(!it) return [];
+  var details = [];
+  // Cas 1 : sous-services explicites
+  var sub = it.services || it.subServices || null;
+  if(Array.isArray(sub) && sub.length){
+    sub.forEach(function(s){
+      var label = (typeof s === "object") ? (s.name || s.n || s.nom) : String(s);
+      // Si c'est juste un id de service, le résoudre via SVC
+      if(label && typeof SVC !== "undefined" && Array.isArray(SVC)){
+        var fSvc = SVC.find(function(x){ return String(x.id) === String(label); });
+        if(fSvc) label = fSvc.n;
+      }
+      if(label) details.push(label);
+    });
+    if(details.length) return details;
+  }
+  // Cas 2 : forfaitId / forfaitIdx / sId → trouver le forfait dans FORFAITS[]
+  if(typeof FORFAITS !== "undefined" && Array.isArray(FORFAITS)){
+    var f = null;
+    if(it.forfaitId) f = FORFAITS.find(function(x){ return x.id === it.forfaitId; });
+    if(!f && typeof it.forfaitIdx === "number") f = FORFAITS[it.forfaitIdx];
+    if(!f && it.sId) f = FORFAITS.find(function(x){ return x.id === it.sId; });
+    if(f && Array.isArray(f.services) && f.services.length){
+      f.services.forEach(function(svcId){
+        var svc = (typeof SVC !== "undefined" && Array.isArray(SVC)) ? SVC.find(function(x){ return x.id === svcId; }) : null;
+        if(svc) details.push(svc.n);
+        else details.push("Prestation #"+svcId);
+      });
+      if(details.length) return details;
+    }
+    // Si forfait trouvé sans sous-services explicites, utilise ses phases
+    if(f && Array.isArray(f.phases) && f.phases.length > 1){
+      f.phases.forEach(function(p){ if(p.l && p.t !== "p") details.push(p.l); });
+      if(details.length) return details;
+    }
+  }
+  // Cas 3 : phases sur l'item (multi-phases = forfait/composition)
+  if(Array.isArray(it.phases) && it.phases.length > 1){
+    it.phases.forEach(function(p){ if(p.l && p.t !== "p") details.push(p.l + (p.d ? " (" + p.d + " min)" : "")); });
+  }
+  return details;
+}
+window._devisForfaitDetail = _devisForfaitDetail;
+
 // Sélecteur explicite de format (clic droit / long-press sur le bouton imprimer)
 function chooseDevisPrintFmt(idx){
   var last=null;try{last=localStorage.getItem("_lx_devis_print_fmt");}catch(e){}
@@ -2824,27 +2877,8 @@ function printDevis(idx,printFmt){
     h+="<tr><td>";
     h+="<div class='forfait-title'>"+(it.name||"—")+"</div>";
 
-    // Détail forfait : si l'item a .services (array) ou .phases (jsonb) ou .sId pointe sur un forfait
-    var forfaitDetails=[];
-    // Cas 1 : item a directement une liste de sous-services (saved as .services ou .subServices)
-    var sub=it.services||it.subServices||null;
-    if(Array.isArray(sub)&&sub.length){
-      sub.forEach(function(s){forfaitDetails.push(s.name||s.n||s.nom||String(s));});
-    }
-    // Cas 2 : sId pointe sur un forfait FORFAITS[] qui a .services (array de services IDs)
-    else if(it.sId&&typeof FORFAITS!=="undefined"&&Array.isArray(FORFAITS)){
-      var f=FORFAITS.find(function(x){return x.id===it.sId;});
-      if(f&&Array.isArray(f.services)&&f.services.length){
-        f.services.forEach(function(svcId){
-          var svc=(typeof SVC!=="undefined"&&Array.isArray(SVC))?SVC.find(function(x){return x.id===svcId;}):null;
-          if(svc)forfaitDetails.push(svc.n);
-        });
-      }
-    }
-    // Cas 3 : item a .phases (jsonb) avec labels
-    if(!forfaitDetails.length&&Array.isArray(it.phases)&&it.phases.length){
-      it.phases.forEach(function(p){if(p.l)forfaitDetails.push(p.l+(p.d?" ("+p.d+" min)":""));});
-    }
+    // Détail forfait : reconstruit la liste des prestations incluses
+    var forfaitDetails = _devisForfaitDetail(it);
 
     if(forfaitDetails.length){
       h+="<ul class='forfait-detail'>";
@@ -3017,22 +3051,8 @@ function printDevisThermal(idx){
 
     h+="<div class='item-name'>"+(it.name||"-")+"</div>";
 
-    // Détail forfait — comme dans la version A4
-    var forfaitDetails=[];
-    var sub=it.services||it.subServices||null;
-    if(Array.isArray(sub)&&sub.length){sub.forEach(function(s){forfaitDetails.push(s.name||s.n||s.nom||String(s));});}
-    else if(it.sId&&typeof FORFAITS!=="undefined"&&Array.isArray(FORFAITS)){
-      var f=FORFAITS.find(function(x){return x.id===it.sId;});
-      if(f&&Array.isArray(f.services)&&f.services.length){
-        f.services.forEach(function(svcId){
-          var svc=(typeof SVC!=="undefined"&&Array.isArray(SVC))?SVC.find(function(x){return x.id===svcId;}):null;
-          if(svc)forfaitDetails.push(svc.n);
-        });
-      }
-    }
-    if(!forfaitDetails.length&&Array.isArray(it.phases)&&it.phases.length){
-      it.phases.forEach(function(p){if(p.l)forfaitDetails.push(p.l);});
-    }
+    // Détail forfait via helper partagé
+    var forfaitDetails = _devisForfaitDetail(it);
     if(forfaitDetails.length){
       forfaitDetails.forEach(function(fd){h+="<div class='item-detail'>- "+fd+"</div>";});
     }
@@ -3270,6 +3290,13 @@ function _buildDevisEmailHtml(dv){
     var bg = (k%2===0) ? '#fff' : '#faf9f5';
     h += '<tr style="background:'+bg+'">';
     h += '<td style="padding:10px 8px;border-bottom:1px solid #e5e5e5;font-size:13px"><strong>'+(item.name||'—')+'</strong>';
+    // Détail forfait : liste les prestations incluses
+    var subs = _devisForfaitDetail(item);
+    if(subs.length){
+      h += '<ul style="margin:6px 0 0 0;padding:0 0 0 12px;border-left:2px solid #c8a84e;list-style:none">';
+      subs.forEach(function(s){ h += '<li style="font-size:11px;color:#666;padding:1px 0">• '+s+'</li>'; });
+      h += '</ul>';
+    }
     if(item.remise && item.remise>0) h += '<div style="font-size:11px;color:#c43838;margin-top:2px">Remise : -'+item.remise.toFixed(2)+' €</div>';
     h += '</td>';
     h += '<td style="padding:10px 8px;border-bottom:1px solid #e5e5e5;text-align:right;font-size:13px">'+qtyN+'</td>';
