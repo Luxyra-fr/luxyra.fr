@@ -2417,9 +2417,37 @@ function cleanupPendingFromTk(){
 }
 window.cleanupPendingFromTk = cleanupPendingFromTk;
 
-function printDevis(idx){
+// Choix du format d'impression devis. Mémorise le dernier choix.
+function printDevis(idx,fmt){
   var dv=window.DEVIS[idx];if(!dv)return;
   window._currentDevis=dv;window._currentDevisIdx=idx;
+  if(!fmt){
+    // Lecture du dernier choix (par défaut: ouvre le sélecteur)
+    var last=null;try{last=localStorage.getItem("_lx_devis_print_fmt");}catch(e){}
+    var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:380px">';
+    h+='<h2 style="color:var(--gold);margin-bottom:6px">Format d\'impression</h2>';
+    h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">Choisissez votre imprimante</div>';
+    h+='<div style="display:flex;flex-direction:column;gap:10px">';
+    h+='<button onclick="cM();printDevis('+idx+',\u0027a4\u0027)" style="padding:14px;border:1px solid '+(last==="a4"?"var(--gold)":"rgba(255,255,255,.1)")+';border-radius:12px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer;text-align:left;display:flex;align-items:center;gap:14px">';
+    h+='<span style="font-size:24px">\ud83d\udcc4</span>';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">A4 / Imprimante standard</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Devis pro avec logo, couleurs, signature client</div></div>';
+    if(last==="a4")h+='<span style="font-size:11px;color:var(--gold);font-weight:700">DERNIER</span>';
+    h+='</button>';
+    h+='<button onclick="cM();printDevis('+idx+',\u0027thermal\u0027)" style="padding:14px;border:1px solid '+(last==="thermal"?"var(--gold)":"rgba(255,255,255,.1)")+';border-radius:12px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer;text-align:left;display:flex;align-items:center;gap:14px">';
+    h+='<span style="font-size:24px">\ud83e\uddfe</span>';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">Imprimante ticket / thermique</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Format 80mm, optimisé pour rouleau de caisse</div></div>';
+    if(last==="thermal")h+='<span style="font-size:11px;color:var(--gold);font-weight:700">DERNIER</span>';
+    h+='</button>';
+    h+='</div>';
+    h+='<button onclick="cM()" style="margin-top:14px;width:100%;padding:10px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.6);font-weight:600;cursor:pointer">Annuler</button>';
+    h+='</div></div>';
+    document.getElementById("modal").innerHTML=h;
+    return;
+  }
+  // Mémoriser le choix
+  try{localStorage.setItem("_lx_devis_print_fmt",fmt);}catch(e){}
+  if(fmt==="thermal"){return printDevisThermal(idx);}
+  // Sinon : format A4 (ci-dessous)
   var w=window.open("","_blank","width=720,height=920");
   if(!w){alert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.");return;}
 
@@ -2639,6 +2667,188 @@ function printDevis(idx){
   h+="</body></html>";
   w.document.write(h);w.document.close();
   setTimeout(function(){try{w.print();}catch(e){}}, 300);
+}
+
+// ============================================================
+// IMPRESSION DEVIS — VERSION THERMIQUE 80mm
+// Sortie compacte, monochrome, monospace pour imprimantes ticket.
+// ============================================================
+function printDevisThermal(idx){
+  var dv=window.DEVIS[idx];if(!dv)return;
+  var w=window.open("","_blank","width=320,height=720");
+  if(!w){alert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.");return;}
+
+  var cl=dv.cId?gC(dv.cId):null;
+  var clientLine=dv.clientName||dv.clientNom||"Client de passage";
+  var clientTel=dv.clientTel||(cl?cl.tel:"")||"";
+  var clientEmail=dv.clientEmail||(cl?cl.em:"")||"";
+  var txTVA=Number(SALON_CONFIG.tauxTVA||20);
+  var isAutoEntr=(txTVA===0);
+  var showTVA=(typeof SHOW_TVA_TICKET!=="undefined")?SHOW_TVA_TICKET:!isAutoEntr;
+
+  var dateDev=dv.date||TD;
+  var dateValidite=dv.dateValidite;
+  if(!dateValidite){try{var d=new Date(dateDev);d.setDate(d.getDate()+30);dateValidite=d.toISOString().slice(0,10);}catch(e){dateValidite=dateDev;}}
+  var numStr=dv.num?String(dv.num).padStart(4,"0"):("B"+(idx+1));
+
+  var totalBrut=0,totalRemise=0;
+  for(var i=0;i<dv.items.length;i++){
+    var it=dv.items[i];
+    totalBrut+=(it.price||0)*(it.qty||1);
+    totalRemise+=(it.remise||0);
+  }
+  var totalTTC=dv.total||(totalBrut-totalRemise);
+  var totalHT=showTVA?Math.round(totalTTC/(1+txTVA/100)*100)/100:totalTTC;
+  var totalTVA=showTVA?Math.round((totalTTC-totalHT)*100)/100:0;
+
+  var nomComplet=typeof SALON_CONFIG.nomComplet==="function"?SALON_CONFIG.nomComplet():SALON_CONFIG.nom;
+  var siret=SALON_CONFIG.siret||"";
+  var tvaIntra=SALON_CONFIG.tvaIntra||SALON_CONFIG.tva||"";
+  var logo=SALON_CONFIG.logo||"";
+
+  // Helper : ligne séparateur de tirets
+  function sep(c){c=c||"-";var s="";for(var k=0;k<32;k++)s+=c;return s;}
+  // Helper : ligne label/valeur sur 32 cols (label gauche, valeur droite)
+  function lineLR(l,r){
+    l=String(l||"");r=String(r||"");
+    var pad=32-l.length-r.length;
+    if(pad<1){return l+" "+r;}
+    var s=l;for(var k=0;k<pad;k++)s+=" ";return s+r;
+  }
+
+  var h="<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><title>Devis "+numStr+"</title>";
+  h+="<style>";
+  h+="@page{size:80mm auto;margin:2mm}";
+  h+="html{color-scheme:light}";
+  h+="*{color:#000!important;box-sizing:border-box}";
+  h+="body{font-family:'Courier New','Lucida Console',monospace;width:76mm;margin:0 auto;padding:4mm 2mm;color:#000;background:#fff;font-size:11px;line-height:1.35}";
+  h+=".c{text-align:center}";
+  h+=".r{text-align:right}";
+  h+=".b{font-weight:700}";
+  h+=".big{font-size:14px;font-weight:900;letter-spacing:1px}";
+  h+=".lg{max-width:50mm;max-height:18mm;margin:0 auto 4px;display:block}";
+  h+="hr{border:none;border-top:1px dashed #000;margin:6px 0}";
+  h+=".item-name{font-size:11px;font-weight:700;margin-top:4px}";
+  h+=".item-detail{font-size:10px;padding-left:6px;margin-top:1px}";
+  h+=".item-line{font-family:inherit;white-space:pre;font-size:11px}";
+  h+=".total-line{font-size:13px;font-weight:900;border-top:2px solid #000;border-bottom:2px solid #000;padding:4px 0;margin:6px 0}";
+  h+=".cond{font-size:9px;line-height:1.4;margin-top:8px}";
+  h+=".sig{margin-top:14px;font-size:10px}";
+  h+=".sig-box{border:1px solid #000;padding:14px 4px 4px;margin-top:4px;min-height:32px}";
+  h+=".footer{font-size:9px;text-align:center;margin-top:10px;padding-top:6px;border-top:1px dashed #000}";
+  h+="@media print{body{width:76mm;padding:2mm}}";
+  h+="</style></head><body>";
+
+  // ===== HEADER =====
+  if(logo)h+="<img src='"+logo+"' class='lg' alt=''>";
+  h+="<div class='c b big'>"+nomComplet.toUpperCase()+"</div>";
+  if(SALON_CONFIG.adresse)h+="<div class='c'>"+SALON_CONFIG.adresse+"</div>";
+  if(SALON_CONFIG.cp||SALON_CONFIG.ville)h+="<div class='c'>"+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||"")+"</div>";
+  if(SALON_CONFIG.tel)h+="<div class='c'>Tel: "+SALON_CONFIG.tel+"</div>";
+  if(siret)h+="<div class='c' style='font-size:9px;margin-top:2px'>SIRET "+siret+"</div>";
+  if(showTVA&&tvaIntra)h+="<div class='c' style='font-size:9px'>TVA "+tvaIntra+"</div>";
+
+  h+="<hr>";
+
+  // ===== DOC TITLE =====
+  h+="<div class='c big'>DEVIS N&deg; "+numStr+"</div>";
+  h+="<div class='c' style='margin-top:3px'>Etabli le "+fmt(dateDev)+"</div>";
+  h+="<div class='c b' style='margin-top:1px'>Valable jusqu'au "+fmt(dateValidite)+"</div>";
+
+  h+="<hr>";
+
+  // ===== CLIENT =====
+  h+="<div class='b' style='font-size:10px;text-transform:uppercase;margin-bottom:2px'>Client</div>";
+  h+="<div class='b'>"+clientLine+"</div>";
+  if(clientTel)h+="<div>Tel: "+clientTel+"</div>";
+  if(clientEmail)h+="<div style='font-size:10px;word-break:break-all'>"+clientEmail+"</div>";
+
+  h+="<hr>";
+
+  // ===== ITEMS =====
+  h+="<div class='b' style='font-size:10px;text-transform:uppercase;margin-bottom:4px'>Prestations</div>";
+  for(var i=0;i<dv.items.length;i++){
+    var it=dv.items[i];
+    var qty=it.qty||1;
+    var pu=it.price||0;
+    var totalItemTTC=pu*qty-(it.remise||0);
+
+    h+="<div class='item-name'>"+(it.name||"-")+"</div>";
+
+    // Détail forfait — comme dans la version A4
+    var forfaitDetails=[];
+    var sub=it.services||it.subServices||null;
+    if(Array.isArray(sub)&&sub.length){sub.forEach(function(s){forfaitDetails.push(s.name||s.n||s.nom||String(s));});}
+    else if(it.sId&&typeof FORFAITS!=="undefined"&&Array.isArray(FORFAITS)){
+      var f=FORFAITS.find(function(x){return x.id===it.sId;});
+      if(f&&Array.isArray(f.services)&&f.services.length){
+        f.services.forEach(function(svcId){
+          var svc=(typeof SVC!=="undefined"&&Array.isArray(SVC))?SVC.find(function(x){return x.id===svcId;}):null;
+          if(svc)forfaitDetails.push(svc.n);
+        });
+      }
+    }
+    if(!forfaitDetails.length&&Array.isArray(it.phases)&&it.phases.length){
+      it.phases.forEach(function(p){if(p.l)forfaitDetails.push(p.l);});
+    }
+    if(forfaitDetails.length){
+      forfaitDetails.forEach(function(fd){h+="<div class='item-detail'>- "+fd+"</div>";});
+    }
+
+    // Ligne quantité × prix = total
+    h+="<div class='item-line'>"+lineLR("  "+qty+" x "+pu.toFixed(2)+" EUR",totalItemTTC.toFixed(2)+" EUR")+"</div>";
+    if(it.remise&&it.remise>0){
+      h+="<div class='item-line' style='font-size:10px'>"+lineLR("  Remise","-"+it.remise.toFixed(2)+" EUR")+"</div>";
+    }
+  }
+
+  h+="<hr>";
+
+  // ===== TOTAUX =====
+  if(showTVA){
+    h+="<div class='item-line'>"+lineLR("Total HT",totalHT.toFixed(2)+" EUR")+"</div>";
+    h+="<div class='item-line'>"+lineLR("TVA "+txTVA+"%",totalTVA.toFixed(2)+" EUR")+"</div>";
+  }
+  if(totalRemise>0){
+    h+="<div class='item-line'>"+lineLR("Remise totale","-"+totalRemise.toFixed(2)+" EUR")+"</div>";
+  }
+  h+="<div class='total-line'>"+lineLR("TOTAL "+(showTVA?"TTC":""),totalTTC.toFixed(2)+" EUR")+"</div>";
+
+  if(!showTVA||isAutoEntr){
+    h+="<div class='c' style='font-size:9px;font-style:italic;margin-top:4px'>TVA non applicable, art. 293 B du CGI</div>";
+  }
+
+  // ===== Notes =====
+  if(dv.notes){
+    h+="<hr>";
+    h+="<div class='b' style='font-size:10px;text-transform:uppercase'>Notes</div>";
+    h+="<div style='font-size:10px;margin-top:2px'>"+dv.notes+"</div>";
+  }
+
+  // ===== Conditions =====
+  h+="<hr>";
+  h+="<div class='cond b' style='text-transform:uppercase'>Conditions</div>";
+  h+="<div class='cond'>";
+  h+="- Devis valable 30 jours<br>";
+  h+="- Acompte 30% a la reservation<br>";
+  h+="- Solde le jour de la prestation<br>";
+  h+="- Annulation -48h: perte acompte";
+  h+="</div>";
+
+  // ===== Signature =====
+  h+="<div class='sig b'>Bon pour accord:</div>";
+  h+="<div class='sig-box'></div>";
+  h+="<div class='sig' style='margin-top:6px'>Date et signature</div>";
+
+  // ===== Footer =====
+  h+="<div class='footer'>";
+  h+="Devis genere le "+new Date().toLocaleString("fr-FR");
+  h+="<br>Merci de votre confiance";
+  h+="</div>";
+
+  h+="</body></html>";
+  w.document.write(h);w.document.close();
+  setTimeout(function(){try{w.print();}catch(e){}},300);
 }
 
 function emailDevis(idx){
