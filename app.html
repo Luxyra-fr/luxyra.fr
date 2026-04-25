@@ -2225,9 +2225,13 @@ function rPendingTk(){
 function resumePendingTk(idx){
   var pk=window.PENDING_TK[idx];if(!pk)return;
   _tk={step:3,stId:pk.stId,cId:pk.cId,items:JSON.parse(JSON.stringify(pk.items)),comment:"",remise:pk.remise};
-  // Suppression DB + local
-  if(pk.dbId && typeof deletePendingTkDb==="function")deletePendingTkDb(pk.dbId);
-  window.PENDING_TK.splice(idx,1);
+  // On garde le pending tant que l'encaissement n'est pas validé.
+  // _fromPendingId / _fromPendingDbId permettent de le retrouver pour suppression
+  // après encaissement réussi (cf cleanupPendingFromTk).
+  // Si l'utilisateur fait retour en arrière sans encaisser, le pending reste intact.
+  _tk._fromPendingId = pk.id;
+  _tk._fromPendingDbId = pk.dbId;
+  _tk._autoSaved = true; // évite double-save si on quitte la caisse
   showCaisse();
 }
 
@@ -2359,14 +2363,48 @@ function saveDevis(){
 function convertDevis(idx){
   var dv=window.DEVIS[idx];if(!dv)return;
   _tk={step:3,stId:T[0].id,cId:dv.cId,items:dv.items.map(function(it){return{sId:it.sId,name:it.name,price:it.price,qty:it.qty,remise:0};}),comment:"",remise:0};
-  // NF525 : marquer le devis comme 'converti' au lieu de le supprimer (traçabilité)
-  if(dv.dbId && typeof updateDevisStatus==="function"){
-    updateDevisStatus(dv.dbId, "converti");
-    dv.status = "converti";
-  }
-  window.DEVIS.splice(idx,1);
+  // On garde le devis dans la liste tant que l'encaissement n'est pas validé.
+  // Le devis sera marqué 'converti' (au lieu d'être supprimé) après encaissement
+  // réussi via cleanupPendingFromTk(). Si retour en arrière, le devis reste.
+  _tk._fromDevisId = dv.id;
+  _tk._fromDevisDbId = dv.dbId;
+  _tk._autoSaved = true;
   showCaisse();
 }
+
+// Appelé après chaque encaissement validé : nettoie pending/devis source
+function cleanupPendingFromTk(){
+  try {
+    if (_tk && _tk._fromPendingId) {
+      // Retirer le pending source de PENDING_TK + DB
+      if (window.PENDING_TK && window.PENDING_TK.length) {
+        for (var i = window.PENDING_TK.length - 1; i >= 0; i--) {
+          if (window.PENDING_TK[i].id === _tk._fromPendingId) {
+            window.PENDING_TK.splice(i, 1); break;
+          }
+        }
+      }
+      if (_tk._fromPendingDbId && typeof deletePendingTkDb === "function") {
+        deletePendingTkDb(_tk._fromPendingDbId);
+      }
+    }
+    if (_tk && _tk._fromDevisId) {
+      // Marquer le devis comme converti (NF525 : on garde la traçabilité)
+      if (window.DEVIS && window.DEVIS.length) {
+        for (var j = 0; j < window.DEVIS.length; j++) {
+          if (window.DEVIS[j].id === _tk._fromDevisId) {
+            window.DEVIS[j].status = "converti";
+            break;
+          }
+        }
+      }
+      if (_tk._fromDevisDbId && typeof updateDevisStatus === "function") {
+        updateDevisStatus(_tk._fromDevisDbId, "converti");
+      }
+    }
+  } catch (e) { console.warn("[cleanupPendingFromTk]", e); }
+}
+window.cleanupPendingFromTk = cleanupPendingFromTk;
 
 function printDevis(idx){
   var dv=window.DEVIS[idx];if(!dv)return;
@@ -3996,11 +4034,12 @@ function go(pg,arg){
   var _prevPage=window._currentPage;
   // Auto-save du panier en attente si on quitte la caisse sans encaisser
   // (évite de perdre le panier quand l'utilisateur clique logo / accueil / imprimer /
-  // autre navigation avant d'avoir validé le paiement)
-  if(_prevPage==="caisse" && pg!=="caisse" && typeof _tk!=="undefined" && _tk && _tk.items && _tk.items.length){
+  // autre navigation avant d'avoir validé le paiement).
+  // Skip si _autoSaved=true (déjà géré, ex: panier vient d'un pending/devis qui existe déjà).
+  if(_prevPage==="caisse" && pg!=="caisse" && typeof _tk!=="undefined" && _tk && _tk.items && _tk.items.length && !_tk._autoSaved){
     try {
       var _autoTotal = _tk.items.reduce(function(a,b){return a+(b.price||0)*(b.qty||1)-(b.remise||0);},0)-( _tk.remise||0);
-      if(_autoTotal > 0 && !_tk._autoSaved){
+      if(_autoTotal > 0){
         var _autoSty=typeof gT==="function"?gT(_tk.stId):null;
         var _autoCl=_tk.cId?(typeof gC==="function"?gC(_tk.cId):null):null;
         var _autoPk={
@@ -13593,6 +13632,7 @@ function doFinalPayExecute(method){
         try{AP[i].ticketHtml=buildTicketHTML(AP[i],false);}catch(e){}
         if(typeof saveAppointment==="function")saveAppointment(AP[i]);
         if(typeof saveTicketToDb==="function")saveTicketToDb(AP[i]); // NF525: table tickets DB
+        if(typeof cleanupPendingFromTk==="function")cleanupPendingFromTk();
         // Update rdv_online status if this was an online booking
         if(AP[i].onlineId&&typeof _sb!=="undefined"&&_sb){
           try{_sb.from("rdv_online").update({status:"done"}).eq("id",AP[i].onlineId);}catch(e){}
@@ -13615,6 +13655,8 @@ function doFinalPayExecute(method){
     AP.push(newTk);
     if(typeof saveAppointment==="function")saveAppointment(newTk);
     if(typeof saveTicketToDb==="function")saveTicketToDb(newTk); // NF525: table tickets DB
+    // Encaissement validé → nettoie le pending/devis source si _tk en venait
+    if(typeof cleanupPendingFromTk==="function")cleanupPendingFromTk();
   }
   
   // NF525: audit log
