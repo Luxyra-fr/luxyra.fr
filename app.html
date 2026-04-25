@@ -2248,28 +2248,13 @@ function rPendingTk(){
     h+='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
     h+='Reprendre';
     h+='</button>';
-    // Menu kebab (Dupliquer / Supprimer)
-    h+='<button onclick="event.stopPropagation();showPendingMenu('+i+',event)" style="padding:10px 12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:var(--text2);cursor:pointer" title="Plus">';
-    h+='<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+    // Bouton supprimer direct (pas de kebab : il n'y a que cette action)
+    h+='<button onclick="event.stopPropagation();confirmDelPendingTk('+i+')" style="padding:10px 12px;border:1px solid rgba(248,113,113,.25);border-radius:10px;background:rgba(248,113,113,.08);color:#f87171;cursor:pointer" title="Supprimer">';
+    h+='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>';
     h+='</button>';
     h+='</div></div>';
   }
   return h;
-}
-
-// Menu contextuel pour un pending (Supprimer uniquement — pas de Dupliquer)
-function showPendingMenu(idx,e){
-  if(e&&e.preventDefault)e.preventDefault();
-  var pk=window.PENDING_TK[idx];if(!pk)return;
-  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:340px">';
-  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">'+(pk.clientName||'Client de passage')+' \u00b7 '+pk.total.toFixed(2)+' \u20ac</div>';
-  h+='<div style="display:flex;flex-direction:column;gap:8px">';
-  h+='<button onclick="cM();confirmDelPendingTk('+idx+')" style="padding:12px;border:1px solid rgba(248,113,113,.25);border-radius:10px;background:rgba(248,113,113,.08);color:#f87171;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left">';
-  h+='<span style="font-size:18px">\ud83d\uddd1\ufe0f</span><span>Supprimer</span></button>';
-  h+='</div>';
-  h+='<button onclick="cM()" style="margin-top:14px;width:100%;padding:10px;border:none;border-radius:10px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.5);font-weight:600;cursor:pointer">Fermer</button>';
-  h+='</div></div>';
-  document.getElementById("modal").innerHTML=h;
 }
 
 function resumePendingTk(idx){
@@ -2654,43 +2639,70 @@ window.cleanupPendingFromTk = cleanupPendingFromTk;
 function _devisForfaitDetail(it){
   if(!it) return [];
   var details = [];
-  // Cas 1 : sous-services explicites
+
+  // Cas A : item.sId pointe sur un SVC qui a des phases multi-étapes.
+  // C'est le cas RÉEL des "forfaits" Luxyra (services à phases multiples
+  // créés via "Nouvelle prestation" → ajout de phases). doAddTkSvc(svcId)
+  // pousse {sId: svcId} dans le panier. Les détails (Shampoing, Coupe,
+  // Mèches…) sont stockés dans SVC[svc].phases[].l.
+  if(it.sId && typeof SVC !== "undefined" && Array.isArray(SVC)){
+    var svc = SVC.find(function(x){ return x.id === it.sId; });
+    if(svc && Array.isArray(svc.phases) && svc.phases.length > 1){
+      svc.phases.forEach(function(p){
+        if(p && p.l && p.t !== "p") details.push(p.l);
+      });
+      if(details.length) return details;
+    }
+  }
+
+  // Cas B : item.phases stocké directement sur l'item (snapshot fait au
+  // moment de la sauvegarde du devis pour résister aux modifs ultérieures
+  // du catalogue services).
+  if(Array.isArray(it.phases) && it.phases.length > 1){
+    it.phases.forEach(function(p){
+      if(p && p.l && p.t !== "p") details.push(p.l);
+    });
+    if(details.length) return details;
+  }
+
+  // Cas C : sous-services explicites passés en .services / .subServices
   var sub = it.services || it.subServices || null;
   if(Array.isArray(sub) && sub.length){
     sub.forEach(function(s){
-      var label = (typeof s === "object") ? (s.name || s.n || s.nom) : String(s);
-      // Si c'est juste un id de service, le résoudre via SVC
-      if(label && typeof SVC !== "undefined" && Array.isArray(SVC)){
-        var fSvc = SVC.find(function(x){ return String(x.id) === String(label); });
-        if(fSvc) label = fSvc.n;
+      var label = (typeof s === "object") ? (s.name || s.n || s.nom) : null;
+      if(!label && (typeof s === "number" || typeof s === "string")){
+        // ID → résoudre via SVC
+        if(typeof SVC !== "undefined" && Array.isArray(SVC)){
+          var fSvc = SVC.find(function(x){ return String(x.id) === String(s); });
+          if(fSvc) label = fSvc.n;
+        }
+        if(!label) label = String(s);
       }
       if(label) details.push(label);
     });
     if(details.length) return details;
   }
-  // Cas 2 : forfaitId / forfaitIdx / sId → trouver le forfait dans FORFAITS[]
+
+  // Cas D : forfaitId / forfaitIdx → résoudre dans FORFAITS[] (table
+  // séparée, peu utilisée dans Luxyra mais conservée pour compat)
   if(typeof FORFAITS !== "undefined" && Array.isArray(FORFAITS)){
     var f = null;
     if(it.forfaitId) f = FORFAITS.find(function(x){ return x.id === it.forfaitId; });
     if(!f && typeof it.forfaitIdx === "number") f = FORFAITS[it.forfaitIdx];
-    if(!f && it.sId) f = FORFAITS.find(function(x){ return x.id === it.sId; });
-    if(f && Array.isArray(f.services) && f.services.length){
-      f.services.forEach(function(svcId){
-        var svc = (typeof SVC !== "undefined" && Array.isArray(SVC)) ? SVC.find(function(x){ return x.id === svcId; }) : null;
-        if(svc) details.push(svc.n);
-        else details.push("Prestation #"+svcId);
-      });
-      if(details.length) return details;
+    if(f){
+      if(Array.isArray(f.services) && f.services.length){
+        f.services.forEach(function(svcId){
+          var svc2 = (typeof SVC !== "undefined" && Array.isArray(SVC)) ? SVC.find(function(x){ return x.id === svcId; }) : null;
+          if(svc2) details.push(svc2.n);
+          else details.push("Prestation #"+svcId);
+        });
+        if(details.length) return details;
+      }
+      if(Array.isArray(f.phases) && f.phases.length > 1){
+        f.phases.forEach(function(p){ if(p && p.l && p.t !== "p") details.push(p.l); });
+        if(details.length) return details;
+      }
     }
-    // Si forfait trouvé sans sous-services explicites, utilise ses phases
-    if(f && Array.isArray(f.phases) && f.phases.length > 1){
-      f.phases.forEach(function(p){ if(p.l && p.t !== "p") details.push(p.l); });
-      if(details.length) return details;
-    }
-  }
-  // Cas 3 : phases sur l'item (multi-phases = forfait/composition)
-  if(Array.isArray(it.phases) && it.phases.length > 1){
-    it.phases.forEach(function(p){ if(p.l && p.t !== "p") details.push(p.l + (p.d ? " (" + p.d + " min)" : "")); });
   }
   return details;
 }
@@ -3146,9 +3158,16 @@ function saveAsDevis(){
     var qty=it.qty||1;
     totalBrut += (it.price||0)*qty;
     totalRemise += (it.remise||0);
-    // Préserve TOUS les champs qui permettent de reconstruire le détail forfait
-    // à l'impression / l'email : forfaitId, isForfait, forfaitIdx, phases,
-    // services. Sinon le helper _devisForfaitDetail ne retrouve plus rien.
+    // Snapshot des phases au moment de la création du devis : sinon, si le
+    // salon modifie/supprime la prestation plus tard, le devis perdrait son
+    // détail. On copie depuis SVC[sId] si l'item n'a pas de phases propres.
+    var snapPhases = Array.isArray(it.phases) ? JSON.parse(JSON.stringify(it.phases)) : null;
+    if(!snapPhases && it.sId && typeof SVC !== "undefined" && Array.isArray(SVC)){
+      var svc = SVC.find(function(x){ return x.id === it.sId; });
+      if(svc && Array.isArray(svc.phases) && svc.phases.length > 1){
+        snapPhases = JSON.parse(JSON.stringify(svc.phases));
+      }
+    }
     return {
       sId: it.sId,
       name: it.name,
@@ -3158,7 +3177,7 @@ function saveAsDevis(){
       isForfait: it.isForfait||false,
       forfaitId: it.forfaitId||null,
       forfaitIdx: (typeof it.forfaitIdx === "number") ? it.forfaitIdx : null,
-      phases: Array.isArray(it.phases) ? JSON.parse(JSON.stringify(it.phases)) : null,
+      phases: snapPhases,
       services: Array.isArray(it.services) ? JSON.parse(JSON.stringify(it.services)) : null,
       subServices: Array.isArray(it.subServices) ? JSON.parse(JSON.stringify(it.subServices)) : null
     };
@@ -3396,8 +3415,18 @@ async function _devisSendEmail(idx){
         htmlContent: html
       })
     });
-    var data = await resp.json();
-    if(data && data.success){
+    var rawText = await resp.text();
+    console.log("[devis email] HTTP "+resp.status+" body:", rawText);
+    var data = null;
+    try { data = JSON.parse(rawText); } catch(pe) {
+      _devisShowEmailError("R\u00e9ponse serveur invalide", rawText.slice(0,400), email, idx);
+      return;
+    }
+    // Vérification stricte : la réponse Brevo contient typiquement
+    // result.messageId ou messageId si OK, sinon error/code/message.
+    var brevoOK = data && (data.success === true) &&
+                  ((data.result && data.result.messageId) || data.messageId || data.id);
+    if(brevoOK){
       // Audit + log dans messaging_log si dispo
       if(typeof auditLog === "function") auditLog("EMAIL_DEVIS","Devis "+(dv.num||"")+" \u2192 "+email);
       if(typeof _sb !== "undefined" && _sb && typeof _salonId !== "undefined" && _salonId){
@@ -3410,16 +3439,37 @@ async function _devisSendEmail(idx){
         dv.sentAt = new Date().toISOString();
       }
       if(typeof toast === "function") toast("Devis envoy\u00e9 \u00e0 "+email,"success");
+      setTimeout(function(){ go("devis"); }, 200);
     } else {
-      var errMsg = (data && (data.error || data.message || (data.result && data.result.message))) || "Erreur inconnue";
-      if(typeof toast === "function") toast("\u00c9chec envoi : "+errMsg,"error");
-      console.error("[devis email] ECHEC:", data);
+      // Erreur réelle — afficher le détail à l'utilisateur
+      var errMsg = (data && (data.error || data.message || (data.result && data.result.message))) || "L\u0027API n\u0027a pas confirm\u00e9 l\u0027envoi";
+      _devisShowEmailError(errMsg, JSON.stringify(data).slice(0,400), email, idx);
     }
   } catch(e){
-    if(typeof toast === "function") toast("Erreur r\u00e9seau","error");
     console.error("[devis email] exception", e);
+    _devisShowEmailError("Erreur r\u00e9seau", e.message, email, idx);
   }
-  setTimeout(function(){ if(window._currentPage!=="devis") go("devis"); else go("devis"); }, 200);
+}
+
+// Modal d'erreur email — propose au salon une explication claire + alternatives
+function _devisShowEmailError(reason, technical, email, idx){
+  var h = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:left;max-width:440px">';
+  h += '<div style="text-align:center;font-size:36px;margin-bottom:6px">\u26a0\ufe0f</div>';
+  h += '<h2 style="text-align:center;margin-bottom:8px;color:#f87171">\u00c9chec d\u0027envoi</h2>';
+  h += '<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+reason+'</div>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Destinataire : <strong style="color:#fff">'+email+'</strong></div>';
+  h += '<div style="font-size:11px;color:var(--text3);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);border-radius:8px;padding:10px;margin-bottom:14px;font-family:monospace;word-break:break-all;max-height:120px;overflow-y:auto">'+(technical||'')+'</div>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:14px;line-height:1.5">';
+  h += '<strong style="color:#fff">Causes possibles :</strong><br>';
+  h += '\u2022 Email expéditeur du salon non vérifié chez Brevo<br>';
+  h += '\u2022 Cl\u00e9 API Brevo invalide ou cr\u00e9dits \u00e9puis\u00e9s<br>';
+  h += '\u2022 Adresse destinataire dans la liste de blocage Brevo';
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button onclick="cM();go(\'devis\')" style="flex:1;padding:10px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Plus tard</button>';
+  h += '<button onclick="cM();_devisSendEmail('+idx+')" style="flex:1;padding:10px;border:none;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer">R\u00e9essayer</button>';
+  h += '</div></div></div>';
+  document.getElementById("modal").innerHTML = h;
 }
 
 // Demander l'email si client de passage / pas d'email connu
