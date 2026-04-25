@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260424-03"></script>
+<script src="luxyra-supabase.js?v=20260425-01"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -2189,10 +2189,21 @@ function savePendingTicket(){
     total:_tk.items.reduce(function(a,b){return a+b.price*b.qty-b.remise;},0)-(_tk.remise||0)
   };
   window.PENDING_TK.push(pk);
-  // Persistance DB : survit à la fermeture de l'app / changement de device
-  if(typeof savePendingTkDb==="function")savePendingTkDb(pk);
+  // Persistance DB : on attend la fin du save avant de naviguer pour qu'un
+  // F5 immédiat ne coupe pas la requête POST. Toast de confirmation au retour.
   cM();
-go("home");
+  if(typeof savePendingTkDb==="function"){
+    var p=savePendingTkDb(pk);
+    if(p&&typeof p.then==="function"){
+      p.then(function(row){
+        if(!row){
+          // Save failed — alerter l'utilisateur, le pending est en mémoire mais pas en DB
+          if(typeof toast==="function")toast("Sauvegarde DB \u00e9chou\u00e9e \u2014 ticket en m\u00e9moire seulement","warning");
+        }
+      });
+    }
+  }
+  go("home");
 }
 
 // Render pending tickets page
@@ -4097,9 +4108,25 @@ function go(pg,arg){
     else if(pg==="settings"){var _sy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rSettings()+'</div>';if(pg===_prevPage){window.scrollTo(0,_sy);requestAnimationFrame(function(){window.scrollTo(0,_sy);});}}
     else if(pg==="tickets")app.innerHTML='<div class="app-content">'+rTickets()+'</div>';
     else if(pg==="caisseGestion")app.innerHTML='<div class="app-content">'+rCaisseGestion()+'</div>';
-    else if(pg==="pendingTk")app.innerHTML='<div class="app-content">'+rPendingTk()+'</div>';
+    else if(pg==="pendingTk"){
+      app.innerHTML='<div class="app-content">'+rPendingTk()+'</div>';
+      // Filet de sécurité : si la liste est vide en mémoire mais que la DB
+      // contient peut-être des records (load au boot a pu skipper), refetch.
+      if((!window.PENDING_TK||!window.PENDING_TK.length)&&typeof loadPendingAndDevis==="function"){
+        loadPendingAndDevis().then(function(){
+          if(window._currentPage==="pendingTk")app.innerHTML='<div class="app-content">'+rPendingTk()+'</div>';
+        });
+      }
+    }
     else if(pg==="notifs"){if(typeof showNotifs==="function")showNotifs();else cM();}
-    else if(pg==="devis")app.innerHTML='<div class="app-content">'+rDevis()+'</div>';
+    else if(pg==="devis"){
+      app.innerHTML='<div class="app-content">'+rDevis()+'</div>';
+      if((!window.DEVIS||!window.DEVIS.length)&&typeof loadPendingAndDevis==="function"){
+        loadPendingAndDevis().then(function(){
+          if(window._currentPage==="devis")app.innerHTML='<div class="app-content">'+rDevis()+'</div>';
+        });
+      }
+    }
     else app.innerHTML="<p>Page introuvable</p>";
   }catch(e){
     app.innerHTML="<div class='card'><p style='color:var(--red)'>Erreur: "+e.message+"</p></div>";

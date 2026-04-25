@@ -126,6 +126,80 @@ async function checkSession() {
 // LOAD DATA — Charger les données du salon depuis Supabase
 // ============================================================
 
+// Helper isolé : charge tickets_attente + devis depuis la DB.
+// Appelé tôt dans loadSalonData() pour garantir que ces deux listes sont
+// peuplées même si une étape suivante throw. Re-appelable comme filet de
+// sécurité (reset window.PENDING_TK + window.DEVIS à chaque appel).
+async function loadPendingAndDevis() {
+  if (!_sb || !_salonId) return;
+  // Tickets en attente
+  try {
+    var pkResAtt = await _sb.from("tickets_attente").select("*")
+      .eq("salon_id", _salonId)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (pkResAtt.error) {
+      console.warn("[loadPendingAndDevis] tickets_attente error", pkResAtt.error);
+    } else if (pkResAtt.data) {
+      window.PENDING_TK = pkResAtt.data.map(function(p) {
+        var raw = (p.raw_data && typeof p.raw_data === "object") ? p.raw_data : {};
+        return Object.assign({}, raw, {
+          dbId: p.id,
+          id: raw.id || p.local_id || p.id,
+          date: p.date_creation,
+          time: (p.heure_creation || "").toString().slice(0,5),
+          cId: p.client_id || raw.cId || "",
+          clientName: p.client_nom || raw.clientName || "",
+          stId: p.collaborateur_id || raw.stId,
+          styName: p.collaborateur_nom || raw.styName || "",
+          items: p.items || raw.items || [],
+          remise: Number(p.remise),
+          total: Number(p.total)
+        });
+      });
+    } else {
+      window.PENDING_TK = window.PENDING_TK || [];
+    }
+  } catch(e) {
+    console.warn("[loadPendingAndDevis] tickets_attente exception", e);
+    window.PENDING_TK = window.PENDING_TK || [];
+  }
+  // Devis
+  try {
+    var dvRes = await _sb.from("devis").select("*")
+      .eq("salon_id", _salonId)
+      .order("num", { ascending: false })
+      .limit(500);
+    if (dvRes.error) {
+      console.warn("[loadPendingAndDevis] devis error", dvRes.error);
+    } else if (dvRes.data) {
+      // Expirer les devis périmés non marqués (best-effort, fire-and-forget)
+      try { _sb.rpc("devis_expire_overdue").catch(function(){}); } catch(e0) {}
+      window.DEVIS = dvRes.data.map(function(d) {
+        var raw = (d.raw_data && typeof d.raw_data === "object") ? d.raw_data : {};
+        return Object.assign({}, raw, {
+          dbId: d.id, num: d.num, date: d.date_devis, dateValidite: d.date_validite,
+          cId: d.client_id, clientName: d.client_nom || "",
+          clientPrenom: d.client_prenom, clientTel: d.client_tel, clientEmail: d.client_email,
+          items: d.items || [],
+          total: Number(d.total_ttc), totalHT: Number(d.total_ht), totalTVA: Number(d.total_tva),
+          tauxTVA: Number(d.taux_tva), totalBrut: Number(d.total_brut), remise: Number(d.total_remise),
+          status: d.status, sentAt: d.sent_at, acceptedAt: d.accepted_at,
+          refusedAt: d.refused_at, convertedAt: d.converted_at,
+          ticketId: d.ticket_id, stId: d.collaborateur_id, stNom: d.collaborateur_nom,
+          notes: d.notes || ""
+        });
+      });
+    } else {
+      window.DEVIS = window.DEVIS || [];
+    }
+  } catch(e) {
+    console.warn("[loadPendingAndDevis] devis exception", e);
+    window.DEVIS = window.DEVIS || [];
+  }
+}
+if (typeof window !== "undefined") window.loadPendingAndDevis = loadPendingAndDevis;
+
 async function loadSalonData() {
   if (!_sb || !_userId) { startOffline(); return; }
   try{
@@ -276,44 +350,61 @@ async function loadSalonData() {
   }
   if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}}catch(e){}}
 
+  // ============================================================
+  // 2.5 — Pré-load PENDING_TK + DEVIS EN PRIORITÉ (avant tout
+  // chargement potentiellement faillible). Garanti d'être tenté
+  // même si une étape suivante throw, parce qu'elle est elle-même
+  // wrappée et qu'on défere les autres loads dans des try/catch
+  // individuels juste après.
+  // ============================================================
+  window.PENDING_TK = window.PENDING_TK || [];
+  window.DEVIS = window.DEVIS || [];
+  await loadPendingAndDevis();
+
   // 3. Charger collaborateurs → T[]
-  var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
-  if (tRes.data) {
-    T = tRes.data.map(function(c) {
-      return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
-               hrs: c.horaires || {}, pause: c.pause || null };
-    });
-  }
+  try {
+    var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
+    if (tRes.data) {
+      T = tRes.data.map(function(c) {
+        return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
+                 hrs: c.horaires || {}, pause: c.pause || null };
+      });
+    }
+  } catch(e) { console.warn("[loadSalonData] collaborateurs skipped", e); }
 
   // 4. Charger services → SVC[]
-  var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId).order("id");
-  if (svcRes.data) {
-    SVC = svcRes.data.map(function(s) {
-      return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
-    });
-    // Recalculer CATS
-    var catSet = {};
-    SVC.forEach(function(s) { if (s.cat) catSet[s.cat] = true; });
-    CATS = Object.keys(catSet);
-  }
+  try {
+    var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId).order("id");
+    if (svcRes.data) {
+      SVC = svcRes.data.map(function(s) {
+        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
+      });
+      // Recalculer CATS
+      var catSet = {};
+      SVC.forEach(function(s) { if (s.cat) catSet[s.cat] = true; });
+      CATS = Object.keys(catSet);
+    }
+  } catch(e) { console.warn("[loadSalonData] services skipped", e); }
 
   // 5. Charger clients → CL[]
-  var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom");
-  if (clRes.data) {
-    CL = clRes.data.map(function(c) {
-      return {
-        id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
-        ph: c.telephone, ph2: c.telephone2, em: c.email,
-        adr: c.adresse, cp: c.cp, ville: c.ville, ddn: c.date_naissance,
-        cr: c.created_at ? c.created_at.slice(0,10) : "",
-        no: c.notes, natChev: c.nature_cheveux, typeChev: c.type_cheveux,
-        detChev: c.details_cheveux, collab: c.collab_pref,
-        actif: c.actif, fid: c.points_fidelite,
-        smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
-        clientBeautyproId: c.client_beautypro_id || null
-      };
-    });
-  }
+  try {
+    var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom");
+    if (clRes.data) {
+      CL = clRes.data.map(function(c) {
+        return {
+          id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
+          ph: c.telephone, ph2: c.telephone2, em: c.email,
+          adr: c.adresse, cp: c.cp, ville: c.ville, ddn: c.date_naissance,
+          cr: c.created_at ? c.created_at.slice(0,10) : "",
+          no: c.notes, natChev: c.nature_cheveux, typeChev: c.type_cheveux,
+          detChev: c.details_cheveux, collab: c.collab_pref,
+          actif: c.actif, fid: c.points_fidelite,
+          smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
+          clientBeautyproId: c.client_beautypro_id || null
+        };
+      });
+    }
+  } catch(e) { console.warn("[loadSalonData] clients skipped", e); }
 
   // 5b. Sync fidelite points from fidelite_client (source of truth)
   try {
@@ -330,29 +421,32 @@ async function loadSalonData() {
   } catch(e) {}
 
   // 6. Charger rendez-vous/tickets → AP[]
-  var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(500);
-  if (apRes.data) {
-    AP = apRes.data.map(function(a) {
-      return {
-        id: a.id, cId: a.client_id, sId: a.service_id, stId: a.collab_id,
-        date: a.date_rdv, time: a.heure, pr: Number(a.prix),
-        brutTotal: a.brut_total ? Number(a.brut_total) : undefined,
-        remise: Number(a.remise || 0),
-        st: a.status, met: a.mode_paiement,
-        tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
-        items: a.items || [], comment: a.comment || "",
-        aPhases: a.a_phases || [],
-        clients: a.clients || [], fromCaisse: a.from_caisse || false,
-        cancelled: a.cancelled, cancelReason: a.cancel_reason
-      };
-    });
-    // Restaurer le dernier hash + tkN
-    var doneH = AP.filter(function(a) { return a.hash; });
-    if (doneH.length) _lastTicketHash = doneH[0].hash || "00000000";
-    var maxTkN=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>maxTkN)maxTkN=a.tkNum;});if(maxTkN>0)tkN=maxTkN;
-  }
+  try {
+    var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(500);
+    if (apRes.data) {
+      AP = apRes.data.map(function(a) {
+        return {
+          id: a.id, cId: a.client_id, sId: a.service_id, stId: a.collab_id,
+          date: a.date_rdv, time: a.heure, pr: Number(a.prix),
+          brutTotal: a.brut_total ? Number(a.brut_total) : undefined,
+          remise: Number(a.remise || 0),
+          st: a.status, met: a.mode_paiement,
+          tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
+          items: a.items || [], comment: a.comment || "",
+          aPhases: a.a_phases || [],
+          clients: a.clients || [], fromCaisse: a.from_caisse || false,
+          cancelled: a.cancelled, cancelReason: a.cancel_reason
+        };
+      });
+      // Restaurer le dernier hash + tkN
+      var doneH = AP.filter(function(a) { return a.hash; });
+      if (doneH.length) _lastTicketHash = doneH[0].hash || "00000000";
+      var maxTkN=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>maxTkN)maxTkN=a.tkNum;});if(maxTkN>0)tkN=maxTkN;
+    }
+  } catch(e) { console.warn("[loadSalonData] appointments skipped", e); }
 
   // 6b. Charger RDV en ligne → window.RDV_ONLINE[]
+  try {
   var today = new Date().toISOString().slice(0,10);
   var roRes = await _sb.from("rdv_online").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
   if (roRes.data) {
@@ -408,8 +502,10 @@ async function loadSalonData() {
   } else {
     window.RDV_ONLINE = [];
   }
+  } catch(e) { console.warn("[loadSalonData] rdv_online skipped", e); window.RDV_ONLINE = window.RDV_ONLINE || []; }
 
   // 7. Charger produits → PRODS[]
+  try {
   var prRes = await _sb.from("produits").select("*").eq("salon_id", _salonId).order("nom");
   if (prRes.data) {
     PRODS = prRes.data.map(function(p) {
@@ -438,6 +534,7 @@ async function loadSalonData() {
     PRODS.forEach(function(p) { if (p.cat) pcatSet[p.cat] = true; });
     PCATS = Object.keys(pcatSet);
   }
+  } catch(e) { console.warn("[loadSalonData] produits skipped", e); }
 
   // 7b. Charger fournisseurs → FOURNISSEURS[]
   window.FOURNISSEURS = [];
@@ -452,6 +549,7 @@ async function loadSalonData() {
   } catch(e) { console.log("[FOURNISSEURS] Skip:", e.message); }
 
   // 8. Charger cartes cadeaux → GC[]
+  try {
   var gcRes = await _sb.from("cartes_cadeaux").select("*").eq("salon_id", _salonId).order("date_creation", { ascending: false });
   if (gcRes.data) {
     GC = gcRes.data.map(function(g) {
@@ -471,6 +569,7 @@ async function loadSalonData() {
       };
     });
   }
+  } catch(e) { console.warn("[loadSalonData] cartes_cadeaux skipped", e); }
 
   // 8.5. Charger tickets DB → window.TICKETS_DB[] (pour historique NF525 safe)
   //       Les tickets restent dans AP[] pour l'UI existante, window.TICKETS_DB
@@ -507,62 +606,13 @@ async function loadSalonData() {
     }
   } catch(e) { console.warn("[loadSalonData] tickets load skipped", e); window.TICKETS_DB = []; }
 
-  // 8.55. Charger tickets en attente → window.PENDING_TK (persistance DB)
-  try {
-    var pkRes = await _sb.from("tickets_attente").select("*")
-      .eq("salon_id", _salonId)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (pkRes.data) {
-      window.PENDING_TK = pkRes.data.map(function(p) {
-        var raw = (p.raw_data && typeof p.raw_data === "object") ? p.raw_data : {};
-        return Object.assign({}, raw, {
-          dbId: p.id,
-          id: raw.id || p.local_id || p.id,
-          date: p.date_creation,
-          time: (p.heure_creation || "").toString().slice(0,5),
-          cId: p.client_id || raw.cId || "",
-          clientName: p.client_nom || raw.clientName || "",
-          stId: p.collaborateur_id || raw.stId,
-          styName: p.collaborateur_nom || raw.styName || "",
-          items: p.items || raw.items || [],
-          remise: Number(p.remise),
-          total: Number(p.total)
-        });
-      });
-    } else {
-      window.PENDING_TK = [];
-    }
-  } catch(e) { console.warn("[loadSalonData] tickets_attente load skipped", e); window.PENDING_TK = []; }
-
-  // 8.6. Charger devis DB → window.DEVIS[] (remplace le localStorage)
-  try {
-    var dvRes = await _sb.from("devis").select("*")
-      .eq("salon_id", _salonId)
-      .order("num", { ascending: false })
-      .limit(500);
-    if (dvRes.data) {
-      // Expirer automatiquement les devis périmés non marqués
-      _sb.rpc("devis_expire_overdue").catch(function(){});
-      window.DEVIS = dvRes.data.map(function(d) {
-        var raw = (d.raw_data && typeof d.raw_data === "object") ? d.raw_data : {};
-        return Object.assign({}, raw, {
-          dbId: d.id, num: d.num, date: d.date_devis, dateValidite: d.date_validite,
-          cId: d.client_id, clientName: d.client_nom || "",
-          clientPrenom: d.client_prenom, clientTel: d.client_tel, clientEmail: d.client_email,
-          items: d.items || [],
-          total: Number(d.total_ttc), totalHT: Number(d.total_ht), totalTVA: Number(d.total_tva),
-          tauxTVA: Number(d.taux_tva), totalBrut: Number(d.total_brut), remise: Number(d.total_remise),
-          status: d.status, sentAt: d.sent_at, acceptedAt: d.accepted_at,
-          refusedAt: d.refused_at, convertedAt: d.converted_at,
-          ticketId: d.ticket_id, stId: d.collaborateur_id, stNom: d.collaborateur_nom,
-          notes: d.notes || ""
-        });
-      });
-    }
-  } catch(e) { console.warn("[loadSalonData] devis load skipped", e); }
+  // 8.55 / 8.6 — déplacés en tête de loadSalonData (section 2.5) via
+  // loadPendingAndDevis(). Re-tentative ici comme filet de sécurité au cas
+  // où l'auth/session aurait été établie entre-temps.
+  await loadPendingAndDevis();
 
   // 9. Charger clôtures → window.CLOTURES[]
+  try {
   var clotRes = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num");
   if (clotRes.data) {
     window.CLOTURES = clotRes.data.map(function(c) {
@@ -606,32 +656,49 @@ async function loadSalonData() {
       });
     });
   }
+  } catch(e) { console.warn("[loadSalonData] clotures skipped", e); }
 
   // 10. Charger audit log → window.AUDIT_LOG[]
-  var auRes = await _sb.from("audit_log").select("*").eq("salon_id", _salonId).order("timestamp_action", { ascending: false }).limit(500);
-  if (auRes.data) {
-    window.AUDIT_LOG = auRes.data.map(function(a) {
-      return { ts: a.timestamp_action, action: a.action, detail: a.details };
-    });
-  }
+  try {
+    var auRes = await _sb.from("audit_log").select("*").eq("salon_id", _salonId).order("timestamp_action", { ascending: false }).limit(500);
+    if (auRes.data) {
+      window.AUDIT_LOG = auRes.data.map(function(a) {
+        return { ts: a.timestamp_action, action: a.action, detail: a.details };
+      });
+    }
+  } catch(e) { console.warn("[loadSalonData] audit_log skipped", e); }
 
   // 11. Charger forfaits → FORFAITS[]
-  var fRes = await _sb.from("forfaits").select("*").eq("salon_id", _salonId).order("id");
-  if (fRes.data && fRes.data.length > 0) {
-    FORFAITS = fRes.data.map(function(f) {
-      return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false };
-    });
-  }
+  try {
+    var fRes = await _sb.from("forfaits").select("*").eq("salon_id", _salonId).order("id");
+    if (fRes.data && fRes.data.length > 0) {
+      FORFAITS = fRes.data.map(function(f) {
+        return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false };
+      });
+    }
+  } catch(e) { console.warn("[loadSalonData] forfaits skipped", e); }
 
   // 12. Charger packs clients → window.PACKS_CLIENTS[]
-  var pkRes = await _sb.from("packs_clients").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
-  if (pkRes.data) {
-    window.PACKS_CLIENTS = pkRes.data.map(function(p) {
-      return { id: p.id, clientId: p.client_id, clientNom: p.client_nom, nom: p.nom, prestId: p.prestation_id, prestNom: p.prestation_nom, total: p.total_seances, used: p.seances_utilisees, prix: Number(p.prix_total), dateAchat: p.date_achat, dateExp: p.date_expiration, ticketNum: p.ticket_num, status: p.status };
-    });
-  } else {
-    window.PACKS_CLIENTS = [];
-  }
+  try {
+    var pkResPacks = await _sb.from("packs_clients").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
+    if (pkResPacks.data) {
+      window.PACKS_CLIENTS = pkResPacks.data.map(function(p) {
+        return { id: p.id, clientId: p.client_id, clientNom: p.client_nom, nom: p.nom, prestId: p.prestation_id, prestNom: p.prestation_nom, total: p.total_seances, used: p.seances_utilisees, prix: Number(p.prix_total), dateAchat: p.date_achat, dateExp: p.date_expiration, ticketNum: p.ticket_num, status: p.status };
+      });
+    } else {
+      window.PACKS_CLIENTS = [];
+    }
+  } catch(e) { console.warn("[loadSalonData] packs_clients skipped", e); window.PACKS_CLIENTS = window.PACKS_CLIENTS || []; }
+
+  // Filet de sécurité final — re-load PENDING_TK + DEVIS si vides
+  // (peut arriver en cas de transient timeout au boot)
+  try {
+    if ((!window.PENDING_TK || !window.PENDING_TK.length) ||
+        (!window.DEVIS || !window.DEVIS.length)) {
+      await loadPendingAndDevis();
+    }
+  } catch(e) {}
+  console.log("[Luxyra] Pending="+(window.PENDING_TK||[]).length+" Devis="+(window.DEVIS||[]).length);
 
   // Lancer l'app !
   console.log("Luxyra: Données chargées depuis Supabase (" + CL.length + " clients, " + AP.length + " RDV, " + PRODS.length + " produits)");
