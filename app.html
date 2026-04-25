@@ -2284,7 +2284,7 @@ function rDevis(){
     h+='<div style="width:90px;font-size:13px">'+fmt(dv.date)+'<br><strong style="color:var(--gold)">'+dv.total.toFixed(2)+' \u20ac</strong></div>';
     h+='<div style="flex:1;font-size:14px;font-weight:600">'+SALON_CONFIG.nom+'<br><span style="font-weight:400;color:var(--text3)">'+dv.clientName+'</span></div>';
     h+='<div style="display:flex;gap:6px;align-items:center">';
-    h+='<button onclick="printDevis('+i+')" style="border:none;background:none;cursor:pointer;padding:4px" title="Imprimer"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>';
+    h+='<button onclick="printDevis('+i+')" oncontextmenu="event.preventDefault();chooseDevisPrintFmt('+i+');return false;" ontouchstart="window._lpTm=setTimeout(function(){chooseDevisPrintFmt('+i+');},600)" ontouchend="clearTimeout(window._lpTm)" ontouchmove="clearTimeout(window._lpTm)" style="border:none;background:none;cursor:pointer;padding:4px" title="Imprimer (clic droit / appui long pour changer le format)"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>';
     h+='<button onclick="convertDevis('+i+')" style="border:none;background:none;cursor:pointer;padding:4px" title="Modifier"><svg width="28" height="28" viewBox="0 0 32 32"><rect x="2" y="2" width="28" height="28" rx="3" fill="none" stroke="#555" stroke-width="2"/><line x1="16" y1="2" x2="16" y2="30" stroke="#ddd" stroke-width="1"/><line x1="2" y1="16" x2="30" y2="16" stroke="#ddd" stroke-width="1"/><text x="9" y="13" font-size="11" fill="#555" font-family="Arial" font-weight="700" text-anchor="middle">+</text><text x="23" y="13" font-size="11" fill="#555" font-family="Arial" font-weight="700" text-anchor="middle">\u00d7</text><text x="9" y="27" font-size="11" fill="#555" font-family="Arial" font-weight="700" text-anchor="middle">\u00f7</text><text x="23" y="27" font-size="11" fill="#555" font-family="Arial" font-weight="700" text-anchor="middle">\u2212</text></svg></button>';
     h+='<button onclick="confirmDelDevis('+i+')" style="border:none;background:none;cursor:pointer;padding:4px" title="Supprimer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c44" stroke-width="3"><line x1="4" y1="4" x2="20" y2="20"/><line x1="20" y1="4" x2="4" y2="20"/></svg></button>';
     h+='</div></div>';
@@ -2350,25 +2350,41 @@ function saveDevis(){
   var cl=cId?gC(cId):null;
   var notes=document.getElementById("dvNotes")?document.getElementById("dvNotes").value.trim():"";
   var total=0;window._dvItems.forEach(function(it){total+=it.price*it.qty;});
+  // Nom client : si client connu → "Nom Prénom", sinon fallback safe.
+  // ATTENTION : ne jamais référencer _tk ici — saveDevis() peut être appelé
+  // depuis newDevis() où _tk est null (devis créé hors caisse).
+  var defaultName="Client de passage";
+  var clientNameStr=cl?cName(cl):defaultName;
   var newDv={
     id:U(),date:TD,cId:cId,
-    clientName:cl?cName(cl):passageName(_tk.cId,_tk.sId),
-    clientNom:cl?cName(cl):passageName(_tk.cId,_tk.sId),
+    clientName:clientNameStr,
+    clientNom:clientNameStr,
     clientTel:cl?cl.tel:null,clientEmail:cl?cl.em:null,
     items:window._dvItems.map(function(it){return {name:it.name,price:it.price,qty:it.qty,sId:it.sId||null};}),
     total:total,notes:notes,status:"brouillon"
   };
   window.DEVIS.push(newDv);
-  // NF525 : persiste en DB (num auto, date_validite auto +30j, status machine)
-  if(typeof saveDevisToDb==="function"){
-    saveDevisToDb(newDv).then(function(dbRow){
-      // dbId+num sont ré-assignés à newDv par saveDevisToDb
-      // Re-render pour afficher le num officiel
-      if(typeof go==="function"&&document.getElementById("app")&&window._curPage==="devis")go("devis");
-    });
-  }
   window._dvItems=[];
-  cM();go("devis");
+  cM();
+  // NF525 : persiste en DB (num auto, date_validite auto +30j, status machine).
+  // On attend la promise pour pouvoir alerter en cas d'échec et re-render
+  // ensuite avec le num officiel attribué par le trigger DB.
+  if(typeof saveDevisToDb==="function"){
+    var p=saveDevisToDb(newDv);
+    if(p&&typeof p.then==="function"){
+      p.then(function(dbRow){
+        if(!dbRow){
+          if(typeof toast==="function")toast("Sauvegarde DB \u00e9chou\u00e9e \u2014 devis en m\u00e9moire seulement","warning");
+        }
+        // Re-render pour afficher le num officiel
+        if(typeof go==="function"&&document.getElementById("app")&&window._currentPage==="devis")go("devis");
+      }).catch(function(err){
+        console.error("[saveDevis] DB save error",err);
+        if(typeof toast==="function")toast("Erreur sauvegarde devis","error");
+      });
+    }
+  }
+  go("devis");
 }
 
 function convertDevis(idx){
@@ -2417,34 +2433,47 @@ function cleanupPendingFromTk(){
 }
 window.cleanupPendingFromTk = cleanupPendingFromTk;
 
-// Choix du format d'impression devis. Mémorise le dernier choix.
+// Sélecteur explicite de format (clic droit / long-press sur le bouton imprimer)
+function chooseDevisPrintFmt(idx){
+  var last=null;try{last=localStorage.getItem("_lx_devis_print_fmt");}catch(e){}
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:380px">';
+  h+='<h2 style="color:var(--gold);margin-bottom:6px">Format d\'impression</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">Le format choisi sera m\u00e9moris\u00e9</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:10px">';
+  h+='<button onclick="cM();printDevis('+idx+',\u0027a4\u0027)" style="padding:14px;border:1px solid '+(last==="a4"?"var(--gold)":"rgba(255,255,255,.1)")+';border-radius:12px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer;text-align:left;display:flex;align-items:center;gap:14px">';
+  h+='<span style="font-size:24px">\ud83d\udcc4</span>';
+  h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">A4 / Imprimante standard</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Devis pro avec logo, couleurs, signature</div></div>';
+  if(last==="a4")h+='<span style="font-size:11px;color:var(--gold);font-weight:700">ACTUEL</span>';
+  h+='</button>';
+  h+='<button onclick="cM();printDevis('+idx+',\u0027thermal\u0027)" style="padding:14px;border:1px solid '+(last==="thermal"?"var(--gold)":"rgba(255,255,255,.1)")+';border-radius:12px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer;text-align:left;display:flex;align-items:center;gap:14px">';
+  h+='<span style="font-size:24px">\ud83e\uddfe</span>';
+  h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">Imprimante ticket / thermique</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Format 80mm rouleau de caisse</div></div>';
+  if(last==="thermal")h+='<span style="font-size:11px;color:var(--gold);font-weight:700">ACTUEL</span>';
+  h+='</button>';
+  h+='</div>';
+  h+='<button onclick="cM()" style="margin-top:14px;width:100%;padding:10px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.6);font-weight:600;cursor:pointer">Annuler</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
+// Impression devis. Si le format n'est pas spécifié :
+//  - utilise le dernier choix mémorisé en localStorage si présent
+//  - sinon, ouvre le sélecteur (1ère fois sur le device)
+// Pour changer le format après le 1er choix : clic droit sur le bouton imprimer.
 function printDevis(idx,fmt){
   var dv=window.DEVIS[idx];if(!dv)return;
   window._currentDevis=dv;window._currentDevisIdx=idx;
   if(!fmt){
-    // Lecture du dernier choix (par défaut: ouvre le sélecteur)
     var last=null;try{last=localStorage.getItem("_lx_devis_print_fmt");}catch(e){}
-    var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:380px">';
-    h+='<h2 style="color:var(--gold);margin-bottom:6px">Format d\'impression</h2>';
-    h+='<div style="font-size:13px;color:var(--text3);margin-bottom:16px">Choisissez votre imprimante</div>';
-    h+='<div style="display:flex;flex-direction:column;gap:10px">';
-    h+='<button onclick="cM();printDevis('+idx+',\u0027a4\u0027)" style="padding:14px;border:1px solid '+(last==="a4"?"var(--gold)":"rgba(255,255,255,.1)")+';border-radius:12px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer;text-align:left;display:flex;align-items:center;gap:14px">';
-    h+='<span style="font-size:24px">\ud83d\udcc4</span>';
-    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">A4 / Imprimante standard</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Devis pro avec logo, couleurs, signature client</div></div>';
-    if(last==="a4")h+='<span style="font-size:11px;color:var(--gold);font-weight:700">DERNIER</span>';
-    h+='</button>';
-    h+='<button onclick="cM();printDevis('+idx+',\u0027thermal\u0027)" style="padding:14px;border:1px solid '+(last==="thermal"?"var(--gold)":"rgba(255,255,255,.1)")+';border-radius:12px;background:rgba(255,255,255,.04);color:#fff;cursor:pointer;text-align:left;display:flex;align-items:center;gap:14px">';
-    h+='<span style="font-size:24px">\ud83e\uddfe</span>';
-    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px">Imprimante ticket / thermique</div><div style="font-size:11px;color:var(--text3);margin-top:2px">Format 80mm, optimisé pour rouleau de caisse</div></div>';
-    if(last==="thermal")h+='<span style="font-size:11px;color:var(--gold);font-weight:700">DERNIER</span>';
-    h+='</button>';
-    h+='</div>';
-    h+='<button onclick="cM()" style="margin-top:14px;width:100%;padding:10px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.6);font-weight:600;cursor:pointer">Annuler</button>';
-    h+='</div></div>';
-    document.getElementById("modal").innerHTML=h;
-    return;
+    if(last==="a4"||last==="thermal"){
+      // Format déjà choisi → impression directe sans modal
+      fmt=last;
+    } else {
+      // Première fois → sélecteur
+      chooseDevisPrintFmt(idx);
+      return;
+    }
   }
-  // Mémoriser le choix
   try{localStorage.setItem("_lx_devis_print_fmt",fmt);}catch(e){}
   if(fmt==="thermal"){return printDevisThermal(idx);}
   // Sinon : format A4 (ci-dessous)
