@@ -2430,97 +2430,207 @@ function dupDevis(idx){
   if(typeof toast==="function")toast("Devis dupliqu\u00e9","success");
 }
 
+// ============================================================
+// CRÉATION DEVIS — flow propre, sans nested modals qui s'écrasent.
+// État stocké dans window._devisDraft (préservé entre re-renders).
+// Les fonctions d'édition modifient _devisDraft + appellent _renderNewDevis()
+// qui re-render uniquement le contenu du modal sans toucher à l'état.
+// ============================================================
 function newDevis(){
-  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>Nouveau devis</h2>';
-  htm+='<div class="fg"><label>Client</label><select id="dvClient"><option value="">Client de passage</option>';
-  var sorted=CL.slice().sort(function(a,b){return(a.nom+a.pre).localeCompare(b.nom+b.pre);});
-  for(var i=0;i<sorted.length;i++)htm+='<option value="'+sorted[i].id+'">'+sorted[i].nom+' '+sorted[i].pre+'</option>';
-  htm+='</select></div>';
-  htm+='<div id="dvItems"></div>';
-  htm+='<button class="btn bs" style="margin:8px 0" onclick="addDevisItem()">+ Ajouter une prestation</button>';
-  htm+='<div class="fg"><label>Notes</label><textarea id="dvNotes" rows="2" style="width:100%" placeholder="Remarques..."></textarea></div>';
-  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-  htm+='<button class="btn bg" style="flex:1" onclick="saveDevis()">Enregistrer</button>';
-  htm+='</div></div>';
-  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
-  window._dvItems=[];
+  // Reset uniquement à l'entrée — pas à chaque re-render
+  window._devisDraft = { cId: "", items: [], notes: "" };
+  _renderNewDevis();
 }
 
-function addDevisItem(){
-  var htm='<div class="mbox"><h2>Ajouter prestation</h2>';
-  htm+='<div class="fg"><label>Prestation</label><select id="dvSvc">';
-  for(var ci=0;ci<CATS.length;ci++){
-    var svcs=SVC.filter(function(s){return s.cat===CATS[ci]});
-    for(var si=0;si<svcs.length;si++){
-      var s=svcs[si];
-      htm+='<option value="'+s.id+'">'+s.n+' - '+s.p+'\u20ac</option>';
+function _renderNewDevis(){
+  var d = window._devisDraft || (window._devisDraft = { cId:"", items:[], notes:"" });
+
+  var sorted = CL.slice().sort(function(a,b){return(a.nom+a.pre).localeCompare(b.nom+b.pre);});
+
+  // Total
+  var total = 0;
+  d.items.forEach(function(it){ total += (it.price||0) * (it.qty||1); });
+
+  var h = '<div class="mbox" style="max-height:90vh;overflow-y:auto;max-width:480px"><h2 style="margin-bottom:6px">Nouveau devis</h2>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">N&deg; auto-attribu&eacute; \u00b7 valid&eacute; 30 jours \u00b7 NF525</div>';
+
+  // Client select — preserve choice via onchange
+  h += '<div class="fg"><label>Client</label>';
+  h += '<select id="dvClient" onchange="window._devisDraft.cId=this.value">';
+  h += '<option value="" '+(d.cId===""?"selected":"")+'>Client de passage</option>';
+  for(var i=0;i<sorted.length;i++){
+    var c = sorted[i];
+    h += '<option value="'+c.id+'" '+(d.cId===c.id?"selected":"")+'>'+(c.nom||"")+' '+(c.pre||"")+'</option>';
+  }
+  h += '</select></div>';
+
+  // Items list
+  h += '<div style="margin:14px 0">';
+  h += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Prestations</div>';
+  if(!d.items.length){
+    h += '<div style="padding:14px;background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.1);border-radius:10px;text-align:center;color:var(--text3);font-size:13px">Aucune prestation \u2014 ajoutez-en au moins une</div>';
+  } else {
+    for(var k=0;k<d.items.length;k++){
+      var it = d.items[k];
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:10px;background:rgba(255,255,255,.03);border-radius:10px;margin-bottom:6px">';
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div style="font-weight:600;font-size:13px">'+(it.name||"-")+'</div>';
+      h += '<div style="font-size:11px;color:var(--text3);margin-top:2px">'+(it.price||0).toFixed(2)+' \u20ac &times; '+(it.qty||1)+'</div>';
+      h += '</div>';
+      // Qty stepper
+      h += '<div style="display:flex;align-items:center;gap:4px">';
+      h += '<button onclick="_devisQty('+k+',-1)" style="width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700">-</button>';
+      h += '<span style="min-width:20px;text-align:center;font-weight:700;font-size:13px">'+(it.qty||1)+'</span>';
+      h += '<button onclick="_devisQty('+k+',1)" style="width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700">+</button>';
+      h += '</div>';
+      // Delete
+      h += '<button onclick="_devisDel('+k+')" style="border:none;background:none;color:#f87171;cursor:pointer;padding:4px;font-size:18px" title="Retirer">&times;</button>';
+      h += '</div>';
     }
   }
-  htm+='</select></div>';
-  htm+='<button class="btn bg bk" style="margin-top:10px" onclick="doAddDevisItem()">Ajouter</button>';
-  htm+='</div>';
-  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  h += '<button onclick="_devisOpenItemPicker()" style="width:100%;margin-top:6px;padding:12px;border:1px dashed rgba(212,168,67,.4);border-radius:10px;background:rgba(212,168,67,.06);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer">+ Ajouter une prestation</button>';
+  h += '</div>';
+
+  // Notes
+  h += '<div class="fg"><label>Notes (optionnel)</label>';
+  h += '<textarea id="dvNotes" rows="2" style="width:100%" placeholder="Remarques..." oninput="window._devisDraft.notes=this.value">'+ (d.notes||"") +'</textarea></div>';
+
+  // Total
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(212,168,67,.08);border-radius:10px;margin:14px 0">';
+  h += '<span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">Total devis</span>';
+  h += '<strong style="font-size:20px;color:var(--gold)">'+total.toFixed(2)+' \u20ac</strong>';
+  h += '</div>';
+
+  // Actions
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button onclick="cM()" style="flex:1;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Annuler</button>';
+  var disabled = !d.items.length;
+  h += '<button onclick="saveDevis()" '+(disabled?'disabled':'')+' style="flex:1;padding:12px;border:none;border-radius:10px;background:'+(disabled?'rgba(255,255,255,.06)':'linear-gradient(135deg,#d4a843,#b8960f)')+';color:'+(disabled?'rgba(255,255,255,.3)':'#000')+';font-weight:700;cursor:'+(disabled?'not-allowed':'pointer')+'">Enregistrer</button>';
+  h += '</div></div>';
+
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
 
-function doAddDevisItem(){
-  var sId=parseInt(document.getElementById("dvSvc").value);
-  var sv=gS(sId);if(!sv)return;
-  if(!window._dvItems)window._dvItems=[];
-  window._dvItems.push({sId:sId,name:sv.n,price:sv.p,qty:1});
-  newDevis(); // Refresh
-  // Re-render items
-  var el=document.getElementById("dvItems");
-  if(el){
-    var h='';
-    for(var i=0;i<window._dvItems.length;i++){
-      var it=window._dvItems[i];
-      h+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px">';
-      h+='<span>'+it.name+'</span><strong>'+it.price.toFixed(2)+' \u20ac</strong></div>';
-    }
-    el.innerHTML=h;
-  }
+function _devisQty(idx, delta){
+  var d = window._devisDraft;if(!d||!d.items[idx])return;
+  d.items[idx].qty = Math.max(1, (d.items[idx].qty||1) + delta);
+  _renderNewDevis();
+}
+function _devisDel(idx){
+  var d = window._devisDraft;if(!d)return;
+  d.items.splice(idx,1);
+  _renderNewDevis();
 }
 
-function saveDevis(){
-  if(!window._dvItems||!window._dvItems.length)return;
-  var cId=document.getElementById("dvClient")?document.getElementById("dvClient").value:"";
-  var cl=cId?gC(cId):null;
-  var notes=document.getElementById("dvNotes")?document.getElementById("dvNotes").value.trim():"";
-  var total=0;window._dvItems.forEach(function(it){total+=it.price*it.qty;});
-  // Nom client : si client connu → "Nom Prénom", sinon fallback safe.
-  // ATTENTION : ne jamais référencer _tk ici — saveDevis() peut être appelé
-  // depuis newDevis() où _tk est null (devis créé hors caisse).
-  var defaultName="Client de passage";
-  var clientNameStr=cl?cName(cl):defaultName;
-  var newDv={
-    id:U(),date:TD,cId:cId,
-    clientName:clientNameStr,
-    clientNom:clientNameStr,
-    clientTel:cl?cl.tel:null,clientEmail:cl?cl.em:null,
-    items:window._dvItems.map(function(it){return {name:it.name,price:it.price,qty:it.qty,sId:it.sId||null};}),
-    total:total,notes:notes,status:"brouillon"
-  };
-  window.DEVIS.push(newDv);
-  window._dvItems=[];
-  cM();
-  // NF525 : persiste en DB (num auto, date_validite auto +30j, status machine).
-  // On attend la promise pour pouvoir alerter en cas d'échec et re-render
-  // ensuite avec le num officiel attribué par le trigger DB.
-  if(typeof saveDevisToDb==="function"){
-    var p=saveDevisToDb(newDv);
-    if(p&&typeof p.then==="function"){
-      p.then(function(dbRow){
-        if(!dbRow){
-          if(typeof toast==="function")toast("Sauvegarde DB \u00e9chou\u00e9e \u2014 devis en m\u00e9moire seulement","warning");
-        }
-        // Re-render pour afficher le num officiel
-        if(typeof go==="function"&&document.getElementById("app")&&window._currentPage==="devis")go("devis");
-      }).catch(function(err){
-        console.error("[saveDevis] DB save error",err);
-        if(typeof toast==="function")toast("Erreur sauvegarde devis","error");
+// Sélecteur de prestation : overlay au-dessus du modal devis principal
+function _devisOpenItemPicker(){
+  // Persiste le client sélectionné dans le DOM avant de switcher de modal
+  var sel = document.getElementById("dvClient");
+  if(sel) window._devisDraft.cId = sel.value;
+  var notes = document.getElementById("dvNotes");
+  if(notes) window._devisDraft.notes = notes.value;
+
+  var h = '<div class="mbox" style="max-width:420px;max-height:80vh;overflow-y:auto"><h2>Ajouter une prestation</h2>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Choisissez dans votre catalogue</div>';
+
+  if(!SVC || !SVC.length){
+    h += '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">Aucune prestation dans votre catalogue.<br>Cr\u00e9ez-en d\u0027abord depuis "Services".</div>';
+    h += '<button onclick="_renderNewDevis()" style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Retour</button>';
+  } else {
+    h += '<div style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto;margin-bottom:14px">';
+    for(var ci=0;ci<CATS.length;ci++){
+      var svcs = SVC.filter(function(s){return s.cat===CATS[ci];});
+      if(!svcs.length) continue;
+      h += '<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">'+CATS[ci]+'</div>';
+      svcs.forEach(function(s){
+        h += '<button onclick="_devisAddSvc('+s.id+')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:rgba(255,255,255,.03);color:#fff;cursor:pointer;text-align:left;gap:10px">';
+        h += '<span style="flex:1;font-size:13px">'+(s.n||"-")+'</span>';
+        h += '<strong style="color:var(--gold);font-size:13px">'+(Number(s.p)||0).toFixed(2)+' \u20ac</strong>';
+        h += '</button>';
       });
     }
+    h += '</div>';
+    h += '<button onclick="_renderNewDevis()" style="width:100%;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Annuler</button>';
+  }
+  h += '</div>';
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="_renderNewDevis()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+function _devisAddSvc(sId){
+  var sv = gS(sId);if(!sv){_renderNewDevis();return;}
+  var d = window._devisDraft || (window._devisDraft = {cId:"",items:[],notes:""});
+  // Si la prestation est déjà dans le panier, incrémenter qty au lieu de dupliquer
+  var existing = d.items.find(function(it){return it.sId===sId;});
+  if(existing){ existing.qty = (existing.qty||1) + 1; }
+  else { d.items.push({sId:sId, name:sv.n, price:Number(sv.p)||0, qty:1, remise:0}); }
+  _renderNewDevis();
+}
+
+// Compat: ancien nom appelé depuis convertDevis et autres si besoin
+function addDevisItem(){_devisOpenItemPicker();}
+function doAddDevisItem(){/* legacy noop */}
+
+function saveDevis(){
+  // Lit l'état depuis _devisDraft (la nouvelle structure propre).
+  // Compat : retombe sur _dvItems si un caller legacy ne passe pas par newDevis.
+  var draft = window._devisDraft || { cId:"", items:(window._dvItems||[]), notes:"" };
+
+  // Sync les valeurs DOM (au cas où le user a tapé sans changer onchange/oninput)
+  var selEl = document.getElementById("dvClient");
+  if(selEl) draft.cId = selEl.value;
+  var notesEl = document.getElementById("dvNotes");
+  if(notesEl) draft.notes = notesEl.value;
+
+  if(!draft.items || !draft.items.length){
+    if(typeof toast==="function") toast("Ajoutez au moins une prestation","warning");
+    return;
+  }
+
+  var cl = draft.cId ? gC(draft.cId) : null;
+  var clientNameStr = cl ? cName(cl) : "Client de passage";
+  var total = 0;
+  draft.items.forEach(function(it){ total += (it.price||0) * (it.qty||1); });
+
+  var newDv = {
+    id: U(),
+    date: TD,
+    cId: draft.cId || "",
+    clientName: clientNameStr,
+    clientNom: clientNameStr,
+    clientTel: cl ? cl.tel : null,
+    clientEmail: cl ? cl.em : null,
+    items: draft.items.map(function(it){ return {name:it.name, price:it.price, qty:it.qty||1, sId:it.sId||null}; }),
+    total: total,
+    notes: (draft.notes||"").trim(),
+    status: "brouillon"
+  };
+  window.DEVIS = window.DEVIS || [];
+  window.DEVIS.unshift(newDv);   // affichage le plus récent en haut
+  window._devisDraft = null;
+  window._dvItems = [];
+  cM();
+
+  // Persistance DB — promise awaited pour feedback utilisateur
+  if(typeof saveDevisToDb==="function"){
+    var p = saveDevisToDb(newDv);
+    if(p && typeof p.then==="function"){
+      p.then(function(dbRow){
+        if(!dbRow){
+          if(typeof toast==="function") toast("Erreur sauvegarde DB \u2014 devis non persist\u00e9","error");
+        } else {
+          if(typeof toast==="function") toast("Devis enregistr\u00e9 \u00b7 N\u00b0 "+(newDv.num||""),"success");
+        }
+        // Re-render pour afficher le num officiel attribué par la DB
+        if(typeof go==="function" && document.getElementById("app") && window._currentPage==="devis"){
+          go("devis");
+        }
+      }).catch(function(err){
+        console.error("[saveDevis] DB save error", err);
+        if(typeof toast==="function") toast("Erreur sauvegarde devis","error");
+      });
+    }
+  } else {
+    if(typeof toast==="function") toast("Connexion DB indisponible","warning");
   }
   go("devis");
 }
