@@ -4582,6 +4582,23 @@ function saveAbsences(){
   // Also update site_config for online booking
   if(typeof saveSiteConfig==="function")saveSiteConfig();
 }
+// Supprime toutes les fermetures/ouvertures exceptionnelles dont la date
+// est strictement antérieure à aujourd'hui. Pour nettoyer le panneau
+// "Historique" en un clic.
+function cleanupPastExceptions(){
+  if(!window.ABSENCES||!window.ABSENCES.length)return;
+  var before=window.ABSENCES.length;
+  window.ABSENCES = window.ABSENCES.filter(function(a){
+    if(a.type!=="fermeture_except"&&a.type!=="ouverture_except")return true;
+    if(!a.date) return true;
+    return a.date >= TD;
+  });
+  var removed = before - window.ABSENCES.length;
+  if(typeof saveAbsences === "function") saveAbsences();
+  if(typeof toast === "function") toast(removed+" exception"+(removed>1?'s passées supprimées':' passée supprimée'),"success");
+  if(typeof go === "function") go("settings");
+}
+
 function removeAbsence(idx){
   if(!window.ABSENCES||idx<0||idx>=window.ABSENCES.length)return;
   window.ABSENCES.splice(idx,1);
@@ -7172,26 +7189,60 @@ function rSettings(){
     h+='<button class="btn" style="flex:1;padding:12px;background:rgba(233,30,99,.1);border:1px solid rgba(233,30,99,.3);color:#e91e63;font-weight:700;font-size:13px" onclick="addExceptFermeture()">\ud83d\udd12 Fermeture exceptionnelle</button>';
     h+='<button class="btn" style="flex:1;padding:12px;background:rgba(0,188,212,.1);border:1px solid rgba(0,188,212,.3);color:#00bcd4;font-weight:700;font-size:13px" onclick="addExceptOuverture()">\ud83d\udd13 Ouverture exceptionnelle</button>';
     h+='</div>';
-    var exceptions=(window.ABSENCES||[]).filter(function(a){return a.type==="fermeture_except"||a.type==="ouverture_except";});
-    if(exceptions.length){
-      exceptions.sort(function(a,b){return(a.date||"").localeCompare(b.date||"");});
-      for(var ei=0;ei<exceptions.length;ei++){
-        var ex=exceptions[ei];
-        var exIdx=window.ABSENCES.indexOf(ex);
-        var isFerm=ex.type==="fermeture_except";
-        var exCollab=ex.stId?gT(ex.stId):null;
-        h+='<div style="display:flex;align-items:center;gap:10px;padding:10px;margin-bottom:6px;border-radius:10px;border:1px solid '+(isFerm?'rgba(233,30,99,.2)':'rgba(0,188,212,.2)')+';background:'+(isFerm?'rgba(233,30,99,.06)':'rgba(0,188,212,.06)')+'">';
-        h+='<div style="font-size:20px">'+(isFerm?'\ud83d\udd12':'\ud83d\udd13')+'</div>';
-        h+='<div style="flex:1">';
-        h+='<div style="font-weight:700;font-size:13px;color:'+(isFerm?'#e91e63':'#00bcd4')+'">'+(isFerm?'Fermeture':'Ouverture')+' \u2014 '+fmt(ex.date)+'</div>';
-        h+='<div style="font-size:11px;color:var(--text3)">'+(ex.motif||"")+(exCollab?' \u2022 '+exCollab.n:(!ex.stId&&isFerm?' \u2022 Tout l\u2019\u00e9tablissement':''))+'</div>';
-        if(!isFerm&&ex.horaire_o)h+='<div style="font-size:11px;color:var(--text2)">Horaires: '+ex.horaire_o+' \u2192 '+ex.horaire_c+'</div>';
-        h+='</div>';
-        h+='<button class="btn bs" style="font-size:10px;color:var(--red)" onclick="removeAbsence('+exIdx+');go(\'settings\')">Supprimer</button>';
-        h+='</div>';
+    var allExceptions=(window.ABSENCES||[]).filter(function(a){return a.type==="fermeture_except"||a.type==="ouverture_except";});
+    // S\u00e9pare exceptions \u00e0 venir (>= aujourd'hui) et pass\u00e9es
+    var upcomingEx=allExceptions.filter(function(a){return !a.date || a.date >= TD;});
+    var pastEx=allExceptions.filter(function(a){return a.date && a.date < TD;});
+    upcomingEx.sort(function(a,b){return(a.date||"").localeCompare(b.date||"");});
+    pastEx.sort(function(a,b){return(b.date||"").localeCompare(a.date||"");}); // plus r\u00e9cent d'abord
+    var showPast=!!window._showPastExceptions;
+
+    function _renderExceptionRow(ex,exIdx,isPast){
+      var isFerm=ex.type==="fermeture_except";
+      var exCollab=ex.stId?gT(ex.stId):null;
+      var bgColor=isPast?'rgba(255,255,255,.02)':(isFerm?'rgba(233,30,99,.06)':'rgba(0,188,212,.06)');
+      var borderColor=isPast?'rgba(255,255,255,.06)':(isFerm?'rgba(233,30,99,.2)':'rgba(0,188,212,.2)');
+      var titleColor=isPast?'rgba(255,255,255,.4)':(isFerm?'#e91e63':'#00bcd4');
+      var r='<div style="display:flex;align-items:center;gap:10px;padding:10px;margin-bottom:6px;border-radius:10px;border:1px solid '+borderColor+';background:'+bgColor+';opacity:'+(isPast?'.6':'1')+'">';
+      r+='<div style="font-size:20px">'+(isFerm?'\ud83d\udd12':'\ud83d\udd13')+'</div>';
+      r+='<div style="flex:1">';
+      r+='<div style="font-weight:700;font-size:13px;color:'+titleColor+'">'+(isFerm?'Fermeture':'Ouverture')+' \u2014 '+fmt(ex.date)+'</div>';
+      r+='<div style="font-size:11px;color:var(--text3)">'+(ex.motif||"")+(exCollab?' \u2022 '+exCollab.n:(!ex.stId&&isFerm?' \u2022 Tout l\u2019\u00e9tablissement':''))+'</div>';
+      if(!isFerm&&ex.horaire_o)r+='<div style="font-size:11px;color:var(--text2)">Horaires: '+ex.horaire_o+' \u2192 '+ex.horaire_c+'</div>';
+      r+='</div>';
+      r+='<button class="btn bs" style="font-size:10px;color:var(--red)" onclick="removeAbsence('+exIdx+');go(\'settings\')">Supprimer</button>';
+      r+='</div>';
+      return r;
+    }
+
+    if(upcomingEx.length){
+      for(var ei=0;ei<upcomingEx.length;ei++){
+        var ex=upcomingEx[ei];
+        h+=_renderExceptionRow(ex,window.ABSENCES.indexOf(ex),false);
       }
-    }else{
-      h+='<div style="text-align:center;padding:16px;color:var(--text3);font-size:13px;font-style:italic">Aucune exception programm\u00e9e</div>';
+    } else {
+      h+='<div style="text-align:center;padding:16px;color:var(--text3);font-size:13px;font-style:italic">Aucune exception \u00e0 venir</div>';
+    }
+
+    // Section historique (repli\u00e9 par d\u00e9faut)
+    if(pastEx.length){
+      h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      h+='<button onclick="window._showPastExceptions='+(!showPast)+';go(\'settings\')" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:0;display:flex;align-items:center;gap:6px">';
+      h+='<span style="font-size:10px">'+(showPast?'\u25bc':'\u25b6')+'</span>';
+      h+='Historique ('+pastEx.length+' exception'+(pastEx.length>1?'s':'')+' pass\u00e9e'+(pastEx.length>1?'s':'')+')';
+      h+='</button>';
+      if(showPast){
+        h+='<button class="btn bs" style="font-size:10px;color:var(--red)" onclick="cleanupPastExceptions()">Tout supprimer</button>';
+      }
+      h+='</div>';
+      if(showPast){
+        for(var pi=0;pi<pastEx.length;pi++){
+          var pex=pastEx[pi];
+          h+=_renderExceptionRow(pex,window.ABSENCES.indexOf(pex),true);
+        }
+      }
+      h+='</div>';
     }
     h+='</div>';
   }
