@@ -1,9 +1,9 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-13 — chips toutes visibles, grisées si vides
-console.log("%cLuxyra build 20260425-13 (chips visibles toutes, grisées si vides)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-13";
+// BUILD: 20260425-14 — supprimer famille depuis n'importe quel tab fonctionne
+console.log("%cLuxyra build 20260425-14 (suppression famille cross-tab)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-14";
 // Affiche la version dans le coin de l'écran 5 secondes au boot pour
 // que l'utilisateur puisse confirmer qu'il a bien le dernier code
 // sans avoir à ouvrir DevTools.

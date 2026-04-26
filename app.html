@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-13"></script>
+<script src="luxyra-supabase.js?v=20260425-14"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9313,11 +9313,16 @@ function deleteForfaitCategory(){
     return forfaitsInCat.length+" prestation"+(forfaitsInCat.length>1?"s":"")+" (dont "+nbForfaits+" forfait"+(nbForfaits>1?"s":"")+")";
   }
 
+  // === Cas 1 : famille a des forfaits + (peut-\u00eatre) des services simples ===
   if(forfaitsInCat.length > 0){
     var label = _itemsLabel();
+    var msgPlus = "";
+    if(servicesSimplesRestants > 0){
+      msgPlus = " La famille contient aussi "+servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" simple"+(servicesSimplesRestants>1?"s":"")+" \u2014 supprimez-les depuis l'onglet Services si vous voulez retirer la famille enti\u00e8rement.";
+    }
     showConfirmDelete(
       "Supprimer la famille \u00ab "+cat+" \u00bb ?",
-      "Cette famille contient "+label+" qui seront \u00e9galement supprim\u00e9s.",
+      "Cette famille contient "+label+" qui seront supprim\u00e9s."+msgPlus,
       function(){
         cM();
         setTimeout(function(){
@@ -9336,7 +9341,35 @@ function deleteForfaitCategory(){
         }, 300);
       }
     );
-  } else {
+  }
+  // === Cas 2 : 0 forfait MAIS services simples \u2192 propose suppression totale ===
+  else if(servicesSimplesRestants > 0){
+    showConfirmDelete(
+      "Supprimer la famille \u00ab "+cat+" \u00bb enti\u00e8rement ?",
+      "Aucun forfait dans cette famille, mais elle contient "+servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" simple"+(servicesSimplesRestants>1?"s":"")+" (visible dans Services). Tout supprimer ?",
+      function(){
+        cM();
+        setTimeout(function(){
+          showConfirmDelete(
+            "\u26a0\ufe0f Confirmer la suppression totale ?",
+            servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" + la famille seront d\u00e9finitivement perdu"+(servicesSimplesRestants>1?"es":"e")+". Action irr\u00e9versible.",
+            function(){
+              // Supprime TOUT : services simples ET famille
+              var allSvcs = SVC.filter(function(s){ return s.cat === cat; });
+              _runForfaitDelete(allSvcs).then(function(ok){
+                if(ok){
+                  cM(); go("services");
+                  if(typeof toast === "function") toast("Famille \u00ab "+cat+" \u00bb et "+servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" supprim\u00e9es","success");
+                }
+              });
+            }
+          );
+        }, 300);
+      }
+    );
+  }
+  // === Cas 3 : famille totalement vide ===
+  else {
     showConfirmDelete(
       "Supprimer la famille \u00ab "+cat+" \u00bb ?",
       "Cette famille est vide.",
@@ -9594,7 +9627,7 @@ function deleteCategory(){
   if(svcs.length>0){
     var detailMsg = "Cette famille contient "+label+" qui seront supprim\u00e9es.";
     if(forfaitsRestants > 0){
-      detailMsg += " ("+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" gard\u00e9"+(forfaitsRestants>1?"s":"")+" \u2014 supprimez-les depuis l'onglet Forfaits)";
+      detailMsg += " ("+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" gard\u00e9"+(forfaitsRestants>1?"s":"")+" \u2014 supprimez-les depuis l'onglet Forfaits si vous voulez retirer la famille enti\u00e8rement)";
     }
     showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?", detailMsg, function(){
       cM();
@@ -9609,7 +9642,28 @@ function deleteCategory(){
         });
       },300);
     });
-  }else{
+  } else if(forfaitsRestants > 0){
+    // 0 service simple mais des forfaits \u2192 propose suppression totale
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb enti\u00e8rement ?",
+      "Aucune prestation simple, mais cette famille contient "+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" (visible dans Forfaits). Tout supprimer ?",
+      function(){
+        cM();
+        setTimeout(function(){
+          showConfirmDelete("\u26a0\ufe0f Confirmer la suppression totale ?",forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" + la famille seront d\u00e9finitivement perdu"+(forfaitsRestants>1?"s":"")+". Action irr\u00e9versible.",
+            function(){
+              var allSvcs = SVC.filter(function(s){ return s.cat === catName; });
+              _doDeleteCategoryFlow(catName, allSvcs).then(function(ok){
+                if(ok){
+                  cM(); go("services");
+                  if(typeof toast==="function") toast("Famille \u00ab "+catName+" \u00bb et "+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" supprim\u00e9s","success");
+                }
+              });
+            }
+          );
+        }, 300);
+      }
+    );
+  } else {
     showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille est vide.",function(){
       _doDeleteCategoryFlow(catName, []).then(function(ok){
         if(ok){
