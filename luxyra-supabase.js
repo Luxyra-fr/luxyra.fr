@@ -1,8 +1,8 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260426-01 — fiche technique étendue persistée (clients.fiche_tech jsonb)
-window.__LUXYRA_BUILD = "20260426-01";
+// BUILD: 20260426-02 — historique séances multi-métier + sweep logos
+window.__LUXYRA_BUILD = "20260426-02";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -882,7 +882,10 @@ var _FICHE_TECH_KEYS = [
   "objectifBE","pressionBE","dureeBE","frequenceBE",
   "zonesSensibles","contrIndBE","detBE",
   // Photos avant/après
-  "photos"
+  "photos",
+  // Historique structuré par métier (barbier/esthétique/ongles/bien-être).
+  // Coiffure utilise toujours `formules` ci-dessus pour les formules couleur.
+  "histoMetier"
 ];
 
 // Sauvegarder un client (create ou update)

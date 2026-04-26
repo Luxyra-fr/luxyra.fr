@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260426-01"></script>
+<script src="luxyra-supabase.js?v=20260426-02"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -4661,6 +4661,112 @@ function doAddFormule(cId){
   if(typeof saveClient==="function")saveClient(cl);
   cM();go("detail");
 }
+
+// === Historique structuré par métier (barbier / esthétique / ongles / bien-être) ===
+// Le coiffeur a déjà son historique de formules couleur (addFormuleCouleur).
+// Les autres métiers utilisent un schéma générique adapté.
+function _histoMetierSchema(){
+  var m=SALON_CONFIG.metier||"coiffure";
+  if(m==="barbier")return{
+    title:"💈 Nouvelle prestation barbier",
+    typeOptions:["Coupe","Barbe","Rasage à l'ancienne","Coupe + Barbe","Dégradé","Contour","Coloration barbe"],
+    fields:[
+      {k:"contour",l:"Contour / dessin",ph:"Net, fade, ligne droite..."},
+      {k:"degrade",l:"Dégradé",ph:"Bas, mid, haut, à blanc..."},
+      {k:"produits",l:"Produits utilisés",ph:"Cire, baume, huile..."}
+    ]
+  };
+  if(m==="esthetique")return{
+    title:"💆 Nouveau soin",
+    typeOptions:["Soin visage","Soin corps","Épilation","Maquillage","Massage","Manucure","Pédicure","Bronzage","Beauté des mains/pieds"],
+    fields:[
+      {k:"zones",l:"Zones traitées",ph:"Visage, dos, jambes..."},
+      {k:"produits",l:"Produits utilisés",ph:"Marque + référence"},
+      {k:"reaction",l:"Réaction cliente",ph:"Aucune, légère rougeur, sensibilité..."}
+    ]
+  };
+  if(m==="ongles")return{
+    title:"💅 Nouvelle prestation ongles",
+    typeOptions:["Manucure","Pédicure","Pose gel","Semi-permanent","Pose capsules","Acrylique","Nail art","Dépose","Réparation"],
+    fields:[
+      {k:"couleurs",l:"Couleurs / vernis",ph:"Ex: Rouge OPI Big Apple Red"},
+      {k:"marque",l:"Marque",ph:"OPI, Essie, Mavala..."},
+      {k:"tenue",l:"Tenue prévue (jours)",ph:"21",type:"number"}
+    ]
+  };
+  if(m==="bien_etre")return{
+    title:"🧘 Nouvelle séance",
+    typeOptions:["Massage relaxant","Massage thérapeutique","Réflexologie","Shiatsu","Soin énergétique","Méditation","Drainage lymphatique"],
+    fields:[
+      {k:"zones",l:"Zones traitées",ph:"Dos, cervicales, jambes..."},
+      {k:"pression",l:"Pression appliquée",ph:"Légère, modérée, forte"},
+      {k:"ressenti",l:"Ressenti client",ph:"Détendu, soulagé, sensibilité..."}
+    ]
+  };
+  return null; // coiffure → utilise addFormuleCouleur
+}
+function addHistoMetier(cId){
+  var sch=_histoMetierSchema();if(!sch)return;
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>'+sch.title+'</h2>';
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  htm+='<div class="fg"><label>Date *</label><input type="date" id="hmDate" value="'+TD+'"></div>';
+  htm+='<div class="fg"><label>Type *</label><select id="hmType">';
+  sch.typeOptions.forEach(function(o){htm+='<option value="'+o+'">'+o+'</option>';});
+  htm+='</select></div></div>';
+  htm+='<div class="fg"><label>Durée (min)</label><input type="number" id="hmDuree" min="1" value="60"></div>';
+  sch.fields.forEach(function(f){
+    var t=f.type||"text";
+    htm+='<div class="fg"><label>'+f.l+'</label><input id="hm_'+f.k+'" type="'+t+'" placeholder="'+(f.ph||"")+'"></div>';
+  });
+  htm+='<div class="fg"><label>Notes</label><textarea id="hmNotes" rows="2" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" placeholder="Détails de la séance, ajustements pour la prochaine fois..."></textarea></div>';
+  htm+='<div style="display:flex;gap:8px;margin-top:10px">';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="doAddHistoMetier(\''+cId+'\')">Enregistrer</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+function doAddHistoMetier(cId){
+  var cl=gC(cId);if(!cl)return;
+  var sch=_histoMetierSchema();if(!sch)return;
+  var date=document.getElementById("hmDate").value;
+  var type=document.getElementById("hmType").value;
+  if(!date||!type){alert("Date et type obligatoires");return;}
+  var entry={date:date,type:type,duree:+(document.getElementById("hmDuree").value||60),notes:(document.getElementById("hmNotes").value||"").trim()};
+  sch.fields.forEach(function(f){
+    var v=(document.getElementById("hm_"+f.k)||{}).value||"";
+    entry[f.k]=v.trim?v.trim():v;
+  });
+  if(!cl.histoMetier)cl.histoMetier=[];
+  cl.histoMetier.push(entry);
+  if(typeof saveClient==="function")saveClient(cl);
+  cM();go("detail");
+}
+function _renderHistoMetierList(c){
+  var sch=_histoMetierSchema();if(!sch)return"";
+  var h='<div class="card" style="margin-top:10px"><div class="ct">📒 Historique des séances</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Trace de chaque prestation pour ce client.</div>';
+  if(c.histoMetier&&c.histoMetier.length){
+    for(var hi=c.histoMetier.length-1;hi>=0;hi--){
+      var e=c.histoMetier[hi];
+      h+='<div style="padding:10px;margin-bottom:6px;border-radius:8px;background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.15)">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+      h+='<span style="font-size:12px;font-weight:700;color:var(--gold)">'+(typeof fmt==="function"?fmt(e.date):e.date)+' • '+(e.type||"")+'</span>';
+      h+='<button class="btn bs" style="font-size:9px;color:var(--red);padding:2px 6px" onclick="gC(\''+c.id+'\').histoMetier.splice('+hi+',1);if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'));go(\'detail\')">X</button>';
+      h+='</div>';
+      sch.fields.forEach(function(f){
+        if(e[f.k])h+='<div style="font-size:11px;color:var(--text3)"><strong>'+f.l+':</strong> '+e[f.k]+'</div>';
+      });
+      if(e.duree)h+='<div style="font-size:11px;color:var(--text3)">⏱ '+e.duree+' min</div>';
+      if(e.notes)h+='<div style="font-size:11px;color:var(--text3);font-style:italic;margin-top:2px">'+e.notes+'</div>';
+      h+='</div>';
+    }
+  }else{
+    h+='<div style="text-align:center;padding:12px;color:var(--text3);font-size:12px;font-style:italic">Aucune séance enregistrée</div>';
+  }
+  h+='<button class="btn bs" style="width:100%;margin-top:8px;font-size:12px;padding:10px" onclick="addHistoMetier(\''+c.id+'\')">➕ Ajouter une séance</button>';
+  h+='</div>';
+  return h;
+}
 function addClientPhoto(cId,input,label){
   if(!input.files||!input.files[0])return;
   var file=input.files[0];
@@ -5221,7 +5327,7 @@ function rHome(){
   h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:10px;text-align:center">';
   h+='<div style="font-size:18px;font-weight:900;color:#fff">'+caServices.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
   h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(caServices/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
-  h+='<div style="font-size:12px;color:var(--pink);font-weight:700">\u2702\ufe0f Services</div></div>';
+  h+='<div style="font-size:12px;color:var(--pink);font-weight:700">'+getMetierConfig().icon+' Services</div></div>';
   h+='<div style="background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:10px;padding:10px;text-align:center">';
   h+='<div style="font-size:18px;font-weight:900;color:#fff">'+caProducts.toFixed(0)+' \u20ac <span style="font-size:10px;color:rgba(255,255,255,.4)">TTC</span></div>';
   h+='<div style="font-size:11px;color:rgba(255,255,255,.35)">HT : '+(caProducts/(1+tvaR/100)).toFixed(2)+' \u20ac</div>';
@@ -8354,6 +8460,8 @@ function rDetail(){
     }
     h+='<button class="btn bs" style="width:100%;margin-top:8px;font-size:12px;padding:10px" onclick="addFormuleCouleur(\''+c.id+'\')">\u2795 Ajouter une formule</button>';
     h+='</div>';
+    // Barbier : ajoute aussi l'historique structur\u00e9 (coupes/barbes)
+    if((SALON_CONFIG.metier||"")==="barbier") h += _renderHistoMetierList(c);
   }
   else if(clTab==="peau"){
     var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
@@ -8376,6 +8484,7 @@ function rDetail(){
     h+='<div class="fg"><label>Date du dernier soin</label><input type="date" value="'+(c.dernierSoinPeau||"")+'" onchange="'+_s("dernierSoinPeau","this.value")+'"></div>';
     h+='<div class="fg"><label>D\u00e9tails / Notes peau</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detPeau","this.value")+'">'+(c.detPeau||"")+'</textarea></div>';
     h+='</div>';
+    h += _renderHistoMetierList(c);
   }
   else if(clTab==="ongles"){
     var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
@@ -8397,6 +8506,7 @@ function rDetail(){
     h+='<div class="fg"><label>\u26a0\ufe0f Allergies / Contre-indications</label><input value="'+(c.allergiesOngles||"")+'" placeholder="Gel UV, acrylique, ac\u00e9tone..." onchange="'+_s("allergiesOngles","this.value")+'"></div>';
     h+='<div class="fg"><label>D\u00e9tails / Notes ongles</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detOngles","this.value")+'">'+(c.detOngles||"")+'</textarea></div>';
     h+='</div>';
+    h += _renderHistoMetierList(c);
   }
   else if(clTab==="bienetre"){
     var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
@@ -8418,6 +8528,7 @@ function rDetail(){
     h+='<div class="fg"><label>\u26a0\ufe0f Contre-indications m\u00e9dicales</label><input value="'+(c.contrIndBE||"")+'" placeholder="Grossesse, probl\u00e8me cardiaque, phl\u00e9bite..." onchange="'+_s("contrIndBE","this.value")+'"></div>';
     h+='<div class="fg"><label>D\u00e9tails / Notes</label><textarea rows="3" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:13px" onchange="'+_s("detBE","this.value")+'">'+(c.detBE||"")+'</textarea></div>';
     h+='</div>';
+    h += _renderHistoMetierList(c);
   }
   else if(clTab==="photos"){
     if(!c.photos)c.photos=[];
@@ -8868,7 +8979,7 @@ function _renderForfaitComposer(){
         // Resolve current name from SVC (in case service was renamed)
         var currentSvc = st.sId ? gS(st.sId) : null;
         var displayName = currentSvc ? currentSvc.n : (st.name || 'Prestation supprimée');
-        h += '<div style="font-weight:700;font-size:13px;color:'+labelC+'">✂️ '+displayName+'</div>';
+        h += '<div style="font-weight:700;font-size:13px;color:'+labelC+'">'+getMetierConfig().icon+' '+displayName+'</div>';
         if(currentSvc){
           h += '<div style="font-size:11px;color:var(--text3)">'+(Number(currentSvc.p)||0).toFixed(2)+' € (prix individuel)</div>';
         } else if(st.sId){
@@ -9115,7 +9226,7 @@ function rServices(){
   // Main tabs: Services vs Forfaits
   if(!window._svcTab)window._svcTab="services";
   h+='<div style="display:flex;gap:0;margin-bottom:12px;border-bottom:2px solid var(--border2);background:rgba(10,10,14,.95);border-radius:10px 10px 0 0;padding:4px 4px 0">';
-  h+='<button onclick="window._svcTab=\'services\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:'+(window._svcTab==="services"?"rgba(200,168,78,.15)":"transparent")+';color:'+(window._svcTab==="services"?"var(--gold)":"rgba(255,255,255,.5)")+';border-bottom:2px solid '+(window._svcTab==="services"?"var(--gold)":"transparent")+'">\u2702\ufe0f Services</button>';
+  h+='<button onclick="window._svcTab=\'services\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:'+(window._svcTab==="services"?"rgba(200,168,78,.15)":"transparent")+';color:'+(window._svcTab==="services"?"var(--gold)":"rgba(255,255,255,.5)")+';border-bottom:2px solid '+(window._svcTab==="services"?"var(--gold)":"transparent")+'">'+getMetierConfig().icon+' Services</button>';
   h+='<button onclick="window._svcTab=\'forfaits\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:'+(window._svcTab==="forfaits"?"rgba(200,168,78,.15)":"transparent")+';color:'+(window._svcTab==="forfaits"?"var(--gold)":"rgba(255,255,255,.5)")+';border-bottom:2px solid '+(window._svcTab==="forfaits"?"var(--gold)":"transparent")+'">\ud83d\udce6 Forfaits</button>';
   h+='</div>';
   if(window._svcTab==="forfaits") return h+rForfaits();
@@ -9195,7 +9306,7 @@ function rServices(){
 function _renderSvcActionBar(kind){
   var primaryLabel = kind === "forfait" ? "Nouveau forfait" : "Nouvelle prestation";
   var primaryHandler = kind === "forfait" ? "addForfaitFromServices()" : "addService()";
-  var primaryIcon = kind === "forfait" ? "\ud83d\udce6" : "\u2702\ufe0f";
+  var primaryIcon = kind === "forfait" ? "\ud83d\udce6" : getMetierConfig().icon;
 
   var currentCat = kind === "forfait" ? (window._forfCat || "all") : aCat;
   var canDeleteCat = currentCat && currentCat !== "all";
@@ -9353,7 +9464,7 @@ function addService(){
   var defCat = aCat || (CATS && CATS[0]) || "";
 
   var htm = '<div class="mbox" style="max-height:90vh;overflow-y:auto;max-width:480px">';
-  htm += '<h2 style="margin-bottom:6px">\u2702\ufe0f Nouvelle prestation</h2>';
+  htm += '<h2 style="margin-bottom:6px">'+getMetierConfig().icon+' Nouvelle prestation</h2>';
   htm += '<div style="font-size:12px;color:var(--text3);margin-bottom:18px">Une prestation simple \u2014 pour un forfait multi-\u00e9tapes, utilisez l\'onglet Forfaits</div>';
 
   htm += '<div class="fg"><label>Nom *</label><input id="nsName" placeholder="Ex: Coupe femme" value="'+defName.replace(/"/g,'&quot;')+'"></div>';
@@ -9418,7 +9529,7 @@ function editService(id){
   var dur = (sv.phases && sv.phases[0] && sv.phases[0].d) || 30;
 
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto;max-width:480px">';
-  htm+='<h2 style="margin-bottom:14px">\u2702\ufe0f Modifier la prestation</h2>';
+  htm+='<h2 style="margin-bottom:14px">'+getMetierConfig().icon+' Modifier la prestation</h2>';
   htm+='<div class="fg"><label>Nom</label><input id="esName" value="'+(sv.n||"").replace(/"/g,'&quot;')+'"></div>';
 
   htm+='<div style="display:flex;gap:10px">';
@@ -9958,7 +10069,7 @@ var STOCK_ENTRY_MOTIFS=[
 ];
 var STOCK_OUT_MOTIFS=[
   {k:"vente_magasin",l:"\ud83d\uded2 Vente magasin",c:"#e91e63"},
-  {k:"utilisation_salon",l:"\u2702\ufe0f Utilisation au salon",c:"#ff9800",hint:"Consomm\u00e9 en interne (non vendu)"},
+  {k:"utilisation_salon",l:"\ud83c\udfe0 Utilisation au salon",c:"#ff9800",hint:"Consomm\u00e9 en interne (non vendu)"},
   {k:"casse",l:"\ud83d\udca5 Casse",c:"#f44336"},
   {k:"vol",l:"\u26a0\ufe0f Vol",c:"#d32f2f"},
   {k:"perime",l:"\u23f3 P\u00e9rim\u00e9",c:"#795548"},
@@ -10412,7 +10523,7 @@ function editProd(id){
   htm+='</div></div>';
   
   // Tabs
-  var tabs=[{k:"infos",l:"\u2702\ufe0f Infos"},{k:"prix",l:"\ud83d\udcb0 Prix"},{k:"promo",l:"\ud83c\udf89 Promo"},{k:"histo",l:"\ud83d\udd52 Historique"}];
+  var tabs=[{k:"infos",l:"\u2139\ufe0f Infos"},{k:"prix",l:"\ud83d\udcb0 Prix"},{k:"promo",l:"\ud83c\udf89 Promo"},{k:"histo",l:"\ud83d\udd52 Historique"}];
   // NF525: masquer l'onglet Prix si pas la permission see_prices_achat
   var _canSeePrices = (typeof hasPermission!=="function") || hasPermission("see_prices_achat");
   if(!_canSeePrices){
@@ -12624,7 +12735,7 @@ function rStats(){
   h+='</div>';
   
   // 10. CA par prestation (top services)
-  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">\u2702\ufe0f CA par prestation</div>';
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">'+getMetierConfig().icon+' CA par prestation</div>';
   var svcCA={};
   dn.forEach(function(a){
     if(a.items){a.items.forEach(function(it){
@@ -12834,7 +12945,7 @@ function oM(type,pf){
     h+='<input type="hidden" id="mc" value="'+(pf.cId||"")+'">';
     
     // Category selection with icons (like encaissement tiles)
-    h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin:14px 0 6px">\u2702\ufe0f S\u00e9lection de la prestation</div>';
+    h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin:14px 0 6px">'+getMetierConfig().icon+' S\u00e9lection de la prestation</div>';
     h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
     for(var ci=0;ci<CATS.length;ci++){
       var cat=CATS[ci];var sc=getSvcColor(cat);var catIco=getCatIcon(cat);
@@ -13693,7 +13804,7 @@ function showCaisse(){
     // Tabs
     if(!window._posTab)window._posTab="services";
     h+='<div style="display:flex;padding:8px 12px 0;gap:4px;flex-shrink:0">';
-    var posTabs=[["services","\u2702\ufe0f Services"],["forfaits","\ud83d\udce6 Forfaits"],["cartes","\ud83d\udcb3 Cartes"],["abos","\ud83c\udf9f Packs"],["produits","\ud83e\uddf4 Produits"]];
+    var posTabs=[["services",getMetierConfig().icon+" Services"],["forfaits","\ud83d\udce6 Forfaits"],["cartes","\ud83d\udcb3 Cartes"],["abos","\ud83c\udf9f Packs"],["produits","\ud83e\uddf4 Produits"]];
     for(var pti=0;pti<posTabs.length;pti++){
       var pt=posTabs[pti];
       var ptSel=window._posTab===pt[0];
@@ -13987,7 +14098,7 @@ function tkAddServiceFor(forCId){
   tkAddService();
 }
 
-function showAddMenu(){var cId=_tk.cId;var activePacks=(window.PACKS_CLIENTS||[]).filter(function(p){return p.clientId===cId&&p.status==="active"&&p.used<p.total;});var h='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;color:#fff;padding:20px;max-width:400px;width:100%;text-align:center">';h+='<div style="font-family:var(--f1);font-size:16px;font-weight:800;color:var(--gold);margin-bottom:16px">Que souhaitez-vous ajouter ?</div>';h+='<div style="display:flex;flex-direction:column;gap:8px">';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u2702\ufe0f</span><span style="flex:1;text-align:left">Prestation</span></button>';h+='<button onclick="tkAddProduct()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83e\uddf4</span><span style="flex:1;text-align:left">Produit</span></button>';h+='<button onclick="tkAddPack()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(200,168,78,.3);border-radius:12px;background:rgba(200,168,78,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83c\udf9f\ufe0f</span><span style="flex:1;text-align:left">Vendre un pack promo</span></button>';if(window.CARTES_ABO&&window.CARTES_ABO.length>0){h+='<button onclick="venteCarteAboFromCaisse()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb3</span><span style="flex:1;text-align:left">Vendre une carte d\u2019abonnement</span></button>';}if(activePacks.length>0){h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:var(--gold);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Utiliser un pack existant</div>';activePacks.forEach(function(pk){h+='<button onclick="usePackInTicket(\''+pk.id+'\')" style="padding:14px 16px;font-size:13px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:18px">\u2705</span><span style="flex:1;text-align:left">'+pk.nom+' <span style="color:rgba(255,255,255,.5);font-weight:400">('+pk.used+'/'+pk.total+' utilis\u00e9es)</span></span></button>';});}h+='</div>';h+='<button style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button>';h+='</div>';document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()" style="display:flex;justify-content:center">'+h+'</div></div>';}
+function showAddMenu(){var cId=_tk.cId;var activePacks=(window.PACKS_CLIENTS||[]).filter(function(p){return p.clientId===cId&&p.status==="active"&&p.used<p.total;});var h='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;color:#fff;padding:20px;max-width:400px;width:100%;text-align:center">';h+='<div style="font-family:var(--f1);font-size:16px;font-weight:800;color:var(--gold);margin-bottom:16px">Que souhaitez-vous ajouter ?</div>';h+='<div style="display:flex;flex-direction:column;gap:8px">';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">'+getMetierConfig().icon+'</span><span style="flex:1;text-align:left">Prestation</span></button>';h+='<button onclick="tkAddProduct()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83e\uddf4</span><span style="flex:1;text-align:left">Produit</span></button>';h+='<button onclick="tkAddPack()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(200,168,78,.3);border-radius:12px;background:rgba(200,168,78,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83c\udf9f\ufe0f</span><span style="flex:1;text-align:left">Vendre un pack promo</span></button>';if(window.CARTES_ABO&&window.CARTES_ABO.length>0){h+='<button onclick="venteCarteAboFromCaisse()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb3</span><span style="flex:1;text-align:left">Vendre une carte d\u2019abonnement</span></button>';}if(activePacks.length>0){h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:var(--gold);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Utiliser un pack existant</div>';activePacks.forEach(function(pk){h+='<button onclick="usePackInTicket(\''+pk.id+'\')" style="padding:14px 16px;font-size:13px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:18px">\u2705</span><span style="flex:1;text-align:left">'+pk.nom+' <span style="color:rgba(255,255,255,.5);font-weight:400">('+pk.used+'/'+pk.total+' utilis\u00e9es)</span></span></button>';});}h+='</div>';h+='<button style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button>';h+='</div>';document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()" style="display:flex;justify-content:center">'+h+'</div></div>';}
 
 function usePackInTicket(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
@@ -16569,7 +16680,7 @@ function buildRdvEmailHTML(type,vars){
 
   // Prestation
   h+='<tr><td style="padding:12px 24px">';
-  h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">\u2702\ufe0f Prestation</div>';
+  h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">'+getMetierConfig().icon+' Prestation</div>';
   h+='<div style="font-size:15px;font-weight:600;color:#fff">'+vars.prestation+'</div>';
   h+='</td></tr>';
 
