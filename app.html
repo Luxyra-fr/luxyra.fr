@@ -9058,18 +9058,8 @@ function doEditForfait(idx){
   cM();go("services");
 }
 
-function deleteForfaitCategory(){
-  var cat=window._forfCat;
-  var fInCat=FORFAITS.filter(function(f){return f.cat===cat;});
-  if(fInCat.length>0){alert("Videz d'abord les forfaits de cette categorie");return;}
-  // Remove category from CATS if no services use it either
-  var svcInCat=SVC.filter(function(s){return s.cat===cat;});
-  if(svcInCat.length===0){
-    CATS=CATS.filter(function(c){return c!==cat;});
-  }
-  window._forfCat='all';
-  go("services");
-}
+// (deleteForfaitCategory legacy retiré — remplacé par la version cascade
+//  plus bas qui gère proprement les familles non vides via showConfirmDelete)
 
 function deleteForfait(idx){
   var f=FORFAITS[idx];if(!f)return;
@@ -9097,7 +9087,7 @@ function rServices(){
   for(var i=0;i<CATS.length;i++){
     h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[i]+'</div>';
   }
-  h+='<button class="btn bs" style="font-size:12px;padding:6px 10px" onclick="addCategory()">+ Cat\u00e9gorie</button>';
+  // (bouton "+ Famille" d\u00e9plac\u00e9 dans la barre d'actions en bas de page)
   h+='</div>';
   // Color picker for current category
   var _cc=SVCCOLORS[aCat]||{bg:"#f0f0f0",border:"#999"};
@@ -9151,57 +9141,98 @@ function rServices(){
   return h;
 }
 
-// Barre d'actions premium partag\u00e9e entre Services et Forfaits.
-// 1 bouton CTA principal (gold gradient) + 2 boutons secondaires.
-// kind = 'service' ou 'forfait' \u2014 adapte le label du CTA principal.
+// Barre d'actions partag\u00e9e entre Services et Forfaits, en bas de page.
+// 3 boutons : CTA principal (gold) + Nouvelle famille + Supprimer famille.
+// La suppression utilise deleteCategory() qui g\u00e8re la cascade de
+// confirmations si la famille n'est pas vide (suppression des prestations
+// associ\u00e9es). Plus de verrouillage idiot.
 function _renderSvcActionBar(kind){
   var primaryLabel = kind === "forfait" ? "Nouveau forfait" : "Nouvelle prestation";
   var primaryHandler = kind === "forfait" ? "addForfaitFromServices()" : "addService()";
   var primaryIcon = kind === "forfait" ? "\ud83d\udce6" : "\u2702\ufe0f";
 
-  // La famille active d\u00e9pend du tab : window._forfCat pour forfaits, aCat pour services
   var currentCat = kind === "forfait" ? (window._forfCat || "all") : aCat;
   var canDeleteCat = currentCat && currentCat !== "all";
+  var safeName = (currentCat || "").replace(/'/g,"\\'").replace(/"/g,"&quot;");
 
-  // V\u00e9rifie si la cat\u00e9gorie active est vide (autorise sa suppression)
-  var inCat = (typeof SVC !== "undefined" && Array.isArray(SVC))
-    ? SVC.filter(function(s){
-        var multi = s.phases && s.phases.length > 1;
-        if(kind === "forfait" ? !multi : multi) return false;
-        return s.cat === currentCat;
-      }).length
-    : 0;
-  if(inCat > 0) canDeleteCat = false;
+  var h = '<div style="margin-top:28px;padding:20px 18px;border-radius:14px;background:linear-gradient(180deg,rgba(212,168,67,.05),rgba(212,168,67,.01));border:1px solid rgba(212,168,67,.18);box-shadow:0 6px 24px rgba(0,0,0,.25)">';
 
-  var h = '<div style="margin-top:24px;padding:18px;border-radius:14px;background:linear-gradient(180deg,rgba(212,168,67,.04),rgba(212,168,67,.01));border:1px solid rgba(212,168,67,.18);box-shadow:0 4px 20px rgba(0,0,0,.2)">';
-  h += '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:12px;text-align:center">Actions rapides</div>';
-
-  // CTA principal \u2014 gradient or, large, premium
-  h += '<button onclick="'+primaryHandler+'" style="width:100%;padding:16px;border:none;border-radius:12px;background:linear-gradient(135deg,#e6c265,#c8a84e 50%,#a8862e);color:#0a0a0a;font-weight:800;font-size:15px;letter-spacing:.5px;cursor:pointer;box-shadow:0 4px 16px rgba(212,168,67,.3),inset 0 1px 0 rgba(255,255,255,.25);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 22px rgba(212,168,67,.4),inset 0 1px 0 rgba(255,255,255,.3)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.3),inset 0 1px 0 rgba(255,255,255,.25)\'">';
+  // CTA principal \u2014 gradient or, gros, hover lift
+  h += '<button onclick="'+primaryHandler+'" style="width:100%;padding:16px;border:none;border-radius:12px;background:linear-gradient(135deg,#e6c265,#c8a84e 50%,#a8862e);color:#0a0a0a;font-weight:800;font-size:15px;letter-spacing:.5px;cursor:pointer;box-shadow:0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 22px rgba(212,168,67,.42),inset 0 1px 0 rgba(255,255,255,.32)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28)\'">';
   h += '<span style="font-size:18px;margin-right:8px">'+primaryIcon+'</span>'+primaryLabel;
   h += '</button>';
 
-  // Boutons secondaires
-  h += '<div style="display:flex;gap:8px;margin-top:10px">';
-  h += '<button onclick="addCategory()" style="flex:1;padding:12px;border:1px solid rgba(212,168,67,.25);border-radius:10px;background:rgba(212,168,67,.05);color:var(--gold);font-weight:600;font-size:13px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.12)\'" onmouseout="this.style.background=\'rgba(212,168,67,.05)\'">';
-  h += '<span style="font-size:14px;margin-right:4px">\uff0b</span>Nouvelle famille';
+  // Boutons secondaires (Famille + Supprimer)
+  h += '<div style="display:flex;gap:8px;margin-top:12px">';
+
+  // Nouvelle famille
+  h += '<button onclick="addCategory()" style="flex:1;padding:13px 12px;border:1px solid rgba(212,168,67,.3);border-radius:10px;background:rgba(212,168,67,.06);color:var(--gold);font-weight:700;font-size:13px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.14)\'" onmouseout="this.style.background=\'rgba(212,168,67,.06)\'">';
+  h += '\uff0b Nouvelle famille';
   h += '</button>';
 
+  // Supprimer famille (toujours actif si une famille sp\u00e9cifique est s\u00e9lectionn\u00e9e)
   if(canDeleteCat){
     var delHandler = kind === "forfait"
-      ? "showConfirm('Supprimer la famille \\''+currentCat+'\\' ?',function(){CATS=CATS.filter(function(c){return c!==window._forfCat;});window._forfCat='all';if(typeof saveSalonConfig===\\'function\\')saveSalonConfig();go(\\'services\\');})"
+      ? "deleteForfaitCategory()"
       : "confirmDeleteCategory()";
-    h += '<button onclick="'+delHandler+'" style="flex:1;padding:12px;border:1px solid rgba(248,113,113,.25);border-radius:10px;background:rgba(248,113,113,.06);color:#f87171;font-weight:600;font-size:13px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(248,113,113,.12)\'" onmouseout="this.style.background=\'rgba(248,113,113,.06)\'">';
-    h += '\ud83d\uddd1 Supprimer "'+currentCat+'"';
+    h += '<button onclick="'+delHandler+'" style="flex:1;padding:13px 12px;border:1px solid rgba(248,113,113,.3);border-radius:10px;background:rgba(248,113,113,.08);color:#f87171;font-weight:700;font-size:13px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(248,113,113,.16)\'" onmouseout="this.style.background=\'rgba(248,113,113,.08)\'">';
+    h += '\ud83d\uddd1 Supprimer la famille';
     h += '</button>';
-  } else if(currentCat && currentCat !== "all") {
-    h += '<button disabled style="flex:1;padding:12px;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.25);font-weight:600;font-size:12px;cursor:not-allowed" title="Famille non vide \u2014 supprimez d\'abord les '+(kind==="forfait"?"forfaits":"prestations")+' qu\'elle contient">';
-    h += '\ud83d\udd12 "'+currentCat+'" non vide';
-    h += '</button>';
+  } else {
+    // Pas de famille active (tab "Toutes" en forfaits) \u2014 bouton info d\u00e9sactiv\u00e9
+    h += '<div style="flex:1;padding:13px 12px;border:1px dashed rgba(255,255,255,.08);border-radius:10px;color:rgba(255,255,255,.3);font-weight:600;font-size:11px;text-align:center;line-height:1.4">S\u00e9lectionnez une famille pour la supprimer</div>';
   }
   h += '</div>';
   h += '</div>';
   return h;
+}
+
+// Suppression d'une famille de forfaits (cascade similaire \u00e0 deleteCategory
+// pour les services). Si la famille contient des forfaits, double
+// confirmation avant suppression d\u00e9finitive.
+function deleteForfaitCategory(){
+  var cat = window._forfCat;
+  if(!cat || cat === "all") return;
+  var forfaitsInCat = SVC.filter(function(s){
+    return s.phases && s.phases.length > 1 && s.cat === cat;
+  });
+  if(forfaitsInCat.length > 0){
+    showConfirmDelete(
+      "Supprimer la famille \u00ab "+cat+" \u00bb ?",
+      "Cette famille contient "+forfaitsInCat.length+" forfait(s) qui seront \u00e9galement supprim\u00e9s.",
+      function(){
+        cM();
+        setTimeout(function(){
+          showConfirmDelete(
+            "\u26a0\ufe0f Confirmer la suppression ?",
+            ""+forfaitsInCat.length+" forfait(s) seront d\u00e9finitivement perdu(s). Cette action est irr\u00e9versible.",
+            function(){
+              var ids = forfaitsInCat.map(function(s){return s.id;});
+              SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
+              CATS = CATS.filter(function(c){ return c !== cat; });
+              window._forfCat = "all";
+              if(typeof saveServices === "function") saveServices();
+              if(typeof saveSalonConfig === "function") saveSalonConfig();
+              cM(); go("services");
+              if(typeof toast === "function") toast("Famille supprim\u00e9e","success");
+            }
+          );
+        }, 300);
+      }
+    );
+  } else {
+    showConfirmDelete(
+      "Supprimer la famille \u00ab "+cat+" \u00bb ?",
+      "Cette famille est vide.",
+      function(){
+        CATS = CATS.filter(function(c){ return c !== cat; });
+        window._forfCat = "all";
+        if(typeof saveSalonConfig === "function") saveSalonConfig();
+        cM(); go("services");
+        if(typeof toast === "function") toast("Famille supprim\u00e9e","success");
+      }
+    );
+  }
 }
 
 function addForfaitService(){
