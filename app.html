@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-04"></script>
+<script src="luxyra-supabase.js?v=20260425-05"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9211,6 +9211,26 @@ function deleteForfaitCategory(){
   var forfaitsInCat = SVC.filter(function(s){
     return s.phases && s.phases.length > 1 && s.cat === cat;
   });
+  async function _runForfaitDelete(forfaitsToKill){
+    var ids = forfaitsToKill.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
+    if(ids.length){
+      if(typeof deleteServicesDbBulk!=="function"){
+        if(typeof toast==="function") toast("Connexion DB indisponible","error");
+        return false;
+      }
+      var ok = await deleteServicesDbBulk(ids);
+      if(!ok){
+        if(typeof toast==="function") toast("\u00c9chec suppression DB \u2014 famille non supprim\u00e9e","error");
+        return false;
+      }
+    }
+    SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
+    CATS = CATS.filter(function(c){ return c !== cat; });
+    window._forfCat = "all";
+    if(typeof saveSalonConfig === "function") await saveSalonConfig();
+    return true;
+  }
+
   if(forfaitsInCat.length > 0){
     showConfirmDelete(
       "Supprimer la famille \u00ab "+cat+" \u00bb ?",
@@ -9222,17 +9242,12 @@ function deleteForfaitCategory(){
             "\u26a0\ufe0f Confirmer la suppression ?",
             ""+forfaitsInCat.length+" forfait(s) seront d\u00e9finitivement perdu(s). Cette action est irr\u00e9versible.",
             function(){
-              var ids = forfaitsInCat.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
-              // 1. DELETE en DB (sinon retour au refresh)
-              if(ids.length && typeof deleteServicesDbBulk==="function") deleteServicesDbBulk(ids);
-              // 2. Filtre local
-              SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
-              CATS = CATS.filter(function(c){ return c !== cat; });
-              window._forfCat = "all";
-              // 3. Persiste config (cat\u00e9gories)
-              if(typeof saveSalonConfig === "function") saveSalonConfig();
-              cM(); go("services");
-              if(typeof toast === "function") toast("Famille et "+ids.length+" forfait(s) supprim\u00e9s","success");
+              _runForfaitDelete(forfaitsInCat).then(function(ok){
+                if(ok){
+                  cM(); go("services");
+                  if(typeof toast === "function") toast("Famille et "+forfaitsInCat.length+" forfait(s) supprim\u00e9s","success");
+                }
+              });
             }
           );
         }, 300);
@@ -9243,11 +9258,12 @@ function deleteForfaitCategory(){
       "Supprimer la famille \u00ab "+cat+" \u00bb ?",
       "Cette famille est vide.",
       function(){
-        CATS = CATS.filter(function(c){ return c !== cat; });
-        window._forfCat = "all";
-        if(typeof saveSalonConfig === "function") saveSalonConfig();
-        cM(); go("services");
-        if(typeof toast === "function") toast("Famille supprim\u00e9e","success");
+        _runForfaitDelete([]).then(function(ok){
+          if(ok){
+            cM(); go("services");
+            if(typeof toast === "function") toast("Famille supprim\u00e9e","success");
+          }
+        });
       }
     );
   }
@@ -9445,34 +9461,55 @@ function showConfirmDelete(title,detail,onConfirm){
 }
 
 function confirmDeleteCategory(){deleteCategory();}
+async function _doDeleteCategoryFlow(catName, svcs){
+  var ids = svcs.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
+  // 1. AWAIT le DELETE DB. Si fail (RLS, r\u00e9seau), on n'avance pas \u2014 sinon
+  //    le config dirait "famille supprim\u00e9e" mais les services en DB
+  //    feraient ressusciter au prochain reload.
+  if(ids.length){
+    if(typeof deleteServicesDbBulk!=="function"){
+      if(typeof toast==="function") toast("Connexion DB indisponible","error");
+      return false;
+    }
+    var ok = await deleteServicesDbBulk(ids);
+    if(!ok){
+      if(typeof toast==="function") toast("\u00c9chec suppression DB \u2014 famille non supprim\u00e9e","error");
+      return false;
+    }
+  }
+  // 2. \u00c9tat local
+  SVC=SVC.filter(function(s){return s.cat!==catName});
+  CATS=CATS.filter(function(c){return c!==catName});
+  aCat=CATS[0]||"";
+  // 3. Persistance config (cat\u00e9gories) \u2014 await aussi pour \u00eatre s\u00fbr
+  if(typeof saveSalonConfig==="function") await saveSalonConfig();
+  return true;
+}
 function deleteCategory(){
-  var svcs=SVC.filter(function(s){return s.cat===aCat});
+  var catName=aCat;
+  var svcs=SVC.filter(function(s){return s.cat===catName});
   if(svcs.length>0){
-    showConfirmDelete("Supprimer la famille \u00ab"+aCat+"\u00bb ?","Cette famille contient "+svcs.length+" prestation(s) qui seront \u00e9galement supprim\u00e9es.",function(){
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille contient "+svcs.length+" prestation(s) qui seront \u00e9galement supprim\u00e9es.",function(){
       cM();
       setTimeout(function(){
         showConfirmDelete("\u26a0\ufe0f Confirmer la suppression ?",""+svcs.length+" prestation(s) seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",function(){
-          // 1. Bulk delete en DB (services + tout ce qui a la cat\u00e9gorie)
-          var ids = svcs.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
-          if(ids.length && typeof deleteServicesDbBulk==="function") deleteServicesDbBulk(ids);
-          // 2. Filtre local
-          SVC=SVC.filter(function(s){return s.cat!==aCat});
-          CATS=CATS.filter(function(c){return c!==aCat});
-          aCat=CATS[0]||"";
-          // 3. Persiste config (cat\u00e9gories) en DB
-          if(typeof saveSalonConfig==="function") saveSalonConfig();
-          cM(); go("services");
-          if(typeof toast==="function") toast("Famille et "+ids.length+" prestation(s) supprim\u00e9es","success");
+          _doDeleteCategoryFlow(catName, svcs).then(function(ok){
+            if(ok){
+              cM(); go("services");
+              if(typeof toast==="function") toast("Famille et "+svcs.length+" prestation(s) supprim\u00e9es","success");
+            }
+          });
         });
       },300);
     });
   }else{
-    showConfirmDelete("Supprimer la famille \u00ab"+aCat+"\u00bb ?","Cette famille est vide.",function(){
-      CATS=CATS.filter(function(c){return c!==aCat});
-      aCat=CATS[0]||"";
-      if(typeof saveSalonConfig==="function") saveSalonConfig();
-      cM(); go("services");
-      if(typeof toast==="function") toast("Famille supprim\u00e9e","success");
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille est vide.",function(){
+      _doDeleteCategoryFlow(catName, []).then(function(ok){
+        if(ok){
+          cM(); go("services");
+          if(typeof toast==="function") toast("Famille supprim\u00e9e","success");
+        }
+      });
     });
   }
 }

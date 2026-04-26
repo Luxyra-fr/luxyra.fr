@@ -385,23 +385,31 @@ async function loadSalonData() {
       // du métier configuré au lieu de garder les catégories coiffure
       // hardcodées (sinon un nouveau salon "esthétique" verrait des
       // "Coupe / Coloration" sans rapport avec son activité).
-      // CATS = SOURCE OF TRUTH = config_json.categories si présent, sinon
-      // dérivé des services existants. Permet aux familles vides de
-      // SURVIVRE au refresh (sinon le user les recrée à chaque fois).
-      // Et la suppression d'une famille la retire DEFINITIVEMENT
-      // (n'est plus reconstruite depuis les services au reload).
+      // CATS = SOURCE OF TRUTH STRICTE = config_json.categories.
+      // Si présent (l'utilisateur a fait au moins un add/delete), c'est la
+      // seule source — pas de "auto-merge" depuis SVC qui ressuscitait
+      // les familles supprimées dont les services persistaient (race async).
+      // Si jamais il y a un service orphelin avec une cat non listée, on
+      // l'ajoute en dernier recours pour ne pas masquer les données.
       var catSet = {};
       SVC.forEach(function(s) { if (s.cat) catSet[s.cat] = true; });
       var derived = Object.keys(catSet);
-      if (Array.isArray(window._cfgCategories) && window._cfgCategories.length) {
-        // Source persistée : on prend ça + on ajoute toute catégorie de
-        // service qui n'y serait pas (auto-ajout pour cohérence)
+      if (Array.isArray(window._cfgCategories)) {
+        // Config persisté = autorité (peut être vide tableau si user a tout supprimé)
         CATS = window._cfgCategories.slice();
-        derived.forEach(function(c){ if (CATS.indexOf(c) < 0) CATS.push(c); });
+        // Sécurité : si un service en DB a une cat non listée (orphelin),
+        // on l'ajoute pour ne pas le rendre invisible. Cas limite, mais
+        // évite de "perdre" silencieusement des prestations.
+        derived.forEach(function(c){
+          if (CATS.indexOf(c) < 0) {
+            console.warn("[loadSalonData] Catégorie orpheline détectée:", c, "— ajoutée pour visibilité");
+            CATS.push(c);
+          }
+        });
       } else if (derived.length) {
+        // Pas de config persisté (anciens salons) → dérivé des services
         CATS = derived;
       } else if (typeof METIER_CONFIG !== "undefined" && SALON_CONFIG.metier && METIER_CONFIG[SALON_CONFIG.metier]) {
-        // Salon vierge : applique les catégories par défaut du métier
         CATS = METIER_CONFIG[SALON_CONFIG.metier].defaultCats.slice();
       }
     }
