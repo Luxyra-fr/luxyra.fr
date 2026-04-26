@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-14"></script>
+<script src="luxyra-supabase.js?v=20260425-15"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -8679,21 +8679,14 @@ function rForfaits(){
   if(!window._forfCat)window._forfCat='all';
   // === Action bar luxe en haut (forfaits) ===
   h += _renderSvcActionBar('forfait');
-  // Famille filter chips — affiche TOUTES les familles, mais celles qui
-  // n'ont pas de forfait sont en opacité réduite (visuellement "vide" mais
-  // toujours cliquables). Le user voit d'un coup d'oeil son catalogue
-  // complet sans qu'on lui cache rien.
-  var forfCatsAvecContenu = {};
-  SVC.forEach(function(s){
-    if(s.phases && s.phases.length > 1 && s.cat) forfCatsAvecContenu[s.cat] = true;
-  });
+  // Familles de FORFAITS uniquement (CATS_FORF). Indépendant de CATS_SVC.
+  var catsF = (window.CATS_FORF && window.CATS_FORF.length) ? window.CATS_FORF : [];
+  // Si _forfCat n'est plus dans la liste, switch sur 'all'
+  if(window._forfCat !== 'all' && catsF.indexOf(window._forfCat) < 0) window._forfCat = 'all';
   h+='<div style="display:flex;align-items:center;gap:6px;margin-top:14px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
   h+='<div class="tab'+(window._forfCat==='all'?' on':'')+'" onclick="window._forfCat=\'all\';go(\'services\')">Toutes</div>';
-  for(var ci=0;ci<CATS.length;ci++){
-    var hasContent = !!forfCatsAvecContenu[CATS[ci]];
-    var dimStyle = hasContent ? '' : ';opacity:.4';
-    var dimTitle = hasContent ? '' : ' title="Aucun forfait dans cette famille"';
-    h+='<div class="tab'+(window._forfCat===CATS[ci]?' on':'')+'" style="'+dimStyle+'"'+dimTitle+' onclick="window._forfCat=\''+CATS[ci].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[ci]+'</div>';
+  for(var ci=0;ci<catsF.length;ci++){
+    h+='<div class="tab'+(window._forfCat===catsF[ci]?' on':'')+'" onclick="window._forfCat=\''+catsF[ci].replace(/'/g,"\\'")+'\';go(\'services\')">'+catsF[ci]+'</div>';
   }
   h+='</div>';
   // Filter multi-phase services
@@ -9132,21 +9125,16 @@ function rServices(){
   // N'afficher que les familles qui ont des prestations simples c\u00f4t\u00e9 Services.
   // Une famille avec uniquement des forfaits reste dans CATS mais ne pollue
   // pas les chips Services (et inversement c\u00f4t\u00e9 Forfaits).
-  var svcCatsAvecContenu = {};
-  SVC.forEach(function(s){
-    var isSimple = !s.phases || s.phases.length <= 1;
-    if(isSimple && s.cat) svcCatsAvecContenu[s.cat] = true;
-  });
+  // (svcCatsAvecContenu retiré — on utilise maintenant CATS_SVC directement)
+  var catsS = (window.CATS_SVC && window.CATS_SVC.length) ? window.CATS_SVC : [];
+  if(aCat && catsS.indexOf(aCat) < 0) aCat = catsS[0] || "";
   // Affiche TOUTES les familles, en grisant celles qui n'ont pas de
   // prestation simple. Le user voit son catalogue complet.
 
   h+='<div style="font-size:12px;color:var(--gold);margin-top:14px;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Famille</div>';
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
-  for(var i=0;i<CATS.length;i++){
-    var hasS = !!svcCatsAvecContenu[CATS[i]];
-    var dimS = hasS ? '' : ';opacity:.4';
-    var dimT = hasS ? '' : ' title="Aucune prestation simple dans cette famille"';
-    h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" style="'+dimS+'"'+dimT+' onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[i]+'</div>';
+  for(var i=0;i<catsS.length;i++){
+    h+='<div class="tab'+(aCat===catsS[i]?" on":"")+'" onclick="aCat=\''+catsS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+catsS[i]+'</div>';
   }
   h+='</div>';
   // Color picker for current category
@@ -9285,15 +9273,13 @@ function deleteForfaitCategory(){
       }
     }
     SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
-    // Ne retirer la famille de CATS QUE si plus aucun service simple
-    // ne pointe sur elle. Sinon elle reste vivante c\u00f4t\u00e9 Services.
-    var stillUsed = SVC.some(function(s){ return s.cat === cat; });
-    if(!stillUsed){
-      CATS = CATS.filter(function(c){ return c !== cat; });
-      console.log("[_runForfaitDelete] famille vid\u00e9e \u2192 retir\u00e9e de CATS");
-    } else {
-      console.log("[_runForfaitDelete] famille conserv\u00e9e (services simples restants)");
-    }
+    // Famille de FORFAITS toujours retir\u00e9e de CATS_FORF (chaque tab a sa
+    // propre liste ind\u00e9pendante). CATS_SVC NON touch\u00e9.
+    if(window.CATS_FORF) window.CATS_FORF = window.CATS_FORF.filter(function(c){ return c !== cat; });
+    // CATS = union, mise \u00e0 jour si plus pr\u00e9sente nulle part
+    var stillInSvc = window.CATS_SVC && window.CATS_SVC.indexOf(cat) >= 0;
+    if(!stillInSvc) CATS = CATS.filter(function(c){ return c !== cat; });
+    console.log("[_runForfaitDelete] CATS_FORF apr\u00e8s retrait:", window.CATS_FORF);
     window._forfCat = "all";
     if(typeof saveSalonConfig === "function"){
       console.log("[_runForfaitDelete] calling saveSalonConfig...");
@@ -9313,27 +9299,26 @@ function deleteForfaitCategory(){
     return forfaitsInCat.length+" prestation"+(forfaitsInCat.length>1?"s":"")+" (dont "+nbForfaits+" forfait"+(nbForfaits>1?"s":"")+")";
   }
 
-  // === Cas 1 : famille a des forfaits + (peut-\u00eatre) des services simples ===
+  // STRICT : famille de FORFAITS = ind\u00e9pendante de Services. On supprime
+  // les forfaits ET la famille de CATS_FORF. Les services simples (autre
+  // famille du m\u00eame nom) ne sont PAS touch\u00e9s.
   if(forfaitsInCat.length > 0){
-    var label = _itemsLabel();
-    var msgPlus = "";
-    if(servicesSimplesRestants > 0){
-      msgPlus = " La famille contient aussi "+servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" simple"+(servicesSimplesRestants>1?"s":"")+" \u2014 supprimez-les depuis l'onglet Services si vous voulez retirer la famille enti\u00e8rement.";
-    }
+    var nbf = forfaitsInCat.length;
+    var lblF = nbf+" forfait"+(nbf>1?"s":"");
     showConfirmDelete(
-      "Supprimer la famille \u00ab "+cat+" \u00bb ?",
-      "Cette famille contient "+label+" qui seront supprim\u00e9s."+msgPlus,
+      "Supprimer la famille \u00ab "+cat+" \u00bb des forfaits ?",
+      "Cette famille de forfaits contient "+lblF+" qui seront \u00e9galement supprim\u00e9s.",
       function(){
         cM();
         setTimeout(function(){
           showConfirmDelete(
             "\u26a0\ufe0f Confirmer la suppression ?",
-            label+" seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",
+            lblF+" seront d\u00e9finitivement perdus. Cette action est irr\u00e9versible.",
             function(){
               _runForfaitDelete(forfaitsInCat).then(function(ok){
                 if(ok){
                   cM(); go("services");
-                  if(typeof toast === "function") toast("Famille et "+label+" supprim\u00e9s","success");
+                  if(typeof toast === "function") toast("Famille forfaits \u00ab "+cat+" \u00bb et "+lblF+" supprim\u00e9s","success");
                 }
               });
             }
@@ -9341,38 +9326,11 @@ function deleteForfaitCategory(){
         }, 300);
       }
     );
-  }
-  // === Cas 2 : 0 forfait MAIS services simples \u2192 propose suppression totale ===
-  else if(servicesSimplesRestants > 0){
+  } else {
+    // Famille de forfaits sans contenu \u2192 simple suppression
     showConfirmDelete(
-      "Supprimer la famille \u00ab "+cat+" \u00bb enti\u00e8rement ?",
-      "Aucun forfait dans cette famille, mais elle contient "+servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" simple"+(servicesSimplesRestants>1?"s":"")+" (visible dans Services). Tout supprimer ?",
-      function(){
-        cM();
-        setTimeout(function(){
-          showConfirmDelete(
-            "\u26a0\ufe0f Confirmer la suppression totale ?",
-            servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" + la famille seront d\u00e9finitivement perdu"+(servicesSimplesRestants>1?"es":"e")+". Action irr\u00e9versible.",
-            function(){
-              // Supprime TOUT : services simples ET famille
-              var allSvcs = SVC.filter(function(s){ return s.cat === cat; });
-              _runForfaitDelete(allSvcs).then(function(ok){
-                if(ok){
-                  cM(); go("services");
-                  if(typeof toast === "function") toast("Famille \u00ab "+cat+" \u00bb et "+servicesSimplesRestants+" prestation"+(servicesSimplesRestants>1?"s":"")+" supprim\u00e9es","success");
-                }
-              });
-            }
-          );
-        }, 300);
-      }
-    );
-  }
-  // === Cas 3 : famille totalement vide ===
-  else {
-    showConfirmDelete(
-      "Supprimer la famille \u00ab "+cat+" \u00bb ?",
-      "Cette famille est vide.",
+      "Supprimer la famille \u00ab "+cat+" \u00bb des forfaits ?",
+      "Cette famille de forfaits est vide. Les \u00e9ventuelles prestations simples du m\u00eame nom ne seront PAS touch\u00e9es.",
       function(){
         _runForfaitDelete([]).then(function(ok){
           if(ok){
@@ -9553,10 +9511,19 @@ function addCategory(){
 function doAddCategory(){
   var name=document.getElementById("ncName").value.trim();
   if(!name)return;
-  if(CATS.indexOf(name)<0)CATS.push(name);
-  aCat=name;
-  // Persiste dans salons.config_json.categories pour survivre au refresh
-  // même si la famille est encore vide.
+  // Ajoute dans la bonne liste selon l'onglet actif :
+  // tab Forfaits → CATS_FORF, tab Services → CATS_SVC
+  if(!window.CATS_SVC) window.CATS_SVC = [];
+  if(!window.CATS_FORF) window.CATS_FORF = [];
+  if(window._svcTab === "forfaits"){
+    if(window.CATS_FORF.indexOf(name) < 0) window.CATS_FORF.push(name);
+    window._forfCat = name;
+  } else {
+    if(window.CATS_SVC.indexOf(name) < 0) window.CATS_SVC.push(name);
+    aCat = name;
+  }
+  // Garde CATS = union pour rétro-compat
+  if(CATS.indexOf(name) < 0) CATS.push(name);
   if(typeof saveSalonConfig==="function") saveSalonConfig();
   cM(); go("services");
   if(typeof toast==="function") toast("Famille « "+name+" » créée","success");
@@ -9595,16 +9562,14 @@ async function _doDeleteCategoryFlow(catName, svcs){
       return false;
     }
   }
-  // 2. \u00c9tat local : retire UNIQUEMENT les services qu'on a explicitement
-  //    supprim\u00e9s (pas tous les services de la cat). Les forfaits restent.
+  // 2. \u00c9tat local : retire les services + la famille de CATS_SVC
   var deletedIds = svcs.map(function(s){return s.id;});
   SVC = SVC.filter(function(s){ return deletedIds.indexOf(s.id) < 0; });
-  // Famille retir\u00e9e seulement si plus rien (forfait compris) ne pointe dessus
-  var stillUsed = SVC.some(function(s){ return s.cat === catName; });
-  if(!stillUsed){
-    CATS = CATS.filter(function(c){return c!==catName});
-    aCat = CATS[0] || "";
-  }
+  if(window.CATS_SVC) window.CATS_SVC = window.CATS_SVC.filter(function(c){ return c !== catName; });
+  // CATS = union, retire si plus pr\u00e9sente c\u00f4t\u00e9 Forfaits non plus
+  var stillInForf = window.CATS_FORF && window.CATS_FORF.indexOf(catName) >= 0;
+  if(!stillInForf) CATS = CATS.filter(function(c){return c!==catName});
+  aCat = (window.CATS_SVC && window.CATS_SVC[0]) || "";
   // 3. Persistance config (cat\u00e9gories) \u2014 await aussi pour \u00eatre s\u00fbr
   if(typeof saveSalonConfig==="function") await saveSalonConfig();
   return true;
@@ -9625,46 +9590,44 @@ function deleteCategory(){
   var label = svcs.length+" prestation"+(svcs.length>1?"s":"");
 
   if(svcs.length>0){
-    var detailMsg = "Cette famille contient "+label+" qui seront supprim\u00e9es.";
-    if(forfaitsRestants > 0){
-      detailMsg += " ("+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" gard\u00e9"+(forfaitsRestants>1?"s":"")+" \u2014 supprimez-les depuis l'onglet Forfaits si vous voulez retirer la famille enti\u00e8rement)";
+    // V\u00e9rifie si des services sont r\u00e9f\u00e9renc\u00e9s dans des forfaits
+    var refs = [];
+    svcs.forEach(function(s){
+      var usedInForfaits = SVC.filter(function(f){
+        if(!f.phases || f.phases.length <= 1) return false;
+        return f.phases.some(function(p){ return p.sId === s.id; });
+      });
+      if(usedInForfaits.length > 0){
+        refs.push({ svc: s, forfaits: usedInForfaits });
+      }
+    });
+
+    if(refs.length > 0){
+      var msg = "Impossible : "+refs.length+" prestation"+(refs.length>1?"s":"")+" sont utilis\u00e9e"+(refs.length>1?"s":"")+" dans des forfaits :\n\n";
+      refs.slice(0,5).forEach(function(r){
+        msg += "\u2022 "+r.svc.n+" \u2192 "+r.forfaits.map(function(f){return f.n;}).join(", ")+"\n";
+      });
+      if(refs.length>5) msg += "\u2026 et "+(refs.length-5)+" autre(s)\n";
+      msg += "\nRetirez-les d'abord de ces forfaits avant de supprimer la famille.";
+      alert(msg);
+      return;
     }
-    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?", detailMsg, function(){
+
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb des services ?", "Cette famille de services contient "+label+" qui seront supprim\u00e9es. Les forfaits du m\u00eame nom (s'il y en a) ne seront PAS touch\u00e9s.", function(){
       cM();
       setTimeout(function(){
         showConfirmDelete("\u26a0\ufe0f Confirmer la suppression ?",label+" seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",function(){
           _doDeleteCategoryFlow(catName, svcs).then(function(ok){
             if(ok){
               cM(); go("services");
-              if(typeof toast==="function") toast(label+" supprim\u00e9es","success");
+              if(typeof toast==="function") toast("Famille services \u00ab "+catName+" \u00bb et "+label+" supprim\u00e9es","success");
             }
           });
         });
       },300);
     });
-  } else if(forfaitsRestants > 0){
-    // 0 service simple mais des forfaits \u2192 propose suppression totale
-    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb enti\u00e8rement ?",
-      "Aucune prestation simple, mais cette famille contient "+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" (visible dans Forfaits). Tout supprimer ?",
-      function(){
-        cM();
-        setTimeout(function(){
-          showConfirmDelete("\u26a0\ufe0f Confirmer la suppression totale ?",forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" + la famille seront d\u00e9finitivement perdu"+(forfaitsRestants>1?"s":"")+". Action irr\u00e9versible.",
-            function(){
-              var allSvcs = SVC.filter(function(s){ return s.cat === catName; });
-              _doDeleteCategoryFlow(catName, allSvcs).then(function(ok){
-                if(ok){
-                  cM(); go("services");
-                  if(typeof toast==="function") toast("Famille \u00ab "+catName+" \u00bb et "+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" supprim\u00e9s","success");
-                }
-              });
-            }
-          );
-        }, 300);
-      }
-    );
   } else {
-    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille est vide.",function(){
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb des services ?","Cette famille de services est vide. Les forfaits du m\u00eame nom (s'il y en a) ne seront PAS touch\u00e9s.",function(){
       _doDeleteCategoryFlow(catName, []).then(function(ok){
         if(ok){
           cM(); go("services");
