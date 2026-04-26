@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260426-02"></script>
+<script src="luxyra-supabase.js?v=20260426-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -4767,6 +4767,86 @@ function _renderHistoMetierList(c){
   h+='</div>';
   return h;
 }
+// Rappel rapide de la dernière prestation pour ce client. S'affiche dans
+// la fiche RDV (clickAppt) — formules couleur pour coiffure, sinon
+// dernière entrée histoMetier. Bouton "Reprendre" pour copier l'entrée
+// à la date du jour (gain de temps en cabine).
+function _renderDernierePrestationCard(cl){
+  if(!cl)return"";
+  var m=SALON_CONFIG.metier||"coiffure";
+  var entry=null,kind="";
+  if(m==="coiffure" && cl.formules && cl.formules.length){
+    entry=cl.formules.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
+    kind="formule";
+  } else if(cl.histoMetier && cl.histoMetier.length){
+    entry=cl.histoMetier.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
+    kind="histo";
+  } else if(m==="coiffure" || m==="barbier"){
+    if(cl.formules && cl.formules.length){
+      entry=cl.formules.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
+      kind="formule";
+    }
+  }
+  if(!entry)return"";
+  var labelKind=kind==="formule"?"Dernière formule":"Dernière séance";
+  var icon=kind==="formule"?"🎨":"📒";
+  var h='<div style="background:rgba(200,168,78,.05);border:1px solid rgba(200,168,78,.2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--gold);font-weight:700">'+icon+' '+labelKind+'</div>';
+  h+='<div style="font-size:11px;color:var(--text3)">'+(typeof fmt==="function"?fmt(entry.date):entry.date)+'</div>';
+  h+='</div>';
+  if(kind==="formule"){
+    if(entry.marque)h+='<div style="font-size:13px;font-weight:700">'+entry.marque+(entry.numero?" · "+entry.numero:"")+'</div>';
+    if(entry.melange)h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">🧪 '+entry.melange+'</div>';
+    if(entry.oxydant||entry.tempsPose){
+      h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">';
+      if(entry.oxydant)h+='Oxydant : '+entry.oxydant+' · ';
+      if(entry.tempsPose)h+='⏱ '+entry.tempsPose+' min';
+      h+='</div>';
+    }
+    if(entry.zone)h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">📍 '+entry.zone+'</div>';
+    if(entry.notes)h+='<div style="font-size:12px;color:var(--text3);font-style:italic;margin-top:4px">«&nbsp;'+entry.notes+'&nbsp;»</div>';
+  } else {
+    if(entry.type)h+='<div style="font-size:13px;font-weight:700">'+entry.type+'</div>';
+    var sch=(typeof _histoMetierSchema==="function")?_histoMetierSchema():null;
+    if(sch && sch.fields){
+      sch.fields.forEach(function(f){
+        if(entry[f.k])h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">'+f.l+' : '+entry[f.k]+'</div>';
+      });
+    }
+    if(entry.duree)h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">⏱ '+entry.duree+' min</div>';
+    if(entry.notes)h+='<div style="font-size:12px;color:var(--text3);font-style:italic;margin-top:4px">«&nbsp;'+entry.notes+'&nbsp;»</div>';
+  }
+  h+='<button class="btn bs" style="width:100%;margin-top:10px;font-size:12px;padding:10px;background:rgba(200,168,78,.15);color:var(--gold);font-weight:700" onclick="reprendreDernierePrestation(\''+cl.id+'\',\''+kind+'\')">🔄 Reprendre cette '+(kind==="formule"?"formule":"séance")+' (à la date du jour)</button>';
+  h+='</div>';
+  return h;
+}
+function reprendreDernierePrestation(cId,kind){
+  var cl=gC(cId);if(!cl)return;
+  var src=null;
+  if(kind==="formule" && cl.formules && cl.formules.length){
+    src=cl.formules.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
+  } else if(cl.histoMetier && cl.histoMetier.length){
+    src=cl.histoMetier.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
+  }
+  if(!src){alert("Rien à reprendre pour ce client.");return;}
+  var copy={};for(var k in src)if(Object.prototype.hasOwnProperty.call(src,k))copy[k]=src[k];
+  copy.date=TD;
+  copy.notes=(src.notes||"")+(src.notes?" · ":"")+"Reprise du "+(typeof fmt==="function"?fmt(src.date):src.date);
+  if(kind==="formule"){
+    if(!cl.formules)cl.formules=[];
+    cl.formules.push(copy);
+  } else {
+    if(!cl.histoMetier)cl.histoMetier=[];
+    cl.histoMetier.push(copy);
+  }
+  if(typeof saveClient==="function")saveClient(cl);
+  if(typeof toast==="function")toast("Prestation reprise et ajoutée à la fiche du jour","success");
+  // Re-render la modal RDV courante si on connaît l'appt
+  if(window._currentApptId){var aId=window._currentApptId;cM();clickAppt(aId);}
+  else cM();
+}
+
 function addClientPhoto(cId,input,label){
   if(!input.files||!input.files[0])return;
   var file=input.files[0];
@@ -6640,6 +6720,7 @@ function clickAppt(id){
   if(window._pendingDrag)return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
+  window._currentApptId = id;
   var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
   var colors=getSvcColor(sv?sv.cat:"Coupe");
   // Get phases: per-appointment override or from service
@@ -6672,7 +6753,10 @@ function clickAppt(id){
     htm+='<div style="text-align:center;font-style:italic;color:rgba(255,255,255,.45)">'+passageName(a.cId,a.sId)+'</div>';
   }
   htm+='</div>';
-  
+
+  // === RAPPEL DERNIÈRE PRESTATION (si client connu) ===
+  if(cl) htm += _renderDernierePrestationCard(cl);
+
   // === MODIFICATION DE RENDEZ-VOUS ===
   htm+='<div style="text-align:center;font-weight:800;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:#fff;margin-bottom:10px">Modification de rendez-vous</div>';
   htm+='<div class="card">';
