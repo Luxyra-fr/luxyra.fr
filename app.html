@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-11"></script>
+<script src="luxyra-supabase.js?v=20260425-12"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -8679,11 +8679,23 @@ function rForfaits(){
   if(!window._forfCat)window._forfCat='all';
   // === Action bar luxe en haut (forfaits) ===
   h += _renderSvcActionBar('forfait');
-  // Famille filter chips
+  // Famille filter chips — afficher SEULEMENT les familles qui ont
+  // effectivement des forfaits dedans. Sinon le user voit un onglet
+  // "Homme" qui n'a aucun forfait, clique supprimer, et rien ne se
+  // passe parce qu'il n'y a rien à supprimer.
+  var forfCatsAvecContenu = {};
+  SVC.forEach(function(s){
+    if(s.phases && s.phases.length > 1 && s.cat) forfCatsAvecContenu[s.cat] = true;
+  });
+  var forfCatsList = CATS.filter(function(c){ return forfCatsAvecContenu[c]; });
+  // Si _forfCat actuel n'a plus de contenu, basculer sur 'all'
+  if(window._forfCat !== 'all' && !forfCatsAvecContenu[window._forfCat]){
+    window._forfCat = 'all';
+  }
   h+='<div style="display:flex;align-items:center;gap:6px;margin-top:14px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
   h+='<div class="tab'+(window._forfCat==='all'?' on':'')+'" onclick="window._forfCat=\'all\';go(\'services\')">Toutes</div>';
-  for(var ci=0;ci<CATS.length;ci++){
-    h+='<div class="tab'+(window._forfCat===CATS[ci]?' on':'')+'" onclick="window._forfCat=\''+CATS[ci].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[ci]+'</div>';
+  for(var ci=0;ci<forfCatsList.length;ci++){
+    h+='<div class="tab'+(window._forfCat===forfCatsList[ci]?' on':'')+'" onclick="window._forfCat=\''+forfCatsList[ci].replace(/'/g,"\\'")+'\';go(\'services\')">'+forfCatsList[ci]+'</div>';
   }
   h+='</div>';
   // Filter multi-phase services
@@ -9119,13 +9131,23 @@ function rServices(){
   // === Action bar luxe en haut (services) ===
   h += _renderSvcActionBar('service');
   // Familles (catégories)
+  // N'afficher que les familles qui ont des prestations simples c\u00f4t\u00e9 Services.
+  // Une famille avec uniquement des forfaits reste dans CATS mais ne pollue
+  // pas les chips Services (et inversement c\u00f4t\u00e9 Forfaits).
+  var svcCatsAvecContenu = {};
+  SVC.forEach(function(s){
+    var isSimple = !s.phases || s.phases.length <= 1;
+    if(isSimple && s.cat) svcCatsAvecContenu[s.cat] = true;
+  });
+  var svcCatsList = CATS.filter(function(c){ return svcCatsAvecContenu[c] || c === aCat; });
+  if(!svcCatsList.length) svcCatsList = CATS.slice();
+  if(aCat && svcCatsList.indexOf(aCat) < 0) aCat = svcCatsList[0] || "";
+
   h+='<div style="font-size:12px;color:var(--gold);margin-top:14px;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Famille</div>';
-  // Category tabs + add category button
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
-  for(var i=0;i<CATS.length;i++){
-    h+='<div class="tab'+(aCat===CATS[i]?" on":"")+'" onclick="aCat=\''+CATS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[i]+'</div>';
+  for(var i=0;i<svcCatsList.length;i++){
+    h+='<div class="tab'+(aCat===svcCatsList[i]?" on":"")+'" onclick="aCat=\''+svcCatsList[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+svcCatsList[i]+'</div>';
   }
-  // (bouton "+ Famille" d\u00e9plac\u00e9 dans la barre d'actions en bas de page)
   h+='</div>';
   // Color picker for current category
   var _cc=SVCCOLORS[aCat]||{bg:"#f0f0f0",border:"#999"};
