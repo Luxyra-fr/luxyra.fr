@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-05"></script>
+<script src="luxyra-supabase.js?v=20260425-06"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -5350,11 +5350,33 @@ function saveAppBg(){
   // Sauvegarde aussi dans Supabase config_json pour multi-device
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     if(!window._SALON_CONFIG_JSON)window._SALON_CONFIG_JSON={};
+    // SYNC le cache complet avant write (sinon écrase les modifs faites
+    // ailleurs entre temps : categories, sms_config, etc.)
+    _syncConfigCacheBeforeWrite();
     window._SALON_CONFIG_JSON.app_bg=APP_BG||"";
     _sb.from("salons").update({config_json:JSON.stringify(window._SALON_CONFIG_JSON)}).eq("id",_salonId).then(function(r){
       if(r&&r.error)console.warn("[saveAppBg]",r.error);
     });
   }
+}
+
+// Synchronise toutes les sections critiques de l'état runtime dans le
+// cache window._SALON_CONFIG_JSON AVANT chaque écriture en DB. Sans ça,
+// saveAppBg et saveSmsConfig écrivaient avec un snapshot figé au boot
+// et écrasaient les modifs récentes (categories, absences, etc.).
+function _syncConfigCacheBeforeWrite(){
+  if(!window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON = {};
+  var c = window._SALON_CONFIG_JSON;
+  if(typeof CATS !== "undefined" && Array.isArray(CATS)) c.categories = CATS.slice();
+  if(typeof window.ABSENCES !== "undefined") c.absences = window.ABSENCES || [];
+  if(typeof window.SMS_CONFIG !== "undefined") c.sms_config = window.SMS_CONFIG;
+  if(typeof FORFAITS !== "undefined" && Array.isArray(FORFAITS)) c.forfaits = FORFAITS;
+  if(typeof APP_BG !== "undefined") c.app_bg = APP_BG || "";
+  if(typeof window.PAY_ACTIVE !== "undefined") c.pay_active = window.PAY_ACTIVE || {};
+  if(typeof window.FIDCONF !== "undefined") c.fidconf = window.FIDCONF;
+  if(window.CAISSE_DATA && window.CAISSE_DATA.fond !== undefined) c.fond_caisse = window.CAISSE_DATA.fond;
+  if(typeof SVCCOLORS !== "undefined") c.svccolors = SVCCOLORS;
+  if(typeof window.PRODCOLORS !== "undefined") c.prodcolors = window.PRODCOLORS;
 }
 var SLOT=15,SLOT_H=28;
 
@@ -16349,10 +16371,9 @@ function rMarketing(){
 function saveSmsConfig(){
   try{localStorage.setItem("_cp_sms_config",JSON.stringify(window.SMS_CONFIG));}catch(e){}
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    // FIX anti-race condition : on garde le config_json complet en mémoire
-    // et on écrit directement, sans select préalable. Si plusieurs saveSmsConfig
-    // s'enchaînent rapidement, ils écrivent tous le dernier état de window.SMS_CONFIG.
-    if(!window._SALON_CONFIG_JSON)window._SALON_CONFIG_JSON={};
+    // SYNC du cache : indispensable pour ne pas écraser les autres sections
+    // (categories surtout) qui auraient pu changer depuis le boot.
+    _syncConfigCacheBeforeWrite();
     window._SALON_CONFIG_JSON.sms_config=window.SMS_CONFIG;
     _sb.from("salons").update({config_json:JSON.stringify(window._SALON_CONFIG_JSON)}).eq("id",_salonId).then(function(r){
       if(r&&r.error)console.warn("[saveSmsConfig] Supabase error:",r.error);

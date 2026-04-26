@@ -1300,7 +1300,32 @@ async function saveSalonConfig() {
     frais_deplacement: SALON_CONFIG.fraisDeplacement || 0,
     show_tva_ticket: window.SHOW_TVA_TICKET
   };
-  try{var _sc=window.SITE_CONFIG||{};data.config_json=JSON.stringify({nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,fidconf:window.FIDCONF||{seuil:10,remise:10},pay_active:window.PAY_ACTIVE||{},fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,prodcolors:window.PRODCOLORS||{},svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},sms_config:window.SMS_CONFIG||{},validite_devis:Number(SALON_CONFIG.validiteDevis)||30,categories:(typeof CATS!=="undefined"&&Array.isArray(CATS))?CATS.slice():[]});}catch(e){}
+  try{
+    var _sc=window.SITE_CONFIG||{};
+    var newCfg = {
+      nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,
+      slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,
+      siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,
+      photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,
+      slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,
+      fidconf:window.FIDCONF||{seuil:10,remise:10},
+      pay_active:window.PAY_ACTIVE||{},
+      fond_caisse:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,
+      prodcolors:window.PRODCOLORS||{},
+      svccolors:typeof SVCCOLORS!=="undefined"?SVCCOLORS:{},
+      sms_config:window.SMS_CONFIG||{},
+      absences:window.ABSENCES||[],
+      forfaits:typeof FORFAITS!=="undefined"?FORFAITS:[],
+      app_bg:typeof APP_BG!=="undefined"?APP_BG:"",
+      validite_devis:Number(SALON_CONFIG.validiteDevis)||30,
+      categories:(typeof CATS!=="undefined"&&Array.isArray(CATS))?CATS.slice():[]
+    };
+    data.config_json = JSON.stringify(newCfg);
+    // CRITIQUE : met à jour aussi le cache window._SALON_CONFIG_JSON
+    // pour que les saves "innocents" (saveAppBg, saveSmsConfig) ne
+    // ré-écrasent pas avec une version stale.
+    window._SALON_CONFIG_JSON = newCfg;
+  }catch(e){}
   var r=await _sb.from("salons").update(data).eq("id", _salonId);
   if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
 }
