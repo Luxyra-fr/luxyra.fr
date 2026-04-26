@@ -1,9 +1,9 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-14 — supprimer famille depuis n'importe quel tab fonctionne
-console.log("%cLuxyra build 20260425-14 (suppression famille cross-tab)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-14";
+// BUILD: 20260425-15 — Services & Forfaits familles 100% indépendants
+console.log("%cLuxyra build 20260425-15 (familles services/forfaits indépendantes)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-15";
 // Affiche la version dans le coin de l'écran 5 secondes au boot pour
 // que l'utilisateur puisse confirmer qu'il a bien le dernier code
 // sans avoir à ouvrir DevTools.
@@ -365,7 +365,7 @@ async function loadSalonData() {
       _sb.from("salons").update({sms_credits:newCredits,sms_last_reset:today}).eq("id",salon.id);
     }
   }
-  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();}catch(e){}}
+  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();if(Array.isArray(cfg.categories_services))window._cfgCatsSvc=cfg.categories_services.slice();if(Array.isArray(cfg.categories_forfaits))window._cfgCatsForf=cfg.categories_forfaits.slice();}catch(e){}}
   // Defaults if not loaded from cfg
   if(!SALON_CONFIG.validiteDevis) SALON_CONFIG.validiteDevis = 30;
 
@@ -402,33 +402,58 @@ async function loadSalonData() {
       // du métier configuré au lieu de garder les catégories coiffure
       // hardcodées (sinon un nouveau salon "esthétique" verrait des
       // "Coupe / Coloration" sans rapport avec son activité).
-      // CATS = SOURCE OF TRUTH STRICTE = config_json.categories.
-      // Si présent (l'utilisateur a fait au moins un add/delete), c'est la
-      // seule source — pas de "auto-merge" depuis SVC qui ressuscitait
-      // les familles supprimées dont les services persistaient (race async).
-      // Si jamais il y a un service orphelin avec une cat non listée, on
-      // l'ajoute en dernier recours pour ne pas masquer les données.
-      var catSet = {};
-      SVC.forEach(function(s) { if (s.cat) catSet[s.cat] = true; });
-      var derived = Object.keys(catSet);
-      if (Array.isArray(window._cfgCategories)) {
-        // Config persisté = autorité (peut être vide tableau si user a tout supprimé)
-        CATS = window._cfgCategories.slice();
-        // Sécurité : si un service en DB a une cat non listée (orphelin),
-        // on l'ajoute pour ne pas le rendre invisible. Cas limite, mais
-        // évite de "perdre" silencieusement des prestations.
-        derived.forEach(function(c){
-          if (CATS.indexOf(c) < 0) {
-            console.warn("[loadSalonData] Catégorie orpheline détectée:", c, "— ajoutée pour visibilité");
-            CATS.push(c);
-          }
-        });
-      } else if (derived.length) {
-        // Pas de config persisté (anciens salons) → dérivé des services
-        CATS = derived;
-      } else if (typeof METIER_CONFIG !== "undefined" && SALON_CONFIG.metier && METIER_CONFIG[SALON_CONFIG.metier]) {
-        CATS = METIER_CONFIG[SALON_CONFIG.metier].defaultCats.slice();
+      // SOURCE DE VÉRITÉ : 2 LISTES INDÉPENDANTES (CATS_SVC + CATS_FORF).
+      // Une famille de services est SÉPARÉE d'une famille de forfaits
+      // même si elles ont le même nom. CATS = union pour rétro-compat
+      // mais les chips et la logique de suppression utilisent les deux
+      // listes séparément.
+      var derivedSvc = {}, derivedForf = {};
+      SVC.forEach(function(s) {
+        if (!s.cat) return;
+        var multi = s.phases && s.phases.length > 1;
+        if (multi) derivedForf[s.cat] = true;
+        else derivedSvc[s.cat] = true;
+      });
+      var derSvcArr = Object.keys(derivedSvc);
+      var derForfArr = Object.keys(derivedForf);
+
+      // CATS_SVC : depuis config si présent, sinon dérivé
+      if (Array.isArray(window._cfgCatsSvc)) {
+        window.CATS_SVC = window._cfgCatsSvc.slice();
+        // safety net : ajoute orphelins
+        derSvcArr.forEach(function(c){ if(window.CATS_SVC.indexOf(c)<0) window.CATS_SVC.push(c); });
+      } else if (Array.isArray(window._cfgCategories)) {
+        // Migration : ancienne config "categories" non typée → on prend
+        // celles qui correspondent à des services simples
+        window.CATS_SVC = window._cfgCategories.filter(function(c){ return derivedSvc[c]; });
+        // + orphelins
+        derSvcArr.forEach(function(c){ if(window.CATS_SVC.indexOf(c)<0) window.CATS_SVC.push(c); });
+      } else {
+        window.CATS_SVC = derSvcArr;
       }
+
+      // CATS_FORF : symétrique
+      if (Array.isArray(window._cfgCatsForf)) {
+        window.CATS_FORF = window._cfgCatsForf.slice();
+        derForfArr.forEach(function(c){ if(window.CATS_FORF.indexOf(c)<0) window.CATS_FORF.push(c); });
+      } else if (Array.isArray(window._cfgCategories)) {
+        window.CATS_FORF = window._cfgCategories.filter(function(c){ return derivedForf[c]; });
+        derForfArr.forEach(function(c){ if(window.CATS_FORF.indexOf(c)<0) window.CATS_FORF.push(c); });
+      } else {
+        window.CATS_FORF = derForfArr;
+      }
+
+      // Salon vierge ? Applique les defaultCats du métier en SERVICES
+      if (!window.CATS_SVC.length && !window.CATS_FORF.length
+          && typeof METIER_CONFIG !== "undefined" && SALON_CONFIG.metier && METIER_CONFIG[SALON_CONFIG.metier]) {
+        window.CATS_SVC = METIER_CONFIG[SALON_CONFIG.metier].defaultCats.slice();
+      }
+
+      // CATS = union (rétro-compat avec code qui itère encore sur CATS)
+      var union = {};
+      window.CATS_SVC.forEach(function(c){ union[c]=true; });
+      window.CATS_FORF.forEach(function(c){ union[c]=true; });
+      CATS = Object.keys(union);
     }
   } catch(e) { console.warn("[loadSalonData] services skipped", e); }
 
@@ -1335,7 +1360,9 @@ async function saveSalonConfig() {
       forfaits:typeof FORFAITS!=="undefined"?FORFAITS:[],
       app_bg:typeof APP_BG!=="undefined"?APP_BG:"",
       validite_devis:Number(SALON_CONFIG.validiteDevis)||30,
-      categories:(typeof CATS!=="undefined"&&Array.isArray(CATS))?CATS.slice():[]
+      categories:(typeof CATS!=="undefined"&&Array.isArray(CATS))?CATS.slice():[],
+      categories_services:(window.CATS_SVC&&Array.isArray(window.CATS_SVC))?window.CATS_SVC.slice():[],
+      categories_forfaits:(window.CATS_FORF&&Array.isArray(window.CATS_FORF))?window.CATS_FORF.slice():[]
     };
     data.config_json = JSON.stringify(newCfg);
     // CRITIQUE : met à jour aussi le cache window._SALON_CONFIG_JSON
