@@ -1,23 +1,8 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-17 — Réparation familles : restaurer même si présente dans une seule liste
-console.log("%cLuxyra build 20260425-17 (réparation familles agressive)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-17";
-// Affiche la version dans le coin de l'écran 5 secondes au boot pour
-// que l'utilisateur puisse confirmer qu'il a bien le dernier code
-// sans avoir à ouvrir DevTools.
-document.addEventListener("DOMContentLoaded", function(){
-  setTimeout(function(){
-    var d = document.createElement("div");
-    d.style.cssText = "position:fixed;bottom:8px;right:8px;z-index:99999;background:#0a0a0a;color:#c8a84e;border:1px solid #c8a84e;padding:4px 10px;font:11px monospace;border-radius:6px;opacity:.85;cursor:pointer";
-    d.textContent = "build " + (window.__LUXYRA_BUILD || "?");
-    d.title = "Cliquer pour fermer";
-    d.onclick = function(){ d.remove(); };
-    document.body.appendChild(d);
-    setTimeout(function(){ if(d.parentNode) d.style.opacity='.3'; }, 5000);
-  }, 500);
-});
+// BUILD: 20260425-18
+window.__LUXYRA_BUILD = "20260425-18";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -454,14 +439,8 @@ async function loadSalonData() {
       if (Array.isArray(window._cfgCategories)) {
         window._cfgCategories.forEach(function(c){
           if (!c) return;
-          if (window.CATS_SVC.indexOf(c) < 0) {
-            console.log("[CATS-repair] +Services:", c);
-            window.CATS_SVC.push(c);
-          }
-          if (window.CATS_FORF.indexOf(c) < 0) {
-            console.log("[CATS-repair] +Forfaits:", c);
-            window.CATS_FORF.push(c);
-          }
+          if (window.CATS_SVC.indexOf(c) < 0) window.CATS_SVC.push(c);
+          if (window.CATS_FORF.indexOf(c) < 0) window.CATS_FORF.push(c);
         });
       }
 
@@ -1405,12 +1384,8 @@ async function deleteServiceDb(id) {
   if (!_sb || !_salonId || !id) return false;
   try {
     var r = await _sb.from("services").delete().eq("id", id).eq("salon_id", _salonId).select();
-    console.log("[deleteServiceDb] id="+id+" rows_deleted="+(r.data?r.data.length:0), r.error || "");
     if (r && r.error) { console.warn("[deleteServiceDb] error", r.error); return false; }
-    if (!r.data || r.data.length === 0) {
-      console.warn("[deleteServiceDb] 0 rows deleted — probable RLS block ou row absente");
-      return false;
-    }
+    if (!r.data || r.data.length === 0) return false;
     return true;
   } catch(e) { console.error("[deleteServiceDb]", e); return false; }
 }
@@ -1421,14 +1396,9 @@ async function deleteServicesDbBulk(ids) {
   try {
     var r = await _sb.from("services").delete().in("id", ids).eq("salon_id", _salonId).select();
     var count = (r && r.data) ? r.data.length : 0;
-    console.log("[deleteServicesDbBulk] requested="+ids.length+" deleted="+count, r.error || "");
     if (r && r.error) { console.warn("[deleteServicesDbBulk] error", r.error); return false; }
-    if (count === 0 && ids.length > 0) {
-      console.warn("[deleteServicesDbBulk] 0 rows supprimées sur "+ids.length+" demandées — RLS block ?");
-      return false;
-    }
+    if (count === 0 && ids.length > 0) return false;
     if (count < ids.length) {
-      console.warn("[deleteServicesDbBulk] partiel : "+count+"/"+ids.length+" supprimés");
       // Partiel = on continue (au moins une partie a été nettoyée)
     }
     return true;
