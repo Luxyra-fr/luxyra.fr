@@ -8655,7 +8655,10 @@ function rForfaits(){
   var h='';
   // Category filter
   if(!window._forfCat)window._forfCat='all';
-  h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
+  // === Action bar luxe en haut (forfaits) ===
+  h += _renderSvcActionBar('forfait');
+  // Famille filter chips
+  h+='<div style="display:flex;align-items:center;gap:6px;margin-top:14px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
   h+='<div class="tab'+(window._forfCat==='all'?' on':'')+'" onclick="window._forfCat=\'all\';go(\'services\')">Toutes</div>';
   for(var ci=0;ci<CATS.length;ci++){
     h+='<div class="tab'+(window._forfCat===CATS[ci]?' on':'')+'" onclick="window._forfCat=\''+CATS[ci].replace(/'/g,"\\'")+'\';go(\'services\')">'+CATS[ci]+'</div>';
@@ -8704,8 +8707,6 @@ function rForfaits(){
     h+='<button class="btn bs" class="btn-danger btn-icon" onclick="deleteService('+s.id+')">\ud83d\uddd1</button>';
     h+='</div></div></div>';
   }
-  // === Action bar luxe (forfaits) \u2014 partag\u00e9e avec services ===
-  h += _renderSvcActionBar('forfait');
   return h;
 }
 function addForfait(){
@@ -8853,9 +8854,11 @@ function _renderForfaitComposer(){
 
       // Duration controls
       h += '<div style="display:flex;align-items:center;gap:4px">';
+      // Durée éditable : -/+ par 5min OU saisie manuelle (12, 23, 37 min...)
       h += '<button onclick="_forfaitStepDur('+k+',-5)" style="width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700">-</button>';
-      h += '<span style="min-width:40px;text-align:center;font-weight:700;font-size:12px">'+(st.duration||0)+' min</span>';
-      h += '<button onclick="_forfaitStepDur('+k+',5)" style="width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700">+</button>';
+      h += '<input type="number" min="1" step="1" value="'+(st.duration||0)+'" oninput="_forfaitSetDur('+k+',this.value)" style="width:48px;height:26px;text-align:center;font-weight:700;font-size:12px;border:1px solid rgba(255,255,255,.1);border-radius:5px;background:rgba(255,255,255,.06);color:#fff;padding:0 4px">';
+      h += '<span style="font-size:10px;color:var(--text3);margin-left:2px">min</span>';
+      h += '<button onclick="_forfaitStepDur('+k+',5)" style="width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700;margin-left:2px">+</button>';
       h += '</div>';
 
       // Remove
@@ -8904,8 +8907,19 @@ function _forfaitDelStep(idx){
 }
 function _forfaitStepDur(idx, delta){
   var d = window._forfaitDraft;if(!d||!d.steps[idx])return;
-  d.steps[idx].duration = Math.max(5, (d.steps[idx].duration||0) + delta);
+  d.steps[idx].duration = Math.max(1, (d.steps[idx].duration||0) + delta);
   _renderForfaitComposer();
+}
+
+// Saisie manuelle de durée — n'appelle PAS _renderForfaitComposer pour
+// éviter de perdre le focus du champ pendant que l'utilisateur tape.
+// Le total durée n'est mis à jour qu'au prochain re-render (ajout/retrait
+// d'étape ou save). Ce comportement est volontaire.
+function _forfaitSetDur(idx, value){
+  var d = window._forfaitDraft;if(!d||!d.steps[idx])return;
+  var v = parseInt(value, 10);
+  if(isNaN(v) || v < 1) return;
+  d.steps[idx].duration = v;
 }
 function _forfaitAddPause(){
   var d = window._forfaitDraft;if(!d)return;
@@ -9080,8 +9094,10 @@ function rServices(){
   h+='<button onclick="window._svcTab=\'forfaits\';go(\'services\')" style="flex:1;padding:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;background:'+(window._svcTab==="forfaits"?"rgba(200,168,78,.15)":"transparent")+';color:'+(window._svcTab==="forfaits"?"var(--gold)":"rgba(255,255,255,.5)")+';border-bottom:2px solid '+(window._svcTab==="forfaits"?"var(--gold)":"transparent")+'">\ud83d\udce6 Forfaits</button>';
   h+='</div>';
   if(window._svcTab==="forfaits") return h+rForfaits();
+  // === Action bar luxe en haut (services) ===
+  h += _renderSvcActionBar('service');
   // Familles (catégories)
-  h+='<div style="font-size:12px;color:var(--gold);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Famille</div>';
+  h+='<div style="font-size:12px;color:var(--gold);margin-top:14px;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Famille</div>';
   // Category tabs + add category button
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
   for(var i=0;i<CATS.length;i++){
@@ -9136,8 +9152,6 @@ function rServices(){
     h+='</div>';
   }
 
-  // === Action bar luxe (services) ===
-  h += _renderSvcActionBar('service');
   return h;
 }
 
@@ -9155,7 +9169,8 @@ function _renderSvcActionBar(kind){
   var canDeleteCat = currentCat && currentCat !== "all";
   var safeName = (currentCat || "").replace(/'/g,"\\'").replace(/"/g,"&quot;");
 
-  var h = '<div style="margin-top:28px;padding:20px 18px;border-radius:14px;background:linear-gradient(180deg,rgba(212,168,67,.05),rgba(212,168,67,.01));border:1px solid rgba(212,168,67,.18);box-shadow:0 6px 24px rgba(0,0,0,.25)">';
+  // Bandeau d'actions en haut de page (Services et Forfaits)
+  var h = '<div style="margin-bottom:8px;padding:18px 16px;border-radius:14px;background:linear-gradient(180deg,rgba(212,168,67,.06),rgba(212,168,67,.015));border:1px solid rgba(212,168,67,.2);box-shadow:0 4px 18px rgba(0,0,0,.2)">';
 
   // CTA principal \u2014 gradient or, gros, hover lift
   h += '<button onclick="'+primaryHandler+'" style="width:100%;padding:16px;border:none;border-radius:12px;background:linear-gradient(135deg,#e6c265,#c8a84e 50%,#a8862e);color:#0a0a0a;font-weight:800;font-size:15px;letter-spacing:.5px;cursor:pointer;box-shadow:0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 22px rgba(212,168,67,.42),inset 0 1px 0 rgba(255,255,255,.32)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28)\'">';
