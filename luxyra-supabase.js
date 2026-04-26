@@ -381,10 +381,19 @@ async function loadSalonData() {
       SVC = svcRes.data.map(function(s) {
         return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
       });
-      // Recalculer CATS
+      // Recalculer CATS — si aucun service encore, applique les defaultCats
+      // du métier configuré au lieu de garder les catégories coiffure
+      // hardcodées (sinon un nouveau salon "esthétique" verrait des
+      // "Coupe / Coloration" sans rapport avec son activité).
       var catSet = {};
       SVC.forEach(function(s) { if (s.cat) catSet[s.cat] = true; });
-      CATS = Object.keys(catSet);
+      var resolvedCats = Object.keys(catSet);
+      if (resolvedCats.length) {
+        CATS = resolvedCats;
+      } else if (typeof METIER_CONFIG !== "undefined" && SALON_CONFIG.metier && METIER_CONFIG[SALON_CONFIG.metier]) {
+        // Salon vierge : applique les catégories par défaut du métier
+        CATS = METIER_CONFIG[SALON_CONFIG.metier].defaultCats.slice();
+      }
     }
   } catch(e) { console.warn("[loadSalonData] services skipped", e); }
 
