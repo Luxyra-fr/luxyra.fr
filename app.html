@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-07"></script>
+<script src="luxyra-supabase.js?v=20260425-08"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9228,19 +9228,28 @@ function _renderSvcActionBar(kind){
 // pour les services). Si la famille contient des forfaits, double
 // confirmation avant suppression d\u00e9finitive.
 function deleteForfaitCategory(){
+  console.log("[deleteForfaitCategory] BUILD", window.__LUXYRA_BUILD, "_forfCat=", window._forfCat);
   var cat = window._forfCat;
-  if(!cat || cat === "all") return;
+  if(!cat || cat === "all"){
+    console.warn("[deleteForfaitCategory] aborted: cat is 'all' or undefined");
+    return;
+  }
   var forfaitsInCat = SVC.filter(function(s){
     return s.phases && s.phases.length > 1 && s.cat === cat;
   });
+  console.log("[deleteForfaitCategory] famille="+cat+" forfaits dedans="+forfaitsInCat.length);
   async function _runForfaitDelete(forfaitsToKill){
+    console.log("[_runForfaitDelete] start, \u00e0 supprimer:", forfaitsToKill.length);
     var ids = forfaitsToKill.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
+    console.log("[_runForfaitDelete] valid ids:", ids);
     if(ids.length){
       if(typeof deleteServicesDbBulk!=="function"){
+        console.error("[_runForfaitDelete] deleteServicesDbBulk introuvable");
         if(typeof toast==="function") toast("Connexion DB indisponible","error");
         return false;
       }
       var ok = await deleteServicesDbBulk(ids);
+      console.log("[_runForfaitDelete] deleteServicesDbBulk returned:", ok);
       if(!ok){
         if(typeof toast==="function") toast("\u00c9chec suppression DB \u2014 famille non supprim\u00e9e","error");
         return false;
@@ -9248,8 +9257,13 @@ function deleteForfaitCategory(){
     }
     SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
     CATS = CATS.filter(function(c){ return c !== cat; });
+    console.log("[_runForfaitDelete] CATS apr\u00e8s filter:", CATS);
     window._forfCat = "all";
-    if(typeof saveSalonConfig === "function") await saveSalonConfig();
+    if(typeof saveSalonConfig === "function"){
+      console.log("[_runForfaitDelete] calling saveSalonConfig...");
+      await saveSalonConfig();
+      console.log("[_runForfaitDelete] saveSalonConfig DONE");
+    }
     return true;
   }
 
