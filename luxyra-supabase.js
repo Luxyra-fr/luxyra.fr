@@ -1,9 +1,23 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-06 — categories persistance + RLS strict check
-console.log("%cLuxyra build 20260425-06 (categories persistance fix)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-06";
+// BUILD: 20260425-07 — debug visible build version
+console.log("%cLuxyra build 20260425-07 (debug delete family)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-07";
+// Affiche la version dans le coin de l'écran 5 secondes au boot pour
+// que l'utilisateur puisse confirmer qu'il a bien le dernier code
+// sans avoir à ouvrir DevTools.
+document.addEventListener("DOMContentLoaded", function(){
+  setTimeout(function(){
+    var d = document.createElement("div");
+    d.style.cssText = "position:fixed;bottom:8px;right:8px;z-index:99999;background:#0a0a0a;color:#c8a84e;border:1px solid #c8a84e;padding:4px 10px;font:11px monospace;border-radius:6px;opacity:.85;cursor:pointer";
+    d.textContent = "build " + (window.__LUXYRA_BUILD || "?");
+    d.title = "Cliquer pour fermer";
+    d.onclick = function(){ d.remove(); };
+    document.body.appendChild(d);
+    setTimeout(function(){ if(d.parentNode) d.style.opacity='.3'; }, 5000);
+  }, 500);
+});
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
