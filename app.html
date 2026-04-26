@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-03"></script>
+<script src="luxyra-supabase.js?v=20260425-04"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9222,14 +9222,17 @@ function deleteForfaitCategory(){
             "\u26a0\ufe0f Confirmer la suppression ?",
             ""+forfaitsInCat.length+" forfait(s) seront d\u00e9finitivement perdu(s). Cette action est irr\u00e9versible.",
             function(){
-              var ids = forfaitsInCat.map(function(s){return s.id;});
+              var ids = forfaitsInCat.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
+              // 1. DELETE en DB (sinon retour au refresh)
+              if(ids.length && typeof deleteServicesDbBulk==="function") deleteServicesDbBulk(ids);
+              // 2. Filtre local
               SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
               CATS = CATS.filter(function(c){ return c !== cat; });
               window._forfCat = "all";
-              if(typeof saveServices === "function") saveServices();
+              // 3. Persiste config (cat\u00e9gories)
               if(typeof saveSalonConfig === "function") saveSalonConfig();
               cM(); go("services");
-              if(typeof toast === "function") toast("Famille supprim\u00e9e","success");
+              if(typeof toast === "function") toast("Famille et "+ids.length+" forfait(s) supprim\u00e9s","success");
             }
           );
         }, 300);
@@ -9386,7 +9389,17 @@ function doEditService(id){
 function deleteService(id){
   var sv=gS(id);if(!sv)return;
   var wasForfait=sv.phases&&sv.phases.length>1;
-  showConfirmDelete("Supprimer "+sv.n+" ?",sv.p+"\u20ac",function(){SVC=SVC.filter(function(s){return s.id!==id});if(wasForfait)window._svcTab="forfaits";if(typeof saveSalonConfig==="function")saveSalonConfig();cM();go("services");});
+  showConfirmDelete("Supprimer "+sv.n+" ?",sv.p+"\u20ac",function(){
+    // 1. Supprime en DB (sinon revient au refresh)
+    if(typeof deleteServiceDb==="function") deleteServiceDb(id);
+    // 2. Filtre local
+    SVC=SVC.filter(function(s){return s.id!==id});
+    if(wasForfait) window._svcTab="forfaits";
+    // 3. Persiste config (cat\u00e9gories) au cas o\u00f9 la presta \u00e9tait la derni\u00e8re
+    if(typeof saveSalonConfig==="function") saveSalonConfig();
+    cM(); go("services");
+    if(typeof toast==="function") toast("Prestation supprim\u00e9e","success");
+  });
 }
 
 function doDeleteService(id){
@@ -9410,7 +9423,11 @@ function doAddCategory(){
   if(!name)return;
   if(CATS.indexOf(name)<0)CATS.push(name);
   aCat=name;
-  cM();go("services");
+  // Persiste dans salons.config_json.categories pour survivre au refresh
+  // même si la famille est encore vide.
+  if(typeof saveSalonConfig==="function") saveSalonConfig();
+  cM(); go("services");
+  if(typeof toast==="function") toast("Famille « "+name+" » créée","success");
 }
 
 
@@ -9431,22 +9448,32 @@ function confirmDeleteCategory(){deleteCategory();}
 function deleteCategory(){
   var svcs=SVC.filter(function(s){return s.cat===aCat});
   if(svcs.length>0){
-    // First confirmation: warn about prestations
     showConfirmDelete("Supprimer la famille \u00ab"+aCat+"\u00bb ?","Cette famille contient "+svcs.length+" prestation(s) qui seront \u00e9galement supprim\u00e9es.",function(){
-      // Second confirmation
       cM();
       setTimeout(function(){
         showConfirmDelete("\u26a0\ufe0f Confirmer la suppression ?",""+svcs.length+" prestation(s) seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",function(){
+          // 1. Bulk delete en DB (services + tout ce qui a la cat\u00e9gorie)
+          var ids = svcs.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
+          if(ids.length && typeof deleteServicesDbBulk==="function") deleteServicesDbBulk(ids);
+          // 2. Filtre local
           SVC=SVC.filter(function(s){return s.cat!==aCat});
           CATS=CATS.filter(function(c){return c!==aCat});
           aCat=CATS[0]||"";
-          if(typeof saveServices==="function")saveServices();
-          cM();go("services");
+          // 3. Persiste config (cat\u00e9gories) en DB
+          if(typeof saveSalonConfig==="function") saveSalonConfig();
+          cM(); go("services");
+          if(typeof toast==="function") toast("Famille et "+ids.length+" prestation(s) supprim\u00e9es","success");
         });
       },300);
     });
   }else{
-    showConfirmDelete("Supprimer la famille \u00ab"+aCat+"\u00bb ?","Cette famille est vide.",function(){CATS=CATS.filter(function(c){return c!==aCat});aCat=CATS[0]||"";cM();go("services");});
+    showConfirmDelete("Supprimer la famille \u00ab"+aCat+"\u00bb ?","Cette famille est vide.",function(){
+      CATS=CATS.filter(function(c){return c!==aCat});
+      aCat=CATS[0]||"";
+      if(typeof saveSalonConfig==="function") saveSalonConfig();
+      cM(); go("services");
+      if(typeof toast==="function") toast("Famille supprim\u00e9e","success");
+    });
   }
 }
 
