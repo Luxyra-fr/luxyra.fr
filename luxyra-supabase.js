@@ -1,9 +1,9 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-15 — Services & Forfaits familles 100% indépendants
-console.log("%cLuxyra build 20260425-15 (familles services/forfaits indépendantes)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-15";
+// BUILD: 20260425-16 — Réparation familles perdues lors de la migration v15
+console.log("%cLuxyra build 20260425-16 (réparation familles perdues)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-16";
 // Affiche la version dans le coin de l'écran 5 secondes au boot pour
 // que l'utilisateur puisse confirmer qu'il a bien le dernier code
 // sans avoir à ouvrir DevTools.
@@ -423,24 +423,43 @@ async function loadSalonData() {
         // safety net : ajoute orphelins
         derSvcArr.forEach(function(c){ if(window.CATS_SVC.indexOf(c)<0) window.CATS_SVC.push(c); });
       } else if (Array.isArray(window._cfgCategories)) {
-        // Migration : ancienne config "categories" non typée → on prend
-        // celles qui correspondent à des services simples
-        window.CATS_SVC = window._cfgCategories.filter(function(c){ return derivedSvc[c]; });
-        // + orphelins
+        // Migration : ancienne config "categories" non typée. On copie
+        // TOUTES les anciennes familles dans CATS_SVC pour que rien ne
+        // disparaisse au passage à la nouvelle structure. L'utilisateur
+        // pourra supprimer ce qu'il veut ensuite (les listes sont
+        // indépendantes après la migration).
+        window.CATS_SVC = window._cfgCategories.slice();
         derSvcArr.forEach(function(c){ if(window.CATS_SVC.indexOf(c)<0) window.CATS_SVC.push(c); });
       } else {
         window.CATS_SVC = derSvcArr;
       }
 
-      // CATS_FORF : symétrique
+      // CATS_FORF : symétrique — migration garde aussi tout
       if (Array.isArray(window._cfgCatsForf)) {
         window.CATS_FORF = window._cfgCatsForf.slice();
         derForfArr.forEach(function(c){ if(window.CATS_FORF.indexOf(c)<0) window.CATS_FORF.push(c); });
       } else if (Array.isArray(window._cfgCategories)) {
-        window.CATS_FORF = window._cfgCategories.filter(function(c){ return derivedForf[c]; });
+        window.CATS_FORF = window._cfgCategories.slice();
         derForfArr.forEach(function(c){ if(window.CATS_FORF.indexOf(c)<0) window.CATS_FORF.push(c); });
       } else {
         window.CATS_FORF = derForfArr;
+      }
+
+      // RÉPARATION : si l'ancien champ cfg.categories contient des
+      // familles qui ne sont dans NI _cfgCatsSvc NI _cfgCatsForf, c'est
+      // que la première migration (build 20260425-15) les a perdues.
+      // On les restaure dans les deux listes.
+      if (Array.isArray(window._cfgCategories)) {
+        window._cfgCategories.forEach(function(c){
+          if (!c) return;
+          var inSvc = window.CATS_SVC.indexOf(c) >= 0;
+          var inForf = window.CATS_FORF.indexOf(c) >= 0;
+          if (!inSvc && !inForf) {
+            console.log("[CATS-repair] famille restaurée:", c);
+            window.CATS_SVC.push(c);
+            window.CATS_FORF.push(c);
+          }
+        });
       }
 
       // Salon vierge ? Applique les defaultCats du métier en SERVICES
