@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-09"></script>
+<script src="luxyra-supabase.js?v=20260425-10"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9268,21 +9268,32 @@ function deleteForfaitCategory(){
     return true;
   }
 
+  // Compte s\u00e9par\u00e9ment forfaits (multi-phase) vs prestations simples (1 phase)
+  var nbForfaits = forfaitsInCat.filter(function(s){return s.phases && s.phases.length > 1;}).length;
+  var nbSimples = forfaitsInCat.length - nbForfaits;
+  // Construit un libell\u00e9 adapt\u00e9 : "3 prestations (dont 2 forfaits)" ou "5 prestations" ou "2 forfaits"
+  function _itemsLabel(){
+    if(nbForfaits === 0 && nbSimples > 0) return nbSimples+" prestation"+(nbSimples>1?"s":"");
+    if(nbSimples === 0 && nbForfaits > 0) return nbForfaits+" forfait"+(nbForfaits>1?"s":"");
+    return forfaitsInCat.length+" prestation"+(forfaitsInCat.length>1?"s":"")+" (dont "+nbForfaits+" forfait"+(nbForfaits>1?"s":"")+")";
+  }
+
   if(forfaitsInCat.length > 0){
+    var label = _itemsLabel();
     showConfirmDelete(
       "Supprimer la famille \u00ab "+cat+" \u00bb ?",
-      "Cette famille contient "+forfaitsInCat.length+" forfait(s) qui seront \u00e9galement supprim\u00e9s.",
+      "Cette famille contient "+label+" qui seront \u00e9galement supprim\u00e9s.",
       function(){
         cM();
         setTimeout(function(){
           showConfirmDelete(
             "\u26a0\ufe0f Confirmer la suppression ?",
-            ""+forfaitsInCat.length+" forfait(s) seront d\u00e9finitivement perdu(s). Cette action est irr\u00e9versible.",
+            label+" seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",
             function(){
               _runForfaitDelete(forfaitsInCat).then(function(ok){
                 if(ok){
                   cM(); go("services");
-                  if(typeof toast === "function") toast("Famille et "+forfaitsInCat.length+" forfait(s) supprim\u00e9s","success");
+                  if(typeof toast === "function") toast("Famille et "+label+" supprim\u00e9s","success");
                 }
               });
             }
@@ -9527,17 +9538,28 @@ async function _doDeleteCategoryFlow(catName, svcs){
 function deleteCategory(){
   console.log("[deleteCategory] BUILD", window.__LUXYRA_BUILD, "aCat="+aCat);
   var catName=aCat;
+  // FIX sym\u00e9trie : supprimer TOUTES les prestations (simple + forfait)
+  // de la famille, pas juste les simples. Sinon le forfait restant
+  // ferait ressusciter la cat via la safety net au reload.
   var svcs=SVC.filter(function(s){return s.cat===catName});
-  console.log("[deleteCategory] famille="+catName+" services dedans="+svcs.length);
+  console.log("[deleteCategory] famille="+catName+" tous services dedans="+svcs.length);
+  // Compte s\u00e9par\u00e9ment forfaits / simples pour message clair
+  var nbForf = svcs.filter(function(s){return s.phases && s.phases.length > 1;}).length;
+  var nbSimp = svcs.length - nbForf;
+  var label;
+  if(nbForf === 0) label = nbSimp+" prestation"+(nbSimp>1?"s":"");
+  else if(nbSimp === 0) label = nbForf+" forfait"+(nbForf>1?"s":"");
+  else label = svcs.length+" prestation"+(svcs.length>1?"s":"")+" (dont "+nbForf+" forfait"+(nbForf>1?"s":"")+")";
+
   if(svcs.length>0){
-    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille contient "+svcs.length+" prestation(s) qui seront \u00e9galement supprim\u00e9es.",function(){
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille contient "+label+" qui seront \u00e9galement supprim\u00e9es.",function(){
       cM();
       setTimeout(function(){
-        showConfirmDelete("\u26a0\ufe0f Confirmer la suppression ?",""+svcs.length+" prestation(s) seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",function(){
+        showConfirmDelete("\u26a0\ufe0f Confirmer la suppression ?",label+" seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",function(){
           _doDeleteCategoryFlow(catName, svcs).then(function(ok){
             if(ok){
               cM(); go("services");
-              if(typeof toast==="function") toast("Famille et "+svcs.length+" prestation(s) supprim\u00e9es","success");
+              if(typeof toast==="function") toast("Famille et "+label+" supprim\u00e9es","success");
             }
           });
         });

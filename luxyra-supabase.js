@@ -1,9 +1,9 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-09 — supprime TOUS les services de la famille (forfait + simple)
-console.log("%cLuxyra build 20260425-09 (delete famille = tous services)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-09";
+// BUILD: 20260425-10 — message confirmation distingue forfaits vs prestations
+console.log("%cLuxyra build 20260425-10 (libellé suppression famille précis)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-10";
 // Affiche la version dans le coin de l'écran 5 secondes au boot pour
 // que l'utilisateur puisse confirmer qu'il a bien le dernier code
 // sans avoir à ouvrir DevTools.
