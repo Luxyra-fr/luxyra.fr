@@ -1,6 +1,9 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
+// BUILD: 20260425-06 — categories persistance + RLS strict check
+console.log("%cLuxyra build 20260425-06 (categories persistance fix)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-06";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -1330,24 +1333,38 @@ async function saveSalonConfig() {
   if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
 }
 
-// Supprime un service en DB (DELETE réel sur la table services).
-// À appeler depuis deleteService et deleteCategory côté frontend, sinon
-// le filtrage local n'est jamais persisté → la presta revient au refresh.
+// Supprime un service en DB. Vérifie le NOMBRE DE ROWS supprimées —
+// car Supabase retourne 0 rows sans erreur si RLS bloque silencieusement.
 async function deleteServiceDb(id) {
   if (!_sb || !_salonId || !id) return false;
   try {
-    var r = await _sb.from("services").delete().eq("id", id).eq("salon_id", _salonId);
+    var r = await _sb.from("services").delete().eq("id", id).eq("salon_id", _salonId).select();
+    console.log("[deleteServiceDb] id="+id+" rows_deleted="+(r.data?r.data.length:0), r.error || "");
     if (r && r.error) { console.warn("[deleteServiceDb] error", r.error); return false; }
+    if (!r.data || r.data.length === 0) {
+      console.warn("[deleteServiceDb] 0 rows deleted — probable RLS block ou row absente");
+      return false;
+    }
     return true;
   } catch(e) { console.error("[deleteServiceDb]", e); return false; }
 }
 
-// Supprime un lot de services en DB (utilisé pour suppression de famille)
+// Supprime un lot de services en DB. Idem : vérifie le count réel.
 async function deleteServicesDbBulk(ids) {
   if (!_sb || !_salonId || !Array.isArray(ids) || !ids.length) return false;
   try {
-    var r = await _sb.from("services").delete().in("id", ids).eq("salon_id", _salonId);
+    var r = await _sb.from("services").delete().in("id", ids).eq("salon_id", _salonId).select();
+    var count = (r && r.data) ? r.data.length : 0;
+    console.log("[deleteServicesDbBulk] requested="+ids.length+" deleted="+count, r.error || "");
     if (r && r.error) { console.warn("[deleteServicesDbBulk] error", r.error); return false; }
+    if (count === 0 && ids.length > 0) {
+      console.warn("[deleteServicesDbBulk] 0 rows supprimées sur "+ids.length+" demandées — RLS block ?");
+      return false;
+    }
+    if (count < ids.length) {
+      console.warn("[deleteServicesDbBulk] partiel : "+count+"/"+ids.length+" supprimés");
+      // Partiel = on continue (au moins une partie a été nettoyée)
+    }
     return true;
   } catch(e) { console.error("[deleteServicesDbBulk]", e); return false; }
 }
