@@ -1,9 +1,9 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-16 — Réparation familles perdues lors de la migration v15
-console.log("%cLuxyra build 20260425-16 (réparation familles perdues)","color:#c8a84e;font-weight:700;font-size:13px");
-window.__LUXYRA_BUILD = "20260425-16";
+// BUILD: 20260425-17 — Réparation familles : restaurer même si présente dans une seule liste
+console.log("%cLuxyra build 20260425-17 (réparation familles agressive)","color:#c8a84e;font-weight:700;font-size:13px");
+window.__LUXYRA_BUILD = "20260425-17";
 // Affiche la version dans le coin de l'écran 5 secondes au boot pour
 // que l'utilisateur puisse confirmer qu'il a bien le dernier code
 // sans avoir à ouvrir DevTools.
@@ -445,18 +445,21 @@ async function loadSalonData() {
         window.CATS_FORF = derForfArr;
       }
 
-      // RÉPARATION : si l'ancien champ cfg.categories contient des
-      // familles qui ne sont dans NI _cfgCatsSvc NI _cfgCatsForf, c'est
-      // que la première migration (build 20260425-15) les a perdues.
-      // On les restaure dans les deux listes.
+      // RÉPARATION : v15 a filtré les familles présentes dans l'ancien
+      // cfg.categories en ne gardant que celles avec un contenu détecté
+      // de leur tab. Résultat : une famille avec uniquement des forfaits
+      // a disparu de Services (et inversement). On restaure : toute
+      // famille présente dans cfg.categories doit être dans LES DEUX
+      // listes. L'utilisateur peut ensuite supprimer de l'un ou l'autre.
       if (Array.isArray(window._cfgCategories)) {
         window._cfgCategories.forEach(function(c){
           if (!c) return;
-          var inSvc = window.CATS_SVC.indexOf(c) >= 0;
-          var inForf = window.CATS_FORF.indexOf(c) >= 0;
-          if (!inSvc && !inForf) {
-            console.log("[CATS-repair] famille restaurée:", c);
+          if (window.CATS_SVC.indexOf(c) < 0) {
+            console.log("[CATS-repair] +Services:", c);
             window.CATS_SVC.push(c);
+          }
+          if (window.CATS_FORF.indexOf(c) < 0) {
+            console.log("[CATS-repair] +Forfaits:", c);
             window.CATS_FORF.push(c);
           }
         });
@@ -1379,7 +1382,10 @@ async function saveSalonConfig() {
       forfaits:typeof FORFAITS!=="undefined"?FORFAITS:[],
       app_bg:typeof APP_BG!=="undefined"?APP_BG:"",
       validite_devis:Number(SALON_CONFIG.validiteDevis)||30,
-      categories:(typeof CATS!=="undefined"&&Array.isArray(CATS))?CATS.slice():[],
+      // Ancien champ "categories" (liste unique) abandonné — remplacé par
+      // categories_services + categories_forfaits. Ne pas le ré-écrire,
+      // sinon la réparation au load le re-pousserait dans les listes
+      // typées et annulerait des suppressions volontaires.
       categories_services:(window.CATS_SVC&&Array.isArray(window.CATS_SVC))?window.CATS_SVC.slice():[],
       categories_forfaits:(window.CATS_FORF&&Array.isArray(window.CATS_FORF))?window.CATS_FORF.slice():[]
     };
