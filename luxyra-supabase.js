@@ -1,8 +1,8 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260426-02 — historique séances multi-métier + sweep logos
-window.__LUXYRA_BUILD = "20260426-02";
+// BUILD: 20260426-03 — rappel dernière prestation + reprise rapide en RDV
+window.__LUXYRA_BUILD = "20260426-03";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
