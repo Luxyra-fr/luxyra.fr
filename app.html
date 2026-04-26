@@ -295,7 +295,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260425-10"></script>
+<script src="luxyra-supabase.js?v=20260425-11"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9234,11 +9234,17 @@ function deleteForfaitCategory(){
     console.warn("[deleteForfaitCategory] aborted: cat is 'all' or undefined");
     return;
   }
-  // FIX : supprimer TOUS les services (simples ET forfaits) de cette famille,
-  // pas juste les multi-phase. Sinon les services simples restent en DB et
-  // au reload, la safety net détecte la cat orpheline et la ressuscite.
-  var forfaitsInCat = SVC.filter(function(s){ return s.cat === cat; });
-  console.log("[deleteForfaitCategory] famille="+cat+" tous services dedans="+forfaitsInCat.length);
+  // RESPECT DU SCOPE : depuis l'onglet Forfaits on ne supprime QUE les
+  // forfaits (multi-phase) de cette famille. Les services simples restent
+  // intacts. La famille reste dans CATS si des services simples existent
+  // encore avec cette cat. Sinon la famille est retirée.
+  var forfaitsInCat = SVC.filter(function(s){
+    return s.cat === cat && s.phases && s.phases.length > 1;
+  });
+  var servicesSimplesRestants = SVC.filter(function(s){
+    return s.cat === cat && (!s.phases || s.phases.length <= 1);
+  }).length;
+  console.log("[deleteForfaitCategory] famille="+cat+" forfaits="+forfaitsInCat.length+" services_simples_restants="+servicesSimplesRestants);
   async function _runForfaitDelete(forfaitsToKill){
     console.log("[_runForfaitDelete] start, \u00e0 supprimer:", forfaitsToKill.length);
     var ids = forfaitsToKill.map(function(s){return s.id;}).filter(function(id){return typeof id==="number"&&id>0;});
@@ -9257,8 +9263,15 @@ function deleteForfaitCategory(){
       }
     }
     SVC = SVC.filter(function(s){ return ids.indexOf(s.id) < 0; });
-    CATS = CATS.filter(function(c){ return c !== cat; });
-    console.log("[_runForfaitDelete] CATS apr\u00e8s filter:", CATS);
+    // Ne retirer la famille de CATS QUE si plus aucun service simple
+    // ne pointe sur elle. Sinon elle reste vivante c\u00f4t\u00e9 Services.
+    var stillUsed = SVC.some(function(s){ return s.cat === cat; });
+    if(!stillUsed){
+      CATS = CATS.filter(function(c){ return c !== cat; });
+      console.log("[_runForfaitDelete] famille vid\u00e9e \u2192 retir\u00e9e de CATS");
+    } else {
+      console.log("[_runForfaitDelete] famille conserv\u00e9e (services simples restants)");
+    }
     window._forfCat = "all";
     if(typeof saveSalonConfig === "function"){
       console.log("[_runForfaitDelete] calling saveSalonConfig...");
@@ -9527,10 +9540,16 @@ async function _doDeleteCategoryFlow(catName, svcs){
       return false;
     }
   }
-  // 2. \u00c9tat local
-  SVC=SVC.filter(function(s){return s.cat!==catName});
-  CATS=CATS.filter(function(c){return c!==catName});
-  aCat=CATS[0]||"";
+  // 2. \u00c9tat local : retire UNIQUEMENT les services qu'on a explicitement
+  //    supprim\u00e9s (pas tous les services de la cat). Les forfaits restent.
+  var deletedIds = svcs.map(function(s){return s.id;});
+  SVC = SVC.filter(function(s){ return deletedIds.indexOf(s.id) < 0; });
+  // Famille retir\u00e9e seulement si plus rien (forfait compris) ne pointe dessus
+  var stillUsed = SVC.some(function(s){ return s.cat === catName; });
+  if(!stillUsed){
+    CATS = CATS.filter(function(c){return c!==catName});
+    aCat = CATS[0] || "";
+  }
   // 3. Persistance config (cat\u00e9gories) \u2014 await aussi pour \u00eatre s\u00fbr
   if(typeof saveSalonConfig==="function") await saveSalonConfig();
   return true;
@@ -9538,28 +9557,31 @@ async function _doDeleteCategoryFlow(catName, svcs){
 function deleteCategory(){
   console.log("[deleteCategory] BUILD", window.__LUXYRA_BUILD, "aCat="+aCat);
   var catName=aCat;
-  // FIX sym\u00e9trie : supprimer TOUTES les prestations (simple + forfait)
-  // de la famille, pas juste les simples. Sinon le forfait restant
-  // ferait ressusciter la cat via la safety net au reload.
-  var svcs=SVC.filter(function(s){return s.cat===catName});
-  console.log("[deleteCategory] famille="+catName+" tous services dedans="+svcs.length);
-  // Compte s\u00e9par\u00e9ment forfaits / simples pour message clair
-  var nbForf = svcs.filter(function(s){return s.phases && s.phases.length > 1;}).length;
-  var nbSimp = svcs.length - nbForf;
-  var label;
-  if(nbForf === 0) label = nbSimp+" prestation"+(nbSimp>1?"s":"");
-  else if(nbSimp === 0) label = nbForf+" forfait"+(nbForf>1?"s":"");
-  else label = svcs.length+" prestation"+(svcs.length>1?"s":"")+" (dont "+nbForf+" forfait"+(nbForf>1?"s":"")+")";
+  // RESPECT DU SCOPE : depuis l'onglet Services on ne supprime QUE les
+  // prestations simples. Les forfaits multi-phase de cette famille
+  // restent intacts. La famille reste si encore utilis\u00e9e.
+  var svcs = SVC.filter(function(s){
+    return s.cat === catName && (!s.phases || s.phases.length <= 1);
+  });
+  var forfaitsRestants = SVC.filter(function(s){
+    return s.cat === catName && s.phases && s.phases.length > 1;
+  }).length;
+  console.log("[deleteCategory] famille="+catName+" prestations simples="+svcs.length+" forfaits_restants="+forfaitsRestants);
+  var label = svcs.length+" prestation"+(svcs.length>1?"s":"");
 
   if(svcs.length>0){
-    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?","Cette famille contient "+label+" qui seront \u00e9galement supprim\u00e9es.",function(){
+    var detailMsg = "Cette famille contient "+label+" qui seront supprim\u00e9es.";
+    if(forfaitsRestants > 0){
+      detailMsg += " ("+forfaitsRestants+" forfait"+(forfaitsRestants>1?"s":"")+" gard\u00e9"+(forfaitsRestants>1?"s":"")+" \u2014 supprimez-les depuis l'onglet Forfaits)";
+    }
+    showConfirmDelete("Supprimer la famille \u00ab"+catName+"\u00bb ?", detailMsg, function(){
       cM();
       setTimeout(function(){
         showConfirmDelete("\u26a0\ufe0f Confirmer la suppression ?",label+" seront d\u00e9finitivement perdues. Cette action est irr\u00e9versible.",function(){
           _doDeleteCategoryFlow(catName, svcs).then(function(ok){
             if(ok){
               cM(); go("services");
-              if(typeof toast==="function") toast("Famille et "+label+" supprim\u00e9es","success");
+              if(typeof toast==="function") toast(label+" supprim\u00e9es","success");
             }
           });
         });
