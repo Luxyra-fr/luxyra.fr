@@ -2657,16 +2657,29 @@ function _devisForfaitDetail(it){
   if(!it) return [];
   var details = [];
 
+  // Helper interne : pour une phase 'travail', résout le nom à afficher.
+  // Priorité : si phase.sId pointe vers un service du catalogue, prendre
+  // son nom à jour (résiste aux renommages). Fallback sur phase.l.
+  function _phaseLabel(p){
+    if(!p || p.t === "p") return null;
+    if(p.sId && typeof SVC !== "undefined" && Array.isArray(SVC)){
+      var sub = SVC.find(function(x){ return x.id === p.sId; });
+      if(sub && sub.n) return sub.n;
+    }
+    return p.l || null;
+  }
+
   // Cas A : item.sId pointe sur un SVC qui a des phases multi-étapes.
-  // C'est le cas RÉEL des "forfaits" Luxyra (services à phases multiples
-  // créés via "Nouvelle prestation" → ajout de phases). doAddTkSvc(svcId)
-  // pousse {sId: svcId} dans le panier. Les détails (Shampoing, Coupe,
-  // Mèches…) sont stockés dans SVC[svc].phases[].l.
+  // C'est le cas RÉEL des "forfaits" Luxyra (composés depuis le catalogue
+  // OU services à phases multiples manuels). doAddTkSvc(svcId) pousse
+  // {sId: svcId} dans le panier. Les détails sont reconstruits via les
+  // phases du service (avec résolution sId → nom à jour si dispo).
   if(it.sId && typeof SVC !== "undefined" && Array.isArray(SVC)){
     var svc = SVC.find(function(x){ return x.id === it.sId; });
     if(svc && Array.isArray(svc.phases) && svc.phases.length > 1){
       svc.phases.forEach(function(p){
-        if(p && p.l && p.t !== "p") details.push(p.l);
+        var label = _phaseLabel(p);
+        if(label) details.push(label);
       });
       if(details.length) return details;
     }
@@ -2677,7 +2690,8 @@ function _devisForfaitDetail(it){
   // du catalogue services).
   if(Array.isArray(it.phases) && it.phases.length > 1){
     it.phases.forEach(function(p){
-      if(p && p.l && p.t !== "p") details.push(p.l);
+      var label = _phaseLabel(p);
+      if(label) details.push(label);
     });
     if(details.length) return details;
   }
@@ -8652,11 +8666,15 @@ function rForfaits(){
     h+='<div style="flex:1;min-width:0">';
     h+='<div style="font-weight:700;font-size:14px">'+s.n+'</div>';
     h+='<div style="font-size:12px;color:var(--text2)">\u23f1 '+td+' min'+(pD>0?' (\u23f8 +'+pD+'min pause)':'')+'</div>';
-    // Phase pills
+    // Phase pills (r\u00e9soudre le nom via sId si dispo pour avoir le nom \u00e0 jour)
     h+='<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">';
     for(var pi=0;pi<s.phases.length;pi++){
       var ph=s.phases[pi];
-      if(ph.t==="w")h+='<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--green-bg);color:var(--green)">'+ph.l+' '+ph.d+'\'</span>';
+      if(ph.t==="w"){
+        var phLabel = ph.l;
+        if(ph.sId){ var phSvc=gS(ph.sId); if(phSvc) phLabel = phSvc.n; }
+        h+='<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--green-bg);color:var(--green)">'+(phLabel||'\u00c9tape')+' '+ph.d+'\'</span>';
+      }
       else h+='<span style="font-size:10px;padding:1px 6px;border-radius:8px;background:var(--orange-bg);color:var(--orange)">\u23f8 '+ph.d+'\'</span>';
     }
     h+='</div>';
@@ -8670,14 +8688,16 @@ function rForfaits(){
     h+='<div style="text-align:right;flex-shrink:0;min-width:80px">';
     h+='<div style="font-size:20px;font-weight:800;color:var(--gold)">'+s.p+'\u20ac</div>';
     h+='<div style="display:flex;gap:4px;margin-top:4px;justify-content:flex-end">';
-    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px" onclick="editService('+s.id+')">\u270f\ufe0f</button>';
+    h+='<button class="btn bs" style="font-size:11px;padding:4px 8px" onclick="addForfaitFromServices('+s.id+')" title="Modifier le forfait">\u270f\ufe0f</button>';
     h+='<button class="btn bs" class="btn-danger btn-icon" onclick="deleteService('+s.id+')">\ud83d\uddd1</button>';
     h+='</div></div></div>';
   }
-  // Button to create a new forfait
-  h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--border);background:transparent" onclick="addForfaitService()">';
-  h+='<div style="font-size:28px;opacity:.4">+</div>';
-  h+='<div style="font-size:13px;color:var(--text3);font-weight:600">Nouveau forfait (multi-\u00e9tapes)</div></div>';
+  // Button to create a new forfait \u2014 nouveau composer style Planity (s\u00e9lection
+  // de services existants + pauses)
+  h+='<div class="card" style="text-align:center;cursor:pointer;border:2px dashed var(--gold);background:rgba(212,168,67,.04)" onclick="addForfaitFromServices()">';
+  h+='<div style="font-size:28px;color:var(--gold);opacity:.7">+</div>';
+  h+='<div style="font-size:13px;color:var(--gold);font-weight:700">Nouveau forfait</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">Composez \u00e0 partir de vos prestations + pauses</div></div>';
   // Category management
   h+='<div style="display:flex;gap:8px;margin-top:12px;justify-content:center">';
   h+='<button class="btn bs" style="font-size:12px;padding:6px 10px" onclick="addCategory()">+ Famille</button>';
@@ -8723,6 +8743,285 @@ function doAddForfait(){
   FORFAITS.push({id:id,n:name,p:price,cat:cat,services:svcs,dur:dur,phases:[{t:"w",d:dur,l:name}]});
   saveForfaitsToSupabase();
   cM();go("services");
+}
+
+// ============================================================
+// FORFAIT COMPOSER — STYLE PLANITY / LS COIFFURE
+// Le forfait est un service à phases multiples, où chaque phase "travail"
+// référence un service existant (sId). Les pauses sont insérées entre.
+// Stocké dans SVC[] avec phases = [{t:'w',sId,d,l}, {t:'p',d}, ...]
+// ============================================================
+function addForfaitFromServices(editSvcId){
+  // Charge un draft : nouveau ou édition d'un forfait existant
+  if(editSvcId){
+    var existing = gS(editSvcId);
+    if(existing){
+      window._forfaitDraft = {
+        editId: editSvcId,
+        name: existing.n,
+        price: existing.p,
+        cat: existing.cat || CATS[0] || "",
+        showSite: existing.showSite !== false,
+        bookOnline: existing.bookOnline !== false,
+        steps: (existing.phases || []).map(function(ph){
+          return ph.t === "p"
+            ? { type: "pause", duration: ph.d || 15 }
+            : { type: "service", sId: ph.sId || null, name: ph.l || "Étape", duration: ph.d || 15 };
+        })
+      };
+    }
+  }
+  if(!window._forfaitDraft){
+    window._forfaitDraft = { editId:null, name:"", price:0, cat:CATS[0]||"", showSite:true, bookOnline:true, steps:[] };
+  }
+  _renderForfaitComposer();
+}
+
+function _renderForfaitComposer(){
+  var d = window._forfaitDraft;
+
+  // Total durée + somme prix des services référencés (pour suggérer un prix)
+  var totalDur = 0;
+  var sumServicesPrice = 0;
+  d.steps.forEach(function(s){
+    totalDur += (s.duration || 0);
+    if(s.type === "service" && s.sId){
+      var svc = gS(s.sId);
+      if(svc) sumServicesPrice += Number(svc.p) || 0;
+    }
+  });
+
+  var h = '<div class="mbox" style="max-height:90vh;overflow-y:auto;max-width:520px">';
+  h += '<h2 style="margin-bottom:6px">'+(d.editId?'✏️ Modifier le forfait':'📦 Nouveau forfait')+'</h2>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Composez à partir de vos prestations existantes</div>';
+
+  // Nom + Prix + Catégorie
+  h += '<div class="fg"><label>Nom *</label><input id="fcName" value="'+(d.name||'').replace(/"/g,'&quot;')+'" placeholder="Ex: Pack Mariée" oninput="window._forfaitDraft.name=this.value"></div>';
+
+  h += '<div style="display:flex;gap:10px">';
+  h += '<div class="fg" style="flex:1"><label>Prix forfait (€) *</label><input type="number" id="fcPrice" min="0" step="1" value="'+(d.price||0)+'" style="font-size:16px;font-weight:700;text-align:center" oninput="window._forfaitDraft.price=parseFloat(this.value)||0;_updateForfaitTotalLabels()"></div>';
+  h += '<div class="fg" style="flex:1"><label>Catégorie</label><select id="fcCat" onchange="window._forfaitDraft.cat=this.value">';
+  for(var ci=0;ci<CATS.length;ci++) h += '<option value="'+CATS[ci]+'"'+(d.cat===CATS[ci]?' selected':'')+'>'+CATS[ci]+'</option>';
+  h += '</select></div>';
+  h += '</div>';
+
+  if(sumServicesPrice > 0 && Math.abs(sumServicesPrice - (d.price||0)) > 0.5){
+    h += '<div style="margin:-6px 0 12px;font-size:11px;color:var(--text3);text-align:right;cursor:pointer" onclick="window._forfaitDraft.price='+sumServicesPrice+';_renderForfaitComposer()">Prix services individuels: <strong style="color:var(--gold)">'+sumServicesPrice.toFixed(2)+' €</strong> · cliquer pour appliquer</div>';
+  }
+
+  // Visibilité
+  h += '<div style="display:flex;gap:8px;margin-bottom:14px">';
+  h += '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border2);border-radius:8px;cursor:pointer;font-size:12px"><input type="checkbox" '+(d.showSite?'checked':'')+' onchange="window._forfaitDraft.showSite=this.checked"> 🌐 Site</label>';
+  h += '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border2);border-radius:8px;cursor:pointer;font-size:12px"><input type="checkbox" '+(d.bookOnline?'checked':'')+' onchange="window._forfaitDraft.bookOnline=this.checked"> 📅 Réservation</label>';
+  h += '</div>';
+
+  // === COMPOSITION ===
+  h += '<div style="margin-bottom:14px">';
+  h += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Composition (étapes du forfait)</div>';
+
+  if(!d.steps.length){
+    h += '<div style="padding:18px;background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.1);border-radius:10px;text-align:center;color:var(--text3);font-size:13px">Ajoutez au moins une prestation ci-dessous</div>';
+  } else {
+    for(var k=0; k<d.steps.length; k++){
+      var st = d.steps[k];
+      var isPause = st.type === "pause";
+      var bg = isPause ? 'rgba(255,152,0,.08)' : 'rgba(74,222,128,.06)';
+      var borderC = isPause ? 'rgba(255,152,0,.3)' : 'rgba(74,222,128,.25)';
+      var labelC = isPause ? '#ff9800' : '#4ade80';
+
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:10px;background:'+bg+';border:1px solid '+borderC+';border-radius:10px;margin-bottom:6px">';
+      // Up/Down arrows
+      h += '<div style="display:flex;flex-direction:column;gap:2px">';
+      h += '<button onclick="_forfaitMoveStep('+k+',-1)" '+(k===0?'disabled':'')+' style="width:22px;height:18px;border:none;background:rgba(255,255,255,.06);color:#fff;cursor:'+(k===0?'not-allowed':'pointer')+';border-radius:4px;font-size:10px;'+(k===0?'opacity:.3':'')+'">▲</button>';
+      h += '<button onclick="_forfaitMoveStep('+k+',1)" '+(k===d.steps.length-1?'disabled':'')+' style="width:22px;height:18px;border:none;background:rgba(255,255,255,.06);color:#fff;cursor:'+(k===d.steps.length-1?'not-allowed':'pointer')+';border-radius:4px;font-size:10px;'+(k===d.steps.length-1?'opacity:.3':'')+'">▼</button>';
+      h += '</div>';
+
+      h += '<div style="flex:1;min-width:0">';
+      if(isPause){
+        h += '<div style="font-weight:700;font-size:13px;color:'+labelC+'">⏸ Pause</div>';
+        h += '<div style="font-size:11px;color:var(--text3)">Le coiffeur peut s\'occuper d\'un autre client</div>';
+      } else {
+        // Resolve current name from SVC (in case service was renamed)
+        var currentSvc = st.sId ? gS(st.sId) : null;
+        var displayName = currentSvc ? currentSvc.n : (st.name || 'Prestation supprimée');
+        h += '<div style="font-weight:700;font-size:13px;color:'+labelC+'">✂️ '+displayName+'</div>';
+        if(currentSvc){
+          h += '<div style="font-size:11px;color:var(--text3)">'+(Number(currentSvc.p)||0).toFixed(2)+' € (prix individuel)</div>';
+        } else if(st.sId){
+          h += '<div style="font-size:11px;color:#f87171">⚠ Service supprimé du catalogue</div>';
+        }
+      }
+      h += '</div>';
+
+      // Duration controls
+      h += '<div style="display:flex;align-items:center;gap:4px">';
+      h += '<button onclick="_forfaitStepDur('+k+',-5)" style="width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700">-</button>';
+      h += '<span style="min-width:40px;text-align:center;font-weight:700;font-size:12px">'+(st.duration||0)+' min</span>';
+      h += '<button onclick="_forfaitStepDur('+k+',5)" style="width:24px;height:24px;border-radius:5px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:#fff;cursor:pointer;font-weight:700">+</button>';
+      h += '</div>';
+
+      // Remove
+      h += '<button onclick="_forfaitDelStep('+k+')" style="border:none;background:none;color:#f87171;cursor:pointer;padding:4px;font-size:18px" title="Retirer">×</button>';
+      h += '</div>';
+    }
+  }
+
+  // Boutons d'ajout
+  h += '<div style="display:flex;gap:8px;margin-top:8px">';
+  h += '<button onclick="_forfaitOpenSvcPicker()" style="flex:2;padding:10px;border:1px dashed rgba(74,222,128,.4);border-radius:10px;background:rgba(74,222,128,.05);color:#4ade80;font-weight:700;font-size:13px;cursor:pointer">+ Ajouter une prestation</button>';
+  h += '<button onclick="_forfaitAddPause()" style="flex:1;padding:10px;border:1px dashed rgba(255,152,0,.4);border-radius:10px;background:rgba(255,152,0,.06);color:#ff9800;font-weight:700;font-size:13px;cursor:pointer">+ Pause</button>';
+  h += '</div>';
+  h += '</div>';
+
+  // Total
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px;background:rgba(212,168,67,.08);border-radius:10px;margin-bottom:14px">';
+  h += '<span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">Durée totale</span>';
+  h += '<strong style="font-size:18px;color:var(--gold)">'+totalDur+' min</strong>';
+  h += '</div>';
+
+  // Actions
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button onclick="window._forfaitDraft=null;cM()" style="flex:1;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Annuler</button>';
+  var saveDisabled = !d.name || !d.price || !d.steps.length;
+  h += '<button onclick="_forfaitSave()" '+(saveDisabled?'disabled':'')+' style="flex:1;padding:12px;border:none;border-radius:10px;background:'+(saveDisabled?'rgba(255,255,255,.06)':'linear-gradient(135deg,#d4a843,#b8960f)')+';color:'+(saveDisabled?'rgba(255,255,255,.3)':'#000')+';font-weight:700;cursor:'+(saveDisabled?'not-allowed':'pointer')+'">'+(d.editId?'Enregistrer':'Créer le forfait')+'</button>';
+  h += '</div>';
+  h += '</div>';
+
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+function _updateForfaitTotalLabels(){ /* placeholder for live update of price hint */ _renderForfaitComposer(); }
+
+function _forfaitMoveStep(idx, delta){
+  var d = window._forfaitDraft;if(!d)return;
+  var ni = idx + delta;
+  if(ni < 0 || ni >= d.steps.length) return;
+  var tmp = d.steps[idx]; d.steps[idx] = d.steps[ni]; d.steps[ni] = tmp;
+  _renderForfaitComposer();
+}
+function _forfaitDelStep(idx){
+  var d = window._forfaitDraft;if(!d)return;
+  d.steps.splice(idx,1);
+  _renderForfaitComposer();
+}
+function _forfaitStepDur(idx, delta){
+  var d = window._forfaitDraft;if(!d||!d.steps[idx])return;
+  d.steps[idx].duration = Math.max(5, (d.steps[idx].duration||0) + delta);
+  _renderForfaitComposer();
+}
+function _forfaitAddPause(){
+  var d = window._forfaitDraft;if(!d)return;
+  d.steps.push({ type:"pause", duration:15 });
+  _renderForfaitComposer();
+}
+
+// Picker de prestations existantes (overlay) — exclut les services qui sont
+// eux-mêmes des forfaits (pour éviter les compositions imbriquées confuses).
+function _forfaitOpenSvcPicker(){
+  var simpleSvc = (SVC || []).filter(function(s){
+    return !s.phases || s.phases.length <= 1;
+  });
+
+  var h = '<div class="mbox" style="max-width:460px;max-height:80vh;overflow-y:auto"><h2>Ajouter une prestation</h2>';
+  h += '<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Sélectionnez dans votre catalogue</div>';
+
+  if(!simpleSvc.length){
+    h += '<div style="padding:20px;text-align:center;color:var(--text3);font-size:13px">Aucune prestation simple. Créez-en d\'abord depuis l\'onglet Prestations.</div>';
+    h += '<button onclick="_renderForfaitComposer()" style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Retour</button>';
+  } else {
+    h += '<div style="display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow-y:auto;margin-bottom:14px">';
+    var byCat = {};
+    simpleSvc.forEach(function(s){ var c=s.cat||"Autre"; (byCat[c]=byCat[c]||[]).push(s); });
+    Object.keys(byCat).sort().forEach(function(cat){
+      h += '<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.5px;margin:8px 0 4px">'+cat+'</div>';
+      byCat[cat].forEach(function(s){
+        var dur = (s.phases && s.phases[0]) ? s.phases[0].d : 15;
+        h += '<button onclick="_forfaitAddSvc('+s.id+')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid rgba(255,255,255,.06);border-radius:10px;background:rgba(255,255,255,.03);color:#fff;cursor:pointer;text-align:left;gap:10px">';
+        h += '<span style="flex:1;font-size:13px">'+(s.n||'-')+' <span style="color:var(--text3);font-size:11px">· '+dur+' min</span></span>';
+        h += '<strong style="color:var(--gold);font-size:13px">'+(Number(s.p)||0).toFixed(2)+' €</strong>';
+        h += '</button>';
+      });
+    });
+    h += '</div>';
+    h += '<button onclick="_renderForfaitComposer()" style="width:100%;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Annuler</button>';
+  }
+  h += '</div>';
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="_renderForfaitComposer()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+function _forfaitAddSvc(svcId){
+  var d = window._forfaitDraft;if(!d)return;
+  var svc = gS(svcId);if(!svc){_renderForfaitComposer();return;}
+  // Durée de base = somme des phases du service (ou 15 min par défaut)
+  var dur = 0;
+  if(svc.phases && svc.phases.length) svc.phases.forEach(function(p){ if(p.t!=="p") dur += (p.d||0); });
+  if(!dur) dur = 15;
+  // Auto-increase price (suggested = sum of services)
+  d.steps.push({ type:"service", sId:svcId, name:svc.n, duration:dur });
+  // Pré-remplir le nom du forfait à partir des services choisis (si vide)
+  if(!d.name){
+    d.name = d.steps.filter(function(s){return s.type==="service";}).map(function(s){return s.name;}).join(" + ");
+  }
+  // Pré-remplir le prix avec la somme des services (si user n'a pas encore touché)
+  if(!d.price || d.price === 0){
+    var sum = 0;
+    d.steps.forEach(function(s){ if(s.type==="service" && s.sId){ var sv=gS(s.sId); if(sv) sum += Number(sv.p)||0; } });
+    d.price = sum;
+  }
+  _renderForfaitComposer();
+}
+
+// Sauvegarde le forfait dans SVC[] (création ou édition). Le forfait est
+// un service à phases multiples, où chaque phase 'travail' référence un
+// service existant via sId pour résoudre le nom à jour à l'affichage.
+function _forfaitSave(){
+  var d = window._forfaitDraft;
+  if(!d || !d.name || !d.price || !d.steps.length){
+    if(typeof toast === "function") toast("Nom, prix et au moins une étape requis","warning");
+    return;
+  }
+  var phases = d.steps.map(function(s){
+    if(s.type === "pause") return { t:"p", d: s.duration||15 };
+    var svc = s.sId ? gS(s.sId) : null;
+    return { t:"w", d: s.duration||15, sId: s.sId||null, l: svc ? svc.n : (s.name || "Étape") };
+  });
+
+  if(d.editId){
+    // Update existant
+    for(var i=0;i<SVC.length;i++){
+      if(SVC[i].id === d.editId){
+        SVC[i].n = d.name;
+        SVC[i].p = d.price;
+        SVC[i].cat = d.cat;
+        SVC[i].phases = phases;
+        SVC[i].showSite = d.showSite;
+        SVC[i].bookOnline = d.bookOnline;
+        break;
+      }
+    }
+  } else {
+    // Création
+    var newId = SVC.length ? Math.max.apply(null, SVC.map(function(s){return s.id;})) + 1 : 1;
+    SVC.push({
+      id: newId,
+      n: d.name,
+      p: d.price,
+      cat: d.cat || CATS[0] || "Forfaits",
+      phases: phases,
+      showSite: !!d.showSite,
+      bookOnline: !!d.bookOnline
+    });
+  }
+
+  if(typeof saveServices === "function") saveServices();
+  if(typeof saveSalonConfig === "function") saveSalonConfig();
+  if(typeof saveSiteConfig === "function") saveSiteConfig();
+
+  window._forfaitDraft = null;
+  window._svcTab = "forfaits";
+  cM();
+  go("services");
+  if(typeof toast === "function") toast(d.editId ? "Forfait mis à jour" : "Forfait créé","success");
 }
 
 function editForfait(idx){
