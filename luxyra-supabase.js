@@ -1,8 +1,8 @@
 // ============================================================
 // LUXYRA — MODULE SUPABASE (luxyra-supabase.js)
 // ============================================================
-// BUILD: 20260425-18
-window.__LUXYRA_BUILD = "20260425-18";
+// BUILD: 20260426-01 — fiche technique étendue persistée (clients.fiche_tech jsonb)
+window.__LUXYRA_BUILD = "20260426-01";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -463,7 +463,7 @@ async function loadSalonData() {
     var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom");
     if (clRes.data) {
       CL = clRes.data.map(function(c) {
-        return {
+        var obj = {
           id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
           ph: c.telephone, ph2: c.telephone2, em: c.email,
           adr: c.adresse, cp: c.cp, ville: c.ville, ddn: c.date_naissance,
@@ -474,6 +474,18 @@ async function loadSalonData() {
           smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
           clientBeautyproId: c.client_beautypro_id || null
         };
+        // Déballe la fiche technique étendue (peau, ongles, bien-être,
+        // formules couleur, photos…) sur l'objet client. Le code UI
+        // existant lit directement c.typePeau / c.formules / c.photos /
+        // etc. — pas besoin de toucher au rendu.
+        if (c.fiche_tech && typeof c.fiche_tech === "object") {
+          for (var k in c.fiche_tech) {
+            if (Object.prototype.hasOwnProperty.call(c.fiche_tech, k)) {
+              obj[k] = c.fiche_tech[k];
+            }
+          }
+        }
+        return obj;
       });
     }
   } catch(e) { console.warn("[loadSalonData] clients skipped", e); }
@@ -853,9 +865,36 @@ function startOffline() {
 // SAVE DATA — Sauvegarder vers Supabase après chaque action
 // ============================================================
 
+// Liste des clés qui partent dans la colonne fiche_tech (JSONB).
+// Tout ce qui n'est PAS déjà mappé sur une colonne dédiée (nom, email,
+// nature_cheveux, etc.) et qui appartient à la fiche technique étendue
+// passe par ici. Ça évite de multiplier les colonnes spécifiques métier.
+var _FICHE_TECH_KEYS = [
+  // Cheveux étendus (en plus de nat/type/det déjà persistés)
+  "longueurChev","cuirChev","allergiesChev","formules",
+  // Peau (esthétique)
+  "typePeau","phototype","pbPeau","pilosite","zonesEpil",
+  "allergiesPeau","dernierSoinPeau","detPeau",
+  // Ongles
+  "etatOngles","formeOngles","tailleCapsules","techniqueOngles",
+  "couleursOngles","allergiesOngles","detOngles",
+  // Bien-être
+  "objectifBE","pressionBE","dureeBE","frequenceBE",
+  "zonesSensibles","contrIndBE","detBE",
+  // Photos avant/après
+  "photos"
+];
+
 // Sauvegarder un client (create ou update)
 async function saveClient(client) {
   if (!_isOnline || !_salonId) return;
+  // Construit le bucket fiche_tech à partir des champs étendus présents
+  // sur l'objet client en mémoire. On ne pousse que les valeurs définies
+  // pour ne pas écraser une fiche existante avec des undefined.
+  var ft = {};
+  _FICHE_TECH_KEYS.forEach(function(k){
+    if (client[k] !== undefined && client[k] !== null) ft[k] = client[k];
+  });
   var data = {
     salon_id: _salonId,
     nom: client.nom, prenom: client.pre, sexe: client.sex,
@@ -865,7 +904,8 @@ async function saveClient(client) {
     nature_cheveux: client.natChev, type_cheveux: client.typeChev,
     details_cheveux: client.detChev, collab_pref: client.collab,
     actif: client.actif, points_fidelite: client.fid,
-    sms_ok: client.smsOk, email_ok: client.emOk, fiches: client.fiches || []
+    sms_ok: client.smsOk, email_ok: client.emOk, fiches: client.fiches || [],
+    fiche_tech: ft
   };
   // UUID = update, local ID = insert
   if (client.id && client.id.indexOf("-") > 0 && client.id.length > 30) {
