@@ -984,9 +984,10 @@ async function editOperateur(opId) {
   htm += '<option value="admin"'+(role==="admin"?" selected":"")+'>\ud83d\udc51 Administrateur (PIN 6 chiffres)</option>';
   htm += '</select></div>';
   
-  // Lien optionnel avec un coiffeur du planning
+  // Lien optionnel avec un collaborateur du planning (label adapt\u00e9 au m\u00e9tier)
   if (coiffeurs.length) {
-    htm += '<div class="fg"><label>Li\u00e9 \u00e0 un coiffeur du planning (facultatif)</label>';
+    var _cLab = (typeof getCollabLabel === "function") ? getCollabLabel().toLowerCase() : "collaborateur";
+    htm += '<div class="fg"><label>Li\u00e9 \u00e0 un '+_cLab+' du planning (facultatif)</label>';
     htm += '<select id="opCollabLink"><option value="">Aucun \u2014 op\u00e9rateur uniquement</option>';
     for (var c=0; c<coiffeurs.length; c++) {
       var ck = coiffeurs[c];
@@ -994,7 +995,7 @@ async function editOperateur(opId) {
       htm += '<option value="'+ck.id+'"'+sel+'>'+ck.n+'</option>';
     }
     htm += '</select>';
-    htm += '<div style="font-size:11px;color:var(--text3);margin-top:4px">Si li\u00e9, les RDV r\u00e9alis\u00e9s par cet op\u00e9rateur seront attribu\u00e9s \u00e0 ce coiffeur.</div></div>';
+    htm += '<div style="font-size:11px;color:var(--text3);margin-top:4px">Si li\u00e9, les RDV r\u00e9alis\u00e9s par cet op\u00e9rateur seront attribu\u00e9s \u00e0 ce '+_cLab+'.</div></div>';
   }
   
   // PIN section
@@ -1195,7 +1196,7 @@ async function saveCollabAccount(collabId) {
   var _collabIdStr = String(collabId);
   var existing = OPERATEURS.find(function(o){return o.collab_id != null && String(o.collab_id) === _collabIdStr;});
   if (existing) {
-    toast("Un compte existe d\u00e9j\u00e0 pour ce coiffeur", "warning");
+    toast("Un compte existe d\u00e9j\u00e0 pour ce "+((typeof getCollabLabel==="function")?getCollabLabel().toLowerCase():"collaborateur"), "warning");
     return;
   }
   var nameParts = (collab.n||"").split(" ");
@@ -1314,9 +1315,10 @@ async function savePermsUI(opId) {
   }
 }
 
-// Supprimer le compte de connexion d'un coiffeur (mais garder le coiffeur)
+// Supprimer le compte de connexion d'un collaborateur (mais garder le collab)
 function removeCollabAccountUI(opId, collabId) {
-  showConfirm("Supprimer le compte de connexion ? Le coiffeur restera dans le planning mais ne pourra plus se connecter.", function(){
+  var _cLab = (typeof getCollabLabel === "function") ? getCollabLabel().toLowerCase() : "collaborateur";
+  showConfirm("Supprimer le compte de connexion ? Le "+_cLab+" restera dans le planning mais ne pourra plus se connecter.", function(){
     deleteOperateur(opId).then(function(ok){
       if (ok) {
         toast("Compte supprim\u00e9", "success");
@@ -2122,11 +2124,14 @@ function calcFraisDeplacement(distKm){
 function getCollabLabel(){var mc=getMetierConfig();return mc.collabLabel;}
 document.addEventListener("DOMContentLoaded",function(){var el=document.getElementById("salonName");if(el)el.textContent=SALON_CONFIG.nom;});
 
+// Placeholders pour démos hors-ligne uniquement. Surchargés par loadSalonData
+// avec les vrais collaborateurs du salon dès la connexion. Noms génériques
+// (Membre 1/2) pour ne pas hardcoder un métier précis.
 var T=[
-  {id:1,n:"Coiffeur 1",i:"C1",c:"#c9a227",img:"",
+  {id:1,n:"Membre 1",i:"M1",c:"#c9a227",img:"",
    hrs:{0:null,1:{o:"14:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}}
   },
-  {id:2,n:"Coiffeur 2",i:"C2",c:"#7d3c98",img:"",
+  {id:2,n:"Membre 2",i:"M2",c:"#7d3c98",img:"",
    hrs:{0:null,1:{o:"14:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}}
   }
 ];
@@ -4845,7 +4850,12 @@ var SVC=[
 ];
 var FORFAITS=[];
 
-var CATS=["Coupe","Brushing","Coloration","M\u00e8ches","Soins","Permanente","Homme"];
+// Cat\u00e9gories par d\u00e9faut. Si le salon n'a aucun service \u00e0 l'init, on prend
+// les defaultCats du m\u00e9tier configur\u00e9 (cf. METIER_CONFIG). Sinon les
+// cat\u00e9gories sont reconstruites depuis les services charg\u00e9s.
+var CATS=(typeof METIER_CONFIG!=="undefined" && SALON_CONFIG && SALON_CONFIG.metier && METIER_CONFIG[SALON_CONFIG.metier])
+  ? METIER_CONFIG[SALON_CONFIG.metier].defaultCats.slice()
+  : ["Coupe","Brushing","Coloration","M\u00e8ches","Soins","Permanente","Homme"];
 
 var PRODS=[];
 var PCATS=[];
@@ -4868,7 +4878,9 @@ if(!window.CAISSE_DATA)window.CAISSE_DATA={fond:200,coffreEsp:0,coffreChq:0,remi
 var _lastTicketHash="00000000";
 (function(){var doneH=AP.filter(function(a){return a.hash;});if(doneH.length){_lastTicketHash=doneH[doneH.length-1].hash||"00000000";}})();
 
-var calD=new Date(TD),aCat="Coupe",aPCat="all",cFi="all",cSr="",accM=TD.slice(0,7),selCl=null,uid=0;
+// aCat = catégorie active dans l'UI services. Prend la 1ère catégorie du
+// salon (varie selon métier) plutôt que "Coupe" hardcodé.
+var calD=new Date(TD),aCat=(CATS&&CATS.length?CATS[0]:""),aPCat="all",cFi="all",cSr="",accM=TD.slice(0,7),selCl=null,uid=0;
 if(!window._planDays)window._planDays=1;
 function U(){return"u"+(++uid)+"_"+Date.now().toString(36);}
 function gS(id){for(var i=0;i<SVC.length;i++)if(SVC[i].id===id)return SVC[i];return null;}
