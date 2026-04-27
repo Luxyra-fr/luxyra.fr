@@ -579,3 +579,21 @@ WHERE schemaname='public'
 - Autocomplete temps réel dans la search bar
 - Géocodage automatique des nouveaux salons à l'inscription (trigger Postgres ou edge function)
 - Fiche salon avec mini-map intégrée (la lat/lng est désormais dispo)
+
+### Session 2026-04-27 (suite 6) — Hotfixes UX page recherche (logos + carte FR)
+**Retours visuels Alexandre après test** :
+- Logo Excellence Coiffure cropé dans la card (cover qui rogne)
+- Régions affichées en anglais sur la carte (London, Brittany, etc.)
+- Position du salon imprécise (mauvais côté de la rue)
+
+**Fixes** :
+1. `.salon-thumb img` : `object-fit: cover` → `contain` + `max-width/height` + padding 6px. Logos désormais affichés ENTIERS quel que soit leur ratio.
+2. Tile layer : CARTO Dark Matter (anglais) → **OSM France** (`https://tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png`) qui a les labels en français natif. Pour conserver le rendu sombre cohérent Luxyra : filter CSS sur `.leaflet-tile-pane` (les markers sont sur `.leaflet-marker-pane` séparé donc PAS affectés). Filter testé : `invert(0.94) hue-rotate(180deg) saturate(0.55) brightness(0.92) contrast(0.92)`.
+3. Position : vérifié via **BAN (api.adresse.data.gouv.fr)** — score 0.96, mêmes coordonnées que Nominatim. C'est la donnée publique correcte mais le marker pointe au centre du tronçon de rue, pas du côté précis du numéro. Solution propre : Phase D = UI ajustement manuel.
+
+### Phase D (à faire dans une session future) — UI géolocalisation salon
+- Dans Paramètres → Site (app.html), afficher une mini-map Leaflet centrée sur les coordonnées actuelles du salon
+- Marker draggable : le salon ajuste sa position au pixel près
+- Champ texte adresse + bouton "Re-géocoder via BAN" pour recalculer auto si l'adresse change
+- À l'inscription d'un nouveau salon (`inscription.html`) : géocodage automatique via BAN dès la saisie de l'adresse
+- Optionnel : trigger Postgres `BEFORE UPDATE` qui re-géocode si `adresse/cp/ville` changent (via pg_net + BAN)
