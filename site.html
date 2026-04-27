@@ -498,14 +498,18 @@ async function loadSalon(){
       });
     }
     
-    // 4. Services
-    var sv=await sb.from("services").select("*").eq("salon_id",salonId).order("nom");
+    // 4. Services — on charge uniquement ceux actifs ET bookables ET visibles site.
+    // Les flags DB (actif/book_online/show_site) sont la source de vérité.
+    // La whitelist legacy SITE_CFG.svcOnline est ignorée si elle existe :
+    // les pros gèrent maintenant la visibilité par les 3 flags directement.
+    var sv=await sb.from("services").select("*")
+      .eq("salon_id",salonId)
+      .eq("actif",true)
+      .eq("book_online",true)
+      .eq("show_site",true)
+      .order("nom");
     if(sv.data){
       SERVICES=sv.data.map(function(s){return{id:s.id,n:s.nom,p:Number(s.prix),cat:s.categorie,phases:s.phases||[]};});
-      // Filter by online config
-      if(SITE_CFG.svcOnline&&SITE_CFG.svcOnline.length>0){
-        SERVICES=SERVICES.filter(function(s){return SITE_CFG.svcOnline.indexOf(s.id)>=0;});
-      }
     }
     
     // 5. Products
