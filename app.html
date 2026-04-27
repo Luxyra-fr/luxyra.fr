@@ -301,7 +301,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260427-02"></script>
+<script src="luxyra-supabase.js?v=20260427-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -7628,6 +7628,182 @@ function loadSiteConfig(){
   }
 }
 
+// ============================================================================
+// SALON LOCATION — mini-map Leaflet draggable dans Paramètres
+// Charge Leaflet à la demande (pas de coût initial sur autres pages)
+// ============================================================================
+function loadLeaflet(cb){
+  if(window.L){ cb(); return; }
+  var css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+  document.head.appendChild(css);
+  var sc = document.createElement('script');
+  sc.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  sc.onload = cb;
+  sc.onerror = function(){ console.warn('Leaflet load failed'); };
+  document.head.appendChild(sc);
+}
+
+window._locMap = null;
+window._locMarker = null;
+
+async function geocodeBANSafe(adresse, cp, ville){
+  try {
+    var q = (adresse + " " + ville).trim();
+    if(!q) return null;
+    var url = "https://api-adresse.data.gouv.fr/search/?q=" + encodeURIComponent(q)
+            + (cp ? "&postcode=" + encodeURIComponent(cp) : "")
+            + "&limit=1&autocomplete=0";
+    var ctrl = new AbortController();
+    var to = setTimeout(function(){ctrl.abort();}, 5000);
+    var r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(to);
+    if(!r.ok) return null;
+    var data = await r.json();
+    var f = data && data.features && data.features[0];
+    if(!f || !f.geometry || !f.geometry.coordinates) return null;
+    return {
+      lng: Number(f.geometry.coordinates[0]),
+      lat: Number(f.geometry.coordinates[1]),
+      score: Number(f.properties && f.properties.score) || 0,
+      label: (f.properties && f.properties.label) || ""
+    };
+  } catch(e){ return null; }
+}
+
+function initSalonLocationMap(){
+  var el = document.getElementById('locMap');
+  if(!el || !_salonId) return;
+  // Détacher l'ancienne map si on re-render la page
+  if(window._locMap){ try{ window._locMap.remove(); }catch(e){} window._locMap = null; window._locMarker = null; }
+
+  loadLeaflet(async function(){
+    if(!document.getElementById('locMap')) return; // user a quitté la page
+    // Récupérer les coords actuelles depuis la DB
+    var current = { lat: null, lng: null };
+    try {
+      var r = await _sb.from('salons').select('latitude, longitude, adresse, cp, ville').eq('id', _salonId).single();
+      if(r.data){
+        current.lat = r.data.latitude !== null ? Number(r.data.latitude) : null;
+        current.lng = r.data.longitude !== null ? Number(r.data.longitude) : null;
+        current.adresse = r.data.adresse || '';
+        current.cp = r.data.cp || '';
+        current.ville = r.data.ville || '';
+      }
+    } catch(e){}
+
+    var status = document.getElementById('locMapStatus');
+    var coordsDisplay = document.getElementById('locCoords');
+
+    // Si pas de coords, tenter géocodage immédiat
+    if((current.lat == null || current.lng == null) && current.adresse){
+      if(status) status.innerHTML = '🔄 Géolocalisation de votre adresse en cours…';
+      var geo = await geocodeBANSafe(current.adresse, current.cp, current.ville);
+      if(geo){
+        current.lat = geo.lat; current.lng = geo.lng;
+        if(status) status.innerHTML = '✅ Position détectée automatiquement. Vous pouvez l\u0027affiner ci-dessous.';
+        // Save direct
+        await _sb.from('salons').update({ latitude: geo.lat, longitude: geo.lng, geocoded_at: new Date().toISOString() }).eq('id', _salonId);
+      } else {
+        if(status) status.innerHTML = '⚠️ Adresse non géolocalisée. Cliquez sur la carte pour placer votre salon.';
+        // Vue France par défaut
+        current.lat = 46.7; current.lng = 2.5;
+      }
+    }
+    if(current.lat == null || current.lng == null){
+      current.lat = 46.7; current.lng = 2.5;
+      if(status) status.innerHTML = '⚠️ Adresse non géolocalisée. Cliquez sur la carte ou utilisez "Recalculer".';
+    } else if(status && !status.innerHTML){
+      status.innerHTML = '✅ Position enregistrée. Glissez le repère pour ajuster.';
+    }
+
+    var hasReal = current.lat !== 46.7;
+    window._locMap = L.map('locMap', { zoomControl: true }).setView([current.lat, current.lng], hasReal ? 17 : 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap France', subdomains: 'abc', maxZoom: 20
+    }).addTo(window._locMap);
+
+    if(hasReal){
+      window._locMarker = L.marker([current.lat, current.lng], { draggable: true }).addTo(window._locMap);
+      updateLocCoordsDisplay(current.lat, current.lng);
+      window._locMarker.on('dragend', function(){
+        var p = window._locMarker.getLatLng();
+        saveLocation(p.lat, p.lng);
+      });
+    }
+    // Click sur la map = pose le marker à cet endroit
+    window._locMap.on('click', function(e){
+      if(!window._locMarker){
+        window._locMarker = L.marker(e.latlng, { draggable: true }).addTo(window._locMap);
+        window._locMarker.on('dragend', function(){
+          var p = window._locMarker.getLatLng();
+          saveLocation(p.lat, p.lng);
+        });
+      } else {
+        window._locMarker.setLatLng(e.latlng);
+      }
+      saveLocation(e.latlng.lat, e.latlng.lng);
+    });
+  });
+}
+
+function updateLocCoordsDisplay(lat, lng){
+  var el = document.getElementById('locCoords');
+  if(el) el.textContent = '📌 ' + Number(lat).toFixed(6) + ', ' + Number(lng).toFixed(6);
+}
+
+async function saveLocation(lat, lng){
+  if(!_salonId) return;
+  try {
+    var r = await _sb.from('salons').update({
+      latitude: Number(lat),
+      longitude: Number(lng),
+      geocoded_at: new Date().toISOString()
+    }).eq('id', _salonId);
+    if(r.error){
+      if(typeof toast === 'function') toast('Erreur: ' + r.error.message, 'error');
+      return;
+    }
+    updateLocCoordsDisplay(lat, lng);
+    var status = document.getElementById('locMapStatus');
+    if(status) status.innerHTML = '✅ Position enregistrée.';
+    if(typeof toast === 'function') toast('📍 Position mise à jour', 'success');
+  } catch(e){
+    if(typeof toast === 'function') toast('Erreur réseau', 'error');
+  }
+}
+
+async function locReGeocode(){
+  var status = document.getElementById('locMapStatus');
+  if(status) status.innerHTML = '🔄 Recalcul en cours…';
+  try {
+    var r = await _sb.from('salons').select('adresse, cp, ville').eq('id', _salonId).single();
+    if(!r.data) return;
+    var geo = await geocodeBANSafe(r.data.adresse, r.data.cp, r.data.ville);
+    if(!geo){
+      if(status) status.innerHTML = '⚠️ Adresse non géolocalisée. Vérifiez votre adresse dans la fiche salon.';
+      return;
+    }
+    await saveLocation(geo.lat, geo.lng);
+    if(window._locMap){
+      window._locMap.setView([geo.lat, geo.lng], 17);
+      if(window._locMarker){
+        window._locMarker.setLatLng([geo.lat, geo.lng]);
+      } else {
+        window._locMarker = L.marker([geo.lat, geo.lng], { draggable: true }).addTo(window._locMap);
+        window._locMarker.on('dragend', function(){
+          var p = window._locMarker.getLatLng();
+          saveLocation(p.lat, p.lng);
+        });
+      }
+    }
+    if(status) status.innerHTML = '✅ Recalculé : ' + (geo.label || 'position trouvée') + ' (précision ' + Math.round(geo.score*100) + '%). Vous pouvez encore affiner en glissant le repère.';
+  } catch(e){
+    if(status) status.innerHTML = '⚠️ Erreur lors du recalcul. Réessayez.';
+  }
+}
+
 function rSettings(){
   var settTab=window._settTab||"main";
   var h='';
@@ -8279,6 +8455,19 @@ function rSettings(){
       h+='<div style="background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.2);border-radius:10px;padding:12px;margin-top:10px;font-size:12px;color:var(--text2);line-height:1.6">✓ Le bouton "Demander un RDV sur mesure" apparaît sur votre page de réservation. Les demandes apparaissent ici dans l’app et par notification.</div>';
     }
     h+='</div>';
+
+    // === LOCALISATION SUR LA CARTE ===
+    h+='<div class="card"><div class="ct">📍 Votre emplacement sur la carte</div>';
+    h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:14px">Vos clientes vous trouvent grâce à votre position sur la carte de Luxyra. Si le repère n’est pas exactement au bon endroit (mauvais côté de la rue par exemple), <strong>déplacez-le</strong> avec votre souris ou doigt pour ajuster.</div>';
+    h+='<div id="locMapStatus" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>';
+    h+='<div id="locMap" style="width:100%;height:300px;border-radius:14px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:#0c0c12"></div>';
+    h+='<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">';
+    h+='<button class="btn bs" style="font-size:13px" onclick="locReGeocode()">🔄 Recalculer depuis mon adresse</button>';
+    h+='<div id="locCoords" style="font-size:11px;color:var(--text3);align-self:center"></div>';
+    h+='</div>';
+    h+='</div>';
+    // Init map après render (timeout pour laisser le DOM se construire)
+    setTimeout(initSalonLocationMap, 100);
 
   }
   

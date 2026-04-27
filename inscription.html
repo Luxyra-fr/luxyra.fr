@@ -282,6 +282,36 @@ function downloadContratPDF(signed){
   setTimeout(function(){w.print();},500);
 }
 
+// Géocode via BAN (Base d'Adresses Nationale) — gratuit, public, sans clé.
+// Retourne {lat, lng, score, label} ou null si non trouvé / API down.
+// Best-effort : ne bloque jamais le flow inscription.
+async function geocodeBANSafe(adresse, cp, ville){
+  try {
+    var q = (adresse + " " + ville).trim();
+    if(!q) return null;
+    var url = "https://api-adresse.data.gouv.fr/search/?q=" + encodeURIComponent(q)
+            + (cp ? "&postcode=" + encodeURIComponent(cp) : "")
+            + "&limit=1&autocomplete=0";
+    var ctrl = new AbortController();
+    var to = setTimeout(function(){ctrl.abort();}, 5000); // timeout 5s
+    var r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(to);
+    if(!r.ok) return null;
+    var data = await r.json();
+    var f = data && data.features && data.features[0];
+    if(!f || !f.geometry || !f.geometry.coordinates) return null;
+    return {
+      lng: Number(f.geometry.coordinates[0]),
+      lat: Number(f.geometry.coordinates[1]),
+      score: Number(f.properties && f.properties.score) || 0,
+      label: (f.properties && f.properties.label) || ""
+    };
+  } catch(e){
+    console.warn("geocodeBAN", e);
+    return null;
+  }
+}
+
 async function doSubmit(){
   DATA.cgvAccepted=document.getElementById("chkCGV")&&document.getElementById("chkCGV").checked;
   DATA.confAccepted=document.getElementById("chkConf")&&document.getElementById("chkConf").checked;
@@ -329,6 +359,11 @@ async function doSubmit(){
     // 4. Generate subdomain
     var subdomain=DATA.nom.trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,30);
 
+    // 4.5 Géocodage automatique via BAN (api.adresse.data.gouv.fr).
+    // Best-effort : si BAN échoue ou ne trouve pas, on enregistre quand même
+    // le salon (sans coords) — il pourra ajuster manuellement dans Paramètres.
+    var _geo = await geocodeBANSafe(DATA.adresse.trim(), DATA.cp.trim(), DATA.ville.trim());
+
     // 5. Create salon with signature
     // Store signature for signed PDF download
     window._lastSignature=signatureData;
@@ -352,6 +387,9 @@ async function doSubmit(){
       trial_end:trialEnd.toISOString().slice(0,10),
       subdomain:subdomain,
       verification_status:"pending",
+      latitude: _geo ? _geo.lat : null,
+      longitude: _geo ? _geo.lng : null,
+      geocoded_at: _geo ? new Date().toISOString() : null,
       config_json:JSON.stringify({nom:DATA.nom.trim(),metier:DATA.metier,
       forme_juridique:DATA.formeJur,mode_activite:DATA.modeActivite,adresse:DATA.adresse.trim(),cp:DATA.cp.trim(),ville:DATA.ville.trim(),tel:DATA.tel.trim()}),
       sms_credits:0,
