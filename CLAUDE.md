@@ -447,3 +447,34 @@ WHERE schemaname='public'
 
 **Migrations DB de cette phase** :
 - `create_clients_luxyra_view_alias` — vue lecture/écriture qui pointe vers `clients_beautypro`
+
+### Session 2026-04-27 (suite 3) — Phase 2 rebrand BeautyPro → Luxyra (call-sites + edge functions)
+**Phase 2A** — Migration cosmétique des call-sites HTML
+- 30 occurrences `BP.*` migrées vers `LX.*` dans site.html (13), compte.html (14), marketplace.html (2), inscription.html (1)
+- Cosmétique pur, l'alias window.LX === window.BP étant déjà en place. Zéro impact fonctionnel.
+- app.html non concerné (utilise Supabase Auth standard).
+
+**Phase 2B** — Edge functions lx-* en miroir des bp-*
+- Déployé `lx-signup`, `lx-login`, `lx-profile` v1 avec **exactement le même code** que les bp-* et le même `BP_SESSION_SECRET`. Conséquence : les tokens JWT créés par lx-* sont vérifiables par bp-* et inversement.
+- `bp-client.js` modifié : pointe maintenant sur les URLs `lx-*`. Les fonctions internes gardent les noms `bpSignup`, `bpLogin`, etc. (l'API publique window.BP / window.LX est inchangée).
+- Les anciennes `bp-*` restent ACTIVES en parallèle pour rétro-compat (sessions JWT existantes, versions cachées de bp-client.js).
+
+**Tests bout-en-bout Chrome (réels en prod)** :
+1. ✅ Session existante créée par `bp-signup` survit après bascule vers `lx-profile`
+2. ✅ `LX.get()` retourne le profil via `lx-profile` avec un JWT issu de `bp-signup` (interopérabilité confirmée)
+3. ✅ `LX.signup()` crée un nouveau compte via `lx-signup`, retourne user + token
+4. ✅ Aucune nouvelle exception console
+5. ✅ Migration zéro-downtime, zéro-déconnexion
+
+**Phase 3 — à faire dans une future session dédiée** (non urgent, après vérif que tout marche en prod plusieurs jours)
+- Renommer la table physique : `ALTER TABLE clients_beautypro RENAME TO clients_luxyra` + drop la vue alias actuelle. Penser à la rétro-compat via une vue `clients_beautypro` qui pointe vers la nouvelle table le temps que toutes les références au nom legacy disparaissent.
+- Supprimer les edge functions `bp-signup`, `bp-login`, `bp-profile` (après confirmation que plus rien ne les appelle).
+- Renommer `bp-client.js` → `lx-client.js` + bump cache-busting.
+- Supprimer l'alias `window.BP` (= window.LX seul).
+- Renommer la variable interne `bp_id` dans le JWT payload en `lx_id` (avec migration douce : verifySession accepte les deux pour les sessions en cours).
+
+**Migrations / déploiements de cette phase** :
+- Edge functions ajoutées : `lx-signup`, `lx-login`, `lx-profile`
+- Pas de migration DB (les noms physiques ne bougent pas en Phase 2)
+
+**Build** : aucune des autres features n'a été touchée. Ce rebrand est strictement additif et cosmétique pour cette phase.
