@@ -183,4 +183,12 @@
     getToken: getToken,
     checkPasswordLeaked: bpCheckPasswordLeaked
   };
+
+  // === Phase 1 rebrand BeautyPro → Luxyra ===
+  // Alias propre pour tout nouveau code : window.LX === window.BP.
+  // Le code existant utilisant BP.* continue de fonctionner exactement comme avant.
+  // En Phase 2 (future session), on migrera tous les call-sites vers LX.* puis on
+  // pourra supprimer l'alias BP. Aucun risque ici : ce sont les MÊMES fonctions,
+  // pas une copie — donc même comportement, mêmes sessions, mêmes localStorage keys.
+  window.LX = window.BP;
 })();
