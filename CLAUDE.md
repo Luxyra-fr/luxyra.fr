@@ -693,3 +693,38 @@ Total : 15 commits, ~3000 lignes de code, 5 nouvelles features majeures, 2 hotfi
 - `scrollToTarifCat(cat)` / `initTarifsScrollSpy()`
 - `initSalonMiniMap()` / `_renderSalonMiniMap(lat, lng)`
 - `adrFromSalon(s)`
+
+### Session 2026-04-27 (suite 9) — Hotfixes critiques + validation nouveau salon
+**Bugs critiques découverts en testant** :
+
+1. **Whitelist `services_en_ligne` obsolète** masquait des prestations actives :
+   - site.html chargeait toutes les prestations puis filtrait via `SITE_CFG.svcOnline` (= `site_config.services_en_ligne`)
+   - Excellence Coiffure avait 9 ids whitelistés sur 38 services actifs → 29 prestations cachées
+   - **Fix** : SELECT côté DB avec `actif=true AND book_online=true AND show_site=true`. La whitelist legacy n'est plus appliquée. Defaults DB sont à `true` sur les 3 flags donc tout nouveau service apparaît automatiquement.
+
+2. **Bug bloquant inscription nouveau salon** :
+   - `inscription.html` envoyait `telephone:DATA.tel.trim()` à l'INSERT salon
+   - Mais la table `salons` a la colonne `tel`, pas `telephone`
+   - **Toute tentative de signup échouait** avec `42703: column "telephone" does not exist`
+   - **Fix** : `telephone` → `tel` dans le payload INSERT salon (ligne 374). La colonne `telephone` reste dans inscriptions_log car cette table-là a bien `telephone`.
+
+**Test bout-en-bout nouveau salon** (créé via INSERT direct DB simulant post-inscription) :
+- ✅ Salon "Test Beauté Paris" créé avec lat/lng pré-géocodées
+- ✅ Hero affiché : "Test Beauté Paris" + "Institut de beauté · Paris"
+- ✅ 2 CTAs visibles
+- ✅ 3 blocs Le salon / L'équipe / Comment nous trouver
+- ✅ Mini-map Leaflet affichée avec marker
+- ✅ 1 collaborateur (Sophie) visible dans Équipe
+- ✅ 3 services visibles (Épilation, Corps, Visage)
+- ✅ Page Tarifs : 3 chips sticky + 3 catégories + 3 lignes prestations + 3 boutons Réserver
+- ✅ Téléphone 0140000000 affiché correctement
+- ✅ 0 erreur console
+
+**Defaults DB confirmés** sur la table services : `actif`, `book_online`, `show_site` sont tous à `true` par défaut. Donc tout pro qui crée une nouvelle prestation dans son app la voit automatiquement sur le site cliente.
+
+**Pour la commercialisation** : un pro qui s'inscrit aujourd'hui obtient automatiquement :
+- Sa fiche site.html?s=ID accessible
+- Hero pro avec ses infos
+- Mini-map à sa position (via géocodage BAN au signup)
+- Page Tarifs vide tant qu'il n'a pas créé de service, puis chaque service apparaît auto avec bouton Réserver
+- Booking flow fonctionnel
