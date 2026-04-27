@@ -53,11 +53,21 @@ body{font-family:var(--f2);background:var(--bg);color:var(--text);min-height:100
 .step-title{font-family:var(--f1);font-size:20px;font-weight:700}
 
 /* Service selection */
-.svc-card{padding:14px;border-radius:12px;cursor:pointer;border:2px solid rgba(200,168,78,.08);background:var(--bg3);transition:all .3s;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.svc-card{padding:14px;border-radius:12px;cursor:pointer;border:2px solid rgba(200,168,78,.08);background:var(--bg3);transition:all .3s;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px}
 .svc-card:hover{border-color:rgba(200,168,78,.25)}
 .svc-card.selected{border-color:var(--gold);background:rgba(200,168,78,.06)}
 .svc-card .n{font-weight:700;font-size:14px}.svc-card .d{font-size:12px;color:var(--text3);margin-top:2px}
 .svc-card .p{font-family:var(--f1);font-weight:800;font-size:18px;color:var(--gold)}
+.svc-card .chk{width:24px;height:24px;border-radius:8px;border:2px solid rgba(200,168,78,.25);background:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#0a0a0a;font-weight:900;font-size:14px;transition:all .2s}
+.svc-card.selected .chk{background:var(--gold);border-color:var(--gold)}
+.svc-card .body{flex:1;min-width:0}
+.book-cart{position:sticky;bottom:12px;z-index:30;background:linear-gradient(135deg,rgba(200,168,78,.14),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.35);border-radius:14px;padding:14px 16px;margin-top:16px;backdrop-filter:blur(8px);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.book-cart .bc-line{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--text2);padding:4px 0}
+.book-cart .bc-line .v{color:#fff;font-weight:700}
+.book-cart .bc-tot{border-top:1px solid rgba(200,168,78,.2);padding-top:8px;margin-top:6px;font-size:14px}
+.book-cart .bc-tot .v{font-family:var(--f1);font-size:18px;color:var(--gold);font-weight:900}
+.book-cart .bc-cta{margin-top:10px;width:100%}
+.book-cart-empty{font-size:12px;color:var(--text3);text-align:center;padding:6px 0}
 
 /* Collab selection */
 .collab-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
@@ -228,7 +238,37 @@ var salonId=params.get("s")||params.get("salon")||window.__SALON_ID||"";
 // State
 var SALON={},COLLABS=[],SERVICES=[],PRODUCTS=[],HORAIRES={},SITE_CFG={};
 var RDV_EXISTING=[];
-var booking={svcId:null,svc:null,collabId:null,collab:null,date:null,time:null};
+// booking.items[] = liste multi-prestations [{svcId,svc,duree,prix}]
+// booking.svcId/svc gardent l'item PRINCIPAL (le 1er) pour rétro-compat avec le reste du flow.
+// totalDuration et totalPrix sont (re)calculés via bookingTotals().
+var booking={items:[],svcId:null,svc:null,collabId:null,collab:null,date:null,time:null,duration:0,totalPrix:0};
+
+function bookingTotals(){
+  var dur=0,prix=0;
+  if(booking.items&&booking.items.length){
+    booking.items.forEach(function(it){dur+=(it.duree||0);prix+=(Number(it.prix)||0);});
+  }else if(booking.svc){
+    dur=booking.duration||30;prix=Number(booking.svc.p)||0;
+  }
+  booking.duration=dur||30;
+  booking.totalPrix=prix;
+  return {dur:booking.duration,prix:prix};
+}
+
+function bookingPrimaryNom(){
+  if(booking.items&&booking.items.length){
+    if(booking.items.length===1)return booking.items[0].nom;
+    return booking.items.map(function(i){return i.nom;}).join(" + ");
+  }
+  return booking.svc?booking.svc.n:"";
+}
+
+function bookingItemsPayload(){
+  if(!booking.items||!booking.items.length)return null;
+  return booking.items.map(function(it,idx){
+    return {service_id:it.svcId,nom:it.nom,prix:Number(it.prix)||0,duree:Number(it.duree)||0,ordre:idx};
+  });
+}
 var calMonth=new Date().getMonth(),calYear=new Date().getFullYear();
 
 // Multi-métier : labels adaptés selon le type d'activité du salon
@@ -828,32 +868,86 @@ function showPage(id){
 // ============================================================
 
 function renderBookingStep1(){
-  booking={svcId:null,svc:null,collabId:null,collab:null,date:null,time:null};
+  // Reset booking state but PRESERVE items if user revient sur step 1 depuis step 2
+  if(!booking.items)booking.items=[];
+  booking.collabId=null;booking.collab=null;booking.date=null;booking.time=null;
   var h='<div class="step active">';
-  h+='<div class="step-header"><div class="step-num">1</div><div class="step-title">Choisissez une prestation</div></div>';
+  h+='<div class="step-header"><div class="step-num">1</div><div class="step-title">Choisissez vos prestations</div></div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Vous pouvez en s\u00e9lectionner plusieurs \u2014 elles seront encha\u00een\u00e9es sur le m\u00eame cr\u00e9neau.</div>';
   // Group by cat
   var cats={};SERVICES.forEach(function(s){if(!cats[s.cat])cats[s.cat]=[];cats[s.cat].push(s);});
   for(var cat in cats){
     h+='<div style="font-size:12px;font-weight:800;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin:16px 0 8px">'+cat+'</div>';
     cats[cat].forEach(function(s){
       var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
-      h+='<div class="svc-card" onclick="selectService('+s.id+')">';
-      h+='<div><div class="n">'+s.n+'</div><div class="d">'+(dur||30)+' min</div></div>';
-      h+='<div class="p">'+s.p+' \u20ac</div></div>';
+      var isSel=isServiceInBooking(s.id);
+      h+='<div class="svc-card '+(isSel?'selected':'')+'" onclick="toggleService('+s.id+')">';
+      h+='<div class="chk">'+(isSel?'\u2713':'')+'</div>';
+      h+='<div class="body"><div class="n">'+s.n+'</div><div class="d">'+(dur||30)+' min</div></div>';
+      h+='<div class="p">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div></div>';
     });
   }
+  // Mini-cart sticky bottom
+  h+='<div id="bookCart" class="book-cart">'+renderBookingCartInner()+'</div>';
   h+='</div>';
   document.getElementById("bookingFlow").innerHTML=h;
 }
 
-function selectService(svcId){
+function isServiceInBooking(svcId){
+  if(!booking.items)return false;
+  for(var i=0;i<booking.items.length;i++){if(booking.items[i].svcId===svcId)return true;}
+  return false;
+}
+
+function toggleService(svcId){
   var svc=null;for(var i=0;i<SERVICES.length;i++){if(SERVICES[i].id===svcId){svc=SERVICES[i];break;}}
   if(!svc)return;
-  booking.svcId=svcId;booking.svc=svc;
-  // Duration
-  var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=p.d;});
-  booking.duration=dur||30;
-  renderBookingStep2();
+  if(!booking.items)booking.items=[];
+  // Toggle
+  var existingIdx=-1;
+  for(var i=0;i<booking.items.length;i++){if(booking.items[i].svcId===svcId){existingIdx=i;break;}}
+  if(existingIdx>=0){
+    booking.items.splice(existingIdx,1);
+  }else{
+    var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=p.d;});
+    if(!dur)dur=30;
+    booking.items.push({svcId:svcId,nom:svc.n,prix:Number(svc.p)||0,duree:dur,svc:svc});
+  }
+  // Sync legacy fields (premier item = service principal)
+  if(booking.items.length){
+    var first=booking.items[0];
+    booking.svcId=first.svcId;booking.svc=first.svc;
+  }else{
+    booking.svcId=null;booking.svc=null;
+  }
+  bookingTotals();
+  // Re-render step1 (cards toggle visuel) + cart
+  renderBookingStep1();
+}
+
+function renderBookingCartInner(){
+  if(!booking.items||!booking.items.length){
+    return '<div class="book-cart-empty">S\u00e9lectionnez au moins une prestation pour continuer</div>';
+  }
+  var t=bookingTotals();
+  var h='';
+  booking.items.forEach(function(it){
+    h+='<div class="bc-line"><span>'+it.nom+' <span style="color:var(--text3);font-size:11px">('+it.duree+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+  });
+  h+='<div class="bc-line bc-tot"><span>Total \u2022 '+t.dur+' min</span><span class="v">'+t.prix.toFixed(2)+' \u20ac</span></div>';
+  h+='<button class="btn btn-gold bc-cta" onclick="renderBookingStep2()">Continuer \u25b6</button>';
+  return h;
+}
+
+// Compat : selectService garde l'ancien comportement (mono-select) pour
+// d'\u00e9ventuels callers externes ou liens directs (ex: bouton "R\u00e9server" sur la fiche service).
+function selectService(svcId){
+  if(!booking.items)booking.items=[];
+  // Vide la liste pour mimer l'ancien comportement single-select
+  booking.items=[];
+  toggleService(svcId);
+  // Avance directement \u00e0 l'\u00e9tape suivante
+  if(booking.items.length)renderBookingStep2();
 }
 
 function renderBookingStep2(){
@@ -1142,20 +1236,33 @@ function selectTime(time){
 }
 
 function renderBookingStep4(){
-  var svc=booking.svc;
   var collab=booking.collab;
+  var t=bookingTotals();
+  var totalPrix=t.prix;
+  var totalDur=t.dur;
+  var hasMulti=booking.items&&booking.items.length>1;
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">4</div><div class="step-title">Vos coordonn\u00e9es</div></div>';
-  
+
   // Summary
   h+='<div class="summary">';
-  h+='<div class="summary-row"><span>Prestation</span><span class="v">'+svc.n+'</span></div>';
-  h+='<div class="summary-row"><span>Prix</span><span class="v">'+svc.p+' \u20ac</span></div>';
+  if(hasMulti){
+    h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-bottom:1px solid rgba(200,168,78,.2)"><span>Prestations</span><span class="v">'+booking.items.length+' \u25be</span></div>';
+    booking.items.forEach(function(it){
+      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+it.nom+' <span style="color:var(--text3);font-size:11px">('+it.duree+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+    });
+    h+='<div class="summary-row" style="font-weight:700"><span>Dur\u00e9e totale</span><span class="v">'+totalDur+' min</span></div>';
+    h+='<div class="summary-row" style="font-weight:700"><span>Prix total</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+  }else{
+    var svc=(booking.items&&booking.items[0])||{nom:booking.svc?booking.svc.n:"",prix:booking.svc?booking.svc.p:0,duree:totalDur};
+    h+='<div class="summary-row"><span>Prestation</span><span class="v">'+svc.nom+'</span></div>';
+    h+='<div class="summary-row"><span>Prix</span><span class="v">'+(Number(svc.prix)||0).toFixed(2)+' \u20ac</span></div>';
+  }
   h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?collab.n:"Pas de pr\u00e9f\u00e9rence")+'</span></div>';
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+'</span></div>';
   h+='<div class="summary-row"><span>Heure</span><span class="v">'+booking.time+'</span></div>';
   if(SITE_CFG.acompte){
-    var acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(svc.p*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
+    var acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(totalPrix*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
     if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
     h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
     if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+SITE_CFG.acompteDesc+'</div>';
@@ -1167,7 +1274,7 @@ function renderBookingStep4(){
   // Carte d'abonnement suggestion (if salon has cards and client has none)
   if(window.SITE_CARTES_ABO&&window.SITE_CARTES_ABO.length>0&&!CLIENT_CARTE_ABO){
     var bestCA=window.SITE_CARTES_ABO[0];
-    var potEco=Math.round(svc.p*bestCA.remiseServices/100*100)/100;
+    var potEco=Math.round(totalPrix*bestCA.remiseServices/100*100)/100;
     h+='<div style="margin:16px 0;padding:16px;background:linear-gradient(135deg,rgba(200,168,78,.1),rgba(200,168,78,.03));border:1.5px solid rgba(200,168,78,.25);border-radius:14px">';
     h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">';
     h+='<div style="font-size:24px">\ud83d\udcb3</div>';
@@ -1228,8 +1335,12 @@ async function submitBooking(){
   var pre=document.getElementById("bkPre").value.trim();
   var email=document.getElementById("bkEmail").value.trim();
   var msg=document.getElementById("bkMsg").value.trim();
-  
-  var dur=booking.duration||30;
+
+  var t=bookingTotals();
+  var dur=t.dur;
+  var totalPrix=t.prix;
+  var primaryNom=bookingPrimaryNom();
+  var itemsPayload=bookingItemsPayload();
   // Refresh availability from DB before submitting (prevents stale data)
   await refreshRDV();
   // Double-check availability before submitting
@@ -1242,24 +1353,28 @@ async function submitBooking(){
     return;
   }
   var acompte=0;
-  if(SITE_CFG.acompte){acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(booking.svc.p*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;}
-  
+  if(SITE_CFG.acompte){
+    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(totalPrix*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
+    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
+  }
+
   var data={
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
     client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
-    service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
+    service_id:booking.svcId,service_nom:primaryNom,service_prix:totalPrix,
+    items:itemsPayload,
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
     acompte_montant:acompte,status:SITE_CFG.autoConfirm?"confirmed":"pending",
     message:msg
   };
-  
+
   try{
     var r=await sb.from("rdv_online").insert(data).select();
     if(r.error){alert(rdvErrorMessage(r.error));await refreshRDV();renderTimeSlots(booking.date);return;}
     // Immediately block this slot from being rebooked
-    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:booking.svc.n}]});
+    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
     // Success
     var confirmMsg=SITE_CFG.msgConfirm||"Votre demande a bien \u00e9t\u00e9 envoy\u00e9e.";
     var h='<div class="success-page">';
@@ -1267,7 +1382,15 @@ async function submitBooking(){
     h+='<h2>'+(SITE_CFG.autoConfirm?"Rendez-vous confirm\u00e9 !":"Demande envoy\u00e9e !")+'</h2>';
     h+='<p>'+confirmMsg+'</p>';
     h+='<div class="summary" style="max-width:400px;margin:20px auto">';
-    h+='<div class="summary-row"><span>Prestation</span><span class="v">'+booking.svc.n+'</span></div>';
+    if(booking.items&&booking.items.length>1){
+      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
+      booking.items.forEach(function(it){
+        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+it.nom+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+      });
+      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+    }else{
+      h+='<div class="summary-row"><span>Prestation</span><span class="v">'+primaryNom+'</span></div>';
+    }
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+booking.collab.n+'</span></div>';
     h+='</div>';
@@ -1372,15 +1495,19 @@ async function submitWithStripe(){
   var email=document.getElementById("bkEmail").value.trim();
   var msg=document.getElementById("bkMsg").value.trim();
   
+  var t=bookingTotals();
+  var dur=t.dur;
+  var totalPrix=t.prix;
+  var primaryNom=bookingPrimaryNom();
+  var itemsPayload=bookingItemsPayload();
   var acompte=0;
   if(SITE_CFG.acompte){
-    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(booking.svc.p*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
+    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(totalPrix*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
     if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
   }
   if(acompte<=0){submitBooking();return;}
-  
+
   // Check slot availability before payment
-  var dur=booking.duration||30;
   await refreshRDV();
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
     alert("Ce cr\u00e9neau n\u2019est plus disponible. Veuillez choisir un autre horaire.");return;
@@ -1393,7 +1520,8 @@ async function submitWithStripe(){
       salon_id:salonId,
       client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
       client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
-      service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
+      service_id:booking.svcId,service_nom:primaryNom,service_prix:totalPrix,
+      items:itemsPayload,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
       acompte_montant:acompte,acompte_paye:false,
@@ -1411,7 +1539,7 @@ async function submitWithStripe(){
         body:JSON.stringify({
           salon_id:salonId,
           amount:acompte,
-          description:"Acompte - "+booking.svc.n+" le "+formatDateFR(booking.date)+" \u00e0 "+booking.time+" - "+SALON.nom,
+          description:"Acompte - "+primaryNom+" le "+formatDateFR(booking.date)+" \u00e0 "+booking.time+" - "+SALON.nom,
           customer_email:email,
           customer_name:(nom+" "+(pre||"")).trim(),
           metadata:{type:"acompte",rdv_id:rdvId,return_url:window.location.origin+"/site.html?s="+salonId+"&payment=success&rdv="+rdvId,cancel_url:window.location.origin+"/site.html?s="+salonId+"&payment=cancel&rdv="+rdvId}
@@ -1436,11 +1564,19 @@ async function submitWithStripe(){
   
   // Fallback: no Connect → use card token simulation (test mode)
   window._pendingBooking={nom:nom,pre:pre,tel:tel,email:email,msg:msg,acompte:acompte};
-  
+
+  var hasMulti=booking.items&&booking.items.length>1;
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">\ud83d\udcb3</div><div class="step-title">Paiement de l\u0027acompte</div></div>';
   h+='<div class="summary">';
-  h+='<div class="summary-row"><span>Prestation</span><span class="v">'+booking.svc.n+'</span></div>';
+  if(hasMulti){
+    h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
+    booking.items.forEach(function(it){
+      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+it.nom+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+    });
+  }else{
+    h+='<div class="summary-row"><span>Prestation</span><span class="v">'+primaryNom+'</span></div>';
+  }
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
   h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span style="font-weight:800">Acompte</span><span class="v" style="font-size:20px;color:var(--gold)">'+acompte.toFixed(2)+' \u20ac</span></div>';
   h+='</div>';
@@ -1512,11 +1648,16 @@ async function processStripePayment(){
     var last4=result.token.card.last4;
     var brand=result.token.card.brand;
 
-    var dur=booking.duration||30;
+    var t=bookingTotals();
+    var dur=t.dur;
+    var totalPrix=t.prix;
+    var primaryNom=bookingPrimaryNom();
+    var itemsPayload=bookingItemsPayload();
     var rdvData={
       client_nom:pb.nom,client_prenom:pb.pre,client_tel:pb.tel,client_email:pb.email,
       client_beautypro_id:CLIENT?CLIENT.id:null,
-      service_id:booking.svcId,service_nom:booking.svc.n,service_prix:booking.svc.p,
+      service_id:booking.svcId,service_nom:primaryNom,service_prix:totalPrix,
+      items:itemsPayload,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
       status:SITE_CFG.autoConfirm?"confirmed":"pending",
@@ -1546,23 +1687,32 @@ async function processStripePayment(){
     }
     
     // SUCCESS - block slot from being rebooked
-    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:booking.svc.n}]});
+    RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
     // SUCCESS - show confirmation with payment receipt
+    var hasMulti=booking.items&&booking.items.length>1;
     var h='<div class="success-page">';
     h+='<div class="ico">\u2705</div>';
     h+='<h2>Paiement accept\u00e9 !</h2>';
     h+='<p>Votre acompte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a \u00e9t\u00e9 encaiss\u00e9.</p>';
     h+='<div class="summary" style="max-width:400px;margin:20px auto">';
-    h+='<div class="summary-row"><span>Prestation</span><span class="v">'+booking.svc.n+'</span></div>';
+    if(hasMulti){
+      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
+      booking.items.forEach(function(it){
+        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+it.nom+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+      });
+      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+    }else{
+      h+='<div class="summary-row"><span>Prestation</span><span class="v">'+primaryNom+'</span></div>';
+    }
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+booking.collab.n+'</span></div>';
     h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span>Acompte pay\u00e9</span><span class="v" style="color:#2d9a5e">'+acompte.toFixed(2)+' \u20ac \u2714</span></div>';
     h+='<div class="summary-row"><span>Carte</span><span class="v">'+brand.toUpperCase()+' **** '+last4+'</span></div>';
-    h+='<div class="summary-row"><span>Reste \u00e0 payer au salon</span><span class="v">'+(booking.svc.p-acompte).toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"><span>Reste \u00e0 payer au salon</span><span class="v">'+(totalPrix-acompte).toFixed(2)+' \u20ac</span></div>';
     h+='</div>';
-    
+
     // Send email receipt if email provided
-    h+='<button class="btn btn-outline" onclick="printAcompteReceipt(\''+booking.svc.n+'\','+acompte+',\''+booking.date+'\',\''+booking.time+'\',\''+brand+'\',\''+last4+'\')" style="margin-top:12px">\ud83d\udda8 Imprimer le re\u00e7u</button>';
+    h+='<button class="btn btn-outline" onclick="printAcompteReceipt(\''+primaryNom+'\','+acompte+',\''+booking.date+'\',\''+booking.time+'\',\''+brand+'\',\''+last4+'\')" style="margin-top:12px">\ud83d\udda8 Imprimer le re\u00e7u</button>';
     if(pb.email){
       h+='<p style="font-size:13px;color:var(--text3);margin-top:8px">Re\u00e7u disponible pour '+pb.email+'</p>';
     }
