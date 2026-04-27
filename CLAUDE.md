@@ -642,3 +642,54 @@ WHERE schemaname='public'
 15. `0925626` — feat(geo): géocodage auto inscription + UI ajustement marker dans Paramètres
 
 Total : 15 commits, ~3000 lignes de code, 5 nouvelles features majeures, 2 hotfixes, doc complète.
+
+### Session 2026-04-27 (suite 8) — Refonte fiche salon site.html (pages séparées pro)
+**Demande Alexandre** : "rien d'ordonné par section c'est pas top". Mais aussi : "j'aime pas les longues pages comme LS Coiffure, je préfère plusieurs sections".
+
+**Décisions produit** :
+- Garder le système multi-pages (Accueil / Tarifs / Boutique / Réserver / Compte)
+- Améliorer chaque page individuellement
+- Sticky chips catégories sur Tarifs validé
+- Pas de description par prestation (juste nom + durée + prix)
+- Nom "Tarifs" gardé
+
+**Refonte Page Accueil** :
+- Hero clean : métier · ville en label, nom big serif, sous-titre/slogan, adresse, étoiles+avis si dispo
+- Bloc "Le salon" : description courte
+- Bloc "L'équipe" : grid avatars + noms
+- Bloc "Le salon en images" : grid photos (1, 2 ou N colonnes selon nb)
+- Bloc "Comment nous trouver" : split mini-map Leaflet (lazy-loaded) + horaires (jour actuel surligné gold) + contact (tél/email cliquables)
+- 2 CTAs hero : "Voir les tarifs" (outline) + "Prendre rendez-vous" (gold)
+
+**Refonte Page Tarifs** :
+- Sticky chips catégories en haut (z-index 30, backdrop-blur)
+  → cliquer une chip scroll smooth vers la section avec offset sticky
+  → IntersectionObserver met à jour la chip active selon scroll
+- Compteur en sous-titre : X prestations · Y catégories
+- Liste organisée par catégorie : titre + lignes
+  Chaque ligne : nom + durée (⏱ X min) + prix gold + bouton "Réserver"
+- Bouton "Réserver" appelle goToBookingWithService(id) qui :
+  1. Reset booking, ajoute la presta via toggleService
+  2. Affiche page booking step 1 avec presta déjà cochée
+
+**Bugs trouvés et fixés en cours** :
+1. Apostrophe non échappée dans `'L'équipe'` (string JS) → `'`
+2. Apostrophe dupliquée dans `'aujourd'hui':''` → fix ciblé
+3. `loadSalon()` mappait `s.telephone` mais la vue expose `s.tel` → fallback sur les deux
+4. `loadSalon()` ne mappait PAS latitude/longitude/note_moyenne/nb_avis depuis salons_public
+5. `initSalonMiniMap` se déclenchait avant que SALON soit peuplé → déplacé à la fin de renderSite()
+
+**Tests Chrome bout-en-bout (en prod)** :
+- ✅ Hero "Excellence Coiffure" + 2 CTAs (Voir tarifs + Prendre RDV)
+- ✅ 3 blocks accueil : Le salon / L'équipe / Comment nous trouver
+- ✅ 2 équipiers visibles
+- ✅ Mini-map Leaflet : 6 tiles affichées + marker visible + coords correctes
+- ✅ Page Tarifs : 2 chips (Brushing, Soins), 6 lignes prestations, 6 boutons "Réserver"
+- ✅ Sample row : "Brushing court / ⏱ 20 min / 22.00 €"
+
+**Helpers JS ajoutés** :
+- `escapeHtmlSimple` / `escapeAttrSimple`
+- `goToBooking()` / `goToBookingWithService(svcId)`
+- `scrollToTarifCat(cat)` / `initTarifsScrollSpy()`
+- `initSalonMiniMap()` / `_renderSalonMiniMap(lat, lng)`
+- `adrFromSalon(s)`
