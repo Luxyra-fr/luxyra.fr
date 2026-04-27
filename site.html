@@ -333,7 +333,8 @@ async function loadSalon(){
         fondStyle:d.fond_style||"uni",
         absences:d.absences||[],
         collaborateurs:d.collaborateurs||[],
-        horaires_salon:d.horaires_salon||null
+        horaires_salon:d.horaires_salon||null,
+        acceptRdvSurMesure:d.accept_rdv_sur_mesure===true
       };
     }
     // FIX M7: Fallback absences from salon config_json if site_config empty
@@ -542,6 +543,11 @@ async function doClientRegister(){
   saveClientSession();
   closeAuth();
   renderSite();
+  // Hook : rouvrir le modal sur-mesure si on était en train de le demander
+  if(window._afterLoginAction==="surMesure"){
+    window._afterLoginAction=null;
+    setTimeout(openSurMesureModal,200);
+  }
 }
 
 async function doClientLogin(){
@@ -555,6 +561,11 @@ async function doClientLogin(){
   saveClientSession();
   closeAuth();
   renderSite();
+  // Hook : rouvrir le modal sur-mesure si on était en train de le demander
+  if(window._afterLoginAction==="surMesure"){
+    window._afterLoginAction=null;
+    setTimeout(openSurMesureModal,200);
+  }
 }
 
 async function ensureClientSalon(clientId){
@@ -889,8 +900,91 @@ function renderBookingStep1(){
   }
   // Mini-cart sticky bottom
   h+='<div id="bookCart" class="book-cart">'+renderBookingCartInner()+'</div>';
+  // Bouton "RDV sur mesure" si activé par le salon
+  if(SITE_CFG.acceptRdvSurMesure){
+    h+='<div style="margin-top:24px;padding-top:20px;border-top:1px solid rgba(200,168,78,.1)">';
+    h+='<div style="text-align:center;font-size:12px;color:var(--text3);margin-bottom:10px">Vous ne trouvez pas ce que vous cherchez ?</div>';
+    h+='<button class="btn btn-outline" style="width:100%" onclick="openSurMesureModal()">✨ Demander un RDV sur mesure</button>';
+    h+='<div style="text-align:center;font-size:11px;color:var(--text3);margin-top:8px">Le salon vous proposera un créneau personnalisé sous 24-48h.</div>';
+    h+='</div>';
+  }
   h+='</div>';
   document.getElementById("bookingFlow").innerHTML=h;
+}
+
+// ============================================================
+// RDV SUR MESURE — demande libre, le salon compose puis propose
+// ============================================================
+function openSurMesureModal(){
+  // Auth Luxyra obligatoire
+  if(!CLIENT){
+    showAuthModal("login");
+    // Mémorise qu'on voulait ouvrir le sur-mesure pour rouvrir après login
+    window._afterLoginAction="surMesure";
+    return;
+  }
+  if(!CLIENT.telephone){
+    alert("Veuillez renseigner votre téléphone dans votre compte avant de faire une demande sur mesure.");
+    return;
+  }
+  var h='<div class="auth-modal" onclick="if(event.target===this)closeSurMesureModal()">';
+  h+='<div class="auth-box" onclick="event.stopPropagation()" style="max-width:460px">';
+  h+='<h2>✨ RDV sur mesure</h2>';
+  h+='<div class="sub">Décrivez ce que vous souhaitez — le salon vous proposera un créneau adapté.</div>';
+  h+='<div id="smErr" class="err"></div>';
+  h+='<div class="fg" style="margin-bottom:12px">';
+  h+='<label>Votre demande *</label>';
+  h+='<textarea id="smDemande" rows="4" placeholder="Ex: Je veux une couleur + un soin profond pendant le shampoing + une coupe + brushing. J\u0027ai les cheveux longs, fins."></textarea>';
+  h+='</div>';
+  h+='<div class="fg" style="margin-bottom:12px">';
+  h+='<label>Vos disponibilités (optionnel)</label>';
+  h+='<textarea id="smDispo" rows="2" placeholder="Ex: plûtot mardi matin ou jeudi après-midi sur les 2 prochaines semaines"></textarea>';
+  h+='</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:14px;background:rgba(200,168,78,.04);padding:10px;border-radius:8px;line-height:1.5">';
+  h+='Le salon vous contactera à <strong>'+CLIENT.email+'</strong>'+(CLIENT.telephone?' ou au <strong>'+CLIENT.telephone+'</strong>':'')+' avec une proposition de créneau et son tarif. Vous pourrez accepter (avec paiement d\u0027acompte) ou refuser.';
+  h+='</div>';
+  h+='<button class="btn btn-gold" style="width:100%" onclick="submitSurMesure()" id="smBtn">Envoyer la demande</button>';
+  h+='<div style="text-align:center;margin-top:10px"><a style="color:var(--text3);font-size:12px;cursor:pointer" onclick="closeSurMesureModal()">Annuler</a></div>';
+  h+='</div></div>';
+  document.getElementById("authModal").innerHTML=h;
+}
+
+function closeSurMesureModal(){document.getElementById("authModal").innerHTML="";}
+
+async function submitSurMesure(){
+  var demande=document.getElementById("smDemande").value.trim();
+  var dispo=document.getElementById("smDispo").value.trim();
+  var errEl=document.getElementById("smErr");
+  errEl.style.display="none";errEl.textContent="";
+  if(demande.length<5){errEl.textContent="Veuillez décrire votre demande (5 caractères min).";errEl.style.display="block";return;}
+  if(demande.length>2000){errEl.textContent="Demande trop longue (2000 caractères max).";errEl.style.display="block";return;}
+  var btn=document.getElementById("smBtn");
+  btn.disabled=true;btn.textContent="Envoi en cours...";
+  try{
+    var token=(typeof BP!=="undefined"&&BP.getToken)?BP.getToken():(window._bpToken||"");
+    var r=await fetch(SB_URL+"/functions/v1/rdv-demande-create",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+      body:JSON.stringify({session_token:token,salon_id:salonId,demande_text:demande,dispo_text:dispo})
+    });
+    var data=await r.json();
+    if(!r.ok){
+      errEl.textContent=data.error||"Erreur lors de l'envoi";errEl.style.display="block";
+      btn.disabled=false;btn.textContent="Envoyer la demande";return;
+    }
+    // Success
+    var h='<div class="auth-modal" onclick="if(event.target===this)closeSurMesureModal()">';
+    h+='<div class="auth-box" onclick="event.stopPropagation()" style="text-align:center">';
+    h+='<div style="font-size:48px;margin-bottom:12px">✨</div>';
+    h+='<h2 style="color:var(--green)">Demande envoyée !</h2>';
+    h+='<p style="font-size:14px;color:var(--text2);line-height:1.6;margin:14px 0">'+(data.message||"Votre demande a été envoyée. Le salon vous proposera un créneau sous 24-48h.")+'</p>';
+    h+='<button class="btn btn-gold" style="width:100%" onclick="closeSurMesureModal()">Fermer</button>';
+    h+='</div></div>';
+    document.getElementById("authModal").innerHTML=h;
+  }catch(e){
+    errEl.textContent="Erreur de connexion : "+e.message;errEl.style.display="block";
+    btn.disabled=false;btn.textContent="Envoyer la demande";
+  }
 }
 
 function isServiceInBooking(svcId){

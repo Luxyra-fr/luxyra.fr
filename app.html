@@ -301,7 +301,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260427-01"></script>
+<script src="luxyra-supabase.js?v=20260427-02"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -3826,6 +3826,8 @@ function notifTypeMeta(type){
     "rdv_online_modif": {icon:"✏️", color:"#fb923c", bg:"rgba(251,146,60,.12)", label:"Modification demandée"},
     "rdv_online_cancel":{icon:"❌", color:"#f87171", bg:"rgba(248,113,113,.12)", label:"RDV annulé"},
     "rdv_online":       {icon:"📅", color:"#4ade80", bg:"rgba(74,222,128,.12)", label:"RDV en ligne"},
+    "rdv_demande_new":  {icon:"✨", color:"#c8a84e", bg:"rgba(200,168,78,.12)", label:"Demande sur mesure"},
+    "rdv_demande_refused":{icon:"❌", color:"#f87171", bg:"rgba(248,113,113,.12)", label:"Proposition refusée"},
     "produit_online":   {icon:"🛍️", color:"#c084fc", bg:"rgba(192,132,252,.12)", label:"Commande"},
     "google_reserve":   {icon:"🔗", color:"#60a5fa", bg:"rgba(96,165,250,.12)", label:"RDV Google"},
     "acompte_paye":     {icon:"💰", color:"#fbbf24", bg:"rgba(251,191,36,.12)", label:"Acompte reçu"},
@@ -3937,6 +3939,9 @@ async function showNotifs(filter){
         if(n.type === "rdv_online_modif" && !seen){
           actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="acceptModification(\''+n.id+'\')">✓ Accepter</button>');
           actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="refuseModification(\''+n.id+'\')">✗ Refuser</button>');
+        } else if(n.type === "rdv_demande_new" || n.type === "rdv_demande_refused"){
+          var demId = (n.data && n.data.demande_id) || null;
+          if(demId) actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="cM();setTimeout(function(){openDemande(\''+demId+'\')},150)">Voir la demande →</button>');
         } else if(rdvId){
           actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="openRdvFromNotif(\''+rdvId+'\',\''+n.id+'\')">Voir le RDV →</button>');
         }
@@ -5337,10 +5342,380 @@ window._rdvPollInterval=setInterval(function(){
   }
 },30000);
 
+// ============================================================================
+// RDV SUR MESURE (demandes) — polling + UI salon
+// ============================================================================
+window.RDV_DEMANDES = window.RDV_DEMANDES || [];
+
+async function loadRdvDemandes(){
+  if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return;
+  try{
+    var r = await _sb.from("rdv_demandes")
+      .select("id,client_nom,client_prenom,client_tel,client_email,client_beautypro_id,demande_text,dispo_text,photo_url,status,proposed_data,proposal_token,proposal_expires_at,refuse_reason,rdv_online_id,created_at,proposed_at,confirmed_at,refused_at")
+      .eq("salon_id", _salonId)
+      .order("created_at", {ascending: false})
+      .limit(100);
+    if(r.data) window.RDV_DEMANDES = r.data;
+  } catch(e){ console.warn("loadRdvDemandes failed", e); }
+}
+
+// Premier load au plus vite (dès que _salonId apparaît)
+(function(){
+  var attempts=0;
+  var iv=setInterval(function(){
+    attempts++;
+    if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
+      clearInterval(iv);
+      loadRdvDemandes().then(function(){
+        if(window._currentPage==="home" && typeof rHome==="function") {
+          try { document.getElementById("app").innerHTML = rHome(); } catch(e){}
+        }
+        try { subscribeRdvDemandes(); } catch(e){ console.warn("subscribeRdvDemandes failed", e); }
+      });
+    }
+    if(attempts > 60) clearInterval(iv); // give up after ~1 min
+  }, 1000);
+})();
+
+// Polling de fallback (en plus du realtime)
+window._rdvDemandesPollInterval = setInterval(function(){
+  if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
+    loadRdvDemandes();
+  }
+}, 60000); // 1 min
+
+// Realtime listener (en plus du polling)
+function subscribeRdvDemandes(){
+  if(typeof _sb==="undefined" || !_sb || !_salonId) return;
+  if(window._rdvDemandesChannel) try{_sb.removeChannel(window._rdvDemandesChannel);}catch(e){}
+  window._rdvDemandesChannel = _sb
+    .channel("rdv_demandes_"+_salonId)
+    .on("postgres_changes", {event:"*", schema:"public", table:"rdv_demandes", filter:"salon_id=eq."+_salonId}, function(payload){
+      console.log("Realtime rdv_demandes:", payload.eventType);
+      loadRdvDemandes();
+      // Refresh la home si on est dessus pour mettre à jour le compteur
+      if(window._currentPage==="home" && typeof go==="function") setTimeout(function(){ if(window._currentPage==="home") document.getElementById("app").innerHTML=rHome(); }, 200);
+    })
+    .subscribe();
+}
+
+function getDemande(id){
+  for(var i=0;i<window.RDV_DEMANDES.length;i++) if(window.RDV_DEMANDES[i].id===id) return window.RDV_DEMANDES[i];
+  return null;
+}
+
+// Modal détail + composer
+async function openDemande(id){
+  var d = getDemande(id);
+  if(!d){ await loadRdvDemandes(); d = getDemande(id); }
+  if(!d){ if(typeof toast==="function") toast("Demande introuvable","error"); return; }
+
+  // Si déjà confirmée/refusée → vue lecture seule
+  var isHistorique = (d.status==="confirmed" || d.status==="refused" || d.status==="cancelled_by_salon" || d.status==="expired");
+  var isProposed = (d.status==="proposed");
+
+  var statusBadges = {
+    pending:    {color:"#fbbf24", bg:"rgba(251,191,36,.12)", label:"⏳ En attente de votre proposition"},
+    proposed:   {color:"#60a5fa", bg:"rgba(96,165,250,.12)", label:"✉️ Proposition envoyée — en attente de la cliente"},
+    confirmed:  {color:"#4ade80", bg:"rgba(74,222,128,.12)", label:"✅ Confirmé et payé"},
+    refused:    {color:"#f87171", bg:"rgba(248,113,113,.12)", label:"❌ Refusé par la cliente"},
+    expired:    {color:"#9ca3af", bg:"rgba(156,163,175,.12)", label:"⌛ Expiré"},
+    cancelled_by_salon: {color:"#9ca3af", bg:"rgba(156,163,175,.12)", label:"🚫 Annulé par vous"}
+  };
+  var sb_ = statusBadges[d.status] || statusBadges.pending;
+  var nomComplet = ((d.client_prenom||"")+" "+(d.client_nom||"")).trim() || "Cliente";
+  var dateCreated = new Date(d.created_at).toLocaleString("fr-FR",{dateStyle:"short",timeStyle:"short"});
+
+  var h = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:560px;max-height:90vh;overflow-y:auto">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;gap:12px">';
+  h += '<div style="flex:1;min-width:0"><h3 style="margin:0;font-size:18px">✨ Demande sur mesure</h3>';
+  h += '<div style="font-size:11px;color:var(--text3);margin-top:2px">Reçue le '+dateCreated+'</div></div>';
+  h += '<button class="btn bs" style="font-size:13px;padding:6px 12px" onclick="cM()">✕</button>';
+  h += '</div>';
+  h += '<div style="background:'+sb_.bg+';border:1px solid '+sb_.color+'33;border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12px;color:'+sb_.color+';font-weight:700">'+sb_.label+'</div>';
+
+  // Cliente
+  h += '<div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:14px">';
+  h += '<div style="font-size:11px;color:var(--text3);font-weight:800;letter-spacing:1px;margin-bottom:6px">CLIENTE</div>';
+  h += '<div style="font-weight:700;font-size:15px">'+nomComplet+'</div>';
+  h += '<div style="font-size:13px;color:var(--text2);margin-top:4px">📞 '+(d.client_tel||"—")+(d.client_email?'  ·  ✉️ '+d.client_email:"")+'</div>';
+  h += '</div>';
+
+  // Demande
+  h += '<div style="margin-bottom:14px">';
+  h += '<div style="font-size:11px;color:var(--text3);font-weight:800;letter-spacing:1px;margin-bottom:6px">SA DEMANDE</div>';
+  h += '<div style="background:rgba(200,168,78,.04);border:1px solid rgba(200,168,78,.12);border-radius:8px;padding:12px;font-size:14px;line-height:1.6;white-space:pre-wrap">'+escapeHtml(d.demande_text||"")+'</div>';
+  if(d.dispo_text){
+    h += '<div style="font-size:11px;color:var(--text3);font-weight:800;letter-spacing:1px;margin:10px 0 6px">DISPONIBILITÉS</div>';
+    h += '<div style="font-size:13px;color:var(--text2);background:rgba(255,255,255,.03);border-radius:8px;padding:10px;line-height:1.5">'+escapeHtml(d.dispo_text)+'</div>';
+  }
+  h += '</div>';
+
+  if(isHistorique){
+    if(d.proposed_data){
+      h += '<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--text3);font-weight:800;letter-spacing:1px;margin-bottom:6px">VOTRE PROPOSITION</div>';
+      h += renderDemandeProposition(d.proposed_data) + '</div>';
+    }
+    if(d.refuse_reason){
+      h += '<div style="background:rgba(248,113,113,.08);border-left:3px solid #f87171;padding:10px;border-radius:6px;font-size:13px;margin-bottom:14px"><strong>Raison du refus :</strong> '+escapeHtml(d.refuse_reason)+'</div>';
+    }
+    h += '<button class="btn bs" style="width:100%" onclick="cM()">Fermer</button>';
+  } else if(isProposed){
+    // Proposition déjà envoyée — montrer le détail + actions
+    h += '<div style="margin-bottom:14px"><div style="font-size:11px;color:var(--text3);font-weight:800;letter-spacing:1px;margin-bottom:6px">PROPOSITION ENVOYÉE</div>';
+    h += renderDemandeProposition(d.proposed_data) + '</div>';
+    h += '<div style="font-size:11px;color:var(--text3);background:rgba(255,255,255,.03);padding:8px;border-radius:6px;margin-bottom:10px;line-height:1.5">Lien envoyé à la cliente. Vous serez notifié d\u00e8s qu\u0027elle accepte (en payant) ou refuse.</div>';
+    h += '<div style="display:flex;gap:8px"><button class="btn bs" style="flex:1" onclick="cM()">Fermer</button>';
+    h += '<button class="btn bs" style="flex:1;background:rgba(248,113,113,.08);color:#f87171;border-color:rgba(248,113,113,.2)" onclick="cancelDemandeProposal(\''+d.id+'\')">Annuler la proposition</button></div>';
+  } else {
+    // pending → composer
+    h += renderDemandeComposer(d);
+  }
+  h += '</div></div>';
+  document.getElementById("modal").innerHTML = h;
+
+  // Init des computeds
+  setTimeout(updateDemandePropTotals, 50);
+}
+
+function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+
+function renderDemandeProposition(p){
+  if(!p) return '<div style="color:var(--text3)">Aucune proposition</div>';
+  var items = p.items || [];
+  var h = '<div style="background:rgba(200,168,78,.04);border:1px solid rgba(200,168,78,.18);border-radius:10px;padding:12px;font-size:14px">';
+  h += '<div style="margin-bottom:8px"><strong>📅 '+(p.date||"")+' à '+(p.heure||"")+'</strong></div>';
+  if(p.collaborateur_nom) h += '<div style="font-size:13px;color:var(--text2);margin-bottom:6px">👤 '+p.collaborateur_nom+'</div>';
+  if(items.length){
+    h += '<div style="margin:8px 0;padding-top:8px;border-top:1px solid rgba(200,168,78,.1)">';
+    items.forEach(function(it){
+      h += '<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0"><span>• '+escapeHtml(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(it.duree||0)+' min)</span></span><span style="color:var(--gold);font-weight:700">'+(Number(it.prix)||0).toFixed(2)+' €</span></div>';
+    });
+    h += '</div>';
+  }
+  h += '<div style="display:flex;justify-content:space-between;font-weight:800;border-top:1px solid rgba(200,168,78,.2);padding-top:8px;margin-top:8px">';
+  h += '<span>Total ('+(p.duree_minutes||0)+' min)</span><span style="color:var(--gold)">'+(Number(p.prix_total)||0).toFixed(2)+' €</span></div>';
+  if(p.acompte_montant) h += '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-top:4px"><span>Acompte demandé</span><span>'+(Number(p.acompte_montant)||0).toFixed(2)+' €</span></div>';
+  if(p.message_salon) h += '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed rgba(200,168,78,.15);font-size:13px;color:var(--text2);font-style:italic;line-height:1.5">"'+escapeHtml(p.message_salon)+'"</div>';
+  h += '</div>';
+  return h;
+}
+
+function renderDemandeComposer(d){
+  var h = '<div style="border-top:2px solid rgba(200,168,78,.15);padding-top:14px;margin-top:8px">';
+  h += '<div style="font-size:11px;color:var(--gold);font-weight:800;letter-spacing:1px;margin-bottom:10px">✏️ COMPOSER LA PROPOSITION</div>';
+  // Date + heure
+  var tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+  var defDate = tomorrow.toISOString().slice(0,10);
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">';
+  h += '<div><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Date</label><input type="date" id="dpDate" value="'+defDate+'" min="'+defDate+'" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px"></div>';
+  h += '<div><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Heure</label><input type="time" id="dpHeure" value="10:00" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px"></div>';
+  h += '</div>';
+  // Collaborateur (depuis T = collaborateurs)
+  h += '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Avec qui</label>';
+  h += '<select id="dpCollab" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px">';
+  h += '<option value="">— Pas de préférence / au choix du salon —</option>';
+  if(typeof T!=="undefined" && T) T.forEach(function(c){ if(c.actif!==false) h += '<option value="'+c.id+'" data-nom="'+escapeHtml(c.n)+'">'+escapeHtml(c.n)+'</option>'; });
+  h += '</select></div>';
+  // Liste des services à composer
+  h += '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:6px">Prestations à inclure</label>';
+  h += '<div style="max-height:240px;overflow-y:auto;background:var(--bg3);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:6px">';
+  if(typeof S!=="undefined" && S && S.length){
+    S.forEach(function(s){ if(s.actif!==false){
+      h += '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:6px;font-size:13px" onmouseover="this.style.background=\'rgba(200,168,78,.06)\'" onmouseout="this.style.background=\'\'">';
+      h += '<input type="checkbox" class="dpSvcChk" data-id="'+s.id+'" data-nom="'+escapeHtml(s.n)+'" data-prix="'+(s.p||0)+'" data-duree="'+(s.duree||30)+'" onchange="updateDemandePropTotals()">';
+      h += '<span style="flex:1">'+escapeHtml(s.n)+' <span style="color:var(--text3);font-size:11px">('+(s.duree||30)+' min)</span></span>';
+      h += '<span style="color:var(--gold);font-weight:700">'+(Number(s.p)||0).toFixed(2)+' €</span>';
+      h += '</label>';
+    } });
+  } else {
+    h += '<div style="padding:14px;text-align:center;color:var(--text3);font-size:13px">Aucun service configuré</div>';
+  }
+  h += '</div></div>';
+  // Acompte
+  var defAcompte = (typeof SALON_CONFIG!=="undefined" && SALON_CONFIG.acompteOnlinePct) ? SALON_CONFIG.acompteOnlinePct : 30;
+  h += '<div style="display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:10px">';
+  h += '<div><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Acompte demandé (% du prix)</label>';
+  h += '<input type="number" id="dpAcomptePct" value="'+defAcompte+'" min="0" max="100" onchange="updateDemandePropTotals()" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px"></div>';
+  h += '<div><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Durée totale</label>';
+  h += '<input type="text" id="dpDureeAffiche" value="0 min" readonly style="width:100%;padding:9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:8px;color:var(--text2);font-size:14px"></div>';
+  h += '</div>';
+  // Récap totaux
+  h += '<div id="dpTotals" style="background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.18);border-radius:10px;padding:10px;margin-bottom:10px;font-size:14px"></div>';
+  // Message libre
+  h += '<div style="margin-bottom:14px"><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Message à la cliente (optionnel)</label>';
+  h += '<textarea id="dpMessage" rows="2" placeholder="Ex: Bonjour, voici la proposition. Le soin sera réalisé pendant le shampoing pour gagner du temps." style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px;resize:vertical;font-family:inherit"></textarea></div>';
+  // Actions
+  h += '<div style="display:flex;gap:8px">';
+  h += '<button class="btn bs" style="flex:1" onclick="cM()">Annuler</button>';
+  h += '<button class="btn bg bs" style="flex:2;font-weight:700" id="dpSendBtn" onclick="sendDemandeProposal(\''+d.id+'\')">📨 Envoyer la proposition</button>';
+  h += '</div></div>';
+  return h;
+}
+
+function getDemandeComposerData(){
+  var date = document.getElementById("dpDate").value;
+  var heure = document.getElementById("dpHeure").value;
+  var collabSel = document.getElementById("dpCollab");
+  var collabId = collabSel.value ? parseInt(collabSel.value,10) : null;
+  var collabNom = collabSel.value ? (collabSel.options[collabSel.selectedIndex].getAttribute("data-nom")||"") : null;
+  var checks = document.querySelectorAll(".dpSvcChk:checked");
+  var items = [];
+  var dur = 0, prix = 0;
+  checks.forEach(function(ck, idx){
+    var d = parseInt(ck.getAttribute("data-duree"),10) || 30;
+    var p = Number(ck.getAttribute("data-prix")) || 0;
+    items.push({ service_id: parseInt(ck.getAttribute("data-id"),10), nom: ck.getAttribute("data-nom"), prix: p, duree: d, ordre: idx });
+    dur += d; prix += p;
+  });
+  var pct = parseInt(document.getElementById("dpAcomptePct").value,10);
+  if(isNaN(pct) || pct<0) pct = 0;
+  if(pct > 100) pct = 100;
+  var acompte = Math.round(prix * pct / 100 * 100) / 100;
+  var message = document.getElementById("dpMessage").value.trim();
+  return { date:date, heure:heure, collaborateur_id:collabId, collaborateur_nom:collabNom, items:items, duree_minutes:dur, prix_total:prix, acompte_pct:pct, acompte_montant:acompte, message_salon:message };
+}
+
+function updateDemandePropTotals(){
+  var data = getDemandeComposerData();
+  var dureeEl = document.getElementById("dpDureeAffiche");
+  if(dureeEl) dureeEl.value = data.duree_minutes + " min";
+  var totEl = document.getElementById("dpTotals");
+  if(totEl){
+    var h = '<div style="display:flex;justify-content:space-between;font-weight:700"><span>Prix total</span><span style="color:var(--gold);font-size:16px">'+data.prix_total.toFixed(2)+' €</span></div>';
+    h += '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-top:4px"><span>Acompte ('+data.acompte_pct+'%)</span><span>'+data.acompte_montant.toFixed(2)+' €</span></div>';
+    h += '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2)"><span>Reste à payer au salon</span><span>'+(data.prix_total - data.acompte_montant).toFixed(2)+' €</span></div>';
+    totEl.innerHTML = h;
+  }
+}
+
+async function sendDemandeProposal(demandeId){
+  var data = getDemandeComposerData();
+  // Validation
+  if(!data.date || !data.heure){ alert("Veuillez choisir la date et l'heure."); return; }
+  if(!data.items.length){ alert("Sélectionnez au moins une prestation."); return; }
+  if(data.prix_total <= 0){ alert("Le prix total doit être supérieur à 0."); return; }
+  // Date dans le futur
+  var dt = new Date(data.date+"T"+data.heure);
+  if(dt < new Date(Date.now() + 30*60*1000)){ alert("La date doit être au moins 30 min dans le futur."); return; }
+
+  var btn = document.getElementById("dpSendBtn");
+  btn.disabled = true; btn.textContent = "Envoi...";
+  try{
+    // Récupérer la session du salon (pour appel edge function authentifié)
+    var session = await _sb.auth.getSession();
+    var token = session.data.session ? session.data.session.access_token : null;
+    if(!token){ alert("Session expirée, reconnectez-vous."); btn.disabled=false; btn.textContent="📨 Envoyer la proposition"; return; }
+
+    var resp = await fetch(SB_URL_GLOBAL+"/functions/v1/rdv-demande-propose", {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "apikey": SB_KEY_GLOBAL, "Authorization": "Bearer "+token },
+      body: JSON.stringify({ demande_id: demandeId, proposed_data: data })
+    });
+    var rd = await resp.json();
+    if(!resp.ok){
+      alert("Erreur : "+(rd.error||"envoi impossible"));
+      btn.disabled = false; btn.textContent = "📨 Envoyer la proposition";
+      return;
+    }
+
+    // Envoi de l'email à la cliente (best-effort, ne bloque pas si échec)
+    if(rd.client && rd.client.email){
+      try{
+        var emailHtml = buildDemandeProposalEmailHtml(data, rd.proposal_url, rd.client, rd.salon_nom);
+        await fetch("/api/email/custom", {
+          method: "POST",
+          headers: { "Content-Type":"application/json" },
+          body: JSON.stringify({
+            to: rd.client.email,
+            toName: ((rd.client.prenom||"")+" "+(rd.client.nom||"")).trim(),
+            salonName: rd.salon_nom || (SALON_CONFIG.nom || "Le salon"),
+            salonEmail: SALON_CONFIG.email || "contact@luxyra.fr",
+            subject: "Votre proposition de RDV chez "+(rd.salon_nom || SALON_CONFIG.nom || "le salon"),
+            htmlContent: emailHtml
+          })
+        }).then(function(r){ return r.text(); }).then(function(t){ console.log("[demande email] sent:", t.slice(0,200)); });
+      }catch(emailErr){
+        console.warn("Email envoi échoué (la proposition reste valide)", emailErr);
+      }
+    }
+
+    if(typeof toast==="function") toast("Proposition envoyée à la cliente ✨", "success");
+    // Affichage du lien (au cas où email tardif/indispo, le salon peut copier-coller)
+    setTimeout(function(){
+      if(typeof toast==="function") toast("Lien : "+rd.proposal_url, "info");
+    }, 800);
+    cM();
+    await loadRdvDemandes();
+    if(window._currentPage==="home") document.getElementById("app").innerHTML = rHome();
+  } catch(e){
+    alert("Erreur réseau : "+e.message);
+    btn.disabled = false; btn.textContent = "📨 Envoyer la proposition";
+  }
+}
+
+async function cancelDemandeProposal(demandeId){
+  if(!confirm("Annuler cette proposition ? La cliente ne pourra plus la payer.")) return;
+  try{
+    var r = await _sb.from("rdv_demandes").update({ status: "cancelled_by_salon" }).eq("id", demandeId);
+    if(r.error){ alert("Erreur : "+r.error.message); return; }
+    if(typeof toast==="function") toast("Proposition annulée", "info");
+    cM();
+    await loadRdvDemandes();
+    if(window._currentPage==="home") document.getElementById("app").innerHTML = rHome();
+  } catch(e){ alert("Erreur : "+e.message); }
+}
+
+// Globals utilisés pour les fetch d'edge functions (déjà dispos via luxyra-supabase.js)
+window.SB_URL_GLOBAL = window.SB_URL_GLOBAL || "https://kxdgjtvrkwugbifgppai.supabase.co";
+window.SB_KEY_GLOBAL = window.SB_KEY_GLOBAL || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+
+function buildDemandeProposalEmailHtml(data, url, client, salonNom){
+  var greeting = client && client.prenom ? "Bonjour "+client.prenom : "Bonjour";
+  var itemsHtml = "";
+  (data.items||[]).forEach(function(it){
+    itemsHtml += '<tr><td style="padding:6px 8px;font-size:14px">'+escapeHtml(it.nom)+' <span style="color:#999;font-size:12px">('+(it.duree||0)+' min)</span></td><td style="padding:6px 8px;font-size:14px;text-align:right;color:#c8a84e;font-weight:700">'+(Number(it.prix)||0).toFixed(2)+' €</td></tr>';
+  });
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Proposition de RDV</title></head><body style="margin:0;padding:20px;background:#f8f5ee;font-family:\'Helvetica Neue\',Arial,sans-serif;color:#111">';
+  html += '<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08)">';
+  html += '<div style="background:linear-gradient(135deg,#0a0a0a,#1a1a1a);padding:28px 24px;text-align:center">';
+  html += '<div style="font-family:\'Playfair Display\',serif;color:#c8a84e;font-size:28px;font-weight:800">'+escapeHtml(salonNom||"Salon")+'</div>';
+  html += '<div style="color:rgba(255,255,255,.6);font-size:13px;margin-top:6px">vous propose un rendez-vous</div></div>';
+  html += '<div style="padding:24px">';
+  html += '<p style="font-size:15px;margin:0 0 14px">'+greeting+',</p>';
+  html += '<p style="font-size:14px;line-height:1.6;color:#333;margin:0 0 18px">Suite à votre demande, voici notre proposition :</p>';
+  html += '<div style="background:#faf7ed;border:1px solid #e8dfc4;border-radius:10px;padding:16px;margin-bottom:18px">';
+  html += '<div style="font-size:16px;font-weight:700;color:#c8a84e;margin-bottom:10px">📅 '+escapeHtml(data.date)+' à '+escapeHtml(data.heure)+'</div>';
+  if(data.collaborateur_nom) html += '<div style="font-size:13px;color:#666;margin-bottom:10px">👤 '+escapeHtml(data.collaborateur_nom)+'</div>';
+  html += '<table style="width:100%;border-collapse:collapse;margin-top:8px">'+itemsHtml+'</table>';
+  html += '<div style="border-top:1px solid #e8dfc4;margin-top:10px;padding-top:10px;font-size:14px"><strong>Total ('+(data.duree_minutes||0)+' min)</strong> <span style="float:right;color:#c8a84e;font-weight:800">'+(Number(data.prix_total)||0).toFixed(2)+' €</span></div>';
+  if(data.acompte_montant) html += '<div style="font-size:13px;color:#666;margin-top:4px">Acompte demandé : <strong>'+(Number(data.acompte_montant)||0).toFixed(2)+' €</strong></div>';
+  html += '</div>';
+  if(data.message_salon){ html += '<div style="background:#fffaf0;border-left:3px solid #c8a84e;padding:12px 14px;font-size:14px;color:#555;line-height:1.5;margin-bottom:18px;font-style:italic">"'+escapeHtml(data.message_salon)+'"</div>'; }
+  html += '<div style="text-align:center;margin:24px 0">';
+  html += '<a href="'+url+'" style="display:inline-block;background:#c8a84e;color:#0a0a0a;padding:14px 32px;border-radius:10px;font-weight:800;text-decoration:none;font-size:15px">Voir et accepter cette proposition</a>';
+  html += '</div>';
+  html += '<p style="font-size:12px;color:#999;text-align:center;margin:14px 0 0">Lien valide 72h. Vous pourrez accepter (avec paiement de l\u0027acompte) ou refuser depuis cette page.</p>';
+  html += '</div>';
+  html += '<div style="background:#f5f0e0;padding:14px;text-align:center;font-size:11px;color:#888">'+escapeHtml(salonNom||"Salon")+' — Réservation gérée par Luxyra</div>';
+  html += '</div></body></html>';
+  return html;
+}
+
 function rHome(){
   var h='';
   var today=TD;
   var tvaR=SALON_CONFIG.tauxTVA||20;
+  // === Bandeau "Demandes sur mesure en attente" ===
+  var pendingDemandes = (window.RDV_DEMANDES||[]).filter(function(x){return x.status==="pending";});
+  if(pendingDemandes.length){
+    h+='<div style="background:linear-gradient(135deg,rgba(200,168,78,.18),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.4);border-radius:14px;padding:14px 16px;margin-bottom:12px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="openDemande(\''+pendingDemandes[0].id+'\')">';
+    h+='<div style="font-size:32px">✨</div>';
+    h+='<div style="flex:1"><div style="font-weight:800;font-size:15px;color:var(--gold)">'+pendingDemandes.length+' demande'+(pendingDemandes.length>1?"s":"")+' sur mesure</div>';
+    h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">'+(pendingDemandes[0].client_prenom||"")+" "+(pendingDemandes[0].client_nom||"")+" — "+(pendingDemandes[0].demande_text||"").slice(0,60)+(pendingDemandes[0].demande_text&&pendingDemandes[0].demande_text.length>60?"…":"")+'</div></div>';
+    h+='<div style="color:var(--gold);font-size:18px">›</div>';
+    h+='</div>';
+  }
   // Data
   var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled;});
   var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
@@ -7216,6 +7591,7 @@ function saveSiteConfig(){
       absences:window.ABSENCES||[],
       collaborateurs:T.map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null,pause:t.pause||null};}),
       horaires_salon:H,
+      accept_rdv_sur_mesure:SC.acceptRdvSurMesure===true,
       updated_at:new Date().toISOString()
     };
     // Upsert using Supabase native upsert
@@ -7243,7 +7619,8 @@ function loadSiteConfig(){
           theme:d.style_theme||"dark_gold",fondStyle:d.fond_style||"uni",
           photoHero:d.photo_hero||"",photoSalon:d.photo_salon||"",photosSalon:d.photos_salon||[],descSalon:d.description_salon||"",slogan:d.slogan||"",
           fideliteActive:d.fidelite_active!==false,fideliteSeuil:d.fidelite_seuil||10,
-          fideliteType:d.fidelite_type||"pourcentage",fideliteValeur:Number(d.fidelite_valeur)||10
+          fideliteType:d.fidelite_type||"pourcentage",fideliteValeur:Number(d.fidelite_valeur)||10,
+          acceptRdvSurMesure:d.accept_rdv_sur_mesure===true
         };
         console.log("[SITE CONFIG] Loaded",window.SITE_CONFIG);
       }
@@ -7893,7 +8270,16 @@ function rSettings(){
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">R\u00e9sa max (jours)</label><input type="number" value="'+SC.delaiMaxJ+'" min="1" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.delaiMaxJ=+this.value;saveSiteConfig()"></div>';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Intervalles</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option></select></div>';
     h+='</div></div>';
-    
+
+    // === RDV SUR MESURE ===
+    h+='<div class="card"><div class="ct">✨ RDV sur mesure</div>';
+    h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:14px">Permet à vos clientes de faire une <strong>demande libre</strong> quand votre catalogue ne couvre pas exactement leur besoin (ex: combo prestations imbriquées, demandes complexes). Vous recevez la demande, vous composez le RDV exact dans l’app, vous lui envoyez une proposition par email avec lien de paiement de l’acompte.</div>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid var(--border2);cursor:pointer"><span style="font-size:15px"><strong>Activer les RDV sur mesure</strong></span><input type="checkbox" '+(SC.acceptRdvSurMesure===true?"checked":"")+' style="width:22px;height:22px;cursor:pointer" onchange="window.SITE_CONFIG.acceptRdvSurMesure=this.checked;saveSiteConfig();if(typeof toast===\'function\')toast(this.checked?\'RDV sur mesure activés ✨\':\'RDV sur mesure désactivés\',\'info\')"></label>';
+    if(SC.acceptRdvSurMesure){
+      h+='<div style="background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.2);border-radius:10px;padding:12px;margin-top:10px;font-size:12px;color:var(--text2);line-height:1.6">✓ Le bouton "Demander un RDV sur mesure" apparaît sur votre page de réservation. Les demandes apparaissent ici dans l’app et par notification.</div>';
+    }
+    h+='</div>';
+
   }
   
   else if(settTab==="connect"){

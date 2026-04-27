@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Votre proposition de RDV — Luxyra</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://js.stripe.com/v3/"></script>
+<style>
+:root{
+  --gold:#c8a84e;--gold-l:#d4a843;--bg:#0a0a0a;--bg2:#101014;--bg3:#16161c;
+  --text:#fff;--text2:rgba(255,255,255,.7);--text3:rgba(255,255,255,.4);
+  --green:#4ade80;--red:#f87171;--blue:#60a5fa;
+  --f1:'Playfair Display',serif;--f2:'Nunito',sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--f2);min-height:100vh}
+.wrap{max-width:540px;margin:0 auto;padding:24px 16px}
+.hdr{text-align:center;padding:24px 0 12px}
+.hdr .logo{max-width:180px;max-height:80px;margin-bottom:8px;border-radius:12px}
+.hdr .salon{font-family:var(--f1);font-size:24px;color:var(--gold);font-weight:800;margin:8px 0 4px}
+.hdr .sub{font-size:13px;color:var(--text3)}
+.card{background:var(--bg3);border:1.5px solid rgba(200,168,78,.15);border-radius:16px;padding:20px;margin-bottom:14px}
+.card h2{font-family:var(--f1);font-size:18px;margin:0 0 12px;color:var(--gold);font-weight:700}
+.row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px;border-bottom:1px dotted rgba(200,168,78,.08)}
+.row:last-child{border-bottom:none}
+.row .v{font-weight:700;color:var(--gold)}
+.row.tot{border-top:2px solid var(--gold);margin-top:8px;padding-top:10px;font-size:16px}
+.item{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;color:var(--text2)}
+.item .v{color:var(--gold);font-weight:700}
+.msg{background:rgba(200,168,78,.06);border-left:3px solid var(--gold);padding:12px 14px;border-radius:6px;font-size:13px;color:var(--text2);font-style:italic;line-height:1.5;margin-top:12px}
+.btn{display:block;width:100%;padding:16px;border-radius:12px;font-size:15px;font-weight:800;text-align:center;cursor:pointer;border:none;font-family:var(--f2);transition:all .25s;margin-bottom:10px}
+.btn-gold{background:var(--gold);color:#0a0a0a}.btn-gold:hover{background:var(--gold-l);transform:translateY(-1px)}
+.btn-outline{background:transparent;border:2px solid rgba(255,255,255,.15);color:var(--text2)}
+.btn-outline:hover{border-color:var(--gold);color:var(--gold)}
+.btn-danger{background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);color:var(--red)}
+.btn-danger:hover{background:rgba(248,113,113,.15)}
+.btn:disabled{opacity:.4;pointer-events:none}
+.err{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);color:var(--red);padding:12px;border-radius:8px;font-size:13px;margin:10px 0;display:none}
+.warn{background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);color:#fbbf24;padding:12px;border-radius:8px;font-size:13px;margin:10px 0}
+.spin{width:32px;height:32px;border:3px solid rgba(200,168,78,.2);border-top-color:var(--gold);border-radius:50%;animation:r 1s linear infinite;margin:24px auto;display:block}
+@keyframes r{to{transform:rotate(360deg)}}
+.expires{font-size:11px;color:var(--text3);text-align:center;margin-top:8px}
+.success-page{text-align:center;padding:40px 20px}
+.success-page .ico{font-size:64px;margin-bottom:14px}
+.success-page h2{font-family:var(--f1);font-size:24px;color:var(--green);margin:0 0 10px}
+.success-page p{font-size:14px;color:var(--text2);line-height:1.7}
+.label{font-size:11px;font-weight:800;letter-spacing:1.5px;color:var(--text3);text-transform:uppercase;margin-bottom:6px}
+input[type=text],textarea{width:100%;padding:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;color:#fff;font-size:14px;font-family:inherit}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(8px);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px}
+.modal-box{background:var(--bg3);border:2px solid var(--gold);border-radius:18px;padding:24px;max-width:420px;width:100%}
+.stripe-box{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;min-height:44px}
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+  <div class="spin"></div>
+  <div style="text-align:center;color:var(--text3);font-size:13px">Chargement de votre proposition…</div>
+</div>
+
+<script>
+var SB_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
+var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+var STRIPE_PK="pk_test_51TCS0KPk42Psx94TbtlODP1PLrlFAFznR35OuEjt2l1LcOywSXfj4oQUNdQCJcS4XajdSjVcDr0DLLT1B8ew2pXj005qIoOWVo";
+var stripe=null; try{stripe=Stripe(STRIPE_PK);}catch(e){console.warn("Stripe not loaded",e);}
+
+function getToken(){
+  var p=new URLSearchParams(window.location.search);
+  return p.get("t")||"";
+}
+function escapeHtml(s){ return String(s||"").replace(/[&<>"]/g, function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+function fmtDate(s){
+  if(!s) return "";
+  var p=s.split("-");
+  var d=new Date(+p[0],+p[1]-1,+p[2]);
+  var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+  var mois=["janvier","fevrier","mars","avril","mai","juin","juillet","aout","septembre","octobre","novembre","decembre"];
+  return jours[d.getDay()]+" "+p[2]+" "+mois[d.getMonth()]+" "+p[0];
+}
+function fmtExpires(s){
+  if(!s) return "";
+  var t=new Date(s);
+  var diff=Math.max(0,(t-new Date())/1000);
+  if(diff<3600) return "Expire dans "+Math.floor(diff/60)+" min";
+  if(diff<86400) return "Expire dans "+Math.floor(diff/3600)+" h";
+  return "Expire le "+t.toLocaleDateString("fr-FR")+" a "+t.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+}
+
+var STATE={token:null,demande:null,salon:null};
+
+async function fetchProposal(){
+  var token=getToken();
+  if(!token){ renderError("Lien invalide", "Le lien que vous avez recu est incomplet."); return; }
+  STATE.token=token;
+  try{
+    var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+      body:JSON.stringify({token:token,action:"get"})
+    });
+    var data=await r.json();
+    if(!r.ok){
+      renderError("Lien invalide ou expire", data.error||"Cette proposition n'est plus accessible.");
+      return;
+    }
+    STATE.demande=data.demande;
+    STATE.salon=data.salon||{};
+    if(data.demande.status==="confirmed"){ renderConfirmed(); return; }
+    if(data.demande.status==="refused"){ renderRefused(); return; }
+    if(data.demande.status==="expired"||data.demande.status==="cancelled_by_salon"){ renderError("Proposition cloturee", "Cette proposition n'est plus active."); return; }
+    renderProposal();
+  }catch(e){
+    renderError("Erreur de connexion", e.message);
+  }
+}
+
+function renderError(title, msg){
+  document.getElementById("root").innerHTML =
+    '<div class="card" style="margin-top:40px;text-align:center">'+
+    '<div style="font-size:48px;margin-bottom:10px">😕</div>'+
+    '<h2 style="font-family:var(--f1);color:var(--red)">'+escapeHtml(title)+'</h2>'+
+    '<p style="color:var(--text2);font-size:14px;line-height:1.6">'+escapeHtml(msg)+'</p>'+
+    '</div>';
+}
+
+function renderConfirmed(){
+  var pd=STATE.demande.proposed_data||{};
+  document.getElementById("root").innerHTML =
+    '<div class="success-page">'+
+    '<div class="ico">✅</div>'+
+    '<h2>RDV confirme et paye</h2>'+
+    '<p>Votre rendez-vous du <strong>'+fmtDate(pd.date)+' a '+escapeHtml(pd.heure||"")+'</strong> est confirme chez <strong>'+escapeHtml(STATE.salon.nom||"")+'</strong>.</p>'+
+    '<p style="margin-top:14px;font-size:13px;color:var(--text3)">Un email de confirmation vous a ete envoye. A bientot !</p>'+
+    '</div>';
+}
+
+function renderRefused(){
+  document.getElementById("root").innerHTML =
+    '<div class="success-page">'+
+    '<div class="ico">😔</div>'+
+    '<h2 style="color:var(--text2)">Proposition refusee</h2>'+
+    '<p>Vous avez refuse cette proposition. Vous pouvez contacter le salon pour discuter d'autres options.</p>'+
+    (STATE.salon.telephone ? '<p style="margin-top:10px"><strong>📞 '+escapeHtml(STATE.salon.telephone)+'</strong></p>' : '')+
+    '</div>';
+}
+
+function renderProposal(){
+  var pd=STATE.demande.proposed_data||{};
+  var s=STATE.salon||{};
+  var c=STATE.demande.client||{};
+  var items=pd.items||[];
+  var prixTotal=Number(pd.prix_total)||0;
+  var acompte=Number(pd.acompte_montant)||0;
+  var reste=prixTotal-acompte;
+
+  var h='<div class="hdr">';
+  if(s.logo) h+='<img class="logo" src="'+escapeHtml(s.logo)+'" alt="">';
+  h+='<div class="salon">'+escapeHtml(s.nom||"Salon")+'</div>';
+  h+='<div class="sub">vous propose un rendez-vous personnalise</div>';
+  h+='</div>';
+
+  h+='<div class="card"><h2>📅 Votre rendez-vous</h2>';
+  h+='<div class="row"><span>Date</span><span class="v">'+fmtDate(pd.date)+'</span></div>';
+  h+='<div class="row"><span>Heure</span><span class="v">'+escapeHtml(pd.heure||"")+'</span></div>';
+  h+='<div class="row"><span>Duree estimee</span><span class="v">'+(pd.duree_minutes||0)+' min</span></div>';
+  if(pd.collaborateur_nom) h+='<div class="row"><span>Avec</span><span class="v">'+escapeHtml(pd.collaborateur_nom)+'</span></div>';
+  h+='</div>';
+
+  h+='<div class="card"><h2>✨ Vos prestations</h2>';
+  items.forEach(function(it){
+    h+='<div class="item"><span>• '+escapeHtml(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(it.duree||0)+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' €</span></div>';
+  });
+  h+='<div class="row tot"><span>Total</span><span class="v">'+prixTotal.toFixed(2)+' €</span></div>';
+  if(pd.message_salon) h+='<div class="msg">"'+escapeHtml(pd.message_salon)+'"</div>';
+  h+='</div>';
+
+  if(acompte>0){
+    h+='<div class="card"><h2>💳 Paiement de l'acompte</h2>';
+    h+='<div class="row"><span>Acompte a regler maintenant</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' €</span></div>';
+    h+='<div class="row"><span>Reste a payer au salon</span><span class="v" style="color:var(--text2)">'+reste.toFixed(2)+' €</span></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">🔒 Paiement securise par Stripe</div>';
+    h+='</div>';
+  }
+
+  h+='<div id="errBox" class="err"></div>';
+
+  if(acompte>0){
+    h+='<button class="btn btn-gold" onclick="openPaymentModal()">💳 Payer '+acompte.toFixed(2)+' € et confirmer</button>';
+  } else {
+    h+='<button class="btn btn-gold" onclick="confirmFree()">✅ Confirmer le rendez-vous</button>';
+  }
+  h+='<button class="btn btn-danger" onclick="openRefuseModal()">❌ Refuser cette proposition</button>';
+  h+='<div class="expires">'+fmtExpires(STATE.demande.expires_at)+'</div>';
+
+  document.getElementById("root").innerHTML=h;
+}
+
+function openRefuseModal(){
+  var h='<div class="modal" id="refuseModal" onclick="if(event.target===this)closeRefuseModal()">';
+  h+='<div class="modal-box">';
+  h+='<h2 style="font-family:var(--f1);color:var(--gold);margin:0 0 12px">Refuser la proposition ?</h2>';
+  h+='<p style="font-size:13px;color:var(--text2);line-height:1.5;margin:0 0 14px">Vous pouvez expliquer brievement pourquoi (optionnel) :</p>';
+  h+='<textarea id="refuseReason" rows="3" placeholder="Ex: la date ne me convient pas, je preferais le matin..."></textarea>';
+  h+='<div style="display:flex;gap:10px;margin-top:16px">';
+  h+='<button class="btn btn-outline" style="margin:0" onclick="closeRefuseModal()">Annuler</button>';
+  h+='<button class="btn btn-danger" id="refuseBtn" style="margin:0" onclick="doRefuse()">Confirmer le refus</button>';
+  h+='</div></div></div>';
+  document.body.insertAdjacentHTML("beforeend",h);
+}
+function closeRefuseModal(){ var m=document.getElementById("refuseModal"); if(m) m.remove(); }
+async function doRefuse(){
+  var reason=document.getElementById("refuseReason").value.trim();
+  var btn=document.getElementById("refuseBtn");
+  btn.disabled=true; btn.textContent="Envoi...";
+  try{
+    var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+      body:JSON.stringify({token:STATE.token,action:"refuse",reason:reason})
+    });
+    var data=await r.json();
+    if(!r.ok){ alert("Erreur: "+(data.error||"refus impossible")); btn.disabled=false; btn.textContent="Confirmer le refus"; return; }
+    closeRefuseModal();
+    STATE.demande.status="refused";
+    renderRefused();
+  }catch(e){
+    alert("Erreur de connexion: "+e.message);
+    btn.disabled=false; btn.textContent="Confirmer le refus";
+  }
+}
+
+async function confirmFree(){
+  // Pas d'acompte → confirmation directe (sans paiement)
+  if(!confirm("Confirmer ce rendez-vous ?")) return;
+  try{
+    var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+      body:JSON.stringify({token:STATE.token,action:"confirm"})
+    });
+    var data=await r.json();
+    if(!r.ok){ document.getElementById("errBox").style.display="block"; document.getElementById("errBox").textContent=data.error||"Confirmation impossible"; return; }
+    STATE.demande.status="confirmed";
+    renderConfirmed();
+  }catch(e){
+    document.getElementById("errBox").style.display="block"; document.getElementById("errBox").textContent="Erreur de connexion: "+e.message;
+  }
+}
+
+function openPaymentModal(){
+  if(!stripe){ alert("Le module de paiement n'a pas pu etre charge. Reessayez ou contactez le salon."); return; }
+  var pd=STATE.demande.proposed_data||{};
+  var c=STATE.demande.client||{};
+  var acompte=Number(pd.acompte_montant)||0;
+  var nom=((c.prenom||"")+" "+(c.nom||"")).trim();
+  var h='<div class="modal" id="payModal" onclick="if(event.target===this)closePaymentModal()">';
+  h+='<div class="modal-box" style="max-width:440px">';
+  h+='<h2 style="font-family:var(--f1);color:var(--gold);margin:0 0 6px">💳 Paiement</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Acompte de <strong style="color:var(--gold)">'+acompte.toFixed(2)+' €</strong></div>';
+  h+='<div class="label">Titulaire de la carte</div>';
+  h+='<input type="text" id="payName" value="'+escapeHtml(nom)+'" style="margin-bottom:10px">';
+  h+='<div class="label">Numero de carte</div>';
+  h+='<div class="stripe-box" id="cardElement"></div>';
+  h+='<div id="payErr" style="color:var(--red);font-size:12px;margin-top:6px;min-height:18px"></div>';
+  h+='<div style="display:flex;gap:10px;margin-top:14px">';
+  h+='<button class="btn btn-outline" style="margin:0" onclick="closePaymentModal()">Annuler</button>';
+  h+='<button class="btn btn-gold" id="payBtn" style="margin:0" onclick="doPayment()">🔒 Payer '+acompte.toFixed(2)+' €</button>';
+  h+='</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:12px;text-align:center">🔒 Securise par Stripe</div>';
+  h+='</div></div>';
+  document.body.insertAdjacentHTML("beforeend",h);
+  // Mount Stripe Elements
+  var elements=stripe.elements({appearance:{theme:"night",variables:{colorPrimary:"#c8a84e",colorBackground:"#1a1a1a",colorText:"#ffffff",colorDanger:"#ef5350",fontFamily:"Nunito, sans-serif",borderRadius:"10px"}}});
+  window._proposalCard=elements.create("card",{style:{base:{fontSize:"16px",color:"#fff","::placeholder":{color:"rgba(255,255,255,.4)"}}}});
+  window._proposalCard.mount("#cardElement");
+  window._proposalCard.on("change",function(ev){ document.getElementById("payErr").textContent=ev.error?ev.error.message:""; });
+}
+function closePaymentModal(){ var m=document.getElementById("payModal"); if(m) m.remove(); window._proposalCard=null; }
+
+async function doPayment(){
+  var btn=document.getElementById("payBtn");
+  var errEl=document.getElementById("payErr");
+  var pd=STATE.demande.proposed_data||{};
+  var acompte=Number(pd.acompte_montant)||0;
+  var name=document.getElementById("payName").value.trim()||"Cliente";
+  btn.disabled=true; btn.textContent="Paiement en cours...";
+  try{
+    var result=await stripe.createToken(window._proposalCard,{name:name});
+    if(result.error){ errEl.textContent=result.error.message; btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €"; return; }
+    var token=result.token;
+    var brand=token.card.brand, last4=token.card.last4;
+
+    // Path A : Stripe Connect actif
+    var s=STATE.salon||{};
+    var connectActive = s.stripe_connect_id && s.stripe_connect_status==="active";
+
+    if(connectActive){
+      // Pour la V1 on fait simple : on appelle l'edge function rdv-charge-acompte
+      // qui charge sur le compte Luxyra (path B). Le path A Connect Checkout demande
+      // une redirection : a faire en V1.5.
+      // (Note : pour rester safe, on reste sur path B pour cette V1 meme si Connect est actif.
+      //  Le salon recevra l'acompte plus tard via reversement manuel.)
+    }
+
+    // Charger l'acompte via edge function rdv-charge-acompte (Path B = compte Luxyra)
+    // mais sans creer de rdv_online — on n'a besoin que du paiement reussi.
+    // Utiliser l'API Charges directement via une nouvelle action de l'edge function
+    // proposal-action qui combine paiement + creation rdv. Mais la couche actuelle est :
+    // 1) Charge Stripe (cote front via stripe.createToken => token)
+    // 2) Confirm via rdv-demande-proposal-action (action=confirm) avec stripe_token + brand + last4
+    //    L'edge function va creer le rdv_online avec acompte_paye=true (notre trigger v3
+    //    accepte stripe_token comme preuve).
+    // Le debit reel sera fait via une edge function future ou manuellement par le salon Stripe dashboard.
+    // Pour la V1 : on enregistre juste le token (preuve carte valide).
+    // V1.5 : appel rdv-charge-acompte separe pour debit reel.
+    var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+      body:JSON.stringify({
+        token:STATE.token,
+        action:"confirm",
+        stripe_token:token.id,
+        stripe_brand:brand,
+        stripe_last4:last4
+      })
+    });
+    var data=await r.json();
+    if(!r.ok){ errEl.textContent=data.error||"Erreur lors de la confirmation"; btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €"; return; }
+    closePaymentModal();
+    STATE.demande.status="confirmed";
+    renderConfirmed();
+  }catch(e){
+    errEl.textContent="Erreur: "+e.message;
+    btn.disabled=false; btn.textContent="🔒 Payer "+acompte.toFixed(2)+" €";
+  }
+}
+
+// Init
+fetchProposal();
+</script>
+</body>
+</html>
