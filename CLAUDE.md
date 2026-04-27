@@ -340,3 +340,36 @@ WHERE schemaname='public'
 - Tests end-to-end via pg_net : signup / login / profile / change_password / legacy hash migration / erreurs → tous verts
 - CLAUDE.md mis à jour
 - Prochaine étape : commit + push, tests navigateur par Alexandre
+
+### Session 2026-04-27 — Multi-prestations chaînées en booking online (Planity-killer)
+**Objectif** : permettre au client de réserver 2-3 prestations dans le même RDV (ex: Coupe + Couleur + Soin) sans avoir à prendre 3 RDV séparés. Dépasse Planity sur ce volet : nous avons aussi multi-services LIBRES en plus des forfaits prédéfinis.
+
+**Changements DB** :
+- Migration `rdv_online_add_items_jsonb` : nouvelle colonne `items JSONB` sur `rdv_online`. Format `[{service_id,nom,prix,duree,ordre}]`. Index GIN pour requêtes futures.
+- Migration `rdv_online_validate_v3_multi_items` : trigger v3 qui boucle sur items[] si présent, valide chaque service (existence, salon, actif, book_online, show_site). Compat totale avec mono (items=null garde l'ancien comportement).
+
+**Changements front (`site.html`)** :
+- `booking.items[]` ajouté + helpers `bookingTotals()`, `bookingPrimaryNom()`, `bookingItemsPayload()`
+- Step 1 refondu : checkbox + mini-cart sticky en bas avec récap (durée/prix totaux) + CTA "Continuer"
+- Step 4 récap multi-aware : liste détaillée si plusieurs prestations
+- 3 fonctions submit (submitBooking, submitWithStripe, processStripePayment) envoient `items` et calculent acompte sur le total
+- Compat : si client coche 1 seule presta, UX strictement identique à avant
+- CSS : `.book-cart` (sticky bottom), `.svc-card .chk` (checkbox visuelle)
+
+**Changements front (`app.html`)** :
+- SELECT polling rdv_online inclut maintenant `items`
+- RDV_ONLINE map exposé `items` + `duree` aux consommateurs
+- `service_nom` reste le combo concaténé "X + Y + Z" donc tout l'affichage existant marche sans refactor
+- Bump cache-busting `v=20260427-01`
+
+**Tests e2e** (5 scénarios via SET ROLE anon) :
+1. ✅ Mono insert (régression) — items=null OK
+2. ✅ Multi 2 services valides — items[] bien stocké en JSONB
+3. ✅ Service d'un autre salon → rejeté ("Service inexistant id X")
+4. ✅ Service inexistant → rejeté
+5. ✅ Durée totale dépassant fermeture (17h45 + 30min vs fermeture 18h) → rejeté
+
+**Reste à faire (futur)** :
+- Optionnel : trigger Postgres qui copie auto rdv_online → appointments avec phases dérivées (pour intégration cabine totale)
+- Optionnel : multi-collab chainé (la coloriste fait la couleur, le coiffeur fait la coupe)
+- Optionnel : suggestions de combos populaires côté client ("Les clients ont souvent ajouté…")
