@@ -2,7 +2,7 @@
 // bp-client.js — Client helper pour les edge functions BeautyPro
 // ============================================================================
 // Remplace les accès directs à la table clients_beautypro par des appels
-// aux edge functions bp-signup / bp-login / bp-profile.
+// aux edge functions lx-signup / lx-login / lx-profile (anciennement bp-*).
 //
 // Stockage session :
 //   - localStorage["lx_bp_token"] : session_token JWT HS256 (30 jours)
@@ -49,7 +49,7 @@
 
   async function bpSignup(fields){
     // fields : { email, password, nom, prenom, telephone?, date_naissance?, genre?, sms_ok?, email_ok? }
-    var res = await call("bp-signup", fields);
+    var res = await call("lx-signup", fields);
     if (res.ok && res.data && res.data.session_token) {
       setToken(res.data.session_token);
       setUser(res.data.user);
@@ -58,7 +58,7 @@
   }
 
   async function bpLogin(email, password){
-    var res = await call("bp-login", { email: email, password: password });
+    var res = await call("lx-login", { email: email, password: password });
     if (res.ok && res.data && res.data.session_token) {
       setToken(res.data.session_token);
       setUser(res.data.user);
@@ -69,7 +69,7 @@
   async function bpGet(){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
-    var res = await call("bp-profile", { session_token: token, action: "get" });
+    var res = await call("lx-profile", { session_token: token, action: "get" });
     if (res.ok && res.data && res.data.user) setUser(res.data.user);
     else if (res.status === 401) { setToken(""); setUser(null); }
     return res;
@@ -79,7 +79,7 @@
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var body = Object.assign({ session_token: token, action: "update" }, patch || {});
-    var res = await call("bp-profile", body);
+    var res = await call("lx-profile", body);
     if (res.ok && res.data && res.data.user) setUser(res.data.user);
     return res;
   }
@@ -87,7 +87,7 @@
   async function bpChangePassword(oldPass, newPass){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
-    return await call("bp-profile", {
+    return await call("lx-profile", {
       session_token: token, action: "change_password",
       old_password: oldPass, new_password: newPass
     });
@@ -96,7 +96,7 @@
   async function bpDelete(password){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
-    var res = await call("bp-profile", {
+    var res = await call("lx-profile", {
       session_token: token, action: "delete",
       password: password || ""
     });
@@ -107,7 +107,7 @@
   async function bpToggleNotif(field, value){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
-    var res = await call("bp-profile", {
+    var res = await call("lx-profile", {
       session_token: token, action: "toggle_notif",
       field: field, value: value
     });
@@ -121,7 +121,7 @@
   async function bpRemovePayment(){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
-    var res = await call("bp-profile", { session_token: token, action: "remove_payment" });
+    var res = await call("lx-profile", { session_token: token, action: "remove_payment" });
     if (res.ok) {
       var u = getUser();
       if (u) { u.stripe_pm = null; u.card_last4 = null; u.card_exp = null; setUser(u); }
