@@ -534,3 +534,48 @@ WHERE schemaname='public'
 - Autocomplete temps réel dans la search bar (services + noms salons + villes)
 - Booking inline depuis la fiche salon (sans changer de page)
 - Avis clientes + scoring
+
+### Session 2026-04-27 (suite 5) — Phase B marketplace : page /recherche avec carte Leaflet
+**Objectif** : page de résultats dédiée avec carte interactive, filtres, URL params SEO-friendly.
+
+**Migrations DB** :
+- `salons_add_lat_lng_extend_public_view` : colonnes `salons.latitude`, `longitude`, `geocoded_at` + index spatial partial GIN sur (lat,lng) + extension de `salons_public` pour exposer lat/lng
+- `salons_public_alter_security_invoker_off` : HOTFIX. Ma migration précédente avait basculé la vue en `security_invoker=on` ce qui cassait l'accès anon (la table salons est lockée). Remise en `=off` (la vue filtre déjà aux active/trial et n'expose pas les colonnes sensibles, donc anon-safe).
+
+**Géocodage** :
+- Excellence Coiffure géocodée via Nominatim OSM (gratuit, pas de clé API) → 49.1111370, 7.0668880
+
+**Nouvelle page `/recherche.html`** :
+- Layout split desktop (liste à gauche, carte à droite) + responsive mobile (toggle liste/carte avec bouton flottant)
+- **Carte Leaflet** + tiles **CARTO Dark Matter** (gratuit, style sombre cohérent Luxyra)
+- Markers SVG personnalisés noir+or par métier (emoji différent par catégorie)
+- Cards salons avec thumbnail logo, métier, nom, adresse, CTA "Voir le salon"
+- Hover card → highlight marker (transform scale + glow)
+- Click marker → popup Leaflet stylé Luxyra avec récap + bouton réservation
+- 6 pills filtres métier + filtre actif visuel + count résultats
+- Search bar header (nom/prestation + ville)
+- URL params persistés `?metier=&q=&ville=` (replaceState pour ne pas polluer l'historique)
+- Auto-fit bounds sur les markers visibles, zoom 14 si 1 seul, vue France si vide
+- Fallback message "Aucun salon" engageant
+
+**Mise à jour `index.html`** :
+- `doSearch()` et `quickSearch()` redirigent vers `/recherche.html` au lieu de `/marketplace.html`
+- Marketplace.html reste accessible (rétro-compat)
+
+**Tests Chrome bout-en-bout (réels en prod)** :
+1. ✅ `/recherche.html` charge, carte Leaflet visible, header + filtres présents
+2. ✅ `?metier=coiffure` filtre actif et 1 résultat (Excellence Coiffure)
+3. ✅ Card affichée correctement (logo, métier, nom, adresse complète, CTA)
+4. ✅ Marker visible sur la carte avec auto-zoom niveau 18 sur le salon unique
+5. ✅ Filtre "Barbier" → 0 résultat, message empty engageant affiché
+6. ✅ Filtre "Tous" → 1 résultat retrouvé, URL nettoyée
+7. ✅ `highlightSalon()` → card.highlight visible + popup Leaflet ouvert
+8. ✅ Hover card synchronise marker.active
+
+**Phase C (à faire dans une session future)** :
+- URL SEO `/coiffeur/paris-75` via Cloudflare Worker (pattern `/{metier}/{ville}-{cp}`)
+- Cluster markers quand beaucoup de salons (Leaflet.markercluster)
+- Filtres avancés (note, distance, ouvert maintenant, prix)
+- Autocomplete temps réel dans la search bar
+- Géocodage automatique des nouveaux salons à l'inscription (trigger Postgres ou edge function)
+- Fiche salon avec mini-map intégrée (la lat/lng est désormais dispo)
