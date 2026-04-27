@@ -1629,7 +1629,7 @@ function getInvTournantProducts(){
   return sorted.slice(0,5);
 }
 
-var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.3",subdomain:"",plan:"essential"};
+var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.3",subdomain:"",slug:"",plan:"essential"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
 
@@ -7470,6 +7470,44 @@ async function saveSubdomain(){
   }catch(e){console.error("saveSubdomain ERROR:",e);statusEl.innerHTML='\u274c Erreur: '+e.message;statusEl.style.color="#f87171";}
 }
 
+// Mots r\u00e9serv\u00e9s (routes syst\u00e8me Luxyra) \u2014 synchronis\u00e9 avec la fonction Postgres is_reserved_slug
+var LX_RESERVED_SLUGS=["pro","app","compte","recherche","inscription","marketplace","site","proposal","admin","api","pages","panel","login","signup","signin","logout","contact","terms","cgv","mentions","legal","about","help","support","blog","press","sitemap","robots","favicon","assets","static","public","www","mail","email","cdn","static-cdn","dashboard","settings","onboarding","index","home","root","test","dev","staging","prod","connexion","deconnexion","parametres","tarifs","prix","offres","professionnels","metiers","partenaires","salon","salons","rdv","reservation","booking","services","prestations","avis","reviews","search","recherche-pro"];
+
+// Sauvegarde du slug personnalis\u00e9 du salon
+async function saveSlug(){
+  var inp=document.getElementById("slugField");
+  var statusEl=document.getElementById("slugStatus");
+  if(!inp||!statusEl)return;
+  var slug=String(inp.value||"").trim().toLowerCase().replace(/[^a-z0-9-]/g,"").replace(/^-+|-+$/g,"").slice(0,60);
+  if(!slug||slug.length<2){statusEl.innerHTML='\u274c Minimum 2 caract\u00e8res (lettres, chiffres, tirets).';statusEl.style.color="#f87171";return;}
+  if(slug.length>60){statusEl.innerHTML='\u274c Maximum 60 caract\u00e8res.';statusEl.style.color="#f87171";return;}
+  if(LX_RESERVED_SLUGS.indexOf(slug)!==-1){statusEl.innerHTML='\u274c "'+slug+'" est r\u00e9serv\u00e9. Choisissez un autre nom.';statusEl.style.color="#f87171";return;}
+  statusEl.innerHTML="V\u00e9rification...";statusEl.style.color="var(--text3)";
+  try{
+    // V\u00e9rifier disponibilit\u00e9 dans salons + alias historique
+    var check=await _sb.from("salons").select("id").eq("slug",slug);
+    if(check.error){statusEl.innerHTML='\u274c Erreur v\u00e9rif : '+check.error.message;statusEl.style.color="#f87171";return;}
+    if(check.data&&check.data.length>0&&check.data[0].id!==_salonId){
+      statusEl.innerHTML='\u274c "luxyra.fr/'+slug+'" est d\u00e9j\u00e0 pris.';statusEl.style.color="#f87171";return;
+    }
+    var checkAlias=await _sb.from("salon_slug_aliases").select("salon_id").eq("slug",slug);
+    if(!checkAlias.error && checkAlias.data && checkAlias.data.length>0 && checkAlias.data[0].salon_id!==_salonId){
+      statusEl.innerHTML='\u274c "luxyra.fr/'+slug+'" est r\u00e9serv\u00e9 par un alias historique.';statusEl.style.color="#f87171";return;
+    }
+    // Sauvegarder (le trigger DB archive automatiquement l'ancien slug dans salon_slug_aliases)
+    var upd=await _sb.from("salons").update({slug:slug}).eq("id",_salonId).select("slug");
+    if(upd.error){statusEl.innerHTML='\u274c Erreur save : '+upd.error.message;statusEl.style.color="#f87171";return;}
+    var newSlug=(upd.data&&upd.data[0]&&upd.data[0].slug)||slug;
+    if(!window.SALON)window.SALON={};
+    window.SALON.slug=newSlug;
+    SALON_CONFIG.slug=newSlug;
+    statusEl.innerHTML='\u2705 Enregistr\u00e9 ! Votre site : <a href="https://luxyra.fr/site.html?slug='+encodeURIComponent(newSlug)+'" target="_blank" style="color:var(--gold)">luxyra.fr/'+newSlug+'</a>';
+    statusEl.style.color="#4ade80";
+    // Rafra\u00eechit la card pour montrer la nouvelle URL en haut
+    setTimeout(function(){if(typeof go==="function")go("settings");},1200);
+  }catch(e){console.error("saveSlug ERROR:",e);statusEl.innerHTML='\u274c Erreur : '+e.message;statusEl.style.color="#f87171";}
+}
+
 function saveSalonInfo(){
   var S=window.SALON;
   if(!S)return;
@@ -8292,28 +8330,56 @@ function rSettings(){
     }
     h+='</div>';
     
-    // URL du site + sous-domaine
+    // URL du site (slug personnalisable)
     if(typeof _salonId!=="undefined"&&_salonId){
-      h+='<div class="card"><div class="ct">Adresse de votre site</div>';
-      // Sous-domaine personnalisé
-      var curSub=SALON_CONFIG.subdomain||(window.SALON&&window.SALON.subdomain)||"";
-      h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Choisissez votre adresse personnalis\u00e9e</label>';
+      var curSlug=SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"";
+      var _eSlug=String(curSlug).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];});
+      h+='<div class="card"><div class="ct">\ud83d\udd17 Adresse de votre site</div>';
+      h+='<div style="margin-top:10px;padding:14px;background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.18);border-radius:10px;margin-bottom:14px">';
+      h+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px;letter-spacing:.5px;text-transform:uppercase">Votre URL publique</div>';
+      h+='<div id="slugUrlDisplay" style="font-family:var(--f1);font-size:18px;font-weight:700;color:var(--gold);word-break:break-all;line-height:1.4">';
+      h+= curSlug ? ('luxyra.fr/'+_eSlug) : '<span style="color:var(--text3);font-family:inherit;font-size:14px;font-weight:400">Chargement...</span>';
+      h+='</div>';
+      if(curSlug){
+        var siteUrlPretty="https://luxyra.fr/site.html?slug="+encodeURIComponent(curSlug);
+        h+='<div style="display:flex;gap:8px;margin-top:10px">';
+        h+='<button class="btn bs" style="font-size:12px;padding:8px 14px" onclick="navigator.clipboard.writeText(\'https://luxyra.fr/'+_eSlug+'\');this.textContent=\'\u2705 Copi\u00e9\';var b=this;setTimeout(function(){b.textContent=\'\ud83d\udccb Copier\'},2000)">\ud83d\udccb Copier</button>';
+        h+='<a class="btn bs" style="font-size:12px;padding:8px 14px;text-decoration:none" href="'+siteUrlPretty+'" target="_blank">\u2197 Ouvrir</a>';
+        h+='</div>';
+      }
+      h+='</div>';
+
+      h+='<div style="margin-top:6px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Personnaliser votre adresse</label>';
       h+='<div style="display:flex;align-items:center;gap:0;margin-bottom:8px">';
-      h+='<input id="subdomainField" value="'+curSub+'" placeholder="mon-etablissement" style="flex:1;padding:12px;font-size:14px;background:var(--bg);border:1px solid rgba(200,168,78,.15);border-radius:10px 0 0 10px;color:var(--gold);outline:none" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9-]/g,&quot;&quot;)">';
-      h+='<div style="padding:12px 14px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-left:none;border-radius:0 10px 10px 0;font-size:13px;color:var(--text3);white-space:nowrap">.luxyra.fr</div>';
+      h+='<div style="padding:12px 10px;background:rgba(255,255,255,.03);border:1px solid rgba(200,168,78,.15);border-right:none;border-radius:10px 0 0 10px;font-size:13px;color:var(--text3);white-space:nowrap">luxyra.fr/</div>';
+      h+='<input id="slugField" value="'+_eSlug+'" placeholder="mon-salon" style="flex:1;padding:12px;font-size:14px;background:var(--bg);border:1px solid rgba(200,168,78,.15);border-radius:0 10px 10px 0;color:var(--gold);outline:none" oninput="this.value=this.value.toLowerCase().replace(/[^a-z0-9-]/g,&quot;&quot;).slice(0,60)">';
       h+='</div>';
-      h+='<div id="subdomainStatus" style="font-size:11px;color:var(--text3);margin-bottom:10px">'+(curSub?'\u2705 Votre site : <a href="https://'+curSub+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+curSub+'.luxyra.fr</a>':'Tapez le nom souhait\u00e9 pour votre site')+'</div>';
-      h+='<button class="btn bs" style="font-size:13px;padding:10px 20px" onclick="saveSubdomain()">Enregistrer</button>';
+      h+='<div id="slugStatus" style="font-size:11px;color:var(--text3);margin-bottom:10px">Lettres min., chiffres, tirets. Entre 2 et 60 caract\u00e8res. \u00c9vitez les mots r\u00e9serv\u00e9s (pro, app, recherche\u2026).</div>';
+      h+='<button class="btn bs" style="font-size:13px;padding:10px 20px" onclick="saveSlug()">Enregistrer</button>';
       h+='</div>';
-      // Lien direct (fallback)
-      var siteUrl=window.location.origin+"/site.html?s="+_salonId;
-      h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06)">';
-      h+='<label style="font-size:11px;color:var(--text3);display:block;margin-bottom:6px">Lien direct (fonctionne toujours)</label>';
-      h+='<div style="display:flex;gap:8px;align-items:center">';
-      h+='<input id="siteUrlField" value="'+siteUrl+'" readonly style="flex:1;font-size:11px;padding:10px;background:var(--bg);border-radius:10px;color:var(--text3);border:1px solid rgba(255,255,255,.06)">';
+
+      // Lien UUID (fallback technique)
+      var siteUrlUuid=window.location.origin+"/site.html?s="+_salonId;
+      h+='<details style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06)"><summary style="font-size:11px;color:var(--text3);cursor:pointer;outline:none">Lien technique (UUID, fallback)</summary>';
+      h+='<div style="display:flex;gap:8px;align-items:center;margin-top:8px">';
+      h+='<input id="siteUrlField" value="'+siteUrlUuid+'" readonly style="flex:1;font-size:11px;padding:10px;background:var(--bg);border-radius:10px;color:var(--text3);border:1px solid rgba(255,255,255,.06)">';
       h+='<button class="btn bs" style="font-size:11px;white-space:nowrap;padding:10px 14px" onclick="navigator.clipboard.writeText(document.getElementById(\'siteUrlField\').value);this.textContent=\'Copi\u00e9 !\';var b=this;setTimeout(function(){b.textContent=\'Copier\'},2000)">Copier</button>';
-      h+='</div></div>';
+      h+='</div></details>';
       h+='</div>';
+
+      // Lazy load slug si pas encore connu
+      if(!curSlug){
+        setTimeout(function(){
+          if(typeof _sb==="undefined"||!_sb)return;
+          _sb.from("salons").select("slug").eq("id",_salonId).limit(1).then(function(r){
+            if(r&&r.data&&r.data[0]&&r.data[0].slug){
+              SALON_CONFIG.slug=r.data[0].slug;
+              if(window.SALON)window.SALON.slug=r.data[0].slug;
+              if(typeof go==="function")go("settings");
+            }
+          });
+        },50);
+      }
     }
     
     // === PERSONNALISATION VISUELLE ===

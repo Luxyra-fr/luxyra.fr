@@ -204,6 +204,15 @@ function syncUrl(){
 }
 
 // ---- Helpers ----
+// Bascule à true une fois le Worker Cloudflare patché pour servir /:slug
+var LX_CLEAN_URLS=false;
+function salonHref(s){
+  if(s && s.slug){
+    return LX_CLEAN_URLS ? '/'+encodeURIComponent(s.slug) : '/site.html?slug='+encodeURIComponent(s.slug);
+  }
+  if(s && s.id) return '/site.html?s='+encodeURIComponent(s.id);
+  return '#';
+}
 function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 function normalize(s){
   return String(s||'').toLowerCase()
@@ -214,11 +223,11 @@ function normalize(s){
 // ---- Fetch ----
 async function loadSalons(){
   try {
-    var r = await sb.from('salons_public').select('id, nom, ville, cp, adresse, metier, logo, latitude, longitude');
+    var r = await sb.from('salons_public').select('id, slug, nom, ville, cp, adresse, metier, logo, latitude, longitude');
     if(r.error) throw r.error;
     STATE.salons = (r.data || []).map(function(s){
       return {
-        id: s.id, nom: s.nom || 'Salon', ville: s.ville || '', cp: s.cp || '',
+        id: s.id, slug: s.slug || '', nom: s.nom || 'Salon', ville: s.ville || '', cp: s.cp || '',
         adresse: s.adresse || '', metier: s.metier || 'coiffure', logo: s.logo || '',
         lat: s.latitude !== null ? Number(s.latitude) : null,
         lng: s.longitude !== null ? Number(s.longitude) : null
@@ -288,7 +297,7 @@ function renderResults(){
       ? '<img src="'+escapeHtml(s.logo)+'" alt="'+escapeHtml(s.nom)+'" loading="lazy">'
       : '<span class="salon-thumb-fallback">'+escapeHtml((s.nom||'L').charAt(0).toUpperCase())+'</span>';
     h += '<a class="salon-card" data-id="'+escapeHtml(s.id)+'" '
-      +     'href="/site.html?s='+encodeURIComponent(s.id)+'" '
+      +     'href="'+escapeHtml(salonHref(s))+'" '
       +     'onmouseenter="hoverSalon(\''+s.id+'\')" '
       +     'onmouseleave="hoverSalon(null)">'
       + '<div class="salon-thumb">'+thumb+'</div>'
@@ -351,7 +360,7 @@ function renderMarkers(){
       '<div style="font-family:\u0027Cormorant Garamond\u0027,Georgia,serif;font-size:18px;font-weight:700;color:#d4a843;margin-bottom:4px">'+escapeHtml(s.nom)+'</div>'
       + '<div style="font-size:11px;color:#9a9590;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">'+escapeHtml(label)+'</div>'
       + '<div style="font-size:13px;color:#9a9590;line-height:1.5;margin-bottom:10px">'+escapeHtml(addr || 'France')+'</div>'
-      + '<a href="/site.html?s='+encodeURIComponent(s.id)+'" style="display:inline-block;padding:7px 14px;border-radius:8px;background:#d4a843;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:13px">Réserver →</a>';
+      + '<a href="'+escapeHtml(salonHref(s))+'" style="display:inline-block;padding:7px 14px;border-radius:8px;background:#d4a843;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:13px">Réserver →</a>';
     m.bindPopup(popupHtml, { closeButton: true });
     m.on('click', function(){ highlightSalon(s.id, false); });
     m.addTo(STATE.map);

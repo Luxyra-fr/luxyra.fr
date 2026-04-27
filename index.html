@@ -352,7 +352,7 @@ async function loadSalonsEnAvant(){
     // salons_public filtre déjà aux salons active/trial dans sa définition.
     // Pas besoin de filtre status ici (la colonne n'est d'ailleurs pas exposée).
     var r = await sb.from('salons_public')
-      .select('id, nom, adresse, cp, ville, logo, metier')
+      .select('id, slug, nom, adresse, cp, ville, logo, metier')
       .limit(6);
     if(r.error){ throw r.error; }
     var salons = r.data || [];
@@ -370,7 +370,7 @@ async function loadSalonsEnAvant(){
       var logoBlock = s.logo
         ? '<img src="'+escapeAttr(s.logo)+'" alt="'+escapeAttr(s.nom||'Salon')+'" loading="lazy">'
         : '<span class="salon-img-fallback">'+escapeHtml((s.nom||'L').charAt(0).toUpperCase())+'</span>';
-      html += '<a class="salon-card" href="/site.html?s='+encodeURIComponent(s.id)+'">'
+      html += '<a class="salon-card" href="'+escapeAttr(salonHref(s))+'">'
             + '<div class="salon-img">'+logoBlock+'</div>'
             + '<div class="salon-body">'
             +   '<div class="meta">'+escapeHtml(metier)+'</div>'
@@ -391,6 +391,16 @@ function escapeHtml(s){
   });
 }
 function escapeAttr(s){ return escapeHtml(s); }
+
+// Bascule à true une fois le Worker Cloudflare patché pour servir /:slug
+var LX_CLEAN_URLS=false;
+function salonHref(s){
+  if(s && s.slug){
+    return LX_CLEAN_URLS ? '/'+encodeURIComponent(s.slug) : '/site.html?slug='+encodeURIComponent(s.slug);
+  }
+  if(s && s.id) return '/site.html?s='+encodeURIComponent(s.id);
+  return '#';
+}
 
 // === Reveal au scroll ===
 (function(){

@@ -294,9 +294,20 @@ function rdvErrorMessage(err){
   return "Erreur : " + m;
 }
 
-// Get salon ID from URL
+// Get salon reference from URL
+// Priorité : ?slug=xxx > pathname /xxx (Worker rewrite) > ?s=uuid > ?salon=uuid > __SALON_ID > __SALON_SUBDOMAIN
 var params=new URLSearchParams(window.location.search);
 var salonId=params.get("s")||params.get("salon")||window.__SALON_ID||"";
+var salonSlug=params.get("slug")||window.__SALON_SLUG||"";
+// Détection slug depuis le pathname (cas où Cloudflare Worker rewrite /excellence-coiffure → site.html?slug=)
+if(!salonSlug && !salonId){
+  var _path=window.location.pathname.replace(/^\/+|\/+$/g,"");
+  if(_path && _path!=="site.html" && /^[a-z0-9][a-z0-9-]{1,79}$/i.test(_path)){
+    salonSlug=_path.toLowerCase();
+  }
+}
+// Flag : passe à true une fois le Worker Cloudflare patché pour servir /:slug
+var LX_CLEAN_URLS=false;
 
 // State
 var SALON={},COLLABS=[],SERVICES=[],PRODUCTS=[],HORAIRES={},SITE_CFG={};
@@ -354,18 +365,71 @@ function getCollabLabel(){
 // Try to restore client session
 loadClientSession();
 
-// If no salon ID but subdomain is set, resolve it
-if(!salonId&&window.__SALON_SUBDOMAIN){
-  (async function(){
-    try{
-      var r=await sb.from("salons_public").select("id").eq("subdomain",window.__SALON_SUBDOMAIN).limit(1);
-      if(r.data&&r.data[0]){salonId=r.data[0].id;loadSalon();}
-      else{showError("Salon introuvable pour: "+window.__SALON_SUBDOMAIN);}
-    }catch(e){showError("Erreur de connexion");}
-  })();
+// Construit l'URL canonique de la fiche salon (utilis\u00e9e par replaceState)
+function buildSalonUrl(extraQs){
+  var qs=extraQs?("?"+extraQs):"";
+  if(LX_CLEAN_URLS && SALON && SALON.slug){
+    return "/"+SALON.slug+qs;
+  }
+  if(SALON && SALON.slug){
+    var p=window.location.pathname;
+    return p+"?slug="+SALON.slug+(extraQs?("&"+extraQs):"");
+  }
+  if(salonId){
+    var p2=window.location.pathname;
+    return p2+"?s="+salonId+(extraQs?("&"+extraQs):"");
+  }
+  return window.location.pathname+qs;
 }
-else if(!salonId){showError("Aucun salon sp\u00e9cifi\u00e9. V\u00e9rifiez le lien.");}
-else{loadSalon();}
+
+// R\u00e9solveur principal : slug \u2192 uuid \u2192 subdomain
+(async function resolveSalonRef(){
+  try{
+    if(salonSlug){
+      // 1) Lookup direct par slug
+      var r=await sb.from("salons_public").select("id,slug").eq("slug",salonSlug).limit(1);
+      if(r.data&&r.data[0]){
+        salonId=r.data[0].id;
+        return loadSalon();
+      }
+      // 2) Lookup dans alias historique (anciens slugs renomm\u00e9s)
+      var ar=await sb.from("salon_slug_aliases").select("salon_id").eq("slug",salonSlug).limit(1);
+      if(ar.data&&ar.data[0]){
+        var sr=await sb.from("salons_public").select("id,slug").eq("id",ar.data[0].salon_id).limit(1);
+        if(sr.data&&sr.data[0]){
+          salonId=sr.data[0].id;
+          // Canonicalise vers le slug actuel
+          var newSlug=sr.data[0].slug;
+          if(LX_CLEAN_URLS){
+            window.location.replace("/"+newSlug);
+            return;
+          }
+          window.history.replaceState({},"",window.location.pathname+"?slug="+newSlug);
+          salonSlug=newSlug;
+          return loadSalon();
+        }
+      }
+      showError("Salon introuvable : "+salonSlug);
+      return;
+    }
+    if(salonId){
+      return loadSalon();
+    }
+    if(window.__SALON_SUBDOMAIN){
+      var rs=await sb.from("salons_public").select("id,slug").eq("subdomain",window.__SALON_SUBDOMAIN).limit(1);
+      if(rs.data&&rs.data[0]){
+        salonId=rs.data[0].id;
+        return loadSalon();
+      }
+      showError("Salon introuvable pour : "+window.__SALON_SUBDOMAIN);
+      return;
+    }
+    showError("Aucun salon sp\u00e9cifi\u00e9. V\u00e9rifiez le lien.");
+  }catch(e){
+    console.error("resolveSalonRef",e);
+    showError("Erreur de connexion");
+  }
+})();
 
 async function loadSalon(){
   try{
@@ -374,7 +438,19 @@ async function loadSalon(){
     if(r.error){showError("Erreur: "+r.error.message);return;}
     if(!r.data||!r.data[0]){showError("Salon introuvable.");return;}
     var s=r.data[0];
-    SALON={id:s.id,nom:s.nom||"Salon",sousTitre:s.sous_titre||"",adresse:s.adresse||"",cp:s.cp||"",ville:s.ville||"",tel:s.tel||s.telephone||"",email:s.email||"",siret:s.siret||"",logo:s.logo||"",config:s.config||{},connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"",metier:s.metier||"coiffure",latitude:s.latitude!==null&&s.latitude!==undefined?Number(s.latitude):null,longitude:s.longitude!==null&&s.longitude!==undefined?Number(s.longitude):null,note_moyenne:Number(s.note_moyenne)||0,nb_avis:Number(s.nb_avis)||0};
+    SALON={id:s.id,slug:s.slug||"",nom:s.nom||"Salon",sousTitre:s.sous_titre||"",adresse:s.adresse||"",cp:s.cp||"",ville:s.ville||"",tel:s.tel||s.telephone||"",email:s.email||"",siret:s.siret||"",logo:s.logo||"",config:s.config||{},connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"",metier:s.metier||"coiffure",latitude:s.latitude!==null&&s.latitude!==undefined?Number(s.latitude):null,longitude:s.longitude!==null&&s.longitude!==undefined?Number(s.longitude):null,note_moyenne:Number(s.note_moyenne)||0,nb_avis:Number(s.nb_avis)||0};
+    // Canonicalisation URL : si arrivé via ?s=uuid et que le salon a un slug, bascule l'URL visible
+    try{
+      if(SALON.slug){
+        var _hadUuid=params.get("s")||params.get("salon");
+        var _hasSlugQs=params.get("slug")||"";
+        if(LX_CLEAN_URLS && window.location.pathname.indexOf("/"+SALON.slug)!==0){
+          window.history.replaceState({},"","/"+SALON.slug+window.location.hash);
+        }else if(!LX_CLEAN_URLS && _hadUuid && !_hasSlugQs){
+          window.history.replaceState({},"",window.location.pathname+"?slug="+SALON.slug+window.location.hash);
+        }
+      }
+    }catch(_){}
     document.title=SALON.nom+" — R\u00e9servation en ligne";
     
     // 2. Site config
@@ -698,18 +774,18 @@ function renderSite(){
     // Update RDV to confirmed + paid
     sb.from("rdv_online").update({status:SITE_CFG.autoConfirm?"confirmed":"pending",acompte_paye:true}).eq("id",_rdvId).then(function(){
       // Clear URL params
-      window.history.replaceState({},"",window.location.pathname+"?s="+salonId);
+      window.history.replaceState({},"",buildSalonUrl());
     });
     // Show success page
     var el=document.getElementById("app");
     el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement accept\u00e9 !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre acompte a \u00e9t\u00e9 encaiss\u00e9 et votre rendez-vous est '+(SITE_CFG.autoConfirm?'confirm\u00e9':'en attente de confirmation')+'.</p><p style="font-size:13px;color:var(--text3);margin-bottom:24px">Un email de confirmation vous sera envoy\u00e9.</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
-    window.returnToSalon=function(){window.history.replaceState({},"",window.location.pathname+"?s="+salonId);renderSite();};
+    window.returnToSalon=function(){window.history.replaceState({},"",buildSalonUrl());renderSite();};
     return;
   }
   if(_pp==="cancel"&&_rdvId){
     // Delete the pending RDV
     sb.from("rdv_online").delete().eq("id",_rdvId).eq("status","pending_payment");
-    window.history.replaceState({},"",window.location.pathname+"?s="+salonId);
+    window.history.replaceState({},"",buildSalonUrl());
   }
   
   // Handle Click & Collect payment return
@@ -717,15 +793,15 @@ function renderSite(){
   var _cmdId=params.get("cmd");
   if(_op==="success"&&_cmdId){
     sb.from("commandes_online").update({status:"pending",paid_online:true}).eq("id",_cmdId).then(function(){
-      window.history.replaceState({},"",window.location.pathname+"?s="+salonId);
+      window.history.replaceState({},"",buildSalonUrl());
     });
     var el=document.getElementById("app");
-    el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Commande pay\u00e9e !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre paiement a \u00e9t\u00e9 accept\u00e9. Le salon pr\u00e9pare votre commande. Vous recevrez une notification quand elle sera pr\u00eate \u00e0 retirer.</p><button class="btn btn-gold" onclick="window.history.replaceState({},\'\',window.location.pathname+\'?s='+salonId+'\');renderSite()">Retour au salon</button></div></div>';
+    el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Commande pay\u00e9e !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre paiement a \u00e9t\u00e9 accept\u00e9. Le salon pr\u00e9pare votre commande. Vous recevrez une notification quand elle sera pr\u00eate \u00e0 retirer.</p><button class="btn btn-gold" onclick="window.history.replaceState({},\'\',buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
     return;
   }
   if(_op==="cancel"&&_cmdId){
     sb.from("commandes_online").delete().eq("id",_cmdId).eq("status","pending_payment");
-    window.history.replaceState({},"",window.location.pathname+"?s="+salonId);
+    window.history.replaceState({},"",buildSalonUrl());
   }
   
   if(CLIENT)checkClientCarteAbo();
