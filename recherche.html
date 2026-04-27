@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Recherche — Trouvez votre salon — Luxyra</title>
+<meta name="description" content="Trouvez votre salon de beauté ou bien-être : coiffure, barbier, esthétique, ongles, bien-être. Carte interactive et liste des salons partout en France.">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+--bg:#060609;--bg2:#0c0c12;--bg3:#14141e;--card:rgba(18,18,28,.85);
+--gold:#d4a843;--gold2:#b8960f;--gold-l:#e6c266;--gold-glow:rgba(212,168,67,.08);
+--text:#e8e4dc;--text2:#9a9590;--text3:#5c5854;
+--border:rgba(212,168,67,.12);
+--f1:'DM Sans',system-ui,sans-serif;--f2:'Cormorant Garamond',Georgia,serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--f1);line-height:1.5;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+a{color:inherit;text-decoration:none}
+
+/* HEADER (compact) */
+.hdr{flex-shrink:0;background:rgba(6,6,9,.96);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:12px 22px;display:flex;align-items:center;gap:14px;z-index:100;position:relative}
+.hdr-logo{display:flex;align-items:center;gap:8px;font-family:var(--f2);font-size:22px;font-weight:700;color:var(--gold);letter-spacing:1px;flex-shrink:0;cursor:pointer}
+.hdr-logo img{border-radius:6px}
+.hdr-search{flex:1;display:flex;align-items:center;gap:0;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:4px;max-width:720px;margin:0 auto}
+.hdr-search:focus-within{border-color:var(--gold)}
+.hdr-search-field{flex:1;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;min-width:0}
+.hdr-search-field+.hdr-search-field{border-left:1px solid rgba(255,255,255,.06)}
+.hdr-search-field svg{flex-shrink:0;color:var(--gold);width:16px;height:16px}
+.hdr-search-field input{flex:1;background:none;border:none;color:var(--text);font-size:14px;font-family:var(--f1);outline:none;min-width:0}
+.hdr-search-field input::placeholder{color:var(--text3)}
+.hdr-search-btn{flex-shrink:0;padding:9px 18px;border-radius:8px;background:linear-gradient(135deg,var(--gold) 0%,var(--gold-l) 100%);border:none;color:#0a0a0a;font-weight:800;font-size:13px;cursor:pointer;letter-spacing:.5px;transition:all .2s}
+.hdr-search-btn:hover{box-shadow:0 4px 16px rgba(212,168,67,.3)}
+.hdr-pro{flex-shrink:0;padding:8px 14px;border-radius:8px;background:transparent;border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;transition:all .2s}
+.hdr-pro:hover{border-color:var(--gold);color:var(--gold)}
+
+@media(max-width:880px){
+  .hdr{flex-wrap:wrap;padding:10px 14px;gap:8px}
+  .hdr-search{order:3;width:100%;max-width:none}
+  .hdr-pro{padding:6px 10px;font-size:11px}
+}
+@media(max-width:540px){
+  .hdr-search{flex-direction:column;padding:4px;gap:2px}
+  .hdr-search-field+.hdr-search-field{border-left:none;border-top:1px solid rgba(255,255,255,.06)}
+  .hdr-search-btn{width:100%}
+}
+
+/* FILTERS BAR */
+.filters{flex-shrink:0;padding:10px 22px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;overflow-x:auto;scrollbar-width:none}
+.filters::-webkit-scrollbar{display:none}
+.filter-pill{flex-shrink:0;padding:7px 14px;border-radius:50px;background:rgba(212,168,67,.06);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.filter-pill:hover{border-color:rgba(212,168,67,.4);color:var(--text)}
+.filter-pill.active{background:rgba(212,168,67,.18);border-color:var(--gold);color:var(--gold)}
+.filter-emoji{font-size:13px}
+.filter-count{margin-left:auto;flex-shrink:0;font-size:12px;color:var(--text3);padding:0 8px;white-space:nowrap}
+
+/* MAIN LAYOUT — 2 col split */
+.main{flex:1;display:flex;min-height:0;overflow:hidden}
+.results{width:46%;max-width:560px;overflow-y:auto;background:var(--bg);padding:18px 18px 60px}
+.map-wrap{flex:1;position:relative;background:#0c0c12}
+#map{position:absolute;inset:0;background:#0c0c12}
+
+/* MAP CUSTOM (style sombre) */
+.leaflet-container{background:#0c0c12;font-family:var(--f1);font-size:12px}
+.leaflet-popup-content-wrapper{background:var(--card);color:var(--text);border:1px solid var(--gold);border-radius:14px;padding:0}
+.leaflet-popup-content{margin:0;padding:14px 16px;line-height:1.5;min-width:200px}
+.leaflet-popup-tip{background:var(--gold);border:none}
+.leaflet-popup-close-button{color:var(--gold)!important;font-size:18px!important;padding:4px 8px!important}
+.leaflet-control-zoom a{background:var(--card)!important;color:var(--gold)!important;border:1px solid var(--border)!important;backdrop-filter:blur(8px)}
+.leaflet-control-zoom a:hover{background:rgba(212,168,67,.18)!important}
+.leaflet-control-attribution{background:rgba(6,6,9,.7)!important;color:var(--text3)!important;font-size:10px!important}
+.leaflet-control-attribution a{color:var(--gold)!important}
+
+/* MARKERS PERSONNALISÉS */
+.marker-pin{width:32px;height:42px;cursor:pointer;transform:translate(-50%,-100%);transition:transform .2s}
+.marker-pin:hover, .marker-pin.active{transform:translate(-50%,-100%) scale(1.15);filter:drop-shadow(0 0 12px var(--gold))}
+.marker-pin svg{width:100%;height:100%;display:block;filter:drop-shadow(0 4px 8px rgba(0,0,0,.4))}
+
+/* SALON CARDS (results list) */
+.salon-card{display:flex;gap:14px;padding:14px;border-radius:14px;background:var(--card);border:1px solid var(--border);margin-bottom:12px;cursor:pointer;transition:all .25s;backdrop-filter:blur(6px)}
+.salon-card:hover{border-color:rgba(212,168,67,.4);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.salon-card.highlight{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-glow), 0 12px 40px rgba(212,168,67,.18);background:linear-gradient(135deg,rgba(212,168,67,.06),var(--card))}
+.salon-thumb{width:96px;height:96px;flex-shrink:0;border-radius:10px;background:linear-gradient(135deg,#1a1a26,#0c0c12);overflow:hidden;display:flex;align-items:center;justify-content:center}
+.salon-thumb img{width:100%;height:100%;object-fit:cover}
+.salon-thumb-fallback{font-family:var(--f2);font-size:36px;color:rgba(212,168,67,.25);font-weight:700}
+.salon-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.salon-info .meta{font-size:10px;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase;font-weight:700}
+.salon-info .nom{font-family:var(--f2);font-size:20px;font-weight:700;line-height:1.2;color:var(--text)}
+.salon-info .addr{font-size:13px;color:var(--text2);line-height:1.4}
+.salon-info .cta{margin-top:auto;align-self:flex-start;font-size:12px;color:var(--gold);font-weight:700;padding:5px 10px;border:1px solid var(--gold);border-radius:50px;transition:all .2s}
+.salon-card:hover .cta{background:var(--gold);color:#0a0a0a}
+
+/* EMPTY / LOADING */
+.empty, .loading{padding:50px 20px;text-align:center;color:var(--text3);font-size:14px}
+.empty .ico, .loading .ico{font-size:42px;margin-bottom:12px;opacity:.4}
+.spin{width:28px;height:28px;border:3px solid rgba(212,168,67,.2);border-top-color:var(--gold);border-radius:50%;animation:r 1s linear infinite;margin:0 auto 14px}
+@keyframes r{to{transform:rotate(360deg)}}
+
+/* MOBILE : carte en plein écran toggle */
+.toggle-view{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:50;padding:12px 24px;border-radius:50px;background:var(--gold);color:#0a0a0a;border:none;font-weight:800;font-size:13px;letter-spacing:.5px;box-shadow:0 8px 24px rgba(0,0,0,.5);cursor:pointer}
+@media(max-width:880px){
+  .main{flex-direction:column}
+  .results{width:100%;max-width:none;height:100%;display:block}
+  .map-wrap{display:none;height:calc(100vh - 110px)}
+  body.show-map .results{display:none}
+  body.show-map .map-wrap{display:block}
+  .toggle-view{display:block}
+}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <a href="/" class="hdr-logo"><img src="data:image/webp;base64,UklGRigDAABXRUJQVlA4IBwDAACQDwCdASowADAAPlEij0WjoaETnASQOAUEsYBXJ605F9ePOejDbec73pwG84/6hxHu6q1dzC/+R9wHs1+hv+V/efgG/Vr/Z9eT9t/Yt/XlTKjrpPnVbcfCR8tAOR6dRsfqF3udzZAdGylkMu2pczclBrwDhuRUDlbkjXhfxbiQjs9IdEwgAP78pX/Fh/xQon4sa1CAyc1/ohBG4jmXYWWfjbcyo11jsoAEsbKeULzwh4FPpVJacD7br1LCiiTDp6xN56OfIpUJgCP+FWVUJOptF9MFJb8tE/3ifo4Ng0+lY/VlDL4D/TB2T4CbrArX9vFDoA8SUi/m517TEcmWSSbht5H+dTrB2o0es+G2o659GdTCDQNyr9Hh8vrb3Y6Cc6zsBIJZMqmmOLAm9+SJtf95P9+xYORz7ZuF8tvS94dtKJwJGMeX8OQXzRL0KFHATmXJUqnLKsq/v1Zf1kmomC9u7aTBJ/4O7vOnFN6wS2rvppGtBvfLZ/FtS03eYzgPGzOItPGsadUwy7fTb/FZEnSeVSH1zzIXIEq/8+S7Ccq2dHZ69n6L9OXHDU5ajWGModmSmmOJLh/aBVTZvjrBUfHG4B0cxIHE16Jy/o5+f+wQRxjDHFxSihTQKV4cl4Vb322dDJx61utw0XwrKdyfqVuW7nGFAECCSOFIpzrlhBKChYG2Vd9wgu58MRtO2nPzXO1PkMGAe+QaaBL1S71cD0zDIE3yhpFNwL+TMswCh6JWdmOur6ca76M1MH1a76WXsgpuEc7lPJi3+mziL0Dv52LSajdG/5teMdG2pP/5GsX1GyLUZK9NnA2iIGNVArxMbvXQ15D/UVozmLf0GPQ5ICgwSw5Iv76FLCxKVsgS8ARQG8E3hqqMSb7XYCoHuYkTlowqF0qTthXyq89GJ++pf7hud/OAcFnN3z5dNSSvK8XkfJdwyJKp9Pcsug48wzT+NiKadVrEIS2eKfhxhdS8bzoWPR96Ff4lh9zxrh2Q8iLrcjwyaE+NrgC+wprpy9eV3uy1L7nH2heVxDPHLS4Qou4afIINoUvdBbv7wAAA" width="32" height="32" alt="Luxyra"> Luxyra</a>
+
+  <form class="hdr-search" id="searchBar" onsubmit="onSubmitSearch(event)">
+    <div class="hdr-search-field">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="search-q" type="text" placeholder="Salon ou prestation" autocomplete="off">
+    </div>
+    <div class="hdr-search-field">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      <input id="search-ville" type="text" placeholder="Ville, code postal" autocomplete="off">
+    </div>
+    <button type="submit" class="hdr-search-btn">Chercher</button>
+  </form>
+
+  <a href="/pro" class="hdr-pro">Je suis un pro</a>
+</header>
+
+<div class="filters" id="filters">
+  <button class="filter-pill" data-metier="" onclick="setFilter('')">Tous</button>
+  <button class="filter-pill" data-metier="coiffure" onclick="setFilter('coiffure')"><span class="filter-emoji">✂️</span> Coiffure</button>
+  <button class="filter-pill" data-metier="barbier" onclick="setFilter('barbier')"><span class="filter-emoji">💈</span> Barbier</button>
+  <button class="filter-pill" data-metier="esthetique" onclick="setFilter('esthetique')"><span class="filter-emoji">💆</span> Esthétique</button>
+  <button class="filter-pill" data-metier="ongles" onclick="setFilter('ongles')"><span class="filter-emoji">💅</span> Ongles</button>
+  <button class="filter-pill" data-metier="bien_etre" onclick="setFilter('bien_etre')"><span class="filter-emoji">🧘</span> Bien-être</button>
+  <span class="filter-count" id="resultCount">…</span>
+</div>
+
+<div class="main">
+  <div class="results" id="resultsList">
+    <div class="loading"><div class="spin"></div>Chargement des salons…</div>
+  </div>
+  <div class="map-wrap"><div id="map"></div></div>
+</div>
+
+<button class="toggle-view" id="toggleView" onclick="toggleView()">🗺 Voir la carte</button>
+
+<script>
+// ============================================================
+// /recherche.html — page recherche + carte Leaflet
+// ============================================================
+var SB_URL = "https://kxdgjtvrkwugbifgppai.supabase.co";
+var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+var sb = supabase.createClient(SB_URL, SB_KEY);
+
+// State
+var STATE = {
+  salons: [],
+  filtered: [],
+  map: null,
+  markers: {},  // id -> L.marker
+  filter: { metier: '', q: '', ville: '' },
+  highlightedId: null
+};
+
+var METIER_LABEL = { coiffure:'Coiffure', barbier:'Barbier', esthetique:'Esthétique', ongles:'Ongles', bien_etre:'Bien-être' };
+var METIER_EMOJI = { coiffure:'✂️', barbier:'💈', esthetique:'💆', ongles:'💅', bien_etre:'🧘' };
+
+// ---- Init depuis URL params ----
+function readParams(){
+  var p = new URLSearchParams(window.location.search);
+  STATE.filter.metier = p.get('metier') || '';
+  STATE.filter.q = p.get('q') || '';
+  STATE.filter.ville = p.get('ville') || '';
+}
+function syncFormFromState(){
+  document.getElementById('search-q').value = STATE.filter.q;
+  document.getElementById('search-ville').value = STATE.filter.ville;
+  document.querySelectorAll('.filter-pill').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-metier') === STATE.filter.metier);
+  });
+}
+function syncUrl(){
+  var p = new URLSearchParams();
+  if(STATE.filter.metier) p.set('metier', STATE.filter.metier);
+  if(STATE.filter.q) p.set('q', STATE.filter.q);
+  if(STATE.filter.ville) p.set('ville', STATE.filter.ville);
+  var qs = p.toString();
+  history.replaceState(null, '', '/recherche.html' + (qs ? '?' + qs : ''));
+}
+
+// ---- Helpers ----
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+function normalize(s){
+  return String(s||'').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9 ]/g,' ');
+}
+
+// ---- Fetch ----
+async function loadSalons(){
+  try {
+    var r = await sb.from('salons_public').select('id, nom, ville, cp, adresse, metier, logo, latitude, longitude');
+    if(r.error) throw r.error;
+    STATE.salons = (r.data || []).map(function(s){
+      return {
+        id: s.id, nom: s.nom || 'Salon', ville: s.ville || '', cp: s.cp || '',
+        adresse: s.adresse || '', metier: s.metier || 'coiffure', logo: s.logo || '',
+        lat: s.latitude !== null ? Number(s.latitude) : null,
+        lng: s.longitude !== null ? Number(s.longitude) : null
+      };
+    });
+  } catch(e){
+    console.warn('loadSalons', e);
+    STATE.salons = [];
+  }
+  applyFilters();
+}
+
+// ---- Filtres ----
+function applyFilters(){
+  var f = STATE.filter;
+  var qN = normalize(f.q);
+  var villeN = normalize(f.ville);
+  STATE.filtered = STATE.salons.filter(function(s){
+    if(f.metier && s.metier !== f.metier) return false;
+    if(qN){
+      var hay = normalize(s.nom + ' ' + s.metier + ' ' + (METIER_LABEL[s.metier]||''));
+      if(hay.indexOf(qN) < 0) return false;
+    }
+    if(villeN){
+      var hayV = normalize(s.ville + ' ' + s.cp + ' ' + s.adresse);
+      if(hayV.indexOf(villeN) < 0) return false;
+    }
+    return true;
+  });
+  renderResults();
+  renderMarkers();
+  updateCount();
+  syncUrl();
+}
+function setFilter(metier){
+  STATE.filter.metier = metier;
+  syncFormFromState();
+  applyFilters();
+}
+function onSubmitSearch(ev){
+  if(ev) ev.preventDefault();
+  STATE.filter.q = document.getElementById('search-q').value.trim();
+  STATE.filter.ville = document.getElementById('search-ville').value.trim();
+  applyFilters();
+}
+
+function updateCount(){
+  var n = STATE.filtered.length;
+  document.getElementById('resultCount').textContent = n + ' résultat' + (n>1?'s':'');
+}
+
+// ---- Render results list ----
+function renderResults(){
+  var c = document.getElementById('resultsList');
+  if(!STATE.filtered.length){
+    c.innerHTML = '<div class="empty"><div class="ico">🔍</div>'
+      + 'Aucun salon ne correspond à votre recherche.<br>'
+      + 'Essayez d\u0027élargir les critères ou de retirer le filtre métier.</div>';
+    return;
+  }
+  var h = '';
+  STATE.filtered.forEach(function(s){
+    var label = METIER_LABEL[s.metier] || 'Beauté';
+    var emoji = METIER_EMOJI[s.metier] || '✨';
+    var addr = [s.adresse, [s.cp, s.ville].filter(Boolean).join(' ')].filter(Boolean).join(' • ');
+    var thumb = s.logo
+      ? '<img src="'+escapeHtml(s.logo)+'" alt="'+escapeHtml(s.nom)+'" loading="lazy">'
+      : '<span class="salon-thumb-fallback">'+escapeHtml((s.nom||'L').charAt(0).toUpperCase())+'</span>';
+    h += '<a class="salon-card" data-id="'+escapeHtml(s.id)+'" '
+      +     'href="/site.html?s='+encodeURIComponent(s.id)+'" '
+      +     'onmouseenter="hoverSalon(\''+s.id+'\')" '
+      +     'onmouseleave="hoverSalon(null)">'
+      + '<div class="salon-thumb">'+thumb+'</div>'
+      + '<div class="salon-info">'
+      +   '<div class="meta">'+emoji+' '+escapeHtml(label)+'</div>'
+      +   '<div class="nom">'+escapeHtml(s.nom)+'</div>'
+      +   '<div class="addr">'+escapeHtml(addr || 'France')+'</div>'
+      +   '<div class="cta">Voir le salon →</div>'
+      + '</div></a>';
+  });
+  c.innerHTML = h;
+}
+
+// ---- Map ----
+function initMap(){
+  STATE.map = L.map('map', {
+    zoomControl: true,
+    attributionControl: true
+  }).setView([46.7, 2.5], 6); // Centré sur la France
+  // CARTO Dark Matter (gratuit, style sombre cohérent avec Luxyra)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19
+  }).addTo(STATE.map);
+}
+
+function makeMarkerIcon(metier, highlighted){
+  var emoji = METIER_EMOJI[metier] || '📍';
+  var fill = highlighted ? '#e6c266' : '#d4a843';
+  var html =
+    '<div class="marker-pin'+(highlighted?' active':'')+'" data-metier="'+metier+'">'
+    + '<svg viewBox="0 0 32 42" fill="none" xmlns="http://www.w3.org/2000/svg">'
+    +   '<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="'+fill+'" stroke="#0a0a0a" stroke-width="1.5"/>'
+    +   '<circle cx="16" cy="16" r="9" fill="#0a0a0a"/>'
+    +   '<text x="16" y="21" font-size="13" text-anchor="middle" fill="#d4a843">'+emoji+'</text>'
+    + '</svg>'
+    + '</div>';
+  return L.divIcon({ html: html, className: 'marker-divicon', iconSize: [32,42], iconAnchor: [16,42], popupAnchor: [0,-40] });
+}
+
+function renderMarkers(){
+  if(!STATE.map) return;
+  // Clear existing
+  Object.keys(STATE.markers).forEach(function(id){
+    STATE.map.removeLayer(STATE.markers[id]);
+  });
+  STATE.markers = {};
+  // Add new
+  var bounds = [];
+  STATE.filtered.forEach(function(s){
+    if(s.lat == null || s.lng == null || isNaN(s.lat) || isNaN(s.lng)) return;
+    var icon = makeMarkerIcon(s.metier, false);
+    var m = L.marker([s.lat, s.lng], { icon: icon });
+    var label = METIER_LABEL[s.metier] || 'Beauté';
+    var addr = [s.adresse, [s.cp, s.ville].filter(Boolean).join(' ')].filter(Boolean).join(' • ');
+    var popupHtml =
+      '<div style="font-family:\u0027Cormorant Garamond\u0027,Georgia,serif;font-size:18px;font-weight:700;color:#d4a843;margin-bottom:4px">'+escapeHtml(s.nom)+'</div>'
+      + '<div style="font-size:11px;color:#9a9590;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">'+escapeHtml(label)+'</div>'
+      + '<div style="font-size:13px;color:#9a9590;line-height:1.5;margin-bottom:10px">'+escapeHtml(addr || 'France')+'</div>'
+      + '<a href="/site.html?s='+encodeURIComponent(s.id)+'" style="display:inline-block;padding:7px 14px;border-radius:8px;background:#d4a843;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:13px">Réserver →</a>';
+    m.bindPopup(popupHtml, { closeButton: true });
+    m.on('click', function(){ highlightSalon(s.id, false); });
+    m.addTo(STATE.map);
+    STATE.markers[s.id] = m;
+    bounds.push([s.lat, s.lng]);
+  });
+  // Auto-fit si on a des résultats
+  if(bounds.length){
+    if(bounds.length === 1){
+      STATE.map.setView(bounds[0], 14);
+    } else {
+      STATE.map.fitBounds(bounds, { padding: [40,40], maxZoom: 13 });
+    }
+  } else {
+    // Reset France view
+    STATE.map.setView([46.7, 2.5], 6);
+  }
+}
+
+// ---- Highlight ----
+function highlightSalon(id, scrollList){
+  // Cards
+  document.querySelectorAll('.salon-card').forEach(function(el){
+    el.classList.toggle('highlight', el.getAttribute('data-id') === id);
+  });
+  // Marker zoom + popup
+  if(id && STATE.markers[id]){
+    var m = STATE.markers[id];
+    m.openPopup();
+  }
+  STATE.highlightedId = id;
+  // Scroll list to highlighted
+  if(scrollList && id){
+    var card = document.querySelector('.salon-card[data-id="'+CSS.escape(id)+'"]');
+    if(card) card.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+function hoverSalon(id){
+  if(!id){
+    document.querySelectorAll('.marker-pin.active').forEach(function(p){ p.classList.remove('active'); });
+    return;
+  }
+  // Highlight le marker correspondant
+  Object.keys(STATE.markers).forEach(function(mid){
+    var marker = STATE.markers[mid];
+    var iconEl = marker.getElement();
+    if(!iconEl) return;
+    var pin = iconEl.querySelector('.marker-pin');
+    if(pin) pin.classList.toggle('active', mid === id);
+  });
+}
+
+// ---- Mobile toggle ----
+function toggleView(){
+  document.body.classList.toggle('show-map');
+  document.getElementById('toggleView').textContent =
+    document.body.classList.contains('show-map') ? '☰ Voir la liste' : '🗺 Voir la carte';
+  // Force map redraw quand on l'affiche
+  if(document.body.classList.contains('show-map') && STATE.map){
+    setTimeout(function(){ STATE.map.invalidateSize(); }, 50);
+  }
+}
+
+// ---- Init ----
+readParams();
+syncFormFromState();
+initMap();
+loadSalons();
+</script>
+
+</body>
+</html>
