@@ -378,10 +378,14 @@ async function loadSalonData() {
 
   // 4. Charger services → SVC[]
   try {
-    var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId).order("id");
+    // Tri par catégorie puis par ordre personnalisé (NULL en dernier) puis nom
+    var svcRes = await _sb.from("services").select("*").eq("salon_id", _salonId)
+      .order("categorie", {ascending: true})
+      .order("ordre", {ascending: true, nullsFirst: false})
+      .order("nom", {ascending: true});
     if (svcRes.data) {
       SVC = svcRes.data.map(function(s) {
-        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
+        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
       });
       // Recalculer CATS — si aucun service encore, applique les defaultCats
       // du métier configuré au lieu de garder les catégories coiffure

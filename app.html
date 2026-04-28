@@ -10079,14 +10079,26 @@ function rServices(){
   h+='</div>';
   // (action bar luxe affich\u00e9e en bas de page \u2014 voir _renderSvcActionBar plus bas)
   // Services in selected category (only single-phase = services simples)
-  var svcs=SVC.filter(function(s){return s.cat===aCat && (!s.phases || s.phases.length<=1)});
-  
+  // Tri : ordre personnalis\u00e9 (NULL en dernier) puis nom
+  var svcs=SVC.filter(function(s){return s.cat===aCat && (!s.phases || s.phases.length<=1)})
+    .sort(function(a,b){
+      var oa=(a.ordre==null?999999:a.ordre);
+      var ob=(b.ordre==null?999999:b.ordre);
+      if(oa!==ob)return oa-ob;
+      return (a.n||'').localeCompare(b.n||'');
+    });
+
   for(var i=0;i<svcs.length;i++){
     var s=svcs[i];
     var td=svcTotalDur(s);
     var pD=0;s.phases.forEach(function(p){if(p.t==="p")pD+=p.d;});
-    
+
     h+='<div class="card" style="display:flex;align-items:center;gap:10px;background:rgba(20,20,30,.95);backdrop-filter:none;max-width:800px">';
+    // Fl\u00e8ches up/down (ordre)
+    h+='<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">';
+    h+='<button class="btn bs" style="font-size:11px;padding:2px 6px;line-height:1;'+(i===0?"opacity:.3;cursor:not-allowed":"")+'" '+(i===0?"disabled":'onclick="moveServiceUp('+s.id+')"')+' title="Monter">\u25b2</button>';
+    h+='<button class="btn bs" style="font-size:11px;padding:2px 6px;line-height:1;'+(i===svcs.length-1?"opacity:.3;cursor:not-allowed":"")+'" '+(i===svcs.length-1?"disabled":'onclick="moveServiceDown('+s.id+')"')+' title="Descendre">\u25bc</button>';
+    h+='</div>';
     // Left: info
     h+='<div style="flex:1;min-width:0">';
     h+='<div style="font-weight:700;font-size:14px">'+s.n+'</div>';
@@ -10118,6 +10130,47 @@ function rServices(){
   }
 
   return h;
+}
+
+// R\u00e9ordonne un service dans sa cat\u00e9gorie (\u00e9change position avec le voisin)
+async function moveServiceUp(svcId){ await _moveService(svcId, -1); }
+async function moveServiceDown(svcId){ await _moveService(svcId, +1); }
+async function _moveService(svcId, delta){
+  var s = SVC.find(function(x){return x.id===svcId;});
+  if(!s) return;
+  // R\u00e9cup\u00e8re la liste tri\u00e9e de la cat\u00e9gorie
+  var siblings = SVC.filter(function(x){return x.cat===s.cat && (!x.phases || x.phases.length<=1);})
+    .sort(function(a,b){
+      var oa=(a.ordre==null?999999:a.ordre);
+      var ob=(b.ordre==null?999999:b.ordre);
+      if(oa!==ob)return oa-ob;
+      return (a.n||'').localeCompare(b.n||'');
+    });
+  var idx = siblings.indexOf(s);
+  var newIdx = idx + delta;
+  if(newIdx<0 || newIdx>=siblings.length) return;
+  // \u00c9change les ordres en m\u00e9moire
+  var swap = siblings[newIdx];
+  var oA = (s.ordre==null ? idx : s.ordre);
+  var oB = (swap.ordre==null ? newIdx : swap.ordre);
+  // Renum\u00e9rote toute la cat\u00e9gorie pour avoir des ordres propres (0..N)
+  // \u00c9change dans l'ordre tri\u00e9
+  var arr = siblings.slice();
+  arr[idx] = swap;
+  arr[newIdx] = s;
+  // Applique 0..N en m\u00e9moire et persiste
+  for(var i=0;i<arr.length;i++){
+    arr[i].ordre = i;
+  }
+  // Persistance Supabase (UPDATE en batch)
+  if(typeof _sb!=="undefined" && _sb){
+    try{
+      for(var j=0;j<arr.length;j++){
+        await _sb.from("services").update({ordre:j}).eq("id", arr[j].id);
+      }
+    }catch(e){console.warn("moveService UPDATE", e);}
+  }
+  go("services");
 }
 
 // Barre d'actions partag\u00e9e entre Services et Forfaits, en bas de page.
