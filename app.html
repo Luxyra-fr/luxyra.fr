@@ -15149,6 +15149,87 @@ function venteCarteAbo(clientId){
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
+// ============================================================
+// Persistance des cartes d'abonnement clients (table cartes_abo_clients)
+// ============================================================
+// Mapping noms JS (camelCase) ↔ noms DB (snake_case)
+function _carteAboToDb(cc){
+  return {
+    id:cc.id||undefined,
+    salon_id:typeof _salonId!=="undefined"?_salonId:null,
+    client_id:cc.clientId||"",
+    client_nom:cc.clientNom||"",
+    client_beautypro_id:cc.clientBpId||null,
+    carte_id:String(cc.carteId||""),
+    carte_nom:cc.carteNom||"",
+    tarif:Number(cc.tarif)||0,
+    remise_services:Number(cc.remiseServices)||0,
+    remise_forfaits:Number(cc.remiseForfaits)||0,
+    date_achat:cc.dateAchat||null,
+    date_expiration:cc.dateExp||null,
+    status:cc.status||"active",
+    ticket_num:cc.ticketNum||"",
+    economies_totales:Number(cc.economiesTotales)||0
+  };
+}
+function _carteAboFromDb(row){
+  return {
+    id:row.id,
+    clientId:row.client_id||"",
+    clientBpId:row.client_beautypro_id||null,
+    clientNom:row.client_nom||"",
+    carteId:row.carte_id||"",
+    carteNom:row.carte_nom||"",
+    tarif:Number(row.tarif)||0,
+    remiseServices:Number(row.remise_services)||0,
+    remiseForfaits:Number(row.remise_forfaits)||0,
+    dateAchat:row.date_achat||"",
+    dateExp:row.date_expiration||"",
+    status:row.status||"active",
+    ticketNum:row.ticket_num||"",
+    economiesTotales:Number(row.economies_totales)||0
+  };
+}
+// Charge toutes les cartes du salon depuis la DB (appelé au boot de l'app)
+async function loadCartesAboClients(){
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
+  try{
+    var r=await _sb.from("cartes_abo_clients").select("*").eq("salon_id",_salonId);
+    if(r.error){console.warn("loadCartesAboClients:",r.error.message);return;}
+    window.CARTES_ABO_CLIENTS=(r.data||[]).map(_carteAboFromDb);
+    console.log("[CARTES_ABO] "+window.CARTES_ABO_CLIENTS.length+" cartes chargées depuis Supabase");
+  }catch(e){console.warn("loadCartesAboClients exception:",e);}
+}
+// INSERT (si cc.id null) ou UPDATE (si cc.id existe) la carte en DB
+async function saveCarteAboClient(cc){
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
+  try{
+    var payload=_carteAboToDb(cc);
+    if(cc.id){
+      // UPDATE
+      var u=await _sb.from("cartes_abo_clients").update(payload).eq("id",cc.id).select().single();
+      if(u.error){console.warn("saveCarteAboClient UPDATE:",u.error.message);return;}
+    }else{
+      // INSERT (laisser la DB générer l'uuid)
+      delete payload.id;
+      var i=await _sb.from("cartes_abo_clients").insert(payload).select().single();
+      if(i.error){console.warn("saveCarteAboClient INSERT:",i.error.message);return;}
+      if(i.data&&i.data.id)cc.id=i.data.id; // récupère l'id généré
+    }
+  }catch(e){console.warn("saveCarteAboClient exception:",e);}
+}
+// Incrémente les économies de la carte (appelé à chaque ticket payé qui utilise la remise)
+async function updateCarteAboEconomies(carteId,delta){
+  var cc=(window.CARTES_ABO_CLIENTS||[]).find(function(c){return c.id===carteId;});
+  if(!cc)return;
+  cc.economiesTotales=(cc.economiesTotales||0)+Number(delta||0);
+  if(typeof _sb!=="undefined"&&_sb&&cc.id){
+    try{
+      await _sb.from("cartes_abo_clients").update({economies_totales:cc.economiesTotales}).eq("id",cc.id);
+    }catch(e){console.warn("updateCarteAboEconomies:",e);}
+  }
+}
+
 function doVenteCarteAbo(clientId,caIdx){
   var c=gC(clientId);if(!c)return;
   var ca=window.CARTES_ABO[caIdx];if(!ca)return;
@@ -19086,6 +19167,8 @@ function initApp(){
         window.SALON.slug=rs.data[0].slug;
       }
     });
+    // Charge les cartes d'abonnement clients depuis la DB (jusqu'ici jamais persistées !)
+    if(typeof loadCartesAboClients==="function")loadCartesAboClients();
     _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
       if(r.data&&r.data[0]&&r.data[0].config_json){
         try{
