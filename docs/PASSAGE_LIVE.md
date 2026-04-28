@@ -54,7 +54,7 @@ Les deux paths sont dans `site.html` autour de `processStripePayment()` (ligne 1
 |---|---|---|---|
 | 1 | `sk_live_51TCS0K...` | **Supabase** Dashboard → Functions → Settings → Secrets → `STRIPE_SECRET_KEY` | Secret |
 | 2 | `sk_live_51TCS0K...` | **Cloudflare** Dashboard → Workers → luxyra-router → Variables and Secrets → (secret Stripe) | Secret |
-| 3 | `pk_live_51TCS0K...` | **GitHub / code** → `site.html` ligne ~206 + `marketplace.html` si présent | Public (normal, dans le JS client) |
+| 3 | `pk_live_51TCS0K...` | **GitHub / code** → `site.html` ligne ~206 + `proposal.html` | Public (normal, dans le JS client) |
 
 ### Récupérer les clés live
 
@@ -68,7 +68,7 @@ Les deux paths sont dans `site.html` autour de `processStripePayment()` (ligne 1
 
 1. **D'abord Supabase** : remplace `STRIPE_SECRET_KEY` par `sk_live_...`
 2. **Ensuite Cloudflare Worker** : remplace la secret Stripe par `sk_live_...`
-3. **Enfin le code** : modifie `site.html` et `marketplace.html` pour passer à `pk_live_...`, puis commit + push
+3. **Enfin le code** : modifie `site.html` et `proposal.html` pour passer à `pk_live_...`, puis commit + push
 4. **Teste avec TA vraie carte** en achetant un acompte de 1€ pour valider
 
 ---

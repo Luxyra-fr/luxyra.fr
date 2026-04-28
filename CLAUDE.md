@@ -48,7 +48,7 @@ luxyra.fr/
 │   └── sw-admin.js            # Service worker admin
 ├── inscription.html            # Flow signup salons (~528 lignes)
 ├── compte.html                 # Gestion compte utilisateur
-├── marketplace.html            # ⚠ DÉPRÉCIÉ — page de redirection vers /recherche.html (remplacée par index.html + recherche.html)
+│ # marketplace.html SUPPRIMÉ (28 avr 2026) — remplacé par index.html + recherche.html
 ├── reset-password.html         # Reset mot de passe
 ├── clear.html                  # Utilitaire (probablement clear cache)
 ├── preview-email-confirmation.html

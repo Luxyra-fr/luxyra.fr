@@ -38,7 +38,7 @@ const RESERVED_PATHS = new Set([
   '', 'index.html', 'pro', 'pro.html',
   'app', 'app.html', 'compte', 'compte.html',
   'recherche', 'recherche.html', 'inscription', 'inscription.html',
-  'marketplace', 'marketplace.html', 'proposal', 'proposal.html',
+  'proposal', 'proposal.html',
   'admin', 'admin.html', 'site.html',
   'cgv', 'cgv.html', 'mentions-legales', 'mentions-legales.html',
   'politique-confidentialite', 'politique-confidentialite.html',
