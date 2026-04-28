@@ -770,6 +770,66 @@ async function handleSalonAvailability(request, env) {
 async function handleExistingRoutes(request, url, env) {
   const host = url.hostname;
 
+  // ============================================================
+  // SITEMAP DYNAMIQUE : proxy /sitemap.xml depuis l'edge function Supabase
+  // (auto-update à chaque nouveau salon, pas besoin de toucher au repo)
+  // ============================================================
+  if (url.pathname === "/sitemap.xml") {
+    try {
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/sitemap`, {
+        cf: { cacheTtl: 3600, cacheEverything: true }
+      });
+      const xml = await r.text();
+      return new Response(xml, {
+        status: r.status,
+        headers: {
+          "Content-Type": "application/xml; charset=utf-8",
+          "Cache-Control": "public, max-age=3600, s-maxage=3600",
+        },
+      });
+    } catch (e) {
+      // Fallback : sitemap minimal pour ne pas casser le SEO
+      const fallback = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://luxyra.fr/</loc></url>\n</urlset>';
+      return new Response(fallback, {
+        status: 200,
+        headers: { "Content-Type": "application/xml; charset=utf-8" },
+      });
+    }
+  }
+
+  // ============================================================
+  // ROBOTS.TXT servi en dur (sans pollution Cloudflare bot protection)
+  // ============================================================
+  if (url.pathname === "/robots.txt") {
+    const txt = `# robots.txt — Luxyra
+# https://luxyra.fr
+
+User-agent: *
+Allow: /
+Disallow: /app
+Disallow: /app.html
+Disallow: /admin
+Disallow: /admin.html
+Disallow: /compte
+Disallow: /compte.html
+Disallow: /proposal
+Disallow: /proposal.html
+Disallow: /reset-password
+Disallow: /reset-password.html
+Disallow: /clear
+Disallow: /clear.html
+
+Sitemap: https://luxyra.fr/sitemap.xml
+`;
+    return new Response(txt, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "public, max-age=3600, s-maxage=3600",
+      },
+    });
+  }
+
   if (host !== "luxyra.fr" && host !== "www.luxyra.fr" && host.endsWith(".luxyra.fr")) {
     const subdomain = host.replace(".luxyra.fr", "");
     if (url.pathname !== "/" && url.pathname !== "/index.html" && url.pathname !== "/site.html") {
