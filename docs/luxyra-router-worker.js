@@ -9,7 +9,6 @@
 // NEW SMS-NATIVE: /api/sms/generate-link-token + /api/sms/link-device
 // FIX W7: Added /suppression-donnees route for Google Play data deletion page
 // NEW SLUG (28 avr 2026): /<slug> → /site.html avec window.__SALON_SLUG injecté
-// CLEANUP (28 avr 2026): retiré /marketplace (page supprimée)
 // ============================================================
 
 // FIX W5: Simple in-memory rate limiter (per isolate, resets on redeploy)
@@ -765,7 +764,6 @@ async function handleSalonAvailability(request, env) {
 // EXISTING ROUTER — FIX W3: corrected clean routes
 // FIX W7: Added /suppression-donnees
 // NEW SLUG: rewrite /<slug> → /site.html avec window.__SALON_SLUG injecté
-// CLEANUP: retiré /marketplace (page supprimée le 28 avr 2026)
 // ============================================================
 async function handleExistingRoutes(request, url, env) {
   const host = url.hostname;
@@ -876,7 +874,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "proposal", "cgv", "mentions", "mentions-legales",
       "confidentialite", "politique-confidentialite",
       "suppression-donnees", "dpa", "reset-password",
-      "site", "index", "home", "marketplace",
+      "site", "index", "home",
       "preview-email-confirmation", "clear",
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
