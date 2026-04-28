@@ -328,7 +328,16 @@ function bookingTotals(){
   }
   booking.duration=dur||30;
   booking.totalPrix=prix;
-  return {dur:booking.duration,prix:prix};
+  // Application auto de la remise carte d'abonnement si la cliente a une carte active
+  // Sur le site, on ne réserve que des services → on applique remiseServices
+  var remise=0, prixFinal=prix;
+  if(CLIENT_CARTE_ABO && CLIENT_CARTE_ABO.remiseServices>0){
+    remise=Math.round(prix*CLIENT_CARTE_ABO.remiseServices/100*100)/100;
+    prixFinal=Math.round((prix-remise)*100)/100;
+  }
+  booking.remiseCarte=remise;
+  booking.prixFinal=prixFinal;
+  return {dur:booking.duration,prix:prix,remise:remise,prixFinal:prixFinal};
 }
 
 function bookingPrimaryNom(){
@@ -1731,6 +1740,9 @@ function renderBookingStep4(){
   var t=bookingTotals();
   var totalPrix=t.prix;
   var totalDur=t.dur;
+  var prixFinal=t.prixFinal;
+  var remiseCarte=t.remise;
+  var hasCarte=remiseCarte>0;
   var hasMulti=booking.items&&booking.items.length>1;
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">4</div><div class="step-title">Vos coordonn\u00e9es</div></div>';
@@ -1743,17 +1755,23 @@ function renderBookingStep4(){
       h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+it.nom+' <span style="color:var(--text3);font-size:11px">('+it.duree+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
     });
     h+='<div class="summary-row" style="font-weight:700"><span>Dur\u00e9e totale</span><span class="v">'+totalDur+' min</span></div>';
-    h+='<div class="summary-row" style="font-weight:700"><span>Prix total</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasCarte?"Sous-total":"Prix total")+'</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
   }else{
     var svc=(booking.items&&booking.items[0])||{nom:booking.svc?booking.svc.n:"",prix:booking.svc?booking.svc.p:0,duree:totalDur};
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+svc.nom+'</span></div>';
-    h+='<div class="summary-row"><span>Prix</span><span class="v">'+(Number(svc.prix)||0).toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':'')+'><span>'+(hasCarte?"Sous-total":"Prix")+'</span><span class="v">'+(Number(svc.prix)||0).toFixed(2)+' \u20ac</span></div>';
+  }
+  // Ligne remise carte d'abonnement
+  if(hasCarte){
+    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+CLIENT_CARTE_ABO.carteNom+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-top:1px solid rgba(200,168,78,.2);padding-top:8px"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2)+' \u20ac</span></div>';
   }
   h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?collab.n:"Pas de pr\u00e9f\u00e9rence")+'</span></div>';
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+'</span></div>';
   h+='<div class="summary-row"><span>Heure</span><span class="v">'+booking.time+'</span></div>';
   if(SITE_CFG.acompte){
-    var acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(totalPrix*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
+    // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte)
+    var acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(prixFinal*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
     if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
     h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
     if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+SITE_CFG.acompteDesc+'</div>';
@@ -1776,7 +1794,19 @@ function renderBookingStep4(){
     h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(255,255,255,.04);border-radius:10px;border:1px solid rgba(255,255,255,.08)"><div style="font-size:20px;font-weight:900;color:var(--gold)">-'+bestCA.remiseForfaits+'%</div><div style="font-size:10px;color:var(--text3)">sur prix TTC forfaits</div></div>';
     h+='<div style="flex:1;text-align:center;padding:10px;background:rgba(76,175,80,.08);border-radius:10px;border:1px solid rgba(76,175,80,.15)"><div style="font-size:20px;font-weight:900;color:#4caf50">'+bestCA.duree+'</div><div style="font-size:10px;color:var(--text3)">mois</div></div>';
     h+='</div>';
-    if(potEco>0)h+='<div style="font-size:12px;color:var(--text3);text-align:center">\ud83d\udca1 Sur cette prestation, vous auriez \u00e9conomis\u00e9 <strong style="color:#4caf50">'+potEco.toFixed(2)+' \u20ac TTC</strong>. Demandez votre carte lors de votre visite !</div>';
+    if(potEco>0)h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:10px">\ud83d\udca1 Sur cette prestation, vous auriez \u00e9conomis\u00e9 <strong style="color:#4caf50">'+potEco.toFixed(2)+' \u20ac TTC</strong>.</div>';
+    // Bouton "Souscrire en ligne" si paiement Stripe Connect actif c\u00f4t\u00e9 salon ET cliente connect\u00e9e
+    var canPayOnline = SALON.connectId && SALON.connectStatus==="active";
+    if(canPayOnline){
+      if(CLIENT){
+        h+='<button class="btn btn-gold" style="width:100%;margin-top:6px;padding:12px;font-weight:800" onclick="openSouscrireCarteModal(0)">\ud83d\udcb3 Souscrire en ligne \u2014 '+bestCA.tarif+' \u20ac TTC</button>';
+        h+='<div style="font-size:11px;color:var(--text3);text-align:center;margin-top:6px">Paiement s\u00e9curis\u00e9 par Stripe \u2022 Carte active imm\u00e9diatement</div>';
+      }else{
+        h+='<button class="btn btn-outline" style="width:100%;margin-top:6px;padding:12px;font-weight:700" onclick="openAuthModal()">Connectez-vous pour souscrire en ligne</button>';
+      }
+    }else{
+      h+='<div style="font-size:12px;color:var(--text3);text-align:center;font-style:italic">Demandez votre carte lors de votre visite au salon</div>';
+    }
     h+='</div>';
   }
   // Active carte badge
@@ -1830,6 +1860,8 @@ async function submitBooking(){
   var t=bookingTotals();
   var dur=t.dur;
   var totalPrix=t.prix;
+  var prixFinal=t.prixFinal;
+  var remiseCarte=t.remise;
   var primaryNom=bookingPrimaryNom();
   var itemsPayload=bookingItemsPayload();
   // Refresh availability from DB before submitting (prevents stale data)
@@ -1845,7 +1877,8 @@ async function submitBooking(){
   }
   var acompte=0;
   if(SITE_CFG.acompte){
-    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(totalPrix*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
+    // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte d'abonnement si applicable)
+    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(prixFinal*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
     if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
   }
 
@@ -1853,8 +1886,11 @@ async function submitBooking(){
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
     client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
-    service_id:booking.svcId,service_nom:primaryNom,service_prix:totalPrix,
+    // service_prix = prix FINAL (apr\u00e8s remise carte). carte_abo_id + remise_carte_montant pour tra\u00e7abilit\u00e9.
+    service_id:booking.svcId,service_nom:primaryNom,service_prix:prixFinal,
     items:itemsPayload,
+    carte_abo_id:(remiseCarte>0&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
+    remise_carte_montant:remiseCarte,
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
     acompte_montant:acompte,status:SITE_CFG.autoConfirm?"confirmed":"pending",
@@ -1878,9 +1914,13 @@ async function submitBooking(){
       booking.items.forEach(function(it){
         h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+it.nom+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
       });
-      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row"'+(remiseCarte>0?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(remiseCarte>0?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
     }else{
       h+='<div class="summary-row"><span>Prestation</span><span class="v">'+primaryNom+'</span></div>';
+    }
+    if(remiseCarte>0){
+      h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+(CLIENT_CARTE_ABO?CLIENT_CARTE_ABO.carteNom:"abonnement")+'</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2)+' \u20ac</span></div>';
     }
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+booking.collab.n+'</span></div>';
@@ -2516,6 +2556,132 @@ async function checkClientCarteAbo(){
 }
 
 function formatDateFR(ds){if(!ds)return"";var p=ds.split("-");var dt=new Date(p[0],p[1]-1,p[2]);var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];var mois=["janvier","f\u00e9vrier","mars","avril","mai","juin","juillet","ao\u00fbt","septembre","octobre","novembre","d\u00e9cembre"];return jours[dt.getDay()]+" "+p[2]+" "+mois[dt.getMonth()]+" "+p[0];}
+
+// === SOUSCRIPTION CARTE D'ABONNEMENT EN LIGNE (paiement Stripe Connect) ===
+function openSouscrireCarteModal(idx){
+  if(!CLIENT){openAuthModal();return;}
+  if(!SALON.connectId||SALON.connectStatus!=="active"){
+    alert("Le paiement en ligne n'est pas disponible pour ce salon. Demandez votre carte sur place.");
+    return;
+  }
+  var ca=window.SITE_CARTES_ABO&&window.SITE_CARTES_ABO[idx||0];
+  if(!ca){alert("Carte introuvable");return;}
+  var dExp=new Date();dExp.setMonth(dExp.getMonth()+ca.duree);
+  var dateExpStr=dExp.toLocaleDateString("fr-FR");
+  var h='<div class="auth-modal" onclick="if(event.target===this)closeAuthModal()">';
+  h+='<div class="auth-box" style="max-width:440px">';
+  h+='<div style="text-align:center;margin-bottom:14px"><div style="font-size:42px">\ud83d\udcb3</div></div>';
+  h+='<h2 style="font-size:20px;margin-bottom:6px;text-align:center">Souscrire \u2014 '+escapeHtmlSimple(ca.nom)+'</h2>';
+  h+='<div style="text-align:center;color:var(--text3);font-size:13px;margin-bottom:16px">'+escapeHtmlSimple(SALON.nom)+'</div>';
+  h+='<div style="background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.2);border-radius:12px;padding:14px;margin-bottom:14px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="color:var(--text2);font-size:13px">Tarif</span><span style="font-weight:800;font-size:18px;color:var(--gold)">'+ca.tarif+' \u20ac TTC</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="color:var(--text2);font-size:13px">Dur\u00e9e</span><span style="font-weight:600;font-size:14px">'+ca.duree+' mois</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="color:var(--text2);font-size:13px">Remise services</span><span style="font-weight:700;font-size:14px;color:#4caf50">-'+ca.remiseServices+'%</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0"><span style="color:var(--text2);font-size:13px">Valable jusqu\'au</span><span style="font-weight:600;font-size:14px">'+dateExpStr+'</span></div>';
+  h+='</div>';
+  h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:14px;text-align:center">La remise s\'appliquera automatiquement \u00e0 toutes vos prestations chez <strong>'+escapeHtmlSimple(SALON.nom)+'</strong> pendant '+ca.duree+' mois.</div>';
+  h+='<button class="btn btn-gold" style="width:100%;padding:14px;font-weight:800;font-size:15px" id="btnSouscrirePay" onclick="submitSouscrireCarte('+idx+')">\ud83d\udcb3 Payer '+ca.tarif+' \u20ac en ligne</button>';
+  h+='<div style="font-size:11px;color:var(--text3);text-align:center;margin-top:8px">Paiement s\u00e9curis\u00e9 Stripe \u2022 Carte active imm\u00e9diatement</div>';
+  h+='<div style="text-align:center;margin-top:12px"><a style="color:var(--text3);font-size:12px;cursor:pointer" onclick="closeAuthModal()">Annuler</a></div>';
+  h+='</div></div>';
+  document.getElementById("authModal").innerHTML=h;
+}
+
+async function submitSouscrireCarte(idx){
+  if(!CLIENT){openAuthModal();return;}
+  var ca=window.SITE_CARTES_ABO&&window.SITE_CARTES_ABO[idx||0];
+  if(!ca)return;
+  var btn=document.getElementById("btnSouscrirePay");
+  if(btn){btn.disabled=true;btn.textContent="Cr\u00e9ation du paiement\u2026";}
+  try{
+    // 1) Pr\u00e9-cr\u00e9ation de la carte en status "pending_payment"
+    var dExp=new Date();dExp.setMonth(dExp.getMonth()+ca.duree);
+    var dateAchat=new Date().toISOString().slice(0,10);
+    var dateExp=dExp.toISOString().slice(0,10);
+    var clientNom=((CLIENT.prenom||"")+" "+(CLIENT.nom||"")).trim()||CLIENT.email;
+    var insertRes=await sb.from("cartes_abo_clients").insert({
+      salon_id:salonId,
+      client_id:CLIENT.id||CLIENT.email,
+      client_nom:clientNom,
+      client_beautypro_id:CLIENT.email,
+      carte_id:String(ca.id||""),
+      carte_nom:ca.nom,
+      tarif:Number(ca.tarif),
+      remise_services:Number(ca.remiseServices),
+      remise_forfaits:Number(ca.remiseForfaits),
+      date_achat:dateAchat,
+      date_expiration:dateExp,
+      status:"pending_payment",
+      ticket_num:"",
+      economies_totales:0
+    }).select().single();
+    if(insertRes.error){throw new Error(insertRes.error.message);}
+    var carteId=insertRes.data.id;
+    // 2) Cr\u00e9ation de la session Stripe Checkout via le worker
+    var slugOrId=SALON.slug||salonId;
+    // Stripe remplace {CHECKOUT_SESSION_ID} par l'ID r\u00e9el au retour
+    var returnUrl=window.location.origin+"/"+slugOrId+"?carte_paid=success&id="+carteId+"&session_id={CHECKOUT_SESSION_ID}";
+    var cancelUrl=window.location.origin+"/"+slugOrId+"?carte_paid=cancel&id="+carteId;
+    var payRes=await fetch("/api/stripe/connect-payment",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        salon_id:salonId,
+        amount:Number(ca.tarif),
+        description:"Carte d'abonnement \u2014 "+ca.nom,
+        customer_email:CLIENT.email,
+        customer_name:clientNom,
+        metadata:{
+          type:"carte_abo",
+          carte_abo_id:carteId,
+          rdv_id:carteId,
+          return_url:returnUrl,
+          cancel_url:cancelUrl
+        }
+      })
+    });
+    var payData=await payRes.json();
+    if(!payData.url){throw new Error(payData.error||"Erreur paiement");}
+    window.location.href=payData.url;
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent="\ud83d\udcb3 Payer "+ca.tarif+" \u20ac en ligne";}
+    alert("Erreur : "+e.message);
+  }
+}
+
+// D\u00e9tection au load des retours de paiement carte d'abonnement
+(async function handleCartePaymentReturn(){
+  var qp=new URLSearchParams(window.location.search);
+  var status=qp.get("carte_paid");
+  var carteId=qp.get("id");
+  var sessionId=qp.get("session_id");
+  if(!status||!carteId)return;
+  // Nettoie l'URL
+  window.history.replaceState({},"",window.location.pathname);
+  if(status==="success"){
+    if(!sessionId){
+      alert("\u26a0 Confirmation de paiement sans identifiant Stripe. Contactez le salon si la remise n'appara\u00eet pas.");
+      return;
+    }
+    try{
+      // L'activation passe par une edge function qui v\u00e9rifie le paiement Stripe
+      var r=await fetch("https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/carte-abo-confirm-payment",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({carte_id:carteId,stripe_session_id:sessionId})
+      });
+      var data=await r.json();
+      if(!data.ok){throw new Error(data.error||"Activation \u00e9chou\u00e9e");}
+      // Recharge la carte client + UI
+      if(typeof checkClientCarteAbo==="function")await checkClientCarteAbo();
+      setTimeout(function(){alert("\u2705 Votre carte d'abonnement est active ! La remise s'appliquera automatiquement \u00e0 vos prochaines r\u00e9servations.");},300);
+    }catch(e){
+      alert("\u26a0 Le paiement a r\u00e9ussi mais l'activation a \u00e9chou\u00e9.\nContactez le salon en pr\u00e9cisant la r\u00e9f\u00e9rence : "+carteId+"\nErreur : "+e.message);
+    }
+  }else if(status==="cancel"){
+    // La carte pending_payment sera nettoy\u00e9e par cron \u2014 pas de delete c\u00f4t\u00e9 client (RLS)
+  }
+})();
 </script>
 </body>
 </html>
