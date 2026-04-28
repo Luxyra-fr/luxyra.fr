@@ -15150,6 +15150,37 @@ function venteCarteAbo(clientId){
 }
 
 // ============================================================
+// Persistance globale du config_json (cartes_abo modèles, forfaits, absences, sms_config, etc.)
+// Read-modify-write pour ne jamais écraser les autres champs.
+// ============================================================
+async function saveSalonConfig(){
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
+  try{
+    var r=await _sb.from("salons").select("config_json").eq("id",_salonId).limit(1);
+    var cfg={};
+    if(r&&r.data&&r.data[0]&&r.data[0].config_json){
+      try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(_){cfg={};}
+    }
+    if(typeof cfg!=="object"||cfg===null)cfg={};
+    // On merge les champs gérés en mémoire vers cfg (sans écraser le reste)
+    cfg.cartes_abo = window.CARTES_ABO || cfg.cartes_abo || [];
+    cfg.forfaits   = (typeof FORFAITS!=="undefined"?FORFAITS:cfg.forfaits) || [];
+    cfg.absences   = window.ABSENCES || cfg.absences || [];
+    if(window.SMS_CONFIG && typeof window.SMS_CONFIG==="object") cfg.sms_config = window.SMS_CONFIG;
+    if(typeof APP_BG!=="undefined") cfg.app_bg = APP_BG||"";
+    // Champs SALON_CONFIG top-level pertinents
+    if(typeof SALON_CONFIG==="object" && SALON_CONFIG){
+      if(SALON_CONFIG.metier)        cfg.metier        = SALON_CONFIG.metier;
+      if(SALON_CONFIG.modeActivite)  cfg.modeActivite  = SALON_CONFIG.modeActivite;
+      if(SALON_CONFIG.domicile)      cfg.domicile      = SALON_CONFIG.domicile;
+    }
+    window._SALON_CONFIG_JSON = cfg;
+    var u = await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
+    if(u && u.error) console.warn("saveSalonConfig:",u.error.message);
+  }catch(e){console.warn("saveSalonConfig exception:",e);}
+}
+
+// ============================================================
 // Persistance des cartes d'abonnement clients (table cartes_abo_clients)
 // ============================================================
 // Mapping noms JS (camelCase) ↔ noms DB (snake_case)
@@ -19177,6 +19208,8 @@ function initApp(){
           window._SALON_CONFIG_JSON=cfg;
           if(cfg.forfaits&&cfg.forfaits.length>0){FORFAITS=cfg.forfaits;localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}
           if(cfg.absences&&cfg.absences.length>0){window.ABSENCES=cfg.absences;localStorage.setItem("_cp_absences",JSON.stringify(window.ABSENCES));}
+          // Charge les modèles de cartes d'abonnement (templates)
+          if(Array.isArray(cfg.cartes_abo))window.CARTES_ABO=cfg.cartes_abo;
           // Restaurer aussi sms_config si présent dans Supabase (au cas où localStorage est vide)
           if(cfg.sms_config&&typeof cfg.sms_config==="object"){
             window.SMS_CONFIG=cfg.sms_config;
