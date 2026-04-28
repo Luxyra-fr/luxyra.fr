@@ -5676,7 +5676,7 @@ function buildDemandeProposalEmailHtml(data, url, client, salonNom){
   (data.items||[]).forEach(function(it){
     itemsHtml += '<tr><td style="padding:6px 8px;font-size:14px">'+escapeHtml(it.nom)+' <span style="color:#999;font-size:12px">('+(it.duree||0)+' min)</span></td><td style="padding:6px 8px;font-size:14px;text-align:right;color:#c8a84e;font-weight:700">'+(Number(it.prix)||0).toFixed(2)+' €</td></tr>';
   });
-  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Proposition de RDV</title></head><body style="margin:0;padding:20px;background:#f8f5ee;font-family:\'Helvetica Neue\',Arial,sans-serif;color:#111">';
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Proposition de RDV</title></head><body style="margin:0;padding:20px;background:#f8f5ee;font-family:\'Helvetica Neue\',Arial,sans-serif;color:#111">';
   html += '<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.08)">';
   html += '<div style="background:linear-gradient(135deg,#0a0a0a,#1a1a1a);padding:28px 24px;text-align:center">';
   html += '<div style="font-family:\'Playfair Display\',serif;color:#c8a84e;font-size:28px;font-weight:800">'+escapeHtml(salonNom||"Salon")+'</div>';
@@ -17437,8 +17437,17 @@ function buildRdvEmailHTML(type,vars){
     h+='Si vous devez modifier ou annuler votre rendez-vous,<br>n\u2019h\u00e9sitez pas \u00e0 nous contacter.</td></tr>';
   }
 
+  // CTA buttons (lien fiche salon + mes RDV)
+  var slug=vars.slug||SALON_CONFIG.slug||"";
+  if(slug){
+    h+='<tr><td style="padding:8px 24px 0;text-align:center">';
+    h+='<a href="https://luxyra.fr/'+slug+'" style="display:inline-block;background:'+gold+';color:#0a0a0a;padding:12px 28px;border-radius:10px;font-weight:800;text-decoration:none;font-size:14px;margin:6px 4px">\u2728 Voir le salon</a>';
+    h+='<a href="https://luxyra.fr/compte" style="display:inline-block;background:transparent;color:'+gold+';border:1px solid '+gold+';padding:11px 24px;border-radius:10px;font-weight:700;text-decoration:none;font-size:13px;margin:6px 4px">\ud83d\udcc5 Mes rendez-vous</a>';
+    h+='</td></tr>';
+  }
+
   // Gold separator
-  h+='<tr><td style="padding:8px 40px 16px"><div style="height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,78,.3),transparent)"></div></td></tr>';
+  h+='<tr><td style="padding:16px 40px 16px"><div style="height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,78,.3),transparent)"></div></td></tr>';
 
   // Footer
   h+='<tr><td style="padding:0 24px 32px;text-align:center">';
@@ -17463,6 +17472,7 @@ async function doSendConfirm(mode,rdvId){
     heure:rdvObj.time||"",date:fmt(rdvObj.date),
     prestation:sv?sv.n:"Prestation",
     salon:SALON_CONFIG.nom,
+    slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",
     collab:sty?sty.n:""
   };
   var sent=[];
@@ -17797,7 +17807,7 @@ async function checkSmsReminders(){
     if(a.st==="canc"||a.st==="done"||a.cancelled)continue;
     var cl=gC(a.cId);if(!cl||!cl.ph||!cl.smsOk)continue;
     var sv=gS(a.sId);var sty=gT(a.stId);
-    var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,collab:sty?sty.n:""};
+    var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:""};
     
     // Rappel 24h: send today for tomorrow's appointments
     if(cfg.rappel24h&&a.date===tomorrowStr){
@@ -18236,7 +18246,7 @@ function buildCarteNotifText(template,vars){
 
 function buildCarteEmailHTML(vars,bodyText){
   var gold="#c8a84e";var salonNom=SALON_CONFIG.nom||"";
-  var h='<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0a0a0a;font-family:Arial,sans-serif">';
+  var h='<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head><body style="margin:0;padding:0;background:#0a0a0a;font-family:Arial,sans-serif">';
   h+='<div style="max-width:500px;margin:0 auto;padding:20px">';
   h+='<div style="text-align:center;padding:20px 0;border-bottom:1px solid #2a2a30">';
   if(SALON_CONFIG.logo)h+='<img src="'+SALON_CONFIG.logo+'" style="height:40px;margin-bottom:8px" alt="">';
@@ -19001,6 +19011,14 @@ function initApp(){
   }
   // Also try to load from Supabase config_json (async)
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    // Charge aussi le slug top-level (pour les emails et la card "Adresse de votre site")
+    _sb.from("salons").select("slug").eq("id",_salonId).limit(1).then(function(rs){
+      if(rs&&rs.data&&rs.data[0]&&rs.data[0].slug){
+        SALON_CONFIG.slug=rs.data[0].slug;
+        if(!window.SALON)window.SALON={};
+        window.SALON.slug=rs.data[0].slug;
+      }
+    });
     _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
       if(r.data&&r.data[0]&&r.data[0].config_json){
         try{
