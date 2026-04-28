@@ -9616,10 +9616,21 @@ function rForfaits(){
   var catsF = (window.CATS_FORF && window.CATS_FORF.length) ? window.CATS_FORF : [];
   // Si _forfCat n'est plus dans la liste, switch sur 'all'
   if(window._forfCat !== 'all' && catsF.indexOf(window._forfCat) < 0) window._forfCat = 'all';
-  h+='<div style="display:flex;align-items:center;gap:6px;margin-top:14px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:14px;margin-bottom:6px">Famille (◀ ▶ pour réordonner)</div>';
+  h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
   h+='<div class="tab'+(window._forfCat==='all'?' on':'')+'" onclick="window._forfCat=\'all\';go(\'services\')">Toutes</div>';
   for(var ci=0;ci<catsF.length;ci++){
-    h+='<div class="tab'+(window._forfCat===catsF[ci]?' on':'')+'" onclick="window._forfCat=\''+catsF[ci].replace(/'/g,"\\'")+'\';go(\'services\')">'+catsF[ci]+'</div>';
+    var _isOnF=(window._forfCat===catsF[ci]);
+    var _escF=catsF[ci].replace(/'/g,"\\'");
+    if(_isOnF){
+      h+='<div style="display:inline-flex;align-items:center;gap:0;border-radius:8px;overflow:hidden">';
+      h+='<button class="btn bs" style="font-size:11px;padding:4px 7px;border-radius:8px 0 0 8px;'+(ci===0?"opacity:.3;cursor:not-allowed":"")+'" '+(ci===0?"disabled":'onclick="moveCategoryLeft(\\\'forf\\\',\\\''+_escF+'\\\')"')+' title="Reculer">◀</button>';
+      h+='<div class="tab on" style="border-radius:0">'+catsF[ci]+'</div>';
+      h+='<button class="btn bs" style="font-size:11px;padding:4px 7px;border-radius:0 8px 8px 0;'+(ci===catsF.length-1?"opacity:.3;cursor:not-allowed":"")+'" '+(ci===catsF.length-1?"disabled":'onclick="moveCategoryRight(\\\'forf\\\',\\\''+_escF+'\\\')"')+' title="Avancer">▶</button>';
+      h+='</div>';
+    }else{
+      h+='<div class="tab" onclick="window._forfCat=\''+_escF+'\';go(\'services\')">'+catsF[ci]+'</div>';
+    }
   }
   h+='</div>';
   // Filter multi-phase services
@@ -10064,10 +10075,21 @@ function rServices(){
   // Affiche TOUTES les familles, en grisant celles qui n'ont pas de
   // prestation simple. Le user voit son catalogue complet.
 
-  h+='<div style="font-size:12px;color:var(--gold);margin-top:14px;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Famille</div>';
+  h+='<div style="font-size:12px;color:var(--gold);margin-top:14px;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Famille <span style="font-weight:400;color:var(--text3);font-size:10px;text-transform:none;letter-spacing:0">(◀ ▶ pour réordonner)</span></div>';
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;background:rgba(10,10,14,.9);padding:8px 10px;border-radius:10px">';
   for(var i=0;i<catsS.length;i++){
-    h+='<div class="tab'+(aCat===catsS[i]?" on":"")+'" onclick="aCat=\''+catsS[i].replace(/'/g,"\\'")+'\';go(\'services\')">'+catsS[i]+'</div>';
+    var _isOn=(aCat===catsS[i]);
+    var _esc=catsS[i].replace(/'/g,"\\'");
+    if(_isOn){
+      // Chip active : flèches ◀ ▶ pour réordonner
+      h+='<div style="display:inline-flex;align-items:center;gap:0;border-radius:8px;overflow:hidden">';
+      h+='<button class="btn bs" style="font-size:11px;padding:4px 7px;border-radius:8px 0 0 8px;'+(i===0?"opacity:.3;cursor:not-allowed":"")+'" '+(i===0?"disabled":'onclick="moveCategoryLeft(\\\'svc\\\',\\\''+_esc+'\\\')"')+' title="Reculer">◀</button>';
+      h+='<div class="tab on" style="border-radius:0">'+catsS[i]+'</div>';
+      h+='<button class="btn bs" style="font-size:11px;padding:4px 7px;border-radius:0 8px 8px 0;'+(i===catsS.length-1?"opacity:.3;cursor:not-allowed":"")+'" '+(i===catsS.length-1?"disabled":'onclick="moveCategoryRight(\\\'svc\\\',\\\''+_esc+'\\\')"')+' title="Avancer">▶</button>';
+      h+='</div>';
+    }else{
+      h+='<div class="tab" onclick="aCat=\''+_esc+'\';go(\'services\')">'+catsS[i]+'</div>';
+    }
   }
   h+='</div>';
   // Color picker for current category
@@ -10130,6 +10152,24 @@ function rServices(){
   }
 
   return h;
+}
+
+// R\u00e9ordonne une cat\u00e9gorie (famille) dans CATS_SVC ou CATS_FORF
+function moveCategoryLeft(kind, name){ _moveCategory(kind, name, -1); }
+function moveCategoryRight(kind, name){ _moveCategory(kind, name, +1); }
+function _moveCategory(kind, name, delta){
+  var arr = (kind==="forf") ? (window.CATS_FORF||[]) : (window.CATS_SVC||[]);
+  var idx = arr.indexOf(name);
+  if(idx<0) return;
+  var newIdx = idx + delta;
+  if(newIdx<0 || newIdx>=arr.length) return;
+  // \u00c9change dans le tableau (l'ordre du tableau = ordre d'affichage)
+  arr.splice(idx, 1);
+  arr.splice(newIdx, 0, name);
+  if(kind==="forf"){ window.CATS_FORF = arr; }
+  else{ window.CATS_SVC = arr; }
+  if(typeof saveSalonConfig==="function") saveSalonConfig();
+  go("services");
 }
 
 // R\u00e9ordonne un service dans sa cat\u00e9gorie (\u00e9change position avec le voisin)
@@ -15249,6 +15289,9 @@ async function saveSalonConfig(){
     cfg.cartes_abo = window.CARTES_ABO || cfg.cartes_abo || [];
     cfg.cartes_abo_config = window.CARTES_ABO_CONFIG || cfg.cartes_abo_config || {active:true};
     cfg.forfaits   = (typeof FORFAITS!=="undefined"?FORFAITS:cfg.forfaits) || [];
+    // Ordre des familles (services + forfaits indépendants)
+    if(Array.isArray(window.CATS_SVC))  cfg.cats_svc  = window.CATS_SVC;
+    if(Array.isArray(window.CATS_FORF)) cfg.cats_forf = window.CATS_FORF;
     cfg.absences   = window.ABSENCES || cfg.absences || [];
     if(window.SMS_CONFIG && typeof window.SMS_CONFIG==="object") cfg.sms_config = window.SMS_CONFIG;
     if(typeof APP_BG!=="undefined") cfg.app_bg = APP_BG||"";
