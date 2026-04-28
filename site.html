@@ -604,21 +604,35 @@ async function loadSalon(){
         }
       }catch(e){console.log("Absences fallback:",e);}
     }
-    // Load cartes d'abonnement config from config_json (modèles + toggle activation)
+    // Load cartes d'abonnement config + forfaits + ordre catégories from config_json
     window.SITE_CARTES_ABO=[];
     window.SITE_CARTES_ABO_ACTIVE=true;
+    window.SITE_FORFAITS=[];
+    window.SITE_CATS_ORDER=[]; // ordre fusionné (cats_svc + cats_forf)
     try{
       var cfgCA=await sb.from("salons_public").select("config_json").eq("id",salonId).limit(1);
       if(cfgCA.data&&cfgCA.data[0]&&cfgCA.data[0].config_json){
         var cfgParsed=typeof cfgCA.data[0].config_json==="string"?JSON.parse(cfgCA.data[0].config_json):cfgCA.data[0].config_json;
-        // Toggle activation (par défaut true si non défini)
+        // Cartes d'abonnement
         if(cfgParsed.cartes_abo_config && cfgParsed.cartes_abo_config.active===false){
           window.SITE_CARTES_ABO_ACTIVE=false;
         }
-        // Modèles (uniquement si activé)
         if(window.SITE_CARTES_ABO_ACTIVE && cfgParsed.cartes_abo && cfgParsed.cartes_abo.length){
           window.SITE_CARTES_ABO=cfgParsed.cartes_abo;
         }
+        // Forfaits — visibles côté site avec leur catégorie (peut chevaucher avec services)
+        if(Array.isArray(cfgParsed.forfaits)){
+          window.SITE_FORFAITS=cfgParsed.forfaits.map(function(f){
+            return {id:'f_'+(f.id||Math.random()), n:f.n||f.nom||'Forfait', p:Number(f.p||f.prix)||0, cat:f.cat||f.categorie||'', dur:Number(f.dur)||0, isForfait:true};
+          });
+        }
+        // Ordre fusionné des familles (services puis forfaits, sans duplicata)
+        var ordSvc = Array.isArray(cfgParsed.cats_svc)?cfgParsed.cats_svc.slice():[];
+        var ordForf = Array.isArray(cfgParsed.cats_forf)?cfgParsed.cats_forf.slice():[];
+        var merged=[];
+        ordSvc.forEach(function(c){if(merged.indexOf(c)<0)merged.push(c);});
+        ordForf.forEach(function(c){if(merged.indexOf(c)<0)merged.push(c);});
+        window.SITE_CATS_ORDER=merged;
       }
     }catch(e){}
     // Check if site is active (Worker sets this to false when plan is Essential)
@@ -1039,20 +1053,52 @@ function renderSite(){
 
   // === PAGE TARIFS \u2014 sticky chips + liste par cat\u00e9gorie + bouton R\u00e9server par presta ===
   h+='<div class="page" id="page-tarifs">';
-  // Group by category
-  var cats={};SERVICES.forEach(function(s){
+  // Fusion : services (depuis DB) + forfaits (depuis config_json) group\u00e9s par cat\u00e9gorie.
+  // Si une famille existe pour les deux, ils apparaissent SOUS LA M\u00caME RUBRIQUE.
+  var allItems=[];
+  SERVICES.forEach(function(s){
     var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
     s._dur=dur||30;
-    if(!cats[s.cat])cats[s.cat]=[];
-    cats[s.cat].push(s);
+    allItems.push(s);
   });
-  var catNames=Object.keys(cats);
+  (window.SITE_FORFAITS||[]).forEach(function(f){
+    f._dur=f.dur||0;
+    allItems.push(f);
+  });
+  var cats={};
+  allItems.forEach(function(it){
+    if(!it.cat)return;
+    if(!cats[it.cat])cats[it.cat]=[];
+    cats[it.cat].push(it);
+  });
+  // Tri des cat\u00e9gories : ordre du salon (SITE_CATS_ORDER) puis cat\u00e9gories restantes par ordre alphab\u00e9tique
+  var ordRef = (window.SITE_CATS_ORDER||[]);
+  var catNames = Object.keys(cats).sort(function(a,b){
+    var ia=ordRef.indexOf(a), ib=ordRef.indexOf(b);
+    if(ia===-1 && ib===-1) return a.localeCompare(b);
+    if(ia===-1) return 1;
+    if(ib===-1) return -1;
+    return ia-ib;
+  });
+  // Tri \u00e0 l'int\u00e9rieur de chaque cat\u00e9gorie : services par ordre/nom, forfaits \u00e0 la suite
+  catNames.forEach(function(cat){
+    cats[cat].sort(function(a,b){
+      // Services avant forfaits
+      var fa=a.isForfait?1:0, fb=b.isForfait?1:0;
+      if(fa!==fb)return fa-fb;
+      // Puis ordre personnalis\u00e9 (services) ou nom
+      var oa=(a.ordre==null?999999:a.ordre);
+      var ob=(b.ordre==null?999999:b.ordre);
+      if(oa!==ob)return oa-ob;
+      return (a.n||'').localeCompare(b.n||'');
+    });
+  });
   if(catNames.length===0){
     h+='<div class="sec">Nos tarifs</div><div class="gold-sep"></div>';
     h+='<p class="sec-sub" style="text-align:center;padding:30px">Les tarifs seront bient\u00f4t disponibles.</p>';
   } else {
     h+='<div class="sec">Nos tarifs</div>';
-    h+='<p class="sec-sub" style="text-align:center;margin-bottom:14px">'+SERVICES.length+' prestation'+(SERVICES.length>1?'s':'')+' \u00b7 '+catNames.length+' cat\u00e9gorie'+(catNames.length>1?'s':'')+'</p>';
+    h+='<p class="sec-sub" style="text-align:center;margin-bottom:14px">'+allItems.length+' prestation'+(allItems.length>1?'s':'')+' \u00b7 '+catNames.length+' cat\u00e9gorie'+(catNames.length>1?'s':'')+'</p>';
     // Sticky chips bar
     h+='<div class="tarifs-chips" id="tarifsChips">';
     catNames.forEach(function(cat,idx){
@@ -1065,14 +1111,15 @@ function renderSite(){
       h+='<div class="tarif-cat" data-cat="'+escapeAttrSimple(cat)+'">';
       h+='<div class="tarif-cat-title">'+escapeHtmlSimple(cat)+'</div>';
       cats[cat].forEach(function(s){
+        var isForf=!!s.isForfait;
         h+='<div class="tarif-row">';
         h+='<div class="tarif-row-left">';
-        h+='<div class="tarif-row-name">'+escapeHtmlSimple(s.n)+'</div>';
-        h+='<div class="tarif-row-meta">\u23f1 '+s._dur+' min</div>';
+        h+='<div class="tarif-row-name">'+(isForf?'\ud83d\udce6 ':'')+escapeHtmlSimple(s.n)+'</div>';
+        h+='<div class="tarif-row-meta">\u23f1 '+(s._dur||30)+' min'+(isForf?' \u00b7 Forfait':'')+'</div>';
         h+='</div>';
         h+='<div class="tarif-row-right">';
         h+='<div class="tarif-row-price">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div>';
-        if(SITE_CFG.resa)h+='<button class="tarif-row-cta" onclick="goToBookingWithService('+s.id+')">R\u00e9server</button>';
+        if(SITE_CFG.resa && !isForf)h+='<button class="tarif-row-cta" onclick="goToBookingWithService('+s.id+')">R\u00e9server</button>';
         h+='</div>';
         h+='</div>';
       });
