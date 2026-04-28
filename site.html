@@ -431,6 +431,113 @@ function buildSalonUrl(extraQs){
   }
 })();
 
+// SEO : injecte les meta Open Graph, Twitter Card et JSON-LD LocalBusiness dans <head>
+function injectSeoMeta(SALON, SITE_CFG){
+  if(!SALON || !SALON.id) return;
+  var slug = SALON.slug || "";
+  var url = "https://luxyra.fr" + (slug ? "/"+slug : "/site.html?s="+SALON.id);
+  var nom = SALON.nom || "Salon";
+  var ville = SALON.ville || "";
+  var metierLabel = (typeof METIER_CONFIG!=="undefined" && SALON.metier && METIER_CONFIG[SALON.metier]) ? METIER_CONFIG[SALON.metier].label : "Salon de beauté";
+  var desc = nom + (ville?" — "+metierLabel+" à "+ville:" — "+metierLabel) + ". Réservez votre rendez-vous en ligne sur Luxyra.";
+  var image = (SITE_CFG && SITE_CFG.photoHero) || (SITE_CFG && SITE_CFG.photoSalon) || SALON.logo || "https://luxyra.fr/luxyra-logo.png";
+  // Si l'image est en data URL (base64), on tombe sur le logo Luxyra (les bots ne suivent pas les data URLs)
+  if(image && image.indexOf("data:")===0) image = SALON.logo && SALON.logo.indexOf("data:")!==0 ? SALON.logo : "https://luxyra.fr/luxyra-logo.png";
+
+  function setMeta(attr, key, value){
+    if(!value) return;
+    var sel = "meta["+attr+"=\""+key+"\"]";
+    var el = document.querySelector(sel);
+    if(!el){ el = document.createElement("meta"); el.setAttribute(attr, key); document.head.appendChild(el); }
+    el.setAttribute("content", value);
+  }
+  function setLink(rel, href){
+    if(!href) return;
+    var el = document.querySelector("link[rel=\""+rel+"\"]");
+    if(!el){ el = document.createElement("link"); el.setAttribute("rel", rel); document.head.appendChild(el); }
+    el.setAttribute("href", href);
+  }
+
+  // Description
+  setMeta("name", "description", desc);
+  setLink("canonical", url);
+
+  // Open Graph
+  setMeta("property", "og:type", "website");
+  setMeta("property", "og:site_name", "Luxyra");
+  setMeta("property", "og:url", url);
+  setMeta("property", "og:title", nom + " — Réservation en ligne");
+  setMeta("property", "og:description", desc);
+  setMeta("property", "og:image", image);
+  setMeta("property", "og:locale", "fr_FR");
+
+  // Twitter Card
+  setMeta("name", "twitter:card", "summary_large_image");
+  setMeta("name", "twitter:title", nom + " — Réservation en ligne");
+  setMeta("name", "twitter:description", desc);
+  setMeta("name", "twitter:image", image);
+
+  // JSON-LD LocalBusiness
+  var addr = {
+    "@type":"PostalAddress",
+    "streetAddress": SALON.adresse || "",
+    "postalCode": SALON.cp || "",
+    "addressLocality": ville,
+    "addressCountry": "FR"
+  };
+  // Type spécifique selon le métier
+  var typeByMetier = {
+    coiffure: "HairSalon", barbier: "BarberShop",
+    esthetique: "BeautySalon", ongles: "NailSalon", bien_etre: "DaySpa"
+  };
+  var schemaType = typeByMetier[SALON.metier] || "LocalBusiness";
+  var ld = {
+    "@context": "https://schema.org",
+    "@type": schemaType,
+    "name": nom,
+    "url": url,
+    "image": image,
+    "address": addr,
+    "priceRange": "€€"
+  };
+  if(SALON.tel) ld.telephone = SALON.tel;
+  if(SALON.email) ld.email = SALON.email;
+  if(SALON.latitude && SALON.longitude){
+    ld.geo = { "@type":"GeoCoordinates", "latitude": SALON.latitude, "longitude": SALON.longitude };
+  }
+  if(SALON.note_moyenne && SALON.nb_avis){
+    ld.aggregateRating = {
+      "@type":"AggregateRating",
+      "ratingValue": SALON.note_moyenne,
+      "reviewCount": SALON.nb_avis
+    };
+  }
+  // Horaires si dispo
+  try{
+    var hSal = SITE_CFG && SITE_CFG.horaires_salon;
+    if(hSal){
+      var jourMap = {lundi:"Mo", mardi:"Tu", mercredi:"We", jeudi:"Th", vendredi:"Fr", samedi:"Sa", dimanche:"Su"};
+      var horaires = [];
+      Object.keys(hSal).forEach(function(j){
+        var v = hSal[j];
+        if(v && v.ouvert && v.creneaux && v.creneaux.length){
+          v.creneaux.forEach(function(c){ horaires.push(jourMap[j] + " " + c.debut + "-" + c.fin); });
+        }
+      });
+      if(horaires.length) ld.openingHours = horaires;
+    }
+  }catch(e){}
+
+  // Inject ou remplace le JSON-LD
+  var existing = document.getElementById("ld-localbusiness");
+  if(existing) existing.remove();
+  var script = document.createElement("script");
+  script.id = "ld-localbusiness";
+  script.type = "application/ld+json";
+  script.textContent = JSON.stringify(ld);
+  document.head.appendChild(script);
+}
+
 async function loadSalon(){
   try{
     // 1. Salon info — via salons_public view (anon-safe, exclut user_id/billing/stripe_customer_id/sms_credits/documents/etc)
@@ -500,6 +607,8 @@ async function loadSalon(){
       showError("Ce site n'est pas disponible actuellement.");
       return;
     }
+    // === SEO : meta Open Graph + Twitter Card + JSON-LD LocalBusiness ===
+    try{ injectSeoMeta(SALON, SITE_CFG); }catch(e){console.warn("SEO inject", e);}
 
     // Option B : si le salon a activé l'acompte mais n'a pas Stripe Connect actif,
     // on désactive silencieusement l'acompte (les réservations passent sans paiement).
