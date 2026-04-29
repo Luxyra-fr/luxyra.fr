@@ -248,21 +248,86 @@ function normalize(s){
 // ---- Fetch ----
 async function loadSalons(){
   try {
-    var r = await sb.from('salons_public').select('id, slug, nom, ville, cp, adresse, metier, logo, latitude, longitude');
+    var r = await sb.from('salons_public').select('id, slug, nom, ville, cp, adresse, metier, logo, latitude, longitude, note_moyenne, nb_avis');
     if(r.error) throw r.error;
     STATE.salons = (r.data || []).map(function(s){
       return {
         id: s.id, slug: s.slug || '', nom: s.nom || 'Salon', ville: s.ville || '', cp: s.cp || '',
         adresse: s.adresse || '', metier: s.metier || 'coiffure', logo: s.logo || '',
         lat: s.latitude !== null ? Number(s.latitude) : null,
-        lng: s.longitude !== null ? Number(s.longitude) : null
+        lng: s.longitude !== null ? Number(s.longitude) : null,
+        note: s.note_moyenne != null ? Number(s.note_moyenne) : 0,
+        nbAvis: s.nb_avis != null ? Number(s.nb_avis) : 0,
+        resaActive: false, // sera rempli par loadSiteConfigs
+        nextSlot: null // ditto
       };
     });
+    // Charge les configs site (horaires + résa active) pour calculer le prochain dispo
+    try {
+      var rc = await sb.from('site_config').select('salon_id, reservation_active, horaires_salon, absences');
+      if(rc.data){
+        var byId = {};
+        rc.data.forEach(function(c){byId[c.salon_id]=c;});
+        STATE.salons.forEach(function(s){
+          var cfg = byId[s.id];
+          if(!cfg) return;
+          s.resaActive = !!cfg.reservation_active;
+          if(s.resaActive && cfg.horaires_salon){
+            s.nextSlot = computeNextOpenSlot(cfg.horaires_salon, cfg.absences);
+          }
+        });
+      }
+    } catch(e){ console.warn('loadSiteConfigs', e); }
   } catch(e){
     console.warn('loadSalons', e);
     STATE.salons = [];
   }
   applyFilters();
+}
+
+// Calcul du prochain créneau approximatif basé sur les horaires d'ouverture
+// (ne tient pas compte des RDV déjà pris, mais donne un signal "Prochain dispo : X")
+function computeNextOpenSlot(horaires, absences){
+  if(!horaires) return null;
+  var now = new Date();
+  var jours = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+  for(var d = 0; d < 14; d++){
+    var probe = new Date(now); probe.setDate(probe.getDate() + d);
+    var dow = probe.getDay();
+    var h = horaires[dow] || horaires[String(dow)];
+    if(!h || !h.o || !h.c) continue;
+    // Vérifier absence salon entière ce jour-là (si absences[].sid===null couvre la date)
+    var iso = probe.toISOString().slice(0,10);
+    var blocked = false;
+    if(Array.isArray(absences)){
+      absences.forEach(function(ab){
+        if(ab && (!ab.stId && !ab.sid)){ // absence "salon" globale
+          if(ab.df && ab.dt && iso >= ab.df && iso <= ab.dt){ blocked = true; }
+          else if(ab.d && ab.d === iso){ blocked = true; }
+        }
+      });
+    }
+    if(blocked) continue;
+    // Si c'est aujourd'hui : vérifier qu'il reste du temps avant fermeture (1h avant clôture)
+    if(d === 0){
+      var nowMin = now.getHours()*60 + now.getMinutes();
+      var cParts = h.c.split(':');
+      var closeMin = parseInt(cParts[0])*60 + parseInt(cParts[1] || 0);
+      if(nowMin >= closeMin - 60) continue; // moins d'1h avant fermeture
+      var oParts = h.o.split(':');
+      var openMin = parseInt(oParts[0])*60 + parseInt(oParts[1] || 0);
+      // Premier créneau après maintenant, arrondi à la prochaine demi-heure
+      var startMin = Math.max(openMin, Math.ceil((nowMin + 30) / 30) * 30);
+      if(startMin >= closeMin - 30) continue;
+      var hh = Math.floor(startMin/60), mm = startMin%60;
+      return { dayLabel: "Aujourd'hui", time: (hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm };
+    }
+    if(d === 1){
+      return { dayLabel: 'Demain', time: h.o };
+    }
+    return { dayLabel: jours[dow], time: h.o };
+  }
+  return null;
 }
 
 // ---- Géolocalisation ----
@@ -391,15 +456,38 @@ function renderResults(){
       var distLabel = d < 1 ? Math.round(d*1000)+' m' : d < 10 ? d.toFixed(1)+' km' : Math.round(d)+' km';
       distHtml = '<span style="display:inline-block;background:rgba(76,175,80,.12);color:#4caf50;border:1px solid rgba(76,175,80,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px">📍 '+distLabel+'</span>';
     }
+    // Note + nb avis
+    var noteHtml = '';
+    if(s.note > 0 && s.nbAvis > 0){
+      var stars = '';
+      for(var ssi = 1; ssi <= 5; ssi++) stars += (ssi <= Math.round(s.note) ? '★' : '☆');
+      noteHtml = '<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#d4a843;font-weight:700;margin-left:8px" title="'+s.nbAvis+' avis vérifiés">'
+        + '<span style="letter-spacing:1px">'+stars+'</span>'
+        + '<span>'+s.note.toFixed(1)+'</span>'
+        + '<span style="color:#9a9590;font-weight:500">('+s.nbAvis+')</span>'
+        + '</span>';
+    }
+    // Prochain dispo
+    var slotHtml = '';
+    if(s.resaActive && s.nextSlot){
+      slotHtml = '<div style="margin-top:6px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(76,175,80,.10);border:1px solid rgba(76,175,80,.25);border-radius:50px;font-size:11px;color:#4caf50;font-weight:700">'
+        + '<span>⚡ Prochain dispo</span>'
+        + '<span style="color:#fff">'+escapeHtml(s.nextSlot.dayLabel)+' à '+escapeHtml(s.nextSlot.time)+'</span>'
+        + '</div>';
+    } else if(s.resaActive){
+      slotHtml = '<div style="margin-top:6px;display:inline-flex;align-items:center;gap:6px;padding:3px 9px;background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.18);border-radius:50px;font-size:11px;color:#d4a843;font-weight:600">'
+        + '⚡ Réservation en ligne</div>';
+    }
     h += '<a class="salon-card" data-id="'+escapeHtml(s.id)+'" '
       +     'href="'+escapeHtml(salonHref(s))+'" '
       +     'onmouseenter="hoverSalon(\''+s.id+'\')" '
       +     'onmouseleave="hoverSalon(null)">'
       + '<div class="salon-thumb">'+thumb+'</div>'
       + '<div class="salon-info">'
-      +   '<div class="meta">'+emoji+' '+escapeHtml(label)+distHtml+'</div>'
+      +   '<div class="meta">'+emoji+' '+escapeHtml(label)+distHtml+noteHtml+'</div>'
       +   '<div class="nom">'+escapeHtml(s.nom)+'</div>'
       +   '<div class="addr">'+escapeHtml(addr || 'France')+'</div>'
+      +   slotHtml
       +   '<div class="cta">Voir le salon →</div>'
       + '</div></a>';
   });
