@@ -9634,10 +9634,15 @@ function rForfaits(){
   }
   h+='</div>';
   // Filter multi-phase services (= forfaits)
-  // Tri : ordre personnalis\u00e9 (NULL en dernier) puis nom
+  // Tri : par cat\u00e9gorie (en mode "Toutes" pour grouper visuellement),
+  // puis ordre personnalis\u00e9 (NULL en dernier), puis nom
   var list=SVC.filter(function(s){return s.phases&&s.phases.length>1;});
   if(window._forfCat!=='all')list=list.filter(function(s){return s.cat===window._forfCat;});
   list.sort(function(a,b){
+    if(window._forfCat==='all'){
+      var ca=(a.cat||'').toLowerCase(), cb=(b.cat||'').toLowerCase();
+      if(ca!==cb)return ca.localeCompare(cb);
+    }
     var oa=(a.ordre==null?999999:a.ordre);
     var ob=(b.ordre==null?999999:b.ordre);
     if(oa!==ob)return oa-ob;
@@ -9648,21 +9653,32 @@ function rForfaits(){
     h+='<div style="font-size:15px;font-weight:700;margin-bottom:6px">Aucun forfait'+(window._forfCat!=='all'?' dans '+window._forfCat:'')+'</div>';
     h+='<div style="font-size:13px;margin-bottom:16px">Les forfaits sont des prestations avec plusieurs \u00e9tapes (travail + pause).</div></div>';
   }
-  // Les fl\u00e8ches up/down ne s'appliquent que dans une cat\u00e9gorie sp\u00e9cifique (pas en mode "Toutes")
-  var canReorder=(window._forfCat!=='all');
+  // Pr\u00e9-calcul : pour chaque forfait, trouve son index dans sa cat\u00e9gorie (ordre intra-cat)
+  // Permet d'afficher les fl\u00e8ches \u25b2\u25bc qui d\u00e9sactivent correctement aux bornes de la cat\u00e9gorie.
+  var idxInCat={}, lastInCat={};
+  list.forEach(function(s,i){
+    var cat=s.cat||'';
+    if(idxInCat[cat]===undefined){idxInCat[cat]={};lastInCat[cat]=-1;}
+    var c=lastInCat[cat]+1;
+    idxInCat[cat][s.id]=c;
+    lastInCat[cat]=c;
+  });
   for(var i=0;i<list.length;i++){
     var s=list[i];
     var td=svcTotalDur(s);
     var pD=0;s.phases.forEach(function(p){if(p.t==="p")pD+=p.d;});
     var cc=getSvcColor(s.cat);
+    var posInCat=(idxInCat[s.cat||'']||{})[s.id]||0;
+    var totalInCat=(lastInCat[s.cat||'']||0)+1;
+    var isFirstOfCat=(posInCat===0);
+    var isLastOfCat=(posInCat===totalInCat-1);
     h+='<div class="card" style="display:flex;align-items:center;gap:10px;background:rgba(20,20,30,.95);backdrop-filter:none;max-width:800px">';
-    // Fl\u00e8ches up/down uniquement quand on est dans une cat\u00e9gorie filtr\u00e9e
-    if(canReorder){
-      h+='<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">';
-      h+='<button class="btn bs" style="font-size:11px;padding:2px 6px;line-height:1;'+(i===0?"opacity:.3;cursor:not-allowed":"")+'" '+(i===0?"disabled":'onclick="moveServiceUp('+s.id+')"')+' title="Monter">\u25b2</button>';
-      h+='<button class="btn bs" style="font-size:11px;padding:2px 6px;line-height:1;'+(i===list.length-1?"opacity:.3;cursor:not-allowed":"")+'" '+(i===list.length-1?"disabled":'onclick="moveServiceDown('+s.id+')"')+' title="Descendre">\u25bc</button>';
-      h+='</div>';
-    }
+    // Fl\u00e8ches \u25b2\u25bc TOUJOURS visibles (mode "Toutes" comme cat\u00e9gorie filtr\u00e9e).
+    // En mode "Toutes", elles d\u00e9placent dans la cat\u00e9gorie d'origine (intra-cat).
+    h+='<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0">';
+    h+='<button class="btn bs" style="font-size:11px;padding:2px 6px;line-height:1;'+(isFirstOfCat?"opacity:.3;cursor:not-allowed":"")+'" '+(isFirstOfCat?"disabled":'onclick="moveServiceUp('+s.id+')"')+' title="Monter dans '+(s.cat||'')+'">\u25b2</button>';
+    h+='<button class="btn bs" style="font-size:11px;padding:2px 6px;line-height:1;'+(isLastOfCat?"opacity:.3;cursor:not-allowed":"")+'" '+(isLastOfCat?"disabled":'onclick="moveServiceDown('+s.id+')"')+' title="Descendre dans '+(s.cat||'')+'">\u25bc</button>';
+    h+='</div>';
     h+='<div style="flex:1;min-width:0">';
     h+='<div style="font-weight:700;font-size:14px">'+s.n+'</div>';
     h+='<div style="font-size:12px;color:var(--text2)">\u23f1 '+td+' min'+(pD>0?' (\u23f8 +'+pD+'min pause)':'')+'</div>';
