@@ -1358,12 +1358,13 @@ setTimeout(initSalonMiniMap,400);
 // ============================================================
 
 function renderBookingStep1(){
-  // Reset booking state but PRESERVE items if user revient sur step 1 depuis step 2
+  // Mode mono-prestation (style Planity) : 1 service \u00e0 la fois.
+  // Pour combiner plusieurs services, le salon cr\u00e9e un forfait d\u00e9di\u00e9.
   if(!booking.items)booking.items=[];
   booking.collabId=null;booking.collab=null;booking.date=null;booking.time=null;
   var h='<div class="step active">';
-  h+='<div class="step-header"><div class="step-num">1</div><div class="step-title">Choisissez vos prestations</div></div>';
-  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Vous pouvez en s\u00e9lectionner plusieurs \u2014 elles seront encha\u00een\u00e9es sur le m\u00eame cr\u00e9neau.</div>';
+  h+='<div class="step-header"><div class="step-num">1</div><div class="step-title">Choisissez votre prestation</div></div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">S\u00e9lectionnez la prestation souhait\u00e9e. Pour combiner plusieurs services, choisissez un forfait d\u00e9di\u00e9.</div>';
   // Group by cat
   var cats={};SERVICES.forEach(function(s){if(!cats[s.cat])cats[s.cat]=[];cats[s.cat].push(s);});
   for(var cat in cats){
@@ -1476,38 +1477,33 @@ function toggleService(svcId){
   var svc=null;for(var i=0;i<SERVICES.length;i++){if(SERVICES[i].id===svcId){svc=SERVICES[i];break;}}
   if(!svc)return;
   if(!booking.items)booking.items=[];
-  // Toggle
-  var existingIdx=-1;
-  for(var i=0;i<booking.items.length;i++){if(booking.items[i].svcId===svcId){existingIdx=i;break;}}
-  if(existingIdx>=0){
-    booking.items.splice(existingIdx,1);
-  }else{
-    var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=p.d;});
-    if(!dur)dur=30;
-    booking.items.push({svcId:svcId,nom:svc.n,prix:Number(svc.p)||0,duree:dur,svc:svc});
-  }
-  // Sync legacy fields (premier item = service principal)
-  if(booking.items.length){
-    var first=booking.items[0];
-    booking.svcId=first.svcId;booking.svc=first.svc;
-  }else{
+  // MONO-SÉLECTION (Planity-like) : 1 prestation à la fois.
+  // Si on click sur la même → désélectionne. Sinon → remplace.
+  var alreadySel=(booking.items.length===1 && booking.items[0].svcId===svcId);
+  if(alreadySel){
+    booking.items=[];
     booking.svcId=null;booking.svc=null;
+    bookingTotals();
+    renderBookingStep1();
+    return;
   }
+  var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=p.d;});
+  if(!dur)dur=30;
+  booking.items=[{svcId:svcId,nom:svc.n,prix:Number(svc.p)||0,duree:dur,svc:svc}];
+  booking.svcId=svcId;booking.svc=svc;
   bookingTotals();
-  // Re-render step1 (cards toggle visuel) + cart
-  renderBookingStep1();
+  // Auto-avance à l'étape 2 (style Planity)
+  renderBookingStep2();
 }
 
 function renderBookingCartInner(){
+  // En mode mono-prestation, le mini-cart est un simple r\u00e9cap de la prestation choisie.
   if(!booking.items||!booking.items.length){
-    return '<div class="book-cart-empty">S\u00e9lectionnez au moins une prestation pour continuer</div>';
+    return '<div class="book-cart-empty">S\u00e9lectionnez une prestation ci-dessus pour continuer</div>';
   }
-  var t=bookingTotals();
+  var it=booking.items[0];
   var h='';
-  booking.items.forEach(function(it){
-    h+='<div class="bc-line"><span>'+it.nom+' <span style="color:var(--text3);font-size:11px">('+it.duree+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
-  });
-  h+='<div class="bc-line bc-tot"><span>Total \u2022 '+t.dur+' min</span><span class="v">'+t.prix.toFixed(2)+' \u20ac</span></div>';
+  h+='<div class="bc-line"><span>'+it.nom+' <span style="color:var(--text3);font-size:11px">('+it.duree+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
   h+='<button class="btn btn-gold bc-cta" onclick="renderBookingStep2()">Continuer \u25b6</button>';
   return h;
 }
