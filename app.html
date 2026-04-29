@@ -19638,6 +19638,10 @@ function initApp(){
     });
     // Charge les cartes d'abonnement clients depuis la DB (jusqu'ici jamais persistées !)
     if(typeof loadCartesAboClients==="function")loadCartesAboClients();
+    // Charge la liste des avis pour badge + UI réactive
+    if(typeof loadAvisList==="function")loadAvisList().then(function(){
+      if(window._currentPage==="home" && document.getElementById("app")) document.getElementById("app").innerHTML=rHome();
+    });
     _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
       if(r.data&&r.data[0]&&r.data[0].config_json){
         try{
@@ -19849,6 +19853,48 @@ function setupRealtime(){
     .on("postgres_changes",{event:"*",schema:"public",table:"clients",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: client change",payload.eventType);
       reloadFromSupabase("clients");
+    })
+    .on("postgres_changes",{event:"INSERT",schema:"public",table:"avis_salon",filter:"salon_id=eq."+_salonId},function(payload){
+      console.log("Realtime: nouvel avis",payload.new);
+      var av=payload.new;
+      if(av){
+        // Ajout local + notif
+        if(!window.AVIS_LIST) window.AVIS_LIST=[];
+        // Eviter doublon si d\u00e9j\u00e0 pr\u00e9sent
+        if(!window.AVIS_LIST.find(function(x){return x.id===av.id;})) window.AVIS_LIST.unshift(av);
+        var stars="";for(var nsi=1;nsi<=5;nsi++)stars+=(nsi<=Number(av.note||0)?"\u2605":"\u2606");
+        window.NOTIFS.unshift({
+          id:"avis_"+av.id, type:"new_avis",
+          title:"\u2b50 Nouvel avis client ("+stars+")",
+          detail:(av.nom||"Client")+" : "+String(av.texte||"(sans commentaire)").slice(0,80)+(String(av.texte||"").length>80?"\u2026":""),
+          ts:new Date().toISOString(),seen:false,confirmed:false,
+          action:"go('avis')"
+        });
+        updateNotifBadge();
+        // Refresh tile badge si on est sur home
+        if(window._currentPage==="home" && document.getElementById("app")) document.getElementById("app").innerHTML=rHome();
+        if(window._currentPage==="avis" && document.getElementById("app")) document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+      }
+    })
+    .on("postgres_changes",{event:"UPDATE",schema:"public",table:"avis_salon",filter:"salon_id=eq."+_salonId},function(payload){
+      // Avis mis \u00e0 jour (le client a \u00e9dit\u00e9 son avis) \u2192 notif
+      var av=payload.new, old=payload.old||{};
+      if(!av) return;
+      var local=(window.AVIS_LIST||[]).find(function(x){return x.id===av.id;});
+      if(local) Object.assign(local, av);
+      // Ne notifier que si note ou texte ont vraiment chang\u00e9 (pas si c'est nous qui avons \u00e9crit salon_reply)
+      if(old.note!==av.note || old.texte!==av.texte){
+        var stars="";for(var usi=1;usi<=5;usi++)stars+=(usi<=Number(av.note||0)?"\u2605":"\u2606");
+        window.NOTIFS.unshift({
+          id:"avis_upd_"+av.id+"_"+Date.now(), type:"updated_avis",
+          title:"\u270f Avis mis \u00e0 jour ("+stars+")",
+          detail:(av.nom||"Client")+" a modifi\u00e9 son avis : "+String(av.texte||"").slice(0,80),
+          ts:new Date().toISOString(),seen:false,confirmed:false,
+          action:"go('avis')"
+        });
+        updateNotifBadge();
+        if(window._currentPage==="avis" && document.getElementById("app")) document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+      }
     })
     .on("postgres_changes",{event:"INSERT",schema:"public",table:"clients_online",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: new client online",payload.new);

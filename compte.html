@@ -301,13 +301,13 @@ function renderRdvTab(){
       h+='</div>';
       if(r.status==="done"||r.status==="confirmed"){
         h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">';
-        // Bouton avis : seulement pour RDV honor\u00e9 (status==="done") et si pas d\u00e9j\u00e0 laiss\u00e9 un avis
-        if(r.status==="done"){
-          var avisExist=CLIENT_AVIS.find(function(a){return a.rdv_online_id===r.id;});
+        // Bouton avis : seulement pour RDV honor\u00e9, 1 par salon (\u00e9dition possible)
+        if(r.status==="done" && r.salon_id){
+          var avisExist=CLIENT_AVIS.find(function(a){return a.salon_id===r.salon_id;});
           if(avisExist){
-            h+='<button disabled style="padding:6px 12px;border-radius:6px;border:1px solid rgba(74,222,128,.2);background:rgba(74,222,128,.06);color:var(--green);font-size:11px;font-weight:600;cursor:default">\u2713 Avis laiss\u00e9</button>';
+            h+='<button onclick="showLeaveAvisModal(\''+r.id+'\',null,\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\u270f Modifier mon avis</button>';
           } else {
-            h+='<button onclick="showLeaveAvisModal(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis</button>';
+            h+='<button onclick="showLeaveAvisModal(\''+r.id+'\',null,\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis</button>';
           }
         }
         if(r.salon_id)h+='<button onclick="rebookRdv(\''+r.salon_id+'\','+(r.service_id||'null')+',\''+encodeURIComponent(r.salon_nom||"")+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udd01 Reprendre ce RDV</button>';
@@ -583,12 +583,24 @@ function renderTicketsTab(){
       h+='</div>';
     }
     // Actions
-    h+='<div style="display:flex;gap:8px">';
-    h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">\ud83d\udda8 Voir le ticket</button>';
-    h+='<button onclick="emailReceipt(\''+r.id+'\')" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:12px;font-weight:700;cursor:pointer">\u2709 Recevoir par email</button>';
-    h+='</div></div>';
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap">';
+    h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="flex:1;min-width:140px;padding:10px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">\ud83d\udda8 Voir le ticket</button>';
+    h+='<button onclick="emailReceipt(\''+r.id+'\')" style="flex:1;min-width:140px;padding:10px;border-radius:8px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:12px;font-weight:700;cursor:pointer">\u2709 Recevoir par email</button>';
+    h+='</div>';
+    // Bouton avis : pour les tickets aussi (1 avis par salon, peut \u00eatre modifi\u00e9)
+    if(r.salon_id){
+      var existAvis=CLIENT_AVIS.find(function(a){return a.salon_id===r.salon_id;});
+      h+='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">';
+      if(existAvis){
+        h+='<button onclick="showLeaveAvisModal(null,\''+r.id+'\',\''+r.salon_id+'\')" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\u270f Modifier mon avis sur ce salon</button>';
+      } else {
+        h+='<button onclick="showLeaveAvisModal(null,\''+r.id+'\',\''+r.salon_id+'\')" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis sur ce salon</button>';
+      }
+      h+='</div>';
+    }
+    h+='</div>';
   });
-  
+
   h+='</div>';
   return h;
 }
@@ -880,9 +892,9 @@ async function loadMyRdvs(){
     
     // Sort by date desc
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
-    // Charger les avis déjà laissés par ce client (anti-doublon)
+    // Charger les avis déjà laissés par ce client (1 avis par salon)
     try{
-      var rA=await api("avis_salon?select=id,rdv_online_id,note,texte,created_at&client_beautypro_id=eq."+CLIENT.id);
+      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at&client_beautypro_id=eq."+CLIENT.id);
       var dA=await rA.json();
       if(Array.isArray(dA)) CLIENT_AVIS=dA;
     }catch(_){}
@@ -1096,30 +1108,38 @@ function rebookRdv(salonId,serviceId,salonNom){
 }
 
 // ============================================================================
-// AVIS \u2014 Modal "Laisser un avis" (compte Luxyra obligatoire)
+// AVIS \u2014 Modal "Laisser un avis" (compte Luxyra obligatoire, 1 avis/salon)
 // ============================================================================
-var AVIS_DRAFT={rdvId:null, note:0, texte:""};
+// 1 client \u2192 1 avis par salon, qui peut \u00eatre MODIFI\u00c9 depuis n'importe quel
+// RDV/ticket li\u00e9 \u00e0 ce salon. Pr\u00e9-remplit la note + texte si avis existe d\u00e9j\u00e0.
+var AVIS_DRAFT={rdvId:null, ticketId:null, salonId:null, note:0, texte:"", editing:null};
 
-function showLeaveAvisModal(rdvId){
+function showLeaveAvisModal(rdvId, ticketId, salonId){
   if(!LX || !LX.hasSession()){
     showToast("Connexion requise pour laisser un avis");
     return;
   }
-  var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});
-  if(!rdv){showToast("RDV introuvable");return;}
-  // Check anti-doublon c\u00f4t\u00e9 client
-  if(CLIENT_AVIS.find(function(a){return a.rdv_online_id===rdvId;})){
-    showToast("Vous avez d\u00e9j\u00e0 laiss\u00e9 un avis pour ce RDV");
-    return;
-  }
-  AVIS_DRAFT={rdvId:rdvId, note:0, texte:""};
-  renderAvisModal(rdv);
+  // On retrouve le RDV ou ticket pour le contexte d'affichage
+  var src=CLIENT_RDVS.find(function(r){return r.id===(rdvId||ticketId);});
+  if(!src){showToast("Visite introuvable");return;}
+  if(!salonId) salonId=src.salon_id;
+  // Pr\u00e9-remplit avec l'avis existant si d\u00e9j\u00e0 un pour ce salon
+  var existing=CLIENT_AVIS.find(function(a){return a.salon_id===salonId;});
+  AVIS_DRAFT={
+    rdvId:rdvId||null,
+    ticketId:ticketId||null,
+    salonId:salonId,
+    note: existing ? Number(existing.note||0) : 0,
+    texte: existing ? String(existing.texte||"") : "",
+    editing: existing ? existing.id : null
+  };
+  renderAvisModal(src);
 }
 
-function renderAvisModal(rdv){
+function renderAvisModal(src){
   var existing=document.getElementById("avisModal");
   if(existing) existing.remove();
-  var dp=(rdv.date_rdv||"").split("-");
+  var dp=(src.date_rdv||"").split("-");
   var dateStr=dp.length===3 ? (parseInt(dp[2])+" "+["janv","f\u00e9vr","mars","avr","mai","juin","juil","ao\u00fbt","sept","oct","nov","d\u00e9c"][parseInt(dp[1])-1]+" "+dp[0]) : "";
   var stars="";
   for(var i=1;i<=5;i++){
@@ -1128,14 +1148,18 @@ function renderAvisModal(rdv){
   }
   var noteLabels={1:"Tr\u00e8s d\u00e9cevant",2:"D\u00e9cevant",3:"Correct",4:"Bien",5:"Excellent"};
   var noteLabel=AVIS_DRAFT.note ? noteLabels[AVIS_DRAFT.note] : "Cliquez sur les \u00e9toiles pour noter";
+  var titleStr=AVIS_DRAFT.editing ? "Modifier mon avis" : "Votre avis";
+  var subtitle=escAttr(src.salon_nom||"Salon")+(src.service_nom?(" \u00b7 "+escAttr(src.service_nom)):"")+(dateStr?(" \u00b7 "+dateStr):"");
+  var hint=AVIS_DRAFT.editing ? "Vous pouvez mettre \u00e0 jour votre avis. La nouvelle version remplacera l'ancienne (et la r\u00e9ponse du salon sera r\u00e9initialis\u00e9e)." : "";
   var html=''
     +'<div id="avisModal" onclick="if(event.target===this)closeAvisModal()" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">'
     +'<div style="background:#1a1815;border:1px solid rgba(200,168,78,.3);border-radius:16px;max-width:480px;width:100%;padding:28px;box-shadow:0 24px 60px rgba(0,0,0,.7)">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">'
-    +'<div><div style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:#d4a843;margin-bottom:4px">Votre avis</div>'
-    +'<div style="font-size:13px;color:#9a9590">'+escAttr(rdv.salon_nom||"Salon")+' \u00b7 '+escAttr(rdv.service_nom||"")+' \u00b7 '+dateStr+'</div></div>'
+    +'<div><div style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:#d4a843;margin-bottom:4px">'+titleStr+'</div>'
+    +'<div style="font-size:13px;color:#9a9590">'+subtitle+'</div></div>'
     +'<button onclick="closeAvisModal()" style="background:none;border:none;color:#9a9590;font-size:24px;cursor:pointer;line-height:1">\u00d7</button>'
     +'</div>'
+    +(hint?'<div style="background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.15);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#c8c4be;line-height:1.5">'+hint+'</div>':'')
     +'<div style="text-align:center;margin:18px 0 8px">'+stars+'</div>'
     +'<div id="avisNoteLabel" style="text-align:center;font-size:13px;color:'+(AVIS_DRAFT.note?"#d4a843":"#666")+';font-weight:'+(AVIS_DRAFT.note?"600":"400")+';margin-bottom:18px;height:18px">'+noteLabel+'</div>'
     +'<label style="display:block;font-size:12px;color:#c8c4be;margin-bottom:6px">Votre commentaire <span style="color:#666">(optionnel)</span></label>'
@@ -1144,7 +1168,7 @@ function renderAvisModal(rdv){
     +'<div id="avisErr" style="color:#f87171;font-size:12px;margin-top:10px;display:none"></div>'
     +'<div style="display:flex;gap:10px;margin-top:18px">'
     +'<button onclick="closeAvisModal()" style="flex:1;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:transparent;color:#c8c4be;font-size:13px;font-weight:600;cursor:pointer">Annuler</button>'
-    +'<button id="avisSubmitBtn" onclick="submitAvis()" style="flex:2;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b88c2a);color:#0f0e0c;font-size:13px;font-weight:700;cursor:pointer">Publier mon avis</button>'
+    +'<button id="avisSubmitBtn" onclick="submitAvis()" style="flex:2;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b88c2a);color:#0f0e0c;font-size:13px;font-weight:700;cursor:pointer">'+(AVIS_DRAFT.editing?"Mettre à jour mon avis":"Publier mon avis")+'</button>'
     +'</div></div></div>';
   document.body.insertAdjacentHTML("beforeend", html);
 }
@@ -1153,11 +1177,10 @@ function escAttr(s){return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&qu
 
 function setAvisNote(n){
   AVIS_DRAFT.note=n;
-  // Sauvegarde texte avant re-render
   var ta=document.getElementById("avisTexte");
   if(ta) AVIS_DRAFT.texte=ta.value;
-  var rdv=CLIENT_RDVS.find(function(r){return r.id===AVIS_DRAFT.rdvId;});
-  if(rdv) renderAvisModal(rdv);
+  var src=CLIENT_RDVS.find(function(r){return r.id===(AVIS_DRAFT.rdvId||AVIS_DRAFT.ticketId);});
+  if(src) renderAvisModal(src);
 }
 
 function closeAvisModal(){
@@ -1184,32 +1207,38 @@ async function submitAvis(){
   btn.disabled=true; btn.textContent="Envoi\u2026"; btn.style.opacity=".6";
   try{
     var SB_FN_URL="https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/avis-create";
+    var payload={
+      session_token: LX.getToken(),
+      note: AVIS_DRAFT.note,
+      texte: texte
+    };
+    if(AVIS_DRAFT.rdvId) payload.rdv_online_id=AVIS_DRAFT.rdvId;
+    if(AVIS_DRAFT.ticketId) payload.ticket_id=AVIS_DRAFT.ticketId;
     var r=await fetch(SB_FN_URL,{
       method:"POST",
       headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
-      body:JSON.stringify({
-        session_token: LX.getToken(),
-        rdv_online_id: AVIS_DRAFT.rdvId,
-        note: AVIS_DRAFT.note,
-        texte: texte
-      })
+      body:JSON.stringify(payload)
     });
     var data=await r.json().catch(function(){return{};});
     if(!r.ok){
       err.textContent=data.error||"Erreur lors de l'envoi";
       err.style.display="block";
-      btn.disabled=false; btn.textContent="Publier mon avis"; btn.style.opacity="1";
+      btn.disabled=false; btn.textContent=(AVIS_DRAFT.editing?"Modifier mon avis":"Publier mon avis"); btn.style.opacity="1";
       return;
     }
-    // Succ\u00e8s \u2014 ajoute \u00e0 CLIENT_AVIS pour griser le bouton
-    if(data.avis) CLIENT_AVIS.push({id:data.avis.id, rdv_online_id:AVIS_DRAFT.rdvId, note:AVIS_DRAFT.note, texte:texte});
+    // Succ\u00e8s \u2014 UPSERT en local (remplace si d\u00e9j\u00e0 existant pour ce salon)
+    if(data.avis){
+      var idx=CLIENT_AVIS.findIndex(function(a){return a.salon_id===AVIS_DRAFT.salonId;});
+      var entry={id:data.avis.id, salon_id:AVIS_DRAFT.salonId, rdv_online_id:AVIS_DRAFT.rdvId||null, ticket_id:AVIS_DRAFT.ticketId||null, note:AVIS_DRAFT.note, texte:texte, created_at:data.avis.created_at, updated_at:data.avis.updated_at||null};
+      if(idx>=0) CLIENT_AVIS[idx]=entry; else CLIENT_AVIS.push(entry);
+    }
     closeAvisModal();
-    showToast("\u2713 Merci ! Votre avis a \u00e9t\u00e9 publi\u00e9.");
+    showToast(data.action==="updated" ? "\u2713 Votre avis a \u00e9t\u00e9 mis \u00e0 jour." : "\u2713 Merci ! Votre avis a \u00e9t\u00e9 publi\u00e9.");
     render();
   }catch(e){
     err.textContent="Erreur r\u00e9seau : "+(e.message||e);
     err.style.display="block";
-    btn.disabled=false; btn.textContent="Publier mon avis"; btn.style.opacity="1";
+    btn.disabled=false; btn.textContent=(AVIS_DRAFT.editing?"Modifier mon avis":"Publier mon avis"); btn.style.opacity="1";
   }
 }
 
