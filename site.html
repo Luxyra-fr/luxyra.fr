@@ -1055,14 +1055,30 @@ function renderSite(){
   h+='<div class="page" id="page-tarifs">';
   // Fusion : services (depuis DB) + forfaits (depuis config_json) group\u00e9s par cat\u00e9gorie.
   // Si une famille existe pour les deux, ils apparaissent SOUS LA M\u00caME RUBRIQUE.
+  // D\u00c9DUPLICATION : les "forfaits" Luxyra sont auto-g\u00e9n\u00e9r\u00e9s \u00e0 partir des services
+  // (1 forfait = 1 service envelopp\u00e9 pour usage caisse). On n'affiche un forfait
+  // c\u00f4t\u00e9 client QUE s'il apporte une vraie valeur (vrai pack multi-services OU nom
+  // qui n'existe pas d\u00e9j\u00e0 comme service simple).
   var allItems=[];
+  var svcKeys=new Set();
   SERVICES.forEach(function(s){
     var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
     s._dur=dur||30;
     allItems.push(s);
+    // Cl\u00e9 pour d\u00e9dupliquer (cat\u00e9gorie + nom normalis\u00e9)
+    svcKeys.add(((s.cat||'')+'|'+(s.n||'')).toLowerCase().trim());
   });
   (window.SITE_FORFAITS||[]).forEach(function(f){
+    var key=((f.cat||'')+'|'+(f.n||'')).toLowerCase().trim();
+    // Skip si nom + cat\u00e9gorie identique \u00e0 un service existant (doublon auto-g\u00e9n\u00e9r\u00e9)
+    if(svcKeys.has(key))return;
+    // Skip si forfait "vide" (pas de services associ\u00e9s OU 1 seul service homonyme)
+    var nbSvc=(f.services&&f.services.length)||0;
+    if(nbSvc<=1)return;
     f._dur=f.dur||0;
+    if(!f._dur && f.phases){
+      f.phases.forEach(function(p){f._dur+=(p.d||0);});
+    }
     allItems.push(f);
   });
   var cats={};
