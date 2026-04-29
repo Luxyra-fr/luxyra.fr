@@ -733,6 +733,15 @@ async function loadSalon(){
     var pr=await sb.from("produits").select("*").eq("salon_id",salonId).order("nom");
     if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.image||"",stk:p.stock||0,cc:p.click_collect,contenance:p.contenance||null,description:p.description||null,promoActif:p.promo_actif||false,promoPrix:p.promo_prix!=null?Number(p.promo_prix):null,promoDebut:p.promo_debut||null,promoFin:p.promo_fin||null,promoLabel:p.promo_label||null};});
     
+    // 5b. Avis clients (note moyenne déjà dans SALON.note_moyenne, mais on charge la liste pour affichage)
+    window.SALON_AVIS=[];
+    try{
+      var avis=await sb.from("avis_salon").select("id, nom, note, texte, date, created_at")
+        .eq("salon_id",salonId).eq("approved",true).eq("reported",false)
+        .order("created_at",{ascending:false}).limit(20);
+      if(avis.data) window.SALON_AVIS=avis.data;
+    }catch(e){console.log("Avis load error:",e);}
+
     // 6. Existing appointments (via Worker - bypasses RLS)
     var today=new Date().toISOString().slice(0,10);
     var maxDate=new Date();maxDate.setDate(maxDate.getDate()+(SITE_CFG.delaiMax||30));
@@ -1002,6 +1011,23 @@ function renderSite(){
   }
   h+='</div>';
   if(SITE_CFG.msgAccueil)h+='<p class="salon-hero-msg">'+SITE_CFG.msgAccueil+'</p>';
+  // ⚡ Prochain RDV disponible (style Planity) — affiché si réservation active
+  if(SITE_CFG.resa){
+    var nextSlotPreview=null;
+    try{
+      // Calcul avec une durée moyenne de 30 min (juste pour donner un aperçu)
+      var prevBooking=window.booking;
+      window.booking={items:[],duration:30,svcId:null,svc:null,collabId:null,collab:null,date:null,time:null};
+      if(typeof findNextAvailableSlot==="function") nextSlotPreview=findNextAvailableSlot();
+      window.booking=prevBooking;
+    }catch(_){}
+    if(nextSlotPreview){
+      h+='<div style="display:inline-flex;align-items:center;gap:10px;margin:14px auto 6px;padding:10px 16px;background:linear-gradient(135deg,rgba(76,175,80,.12),rgba(76,175,80,.04));border:1.5px solid rgba(76,175,80,.30);border-radius:50px">';
+      h+='<span style="font-size:11px;color:#4caf50;font-weight:700;text-transform:uppercase;letter-spacing:.5px">⚡ Prochain RDV</span>';
+      h+='<span style="font-weight:700;color:#fff">'+nextSlotPreview.dateLabel+' à '+nextSlotPreview.time+'</span>';
+      h+='</div>';
+    }
+  }
   h+='<div class="salon-hero-cta">';
   h+='<button class="btn btn-outline" onclick="showPage(\'tarifs\')" style="font-size:14px;padding:13px 24px">Voir les tarifs</button>';
   if(SITE_CFG.resa)h+='<button class="btn btn-gold" onclick="goToBooking()" style="font-size:15px;padding:14px 32px">Prendre rendez-vous</button>';
@@ -1061,6 +1087,38 @@ function renderSite(){
   if(SALON.tel)h+='<div class="pratique-line">\ud83d\udcde <a href="tel:'+SALON.tel+'">'+SALON.tel+'</a></div>';
   if(SALON.email)h+='<div class="pratique-line">\u2709\ufe0f <a href="mailto:'+SALON.email+'">'+SALON.email+'</a></div>';
   h+='</div></div></div></div>';
+
+  // === Avis clients (style Planity) ===
+  var avisList=window.SALON_AVIS||[];
+  if(avisList.length>0 || (noteMoy>0 && nbAvis>0)){
+    h+='<div class="salon-block"><div class="salon-block-title">Avis clients</div>';
+    if(noteMoy>0 && nbAvis>0){
+      var sStars='';for(var ssi2=1;ssi2<=5;ssi2++)sStars+=(ssi2<=Math.round(noteMoy)?'\u2605':'\u2606');
+      h+='<div style="display:flex;align-items:center;gap:18px;margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid rgba(200,168,78,.15)">';
+      h+='<div style="font-size:48px;font-weight:800;color:var(--gold);font-family:var(--f1);line-height:1">'+noteMoy.toFixed(1)+'</div>';
+      h+='<div><div style="color:var(--gold);font-size:20px;letter-spacing:3px">'+sStars+'</div>';
+      h+='<div style="font-size:13px;color:var(--text3);margin-top:4px">Sur '+nbAvis+' avis v\u00e9rifi\u00e9s</div></div>';
+      h+='</div>';
+    }
+    if(avisList.length){
+      avisList.slice(0,5).forEach(function(a){
+        var aStars='';for(var ai2=1;ai2<=5;ai2++)aStars+=(ai2<=Number(a.note||0)?'\u2605':'\u2606');
+        h+='<div style="padding:14px 0;border-bottom:1px solid rgba(200,168,78,.08)">';
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+        h+='<strong style="color:var(--text)">'+escapeHtmlSimple(a.nom||'Client')+'</strong>';
+        h+='<span style="color:var(--gold);letter-spacing:2px;font-size:14px">'+aStars+'</span></div>';
+        if(a.texte)h+='<p style="font-size:13px;color:var(--text2);line-height:1.5;margin:6px 0 0">'+escapeHtmlSimple(a.texte)+'</p>';
+        if(a.date||a.created_at)h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">'+formatDateFR((a.date||a.created_at).split("T")[0])+'</div>';
+        h+='</div>';
+      });
+      if(avisList.length>5){
+        h+='<div style="text-align:center;margin-top:14px;font-size:12px;color:var(--text3)">'+(avisList.length-5)+' autre'+(avisList.length-5>1?'s':'')+' avis non affich\u00e9'+(avisList.length-5>1?'s':'')+'</div>';
+      }
+    }else{
+      h+='<p style="color:var(--text3);font-style:italic;text-align:center;padding:20px 0">Aucun avis client pour l\'instant. Soyez le premier \u00e0 partager votre exp\u00e9rience apr\u00e8s votre prochain RDV !</p>';
+    }
+    h+='</div>';
+  }
 
   h+='</div>'; // fin page-accueil
 
