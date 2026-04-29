@@ -165,6 +165,10 @@ a{color:inherit;text-decoration:none}
   <button class="filter-pill" data-metier="esthetique" onclick="setFilter('esthetique')"><span class="filter-emoji">💆</span> Esthétique</button>
   <button class="filter-pill" data-metier="ongles" onclick="setFilter('ongles')"><span class="filter-emoji">💅</span> Ongles</button>
   <button class="filter-pill" data-metier="bien_etre" onclick="setFilter('bien_etre')"><span class="filter-emoji">🧘</span> Bien-être</button>
+  <span style="display:inline-block;width:1px;height:20px;background:var(--border);margin:0 4px;vertical-align:middle"></span>
+  <button class="filter-pill" data-mode="" onclick="setModeFilter('')" title="Sur place et à domicile">Tous lieux</button>
+  <button class="filter-pill" data-mode="salon" onclick="setModeFilter('salon')" title="Salons et instituts qui reçoivent leurs clients"><span class="filter-emoji">🏪</span> Sur place</button>
+  <button class="filter-pill" data-mode="domicile" onclick="setModeFilter('domicile')" title="Pros qui se déplacent chez vous"><span class="filter-emoji">🏠</span> À domicile</button>
   <button class="filter-pill" id="geoBtn" onclick="toggleGeoSort()" style="margin-left:8px;border-color:rgba(76,175,80,.3)" title="Trier par distance">
     <span class="filter-emoji">📍</span> Près de moi
   </button>
@@ -194,7 +198,7 @@ var STATE = {
   filtered: [],
   map: null,
   markers: {},  // id -> L.marker
-  filter: { metier: '', q: '', ville: '' },
+  filter: { metier: '', q: '', ville: '', mode: '' }, // mode: '' | 'salon' | 'domicile'
   // Géolocalisation
   geoActive: false,
   userLat: null,
@@ -211,12 +215,17 @@ function readParams(){
   STATE.filter.metier = p.get('metier') || '';
   STATE.filter.q = p.get('q') || '';
   STATE.filter.ville = p.get('ville') || '';
+  var m = p.get('mode') || '';
+  STATE.filter.mode = (m === 'salon' || m === 'domicile') ? m : '';
 }
 function syncFormFromState(){
   document.getElementById('search-q').value = STATE.filter.q;
   document.getElementById('search-ville').value = STATE.filter.ville;
-  document.querySelectorAll('.filter-pill').forEach(function(b){
+  document.querySelectorAll('.filter-pill[data-metier]').forEach(function(b){
     b.classList.toggle('active', b.getAttribute('data-metier') === STATE.filter.metier);
+  });
+  document.querySelectorAll('.filter-pill[data-mode]').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-mode') === STATE.filter.mode);
   });
 }
 function syncUrl(){
@@ -224,6 +233,7 @@ function syncUrl(){
   if(STATE.filter.metier) p.set('metier', STATE.filter.metier);
   if(STATE.filter.q) p.set('q', STATE.filter.q);
   if(STATE.filter.ville) p.set('ville', STATE.filter.ville);
+  if(STATE.filter.mode) p.set('mode', STATE.filter.mode);
   var qs = p.toString();
   history.replaceState(null, '', '/recherche.html' + (qs ? '?' + qs : ''));
 }
@@ -248,7 +258,7 @@ function normalize(s){
 // ---- Fetch ----
 async function loadSalons(){
   try {
-    var r = await sb.from('salons_public').select('id, slug, nom, ville, cp, adresse, metier, logo, latitude, longitude, note_moyenne, nb_avis');
+    var r = await sb.from('salons_public').select('id, slug, nom, ville, cp, adresse, metier, logo, latitude, longitude, note_moyenne, nb_avis, mode_activite, zone_deplacement_km, frais_deplacement, frais_deplacement_type');
     if(r.error) throw r.error;
     STATE.salons = (r.data || []).map(function(s){
       return {
@@ -258,8 +268,12 @@ async function loadSalons(){
         lng: s.longitude !== null ? Number(s.longitude) : null,
         note: s.note_moyenne != null ? Number(s.note_moyenne) : 0,
         nbAvis: s.nb_avis != null ? Number(s.nb_avis) : 0,
-        resaActive: false, // sera rempli par loadSiteConfigs
-        nextSlot: null // ditto
+        mode: s.mode_activite || 'salon', // 'salon' | 'domicile' | 'mixte'
+        zoneKm: s.zone_deplacement_km != null ? Number(s.zone_deplacement_km) : 0,
+        fraisDepl: s.frais_deplacement != null ? Number(s.frais_deplacement) : 0,
+        fraisType: s.frais_deplacement_type || 'forfait',
+        resaActive: false,
+        nextSlot: null
       };
     });
     // Charge les configs site (horaires + résa active) pour calculer le prochain dispo
@@ -388,6 +402,11 @@ function applyFilters(){
   var villeN = normalize(f.ville);
   STATE.filtered = STATE.salons.filter(function(s){
     if(f.metier && s.metier !== f.metier) return false;
+    // Filtre mode (sur place / domicile)
+    // 'salon' filter : exclut les pros uniquement domicile (mais garde les mixtes)
+    // 'domicile' filter : exclut les pros uniquement salon (mais garde les mixtes)
+    if(f.mode === 'salon' && s.mode === 'domicile') return false;
+    if(f.mode === 'domicile' && s.mode === 'salon') return false;
     if(qN){
       var hay = normalize(s.nom + ' ' + s.metier + ' ' + (METIER_LABEL[s.metier]||''));
       if(hay.indexOf(qN) < 0) return false;
@@ -398,18 +417,36 @@ function applyFilters(){
     }
     return true;
   });
-  // Si géoloc active : calcule la distance pour chaque salon et trie ASC
+  // Si géoloc active : calcul distance + filtre intelligent selon mode
   if(STATE.geoActive && STATE.userLat!=null && STATE.userLng!=null){
     STATE.filtered.forEach(function(s){
       s._dist = distanceKm(STATE.userLat, STATE.userLng, s.lat, s.lng);
+      s._coversMyArea = false;
+      // Pour les pros à domicile : couvrent-ils ma zone ?
+      if((s.mode === 'domicile' || s.mode === 'mixte') && s._dist != null && s.zoneKm > 0){
+        s._coversMyArea = (s._dist <= s.zoneKm);
+      }
     });
+    // FILTRE DUR : un pro uniquement à domicile qui ne couvre PAS ma zone est masqué
+    STATE.filtered = STATE.filtered.filter(function(s){
+      if(s.mode === 'domicile'){
+        // Pro uniquement domicile → doit couvrir ma zone
+        if(s._dist == null) return true; // si pas de coordonnées, on garde pour pas pénaliser
+        return s._coversMyArea;
+      }
+      return true;
+    });
+    // Tri : pros qui couvrent ma zone d'abord (domicile/mixte), puis par distance ASC
     STATE.filtered.sort(function(a,b){
+      var ac = a._coversMyArea ? 0 : 1;
+      var bc = b._coversMyArea ? 0 : 1;
+      if(ac !== bc && (a.mode!=='salon' || b.mode!=='salon')) return ac - bc;
       var da = (a._dist==null) ? 99999 : a._dist;
       var db = (b._dist==null) ? 99999 : b._dist;
       return da - db;
     });
   }else{
-    STATE.filtered.forEach(function(s){ delete s._dist; });
+    STATE.filtered.forEach(function(s){ delete s._dist; delete s._coversMyArea; });
   }
   renderResults();
   renderMarkers();
@@ -418,6 +455,11 @@ function applyFilters(){
 }
 function setFilter(metier){
   STATE.filter.metier = metier;
+  syncFormFromState();
+  applyFilters();
+}
+function setModeFilter(mode){
+  STATE.filter.mode = (mode === 'salon' || mode === 'domicile') ? mode : '';
   syncFormFromState();
   applyFilters();
 }
@@ -454,8 +496,23 @@ function renderResults(){
     if(s._dist != null){
       var d = s._dist;
       var distLabel = d < 1 ? Math.round(d*1000)+' m' : d < 10 ? d.toFixed(1)+' km' : Math.round(d)+' km';
-      distHtml = '<span style="display:inline-block;background:rgba(76,175,80,.12);color:#4caf50;border:1px solid rgba(76,175,80,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px">📍 '+distLabel+'</span>';
+      // Pour pros à domicile : afficher "Couvre votre zone" plutôt que la distance brute
+      if(s.mode === 'domicile' && s._coversMyArea){
+        distHtml = '<span style="display:inline-block;background:rgba(76,175,80,.12);color:#4caf50;border:1px solid rgba(76,175,80,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px" title="Le pro se déplace jusqu\'à '+s.zoneKm+' km — vous êtes à '+distLabel+'">✓ Couvre votre zone</span>';
+      } else if(s.mode === 'mixte' && s._coversMyArea){
+        distHtml = '<span style="display:inline-block;background:rgba(76,175,80,.12);color:#4caf50;border:1px solid rgba(76,175,80,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px">📍 '+distLabel+' · ✓ se déplace</span>';
+      } else {
+        distHtml = '<span style="display:inline-block;background:rgba(76,175,80,.12);color:#4caf50;border:1px solid rgba(76,175,80,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:8px">📍 '+distLabel+'</span>';
+      }
     }
+    // Badge mode (sur place / à domicile / les deux)
+    var modeBadge = '';
+    if(s.mode === 'domicile'){
+      modeBadge = '<span style="display:inline-block;background:rgba(99,179,237,.12);color:#63b3ed;border:1px solid rgba(99,179,237,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:6px" title="Ce pro se déplace chez vous">🏠 À domicile</span>';
+    } else if(s.mode === 'mixte'){
+      modeBadge = '<span style="display:inline-block;background:rgba(212,168,67,.12);color:#d4a843;border:1px solid rgba(212,168,67,.3);padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-left:6px" title="Sur place ou à domicile">🏪+🏠</span>';
+    }
+    // (mode==='salon' : pas de badge — c'est le défaut)
     // Note + nb avis
     var noteHtml = '';
     if(s.note > 0 && s.nbAvis > 0){
@@ -484,7 +541,7 @@ function renderResults(){
       +     'onmouseleave="hoverSalon(null)">'
       + '<div class="salon-thumb">'+thumb+'</div>'
       + '<div class="salon-info">'
-      +   '<div class="meta">'+emoji+' '+escapeHtml(label)+distHtml+noteHtml+'</div>'
+      +   '<div class="meta">'+emoji+' '+escapeHtml(label)+modeBadge+distHtml+noteHtml+'</div>'
       +   '<div class="nom">'+escapeHtml(s.nom)+'</div>'
       +   '<div class="addr">'+escapeHtml(addr || 'France')+'</div>'
       +   slotHtml
