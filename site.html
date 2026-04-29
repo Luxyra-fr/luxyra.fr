@@ -317,7 +317,7 @@ var RDV_EXISTING=[];
 // booking.items[] = liste multi-prestations [{svcId,svc,duree,prix}]
 // booking.svcId/svc gardent l'item PRINCIPAL (le 1er) pour rétro-compat avec le reste du flow.
 // totalDuration et totalPrix sont (re)calculés via bookingTotals().
-var booking={items:[],svcId:null,svc:null,collabId:null,collab:null,date:null,time:null,duration:0,totalPrix:0};
+var booking={items:[],svcId:null,svc:null,collabId:null,collab:null,date:null,time:null,duration:0,totalPrix:0,lieu:'salon',clientAdr:null};
 
 function bookingTotals(){
   var dur=0,prix=0;
@@ -329,15 +329,113 @@ function bookingTotals(){
   booking.duration=dur||30;
   booking.totalPrix=prix;
   // Application auto de la remise carte d'abonnement si la cliente a une carte active
-  // Sur le site, on ne réserve que des services → on applique remiseServices
   var remise=0, prixFinal=prix;
   if(CLIENT_CARTE_ABO && CLIENT_CARTE_ABO.remiseServices>0){
     remise=Math.round(prix*CLIENT_CARTE_ABO.remiseServices/100*100)/100;
     prixFinal=Math.round((prix-remise)*100)/100;
   }
+  // Frais de déplacement (uniquement si lieu='domicile' et adresse validée)
+  var fraisDepl=0;
+  if(booking.lieu==='domicile' && booking.clientAdr && booking.clientAdr.frais_mt!=null){
+    fraisDepl=Number(booking.clientAdr.frais_mt)||0;
+    prixFinal=Math.round((prixFinal+fraisDepl)*100)/100;
+  }
   booking.remiseCarte=remise;
+  booking.fraisDepl=fraisDepl;
   booking.prixFinal=prixFinal;
-  return {dur:booking.duration,prix:prix,remise:remise,prixFinal:prixFinal};
+  return {dur:booking.duration,prix:prix,remise:remise,fraisDepl:fraisDepl,prixFinal:prixFinal};
+}
+
+// Géocodage adresse via API BAN (gouv.fr)
+async function geocodeBANSimple(query){
+  try{
+    var url="https://api-adresse.data.gouv.fr/search/?q="+encodeURIComponent(query)+"&limit=1";
+    var r=await fetch(url);
+    var d=await r.json();
+    if(d&&d.features&&d.features[0]){
+      var f=d.features[0];
+      return {
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        label: f.properties.label,
+        cp: f.properties.postcode||"",
+        ville: f.properties.city||""
+      };
+    }
+  }catch(e){console.warn("geocode:",e);}
+  return null;
+}
+
+// Distance Haversine entre 2 points GPS
+function distanceKmSite(lat1,lon1,lat2,lon2){
+  if(lat1==null||lon1==null||lat2==null||lon2==null) return null;
+  var R=6371;
+  var dLat=(lat2-lat1)*Math.PI/180;
+  var dLon=(lon2-lon1)*Math.PI/180;
+  var a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+// Calcul des frais de déplacement
+function computeFraisDepl(distanceKm){
+  var fraisType=String(SALON.frais_deplacement_type||"forfait");
+  var fraisDepl=Number(SALON.frais_deplacement||0);
+  if(fraisDepl<=0) return 0;
+  if(fraisType==="par_km") return Math.round(fraisDepl*distanceKm*100)/100;
+  return fraisDepl; // forfait
+}
+
+function setBookingLieu(lieu){
+  booking.lieu=lieu;
+  if(lieu==='salon'){ booking.clientAdr=null; }
+  renderBookingStep4();
+}
+
+// Validation adresse cliente saisie : géocode + check zone + calcule frais
+async function validateClientAdresse(){
+  var adr=document.getElementById("bkClientAdr");
+  var cp=document.getElementById("bkClientCp");
+  var ville=document.getElementById("bkClientVille");
+  var compl=document.getElementById("bkClientCompl");
+  var statusEl=document.getElementById("bkAdrStatus");
+  if(!adr||!adr.value.trim()){
+    if(statusEl){statusEl.style.color='var(--red)';statusEl.textContent='Adresse requise pour un RDV à domicile';}
+    return false;
+  }
+  if(statusEl){statusEl.style.color='var(--text3)';statusEl.textContent='⏳ Vérification de l\'adresse...';}
+  var query=adr.value.trim()+', '+(cp?cp.value.trim()+' ':'')+(ville?ville.value.trim():'');
+  var geo=await geocodeBANSimple(query);
+  if(!geo){
+    if(statusEl){statusEl.style.color='var(--red)';statusEl.textContent='❌ Adresse introuvable. Vérifiez l\'orthographe.';}
+    return false;
+  }
+  // Calcul distance entre salon (SALON.latitude/longitude) et client
+  var dist=distanceKmSite(Number(SALON.latitude), Number(SALON.longitude), geo.lat, geo.lng);
+  if(dist==null){
+    if(statusEl){statusEl.style.color='var(--red)';statusEl.textContent='❌ Impossible de calculer la distance.';}
+    return false;
+  }
+  var zoneKm=Number(SALON.zone_deplacement_km||0)||25;
+  if(dist>zoneKm){
+    if(statusEl){statusEl.style.color='var(--red)';statusEl.textContent='❌ Vous êtes à '+dist.toFixed(1)+' km — au-delà de la zone de déplacement ('+zoneKm+' km).';}
+    booking.clientAdr=null;
+    return false;
+  }
+  var frais=computeFraisDepl(dist);
+  booking.clientAdr={
+    adr: adr.value.trim(),
+    cp: cp?cp.value.trim():'',
+    ville: ville?ville.value.trim():'',
+    complement: compl?compl.value.trim():'',
+    lat: geo.lat, lng: geo.lng,
+    distance_km: Math.round(dist*100)/100,
+    frais_mt: frais
+  };
+  if(statusEl){
+    statusEl.style.color='#4caf50';
+    statusEl.innerHTML='✓ Adresse validée — '+dist.toFixed(1)+' km · Frais : <strong>'+frais.toFixed(2)+' €</strong>';
+  }
+  return true;
 }
 
 function bookingPrimaryNom(){
@@ -1065,15 +1163,54 @@ function renderSite(){
     h+='</div></div>';
   }
 
-  // Comment nous trouver (mini-map + horaires + contact)
-  h+='<div class="salon-block"><div class="salon-block-title">Comment nous trouver</div>';
+  // === Mode d'activite (Sur place / A domicile / Mixte) ===
+  var mode=String(SALON.mode_activite||"salon").toLowerCase();
+  var zoneKm=Number(SALON.zone_deplacement_km||0);
+  var fraisDepl=Number(SALON.frais_deplacement||0);
+  var fraisType=String(SALON.frais_deplacement_type||"forfait");
+  var lieuByMetier={coiffure:"salon", barbier:"salon", esthetique:"institut", ongles:"studio", bien_etre:"cabinet"};
+  var lieuLabel=lieuByMetier[String(SALON.metier||"coiffure")] || "salon";
+  var fraisLabel="";
+  if(fraisDepl<=0) fraisLabel="Frais de deplacement gratuits";
+  else if(fraisType==="par_km") fraisLabel="Frais de deplacement : "+fraisDepl.toFixed(2)+" \u20ac/km";
+  else fraisLabel="Frais de deplacement : "+fraisDepl.toFixed(2)+" \u20ac (forfait)";
+
+  if(mode==="domicile" || mode==="mixte"){
+    h+='<div class="salon-block"><div class="salon-block-title">Comment ca se passe</div>';
+    if(mode==="mixte"){
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">';
+      h+='<div class="pratique-block" style="text-align:center">';
+      h+='<div style="font-size:32px;margin-bottom:6px">\ud83c\udfea</div>';
+      h+='<div class="pratique-title">Recoit en '+lieuLabel+'</div>';
+      h+='<div style="font-size:12px;color:var(--text2);margin-top:6px">'+escapeHtmlSimple(adr)+'</div></div>';
+      h+='<div class="pratique-block" style="text-align:center">';
+      h+='<div style="font-size:32px;margin-bottom:6px">\ud83c\udfe0</div>';
+      h+='<div class="pratique-title">Se deplace a domicile</div>';
+      h+='<div style="font-size:12px;color:var(--text2);margin-top:6px">Rayon de '+(zoneKm||25)+' km autour de '+escapeHtmlSimple(SALON.ville||"")+'</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">'+fraisLabel+'</div></div>';
+      h+='</div>';
+    } else {
+      h+='<div class="pratique-block" style="background:linear-gradient(135deg,rgba(99,179,237,.06),rgba(99,179,237,.02));border-color:rgba(99,179,237,.2)">';
+      h+='<div style="display:flex;align-items:center;gap:14px;margin-bottom:8px">';
+      h+='<div style="font-size:36px">\ud83c\udfe0</div>';
+      h+='<div><div class="pratique-title" style="margin:0">Pro a domicile uniquement</div>';
+      h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">Je me deplace chez vous dans un rayon de <strong>'+(zoneKm||25)+' km</strong> autour de '+escapeHtmlSimple(SALON.ville||"ma zone")+'.</div></div></div>';
+      h+='<div style="font-size:13px;color:var(--text2);padding-top:10px;border-top:1px solid rgba(255,255,255,.05)">\ud83d\udcb6 '+fraisLabel+'</div>';
+      h+='</div>';
+    }
+    h+='</div>';
+  }
+
+  // Comment nous trouver / Horaires & contact (selon mode)
+  var trouverTitle = (mode==="domicile") ? "Horaires & contact" : "Comment nous trouver";
+  h+='<div class="salon-block"><div class="salon-block-title">'+trouverTitle+'</div>';
   h+='<div class="pratique-grid">';
-  if(SALON.latitude&&SALON.longitude){
+  if(mode!=="domicile" && SALON.latitude&&SALON.longitude){
     h+='<div id="salonMiniMap" class="salon-mini-map"></div>';
-  } else {
+  } else if(mode!=="domicile") {
     h+='<div class="salon-mini-map salon-mini-map-empty">\ud83d\udccd '+adr+'</div>';
   }
-  h+='<div class="pratique-info">';
+  h+='<div class="pratique-info"'+(mode==="domicile"?' style="grid-column:1/-1"':'')+'>';
   h+='<div class="pratique-block"><div class="pratique-title">Horaires</div>';
   var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
   var dow=new Date().getDay();
@@ -1083,7 +1220,7 @@ function renderSite(){
   }
   h+='</div>';
   h+='<div class="pratique-block"><div class="pratique-title">Contact</div>';
-  h+='<div class="pratique-line">\ud83d\udccd '+adr+'</div>';
+  if(mode!=="domicile") h+='<div class="pratique-line">\ud83d\udccd '+adr+'</div>';
   if(SALON.tel)h+='<div class="pratique-line">\ud83d\udcde <a href="tel:'+SALON.tel+'">'+SALON.tel+'</a></div>';
   if(SALON.email)h+='<div class="pratique-line">\u2709\ufe0f <a href="mailto:'+SALON.email+'">'+SALON.email+'</a></div>';
   h+='</div></div></div></div>';
@@ -2199,6 +2336,12 @@ function renderBookingStep4(){
   // Ligne remise carte d'abonnement
   if(hasCarte){
     h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+CLIENT_CARTE_ABO.carteNom+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
+  }
+  // Ligne frais d\u00e9placement
+  if(booking.lieu==='domicile' && t.fraisDepl>0){
+    h+='<div class="summary-row" style="color:#63b3ed"><span>\ud83c\udfe0 Frais de d\u00e9placement</span><span class="v">+'+t.fraisDepl.toFixed(2)+' \u20ac</span></div>';
+  }
+  if(hasCarte || (booking.lieu==='domicile' && t.fraisDepl>0)){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-top:1px solid rgba(200,168,78,.2);padding-top:8px"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2)+' \u20ac</span></div>';
   }
   h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?collab.n:"Pas de pr\u00e9f\u00e9rence")+'</span></div>';
@@ -2252,6 +2395,41 @@ function renderBookingStep4(){
     h+='<div style="font-size:11px;color:var(--text3)">-'+CLIENT_CARTE_ABO.remiseServices+'% sur le prix TTC services \u2022 \u00c9conomies totales : '+(CLIENT_CARTE_ABO.eco||0).toFixed(2)+' \u20ac</div></div></div>';
   }
 
+  // === Lieu du RDV (sur place / domicile) selon mode_activite du salon ===
+  var salonMode=String(SALON.mode_activite||"salon").toLowerCase();
+  if(salonMode==="domicile"){
+    booking.lieu='domicile'; // forc\u00e9
+  } else if(salonMode==="mixte"){
+    if(!booking.lieu) booking.lieu='salon';
+    // Choix radio
+    h+='<div style="margin-bottom:14px;padding:12px;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:10px">';
+    h+='<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Lieu du rendez-vous</div>';
+    h+='<div style="display:flex;gap:8px">';
+    h+='<label style="flex:1;padding:10px;border-radius:8px;border:1.5px solid '+(booking.lieu==='salon'?'var(--gold)':'var(--border)')+';background:'+(booking.lieu==='salon'?'rgba(212,168,67,.06)':'transparent')+';cursor:pointer;text-align:center"><input type="radio" name="bkLieu" value="salon" '+(booking.lieu==='salon'?'checked':'')+' onchange="setBookingLieu(\'salon\')" style="display:none">\ud83c\udfea Sur place</label>';
+    h+='<label style="flex:1;padding:10px;border-radius:8px;border:1.5px solid '+(booking.lieu==='domicile'?'var(--gold)':'var(--border)')+';background:'+(booking.lieu==='domicile'?'rgba(212,168,67,.06)':'transparent')+';cursor:pointer;text-align:center"><input type="radio" name="bkLieu" value="domicile" '+(booking.lieu==='domicile'?'checked':'')+' onchange="setBookingLieu(\'domicile\')" style="display:none">\ud83c\udfe0 \u00c0 domicile</label>';
+    h+='</div></div>';
+  } else {
+    booking.lieu='salon';
+  }
+
+  // Si lieu='domicile' : champs adresse cliente
+  if(booking.lieu==='domicile'){
+    var cAdr=(booking.clientAdr&&booking.clientAdr.adr)||(CLIENT&&CLIENT.adresse)||'';
+    var cCp=(booking.clientAdr&&booking.clientAdr.cp)||(CLIENT&&CLIENT.cp)||'';
+    var cVille=(booking.clientAdr&&booking.clientAdr.ville)||(CLIENT&&CLIENT.ville)||'';
+    var cCompl=(booking.clientAdr&&booking.clientAdr.complement)||'';
+    var zoneInfo=Number(SALON.zone_deplacement_km||0)||25;
+    h+='<div style="margin-bottom:14px;padding:14px;background:rgba(99,179,237,.04);border:1px solid rgba(99,179,237,.2);border-radius:10px">';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:18px">\ud83c\udfe0</span><strong style="color:#63b3ed">Adresse du rendez-vous</strong></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Le pro se d\u00e9place dans un rayon de '+zoneInfo+' km. Renseignez votre adresse pour v\u00e9rifier la couverture et calculer les frais.</div>';
+    h+='<div class="fg" style="margin-bottom:6px"><label>Adresse *</label><input id="bkClientAdr" placeholder="12 rue de la R\u00e9publique" value="'+cAdr.replace(/"/g,"&quot;")+'"></div>';
+    h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="bkClientCp" placeholder="75001" value="'+cCp.replace(/"/g,"&quot;")+'"></div><div class="fg"><label>Ville *</label><input id="bkClientVille" placeholder="Paris" value="'+cVille.replace(/"/g,"&quot;")+'"></div></div>';
+    h+='<div class="fg" style="margin-bottom:6px"><label>Compl\u00e9ment (\u00e9tage, code, interphone)</label><input id="bkClientCompl" placeholder="3e \u00e9tage, code 1234B" value="'+cCompl.replace(/"/g,"&quot;")+'"></div>';
+    h+='<button type="button" onclick="validateClientAdresse()" style="margin-top:8px;padding:8px 14px;border-radius:6px;border:1px solid rgba(99,179,237,.3);background:rgba(99,179,237,.08);color:#63b3ed;font-size:12px;font-weight:700;cursor:pointer">\ud83d\udccd V\u00e9rifier l\'adresse + calculer les frais</button>';
+    h+='<div id="bkAdrStatus" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>';
+    h+='</div>';
+  }
+
   // Form
   var cNom=CLIENT?CLIENT.nom:"",cPre=CLIENT?(CLIENT.prenom||""):"",cTel=CLIENT?(CLIENT.telephone||""):"",cEm=CLIENT?CLIENT.email:"";
   h+='<div class="fg-row"><div class="fg"><label>Nom *</label><input id="bkNom" required value="'+cNom+'"></div><div class="fg"><label>Pr\u00e9nom</label><input id="bkPre" value="'+cPre+'"></div></div>';
@@ -2288,6 +2466,13 @@ async function submitBooking(){
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
   if(!nom||!tel){alert("Nom et t\u00e9l\u00e9phone obligatoires");return;}
+  // Si lieu='domicile' : valider l'adresse (re-g\u00e9ocode si pas encore valid\u00e9e)
+  if(booking.lieu==='domicile'){
+    if(!booking.clientAdr || booking.clientAdr.frais_mt==null){
+      var ok=await validateClientAdresse();
+      if(!ok){ alert("Veuillez v\u00e9rifier l'adresse de RDV \u00e0 domicile avant de confirmer."); return; }
+    }
+  }
   var pre=document.getElementById("bkPre").value.trim();
   var email=document.getElementById("bkEmail").value.trim();
   var msg=document.getElementById("bkMsg").value.trim();
@@ -2321,7 +2506,6 @@ async function submitBooking(){
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
     client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
-    // service_prix = prix FINAL (apr\u00e8s remise carte). carte_abo_id + remise_carte_montant pour tra\u00e7abilit\u00e9.
     service_id:booking.svcId,service_nom:primaryNom,service_prix:prixFinal,
     items:itemsPayload,
     carte_abo_id:(remiseCarte>0&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
@@ -2329,8 +2513,20 @@ async function submitBooking(){
     collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
     date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
     acompte_montant:acompte,status:SITE_CFG.autoConfirm?"confirmed":"pending",
-    message:msg
+    message:msg,
+    lieu: booking.lieu||'salon'
   };
+  // Champs sp\u00e9cifiques RDV \u00e0 domicile
+  if(booking.lieu==='domicile' && booking.clientAdr){
+    data.client_adresse = booking.clientAdr.adr;
+    data.client_adresse_cp = booking.clientAdr.cp;
+    data.client_adresse_ville = booking.clientAdr.ville;
+    data.adresse_complement = booking.clientAdr.complement || null;
+    data.client_lat = booking.clientAdr.lat;
+    data.client_lng = booking.clientAdr.lng;
+    data.distance_km = booking.clientAdr.distance_km;
+    data.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
+  }
 
   try{
     var r=await sb.from("rdv_online").insert(data).select();
@@ -2457,13 +2653,19 @@ async function submitWithStripe(){
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
   if(!nom||!tel){alert("Nom et telephone obligatoires");return;}
+  if(booking.lieu==='domicile'){
+    if(!booking.clientAdr || booking.clientAdr.frais_mt==null){
+      var ok=await validateClientAdresse();
+      if(!ok){ alert("Veuillez verifier l\'adresse de RDV a domicile avant de payer."); return; }
+    }
+  }
   var pre=document.getElementById("bkPre").value.trim();
   var email=document.getElementById("bkEmail").value.trim();
   var msg=document.getElementById("bkMsg").value.trim();
-  
+
   var t=bookingTotals();
   var dur=t.dur;
-  var totalPrix=t.prix;
+  var totalPrix=t.prixFinal;
   var primaryNom=bookingPrimaryNom();
   var itemsPayload=bookingItemsPayload();
   var acompte=0;
@@ -2491,8 +2693,19 @@ async function submitWithStripe(){
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
       acompte_montant:acompte,acompte_paye:false,
-      status:"pending_payment",message:msg
+      status:"pending_payment",message:msg,
+      lieu: booking.lieu||'salon'
     };
+    if(booking.lieu==='domicile' && booking.clientAdr){
+      rdvData.client_adresse = booking.clientAdr.adr;
+      rdvData.client_adresse_cp = booking.clientAdr.cp;
+      rdvData.client_adresse_ville = booking.clientAdr.ville;
+      rdvData.adresse_complement = booking.clientAdr.complement || null;
+      rdvData.client_lat = booking.clientAdr.lat;
+      rdvData.client_lng = booking.clientAdr.lng;
+      rdvData.distance_km = booking.clientAdr.distance_km;
+      rdvData.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
+    }
     var rdvRes=await sb.from("rdv_online").insert(rdvData).select();
     if(rdvRes.error){alert(rdvErrorMessage(rdvRes.error));await refreshRDV();renderTimeSlots(booking.date);return;}
     var rdvId=rdvRes.data[0].id;
