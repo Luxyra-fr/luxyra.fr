@@ -1363,55 +1363,116 @@ setTimeout(initSalonMiniMap,400);
 
 function renderBookingStep1(){
   // Mode mono-prestation (style Planity) : 1 service \u00e0 la fois.
-  // Pour combiner plusieurs services, le salon cr\u00e9e un forfait d\u00e9di\u00e9.
+  // Design harmonis\u00e9 avec la page Tarifs : sticky chips + tarif-row.
   if(!booking.items)booking.items=[];
   booking.collabId=null;booking.collab=null;booking.date=null;booking.time=null;
+  var cats={};
+  SERVICES.forEach(function(s){
+    var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
+    s._dur=dur||30;
+    if(!cats[s.cat])cats[s.cat]=[];
+    cats[s.cat].push(s);
+  });
+  var ordRef=(window.SITE_CATS_ORDER||[]);
+  var catNames=Object.keys(cats).sort(function(a,b){
+    var ia=ordRef.indexOf(a), ib=ordRef.indexOf(b);
+    if(ia===-1 && ib===-1)return a.localeCompare(b);
+    if(ia===-1)return 1;
+    if(ib===-1)return -1;
+    return ia-ib;
+  });
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">1</div><div class="step-title">Choisissez votre prestation</div></div>';
-  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">S\u00e9lectionnez la prestation souhait\u00e9e. Pour combiner plusieurs services, choisissez un forfait d\u00e9di\u00e9.</div>';
-  // Group by cat
-  var cats={};SERVICES.forEach(function(s){if(!cats[s.cat])cats[s.cat]=[];cats[s.cat].push(s);});
-  for(var cat in cats){
-    h+='<div style="font-size:12px;font-weight:800;letter-spacing:2px;color:var(--text3);text-transform:uppercase;margin:16px 0 8px">'+cat+'</div>';
+  h+='<p style="font-size:12px;color:var(--text3);margin-bottom:14px;text-align:center">S\u00e9lectionnez la prestation souhait\u00e9e. Pour combiner plusieurs services, choisissez un forfait d\u00e9di\u00e9.</p>';
+  if(!catNames.length){
+    h+='<div style="text-align:center;padding:40px;color:var(--text3)">Aucune prestation disponible.</div>';
+    h+='</div>';
+    document.getElementById("bookingFlow").innerHTML=h;
+    return;
+  }
+  // Sticky chips (m\u00eame style que page Tarifs)
+  h+='<div class="tarifs-chips" id="bookingChips">';
+  catNames.forEach(function(cat,idx){
+    var safe=escapeAttrSimple(cat);
+    h+='<button class="tarif-chip'+(idx===0?' active':'')+'" data-cat-target="'+safe+'" onclick="scrollToBookingCat(\''+safe.replace(/\\/g,"\\\\").replace(/'/g,"\\'")+'\')">'+escapeHtmlSimple(cat)+'</button>';
+  });
+  h+='</div>';
+  // Liste par cat\u00e9gorie (m\u00eame structure que tarif-cat / tarif-row)
+  h+='<div class="tarifs-list">';
+  catNames.forEach(function(cat){
+    h+='<div class="tarif-cat" data-cat="'+escapeAttrSimple(cat)+'">';
+    h+='<div class="tarif-cat-title">'+escapeHtmlSimple(cat)+'</div>';
     cats[cat].forEach(function(s){
-      var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
       var isSel=isServiceInBooking(s.id);
       var isOnDemand=(s.bookOnline===false);
+      var dur=s._dur||30;
+      h+='<div class="tarif-row'+(isSel?' tarif-row-selected':'')+'"'+(isOnDemand?'':' onclick="toggleService('+s.id+')" style="cursor:pointer"')+'>';
+      h+='<div class="tarif-row-left">';
+      h+='<div class="tarif-row-name">'+(isSel?'<span style="color:var(--gold)">\u2713 </span>':'')+escapeHtmlSimple(s.n)+'</div>';
+      h+='<div class="tarif-row-meta">\u23f1 '+dur+' min'+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
+      h+='</div>';
+      h+='<div class="tarif-row-right">';
+      h+='<div class="tarif-row-price">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div>';
       if(isOnDemand){
-        // Prestation non r\u00e9servable en ligne \u2192 bouton "Demander ce RDV" (utilise le flow RDV sur mesure)
-        var canRequest=SITE_CFG.acceptRdvSurMesure;
-        h+='<div class="svc-card" style="opacity:.85">';
-        h+='<div class="chk" style="background:rgba(255,152,0,.15);color:#ff9800;font-size:14px">\ud83d\udcde</div>';
-        h+='<div class="body"><div class="n">'+s.n+'</div><div class="d" style="color:#ff9800">'+(dur||30)+' min \u00b7 Sur demande</div></div>';
-        h+='<div class="p" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">';
-        h+='<div>'+(Number(s.p)||0).toFixed(2)+' \u20ac</div>';
-        if(canRequest)h+='<button class="btn btn-outline" style="font-size:11px;padding:4px 10px;white-space:nowrap" onclick="event.stopPropagation();openSurMesureModal('+s.id+')">Demander ce RDV</button>';
-        else h+='<div style="font-size:10px;color:var(--text3)">Contactez le salon</div>';
-        h+='</div></div>';
+        if(SITE_CFG.acceptRdvSurMesure){
+          h+='<button class="tarif-row-cta" style="background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="event.stopPropagation();openSurMesureModal('+s.id+')">Demander</button>';
+        }else{
+          h+='<div style="font-size:10px;color:var(--text3);text-align:right">Contactez<br>le salon</div>';
+        }
       }else{
-        h+='<div class="svc-card '+(isSel?'selected':'')+'" onclick="toggleService('+s.id+')">';
-        h+='<div class="chk">'+(isSel?'\u2713':'')+'</div>';
-        h+='<div class="body"><div class="n">'+s.n+'</div><div class="d">'+(dur||30)+' min</div></div>';
-        h+='<div class="p">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div></div>';
+        h+='<button class="tarif-row-cta'+(isSel?' tarif-row-cta-selected':'')+'" onclick="event.stopPropagation();toggleService('+s.id+')">'+(isSel?'S\u00e9lectionn\u00e9':'Choisir')+'</button>';
       }
+      h+='</div></div>';
     });
-  }
-  // Mini-cart sticky bottom
+    h+='</div>';
+  });
+  h+='</div>';
+  // Mini-cart sticky en bas
   h+='<div id="bookCart" class="book-cart">'+renderBookingCartInner()+'</div>';
-  // Bouton "RDV sur mesure" si activé par le salon
+  // RDV sur mesure libre (si activ\u00e9)
   if(SITE_CFG.acceptRdvSurMesure){
     h+='<div style="margin-top:24px;padding-top:20px;border-top:1px solid rgba(200,168,78,.1)">';
     h+='<div style="text-align:center;font-size:12px;color:var(--text3);margin-bottom:10px">Vous ne trouvez pas ce que vous cherchez ?</div>';
-    h+='<button class="btn btn-outline" style="width:100%" onclick="openSurMesureModal()">✨ Demander un RDV sur mesure</button>';
-    h+='<div style="text-align:center;font-size:11px;color:var(--text3);margin-top:8px">Le salon vous proposera un créneau personnalisé sous 24-48h.</div>';
+    h+='<button class="btn btn-outline" style="width:100%" onclick="openSurMesureModal()">\u2728 Demander un RDV sur mesure</button>';
+    h+='<div style="text-align:center;font-size:11px;color:var(--text3);margin-top:8px">Le salon vous proposera un cr\u00e9neau personnalis\u00e9 sous 24-48h.</div>';
     h+='</div>';
   }
   h+='</div>';
   document.getElementById("bookingFlow").innerHTML=h;
+  setTimeout(initBookingScrollSpy, 50);
+}
+
+// Scroll vers une cat\u00e9gorie dans la liste de booking
+function scrollToBookingCat(cat){
+  var el=document.querySelector('.tarif-cat[data-cat="'+cat.replace(/"/g,'\\"')+'"]');
+  if(!el)return;
+  var y=el.getBoundingClientRect().top+window.pageYOffset-90;
+  window.scrollTo({top:y,behavior:'smooth'});
+}
+
+// Met \u00e0 jour la chip active selon la position de scroll
+function initBookingScrollSpy(){
+  var chips=document.querySelectorAll('#bookingChips .tarif-chip');
+  if(!chips.length)return;
+  var sections=document.querySelectorAll('#bookingFlow .tarif-cat');
+  function update(){
+    var top=window.scrollY+150;
+    var current=null;
+    sections.forEach(function(s){
+      if(s.offsetTop<=top)current=s.getAttribute('data-cat');
+    });
+    chips.forEach(function(c){
+      c.classList.toggle('active', c.getAttribute('data-cat-target')===current);
+    });
+  }
+  window.removeEventListener('scroll',window._bookSpy);
+  window._bookSpy=update;
+  window.addEventListener('scroll',update,{passive:true});
+  update();
 }
 
 // ============================================================
-// RDV SUR MESURE — demande libre, le salon compose puis propose
+// RDV SUR MESURE \u2014 demande libre, le salon compose puis propose
 // ============================================================
 function openSurMesureModal(svcId){
   // Auth Luxyra obligatoire
