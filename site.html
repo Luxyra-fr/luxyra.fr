@@ -1757,9 +1757,12 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
     if(ab.type==="fermeture_except"&&ab.date===date){
       if(!ab.stId||!collabId||ab.stId===collabId)return true;
     }
-    // Filter by collaborator
+    // Filter by collaborator : on ne regarde que les absences qui concernent
+    // soit ce collab précis, soit le salon entier (ab.stId vide).
+    // Le mode "sans préférence" (collabId=null) est géré dans isSlotTaken
+    // qui appelle isSpecificCollabBusy pour CHAQUE collab — donc ici on a
+    // toujours un collabId réel quand on entre dans cette fonction.
     if(collabId&&ab.stId&&ab.stId!==collabId)continue;
-    if(!collabId&&ab.stId)continue;
     var aType=ab.type||"absent";
     // Full-day blocks
     if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
@@ -1801,11 +1804,15 @@ function isCollabDayOff(date,collabId){
   return false;
 }
 
-function isSlotTaken(date,time,duration,collabId){
+// Check si UN collab spécifique est indispo (absences, pauses, RDV existants)
+// pour un créneau donné. NE PAS appeler avec collabId=null directement —
+// utiliser isSlotTaken qui gère le mode "sans préférence".
+function isSpecificCollabBusy(date,time,duration,collabId){
+  if(!collabId)return false; // garde-fou (sans collab on passe par isSlotTaken)
   var slotStart=toMin(time),slotEnd=slotStart+duration;
-  // Check blocked slots (absences, pauses, congés)
+  // 1) Absences/pauses/congés de ce collab
   if(isCollabBlocked(date,collabId,slotStart,slotEnd))return true;
-  // Check existing appointments - check WORK blocks including delegated phases
+  // 2) RDV existants impliquant ce collab
   for(var i=0;i<RDV_EXISTING.length;i++){
     var r=RDV_EXISTING[i];
     if(r.date_rdv!==date)continue;
@@ -1817,17 +1824,16 @@ function isSlotTaken(date,time,duration,collabId){
         var ph=r.a_phases[pi];
         if(ph.t==="w"){
           var phCollab=ph.stId||r.collab_id;
-          // Skip phases not for this collaborator
-          if(collabId&&phCollab&&phCollab!==collabId){cur+=(ph.d||0);continue;}
+          // Si la phase n'est pas pour CE collab → skip, il est libre pendant
+          if(phCollab && phCollab!==collabId){cur+=(ph.d||0);continue;}
           var wEnd=cur+(ph.d||30);
           if(slotStart<wEnd&&slotEnd>cur)return true;
         }
         cur+=(ph.d||0);
       }
     } else {
-      // No phases: check main collab only
-      if(collabId&&r.collab_id&&r.collab_id!==collabId)continue;
-      // Use service duration if available, else default 30min
+      // Pas de phases : RDV bloque le collab principal pendant toute sa durée
+      if(r.collab_id && r.collab_id!==collabId)continue;
       var rDur=30;
       if(r.service_id){for(var si=0;si<SERVICES.length;si++){if(SERVICES[si].id===r.service_id){var sv=SERVICES[si];if(sv.phases&&sv.phases.length){var td=0;sv.phases.forEach(function(p){td+=p.d;});rDur=td;}else rDur=sv.duree||30;break;}}}
       var rEnd=rStart+rDur;
@@ -1835,6 +1841,65 @@ function isSlotTaken(date,time,duration,collabId){
     }
   }
   return false;
+}
+
+function isSlotTaken(date,time,duration,collabId){
+  // Mode collab spécifique : check ce collab uniquement
+  if(collabId) return isSpecificCollabBusy(date,time,duration,collabId);
+  // Mode "sans préférence" : si AU MOINS UN collab actif est dispo → slot dispo
+  var activeCollabs=(COLLABS||[]).filter(function(c){
+    if(c.actif===false || c.active===false) return false;
+    return true;
+  });
+  if(!activeCollabs.length){
+    // Pas de collabs définis (mono-praticien) → check absences globales + RDV non-attribués
+    var slotStart=toMin(time),slotEnd=slotStart+duration;
+    // Absences globales (fermeture exceptionnelle, etc.) sans stId
+    var absences=SITE_CFG.absences||[];
+    for(var i=0;i<absences.length;i++){
+      var ab=absences[i];
+      if(ab.stId)continue; // ne s'applique pas aux absences spécifiques
+      if(ab.type==="fermeture_except"&&ab.date===date)return true;
+      var aType=ab.type||"absent";
+      if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
+        if(ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)return true;
+        if(ab.date===date&&!ab.from)return true;
+      }
+      if((aType==="pause"||aType==="absent_heures")&&ab.date===date&&ab.from&&ab.to){
+        var bStart=toMin(ab.from),bEnd=toMin(ab.to);
+        if(slotStart<bEnd&&slotEnd>bStart)return true;
+      }
+    }
+    // RDV existants (sans collab cible, on bloque tout)
+    for(var i=0;i<RDV_EXISTING.length;i++){
+      var r=RDV_EXISTING[i];
+      if(r.date_rdv!==date||!r.heure)continue;
+      var rStart=toMin(r.heure);
+      if(r.a_phases&&r.a_phases.length){
+        var cur=rStart;
+        for(var pi=0;pi<r.a_phases.length;pi++){
+          var ph=r.a_phases[pi];
+          if(ph.t==="w"){
+            var wEnd=cur+(ph.d||30);
+            if(slotStart<wEnd&&slotEnd>cur)return true;
+          }
+          cur+=(ph.d||0);
+        }
+      }else{
+        var rDur=30;
+        if(r.service_id){for(var si=0;si<SERVICES.length;si++){if(SERVICES[si].id===r.service_id){var sv=SERVICES[si];if(sv.phases&&sv.phases.length){var td=0;sv.phases.forEach(function(p){td+=p.d;});rDur=td;}else rDur=sv.duree||30;break;}}}
+        if(slotStart<rStart+rDur&&slotEnd>rStart)return true;
+      }
+    }
+    return false;
+  }
+  // Cherche au moins UN collab dispo
+  for(var i=0;i<activeCollabs.length;i++){
+    if(!isSpecificCollabBusy(date,time,duration,activeCollabs[i].id)){
+      return false; // un collab est libre → slot dispo
+    }
+  }
+  return true; // tous indispos
 }
 
 function renderTimeSlots(dateStr){
