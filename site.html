@@ -1641,7 +1641,9 @@ function findNextAvailableSlot(){
       }
     }
     if(!hrs) continue;
+    // Skip si tout le monde est absent ce jour
     if(booking.collabId && isCollabDayOff(dateStr,booking.collabId)) continue;
+    if(!booking.collabId && isAllCollabsOff(dateStr)) continue;
     var startM=toMin(hrs.o), endM=toMin(hrs.c);
     var interval=15;
     for(var m=startM;m+dur<=endM;m+=interval){
@@ -1726,7 +1728,13 @@ function renderCalendar(){
     if(isExceptClosed)isClosed=true;
     if(isExceptOpen)isClosed=false;
     // Check if collaborator has full-day absence on this date
-    var isAbsent=!isClosed&&booking.collabId&&isCollabDayOff(dateKey,booking.collabId);
+    // - Avec collab choisi : check ce collab uniquement
+    // - Sans préférence : grise si TOUS les collabs actifs sont absents
+    var isAbsent=false;
+    if(!isClosed){
+      if(booking.collabId) isAbsent=isCollabDayOff(dateKey,booking.collabId);
+      else isAbsent=isAllCollabsOff(dateKey);
+    }
     var isToday=dt.getTime()===today.getTime();
     var isSelected=booking.date&&booking.date===dateKey;
     var cls="cal-day";
@@ -1787,6 +1795,7 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
 }
 
 function isCollabDayOff(date,collabId){
+  if(!collabId) return false; // garde-fou — passer par isAllCollabsOff
   var absences=SITE_CFG.absences||[];
   for(var i=0;i<absences.length;i++){
     var ab=absences[i];
@@ -1794,7 +1803,7 @@ function isCollabDayOff(date,collabId){
     if(ab.type==="fermeture_except"&&ab.date===date){
       if(!ab.stId||ab.stId===collabId)return true;
     }
-    if(collabId&&ab.stId&&ab.stId!==collabId)continue;
+    if(ab.stId&&ab.stId!==collabId)continue;
     var aType=ab.type||"absent";
     if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
       if(ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)return true;
@@ -1802,6 +1811,37 @@ function isCollabDayOff(date,collabId){
     }
   }
   return false;
+}
+
+// Mode "sans préférence" : grise un jour si TOUS les collabs actifs
+// sont en absence (congé/maladie/etc.) ce jour-là, OU si fermeture
+// exceptionnelle globale. Si pas de collabs définis, check fermeture globale uniquement.
+function isAllCollabsOff(date){
+  var absences=SITE_CFG.absences||[];
+  // Fermeture exceptionnelle globale (ab.stId vide) → tout le monde fermé
+  for(var i=0;i<absences.length;i++){
+    var ab=absences[i];
+    if(ab.type==="fermeture_except"&&ab.date===date&&!ab.stId)return true;
+    // Absence globale (sans stId) couvrant ce jour
+    if(!ab.stId){
+      var aType=ab.type||"absent";
+      if(aType==="conge"||aType==="absent_jour"||aType==="absent"||aType==="maladie"||aType==="formation"){
+        if(ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)return true;
+        if(ab.date===date&&!ab.from)return true;
+      }
+    }
+  }
+  // Aucun collab actif → check global déjà fait → dispo
+  var activeCollabs=(COLLABS||[]).filter(function(c){
+    if(c.actif===false||c.active===false) return false;
+    return true;
+  });
+  if(!activeCollabs.length) return false;
+  // Tous les collabs doivent être off
+  for(var i=0;i<activeCollabs.length;i++){
+    if(!isCollabDayOff(date,activeCollabs[i].id)) return false;
+  }
+  return true;
 }
 
 // Check si UN collab spécifique est indispo (absences, pauses, RDV existants)
