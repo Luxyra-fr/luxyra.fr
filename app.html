@@ -2315,7 +2315,7 @@ async function loadAvisList(){
     var sid=window._salonId||(window.SALON&&SALON.id);
     if(!sb||!sid) return;
     var r=await sb.from("avis_salon")
-      .select("id, nom, note, texte, date, created_at, approved, reported, rdv_online_id")
+      .select("id, nom, note, texte, date, created_at, approved, reported, hidden_by_luxyra, rdv_online_id, salon_reply, salon_reply_at, flag_reason, flagged_at")
       .eq("salon_id", sid)
       .order("created_at",{ascending:false})
       .limit(200);
@@ -2326,25 +2326,32 @@ async function loadAvisList(){
 function rAvis(){
   var list=window.AVIS_LIST||[];
   var filter=window.AVIS_FILTER||"all";
-  var counts={all:list.length, pending:0, approved:0, reported:0};
+  // Comptes : tous publiés (sauf hidden_by_luxyra), sans réponse, signalés
+  var counts={all:0, no_reply:0, flagged:0, hidden:0};
   list.forEach(function(a){
-    if(a.reported) counts.reported++;
-    else if(a.approved) counts.approved++;
-    else counts.pending++;
+    if(a.hidden_by_luxyra){counts.hidden++;return;}
+    counts.all++;
+    if(!a.salon_reply) counts.no_reply++;
+    if(a.flag_reason && !a.hidden_by_luxyra) counts.flagged++;
   });
   var filtered=list.filter(function(a){
-    if(filter==="reported") return !!a.reported;
-    if(filter==="approved") return !a.reported && a.approved;
-    if(filter==="pending") return !a.reported && !a.approved;
-    return true;
+    if(a.hidden_by_luxyra && filter!=="hidden") return false;
+    if(filter==="no_reply") return !a.salon_reply && !a.hidden_by_luxyra;
+    if(filter==="flagged") return !!a.flag_reason && !a.hidden_by_luxyra;
+    if(filter==="hidden") return !!a.hidden_by_luxyra;
+    return !a.hidden_by_luxyra;
   });
-  // Note moyenne (sur approved non reported)
-  var pubs=list.filter(function(a){return a.approved && !a.reported;});
+  // Note moyenne (sur publiés non cachés par Luxyra)
+  var pubs=list.filter(function(a){return a.approved && !a.reported && !a.hidden_by_luxyra;});
   var avgNote=pubs.length ? (pubs.reduce(function(s,a){return s+Number(a.note||0);},0)/pubs.length) : 0;
   var h='';
   h+='<div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">';
   h+='<button onclick="go(\'home\')" style="background:none;border:none;color:var(--gold);font-size:22px;cursor:pointer">←</button>';
   h+='<h2 style="margin:0;font-family:var(--f1);color:var(--gold);font-size:22px">★ Avis clients</h2>';
+  h+='</div>';
+  // Bandeau d'info
+  h+='<div style="background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.2);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.5">';
+  h+='<strong style="color:#4ade80">ℹ️ Comment ça marche</strong> — Les avis de vos clients (avec compte Luxyra et RDV honoré) sont publiés automatiquement. Vous ne pouvez pas les supprimer, mais vous pouvez <strong>répondre publiquement</strong> sous chaque avis. Si un avis vous semble abusif (insulte, faux client…), <strong>signalez-le à Luxyra</strong> : nous le vérifions et décidons de le masquer ou non.';
   h+='</div>';
   // Header note moyenne
   if(pubs.length>0){
@@ -2352,16 +2359,16 @@ function rAvis(){
     h+='<div style="display:flex;align-items:center;gap:18px;background:linear-gradient(135deg,rgba(212,168,67,.08),rgba(212,168,67,.02));border:1px solid rgba(212,168,67,.2);border-radius:14px;padding:18px;margin-bottom:16px">';
     h+='<div style="font-size:42px;font-weight:800;color:var(--gold);font-family:var(--f1);line-height:1">'+avgNote.toFixed(1)+'</div>';
     h+='<div><div style="color:var(--gold);font-size:18px;letter-spacing:2px">'+stars+'</div>';
-    h+='<div style="font-size:12px;color:var(--text3);margin-top:4px">'+pubs.length+' avis publié'+(pubs.length>1?"s":"")+' sur '+counts.all+' reçu'+(counts.all>1?"s":"")+'</div></div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-top:4px">'+pubs.length+' avis publié'+(pubs.length>1?"s":"")+'</div></div>';
     h+='</div>';
   }
   // Filtres
   var tabs=[
     {k:"all",l:"Tous",n:counts.all,c:"var(--text2)"},
-    {k:"pending",l:"À modérer",n:counts.pending,c:"#fbbf24"},
-    {k:"approved",l:"Publiés",n:counts.approved,c:"#4ade80"},
-    {k:"reported",l:"Signalés",n:counts.reported,c:"#f87171"}
+    {k:"no_reply",l:"Sans réponse",n:counts.no_reply,c:"#fbbf24"},
+    {k:"flagged",l:"Signalés à Luxyra",n:counts.flagged,c:"#fb923c"}
   ];
+  if(counts.hidden>0) tabs.push({k:"hidden",l:"Masqués par Luxyra",n:counts.hidden,c:"#f87171"});
   h+='<div style="display:flex;gap:6px;margin-bottom:14px;overflow-x:auto;padding-bottom:4px">';
   tabs.forEach(function(t){
     var active=filter===t.k;
@@ -2374,7 +2381,7 @@ function rAvis(){
     h+='<div style="font-size:42px;margin-bottom:12px;opacity:.3">★</div>';
     h+='<div style="color:var(--text3);font-weight:600">Aucun avis '+(filter==="all"?"pour l\'instant":"dans cette catégorie")+'</div>';
     if(filter==="all"){
-      h+='<div style="color:var(--text3);font-size:12px;margin-top:8px">Vos clients pourront laisser un avis après un RDV honoré.<br>Un email d\'invitation est envoyé automatiquement 2 jours après le RDV.</div>';
+      h+='<div style="color:var(--text3);font-size:12px;margin-top:8px">Vos clients pourront laisser un avis après un RDV honoré.<br>Un email d\'invitation leur sera envoyé automatiquement 2 jours après le RDV.</div>';
     }
     h+='</div>';
     return h;
@@ -2382,9 +2389,9 @@ function rAvis(){
   filtered.forEach(function(a){
     var stars="";for(var i=1;i<=5;i++)stars+=(i<=Number(a.note||0)?"★":"☆");
     var statusBadge="";
-    if(a.reported) statusBadge='<span style="padding:2px 8px;border-radius:10px;background:rgba(248,113,113,.12);color:#f87171;font-size:10px;font-weight:700;text-transform:uppercase">Signalé</span>';
-    else if(a.approved) statusBadge='<span style="padding:2px 8px;border-radius:10px;background:rgba(74,222,128,.12);color:#4ade80;font-size:10px;font-weight:700;text-transform:uppercase">Publié</span>';
-    else statusBadge='<span style="padding:2px 8px;border-radius:10px;background:rgba(251,191,36,.12);color:#fbbf24;font-size:10px;font-weight:700;text-transform:uppercase">À modérer</span>';
+    if(a.hidden_by_luxyra) statusBadge='<span style="padding:2px 8px;border-radius:10px;background:rgba(248,113,113,.12);color:#f87171;font-size:10px;font-weight:700;text-transform:uppercase">Masqué Luxyra</span>';
+    else if(a.flag_reason) statusBadge='<span style="padding:2px 8px;border-radius:10px;background:rgba(251,146,60,.12);color:#fb923c;font-size:10px;font-weight:700;text-transform:uppercase">Signalé en cours</span>';
+    else statusBadge='<span style="padding:2px 8px;border-radius:10px;background:rgba(74,222,128,.12);color:#4ade80;font-size:10px;font-weight:700;text-transform:uppercase">Publié</span>';
     var dateAffich="";
     try{
       var dStr=a.date||(a.created_at&&a.created_at.slice(0,10));
@@ -2398,51 +2405,153 @@ function rAvis(){
     if(dateAffich) h+='<span style="font-size:11px;color:var(--text3)">'+dateAffich+'</span>';
     h+='</div></div>';
     if(a.texte) h+='<p style="font-size:13px;color:var(--text2);line-height:1.5;margin:8px 0 12px">'+_escAvis(a.texte)+'</p>';
-    // Actions
-    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:10px">';
-    if(!a.reported){
-      if(a.approved){
-        h+='<button onclick="moderateAvis(\''+a.id+'\',\'unpublish\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">Dépublier</button>';
-      } else {
-        h+='<button onclick="moderateAvis(\''+a.id+'\',\'approve\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(74,222,128,.3);background:rgba(74,222,128,.08);color:#4ade80;font-size:11px;font-weight:700;cursor:pointer">✓ Publier</button>';
-      }
-      h+='<button onclick="moderateAvis(\''+a.id+'\',\'report\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.08);color:#f87171;font-size:11px;font-weight:700;cursor:pointer">⚠ Signaler</button>';
-    } else {
-      h+='<button onclick="moderateAvis(\''+a.id+'\',\'unreport\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">Annuler le signalement</button>';
+    // Réponse existante du salon
+    if(a.salon_reply){
+      h+='<div style="margin:8px 0 12px;padding:10px 12px;border-left:2px solid var(--gold);background:rgba(200,168,78,.04);border-radius:0 8px 8px 0">';
+      h+='<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">↪ Votre réponse publique</div>';
+      h+='<p style="font-size:12px;color:var(--text2);line-height:1.5;margin:0">'+_escAvis(a.salon_reply)+'</p>';
+      h+='</div>';
     }
-    h+='</div>';
+    // Statut signalement
+    if(a.flag_reason && !a.hidden_by_luxyra){
+      h+='<div style="margin:8px 0;padding:8px 10px;border-radius:6px;background:rgba(251,146,60,.06);border:1px solid rgba(251,146,60,.2);font-size:11px;color:#fb923c">';
+      h+='⚠ Signalé à Luxyra : <strong>'+_escAvis(a.flag_reason)+'</strong> — en cours d\'examen.';
+      h+='</div>';
+    }
+    // Actions
+    if(!a.hidden_by_luxyra){
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:10px">';
+      h+='<button onclick="showReplyModal(\''+a.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">'+(a.salon_reply?"✏ Modifier ma réponse":"💬 Répondre publiquement")+'</button>';
+      if(!a.flag_reason){
+        h+='<button onclick="showFlagModal(\''+a.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(251,146,60,.3);background:rgba(251,146,60,.08);color:#fb923c;font-size:11px;font-weight:700;cursor:pointer">⚠ Signaler à Luxyra</button>';
+      } else {
+        h+='<button onclick="cancelFlag(\''+a.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">Annuler le signalement</button>';
+      }
+      h+='</div>';
+    }
     h+='</div>';
   });
   return h;
 }
 
 function _escAvis(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function _escAttrAvis(s){return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
 function setAvisFilter(k){
   window.AVIS_FILTER=k;
   if(typeof go==="function") go("avis");
 }
 
-async function moderateAvis(avisId, action){
-  try{
-    var sb=window._sb||window.sb;
-    if(!sb) return;
-    var patch={};
-    if(action==="approve"){ patch={approved:true, reported:false}; }
-    else if(action==="unpublish"){ patch={approved:false}; }
-    else if(action==="report"){
-      if(!confirm("Signaler cet avis ? Il sera masqué du site public et de la liste des avis.")) return;
-      patch={reported:true};
-    }
-    else if(action==="unreport"){ patch={reported:false}; }
-    else return;
-    var r=await sb.from("avis_salon").update(patch).eq("id", avisId);
-    if(r.error){ alert("Erreur: "+r.error.message); return; }
-    // Update local
-    var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
-    if(local) Object.assign(local, patch);
-    if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
-  }catch(e){alert("Erreur: "+(e.message||e));}
+// ----- Modal "Répondre publiquement" -----
+function showReplyModal(avisId){
+  var avis=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+  if(!avis) return;
+  var m=document.getElementById("avisReplyModal");
+  if(m) m.remove();
+  var existing=avis.salon_reply||"";
+  var html=''
+    +'<div id="avisReplyModal" onclick="if(event.target===this)closeReplyModal()" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">'
+    +'<div style="background:#1a1815;border:1px solid rgba(200,168,78,.3);border-radius:14px;max-width:520px;width:100%;padding:24px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">'
+    +'<div><div style="font-family:var(--f1);font-size:18px;font-weight:700;color:var(--gold)">Répondre publiquement</div>'
+    +'<div style="font-size:12px;color:var(--text3);margin-top:4px">À l\'avis de '+_escAvis(avis.nom)+'</div></div>'
+    +'<button onclick="closeReplyModal()" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer">×</button></div>'
+    +'<div style="background:rgba(255,255,255,.03);padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.5">"'+_escAvis(avis.texte||"(sans commentaire)")+'"</div>'
+    +'<label style="display:block;font-size:12px;color:var(--text2);margin-bottom:6px">Votre réponse <span style="color:var(--text3)">(visible publiquement sur votre fiche)</span></label>'
+    +'<textarea id="avisReplyText" maxlength="1500" placeholder="Merci pour votre retour…" style="width:100%;min-height:130px;padding:12px;border-radius:10px;border:1px solid rgba(200,168,78,.15);background:#0f0e0c;color:#fff;font-family:inherit;font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box">'+_escAttrAvis(existing)+'</textarea>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:6px">Conseil : restez courtois et professionnel, même face à une critique. Une réponse classe vaut mieux qu\'un avis 5★.</div>'
+    +'<div id="avisReplyErr" style="color:#f87171;font-size:12px;margin-top:8px;display:none"></div>'
+    +'<div style="display:flex;gap:8px;margin-top:16px">'
+    +(existing?'<button onclick="deleteReply(\''+avisId+'\')" style="padding:10px 14px;border-radius:8px;border:1px solid rgba(248,113,113,.3);background:rgba(248,113,113,.08);color:#f87171;font-size:12px;font-weight:600;cursor:pointer">Supprimer</button>':'')
+    +'<button onclick="closeReplyModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:transparent;color:var(--text2);font-size:12px;cursor:pointer">Annuler</button>'
+    +'<button id="avisReplyBtn" onclick="submitReply(\''+avisId+'\')" style="flex:2;padding:10px;border-radius:8px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0f0e0c;font-size:12px;font-weight:700;cursor:pointer">Publier ma réponse</button>'
+    +'</div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+}
+function closeReplyModal(){var m=document.getElementById("avisReplyModal");if(m)m.remove();}
+async function submitReply(avisId){
+  var ta=document.getElementById("avisReplyText");
+  var txt=ta?ta.value.trim():"";
+  var err=document.getElementById("avisReplyErr");
+  if(!txt){err.textContent="Réponse vide";err.style.display="block";return;}
+  var sb=window._sb||window.sb;if(!sb)return;
+  var btn=document.getElementById("avisReplyBtn");btn.disabled=true;btn.textContent="Envoi…";
+  var r=await sb.from("avis_salon").update({salon_reply:txt, salon_reply_at:new Date().toISOString()}).eq("id", avisId);
+  if(r.error){err.textContent=r.error.message;err.style.display="block";btn.disabled=false;btn.textContent="Publier ma réponse";return;}
+  var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+  if(local){local.salon_reply=txt;local.salon_reply_at=new Date().toISOString();}
+  closeReplyModal();
+  if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+}
+async function deleteReply(avisId){
+  if(!confirm("Supprimer votre réponse publique ?")) return;
+  var sb=window._sb||window.sb;if(!sb)return;
+  var r=await sb.from("avis_salon").update({salon_reply:null, salon_reply_at:null}).eq("id", avisId);
+  if(r.error){alert(r.error.message);return;}
+  var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+  if(local){local.salon_reply=null;local.salon_reply_at=null;}
+  closeReplyModal();
+  if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+}
+
+// ----- Modal "Signaler à Luxyra" -----
+function showFlagModal(avisId){
+  var avis=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+  if(!avis) return;
+  var m=document.getElementById("avisFlagModal");if(m)m.remove();
+  var html=''
+    +'<div id="avisFlagModal" onclick="if(event.target===this)closeFlagModal()" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">'
+    +'<div style="background:#1a1815;border:1px solid rgba(251,146,60,.3);border-radius:14px;max-width:480px;width:100%;padding:24px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">'
+    +'<div style="font-family:var(--f1);font-size:18px;font-weight:700;color:#fb923c">⚠ Signaler cet avis à Luxyra</div>'
+    +'<button onclick="closeFlagModal()" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer">×</button></div>'
+    +'<p style="font-size:13px;color:var(--text2);line-height:1.5;margin:0 0 14px">L\'avis <strong>reste publié</strong> pendant l\'examen. Notre équipe vérifie sous 48h et décide de le masquer ou non.</p>'
+    +'<label style="display:block;font-size:12px;color:var(--text2);margin-bottom:6px">Motif du signalement</label>'
+    +'<select id="flagReasonSel" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(251,146,60,.2);background:#0f0e0c;color:#fff;font-size:13px;margin-bottom:10px">'
+    +'<option value="">— Choisir un motif —</option>'
+    +'<option value="insulte">Insulte ou langage inapproprié</option>'
+    +'<option value="faux_client">Personne jamais venue chez nous</option>'
+    +'<option value="hors_sujet">Hors-sujet (parle d\'autre chose)</option>'
+    +'<option value="concurrent">Avis posté par un concurrent</option>'
+    +'<option value="discrimination">Propos discriminatoires</option>'
+    +'<option value="autre">Autre motif (précisez)</option>'
+    +'</select>'
+    +'<textarea id="flagDetailsText" maxlength="500" placeholder="Détails / contexte (optionnel pour les motifs simples, obligatoire pour Autre)" style="width:100%;min-height:80px;padding:10px;border-radius:8px;border:1px solid rgba(251,146,60,.15);background:#0f0e0c;color:#fff;font-family:inherit;font-size:12px;resize:vertical;box-sizing:border-box"></textarea>'
+    +'<div id="avisFlagErr" style="color:#f87171;font-size:12px;margin-top:8px;display:none"></div>'
+    +'<div style="display:flex;gap:8px;margin-top:14px">'
+    +'<button onclick="closeFlagModal()" style="flex:1;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:transparent;color:var(--text2);font-size:12px;cursor:pointer">Annuler</button>'
+    +'<button id="avisFlagBtn" onclick="submitFlag(\''+avisId+'\')" style="flex:2;padding:10px;border-radius:8px;border:none;background:#fb923c;color:#0f0e0c;font-size:12px;font-weight:700;cursor:pointer">Envoyer le signalement</button>'
+    +'</div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+}
+function closeFlagModal(){var m=document.getElementById("avisFlagModal");if(m)m.remove();}
+async function submitFlag(avisId){
+  var sel=document.getElementById("flagReasonSel");
+  var det=document.getElementById("flagDetailsText");
+  var err=document.getElementById("avisFlagErr");
+  var reason=sel?sel.value:"";
+  var details=det?det.value.trim():"";
+  if(!reason){err.textContent="Sélectionnez un motif";err.style.display="block";return;}
+  if(reason==="autre" && !details){err.textContent="Précisez le motif (Autre)";err.style.display="block";return;}
+  var fullReason=details ? (reason+" — "+details) : reason;
+  var sb=window._sb||window.sb;if(!sb)return;
+  var btn=document.getElementById("avisFlagBtn");btn.disabled=true;btn.textContent="Envoi…";
+  var r=await sb.from("avis_salon").update({flag_reason:fullReason, flagged_at:new Date().toISOString()}).eq("id", avisId);
+  if(r.error){err.textContent=r.error.message;err.style.display="block";btn.disabled=false;btn.textContent="Envoyer le signalement";return;}
+  var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+  if(local){local.flag_reason=fullReason;local.flagged_at=new Date().toISOString();}
+  closeFlagModal();
+  alert("Signalement envoyé à Luxyra. Notre équipe examine cet avis sous 48h.");
+  if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+}
+async function cancelFlag(avisId){
+  if(!confirm("Annuler le signalement de cet avis ?")) return;
+  var sb=window._sb||window.sb;if(!sb)return;
+  var r=await sb.from("avis_salon").update({flag_reason:null, flagged_at:null}).eq("id", avisId);
+  if(r.error){alert(r.error.message);return;}
+  var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+  if(local){local.flag_reason=null;local.flagged_at=null;}
+  if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
 }
 
 function rDevis(){
@@ -6062,11 +6171,11 @@ function rHome(){
   if(hasPermission("planning"))h+='<div class="tile gt-blue" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="color:#fff">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
   if(hasPermission("caisse"))h+='<div class="tile gt-pink" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="color:#fff">'+ICO.caisse+'</div><div class="tl">Caisse</div></div>';
   if(hasPermission("stats"))h+='<div class="tile gt-purple" onclick="go(\'stats\')"><div class="ti" style="color:#fff">'+ICO.stats+'</div><div class="tl">Statistiques</div></div>';
-  // Avis clients (badge nb non modérés)
+  // Avis clients (badge nb d'avis sans réponse — incite le salon à répondre)
   if(hasPermission("settings")){
-    var _avisToMod=(window.AVIS_LIST||[]).filter(function(a){return !a.approved && !a.reported;}).length;
+    var _avisNoReply=(window.AVIS_LIST||[]).filter(function(a){return !a.salon_reply && !a.hidden_by_luxyra;}).length;
     h+='<div class="tile" style="background:linear-gradient(135deg,#d4a843,#b8960f);position:relative" onclick="go(\'avis\')"><div class="ti" style="color:#fff">★</div><div class="tl">Avis clients</div>';
-    if(_avisToMod>0) h+='<div style="position:absolute;top:6px;right:6px;background:#fff;color:#b8960f;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">'+_avisToMod+'</div>';
+    if(_avisNoReply>0) h+='<div style="position:absolute;top:6px;right:6px;background:#fff;color:#b8960f;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center" title="Avis sans réponse">'+_avisNoReply+'</div>';
     h+='</div>';
   }
   if(hasPermission("marketing")){
