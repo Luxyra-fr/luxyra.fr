@@ -5961,77 +5961,11 @@ function buildDemandeProposalEmailHtml(data, url, client, salonNom){
   return html;
 }
 
-// Onboarding : checklist guidée pour les nouveaux salons.
-// Renvoie le HTML du bandeau si au moins une étape n'est pas faite, sinon "".
-function renderOnboardingChecklist(){
-  if(typeof _salonId==="undefined"||!_salonId)return "";
-  // Détection auto de l'état de chaque étape
-  var hasLogo = !!(SALON_CONFIG.logo&&SALON_CONFIG.logo.length>30);
-  var hasAddr = !!(SALON_CONFIG.adresse&&SALON_CONFIG.cp&&SALON_CONFIG.ville);
-  var hasTel  = !!(SALON_CONFIG.tel&&SALON_CONFIG.tel.length>=8);
-  var profilOk = hasLogo && hasAddr && hasTel;
-  var servicesOk = (typeof SVC!=="undefined"&&SVC.length>=1);
-  var hSal = (window.SITE_CONFIG&&window.SITE_CONFIG.horaires_salon)||null;
-  var horairesOk = !!(hSal && Object.keys(hSal).some(function(j){
-    var v=hSal[j]; return v&&v.ouvert&&v.creneaux&&v.creneaux.length>0;
-  }));
-  var sc=window.SITE_CONFIG||{};
-  var photosOk = !!((sc.photo_hero&&sc.photo_hero.length>30) || (sc.photosSalon&&sc.photosSalon.length>0));
-  var slug = SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"";
-  // Heuristique : slug "personnalisé" = différent du slug auto-généré (= slugify(nom))
-  var autoSlug = (SALON_CONFIG.nom||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,60);
-  var slugOk = !!slug; // on considère OK dès qu'un slug existe (auto ou perso)
-  var siteOk = (window.SITE_CONFIG&&window.SITE_CONFIG.siteActif===true);
-
-  var steps = [
-    {key:"profil",   ok:profilOk,    icon:"🏢", label:"Complétez votre profil",  desc:"Nom, adresse, téléphone, logo", action:"go('settings')"},
-    {key:"services", ok:servicesOk,  icon:"✂️", label:"Ajoutez vos prestations",       desc:"Au moins 1 service avec durée et tarif", action:"go('services')"},
-    {key:"horaires", ok:horairesOk,  icon:"🕐", label:"Définissez vos horaires", desc:"Au moins un jour ouvert avec un créneau", action:"go('settings')"},
-    {key:"photos",   ok:photosOk,    icon:"📸", label:"Ajoutez des photos",            desc:"Photo de couverture ou galerie",                action:"go('settings')"},
-    {key:"slug",     ok:slugOk,      icon:"🔗", label:"Personnalisez votre URL",       desc:"luxyra.fr/votre-salon",                          action:"go('settings')"},
-    {key:"site",     ok:siteOk,      icon:"🌐", label:"Activez votre site en ligne",  desc:"Permettre aux clients de réserver",        action:"go('settings')"}
-  ];
-  var done = steps.filter(function(s){return s.ok;}).length;
-  var total = steps.length;
-  if(done===total)return ""; // Tout est fait, on n'affiche plus la checklist
-
-  var pct = Math.round((done/total)*100);
-  var h='<div style="background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));border:1.5px solid rgba(200,168,78,.35);border-radius:16px;padding:18px;margin-bottom:14px">';
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">';
-  h+='<div><div style="font-weight:800;font-size:16px;color:var(--gold);margin-bottom:2px">✨ Bienvenue sur Luxyra !</div>';
-  h+='<div style="font-size:12px;color:var(--text2)">Complétez ces étapes pour mettre votre salon en ligne</div></div>';
-  h+='<div style="text-align:right"><div style="font-size:22px;font-weight:800;color:var(--gold);line-height:1">'+done+'<span style="font-size:14px;color:var(--text3);font-weight:400">/'+total+'</span></div>';
-  h+='<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">terminé</div></div>';
-  h+='</div>';
-  // Barre de progression
-  h+='<div style="background:rgba(255,255,255,.05);border-radius:8px;height:6px;overflow:hidden;margin-bottom:14px">';
-  h+='<div style="background:linear-gradient(90deg,var(--gold),#b8960f);height:100%;width:'+pct+'%;transition:width .4s"></div>';
-  h+='</div>';
-  // Étapes
-  steps.forEach(function(s){
-    var bg = s.ok ? "rgba(45,154,94,.06)" : "rgba(255,255,255,.02)";
-    var borderC = s.ok ? "rgba(45,154,94,.25)" : "rgba(255,255,255,.06)";
-    var checkIco = s.ok ? '<span style="color:#4ade80;font-size:18px">✅</span>' : '<span style="display:inline-block;width:18px;height:18px;border:2px solid var(--text3);border-radius:50%"></span>';
-    var labelStyle = s.ok ? "text-decoration:line-through;color:var(--text2);opacity:.7" : "color:var(--text)";
-    var clickable = s.ok ? "" : 'cursor:pointer';
-    var onclick = s.ok ? "" : 'onclick="'+s.action+'"';
-    h+='<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:'+bg+';border:1px solid '+borderC+';border-radius:10px;margin-bottom:6px;'+clickable+'" '+onclick+'>';
-    h+='<div>'+checkIco+'</div>';
-    h+='<div style="font-size:18px">'+s.icon+'</div>';
-    h+='<div style="flex:1"><div style="font-size:13px;font-weight:700;'+labelStyle+'">'+s.label+'</div>';
-    h+='<div style="font-size:11px;color:var(--text3);margin-top:1px">'+s.desc+'</div></div>';
-    if(!s.ok)h+='<div style="color:var(--gold);font-size:18px">›</div>';
-    h+='</div>';
-  });
-  return h;
-}
 
 function rHome(){
   var h='';
   var today=TD;
   var tvaR=SALON_CONFIG.tauxTVA||20;
-  // === Onboarding checklist (s'efface une fois 100% complété) ===
-  h += renderOnboardingChecklist();
   // === Bandeau "Demandes sur mesure en attente" ===
   var pendingDemandes = (window.RDV_DEMANDES||[]).filter(function(x){return x.status==="pending";});
   if(pendingDemandes.length){
