@@ -90,6 +90,7 @@ var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var HDR={"apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY,"Content-Type":"application/json"};
 var CLIENT=null;
 var CLIENT_RDVS=[];
+var CLIENT_AVIS=[]; // avis déjà laissés par ce client (pour bloquer doublons)
 var PAGE="login"; // login, register, dashboard
 var TAB="rdv"; // rdv, profile, settings
 
@@ -299,7 +300,16 @@ function renderRdvTab(){
       h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
       h+='</div>';
       if(r.status==="done"||r.status==="confirmed"){
-        h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end">';
+        h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">';
+        // Bouton avis : seulement pour RDV honor\u00e9 (status==="done") et si pas d\u00e9j\u00e0 laiss\u00e9 un avis
+        if(r.status==="done"){
+          var avisExist=CLIENT_AVIS.find(function(a){return a.rdv_online_id===r.id;});
+          if(avisExist){
+            h+='<button disabled style="padding:6px 12px;border-radius:6px;border:1px solid rgba(74,222,128,.2);background:rgba(74,222,128,.06);color:var(--green);font-size:11px;font-weight:600;cursor:default">\u2713 Avis laiss\u00e9</button>';
+          } else {
+            h+='<button onclick="showLeaveAvisModal(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis</button>';
+          }
+        }
         if(r.salon_id)h+='<button onclick="rebookRdv(\''+r.salon_id+'\','+(r.service_id||'null')+',\''+encodeURIComponent(r.salon_nom||"")+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udd01 Reprendre ce RDV</button>';
         h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udcc4 Re\u00e7u</button>';
         h+='</div>';
@@ -870,6 +880,12 @@ async function loadMyRdvs(){
     
     // Sort by date desc
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
+    // Charger les avis déjà laissés par ce client (anti-doublon)
+    try{
+      var rA=await api("avis_salon?select=id,rdv_online_id,note,texte,created_at&client_beautypro_id=eq."+CLIENT.id);
+      var dA=await rA.json();
+      if(Array.isArray(dA)) CLIENT_AVIS=dA;
+    }catch(_){}
     render();
   }catch(e){}
 }
@@ -1077,6 +1093,124 @@ function rebookRdv(salonId,serviceId,salonNom){
   if(serviceId && serviceId!=='null') url+="&book="+encodeURIComponent(serviceId);
   window.open(url,"_blank");
   showToast("\ud83d\udd01 Redirection vers "+(sName||"le salon")+" pour r\u00e9server...");
+}
+
+// ============================================================================
+// AVIS \u2014 Modal "Laisser un avis" (compte Luxyra obligatoire)
+// ============================================================================
+var AVIS_DRAFT={rdvId:null, note:0, texte:""};
+
+function showLeaveAvisModal(rdvId){
+  if(!LX || !LX.hasSession()){
+    showToast("Connexion requise pour laisser un avis");
+    return;
+  }
+  var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});
+  if(!rdv){showToast("RDV introuvable");return;}
+  // Check anti-doublon c\u00f4t\u00e9 client
+  if(CLIENT_AVIS.find(function(a){return a.rdv_online_id===rdvId;})){
+    showToast("Vous avez d\u00e9j\u00e0 laiss\u00e9 un avis pour ce RDV");
+    return;
+  }
+  AVIS_DRAFT={rdvId:rdvId, note:0, texte:""};
+  renderAvisModal(rdv);
+}
+
+function renderAvisModal(rdv){
+  var existing=document.getElementById("avisModal");
+  if(existing) existing.remove();
+  var dp=(rdv.date_rdv||"").split("-");
+  var dateStr=dp.length===3 ? (parseInt(dp[2])+" "+["janv","f\u00e9vr","mars","avr","mai","juin","juil","ao\u00fbt","sept","oct","nov","d\u00e9c"][parseInt(dp[1])-1]+" "+dp[0]) : "";
+  var stars="";
+  for(var i=1;i<=5;i++){
+    var active=i<=AVIS_DRAFT.note;
+    stars+='<span onclick="setAvisNote('+i+')" style="font-size:38px;cursor:pointer;color:'+(active?"#d4a843":"#3a3a3a")+';transition:color .15s;user-select:none;padding:0 4px" data-star="'+i+'">\u2605</span>';
+  }
+  var noteLabels={1:"Tr\u00e8s d\u00e9cevant",2:"D\u00e9cevant",3:"Correct",4:"Bien",5:"Excellent"};
+  var noteLabel=AVIS_DRAFT.note ? noteLabels[AVIS_DRAFT.note] : "Cliquez sur les \u00e9toiles pour noter";
+  var html=''
+    +'<div id="avisModal" onclick="if(event.target===this)closeAvisModal()" style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">'
+    +'<div style="background:#1a1815;border:1px solid rgba(200,168,78,.3);border-radius:16px;max-width:480px;width:100%;padding:28px;box-shadow:0 24px 60px rgba(0,0,0,.7)">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">'
+    +'<div><div style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:#d4a843;margin-bottom:4px">Votre avis</div>'
+    +'<div style="font-size:13px;color:#9a9590">'+escAttr(rdv.salon_nom||"Salon")+' \u00b7 '+escAttr(rdv.service_nom||"")+' \u00b7 '+dateStr+'</div></div>'
+    +'<button onclick="closeAvisModal()" style="background:none;border:none;color:#9a9590;font-size:24px;cursor:pointer;line-height:1">\u00d7</button>'
+    +'</div>'
+    +'<div style="text-align:center;margin:18px 0 8px">'+stars+'</div>'
+    +'<div id="avisNoteLabel" style="text-align:center;font-size:13px;color:'+(AVIS_DRAFT.note?"#d4a843":"#666")+';font-weight:'+(AVIS_DRAFT.note?"600":"400")+';margin-bottom:18px;height:18px">'+noteLabel+'</div>'
+    +'<label style="display:block;font-size:12px;color:#c8c4be;margin-bottom:6px">Votre commentaire <span style="color:#666">(optionnel)</span></label>'
+    +'<textarea id="avisTexte" maxlength="2000" placeholder="Comment s\'est pass\u00e9 votre rendez-vous ?" style="width:100%;min-height:120px;padding:12px;border-radius:10px;border:1px solid rgba(200,168,78,.15);background:#0f0e0c;color:#fff;font-family:inherit;font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box">'+escAttr(AVIS_DRAFT.texte)+'</textarea>'
+    +'<div style="font-size:11px;color:#666;margin-top:6px;line-height:1.5">Votre avis sera publi\u00e9 sous votre pr\u00e9nom et l\'initiale de votre nom (ex : \u00ab '+escAttr((CLIENT&&CLIENT.prenom)||"Client")+' '+escAttr(((CLIENT&&CLIENT.nom)||"X").charAt(0).toUpperCase())+'. \u00bb).<br>Soyez juste et constructif \u2014 votre avis aidera d\'autres clients.</div>'
+    +'<div id="avisErr" style="color:#f87171;font-size:12px;margin-top:10px;display:none"></div>'
+    +'<div style="display:flex;gap:10px;margin-top:18px">'
+    +'<button onclick="closeAvisModal()" style="flex:1;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:transparent;color:#c8c4be;font-size:13px;font-weight:600;cursor:pointer">Annuler</button>'
+    +'<button id="avisSubmitBtn" onclick="submitAvis()" style="flex:2;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b88c2a);color:#0f0e0c;font-size:13px;font-weight:700;cursor:pointer">Publier mon avis</button>'
+    +'</div></div></div>';
+  document.body.insertAdjacentHTML("beforeend", html);
+}
+
+function escAttr(s){return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+
+function setAvisNote(n){
+  AVIS_DRAFT.note=n;
+  // Sauvegarde texte avant re-render
+  var ta=document.getElementById("avisTexte");
+  if(ta) AVIS_DRAFT.texte=ta.value;
+  var rdv=CLIENT_RDVS.find(function(r){return r.id===AVIS_DRAFT.rdvId;});
+  if(rdv) renderAvisModal(rdv);
+}
+
+function closeAvisModal(){
+  var m=document.getElementById("avisModal");
+  if(m) m.remove();
+}
+
+async function submitAvis(){
+  var ta=document.getElementById("avisTexte");
+  var texte=ta?ta.value.trim():"";
+  var err=document.getElementById("avisErr");
+  var btn=document.getElementById("avisSubmitBtn");
+  err.style.display="none";
+  if(!AVIS_DRAFT.note || AVIS_DRAFT.note<1 || AVIS_DRAFT.note>5){
+    err.textContent="S\u00e9lectionnez une note de 1 \u00e0 5 \u00e9toiles";
+    err.style.display="block";
+    return;
+  }
+  if(!LX || !LX.hasSession()){
+    err.textContent="Session expir\u00e9e. Reconnectez-vous.";
+    err.style.display="block";
+    return;
+  }
+  btn.disabled=true; btn.textContent="Envoi\u2026"; btn.style.opacity=".6";
+  try{
+    var SB_FN_URL="https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/avis-create";
+    var r=await fetch(SB_FN_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+      body:JSON.stringify({
+        session_token: LX.getToken(),
+        rdv_online_id: AVIS_DRAFT.rdvId,
+        note: AVIS_DRAFT.note,
+        texte: texte
+      })
+    });
+    var data=await r.json().catch(function(){return{};});
+    if(!r.ok){
+      err.textContent=data.error||"Erreur lors de l'envoi";
+      err.style.display="block";
+      btn.disabled=false; btn.textContent="Publier mon avis"; btn.style.opacity="1";
+      return;
+    }
+    // Succ\u00e8s \u2014 ajoute \u00e0 CLIENT_AVIS pour griser le bouton
+    if(data.avis) CLIENT_AVIS.push({id:data.avis.id, rdv_online_id:AVIS_DRAFT.rdvId, note:AVIS_DRAFT.note, texte:texte});
+    closeAvisModal();
+    showToast("\u2713 Merci ! Votre avis a \u00e9t\u00e9 publi\u00e9.");
+    render();
+  }catch(e){
+    err.textContent="Erreur r\u00e9seau : "+(e.message||e);
+    err.style.display="block";
+    btn.disabled=false; btn.textContent="Publier mon avis"; btn.style.opacity="1";
+  }
 }
 
 function closePopup(id){var el=document.getElementById(id);if(el)el.remove();}
