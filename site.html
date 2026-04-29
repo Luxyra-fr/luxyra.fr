@@ -716,20 +716,22 @@ async function loadSalon(){
       });
     }
     
-    // 4. Services — on charge uniquement ceux actifs ET bookables ET visibles site.
-    // Les flags DB (actif/book_online/show_site) sont la source de vérité.
-    // La whitelist legacy SITE_CFG.svcOnline est ignorée si elle existe :
-    // les pros gèrent maintenant la visibilité par les 3 flags directement.
+    // 4. Services — on charge tous ceux actifs ET visibles site, peu importe book_online.
+    // Les non-réservables (book_online=false) s'affichent avec un bouton "Demander ce RDV"
+    // qui passe par le flow RDV sur mesure (rdv_demandes → proposal.html).
     // Tri : ordre personnalisé du salon (NULL en dernier) puis alphabétique
     var sv=await sb.from("services").select("*")
       .eq("salon_id",salonId)
       .eq("actif",true)
-      .eq("book_online",true)
       .eq("show_site",true)
       .order("ordre",{ascending:true,nullsFirst:false})
       .order("nom",{ascending:true});
     if(sv.data){
-      SERVICES=sv.data.map(function(s){return{id:s.id,n:s.nom,p:Number(s.prix),cat:s.categorie,ordre:s.ordre,phases:s.phases||[]};});
+      SERVICES=sv.data.map(function(s){return{
+        id:s.id,n:s.nom,p:Number(s.prix),cat:s.categorie,ordre:s.ordre,
+        phases:s.phases||[],
+        bookOnline:s.book_online!==false  // false = non réservable en ligne (sur demande)
+      };});
     }
     
     // 5. Products
@@ -1128,14 +1130,21 @@ function renderSite(){
       h+='<div class="tarif-cat-title">'+escapeHtmlSimple(cat)+'</div>';
       cats[cat].forEach(function(s){
         var isForf=!!s.isForfait;
+        var isOnDemand=(!isForf && s.bookOnline===false);
         h+='<div class="tarif-row">';
         h+='<div class="tarif-row-left">';
         h+='<div class="tarif-row-name">'+(isForf?'\ud83d\udce6 ':'')+escapeHtmlSimple(s.n)+'</div>';
-        h+='<div class="tarif-row-meta">\u23f1 '+(s._dur||30)+' min'+(isForf?' \u00b7 Forfait':'')+'</div>';
+        h+='<div class="tarif-row-meta">\u23f1 '+(s._dur||30)+' min'+(isForf?' \u00b7 Forfait':'')+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
         h+='</div>';
         h+='<div class="tarif-row-right">';
         h+='<div class="tarif-row-price">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div>';
-        if(SITE_CFG.resa && !isForf)h+='<button class="tarif-row-cta" onclick="goToBookingWithService('+s.id+')">R\u00e9server</button>';
+        if(SITE_CFG.resa && !isForf){
+          if(isOnDemand && SITE_CFG.acceptRdvSurMesure){
+            h+='<button class="tarif-row-cta" style="background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="openSurMesureModal('+s.id+')">Demander</button>';
+          }else if(!isOnDemand){
+            h+='<button class="tarif-row-cta" onclick="goToBookingWithService('+s.id+')">R\u00e9server</button>';
+          }
+        }
         h+='</div>';
         h+='</div>';
       });
@@ -1372,10 +1381,24 @@ function renderBookingStep1(){
     cats[cat].forEach(function(s){
       var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
       var isSel=isServiceInBooking(s.id);
-      h+='<div class="svc-card '+(isSel?'selected':'')+'" onclick="toggleService('+s.id+')">';
-      h+='<div class="chk">'+(isSel?'\u2713':'')+'</div>';
-      h+='<div class="body"><div class="n">'+s.n+'</div><div class="d">'+(dur||30)+' min</div></div>';
-      h+='<div class="p">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div></div>';
+      var isOnDemand=(s.bookOnline===false);
+      if(isOnDemand){
+        // Prestation non r\u00e9servable en ligne \u2192 bouton "Demander ce RDV" (utilise le flow RDV sur mesure)
+        var canRequest=SITE_CFG.acceptRdvSurMesure;
+        h+='<div class="svc-card" style="opacity:.85">';
+        h+='<div class="chk" style="background:rgba(255,152,0,.15);color:#ff9800;font-size:14px">\ud83d\udcde</div>';
+        h+='<div class="body"><div class="n">'+s.n+'</div><div class="d" style="color:#ff9800">'+(dur||30)+' min \u00b7 Sur demande</div></div>';
+        h+='<div class="p" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">';
+        h+='<div>'+(Number(s.p)||0).toFixed(2)+' \u20ac</div>';
+        if(canRequest)h+='<button class="btn btn-outline" style="font-size:11px;padding:4px 10px;white-space:nowrap" onclick="event.stopPropagation();openSurMesureModal('+s.id+')">Demander ce RDV</button>';
+        else h+='<div style="font-size:10px;color:var(--text3)">Contactez le salon</div>';
+        h+='</div></div>';
+      }else{
+        h+='<div class="svc-card '+(isSel?'selected':'')+'" onclick="toggleService('+s.id+')">';
+        h+='<div class="chk">'+(isSel?'\u2713':'')+'</div>';
+        h+='<div class="body"><div class="n">'+s.n+'</div><div class="d">'+(dur||30)+' min</div></div>';
+        h+='<div class="p">'+(Number(s.p)||0).toFixed(2)+' \u20ac</div></div>';
+      }
     });
   }
   // Mini-cart sticky bottom
@@ -1395,13 +1418,19 @@ function renderBookingStep1(){
 // ============================================================
 // RDV SUR MESURE — demande libre, le salon compose puis propose
 // ============================================================
-function openSurMesureModal(){
+function openSurMesureModal(svcId){
   // Auth Luxyra obligatoire
   if(!CLIENT){
     showAuthModal("login");
     // Mémorise qu'on voulait ouvrir le sur-mesure pour rouvrir après login
     window._afterLoginAction="surMesure";
+    if(svcId)window._afterLoginSvcId=svcId;
     return;
+  }
+  // Pré-remplissage si la modal est ouverte depuis un service "sur demande" précis
+  var preService=null;
+  if(svcId){
+    for(var _i=0;_i<SERVICES.length;_i++){if(SERVICES[_i].id===svcId){preService=SERVICES[_i];break;}}
   }
   if(!CLIENT.telephone){
     alert("Veuillez renseigner votre téléphone dans votre compte avant de faire une demande sur mesure.");
@@ -1409,11 +1438,20 @@ function openSurMesureModal(){
   }
   var h='<div class="auth-modal" onclick="if(event.target===this)closeSurMesureModal()">';
   h+='<div class="auth-box" onclick="event.stopPropagation()" style="max-width:460px">';
-  h+='<h2>✨ RDV sur mesure</h2>';
-  h+='<div class="sub">Décrivez ce que vous souhaitez — le salon vous proposera un créneau adapté.</div>';
+  h+='<h2>'+(preService?'📞 Demander ce RDV':'✨ RDV sur mesure')+'</h2>';
+  if(preService){
+    h+='<div style="margin-bottom:12px;padding:12px 14px;background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.2);border-radius:10px">';
+    h+='<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Prestation demandée</div>';
+    h+='<div style="font-weight:700;font-size:15px;color:var(--gold)">'+escapeHtmlSimple(preService.n)+'</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">'+(Number(preService.p)||0).toFixed(2)+' € · '+preService.cat+'</div>';
+    h+='</div>';
+  }else{
+    h+='<div class="sub">Décrivez ce que vous souhaitez — le salon vous proposera un créneau adapté.</div>';
+  }
   h+='<div id="smErr" class="err"></div>';
+  if(preService)h+='<input type="hidden" id="smSvcId" value="'+preService.id+'">';
   h+='<div class="fg" style="margin-bottom:12px">';
-  h+='<label>Votre demande *</label>';
+  h+='<label>'+(preService?'Précisions / questions (optionnel)':'Votre demande *')+'</label>';
   h+='<textarea id="smDemande" rows="4" placeholder="Ex: Je veux une couleur + un soin profond pendant le shampoing + une coupe + brushing. J\u0027ai les cheveux longs, fins."></textarea>';
   h+='</div>';
   h+='<div class="fg" style="margin-bottom:12px">';
@@ -1434,10 +1472,21 @@ function closeSurMesureModal(){document.getElementById("authModal").innerHTML=""
 async function submitSurMesure(){
   var demande=document.getElementById("smDemande").value.trim();
   var dispo=document.getElementById("smDispo").value.trim();
+  var svcIdEl=document.getElementById("smSvcId");
+  var serviceId=svcIdEl?parseInt(svcIdEl.value)||null:null;
   var errEl=document.getElementById("smErr");
   errEl.style.display="none";errEl.textContent="";
-  if(demande.length<5){errEl.textContent="Veuillez décrire votre demande (5 caractères min).";errEl.style.display="block";return;}
+  // Si une prestation est pré-renseignée, le commentaire est optionnel.
+  // Sinon (RDV sur mesure libre), il faut au moins 5 caractères.
+  if(!serviceId && demande.length<5){errEl.textContent="Veuillez décrire votre demande (5 caractères min).";errEl.style.display="block";return;}
   if(demande.length>2000){errEl.textContent="Demande trop longue (2000 caractères max).";errEl.style.display="block";return;}
+  // Si pré-rempli depuis un service, on construit un texte par défaut
+  var demandeFinal=demande;
+  if(serviceId){
+    var svc=null;for(var i=0;i<SERVICES.length;i++){if(SERVICES[i].id===serviceId){svc=SERVICES[i];break;}}
+    var prefix=svc?("Prestation demandée : "+svc.n+" ("+(Number(svc.p)||0).toFixed(2)+" €)"):"";
+    demandeFinal=prefix+(demande?"\n\n"+demande:"");
+  }
   var btn=document.getElementById("smBtn");
   btn.disabled=true;btn.textContent="Envoi en cours...";
   try{
@@ -1445,7 +1494,7 @@ async function submitSurMesure(){
     var r=await fetch(SB_URL+"/functions/v1/rdv-demande-create",{
       method:"POST",
       headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
-      body:JSON.stringify({session_token:token,salon_id:salonId,demande_text:demande,dispo_text:dispo})
+      body:JSON.stringify({session_token:token,salon_id:salonId,demande_text:demandeFinal,dispo_text:dispo,service_id:serviceId})
     });
     var data=await r.json();
     if(!r.ok){
@@ -1522,8 +1571,22 @@ function selectService(svcId){
 function renderBookingStep2(){
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">2</div><div class="step-title">Choisissez votre '+getCollabLabel().toLowerCase()+'</div></div>';
+
+  // === Prochain cr\u00e9neau disponible (style Planity) ===
+  var prevCollabId=booking.collabId;
+  booking.collabId=null;
+  var nextSlot=findNextAvailableSlot();
+  booking.collabId=prevCollabId;
+  if(nextSlot){
+    h+='<div style="margin-bottom:16px;padding:14px;background:linear-gradient(135deg,rgba(76,175,80,.10),rgba(76,175,80,.03));border:1.5px solid rgba(76,175,80,.30);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">';
+    h+='<div><div style="font-size:11px;color:#4caf50;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">\u26a1 Prochain cr\u00e9neau disponible</div>';
+    h+='<div style="font-size:15px;font-weight:700;color:#fff">'+nextSlot.dateLabel+' \u00e0 '+nextSlot.time+'</div></div>';
+    h+='<button class="btn btn-gold" style="padding:10px 18px;font-size:13px" onclick="bookNextSlot(\''+nextSlot.date+'\',\''+nextSlot.time+'\')">R\u00e9server ce cr\u00e9neau</button>';
+    h+='</div>';
+    h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:16px;font-style:italic">Ou choisissez votre '+getCollabLabel().toLowerCase()+' ci-dessous :</div>';
+  }
+
   h+='<div class="collab-grid">';
-  // No preference option
   h+='<div class="collab-card" onclick="selectCollab(null)"><div class="collab-av">\ud83d\udc87</div><div class="collab-name">Pas de pr\u00e9f\u00e9rence</div></div>';
   for(var i=0;i<COLLABS.length;i++){
     var c=COLLABS[i];
@@ -1536,6 +1599,66 @@ function renderBookingStep2(){
   h+='<div style="margin-top:16px"><button class="btn btn-outline" onclick="renderBookingStep1()">\u25c0 Retour</button></div>';
   h+='</div>';
   document.getElementById("bookingFlow").innerHTML=h;
+}
+
+// R\u00e9serve directement le prochain cr\u00e9neau dispo (pas de pr\u00e9f\u00e9rence collab)
+function bookNextSlot(dateStr, timeStr){
+  booking.collabId=null;
+  booking.collab=null;
+  booking.date=dateStr;
+  booking.time=timeStr;
+  renderBookingStep4();
+}
+
+// Cherche le 1er cr\u00e9neau disponible dans les 30 prochains jours
+function findNextAvailableSlot(){
+  if(!booking.duration && !booking.svc) return null;
+  var dur=booking.duration||30;
+  var minDelay=(SITE_CFG.delaiMin||2)*60;
+  var maxDays=Math.min(SITE_CFG.delaiMax||30,30);
+  var now=new Date();
+  for(var dayOffset=0;dayOffset<=maxDays;dayOffset++){
+    var dt=new Date(now); dt.setDate(dt.getDate()+dayOffset);
+    var dateStr=dt.toISOString().slice(0,10);
+    var dow=dt.getDay();
+    var hrs=HORAIRES[dow];
+    if(booking.collab && booking.collab.hrs) hrs=booking.collab.hrs[dow];
+    var absences=SITE_CFG.absences||[];
+    var skipDay=false;
+    for(var ai=0;ai<absences.length;ai++){
+      var ab=absences[ai];
+      if(ab.type==="fermeture_except" && ab.date===dateStr){
+        if(!ab.stId||!booking.collabId||ab.stId===booking.collabId){skipDay=true;break;}
+      }
+    }
+    if(skipDay) continue;
+    if(!hrs){
+      for(var ai=0;ai<absences.length;ai++){
+        var ab=absences[ai];
+        if(ab.type==="ouverture_except" && ab.date===dateStr && ab.horaire_o && ab.horaire_c){
+          if(!booking.collabId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
+        }
+      }
+    }
+    if(!hrs) continue;
+    if(booking.collabId && isCollabDayOff(dateStr,booking.collabId)) continue;
+    var startM=toMin(hrs.o), endM=toMin(hrs.c);
+    var interval=15;
+    for(var m=startM;m+dur<=endM;m+=interval){
+      var timeStr=fromMin(m);
+      var slotDt=new Date(dateStr+"T"+timeStr);
+      if((slotDt-now)/60000 < minDelay) continue;
+      if(isSlotTaken(dateStr,timeStr,dur,booking.collabId)) continue;
+      var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+      var mois=["janvier","f\u00e9vrier","mars","avril","mai","juin","juillet","ao\u00fbt","septembre","octobre","novembre","d\u00e9cembre"];
+      var label;
+      if(dayOffset===0) label="Aujourd\u0027hui";
+      else if(dayOffset===1) label="Demain";
+      else label=jours[dt.getDay()]+" "+dt.getDate()+" "+mois[dt.getMonth()];
+      return {date:dateStr,time:timeStr,dateLabel:label};
+    }
+  }
+  return null;
 }
 
 function selectCollab(collabId){
