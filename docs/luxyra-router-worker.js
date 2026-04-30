@@ -879,6 +879,8 @@ Sitemap: https://luxyra.fr/sitemap.xml
     "/suppression-donnees": "/suppression-donnees.html",
     "/dpa": "/dpa.html",
     "/reset-password": "/reset-password.html",
+    "/tarifs": "/tarifs.html",
+    "/aide": "/aide.html",
   };
 
   let path = url.pathname;
@@ -897,7 +899,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "proposal", "cgv", "mentions", "mentions-legales",
       "confidentialite", "politique-confidentialite",
       "suppression-donnees", "dpa", "reset-password",
-      "site", "index", "home",
+      "site", "index", "home", "tarifs", "aide",
       "preview-email-confirmation", "clear",
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
