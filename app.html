@@ -7413,15 +7413,22 @@ function clickAppt(id){
   // Date/time + action icons
   htm+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
   htm+='<div style="flex:1;font-weight:700;font-size:15px">'+label+'</div>';
-  if(!a.isOnline&&a.st!=="done"){
+  if(a.st!=="done"){
+    // \u00c9dition autoris\u00e9e pour TOUS les RDV (y compris online), seul l'encaiss\u00e9 est verrouill\u00e9 NF525
     htm+='<button class="btn bs" title="Modifier heure" onclick="editApptTime(\''+a.id+'\')">\u270f\ufe0f</button>';
-    htm+='<button class="btn bs" title="Supprimer" style="color:#ef5350" onclick="delAppt(\''+a.id+'\')">\ud83d\uddd1\ufe0f</button>';
-  }else if(a.isOnline){
-    htm+='<div style="font-size:11px;color:#a29bfe;font-weight:700">\ud83c\udf10 R\u00e9serv\u00e9 en ligne</div>';
-  }else if(a.st==="done"){
+    if(!a.isOnline){
+      htm+='<button class="btn bs" title="Supprimer" style="color:#ef5350" onclick="delAppt(\''+a.id+'\')">\ud83d\uddd1\ufe0f</button>';
+    }
+  }else{
     htm+='<div style="font-size:10px;color:rgba(255,255,255,.3)">\ud83d\udd12 Encaiss\u00e9</div>';
   }
   htm+='</div>';
+  // Bandeau info pour RDV online
+  if(a.isOnline && a.st!=="done"){
+    htm+='<div style="background:rgba(108,92,231,.08);border:1px solid rgba(108,92,231,.2);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#a29bfe;display:flex;align-items:center;gap:8px">';
+    htm+='<span>\ud83c\udf10</span><span><strong>RDV pris en ligne.</strong> Vous pouvez ajuster la dur\u00e9e, le collaborateur et ajouter des prestations \u2014 vos modifications ne notifient pas le client.</span>';
+    htm+='</div>';
+  }
   
   // Phases detail table
   var isDone=a.st==="done";
@@ -7455,10 +7462,22 @@ function clickAppt(id){
     }
     htm+='<span style="font-size:10px;color:rgba(255,255,255,.35)">min</span>';
     htm+='<div style="font-size:9px;color:rgba(255,255,255,.3)">'+phStart+'\u2192'+phEnd+'</div>';
+    // Boutons reorder + supprimer la phase (sauf si encaisse)
+    if(!isDone){
+      htm+='<div style="display:flex;gap:2px;margin-left:4px">';
+      if(i>0) htm+='<button title="Monter" onclick="movePhaseUp(\''+a.id+'\','+i+')" style="padding:3px 6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px">\u2191</button>';
+      if(i<phases.length-1) htm+='<button title="Descendre" onclick="movePhaseDown(\''+a.id+'\','+i+')" style="padding:3px 6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px">\u2193</button>';
+      if(phases.length>1) htm+='<button title="Supprimer cette phase" onclick="removePhase(\''+a.id+'\','+i+')" style="padding:3px 6px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.2);border-radius:4px;color:#ef5350;cursor:pointer;font-size:11px">\u00d7</button>';
+      htm+='</div>';
+    }
     htm+='</div>';
     cur+=ph.d;
   }
   htm+='</div>';
+  // Bouton "+ Ajouter une prestation" (sauf si encaisse)
+  if(!isDone){
+    htm+='<button onclick="showAddPrestaModal(\''+a.id+'\')" style="margin-top:8px;width:100%;padding:10px;background:rgba(200,168,78,.06);border:1px dashed rgba(200,168,78,.3);border-radius:8px;color:var(--gold);font-size:12px;font-weight:700;cursor:pointer">+ Ajouter une prestation</button>';
+  }
   
   // Comment
   htm+='<div style="color:var(--gold);font-weight:700;font-size:13px;margin-top:12px;margin-bottom:4px">Commentaire</div>';
@@ -7504,12 +7523,10 @@ function clickAppt(id){
   // Buttons row 2
   htm+='<div style="display:flex;gap:8px;margin-top:8px">';
   if(a.st==="done"){
-    // Encaissé: no cancel, no modify - NF525 locked
     htm+='<div style="flex:1;text-align:center;font-size:11px;color:rgba(255,255,255,.3);padding:8px">\ud83d\udd12 Ticket encaiss\u00e9 \u2014 Non modifiable</div>';
-  } else if(!a.isOnline){
-    htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="confirmCancelAppt(\''+a.id+'\')">Annuler RDV</button>';
   } else {
-    htm+='<button class="btn" style="flex:1;background:rgba(108,92,231,.08);color:#a29bfe;font-size:12px" disabled>\ud83d\udd12 Modifiable par le client</button>';
+    var cancelLabel = a.isOnline ? "Annuler RDV (notifie le client)" : "Annuler RDV";
+    htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="confirmCancelAppt(\''+a.id+'\')">'+cancelLabel+'</button>';
   }
   htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.08);font-weight:700" onclick="cM();go(\'planning\')">\u25c0 Retour planning</button>';
   htm+='</div>';
@@ -7586,6 +7603,112 @@ async function updApptPhaseCollab(id,idx,stId){
 }
 function updApptComment(id,val){
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){AP[i].comment=val;if(typeof saveAppointment==="function")saveAppointment(AP[i]);break;}}
+}
+
+// ===== Réordonner / supprimer / ajouter une phase à un RDV =====
+function _findAppt(id){var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}return a;}
+async function movePhaseUp(id, idx){
+  var a=_findAppt(id); if(!a||a.st==="done") return;
+  var ph=getApptPhases(a);
+  if(idx<=0||idx>=ph.length) return;
+  var tmp=ph[idx]; ph[idx]=ph[idx-1]; ph[idx-1]=tmp;
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+}
+async function movePhaseDown(id, idx){
+  var a=_findAppt(id); if(!a||a.st==="done") return;
+  var ph=getApptPhases(a);
+  if(idx<0||idx>=ph.length-1) return;
+  var tmp=ph[idx]; ph[idx]=ph[idx+1]; ph[idx+1]=tmp;
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+}
+async function removePhase(id, idx){
+  var a=_findAppt(id); if(!a||a.st==="done") return;
+  var ph=getApptPhases(a);
+  if(ph.length<=1){ alert("Impossible de supprimer la seule phase du RDV. Annulez plutôt le RDV."); return; }
+  if(!confirm("Supprimer cette phase du RDV ?")) return;
+  ph.splice(idx,1);
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+}
+
+// Modal "Ajouter une prestation à un RDV"
+function showAddPrestaModal(apptId){
+  var a=_findAppt(apptId); if(!a) return;
+  var allSvcs=(typeof SVC!=="undefined"?SVC:[]).filter(function(s){return s&&s.n;});
+  // Grouper par catégorie
+  var byCat={};
+  allSvcs.forEach(function(s){
+    var cat=s.cat||"Autre";
+    if(!byCat[cat])byCat[cat]=[];
+    byCat[cat].push(s);
+  });
+  var cats=Object.keys(byCat).sort();
+  var phases=getApptPhases(a);
+  var insertOptions='<option value="end">À la fin (par défaut)</option>';
+  phases.forEach(function(ph,i){
+    insertOptions+='<option value="'+(i+1)+'">Après la phase '+(i+1)+' — '+(ph.l||(ph.t==="w"?"Travail":"Pause"))+'</option>';
+  });
+
+  var h='<div class="mbox" style="max-width:520px;max-height:80vh;overflow:auto">';
+  h+='<h2 style="margin:0 0 8px;font-size:18px;color:var(--gold)">+ Ajouter une prestation</h2>';
+  h+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px">Sélectionnez la prestation à ajouter à ce RDV. Sa durée et ses pauses seront ajoutées automatiquement.</div>';
+  // Sélecteur de position
+  h+='<div style="margin-bottom:12px"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Position dans le RDV</label>';
+  h+='<select id="addPrestaPos" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px">';
+  h+=insertOptions;
+  h+='</select></div>';
+  // Liste services groupés par catégorie
+  cats.forEach(function(cat){
+    h+='<div style="font-weight:700;color:var(--gold);font-size:12px;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">'+cat+'</div>';
+    byCat[cat].forEach(function(s){
+      var totalDur=(s.phases&&s.phases.length)?s.phases.reduce(function(t,p){return t+(p.d||0);},0):(s.d||30);
+      h+='<div onclick="addPrestaToAppt(\''+apptId+'\','+s.id+')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-bottom:4px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:8px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(200,168,78,.08)\'" onmouseout="this.style.background=\'rgba(255,255,255,.03)\'">';
+      h+='<div><div style="font-weight:600;font-size:13px;color:#fff">'+(s.n||"")+'</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+totalDur+' min · '+(Number(s.p)||0).toFixed(2)+' €</div></div>';
+      h+='<div style="font-size:18px;color:var(--gold)">+</div>';
+      h+='</div>';
+    });
+  });
+  if(!cats.length) h+='<div style="text-align:center;padding:20px;color:var(--text3);font-style:italic">Aucune prestation configurée. Ajoutez-en dans Services et Forfaits.</div>';
+  h+='<button class="btn" style="width:100%;margin-top:12px;background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button>';
+  h+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+async function addPrestaToAppt(apptId, svcId){
+  var a=_findAppt(apptId); if(!a||a.st==="done"){cM();return;}
+  var svc=(typeof gS==="function")?gS(svcId):null;
+  if(!svc){ alert("Prestation introuvable"); return; }
+  var ph=getApptPhases(a);
+  // Phases à ajouter : depuis svc.phases si défini, sinon une seule phase travail
+  var newPhases=[];
+  if(svc.phases&&svc.phases.length){
+    newPhases=JSON.parse(JSON.stringify(svc.phases));
+  } else {
+    newPhases=[{t:"w", d:Number(svc.d)||30, l:svc.n||"Prestation", stId:a.stId}];
+  }
+  // S'assurer que les phases work héritent du collab principal si non défini
+  newPhases.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId=a.stId; });
+  // Position d'insertion
+  var posSel=document.getElementById("addPrestaPos");
+  var pos=posSel?posSel.value:"end";
+  if(pos==="end"){
+    a.aPhases=ph.concat(newPhases);
+  } else {
+    var insertAt=parseInt(pos,10);
+    a.aPhases=ph.slice(0,insertAt).concat(newPhases).concat(ph.slice(insertAt));
+  }
+  // Mettre à jour items pour traçabilité encaissement
+  if(!a.items) a.items=[];
+  a.items.push({name:svc.n||"Prestation", price:Number(svc.p)||0, qty:1, isProd:false, addedDuringRdv:true, sId:svc.id});
+  // Mettre à jour prix si présent
+  if(typeof a.pr==="number") a.pr+=Number(svc.p)||0;
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  cM();
+  toast("✓ "+(svc.n||"Prestation")+" ajoutée au RDV","success");
+  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(apptId);},150);});
 }
 function delAppt(id){
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
