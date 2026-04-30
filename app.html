@@ -9376,6 +9376,19 @@ function rSettings(){
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">G\u00e9n\u00e8re l\u0027attestation officielle de conformit\u00e9 NF525 \u00e0 remettre au client du salon. Ce document atteste que Luxyra respecte les 4 conditions l\u00e9gales.</div>';
     h+='<button class="btn btn-outline-green" style="width:100%;padding:12px;font-size:14px" onclick="genererAttestation()">\ud83d\udcc4 G\u00e9n\u00e9rer attestation PDF</button>';
     h+='</div>';
+    // === Export FEC (Fichier des Ecritures Comptables) ===
+    h+='<div class="card" style="margin-top:14px;border-left:4px solid #9c27b0"><div class="ct">\ud83d\udcd1 Export FEC (controle fiscal)</div>';
+    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Le <strong>Fichier des Ecritures Comptables</strong> est le format legal officiel a fournir a l\'administration fiscale en cas de controle (arrete du 29/07/2013). Genere toutes les ecritures de vente sur la periode selectionnee.</div>';
+    var thisYearStart=(new Date().getFullYear())+"-01-01";
+    h+='<div style="display:flex;gap:8px;margin-bottom:8px">';
+    h+='<div style="flex:1"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Date de debut</label>';
+    h+='<input type="date" id="fecDateFrom" value="'+thisYearStart+'" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
+    h+='<div style="flex:1"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">Date de fin</label>';
+    h+='<input type="date" id="fecDateTo" value="'+TD+'" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
+    h+='</div>';
+    h+='<button class="btn" style="width:100%;padding:12px;background:rgba(156,39,176,.1);color:#ce93d8;border:1px solid rgba(156,39,176,.3);font-weight:700;font-size:14px" onclick="exportFEC()">\ud83d\udcd1 Telecharger le fichier FEC</button>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center">Format texte normalise &middot; Conservation 6 ans (CGI art. L102B)</div>';
+    h+='</div>';
   }
   else if(settTab==="factures"){
     h+='<div class="sec">\ud83e\uddfe Mes factures Luxyra</div>';
@@ -19736,6 +19749,92 @@ function archivageAnnuel(){
   hm+='<button class="btn bg bk" style="width:100%;padding:12px" onclick="cM()">OK</button>';
   hm+='</div></div>';
   document.getElementById("modal").innerHTML=hm;
+}
+
+// ===== Export FEC (Fichier des Écritures Comptables) =====
+// Format légal défini par l'arrêté du 29/07/2013 + 24/03/2017
+// 18 colonnes obligatoires séparées par tabulation, encoding UTF-8
+// Nom : <SIREN>FEC<AAAAMMJJ>.txt
+async function exportFEC(){
+  var dateFrom=document.getElementById("fecDateFrom").value;
+  var dateTo=document.getElementById("fecDateTo").value;
+  if(!dateFrom||!dateTo){alert("Période obligatoire");return;}
+  if(dateFrom>dateTo){alert("Date de début > date de fin");return;}
+
+  var siret=(SALON_CONFIG.siret||"").replace(/\s/g,"");
+  var siren=siret.slice(0,9);
+  if(!siren||siren.length!==9){
+    alert("SIRET non renseigné. Renseignez-le dans Paramètres > Mon salon avant d'exporter le FEC.");
+    return;
+  }
+  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+
+  if(typeof toast==="function") toast("Préparation de l'export FEC…","info");
+  var ticketsAll=[];
+  try{
+    if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
+      var r=await _sb.from("tickets")
+        .select("num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status")
+        .eq("salon_id",_salonId)
+        .gte("date_ticket",dateFrom)
+        .lte("date_ticket",dateTo)
+        .order("date_ticket")
+        .order("num");
+      if(r.data) ticketsAll=r.data;
+    }
+  }catch(e){console.error("FEC fetch:",e); alert("Erreur de chargement des tickets : "+e.message); return;}
+
+  var tickets=ticketsAll.filter(function(t){return t.status==="done"||t.status==="cancelled";});
+  if(!tickets.length){alert("Aucun ticket encaissé sur la période sélectionnée.");return;}
+
+  // Plan comptable simplifié
+  var ACC_VENTE_SVC="707000", ACC_TVA="445710", ACC_CAISSE="530000", ACC_BANQUE="512000", ACC_CARTE_CADEAU="467000";
+  function payAccount(mode){
+    var m=String(mode||"").toLowerCase();
+    if(m.indexOf("esp")>=0||m.indexOf("cash")>=0) return ACC_CAISSE;
+    if(m.indexOf("cadeau")>=0||m.indexOf("avoir")>=0) return ACC_CARTE_CADEAU;
+    return ACC_BANQUE;
+  }
+  function fmtDate(d){if(!d) return ""; return String(d).slice(0,10).replace(/-/g,"");}
+  function fmtAmount(n){var v=Math.round((Number(n)||0)*100)/100; return v.toFixed(2).replace(".",",");}
+  function escFEC(s){return String(s||"").replace(/\t/g," ").replace(/[\r\n]/g," ");}
+
+  var headers=["JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib","CompAuxNum","CompAuxLib","PieceRef","PieceDate","EcritureLib","Debit","Credit","EcritureLet","DateLet","ValidDate","Montantdevise","Idevise"];
+  var lines=[headers.join("\t")];
+
+  var ecrNum=0;
+  tickets.forEach(function(t){
+    ecrNum++;
+    var dateE=fmtDate(t.date_ticket);
+    var pieceRef="TK"+String(t.num||0).padStart(6,"0");
+    var libBase=((t.client_prenom||"")+" "+(t.client_nom||"")).trim()||"Vente comptoir";
+    var totalTTC=Number(t.total_ttc)||0;
+    var totalHT=Number(t.total_ht)||(totalTTC/(1+tva/100));
+    var totalTVA=Number(t.total_tva)||(totalTTC-totalHT);
+    var modeAcc=payAccount(t.mode_paiement);
+    var modeLab=String(t.mode_paiement||"Caisse").toUpperCase();
+
+    if(t.status==="cancelled"){
+      lines.push(["VTE","Ventes salon",String(ecrNum),dateE,modeAcc,"Caisse / Banque","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTTC),"","",dateE,"",""].join("\t"));
+      lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_SVC,"Ventes services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(totalHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
+      if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée","","",pieceRef,dateE,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""].join("\t"));
+      return;
+    }
+
+    lines.push(["VTE","Ventes salon",String(ecrNum),dateE,modeAcc,modeLab,"","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(totalTTC),fmtAmount(0),"","",dateE,"",""].join("\t"));
+    lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_SVC,"Ventes prestations","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(totalHT),"","",dateE,"",""].join("\t"));
+    if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée "+tva+"%","","",pieceRef,dateE,"TVA "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTVA),"","",dateE,"",""].join("\t"));
+  });
+
+  var content=lines.join("\r\n");
+  var fileName=siren+"FEC"+fmtDate(dateTo)+".txt";
+  var blob=new Blob([new Uint8Array([0xEF,0xBB,0xBF]), content], {type:"text/plain;charset=utf-8"});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click();
+  setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);}, 100);
+
+  if(typeof auditLog==="function") auditLog("EXPORT_FEC", "Période "+dateFrom+" → "+dateTo+" · "+tickets.length+" tickets · "+(lines.length-1)+" écritures");
+  if(typeof toast==="function") toast("✓ FEC téléchargé : "+fileName+" ("+tickets.length+" tickets, "+(lines.length-1)+" écritures)","success");
 }
 
 function genererAttestation(){
