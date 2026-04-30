@@ -18502,18 +18502,19 @@ async function sendSms(phone,message,context,clientNom){
     var resp=await fetch("/api/sms/custom",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({telephone:cleanPhone,message:message,salonName:window.SMS_CONFIG&&window.SMS_CONFIG.smsSender?window.SMS_CONFIG.smsSender:SALON_CONFIG.nom})
+      body:JSON.stringify({telephone:cleanPhone,message:message,salonName:window.SMS_CONFIG&&window.SMS_CONFIG.smsSender?window.SMS_CONFIG.smsSender:SALON_CONFIG.nom,salon_id:_salonId})
     });
     var data=await resp.json();
     if(data.success){
-      // Decrement local credits
-      window.SMS_CREDITS=Math.max(0,(window.SMS_CREDITS||0)-1);
+      // Crédits déjà décrémentés côté worker (defense in depth) — on resync local
+      if(typeof data.remainingCredits==="number"){
+        window.SMS_CREDITS=data.remainingCredits;
+      }else{
+        window.SMS_CREDITS=Math.max(0,(window.SMS_CREDITS||0)-1);
+      }
       window.SMS_USED=(window.SMS_USED||0)+1;
-      // Update Supabase — only sms_credits (confirmed column)
+      // Log uniquement (le worker a déjà patch sms_credits/sms_used en DB)
       if(typeof _sb!=="undefined"&&_salonId){
-        try{
-          await _sb.from("salons").update({sms_credits:window.SMS_CREDITS}).eq("id",_salonId);
-        }catch(e){console.error("[SMS] DB credit update failed:",e);}
         try{
           _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:message.slice(0,50)});
         }catch(e){}

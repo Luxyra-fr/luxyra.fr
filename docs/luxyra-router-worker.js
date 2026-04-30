@@ -701,24 +701,50 @@ async function handleEmailCustom(request, env) {
 }
 
 // FIX W6: .trim() on SMS sender to avoid trailing space ("Excellence " → "Excellence")
+// === Helper: gate SMS (vérifie plan Pro + crédits > 0 + décrémente atomiquement) ===
+// Retourne { ok: true } si autorisé et crédits décrémentés, sinon { ok: false, status, error }
+async function gateSmsAndDecrementCredit(env, salonId) {
+  if (!salonId) return { ok: false, status: 400, error: "salon_id requis" };
+  const salon = await supabaseGet(env, salonId);
+  if (!salon) return { ok: false, status: 404, error: "Salon introuvable" };
+  // Plan Pro requis
+  if (salon.plan !== "pro") return { ok: false, status: 403, error: "Plan Pro requis pour envoyer des SMS" };
+  // Compte actif (pas suspended/cancelled)
+  if (salon.status === "suspended" || salon.status === "cancelled") {
+    return { ok: false, status: 403, error: "Compte suspendu — régularisez votre abonnement" };
+  }
+  // Crédits suffisants
+  const credits = Number(salon.sms_credits || 0);
+  if (credits <= 0) return { ok: false, status: 402, error: "Plus de crédits SMS — rechargez via Paramètres > SMS" };
+  // Décrément atomique (PostgREST PATCH avec valeur calculée)
+  await supabaseUpdate(env, salonId, { sms_credits: credits - 1, sms_used: (salon.sms_used || 0) + 1 });
+  return { ok: true, remainingCredits: credits - 1 };
+}
+
 async function handleSmsRappel(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
-  const { telephone, clientPrenom, salonName, date, heure, prestation } = await request.json();
+  const { telephone, clientPrenom, salonName, date, heure, prestation, salon_id } = await request.json();
   if (!telephone) return jsonResponse({ error: "telephone requis" }, 400);
+  // === Gate Pro + crédits + décrément ===
+  const gate = await gateSmsAndDecrementCredit(env, salon_id);
+  if (!gate.ok) return jsonResponse({ error: gate.error }, gate.status);
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
   const result = await brevoSendSms(env, { to: phone, content: `${salonName||"Votre salon"} : Rappel RDV le ${date} à ${heure}${prestation?" ("+prestation+")":""}. Pour modifier/annuler, contactez-nous. A bientôt !`, sender: (salonName||"Luxyra").slice(0,11).trim() });
-  return jsonResponse({ success: true, result });
+  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits });
 }
 
 async function handleSmsCustom(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
-  const { telephone, message, salonName } = await request.json();
+  const { telephone, message, salonName, salon_id } = await request.json();
   if (!telephone || !message) return jsonResponse({ error: "telephone et message requis" }, 400);
+  // === Gate Pro + crédits + décrément ===
+  const gate = await gateSmsAndDecrementCredit(env, salon_id);
+  if (!gate.ok) return jsonResponse({ error: gate.error }, gate.status);
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
   const result = await brevoSendSms(env, { to: phone, content: message, sender: (salonName||"Luxyra").slice(0,11).trim() });
-  return jsonResponse({ success: true, result });
+  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits });
 }
 
 async function handleClientTickets(request, env) {
