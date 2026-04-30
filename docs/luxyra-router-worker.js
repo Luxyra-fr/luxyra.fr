@@ -237,7 +237,8 @@ async function handleWebhook(request, env) {
       console.log("invoice.paid: final salonId=", salonId, "plan=", plan);
 
       if (salonId) {
-        await updateSalonStatus(env, salonId, "active");
+        // Active + reset past_due_since (au cas où retry Stripe a réussi)
+        await supabaseUpdate(env, salonId, { status: "active", past_due_since: null });
         try {
           const planPrix = plan === "pro" ? 24.99 : 14.99;
           const sbUrl = CONFIG.SUPABASE_URL;
@@ -295,14 +296,23 @@ async function handleWebhook(request, env) {
         const sub = await stripeAPI(env, `subscriptions/${subId}`, null, "GET");
         pfSalonId = sub.metadata?.salon_id;
       }
-      if (pfSalonId) await updateSalonStatus(env, pfSalonId, "past_due");
+      if (pfSalonId) {
+        // Marquer past_due + horodater (sert au cron de relance + suspension auto)
+        await supabaseUpdate(env, pfSalonId, {
+          status: "past_due",
+          past_due_since: new Date().toISOString()
+        });
+        // Email immédiat "paiement échoué"
+        try { await callBillingEmail(env, pfSalonId, "payment_failed"); }
+        catch (e) { console.warn("billing-email payment_failed failed:", e?.message || e); }
+      }
       break;
     }
 
     case "customer.subscription.deleted": {
       const salonId = data.metadata?.salon_id;
       if (salonId) {
-        await supabaseUpdate(env, salonId, { plan: "essential", status: "cancelled" });
+        await supabaseUpdate(env, salonId, { plan: "essential", status: "cancelled", past_due_since: null });
         await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
       }
       break;
@@ -584,6 +594,19 @@ async function patchSiteConfig(env, salonId, fields) {
     headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
     body: JSON.stringify(fields),
   });
+}
+
+// Helper: trigger billing email via edge function
+async function callBillingEmail(env, salonId, kind, force = false) {
+  const fnUrl = `${CONFIG.SUPABASE_URL}/functions/v1/salon-billing-email`;
+  const cronSecret = env.AVIS_CRON_SECRET || "";
+  if (!cronSecret) { console.warn("AVIS_CRON_SECRET not set in worker"); return; }
+  const r = await fetch(fnUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-cron-secret": cronSecret },
+    body: JSON.stringify({ salon_id: salonId, kind, force }),
+  });
+  if (!r.ok) console.warn("callBillingEmail", kind, "failed:", await r.text());
 }
 
 function jsonResponse(data, status = 200) {
