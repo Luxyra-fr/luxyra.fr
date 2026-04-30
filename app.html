@@ -7471,12 +7471,12 @@ function clickAppt(id){
       htm+='</div>';
     }
     htm+='</div>';
-    // Affichage des addons (prestations faites PENDANT cette phase, sans rallonger)
+    // Affichage des addons (prestations faites PENDANT cette phase)
     if(ph.addons && ph.addons.length){
       ph.addons.forEach(function(ad,adIdx){
         htm+='<div style="display:flex;align-items:center;gap:6px;padding:4px 6px 4px 18px;font-size:11px;color:#a29bfe;background:rgba(108,92,231,.05);border-left:2px solid rgba(108,92,231,.4);margin-left:10px;border-bottom:1px solid rgba(255,255,255,.04)">';
         htm+='<span style="font-size:10px">\u21B3</span>';
-        htm+='<div style="flex:1;font-style:italic">'+ad.name+' <span style="color:var(--text3);font-size:10px">(pendant cette phase)</span></div>';
+        htm+='<div style="flex:1;font-style:italic">'+ad.name+' <span style="color:var(--text3);font-size:10px">(en parall\u00e8le'+(ad.addedDur>0?' \u00b7 +'+ad.addedDur+' min':'')+')</span></div>';
         if(!isDone){
           htm+='<button title="Retirer" onclick="removeAddon(\''+a.id+'\','+i+','+adIdx+')" style="padding:2px 6px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.2);border-radius:4px;color:#ef5350;cursor:pointer;font-size:10px">\u00d7</button>';
         }
@@ -7641,6 +7641,10 @@ async function removeAddon(id, phIdx, addonIdx){
   if(!ph[phIdx]||!ph[phIdx].addons||!ph[phIdx].addons[addonIdx]) return;
   var ad=ph[phIdx].addons[addonIdx];
   if(!confirm("Retirer « "+ad.name+" » de cette phase ?")) return;
+  // Retirer la durée additionnelle de la phase parente
+  if(ad.addedDur>0){
+    ph[phIdx].d=Math.max(5,(Number(ph[phIdx].d)||0)-Number(ad.addedDur));
+  }
   // Retirer aussi de items (si présent)
   if(a.items){
     for(var i=a.items.length-1;i>=0;i--){
@@ -7703,7 +7707,7 @@ function showAddPrestaModal(apptId){
     h+='</optgroup>';
   }
   h+='</select>';
-  h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">💡 « Pendant » : la prestation est facturée mais ne change pas la durée du RDV (utile pour soin pendant shampoing, masque pendant manucure, etc.)</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">💡 « Pendant » : la prestation se fait en parallèle d\'une autre (ex : soin pendant shampoing). Elle rallonge un peu cette phase parente — vous pouvez ajuster les minutes ajoutées.</div>';
   h+='</div>';
   // Liste services groupés par catégorie
   cats.forEach(function(cat){
@@ -7730,14 +7734,30 @@ async function addPrestaToAppt(apptId, svcId){
   var ph=getApptPhases(a);
   var posSel=document.getElementById("addPrestaPos");
   var pos=posSel?posSel.value:"end";
-  // Cas "during" : ne touche pas aPhases, ajoute juste au ticket et marque l'item
+  // Cas "during" : la presta se fait pendant la phase parente
+  // → on ajoute la DURÉE du soin à la phase parente (rallonge le RDV)
+  // → on marque l'addon visuellement sous la phase parente
   var isDuring=String(pos).indexOf("during-")===0;
   var duringIdx=isDuring?parseInt(String(pos).split("-")[1],10):-1;
   if(isDuring){
-    // Marque la phase parente avec un addon visuel (tag pour rendu)
     if(ph[duringIdx]){
+      // Calcul de la durée du soin (somme des phases work si forfait, sinon svc.d)
+      var addedDur=0;
+      if(svc.phases&&svc.phases.length){
+        svc.phases.forEach(function(p){ if(p.t==="w") addedDur+=Number(p.d)||0; });
+      } else {
+        addedDur=Number(svc.d)||0;
+      }
+      // Demander confirmation/ajustement de la durée additionnelle
+      var prompt1="Durée additionnelle pour cette phase (minutes) ?\n\nLa prestation « "+(svc.n||"Soin")+" » dure normalement "+addedDur+" min.\nLaissez "+addedDur+" pour rallonger d'autant, ou modifiez selon votre pratique.";
+      var userDur=window.prompt(prompt1, String(addedDur));
+      if(userDur===null){return;} // annulé
+      var realAdd=parseInt(userDur,10);
+      if(isNaN(realAdd)||realAdd<0) realAdd=addedDur;
+      // Étend la durée de la phase parente
+      ph[duringIdx].d=(Number(ph[duringIdx].d)||0)+realAdd;
       if(!ph[duringIdx].addons) ph[duringIdx].addons=[];
-      ph[duringIdx].addons.push({name:svc.n||"Prestation", sId:svc.id});
+      ph[duringIdx].addons.push({name:svc.n||"Prestation", sId:svc.id, addedDur:realAdd});
       a.aPhases=ph;
     }
   } else {
