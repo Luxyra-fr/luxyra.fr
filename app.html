@@ -2615,15 +2615,19 @@ function rDevis(){
       }
       h+='</div>';
     }
-    h+='<div style="display:flex;gap:8px;align-items:center">';
-    // Imprimer (icon + label, clic droit / long press change format)
-    h+='<button onclick="printDevis('+i+')" oncontextmenu="event.preventDefault();chooseDevisPrintFmt('+i+');return false;" ontouchstart="window._lpTm=setTimeout(function(){chooseDevisPrintFmt('+i+');},600)" ontouchend="clearTimeout(window._lpTm)" ontouchmove="clearTimeout(window._lpTm)" style="flex:1;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px" title="Imprimer (clic droit / appui long pour changer le format)">';
+    h+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+    h+='<button onclick="printDevis('+i+')" oncontextmenu="event.preventDefault();chooseDevisPrintFmt('+i+');return false;" ontouchstart="window._lpTm=setTimeout(function(){chooseDevisPrintFmt('+i+');},600)" ontouchend="clearTimeout(window._lpTm)" ontouchmove="clearTimeout(window._lpTm)" style="flex:1;min-width:120px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px" title="Imprimer (clic droit / appui long pour changer le format)">';
     h+='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>';
     h+='Imprimer';
     h+='</button>';
-    // Encaisser (action principale, sauf si déjà converti/refusé/expiré)
     if(canEncaisse){
-      h+='<button onclick="convertDevis('+i+')" style="flex:1;padding:10px;border:none;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">';
+      // Planifier en RDV (créneau planning) — action principale gold
+      h+='<button onclick="convertDevisToRdv('+i+')" style="flex:1;min-width:120px;padding:10px;border:none;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px" title="Planifier ce devis comme RDV">';
+      h+='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+      h+='Planifier RDV';
+      h+='</button>';
+      // Encaisser (alternative, secondaire)
+      h+='<button onclick="convertDevis('+i+')" style="flex:1;min-width:120px;padding:10px;border:1px solid rgba(76,175,80,.3);border-radius:10px;background:rgba(76,175,80,.1);color:#4caf50;font-weight:700;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px" title="Encaisser directement">';
       h+='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>';
       h+='Encaisser';
       h+='</button>';
@@ -2873,6 +2877,120 @@ function convertDevis(idx){
   _tk._fromDevisDbId = dv.dbId;
   _tk._autoSaved = true;
   showCaisse();
+}
+
+// === Convertir un devis en RDV planifié (planning) ===
+// Ouvre un mini-modal pour choisir collab + date + heure, puis crée
+// un appointment dans AP avec les phases du devis.
+function convertDevisToRdv(idx){
+  var dv=window.DEVIS[idx]; if(!dv) return;
+  var todayStr = (typeof TD!=="undefined") ? TD : new Date().toISOString().slice(0,10);
+  var defaultStId = (T && T[0]) ? T[0].id : null;
+  // Calcul durée totale du devis (somme des durées des items)
+  var totalDur = 0;
+  if(dv.items){
+    dv.items.forEach(function(it){
+      var sv = (typeof gS==="function" && it.sId) ? gS(it.sId) : null;
+      if(sv){
+        if(sv.phases && sv.phases.length){
+          sv.phases.forEach(function(p){ totalDur += (p.d||0); });
+        } else {
+          totalDur += (Number(sv.d)||30) * (Number(it.qty)||1);
+        }
+      } else {
+        totalDur += 30 * (Number(it.qty)||1);
+      }
+    });
+  }
+  if(totalDur<=0) totalDur = 60;
+  // Construire le modal
+  var h='<div class="mbox" style="max-width:440px">';
+  h+='<h2 style="margin:0 0 6px;font-size:18px;color:var(--gold)">📅 Planifier le devis en RDV</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">'+(dv.clientName||"Client")+' · '+dv.total.toFixed(2)+' € · ~'+totalDur+' min</div>';
+  // Collab
+  h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Avec qui ?</label>';
+  h+='<select id="cdrCollab" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px">';
+  for(var ti=0;ti<T.length;ti++){
+    if(!T[ti].actif) continue;
+    h+='<option value="'+T[ti].id+'"'+(T[ti].id===defaultStId?' selected':'')+' style="color:#000;background:#fff">'+T[ti].n+'</option>';
+  }
+  h+='</select></div>';
+  // Date + heure
+  h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
+  h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Date</label>';
+  h+='<input id="cdrDate" type="date" value="'+todayStr+'" min="'+todayStr+'" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
+  h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Heure</label>';
+  h+='<input id="cdrTime" type="time" value="10:00" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
+  h+='</div>';
+  // Info récap
+  h+='<div style="background:rgba(212,168,67,.05);border:1px solid rgba(212,168,67,.15);border-radius:8px;padding:10px;margin-bottom:14px;font-size:11px;color:var(--text3);line-height:1.5">';
+  h+='Le RDV sera créé sur le planning avec les '+(dv.items?dv.items.length:0)+' prestation(s) du devis. Le devis sera marqué <strong>« converti »</strong>. Vous pourrez modifier le RDV ensuite.';
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button onclick="cM()" style="flex:1;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:transparent;color:var(--text2);font-size:13px;cursor:pointer">Annuler</button>';
+  h+='<button onclick="doConvertDevisToRdv('+idx+')" style="flex:2;padding:12px;border-radius:8px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:13px;cursor:pointer">📅 Créer le RDV</button>';
+  h+='</div>';
+  h+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+async function doConvertDevisToRdv(idx){
+  var dv=window.DEVIS[idx]; if(!dv) return;
+  var stId = parseInt(document.getElementById("cdrCollab").value, 10);
+  var date = document.getElementById("cdrDate").value;
+  var time = document.getElementById("cdrTime").value;
+  if(!stId||!date||!time){ alert("Collab, date et heure obligatoires"); return; }
+  // Construire les phases depuis les items du devis
+  var aPhases = [];
+  if(dv.items){
+    dv.items.forEach(function(it){
+      var sv = (typeof gS==="function" && it.sId) ? gS(it.sId) : null;
+      if(sv && sv.phases && sv.phases.length){
+        var copy = JSON.parse(JSON.stringify(sv.phases));
+        copy.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId = stId; });
+        aPhases = aPhases.concat(copy);
+      } else {
+        var dur = sv ? (Number(sv.d)||30) : 30;
+        var qty = Number(it.qty)||1;
+        for(var qi=0; qi<qty; qi++){
+          aPhases.push({t:"w", d:dur, l:(it.name||"Prestation"), stId:stId});
+        }
+      }
+    });
+  }
+  if(!aPhases.length) aPhases = [{t:"w", d:60, l:(dv.clientName||"Devis"), stId:stId}];
+  // Service principal (premier item du devis)
+  var primarySid = (dv.items && dv.items[0]) ? dv.items[0].sId : null;
+  // Créer l'appointment
+  var newAppt = {
+    id: (typeof U==="function") ? U() : ("appt-"+Date.now()),
+    cId: dv.cId || null,
+    sId: primarySid,
+    stId: stId,
+    date: date,
+    time: time,
+    pr: Number(dv.total)||0,
+    st: "conf",
+    items: dv.items.map(function(it){return {name:it.name, price:it.price, qty:it.qty, isProd:false, sId:it.sId, fromDevis:true};}),
+    comment: "Issu du devis "+(dv.num?"N°"+String(dv.num).padStart(4,"0"):dv.id.slice(0,8)),
+    aPhases: aPhases,
+    fromDevisId: dv.id,
+    fromDevisDbId: dv.dbId
+  };
+  // Pour client de passage, ajouter clientName pour l'affichage
+  if(!newAppt.cId && dv.clientName){
+    newAppt.clientName = dv.clientName;
+  }
+  AP.push(newAppt);
+  if(typeof saveAppointment==="function") await saveAppointment(newAppt);
+  // Marquer le devis comme converti
+  dv.status = "converti";
+  if(dv.dbId && typeof updateDevisStatus==="function") updateDevisStatus(dv.dbId, "converti");
+  cM();
+  if(typeof toast==="function") toast("✓ RDV créé le "+date+" à "+time, "success");
+  // Naviguer sur le planning du jour du RDV
+  try{ window.calD = new Date(date+"T12:00:00"); window._planDays = 1; }catch(_){}
+  if(typeof go==="function") go("planning");
 }
 
 // Appelé après chaque encaissement validé : nettoie pending/devis source
