@@ -4234,24 +4234,26 @@ async function openRdvFromNotif(rdvId, notifId){
   // Marquer la notif comme lue
   if(notifId){ try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",notifId); }catch(_){} }
   window._notifBadgeCache.t = 0; updateNotifBadge();
-  // Fermer le modal notifs
   cM();
-  // Ouvrir l'agenda sur le bon jour — approche simple : go à l'agenda
-  // (le salon peut ensuite retrouver le RDV visuellement)
-  if(typeof go === "function") go("ag");
-  // Si on a accès au RDV pour scroller dessus :
+  // Charger le RDV pour positionner l'agenda sur la bonne date
+  var rdv = null;
   try{
-    var rdv = null;
     if(typeof _sb !== "undefined" && _sb){
       var res = await _sb.from("rdv_online").select("date_rdv,heure_rdv,client_nom,client_prenom,status").eq("id", rdvId).single();
       rdv = res.data;
     }
-    if(rdv){
-      setTimeout(function(){
-        toast("RDV du " + rdv.date_rdv + " " + (rdv.heure_rdv||"").slice(0,5) + " — " + (rdv.client_prenom||"") + " " + (rdv.client_nom||""), "info");
-      }, 300);
-    }
   }catch(_){}
+  // Positionner l'agenda sur la date du RDV avant d'ouvrir
+  if(rdv && rdv.date_rdv){
+    try{ window.TD = rdv.date_rdv; }catch(_){}
+  }
+  // Aller sur le planning (page = "planning")
+  if(typeof go === "function") go("planning");
+  if(rdv){
+    setTimeout(function(){
+      toast("RDV du " + rdv.date_rdv + " " + (rdv.heure_rdv||"").slice(0,5) + " — " + (rdv.client_prenom||"") + " " + (rdv.client_nom||""), "info");
+    }, 300);
+  }
 }
 async function confirmNotif(id){
   try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);}catch(e){}
