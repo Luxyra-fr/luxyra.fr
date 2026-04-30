@@ -3909,7 +3909,7 @@ function buildTicketText(appt){
   t+=""+SALON_CONFIG.nomComplet()+"\n";
   t+=""+SALON_CONFIG.adresseComplete()+"\n\n";
   t+="Date: "+fmt(appt.date)+" a "+appt.time+"\n";
-  t+="Client: "+(cl?cName(cl):passageName(a.cId,a.sId))+"\n";
+  t+="Client: "+apptClientLabel(a)+"\n";
   t+="Collaborateur: "+(sty?sty.n:"")+"\n\n";
   t+="Prestation: "+(sv?sv.n:"")+" ... "+appt.pr.toFixed(2)+" EUR\n";
   t+="TOTAL: "+appt.pr.toFixed(2)+" EUR\n";
@@ -4555,7 +4555,7 @@ function printClotureZ(){
   done.forEach(function(a){
     var cl=gC(a.cId);var hr=(a.ts||"").slice(11,16)||"--:--";
     var remInfo=a.remise>0?" <span style=\"color:#c00;font-size:9px\">(-"+a.remise.toFixed(0)+")</span>":"";
-    h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+(cl?cName(cl):passageName(a.cId,a.sId))+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
+    h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+apptClientLabel(a)+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
   });
   h+="</table>";
   
@@ -5347,6 +5347,21 @@ function passageName(cId,sId){
     return"\ud83d\udc69 Client de passage femme";
   }
   var cl=gC(cId);return cl?cName(cl):"Client de passage";
+}
+
+// Label client universel pour un RDV : client connu > nom RDV online > passage g\u00e9n\u00e9rique
+function apptClientLabel(a){
+  if(!a) return "";
+  if(a.cId){
+    var cl=gC(a.cId);
+    if(cl) return cName(cl);
+  }
+  // RDV en ligne : utilise le nom transmis (clientName ou nom+prenom)
+  if(a.isOnline){
+    if(a.clientName) return a.clientName;
+    if(a.nom||a.prenom) return ((a.nom||"")+" "+(a.prenom||"")).trim();
+  }
+  return passageName(a.cId, a.sId);
 }
 function fmt(d){return new Date(d).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});}
 function dB(a,b){return Math.floor((new Date(b)-new Date(a))/864e5);}
@@ -6403,7 +6418,7 @@ function checkConflict(stId, date, time, svcId, excludeId){
       for(var xi=0;xi<exBlocks.length;xi++){
         if(newBlocks[ni].start<exBlocks[xi].end && newBlocks[ni].end>exBlocks[xi].start){
           var cl=gC(existing[ei].cId);
-          var clN=cl?cName(cl):passageName(existing[ei].cId,existing[ei].sId);
+          var clN=apptClientLabel(existing[ei]);
           var exSv=gS(existing[ei].sId);
           conflicts.push({appt:existing[ei],clientName:clN,svcName:exSv?exSv.n:"Prestation",time:existing[ei].time,overlapStart:Math.max(newBlocks[ni].start,exBlocks[xi].start),overlapEnd:Math.min(newBlocks[ni].end,exBlocks[xi].end)});
           break;
@@ -6629,7 +6644,7 @@ function rPlanning(){
                   var colW=myBlock?100/myBlock.maxCol:100;
                   var leftPct=myBlock?myBlock.col*colW:0;
                   h+='<div class="pg-block" data-aid="'+a.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':colors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':colors.border)+';color:'+(a.isOnline?'#2d1b69':colors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
-                  h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
+                  h+='<div class="pb-name">'+apptClientLabel(a)+'</div>';
                   h+='<div class="pb-svc">'+(sv?sv.n:"")+'</div>';
                   h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
                   h+='</div>';
@@ -6750,9 +6765,9 @@ function rPlanningDay(dateObj,showDayHeader){
           var colW=myBlock?100/myBlock.maxCol:100;
           var leftPct=myBlock?myBlock.col*colW:0;
           var _htip=Math.round((a.pr||0)*100/(100+(SALON_CONFIG.tauxTVA||20))*100)/100;
-          var _ttip=(cl?cName(cl):passageName(a.cId,a.sId))+"\n"+(sv?sv.n:"")+"\n"+sty.n+"\n\u23f1 "+totalDur+"min ("+a.time+" \u2192 "+endTime+")\n"+(a.pr||0).toFixed(2)+"\u20ac TTC / "+_htip.toFixed(2)+"\u20ac HT\n"+(a.st==="done"?"\u2705 Encaiss\u00e9 ("+a.met+")":(a.isOnline?"\u2714 Confirm\u00e9 en ligne":"\ud83d\udcc5 Pr\u00e9vu"));
+          var _ttip=apptClientLabel(a)+"\n"+(sv?sv.n:"")+"\n"+sty.n+"\n\u23f1 "+totalDur+"min ("+a.time+" \u2192 "+endTime+")\n"+(a.pr||0).toFixed(2)+"\u20ac TTC / "+_htip.toFixed(2)+"\u20ac HT\n"+(a.st==="done"?"\u2705 Encaiss\u00e9 ("+a.met+")":(a.isOnline?"\u2714 Confirm\u00e9 en ligne":"\ud83d\udcc5 Pr\u00e9vu"));
           h+='<div class="pg-block" data-aid="'+a.id+'" data-stid="'+sty.id+'"'+(a.isOnline?' data-nodrag="1"':'')+' style="top:'+topPx+'px;height:'+Math.max(hPx-2,SLOT_H-2)+'px;left:'+leftPct+'%;width:'+(colW-1)+'%;background:'+(a.isOnline?'rgba(108,92,231,.35)':colors.bg)+';border-color:'+(a.isOnline?'#7c6dd8':colors.border)+';color:'+(a.isOnline?'#2d1b69':colors.text)+'" onclick="showRdvPopup(\''+a.id+'\',event)" ondblclick="hideRdvPopup();clickAppt(\''+a.id+'\')">';
-          h+='<div class="pb-name">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
+          h+='<div class="pb-name">'+apptClientLabel(a)+'</div>';
           h+='<div class="pb-svc">'+(sv?sv.n:"")+'</div>';
           h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+endTime+'</div>';
           if(hPx>=50){
@@ -6904,7 +6919,7 @@ function printPlanning(){
         var htP=Math.round((a.pr||0)*100/(100+txTVA)*100)/100;
         h+='<div class="rdv-row">';
         h+='<div class="rdv-time">'+a.time+' \u2192 '+endT+'</div>';
-        h+='<div class="rdv-client">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
+        h+='<div class="rdv-client">'+apptClientLabel(a)+'</div>';
         h+='<div class="rdv-svc">'+(sv?sv.n:"")+'</div>';
         h+='<div class="rdv-dur">'+td+'min</div>';
         h+='<div class="rdv-price">'+(a.pr||0).toFixed(0)+'\u20ac</div>';
@@ -7256,7 +7271,7 @@ function dragEnd(e){
         // Show confirmation modal
         var htm='<div class="mbg" onclick="cM();go(\'planning\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
         htm+='<h2 style="color:var(--gold)">D\u00e9placer ce RDV ?</h2>';
-        htm+='<div style="font-size:14px;margin-bottom:6px;font-weight:700">'+(cl?cName(cl):passageName(dragAppt.cId,dragAppt.sId))+'</div>';
+        htm+='<div style="font-size:14px;margin-bottom:6px;font-weight:700">'+apptClientLabel(dragAppt)+'</div>';
         htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:'RDV')+'</div>';
         htm+='<div style="display:flex;gap:10px;justify-content:center;margin-bottom:14px">';
         htm+='<div style="flex:1;padding:10px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15)">';
@@ -7306,7 +7321,7 @@ function showRdvPopup(id,evt){
   var td=0;phases.forEach(function(p){td+=p.d;});
   var endTime=frM(toM(a.time)+td);
   var pop=document.getElementById("rdvPopup");
-  var h='<div class="rp-name">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
+  var h='<div class="rp-name">'+apptClientLabel(a)+'</div>';
   h+='<div class="rp-svc">'+(sv?sv.n:"")+(sty?" \u2022 "+sty.n:"")+'</div>';
   h+='<div class="rp-info">';
   h+='\ud83d\udd52 '+a.time+' \u2192 '+endTime+' ('+td+'min)';
@@ -7356,7 +7371,7 @@ function confirmCancelAppt(id){
   htm+='<div style="font-size:40px;margin-bottom:10px">\u26a0\ufe0f</div>';
   htm+='<h2 style="color:#ef5350;margin-bottom:8px">Annuler ce RDV ?</h2>';
   htm+='<div style="background:rgba(239,83,80,.06);border:1px solid rgba(239,83,80,.15);border-radius:10px;padding:12px;margin-bottom:14px;text-align:left;font-size:13px">';
-  htm+='<div style="font-weight:800;font-size:14px;margin-bottom:4px">'+(cl?cName(cl):passageName(a.cId,a.sId))+'</div>';
+  htm+='<div style="font-weight:800;font-size:14px;margin-bottom:4px">'+apptClientLabel(a)+'</div>';
   htm+='<div style="color:rgba(255,255,255,.6)">'+(sv?sv.n:"")+'</div>';
   htm+='<div style="color:rgba(255,255,255,.6)">\ud83d\udcc5 '+fmt(a.date)+' \u00e0 '+a.time+(sty?' \u2022 '+sty.n:'')+'</div>';
   htm+='</div>';
@@ -17113,7 +17128,7 @@ function rTickets(){
   for(var i=0;i<done.length;i++){
     var a=done[i];
     var cl=gC(a.cId),sty=gT(a.stId);
-    var clN=cl?cName(cl):passageName(a.cId,a.sId);
+    var clN=apptClientLabel(a);
     var styN=sty?sty.n:"--";
     var isCancelled=a.cancelled||a.st==="cancelled";
     var isAvoir=a.isAvoir;
@@ -17186,7 +17201,7 @@ function emailTicket(id){
   if(!a){alert("Ticket introuvable");return;}
   var cl=gC(a.cId);
   var email=cl?cl.em:"";
-  var clN=cl?cName(cl):passageName(a.cId,a.sId);
+  var clN=apptClientLabel(a);
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:400px">';
   h+='<h2 style="color:var(--gold)">\u2709\ufe0f Envoyer le ticket #'+(a.tkNum||"--")+'</h2>';
   h+='<div style="font-size:13px;color:var(--text2);margin-bottom:16px">Client : <strong>'+clN+'</strong>'+(email?' ('+email+')':' \u2014 Pas d\u2019email enregistr\u00e9')+'</div>';
@@ -17296,7 +17311,7 @@ function openEmailTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId,a.sId);
+  var clN=apptClientLabel(a);
   var email=cl?cl.em:"";
   var subject="Votre ticket #"+(a.tkNum||"")+" - "+SALON_CONFIG.nom;
   var body="Bonjour"+(cl?" "+cl.pre:"")+",\n\nVoici le r\u00e9capitulatif de votre visite du "+fmt(a.date)+" :\n\n";
@@ -17334,7 +17349,7 @@ function exportTicketsCSV(){
 // ===== TICKET FORMAT UNIQUE (NF525) — utilisé partout =====
 function buildTicketHTML(a, isDuplicate){
   var cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId,a.sId);
+  var clN=apptClientLabel(a);
   var total=a.pr;
   var txTVA=SALON_CONFIG.tauxTVA||20;
   var ht=Math.round(total/(1+txTVA/100)*100)/100;
@@ -17572,7 +17587,7 @@ function modifTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var cl=gC(a.cId),sty=gT(a.stId);
-  var clN=cl?cName(cl):passageName(a.cId,a.sId);
+  var clN=apptClientLabel(a);
   var styN=sty?sty.n:"--";
   var isPast=a.date!==TD;
   
