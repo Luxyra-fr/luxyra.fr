@@ -5350,17 +5350,28 @@ function passageName(cId,sId){
 }
 
 // Label client universel pour un RDV : client connu > nom RDV online > passage g\u00e9n\u00e9rique
+// Robuste face aux reloads qui peuvent \u00e9craser certains champs.
 function apptClientLabel(a){
   if(!a) return "";
+  // 1. Client connu en local
   if(a.cId){
     var cl=gC(a.cId);
     if(cl) return cName(cl);
   }
-  // RDV en ligne : utilise le nom transmis (clientName ou nom+prenom)
-  if(a.isOnline){
-    if(a.clientName) return a.clientName;
-    if(a.nom||a.prenom) return ((a.nom||"")+" "+(a.prenom||"")).trim();
+  // 2. Champs port\u00e9s par le RDV (isOnline = true OU donn\u00e9es pr\u00e9sentes m\u00eame sans le flag)
+  if(a.clientName) return a.clientName;
+  if(a.nom || a.prenom) return ((a.prenom||"")+" "+(a.nom||"")).trim();
+  // 3. Lookup dans RDV_ONLINE par onlineId (au cas o\u00f9 le flag isOnline aurait \u00e9t\u00e9 perdu apr\u00e8s un reload)
+  if(a.onlineId && window.RDV_ONLINE && window.RDV_ONLINE.length){
+    for(var i=0;i<window.RDV_ONLINE.length;i++){
+      var ro=window.RDV_ONLINE[i];
+      if(ro.id===a.onlineId){
+        if(ro.nom||ro.prenom) return ((ro.prenom||"")+" "+(ro.nom||"")).trim();
+        break;
+      }
+    }
   }
+  // 4. Fallback g\u00e9n\u00e9rique
   return passageName(a.cId, a.sId);
 }
 function fmt(d){return new Date(d).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});}
