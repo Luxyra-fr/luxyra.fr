@@ -337,19 +337,11 @@ async function loadSalonData() {
     }
   }
 
-  // Monthly SMS reset for Pro plans (30 free/month)
-  if(salon.plan==="pro"){
-    var today=new Date().toISOString().slice(0,10);
-    var lastReset=salon.sms_last_reset||"";
-    var resetMonth=lastReset?lastReset.slice(0,7):"";
-    var currentMonth=today.slice(0,7);
-    if(resetMonth!==currentMonth){
-      // New month: add 30 free SMS
-      var newCredits=(salon.sms_credits||0)+30;
-      window.SMS_CREDITS=newCredits;
-      _sb.from("salons").update({sms_credits:newCredits,sms_last_reset:today}).eq("id",salon.id);
-    }
-  }
+  // SMS bonus v2 (2026-04) : l'ancien système +30 SMS/mois automatique a été
+  // remplacé par un bonus one-shot de 150 SMS crédité par le worker Cloudflare
+  // sur réception du 1er invoice.paid Pro en mode LIVE (anti-doublon via le
+  // flag salons.welcome_sms_bonus_given). Voir luxyra-router-worker.js,
+  // case "invoice.paid". Aucun crédit récurrent ici.
   if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;if(cfg.fond_caisse!==undefined){if(!window.CAISSE_DATA)window.CAISSE_DATA={};window.CAISSE_DATA.fond=cfg.fond_caisse;}if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();if(Array.isArray(cfg.categories_services))window._cfgCatsSvc=cfg.categories_services.slice();if(Array.isArray(cfg.categories_forfaits))window._cfgCatsForf=cfg.categories_forfaits.slice();}catch(e){}}
   // Defaults if not loaded from cfg
   if(!SALON_CONFIG.validiteDevis) SALON_CONFIG.validiteDevis = 30;

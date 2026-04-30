@@ -239,6 +239,25 @@ async function handleWebhook(request, env) {
       if (salonId) {
         // Active + reset past_due_since (au cas où retry Stripe a réussi)
         await supabaseUpdate(env, salonId, { status: "active", past_due_since: null });
+
+        // === BONUS 150 SMS one-shot au 1er paiement Pro (LIVE uniquement) ===
+        // - data.livemode = true sur les paiements réels (false en mode test Stripe)
+        // - welcome_sms_bonus_given = false → bonus pas encore donné
+        // - plan === "pro" → seul le plan Pro a le bonus SMS
+        if (data.livemode === true && plan === "pro") {
+          try {
+            const salonRow = await supabaseGet(env, salonId);
+            if (salonRow && salonRow.welcome_sms_bonus_given !== true) {
+              const newCredits = (salonRow.sms_credits || 0) + 150;
+              await supabaseUpdate(env, salonId, {
+                sms_credits: newCredits,
+                welcome_sms_bonus_given: true
+              });
+              console.log("invoice.paid: 150 SMS bonus credited to salon", salonId, "new total=", newCredits);
+            }
+          } catch (e) { console.warn("SMS bonus error:", e?.message || e); }
+        }
+
         try {
           const planPrix = plan === "pro" ? 24.99 : 14.99;
           const sbUrl = CONFIG.SUPABASE_URL;
