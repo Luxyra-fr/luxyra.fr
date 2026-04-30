@@ -7471,6 +7471,18 @@ function clickAppt(id){
       htm+='</div>';
     }
     htm+='</div>';
+    // Affichage des addons (prestations faites PENDANT cette phase, sans rallonger)
+    if(ph.addons && ph.addons.length){
+      ph.addons.forEach(function(ad,adIdx){
+        htm+='<div style="display:flex;align-items:center;gap:6px;padding:4px 6px 4px 18px;font-size:11px;color:#a29bfe;background:rgba(108,92,231,.05);border-left:2px solid rgba(108,92,231,.4);margin-left:10px;border-bottom:1px solid rgba(255,255,255,.04)">';
+        htm+='<span style="font-size:10px">\u21B3</span>';
+        htm+='<div style="flex:1;font-style:italic">'+ad.name+' <span style="color:var(--text3);font-size:10px">(pendant cette phase)</span></div>';
+        if(!isDone){
+          htm+='<button title="Retirer" onclick="removeAddon(\''+a.id+'\','+i+','+adIdx+')" style="padding:2px 6px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.2);border-radius:4px;color:#ef5350;cursor:pointer;font-size:10px">\u00d7</button>';
+        }
+        htm+='</div>';
+      });
+    }
     cur+=ph.d;
   }
   htm+='</div>';
@@ -7623,6 +7635,26 @@ async function movePhaseDown(id, idx){
   if(typeof saveAppointment==="function") await saveAppointment(a);
   requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
 }
+async function removeAddon(id, phIdx, addonIdx){
+  var a=_findAppt(id); if(!a||a.st==="done") return;
+  var ph=getApptPhases(a);
+  if(!ph[phIdx]||!ph[phIdx].addons||!ph[phIdx].addons[addonIdx]) return;
+  var ad=ph[phIdx].addons[addonIdx];
+  if(!confirm("Retirer « "+ad.name+" » de cette phase ?")) return;
+  // Retirer aussi de items (si présent)
+  if(a.items){
+    for(var i=a.items.length-1;i>=0;i--){
+      if(a.items[i].sId===ad.sId && a.items[i].duringPhase===phIdx){
+        if(typeof a.pr==="number") a.pr-=Number(a.items[i].price)||0;
+        a.items.splice(i,1);
+        break;
+      }
+    }
+  }
+  ph[phIdx].addons.splice(addonIdx,1);
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+}
 async function removePhase(id, idx){
   var a=_findAppt(id); if(!a||a.st==="done") return;
   var ph=getApptPhases(a);
@@ -7650,15 +7682,29 @@ function showAddPrestaModal(apptId){
   phases.forEach(function(ph,i){
     insertOptions+='<option value="'+(i+1)+'">Après la phase '+(i+1)+' — '+(ph.l||(ph.t==="w"?"Travail":"Pause"))+'</option>';
   });
+  // Options "pendant une phase" (sans rallonger)
+  var duringOptions='';
+  phases.forEach(function(ph,i){
+    if(ph.t==="w") duringOptions+='<option value="during-'+i+'">Pendant la phase '+(i+1)+' — '+(ph.l||"Travail")+' (sans rallonger)</option>';
+  });
 
-  var h='<div class="mbox" style="max-width:520px;max-height:80vh;overflow:auto">';
+  var h='<div class="mbox" style="max-width:560px;max-height:85vh;overflow:auto">';
   h+='<h2 style="margin:0 0 8px;font-size:18px;color:var(--gold)">+ Ajouter une prestation</h2>';
-  h+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px">Sélectionnez la prestation à ajouter à ce RDV. Sa durée et ses pauses seront ajoutées automatiquement.</div>';
-  // Sélecteur de position
-  h+='<div style="margin-bottom:12px"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Position dans le RDV</label>';
-  h+='<select id="addPrestaPos" style="width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px">';
+  h+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Sélectionnez la prestation à ajouter à ce RDV. Choisissez si elle se fait <strong>après</strong> (rallonge le RDV) ou <strong>pendant</strong> une phase existante (ex : soin pendant le shampoing).</div>';
+  // Sélecteur de position : combine "après" (rallonge) et "pendant" (n''ajoute pas de durée)
+  h+='<div style="margin-bottom:14px"><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Quand faire cette prestation ?</label>';
+  h+='<select id="addPrestaPos" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px">';
+  h+='<optgroup label="Ajouter (rallonge le RDV)" style="color:#000">';
   h+=insertOptions;
-  h+='</select></div>';
+  h+='</optgroup>';
+  if(duringOptions){
+    h+='<optgroup label="Pendant (ne rallonge pas)" style="color:#000">';
+    h+=duringOptions;
+    h+='</optgroup>';
+  }
+  h+='</select>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4">💡 « Pendant » : la prestation est facturée mais ne change pas la durée du RDV (utile pour soin pendant shampoing, masque pendant manucure, etc.)</div>';
+  h+='</div>';
   // Liste services groupés par catégorie
   cats.forEach(function(cat){
     h+='<div style="font-weight:700;color:var(--gold);font-size:12px;text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px">'+cat+'</div>';
@@ -7682,32 +7728,41 @@ async function addPrestaToAppt(apptId, svcId){
   var svc=(typeof gS==="function")?gS(svcId):null;
   if(!svc){ alert("Prestation introuvable"); return; }
   var ph=getApptPhases(a);
-  // Phases à ajouter : depuis svc.phases si défini, sinon une seule phase travail
-  var newPhases=[];
-  if(svc.phases&&svc.phases.length){
-    newPhases=JSON.parse(JSON.stringify(svc.phases));
-  } else {
-    newPhases=[{t:"w", d:Number(svc.d)||30, l:svc.n||"Prestation", stId:a.stId}];
-  }
-  // S'assurer que les phases work héritent du collab principal si non défini
-  newPhases.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId=a.stId; });
-  // Position d'insertion
   var posSel=document.getElementById("addPrestaPos");
   var pos=posSel?posSel.value:"end";
-  if(pos==="end"){
-    a.aPhases=ph.concat(newPhases);
+  // Cas "during" : ne touche pas aPhases, ajoute juste au ticket et marque l'item
+  var isDuring=String(pos).indexOf("during-")===0;
+  var duringIdx=isDuring?parseInt(String(pos).split("-")[1],10):-1;
+  if(isDuring){
+    // Marque la phase parente avec un addon visuel (tag pour rendu)
+    if(ph[duringIdx]){
+      if(!ph[duringIdx].addons) ph[duringIdx].addons=[];
+      ph[duringIdx].addons.push({name:svc.n||"Prestation", sId:svc.id});
+      a.aPhases=ph;
+    }
   } else {
-    var insertAt=parseInt(pos,10);
-    a.aPhases=ph.slice(0,insertAt).concat(newPhases).concat(ph.slice(insertAt));
+    // Phases à ajouter en séquence (rallonge le RDV)
+    var newPhases=[];
+    if(svc.phases&&svc.phases.length){
+      newPhases=JSON.parse(JSON.stringify(svc.phases));
+    } else {
+      newPhases=[{t:"w", d:Number(svc.d)||30, l:svc.n||"Prestation", stId:a.stId}];
+    }
+    newPhases.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId=a.stId; });
+    if(pos==="end"){
+      a.aPhases=ph.concat(newPhases);
+    } else {
+      var insertAt=parseInt(pos,10);
+      a.aPhases=ph.slice(0,insertAt).concat(newPhases).concat(ph.slice(insertAt));
+    }
   }
-  // Mettre à jour items pour traçabilité encaissement
+  // Items pour traçabilité ticket (toujours)
   if(!a.items) a.items=[];
-  a.items.push({name:svc.n||"Prestation", price:Number(svc.p)||0, qty:1, isProd:false, addedDuringRdv:true, sId:svc.id});
-  // Mettre à jour prix si présent
+  a.items.push({name:svc.n||"Prestation", price:Number(svc.p)||0, qty:1, isProd:false, addedDuringRdv:true, duringPhase:isDuring?duringIdx:null, sId:svc.id});
   if(typeof a.pr==="number") a.pr+=Number(svc.p)||0;
   if(typeof saveAppointment==="function") await saveAppointment(a);
   cM();
-  toast("✓ "+(svc.n||"Prestation")+" ajoutée au RDV","success");
+  toast("✓ "+(svc.n||"Prestation")+(isDuring?" ajoutée pendant la phase "+(duringIdx+1):" ajoutée au RDV"),"success");
   requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(apptId);},150);});
 }
 function delAppt(id){
