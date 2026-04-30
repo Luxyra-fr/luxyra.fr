@@ -878,7 +878,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "preview-email-confirmation", "clear",
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
-      "bp-client.js", "luxyra-supabase.js", "supabase.min.js",
+      "lx-client.js", "luxyra-supabase.js", "supabase.min.js",
       "robots.txt", "sitemap.xml"
     ]);
     const isOneSegment = segmentForSlug && !segmentForSlug.includes("/");

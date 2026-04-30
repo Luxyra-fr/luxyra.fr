@@ -476,7 +476,7 @@ async function loadSalonData() {
           detChev: c.details_cheveux, collab: c.collab_pref,
           actif: c.actif, fid: c.points_fidelite,
           smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
-          clientBeautyproId: c.client_beautypro_id || null
+          clientBeautyproId: c.client_luxyra_id || null
         };
         // Déballe la fiche technique étendue (peau, ongles, bien-être,
         // formules couleur, photos…) sur l'objet client. Le code UI
@@ -496,11 +496,11 @@ async function loadSalonData() {
 
   // 5b. Sync fidelite points from fidelite_client (source of truth)
   try {
-    var fidRes = await _sb.from("fidelite_client").select("client_beautypro_id,points").eq("salon_id", _salonId);
+    var fidRes = await _sb.from("fidelite_client").select("client_luxyra_id,points").eq("salon_id", _salonId);
     if (fidRes.data) {
       fidRes.data.forEach(function(f) {
         for (var ci = 0; ci < CL.length; ci++) {
-          if (CL[ci].em && CL[ci].em === f.client_beautypro_id) {
+          if (CL[ci].em && CL[ci].em === f.client_luxyra_id) {
             CL[ci].fid = f.points || 0;
           }
         }
@@ -939,14 +939,14 @@ async function saveClient(client) {
         await _sb.from("clients").update(syncClients).eq("email", client.em).neq("id", client.id);
       }
       if (Object.keys(syncBp).length) {
-        await _sb.from("clients_beautypro").update(syncBp).eq("email", client.em);
+        await _sb.from("clients_luxyra").update(syncBp).eq("email", client.em);
       }
     } catch(e) { console.log("[SYNC]", e.message); }
   }
   // Sync fidelite_client.points when fid changes
   if (client.em && client.fid !== undefined && _salonId) {
     try {
-      var fr = await _sb.from("fidelite_client").select("id").eq("client_beautypro_id", client.em).eq("salon_id", _salonId).limit(1);
+      var fr = await _sb.from("fidelite_client").select("id").eq("client_luxyra_id", client.em).eq("salon_id", _salonId).limit(1);
       if (fr.data && fr.data[0]) {
         await _sb.from("fidelite_client").update({ points: client.fid }).eq("id", fr.data[0].id);
       }
@@ -1812,10 +1812,10 @@ async function syncClientFromOnlineRdv(rdvData) {
   if (!_isOnline || !_salonId) return null;
   // Check if client already exists by email or beautypro_id
   var email = rdvData.client_email || "";
-  var bpId = rdvData.client_beautypro_id || null;
+  var bpId = rdvData.client_luxyra_id || null;
   var existing = null;
   if (bpId) {
-    var r = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("client_beautypro_id", bpId).limit(1);
+    var r = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("client_luxyra_id", bpId).limit(1);
     if (r.data && r.data.length) existing = r.data[0];
   }
   if (!existing && email) {
@@ -1828,8 +1828,8 @@ async function syncClientFromOnlineRdv(rdvData) {
   }
   if (existing) {
     // Link beautypro_id if not set
-    if (bpId && !existing.client_beautypro_id) {
-      await _sb.from("clients").update({ client_beautypro_id: bpId }).eq("id", existing.id);
+    if (bpId && !existing.client_luxyra_id) {
+      await _sb.from("clients").update({ client_luxyra_id: bpId }).eq("id", existing.id);
     }
     return existing.id;
   }
@@ -1840,7 +1840,7 @@ async function syncClientFromOnlineRdv(rdvData) {
     prenom: rdvData.client_prenom || "",
     telephone: rdvData.client_telephone || "",
     email: email,
-    client_beautypro_id: bpId,
+    client_luxyra_id: bpId,
     genre: rdvData.client_genre || "F",
     date_naissance: rdvData.client_ddn || null,
     created_at: new Date().toISOString()
@@ -1857,7 +1857,7 @@ async function updateFideliteClient(bpId, salonId, salonNom, currentFid, hasPres
   var pts = (typeof currentFid === "number") ? currentFid : null;
   var countVisit = hasPrestation !== false;
   try {
-    var r = await _sb.from("fidelite_client").select("*").eq("client_beautypro_id", bpId).eq("salon_id", salonId).limit(1);
+    var r = await _sb.from("fidelite_client").select("*").eq("client_luxyra_id", bpId).eq("salon_id", salonId).limit(1);
     if (r.data && r.data.length) {
       var f = r.data[0];
       var updateData = {
@@ -1873,7 +1873,7 @@ async function updateFideliteClient(bpId, salonId, salonNom, currentFid, hasPres
       await _sb.from("fidelite_client").update(updateData).eq("id", f.id);
     } else {
       await _sb.from("fidelite_client").insert({
-        client_beautypro_id: bpId,
+        client_luxyra_id: bpId,
         salon_id: salonId,
         salon_nom: salonNom || SALON_CONFIG.nom,
         points: pts !== null ? pts : 1,

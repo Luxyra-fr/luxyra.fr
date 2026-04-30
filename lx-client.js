@@ -1,23 +1,34 @@
 // ============================================================================
-// bp-client.js — Client helper pour les edge functions BeautyPro
+// lx-client.js — Client helper pour les edge functions Luxyra
 // ============================================================================
-// Remplace les accès directs à la table clients_beautypro par des appels
-// aux edge functions lx-signup / lx-login / lx-profile (anciennement bp-*).
+// Wrapper autour des edge functions lx-signup / lx-login / lx-profile pour
+// l'authentification cliente Luxyra (compte cliente unique cross-salons).
 //
 // Stockage session :
-//   - localStorage["lx_bp_token"] : session_token JWT HS256 (30 jours)
-//   - localStorage["lx_account"]  : objet user (SANS password_hash)
+//   - localStorage["lx_token"]   : session_token JWT HS256 (30 jours)
+//   - localStorage["lx_account"] : objet user (SANS password_hash)
+//
+// Compat legacy : lit aussi localStorage["lx_bp_token"] et le migre
+// silencieusement vers "lx_token" pour ne pas déconnecter les sessions actives.
 // ============================================================================
 
 (function(){
-  var BP_API = "https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1";
-  var BP_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+  var LX_API = "https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1";
+  var LX_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+
+  // Migration silencieuse : si l'ancien token existe mais pas le nouveau, copie-le
+  try {
+    if (!localStorage.getItem("lx_token") && localStorage.getItem("lx_bp_token")) {
+      localStorage.setItem("lx_token", localStorage.getItem("lx_bp_token"));
+      localStorage.removeItem("lx_bp_token");
+    }
+  } catch(e){}
 
   function getToken(){
-    try { return localStorage.getItem("lx_bp_token") || ""; } catch(e){ return ""; }
+    try { return localStorage.getItem("lx_token") || ""; } catch(e){ return ""; }
   }
   function setToken(t){
-    try { if(t) localStorage.setItem("lx_bp_token", t); else localStorage.removeItem("lx_bp_token"); } catch(e){}
+    try { if(t) localStorage.setItem("lx_token", t); else localStorage.removeItem("lx_token"); } catch(e){}
   }
   function setUser(u){
     try { if(u) localStorage.setItem("lx_account", JSON.stringify(u)); else localStorage.removeItem("lx_account"); } catch(e){}
@@ -28,12 +39,12 @@
 
   async function call(endpoint, body){
     try {
-      var r = await fetch(BP_API + "/" + endpoint, {
+      var r = await fetch(LX_API + "/" + endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "apikey": BP_ANON,
-          "Authorization": "Bearer " + BP_ANON
+          "apikey": LX_ANON,
+          "Authorization": "Bearer " + LX_ANON
         },
         body: JSON.stringify(body || {})
       });
@@ -47,8 +58,7 @@
 
   // ------------------------ Public API ------------------------
 
-  async function bpSignup(fields){
-    // fields : { email, password, nom, prenom, telephone?, date_naissance?, genre?, sms_ok?, email_ok? }
+  async function lxSignup(fields){
     var res = await call("lx-signup", fields);
     if (res.ok && res.data && res.data.session_token) {
       setToken(res.data.session_token);
@@ -57,7 +67,7 @@
     return res;
   }
 
-  async function bpLogin(email, password){
+  async function lxLogin(email, password){
     var res = await call("lx-login", { email: email, password: password });
     if (res.ok && res.data && res.data.session_token) {
       setToken(res.data.session_token);
@@ -66,7 +76,7 @@
     return res;
   }
 
-  async function bpGet(){
+  async function lxGet(){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var res = await call("lx-profile", { session_token: token, action: "get" });
@@ -75,7 +85,7 @@
     return res;
   }
 
-  async function bpUpdate(patch){
+  async function lxUpdate(patch){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var body = Object.assign({ session_token: token, action: "update" }, patch || {});
@@ -84,7 +94,7 @@
     return res;
   }
 
-  async function bpChangePassword(oldPass, newPass){
+  async function lxChangePassword(oldPass, newPass){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     return await call("lx-profile", {
@@ -93,7 +103,7 @@
     });
   }
 
-  async function bpDelete(password){
+  async function lxDelete(password){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var res = await call("lx-profile", {
@@ -104,7 +114,7 @@
     return res;
   }
 
-  async function bpToggleNotif(field, value){
+  async function lxToggleNotif(field, value){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var res = await call("lx-profile", {
@@ -118,7 +128,7 @@
     return res;
   }
 
-  async function bpRemovePayment(){
+  async function lxRemovePayment(){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var res = await call("lx-profile", { session_token: token, action: "remove_payment" });
@@ -129,18 +139,17 @@
     return res;
   }
 
-  function bpLogout(){
+  function lxLogout(){
     setToken("");
     setUser(null);
   }
 
-  function bpHasSession(){
+  function lxHasSession(){
     return !!getToken();
   }
 
   // Check HaveIBeenPwned via k-anonymity API (SHA-1, 5 premiers chars seulement envoyés)
-  // Returns true si le mdp est dans une fuite connue. Fail-open si API down.
-  async function bpCheckPasswordLeaked(password){
+  async function lxCheckPasswordLeaked(password){
     if(!password) return false;
     try {
       var enc = new TextEncoder().encode(password);
@@ -168,27 +177,19 @@
   }
 
   // Expose globalement
-  window.BP = {
-    signup: bpSignup,
-    login: bpLogin,
-    get: bpGet,
-    update: bpUpdate,
-    changePassword: bpChangePassword,
-    delete: bpDelete,
-    toggleNotif: bpToggleNotif,
-    removePayment: bpRemovePayment,
-    logout: bpLogout,
-    hasSession: bpHasSession,
+  window.LX = {
+    signup: lxSignup,
+    login: lxLogin,
+    get: lxGet,
+    update: lxUpdate,
+    changePassword: lxChangePassword,
+    delete: lxDelete,
+    toggleNotif: lxToggleNotif,
+    removePayment: lxRemovePayment,
+    logout: lxLogout,
+    hasSession: lxHasSession,
     getUser: getUser,
     getToken: getToken,
-    checkPasswordLeaked: bpCheckPasswordLeaked
+    checkPasswordLeaked: lxCheckPasswordLeaked
   };
-
-  // === Phase 1 rebrand BeautyPro → Luxyra ===
-  // Alias propre pour tout nouveau code : window.LX === window.BP.
-  // Le code existant utilisant BP.* continue de fonctionner exactement comme avant.
-  // En Phase 2 (future session), on migrera tous les call-sites vers LX.* puis on
-  // pourra supprimer l'alias BP. Aucun risque ici : ce sont les MÊMES fonctions,
-  // pas une copie — donc même comportement, mêmes sessions, mêmes localStorage keys.
-  window.LX = window.BP;
 })();

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&display=swap" rel="stylesheet">
-<script src="bp-client.js"></script>
+<script src="lx-client.js"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -345,12 +345,12 @@ var _fideliteLoaded=false;
 async function loadFidelite(){
   if(!CLIENT||_fideliteLoaded)return;
   try{
-    var r=await api("fidelite_client?select=*&client_beautypro_id=eq."+encodeURIComponent(CLIENT.email||CLIENT.id)+"&order=derniere_visite.desc");
+    var r=await api("fidelite_client?select=*&client_luxyra_id=eq."+encodeURIComponent(CLIENT.email||CLIENT.id)+"&order=derniere_visite.desc");
     var data=await r.json();
     if(Array.isArray(data))FIDELITE_DATA=data;
     // Also try by ID if email returned nothing
     if(!FIDELITE_DATA.length&&CLIENT.id){
-      var r2=await api("fidelite_client?select=*&client_beautypro_id=eq."+CLIENT.id+"&order=derniere_visite.desc");
+      var r2=await api("fidelite_client?select=*&client_luxyra_id=eq."+CLIENT.id+"&order=derniere_visite.desc");
       var d2=await r2.json();
       if(Array.isArray(d2)&&d2.length)FIDELITE_DATA=d2;
     }
@@ -436,7 +436,7 @@ async function loadCartesAbo(){
   if(!CLIENT||_cartesLoaded)return;
   try{
     // Query by email — same cross-salon pattern as fidelite
-    var r=await api("cartes_abo_clients?select=*&client_beautypro_id=eq."+encodeURIComponent(CLIENT.email)+"&order=created_at.desc");
+    var r=await api("cartes_abo_clients?select=*&client_luxyra_id=eq."+encodeURIComponent(CLIENT.email)+"&order=created_at.desc");
     var data=await r.json();
     if(Array.isArray(data))CARTES_ABO_DATA=data;
     // Enrich with salon name
@@ -811,7 +811,7 @@ async function saveProfile(){
   var adr=document.getElementById("pAdr")?document.getElementById("pAdr").value.trim():"";
   var cp=document.getElementById("pCp")?document.getElementById("pCp").value.trim():"";
   var ville=document.getElementById("pVille")?document.getElementById("pVille").value.trim():"";
-  // 1. Save to clients_beautypro via edge function
+  // 1. Save to clients_luxyra via edge function
   var res=await LX.update({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville});
   if(!res.ok){var el0=document.getElementById("profileMsg");if(el0){el0.style.display="block";el0.style.color="var(--red)";el0.textContent=res.data&&res.data.error?res.data.error:"Erreur";}return;}
   CLIENT=res.data.user;saveSession();
@@ -864,7 +864,7 @@ async function loadMyRdvs(){
   if(!CLIENT)return;
   try{
     // Get RDVs from rdv_online with salon name
-    var r=await api("rdv_online?select=*,salons(nom)&client_beautypro_id=eq."+CLIENT.id+"&order=date_rdv.desc&limit=50");
+    var r=await api("rdv_online?select=*,salons(nom)&client_luxyra_id=eq."+CLIENT.id+"&order=date_rdv.desc&limit=50");
     var data=await r.json();
     if(Array.isArray(data)){
       CLIENT_RDVS=data.map(function(d){d.salon_nom=d.salons?d.salons.nom:"";return d;});
@@ -894,7 +894,7 @@ async function loadMyRdvs(){
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
     // Charger les avis déjà laissés par ce client (1 avis par salon)
     try{
-      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at&client_beautypro_id=eq."+CLIENT.id);
+      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at&client_luxyra_id=eq."+CLIENT.id);
       var dA=await rA.json();
       if(Array.isArray(dA)) CLIENT_AVIS=dA;
     }catch(_){}
@@ -955,11 +955,11 @@ async function doDeleteAccount(){
   try{
     var email=CLIENT.email;
     // Anonymize rdv_online (reste en anon pour l'instant)
-    await api("rdv_online?client_beautypro_id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({client_beautypro_id:null,client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""})});
+    await api("rdv_online?client_luxyra_id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({client_luxyra_id:null,client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""})});
     // Anonymize appointments in all salons
     await api("clients?email=eq."+encodeURIComponent(email),{method:"PATCH",body:JSON.stringify({nom:"ANONYME",prenom:"",telephone:"",email:"",adresse:"",cp:"",ville:"",date_naissance:null,notes:"",actif:false})});
     // Delete fidelite_client
-    await api("fidelite_client?client_beautypro_id=eq."+encodeURIComponent(email),{method:"DELETE"});
+    await api("fidelite_client?client_luxyra_id=eq."+encodeURIComponent(email),{method:"DELETE"});
     // Delete client_salon links
     await api("client_salon?client_id=eq."+CLIENT.id,{method:"DELETE"});
     // Delete the BP account via edge function

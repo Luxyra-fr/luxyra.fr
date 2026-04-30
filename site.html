@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=Nunito:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="bp-client.js"></script>
+<script src="lx-client.js"></script>
 <script src="https://js.stripe.com/v3/"></script>
 <style>
 :root{--gold:#c8a84e;--gold-l:#e8d994;--bg:#0a0a0a;--bg2:#111;--bg3:#1a1a1e;--text:#f5f0e8;--text2:rgba(245,240,232,.6);--text3:rgba(245,240,232,.35);--green:#2d9a5e;--red:#c43838;--f1:'Playfair Display',serif;--f2:'Nunito',sans-serif;--f3:'Cormorant Garamond',serif;--max:900px}
@@ -997,14 +997,14 @@ function doClientLogout(){
 }
 
 function saveClientSession(){
-  // bp-client.js écrit déjà lx_bp_token + lx_account lors de signup/login/update.
+  // lx-client.js écrit déjà lx_token + lx_account lors de signup/login/update.
   // On recopie CLIENT (sans password_hash) dans localStorage pour rester compat avec l'ancien flow.
   if (!CLIENT) return;
   var safe={};for(var k in CLIENT){if(k!=="password_hash")safe[k]=CLIENT[k];}
   try{localStorage.setItem("lx_account",JSON.stringify(safe));}catch(e){}
 }
 function loadClientSession(){
-  // Si on a un token BP valide, utiliser le user stocké par bp-client
+  // Si on a un token LX valide, utiliser le user stocké par lx-client
   if (window.LX && LX.hasSession()) {
     var u=LX.getUser();
     if(u){CLIENT=u;return true;}
@@ -1016,8 +1016,8 @@ function loadClientSession(){
 
 async function loadClientRDVs(){
   if(!CLIENT)return;
-  // Primary: query by client_beautypro_id
-  var r=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_beautypro_id",CLIENT.id).order("date_rdv",{ascending:false});
+  // Primary: query by client_luxyra_id
+  var r=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_luxyra_id",CLIENT.id).order("date_rdv",{ascending:false});
   if(r.data)CLIENT_RDVS=r.data;
   // Fallback: also load by email (for old bookings before migration)
   var r2=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_email",CLIENT.email).order("date_rdv",{ascending:false});
@@ -2510,7 +2510,7 @@ async function submitBooking(){
   var data={
     salon_id:salonId,
     client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
-    client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
+    client_online_id:null,client_luxyra_id:CLIENT?CLIENT.id:null,
     service_id:booking.svcId,service_nom:primaryNom,service_prix:prixFinal,
     items:itemsPayload,
     carte_abo_id:(remiseCarte>0&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
@@ -2583,7 +2583,7 @@ async function saveClientProfile(){
 async function loadDashboardFidelite(){
   if(!CLIENT||!salonId)return;
   try{
-    var r=await sb.from("fidelite_client").select("*").eq("client_beautypro_id",CLIENT.email).eq("salon_id",salonId).limit(1);
+    var r=await sb.from("fidelite_client").select("*").eq("client_luxyra_id",CLIENT.email).eq("salon_id",salonId).limit(1);
     var pts=0,vis=0,seuil=10,remise=10,remType="amount";
     if(r.data&&r.data[0]){
       pts=r.data[0].points||0;
@@ -2692,7 +2692,7 @@ async function submitWithStripe(){
     var rdvData={
       salon_id:salonId,
       client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
-      client_online_id:null,client_beautypro_id:CLIENT?CLIENT.id:null,
+      client_online_id:null,client_luxyra_id:CLIENT?CLIENT.id:null,
       service_id:booking.svcId,service_nom:primaryNom,service_prix:totalPrix,
       items:itemsPayload,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
@@ -2839,7 +2839,7 @@ async function processStripePayment(){
     var itemsPayload=bookingItemsPayload();
     var rdvData={
       client_nom:pb.nom,client_prenom:pb.pre,client_tel:pb.tel,client_email:pb.email,
-      client_beautypro_id:CLIENT?CLIENT.id:null,
+      client_luxyra_id:CLIENT?CLIENT.id:null,
       service_id:booking.svcId,service_nom:primaryNom,service_prix:totalPrix,
       items:itemsPayload,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
@@ -3197,7 +3197,7 @@ async function checkClientCarteAbo(){
   if(!CLIENT||!CLIENT.email||!salonId)return;
   try{
     // Query by email — same cross-salon pattern as fidelite
-    var r=await sb.from("cartes_abo_clients").select("*").eq("salon_id",salonId).eq("client_beautypro_id",CLIENT.email).eq("status","active").limit(1);
+    var r=await sb.from("cartes_abo_clients").select("*").eq("salon_id",salonId).eq("client_luxyra_id",CLIENT.email).eq("status","active").limit(1);
     if(r.data&&r.data[0]){
       var c=r.data[0];
       var today=new Date().toISOString().slice(0,10);
@@ -3256,7 +3256,7 @@ async function submitSouscrireCarte(idx){
       salon_id:salonId,
       client_id:CLIENT.id||CLIENT.email,
       client_nom:clientNom,
-      client_beautypro_id:CLIENT.email,
+      client_luxyra_id:CLIENT.email,
       carte_id:String(ca.id||""),
       carte_nom:ca.nom,
       tarif:Number(ca.tarif),
