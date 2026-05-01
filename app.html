@@ -13835,7 +13835,7 @@ function rAccounting(){
   
   // Nav bar
   var h='<div class="cnav"><button onclick="chM(-1)">\u25C0</button><h3>'+mL+'</h3><button onclick="chM(1)">\u25B6</button>';
-  h+='<button class="btn bg bs" onclick="expCSV()">\uD83D\uDCE5 CSV</button>';
+  h+='<button class="btn bg bs" onclick="showExportsComptables()">\ud83d\uDCE5 Exports</button>';
   h+='<button class="btn bs" style="background:#1a1a1a;color:var(--gold);font-weight:700" onclick="printBandeZ()">\ud83d\udcca Bande Z</button></div>';
   
   // ===== COMPACT SUMMARY - 1 row =====
@@ -13956,19 +13956,488 @@ function rAccounting(){
 
 function chM(d){var p=accM.split("-").map(Number);var nd=new Date(p[0],p[1]-1+d,1);accM=nd.getFullYear()+"-"+String(nd.getMonth()+1).padStart(2,"0");go("accounting");}
 
-function expCSV(){
+// =====================================================================
+// MODAL EXPORTS COMPTABLES \u2014 acc\u00e8s centralis\u00e9 \u00e0 tous les exports
+// =====================================================================
+function showExportsComptables(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
-    if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal comptable",expCSV);return;}
+    if(typeof requireAdmin==="function"){requireAdmin("Acc\u00e9der aux exports comptables",showExportsComptables);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0});
-  var ps2=PS.filter(function(p){return p.date.indexOf(accM)===0});
-  var rows=["Date;Description;Type;Paiement;Montant"];
-  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);rows.push(a.date+";"+(cl?cName(cl):"")+" - "+(sv?sv.n:"")+";Prestation;"+a.met+";"+a.pr.toFixed(2));});
-  ps2.forEach(function(p){rows.push(p.date+";"+p.prod+";Produit;"+p.met+";"+p.pr.toFixed(2));});
-  var csv="\uFEFF"+rows.join("\n");
-  var blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
-  try{var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="journal_"+accM+".csv";document.body.appendChild(a);a.click();document.body.removeChild(a);}catch(e){var w=window.open("","_blank");if(w){w.document.write("<pre>"+csv+"</pre>");w.document.title="Export CSV";}}
+  var p = accM.split("-");var mL = MO[parseInt(p[1])-1]+" "+p[0];
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
+  var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
+  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
+  var totalCA = 0; dn.forEach(function(a){totalCA+=Number(a.pr)||0;}); ps2.forEach(function(p){totalCA+=Number(p.pr)||0;});
+
+  var h = '<div class="mbox" style="max-width:600px;max-height:90vh;overflow-y:auto">';
+  h += '<h2 style="margin-bottom:8px">\ud83d\udce5 Exports comptables</h2>';
+  h += '<div style="font-size:13px;color:var(--text2);margin-bottom:16px">P\u00e9riode : <strong style="color:var(--gold)">'+mL+'</strong> \u00b7 '+csvNum(totalCA)+'\u20ac TTC \u00b7 '+dn.length+' tickets'+(annul.length?' \u00b7 '+annul.length+' annulations':'')+'</div>';
+
+  // === RECOMMAND\u00c9 : pack ZIP tout-en-un ===
+  h += '<div style="background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.04));border:2px solid var(--gold);border-radius:14px;padding:16px;margin-bottom:16px">';
+  h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:24px">\ud83d\udce6</span><div><div style="font-weight:800;color:var(--gold);font-size:15px">Pack complet pour mon comptable</div><div style="font-size:12px;color:var(--text2);margin-top:2px">ZIP avec tous les fichiers + note explicative \u00b7 \u00e0 envoyer \u00e0 votre cabinet en 1 clic</div></div></div>';
+  h += '<button class="btn" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--gold),#b8960f);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:pointer" onclick="cM();expPackComptable()">\ud83d\udce6 T\u00e9l\u00e9charger le pack ZIP de '+mL+'</button>';
+  h += '</div>';
+
+  // === Exports individuels ===
+  h += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin:10px 0 8px">Exports individuels</div>';
+
+  var exports = [
+    {id:"journal", icon:"\ud83d\udccb", title:"Journal de caisse d\u00e9taill\u00e9", desc:"Toutes les ventes (HT/TVA/TTC, mode paiement, hash NF525) \u2014 format CSV Excel FR", fn:"expCSV", count:dn.length+ps2.length+" lignes"},
+    {id:"tva", icon:"\ud83d\udcb6", title:"R\u00e9cap TVA mensuel", desc:"Pour la d\u00e9claration CA3/CA12 (base HT, TVA collect\u00e9e, total TTC par taux)", fn:"expRecapTVA", count:""},
+    {id:"compta", icon:"\ud83d\udcca", title:"Journal des ventes (format comptable)", desc:"\u00c9critures d\u00e9bit/cr\u00e9dit standard FR (706/707/4457/512). Importable Sage/EBP/Cegid", fn:"expJournalComptable", count:dn.length+ps2.length+" \u00e9critures"},
+    {id:"annul", icon:"\u274c", title:"Annulations & remboursements", desc:"Tickets annul\u00e9s avec motifs NF525 et hash original (obligation l\u00e9gale)", fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")},
+    {id:"stripe", icon:"\ud83d\udcb3", title:"Bordereau acomptes en ligne (Stripe)", desc:"R\u00e9conciliation : montant brut, frais Stripe estim\u00e9s, net re\u00e7u en banque", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")}
+  ];
+
+  exports.forEach(function(e){
+    var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length);
+    h += '<div style="display:flex;align-items:center;gap:12px;padding:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;margin-bottom:6px;'+(disabled?'opacity:.45;':'cursor:pointer;')+'transition:background .15s"'+(disabled?'':' onmouseover="this.style.background=\'rgba(200,168,78,.08)\'" onmouseout="this.style.background=\'rgba(255,255,255,.03)\'" onclick="cM();'+e.fn+'()"')+'>';
+    h += '<div style="font-size:26px;width:38px;text-align:center;flex-shrink:0">'+e.icon+'</div>';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px"><div style="font-weight:700;font-size:13px;color:#fff">'+e.title+'</div>'+(e.count?'<div style="font-size:10px;color:var(--text3);background:rgba(255,255,255,.05);padding:2px 6px;border-radius:4px">'+e.count+'</div>':'')+'</div>';
+    h += '<div style="font-size:11px;color:var(--text2);line-height:1.4">'+e.desc+'</div>';
+    h += '</div>';
+    if(!disabled) h += '<div style="font-size:18px;color:var(--gold)">\u2193</div>';
+    h += '</div>';
+  });
+
+  // === Lien rappel FEC ===
+  h += '<div style="margin-top:14px;padding:12px;background:rgba(156,39,176,.06);border:1px solid rgba(156,39,176,.2);border-radius:10px;font-size:12px;color:var(--text2);line-height:1.5">';
+  h += '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">\ud83d\udee1\ufe0f</span><div><strong style="color:#ce93d8">Pour un contr\u00f4le fiscal :</strong> le <strong>FEC (Fichier des \u00c9critures Comptables)</strong> au format texte l\u00e9gal officiel (arr\u00eat\u00e9 29/07/2013) est disponible dans <a href="javascript:cM();window._settTab=\'nf525\';go(\'settings\')" style="color:var(--gold)">Param\u00e8tres &gt; NF525</a>.</div></div>';
+  h += '</div>';
+
+  // Bouton fermer
+  h += '<button class="btn" style="width:100%;margin-top:14px;background:rgba(255,255,255,.06)" onclick="cM()">Fermer</button>';
+  h += '</div>';
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+// =====================================================================
+// HELPERS CSV \u2014 exports comptables conformes RFC 4180 / Excel FR
+// =====================================================================
+// Format standard FR : s\u00e9parateur ";" (Excel FR) + UTF-8 BOM + CRLF
+// D\u00e9cimal : virgule (Excel FR), 2 d\u00e9cimales pour les montants
+// Dates : ISO YYYY-MM-DD pour tri facile par compta
+
+function csvEscape(v){
+  if(v===null||v===undefined) return "";
+  var s = String(v);
+  // Si contient ";" ou guillemet ou retour ligne \u2192 entourer de guillemets et doubler les guillemets internes
+  if(s.indexOf(";")>=0 || s.indexOf('"')>=0 || s.indexOf("\n")>=0 || s.indexOf("\r")>=0){
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+function csvNum(n, decimals){
+  if(n===null||n===undefined||isNaN(n)) return "";
+  var d = (typeof decimals==="number") ? decimals : 2;
+  // Format FR : virgule d\u00e9cimale, pas de s\u00e9parateur de milliers
+  return Number(n).toFixed(d).replace(".", ",");
+}
+function csvBuild(headerRow, dataRows){
+  // BOM UTF-8 pour Excel + CRLF entre lignes (norme RFC 4180)
+  var lines = [];
+  lines.push(headerRow.map(csvEscape).join(";"));
+  dataRows.forEach(function(row){ lines.push(row.map(csvEscape).join(";")); });
+  return "\uFEFF" + lines.join("\r\n");
+}
+function csvDownload(filename, csvContent){
+  try{
+    var blob = new Blob([csvContent], {type:"text/csv;charset=utf-8;"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+    if(typeof toast==="function") toast("\uD83D\uDCE5 "+filename+" t\u00e9l\u00e9charg\u00e9","success");
+  }catch(e){
+    var w = window.open("", "_blank");
+    if(w){ w.document.write("<pre style='font-family:monospace;font-size:11px'>"+csvContent.replace(/</g,"&lt;")+"</pre>"); w.document.title = filename; }
+  }
+}
+
+// =====================================================================
+// EXPORT 1 : JOURNAL DE CAISSE d\u00e9taill\u00e9 (par ticket / par ligne)
+// =====================================================================
+// Remplace l'ancien expCSV simpliste. Format adapt\u00e9 \u00E0 un comptable :
+// 1 ligne par ticket avec total HT, TVA, TTC + d\u00e9tail des items en colonne suppl\u00e9mentaire.
+function expCSV(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal de caisse",expCSV);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
+  var txTVA = SALON_CONFIG.tauxTVA || 20;
+
+  var headers = [
+    "Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail des prestations",
+    "Total HT (\u20AC)","TVA "+txTVA+"% (\u20AC)","Total TTC (\u20AC)","Remise (\u20AC)",
+    "Mode paiement","Statut","Hash NF525"
+  ];
+  var rows = [];
+
+  dn.forEach(function(a){
+    var sv = gS(a.sId), cl = gC(a.cId), sty = gT(a.stId);
+    var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
+    // D\u00e9tail items
+    var detail = "";
+    if(a.items && a.items.length){
+      detail = a.items.filter(function(it){return !it.isSep;}).map(function(it){
+        return (it.qty>1?(it.qty+"\u00D7 "):"") + (it.name||"") + " ("+csvNum(it.price)+"\u20AC)";
+      }).join(" + ");
+    } else if(sv){
+      detail = sv.n;
+    }
+    var ttc = Number(a.pr) || 0;
+    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
+    var tva = Math.round((ttc-ht)*100)/100;
+    rows.push([
+      a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
+      csvNum(ht), csvNum(tva), csvNum(ttc), csvNum(a.remise||0),
+      a.met||"", a.cancelled?"ANNUL\u00C9":"Encaiss\u00e9", (a.hash||"").slice(0,16)
+    ]);
+  });
+
+  // Lignes ventes produits hors tickets (PS)
+  ps2.forEach(function(p){
+    var ttc = Number(p.pr) || 0;
+    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
+    var tva = Math.round((ttc-ht)*100)/100;
+    rows.push([
+      p.date, p.time||"", p.tkNum||"", "", "", "\uD83D\uDECD "+p.prod,
+      csvNum(ht), csvNum(tva), csvNum(ttc), 0,
+      p.met||"", "Vente produit", ""
+    ]);
+  });
+
+  // Tri par date + heure
+  rows.sort(function(a,b){
+    var d = String(a[0]).localeCompare(String(b[0]));
+    if(d) return d;
+    return String(a[1]).localeCompare(String(b[1]));
+  });
+
+  csvDownload("journal_caisse_"+accM+".csv", csvBuild(headers, rows));
+  if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_CSV","P\u00e9riode "+accM+" - "+rows.length+" lignes");
+}
+
+// =====================================================================
+// EXPORT 2 : R\u00C9CAP TVA mensuel (CA3/CA12)
+// =====================================================================
+// Pour la d\u00e9claration de TVA. D\u00e9tail par taux + r\u00e9cap.
+function expRecapTVA(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le r\u00e9cap TVA",expRecapTVA);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
+  var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var totalTTC = 0;
+  dn.forEach(function(a){ totalTTC += (Number(a.pr)||0); });
+  ps2.forEach(function(p){ totalTTC += (Number(p.pr)||0); });
+  var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
+  var totalTVA = Math.round((totalTTC-totalHT)*100)/100;
+  var nbTickets = dn.length + ps2.length;
+
+  // Section 1 : R\u00e9cap par taux
+  var headers = ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"];
+  var rows = [
+    [txTVA+"%", csvNum(totalHT), csvNum(totalTVA), csvNum(totalTTC), nbTickets]
+  ];
+  // Note micro-entrepreneur si applicable (TVA non applicable art. 293B)
+  var isMicro = String(SALON_CONFIG.formeJur||"").toLowerCase().indexOf("micro")>=0;
+  var lines = csvBuild(headers, rows);
+  if(isMicro){
+    lines += "\r\n\r\n\"\u26A0\uFE0F R\u00e9gime micro-entrepreneur - TVA non applicable, art. 293B du CGI\"";
+    lines += "\r\n\"Si vous d\u00e9passez les seuils de TVA en franchise, contactez votre comptable.\"";
+  }
+  // D\u00e9tail par jour
+  lines += "\r\n\r\n\"=== D\u00e9tail par jour ===\"\r\n";
+  lines += csvEscape("Date")+";"+csvEscape("Base HT")+";"+csvEscape("TVA")+";"+csvEscape("Total TTC")+";"+csvEscape("Nb")+"\r\n";
+  var byDay = {};
+  dn.concat(ps2).forEach(function(x){
+    var d = x.date;
+    if(!byDay[d]) byDay[d] = {ttc:0, n:0};
+    byDay[d].ttc += (Number(x.pr)||0);
+    byDay[d].n++;
+  });
+  Object.keys(byDay).sort().forEach(function(d){
+    var t = byDay[d].ttc;
+    var h = Math.round(t/(1+txTVA/100)*100)/100;
+    var tv = Math.round((t-h)*100)/100;
+    lines += csvEscape(d)+";"+csvNum(h)+";"+csvNum(tv)+";"+csvNum(t)+";"+byDay[d].n+"\r\n";
+  });
+
+  csvDownload("recap_tva_"+accM+".csv", lines);
+  if(typeof auditLog==="function") auditLog("EXPORT_RECAP_TVA","P\u00e9riode "+accM+" - HT "+csvNum(totalHT)+" TVA "+csvNum(totalTVA));
+}
+
+// =====================================================================
+// EXPORT 3 : JOURNAL DES VENTES format comptable (\u00e9critures d\u00e9bit/cr\u00e9dit)
+// =====================================================================
+// Format \u00E0 importer dans logiciel comptable (Sage, EBP, Cegid, Quadratus, ...)
+// 1 \u00e9criture par ticket avec ventilation : 707 ventes / 4457 TVA collect\u00e9e / 5XX banque-caisse
+function expJournalComptable(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal comptable",expJournalComptable);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
+  var txTVA = SALON_CONFIG.tauxTVA || 20;
+
+  // Mapping mode paiement \u2192 compte g\u00e9n\u00e9ral (plan comptable g\u00e9n\u00e9ral FR)
+  function compteContrePartie(met){
+    var m = String(met||"").toLowerCase();
+    if(m.indexOf("cb")>=0 || m.indexOf("carte")>=0) return "512100"; // Banque - encaissements CB
+    if(m.indexOf("esp")>=0 || m.indexOf("cash")>=0) return "530000"; // Caisse
+    if(m.indexOf("cheq")>=0 || m.indexOf("ch\u00e8q")>=0) return "511200"; // Ch\u00e8ques \u00E0 encaisser
+    if(m.indexOf("vir")>=0) return "512000"; // Banque - virements
+    return "511000"; // Banque (g\u00e9n\u00e9rique)
+  }
+
+  var headers = [
+    "JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib",
+    "PieceRef","PieceDate","EcritureLib","Debit","Credit","Lettrage","ModePaiement"
+  ];
+  var rows = [];
+  var ecrNum = 1;
+
+  function pushTicket(date, num, libelle, ttc, ht, tva, met, type){
+    var contrep = compteContrePartie(met);
+    var compteVente = type==="produit" ? "707000" : "706000"; // 706 prestations services, 707 ventes marchandises
+    var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
+    // Ligne 1 : D\u00e9bit banque/caisse au TTC
+    rows.push(["VE","Ventes",ecrNum,date,contrep,compteContrePartie.libs?compteContrePartie.libs[contrep]:contrep,num||"",date,lib,csvNum(ttc),"","",met||""]);
+    // Ligne 2 : Cr\u00e9dit ventes au HT
+    rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
+    // Ligne 3 : Cr\u00e9dit TVA collect\u00e9e (si applicable)
+    if(tva > 0){
+      var compteTVA = "445710"; // TVA collect\u00e9e 20%
+      if(txTVA===10) compteTVA = "445720";
+      else if(txTVA===5.5) compteTVA = "445730";
+      rows.push(["VE","Ventes",ecrNum,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);
+    }
+    ecrNum++;
+  }
+
+  dn.forEach(function(a){
+    var sv = gS(a.sId), cl = gC(a.cId);
+    var clNom = cl ? cName(cl) : "Passage";
+    var libelle = clNom + (sv?" - "+sv.n:"");
+    var ttc = Number(a.pr)||0;
+    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
+    var tva = Math.round((ttc-ht)*100)/100;
+    pushTicket(a.date, "TK"+(a.tkNum||""), libelle, ttc, ht, tva, a.met, "service");
+  });
+  ps2.forEach(function(p){
+    var ttc = Number(p.pr)||0;
+    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
+    var tva = Math.round((ttc-ht)*100)/100;
+    pushTicket(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, tva, p.met, "produit");
+  });
+
+  csvDownload("journal_comptable_"+accM+".csv", csvBuild(headers, rows));
+  if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_COMPTABLE","P\u00e9riode "+accM+" - "+(ecrNum-1)+" \u00e9critures");
+}
+
+// =====================================================================
+// EXPORT 4 : LISTE ANNULATIONS & REMBOURSEMENTS
+// =====================================================================
+// NF525 : trace tous les tickets annul\u00e9s avec motifs
+function expAnnulations(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter les annulations",expAnnulations);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var annul = AP.filter(function(a){
+    return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;
+  });
+  var headers = ["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC (\u20AC)","Motif NF525","Hash original"];
+  var rows = annul.map(function(a){
+    var sv = gS(a.sId), cl = gC(a.cId);
+    var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
+    return [
+      a.date, a.time||"", a.tkNum||"", a.cancelDate||"", clNom, sv?sv.n:"",
+      csvNum(a.pr||0), a.cancelReason||"(non pr\u00e9cis\u00e9)", (a.hash||"").slice(0,16)
+    ];
+  });
+  csvDownload("annulations_"+accM+".csv", csvBuild(headers, rows));
+  if(typeof auditLog==="function") auditLog("EXPORT_ANNULATIONS","P\u00e9riode "+accM+" - "+rows.length+" annulations");
+}
+
+// =====================================================================
+// EXPORT 5 : BORDEREAU PAIEMENTS EN LIGNE (Stripe Connect)
+// =====================================================================
+// R\u00e9conciliation des acomptes pay\u00e9s en ligne sur les RDV
+function expBordereauStripe(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le bordereau Stripe",expBordereauStripe);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){
+    return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;
+  });
+  var headers = ["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte (\u20AC)","Frais Stripe estim\u00e9s (1,4%+0,25\u20AC)","Net re\u00E7u (\u20AC)","Statut RDV","ID Stripe"];
+  var totalBrut = 0, totalFrais = 0, totalNet = 0;
+  var rows = rdvOnline.map(function(r){
+    var brut = Number(r.acompte)||0;
+    var frais = Math.round((brut*0.014 + 0.25)*100)/100;
+    var net = Math.round((brut - frais)*100)/100;
+    totalBrut += brut; totalFrais += frais; totalNet += net;
+    return [
+      r.date, r.heure||"", (r.nom||"")+" "+(r.prenom||""), r.tel||"",
+      r.svcNom||"", csvNum(brut), csvNum(frais), csvNum(net),
+      r.status||"", r.stripePaymentId||""
+    ];
+  });
+  // Ligne total
+  rows.push(["","","","","TOTAL", csvNum(totalBrut), csvNum(totalFrais), csvNum(totalNet), rdvOnline.length+" RDV", ""]);
+  csvDownload("bordereau_stripe_"+accM+".csv", csvBuild(headers, rows));
+  if(typeof auditLog==="function") auditLog("EXPORT_BORDEREAU_STRIPE","P\u00e9riode "+accM+" - "+rdvOnline.length+" acomptes - Brut "+csvNum(totalBrut));
+}
+
+// =====================================================================
+// EXPORT 6 : PACK ZIP "POUR MON COMPTABLE" \u2014 tout en 1 clic
+// =====================================================================
+// G\u00e9n\u00e8re et t\u00e9l\u00e9charge un ZIP contenant tous les exports utiles pour la
+// transmission mensuelle au cabinet comptable.
+async function expPackComptable(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le pack comptable",expPackComptable);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  // Charger JSZip via CDN si pas d\u00e9j\u00E0 l\u00E0
+  if(typeof JSZip==="undefined"){
+    if(typeof toast==="function") toast("Chargement de l'outil ZIP\u2026","info");
+    await new Promise(function(resolve, reject){
+      var s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  var zip = new JSZip();
+  var folder = zip.folder("Luxyra_compta_"+accM);
+
+  // Helper : run un export et capture le contenu (au lieu de download)
+  // On va dupliquer la logique des 4 exports en y mettant le contenu dans le ZIP.
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
+  var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
+  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
+  var txTVA = SALON_CONFIG.tauxTVA||20;
+
+  // 1. Journal de caisse d\u00e9taill\u00e9
+  var hJournal = ["Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail","Total HT (\u20AC)","TVA "+txTVA+"% (\u20AC)","Total TTC (\u20AC)","Remise (\u20AC)","Mode paiement","Statut","Hash NF525"];
+  var rJournal = [];
+  dn.forEach(function(a){
+    var sv=gS(a.sId), cl=gC(a.cId), sty=gT(a.stId);
+    var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
+    var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"\u00D7 "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
+    var ttc=Number(a.pr)||0; var ht=Math.round(ttc/(1+txTVA/100)*100)/100; var tva=Math.round((ttc-ht)*100)/100;
+    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),a.met||"","Encaiss\u00e9",(a.hash||"").slice(0,16)]);
+  });
+  ps2.forEach(function(p){
+    var ttc=Number(p.pr)||0; var ht=Math.round(ttc/(1+txTVA/100)*100)/100; var tva=Math.round((ttc-ht)*100)/100;
+    rJournal.push([p.date,p.time||"",p.tkNum||"","","","\uD83D\uDECD "+p.prod,csvNum(ht),csvNum(tva),csvNum(ttc),0,p.met||"","Vente produit",""]);
+  });
+  rJournal.sort(function(a,b){var d=String(a[0]).localeCompare(String(b[0]));return d?d:String(a[1]).localeCompare(String(b[1]));});
+  folder.file("01_journal_caisse_"+accM+".csv", csvBuild(hJournal, rJournal));
+
+  // 2. R\u00e9cap TVA
+  var totalTTC = 0;
+  dn.forEach(function(a){totalTTC += (Number(a.pr)||0);});
+  ps2.forEach(function(p){totalTTC += (Number(p.pr)||0);});
+  var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
+  var totalTVA = Math.round((totalTTC-totalHT)*100)/100;
+  var tvaContent = csvBuild(
+    ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"],
+    [[txTVA+"%",csvNum(totalHT),csvNum(totalTVA),csvNum(totalTTC),(dn.length+ps2.length)]]
+  );
+  var isMicro = String(SALON_CONFIG.formeJur||"").toLowerCase().indexOf("micro")>=0;
+  if(isMicro){
+    tvaContent += "\r\n\r\n\"\u26A0\uFE0F R\u00e9gime micro-entrepreneur - TVA non applicable, art. 293B du CGI\"";
+  }
+  folder.file("02_recap_tva_"+accM+".csv", tvaContent);
+
+  // 3. Journal comptable (\u00e9critures d\u00e9bit/cr\u00e9dit)
+  var hCompta = ["JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib","PieceRef","PieceDate","EcritureLib","Debit","Credit","Lettrage","ModePaiement"];
+  var rCompta = [];
+  var ecrNum2 = 1;
+  function compte(met){var m=String(met||"").toLowerCase();if(m.indexOf("cb")>=0||m.indexOf("carte")>=0)return "512100";if(m.indexOf("esp")>=0||m.indexOf("cash")>=0)return "530000";if(m.indexOf("cheq")>=0||m.indexOf("ch\u00e8q")>=0)return "511200";if(m.indexOf("vir")>=0)return "512000";return "511000";}
+  function pushEcr(date, num, libelle, ttc, ht, tva, met, type){
+    var compteVente = type==="produit"?"707000":"706000";
+    var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
+    rCompta.push(["VE","Ventes",ecrNum2,date,compte(met),"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
+    rCompta.push(["VE","Ventes",ecrNum2,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
+    if(tva>0){var compteTVA="445710";if(txTVA===10)compteTVA="445720";else if(txTVA===5.5)compteTVA="445730";rCompta.push(["VE","Ventes",ecrNum2,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);}
+    ecrNum2++;
+  }
+  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
+  ps2.forEach(function(p){var ttc=Number(p.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(p.date,"PR"+(p.tkNum||""),p.prod||"Vente produit",ttc,ht,tva,p.met,"produit");});
+  folder.file("03_journal_comptable_"+accM+".csv", csvBuild(hCompta, rCompta));
+
+  // 4. Annulations
+  if(annul.length){
+    var rAnnul = annul.map(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";return [a.date,a.time||"",a.tkNum||"",a.cancelDate||"",clNom,sv?sv.n:"",csvNum(a.pr||0),a.cancelReason||"(non pr\u00e9cis\u00e9)",(a.hash||"").slice(0,16)];});
+    folder.file("04_annulations_"+accM+".csv", csvBuild(["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC","Motif NF525","Hash"], rAnnul));
+  }
+
+  // 5. Bordereau Stripe (si acomptes en ligne)
+  if(rdvOnline.length){
+    var totalBrut2=0,totalFrais2=0,totalNet2=0;
+    var rStripe = rdvOnline.map(function(r){var brut=Number(r.acompte)||0;var frais=Math.round((brut*0.014+0.25)*100)/100;var net=Math.round((brut-frais)*100)/100;totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),r.status||"",r.stripePaymentId||""];});
+    rStripe.push(["","","","","TOTAL",csvNum(totalBrut2),csvNum(totalFrais2),csvNum(totalNet2),rdvOnline.length+" RDV",""]);
+    folder.file("05_bordereau_stripe_"+accM+".csv", csvBuild(["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte","Frais Stripe","Net re\u00E7u","Statut","ID Stripe"], rStripe));
+  }
+
+  // 6. Note explicative
+  var note = "PACK COMPTABLE LUXYRA \u2014 "+accM+"\r\n";
+  note += "Salon : "+(SALON_CONFIG.nom||"")+"\r\n";
+  note += "SIRET : "+(SALON_CONFIG.siret||"non renseign\u00e9")+"\r\n";
+  note += "Forme juridique : "+(SALON_CONFIG.formeJur||"non pr\u00e9cis\u00e9e")+"\r\n";
+  note += "P\u00e9riode : "+accM+"\r\n";
+  note += "G\u00e9n\u00e9r\u00e9 le : "+new Date().toLocaleString("fr-FR")+"\r\n\r\n";
+  note += "===== CONTENU DU PACK =====\r\n";
+  note += "01_journal_caisse_"+accM+".csv : journal d\u00e9taill\u00e9 tous les tickets/ventes\r\n";
+  note += "02_recap_tva_"+accM+".csv : r\u00e9capitulatif TVA pour d\u00e9claration\r\n";
+  note += "03_journal_comptable_"+accM+".csv : \u00e9critures comptables au format standard FR\r\n";
+  if(annul.length) note += "04_annulations_"+accM+".csv : tickets annul\u00e9s (motifs NF525)\r\n";
+  if(rdvOnline.length) note += "05_bordereau_stripe_"+accM+".csv : acomptes en ligne (r\u00e9conciliation)\r\n";
+  note += "\r\n===== TOTAUX =====\r\n";
+  note += "CA TTC : "+csvNum(totalTTC)+" \u20AC\r\n";
+  note += "CA HT : "+csvNum(totalHT)+" \u20AC\r\n";
+  note += "TVA collect\u00e9e : "+csvNum(totalTVA)+" \u20AC\r\n";
+  note += "Tickets : "+dn.length+"\r\n";
+  note += "Ventes produits hors tickets : "+ps2.length+"\r\n";
+  note += "Annulations : "+annul.length+"\r\n";
+  if(rdvOnline.length) note += "Acomptes en ligne : "+rdvOnline.length+"\r\n";
+  note += "\r\n===== CONFORMIT\u00C9 =====\r\n";
+  note += "Caisse certifi\u00e9e NF525 (cha\u00EEnage SHA-256)\r\n";
+  note += "Pour le FEC officiel (contr\u00F4le fiscal), voir Param\u00e8tres > NF525 > Export FEC\r\n";
+  if(isMicro){
+    note += "\r\n\u26A0\uFE0F TVA non applicable, art. 293B du CGI (r\u00e9gime micro-entrepreneur)\r\n";
+    note += "Si vous d\u00e9passez les seuils de franchise TVA, contactez votre comptable.\r\n";
+  }
+  folder.file("00_LISEZ-MOI.txt", note);
+
+  // G\u00e9n\u00e9ration + download du ZIP
+  if(typeof toast==="function") toast("Cr\u00e9ation du pack ZIP\u2026","info");
+  var blob = await zip.generateAsync({type:"blob", compression:"DEFLATE"});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = "Luxyra_compta_"+accM+".zip";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);}, 5000);
+  if(typeof toast==="function") toast("\uD83D\uDCE6 Pack comptable t\u00e9l\u00e9charg\u00e9 !","success");
+  if(typeof auditLog==="function") auditLog("EXPORT_PACK_COMPTABLE","P\u00e9riode "+accM+" - 6 fichiers");
 }
 
 function printBandeZ(){
