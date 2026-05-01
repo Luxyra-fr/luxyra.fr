@@ -13957,6 +13957,390 @@ function rAccounting(){
 function chM(d){var p=accM.split("-").map(Number);var nd=new Date(p[0],p[1]-1+d,1);accM=nd.getFullYear()+"-"+String(nd.getMonth()+1).padStart(2,"0");go("accounting");}
 
 // =====================================================================
+// HELPERS : navigation mois pour modal exports
+// =====================================================================
+function _prevMonth(ym){
+  var p = String(ym||"").split("-");
+  var d = new Date(parseInt(p[0])||2026, (parseInt(p[1])||1)-1, 1);
+  d.setMonth(d.getMonth()-1);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+}
+function _nextMonth(ym){
+  var p = String(ym||"").split("-");
+  var d = new Date(parseInt(p[0])||2026, (parseInt(p[1])||1)-1, 1);
+  d.setMonth(d.getMonth()+1);
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+}
+
+// =====================================================================
+// EXPORT PDF : RAPPORT COMPLET MENSUEL
+// =====================================================================
+// G\u00e9n\u00e8re un rapport PDF imprimable avec :
+// - Header salon (nom, SIRET, p\u00e9riode)
+// - Synth\u00e8se (totaux CA, HT, TVA, nb tickets)
+// - R\u00e9partition par collaborateur
+// - D\u00e9tail par jour
+// - D\u00e9tail par mode de paiement
+// - Liste annulations
+// - Mentions l\u00e9gales NF525 + 293B si micro
+// Helper : g\u00e9n\u00e8re le HTML du rapport (utilis\u00e9 par expRapportComptablePDF + expPackComptable)
+function _buildRapportHTML(periodM){
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(periodM)===0 && !a.cancelled;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(periodM)===0;});
+  var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(periodM)===0;});
+  var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var isMicro = isMicroEntrepreneur();
+  var p = periodM.split("-");var mLabel = MO[parseInt(p[1])-1]+" "+p[0];
+
+  var totalTTC = 0, totalCB = 0, totalEsp = 0, totalCheq = 0, totalVir = 0, totalAutre = 0, totalRemises = 0;
+  dn.forEach(function(a){
+    totalTTC += Number(a.pr)||0;
+    totalRemises += Number(a.remise)||0;
+    var m = String(a.met||"").toLowerCase();
+    if(m.indexOf("cb")>=0||m.indexOf("carte")>=0) totalCB += Number(a.pr)||0;
+    else if(m.indexOf("esp")>=0||m.indexOf("cash")>=0) totalEsp += Number(a.pr)||0;
+    else if(m.indexOf("cheq")>=0||m.indexOf("ch\u00e8q")>=0) totalCheq += Number(a.pr)||0;
+    else if(m.indexOf("vir")>=0) totalVir += Number(a.pr)||0;
+    else totalAutre += Number(a.pr)||0;
+  });
+  ps2.forEach(function(pp){
+    totalTTC += Number(pp.pr)||0;
+    var m = String(pp.met||"").toLowerCase();
+    if(m.indexOf("cb")>=0) totalCB += Number(pp.pr)||0;
+    else if(m.indexOf("esp")>=0) totalEsp += Number(pp.pr)||0;
+    else if(m.indexOf("cheq")>=0) totalCheq += Number(pp.pr)||0;
+    else if(m.indexOf("vir")>=0) totalVir += Number(pp.pr)||0;
+    else totalAutre += Number(pp.pr)||0;
+  });
+  var totalHT = isMicro ? totalTTC : Math.round(totalTTC/(1+txTVA/100)*100)/100;
+  var totalTVA = isMicro ? 0 : Math.round((totalTTC-totalHT)*100)/100;
+  var totalAnnul = 0; annul.forEach(function(a){ totalAnnul += Number(a.pr)||0; });
+  var nbTickets = dn.length + ps2.length;
+
+  var perStyAcc = {};
+  T.forEach(function(t){perStyAcc[t.id]={n:t.n,ca:0,nb:0,rem:0};});
+  dn.forEach(function(a){
+    var dist = (typeof caPerCollabForAppt === "function") ? caPerCollabForAppt(a) : null;
+    if(dist && Object.keys(dist).length){
+      Object.keys(dist).forEach(function(sid){
+        var key=+sid; if(!perStyAcc[key]) key=sid;
+        if(perStyAcc[key]) perStyAcc[key].ca += dist[sid];
+      });
+      if(perStyAcc[a.stId]){ perStyAcc[a.stId].nb++; perStyAcc[a.stId].rem += (a.remise||0); }
+    } else if(perStyAcc[a.stId]){ perStyAcc[a.stId].ca += a.pr; perStyAcc[a.stId].nb++; perStyAcc[a.stId].rem += (a.remise||0); }
+  });
+
+  var byDay = {};
+  dn.concat(ps2).forEach(function(x){
+    var d = x.date;
+    if(!byDay[d]) byDay[d] = {ttc:0, n:0};
+    byDay[d].ttc += Number(x.pr)||0;
+    byDay[d].n++;
+  });
+
+  function fmtMoney(n){return Number(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" \u20ac";}
+  function fmtDate(d){var dp=d.split("-");return dp[2]+"/"+dp[1]+"/"+dp[0];}
+
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport comptable '+mLabel+' \u2014 '+(SALON_CONFIG.nom||"")+'</title>';
+  html += '<style>';
+  html += '@page{size:A4;margin:14mm}';
+  html += 'body{font-family:Arial,sans-serif;color:#000;font-size:11px;line-height:1.4;margin:0;background:#fff}';
+  html += 'h1{font-size:18px;margin:0 0 4px;color:#c8a84e;border-bottom:2px solid #c8a84e;padding-bottom:6px}';
+  html += 'h2{font-size:13px;margin:14px 0 6px;color:#1a1a1a;background:#f0e8d0;padding:5px 10px;border-left:3px solid #c8a84e}';
+  html += '.header-info{display:flex;justify-content:space-between;font-size:10px;color:#555;margin-bottom:14px}';
+  html += '.salon-meta{font-size:10px;color:#666;line-height:1.6;margin-bottom:8px}';
+  html += 'table{width:100%;border-collapse:collapse;margin:6px 0;font-size:10px}';
+  html += 'th,td{padding:5px 8px;text-align:left;border-bottom:1px solid #ddd}';
+  html += 'th{background:#f5f5f5;font-weight:700;font-size:9px;text-transform:uppercase;letter-spacing:.5px}';
+  html += 'td.num{text-align:right;font-variant-numeric:tabular-nums}';
+  html += 'tr.tot td{font-weight:700;border-top:2px solid #000;background:#fafaf2}';
+  html += '.kpi-row{display:flex;gap:8px;margin:10px 0}';
+  html += '.kpi{flex:1;padding:10px;border:1px solid #ccc;border-radius:6px;text-align:center;background:#fafafa}';
+  html += '.kpi-v{font-size:18px;font-weight:900;color:#c8a84e;display:block}';
+  html += '.kpi-l{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:.5px}';
+  html += '.footer{margin-top:24px;padding-top:10px;border-top:1px solid #ccc;font-size:9px;color:#666;line-height:1.6}';
+  html += '.warning{background:#fff7e6;border-left:3px solid #fb923c;padding:6px 10px;font-size:10px;margin:8px 0}';
+  html += '.print-btn{position:fixed;top:10px;right:10px;padding:10px 16px;background:#c8a84e;color:#000;font-weight:700;border:none;border-radius:6px;cursor:pointer;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.2)}';
+  html += '@media print{.print-btn{display:none}}';
+  html += '</style></head><body>';
+  html += '<button class="print-btn" onclick="window.print()">\ud83d\udda8 Imprimer / Sauvegarder en PDF</button>';
+
+  html += '<h1>\ud83d\udcca RAPPORT COMPTABLE \u2014 '+mLabel.toUpperCase()+'</h1>';
+  html += '<div class="header-info">';
+  html += '<div class="salon-meta"><strong>'+(SALON_CONFIG.nom||"")+'</strong>';
+  if(SALON_CONFIG.adresse) html += '<br>'+SALON_CONFIG.adresse+(SALON_CONFIG.cp?', '+SALON_CONFIG.cp:'')+(SALON_CONFIG.ville?' '+SALON_CONFIG.ville:'');
+  if(SALON_CONFIG.siret) html += '<br>SIRET : '+SALON_CONFIG.siret;
+  if(SALON_CONFIG.formeJur) html += '<br>'+SALON_CONFIG.formeJur;
+  html += '</div>';
+  html += '<div style="text-align:right;font-size:10px;color:#666">';
+  html += '\u00c9dit\u00e9 le '+new Date().toLocaleDateString("fr-FR")+'<br>';
+  html += 'P\u00e9riode : '+mLabel+'<br>';
+  html += 'Caisse certifi\u00e9e NF525';
+  html += '</div></div>';
+
+  if(isMicro) html += '<div class="warning">\ud83d\udccb <strong>R\u00e9gime micro-entrepreneur</strong> \u2014 TVA non applicable, art. 293B du CGI</div>';
+  if(nbTickets===0){
+    html += '<div class="warning" style="background:#fee;border-color:#f87171;color:#c33">\u26a0\ufe0f Aucun ticket encaiss\u00e9 sur cette p\u00e9riode. Le rapport ne contient aucune donn\u00e9e \u00e0 analyser.</div>';
+  }
+
+  html += '<h2>1. Synth\u00e8se de la p\u00e9riode</h2>';
+  html += '<div class="kpi-row">';
+  html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalTTC)+'</span><span class="kpi-l">CA '+(isMicro?'brut':'TTC')+'</span></div>';
+  if(!isMicro){
+    html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalHT)+'</span><span class="kpi-l">CA HT</span></div>';
+    html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalTVA)+'</span><span class="kpi-l">TVA collect\u00e9e</span></div>';
+  }
+  html += '<div class="kpi"><span class="kpi-v">'+nbTickets+'</span><span class="kpi-l">Tickets</span></div>';
+  html += '</div>';
+  if(annul.length){
+    html += '<div style="font-size:10px;color:#999;margin-top:4px">\u21b3 Hors '+annul.length+' annulation'+(annul.length>1?'s':'')+' ('+fmtMoney(totalAnnul)+')</div>';
+  }
+
+  html += '<h2>2. Ventilation par mode de paiement</h2>';
+  html += '<table>';
+  html += '<tr><th>Mode</th><th class="num">Montant</th><th class="num">Part</th></tr>';
+  function pctRow(label, val){
+    if(val<=0) return '';
+    var pct = totalTTC>0 ? (val/totalTTC*100).toFixed(1) : '0.0';
+    return '<tr><td>'+label+'</td><td class="num">'+fmtMoney(val)+'</td><td class="num">'+pct+' %</td></tr>';
+  }
+  html += pctRow('\ud83d\udcb3 Carte bancaire', totalCB);
+  html += pctRow('\ud83d\udcb5 Esp\u00e8ces', totalEsp);
+  html += pctRow('\ud83d\udcdd Ch\u00e8que', totalCheq);
+  html += pctRow('\ud83c\udfe6 Virement', totalVir);
+  html += pctRow('Autre', totalAutre);
+  html += '<tr class="tot"><td>Total</td><td class="num">'+fmtMoney(totalTTC)+'</td><td class="num">100,0 %</td></tr>';
+  html += '</table>';
+
+  if(T && T.length){
+    html += '<h2>3. R\u00e9partition par collaborateur</h2>';
+    html += '<table><tr><th>Collaborateur</th><th class="num">CA '+(isMicro?'brut':'TTC')+'</th>'+(!isMicro?'<th class="num">HT</th><th class="num">TVA</th>':'')+'<th class="num">Tickets</th><th class="num">Remises</th></tr>';
+    T.forEach(function(t){
+      var s = perStyAcc[t.id]; if(!s) return;
+      var sht = isMicro ? s.ca : Math.round(s.ca/(1+txTVA/100)*100)/100;
+      var stva = isMicro ? 0 : Math.round((s.ca-sht)*100)/100;
+      html += '<tr>';
+      html += '<td>'+s.n+'</td>';
+      html += '<td class="num">'+fmtMoney(s.ca)+'</td>';
+      if(!isMicro){
+        html += '<td class="num">'+fmtMoney(sht)+'</td>';
+        html += '<td class="num">'+fmtMoney(stva)+'</td>';
+      }
+      html += '<td class="num">'+s.nb+'</td>';
+      html += '<td class="num">'+(s.rem>0?fmtMoney(s.rem):'\u2014')+'</td>';
+      html += '</tr>';
+    });
+    html += '</table>';
+  }
+
+  html += '<h2>4. D\u00e9tail jour par jour</h2>';
+  if(Object.keys(byDay).length===0){
+    html += '<p style="color:#999;font-style:italic">Aucune transaction sur la p\u00e9riode.</p>';
+  } else {
+    html += '<table><tr><th>Date</th><th class="num">Tickets</th><th class="num">CA '+(isMicro?'brut':'TTC')+'</th>'+(!isMicro?'<th class="num">HT</th><th class="num">TVA</th>':'')+'</tr>';
+    Object.keys(byDay).sort().forEach(function(d){
+      var t = byDay[d].ttc;
+      var ht = isMicro ? t : Math.round(t/(1+txTVA/100)*100)/100;
+      var tv = isMicro ? 0 : Math.round((t-ht)*100)/100;
+      html += '<tr>';
+      html += '<td>'+fmtDate(d)+'</td>';
+      html += '<td class="num">'+byDay[d].n+'</td>';
+      html += '<td class="num">'+fmtMoney(t)+'</td>';
+      if(!isMicro){
+        html += '<td class="num">'+fmtMoney(ht)+'</td>';
+        html += '<td class="num">'+fmtMoney(tv)+'</td>';
+      }
+      html += '</tr>';
+    });
+    html += '<tr class="tot"><td>Total</td><td class="num">'+nbTickets+'</td><td class="num">'+fmtMoney(totalTTC)+'</td>';
+    if(!isMicro) html += '<td class="num">'+fmtMoney(totalHT)+'</td><td class="num">'+fmtMoney(totalTVA)+'</td>';
+    html += '</tr></table>';
+  }
+
+  if(annul.length){
+    html += '<h2>5. Annulations (NF525)</h2>';
+    html += '<table><tr><th>Date orig.</th><th>N\u00b0 Tk</th><th>Date annul.</th><th>Motif</th><th class="num">Montant</th></tr>';
+    annul.forEach(function(a){
+      html += '<tr>';
+      html += '<td>'+fmtDate(a.date)+'</td>';
+      html += '<td>'+(a.tkNum||'\u2014')+'</td>';
+      html += '<td>'+fmtDate(a.cancelDate)+'</td>';
+      html += '<td style="font-size:9px">'+(a.cancelReason||'(non pr\u00e9cis\u00e9)').slice(0,60)+'</td>';
+      html += '<td class="num">'+fmtMoney(a.pr||0)+'</td>';
+      html += '</tr>';
+    });
+    html += '</table>';
+  }
+
+  html += '<div class="footer">';
+  html += '<strong>Document \u00e9dit\u00e9 par Luxyra v'+(SALON_CONFIG.version||"6.3")+'</strong> \u2014 Caisse certifi\u00e9e NF525 (cha\u00eenage SHA-256)<br>';
+  if(isMicro) html += 'R\u00e9gime micro-entrepreneur \u2014 TVA non applicable, art. 293B du CGI<br>';
+  else html += 'Taux TVA appliqu\u00e9 : '+txTVA+'%<br>';
+  html += 'Pour le contr\u00f4le fiscal : utilisez l\'export FEC (Param\u00e8tres &gt; NF525) \u2014 format l\u00e9gal arr\u00eat\u00e9 du 29/07/2013<br>';
+  html += '<em>Conservation obligatoire 6 ans (CGI art. L102B)</em>';
+  html += '</div></body></html>';
+  return html;
+}
+
+function expRapportComptablePDF(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Imprimer le rapport comptable",expRapportComptablePDF);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var html = _buildRapportHTML(accM);
+  var w = window.open("", "_blank");
+  if(!w){ alert("Impossible d'ouvrir la fen\u00eatre. Autorisez les pop-ups."); return; }
+  w.document.write(html);
+  w.document.close();
+  if(typeof auditLog==="function") auditLog("EXPORT_RAPPORT_PDF","P\u00e9riode "+accM);
+  if(typeof toast==="function") toast("\ud83d\udcc4 Rapport ouvert. Cliquez sur \ud83d\udda8 pour sauvegarder en PDF.","success");
+}
+
+// =====================================================================
+// HELPER : d\u00e9tection r\u00e9gime micro-entrepreneur
+// =====================================================================
+// Un salon est consid\u00e9r\u00e9 micro-entrepreneur si :
+//   - sa forme juridique contient "micro" (ex: "micro-entreprise", "micro-entrepreneur"), OU
+//   - son taux TVA est explicitement \u00e0 0 (franchise en base TVA)
+function isMicroEntrepreneur(){
+  var formeJur = String(SALON_CONFIG.formeJur || "").toLowerCase();
+  if(formeJur.indexOf("micro") >= 0 || formeJur.indexOf("auto-entrepreneur") >= 0 || formeJur === "ae" || formeJur === "ei") return true;
+  if(Number(SALON_CONFIG.tauxTVA) === 0) return true;
+  return false;
+}
+
+// Seuils micro-entrepreneur 2024-2026 (\u00e0 mettre \u00e0 jour si la loi change)
+var MICRO_SEUILS = {
+  // Plafond CA pour rester en micro (au-del\u00e0 \u2192 bascule r\u00e9gime r\u00e9el)
+  ca_services: 77700,        // BIC services + BNC
+  ca_ventes:   188700,       // ventes marchandises + restauration
+  // Plafond franchise en base TVA (au-del\u00e0 \u2192 TVA obligatoire)
+  tva_services: 36800,       // 39100\u20ac avec tol\u00e9rance 1\u00e8re ann\u00e9e
+  tva_ventes:   91900,       // 101000\u20ac avec tol\u00e9rance 1\u00e8re ann\u00e9e
+  // Tol\u00e9rance majoration (limite haute)
+  tva_services_max: 39100,
+  tva_ventes_max:   101000
+};
+
+// Calcule le CA YTD (year-to-date) pour les seuils micro
+function getCAYearToDate(){
+  var year = new Date().getFullYear();
+  var prefix = year + "-";
+  var totalSvc = 0, totalProd = 0;
+  AP.filter(function(a){return a.st==="done" && !a.cancelled && a.date.indexOf(prefix)===0;})
+    .forEach(function(a){
+      // Distinguer prestation vs vente produit selon les items
+      if(a.items && a.items.length){
+        a.items.forEach(function(it){
+          if(it.isProd) totalProd += (Number(it.price)||0)*(Number(it.qty)||1);
+          else totalSvc += (Number(it.price)||0)*(Number(it.qty)||1);
+        });
+      } else {
+        totalSvc += Number(a.pr)||0;
+      }
+    });
+  PS.filter(function(p){return p.date.indexOf(prefix)===0;}).forEach(function(p){
+    totalProd += Number(p.pr)||0;
+  });
+  return {
+    services: Math.round(totalSvc * 100) / 100,
+    ventes: Math.round(totalProd * 100) / 100,
+    total: Math.round((totalSvc + totalProd) * 100) / 100,
+    year: year
+  };
+}
+
+// Statut des seuils micro : ok / warning / danger
+function getMicroSeuilsStatus(){
+  if(!isMicroEntrepreneur()) return null;
+  var ca = getCAYearToDate();
+  // M\u00e9tier : on consid\u00e8re que les services sont l'activit\u00e9 principale (cas Luxyra)
+  // \u2192 on regarde principalement les seuils services
+  var ratioCa = ca.services / MICRO_SEUILS.ca_services;
+  var ratioTva = ca.services / MICRO_SEUILS.tva_services;
+  var status = "ok";
+  var alerts = [];
+  if(ratioTva >= 1){
+    status = "danger";
+    alerts.push("Seuil TVA d\u00e9pass\u00e9 ("+ca.services.toFixed(0)+"\u20ac \u2265 "+MICRO_SEUILS.tva_services+"\u20ac) \u2014 vous devez collecter la TVA");
+  } else if(ratioTva >= 0.85){
+    status = "warning";
+    alerts.push("Vous approchez le seuil TVA ("+(ratioTva*100).toFixed(0)+"%) \u2014 bascule \u00e0 "+MICRO_SEUILS.tva_services+"\u20ac");
+  }
+  if(ratioCa >= 1){
+    status = "danger";
+    alerts.push("Seuil r\u00e9gime micro d\u00e9pass\u00e9 ("+ca.services.toFixed(0)+"\u20ac \u2265 "+MICRO_SEUILS.ca_services+"\u20ac) \u2014 bascule r\u00e9gime r\u00e9el obligatoire");
+  } else if(ratioCa >= 0.85){
+    if(status==="ok") status = "warning";
+    alerts.push("Vous approchez le seuil micro ("+(ratioCa*100).toFixed(0)+"%) \u2014 bascule \u00e0 "+MICRO_SEUILS.ca_services+"\u20ac");
+  }
+  return { ca: ca, status: status, alerts: alerts, ratioCa: ratioCa, ratioTva: ratioTva };
+}
+
+// =====================================================================
+// EXPORT 7 : D\u00c9CLARATION URSSAF (auto-entrepreneur uniquement)
+// =====================================================================
+// R\u00e9cap simple du CA pour reporter dans la d\u00e9claration mensuelle/trimestrielle URSSAF.
+// Les auto-entrepreneurs d\u00e9clarent leur CA brut \u2192 URSSAF calcule les cotisations (~22% pour services).
+function expDeclarationURSSAF(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter la d\u00e9claration URSSAF",expDeclarationURSSAF);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  // P\u00e9riode : mois s\u00e9lectionn\u00e9
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
+  var totalSvc = 0, totalProd = 0;
+  dn.forEach(function(a){
+    if(a.items && a.items.length){
+      a.items.forEach(function(it){
+        if(it.isProd) totalProd += (Number(it.price)||0)*(Number(it.qty)||1);
+        else totalSvc += (Number(it.price)||0)*(Number(it.qty)||1);
+      });
+    } else {
+      totalSvc += Number(a.pr)||0;
+    }
+  });
+  ps2.forEach(function(p){ totalProd += Number(p.pr)||0; });
+  var totalCA = totalSvc + totalProd;
+  // Cotisations URSSAF approximatives (taux 2024-2026)
+  // Services BIC : 22.2% (cotisations + CFP + CFE)
+  // Ventes BIC : 12.3%
+  // \u2192 On donne juste les ordres de grandeur, le calcul officiel est sur urssaf.fr
+  var cotisSvc = Math.round(totalSvc * 0.222 * 100) / 100;
+  var cotisProd = Math.round(totalProd * 0.123 * 100) / 100;
+  var cotisTotal = cotisSvc + cotisProd;
+  var net = totalCA - cotisTotal;
+
+  var p2 = accM.split("-"); var mLabel = MO[parseInt(p2[1])-1] + " " + p2[0];
+  var ca = getCAYearToDate();
+
+  var headers = ["Cat\u00e9gorie","CA brut (\u20ac) "+mLabel,"Taux URSSAF","Cotisations estim\u00e9es (\u20ac)","Net apr\u00e8s URSSAF (\u20ac)"];
+  var rows = [
+    ["Prestations de services (BIC)", csvNum(totalSvc), "22,2 %", csvNum(cotisSvc), csvNum(totalSvc - cotisSvc)],
+    ["Ventes marchandises (BIC)", csvNum(totalProd), "12,3 %", csvNum(cotisProd), csvNum(totalProd - cotisProd)],
+    ["TOTAL "+mLabel, csvNum(totalCA), "", csvNum(cotisTotal), csvNum(net)]
+  ];
+  var content = csvBuild(headers, rows);
+  // Ajout r\u00e9cap annuel (seuils)
+  content += "\r\n\r\n\"=== R\u00e9capitulatif "+ca.year+" (cumul YTD) ===\"\r\n";
+  content += '"Cat\u00e9gorie";"Total YTD (\u20ac)";"Seuil r\u00e9gime micro";"Seuil franchise TVA";"% seuil micro";"% seuil TVA"\r\n';
+  content += '"Prestations services";'+csvNum(ca.services)+';'+MICRO_SEUILS.ca_services+';'+MICRO_SEUILS.tva_services+';'+(ca.services/MICRO_SEUILS.ca_services*100).toFixed(1)+';'+(ca.services/MICRO_SEUILS.tva_services*100).toFixed(1)+'\r\n';
+  content += '"Ventes marchandises";'+csvNum(ca.ventes)+';'+MICRO_SEUILS.ca_ventes+';'+MICRO_SEUILS.tva_ventes+';'+(ca.ventes/MICRO_SEUILS.ca_ventes*100).toFixed(1)+';'+(ca.ventes/MICRO_SEUILS.tva_ventes*100).toFixed(1)+'\r\n';
+  content += "\r\n";
+  content += "\"\u26a0\ufe0f Cotisations estim\u00e9es \u00e0 titre indicatif uniquement.\"\r\n";
+  content += "\"Le calcul officiel et la d\u00e9claration se font sur autoentrepreneur.urssaf.fr\"\r\n";
+  // Alerte seuils
+  var seuils = getMicroSeuilsStatus();
+  if(seuils && seuils.alerts.length){
+    content += "\r\n\"=== \u26a0\ufe0f ALERTES SEUILS ===\"\r\n";
+    seuils.alerts.forEach(function(al){ content += '"'+al.replace(/"/g,'""')+'"\r\n'; });
+  }
+  csvDownload("declaration_urssaf_"+accM+".csv", content);
+  if(typeof auditLog==="function") auditLog("EXPORT_URSSAF","P\u00e9riode "+accM+" - CA "+csvNum(totalCA)+"\u20ac");
+}
+
+// =====================================================================
 // MODAL EXPORTS COMPTABLES \u2014 acc\u00e8s centralis\u00e9 \u00e0 tous les exports
 // =====================================================================
 function showExportsComptables(){
@@ -13971,26 +14355,89 @@ function showExportsComptables(){
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
   var totalCA = 0; dn.forEach(function(a){totalCA+=Number(a.pr)||0;}); ps2.forEach(function(p){totalCA+=Number(p.pr)||0;});
 
-  var h = '<div class="mbox" style="max-width:600px;max-height:90vh;overflow-y:auto">';
-  h += '<h2 style="margin-bottom:8px">\ud83d\udce5 Exports comptables</h2>';
-  h += '<div style="font-size:13px;color:var(--text2);margin-bottom:16px">P\u00e9riode : <strong style="color:var(--gold)">'+mL+'</strong> \u00b7 '+csvNum(totalCA)+'\u20ac TTC \u00b7 '+dn.length+' tickets'+(annul.length?' \u00b7 '+annul.length+' annulations':'')+'</div>';
+  var isMicro = isMicroEntrepreneur();
+  var seuils = getMicroSeuilsStatus();
 
-  // === RECOMMAND\u00c9 : pack ZIP tout-en-un ===
-  h += '<div style="background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.04));border:2px solid var(--gold);border-radius:14px;padding:16px;margin-bottom:16px">';
-  h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:24px">\ud83d\udce6</span><div><div style="font-weight:800;color:var(--gold);font-size:15px">Pack complet pour mon comptable</div><div style="font-size:12px;color:var(--text2);margin-top:2px">ZIP avec tous les fichiers + note explicative \u00b7 \u00e0 envoyer \u00e0 votre cabinet en 1 clic</div></div></div>';
-  h += '<button class="btn" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--gold),#b8960f);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:pointer" onclick="cM();expPackComptable()">\ud83d\udce6 T\u00e9l\u00e9charger le pack ZIP de '+mL+'</button>';
+  var nbTickets = dn.length + ps2.length;
+  var isEmpty = nbTickets === 0;
+
+  var h = '<div class="mbox" style="max-width:620px;max-height:90vh;overflow-y:auto">';
+  h += '<h2 style="margin-bottom:8px">\ud83d\udce5 Exports comptables'+(isMicro?' <span style="font-size:11px;background:rgba(96,165,250,.15);color:#60a5fa;padding:3px 10px;border-radius:8px;font-weight:700;letter-spacing:.5px;margin-left:6px">MICRO-ENTREPRENEUR</span>':'')+'</h2>';
+
+  // === S\u00e9lecteur de mois directement dans la modal ===
+  h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid rgba(255,255,255,.06)">';
+  h += '<button onclick="accM=_prevMonth(accM);showExportsComptables()" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#fff;font-size:14px;cursor:pointer;padding:6px 10px">\u25c0</button>';
+  h += '<input type="month" value="'+accM+'" onchange="accM=this.value;showExportsComptables()" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:#fff;font-size:13px;text-align:center;font-weight:700">';
+  h += '<button onclick="accM=_nextMonth(accM);showExportsComptables()" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;color:#fff;font-size:14px;cursor:pointer;padding:6px 10px">\u25b6</button>';
+  h += '</div>';
+
+  h += '<div style="font-size:13px;color:var(--text2);margin-bottom:14px">P\u00e9riode : <strong style="color:var(--gold)">'+mL+'</strong> \u00b7 '+csvNum(totalCA)+'\u20ac '+(isMicro?'CA':'TTC')+' \u00b7 <strong style="color:'+(isEmpty?'#f87171':'#4ade80')+'">'+nbTickets+' ticket'+(nbTickets>1?'s':'')+' encaiss\u00e9'+(nbTickets>1?'s':'')+'</strong>'+(annul.length?' \u00b7 '+annul.length+' annulations':'')+'</div>';
+
+  // === BANDEAU SI P\u00c9RIODE VIDE ===
+  if(isEmpty){
+    // Trouver le dernier mois avec des tickets pour proposer
+    var lastMonth = null;
+    var allDone = AP.filter(function(a){return a.st==="done";}).sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
+    if(allDone.length) lastMonth = allDone[0].date.slice(0,7);
+    h += '<div style="background:rgba(251,146,60,.1);border:1.5px solid rgba(251,146,60,.35);border-radius:12px;padding:14px;margin-bottom:14px">';
+    h += '<div style="display:flex;align-items:flex-start;gap:10px"><span style="font-size:22px">\u26a0\ufe0f</span><div style="flex:1">';
+    h += '<div style="font-weight:800;color:#fb923c;font-size:14px;margin-bottom:4px">Aucun ticket encaiss\u00e9 sur cette p\u00e9riode</div>';
+    h += '<div style="font-size:12px;color:var(--text2);line-height:1.5">Les exports ne contiendront que les en-t\u00eates (vides). S\u00e9lectionnez un mois o\u00f9 vous avez encaiss\u00e9 des tickets.</div>';
+    if(lastMonth && lastMonth !== accM){
+      var lp = lastMonth.split("-"); var llabel = MO[parseInt(lp[1])-1]+" "+lp[0];
+      h += '<button onclick="accM=\''+lastMonth+'\';showExportsComptables()" style="margin-top:10px;padding:8px 14px;background:rgba(251,146,60,.15);border:1px solid rgba(251,146,60,.3);border-radius:8px;color:#fb923c;font-size:12px;font-weight:700;cursor:pointer">\ud83d\udcc2 Aller au dernier mois actif : '+llabel+'</button>';
+    }
+    h += '</div></div></div>';
+  }
+
+  // === Bandeau alerte seuils micro ===
+  if(seuils && seuils.alerts.length){
+    var bgColor = seuils.status==="danger" ? "rgba(248,113,113,.12)" : "rgba(251,146,60,.12)";
+    var bdColor = seuils.status==="danger" ? "rgba(248,113,113,.35)" : "rgba(251,146,60,.35)";
+    var txColor = seuils.status==="danger" ? "#f87171" : "#fb923c";
+    h += '<div style="background:'+bgColor+';border:1.5px solid '+bdColor+';border-radius:12px;padding:12px 14px;margin-bottom:14px">';
+    h += '<div style="font-weight:800;color:'+txColor+';font-size:13px;margin-bottom:6px">\u26a0\ufe0f Alerte seuils micro-entrepreneur</div>';
+    seuils.alerts.forEach(function(al){
+      h += '<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-top:4px">\u2022 '+al+'</div>';
+    });
+    h += '<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">CA YTD '+seuils.ca.year+' : services '+csvNum(seuils.ca.services)+'\u20ac \u00b7 ventes '+csvNum(seuils.ca.ventes)+'\u20ac</div>';
+    h += '</div>';
+  }
+
+  // === RECOMMAND\u00c9 : 2 actions premium c\u00f4te \u00e0 c\u00f4te (PDF + ZIP) ===
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">';
+  // Rapport PDF
+  h += '<div style="background:linear-gradient(135deg,rgba(96,165,250,.12),rgba(96,165,250,.04));border:1.5px solid #60a5fa;border-radius:14px;padding:14px;text-align:center"'+(isEmpty?' style="opacity:.5"':'')+'>';
+  h += '<div style="font-size:28px;margin-bottom:4px">\ud83d\udcc4</div>';
+  h += '<div style="font-weight:800;color:#60a5fa;font-size:13px;margin-bottom:4px">Rapport PDF complet</div>';
+  h += '<div style="font-size:10px;color:var(--text2);margin-bottom:10px;line-height:1.4">Synth\u00e8se + ventilation par mode de paiement + collab + jour</div>';
+  h += '<button class="btn"'+(isEmpty?' disabled':'')+' style="width:100%;padding:10px;background:rgba(96,165,250,.15);border:1px solid rgba(96,165,250,.3);color:#60a5fa;font-weight:700;font-size:12px;border-radius:8px;cursor:'+(isEmpty?'not-allowed':'pointer')+'" onclick="'+(isEmpty?'':'cM();expRapportComptablePDF()')+'">\ud83d\udcc4 Voir le rapport</button>';
+  h += '</div>';
+  // Pack ZIP
+  h += '<div style="background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.04));border:2px solid var(--gold);border-radius:14px;padding:14px;text-align:center"'+(isEmpty?' style="opacity:.5"':'')+'>';
+  h += '<div style="font-size:28px;margin-bottom:4px">\ud83d\udce6</div>';
+  h += '<div style="font-weight:800;color:var(--gold);font-size:13px;margin-bottom:4px">Pack ZIP comptable</div>';
+  h += '<div style="font-size:10px;color:var(--text2);margin-bottom:10px;line-height:1.4">PDF + tous les CSV en 1 fichier \u00e0 envoyer au cabinet</div>';
+  h += '<button class="btn"'+(isEmpty?' disabled':'')+' style="width:100%;padding:10px;background:linear-gradient(135deg,var(--gold),#b8960f);color:#0a0a0a;font-weight:800;font-size:12px;border:none;border-radius:8px;cursor:'+(isEmpty?'not-allowed':'pointer')+'" onclick="'+(isEmpty?'':'cM();expPackComptable()')+'">\ud83d\udce6 T\u00e9l\u00e9charger</button>';
+  h += '</div>';
   h += '</div>';
 
   // === Exports individuels ===
   h += '<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin:10px 0 8px">Exports individuels</div>';
 
-  var exports = [
-    {id:"journal", icon:"\ud83d\udccb", title:"Journal de caisse d\u00e9taill\u00e9", desc:"Toutes les ventes (HT/TVA/TTC, mode paiement, hash NF525) \u2014 format CSV Excel FR", fn:"expCSV", count:dn.length+ps2.length+" lignes"},
-    {id:"tva", icon:"\ud83d\udcb6", title:"R\u00e9cap TVA mensuel", desc:"Pour la d\u00e9claration CA3/CA12 (base HT, TVA collect\u00e9e, total TTC par taux)", fn:"expRecapTVA", count:""},
-    {id:"compta", icon:"\ud83d\udcca", title:"Journal des ventes (format comptable)", desc:"\u00c9critures d\u00e9bit/cr\u00e9dit standard FR (706/707/4457/512). Importable Sage/EBP/Cegid", fn:"expJournalComptable", count:dn.length+ps2.length+" \u00e9critures"},
-    {id:"annul", icon:"\u274c", title:"Annulations & remboursements", desc:"Tickets annul\u00e9s avec motifs NF525 et hash original (obligation l\u00e9gale)", fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")},
-    {id:"stripe", icon:"\ud83d\udcb3", title:"Bordereau acomptes en ligne (Stripe)", desc:"R\u00e9conciliation : montant brut, frais Stripe estim\u00e9s, net re\u00e7u en banque", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")}
-  ];
+  // Liste adapt\u00e9e selon micro/normal
+  var exports = [];
+  if(isMicro){
+    // Micro-entrepreneur : URSSAF en t\u00eate, pas de TVA/journal comptable classique
+    exports.push({id:"urssaf", icon:"\ud83c\udfdb", title:"D\u00e9claration URSSAF mensuelle", desc:"CA brut + cotisations estim\u00e9es (services 22.2% / ventes 12.3%) \u00e0 reporter sur autoentrepreneur.urssaf.fr", fn:"expDeclarationURSSAF", count:""});
+  }
+  exports.push({id:"journal", icon:"\ud83d\udccb", title:"Journal de caisse d\u00e9taill\u00e9", desc:"Toutes les ventes ("+(isMicro?'CA brut, sans TVA collect\u00e9e':'HT/TVA/TTC')+", mode paiement, hash NF525) \u2014 format CSV Excel FR", fn:"expCSV", count:dn.length+ps2.length+" lignes"});
+  if(!isMicro){
+    exports.push({id:"tva", icon:"\ud83d\udcb6", title:"R\u00e9cap TVA mensuel", desc:"Pour la d\u00e9claration CA3/CA12 (base HT, TVA collect\u00e9e, total TTC par taux)", fn:"expRecapTVA", count:""});
+  }
+  exports.push({id:"compta", icon:"\ud83d\udcca", title:"Journal des ventes (format comptable)", desc:"\u00c9critures d\u00e9bit/cr\u00e9dit standard FR ("+(isMicro?'706/707/512 sans TVA':'706/707/4457/512')+"). Importable Sage/EBP/Cegid", fn:"expJournalComptable", count:dn.length+ps2.length+" \u00e9critures"});
+  exports.push({id:"annul", icon:"\u274c", title:"Annulations & remboursements", desc:"Tickets annul\u00e9s avec motifs NF525 et hash original (obligation l\u00e9gale)", fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")});
+  exports.push({id:"stripe", icon:"\ud83d\udcb3", title:"Bordereau acomptes en ligne (Stripe)", desc:"R\u00e9conciliation : montant brut, frais Stripe estim\u00e9s, net re\u00e7u en banque", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")});
 
   exports.forEach(function(e){
     var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length);
@@ -14212,16 +14659,22 @@ function expJournalComptable(){
     var contrep = compteContrePartie(met);
     var compteVente = type==="produit" ? "707000" : "706000"; // 706 prestations services, 707 ventes marchandises
     var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
-    // Ligne 1 : D\u00e9bit banque/caisse au TTC
-    rows.push(["VE","Ventes",ecrNum,date,contrep,compteContrePartie.libs?compteContrePartie.libs[contrep]:contrep,num||"",date,lib,csvNum(ttc),"","",met||""]);
-    // Ligne 2 : Cr\u00e9dit ventes au HT
-    rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
-    // Ligne 3 : Cr\u00e9dit TVA collect\u00e9e (si applicable)
-    if(tva > 0){
-      var compteTVA = "445710"; // TVA collect\u00e9e 20%
-      if(txTVA===10) compteTVA = "445720";
-      else if(txTVA===5.5) compteTVA = "445730";
-      rows.push(["VE","Ventes",ecrNum,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);
+    var isMicro = isMicroEntrepreneur();
+    // En micro-entrepreneur (franchise TVA art. 293B), HT = TTC car pas de TVA collect\u00e9e
+    if(isMicro){
+      // \u00c9criture simplifi\u00e9e : D\u00e9bit banque/caisse = Cr\u00e9dit ventes (au CA brut)
+      rows.push(["VE","Ventes",ecrNum,date,contrep,"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
+      rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits (293B)":"Prestations services (293B)",num||"",date,lib,"",csvNum(ttc),"",""]);
+    } else {
+      // R\u00e9gime r\u00e9el TVA : 3 lignes (banque + ventes HT + TVA)
+      rows.push(["VE","Ventes",ecrNum,date,contrep,"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
+      rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
+      if(tva > 0){
+        var compteTVA = "445710"; // TVA collect\u00e9e 20%
+        if(txTVA===10) compteTVA = "445720";
+        else if(txTVA===5.5) compteTVA = "445730";
+        rows.push(["VE","Ventes",ecrNum,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);
+      }
     }
     ecrNum++;
   }
@@ -14351,21 +14804,46 @@ async function expPackComptable(){
   rJournal.sort(function(a,b){var d=String(a[0]).localeCompare(String(b[0]));return d?d:String(a[1]).localeCompare(String(b[1]));});
   folder.file("01_journal_caisse_"+accM+".csv", csvBuild(hJournal, rJournal));
 
-  // 2. R\u00e9cap TVA
+  // 2. R\u00e9cap TVA OU D\u00e9claration URSSAF (selon r\u00e9gime)
   var totalTTC = 0;
   dn.forEach(function(a){totalTTC += (Number(a.pr)||0);});
   ps2.forEach(function(p){totalTTC += (Number(p.pr)||0);});
   var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
   var totalTVA = Math.round((totalTTC-totalHT)*100)/100;
-  var tvaContent = csvBuild(
-    ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"],
-    [[txTVA+"%",csvNum(totalHT),csvNum(totalTVA),csvNum(totalTTC),(dn.length+ps2.length)]]
-  );
-  var isMicro = String(SALON_CONFIG.formeJur||"").toLowerCase().indexOf("micro")>=0;
+  var isMicro = isMicroEntrepreneur();
   if(isMicro){
-    tvaContent += "\r\n\r\n\"\u26A0\uFE0F R\u00e9gime micro-entrepreneur - TVA non applicable, art. 293B du CGI\"";
+    // Pour micro : d\u00e9claration URSSAF \u00E0 la place du r\u00e9cap TVA
+    var totalSvcM = 0, totalProdM = 0;
+    dn.forEach(function(a){
+      if(a.items && a.items.length){
+        a.items.forEach(function(it){
+          if(it.isProd) totalProdM += (Number(it.price)||0)*(Number(it.qty)||1);
+          else totalSvcM += (Number(it.price)||0)*(Number(it.qty)||1);
+        });
+      } else { totalSvcM += Number(a.pr)||0; }
+    });
+    ps2.forEach(function(p){ totalProdM += Number(p.pr)||0; });
+    var cotisSvcM = Math.round(totalSvcM * 0.222 * 100) / 100;
+    var cotisProdM = Math.round(totalProdM * 0.123 * 100) / 100;
+    var urssafContent = csvBuild(
+      ["Cat\u00e9gorie","CA brut (\u20AC)","Taux URSSAF","Cotisations estim\u00e9es (\u20AC)","Net apr\u00E8s URSSAF (\u20AC)"],
+      [
+        ["Prestations services (BIC)", csvNum(totalSvcM), "22,2 %", csvNum(cotisSvcM), csvNum(totalSvcM-cotisSvcM)],
+        ["Ventes marchandises (BIC)", csvNum(totalProdM), "12,3 %", csvNum(cotisProdM), csvNum(totalProdM-cotisProdM)],
+        ["TOTAL", csvNum(totalTTC), "", csvNum(cotisSvcM+cotisProdM), csvNum(totalTTC-cotisSvcM-cotisProdM)]
+      ]
+    );
+    urssafContent += "\r\n\r\n\"\u26A0\uFE0F Cotisations estim\u00e9es indicatives. Calcul officiel sur autoentrepreneur.urssaf.fr\"";
+    urssafContent += "\r\n\"TVA non applicable, art. 293B du CGI (r\u00e9gime micro-entrepreneur)\"";
+    folder.file("02_declaration_urssaf_"+accM+".csv", urssafContent);
+  } else {
+    // R\u00e9gime r\u00e9el TVA : r\u00e9cap classique
+    var tvaContent = csvBuild(
+      ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"],
+      [[txTVA+"%",csvNum(totalHT),csvNum(totalTVA),csvNum(totalTTC),(dn.length+ps2.length)]]
+    );
+    folder.file("02_recap_tva_"+accM+".csv", tvaContent);
   }
-  folder.file("02_recap_tva_"+accM+".csv", tvaContent);
 
   // 3. Journal comptable (\u00e9critures d\u00e9bit/cr\u00e9dit)
   var hCompta = ["JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib","PieceRef","PieceDate","EcritureLib","Debit","Credit","Lettrage","ModePaiement"];
@@ -14375,9 +14853,16 @@ async function expPackComptable(){
   function pushEcr(date, num, libelle, ttc, ht, tva, met, type){
     var compteVente = type==="produit"?"707000":"706000";
     var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
-    rCompta.push(["VE","Ventes",ecrNum2,date,compte(met),"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
-    rCompta.push(["VE","Ventes",ecrNum2,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
-    if(tva>0){var compteTVA="445710";if(txTVA===10)compteTVA="445720";else if(txTVA===5.5)compteTVA="445730";rCompta.push(["VE","Ventes",ecrNum2,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);}
+    var isMicroPack = isMicroEntrepreneur();
+    if(isMicroPack){
+      // Micro : pas d'\u00e9criture TVA, 2 lignes \u00e9quilibr\u00e9es au CA brut
+      rCompta.push(["VE","Ventes",ecrNum2,date,compte(met),"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
+      rCompta.push(["VE","Ventes",ecrNum2,date,compteVente,(type==="produit"?"Ventes produits":"Prestations services")+" (293B)",num||"",date,lib,"",csvNum(ttc),"",""]);
+    } else {
+      rCompta.push(["VE","Ventes",ecrNum2,date,compte(met),"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
+      rCompta.push(["VE","Ventes",ecrNum2,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
+      if(tva>0){var compteTVA="445710";if(txTVA===10)compteTVA="445720";else if(txTVA===5.5)compteTVA="445730";rCompta.push(["VE","Ventes",ecrNum2,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);}
+    }
     ecrNum2++;
   }
   dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
@@ -14398,35 +14883,12 @@ async function expPackComptable(){
     folder.file("05_bordereau_stripe_"+accM+".csv", csvBuild(["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte","Frais Stripe","Net re\u00E7u","Statut","ID Stripe"], rStripe));
   }
 
-  // 6. Note explicative
-  var note = "PACK COMPTABLE LUXYRA \u2014 "+accM+"\r\n";
-  note += "Salon : "+(SALON_CONFIG.nom||"")+"\r\n";
-  note += "SIRET : "+(SALON_CONFIG.siret||"non renseign\u00e9")+"\r\n";
-  note += "Forme juridique : "+(SALON_CONFIG.formeJur||"non pr\u00e9cis\u00e9e")+"\r\n";
-  note += "P\u00e9riode : "+accM+"\r\n";
-  note += "G\u00e9n\u00e9r\u00e9 le : "+new Date().toLocaleString("fr-FR")+"\r\n\r\n";
-  note += "===== CONTENU DU PACK =====\r\n";
-  note += "01_journal_caisse_"+accM+".csv : journal d\u00e9taill\u00e9 tous les tickets/ventes\r\n";
-  note += "02_recap_tva_"+accM+".csv : r\u00e9capitulatif TVA pour d\u00e9claration\r\n";
-  note += "03_journal_comptable_"+accM+".csv : \u00e9critures comptables au format standard FR\r\n";
-  if(annul.length) note += "04_annulations_"+accM+".csv : tickets annul\u00e9s (motifs NF525)\r\n";
-  if(rdvOnline.length) note += "05_bordereau_stripe_"+accM+".csv : acomptes en ligne (r\u00e9conciliation)\r\n";
-  note += "\r\n===== TOTAUX =====\r\n";
-  note += "CA TTC : "+csvNum(totalTTC)+" \u20AC\r\n";
-  note += "CA HT : "+csvNum(totalHT)+" \u20AC\r\n";
-  note += "TVA collect\u00e9e : "+csvNum(totalTVA)+" \u20AC\r\n";
-  note += "Tickets : "+dn.length+"\r\n";
-  note += "Ventes produits hors tickets : "+ps2.length+"\r\n";
-  note += "Annulations : "+annul.length+"\r\n";
-  if(rdvOnline.length) note += "Acomptes en ligne : "+rdvOnline.length+"\r\n";
-  note += "\r\n===== CONFORMIT\u00C9 =====\r\n";
-  note += "Caisse certifi\u00e9e NF525 (cha\u00EEnage SHA-256)\r\n";
-  note += "Pour le FEC officiel (contr\u00F4le fiscal), voir Param\u00e8tres > NF525 > Export FEC\r\n";
-  if(isMicro){
-    note += "\r\n\u26A0\uFE0F TVA non applicable, art. 293B du CGI (r\u00e9gime micro-entrepreneur)\r\n";
-    note += "Si vous d\u00e9passez les seuils de franchise TVA, contactez votre comptable.\r\n";
-  }
-  folder.file("00_LISEZ-MOI.txt", note);
+  // 0. Rapport HTML imprimable inclus dans le ZIP (\u00e0 ouvrir dans le navigateur, bouton \ud83d\udda8 \u2192 PDF)
+  // Remplace l'ancien LISEZ-MOI.txt (jug\u00e9 inutile par l'utilisateur).
+  try {
+    var rapportHtml = _buildRapportHTML(accM);
+    folder.file("00_rapport_complet_"+accM+".html", rapportHtml);
+  } catch(e) { console.warn("Rapport HTML skip:", e); }
 
   // G\u00e9n\u00e9ration + download du ZIP
   if(typeof toast==="function") toast("Cr\u00e9ation du pack ZIP\u2026","info");
