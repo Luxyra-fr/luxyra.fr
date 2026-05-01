@@ -8137,11 +8137,16 @@ async function addPrestaToAppt(apptId, svcId){
   }
   // Items pour traçabilité ticket (toujours)
   if(!a.items) a.items=[];
-  a.items.push({name:svc.n||"Prestation", price:Number(svc.p)||0, qty:1, isProd:false, addedDuringRdv:true, duringPhase:isDuring?duringIdx:null, sId:svc.id});
+  // Garde-fou anti-déchet : ne sauvegarde que si le service a un nom (sinon item placeholder)
+  var svcN = (svc.n || "").trim();
+  if(!svcN){ cM(); toast("Erreur : service sans nom — ajout annulé","warning"); return; }
+  a.items.push({name:svcN, price:Number(svc.p)||0, qty:1, isProd:false, addedDuringRdv:true, duringPhase:isDuring?duringIdx:null, sId:svc.id});
   if(typeof a.pr==="number") a.pr+=Number(svc.p)||0;
   if(typeof saveAppointment==="function") await saveAppointment(a);
+  // FIX B : audit log de l'ajout (qui, quand, quoi) — permet de tracer
+  if(typeof auditLog==="function") auditLog("AJOUT_PRESTATION_RDV","RDV "+a.id+" — Ajout '"+svcN+"' "+(Number(svc.p)||0).toFixed(2)+"E"+(isDuring?" pendant phase "+(duringIdx+1):""));
   cM();
-  toast("✓ "+(svc.n||"Prestation")+(isDuring?" ajoutée pendant la phase "+(duringIdx+1):" ajoutée au RDV"),"success");
+  toast("✓ "+svcN+(isDuring?" ajoutée pendant la phase "+(duringIdx+1):" ajoutée au RDV"),"success");
   requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(apptId);},150);});
 }
 function delAppt(id){
@@ -17069,10 +17074,14 @@ function mD(id){
       var mainPrice=Math.max(0,(Number(a.pr)||0)-addonsTotal);
       cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:mainPrice,qty:1,remise:0}];
       a.items.forEach(function(it){
+        // Garde-fou anti-déchet : skip les placeholders vides (name vide + price 0 + pas un produit)
+        var nm = String(it.name||"").trim();
+        var pr = Number(it.price)||0;
+        if(!nm && pr === 0 && !it.isProd){ return; }
         cartItems.push({
           sId:it.sId||null,
-          name:it.name||"Prestation ajoutée",
-          price:Number(it.price)||0,
+          name:nm || (it.isProd ? "Produit" : "Prestation"),  // fallback différencié, jamais "Prestation ajoutée" générique
+          price:pr,
           qty:Number(it.qty)||1,
           remise:Number(it.remise)||0,
           isProd:!!it.isProd,
