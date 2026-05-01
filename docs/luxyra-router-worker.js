@@ -61,6 +61,9 @@ export default {
       if (url.pathname === "/api/sms/generate-link-token" && request.method === "POST") return await handleSmsGenerateLinkToken(request, env);
       if (url.pathname === "/api/sms/link-device" && request.method === "POST") return await handleSmsLinkDevice(request, env);
       if (url.pathname === "/api/client/tickets" && request.method === "POST") return await handleClientTickets(request, env);
+      // Invitations clients (magic link "créer mot de passe")
+      if (url.pathname === "/api/client/invite" && request.method === "POST") return await handleClientInvite(request, env);
+      if (url.pathname === "/api/client/invite/verify" && request.method === "POST") return await handleClientInviteVerify(request, env);
       if (url.pathname === "/api/salon/availability" && request.method === "POST") return await handleSalonAvailability(request, env);
       if (url.pathname === "/api/rdv/cancel" && request.method === "POST") return await handleRdvCancel(request, env);
       return jsonResponse({ error: "Not found" }, 404);
@@ -902,6 +905,157 @@ async function handleRdvCancel(request, env) {
     if (res.ok) return jsonResponse({ success: true });
     return jsonResponse({ error: "Update failed", status: res.status }, 500);
   } catch (err) { return jsonResponse({ error: err.message }); }
+}
+
+// ============================================================
+// CLIENT INVITES — magic link pour créer un compte
+// ============================================================
+// 1) handleClientInvite : génère token + envoie email
+// 2) handleClientInviteVerify : valide token, signup auth, lie le client
+
+async function handleClientInvite(request, env) {
+  try {
+    const { salon_id, client_id, email, client_nom, client_prenom, salon_nom, operator_name } = await request.json();
+    if (!salon_id || !client_id || !email) return jsonResponse({ error: "salon_id, client_id, email requis" }, 400);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonResponse({ error: "Email invalide" }, 400);
+
+    // Insert l'invitation (token UUID auto via DEFAULT gen_random_uuid())
+    const insertRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites`, {
+      method: "POST",
+      headers: {
+        "apikey": env.SUPABASE_SERVICE_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+      },
+      body: JSON.stringify({ salon_id, client_id, email: email.toLowerCase().trim(), invited_by_operator: operator_name || null })
+    });
+    if (!insertRes.ok) {
+      const t = await insertRes.text();
+      console.error("client_invites insert failed:", insertRes.status, t);
+      return jsonResponse({ error: "Erreur création invitation" }, 500);
+    }
+    const inserted = await insertRes.json();
+    const token = inserted[0]?.token;
+    if (!token) return jsonResponse({ error: "Token non généré" }, 500);
+
+    const inviteUrl = `https://luxyra.fr/compte?invite=${token}`;
+    const prenom = client_prenom || "";
+    const nomComplet = `${prenom} ${client_nom||""}`.trim() || "vous";
+    const salonName = salon_nom || "votre salon";
+
+    // Email Brevo — design premium Luxyra noir + or
+    const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:0;color:#1a1a1a;background:#fff">
+      <div style="background:linear-gradient(135deg,#0a0a0a,#1a1a1a);padding:30px 28px;text-align:center">
+        <div style="color:#d4a843;font-family:Georgia,serif;font-size:32px;font-weight:300;letter-spacing:6px;margin:0">LUXYRA</div>
+        <div style="color:#9a9a9a;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-top:6px">Espace client</div>
+      </div>
+      <div style="padding:32px 28px">
+        <h2 style="margin:0 0 16px;color:#1a1a1a;font-family:Georgia,serif;font-weight:600">Bonjour ${prenom||"!"}</h2>
+        <p style="font-size:14px;line-height:1.7;color:#333;margin:0 0 12px">
+          <strong>${salonName}</strong> a créé votre fiche client et vous invite à activer votre compte Luxyra.
+        </p>
+        <p style="font-size:14px;line-height:1.7;color:#333;margin:0 0 24px">
+          En quelques clics, accédez à votre <strong>historique de RDV</strong>, vos <strong>factures</strong>, vos <strong>points de fidélité</strong> et vos <strong>cartes d'abonnement</strong>.
+        </p>
+        <div style="text-align:center;margin:28px 0">
+          <a href="${inviteUrl}" style="display:inline-block;padding:16px 36px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-weight:800;text-decoration:none;border-radius:12px;font-size:14px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.3)">Créer mon compte</a>
+        </div>
+        <p style="font-size:12px;line-height:1.6;color:#666;margin:24px 0 0">Ce lien est valide 14 jours et vous permettra de définir votre mot de passe en toute sécurité.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+        <p style="font-size:11px;color:#999;line-height:1.6;margin:0">
+          Vous recevez cet email car le salon ${salonName} a créé votre fiche client avec votre adresse email. Si vous n'êtes pas concerné, ignorez ce message — aucun compte ne sera créé sans votre action.
+        </p>
+        <p style="font-size:11px;color:#999;text-align:center;margin:18px 0 0">Luxyra · contact@luxyra.fr</p>
+      </div>
+    </div>`;
+    const textContent = `Bonjour ${prenom},\n\n${salonName} a créé votre fiche client et vous invite à activer votre compte Luxyra.\n\nAccédez à votre historique RDV, factures, points fidélité, cartes d'abonnement :\n${inviteUrl}\n\nCe lien est valide 14 jours.\n\nLuxyra.`;
+    await brevoSendEmail(env, {
+      to: email, toName: nomComplet,
+      senderEmail: "contact@luxyra.fr", senderName: salonName,
+      replyTo: null,
+      subject: `Activez votre compte client — ${salonName}`,
+      htmlContent: html, textContent, attachment: null
+    });
+
+    return jsonResponse({ ok: true, token, inviteUrl });
+  } catch (e) {
+    console.error("handleClientInvite error:", e);
+    return jsonResponse({ error: e.message || "Erreur serveur" }, 500);
+  }
+}
+
+async function handleClientInviteVerify(request, env) {
+  try {
+    const { token, password } = await request.json();
+    if (!token) return jsonResponse({ error: "token requis" }, 400);
+    if (!password || String(password).length < 6) return jsonResponse({ error: "Mot de passe minimum 6 caractères" }, 400);
+
+    // Charge l'invitation
+    const inviteRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&select=*`, {
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
+    });
+    const invites = await inviteRes.json();
+    if (!invites || !invites.length) return jsonResponse({ error: "Invitation introuvable ou expirée" }, 404);
+    const invite = invites[0];
+    if (invite.used_at) return jsonResponse({ error: "Cette invitation a déjà été utilisée. Connectez-vous avec votre mot de passe." }, 410);
+    if (new Date(invite.expires_at) < new Date()) return jsonResponse({ error: "Cette invitation a expiré. Demandez-en une nouvelle au salon." }, 410);
+
+    // Crée le compte auth Supabase via Admin API (avec service_role key)
+    const signupRes = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: {
+        "apikey": env.SUPABASE_SERVICE_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ email: invite.email, password, email_confirm: true })
+    });
+    let authUserId = null;
+    if (signupRes.ok) {
+      const signupData = await signupRes.json();
+      authUserId = signupData.id || signupData.user?.id;
+    } else if (signupRes.status === 422) {
+      // L'utilisateur existe déjà → on update juste le mot de passe
+      const findRes = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(invite.email)}`, {
+        headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
+      });
+      const found = await findRes.json();
+      const existingId = found.users?.[0]?.id;
+      if (existingId) {
+        await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users/${existingId}`, {
+          method: "PUT",
+          headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ password, email_confirm: true })
+        });
+        authUserId = existingId;
+      }
+    } else {
+      const t = await signupRes.text();
+      console.error("auth signup failed:", signupRes.status, t);
+      return jsonResponse({ error: "Erreur création compte" }, 500);
+    }
+    if (!authUserId) return jsonResponse({ error: "ID utilisateur non récupéré" }, 500);
+
+    // Lie la fiche client à l'auth user (clients.user_id = authUserId)
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}`, {
+      method: "PATCH",
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: authUserId })
+    });
+
+    // Marque l'invitation comme utilisée
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}`, {
+      method: "PATCH",
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ used_at: new Date().toISOString() })
+    });
+
+    return jsonResponse({ ok: true, email: invite.email });
+  } catch (e) {
+    console.error("handleClientInviteVerify error:", e);
+    return jsonResponse({ error: e.message || "Erreur serveur" }, 500);
+  }
 }
 
 // ============================================================

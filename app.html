@@ -10302,6 +10302,18 @@ function rDetail(){
     h+='<div style="margin:16px 0"><div style="font-weight:700;font-size:16px;margin-bottom:8px">E-mails</div>';
     h+='<label style="font-size:14px;display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" '+(c.emOk?"checked":"")+' onchange="gC(\''+c.id+'\').emOk=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Ce client accepte la r\u00e9ception d\u0027e-mails</label></div>';
     h+='</div>';
+    // Bouton "Inviter \u00e0 cr\u00e9er son compte" \u2014 magic link envoy\u00e9 par email
+    if(c.em){
+      h+='<div class="card"><div class="ct">\ud83d\udd11 Acc\u00e8s au compte client</div>';
+      if(c.user_id){
+        h+='<div style="font-size:13px;color:#4caf50;padding:10px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);border-radius:8px;margin-bottom:8px">\u2705 Ce client a activ\u00e9 son compte. Il acc\u00e8de \u00e0 ses RDV, factures, fid\u00e9lit\u00e9 depuis luxyra.fr/compte avec son mot de passe.</div>';
+        h+='<button class="btn" style="width:100%;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.1);font-size:12px" onclick="inviteClient(\''+c.id+'\')">Renvoyer un email d\u0027invitation (r\u00e9init. mot de passe)</button>';
+      } else {
+        h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">Envoyer \u00e0 <strong style="color:var(--gold)">'+c.em+'</strong> un email avec un lien pour cr\u00e9er son mot de passe et acc\u00e9der \u00e0 son compte (RDV, factures, fid\u00e9lit\u00e9).</div>';
+        h+='<button class="btn" style="width:100%;background:linear-gradient(135deg,var(--gold),#b8960f);color:#000;font-weight:800" onclick="inviteClient(\''+c.id+'\')">\ud83d\udce7 Envoyer l\u0027invitation</button>';
+      }
+      h+='</div>';
+    }
     // Droit à l'export (portabilité)
     h+='<div class="card"><div class="ct">Droit \u00e0 la portabilit\u00e9 (Art. 20 RGPD)</div>';
     h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px">Exporter toutes les donn\u00e9es du client dans un format lisible.</div>';
@@ -16749,6 +16761,55 @@ function renderRdvPhases(){
   el.innerHTML=h;
 }
 
+// === INVITATION CLIENT : envoi email avec lien magique pour créer mot de passe ===
+async function inviteClient(cId){
+  var c = null; for(var i=0;i<CL.length;i++){if(CL[i].id===cId){c=CL[i];break;}}
+  if(!c){if(typeof toast==="function")toast("Client introuvable","warning");return;}
+  if(!c.em){if(typeof toast==="function")toast("Pas d'email enregistré pour ce client","warning");return;}
+  if(!c.emOk){
+    if(!confirm("Ce client n'a pas accepté les emails (RGPD). Envoyer quand même l'invitation ?")) return;
+  }
+  try {
+    if(typeof toast==="function")toast("Envoi de l'invitation…","info");
+    var resp = await fetch("/api/client/invite", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        salon_id: window._salonId || "",
+        client_id: c.id,
+        email: c.em,
+        client_nom: c.nom||"",
+        client_prenom: c.pre||"",
+        salon_nom: SALON_CONFIG.nom||"",
+        operator_name: (window._currentOp&&window._currentOp.name) || (window._currentOp&&window._currentOp.n) || "Salon"
+      })
+    });
+    var data = await resp.json();
+    if(resp.ok && data.ok){
+      if(typeof toast==="function")toast("✓ Invitation envoyée à "+c.em,"success");
+      if(typeof auditLog==="function")auditLog("INVITATION_CLIENT","Email envoyé à "+c.em+" (client "+c.id+")");
+    } else {
+      if(typeof toast==="function")toast("Erreur : "+(data.error||"envoi impossible"),"warning");
+    }
+  } catch(e) {
+    if(typeof toast==="function")toast("Erreur réseau : "+(e.message||""),"warning");
+  }
+}
+// Mini modal de proposition d'envoi à la création (déclenché auto si email + emailOK)
+function showInviteClientPrompt(cId){
+  var c=null; for(var i=0;i<CL.length;i++){if(CL[i].id===cId){c=CL[i];break;}}
+  if(!c||!c.em)return;
+  var nom=(c.pre||"")+" "+(c.nom||"");
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+  h+='<div style="display:inline-block;padding:14px;background:linear-gradient(135deg,rgba(212,168,67,.18),rgba(212,168,67,.05));border:1px solid rgba(212,168,67,.3);border-radius:14px;margin-bottom:12px"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d4a843" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>';
+  h+='<h2 style="margin:0 0 6px;font-size:18px;color:#fff">Inviter '+nom.trim()+' ?</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin:6px 0 18px;line-height:1.5">Envoyer un email à <strong style="color:var(--gold)">'+c.em+'</strong> avec un lien pour créer son mot de passe et accéder à son compte (RDV, factures, fidélité).</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM()">Plus tard</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="cM();inviteClient(\''+cId+'\')">📧 Envoyer l\'invitation</button></div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
 function aCl(){
   var nom=document.getElementById("mnom").value.trim();
   var pre=document.getElementById("mpre").value.trim();
@@ -16761,6 +16822,12 @@ function aCl(){
   var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:"",cp:"",ville:"",ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[]};
   CL.push(newCl);
   if(typeof saveClient==="function")saveClient(newCl);
+  // Si email + consentement RGPD : propose d'envoyer l'invitation pour activer le compte client
+  if(em && newCl.emOk){
+    setTimeout(function(){
+      if(typeof showInviteClientPrompt==="function") showInviteClientPrompt(newCl.id);
+    }, 250);
+  }
   // If we came from caisse, go back to caisse with this new client
   if(window._fromCaisse){
     window._fromCaisse=false;

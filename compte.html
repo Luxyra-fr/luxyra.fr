@@ -134,7 +134,17 @@ function loadSession(){
   try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";}}catch(e){}
 }
 function logout(){CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");}catch(e){}render();}
-loadSession();
+
+// === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
+// Si l'URL contient ?invite=XXX, on bypasse loadSession et on affiche le form invite.
+window.INVITE_TOKEN = (function(){
+  try { var p = new URLSearchParams(window.location.search); return p.get("invite") || null; } catch(e){ return null; }
+})();
+if(window.INVITE_TOKEN){
+  PAGE = "invite";  // override
+} else {
+  loadSession();
+}
 // Refresh client data via edge function (si session BP valide)
 if(CLIENT&&LX.hasSession()){
   LX.get().then(function(res){
@@ -164,6 +174,7 @@ function render(){
   
   if(PAGE==="login")h+=renderLogin();
   else if(PAGE==="register")h+=renderRegister();
+  else if(PAGE==="invite")h+=renderInvite();
   else if(PAGE==="dashboard")h+=renderDashboard();
   
   h+='<div class="footer">Luxyra \u00a9 2026 \u2014 Tous droits r\u00e9serv\u00e9s</div>';
@@ -207,6 +218,63 @@ function renderRegister(){
   h+='<div style="text-align:center;margin-top:16px;font-size:14px">D\u00e9j\u00e0 un compte ? <a href="#" onclick="event.preventDefault();PAGE=\'login\';render()">Se connecter</a></div>';
   h+='</div></div>';
   return h;
+}
+
+// ========== INVITE (lien magique re\u00e7u par email pour activer un compte cr\u00e9\u00e9 en salon) ==========
+function renderInvite(){
+  var h='<div class="auth-page"><div class="auth-card" style="max-width:460px">';
+  h+='<div style="text-align:center;margin-bottom:18px">';
+  h+='<div style="display:inline-block;padding:14px;background:linear-gradient(135deg,rgba(212,168,67,.18),rgba(212,168,67,.05));border:1px solid rgba(212,168,67,.3);border-radius:14px"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d4a843" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>';
+  h+='</div>';
+  h+='<h1 style="text-align:center">Activez votre compte</h1>';
+  h+='<p style="text-align:center;font-size:13px;color:var(--text2);margin:8px 0 22px;line-height:1.5">Un salon a cr\u00e9\u00e9 votre fiche. D\u00e9finissez votre mot de passe ci-dessous pour acc\u00e9der \u00e0 votre historique de RDV, vos factures et votre fid\u00e9lit\u00e9.</p>';
+  h+='<div id="invErr" class="err"></div>';
+  h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 6 caract\u00e8res"></div>';
+  h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="iPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doActivateInvite()"></div>';
+  h+='<button class="btn-gold" style="width:100%;margin-top:6px" onclick="doActivateInvite()">Activer mon compte</button>';
+  h+='<div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text3);line-height:1.5">Lien valide 14 jours \u00b7 usage unique<br>En activant votre compte, vous acceptez nos <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> et notre <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a>.</div>';
+  h+='</div></div>';
+  return h;
+}
+async function doActivateInvite(){
+  var p1=(document.getElementById("iPass")||{}).value||"";
+  var p2=(document.getElementById("iPass2")||{}).value||"";
+  if(p1.length<6){showErr("invErr","Mot de passe minimum 6 caract\u00e8res");return;}
+  if(p1!==p2){showErr("invErr","Les mots de passe ne correspondent pas");return;}
+  var token=window.INVITE_TOKEN;
+  if(!token){showErr("invErr","Token d\u2019invitation manquant");return;}
+  // D\u00e9sactive bouton pendant la requ\u00eate
+  var btn=document.querySelector('button.btn-gold[onclick*="doActivateInvite"]');
+  if(btn){btn.disabled=true;btn.textContent="Activation en cours\u2026";}
+  try{
+    var resp=await fetch("/api/client/invite/verify",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token:token, password:p1})
+    });
+    var data=await resp.json();
+    if(!resp.ok || !data.ok){
+      showErr("invErr", data.error || "Activation impossible. Contactez votre salon.");
+      if(btn){btn.disabled=false;btn.textContent="Activer mon compte";}
+      return;
+    }
+    // Compte cr\u00e9\u00e9 + li\u00e9 \u2192 on connecte automatiquement avec email + password
+    var loginRes = await LX.signin({email:data.email, password:p1});
+    if(!loginRes.ok){
+      showErr("invErr","Compte activ\u00e9, mais connexion \u00e9chou\u00e9e. Allez sur /compte et connectez-vous avec votre email et mot de passe.");
+      if(btn){btn.disabled=false;btn.textContent="R\u00e9essayer";}
+      return;
+    }
+    // Connect\u00e9 \u2192 bascule sur dashboard, nettoie l'URL
+    if(loginRes.data && loginRes.data.user){ CLIENT=loginRes.data.user; saveSession(); }
+    PAGE="dashboard";
+    window.INVITE_TOKEN=null;
+    if(window.history && window.history.replaceState){ window.history.replaceState({}, "", "/compte"); }
+    render();
+  }catch(e){
+    showErr("invErr","Erreur r\u00e9seau : "+(e.message||""));
+    if(btn){btn.disabled=false;btn.textContent="Activer mon compte";}
+  }
 }
 
 // ========== DASHBOARD ==========
