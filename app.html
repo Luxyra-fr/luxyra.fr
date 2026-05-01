@@ -14315,28 +14315,42 @@ function expDeclarationURSSAF(){
   var p2 = accM.split("-"); var mLabel = MO[parseInt(p2[1])-1] + " " + p2[0];
   var ca = getCAYearToDate();
 
-  var headers = ["Cat\u00e9gorie","CA brut (\u20ac) "+mLabel,"Taux URSSAF","Cotisations estim\u00e9es (\u20ac)","Net apr\u00e8s URSSAF (\u20ac)"];
+  var headers = ["Cat\u00e9gorie","CA brut (\u20ac)","Taux URSSAF","Cotisations estim\u00e9es (\u20ac)","Net apr\u00e8s URSSAF (\u20ac)"];
   var rows = [
-    ["Prestations de services (BIC)", csvNum(totalSvc), "22,2 %", csvNum(cotisSvc), csvNum(totalSvc - cotisSvc)],
-    ["Ventes marchandises (BIC)", csvNum(totalProd), "12,3 %", csvNum(cotisProd), csvNum(totalProd - cotisProd)],
-    ["TOTAL "+mLabel, csvNum(totalCA), "", csvNum(cotisTotal), csvNum(net)]
+    ["Prestations de services (BIC)", csvNum(totalSvc)+" \u20ac", "22,2 %", csvNum(cotisSvc)+" \u20ac", csvNum(totalSvc - cotisSvc)+" \u20ac"],
+    ["Ventes marchandises (BIC)", csvNum(totalProd)+" \u20ac", "12,3 %", csvNum(cotisProd)+" \u20ac", csvNum(totalProd - cotisProd)+" \u20ac"],
+    ["TOTAL "+mLabel, csvNum(totalCA)+" \u20ac", "", csvNum(cotisTotal)+" \u20ac", csvNum(net)+" \u20ac"]
   ];
-  var content = csvBuild(headers, rows);
-  // Ajout r\u00e9cap annuel (seuils)
-  content += "\r\n\r\n\"=== R\u00e9capitulatif "+ca.year+" (cumul YTD) ===\"\r\n";
-  content += '"Cat\u00e9gorie";"Total YTD (\u20ac)";"Seuil r\u00e9gime micro";"Seuil franchise TVA";"% seuil micro";"% seuil TVA"\r\n';
-  content += '"Prestations services";'+csvNum(ca.services)+';'+MICRO_SEUILS.ca_services+';'+MICRO_SEUILS.tva_services+';'+(ca.services/MICRO_SEUILS.ca_services*100).toFixed(1)+';'+(ca.services/MICRO_SEUILS.tva_services*100).toFixed(1)+'\r\n';
-  content += '"Ventes marchandises";'+csvNum(ca.ventes)+';'+MICRO_SEUILS.ca_ventes+';'+MICRO_SEUILS.tva_ventes+';'+(ca.ventes/MICRO_SEUILS.ca_ventes*100).toFixed(1)+';'+(ca.ventes/MICRO_SEUILS.tva_ventes*100).toFixed(1)+'\r\n';
-  content += "\r\n";
-  content += "\"\u26a0\ufe0f Cotisations estim\u00e9es \u00e0 titre indicatif uniquement.\"\r\n";
-  content += "\"Le calcul officiel et la d\u00e9claration se font sur autoentrepreneur.urssaf.fr\"\r\n";
+  // Footer : r\u00e9cap annuel YTD avec seuils
+  var footer = [];
+  footer.push(["R\u00c9CAPITULATIF "+ca.year+" (cumul YTD)","","","",""]);
+  footer.push(["Cat\u00e9gorie","Total YTD","Seuil r\u00e9gime micro","Seuil franchise TVA","% seuil micro / % TVA"]);
+  footer.push([
+    "Prestations services",
+    csvNum(ca.services)+" \u20ac",
+    MICRO_SEUILS.ca_services+" \u20ac",
+    MICRO_SEUILS.tva_services+" \u20ac",
+    (ca.services/MICRO_SEUILS.ca_services*100).toFixed(1)+" % / "+(ca.services/MICRO_SEUILS.tva_services*100).toFixed(1)+" %"
+  ]);
+  footer.push([
+    "Ventes marchandises",
+    csvNum(ca.ventes)+" \u20ac",
+    MICRO_SEUILS.ca_ventes+" \u20ac",
+    MICRO_SEUILS.tva_ventes+" \u20ac",
+    (ca.ventes/MICRO_SEUILS.ca_ventes*100).toFixed(1)+" % / "+(ca.ventes/MICRO_SEUILS.tva_ventes*100).toFixed(1)+" %"
+  ]);
+  footer.push(["","","","",""]);
+  footer.push(["Notes","",""]);
+  footer.push(["\u26a0\ufe0f","","Cotisations \u00e0 titre indicatif uniquement","",""]);
+  footer.push(["\u2713","","Calcul officiel + d\u00e9claration : autoentrepreneur.urssaf.fr","",""]);
   // Alerte seuils
   var seuils = getMicroSeuilsStatus();
   if(seuils && seuils.alerts.length){
-    content += "\r\n\"=== \u26a0\ufe0f ALERTES SEUILS ===\"\r\n";
-    seuils.alerts.forEach(function(al){ content += '"'+al.replace(/"/g,'""')+'"\r\n'; });
+    footer.push(["","","","",""]);
+    footer.push(["\u26a0\ufe0f ALERTES SEUILS","","","",""]);
+    seuils.alerts.forEach(function(al){ footer.push(["",al,"","",""]); });
   }
-  csvDownload("declaration_urssaf_"+accM+".csv", content);
+  csvDownload("declaration_urssaf_"+accM+".csv", csvBuildPro("D\u00e9claration URSSAF auto-entrepreneur", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_URSSAF","P\u00e9riode "+accM+" - CA "+csvNum(totalCA)+"\u20ac");
 }
 
@@ -14491,6 +14505,52 @@ function csvBuild(headerRow, dataRows){
   dataRows.forEach(function(row){ lines.push(row.map(csvEscape).join(";")); });
   return "\uFEFF" + lines.join("\r\n");
 }
+
+// =====================================================================
+// HELPER : EN-T\u00CATE PRO pour les CSV (5-6 lignes salon + p\u00E9riode)
+// =====================================================================
+// Affiche en haut de chaque CSV :
+//   - Logo/Nom Luxyra + n\u00B0 version
+//   - Salon : Nom \u00B7 SIRET \u00B7 Forme jur \u00B7 Adresse
+//   - P\u00E9riode \u00B7 Date d'\u00E9dition
+//   - Type de document
+//   - Ligne vide (s\u00E9parateur visuel dans Excel)
+function csvProHeader(typeDoc, periodeM){
+  var p = String(periodeM||accM||"").split("-");
+  var mLabel = (p.length>=2 && MO[parseInt(p[1])-1]) ? (MO[parseInt(p[1])-1]+" "+p[0]) : (periodeM||"");
+  var nowFr = new Date().toLocaleString("fr-FR", {dateStyle:"long", timeStyle:"short"});
+  var lines = [];
+  lines.push(["LUXYRA","","","",""]); // ligne titre
+  lines.push(["Document","",typeDoc,"",""]);
+  lines.push(["Salon","",SALON_CONFIG.nom||"","",""]);
+  lines.push(["SIRET","",SALON_CONFIG.siret||"non renseign\u00E9","",""]);
+  lines.push(["Forme juridique","",SALON_CONFIG.formeJur||"non pr\u00E9cis\u00E9e","",""]);
+  if(SALON_CONFIG.adresse) lines.push(["Adresse","",SALON_CONFIG.adresse+(SALON_CONFIG.cp?", "+SALON_CONFIG.cp:"")+(SALON_CONFIG.ville?" "+SALON_CONFIG.ville:""),"",""]);
+  lines.push(["P\u00E9riode","",mLabel,"",""]);
+  lines.push(["\u00C9dit\u00E9 le","",nowFr,"",""]);
+  if(isMicroEntrepreneur()) lines.push(["R\u00E9gime","","Micro-entrepreneur \u2014 TVA non applicable, art. 293B du CGI","",""]);
+  lines.push(["Conformit\u00E9","","Caisse certifi\u00E9e NF525 (cha\u00EEnage SHA-256)","",""]);
+  lines.push(["","","","",""]); // ligne vide s\u00E9paratrice
+  return lines.map(function(row){return row.map(csvEscape).join(";");}).join("\r\n");
+}
+
+// Variante csvBuild avec en-t\u00EAte pro int\u00E9gr\u00E9
+function csvBuildPro(typeDoc, periodeM, headerRow, dataRows, footerRows){
+  var sections = [];
+  sections.push(csvProHeader(typeDoc, periodeM));
+  // Donn\u00E9es
+  var dataLines = [];
+  dataLines.push(headerRow.map(csvEscape).join(";"));
+  dataRows.forEach(function(row){ dataLines.push(row.map(csvEscape).join(";")); });
+  sections.push(dataLines.join("\r\n"));
+  // Footer (totaux/r\u00E9sum\u00E9 optionnel)
+  if(footerRows && footerRows.length){
+    sections.push("");
+    sections.push("\"=== R\u00C9SUM\u00C9 ===\"");
+    footerRows.forEach(function(row){ sections.push(row.map(csvEscape).join(";")); });
+  }
+  return "\uFEFF" + sections.join("\r\n\r\n");
+}
 function csvDownload(filename, csvContent){
   try{
     var blob = new Blob([csvContent], {type:"text/csv;charset=utf-8;"});
@@ -14568,8 +14628,24 @@ function expCSV(){
     return String(a[1]).localeCompare(String(b[1]));
   });
 
-  csvDownload("journal_caisse_"+accM+".csv", csvBuild(headers, rows));
-  if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_CSV","P\u00e9riode "+accM+" - "+rows.length+" lignes");
+  // Calcul totaux pour le footer
+  var sumHT=0, sumTVA=0, sumTTC=0, sumRem=0;
+  rows.forEach(function(r){
+    sumHT += parseFloat(String(r[6]).replace(",","."))||0;
+    sumTVA += parseFloat(String(r[7]).replace(",","."))||0;
+    sumTTC += parseFloat(String(r[8]).replace(",","."))||0;
+    sumRem += parseFloat(String(r[9]).replace(",","."))||0;
+  });
+  var footer = [
+    ["Nombre de tickets", rows.length],
+    ["Total HT", csvNum(sumHT)+" \u20ac"],
+    ["Total TVA "+txTVA+"%", csvNum(sumTVA)+" \u20ac"],
+    ["Total TTC", csvNum(sumTTC)+" \u20ac"],
+    ["Total remises accord\u00e9es", csvNum(sumRem)+" \u20ac"]
+  ];
+
+  csvDownload("journal_caisse_"+accM+".csv", csvBuildPro("Journal de caisse d\u00e9taill\u00e9", accM, headers, rows, footer));
+  if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_CSV","P\u00e9riode "+accM+" - "+rows.length+" lignes - "+csvNum(sumTTC)+"\u20ac");
 }
 
 // =====================================================================
@@ -14596,16 +14672,7 @@ function expRecapTVA(){
   var rows = [
     [txTVA+"%", csvNum(totalHT), csvNum(totalTVA), csvNum(totalTTC), nbTickets]
   ];
-  // Note micro-entrepreneur si applicable (TVA non applicable art. 293B)
-  var isMicro = String(SALON_CONFIG.formeJur||"").toLowerCase().indexOf("micro")>=0;
-  var lines = csvBuild(headers, rows);
-  if(isMicro){
-    lines += "\r\n\r\n\"\u26A0\uFE0F R\u00e9gime micro-entrepreneur - TVA non applicable, art. 293B du CGI\"";
-    lines += "\r\n\"Si vous d\u00e9passez les seuils de TVA en franchise, contactez votre comptable.\"";
-  }
-  // D\u00e9tail par jour
-  lines += "\r\n\r\n\"=== D\u00e9tail par jour ===\"\r\n";
-  lines += csvEscape("Date")+";"+csvEscape("Base HT")+";"+csvEscape("TVA")+";"+csvEscape("Total TTC")+";"+csvEscape("Nb")+"\r\n";
+  // R\u00e9cap par jour pour le footer
   var byDay = {};
   dn.concat(ps2).forEach(function(x){
     var d = x.date;
@@ -14613,14 +14680,19 @@ function expRecapTVA(){
     byDay[d].ttc += (Number(x.pr)||0);
     byDay[d].n++;
   });
+  // Footer avec d\u00e9tail par jour + totaux
+  var footer = [];
+  footer.push(["D\u00c9TAIL PAR JOUR","","","",""]);
+  footer.push(["Date","Base HT","TVA","Total TTC","Nb op\u00e9rations"]);
   Object.keys(byDay).sort().forEach(function(d){
     var t = byDay[d].ttc;
     var h = Math.round(t/(1+txTVA/100)*100)/100;
     var tv = Math.round((t-h)*100)/100;
-    lines += csvEscape(d)+";"+csvNum(h)+";"+csvNum(tv)+";"+csvNum(t)+";"+byDay[d].n+"\r\n";
+    footer.push([d, csvNum(h)+" \u20ac", csvNum(tv)+" \u20ac", csvNum(t)+" \u20ac", byDay[d].n]);
   });
+  footer.push(["TOTAL", csvNum(totalHT)+" \u20ac", csvNum(totalTVA)+" \u20ac", csvNum(totalTTC)+" \u20ac", nbTickets]);
 
-  csvDownload("recap_tva_"+accM+".csv", lines);
+  csvDownload("recap_tva_"+accM+".csv", csvBuildPro("R\u00e9cap TVA mensuel (d\u00e9claration CA3/CA12)", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_RECAP_TVA","P\u00e9riode "+accM+" - HT "+csvNum(totalHT)+" TVA "+csvNum(totalTVA));
 }
 
@@ -14695,7 +14767,19 @@ function expJournalComptable(){
     pushTicket(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, tva, p.met, "produit");
   });
 
-  csvDownload("journal_comptable_"+accM+".csv", csvBuild(headers, rows));
+  // Footer avec totaux d\u00e9bit/cr\u00e9dit
+  var sumDebit = 0, sumCredit = 0;
+  rows.forEach(function(r){
+    sumDebit += parseFloat(String(r[9]).replace(",","."))||0;
+    sumCredit += parseFloat(String(r[10]).replace(",","."))||0;
+  });
+  var footer = [
+    ["Nombre d'\u00e9critures comptables", (ecrNum-1)],
+    ["Total D\u00e9bit", csvNum(sumDebit)+" \u20ac"],
+    ["Total Cr\u00e9dit", csvNum(sumCredit)+" \u20ac"],
+    ["\u00c9quilibre", Math.abs(sumDebit-sumCredit)<0.01 ? "\u2713 \u00e9quilibr\u00e9" : "\u26a0\ufe0f D\u00c9S\u00c9QUILIBRE "+csvNum(sumDebit-sumCredit)+" \u20ac"]
+  ];
+  csvDownload("journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (\u00e9critures comptables)", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_COMPTABLE","P\u00e9riode "+accM+" - "+(ecrNum-1)+" \u00e9critures");
 }
 
@@ -14720,7 +14804,14 @@ function expAnnulations(){
       csvNum(a.pr||0), a.cancelReason||"(non pr\u00e9cis\u00e9)", (a.hash||"").slice(0,16)
     ];
   });
-  csvDownload("annulations_"+accM+".csv", csvBuild(headers, rows));
+  var sumAnnul = 0;
+  rows.forEach(function(r){ sumAnnul += parseFloat(String(r[6]).replace(",","."))||0; });
+  var footer = [
+    ["Nombre d'annulations", rows.length],
+    ["Montant total annul\u00e9", csvNum(sumAnnul)+" \u20ac"],
+    ["Conformit\u00e9", "Hash NF525 conserv\u00e9 pour chaque ticket annul\u00e9"]
+  ];
+  csvDownload("annulations_"+accM+".csv", csvBuildPro("Annulations & remboursements (NF525)", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_ANNULATIONS","P\u00e9riode "+accM+" - "+rows.length+" annulations");
 }
 
@@ -14751,7 +14842,16 @@ function expBordereauStripe(){
   });
   // Ligne total
   rows.push(["","","","","TOTAL", csvNum(totalBrut), csvNum(totalFrais), csvNum(totalNet), rdvOnline.length+" RDV", ""]);
-  csvDownload("bordereau_stripe_"+accM+".csv", csvBuild(headers, rows));
+  // Total d\u00e9j\u00e0 ajout\u00e9 en derni\u00e8re ligne de rows par le code existant \u2014 on l'extrait pour le footer
+  var dataRows = rows.slice(0, -1); // sans la ligne TOTAL
+  var footer = [
+    ["Nombre d'acomptes", rdvOnline.length],
+    ["Montant brut encaiss\u00e9", csvNum(totalBrut)+" \u20ac"],
+    ["Frais Stripe estim\u00e9s (1,4% + 0,25\u20ac)", csvNum(totalFrais)+" \u20ac"],
+    ["Net re\u00e7u en banque", csvNum(totalNet)+" \u20ac"],
+    ["Note", "Stripe Connect : versement direct sur le compte du salon"]
+  ];
+  csvDownload("bordereau_stripe_"+accM+".csv", csvBuildPro("Bordereau acomptes en ligne (Stripe Connect)", accM, headers, dataRows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_BORDEREAU_STRIPE","P\u00e9riode "+accM+" - "+rdvOnline.length+" acomptes - Brut "+csvNum(totalBrut));
 }
 
@@ -14802,7 +14902,7 @@ async function expPackComptable(){
     rJournal.push([p.date,p.time||"",p.tkNum||"","","","\uD83D\uDECD "+p.prod,csvNum(ht),csvNum(tva),csvNum(ttc),0,p.met||"","Vente produit",""]);
   });
   rJournal.sort(function(a,b){var d=String(a[0]).localeCompare(String(b[0]));return d?d:String(a[1]).localeCompare(String(b[1]));});
-  folder.file("01_journal_caisse_"+accM+".csv", csvBuild(hJournal, rJournal));
+  folder.file("01_journal_caisse_"+accM+".csv", csvBuildPro("Journal de caisse détaillé", accM, hJournal, rJournal));
 
   // 2. R\u00e9cap TVA OU D\u00e9claration URSSAF (selon r\u00e9gime)
   var totalTTC = 0;
@@ -14825,24 +14925,27 @@ async function expPackComptable(){
     ps2.forEach(function(p){ totalProdM += Number(p.pr)||0; });
     var cotisSvcM = Math.round(totalSvcM * 0.222 * 100) / 100;
     var cotisProdM = Math.round(totalProdM * 0.123 * 100) / 100;
-    var urssafContent = csvBuild(
+    var urssafFooter = [
+      ["Notes","",""],
+      ["\u26A0\uFE0F","Cotisations estim\u00e9es \u00E0 titre indicatif uniquement",""],
+      ["\u2713","Calcul officiel + d\u00e9claration : autoentrepreneur.urssaf.fr",""],
+      ["\u2713","TVA non applicable, art. 293B du CGI (r\u00e9gime micro-entrepreneur)",""]
+    ];
+    folder.file("02_declaration_urssaf_"+accM+".csv", csvBuildPro("D\u00e9claration URSSAF auto-entrepreneur", accM,
       ["Cat\u00e9gorie","CA brut (\u20AC)","Taux URSSAF","Cotisations estim\u00e9es (\u20AC)","Net apr\u00E8s URSSAF (\u20AC)"],
       [
-        ["Prestations services (BIC)", csvNum(totalSvcM), "22,2 %", csvNum(cotisSvcM), csvNum(totalSvcM-cotisSvcM)],
-        ["Ventes marchandises (BIC)", csvNum(totalProdM), "12,3 %", csvNum(cotisProdM), csvNum(totalProdM-cotisProdM)],
-        ["TOTAL", csvNum(totalTTC), "", csvNum(cotisSvcM+cotisProdM), csvNum(totalTTC-cotisSvcM-cotisProdM)]
-      ]
-    );
-    urssafContent += "\r\n\r\n\"\u26A0\uFE0F Cotisations estim\u00e9es indicatives. Calcul officiel sur autoentrepreneur.urssaf.fr\"";
-    urssafContent += "\r\n\"TVA non applicable, art. 293B du CGI (r\u00e9gime micro-entrepreneur)\"";
-    folder.file("02_declaration_urssaf_"+accM+".csv", urssafContent);
+        ["Prestations services (BIC)", csvNum(totalSvcM)+" \u20AC", "22,2 %", csvNum(cotisSvcM)+" \u20AC", csvNum(totalSvcM-cotisSvcM)+" \u20AC"],
+        ["Ventes marchandises (BIC)", csvNum(totalProdM)+" \u20AC", "12,3 %", csvNum(cotisProdM)+" \u20AC", csvNum(totalProdM-cotisProdM)+" \u20AC"],
+        ["TOTAL", csvNum(totalTTC)+" \u20AC", "", csvNum(cotisSvcM+cotisProdM)+" \u20AC", csvNum(totalTTC-cotisSvcM-cotisProdM)+" \u20AC"]
+      ],
+      urssafFooter
+    ));
   } else {
     // R\u00e9gime r\u00e9el TVA : r\u00e9cap classique
-    var tvaContent = csvBuild(
+    folder.file("02_recap_tva_"+accM+".csv", csvBuildPro("R\u00e9cap TVA mensuel (d\u00e9claration CA3/CA12)", accM,
       ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"],
-      [[txTVA+"%",csvNum(totalHT),csvNum(totalTVA),csvNum(totalTTC),(dn.length+ps2.length)]]
-    );
-    folder.file("02_recap_tva_"+accM+".csv", tvaContent);
+      [[txTVA+" %",csvNum(totalHT)+" \u20AC",csvNum(totalTVA)+" \u20AC",csvNum(totalTTC)+" \u20AC",(dn.length+ps2.length)]]
+    ));
   }
 
   // 3. Journal comptable (\u00e9critures d\u00e9bit/cr\u00e9dit)
@@ -14867,12 +14970,12 @@ async function expPackComptable(){
   }
   dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
   ps2.forEach(function(p){var ttc=Number(p.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(p.date,"PR"+(p.tkNum||""),p.prod||"Vente produit",ttc,ht,tva,p.met,"produit");});
-  folder.file("03_journal_comptable_"+accM+".csv", csvBuild(hCompta, rCompta));
+  folder.file("03_journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (écritures comptables)", accM, hCompta, rCompta));
 
   // 4. Annulations
   if(annul.length){
     var rAnnul = annul.map(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";return [a.date,a.time||"",a.tkNum||"",a.cancelDate||"",clNom,sv?sv.n:"",csvNum(a.pr||0),a.cancelReason||"(non pr\u00e9cis\u00e9)",(a.hash||"").slice(0,16)];});
-    folder.file("04_annulations_"+accM+".csv", csvBuild(["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC","Motif NF525","Hash"], rAnnul));
+    folder.file("04_annulations_"+accM+".csv", csvBuildPro("Annulations & remboursements (NF525)", accM, ["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC","Motif NF525","Hash"], rAnnul));
   }
 
   // 5. Bordereau Stripe (si acomptes en ligne)
@@ -14880,7 +14983,7 @@ async function expPackComptable(){
     var totalBrut2=0,totalFrais2=0,totalNet2=0;
     var rStripe = rdvOnline.map(function(r){var brut=Number(r.acompte)||0;var frais=Math.round((brut*0.014+0.25)*100)/100;var net=Math.round((brut-frais)*100)/100;totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),r.status||"",r.stripePaymentId||""];});
     rStripe.push(["","","","","TOTAL",csvNum(totalBrut2),csvNum(totalFrais2),csvNum(totalNet2),rdvOnline.length+" RDV",""]);
-    folder.file("05_bordereau_stripe_"+accM+".csv", csvBuild(["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte","Frais Stripe","Net re\u00E7u","Statut","ID Stripe"], rStripe));
+    folder.file("05_bordereau_stripe_"+accM+".csv", csvBuildPro("Bordereau acomptes en ligne (Stripe Connect)", accM, ["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte","Frais Stripe","Net re\u00E7u","Statut","ID Stripe"], rStripe));
   }
 
   // 0. Rapport HTML imprimable inclus dans le ZIP (\u00e0 ouvrir dans le navigateur, bouton \ud83d\udda8 \u2192 PDF)
