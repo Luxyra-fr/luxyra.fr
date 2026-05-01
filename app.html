@@ -245,6 +245,13 @@ body{max-width:100%;margin:0 auto;}
 .gt-gold::before{background:linear-gradient(135deg,#4a3a10,#c8a84e);}
 .tile-locked{opacity:.55;position:relative}.tile-locked .lock-badge{position:absolute;top:6px;right:6px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-size:9px;font-weight:800;padding:2px 6px;border-radius:6px;z-index:2;letter-spacing:.5px}.tile-locked:active{transform:none!important}
 .upgrade-overlay{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center}
+/* === Détail RDV — phase rows responsive === */
+.phases-list .phase-row{transition:background .15s}
+.phases-list .phase-row:hover{background:rgba(200,168,78,.03)}
+.phases-list .insert-here{margin-top:-2px;margin-bottom:-2px}
+@media(max-width:520px){
+  .phases-list .phase-row{grid-template-columns:1fr 56px auto !important;grid-template-areas:'collab dur actions' 'name name name' 'time time time' !important;gap:4px 6px !important;padding:10px 4px !important}
+}
 .pos-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);height:calc(100vh - 60px);overflow:hidden}
 @media(max-width:768px){.pos-grid{grid-template-columns:1fr;height:auto;overflow:visible}
 .pos-grid .pos-left{max-height:40vh;overflow-y:auto}
@@ -7631,44 +7638,52 @@ function clickAppt(id){
   // Phases detail table
   var isDone=a.st==="done";
   htm+='<div style="color:var(--gold);font-weight:700;font-size:13px;margin-bottom:6px">D\u00e9tails du RDV'+(isDone?' <span style="font-size:10px;color:rgba(255,255,255,.3);font-weight:500">(lecture seule)</span>':'')+'</div>';
-  htm+='<div style="font-size:13px">';
+  htm+='<div style="font-size:13px" class="phases-list">';
   var cur=toM(a.time);
   for(var i=0;i<phases.length;i++){
     var ph=phases[i];
     var phStart=String(Math.floor(cur/60)).padStart(2,"0")+":"+String(cur%60).padStart(2,"0");
     var phEnd=String(Math.floor((cur+ph.d)/60)).padStart(2,"0")+":"+String((cur+ph.d)%60).padStart(2,"0");
-    htm+='<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap">';
+    // Layout : grid 2 lignes - principale + meta (responsive mobile)
+    htm+='<div class="phase-row" style="display:grid;grid-template-columns:90px 1fr 56px auto;grid-template-areas:\'collab name dur actions\' \'time time time time\';gap:6px 8px;align-items:center;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.08)">';
     if(ph.t==="w"){
       var phStId=ph.stId||a.stId;
       if(isDone){
         var phSty=gT(phStId);
-        htm+='<div style="width:90px;font-size:11px;font-weight:700;color:'+(phSty?phSty.c:'#fff')+'">'+(phSty?phSty.n:'')+'</div>';
+        htm+='<div style="grid-area:collab;font-size:11px;font-weight:700;color:'+(phSty?phSty.c:'#fff')+';text-align:left">'+(phSty?phSty.n:'')+'</div>';
       } else {
-        htm+='<select style="width:90px;padding:4px;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff" onchange="updApptPhaseCollab(\''+a.id+'\','+i+',+this.value)">';
+        htm+='<select style="grid-area:collab;width:100%;padding:5px 4px;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff" onchange="updApptPhaseCollab(\''+a.id+'\','+i+',+this.value)">';
         for(var ti=0;ti<T.length;ti++){htm+='<option value="'+T[ti].id+'"'+(T[ti].id===phStId?' selected':'')+' style="color:#000;background:#fff">'+T[ti].n+'</option>';}
         htm+='</select>';
       }
-      htm+='<div style="flex:1;font-weight:600;font-size:12px">'+ph.l.toUpperCase()+'</div>';
+      htm+='<div style="grid-area:name;font-weight:600;font-size:12px;line-height:1.2;min-width:0;overflow-wrap:anywhere">'+ph.l.toUpperCase()+'</div>';
     }else{
-      htm+='<div style="width:90px;font-size:11px;color:#f0a030;font-weight:700">\u23f8 Pause</div>';
-      htm+='<div style="flex:1;font-style:italic;font-size:12px;color:rgba(255,255,255,.5)">Libre pour autre client</div>';
+      htm+='<div style="grid-area:collab;font-size:11px;color:#f0a030;font-weight:700">\u23f8 Pause</div>';
+      htm+='<div style="grid-area:name;font-style:italic;font-size:12px;color:rgba(255,255,255,.5);line-height:1.2">Libre pour autre client</div>';
     }
+    htm+='<div style="grid-area:dur;display:flex;align-items:center;gap:3px;justify-content:flex-end">';
     if(isDone){
-      htm+='<div style="font-size:12px;font-weight:700;width:46px;text-align:center">'+ph.d+'</div>';
+      htm+='<div style="font-size:12px;font-weight:700;text-align:center;min-width:30px">'+ph.d+'</div>';
     } else {
-      htm+='<input type="number" value="'+ph.d+'" min="5" step="5" style="width:46px;padding:4px;font-size:12px;text-align:center;border:1px solid rgba(255,255,255,.1);border-radius:6px" onchange="updApptPhase(\''+a.id+'\','+i+',+this.value)">';
+      htm+='<input type="number" value="'+ph.d+'" min="5" step="5" style="width:42px;padding:4px 2px;font-size:12px;text-align:center;border:1px solid rgba(255,255,255,.1);border-radius:6px" onchange="updApptPhase(\''+a.id+'\','+i+',+this.value)">';
     }
-    htm+='<span style="font-size:10px;color:rgba(255,255,255,.35)">min</span>';
-    htm+='<div style="font-size:9px;color:rgba(255,255,255,.3)">'+phStart+'\u2192'+phEnd+'</div>';
-    // Boutons reorder + supprimer la phase (sauf si encaisse)
+    htm+='<span style="font-size:10px;color:rgba(255,255,255,.35)">min</span></div>';
+    // Actions (reorder + delete phase)
     if(!isDone){
-      htm+='<div style="display:flex;gap:2px;margin-left:4px">';
-      if(i>0) htm+='<button title="Monter" onclick="movePhaseUp(\''+a.id+'\','+i+')" style="padding:3px 6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px">\u2191</button>';
-      if(i<phases.length-1) htm+='<button title="Descendre" onclick="movePhaseDown(\''+a.id+'\','+i+')" style="padding:3px 6px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px">\u2193</button>';
-      if(phases.length>1) htm+='<button title="Supprimer cette phase" onclick="removePhase(\''+a.id+'\','+i+')" style="padding:3px 6px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.2);border-radius:4px;color:#ef5350;cursor:pointer;font-size:11px">\u00d7</button>';
+      htm+='<div style="grid-area:actions;display:flex;gap:2px;justify-self:end">';
+      if(i>0) htm+='<button title="Monter" onclick="movePhaseUp(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px;min-width:24px">\u2191</button>';
+      if(i<phases.length-1) htm+='<button title="Descendre" onclick="movePhaseDown(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px;min-width:24px">\u2193</button>';
+      if(phases.length>1) htm+='<button title="Supprimer cette phase" onclick="removePhase(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.2);border-radius:4px;color:#ef5350;cursor:pointer;font-size:11px;min-width:24px">\u00d7</button>';
       htm+='</div>';
+    } else {
+      htm+='<div style="grid-area:actions"></div>';
     }
+    htm+='<div style="grid-area:time;font-size:10px;color:rgba(255,255,255,.35);text-align:right">'+phStart+' \u2192 '+phEnd+'</div>';
     htm+='</div>';
+    // Bouton "+" inter-phases pour insertion directe \u00e0 cet endroit (sauf si encaisse, et pas apr\u00e8s la derni\u00e8re)
+    if(!isDone && i<phases.length-1){
+      htm+='<div class="insert-here" style="text-align:center;padding:2px 0;line-height:0"><button onclick="showAddPrestaModal(\''+a.id+'\','+(i+1)+')" title="Ins\u00e9rer une prestation ici" style="width:24px;height:18px;padding:0;background:rgba(200,168,78,.08);border:1px dashed rgba(200,168,78,.35);border-radius:50%;color:var(--gold);font-size:13px;font-weight:700;cursor:pointer;line-height:1;opacity:.5;transition:opacity .15s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.5">+</button></div>';
+    }
     // Affichage des addons (prestations faites PENDANT cette phase)
     if(ph.addons && ph.addons.length){
       ph.addons.forEach(function(ad,adIdx){
@@ -7868,7 +7883,7 @@ async function removePhase(id, idx){
 }
 
 // Modal "Ajouter une prestation à un RDV"
-function showAddPrestaModal(apptId){
+function showAddPrestaModal(apptId, presetPos){
   var a=_findAppt(apptId); if(!a) return;
   var allSvcs=(typeof SVC!=="undefined"?SVC:[]).filter(function(s){return s&&s.n;});
   // Grouper par catégorie
@@ -7880,9 +7895,12 @@ function showAddPrestaModal(apptId){
   });
   var cats=Object.keys(byCat).sort();
   var phases=getApptPhases(a);
-  var insertOptions='<option value="end">À la fin (par défaut)</option>';
+  // Position pré-sélectionnée (depuis le "+" inter-phases) ou "end" par défaut
+  var preset = (presetPos!==undefined && presetPos!==null) ? String(presetPos) : "end";
+  var insertOptions='<option value="end"'+(preset==="end"?' selected':'')+'>À la fin (par défaut)</option>';
   phases.forEach(function(ph,i){
-    insertOptions+='<option value="'+(i+1)+'">Après la phase '+(i+1)+' — '+(ph.l||(ph.t==="w"?"Travail":"Pause"))+'</option>';
+    var v = String(i+1);
+    insertOptions+='<option value="'+v+'"'+(preset===v?' selected':'')+'>Après la phase '+(i+1)+' — '+(ph.l||(ph.t==="w"?"Travail":"Pause"))+'</option>';
   });
   // Options "pendant une phase" (sans rallonger)
   var duringOptions='';
@@ -15169,7 +15187,32 @@ function mD(id){
   if(!a)return;
   var sv=gS(a.sId);
   var acomp=a.acompte||0;
-  _tk={step:3,stId:a.stId,cId:a.cId,items:[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}],comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||""};
+  // FIX BUG ENCAISSEMENT (2026-05) : si des prestations ont été ajoutées au RDV
+  // via "+ Ajouter une prestation", on les retrouve dans a.items. Important :
+  //   - a.items contient UNIQUEMENT les ajouts (pas la prestation principale)
+  //   - a.pr a été incrémenté de la somme des prix des ajouts
+  // Donc : prix de la presta principale = a.pr - somme(a.items[].price)
+  var cartItems;
+  if(Array.isArray(a.items)&&a.items.length){
+    var addonsTotal=a.items.reduce(function(s,it){return s+(Number(it.price)||0);},0);
+    var mainPrice=Math.max(0,(Number(a.pr)||0)-addonsTotal);
+    cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:mainPrice,qty:1,remise:0}];
+    a.items.forEach(function(it){
+      cartItems.push({
+        sId:it.sId||null,
+        name:it.name||"Prestation ajoutée",
+        price:Number(it.price)||0,
+        qty:Number(it.qty)||1,
+        remise:Number(it.remise)||0,
+        isProd:!!it.isProd,
+        prodId:it.prodId||null,
+        addedDuringRdv:true
+      });
+    });
+  } else {
+    cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}];
+  }
+  _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||""};
   cM();
   showCaisse();
 }
