@@ -9890,32 +9890,54 @@ function rgpdDeleteClient(cId){
   htm+='</div></div></div>';
   document.getElementById("modal").innerHTML=htm;
 }
-function doRgpdDelete(cId){
+async function doRgpdDelete(cId){
   var confirm=document.getElementById("rgpdConfirm");
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="#ef5350";confirm.focus();return;}
   var cl=gC(cId);if(!cl)return;
   var name=cName(cl);
   var email=cl.em||"";
-  // Anonymize tickets (NF525: keep amounts, remove personal data)
-  for(var i=0;i<AP.length;i++){
-    if(AP[i].cId===cId){AP[i].cId="anonyme";AP[i].comment="";if(typeof saveAppointment==="function")saveAppointment(AP[i]);}
-  }
-  // Remove from CL
-  for(var i=CL.length-1;i>=0;i--){if(CL[i].id===cId){CL.splice(i,1);break;}}
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    // Delete client from salon
-    _sb.from("clients").delete().eq("id",cId).eq("salon_id",_salonId);
-    // Delete fidelite_client for this salon
-    if(email){
-      _sb.from("fidelite_client").delete().eq("client_luxyra_id",email).eq("salon_id",_salonId);
+  // D\u00e9sactive le bouton + feedback visuel pendant l'op\u00e9ration (peut prendre 1-3 sec)
+  var delBtn=document.querySelector('button[onclick*="doRgpdDelete"]');
+  if(delBtn){delBtn.disabled=true;delBtn.innerHTML='\u23f3 Suppression en cours\u2026';delBtn.style.opacity='0.6';}
+
+  try {
+    // \u00c9tape 1 : anonymiser les tickets (await chaque save pour persistance garantie)
+    var tickets=[];
+    for(var i=0;i<AP.length;i++){if(AP[i].cId===cId)tickets.push(AP[i]);}
+    for(var ti=0;ti<tickets.length;ti++){
+      tickets[ti].cId="anonyme"; tickets[ti].comment="";
+      if(typeof saveAppointment==="function") await saveAppointment(tickets[ti]);
     }
-    // Anonymize rdv_online for this salon
-    if(email){
-      _sb.from("rdv_online").update({client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""}).eq("client_email",email).eq("salon_id",_salonId);
+
+    // \u00c9tape 2 : DELETE client en DB (AWAIT \u2014 sinon la promise est interrompue par cM/go)
+    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+      var delRes = await _sb.from("clients").delete().eq("id",cId).eq("salon_id",_salonId);
+      if(delRes && delRes.error){
+        if(typeof toast==="function") toast("Erreur DB : "+delRes.error.message,"warning");
+        console.error("doRgpdDelete: \u00e9chec DELETE clients", delRes.error);
+        if(delBtn){delBtn.disabled=false;delBtn.innerHTML='\ud83d\uddd1 Supprimer';delBtn.style.opacity='1';}
+        return;  // NE PAS retirer du local si erreur DB \u2192 user voit le client toujours pr\u00e9sent
+      }
+      // \u00c9tape 3 : delete fidelit\u00e9 + anonymise rdv_online (async parall\u00e8le, on attend les 2)
+      if(email){
+        await Promise.all([
+          _sb.from("fidelite_client").delete().eq("client_luxyra_id",email).eq("salon_id",_salonId),
+          _sb.from("rdv_online").update({client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""}).eq("client_email",email).eq("salon_id",_salonId)
+        ]).catch(function(e){ console.warn("doRgpdDelete: erreur partielle fidelite/rdv_online", e); });
+      }
     }
+
+    // \u00c9tape 4 : SEULEMENT MAINTENANT on retire du local (DB confirm\u00e9e OK)
+    for(var j=CL.length-1;j>=0;j--){if(CL[j].id===cId){CL.splice(j,1);break;}}
+
+    if(typeof auditLog==="function") auditLog("RGPD_EFFACEMENT","Client "+name+" (ID:"+cId+") - Donn\u00e9es personnelles supprim\u00e9es, tickets anonymis\u00e9s, fid\u00e9lit\u00e9 supprim\u00e9e");
+    if(typeof toast==="function") toast("\u2713 Client supprim\u00e9 conform\u00e9ment RGPD","success");
+    cM(); go("clients");
+  } catch(e) {
+    console.error("doRgpdDelete erreur:", e);
+    if(typeof toast==="function") toast("Erreur suppression : "+(e.message||""),"warning");
+    if(delBtn){delBtn.disabled=false;delBtn.innerHTML='\ud83d\uddd1 Supprimer';delBtn.style.opacity='1';}
   }
-  auditLog("RGPD_EFFACEMENT","Client "+name+" (ID:"+cId+") - Donn\u00e9es personnelles supprim\u00e9es, tickets anonymis\u00e9s, fid\u00e9lit\u00e9 supprim\u00e9e");
-  cM();go("clients");
 }
 function exportClientData(cId){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
