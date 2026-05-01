@@ -13957,6 +13957,64 @@ function rAccounting(){
 function chM(d){var p=accM.split("-").map(Number);var nd=new Date(p[0],p[1]-1+d,1);accM=nd.getFullYear()+"-"+String(nd.getMonth()+1).padStart(2,"0");go("accounting");}
 
 // =====================================================================
+// CONFIG GLOBALE LUXYRA — chargée depuis app_config (singleton DB)
+// Modifiable depuis le panel admin → propagée automatiquement partout.
+// =====================================================================
+window.LX_CONFIG = window.LX_CONFIG || {
+  stripe_fee_pct: 1.5,
+  stripe_fee_fixed: 0.25,
+  stripe_fee_uk_pct: 2.5,
+  stripe_fee_intl_pct: 3.25,
+  stripe_fee_sepa_pct: 0.8,
+  stripe_fee_sepa_max: 5,
+  sms_bonus_first_pay: 150,
+  sms_price_ttc: 0.065,
+  urssaf_services_pct: 22.2,
+  urssaf_ventes_pct: 12.3,
+  micro_seuil_ca_services: 77700,
+  micro_seuil_ca_ventes: 188700,
+  micro_seuil_tva_services: 36800,
+  micro_seuil_tva_ventes: 91900,
+  plan_essential_eur: 14.99,
+  plan_pro_eur: 24.99,
+  _loaded: false
+};
+
+// Charge la config depuis la DB (lecture seule, RLS allow anon)
+async function loadAppConfig(){
+  try{
+    if(typeof _sb === "undefined" || !_sb) return;
+    var r = await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
+    if(r.data && r.data.config){
+      Object.keys(r.data.config).forEach(function(k){ window.LX_CONFIG[k] = r.data.config[k]; });
+      window.LX_CONFIG._loaded = true;
+      // Sync MICRO_SEUILS et anciennes constantes pour rétrocompat
+      if(typeof MICRO_SEUILS !== "undefined"){
+        MICRO_SEUILS.ca_services = window.LX_CONFIG.micro_seuil_ca_services;
+        MICRO_SEUILS.ca_ventes = window.LX_CONFIG.micro_seuil_ca_ventes;
+        MICRO_SEUILS.tva_services = window.LX_CONFIG.micro_seuil_tva_services;
+        MICRO_SEUILS.tva_ventes = window.LX_CONFIG.micro_seuil_tva_ventes;
+      }
+      console.log("[LX_CONFIG] Loaded from DB", window.LX_CONFIG);
+    }
+  }catch(e){ console.warn("[LX_CONFIG] load failed, using defaults:", e); }
+}
+// Auto-load au démarrage si Supabase déjà initialisé
+setTimeout(function(){ if(typeof _sb !== "undefined" && _sb) loadAppConfig(); }, 1500);
+
+// Helpers de calcul utilisant la config
+function lxStripeFee(brut){
+  var pct = Number(window.LX_CONFIG.stripe_fee_pct) / 100;
+  var fixed = Number(window.LX_CONFIG.stripe_fee_fixed);
+  return Math.round((brut * pct + fixed) * 100) / 100;
+}
+function lxStripeNet(brut){ return Math.round((brut - lxStripeFee(brut)) * 100) / 100; }
+function lxStripeFeeLabel(){
+  return window.LX_CONFIG.stripe_fee_pct.toString().replace(".",",")+"% + "+
+         window.LX_CONFIG.stripe_fee_fixed.toString().replace(".",",")+" €";
+}
+
+// =====================================================================
 // HELPERS : navigation mois pour modal exports
 // =====================================================================
 function _prevMonth(ym){
@@ -14831,7 +14889,7 @@ function expBordereauStripe(){
   var totalBrut = 0, totalFrais = 0, totalNet = 0;
   var rows = rdvOnline.map(function(r){
     var brut = Number(r.acompte)||0;
-    var frais = Math.round((brut*0.015 + 0.25)*100)/100;
+    var frais = lxStripeFee(brut);
     var net = Math.round((brut - frais)*100)/100;
     totalBrut += brut; totalFrais += frais; totalNet += net;
     return [
@@ -14983,7 +15041,7 @@ async function expPackComptable(){
   // 5. Bordereau Stripe (si acomptes en ligne)
   if(rdvOnline.length){
     var totalBrut2=0,totalFrais2=0,totalNet2=0;
-    var rStripe = rdvOnline.map(function(r){var brut=Number(r.acompte)||0;var frais=Math.round((brut*0.015+0.25)*100)/100;var net=Math.round((brut-frais)*100)/100;totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),r.status||"",r.stripePaymentId||""];});
+    var rStripe = rdvOnline.map(function(r){var brut=Number(r.acompte)||0;var frais=lxStripeFee(brut);var net=Math.round((brut-frais)*100)/100;totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),r.status||"",r.stripePaymentId||""];});
     rStripe.push(["","","","","TOTAL",csvNum(totalBrut2),csvNum(totalFrais2),csvNum(totalNet2),rdvOnline.length+" RDV",""]);
     var stripeFooter = [
       ["Note", "Frais estim\u00e9s selon tarif standard Stripe France 2024-2026 (CB EU 1,5% + 0,25\u20ac)"],

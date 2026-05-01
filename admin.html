@@ -1592,9 +1592,93 @@ function rSettings(){
     +'<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">'
     +'<button class="btn gold" onclick="lxPushEnable().then(function(){lxRenderPushDevices();})">➕ Activer cet appareil</button>'
     +'<button class="btn ghost" onclick="lxPushTest()">📤 Tester</button>'
-    +'</div></div></div>';
+    +'</div></div>';
+  // === NEW : Constantes business éditables ===
+  h+='<div class="settings-card" style="grid-column:1/-1"><h3>⚙️ Constantes business <span style="font-size:10px;color:var(--text3);font-weight:normal;letter-spacing:0">Modif propagée partout (app, site public, edge functions)</span></h3>';
+  h+='<div id="appConfigEditBox" style="font-size:13px;color:var(--text3)">⏳ Chargement…</div>';
+  h+='</div>';
+  h+='</div>';
   setTimeout(lxRenderPushDevices,50);
+  setTimeout(loadAppConfigEditor,100);
   return h;
+}
+
+// === Édition des constantes globales (singleton app_config) ===
+async function loadAppConfigEditor(){
+  var box = document.getElementById("appConfigEditBox");
+  if(!box) return;
+  try{
+    var r = await _sb.from("app_config").select("config, updated_at, updated_by").eq("id", 1).maybeSingle();
+    if(r.error){ box.innerHTML = '<div style="color:var(--red)">Erreur : '+r.error.message+'</div>'; return; }
+    var cfg = (r.data && r.data.config) || {};
+    var updatedAt = r.data && r.data.updated_at ? new Date(r.data.updated_at).toLocaleString("fr-FR") : "?";
+    var updatedBy = r.data && r.data.updated_by || "?";
+    var fields = [
+      {section:"💳 Frais Stripe (CB EU)"},
+      {key:"stripe_fee_pct", label:"Pourcentage CB EU (%)", val:cfg.stripe_fee_pct, step:0.1, hint:"Tarif standard Stripe France 2024-2026 = 1,5"},
+      {key:"stripe_fee_fixed", label:"Frais fixe par transaction (€)", val:cfg.stripe_fee_fixed, step:0.01, hint:"Standard = 0,25"},
+      {key:"stripe_fee_uk_pct", label:"Pourcentage CB UK (%)", val:cfg.stripe_fee_uk_pct, step:0.1},
+      {key:"stripe_fee_intl_pct", label:"Pourcentage CB hors EU (%)", val:cfg.stripe_fee_intl_pct, step:0.1},
+      {key:"stripe_fee_sepa_pct", label:"Pourcentage SEPA (%)", val:cfg.stripe_fee_sepa_pct, step:0.1},
+      {key:"stripe_fee_sepa_max", label:"Plafond frais SEPA (€)", val:cfg.stripe_fee_sepa_max, step:0.5},
+      {section:"📱 SMS"},
+      {key:"sms_bonus_first_pay", label:"SMS offerts au 1er paiement Pro", val:cfg.sms_bonus_first_pay, step:1, hint:"Actuel = 150"},
+      {key:"sms_price_ttc", label:"Prix unitaire SMS facturé (€ TTC)", val:cfg.sms_price_ttc, step:0.001, hint:"Standard = 0,065"},
+      {section:"🏛 URSSAF (auto-entrepreneur)"},
+      {key:"urssaf_services_pct", label:"Cotisations URSSAF prestations services (%)", val:cfg.urssaf_services_pct, step:0.1},
+      {key:"urssaf_ventes_pct", label:"Cotisations URSSAF ventes marchandises (%)", val:cfg.urssaf_ventes_pct, step:0.1},
+      {section:"📊 Seuils micro-entrepreneur"},
+      {key:"micro_seuil_ca_services", label:"Seuil CA régime micro - services (€)", val:cfg.micro_seuil_ca_services, step:100},
+      {key:"micro_seuil_ca_ventes", label:"Seuil CA régime micro - ventes (€)", val:cfg.micro_seuil_ca_ventes, step:100},
+      {key:"micro_seuil_tva_services", label:"Seuil franchise TVA - services (€)", val:cfg.micro_seuil_tva_services, step:100},
+      {key:"micro_seuil_tva_ventes", label:"Seuil franchise TVA - ventes (€)", val:cfg.micro_seuil_tva_ventes, step:100},
+      {section:"💎 Tarifs Luxyra"},
+      {key:"plan_essential_eur", label:"Prix abonnement Essentiel (€/mois)", val:cfg.plan_essential_eur, step:0.01, hint:"Si modif, MAJ aussi sur Stripe Dashboard"},
+      {key:"plan_pro_eur", label:"Prix abonnement Pro (€/mois)", val:cfg.plan_pro_eur, step:0.01, hint:"Si modif, MAJ aussi sur Stripe Dashboard"}
+    ];
+    var html = '<div style="font-size:11px;color:var(--text3);margin-bottom:14px">Dernière modif : '+updatedAt+' par '+updatedBy+'</div>';
+    fields.forEach(function(f){
+      if(f.section){
+        html += '<div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:1px;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid rgba(212,168,67,.15)">'+f.section+'</div>';
+        return;
+      }
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0">';
+      html += '<label style="flex:1;font-size:12px;color:var(--text2)">'+f.label;
+      if(f.hint) html += '<div style="font-size:10px;color:var(--text3);margin-top:1px">'+f.hint+'</div>';
+      html += '</label>';
+      html += '<input id="ac_'+f.key+'" type="number" step="'+(f.step||0.01)+'" value="'+(f.val!=null?f.val:"")+'" style="width:120px;padding:6px 10px;text-align:right;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:700;font-family:var(--mono,monospace)">';
+      html += '</div>';
+    });
+    html += '<div style="margin-top:16px;display:flex;gap:8px;align-items:center">';
+    html += '<button class="btn gold" onclick="saveAppConfig()" style="padding:10px 20px;font-weight:700">💾 Enregistrer (propagé partout)</button>';
+    html += '<button class="btn ghost" onclick="loadAppConfigEditor()" style="padding:10px 20px">↺ Annuler</button>';
+    html += '<div style="margin-left:auto;font-size:11px;color:var(--text3)">⚠️ Modifs visibles dans : app salon, site public, exports comptables, edge functions</div>';
+    html += '</div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<div style="color:var(--red)">Erreur : '+e.message+'</div>';
+  }
+}
+
+async function saveAppConfig(){
+  var keys = ["stripe_fee_pct","stripe_fee_fixed","stripe_fee_uk_pct","stripe_fee_intl_pct","stripe_fee_sepa_pct","stripe_fee_sepa_max","sms_bonus_first_pay","sms_price_ttc","urssaf_services_pct","urssaf_ventes_pct","micro_seuil_ca_services","micro_seuil_ca_ventes","micro_seuil_tva_services","micro_seuil_tva_ventes","plan_essential_eur","plan_pro_eur"];
+  var newConfig = {};
+  for(var i=0;i<keys.length;i++){
+    var el = document.getElementById("ac_"+keys[i]);
+    if(!el) continue;
+    var v = parseFloat(el.value);
+    if(isNaN(v)){ alert("Valeur invalide pour "+keys[i]); el.focus(); return; }
+    if(v < 0){ alert("Valeur négative interdite pour "+keys[i]); el.focus(); return; }
+    newConfig[keys[i]] = v;
+  }
+  if(!confirm("Enregistrer ces modifications ?\n\nElles seront immédiatement appliquées :\n• App salon (exports comptables, calculs frais)\n• Site public (tarifs.html, aide.html)\n• Edge function emails onboarding\n• Bordereau Stripe / pack ZIP comptable\n\nContinuer ?")) return;
+  try{
+    var r = await _sb.from("app_config").update({config:newConfig}).eq("id",1);
+    if(r.error){ alert("Erreur : "+r.error.message); return; }
+    await _sb.from("admin_log").insert({admin_user_id:_uid, action:"EDIT_APP_CONFIG", details:JSON.stringify(newConfig)});
+    alert("✅ Configuration mise à jour. Les modifs sont actives partout.");
+    loadAppConfigEditor();
+  }catch(e){ alert("Erreur : "+e.message); }
 }
 
 // ===== NF525 =====
