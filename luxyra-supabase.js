@@ -966,6 +966,75 @@ async function saveClient(client) {
 // Sauvegarder un rendez-vous/ticket
 async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
+
+  // === RDV ONLINE : route vers rdv_online (id préfixé "online_") ===
+  // FIX 2026-05 : avant ce fix, saveAppointment update appointments avec l'id
+  // "online_xxx" qui n'existe pas → 0 row updated → modif perdue au refresh.
+  if (appt.id && typeof appt.id === "string" && appt.id.indexOf("online_") === 0) {
+    var onlineUuid = appt.id.slice("online_".length);
+    var onlineData = {
+      collaborateur_id: appt.stId,
+      date_rdv: appt.date,
+      heure_rdv: appt.time,
+      service_id: appt.sId,
+      service_prix: appt.pr,
+      message: appt.comment || "",
+      items: appt.items || []
+    };
+    // Calculer la nouvelle durée à partir des phases si disponible
+    if (appt.aPhases && Array.isArray(appt.aPhases) && appt.aPhases.length) {
+      var totalDur = 0;
+      appt.aPhases.forEach(function(ph){ totalDur += (Number(ph.d) || 0); });
+      if (totalDur > 0) onlineData.duree_minutes = totalDur;
+    }
+    // Resolve collab name pour info DB (utile à compte.html)
+    var onlineCollabName = null;
+    if (appt.stId && typeof gT === "function") { var st0 = gT(appt.stId); if (st0 && st0.n) onlineCollabName = st0.n; }
+    if (onlineCollabName) onlineData.collaborateur_nom = onlineCollabName;
+    // Recalculer service_nom si la prestation principale a changé
+    if (appt.sId && typeof gS === "function") { var sv0 = gS(appt.sId); if (sv0 && sv0.n) onlineData.service_nom = sv0.n; }
+    // Reset la demande de modif client (puisque le salon vient de modifier de son côté)
+    onlineData.modification_demandee = false;
+    onlineData.modification_status = null;
+    // Tracking de la modif salon : on lit l'état actuel pour calculer le diff
+    try {
+      var oldRes = await _sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,collaborateur_nom,duree_minutes,service_id,service_nom,service_prix,items").eq("id", onlineUuid).eq("salon_id", _salonId).maybeSingle();
+      if (oldRes && oldRes.data) {
+        var old = oldRes.data;
+        var diff = {};
+        function diffField(key, oldVal, newVal) {
+          if (newVal === undefined) return;
+          var ov = oldVal == null ? null : oldVal;
+          var nv = newVal == null ? null : newVal;
+          // Normaliser heure (DB peut renvoyer "HH:MM:SS")
+          if (typeof ov === "string" && ov.length >= 5 && key.indexOf("heure") >= 0) ov = ov.slice(0,5);
+          if (typeof nv === "string" && nv.length >= 5 && key.indexOf("heure") >= 0) nv = nv.slice(0,5);
+          if (String(ov) !== String(nv)) diff[key] = { old: ov, new: nv };
+        }
+        diffField("date_rdv", old.date_rdv, onlineData.date_rdv);
+        diffField("heure_rdv", old.heure_rdv, onlineData.heure_rdv);
+        diffField("collaborateur_id", old.collaborateur_id, onlineData.collaborateur_id);
+        diffField("collaborateur_nom", old.collaborateur_nom, onlineData.collaborateur_nom);
+        diffField("duree_minutes", old.duree_minutes, onlineData.duree_minutes);
+        diffField("service_id", old.service_id, onlineData.service_id);
+        diffField("service_nom", old.service_nom, onlineData.service_nom);
+        if (Object.keys(diff).length > 0) {
+          onlineData.salon_modified_at = new Date().toISOString();
+          onlineData.salon_modified_fields = diff;
+          onlineData.salon_modified_acknowledged_by_client = false;
+          onlineData.salon_modified_acknowledged_at = null;
+        }
+      }
+    } catch (eDiff) { console.warn("[saveAppointment online] diff calc skipped:", eDiff && eDiff.message); }
+    try {
+      var r = await _sb.from("rdv_online").update(onlineData).eq("id", onlineUuid).eq("salon_id", _salonId);
+      if (r && r.error) console.warn("[saveAppointment online] update rdv_online failed:", r.error.message);
+      else console.log("[saveAppointment online] rdv_online updated:", onlineUuid, onlineData.salon_modified_fields ? "(modif tracked)" : "(no diff)");
+    } catch (e) { console.error("[saveAppointment online] exception:", e); }
+    return;
+  }
+
+  // === RDV CLASSIQUE / TICKET : appointments table ===
   // Resolve client email and collab name for compte client lookup
   var clEmail = null, collabName = null;
   if (appt.cId && typeof gC === "function") { var cl = gC(appt.cId); if (cl && cl.em) clEmail = cl.em; }

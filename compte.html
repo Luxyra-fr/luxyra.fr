@@ -264,7 +264,22 @@ function renderRdvTab(){
       h+='<div class="rdv-salon">\ud83c\udfe0 '+(r.salon_nom||"Salon")+'</div></div>';
       h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
       h+='</div>';
-      // Modification pending notice
+      // === Modification SALON (le salon a modifi\u00e9 le RDV) \u2014 bandeau prioritaire ===
+      if(r.salon_modified_at && !r.salon_modified_acknowledged_by_client){
+        var modFields=r.salon_modified_fields||{};
+        var modList=[];
+        if(modFields.date_rdv) modList.push('Date : <strong>'+fmtDate(modFields.date_rdv.old)+' \u2192 '+fmtDate(modFields.date_rdv.new)+'</strong>');
+        if(modFields.heure_rdv) modList.push('Heure : <strong>'+(modFields.heure_rdv.old||"").slice(0,5)+' \u2192 '+(modFields.heure_rdv.new||"").slice(0,5)+'</strong>');
+        if(modFields.collaborateur_nom) modList.push('Avec : <strong>'+modFields.collaborateur_nom.old+' \u2192 '+modFields.collaborateur_nom.new+'</strong>');
+        if(modFields.duree_minutes) modList.push('Dur\u00e9e : <strong>'+modFields.duree_minutes.old+' \u2192 '+modFields.duree_minutes.new+' min</strong>');
+        if(modFields.service_nom) modList.push('Prestation : <strong>'+modFields.service_nom.old+' \u2192 '+modFields.service_nom.new+'</strong>');
+        h+='<div style="margin-top:8px;padding:10px 12px;background:linear-gradient(135deg,rgba(251,146,60,.12),rgba(251,146,60,.06));border:1.5px solid rgba(251,146,60,.35);border-radius:10px;font-size:12px;color:#fff;line-height:1.6">';
+        h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:16px">\u26a0\ufe0f</span><strong style="color:#fb923c">Modification par le salon</strong><span style="font-size:10px;color:var(--text3);margin-left:auto">'+fmtDate(r.salon_modified_at.slice(0,10))+'</span></div>';
+        if(modList.length){h+='<div style="font-size:12px">'+modList.join('<br>')+'</div>';}
+        h+='<button onclick="ackSalonModification(\''+r.id+'\')" style="margin-top:8px;width:100%;padding:8px;border-radius:6px;border:1px solid rgba(251,146,60,.3);background:rgba(251,146,60,.08);color:#fb923c;font-size:11px;font-weight:700;cursor:pointer">\u2713 J\'ai pris connaissance</button>';
+        h+='</div>';
+      }
+      // Modification pending notice (DEMAND\u00c9E PAR LE CLIENT vers salon)
       if(r.modification_demandee&&r.modification_status==="pending"){
         h+='<div style="margin-top:6px;padding:8px;background:rgba(251,146,60,.08);border-radius:8px;font-size:12px;color:var(--orange)">\u270f\ufe0f Modification demand\u00e9e \u2192 '+fmtDate(r.modification_date)+' \u00e0 '+r.modification_heure+' \u2014 <em>En attente de confirmation</em></div>';
       }
@@ -976,6 +991,29 @@ function removeCard(){
 }
 
 // ========== RDV ACTIONS ==========
+// Le client acquitte qu'il a vu la modification faite par le salon
+async function ackSalonModification(rdvId){
+  if(!rdvId)return;
+  try{
+    var r=await api("rdv_online?id=eq."+rdvId,{
+      method:"PATCH",
+      body:JSON.stringify({
+        salon_modified_acknowledged_by_client:true,
+        salon_modified_acknowledged_at:new Date().toISOString()
+      })
+    });
+    // Update local state
+    var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});
+    if(rdv){
+      rdv.salon_modified_acknowledged_by_client=true;
+      rdv.salon_modified_acknowledged_at=new Date().toISOString();
+    }
+    render();
+  }catch(e){
+    alert("Erreur: "+(e.message||"impossible de marquer comme lu"));
+  }
+}
+
 function showModifyRdv(rdvId,salonId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px" onclick="closePopup(\'modifyModal\')">';
