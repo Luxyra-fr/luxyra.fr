@@ -15312,29 +15312,53 @@ function mD(id){
   if(!a)return;
   var sv=gS(a.sId);
   var acomp=a.acompte||0;
-  // FIX BUG ENCAISSEMENT (2026-05) : si des prestations ont été ajoutées au RDV
-  // via "+ Ajouter une prestation", on les retrouve dans a.items. Important :
-  //   - a.items contient UNIQUEMENT les ajouts (pas la prestation principale)
-  //   - a.pr a été incrémenté de la somme des prix des ajouts
-  // Donc : prix de la presta principale = a.pr - somme(a.items[].price)
+  // FIX BUG ENCAISSEMENT (2026-05) : 3 cas distincts
+  //  A) RDV online multi-prestation : a.items contient TOUTES les prestations
+  //     (pas de "main" séparé) → on utilise a.items tel quel.
+  //  B) RDV avec prestations ajoutées via "+ Ajouter une prestation" : a.items
+  //     contient UNIQUEMENT les ajouts, a.pr a été incrémenté → on calcule le
+  //     prix du main = a.pr - somme(items).
+  //  C) RDV simple : pas d'a.items → un seul item depuis a.sId/a.pr.
+  // Détection A vs B : si a.isOnline ET items contient le main (sId match) OU
+  // si la somme items = a.pr → cas A (online multi).
   var cartItems;
   if(Array.isArray(a.items)&&a.items.length){
     var addonsTotal=a.items.reduce(function(s,it){return s+(Number(it.price)||0);},0);
-    var mainPrice=Math.max(0,(Number(a.pr)||0)-addonsTotal);
-    cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:mainPrice,qty:1,remise:0}];
-    a.items.forEach(function(it){
-      cartItems.push({
-        sId:it.sId||null,
-        name:it.name||"Prestation ajoutée",
-        price:Number(it.price)||0,
-        qty:Number(it.qty)||1,
-        remise:Number(it.remise)||0,
-        isProd:!!it.isProd,
-        prodId:it.prodId||null,
-        addedDuringRdv:true
+    var hasMainInItems=a.items.some(function(it){return it.sId&&String(it.sId)===String(a.sId);});
+    var sumMatchesPr=Math.abs(addonsTotal-(Number(a.pr)||0))<0.01;
+    var isOnlineMulti=!!a.isOnline && (hasMainInItems || sumMatchesPr);
+    if(isOnlineMulti){
+      // Cas A : a.items contient déjà toutes les prestations (booking online multi)
+      cartItems=a.items.map(function(it){
+        return {
+          sId:it.sId||null,
+          name:it.name||"Prestation",
+          price:Number(it.price)||0,
+          qty:Number(it.qty)||1,
+          remise:Number(it.remise)||0,
+          isProd:!!it.isProd,
+          prodId:it.prodId||null
+        };
       });
-    });
+    } else {
+      // Cas B : items = additions seulement, on rajoute le main au début
+      var mainPrice=Math.max(0,(Number(a.pr)||0)-addonsTotal);
+      cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:mainPrice,qty:1,remise:0}];
+      a.items.forEach(function(it){
+        cartItems.push({
+          sId:it.sId||null,
+          name:it.name||"Prestation ajoutée",
+          price:Number(it.price)||0,
+          qty:Number(it.qty)||1,
+          remise:Number(it.remise)||0,
+          isProd:!!it.isProd,
+          prodId:it.prodId||null,
+          addedDuringRdv:true
+        });
+      });
+    }
   } else {
+    // Cas C : RDV simple
     cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}];
   }
   _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||""};

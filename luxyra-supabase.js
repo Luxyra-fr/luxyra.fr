@@ -535,6 +535,7 @@ async function loadSalonData() {
         id: r.id, salonId: r.salon_id,
         nom: r.client_nom, prenom: r.client_prenom, tel: r.client_tel, email: r.client_email,
         svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
+        items: r.items || null, // multi-prestation : array d'items si booking multi, sinon null
         collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
         date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
         duree: r.duree_minutes,
@@ -558,6 +559,22 @@ async function loadSalonData() {
           var realSvc = null;
           for (var si = 0; si < SVC.length; si++) { if (SVC[si].id === r.svcId) { realSvc = SVC[si]; break; } }
           var phases = realSvc && realSvc.phases && realSvc.phases.length > 0 ? realSvc.phases : [{t:"w", d: dur, l: r.svcNom}];
+          // Items : si multi-prestation (r.items contient plusieurs entrées), on stocke
+          // tout. Sinon on laisse VIDE (le main service est déjà dans a.sId/a.pr).
+          // Important : ne pas pré-remplir avec un duplicat du main, sinon mD(id) à
+          // l'encaissement crée 2 lignes (cf. fix 2026-05).
+          var aptItems = [];
+          if (Array.isArray(r.items) && r.items.length > 1) {
+            aptItems = r.items.map(function(it){
+              return {
+                sId: it.sId || it.service_id || null,
+                name: it.name || it.svcNom || "Prestation",
+                price: Number(it.price || it.svcPrix || 0),
+                qty: Number(it.qty || 1),
+                remise: Number(it.remise || 0)
+              };
+            });
+          }
           AP.push({
             id: "online_" + r.id,
             onlineId: r.id,
@@ -568,7 +585,7 @@ async function loadSalonData() {
             time: r.heure,
             pr: r.svcPrix,
             st: r.status === "confirmed" ? "conf" : "conf",
-            items: [{name: r.svcNom, price: r.svcPrix, qty: 1, remise: 0}],
+            items: aptItems,
             comment: "RDV EN LIGNE - " + r.nom + (r.prenom ? " " + r.prenom : "") + " - " + r.tel + (r.message ? " - " + r.message : ""),
             aPhases: phases,
             isOnline: true,
