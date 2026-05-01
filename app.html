@@ -1729,7 +1729,7 @@ function showPlanChoiceModal(blocking){
   h+='</div></div>';
   // CGV checkbox
   h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:16px;cursor:pointer;font-size:12px;color:rgba(255,255,255,.4);line-height:1.5;text-align:left"><input type="checkbox" id="cgvPlanCheck" style="margin-top:3px;flex-shrink:0;width:16px;height:16px"> <span>J\u2019accepte les <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> et la <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a></span></label>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.25);margin-bottom:12px">TVA non applicable, art. 293B du CGI \u2022 Sans engagement</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.25);margin-bottom:12px">'+lxTvaMentionShort()+' \u2022 Sans engagement</div>';
   if(!blocking){
     h+='<button onclick="document.getElementById(\'planChoiceModal\').remove()" style="width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:transparent;color:rgba(255,255,255,.3);font-size:13px;cursor:pointer">Plus tard</button>';
   }
@@ -13977,6 +13977,12 @@ window.LX_CONFIG = window.LX_CONFIG || {
   micro_seuil_tva_ventes: 91900,
   plan_essential_eur: 14.99,
   plan_pro_eur: 24.99,
+  // Identité éditeur Luxyra (TVA + forme juridique) — bascule micro → SAS
+  luxyra_tva_pct: 0,
+  luxyra_siret_editeur: "910928464",
+  luxyra_tva_intra: "",
+  luxyra_forme_juridique: "Entreprise individuelle (micro-entrepreneur)",
+  luxyra_capital_social: "",
   _loaded: false
 };
 
@@ -14022,6 +14028,18 @@ function lxPlanPrice(plan){
   return v;
 }
 function lxPlanPriceLabel(plan){ return lxPlanPrice(plan).toFixed(2).replace(".",","); }
+// Helpers TVA Luxyra (bascule micro art.293B → SAS assujettie selon luxyra_tva_pct)
+function lxTvaPct(){ return Number((window.LX_CONFIG||{}).luxyra_tva_pct || 0); }
+function lxIsAssujetti(){ return lxTvaPct() > 0; }
+function lxTvaMentionShort(){
+  return lxIsAssujetti()
+    ? "TVA "+lxTvaPct().toString().replace(".",",")+"% en sus"
+    : "TVA non applicable, art. 293B du CGI";
+}
+function lxPlanPriceTTC(plan){
+  return Math.round(lxPlanPrice(plan) * (1 + lxTvaPct()/100) * 100) / 100;
+}
+function lxPlanPriceTTCLabel(plan){ return lxPlanPriceTTC(plan).toFixed(2).replace(".",","); }
 // Met à jour tous les éléments [data-lxconfig="plan_essential"] / [data-lxconfig="plan_pro"]
 // sur la page (utilisable depuis le DOM dynamique app)
 function lxRefreshPriceElements(){
@@ -20901,7 +20919,13 @@ function printFactureSalon(id){
     html+='@media print{body{padding:20px}}</style></head><body>';
     html+='<div style="display:flex;justify-content:space-between;margin-bottom:30px"><div>';
     html+='<div style="font-size:24px;font-weight:900;color:#c8a84e;letter-spacing:2px">LUXYRA</div>';
-    html+='<div style="font-size:10px;color:#888">Alexandre Jensen<br>SIRET 910 928 464 00023<br>support@luxyra.fr</div>';
+    var _editName = "Alexandre Jensen";
+    var _editForme = (window.LX_CONFIG && window.LX_CONFIG.luxyra_forme_juridique) || "Entreprise individuelle (micro-entrepreneur)";
+    var _editSiret = (window.LX_CONFIG && window.LX_CONFIG.luxyra_siret_editeur) || "910928464";
+    var _editTvaIntra = (window.LX_CONFIG && window.LX_CONFIG.luxyra_tva_intra) || "";
+    var _editCapital = (window.LX_CONFIG && window.LX_CONFIG.luxyra_capital_social) || "";
+    var _siretFmt = String(_editSiret).replace(/(\d{3})(\d{3})(\d{3})(\d{0,5})/, function(_,a,b,c,d){return a+" "+b+" "+c+(d?" "+d:"");});
+    html+='<div style="font-size:10px;color:#888">'+_editName+'<br>SIRET '+_siretFmt+(_editTvaIntra?'<br>TVA Intra : '+_editTvaIntra:'')+(_editCapital?'<br>Capital social : '+_editCapital:'')+'<br>support@luxyra.fr</div>';
     html+='</div><div style="text-align:right"><h1>FACTURE</h1>';
     html+='<div style="font-size:16px;font-weight:700;color:#c8a84e">'+f.numero+'</div>';
     html+='<div style="font-size:12px;margin-top:6px">Date : '+new Date(f.date_facture).toLocaleDateString("fr-FR")+'</div></div></div>';
@@ -20911,15 +20935,29 @@ function printFactureSalon(id){
     if(SALON_CONFIG.cp||SALON_CONFIG.ville)html+='<div style="font-size:12px;color:#666">'+(SALON_CONFIG.cp||"")+' '+(SALON_CONFIG.ville||"")+'</div>';
     if(SALON_CONFIG.siret)html+='<div style="font-size:11px;color:#888;margin-top:4px">SIRET : '+SALON_CONFIG.siret+'</div>';
     html+='</div>';
-    html+='<table><tr><th>Description</th><th>P\u00e9riode</th><th style="text-align:right">Montant</th></tr>';
+    var _tauxTva = Number(f.taux_tva || 0);
+    var _isAssujetti = _tauxTva > 0;
+    html+='<table><tr><th>Description</th><th>P\u00e9riode</th><th style="text-align:right">Montant '+(_isAssujetti?'HT':'')+'</th></tr>';
     html+='<tr><td>Abonnement Luxyra '+planLabel+' \u2014 Mensuel</td>';
     html+='<td>'+(f.periode_debut?new Date(f.periode_debut).toLocaleDateString("fr-FR")+' au '+new Date(f.periode_fin).toLocaleDateString("fr-FR"):'\u2014')+'</td>';
     html+='<td style="text-align:right;font-weight:700">'+Number(f.montant_ht).toFixed(2)+' \u20ac</td></tr></table>';
-    html+='<div style="text-align:right;margin-top:20px"><div>Total : '+Number(f.montant_ht).toFixed(2)+' \u20ac</div>';
-    html+='<div style="font-size:12px;color:#888">TVA non applicable, art. 293B du CGI</div>';
-    html+='<div style="font-size:18px;font-weight:bold;margin-top:6px;color:#c8a84e">Total TTC : '+Number(f.montant_ttc).toFixed(2)+' \u20ac</div></div>';
+    html+='<div style="text-align:right;margin-top:20px">';
+    if(_isAssujetti){
+      html+='<div>Total HT : '+Number(f.montant_ht).toFixed(2)+' \u20ac</div>';
+      html+='<div>TVA '+_tauxTva.toString().replace(".",",")+'% : '+Number(f.montant_tva||0).toFixed(2)+' \u20ac</div>';
+      html+='<div style="font-size:18px;font-weight:bold;margin-top:6px;color:#c8a84e">Total TTC : '+Number(f.montant_ttc).toFixed(2)+' \u20ac</div>';
+      html+='<div style="font-size:10px;color:#888;margin-top:4px;font-style:italic">TVA acquitt\u00e9e sur les encaissements</div>';
+    } else {
+      html+='<div>Total : '+Number(f.montant_ht).toFixed(2)+' \u20ac</div>';
+      html+='<div style="font-size:12px;color:#888">TVA non applicable, art. 293B du CGI</div>';
+      html+='<div style="font-size:18px;font-weight:bold;margin-top:6px;color:#c8a84e">Total TTC : '+Number(f.montant_ttc).toFixed(2)+' \u20ac</div>';
+    }
+    html+='</div>';
     html+='<div style="margin-top:24px;font-size:11px;color:#888">Paiement : '+(f.mode_paiement==="sepa"?"Pr\u00e9l\u00e8vement SEPA":"Carte bancaire")+'</div>';
-    html+='<div class="footer">Luxyra \u2014 Alexandre Jensen \u2014 Micro-entrepreneur<br>SIRET 910 928 464 00023 \u2014 TVA non applicable, art. 293B du CGI<br>support@luxyra.fr \u2014 www.luxyra.fr</div>';
+    var _footerMention = _isAssujetti
+      ? 'TVA acquitt\u00e9e sur les encaissements'+(_editTvaIntra?' \u2014 TVA Intra '+_editTvaIntra:'')
+      : 'TVA non applicable, art. 293B du CGI';
+    html+='<div class="footer">Luxyra \u2014 '+_editName+' \u2014 '+_editForme+'<br>SIRET '+_siretFmt+(_editCapital?' \u2014 Capital social '+_editCapital:'')+' \u2014 '+_footerMention+'<br>support@luxyra.fr \u2014 www.luxyra.fr</div>';
     html+='</body></html>';
     w.document.write(html);w.document.close();
     setTimeout(function(){w.print();},500);

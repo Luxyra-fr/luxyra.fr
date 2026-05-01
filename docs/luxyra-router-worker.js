@@ -259,9 +259,10 @@ async function handleWebhook(request, env) {
         }
 
         try {
-          // Lit le prix réel depuis app_config (centralisation : un seul endroit à modifier)
-          // Fallback hardcodé si la table n'est pas accessible
+          // Lit le prix réel + TVA réelle depuis app_config (centralisation : un seul endroit à modifier)
+          // Fallback hardcodé si la table n'est pas accessible (planPrix = HT, tvaPct = % TVA Luxyra)
           let planPrix = plan === "pro" ? 24.99 : 14.99;
+          let tvaPct = 0;  // 0 en franchise micro (art. 293B), 20 en SAS assujetti
           try {
             const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, {
               headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
@@ -271,8 +272,15 @@ async function handleWebhook(request, env) {
               const cfg = cfgRows[0].config;
               if (plan === "pro" && cfg.plan_pro_eur != null) planPrix = Number(cfg.plan_pro_eur);
               else if (plan !== "pro" && cfg.plan_essential_eur != null) planPrix = Number(cfg.plan_essential_eur);
+              if (cfg.luxyra_tva_pct != null) tvaPct = Number(cfg.luxyra_tva_pct);
             }
           } catch (e) { console.warn("app_config fetch failed, using fallback:", e?.message); }
+          // Calcul HT/TVA/TTC : planPrix est interprété comme HT
+          // → en franchise (tvaPct=0) : HT = TTC, TVA = 0 (comportement actuel inchangé)
+          // → en SAS (tvaPct=20) : TVA et TTC calculés automatiquement
+          const ht = planPrix;
+          const tvaAmount = Math.round(ht * tvaPct) / 100;  // arrondi au centime
+          const ttc = Math.round((ht + tvaAmount) * 100) / 100;
           const sbUrl = CONFIG.SUPABASE_URL;
           const numRes = await fetch(`${sbUrl}/rest/v1/rpc/next_facture_numero`, {
             method: "POST",
@@ -296,7 +304,7 @@ async function handleWebhook(request, env) {
             }
           } catch(e) {}
           const insertBody = {
-            salon_id: salonId, numero, montant_ht: planPrix, taux_tva: 0, montant_tva: 0, montant_ttc: planPrix,
+            salon_id: salonId, numero, montant_ht: ht, taux_tva: tvaPct, montant_tva: tvaAmount, montant_ttc: ttc,
             description: `Abonnement Luxyra ${plan === "pro" ? "Pro" : "Essentiel"} - Mensuel`,
             plan, periode_debut: periodStart, periode_fin: periodEnd,
             stripe_invoice_id: data.id || null, stripe_payment_intent: data.payment_intent || data.charge || null,
