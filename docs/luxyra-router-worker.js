@@ -134,11 +134,26 @@ async function handleCreateCheckout(request, env) {
     const { salon_id, plan, email } = body;
     if (!salon_id || !plan || !email) return jsonResponse({ error: "salon_id, plan et email requis" }, 400);
 
+    // Lit les prix de packs SMS depuis app_config (centralisé, modif depuis admin)
+    // Fallback hardcodé si la table n'est pas accessible
     const smsPacks = {
       sms_100: { amount: 799, qty: 100, label: "Pack 100 SMS" },
       sms_250: { amount: 1899, qty: 250, label: "Pack 250 SMS" },
       sms_500: { amount: 3599, qty: 500, label: "Pack 500 SMS" },
     };
+    try {
+      const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, {
+        headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
+      });
+      const cfgRows = await cfgRes.json();
+      if (cfgRows && cfgRows[0] && cfgRows[0].config) {
+        const cfg = cfgRows[0].config;
+        // Conversion € → cents (Stripe attend des cents en entier)
+        if (cfg.sms_pack_100_eur != null) smsPacks.sms_100.amount = Math.round(Number(cfg.sms_pack_100_eur) * 100);
+        if (cfg.sms_pack_250_eur != null) smsPacks.sms_250.amount = Math.round(Number(cfg.sms_pack_250_eur) * 100);
+        if (cfg.sms_pack_500_eur != null) smsPacks.sms_500.amount = Math.round(Number(cfg.sms_pack_500_eur) * 100);
+      }
+    } catch (e) { console.warn("app_config fetch failed for SMS packs, using fallback:", e?.message); }
 
     let customerId = await getOrCreateStripeCustomer(env, email, salon_id);
     if (!customerId) return jsonResponse({ error: "Impossible de créer le client Stripe." }, 500);
