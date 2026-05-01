@@ -276,20 +276,34 @@ async function loadSalons(){
         nextSlot: null
       };
     });
-    // Charge les configs site (horaires + résa active) pour calculer le prochain dispo
+    // Charge les configs site (juste pour savoir si résa active) puis appelle la RPC
+    // fn_salon_next_available_slot(salon_id) qui calcule le PROCHAIN créneau réel
+    // (respecte horaires + delai_min_heures + RDV déjà pris). Cohérent avec site.html.
     try {
-      var rc = await sb.from('site_config').select('salon_id, reservation_active, horaires_salon, absences');
+      var rc = await sb.from('site_config').select('salon_id, reservation_active');
       if(rc.data){
         var byId = {};
         rc.data.forEach(function(c){byId[c.salon_id]=c;});
+        // Marque resaActive d'abord
         STATE.salons.forEach(function(s){
           var cfg = byId[s.id];
-          if(!cfg) return;
-          s.resaActive = !!cfg.reservation_active;
-          if(s.resaActive && cfg.horaires_salon){
-            s.nextSlot = computeNextOpenSlot(cfg.horaires_salon, cfg.absences);
-          }
+          s.resaActive = cfg && !!cfg.reservation_active;
         });
+        // Appelle la RPC en parallèle pour chaque salon résa active (limite à 50 pour perf)
+        var activeSalons = STATE.salons.filter(function(s){return s.resaActive;}).slice(0, 50);
+        await Promise.all(activeSalons.map(function(s){
+          return sb.rpc('fn_salon_next_available_slot', {p_salon_id: s.id})
+            .then(function(r){
+              if(r && r.data){
+                // RPC retourne {date, time, day_label}
+                s.nextSlot = {
+                  dayLabel: r.data.day_label || '',
+                  time: r.data.time || '',
+                  date: r.data.date || ''
+                };
+              }
+            }).catch(function(e){ console.warn('nextSlot RPC failed for', s.id, e); });
+        }));
       }
     } catch(e){ console.warn('loadSiteConfigs', e); }
   } catch(e){
