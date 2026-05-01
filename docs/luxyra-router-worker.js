@@ -739,6 +739,8 @@ async function handleEmailCustom(request, env) {
 // FIX W6: .trim() on SMS sender to avoid trailing space ("Excellence " → "Excellence")
 // === Helper: gate SMS (vérifie plan Pro + crédits > 0 + décrémente atomiquement) ===
 // Retourne { ok: true } si autorisé et crédits décrémentés, sinon { ok: false, status, error }
+// Race-safe : utilise la RPC Postgres decrement_sms_credit (UPDATE WHERE > 0 RETURNING).
+// → impossible de descendre sous 0 même avec des envois parallèles en burst.
 async function gateSmsAndDecrementCredit(env, salonId) {
   if (!salonId) return { ok: false, status: 400, error: "salon_id requis" };
   const salon = await supabaseGet(env, salonId);
@@ -749,12 +751,31 @@ async function gateSmsAndDecrementCredit(env, salonId) {
   if (salon.status === "suspended" || salon.status === "cancelled") {
     return { ok: false, status: 403, error: "Compte suspendu — régularisez votre abonnement" };
   }
-  // Crédits suffisants
-  const credits = Number(salon.sms_credits || 0);
-  if (credits <= 0) return { ok: false, status: 402, error: "Plus de crédits SMS — rechargez via Paramètres > SMS" };
-  // Décrément atomique (PostgREST PATCH avec valeur calculée)
-  await supabaseUpdate(env, salonId, { sms_credits: credits - 1, sms_used: (salon.sms_used || 0) + 1 });
-  return { ok: true, remainingCredits: credits - 1 };
+  // Décrément ATOMIQUE via RPC (race-safe — UPDATE WHERE sms_credits > 0)
+  // Si 0 lignes mises à jour (crédits déjà à 0), renvoie {ok:false, remaining:0} sans rien modifier.
+  try {
+    const rpcRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/decrement_sms_credit`, {
+      method: "POST",
+      headers: {
+        "apikey": env.SUPABASE_SERVICE_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ p_salon_id: salonId })
+    });
+    if (!rpcRes.ok) {
+      console.error("decrement_sms_credit RPC HTTP error:", rpcRes.status);
+      return { ok: false, status: 500, error: "Erreur décrément crédit SMS (rpc)" };
+    }
+    const rpcData = await rpcRes.json();
+    if (!rpcData || rpcData.ok !== true) {
+      return { ok: false, status: 402, error: "Plus de crédits SMS — rechargez via Paramètres > SMS" };
+    }
+    return { ok: true, remainingCredits: Number(rpcData.remaining || 0) };
+  } catch (e) {
+    console.error("decrement_sms_credit RPC error:", e?.message || e);
+    return { ok: false, status: 500, error: "Erreur décrément crédit SMS" };
+  }
 }
 
 async function handleSmsRappel(request, env) {

@@ -20448,7 +20448,41 @@ function sendCampaignV2(){
   var hasSms=true;
   var hasEmail=true;
   if(doSms&&!hasSms&&doEmail&&!hasEmail){alert("\u26a0\ufe0f Configurez au moins un fournisseur (SMS ou Email) dans Marketing > Configuration");return;}
-  
+
+  // === PREFLIGHT CR\u00c9DITS SMS \u2014 emp\u00eache d'envoyer plus que ce qu'on a ===
+  // Compte les destinataires SMS \u00e9ligibles, compare avec cr\u00e9dits restants.
+  // window._campSmsForce=true bypass le check (mis \u00e0 true par le bouton "Envoyer quand m\u00eame")
+  if(doSms && !window._campSmsForce){
+    var smsRecipients=clients.filter(function(cl){return cl.smsOk&&cl.ph;}).length;
+    var smsAvail=Number(window.SMS_CREDITS||0);
+    if(smsRecipients>smsAvail){
+      var manquants=smsRecipients-smsAvail;
+      var htmW='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:480px">';
+      htmW+='<div style="font-size:48px;margin-bottom:8px">\u26a0\ufe0f</div>';
+      htmW+='<h2 style="color:#f59e0b;margin-bottom:8px">Cr\u00e9dits SMS insuffisants</h2>';
+      htmW+='<div style="font-size:14px;color:rgba(255,255,255,.7);line-height:1.6;margin-bottom:16px">';
+      htmW+='Vous avez <strong style="color:#fff">'+smsAvail+'</strong> cr\u00e9dit'+(smsAvail>1?'s':'')+' SMS, mais <strong style="color:#fff">'+smsRecipients+'</strong> destinataire'+(smsRecipients>1?'s':'')+' ser'+(smsRecipients>1?'ont':'a')+' contact\u00e9'+(smsRecipients>1?'s':'')+' par SMS.';
+      htmW+='<br><br>Si vous lancez maintenant, seul'+(smsAvail>1?'s les ':' le ')+'<strong style="color:#4caf50">'+smsAvail+' premier'+(smsAvail>1?'s':'')+' SMS</strong> partir'+(smsAvail>1?'ont':'a')+' (commande chronologique). Les <strong style="color:#ef5350">'+manquants+' destinataire'+(manquants>1?'s':'')+' restant'+(manquants>1?'s':'')+'</strong> ne recevr'+(manquants>1?'ont':'a')+' rien.';
+      if(doEmail){htmW+='<br><br>Les emails seront envoy\u00e9s normalement (pas de limite c\u00f4t\u00e9 Luxyra).';}
+      htmW+='</div>';
+      htmW+='<div style="display:flex;flex-direction:column;gap:8px">';
+      htmW+='<button onclick="cM();buySMSPack(100)" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer;font-size:14px">\ud83d\udcf1 Acheter plus de cr\u00e9dits avant</button>';
+      htmW+='<button id="campForceBtn" style="padding:12px;border-radius:10px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.1);color:#f59e0b;font-weight:700;cursor:pointer;font-size:13px">Envoyer quand m\u00eame ('+smsAvail+' SMS '+(doEmail?'+ tous les emails':'')+')</button>';
+      htmW+='<button onclick="cM()" style="padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:rgba(255,255,255,.5);cursor:pointer;font-size:13px">Annuler</button>';
+      htmW+='</div></div></div>';
+      document.getElementById("modal").innerHTML=htmW;
+      // C\u00e2bler le "Envoyer quand m\u00eame" : on relance la m\u00eame fonction en marquant un flag pour bypass le pr\u00e9flight
+      document.getElementById("campForceBtn").onclick=function(){
+        cM();
+        window._campSmsForce=true;  // bypass le pr\u00e9flight au prochain appel
+        try{ sendCampaignV2(); } finally { window._campSmsForce=false; }  // reset apr\u00e8s dans tous les cas
+      };
+      return;
+    }
+  }
+  // Reset du flag si on arrive ici par une voie normale (assez de cr\u00e9dits)
+  window._campSmsForce=false;
+
   var smsSent=0,emailSent=0,errors=0;
   var chain=Promise.resolve();
   clients.forEach(function(cl){
@@ -20556,6 +20590,32 @@ function sendCampaign(type){
     alert("\u26a0\ufe0f Configurez d\u0027abord votre fournisseur SMS dans Param\u00e8tres > SMS & Marketing");
     return;
   }
+  // === PREFLIGHT CR\u00c9DITS SMS ===
+  if(!window._campSmsForce){
+    var smsRecipients=clients.filter(function(cl){return cl.smsOk!==false&&cl.ph;}).length;
+    var smsAvail=Number(window.SMS_CREDITS||0);
+    if(smsRecipients>smsAvail){
+      var manquants=smsRecipients-smsAvail;
+      var htmW='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:480px">';
+      htmW+='<div style="font-size:48px;margin-bottom:8px">\u26a0\ufe0f</div>';
+      htmW+='<h2 style="color:#f59e0b;margin-bottom:8px">Cr\u00e9dits SMS insuffisants</h2>';
+      htmW+='<div style="font-size:14px;color:rgba(255,255,255,.7);line-height:1.6;margin-bottom:16px">Vous avez <strong style="color:#fff">'+smsAvail+'</strong> cr\u00e9dit'+(smsAvail>1?'s':'')+' SMS, mais <strong style="color:#fff">'+smsRecipients+'</strong> destinataire'+(smsRecipients>1?'s':'')+' ser'+(smsRecipients>1?'ont':'a')+' contact\u00e9'+(smsRecipients>1?'s':'')+'.<br><br>Si vous lancez maintenant, seul'+(smsAvail>1?'s les ':' le ')+'<strong style="color:#4caf50">'+smsAvail+' premier'+(smsAvail>1?'s':'')+' SMS</strong> partir'+(smsAvail>1?'ont':'a')+'. Les <strong style="color:#ef5350">'+manquants+' destinataire'+(manquants>1?'s':'')+' restant'+(manquants>1?'s':'')+'</strong> ne recevr'+(manquants>1?'ont':'a')+' rien.</div>';
+      htmW+='<div style="display:flex;flex-direction:column;gap:8px">';
+      htmW+='<button onclick="cM();buySMSPack(100)" style="padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer;font-size:14px">\ud83d\udcf1 Acheter plus de cr\u00e9dits avant</button>';
+      htmW+='<button id="campV1ForceBtn" style="padding:12px;border-radius:10px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.1);color:#f59e0b;font-weight:700;cursor:pointer;font-size:13px">Envoyer quand m\u00eame ('+smsAvail+' SMS seulement)</button>';
+      htmW+='<button onclick="cM()" style="padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:rgba(255,255,255,.5);cursor:pointer;font-size:13px">Annuler</button>';
+      htmW+='</div></div></div>';
+      document.getElementById("modal").innerHTML=htmW;
+      var _typeArg=type;
+      document.getElementById("campV1ForceBtn").onclick=function(){
+        cM();
+        window._campSmsForce=true;
+        try{ sendCampaign(_typeArg); } finally { window._campSmsForce=false; }
+      };
+      return;
+    }
+  }
+  window._campSmsForce=false;
   var sent=0,errors=0;
   var chain=Promise.resolve();
   clients.forEach(function(cl){
