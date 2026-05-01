@@ -778,6 +778,52 @@ async function gateSmsAndDecrementCredit(env, salonId) {
   }
 }
 
+// === Helper : alerte email quand un SMS automatique est bloqué (crédits 0) ===
+// Rate-limité à 1 email/24h par salon via salons.last_sms_credit_alert_at.
+// Ne block pas la réponse — fire & forget (waitUntil-style).
+async function notifySalonCreditExhausted(env, salonId) {
+  try {
+    const salon = await supabaseGet(env, salonId);
+    if (!salon || !salon.email) return;
+    // Rate-limit : si déjà notifié dans les 24 dernières heures, skip
+    if (salon.last_sms_credit_alert_at) {
+      const last = new Date(salon.last_sms_credit_alert_at).getTime();
+      if (Date.now() - last < 24 * 3600 * 1000) return;
+    }
+    const salonName = salon.nom || "votre salon";
+    const subject = `⚠️ Crédits SMS épuisés — ${salonName}`;
+    const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a">
+      <div style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a);padding:24px;border-radius:14px 14px 0 0;text-align:center">
+        <div style="color:#d4a843;font-size:24px;font-weight:900;letter-spacing:2px">LUXYRA</div>
+      </div>
+      <div style="background:#fff;border:1px solid #e8e0d0;border-top:none;padding:28px;border-radius:0 0 14px 14px">
+        <div style="font-size:48px;text-align:center;margin-bottom:8px">📱</div>
+        <h2 style="text-align:center;color:#c8a84e;margin:0 0 16px">Vos crédits SMS sont épuisés</h2>
+        <p style="font-size:14px;line-height:1.6;color:#333">Bonjour,</p>
+        <p style="font-size:14px;line-height:1.6;color:#333">Le compte SMS de <strong>${salonName}</strong> est arrivé à 0. Vos rappels de RDV automatiques (24h, 2h), SMS d'anniversaire et notifications fidélité <strong style="color:#ef5350">ne sont plus envoyés</strong>.</p>
+        <p style="font-size:14px;line-height:1.6;color:#333">Pour rétablir les envois immédiatement, rechargez un pack SMS depuis votre application :</p>
+        <div style="text-align:center;margin:24px 0">
+          <a href="https://luxyra.fr/app#sms" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;text-decoration:none;border-radius:10px;font-size:14px">📱 Recharger mes SMS</a>
+        </div>
+        <p style="font-size:12px;line-height:1.6;color:#666">Vous recevrez ce mail 1 fois maximum par 24h tant que votre solde reste à 0. Vous pouvez continuer à envoyer des emails normalement (les emails ne consomment pas de crédits SMS).</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+        <p style="font-size:11px;color:#999;text-align:center;margin:0">Email automatique — Luxyra</p>
+      </div>
+    </div>`;
+    const textContent = `Vos crédits SMS sont épuisés.\n\nLe compte SMS de ${salonName} est à 0. Vos rappels RDV automatiques, SMS anniversaire et notifications fidélité ne sont plus envoyés.\n\nPour recharger : https://luxyra.fr/app#sms\n\nLuxyra.`;
+    await brevoSendEmail(env, {
+      to: salon.email, toName: salonName,
+      senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
+      subject, htmlContent: html, textContent, replyTo: null, attachment: null
+    });
+    // Update timestamp pour rate-limit
+    await supabaseUpdate(env, salonId, { last_sms_credit_alert_at: new Date().toISOString() });
+    console.log("notifySalonCreditExhausted: email envoyé à", salon.email);
+  } catch (e) {
+    console.error("notifySalonCreditExhausted error:", e?.message || e);
+  }
+}
+
 async function handleSmsRappel(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
@@ -785,7 +831,14 @@ async function handleSmsRappel(request, env) {
   if (!telephone) return jsonResponse({ error: "telephone requis" }, 400);
   // === Gate Pro + crédits + décrément ===
   const gate = await gateSmsAndDecrementCredit(env, salon_id);
-  if (!gate.ok) return jsonResponse({ error: gate.error }, gate.status);
+  if (!gate.ok) {
+    // Si le blocage est dû à des crédits 0 (status 402) → alerte email auto au salon
+    // (rate-limité 24h dans la fonction). Fire & forget — ne bloque pas la réponse.
+    if (gate.status === 402 && salon_id) {
+      notifySalonCreditExhausted(env, salon_id).catch(function(e){ console.warn("alert email failed:", e?.message); });
+    }
+    return jsonResponse({ error: gate.error }, gate.status);
+  }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
   const result = await brevoSendSms(env, { to: phone, content: `${salonName||"Votre salon"} : Rappel RDV le ${date} à ${heure}${prestation?" ("+prestation+")":""}. Pour modifier/annuler, contactez-nous. A bientôt !`, sender: (salonName||"Luxyra").slice(0,11).trim() });
   return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits });
