@@ -259,7 +259,19 @@ async function lxPushNeedsBanner(){
   return true;
 }
 var curPage="dashboard";window._currentTab="cockpit",curFilter="all";
+// Tarifs par défaut, écrasés au load par loadPlansFromConfig() qui lit app_config
 var PLANS=[{id:"essential",nom:"Essentiel",prix:14.99,couleur:"var(--blue)"},{id:"pro",nom:"Pro",prix:24.99,couleur:"var(--gold)"}];
+async function loadPlansFromConfig(){
+  try{
+    if(typeof _sb==="undefined"||!_sb)return;
+    var r=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
+    if(r.data&&r.data.config){
+      var c=r.data.config;
+      if(c.plan_essential_eur!=null) PLANS[0].prix=Number(c.plan_essential_eur);
+      if(c.plan_pro_eur!=null) PLANS[1].prix=Number(c.plan_pro_eur);
+    }
+  }catch(e){console.warn("[PLANS] load failed",e);}
+}
 var colors=["#c9a227","#7d3c98","#2980b9","#27ae60","#e74c3c","#f39c12","#1abc9c","#e67e22"];
 
 function fmtM(n){return(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+"€";}
@@ -280,7 +292,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadData();loadDemandes();loadInscriptions();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
+      if(c.data){_online=true;await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
     }
   }catch(e){}
   showLogin();
@@ -307,7 +319,7 @@ async function doLogin(){
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
-  await loadData();loadDemandes();loadInscriptions();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
+  await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}

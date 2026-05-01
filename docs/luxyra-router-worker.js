@@ -259,7 +259,20 @@ async function handleWebhook(request, env) {
         }
 
         try {
-          const planPrix = plan === "pro" ? 24.99 : 14.99;
+          // Lit le prix réel depuis app_config (centralisation : un seul endroit à modifier)
+          // Fallback hardcodé si la table n'est pas accessible
+          let planPrix = plan === "pro" ? 24.99 : 14.99;
+          try {
+            const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, {
+              headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
+            });
+            const cfgRows = await cfgRes.json();
+            if (cfgRows && cfgRows[0] && cfgRows[0].config) {
+              const cfg = cfgRows[0].config;
+              if (plan === "pro" && cfg.plan_pro_eur != null) planPrix = Number(cfg.plan_pro_eur);
+              else if (plan !== "pro" && cfg.plan_essential_eur != null) planPrix = Number(cfg.plan_essential_eur);
+            }
+          } catch (e) { console.warn("app_config fetch failed, using fallback:", e?.message); }
           const sbUrl = CONFIG.SUPABASE_URL;
           const numRes = await fetch(`${sbUrl}/rest/v1/rpc/next_facture_numero`, {
             method: "POST",

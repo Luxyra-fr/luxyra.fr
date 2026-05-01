@@ -848,14 +848,14 @@ function showTrialExpiredScreen(salon) {
     '<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;justify-content:center">'+
     '<div style="flex:1;min-width:180px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:14px;padding:20px;text-align:center">'+
     '<div style="font-size:12px;color:#60a5fa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ESSENTIEL</div>'+
-    '<div style="font-size:28px;font-weight:800;color:#fff">14,99\u20ac<span style="font-size:14px;color:#94a3b8">/mois</span></div>'+
+    '<div style="font-size:28px;font-weight:800;color:#fff"><span data-lxconfig="plan_essential">14,99</span>\u20ac<span style="font-size:14px;color:#94a3b8">/mois</span></div>'+
     '<div style="font-size:11px;color:#94a3b8;margin-top:8px">Planning \u2022 Encaissement \u2022 Clients</div>'+
     '<button onclick="checkCgvAndPay(\'essential\')" style="margin-top:12px;width:100%;padding:10px;border-radius:10px;background:#60a5fa;color:#fff;font-weight:700;border:none;cursor:pointer;font-size:13px">Choisir Essentiel</button>'+
     '</div>'+
     '<div style="flex:1;min-width:180px;background:rgba(212,168,67,.08);border:1.5px solid rgba(212,168,67,.3);border-radius:14px;padding:20px;text-align:center;position:relative">'+
     '<div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#d4a843;color:#000;font-size:9px;font-weight:800;padding:3px 10px;border-radius:50px;letter-spacing:1px">RECOMMANDÉ</div>'+
     '<div style="font-size:12px;color:#d4a843;font-weight:700;letter-spacing:1px;margin-bottom:8px">PRO</div>'+
-    '<div style="font-size:28px;font-weight:800;color:#fff">24,99\u20ac<span style="font-size:14px;color:#94a3b8">/mois</span></div>'+
+    '<div style="font-size:28px;font-weight:800;color:#fff"><span data-lxconfig="plan_pro">24,99</span>\u20ac<span style="font-size:14px;color:#94a3b8">/mois</span></div>'+
     '<div style="font-size:11px;color:#94a3b8;margin-top:8px">Tout Essentiel + Site \u2022 Résa \u2022 SMS</div>'+
     '<button onclick="checkCgvAndPay(\'pro\')" style="margin-top:12px;width:100%;padding:10px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;border:none;cursor:pointer;font-size:13px">Choisir Pro</button>'+
     '</div>'+
@@ -863,6 +863,10 @@ function showTrialExpiredScreen(salon) {
     '<label style="display:flex;align-items:flex-start;gap:8px;margin:16px 0 12px;cursor:pointer;font-size:11px;color:#94a3b8;line-height:1.4;text-align:left"><input type="checkbox" id="cgvCheck" style="margin-top:2px;flex-shrink:0"> J\u2019accepte les <a href="/cgv" target="_blank" style="color:#d4a843">CGV</a> et la <a href="/confidentialite" target="_blank" style="color:#d4a843">Politique de confidentialit\u00e9</a></label>'+
     '<button onclick="doLogout()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button>'+
     '</div></div>';
+  // Refresh les éléments [data-lxconfig] avec les valeurs actuelles de la config DB
+  if (typeof lxRefreshPriceElements === "function") {
+    setTimeout(function(){ lxRefreshPriceElements(); }, 100);
+  }
 }
 
 // Mode hors ligne (pas de Supabase configuré)
