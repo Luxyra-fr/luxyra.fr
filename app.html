@@ -6196,8 +6196,27 @@ function rHome(){
       if(AP.filter(function(b){return b.cId===a.cId&&b.date<today&&b.st==="done"&&!b.cancelled;}).length===0)newClients++;
     }
   });
+  // CA réparti par collaborateur (prorata prix catalog × facteur remise forfait)
   var perSty={};
-  done.forEach(function(a){var sty=gT(a.stId);var n=sty?sty.n:"?";if(!perSty[n])perSty[n]={ca:0,nb:0};perSty[n].ca+=a.pr;perSty[n].nb++;});
+  done.forEach(function(a){
+    var dist = (typeof caPerCollabForAppt === "function") ? caPerCollabForAppt(a) : null;
+    if(dist && Object.keys(dist).length){
+      Object.keys(dist).forEach(function(sid){
+        var sty=gT(+sid)||gT(sid);
+        var n=sty?sty.n:"?";
+        if(!perSty[n])perSty[n]={ca:0,nb:0};
+        perSty[n].ca+=dist[sid];
+      });
+      // Le RDV compte UNE fois pour le collab principal (nb client)
+      var stMain=gT(a.stId);var nMain=stMain?stMain.n:"?";
+      if(!perSty[nMain])perSty[nMain]={ca:0,nb:0};
+      perSty[nMain].nb++;
+    } else {
+      var sty=gT(a.stId);var n=sty?sty.n:"?";
+      if(!perSty[n])perSty[n]={ca:0,nb:0};
+      perSty[n].ca+=a.pr;perSty[n].nb++;
+    }
+  });
   var styNames=Object.keys(perSty);
 
   // === CA PRÉVISIONNEL DU MOIS ===
@@ -7772,6 +7791,84 @@ function getApptPhases(a){
   }
   return[];
 }
+
+// === Répartition du CA d'un RDV entre collaborateurs ===
+// Stratégie (validée 2026-05) : prorata du prix catalog des services contenus
+// dans le forfait, ajusté du facteur de remise du forfait.
+//
+// Exemple : forfait à 100€ contenant Coupe (catalog 30€, Amandine) +
+// Couleur (catalog 60€, Manue) + Brushing (catalog 30€, Amandine).
+// Sum catalog = 120€, factor = 100/120 = 0.833.
+// → Amandine : (30+30) × 0.833 = 50€, Manue : 60 × 0.833 = 50€, total = 100€ ✅
+//
+// Fallback :
+// - Pas de phases ou un seul collab dans toutes les phases → 100% au stId principal
+// - Phases sans sId résolvable → prorata par durée des phases work
+// - Items ajoutés (a.items addedDuringRdv) → comptabilisés au stId principal
+//   (data model actuel ne stocke pas de stId par item ajouté)
+//
+// Retourne un objet { [stId]: amount } dont la somme égale a.pr (à l'arrondi près)
+function caPerCollabForAppt(a){
+  var result = {};
+  var totalPr = Number(a.pr) || 0;
+  if(totalPr <= 0) return result;
+  var phases = (typeof getApptPhases === "function") ? getApptPhases(a) : (a.aPhases || []);
+  // Filtrer les phases work uniquement
+  var workPhases = (phases || []).filter(function(p){ return p && p.t === "w"; });
+  // Cas trivial : pas de phases ou tous sur le même collab → tout au principal
+  var distinctStIds = {};
+  workPhases.forEach(function(p){
+    var sid = p.stId || a.stId;
+    if(sid != null) distinctStIds[String(sid)] = true;
+  });
+  var nbDistinctCollabs = Object.keys(distinctStIds).length;
+  if(!workPhases.length || nbDistinctCollabs <= 1){
+    var k = String(a.stId);
+    result[k] = (result[k] || 0) + totalPr;
+    return result;
+  }
+  // Calcul de la part "items addons" qui va au collab principal (pas de stId par item)
+  var addonsTotal = 0;
+  if(Array.isArray(a.items)){
+    a.items.forEach(function(it){ addonsTotal += (Number(it.price) || 0); });
+  }
+  var basePr = Math.max(0, totalPr - addonsTotal);
+  // Tentative répartition par prix catalog
+  var phasesWithPrice = workPhases.map(function(p){
+    var sv = (p.sId != null) ? (typeof gS === "function" ? gS(p.sId) : null) : null;
+    var catalogPrice = sv ? (Number(sv.p) || 0) : 0;
+    return { stId: p.stId || a.stId, catalogPrice: catalogPrice, dur: Number(p.d) || 0 };
+  });
+  var sumCatalog = phasesWithPrice.reduce(function(s, p){ return s + p.catalogPrice; }, 0);
+  if(sumCatalog > 0){
+    // Mode "prix catalog × factor de remise"
+    var factor = basePr / sumCatalog;
+    phasesWithPrice.forEach(function(p){
+      var k = String(p.stId);
+      result[k] = (result[k] || 0) + (p.catalogPrice * factor);
+    });
+  } else {
+    // Fallback : prorata par durée
+    var sumDur = phasesWithPrice.reduce(function(s, p){ return s + p.dur; }, 0);
+    if(sumDur > 0){
+      phasesWithPrice.forEach(function(p){
+        var k = String(p.stId);
+        result[k] = (result[k] || 0) + (basePr * p.dur / sumDur);
+      });
+    } else {
+      // Cas extrême : tout au principal
+      var kk = String(a.stId);
+      result[kk] = (result[kk] || 0) + basePr;
+    }
+  }
+  // Addons (prestations ajoutées) : attribués au collab principal du RDV
+  if(addonsTotal > 0){
+    var ka = String(a.stId);
+    result[ka] = (result[ka] || 0) + addonsTotal;
+  }
+  return result;
+}
+window.caPerCollabForAppt = caPerCollabForAppt;
 async function updApptPhase(id,idx,val){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
@@ -13708,7 +13805,19 @@ function rAccounting(){
   
   // ===== REPARTITION PAR COLLABORATEUR (LS Coiffure style - FIRST) =====
   var perStyAcc={};T.forEach(function(t){perStyAcc[t.id]={n:t.n,ca:0,nb:0,rem:0};});
-  dn.forEach(function(a){if(perStyAcc[a.stId]){perStyAcc[a.stId].ca+=a.pr;perStyAcc[a.stId].nb++;perStyAcc[a.stId].rem+=(a.remise||0);}});
+  // CA réparti par collab (multi-collab forfait)
+  dn.forEach(function(a){
+    var dist = (typeof caPerCollabForAppt === "function") ? caPerCollabForAppt(a) : null;
+    if(dist && Object.keys(dist).length){
+      Object.keys(dist).forEach(function(sid){
+        var key = +sid; if(!perStyAcc[key]) key = sid;
+        if(perStyAcc[key]) perStyAcc[key].ca += dist[sid];
+      });
+      if(perStyAcc[a.stId]){ perStyAcc[a.stId].nb++; perStyAcc[a.stId].rem += (a.remise||0); }
+    } else if(perStyAcc[a.stId]){
+      perStyAcc[a.stId].ca+=a.pr;perStyAcc[a.stId].nb++;perStyAcc[a.stId].rem+=(a.remise||0);
+    }
+  });
   var tRemAcc=0;
   
   h+='<div style="background:var(--card);border-radius:12px;overflow:hidden;margin-bottom:14px">';
@@ -13847,7 +13956,19 @@ function printBandeZ(){
   
   // Par collaborateur
   var perSty={};T.forEach(function(t){perSty[t.id]={n:t.n,ca:0,nb:0};});
-  dn.forEach(function(a){if(perSty[a.stId]){perSty[a.stId].ca+=a.pr;perSty[a.stId].nb++;}});
+  // CA réparti par collab (multi-collab forfait)
+  dn.forEach(function(a){
+    var dist = (typeof caPerCollabForAppt === "function") ? caPerCollabForAppt(a) : null;
+    if(dist && Object.keys(dist).length){
+      Object.keys(dist).forEach(function(sid){
+        var key = +sid; if(!perSty[key]) key = sid;
+        if(perSty[key]) perSty[key].ca += dist[sid];
+      });
+      if(perSty[a.stId]) perSty[a.stId].nb++;
+    } else if(perSty[a.stId]){
+      perSty[a.stId].ca+=a.pr;perSty[a.stId].nb++;
+    }
+  });
   
   // Par jour
   var perDay={};
@@ -19453,7 +19574,19 @@ function cloturerJournee(){
   var hDernier=heures.length?heures[heures.length-1].slice(11,16)||"--:--":"--:--";
   // Per-stylist
   var perSty={};T.forEach(function(t){perSty[t.id]={n:t.n,ca:0,nb:0};});
-  done.forEach(function(a){if(perSty[a.stId]){perSty[a.stId].ca+=a.pr;perSty[a.stId].nb++;}});
+  // CA réparti par collab (multi-collab forfait)
+  done.forEach(function(a){
+    var dist = (typeof caPerCollabForAppt === "function") ? caPerCollabForAppt(a) : null;
+    if(dist && Object.keys(dist).length){
+      Object.keys(dist).forEach(function(sid){
+        var key = +sid; if(!perSty[key]) key = sid;
+        if(perSty[key]) perSty[key].ca += dist[sid];
+      });
+      if(perSty[a.stId]) perSty[a.stId].nb++;
+    } else if(perSty[a.stId]){
+      perSty[a.stId].ca+=a.pr;perSty[a.stId].nb++;
+    }
+  });
   // Remises / rabais
   var totalRemises=0;var brutTotalGlobal=0;
   done.forEach(function(a){totalRemises+=(a.remise||0);brutTotalGlobal+=(a.brutTotal||a.pr);});
