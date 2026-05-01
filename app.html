@@ -4180,45 +4180,91 @@ async function addNotif(type,title,detail,data){
     await _sb.from('notifications').insert({salon_id:_salonId,type:type,title:title,detail:detail||'',data:data||{}});
   }catch(e){console.warn('addNotif',e);}
 }
+// Helper : r\u00e9cup\u00e8re les nouvelles date/heure propos\u00e9es par le client depuis la notif
+// (g\u00e8re plusieurs formats : modifData direct, data.modification, data direct)
+function _extractModifData(n){
+  if(!n)return null;
+  if(n.modifData && (n.modifData.date || n.modifData.heure)) return n.modifData;
+  var d = n.data || {};
+  if(d.modification && (d.modification.date || d.modification.heure)){
+    return {date:d.modification.date, heure:d.modification.heure, msg:d.modification.msg};
+  }
+  // Cas legacy : data contient directement date/heure (\u00e0 la racine)
+  if(d.date || d.heure) return {date:d.date, heure:d.heure};
+  return null;
+}
+
 async function acceptModification(notifId){
   var n=null;for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].id===notifId){n=window.NOTIFS[i];break;}}
-  if(!n||!n.modifData)return;
-  var rdvId=n.rdvOnlineId;
-  // Update rdv_online in Supabase
+  if(!n){toast&&toast("Notification introuvable","error");return;}
+  var modif = _extractModifData(n);
+  // rdvId : essaie plusieurs sources (rdvOnlineId, data.rdv_id)
+  var rdvId = n.rdvOnlineId || (n.data && (n.data.rdv_id || n.data.rdvId)) || null;
+  if(!modif || !rdvId){
+    console.error("[acceptModif] modif or rdvId missing", {n:n, modif:modif, rdvId:rdvId});
+    toast && toast("Donn\u00e9es manquantes pour accepter la modif","error");
+    return;
+  }
+  // Normalize heure : si format "HH:MM:SS" \u2192 garde tel quel, si "HH:MM" \u2192 ajoute ":00"
+  var newHeure = String(modif.heure||"");
+  if(newHeure.length === 5) newHeure += ":00";
+  // UPDATE rdv_online directement (pas via saveAppointment qui marquerait salon_modified)
   if(typeof _sb!=="undefined"&&_sb){
-    await _sb.from("rdv_online").update({
-      date_rdv:n.modifData.date,
-      heure_rdv:n.modifData.heure,
+    var upd = {
       modification_status:"accepted",
       modification_demandee:false
-    }).eq("id",rdvId);
+    };
+    if(modif.date) upd.date_rdv = modif.date;
+    if(modif.heure) upd.heure_rdv = newHeure;
+    var r = await _sb.from("rdv_online").update(upd).eq("id",rdvId);
+    if(r && r.error){
+      toast && toast("Erreur Supabase : "+r.error.message,"error");
+      console.error("[acceptModif] update failed:",r.error);
+      return;
+    }
   }
-  // Update local AP entry
+  // Update local AP entry (sans d\u00e9clencher saveAppointment qui marquerait salon_modified)
   for(var ai=0;ai<AP.length;ai++){
-    if(AP[ai].onlineId===rdvId){
-      AP[ai].date=n.modifData.date;
-      AP[ai].time=n.modifData.heure;
-      if(typeof saveAppointment==="function")saveAppointment(AP[ai]);
+    if(AP[ai].onlineId===rdvId || AP[ai].id==="online_"+rdvId){
+      if(modif.date) AP[ai].date=modif.date;
+      if(modif.heure) AP[ai].time=String(modif.heure).slice(0,5);
       break;
     }
   }
+  // Marquer notif comme lue en DB (si dbId existe)
+  if(n.dbId && typeof _sb!=="undefined" && _sb){
+    try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",n.dbId); }catch(e){}
+  }
   n.confirmed=true;n.seen=true;
   n.title="\u2705 Modification accept\u00e9e";
+  toast && toast("Modification accept\u00e9e \u2014 le client est inform\u00e9","success");
   showNotifs();updateNotifBadge();
 }
 
 async function refuseModification(notifId){
   var n=null;for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].id===notifId){n=window.NOTIFS[i];break;}}
-  if(!n)return;
-  var rdvId=n.rdvOnlineId;
+  if(!n){toast&&toast("Notification introuvable","error");return;}
+  var rdvId = n.rdvOnlineId || (n.data && (n.data.rdv_id || n.data.rdvId)) || null;
+  if(!rdvId){
+    toast && toast("ID de RDV manquant","error");
+    return;
+  }
   if(typeof _sb!=="undefined"&&_sb){
-    await _sb.from("rdv_online").update({
+    var r = await _sb.from("rdv_online").update({
       modification_status:"refused",
       modification_demandee:false
     }).eq("id",rdvId);
+    if(r && r.error){
+      toast && toast("Erreur Supabase : "+r.error.message,"error");
+      return;
+    }
+  }
+  if(n.dbId && typeof _sb!=="undefined" && _sb){
+    try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",n.dbId); }catch(e){}
   }
   n.confirmed=true;n.seen=true;
   n.title="\u274c Modification refus\u00e9e";
+  toast && toast("Modification refus\u00e9e \u2014 le client est inform\u00e9","success");
   showNotifs();updateNotifBadge();
 }
 
