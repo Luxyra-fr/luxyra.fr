@@ -66,10 +66,33 @@ export default {
       if (url.pathname === "/api/client/invite/verify" && request.method === "POST") return await handleClientInviteVerify(request, env);
       if (url.pathname === "/api/salon/availability" && request.method === "POST") return await handleSalonAvailability(request, env);
       if (url.pathname === "/api/rdv/cancel" && request.method === "POST") return await handleRdvCancel(request, env);
+      // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
+      // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
+      if (url.pathname === "/api/admin/retention-purge" && request.method === "POST") {
+        const auth = request.headers.get("Authorization") || "";
+        if (!env.RETENTION_ADMIN_TOKEN || auth !== `Bearer ${env.RETENTION_ADMIN_TOKEN}`) {
+          return jsonResponse({ error: "unauthorized" }, 401);
+        }
+        const result = await runRetentionPurgeJob(env);
+        return jsonResponse({ success: true, ...result });
+      }
       return jsonResponse({ error: "Not found" }, 404);
     } catch (err) {
       console.error("Worker error:", err);
       return jsonResponse({ error: err.message }, 500);
+    }
+  },
+
+  // Cron trigger Cloudflare — appelé selon la config wrangler.toml [triggers].crons.
+  // Pour l'instant 1×/jour à 3h UTC : job de rétention (préavis + purge 6 ans).
+  async scheduled(event, env, ctx) {
+    console.log(`[cron] scheduled event triggered: ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`);
+    try {
+      const result = await runRetentionPurgeJob(env);
+      console.log(`[cron] retention-purge done:`, result);
+    } catch (err) {
+      console.error(`[cron] retention-purge FAILED:`, err?.message || err);
+      // On ne re-throw pas — on veut que le cron continue de tourner les jours suivants.
     }
   },
 };
@@ -1453,6 +1476,214 @@ async function handleSmsLinkDevice(request, env) {
   } catch (e) {
     console.error("link-device error:", e);
     return jsonResponse({ error: "Erreur serveur: " + e.message }, 500);
+  }
+}
+
+// ============================================================
+// JOB DE RÉTENTION DES DONNÉES (cron quotidien)
+// ============================================================
+// Conformité légale : CGI art. L102 B / art. 286-I-3° bis → conservation 6 ans
+// minimum des documents comptables. Au-delà, RGPD impose une durée justifiée :
+// on supprime donc à 6 ans + 1 jour, après préavis de 30 jours.
+//
+// Phases :
+//   1. PRÉAVIS : salons cancelled depuis 5 ans 11 mois → email "il vous reste
+//      30 jours pour télécharger vos archives". On stocke retention_warned_at
+//      pour ne pas re-envoyer le mail tous les jours.
+//   2. PURGE : salons cancelled depuis > 6 ans (+ délai préavis) → suppression
+//      définitive (cascade Postgres FKs supprime appointments, tickets,
+//      clotures, clients, etc.). Les factures Luxyra sont conservées séparément
+//      pour notre propre comptabilité (table factures_luxyra).
+//
+// Sécurité :
+//   - Ne touche QUE les salons avec status='cancelled' AND cancelled_at IS NOT NULL
+//   - Délai purge réel = 6 ans + 1 mois (le mois de préavis)
+//   - Logs détaillés pour audit
+//   - Endpoint /api/admin/retention-purge pour run manuel (auth via bearer token)
+async function runRetentionPurgeJob(env) {
+  const sbKey = env.SUPABASE_SERVICE_KEY;
+  if (!sbKey) {
+    console.warn("[retention] SUPABASE_SERVICE_KEY missing — abort");
+    return { skipped: "no_service_key" };
+  }
+  const now = new Date();
+  // Bornes : on calcule "now - X années" en ms. ATTENTION aux années bissextiles
+  // → on utilise setFullYear sur un Date pour rester précis.
+  const dateMinusYears = (n) => {
+    const d = new Date(now); d.setFullYear(d.getFullYear() - n); return d.toISOString();
+  };
+  const fiveYrsElevenMonths = (() => {
+    const d = new Date(now); d.setFullYear(d.getFullYear() - 6); d.setMonth(d.getMonth() + 1); return d.toISOString();
+  })();
+  const sixYears = dateMinusYears(6);
+
+  const stats = { warned: 0, purged: 0, errors: 0, details: [] };
+
+  // === PHASE 1 — PRÉAVIS 30 JOURS ===
+  // Salons cancelled depuis ≥ 5 ans 11 mois et < 6 ans, sans retention_warned_at.
+  try {
+    const warnRes = await fetch(
+      `${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,cancelled_at,retention_warned_at` +
+      `&status=eq.cancelled&cancelled_at=lte.${encodeURIComponent(fiveYrsElevenMonths)}` +
+      `&cancelled_at=gt.${encodeURIComponent(sixYears)}` +
+      `&retention_warned_at=is.null`,
+      { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
+    );
+    if (warnRes.ok) {
+      const toWarn = await warnRes.json();
+      console.log(`[retention] phase 1 (préavis) : ${toWarn.length} salons à notifier`);
+      for (const salon of toWarn) {
+        try {
+          if (salon.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(salon.email)) {
+            await sendRetentionWarningEmail(env, salon);
+          }
+          // Marque comme prévenu (même si pas d'email — sinon on retente tous les jours)
+          await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salon.id}`, {
+            method: "PATCH",
+            headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify({ retention_warned_at: new Date().toISOString() })
+          });
+          stats.warned++;
+          stats.details.push({ phase: "warned", id: salon.id, nom: salon.nom, email: salon.email || "(no email)" });
+        } catch (e) {
+          stats.errors++;
+          console.error(`[retention] warn salon ${salon.id} failed:`, e?.message || e);
+        }
+      }
+    } else {
+      console.warn(`[retention] phase 1 query failed: ${warnRes.status}`);
+    }
+  } catch (e) {
+    console.error("[retention] phase 1 exception:", e?.message || e);
+    stats.errors++;
+  }
+
+  // === PHASE 2 — PURGE EFFECTIVE ===
+  // Salons cancelled depuis ≥ 6 ans ET retention_warned_at non null (préavis envoyé).
+  // Délai supplémentaire : on attend 30 jours après le préavis (au cas où on
+  // aurait warné juste avant les 6 ans).
+  try {
+    const purgeBefore = (() => { const d = new Date(now); d.setDate(d.getDate() - 30); return d.toISOString(); })();
+    const purgeRes = await fetch(
+      `${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,cancelled_at,retention_warned_at` +
+      `&status=eq.cancelled&cancelled_at=lte.${encodeURIComponent(sixYears)}` +
+      `&retention_warned_at=lte.${encodeURIComponent(purgeBefore)}`,
+      { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
+    );
+    if (purgeRes.ok) {
+      const toPurge = await purgeRes.json();
+      console.log(`[retention] phase 2 (purge) : ${toPurge.length} salons à supprimer`);
+      for (const salon of toPurge) {
+        try {
+          // Suppression cascade — la FK ON DELETE CASCADE de Postgres supprimera
+          // appointments, tickets, clotures, clients, services, products, etc.
+          // Si certaines tables n'ont pas la cascade, il faudra ajouter les DELETE
+          // explicites ici (à vérifier après tests).
+          const delRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salon.id}`, {
+            method: "DELETE",
+            headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, Prefer: "return=minimal" }
+          });
+          if (delRes.ok) {
+            stats.purged++;
+            stats.details.push({ phase: "purged", id: salon.id, nom: salon.nom, cancelled_at: salon.cancelled_at });
+            // Notifie l'admin Luxyra (pour audit interne)
+            try { await sendRetentionPurgedAdminEmail(env, salon); } catch (_e) {}
+          } else {
+            stats.errors++;
+            console.error(`[retention] delete salon ${salon.id} failed: ${delRes.status}`);
+          }
+        } catch (e) {
+          stats.errors++;
+          console.error(`[retention] purge salon ${salon.id} exception:`, e?.message || e);
+        }
+      }
+    } else {
+      console.warn(`[retention] phase 2 query failed: ${purgeRes.status}`);
+    }
+  } catch (e) {
+    console.error("[retention] phase 2 exception:", e?.message || e);
+    stats.errors++;
+  }
+
+  return stats;
+}
+
+// Email préavis 30 jours avant suppression
+async function sendRetentionWarningEmail(env, salon) {
+  if (!env.BREVO_API_KEY) { console.warn("[retention] BREVO_API_KEY missing — skip email"); return; }
+  const cancelDate = new Date(salon.cancelled_at);
+  const purgeDate = new Date(cancelDate); purgeDate.setFullYear(purgeDate.getFullYear() + 6);
+  const purgeFmt = purgeDate.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
+  const html = `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;color:#1a1a1a">
+  <div style="background:linear-gradient(135deg,#d4a843,#b8960f);padding:24px;text-align:center">
+    <h1 style="color:#0a0a0a;margin:0;font-size:24px;letter-spacing:1px">LUXYRA</h1>
+  </div>
+  <div style="padding:32px 28px">
+    <h2 style="color:#1a1a1a;font-size:20px;margin:0 0 16px">⏰ Préavis de suppression de vos données</h2>
+    <p style="font-size:15px;line-height:1.6;color:#333">Bonjour,</p>
+    <p style="font-size:15px;line-height:1.6;color:#333">Votre abonnement Luxyra a été résilié il y a <strong>près de 6 ans</strong>. Conformément à la législation française (CGI art. L102 B), nous avons conservé vos documents comptables pendant cette période obligatoire.</p>
+    <div style="background:#fff8e6;border-left:4px solid #d4a843;padding:16px;margin:20px 0;border-radius:6px">
+      <p style="margin:0;font-size:14px;color:#1a1a1a"><strong>📅 Vos données seront supprimées définitivement le <span style="color:#b8960f">${purgeFmt}</span></strong> (dans environ 30 jours).</p>
+    </div>
+    <p style="font-size:15px;line-height:1.6;color:#333">Si vous souhaitez récupérer vos clôtures Z, factures, ou tout autre document comptable, connectez-vous dès maintenant en mode archives :</p>
+    <div style="text-align:center;margin:28px 0">
+      <a href="https://app.luxyra.fr" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:10px;letter-spacing:.5px;text-transform:uppercase;font-size:13px">Accéder à mes archives</a>
+    </div>
+    <p style="font-size:14px;line-height:1.6;color:#666">Une fois connecté, cliquez sur <strong>"Accéder à mes archives comptables"</strong> pour télécharger vos documents en quelques clics.</p>
+    <hr style="border:none;border-top:1px solid #eee;margin:28px 0">
+    <p style="font-size:12px;color:#999;line-height:1.5">Vous pouvez également <a href="https://app.luxyra.fr" style="color:#d4a843">reprendre un abonnement</a> à tout moment pour continuer d'utiliser Luxyra.</p>
+    <p style="font-size:12px;color:#999;margin-top:18px">Luxyra • contact@luxyra.fr</p>
+  </div>
+</div>`;
+  const text = `Préavis suppression de vos données — Luxyra\n\nVotre abonnement résilié atteint bientôt 6 ans. Vos documents comptables seront supprimés définitivement le ${purgeFmt} (dans environ 30 jours).\n\nPour récupérer vos clôtures Z, factures et autres documents : connectez-vous sur https://app.luxyra.fr et cliquez sur "Accéder à mes archives comptables".\n\nLuxyra • contact@luxyra.fr`;
+  try {
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", "accept": "application/json" },
+      body: JSON.stringify({
+        sender: { name: "Luxyra", email: "contact@luxyra.fr" },
+        to: [{ email: salon.email, name: salon.nom || "" }],
+        subject: `⏰ Préavis : suppression de vos données Luxyra le ${purgeFmt}`,
+        htmlContent: html,
+        textContent: text
+      })
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`[retention] Brevo email failed for salon ${salon.id}: ${res.status} ${errBody}`);
+    }
+  } catch (e) {
+    console.error(`[retention] sendRetentionWarningEmail exception:`, e?.message || e);
+  }
+}
+
+// Notif admin Luxyra après purge (pour audit interne)
+async function sendRetentionPurgedAdminEmail(env, salon) {
+  if (!env.BREVO_API_KEY) return;
+  const adminEmail = env.LUXYRA_ADMIN_EMAIL || "contact@luxyra.fr";
+  const html = `<p>Salon résilié purgé automatiquement (rétention 6 ans atteinte) :</p>
+<ul>
+<li><strong>ID</strong> : ${salon.id}</li>
+<li><strong>Nom</strong> : ${salon.nom || "(sans nom)"}</li>
+<li><strong>Email</strong> : ${salon.email || "(non renseigné)"}</li>
+<li><strong>Résilié le</strong> : ${salon.cancelled_at}</li>
+<li><strong>Préavis envoyé le</strong> : ${salon.retention_warned_at}</li>
+<li><strong>Purgé le</strong> : ${new Date().toISOString()}</li>
+</ul>`;
+  try {
+    await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sender: { name: "Luxyra Cron", email: "contact@luxyra.fr" },
+        to: [{ email: adminEmail, name: "Admin Luxyra" }],
+        subject: `[Audit] Salon ${salon.nom || salon.id} purgé (rétention 6 ans)`,
+        htmlContent: html
+      })
+    });
+  } catch (e) {
+    console.error("[retention] admin notif failed:", e?.message || e);
   }
 }
 // EOF
