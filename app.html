@@ -5397,31 +5397,172 @@ function reprendreDernierePrestation(cId,kind){
   else cM();
 }
 
-function addClientPhoto(cId,input,label){
+// Upload une photo client → bucket Supabase Storage `client-photos`.
+// Stocke uniquement le path en DB (~80 octets) au lieu du base64 (~30-50 Ko).
+// Avantages scalabilité : DB 600× plus légère, photos cachées par le navigateur,
+// pas de re-download à chaque chargement de fiche client. Compatible avec les
+// anciennes photos en `data:` (cf. clientPhotoSrc() pour l'affichage).
+async function addClientPhoto(cId,input,label){
   if(!input.files||!input.files[0])return;
   var file=input.files[0];
-  if(file.size>2*1024*1024){alert("Photo trop lourde (max 2 Mo). Essayez avec une photo plus petite.");input.value="";return;}
-  var reader=new FileReader();
-  reader.onload=function(e){
-    var cl=gC(cId);if(!cl)return;
-    if(!cl.photos)cl.photos=[];
-    // Resize image to max 400px for storage
-    var img=new Image();
-    img.onload=function(){
-      var max=400;var w=img.width,h=img.height;
-      if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
-      var canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
-      canvas.getContext("2d").drawImage(img,0,0,w,h);
-      var data=canvas.toDataURL("image/jpeg",0.7);
-      cl.photos.push({date:TD,label:label||"",data:data});
-      if(typeof saveClient==="function")saveClient(cl);
-      go("detail");
-    };
-    img.src=e.target.result;
-  };
-  reader.readAsDataURL(file);
+  if(file.size>5*1024*1024){alert("Photo trop lourde (max 5 Mo). Essayez avec une photo plus petite.");input.value="";return;}
+  // Wrap FileReader/Image en promesse pour avoir async/await propre
+  var dataUrl=await new Promise(function(resolve,reject){
+    var r=new FileReader();r.onload=function(e){resolve(e.target.result);};r.onerror=reject;r.readAsDataURL(file);
+  });
+  var img=await new Promise(function(resolve,reject){
+    var i=new Image();i.onload=function(){resolve(i);};i.onerror=reject;i.src=dataUrl;
+  });
+  // Resize max 400px (côté client = bande passante upload réduite)
+  var max=400;var w=img.width,h=img.height;
+  if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
+  var canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+  canvas.getContext("2d").drawImage(img,0,0,w,h);
+  // Convert canvas → Blob (binaire) au lieu de toDataURL (base64) pour upload optimal
+  var blob=await new Promise(function(resolve){canvas.toBlob(resolve,"image/jpeg",0.78);});
+  var cl=gC(cId);if(!cl){input.value="";return;}
+  if(!cl.photos)cl.photos=[];
+  // Path : <salon_id>/<client_id>/<photo_uuid>.jpg — RLS s'appuie sur le 1er segment
+  var photoId=(typeof U==="function"?U():String(Date.now()+Math.random()))+".jpg";
+  var path=window._salonId+"/"+cId+"/"+photoId;
+  try {
+    var up=await _sb.storage.from("client-photos").upload(path,blob,{contentType:"image/jpeg",upsert:false});
+    if(up.error){
+      console.error("[addClientPhoto] upload failed:",up.error);
+      if(typeof toast==="function") toast("Erreur upload photo : "+up.error.message,"error");
+      else alert("Erreur upload photo : "+up.error.message);
+      input.value="";return;
+    }
+    cl.photos.push({date:TD,label:label||"",path:path});
+    if(typeof saveClient==="function") await saveClient(cl);
+    if(typeof toast==="function") toast("Photo ajoutée","success");
+    go("detail");
+  } catch(e){
+    console.error("[addClientPhoto] exception:",e);
+    if(typeof toast==="function") toast("Erreur upload photo","error");
+  }
   input.value="";
 }
+
+// Cache mémoire des signed URLs (1h TTL) pour ne pas les regénérer à chaque render.
+window._photoSignedUrlCache = window._photoSignedUrlCache || {};
+
+// Renvoie une src utilisable dans un <img> pour une photo client.
+// Compatible avec les 2 formats : ancien `{data: "data:image/jpeg;base64,…"}` ET
+// nouveau `{path: "<salon>/<client>/<id>.jpg"}` → signed URL Supabase Storage.
+async function clientPhotoSrc(photo){
+  if(!photo) return "";
+  // Format ancien (base64 inline) : on retourne tel quel
+  if(photo.data) return photo.data;
+  // Format nouveau (path bucket) : on génère/réutilise une signed URL valide 1h
+  if(photo.path){
+    var cached=window._photoSignedUrlCache[photo.path];
+    var now=Date.now();
+    if(cached && cached.expires > now+60000) return cached.url; // marge 1 min
+    try {
+      var res=await _sb.storage.from("client-photos").createSignedUrl(photo.path,3600);
+      if(res.data && res.data.signedUrl){
+        window._photoSignedUrlCache[photo.path]={url:res.data.signedUrl, expires:now+3600000};
+        return res.data.signedUrl;
+      }
+    } catch(e){ console.warn("[clientPhotoSrc] signed url failed:",e); }
+  }
+  return "";
+}
+window.clientPhotoSrc = clientPhotoSrc;
+
+// Helper synchrone : génère une src "loading" + lance la résolution async qui
+// remplace la src une fois la signed URL prête. À utiliser dans les templates HTML
+// où on ne peut pas faire d'await. Usage : <img id="ph_X" src="..." onload="...">
+function clientPhotoSrcAsync(photo, imgId){
+  if(!photo) return "";
+  if(photo.data) return photo.data; // legacy direct
+  if(!photo.path) return "";
+  var cached=window._photoSignedUrlCache[photo.path];
+  if(cached && cached.expires > Date.now()+60000) return cached.url;
+  // Pas en cache : on retourne placeholder vide et on patch après async
+  setTimeout(function(){
+    clientPhotoSrc(photo).then(function(url){
+      var el=document.getElementById(imgId);
+      if(el && url) el.src=url;
+    });
+  }, 0);
+  // SVG placeholder gris pendant le chargement (évite les <img src="" qui font du bruit)
+  return "data:image/svg+xml;utf8,"+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23222"/></svg>');
+}
+window.clientPhotoSrcAsync = clientPhotoSrcAsync;
+
+// Suppression d'une photo client (DB + bucket Storage si nouveau format)
+async function delClientPhoto(cId, photoIdx){
+  var cl=gC(cId);if(!cl||!cl.photos||!cl.photos[photoIdx])return;
+  if(!confirm("Supprimer cette photo ?")) return;
+  var photo=cl.photos[photoIdx];
+  // Si nouveau format (path bucket) : delete depuis le bucket aussi
+  if(photo.path){
+    try { await _sb.storage.from("client-photos").remove([photo.path]); }
+    catch(e){ console.warn("[delClientPhoto] bucket remove failed:",e); }
+    if(window._photoSignedUrlCache && window._photoSignedUrlCache[photo.path]){
+      delete window._photoSignedUrlCache[photo.path];
+    }
+  }
+  // Retire de l'array et persist
+  cl.photos.splice(photoIdx,1);
+  if(typeof saveClient==="function") await saveClient(cl);
+  go("detail");
+}
+window.delClientPhoto = delClientPhoto;
+
+// Migration one-shot des photos clients du salon : convertit les `{date,label,data:base64}`
+// en `{date,label,path:"<salon>/<client>/<id>.jpg"}` en uploadant dans le bucket Storage.
+// Idempotent (skip les photos déjà au format path). À appeler depuis la console une fois
+// après le déploiement, ou via le bouton admin "Migrer photos vers Storage".
+async function migrateClientPhotosToStorage(){
+  if(!_sb || !window._salonId){ alert("Pas connecté."); return {ok:false}; }
+  var stats={clients_traites:0, photos_migrees:0, photos_skipped:0, errors:0};
+  var clientsAvecPhotos = (typeof CL!=="undefined"?CL:[]).filter(function(c){
+    return c.photos && c.photos.length && c.photos.some(function(p){return p.data && !p.path;});
+  });
+  if(!clientsAvecPhotos.length){ alert("Aucune photo à migrer (toutes déjà sur Storage)."); return {ok:true, ...stats}; }
+  if(!confirm("Migrer "+clientsAvecPhotos.length+" client(s) avec photos base64 vers Supabase Storage ?\n\n(L'opération peut prendre 1-2 minutes selon le nombre de photos.)")) return {cancelled:true};
+  console.log("[migrate] start: "+clientsAvecPhotos.length+" clients");
+  for(var i=0;i<clientsAvecPhotos.length;i++){
+    var cl=clientsAvecPhotos[i];
+    var changed=false;
+    for(var j=0;j<cl.photos.length;j++){
+      var ph=cl.photos[j];
+      if(ph.path){ stats.photos_skipped++; continue; }
+      if(!ph.data){ continue; }
+      try {
+        // Convert base64 dataURL → Blob
+        var resp=await fetch(ph.data);
+        var blob=await resp.blob();
+        var photoId=(typeof U==="function"?U():String(Date.now()+Math.random()))+".jpg";
+        var path=window._salonId+"/"+cl.id+"/"+photoId;
+        var up=await _sb.storage.from("client-photos").upload(path,blob,{contentType:blob.type||"image/jpeg",upsert:false});
+        if(up.error){
+          console.error("[migrate] upload failed for "+cl.id+":",up.error);
+          stats.errors++;
+          continue;
+        }
+        // Remplace data par path (garde date + label)
+        cl.photos[j]={date:ph.date,label:ph.label||"",path:path};
+        stats.photos_migrees++;
+        changed=true;
+      } catch(e){
+        console.error("[migrate] exception:",e);
+        stats.errors++;
+      }
+    }
+    if(changed){
+      try { await saveClient(cl); stats.clients_traites++; }
+      catch(e){ console.error("[migrate] saveClient failed:",e); stats.errors++; }
+    }
+  }
+  console.log("[migrate] done:",stats);
+  alert("Migration terminée :\n• "+stats.clients_traites+" client(s) mis à jour\n• "+stats.photos_migrees+" photo(s) migrée(s)\n• "+stats.errors+" erreur(s)");
+  return {ok:true, ...stats};
+}
+window.migrateClientPhotosToStorage = migrateClientPhotosToStorage;
 
 function showCAInstantane(){
   var today=TD;
@@ -10310,18 +10451,20 @@ function rDetail(){
   else if(clTab==="photos"){
     if(!c.photos)c.photos=[];
     h+='<div class="card"><div class="ct">\ud83d\udcf7 Galerie photos avant / apr\u00e8s</div>';
-    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Ajoutez des photos pour suivre l\u2019\u00e9volution du client. Les photos sont stock\u00e9es localement en base64.</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Ajoutez des photos pour suivre l\u2019\u00e9volution du client. Les photos sont stock\u00e9es de mani\u00e8re s\u00e9curis\u00e9e (acc\u00e8s isol\u00e9 par salon).</div>';
     if(c.photos.length){
       h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:12px">';
       for(var phi=c.photos.length-1;phi>=0;phi--){
         var ph=c.photos[phi];
+        var phImgId="cph_"+c.id+"_"+phi;
+        var phSrc=(typeof clientPhotoSrcAsync==="function")?clientPhotoSrcAsync(ph,phImgId):(ph.data||"");
         h+='<div style="position:relative;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.3)">';
-        h+='<img src="'+ph.data+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block">';
+        h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block">';
         h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.8));padding:6px 8px">';
         h+='<div style="font-size:9px;color:rgba(255,255,255,.7);font-weight:700">'+fmt(ph.date)+'</div>';
         if(ph.label)h+='<div style="font-size:8px;color:var(--gold)">'+ph.label+'</div>';
         h+='</div>';
-        h+='<button onclick="gC(\''+c.id+'\').photos.splice('+phi+',1);if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'));go(\'detail\')" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);border:none;color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2716</button>';
+        h+='<button onclick="delClientPhoto(\''+c.id+'\','+phi+')" title="Supprimer cette photo" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);border:none;color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2716</button>';
         h+='</div>';
       }
       h+='</div>';
