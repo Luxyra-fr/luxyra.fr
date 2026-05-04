@@ -5896,18 +5896,37 @@ window.assertNotArchive = assertNotArchive;
 // === NAVIGATION ===
 function goBack(){
   var pg=window._currentPage;
-  // If on detail page and came from a RDV click, go back to planning and reopen the RDV
+  // Cas spécial : detail venant d'un RDV cliqué → retour planning + ré-ouvre le RDV
   if(pg==="detail"&&window._returnToAppt){
     var aid=window._returnToAppt;
     window._returnToAppt=null;
+    window._skipNavPush=true;
     go("planning");
     setTimeout(function(){clickAppt(aid);},100);
     return;
   }
-  // Default: go home
+  // Cas général : pop le nav stack pour retourner à la page précédente
+  // (ex: clients → detail → goBack ramène à clients, pas à home).
+  // Le flag _skipNavPush évite de pousser à nouveau cette page dans le stack pendant le go,
+  // ce qui créerait une boucle (goBack → ne plus pouvoir avancer).
+  if(window._navStack && window._navStack.length){
+    var prev=window._navStack.pop();
+    window._skipNavPush=true;
+    return go(prev);
+  }
+  // Fallback : si stack vide (ex: ouverture directe sur une page), retour home
   go("home");
 }
 function go(pg,arg){
+  // === Nav history : push la page courante avant de changer (pour goBack) ===
+  // Skip si on est en train de revenir via goBack (sinon boucle infinie).
+  // Limite à 10 entrées pour ne pas accumuler indéfiniment en mémoire.
+  if(!window._skipNavPush && window._currentPage && pg !== window._currentPage){
+    if(!window._navStack) window._navStack=[];
+    window._navStack.push(window._currentPage);
+    if(window._navStack.length > 10) window._navStack.shift();
+  }
+  window._skipNavPush=false;
   // === Mode Archives (salon résilié, lecture seule) ===
   // Seules les pages utiles pour récupérer les documents comptables sont accessibles.
   // Les autres routes redirigent vers "accounting" (compta) avec un toast.
