@@ -5639,6 +5639,92 @@ function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace
 // Set date in header
 var _hdEl=document.getElementById("hdate");if(_hdEl)_hdEl.textContent=new Date(TD).toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
 
+// === MODE ARCHIVES (salon résilié, lecture seule) ===
+// Activé via sessionStorage "luxyra_archive_mode"=1 (set par enterArchiveMode dans
+// luxyra-supabase.js). Quand actif :
+//   - Bandeau permanent affiche "Mode archive" + date fin de conservation (cancelled_at + 6 ans)
+//   - Routes restreintes (compta, historique, stats, audit) — gérées dans go()
+//   - Boutons d'écriture cachés via CSS body.archive-mode .archive-hidden
+//   - assertNotArchive() permet de protéger les fonctions write critiques par sécurité
+function setupArchiveModeUI(){
+  if(!window._archiveMode) return;
+  document.body.classList.add("archive-mode");
+
+  // Calcul date fin conservation (cancelled_at + 6 ans, CGI art. L102 B)
+  var endTxt = "", remainingTxt = "";
+  try {
+    var cAtRaw = window._archiveSalon && window._archiveSalon.cancelled_at;
+    if(cAtRaw){
+      var cAt = new Date(cAtRaw);
+      var endD = new Date(cAt); endD.setFullYear(endD.getFullYear()+6);
+      endTxt = endD.toLocaleDateString("fr-FR",{day:"2-digit",month:"long",year:"numeric"});
+      var months = Math.max(0, Math.round((endD - new Date())/(1000*60*60*24*30.44)));
+      remainingTxt = months >= 12
+        ? Math.floor(months/12)+" an"+(months>=24?"s":"")+(months%12?" et "+(months%12)+" mois":"")
+        : months+" mois";
+    }
+  } catch(e){}
+
+  // Bandeau permanent — sticky en haut, sous le header
+  var existing = document.getElementById("archiveBanner");
+  if(existing) existing.remove();
+  var banner = document.createElement("div");
+  banner.id = "archiveBanner";
+  banner.style.cssText = "position:sticky;top:0;left:0;right:0;z-index:9990;background:linear-gradient(90deg,rgba(212,168,67,.15) 0%,rgba(212,168,67,.08) 50%,rgba(212,168,67,.15) 100%);border-bottom:1px solid rgba(212,168,67,.4);padding:9px 16px;display:flex;align-items:center;gap:10px;font-family:Arial,sans-serif;font-size:12px;color:#d4a843;flex-wrap:wrap;justify-content:space-between";
+  banner.innerHTML = ''
+    + '<div style="display:flex;align-items:center;gap:9px;flex:1;min-width:0">'
+    +   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>'
+    +   '<span style="font-weight:700;letter-spacing:.4px">Mode archives</span>'
+    +   '<span style="color:#94a3b8;font-weight:400">— lecture seule'
+    +     (endTxt ? ' · conservés jusqu\'au <strong style="color:#fff;font-weight:600">'+endTxt+'</strong>'+(remainingTxt?' ('+remainingTxt+')':'') : '')
+    +   '</span>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-shrink:0">'
+    +   '<button onclick="openCustomerPortal()" style="padding:5px 11px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;border:none;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;letter-spacing:.3px">Reprendre l\'abonnement</button>'
+    +   '<button onclick="exitArchiveMode()" style="padding:5px 10px;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,.12);border-radius:6px;font-size:11px;cursor:pointer">Quitter</button>'
+    + '</div>';
+  document.body.insertBefore(banner, document.body.firstChild);
+
+  // CSS de masquage des boutons/zones d'écriture
+  var style = document.getElementById("archiveModeStyle");
+  if(!style){
+    style = document.createElement("style");
+    style.id = "archiveModeStyle";
+    style.textContent = ''
+      // Masque les éléments marqués .archive-hidden + actions d'écriture connues
+      + 'body.archive-mode .archive-hidden,'
+      + 'body.archive-mode .fab-add,'
+      + 'body.archive-mode #fab,'
+      + 'body.archive-mode .btn-add-rdv,'
+      + 'body.archive-mode .btn-encaisser,'
+      + 'body.archive-mode .btn-validate-tk{display:none !important}'
+      // Désactive les boutons d'action de la nav du bas (sauf accueil/compta/historique/stats)
+      + 'body.archive-mode .ftab[data-pg="caisse"],'
+      + 'body.archive-mode .ftab[data-pg="planning"],'
+      + 'body.archive-mode .ftab[data-pg="clients"],'
+      + 'body.archive-mode .ftab[data-pg="settings"]{opacity:.35;pointer-events:none}'
+      // Curseur not-allowed sur les zones édition
+      + 'body.archive-mode input:not([readonly]):not([type=button]):not([type=submit]),'
+      + 'body.archive-mode textarea,'
+      + 'body.archive-mode select{}'
+      // Ajout d'un padding-top léger pour ne pas que le bandeau cache du contenu
+      + 'body.archive-mode{}';
+    document.head.appendChild(style);
+  }
+}
+window.setupArchiveModeUI = setupArchiveModeUI;
+
+// Garde-fou pour les fonctions d'écriture critiques. À appeler en début de fonction
+// pour bloquer toute modif si en mode archive. Retourne true si on doit STOP.
+function assertNotArchive(action){
+  if(window._archiveMode){
+    if(typeof toast==="function") toast("Mode archives : "+(action||"action")+" désactivé(e). Reprenez votre abonnement pour modifier vos données.","warning");
+    return true;
+  }
+  return false;
+}
+window.assertNotArchive = assertNotArchive;
+
 // === NAVIGATION ===
 function goBack(){
   var pg=window._currentPage;
@@ -5654,6 +5740,16 @@ function goBack(){
   go("home");
 }
 function go(pg,arg){
+  // === Mode Archives (salon résilié, lecture seule) ===
+  // Seules les pages utiles pour récupérer les documents comptables sont accessibles.
+  // Les autres routes redirigent vers "accounting" (compta) avec un toast.
+  if(window._archiveMode){
+    var _archiveAllowed={accounting:1,history:1,stats:1,audit:1,profile:1,login:1};
+    if(!_archiveAllowed[pg]){
+      if(typeof toast==="function")toast("Mode archives : navigation limitée à la comptabilité","info");
+      pg="accounting";
+    }
+  }
   // === NF525 Permission check ===
   // Map page → required permission
   var _pagePerm={
@@ -22553,7 +22649,13 @@ function initApp(){
       }
     });
   }
-  go("home");
+  // Mode Archives : setup UI (bandeau + verrouillage CSS) avant le 1er render
+  if(window._archiveMode && typeof setupArchiveModeUI === "function"){
+    setupArchiveModeUI();
+    go("accounting");
+  } else {
+    go("home");
+  }
   // Connect onboarding just completed
   if(window._connectJustConfigured){
     window._settTab="connect";
