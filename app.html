@@ -4622,8 +4622,8 @@ function printClotureZ(){
   c.cumulAnnuel     = _n(c.cumulAnnuel);
   c.tkMin           = c.tkMin || 0;
   c.tkMax           = c.tkMax || 0;
-  c.hPremier        = c.hPremier || "--:--";
-  c.hDernier        = c.hDernier || "--:--";
+  // hPremier/hDernier : on les hydrate plus bas après calcul de `done` (les vieilles
+  // clôtures n'ont pas ces champs, on les reconstruit depuis les tickets du jour).
   if(!c.details || typeof c.details !== "object") c.details = {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0};
   ["cb","esp","chq","bon","vir","aut"].forEach(function(k){ c.details[k] = _n(c.details[k]); });
 
@@ -4656,6 +4656,14 @@ function printClotureZ(){
   var done=AP.filter(function(a){return a.st==="done"&&a.date===c.date&&!a.cancelled;});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===c.date;});
   var perSty=c.perSty||{};
+  // Reconstruction des heures premier/dernier ticket si absentes (vieilles clôtures
+  // sans hPremier/hDernier en DB) — on les recalcule depuis `done` (timestamps ts).
+  if((!c.hPremier || c.hPremier==="--:--") && done.length){
+    var _hrs=done.map(function(a){return(a.ts||"").slice(11,16);}).filter(function(h){return h&&h.length===5;}).sort();
+    if(_hrs.length){ c.hPremier=_hrs[0]; c.hDernier=_hrs[_hrs.length-1]; }
+  }
+  if(!c.hPremier) c.hPremier="--:--";
+  if(!c.hDernier) c.hDernier="--:--";
   
   // Mouvements caisse
   var mvJour=CD.mouvements?CD.mouvements.filter(function(m){return m.date===c.date;}):[];
@@ -4834,8 +4842,7 @@ function printClotureZ(){
   if(window.CLOTURES.length>=2){var prev=window.CLOTURES[window.CLOTURES.length-2];h+="<p class=\"small\">Hash pr\u00e9c\u00e9dent: "+prev.hash+"</p>";}
   h+="<p class=\"small\">Cha\u00eene inalt\u00e9rable - S\u00e9quence continue v\u00e9rifiable</p>";
   h+="<div class=\"sep\"></div>";
-  h+="<p class=\"small\">Logiciel: Luxyra "+SALON_CONFIG.version+"<br>contact@luxyra.fr</p>";
-  h+="<p class=\"small\">contact@luxyra.fr</p>";
+  h+="<p class=\"small\">Logiciel: Luxyra "+SALON_CONFIG.version+" \u2013 contact@luxyra.fr</p>";
   h+="<p class=\"small\">\u00a9 Luxyra - Tous droits r\u00e9serv\u00e9s</p>";
   h+="<div class=\"sep\"></div>";
   h+="<p style=\"font-size:10px;font-weight:700\">DOCUMENT COMPTABLE OBLIGATOIRE</p>";
@@ -4849,7 +4856,29 @@ function printClotureZ(){
   h+="</table>";
   
   h+="</body></html>";
-  w.document.write(h);w.document.close();w.print();
+  w.document.write(h);w.document.close();
+  // Injecte la barre d'actions premium (Imprimer + Enregistrer PDF + Fermer) — pas
+  // de w.print() auto : l'utilisateur choisit explicitement Imprimer ou Enregistrer PDF.
+  setTimeout(function(){
+    try {
+      var doc = w.document;
+      var toolbar = doc.createElement("div");
+      toolbar.className = "no-print";
+      toolbar.style.cssText = "position:sticky;top:0;left:0;right:0;background:linear-gradient(180deg,#0a0a0a,#1a1a1a);color:#fff;padding:12px 20px;display:flex;gap:10px;justify-content:center;border-bottom:2px solid #c8a84e;box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:9999;font-family:Arial,sans-serif";
+      toolbar.innerHTML = ''
+        + '<button onclick="window.print()" style="padding:11px 22px;background:linear-gradient(135deg,#c8a84e,#a8881e);color:#000;font-weight:800;border:none;border-radius:9px;cursor:pointer;font-size:13px;letter-spacing:.3px;display:inline-flex;align-items:center;gap:8px;box-shadow:0 2px 12px rgba(200,168,78,.3)">'
+        +   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>'
+        +   'Imprimer / Enregistrer PDF'
+        + '</button>'
+        + '<button onclick="window.close()" style="padding:11px 16px;background:transparent;color:#aaa;font-weight:600;border:1px solid rgba(255,255,255,.15);border-radius:9px;cursor:pointer;font-size:13px">Fermer</button>';
+      var body = doc.body;
+      if(body && body.firstChild) body.insertBefore(toolbar, body.firstChild);
+      else if(body) body.appendChild(toolbar);
+      var st = doc.createElement("style");
+      st.textContent = "@media print { .no-print { display:none !important } }";
+      doc.head.appendChild(st);
+    } catch(e){ console.warn("Cloture Z toolbar inject failed:", e); }
+  }, 100);
 }
 
 
@@ -13884,11 +13913,16 @@ function rAccounting(){
   var h='<div class="cnav cnav-compact" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
   h+='<div class="cnav-month" style="display:flex;align-items:center;gap:5px;flex:1 1 200px;min-width:200px;max-width:280px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:9px;padding:2px 5px">';
   h+='<button class="cnav-arrow" onclick="chM(-1)" title="Mois précédent" style="width:28px !important;height:28px !important;flex-shrink:0;border-radius:6px;background:rgba(255,255,255,.04) !important;border:1px solid rgba(255,255,255,.08) !important;color:var(--text);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">◀</button>';
-  // Titre cliquable qui déclenche le datepicker (input month natif caché par-dessus)
-  h+='<label class="cnav-title-wrap" title="Cliquez pour choisir un autre mois" style="position:relative;flex:1;cursor:pointer;display:block">';
-  h+='<h3 class="cnav-title" style="margin:0;text-align:center;font-family:var(--f2,Georgia,serif);font-weight:600;color:var(--gold);font-size:14px;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:28px;cursor:pointer">'+mL+' <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-left:3px;opacity:.6"><polyline points="6 9 12 15 18 9"/></svg></h3>';
-  h+='<input type="month" value="'+accM+'" onchange="if(this.value){accM=this.value;go(\'accounting\');}" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%">';
-  h+='</label>';
+  // Titre = bouton qui appelle showPicker() sur l'input month natif (placé juste après).
+  // Astuce opacity:0 abandonnée : Safari/iOS refuse souvent d'ouvrir le picker depuis
+  // un input invisible. showPicker() (Chrome/Edge/Firefox/Safari 16.4+) fonctionne via
+  // un click utilisateur explicite ; fallback focus()+click() pour anciens navigateurs.
+  h+='<div class="cnav-title-wrap" style="position:relative;flex:1;min-width:0">';
+  h+='<button class="cnav-title-btn" type="button" title="Cliquez pour choisir un autre mois" onclick="var p=document.getElementById(\'cnavMP\');if(p&&p.showPicker){try{p.showPicker();return}catch(e){}}if(p){p.focus();p.click();}" style="all:unset;display:flex;align-items:center;justify-content:center;gap:4px;width:100% !important;height:28px !important;cursor:pointer;color:var(--gold);font-family:var(--f2,Georgia,serif);font-weight:600;font-size:14px;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:transparent !important;border:none !important;padding:0 !important">';
+  h+=mL+' <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="opacity:.6;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>';
+  h+='</button>';
+  h+='<input id="cnavMP" type="month" value="'+accM+'" onchange="if(this.value){accM=this.value;go(\'accounting\');}" style="position:absolute;left:50%;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;margin:0">';
+  h+='</div>';
   h+='<button class="cnav-arrow" onclick="chM(1)" title="Mois suivant" style="width:28px !important;height:28px !important;flex-shrink:0;border-radius:6px;background:rgba(255,255,255,.04) !important;border:1px solid rgba(255,255,255,.08) !important;color:var(--text);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">▶</button>';
   h+='</div>';
     // Bouton Documents comptables — pilule étendue avec texte explicite + icône SVG classeur (Feather BookOpen)
