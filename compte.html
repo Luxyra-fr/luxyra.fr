@@ -231,7 +231,7 @@ function renderInvite(){
   h+='<div id="invErr" class="err"></div>';
   h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 6 caract\u00e8res"></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="iPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doActivateInvite()"></div>';
-  h+='<button class="btn-gold" style="width:100%;margin-top:6px" onclick="doActivateInvite()">Activer mon compte</button>';
+  h+='<button id="btnActivateInvite" style="width:100%;margin-top:10px;padding:16px 20px;background:linear-gradient(135deg,#d4a843 0%,#b8960f 100%);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'" onclick="doActivateInvite()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Activer mon compte</button>';
   h+='<div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text3);line-height:1.5">Lien valide 14 jours \u00b7 usage unique<br>En activant votre compte, vous acceptez nos <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> et notre <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a>.</div>';
   h+='</div></div>';
   return h;
@@ -243,9 +243,11 @@ async function doActivateInvite(){
   if(p1!==p2){showErr("invErr","Les mots de passe ne correspondent pas");return;}
   var token=window.INVITE_TOKEN;
   if(!token){showErr("invErr","Token d\u2019invitation manquant");return;}
-  // D\u00e9sactive bouton pendant la requ\u00eate
-  var btn=document.querySelector('button.btn-gold[onclick*="doActivateInvite"]');
-  if(btn){btn.disabled=true;btn.textContent="Activation en cours\u2026";}
+  // D\u00e9sactive bouton pendant la requ\u00eate + spinner
+  var btn=document.getElementById("btnActivateInvite");
+  var btnHTMLOriginal = btn ? btn.innerHTML : "";
+  if(btn){btn.disabled=true;btn.style.opacity="0.6";btn.innerHTML='<svg width="18" height="18" viewBox="0 0 50 50" style="animation:spin 1s linear infinite"><circle cx="25" cy="25" r="20" stroke="#0a0a0a" stroke-width="4" fill="none" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"/></svg>Activation en cours\u2026';}
+  if(!document.getElementById("_spinStyle")){var s=document.createElement("style");s.id="_spinStyle";s.textContent="@keyframes spin{to{transform:rotate(360deg)}}";document.head.appendChild(s);}
   try{
     var resp=await fetch("/api/client/invite/verify",{
       method:"POST",
@@ -255,10 +257,11 @@ async function doActivateInvite(){
     var data=await resp.json();
     if(!resp.ok || !data.ok){
       showErr("invErr", data.error || "Activation impossible. Contactez votre salon.");
-      if(btn){btn.disabled=false;btn.textContent="Activer mon compte";}
+      if(btn){btn.disabled=false;btn.style.opacity="1";btn.innerHTML=btnHTMLOriginal;}
       return;
     }
     // Compte cr\u00e9\u00e9 + li\u00e9 \u2192 on connecte automatiquement avec email + password
+    if(btn){btn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Compte activ\u00e9 \u2713';}
     var loginRes = await LX.signin({email:data.email, password:p1});
     if(!loginRes.ok){
       showErr("invErr","Compte activ\u00e9, mais connexion \u00e9chou\u00e9e. Allez sur /compte et connectez-vous avec votre email et mot de passe.");
