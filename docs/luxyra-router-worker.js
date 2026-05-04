@@ -378,7 +378,12 @@ async function handleWebhook(request, env) {
           console.log(`[ignored] subscription.deleted pour ${data.id} ≠ sub active ${salon.stripe_subscription_id} du salon ${salonId}`);
           break;
         }
-        await supabaseUpdate(env, salonId, { plan: "essential", status: "cancelled", past_due_since: null });
+        // cancelled_at = ancrage légal des 6 ans de conservation des données comptables.
+        // On ne l'écrase pas s'il est déjà défini (ré-résiliation, ou l'utilisateur a
+        // résilié via /api/cancel-subscription qui set déjà cancelled_at).
+        const updates = { plan: "essential", status: "cancelled", past_due_since: null };
+        if (!salon?.cancelled_at) updates.cancelled_at = new Date().toISOString();
+        await supabaseUpdate(env, salonId, updates);
         await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
       }
       break;

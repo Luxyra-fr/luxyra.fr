@@ -233,8 +233,20 @@ async function loadSalonData() {
 
   // Vérifier statut abonnement
   if (salon.status === "suspended" || salon.status === "cancelled") {
-    showSuspendedScreen(salon.status);
-    return;
+    // Mode Archives : si l'utilisateur a explicitement choisi d'accéder à ses
+    // documents comptables (lecture seule), on continue le chargement normal mais
+    // avec le flag _archiveMode qui désactive toutes les écritures côté UI.
+    // Le flag est posé par showSuspendedScreen → bouton "Accéder à mes archives"
+    // (sessionStorage = nettoyé à fermeture onglet, pas localStorage).
+    if (sessionStorage.getItem("luxyra_archive_mode") === "1" && salon.status === "cancelled") {
+      window._archiveMode = true;
+      window._archiveSalon = salon;
+      // Continue le chargement normal — le bandeau + le verrouillage des routes
+      // sont injectés par enterArchiveMode() après que l'app soit montée.
+    } else {
+      showSuspendedScreen(salon.status, salon);
+      return;
+    }
   }
 
   // Vérifier si plan offert (gratuit)
@@ -830,32 +842,85 @@ async function loadSalonData() {
   }catch(err){console.error("loadSalonData error:",err);}
 }
 
-function showSuspendedScreen(status) {
+function showSuspendedScreen(status, salon) {
   var el = document.getElementById("app") || document.body;
   // Traduction FR + style premium Luxyra (au lieu de "Compte cancelled" en anglais)
   var titre = status === "suspended" ? "Abonnement suspendu" : "Abonnement annulé";
   var msg   = status === "suspended"
     ? "Votre abonnement est suspendu suite à un défaut de paiement. Mettez à jour votre moyen de paiement pour réactiver l'accès immédiatement."
-    : "Votre abonnement a été résilié. Vous pouvez reprendre un abonnement à tout moment depuis le bouton ci-dessous.";
+    : "Votre abonnement a été résilié. Vous pouvez reprendre un abonnement à tout moment, ou accéder à vos documents comptables en lecture seule.";
   var iconSvg = status === "suspended"
     ? '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
     : '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+
+  // Mode Archives : visible uniquement pour les comptes "cancelled" (résiliés).
+  // Calcul de la date de fin de conservation : cancelled_at + 6 ans (CGI art. L102 B).
+  var archiveBlock = "";
+  if (status === "cancelled") {
+    var endDate = "";
+    var monthsLeft = "";
+    if (salon && salon.cancelled_at) {
+      try {
+        var cAt = new Date(salon.cancelled_at);
+        var endD = new Date(cAt); endD.setFullYear(endD.getFullYear() + 6);
+        endDate = endD.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
+        var diffMs = endD - new Date();
+        var monthsTot = Math.max(0, Math.round(diffMs / (1000*60*60*24*30.44)));
+        monthsLeft = monthsTot >= 12 ? Math.floor(monthsTot/12) + " an" + (monthsTot >= 24 ? "s" : "") + (monthsTot%12 ? " et " + (monthsTot%12) + " mois" : "") : monthsTot + " mois";
+      } catch(e) { endDate = ""; }
+    }
+    archiveBlock = ''
+      + '<div style="margin-top:14px;padding:14px 16px;background:rgba(212,168,67,.05);border:1px solid rgba(212,168,67,.2);border-radius:12px;text-align:left">'
+      +   '<div style="display:flex;align-items:start;gap:10px">'
+      +     '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d4a843" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>'
+      +     '<div style="flex:1">'
+      +       '<div style="color:#d4a843;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">Vos documents sont conservés</div>'
+      +       '<div style="color:#94a3b8;font-size:12px;line-height:1.55">Conformément à la loi française (CGI art. L102 B), vos clôtures Z, factures et données comptables restent accessibles <strong style="color:#fff">6 ans</strong>'+(endDate?' — soit jusqu\'au <strong style="color:#fff">'+endDate+'</strong>'+(monthsLeft?' ('+monthsLeft+' restants)':''):'')+'.</div>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>'
+      + '<button onclick="enterArchiveMode()" style="margin-top:14px;display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 24px;background:transparent;color:#d4a843;font-weight:700;border:1.5px solid rgba(212,168,67,.45);border-radius:11px;cursor:pointer;font-size:13px;letter-spacing:.4px;text-transform:uppercase;transition:all .2s;width:100%" onmouseover="this.style.background=\'rgba(212,168,67,.08)\';this.style.borderColor=\'#d4a843\'" onmouseout="this.style.background=\'transparent\';this.style.borderColor=\'rgba(212,168,67,.45)\'">'
+      +   '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>'
+      +   'Accéder à mes archives comptables'
+      + '</button>';
+  }
+
   el.innerHTML = ''
     + '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#0a0a0a 0%,#0c0c12 100%);padding:20px">'
-    +   '<div style="text-align:center;max-width:440px;padding:32px;background:rgba(20,20,25,.8);border:1px solid rgba(255,255,255,.08);border-radius:20px;backdrop-filter:blur(12px)">'
+    +   '<div style="text-align:center;max-width:460px;padding:32px;background:rgba(20,20,25,.8);border:1px solid rgba(255,255,255,.08);border-radius:20px;backdrop-filter:blur(12px)">'
     +     '<div style="display:inline-block;padding:18px;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);border-radius:18px;margin-bottom:18px">'+iconSvg+'</div>'
     +     '<h2 style="color:#fff;font-family:Georgia,\'Times New Roman\',serif;font-weight:600;font-size:24px;margin:0 0 8px;letter-spacing:.3px">'+titre+'</h2>'
-    +     '<p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 28px">'+msg+'</p>'
-    +     '<button onclick="openCustomerPortal()" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-weight:800;border:none;border-radius:12px;cursor:pointer;font-size:14px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'">'
+    +     '<p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 24px">'+msg+'</p>'
+    +     '<button onclick="openCustomerPortal()" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-weight:800;border:none;border-radius:12px;cursor:pointer;font-size:14px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s;width:100%" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'">'
     +       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 15h0M2 9h20"/></svg>'
-    +       'Gérer mon abonnement'
+    +       (status === "suspended" ? 'Régulariser mon paiement' : 'Reprendre un abonnement')
     +     '</button>'
+    +     archiveBlock
     +     '<div style="margin-top:18px"><button onclick="doLogout()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px;text-decoration:underline">Se déconnecter</button></div>'
     +     '<div style="margin-top:24px;padding-top:18px;border-top:1px solid rgba(255,255,255,.05);font-size:11px;color:#64748b;line-height:1.5">Si vous pensez qu\'il s\'agit d\'une erreur, contactez-nous : <a href="mailto:contact@luxyra.fr" style="color:#d4a843;text-decoration:none">contact@luxyra.fr</a></div>'
     +   '</div>'
     + '</div>';
   var hdr=document.getElementById("hdr"); if(hdr)hdr.style.display="none";
 }
+
+// Bouton "Accéder à mes archives" → set le flag sessionStorage et reload.
+// Le flag est lu au prochain loadSalonData(), qui skip le showSuspendedScreen
+// et continue le chargement normal avec _archiveMode=true.
+function enterArchiveMode(){
+  try {
+    sessionStorage.setItem("luxyra_archive_mode", "1");
+    sessionStorage.setItem("luxyra_archive_entered_at", new Date().toISOString());
+  } catch(e){}
+  window.location.reload();
+}
+
+// Quitter le mode archives (retour à l'écran "Abonnement annulé")
+function exitArchiveMode(){
+  try { sessionStorage.removeItem("luxyra_archive_mode"); } catch(e){}
+  window.location.reload();
+}
+window.enterArchiveMode = enterArchiveMode;
+window.exitArchiveMode = exitArchiveMode;
 
 function showTrialExpiredScreen(salon) {
   var el = document.getElementById("app") || document.body;
