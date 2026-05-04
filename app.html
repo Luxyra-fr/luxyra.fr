@@ -14173,6 +14173,22 @@ function _oldRCaisse(){
 
 // === ACCOUNTING ===
 function rAccounting(){
+  // Lazy load des clôtures du mois sélectionné si pas déjà en mémoire (chargement
+  // initial limité à 500 = ~1.5 an). Si on tombe sur un mois plus ancien, on fetch
+  // à la demande et on re-render. Idempotent (skip si déjà chargé). Async, ne
+  // bloque pas l'affichage : la 1ère render se fait avec les data en mémoire,
+  // puis re-render automatique quand les anciennes clôtures arrivent.
+  if(typeof window.loadOlderClotures === "function" && accM && /^\d{4}-\d{2}$/.test(accM)){
+    var hasCurMonth = (window.CLOTURES||[]).some(function(c){return c.date && String(c.date).indexOf(accM)===0;});
+    if(!hasCurMonth){
+      window.loadOlderClotures(accM).then(function(r){
+        if(r && r.ok && r.count>0 && window._currentPage==="accounting"){
+          // Re-render uniquement si on est toujours sur la page compta du même mois
+          go("accounting");
+        }
+      });
+    }
+  }
   var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled;});
   var ps=PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var tPr=0,tPd=0,tCB=0,tE=0;
@@ -22063,7 +22079,14 @@ function cloturerJournee(){
   // Total annulations
   var totalAnnul=0;annul.forEach(function(a){totalAnnul+=a.pr||0;});
   // Build closure object
-  var c={id:U(),date:TD,ts:new Date().toISOString(),num:window.CLOTURES.length+1,
+  // Calcul du num via MAX(num) en mémoire au lieu de CLOTURES.length+1.
+  // Robuste contre la pagination du chargement initial (si on charge seulement
+  // les N dernières clôtures, length≠num max). Reste cohérent avec UNIQUE constraint.
+  var _nextClotureNum = (function(){
+    var m=0; window.CLOTURES.forEach(function(x){if(x.num && x.num>m)m=x.num;});
+    return m+1;
+  })();
+  var c={id:U(),date:TD,ts:new Date().toISOString(),num:_nextClotureNum,
     nbTickets:done.length,nbAnnul:annul.length,totalAnnul:totalAnnul,
     tkMin:tkMin,tkMax:tkMax,hPremier:hPremier,hDernier:hDernier,
     totalCA:totalCA,totalPrest:totalPrest,totalProd:totalProd,
