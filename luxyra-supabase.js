@@ -35,6 +35,167 @@ var _saveQueue = [];       // file d'attente des sauvegardes
 
 
 // ============================================================
+// CACHE INDEXEDDB — démarrage instantané (stale-while-revalidate)
+// ============================================================
+// Stratégie : au login, on lit le cache → hydrate les variables globales →
+// affiche le dashboard immédiatement (~50ms). En parallèle, fetch full normal
+// continue. À la fin du fetch, on remplace les data par les fraîches +
+// re-render + sauve nouveau snapshot. Démarrage perçu <100ms même gros salon.
+//
+// Sécurité : isolation par salon_id, version du schema cache (purge auto si
+// changement), feature flag (window.LX_CACHE_ENABLED), fallback automatique
+// si IndexedDB échoue, clear au logout.
+var LX_CACHE_DB_NAME = "luxyra_cache";
+var LX_CACHE_VERSION = 1;
+var LX_CACHE_SCHEMA_VERSION = 1; // bumper si on change la forme des snapshots
+window.LX_CACHE_ENABLED = (typeof window.LX_CACHE_ENABLED === "undefined") ? true : window.LX_CACHE_ENABLED;
+window._cacheHydrated = false; // true si on a hydraté depuis cache au démarrage
+window._cacheRefreshing = false; // true pendant le fetch full background
+
+function _hasIndexedDb(){
+  try { return typeof indexedDB !== "undefined" && indexedDB; } catch(e){ return false; }
+}
+
+function _openCacheDb(){
+  return new Promise(function(resolve, reject){
+    if (!_hasIndexedDb()) return reject(new Error("no_indexeddb"));
+    try {
+      var req = indexedDB.open(LX_CACHE_DB_NAME, LX_CACHE_VERSION);
+      req.onupgradeneeded = function(e){
+        var db = e.target.result;
+        if (!db.objectStoreNames.contains("snapshots")) {
+          db.createObjectStore("snapshots", { keyPath: "salon_id" });
+        }
+      };
+      req.onsuccess = function(e){ resolve(e.target.result); };
+      req.onerror = function(e){ reject(e.target.error || new Error("idb_open_error")); };
+    } catch(e){ reject(e); }
+  });
+}
+
+async function readCacheSnapshot(salonId){
+  if (!window.LX_CACHE_ENABLED || !salonId || !_hasIndexedDb()) return null;
+  try {
+    var db = await _openCacheDb();
+    return new Promise(function(resolve){
+      var tx, store, req;
+      try {
+        tx = db.transaction("snapshots", "readonly");
+        store = tx.objectStore("snapshots");
+        req = store.get(salonId);
+      } catch(e){ resolve(null); return; }
+      req.onsuccess = function(){
+        var snap = req.result;
+        // Validation : doit avoir la bonne version de schema, sinon on jette
+        if (snap && snap.schema_version === LX_CACHE_SCHEMA_VERSION) resolve(snap);
+        else resolve(null);
+      };
+      req.onerror = function(){ resolve(null); };
+    });
+  } catch(e){ console.warn("[cache] read failed:", e?.message || e); return null; }
+}
+
+async function writeCacheSnapshot(salonId, snapshot){
+  if (!window.LX_CACHE_ENABLED || !salonId || !_hasIndexedDb()) return false;
+  try {
+    var db = await _openCacheDb();
+    return new Promise(function(resolve){
+      var tx, store, req;
+      try {
+        tx = db.transaction("snapshots", "readwrite");
+        store = tx.objectStore("snapshots");
+        snapshot.salon_id = salonId;
+        snapshot.schema_version = LX_CACHE_SCHEMA_VERSION;
+        snapshot.cached_at = new Date().toISOString();
+        req = store.put(snapshot);
+      } catch(e){ resolve(false); return; }
+      req.onsuccess = function(){ resolve(true); };
+      req.onerror = function(){ resolve(false); };
+    });
+  } catch(e){ console.warn("[cache] write failed:", e?.message || e); return false; }
+}
+
+async function clearCacheForSalon(salonId){
+  if (!_hasIndexedDb()) return;
+  try {
+    var db = await _openCacheDb();
+    var tx = db.transaction("snapshots", "readwrite");
+    tx.objectStore("snapshots").delete(salonId);
+  } catch(e){}
+}
+
+async function clearAllCache(){
+  if (!_hasIndexedDb()) return;
+  try {
+    var db = await _openCacheDb();
+    var tx = db.transaction("snapshots", "readwrite");
+    tx.objectStore("snapshots").clear();
+  } catch(e){}
+}
+
+// Sérialise l'état actuel des globales JS dans un objet snapshot.
+// Capturé à la fin de loadSalonData(), restauré au prochain démarrage.
+function _captureSnapshot(){
+  var snap = {};
+  // Données métier — clés courtes pour économiser l'espace
+  snap.SALON_CONFIG = (typeof SALON_CONFIG !== "undefined") ? SALON_CONFIG : null;
+  snap.T  = (typeof T  !== "undefined") ? T  : [];
+  snap.SV = (typeof SV !== "undefined") ? SV : [];
+  snap.PR = (typeof PR !== "undefined") ? PR : [];
+  snap.CL = (typeof CL !== "undefined") ? CL : [];
+  snap.AP = (typeof AP !== "undefined") ? AP : [];
+  snap.PS = (typeof PS !== "undefined") ? PS : [];
+  snap.CD = (typeof CAISSE_DATA !== "undefined") ? CAISSE_DATA : null;
+  snap.FORFAITS = (typeof FORFAITS !== "undefined") ? FORFAITS : [];
+  snap.GIFTS = (typeof GIFTS !== "undefined") ? GIFTS : [];
+  snap.CLOTURES = window.CLOTURES || [];
+  snap.AUDIT_LOG = window.AUDIT_LOG || [];
+  snap.RDV_ONLINE = window.RDV_ONLINE || [];
+  snap.PENDING_TK = window.PENDING_TK || [];
+  snap.DEVIS = window.DEVIS || [];
+  snap.TICKETS_DB = window.TICKETS_DB || [];
+  snap.PACKS_CLIENTS = window.PACKS_CLIENTS || [];
+  snap.SUPPLIERS = window.SUPPLIERS || [];
+  return snap;
+}
+
+// Restaure l'état des globales depuis un snapshot. Doit être 100% idempotent.
+function _hydrateFromSnapshot(snap){
+  if (!snap) return false;
+  try {
+    if (snap.SALON_CONFIG && typeof SALON_CONFIG !== "undefined") {
+      Object.assign(SALON_CONFIG, snap.SALON_CONFIG);
+    }
+    if (typeof window.T  === "object" || typeof T  !== "undefined") { window.T  = snap.T  || []; }
+    if (typeof window.SV === "object" || typeof SV !== "undefined") { window.SV = snap.SV || []; }
+    if (typeof window.PR === "object" || typeof PR !== "undefined") { window.PR = snap.PR || []; }
+    if (typeof window.CL === "object" || typeof CL !== "undefined") { window.CL = snap.CL || []; }
+    if (typeof window.AP === "object" || typeof AP !== "undefined") { window.AP = snap.AP || []; }
+    if (typeof window.PS === "object" || typeof PS !== "undefined") { window.PS = snap.PS || []; }
+    if (snap.CD) window.CAISSE_DATA = snap.CD;
+    if (typeof window.FORFAITS === "object" || typeof FORFAITS !== "undefined") { window.FORFAITS = snap.FORFAITS || []; }
+    if (typeof window.GIFTS === "object" || typeof GIFTS !== "undefined") { window.GIFTS = snap.GIFTS || []; }
+    window.CLOTURES = snap.CLOTURES || [];
+    window.AUDIT_LOG = snap.AUDIT_LOG || [];
+    window.RDV_ONLINE = snap.RDV_ONLINE || [];
+    window.PENDING_TK = snap.PENDING_TK || [];
+    window.DEVIS = snap.DEVIS || [];
+    window.TICKETS_DB = snap.TICKETS_DB || [];
+    window.PACKS_CLIENTS = snap.PACKS_CLIENTS || [];
+    window.SUPPLIERS = snap.SUPPLIERS || [];
+    return true;
+  } catch(e){ console.warn("[cache] hydrate failed:", e); return false; }
+}
+
+// Helpers exposés en global pour debug + clear depuis console
+if (typeof window !== "undefined") {
+  window.clearCacheForSalon = clearCacheForSalon;
+  window.clearAllCache = clearAllCache;
+  window._captureSnapshot = _captureSnapshot;
+  window._hydrateFromSnapshot = _hydrateFromSnapshot;
+}
+
+// ============================================================
 // AUTH — LOGIN / LOGOUT / SESSION
 // ============================================================
 
@@ -99,10 +260,16 @@ async function doResetPwd() {
 
 // Logout
 async function doLogout() {
+  // Clear le cache IndexedDB du salon courant AVANT de perdre _salonId
+  // (sécurité : un user qui se déconnecte ne doit pas laisser ses data sur la machine)
+  if (_salonId) {
+    try { await clearCacheForSalon(_salonId); } catch(e){}
+  }
   if (_sb) await _sb.auth.signOut();
   _salonId = null;
   _userId = null;
   _isOnline = false;
+  window._cacheHydrated = false;
   // Cleanup polling and realtime
   if(window._rdvPollInterval){clearInterval(window._rdvPollInterval);window._rdvPollInterval=null;}
   if(window._realtimeChannel&&_sb){try{_sb.removeChannel(window._realtimeChannel);}catch(e){}window._realtimeChannel=null;}
@@ -315,6 +482,29 @@ async function loadSalonData() {
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
   SALON_CONFIG.email = salon.email || "";
   SALON_CONFIG.plan = salon.plan || "essential";
+
+  // === CACHE INDEXEDDB : hydratation anticipée pour démarrage instantané ===
+  // Si on a un snapshot du salon dans IndexedDB, on l'utilise pour pré-charger
+  // les variables globales AVANT le fetch full. Ça permet à app.html de rendre
+  // le dashboard immédiatement (~50ms) si la callback _earlyRenderFromCache est
+  // définie. Le fetch full continue en background et écrase les data avec les
+  // valeurs fraîches à la fin → re-render automatique via go("home") final.
+  // Aucune casse : si le cache est invalide ou IndexedDB échoue, fallback flow normal.
+  window._cacheHydrated = false;
+  if (window.LX_CACHE_ENABLED && (salon.status !== "suspended" && salon.status !== "cancelled")) {
+    try {
+      var cachedSnap = await readCacheSnapshot(_salonId);
+      if (cachedSnap && _hydrateFromSnapshot(cachedSnap)) {
+        window._cacheHydrated = true;
+        console.log("[cache] hydrated from IndexedDB cache (cached_at: "+cachedSnap.cached_at+")");
+        // Callback côté app.html pour render anticipé. Si non définie, on continue
+        // sans render anticipé — le fetch normal fait le go("home") à la fin.
+        if (typeof window._earlyRenderFromCache === "function") {
+          try { window._earlyRenderFromCache(); } catch(e){ console.warn("[cache] earlyRender threw:", e); }
+        }
+      }
+    } catch(e){ console.warn("[cache] hydration skipped:", e?.message || e); }
+  }
 
   // Vérifier statut abonnement
   if (salon.status === "suspended" || salon.status === "cancelled") {
@@ -896,6 +1086,22 @@ async function loadSalonData() {
         if (typeof updateOperatorAvatar === "function") updateOperatorAvatar();
       });
     }, 600);
+  }
+  // === CACHE INDEXEDDB : sauvegarde du snapshot après fetch full ===
+  // À ce stade toutes les variables globales (T, SV, PR, CL, AP, CLOTURES, etc.)
+  // sont remplies avec les data fraîches. On capture l'état et on l'écrit en
+  // arrière-plan dans IndexedDB pour le prochain démarrage. Non-bloquant : si
+  // l'écriture échoue, le user n'en sait rien et le flow continue.
+  if (window.LX_CACHE_ENABLED && _salonId && !window._archiveMode) {
+    try {
+      var snap = _captureSnapshot();
+      // setTimeout 0 = non-bloquant pour go("home") qui suit
+      setTimeout(function(){
+        writeCacheSnapshot(_salonId, snap).then(function(ok){
+          if (ok) console.log("[cache] snapshot saved for salon "+_salonId);
+        }).catch(function(){});
+      }, 0);
+    } catch(e){ console.warn("[cache] capture failed:", e); }
   }
   }catch(err){console.error("loadSalonData error:",err);}
 }
