@@ -133,12 +133,24 @@ async function clearAllCache(){
   } catch(e){}
 }
 
+// Helper : retire les fonctions d'un objet (structuredClone d'IndexedDB ne les
+// supporte pas). Utile pour SALON_CONFIG qui a des méthodes nomComplet/adresseComplete.
+function _stripFunctions(obj){
+  if (!obj || typeof obj !== "object") return obj;
+  try {
+    return JSON.parse(JSON.stringify(obj, function(k, v){
+      return (typeof v === "function") ? undefined : v;
+    }));
+  } catch(e){ return null; }
+}
+
 // Sérialise l'état actuel des globales JS dans un objet snapshot.
 // Capturé à la fin de loadSalonData(), restauré au prochain démarrage.
 function _captureSnapshot(){
   var snap = {};
-  // Données métier — clés courtes pour économiser l'espace
-  snap.SALON_CONFIG = (typeof SALON_CONFIG !== "undefined") ? SALON_CONFIG : null;
+  // SALON_CONFIG : on retire les fonctions (nomComplet, adresseComplete, etc.)
+  // qui sont définies au boot par app.html, pas besoin de les sérialiser.
+  snap.SALON_CONFIG = (typeof SALON_CONFIG !== "undefined") ? _stripFunctions(SALON_CONFIG) : null;
   snap.T  = (typeof T  !== "undefined") ? T  : [];
   snap.SV = (typeof SV !== "undefined") ? SV : [];
   snap.PR = (typeof PR !== "undefined") ? PR : [];
