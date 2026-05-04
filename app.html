@@ -4657,9 +4657,19 @@ function printClotureZ(){
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===c.date;});
   var perSty=c.perSty||{};
   // Reconstruction des heures premier/dernier ticket si absentes (vieilles clôtures
-  // sans hPremier/hDernier en DB) — on les recalcule depuis `done` (timestamps ts).
+  // sans hPremier/hDernier en DB) — on les recalcule depuis `done`. On essaie d'abord
+  // ts (ISO complet), puis time ("HH:MM") en fallback. Les vieux tickets pré-NF525
+  // n'avaient parfois que `time`, ce qui rendait le `.slice(11,16)` sur ts inutile.
+  function _extractHr(a){
+    if(a.ts && typeof a.ts==="string" && a.ts.length>=16){
+      var s=a.ts.slice(11,16);
+      if(s && /^\d{2}:\d{2}$/.test(s)) return s;
+    }
+    if(a.time && typeof a.time==="string" && /^\d{2}:\d{2}$/.test(a.time.slice(0,5))) return a.time.slice(0,5);
+    return "";
+  }
   if((!c.hPremier || c.hPremier==="--:--") && done.length){
-    var _hrs=done.map(function(a){return(a.ts||"").slice(11,16);}).filter(function(h){return h&&h.length===5;}).sort();
+    var _hrs=done.map(_extractHr).filter(function(h){return h;}).sort();
     if(_hrs.length){ c.hPremier=_hrs[0]; c.hDernier=_hrs[_hrs.length-1]; }
   }
   if(!c.hPremier) c.hPremier="--:--";
@@ -4777,7 +4787,7 @@ function printClotureZ(){
   h+="<table style=\"font-size:10px\"><tr><th>N\u00b0</th><th>Heure</th><th>Client</th><th class=\"tr\">Montant</th><th>Mode</th></tr>";
   done.sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
   done.forEach(function(a){
-    var cl=gC(a.cId);var hr=(a.ts||"").slice(11,16)||"--:--";
+    var cl=gC(a.cId);var hr=_extractHr(a)||"--:--";
     var remInfo=a.remise>0?" <span style=\"color:#c00;font-size:9px\">(-"+a.remise.toFixed(0)+")</span>":"";
     h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+apptClientLabel(a)+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
   });
@@ -13908,21 +13918,37 @@ function rAccounting(){
   var totHT=Math.round(tTotal/(1+txA/100)*100)/100;
   var totTVA=Math.round((tTotal-totHT)*100)/100;
   
-  // Nav bar : sélecteur mois avec picker année/mois (cliquer sur le titre = ouvre datepicker)
-  // Anti-débordement : sélecteur mois max 280px, bouton flex-shrink:0, wrap si vraiment trop serré
+  // Nav bar : 2 sélecteurs natifs (Mois + Année) côte à côte. Plus de picker month
+  // unique (Safari/iOS = lourd à scroller, plusieurs années à reculer = fastidieux).
+  // Saut direct à n'importe quelle année en 1 clic. Liste années élargie si CLOTURES
+  // contient du plus ancien.
+  var _curM=parseInt(accM.slice(5,7))||1;
+  var _curY=parseInt(accM.slice(0,4))||new Date().getFullYear();
+  var _nowY=new Date().getFullYear();
+  var _minY=Math.min(_curY,_nowY-7);
+  var _maxY=Math.max(_curY,_nowY)+1;
+  if(Array.isArray(window.CLOTURES)){
+    window.CLOTURES.forEach(function(cl){
+      var y=parseInt(String(cl.date||"").slice(0,4));
+      if(y && y<_minY) _minY=y;
+    });
+  }
   var h='<div class="cnav cnav-compact" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
-  h+='<div class="cnav-month" style="display:flex;align-items:center;gap:5px;flex:1 1 200px;min-width:200px;max-width:280px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:9px;padding:2px 5px">';
+  h+='<div class="cnav-month" style="display:flex;align-items:center;gap:5px;flex:1 1 240px;min-width:230px;max-width:330px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:9px;padding:2px 5px">';
   h+='<button class="cnav-arrow" onclick="chM(-1)" title="Mois précédent" style="width:28px !important;height:28px !important;flex-shrink:0;border-radius:6px;background:rgba(255,255,255,.04) !important;border:1px solid rgba(255,255,255,.08) !important;color:var(--text);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">◀</button>';
-  // Titre = bouton qui appelle showPicker() sur l'input month natif (placé juste après).
-  // Astuce opacity:0 abandonnée : Safari/iOS refuse souvent d'ouvrir le picker depuis
-  // un input invisible. showPicker() (Chrome/Edge/Firefox/Safari 16.4+) fonctionne via
-  // un click utilisateur explicite ; fallback focus()+click() pour anciens navigateurs.
-  h+='<div class="cnav-title-wrap" style="position:relative;flex:1;min-width:0">';
-  h+='<button class="cnav-title-btn" type="button" title="Cliquez pour choisir un autre mois" onclick="var p=document.getElementById(\'cnavMP\');if(p&&p.showPicker){try{p.showPicker();return}catch(e){}}if(p){p.focus();p.click();}" style="all:unset;display:flex;align-items:center;justify-content:center;gap:4px;width:100% !important;height:28px !important;cursor:pointer;color:var(--gold);font-family:var(--f2,Georgia,serif);font-weight:600;font-size:14px;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:transparent !important;border:none !important;padding:0 !important">';
-  h+=mL+' <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="opacity:.6;flex-shrink:0"><polyline points="6 9 12 15 18 9"/></svg>';
-  h+='</button>';
-  h+='<input id="cnavMP" type="month" value="'+accM+'" onchange="if(this.value){accM=this.value;go(\'accounting\');}" style="position:absolute;left:50%;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;margin:0">';
-  h+='</div>';
+  // Sélecteur Mois
+  h+='<select class="cnav-sel" id="cnavSelM" onchange="var y=document.getElementById(\'cnavSelY\').value;accM=y+\'-\'+this.value;go(\'accounting\')" style="flex:2 1 0;min-width:0;height:28px;background:transparent !important;border:none !important;color:var(--gold);font-family:var(--f2,Georgia,serif);font-weight:600;font-size:14px;letter-spacing:.3px;cursor:pointer;text-align:center;text-align-last:center;padding:0 4px !important;outline:none">';
+  for(var _m=1;_m<=12;_m++){
+    var _mp=_m<10?'0'+_m:String(_m);
+    h+='<option value="'+_mp+'"'+(_m===_curM?' selected':'')+'>'+MO[_m-1]+'</option>';
+  }
+  h+='</select>';
+  // Sélecteur Année
+  h+='<select class="cnav-sel" id="cnavSelY" onchange="var m=document.getElementById(\'cnavSelM\').value;accM=this.value+\'-\'+m;go(\'accounting\')" style="flex:1 1 0;min-width:0;height:28px;background:transparent !important;border:none !important;color:var(--gold);font-family:var(--f2,Georgia,serif);font-weight:700;font-size:14px;letter-spacing:.5px;cursor:pointer;text-align:center;text-align-last:center;padding:0 4px !important;outline:none">';
+  for(var _y=_maxY;_y>=_minY;_y--){
+    h+='<option value="'+_y+'"'+(_y===_curY?' selected':'')+'>'+_y+'</option>';
+  }
+  h+='</select>';
   h+='<button class="cnav-arrow" onclick="chM(1)" title="Mois suivant" style="width:28px !important;height:28px !important;flex-shrink:0;border-radius:6px;background:rgba(255,255,255,.04) !important;border:1px solid rgba(255,255,255,.08) !important;color:var(--text);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center">▶</button>';
   h+='</div>';
     // Bouton Documents comptables — pilule étendue avec texte explicite + icône SVG classeur (Feather BookOpen)
@@ -13933,7 +13959,8 @@ function rAccounting(){
   h+='</button>';
   h+='</div>';
   // Responsive : si vraiment trop étroit (<480px = mobile), bouton passe en disque doré seul
-  h+='<style>.cnav-compact .cnav-arrow:hover{background:rgba(212,168,67,.12) !important}.cnav-compact .cnav-docs:hover{transform:translateY(-1px)}@media(max-width:520px){.cnav-compact{gap:8px !important}.cnav-compact .cnav-month{min-width:140px !important;max-width:none !important;flex:1 1 140px !important}.cnav-compact .cnav-docs{padding:0 !important;width:38px !important;height:38px !important;border-radius:50% !important}.cnav-compact .cnav-docs .lbl-doc{display:none}.cnav-compact .cnav-title{font-size:12px !important}}</style>';
+  // + Style des selects (option dropdown lisible thème sombre) + appearance:none chevron custom
+  h+='<style>.cnav-compact .cnav-arrow:hover{background:rgba(212,168,67,.12) !important}.cnav-compact .cnav-docs:hover{transform:translateY(-1px)}.cnav-compact .cnav-sel{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--gold) 50%),linear-gradient(135deg,var(--gold) 50%,transparent 50%) !important;background-position:calc(100% - 10px) 12px,calc(100% - 6px) 12px !important;background-size:4px 4px,4px 4px !important;background-repeat:no-repeat !important;padding-right:18px !important}.cnav-compact .cnav-sel:hover{color:#fff !important}.cnav-compact .cnav-sel:focus{outline:1px solid rgba(212,168,67,.4) !important;outline-offset:1px}.cnav-compact .cnav-sel option{background:#1a1a1a !important;color:#fff !important;font-family:Arial,sans-serif !important;font-weight:500}@media(max-width:520px){.cnav-compact{gap:8px !important}.cnav-compact .cnav-month{min-width:180px !important;max-width:none !important;flex:1 1 180px !important}.cnav-compact .cnav-sel{font-size:12px !important;padding-right:14px !important}.cnav-compact .cnav-docs{padding:0 !important;width:38px !important;height:38px !important;border-radius:50% !important}.cnav-compact .cnav-docs .lbl-doc{display:none}}</style>';
   
   // ===== COMPACT SUMMARY - 1 row =====
   h+='<div class="sr">';
@@ -21728,10 +21755,18 @@ function cloturerJournee(){
   var tkNums=done.map(function(a){return a.tkNum||0;}).filter(function(n){return n>0;});
   var tkMin=tkNums.length?Math.min.apply(null,tkNums):0;
   var tkMax=tkNums.length?Math.max.apply(null,tkNums):0;
-  // Heure premier/dernier ticket
-  var heures=done.map(function(a){return a.ts||a.date;}).sort();
-  var hPremier=heures.length?heures[0].slice(11,16)||"--:--":"--:--";
-  var hDernier=heures.length?heures[heures.length-1].slice(11,16)||"--:--":"--:--";
+  // Heure premier/dernier ticket — essaie ts (ISO) puis time ("HH:MM") en fallback.
+  // Les tickets sans ts (vieux passages, créations manuelles) ont au moins `time`.
+  var heures=done.map(function(a){
+    if(a.ts && typeof a.ts==="string" && a.ts.length>=16){
+      var s=a.ts.slice(11,16);
+      if(/^\d{2}:\d{2}$/.test(s)) return s;
+    }
+    if(a.time && typeof a.time==="string" && /^\d{2}:\d{2}$/.test(a.time.slice(0,5))) return a.time.slice(0,5);
+    return "";
+  }).filter(function(h){return h;}).sort();
+  var hPremier=heures.length?heures[0]:"--:--";
+  var hDernier=heures.length?heures[heures.length-1]:"--:--";
   // Per-stylist
   var perSty={};T.forEach(function(t){perSty[t.id]={n:t.n,ca:0,nb:0};});
   // CA réparti par collab (multi-collab forfait)
