@@ -832,9 +832,29 @@ async function loadSalonData() {
 
 function showSuspendedScreen(status) {
   var el = document.getElementById("app") || document.body;
-  var msg = status === "suspended" ? "Votre abonnement est suspendu suite à un défaut de paiement." : "Votre abonnement a été résilié.";
-  el.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#0a0e1a)"><div style="text-align:center;max-width:400px;padding:32px"><div style="font-size:48px;margin-bottom:16px">⚠️</div><h2 style="color:#f87171;margin-bottom:12px">Compte ' + status + '</h2><p style="color:#94a3b8;margin-bottom:20px">' + msg + '</p><button onclick="openCustomerPortal()" style="display:inline-block;padding:12px 24px;background:#d4a843;color:#000;border-radius:10px;font-weight:700;border:none;cursor:pointer;font-size:15px">Gérer mon abonnement</button><br><button onclick="doLogout()" style="margin-top:12px;background:none;border:none;color:#64748b;cursor:pointer;font-size:13px">Se déconnecter</button></div></div>';
-  document.getElementById("hdr").style.display="none";
+  // Traduction FR + style premium Luxyra (au lieu de "Compte cancelled" en anglais)
+  var titre = status === "suspended" ? "Abonnement suspendu" : "Abonnement annulé";
+  var msg   = status === "suspended"
+    ? "Votre abonnement est suspendu suite à un défaut de paiement. Mettez à jour votre moyen de paiement pour réactiver l'accès immédiatement."
+    : "Votre abonnement a été résilié. Vous pouvez reprendre un abonnement à tout moment depuis le bouton ci-dessous.";
+  var iconSvg = status === "suspended"
+    ? '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+    : '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+  el.innerHTML = ''
+    + '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#0a0a0a 0%,#0c0c12 100%);padding:20px">'
+    +   '<div style="text-align:center;max-width:440px;padding:32px;background:rgba(20,20,25,.8);border:1px solid rgba(255,255,255,.08);border-radius:20px;backdrop-filter:blur(12px)">'
+    +     '<div style="display:inline-block;padding:18px;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);border-radius:18px;margin-bottom:18px">'+iconSvg+'</div>'
+    +     '<h2 style="color:#fff;font-family:Georgia,\'Times New Roman\',serif;font-weight:600;font-size:24px;margin:0 0 8px;letter-spacing:.3px">'+titre+'</h2>'
+    +     '<p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 28px">'+msg+'</p>'
+    +     '<button onclick="openCustomerPortal()" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-weight:800;border:none;border-radius:12px;cursor:pointer;font-size:14px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'">'
+    +       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 15h0M2 9h20"/></svg>'
+    +       'Gérer mon abonnement'
+    +     '</button>'
+    +     '<div style="margin-top:18px"><button onclick="doLogout()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px;text-decoration:underline">Se déconnecter</button></div>'
+    +     '<div style="margin-top:24px;padding-top:18px;border-top:1px solid rgba(255,255,255,.05);font-size:11px;color:#64748b;line-height:1.5">Si vous pensez qu\'il s\'agit d\'une erreur, contactez-nous : <a href="mailto:contact@luxyra.fr" style="color:#d4a843;text-decoration:none">contact@luxyra.fr</a></div>'
+    +   '</div>'
+    + '</div>';
+  var hdr=document.getElementById("hdr"); if(hdr)hdr.style.display="none";
 }
 
 function showTrialExpiredScreen(salon) {

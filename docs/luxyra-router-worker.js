@@ -370,6 +370,14 @@ async function handleWebhook(request, env) {
     case "customer.subscription.deleted": {
       const salonId = data.metadata?.salon_id;
       if (salonId) {
+        // GARDE-FOU CRITIQUE : ignore si la sub deletée n'est PAS la sub active du salon.
+        // Sans ça, l'expiration d'une vieille sub annulée écraserait le statut alors
+        // qu'une nouvelle sub est en cours (cas réel rencontré 2026-05-03).
+        const salon = await supabaseGet(env, salonId);
+        if (salon && salon.stripe_subscription_id && salon.stripe_subscription_id !== data.id) {
+          console.log(`[ignored] subscription.deleted pour ${data.id} ≠ sub active ${salon.stripe_subscription_id} du salon ${salonId}`);
+          break;
+        }
         await supabaseUpdate(env, salonId, { plan: "essential", status: "cancelled", past_due_since: null });
         await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
       }
@@ -380,7 +388,16 @@ async function handleWebhook(request, env) {
       const salonId = data.metadata?.salon_id;
       const priceId = data.items?.data?.[0]?.price?.id;
       if (salonId && priceId) {
+        // GARDE-FOU : ignore si la sub updatée n'est PAS la sub active du salon
+        const salon = await supabaseGet(env, salonId);
+        if (salon && salon.stripe_subscription_id && salon.stripe_subscription_id !== data.id) {
+          console.log(`[ignored] subscription.updated pour ${data.id} ≠ sub active ${salon.stripe_subscription_id} du salon ${salonId}`);
+          break;
+        }
         const newPlan = priceId === CONFIG.PRICE_PRO ? "pro" : "essential";
+        // Si la sub est marquée pour annulation à la fin de période (cancel_at_period_end),
+        // on garde status=active jusqu'à l'expiration réelle (c'est subscription.deleted qui passera à cancelled).
+        // L'utilisateur conserve son accès jusqu'à la fin de la période payée.
         await supabaseUpdate(env, salonId, { plan: newPlan });
         if (newPlan !== "pro") await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
         else await patchSiteConfig(env, salonId, { site_actif: true, reservation_active: true });
@@ -628,7 +645,33 @@ async function getOrCreateStripeCustomer(env, email, salonId) {
 }
 
 async function updateSalonPlan(env, salonId, plan, subscriptionId, customerId) {
-  await supabaseUpdate(env, salonId, { plan, status: "active", stripe_subscription_id: subscriptionId, stripe_customer_id: customerId });
+  // ANTI-DOUBLE-FACTURATION : si le salon avait déjà une sub différente,
+  // on l'annule sur Stripe AVANT de l'écraser en DB. Sinon le client serait facturé
+  // sur les 2 subs en parallèle (l'ancienne + la nouvelle) jusqu'à expiration manuelle.
+  // Cas concret : user annule (cancel_at_period_end) puis reSubscribe avant expiration
+  //              → sans ce fix, 2 subs Pro actives = double prélèvement.
+  try {
+    const salon = await supabaseGet(env, salonId);
+    if (salon && salon.stripe_subscription_id && salon.stripe_subscription_id !== subscriptionId) {
+      console.log(`[updateSalonPlan] Annule l'ancienne sub ${salon.stripe_subscription_id} (remplacée par ${subscriptionId})`);
+      try {
+        await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, null, "DELETE");
+      } catch (e) {
+        console.warn(`[updateSalonPlan] Échec annulation ancienne sub ${salon.stripe_subscription_id}:`, e?.message);
+        // On continue quand même, mais on log l'erreur. L'admin pourra annuler manuellement
+        // dans Stripe Dashboard si nécessaire.
+      }
+    }
+  } catch (e) {
+    console.warn("[updateSalonPlan] Anti-double-facturation check failed:", e?.message);
+  }
+  await supabaseUpdate(env, salonId, {
+    plan,
+    status: "active",
+    stripe_subscription_id: subscriptionId,
+    stripe_customer_id: customerId,
+    past_due_since: null
+  });
 }
 async function updateSalonStatus(env, salonId, status) { await supabaseUpdate(env, salonId, { status }); }
 
