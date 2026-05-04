@@ -1500,6 +1500,25 @@ async function saveCloture(clot) {
     raw_data: raw
   };
   var res = await _sb.from("clotures").insert(data).select();
+  // Gestion erreur 23505 (unique_violation sur clotures_unique_num_per_salon) :
+  // arrive si un 2e INSERT tente d'utiliser un num déjà pris (cas de double-trigger
+  // qui aurait passé le flag JS pour une raison X, ou tab dupliqué qui resync).
+  // On évite de planter l'app — la clôture est déjà en DB grâce au 1er INSERT.
+  if (res.error) {
+    if (res.error.code === "23505" || (res.error.message || "").indexOf("clotures_unique_num_per_salon") >= 0) {
+      console.warn("[saveCloture] Doublon détecté (UNIQUE constraint), clôture déjà enregistrée. Num=" + clot.num);
+      // On retrouve l'id de la clôture déjà en DB pour synchroniser l'objet local
+      try {
+        var existing = await _sb.from("clotures").select("id").eq("salon_id", _salonId).eq("num", clot.num).maybeSingle();
+        if (existing.data && existing.data.id) clot.id = existing.data.id;
+      } catch (_e) {}
+      if (typeof toast === "function") toast("⚠️ Clôture déjà enregistrée — pas de doublon créé.", "info");
+      return;
+    }
+    console.error("[saveCloture] Erreur insert:", res.error);
+    if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
+    return;
+  }
   if (res.data && res.data[0]) clot.id = res.data[0].id;
 }
 

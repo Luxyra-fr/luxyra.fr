@@ -4523,7 +4523,31 @@ function _doClotureDo(){
   document.getElementById("modal").innerHTML=h;
 }
 function doConfirmCloture(){
-  var c=cloturerJournee();
+  // GARDE-FOU CRITIQUE NF525 : anti-double-clic. Sans ça, un double-tap rapide sur
+  // "Confirmer" appelle cloturerJournee() 2 fois. Les 2 appels lisent CLOTURES.length
+  // simultanément → même num attribué → 2 INSERTs en DB avec même num mais hashes
+  // différents. Casse la chaîne NF525 et crée des doublons dans l'historique.
+  // (cas rencontré 2026-04 sur Excellence Coiffure : Z #11, #13, #15, #17 dupliqués)
+  if(window._cloturingInProgress){
+    if(typeof toast==="function") toast("Clôture en cours, merci de patienter…","info");
+    return;
+  }
+  window._cloturingInProgress=true;
+  // Désactive le bouton Confirmer pour bloquer le double-tap
+  try{
+    var btns=document.querySelectorAll("button");
+    btns.forEach(function(b){
+      if((b.textContent||"").trim()==="Confirmer"){ b.disabled=true; b.style.opacity=".5"; b.style.cursor="not-allowed"; b.textContent="Clôture en cours…"; }
+    });
+  }catch(_e){}
+  var c;
+  try { c = cloturerJournee(); }
+  finally {
+    // Libère le flag après 3s (le temps que l'INSERT DB ait fini). Au-delà, un
+    // 2e clic est OK (= sécurité, pas un retry intentionnel).
+    setTimeout(function(){ window._cloturingInProgress=false; },3000);
+  }
+  if(!c) return; // closeDay a renvoyé null (déjà clôturée, pas de tickets, etc.)
   window._lastCloture=c;
   
   // Auto mise au coffre: especes + cheques go to coffre automatically
