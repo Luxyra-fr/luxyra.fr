@@ -1,0 +1,44 @@
+name: Deploy Cloudflare Worker
+
+# Déploiement automatique du worker luxyra-router à chaque push qui modifie
+# le code du worker ou cette config CI.
+# Évite à Alexandre de se connecter sur dash.cloudflare.com et faire
+# Edit Code + Save and Deploy manuellement à chaque modif.
+#
+# PRÉREQUIS (à faire UNE SEULE FOIS) :
+#   GitHub repo Settings > Secrets and variables > Actions > New repository secret
+#   1. CLOUDFLARE_API_TOKEN  : token créé sur dash.cloudflare.com/profile/api-tokens
+#                              avec template "Edit Cloudflare Workers"
+#   2. CLOUDFLARE_ACCOUNT_ID : visible dans dash.cloudflare.com (sidebar à droite)
+
+on:
+  # Auto-deploy quand on push une modif du worker ou de ce workflow
+  push:
+    branches: [main]
+    paths:
+      - 'docs/luxyra-router-worker.js'
+      - 'wrangler.toml'
+      - '.github/workflows/deploy-worker.yml'
+  # Permet de re-déclencher manuellement depuis l'onglet Actions
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy luxyra-router to Cloudflare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Deploy Worker via Wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Summary
+        run: |
+          echo "✅ Worker luxyra-router déployé"
+          echo "Commit : ${{ github.sha }}"
+          echo "Auteur : ${{ github.actor }}"
+          echo "Message : ${{ github.event.head_commit.message }}"
