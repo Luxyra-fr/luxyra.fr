@@ -202,6 +202,91 @@ async function loadPendingAndDevis() {
 }
 if (typeof window !== "undefined") window.loadPendingAndDevis = loadPendingAndDevis;
 
+// ============================================================
+// HELPER : transforme une ligne DB clotures en objet JS hydraté pour window.CLOTURES.
+// Centralisé pour pouvoir être réutilisé par loadSalonData() ET loadOlderClotures().
+// ============================================================
+function _mapClotureRow(c) {
+  // raw_data = snapshot JSON complet (nouvelles clôtures). Fallback sur colonnes
+  // structurées pour la rétro-compat des anciennes clôtures.
+  var base = (c.raw_data && typeof c.raw_data === "object") ? c.raw_data : {};
+  var totalCA = Number(c.total_ca) || 0;
+  var totalHT = Number(c.total_ht) || 0;
+  var txTVA = base.txTVA || 20;
+  var totalPrest = base.totalPrest != null ? base.totalPrest : totalCA;
+  var totalProd  = base.totalProd  != null ? base.totalProd  : 0;
+  return Object.assign({
+    totalPrest: totalPrest,
+    totalProd:  totalProd,
+    totalTVA:   base.totalTVA   != null ? base.totalTVA   : (totalCA - totalHT),
+    txTVA:      txTVA,
+    prestHT:    base.prestHT    != null ? base.prestHT    : Math.round(totalPrest / (1 + txTVA/100) * 100) / 100,
+    prestTVA:   base.prestTVA   != null ? base.prestTVA   : Math.round((totalPrest - (totalPrest / (1 + txTVA/100))) * 100) / 100,
+    prodHT:     base.prodHT     != null ? base.prodHT     : Math.round(totalProd  / (1 + txTVA/100) * 100) / 100,
+    prodTVA:    base.prodTVA    != null ? base.prodTVA    : Math.round((totalProd  - (totalProd  / (1 + txTVA/100))) * 100) / 100,
+    totalRemises: base.totalRemises || 0,
+    brutTotalGlobal: base.brutTotalGlobal || totalCA,
+    totalAnnul: base.totalAnnul || 0,
+    tkMin: base.tkMin || 0, tkMax: base.tkMax || 0,
+    hPremier: base.hPremier || "--:--", hDernier: base.hDernier || "--:--",
+    panierMoyen: base.panierMoyen != null ? base.panierMoyen : (c.nb_tickets > 0 ? Math.round(totalCA / c.nb_tickets * 100) / 100 : 0),
+    details: base.details || {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0},
+    cumulMois: base.cumulMois || Number(c.cumul_mois_ca) || 0,
+    cumulAnnuel: base.cumulAnnuel || Number(c.cumul_annee_ca) || 0
+  }, base, {
+    id: c.id, date: c.date_cloture, ts: c.timestamp_cloture, num: c.num,
+    totalCA: totalCA, totalHT: totalHT,
+    nbTickets: c.nb_tickets, nbAnnul: c.nb_annulations,
+    perPay: base.perPay || c.detail_paiements || {},
+    perSty: base.perSty || c.detail_collabs || {},
+    cumulMoisCA: Number(c.cumul_mois_ca), cumulMoisTk: c.cumul_mois_tickets,
+    cumulAnCA: Number(c.cumul_annee_ca), cumulAnTk: c.cumul_annee_tickets,
+    hash: c.hash, hashAlgo: c.hash_algo
+  });
+}
+
+// ============================================================
+// LAZY LOAD : charge les clôtures d'un mois précis si pas encore en mémoire.
+// Appelé quand l'utilisateur sélectionne un mois ancien dans la nav compta
+// (sélecteurs Mois+Année). Idempotent (skip si déjà chargé). Async safe.
+// ============================================================
+async function loadOlderClotures(yearMonth) {
+  if (!_sb || !_salonId) return { ok: false };
+  if (!yearMonth || !/^\d{4}-\d{2}$/.test(yearMonth)) return { ok: false };
+  // Si on a déjà des clôtures de ce mois en mémoire, on suppose qu'elles sont toutes là
+  var alreadyHas = (window.CLOTURES || []).some(function(c){
+    return c.date && String(c.date).indexOf(yearMonth) === 0;
+  });
+  if (alreadyHas) return { ok: true, skipped: true };
+  // Range du mois (premier au dernier jour)
+  var startDate = yearMonth + "-01";
+  var endDate = yearMonth + "-31"; // PostgreSQL accepte jusqu'à 31, ignore les jours invalides
+  try {
+    var res = await _sb.from("clotures").select("*")
+      .eq("salon_id", _salonId)
+      .gte("date_cloture", startDate)
+      .lte("date_cloture", endDate)
+      .order("num", { ascending: true });
+    if (res.error) {
+      console.warn("[loadOlderClotures]", res.error);
+      return { ok: false, error: res.error };
+    }
+    if (!res.data || !res.data.length) return { ok: true, count: 0 };
+    var newOnes = res.data.map(_mapClotureRow);
+    var existingIds = new Set((window.CLOTURES || []).map(function(c){return c.id;}));
+    var toAdd = newOnes.filter(function(c){return !existingIds.has(c.id);});
+    if (toAdd.length) {
+      window.CLOTURES = (window.CLOTURES || []).concat(toAdd).sort(function(a,b){return (a.num||0) - (b.num||0);});
+      console.log("[loadOlderClotures] +"+toAdd.length+" clôtures pour "+yearMonth);
+    }
+    return { ok: true, count: toAdd.length };
+  } catch (e) {
+    console.warn("[loadOlderClotures] exception", e);
+    return { ok: false, error: e };
+  }
+}
+if (typeof window !== "undefined") window.loadOlderClotures = loadOlderClotures;
+
 async function loadSalonData() {
   if (!_sb || !_userId) { startOffline(); return; }
   try{
@@ -468,7 +553,10 @@ async function loadSalonData() {
 
   // 5. Charger clients → CL[]
   try {
-    var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom");
+    // Limit 5000 clients = filet de sécurité scalabilité (gros salon = 2000-3000 clients
+    // actifs+inactifs). Au-delà, le user peut chercher via le moteur de recherche
+    // qui fera un fetch ciblé sur le serveur.
+    var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom").limit(5000);
     if (clRes.data) {
       CL = clRes.data.map(function(c) {
         var obj = {
@@ -540,7 +628,9 @@ async function loadSalonData() {
   // 6b. Charger RDV en ligne → window.RDV_ONLINE[]
   try {
   var today = new Date().toISOString().slice(0,10);
-  var roRes = await _sb.from("rdv_online").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false });
+  // Limit 500 = filet sécurité. Les RDV online cancellés/done/refused vieux n'ont
+  // pas besoin d'être en mémoire. Si plus tard nécessaire, lazy load via fetch ciblé.
+  var roRes = await _sb.from("rdv_online").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false }).limit(500);
   if (roRes.data) {
     window.RDV_ONLINE = roRes.data.map(function(r) {
       return {
@@ -722,48 +812,16 @@ async function loadSalonData() {
 
   // 9. Charger clôtures → window.CLOTURES[]
   try {
-  var clotRes = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num");
+  // Limit 500 clôtures (= ~1 an et demi à raison d'1/jour ouvré). Charge les plus
+  // récentes (num DESC). Pour consulter une clôture plus ancienne, l'app utilise
+  // loadOlderClotures() à la demande quand l'utilisateur sélectionne une période
+  // ancienne dans la nav compta. Garantit chargement initial rapide à grande échelle.
+  var clotRes = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num", { ascending: false }).limit(500);
+  // On ré-inverse l'ordre côté JS pour avoir num croissant en mémoire (compatibilité
+  // avec le code existant qui attend cet ordre, ex: chaîne hash, cumuls, etc.).
+  if (clotRes.data) clotRes.data.reverse();
   if (clotRes.data) {
-    window.CLOTURES = clotRes.data.map(function(c) {
-      // raw_data = snapshot JSON complet (nouvelles clôtures). Fallback sur colonnes
-      // structurées pour la rétro-compat des anciennes clôtures.
-      var base = (c.raw_data && typeof c.raw_data === "object") ? c.raw_data : {};
-      var totalCA = Number(c.total_ca) || 0;
-      var totalHT = Number(c.total_ht) || 0;
-      var txTVA = base.txTVA || 20;
-      var totalPrest = base.totalPrest != null ? base.totalPrest : totalCA;
-      var totalProd  = base.totalProd  != null ? base.totalProd  : 0;
-      // Hydrater avec defaults safe pour empêcher les .toFixed() sur undefined dans l'UI
-      return Object.assign({
-        totalPrest: totalPrest,
-        totalProd:  totalProd,
-        totalTVA:   base.totalTVA   != null ? base.totalTVA   : (totalCA - totalHT),
-        txTVA:      txTVA,
-        prestHT:    base.prestHT    != null ? base.prestHT    : Math.round(totalPrest / (1 + txTVA/100) * 100) / 100,
-        prestTVA:   base.prestTVA   != null ? base.prestTVA   : Math.round((totalPrest - (totalPrest / (1 + txTVA/100))) * 100) / 100,
-        prodHT:     base.prodHT     != null ? base.prodHT     : Math.round(totalProd  / (1 + txTVA/100) * 100) / 100,
-        prodTVA:    base.prodTVA    != null ? base.prodTVA    : Math.round((totalProd  - (totalProd  / (1 + txTVA/100))) * 100) / 100,
-        totalRemises: base.totalRemises || 0,
-        brutTotalGlobal: base.brutTotalGlobal || totalCA,
-        totalAnnul: base.totalAnnul || 0,
-        tkMin: base.tkMin || 0, tkMax: base.tkMax || 0,
-        hPremier: base.hPremier || "--:--", hDernier: base.hDernier || "--:--",
-        panierMoyen: base.panierMoyen != null ? base.panierMoyen : (c.nb_tickets > 0 ? Math.round(totalCA / c.nb_tickets * 100) / 100 : 0),
-        details: base.details || {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0},
-        cumulMois: base.cumulMois || Number(c.cumul_mois_ca) || 0,
-        cumulAnnuel: base.cumulAnnuel || Number(c.cumul_annee_ca) || 0
-      }, base, {
-        // Ces clés écrasent les valeurs de base : on privilégie la DB pour les champs canoniques
-        id: c.id, date: c.date_cloture, ts: c.timestamp_cloture, num: c.num,
-        totalCA: totalCA, totalHT: totalHT,
-        nbTickets: c.nb_tickets, nbAnnul: c.nb_annulations,
-        perPay: base.perPay || c.detail_paiements || {},
-        perSty: base.perSty || c.detail_collabs || {},
-        cumulMoisCA: Number(c.cumul_mois_ca), cumulMoisTk: c.cumul_mois_tickets,
-        cumulAnCA: Number(c.cumul_annee_ca), cumulAnTk: c.cumul_annee_tickets,
-        hash: c.hash, hashAlgo: c.hash_algo
-      });
-    });
+    window.CLOTURES = clotRes.data.map(_mapClotureRow);
   }
   } catch(e) { console.warn("[loadSalonData] clotures skipped", e); }
 
