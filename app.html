@@ -315,7 +315,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260505-01"></script>
+<script src="luxyra-supabase.js?v=20260505-02"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -14152,7 +14152,14 @@ function rCaisse(){
   if(!_co){try{if(localStorage.getItem("caisseOpenDate")===TD)_co=true;}catch(e){}}
   if(!_co&&AP.filter(function(a){return a.date===TD&&a.st==="done"}).length>0)_co=true;
   if(_co){window._caisseOpenDate=TD;try{localStorage.setItem("caisseOpenDate",TD);}catch(e){}
-    // Already opened today -> go directly to collaborator selection
+    // Already opened today.
+    // Si _tk est déjà pré-rempli (ex: vente carte depuis fiche client → cId+items
+    // pré-set), on respecte cet état et on affiche directement la caisse sans
+    // réinitialiser. Sinon, ouvre l'écran de sélection collab+client (step 1).
+    if(window._tk && Array.isArray(window._tk.items) && window._tk.items.length > 0){
+      showCaisse();
+      return"";
+    }
     startCaisse();
     return"";
   }
@@ -18652,25 +18659,16 @@ function doVenteCarteAbo(clientId,caIdx){
   auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (expire "+dateExp+", attente paiement)");
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.");},500);
   cM();
-  // #2 Collab pr\u00e9-s\u00e9lectionn\u00e9
-  var defaultStId=null;
-  if(window.CURRENT_OPERATOR && window.CURRENT_OPERATOR.collab_id) defaultStId=window.CURRENT_OPERATOR.collab_id;
-  if(!defaultStId){
-    var cAppts=(typeof AP!=="undefined"?AP:[]).filter(function(a){return a.cId===clientId && a.stId;});
-    if(cAppts.length){
-      cAppts.sort(function(a,b){return String(b.ts||"").localeCompare(String(a.ts||""));});
-      defaultStId=cAppts[0].stId;
-    }
-  }
-  if(!defaultStId && typeof T!=="undefined" && T.length) defaultStId=T[0].id;
+  // Note 2026-05-05 : pas de pre-select du collab (Alexandre : ce n est pas
+  // forcement l operateur connecte qui vend la carte). L utilisateur choisit
+  // a l etape 1. Le client (cId) est pre-rempli ci-dessous.
   // Item de carte
   var carteItem={sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true,pendingCarteId:carteClient.id||null};
   // #3 Ajout au ticket en cours si m\u00eame client + items existants, sinon nouveau
   if(window._tk && _tk.cId===clientId && Array.isArray(_tk.items) && _tk.items.length>0){
     _tk.items.push(carteItem);
-    if(!_tk.stId) _tk.stId=defaultStId;
   } else {
-    _tk={step:(defaultStId?3:1),stId:defaultStId,cId:clientId,items:[carteItem],comment:"",remise:0};
+    _tk={step:1,stId:null,cId:clientId,items:[carteItem],comment:"",remise:0};
   }
   go("caisse");
 }
