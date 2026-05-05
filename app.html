@@ -315,7 +315,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260505-09"></script>
+<script src="luxyra-supabase.js?v=20260505-10"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -22198,20 +22198,23 @@ async function sha256Async(str){
 function simpleHash(str){return sha256Sync(str);}
 // _lastTicketHash already initialized above
 function chainTicket(ticket){
+  // BUG FIX 2026-05-05 : avant ce fix, on calculait un hash sync (DJB2 fallback)
+  // puis on lançait sha256Async() en parallèle qui re-save l'appointment quand
+  // le hash diffère. Comme DJB2 ≠ SHA-256, le re-save se déclenchait TOUJOURS.
+  // Race condition : si l'INSERT initial n'avait pas encore reçu son ID DB,
+  // le 2ème save faisait un 2ème INSERT → DOUBLON de ticket en DB (constaté
+  // sur les tickets #209/210/211 du 2026-05-05).
+  // Fix : on garde uniquement le hash sync (DJB2 fallback). La chaîne reste
+  // intacte (chained sur _lastTicketHash sync), le ticket n'est sauvé qu'une
+  // seule fois. Hash algo marqué "DJB2-chain" pour ne pas mentir sur l'algo.
+  // TODO future : implémenter un vrai SHA-256 sync en JS pour conformité
+  // NF525 stricte. La chaîne actuelle est intègre mais le hash n'est pas
+  // SHA-256 nominal.
   var data="TK|"+ticket.tkNum+"|"+ticket.date+"|"+ticket.time+"|"+ticket.pr.toFixed(2)+"|"+ticket.met+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret;
   ticket.prevHash=_lastTicketHash;
-  ticket.hashAlgo="SHA-256";
-  // Use sync hash immediately for UI
+  ticket.hashAlgo="DJB2-chain";
   ticket.hash=sha256Sync(data);
   _lastTicketHash=ticket.hash;
-  // Upgrade to real SHA-256 and RE-SAVE to ensure DB has correct hash
-  sha256Async(data).then(function(h){
-    if(h!==ticket.hash){
-      ticket.hash=h;
-      _lastTicketHash=h;
-      if(typeof saveAppointment==="function")saveAppointment(ticket);
-    }
-  });
   return ticket;
 }
 function cancelSecureTicket(id,motif){
