@@ -173,7 +173,10 @@ function generateUuidV4() {
 // Renvoie { lx_id, email } si valide, sinon null.
 async function verifyClientSession(token, env) {
   if (!token || typeof token !== "string") return null;
-  if (!env.SUPABASE_SERVICE_KEY) return null;
+  if (!env.SUPABASE_SERVICE_KEY) {
+    console.error("[verifyClientSession] SUPABASE_SERVICE_KEY missing");
+    return null;
+  }
   try {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/lx-profile`, {
       method: "POST",
@@ -185,14 +188,21 @@ async function verifyClientSession(token, env) {
       },
       body: JSON.stringify({ session_token: token, action: "get" })
     });
-    if (!r.ok) return null;
-    const data = await r.json();
-    if (!data || !data.user) return null;
+    if (!r.ok) {
+      const errText = await r.text().catch(() => "");
+      console.error("[verifyClientSession] lx-profile non-OK:", r.status, errText.slice(0, 200));
+      return null;
+    }
+    const data = await r.json().catch(() => null);
+    if (!data || !data.user) {
+      console.error("[verifyClientSession] lx-profile no user in response:", JSON.stringify(data).slice(0, 200));
+      return null;
+    }
     const u = data.user;
     if (!u.id) return null;
     return { lx_id: String(u.id), email: String(u.email || "").toLowerCase().trim() };
   } catch (e) {
-    console.error("verifyClientSession error:", e);
+    console.error("[verifyClientSession] exception:", e?.message || e);
     return null;
   }
 }
