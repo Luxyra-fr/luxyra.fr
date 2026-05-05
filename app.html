@@ -18379,10 +18379,27 @@ function doAddPackFromCaisse(){
 }
 
 // ===== CARTES D'ABONNEMENT =====
+// Renvoie la carte d'abo "utilisable" pour un client donné :
+//  - status "active" non expirée (cas standard)
+//  - OU status "pending" liée à un item du ticket courant (= la carte vient
+//    d'être vendue dans ce ticket, on applique la remise immédiatement même
+//    si la carte n'est pas encore validée par le paiement effectif).
+// La status "pending" devient "active" au moment du paiement (cf. doFinalPayExecute).
 function getActiveCarteAbo(clientId){
   if(!clientId||!window.CARTES_ABO_CLIENTS)return null;
   var today=new Date().toISOString().slice(0,10);
-  return window.CARTES_ABO_CLIENTS.find(function(cc){return cc.clientId===clientId&&cc.status==="active"&&(!cc.dateExp||cc.dateExp>=today);})||null;
+  // 1. Recherche carte active classique
+  var active=window.CARTES_ABO_CLIENTS.find(function(cc){return cc.clientId===clientId&&cc.status==="active"&&(!cc.dateExp||cc.dateExp>=today);});
+  if(active) return active;
+  // 2. Carte pending dans le ticket courant (vente carte + prestation sur même facture)
+  if(window._tk && window._tk.cId===clientId && Array.isArray(window._tk.items)){
+    var hasCarteItem=window._tk.items.some(function(it){return it.isCarteAbo;});
+    if(hasCarteItem){
+      var pending=window.CARTES_ABO_CLIENTS.find(function(cc){return cc.clientId===clientId&&cc.status==="pending";});
+      if(pending) return pending;
+    }
+  }
+  return null;
 }
 
 function addCarteAbo(){
@@ -18594,29 +18611,67 @@ async function updateCarteAboEconomies(carteId,delta){
   }
 }
 
+// Vente d'une carte d'abonnement depuis la fiche client (4 améliorations 2026-05-05) :
+//   #1 Renouvellement CUMULE les jours restants (au lieu de reset à today+12mois)
+//   #2 Collaborateur pré-sélectionné (CURRENT_OPERATOR ou dernier collab du client)
+//   #3 Carte AJOUTÉE au ticket en cours si même client (au lieu d'écraser)
+//   #4 Status "pending" à la vente, "active" après paiement (la remise s'applique
+//      immédiatement sur le ticket courant via getActiveCarteAbo qui voit pending)
+// + flag anti-double-clic _sellingCarteAbo (évite double-vente sur double-tap)
 function doVenteCarteAbo(clientId,caIdx){
-  var c=gC(clientId);if(!c)return;
-  var ca=window.CARTES_ABO[caIdx];if(!ca)return;
-  var dateAchat=TD;
-  var dExp=new Date();dExp.setMonth(dExp.getMonth()+ca.duree);
-  var dateExp=dExp.toISOString().slice(0,10);
-  // Désactiver ancienne carte si existe
+  if(window._sellingCarteAbo){
+    if(typeof toast==="function") toast("Vente carte en cours, merci de patienter\u2026","info");
+    return;
+  }
+  window._sellingCarteAbo=true;
+  setTimeout(function(){window._sellingCarteAbo=false;},3000);
+  var c=gC(clientId);if(!c){window._sellingCarteAbo=false;return;}
+  var ca=window.CARTES_ABO[caIdx];if(!ca){window._sellingCarteAbo=false;return;}
+  // #1 Cumul jours restants : si carte encore active, on repart de son dateExp.
   var old=getActiveCarteAbo(clientId);
-  if(old){old.status="replaced";if(typeof saveCarteAboClient==="function")saveCarteAboClient(old);}
+  var startDate=new Date();
+  if(old && old.dateExp){
+    var existExp=new Date(old.dateExp+"T00:00:00");
+    if(existExp > startDate) startDate=existExp;
+  }
+  var dExp=new Date(startDate); dExp.setMonth(dExp.getMonth()+ca.duree);
+  var dateExp=dExp.toISOString().slice(0,10);
+  if(old && old.status==="active"){
+    old.status="replaced";
+    if(typeof saveCarteAboClient==="function") saveCarteAboClient(old);
+  }
+  // #4 Status "pending" \u2014 sera bascul\u00e9e \u00e0 "active" au paiement effectif
   var carteClient={
     id:null,clientId:clientId,clientBpId:c.clientBeautyproId||c.em||null,clientNom:cName(c),carteId:ca.id,carteNom:ca.nom,
     tarif:ca.tarif,remiseServices:ca.remiseServices,remiseForfaits:ca.remiseForfaits,
-    dateAchat:dateAchat,dateExp:dateExp,status:"active",ticketNum:"",economiesTotales:0
+    dateAchat:TD,dateExp:dateExp,status:"pending",ticketNum:"",economiesTotales:0
   };
   if(!window.CARTES_ABO_CLIENTS)window.CARTES_ABO_CLIENTS=[];
   window.CARTES_ABO_CLIENTS.push(carteClient);
   if(typeof saveCarteAboClient==="function")saveCarteAboClient(carteClient);
-  auditLog("CARTE_ABO_VENDUE",ca.nom+" \u00e0 "+cName(c)+" pour "+ca.tarif+"\u20ac (expire "+dateExp+")");
-  sendCarteWelcome(clientId,carteClient);
+  auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (expire "+dateExp+", attente paiement)");
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.");},500);
   cM();
-  // Ouvrir la caisse avec la carte comme article
-  _tk={step:1,stId:null,cId:clientId,items:[{sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true}],comment:"",remise:0};
+  // #2 Collab pr\u00e9-s\u00e9lectionn\u00e9
+  var defaultStId=null;
+  if(window.CURRENT_OPERATOR && window.CURRENT_OPERATOR.collab_id) defaultStId=window.CURRENT_OPERATOR.collab_id;
+  if(!defaultStId){
+    var cAppts=(typeof AP!=="undefined"?AP:[]).filter(function(a){return a.cId===clientId && a.stId;});
+    if(cAppts.length){
+      cAppts.sort(function(a,b){return String(b.ts||"").localeCompare(String(a.ts||""));});
+      defaultStId=cAppts[0].stId;
+    }
+  }
+  if(!defaultStId && typeof T!=="undefined" && T.length) defaultStId=T[0].id;
+  // Item de carte
+  var carteItem={sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true,pendingCarteId:carteClient.id||null};
+  // #3 Ajout au ticket en cours si m\u00eame client + items existants, sinon nouveau
+  if(window._tk && _tk.cId===clientId && Array.isArray(_tk.items) && _tk.items.length>0){
+    _tk.items.push(carteItem);
+    if(!_tk.stId) _tk.stId=defaultStId;
+  } else {
+    _tk={step:(defaultStId?3:1),stId:defaultStId,cId:clientId,items:[carteItem],comment:"",remise:0};
+  }
   go("caisse");
 }
 
@@ -18641,26 +18696,44 @@ function venteCarteAboFromCaisse(){
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
+// Vente d'une carte d'abonnement depuis la caisse (client déjà sélectionné).
+// Mêmes améliorations que doVenteCarteAbo : cumul jours restants, status pending.
+// Pas besoin de fix collab/ticket : on est déjà dans le bon ticket en cours.
 function doVenteCarteAboFromCaisse(caIdx){
-  var cId=_tk.cId;var c=gC(cId);if(!c)return;
-  var ca=window.CARTES_ABO[caIdx];if(!ca)return;
-  var dExp=new Date();dExp.setMonth(dExp.getMonth()+ca.duree);
-  var dateExp=dExp.toISOString().slice(0,10);
+  if(window._sellingCarteAbo){
+    if(typeof toast==="function") toast("Vente carte en cours, merci de patienter\u2026","info");
+    return;
+  }
+  window._sellingCarteAbo=true;
+  setTimeout(function(){window._sellingCarteAbo=false;},3000);
+  var cId=_tk.cId;var c=gC(cId);if(!c){window._sellingCarteAbo=false;return;}
+  var ca=window.CARTES_ABO[caIdx];if(!ca){window._sellingCarteAbo=false;return;}
+  // #1 Cumul jours restants
   var old=getActiveCarteAbo(cId);
-  if(old){old.status="replaced";if(typeof saveCarteAboClient==="function")saveCarteAboClient(old);}
+  var startDate=new Date();
+  if(old && old.dateExp){
+    var existExp=new Date(old.dateExp+"T00:00:00");
+    if(existExp > startDate) startDate=existExp;
+  }
+  var dExp=new Date(startDate); dExp.setMonth(dExp.getMonth()+ca.duree);
+  var dateExp=dExp.toISOString().slice(0,10);
+  if(old && old.status==="active"){
+    old.status="replaced";
+    if(typeof saveCarteAboClient==="function") saveCarteAboClient(old);
+  }
+  // #4 Status pending
   var carteClient={
     id:null,clientId:cId,clientBpId:c.clientBeautyproId||c.em||null,clientNom:cName(c),carteId:ca.id,carteNom:ca.nom,
     tarif:ca.tarif,remiseServices:ca.remiseServices,remiseForfaits:ca.remiseForfaits,
-    dateAchat:TD,dateExp:dateExp,status:"active",ticketNum:"",economiesTotales:0
+    dateAchat:TD,dateExp:dateExp,status:"pending",ticketNum:"",economiesTotales:0
   };
   if(!window.CARTES_ABO_CLIENTS)window.CARTES_ABO_CLIENTS=[];
   window.CARTES_ABO_CLIENTS.push(carteClient);
   if(typeof saveCarteAboClient==="function")saveCarteAboClient(carteClient);
-  auditLog("CARTE_ABO_VENDUE",ca.nom+" \u00e0 "+cName(c)+" pour "+ca.tarif+"\u20ac");
-  sendCarteWelcome(cId,carteClient);
+  auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (caisse, expire "+dateExp+")");
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email. La carte fonctionne ici, mais ne sera pas visible dans son espace client. Ajoutez un email dans sa fiche.");},500);
-  // Ajouter la carte au ticket (prix fixe, jamais de remise)
-  _tk.items.push({sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true});
+  // Ajouter la carte au ticket en cours (avec ref pendingCarteId pour activation paiement)
+  _tk.items.push({sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true,pendingCarteId:carteClient.id||null});
   showCaisse();
 }
 
@@ -19504,7 +19577,28 @@ function doFinalPayExecute(method){
   _tk.items.forEach(function(it){brutTotal+=it.price*it.qty;itemRemises+=(it.remise||0);});
   var globalRemise=_tk.remise||0;
   var totalRemise=itemRemises+globalRemise;
-  var savedItems=_tk.items.map(function(it){return{name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:!!it.isProd,isCarteAbo:!!it.isCarteAbo,carteAboRemise:!!it.carteAboRemise,carteAboPct:it.carteAboPct||0};});
+  var savedItems=_tk.items.map(function(it){return{name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:!!it.isProd,isCarteAbo:!!it.isCarteAbo,carteAboRemise:!!it.carteAboRemise,carteAboPct:it.carteAboPct||0,pendingCarteId:it.pendingCarteId||null};});
+  // #4 Activation cartes d'abo pending : à ce stade le paiement est validé.
+  // On bascule en "active" toutes les cartes pending référencées par les items
+  // isCarteAbo du ticket. La remise déjà appliquée sur le ticket courant reste.
+  // Si l'INSERT du ticket échoue plus loin, les cartes restent "pending" — on
+  // les nettoiera au prochain reload via un job qui supprime les pending de plus
+  // de 24h orphelines (à coder plus tard si besoin).
+  try {
+    _tk.items.forEach(function(it){
+      if(it.isCarteAbo && it.pendingCarteId){
+        var pending=(window.CARTES_ABO_CLIENTS||[]).find(function(cc){return cc.id===it.pendingCarteId;});
+        if(pending && pending.status==="pending"){
+          pending.status="active";
+          if(typeof saveCarteAboClient==="function") saveCarteAboClient(pending);
+          if(typeof sendCarteWelcome==="function" && pending.clientId){
+            try { sendCarteWelcome(pending.clientId, pending); } catch(_e){}
+          }
+          if(typeof auditLog==="function") auditLog("CARTE_ABO_ACTIVEE", pending.carteNom+" \u2192 "+pending.clientNom+" (paiement effectif)");
+        }
+      }
+    });
+  } catch(e){ console.warn("[carte abo] activation pending failed:", e); }
   var tsNow=new Date().toISOString();
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   
