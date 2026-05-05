@@ -1875,7 +1875,22 @@ async function saveSalonConfig() {
       // sinon la réparation au load le re-pousserait dans les listes
       // typées et annulerait des suppressions volontaires.
       categories_services:(window.CATS_SVC&&Array.isArray(window.CATS_SVC))?window.CATS_SVC.slice():[],
-      categories_forfaits:(window.CATS_FORF&&Array.isArray(window.CATS_FORF))?window.CATS_FORF.slice():[]
+      categories_forfaits:(window.CATS_FORF&&Array.isArray(window.CATS_FORF))?window.CATS_FORF.slice():[],
+      // Cartes d'abonnement : modèles + toggle. CRITIQUE — sans ces 2 lignes,
+      // chaque saveSalonConfig() écrasait silencieusement les modèles existants
+      // en DB (cas réel rencontré sur Excellence Coiffure 2026-05-04 : les 6
+      // cartes vendues continuaient de fonctionner mais le modèle source était
+      // perdu, empêchant toute nouvelle vente). Garde-fou : si window.CARTES_ABO
+      // est vide alors qu'il y avait des modèles en DB, on préserve les modèles
+      // du cache _SALON_CONFIG_JSON pour ne pas écraser par mégarde.
+      cartes_abo:(Array.isArray(window.CARTES_ABO) && window.CARTES_ABO.length > 0)
+        ? window.CARTES_ABO
+        : ((window._SALON_CONFIG_JSON && Array.isArray(window._SALON_CONFIG_JSON.cartes_abo))
+            ? window._SALON_CONFIG_JSON.cartes_abo : []),
+      cartes_abo_config:(window.CARTES_ABO_CONFIG && typeof window.CARTES_ABO_CONFIG === "object")
+        ? window.CARTES_ABO_CONFIG
+        : ((window._SALON_CONFIG_JSON && window._SALON_CONFIG_JSON.cartes_abo_config)
+            || {active:true})
     };
     data.config_json = JSON.stringify(newCfg);
     // CRITIQUE : met à jour aussi le cache window._SALON_CONFIG_JSON
