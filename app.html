@@ -19458,8 +19458,31 @@ function applyFidDiscount(amount,method){
 }
 
 function doFinalPayExecute(method){
+  // GARDE-FOU CRITIQUE NF525 : anti-double-clic. Sans \u00e7a, un double-tap rapide
+  // sur le bouton de validation du paiement appelle doFinalPayExecute() 2 fois.
+  // Les 2 appels incr\u00e9mentent tkN, cr\u00e9ent 2 entr\u00e9es dans AP, font 2 INSERTs en
+  // DB (appointments table) \u2014 le ticket DB est prot\u00e9g\u00e9 par UNIQUE(num,salon)
+  // mais appointments ne l'est pas. Cas r\u00e9el rencontr\u00e9 2026-05-04 sur Excellence
+  // Coiffure : 6 entr\u00e9es appointments pour 3 vraies ventes, cl\u00f4ture Z #18
+  // a compt\u00e9 6 tickets au lieu de 3 (298\u20ac au lieu de 149\u20ac).
+  if(window._payingInProgress){
+    if(typeof toast==="function") toast("Paiement en cours, merci de patienter\u2026","info");
+    return;
+  }
+  window._payingInProgress=true;
+  // D\u00e9sactive tous les boutons de la modal de paiement pour bloquer le double-tap
+  try{
+    var modalBtns=document.querySelectorAll(".mbox button, .mbg button");
+    modalBtns.forEach(function(b){
+      if(!b.disabled){ b.disabled=true; b.style.opacity=".5"; b.style.cursor="not-allowed"; }
+    });
+  }catch(_e){}
+  // Lib\u00e8re le flag apr\u00e8s 5s (le temps que les INSERTs DB aient fini). Au-del\u00e0,
+  // un 2e clic est OK \u2014 s\u00e9curit\u00e9, pas un retry intentionnel.
+  setTimeout(function(){ window._payingInProgress=false; },5000);
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
   if(total<0||!_tk.items.length){
+    window._payingInProgress=false; // lib\u00e8re imm\u00e9diatement, on n'a rien cr\u00e9\u00e9
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">\u26a0\ufe0f</div><h2>Aucune prestation</h2><div style="font-size:14px;margin-bottom:14px">Ajoutez au moins une prestation ou un produit.</div><button class="btn bg bk" onclick="_tk.step=3;showCaisse()">Retour au ticket</button></div></div>';
     return;
   }
