@@ -103,6 +103,18 @@ export default {
       console.error(`[cron] retention-purge FAILED:`, err?.message || err);
       // On ne re-throw pas — on veut que le cron continue de tourner les jours suivants.
     }
+    // Job cartes pending orphelines : créées via doVenteCarteAbo mais jamais
+    // confirmées par un paiement (ex: vente abandonnée, double-clic supprimé).
+    // Sans ce purge, elles restent en "pending" et peuvent réapparaître dans
+    // l'UI. Avec notre fix anti-bug 2026-05-05, l'ancienne carte n'est plus
+    // marquée replaced à tort — mais on veut quand même nettoyer les pending
+    // qui traînent (≥ 24 h).
+    try {
+      const result2 = await runPendingCartesAboPurgeJob(env);
+      console.log(`[cron] pending-cartes-purge done:`, result2);
+    } catch (err) {
+      console.error(`[cron] pending-cartes-purge FAILED:`, err?.message || err);
+    }
   },
 };
 
@@ -1843,6 +1855,52 @@ async function handleSmsLinkDevice(request, env) {
 //   - Délai purge réel = 6 ans + 1 mois (le mois de préavis)
 //   - Logs détaillés pour audit
 //   - Endpoint /api/admin/retention-purge pour run manuel (auth via bearer token)
+// ============================================================
+// PURGE CARTES ABO PENDING ORPHELINES
+// ============================================================
+// Supprime les cartes_abo_clients en status='pending' créées il y a plus
+// de 24 h. Une vraie vente passe en "active" en quelques secondes (au
+// paiement effectif). Au-delà de 24 h, c'est une vente abandonnée :
+// double-clic, paiement annulé, salon qui change d'avis. Sans purge, ces
+// rows polluent la fiche client et peuvent générer des appels fantômes.
+async function runPendingCartesAboPurgeJob(env) {
+  const sbKey = env.SUPABASE_SERVICE_KEY;
+  if (!sbKey) {
+    console.warn("[purge-pending-cartes] SUPABASE_SERVICE_KEY missing — abort");
+    return { skipped: "no_service_key" };
+  }
+  const cutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // Supabase REST DELETE avec filter created_at lt cutoff + status pending
+  // Prefer:return=representation pour récupérer ce qui a été supprimé.
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients`
+    + `?status=eq.pending`
+    + `&created_at=lt.${encodeURIComponent(cutoffIso)}`;
+  try {
+    const r = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        apikey: sbKey,
+        Authorization: `Bearer ${sbKey}`,
+        Prefer: "return=representation"
+      }
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      console.error(`[purge-pending-cartes] DELETE failed: ${r.status} ${txt.slice(0, 200)}`);
+      return { ok: false, status: r.status };
+    }
+    const deleted = await r.json().catch(() => []);
+    const count = Array.isArray(deleted) ? deleted.length : 0;
+    if (count > 0) {
+      console.log(`[purge-pending-cartes] deleted ${count} pending carte(s) older than 24h`);
+    }
+    return { ok: true, deleted: count, cutoff: cutoffIso };
+  } catch (e) {
+    console.error("[purge-pending-cartes] exception:", e?.message || e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
 async function runRetentionPurgeJob(env) {
   const sbKey = env.SUPABASE_SERVICE_KEY;
   if (!sbKey) {
