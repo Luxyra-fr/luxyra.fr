@@ -161,59 +161,38 @@ function generateUuidV4() {
 }
 
 // ============================================================
-// CLIENT SESSION JWT VERIFY (HS256)
+// CLIENT SESSION VERIFY — délègue à lx-profile edge function
 // ============================================================
-// Vérifie un session_token émis par les edge functions lx-login / lx-signup.
-// Le secret de signature est partagé entre les edge functions et ce worker :
-//   priorité LX_SESSION_SECRET > BP_SESSION_SECRET > SUPABASE_SERVICE_KEY
-// (même chaîne de fallback que lx-profile, pour éviter une déconnexion globale
-// au moindre changement d'env).
+// Plutôt que de tenter une vérif HMAC locale (qui dépendrait d'un secret
+// partagé exact entre Cloudflare et Supabase Edge Functions, fragile en
+// pratique car les noms de secrets varient), on délègue la validation
+// à l'edge function `lx-profile` qui a elle-même signé le token : si
+// elle renvoie 200 avec un user, le token est valide. Coût ~50-100 ms
+// par appel — acceptable pour des actions user-initiated (pas de hot path).
 //
 // Renvoie { lx_id, email } si valide, sinon null.
-// Utilisé par les endpoints /api/client/* pour authentifier les requêtes
-// venant de compte.html sans dépendre de l'anon key (qui est publique).
-function _b64urlToBytes(str) {
-  // base64url -> base64
-  let b64 = str.replace(/-/g, "+").replace(/_/g, "/");
-  while (b64.length % 4 !== 0) b64 += "=";
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-function _b64urlToString(str) {
-  return new TextDecoder().decode(_b64urlToBytes(str));
-}
-
 async function verifyClientSession(token, env) {
   if (!token || typeof token !== "string") return null;
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [headerB64, payloadB64, sigB64] = parts;
-  const secret = env.LX_SESSION_SECRET || env.BP_SESSION_SECRET || env.SUPABASE_SERVICE_KEY;
-  if (!secret) return null;
+  if (!env.SUPABASE_SERVICE_KEY) return null;
   try {
-    // Vérifie l'algo HS256
-    const header = JSON.parse(_b64urlToString(headerB64));
-    if (!header || header.alg !== "HS256") return null;
-    // Recalcule la signature
-    const enc = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw", enc.encode(secret),
-      { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
-    );
-    const data = enc.encode(headerB64 + "." + payloadB64);
-    const sigBytes = _b64urlToBytes(sigB64);
-    const ok = await crypto.subtle.verify("HMAC", key, sigBytes, data);
-    if (!ok) return null;
-    // Parse payload + check exp
-    const payload = JSON.parse(_b64urlToString(payloadB64));
-    if (!payload) return null;
-    if (payload.exp && Math.floor(Date.now() / 1000) > Number(payload.exp)) return null;
-    const id = payload.lx_id || payload.bp_id;
-    if (!id) return null;
-    return { lx_id: String(id), email: String(payload.email || "").toLowerCase().trim() };
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/lx-profile`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Apikey requise par Supabase Functions gateway
+        "apikey": env.SUPABASE_SERVICE_KEY,
+        "Authorization": "Bearer " + env.SUPABASE_SERVICE_KEY
+      },
+      body: JSON.stringify({ session_token: token, action: "get" })
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || !data.user) return null;
+    const u = data.user;
+    if (!u.id) return null;
+    return { lx_id: String(u.id), email: String(u.email || "").toLowerCase().trim() };
   } catch (e) {
+    console.error("verifyClientSession error:", e);
     return null;
   }
 }
