@@ -315,7 +315,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260505-07"></script>
+<script src="luxyra-supabase.js?v=20260505-08"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -18688,10 +18688,12 @@ async function doVenteCarteAbo(clientId,caIdx){
   }
   var dExp=new Date(startDate); dExp.setMonth(dExp.getMonth()+ca.duree);
   var dateExp=dExp.toISOString().slice(0,10);
-  if(old && old.status==="active"){
-    old.status="replaced";
-    if(typeof saveCarteAboClient==="function") saveCarteAboClient(old);
-  }
+  // BUG FIX 2026-05-05 : on NE marque PLUS l'ancienne carte en "replaced" ici.
+  // Avant, si la vente pending \u00e9tait ensuite abandonn\u00e9e/\u00e9chou\u00e9e, l'ancienne
+  // carte restait "replaced" alors qu'aucune nouvelle ne l'avait remplac\u00e9e
+  // (r\u00e9sultat : 0 carte active alors qu'1 devrait l'\u00eatre).
+  // Le bascule "replaced" se fait maintenant au paiement effectif, dans
+  // doFinalPayExecute (juste apr\u00e8s le pending \u2192 active).
   // #4 Status "pending" \u2014 sera bascul\u00e9e \u00e0 "active" au paiement effectif
   var carteClient={
     id:null,clientId:clientId,clientBpId:c.clientBeautyproId||c.em||null,clientNom:cName(c),carteId:ca.id,carteNom:ca.nom,
@@ -18763,10 +18765,8 @@ async function doVenteCarteAboFromCaisse(caIdx){
   }
   var dExp=new Date(startDate); dExp.setMonth(dExp.getMonth()+ca.duree);
   var dateExp=dExp.toISOString().slice(0,10);
-  if(old && old.status==="active"){
-    old.status="replaced";
-    if(typeof saveCarteAboClient==="function") saveCarteAboClient(old);
-  }
+  // BUG FIX 2026-05-05 : on NE marque PLUS l'ancienne carte en "replaced" ici
+  // (cf. doVenteCarteAbo). Le bascule se fait au paiement effectif.
   // #4 Status pending
   var carteClient={
     id:null,clientId:cId,clientBpId:c.clientBeautyproId||c.em||null,clientNom:cName(c),carteId:ca.id,carteNom:ca.nom,
@@ -19638,6 +19638,19 @@ function doFinalPayExecute(method){
       if(it.isCarteAbo && it.pendingCarteId){
         var pending=(window.CARTES_ABO_CLIENTS||[]).find(function(cc){return cc.id===it.pendingCarteId;});
         if(pending && pending.status==="pending"){
+          // BUG FIX 2026-05-05 : on bascule l'ancienne carte active du m\u00eame client
+          // en "replaced" UNIQUEMENT ici (au paiement effectif), pas \u00e0 la cr\u00e9ation
+          // pending. Sinon une vente abandonn\u00e9e laissait l'ancienne carte cass\u00e9e.
+          try {
+            (window.CARTES_ABO_CLIENTS||[]).forEach(function(other){
+              if(other.id !== pending.id
+                 && other.clientId === pending.clientId
+                 && other.status === "active"){
+                other.status = "replaced";
+                if(typeof saveCarteAboClient==="function") saveCarteAboClient(other);
+              }
+            });
+          } catch(eRepl){ console.warn("[carte abo] replace previous active failed:", eRepl); }
           pending.status="active";
           if(typeof saveCarteAboClient==="function") saveCarteAboClient(pending);
           if(typeof sendCarteWelcome==="function" && pending.clientId){
