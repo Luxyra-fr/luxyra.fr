@@ -315,7 +315,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260505-02"></script>
+<script src="luxyra-supabase.js?v=20260505-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -17375,7 +17375,35 @@ function showInviteClientPrompt(cId){
   document.getElementById("modal").innerHTML=h;
 }
 
+
+// Helper anti-double-clic : à appeler en début de fonction critique d'INSERT.
+// Usage : if (guardDoubleClick("client")) return;
+// Le param sert juste de label pour le toast. Auto-libère après 3s.
+function guardDoubleClick(label){
+  var key="_guard_"+(label||"op");
+  if(window[key]){
+    if(typeof toast==="function") toast((label||"Action")+" en cours, merci de patienter…","info");
+    return true;
+  }
+  window[key]=true;
+  // Désactive visuellement les boutons de la modal en cours (les autres restent OK)
+  try{
+    var btns=document.querySelectorAll(".mbox button[onclick], .mbg button[onclick]");
+    btns.forEach(function(b){ if(!b.disabled){ b.dataset._guarded="1"; b.disabled=true; b.style.opacity=".5"; b.style.cursor="not-allowed"; } });
+  }catch(_e){}
+  setTimeout(function(){
+    window[key]=false;
+    try{
+      var btns2=document.querySelectorAll('button[data-_guarded="1"]');
+      btns2.forEach(function(b){ b.disabled=false; b.style.opacity=""; b.style.cursor=""; delete b.dataset._guarded; });
+    }catch(_e){}
+  },3000);
+  return false;
+}
+window.guardDoubleClick=guardDoubleClick;
+
 function aCl(){
+  if(guardDoubleClick("client")) return;
   var nom=document.getElementById("mnom").value.trim();
   var pre=document.getElementById("mpre").value.trim();
   if(!nom){alert("Nom requis");return;}
@@ -17415,6 +17443,7 @@ function aCl(){
 }
 
 function aGi(){
+  if(guardDoubleClick("bon cadeau")) return;
   var v=parseFloat(document.getElementById("gv").value);
   if(!v||v<=0){alert("Indiquez un montant");return;}
   var f=document.getElementById("gf").value.trim()||"Client";
@@ -18625,7 +18654,7 @@ async function updateCarteAboEconomies(carteId,delta){
 //   #4 Status "pending" à la vente, "active" après paiement (la remise s'applique
 //      immédiatement sur le ticket courant via getActiveCarteAbo qui voit pending)
 // + flag anti-double-clic _sellingCarteAbo (évite double-vente sur double-tap)
-function doVenteCarteAbo(clientId,caIdx){
+async function doVenteCarteAbo(clientId,caIdx){
   if(window._sellingCarteAbo){
     if(typeof toast==="function") toast("Vente carte en cours, merci de patienter\u2026","info");
     return;
@@ -18655,7 +18684,10 @@ function doVenteCarteAbo(clientId,caIdx){
   };
   if(!window.CARTES_ABO_CLIENTS)window.CARTES_ABO_CLIENTS=[];
   window.CARTES_ABO_CLIENTS.push(carteClient);
-  if(typeof saveCarteAboClient==="function")saveCarteAboClient(carteClient);
+  // CRITIQUE : on AWAIT le save pour avoir l'id DB AVANT de l'attacher au carteItem.
+  // Sans ça, pendingCarteId reste null et au paiement on ne sait pas quelle carte
+  // activer. Le INSERT prend ~50-100ms, acceptable pour l'UX.
+  if(typeof saveCarteAboClient==="function") await saveCarteAboClient(carteClient);
   auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (expire "+dateExp+", attente paiement)");
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.");},500);
   cM();
@@ -18697,7 +18729,7 @@ function venteCarteAboFromCaisse(){
 // Vente d'une carte d'abonnement depuis la caisse (client déjà sélectionné).
 // Mêmes améliorations que doVenteCarteAbo : cumul jours restants, status pending.
 // Pas besoin de fix collab/ticket : on est déjà dans le bon ticket en cours.
-function doVenteCarteAboFromCaisse(caIdx){
+async function doVenteCarteAboFromCaisse(caIdx){
   if(window._sellingCarteAbo){
     if(typeof toast==="function") toast("Vente carte en cours, merci de patienter\u2026","info");
     return;
@@ -18727,7 +18759,7 @@ function doVenteCarteAboFromCaisse(caIdx){
   };
   if(!window.CARTES_ABO_CLIENTS)window.CARTES_ABO_CLIENTS=[];
   window.CARTES_ABO_CLIENTS.push(carteClient);
-  if(typeof saveCarteAboClient==="function")saveCarteAboClient(carteClient);
+  if(typeof saveCarteAboClient==="function") await saveCarteAboClient(carteClient);
   auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (caisse, expire "+dateExp+")");
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email. La carte fonctionne ici, mais ne sera pas visible dans son espace client. Ajoutez un email dans sa fiche.");},500);
   // Ajouter la carte au ticket en cours (avec ref pendingCarteId pour activation paiement)
