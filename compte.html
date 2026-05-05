@@ -116,6 +116,28 @@ async function sha256Salted(email, pass){
   return await sha256(email.toLowerCase().trim() + ":" + pass);
 }
 function api(path,opts){return fetch(SB_URL+"/rest/v1/"+path,Object.assign({headers:HDR},opts||{}));}
+
+// === Helper sécurisé : appelle un endpoint /api/client/* du worker en passant
+// le session_token JWT. Le worker valide le token et utilise service_role pour
+// bypass RLS. Permet de DROP les policies anon USING(true).
+async function _clientApi(endpoint, body){
+  var token = (window.LX && LX.getToken) ? LX.getToken() : "";
+  if(!token) return {ok:false, status:401, data:{error:"Pas de session"}};
+  var payload = Object.assign({session_token:token}, body||{});
+  try{
+    var r = await fetch("/api/client/"+endpoint, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    var data;
+    try{ data = await r.json(); }catch(_){ data = {}; }
+    if(r.status===401){ try{LX.logout();}catch(e){} }
+    return {ok:r.ok, status:r.status, data:data};
+  }catch(e){
+    return {ok:false, status:0, data:{error:"Erreur réseau: "+(e.message||e)}};
+  }
+}
 function fmtDate(d){if(!d)return"\u2014";try{return new Date(d).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});}catch(e){return d;}}
 
 // Session
@@ -443,29 +465,10 @@ var _fideliteLoaded=false;
 async function loadFidelite(){
   if(!CLIENT||_fideliteLoaded)return;
   try{
-    var r=await api("fidelite_client?select=*&client_luxyra_id=eq."+encodeURIComponent(CLIENT.email||CLIENT.id)+"&order=derniere_visite.desc");
-    var data=await r.json();
-    if(Array.isArray(data))FIDELITE_DATA=data;
-    // Also try by ID if email returned nothing
-    if(!FIDELITE_DATA.length&&CLIENT.id){
-      var r2=await api("fidelite_client?select=*&client_luxyra_id=eq."+CLIENT.id+"&order=derniere_visite.desc");
-      var d2=await r2.json();
-      if(Array.isArray(d2)&&d2.length)FIDELITE_DATA=d2;
-    }
-    // Fetch CURRENT fidconf from each salon (not stale values from last visit)
-    for(var fi=0;fi<FIDELITE_DATA.length;fi++){
-      try{
-        var sr=await api("salons_public?select=config_json&id=eq."+FIDELITE_DATA[fi].salon_id);
-        var sd=await sr.json();
-        if(Array.isArray(sd)&&sd[0]){
-          var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
-          if(cfg.fidconf){
-            FIDELITE_DATA[fi].seuil_fidelite=cfg.fidconf.seuil||10;
-            FIDELITE_DATA[fi].remise_fidelite=cfg.fidconf.remise||10;
-            FIDELITE_DATA[fi].remise_type=cfg.fidconf.type||"amount";
-          }
-        }
-      }catch(e){}
+    // Endpoint sécurisé : token validé côté worker + service_role pour bypass RLS
+    var res = await _clientApi("fidelite", {});
+    if(res.ok && res.data && Array.isArray(res.data.fidelite)){
+      FIDELITE_DATA = res.data.fidelite;
     }
     _fideliteLoaded=true;
   }catch(e){console.log("Fidelite load error:",e);}
@@ -533,19 +536,10 @@ var _cartesLoaded=false;
 async function loadCartesAbo(){
   if(!CLIENT||_cartesLoaded)return;
   try{
-    // Query by email — same cross-salon pattern as fidelite
-    var r=await api("cartes_abo_clients?select=*&client_luxyra_id=eq."+encodeURIComponent(CLIENT.email)+"&order=created_at.desc");
-    var data=await r.json();
-    if(Array.isArray(data))CARTES_ABO_DATA=data;
-    // Enrich with salon name
-    for(var ci=0;ci<CARTES_ABO_DATA.length;ci++){
-      if(!CARTES_ABO_DATA[ci].salon_nom){
-        try{
-          var sr=await api("salons_public?select=nom&id=eq."+CARTES_ABO_DATA[ci].salon_id);
-          var sd=await sr.json();
-          if(Array.isArray(sd)&&sd[0])CARTES_ABO_DATA[ci].salon_nom=sd[0].nom;
-        }catch(e){}
-      }
+    // Endpoint sécurisé : worker valide le token + bypass RLS via service_role
+    var res = await _clientApi("cartes", {});
+    if(res.ok && res.data && Array.isArray(res.data.cartes)){
+      CARTES_ABO_DATA = res.data.cartes;
     }
     _cartesLoaded=true;
   }catch(e){console.log("Cartes abo load error:",e);}
@@ -961,16 +955,10 @@ function toggleNotif(el,field){
 async function loadMyRdvs(){
   if(!CLIENT)return;
   try{
-    // Get RDVs from rdv_online with salon name
-    var r=await api("rdv_online?select=*,salons(nom)&client_luxyra_id=eq."+CLIENT.id+"&order=date_rdv.desc&limit=50");
-    var data=await r.json();
-    if(Array.isArray(data)){
-      CLIENT_RDVS=data.map(function(d){d.salon_nom=d.salons?d.salons.nom:"";return d;});
-    }
-    // Fallback by email
-    var r2=await api("rdv_online?select=*,salons(nom)&client_email=eq."+encodeURIComponent(CLIENT.email)+"&order=date_rdv.desc&limit=50");
-    var data2=await r2.json();
-    if(Array.isArray(data2)){data2.forEach(function(d){d.salon_nom=d.salons?d.salons.nom:"";var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===d.id)ex=true;});if(!ex)CLIENT_RDVS.push(d);});}
+    // Endpoint sécurisé : le worker fait les 2 fetches (par lx_id puis par email)
+    // et dedupe côté serveur. Plus de fuite anon.
+    var resR = await _clientApi("rdvs", {});
+    CLIENT_RDVS = (resR.ok && resR.data && Array.isArray(resR.data.rdvs)) ? resR.data.rdvs : [];
     
     // Load POS tickets via Worker (bypasses RLS)
     try{
@@ -1051,16 +1039,14 @@ async function doDeleteAccount(){
   var confirm=document.getElementById("delConfirm");
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="var(--red)";confirm.focus();return;}
   try{
-    var email=CLIENT.email;
-    // Anonymize rdv_online (reste en anon pour l'instant)
-    await api("rdv_online?client_luxyra_id=eq."+CLIENT.id,{method:"PATCH",body:JSON.stringify({client_luxyra_id:null,client_nom:"Anonyme",client_prenom:"",client_tel:"",client_email:""})});
-    // Anonymize appointments in all salons
-    await api("clients?email=eq."+encodeURIComponent(email),{method:"PATCH",body:JSON.stringify({nom:"ANONYME",prenom:"",telephone:"",email:"",adresse:"",cp:"",ville:"",date_naissance:null,notes:"",actif:false})});
-    // Delete fidelite_client
-    await api("fidelite_client?client_luxyra_id=eq."+encodeURIComponent(email),{method:"DELETE"});
-    // Delete client_salon links
-    await api("client_salon?client_id=eq."+CLIENT.id,{method:"DELETE"});
-    // Delete the BP account via edge function
+    // Anonymize rdv_online + clients + delete fidelite_client + client_salon
+    // via endpoint sécurisé (worker valide token + service_role)
+    var anonRes = await _clientApi("anonymize", {});
+    if(!anonRes.ok){
+      alert("Erreur anonymisation: "+(anonRes.data&&anonRes.data.error?anonRes.data.error:"inconnue"));
+      return;
+    }
+    // Delete the LX account via edge function
     var res=await LX.delete();
     if(!res.ok){alert("Erreur suppression compte: "+(res.data&&res.data.error?res.data.error:""));return;}
     logout();
@@ -1078,14 +1064,12 @@ function removeCard(){
 async function ackSalonModification(rdvId){
   if(!rdvId)return;
   try{
-    var r=await api("rdv_online?id=eq."+rdvId,{
-      method:"PATCH",
-      body:JSON.stringify({
-        salon_modified_acknowledged_by_client:true,
-        salon_modified_acknowledged_at:new Date().toISOString()
-      })
+    var res = await _clientApi("rdv-update", {
+      rdv_id: rdvId,
+      salon_modified_acknowledged_by_client: true,
+      salon_modified_acknowledged_at: new Date().toISOString()
     });
-    // Update local state
+    if(!res.ok){ alert("Erreur: "+(res.data&&res.data.error?res.data.error:"impossible de marquer comme lu")); return; }
     var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});
     if(rdv){
       rdv.salon_modified_acknowledged_by_client=true;
@@ -1121,13 +1105,15 @@ async function submitModifyRdv(rdvId,salonId){
   var msg=document.getElementById("modMsg").value.trim();
   if(!date||!time){alert("Date et heure requises");return;}
   try{
-    await api("rdv_online?id=eq."+rdvId,{method:"PATCH",body:JSON.stringify({
-      modification_demandee:true,
-      modification_date:date,
-      modification_heure:time,
-      modification_message:msg||null,
-      modification_status:"pending"
-    })});
+    var res = await _clientApi("rdv-update", {
+      rdv_id: rdvId,
+      modification_demandee: true,
+      modification_date: date,
+      modification_heure: time,
+      modification_message: msg||null,
+      modification_status: "pending"
+    });
+    if(!res.ok){ alert("Erreur: "+(res.data&&res.data.error?res.data.error:"impossible")); return; }
     closePopup("modifyModal");
     // Update local
     var r=CLIENT_RDVS.find(function(x){return x.id===rdvId;});
@@ -1161,14 +1147,15 @@ async function submitCancelRdv(rdvId){
   var reason=document.getElementById("cancelReason").value;
   if(!reason){alert("Veuillez indiquer un motif");return;}
   try{
-    // Use worker endpoint (bypasses RLS with service key)
-    var res=await fetch("/api/rdv/cancel",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({rdv_id:rdvId,reason:reason,cancelled_by:"client"})
+    // Endpoint sécurisé : worker valide le session_token + check ownership du RDV
+    var res = await _clientApi("rdv-update", {
+      rdv_id: rdvId,
+      status: "cancelled",
+      cancel_reason: reason,
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: "client"
     });
-    var data=await res.json();
-    if(!data.success){alert("Erreur: "+(data.error||"Annulation impossible"));return;}
+    if(!res.ok){alert("Erreur: "+(res.data&&res.data.error?res.data.error:"Annulation impossible"));return;}
     closePopup("cancelModal");
     // Update local + force reload from DB
     var r=CLIENT_RDVS.find(function(x){return x.id===rdvId;});

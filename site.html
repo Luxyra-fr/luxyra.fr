@@ -283,6 +283,29 @@ var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var sb=supabase.createClient(SB_URL,SB_KEY);
 var stripe=null;try{stripe=Stripe("pk_test_51TCS0KPk42Psx94TbtlODP1PLrlFAFznR35OuEjt2l1LcOywSXfj4oQUNdQCJcS4XajdSjVcDr0DLLT1B8ew2pXj005qIoOWVo");}catch(e){console.warn("Stripe not loaded",e);}
 
+// Helper sécurisé : appelle un endpoint /api/client/* du worker.
+// Le worker valide le session_token JWT (issu de lx-login) puis utilise
+// le service_role pour bypass RLS. Évite les leaks anon sur cartes_abo_clients,
+// fidelite_client, rdv_online qui étaient en USING(true).
+async function _clientApi(endpoint, body){
+  var token = (window.LX && LX.getToken) ? LX.getToken() : "";
+  if(!token) return {ok:false, status:401, data:{error:"Pas de session"}};
+  var payload = Object.assign({session_token:token}, body||{});
+  try{
+    var r = await fetch("/api/client/"+endpoint, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    var data;
+    try{ data = await r.json(); }catch(_){ data = {}; }
+    if(r.status===401){ try{LX.logout();}catch(e){} }
+    return {ok:r.ok, status:r.status, data:data};
+  }catch(e){
+    return {ok:false, status:0, data:{error:"Erreur réseau: "+(e.message||e)}};
+  }
+}
+
 // Traduit les erreurs Postgres (trigger + contraintes) en messages user-friendly
 function rdvErrorMessage(err){
   if(!err)return "Erreur inconnue";
@@ -1019,17 +1042,10 @@ function loadClientSession(){
 
 async function loadClientRDVs(){
   if(!CLIENT)return;
-  // Primary: query by client_luxyra_id
-  var r=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_luxyra_id",CLIENT.id).order("date_rdv",{ascending:false});
-  if(r.data)CLIENT_RDVS=r.data;
-  // Fallback: also load by email (for old bookings before migration)
-  var r2=await sb.from("rdv_online").select("*").eq("salon_id",salonId).eq("client_email",CLIENT.email).order("date_rdv",{ascending:false});
-  if(r2.data){
-    r2.data.forEach(function(rdv){
-      var exists=false;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdv.id){exists=true;break;}}
-      if(!exists)CLIENT_RDVS.push(rdv);
-    });
-  }
+  // Endpoint sécurisé : worker valide session_token + bypass RLS via service_role.
+  // Le serveur fait les 2 fetches (par lx_id + par email) et dedupe → plus de fuite anon.
+  var res = await _clientApi("rdvs", {salon_id: salonId});
+  CLIENT_RDVS = (res.ok && res.data && Array.isArray(res.data.rdvs)) ? res.data.rdvs : [];
 }
 
 
@@ -2593,11 +2609,17 @@ async function saveClientProfile(){
 async function loadDashboardFidelite(){
   if(!CLIENT||!salonId)return;
   try{
-    var r=await sb.from("fidelite_client").select("*").eq("client_luxyra_id",CLIENT.email).eq("salon_id",salonId).limit(1);
+    // Endpoint sécurisé : worker valide token + filtre par salon_id côté serveur
+    var resF = await _clientApi("fidelite", {salon_id: salonId});
+    var fid = (resF.ok && resF.data && Array.isArray(resF.data.fidelite)) ? resF.data.fidelite[0] : null;
     var pts=0,vis=0,seuil=10,remise=10,remType="amount";
-    if(r.data&&r.data[0]){
-      pts=r.data[0].points||0;
-      vis=r.data[0].visites||0;
+    if(fid){
+      pts=fid.points||0;
+      vis=fid.visites||0;
+      // Le worker enrichit déjà avec fidconf à jour
+      if(fid.seuil_fidelite) seuil = fid.seuil_fidelite;
+      if(fid.remise_fidelite) remise = fid.remise_fidelite;
+      if(fid.remise_type) remType = fid.remise_type;
     }
     // Get CURRENT fidconf from salon config_json
     try{
@@ -2962,10 +2984,16 @@ async function doModifyRequest(rdvId){
     alert("Ce cr\u00e9neau n'est pas disponible. Choisissez un autre horaire.");return;
   }
   try{
-    await sb.from("rdv_online").update({
-      modification_demandee:true,modification_date:newDate,modification_heure:newTime,
-      modification_message:msg||null,modification_status:"pending"
-    }).eq("id",rdvId);
+    // Endpoint sécurisé : worker valide token + check ownership du RDV
+    var resM = await _clientApi("rdv-update", {
+      rdv_id: rdvId,
+      modification_demandee: true,
+      modification_date: newDate,
+      modification_heure: newTime,
+      modification_message: msg||null,
+      modification_status: "pending"
+    });
+    if(!resM.ok){ alert("Erreur: "+(resM.data&&resM.data.error?resM.data.error:"impossible")); return; }
     document.querySelector(".modify-modal").remove();
     var toast=document.createElement("div");
     toast.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#2d9a5e;color:#fff;padding:14px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.3);text-align:center";
@@ -3206,10 +3234,11 @@ async function checkClientCarteAbo(){
   CLIENT_CARTE_ABO=null;
   if(!CLIENT||!CLIENT.email||!salonId)return;
   try{
-    // Query by email — same cross-salon pattern as fidelite
-    var r=await sb.from("cartes_abo_clients").select("*").eq("salon_id",salonId).eq("client_luxyra_id",CLIENT.email).eq("status","active").limit(1);
-    if(r.data&&r.data[0]){
-      var c=r.data[0];
+    // Endpoint sécurisé : worker valide token + filtre par salon_id côté serveur (service_role)
+    var res = await _clientApi("cartes", {salon_id: salonId, only_active: true});
+    var cartes = (res.ok && res.data && Array.isArray(res.data.cartes)) ? res.data.cartes : [];
+    if(cartes.length){
+      var c = cartes[0];
       var today=new Date().toISOString().slice(0,10);
       if(!c.date_expiration||c.date_expiration>=today){
         CLIENT_CARTE_ABO={id:c.id,carteNom:c.carte_nom,remiseServices:Number(c.remise_services),remiseForfaits:Number(c.remise_forfaits),dateExp:c.date_expiration,eco:Number(c.economies_totales)||0};

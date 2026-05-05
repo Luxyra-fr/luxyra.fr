@@ -61,6 +61,15 @@ export default {
       if (url.pathname === "/api/sms/generate-link-token" && request.method === "POST") return await handleSmsGenerateLinkToken(request, env);
       if (url.pathname === "/api/sms/link-device" && request.method === "POST") return await handleSmsLinkDevice(request, env);
       if (url.pathname === "/api/client/tickets" && request.method === "POST") return await handleClientTickets(request, env);
+      // Endpoints espace client compte.html — bypass RLS via service_role
+      // après vérification du session_token JWT (issu de lx-login/lx-signup).
+      // Permet de DROP les policies anon USING(true) qui leakaient toutes les
+      // données client cross-salons à n'importe quel détenteur de l'anon key.
+      if (url.pathname === "/api/client/cartes" && request.method === "POST") return await handleClientCartes(request, env);
+      if (url.pathname === "/api/client/fidelite" && request.method === "POST") return await handleClientFidelite(request, env);
+      if (url.pathname === "/api/client/rdvs" && request.method === "POST") return await handleClientRdvs(request, env);
+      if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
+      if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
       // Invitations clients (magic link "créer mot de passe")
       if (url.pathname === "/api/client/invite" && request.method === "POST") return await handleClientInvite(request, env);
       if (url.pathname === "/api/client/invite/verify" && request.method === "POST") return await handleClientInviteVerify(request, env);
@@ -149,6 +158,74 @@ function generateUuidV4() {
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
   const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;
+}
+
+// ============================================================
+// CLIENT SESSION JWT VERIFY (HS256)
+// ============================================================
+// Vérifie un session_token émis par les edge functions lx-login / lx-signup.
+// Le secret de signature est partagé entre les edge functions et ce worker :
+//   priorité LX_SESSION_SECRET > BP_SESSION_SECRET > SUPABASE_SERVICE_KEY
+// (même chaîne de fallback que lx-profile, pour éviter une déconnexion globale
+// au moindre changement d'env).
+//
+// Renvoie { lx_id, email } si valide, sinon null.
+// Utilisé par les endpoints /api/client/* pour authentifier les requêtes
+// venant de compte.html sans dépendre de l'anon key (qui est publique).
+function _b64urlToBytes(str) {
+  // base64url -> base64
+  let b64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (b64.length % 4 !== 0) b64 += "=";
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function _b64urlToString(str) {
+  return new TextDecoder().decode(_b64urlToBytes(str));
+}
+
+async function verifyClientSession(token, env) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [headerB64, payloadB64, sigB64] = parts;
+  const secret = env.LX_SESSION_SECRET || env.BP_SESSION_SECRET || env.SUPABASE_SERVICE_KEY;
+  if (!secret) return null;
+  try {
+    // Vérifie l'algo HS256
+    const header = JSON.parse(_b64urlToString(headerB64));
+    if (!header || header.alg !== "HS256") return null;
+    // Recalcule la signature
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(secret),
+      { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+    );
+    const data = enc.encode(headerB64 + "." + payloadB64);
+    const sigBytes = _b64urlToBytes(sigB64);
+    const ok = await crypto.subtle.verify("HMAC", key, sigBytes, data);
+    if (!ok) return null;
+    // Parse payload + check exp
+    const payload = JSON.parse(_b64urlToString(payloadB64));
+    if (!payload) return null;
+    if (payload.exp && Math.floor(Date.now() / 1000) > Number(payload.exp)) return null;
+    const id = payload.lx_id || payload.bp_id;
+    if (!id) return null;
+    return { lx_id: String(id), email: String(payload.email || "").toLowerCase().trim() };
+  } catch (e) {
+    return null;
+  }
+}
+
+// Helper Supabase REST avec service_role pour les endpoints client/*
+function _sbHeaders(env, opts = {}) {
+  const sbKey = env.SUPABASE_SERVICE_KEY;
+  return Object.assign({
+    "apikey": sbKey,
+    "Authorization": "Bearer " + sbKey,
+    "Content-Type": "application/json"
+  }, opts);
 }
 
 // ============================================================
@@ -957,6 +1034,283 @@ async function handleClientTickets(request, env) {
     allTickets.sort((a, b) => (a.date_rdv || "") > (b.date_rdv || "") ? -1 : 1);
     return jsonResponse({ tickets: allTickets });
   } catch(err) { return jsonResponse({ error: err.message, tickets: [] }); }
+}
+
+// ============================================================
+// CLIENT ESPACE (compte.html) — endpoints sécurisés
+// ============================================================
+// Chaque endpoint :
+//   1. Lit `session_token` du body
+//   2. Vérifie le JWT via verifyClientSession (HS256, secret partagé edge functions)
+//   3. Si OK → utilise SUPABASE_SERVICE_KEY pour bypass RLS, filtré sur lx_id/email
+//   4. Si KO → 401
+// Permet ensuite de DROP les policies anon USING(true) qui leakaient toutes
+// les données client à n'importe quel détenteur de l'anon key (publique).
+
+// GET cartes d'abonnement du client (cross-salons par défaut, filtrable par salon_id)
+async function handleClientCartes(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    const email = session.email;
+    if (!email) return jsonResponse({ error: "email manquant dans la session" }, 401);
+    // Filtre optionnel salon_id (utilisé par site.html quand on est sur la page d'un seul salon)
+    const salonId = body.salon_id ? String(body.salon_id) : null;
+    const onlyActive = body.only_active === true;
+    let url = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients?select=*&client_luxyra_id=eq.${encodeURIComponent(email)}`;
+    if (salonId) url += `&salon_id=eq.${encodeURIComponent(salonId)}`;
+    if (onlyActive) url += `&status=eq.active`;
+    url += `&order=created_at.desc`;
+    const cartesRes = await fetch(url, { headers: _sbHeaders(env) });
+    if (!cartesRes.ok) return jsonResponse({ error: "Lecture cartes échouée" }, 500);
+    const cartes = await cartesRes.json();
+    if (!Array.isArray(cartes) || !cartes.length) return jsonResponse({ cartes: [] });
+    // Enrich salon_nom (1 fetch par salon unique)
+    const salonIds = [...new Set(cartes.map(c => c.salon_id).filter(Boolean))];
+    const salonNames = {};
+    for (const sid of salonIds) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&id=eq.${sid}&limit=1`,
+          { headers: _sbHeaders(env) }
+        );
+        const data = await r.json();
+        if (Array.isArray(data) && data[0]) salonNames[sid] = data[0].nom;
+      } catch (e) {}
+    }
+    cartes.forEach(c => { c.salon_nom = salonNames[c.salon_id] || ""; });
+    return jsonResponse({ cartes });
+  } catch (e) {
+    console.error("handleClientCartes:", e);
+    return jsonResponse({ error: e.message || "erreur" }, 500);
+  }
+}
+
+// GET fidelité du client (cross-salons par défaut, filtrable par salon_id) + enrich seuils/remises
+async function handleClientFidelite(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    const email = session.email;
+    const lxId = session.lx_id;
+    const salonId = body.salon_id ? String(body.salon_id) : null;
+    // fidelite_client.client_luxyra_id est text — on essaie email d'abord, fallback id
+    function _buildUrl(idVal) {
+      let u = `${CONFIG.SUPABASE_URL}/rest/v1/fidelite_client?select=*&client_luxyra_id=eq.${encodeURIComponent(idVal)}`;
+      if (salonId) u += `&salon_id=eq.${encodeURIComponent(salonId)}`;
+      u += `&order=derniere_visite.desc`;
+      return u;
+    }
+    let fidelite = [];
+    try {
+      const r1 = await fetch(_buildUrl(email), { headers: _sbHeaders(env) });
+      const d1 = await r1.json();
+      if (Array.isArray(d1)) fidelite = d1;
+    } catch (e) {}
+    if (!fidelite.length && lxId) {
+      try {
+        const r2 = await fetch(_buildUrl(lxId), { headers: _sbHeaders(env) });
+        const d2 = await r2.json();
+        if (Array.isArray(d2) && d2.length) fidelite = d2;
+      } catch (e) {}
+    }
+    // Enrich avec fidconf à jour de chaque salon
+    for (const f of fidelite) {
+      if (!f.salon_id) continue;
+      try {
+        const sr = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom,config_json&id=eq.${f.salon_id}&limit=1`,
+          { headers: _sbHeaders(env) }
+        );
+        const sd = await sr.json();
+        if (Array.isArray(sd) && sd[0]) {
+          if (!f.salon_nom) f.salon_nom = sd[0].nom;
+          let cfg = {};
+          try {
+            cfg = typeof sd[0].config_json === "string" ? JSON.parse(sd[0].config_json) : (sd[0].config_json || {});
+          } catch (e) {}
+          if (cfg.fidconf) {
+            f.seuil_fidelite = cfg.fidconf.seuil || f.seuil_fidelite || 10;
+            f.remise_fidelite = cfg.fidconf.remise || f.remise_fidelite || 10;
+            f.remise_type = cfg.fidconf.type || f.remise_type || "amount";
+          }
+        }
+      } catch (e) {}
+    }
+    return jsonResponse({ fidelite });
+  } catch (e) {
+    console.error("handleClientFidelite:", e);
+    return jsonResponse({ error: e.message || "erreur" }, 500);
+  }
+}
+
+// GET RDV en ligne du client (cross-salons par défaut, filtrable par salon_id)
+async function handleClientRdvs(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    const lxId = session.lx_id;
+    const email = session.email;
+    const salonId = body.salon_id ? String(body.salon_id) : null;
+    // 2 fetches : par luxyra_id (uuid) puis par email (text). Dedupe sur id.
+    const seen = new Set();
+    const rdvs = [];
+    async function _fetch(filter) {
+      try {
+        let u = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=*,salons(nom)&${filter}`;
+        if (salonId) u += `&salon_id=eq.${encodeURIComponent(salonId)}`;
+        u += `&order=date_rdv.desc&limit=50`;
+        const r = await fetch(u, { headers: _sbHeaders(env) });
+        const data = await r.json();
+        if (!Array.isArray(data)) return;
+        for (const d of data) {
+          if (seen.has(d.id)) continue;
+          seen.add(d.id);
+          d.salon_nom = d.salons ? d.salons.nom : "";
+          delete d.salons;
+          rdvs.push(d);
+        }
+      } catch (e) {}
+    }
+    if (lxId) await _fetch(`client_luxyra_id=eq.${encodeURIComponent(lxId)}`);
+    if (email) await _fetch(`client_email=eq.${encodeURIComponent(email)}`);
+    rdvs.sort((a, b) => (a.date_rdv || "") > (b.date_rdv || "") ? -1 : 1);
+    return jsonResponse({ rdvs });
+  } catch (e) {
+    console.error("handleClientRdvs:", e);
+    return jsonResponse({ error: e.message || "erreur" }, 500);
+  }
+}
+
+// PATCH d'un RDV (modification, ack, annulation contrôlées par session)
+async function handleClientRdvUpdate(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    const rdvId = body.rdv_id;
+    if (!rdvId) return jsonResponse({ error: "rdv_id requis" }, 400);
+    // Vérif ownership : le RDV doit appartenir au client (lx_id ou email)
+    const ownRes = await fetch(
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email&id=eq.${encodeURIComponent(rdvId)}&limit=1`,
+      { headers: _sbHeaders(env) }
+    );
+    const own = await ownRes.json();
+    if (!Array.isArray(own) || !own[0]) return jsonResponse({ error: "RDV introuvable" }, 404);
+    const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
+                 (own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
+    if (!owns) return jsonResponse({ error: "RDV non rattaché à votre compte" }, 403);
+    // Whitelist des champs PATCHables côté client
+    const ALLOWED = [
+      "modification_demandee", "modification_date", "modification_heure",
+      "modification_message", "modification_status",
+      "salon_modified_acknowledged_by_client", "salon_modified_acknowledged_at",
+      "status", "cancel_reason", "cancelled_at", "cancelled_by"
+    ];
+    const patch = {};
+    for (const k of ALLOWED) if (k in body) patch[k] = body[k];
+    if (Object.keys(patch).length === 0) return jsonResponse({ error: "rien à patcher" }, 400);
+    const upd = await fetch(
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdvId)}`,
+      { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify(patch) }
+    );
+    if (!upd.ok) {
+      const t = await upd.text();
+      return jsonResponse({ error: "update échoué: " + t }, 500);
+    }
+    return jsonResponse({ success: true });
+  } catch (e) {
+    console.error("handleClientRdvUpdate:", e);
+    return jsonResponse({ error: e.message || "erreur" }, 500);
+  }
+}
+
+// Anonymisation RGPD (suppression compte) — anonymise rdv_online + delete fidelite_client
+// Utilisé par doDeleteAccount() côté compte.html
+async function handleClientAnonymize(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    const lxId = session.lx_id;
+    const email = session.email;
+    const errors = [];
+    // 1) Anonymise rdv_online par lx_id
+    if (lxId) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?client_luxyra_id=eq.${encodeURIComponent(lxId)}`,
+          { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
+            body: JSON.stringify({ client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "" }) }
+        );
+        if (!r.ok) errors.push("rdv_online by id: " + await r.text());
+      } catch (e) { errors.push("rdv_online by id: " + e.message); }
+    }
+    // 2) Anonymise rdv_online par email (au cas où certains anciens RDV n'ont que l'email)
+    if (email) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?client_email=eq.${encodeURIComponent(email)}`,
+          { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
+            body: JSON.stringify({ client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "" }) }
+        );
+        if (!r.ok) errors.push("rdv_online by email: " + await r.text());
+      } catch (e) { errors.push("rdv_online by email: " + e.message); }
+    }
+    // 3) Anonymise clients (toutes les fiches salon liées à cet email)
+    if (email) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/clients?email=eq.${encodeURIComponent(email)}`,
+          { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
+            body: JSON.stringify({ nom: "ANONYME", prenom: "", telephone: "", email: "", adresse: "", cp: "", ville: "", date_naissance: null, notes: "", actif: false }) }
+        );
+        if (!r.ok) errors.push("clients: " + await r.text());
+      } catch (e) { errors.push("clients: " + e.message); }
+    }
+    // 4) Delete fidelite_client par email (le PK est l'email côté luxyra)
+    if (email) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/fidelite_client?client_luxyra_id=eq.${encodeURIComponent(email)}`,
+          { method: "DELETE", headers: _sbHeaders(env, { "Prefer": "return=minimal" }) }
+        );
+        if (!r.ok) errors.push("fidelite by email: " + await r.text());
+      } catch (e) { errors.push("fidelite by email: " + e.message); }
+    }
+    // 5) Delete fidelite_client par lx_id (legacy/safety)
+    if (lxId) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/fidelite_client?client_luxyra_id=eq.${encodeURIComponent(lxId)}`,
+          { method: "DELETE", headers: _sbHeaders(env, { "Prefer": "return=minimal" }) }
+        );
+        if (!r.ok) errors.push("fidelite by id: " + await r.text());
+      } catch (e) { errors.push("fidelite by id: " + e.message); }
+    }
+    // 6) Delete client_salon links
+    if (lxId) {
+      try {
+        const r = await fetch(
+          `${CONFIG.SUPABASE_URL}/rest/v1/client_salon?client_id=eq.${encodeURIComponent(lxId)}`,
+          { method: "DELETE", headers: _sbHeaders(env, { "Prefer": "return=minimal" }) }
+        );
+        if (!r.ok) errors.push("client_salon: " + await r.text());
+      } catch (e) { errors.push("client_salon: " + e.message); }
+    }
+    return jsonResponse({ success: true, partial_errors: errors.length ? errors : null });
+  } catch (e) {
+    console.error("handleClientAnonymize:", e);
+    return jsonResponse({ error: e.message || "erreur" }, 500);
+  }
 }
 
 // ============================================================
