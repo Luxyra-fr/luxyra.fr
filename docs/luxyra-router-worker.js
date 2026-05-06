@@ -1182,6 +1182,45 @@ async function handleClientRdvs(request, env) {
     if (lxId) await _fetch(`client_luxyra_id=eq.${encodeURIComponent(lxId)}`);
     if (email) await _fetch(`client_email=eq.${encodeURIComponent(email)}`);
     rdvs.sort((a, b) => (a.date_rdv || "") > (b.date_rdv || "") ? -1 : 1);
+    // Quick Win #3 (2026-05-06) : enrichir chaque RDV avec la politique d'annulation
+    // du salon (politique_annulation_h en heures + remboursement_annulation bool).
+    // Permet à compte.html (espace client multi-salons) de bloquer les annulations
+    // hors délai sans avoir à fetcher chaque salon séparément.
+    try {
+      const distinctSalons = Array.from(new Set(rdvs.map(r => r.salon_id).filter(Boolean)));
+      if (distinctSalons.length > 0) {
+        const inList = distinctSalons.map(id => encodeURIComponent(id)).join(",");
+        const cu = `${CONFIG.SUPABASE_URL}/rest/v1/site_configs?select=salon_id,politique_annulation,remboursement_annulation&salon_id=in.(${inList})`;
+        const cr = await fetch(cu, { headers: _sbHeaders(env) });
+        const cd = await cr.json();
+        const policyMap = {};
+        if (Array.isArray(cd)) {
+          for (const c of cd) {
+            // Convertit "24h"/"48h"/"72h"/"jamais" en nombre d'heures (-1 = jamais annulable, 0 = aucun délai)
+            let h = 48;
+            const raw = String(c.politique_annulation || "48h").trim().toLowerCase();
+            if (raw === "jamais" || raw === "non" || raw === "no") h = -1;
+            else if (raw === "0" || raw === "0h" || raw === "aucun") h = 0;
+            else { const m = raw.match(/(\d+)/); if (m) h = parseInt(m[1], 10); }
+            policyMap[c.salon_id] = {
+              hours: h,
+              remboursement: c.remboursement_annulation !== false
+            };
+          }
+        }
+        for (const r of rdvs) {
+          const p = policyMap[r.salon_id];
+          if (p) {
+            r.politique_annulation_h = p.hours;
+            r.remboursement_annulation = p.remboursement;
+          } else {
+            // Salon sans config (ou archive) : défaut 48h pour rester safe
+            r.politique_annulation_h = 48;
+            r.remboursement_annulation = true;
+          }
+        }
+      }
+    } catch (e) { /* fail silencieux : le client retombera sur 48h par défaut */ }
     return jsonResponse({ rdvs });
   } catch (e) {
     console.error("handleClientRdvs:", e);
