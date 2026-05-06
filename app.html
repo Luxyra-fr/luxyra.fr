@@ -322,7 +322,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260506-03"></script>
+<script src="luxyra-supabase.js?v=20260506-04"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9792,27 +9792,63 @@ function rSettings(){
   }
   
     else if(settTab==="fidelite"){
-    if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10};
+    // Quick Win #4 (2026-05-06) : 3 modes de fid\u00e9lit\u00e9 (passages / cagnotte / CA cumul\u00e9)
+    // Compatibilit\u00e9 ascendante : si mode absent, fallback "passages" = comportement historique.
+    if(!window.FIDCONF)window.FIDCONF={seuil:10,remise:10,mode:"passages"};
+    if(!window.FIDCONF.mode)window.FIDCONF.mode="passages";
     var fidActive=window.FIDCONF.active!==false;
+    var fidMode=window.FIDCONF.mode;
     var fidSeuil=window.FIDCONF.seuil||10;
     var fidRemise=window.FIDCONF.remise||10;
     var fidType=window.FIDCONF.type||"amount";
-    
-    h+='<div class="sec">\ud83c\udfc5 1. Programme de fid\u00e9lit\u00e9 (tampons)</div>';
-    
+    var fidCagnottePct=window.FIDCONF.cagnottePct||5;
+    var fidCaSeuil=window.FIDCONF.caSeuil||500;
+    var fidCaRemise=window.FIDCONF.caRemise||25;
+    var fidCaType=window.FIDCONF.caType||"amount";
+
+    h+='<div class="sec">\ud83c\udfc5 1. Programme de fid\u00e9lit\u00e9</div>';
+
     h+='<div class="card">';
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px"><strong>Fid\u00e9lit\u00e9 active</strong></span><input type="checkbox" '+(fidActive?"checked":"")+' style="width:22px;height:22px;cursor:pointer" onchange="window.FIDCONF.active=this.checked;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></label>';
-    
-    h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Nombre de passages pour la remise</label>';
-    h+='<input type="number" value="'+fidSeuil+'" min="1" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.seuil=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
-    
-    h+='<div style="display:flex;gap:12px;margin-top:14px">';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type de remise</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.type=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"><option value="amount"'+(fidType==="amount"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="percent"'+(fidType==="percent"?" selected":"")+'>Pourcentage (%)</option></select></div>';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Valeur de la remise</label><input type="number" value="'+fidRemise+'" min="1" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.remise=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
-    h+='</div>';
-    
-    var fidU=fidType==="percent"?"%":" \u20ac";
-    h+='<div style="margin-top:14px;padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-radius:12px;text-align:center;font-size:15px;color:var(--text)">Apr\u00e8s <strong>'+fidSeuil+' passages</strong>, le client obtient <strong>'+fidRemise+fidU+' de remise</strong></div>';
+
+    // S\u00e9lecteur du mode de fid\u00e9lit\u00e9
+    h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">M\u00e9canique de fid\u00e9lit\u00e9 '+lxHelpIcon("Passages : 1 point par visite (carte tampon classique). Cagnotte : un % de chaque achat alimente une cagnotte en \u20ac utilisable plus tard. CA cumul\u00e9 : remise d\u00e9clench\u00e9e quand le client atteint un seuil total de chiffre d\'affaires.")+'</label>';
+    h+='<select style="width:100%;padding:14px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.mode=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')">';
+    h+='<option value="passages"'+(fidMode==="passages"?" selected":"")+'>\ud83c\udfaf Carte tampon (par passages)</option>';
+    h+='<option value="cagnotte"'+(fidMode==="cagnotte"?" selected":"")+'>\ud83d\udcb0 Cagnotte (% du ticket)</option>';
+    h+='<option value="ca_cumule"'+(fidMode==="ca_cumule"?" selected":"")+'>\ud83d\udcca CA cumul\u00e9 (seuil en \u20ac)</option>';
+    h+='</select></div>';
+
+    if(fidMode==="passages"){
+      // === MODE 1 : PASSAGES (carte tampon) ===
+      h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Nombre de passages pour la remise</label>';
+      h+='<input type="number" value="'+fidSeuil+'" min="1" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.seuil=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
+      h+='<div style="display:flex;gap:12px;margin-top:14px">';
+      h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type de remise</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.type=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"><option value="amount"'+(fidType==="amount"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="percent"'+(fidType==="percent"?" selected":"")+'>Pourcentage (%)</option></select></div>';
+      h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Valeur de la remise</label><input type="number" value="'+fidRemise+'" min="1" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.remise=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
+      h+='</div>';
+      var fidU=fidType==="percent"?"%":" \u20ac";
+      h+='<div style="margin-top:14px;padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-radius:12px;text-align:center;font-size:15px;color:var(--text)">Apr\u00e8s <strong>'+fidSeuil+' passages</strong>, le client obtient <strong>'+fidRemise+fidU+' de remise</strong></div>';
+    }
+    else if(fidMode==="cagnotte"){
+      // === MODE 2 : CAGNOTTE (% du ticket) ===
+      h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">% du ticket vers\u00e9 dans la cagnotte du client '+lxHelpIcon("\u00c0 chaque encaissement, ce % du total TTC est ajout\u00e9 \u00e0 la cagnotte personnelle du client. Le client peut ensuite utiliser sa cagnotte pour r\u00e9duire un futur ticket.")+'</label>';
+      h+='<input type="number" value="'+fidCagnottePct+'" min="0" max="50" step="0.5" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.cagnottePct=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
+      h+='<div style="margin-top:14px;padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-radius:12px;text-align:center;font-size:15px;color:var(--text)">Pour chaque ticket, <strong>'+fidCagnottePct+'% du total</strong> est cr\u00e9dit\u00e9 sur la cagnotte du client. Exemple : ticket de 80\u20ac \u2192 +<strong>'+(80*fidCagnottePct/100).toFixed(2)+'\u20ac</strong> en cagnotte.</div>';
+      h+='<div style="margin-top:8px;padding:10px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.18);border-radius:10px;font-size:12px;color:rgba(255,255,255,.6);text-align:left">\u2139\ufe0f Branchement caisse en Phase 2 \u2014 pour l\'instant, le mode est sauvegard\u00e9 mais la logique d\'attribution sera activ\u00e9e prochainement.</div>';
+    }
+    else if(fidMode==="ca_cumule"){
+      // === MODE 3 : CA CUMUL\u00c9 ===
+      h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Seuil de CA cumul\u00e9 pour d\u00e9clencher la remise '+lxHelpIcon("Le client cumule ses d\u00e9penses ticket apr\u00e8s ticket. Quand il atteint ce seuil, la remise est d\u00e9bloqu\u00e9e et le compteur repart \u00e0 z\u00e9ro.")+' (\u20ac)</label>';
+      h+='<input type="number" value="'+fidCaSeuil+'" min="50" step="50" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.caSeuil=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
+      h+='<div style="display:flex;gap:12px;margin-top:14px">';
+      h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type de remise</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.caType=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"><option value="amount"'+(fidCaType==="amount"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="percent"'+(fidCaType==="percent"?" selected":"")+'>Pourcentage (%)</option></select></div>';
+      h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Valeur de la remise</label><input type="number" value="'+fidCaRemise+'" min="1" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.caRemise=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
+      h+='</div>';
+      var fidCaU=fidCaType==="percent"?"%":" \u20ac";
+      h+='<div style="margin-top:14px;padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-radius:12px;text-align:center;font-size:15px;color:var(--text)">Quand le client atteint <strong>'+fidCaSeuil+'\u20ac de CA cumul\u00e9</strong>, il obtient <strong>'+fidCaRemise+fidCaU+' de remise</strong> (compteur remis \u00e0 z\u00e9ro).</div>';
+      h+='<div style="margin-top:8px;padding:10px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.18);border-radius:10px;font-size:12px;color:rgba(255,255,255,.6);text-align:left">\u2139\ufe0f Branchement caisse en Phase 2 \u2014 pour l\'instant, le mode est sauvegard\u00e9 mais la logique de cumul sera activ\u00e9e prochainement.</div>';
+    }
     h+='</div>';
 
     // === SECTION 2: Packs promo (ex-abonnements) ===
