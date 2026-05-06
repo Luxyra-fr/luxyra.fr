@@ -322,7 +322,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260506-01"></script>
+<script src="luxyra-supabase.js?v=20260506-02"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -5776,6 +5776,65 @@ var _lastTicketHash="00000000";
 var calD=new Date(TD),aCat=(CATS&&CATS.length?CATS[0]:""),aPCat="all",cFi="all",cSr="",accM=TD.slice(0,7),selCl=null,uid=0;
 if(!window._planDays)window._planDays=1;
 function U(){return"u"+(++uid)+"_"+Date.now().toString(36);}
+
+// === VALIDATION SIRET / TVA INTRACOMMUNAUTAIRE FR (Quick Win 2026-05-06 #2) ===
+// SIRET : 14 chiffres, algo Luhn (sauf cas La Poste 356000... où la somme % 5 = 0)
+// TVA   : "FR" + clé 2 chiffres + SIREN 9 chiffres ; clé = (12 + 3 × (SIREN mod 97)) mod 97
+// Retournent un objet {ok:bool, msg:string} pour rendu UX.
+function lxValidateSiret(raw){
+  if(!raw) return {ok:false, msg:"Non renseigné"};
+  var s = String(raw).replace(/[\s.\-]/g, "");
+  if(s.length !== 14) return {ok:false, msg:"Doit contenir 14 chiffres (vu : "+s.length+")"};
+  if(!/^\d{14}$/.test(s)) return {ok:false, msg:"Caractères non chiffrés détectés"};
+  // Cas spécial La Poste : SIRET commençant par 356000 → somme divisible par 5
+  var sum = 0;
+  for(var i = 0; i < 14; i++){
+    var d = parseInt(s.charAt(i), 10);
+    if(i % 2 === 1){ // positions 2, 4, 6... (indexes 1,3,5...) doublées
+      d *= 2;
+      if(d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  if(s.indexOf("356000") === 0){
+    if(sum % 5 !== 0) return {ok:false, msg:"Clé Luhn invalide (La Poste)"};
+  } else {
+    if(sum % 10 !== 0) return {ok:false, msg:"Clé Luhn invalide (le numéro saisi est faux)"};
+  }
+  return {ok:true, msg:"Numéro SIRET valide"};
+}
+function lxValidateTvaFr(raw){
+  if(!raw) return {ok:false, msg:"Non renseigné"};
+  var t = String(raw).replace(/[\s.\-]/g, "").toUpperCase();
+  if(!/^FR[A-Z0-9]{2}\d{9}$/.test(t)) return {ok:false, msg:"Format attendu : FR + 2 chiffres + 9 chiffres SIREN"};
+  // Pour les TVA "classiques" la clé est 2 chiffres ; le calcul de validation
+  // ne fonctionne que pour ces cas-là (et pas les clés alphanumériques rares).
+  if(!/^FR\d{2}\d{9}$/.test(t)) return {ok:true, msg:"Format alphanumérique (rare) — non vérifiable côté client"};
+  var key = parseInt(t.substr(2, 2), 10);
+  var siren = parseInt(t.substr(4, 9), 10);
+  var expected = (12 + 3 * (siren % 97)) % 97;
+  if(key !== expected) return {ok:false, msg:"Clé TVA invalide (attendu : "+String(expected).padStart(2,"0")+", trouvé : "+String(key).padStart(2,"0")+")"};
+  return {ok:true, msg:"Numéro TVA intracommunautaire valide"};
+}
+// Helper UI : génère un span ✓ vert ou ✗ rouge à côté d'un champ
+// + tooltip natif via title="" pour le détail. Peu intrusif et bien pour MVP.
+function lxValidationBadge(validation){
+  if(!validation || !validation.msg) return "";
+  if(validation.ok){
+    return '<span style="color:#4caf50;font-weight:700;font-size:14px;margin-left:6px" title="'+validation.msg+'">✓</span>';
+  }
+  // Si vide, badge moins agressif (gris)
+  if(validation.msg === "Non renseigné"){
+    return '<span style="color:rgba(255,255,255,.3);font-size:14px;margin-left:6px" title="'+validation.msg+'">○</span>';
+  }
+  return '<span style="color:#ef5350;font-weight:700;font-size:14px;margin-left:6px" title="'+validation.msg+'">✗</span>';
+}
+// Helper UI : icône ❓ d'aide avec tooltip natif (title="")
+// Plus tard on pourra remplacer par un popover custom si besoin.
+function lxHelpIcon(text){
+  return '<span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:rgba(200,168,78,.18);color:var(--gold);font-size:11px;font-weight:700;text-align:center;line-height:16px;margin-left:6px;cursor:help;vertical-align:middle" title="'+text.replace(/"/g,"&quot;")+'">?</span>';
+}
+
 function gS(id){for(var i=0;i<SVC.length;i++)if(SVC[i].id===id)return SVC[i];return null;}
 function gT(id){for(var i=0;i<T.length;i++)if(T[i].id===id)return T[i];return null;}
 function gC(id){for(var i=0;i<CL.length;i++)if(CL[i].id===id)return CL[i];return null;}
@@ -9478,11 +9537,17 @@ function rSettings(){
     h+='<div class="fg"><label>Ville</label><input value="'+S.ville+'" onchange="window.SALON.ville=this.value"></div></div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input value="'+S.tel+'" onchange="window.SALON.tel=this.value"></div>';
     h+='<div class="fg"><label>Email</label><input value="'+S.email+'" onchange="window.SALON.email=this.value"></div>';
-    // SIRET - VERROUILLE (legal NF525, immuable apres 1er ticket)
-    h+='<div class="fg"><label>SIRET <span style="font-size:10px;color:var(--text3)">\ud83d\udd12 verrouill\u00e9 (l\u00e9gal)</span></label>';
+    // SIRET - VERROUILLE (legal NF525, immuable apres 1er ticket) + validation visuelle (Quick Win #2 2026-05-06)
+    var _siretValid = lxValidateSiret(S.siret);
+    h+='<div class="fg"><label>SIRET '+lxValidationBadge(_siretValid)+lxHelpIcon("Num\u00e9ro \u00e0 14 chiffres d\u00e9livr\u00e9 par l'INSEE lors de l'immatriculation. Visible sur votre extrait KBis ou via l'avis SIRENE de l'URSSAF.")+' <span style="font-size:10px;color:var(--text3)">\ud83d\udd12 verrouill\u00e9 (l\u00e9gal)</span></label>';
     h+='<input value="'+(S.siret||"").replace(/"/g,"&quot;")+'" disabled style="opacity:.65;cursor:not-allowed;background:rgba(255,255,255,.02);font-family:monospace">';
+    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">'+(_siretValid.ok?'<span style="color:#4caf50">\u2713 '+_siretValid.msg+'</span>':_siretValid.msg!=="Non renseign\u00e9"?'<span style="color:#ef5350">\u26a0 '+_siretValid.msg+'</span>':'')+'</div>';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">Le SIRET est cha\u00een\u00e9 dans vos tickets NF525. Modification : <a href="mailto:support@luxyra.fr?subject=Correction%20SIRET" style="color:var(--gold);text-decoration:underline">support@luxyra.fr</a></div></div>';
-    h+='<div class="fg"><label>N\u00b0 TVA intracommunautaire</label><input value="'+S.tva+'" onchange="window.SALON.tva=this.value"></div>';
+    // TVA intracommunautaire avec validation temps r\u00e9el (Quick Win #2 2026-05-06)
+    var _tvaValid = lxValidateTvaFr(S.tva);
+    h+='<div class="fg"><label>N\u00b0 TVA intracommunautaire <span id="tvaBadge">'+lxValidationBadge(_tvaValid)+'</span>'+lxHelpIcon("Format : FR + 2 chiffres de cl\u00e9 + 9 chiffres SIREN. Calcul\u00e9 automatiquement \u00e0 partir du SIRET. Obligatoire si vous facturez TVA. V\u00e9rifiable sur le site VIES de l'UE.")+'</label>';
+    h+='<input id="tvaInput" value="'+(S.tva||"").replace(/"/g,"&quot;")+'" placeholder="FR12345678901" onchange="window.SALON.tva=this.value" oninput="(function(self){var v=lxValidateTvaFr(self.value);var b=document.getElementById(\'tvaBadge\');if(b)b.innerHTML=lxValidationBadge(v);})(this)">';
+    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px" id="tvaHelpMsg">'+(_tvaValid.ok?'<span style="color:#4caf50">\u2713 '+_tvaValid.msg+'</span>':_tvaValid.msg!=="Non renseign\u00e9"?'<span style="color:#ef5350">\u26a0 '+_tvaValid.msg+'</span>':'<span style="color:rgba(255,255,255,.5)">Optionnel \u2014 laissez vide si non assujetti TVA (r\u00e9gime micro-BIC sans option)</span>')+'</div></div>';
     h+='</div>';
     // Save button
     h+='<button class="btn bg bk" style="width:100%;margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="saveSalonInfo()">\u2705 Enregistrer les infos salon</button>';
