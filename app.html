@@ -322,7 +322,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260506-04"></script>
+<script src="luxyra-supabase.js?v=20260506-05"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -11569,7 +11569,7 @@ function _renderSvcActionBar(kind){
   h += '<span style="font-size:18px;margin-right:8px">'+primaryIcon+'</span>'+primaryLabel;
   h += '</button>';
 
-  // Boutons secondaires (Famille + Supprimer)
+  // Boutons secondaires (Famille + Supprimer + Bulk edit)
   h += '<div style="display:flex;gap:8px;margin-top:12px">';
 
   // Nouvelle famille
@@ -11590,6 +11590,12 @@ function _renderSvcActionBar(kind){
     h += '<div style="flex:1;padding:13px 12px;border:1px dashed rgba(255,255,255,.08);border-radius:10px;color:rgba(255,255,255,.3);font-weight:600;font-size:11px;text-align:center;line-height:1.4">S\u00e9lectionnez une famille pour la supprimer</div>';
   }
   h += '</div>';
+
+  // Quick Win #5 (2026-05-06) : bouton Modifier en masse (services uniquement, pas forfaits multi-phases)
+  if(kind === "service"){
+    h += '<button onclick="showBulkSvcPriceUpdate()" style="width:100%;margin-top:8px;padding:12px;border:1px solid rgba(76,175,80,.3);border-radius:10px;background:rgba(76,175,80,.06);color:#66bb6a;font-weight:700;font-size:13px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(76,175,80,.14)\'" onmouseout="this.style.background=\'rgba(76,175,80,.06)\'">\ud83d\udcc8 Modifier en masse (prix / dur\u00e9e)</button>';
+  }
+
   h += '</div>';
   return h;
 }
@@ -13160,6 +13166,178 @@ function applyBulkPriceUpdate(){
     toast(count+" produit"+(count>1?"s":"")+" mis \u00e0 jour","success");
   });
 }
+
+// === BULK SERVICE UPDATE (Quick Win #5 \u2014 2026-05-06) ===
+// \u00c9dition multiple des services simples : prix (% ou \u20ac) et dur\u00e9e (+/- minutes)
+// Distinction services simples vs forfaits : on ne touche qu'aux SVC sans phases multiples,
+// pour ne pas casser les forfaits dont la dur\u00e9e totale d\u00e9pend du sequencing des phases.
+function showBulkSvcPriceUpdate(){
+  if(!window._bulkSvcSelected)window._bulkSvcSelected={};
+  if(!window._bulkSvcFilter)window._bulkSvcFilter={cat:"all"};
+  if(!window._bulkSvcType)window._bulkSvcType="percent";
+  if(!window._bulkSvcValue)window._bulkSvcValue=10;
+  if(!window._bulkSvcOp)window._bulkSvcOp="augmenter";
+  if(!window._bulkSvcTarget)window._bulkSvcTarget="prix"; // "prix" | "duree"
+  renderBulkSvcPriceUpdate();
+}
+function renderBulkSvcPriceUpdate(){
+  var filter=window._bulkSvcFilter;
+  // Services simples uniquement (pas de forfaits multi-phases)
+  var allSvcs=SVC.filter(function(s){return !s.phases||s.phases.length<=1;});
+  var filtered=allSvcs.filter(function(s){
+    if(filter.cat!=="all"&&s.cat!==filter.cat)return false;
+    return true;
+  });
+  var allSelected=filtered.length>0&&filtered.every(function(s){return window._bulkSvcSelected[s.id];});
+  var selectedCount=filtered.filter(function(s){return window._bulkSvcSelected[s.id];}).length;
+  var target=window._bulkSvcTarget;
+
+  var h='<div style="position:fixed;inset:0;z-index:999;background:#0a0a0e;overflow-y:auto;padding:16px"><div style="max-width:700px;margin:0 auto">';
+  h+='<h2 style="color:#66bb6a">\ud83d\udcc8 Modification multiple des prestations</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">S\u00e9lectionnez les prestations puis appliquez une modification de prix (% ou \u20ac) ou de dur\u00e9e (+/- min) en masse.</div>';
+
+  // Filter par cat\u00e9gorie
+  var catsList=(window.CATS_SVC||[]).slice();
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">\ud83d\udd0d Filtres</div>';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Famille</label>';
+  h+='<select onchange="window._bulkSvcFilter.cat=this.value;window._bulkSvcSelected={};renderBulkSvcPriceUpdate()" style="width:100%;padding:8px">';
+  h+='<option value="all"'+(filter.cat==="all"?" selected":"")+'>Toutes les familles</option>';
+  for(var i=0;i<catsList.length;i++)h+='<option value="'+catsList[i]+'"'+(filter.cat===catsList[i]?" selected":"")+'>'+catsList[i]+'</option>';
+  h+='</select></div></div>';
+
+  // Cible : prix ou dur\u00e9e
+  h+='<div style="background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.2);border-radius:12px;padding:14px;margin-bottom:14px">';
+  h+='<div style="font-size:11px;color:#66bb6a;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">\ud83c\udfaf Que modifier ?</div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:14px">';
+  h+='<button onclick="window._bulkSvcTarget=\'prix\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(target==="prix"?"#66bb6a":"rgba(255,255,255,.1)")+';background:'+(target==="prix"?"rgba(76,175,80,.2)":"rgba(255,255,255,.04)")+';color:'+(target==="prix"?"#66bb6a":"rgba(255,255,255,.5)")+';font-weight:'+(target==="prix"?"800":"600")+';cursor:pointer;font-size:13px">\ud83d\udcb0 Prix</button>';
+  h+='<button onclick="window._bulkSvcTarget=\'duree\';window._bulkSvcType=\'amount\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(target==="duree"?"#66bb6a":"rgba(255,255,255,.1)")+';background:'+(target==="duree"?"rgba(76,175,80,.2)":"rgba(255,255,255,.04)")+';color:'+(target==="duree"?"#66bb6a":"rgba(255,255,255,.5)")+';font-weight:'+(target==="duree"?"800":"600")+';cursor:pointer;font-size:13px">\u23f1 Dur\u00e9e</button>';
+  h+='</div>';
+
+  // Op (augmenter / diminuer)
+  h+='<div style="display:flex;gap:6px;margin-bottom:12px">';
+  h+='<button onclick="window._bulkSvcOp=\'augmenter\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(window._bulkSvcOp==="augmenter"?"#66bb6a":"rgba(255,255,255,.1)")+';background:'+(window._bulkSvcOp==="augmenter"?"rgba(76,175,80,.2)":"rgba(255,255,255,.04)")+';color:'+(window._bulkSvcOp==="augmenter"?"#66bb6a":"rgba(255,255,255,.5)")+';font-weight:'+(window._bulkSvcOp==="augmenter"?"800":"600")+';cursor:pointer;font-size:13px">\u2197\ufe0f Augmenter</button>';
+  h+='<button onclick="window._bulkSvcOp=\'diminuer\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:2px solid '+(window._bulkSvcOp==="diminuer"?"#ef5350":"rgba(255,255,255,.1)")+';background:'+(window._bulkSvcOp==="diminuer"?"rgba(244,67,54,.2)":"rgba(255,255,255,.04)")+';color:'+(window._bulkSvcOp==="diminuer"?"#ef5350":"rgba(255,255,255,.5)")+';font-weight:'+(window._bulkSvcOp==="diminuer"?"800":"600")+';cursor:pointer;font-size:13px">\u2198\ufe0f Diminuer</button>';
+  h+='</div>';
+
+  // Type + valeur
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end">';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Type</label>';
+  if(target==="prix"){
+    h+='<select onchange="window._bulkSvcType=this.value;renderBulkSvcPriceUpdate()" style="width:100%;padding:10px">';
+    h+='<option value="percent"'+(window._bulkSvcType==="percent"?" selected":"")+'>Pourcentage (%)</option>';
+    h+='<option value="amount"'+(window._bulkSvcType==="amount"?" selected":"")+'>Montant fixe (\u20ac)</option>';
+    h+='</select>';
+  } else {
+    // Dur\u00e9e : uniquement minutes (montant fixe)
+    h+='<input type="text" disabled value="Minutes" style="width:100%;padding:10px;opacity:.7;cursor:not-allowed">';
+  }
+  h+='</div>';
+  h+='<div><label style="font-size:11px;color:var(--text3)">Valeur</label>';
+  h+='<input type="number" id="bulkSvcValueInput" value="'+window._bulkSvcValue+'" min="0" step="'+(target==="duree"?"5":"0.5")+'" oninput="window._bulkSvcValue=parseFloat(this.value)||0;renderBulkSvcPriceUpdate()" style="width:100%;padding:10px;font-size:18px;font-weight:800;text-align:center"></div>';
+  h+='</div>';
+
+  // Aper\u00e7u sur 1er service s\u00e9lectionn\u00e9
+  var previewSvc=filtered.find(function(s){return window._bulkSvcSelected[s.id];});
+  if(previewSvc){
+    if(target==="prix"){
+      var newPrice=calcBulkNewPrice(previewSvc.p,window._bulkSvcOp,window._bulkSvcType,window._bulkSvcValue);
+      h+='<div style="margin-top:10px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;font-size:12px"><div style="color:var(--text3)">Aper\u00e7u sur "'+previewSvc.n+'":</div><div style="font-weight:800;color:#fff">'+previewSvc.p.toFixed(2)+'\u20ac \u2192 <span style="color:'+(window._bulkSvcOp==="augmenter"?"#66bb6a":"#ef5350")+'">'+newPrice.toFixed(2)+'\u20ac</span></div></div>';
+    } else {
+      var oldDur=svcTotalDur(previewSvc);
+      var newDur=Math.max(5,window._bulkSvcOp==="augmenter"?oldDur+window._bulkSvcValue:oldDur-window._bulkSvcValue);
+      h+='<div style="margin-top:10px;padding:10px;background:rgba(255,255,255,.04);border-radius:8px;font-size:12px"><div style="color:var(--text3)">Aper\u00e7u sur "'+previewSvc.n+'":</div><div style="font-weight:800;color:#fff">'+oldDur+' min \u2192 <span style="color:'+(window._bulkSvcOp==="augmenter"?"#66bb6a":"#ef5350")+'">'+newDur+' min</span></div></div>';
+    }
+  }
+  h+='</div>';
+
+  // Liste des services
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:12px;margin-bottom:14px">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px">\ud83d\udcdd Prestations ('+selectedCount+'/'+filtered.length+' s\u00e9lectionn\u00e9es)</div>';
+  h+='<button onclick="bulkSvcToggleAll('+!allSelected+')" style="padding:6px 12px;background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.3);border-radius:6px;color:#64b5f6;font-size:11px;font-weight:700;cursor:pointer">'+(allSelected?"Tout d\u00e9s\u00e9l.":"Tout s\u00e9l.")+'</button>';
+  h+='</div>';
+  h+='<div style="max-height:280px;overflow-y:auto">';
+  if(!filtered.length)h+='<div style="text-align:center;color:var(--text3);padding:20px">Aucune prestation pour cette famille</div>';
+  for(var i=0;i<filtered.length;i++){
+    var s=filtered[i];
+    var isSel=!!window._bulkSvcSelected[s.id];
+    var dur=svcTotalDur(s);
+    h+='<div onclick="bulkSvcToggle('+s.id+')" style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid var(--border2);cursor:pointer;background:'+(isSel?"rgba(76,175,80,.08)":"transparent")+'">';
+    h+='<div style="width:20px;height:20px;border-radius:4px;border:2px solid '+(isSel?"#66bb6a":"rgba(255,255,255,.2)")+';background:'+(isSel?"#66bb6a":"transparent")+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+(isSel?'<span style="color:#fff;font-size:14px;font-weight:900">\u2713</span>':'')+'</div>';
+    h+='<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.n+'</div>';
+    h+='<div style="font-size:10px;color:var(--text3)">'+s.cat+' \u2022 '+dur+' min</div></div>';
+    h+='<div style="text-align:right;flex-shrink:0"><div style="font-size:13px;font-weight:700;color:#fff">'+s.p.toFixed(2)+'\u20ac</div>';
+    if(isSel){
+      if(target==="prix"){
+        var nP=calcBulkNewPrice(s.p,window._bulkSvcOp,window._bulkSvcType,window._bulkSvcValue);
+        h+='<div style="font-size:11px;font-weight:700;color:'+(window._bulkSvcOp==="augmenter"?"#66bb6a":"#ef5350")+'">\u2192 '+nP.toFixed(2)+'\u20ac</div>';
+      } else {
+        var nD=Math.max(5,window._bulkSvcOp==="augmenter"?dur+window._bulkSvcValue:dur-window._bulkSvcValue);
+        h+='<div style="font-size:11px;font-weight:700;color:'+(window._bulkSvcOp==="augmenter"?"#66bb6a":"#ef5350")+'">\u2192 '+nD+' min</div>';
+      }
+    }
+    h+='</div>';
+    h+='</div>';
+  }
+  h+='</div></div>';
+
+  // Boutons action
+  h+='<div style="display:flex;gap:8px;position:sticky;bottom:0;padding:10px 0;background:#0a0a0e">';
+  h+='<button class="btn btn-ghost" style="flex:1" onclick="window._bulkSvcSelected={};cM()">Annuler</button>';
+  if(selectedCount>0)h+='<button class="btn" style="flex:2;background:'+(window._bulkSvcOp==="augmenter"?"#66bb6a":"#ef5350")+';color:#fff;font-weight:800" onclick="applyBulkSvcPriceUpdate()">\u2705 Appliquer sur '+selectedCount+' prestation'+(selectedCount>1?"s":"")+'</button>';
+  h+='</div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function bulkSvcToggle(id){
+  if(window._bulkSvcSelected[id])delete window._bulkSvcSelected[id];
+  else window._bulkSvcSelected[id]=true;
+  renderBulkSvcPriceUpdate();
+}
+function bulkSvcToggleAll(select){
+  var filter=window._bulkSvcFilter;
+  var allSvcs=SVC.filter(function(s){return !s.phases||s.phases.length<=1;});
+  var filtered=allSvcs.filter(function(s){if(filter.cat!=="all"&&s.cat!==filter.cat)return false;return true;});
+  if(select){filtered.forEach(function(s){window._bulkSvcSelected[s.id]=true;});}
+  else {filtered.forEach(function(s){delete window._bulkSvcSelected[s.id];});}
+  renderBulkSvcPriceUpdate();
+}
+function applyBulkSvcPriceUpdate(){
+  var ids=Object.keys(window._bulkSvcSelected).filter(function(k){return window._bulkSvcSelected[k];});
+  if(!ids.length)return;
+  var op=window._bulkSvcOp,type=window._bulkSvcType,value=window._bulkSvcValue,target=window._bulkSvcTarget;
+  var msg=op==="augmenter"?"Augmenter":"Diminuer";
+  var unit=target==="prix"?(type==="percent"?value+"%":value+"\u20ac"):value+" min";
+  var what=target==="prix"?"prix":"dur\u00e9e";
+  showConfirm(msg+" la "+what+" de "+unit+" pour "+ids.length+" prestation"+(ids.length>1?"s":"")+" ?",function(){
+    var count=0;
+    ids.forEach(function(idStr){
+      var id=parseInt(idStr);
+      var s=null;for(var i=0;i<SVC.length;i++){if(SVC[i].id===id){s=SVC[i];break;}}
+      if(!s)return;
+      if(target==="prix"){
+        s.p=calcBulkNewPrice(s.p,op,type,value);
+      } else {
+        // Dur\u00e9e : on travaille uniquement sur les services simples (1 phase max)
+        // donc on ajuste la phase work si elle existe, sinon on la cr\u00e9e
+        if(!s.phases||!s.phases.length){s.phases=[{t:"w",l:"Travail",d:Math.max(5,op==="augmenter"?value:0)}];}
+        else {
+          var ph=s.phases.find(function(p){return p.t==="w";});
+          if(ph){ph.d=Math.max(5,op==="augmenter"?ph.d+value:ph.d-value);}
+        }
+      }
+      count++;
+    });
+    // Sauvegarde group\u00e9e
+    if(typeof saveServices==="function")saveServices();
+    if(typeof auditLog==="function")auditLog("BULK_SVC",msg+" "+what+" "+unit+" sur "+count+" prestations");
+    window._bulkSvcSelected={};
+    cM();go("services");
+    toast(count+" prestation"+(count>1?"s":"")+" mise"+(count>1?"s":"")+" \u00e0 jour","success");
+  });
+}
+
 
 // === BULK DELETE (Suppressions multiples) ===
 function showBulkDelete(){
