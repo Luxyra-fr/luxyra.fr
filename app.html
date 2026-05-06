@@ -322,7 +322,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260505-13"></script>
+<script src="luxyra-supabase.js?v=20260506-01"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -10377,7 +10377,31 @@ function rDetail(){
     h+='<div class="fg"><label>Ville</label><input value="'+(c.ville||"")+'" onchange="gC(\''+c.id+'\').ville=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div></div>';
     h+='<div class="ct" style="margin-top:16px">Notes</div>';
     h+='<div class="fg"><textarea rows="4" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:14px" onchange="gC(\''+c.id+'\').no=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">'+(c.no||"")+'</textarea></div>';
-    h+='<div style="margin-top:8px;max-width:200px"><label style="font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(c.actif?"checked":"")+' onchange="gC(\''+c.id+'\').actif=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Client actif</label></div>';
+    // Acquisition source (Quick Win 2026-05-06) — section dédiée pour stats marketing
+    h+='<div class="ct" style="margin-top:16px">📊 Acquisition</div>';
+    var _acqSrcOptions = [
+      ["", "— Non renseigné —"],
+      ["bouche_oreille", "Bouche à oreille"],
+      ["google", "Google / Recherche"],
+      ["gmb", "Google My Business"],
+      ["facebook", "Facebook"],
+      ["instagram", "Instagram"],
+      ["tiktok", "TikTok"],
+      ["site_internet", "Site Luxyra"],
+      ["carte_visite", "Carte de visite / flyer"],
+      ["vitrine", "Vitrine du salon (passant)"],
+      ["recommandation", "Recommandation d’un client"],
+      ["salon_precedent", "Salon précédent"],
+      ["autre", "Autre"]
+    ];
+    h+='<div class="fg"><label>Comment a connu le salon ?</label><select id="dAcqSrc_'+c.id+'" onchange="(function(self){var cl=gC(\''+c.id+'\');cl.acqSrc=self.value||null;if(self.value!==\'recommandation\')cl.acqParrain=null;if(typeof saveClient===\'function\')saveClient(cl);var pBox=document.getElementById(\'dAcqParrainBox_'+c.id+'\');if(pBox)pBox.style.display=(self.value===\'recommandation\')?\'block\':\'none\';})(this)">';
+    for(var ai=0;ai<_acqSrcOptions.length;ai++){
+      var k=_acqSrcOptions[ai][0], lbl=_acqSrcOptions[ai][1];
+      h+='<option value="'+k+'"'+((c.acqSrc||"")===k?" selected":"")+'>'+lbl+'</option>';
+    }
+    h+='</select></div>';
+    h+='<div id="dAcqParrainBox_'+c.id+'" class="fg" style="display:'+(c.acqSrc==="recommandation"?"block":"none")+'"><label>Nom du parrain</label><input value="'+(c.acqParrain||"")+'" placeholder="Marie DUPONT" onchange="gC(\''+c.id+'\').acqParrain=this.value.trim()||null;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div style="margin-top:16px;max-width:200px"><label style="font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(c.actif?"checked":"")+' onchange="gC(\''+c.id+'\').actif=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Client actif</label></div>';
     h+='</div>';
   }
   else if(clTab==="cheveu"){
@@ -16648,6 +16672,99 @@ function rStats(){
   for(var ni=0;ni<newCl.length;ni++){var nc=newCl[ni];h+="<div style=\"padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px\">"+nc.nom+" "+nc.pre+(nc.ph?" ("+nc.ph+")":"")+"</div>";}
   if(!newCl.length)h+="<div style=\"color:var(--text3);font-size:13px\">Aucun nouveau client</div>";
   h+="</div>";
+
+  // 7b. ACQUISITION CLIENTS (Quick Win 2026-05-06)
+  // Compte les sources d'acquisition des clients créés sur la période sélectionnée.
+  // Permet de répondre à : "d'où viennent mes nouveaux clients ce mois-ci ?"
+  // Donut chart + tableau détaillé + Top parrains (recommandations).
+  var _acqLabels = {
+    bouche_oreille: "Bouche à oreille",
+    google: "Google / Recherche",
+    gmb: "Google My Business",
+    facebook: "Facebook",
+    instagram: "Instagram",
+    tiktok: "TikTok",
+    site_internet: "Site Luxyra",
+    carte_visite: "Carte de visite / flyer",
+    vitrine: "Vitrine du salon",
+    recommandation: "Recommandation",
+    salon_precedent: "Salon précédent",
+    autre: "Autre"
+  };
+  var _acqColors = {
+    bouche_oreille: "#f0d060",
+    google: "#7ab8e0",
+    gmb: "#5b9bd5",
+    facebook: "#1877f2",
+    instagram: "#e91e63",
+    tiktok: "#ff0050",
+    site_internet: "#c8a84e",
+    carte_visite: "#d4a0d0",
+    vitrine: "#8eb573",
+    recommandation: "#2ea043",
+    salon_precedent: "#9b8bbb",
+    autre: "#999999"
+  };
+  var _acqCounts = {};
+  var _acqWithoutSrc = 0;
+  var _parrainCounts = {};
+  newCl.forEach(function(c){
+    if(c.acqSrc){
+      _acqCounts[c.acqSrc] = (_acqCounts[c.acqSrc]||0) + 1;
+      if(c.acqSrc==="recommandation" && c.acqParrain){
+        _parrainCounts[c.acqParrain] = (_parrainCounts[c.acqParrain]||0) + 1;
+      }
+    } else {
+      _acqWithoutSrc++;
+    }
+  });
+  var _acqItems = Object.keys(_acqCounts).map(function(k){
+    return { l: _acqLabels[k] || k, v: _acqCounts[k], c: _acqColors[k] || "#999999", k: k };
+  }).sort(function(a,b){ return b.v - a.v; });
+  var _acqTotal = newCl.length - _acqWithoutSrc;
+
+  h+='<div class="card" style="margin-bottom:14px">';
+  h+='<div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">📊 Acquisition clients</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">D\'où viennent les '+newCl.length+' nouveaux clients de la période</div>';
+  if(!newCl.length){
+    h+='<div style="color:var(--text3);font-size:13px;padding:12px 0;text-align:center">Aucun nouveau client sur cette période</div>';
+  } else if(_acqTotal===0){
+    h+='<div style="color:var(--text3);font-size:13px;padding:12px 0;text-align:center;font-style:italic">Aucun nouveau client n\'a renseigné de source. Pensez à demander « comment nous avez-vous connu ? » à la création client.</div>';
+  } else {
+    // Liste avec couleurs + count + %
+    for(var aii=0;aii<_acqItems.length;aii++){
+      var ai2 = _acqItems[aii];
+      var pct = Math.round(ai2.v/_acqTotal*100);
+      h+='<div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px">';
+      h+='<span style="width:10px;height:10px;border-radius:2px;background:'+ai2.c+'"></span>';
+      h+='<span style="flex:1">'+ai2.l+'</span>';
+      h+='<span style="font-size:11px;color:var(--text3);margin-right:6px">'+pct+'%</span>';
+      h+='<strong>'+ai2.v+'</strong></div>';
+    }
+    if(_acqWithoutSrc > 0){
+      h+='<div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px;opacity:.6">';
+      h+='<span style="width:10px;height:10px;border-radius:2px;background:#444"></span>';
+      h+='<span style="flex:1;font-style:italic">Non renseigné</span>';
+      h+='<strong>'+_acqWithoutSrc+'</strong></div>';
+    }
+    // Donut chart
+    var _donHTML = don(_acqItems, _acqTotal || 1, 180);
+    _donHTML = _donHTML.replace((_acqTotal || 1).toFixed(2)+" €", _acqTotal+" clients");
+    h+=_donHTML;
+    // Top parrains si recommandations présentes
+    var _parrainList = Object.keys(_parrainCounts).map(function(k){return{n:k,v:_parrainCounts[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,5);
+    if(_parrainList.length){
+      h+='<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border2)">';
+      h+='<div style="font-weight:700;font-size:12px;margin-bottom:6px;color:var(--gold)">🏆 Top parrains (à remercier)</div>';
+      for(var pri=0;pri<_parrainList.length;pri++){
+        h+='<div style="display:flex;align-items:center;padding:4px 0;font-size:13px">';
+        h+='<span style="flex:1">'+_parrainList[pri].n+'</span>';
+        h+='<strong style="color:#2ea043">'+_parrainList[pri].v+' filleul'+(_parrainList[pri].v>1?'s':'')+'</strong></div>';
+      }
+      h+='</div>';
+    }
+  }
+  h+='</div>';
   
   // 8. Affluence par jour
   h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:10px\">";
@@ -17050,6 +17167,25 @@ function oM(type,pf){
     h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input id="mp" autocomplete="off" placeholder="06 XX XX XX XX"></div>';
     h+='<div class="fg"><label>Email</label><input id="me" autocomplete="off" placeholder="email@exemple.com"></div>';
     h+='<div class="fg"><label>Notes</label><input id="mno" placeholder="Allergies, pr\u00e9f\u00e9rences..."></div>';
+    // Source d'acquisition (Quick Win 2026-05-06)
+    // Optionnel \u2014 permet stats marketing \u00ab d'o\u00f9 viennent mes clients ? \u00bb
+    // Si \u00ab recommandation \u00bb s\u00e9lectionn\u00e9e, sous-champ \u00ab parrain \u00bb appara\u00eet.
+    h+='<div class="fg"><label>Comment a connu le salon ?</label><select id="mAcqSrc" onchange="(function(v){var p=document.getElementById(\'mAcqParrainBox\');if(p)p.style.display=(v===\'recommandation\')?\'block\':\'none\';})(this.value)">'
+       + '<option value="">\u2014 Non renseign\u00e9 \u2014</option>'
+       + '<option value="bouche_oreille">Bouche \u00e0 oreille</option>'
+       + '<option value="google">Google / Recherche</option>'
+       + '<option value="gmb">Google My Business</option>'
+       + '<option value="facebook">Facebook</option>'
+       + '<option value="instagram">Instagram</option>'
+       + '<option value="tiktok">TikTok</option>'
+       + '<option value="site_internet">Site Luxyra</option>'
+       + '<option value="carte_visite">Carte de visite / flyer</option>'
+       + '<option value="vitrine">Vitrine du salon (passant)</option>'
+       + '<option value="recommandation">Recommandation d\u2019un client</option>'
+       + '<option value="salon_precedent">Salon pr\u00e9c\u00e9dent</option>'
+       + '<option value="autre">Autre</option>'
+       + '</select></div>';
+    h+='<div id="mAcqParrainBox" class="fg" style="display:none"><label>Nom du parrain (qui l\u2019a recommand\u00e9 ?)</label><input id="mAcqParrain" placeholder="Marie DUPONT"></div>';
     h+='<div style="padding:10px 0;border-top:1px solid var(--border2);margin-top:8px">';
     h+='<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:6px">Consentements RGPD</div>';
     h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0"><input type="checkbox" id="mSmsOk" checked> \ud83d\udcf1 Accepte les SMS</label>';
@@ -17432,7 +17568,10 @@ function aCl(){
   var em=document.getElementById("me")?document.getElementById("me").value.trim():"";
   var no=document.getElementById("mno")?document.getElementById("mno").value.trim():"";
   var ddn=document.getElementById("mddn")?document.getElementById("mddn").value:"";
-  var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:"",cp:"",ville:"",ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[]};
+  // Acquisition source (Quick Win 2026-05-06) — optionnel
+  var acqSrc=document.getElementById("mAcqSrc")?document.getElementById("mAcqSrc").value:"";
+  var acqParrain=(acqSrc==="recommandation" && document.getElementById("mAcqParrain"))?document.getElementById("mAcqParrain").value.trim():"";
+  var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:"",cp:"",ville:"",ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[],acqSrc:acqSrc||null,acqParrain:acqParrain||null};
   CL.push(newCl);
   if(typeof saveClient==="function")saveClient(newCl);
   // Si email + consentement RGPD : propose d'envoyer l'invitation pour activer le compte client

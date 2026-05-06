@@ -770,7 +770,10 @@ async function loadSalonData() {
           detChev: c.details_cheveux, collab: c.collab_pref,
           actif: c.actif, fid: c.points_fidelite,
           smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
-          clientBeautyproId: c.client_luxyra_id || null
+          clientBeautyproId: c.client_luxyra_id || null,
+          // Acquisition source (Quick Win 2026-05-06)
+          acqSrc: c.acquisition_source || null,
+          acqParrain: c.acquisition_parrain || null
         };
         // Déballe la fiche technique étendue (peau, ongles, bien-être,
         // formules couleur, photos…) sur l'objet client. Le code UI
@@ -1286,7 +1289,10 @@ async function saveClient(client) {
     details_cheveux: client.detChev, collab_pref: client.collab,
     actif: client.actif, points_fidelite: client.fid,
     sms_ok: client.smsOk, email_ok: client.emOk, fiches: client.fiches || [],
-    fiche_tech: ft
+    fiche_tech: ft,
+    // Acquisition source (Quick Win 2026-05-06) — optionnel, NULL si pas renseigné
+    acquisition_source: client.acqSrc || null,
+    acquisition_parrain: client.acqParrain || null
   };
   // UUID = update, local ID = insert
   if (client.id && client.id.indexOf("-") > 0 && client.id.length > 30) {
