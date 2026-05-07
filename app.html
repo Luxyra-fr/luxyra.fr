@@ -322,7 +322,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260507-01"></script>
+<script src="luxyra-supabase.js?v=20260507-02"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -11587,15 +11587,9 @@ function _renderSvcActionBar(kind){
     h += '</button>';
   }
 
-  // Quick Win #5 (2026-05-06, restyled 2026-05-07) : Modifier en masse \u2014 sobre, coh\u00e9rent
-  if(kind === "service"){
-    h += '<button onclick="showBulkSvcPriceUpdate()" style="flex:1;min-width:140px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.78);font-weight:600;font-size:12px;letter-spacing:.3px;cursor:pointer;transition:background .15s,border-color .15s,color .15s" onmouseover="this.style.background=\'rgba(212,168,67,.08)\';this.style.borderColor=\'rgba(212,168,67,.35)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\';this.style.borderColor=\'rgba(255,255,255,.08)\';this.style.color=\'rgba(255,255,255,.78)\'"><span style="margin-right:6px;font-size:13px">\u21c5</span>Modifier en masse</button>';
-  }
-
-  if(!canDeleteCat && kind !== "service"){
-    // Filler info quand pas de famille active et pas de bouton bulk pour \u00e9quilibrer
-    h += '<div style="flex:1;min-width:140px;padding:10px 12px;border:1px dashed rgba(255,255,255,.06);border-radius:10px;color:rgba(255,255,255,.25);font-weight:500;font-size:11px;text-align:center;line-height:1.4">S\u00e9lectionnez une famille</div>';
-  }
+  // Quick Win #5 (2026-05-06, \u00e9tendu forfaits 2026-05-07) : Modifier en masse \u2014 services ET forfaits
+  // Pour services : prix + dur\u00e9e. Pour forfaits : prix uniquement (dur\u00e9e = somme des phases).
+  h += '<button onclick="showBulkSvcPriceUpdate(\''+kind+'\')" style="flex:1;min-width:140px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.78);font-weight:600;font-size:12px;letter-spacing:.3px;cursor:pointer;transition:background .15s,border-color .15s,color .15s" onmouseover="this.style.background=\'rgba(212,168,67,.08)\';this.style.borderColor=\'rgba(212,168,67,.35)\';this.style.color=\'var(--gold)\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\';this.style.borderColor=\'rgba(255,255,255,.08)\';this.style.color=\'rgba(255,255,255,.78)\'"><span style="margin-right:6px;font-size:13px">\u21c5</span>Modifier en masse</button>';
 
   h += '</div>';
   h += '</div>';
@@ -13169,23 +13163,32 @@ function applyBulkPriceUpdate(){
   });
 }
 
-// === BULK SERVICE UPDATE (Quick Win #5 \u2014 2026-05-06) ===
-// \u00c9dition multiple des services simples : prix (% ou \u20ac) et dur\u00e9e (+/- minutes)
-// Distinction services simples vs forfaits : on ne touche qu'aux SVC sans phases multiples,
-// pour ne pas casser les forfaits dont la dur\u00e9e totale d\u00e9pend du sequencing des phases.
-function showBulkSvcPriceUpdate(){
+// === BULK UPDATE prix/dur\u00e9e (Quick Win #5 \u2014 2026-05-06, \u00e9tendu forfaits 2026-05-07) ===
+// Services simples : prix (% ou \u20ac) et dur\u00e9e (+/- minutes)
+// Forfaits multi-phases : prix uniquement (la dur\u00e9e vient du sequencing des phases, pas modifiable en bulk)
+function showBulkSvcPriceUpdate(kind){
+  if(!kind)kind="service"; // fallback pour compat
+  window._bulkSvcKind=kind;
   if(!window._bulkSvcSelected)window._bulkSvcSelected={};
   if(!window._bulkSvcFilter)window._bulkSvcFilter={cat:"all"};
   if(!window._bulkSvcType)window._bulkSvcType="percent";
   if(!window._bulkSvcValue)window._bulkSvcValue=10;
   if(!window._bulkSvcOp)window._bulkSvcOp="augmenter";
-  if(!window._bulkSvcTarget)window._bulkSvcTarget="prix"; // "prix" | "duree"
+  // Pour forfaits, force le mode "prix" (dur\u00e9e non \u00e9ditable car somme des phases)
+  if(kind==="forfait")window._bulkSvcTarget="prix";
+  else if(!window._bulkSvcTarget)window._bulkSvcTarget="prix";
+  // Reset selection \u00e0 chaque ouverture pour \u00e9viter les fant\u00f4mes inter-tabs
+  window._bulkSvcSelected={};
   renderBulkSvcPriceUpdate();
 }
 function renderBulkSvcPriceUpdate(){
   var filter=window._bulkSvcFilter;
-  // Services simples uniquement (pas de forfaits multi-phases)
-  var allSvcs=SVC.filter(function(s){return !s.phases||s.phases.length<=1;});
+  var kind=window._bulkSvcKind||"service";
+  // Filtre selon le tab actif : services simples (1 phase max) ou forfaits (>=2 phases)
+  var allSvcs=SVC.filter(function(s){
+    var multi=!!(s.phases&&s.phases.length>1);
+    return kind==="forfait" ? multi : !multi;
+  });
   var filtered=allSvcs.filter(function(s){
     if(filter.cat!=="all"&&s.cat!==filter.cat)return false;
     return true;
@@ -13194,17 +13197,23 @@ function renderBulkSvcPriceUpdate(){
   var selectedCount=filtered.filter(function(s){return window._bulkSvcSelected[s.id];}).length;
   var target=window._bulkSvcTarget;
 
+  var labelEntity=kind==="forfait"?"forfaits":"prestations";
+  var labelEntitySingular=kind==="forfait"?"forfait":"prestation";
+  var subtitle=kind==="forfait"
+    ? "Prix appliqu\u00e9 sur plusieurs forfaits"
+    : "Prix ou dur\u00e9e appliqu\u00e9s sur plusieurs prestations";
+
   var h='<div style="position:fixed;inset:0;z-index:999;background:linear-gradient(180deg,#0a0a0e,#0f0f14);overflow-y:auto;padding:24px 16px"><div style="max-width:680px;margin:0 auto">';
   // Header premium Luxyra
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
   h+='<div style="display:flex;align-items:center;gap:14px"><div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,rgba(212,168,67,.16),rgba(168,134,46,.06));border:1px solid rgba(212,168,67,.3);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--gold);box-shadow:inset 0 1px 0 rgba(212,168,67,.18)">\u21c5</div>';
-  h+='<div><h2 style="color:var(--gold);font-family:var(--f1,Georgia,serif);font-weight:600;font-size:22px;letter-spacing:.5px;margin:0">Modification multiple</h2><div style="font-size:12px;color:rgba(255,255,255,.45);margin-top:2px;letter-spacing:.3px">Prix ou dur\u00e9e appliqu\u00e9s sur plusieurs prestations</div></div></div>';
+  h+='<div><h2 style="color:var(--gold);font-family:var(--f1,Georgia,serif);font-weight:600;font-size:22px;letter-spacing:.5px;margin:0">Modification multiple</h2><div style="font-size:12px;color:rgba(255,255,255,.45);margin-top:2px;letter-spacing:.3px">'+subtitle+'</div></div></div>';
   h+='<button onclick="window._bulkSvcSelected={};cM()" style="width:36px;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:rgba(255,255,255,.6);font-size:18px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(255,255,255,.06)\';this.style.color=\'#fff\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\';this.style.color=\'rgba(255,255,255,.6)\'">\u00d7</button>';
   h+='</div>';
   h+='<div style="height:1px;background:linear-gradient(90deg,transparent,rgba(212,168,67,.2),transparent);margin:16px 0"></div>';
 
-  // Filter par cat\u00e9gorie
-  var catsList=(window.CATS_SVC||[]).slice();
+  // Filter par cat\u00e9gorie \u2014 selon kind : CATS_SVC pour services, CATS_FORF pour forfaits
+  var catsList=(kind==="forfait" ? (window.CATS_FORF||window.CATS_SVC||[]) : (window.CATS_SVC||[])).slice();
   h+='<div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:14px;margin-bottom:14px">';
   h+='<div style="font-size:10px;color:rgba(212,168,67,.6);font-weight:700;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px">Filtre</div>';
   h+='<div><label style="font-size:11px;color:var(--text3)">Famille</label>';
@@ -13214,12 +13223,18 @@ function renderBulkSvcPriceUpdate(){
   h+='</select></div></div>';
 
   // Cible : prix ou dur\u00e9e \u2014 segmented control premium or sur noir
+  // Pour forfaits : Dur\u00e9e masqu\u00e9e (somme des phases, non \u00e9ditable en bulk)
   h+='<div style="background:rgba(255,255,255,.02);border:1px solid rgba(212,168,67,.18);border-radius:12px;padding:14px;margin-bottom:14px">';
   h+='<div style="font-size:10px;color:rgba(212,168,67,.6);font-weight:700;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px">Que modifier ?</div>';
-  h+='<div style="display:flex;gap:6px;margin-bottom:14px;background:rgba(0,0,0,.3);padding:4px;border-radius:10px">';
-  h+='<button onclick="window._bulkSvcTarget=\'prix\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:1px solid '+(target==="prix"?"rgba(212,168,67,.4)":"transparent")+';background:'+(target==="prix"?"linear-gradient(135deg,rgba(212,168,67,.18),rgba(168,134,46,.08))":"transparent")+';color:'+(target==="prix"?"var(--gold)":"rgba(255,255,255,.5)")+';font-weight:'+(target==="prix"?"700":"500")+';cursor:pointer;font-size:13px;letter-spacing:.3px;transition:all .15s">Prix</button>';
-  h+='<button onclick="window._bulkSvcTarget=\'duree\';window._bulkSvcType=\'amount\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:1px solid '+(target==="duree"?"rgba(212,168,67,.4)":"transparent")+';background:'+(target==="duree"?"linear-gradient(135deg,rgba(212,168,67,.18),rgba(168,134,46,.08))":"transparent")+';color:'+(target==="duree"?"var(--gold)":"rgba(255,255,255,.5)")+';font-weight:'+(target==="duree"?"700":"500")+';cursor:pointer;font-size:13px;letter-spacing:.3px;transition:all .15s">Dur\u00e9e</button>';
-  h+='</div>';
+  if(kind!=="forfait"){
+    h+='<div style="display:flex;gap:6px;margin-bottom:14px;background:rgba(0,0,0,.3);padding:4px;border-radius:10px">';
+    h+='<button onclick="window._bulkSvcTarget=\'prix\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:1px solid '+(target==="prix"?"rgba(212,168,67,.4)":"transparent")+';background:'+(target==="prix"?"linear-gradient(135deg,rgba(212,168,67,.18),rgba(168,134,46,.08))":"transparent")+';color:'+(target==="prix"?"var(--gold)":"rgba(255,255,255,.5)")+';font-weight:'+(target==="prix"?"700":"500")+';cursor:pointer;font-size:13px;letter-spacing:.3px;transition:all .15s">Prix</button>';
+    h+='<button onclick="window._bulkSvcTarget=\'duree\';window._bulkSvcType=\'amount\';renderBulkSvcPriceUpdate()" style="flex:1;padding:10px;border-radius:8px;border:1px solid '+(target==="duree"?"rgba(212,168,67,.4)":"transparent")+';background:'+(target==="duree"?"linear-gradient(135deg,rgba(212,168,67,.18),rgba(168,134,46,.08))":"transparent")+';color:'+(target==="duree"?"var(--gold)":"rgba(255,255,255,.5)")+';font-weight:'+(target==="duree"?"700":"500")+';cursor:pointer;font-size:13px;letter-spacing:.3px;transition:all .15s">Dur\u00e9e</button>';
+    h+='</div>';
+  } else {
+    // Forfait : info que seul le prix est modifiable
+    h+='<div style="margin-bottom:12px;padding:10px 12px;background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.18);border-radius:8px;font-size:12px;color:rgba(255,255,255,.6);line-height:1.5">\u2139\ufe0f Pour les forfaits, seul le prix est modifiable en masse. La dur\u00e9e totale est calcul\u00e9e automatiquement \u00e0 partir des phases (travail / pause).</div>';
+  }
 
   // Op (augmenter / diminuer) \u2014 m\u00eame segmented control
   h+='<div style="display:flex;gap:6px;margin-bottom:12px;background:rgba(0,0,0,.3);padding:4px;border-radius:10px">';
@@ -13268,11 +13283,11 @@ function renderBulkSvcPriceUpdate(){
   // Liste des services \u2014 premium dark + or accent
   h+='<div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:12px;padding:14px;margin-bottom:14px">';
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">';
-  h+='<div style="font-size:10px;color:rgba(212,168,67,.6);font-weight:700;text-transform:uppercase;letter-spacing:1.2px">Prestations <span style="color:rgba(255,255,255,.4);font-weight:500">\u00b7</span> <span style="color:var(--gold);font-weight:800">'+selectedCount+'</span><span style="color:rgba(255,255,255,.3)">/'+filtered.length+'</span></div>';
+  h+='<div style="font-size:10px;color:rgba(212,168,67,.6);font-weight:700;text-transform:uppercase;letter-spacing:1.2px">'+(kind==="forfait"?"Forfaits":"Prestations")+' <span style="color:rgba(255,255,255,.4);font-weight:500">\u00b7</span> <span style="color:var(--gold);font-weight:800">'+selectedCount+'</span><span style="color:rgba(255,255,255,.3)">/'+filtered.length+'</span></div>';
   h+='<button onclick="bulkSvcToggleAll('+!allSelected+')" style="padding:6px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(212,168,67,.25);border-radius:8px;color:var(--gold);font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.3px;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.12)\'" onmouseout="this.style.background=\'rgba(255,255,255,.04)\'">'+(allSelected?"Tout d\u00e9s\u00e9lectionner":"Tout s\u00e9lectionner")+'</button>';
   h+='</div>';
   h+='<div style="max-height:300px;overflow-y:auto;margin:0 -6px;padding:0 6px">';
-  if(!filtered.length)h+='<div style="text-align:center;color:rgba(255,255,255,.35);padding:24px;font-style:italic">Aucune prestation pour cette famille</div>';
+  if(!filtered.length)h+='<div style="text-align:center;color:rgba(255,255,255,.35);padding:24px;font-style:italic">Aucun '+labelEntitySingular+' pour cette famille</div>';
   for(var i=0;i<filtered.length;i++){
     var s=filtered[i];
     var isSel=!!window._bulkSvcSelected[s.id];
@@ -13301,7 +13316,7 @@ function renderBulkSvcPriceUpdate(){
   h+='<div style="display:flex;gap:10px;position:sticky;bottom:0;padding:14px 0 6px;background:linear-gradient(180deg,transparent,#0a0a0e 25%)">';
   h+='<button onclick="window._bulkSvcSelected={};cM()" style="flex:1;padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);color:rgba(255,255,255,.7);font-weight:600;font-size:14px;cursor:pointer;letter-spacing:.3px;transition:background .15s" onmouseover="this.style.background=\'rgba(255,255,255,.06)\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\'">Annuler</button>';
   if(selectedCount>0){
-    h+='<button onclick="applyBulkSvcPriceUpdate()" style="flex:2;padding:14px;border:1px solid rgba(212,168,67,.5);border-radius:12px;background:linear-gradient(135deg,#e6c265,#c8a84e 50%,#a8862e);color:#0a0a0a;font-weight:800;font-size:14px;letter-spacing:.4px;cursor:pointer;box-shadow:0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 22px rgba(212,168,67,.42),inset 0 1px 0 rgba(255,255,255,.32)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28)\'">Appliquer sur '+selectedCount+' prestation'+(selectedCount>1?"s":"")+'</button>';
+    h+='<button onclick="applyBulkSvcPriceUpdate()" style="flex:2;padding:14px;border:1px solid rgba(212,168,67,.5);border-radius:12px;background:linear-gradient(135deg,#e6c265,#c8a84e 50%,#a8862e);color:#0a0a0a;font-weight:800;font-size:14px;letter-spacing:.4px;cursor:pointer;box-shadow:0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 22px rgba(212,168,67,.42),inset 0 1px 0 rgba(255,255,255,.32)\'" onmouseout="this.style.transform=\'\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.32),inset 0 1px 0 rgba(255,255,255,.28)\'">Appliquer sur '+selectedCount+' '+labelEntitySingular+(selectedCount>1?"s":"")+'</button>';
   }
   h+='</div>';
   h+='</div></div>';
@@ -13323,11 +13338,13 @@ function bulkSvcToggleAll(select){
 function applyBulkSvcPriceUpdate(){
   var ids=Object.keys(window._bulkSvcSelected).filter(function(k){return window._bulkSvcSelected[k];});
   if(!ids.length)return;
+  var kind=window._bulkSvcKind||"service";
+  var entitySing=kind==="forfait"?"forfait":"prestation";
   var op=window._bulkSvcOp,type=window._bulkSvcType,value=window._bulkSvcValue,target=window._bulkSvcTarget;
   var msg=op==="augmenter"?"Augmenter":"Diminuer";
   var unit=target==="prix"?(type==="percent"?value+"%":value+"\u20ac"):value+" min";
   var what=target==="prix"?"prix":"dur\u00e9e";
-  showConfirm(msg+" la "+what+" de "+unit+" pour "+ids.length+" prestation"+(ids.length>1?"s":"")+" ?",function(){
+  showConfirm(msg+" la "+what+" de "+unit+" pour "+ids.length+" "+entitySing+(ids.length>1?"s":"")+" ?",function(){
     var count=0;
     ids.forEach(function(idStr){
       var id=parseInt(idStr);
@@ -13346,12 +13363,19 @@ function applyBulkSvcPriceUpdate(){
       }
       count++;
     });
-    // Sauvegarde group\u00e9e
+    // Sauvegarde group\u00e9e \u2014 saveServices traite les services ET forfaits (m\u00eame table)
     if(typeof saveServices==="function")saveServices();
-    if(typeof auditLog==="function")auditLog("BULK_SVC",msg+" "+what+" "+unit+" sur "+count+" prestations");
+    if(typeof auditLog==="function")auditLog("BULK_"+kind.toUpperCase(),msg+" "+what+" "+unit+" sur "+count+" "+entitySing+"s");
     window._bulkSvcSelected={};
-    cM();go("services");
-    toast(count+" prestation"+(count>1?"s":"")+" mise"+(count>1?"s":"")+" \u00e0 jour","success");
+    cM();
+    // Pr\u00e9server le tab actif (services ou forfaits) en relan\u00e7ant la bonne route
+    if(kind==="forfait"){
+      window._svcTab="forfaits";
+    } else {
+      window._svcTab="services";
+    }
+    go("services");
+    toast(count+" "+entitySing+(count>1?"s":"")+" mis"+(count>1?"":"")+(entitySing==="prestation"?"e":"")+(count>1?"s":"")+" \u00e0 jour","success");
   });
 }
 
