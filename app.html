@@ -2210,6 +2210,45 @@ function calcFraisDeplacement(distKm){
 function getCollabLabel(){var mc=getMetierConfig();return mc.collabLabel;}
 document.addEventListener("DOMContentLoaded",function(){var el=document.getElementById("salonName");if(el)el.textContent=SALON_CONFIG.nom;});
 
+// === Désactivation globale autocomplete navigateur (Chrome/Safari/Firefox) ===
+// Empêche le navigateur de proposer en suggestion les anciennes valeurs saisies
+// (ex: noms clients, téléphones, adresses) quand on remplit une fiche client.
+// Patch via MutationObserver : tout input/textarea ajouté au DOM reçoit
+// autocomplete="off" + flags 1Password/LastPass.
+(function(){
+  function patchInput(el){
+    if(!el || el.dataset._lxNoac) return;
+    el.dataset._lxNoac="1";
+    if(!el.hasAttribute("autocomplete")) el.setAttribute("autocomplete","off");
+    el.setAttribute("data-lpignore","true");
+    el.setAttribute("data-1p-ignore","true");
+    // Empêcher Chrome de remplir : nom unique aléatoire si pas de name
+    if(!el.name || el.name===""){ el.name="lx-"+Math.random().toString(36).slice(2,9); }
+  }
+  function scan(root){
+    if(!root || !root.querySelectorAll) return;
+    var nodes=root.querySelectorAll("input,textarea");
+    for(var i=0;i<nodes.length;i++) patchInput(nodes[i]);
+  }
+  // Initial scan
+  scan(document.body);
+  // Observe DOM mutations pour patcher tout nouveau input dynamiquement injecté
+  if(window.MutationObserver){
+    var obs=new MutationObserver(function(muts){
+      for(var i=0;i<muts.length;i++){
+        var nodes=muts[i].addedNodes;
+        for(var j=0;j<nodes.length;j++){
+          var n=nodes[j];
+          if(n.nodeType!==1) continue;
+          if(n.tagName==="INPUT"||n.tagName==="TEXTAREA") patchInput(n);
+          else scan(n);
+        }
+      }
+    });
+    obs.observe(document.body,{childList:true,subtree:true});
+  }
+})();
+
 // Placeholders pour démos hors-ligne uniquement. Surchargés par loadSalonData
 // avec les vrais collaborateurs du salon dès la connexion. Noms génériques
 // (Membre 1/2) pour ne pas hardcoder un métier précis.
@@ -4557,7 +4596,7 @@ function doConfirmCloture(){
   // "Confirmer" appelle cloturerJournee() 2 fois. Les 2 appels lisent CLOTURES.length
   // simultanément → même num attribué → 2 INSERTs en DB avec même num mais hashes
   // différents. Casse la chaîne NF525 et crée des doublons dans l'historique.
-  // (cas rencontré 2026-04 sur Excellence Coiffure : Z #11, #13, #15, #17 dupliqués)
+  // (cas rencontré 2026-04 sur un salon en production : Z #11, #13, #15, #17 dupliqués)
   if(window._cloturingInProgress){
     if(typeof toast==="function") toast("Clôture en cours, merci de patienter…","info");
     return;
@@ -8339,10 +8378,10 @@ function getApptPhases(a){
 // Stratégie (validée 2026-05) : prorata du prix catalog des services contenus
 // dans le forfait, ajusté du facteur de remise du forfait.
 //
-// Exemple : forfait à 100€ contenant Coupe (catalog 30€, Amandine) +
-// Couleur (catalog 60€, Manue) + Brushing (catalog 30€, Amandine).
+// Exemple : forfait à 100€ contenant Coupe (catalog 30€, Coiffeuse A) +
+// Couleur (catalog 60€, Coiffeuse B) + Brushing (catalog 30€, Coiffeuse A).
 // Sum catalog = 120€, factor = 100/120 = 0.833.
-// → Amandine : (30+30) × 0.833 = 50€, Manue : 60 × 0.833 = 50€, total = 100€ ✅
+// → Coiffeuse A : (30+30) × 0.833 = 50€, Coiffeuse B : 60 × 0.833 = 50€, total = 100€ ✅
 //
 // Fallback :
 // - Pas de phases ou un seul collab dans toutes les phases → 100% au stId principal
@@ -9622,7 +9661,7 @@ function rSettings(){
     h+='<div class="fg"><label>Nom \u00e9tablissement <span style="font-size:10px;color:var(--text3)">\ud83d\udd12 verrouill\u00e9</span></label>';
     h+='<input value="'+(S.nom||"").replace(/"/g,"&quot;")+'" disabled style="opacity:.65;cursor:not-allowed;background:rgba(255,255,255,.02)">';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">Pour modifier, \u00e9crivez \u00e0 <a href="mailto:support@luxyra.fr?subject=Changement%20nom%20salon" style="color:var(--gold);text-decoration:underline">support@luxyra.fr</a></div></div>';
-    h+='<div class="fg"><label>Sous-titre</label><input value="'+(S.sousTitre||"")+'" placeholder="by Amandine J., Institut de beaut\u00e9..." onchange="window.SALON.sousTitre=this.value"></div>';
+    h+='<div class="fg"><label>Sous-titre</label><input value="'+(S.sousTitre||"")+'" placeholder="Sous-titre du salon (optionnel)" onchange="window.SALON.sousTitre=this.value"></div>';
     h+='<div class="fg"><label>Adresse</label><input value="'+S.adr+'" onchange="window.SALON.adr=this.value"></div>';
     h+='<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
     h+='<div class="fg"><label>CP</label><input value="'+S.cp+'" onchange="window.SALON.cp=this.value"></div>';
@@ -10562,19 +10601,19 @@ function rDetail(){
   if(clTab==="infos"){
     h+='<div class="card"><div class="ct">Informations personnelles</div>';
     h+='<div class="fg"><label>Date de cr\u00e9ation</label><input value="'+c.cr+'" disabled style="background:var(--bg)"></div>';
-    h+='<div class="fg"><label>Date de naissance</label><input type="date" value="'+(c.ddn||"")+'" onchange="gC(\''+c.id+'\').ddn=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div class="fg"><label>Date de naissance</label><input type="date" value="'+(c.ddn||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ddn=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div class="fg"><label>Type de client</label><select onchange="gC(\''+c.id+'\').sex=this.value;gC(\''+c.id+'\').genre=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"><option value="F"'+(c.sex==="F"?" selected":"")+'>Femme</option><option value="H"'+(c.sex==="H"?" selected":"")+'>Homme</option><option value="E"'+((c.sex==="E"||c.genre==="E")?" selected":"")+'>Enfant</option></select></div>';
     h+='<div class="fg"><label>Collaborateur habituel</label><select onchange="gC(\''+c.id+'\').collab=+this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">';
     for(var ti=0;ti<T.length;ti++)h+='<option value="'+T[ti].id+'"'+(c.collab===T[ti].id?" selected":"")+'>'+T[ti].n+'</option>';
     h+='</select></div>';
     h+='<div class="ct" style="margin-top:16px">Contact</div>';
-    h+='<div class="fg"><label>T\u00e9l\u00e9phone portable</label><input value="'+c.ph+'" onchange="gC(\''+c.id+'\').ph=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
-    h+='<div class="fg"><label>T\u00e9l\u00e9phone fixe</label><input value="'+(c.ph2||"")+'" onchange="gC(\''+c.id+'\').ph2=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
-    h+='<div class="fg"><label>E-mail</label><input value="'+(c.em||"")+'" onchange="gC(\''+c.id+'\').em=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
-    h+='<div class="fg"><label>Adresse</label><input value="'+(c.adr||"")+'" onchange="gC(\''+c.id+'\').adr=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div class="fg"><label>T\u00e9l\u00e9phone portable</label><input value="'+c.ph+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ph=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div class="fg"><label>T\u00e9l\u00e9phone fixe</label><input value="'+(c.ph2||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ph2=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div class="fg"><label>E-mail</label><input value="'+(c.em||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').em=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div class="fg"><label>Adresse</label><input value="'+(c.adr||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').adr=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
-    h+='<div class="fg"><label>Code postal</label><input value="'+(c.cp||"")+'" onchange="gC(\''+c.id+'\').cp=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
-    h+='<div class="fg"><label>Ville</label><input value="'+(c.ville||"")+'" onchange="gC(\''+c.id+'\').ville=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div></div>';
+    h+='<div class="fg"><label>Code postal</label><input value="'+(c.cp||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').cp=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+    h+='<div class="fg"><label>Ville</label><input value="'+(c.ville||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ville=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div></div>';
     h+='<div class="ct" style="margin-top:16px">Notes</div>';
     h+='<div class="fg"><textarea rows="4" style="width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-family:var(--f2);font-size:14px" onchange="gC(\''+c.id+'\').no=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">'+(c.no||"")+'</textarea></div>';
     // Acquisition source (Quick Win 2026-05-06) — section dédiée pour stats marketing
@@ -19350,7 +19389,7 @@ async function doVenteCarteAbo(clientId,caIdx){
   auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (expire "+dateExp+", attente paiement)");
   if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.");},500);
   cM();
-  // Note 2026-05-05 : pas de pre-select du collab (Alexandre : ce n est pas
+  // Note 2026-05-05 : pas de pre-select du collab (decision : ce n est pas
   // forcement l operateur connecte qui vend la carte). L utilisateur choisit
   // a l etape 1. Le client (cId) est pre-rempli ci-dessous.
   // Item de carte
