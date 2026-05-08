@@ -158,7 +158,7 @@ tr:hover{background:rgba(255,255,255,.02)}
 var SUPABASE_URL="https://kxdgjtvrkwugbifgppai.supabase.co";
 var SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var _sb=null,_uid=null,_online=false;
-var SALONS=[],ALERTS=[],DEMANDES=[],INSCRIPTIONS=[];
+var SALONS=[],ALERTS=[],DEMANDES=[],INSCRIPTIONS=[],MIGRATIONS=[];
 
 // ===== AUDIT LOG SUPER-ADMIN =====
 // Logger toute action sensible (consultation salon, export, modification…)
@@ -292,7 +292,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
+      if(c.data){_online=true;await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
     }
   }catch(e){}
   showLogin();
@@ -319,7 +319,7 @@ async function doLogin(){
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
-  await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
+  await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
@@ -394,6 +394,18 @@ async function loadInscriptions(){
   }catch(e){console.log("inscriptions_log not found:",e);}
 }
 
+async function loadMigrations(){
+  if(!_sb||!_online)return;
+  try{
+    var r=await _sb.from("migration_requests").select("*").order("created_at",{ascending:false});
+    if(r.data)MIGRATIONS=r.data;
+    var b=document.getElementById("badgeMigrations");
+    // Badge : nombre de demandes "new" + "contacted" + "in_progress" (= demandes actives)
+    var active=MIGRATIONS.filter(function(m){return m.status==="new"||m.status==="contacted"||m.status==="in_progress";}).length;
+    if(b)b.textContent=active>0?active:"";
+  }catch(e){console.log("migration_requests not found:",e);}
+}
+
 // ===== NAV =====
 // Router 6 onglets v2 — nav(tab, sub) avec ?tab=&sub= et back/forward
 // Rétrocompat : anciens nav('dashboard'), nav('inscriptions'), nav('demandes'), nav('sms'), nav('nf525'), nav('settings'), nav('alerts'), nav('revenue'), nav('finances'), nav('systeme')
@@ -457,9 +469,10 @@ function render(){
     h+='<div style="margin-top:24px">'+rAlerts()+'</div>';
   }
   else if(tab==='salons'){
-    h=subBar([{id:'liste',label:'🏠 Liste'},{id:'inscriptions',label:'📝 Inscriptions'},{id:'demandes',label:'📩 Demandes essai'}]);
+    h=subBar([{id:'liste',label:'🏠 Liste'},{id:'inscriptions',label:'📝 Inscriptions'},{id:'demandes',label:'📩 Demandes essai'},{id:'migrations',label:'📥 Migrations'}]);
     if(sub==='inscriptions') h+=rInscriptions();
     else if(sub==='demandes') h+=rDemandes();
+    else if(sub==='migrations') h+=rMigrations();
     else h+=rSalons();
   }
   else if(tab==='finance'){
@@ -1521,6 +1534,135 @@ async function updDem(id,st){
   var labels={contacted:"📞 Marqué comme contacté",done:"✅ Marqué comme traité"};
   alert(labels[st]||"Statut mis à jour");
   await loadDemandes();render();
+}
+
+// ===== MIGRATIONS =====
+function escHtml(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function rMigrations(){
+  var h='<div class="topbar"><h1>Migrations <span>'+MIGRATIONS.length+'</span></h1></div>';
+  if(!MIGRATIONS.length)return h+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:36px;margin-bottom:12px">📥</div><div style="color:var(--text3)">Aucune demande de migration. Les demandes du formulaire <strong>/migration</strong> et de l\'app salon (Settings → Migration) apparaîtront ici.</div></div>';
+
+  // Stats compactes
+  var counts={new:0,contacted:0,in_progress:0,completed:0,cancelled:0};
+  MIGRATIONS.forEach(function(m){if(counts[m.status]!==undefined)counts[m.status]++;});
+  h+='<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">';
+  h+='<div class="card" style="flex:1;min-width:120px;padding:14px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">✨ Nouvelles</div><div style="font-size:24px;font-weight:700;color:var(--gold)">'+counts.new+'</div></div>';
+  h+='<div class="card" style="flex:1;min-width:120px;padding:14px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">📞 Contactés</div><div style="font-size:24px;font-weight:700;color:var(--blue)">'+counts.contacted+'</div></div>';
+  h+='<div class="card" style="flex:1;min-width:120px;padding:14px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">🔧 En cours</div><div style="font-size:24px;font-weight:700;color:var(--orange)">'+counts.in_progress+'</div></div>';
+  h+='<div class="card" style="flex:1;min-width:120px;padding:14px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px">✅ Complétées</div><div style="font-size:24px;font-weight:700;color:var(--green)">'+counts.completed+'</div></div>';
+  h+='</div>';
+
+  // Labels lisibles
+  var SOURCE_LABELS={"caisse-salon":"Caisse salon","reservation-online":"Plateforme résa","planning":"Planning/agenda","excel":"Excel/CSV","papier":"Papier","autre":"Autre"};
+  var STATUS_LABELS={"new":"✨ Nouveau","contacted":"📞 Contacté","in_progress":"🔧 En cours","completed":"✅ Complété","cancelled":"🚫 Annulé"};
+  var STATUS_COLORS={"new":"var(--gold)","contacted":"var(--blue)","in_progress":"var(--orange)","completed":"var(--green)","cancelled":"var(--red)"};
+
+  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">📥 Toutes les demandes</div></div><div style="overflow-x:auto"><table>';
+  h+='<tr><th>Date</th><th>Salon</th><th>Source</th><th>Contact</th><th>Volume</th><th>Origine</th><th>Statut</th><th>Actions</th></tr>';
+  MIGRATIONS.forEach(function(m){
+    var dt=m.created_at?new Date(m.created_at).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):"—";
+    var sourceLbl=(SOURCE_LABELS[m.source_type]||m.source_type||"—");
+    if(m.source_software_name)sourceLbl+=' <span style="font-size:10px;color:var(--text3)">('+escHtml(m.source_software_name)+')</span>';
+    var stC=STATUS_COLORS[m.status]||"var(--text2)";
+    var stL=STATUS_LABELS[m.status]||m.status;
+    var origin=m.salon_id?'<span title="Demande depuis l\'app (salon abonné, ID '+m.salon_id+')" style="color:var(--gold);font-size:11px;font-weight:700">🔐 App</span>':'<span title="Demande publique" style="color:var(--text3);font-size:11px">🌐 Public</span>';
+    h+='<tr'+(m.status==="new"?' style="font-weight:600"':'')+'>';
+    h+='<td style="font-size:11px;font-family:var(--mono);white-space:nowrap">'+dt+'</td>';
+    h+='<td><div style="font-weight:600">'+escHtml(m.salon_name)+'</div></td>';
+    h+='<td style="font-size:13px">'+sourceLbl+'</td>';
+    h+='<td style="font-size:12px"><a href="mailto:'+escHtml(m.email)+'" style="color:var(--gold)">'+escHtml(m.email)+'</a><br><a href="tel:'+escHtml(m.phone)+'" style="color:var(--text2)">'+escHtml(m.phone)+'</a></td>';
+    h+='<td style="font-size:12px">'+escHtml(m.client_count_range||"—")+'</td>';
+    h+='<td>'+origin+'</td>';
+    h+='<td><span style="color:'+stC+';font-size:12px;font-weight:700;white-space:nowrap">'+stL+'</span></td>';
+    h+='<td><div class="td-actions" style="flex-wrap:wrap;gap:4px">';
+    if(m.message)h+='<button class="td-btn" onclick="showMigrationMessage(&#39;'+m.id+'&#39;)" title="Voir le message">💬</button>';
+    if(m.status==="new")h+='<button class="td-btn" onclick="updMig(&#39;'+m.id+'&#39;,&#39;contacted&#39;)" title="Marquer contacté">📞</button>';
+    if(m.status==="new"||m.status==="contacted")h+='<button class="td-btn" onclick="updMig(&#39;'+m.id+'&#39;,&#39;in_progress&#39;)" title="Démarrer migration">🔧</button>';
+    if(m.status!=="completed")h+='<button class="td-btn" onclick="updMig(&#39;'+m.id+'&#39;,&#39;completed&#39;)" title="Marquer complété (retire l\'entrée du menu app du salon)" style="background:rgba(76,175,80,.15);color:var(--green)">✅</button>';
+    if(m.status!=="cancelled"&&m.status!=="completed")h+='<button class="td-btn" onclick="updMig(&#39;'+m.id+'&#39;,&#39;cancelled&#39;)" title="Annuler" style="color:var(--text3)">🚫</button>';
+    h+='<button class="td-btn" onclick="delMig(&#39;'+m.id+'&#39;)" title="Supprimer" style="color:var(--red)">🗑️</button>';
+    h+='</div></td></tr>';
+  });
+  h+='</table></div></div>';
+  return h;
+}
+
+function showMigrationMessage(id){
+  var m=MIGRATIONS.find(function(x){return x.id===id;});if(!m)return;
+  var msg=m.message||"(aucun message)";
+  alert("Message de "+m.salon_name+" :\n\n"+msg);
+}
+
+async function updMig(id,st){
+  var m=MIGRATIONS.find(function(x){return x.id===id;});
+  if(!m){alert("Demande introuvable");return;}
+
+  var confirmMsgs={
+    contacted:"Marquer cette demande comme CONTACTÉE ?",
+    in_progress:"Démarrer la MIGRATION pour "+m.salon_name+" ?\n\nLe salon verra '⏳ Migration en cours' dans son app.",
+    completed:"Marquer la migration COMPLÉTÉE ?\n\n→ L'entrée 'Migration' disparaît du menu Settings de l'app du salon.\n→ Le salon est notifié au prochain reload de son app.",
+    cancelled:"ANNULER cette demande ?\n\n→ Le salon pourra refaire une nouvelle demande.",
+  };
+  if(confirmMsgs[st] && !confirm(confirmMsgs[st]))return;
+
+  try {
+    // 1) Update du status dans migration_requests
+    var u1=await _sb.from("migration_requests").update({
+      status:st,
+      status_updated_at:new Date().toISOString()
+    }).eq("id",id);
+    if(u1.error){alert("Erreur update demande: "+u1.error.message);return;}
+
+    // 2) Si status touche au cycle de vie côté app salon, on synchronise le config_json
+    //    du salon. 'new'/'contacted' = laisse 'requested' côté salon (pas de changement).
+    //    'in_progress' = laisse 'requested' (UX coté salon : "en cours" couvre les deux)
+    //    'completed' ou 'cancelled' = retire le statut du config (l'entrée disparaît du menu)
+    if(m.salon_id){
+      if(st==="completed"||st==="cancelled"){
+        var newCfgStatus = st==="completed" ? "completed" : null;
+        // SELECT le config actuel (jsonb-string), parse, modifie, ré-encode
+        var sRes=await _sb.from("salons").select("config_json").eq("id",m.salon_id).maybeSingle();
+        if(sRes.data){
+          var raw=sRes.data.config_json;
+          var cfg={};
+          try {
+            // Le config est stocké comme jsonb-string : on déballe d'abord
+            var asString = typeof raw === "string" ? raw : JSON.stringify(raw);
+            // Si c'est un wrapped JSON-string, parse 2 fois
+            try { var parsed = JSON.parse(asString); cfg = (typeof parsed === "string") ? JSON.parse(parsed) : parsed; } catch(_) { cfg = {}; }
+            if(typeof cfg!=="object"||cfg===null)cfg={};
+          } catch(e){ cfg={}; }
+          if(newCfgStatus===null){
+            delete cfg.migrationStatus;
+            delete cfg.migrationRequestedAt;
+            delete cfg.migrationRequestId;
+          } else {
+            cfg.migrationStatus = newCfgStatus;
+            cfg.migrationCompletedAt = new Date().toISOString();
+          }
+          var u2=await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",m.salon_id);
+          if(u2.error){alert("Statut demande mis à jour, mais erreur sync config salon : "+u2.error.message);return;}
+        }
+      }
+    }
+
+    var labels={
+      contacted:"📞 Marqué contacté",
+      in_progress:"🔧 Migration démarrée — le salon voit 'Migration en cours' dans son app",
+      completed:"✅ Complété — l\'entrée 'Migration' disparaît du menu de l\'app salon",
+      cancelled:"🚫 Annulé — le salon peut refaire une nouvelle demande",
+    };
+    alert(labels[st]||"Statut mis à jour");
+    await loadMigrations();render();
+  } catch(e){
+    alert("Erreur : "+e.message);
+  }
+}
+
+async function delMig(id){
+  if(!confirm("Supprimer définitivement cette demande de migration ? (irréversible)"))return;
+  await _sb.from("migration_requests").delete().eq("id",id);
+  await loadMigrations();render();
 }
 
 async function delDem(id){
