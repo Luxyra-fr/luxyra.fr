@@ -455,12 +455,16 @@ function render(){
   var tab=window._currentTab||'cockpit';
   var sub=window._currentSub||DEFAULT_SUB[tab]||null;
   var h="";
-  // Helper sous-onglets
+  // Helper sous-onglets (avec badges optionnels)
   function subBar(items){
     var x='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
     items.forEach(function(it){
       var act=(sub===it.id);
-      x+='<button class="tb-btn" style="'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" onclick="nav(\''+tab+'\',\''+it.id+'\')">'+it.label+'</button>';
+      var badge='';
+      if(it.badge && it.badge>0){
+        badge=' <span style="display:inline-block;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:4px;min-width:18px;text-align:center;box-shadow:0 2px 6px rgba(231,76,60,.4)">'+it.badge+'</span>';
+      }
+      x+='<button class="tb-btn" style="position:relative;'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" onclick="nav(\''+tab+'\',\''+it.id+'\')">'+it.label+badge+'</button>';
     });
     return x+'</div>';
   }
@@ -469,7 +473,14 @@ function render(){
     h+='<div style="margin-top:24px">'+rAlerts()+'</div>';
   }
   else if(tab==='salons'){
-    h=subBar([{id:'liste',label:'🏠 Liste'},{id:'inscriptions',label:'📝 Inscriptions'},{id:'demandes',label:'📩 Demandes essai'},{id:'migrations',label:'📥 Migrations'}]);
+    var nbDemandesNew = DEMANDES.filter(function(d){return d.status==="new";}).length;
+    var nbMigrationsActives = MIGRATIONS.filter(function(m){return m.status==="new"||m.status==="contacted"||m.status==="in_progress";}).length;
+    h=subBar([
+      {id:'liste',label:'🏠 Liste'},
+      {id:'inscriptions',label:'📝 Inscriptions'},
+      {id:'demandes',label:'📩 Demandes essai',badge:nbDemandesNew},
+      {id:'migrations',label:'📥 Migrations',badge:nbMigrationsActives}
+    ]);
     if(sub==='inscriptions') h+=rInscriptions();
     else if(sub==='demandes') h+=rDemandes();
     else if(sub==='migrations') h+=rMigrations();
@@ -1801,13 +1812,65 @@ function createFromDem(id){
 
 // ===== ALERTES =====
 function rAlerts(){
-  var h='<div class="topbar"><h1>Alertes</h1></div>';
-  h+='<div class="card" style="padding:0">';
-  if(!ALERTS.length){
-    // Show from admin_log in Supabase
-    h+='<div style="text-align:center;padding:40px;color:var(--text3)">Les actions administratives apparaîtront ici.</div>';
+  var h='<div class="topbar"><h1>Alertes & demandes en attente</h1></div>';
+
+  // === Migrations en attente (new + contacted + in_progress) ===
+  var migPending = MIGRATIONS.filter(function(m){return m.status==="new"||m.status==="contacted"||m.status==="in_progress";});
+  var migNew = MIGRATIONS.filter(function(m){return m.status==="new";});
+  // === Demandes d'essai non traitées ===
+  var demNew = DEMANDES.filter(function(d){return d.status==="new";});
+
+  if(migPending.length || demNew.length){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:18px">';
+
+    if(migPending.length){
+      var urgency = migNew.length>0 ? 'high' : 'mid';
+      var bg = urgency==='high' ? 'linear-gradient(135deg,rgba(231,76,60,.15),rgba(231,76,60,.05))' : 'linear-gradient(135deg,rgba(243,156,18,.15),rgba(243,156,18,.05))';
+      var borderC = urgency==='high' ? 'rgba(231,76,60,.45)' : 'rgba(243,156,18,.4)';
+      var pulseC = urgency==='high' ? '#e74c3c' : '#f39c12';
+      h+='<div onclick="nav(&#39;salons&#39;,&#39;migrations&#39;)" style="cursor:pointer;background:'+bg+';border:1px solid '+borderC+';border-radius:14px;padding:18px;transition:all .2s;position:relative;overflow:hidden" onmouseenter="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 8px 24px rgba(0,0,0,.3)\'" onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'\'">';
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+      h+='<div style="font-size:11px;color:'+pulseC+';font-weight:800;letter-spacing:1.5px;text-transform:uppercase">📥 '+(urgency==='high'?'Action requise':'En cours')+'</div>';
+      if(migNew.length>0)h+='<div style="display:inline-block;background:'+pulseC+';color:#fff;font-size:11px;font-weight:800;padding:3px 9px;border-radius:10px">'+migNew.length+' nouv.</div>';
+      h+='</div>';
+      h+='<div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:6px">'+migPending.length+' migration'+(migPending.length>1?'s':'')+' en attente</div>';
+      // Liste compacte des dernières demandes
+      var top3 = migPending.slice(0,3);
+      top3.forEach(function(m){
+        var stIcon = m.status==='new'?'✨':(m.status==='contacted'?'📞':'🔧');
+        var dt = m.created_at ? new Date(m.created_at).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
+        h+='<div style="font-size:12px;color:rgba(255,255,255,.7);padding:4px 0;border-top:1px solid rgba(255,255,255,.05);margin-top:6px">'+stIcon+' <strong style="color:#fff">'+escHtml(m.salon_name)+'</strong> <span style="color:var(--text3);float:right">'+dt+'</span></div>';
+      });
+      if(migPending.length>3)h+='<div style="font-size:11px;color:'+pulseC+';margin-top:8px;text-align:right">+ '+(migPending.length-3)+' autre'+(migPending.length-3>1?'s':'')+' →</div>';
+      else h+='<div style="font-size:11px;color:'+pulseC+';margin-top:8px;text-align:right">Voir tout →</div>';
+      h+='</div>';
+    }
+
+    if(demNew.length){
+      h+='<div onclick="nav(&#39;salons&#39;,&#39;demandes&#39;)" style="cursor:pointer;background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.3);border-radius:14px;padding:18px;transition:all .2s" onmouseenter="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 8px 24px rgba(0,0,0,.3)\'" onmouseleave="this.style.transform=\'\';this.style.boxShadow=\'\'">';
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+      h+='<div style="font-size:11px;color:var(--gold);font-weight:800;letter-spacing:1.5px;text-transform:uppercase">📩 Nouvelles demandes</div>';
+      h+='<div style="display:inline-block;background:var(--gold);color:#0a0a0a;font-size:11px;font-weight:800;padding:3px 9px;border-radius:10px">'+demNew.length+'</div>';
+      h+='</div>';
+      h+='<div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:6px">'+demNew.length+' demande'+(demNew.length>1?'s':'')+' d\'essai</div>';
+      h+='<div style="font-size:13px;color:rgba(255,255,255,.6)">Visiteurs ayant rempli le formulaire luxyra.fr</div>';
+      h+='<div style="font-size:11px;color:var(--gold);margin-top:8px;text-align:right">Voir →</div>';
+      h+='</div>';
+    }
+
+    h+='</div>';
   }
-  h+='</div>';return h;
+
+  // === État OK si rien en attente ===
+  if(!migPending.length && !demNew.length){
+    h+='<div class="card" style="padding:32px;text-align:center;background:linear-gradient(135deg,rgba(76,175,80,.08),transparent);border:1px solid rgba(76,175,80,.2)">';
+    h+='<div style="font-size:36px;margin-bottom:10px">✅</div>';
+    h+='<div style="font-size:16px;font-weight:700;color:var(--green);margin-bottom:4px">Tout est à jour</div>';
+    h+='<div style="font-size:13px;color:var(--text3)">Aucune demande en attente. Les nouvelles arrivées seront notifiées ici.</div>';
+    h+='</div>';
+  }
+
+  return h;
 }
 
 // ===== REVENUS =====
