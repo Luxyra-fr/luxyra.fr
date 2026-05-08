@@ -470,7 +470,8 @@ function render(){
   }
   if(tab==='cockpit'){
     h=rDashboard();
-    h+='<div style="margin-top:24px">'+rAlerts()+'</div>';
+    // rAlerts() retiré du cockpit — fusionné dans 'À traiter aujourd'hui'
+    // (toutes les actions urgentes sont désormais dans une source unique en haut)
   }
   else if(tab==='salons'){
     var nbDemandesNew = DEMANDES.filter(function(d){return d.status==="new";}).length;
@@ -609,7 +610,10 @@ function rDashboard(){
     return d>=0&&d<3;
   });
   var pendingVerif=SALONS.filter(function(s){return s.verif==='pending_review';});
-  var todoCount=pendingInscr+unreadChat+trialExp.length+pendingVerif.length;
+  var migPending=MIGRATIONS.filter(function(m){return m.status==='new'||m.status==='contacted'||m.status==='in_progress';});
+  var migNew=MIGRATIONS.filter(function(m){return m.status==='new';});
+  var demNew=DEMANDES.filter(function(d){return d.status==='new';});
+  var todoCount=pendingInscr+unreadChat+trialExp.length+pendingVerif.length+migPending.length+demNew.length;
 
   var h='<div class="topbar"><h1>Cockpit <span>Vue temps réel</span></h1><div style="font-size:12px;color:var(--text3);font-family:var(--mono)">'+fmtD(now.toISOString())+'</div></div>';
   // Bannière activation push (si permission === 'default')
@@ -632,13 +636,23 @@ function rDashboard(){
   h+='<div class="kpi"><div class="kpi-label">CA cumulé estimé</div><div class="kpi-value" style="color:var(--purple)">'+fmtM(caCum)+'</div><div class="kpi-sub">Projection 12 mois</div><div class="kpi-icon">📈</div></div>';
   h+='</div>';
 
-  // À traiter aujourd'hui
+  // À traiter aujourd'hui (source unique : migrations + inscriptions + chat + essais + KBIS + demandes)
   h+='<div class="card"><h3>🎯 À traiter aujourd’hui <span style="color:var(--text3);font-weight:500">('+todoCount+')</span></h3>';
   if(todoCount===0){
     h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">✨ Tout est à jour, rien à traiter.</div>';
   }else{
-    if(pendingInscr>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'inscriptions\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📝</span><span style="flex:1"><strong>'+pendingInscr+'</strong> demande'+(pendingInscr>1?'s':'')+' d’inscription en attente</span><span style="color:var(--gold)">→</span></div>';
+    // Ordre : migrations urgentes (new) en premier, puis demandes, puis chat, puis le reste
+    if(migNew.length>0){
+      var urgC = '#e74c3c';
+      h+='<div class="todo-row" onclick="nav(\'salons\',\'migrations\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer;background:linear-gradient(90deg,rgba(231,76,60,.08),transparent)"><span style="font-size:18px">📥</span><span style="flex:1"><strong style="color:'+urgC+'">'+migNew.length+'</strong> nouvelle'+(migNew.length>1?'s':'')+' demande'+(migNew.length>1?'s':'')+' de <strong>migration</strong></span><span style="color:'+urgC+';font-weight:700">→</span></div>';
+    }
+    var migInProgress = migPending.length - migNew.length;
+    if(migInProgress>0){
+      h+='<div class="todo-row" onclick="nav(\'salons\',\'migrations\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">🔧</span><span style="flex:1"><strong>'+migInProgress+'</strong> migration'+(migInProgress>1?'s':'')+' en cours / contactée'+(migInProgress>1?'s':'')+'</span><span style="color:var(--gold)">→</span></div>';
+    }
+    if(demNew.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'demandes\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📩</span><span style="flex:1"><strong>'+demNew.length+'</strong> demande'+(demNew.length>1?'s':'')+' d’essai (formulaire site)</span><span style="color:var(--gold)">→</span></div>';
     if(unreadChat>0)h+='<div class="todo-row" onclick="nav(\'communication\',\'chat\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">💬</span><span style="flex:1"><strong>'+unreadChat+'</strong> message'+(unreadChat>1?'s':'')+' support non lu</span><span style="color:var(--gold)">→</span></div>';
+    if(pendingInscr>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'inscriptions\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📝</span><span style="flex:1"><strong>'+pendingInscr+'</strong> inscription'+(pendingInscr>1?'s':'')+' en attente d’activation</span><span style="color:var(--gold)">→</span></div>';
     if(trialExp.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">⏰</span><span style="flex:1"><strong>'+trialExp.length+'</strong> essai'+(trialExp.length>1?'s':'')+' expire'+(trialExp.length>1?'nt':'')+' dans &lt;3j</span><span style="color:var(--gold)">→</span></div>';
     if(pendingVerif.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;cursor:pointer"><span style="font-size:18px">🛡️</span><span style="flex:1"><strong>'+pendingVerif.length+'</strong> vérification'+(pendingVerif.length>1?'s':'')+' KBIS/ID en attente</span><span style="color:var(--gold)">→</span></div>';
   }
