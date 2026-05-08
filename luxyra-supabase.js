@@ -1884,7 +1884,7 @@ async function saveSalonConfig() {
       categories_forfaits:(window.CATS_FORF&&Array.isArray(window.CATS_FORF))?window.CATS_FORF.slice():[],
       // Cartes d'abonnement : modèles + toggle. CRITIQUE — sans ces 2 lignes,
       // chaque saveSalonConfig() écrasait silencieusement les modèles existants
-      // en DB (cas réel rencontré sur Excellence Coiffure 2026-05-04 : les 6
+      // en DB (cas réel rencontré sur un salon en production 2026-05-04 : les 6
       // cartes vendues continuaient de fonctionner mais le modèle source était
       // perdu, empêchant toute nouvelle vente). Garde-fou : si window.CARTES_ABO
       // est vide alors qu'il y avait des modèles en DB, on préserve les modèles
