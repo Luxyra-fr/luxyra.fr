@@ -1632,7 +1632,9 @@ window.lxAdminAlert = lxAdminAlert;
 window.lxAdminConfirm = lxAdminConfirm;
 
 function rMigrations(){
-  var h='<div class="topbar"><h1>Migrations <span>'+MIGRATIONS.length+'</span></h1></div>';
+  var h='<div class="topbar" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px"><h1 style="margin:0">Migrations <span>'+MIGRATIONS.length+'</span></h1>';
+  h+='<button class="tb-btn" onclick="lxTestMigrationPush()" style="background:rgba(212,168,67,.08);border-color:rgba(212,168,67,.3);color:var(--gold);font-size:12px">🧪 Tester push notification</button>';
+  h+='</div>';
   if(!MIGRATIONS.length)return h+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:36px;margin-bottom:12px">📥</div><div style="color:var(--text3)">Aucune demande de migration. Les demandes du formulaire <strong>/migration</strong> et de l\'app salon (Settings → Migration) apparaîtront ici.</div></div>';
 
   // Stats compactes
@@ -1761,6 +1763,37 @@ async function updMig(id,st){
     await lxAdminAlert("Erreur : "+e.message,{title:"Échec",color:"#e88080"});
   }
 }
+
+async function lxTestMigrationPush(){
+  try {
+    var r = await fetch((window.SUPABASE_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/send-push",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":"Bearer "+SUPABASE_KEY,
+        "apikey":SUPABASE_KEY
+      },
+      body:JSON.stringify({
+        event_type:"migration",
+        title:"📥 Test push migration",
+        body:"Si tu vois ceci sur ton téléphone, le canal Migration est opérationnel ✓",
+        url:"https://luxyra.fr/admin?tab=salons&sub=migrations",
+        target_user_id:_uid
+      })
+    });
+    var j = await r.json();
+    if(j.sent>0){
+      await lxAdminAlert("📲 "+j.sent+" notification"+(j.sent>1?"s":"")+" envoyée"+(j.sent>1?"s":"")+" à votre/vos appareil"+(j.sent>1?"s":"")+".\n\nSi rien ne s'affiche dans les prochaines secondes :\n• Vérifiez que les notifications de luxyra.fr sont autorisées sur le téléphone\n• Vérifiez que le toggle 'events_migration' est ON\n• Vérifiez que le téléphone n'est pas en mode 'Ne pas déranger'",{title:"Push envoyé",surtitle:"Test canal migration"});
+    } else if(j.failed>0){
+      await lxAdminAlert("Aucune notification reçue. "+j.failed+" appareil"+(j.failed>1?"s ont":" a")+" échoué (sans doute expiré).\n\n→ Allez dans Paramètres → Notifications push pour réactiver vos appareils.",{title:"Échec d'envoi",color:"#e88080"});
+    } else {
+      await lxAdminAlert("Aucun appareil souscrit pour les notifs Migration.\n\n→ Activez les notifications push depuis Paramètres → Notifications push.",{title:"Aucun appareil",color:"#f39c12"});
+    }
+  } catch(e){
+    await lxAdminAlert("Erreur lors du test : "+e.message,{title:"Échec",color:"#e88080"});
+  }
+}
+window.lxTestMigrationPush = lxTestMigrationPush;
 
 async function delMig(id){
   var m=MIGRATIONS.find(function(x){return x.id===id;});
