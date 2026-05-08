@@ -5943,13 +5943,46 @@ function lxShowModal(htmlShell){
 // Pré-remplie avec les infos du salon (nom, email, tel), POST vers edge function
 // migration-request avec from_app=true et salon_id pour skip rate-limit + lier la
 // demande au salon en DB.
+// État : si SALON_CONFIG.migrationStatus === "requested", affiche écran info (pas
+// de re-submit). Si "completed", l'entrée est masquée du menu (handled upstream).
 function lxOpenMigrationModal(){
   var S = window.SALON_CONFIG || {};
+  var status = S.migrationStatus || null;
+
+  function esc(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  // === Cas "demande déjà envoyée" : on affiche un écran récap, pas de re-submit ===
+  if(status === "requested"){
+    var sentAt = S.migrationRequestedAt ? new Date(S.migrationRequestedAt) : null;
+    var sentStr = sentAt ? sentAt.toLocaleDateString("fr-FR",{day:"2-digit",month:"long",year:"numeric"}) + " à " + sentAt.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}) : "récemment";
+    var bodyInfo = ''
+      + '<div style="text-align:center;padding:8px 0 14px"><div style="font-size:48px;margin-bottom:8px">⏳</div></div>'
+      + '<p style="font-size:14px;color:rgba(255,255,255,.85);text-align:center;line-height:1.65;margin:0 0 16px">Votre demande de migration a bien été enregistrée le <strong style="color:var(--gold)">'+esc(sentStr)+'</strong>.</p>'
+      + '<div style="background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.2);border-radius:10px;padding:16px;margin:14px 0">'
+      + '<div style="font-family:Georgia,serif;font-size:11px;color:var(--gold);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">Prochaines étapes</div>'
+      + '<div style="font-size:13px;line-height:1.8;color:rgba(255,255,255,.75)">'
+      + '<strong style="color:#fff">1.</strong> Notre équipe vous recontacte sous <strong>4 h ouvrées</strong><br>'
+      + '<strong style="color:#fff">2.</strong> On définit ensemble l\'accès à vos données<br>'
+      + '<strong style="color:#fff">3.</strong> Migration en 24-48 h<br>'
+      + '<strong style="color:#fff">4.</strong> Vous validez 5 fiches au hasard<br>'
+      + '<strong style="color:#fff">5.</strong> Import complet'
+      + '</div></div>'
+      + '<p style="font-size:12px;color:rgba(255,255,255,.5);text-align:center;line-height:1.6;margin:14px 0 0">Une question urgente ? Écrivez à <a href="mailto:support@luxyra.fr" style="color:var(--gold);text-decoration:underline">support@luxyra.fr</a></p>';
+    var footerInfo = '<div style="margin-top:8px"><button class="btn bg" onclick="cM()" style="width:100%;padding:12px;font-family:var(--f1,Georgia,serif);font-size:13px;letter-spacing:1px;text-transform:uppercase">Fermer</button></div>';
+    lxShowModal(lxModalShell({
+      surtitle: "MIGRATION EN COURS",
+      title: "Demande enregistrée",
+      body: bodyInfo,
+      footer: footerInfo,
+      maxWidth: "440px"
+    }));
+    return;
+  }
+
+  // === Cas par défaut : formulaire de demande ===
   var preName = S.nom || "";
   var preEmail = S.email || "";
   var prePhone = S.tel || S.telephone || "";
-
-  function esc(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
   var inputStyle = "width:100%;background:rgba(0,0,0,.35);border:1px solid rgba(212,168,67,.2);border-radius:6px;color:#fff;font-family:var(--f1,Georgia,serif);font-size:14px;padding:11px 14px;letter-spacing:.3px;box-sizing:border-box;outline:none";
   var labelStyle = "display:block;font-size:10px;color:rgba(212,168,67,.85);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-family:'Helvetica Neue',Arial,sans-serif;font-weight:600";
@@ -6069,6 +6102,19 @@ function lxSubmitMigrationModal(){
       if(typeof auditLog==="function"){
         try { auditLog("MIGRATION_REQUEST", "Demande de migration soumise — type "+payload.source_type+(payload.source_software_name?" ("+payload.source_software_name+")":"")); } catch(_) {}
       }
+      // === Persiste le status dans SALON_CONFIG pour bloquer les re-submissions ===
+      // L'entrée du menu Settings affichera "Migration en cours" et la modal montrera
+      // l'écran récap au lieu du formulaire. Quand l'admin marque la demande comme
+      // "completed" en DB, il met aussi SALON_CONFIG.migrationStatus = "completed"
+      // → l'entrée disparaît du menu.
+      try {
+        if(window.SALON_CONFIG){
+          window.SALON_CONFIG.migrationStatus = "requested";
+          window.SALON_CONFIG.migrationRequestedAt = new Date().toISOString();
+          if(r.data.request_id) window.SALON_CONFIG.migrationRequestId = r.data.request_id;
+          if(typeof saveSalonConfig === "function") saveSalonConfig();
+        }
+      } catch(e){ console.error("[migration] failed to persist status:", e); }
     } else {
       var errMsg = (r.data && r.data.error) ? r.data.error : "Une erreur est survenue. Réessayez ou contactez support@luxyra.fr.";
       showMsg("err", errMsg);
@@ -9412,9 +9458,25 @@ function rSettings(){
       {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"},
       {k:"documents",i:"\ud83d\udcc1",t:"Mes documents",d:"Kbis, pi\u00e8ce d\u2019identit\u00e9, v\u00e9rification"},
       {k:"notifspush",i:"\ud83d\udd14",t:"Notifications push",d:"Activation, test, d\u00e9sactivation"},
-      {k:"migration",i:"\ud83d\udce5",t:"Migration depuis ancien logiciel",d:"Reprise gratuite de votre fichier client"},
       {k:"support",i:"\ud83d\udcac",t:"Support Luxyra",d:"Nouvelle conversation, historique"}
     ];
+
+    // === Entr\u00e9e Migration : visibilit\u00e9 conditionnelle selon l'\u00e9tat ===
+    // null/undefined \u2192 entr\u00e9e normale "Demander la migration"
+    // "requested" \u2192 entr\u00e9e "Migration en cours" (info)
+    // "completed" \u2192 entr\u00e9e masqu\u00e9e (migration termin\u00e9e, plus pertinente dans le menu)
+    var _migStatus = (window.SALON_CONFIG && window.SALON_CONFIG.migrationStatus) || null;
+    if(_migStatus !== "completed"){
+      // Ins\u00e8re l'entr\u00e9e Migration JUSTE AVANT Support (donc en avant-derni\u00e8re position)
+      var migEntry;
+      if(_migStatus === "requested"){
+        migEntry = {k:"migration",i:"\u23f3",t:"Migration en cours",d:"Notre \u00e9quipe vous a contact\u00e9 ou va vous contacter sous 4h"};
+      } else {
+        migEntry = {k:"migration",i:"\ud83d\udce5",t:"Migration depuis ancien logiciel",d:"Reprise gratuite de votre fichier client"};
+      }
+      // Ins\u00e8re avant la derni\u00e8re entr\u00e9e (Support)
+      sections.splice(sections.length - 1, 0, migEntry);
+    }
     for(var i=0;i<sections.length;i++){
       var s=sections[i];
       var locked=!isPro()&&(s.k==="siteweb"||s.k==="sms"||s.k==="connect");
@@ -19401,6 +19463,10 @@ async function saveSalonConfig(){
       if(SALON_CONFIG.metier)        cfg.metier        = SALON_CONFIG.metier;
       if(SALON_CONFIG.modeActivite)  cfg.modeActivite  = SALON_CONFIG.modeActivite;
       if(SALON_CONFIG.domicile)      cfg.domicile      = SALON_CONFIG.domicile;
+      // Migration depuis ancien logiciel (Quick Win 2026-05-08) : null|"requested"|"completed"
+      if(SALON_CONFIG.migrationStatus !== undefined)     cfg.migrationStatus     = SALON_CONFIG.migrationStatus;
+      if(SALON_CONFIG.migrationRequestedAt !== undefined) cfg.migrationRequestedAt = SALON_CONFIG.migrationRequestedAt;
+      if(SALON_CONFIG.migrationRequestId !== undefined)   cfg.migrationRequestId   = SALON_CONFIG.migrationRequestId;
     }
     window._SALON_CONFIG_JSON = cfg;
     var u = await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
@@ -23873,6 +23939,11 @@ function initApp(){
             var _bgEl=document.getElementById("appBg");
             if(_bgEl)_bgEl.style.backgroundImage=APP_BG?"url("+APP_BG+")":"none";
           }
+          // Migration depuis ancien logiciel : restaurer le statut depuis cfg
+          // Détermine la visibilité de l'entrée "Migration" dans Settings et l'écran modal
+          if(typeof cfg.migrationStatus !== "undefined") SALON_CONFIG.migrationStatus = cfg.migrationStatus || null;
+          if(typeof cfg.migrationRequestedAt !== "undefined") SALON_CONFIG.migrationRequestedAt = cfg.migrationRequestedAt || null;
+          if(typeof cfg.migrationRequestId !== "undefined") SALON_CONFIG.migrationRequestId = cfg.migrationRequestId || null;
         }catch(e){}
       }else{
         // Pas encore de config_json en base, on initialise vide
