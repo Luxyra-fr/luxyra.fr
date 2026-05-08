@@ -5938,6 +5938,149 @@ function lxModalShell(opts){
 function lxShowModal(htmlShell){
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()" style="background:rgba(0,0,0,.7);backdrop-filter:blur(4px)"><div onclick="event.stopPropagation()" style="display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px">'+htmlShell+'</div></div>';
 }
+
+// === Modal "Demande de migration depuis ancien logiciel" (post-abonnement) ===
+// Pré-remplie avec les infos du salon (nom, email, tel), POST vers edge function
+// migration-request avec from_app=true et salon_id pour skip rate-limit + lier la
+// demande au salon en DB.
+function lxOpenMigrationModal(){
+  var S = window.SALON_CONFIG || {};
+  var preName = S.nom || "";
+  var preEmail = S.email || "";
+  var prePhone = S.tel || S.telephone || "";
+
+  function esc(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
+  var inputStyle = "width:100%;background:rgba(0,0,0,.35);border:1px solid rgba(212,168,67,.2);border-radius:6px;color:#fff;font-family:var(--f1,Georgia,serif);font-size:14px;padding:11px 14px;letter-spacing:.3px;box-sizing:border-box;outline:none";
+  var labelStyle = "display:block;font-size:10px;color:rgba(212,168,67,.85);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;font-family:'Helvetica Neue',Arial,sans-serif;font-weight:600";
+
+  var body = ''
+    + '<p style="font-size:13px;color:rgba(255,255,255,.7);text-align:center;margin:0 0 18px;line-height:1.6">Notre équipe technique reprend gratuitement votre fichier client depuis votre ancien logiciel. Migration <strong style="color:var(--gold)">en 24-48 h</strong>.</p>'
+    + '<form id="mgrForm" autocomplete="off">'
+    + '<div style="margin-bottom:14px"><label style="'+labelStyle+'">Nom du salon</label>'
+    + '<input id="mgr_salon" type="text" value="'+esc(preName)+'" required style="'+inputStyle+'"></div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">'
+    + '<div><label style="'+labelStyle+'">Email</label><input id="mgr_email" type="email" value="'+esc(preEmail)+'" required style="'+inputStyle+'"></div>'
+    + '<div><label style="'+labelStyle+'">Téléphone</label><input id="mgr_phone" type="tel" value="'+esc(prePhone)+'" required style="'+inputStyle+'"></div>'
+    + '</div>'
+    + '<div style="margin-bottom:14px"><label style="'+labelStyle+'">Type de solution actuelle *</label>'
+    + '<select id="mgr_source" required style="'+inputStyle+'">'
+    + '<option value="">— Sélectionnez —</option>'
+    + '<option value="caisse-salon">Logiciel de caisse salon</option>'
+    + '<option value="reservation-online">Plateforme de réservation en ligne</option>'
+    + '<option value="planning">Logiciel de planning / agenda</option>'
+    + '<option value="excel">Excel / CSV</option>'
+    + '<option value="papier">Agenda papier</option>'
+    + '<option value="autre">Autre solution</option>'
+    + '</select></div>'
+    + '<div style="margin-bottom:14px"><label style="'+labelStyle+'">Nom de votre logiciel actuel <span style="text-transform:none;color:rgba(255,255,255,.4);letter-spacing:0">(facultatif)</span></label>'
+    + '<input id="mgr_software" type="text" placeholder="Nom de votre éditeur actuel" style="'+inputStyle+'"></div>'
+    + '<div style="margin-bottom:14px"><label style="'+labelStyle+'">Nombre approximatif de clients</label>'
+    + '<select id="mgr_count" style="'+inputStyle+'">'
+    + '<option value="0-100">Moins de 100</option>'
+    + '<option value="100-500" selected>100 à 500</option>'
+    + '<option value="500-1000">500 à 1000</option>'
+    + '<option value="1000-2000">1000 à 2000</option>'
+    + '<option value="2000+">Plus de 2000</option>'
+    + '</select></div>'
+    + '<div style="margin-bottom:14px"><label style="'+labelStyle+'">Précisions <span style="text-transform:none;color:rgba(255,255,255,.4);letter-spacing:0">(optionnel)</span></label>'
+    + '<textarea id="mgr_message" rows="3" placeholder="Volume photos, points fidélité, cartes d\'abonnement, contraintes particulières..." style="'+inputStyle+';resize:vertical;font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif"></textarea></div>'
+    + '<div id="mgr_msg" style="display:none;padding:12px;border-radius:8px;font-size:13px;text-align:center;margin-bottom:12px"></div>'
+    + '</form>'
+    + '<div style="font-size:11px;color:rgba(255,255,255,.45);text-align:center;line-height:1.7;margin-top:6px">🔒 Données chiffrées en transit · Identifiants éventuels supprimés sous 48 h après migration</div>';
+
+  var footer = '<div style="display:flex;gap:10px;margin-top:8px">'
+    + '<button class="btn" onclick="cM()" style="flex:1;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;padding:12px;font-family:var(--f1,Georgia,serif);font-size:13px;letter-spacing:1px;text-transform:uppercase">Annuler</button>'
+    + '<button id="mgr_submit" class="btn bg" onclick="lxSubmitMigrationModal()" style="flex:2;padding:12px;font-family:var(--f1,Georgia,serif);font-size:13px;letter-spacing:1px;text-transform:uppercase">Envoyer ma demande</button>'
+    + '</div>';
+
+  lxShowModal(lxModalShell({
+    surtitle: "MIGRATION GRATUITE",
+    title: "Reprise de votre fichier client",
+    body: body,
+    footer: footer,
+    maxWidth: "520px"
+  }));
+}
+window.lxOpenMigrationModal = lxOpenMigrationModal;
+
+function lxSubmitMigrationModal(){
+  var get = function(id){ var el = document.getElementById(id); return el ? el.value.trim() : ""; };
+  var msgBox = document.getElementById("mgr_msg");
+  var btn = document.getElementById("mgr_submit");
+  if(msgBox){ msgBox.style.display="none"; }
+
+  var payload = {
+    salon_name: get("mgr_salon"),
+    email: get("mgr_email").toLowerCase(),
+    phone: get("mgr_phone"),
+    source_type: get("mgr_source"),
+    source_software_name: get("mgr_software"),
+    client_count_range: get("mgr_count"),
+    message: get("mgr_message"),
+    from_app: true,
+    salon_id: window._salonId || null
+  };
+
+  function showMsg(type, html){
+    if(!msgBox) return;
+    msgBox.style.display = "block";
+    msgBox.innerHTML = html;
+    if(type==="ok"){
+      msgBox.style.background = "rgba(76,175,80,.1)";
+      msgBox.style.border = "1px solid rgba(76,175,80,.35)";
+      msgBox.style.color = "#7fc97f";
+    } else {
+      msgBox.style.background = "rgba(220,80,80,.1)";
+      msgBox.style.border = "1px solid rgba(220,80,80,.35)";
+      msgBox.style.color = "#e88080";
+    }
+  }
+
+  if(!payload.salon_name || !payload.email || !payload.phone || !payload.source_type){
+    showMsg("err","Merci de remplir tous les champs obligatoires.");
+    return;
+  }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)){
+    showMsg("err","Email invalide.");
+    return;
+  }
+
+  if(btn){ btn.disabled=true; btn.textContent="Envoi en cours…"; btn.style.opacity=".7"; btn.style.cursor="wait"; }
+
+  var SB_URL = window.SB_URL_GLOBAL || "https://kxdgjtvrkwugbifgppai.supabase.co";
+  var SB_KEY = window.SB_KEY_GLOBAL || "";
+
+  fetch(SB_URL + "/functions/v1/migration-request", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SB_KEY,
+      "Authorization": "Bearer " + SB_KEY
+    },
+    body: JSON.stringify(payload)
+  }).then(function(res){
+    return res.json().then(function(data){ return { ok: res.ok, status: res.status, data: data }; }).catch(function(){ return { ok: res.ok, status: res.status, data: null }; });
+  }).then(function(r){
+    if(r.ok && r.data && r.data.ok){
+      showMsg("ok","<strong>✨ Demande bien reçue !</strong><br>Notre équipe vous recontacte sous <strong>4 h ouvrées</strong>. Un email de confirmation vient de partir.");
+      if(btn){ btn.textContent="Envoyé ✓"; btn.style.opacity=".5"; }
+      // Audit log
+      if(typeof auditLog==="function"){
+        try { auditLog("MIGRATION_REQUEST", "Demande de migration soumise — type "+payload.source_type+(payload.source_software_name?" ("+payload.source_software_name+")":"")); } catch(_) {}
+      }
+    } else {
+      var errMsg = (r.data && r.data.error) ? r.data.error : "Une erreur est survenue. Réessayez ou contactez support@luxyra.fr.";
+      showMsg("err", errMsg);
+      if(btn){ btn.disabled=false; btn.textContent="Envoyer ma demande"; btn.style.opacity="1"; btn.style.cursor="pointer"; }
+    }
+  }).catch(function(err){
+    console.error("[migration] submit failed:", err);
+    showMsg("err","Connexion impossible. Réessayez ou contactez support@luxyra.fr.");
+    if(btn){ btn.disabled=false; btn.textContent="Envoyer ma demande"; btn.style.opacity="1"; btn.style.cursor="pointer"; }
+  });
+}
+window.lxSubmitMigrationModal = lxSubmitMigrationModal;
 // Helper pour les inputs premium (réutilisable)
 function lxInputField(opts){
   opts = opts || {};
@@ -9269,6 +9412,7 @@ function rSettings(){
       {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"},
       {k:"documents",i:"\ud83d\udcc1",t:"Mes documents",d:"Kbis, pi\u00e8ce d\u2019identit\u00e9, v\u00e9rification"},
       {k:"notifspush",i:"\ud83d\udd14",t:"Notifications push",d:"Activation, test, d\u00e9sactivation"},
+      {k:"migration",i:"\ud83d\udce5",t:"Migration depuis ancien logiciel",d:"Reprise gratuite de votre fichier client"},
       {k:"support",i:"\ud83d\udcac",t:"Support Luxyra",d:"Nouvelle conversation, historique"}
     ];
     for(var i=0;i<sections.length;i++){
@@ -9283,6 +9427,8 @@ function rSettings(){
       }else{
       if(s.k==="support"){
         h+='<div class="card" style="cursor:pointer;display:flex;align-items:center;gap:14px" onclick="window.lxOpenSupportPanel&&window.lxOpenSupportPanel()">';
+      }else if(s.k==="migration"){
+        h+='<div class="card" style="cursor:pointer;display:flex;align-items:center;gap:14px" onclick="lxOpenMigrationModal()">';
       }else{
         h+='<div class="card" style="cursor:pointer;display:flex;align-items:center;gap:14px" onclick="window._settTab=\''+s.k+'\';go(\'settings\')">';
       }
@@ -24360,6 +24506,21 @@ function refreshCurrentView(){
 
   function handleHash(){
     var h=location.hash||'';
+    // === Hash #settings/migration : ouvre directement la modal de demande de migration ===
+    // Permet le deeplink depuis la page publique /migration (CTA "Déjà abonné")
+    if(/^#settings\/migration\b/i.test(h)){
+      var waitMig=setInterval(function(){
+        if(typeof window.lxOpenMigrationModal==="function"){
+          clearInterval(waitMig);
+          // Petit délai pour laisser l'app finir de booter et le DOM être prêt
+          setTimeout(function(){ window.lxOpenMigrationModal(); }, 500);
+          // Nettoie le hash pour éviter de rouvrir la modal lors d'un refresh
+          try { history.replaceState(null,"",location.pathname+location.search); } catch(_){ }
+        }
+      },200);
+      setTimeout(function(){clearInterval(waitMig);},8000);
+      return;
+    }
     var m=h.match(/#support(?:\?conv=([0-9a-f-]+))?/i);
     if(!m)return;
     openPanel();
