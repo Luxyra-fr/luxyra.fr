@@ -1538,6 +1538,88 @@ async function updDem(id,st){
 
 // ===== MIGRATIONS =====
 function escHtml(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+
+// === Helpers modales premium (remplacent alert() et confirm() natifs) ===
+function _lxAdminCloseModal(){var el=document.getElementById("lxAdminModal");if(el)el.remove();}
+function _lxAdminOpenModal(html){
+  _lxAdminCloseModal();
+  var wrap=document.createElement("div");
+  wrap.id="lxAdminModal";
+  wrap.style.cssText="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;animation:lxFadeIn .2s ease";
+  wrap.onclick=function(e){if(e.target===wrap)_lxAdminCloseModal();};
+  wrap.innerHTML=html;
+  document.body.appendChild(wrap);
+  // Inject keyframes once
+  if(!document.getElementById("lxAdminModalCss")){
+    var st=document.createElement("style");st.id="lxAdminModalCss";
+    st.textContent="@keyframes lxFadeIn{from{opacity:0}to{opacity:1}}@keyframes lxScaleIn{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}";
+    document.head.appendChild(st);
+  }
+}
+function _lxAdminShellHtml(opts){
+  // opts: surtitle, title, body, footer, color
+  var color = opts.color || "#c8a84e";
+  var surtitle = opts.surtitle || "";
+  var title = opts.title || "";
+  var body = opts.body || "";
+  var footer = opts.footer || "";
+  var maxW = opts.maxWidth || "440px";
+  return '<div style="background:radial-gradient(ellipse at top,#15101a 0%,#0a0a0e 70%);border-radius:14px;border:1px solid rgba(212,168,67,.3);position:relative;overflow:hidden;max-width:'+maxW+';width:100%;box-shadow:0 8px 40px rgba(0,0,0,.6);animation:lxScaleIn .25s ease" onclick="event.stopPropagation()">'
+    + '<div style="height:3px;background:linear-gradient(90deg,transparent,#a8862e 18%,'+color+' 50%,#a8862e 82%,transparent)"></div>'
+    + '<div style="padding:24px 24px 22px">'
+    + (surtitle ? '<div style="text-align:center;margin-bottom:6px;font-family:Georgia,serif;font-size:10px;color:rgba(212,168,67,.55);letter-spacing:5px;font-style:italic;text-transform:uppercase">'+surtitle+'</div>' : '')
+    + (title ? '<h2 style="text-align:center;margin:0 0 18px;color:'+color+';font-family:Georgia,serif;font-weight:500;font-size:20px;letter-spacing:3px;text-transform:uppercase">'+title+'</h2>' : '')
+    + '<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:20px">'
+    +   '<div style="height:1px;background:linear-gradient(90deg,transparent,rgba(212,168,67,.5));flex:1"></div>'
+    +   '<svg width="18" height="13" viewBox="0 0 22 16"><path d="M 11 1 L 12.2 6.5 L 18 8 L 12.2 9.5 L 11 15 L 9.8 9.5 L 4 8 L 9.8 6.5 Z" fill="'+color+'"/></svg>'
+    +   '<div style="height:1px;background:linear-gradient(90deg,rgba(212,168,67,.5),transparent);flex:1"></div>'
+    + '</div>'
+    + body
+    + (footer ? '<div style="margin-top:18px">'+footer+'</div>' : '')
+    + '</div>'
+    + '<div style="height:3px;background:linear-gradient(90deg,transparent,#a8862e 18%,'+color+' 50%,#a8862e 82%,transparent)"></div>'
+    + '</div>';
+}
+// lxAdminAlert : Promise-based, 1 bouton OK
+function lxAdminAlert(message, opts){
+  opts = opts || {};
+  return new Promise(function(resolve){
+    var btnId = "lxAdminAlertOk_"+Date.now();
+    var body = '<div style="text-align:center;font-size:14px;line-height:1.7;color:#d4d0ca;margin:0 0 8px;white-space:pre-wrap">'+(opts.html?message:escHtml(message))+'</div>';
+    var footer = '<button id="'+btnId+'" style="width:100%;padding:12px;font-family:Georgia,serif;font-size:13px;letter-spacing:2px;text-transform:uppercase;background:linear-gradient(135deg,#c8a84e,#b8960f);color:#0a0a0a;border:none;border-radius:8px;cursor:pointer;font-weight:700">OK</button>';
+    _lxAdminOpenModal(_lxAdminShellHtml({surtitle:opts.surtitle||"Luxyra Admin",title:opts.title||"Information",body:body,footer:footer,color:opts.color||"#c8a84e"}));
+    setTimeout(function(){
+      var b=document.getElementById(btnId);
+      if(b)b.onclick=function(){_lxAdminCloseModal();resolve(true);};
+    },10);
+  });
+}
+// lxAdminConfirm : Promise-based, 2 boutons (Annuler / Confirmer)
+function lxAdminConfirm(message, opts){
+  opts = opts || {};
+  return new Promise(function(resolve){
+    var okId = "lxAdminConfOk_"+Date.now();
+    var noId = "lxAdminConfNo_"+Date.now();
+    var color = opts.danger ? "#e88080" : "#c8a84e";
+    var okBg = opts.danger
+      ? "linear-gradient(135deg,#c84e4e,#9f0e0e);color:#fff"
+      : "linear-gradient(135deg,#c8a84e,#b8960f);color:#0a0a0a";
+    var body = '<div style="text-align:center;font-size:14px;line-height:1.7;color:#d4d0ca;margin:0 0 8px;white-space:pre-wrap">'+(opts.html?message:escHtml(message))+'</div>';
+    var footer = '<div style="display:flex;gap:10px">'
+      + '<button id="'+noId+'" style="flex:1;padding:12px;font-family:Georgia,serif;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;border-radius:8px;cursor:pointer">Annuler</button>'
+      + '<button id="'+okId+'" style="flex:'+(opts.okFlex||"2")+';padding:12px;font-family:Georgia,serif;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;background:'+okBg+';border:none;border-radius:8px;cursor:pointer;font-weight:700">'+(opts.okLabel||"Confirmer")+'</button>'
+      + '</div>';
+    _lxAdminOpenModal(_lxAdminShellHtml({surtitle:opts.surtitle||"Confirmation requise",title:opts.title||"Action",body:body,footer:footer,color:color}));
+    setTimeout(function(){
+      var ok=document.getElementById(okId), no=document.getElementById(noId);
+      if(ok)ok.onclick=function(){_lxAdminCloseModal();resolve(true);};
+      if(no)no.onclick=function(){_lxAdminCloseModal();resolve(false);};
+    },10);
+  });
+}
+window.lxAdminAlert = lxAdminAlert;
+window.lxAdminConfirm = lxAdminConfirm;
+
 function rMigrations(){
   var h='<div class="topbar"><h1>Migrations <span>'+MIGRATIONS.length+'</span></h1></div>';
   if(!MIGRATIONS.length)return h+'<div class="card" style="text-align:center;padding:40px"><div style="font-size:36px;margin-bottom:12px">📥</div><div style="color:var(--text3)">Aucune demande de migration. Les demandes du formulaire <strong>/migration</strong> et de l\'app salon (Settings → Migration) apparaîtront ici.</div></div>';
@@ -1589,80 +1671,111 @@ function rMigrations(){
 
 function showMigrationMessage(id){
   var m=MIGRATIONS.find(function(x){return x.id===id;});if(!m)return;
-  var msg=m.message||"(aucun message)";
-  alert("Message de "+m.salon_name+" :\n\n"+msg);
+  var msg=m.message||"<em style='color:rgba(255,255,255,.4)'>Aucun message rédigé par le client</em>";
+  var html='<div style="text-align:left;font-size:14px;line-height:1.7;color:#d4d0ca;background:rgba(0,0,0,.25);border:1px solid rgba(212,168,67,.15);border-radius:10px;padding:14px;white-space:pre-wrap;font-family:-apple-system,Segoe UI,sans-serif">'+escHtml(msg).replace(/&lt;em /g,"<em ").replace(/&lt;\/em&gt;/g,"</em>")+'</div>'
+    +'<div style="margin-top:10px;font-size:11px;color:rgba(255,255,255,.4);text-align:center;letter-spacing:1px">— '+escHtml(m.salon_name)+' —</div>';
+  lxAdminAlert(html,{html:true,surtitle:"Message du client",title:"Précisions"});
+}
+
+// Helper interne : nettoie/met à jour le config_json du salon associé à une demande
+async function _migSyncSalonConfig(salonId, newStatus){
+  // newStatus : "requested" | "completed" | null (= retire les champs migration*)
+  if(!salonId)return {ok:true};
+  try {
+    var sRes=await _sb.from("salons").select("config_json").eq("id",salonId).maybeSingle();
+    if(!sRes.data)return {ok:true,note:"salon introuvable"};
+    var raw=sRes.data.config_json;
+    var cfg={};
+    try {
+      var asString = typeof raw === "string" ? raw : JSON.stringify(raw);
+      try { var parsed = JSON.parse(asString); cfg = (typeof parsed === "string") ? JSON.parse(parsed) : parsed; } catch(_) { cfg = {}; }
+      if(typeof cfg!=="object"||cfg===null)cfg={};
+    } catch(e){ cfg={}; }
+    if(newStatus===null){
+      delete cfg.migrationStatus;
+      delete cfg.migrationRequestedAt;
+      delete cfg.migrationRequestId;
+      delete cfg.migrationCompletedAt;
+    } else {
+      cfg.migrationStatus = newStatus;
+      if(newStatus==="completed") cfg.migrationCompletedAt = new Date().toISOString();
+    }
+    var u=await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",salonId);
+    if(u.error)return {ok:false,err:u.error.message};
+    return {ok:true};
+  } catch(e){return {ok:false,err:e.message};}
 }
 
 async function updMig(id,st){
   var m=MIGRATIONS.find(function(x){return x.id===id;});
-  if(!m){alert("Demande introuvable");return;}
+  if(!m){await lxAdminAlert("Demande introuvable",{title:"Erreur",color:"#e88080"});return;}
 
-  var confirmMsgs={
-    contacted:"Marquer cette demande comme CONTACTÉE ?",
-    in_progress:"Démarrer la MIGRATION pour "+m.salon_name+" ?\n\nLe salon verra '⏳ Migration en cours' dans son app.",
-    completed:"Marquer la migration COMPLÉTÉE ?\n\n→ L'entrée 'Migration' disparaît du menu Settings de l'app du salon.\n→ Le salon est notifié au prochain reload de son app.",
-    cancelled:"ANNULER cette demande ?\n\n→ Le salon pourra refaire une nouvelle demande.",
+  var confirmCfg={
+    contacted:{title:"Contact effectué",okLabel:"📞 Marquer contacté",msg:"Marquer cette demande comme CONTACTÉE ?\n\nC'est noté à des fins de suivi interne, le salon n'est pas notifié."},
+    in_progress:{title:"Démarrer migration",okLabel:"🔧 Démarrer",msg:"Démarrer la migration pour\n"+m.salon_name+" ?\n\nLe salon continue de voir « Migration en cours » dans son app."},
+    completed:{title:"Marquer complété",okLabel:"✅ Compléter",msg:"Marquer la migration COMPLÉTÉE ?\n\n→ L'entrée « Migration » disparaît du menu Paramètres de l'app du salon.\n→ Le salon est notifié au prochain reload."},
+    cancelled:{title:"Annuler la demande",okLabel:"🚫 Annuler",danger:true,msg:"Annuler cette demande ?\n\n→ Le statut côté app du salon est retiré.\n→ Le salon pourra refaire une nouvelle demande."},
   };
-  if(confirmMsgs[st] && !confirm(confirmMsgs[st]))return;
+  var c = confirmCfg[st];
+  if(c){
+    var ok = await lxAdminConfirm(c.msg,{title:c.title,okLabel:c.okLabel,danger:c.danger,surtitle:"Action sur la demande"});
+    if(!ok)return;
+  }
 
   try {
-    // 1) Update du status dans migration_requests
-    var u1=await _sb.from("migration_requests").update({
-      status:st,
-      status_updated_at:new Date().toISOString()
-    }).eq("id",id);
-    if(u1.error){alert("Erreur update demande: "+u1.error.message);return;}
+    var u1=await _sb.from("migration_requests").update({status:st,status_updated_at:new Date().toISOString()}).eq("id",id);
+    if(u1.error){await lxAdminAlert("Erreur update demande : "+u1.error.message,{title:"Échec",color:"#e88080"});return;}
 
-    // 2) Si status touche au cycle de vie côté app salon, on synchronise le config_json
-    //    du salon. 'new'/'contacted' = laisse 'requested' côté salon (pas de changement).
-    //    'in_progress' = laisse 'requested' (UX coté salon : "en cours" couvre les deux)
-    //    'completed' ou 'cancelled' = retire le statut du config (l'entrée disparaît du menu)
-    if(m.salon_id){
-      if(st==="completed"||st==="cancelled"){
-        var newCfgStatus = st==="completed" ? "completed" : null;
-        // SELECT le config actuel (jsonb-string), parse, modifie, ré-encode
-        var sRes=await _sb.from("salons").select("config_json").eq("id",m.salon_id).maybeSingle();
-        if(sRes.data){
-          var raw=sRes.data.config_json;
-          var cfg={};
-          try {
-            // Le config est stocké comme jsonb-string : on déballe d'abord
-            var asString = typeof raw === "string" ? raw : JSON.stringify(raw);
-            // Si c'est un wrapped JSON-string, parse 2 fois
-            try { var parsed = JSON.parse(asString); cfg = (typeof parsed === "string") ? JSON.parse(parsed) : parsed; } catch(_) { cfg = {}; }
-            if(typeof cfg!=="object"||cfg===null)cfg={};
-          } catch(e){ cfg={}; }
-          if(newCfgStatus===null){
-            delete cfg.migrationStatus;
-            delete cfg.migrationRequestedAt;
-            delete cfg.migrationRequestId;
-          } else {
-            cfg.migrationStatus = newCfgStatus;
-            cfg.migrationCompletedAt = new Date().toISOString();
-          }
-          var u2=await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",m.salon_id);
-          if(u2.error){alert("Statut demande mis à jour, mais erreur sync config salon : "+u2.error.message);return;}
-        }
+    // Synchro config_json salon : completed → "completed" ; cancelled → null
+    if(m.salon_id && (st==="completed"||st==="cancelled")){
+      var newCfgStatus = st==="completed" ? "completed" : null;
+      var sync = await _migSyncSalonConfig(m.salon_id, newCfgStatus);
+      if(!sync.ok){
+        await lxAdminAlert("Statut mis à jour mais sync salon échouée : "+sync.err,{title:"Sync partielle",color:"#e88080"});
+        await loadMigrations();render();
+        return;
       }
     }
 
     var labels={
-      contacted:"📞 Marqué contacté",
-      in_progress:"🔧 Migration démarrée — le salon voit 'Migration en cours' dans son app",
-      completed:"✅ Complété — l\'entrée 'Migration' disparaît du menu de l\'app salon",
-      cancelled:"🚫 Annulé — le salon peut refaire une nouvelle demande",
+      contacted:{t:"📞 Contact noté",b:"La demande est marquée comme contactée."},
+      in_progress:{t:"🔧 Migration démarrée",b:"Le salon voit « Migration en cours » dans son app."},
+      completed:{t:"✅ Migration complétée",b:"L'entrée « Migration » disparaît du menu Paramètres de l'app du salon."},
+      cancelled:{t:"🚫 Demande annulée",b:"Le salon peut refaire une nouvelle demande quand il le souhaite."},
     };
-    alert(labels[st]||"Statut mis à jour");
+    var lbl=labels[st];
+    if(lbl) await lxAdminAlert(lbl.b,{title:lbl.t,surtitle:"Statut mis à jour"});
     await loadMigrations();render();
   } catch(e){
-    alert("Erreur : "+e.message);
+    await lxAdminAlert("Erreur : "+e.message,{title:"Échec",color:"#e88080"});
   }
 }
 
 async function delMig(id){
-  if(!confirm("Supprimer définitivement cette demande de migration ? (irréversible)"))return;
-  await _sb.from("migration_requests").delete().eq("id",id);
-  await loadMigrations();render();
+  var m=MIGRATIONS.find(function(x){return x.id===id;});
+  if(!m){await lxAdminAlert("Demande introuvable",{title:"Erreur",color:"#e88080"});return;}
+
+  var msg = "Supprimer définitivement la demande de\n"+m.salon_name+" ?\n\nAction irréversible — la trace en historique est perdue.";
+  if(m.salon_id) msg += "\n\nLe statut « Migration en cours » sera également retiré de l'app du salon (si présent).";
+  var ok = await lxAdminConfirm(msg,{title:"Suppression définitive",okLabel:"🗑️ Supprimer",danger:true,surtitle:"Action irréversible"});
+  if(!ok)return;
+
+  try {
+    // Cleanup config_json du salon AVANT suppression (si liée à un salon)
+    if(m.salon_id){
+      var sync = await _migSyncSalonConfig(m.salon_id, null);
+      if(!sync.ok){
+        var keepGoing = await lxAdminConfirm("Erreur sync salon : "+sync.err+"\n\nSupprimer quand même la demande ?",{title:"Sync échouée",okLabel:"Supprimer quand même",danger:true});
+        if(!keepGoing)return;
+      }
+    }
+    var d=await _sb.from("migration_requests").delete().eq("id",id);
+    if(d.error){await lxAdminAlert("Erreur suppression : "+d.error.message,{title:"Échec",color:"#e88080"});return;}
+    await loadMigrations();render();
+    await lxAdminAlert("La demande a été supprimée définitivement.",{title:"🗑️ Suppression effectuée",surtitle:"Confirmation"});
+  } catch(e){
+    await lxAdminAlert("Erreur : "+e.message,{title:"Échec",color:"#e88080"});
+  }
 }
 
 async function delDem(id){
