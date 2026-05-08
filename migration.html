@@ -270,18 +270,18 @@ footer a{color:var(--text2);margin:0 8px}
   <div class="s-sub">Remplissez le formulaire ci-dessous. Notre équipe technique vous recontacte sous 4h ouvrées (du lundi au vendredi, 9h-18h).</div>
 
   <div class="form-card">
-    <form id="migrationForm" onsubmit="submitMigration(event)">
+    <form id="migrationForm" onsubmit="submitMigration(event)" autocomplete="off">
       <div class="form-row">
         <label for="m-salon">Nom de votre salon *</label>
-        <input type="text" id="m-salon" name="salon" required placeholder="Le nom de votre salon" autocomplete="organization">
+        <input type="text" id="m-salon" name="salon" required placeholder="Le nom de votre salon">
       </div>
       <div class="form-row">
         <label for="m-email">Email de contact *</label>
-        <input type="email" id="m-email" name="email" required placeholder="votre adresse email professionnelle" autocomplete="email">
+        <input type="email" id="m-email" name="email" required placeholder="votre adresse email professionnelle">
       </div>
       <div class="form-row">
         <label for="m-tel">Téléphone *</label>
-        <input type="tel" id="m-tel" name="tel" required placeholder="votre numéro de téléphone" autocomplete="tel">
+        <input type="tel" id="m-tel" name="tel" required placeholder="votre numéro de téléphone">
       </div>
       <div class="form-row">
         <label for="m-logiciel">Type de solution actuelle *</label>
@@ -297,7 +297,7 @@ footer a{color:var(--text2);margin:0 8px}
       </div>
       <div class="form-row">
         <label for="m-logiciel-nom">Nom de votre logiciel ou solution actuelle</label>
-        <input type="text" id="m-logiciel-nom" name="logiciel_nom" placeholder="Ex: nom de votre éditeur actuel (facultatif)">
+        <input type="text" id="m-logiciel-nom" name="logiciel_nom" placeholder="Nom de l'éditeur actuel (facultatif)">
       </div>
       <div class="form-row">
         <label for="m-nb-clients">Nombre approximatif de clients</label>
@@ -313,7 +313,13 @@ footer a{color:var(--text2);margin:0 8px}
         <label for="m-message">Message (optionnel)</label>
         <textarea id="m-message" name="message" placeholder="Précisez vos besoins : photos, fidélité, historique tickets, cartes d'abonnement..."></textarea>
       </div>
-      <button type="submit" class="submit-btn">Envoyer ma demande →</button>
+      <!-- Honeypot anti-bot : champ caché qui doit rester vide -->
+      <div style="position:absolute;left:-9999px;top:-9999px" aria-hidden="true">
+        <label>Site web (laisser vide)</label>
+        <input type="text" id="m-website" name="website" tabindex="-1" autocomplete="off">
+      </div>
+      <button type="submit" class="submit-btn" id="m-submit">Envoyer ma demande →</button>
+      <div id="m-msg" style="display:none;margin-top:14px;padding:14px;border-radius:10px;font-size:14px;text-align:center"></div>
       <p class="form-note">🔒 Vos données sont chiffrées en transit (TLS) et stockées en France. Identifiants temporaires supprimés sous 48h après migration.</p>
     </form>
   </div>
@@ -387,34 +393,97 @@ function toggleFaq(el){
   else a.classList.remove('open');
 }
 
-// Form submit (envoi par email via mailto pour l'instant — Phase 2 : edge function)
-function submitMigration(e){
+// Form submit : POST vers edge function migration-request (Supabase + Brevo)
+var SB_URL = "https://kxdgjtvrkwugbifgppai.supabase.co";
+var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+
+function showMsg(type, html){
+  var box = document.getElementById('m-msg');
+  if (!box) return;
+  box.style.display = 'block';
+  box.innerHTML = html;
+  if (type === 'ok') {
+    box.style.background = 'rgba(76,175,80,.08)';
+    box.style.border = '1px solid rgba(76,175,80,.25)';
+    box.style.color = '#7fc97f';
+  } else {
+    box.style.background = 'rgba(220,80,80,.08)';
+    box.style.border = '1px solid rgba(220,80,80,.25)';
+    box.style.color = '#e88080';
+  }
+}
+
+async function submitMigration(e){
   e.preventDefault();
   var f = e.target;
-  var data = {
-    salon: f.salon.value,
-    email: f.email.value,
-    tel: f.tel.value,
-    logiciel: f.logiciel.value,
-    logiciel_nom: f.logiciel_nom ? f.logiciel_nom.value : "",
-    nb_clients: f.nb_clients.value,
-    message: f.message.value
+  var btn = document.getElementById('m-submit');
+  var msg = document.getElementById('m-msg');
+  if (msg) msg.style.display = 'none';
+
+  var payload = {
+    salon_name: (f.salon && f.salon.value || '').trim(),
+    email: (f.email && f.email.value || '').trim().toLowerCase(),
+    phone: (f.tel && f.tel.value || '').trim(),
+    source_type: (f.logiciel && f.logiciel.value || '').trim(),
+    source_software_name: (f.logiciel_nom && f.logiciel_nom.value || '').trim(),
+    client_count_range: (f.nb_clients && f.nb_clients.value || '').trim(),
+    message: (f.message && f.message.value || '').trim(),
+    website: (f.website && f.website.value || '').trim()  // honeypot
   };
-  // Envoi par mailto pour MVP (édition future : POST /api/migration-request)
-  var subject = encodeURIComponent("Demande de migration vers Luxyra — " + data.salon);
-  var body = encodeURIComponent(
-    "Salon : " + data.salon + "\n" +
-    "Email : " + data.email + "\n" +
-    "Téléphone : " + data.tel + "\n" +
-    "Type de solution : " + data.logiciel + "\n" +
-    (data.logiciel_nom ? "Nom du logiciel actuel : " + data.logiciel_nom + "\n" : "") +
-    "Nombre de clients : " + data.nb_clients + "\n\n" +
-    "Message :\n" + data.message
-  );
-  window.location.href = "mailto:contact@luxyra.fr?subject=" + subject + "&body=" + body;
-  setTimeout(function(){
-    alert("Merci ! Votre demande a été préparée dans votre messagerie. Notre équipe vous recontacte sous 4h ouvrées.");
-  }, 500);
+
+  if (!payload.salon_name || !payload.email || !payload.phone || !payload.source_type) {
+    showMsg('err', 'Merci de remplir tous les champs obligatoires.');
+    return false;
+  }
+
+  // Disable button pendant l'envoi
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Envoi en cours…';
+    btn.style.opacity = '.7';
+    btn.style.cursor = 'wait';
+  }
+
+  try {
+    var res = await fetch(SB_URL + '/functions/v1/migration-request', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY
+      },
+      body: JSON.stringify(payload)
+    });
+
+    var data = null;
+    try { data = await res.json(); } catch(_) {}
+
+    if (res.ok && data && data.ok) {
+      // Succès : reset du form, message confirmation
+      f.reset();
+      showMsg('ok', '<strong>✨ Demande bien reçue !</strong><br>Notre équipe technique vous recontacte sous <strong>4 heures ouvrées</strong>. Un email de confirmation vient de partir vers votre adresse.');
+      if (btn) {
+        btn.textContent = 'Envoyé ✓';
+        btn.style.opacity = '.5';
+      }
+      // Scroll vers le message
+      setTimeout(function(){
+        var box = document.getElementById('m-msg');
+        if (box && box.scrollIntoView) box.scrollIntoView({behavior:'smooth', block:'center'});
+      }, 100);
+    } else if (res.status === 429) {
+      showMsg('err', 'Trop de demandes récentes depuis cette adresse. Merci de nous contacter directement à <a href="mailto:contact@luxyra.fr" style="color:inherit;text-decoration:underline">contact@luxyra.fr</a>.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Envoyer ma demande →'; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+    } else {
+      var errMsg = (data && data.error) ? data.error : 'Une erreur est survenue. Merci de réessayer ou de nous écrire à contact@luxyra.fr.';
+      showMsg('err', errMsg);
+      if (btn) { btn.disabled = false; btn.textContent = 'Envoyer ma demande →'; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+    }
+  } catch (err) {
+    console.error('[migration] submit failed:', err);
+    showMsg('err', 'Connexion impossible. Merci de réessayer ou de nous écrire à <a href="mailto:contact@luxyra.fr" style="color:inherit;text-decoration:underline">contact@luxyra.fr</a>.');
+    if (btn) { btn.disabled = false; btn.textContent = 'Envoyer ma demande →'; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+  }
   return false;
 }
 </script>
