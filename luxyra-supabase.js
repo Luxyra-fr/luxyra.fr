@@ -854,7 +854,14 @@ async function loadSalonData() {
         acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye,
         status: r.status, message: r.message,
         createdAt: r.created_at, confirmedAt: r.confirmed_at,
-        isOnline: true
+        isOnline: true,
+        // Empreinte bancaire (mai 2026)
+        paymentIntentId: r.payment_intent_id || null,
+        empreinteStatus: r.empreinte_status || "none",
+        empreinteAmount: r.empreinte_amount ? Number(r.empreinte_amount) : null,
+        empreinteHeldAt: r.empreinte_held_at || null,
+        empreinteCapturedAt: r.empreinte_captured_at || null,
+        empreinteReleasedAt: r.empreinte_released_at || null
       };
     });
     // Merge pending+confirmed into AP for planning display
@@ -1458,8 +1465,8 @@ async function deleteAppointmentFromDb(apptId) {
 
 // Sauvegarder un produit
 async function saveProduct(prod) {
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_isOnline || !_salonId) return;
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   var data = {
     salon_id: _salonId,
     nom: prod.n, prix: prod.p, prix_achat: prod.pa || 0,
@@ -1855,8 +1862,8 @@ async function saveAuditEntry(action, detail) {
 
 // Sauvegarder la config du salon
 async function saveSalonConfig() {
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_isOnline || !_salonId) return;
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   var data = {
     nom: SALON_CONFIG.nom, sous_titre: SALON_CONFIG.sousTitre,
     logo: SALON_CONFIG.logo, adresse: SALON_CONFIG.adresse,
@@ -1957,8 +1964,8 @@ if (typeof window !== "undefined") {
 // Sauvegarder les collaborateurs
 // Sauvegarder les services
 async function saveServices() {
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_sb || !_salonId) return;
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   for (var i = 0; i < SVC.length; i++) {
     var s = SVC[i];
     var data = {
@@ -1983,8 +1990,8 @@ async function saveServices() {
 
 // Sauvegarder les forfaits
 async function saveForfaits() {
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_sb || !_salonId) return;
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   for (var i = 0; i < FORFAITS.length; i++) {
     var f = FORFAITS[i];
     var data = {
