@@ -15212,8 +15212,161 @@ function rAccounting(){
       h+='<button class="btn bs" style="font-size:10px;padding:3px 8px;margin-top:2px" onclick="reprintClotureZ('+zi+')">\ud83d\udda8 Reimprimer</button></div></div>';
     }
   }
+
+  // ===== ARCHIVES MIGR\u00c9ES (lecture seule, NF525) =====
+  // Section qui appara\u00eet uniquement si le salon a au moins 1 facture migr\u00e9e.
+  // Container rempli en async par lxLoadMigratedInvoices()
+  h+='<div id="lxMigratedInvoicesBox"></div>';
+  // Trigger async load (non-blocking)
+  setTimeout(function(){ if(typeof lxLoadMigratedInvoices==="function") lxLoadMigratedInvoices(); }, 50);
+
   return h;
 }
+
+// === Chargement et affichage des factures migr\u00e9es (lecture seule) ===
+// R\u00e9cup\u00e8re depuis migrated_invoices, affiche bandeau p\u00e9dagogique NF525 + liste.
+// Cache window._migratedInvoices pour \u00e9viter les re-fetch \u00e0 chaque go('accounting').
+window._migratedInvoicesCache = null;
+async function lxLoadMigratedInvoices(force){
+  var box = document.getElementById("lxMigratedInvoicesBox");
+  if(!box) return;
+  if(typeof _sb === "undefined" || !_sb || !window._salonId) return;
+
+  var data = window._migratedInvoicesCache;
+  if(force || !data){
+    try {
+      var r = await _sb.from("migrated_invoices")
+        .select("id,date_facture,client_name,total_ttc,source_software,source_invoice_number,modes_paiement,items")
+        .eq("salon_id", window._salonId)
+        .order("date_facture", {ascending:false})
+        .limit(500);
+      data = (r && r.data) || [];
+      window._migratedInvoicesCache = data;
+    } catch(e){
+      console.warn("[migrated_invoices] load failed:", e);
+      return;
+    }
+  }
+  if(!data || data.length===0) return;  // Pas d'archives, on n'affiche rien
+
+  // Si on a au moins 1 archive, on affiche la section
+  // Source software le plus fr\u00e9quent (pour le bandeau)
+  var sources = {};
+  data.forEach(function(inv){ if(inv.source_software){ sources[inv.source_software]=(sources[inv.source_software]||0)+1; } });
+  var topSource = Object.keys(sources).sort(function(a,b){return sources[b]-sources[a];})[0] || "ancien logiciel";
+
+  // Date du 1er ticket Luxyra (si CLOTURES dispo)
+  var firstLuxyraDate = null;
+  if(window.CLOTURES && window.CLOTURES.length){
+    var sorted = window.CLOTURES.slice().sort(function(a,b){return new Date(a.date)-new Date(b.date);});
+    firstLuxyraDate = sorted[0].date;
+  }
+
+  var h = '<div class="sec" style="margin-top:24px">\ud83d\udcda Archives migr\u00e9es '+(data.length>0?'('+data.length+')':'')+'</div>';
+  // Bandeau p\u00e9dagogique NF525
+  h += '<div class="card" style="background:linear-gradient(135deg,rgba(96,165,250,.06),rgba(96,165,250,.02));border:1px solid rgba(96,165,250,.25);padding:16px;margin-bottom:14px">';
+  h += '<div style="display:flex;gap:12px;align-items:flex-start">';
+  h += '<div style="font-size:24px;flex-shrink:0">\ud83d\udcda</div>';
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div style="font-family:var(--f1,Georgia,serif);font-weight:600;font-size:14px;color:#9bc2ff;margin-bottom:6px;letter-spacing:.5px">Documents informatifs \u2014 non r\u00e9\u00e9ditables</div>';
+  h += '<div style="font-size:12px;color:rgba(255,255,255,.7);line-height:1.65">Ces factures ont \u00e9t\u00e9 <strong>import\u00e9es depuis '+escapeHtml(topSource)+'</strong> \u00e0 votre demande. Elles sont consultables ici pour votre tra\u00e7abilit\u00e9 l\u00e9gale (conservation 6 ans), mais <strong>ne sont pas sign\u00e9es par la cha\u00eene NF525 Luxyra</strong>. Vous ne pouvez pas les r\u00e9\u00e9diter ni les modifier.</div>';
+  if(firstLuxyraDate){
+    h += '<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:8px;padding-top:8px;border-top:1px solid rgba(96,165,250,.15)">\u2728 Votre <strong style="color:var(--gold)">cha\u00eene NF525 Luxyra</strong> a d\u00e9marr\u00e9 le <strong>'+fmt(firstLuxyraDate)+'</strong>. Toutes les factures \u00e9mises depuis sont sign\u00e9es et certifi\u00e9es.</div>';
+  }
+  h += '</div></div></div>';
+
+  // Liste des factures migr\u00e9es (group\u00e9es par ann\u00e9e)
+  var byYear = {};
+  data.forEach(function(inv){
+    var y = String(inv.date_facture||"").slice(0,4) || "?";
+    if(!byYear[y]) byYear[y]=[];
+    byYear[y].push(inv);
+  });
+  var years = Object.keys(byYear).sort().reverse();
+
+  years.forEach(function(y){
+    h += '<div style="margin-top:10px;font-size:11px;color:var(--gold);letter-spacing:2px;font-family:var(--f1,Georgia,serif);text-transform:uppercase">\u2014 Ann\u00e9e '+y+' \u2014</div>';
+    byYear[y].forEach(function(inv){
+      var dt = inv.date_facture ? fmt(inv.date_facture) : "\u2014";
+      var num = inv.source_invoice_number ? '#'+escapeHtml(inv.source_invoice_number) : '';
+      var name = inv.client_name ? escapeHtml(inv.client_name) : '\u2014';
+      h += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(96,165,250,.03);border:1px solid rgba(96,165,250,.15)">';
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:rgba(96,165,250,.12);color:#9bc2ff;font-size:9px;font-weight:700;letter-spacing:1px;padding:2px 6px;border-radius:4px;text-transform:uppercase">\ud83d\udcda Archive</span>';
+      h += '<div style="font-weight:600;font-size:13px">'+num+(num?' \u00b7 ':'')+name+'</div></div>';
+      h += '<div style="font-size:11px;color:var(--text3);margin-top:3px">'+dt+' \u00b7 '+escapeHtml(inv.source_software)+(inv.modes_paiement && inv.modes_paiement.length ? ' \u00b7 '+inv.modes_paiement.map(function(p){return p.type;}).join(", ") : '')+'</div>';
+      h += '</div>';
+      h += '<div style="text-align:right;flex-shrink:0">';
+      h += '<div style="font-weight:800;font-family:var(--f1);color:var(--gold);font-size:15px">'+(Number(inv.total_ttc)||0).toFixed(2)+' \u20ac</div>';
+      h += '<button class="btn bs" style="font-size:10px;padding:3px 8px;margin-top:2px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.6)" onclick="lxShowMigratedInvoice(\''+inv.id+'\')">\ud83d\udc41\ufe0f Voir</button>';
+      h += '</div></div>';
+    });
+  });
+
+  box.innerHTML = h;
+}
+window.lxLoadMigratedInvoices = lxLoadMigratedInvoices;
+
+// === D\u00e9tail d'une facture migr\u00e9e (lecture seule) ===
+async function lxShowMigratedInvoice(id){
+  var inv = (window._migratedInvoicesCache||[]).find(function(x){return x.id===id;});
+  if(!inv){
+    if(typeof toast==="function") toast("Facture introuvable","error");
+    return;
+  }
+  var dt = inv.date_facture ? fmt(inv.date_facture) : "\u2014";
+  var items = Array.isArray(inv.items) ? inv.items : [];
+  var modes = Array.isArray(inv.modes_paiement) ? inv.modes_paiement : [];
+
+  var body = '<div style="text-align:left">';
+  // Bandeau lecture seule
+  body += '<div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.3);border-radius:8px;padding:11px 13px;margin-bottom:14px;font-size:12px;color:#9bc2ff;line-height:1.6"><strong>\ud83d\udcda Archive lecture seule</strong> \u2014 facture import\u00e9e depuis <strong>'+escapeHtml(inv.source_software)+'</strong>. Document \u00e0 titre informatif, non r\u00e9\u00e9dit\u00e9 par Luxyra (pas dans la cha\u00eene NF525 active).</div>';
+
+  // En-t\u00eate facture
+  body += '<div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px">Facture d\'origine</div>';
+  body += '<table style="width:100%;font-size:13px;color:#fff;margin-bottom:14px"><tr><td style="padding:4px 0;color:var(--text3);width:120px">N\u00b0 d\'origine</td><td style="font-family:Courier,monospace">'+(inv.source_invoice_number?escapeHtml(inv.source_invoice_number):'\u2014')+'</td></tr>';
+  body += '<tr><td style="padding:4px 0;color:var(--text3)">Date</td><td>'+dt+'</td></tr>';
+  body += '<tr><td style="padding:4px 0;color:var(--text3)">Client</td><td>'+(inv.client_name?escapeHtml(inv.client_name):'\u2014')+'</td></tr></table>';
+
+  // Items
+  if(items.length){
+    body += '<div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">D\u00e9tails</div>';
+    body += '<div style="background:rgba(0,0,0,.25);border:1px solid rgba(212,168,67,.12);border-radius:8px;padding:10px;margin-bottom:14px">';
+    items.forEach(function(it){
+      body += '<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid rgba(255,255,255,.04)">';
+      body += '<div>'+escapeHtml(it.nom||"")+(it.qty>1?' \u00d7 '+it.qty:'')+'</div>';
+      body += '<div style="font-weight:600">'+(Number(it.prix||0)*(it.qty||1)).toFixed(2)+' \u20ac</div></div>';
+    });
+    body += '</div>';
+  }
+
+  // Modes paiement
+  if(modes.length){
+    body += '<div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(255,255,255,.5);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Paiement</div>';
+    body += '<div style="margin-bottom:14px">';
+    modes.forEach(function(p){
+      body += '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px"><span>'+escapeHtml(p.type||"")+'</span><span>'+(Number(p.montant||0)).toFixed(2)+' \u20ac</span></div>';
+    });
+    body += '</div>';
+  }
+
+  // Total
+  body += '<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid rgba(212,168,67,.3);margin-top:8px">';
+  body += '<div style="font-family:var(--f1,Georgia,serif);font-size:14px;color:var(--gold);letter-spacing:1.5px;text-transform:uppercase">Total TTC</div>';
+  body += '<div style="font-family:var(--f1,Georgia,serif);font-size:22px;color:var(--gold);font-weight:700">'+(Number(inv.total_ttc)||0).toFixed(2)+' \u20ac</div></div>';
+  body += '</div>';
+
+  var footer = '<button class="btn bg" onclick="cM()" style="width:100%;padding:12px;font-family:var(--f1,Georgia,serif);font-size:13px;letter-spacing:1.5px;text-transform:uppercase">Fermer</button>';
+  lxShowModal(lxModalShell({
+    surtitle: "ARCHIVE LECTURE SEULE",
+    title: "Facture migr\u00e9e",
+    body: body,
+    footer: footer,
+    maxWidth: "520px",
+    color: "#9bc2ff"
+  }));
+}
+window.lxShowMigratedInvoice = lxShowMigratedInvoice;
 
 
 
