@@ -6700,6 +6700,22 @@ function go(pg,arg){
   }
 }
 
+// === HELPER : appointments d'un client (principal OU séparateur multi-client) ===
+// Retourne les appointments où le client apparaît, soit comme client principal (a.cId),
+// soit comme client secondaire dans les séparateurs (a.items[i].isSep && sepCId === id).
+// Utilisé pour calculer la dernière visite + l'historique d'un client.
+function getApptsForClient(cId, statusFilter){
+  return AP.filter(function(a){
+    if(statusFilter && a.st !== statusFilter) return false;
+    if(a.cId === cId) return true;
+    if(a.items && Array.isArray(a.items)){
+      return a.items.some(function(it){return it.isSep === true && it.sepCId === cId;});
+    }
+    return false;
+  });
+}
+window.getApptsForClient = getApptsForClient;
+
 // === STATS CALC ===
 function cStats(){
   var dn=AP.filter(function(a){return a.st==="done"});
@@ -6709,7 +6725,8 @@ function cStats(){
   var ct=0;dn.forEach(function(a){ct+=a.pr;});
   var fi=0,pe=0,ri=0;
   var cs=CL.map(function(c){
-    var v=dn.filter(function(a){return a.cId===c.id}).sort(function(a,b){return new Date(b.date)-new Date(a.date)});
+    // Inclus aussi les passages multi-client (séparateurs sepCId)
+    var v=getApptsForClient(c.id, "done").sort(function(a,b){return new Date(b.date)-new Date(a.date)});
     var l=v.length>0?v[0].date:null;
     var d=l?dB(l,TD):9999;
     var s="fidele";
@@ -8650,7 +8667,8 @@ function clickAppt(id){
       _fidLine='<div style="color:var(--gold);font-weight:700;font-size:11px">\u2b50 Prog. fid\u00e9lit\u00e9</div>'+(cl.fid||0)+' / '+_s;
     }
     htm+='<div>'+_fidLine+'</div>';
-    var lastV=AP.filter(function(x){return x.cId===cl.id&&x.st==="done"}).sort(function(x,y){return new Date(y.date)-new Date(x.date)});
+    // Inclus aussi les passages multi-client (séparateurs)
+    var lastV=getApptsForClient(cl.id, "done").sort(function(x,y){return new Date(y.date)-new Date(x.date)});
     htm+='<div><div style="color:var(--gold);font-weight:700;font-size:11px">Dernier RDV</div>'+(lastV.length?fmt(lastV[0].date):"\u2014")+'</div>';
     htm+='<div><div style="color:var(--gold);font-weight:700;font-size:11px">Collaborateur favori</div>'+(sty?sty.n:"\u2014")+'</div>';
     htm+='</div>';
@@ -20838,14 +20856,35 @@ function doFinalPay(method){
   // RÈGLE BUSINESS : Carte d'abonnement et fidélité ne se cumulent pas.
   // Un client avec carte abo active → fidélité en stand-by (pas de point, pas de remise).
   // Auto-réactivation à l'expiration de la carte (rien à stocker, on check à chaque ticket).
+  // On stocke les noms des clients skippés pour afficher un message transparent à la caisse.
+  if(!_tk._fidSkippedAbo) _tk._fidSkippedAbo=[];
   clientIds=clientIds.filter(function(cId){
     var cl=gC(cId);if(!cl)return false;
     if(typeof getActiveCarteAbo==="function" && getActiveCarteAbo(cId)){
       // Client avec carte abo active : fidélité en stand-by, on skip
+      var carte=getActiveCarteAbo(cId);
+      var infoSkip={ name: cName(cl), carteName: (carte && carte.carteNom) ? carte.carteNom : "Carte d'abonnement", dateExp: carte && carte.dateExp ? carte.dateExp : null };
+      if(!_tk._fidSkippedAbo.some(function(x){return x.name===infoSkip.name;})) _tk._fidSkippedAbo.push(infoSkip);
       return false;
     }
     return true;
   });
+
+  // Si tous les clients ont une carte abo, on affiche quand même un mini-récap avant de finaliser
+  // (sinon ce serait totalement silencieux). Sinon, on affichera la mention dans la 1ère modal fidélité.
+  if(!clientIds.length && _tk._fidSkippedAbo.length && !_tk._fidSkippedAboShown){
+    _tk._fidSkippedAboShown=true;
+    var skipNames=_tk._fidSkippedAbo.map(function(x){return '<strong style="color:#fff">'+x.name+'</strong> ('+x.carteName+')';}).join(", ");
+    var htmInfo='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+    htmInfo+='<div style="font-size:36px;margin-bottom:8px">💳</div>';
+    htmInfo+='<h2 style="color:var(--gold)">Fidélité en stand-by</h2>';
+    htmInfo+='<div style="font-size:14px;color:rgba(255,255,255,.85);margin-bottom:14px;line-height:1.7">'+skipNames+(_tk._fidSkippedAbo.length>1?' bénéficient ':' bénéficie ')+'déjà d\'une carte d\'abonnement active.<br>Le programme de fidélité est en stand-by (pas de cumul des avantages).</div>';
+    htmInfo+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:14px;font-style:italic">Auto-réactivation à l\'expiration de la carte.</div>';
+    htmInfo+='<button class="btn bg" onclick="(_tk._fidHandled=true)&&doFinalPay(\''+method+'\')||doFinalPay(\''+method+'\')" style="width:100%;padding:12px">Continuer l\'encaissement</button>';
+    htmInfo+='</div></div>';
+    document.getElementById("modal").innerHTML=htmInfo;
+    return;
+  }
   
   if(!clientIds.length){doFinalPayExecute(method);return;}
   
@@ -20873,6 +20912,11 @@ function doFinalPay(method){
   if(currentPoints>=fidSeuil){
     var remiseAmt=fidType==="pourcentage"?Math.round(total*fidVal/100*100)/100:fidVal;
     var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+    // Bandeau info clients skipp\u00e9s pour cause de carte abo (multi-client)
+    if(_tk._fidSkippedAbo && _tk._fidSkippedAbo.length){
+      var skipNamesC1=_tk._fidSkippedAbo.map(function(x){return x.name;}).join(", ");
+      htm+='<div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:rgba(255,255,255,.7);text-align:left;line-height:1.5">\ud83d\udcb3 <strong>Fid\u00e9lit\u00e9 en stand-by pour '+skipNamesC1+'</strong> (carte abo active, pas de cumul)</div>';
+    }
     htm+='<div style="font-size:36px;margin-bottom:8px">\ud83c\udfc6</div>';
     htm+='<h2 style="color:var(--gold)">Bonus fid\u00e9lit\u00e9 !</h2>';
     htm+='<div style="font-size:14px;margin-bottom:6px"><strong>'+cName(cl)+'</strong> a atteint <strong>'+currentPoints+'/'+fidSeuil+' points</strong></div>';
@@ -20893,6 +20937,11 @@ function doFinalPay(method){
   var nextPoints=currentPoints+1;
   var remaining=fidSeuil-nextPoints;
   var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+  // Bandeau info clients skipp\u00e9s pour cause de carte abo (multi-client)
+  if(_tk._fidSkippedAbo && _tk._fidSkippedAbo.length){
+    var skipNamesC2=_tk._fidSkippedAbo.map(function(x){return x.name;}).join(", ");
+    htm+='<div style="background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.25);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:rgba(255,255,255,.7);text-align:left;line-height:1.5">\ud83d\udcb3 <strong>Fid\u00e9lit\u00e9 en stand-by pour '+skipNamesC2+'</strong> (carte abo active, pas de cumul)</div>';
+  }
   htm+='<div style="font-size:36px;margin-bottom:8px">\u2b50</div>';
   htm+='<h2 style="color:var(--gold)">Point fid\u00e9lit\u00e9</h2>';
   htm+='<div style="font-size:14px;margin-bottom:6px"><strong>'+cName(cl)+'</strong></div>';
@@ -23177,7 +23226,8 @@ async function checkSmsReminders(){
       CL.forEach(function(cl){
         var keyRel="relance_"+cl.id;
         if(window._smsSent[keyRel])return; // already sent once
-        var lastV=AP.filter(function(a){return a.cId===cl.id&&a.st==="done";}).sort(function(a,b){return b.date>a.date?1:-1;});
+        // Inclus aussi les passages multi-client (séparateurs sepCId)
+        var lastV=getApptsForClient(cl.id, "done").sort(function(a,b){return b.date>a.date?1:-1;});
         var daysInactive=9999;
         if(lastV.length){daysInactive=Math.floor((new Date(todayStr)-new Date(lastV[0].date))/864e5);}
         else if(cl.cr){daysInactive=Math.floor((new Date(todayStr)-new Date(cl.cr))/864e5);}
