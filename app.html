@@ -11264,6 +11264,78 @@ function _renderClientCaCockpit(c, ap, caTotal, cs){
   return h;
 }
 
+// ===== HELPERS FAMILLE =====
+// Lien bidirectionnel : ajouter un membre dans famille_ids des 2 fiches.
+function lxFamilleAddLink(clientId, otherId){
+  if(clientId===otherId)return;
+  var c1=gC(clientId), c2=gC(otherId);
+  if(!c1||!c2)return;
+  if(!Array.isArray(c1.famille_ids))c1.famille_ids=[];
+  if(!Array.isArray(c2.famille_ids))c2.famille_ids=[];
+  if(c1.famille_ids.indexOf(otherId)<0)c1.famille_ids.push(otherId);
+  if(c2.famille_ids.indexOf(clientId)<0)c2.famille_ids.push(clientId);
+  if(typeof saveClient==="function"){saveClient(c1);saveClient(c2);}
+  if(typeof toast==="function")toast("👨‍👩‍👧 "+cName(c2)+" liée à "+cName(c1)+" comme famille","success");
+  go("detail");
+}
+window.lxFamilleAddLink=lxFamilleAddLink;
+
+function lxFamilleUnlink(clientId, otherId){
+  var c1=gC(clientId), c2=gC(otherId);
+  if(!c1)return;
+  if(Array.isArray(c1.famille_ids)){
+    var idx=c1.famille_ids.indexOf(otherId);
+    if(idx>=0){c1.famille_ids.splice(idx,1);if(typeof saveClient==="function")saveClient(c1);}
+  }
+  if(c2&&Array.isArray(c2.famille_ids)){
+    var idx2=c2.famille_ids.indexOf(clientId);
+    if(idx2>=0){c2.famille_ids.splice(idx2,1);if(typeof saveClient==="function")saveClient(c2);}
+  }
+  if(typeof toast==="function")toast("Lien famille retiré","info");
+  go("detail");
+}
+window.lxFamilleUnlink=lxFamilleUnlink;
+
+function lxFamilleShowPicker(clientId){
+  var c=gC(clientId);if(!c)return;
+  var existing=(Array.isArray(c.famille_ids)?c.famille_ids:[]).slice();
+  existing.push(clientId); // exclure le client lui-même
+  // Liste triée des autres clients
+  var others=CL.filter(function(x){return existing.indexOf(x.id)<0;}).sort(function(a,b){return(a.nom+a.pre).localeCompare(b.nom+b.pre);});
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>👨‍👩‍👧 Lier un membre de famille</h2>';
+  htm+='<div style="font-size:12px;color:var(--text2);margin-bottom:12px">Sélectionnez le client à lier à <strong>'+cName(c)+'</strong>. Le lien sera bidirectionnel (visible des deux côtés).</div>';
+  htm+='<input id="lxFamSearch" autocomplete="off" placeholder="🔍 Rechercher..." style="width:100%;padding:10px;border-radius:8px;font-size:14px;margin-bottom:10px" oninput="lxFilterFamPicker(this.value)">';
+  htm+='<div id="lxFamList" style="max-height:50vh;overflow-y:auto;border:1px solid var(--border2);border-radius:8px">';
+  if(others.length===0){
+    htm+='<div style="padding:20px;text-align:center;color:var(--text3);font-style:italic">Aucun client disponible à lier.</div>';
+  }else{
+    for(var oi=0;oi<others.length;oi++){
+      var o=others[oi];
+      var oIni=(o.nom?o.nom[0]:"")+(o.pre?o.pre[0]:"");
+      htm+='<div class="lxFamItem" data-name="'+(o.nom+' '+o.pre).toLowerCase()+'" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border2);cursor:pointer" onclick="lxFamilleAddLink(\''+clientId+'\',\''+o.id+'\');cM()">';
+      htm+='<div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--gold),#b8960f);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">'+oIni+'</div>';
+      htm+='<div style="flex:1"><div style="font-weight:700;font-size:13px">'+o.nom+' '+o.pre+'</div>';
+      htm+='<div style="font-size:11px;color:var(--text3)">'+(o.sex==="E"?"👶 Enfant":o.sex==="H"?"👨 Homme":"👩 Femme")+(o.ph?' · '+o.ph:'')+'</div></div>';
+      htm+='<div style="font-size:18px;color:var(--gold)">+</div>';
+      htm+='</div>';
+    }
+  }
+  htm+='</div>';
+  htm+='<button class="btn bk" style="width:100%;margin-top:12px" onclick="cM()">Annuler</button></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+window.lxFamilleShowPicker=lxFamilleShowPicker;
+
+function lxFilterFamPicker(q){
+  q=(q||"").toLowerCase();
+  var items=document.querySelectorAll(".lxFamItem");
+  for(var i=0;i<items.length;i++){
+    var nm=items[i].getAttribute("data-name")||"";
+    items[i].style.display=nm.indexOf(q)>=0?"flex":"none";
+  }
+}
+window.lxFilterFamPicker=lxFilterFamPicker;
+
 function rDetail(){
   var s=cStats();var c=null,cs=null;
   for(var i=0;i<CL.length;i++){if(CL[i].id===selCl){c=CL[i];break;}}
@@ -11368,6 +11440,37 @@ function rDetail(){
     }
     h+='</select></div>';
     h+='<div id="dAcqParrainBox_'+c.id+'" class="fg" style="display:'+(c.acqSrc==="recommandation"?"block":"none")+'"><label>Nom du parrain</label><input value="'+(c.acqParrain||"")+'" placeholder="Marie DUPONT" onchange="gC(\''+c.id+'\').acqParrain=this.value.trim()||null;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
+
+    // ===== SECTION FAMILLE (lier parents/enfants/conjoints) =====
+    h+='<div class="ct" style="margin-top:16px">👨‍👩‍👧 Famille</div>';
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:10px;line-height:1.5">Liez les membres d\'une même famille (mère + enfants, conjoints…). Pratique pour les RDV coordonnés et le marketing famille.</div>';
+    var _famIds=Array.isArray(c.famille_ids)?c.famille_ids:[];
+    if(_famIds.length>0){
+      h+='<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">';
+      for(var fi=0;fi<_famIds.length;fi++){
+        var memb=gC(_famIds[fi]);
+        if(!memb){
+          // Membre introuvable (supprimé) — on l'affiche en grisé
+          h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(255,255,255,.02);opacity:.5">';
+          h+='<div style="font-size:13px;color:rgba(255,255,255,.4);font-style:italic;flex:1">— Client supprimé —</div>';
+          h+='<button class="btn bs" style="font-size:10px;color:#ef5350;padding:4px 8px" onclick="lxFamilleUnlink(\''+c.id+'\',\''+_famIds[fi]+'\')">✕</button>';
+          h+='</div>';
+          continue;
+        }
+        var membIni=(memb.nom?memb.nom[0]:"")+(memb.pre?memb.pre[0]:"");
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid rgba(200,168,78,.2);border-radius:8px;background:rgba(200,168,78,.04);cursor:pointer" onclick="selCl=\''+memb.id+'\';clTab=\'infos\';go(\'detail\')">';
+        h+='<div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--gold),#b8960f);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0">'+membIni+'</div>';
+        h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#fff">'+memb.nom+' '+memb.pre+'</div>';
+        h+='<div style="font-size:10px;color:rgba(255,255,255,.5)">'+(memb.sex==="E"?"👶 Enfant":memb.sex==="H"?"👨 Homme":"👩 Femme")+(memb.ph?' · '+memb.ph:'')+'</div></div>';
+        h+='<button class="btn bs" style="font-size:10px;color:#ef5350;padding:4px 8px" title="Retirer le lien" onclick="event.stopPropagation();lxFamilleUnlink(\''+c.id+'\',\''+_famIds[fi]+'\')">✕</button>';
+        h+='</div>';
+      }
+      h+='</div>';
+    }else{
+      h+='<div style="font-size:12px;color:rgba(255,255,255,.4);font-style:italic;padding:10px;text-align:center">Aucun membre de famille lié</div>';
+    }
+    h+='<button class="btn bs" style="width:100%;font-size:12px;padding:10px;background:rgba(200,168,78,.08);border:1px dashed rgba(200,168,78,.3);color:var(--gold);font-weight:700" onclick="lxFamilleShowPicker(\''+c.id+'\')">+ Ajouter un membre de la famille</button>';
+
     h+='<div style="margin-top:16px;max-width:200px"><label style="font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(c.actif?"checked":"")+' onchange="gC(\''+c.id+'\').actif=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Client actif</label></div>';
     h+='</div>';
   }
