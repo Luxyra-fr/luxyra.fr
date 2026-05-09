@@ -573,18 +573,30 @@ function hasPermission(perm) {
 
 // NF525: retourne la liste des coiffeurs visibles selon les permissions
 // Si l'opérateur connecté est un collab sans "see_other_planning", il ne voit que ses RDV
+// Helper : équipe active (sans les collabs marqués inactifs).
+// Utilisé pour planning, modal RDV, sélection caisse, réservation en ligne.
+// NB : T entier reste utilisé pour les stats historiques (où on veut voir
+// les anciennes performances même des collabs partis).
+function getActiveTeam(){
+  if(typeof T==="undefined"||!T)return[];
+  return T.filter(function(t){return t.inactif!==true;});
+}
+window.getActiveTeam=getActiveTeam;
+
 function getVisibleStylists() {
   if (typeof T === "undefined" || !T) return [];
-  if (!CURRENT_OPERATOR) return T;
-  if (CURRENT_OPERATOR.role === "admin") return T;
-  if (Date.now() < _operatorAdminOverrideUntil) return T;
+  // Filtrage de base : exclure les collabs inactifs (sauf admin pour gestion historique)
+  var _baseT = (CURRENT_OPERATOR && CURRENT_OPERATOR.role === "admin") ? T : getActiveTeam();
+  if (!CURRENT_OPERATOR) return _baseT;
+  if (CURRENT_OPERATOR.role === "admin") return _baseT;
+  if (Date.now() < _operatorAdminOverrideUntil) return _baseT;
   // BOOTSTRAP MODE: si aucun admin n'existe, montrer tout (premier setup)
   if (typeof OPERATEURS !== "undefined" && OPERATEURS.length > 0) {
     var hasAnyAdmin = OPERATEURS.some(function(o){return o.role === "admin" && o.actif;});
-    if (!hasAnyAdmin) return T;
+    if (!hasAnyAdmin) return _baseT;
   }
   var perms = CURRENT_OPERATOR.permissions || {};
-  if (perms["see_other_planning"] === true) return T;
+  if (perms["see_other_planning"] === true) return _baseT;
   // Collab sans see_other_planning: filtrer sur son coiffeur lié
   // IMPORTANT: coercer string/integer pour éviter mismatch Supabase
   if (CURRENT_OPERATOR.collab_id != null) {
@@ -10049,6 +10061,22 @@ function rSettings(){
         }
       }
       h+='<button class="btn bs" style="margin-top:8px;font-size:12px" onclick="addAbsence('+st2.id+')">+ Cong\u00e9 / Absence / Pause</button>';
+      // ===== INFORMATIONS RH (date entr\u00e9e/d\u00e9part + inactif) =====
+      var _isInactif=(st2.inactif===true);
+      h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">';
+      h+='<div style="font-size:13px;font-weight:800;color:var(--gold);margin-bottom:10px">\ud83d\udccb Informations RH</div>';
+      h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">';
+      h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date d\'entr\u00e9e</label>';
+      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()"></div>';
+      h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date de d\u00e9part</label>';
+      h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateDepart=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()"></div>';
+      h+='</div>';
+      h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:'+(_isInactif?'rgba(244,67,54,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(_isInactif?'rgba(244,67,54,.3)':'rgba(255,255,255,.06)')+';border-radius:8px;cursor:pointer">';
+      h+='<div><div style="font-size:13px;font-weight:700;color:'+(_isInactif?'#ef5350':'#fff')+'">\u23f8 Inactif (cong\u00e9s, arr\u00eat, d\u00e9part...)</div>';
+      h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Masqu\u00e9 du planning et de la r\u00e9servation en ligne. Reste dans les statistiques.</div></div>';
+      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();if(typeof toast===\'function\')toast(this.checked?\''+st2.n.replace(/\'/g,"\\\\'")+' marqu\u00e9 inactif\':\''+st2.n.replace(/\'/g,"\\\\'")+' r\u00e9activ\u00e9\',\'info\');go(\'settings\')"></label>';
+      h+='</div>';
+      // ===== FIN INFORMATIONS RH =====
       // ===== BLOC COMPTE DE CONNEXION (NF525) =====
       var _st2IdStr = String(st2.id);
       var linkedOp = (typeof OPERATEURS!=="undefined") ? OPERATEURS.find(function(o){return o.collab_id != null && String(o.collab_id) === _st2IdStr;}) : null;
