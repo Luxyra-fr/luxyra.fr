@@ -19314,12 +19314,23 @@ function showCaisse(){
     // Bottom actions
     h+='<div style="padding:8px;border-top:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;gap:4px;flex-shrink:0">';
     h+='<div style="display:flex;gap:4px">';
+    // \ud83d\udc65 +Client (multi-client) \u2014 visible & discoverable
+    var _multiBtnTitle="Encaisser plusieurs clients sur le m\u00eame passage (ex : maman + enfant). Chaque client gardera ses points/cagnotte de fid\u00e9lit\u00e9.";
+    h+='<button onclick="handleTkOption(2)" title="'+_multiBtnTitle+'" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(76,175,80,.25);border-radius:8px;background:rgba(76,175,80,.07);cursor:pointer;color:#7fc984">\ud83d\udc65 + Client</button>';
     h+='<button onclick="handleTkOption(0)" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);cursor:pointer;color:rgba(255,255,255,.6)">\ud83c\udff7 Remise ticket</button>';
     h+='<button onclick="handleTkOption(1)" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);cursor:pointer;color:rgba(255,255,255,.6)">\ud83c\udf81 Bon cadeau</button>';
     if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
       h+='<button onclick="addFraisDeplacement()" style="flex:1;padding:8px;font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.03);cursor:pointer;color:rgba(255,255,255,.6)">\ud83d\ude97 D\u00e9placement</button>';
     }
     h+='</div>';
+    // Indicateur multi-client (si d\u00e9j\u00e0 2+ clients dans le ticket)
+    if(_tk.extraClients&&_tk.extraClients.length>0){
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);font-size:11px;color:#7fc984">';
+      h+='<span style="font-size:14px">\ud83d\udc65</span>';
+      h+='<span style="flex:1;font-weight:600">Ticket multi-client \u00b7 '+(1+_tk.extraClients.length)+' personnes</span>';
+      h+='<span style="opacity:.7;font-size:10px">Encaissement = 1 facture si 1 payeur, sinon r\u00e9glements s\u00e9par\u00e9s</span>';
+      h+='</div>';
+    }
     // Big buttons
     h+='<button onclick="if(!_tk.items.filter(function(x){return !x.isSep}).length){return;}_tk.step=5;showCaisse()" style="width:100%;padding:14px;font-size:15px;font-weight:800;border:none;border-radius:10px;background:linear-gradient(135deg,var(--gold),#b8960f);color:#fff;cursor:pointer;letter-spacing:.5px">Encaissement '+total.toFixed(2)+' \u20ac</button>';
     h+='<div style="display:flex;gap:4px">';
@@ -21161,7 +21172,20 @@ function doFinalPayExecute(method){
   _tk.items.forEach(function(it){brutTotal+=it.price*it.qty;itemRemises+=(it.remise||0);});
   var globalRemise=_tk.remise||0;
   var totalRemise=itemRemises+globalRemise;
-  var savedItems=_tk.items.map(function(it){return{name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:!!it.isProd,isCarteAbo:!!it.isCarteAbo,carteAboRemise:!!it.carteAboRemise,carteAboPct:it.carteAboPct||0,pendingCarteId:it.pendingCarteId||null};});
+  var savedItems=_tk.items.map(function(it){
+    var o={name:it.name,price:it.price,qty:it.qty,remise:it.remise||0,isProd:!!it.isProd,isCarteAbo:!!it.isCarteAbo,carteAboRemise:!!it.carteAboRemise,carteAboPct:it.carteAboPct||0,pendingCarteId:it.pendingCarteId||null};
+    // Préserver les flags multi-client + autres types pour persistance DB (NF525 + audit)
+    if(it.isSep){o.isSep=true;o.sepCId=it.sepCId||null;}
+    if(it.isPack)o.isPack=true;
+    if(it.isBon)o.isBon=true;
+    if(it.isCagnotteCredit)o.isCagnotteCredit=true;
+    if(it.isCagnotteUse)o.isCagnotteUse=true;
+    if(it.isCaCredit)o.isCaCredit=true;
+    if(it.isCaDiscount)o.isCaDiscount=true;
+    if(it.sId)o.sId=it.sId;
+    if(it.fidApplied)o.fidApplied=true;
+    return o;
+  });
   // #4 Activation cartes d'abo pending : à ce stade le paiement est validé.
   // On bascule en "active" toutes les cartes pending référencées par les items
   // isCarteAbo du ticket. La remise déjà appliquée sur le ticket courant reste.
@@ -21213,6 +21237,10 @@ function doFinalPayExecute(method){
         AP[i].items=savedItems;
         AP[i].tkNum=tkN;
         AP[i].ts=tsNow;
+        // Persistance DB : nom client lisible + extras multi-client
+        var _apClPri=AP[i].cId?gC(AP[i].cId):null;
+        if(_apClPri){AP[i].clientNom=_apClPri.nom;AP[i].clientPrenom=_apClPri.pre;}
+        if(_tk.extraClients&&_tk.extraClients.length)AP[i].extraClients=_tk.extraClients;
         // NF525: stocker l'opérateur qui a encaissé
         if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
           AP[i].operator_id=CURRENT_OPERATOR.id;
@@ -21234,7 +21262,12 @@ function doFinalPayExecute(method){
     }
   }else{
     // Direct caisse sale (no RDV) -> create new ticket entry
-    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN};
+    var _tkClPri=_tk.cId?gC(_tk.cId):null;
+    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
+      // Persistance DB : nom client lisible + extras multi-client
+      clientNom:_tkClPri?_tkClPri.nom:(_tk.passType==="H"?"Passage homme":_tk.passType==="E"?"Passage enfant":"Passage femme"),
+      clientPrenom:_tkClPri?_tkClPri.pre:null,
+      extraClients:_tk.extraClients||[]};
     // NF525: stocker l'opérateur qui a encaissé
     if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
       newTk.operator_id=CURRENT_OPERATOR.id;
