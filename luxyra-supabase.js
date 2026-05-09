@@ -775,7 +775,9 @@ async function loadSalonData() {
           clientBeautyproId: c.client_luxyra_id || null,
           // Acquisition source (Quick Win 2026-05-06)
           acqSrc: c.acquisition_source || null,
-          acqParrain: c.acquisition_parrain || null
+          acqParrain: c.acquisition_parrain || null,
+          // Liens famille (mai 2026)
+          famille_ids: Array.isArray(c.famille_ids) ? c.famille_ids : []
         };
         // Déballe la fiche technique étendue (peau, ongles, bien-être,
         // formules couleur, photos…) sur l'objet client. Le code UI
@@ -1294,7 +1296,9 @@ async function saveClient(client) {
     fiche_tech: ft,
     // Acquisition source (Quick Win 2026-05-06) — optionnel, NULL si pas renseigné
     acquisition_source: client.acqSrc || null,
-    acquisition_parrain: client.acqParrain || null
+    acquisition_parrain: client.acqParrain || null,
+    // Liens famille (mai 2026) : array d'IDs UUID des clients liés
+    famille_ids: client.famille_ids || []
   };
   // UUID = update, local ID = insert
   if (client.id && client.id.indexOf("-") > 0 && client.id.length > 30) {
