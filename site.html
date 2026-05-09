@@ -836,7 +836,7 @@ async function loadSalon(){
     var tc=await sb.from("collaborateurs").select("*").eq("salon_id",salonId).eq("actif",true);
     // Filtre supplémentaire côté client : exclure les collabs marqués "inactif"
     // (congés, arrêt, départ). Champ ajouté en mai 2026.
-    if(tc.data)COLLABS=tc.data.filter(function(c){return c.inactif!==true;}).map(function(c){return{id:c.id,n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{},pause:c.pause||null,actif:c.actif!==false};});
+    if(tc.data)COLLABS=tc.data.filter(function(c){return c.inactif!==true;}).map(function(c){return{id:c.id,n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{},pause:c.pause||null,actif:c.actif!==false,competences:c.competences||{all:true}};});
     
     // 4. Services — on charge tous ceux actifs ET visibles site, peu importe book_online.
     // Les non-réservables (book_online=false) s'affichent avec un bouton "Demander ce RDV"
@@ -1893,10 +1893,23 @@ function renderBookingStep2(){
     h+='<div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:16px;font-style:italic">Ou choisissez votre '+getCollabLabel().toLowerCase()+' ci-dessous :</div>';
   }
 
+  // Filtre les collabs selon leurs comp\u00e9tences si une prestation est d\u00e9j\u00e0 choisie
+  var _filterSvcId = booking.svcId || (booking.items && booking.items.length ? booking.items[0].svcId : null);
+  var _eligibleCollabs = COLLABS.filter(function(c){
+    if(!_filterSvcId) return true;
+    var comp = c.competences || {all:true};
+    if(comp.all === true) return true;
+    if(!comp.services || !Array.isArray(comp.services)) return false;
+    return comp.services.indexOf(Number(_filterSvcId)) >= 0 || comp.services.indexOf(String(_filterSvcId)) >= 0;
+  });
+  var _hasFilter = _filterSvcId && _eligibleCollabs.length < COLLABS.length;
+  if(_hasFilter){
+    h+='<div style="margin-bottom:10px;padding:8px 12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:8px;font-size:12px;color:#64b5f6"><strong>\u2139\ufe0f</strong> Seuls les '+getCollabLabel().toLowerCase()+'s habilit\u00e9s \u00e0 effectuer cette prestation sont affich\u00e9s.</div>';
+  }
   h+='<div class="collab-grid">';
   h+='<div class="collab-card" onclick="selectCollab(null)"><div class="collab-av">\ud83d\udc87</div><div class="collab-name">Pas de pr\u00e9f\u00e9rence</div></div>';
-  for(var i=0;i<COLLABS.length;i++){
-    var c=COLLABS[i];
+  for(var i=0;i<_eligibleCollabs.length;i++){
+    var c=_eligibleCollabs[i];
     h+='<div class="collab-card" onclick="selectCollab('+c.id+')">';
     if(c.img)h+='<img class="av" src="'+c.img+'">';
     else h+='<div class="collab-av" style="border-color:'+c.c+';color:'+c.c+'">'+c.i+'</div>';
