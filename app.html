@@ -18273,6 +18273,29 @@ function applyStatPeriod(v){
   go("stats");
 }
 
+// Helper : "Nouveau client" depuis modal RDV → conserve le contexte (date/heure/coiffeur/cat/passage)
+// pour revenir à la modal RDV avec le nouveau client pré-sélectionné après création.
+function _openClientFromRdv(){
+  try{
+    var ctx={};
+    var elD=document.getElementById("md");if(elD)ctx.date=elD.value;
+    var elT=document.getElementById("mt");if(elT)ctx.time=elT.value;
+    // Coiffeur : pas exposé en input visible, mais pf.stId est posé via calStId si dispo
+    if(typeof calStId!=="undefined")ctx.stId=calStId;
+    // Passage en cours (Homme/Femme/Enfant) si déjà cliqué
+    if(window._rdvPassage)ctx.passage=window._rdvPassage;
+    // Catégorie déjà choisie (le bouton actif a une classe ou attr)
+    if(window._rdvCat)ctx.cat=window._rdvCat;
+    // Service déjà choisi
+    if(window._rdvSvcId)ctx.sId=window._rdvSvcId;
+    window._addRdvCtx=ctx;
+    window._fromAddRdv=true;
+  }catch(e){console.warn("_openClientFromRdv ctx error",e);}
+  cM();
+  oM("client");
+}
+window._openClientFromRdv=_openClientFromRdv;
+
 // === MODALS ===
 function oM(type,pf){
   pf=pf||{};
@@ -18314,7 +18337,7 @@ function oM(type,pf){
     h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin-bottom:6px">\ud83d\udc64 S\u00e9lection du client</div>';
     h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">';
     h+='<input type="text" id="rdvSearch" autocomplete="off" placeholder="\ud83d\udd0d Rechercher un client..." oninput="filterRdvClients(this.value)" style="flex:1">';
-    h+='<button class="btn bg" style="width:40px;height:40px;border-radius:50%;font-size:20px;padding:0;flex-shrink:0" onclick="cM();oM(\'client\')">+</button>';
+    h+='<button class="btn bg" style="width:40px;height:40px;border-radius:50%;font-size:20px;padding:0;flex-shrink:0" title="Créer un nouveau client (le RDV sera conservé)" onclick="_openClientFromRdv()">+</button>';
     h+='</div>';
     // Passage tiles with icons (like encaissement)
     h+='<div style="display:flex;gap:6px;margin-bottom:10px">';
@@ -18838,6 +18861,29 @@ function aCl(){
       }
     }
     cM();showCaisse();
+    return;
+  }
+  // Retour à la modal RDV (créé client depuis le bouton + de la modal Nouveau RDV)
+  if(window._fromAddRdv){
+    window._fromAddRdv=false;
+    var ctx=window._addRdvCtx||{};
+    window._addRdvCtx=null;
+    cM();
+    // Réouvre la modal RDV avec le client juste créé pré-sélectionné
+    // pf.cId sera lu et placé dans #mc, et pickRdvClient sera déclenché pour MAJ l'affichage
+    setTimeout(function(){
+      try{
+        oM("appt",{cId:newCl.id,time:ctx.time,stId:ctx.stId});
+        // Restaurer date si différente d'aujourd'hui
+        setTimeout(function(){
+          if(ctx.date){var elD=document.getElementById("md");if(elD)elD.value=ctx.date;}
+          if(typeof pickRdvClient==="function")pickRdvClient(newCl.id);
+          // Restaurer la prestation si déjà choisie
+          if(ctx.sId&&typeof pickRdvSvc==="function"){window._rdvSvcId=ctx.sId;}
+          if(ctx.cat&&typeof pickRdvCat==="function"){pickRdvCat(ctx.cat);}
+        },80);
+      }catch(e){console.warn("retour modal RDV error",e);}
+    },120);
     return;
   }
   cM();go("clients");
