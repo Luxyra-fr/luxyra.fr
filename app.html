@@ -11077,8 +11077,23 @@ function rDetail(){
   for(var i=0;i<CL.length;i++){if(CL[i].id===selCl){c=CL[i];break;}}
   for(var i=0;i<s.cs.length;i++){if(s.cs[i].id===selCl){cs=s.cs[i];break;}}
   if(!c)return"<p>Client introuvable</p>";
-  var ap=AP.filter(function(a){return a.cId===c.id&&a.st==="done"}).sort(function(a,b){return new Date(b.date)-new Date(a.date)});
-  var ts=0;ap.forEach(function(a){ts+=a.pr;});
+  // Inclus les passages multi-client (ce client en séparateur sepCId)
+  var ap=(typeof getApptsForClient==="function"?getApptsForClient(c.id,"done"):AP.filter(function(a){return a.cId===c.id&&a.st==="done";})).sort(function(a,b){return new Date(b.date)-new Date(a.date)});
+  // Pour les tickets multi-client où ce client n'est pas le payeur principal, on calcule le subtotal de SES items
+  ap.forEach(function(a){
+    if(a.cId!==c.id && a.items && Array.isArray(a.items)){
+      // Ce client est dans le ticket via un séparateur — calculer son subtotal
+      var inMyBlock=false, sub=0;
+      for(var ii=0;ii<a.items.length;ii++){
+        var it=a.items[ii];
+        if(it.isSep){inMyBlock=(it.sepCId===c.id);continue;}
+        if(inMyBlock&&!it.isSep){sub+=(it.price||0)*(it.qty||1)-(it.remise||0);}
+      }
+      a._myShare=Math.max(0,sub);
+      a._isMulti=true;
+    }
+  });
+  var ts=0;ap.forEach(function(a){ts+=(a._isMulti?a._myShare:a.pr);});
   var ini=(c.nom?c.nom[0]:"")+(c.pre?c.pre[0]:"");
   
   // Header like LS Coiffure
@@ -11313,13 +11328,26 @@ function rDetail(){
       h+='<tr style="background:var(--bg);font-weight:700;text-transform:uppercase;letter-spacing:.5px;font-size:10.5px;color:var(--text3)"><td style="padding:10px 8px">Date</td><td>N\u00b0</td><td>Collaborateur</td><td>Prestation</td><td style="text-align:right">Montant</td><td style="width:42px"></td></tr>';
       for(var i=0;i<ap.length;i++){
         var a=ap[i],sv=gS(a.sId),sty=gT(a.stId);
-        var libelle = sv ? sv.n : ((a.items&&a.items.length&&a.items[0].name) ? a.items[0].name : "\u2014");
+        var libelle;
+        if(a._isMulti && a.items){
+          // Pour multi-client : libell\u00e9 = nom de SA prestation (premier item apr\u00e8s son s\u00e9parateur)
+          var inBlk=false, myItem=null;
+          for(var ii2=0;ii2<a.items.length;ii2++){
+            var it2=a.items[ii2];
+            if(it2.isSep){inBlk=(it2.sepCId===c.id);continue;}
+            if(inBlk&&!it2.isSep){myItem=it2;break;}
+          }
+          libelle = myItem ? myItem.name : (sv ? sv.n : "\u2014");
+        } else {
+          libelle = sv ? sv.n : ((a.items&&a.items.length&&a.items[0].name) ? a.items[0].name : "\u2014");
+        }
+        var displayMontant = a._isMulti ? (a._myShare||0) : (Number(a.pr)||0);
         h+='<tr style="border-bottom:1px solid var(--border2);cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.06)\'" onmouseout="this.style.background=\''+(i%2===0?"var(--bg)":"transparent")+'\'" onclick="viewClientTicket(\''+a.id+'\')">';
         h+='<td style="padding:10px 8px;font-weight:600">'+fmt(a.date)+'</td>';
-        h+='<td style="color:var(--text3);font-family:monospace">#'+(a.tkNum||"--")+'</td>';
+        h+='<td style="color:var(--text3);font-family:monospace">#'+(a.tkNum||"--")+(a._isMulti?'<span title="Ticket multi-client (pay\u00e9 par le client principal)" style="display:inline-block;margin-left:4px;font-size:9px;color:#7fc984">\ud83d\udc65</span>':'')+'</td>';
         h+='<td>'+(sty?sty.n:"\u2014")+'</td>';
         h+='<td style="color:var(--text2)">'+libelle+'</td>';
-        h+='<td style="text-align:right;font-weight:700;color:var(--gold)">'+(Number(a.pr)||0).toFixed(2)+' \u20ac</td>';
+        h+='<td style="text-align:right;font-weight:700;color:var(--gold)">'+displayMontant.toFixed(2)+' \u20ac</td>';
         h+='<td style="text-align:right;color:var(--gold);opacity:.6"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></td>';
         h+='</tr>';
       }
