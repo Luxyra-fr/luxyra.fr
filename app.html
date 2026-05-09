@@ -627,6 +627,145 @@ function getActiveTeam(){
 }
 window.getActiveTeam=getActiveTeam;
 
+// ===== WIZARD CONFIRMATION CHANGEMENT MODE CAUTION =====
+// Affiche une modal détaillée avec les implications avant d'activer un mode.
+// Évite les changements accidentels et explique les conséquences.
+function lxConfirmModeCaution(newMode, currentMode){
+  if(newMode === currentMode) return; // pas de changement
+  var titles = {aucun:"Réservation libre (mode safe)", acompte:"Acompte (paiement immédiat)", empreinte:"Empreinte bancaire (pré-autorisation)"};
+  var icons = {aucun:"🚫", acompte:"💳", empreinte:"🔒"};
+  var cols = {aucun:"#666", acompte:"#4caf50", empreinte:"#2196f3"};
+  var implications = {
+    aucun: [
+      ["✓","Vos clients peuvent réserver SANS engagement bancaire","#7fc984"],
+      ["✓","Aucun risque financier si Stripe a un souci","#7fc984"],
+      ["⚠","Aucune protection contre les no-show — le client peut ne pas venir sans pénalité","#ff9800"],
+      ["💡","Recommandé pour démarrer ou si votre clientèle est fiable","#64b5f6"]
+    ],
+    acompte: [
+      ["✓","Le client PAIE immédiatement à la réservation (somme débitée de sa carte)","#7fc984"],
+      ["✓","L'argent arrive sur votre compte Stripe instantanément","#7fc984"],
+      ["✓","Engagement client fort — taux de no-show divisé par 3 environ","#7fc984"],
+      ["⚠","Friction à la résa : certains clients abandonnent au moment du paiement","#ff9800"],
+      ["⚠","Si annulation dans les délais : remboursement automatique","#ff9800"],
+      ["💡","Recommandé pour salons premium / prestations longues (couleur, mèches)","#64b5f6"]
+    ],
+    empreinte: [
+      ["✓","Le client AUTORISE un montant sur sa carte SANS débit immédiat","#7fc984"],
+      ["✓","Friction minimale → meilleur taux de conversion","#7fc984"],
+      ["✓","Capture automatique en cas de no-show après le délai configuré","#7fc984"],
+      ["✓","Libération automatique si RDV honoré","#7fc984"],
+      ["⚠","Hold valable 7 jours max (Stripe limite par défaut, extensible 30j sur demande)","#ff9800"],
+      ["⚠","Certains clients peuvent voir le montant temporairement bloqué sur leur appli bancaire","#ff9800"],
+      ["💡","Recommandé pour la plupart des salons — équilibre entre conversion et protection","#64b5f6"]
+    ]
+  };
+  var impl = implications[newMode]||[];
+  var col = cols[newMode];
+  var h='<div class="mbox" style="max-width:520px;max-height:90vh;overflow-y:auto">';
+  h+='<div style="text-align:center;margin-bottom:16px"><div style="font-size:48px">'+icons[newMode]+'</div>';
+  h+='<h2 style="color:'+col+';margin:8px 0 4px">Activer : '+titles[newMode]+'</h2>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.5)">Changement à confirmer pour les futurs RDV en ligne</div></div>';
+  // Liste des implications
+  h+='<div style="background:rgba(255,255,255,.03);border-radius:10px;padding:12px;margin-bottom:14px">';
+  h+='<div style="font-size:11px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">⚙️ Ce que ça change</div>';
+  for(var i=0;i<impl.length;i++){
+    h+='<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:'+(i<impl.length-1?'1px solid rgba(255,255,255,.04)':'none')+'">';
+    h+='<div style="font-size:14px;color:'+impl[i][2]+';font-weight:800;width:20px;text-align:center;flex-shrink:0">'+impl[i][0]+'</div>';
+    h+='<div style="flex:1;font-size:12px;color:rgba(255,255,255,.8);line-height:1.4">'+impl[i][1]+'</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  // Cas particulier acompte/empreinte : avertissements légaux
+  if(newMode!=="aucun"){
+    h+='<div style="background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#bbdefb;line-height:1.5">';
+    h+='<strong style="color:#64b5f6">📜 Mention légale</strong> — Vos CGV (Article 12 bis) précisent déjà les modalités d\'acompte et d\'empreinte. Le client doit accepter explicitement les conditions à la réservation. ';
+    h+='<a onclick="window.open(\\\'/cgv\\\',\\\'_blank\\\')" style="color:var(--gold);cursor:pointer;text-decoration:underline">Voir CGV</a>';
+    h+='</div>';
+  }
+  // Boutons
+  h+='<div style="display:flex;gap:8px">';
+  h+='<button class="btn bk" style="flex:1" onclick="cM()">Annuler</button>';
+  var btnLabel = newMode==="aucun" ? "Désactiver la garantie" : "Activer "+(newMode==="acompte"?"l\'acompte":"l\'empreinte");
+  h+='<button class="btn bg" style="flex:1.4;background:linear-gradient(135deg,'+col+',#000)" onclick="lxApplyModeCaution(\\\''+newMode+'\\\')">'+btnLabel+' →</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+window.lxConfirmModeCaution=lxConfirmModeCaution;
+
+function lxApplyModeCaution(newMode){
+  window.SITE_CONFIG.modeCaution = newMode;
+  if(newMode==="acompte") window.SITE_CONFIG.acompteObligatoire = true;
+  else window.SITE_CONFIG.acompteObligatoire = false;
+  if(typeof saveSiteConfig==="function") saveSiteConfig();
+  if(typeof toast==="function") toast("✓ Mode "+(newMode==="aucun"?"Réservation libre":newMode==="acompte"?"Acompte":"Empreinte")+" activé","success");
+  cM();
+  if(typeof go==="function") go("settings");
+}
+window.lxApplyModeCaution=lxApplyModeCaution;
+
+function lxOpenGarantieGuide(){
+  var h='<div class="mbox" style="max-width:680px;max-height:90vh;overflow-y:auto">';
+  h+='<h2 style="text-align:center;color:var(--gold);margin-bottom:6px">🛡️ Guide : choisir votre garantie</h2>';
+  h+='<div style="font-size:12px;color:var(--text2);text-align:center;margin-bottom:16px">3 modes pour protéger vos créneaux contre les no-show</div>';
+  // Tableau comparatif
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">';
+  // Aucun
+  h+='<div style="padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.02)">';
+  h+='<div style="text-align:center;font-size:32px;margin-bottom:6px">🚫</div>';
+  h+='<div style="text-align:center;font-weight:800;color:#999;font-size:13px;margin-bottom:8px">Aucun</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.7);line-height:1.5"><strong>Friction client</strong><br>Aucune<br><br><strong>Protection no-show</strong><br>0%<br><br><strong>Idéal pour</strong><br>Démarrer / clientèle fidèle</div>';
+  h+='</div>';
+  // Acompte
+  h+='<div style="padding:12px;border:1px solid rgba(76,175,80,.3);border-radius:10px;background:rgba(76,175,80,.05)">';
+  h+='<div style="text-align:center;font-size:32px;margin-bottom:6px">💳</div>';
+  h+='<div style="text-align:center;font-weight:800;color:#7fc984;font-size:13px;margin-bottom:8px">Acompte</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.8);line-height:1.5"><strong>Friction client</strong><br>Élevée (paiement)<br><br><strong>Protection no-show</strong><br>Très forte (~95%)<br><br><strong>Idéal pour</strong><br>Premium, prestations longues</div>';
+  h+='</div>';
+  // Empreinte
+  h+='<div style="padding:12px;border:1px solid rgba(33,150,243,.3);border-radius:10px;background:rgba(33,150,243,.05)">';
+  h+='<div style="text-align:center;font-size:32px;margin-bottom:6px">🔒</div>';
+  h+='<div style="text-align:center;font-weight:800;color:#64b5f6;font-size:13px;margin-bottom:8px">Empreinte ⭐</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.8);line-height:1.5"><strong>Friction client</strong><br>Faible (carte saisie)<br><br><strong>Protection no-show</strong><br>Forte (~85%)<br><br><strong>Idéal pour</strong><br>La plupart des salons</div>';
+  h+='</div>';
+  h+='</div>';
+  // Reco
+  h+='<div style="padding:12px;background:linear-gradient(135deg,rgba(200,168,78,.08),rgba(200,168,78,.02));border:1px solid rgba(200,168,78,.25);border-radius:10px;font-size:12px;color:rgba(255,255,255,.85);line-height:1.6;margin-bottom:14px">';
+  h+='<strong style="color:var(--gold)">⭐ Notre recommandation</strong><br>';
+  h+='1. <strong>Démarrez en mode "Aucun"</strong> les premières semaines pour observer votre taux de no-show.<br>';
+  h+='2. Si > 5% de no-show, basculez sur <strong>Empreinte 30€ avec capture auto 24h</strong>. C\'est le meilleur compromis.<br>';
+  h+='3. Si vous avez des prestations longues (>2h, mèches, lissage), envisagez <strong>Acompte 30%</strong>.';
+  h+='</div>';
+  // Tableau détaillé
+  h+='<div style="font-size:11px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📋 Tableau détaillé</div>';
+  h+='<div style="overflow-x:auto"><table style="width:100%;font-size:11px;border-collapse:collapse">';
+  var rows=[
+    ["", "Aucun", "Acompte", "Empreinte"],
+    ["Débit immédiat","Non","<strong style=\\"color:#7fc984\\">Oui</strong>","Non"],
+    ["Friction client","Aucune","Élevée","Faible"],
+    ["No-show capturé","Non","Si pas remboursé","<strong style=\\"color:#7fc984\\">Oui (auto/manuel)</strong>"],
+    ["Annulation OK","Pas de remboursement","<strong style=\\"color:#7fc984\\">Remboursement auto</strong>","<strong style=\\"color:#7fc984\\">Libération auto</strong>"],
+    ["Stripe Connect requis","Non","<strong style=\\"color:#ff9800\\">Oui</strong>","<strong style=\\"color:#ff9800\\">Oui</strong>"],
+    ["Validité","∞","∞","7 jours (extensible 30)"],
+    ["CGV à jour","Pas requis","<strong style=\\"color:#7fc984\\">Article 12 bis OK</strong>","<strong style=\\"color:#7fc984\\">Article 12 bis OK</strong>"]
+  ];
+  for(var ri=0;ri<rows.length;ri++){
+    var bg = ri===0 ? 'background:rgba(200,168,78,.1)' : (ri%2 ? 'background:rgba(255,255,255,.02)' : '');
+    h+='<tr style="'+bg+'">';
+    for(var ci=0;ci<rows[ri].length;ci++){
+      var weight = (ci===0 || ri===0) ? 'font-weight:700' : 'font-weight:500';
+      var color = ri===0 ? 'color:var(--gold)' : 'color:rgba(255,255,255,.8)';
+      h+='<td style="padding:8px;border-bottom:1px solid rgba(255,255,255,.04);'+weight+';'+color+'">'+rows[ri][ci]+'</td>';
+    }
+    h+='</tr>';
+  }
+  h+='</table></div>';
+  h+='<button class="btn bk" style="width:100%;margin-top:14px" onclick="cM()">Fermer</button>';
+  h+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+window.lxOpenGarantieGuide=lxOpenGarantieGuide;
+
 // ===== EMPREINTE BANCAIRE — Helpers admin =====
 // Rend un widget HTML "Empreinte X € · état · actions" pour un RDV donné.
 // rdvOnline doit avoir empreinteStatus, empreinteAmount, paymentIntentId, empreinteHeldAt, etc.
@@ -9707,7 +9846,6 @@ function toggleProdOnline(prodId,on){
 }
 function saveSiteConfig(){
   var SC=window.SITE_CONFIG;if(!SC)return;
-  if(typeof window.lxAutoSaveToast==="function")window.lxAutoSaveToast();
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     var data={
       salon_id:_salonId,
@@ -10708,23 +10846,32 @@ function rSettings(){
     // ===== MODE DE GARANTIE NO-SHOW (acompte vs empreinte vs aucun) =====
     var _modeC=SC.modeCaution||"aucun";
     h+='<div style="margin-bottom:14px;padding:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:10px">';
-    h+='<div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:10px">🛡️ Garantie anti no-show</div>';
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+    h+='<div style="font-size:13px;font-weight:700;color:var(--gold)">🛡️ Garantie anti no-show</div>';
+    h+='<button type="button" class="btn bs" style="font-size:10px;padding:5px 10px;background:rgba(200,168,78,.08);color:var(--gold);border:1px solid rgba(200,168,78,.25);font-weight:700" onclick="lxOpenGarantieGuide()">❓ Comparer les modes</button>';
+    h+='</div>';
+    if(!_connectActive){
+      h+='<div style="margin-bottom:10px;padding:10px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.25);border-radius:8px;font-size:11px;color:#ffb74d;line-height:1.5">⚠️ <strong>Stripe non configuré</strong> — Acompte et Empreinte sont désactivés. <a onclick="if(typeof startConnectOnboard===\'function\')startConnectOnboard()" style="color:var(--gold);cursor:pointer;font-weight:700;text-decoration:underline">Configurer Stripe</a> pour les activer.</div>';
+    }
     h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
     var _modes=[{k:"aucun",l:"Aucun",icon:"🚫",desc:"Réservation libre",col:"#666"},{k:"acompte",l:"Acompte",icon:"💳",desc:"Paiement à la résa",col:"#4caf50"},{k:"empreinte",l:"Empreinte",icon:"🔒",desc:"Pré-autorisation",col:"#2196f3"}];
     for(var mi=0;mi<_modes.length;mi++){
       var mo=_modes[mi]; var sel=_modeC===mo.k;
       var disabled=(mo.k!=="aucun"&&!_connectActive);
-      h+='<label style="cursor:'+(disabled?"not-allowed":"pointer")+';opacity:'+(disabled?".5":"1")+';padding:10px 6px;border-radius:8px;border:2px solid '+(sel?mo.col:'rgba(255,255,255,.1)')+';background:'+(sel?mo.col+'15':'rgba(255,255,255,.02)')+';text-align:center;display:block">';
-      h+='<input type="radio" name="lxModeCaution" value="'+mo.k+'" '+(sel?"checked":"")+' '+(disabled?"disabled":"")+' style="display:none" onchange="window.SITE_CONFIG.modeCaution=this.value;if(this.value===\'acompte\')window.SITE_CONFIG.acompteObligatoire=true;else window.SITE_CONFIG.acompteObligatoire=false;saveSiteConfig();go(\'settings\')">';
+      // Wizard de confirmation au clic, pas d'activation directe sans confirmation
+      var clickHandler = disabled ? '' : 'lxConfirmModeCaution(\\\''+mo.k+'\\\', \\\''+_modeC+'\\\')';
+      h+='<div style="cursor:'+(disabled?"not-allowed":"pointer")+';opacity:'+(disabled?".5":"1")+';padding:10px 6px;border-radius:8px;border:2px solid '+(sel?mo.col:'rgba(255,255,255,.1)')+';background:'+(sel?mo.col+'15':'rgba(255,255,255,.02)')+';text-align:center" '+(disabled?'':'onclick="'+clickHandler+'"')+'>';
       h+='<div style="font-size:22px">'+mo.icon+'</div>';
-      h+='<div style="font-size:12px;font-weight:800;color:'+(sel?mo.col:'#fff')+';margin-top:4px">'+mo.l+'</div>';
-      h+='<div style="font-size:9px;color:rgba(255,255,255,.5);margin-top:2px">'+mo.desc+'</div></label>';
+      h+='<div style="font-size:12px;font-weight:800;color:'+(sel?mo.col:'#fff')+';margin-top:4px">'+mo.l+(sel?' ✓':'')+'</div>';
+      h+='<div style="font-size:9px;color:rgba(255,255,255,.5);margin-top:2px">'+mo.desc+'</div></div>';
     }
     h+='</div>';
-    if(_modeC==="empreinte"){
-      h+='<div style="margin-top:10px;padding:10px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:8px;font-size:11px;color:#64b5f6;line-height:1.5">';
-      h+='<strong>🔒 Empreinte bancaire</strong> — Stripe pré-autorise X € sur la carte du client sans débiter. Si le client honore son RDV, l\'empreinte est libérée. En cas de no-show, vous capturez l\'empreinte (manuel ou auto après le délai).';
-      h+='</div>';
+    if(_modeC==="aucun"){
+      h+='<div style="margin-top:10px;padding:10px;background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.2);border-radius:8px;font-size:11px;color:#7fc984;line-height:1.5"><strong>✓ Mode safe activé</strong> — Réservations sans engagement bancaire. Idéal pour démarrer. Vous pouvez activer Acompte ou Empreinte plus tard.</div>';
+    } else if(_modeC==="acompte"){
+      h+='<div style="margin-top:10px;padding:10px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:8px;font-size:11px;color:#7fc984;line-height:1.5"><strong>💳 Acompte actif</strong> — Le client paie immédiatement à la réservation. L\'acompte est encaissé sur votre compte Stripe. Si annulation dans les délais, remboursement automatique.</div>';
+    } else if(_modeC==="empreinte"){
+      h+='<div style="margin-top:10px;padding:10px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:8px;font-size:11px;color:#64b5f6;line-height:1.5"><strong>🔒 Empreinte active</strong> — Pré-autorisation Stripe sans débit immédiat. Libérée auto si RDV honoré, capturée auto en cas de no-show après le délai configuré. Hold valable 7 jours max.</div>';
     }
     h+='</div>';
     // Acompte obligatoire (legacy : visible uniquement en mode acompte)

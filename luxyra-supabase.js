@@ -1286,7 +1286,6 @@ var _FICHE_TECH_KEYS = [
 async function saveClient(client) {
   if (!_isOnline || !_salonId) return;
   // Toast auto-save discret (debounced)
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   // Construit le bucket fiche_tech à partir des champs étendus présents
   // sur l'objet client en mémoire. On ne pousse que les valeurs définies
   // pour ne pas écraser une fiche existante avec des undefined.
@@ -1466,7 +1465,6 @@ async function deleteAppointmentFromDb(apptId) {
 // Sauvegarder un produit
 async function saveProduct(prod) {
   if (!_isOnline || !_salonId) return;
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   var data = {
     salon_id: _salonId,
     nom: prod.n, prix: prod.p, prix_achat: prod.pa || 0,
@@ -1863,7 +1861,6 @@ async function saveAuditEntry(action, detail) {
 // Sauvegarder la config du salon
 async function saveSalonConfig() {
   if (!_isOnline || !_salonId) return;
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   var data = {
     nom: SALON_CONFIG.nom, sous_titre: SALON_CONFIG.sousTitre,
     logo: SALON_CONFIG.logo, adresse: SALON_CONFIG.adresse,
@@ -1965,7 +1962,6 @@ if (typeof window !== "undefined") {
 // Sauvegarder les services
 async function saveServices() {
   if (!_sb || !_salonId) return;
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   for (var i = 0; i < SVC.length; i++) {
     var s = SVC[i];
     var data = {
@@ -1991,7 +1987,6 @@ async function saveServices() {
 // Sauvegarder les forfaits
 async function saveForfaits() {
   if (!_sb || !_salonId) return;
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   for (var i = 0; i < FORFAITS.length; i++) {
     var f = FORFAITS[i];
     var data = {
@@ -2062,7 +2057,6 @@ async function deleteForfaitFromDb(forfaitId) {
 
 async function saveCollaborateurs() {
   if (!_isOnline || !_salonId) return;
-  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   // First, get all existing collab IDs from Supabase for this salon
   var existing = await _sb.from("collaborateurs").select("id").eq("salon_id", _salonId);
   var dbIds = {};
