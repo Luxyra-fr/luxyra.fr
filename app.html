@@ -11072,6 +11072,162 @@ passageName=function(cId,sId){
   return _origPassageName(cId,sId);
 };
 
+// ===== TAB "CA" FICHE CLIENT — Cockpit business par client =====
+// Calcule et rend le HTML : statut client, CA total, comparaison annuelle,
+// évolution 12 mois, ventilation services/produits, top 3 prestations.
+function _renderClientCaCockpit(c, ap, caTotal, cs){
+  var h='';
+  var _curYr=TD.slice(0,4); var _prevYr=String(parseInt(_curYr)-1);
+  var _now=new Date(TD);
+  var _ms12=_now.getTime()-365*24*3600*1000;
+  var nbVisitsTotal=ap.length;
+  var caCurYr=0,vcCurYr=0,caPrevYr=0,vcPrevYr=0,ca12m=0,vc12m=0,caServices=0,caProduits=0;
+  var byMonth={}, prestCount={}, dates=[];
+  ap.forEach(function(a){
+    var dParts=(a.date||"").split("-");
+    if(dParts.length<3)return;
+    var dObj=new Date(a.date);
+    dates.push(dObj.getTime());
+    var ym=dParts[0]+"-"+dParts[1];
+    byMonth[ym]=(byMonth[ym]||0)+(Number(a.pr)||0);
+    if(dParts[0]===_curYr){caCurYr+=Number(a.pr)||0;vcCurYr++;}
+    if(dParts[0]===_prevYr){caPrevYr+=Number(a.pr)||0;vcPrevYr++;}
+    if(dObj.getTime()>=_ms12){ca12m+=Number(a.pr)||0;vc12m++;}
+    if(a.items&&Array.isArray(a.items)){
+      a.items.forEach(function(it){
+        if(it.isSep)return;
+        var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
+        if(it.isProd)caProduits+=sub;else caServices+=sub;
+        if(!it.isProd&&it.name)prestCount[it.name]=(prestCount[it.name]||0)+1;
+      });
+    }
+  });
+  var panierMoyen=nbVisitsTotal>0?caTotal/nbVisitsTotal:0;
+  var deltaYr=caPrevYr>0?((caCurYr-caPrevYr)/caPrevYr*100):0;
+  dates.sort(function(a,b){return a-b;});
+  var dateFirst=dates.length?new Date(dates[0]):null;
+  var anciennete=dateFirst?Math.floor((_now-dateFirst)/(365*24*3600*1000)):0;
+  var moisAnc=dateFirst?Math.floor((_now-dateFirst)/(30.44*24*3600*1000)):0;
+  var freqJours=0;
+  if(dates.length>=2){
+    var diffs=[];for(var di=1;di<dates.length;di++)diffs.push((dates[di]-dates[di-1])/(24*3600*1000));
+    freqJours=Math.round(diffs.reduce(function(s,v){return s+v;},0)/diffs.length);
+  }
+  var statut="—",statutCol="#888";
+  if(nbVisitsTotal===0){statut="Nouveau";statutCol="#9c27b0";}
+  else if(caTotal>=500&&nbVisitsTotal>=10){statut="VIP ✨";statutCol="#c8a84e";}
+  else if(vc12m>=4){statut="Fidèle";statutCol="#4caf50";}
+  else if(dates.length&&(_now-new Date(dates[dates.length-1]))/(24*3600*1000)>365){statut="Perdu(e)";statutCol="#f44336";}
+  else if(dates.length&&(_now-new Date(dates[dates.length-1]))/(24*3600*1000)>180){statut="À risque";statutCol="#ff9800";}
+  else{statut="Actif";statutCol="#2196f3";}
+  var topPrest=Object.keys(prestCount).map(function(k){return{n:k,c:prestCount[k]};}).sort(function(a,b){return b.c-a.c;}).slice(0,3);
+  var months12=[];
+  for(var mi=11;mi>=0;mi--){
+    var dRef=new Date(_now.getFullYear(),_now.getMonth()-mi,1);
+    var ymRef=dRef.getFullYear()+"-"+String(dRef.getMonth()+1).padStart(2,"0");
+    months12.push({y:dRef.getFullYear(),m:dRef.getMonth(),ym:ymRef,ca:byMonth[ymRef]||0});
+  }
+  var mxCa=Math.max.apply(null,months12.map(function(x){return x.ca;}).concat([1]));
+  var moisFav=months12.slice().sort(function(a,b){return b.ca-a.ca;})[0];
+  var mNms=["Jan","Fév","Mar","Avr","Mai","Juin","Jui","Aoû","Sep","Oct","Nov","Déc"];
+
+  // HEADER KPI
+  h+='<div class="card" style="background:linear-gradient(135deg,rgba(200,168,78,.06),rgba(200,168,78,.02));border:1px solid rgba(200,168,78,.2)">';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
+  h+='<div><div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(212,168,67,.7);letter-spacing:2px;text-transform:uppercase">Statut client</div>';
+  h+='<div style="font-size:22px;font-weight:800;color:'+statutCol+';margin-top:2px">'+statut+'</div></div>';
+  h+='<div style="text-align:right"><div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(212,168,67,.7);letter-spacing:2px;text-transform:uppercase">CA total</div>';
+  h+='<div style="font-size:28px;font-weight:900;color:var(--gold);font-family:var(--f1,Georgia,serif)">'+caTotal.toFixed(2)+' €</div></div>';
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;border-top:1px solid rgba(200,168,78,.15);padding-top:12px">';
+  h+='<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#fff">'+nbVisitsTotal+'</div><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-top:2px">Visites</div></div>';
+  h+='<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#fff">'+panierMoyen.toFixed(0)+' €</div><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-top:2px">Panier moyen</div></div>';
+  h+='<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#fff">'+(freqJours>0?freqJours+' j':"—")+'</div><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-top:2px">Entre visites</div></div>';
+  var ancStr=anciennete>=1?(anciennete+' an'+(anciennete>1?'s':'')):(moisAnc+' mois');
+  h+='<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#fff">'+(dateFirst?ancStr:"—")+'</div><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-top:2px">Ancienneté</div></div>';
+  h+='</div></div>';
+
+  // COMPARAISON ANNUELLE
+  h+='<div class="card"><div class="ct">📊 Comparaison annuelle</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">';
+  h+='<div style="background:rgba(255,255,255,.03);border-radius:10px;padding:14px">';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px">'+_prevYr+'</div>';
+  h+='<div style="font-size:22px;font-weight:800;color:#fff;margin-top:4px">'+caPrevYr.toFixed(2)+' €</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+vcPrevYr+' visite'+(vcPrevYr>1?'s':'')+'</div>';
+  h+='</div>';
+  var deltaCol=deltaYr>=0?"#4caf50":"#f44336"; var deltaSym=deltaYr>=0?"▲":"▼";
+  h+='<div style="background:linear-gradient(135deg,rgba(200,168,78,.08),rgba(200,168,78,.02));border:1px solid rgba(200,168,78,.2);border-radius:10px;padding:14px">';
+  h+='<div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:1px">'+_curYr+' (en cours)</div>';
+  h+='<div style="font-size:22px;font-weight:800;color:var(--gold);margin-top:4px">'+caCurYr.toFixed(2)+' €</div>';
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">';
+  h+='<span style="font-size:11px;color:rgba(255,255,255,.5)">'+vcCurYr+' visite'+(vcCurYr>1?'s':'')+'</span>';
+  if(caPrevYr>0)h+='<span style="font-size:11px;font-weight:800;color:'+deltaCol+'">'+deltaSym+' '+Math.abs(deltaYr).toFixed(0)+'%</span>';
+  h+='</div></div></div>';
+  h+='<div style="margin-top:12px;padding:12px;background:rgba(33,150,243,.06);border:1px solid rgba(33,150,243,.2);border-radius:10px;display:flex;justify-content:space-between;align-items:center">';
+  h+='<div><div style="font-size:11px;color:#64b5f6;text-transform:uppercase;letter-spacing:1px;font-weight:700">12 derniers mois (rolling)</div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+vc12m+' visite'+(vc12m>1?'s':'')+'</div></div>';
+  h+='<div style="font-size:20px;font-weight:800;color:#64b5f6">'+ca12m.toFixed(2)+' €</div>';
+  h+='</div></div>';
+
+  // EVOLUTION 12 MOIS
+  h+='<div class="card"><div class="ct">📈 Évolution 12 derniers mois</div>';
+  h+='<div style="display:flex;align-items:flex-end;gap:4px;height:120px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.08)">';
+  for(var mi2=0;mi2<months12.length;mi2++){
+    var bar=months12[mi2];
+    var pct=mxCa>0?(bar.ca/mxCa*100):0;
+    var barCol=bar.ca>0?(bar===moisFav?"linear-gradient(180deg,#c8a84e,#b8960f)":"linear-gradient(180deg,rgba(200,168,78,.6),rgba(200,168,78,.3))"):"rgba(255,255,255,.06)";
+    var isCur=(bar.y===_now.getFullYear()&&bar.m===_now.getMonth());
+    h+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px" title="'+mNms[bar.m]+' '+bar.y+' : '+bar.ca.toFixed(2)+'€">';
+    h+='<div style="font-size:9px;color:'+(bar.ca>0?'rgba(200,168,78,.8)':'rgba(255,255,255,.2)')+';font-weight:700">'+(bar.ca>0?bar.ca.toFixed(0):'')+'</div>';
+    h+='<div style="width:100%;height:'+Math.max(pct,2)+'%;background:'+barCol+';border-radius:4px 4px 0 0;min-height:3px"></div>';
+    h+='<div style="font-size:9px;color:'+(isCur?'var(--gold)':'rgba(255,255,255,.4)')+';font-weight:'+(isCur?'800':'500')+'">'+mNms[bar.m]+'</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  if(moisFav&&moisFav.ca>0){
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:8px;text-align:center">⭐ Mois favori : <strong style="color:var(--gold)">'+mNms[moisFav.m]+' '+moisFav.y+'</strong> avec '+moisFav.ca.toFixed(2)+' €</div>';
+  }
+  h+='</div>';
+
+  // VENTILATION SERVICES/PRODUITS
+  var totVent=caServices+caProduits;
+  if(totVent>0){
+    var pctSrv=Math.round(caServices/totVent*100);
+    var pctPrd=100-pctSrv;
+    h+='<div class="card"><div class="ct">🥧 Répartition des achats</div>';
+    h+='<div style="display:flex;height:24px;border-radius:8px;overflow:hidden;margin:10px 0">';
+    h+='<div style="width:'+pctSrv+'%;background:linear-gradient(90deg,#c8a84e,#b8960f);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px">'+(pctSrv>=15?pctSrv+'%':'')+'</div>';
+    h+='<div style="width:'+pctPrd+'%;background:linear-gradient(90deg,#ff9800,#f57c00);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px">'+(pctPrd>=15?pctPrd+'%':'')+'</div>';
+    h+='</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">';
+    h+='<div style="display:flex;align-items:center;gap:8px"><div style="width:12px;height:12px;background:linear-gradient(135deg,#c8a84e,#b8960f);border-radius:3px"></div>';
+    h+='<div><div style="font-size:11px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px">Prestations</div><div style="font-weight:800;color:var(--gold)">'+caServices.toFixed(2)+' €</div></div></div>';
+    h+='<div style="display:flex;align-items:center;gap:8px"><div style="width:12px;height:12px;background:linear-gradient(135deg,#ff9800,#f57c00);border-radius:3px"></div>';
+    h+='<div><div style="font-size:11px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px">Produits</div><div style="font-weight:800;color:#ff9800">'+caProduits.toFixed(2)+' €</div></div></div>';
+    h+='</div></div>';
+  }
+
+  // TOP 3 PRESTATIONS
+  if(topPrest.length>0){
+    h+='<div class="card"><div class="ct">🏆 Prestations préférées</div>';
+    var medals=["🥇","🥈","🥉"];
+    for(var ti=0;ti<topPrest.length;ti++){
+      var tp=topPrest[ti];
+      h+='<div style="display:flex;align-items:center;gap:12px;padding:10px 0;'+(ti<topPrest.length-1?'border-bottom:1px solid rgba(255,255,255,.06)':'')+'">';
+      h+='<div style="font-size:22px">'+medals[ti]+'</div>';
+      h+='<div style="flex:1"><div style="font-weight:700;color:#fff">'+tp.n+'</div></div>';
+      h+='<div style="font-size:13px;font-weight:800;color:var(--gold)">'+tp.c+' fois</div>';
+      h+='</div>';
+    }
+    h+='</div>';
+  }
+
+  if(nbVisitsTotal===0){
+    h+='<div style="text-align:center;padding:20px;color:rgba(255,255,255,.4);font-style:italic">Aucune visite encore enregistrée pour ce client.</div>';
+  }
+  return h;
+}
+
 function rDetail(){
   var s=cStats();var c=null,cs=null;
   for(var i=0;i<CL.length;i++){if(CL[i].id===selCl){c=CL[i];break;}}
@@ -11508,16 +11664,7 @@ function rDetail(){
     h+='</div>';
   }
   else if(clTab==="ca"){
-    var caTotal=ts;
-    var caYear=0;ap.forEach(function(a){if(a.date.indexOf(TD.slice(0,4))===0)caYear+=a.pr;});
-    var vcYear=ap.filter(function(a){return a.date.indexOf(TD.slice(0,4))===0}).length;
-    h+='<div class="card"><div class="ct">Donn\u00e9es globales</div>';
-    h+='<div class="sr"><div class="sb"><div class="sv">'+(cs?cs.vc:0)+'</div><div class="sl">Visites</div></div>';
-    h+='<div class="sb"><div class="sv">'+caTotal.toFixed(2)+' \u20ac</div><div class="sl">Chiffre d\u0027affaires</div></div></div>';
-    h+='<div class="ct" style="margin-top:16px">Donn\u00e9es de l\u0027ann\u00e9e '+TD.slice(0,4)+'</div>';
-    h+='<div class="sr"><div class="sb"><div class="sv">'+vcYear+'</div><div class="sl">Visites</div></div>';
-    h+='<div class="sb"><div class="sv">'+caYear.toFixed(2)+' \u20ac</div><div class="sl">CA ann\u00e9e</div></div></div>';
-    h+='</div>';
+    h+=_renderClientCaCockpit(c,ap,ts,cs);
   }
   return h;
 }
