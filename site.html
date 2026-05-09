@@ -705,6 +705,9 @@ async function loadSalon(){
         politiqueAnnul:d.politique_annulation||"48h",remboursementAnnul:d.remboursement_annulation,
         delaiMin:d.delai_min_heures||2,delaiMax:d.delai_max_jours||30,interval:d.creneau_intervalle||15,
         bloquerNouveauxComptes:d.bloquer_nouveaux_comptes===true,
+        modeCaution:d.mode_caution||"aucun",
+        empreinteMontant:Number(d.empreinte_montant)||30,
+        empreinteCaptureDelaiH:Number(d.empreinte_capture_delai_h)||24,
         autoConfirm:d.confirmation_auto,svcOnline:d.services_en_ligne||[],prodOnline:d.produits_en_ligne||[],
         msgAccueil:d.message_accueil||"",msgConfirm:d.message_confirmation||"",
         couleur:d.couleur_primaire||"#c8a84e",couleur2:d.couleur_secondaire||"#0a0a0a",
@@ -2726,12 +2729,18 @@ async function submitWithStripe(){
   var totalPrix=t.prixFinal;
   var primaryNom=bookingPrimaryNom();
   var itemsPayload=bookingItemsPayload();
-  var acompte=0;
-  if(SITE_CFG.acompte){
-    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(totalPrix*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
-    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
+  // ===== ROUTE EARLY SELON MODE DE CAUTION =====
+  var modeC = SITE_CFG.modeCaution || (SITE_CFG.acompte?"acompte":"aucun");
+  var acompte = 0;
+  if(modeC === "empreinte"){
+    acompte = Number(SITE_CFG.empreinteMontant) || 30;
+  } else if(modeC === "acompte" || SITE_CFG.acompte){
+    acompte = SITE_CFG.acompteType==="pourcentage"
+      ? Math.round(totalPrix * SITE_CFG.acompteMt / 100)
+      : SITE_CFG.acompteMt;
+    if(SITE_CFG.acompteMin && acompte < SITE_CFG.acompteMin) acompte = SITE_CFG.acompteMin;
   }
-  if(acompte<=0){submitBooking();return;}
+  if(modeC === "aucun" || acompte <= 0){ submitBooking(); return; }
 
   // Check slot availability before payment
   await refreshRDV();
@@ -2739,8 +2748,9 @@ async function submitWithStripe(){
     alert("Ce cr\u00e9neau n\u2019est plus disponible. Veuillez choisir un autre horaire.");return;
   }
   
-  // If salon has Stripe Connect → use real Checkout Session
-  if(SALON.connectId&&SALON.connectStatus==="active"){
+  // EMPREINTE : skip Connect Checkout (incompatible avec capture_method=manual) → flow fallback
+  // ACOMPTE avec Connect actif → Connect Checkout
+  if(modeC !== "empreinte" && SALON.connectId && SALON.connectStatus==="active"){
     // 1. Create RDV with pending_payment status
     var rdvData={
       salon_id:salonId,
@@ -2962,8 +2972,8 @@ async function processStripePayment(){
     var hasMulti=booking.items&&booking.items.length>1;
     var h='<div class="success-page">';
     h+='<div class="ico">\u2705</div>';
-    h+='<h2>Paiement accept\u00e9 !</h2>';
-    h+='<p>Votre acompte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a \u00e9t\u00e9 encaiss\u00e9.</p>';
+    h+='<h2>'+(isEmp?'Pré-autorisation acceptée !':'Paiement accepté !')+'</h2>';
+    h+='<p>'+(isEmp?'Une empreinte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a été réalisée sur votre carte. Aucun débit immédiat — sera libérée après votre RDV.':'Votre acompte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a été encaissé.')+'</p>';
     h+='<div class="summary" style="max-width:400px;margin:20px auto">';
     if(hasMulti){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
@@ -2976,9 +2986,9 @@ async function processStripePayment(){
     }
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+booking.collab.n+'</span></div>';
-    h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span>Acompte pay\u00e9</span><span class="v" style="color:#2d9a5e">'+acompte.toFixed(2)+' \u20ac \u2714</span></div>';
+    h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span>'+(isEmp?'Empreinte (non débitée)':'Acompte payé')+'</span><span class="v" style="color:#2d9a5e">'+acompte.toFixed(2)+' \u20ac \u2714</span></div>';
     h+='<div class="summary-row"><span>Carte</span><span class="v">'+brand.toUpperCase()+' **** '+last4+'</span></div>';
-    h+='<div class="summary-row"><span>Reste \u00e0 payer au salon</span><span class="v">'+(totalPrix-acompte).toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"><span>'+(isEmp?'À payer au salon':'Reste à payer au salon')+'</span><span class="v">'+(isEmp?totalPrix.toFixed(2):(totalPrix-acompte).toFixed(2))+' \u20ac</span></div>';
     h+='</div>';
 
     // Send email receipt if email provided
