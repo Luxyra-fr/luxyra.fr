@@ -627,6 +627,100 @@ function getActiveTeam(){
 }
 window.getActiveTeam=getActiveTeam;
 
+// ===== EMPREINTE BANCAIRE — Helpers admin =====
+// Rend un widget HTML "Empreinte X € · état · actions" pour un RDV donné.
+// rdvOnline doit avoir empreinteStatus, empreinteAmount, paymentIntentId, empreinteHeldAt, etc.
+function lxRenderEmpreinteWidget(ro){
+  if(!ro||!ro.empreinteStatus||ro.empreinteStatus==="none")return "";
+  var st=ro.empreinteStatus;
+  var amt=Number(ro.empreinteAmount||0).toFixed(2);
+  var html='<div style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid ';
+  if(st==="held"){
+    html+='rgba(33,150,243,.3);background:rgba(33,150,243,.08)">';
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+    html+='<div><div style="font-weight:800;color:#64b5f6;font-size:13px">🔒 Empreinte bancaire active</div>';
+    html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+amt+' € pré-autorisés (non débités)</div>';
+    if(ro.empreinteHeldAt){
+      var heldDate=new Date(ro.empreinteHeldAt);
+      var ageH=Math.floor((Date.now()-heldDate.getTime())/3600000);
+      html+='<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">Pré-autorisé il y a '+(ageH<24?ageH+'h':Math.floor(ageH/24)+'j')+' · expire dans '+Math.max(0,168-ageH)+'h</div>';
+    }
+    html+='</div></div>';
+    html+='<div style="display:flex;gap:6px">';
+    html+='<button class="btn bs" style="flex:1;font-size:11px;padding:8px;background:rgba(76,175,80,.1);color:#66bb6a;border:1px solid rgba(76,175,80,.3);font-weight:700" onclick="lxEmpreinteRelease(\''+ro.id+'\')">✓ Libérer (RDV honoré)</button>';
+    html+='<button class="btn bs" style="flex:1;font-size:11px;padding:8px;background:rgba(244,67,54,.1);color:#ef5350;border:1px solid rgba(244,67,54,.3);font-weight:700" onclick="lxEmpreinteCapture(\''+ro.id+'\')">💸 Capturer (no-show)</button>';
+    html+='</div>';
+  } else if(st==="captured"){
+    html+='rgba(244,67,54,.3);background:rgba(244,67,54,.08)">';
+    html+='<div style="font-weight:800;color:#ef5350;font-size:13px">💸 Empreinte capturée</div>';
+    html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+amt+' € débités' + (ro.empreinteCapturedAt?' le '+new Date(ro.empreinteCapturedAt).toLocaleDateString("fr-FR"):'')+'</div>';
+  } else if(st==="released"){
+    html+='rgba(76,175,80,.3);background:rgba(76,175,80,.08)">';
+    html+='<div style="font-weight:800;color:#66bb6a;font-size:13px">✓ Empreinte libérée</div>';
+    html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+amt+' € libérés' + (ro.empreinteReleasedAt?' le '+new Date(ro.empreinteReleasedAt).toLocaleDateString("fr-FR"):'')+'</div>';
+  } else if(st==="expired"){
+    html+='rgba(255,152,0,.3);background:rgba(255,152,0,.08)">';
+    html+='<div style="font-weight:800;color:#ff9800;font-size:13px">⏱ Empreinte expirée</div>';
+    html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Délai Stripe 7j dépassé · '+amt+' € libérés automatiquement</div>';
+  } else if(st==="failed"){
+    html+='rgba(244,67,54,.3);background:rgba(244,67,54,.08)">';
+    html+='<div style="font-weight:800;color:#ef5350;font-size:13px">⚠ Échec empreinte</div>';
+    html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">La pré-autorisation n\'a pas pu être réalisée</div>';
+  }
+  html+='</div>';
+  return html;
+}
+window.lxRenderEmpreinteWidget=lxRenderEmpreinteWidget;
+
+async function lxEmpreinteCapture(rdvId){
+  if(!confirm("⚠️ Capturer l\'empreinte bancaire ?\n\nLe client sera débité du montant pré-autorisé. À utiliser uniquement en cas de no-show non excusable."))return;
+  try{
+    var token=localStorage.getItem("supabase.auth.token")||"";
+    if(typeof _sb!=="undefined"&&_sb){
+      var sess=await _sb.auth.getSession();
+      token=sess.data?.session?.access_token||token;
+    }
+    var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-capture",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+      body:JSON.stringify({rdv_id:rdvId,reason:"no_show"})
+    });
+    var data=await r.json();
+    if(!r.ok){toast(data.error||"Échec capture","error");return;}
+    toast("💸 Empreinte capturée — "+(data.amount_captured?data.amount_captured.toFixed(2)+" €":""),"success");
+    // Sync local
+    if(window.RDV_ONLINE){
+      for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="captured";RDV_ONLINE[i].empreinteCapturedAt=new Date().toISOString();break;}
+    }
+    if(typeof go==="function")go("planning");
+  }catch(e){toast("Erreur réseau : "+e.message,"error");}
+}
+window.lxEmpreinteCapture=lxEmpreinteCapture;
+
+async function lxEmpreinteRelease(rdvId){
+  if(!confirm("Libérer l\'empreinte bancaire ?\n\nLes fonds seront immédiatement libérés sur la carte du client. À utiliser quand le RDV est honoré."))return;
+  try{
+    var token="";
+    if(typeof _sb!=="undefined"&&_sb){
+      var sess=await _sb.auth.getSession();
+      token=sess.data?.session?.access_token||"";
+    }
+    var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-release",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+      body:JSON.stringify({rdv_id:rdvId,reason:"rdv_honore"})
+    });
+    var data=await r.json();
+    if(!r.ok){toast(data.error||"Échec release","error");return;}
+    toast("✓ Empreinte libérée","success");
+    if(window.RDV_ONLINE){
+      for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="released";RDV_ONLINE[i].empreinteReleasedAt=new Date().toISOString();break;}
+    }
+    if(typeof go==="function")go("planning");
+  }catch(e){toast("Erreur réseau : "+e.message,"error");}
+}
+window.lxEmpreinteRelease=lxEmpreinteRelease;
+
 // ===== COMPÉTENCES COLLAB =====
 // Vérifie si un collaborateur peut effectuer une prestation donnée.
 // competences = {all:true} → tout autorisé (par défaut)
@@ -6959,9 +7053,14 @@ window._rdvPollInterval=setInterval(function(){
             upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
             upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
             upd.cancelled_by=rdv.cancelled_by;upd.cancel_reason=rdv.cancel_reason;
+            // Empreinte states (toujours sync)
+            upd.empreinteStatus=rdv.empreinte_status||"none";
+            upd.empreinteAmount=rdv.empreinte_amount?Number(rdv.empreinte_amount):null;
+            upd.empreinteCapturedAt=rdv.empreinte_captured_at||null;
+            upd.empreinteReleasedAt=rdv.empreinte_released_at||null;
           }
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at});
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});
             newCount++;
           }
           // Check for modification requests from polling
@@ -8745,6 +8844,15 @@ function showRdvPopup(id,evt){
   if(a.acompte>0)h+='<br>\ud83d\udcb3 Acompte: '+a.acompte.toFixed(2)+'\u20ac';
   if(a.comment)h+='<br>\ud83d\udcdd '+a.comment;
   h+='</div>';
+  // Widget empreinte si RDV en ligne avec empreinte
+  if(a.isOnline&&a.onlineId&&window.RDV_ONLINE){
+    for(var _ri=0;_ri<RDV_ONLINE.length;_ri++){
+      if(RDV_ONLINE[_ri].id===a.onlineId&&RDV_ONLINE[_ri].empreinteStatus&&RDV_ONLINE[_ri].empreinteStatus!=="none"){
+        h+=lxRenderEmpreinteWidget(RDV_ONLINE[_ri]);
+        break;
+      }
+    }
+  }
   h+='<div class="rp-btns">';
   h+='<button style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.5)" onclick="hideRdvPopup()">Fermer</button>';
   h+='<button style="background:rgba(200,168,78,.15);color:var(--gold)" onclick="hideRdvPopup();clickAppt(\''+a.id+'\')">Modifier</button>';

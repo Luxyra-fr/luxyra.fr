@@ -2787,11 +2787,21 @@ async function submitWithStripe(){
   }
   
   // Fallback: no Connect → use card token simulation (test mode)
-  window._pendingBooking={nom:nom,pre:pre,tel:tel,email:email,msg:msg,acompte:acompte};
+  // Mode caution : 'acompte' (par défaut, débit immédiat) ou 'empreinte' (pré-autorisation sans débit)
+  var modeCaution = (SITE_CFG && SITE_CFG.modeCaution) || 'acompte';
+  var isEmpreinte = (modeCaution === 'empreinte');
+  if(isEmpreinte){ acompte = Number(SITE_CFG.empreinteMontant) || 30; }
+  window._pendingBooking={nom:nom,pre:pre,tel:tel,email:email,msg:msg,acompte:acompte,mode:modeCaution};
 
   var hasMulti=booking.items&&booking.items.length>1;
   var h='<div class="step active">';
-  h+='<div class="step-header"><div class="step-num">\ud83d\udcb3</div><div class="step-title">Paiement de l\u0027acompte</div></div>';
+  h+='<div class="step-header"><div class="step-num">'+(isEmpreinte?'\ud83d\udd12':'\ud83d\udcb3')+'</div><div class="step-title">'+(isEmpreinte?'Empreinte bancaire':'Paiement de l\u0027acompte')+'</div></div>';
+  if(isEmpreinte){
+    h+='<div style="margin-bottom:14px;padding:12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:10px;font-size:12px;color:#bbdefb;line-height:1.5">';
+    h+='<strong style="color:#64b5f6">\ud83d\udd12 Aucun débit immédiat</strong><br>';
+    h+='Une pré-autorisation de <strong>'+acompte.toFixed(2)+' \u20ac</strong> sera réalisée sur votre carte. Cette somme n\u0027est <strong>pas débitée</strong>. Elle sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée uniquement en cas d\u0027absence</strong> non annulée dans les délais.';
+    h+='</div>';
+  }
   h+='<div class="summary">';
   if(hasMulti){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
@@ -2802,17 +2812,20 @@ async function submitWithStripe(){
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+primaryNom+'</span></div>';
   }
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
-  h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span style="font-weight:800">Acompte</span><span class="v" style="font-size:20px;color:var(--gold)">'+acompte.toFixed(2)+' \u20ac</span></div>';
+  h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span style="font-weight:800">'+(isEmpreinte?'Empreinte (non débitée)':'Acompte')+'</span><span class="v" style="font-size:20px;color:var(--gold)">'+acompte.toFixed(2)+' \u20ac</span></div>';
   h+='</div>';
   h+='<div style="margin-top:16px">';
   h+='<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Titulaire de la carte</label>';
   h+='<input type="text" id="stripeCardName" value="'+(nom+' '+(pre||'')).trim()+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div id="stripeCardElement" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:14px;min-height:44px"></div>';
   h+='<div id="stripeError" style="color:#ef5350;font-size:12px;margin-top:6px;min-height:18px"></div>';
+  if(isEmpreinte){
+    h+='<label style="display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;color:rgba(255,255,255,.6);cursor:pointer"><input type="checkbox" id="empreinteAccept" style="margin-top:2px;flex-shrink:0"><span>J\u0027accepte que <strong>'+acompte.toFixed(2)+' \u20ac</strong> soit débité de ma carte en cas d\u0027absence non annulée 24h à l\u0027avance. <a href="/cgv" target="_blank" style="color:var(--gold)">Conditions</a></span></label>';
+  }
   h+='</div>';
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
   h+='<button class="btn btn-outline" onclick="renderBookingStep4()">\u25c0 Retour</button>';
-  h+='<button class="btn btn-gold" style="flex:1" id="stripePayBtn" onclick="processStripePayment()">\ud83d\udd12 Payer '+acompte.toFixed(2)+' \u20ac</button>';
+  h+='<button class="btn btn-gold" style="flex:1" id="stripePayBtn" onclick="processStripePayment()">'+(isEmpreinte?'\ud83d\udd12 Pré-autoriser '+acompte.toFixed(2)+' \u20ac':'\ud83d\udd12 Payer '+acompte.toFixed(2)+' \u20ac')+'</button>';
   h+='</div>';
   h+='<div style="text-align:center;margin-top:12px;font-size:11px;color:var(--text3)">\ud83d\udd12 Paiement s\u00e9curis\u00e9 par Stripe</div>';
   h+='</div>';
@@ -2854,23 +2867,39 @@ async function processStripePayment(){
   // For TEST MODE: we simulate the payment and mark it as paid
   // In production, you need a server-side endpoint to create PaymentIntents
   
-  // For now in test mode: create a token and simulate success
+  // Mode caution : empreinte (pré-autorisation Stripe sans débit) ou acompte (débit immédiat)
+  var isEmp = (pb.mode === 'empreinte');
+  if(isEmp){
+    var ckEmp = document.getElementById("empreinteAccept");
+    if(!ckEmp || !ckEmp.checked){
+      document.getElementById("stripeError").textContent="Vous devez accepter les conditions de l\u0027empreinte bancaire.";
+      btn.disabled=false; btn.textContent="\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac"; return;
+    }
+  }
+
   try{
     var cardName=document.getElementById("stripeCardName").value.trim()||pb.nom;
-    var result=await stripe.createToken(window._stripeCard,{name:cardName});
+    var result;
+    if(isEmp){
+      // Empreinte : créer un PaymentMethod (pm_xxx) → utilisé par PaymentIntent capture_method=manual
+      result = await stripe.createPaymentMethod({type:"card", card: window._stripeCard, billing_details:{name:cardName}});
+    } else {
+      // Acompte : token classique (Charges API legacy)
+      result = await stripe.createToken(window._stripeCard, {name:cardName});
+    }
     
     if(result.error){
       document.getElementById("stripeError").textContent=result.error.message;
       btn.disabled=false;
-      btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+      btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
       return;
     }
     
-    // Token created successfully — la carte sera réellement débitée côté serveur via
-    // l'edge function rdv-charge-acompte (qui appelle Stripe Charges API avec la secret key)
-    var tokenId=result.token.id;
-    var last4=result.token.card.last4;
-    var brand=result.token.card.brand;
+    // Branche selon mode : acompte (token débit immédiat) ou empreinte (PaymentMethod + PaymentIntent capture_method=manual)
+    var tokenId = isEmp ? null : result.token.id;
+    var paymentMethodId = isEmp ? result.paymentMethod.id : null;
+    var last4 = isEmp ? (result.paymentMethod.card?.last4 || null) : result.token.card.last4;
+    var brand = isEmp ? (result.paymentMethod.card?.brand || null) : result.token.card.brand;
 
     var t=bookingTotals();
     var dur=t.dur;
@@ -2890,23 +2919,27 @@ async function processStripePayment(){
 
     var chargeResp;
     try{
-      var r=await fetch(SB_URL+"/functions/v1/rdv-charge-acompte",{
+      var endpoint = isEmp ? "rdv-empreinte-create" : "rdv-charge-acompte";
+      var payload = isEmp
+        ? {salon_id:salonId, payment_method_id:paymentMethodId, amount_eur:acompte, rdv_data:rdvData}
+        : {salon_id:salonId, stripe_token:tokenId, amount_eur:acompte, rdv_data:rdvData};
+      var r=await fetch(SB_URL+"/functions/v1/"+endpoint,{
         method:"POST",
         headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
-        body:JSON.stringify({salon_id:salonId,stripe_token:tokenId,amount_eur:acompte,rdv_data:rdvData})
+        body:JSON.stringify(payload)
       });
       chargeResp=await r.json();
       if(!r.ok){
-        document.getElementById("stripeError").textContent=chargeResp.error||"\u00c9chec du paiement";
+        document.getElementById("stripeError").textContent=chargeResp.error||(isEmp?"\u00c9chec de la pré-autorisation":"\u00c9chec du paiement");
         btn.disabled=false;
-        btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
-        if(chargeResp.refunded){await refreshRDV();renderTimeSlots(booking.date);}
+        btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+        if(chargeResp.refunded||chargeResp.released){await refreshRDV();renderTimeSlots(booking.date);}
         return;
       }
     }catch(e){
-      document.getElementById("stripeError").textContent="Erreur r\u00e9seau pendant le paiement: "+e.message;
+      document.getElementById("stripeError").textContent="Erreur r\u00e9seau: "+e.message;
       btn.disabled=false;
-      btn.textContent="\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
+      btn.textContent=isEmp?"\ud83d\udd12 Pré-autoriser "+acompte.toFixed(2)+" \u20ac":"\ud83d\udd12 Payer "+acompte.toFixed(2)+" \u20ac";
       return;
     }
     
