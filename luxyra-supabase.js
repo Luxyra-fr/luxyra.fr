@@ -920,6 +920,7 @@ async function loadSalonData() {
     PRODS = prRes.data.map(function(p) {
       return {
         id: p.id, n: p.nom, p: Number(p.prix), pa: Number(p.prix_achat || 0),
+        pamp: p.pamp != null ? Number(p.pamp) : null, pampQty: Number(p.pamp_qty || 0),
         cat: p.categorie, cb: p.code_barre, stk: p.stock, stkMin: p.stock_min,
         cc: p.coup_coeur, img: p.img || "",
         forSale: p.for_sale !== false, forUse: p.for_use || false,
@@ -1462,6 +1463,8 @@ async function saveProduct(prod) {
   var data = {
     salon_id: _salonId,
     nom: prod.n, prix: prod.p, prix_achat: prod.pa || 0,
+    pamp: prod.pamp != null ? prod.pamp : null,
+    pamp_qty: prod.pampQty || 0,
     categorie: prod.cat, code_barre: prod.cb || "",
     stock: prod.stk, stock_min: prod.stkMin,
     coup_coeur: prod.cc || false, img: prod.img || "",
