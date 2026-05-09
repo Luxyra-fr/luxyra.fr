@@ -627,6 +627,119 @@ function getActiveTeam(){
 }
 window.getActiveTeam=getActiveTeam;
 
+// ===== COMPÉTENCES COLLAB =====
+// Vérifie si un collaborateur peut effectuer une prestation donnée.
+// competences = {all:true} → tout autorisé (par défaut)
+// competences = {all:false, services:[id1,id2,...]} → liste explicite
+function canCollabDoService(collab, svcId){
+  if(!collab)return true;
+  var comp=collab.competences||{all:true};
+  if(comp.all===true)return true;
+  if(!comp.services||!Array.isArray(comp.services))return false;
+  return comp.services.indexOf(Number(svcId))>=0 || comp.services.indexOf(String(svcId))>=0;
+}
+window.canCollabDoService=canCollabDoService;
+
+// Liste les collabs capables de faire une prestation (filtre actifs + compétents)
+function getCollabsForService(svcId){
+  return getActiveTeam().filter(function(t){return canCollabDoService(t, svcId);});
+}
+window.getCollabsForService=getCollabsForService;
+
+// Modal de gestion des compétences pour un collab donné
+function lxOpenCompetencesModal(collabId){
+  var col=null;
+  for(var i=0;i<T.length;i++)if(String(T[i].id)===String(collabId)){col=T[i];break;}
+  if(!col){alert("Collaborateur introuvable");return;}
+  var comp=col.competences||{all:true};
+  var allFlag=comp.all===true;
+  var enabledIds={};
+  if(!allFlag&&Array.isArray(comp.services))comp.services.forEach(function(sid){enabledIds[String(sid)]=true;});
+  // Grouper les services par catégorie
+  var byCat={};
+  for(var si=0;si<SVC.length;si++){
+    var sv=SVC[si];
+    var cat=sv.cat||"Autres";
+    if(!byCat[cat])byCat[cat]=[];
+    byCat[cat].push(sv);
+  }
+  var cats=Object.keys(byCat).sort();
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>🎯 Compétences — '+col.n+'</h2>';
+  htm+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Choisissez les prestations que <strong>'+col.n+'</strong> peut effectuer. Les autres ne lui seront ni assignées dans la modal RDV, ni proposées sur la réservation en ligne.</div>';
+  // Toggle "Toutes" en haut
+  htm+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:'+(allFlag?'rgba(76,175,80,.1)':'rgba(255,255,255,.04)')+';border:1px solid '+(allFlag?'rgba(76,175,80,.3)':'rgba(255,255,255,.1)')+';border-radius:10px;margin-bottom:14px;cursor:pointer">';
+  htm+='<div><div style="font-weight:800;color:'+(allFlag?'#4caf50':'#fff')+'">✅ Toutes les prestations</div>';
+  htm+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Si décoché, vous pourrez sélectionner des prestations spécifiques</div></div>';
+  htm+='<input type="checkbox" id="lxCompAll" '+(allFlag?'checked':'')+' style="width:24px;height:24px;cursor:pointer;accent-color:#4caf50" onchange="lxToggleCompAll(this.checked)">';
+  htm+='</label>';
+  // Liste des services par catégorie
+  htm+='<div id="lxCompList" style="display:'+(allFlag?'none':'block')+'">';
+  for(var ci=0;ci<cats.length;ci++){
+    var cat=cats[ci];
+    var cc=getSvcColor(cat);
+    htm+='<div style="margin-bottom:14px">';
+    htm+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:6px 10px;background:'+cc.bg+';border:1px solid '+cc.border+';border-radius:6px">';
+    htm+='<div style="font-weight:800;font-size:12px;color:'+cc.text+';text-transform:uppercase;letter-spacing:1px;flex:1">'+cat+'</div>';
+    htm+='<button class="btn bs" style="font-size:10px;padding:3px 8px;color:'+cc.text+'" onclick="lxToggleCatComp(\''+cat.replace(/\'/g,"\\\\'")+'\',true)">Tout cocher</button>';
+    htm+='<button class="btn bs" style="font-size:10px;padding:3px 8px" onclick="lxToggleCatComp(\''+cat.replace(/\'/g,"\\\\'")+'\',false)">Tout décocher</button>';
+    htm+='</div>';
+    var svcs=byCat[cat];
+    for(var sj=0;sj<svcs.length;sj++){
+      var sv=svcs[sj];
+      var checked=enabledIds[String(sv.id)]?'checked':'';
+      htm+='<label class="lxCompSvc" data-cat="'+cat+'" style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer">';
+      htm+='<input type="checkbox" class="lxCompCB" data-sid="'+sv.id+'" '+checked+' style="width:18px;height:18px;cursor:pointer">';
+      htm+='<div style="flex:1"><div style="font-size:13px;color:#fff">'+sv.n+'</div></div>';
+      htm+='<div style="font-size:11px;color:var(--gold);font-weight:700">'+(Number(sv.p)||0).toFixed(0)+' €</div>';
+      htm+='</label>';
+    }
+    htm+='</div>';
+  }
+  htm+='</div>';
+  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
+  htm+='<button class="btn bk" style="flex:1" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn bg" style="flex:1" onclick="lxSaveCompetences(\''+collabId+'\')">Enregistrer</button>';
+  htm+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+window.lxOpenCompetencesModal=lxOpenCompetencesModal;
+
+function lxToggleCompAll(checked){
+  var list=document.getElementById("lxCompList");
+  if(list)list.style.display=checked?"none":"block";
+}
+window.lxToggleCompAll=lxToggleCompAll;
+
+function lxToggleCatComp(cat, on){
+  var items=document.querySelectorAll('.lxCompSvc[data-cat="'+cat.replace(/"/g,'\\"')+'"] .lxCompCB');
+  for(var i=0;i<items.length;i++)items[i].checked=on;
+}
+window.lxToggleCatComp=lxToggleCatComp;
+
+function lxSaveCompetences(collabId){
+  var col=null;for(var i=0;i<T.length;i++)if(String(T[i].id)===String(collabId)){col=T[i];break;}
+  if(!col){cM();return;}
+  var allCB=document.getElementById("lxCompAll");
+  var allFlag=allCB&&allCB.checked;
+  if(allFlag){
+    col.competences={all:true};
+  }else{
+    var checked=document.querySelectorAll(".lxCompCB:checked");
+    var ids=[];
+    for(var c=0;c<checked.length;c++){
+      var sid=parseInt(checked[c].getAttribute("data-sid"))||checked[c].getAttribute("data-sid");
+      ids.push(sid);
+    }
+    col.competences={all:false, services:ids};
+  }
+  if(typeof saveCollaborateurs==="function")saveCollaborateurs();
+  cM();
+  var nbWord=allFlag?"toutes prestations":((col.competences.services||[]).length+" prestation(s)");
+  if(typeof toast==="function")toast("✓ Compétences enregistrées : "+nbWord+" pour "+col.n,"success");
+  go("settings");
+}
+window.lxSaveCompetences=lxSaveCompetences;
+
 function getVisibleStylists() {
   if (typeof T === "undefined" || !T) return [];
   // Filtrage de base : exclure les collabs inactifs (sauf admin pour gestion historique)
@@ -10122,6 +10235,19 @@ function rSettings(){
       h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();if(typeof toast===\'function\')toast(this.checked?\''+st2.n.replace(/\'/g,"\\\\'")+' marqu\u00e9 inactif\':\''+st2.n.replace(/\'/g,"\\\\'")+' r\u00e9activ\u00e9\',\'info\');go(\'settings\')"></label>';
       h+='</div>';
       // ===== FIN INFORMATIONS RH =====
+      // ===== COMP\u00c9TENCES =====
+      var _comp=st2.competences||{all:true};
+      var _compLabel=_comp.all===true?'Toutes les prestations':((_comp.services||[]).length+' prestation'+(((_comp.services||[]).length>1)?'s':'')+' autoris\u00e9e'+(((_comp.services||[]).length>1)?'s':''));
+      var _compCol=_comp.all===true?'#4caf50':'#64b5f6';
+      h+='<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">';
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">';
+      h+='<div style="flex:1"><div style="font-size:13px;font-weight:800;color:var(--gold)">\ud83c\udfaf Comp\u00e9tences</div>';
+      h+='<div style="font-size:11px;color:'+_compCol+';margin-top:2px;font-weight:700">'+_compLabel+'</div>';
+      h+='<div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">Filtre les prestations affectables (planning + r\u00e9sa en ligne)</div></div>';
+      h+='<button class="btn bs" style="font-size:11px;padding:8px 14px;background:rgba(200,168,78,.1);color:var(--gold);border:1px solid rgba(200,168,78,.3);font-weight:700;white-space:nowrap" onclick="lxOpenCompetencesModal(\''+st2.id+'\')">Configurer</button>';
+      h+='</div>';
+      h+='</div>';
+      // ===== FIN COMP\u00c9TENCES =====
       // ===== BLOC COMPTE DE CONNEXION (NF525) =====
       var _st2IdStr = String(st2.id);
       var linkedOp = (typeof OPERATEURS!=="undefined") ? OPERATEURS.find(function(o){return o.collab_id != null && String(o.collab_id) === _st2IdStr;}) : null;
