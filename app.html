@@ -399,7 +399,51 @@ console.log("LUXYRA v6.3");
   };
 
   window.alert=function(msg){window.toast(msg);};
+
+  // ===== AUTO-SAVE TOAST (discret, debounced) =====
+  // Affiche "✓ Enregistré" en bas-droite après une sauvegarde, style minimaliste gold.
+  // Debounced à 800ms pour éviter le spam si l'utilisateur tape rapidement.
+  var _autoSaveDebounce=null, _autoSaveEl=null;
+  window.lxAutoSaveToast=function(){
+    if(_autoSaveDebounce)clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce=setTimeout(function(){
+      try{
+        if(_autoSaveEl&&_autoSaveEl.parentElement)_autoSaveEl.parentElement.removeChild(_autoSaveEl);
+        _autoSaveEl=document.createElement("div");
+        _autoSaveEl.style.cssText="position:fixed;bottom:20px;right:20px;z-index:99998;background:rgba(20,20,28,.92);backdrop-filter:blur(8px);border:1px solid rgba(200,168,78,.3);border-radius:8px;padding:8px 14px;color:rgba(200,168,78,.95);font-size:12px;font-weight:600;font-family:Georgia,serif;letter-spacing:.5px;box-shadow:0 4px 16px rgba(0,0,0,.4);transition:opacity .3s,transform .3s;opacity:0;transform:translateY(8px)";
+        _autoSaveEl.innerHTML='✓ Modifications enregistrées';
+        document.body.appendChild(_autoSaveEl);
+        setTimeout(function(){_autoSaveEl.style.opacity="1";_autoSaveEl.style.transform="translateY(0)";},10);
+        setTimeout(function(){
+          if(_autoSaveEl){_autoSaveEl.style.opacity="0";_autoSaveEl.style.transform="translateY(8px)";
+            setTimeout(function(){if(_autoSaveEl&&_autoSaveEl.parentElement)_autoSaveEl.parentElement.removeChild(_autoSaveEl);_autoSaveEl=null;},300);}
+        },1800);
+      }catch(e){console.warn("[autosave-toast]",e);}
+    },800);
+  };
 })();
+
+// ===== CONFIRMATION DANGER (action irréversible) =====
+// Wrap showConfirm avec un bandeau rouge clignotant "⚠ Cette action est irréversible"
+// Utilisé pour : suppressions DB, RGPD effacement, reset PAMP, purge, etc.
+function showConfirmDanger(msg, onYes, onNo){
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:16px" onclick="cM()">';
+  h+='<div onclick="event.stopPropagation()" style="background:#12141e;border:2px solid #f44336;border-radius:16px;padding:0;max-width:420px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(244,67,54,.3);overflow:hidden">';
+  // Bandeau rouge en haut
+  h+='<div style="background:linear-gradient(90deg,#f44336,#d32f2f);color:#fff;padding:10px 16px;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase">⚠ Action irréversible</div>';
+  h+='<div style="padding:24px 28px">';
+  h+='<div style="font-size:36px;margin-bottom:12px">⚠️</div>';
+  h+='<div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:8px;line-height:1.4">'+String(msg).replace(/\n/g,"<br>")+'</div>';
+  h+='<div style="font-size:11px;color:#ef5350;margin-top:8px;font-weight:700">Cette action ne peut pas être annulée</div>';
+  h+='<div style="display:flex;gap:10px;margin-top:20px">';
+  h+='<button class="btn btn-ghost btn-lg" style="flex:1" onclick="cM();if(window._confirmDangerNo)window._confirmDangerNo()">Annuler</button>';
+  h+='<button class="btn btn-lg" style="flex:1;background:linear-gradient(135deg,#f44336,#c62828);color:#fff;border:none" onclick="cM();if(window._confirmDangerYes)window._confirmDangerYes()">Confirmer la suppression</button>';
+  h+='</div></div></div></div>';
+  window._confirmDangerYes=onYes||null;
+  window._confirmDangerNo=onNo||null;
+  document.getElementById("modal").innerHTML=h;
+}
+window.showConfirmDanger=showConfirmDanger;
 
 
 // ===== CUSTOM CONFIRM MODAL =====
@@ -9442,6 +9486,7 @@ function toggleProdOnline(prodId,on){
 }
 function saveSiteConfig(){
   var SC=window.SITE_CONFIG;if(!SC)return;
+  if(typeof window.lxAutoSaveToast==="function")window.lxAutoSaveToast();
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     var data={
       salon_id:_salonId,

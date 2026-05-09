@@ -1276,6 +1276,8 @@ var _FICHE_TECH_KEYS = [
 // Sauvegarder un client (create ou update)
 async function saveClient(client) {
   if (!_isOnline || !_salonId) return;
+  // Toast auto-save discret (debounced)
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   // Construit le bucket fiche_tech à partir des champs étendus présents
   // sur l'objet client en mémoire. On ne pousse que les valeurs définies
   // pour ne pas écraser une fiche existante avec des undefined.
@@ -1454,6 +1456,7 @@ async function deleteAppointmentFromDb(apptId) {
 
 // Sauvegarder un produit
 async function saveProduct(prod) {
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_isOnline || !_salonId) return;
   var data = {
     salon_id: _salonId,
@@ -1848,6 +1851,7 @@ async function saveAuditEntry(action, detail) {
 
 // Sauvegarder la config du salon
 async function saveSalonConfig() {
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_isOnline || !_salonId) return;
   var data = {
     nom: SALON_CONFIG.nom, sous_titre: SALON_CONFIG.sousTitre,
@@ -1949,6 +1953,7 @@ if (typeof window !== "undefined") {
 // Sauvegarder les collaborateurs
 // Sauvegarder les services
 async function saveServices() {
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_sb || !_salonId) return;
   for (var i = 0; i < SVC.length; i++) {
     var s = SVC[i];
@@ -1974,6 +1979,7 @@ async function saveServices() {
 
 // Sauvegarder les forfaits
 async function saveForfaits() {
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   if (!_sb || !_salonId) return;
   for (var i = 0; i < FORFAITS.length; i++) {
     var f = FORFAITS[i];
@@ -2045,6 +2051,7 @@ async function deleteForfaitFromDb(forfaitId) {
 
 async function saveCollaborateurs() {
   if (!_isOnline || !_salonId) return;
+  if (typeof window !== "undefined" && typeof window.lxAutoSaveToast === "function") window.lxAutoSaveToast();
   // First, get all existing collab IDs from Supabase for this salon
   var existing = await _sb.from("collaborateurs").select("id").eq("salon_id", _salonId);
   var dbIds = {};
