@@ -9617,6 +9617,9 @@ function saveSiteConfig(){
       delai_max_jours:SC.delaiMaxJ,
       creneau_intervalle:SC.creneauMin,
       bloquer_nouveaux_comptes:SC.bloquerNouveauxComptes===true,
+      mode_caution:SC.modeCaution||"aucun",
+      empreinte_montant:Number(SC.empreinteMontant)||30,
+      empreinte_capture_delai_h:Number(SC.empreinteCaptureDelaiH)||24,
       confirmation_auto:SC.confirmAuto,
       services_en_ligne:SC.servicesEnLigne,
       produits_en_ligne:SC.produitsEnLigne,
@@ -9661,6 +9664,9 @@ function loadSiteConfig(){
           politiqueAnnul:d.politique_annulation||"48h",remboursementAnnul:d.remboursement_annulation!==false,
           delaiMinH:d.delai_min_heures,delaiMaxJ:d.delai_max_jours,creneauMin:d.creneau_intervalle,
           bloquerNouveauxComptes:d.bloquer_nouveaux_comptes===true,
+          modeCaution:d.mode_caution||"aucun",
+          empreinteMontant:Number(d.empreinte_montant)||30,
+          empreinteCaptureDelaiH:Number(d.empreinte_capture_delai_h)||24,
           confirmAuto:d.confirmation_auto,servicesEnLigne:d.services_en_ligne||[],produitsEnLigne:d.produits_en_ligne||[],
           msgAccueil:d.message_accueil||"",msgConfirmation:d.message_confirmation||"",
           couleur:d.couleur_primaire||"var(--gold)",couleur2:d.couleur_secondaire||"#0a0a0a",
@@ -10591,13 +10597,46 @@ function rSettings(){
       h+='<button onclick="if(typeof startConnectOnboard===\'function\')startConnectOnboard();else if(typeof go===\'function\'){window._settTab=\'paiements\';go(\'settings\');}" class="btn bg" style="padding:10px 14px;font-size:13px;font-weight:700">\u27a1 Configurer Stripe</button>';
       h+='</div></div></div>';
     }
+    // ===== MODE DE GARANTIE NO-SHOW (acompte vs empreinte vs aucun) =====
+    var _modeC=SC.modeCaution||"aucun";
+    h+='<div style="margin-bottom:14px;padding:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:10px">';
+    h+='<div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:10px">🛡️ Garantie anti no-show</div>';
+    h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
+    var _modes=[{k:"aucun",l:"Aucun",icon:"🚫",desc:"Réservation libre",col:"#666"},{k:"acompte",l:"Acompte",icon:"💳",desc:"Paiement à la résa",col:"#4caf50"},{k:"empreinte",l:"Empreinte",icon:"🔒",desc:"Pré-autorisation",col:"#2196f3"}];
+    for(var mi=0;mi<_modes.length;mi++){
+      var mo=_modes[mi]; var sel=_modeC===mo.k;
+      var disabled=(mo.k!=="aucun"&&!_connectActive);
+      h+='<label style="cursor:'+(disabled?"not-allowed":"pointer")+';opacity:'+(disabled?".5":"1")+';padding:10px 6px;border-radius:8px;border:2px solid '+(sel?mo.col:'rgba(255,255,255,.1)')+';background:'+(sel?mo.col+'15':'rgba(255,255,255,.02)')+';text-align:center;display:block">';
+      h+='<input type="radio" name="lxModeCaution" value="'+mo.k+'" '+(sel?"checked":"")+' '+(disabled?"disabled":"")+' style="display:none" onchange="window.SITE_CONFIG.modeCaution=this.value;if(this.value===\'acompte\')window.SITE_CONFIG.acompteObligatoire=true;else if(this.value===\'aucun\')window.SITE_CONFIG.acompteObligatoire=false;saveSiteConfig();go(\'settings\')">';
+      h+='<div style="font-size:22px">'+mo.icon+'</div>';
+      h+='<div style="font-size:12px;font-weight:800;color:'+(sel?mo.col:'#fff')+';margin-top:4px">'+mo.l+'</div>';
+      h+='<div style="font-size:9px;color:rgba(255,255,255,.5);margin-top:2px">'+mo.desc+'</div></label>';
+    }
+    h+='</div>';
+    if(_modeC==="empreinte"){
+      h+='<div style="margin-top:10px;padding:10px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:8px;font-size:11px;color:#64b5f6;line-height:1.5">';
+      h+='<strong>🔒 Empreinte bancaire</strong> — Stripe pré-autorise X € sur la carte du client sans débiter. Si le client honore son RDV, l\'empreinte est libérée. En cas de no-show, vous capturez l\'empreinte (manuel ou auto après le délai).';
+      h+='</div>';
+    }
+    h+='</div>';
+    // Acompte obligatoire (legacy : visible uniquement en mode acompte)
+    if(_modeC==="acompte"){
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border2);cursor:'+(_connectActive?"pointer":"not-allowed")+';opacity:'+(_connectActive?"1":".5")+'"><span style="font-size:15px"><strong>Acompte obligatoire</strong></span><input type="checkbox" '+(SC.acompteObligatoire&&_connectActive?"checked":"")+' '+(_connectActive?"":"disabled")+' style="width:22px;height:22px;cursor:'+(_connectActive?"pointer":"not-allowed")+'" onchange="window.SITE_CONFIG.acompteObligatoire=this.checked;saveSiteConfig()"></label>';
+    }
+    if(_modeC==="acompte"){
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant</label><input type="number" value="'+SC.acompteMontant+'" min="0" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.acompteMontant=+this.value;saveSiteConfig()"></div>';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteType=this.value;saveSiteConfig()"><option value="fixe"'+(SC.acompteType==="fixe"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="pourcentage"'+(SC.acompteType==="pourcentage"?" selected":"")+'>Pourcentage (%)</option></select></div>';
     h+='</div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant minimum (\u20ac)</label><input type="number" value="'+(SC.acompteMin||0)+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.acompteMin=+this.value;saveSiteConfig()"></div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Description visible par le client</label><input value="'+(SC.acompteDesc||"")+'" placeholder="Un acompte est demand\u00e9 pour confirmer votre r\u00e9servation." style="width:100%;padding:12px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteDesc=this.value;saveSiteConfig()"></div>';
+    }else if(_modeC==="empreinte"){
+    h+='<div style="display:flex;gap:12px;margin-top:14px">';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant empreinte (\u20ac) '+lxHelpIcon("Le client est pr\u00e9-autoris\u00e9 pour ce montant. Aucun d\u00e9bit imm\u00e9diat. Vous le capturez seulement en cas de no-show.")+'</label><input type="number" value="'+(SC.empreinteMontant||30)+'" min="5" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteMontant=+this.value;saveSiteConfig()"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Capture auto apr\u00e8s (h)</label><input type="number" value="'+(SC.empreinteCaptureDelaiH||24)+'" min="0" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteCaptureDelaiH=+this.value;saveSiteConfig()"></div>';
+    h+='</div>';
+    h+='<div style="margin-top:10px;padding:10px;background:rgba(33,150,243,.06);border-radius:8px;font-size:11px;color:rgba(255,255,255,.6);line-height:1.5">\ud83d\udca1 Si le client ne se pr\u00e9sente pas et n\'annule pas dans les d\u00e9lais, l\'empreinte sera captur\u00e9e automatiquement '+(SC.empreinteCaptureDelaiH||24)+'h apr\u00e8s l\'heure pr\u00e9vue du RDV. Mettez 0 pour d\u00e9sactiver l\'auto et capturer manuellement.</div>';
+    }
     h+='<div style="display:flex;gap:12px;margin-top:10px">';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Politique d\'annulation '+lxHelpIcon("Délai minimum avant le RDV en deçà duquel le client ne peut plus annuler depuis l\'espace en ligne. Par exemple « 48h avant » : un client qui veut annuler la veille devra appeler le salon. « Aucun délai » : annulation libre jusqu\'au dernier moment. « Jamais » : annulation en ligne désactivée.")+'</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.politiqueAnnul=this.value;saveSiteConfig()"><option value="0h"'+(SC.politiqueAnnul==="0h"?" selected":"")+'>Aucun délai (libre)</option><option value="6h"'+(SC.politiqueAnnul==="6h"?" selected":"")+'>6h avant</option><option value="12h"'+(SC.politiqueAnnul==="12h"?" selected":"")+'>12h avant</option><option value="24h"'+(SC.politiqueAnnul==="24h"?" selected":"")+'>24h avant</option><option value="48h"'+(SC.politiqueAnnul==="48h"?" selected":"")+'>48h avant (recommandé)</option><option value="72h"'+(SC.politiqueAnnul==="72h"?" selected":"")+'>72h avant</option><option value="jamais"'+(SC.politiqueAnnul==="jamais"?" selected":"")+'>Jamais (annulation en ligne désactivée)</option></select></div>';
     h+='<label style="flex:1;display:flex;align-items:end;gap:8px;cursor:pointer;padding-bottom:6px"><input type="checkbox" '+(SC.remboursementAnnul?"checked":"")+' style="width:20px;height:20px" onchange="window.SITE_CONFIG.remboursementAnnul=this.checked;saveSiteConfig()"><span style="font-size:13px">Remboursement auto</span></label>';
