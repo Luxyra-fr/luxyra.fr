@@ -664,7 +664,8 @@ async function loadSalonData() {
         return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
                  hrs: c.horaires || {}, pause: c.pause || null,
                  dateEntree: c.date_entree || null, dateDepart: c.date_depart || null,
-                 inactif: c.inactif === true };
+                 inactif: c.inactif === true,
+                 competences: c.competences || {all:true} };
       });
     }
   } catch(e) { console.warn("[loadSalonData] collaborateurs skipped", e); }
@@ -2069,7 +2070,8 @@ async function saveCollaborateurs() {
       pause: c.pause || null,
       date_entree: c.dateEntree || null,
       date_depart: c.dateDepart || null,
-      inactif: c.inactif === true
+      inactif: c.inactif === true,
+      competences: c.competences || {all:true}
     };
     if (c.id && dbIds[c.id]) {
       // Exists in DB → UPDATE
