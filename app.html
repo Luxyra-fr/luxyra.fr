@@ -18032,9 +18032,46 @@ function rStats(){
   // 3. CA
   h+=sCard("Chiffre d\u0027affaires",[{l:"Produits",v:caPd,c:"#f0d060"},{l:"Prestations",v:caPr,c:"#7ab8e0"}],caT,"ca",function(d){var dd=dayData[d]||{pd:0,pr:0};return[dd.pd,dd.pr];},["#f0d060","#7ab8e0"],["Produits","Prestations"]);
   
-  // 4. CA par collaborateur
+  // 4. CA par collaborateur — donut classique
   var stI=[];T.forEach(function(t){if(stCA[t.id])stI.push({l:t.n,v:stCA[t.id].ca,c:t.c});});
   h+=sCard("CA par collaborateur",stI,caT,"sty",function(d){var vs3=[];T.forEach(function(t){var v=0;dn.filter(function(a){return a.date===d&&a.stId===t.id;}).forEach(function(a){v+=a.pr*taxR;});vs3.push(v);});return vs3;},T.map(function(t){return t.c;}),T.map(function(t){return t.n;}));
+
+  // 4-bis. Détails par collaborateur (table enrichie : tickets, panier moyen, % CA)
+  var collabDetails=[];
+  T.forEach(function(t){
+    var caCol=stCA[t.id]?stCA[t.id].ca:0;
+    var nbTk=dn.filter(function(a){return a.stId===t.id;}).length;
+    collabDetails.push({id:t.id,nom:t.n,col:t.c,img:t.img||null,ini:t.i||(t.n?t.n[0]:"?"),ca:caCol,nbTk:nbTk,panier:nbTk>0?caCol/nbTk:0,pct:caT>0?(caCol/caT*100):0});
+  });
+  collabDetails.sort(function(a,b){return b.ca-a.ca;});
+  var maxCaCol=Math.max.apply(null,collabDetails.map(function(d){return d.ca;}).concat([1]));
+  h+='<div class="card" style="margin-bottom:14px">';
+  h+='<div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px">📋 Détails par collaborateur</div>';
+  if(collabDetails.length===0||caT===0){
+    h+='<div style="text-align:center;padding:14px;color:rgba(255,255,255,.4);font-style:italic">Aucune activité sur la période.</div>';
+  }else{
+    for(var ci3=0;ci3<collabDetails.length;ci3++){
+      var cd=collabDetails[ci3];
+      var pctW=maxCaCol>0?(cd.ca/maxCaCol*100):0;
+      var isTop=(ci3===0&&cd.ca>0);
+      h+='<div style="padding:10px 0;'+(ci3<collabDetails.length-1?'border-bottom:1px solid rgba(255,255,255,.06)':'')+'">';
+      // Header row : avatar + nom + CA
+      h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
+      if(cd.img)h+='<img src="'+cd.img+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid '+cd.col+';flex-shrink:0">';
+      else h+='<div style="width:32px;height:32px;border-radius:50%;background:'+cd.col+';color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0">'+cd.ini+'</div>';
+      h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#fff">'+cd.nom+(isTop?' <span style="font-size:11px;color:var(--gold);margin-left:6px">⭐ Top</span>':'')+'</div>';
+      h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:1px">'+cd.nbTk+' ticket'+(cd.nbTk>1?'s':'')+' · panier '+cd.panier.toFixed(2)+' €</div></div>';
+      h+='<div style="text-align:right"><div style="font-weight:800;font-size:15px;color:'+(isTop?'var(--gold)':'#fff')+';font-family:var(--f1,Georgia,serif)">'+cd.ca.toFixed(2)+' €</div>';
+      h+='<div style="font-size:11px;color:rgba(255,255,255,.5)">'+cd.pct.toFixed(1)+'%</div></div>';
+      h+='</div>';
+      // Progress bar
+      h+='<div style="height:6px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden">';
+      h+='<div style="height:100%;width:'+pctW+'%;background:linear-gradient(90deg,'+cd.col+'88,'+cd.col+');border-radius:3px"></div>';
+      h+='</div>';
+      h+='</div>';
+    }
+  }
+  h+='</div>';
   
   // 5. Quantites vendues
   h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px\">Quantites vendues</div>";
