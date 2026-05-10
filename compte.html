@@ -342,6 +342,8 @@ function renderDashboard(){
 // --- PHOTOS TAB (visible si salon a activé "photos_visible_client") ---
 window.MY_PHOTOS = null; // {salons:[{salon_id,salon_nom,salon_logo,photos:[...]}]}
 window._myPhotosLoading = false;
+window._myPhotosFilter = "all"; // "all" ou salon_id
+function setMyPhotosFilter(v){ window._myPhotosFilter = v; render(); }
 async function loadMyPhotos(){
   if(window._myPhotosLoading) return render();
   window._myPhotosLoading = true;
@@ -390,7 +392,26 @@ function renderPhotosTab(){
       +'</div>';
   }
   var h = '';
-  data.salons.forEach(function(salon){
+  // Sélecteur d'établissement (apparaît uniquement si 2+ salons)
+  if(data.salons.length > 1){
+    var fSel = window._myPhotosFilter || "all";
+    // S'assurer que le filtre actif existe encore (sécurité après reload)
+    if(fSel !== "all" && !data.salons.some(function(s){return s.salon_id===fSel;})) fSel = "all";
+    var totalPhotos = data.salons.reduce(function(a,s){return a+s.photos.length;},0);
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding:8px;background:rgba(0,0,0,.25);border:1px solid rgba(200,168,78,.15);border-radius:10px">';
+    var pillBase = 'cursor:pointer;padding:6px 12px;border-radius:18px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.1);transition:all .15s';
+    var pillOff = 'background:transparent;color:#bbb;'+pillBase;
+    var pillOn  = 'background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;border-color:#c8a84e;'+pillBase;
+    h += '<div style="'+(fSel==="all"?pillOn:pillOff)+'" onclick="setMyPhotosFilter(\'all\')">Tous · '+totalPhotos+'</div>';
+    data.salons.forEach(function(s){
+      h += '<div style="'+(fSel===s.salon_id?pillOn:pillOff)+'" onclick="setMyPhotosFilter(\''+s.salon_id+'\')">'+s.salon_nom+' · '+s.photos.length+'</div>';
+    });
+    h += '</div>';
+  }
+  // Filtrage selon sélection
+  var filterId = window._myPhotosFilter || "all";
+  var salonsToShow = (filterId==="all") ? data.salons : data.salons.filter(function(s){return s.salon_id===filterId;});
+  salonsToShow.forEach(function(salon){
     h += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(200,168,78,.2);border-radius:12px;padding:14px;margin-bottom:14px">';
     h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.06)">';
     if(salon.salon_logo) h += '<img src="'+salon.salon_logo+'" style="width:36px;height:36px;border-radius:8px;object-fit:cover">';
