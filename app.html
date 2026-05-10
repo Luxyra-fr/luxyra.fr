@@ -555,8 +555,15 @@ function openBarcodeScanner(callback){
   // Check if BarcodeDetector is available
   if(!("BarcodeDetector" in window)){
     // Fallback: manual input
-    var code=prompt("Scanner non disponible sur cet appareil.\nEntrez le code-barre manuellement :");
-    if(code&&code.trim())callback(code.trim());
+    showPrompt({
+      title: "Code-barre",
+      label: "Scanner non disponible sur cet appareil. Entrez le code-barre manuellement :",
+      placeholder: "Ex: 3017620422003",
+      okLabel: "Valider",
+      onOk: function(code){
+        if(code && code.trim()) callback(code.trim());
+      }
+    });
     return;
   }
   _scannerActive=true;
@@ -5799,20 +5806,29 @@ function printClotureZ(){
 
 function loadWP(input){if(!input.files||!input.files[0])return;var r=new FileReader();r.onload=function(e){APP_BG=e.target.result;var bg=document.getElementById('appBg');if(bg)bg.style.backgroundImage='url('+APP_BG+')';saveAppBg();};r.readAsDataURL(input.files[0]);}
 function addCollab(){
-  var n=prompt("Nom du collaborateur:");if(!n)return;
-  var ini=n.split(" ").map(function(w){return w.charAt(0).toUpperCase();}).join("").slice(0,2);
-  var cols=["#c44c7a","#4a85b5","#2d9a5e","#d48a1a","#8050a8"];
-  var defHrs={0:null,1:{o:"09:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}};
-  var newC={id:0,n:n,i:ini,c:cols[T.length%cols.length],img:"",hrs:defHrs};
-  // Insert directly to Supabase first, get the real ID
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("collaborateurs").insert({salon_id:_salonId,nom:n,initiales:ini,couleur:newC.c,img:"",horaires:defHrs}).select().then(function(r){
-      if(r.data&&r.data[0]){newC.id=r.data[0].id;}
-      T.push(newC);go("settings");
-    });
-  }else{
-    newC.id=Date.now();T.push(newC);go("settings");
-  }
+  showPrompt({
+    title: "Nouveau collaborateur",
+    label: "Nom du collaborateur",
+    placeholder: "Ex: Marie Dupont",
+    okLabel: "Créer",
+    onOk: function(n){
+      if(!n) return;
+      n = String(n).trim();
+      if(!n) return;
+      var ini=n.split(" ").map(function(w){return w.charAt(0).toUpperCase();}).join("").slice(0,2);
+      var cols=["#c44c7a","#4a85b5","#2d9a5e","#d48a1a","#8050a8"];
+      var defHrs={0:null,1:{o:"09:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18:00"},4:{o:"09:00",c:"18:00"},5:{o:"09:00",c:"18:00"},6:{o:"09:00",c:"16:00"}};
+      var newC={id:0,n:n,i:ini,c:cols[T.length%cols.length],img:"",hrs:defHrs};
+      if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+        _sb.from("collaborateurs").insert({salon_id:_salonId,nom:n,initiales:ini,couleur:newC.c,img:"",horaires:defHrs}).select().then(function(r){
+          if(r.data&&r.data[0]){newC.id=r.data[0].id;}
+          T.push(newC);go("settings");
+        });
+      }else{
+        newC.id=Date.now();T.push(newC);go("settings");
+      }
+    }
+  });
 }
 function drawTimeLine(){document.querySelectorAll('.pg-now-line').forEach(function(el){el.remove();});var now=new Date();var nowM=now.getHours()*60+now.getMinutes();if(dS(calD)!==TD)return;var wrap=document.querySelector('.pg-wrap');if(!wrap)return;var slots=wrap.querySelectorAll('.pg-slots');var tslots=wrap.querySelectorAll('.pg-tslot');if(!tslots.length||!slots.length)return;var firstHr=null;tslots.forEach(function(ts){if(!firstHr&&ts.textContent.indexOf('h')>=0)firstHr=parseInt(ts.textContent);});if(firstHr===null)return;var topPx=((nowM-firstHr*60)/SLOT)*SLOT_H;if(topPx<0||topPx>slots[0].offsetHeight)return;slots.forEach(function(sl){var l=document.createElement('div');l.className='pg-now-line';l.style.top=topPx+'px';sl.appendChild(l);});}
 function clearStyImg(idx){T[idx].img="";if(typeof saveCollaborateurs==="function")saveCollaborateurs();go("settings");}
@@ -7110,13 +7126,13 @@ function lxCopyRgpdMail(){
           msgBox.innerHTML = "✅ Texte copié dans le presse-papier. Collez-le dans Gmail/Outlook.";
         }
       }).catch(function(){
-        prompt("Copiez ce texte (Ctrl+C / Cmd+C) :", fullText);
+        showPrompt({title:"Copier le texte", label:"Copiez ce texte (Ctrl+C / Cmd+C)", defaultValue:fullText, multiline:true, okLabel:"Fermer"});
       });
     } else {
-      prompt("Copiez ce texte (Ctrl+C / Cmd+C) :", fullText);
+      showPrompt({title:"Copier le texte", label:"Copiez ce texte (Ctrl+C / Cmd+C)", defaultValue:fullText, multiline:true, okLabel:"Fermer"});
     }
   } catch(_){
-    prompt("Copiez ce texte (Ctrl+C / Cmd+C) :", fullText);
+    showPrompt({title:"Copier le texte", label:"Copiez ce texte (Ctrl+C / Cmd+C)", defaultValue:fullText, multiline:true, okLabel:"Fermer"});
   }
 }
 window.lxCopyRgpdMail = lxCopyRgpdMail;
@@ -13191,7 +13207,7 @@ function rDetail(){
       h+=(i<c.fid?"\u2714":"")+'</div>';
     }
     h+='</div>';
-    h+='<div style="text-align:center;margin-top:14px"><button class="btn" style="padding:10px 20px;font-size:13px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.2)" onclick="var nv=prompt(String.fromCharCode(77,111,100,105,102,105,101,114,32,108,101,115,32,112,97,115,115,97,103,101,115,58),gC(this.dataset.cid).fid);if(nv!==null){var cc=gC(this.dataset.cid);cc.fid=Math.max(0,parseInt(nv)||0);if(typeof saveClient===String.fromCharCode(102,117,110,99,116,105,111,110))saveClient(cc);go(String.fromCharCode(100,101,116,97,105,108))}" data-cid="'+c.id+'">Modifier manuellement</button></div>';
+    h+='<div style="text-align:center;margin-top:14px"><button class="btn" style="padding:10px 20px;font-size:13px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.2)" onclick="lxEditFidManually(\''+c.id+'\')">Modifier manuellement</button></div>';
     h+='</div>';
   }
   else if(clTab==="rgpd"){
@@ -25057,11 +25073,19 @@ async function sendEmailViaWorker(to,toName,subject,htmlContent){
   }catch(e){return{ok:false,error:e.message};}
 }
 function testSms(){
-  var phone=prompt("Num\u00e9ro de t\u00e9l\u00e9phone pour le test :");
-  if(!phone)return;
-  sendSms(phone,"Test SMS Luxyra - "+SALON_CONFIG.nom+" \u2714\ufe0f","test",null).then(function(r){
-    if(r.ok){showAlert("\u2705 SMS test envoy\u00e9 !","success");go("marketing");}
-    else showAlert("Erreur : "+(r.error||"V\u00e9rifiez votre configuration"),"error");
+  showPrompt({
+    title: "Test SMS",
+    label: "Num\u00e9ro de t\u00e9l\u00e9phone pour le test (format E.164 ou national)",
+    type: "tel",
+    placeholder: "06 12 34 56 78",
+    okLabel: "Envoyer",
+    onOk: function(phone){
+      if(!phone) return;
+      sendSms(phone,"Test SMS Luxyra - "+SALON_CONFIG.nom+" \u2714\ufe0f","test",null).then(function(r){
+        if(r.ok){showAlert("SMS test envoy\u00e9 !","success");go("marketing");}
+        else showAlert("Erreur : "+(r.error||"V\u00e9rifiez votre configuration"),"error");
+      });
+    }
   });
 }
 // Check and send reminders (called periodically)
@@ -25235,11 +25259,19 @@ async function sendEmail(to,subject,body,toName){
   }catch(e){auditLog("EMAIL_ERREUR",e.message);return{ok:false,error:e.message};}
 }
 function testEmail(){
-  var email=prompt("Adresse email pour le test :");
-  if(!email)return;
-  sendEmail(email,"Test Luxyra - "+SALON_CONFIG.nom,"Ceci est un email de test envoy\u00e9 depuis Luxyra.\n\nBien cordialement,\n"+SALON_CONFIG.nom).then(function(r){
-    if(r.ok)showAlert("\u2705 Email test envoy\u00e9 !","success");
-    else showAlert("Erreur : "+(r.error||"V\u00e9rifiez votre configuration"),"error");
+  showPrompt({
+    title: "Test Email",
+    label: "Adresse email pour le test",
+    type: "email",
+    placeholder: "vous@exemple.fr",
+    okLabel: "Envoyer",
+    onOk: function(email){
+      if(!email) return;
+      sendEmail(email,"Test Luxyra - "+SALON_CONFIG.nom,"Ceci est un email de test envoy\u00e9 depuis Luxyra.\n\nBien cordialement,\n"+SALON_CONFIG.nom).then(function(r){
+        if(r.ok)showAlert("Email test envoy\u00e9 !","success");
+        else showAlert("Erreur : "+(r.error||"V\u00e9rifiez votre configuration"),"error");
+      });
+    }
   });
 }
 
@@ -26134,9 +26166,20 @@ function archivageAnnuel(){
     if(typeof requireAdmin==="function"){requireAdmin("G\u00e9n\u00e9rer l'archive annuelle",archivageAnnuel);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var year=prompt("Annee a archiver (ex: 2025):",new Date().getFullYear()-1);
-  if(!year||isNaN(year))return;
-  year=String(year);
+  showPrompt({
+    title: "Archive annuelle",
+    label: "Ann\u00e9e \u00e0 archiver (ex : 2025)",
+    type: "number",
+    defaultValue: String(new Date().getFullYear()-1),
+    placeholder: "2025",
+    okLabel: "G\u00e9n\u00e9rer",
+    onOk: function(year){
+      if(!year||isNaN(year))return;
+      _doArchivageAnnuel(String(year));
+    }
+  });
+}
+function _doArchivageAnnuel(year){
   
   var tickets=AP.filter(function(a){return a.tkNum&&a.date.indexOf(year)===0;});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(year)===0;});
@@ -27143,15 +27186,45 @@ function refreshCurrentView(){
     btn.disabled=false;inp.focus();
   }
 
-  async function newConv(){
+  // Helper exposé en global : édition manuelle du compteur de fidélité
+  // (appelé depuis le bouton "Modifier manuellement" dans la fiche client)
+  window.lxEditFidManually = function(cid){
+    var cc = (typeof gC === "function") ? gC(cid) : null;
+    if(!cc) return;
+    showPrompt({
+      title: "Modifier les passages",
+      label: "Nombre de passages cumulés pour ce client",
+      type: "number",
+      defaultValue: String(cc.fid || 0),
+      placeholder: "0",
+      okLabel: "Enregistrer",
+      onOk: function(nv){
+        if(nv == null) return;
+        cc.fid = Math.max(0, parseInt(nv) || 0);
+        if(typeof saveClient === "function") saveClient(cc);
+        if(typeof go === "function") go("detail");
+      }
+    });
+  };
+
+  function newConv(){
     if(!isAuth())return;
-    var subj=prompt('Sujet de la conversation ?','Question');
-    if(!subj)return;
-    var cid=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now());
-    try{
-      var ins=await _sb.from('support_conversations').insert({id:cid,salon_id:_salonId,status:'open',subject:subj.slice(0,120),unread_count_admin:0,unread_count_client:0,last_message_at:new Date().toISOString()}).select().single();
-      if(ins.data){await loadConvs();openThread(ins.data.id);}
-    }catch(e){showAlert('Erreur création : '+e.message,"error");}
+    showPrompt({
+      title: "Nouvelle conversation",
+      label: "Sujet de la conversation",
+      defaultValue: "Question",
+      placeholder: "Décrivez brièvement votre besoin",
+      maxLength: 120,
+      okLabel: "Créer",
+      onOk: async function(subj){
+        if(!subj)return;
+        var cid=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():String(Date.now());
+        try{
+          var ins=await _sb.from('support_conversations').insert({id:cid,salon_id:_salonId,status:'open',subject:String(subj).slice(0,120),unread_count_admin:0,unread_count_client:0,last_message_at:new Date().toISOString()}).select().single();
+          if(ins.data){await loadConvs();openThread(ins.data.id);}
+        }catch(e){showAlert('Erreur création : '+e.message,"error");}
+      }
+    });
   }
 
   async function markResolved(){
