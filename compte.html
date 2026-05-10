@@ -339,6 +339,39 @@ function renderDashboard(){
   return h;
 }
 
+// --- HELPER : sélecteur d'établissement (pills + barre de recherche si nombreux) ---
+// opts = { salons:[{id,nom,count}], filterId, onSelectFn:"setMyXxxFilter", totalCount, searchKey:"photos|tickets|..." }
+// - Si salons.length <= 1 : retourne ""
+// - Si salons.length >= 6 : ajoute une barre de recherche au-dessus des pills
+function lxRenderSalonPicker(opts){
+  if(!opts || !opts.salons || opts.salons.length <= 1) return "";
+  var SHOW_SEARCH = opts.salons.length > 5;
+  var sk = "_picker_search_"+(opts.searchKey||"def");
+  var searchVal = String(window[sk]||"").toLowerCase().trim();
+  var filtered = opts.salons.filter(function(s){
+    return !searchVal || (s.nom||"").toLowerCase().indexOf(searchVal) >= 0;
+  });
+  var h = '<div style="margin-bottom:14px">';
+  if(SHOW_SEARCH){
+    h += '<div style="margin-bottom:8px"><input type="text" placeholder="🔍 Rechercher un établissement..." value="'+escAttr(searchVal)+'" oninput="window.'+sk+'=this.value;render();setTimeout(function(){var i=document.getElementById(\''+sk+'_input\');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}},10)" id="'+sk+'_input" autocomplete="off" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid rgba(200,168,78,.25);background:rgba(0,0,0,.35);color:#fff;font-size:13px;box-sizing:border-box;outline:none"></div>';
+  }
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;background:rgba(0,0,0,.25);border:1px solid rgba(200,168,78,.15);border-radius:10px;'+(SHOW_SEARCH?"max-height:170px;overflow-y:auto;":"")+'">';
+  var pillBase = 'cursor:pointer;padding:6px 12px;border-radius:18px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.1);transition:all .15s';
+  var pillOff = 'background:transparent;color:#bbb;'+pillBase;
+  var pillOn  = 'background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;border-color:#c8a84e;'+pillBase;
+  // "Tous" toujours présent même en cas de recherche
+  h += '<div style="'+(opts.filterId==="all"?pillOn:pillOff)+'" onclick="'+opts.onSelectFn+'(\'all\')">Tous · '+(opts.totalCount||0)+'</div>';
+  if(filtered.length){
+    filtered.forEach(function(s){
+      h += '<div style="'+(opts.filterId===s.id?pillOn:pillOff)+'" onclick="'+opts.onSelectFn+'(\''+s.id+'\')">'+escAttr(s.nom||"Salon")+' · '+(s.count||0)+'</div>';
+    });
+  } else if(searchVal){
+    h += '<div style="padding:6px 10px;color:#888;font-size:12px;font-style:italic">Aucun résultat pour « '+escAttr(searchVal)+' »</div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
 // --- PHOTOS TAB (visible si salon a activé "photos_visible_client") ---
 window.MY_PHOTOS = null; // {salons:[{salon_id,salon_nom,salon_logo,photos:[...]}]}
 window._myPhotosLoading = false;
@@ -392,24 +425,15 @@ function renderPhotosTab(){
       +'</div>';
   }
   var h = '';
-  // Sélecteur d'établissement (apparaît uniquement si 2+ salons)
-  if(data.salons.length > 1){
-    var fSel = window._myPhotosFilter || "all";
-    // S'assurer que le filtre actif existe encore (sécurité après reload)
-    if(fSel !== "all" && !data.salons.some(function(s){return s.salon_id===fSel;})) fSel = "all";
-    var totalPhotos = data.salons.reduce(function(a,s){return a+s.photos.length;},0);
-    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding:8px;background:rgba(0,0,0,.25);border:1px solid rgba(200,168,78,.15);border-radius:10px">';
-    var pillBase = 'cursor:pointer;padding:6px 12px;border-radius:18px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.1);transition:all .15s';
-    var pillOff = 'background:transparent;color:#bbb;'+pillBase;
-    var pillOn  = 'background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;border-color:#c8a84e;'+pillBase;
-    h += '<div style="'+(fSel==="all"?pillOn:pillOff)+'" onclick="setMyPhotosFilter(\'all\')">Tous · '+totalPhotos+'</div>';
-    data.salons.forEach(function(s){
-      h += '<div style="'+(fSel===s.salon_id?pillOn:pillOff)+'" onclick="setMyPhotosFilter(\''+s.salon_id+'\')">'+s.salon_nom+' · '+s.photos.length+'</div>';
-    });
-    h += '</div>';
-  }
-  // Filtrage selon sélection
+  // Sélecteur d'établissement (helper unifié)
   var filterId = window._myPhotosFilter || "all";
+  if(filterId !== "all" && !data.salons.some(function(s){return s.salon_id===filterId;})) filterId = "all";
+  var totalPhotos = data.salons.reduce(function(a,s){return a+s.photos.length;},0);
+  h += lxRenderSalonPicker({
+    salons: data.salons.map(function(s){return {id:s.salon_id, nom:s.salon_nom, count:s.photos.length};}),
+    filterId: filterId, onSelectFn: "setMyPhotosFilter",
+    totalCount: totalPhotos, searchKey: "photos"
+  });
   var salonsToShow = (filterId==="all") ? data.salons : data.salons.filter(function(s){return s.salon_id===filterId;});
   salonsToShow.forEach(function(salon){
     h += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(200,168,78,.2);border-radius:12px;padding:14px;margin-bottom:14px">';
@@ -571,6 +595,8 @@ function renderRdvTab(){
 // --- FIDELITE TAB ---
 var FIDELITE_DATA=[];
 var _fideliteLoaded=false;
+window._myFideliteFilter = window._myFideliteFilter || "all";
+function setMyFideliteFilter(v){ window._myFideliteFilter = v; render(); }
 
 async function loadFidelite(){
   if(!CLIENT||_fideliteLoaded)return;
@@ -610,9 +636,17 @@ function renderFideliteTab(){
   h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--blue)">'+totalVisites+'</div><div style="font-size:12px;color:var(--text3)">Visites totales</div></div>';
   h+='</div>';
   
-  // Per salon
+  // Per salon \u2014 s\u00e9lecteur d'\u00e9tablissement
+  var fidFilter = window._myFideliteFilter || "all";
+  if(fidFilter !== "all" && !FIDELITE_DATA.some(function(f){return f.salon_id===fidFilter;})) fidFilter = "all";
+  h += lxRenderSalonPicker({
+    salons: FIDELITE_DATA.map(function(f){return {id:f.salon_id, nom:f.salon_nom||"Salon", count:(f.points||0)+" pts"};}),
+    filterId: fidFilter, onSelectFn: "setMyFideliteFilter",
+    totalCount: totalPoints+" pts", searchKey: "fidelite"
+  });
+  var fidToShow = (fidFilter==="all") ? FIDELITE_DATA : FIDELITE_DATA.filter(function(f){return f.salon_id===fidFilter;});
   h+='<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px">Par \u00e9tablissement</div>';
-  FIDELITE_DATA.forEach(function(f){
+  fidToShow.forEach(function(f){
     var seuil=f.seuil_fidelite||10;
     var pts=f.points||0;
     var pct=Math.min(100,Math.round(pts/seuil*100));
@@ -643,6 +677,8 @@ function renderFideliteTab(){
 var CARTES_ABO_DATA=[];
 var _cartesLoaded=false;
 
+window._myCartesFilter = window._myCartesFilter || "all";
+function setMyCartesFilter(v){ window._myCartesFilter = v; render(); }
 async function loadCartesAbo(){
   if(!CLIENT||_cartesLoaded)return;
   try{
@@ -673,10 +709,26 @@ function renderCartesTab(){
   }
   
   var today=new Date().toISOString().slice(0,10);
-  var actives=CARTES_ABO_DATA.filter(function(c){return c.status==="active"&&(!c.date_expiration||c.date_expiration>=today);});
-  var expirees=CARTES_ABO_DATA.filter(function(c){return c.status!=="active"||(c.date_expiration&&c.date_expiration<today);});
-  
-  // Total economies
+  // Sélecteur d'établissement (groupé par salon_id)
+  var cartesSalons = {};
+  CARTES_ABO_DATA.forEach(function(c){
+    if(!c.salon_id) return;
+    if(!cartesSalons[c.salon_id]) cartesSalons[c.salon_id] = {nom:c.salon_nom||"Salon", count:0};
+    cartesSalons[c.salon_id].count++;
+  });
+  var caKeys = Object.keys(cartesSalons);
+  var caFilter = window._myCartesFilter || "all";
+  if(caFilter !== "all" && !cartesSalons[caFilter]) caFilter = "all";
+  h += lxRenderSalonPicker({
+    salons: caKeys.map(function(sid){return {id:sid, nom:cartesSalons[sid].nom, count:cartesSalons[sid].count};}),
+    filterId: caFilter, onSelectFn: "setMyCartesFilter",
+    totalCount: CARTES_ABO_DATA.length, searchKey: "cartes"
+  });
+  var cartesToShow = (caFilter==="all") ? CARTES_ABO_DATA : CARTES_ABO_DATA.filter(function(c){return c.salon_id===caFilter;});
+  var actives=cartesToShow.filter(function(c){return c.status==="active"&&(!c.date_expiration||c.date_expiration>=today);});
+  var expirees=cartesToShow.filter(function(c){return c.status!=="active"||(c.date_expiration&&c.date_expiration<today);});
+
+  // Total economies (toujours sur l'ensemble — ne change pas avec le filtre)
   var totalEco=0;
   CARTES_ABO_DATA.forEach(function(c){totalEco+=Number(c.economies_totales)||0;});
   
@@ -745,7 +797,7 @@ function renderTicketsTab(){
     if(a.heure_rdv&&b.heure_rdv&&a.heure_rdv!==b.heure_rdv)return a.heure_rdv>b.heure_rdv?-1:1;
     return (b.ticket_num||0)-(a.ticket_num||0);
   });
-  // Selecteur d etablissement (apparait uniquement si 2+ salons distincts)
+  // Sélecteur d'établissement (helper unifié)
   var ticketSalons = {};
   doneAll.forEach(function(r){
     if(!r.salon_id) return;
@@ -755,18 +807,11 @@ function renderTicketsTab(){
   var salonKeys = Object.keys(ticketSalons);
   var fSel = window._myTicketsFilter || "all";
   if(fSel !== "all" && !ticketSalons[fSel]) fSel = "all";
-  if(salonKeys.length > 1){
-    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding:8px;background:rgba(0,0,0,.25);border:1px solid rgba(200,168,78,.15);border-radius:10px">';
-    var pillBase = 'cursor:pointer;padding:6px 12px;border-radius:18px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.1);transition:all .15s';
-    var pillOff = 'background:transparent;color:#bbb;'+pillBase;
-    var pillOn  = 'background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;border-color:#c8a84e;'+pillBase;
-    h+='<div style="'+(fSel==="all"?pillOn:pillOff)+'" onclick="setMyTicketsFilter(\'all\')">Tous · '+doneAll.length+'</div>';
-    salonKeys.forEach(function(sid){
-      h+='<div style="'+(fSel===sid?pillOn:pillOff)+'" onclick="setMyTicketsFilter(\''+sid+'\')">'+ticketSalons[sid].nom+' · '+ticketSalons[sid].count+'</div>';
-    });
-    h+='</div>';
-  }
-  // Filtrage selon sélection
+  h += lxRenderSalonPicker({
+    salons: salonKeys.map(function(sid){return {id:sid, nom:ticketSalons[sid].nom, count:ticketSalons[sid].count};}),
+    filterId: fSel, onSelectFn: "setMyTicketsFilter",
+    totalCount: doneAll.length, searchKey: "tickets"
+  });
   var done = (fSel==="all") ? doneAll : doneAll.filter(function(r){return r.salon_id===fSel;});
 
   h+='<div class="section"><div class="section-title">\ud83c\udfab Mes tickets ('+done.length+')</div>';
