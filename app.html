@@ -5884,13 +5884,16 @@ async function addClientPhoto(cId,input,label){
   var img=await new Promise(function(resolve,reject){
     var i=new Image();i.onload=function(){resolve(i);};i.onerror=reject;i.src=dataUrl;
   });
-  // Resize max 400px (côté client = bande passante upload réduite)
-  var max=400;var w=img.width,h=img.height;
+  // Resize max 1920px (qualité HD pour publication web/Facebook)
+  // Avant : 400px (trop petit pour réseaux sociaux). Maintenant : 1920px = Facebook timeline qualité optimale.
+  var max=1920;var w=img.width,h=img.height;
   if(w>max||h>max){if(w>h){h=Math.round(h*max/w);w=max;}else{w=Math.round(w*max/h);h=max;}}
   var canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
-  canvas.getContext("2d").drawImage(img,0,0,w,h);
-  // Convert canvas → Blob (binaire) au lieu de toDataURL (base64) pour upload optimal
-  var blob=await new Promise(function(resolve){canvas.toBlob(resolve,"image/jpeg",0.78);});
+  var ctx=canvas.getContext("2d");
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+  ctx.drawImage(img,0,0,w,h);
+  // Compression JPEG 0.92 = qualité visuelle excellente, taille raisonnable
+  var blob=await new Promise(function(resolve){canvas.toBlob(resolve,"image/jpeg",0.92);});
   var cl=gC(cId);if(!cl){input.value="";return;}
   if(!cl.photos)cl.photos=[];
   // Path : <salon_id>/<client_id>/<photo_uuid>.jpg — RLS s'appuie sur le 1er segment
@@ -11671,7 +11674,10 @@ function lxRenderClientPhotosTab(c){
       h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
       h+='<div><div style="font-family:var(--f1,Georgia,serif);font-size:14px;font-weight:700;color:var(--gold)">📅 '+lxRelativeDate(dateKey)+'</div>';
       h+='<div style="font-size:10px;color:rgba(255,255,255,.4);text-transform:capitalize;margin-top:2px">'+dateLong+'</div></div>';
+      h+='<div style="display:flex;align-items:center;gap:8px">';
       h+='<div style="font-size:10px;color:var(--gold);background:rgba(200,168,78,.1);padding:3px 10px;border-radius:10px;font-weight:700">'+dayPhotos.length+' photo'+(dayPhotos.length>1?"s":"")+'</div>';
+      h+='<button title="Télécharger toutes les photos de cette séance" onclick="lxDownloadSession(\''+c.id+'\',\''+dateKey+'\')" style="background:rgba(33,150,243,.12);border:1px solid rgba(33,150,243,.3);color:#64b5f6;padding:6px 12px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px">📦 Télécharger</button>';
+      h+='</div>';
       h+='</div>';
       h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">';
       for(var pi=0;pi<dayPhotos.length;pi++){
@@ -11683,6 +11689,7 @@ function lxRenderClientPhotosTab(c){
         h+='<div style="position:relative;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'scale(1.02)\';this.style.boxShadow=\'0 6px 20px rgba(200,168,78,.3)\'" onmouseout="this.style.transform=\'scale(1)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.2)\'">';
         h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:zoom-in" onclick="lxOpenPhotoLightbox(\''+c.id+'\','+origIdx+')">';
         h+='<div style="position:absolute;top:6px;left:6px;background:'+meta.col+'cc;backdrop-filter:blur(4px);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;text-shadow:0 1px 2px rgba(0,0,0,.5)">'+meta.icon+' '+meta.l+'</div>';
+        h+='<button onclick="lxDownloadPhoto(\''+c.id+'\','+origIdx+')" title="Télécharger en HD" style="position:absolute;top:6px;right:38px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(33,150,243,.4);color:#64b5f6;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">⬇</button>';
         h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer cette photo" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
         if(ph.note){
           h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:10px 8px 6px;color:#fff">';
@@ -11716,6 +11723,7 @@ function lxRenderClientPhotosTab(c){
       h+='<div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2)">';
       h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:zoom-in" onclick="lxOpenPhotoLightbox(\''+c.id+'\','+origIdx+')">';
       h+='<div style="position:absolute;top:6px;left:6px;background:'+meta.col+'cc;backdrop-filter:blur(4px);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;text-shadow:0 1px 2px rgba(0,0,0,.5)">'+meta.icon+' '+meta.l+'</div>';
+      h+='<button onclick="lxDownloadPhoto(\''+c.id+'\','+origIdx+')" title="Télécharger en HD" style="position:absolute;top:6px;right:38px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">⬇</button>';
       h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
       h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:10px 8px 6px;color:#fff">';
       h+='<div style="font-size:11px;font-weight:700">'+lxRelativeDate(ph.date)+'</div>';
@@ -11775,6 +11783,107 @@ async function lxConfirmPhotoUpload(labelKey){
 }
 window.lxConfirmPhotoUpload=lxConfirmPhotoUpload;
 
+// ===== TÉLÉCHARGEMENT PHOTOS — single & batch =====
+// Slugify le nom du client pour un nom de fichier safe
+function _lxPhotoSlug(s){
+  if(!s)return "client";
+  return String(s).normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-zA-Z0-9-]/g,"_").replace(/_+/g,"_").replace(/^_|_$/g,"").substring(0,40);
+}
+
+// Récupère le blob d'une photo (signed URL → fetch → blob)
+async function _lxFetchPhotoBlob(ph){
+  // Si data inline (vieux format base64), convertir en blob
+  if(ph.data && ph.data.indexOf("data:")===0){
+    var res=await fetch(ph.data);
+    return await res.blob();
+  }
+  // Sinon path Storage : créer signed URL puis fetch
+  if(ph.path && typeof _sb!=="undefined" && _sb){
+    var signed=await _sb.storage.from("client-photos").createSignedUrl(ph.path,3600);
+    if(signed.error||!signed.data)throw new Error("URL signée impossible");
+    var resF=await fetch(signed.data.signedUrl);
+    if(!resF.ok)throw new Error("Téléchargement échoué");
+    return await resF.blob();
+  }
+  throw new Error("Photo introuvable");
+}
+
+// Trigger téléchargement d'un blob comme fichier
+function _lxTriggerDownload(blob, filename){
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a");
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},100);
+}
+
+// Télécharge UNE photo
+async function lxDownloadPhoto(cId, photoIdx){
+  var c=(typeof gC==="function")?gC(cId):null;
+  if(!c||!c.photos||!c.photos[photoIdx]){if(typeof toast==="function")toast("Photo introuvable","error");return;}
+  var ph=c.photos[photoIdx];
+  if(typeof toast==="function")toast("📥 Téléchargement en cours...","info");
+  try{
+    var blob=await _lxFetchPhotoBlob(ph);
+    var clientSlug=_lxPhotoSlug((c.nom||"")+"_"+(c.pre||""));
+    var dateStr=(ph.date||"").replace(/-/g,"") || "sansdate";
+    var labelStr=_lxPhotoSlug(ph.label||"photo");
+    var filename=clientSlug+"_"+dateStr+"_"+labelStr+"_"+(photoIdx+1)+".jpg";
+    _lxTriggerDownload(blob,filename);
+    if(typeof toast==="function")toast("✓ Photo téléchargée","success");
+  }catch(e){
+    console.error("[lxDownloadPhoto]",e);
+    if(typeof toast==="function")toast("Erreur téléchargement : "+e.message,"error");
+  }
+}
+window.lxDownloadPhoto=lxDownloadPhoto;
+
+// Télécharge TOUTES les photos d'une séance (par date) — en ZIP via JSZip CDN si dispo, sinon une par une
+async function lxDownloadSession(cId, dateKey){
+  var c=(typeof gC==="function")?gC(cId):null;
+  if(!c||!c.photos)return;
+  var sessionPhotos=c.photos.filter(function(p){return (p.date||"").slice(0,10)===dateKey;});
+  if(!sessionPhotos.length){if(typeof toast==="function")toast("Aucune photo dans cette séance","warning");return;}
+
+  // Si une seule photo, download direct
+  if(sessionPhotos.length===1){
+    return lxDownloadPhoto(cId, c.photos.indexOf(sessionPhotos[0]));
+  }
+
+  // Charger JSZip si pas déjà chargé
+  if(typeof JSZip==="undefined"){
+    if(typeof toast==="function")toast("Chargement de la librairie ZIP...","info");
+    await new Promise(function(resolve,reject){
+      var s=document.createElement("script");
+      s.src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      s.onload=resolve; s.onerror=reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  if(typeof toast==="function")toast("📦 Préparation du ZIP ("+sessionPhotos.length+" photos)...","info");
+  try{
+    var zip=new JSZip();
+    var clientSlug=_lxPhotoSlug((c.nom||"")+"_"+(c.pre||""));
+    var dateStr=dateKey.replace(/-/g,"");
+    for(var i=0;i<sessionPhotos.length;i++){
+      var ph=sessionPhotos[i];
+      var blob=await _lxFetchPhotoBlob(ph);
+      var labelStr=_lxPhotoSlug(ph.label||"photo");
+      var filename=clientSlug+"_"+dateStr+"_"+labelStr+"_"+(i+1)+".jpg";
+      zip.file(filename, blob);
+    }
+    var zipBlob=await zip.generateAsync({type:"blob"});
+    var zipName=clientSlug+"_seance_"+dateStr+"_"+sessionPhotos.length+"photos.zip";
+    _lxTriggerDownload(zipBlob, zipName);
+    if(typeof toast==="function")toast("✓ ZIP téléchargé ("+sessionPhotos.length+" photos)","success");
+  }catch(e){
+    console.error("[lxDownloadSession]",e);
+    if(typeof toast==="function")toast("Erreur ZIP : "+e.message,"error");
+  }
+}
+window.lxDownloadSession=lxDownloadSession;
+
 function lxConfirmDelPhoto(cId, idx){
   if(typeof showConfirmDanger==="function"){
     showConfirmDanger("Supprimer cette photo ?\\n\\nElle sera définitivement effacée du stockage sécurisé.", function(){
@@ -11816,6 +11925,7 @@ function lxOpenPhotoLightbox(cId, photoIdx){
   h+='<div onclick="event.stopPropagation()" style="padding:14px 18px;background:rgba(0,0,0,.6);backdrop-filter:blur(10px);border-top:1px solid rgba(255,255,255,.06)">';
   h+='<div style="display:flex;align-items:center;gap:10px">';
   h+='<input type="text" placeholder="Note libre (allergies, formule, observations...)" value="'+(ph.note||"").replace(/"/g,"&quot;")+'" style="flex:1;padding:10px 14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:13px" onchange="lxUpdatePhotoNote(\''+cId+'\','+photoIdx+',this.value)">';
+  h+='<button onclick="lxDownloadPhoto(\''+cId+'\','+photoIdx+')" style="background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.4);color:#64b5f6;padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">⬇ Télécharger HD</button>';
   h+='<button onclick="lxConfirmDelPhoto(\''+cId+'\','+photoIdx+');cM()" style="background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.4);color:#ef5350;padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">🗑 Supprimer</button>';
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
