@@ -11616,18 +11616,86 @@ function lxRenderClientPhotosTab(c){
   var photos = c.photos.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);});
   var totalPhotos = photos.length;
   if(!window._photoFilters)window._photoFilters={};
+  if(!window._photoViews)window._photoViews={};
   var filterKey = window._photoFilters[c.id] || "all";
+  var viewMode = window._photoViews[c.id] || "session"; // "session" (groupé date) | "label" (filtre par label)
   var counts = {};
   photos.forEach(function(p){var k=p.label||"autre";counts[k]=(counts[k]||0)+1;});
-  var filtered = filterKey==="all" ? photos : photos.filter(function(p){return (p.label||"autre")===filterKey;});
 
   var h='<div class="card" style="background:linear-gradient(135deg,rgba(200,168,78,.04),rgba(200,168,78,.01))">';
-  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">';
+  // Header
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">';
   h+='<div><div style="font-family:var(--f1,Georgia,serif);font-size:16px;font-weight:800;color:var(--gold)">📸 Galerie photos</div>';
-  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+totalPhotos+' photo'+(totalPhotos>1?'s':'')+(totalPhotos===0?' — Documentez l\\u0027évolution du client':'')+'</div></div>';
+  h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">'+totalPhotos+' photo'+(totalPhotos>1?"s":"")+(totalPhotos===0?" — Documentez l\u0027évolution du client":"")+'</div></div>';
+  // Toggle vue
+  if(totalPhotos>0){
+    h+='<div style="display:flex;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:3px">';
+    var vS=viewMode==="session"; var vL=viewMode==="label";
+    h+='<button onclick="window._photoViews[\''+c.id+'\']=\'session\';go(\'detail\')" style="padding:6px 12px;border-radius:6px;border:none;background:'+(vS?'var(--gold)':'transparent')+';color:'+(vS?'#000':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer">📅 Par séance</button>';
+    h+='<button onclick="window._photoViews[\''+c.id+'\']=\'label\';go(\'detail\')" style="padding:6px 12px;border-radius:6px;border:none;background:'+(vL?'var(--gold)':'transparent')+';color:'+(vL?'#000':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer">🏷 Par catégorie</button>';
+    h+='</div>';
+  }
   h+='</div>';
 
-  if(totalPhotos>0){
+  if(totalPhotos===0){
+    h+='<div style="text-align:center;padding:30px;color:rgba(255,255,255,.3);background:rgba(255,255,255,.02);border:2px dashed rgba(255,255,255,.08);border-radius:12px;margin-bottom:14px">';
+    h+='<div style="font-size:48px;margin-bottom:8px">📷</div>';
+    h+='<div style="font-size:13px">Aucune photo pour ce client</div>';
+    h+='<div style="font-size:11px;margin-top:6px;color:rgba(255,255,255,.4)">Ajoutez des photos pour suivre l\u0027évolution</div>';
+    h+='</div>';
+  } else if(viewMode==="session"){
+    // ========= VUE PAR SÉANCE (groupement par date) =========
+    var groups = {};
+    photos.forEach(function(p){
+      var d = (p.date||"").slice(0,10);
+      if(!groups[d])groups[d]=[];
+      groups[d].push(p);
+    });
+    var sortedDates = Object.keys(groups).sort(function(a,b){return b.localeCompare(a);});
+    h+='<div style="display:flex;flex-direction:column;gap:18px;margin-bottom:14px">';
+    for(var di=0;di<sortedDates.length;di++){
+      var dateKey = sortedDates[di];
+      var dayPhotos = groups[dateKey];
+      // Tri intra-jour : avant en premier, après en dernier, autres au milieu
+      dayPhotos.sort(function(a,b){
+        var orderA = a.label==="avant"?0:(a.label==="apres"||a.label==="après"?2:1);
+        var orderB = b.label==="avant"?0:(b.label==="apres"||b.label==="après"?2:1);
+        return orderA-orderB;
+      });
+      // Header de séance avec date complète
+      var dateObj = new Date(dateKey);
+      var dayName = ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"][dateObj.getDay()];
+      var monthName = ["janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"][dateObj.getMonth()];
+      var dateLong = dayName+" "+dateObj.getDate()+" "+monthName+" "+dateObj.getFullYear();
+      h+='<div style="border:1px solid rgba(200,168,78,.15);border-radius:12px;padding:14px;background:rgba(255,255,255,.02)">';
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
+      h+='<div><div style="font-family:var(--f1,Georgia,serif);font-size:14px;font-weight:700;color:var(--gold)">📅 '+lxRelativeDate(dateKey)+'</div>';
+      h+='<div style="font-size:10px;color:rgba(255,255,255,.4);text-transform:capitalize;margin-top:2px">'+dateLong+'</div></div>';
+      h+='<div style="font-size:10px;color:var(--gold);background:rgba(200,168,78,.1);padding:3px 10px;border-radius:10px;font-weight:700">'+dayPhotos.length+' photo'+(dayPhotos.length>1?"s":"")+'</div>';
+      h+='</div>';
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">';
+      for(var pi=0;pi<dayPhotos.length;pi++){
+        var ph=dayPhotos[pi];
+        var origIdx = c.photos.indexOf(ph);
+        var meta = lxGetPhotoLabelMeta(ph.label||"autre");
+        var phImgId="cph3_"+c.id+"_"+origIdx;
+        var phSrc=(typeof clientPhotoSrcAsync==="function")?clientPhotoSrcAsync(ph,phImgId):(ph.data||"");
+        h+='<div style="position:relative;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'scale(1.02)\';this.style.boxShadow=\'0 6px 20px rgba(200,168,78,.3)\'" onmouseout="this.style.transform=\'scale(1)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.2)\'">';
+        h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:zoom-in" onclick="lxOpenPhotoLightbox(\''+c.id+'\','+origIdx+')">';
+        h+='<div style="position:absolute;top:6px;left:6px;background:'+meta.col+'cc;backdrop-filter:blur(4px);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;text-shadow:0 1px 2px rgba(0,0,0,.5)">'+meta.icon+' '+meta.l+'</div>';
+        h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer cette photo" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
+        if(ph.note){
+          h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:10px 8px 6px;color:#fff">';
+          h+='<div style="font-size:10px;color:rgba(255,255,255,.85);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+ph.note+'</div>';
+          h+='</div>';
+        }
+        h+='</div>';
+      }
+      h+='</div></div>';
+    }
+    h+='</div>';
+  } else {
+    // ========= VUE PAR LABEL (filtres + grille classique) =========
     h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">';
     var selAll = filterKey==="all";
     h+='<button class="btn bs" onclick="window._photoFilters[\''+c.id+'\']=\'all\';go(\'detail\')" style="font-size:11px;padding:6px 12px;border-radius:20px;background:'+(selAll?'rgba(200,168,78,.2)':'rgba(255,255,255,.04)')+';color:'+(selAll?'var(--gold)':'rgba(255,255,255,.6)')+';border:1px solid '+(selAll?'var(--gold)':'rgba(255,255,255,.1)')+';font-weight:700">Tout ('+totalPhotos+')</button>';
@@ -11637,9 +11705,7 @@ function lxRenderClientPhotosTab(c){
       h+='<button class="btn bs" onclick="window._photoFilters[\''+c.id+'\']=\''+lk+'\';go(\'detail\')" style="font-size:11px;padding:6px 12px;border-radius:20px;background:'+(sel?meta.col+'30':'rgba(255,255,255,.04)')+';color:'+(sel?meta.col:'rgba(255,255,255,.6)')+';border:1px solid '+(sel?meta.col:'rgba(255,255,255,.1)')+';font-weight:700">'+meta.icon+' '+meta.l+' ('+counts[lk]+')</button>';
     });
     h+='</div>';
-  }
-
-  if(filtered.length){
+    var filtered = filterKey==="all" ? photos : photos.filter(function(p){return (p.label||"autre")===filterKey;});
     h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:14px">';
     for(var phi=0;phi<filtered.length;phi++){
       var ph=filtered[phi];
@@ -11647,24 +11713,22 @@ function lxRenderClientPhotosTab(c){
       var meta = lxGetPhotoLabelMeta(ph.label||"autre");
       var phImgId="cph2_"+c.id+"_"+origIdx;
       var phSrc=(typeof clientPhotoSrcAsync==="function")?clientPhotoSrcAsync(ph,phImgId):(ph.data||"");
-      h+='<div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'scale(1.02)\';this.style.boxShadow=\'0 6px 20px rgba(200,168,78,.3)\'" onmouseout="this.style.transform=\'scale(1)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.2)\'">';
+      h+='<div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2)">';
       h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:zoom-in" onclick="lxOpenPhotoLightbox(\''+c.id+'\','+origIdx+')">';
       h+='<div style="position:absolute;top:6px;left:6px;background:'+meta.col+'cc;backdrop-filter:blur(4px);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;text-shadow:0 1px 2px rgba(0,0,0,.5)">'+meta.icon+' '+meta.l+'</div>';
-      h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer cette photo" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s" onmouseover="this.style.background=\'rgba(244,67,54,.8)\'" onmouseout="this.style.background=\'rgba(0,0,0,.7)\'">✕</button>';
+      h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
       h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:10px 8px 6px;color:#fff">';
       h+='<div style="font-size:11px;font-weight:700">'+lxRelativeDate(ph.date)+'</div>';
       if(ph.note)h+='<div style="font-size:10px;color:rgba(255,255,255,.7);margin-top:2px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+ph.note+'</div>';
       h+='</div></div>';
     }
     h+='</div>';
-  }else{
-    h+='<div style="text-align:center;padding:30px;color:rgba(255,255,255,.3);background:rgba(255,255,255,.02);border:2px dashed rgba(255,255,255,.08);border-radius:12px;margin-bottom:14px">';
-    h+='<div style="font-size:48px;margin-bottom:8px">📷</div>';
-    h+='<div style="font-size:13px">Aucune photo'+(filterKey!=="all"?' avec ce filtre':'')+'</div>';
-    if(filterKey==="all")h+='<div style="font-size:11px;margin-top:6px">Ajoutez des photos pour suivre l\\u0027évolution du client</div>';
-    h+='</div>';
+    if(filtered.length===0){
+      h+='<div style="text-align:center;padding:20px;color:rgba(255,255,255,.4);font-size:12px">Aucune photo avec ce filtre</div>';
+    }
   }
 
+  // Boutons upload
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">';
   h+='<label style="padding:14px;border-radius:12px;border:2px dashed rgba(33,150,243,.3);background:rgba(33,150,243,.06);cursor:pointer;text-align:center;font-size:13px;font-weight:700;color:#64b5f6;display:flex;align-items:center;justify-content:center;gap:8px"><span style="font-size:20px">📸</span><span>Prendre photo</span><input type="file" accept="image/*" capture="environment" multiple style="display:none" onchange="lxAddPhotosWithLabelPicker(\''+c.id+'\',this)"></label>';
   h+='<label style="padding:14px;border-radius:12px;border:2px dashed rgba(200,168,78,.3);background:rgba(200,168,78,.06);cursor:pointer;text-align:center;font-size:13px;font-weight:700;color:var(--gold);display:flex;align-items:center;justify-content:center;gap:8px"><span style="font-size:20px">🖼️</span><span>Depuis galerie</span><input type="file" accept="image/*" multiple style="display:none" onchange="lxAddPhotosWithLabelPicker(\''+c.id+'\',this)"></label>';
