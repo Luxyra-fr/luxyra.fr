@@ -3256,100 +3256,104 @@ function newDevis(){
   _renderNewDevis();
 }
 
-// Helper : affiche les RDV existants pour le collab + date sélectionnés dans la modal
-// Tient compte des PAUSES dans aPhases : pendant t:"p", le collab est libre,
-// donc on peut insérer un autre RDV pendant ce temps mort.
-// Affiche uniquement les plages "work" (collab réellement occupé).
+// Picker de créneaux libres en temps réel (équivalent du booking en ligne, mais en interne)
+// Tient compte de :
+// - Horaires d'ouverture du salon ce jour (ou horaires individuels du collab si définis)
+// - Pause quotidienne du collab (collab.pause)
+// - RDV existants (avec exclusion des phases "pause" → collab libre pendant pose couleur)
+// - Durée du devis à insérer (window._cdrDur, calculée dans convertDevisToRdv)
+// Affiche des pastilles vertes cliquables qui auto-remplissent le champ heure.
 function lxRefreshDispos(){
   var info = document.getElementById("cdrDispoInfo"); if(!info) return;
   var date = document.getElementById("cdrDate"); date = date ? date.value : null;
   var stEl = document.getElementById("cdrCollab"); var stId = stEl ? parseInt(stEl.value, 10) : null;
-  var timeEl = document.getElementById("cdrTime"); var heureProj = timeEl ? timeEl.value : null;
-  if(!date || !stId){ info.innerHTML = '<div style="color:var(--text3);font-style:italic">Sélectionnez date + collaborateur pour voir les disponibilités</div>'; return; }
+  if(!date || !stId){ info.innerHTML = '<div style="color:var(--text3);font-style:italic">Sélectionnez date + collaborateur</div>'; return; }
 
-  function addMin(t, m){ var p=t.split(":"); var v=parseInt(p[0])*60+parseInt(p[1])+m; var h=Math.floor(v/60), n=v%60; return (h<10?"0":"")+h+":"+(n<10?"0":"")+n; }
+  // Helpers temps
+  function addMin(t,m){ var p=t.split(":"); var v=parseInt(p[0])*60+parseInt(p[1])+m; var h=Math.floor(v/60),n=v%60; return (h<10?"0":"")+h+":"+(n<10?"0":"")+n; }
+  function toMin(t){ var p=t.split(":"); return parseInt(p[0])*60+parseInt(p[1]); }
+  function fromMin(m){ var h=Math.floor(m/60),n=m%60; return (h<10?"0":"")+h+":"+(n<10?"0":"")+n; }
   function overlap(s1,e1,s2,e2){ return s1<e2 && s2<e1; }
 
-  // Pour un RDV donné, retourne les SLOTS WORK du collab cible (pause exclue)
-  // Format : [{start:"10:00", end:"10:30"}, {start:"11:00", end:"11:30"}, ...]
-  function getWorkSlots(rdv, targetCollabId){
-    var startTime = rdv.time || rdv.heure;
-    if(!startTime) return [];
-    var phases = rdv.aPhases || [];
-    if(!phases.length){
-      // Pas de phases définies → 60min full work par défaut
-      return [{start:startTime, end:addMin(startTime,60)}];
-    }
-    var cursor = startTime;
-    var slots = [];
-    phases.forEach(function(p){
-      var d = p.d || 0;
-      if(p.t === "w"){
-        // Phase work : collab occupé, mais seulement si CE collab spécifique
-        // (les phases sans stId sont assignées au stId principal du RDV)
-        var phaseCollab = p.stId || rdv.stId;
-        if(phaseCollab === targetCollabId){
-          slots.push({start:cursor, end:addMin(cursor,d)});
-        }
-      }
-      // Phase pause : on avance le cursor mais on n'ajoute pas de slot (collab libre)
-      cursor = addMin(cursor, d);
-    });
-    // Merge slots adjacents (work consécutifs sans pause entre)
-    var merged = [];
-    slots.forEach(function(s){
-      if(merged.length && merged[merged.length-1].end === s.start){
-        merged[merged.length-1].end = s.end;
-      } else {
-        merged.push({start:s.start, end:s.end});
-      }
-    });
-    return merged;
+  // Durée du devis (déjà calculée dans convertDevisToRdv)
+  var dur = window._cdrDur || 60;
+
+  // Récupère le collab + ses horaires du jour
+  var collab = null;
+  for(var i=0;i<T.length;i++){ if(T[i].id===stId){ collab=T[i]; break; } }
+  if(!collab){ info.innerHTML = '<div style="color:#f87171">Collaborateur introuvable</div>'; return; }
+  // Day of week (T12 pour éviter pb timezone)
+  var dt = new Date(date+"T12:00:00");
+  var dow = dt.getDay();
+  // Horaires : collab si défini, sinon salon
+  var hrs = (collab.hrs && collab.hrs[dow]) ? collab.hrs[dow] : (window.H && window.H[dow] ? window.H[dow] : null);
+  if(!hrs || !hrs.o || !hrs.c){
+    info.innerHTML = '<div style="color:#f87171;font-weight:700">📵 '+collab.n+' ne travaille pas ce jour-là (jour de repos)</div>';
+    return;
   }
 
-  // Filtre RDV existants pour ce collab à cette date (non annulés)
+  // Récupère tous les slots BUSY (work uniquement, pauses exclues + pause quotidienne)
+  var busy = [];
+  // 1. Pause quotidienne fixe du collab
+  if(collab.pause && collab.pause.s && collab.pause.e){
+    busy.push({s:collab.pause.s, e:collab.pause.e});
+  }
+  // 2. RDV existants (work uniquement)
   var rdvs = (window.AP||[]).filter(function(a){
-    if(a.cancelled===true) return false;
-    if(a.date !== date) return false;
+    if(a.cancelled===true || a.date !== date) return false;
     if(a.st === "cancelled" || a.st === "annule" || a.st === "annulé") return false;
     if(a.stId === stId) return true;
     if(a.aPhases && a.aPhases.some && a.aPhases.some(function(p){return p.t==="w" && p.stId === stId;})) return true;
     return false;
   });
-
-  // Calcule tous les slots work (collab occupé) sur la journée
-  var allBusySlots = [];
   rdvs.forEach(function(a){
-    var slots = getWorkSlots(a, stId);
-    slots.forEach(function(s){ allBusySlots.push(s); });
-  });
-  allBusySlots.sort(function(a,b){return a.start.localeCompare(b.start);});
-
-  if(!allBusySlots.length){
-    info.innerHTML = '<div style="color:#4ade80;font-weight:700">✓ Aucun RDV ce jour pour ce collaborateur — toute la journée est libre</div>';
-    return;
-  }
-
-  // Détecte conflit avec l'heure proposée (estimation 60min, l'utilisateur ajustera)
-  var conflict = null;
-  if(heureProj){
-    var hpEnd = addMin(heureProj, 60);
-    for(var i=0;i<allBusySlots.length;i++){
-      if(overlap(heureProj, hpEnd, allBusySlots[i].start, allBusySlots[i].end)){ conflict = allBusySlots[i]; break; }
+    var startTime = a.time || a.heure;
+    if(!startTime) return;
+    var phases = a.aPhases || [];
+    if(!phases.length){
+      busy.push({s:startTime, e:addMin(startTime, 60)});
+      return;
     }
+    var cursor = startTime;
+    phases.forEach(function(p){
+      var pd = p.d || 0;
+      if(p.t === "w"){
+        var phaseCollab = p.stId || a.stId;
+        if(phaseCollab === stId){ busy.push({s:cursor, e:addMin(cursor,pd)}); }
+      }
+      cursor = addMin(cursor, pd);
+    });
+  });
+
+  // Génération des slots de 15min entre hrs.o et hrs.c où le devis (dur) tient sans chevauchement
+  var freeSlots = [];
+  var startM = toMin(hrs.o);
+  var endM = toMin(hrs.c);
+  for(var m=startM; m+dur <= endM; m+=15){
+    var sStart = fromMin(m);
+    var sEnd = fromMin(m+dur);
+    var taken = false;
+    for(var bi=0;bi<busy.length;bi++){
+      if(overlap(sStart, sEnd, busy[bi].s, busy[bi].e)){ taken=true; break; }
+    }
+    if(!taken) freeSlots.push(sStart);
   }
 
-  var html = '';
-  if(conflict){
-    html += '<div style="background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.4);border-radius:6px;padding:6px 10px;margin-bottom:8px;color:#f87171;font-weight:700">⚠ Conflit : '+heureProj+' chevauche un créneau occupé '+conflict.start+' → '+conflict.end+'</div>';
+  // Render : titre + liste pastilles vertes cliquables (regroupées par heure)
+  var html = '<div style="font-weight:700;color:var(--text2);margin-bottom:8px;font-size:11px">⏰ Créneaux libres pour '+collab.n+' ('+dur+' min) — cliquez pour sélectionner :</div>';
+  if(!freeSlots.length){
+    html += '<div style="background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:8px 10px;color:#f87171;font-weight:600;font-size:12px">Aucun créneau libre ce jour pour cette durée. Choisissez une autre date ou un autre collaborateur.</div>';
+  } else {
+    var currentHeure = (document.getElementById("cdrTime")||{}).value;
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px;max-height:160px;overflow-y:auto;padding:4px">';
+    freeSlots.forEach(function(t){
+      var isSel = (t === currentHeure);
+      var bg = isSel ? 'background:linear-gradient(135deg,#e8c873,#a88a3e);color:#0a0a0a;border-color:#e8c873' : 'background:rgba(45,154,94,.12);color:#4ade80;border-color:rgba(45,154,94,.3)';
+      html += '<button type="button" onclick="document.getElementById(\'cdrTime\').value=\''+t+'\';lxRefreshDispos()" style="'+bg+';padding:7px 12px;border-radius:6px;font-size:12px;font-weight:700;border:1px solid;cursor:pointer;transition:transform .1s">'+t+'</button>';
+    });
+    html += '</div>';
+    html += '<div style="font-size:10px;color:var(--text3);margin-top:6px;font-style:italic">Calcul en temps réel : horaires + pause du collab + RDV existants (les pauses des RDV — ex pose couleur — comptent comme dispo).</div>';
   }
-  html += '<div style="font-weight:700;color:var(--text2);margin-bottom:6px;font-size:11px">⏰ Créneaux occupés du collaborateur ('+allBusySlots.length+') — évitez :</div>';
-  html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
-  allBusySlots.forEach(function(s){
-    html += '<span style="background:rgba(248,113,113,.12);color:#f87171;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid rgba(248,113,113,.25)">'+s.start+' → '+s.end+'</span>';
-  });
-  html += '</div>';
-  html += '<div style="font-size:10px;color:var(--text3);margin-top:6px;font-style:italic">Les pauses des RDV (ex: pose couleur) ne sont pas comptées : le collab est libre pendant ce temps.</div>';
   info.innerHTML = html;
 }
 
@@ -3616,6 +3620,8 @@ function convertDevisToRdv(idx){
     });
   }
   if(totalDur<=0) totalDur = 60;
+  // Stocke la durée pour le picker dispos (lxRefreshDispos)
+  window._cdrDur = totalDur;
   // Construire le modal
   var h='<div class="mbox" style="max-width:440px">';
   h+='<h2 style="margin:0 0 6px;font-size:18px;color:var(--gold)">📅 Planifier le devis en RDV</h2>';
