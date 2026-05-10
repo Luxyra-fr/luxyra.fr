@@ -3226,6 +3226,11 @@ function showDevisMenu(idx,e){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:340px">';
   h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">'+(dv.clientName||'Client')+' \u00b7 '+dv.total.toFixed(2)+' \u20ac</div>';
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  // Bouton Modifier (seulement si pas converti en RDV \u2014 on ne touche pas l'historique)
+  if(dv.status !== "converti"){
+    h+='<button onclick="cM();editDevis('+idx+')" style="padding:12px;border:1px solid rgba(212,168,67,.4);border-radius:10px;background:rgba(212,168,67,.08);color:var(--gold);font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left">';
+    h+='<span style="font-size:18px">\u270f\ufe0f</span><span>Modifier le devis</span></button>';
+  }
   h+='<button onclick="cM();chooseDevisPrintFmt('+idx+')" style="padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left">';
   h+='<span style="font-size:18px">\ud83d\uddc4\ufe0f</span><span>Format d\u0027impression\u2026</span></button>';
   // Bouton email (Brevo direct si email connu, sinon demande l'email)
@@ -3248,6 +3253,37 @@ function showDevisMenu(idx,e){
 function newDevis(){
   // Reset uniquement à l'entrée — pas à chaque re-render
   window._devisDraft = { cId: "", items: [], notes: "" };
+  _renderNewDevis();
+}
+
+// Helper : ouvre le planning à la date sélectionnée dans la modal de planification devis
+// Permet à l'utilisateur de visualiser les créneaux libres avant de saisir l'heure
+function lxOpenPlanningForDate(){
+  var dateEl = document.getElementById("cdrDate");
+  var date = dateEl ? dateEl.value : null;
+  if(!date){ if(typeof toast==="function") toast("Sélectionnez d'abord une date","warning"); return; }
+  // Sauvegarde la date dans TD pour que le planning s'ouvre dessus, et navigue
+  // L'utilisateur peut ensuite revenir sur la modal devis (l'état est gardé en mémoire)
+  if(typeof TD !== "undefined"){ window._prevTD = TD; window.TD = date; }
+  if(typeof toast==="function") toast("📅 Planning du "+date+" — l'heure que vous saisirez devra être libre","info");
+  // Ouvre dans un nouvel onglet pour ne pas perdre la modal
+  try{ window.open(window.location.pathname,"_blank"); }catch(e){}
+}
+
+// Éditer un devis existant (status != "converti")
+function editDevis(idx){
+  var dv = window.DEVIS && window.DEVIS[idx];
+  if(!dv){ if(typeof toast==="function") toast("Devis introuvable","error"); return; }
+  if(dv.status === "converti"){ if(typeof toast==="function") toast("Un devis converti en RDV ne peut plus être modifié","warning"); return; }
+  window._devisDraft = {
+    cId: dv.cId || "",
+    items: (dv.items||[]).map(function(it){return {name:it.name, price:it.price, qty:it.qty||1, sId:it.sId||null};}),
+    notes: dv.notes || "",
+    editIdx: idx,
+    editId: dv.id,
+    editDbId: dv.dbId || null,
+    editNum: dv.num || null
+  };
   _renderNewDevis();
 }
 
@@ -3400,21 +3436,38 @@ function saveDevis(){
   var total = 0;
   draft.items.forEach(function(it){ total += (it.price||0) * (it.qty||1); });
 
-  var newDv = {
-    id: U(),
-    date: TD,
-    cId: draft.cId || "",
-    clientName: clientNameStr,
-    clientNom: clientNameStr,
-    clientTel: cl ? cl.tel : null,
-    clientEmail: cl ? cl.em : null,
-    items: draft.items.map(function(it){ return {name:it.name, price:it.price, qty:it.qty||1, sId:it.sId||null}; }),
-    total: total,
-    notes: (draft.notes||"").trim(),
-    status: "brouillon"
-  };
-  window.DEVIS = window.DEVIS || [];
-  window.DEVIS.unshift(newDv);   // affichage le plus récent en haut
+  // Mode édition : on update au lieu de créer un nouveau devis
+  var isEdit = draft.editIdx !== undefined && draft.editIdx !== null;
+  var newDv;
+  if(isEdit){
+    newDv = window.DEVIS[draft.editIdx] || {};
+    // Garde id/date/dbId/num de l'original, met à jour le contenu
+    newDv.cId = draft.cId || "";
+    newDv.clientName = clientNameStr;
+    newDv.clientNom = clientNameStr;
+    newDv.clientTel = cl ? cl.tel : null;
+    newDv.clientEmail = cl ? cl.em : null;
+    newDv.items = draft.items.map(function(it){ return {name:it.name, price:it.price, qty:it.qty||1, sId:it.sId||null}; });
+    newDv.total = total;
+    newDv.notes = (draft.notes||"").trim();
+    newDv.updated_at = new Date().toISOString();
+  } else {
+    newDv = {
+      id: U(),
+      date: TD,
+      cId: draft.cId || "",
+      clientName: clientNameStr,
+      clientNom: clientNameStr,
+      clientTel: cl ? cl.tel : null,
+      clientEmail: cl ? cl.em : null,
+      items: draft.items.map(function(it){ return {name:it.name, price:it.price, qty:it.qty||1, sId:it.sId||null}; }),
+      total: total,
+      notes: (draft.notes||"").trim(),
+      status: "brouillon"
+    };
+    window.DEVIS = window.DEVIS || [];
+    window.DEVIS.unshift(newDv);   // affichage le plus récent en haut
+  }
   window._devisDraft = null;
   window._dvItems = [];
   cM();
@@ -3488,7 +3541,8 @@ function convertDevisToRdv(idx){
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Avec qui ?</label>';
   h+='<select id="cdrCollab" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px">';
   for(var ti=0;ti<T.length;ti++){
-    if(!T[ti].actif) continue;
+    // BUG FIX : T n'a plus de champ "actif", on filtre via "inactif" (cohérent avec getActiveTeam())
+    if(T[ti].inactif===true) continue;
     h+='<option value="'+T[ti].id+'"'+(T[ti].id===defaultStId?' selected':'')+' style="color:#000;background:#fff">'+T[ti].n+'</option>';
   }
   h+='</select></div>';
@@ -3499,6 +3553,8 @@ function convertDevisToRdv(idx){
   h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Heure</label>';
   h+='<input id="cdrTime" type="time" value="10:00" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
   h+='</div>';
+  // Bouton helper : voir les créneaux libres du planning à la date sélectionnée
+  h+='<button type="button" onclick="lxOpenPlanningForDate()" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px;margin-bottom:14px;border-radius:8px;border:1px dashed rgba(212,168,67,.4);background:rgba(212,168,67,.05);color:var(--gold);font-size:12px;font-weight:700;cursor:pointer">📅 Voir les disponibilités du planning à cette date</button>';
   // Info récap
   h+='<div style="background:rgba(212,168,67,.05);border:1px solid rgba(212,168,67,.15);border-radius:8px;padding:10px;margin-bottom:14px;font-size:11px;color:var(--text3);line-height:1.5">';
   h+='Le RDV sera créé sur le planning avec les '+(dv.items?dv.items.length:0)+' prestation(s) du devis. Le devis sera marqué <strong>« converti »</strong>. Vous pourrez modifier le RDV ensuite.';
