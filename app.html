@@ -671,6 +671,7 @@ var APP_SECTIONS = [
   {key:"see_other_planning", label:"\ud83d\udc41\ufe0f Voir le planning des autres", desc:"Sinon, voit uniquement ses propres RDV"},
   {key:"see_ca", label:"\ud83d\udcb0 Voir le CA du jour", desc:"Affiche le bandeau CA sur l'accueil. D\u00e9cochez pour les collabs qui ne doivent pas voir le chiffre du salon."},
   {key:"see_previsionnel_mois", label:"\ud83d\udcc8 Voir le pr\u00e9visionnel mensuel", desc:"Affiche le bloc \"Pr\u00e9visionnel du mois\" dans le bandeau CA. D\u00e9cochez pour ne montrer que les chiffres de la journ\u00e9e."},
+  {key:"cloture_journee", label:"\ud83d\udccb Cl\u00f4turer la journ\u00e9e", desc:"Affiche le bouton \"Cl\u00f4ture de la journ\u00e9e\" (Z NF525) sur l'accueil. Permet de fermer la caisse en fin de journ\u00e9e sans donner acc\u00e8s aux exports/comptabilit\u00e9."},
   {key:"cancel_rdv", label:"\u274c Annuler un RDV", desc:""},
   {key:"refund", label:"\u21a9\ufe0f Rembourser", desc:"Rembourser un ticket"},
   {key:"discount", label:"\ud83c\udf81 Appliquer une remise", desc:"Remises sur tickets ou produits"},
@@ -693,7 +694,7 @@ function defaultPermissions(role) {
   return {
     planning: true, caisse: true, clients: true, products: true,
     stats: false, compta: false, marketing: false, settings: false, operateurs: false,
-    see_other_planning: false, see_ca: false, see_previsionnel_mois: false, cancel_rdv: true, refund: false,
+    see_other_planning: false, see_ca: false, see_previsionnel_mois: false, cloture_journee: true, cancel_rdv: true, refund: false,
     discount: true, see_prices_achat: false,
     export_data: false, manage_products: false, manage_services: false,
     manage_reviews: false
@@ -1922,7 +1923,7 @@ function editOpPermsUI(opId) {
   var sectionGroups = [
     {title:"\ud83d\udcdc Sections principales", keys:["planning","caisse","clients","products","stats","compta","marketing","settings","operateurs"]},
     {title:"\ud83d\udcc5 Planning", keys:["see_other_planning","see_ca","see_previsionnel_mois","cancel_rdv"]},
-    {title:"\ud83d\udcb3 Caisse et paiements", keys:["refund","discount"]},
+    {title:"\ud83d\udcb3 Caisse et paiements", keys:["refund","discount","cloture_journee"]},
     {title:"\ud83d\udcca Donn\u00e9es sensibles", keys:["see_prices_achat","export_data","manage_products","manage_services"]}
   ];
   
@@ -2920,7 +2921,13 @@ function showCaisseDD(e){
   if(!(window.SITE_CONFIG && window.SITE_CONFIG.gestionCaisseSimple===true)){
     h+='<button onclick="cM();go(\'caisseGestion\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb0</span><span style="flex:1;text-align:left">Gestion de la caisse</span></button>';
   }
-  h+='<button onclick="cM();go(\'accounting\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcca</span><span style="flex:1;text-align:left">Journal / Bande Z</span></button>';
+  // Journal / Bande Z = page Comptabilit\u00e9 (cl\u00f4tures historiques, exports
+  // CSV/Excel, audit). Conditionn\u00e9 par la permission "compta" pour qu'un
+  // collab "caisse" sans acc\u00e8s comptabilit\u00e9 ne voie pas ce bouton dans
+  // le menu Caisse (ouvre une page sans contenu sinon).
+  if(typeof hasPermission!=="function" || hasPermission("compta")){
+    h+='<button onclick="cM();go(\'accounting\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcca</span><span style="flex:1;text-align:left">Journal / Bande Z</span></button>';
+  }
   h+='</div>';
   h+='<button onclick="cM()" style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer">Fermer</button>';
   h+='</div></div>';
@@ -8250,7 +8257,9 @@ function rHome(){
   }
   h+='</div>';
   // Clôture
+  if(typeof hasPermission!=="function" || hasPermission("cloture_journee")){
   h+='<div style="padding:0 10px 10px"><button onclick="doCloture()" style="width:100%;padding:12px;background:var(--gold-bg);border:1px solid var(--gold-bg2);color:var(--gold);font-weight:800;font-size:13px;border-radius:10px;cursor:pointer;font-family:var(--f2);letter-spacing:1px">'+ICO.cloture+' CL\u00d4TURE DE LA JOURN\u00c9E</button></div>';
+  }
   h+='</div>'; // close caDetail
   h+='</div>';
   h+='</div>'; // close .home-ca
