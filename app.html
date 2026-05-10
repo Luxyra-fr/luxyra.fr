@@ -7339,14 +7339,25 @@ function go(pg,arg){
     hdr.style.display="";hdr.innerHTML='<button class="back-btn" onclick="goBack()" title="Retour">←</button><button class="back-btn" onclick="go(\'home\')" title="Accueil" style="margin-left:2px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/></svg></button><div><h1>'+(titles[pg]||"")+'</h1></div>';
   }
   
-  // Scroll en haut UNIQUEMENT si :
-  // - changement de page (planning → settings, etc.)
-  // - OU changement de sous-tab dans Settings (ouverture d'un menu, ex: main → etablissement)
-  // Mais PAS sur re-render après modification (input change qui appelle go("settings") → on garde la position scroll de l'utilisateur)
-  var _curSettTab = (pg==="settings") ? (window._settTab || "main") : null;
-  var _settTabChanged = (pg==="settings" && _curSettTab !== window._settTabPrev);
-  if(pg!==_prevPage || _settTabChanged) window.scrollTo({top:0, behavior:"smooth"});
-  window._settTabPrev = _curSettTab;
+  // Scroll en haut SEULEMENT lors d'un vrai changement de vue (pas re-render après modif).
+  // On calcule une "scroll key" composée de pg + sous-tab/sélection courants.
+  // Si la clé change → scroll. Sinon → garde la position scroll de l'utilisateur.
+  // Couvre : settings, fiche client (detail), services/forfaits, bons cadeaux, caisse, encaissement, devis.
+  function _lxScrollKey(p){
+    if(p==="settings") return "set:"+(window._settTab||"main");
+    if(p==="detail") return "det:"+(typeof clTab!=="undefined"?clTab:"")+":"+(typeof selCl!=="undefined"?selCl:"");
+    if(p==="services") return "svc:"+(window._svcTab||"main");
+    if(p==="gifts") return "gc:"+(window._gcTab||"main");
+    if(p==="caisse") return "pos:"+(window._posTab||"main")+":"+(window._posCat||"all");
+    if(p==="devis") return "dev:"+(window._devisFilter||"actifs");
+    if(p==="clients") return "cli:"+(window._bulkFilter||"all");
+    if(p==="products") return "prd:"+(window._bulkFilter||"all");
+    return p;
+  }
+  var _curScrollKey = _lxScrollKey(pg);
+  var _viewChanged = (pg!==_prevPage) || (_curScrollKey !== window._lxScrollKeyPrev);
+  if(_viewChanged) window.scrollTo({top:0, behavior:"smooth"});
+  window._lxScrollKeyPrev = _curScrollKey;
   if(arg)selCl=arg;
   
   try{
