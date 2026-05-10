@@ -550,15 +550,20 @@ function showConfirm(msg,onYes,onNo){
 
 // ===== BARCODE SCANNER (CAMERA) =====
 var _scannerActive=false;
-function openBarcodeScanner(callback){
+function openBarcodeScanner(callback, opts){
   if(_scannerActive)return;
+  opts = opts || {};
+  // Mode QR : pour scanner les bons cadeaux (codes BC-XXXXXX en QR)
+  // Si opts.qr === true, on inclut qr_code dans les formats détectés
+  // ET on ajuste le titre / la zone de scan (carrée pour QR)
+  var isQrMode = opts.qr === true;
   // Check if BarcodeDetector is available
   if(!("BarcodeDetector" in window)){
     // Fallback: manual input
     showPrompt({
-      title: "Code-barre",
-      label: "Scanner non disponible sur cet appareil. Entrez le code-barre manuellement :",
-      placeholder: "Ex: 3017620422003",
+      title: isQrMode ? "Code du bon" : "Code-barre",
+      label: "Scanner non disponible sur cet appareil. Entrez le code manuellement :",
+      placeholder: isQrMode ? "Ex: BC-263067" : "Ex: 3017620422003",
       okLabel: "Valider",
       onOk: function(code){
         if(code && code.trim()) callback(code.trim());
@@ -567,27 +572,32 @@ function openBarcodeScanner(callback){
     return;
   }
   _scannerActive=true;
-  // BARCODES ONLY - no QR codes
-  var detector=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","code_93","codabar","itf"]});
+  // Formats : QR + barcodes en mode QR ; barcodes seuls sinon
+  var formats = isQrMode
+    ? ["qr_code","ean_13","ean_8","upc_a","upc_e","code_128","code_39","code_93","codabar","itf"]
+    : ["ean_13","ean_8","upc_a","upc_e","code_128","code_39","code_93","codabar","itf"];
+  var detector=new BarcodeDetector({formats:formats});
   var overlay=document.createElement("div");
   overlay.id="scanOverlay";
   overlay.style.cssText="position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center";
   var topBar=document.createElement("div");
   topBar.style.cssText="position:absolute;top:0;left:0;right:0;padding:16px;display:flex;justify-content:space-between;align-items:center;z-index:2;background:linear-gradient(180deg,rgba(0,0,0,.8),transparent)";
-  topBar.innerHTML='<div style="color:#fff;font-size:16px;font-weight:700">\ud83d\udcf7 Scanner un code-barre</div><button onclick="closeBarcodeScanner()" style="padding:10px 20px;border-radius:10px;background:rgba(255,255,255,.2);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer">\u2716 Fermer</button>';
+  var topTitle = isQrMode ? "\ud83d\udcf7 Scanner le QR du bon" : "\ud83d\udcf7 Scanner un code-barre";
+  topBar.innerHTML='<div style="color:#fff;font-size:16px;font-weight:700">'+topTitle+'</div><button onclick="closeBarcodeScanner()" style="padding:10px 20px;border-radius:10px;background:rgba(255,255,255,.2);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer">\u2716 Fermer</button>';
   overlay.appendChild(topBar);
   var video=document.createElement("video");
   video.style.cssText="width:100%;height:100%;object-fit:cover";
   video.setAttribute("playsinline","");
   video.setAttribute("autoplay","");
   overlay.appendChild(video);
-  // Scan zone indicator
+  // Scan zone indicator (carr\u00e9e pour QR, rectangulaire pour barcode)
   var zone=document.createElement("div");
-  zone.style.cssText="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:280px;height:120px;border:3px solid var(--gold,#c8a84e);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.5)";
+  var zoneSize = isQrMode ? "width:240px;height:240px" : "width:280px;height:120px";
+  zone.style.cssText="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);"+zoneSize+";border:3px solid var(--gold,#c8a84e);border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.5)";
   overlay.appendChild(zone);
   var hint=document.createElement("div");
   hint.style.cssText="position:absolute;bottom:80px;left:0;right:0;text-align:center;color:#fff;font-size:15px;font-weight:600";
-  hint.textContent="Placez le code-barre dans le cadre";
+  hint.textContent = isQrMode ? "Placez le QR du bon cadeau dans le cadre" : "Placez le code-barre dans le cadre";
   overlay.appendChild(hint);
   document.body.appendChild(overlay);
   var stream=null;
@@ -20393,7 +20403,7 @@ function oM(type,pf){
   }
   else if(type==="giftSearch"){
     h+='<h2>\ud83d\udd0d Rechercher un bon cadeau</h2>';
-    h+='<div class="fg"><label>Code du bon</label><input id="gsCode" placeholder="BC-XXXXXX" style="text-transform:uppercase;font-size:18px;text-align:center;padding:14px;font-weight:700;letter-spacing:2px"></div>';
+    h+='<div class="fg"><label>Code du bon</label><div style="display:flex;gap:8px"><input id="gsCode" placeholder="BC-XXXXXX" style="flex:1;text-transform:uppercase;font-size:18px;text-align:center;padding:14px;font-weight:700;letter-spacing:2px"><button class="btn" style="padding:0 16px;background:rgba(200,168,78,.15);border:2px solid rgba(200,168,78,.4);color:var(--gold);font-size:20px" title="Scanner le QR du bon" onclick="openBarcodeScanner(function(c){var inp=document.getElementById(\'gsCode\');if(inp){inp.value=String(c).trim().toUpperCase();searchGiftByCode();}}, {qr:true})">📷</button></div></div>';
     h+='<button class="btn bg bk" style="margin-top:10px;padding:14px;width:100%" onclick="searchGiftByCode()">Rechercher</button>';
     h+='<div id="gsResult" style="margin-top:14px"></div>';
   }
@@ -22757,7 +22767,10 @@ function finalizePay(method){
     var htm2='<div class="mbox"><h2 style="color:var(--gold)">\ud83c\udf81 Bon cadeau</h2>';
     // Scan field FIRST (priority)
     htm2+='<div style="font-size:13px;color:#666;margin-bottom:8px;text-align:center">Scannez le QR code ou tapez le code</div>';
-    htm2+='<input type="text" id="bcCode" placeholder="Code du bon..." style="text-align:center;font-size:20px;font-weight:800;padding:16px;text-transform:uppercase;letter-spacing:2px" autofocus onkeydown="if(event.key===\'Enter\'){event.preventDefault();doBonPay();}">';
+    htm2+='<div style="display:flex;gap:8px;align-items:stretch">';
+    htm2+='<input type="text" id="bcCode" placeholder="Code du bon..." style="flex:1;text-align:center;font-size:20px;font-weight:800;padding:16px;text-transform:uppercase;letter-spacing:2px" autofocus onkeydown="if(event.key===\'Enter\'){event.preventDefault();doBonPay();}">';
+    htm2+='<button class="btn" style="padding:0 18px;background:rgba(200,168,78,.15);border:2px solid rgba(200,168,78,.4);color:var(--gold);font-size:22px" title="Scanner le QR du bon" onclick="openBarcodeScanner(function(c){var inp=document.getElementById(\'bcCode\');if(inp){inp.value=String(c).trim().toUpperCase();doBonPay();}}, {qr:true})">📷</button>';
+    htm2+='</div>';
     htm2+='<div style="display:flex;gap:8px;margin-top:10px">';
     htm2+='<button class="btn" style="flex:1;background:var(--bg)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
     htm2+='<button class="btn bg" style="flex:1" onclick="doBonPay()">Valider</button>';
