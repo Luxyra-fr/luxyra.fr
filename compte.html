@@ -347,12 +347,20 @@ async function loadMyPhotos(){
   window._myPhotosLoading = true;
   render();
   try{
-    var token = localStorage.getItem("lx_token") || "";
+    // Pattern compatible lx-profile : session_token via POST body (pas Authorization header)
+    var token = (window.LX && LX.getToken) ? LX.getToken() : "";
+    if(!token){
+      window.MY_PHOTOS = {salons:[], error:"Pas de session active"};
+      window._myPhotosLoading = false;
+      return render();
+    }
     var r = await fetch(SB_URL+"/functions/v1/client-mes-photos", {
       method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token, "apikey":SB_KEY}
+      headers:{"Content-Type":"application/json","apikey":SB_KEY},
+      body:JSON.stringify({session_token: token})
     });
     var data = await r.json();
+    if(!r.ok) data.error = data.error || "Erreur serveur";
     window.MY_PHOTOS = data;
   }catch(e){
     console.warn("[loadMyPhotos]", e);
