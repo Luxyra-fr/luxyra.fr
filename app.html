@@ -16986,8 +16986,12 @@ function printGiftThemed(gcId,themeId){
   var _logoBg = _gcDark ? "#fff" : "rgba(255,255,255,.7)";
   var _logoShadow = _gcDark ? "0 4px 14px rgba(0,0,0,.35)" : "0 2px 8px rgba(0,0,0,.08)";
   if(logoSrc)hh+='<img src="'+logoSrc+'" style="width:90px;height:90px;border-radius:14px;object-fit:contain;background:'+_logoBg+';padding:8px;border:2px solid '+t.soft+';margin-bottom:14px;box-shadow:'+_logoShadow+'">';
-  hh+='<div style="font-family:Playfair Display,serif;font-size:17px;font-weight:700;letter-spacing:2px;color:'+t.acc+';text-align:center">'+salon.nom+'</div>';
-  if(salon.sousTitre)hh+='<div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:'+t.soft+';margin-top:4px;text-align:center">'+salon.sousTitre+'</div>';
+  // Couleurs adaptées par thème pour le nom salon (avant : t.acc doré
+  // mate sur noir = peu lisible). Sur thème sombre, on force blanc cassé.
+  var _nomColor = _gcDark ? "#f5e9c3" : t.acc;
+  var _sousColor = _gcDark ? "rgba(255,255,255,.55)" : t.soft;
+  hh+='<div style="font-family:Playfair Display,serif;font-size:17px;font-weight:700;letter-spacing:2px;color:'+_nomColor+';text-align:center">'+salon.nom+'</div>';
+  if(salon.sousTitre)hh+='<div style="font-size:10px;letter-spacing:3px;text-transform:uppercase;color:'+_sousColor+';margin-top:4px;text-align:center">'+salon.sousTitre+'</div>';
   if(t.dc)hh+='<div style="font-size:11px;letter-spacing:8px;color:'+t.dcol+';margin-top:16px">'+t.dc+' '+t.dc+' '+t.dc+'</div>';
   hh+='</div>';
   
@@ -17014,14 +17018,21 @@ function printGiftThemed(gcId,themeId){
   if(g.msg&&g.msg.length>0&&g.msg!=="Bon offert")hh+='<div style="font-family:'+t.mf+';font-size:17px;font-style:italic;color:'+t.soft+';margin:8px 20px">\u00ab '+g.msg+' \u00bb</div>';
   
   // Code + QR
-  // QR : TOUJOURS fond blanc + modules noirs (max contraste, exigence des
-  // scanners). Doré sur transparent était joli mais difficile à scanner
-  // sur fond noir (thèmes luxeNoir, noel, etc.). On wrap dans une carte
-  // blanche avec padding (= "quiet zone" QR standard).
-  var qrSvg=generateQRSVG(g.code,120,"#000","#fff");
+  // BUG FIX : avant on utilisait generateQRSVG() qui ne génère PAS un vrai
+  // QR (cf commentaire "using text hash for visual uniqueness" dans le code
+  // de la fonction). Le QR ressemblait à un QR mais n'encodait pas le code,
+  // donc inutilisable côté client (impossible à scanner).
+  // Maintenant : api.qrserver.com (gratuit, stable, vrai QR ISO/IEC 18004).
+  // Fallback automatique : si l'image ne charge pas (offline), le code texte
+  // BC-XXXXXX reste affiché juste à côté.
+  var qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&qzone=2&format=svg&color=000000&bgcolor=FFFFFF&data=" + encodeURIComponent(g.code);
+  // Code texte : couleur adaptée pour max contraste (or vif sur sombre,
+  // accent du thème sur clair)
+  var _codeColor = _gcDark ? "#f5e9c3" : t.acc;
+  var _codeBorder = _gcDark ? "rgba(245,233,195,.6)" : t.soft;
   hh+='<div style="display:flex;align-items:center;gap:16px;margin:14px 0;justify-content:center">';
-  hh+='<div style="padding:10px 24px;border:2px solid '+t.soft+';font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:'+t.acc+'">'+g.code+'</div>';
-  hh+='<div style="width:88px;height:88px;flex-shrink:0;background:#fff;padding:4px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.2)" title="Scanner ce QR code">'+qrSvg+'</div>';
+  hh+='<div style="padding:10px 24px;border:2px solid '+_codeBorder+';font-family:monospace;font-size:20px;font-weight:800;letter-spacing:5px;color:'+_codeColor+';background:rgba(0,0,0,.2)">'+g.code+'</div>';
+  hh+='<div style="width:88px;height:88px;flex-shrink:0;background:#fff;padding:4px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.2)" title="Scanner ce QR code"><img src="'+qrUrl+'" alt="QR '+g.code+'" style="width:100%;height:100%;display:block" onerror="this.style.display=\'none\'"></div>';
   hh+='</div>';
   
   // Scope + validity
