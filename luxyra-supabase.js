@@ -254,6 +254,9 @@ async function doLogin() {
   if (result.error) { showLoginError(result.error.message); return; }
 
   _userId = result.data.user.id;
+  // Initialise lx_salon_last_activity pour que le check au prochain boot
+  // démarre à partir de maintenant (sinon Infinity = expire immédiatement)
+  try { localStorage.setItem("lx_salon_last_activity", Date.now().toString()); } catch(_){}
   await loadSalonData();
 }
 
@@ -282,6 +285,10 @@ async function doLogout() {
   _userId = null;
   _isOnline = false;
   window._cacheHydrated = false;
+  // Cleanup activity markers (sinon le prochain login partirait avec un
+  // timestamp d'activité de l'ancienne session)
+  try { localStorage.removeItem("lx_salon_last_activity"); } catch(_){}
+  try { localStorage.removeItem("lx_current_op"); } catch(_){}
   // Cleanup polling and realtime
   if(window._rdvPollInterval){clearInterval(window._rdvPollInterval);window._rdvPollInterval=null;}
   if(window._realtimeChannel&&_sb){try{_sb.removeChannel(window._realtimeChannel);}catch(e){}window._realtimeChannel=null;}
@@ -289,18 +296,45 @@ async function doLogout() {
 }
 
 // Check session on load
+// Vérifie aussi un timestamp d'inactivité salon : si > 30 min depuis la
+// dernière interaction réelle (PC arrêté, app fermée), on signOut et on
+// redemande le login, peu importe que le JWT Supabase soit encore valide.
+// Threshold 30 min = compromis : assez court pour qu'un PC fermé en fin de
+// journée demande un login le lendemain matin, assez long pour ne pas
+// emmerder un opérateur qui ferme l'onglet 10 min pour vérifier un truc.
+var SALON_SESSION_INACTIVITY_MS = 30 * 60 * 1000;
 async function checkSession() {
   if (!_sb) { startOffline(); return; }
   try{
   var result = await _sb.auth.getSession();
   if (result.data && result.data.session) {
+    // Check inactivité salon avant de restaurer
+    var lastSalonActivity = parseInt(localStorage.getItem("lx_salon_last_activity") || "0", 10);
+    var elapsed = lastSalonActivity ? (Date.now() - lastSalonActivity) : Infinity;
+    if (elapsed > SALON_SESSION_INACTIVITY_MS) {
+      // Session salon expirée → signOut Supabase + cleanup + login screen.
+      // On vide aussi lx_current_op pour forcer le re-PIN après re-login
+      // (sinon Amandine resterait active après que le salon se reconnecte).
+      try { await _sb.auth.signOut(); } catch(_){}
+      try { localStorage.removeItem("lx_current_op"); } catch(_){}
+      try { localStorage.removeItem("lx_salon_last_activity"); } catch(_){}
+      showLoginScreen();
+      return;
+    }
     _userId = result.data.session.user.id;
+    // Refresh activity timestamp dès qu'on charge avec succès
+    try { localStorage.setItem("lx_salon_last_activity", Date.now().toString()); } catch(_){}
     await loadSalonData();
   } else {
+    try { localStorage.removeItem("lx_salon_last_activity"); } catch(_){}
     showLoginScreen();
   }
   }catch(err){showLoginScreen();}
 }
+// Touch salon activity (throttle) — appelé depuis app.html sur user activity
+window.lxTouchSalonActivity = function() {
+  try { localStorage.setItem("lx_salon_last_activity", Date.now().toString()); } catch(_){}
+};
 
 
 // ============================================================
