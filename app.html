@@ -9869,6 +9869,7 @@ function saveSiteConfig(){
       mode_caution:SC.modeCaution||"aucun",
       empreinte_montant:Number(SC.empreinteMontant)||30,
       empreinte_capture_delai_h:Number(SC.empreinteCaptureDelaiH)||24,
+      photos_visible_client:SC.photosVisibleClient===true,
       confirmation_auto:SC.confirmAuto,
       services_en_ligne:SC.servicesEnLigne,
       produits_en_ligne:SC.produitsEnLigne,
@@ -9916,6 +9917,7 @@ function loadSiteConfig(){
           modeCaution:d.mode_caution||"aucun",
           empreinteMontant:Number(d.empreinte_montant)||30,
           empreinteCaptureDelaiH:Number(d.empreinte_capture_delai_h)||24,
+          photosVisibleClient:d.photos_visible_client===true,
           confirmAuto:d.confirmation_auto,servicesEnLigne:d.services_en_ligne||[],produitsEnLigne:d.produits_en_ligne||[],
           msgAccueil:d.message_accueil||"",msgConfirmation:d.message_confirmation||"",
           couleur:d.couleur_primaire||"var(--gold)",couleur2:d.couleur_secondaire||"#0a0a0a",
@@ -10913,6 +10915,11 @@ function rSettings(){
     h+='<div><div style="font-size:14px;font-weight:700;color:#fff">🚫 Bloquer la création de nouveaux comptes '+lxHelpIcon("Si activé, les nouveaux clients ne peuvent plus créer de compte sur votre site de réservation. Les clients existants continuent à réserver normalement. Utile en période de surcharge, congés, ou anti-spam.")+'</div>';
     h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Les clients existants peuvent toujours réserver</div></div>';
     h+='<input type="checkbox" '+(SC.bloquerNouveauxComptes===true?"checked":"")+' style="width:22px;height:22px;cursor:pointer" onchange="window.SITE_CONFIG.bloquerNouveauxComptes=this.checked;saveSiteConfig();if(typeof toast===\'function\')toast(this.checked?\'Création de comptes bloquée 🚫\':\'Création de comptes ouverte ✅\',\'info\')"></label>';
+    // Photos visibles client (RGPD article 15 - droit d\'accès self-service)
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid var(--border2);cursor:pointer;margin-top:8px">';
+    h+='<div><div style="font-size:14px;font-weight:700;color:#fff">📸 Permettre aux clients de voir leurs photos '+lxHelpIcon("Si activé, vos clients verront une section 'Mes photos' dans leur compte Luxyra (accès depuis le site public via Connexion). Ils pourront voir leurs avant/après. Vous pouvez marquer certaines photos comme privées (icône 🔒 sur chaque photo) — celles-ci ne seront jamais visibles par le client.")+'</div>';
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Self-service RGPD · Photos marquées 🔒 privées restent invisibles</div></div>';
+    h+='<input type="checkbox" '+(SC.photosVisibleClient===true?"checked":"")+' style="width:22px;height:22px;cursor:pointer" onchange="window.SITE_CONFIG.photosVisibleClient=this.checked;saveSiteConfig();if(typeof toast===\'function\')toast(this.checked?\'Photos visibles par le client 📸\':\'Photos privées (salon uniquement)\',\'info\')"></label>';
     h+='</div>';
 
     // === RDV SUR MESURE ===
@@ -11689,6 +11696,10 @@ function lxRenderClientPhotosTab(c){
         h+='<div style="position:relative;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2);transition:transform .15s,box-shadow .15s" onmouseover="this.style.transform=\'scale(1.02)\';this.style.boxShadow=\'0 6px 20px rgba(200,168,78,.3)\'" onmouseout="this.style.transform=\'scale(1)\';this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.2)\'">';
         h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:zoom-in" onclick="lxOpenPhotoLightbox(\''+c.id+'\','+origIdx+')">';
         h+='<div style="position:absolute;top:6px;left:6px;background:'+meta.col+'cc;backdrop-filter:blur(4px);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;text-shadow:0 1px 2px rgba(0,0,0,.5)">'+meta.icon+' '+meta.l+'</div>';
+        if(window.SITE_CONFIG && window.SITE_CONFIG.photosVisibleClient){
+          var _isPriv = ph.private===true;
+          h+='<button onclick="lxTogglePhotoPrivate(\''+c.id+'\','+origIdx+')" title="'+(_isPriv?"Photo privée — invisible par le client":"Photo visible par le client")+'" style="position:absolute;top:6px;right:70px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid '+(_isPriv?"rgba(244,67,54,.4)":"rgba(76,175,80,.4)")+';color:'+(_isPriv?"#ef5350":"#7fc984")+';font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">'+(_isPriv?"🔒":"👁")+'</button>';
+        }
         h+='<button onclick="lxDownloadPhoto(\''+c.id+'\','+origIdx+')" title="Télécharger en HD" style="position:absolute;top:6px;right:38px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(33,150,243,.4);color:#64b5f6;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">⬇</button>';
         h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer cette photo" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
         if(ph.note){
@@ -11723,6 +11734,10 @@ function lxRenderClientPhotosTab(c){
       h+='<div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.4);box-shadow:0 4px 12px rgba(0,0,0,.2)">';
       h+='<img id="'+phImgId+'" src="'+phSrc+'" style="width:100%;aspect-ratio:1;object-fit:cover;display:block;cursor:zoom-in" onclick="lxOpenPhotoLightbox(\''+c.id+'\','+origIdx+')">';
       h+='<div style="position:absolute;top:6px;left:6px;background:'+meta.col+'cc;backdrop-filter:blur(4px);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;text-shadow:0 1px 2px rgba(0,0,0,.5)">'+meta.icon+' '+meta.l+'</div>';
+      if(window.SITE_CONFIG && window.SITE_CONFIG.photosVisibleClient){
+        var _isPriv2 = ph.private===true;
+        h+='<button onclick="lxTogglePhotoPrivate(\''+c.id+'\','+origIdx+')" title="'+(_isPriv2?'Photo privée':'Photo visible par le client')+'" style="position:absolute;top:6px;right:70px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid '+(_isPriv2?'rgba(244,67,54,.4)':'rgba(76,175,80,.4)')+';color:'+(_isPriv2?'#ef5350':'#7fc984')+';font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">'+(_isPriv2?'🔒':'👁')+'</button>';
+      }
       h+='<button onclick="lxDownloadPhoto(\''+c.id+'\','+origIdx+')" title="Télécharger en HD" style="position:absolute;top:6px;right:38px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">⬇</button>';
       h+='<button onclick="lxConfirmDelPhoto(\''+c.id+'\','+origIdx+')" title="Supprimer" style="position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>';
       h+='<div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.85));padding:10px 8px 6px;color:#fff">';
@@ -11883,6 +11898,17 @@ async function lxDownloadSession(cId, dateKey){
   }
 }
 window.lxDownloadSession=lxDownloadSession;
+
+// Toggle photo privé/public (visibilité côté client)
+function lxTogglePhotoPrivate(cId, idx){
+  var c = (typeof gC==="function") ? gC(cId) : null;
+  if(!c||!c.photos||!c.photos[idx]) return;
+  c.photos[idx].private = !c.photos[idx].private;
+  if(typeof saveClient==="function") saveClient(c);
+  if(typeof toast==="function") toast(c.photos[idx].private ? "🔒 Photo masquée du client" : "👁 Photo visible par le client", "success");
+  if(typeof go==="function") go("detail");
+}
+window.lxTogglePhotoPrivate=lxTogglePhotoPrivate;
 
 function lxConfirmDelPhoto(cId, idx){
   if(typeof showConfirmDanger==="function"){
