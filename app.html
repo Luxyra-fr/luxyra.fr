@@ -2628,22 +2628,42 @@ document.addEventListener("wheel", function(e){
 }, {passive:false});
 
 (function(){
+  // Drag-from-anywhere : on intercepte le mousedown sur toute la barre, y compris
+  // sur les .tab. Si l'utilisateur bouge > 5px on déclenche le drag ET on bloque
+  // le clic suivant (sinon le .tab survolé au mouseup s'activerait par erreur).
+  // Si pas de mouvement → c'est un vrai clic, laisse passer normalement.
   var dragSt = null;
   document.addEventListener("mousedown", function(e){
+    if(e.button !== 0) return; // clic gauche uniquement
     var t = e.target.closest && e.target.closest('.tabs');
     if(!t) return;
-    // Si on clique pile sur un .tab, laisse passer le clic (sélection du tab)
-    if(e.target.closest('.tab, button, a, input')) return;
+    if(t.scrollWidth <= t.clientWidth + 1) return; // pas de débordement → pas de drag
     dragSt = {el:t, startX:e.pageX, startLeft:t.scrollLeft, moved:false};
   });
   document.addEventListener("mousemove", function(e){
     if(!dragSt) return;
     var dx = e.pageX - dragSt.startX;
-    if(Math.abs(dx) > 3) dragSt.moved = true;
-    dragSt.el.scrollLeft = dragSt.startLeft - dx;
+    if(Math.abs(dx) > 5){
+      dragSt.moved = true;
+      dragSt.el.scrollLeft = dragSt.startLeft - dx;
+      e.preventDefault();
+    }
   });
-  document.addEventListener("mouseup", function(){ dragSt = null; });
-  document.addEventListener("mouseleave", function(){ dragSt = null; });
+  function endDrag(){
+    if(dragSt && dragSt.moved){
+      // Bloque le prochain click pour ne pas activer un tab survolé
+      var blockNext = function(ev){
+        ev.preventDefault(); ev.stopPropagation();
+        document.removeEventListener('click', blockNext, true);
+      };
+      document.addEventListener('click', blockNext, true);
+      // Sécurité : retire le bloqueur après 50ms si aucun click n'arrive
+      setTimeout(function(){document.removeEventListener('click', blockNext, true);}, 50);
+    }
+    dragSt = null;
+  }
+  document.addEventListener("mouseup", endDrag);
+  document.addEventListener("mouseleave", endDrag);
 })();
 
 // === Désactivation globale autocomplete navigateur (Chrome/Safari/Firefox) ===
