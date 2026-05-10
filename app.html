@@ -1028,11 +1028,23 @@ async function refreshOperateurs() {
     CURRENT_OPERATOR = null;
     return;
   }
-  // Si déjà connecté en localStorage → restaurer
+  // Si déjà connecté en localStorage → restaurer SI session pas expirée
+  // Avant : on restaurait l'opérateur sans vérifier le temps écoulé (bug : après
+  // arrêt PC > 5 min, Amandine restait active sans re-PIN).
+  // Maintenant : check lastActivity, si > 5 min → expire et redemande PIN.
   var saved = localStorage.getItem("lx_current_op");
   if (saved) {
     try {
       var op = JSON.parse(saved);
+      var INACTIVITY_MS = 5 * 60 * 1000; // 5 min — même seuil que startInactivityTimer
+      var elapsed = op.lastActivity ? (Date.now() - op.lastActivity) : Infinity;
+      if (elapsed > INACTIVITY_MS) {
+        // Session expirée (PC fermé, app en background...) → reset + selector
+        localStorage.removeItem("lx_current_op");
+        CURRENT_OPERATOR = null;
+        showOperatorSelector();
+        return;
+      }
       var found = OPERATEURS.find(function(o){return o.id===op.id && o.actif;});
       if (found) {
         CURRENT_OPERATOR = found;
@@ -1052,11 +1064,23 @@ function saveCurrentOperator() {
       id: CURRENT_OPERATOR.id,
       prenom: CURRENT_OPERATOR.prenom,
       nom: CURRENT_OPERATOR.nom,
-      role: CURRENT_OPERATOR.role
+      role: CURRENT_OPERATOR.role,
+      lastActivity: Date.now() // utilisé au boot pour vérifier l'expiration de session
     }));
   } else {
     localStorage.removeItem("lx_current_op");
   }
+}
+// Touch lastActivity à chaque interaction utilisateur (sans rewriter tout le JSON)
+function touchOperatorActivity() {
+  if (!CURRENT_OPERATOR) return;
+  try {
+    var saved = localStorage.getItem("lx_current_op");
+    if (!saved) return;
+    var op = JSON.parse(saved);
+    op.lastActivity = Date.now();
+    localStorage.setItem("lx_current_op", JSON.stringify(op));
+  } catch(e) {}
 }
 
 // Écran de sélection d'opérateur (plein écran)
@@ -1299,9 +1323,21 @@ function resetInactivityTimer() {
   if (CURRENT_OPERATOR) startInactivityTimer();
 }
 // Listen to user activity
+// On reset le timer JS (auto-lock après 5 min en session active) ET on touche
+// lastActivity dans localStorage (throttle 30s) pour que la vérification au
+// boot suivant connaisse le vrai dernier moment d'activité, pas seulement
+// l'instant de la dernière sauvegarde explicite.
+var _lastTouchAt = 0;
 if (typeof document !== "undefined") {
   ["click","touchstart","keydown"].forEach(function(ev){
-    document.addEventListener(ev, function(){resetInactivityTimer();}, {passive:true, capture:true});
+    document.addEventListener(ev, function(){
+      resetInactivityTimer();
+      var now = Date.now();
+      if (now - _lastTouchAt > 30000) { // throttle 30s
+        _lastTouchAt = now;
+        touchOperatorActivity();
+      }
+    }, {passive:true, capture:true});
   });
 }
 
