@@ -5094,10 +5094,22 @@ async function acceptModification(notifId){
   if(typeof _sb!=="undefined"&&_sb){
     var upd = {
       modification_status:"accepted",
-      modification_demandee:false
+      modification_demandee:false,
+      // Accepter une modification = accepter implicitement le RDV avec sa
+      // nouvelle date/heure. Sinon le client voit "modification acceptée"
+      // mais badge "En attente" → confus. On confirme automatiquement
+      // (sans écraser un statut déjà cancelled/done).
+      status:"confirmed",
+      confirmed_at: new Date().toISOString()
     };
     if(modif.date) upd.date_rdv = modif.date;
     if(modif.heure) upd.heure_rdv = newHeure;
+    // Garde-fou : ne re-confirme pas un RDV annulé/terminé
+    var current = await _sb.from("rdv_online").select("status").eq("id",rdvId).single();
+    if(current && current.data && (current.data.status==="cancelled" || current.data.status==="canceled" || current.data.status==="done" || current.data.status==="completed")){
+      delete upd.status;
+      delete upd.confirmed_at;
+    }
     var r = await _sb.from("rdv_online").update(upd).eq("id",rdvId);
     if(r && r.error){
       toast && toast("Erreur Supabase : "+r.error.message,"error");
