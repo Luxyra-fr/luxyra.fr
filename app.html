@@ -456,7 +456,7 @@ if(!window._origConfirm){window._origConfirm=window.confirm.bind(window);window.
 function _syncConfirm(msg){return window._origConfirm(msg);}
 var _syncConfirmResult=null;
 
-// ===== showAlert : remplace alert() natif par un modal Luxyra =====
+// ===== showAlert : remplace showAlert(,"info") natif par un modal Luxyra =====
 // Usage : showAlert("Message"[, "icon"][, callback])
 //   icon = "info" (default) | "success" | "warning" | "error"
 function showAlert(msg, icon, onOk) {
@@ -969,7 +969,7 @@ window.getCollabsForService=getCollabsForService;
 function lxOpenCompetencesModal(collabId){
   var col=null;
   for(var i=0;i<T.length;i++)if(String(T[i].id)===String(collabId)){col=T[i];break;}
-  if(!col){alert("Collaborateur introuvable");return;}
+  if(!col){showAlert("Collaborateur introuvable","error");return;}
   var comp=col.competences||{all:true};
   var allFlag=comp.all===true;
   var enabledIds={};
@@ -2319,7 +2319,7 @@ function showPlanChoiceModal(blocking){
 
 function checkCgvPlanAndPay(plan){
   var cb=document.getElementById("cgvPlanCheck");
-  if(!cb||!cb.checked){alert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.");return;}
+  if(!cb||!cb.checked){showAlert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.","warning");return;}
   startCheckout(plan);
 }
 
@@ -2345,7 +2345,7 @@ function showUpgradeModal(feature){
 
 function checkCgvAndPay(plan){
   var cb=document.getElementById("cgvCheck");
-  if(!cb||!cb.checked){alert("Veuillez accepter les Conditions Générales de Vente pour continuer.");return;}
+  if(!cb||!cb.checked){showAlert("Veuillez accepter les Conditions Générales de Vente pour continuer.","warning");return;}
   startCheckout(plan);
 }
 
@@ -2363,7 +2363,7 @@ async function startCheckout(plan){
     if(!sid) missing.push("identifiant du salon");
     if(!em)  missing.push("email");
     if(!plan)missing.push("forfait");
-    alert("Impossible de continuer : " + missing.join(", ") + " manquant. Rechargez la page et réessayez.");
+    showAlert("Impossible de continuer : " + missing.join(", ") + " manquant. Rechargez la page et réessayez.","error");
     console.error("[startCheckout] données manquantes", {salon_id:sid, plan:plan, email:em});
     if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
     return;
@@ -2380,12 +2380,12 @@ async function startCheckout(plan){
       window.location.href=data.url;
     }else{
       console.error("[startCheckout] Worker error", data);
-      alert("Erreur : " + (data.error || "Impossible de créer la session de paiement"));
+      showAlert("Erreur : " + (data.error || "Impossible de créer la session de paiement"),"error");
       if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
     }
   }catch(e){
     console.error("[startCheckout] network error", e);
-    alert("Erreur de connexion. Vérifiez votre internet.");
+    showAlert("Erreur de connexion. Vérifiez votre internet.","error");
     if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
   }
 }
@@ -2409,8 +2409,10 @@ async function startCheckout(plan){
   if(params.get("sms_pack")==="success"){
     var qty=params.get("qty")||"";
     setTimeout(function(){
-      alert("\u2705 Pack SMS achet\u00e9 ! "+qty+" SMS ajout\u00e9s \u00e0 votre solde.\nRechargez la page pour voir votre nouveau solde.");
+      // Le replaceState ne d\u00e9pend pas de la lecture du message, on le fait
+      // imm\u00e9diatement (URL propre) et on affiche le succ\u00e8s en parall\u00e8le.
       window.history.replaceState({},"",window.location.pathname);
+      showAlert("Pack SMS achet\u00e9 ! "+qty+" SMS ajout\u00e9s \u00e0 votre solde.\nRechargez la page pour voir votre nouveau solde.","success");
     },500);
   }
 })();
@@ -2490,7 +2492,7 @@ function confirmPurgeTestData(){
 async function executePurge(){
   var inp=document.getElementById("purgeConfirmInput");
   if(!inp||inp.value.trim().toUpperCase()!=="PURGER"){
-    alert("Veuillez taper PURGER pour confirmer.");return;
+    showAlert("Veuillez taper PURGER pour confirmer.","warning");return;
   }
   var btn=document.getElementById("purgeExecBtn");
   if(btn){btn.textContent="Purge en cours...";btn.disabled=true;btn.style.opacity=".5";}
@@ -2565,7 +2567,7 @@ async function executePurge(){
 
   }catch(e){
     console.error("[PURGE] Error:",e);
-    alert("Erreur lors de la purge : "+e.message+"\nContactez support@luxyra.fr");
+    showAlert("Erreur lors de la purge : "+e.message+"\nContactez support@luxyra.fr","error");
     if(btn){btn.textContent="\ud83d\uddd1 R\u00e9essayer";btn.disabled=false;btn.style.opacity="1";}
   }
 }
@@ -2580,8 +2582,8 @@ async function openCustomerPortal(){
     });
     var data=await res.json();
     if(data.url)window.location.href=data.url;
-    else alert("Pas d'abonnement trouvé");
-  }catch(e){alert("Erreur de connexion");}
+    else showAlert("Pas d'abonnement trouvé","info");
+  }catch(e){showAlert("Erreur de connexion","error");}
 }
 
 // === STRIPE CONNECT ===
@@ -2653,8 +2655,8 @@ async function startConnectOnboard(){
     });
     var data=await res.json();
     if(data.url)window.location.href=data.url;
-    else{alert("Erreur : "+(data.error||"Impossible de d\u00e9marrer la configuration"));btn.textContent="R\u00e9essayer";btn.disabled=false;}
-  }catch(e){alert("Erreur de connexion");btn.textContent="R\u00e9essayer";btn.disabled=false;}
+    else{showAlert("Erreur : "+(data.error||"Impossible de d\u00e9marrer la configuration"),"error");btn.textContent="R\u00e9essayer";btn.disabled=false;}
+  }catch(e){showAlert("Erreur de connexion","error");btn.textContent="R\u00e9essayer";btn.disabled=false;}
 }
 
 async function openConnectDashboard(){
@@ -2665,8 +2667,8 @@ async function openConnectDashboard(){
     });
     var data=await res.json();
     if(data.url)window.open(data.url,"_blank");
-    else alert("Erreur : "+(data.error||"Compte non configur\u00e9"));
-  }catch(e){alert("Erreur de connexion");}
+    else showAlert("Erreur : "+(data.error||"Compte non configur\u00e9"),"error");
+  }catch(e){showAlert("Erreur de connexion","error");}
 }
 
 function proGate(feature){if(isPro())return true;showUpgradeModal(feature);return false;}
@@ -2720,7 +2722,7 @@ async function doSwitchPlan(plan){
   var isDowngrade=plan==="essential";
   if(!isDowngrade){
     var cgv=document.getElementById("cgvCheckSwitch");
-    if(!cgv||!cgv.checked){alert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.");return;}
+    if(!cgv||!cgv.checked){showAlert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.","warning");return;}
   }
   try{
     var res=await fetch(window.location.origin+STRIPE_API+"/switch-plan",{
@@ -2730,15 +2732,18 @@ async function doSwitchPlan(plan){
     });
     var data=await res.json();
     if(data.success){
-      alert("\u2705 Forfait chang\u00e9 en "+plan.toUpperCase()+" ! Rechargement...");
-      cM();location.reload();
+      // showAlert avec callback : on attend que l'utilisateur clique OK
+      // avant de recharger (sinon il ne verrait jamais le message)
+      showAlert("Forfait chang\u00e9 en "+plan.toUpperCase()+" ! Rechargement...","success",function(){
+        cM();location.reload();
+      });
     }else if(data.error&&data.error.indexOf("abonnement")>=0){
       // No active subscription - redirect to checkout
       cM();startCheckout(plan);
     }else{
-      alert("Erreur: "+(data.error||"Impossible de changer de forfait"));
+      showAlert("Erreur : "+(data.error||"Impossible de changer de forfait"),"error");
     }
-  }catch(e){alert("Erreur de connexion");}
+  }catch(e){showAlert("Erreur de connexion","error");}
 }
 SALON_CONFIG._defaultLogo="data:image/webp;base64,UklGRsoCAABXRUJQVlA4IL4CAADQDACdASoqACoAPlEmkEYjoiGhI4kAcAoJZQC98JXJPtuueASPl+TzOsgRMGvGz9Nf9L3Av1J/5XXN/ZJJJ9N5h5XLY9LqGFboTA6YQGYRIY4cxDR0vRaWNRypCQ9zUcCkClx4gGJbuyDZEMJ/3gAA/vVj/Fh/SqNagRWSN2U5c7xkAYTmvJjJ9+qw81H/eAPE8cL7wHIcTiAlCABUIEWSRggNSFbml//Ts6ApP312IohCpMcxxvoLZgMqX8VgaV+iLwGliUrfojoaTFSaFDdQJtlzKzoY8E7e/x17RTnHrIdh8qEZReQ9uYll7OfD1kUM0zBkSg7gdI/GIBGb44QCNddZUkw4sQ+Umsq0IHJWMa0h+uOoMAeqmb2aaBFRL2Uj+XW+1+3/+jQv3/V/vIYs8a6KASy6H12zJ6dsBo5pjDcmKvFgcTN1e2ztM0tv9VIY9mRo5VemJTG73r0HXxpTUf8RYIeqvG8Cxci4iqOAOTjqaXUa+hGpwUz/0d63ZMCMfqwmzgyy5MIFoNkY+VY+v3/Lfdfv/Ex/mvkcAjtKnebadhURwE0+JBF71NegSMCnTiEagoPlF3wzdrsgoQIhlUek3YpTbRTLIv+4kVB42i1hEWoZYYVKYv1LOG+NO1+g4QqpZFOIvBtUukt6t+v8EFD5btAGps/ReQaGR7phgtvzkGxWi1X8QuQ3RJ00jaCM3S43Lu+DWsGmrCv/elTAQfMTLIX6LscIKG+03SqH+zp8wHhw+XMJ3qsjiQGYKT96461jOcjzTjNaRnjaC+tgxBPNf5WTT8KL/DU0Cq/V6KuP29QfWsBlOiDPv5j9tKugwtV+zlp1ueoxBn4HcOcdmomE6ekCU6mU8Q/EJrU9EPExkUEfS27z3WNfM5QWQyDCqG4HSYsuoItzZnBz9w8uThAiVuK/mslU02gAAAA=";
 // Multi-métiers: adapt l'app selon le domaine du salon
@@ -3859,7 +3864,7 @@ async function doConvertDevisToRdv(idx){
   var stId = parseInt(document.getElementById("cdrCollab").value, 10);
   var date = document.getElementById("cdrDate").value;
   var time = document.getElementById("cdrTime").value;
-  if(!stId||!date||!time){ alert("Collab, date et heure obligatoires"); return; }
+  if(!stId||!date||!time){ showAlert("Collab, date et heure obligatoires","warning"); return; }
   // Construire les phases depuis les items du devis
   var aPhases = [];
   if(dv.items){
@@ -4088,7 +4093,7 @@ function printDevis(idx,printFmt){
   if(printFmt==="thermal"){return printDevisThermal(idx);}
   // Sinon : format A4 (ci-dessous)
   var w=window.open("","_blank","width=720,height=920");
-  if(!w){alert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.");return;}
+  if(!w){showAlert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.","error");return;}
 
   // Client infos
   var cl=dv.cId?gC(dv.cId):null;
@@ -4297,7 +4302,7 @@ function printDevis(idx,printFmt){
 function printDevisThermal(idx){
   var dv=window.DEVIS[idx];if(!dv)return;
   var w=window.open("","_blank","width=320,height=720");
-  if(!w){alert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.");return;}
+  if(!w){showAlert("Popup bloquée — autorisez les popups pour ce site afin d'imprimer.","error");return;}
 
   var cl=dv.cId?gC(dv.cId):null;
   var clientLine=dv.clientName||dv.clientNom||"Client de passage";
@@ -5492,7 +5497,7 @@ function doConfirmCloture(){
 function printClotureZ(){
   var c=window._lastCloture;
   if(!c){
-    alert("Aucune clôture à imprimer. Fermez cette fenêtre et sélectionnez une clôture dans l'historique.");
+    showAlert("Aucune clôture à imprimer. Fermez cette fenêtre et sélectionnez une clôture dans l'historique.","info");
     return;
   }
   // Safe-hydrate : garantit tous les champs nécessaires à l'impression, même si la
@@ -5904,7 +5909,7 @@ function addExceptOuverture(){
 function doExceptOuverture(){
   var d=document.getElementById("exOuvDate").value;if(!d)return;
   var fr=document.getElementById("exOuvFrom").value;var to=document.getElementById("exOuvTo").value;
-  if(!fr||!to){alert("Horaires obligatoires");return;}
+  if(!fr||!to){showAlert("Horaires obligatoires","warning");return;}
   var stId=+document.getElementById("exOuvCollab").value;
   var motif=(document.getElementById("exOuvMotif").value||"").trim()||"Ouverture exceptionnelle";
   if(!window.ABSENCES)window.ABSENCES=[];
@@ -6084,7 +6089,7 @@ function doAddFormule(cId){
   var cl=gC(cId);if(!cl)return;
   var marque=(document.getElementById("fmMarque").value||"").trim();
   var date=document.getElementById("fmDate").value;
-  if(!marque||!date){alert("Marque et date obligatoires");return;}
+  if(!marque||!date){showAlert("Marque et date obligatoires","warning");return;}
   if(!cl.formules)cl.formules=[];
   cl.formules.push({
     date:date,
@@ -6168,7 +6173,7 @@ function doAddHistoMetier(cId){
   var sch=_histoMetierSchema();if(!sch)return;
   var date=document.getElementById("hmDate").value;
   var type=document.getElementById("hmType").value;
-  if(!date||!type){alert("Date et type obligatoires");return;}
+  if(!date||!type){showAlert("Date et type obligatoires","warning");return;}
   var entry={date:date,type:type,duree:+(document.getElementById("hmDuree").value||60),notes:(document.getElementById("hmNotes").value||"").trim()};
   sch.fields.forEach(function(f){
     var v=(document.getElementById("hm_"+f.k)||{}).value||"";
@@ -6267,7 +6272,7 @@ function reprendreDernierePrestation(cId,kind){
   } else if(cl.histoMetier && cl.histoMetier.length){
     src=cl.histoMetier.slice().sort(function(a,b){return new Date(b.date)-new Date(a.date);})[0];
   }
-  if(!src){alert("Rien à reprendre pour ce client.");return;}
+  if(!src){showAlert("Rien à reprendre pour ce client.","warning");return;}
   var copy={};for(var k in src)if(Object.prototype.hasOwnProperty.call(src,k))copy[k]=src[k];
   copy.date=TD;
   copy.notes=(src.notes||"")+(src.notes?" · ":"")+"Reprise du "+(typeof fmt==="function"?fmt(src.date):src.date);
@@ -6293,7 +6298,7 @@ function reprendreDernierePrestation(cId,kind){
 async function addClientPhoto(cId,input,label){
   if(!input.files||!input.files[0])return;
   var file=input.files[0];
-  if(file.size>5*1024*1024){alert("Photo trop lourde (max 5 Mo). Essayez avec une photo plus petite.");input.value="";return;}
+  if(file.size>5*1024*1024){showAlert("Photo trop lourde (max 5 Mo). Essayez avec une photo plus petite.","error");input.value="";return;}
   // Wrap FileReader/Image en promesse pour avoir async/await propre
   var dataUrl=await new Promise(function(resolve,reject){
     var r=new FileReader();r.onload=function(e){resolve(e.target.result);};r.onerror=reject;r.readAsDataURL(file);
@@ -6321,7 +6326,7 @@ async function addClientPhoto(cId,input,label){
     if(up.error){
       console.error("[addClientPhoto] upload failed:",up.error);
       if(typeof toast==="function") toast("Erreur upload photo : "+up.error.message,"error");
-      else alert("Erreur upload photo : "+up.error.message);
+      else showAlert("Erreur upload photo : "+up.error.message,"error");
       input.value="";return;
     }
     cl.photos.push({date:TD,label:label||"",path:path});
@@ -6409,12 +6414,12 @@ window.delClientPhoto = delClientPhoto;
 // Idempotent (skip les photos déjà au format path). À appeler depuis la console une fois
 // après le déploiement, ou via le bouton admin "Migrer photos vers Storage".
 async function migrateClientPhotosToStorage(){
-  if(!_sb || !window._salonId){ alert("Pas connecté."); return {ok:false}; }
+  if(!_sb || !window._salonId){ showAlert("Pas connecté.","info"); return {ok:false}; }
   var stats={clients_traites:0, photos_migrees:0, photos_skipped:0, errors:0};
   var clientsAvecPhotos = (typeof CL!=="undefined"?CL:[]).filter(function(c){
     return c.photos && c.photos.length && c.photos.some(function(p){return p.data && !p.path;});
   });
-  if(!clientsAvecPhotos.length){ alert("Aucune photo à migrer (toutes déjà sur Storage)."); return {ok:true, ...stats}; }
+  if(!clientsAvecPhotos.length){ showAlert("Aucune photo à migrer (toutes déjà sur Storage).","warning"); return {ok:true, ...stats}; }
   if(!confirm("Migrer "+clientsAvecPhotos.length+" client(s) avec photos base64 vers Supabase Storage ?\n\n(L'opération peut prendre 1-2 minutes selon le nombre de photos.)")) return {cancelled:true};
   console.log("[migrate] start: "+clientsAvecPhotos.length+" clients");
   for(var i=0;i<clientsAvecPhotos.length;i++){
@@ -6451,7 +6456,7 @@ async function migrateClientPhotosToStorage(){
     }
   }
   console.log("[migrate] done:",stats);
-  alert("Migration terminée :\n• "+stats.clients_traites+" client(s) mis à jour\n• "+stats.photos_migrees+" photo(s) migrée(s)\n• "+stats.errors+" erreur(s)");
+  showAlert("Migration terminée :\n• "+stats.clients_traites+" client(s) mis à jour\n• "+stats.photos_migrees+" photo(s) migrée(s)\n• "+stats.errors+" erreur(s)","error");
   return {ok:true, ...stats};
 }
 window.migrateClientPhotosToStorage = migrateClientPhotosToStorage;
@@ -7948,12 +7953,12 @@ function updateDemandePropTotals(){
 async function sendDemandeProposal(demandeId){
   var data = getDemandeComposerData();
   // Validation
-  if(!data.date || !data.heure){ alert("Veuillez choisir la date et l'heure."); return; }
-  if(!data.items.length){ alert("Sélectionnez au moins une prestation."); return; }
-  if(data.prix_total <= 0){ alert("Le prix total doit être supérieur à 0."); return; }
+  if(!data.date || !data.heure){ showAlert("Veuillez choisir la date et l'heure.","warning"); return; }
+  if(!data.items.length){ showAlert("Sélectionnez au moins une prestation.","info"); return; }
+  if(data.prix_total <= 0){ showAlert("Le prix total doit être supérieur à 0.","warning"); return; }
   // Date dans le futur
   var dt = new Date(data.date+"T"+data.heure);
-  if(dt < new Date(Date.now() + 30*60*1000)){ alert("La date doit être au moins 30 min dans le futur."); return; }
+  if(dt < new Date(Date.now() + 30*60*1000)){ showAlert("La date doit être au moins 30 min dans le futur.","warning"); return; }
 
   var btn = document.getElementById("dpSendBtn");
   btn.disabled = true; btn.textContent = "Envoi...";
@@ -7961,7 +7966,7 @@ async function sendDemandeProposal(demandeId){
     // Récupérer la session du salon (pour appel edge function authentifié)
     var session = await _sb.auth.getSession();
     var token = session.data.session ? session.data.session.access_token : null;
-    if(!token){ alert("Session expirée, reconnectez-vous."); btn.disabled=false; btn.textContent="📨 Envoyer la proposition"; return; }
+    if(!token){ showAlert("Session expirée, reconnectez-vous.","info"); btn.disabled=false; btn.textContent="📨 Envoyer la proposition"; return; }
 
     var resp = await fetch(SB_URL_GLOBAL+"/functions/v1/rdv-demande-propose", {
       method: "POST",
@@ -7970,7 +7975,7 @@ async function sendDemandeProposal(demandeId){
     });
     var rd = await resp.json();
     if(!resp.ok){
-      alert("Erreur : "+(rd.error||"envoi impossible"));
+      showAlert("Erreur : "+(rd.error||"envoi impossible"),"error");
       btn.disabled = false; btn.textContent = "📨 Envoyer la proposition";
       return;
     }
@@ -8005,7 +8010,7 @@ async function sendDemandeProposal(demandeId){
     await loadRdvDemandes();
     if(window._currentPage==="home") document.getElementById("app").innerHTML = rHome();
   } catch(e){
-    alert("Erreur réseau : "+e.message);
+    showAlert("Erreur réseau : "+e.message,"error");
     btn.disabled = false; btn.textContent = "📨 Envoyer la proposition";
   }
 }
@@ -9804,7 +9809,7 @@ window.caPerCollabForAppt = caPerCollabForAppt;
 async function updApptPhase(id,idx,val){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
-  if(a.st==="done"){alert("RDV encaiss\u00e9 \u2014 modification impossible.");return;}
+  if(a.st==="done"){showAlert("RDV encaiss\u00e9 \u2014 modification impossible.","error");return;}
   var ph=getApptPhases(a);
   if(ph[idx])ph[idx].d=val;
   if(typeof saveAppointment==="function") await saveAppointment(a);
@@ -9817,7 +9822,7 @@ async function updApptPhaseCollab(id,idx,stId){
   // Convert stId to match T[].id type (integer from Supabase, string from select)
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
-  if(a.st==="done"){alert("RDV encaiss\u00e9 \u2014 modification impossible.");clickAppt(id);return;}
+  if(a.st==="done"){showAlert("RDV encaiss\u00e9 \u2014 modification impossible.","error");clickAppt(id);return;}
   var ph=getApptPhases(a);
   if(!ph[idx])return;
   // Calculate phase start time
@@ -9976,7 +9981,7 @@ function showAddPrestaModal(apptId, presetPos){
 async function addPrestaToAppt(apptId, svcId){
   var a=_findAppt(apptId); if(!a||a.st==="done"){cM();return;}
   var svc=(typeof gS==="function")?gS(svcId):null;
-  if(!svc){ alert("Prestation introuvable"); return; }
+  if(!svc){ showAlert("Prestation introuvable","error"); return; }
   var ph=getApptPhases(a);
   var posSel=document.getElementById("addPrestaPos");
   var pos=posSel?posSel.value:"end";
@@ -10127,7 +10132,7 @@ function confirmPendingDrag(){
   // Safety: verify no RDV was lost
   if(AP.length!==countBefore){
     console.error("[DRAG SAFETY] AP count changed! Before:"+countBefore+" After:"+AP.length);
-    alert("Erreur: un RDV a \u00e9t\u00e9 perdu pendant le d\u00e9placement. V\u00e9rifiez le planning.");
+    showAlert("Erreur: un RDV a \u00e9t\u00e9 perdu pendant le d\u00e9placement. V\u00e9rifiez le planning.","error");
   }
   if(!found){
     console.error("[DRAG SAFETY] RDV "+m.id+" not found in AP");
@@ -11856,7 +11861,7 @@ function saveFondCaisse(){
 
 function saveTVA(){
   var val=parseFloat(document.getElementById("tvaInput").value);
-  if(isNaN(val)||val<0||val>30){alert("Taux invalide");return;}
+  if(isNaN(val)||val<0||val>30){showAlert("Taux invalide","warning");return;}
   SALON_CONFIG.tauxTVA=val;
   if(window.SALON)window.SALON.tauxTVA=val;
   if(typeof saveSalonConfig==="function")saveSalonConfig();
@@ -13259,7 +13264,7 @@ function doAddPack(cId){
   var prestEl=document.getElementById("pkPrest");
   var prestId=prestEl?parseInt(prestEl.value)||null:null;
   var prestNom=prestId?((gS(prestId)||{}).n||""):"";
-  if(!name||total<2||prix<=0){alert("Nom, nombre de s\u00e9ances (min 2) et prix obligatoires");return;}
+  if(!name||total<2||prix<=0){showAlert("Nom, nombre de s\u00e9ances (min 2) et prix obligatoires","warning");return;}
   var pack={
     id:null,clientId:cId,clientNom:cName(c),nom:name,
     prestId:prestId,prestNom:prestNom,
@@ -13278,8 +13283,8 @@ function doAddPack(cId){
 
 function validatePackSeance(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
-  if(!pk){alert("Pack introuvable");return;}
-  if(pk.used>=pk.total){alert("Ce pack est termin\u00e9 ("+pk.total+"/"+pk.total+" s\u00e9ances utilis\u00e9es)");return;}
+  if(!pk){showAlert("Pack introuvable","error");return;}
+  if(pk.used>=pk.total){showAlert("Ce pack est termin\u00e9 ("+pk.total+"/"+pk.total+" s\u00e9ances utilis\u00e9es)","info");return;}
   showConfirm("Valider 1 s\u00e9ance du pack \""+pk.nom+"\" ?\nS\u00e9ance "+(pk.used+1)+" / "+pk.total+"\n\nUn ticket sera g\u00e9n\u00e9r\u00e9 pour la tra\u00e7abilit\u00e9.",function(){
     // Open caisse with pack item for proper ticket generation
     _tk={step:1,stId:null,cId:pk.clientId,items:[],comment:"",remise:0};
@@ -14396,7 +14401,7 @@ function deleteCategory(){
       });
       if(refs.length>5) msg += "\u2026 et "+(refs.length-5)+" autre(s)\n";
       msg += "\nRetirez-les d'abord de ces forfaits avant de supprimer la famille.";
-      alert(msg);
+      showAlert(msg,"info");
       return;
     }
 
@@ -14431,7 +14436,7 @@ var prodView="grid"; // grid or list
 var prodTypeFilter="all";
 function showOrderList(){
   var toOrder=PRODS.filter(function(p){return p.stk<=p.stkMin;});
-  if(!toOrder.length){alert("Aucun produit à commander");return;}
+  if(!toOrder.length){showAlert("Aucun produit à commander","info");return;}
   toOrder.sort(function(a,b){return a.stk-b.stk;});
   var h='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udcdd Liste de commande</h2>';
   h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">'+toOrder.length+' produit(s) à commander</div>';
@@ -14462,7 +14467,7 @@ function copyOrderList(){
     var qty=Math.max(p.stkMin*2-p.stk,p.stkMin);
     txt+=p.n+" ("+p.cat+") — Stock: "+p.stk+" — À commander: "+qty+"\n";
   });
-  navigator.clipboard.writeText(txt).then(function(){alert("\u2705 Liste copiée !");}).catch(function(){alert("Erreur copie");});
+  navigator.clipboard.writeText(txt).then(function(){showAlert("\u2705 Liste copiée !","success");}).catch(function(){showAlert("Erreur copie","error");});
 }
 function rProducts(){
   // Refonte 2026-05-08 : \u00e9crin premium autour de la barre d'actions Produits
@@ -15283,7 +15288,7 @@ function scanProd(code){
       showCaisse();
     }
   }else{
-    alert("\u274c Produit non trouv\u00e9 pour le code-barres : "+code);
+    showAlert("\u274c Produit non trouv\u00e9 pour le code-barres : "+code,"error");
   }
 }
 
@@ -17819,7 +17824,7 @@ function expRapportComptablePDF(){
   }
   var html = _buildRapportHTML(accM);
   var w = window.open("", "_blank");
-  if(!w){ alert("Impossible d'ouvrir la fen\u00eatre. Autorisez les pop-ups."); return; }
+  if(!w){ showAlert("Impossible d'ouvrir la fen\u00eatre. Autorisez les pop-ups.","error"); return; }
   w.document.write(html);
   w.document.close();
   // Injecte la barre d'actions (Imprimer/Enregistrer PDF + Fermer) \u2014 m\u00eame style que la Bande Z
@@ -18709,7 +18714,7 @@ async function expExcelComptable(){
       s.src = "https://cdn.jsdelivr.net/gh/gitbrent/xlsx-js-style@master/dist/xlsx.bundle.js";
       s.onload = resolve; s.onerror = function(){reject(new Error("Échec chargement Excel"));};
       document.head.appendChild(s);
-    }).catch(function(e){ alert("Impossible de charger l'outil Excel. Réessayez avec une connexion stable."); throw e; });
+    }).catch(function(e){ showAlert("Impossible de charger l'outil Excel. Réessayez avec une connexion stable.","error"); throw e; });
   }
   // Données identiques à expPackComptable
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
@@ -20387,17 +20392,17 @@ function aAp(){
   // Block if establishment closed or collab absent
   var _effHrs=getEffectiveHrs(d,st);
   if(!_effHrs){
-    alert("\u26d4 Impossible : l\u2019\u00e9tablissement ou le collaborateur est ferm\u00e9/absent ce jour ("+fmt(d)+").");
+    showAlert("\u26d4 Impossible : l\u2019\u00e9tablissement ou le collaborateur est ferm\u00e9/absent ce jour ("+fmt(d)+").","error");
     return;
   }
   var _rdvMin=toM(t);
   if(_rdvMin<toM(_effHrs.o)||_rdvMin>=toM(_effHrs.c)){
-    alert("\u26d4 Impossible : l\u2019horaire "+t+" est en dehors des heures de travail ("+_effHrs.o+" \u2192 "+_effHrs.c+").");
+    showAlert("\u26d4 Impossible : l\u2019horaire "+t+" est en dehors des heures de travail ("+_effHrs.o+" \u2192 "+_effHrs.c+").","error");
     return;
   }
   var _rdvBlocked=isStylistBlockedDuring(st,d,_rdvMin,_rdvMin+1);
   if(_rdvBlocked){
-    alert("\u26d4 Impossible : "+(gT(st)?gT(st).n:"le collaborateur")+" est indisponible \u00e0 "+t+" ("+(_rdvBlocked.label||"Indisponible")+").");
+    showAlert("\u26d4 Impossible : "+(gT(st)?gT(st).n:"le collaborateur")+" est indisponible \u00e0 "+t+" ("+(_rdvBlocked.label||"Indisponible")+").","error");
     return;
   }
   // Check for conflicts
@@ -20678,7 +20683,7 @@ function aCl(){
   if(guardDoubleClick("client")) return;
   var nom=document.getElementById("mnom").value.trim();
   var pre=document.getElementById("mpre").value.trim();
-  if(!nom){alert("Nom requis");return;}
+  if(!nom){showAlert("Nom requis","info");return;}
   var sex=document.getElementById("msex")?document.getElementById("msex").value:"F";
   var ph=document.getElementById("mp")?document.getElementById("mp").value.trim():"";
   var em=document.getElementById("me")?document.getElementById("me").value.trim():"";
@@ -20743,7 +20748,7 @@ function aCl(){
 function aGi(){
   if(guardDoubleClick("bon cadeau")) return;
   var v=parseFloat(document.getElementById("gv").value);
-  if(!v||v<=0){alert("Indiquez un montant");return;}
+  if(!v||v<=0){showAlert("Indiquez un montant","info");return;}
   var f=document.getElementById("gf").value.trim()||"Client";
   var m=document.getElementById("gm").value.trim()||"";
   var t=document.getElementById("gt").value.trim();
@@ -20758,7 +20763,7 @@ function aGi(){
   }
   var gcNum=window._gcSeq++;
   var code=(document.getElementById("newBcCode")?document.getElementById("newBcCode").value.trim().toUpperCase():"")||"BC-"+String(gcNum).padStart(4,"0");
-  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){showAlert("Ce code existe d\u00e9j\u00e0 !","warning");return;}}
   // TVA calculation (20% standard for gift cards = prestation de service)
   var tvaRate=0.20;
   var ht=v/(1+tvaRate);
@@ -21574,8 +21579,8 @@ function showAddMenu(){var cId=_tk.cId;var activePacks=(window.PACKS_CLIENTS||[]
 
 function usePackInTicket(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
-  if(!pk){alert("Pack introuvable");return;}
-  if(pk.used>=pk.total){alert("Ce pack est termin\u00e9");return;}
+  if(!pk){showAlert("Pack introuvable","error");return;}
+  if(pk.used>=pk.total){showAlert("Ce pack est termin\u00e9","success");return;}
   // Valider la séance
   if(typeof usePackSeance==="function"){
     usePackSeance(packId);
@@ -21705,7 +21710,7 @@ function doAddPackFromCaisse(){
   if(guardDoubleClick("pack")) return;
   var cId=_tk.cId;
   var c=cId?gC(cId):null;
-  if(!c){alert("S\u00e9lectionnez un client fichier pour vendre un pack.");return;}
+  if(!c){showAlert("S\u00e9lectionnez un client fichier pour vendre un pack.","info");return;}
   var name=document.getElementById("pkName2").value.trim();
   var total=parseInt(document.getElementById("pkTotal2").value)||0;
   var prix=parseFloat(document.getElementById("pkPrix2").value)||0;
@@ -21713,7 +21718,7 @@ function doAddPackFromCaisse(){
   var prestEl=document.getElementById("pkPrest2");
   var prestId=prestEl?parseInt(prestEl.value)||null:null;
   var prestNom=prestId?((gS(prestId)||{}).n||""):"";
-  if(!name||total<2||prix<=0){alert("Nom, nombre de s\u00e9ances (min 2) et prix obligatoires");return;}
+  if(!name||total<2||prix<=0){showAlert("Nom, nombre de s\u00e9ances (min 2) et prix obligatoires","warning");return;}
   // Sauvegarder le pack
   var pack={
     id:null,clientId:cId,clientNom:cName(c),nom:name,
@@ -21795,7 +21800,7 @@ function doSaveCarteAbo(idx){
   var duree=parseInt(document.getElementById("caDuree").value)||12;
   var remSvc=parseInt(document.getElementById("caRemSvc").value)||0;
   var remForf=parseInt(document.getElementById("caRemForf").value)||0;
-  if(!nom||tarif<=0){alert("Nom et tarif obligatoires");return;}
+  if(!nom||tarif<=0){showAlert("Nom et tarif obligatoires","warning");return;}
   if(!window.CARTES_ABO)window.CARTES_ABO=[];
   if(idx>=0){
     window.CARTES_ABO[idx].nom=nom;window.CARTES_ABO[idx].tarif=tarif;
@@ -21812,7 +21817,7 @@ function doSaveCarteAbo(idx){
 function deleteCarteAbo(idx){
   var ca=window.CARTES_ABO[idx];if(!ca)return;
   var nbActives=(window.CARTES_ABO_CLIENTS||[]).filter(function(cc){return cc.carteId===ca.id&&cc.status==="active";}).length;
-  if(nbActives>0){alert("Impossible de supprimer : "+nbActives+" client(s) poss\u00e8de(nt) cette carte active.");return;}
+  if(nbActives>0){showAlert("Impossible de supprimer : "+nbActives+" client(s) poss\u00e8de(nt) cette carte active.","error");return;}
   showConfirm("Supprimer la carte \u00ab"+ca.nom+"\u00bb ?",function(){
     window.CARTES_ABO.splice(idx,1);
     if(typeof saveSalonConfig==="function")saveSalonConfig();
@@ -21822,8 +21827,8 @@ function deleteCarteAbo(idx){
 }
 
 function venteCarteAbo(clientId){
-  var c=gC(clientId);if(!c){alert("S\u00e9lectionnez un client fichier.");return;}
-  if(!window.CARTES_ABO||!window.CARTES_ABO.length){alert("Aucune carte d\u2019abonnement configur\u00e9e. Allez dans Param\u00e8tres \u2192 Options commerciales.");return;}
+  var c=gC(clientId);if(!c){showAlert("S\u00e9lectionnez un client fichier.","info");return;}
+  if(!window.CARTES_ABO||!window.CARTES_ABO.length){showAlert("Aucune carte d\u2019abonnement configur\u00e9e. Allez dans Param\u00e8tres \u2192 Options commerciales.","info");return;}
   var existCarte=getActiveCarteAbo(clientId);
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udcb3 Vendre une carte d\u2019abonnement</h2>';
   htm+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Client : <strong>'+cName(c)+'</strong></div>';
@@ -22015,7 +22020,7 @@ async function doVenteCarteAbo(clientId,caIdx){
   // activer. Le INSERT prend ~50-100ms, acceptable pour l'UX.
   if(typeof saveCarteAboClient==="function") await saveCarteAboClient(carteClient);
   auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (expire "+dateExp+", attente paiement)");
-  if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.");},500);
+  if(!c.clientBeautyproId&&!c.em)setTimeout(function(){showAlert("\u26a0 Ce client n\u2019a pas d\u2019email renseign\u00e9. La carte fonctionne dans le salon, mais ne sera pas visible dans son espace client (compte.html). Ajoutez un email dans sa fiche pour corriger.","info");},500);
   cM();
   // Note 2026-05-05 : pas de pre-select du collab (decision : ce n est pas
   // forcement l operateur connecte qui vend la carte). L utilisateur choisit
@@ -22034,8 +22039,8 @@ async function doVenteCarteAbo(clientId,caIdx){
 function venteCarteAboFromCaisse(){
   var cId=_tk.cId;
   var c=cId?gC(cId):null;
-  if(!c){alert("S\u00e9lectionnez un client fichier pour vendre une carte.");return;}
-  if(!window.CARTES_ABO||!window.CARTES_ABO.length){alert("Aucune carte configur\u00e9e. Param\u00e8tres \u2192 Options commerciales.");return;}
+  if(!c){showAlert("S\u00e9lectionnez un client fichier pour vendre une carte.","info");return;}
+  if(!window.CARTES_ABO||!window.CARTES_ABO.length){showAlert("Aucune carte configur\u00e9e. Param\u00e8tres \u2192 Options commerciales.","info");return;}
   var existCarte=getActiveCarteAbo(cId);
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udcb3 Vendre une carte</h2>';
   htm+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">Client : <strong>'+cName(c)+'</strong></div>';
@@ -22085,7 +22090,7 @@ async function doVenteCarteAboFromCaisse(caIdx){
   window.CARTES_ABO_CLIENTS.push(carteClient);
   if(typeof saveCarteAboClient==="function") await saveCarteAboClient(carteClient);
   auditLog("CARTE_ABO_VENTE_PENDING",ca.nom+" \u2192 "+cName(c)+" "+ca.tarif+"\u20ac (caisse, expire "+dateExp+")");
-  if(!c.clientBeautyproId&&!c.em)setTimeout(function(){alert("\u26a0 Ce client n\u2019a pas d\u2019email. La carte fonctionne ici, mais ne sera pas visible dans son espace client. Ajoutez un email dans sa fiche.");},500);
+  if(!c.clientBeautyproId&&!c.em)setTimeout(function(){showAlert("\u26a0 Ce client n\u2019a pas d\u2019email. La carte fonctionne ici, mais ne sera pas visible dans son espace client. Ajoutez un email dans sa fiche.","info");},500);
   // Ajouter la carte au ticket en cours (avec ref pendingCarteId pour activation paiement)
   _tk.items.push({sId:null,name:"\ud83d\udcb3 Carte: "+ca.nom+" ("+ca.duree+" mois)",price:ca.tarif,qty:1,remise:0,isCarteAbo:true,pendingCarteId:carteClient.id||null});
   showCaisse();
@@ -22525,7 +22530,7 @@ function doCreateBon(){
   if(!window._gcSeq){window._gcSeq=1;GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});}
   var gcNum=window._gcSeq++;
   var code=(document.getElementById("newBcCode")?document.getElementById("newBcCode").value.trim().toUpperCase():"")||"BC-"+String(gcNum).padStart(4,"0");
-  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){showAlert("Ce code existe d\u00e9j\u00e0 !","warning");return;}}
   var expD=new Date();expD.setMonth(expD.getMonth()+expM);
   var tvaRate=0.20;var ht=montant/(1+tvaRate);var tva=montant-ht;
   var ng={id:U(),code:code,val:montant,ht:ht,tva:tva,tvaRate:tvaRate,rem:montant,date:TD,from:from.trim(),to:to.trim(),msg:msg.trim(),cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,history:[]};
@@ -22567,11 +22572,11 @@ function doOffrirBon(){
     }
   }
   var montant=parseFloat((document.getElementById("fgv")||{}).value)||0;
-  if(montant<=0){alert("Indiquez un montant");return;}
+  if(montant<=0){showAlert("Indiquez un montant","info");return;}
   var to=(document.getElementById("fgt")||{}).value||"Offert";
   var code=(document.getElementById("fgc")||{}).value.trim().toUpperCase();
   if(!code)code="OFF-"+String(Date.now()).slice(-6).toUpperCase();
-  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){showAlert("Ce code existe d\u00e9j\u00e0 !","warning");return;}}
   var expM=parseInt((document.getElementById("fge")||{}).value)||12;
   var scope=(document.getElementById("fgs")||{}).value||"tout";
   if(!window._gcSeq){window._gcSeq=1;GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});}
@@ -22600,12 +22605,12 @@ function doOffrirBon(){
 function doCreateFreeBon(){
   if(guardDoubleClick("bon gratuit")) return;
   var montant=parseFloat(document.getElementById("freeBcVal").value)||0;
-  if(montant<=0){alert("Indiquez un montant");return;}
+  if(montant<=0){showAlert("Indiquez un montant","info");return;}
   var to=(document.getElementById("freeBcTo")||{}).value||"Offert";
   var code=(document.getElementById("freeBcCode")||{}).value.trim().toUpperCase();
   if(!code)code="OFF-"+String(Date.now()).slice(-6).toUpperCase();
   // Check unique
-  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){alert("Ce code existe d\u00e9j\u00e0 !");return;}}
+  for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){showAlert("Ce code existe d\u00e9j\u00e0 !","warning");return;}}
   var expM=parseInt((document.getElementById("freeBcExp")||{}).value)||12;
   var scope=(document.getElementById("freeBcScope")||{}).value||"tout";
   if(!window._gcSeq){window._gcSeq=1;GC.forEach(function(g){if(g.gcNum&&g.gcNum>=window._gcSeq)window._gcSeq=g.gcNum+1;});}
@@ -22747,8 +22752,8 @@ function doBonPay(){
   }
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
   var resteDu=total-(_tk.paid||0);
-  if(bon.scope&&bon.scope!=="tout"){var ws=false;_tk.items.forEach(function(it){if(bon.scope==="prestations"&&it.isProd)ws=true;if(bon.scope==="produits"&&!it.isProd)ws=true;});if(ws){alert("Ce bon est valable uniquement sur les "+(bon.scope==="prestations"?"prestations":"produits"));return;}}
-  if(bon.exp&&bon.exp<TD){alert("Ce bon cadeau a expir\u00e9");return;}
+  if(bon.scope&&bon.scope!=="tout"){var ws=false;_tk.items.forEach(function(it){if(bon.scope==="prestations"&&it.isProd)ws=true;if(bon.scope==="produits"&&!it.isProd)ws=true;});if(ws){showAlert("Ce bon est valable uniquement sur les "+(bon.scope==="prestations"?"prestations":"produits"),"info");return;}}
+  if(bon.exp&&bon.exp<TD){showAlert("Ce bon cadeau a expir\u00e9","info");return;}
   var use=Math.min(bon.rem,resteDu);
   bon.rem-=use;
   bon.used=(bon.used||0)+use;
@@ -23660,7 +23665,7 @@ function emailTicket(id){
     var tot2=0;_tk.items.forEach(function(it){tot2+=it.price*it.qty-(it.remise||0);});tot2-=(_tk.remise||0);
     a.pr=tot2;
   }
-  if(!a){alert("Ticket introuvable");return;}
+  if(!a){showAlert("Ticket introuvable","error");return;}
   var cl=gC(a.cId);
   var email=cl?cl.em:"";
   var clN=apptClientLabel(a);
@@ -23698,10 +23703,10 @@ async function sendTicketByEmail(id){
     var tot3=0;_tk.items.forEach(function(it){tot3+=it.price*it.qty-(it.remise||0);});tot3-=(_tk.remise||0);
     a.pr=tot3;
   }
-  if(!a){alert("Ticket introuvable");return;}
+  if(!a){showAlert("Ticket introuvable","error");return;}
   var cl=gC(a.cId),sty=gT(a.stId);
-  if(!cl||!cl.em){alert("Pas d\u2019email pour ce client");return;}
-  if(!cl.emOk){alert("\u26a0 Ce client a refus\u00e9 les emails (RGPD). Modifiez son consentement dans sa fiche client.");return;}
+  if(!cl||!cl.em){showAlert("Pas d\u2019email pour ce client","info");return;}
+  if(!cl.emOk){showAlert("\u26a0 Ce client a refus\u00e9 les emails (RGPD). Modifiez son consentement dans sa fiche client.","info");return;}
   console.log("[EMAIL] Envoi \u00e0:",cl.em,"Client:",cName(cl),"Ticket:",a.tkNum,"SalonEmail:",SALON_CONFIG.email);
   var btn=document.getElementById("btnSendBrevo");
   if(btn){btn.textContent="\u23f3 Envoi en cours...";btn.style.opacity=".5";btn.onclick=null;}
@@ -23726,20 +23731,20 @@ async function sendTicketByEmail(id){
     var rawText=await res.text();
     console.log("[EMAIL] Response:",rawText);
     var data;
-    try{data=JSON.parse(rawText);}catch(pe){alert("\u274c Erreur serveur (r\u00e9ponse invalide) : "+rawText.slice(0,200));if(btn){btn.textContent="\u2709\ufe0f Envoyer par email au client";btn.style.opacity="1";btn.onclick=function(){sendTicketByEmail(id);};}return;}
+    try{data=JSON.parse(rawText);}catch(pe){showAlert("\u274c Erreur serveur (r\u00e9ponse invalide) : "+rawText.slice(0,200),"error");if(btn){btn.textContent="\u2709\ufe0f Envoyer par email au client";btn.style.opacity="1";btn.onclick=function(){sendTicketByEmail(id);};}return;}
     if(data.success){
       var wasEnc=window._emailFromEnc;
       window._emailFromEnc=false;
       cM();
       if(wasEnc)go("home");
-      alert("\u2705 Email envoy\u00e9 avec succ\u00e8s \u00e0 "+cl.em);
+      showAlert("\u2705 Email envoy\u00e9 avec succ\u00e8s \u00e0 "+cl.em,"success");
     }else{
       console.error("[EMAIL] ECHEC:",JSON.stringify(data));
-      alert("\u274c Erreur: "+(data.error||data.result?.message||data.message||"Erreur inconnue")+"\n\nD\u00e9tail: "+JSON.stringify(data).slice(0,300));
+      showAlert("\u274c Erreur: "+(data.error||data.result?.message||data.message||"Erreur inconnue")+"\n\nD\u00e9tail: "+JSON.stringify(data).slice(0,300),"error");
       if(btn){btn.textContent="\u2709\ufe0f Envoyer par email au client";btn.style.opacity="1";btn.onclick=function(){sendTicketByEmail(id);};}
     }
   }catch(e){
-    alert("\u274c Erreur de connexion: "+e.message);
+    showAlert("\u274c Erreur de connexion: "+e.message,"error");
     if(btn){btn.textContent="\u2709\ufe0f Envoyer par email au client";btn.style.opacity="1";btn.onclick=function(){sendTicketByEmail(id);};}
   }
 }
@@ -24103,7 +24108,7 @@ function doModifReglement(id){
     }
   }
   cM();
-  alert("\u2705 R\u00e8glement modifi\u00e9 : "+met+"\nMotif : "+motif);
+  showAlert("\u2705 R\u00e8glement modifi\u00e9 : "+met+"\nMotif : "+motif,"success");
   go("tickets");
 }
 
@@ -24801,9 +24806,9 @@ async function doSendConfirm(mode,rdvId){
     window._smsSent["em24_"+rdvObj.id]=true;
     try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
   }
-  if(sent.length&&!errors.length)alert("\u2705 Confirmation envoy\u00e9e ("+sent.join(" + ")+")");
-  else if(sent.length&&errors.length)alert("\u2705 "+sent.join(" + ")+" envoy\u00e9(s)\n\u274c "+errors.join("\n"));
-  else alert("\u274c Erreur : "+errors.join("\n"));
+  if(sent.length&&!errors.length)showAlert("\u2705 Confirmation envoy\u00e9e ("+sent.join(" + ")+")","success");
+  else if(sent.length&&errors.length)showAlert("\u2705 "+sent.join(" + ")+" envoy\u00e9(s)\n\u274c "+errors.join("\n"),"success");
+  else showAlert("\u274c Erreur : "+errors.join("\n"),"error");
 }
 async function sendSms(phone,message,context,clientNom){
   if(!isPro()){showUpgradeModal("SMS");return{ok:false,error:"pro_required"};}
@@ -24910,15 +24915,15 @@ async function sendSmsNative(phone,message,context,clientNom){
 }
 // === Change le mode SMS du salon (brevo ou native) ===
 async function setSmsMode(mode){
-  if(mode!=="brevo"&&mode!=="native"){alert("Mode invalide");return;}
+  if(mode!=="brevo"&&mode!=="native"){showAlert("Mode invalide","warning");return;}
   if(mode==="native"&&!window.SMS_NATIVE_DEVICE_ID){
-    alert("Vous devez d'abord lier un t\u00e9l\u00e9phone Android.");
+    showAlert("Vous devez d'abord lier un t\u00e9l\u00e9phone Android.","info");
     return;
   }
   try{
     var res=await _sb.from("salons").update({sms_mode:mode}).eq("id",_salonId);
     if(res.error){
-      alert("Erreur : "+res.error.message);
+      showAlert("Erreur : "+res.error.message,"error");
       return;
     }
     window.SMS_MODE=mode;
@@ -24926,7 +24931,7 @@ async function setSmsMode(mode){
     // Re-render la page settings pour afficher le nouvel \u00e9tat
     if(typeof go==="function")go("settings");
   }catch(e){
-    alert("Erreur r\u00e9seau : "+e.message);
+    showAlert("Erreur r\u00e9seau : "+e.message,"error");
   }
 }
 // === Affiche le modal avec QR code pour lier un t\u00e9l\u00e9phone Android ===
@@ -24971,7 +24976,7 @@ async function showSmsNativeLinkQR(){
     htm+='<div style="margin-top:10px;padding:12px;background:rgba(0,0,0,.3);border:1px solid var(--border2);border-radius:8px">';
     htm+='<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Token \u00e0 copier</div>';
     htm+='<textarea readonly id="linkTokenText" onclick="this.select()" style="width:100%;height:80px;font-family:monospace;font-size:10px;background:#000;color:var(--gold);border:1px solid var(--border2);border-radius:6px;padding:8px;resize:none;word-break:break-all">'+data.signed_token+'</textarea>';
-    htm+='<button class="btn" style="width:100%;margin-top:8px;padding:10px;background:var(--gold);color:#000;font-weight:700;border:none;border-radius:6px;cursor:pointer;font-size:12px" onclick="navigator.clipboard.writeText(document.getElementById(\'linkTokenText\').value).then(function(){alert(\'\u2705 Token copi\u00e9 !\')})">\ud83d\udccb Copier le token</button>';
+    htm+='<button class="btn" style="width:100%;margin-top:8px;padding:10px;background:var(--gold);color:#000;font-weight:700;border:none;border-radius:6px;cursor:pointer;font-size:12px" onclick="navigator.clipboard.writeText(document.getElementById(\'linkTokenText\').value).then(function(){showAlert(\'\u2705 Token copi\u00e9 !\')})">\ud83d\udccb Copier le token</button>';
     htm+='</div></details>';
     htm+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,255,255,.05);color:var(--text3);border:1px solid var(--border2);border-radius:10px;cursor:pointer" onclick="cM();go(\'settings\')">Fermer (je scannerai plus tard)</button>';
     htm+='</div></div>';
@@ -25055,8 +25060,8 @@ function testSms(){
   var phone=prompt("Num\u00e9ro de t\u00e9l\u00e9phone pour le test :");
   if(!phone)return;
   sendSms(phone,"Test SMS Luxyra - "+SALON_CONFIG.nom+" \u2714\ufe0f","test",null).then(function(r){
-    if(r.ok){alert("\u2705 SMS test envoy\u00e9 !");go("marketing");}
-    else alert("\u274c Erreur : "+(r.error||"V\u00e9rifiez votre configuration"));
+    if(r.ok){showAlert("\u2705 SMS test envoy\u00e9 !","success");go("marketing");}
+    else showAlert("Erreur : "+(r.error||"V\u00e9rifiez votre configuration"),"error");
   });
 }
 // Check and send reminders (called periodically)
@@ -25233,8 +25238,8 @@ function testEmail(){
   var email=prompt("Adresse email pour le test :");
   if(!email)return;
   sendEmail(email,"Test Luxyra - "+SALON_CONFIG.nom,"Ceci est un email de test envoy\u00e9 depuis Luxyra.\n\nBien cordialement,\n"+SALON_CONFIG.nom).then(function(r){
-    if(r.ok)alert("\u2705 Email test envoy\u00e9 !");
-    else alert("\u274c Erreur : "+(r.error||"V\u00e9rifiez votre configuration"));
+    if(r.ok)showAlert("\u2705 Email test envoy\u00e9 !","success");
+    else showAlert("Erreur : "+(r.error||"V\u00e9rifiez votre configuration"),"error");
   });
 }
 
@@ -25396,7 +25401,7 @@ function sendCampaignV2(){
   var cfg=window.SMS_CONFIG;
   var hasSms=true;
   var hasEmail=true;
-  if(doSms&&!hasSms&&doEmail&&!hasEmail){alert("\u26a0\ufe0f Configurez au moins un fournisseur (SMS ou Email) dans Marketing > Configuration");return;}
+  if(doSms&&!hasSms&&doEmail&&!hasEmail){showAlert("\u26a0\ufe0f Configurez au moins un fournisseur (SMS ou Email) dans Marketing > Configuration","info");return;}
 
   // === PREFLIGHT CR\u00c9DITS SMS \u2014 emp\u00eache d'envoyer plus que ce qu'on a ===
   // Compte les destinataires SMS \u00e9ligibles, compare avec cr\u00e9dits restants.
@@ -25536,7 +25541,7 @@ function sendCampaign(type){
   if(!clients.length||!msg){cM();return;}
   var cfg=window.SMS_CONFIG;
   if(!cfg){
-    alert("\u26a0\ufe0f Configurez d\u0027abord votre fournisseur SMS dans Param\u00e8tres > SMS et Marketing");
+    showAlert("\u26a0\ufe0f Configurez d\u0027abord votre fournisseur SMS dans Param\u00e8tres > SMS et Marketing","info");
     return;
   }
   // === PREFLIGHT CR\u00c9DITS SMS ===
@@ -25900,13 +25905,13 @@ function clearDoc(type){
 async function uploadDoc(type,input){
   if(!input.files||!input.files[0])return;
   var file=input.files[0];
-  if(file.size>5*1024*1024){alert("Fichier trop volumineux (max 5 Mo)");input.value="";return;}
+  if(file.size>5*1024*1024){showAlert("Fichier trop volumineux (max 5 Mo)","error");input.value="";return;}
   var ext=file.name.split(".").pop().toLowerCase();
-  if(["pdf","jpg","jpeg","png"].indexOf(ext)<0){alert("Format non accept\u00e9. Utilisez PDF, JPG ou PNG.");input.value="";return;}
+  if(["pdf","jpg","jpeg","png"].indexOf(ext)<0){showAlert("Format non accept\u00e9. Utilisez PDF, JPG ou PNG.","info");input.value="";return;}
   try{
     var path="documents/"+window._salonId+"/"+type+"_"+Date.now()+"."+ext;
     var up=await _sb.storage.from("salon-documents").upload(path,file,{contentType:file.type});
-    if(up.error){alert("Erreur upload: "+up.error.message);return;}
+    if(up.error){showAlert("Erreur upload : "+up.error.message,"error");return;}
     var url=_sb.storage.from("salon-documents").getPublicUrl(path);
     var colMap={kbis:"documents_kbis",id:"documents_id",id_verso:"documents_id_verso"};
     var col=colMap[type]||"documents_id";
@@ -25920,9 +25925,9 @@ async function uploadDoc(type,input){
     else if(type==="id")SALON_CONFIG.docId=url.data.publicUrl;
     else if(type==="id_verso")SALON_CONFIG.docIdVerso=url.data.publicUrl;
     if(SALON_CONFIG.docKbis&&SALON_CONFIG.docId)SALON_CONFIG.verif="pending_review";
-    alert("\u2705 Document envoy\u00e9 avec succ\u00e8s !");
+    showAlert("\u2705 Document envoy\u00e9 avec succ\u00e8s !","success");
     go("settings");
-  }catch(e){alert("Erreur: "+e.message);}
+  }catch(e){showAlert("Erreur : "+e.message,"error");}
 }
 async function loadMesFactures(){
   var el=document.getElementById("facturesListApp");if(!el)return;
@@ -26258,13 +26263,13 @@ async function exportFEC(){
   }
   var dateFrom=document.getElementById("fecDateFrom").value;
   var dateTo=document.getElementById("fecDateTo").value;
-  if(!dateFrom||!dateTo){alert("Période obligatoire");return;}
-  if(dateFrom>dateTo){alert("Date de début > date de fin");return;}
+  if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
+  if(dateFrom>dateTo){showAlert("Date de début > date de fin","info");return;}
 
   var siret=(SALON_CONFIG.siret||"").replace(/\s/g,"");
   var siren=siret.slice(0,9);
   if(!siren||siren.length!==9){
-    alert("SIRET non renseigné. Renseignez-le dans Paramètres > Mon salon avant d'exporter le FEC.");
+    showAlert("SIRET non renseigné. Renseignez-le dans Paramètres > Mon salon avant d'exporter le FEC.","info");
     return;
   }
   var tva=Number(SALON_CONFIG.tauxTVA)||20;
@@ -26282,10 +26287,10 @@ async function exportFEC(){
         .order("num");
       if(r.data) ticketsAll=r.data;
     }
-  }catch(e){console.error("FEC fetch:",e); alert("Erreur de chargement des tickets : "+e.message); return;}
+  }catch(e){console.error("FEC fetch:",e); showAlert("Erreur de chargement des tickets : "+e.message,"error"); return;}
 
   var tickets=ticketsAll.filter(function(t){return t.status==="done"||t.status==="cancelled";});
-  if(!tickets.length){alert("Aucun ticket encaissé sur la période sélectionnée.");return;}
+  if(!tickets.length){showAlert("Aucun ticket encaissé sur la période sélectionnée.","info");return;}
 
   // Plan comptable simplifié
   var ACC_VENTE_SVC="707000", ACC_TVA="445710", ACC_CAISSE="530000", ACC_BANQUE="512000", ACC_CARTE_CADEAU="467000";
@@ -26542,7 +26547,7 @@ function initApp(){
         window.SALON.slug=rs.data[0].slug;
       }
     });
-    // Charge les cartes d'abonnement clients depuis la DB (jusqu'ici jamais persistées !)
+    // Charge les cartes d'abonnement clients depuis la DB (jusqu'ici jamais persistées !,"success")nnement clients depuis la DB (jusqu'ici jamais persistées !)
     if(typeof loadCartesAboClients==="function")loadCartesAboClients();
     // Charge la liste des avis pour badge + UI réactive
     if(typeof loadAvisList==="function")loadAvisList().then(function(){
@@ -26629,7 +26634,7 @@ function initApp(){
     window._settTab="connect";
     go("settings");
     setTimeout(function(){
-      alert("\u2705 Configuration des paiements termin\u00e9e ! V\u00e9rifiez le statut ci-dessous.");
+      showAlert("\u2705 Configuration des paiements termin\u00e9e ! V\u00e9rifiez le statut ci-dessous.","success");
     },500);
   }
   // Cancelled subscription: show re-subscribe modal
@@ -27122,7 +27127,7 @@ function refreshCurrentView(){
       await _sb.rpc('escalate_to_human',{p_conv_id:active.id});
       // Re-render ouverture conv
       openThread(active.id);
-    }catch(e){console.error('escalate:',e);alert('Erreur');}
+    }catch(e){console.error('escalate:',e);showAlert('Erreur',"error");}
   }
 
   async function sendMsg(){
@@ -27132,9 +27137,9 @@ function refreshCurrentView(){
     btn.disabled=true;
     try{
       var ins=await _sb.from('support_messages').insert({salon_id:_salonId,conversation_id:S.active.id,sender:'client',message:txt,read_by_admin:false,read_by_client:true}).select().single();
-      if(ins.error){console.error('lxChat insert error:',ins.error);alert('Erreur envoi : '+ins.error.message);}
+      if(ins.error){console.error('lxChat insert error:',ins.error);showAlert('Erreur envoi : '+ins.error.message,"error");}
       else if(ins.data){addBubble(ins.data);inp.value='';}
-    }catch(e){console.error('lxChat sendMsg exception:',e);alert('Erreur envoi : '+(e.message||e));}
+    }catch(e){console.error('lxChat sendMsg exception:',e);showAlert('Erreur envoi : '+(e.message||e),"error");}
     btn.disabled=false;inp.focus();
   }
 
@@ -27146,12 +27151,12 @@ function refreshCurrentView(){
     try{
       var ins=await _sb.from('support_conversations').insert({id:cid,salon_id:_salonId,status:'open',subject:subj.slice(0,120),unread_count_admin:0,unread_count_client:0,last_message_at:new Date().toISOString()}).select().single();
       if(ins.data){await loadConvs();openThread(ins.data.id);}
-    }catch(e){alert('Erreur création : '+e.message);}
+    }catch(e){showAlert('Erreur création : '+e.message,"error");}
   }
 
   async function markResolved(){
     console.log('[lxChat] markResolved clicked, active=',S.active);
-    if(!S.active){alert('Aucune conversation active');return;}
+    if(!S.active){showAlert('Aucune conversation active',"info");return;}
     var active=S.active;
     if(typeof showConfirm==='function'){
       showConfirm('Marquer cette conversation comme résolue ?',function(){_doResolve(active);},null);
@@ -27164,13 +27169,13 @@ function refreshCurrentView(){
       console.log('[lxChat] sending UPDATE for',active.id);
       var up=await _sb.from('support_conversations').update({status:'resolved',resolved_at:new Date().toISOString(),resolved_by:'salon'}).eq('id',active.id).select().single();
       console.log('[lxChat] UPDATE response:',up);
-      if(up.error){console.error('lxChat resolve error:',up.error);alert('Erreur : '+up.error.message);return;}
+      if(up.error){console.error('lxChat resolve error:',up.error);showAlert('Erreur : '+up.error.message,"error");return;}
       var idx=S.convs.findIndex(function(c){return c.id===active.id;});
       if(idx>=0&&up.data)S.convs[idx]=up.data;
       S.active=null;S.tab='resolved';
       renderList();
       loadConvs();
-    }catch(e){console.error('lxChat resolve exception:',e);alert('Erreur : '+(e.message||e));}
+    }catch(e){console.error('lxChat resolve exception:',e);showAlert('Erreur : '+(e.message||e),"error");}
   }
 
   function openPanel(){
