@@ -6392,7 +6392,21 @@ var H={0:null,1:{o:"14:00",c:"18:00"},2:{o:"09:00",c:"18:00"},3:{o:"09:00",c:"18
 // Get effective hours for a date, considering exceptional closings/openings
 function getEffectiveHrs(date,stId){
   var d=new Date(date+'T12:00:00');var dow=d.getDay();
-  var hrs=stId?((gT(stId)||{}).hrs||{})[dow]||H[dow]:H[dow];
+  // FIX : si le collab a des horaires perso (au moins 1 jour configuré),
+  // on ne fallback PAS sur H[dow] pour les autres jours = ses jours non-configurés
+  // sont des jours de repos individuels (cohérent avec LS Coiffure).
+  // Si le collab n'a aucun horaire perso (objet vide), il hérite du salon (mono-collab).
+  var hrs;
+  if(stId){
+    var collab = gT(stId);
+    var collabHrs = collab && collab.hrs;
+    var hasPersonalHrs = collabHrs && typeof collabHrs === 'object' && Object.keys(collabHrs).some(function(k){
+      var v = collabHrs[k]; return v && v.o && v.c;
+    });
+    hrs = hasPersonalHrs ? (collabHrs[dow] || null) : H[dow];
+  } else {
+    hrs = H[dow];
+  }
   if(!window.ABSENCES)return hrs;
   // Check fermeture_except first
   for(var i=0;i<window.ABSENCES.length;i++){
