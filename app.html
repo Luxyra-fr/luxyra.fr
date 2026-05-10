@@ -2874,8 +2874,9 @@ function devisStatusBadge(status){
     "brouillon":{l:"Brouillon",c:"#94a3b8",bg:"rgba(148,163,184,.12)"},
     "envoye":{l:"Envoy\u00e9",c:"#60a5fa",bg:"rgba(96,165,250,.12)"},
     "accepte":{l:"Accept\u00e9",c:"#4ade80",bg:"rgba(74,222,128,.12)"},
+    "planifie":{l:"\ud83d\udcc5 Planifi\u00e9",c:"#fb923c",bg:"rgba(251,146,60,.15)"},
     "refuse":{l:"Refus\u00e9",c:"#f87171",bg:"rgba(248,113,113,.12)"},
-    "converti":{l:"Converti",c:"#d4a843",bg:"rgba(212,168,67,.15)"},
+    "converti":{l:"\u2713 Encaiss\u00e9",c:"#d4a843",bg:"rgba(212,168,67,.15)"},
     "expire":{l:"Expir\u00e9",c:"#a3a3a3",bg:"rgba(163,163,163,.12)"}
   };
   var s=map[status]||map["brouillon"];
@@ -3154,7 +3155,7 @@ function rDevis(){
   for(var i=0;i<window.DEVIS.length;i++){
     var dv=window.DEVIS[i];
     var status=dv.status||"brouillon";
-    var canEncaisse=(status!=="converti"&&status!=="refuse"&&status!=="expire");
+    var canEncaisse=(status!=="converti"&&status!=="refuse"&&status!=="expire"&&status!=="planifie");
     var hasItems=dv.items&&dv.items.length;
     var numStr=dv.num?'N\u00b0 '+String(dv.num).padStart(4,"0"):'';
 
@@ -3226,8 +3227,8 @@ function showDevisMenu(idx,e){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:340px">';
   h+='<div style="font-size:13px;color:var(--text3);margin-bottom:14px">'+(dv.clientName||'Client')+' \u00b7 '+dv.total.toFixed(2)+' \u20ac</div>';
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
-  // Bouton Modifier (seulement si pas converti en RDV \u2014 on ne touche pas l'historique)
-  if(dv.status !== "converti"){
+  // Bouton Modifier (seulement si pas planifi\u00e9/converti \u2014 on ne touche pas un devis li\u00e9 \u00e0 un RDV/encaissement)
+  if(dv.status !== "converti" && dv.status !== "planifie"){
     h+='<button onclick="cM();editDevis('+idx+')" style="padding:12px;border:1px solid rgba(212,168,67,.4);border-radius:10px;background:rgba(212,168,67,.08);color:var(--gold);font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left">';
     h+='<span style="font-size:18px">\u270f\ufe0f</span><span>Modifier le devis</span></button>';
   }
@@ -3361,7 +3362,8 @@ function lxRefreshDispos(){
 function editDevis(idx){
   var dv = window.DEVIS && window.DEVIS[idx];
   if(!dv){ if(typeof toast==="function") toast("Devis introuvable","error"); return; }
-  if(dv.status === "converti"){ if(typeof toast==="function") toast("Un devis converti en RDV ne peut plus être modifié","warning"); return; }
+  if(dv.status === "converti"){ if(typeof toast==="function") toast("Un devis encaissé ne peut plus être modifié","warning"); return; }
+  if(dv.status === "planifie"){ if(typeof toast==="function") toast("Devis planifié — modifiez le RDV directement dans le planning","warning"); return; }
   window._devisDraft = {
     cId: dv.cId || "",
     items: (dv.items||[]).map(function(it){return {name:it.name, price:it.price, qty:it.qty||1, sId:it.sId||null};}),
@@ -3712,11 +3714,13 @@ async function doConvertDevisToRdv(idx){
   }
   AP.push(newAppt);
   if(typeof saveAppointment==="function") await saveAppointment(newAppt);
-  // Marquer le devis comme converti
-  dv.status = "converti";
-  if(dv.dbId && typeof updateDevisStatus==="function") updateDevisStatus(dv.dbId, "converti");
+  // Marquer le devis comme PLANIFIÉ (un RDV existe, mais pas encore encaissé).
+  // Il passera à "converti" automatiquement après encaissement effectif (via cleanupPendingFromTk
+  // côté caisse qui lit _fromDevisId du ticket et update updateDevisStatus(...,"converti")).
+  dv.status = "planifie";
+  if(dv.dbId && typeof updateDevisStatus==="function") updateDevisStatus(dv.dbId, "planifie");
   cM();
-  if(typeof toast==="function") toast("✓ RDV créé le "+date+" à "+time, "success");
+  if(typeof toast==="function") toast("✓ RDV créé le "+date+" à "+time+" — devis marqué planifié", "success");
   // Naviguer sur le planning du jour du RDV
   try{ window.calD = new Date(date+"T12:00:00"); window._planDays = 1; }catch(_){}
   if(typeof go==="function") go("planning");
