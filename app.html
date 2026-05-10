@@ -893,52 +893,56 @@ function lxRenderEmpreinteWidget(ro){
 }
 window.lxRenderEmpreinteWidget=lxRenderEmpreinteWidget;
 
-async function lxEmpreinteCapture(rdvId){
-  if(!confirm("⚠️ Capturer l\'empreinte bancaire ?\n\nLe client sera débité du montant pré-autorisé. À utiliser uniquement en cas de no-show non excusable."))return;
-  try{
-    var token=localStorage.getItem("supabase.auth.token")||"";
-    if(typeof _sb!=="undefined"&&_sb){
-      var sess=await _sb.auth.getSession();
-      token=sess.data?.session?.access_token||token;
-    }
-    var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-capture",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
-      body:JSON.stringify({rdv_id:rdvId,reason:"no_show"})
-    });
-    var data=await r.json();
-    if(!r.ok){toast(data.error||"Échec capture","error");return;}
-    toast("💸 Empreinte capturée — "+(data.amount_captured?data.amount_captured.toFixed(2)+" €":""),"success");
-    // Sync local
-    if(window.RDV_ONLINE){
-      for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="captured";RDV_ONLINE[i].empreinteCapturedAt=new Date().toISOString();break;}
-    }
-    if(typeof go==="function")go("planning");
-  }catch(e){toast("Erreur réseau : "+e.message,"error");}
+function lxEmpreinteCapture(rdvId){
+  // Action financière sensible : showConfirm avec bouton "Confirmer" (rouge danger)
+  showConfirm("⚠️ Capturer l'empreinte bancaire ?\n\nLe client sera débité du montant pré-autorisé. À utiliser uniquement en cas de no-show non excusable.", async function(){
+    try{
+      var token=localStorage.getItem("supabase.auth.token")||"";
+      if(typeof _sb!=="undefined"&&_sb){
+        var sess=await _sb.auth.getSession();
+        token=sess.data?.session?.access_token||token;
+      }
+      var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-capture",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+        body:JSON.stringify({rdv_id:rdvId,reason:"no_show"})
+      });
+      var data=await r.json();
+      if(!r.ok){toast(data.error||"Échec capture","error");return;}
+      toast("💸 Empreinte capturée — "+(data.amount_captured?data.amount_captured.toFixed(2)+" €":""),"success");
+      // Sync local
+      if(window.RDV_ONLINE){
+        for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="captured";RDV_ONLINE[i].empreinteCapturedAt=new Date().toISOString();break;}
+      }
+      if(typeof go==="function")go("planning");
+    }catch(e){toast("Erreur réseau : "+e.message,"error");}
+  });
 }
 window.lxEmpreinteCapture=lxEmpreinteCapture;
 
-async function lxEmpreinteRelease(rdvId){
-  if(!confirm("Libérer l\'empreinte bancaire ?\n\nLes fonds seront immédiatement libérés sur la carte du client. À utiliser quand le RDV est honoré."))return;
-  try{
-    var token="";
-    if(typeof _sb!=="undefined"&&_sb){
-      var sess=await _sb.auth.getSession();
-      token=sess.data?.session?.access_token||"";
-    }
-    var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-release",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
-      body:JSON.stringify({rdv_id:rdvId,reason:"rdv_honore"})
-    });
-    var data=await r.json();
-    if(!r.ok){toast(data.error||"Échec release","error");return;}
-    toast("✓ Empreinte libérée","success");
-    if(window.RDV_ONLINE){
-      for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="released";RDV_ONLINE[i].empreinteReleasedAt=new Date().toISOString();break;}
-    }
-    if(typeof go==="function")go("planning");
-  }catch(e){toast("Erreur réseau : "+e.message,"error");}
+function lxEmpreinteRelease(rdvId){
+  // Action financière : showConfirm avec bouton "Confirmer"
+  showConfirm("Libérer l'empreinte bancaire ?\n\nLes fonds seront immédiatement libérés sur la carte du client. À utiliser quand le RDV est honoré.", async function(){
+    try{
+      var token="";
+      if(typeof _sb!=="undefined"&&_sb){
+        var sess=await _sb.auth.getSession();
+        token=sess.data?.session?.access_token||"";
+      }
+      var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-release",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+        body:JSON.stringify({rdv_id:rdvId,reason:"rdv_honore"})
+      });
+      var data=await r.json();
+      if(!r.ok){toast(data.error||"Échec release","error");return;}
+      toast("✓ Empreinte libérée","success");
+      if(window.RDV_ONLINE){
+        for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="released";RDV_ONLINE[i].empreinteReleasedAt=new Date().toISOString();break;}
+      }
+      if(typeof go==="function")go("planning");
+    }catch(e){toast("Erreur réseau : "+e.message,"error");}
+  });
 }
 window.lxEmpreinteRelease=lxEmpreinteRelease;
 
@@ -3208,15 +3212,16 @@ async function submitReply(avisId){
   closeReplyModal();
   if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
 }
-async function deleteReply(avisId){
-  if(!confirm("Supprimer votre réponse publique ?")) return;
-  var sb=window._sb||window.sb;if(!sb)return;
-  var r=await sb.from("avis_salon").update({salon_reply:null, salon_reply_at:null}).eq("id", avisId);
-  if(r.error){alert(r.error.message);return;}
-  var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
-  if(local){local.salon_reply=null;local.salon_reply_at=null;}
-  closeReplyModal();
-  if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+function deleteReply(avisId){
+  showConfirm("Supprimer votre réponse publique ?", async function(){
+    var sb=window._sb||window.sb;if(!sb)return;
+    var r=await sb.from("avis_salon").update({salon_reply:null, salon_reply_at:null}).eq("id", avisId);
+    if(r.error){showAlert(r.error.message,"error");return;}
+    var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+    if(local){local.salon_reply=null;local.salon_reply_at=null;}
+    closeReplyModal();
+    if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+  });
 }
 
 // ----- Modal "Signaler à Luxyra" -----
@@ -3266,17 +3271,18 @@ async function submitFlag(avisId){
   var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
   if(local){local.flag_reason=fullReason;local.flagged_at=new Date().toISOString();}
   closeFlagModal();
-  alert("Signalement envoyé à Luxyra. Notre équipe examine cet avis sous 48h.");
+  showAlert("Signalement envoyé à Luxyra. Notre équipe examine cet avis sous 48h.","success");
   if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
 }
-async function cancelFlag(avisId){
-  if(!confirm("Annuler le signalement de cet avis ?")) return;
-  var sb=window._sb||window.sb;if(!sb)return;
-  var r=await sb.from("avis_salon").update({flag_reason:null, flagged_at:null}).eq("id", avisId);
-  if(r.error){alert(r.error.message);return;}
-  var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
-  if(local){local.flag_reason=null;local.flagged_at=null;}
-  if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+function cancelFlag(avisId){
+  showConfirm("Annuler le signalement de cet avis ?", async function(){
+    var sb=window._sb||window.sb;if(!sb)return;
+    var r=await sb.from("avis_salon").update({flag_reason:null, flagged_at:null}).eq("id", avisId);
+    if(r.error){showAlert(r.error.message,"error");return;}
+    var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
+    if(local){local.flag_reason=null;local.flagged_at=null;}
+    if(window._currentPage==="avis") document.getElementById("app").innerHTML='<div class="app-content">'+rAvis()+'</div>';
+  });
 }
 
 // Filtre actif des onglets devis (actifs / planifies / encaisses / autres / tous)
@@ -6378,22 +6384,23 @@ function clientPhotoSrcAsync(photo, imgId){
 window.clientPhotoSrcAsync = clientPhotoSrcAsync;
 
 // Suppression d'une photo client (DB + bucket Storage si nouveau format)
-async function delClientPhoto(cId, photoIdx){
+function delClientPhoto(cId, photoIdx){
   var cl=gC(cId);if(!cl||!cl.photos||!cl.photos[photoIdx])return;
-  if(!confirm("Supprimer cette photo ?")) return;
-  var photo=cl.photos[photoIdx];
-  // Si nouveau format (path bucket) : delete depuis le bucket aussi
-  if(photo.path){
-    try { await _sb.storage.from("client-photos").remove([photo.path]); }
-    catch(e){ console.warn("[delClientPhoto] bucket remove failed:",e); }
-    if(window._photoSignedUrlCache && window._photoSignedUrlCache[photo.path]){
-      delete window._photoSignedUrlCache[photo.path];
+  showConfirm("Supprimer cette photo ?", async function(){
+    var photo=cl.photos[photoIdx];
+    // Si nouveau format (path bucket) : delete depuis le bucket aussi
+    if(photo.path){
+      try { await _sb.storage.from("client-photos").remove([photo.path]); }
+      catch(e){ console.warn("[delClientPhoto] bucket remove failed:",e); }
+      if(window._photoSignedUrlCache && window._photoSignedUrlCache[photo.path]){
+        delete window._photoSignedUrlCache[photo.path];
+      }
     }
-  }
-  // Retire de l'array et persist
-  cl.photos.splice(photoIdx,1);
-  if(typeof saveClient==="function") await saveClient(cl);
-  go("detail");
+    // Retire de l'array et persist
+    cl.photos.splice(photoIdx,1);
+    if(typeof saveClient==="function") await saveClient(cl);
+    go("detail");
+  });
 }
 window.delClientPhoto = delClientPhoto;
 
@@ -8003,16 +8010,17 @@ async function sendDemandeProposal(demandeId){
   }
 }
 
-async function cancelDemandeProposal(demandeId){
-  if(!confirm("Annuler cette proposition ? La cliente ne pourra plus la payer.")) return;
-  try{
-    var r = await _sb.from("rdv_demandes").update({ status: "cancelled_by_salon" }).eq("id", demandeId);
-    if(r.error){ alert("Erreur : "+r.error.message); return; }
-    if(typeof toast==="function") toast("Proposition annulée", "info");
-    cM();
-    await loadRdvDemandes();
-    if(window._currentPage==="home") document.getElementById("app").innerHTML = rHome();
-  } catch(e){ alert("Erreur : "+e.message); }
+function cancelDemandeProposal(demandeId){
+  showConfirm("Annuler cette proposition ? La cliente ne pourra plus la payer.", async function(){
+    try{
+      var r = await _sb.from("rdv_demandes").update({ status: "cancelled_by_salon" }).eq("id", demandeId);
+      if(r.error){ showAlert("Erreur : "+r.error.message,"error"); return; }
+      if(typeof toast==="function") toast("Proposition annulée", "info");
+      cM();
+      await loadRdvDemandes();
+      if(window._currentPage==="home") document.getElementById("app").innerHTML = rHome();
+    } catch(e){ showAlert("Erreur : "+e.message,"error"); }
+  });
 }
 
 // Globals utilisés pour les fetch d'edge functions (déjà dispos via luxyra-supabase.js)
@@ -9818,34 +9826,33 @@ async function updApptPhaseCollab(id,idx,stId){
   var phEnd=phStart+ph[idx].d;
   // Warn if collaborator has a conflict, but don't block (salon owner decides)
   var blocked=isStylistBlockedDuring(stId,a.date,phStart,phEnd);
+  // Helper local : assignation effective (factorisée pour les 2 branches : conflit/no-conflit)
+  var _doAssign = async function(){
+    ph[idx].stId=stId;
+    if(idx===0||(ph[idx].t==="w"&&!ph.slice(0,idx).some(function(p){return p.t==="w";}))){
+      for(var _fi=0;_fi<ph.length;_fi++){
+        if(_fi!==idx&&ph[_fi].t==="w"&&!ph[_fi].stId){
+          ph[_fi].stId=a.stId;
+        }
+      }
+      a.stId=stId;
+    }
+    if(typeof saveAppointment==="function") await saveAppointment(a);
+    requestAnimationFrame(function(){
+      go("planning");
+      setTimeout(function(){clickAppt(id);},200);
+    });
+  };
   if(blocked){
     var blockedName=gT(stId)?gT(stId).n:"Ce collaborateur";
     var phStartH=String(Math.floor(phStart/60)).padStart(2,"0")+":"+String(phStart%60).padStart(2,"0");
     var phEndH=String(Math.floor(phEnd/60)).padStart(2,"0")+":"+String(phEnd%60).padStart(2,"0");
-    if(!confirm(blockedName+" est normalement indisponible de "+phStartH+" à "+phEndH+" ("+( blocked.label||"Indisponible")+").\n\nAssigner quand même ?")){
-      go("planning");setTimeout(function(){clickAppt(id);},150);return;
-    }
+    showConfirm(blockedName+" est normalement indisponible de "+phStartH+" à "+phEndH+" ("+( blocked.label||"Indisponible")+").\n\nAssigner quand même ?", _doAssign, function(){
+      go("planning");setTimeout(function(){clickAppt(id);},150);
+    });
+    return;
   }
-  ph[idx].stId=stId;
-  // If it's the first work phase, also update main stId (determines column)
-  if(idx===0||(ph[idx].t==="w"&&!ph.slice(0,idx).some(function(p){return p.t==="w";}))){
-    // Before changing main stId, lock all other phases to their current collab
-    // so they don't inherit the new main stId via fallback
-    for(var _fi=0;_fi<ph.length;_fi++){
-      if(_fi!==idx&&ph[_fi].t==="w"&&!ph[_fi].stId){
-        ph[_fi].stId=a.stId; // lock to current main collab before it changes
-      }
-    }
-    a.stId=stId;
-  }
-  // AWAIT save so Realtime doesn't overwrite with old data
-  if(typeof saveAppointment==="function") await saveAppointment(a);
-  // Re-render planning so the block moves to the correct collab column
-  // Use requestAnimationFrame to ensure save is flushed before re-render
-  requestAnimationFrame(function(){
-    go("planning");
-    setTimeout(function(){clickAppt(id);},200);
-  });
+  _doAssign();
 }
 function updApptComment(id,val){
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){AP[i].comment=val;if(typeof saveAppointment==="function")saveAppointment(AP[i]);break;}}
@@ -9869,38 +9876,40 @@ async function movePhaseDown(id, idx){
   if(typeof saveAppointment==="function") await saveAppointment(a);
   requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
 }
-async function removeAddon(id, phIdx, addonIdx){
+function removeAddon(id, phIdx, addonIdx){
   var a=_findAppt(id); if(!a||a.st==="done") return;
   var ph=getApptPhases(a);
   if(!ph[phIdx]||!ph[phIdx].addons||!ph[phIdx].addons[addonIdx]) return;
   var ad=ph[phIdx].addons[addonIdx];
-  if(!confirm("Retirer « "+ad.name+" » de cette phase ?")) return;
-  // Retirer la durée additionnelle de la phase parente
-  if(ad.addedDur>0){
-    ph[phIdx].d=Math.max(5,(Number(ph[phIdx].d)||0)-Number(ad.addedDur));
-  }
-  // Retirer aussi de items (si présent)
-  if(a.items){
-    for(var i=a.items.length-1;i>=0;i--){
-      if(a.items[i].sId===ad.sId && a.items[i].duringPhase===phIdx){
-        if(typeof a.pr==="number") a.pr-=Number(a.items[i].price)||0;
-        a.items.splice(i,1);
-        break;
+  showConfirm("Retirer « "+ad.name+" » de cette phase ?", async function(){
+    // Retirer la durée additionnelle de la phase parente
+    if(ad.addedDur>0){
+      ph[phIdx].d=Math.max(5,(Number(ph[phIdx].d)||0)-Number(ad.addedDur));
+    }
+    // Retirer aussi de items (si présent)
+    if(a.items){
+      for(var i=a.items.length-1;i>=0;i--){
+        if(a.items[i].sId===ad.sId && a.items[i].duringPhase===phIdx){
+          if(typeof a.pr==="number") a.pr-=Number(a.items[i].price)||0;
+          a.items.splice(i,1);
+          break;
+        }
       }
     }
-  }
-  ph[phIdx].addons.splice(addonIdx,1);
-  if(typeof saveAppointment==="function") await saveAppointment(a);
-  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+    ph[phIdx].addons.splice(addonIdx,1);
+    if(typeof saveAppointment==="function") await saveAppointment(a);
+    requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+  });
 }
-async function removePhase(id, idx){
+function removePhase(id, idx){
   var a=_findAppt(id); if(!a||a.st==="done") return;
   var ph=getApptPhases(a);
-  if(ph.length<=1){ alert("Impossible de supprimer la seule phase du RDV. Annulez plutôt le RDV."); return; }
-  if(!confirm("Supprimer cette phase du RDV ?")) return;
-  ph.splice(idx,1);
-  if(typeof saveAppointment==="function") await saveAppointment(a);
-  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+  if(ph.length<=1){ showAlert("Impossible de supprimer la seule phase du RDV. Annulez plutôt le RDV.","warning"); return; }
+  showConfirm("Supprimer cette phase du RDV ?", async function(){
+    ph.splice(idx,1);
+    if(typeof saveAppointment==="function") await saveAppointment(a);
+    requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
+  });
 }
 
 // Modal "Ajouter une prestation à un RDV"
@@ -12392,9 +12401,9 @@ function lxConfirmDelPhoto(cId, idx){
       if(typeof delClientPhoto==="function") delClientPhoto(cId, idx);
     });
   } else {
-    if(confirm("Supprimer cette photo ?")){
+    showConfirm("Supprimer cette photo ?", function(){
       if(typeof delClientPhoto==="function") delClientPhoto(cId, idx);
-    }
+    });
   }
 }
 window.lxConfirmDelPhoto=lxConfirmDelPhoto;
@@ -20587,8 +20596,16 @@ async function inviteClient(cId){
   if(!c){if(typeof toast==="function")toast("Client introuvable","warning");return;}
   if(!c.em){if(typeof toast==="function")toast("Pas d'email enregistré pour ce client","warning");return;}
   if(!c.emOk){
-    if(!confirm("Ce client n'a pas accepté les emails (RGPD). Envoyer quand même l'invitation ?")) return;
+    // Le client n'a pas opt-in email → on demande confirmation avant d'enfreindre
+    // sa préférence RGPD. On wrap le reste dans le callback showConfirm.
+    showConfirm("Ce client n'a pas accepté les emails (RGPD). Envoyer quand même l'invitation ?", function(){
+      _inviteClientSend(c);
+    });
+    return;
   }
+  _inviteClientSend(c);
+}
+async function _inviteClientSend(c){
   try {
     if(typeof toast==="function")toast("Envoi de l'invitation…","info");
     var resp = await fetch("/api/client/invite", {
@@ -24998,23 +25015,24 @@ async function showSmsNativeLinkQR(){
   }
 }
 // === D\u00e9lier un t\u00e9l\u00e9phone Android ===
-async function unlinkSmsDevice(){
-  if(!confirm("D\u00e9lier votre t\u00e9l\u00e9phone Android ?\n\nLes SMS basculeront automatiquement en mode Brevo. Vous pourrez relier un autre t\u00e9l\u00e9phone quand vous voudrez."))return;
-  try{
-    var res=await _sb.from("salons").update({
-      sms_native_device_id:null,
-      sms_native_linked_at:null,
-      sms_mode:"brevo"
-    }).eq("id",_salonId);
-    if(res.error){alert("Erreur : "+res.error.message);return;}
-    window.SMS_NATIVE_DEVICE_ID=null;
-    window.SMS_MODE="brevo";
-    auditLog("SMS_DEVICE_UNLINKED","Mode revenu \u00e0 Brevo");
-    alert("\u2705 T\u00e9l\u00e9phone d\u00e9li\u00e9. Mode SMS : Brevo.");
-    if(typeof go==="function")go("settings");
-  }catch(e){
-    alert("Erreur r\u00e9seau : "+e.message);
-  }
+function unlinkSmsDevice(){
+  showConfirm("D\u00e9lier votre t\u00e9l\u00e9phone Android ?\n\nLes SMS basculeront automatiquement en mode Brevo. Vous pourrez relier un autre t\u00e9l\u00e9phone quand vous voudrez.", async function(){
+    try{
+      var res=await _sb.from("salons").update({
+        sms_native_device_id:null,
+        sms_native_linked_at:null,
+        sms_mode:"brevo"
+      }).eq("id",_salonId);
+      if(res.error){showAlert("Erreur : "+res.error.message,"error");return;}
+      window.SMS_NATIVE_DEVICE_ID=null;
+      window.SMS_MODE="brevo";
+      auditLog("SMS_DEVICE_UNLINKED","Mode revenu \u00e0 Brevo");
+      showAlert("T\u00e9l\u00e9phone d\u00e9li\u00e9. Mode SMS : Brevo.","success");
+      if(typeof go==="function")go("settings");
+    }catch(e){
+      showAlert("Erreur r\u00e9seau : "+e.message,"error");
+    }
+  });
 }
 async function sendEmailViaWorker(to,toName,subject,htmlContent){
   try{
@@ -25861,21 +25879,22 @@ function cloturerJournee(){
   if(typeof lockTicketsForCloture==="function") lockTicketsForCloture(c);
   auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
 }
-async function clearDoc(type){
-  if(!confirm("Supprimer ce document et en envoyer un nouveau ?"))return;
-  var colMap={kbis:"documents_kbis",id:"documents_id",id_verso:"documents_id_verso"};
-  var col=colMap[type];if(!col)return;
-  var update={};update[col]=null;
-  // If clearing a required doc, reset verification
-  if(type==="kbis"||type==="id"){update.verification_status="pending";}
-  try{
-    await _sb.from("salons").update(update).eq("id",window._salonId);
-    if(type==="kbis")SALON_CONFIG.docKbis="";
-    else if(type==="id")SALON_CONFIG.docId="";
-    else if(type==="id_verso")SALON_CONFIG.docIdVerso="";
-    if(type!=="id_verso")SALON_CONFIG.verif="pending";
-    go("settings");
-  }catch(e){alert("Erreur: "+e.message);}
+function clearDoc(type){
+  showConfirm("Supprimer ce document et en envoyer un nouveau ?", async function(){
+    var colMap={kbis:"documents_kbis",id:"documents_id",id_verso:"documents_id_verso"};
+    var col=colMap[type];if(!col)return;
+    var update={};update[col]=null;
+    // If clearing a required doc, reset verification
+    if(type==="kbis"||type==="id"){update.verification_status="pending";}
+    try{
+      await _sb.from("salons").update(update).eq("id",window._salonId);
+      if(type==="kbis")SALON_CONFIG.docKbis="";
+      else if(type==="id")SALON_CONFIG.docId="";
+      else if(type==="id_verso")SALON_CONFIG.docIdVerso="";
+      if(type!=="id_verso")SALON_CONFIG.verif="pending";
+      go("settings");
+    }catch(e){showAlert("Erreur: "+e.message,"error");}
+  });
 }
 
 async function uploadDoc(type,input){
