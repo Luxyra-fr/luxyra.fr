@@ -2046,6 +2046,33 @@ async function runRetentionPurgeJob(env) {
     stats.errors++;
   }
 
+  // === PHASE 3 — PURGE DEVIS > 10 ANS ===
+  // Code de commerce art L123-22 : conservation min 10 ans des documents
+  // commerciaux (devis, bons de commande...). Au-delà : purge auto pour
+  // ne pas accumuler indéfiniment et plomber la DB des salons actifs.
+  // Pas de préavis nécessaire (pas une obligation NF525/fiscale, juste UX).
+  try {
+    const tenYears = (() => { const d = new Date(now); d.setFullYear(d.getFullYear() - 10); return d.toISOString(); })();
+    const delDevisRes = await fetch(
+      `${CONFIG.SUPABASE_URL}/rest/v1/devis?created_at=lte.${encodeURIComponent(tenYears)}`,
+      { method: "DELETE", headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, Prefer: "return=representation" } }
+    );
+    if (delDevisRes.ok) {
+      const deleted = await delDevisRes.json().catch(() => []);
+      stats.devisPurged = Array.isArray(deleted) ? deleted.length : 0;
+      if (stats.devisPurged > 0) {
+        console.log(`[retention] phase 3 (devis 10 ans) : ${stats.devisPurged} devis purgés`);
+        stats.details.push({ phase: "devis_purged_10y", count: stats.devisPurged });
+      }
+    } else {
+      console.warn(`[retention] phase 3 (devis) failed: ${delDevisRes.status}`);
+      stats.errors++;
+    }
+  } catch (e) {
+    console.error("[retention] phase 3 (devis) exception:", e?.message || e);
+    stats.errors++;
+  }
+
   return stats;
 }
 
