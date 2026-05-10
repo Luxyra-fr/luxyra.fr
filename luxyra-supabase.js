@@ -665,6 +665,7 @@ async function loadSalonData() {
                  hrs: c.horaires || {}, pause: c.pause || null,
                  dateEntree: c.date_entree || null, dateDepart: c.date_depart || null,
                  inactif: c.inactif === true,
+                 photoVisible: c.photo_visible !== false,
                  competences: c.competences || {all:true} };
       });
     }
@@ -2075,6 +2076,7 @@ async function saveCollaborateurs() {
       date_entree: c.dateEntree || null,
       date_depart: c.dateDepart || null,
       inactif: c.inactif === true,
+      photo_visible: c.photoVisible !== false,
       competences: c.competences || {all:true}
     };
     if (c.id && dbIds[c.id]) {
