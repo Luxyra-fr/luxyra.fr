@@ -296,13 +296,15 @@ async function doLogout() {
 }
 
 // Check session on load
-// Vérifie aussi un timestamp d'inactivité salon : si > 30 min depuis la
+// Vérifie aussi un timestamp d'inactivité salon : si > 4h depuis la
 // dernière interaction réelle (PC arrêté, app fermée), on signOut et on
 // redemande le login, peu importe que le JWT Supabase soit encore valide.
-// Threshold 30 min = compromis : assez court pour qu'un PC fermé en fin de
-// journée demande un login le lendemain matin, assez long pour ne pas
-// emmerder un opérateur qui ferme l'onglet 10 min pour vérifier un truc.
-var SALON_SESSION_INACTIVITY_MS = 30 * 60 * 1000;
+// Threshold 4h = compromis :
+// - Couvre une pause déjeuner ou un créneau sans clients sans déranger.
+// - Un PC fermé en fin de journée (>4h) déclenche bien un re-login le
+//   lendemain matin.
+// La sécurité opérateur reste assurée par le re-PIN à 5 min d'inactivité.
+var SALON_SESSION_INACTIVITY_MS = 4 * 60 * 60 * 1000;
 async function checkSession() {
   if (!_sb) { startOffline(); return; }
   try{
