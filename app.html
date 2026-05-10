@@ -2747,7 +2747,10 @@ function showCaisseDD(e){
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
   h+='<button onclick="cM();go(\'tickets\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83c\udfab</span><span style="flex:1;text-align:left">Gestion des tickets</span></button>';
   h+='<button onclick="cM();go(\'gifts\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83c\udf81</span><span style="flex:1;text-align:left">Bons cadeaux</span></button>';
-  h+='<button onclick="cM();go(\'caisseGestion\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb0</span><span style="flex:1;text-align:left">Gestion de la caisse</span></button>';
+  // Mode caisse simplifi\u00e9e : on cache "Gestion de la caisse" (fond, coffre, entr\u00e9es/sorties)
+  if(!(window.SITE_CONFIG && window.SITE_CONFIG.gestionCaisseSimple===true)){
+    h+='<button onclick="cM();go(\'caisseGestion\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb0</span><span style="flex:1;text-align:left">Gestion de la caisse</span></button>';
+  }
   h+='<button onclick="cM();go(\'accounting\')" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcca</span><span style="flex:1;text-align:left">Journal / Bande Z</span></button>';
   h+='</div>';
   h+='<button onclick="cM()" style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer">Fermer</button>';
@@ -5464,6 +5467,14 @@ function addCollab(){
 }
 function drawTimeLine(){document.querySelectorAll('.pg-now-line').forEach(function(el){el.remove();});var now=new Date();var nowM=now.getHours()*60+now.getMinutes();if(dS(calD)!==TD)return;var wrap=document.querySelector('.pg-wrap');if(!wrap)return;var slots=wrap.querySelectorAll('.pg-slots');var tslots=wrap.querySelectorAll('.pg-tslot');if(!tslots.length||!slots.length)return;var firstHr=null;tslots.forEach(function(ts){if(!firstHr&&ts.textContent.indexOf('h')>=0)firstHr=parseInt(ts.textContent);});if(firstHr===null)return;var topPx=((nowM-firstHr*60)/SLOT)*SLOT_H;if(topPx<0||topPx>slots[0].offsetHeight)return;slots.forEach(function(sl){var l=document.createElement('div');l.className='pg-now-line';l.style.top=topPx+'px';sl.appendChild(l);});}
 function clearStyImg(idx){T[idx].img="";if(typeof saveCollaborateurs==="function")saveCollaborateurs();go("settings");}
+// Toggle mode caisse simplifiée (auto-entrepreneur)
+function lxToggleCaisseSimple(enabled){
+  if(!window.SITE_CONFIG) window.SITE_CONFIG={};
+  window.SITE_CONFIG.gestionCaisseSimple = enabled === true;
+  if(typeof saveSiteConfig==="function") saveSiteConfig();
+  if(typeof toast==="function") toast(enabled ? "⚡ Mode caisse simplifiée activé" : "💰 Mode caisse complet réactivé", "info");
+  go("settings");
+}
 // Toggle RGPD : photo visible publiquement sur le site ou non
 function lxToggleCollabPhotoVisible(idx, visible){
   if(!T[idx]) return;
@@ -9932,6 +9943,7 @@ function saveSiteConfig(){
       empreinte_montant:Number(SC.empreinteMontant)||30,
       empreinte_capture_delai_h:Number(SC.empreinteCaptureDelaiH)||24,
       photos_visible_client:SC.photosVisibleClient===true,
+      gestion_caisse_simple:SC.gestionCaisseSimple===true,
       confirmation_auto:SC.confirmAuto,
       services_en_ligne:SC.servicesEnLigne,
       produits_en_ligne:SC.produitsEnLigne,
@@ -9980,6 +9992,7 @@ function loadSiteConfig(){
           empreinteMontant:Number(d.empreinte_montant)||30,
           empreinteCaptureDelaiH:Number(d.empreinte_capture_delai_h)||24,
           photosVisibleClient:d.photos_visible_client===true,
+          gestionCaisseSimple:d.gestion_caisse_simple===true,
           confirmAuto:d.confirmation_auto,servicesEnLigne:d.services_en_ligne||[],produitsEnLigne:d.produits_en_ligne||[],
           msgAccueil:d.message_accueil||"",msgConfirmation:d.message_confirmation||"",
           couleur:d.couleur_primaire||"var(--gold)",couleur2:d.couleur_secondaire||"#0a0a0a",
@@ -11382,8 +11395,17 @@ function rSettings(){
       h+='</label>';
     });
     h+='</div></div>';
-    // Fond de caisse + TVA \u2014 flex column avec spacer pour aligner les boutons en bas
-    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">';
+    // === Mode caisse simplifi\u00e9e (auto-entrepreneur) ===
+    var _gcs = (window.SITE_CONFIG && window.SITE_CONFIG.gestionCaisseSimple===true);
+    h+='<div class="card" style="margin-top:10px;background:'+(_gcs?'rgba(232,200,115,.06)':'rgba(255,255,255,.02)')+';border:1px solid '+(_gcs?'rgba(232,200,115,.3)':'rgba(255,255,255,.08)')+'">';
+    h+='<label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:4px 0">';
+    h+='<input type="checkbox" '+(_gcs?'checked':'')+' style="width:20px;height:20px;cursor:pointer;accent-color:#e8c873;flex-shrink:0;margin-top:2px" onchange="lxToggleCaisseSimple(this.checked)">';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:14px;color:'+(_gcs?'#e8c873':'#fff')+';margin-bottom:2px">'+(_gcs?'\u26a1 Mode caisse simplifi\u00e9e activ\u00e9':'Mode caisse simplifi\u00e9e (auto-entrepreneur)')+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3);line-height:1.5">Pas de fond de caisse, pas d\'\u00e9cran d\'ouverture quotidienne, pas de gestion des entr\u00e9es/sorties d\'esp\u00e8ces. Id\u00e9al pour freelance / auto-entrepreneur qui encaisse sans manipuler de coffre.<br><strong style="color:var(--text2)">Les tickets restent NF525 (conformit\u00e9 fiscale pr\u00e9serv\u00e9e).</strong></div>';
+    h+='</div></label></div>';
+    // Fond de caisse + TVA \u2014 fond cach\u00e9 en mode caisse simplifi\u00e9e (TVA reste seule)
+    h+='<div style="display:grid;grid-template-columns:'+(_gcs?'1fr':'1fr 1fr')+';gap:10px;margin-top:10px">';
+    if(!_gcs){
     h+='<div class="card" style="margin-bottom:0;display:flex;flex-direction:column"><div class="ct">Fond de caisse</div>';
     h+='<div style="display:flex;gap:6px;align-items:center">';
     h+='<input type="number" id="fondCaisseInput" value="'+(window.CAISSE_DATA?window.CAISSE_DATA.fond:200)+'" min="0" step="10" style="flex:1;text-align:center;font-size:16px;font-weight:800;padding:10px">';
@@ -11391,6 +11413,7 @@ function rSettings(){
     h+='<div style="flex:1"></div>'; // spacer pour pousser le bouton en bas
     h+='<button class="btn bg" style="width:100%;margin-top:8px;padding:10px;font-weight:700;font-size:12px" onclick="saveFondCaisse()">Valider</button>';
     h+='</div>';
+    }
     h+='<div class="card" style="margin-bottom:0;display:flex;flex-direction:column"><div class="ct">Taux TVA</div>';
     h+='<div style="display:flex;gap:6px;align-items:center">';
     h+='<input type="number" id="tvaInput" value="'+(SALON_CONFIG.tauxTVA||20)+'" min="0" max="30" step="0.1" style="flex:1;text-align:center;font-size:16px;font-weight:800;padding:10px">';
@@ -16651,6 +16674,17 @@ function searchGiftByCode(){
   res.innerHTML=h;
 }
 function rCaisse(){
+  // Mode caisse simplifiée (auto-entrepreneur) : pas d'écran d'ouverture,
+  // pas de fond de caisse à valider. La caisse est considérée "toujours ouverte".
+  // La conformité NF525 (hash chain des tickets) reste en place.
+  var _SC=window.SITE_CONFIG||{};
+  if(_SC.gestionCaisseSimple===true){
+    window._caisseOpenDate=TD;
+    try{localStorage.setItem("caisseOpenDate",TD);}catch(e){}
+    if(window._tk && Array.isArray(window._tk.items) && window._tk.items.length > 0){showCaisse();return"";}
+    startCaisse();
+    return"";
+  }
   // Check if caisse already opened today
   var _co=window._caisseOpenDate===TD;
   if(!_co){try{if(localStorage.getItem("caisseOpenDate")===TD)_co=true;}catch(e){}}
@@ -23103,7 +23137,8 @@ function toggleCaisseMenu(e){
   var h='<div id="caisseMenuDrop" class="caisse-menu" style="top:'+(rect.bottom+4)+'px;right:16px">';
   h+='<div onclick="closeCM();go(\'tickets\')">Gestion des tickets</div>';
   h+='<div onclick="closeCM();go(\'gifts\')">Bons cadeaux</div>';
-  h+='<div onclick="closeCM();go(\'caisseGestion\')">Gestion de la caisse \u203a</div>';
+  if(!(window.SITE_CONFIG && window.SITE_CONFIG.gestionCaisseSimple===true))
+    h+='<div onclick="closeCM();go(\'caisseGestion\')">Gestion de la caisse \u203a</div>';
   h+='</div>';
   document.body.insertAdjacentHTML("beforeend",h);
   setTimeout(function(){document.addEventListener("click",closeCM,{once:true});},10);
