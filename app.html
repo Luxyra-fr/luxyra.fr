@@ -11166,8 +11166,18 @@ function rSettings(){
     h+='</div>';
     // Save button
     h+='<button class="btn bg bk" style="width:100%;margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="saveSalonInfo()">\u2705 Enregistrer les infos salon</button>';
+    // Zone "Mode test" \u2014 bouton factory reset visible uniquement si is_free=true
+    // ou pendant la p\u00e9riode d'essai. Refus\u00e9 c\u00f4t\u00e9 serveur si abonnement payant.
+    var _isTestMode = (window.IS_FREE_PLAN === true) || (window._trialDaysLeft && window._trialDaysLeft > 0);
+    if(_isTestMode){
+      h+='<div style="margin-top:24px;padding:16px;border:1.5px solid rgba(244,67,54,.35);background:linear-gradient(135deg,rgba(244,67,54,.06),rgba(0,0,0,.3));border-radius:14px">';
+      h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:22px">\ud83e\uddea</span><div style="font-family:var(--f1);font-size:15px;font-weight:800;color:#ef5350;letter-spacing:.5px">Mode test \u2014 Zone de r\u00e9initialisation</div></div>';
+      h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:12px">Visible uniquement pendant votre p\u00e9riode d\'essai ou si votre salon est en plan offert. Permet d\'effacer <strong>toutes les donn\u00e9es op\u00e9rationnelles</strong> (RDV, tickets, clients, services, produits, bons cadeaux, cl\u00f4tures, audit) pour repartir comme un salon neuf.<br><br>\u2705 Conserv\u00e9 : config salon (nom, SIRET, KBIS, abonnement), \u00e9quipe, op\u00e9rateurs et PINs.<br>\ud83d\udd12 <strong>Indisponible une fois en abonnement payant</strong> (protection l\u00e9gale NF525).</div>';
+      h+='<button onclick="lxOpenFactoryReset()" style="width:100%;padding:13px;background:linear-gradient(135deg,#f44336,#c62828);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;letter-spacing:.5px">\ud83d\udd04 R\u00e9initialiser le salon</button>';
+      h+='</div>';
+    }
   }
-  
+
   else if(settTab==="siteweb"){
     if(!isPro()){showUpgradeModal("Site en ligne");window._settTab=null;go("settings");return h;}
     if(!window.SITE_CONFIG)window.SITE_CONFIG={siteActif:false,reservationActive:false,boutiqueActive:false,acompteObligatoire:false,acompteMontant:10,acompteType:"fixe",acompteMin:0,acompteDesc:"",politiqueAnnul:"48h",remboursementAnnul:true,delaiMinH:2,delaiMaxJ:30,creneauMin:15,confirmAuto:false,servicesEnLigne:[],produitsEnLigne:[],msgAccueil:"",msgConfirmation:"",couleur:"var(--gold)",couleur2:"#0a0a0a",theme:"dark_gold",photoHero:"",photoSalon:"",descSalon:"",slogan:"",fideliteActive:true,fideliteSeuil:10,fideliteType:"pourcentage",fideliteValeur:10};
@@ -12100,6 +12110,72 @@ async function doRgpdDelete(cId){
     console.error("doRgpdDelete erreur:", e);
     if(typeof toast==="function") toast("Erreur suppression : "+(e.message||""),"warning");
     if(delBtn){delBtn.disabled=false;delBtn.innerHTML='\ud83d\uddd1 Supprimer';delBtn.style.opacity='1';}
+  }
+}
+
+// ===== FACTORY RESET SALON (mode test uniquement) =====
+// Modal de confirmation triple : explication + saisie "RESET" + appel edge function.
+// S\u00e9curit\u00e9 c\u00f4t\u00e9 serveur : la fonction Postgres factory_reset_salon refuse si le
+// salon est en abonnement payant (trial expir\u00e9 + is_free=false).
+function lxOpenFactoryReset(){
+  var _isTest = (window.IS_FREE_PLAN === true) || (window._trialDaysLeft && window._trialDaysLeft > 0);
+  if(!_isTest){
+    showAlert("Le factory reset est r\u00e9serv\u00e9 aux salons en mode essai ou plan offert. Votre salon est en abonnement payant \u2014 les donn\u00e9es NF525 doivent \u00eatre conserv\u00e9es l\u00e9galement.","warning");
+    return;
+  }
+  var htm = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:480px;text-align:center">';
+  htm += '<div style="font-size:42px;margin-bottom:8px">\u26a0\ufe0f</div>';
+  htm += '<h2 style="color:#ef5350;font-size:20px;margin-bottom:6px">R\u00e9initialiser le salon ?</h2>';
+  htm += '<div style="font-size:13px;color:rgba(255,255,255,.65);line-height:1.6;margin-bottom:14px">Cette action va <strong style="color:#ef5350">EFFACER D\u00c9FINITIVEMENT</strong> :<br><br>';
+  htm += '\u2022 Tous les RDV pass\u00e9s et futurs<br>';
+  htm += '\u2022 Tous les tickets et cl\u00f4tures Z<br>';
+  htm += '\u2022 Tous les clients et leur historique<br>';
+  htm += '\u2022 Tous les services, forfaits, produits<br>';
+  htm += '\u2022 Tous les bons cadeaux et cartes d\'abonnement<br>';
+  htm += '\u2022 Toute la fid\u00e9lit\u00e9 et l\'audit<br><br>';
+  htm += '\u2705 <strong>Conserv\u00e9</strong> : config salon (nom, SIRET, KBIS, abonnement), \u00e9quipe (Amandine, Manu) et leurs PINs.<br><br>';
+  htm += '<strong style="color:#ef5350">Action IRR\u00c9VERSIBLE.</strong></div>';
+  htm += '<div style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:8px;text-align:center">Pour confirmer, tapez <strong style="color:#ef5350">RESET</strong> ci-dessous :</div>';
+  htm += '<input type="text" id="frConfirm" placeholder="RESET" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(244,67,54,.3);text-align:center;font-weight:800;font-size:16px;letter-spacing:4px;margin-bottom:14px;text-transform:uppercase">';
+  htm += '<div style="display:flex;gap:10px">';
+  htm += '<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:14px;padding:14px" onclick="cM()">Annuler</button>';
+  htm += '<button id="frBtn" class="btn" style="flex:1;background:linear-gradient(135deg,#f44336,#c62828);color:#fff;font-weight:800;font-size:14px;padding:14px" onclick="_doFactoryReset()">\ud83d\udd04 Tout effacer</button>';
+  htm += '</div></div></div>';
+  document.getElementById("modal").innerHTML = htm;
+  setTimeout(function(){ var i=document.getElementById("frConfirm"); if(i) i.focus(); }, 50);
+}
+
+async function _doFactoryReset(){
+  var inp = document.getElementById("frConfirm");
+  if(!inp || String(inp.value||"").trim().toUpperCase() !== "RESET"){
+    showAlert("Veuillez taper RESET en majuscules pour confirmer.","warning");
+    return;
+  }
+  var btn = document.getElementById("frBtn");
+  if(btn){ btn.disabled=true; btn.textContent="R\u00e9initialisation en cours\u2026"; btn.style.opacity=".6"; }
+  try{
+    var sess = await _sb.auth.getSession();
+    var token = sess?.data?.session?.access_token || "";
+    if(!token){ showAlert("Session expir\u00e9e, reconnectez-vous.","error"); return; }
+    var resp = await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/salon-factory-reset", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token },
+      body: JSON.stringify({ confirmation: "RESET" })
+    });
+    var data = await resp.json();
+    if(!resp.ok){
+      showAlert("Erreur : "+(data.error||"impossible de r\u00e9initialiser"),"error");
+      if(btn){ btn.disabled=false; btn.textContent="\ud83d\udd04 Tout effacer"; btn.style.opacity="1"; }
+      return;
+    }
+    cM();
+    // Reload complet pour repartir avec une m\u00e9moire app vierge
+    showAlert("Salon r\u00e9initialis\u00e9 avec succ\u00e8s ! Rechargement\u2026","success",function(){
+      window.location.reload();
+    });
+  }catch(e){
+    showAlert("Erreur r\u00e9seau : "+(e.message||""),"error");
+    if(btn){ btn.disabled=false; btn.textContent="\ud83d\udd04 Tout effacer"; btn.style.opacity="1"; }
   }
 }
 function exportClientData(cId){
