@@ -3146,14 +3146,49 @@ function rDevis(){
     return h;
   }
 
-  // Header compteur uniquement (pas de bouton "Nouveau devis" — création passe par la caisse)
-  h+='<div style="padding:12px 16px;background:rgba(212,168,67,.06);border-bottom:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">';
-  h+='<div style="font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">'+window.DEVIS.length+' devis</div>';
-  h+='<div style="font-size:11px;color:var(--text3)">Cr\u00e9ation depuis la caisse</div>';
+  // Onglets premium : filtre par catégorie de statut (default "actifs")
+  var cnt = {actifs:0, planifies:0, encaisses:0, autres:0};
+  window.DEVIS.forEach(function(d){
+    var s = d.status || "brouillon";
+    if(s==="planifie") cnt.planifies++;
+    else if(s==="converti") cnt.encaisses++;
+    else if(s==="refuse" || s==="expire") cnt.autres++;
+    else cnt.actifs++;
+  });
+  var filter = window._devisFilter || "actifs";
+  h+='<div style="padding:12px 16px;background:rgba(212,168,67,.06);border-bottom:1px solid var(--border2)">';
+  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+  var pillBase='cursor:pointer;padding:6px 12px;border-radius:18px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.1);transition:all .15s';
+  var pillOff='background:transparent;color:#bbb;'+pillBase;
+  var pillOn='background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;border-color:#c8a84e;'+pillBase;
+  function _devPill(key, label, count){ return '<div style="'+(filter===key?pillOn:pillOff)+'" onclick="setDevisFilter(\''+key+'\')">'+label+' \u00b7 '+count+'</div>'; }
+  h+=_devPill("actifs","\u00c0 traiter",cnt.actifs);
+  h+=_devPill("planifies","\ud83d\udcc5 Planifi\u00e9s",cnt.planifies);
+  h+=_devPill("encaisses","\u2713 Encaiss\u00e9s",cnt.encaisses);
+  if(cnt.autres>0) h+=_devPill("autres","Refus\u00e9s/Expir\u00e9s",cnt.autres);
+  h+=_devPill("tous","Tous",window.DEVIS.length);
   h+='</div>';
+  h+='<div style="font-size:11px;color:var(--text3)">Cr\u00e9ation depuis la caisse \u00b7 Conservation l\u00e9gale 10 ans (Code commerce). Devis non comptabilis\u00e9s en CA.</div>';
+  h+='</div>';
+  // Filtrage selon onglet actif
+  var _devFiltered = window.DEVIS.filter(function(d){
+    var s = d.status || "brouillon";
+    if(filter==="tous") return true;
+    if(filter==="planifies") return s==="planifie";
+    if(filter==="encaisses") return s==="converti";
+    if(filter==="autres") return s==="refuse" || s==="expire";
+    return s!=="planifie" && s!=="converti" && s!=="refuse" && s!=="expire";
+  });
+  if(!_devFiltered.length){
+    h+='<div style="text-align:center;padding:60px 20px;color:var(--text3)">';
+    h+='<div style="font-size:36px;margin-bottom:10px;opacity:.4">\ud83d\udce6</div>';
+    h+='<div>Aucun devis dans cette cat\u00e9gorie</div></div>';
+    return h;
+  }
 
-  for(var i=0;i<window.DEVIS.length;i++){
-    var dv=window.DEVIS[i];
+  for(var fi=0;fi<_devFiltered.length;fi++){
+    var dv=_devFiltered[fi];
+    var i=window.DEVIS.indexOf(dv);
     var status=dv.status||"brouillon";
     var canEncaisse=(status!=="converti"&&status!=="refuse"&&status!=="expire"&&status!=="planifie");
     var hasItems=dv.items&&dv.items.length;
