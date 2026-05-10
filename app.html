@@ -455,6 +455,84 @@ window._confirmCb=null;
 if(!window._origConfirm){window._origConfirm=window.confirm.bind(window);window.confirm=function(msg){return window._origConfirm(msg);};}
 function _syncConfirm(msg){return window._origConfirm(msg);}
 var _syncConfirmResult=null;
+
+// ===== showAlert : remplace alert() natif par un modal Luxyra =====
+// Usage : showAlert("Message"[, "icon"][, callback])
+//   icon = "info" (default) | "success" | "warning" | "error"
+function showAlert(msg, icon, onOk) {
+  if (typeof icon === "function") { onOk = icon; icon = null; }
+  icon = icon || "info";
+  var icons = {info:"ℹ️", success:"✅", warning:"⚠️", error:"❌"};
+  var colors = {info:"#64b5f6", success:"#22c55e", warning:"#ff9800", error:"#f44336"};
+  var ic = icons[icon] || icons.info;
+  var col = colors[icon] || colors.info;
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px" onclick="cM();if(window._alertOk)window._alertOk()">';
+  h+='<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid '+col+';border-radius:16px;padding:28px;max-width:420px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">';
+  h+='<div style="font-size:36px;margin-bottom:12px">'+ic+'</div>';
+  h+='<div style="font-size:15px;font-weight:600;color:#fff;margin-bottom:8px;line-height:1.5;white-space:pre-line">'+String(msg).replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</div>';
+  h+='<button class="btn btn-lg" style="width:100%;margin-top:18px;background:linear-gradient(135deg,#c8a84e,#b8960f);color:#000;font-weight:800" onclick="cM();if(window._alertOk)window._alertOk()">OK</button>';
+  h+='</div></div>';
+  window._alertOk = onOk || null;
+  document.getElementById("modal").innerHTML = h;
+}
+
+// ===== showPrompt : remplace prompt() natif par un modal Luxyra =====
+// Usage : showPrompt({title, label, defaultValue, placeholder, type, maxLength, onOk(value), onCancel})
+function showPrompt(opts) {
+  opts = opts || {};
+  var title = opts.title || "Saisie";
+  var label = opts.label || "";
+  var defaultValue = opts.defaultValue != null ? String(opts.defaultValue) : "";
+  var placeholder = opts.placeholder || "";
+  var inputType = opts.type || "text";
+  var maxLen = opts.maxLength || null;
+  var inputMode = opts.inputMode || (inputType==="number"?"numeric":null);
+  var pattern = opts.pattern || null;
+  var multiline = !!opts.multiline;
+  var okLabel = opts.okLabel || "Valider";
+  var cancelLabel = opts.cancelLabel || "Annuler";
+  var inputId = "lxPromptInput_"+Date.now();
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px" onclick="cM();if(window._promptCancel)window._promptCancel()">';
+  h+='<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid rgba(200,168,78,.35);border-radius:16px;padding:24px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.6)">';
+  h+='<div style="font-family:Georgia,serif;font-size:18px;font-weight:800;color:#c8a84e;letter-spacing:.5px;margin-bottom:6px">'+String(title).replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</div>';
+  if (label) h+='<div style="font-size:13px;color:rgba(255,255,255,.7);margin-bottom:14px;line-height:1.4;white-space:pre-line">'+String(label).replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</div>';
+  var inputStyle='width:100%;padding:12px 14px;border-radius:10px;border:1.5px solid rgba(200,168,78,.4);background:rgba(255,255,255,.06);color:#fff;font-size:15px;font-family:inherit;outline:none;box-sizing:border-box;letter-spacing:'+(inputType==="number"?"2px":"0");
+  if (multiline) {
+    h+='<textarea id="'+inputId+'" rows="4" style="'+inputStyle+';min-height:90px;resize:vertical"';
+    if (placeholder) h+=' placeholder="'+placeholder.replace(/"/g,"&quot;")+'"';
+    if (maxLen) h+=' maxlength="'+maxLen+'"';
+    h+=' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">'+defaultValue.replace(/</g,"&lt;").replace(/>/g,"&gt;")+'</textarea>';
+  } else {
+    var attrs='id="'+inputId+'" type="'+inputType+'"';
+    attrs+=' value="'+defaultValue.replace(/"/g,"&quot;")+'"';
+    if (placeholder) attrs+=' placeholder="'+placeholder.replace(/"/g,"&quot;")+'"';
+    if (maxLen) attrs+=' maxlength="'+maxLen+'"';
+    if (inputMode) attrs+=' inputmode="'+inputMode+'"';
+    if (pattern) attrs+=' pattern="'+pattern.replace(/"/g,"&quot;")+'"';
+    attrs+=' autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"';
+    h+='<input '+attrs+' style="'+inputStyle+'">';
+  }
+  h+='<div style="display:flex;gap:10px;margin-top:18px">';
+  h+='<button class="btn btn-ghost btn-lg" style="flex:1" onclick="cM();if(window._promptCancel)window._promptCancel()">'+cancelLabel+'</button>';
+  h+='<button id="'+inputId+'_ok" class="btn btn-lg" style="flex:1;background:linear-gradient(135deg,#c8a84e,#b8960f);color:#000;font-weight:800" onclick="(function(){var el=document.getElementById(\''+inputId+'\');var v=el?el.value:\'\';cM();if(window._promptOk)window._promptOk(v);})()">'+okLabel+'</button>';
+  h+='</div></div></div>';
+  window._promptOk = opts.onOk || null;
+  window._promptCancel = opts.onCancel || null;
+  document.getElementById("modal").innerHTML = h;
+  setTimeout(function(){
+    var inp = document.getElementById(inputId);
+    if (inp) {
+      try { inp.focus(); inp.select(); } catch(_){}
+      if (!multiline) {
+        inp.addEventListener("keydown", function(e){
+          if (e.key==="Enter") { e.preventDefault(); var ok=document.getElementById(inputId+"_ok"); if(ok) ok.click(); }
+          else if (e.key==="Escape") { cM(); if(window._promptCancel) window._promptCancel(); }
+        });
+      }
+    }
+  }, 50);
+}
+
 // Async confirm for proper usage
 function showConfirm(msg,onYes,onNo){
   var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px" onclick="cM()">';
@@ -1596,17 +1674,28 @@ function changeOpPinUI(opId) {
   var op = OPERATEURS.find(function(o){return o.id===opId;});
   if (!op) return;
   var pinLen = op.role === "admin" ? 6 : 4;
-  var newPin = prompt("Nouveau PIN ("+pinLen+" chiffres) :");
-  if (newPin === null) return;
-  // Trim et nettoyage : enlever espaces, sauts de ligne, et tout caractère non numérique
-  newPin = String(newPin).replace(/[^0-9]/g, "");
-  if (newPin.length !== pinLen) {
-    toast("PIN invalide : "+newPin.length+" chiffres au lieu de "+pinLen, "warning");
-    return;
-  }
-  changeOperateurPIN(opId, newPin).then(function(ok){
-    if (ok) { toast("PIN modifi\u00e9", "success"); refreshOperateurs(); }
-    else toast("Erreur", "error");
+  showPrompt({
+    title: "Nouveau PIN",
+    label: "Choisir un PIN à "+pinLen+" chiffres pour "+op.prenom+(op.nom?" "+op.nom:""),
+    type: "password",
+    inputMode: "numeric",
+    pattern: "[0-9]*",
+    maxLength: pinLen,
+    placeholder: "•".repeat(pinLen),
+    okLabel: "Enregistrer",
+    onOk: function(newPin) {
+      if (newPin == null) return;
+      // Trim et nettoyage : enlever espaces, sauts de ligne, et tout caractère non numérique
+      newPin = String(newPin).replace(/[^0-9]/g, "");
+      if (newPin.length !== pinLen) {
+        toast("PIN invalide : "+newPin.length+" chiffres au lieu de "+pinLen, "warning");
+        return;
+      }
+      changeOperateurPIN(opId, newPin).then(function(ok){
+        if (ok) { toast("PIN modifi\u00e9", "success"); refreshOperateurs(); }
+        else toast("Erreur", "error");
+      });
+    }
   });
 }
 
@@ -1756,22 +1845,33 @@ function changeOpRoleUI(opId, collabIndex) {
   var newRole = op.role === "admin" ? "collaborateur" : "admin";
   var newPinLen = newRole === "admin" ? 6 : 4;
   showConfirm("Changer le r\u00f4le en \""+(newRole==="admin"?"Administrateur":"Collaborateur")+"\" ?\n\nIl faudra red\u00e9finir un PIN \u00e0 "+newPinLen+" chiffres.", function(){
-    var newPin = prompt("Nouveau PIN \u00e0 "+newPinLen+" chiffres :");
-    if (newPin === null) return;
-    // Trim et nettoyage : enlever espaces, sauts de ligne, et tout caractère non numérique
-    newPin = String(newPin).replace(/[^0-9]/g, "");
-    if (newPin.length !== newPinLen) {
-      toast("PIN invalide : "+newPin.length+" chiffres au lieu de "+newPinLen, "warning");
-      return;
-    }
-    updateOperateur(opId, {role: newRole, permissions: defaultPermissions(newRole)}).then(function(ok1){
-      if (!ok1) { toast("Erreur changement r\u00f4le", "error"); return; }
-      changeOperateurPIN(opId, newPin).then(function(ok2){
-        if (ok2) {
-          toast("R\u00f4le et PIN mis \u00e0 jour", "success");
-          refreshOperateurs().then(function(){go("settings");});
+    showPrompt({
+      title: "Nouveau PIN",
+      label: "Choisir un PIN \u00e0 "+newPinLen+" chiffres pour "+op.prenom+(op.nom?" "+op.nom:"")+" (nouveau r\u00f4le : "+(newRole==="admin"?"Admin":"Collaborateur")+")",
+      type: "password",
+      inputMode: "numeric",
+      pattern: "[0-9]*",
+      maxLength: newPinLen,
+      placeholder: "\u2022".repeat(newPinLen),
+      okLabel: "Enregistrer",
+      onOk: function(newPin) {
+        if (newPin == null) return;
+        // Trim et nettoyage : enlever espaces, sauts de ligne, et tout caractère non numérique
+        newPin = String(newPin).replace(/[^0-9]/g, "");
+        if (newPin.length !== newPinLen) {
+          toast("PIN invalide : "+newPin.length+" chiffres au lieu de "+newPinLen, "warning");
+          return;
         }
-      });
+        updateOperateur(opId, {role: newRole, permissions: defaultPermissions(newRole)}).then(function(ok1){
+          if (!ok1) { toast("Erreur changement r\u00f4le", "error"); return; }
+          changeOperateurPIN(opId, newPin).then(function(ok2){
+            if (ok2) {
+              toast("R\u00f4le et PIN mis \u00e0 jour", "success");
+              refreshOperateurs().then(function(){go("settings");});
+            }
+          });
+        });
+      }
     });
   });
 }
