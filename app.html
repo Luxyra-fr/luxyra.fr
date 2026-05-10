@@ -3256,18 +3256,55 @@ function newDevis(){
   _renderNewDevis();
 }
 
-// Helper : ouvre le planning à la date sélectionnée dans la modal de planification devis
-// Permet à l'utilisateur de visualiser les créneaux libres avant de saisir l'heure
-function lxOpenPlanningForDate(){
-  var dateEl = document.getElementById("cdrDate");
-  var date = dateEl ? dateEl.value : null;
-  if(!date){ if(typeof toast==="function") toast("Sélectionnez d'abord une date","warning"); return; }
-  // Sauvegarde la date dans TD pour que le planning s'ouvre dessus, et navigue
-  // L'utilisateur peut ensuite revenir sur la modal devis (l'état est gardé en mémoire)
-  if(typeof TD !== "undefined"){ window._prevTD = TD; window.TD = date; }
-  if(typeof toast==="function") toast("📅 Planning du "+date+" — l'heure que vous saisirez devra être libre","info");
-  // Ouvre dans un nouvel onglet pour ne pas perdre la modal
-  try{ window.open(window.location.pathname,"_blank"); }catch(e){}
+// Helper : affiche les RDV existants pour le collab + date sélectionnés dans la modal
+// Permet de visualiser les créneaux occupés directement dans la modal devis (sans sortir de l'app)
+function lxRefreshDispos(){
+  var info = document.getElementById("cdrDispoInfo"); if(!info) return;
+  var date = document.getElementById("cdrDate"); date = date ? date.value : null;
+  var stEl = document.getElementById("cdrCollab"); var stId = stEl ? parseInt(stEl.value, 10) : null;
+  var timeEl = document.getElementById("cdrTime"); var heureProj = timeEl ? timeEl.value : null;
+  if(!date || !stId){ info.innerHTML = '<div style="color:var(--text3);font-style:italic">Sélectionnez date + collaborateur pour voir les disponibilités</div>'; return; }
+  // Filtre RDV existants pour ce collab à cette date (non annulés)
+  var rdvs = (window.AP||[]).filter(function(a){
+    if(a.cancelled===true) return false;
+    if(a.date !== date) return false;
+    if(a.st === "cancelled" || a.st === "annule" || a.st === "annulé") return false;
+    if(a.stId === stId) return true;
+    if(a.aPhases && a.aPhases.some && a.aPhases.some(function(p){return p.t==="w" && p.stId === stId;})) return true;
+    return false;
+  });
+  function addMin(t, m){ var p=t.split(":"); var v=parseInt(p[0])*60+parseInt(p[1])+m; var h=Math.floor(v/60), n=v%60; return (h<10?"0":"")+h+":"+(n<10?"0":"")+n; }
+  function rdvDur(a){ var d=0; if(a.aPhases) a.aPhases.forEach(function(p){d+=p.d||0;}); return d||60; }
+  function overlap(s1,e1,s2,e2){ return s1<e2 && s2<e1; }
+  if(!rdvs.length){
+    info.innerHTML = '<div style="color:#4ade80;font-weight:700">✓ Aucun RDV ce jour pour ce collaborateur — toute la journée est libre</div>';
+    return;
+  }
+  rdvs.sort(function(a,b){return (a.time||a.heure||"").localeCompare(b.time||b.heure||"");});
+  // Détecte conflit avec l'heure proposée
+  var conflict = null;
+  if(heureProj){
+    var hpEnd = addMin(heureProj, 60); // estimation 60min default pour la dispo
+    for(var i=0;i<rdvs.length;i++){
+      var aT = rdvs[i].time || rdvs[i].heure;
+      if(!aT) continue;
+      var aEnd = addMin(aT, rdvDur(rdvs[i]));
+      if(overlap(heureProj, hpEnd, aT, aEnd)){ conflict = rdvs[i]; break; }
+    }
+  }
+  var html = '';
+  if(conflict){
+    html += '<div style="background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.4);border-radius:6px;padding:6px 10px;margin-bottom:8px;color:#f87171;font-weight:700">⚠ Conflit : '+heureProj+' chevauche un RDV existant à '+(conflict.time||conflict.heure)+'</div>';
+  }
+  html += '<div style="font-weight:700;color:var(--text2);margin-bottom:6px;font-size:11px">📅 RDV déjà programmés ('+rdvs.length+') — évitez ces créneaux :</div>';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+  rdvs.forEach(function(a){
+    var t = a.time || a.heure || "?";
+    var endT = (t!=="?") ? addMin(t, rdvDur(a)) : "?";
+    html += '<span style="background:rgba(248,113,113,.12);color:#f87171;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid rgba(248,113,113,.25)">'+t+' → '+endT+'</span>';
+  });
+  html += '</div>';
+  info.innerHTML = html;
 }
 
 // Éditer un devis existant (status != "converti")
@@ -3551,10 +3588,16 @@ function convertDevisToRdv(idx){
   h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Date</label>';
   h+='<input id="cdrDate" type="date" value="'+todayStr+'" min="'+todayStr+'" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
   h+='<div style="flex:1"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Heure</label>';
-  h+='<input id="cdrTime" type="time" value="10:00" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
+  h+='<input id="cdrTime" type="time" value="10:00" onchange="lxRefreshDispos()" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
   h+='</div>';
-  // Bouton helper : voir les créneaux libres du planning à la date sélectionnée
-  h+='<button type="button" onclick="lxOpenPlanningForDate()" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px;margin-bottom:14px;border-radius:8px;border:1px dashed rgba(212,168,67,.4);background:rgba(212,168,67,.05);color:var(--gold);font-size:12px;font-weight:700;cursor:pointer">📅 Voir les disponibilités du planning à cette date</button>';
+  // Mini-panneau dispos : affiche les RDV existants du collab sélectionné à la date choisie
+  h+='<div id="cdrDispoInfo" style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px;line-height:1.5;min-height:42px"></div>';
+  // Trigger initial refresh + au changement de date/collab
+  setTimeout(function(){
+    var d=document.getElementById("cdrDate");if(d)d.addEventListener("change",lxRefreshDispos);
+    var c=document.getElementById("cdrCollab");if(c)c.addEventListener("change",lxRefreshDispos);
+    lxRefreshDispos();
+  },50);
   // Info récap
   h+='<div style="background:rgba(212,168,67,.05);border:1px solid rgba(212,168,67,.15);border-radius:8px;padding:10px;margin-bottom:14px;font-size:11px;color:var(--text3);line-height:1.5">';
   h+='Le RDV sera créé sur le planning avec les '+(dv.items?dv.items.length:0)+' prestation(s) du devis. Le devis sera marqué <strong>« converti »</strong>. Vous pourrez modifier le RDV ensuite.';
