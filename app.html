@@ -11919,18 +11919,116 @@ function lxOpenPhotoLightbox(cId, photoIdx){
   h+='</div>';
   h+='<div onclick="event.stopPropagation()" style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;padding:20px;overflow:hidden">';
   if(prevIdx!==null) h+='<button onclick="cM();lxOpenPhotoLightbox(\''+cId+'\','+prevIdx+')" style="position:absolute;left:20px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;width:48px;height:48px;border-radius:50%;font-size:24px;cursor:pointer;backdrop-filter:blur(6px);z-index:2" title="Photo précédente">‹</button>';
-  h+='<img id="'+imgId+'" src="'+src+'" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.6)">';
+  h+='<img id="'+imgId+'" src="'+src+'" data-zoom="1" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.6);cursor:zoom-in;transition:transform .2s;transform-origin:center center" onclick="lxZoomToggle(this, event)" onwheel="lxZoomWheel(this, event)">';
   if(nextIdx!==null) h+='<button onclick="cM();lxOpenPhotoLightbox(\''+cId+'\','+nextIdx+')" style="position:absolute;right:20px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;width:48px;height:48px;border-radius:50%;font-size:24px;cursor:pointer;backdrop-filter:blur(6px);z-index:2" title="Photo suivante">›</button>';
   h+='</div>';
   h+='<div onclick="event.stopPropagation()" style="padding:14px 18px;background:rgba(0,0,0,.6);backdrop-filter:blur(10px);border-top:1px solid rgba(255,255,255,.06)">';
   h+='<div style="display:flex;align-items:center;gap:10px">';
   h+='<input type="text" placeholder="Note libre (allergies, formule, observations...)" value="'+(ph.note||"").replace(/"/g,"&quot;")+'" style="flex:1;padding:10px 14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:13px" onchange="lxUpdatePhotoNote(\''+cId+'\','+photoIdx+',this.value)">';
+  h+='<button onclick="lxOpenPhotoOriginal(\''+cId+'\','+photoIdx+')" title="Ouvrir l\u0027image originale dans un nouvel onglet (taille réelle)" style="background:rgba(156,39,176,.15);border:1px solid rgba(156,39,176,.4);color:#ce93d8;padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">🔍 Original</button>';
   h+='<button onclick="lxDownloadPhoto(\''+cId+'\','+photoIdx+')" style="background:rgba(33,150,243,.15);border:1px solid rgba(33,150,243,.4);color:#64b5f6;padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">⬇ Télécharger HD</button>';
   h+='<button onclick="lxConfirmDelPhoto(\''+cId+'\','+photoIdx+');cM()" style="background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.4);color:#ef5350;padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer">🗑 Supprimer</button>';
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
 window.lxOpenPhotoLightbox=lxOpenPhotoLightbox;
+
+// ===== ZOOM LIGHTBOX =====
+// Click toggle : 1x → 2x au point cliqué → 1x. Wheel : zoom progressif (1x à 4x).
+// Drag : pan dans l'image zoomée.
+window._lbZoom = {scale:1, originX:50, originY:50, dragging:false, lastX:0, lastY:0, panX:0, panY:0};
+
+function lxZoomToggle(img, e){
+  e.stopPropagation();
+  var z = window._lbZoom;
+  if(z.scale > 1){
+    // Reset zoom
+    z.scale = 1; z.panX = 0; z.panY = 0;
+    img.style.transformOrigin = "center center";
+    img.style.transform = "scale(1)";
+    img.style.cursor = "zoom-in";
+  } else {
+    // Zoom 2x au point cliqué
+    var rect = img.getBoundingClientRect();
+    var x = ((e.clientX - rect.left) / rect.width) * 100;
+    var y = ((e.clientY - rect.top) / rect.height) * 100;
+    z.scale = 2; z.panX = 0; z.panY = 0;
+    z.originX = x; z.originY = y;
+    img.style.transformOrigin = x+"% "+y+"%";
+    img.style.transform = "scale(2)";
+    img.style.cursor = "grab";
+    _lbAttachDrag(img);
+  }
+}
+window.lxZoomToggle=lxZoomToggle;
+
+function lxZoomWheel(img, e){
+  e.preventDefault();
+  e.stopPropagation();
+  var z = window._lbZoom;
+  var delta = e.deltaY < 0 ? 0.25 : -0.25;
+  var newScale = Math.max(1, Math.min(4, z.scale + delta));
+  if(newScale === z.scale) return;
+  if(z.scale === 1 && newScale > 1){
+    // Premier zoom : centrer sur point souris
+    var rect = img.getBoundingClientRect();
+    z.originX = ((e.clientX - rect.left) / rect.width) * 100;
+    z.originY = ((e.clientY - rect.top) / rect.height) * 100;
+    img.style.transformOrigin = z.originX+"% "+z.originY+"%";
+    _lbAttachDrag(img);
+  }
+  z.scale = newScale;
+  z.panX = 0; z.panY = 0;
+  img.style.transform = "scale("+newScale+")";
+  img.style.cursor = newScale > 1 ? "grab" : "zoom-in";
+}
+window.lxZoomWheel=lxZoomWheel;
+
+function _lbAttachDrag(img){
+  if(img._lbDragAttached) return;
+  img._lbDragAttached = true;
+  img.addEventListener("mousedown", function(e){
+    if(window._lbZoom.scale <= 1) return;
+    e.preventDefault();
+    var z = window._lbZoom;
+    z.dragging = true; z.lastX = e.clientX; z.lastY = e.clientY;
+    img.style.cursor = "grabbing";
+  });
+  document.addEventListener("mousemove", function(e){
+    var z = window._lbZoom;
+    if(!z.dragging || !img.parentElement) return;
+    var dx = e.clientX - z.lastX; var dy = e.clientY - z.lastY;
+    z.lastX = e.clientX; z.lastY = e.clientY;
+    z.panX += dx / z.scale; z.panY += dy / z.scale;
+    img.style.transform = "scale("+z.scale+") translate("+z.panX+"px,"+z.panY+"px)";
+  });
+  document.addEventListener("mouseup", function(){
+    var z = window._lbZoom;
+    if(z.dragging){ z.dragging = false; img.style.cursor = "grab"; }
+  });
+}
+
+// Ouvre l'image originale (taille réelle) dans un nouvel onglet pour zoom navigateur natif
+async function lxOpenPhotoOriginal(cId, photoIdx){
+  var c = (typeof gC==="function") ? gC(cId) : null;
+  if(!c||!c.photos||!c.photos[photoIdx]) return;
+  var ph = c.photos[photoIdx];
+  if(ph.data && ph.data.indexOf("data:")===0){
+    // Vieux format base64 : ouvrir directement
+    var w = window.open(); if(w) w.document.write("<img src='"+ph.data+"' style='max-width:100%;height:auto'>");
+    return;
+  }
+  if(ph.path && typeof _sb!=="undefined" && _sb){
+    try{
+      var signed = await _sb.storage.from("client-photos").createSignedUrl(ph.path, 3600);
+      if(signed.data && signed.data.signedUrl) window.open(signed.data.signedUrl, "_blank");
+    }catch(e){
+      console.error("[lxOpenPhotoOriginal]", e);
+      if(typeof toast==="function") toast("Impossible d'ouvrir l'original","error");
+    }
+  }
+}
+window.lxOpenPhotoOriginal=lxOpenPhotoOriginal;
 
 function lxUpdatePhotoNote(cId, photoIdx, note){
   var c = (typeof gC==="function") ? gC(cId) : null;
