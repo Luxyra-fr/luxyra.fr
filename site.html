@@ -286,6 +286,46 @@ html{overflow-x:hidden}
 // Lit les données du salon depuis Supabase via l'URL
 // ============================================================
 
+// ===== Helpers premium showAlert / showConfirm (remplacent alert/confirm natifs) =====
+// Conteneur dédié injecté à la volée si absent (pas de dépendance HTML)
+function _lxModalHost(){
+  var el = document.getElementById("lxModalHost");
+  if(!el){ el = document.createElement("div"); el.id = "lxModalHost"; document.body.appendChild(el); }
+  return el;
+}
+function _lxCloseModal(){ var h = document.getElementById("lxModalHost"); if(h) h.innerHTML = ""; }
+function showAlert(msg, icon, onOk){
+  if(typeof icon === "function"){ onOk = icon; icon = null; }
+  icon = icon || "info";
+  var icons = {info:"ℹ️", success:"✅", warning:"⚠️", error:"❌"};
+  var colors = {info:"#64b5f6", success:"#22c55e", warning:"#ff9800", error:"#f44336"};
+  var ic = icons[icon] || icons.info;
+  var col = colors[icon] || colors.info;
+  var safe = String(msg).replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  var h = '<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--f2,system-ui,sans-serif)" onclick="_lxCloseModal();if(window._lxAlertOk)window._lxAlertOk()">'
+    + '<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid '+col+';border-radius:16px;padding:28px;max-width:420px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    + '<div style="font-size:36px;margin-bottom:12px">'+ic+'</div>'
+    + '<div style="font-size:15px;font-weight:600;color:#fff;margin-bottom:8px;line-height:1.5;white-space:pre-line">'+safe+'</div>'
+    + '<button style="width:100%;margin-top:18px;padding:12px;background:linear-gradient(135deg,#c8a84e,#b8960f);color:#000;font-weight:800;border:none;border-radius:10px;cursor:pointer;font-size:15px" onclick="_lxCloseModal();if(window._lxAlertOk)window._lxAlertOk()">OK</button>'
+    + '</div></div>';
+  window._lxAlertOk = onOk || null;
+  _lxModalHost().innerHTML = h;
+}
+function showConfirm(msg, onYes, onNo){
+  var safe = String(msg).replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");
+  var h = '<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--f2,system-ui,sans-serif)" onclick="_lxCloseModal();if(window._lxConfirmNo)window._lxConfirmNo()">'
+    + '<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid rgba(200,168,78,.35);border-radius:16px;padding:28px;max-width:380px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+    + '<div style="font-size:36px;margin-bottom:12px">⚠️</div>'
+    + '<div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:8px;line-height:1.4">'+safe+'</div>'
+    + '<div style="display:flex;gap:10px;margin-top:20px">'
+    + '<button style="flex:1;padding:12px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.1);border-radius:10px;cursor:pointer;font-weight:700;font-size:14px" onclick="_lxCloseModal();if(window._lxConfirmNo)window._lxConfirmNo()">Annuler</button>'
+    + '<button style="flex:1;padding:12px;background:linear-gradient(135deg,#c8a84e,#b8960f);color:#000;border:none;border-radius:10px;cursor:pointer;font-weight:800;font-size:14px" onclick="_lxCloseModal();if(window._lxConfirmYes)window._lxConfirmYes()">Confirmer</button>'
+    + '</div></div></div>';
+  window._lxConfirmYes = onYes || null;
+  window._lxConfirmNo = onNo || null;
+  _lxModalHost().innerHTML = h;
+}
+
 // Client state
 var CLIENT=null; // logged in client
 var CLIENT_RDVS=[];
@@ -1763,7 +1803,7 @@ function openSurMesureModal(svcId){
     for(var _i=0;_i<SERVICES.length;_i++){if(SERVICES[_i].id===svcId){preService=SERVICES[_i];break;}}
   }
   if(!CLIENT.telephone){
-    alert("Veuillez renseigner votre téléphone dans votre compte avant de faire une demande sur mesure.");
+    showAlert("Veuillez renseigner votre téléphone dans votre compte avant de faire une demande sur mesure.","warning");
     return;
   }
   var h='<div class="auth-modal" onclick="if(event.target===this)closeSurMesureModal()">';
@@ -2540,12 +2580,12 @@ async function refreshRDV(){
 async function submitBooking(){
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
-  if(!nom||!tel){alert("Nom et t\u00e9l\u00e9phone obligatoires");return;}
+  if(!nom||!tel){showAlert("Nom et t\u00e9l\u00e9phone obligatoires","warning");return;}
   // Si lieu='domicile' : valider l'adresse (re-g\u00e9ocode si pas encore valid\u00e9e)
   if(booking.lieu==='domicile'){
     if(!booking.clientAdr || booking.clientAdr.frais_mt==null){
       var ok=await validateClientAdresse();
-      if(!ok){ alert("Veuillez v\u00e9rifier l'adresse de RDV \u00e0 domicile avant de confirmer."); return; }
+      if(!ok){ showAlert("Veuillez v\u00e9rifier l'adresse de RDV \u00e0 domicile avant de confirmer.","warning"); return; }
     }
   }
   var pre=document.getElementById("bkPre").value.trim();
@@ -2563,11 +2603,11 @@ async function submitBooking(){
   await refreshRDV();
   // Double-check availability before submitting
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
-    alert("Ce cr\u00e9neau n'est plus disponible. Veuillez choisir un autre horaire.");
+    showAlert("Ce cr\u00e9neau n'est plus disponible. Veuillez choisir un autre horaire.","warning");
     renderTimeSlots(booking.date);return;
   }
   if(booking.collabId&&isCollabDayOff(booking.date,booking.collabId)){
-    alert("Ce collaborateur est indisponible ce jour. Veuillez choisir un autre jour.");
+    showAlert("Ce collaborateur est indisponible ce jour. Veuillez choisir un autre jour.","warning");
     return;
   }
   var acompte=0;
@@ -2605,7 +2645,7 @@ async function submitBooking(){
 
   try{
     var r=await sb.from("rdv_online").insert(data).select();
-    if(r.error){alert(rdvErrorMessage(r.error));await refreshRDV();renderTimeSlots(booking.date);return;}
+    if(r.error){showAlert(rdvErrorMessage(r.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     // Immediately block this slot from being rebooked
     RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
     // Success
@@ -2635,7 +2675,7 @@ async function submitBooking(){
     h+='</div>';
     document.getElementById("bookingFlow").innerHTML=h;
   }catch(e){
-    alert("Erreur: "+e.message);
+    showAlert("Erreur: "+e.message,"error");
   }
 }
 
@@ -2643,10 +2683,10 @@ async function submitBooking(){
 async function saveClientProfile(){
   if(!CLIENT)return;
   var res=await LX.update({nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone});
-  if(!res.ok){alert("Erreur: "+(res.data&&res.data.error?res.data.error:"mise \u00e0 jour impossible"));return;}
+  if(!res.ok){showAlert("Erreur: "+(res.data&&res.data.error?res.data.error:"mise \u00e0 jour impossible"),"error");return;}
   CLIENT=res.data.user;
   saveClientSession();
-  alert("Informations mises \u00e0 jour !");
+  showAlert("Informations mises \u00e0 jour !","info");
 }
 
 // Load dashboard RDV list
@@ -2733,11 +2773,11 @@ async function loadDashboardRdvs(){
 async function submitWithStripe(){
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
-  if(!nom||!tel){alert("Nom et telephone obligatoires");return;}
+  if(!nom||!tel){showAlert("Nom et telephone obligatoires","warning");return;}
   if(booking.lieu==='domicile'){
     if(!booking.clientAdr || booking.clientAdr.frais_mt==null){
       var ok=await validateClientAdresse();
-      if(!ok){ alert("Veuillez verifier l\'adresse de RDV a domicile avant de payer."); return; }
+      if(!ok){ showAlert("Veuillez verifier l\'adresse de RDV a domicile avant de payer.","warning"); return; }
     }
   }
   var pre=document.getElementById("bkPre").value.trim();
@@ -2765,7 +2805,7 @@ async function submitWithStripe(){
   // Check slot availability before payment
   await refreshRDV();
   if(isSlotTaken(booking.date,booking.time,dur,booking.collabId)){
-    alert("Ce cr\u00e9neau n\u2019est plus disponible. Veuillez choisir un autre horaire.");return;
+    showAlert("Ce cr\u00e9neau n\u2019est plus disponible. Veuillez choisir un autre horaire.","warning");return;
   }
   
   // EMPREINTE : skip Connect Checkout (incompatible avec capture_method=manual) → flow fallback
@@ -2795,7 +2835,7 @@ async function submitWithStripe(){
       rdvData.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
     }
     var rdvRes=await sb.from("rdv_online").insert(rdvData).select();
-    if(rdvRes.error){alert(rdvErrorMessage(rdvRes.error));await refreshRDV();renderTimeSlots(booking.date);return;}
+    if(rdvRes.error){showAlert(rdvErrorMessage(rdvRes.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     var rdvId=rdvRes.data[0].id;
     
     // 2. Create Connect Checkout Session via worker
@@ -2816,13 +2856,13 @@ async function submitWithStripe(){
       if(data.url){
         window.location.href=data.url;
       }else{
-        alert("Erreur paiement: "+(data.error||"Impossible de cr\u00e9er la session de paiement"));
+        showAlert("Erreur paiement: "+(data.error||"Impossible de cr\u00e9er la session de paiement"),"error");
         btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;
         // Cleanup: delete the pending RDV
         sb.from("rdv_online").delete().eq("id",rdvId);
       }
     }catch(e){
-      alert("Erreur de connexion");
+      showAlert("Erreur de connexion","error");
       btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;
       sb.from("rdv_online").delete().eq("id",rdvId);
     }
@@ -3060,12 +3100,12 @@ async function doModifyRequest(rdvId){
   var newDate=document.getElementById("modifDate").value;
   var newTime=document.getElementById("modifTime").value;
   var msg=document.getElementById("modifMsg").value.trim();
-  if(!newDate||!newTime){alert("Choisissez une date et un horaire");return;}
+  if(!newDate||!newTime){showAlert("Choisissez une date et un horaire","info");return;}
   var rdv=null;for(var i=0;i<CLIENT_RDVS.length;i++){if(CLIENT_RDVS[i].id===rdvId){rdv=CLIENT_RDVS[i];break;}}
   if(!rdv)return;
   var dur=rdv.duree_minutes||60;
   if(isSlotTaken(newDate,newTime,dur,rdv.collaborateur_id)){
-    alert("Ce cr\u00e9neau n'est pas disponible. Choisissez un autre horaire.");return;
+    showAlert("Ce cr\u00e9neau n'est pas disponible. Choisissez un autre horaire.","warning");return;
   }
   try{
     // Endpoint sécurisé : worker valide token + check ownership du RDV
@@ -3077,14 +3117,14 @@ async function doModifyRequest(rdvId){
       modification_message: msg||null,
       modification_status: "pending"
     });
-    if(!resM.ok){ alert("Erreur: "+(resM.data&&resM.data.error?resM.data.error:"impossible")); return; }
+    if(!resM.ok){ showAlert("Erreur: "+(resM.data&&resM.data.error?resM.data.error:"impossible"),"error"); return; }
     document.querySelector(".modify-modal").remove();
     var toast=document.createElement("div");
     toast.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#2d9a5e;color:#fff;padding:14px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:999;box-shadow:0 4px 20px rgba(0,0,0,.3);text-align:center";
     toast.innerHTML="\u2705 Demande envoy\u00e9e<br><small style=\"font-weight:400;opacity:.8\">Le salon vous contactera</small>";
     document.body.appendChild(toast);setTimeout(function(){toast.remove();},4000);
     loadDashboardRdvs();
-  }catch(e){alert("Erreur. R\u00e9essayez.");}
+  }catch(e){showAlert("Erreur. R\u00e9essayez.","error");}
 }
 
 async function askCancelRdv(rdvId){
@@ -3129,14 +3169,14 @@ async function doCancelRdv(rdvId){
   try{
     var res=await fetch("/api/rdv/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rdv_id:rdvId,reason:msg,cancelled_by:"client"})});
     var result=await res.json();
-    if(!result.success){alert("Erreur: "+(result.error||"annulation impossible"));return;}
+    if(!result.success){showAlert("Erreur: "+(result.error||"annulation impossible"),"error");return;}
     document.querySelector(".modify-modal").remove();
     var toast=document.createElement("div");
     toast.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#ef5350;color:#fff;padding:14px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:999";
     toast.textContent="Rendez-vous annul\u00e9";
     document.body.appendChild(toast);setTimeout(function(){toast.remove();},3000);
     loadDashboardRdvs();
-  }catch(e){alert("Erreur r\u00e9seau. R\u00e9essayez.");}
+  }catch(e){showAlert("Erreur r\u00e9seau. R\u00e9essayez.","error");}
 }
 
 
@@ -3196,7 +3236,7 @@ function updateCartBadge(){
 }
 
 function showCart(){
-  if(!CART.length){alert("Votre panier est vide");return;}
+  if(!CART.length){showAlert("Votre panier est vide","info");return;}
   var total=0;CART.forEach(function(c){total+=c.p*c.qty;});
   var h='<div class="auth-modal" onclick="closeCart()">';
   h+='<div class="auth-box" onclick="event.stopPropagation()" style="max-width:450px">';
@@ -3245,7 +3285,7 @@ async function submitOrder(){
       status:"pending_payment"
     };
     var r=await sb.from("commandes_online").insert(data).select();
-    if(r.error){alert("Erreur: "+r.error.message);return;}
+    if(r.error){showAlert("Erreur: "+r.error.message,"error");return;}
     var cmdId=r.data[0].id;
     try{
       var itemNames=items.map(function(i){return i.nom;}).join(", ");
@@ -3262,8 +3302,8 @@ async function submitOrder(){
       });
       var pData=await res.json();
       if(pData.url){CART=[];updateCartBadge();window.location.href=pData.url;return;}
-      else{alert("Erreur paiement: "+(pData.error||"Impossible de créer la session"));sb.from("commandes_online").delete().eq("id",cmdId);}
-    }catch(e){alert("Erreur de connexion");sb.from("commandes_online").delete().eq("id",cmdId);}
+      else{showAlert("Erreur paiement: "+(pData.error||"Impossible de créer la session"),"error");sb.from("commandes_online").delete().eq("id",cmdId);}
+    }catch(e){showAlert("Erreur de connexion","error");sb.from("commandes_online").delete().eq("id",cmdId);}
     return;
   }
   
@@ -3277,7 +3317,7 @@ async function submitOrder(){
     status:"pending"
   };
   var r=await sb.from("commandes_online").insert(data).select();
-  if(r.error){alert("Erreur: "+r.error.message);return;}
+  if(r.error){showAlert("Erreur: "+r.error.message,"error");return;}
   CART=[];updateCartBadge();
   var h='<div class="auth-modal" onclick="closeCart()">';
   h+='<div class="auth-box" onclick="event.stopPropagation()" style="text-align:center">';
@@ -3341,11 +3381,11 @@ function formatDateFR(ds){if(!ds)return"";var p=ds.split("-");var dt=new Date(p[
 function openSouscrireCarteModal(idx){
   if(!CLIENT){openAuthModal();return;}
   if(!SALON.connectId||SALON.connectStatus!=="active"){
-    alert("Le paiement en ligne n'est pas disponible pour ce salon. Demandez votre carte sur place.");
+    showAlert("Le paiement en ligne n'est pas disponible pour ce salon. Demandez votre carte sur place.","warning");
     return;
   }
   var ca=window.SITE_CARTES_ABO&&window.SITE_CARTES_ABO[idx||0];
-  if(!ca){alert("Carte introuvable");return;}
+  if(!ca){showAlert("Carte introuvable","error");return;}
   var dExp=new Date();dExp.setMonth(dExp.getMonth()+ca.duree);
   var dateExpStr=dExp.toLocaleDateString("fr-FR");
   var h='<div class="auth-modal" onclick="if(event.target===this)closeAuthModal()">';
@@ -3425,7 +3465,7 @@ async function submitSouscrireCarte(idx){
     window.location.href=payData.url;
   }catch(e){
     if(btn){btn.disabled=false;btn.textContent="\ud83d\udcb3 Payer "+ca.tarif+" \u20ac en ligne";}
-    alert("Erreur : "+e.message);
+    showAlert("Erreur : "+e.message,"error");
   }
 }
 
@@ -3440,7 +3480,7 @@ async function submitSouscrireCarte(idx){
   window.history.replaceState({},"",window.location.pathname);
   if(status==="success"){
     if(!sessionId){
-      alert("\u26a0 Confirmation de paiement sans identifiant Stripe. Contactez le salon si la remise n'appara\u00eet pas.");
+      showAlert("\u26a0 Confirmation de paiement sans identifiant Stripe. Contactez le salon si la remise n'appara\u00eet pas.","warning");
       return;
     }
     try{
@@ -3454,9 +3494,9 @@ async function submitSouscrireCarte(idx){
       if(!data.ok){throw new Error(data.error||"Activation \u00e9chou\u00e9e");}
       // Recharge la carte client + UI
       if(typeof checkClientCarteAbo==="function")await checkClientCarteAbo();
-      setTimeout(function(){alert("\u2705 Votre carte d'abonnement est active ! La remise s'appliquera automatiquement \u00e0 vos prochaines r\u00e9servations.");},300);
+      setTimeout(function(){showAlert("\u2705 Votre carte d'abonnement est active ! La remise s'appliquera automatiquement \u00e0 vos prochaines r\u00e9servations.","success");},300);
     }catch(e){
-      alert("\u26a0 Le paiement a r\u00e9ussi mais l'activation a \u00e9chou\u00e9.\nContactez le salon en pr\u00e9cisant la r\u00e9f\u00e9rence : "+carteId+"\nErreur : "+e.message);
+      showAlert("\u26a0 Le paiement a r\u00e9ussi mais l'activation a \u00e9chou\u00e9.\nContactez le salon en pr\u00e9cisant la r\u00e9f\u00e9rence : "+carteId+"\nErreur : "+e.message,"error");
     }
   }else if(status==="cancel"){
     // La carte pending_payment sera nettoy\u00e9e par cron \u2014 pas de delete c\u00f4t\u00e9 client (RLS)
