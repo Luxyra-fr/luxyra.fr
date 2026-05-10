@@ -22788,9 +22788,27 @@ function doBonPay(){
   }
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
   var resteDu=total-(_tk.paid||0);
-  if(bon.scope&&bon.scope!=="tout"){var ws=false;_tk.items.forEach(function(it){if(bon.scope==="prestations"&&it.isProd)ws=true;if(bon.scope==="produits"&&!it.isProd)ws=true;});if(ws){showAlert("Ce bon est valable uniquement sur les "+(bon.scope==="prestations"?"prestations":"produits"),"info");return;}}
   if(bon.exp&&bon.exp<TD){showAlert("Ce bon cadeau a expir\u00e9","info");return;}
-  var use=Math.min(bon.rem,resteDu);
+  // Bon scope-restricted (prestations ou produits) : on ne BLOQUE plus le ticket.
+  // On calcule juste le sous-total \u00e9ligible et on plafonne l'utilisation du bon
+  // \u00e0 ce sous-total. Le reste du ticket (items non \u00e9ligibles) reste \u00e0 payer
+  // normalement dans le step suivant. Ex : ticket = 50\u20ac presta + 30\u20ac produit,
+  // bon "prestations uniquement" 100\u20ac \u2192 on d\u00e9duit 50\u20ac du bon, 30\u20ac \u00e0 r\u00e9gler en CB/esp\u00e8ces.
+  var useMax = bon.rem;
+  if(bon.scope && bon.scope!=="tout"){
+    var totalEligible = 0;
+    _tk.items.forEach(function(it){
+      var line = it.price*it.qty - it.remise;
+      if(bon.scope==="prestations" && !it.isProd) totalEligible += line;
+      else if(bon.scope==="produits" && it.isProd) totalEligible += line;
+    });
+    if(totalEligible <= 0){
+      showAlert("Ce bon est valable uniquement sur les "+(bon.scope==="prestations"?"prestations":"produits")+", or le ticket n'en contient aucun(e).","info");
+      return;
+    }
+    useMax = Math.min(useMax, totalEligible);
+  }
+  var use=Math.min(useMax,resteDu);
   bon.rem-=use;
   bon.used=(bon.used||0)+use;
   if(!bon.history)bon.history=[];
