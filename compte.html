@@ -729,11 +729,13 @@ function renderCartesTab(){
 
 // --- PROFILE TAB ---
 // --- TICKETS TAB ---
+window._myTicketsFilter = window._myTicketsFilter || "all"; // "all" ou salon_id
+function setMyTicketsFilter(v){ window._myTicketsFilter = v; render(); }
 function renderTicketsTab(){
   var h='';
   var mois=["Jan","F\u00e9v","Mar","Avr","Mai","Jun","Jul","Ao\u00fb","Sep","Oct","Nov","D\u00e9c"];
   var today=new Date().toISOString().slice(0,10);
-  var done=CLIENT_RDVS.filter(function(r){
+  var doneAll=CLIENT_RDVS.filter(function(r){
     if(r.status==="done")return true;
     // Past confirmed = effectué (salon n'a pas mis à jour le statut online)
     if((r.status==="confirmed"||r.status==="pending")&&r.date_rdv<today)return true;
@@ -743,7 +745,30 @@ function renderTicketsTab(){
     if(a.heure_rdv&&b.heure_rdv&&a.heure_rdv!==b.heure_rdv)return a.heure_rdv>b.heure_rdv?-1:1;
     return (b.ticket_num||0)-(a.ticket_num||0);
   });
-  
+  // Selecteur d etablissement (apparait uniquement si 2+ salons distincts)
+  var ticketSalons = {};
+  doneAll.forEach(function(r){
+    if(!r.salon_id) return;
+    if(!ticketSalons[r.salon_id]) ticketSalons[r.salon_id] = {nom:r.salon_nom||"Salon", count:0};
+    ticketSalons[r.salon_id].count++;
+  });
+  var salonKeys = Object.keys(ticketSalons);
+  var fSel = window._myTicketsFilter || "all";
+  if(fSel !== "all" && !ticketSalons[fSel]) fSel = "all";
+  if(salonKeys.length > 1){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;padding:8px;background:rgba(0,0,0,.25);border:1px solid rgba(200,168,78,.15);border-radius:10px">';
+    var pillBase = 'cursor:pointer;padding:6px 12px;border-radius:18px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.1);transition:all .15s';
+    var pillOff = 'background:transparent;color:#bbb;'+pillBase;
+    var pillOn  = 'background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;border-color:#c8a84e;'+pillBase;
+    h+='<div style="'+(fSel==="all"?pillOn:pillOff)+'" onclick="setMyTicketsFilter(\'all\')">Tous · '+doneAll.length+'</div>';
+    salonKeys.forEach(function(sid){
+      h+='<div style="'+(fSel===sid?pillOn:pillOff)+'" onclick="setMyTicketsFilter(\''+sid+'\')">'+ticketSalons[sid].nom+' · '+ticketSalons[sid].count+'</div>';
+    });
+    h+='</div>';
+  }
+  // Filtrage selon sélection
+  var done = (fSel==="all") ? doneAll : doneAll.filter(function(r){return r.salon_id===fSel;});
+
   h+='<div class="section"><div class="section-title">\ud83c\udfab Mes tickets ('+done.length+')</div>';
   
   if(!done.length){
