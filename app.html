@@ -18051,32 +18051,44 @@ async function lxLoadMigratedInvoices(force){
   }
   h += '</div></div></div>';
 
-  // Liste des factures migr\u00e9es (group\u00e9es par ann\u00e9e)
-  var byYear = {};
+  // Liste des factures migr\u00e9es : group\u00e9es par ann\u00e9e > mois, mois r\u00e9tractables
+  var byYM = {}; // {"2025-09": [inv,...]}
   data.forEach(function(inv){
-    var y = String(inv.date_facture||"").slice(0,4) || "?";
-    if(!byYear[y]) byYear[y]=[];
-    byYear[y].push(inv);
+    var ym = String(inv.date_facture||"").slice(0,7) || "?";
+    if(!byYM[ym]) byYM[ym]=[];
+    byYM[ym].push(inv);
   });
-  var years = Object.keys(byYear).sort().reverse();
-
-  years.forEach(function(y){
-    h += '<div style="margin-top:10px;font-size:11px;color:var(--gold);letter-spacing:2px;font-family:var(--f1,Georgia,serif);text-transform:uppercase">\u2014 Ann\u00e9e '+y+' \u2014</div>';
-    byYear[y].forEach(function(inv){
+  var sortedYM = Object.keys(byYM).sort().reverse();
+  // Le mois le plus r\u00e9cent est ouvert par d\u00e9faut, les autres r\u00e9tract\u00e9s
+  sortedYM.forEach(function(ym, idx){
+    var arr = byYM[ym];
+    var totalYM = 0; arr.forEach(function(i){totalYM += (Number(i.total_ttc)||0);});
+    var year = ym.slice(0,4);
+    var moisIdx = parseInt(ym.slice(5,7), 10) - 1;
+    var moisLabel = (typeof MO !== "undefined" && MO[moisIdx]) ? MO[moisIdx] : ym;
+    var domId = "lxArchMo_"+ym.replace(/-/g,"");
+    var openByDefault = (idx === 0); // seulement le mois le plus r\u00e9cent
+    h += '<div style="margin-top:10px"><div onclick="var b=document.getElementById(\''+domId+'\');var a=document.getElementById(\''+domId+'arr\');if(b.style.display===\'none\'){b.style.display=\'block\';a.textContent=\'\u25bc\';}else{b.style.display=\'none\';a.textContent=\'\u25b6\';}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:rgba(96,165,250,.05);border:1px solid rgba(96,165,250,.15);border-radius:8px;font-family:var(--f1,Georgia,serif)">';
+    h += '<div style="display:flex;align-items:center;gap:10px"><span id="'+domId+'arr" style="color:var(--gold);font-size:12px">'+(openByDefault?"\u25bc":"\u25b6")+'</span><span style="font-size:13px;font-weight:600;color:#fff;letter-spacing:.5px">'+moisLabel+' '+year+'</span><span style="font-size:11px;color:var(--text3)">'+arr.length+' archive'+(arr.length>1?'s':'')+'</span></div>';
+    h += '<div style="font-size:14px;font-weight:800;font-family:var(--f1,Georgia,serif);color:var(--gold)">'+totalYM.toFixed(2)+' \u20ac</div>';
+    h += '</div>';
+    h += '<div id="'+domId+'" style="display:'+(openByDefault?"block":"none")+';margin-top:6px">';
+    arr.forEach(function(inv){
       var dt = inv.date_facture ? fmt(inv.date_facture) : "\u2014";
       var num = inv.source_invoice_number ? '#'+escapeHtml(inv.source_invoice_number) : '';
       var name = inv.client_name ? escapeHtml(inv.client_name) : '\u2014';
-      h += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(96,165,250,.03);border:1px solid rgba(96,165,250,.15)">';
+      h += '<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(96,165,250,.03);border:1px solid rgba(96,165,250,.15);margin-bottom:6px">';
       h += '<div style="flex:1;min-width:0">';
       h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:rgba(96,165,250,.12);color:#9bc2ff;font-size:9px;font-weight:700;letter-spacing:1px;padding:2px 6px;border-radius:4px;text-transform:uppercase">\ud83d\udcda Archive</span>';
       h += '<div style="font-weight:600;font-size:13px">'+num+(num?' \u00b7 ':'')+name+'</div></div>';
-      h += '<div style="font-size:11px;color:var(--text3);margin-top:3px">'+dt+' \u00b7 '+escapeHtml(inv.source_software)+(inv.modes_paiement && inv.modes_paiement.length ? ' \u00b7 '+inv.modes_paiement.map(function(p){return p.type;}).join(", ") : '')+'</div>';
+      h += '<div style="font-size:11px;color:var(--text3);margin-top:3px">'+dt+' \u00b7 '+escapeHtml(inv.source_software||"")+(inv.modes_paiement && inv.modes_paiement.length ? ' \u00b7 '+inv.modes_paiement.map(function(p){return p.type;}).join(", ") : '')+'</div>';
       h += '</div>';
       h += '<div style="text-align:right;flex-shrink:0">';
       h += '<div style="font-weight:800;font-family:var(--f1);color:var(--gold);font-size:15px">'+(Number(inv.total_ttc)||0).toFixed(2)+' \u20ac</div>';
       h += '<button class="btn bs" style="font-size:10px;padding:3px 8px;margin-top:2px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.6)" onclick="lxShowMigratedInvoice(\''+inv.id+'\')">\ud83d\udc41\ufe0f Voir</button>';
       h += '</div></div>';
     });
+    h += '</div></div>';
   });
 
   box.innerHTML = h;
