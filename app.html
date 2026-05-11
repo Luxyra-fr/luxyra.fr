@@ -9695,11 +9695,12 @@ function clickAppt(id){
       htm+='<input type="number" value="'+ph.d+'" min="5" step="5" style="width:42px;padding:4px 2px;font-size:12px;text-align:center;border:1px solid rgba(255,255,255,.1);border-radius:6px" onchange="updApptPhase(\''+a.id+'\','+i+',+this.value)">';
     }
     htm+='<span style="font-size:10px;color:rgba(255,255,255,.35)">min</span></div>';
-    // Actions (reorder + delete phase)
+    // Actions (reorder + replace + delete phase)
     if(!isDone){
       htm+='<div style="grid-area:actions;display:flex;gap:2px;justify-self:end">';
       if(i>0) htm+='<button title="Monter" onclick="movePhaseUp(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px;min-width:24px">\u2191</button>';
       if(i<phases.length-1) htm+='<button title="Descendre" onclick="movePhaseDown(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:4px;color:#fff;cursor:pointer;font-size:11px;min-width:24px">\u2193</button>';
+      if(ph.t==="w") htm+='<button title="Remplacer cette prestation" onclick="showReplacePhaseModal(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(232,200,115,.08);border:1px solid rgba(232,200,115,.3);border-radius:4px;color:#e8c873;cursor:pointer;font-size:11px;min-width:24px">\u21c4</button>';
       if(phases.length>1) htm+='<button title="Supprimer cette phase" onclick="removePhase(\''+a.id+'\','+i+')" style="padding:4px 7px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.2);border-radius:4px;color:#ef5350;cursor:pointer;font-size:11px;min-width:24px">\u00d7</button>';
       htm+='</div>';
     } else {
@@ -10030,6 +10031,79 @@ function removePhase(id, idx){
     if(typeof auditLog==="function") auditLog("RETRAIT_PHASE_RDV","RDV "+a.id+" — Retrait phase '"+(removed?removed.l:"?")+"' (-"+removedPrice.toFixed(2)+"€)");
     requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
   });
+}
+
+// Modal "Remplacer une prestation par une autre" (refonte 2026-05-11)
+function showReplacePhaseModal(apptId, phaseIdx){
+  var a=_findAppt(apptId); if(!a||a.st==="done"){return;}
+  var ph=getApptPhases(a);
+  if(!ph[phaseIdx] || ph[phaseIdx].t!=="w"){return;}
+  var allSvcs=(typeof SVC!=="undefined"?SVC:[]).filter(function(s){return s&&s.n&&(!s.phases || s.phases.length<=1);});
+  var byCat={};
+  allSvcs.forEach(function(s){
+    var cat=s.cat||"Autre";
+    if(!byCat[cat])byCat[cat]=[];
+    byCat[cat].push(s);
+  });
+  var cats=Object.keys(byCat).sort();
+  var h='<div class="mbox" style="max-width:500px;max-height:90vh;overflow-y:auto">';
+  h+='<div style="text-align:center;margin-bottom:12px"><div style="font-size:11px;color:rgba(232,200,115,.6);letter-spacing:2px;text-transform:uppercase">Phase '+(phaseIdx+1)+'</div>';
+  h+='<h2 style="margin:4px 0 2px;color:#e8c873">Remplacer la prestation</h2>';
+  h+='<div style="font-size:12px;color:rgba(255,255,255,.5)">Actuel : <strong>'+(ph[phaseIdx].l||"?")+'</strong></div></div>';
+  for(var ci=0; ci<cats.length; ci++){
+    var cat=cats[ci];
+    var sc=getSvcColor(cat);
+    h+='<div style="margin-bottom:10px"><div style="font-weight:700;font-size:12px;color:'+sc.border+';margin-bottom:6px;padding:4px 8px;background:'+sc.bg+';border-radius:4px;display:inline-block">'+cat+'</div>';
+    h+='<div style="display:flex;flex-direction:column;gap:4px">';
+    for(var si=0; si<byCat[cat].length; si++){
+      var s=byCat[cat][si];
+      h+='<div onclick="doReplacePhase(\''+apptId+'\','+phaseIdx+','+s.id+')" style="cursor:pointer;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:6px;display:flex;justify-content:space-between;align-items:center;transition:background .15s" onmouseover="this.style.background=\'rgba(232,200,115,.08)\';this.style.borderColor=\'rgba(232,200,115,.3)\'" onmouseout="this.style.background=\'rgba(255,255,255,.04)\';this.style.borderColor=\'rgba(255,255,255,.08)\'">';
+      h+='<span style="font-size:13px;font-weight:600">'+s.n+'</span>';
+      h+='<span style="color:var(--gold);font-weight:700">'+(Number(s.p)||0).toFixed(2)+'€</span></div>';
+    }
+    h+='</div></div>';
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:14px">';
+  h+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM();clickAppt(\''+apptId+'\')">Annuler</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();clickAppt(\''+apptId+'\')"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+async function doReplacePhase(apptId, phaseIdx, newSvcId){
+  var a=_findAppt(apptId); if(!a||a.st==="done") return;
+  var newSv=gS(newSvcId); if(!newSv) return;
+  var ph=getApptPhases(a);
+  if(!ph[phaseIdx] || ph[phaseIdx].t!=="w") return;
+  var oldPhase=ph[phaseIdx];
+  // Calcul du prix retiré (cherche dans items, puis fallback service)
+  var oldPrice=0;
+  if(a.items && a.items.length){
+    var itemIdx=-1;
+    if(oldPhase.sId){ for(var ii=0;ii<a.items.length;ii++){ if(a.items[ii].sId===oldPhase.sId && (a.items[ii].addedDuringRdv || a.items[ii].fromMultiSelect)){ itemIdx=ii; break; } } }
+    if(itemIdx<0){ for(var ii=0;ii<a.items.length;ii++){ if(a.items[ii].name===oldPhase.l && (a.items[ii].addedDuringRdv || a.items[ii].fromMultiSelect)){ itemIdx=ii; break; } } }
+    if(itemIdx>=0){ oldPrice=Number(a.items[itemIdx].price)||0; a.items.splice(itemIdx,1); }
+  }
+  if(!oldPrice){
+    if(oldPhase.sId){ var oSv=gS(oldPhase.sId); if(oSv) oldPrice=Number(oSv.p)||0; }
+    else if(phaseIdx===0 && a.sId){ var primarySv=gS(a.sId); if(primarySv) oldPrice=Number(primarySv.p)||0; }
+  }
+  // Remplace la phase (garde la durée existante OU prend celle du nouveau service)
+  var newDur=oldPhase.d;
+  if(newSv.phases && newSv.phases[0] && newSv.phases[0].d){ newDur=newSv.phases[0].d; }
+  ph[phaseIdx]={t:"w", d:newDur, l:newSv.n, sId:newSvcId, stId:oldPhase.stId||a.stId};
+  a.aPhases=ph;
+  // Met à jour le prix : -ancien + nouveau
+  a.pr=Math.max(0, (Number(a.pr)||0) - oldPrice + (Number(newSv.p)||0));
+  // Ajoute dans items pour traçabilité (sauf si déjà présent)
+  if(!a.items) a.items=[];
+  a.items.push({sId:newSvcId, name:newSv.n, price:Number(newSv.p)||0, qty:1, isProd:false, fromReplace:true});
+  // Si on remplace la 1ère phase, met à jour a.sId
+  if(phaseIdx===0){ a.sId=newSvcId; }
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  if(typeof auditLog==="function") auditLog("REMPLACEMENT_PRESTATION","RDV "+a.id+" — '"+(oldPhase.l||"?")+"' (-"+oldPrice.toFixed(2)+"€) → '"+newSv.n+"' (+"+(Number(newSv.p)||0).toFixed(2)+"€)");
+  cM();
+  if(typeof toast==="function") toast("✓ Prestation remplacée par "+newSv.n,"success");
+  requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(apptId);},150);});
 }
 
 // Modal "Ajouter une prestation à un RDV"
