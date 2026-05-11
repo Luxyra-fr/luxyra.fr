@@ -20802,6 +20802,86 @@ function mO(html){
 window.mO = mO; window.cM = cM;
 
 function uDep(){/* deprecated */}
+// === Refonte 2026-05-11 v4 : helpers RDV familial (suggestion alternative au blocage) ===
+function _findNextSlotForCollab(stId, d, fromMin, neededMin){
+  var hrs = getEffectiveHrs(d, stId);
+  if(!hrs) return null;
+  var oMin = toM(hrs.o), cMin = toM(hrs.c);
+  var start = Math.max(fromMin, oMin);
+  if(start % 5) start += (5 - (start % 5));
+  while(start + neededMin <= cMin){
+    var ts = Math.floor(start/60)+":"+("0"+start%60).slice(-2);
+    var bl = isStylistBlockedDuring(stId, d, start, start+neededMin);
+    if(!bl){
+      var conf = checkConflict(stId, d, ts, null, null);
+      if(conf.length === 0) return ts;
+    }
+    start += 5;
+  }
+  return null;
+}
+function _showFamilialKOAlert(reason, st2Id, st2Name, sugA, stId, stName, sugB){
+  var h = '<div class="mbox" style="max-height:90vh;overflow-y:auto">';
+  h += '<div style="text-align:center;font-size:36px;margin-bottom:8px">👪</div>';
+  h += '<h2 style="text-align:center;color:var(--orange)">2ème RDV non plaçable</h2>';
+  h += '<div style="font-size:14px;text-align:center;margin-bottom:14px;color:var(--text2)">⛔ '+reason+'</div>';
+  h += '<div style="font-size:13px;margin-bottom:10px">Choisissez une alternative :</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px">';
+  if(sugA){
+    h += '<button class="btn" style="width:100%;padding:14px;background:var(--green-bg);color:var(--green);font-weight:700;text-align:left" onclick="_resolveFamilialRdv('+st2Id+',\''+sugA+'\')">→ '+st2Name+' à '+sugA+' <span style="font-weight:400;font-size:12px;opacity:0.8">(prochain créneau libre)</span></button>';
+  }
+  if(sugB && stId !== st2Id){
+    h += '<button class="btn" style="width:100%;padding:14px;background:var(--blue-bg);color:var(--blue);font-weight:700;text-align:left" onclick="_resolveFamilialRdv('+stId+',\''+sugB+'\')">→ '+stName+' à '+sugB+' <span style="font-weight:400;font-size:12px;opacity:0.8">(juste après le 1er RDV)</span></button>';
+  }
+  if(!sugA && !sugB){
+    h += '<div style="font-size:13px;color:var(--red);text-align:center;padding:10px">Aucun créneau libre trouvé aujourd\'hui. Créez le 1er RDV puis cliquez directement sur le planning pour le 2nd.</div>';
+  }
+  h += '<button class="btn" style="width:100%;padding:10px;background:var(--bg2);color:var(--text);font-weight:600;font-size:12px;margin-top:6px" onclick="cM();window._pendingFamilial=null;window._rdv2nd=null;">Annuler le RDV familial</button>';
+  h += '</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+function _resolveFamilialRdv(newStId, newTime){
+  var pf = window._pendingFamilial;
+  if(!pf) return;
+  window._pendingFamilial = null;
+  window._rdv2nd = null;
+  var rdvObj = pf.rdvObj;
+  var sv2 = pf.sv2;
+  var aPhases2 = sv2.phases ? JSON.parse(JSON.stringify(sv2.phases)) : [{t:"w", d:Number(sv2.d)||30, l:sv2.n}];
+  aPhases2.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId = newStId; });
+  var rdvObj2nd = {
+    id: U(),
+    cId: pf.secondCId,
+    sId: pf.secondSvcId,
+    stId: newStId,
+    date: rdvObj.date,
+    time: newTime,
+    pr: Number(sv2.p)||0,
+    st: "conf",
+    met: "",
+    aPhases: aPhases2,
+    comment: "👪 RDV familial (lien à confirmer après save)",
+    clients: []
+  };
+  rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial (lien à confirmer après save)";
+  rdvObj.clients = [];
+  AP.push(rdvObj);
+  AP.push(rdvObj2nd);
+  cM(); go("planning");
+  if(typeof saveAppointment==="function"){
+    saveAppointment(rdvObj).then(function(){
+      return saveAppointment(rdvObj2nd);
+    }).then(function(){
+      rdvObj.clients = [{linkedAppt: rdvObj2nd.id}];
+      rdvObj.comment = (rdvObj.comment||"").replace(/\(lien à confirmer après save\)/, "#"+rdvObj2nd.id.slice(-6));
+      rdvObj2nd.clients = [{linkedAppt: rdvObj.id}];
+      rdvObj2nd.comment = (rdvObj2nd.comment||"").replace(/\(lien à confirmer après save\)/, "#"+rdvObj.id.slice(-6));
+      return Promise.all([saveAppointment(rdvObj), saveAppointment(rdvObj2nd)]);
+    }).then(function(){ go("planning"); }).catch(function(e){ console.warn("Lien RDV familial KO:", e); });
+  }
+  setTimeout(function(){ if(typeof sendRdvConfirmation==="function") sendRdvConfirmation(rdvObj); }, 300);
+}
+
 function aAp(){
   if(guardDoubleClick("rdv")) return;
   var c=document.getElementById("mc").value;
@@ -20868,27 +20948,62 @@ function aAp(){
     showConflictAlert(conflicts,"confirmPendingRdv()");
     return;
   }
-  // === Refonte 2026-05-11 v3 : check absence / horaires / conflit pour le 2nd collab (RDV familial) ===
+  // === Refonte 2026-05-11 v4 : check 2nd collab + suggestions auto au lieu de bloquer net ===
   if(window._rdv2nd && window._rdv2nd.cId && window._rdv2nd.svcId){
     var _st2chk = window._rdv2nd.stId || st;
     var _t2name = (gT(_st2chk)?gT(_st2chk).n:"le collaborateur");
+    var _sv2chk = gS(window._rdv2nd.svcId);
+    var _dur2 = _sv2chk ? (Number(_sv2chk.d)||30) : 30;
     var _effHrs2 = getEffectiveHrs(d, _st2chk);
+    var _ko = null;
     if(!_effHrs2){
-      showAlert("⛔ Impossible : "+_t2name+" est fermé/absent le "+fmt(d)+" pour le 2nd RDV.","error");
-      return;
+      _ko = _t2name+" est fermé/absent le "+fmt(d);
+    } else if(_rdvMin < toM(_effHrs2.o) || _rdvMin >= toM(_effHrs2.c)){
+      _ko = "l’horaire "+t+" est en dehors des heures de "+_t2name+" ("+_effHrs2.o+" → "+_effHrs2.c+")";
+    } else {
+      var _bl2 = isStylistBlockedDuring(_st2chk, d, _rdvMin, _rdvMin+1);
+      if(_bl2){
+        _ko = _t2name+" est indisponible à "+t+" ("+(_bl2.label||"Indisponible")+")";
+      } else {
+        var _conf2 = checkConflict(_st2chk, d, t, window._rdv2nd.svcId, null);
+        if(_conf2.length>0) _ko = "Conflit RDV pour "+_t2name+" à "+t;
+      }
     }
-    if(_rdvMin < toM(_effHrs2.o) || _rdvMin >= toM(_effHrs2.c)){
-      showAlert("⛔ Impossible : l’horaire "+t+" est en dehors des heures de travail de "+_t2name+" ("+_effHrs2.o+" → "+_effHrs2.c+").","error");
-      return;
-    }
-    var _bl2 = isStylistBlockedDuring(_st2chk, d, _rdvMin, _rdvMin+1);
-    if(_bl2){
-      showAlert("⛔ Impossible : "+_t2name+" est indisponible à "+t+" ("+(_bl2.label||"Indisponible")+").","error");
-      return;
-    }
-    var _conf2 = checkConflict(_st2chk, d, t, window._rdv2nd.svcId, null);
-    if(_conf2.length > 0){
-      showAlert("⛔ Conflit pour "+_t2name+" à "+t+" sur le 2nd RDV. Choisissez un autre créneau ou un autre collaborateur.","error");
+    if(_ko){
+      // Durée du 1er RDV (multi-prestation = somme)
+      var _dur1 = Number(sv ? sv.d : 0) || 30;
+      if(window._rdvSvcIds && window._rdvSvcIds.length>1){
+        _dur1 = 0;
+        window._rdvSvcIds.forEach(function(sid){ var ss=gS(sid); if(ss) _dur1 += Number(ss.d)||0; });
+      }
+      // Suggestion A : prochain créneau libre du 2nd collab (même jour, à partir de _rdvMin)
+      var _sugA = _findNextSlotForCollab(_st2chk, d, _rdvMin, _dur2);
+      // Suggestion B : principal collab juste après son 1er RDV
+      var _sugB = (st !== _st2chk) ? _findNextSlotForCollab(st, d, _rdvMin + _dur1, _dur2) : null;
+      var _stName = (gT(st)?gT(st).n:"");
+      // Stocker l'état pour _resolveFamilialRdv
+      var _lieuEl2 = document.getElementById("rdvLieu");
+      var _isDom = (_lieuEl2 && _lieuEl2.value==="domicile");
+      window._pendingFamilial = {
+        rdvObj: {
+          id: U(), cId: c, sId: s, stId: st, date: d, time: t,
+          pr: _rdvTotalPrice, st: "conf", met: "",
+          aPhases: window._rdvPhases || null,
+          items: _rdvItemsMulti || null,
+          lieu: _isDom ? "domicile" : null,
+          adresse: _isDom ? ((document.getElementById("rdvAdresse")||{}).value||"") : null
+        },
+        secondCId: window._rdv2nd.cId,
+        secondSvcId: window._rdv2nd.svcId,
+        sv2: _sv2chk
+      };
+      // Nettoyer rdvObj des clés null pour rester propre
+      var _ro = window._pendingFamilial.rdvObj;
+      if(!_ro.aPhases) delete _ro.aPhases;
+      if(!_ro.items) delete _ro.items;
+      if(!_ro.lieu){ delete _ro.lieu; delete _ro.adresse; }
+      window._rdvPhases = null; window._rdvSvcId=null; window._rdvSvcIds=null; window._rdvPassage=null;
+      _showFamilialKOAlert(_ko, _st2chk, _t2name, _sugA, st, _stName, _sugB);
       return;
     }
   }
