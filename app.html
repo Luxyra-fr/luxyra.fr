@@ -9128,7 +9128,7 @@ function printPlanning(){
   w.document.write(h);w.document.close();
   setTimeout(function(){w.print();},400);
 }
-function clickSlot(stId,time,date){
+function clickSlot(stId,time,date,force){
   // Save current view state to restore after RDV creation
   window._savedCalD=new Date(calD.getTime());
   window._savedPlanDays=window._planDays;
@@ -9137,14 +9137,18 @@ function clickSlot(stId,time,date){
   // Check if establishment is closed this day
   var dkDow=new Date(dk+'T12:00:00').getDay();
   var dkHrs=getEffectiveHrs(dk,stId);
-  if(!dkHrs){
-    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:340px;text-align:center"><div style="font-size:36px;margin-bottom:8px">\ud83d\udeab</div><h2 style="color:#ef5350">Jour ferm\u00e9</h2><div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:14px">'+(gT(stId)?gT(stId).n+" \u2014 ":"")+''+fmt(dk)+'</div><div style="padding:12px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15);color:#ef5350;font-weight:700;font-size:14px;margin-bottom:14px">\u00c9tablissement ferm\u00e9 ce jour</div><button class="btn" style="width:100%;background:rgba(255,255,255,.06)" onclick="cM()">Fermer</button></div></div>';
+  if(!dkHrs && !force){
+    // Permet \u00e0 l'utilisateur de forcer la cr\u00e9ation m\u00eame si jour ferm\u00e9 (RDV exceptionnel)
+    var _forceArg1='clickSlot('+stId+',\''+time+'\',\''+dk+'\',true)';
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:340px;text-align:center"><div style="font-size:36px;margin-bottom:8px">\ud83d\udeab</div><h2 style="color:#ef5350">Jour ferm\u00e9</h2><div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:14px">'+(gT(stId)?gT(stId).n+" \u2014 ":"")+''+fmt(dk)+'</div><div style="padding:12px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15);color:#ef5350;font-weight:700;font-size:14px;margin-bottom:14px">\u00c9tablissement ferm\u00e9 ce jour</div><div style="display:flex;flex-direction:column;gap:8px"><button class="btn" style="background:rgba(232,200,115,.12);color:#e8c873;border:1px solid rgba(232,200,115,.4);font-weight:700" onclick="cM();'+_forceArg1+'">\ud83d\udd13 Cr\u00e9er quand m\u00eame (RDV exceptionnel)</button><button class="btn" style="background:rgba(255,255,255,.06)" onclick="cM()">Fermer</button></div></div></div>';
     return;
   }
   // Check if slot is outside this collab's working hours
   var slotMin=toM(time);
-  if(slotMin<toM(dkHrs.o)||slotMin>=toM(dkHrs.c)){
-    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:340px;text-align:center"><div style="font-size:36px;margin-bottom:8px">\ud83d\udeab</div><h2 style="color:#ef5350">Hors horaires</h2><div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:6px">'+(gT(stId)?gT(stId).n:"")+'</div><div style="padding:12px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15);color:#ef5350;font-weight:700;font-size:14px;margin-bottom:14px">Horaires : '+dkHrs.o+' \u2192 '+dkHrs.c+'</div><button class="btn" style="width:100%;background:rgba(255,255,255,.06)" onclick="cM()">Fermer</button></div></div>';
+  if(!force && dkHrs && (slotMin<toM(dkHrs.o)||slotMin>=toM(dkHrs.c))){
+    // Permet \u00e0 l'utilisateur de forcer la cr\u00e9ation m\u00eame si hors plage horaire (RDV exceptionnel)
+    var _forceArg2='clickSlot('+stId+',\''+time+'\',\''+dk+'\',true)';
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:340px;text-align:center"><div style="font-size:36px;margin-bottom:8px">\u26a0\ufe0f</div><h2 style="color:#ef5350">Hors horaires</h2><div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:6px">'+(gT(stId)?gT(stId).n:"")+' \u2014 '+time+'</div><div style="padding:12px;border-radius:10px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.15);color:#ef5350;font-weight:700;font-size:14px;margin-bottom:14px">Horaires normaux : '+dkHrs.o+' \u2192 '+dkHrs.c+'</div><div style="font-size:12px;color:rgba(255,255,255,.55);margin-bottom:14px;line-height:1.5">Vous pouvez cr\u00e9er ce RDV exceptionnellement en dehors des horaires d&apos;ouverture si la cliente l&apos;accepte.</div><div style="display:flex;flex-direction:column;gap:8px"><button class="btn" style="background:rgba(232,200,115,.12);color:#e8c873;border:1px solid rgba(232,200,115,.4);font-weight:700" onclick="cM();'+_forceArg2+'">\ud83d\udd13 Cr\u00e9er quand m\u00eame (RDV exceptionnel)</button><button class="btn" style="background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button></div></div></div>';
     return;
   }
   // Check if this slot is blocked by absence/pause/congé
