@@ -10575,6 +10575,23 @@ async function saveSlug(){
   }catch(e){console.error("saveSlug ERROR:",e);statusEl.innerHTML='\u274c Erreur : '+e.message;statusEl.style.color="#f87171";}
 }
 
+// Normalise une saisie réseau social :
+// - URL complète (https://...) → conservée telle quelle
+// - @pseudo ou pseudo → reconstruit l'URL canonique de la plateforme
+// - vide → vide
+function _normalizeSocialUrl(input, platform){
+  var v = String(input||"").trim();
+  if(!v) return "";
+  // Déjà une URL complète
+  if(/^https?:\/\//i.test(v)) return v;
+  // Enlève @ et / éventuels
+  var handle = v.replace(/^@+/,"").replace(/^\/+/,"").replace(/\/$/,"");
+  if(!handle) return "";
+  if(platform === "facebook") return "https://facebook.com/"+handle;
+  if(platform === "instagram") return "https://instagram.com/"+handle;
+  if(platform === "tiktok") return "https://tiktok.com/@"+handle.replace(/^@/,"");
+  return v;
+}
 function saveSalonInfo(){
   var S=window.SALON;
   if(!S)return;
@@ -10589,6 +10606,10 @@ function saveSalonInfo(){
   SALON_CONFIG.siret=S.siret||"";
   SALON_CONFIG.tva=S.tva||"";
   SALON_CONFIG.logo=S.logo||"";
+  // Réseaux sociaux (normalise les @pseudo en URL complètes)
+  SALON_CONFIG.facebookUrl = _normalizeSocialUrl(S.facebookUrl||"", "facebook");
+  SALON_CONFIG.instagramUrl = _normalizeSocialUrl(S.instagramUrl||"", "instagram");
+  SALON_CONFIG.tiktokUrl = _normalizeSocialUrl(S.tiktokUrl||"", "tiktok");
   // Also shortcut fields used by bons
   SALON_CONFIG.adr=SALON_CONFIG.adresseComplete();
   // Update header
@@ -11414,7 +11435,7 @@ function rSettings(){
   else if(settTab==="salon"){
     // Init/merge depuis SALON_CONFIG (avant : si window.SALON existait déjà avec {}, les champs restaient undefined → "undefined" affiché en value)
     if(!window.SALON) window.SALON={};
-    var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||""};
+    var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||"",facebookUrl:SALON_CONFIG.facebookUrl||"",instagramUrl:SALON_CONFIG.instagramUrl||"",tiktokUrl:SALON_CONFIG.tiktokUrl||""};
     Object.keys(_salonDefaults).forEach(function(k){ if(window.SALON[k]==null||typeof window.SALON[k]==="undefined") window.SALON[k]=_salonDefaults[k]; });
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos établissement</div><div class="card">';
@@ -11440,6 +11461,11 @@ function rSettings(){
     h+='<div class="fg"><label>Ville</label><input value="'+S.ville+'" onchange="window.SALON.ville=this.value"></div></div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input value="'+S.tel+'" onchange="window.SALON.tel=this.value"></div>';
     h+='<div class="fg"><label>Email</label><input value="'+S.email+'" onchange="window.SALON.email=this.value"></div>';
+    // === R\u00e9seaux sociaux (visibles sur site public + emails confirmation) ===
+    h+='<div style="margin:14px 0 6px;font-size:12px;font-weight:700;color:var(--gold);letter-spacing:1px;text-transform:uppercase">\ud83d\udcf1 R\u00e9seaux sociaux</div>';
+    h+='<div class="fg"><label>Facebook <span style="font-size:10px;color:var(--text3)">(URL compl\u00e8te)</span></label><input value="'+(S.facebookUrl||"").replace(/"/g,"&quot;")+'" placeholder="https://facebook.com/votre-page" onchange="window.SALON.facebookUrl=this.value.trim()"></div>';
+    h+='<div class="fg"><label>Instagram <span style="font-size:10px;color:var(--text3)">(URL ou @pseudo)</span></label><input value="'+(S.instagramUrl||"").replace(/"/g,"&quot;")+'" placeholder="https://instagram.com/votre-pseudo ou @pseudo" onchange="window.SALON.instagramUrl=this.value.trim()"></div>';
+    h+='<div class="fg"><label>TikTok <span style="font-size:10px;color:var(--text3)">(URL ou @pseudo)</span></label><input value="'+(S.tiktokUrl||"").replace(/"/g,"&quot;")+'" placeholder="https://tiktok.com/@votre-pseudo ou @pseudo" onchange="window.SALON.tiktokUrl=this.value.trim()"></div>';
     // SIRET - VERROUILLE (legal NF525, immuable apres 1er ticket) + validation visuelle (Quick Win #2 2026-05-06)
     var _siretValid = lxValidateSiret(S.siret);
     h+='<div class="fg"><label>SIRET '+lxValidationBadge(_siretValid)+lxHelpIcon("Num\u00e9ro \u00e0 14 chiffres d\u00e9livr\u00e9 par l'INSEE lors de l'immatriculation. Visible sur votre extrait KBis ou via l'avis SIRENE de l'URSSAF.")+' <span style="font-size:10px;color:var(--text3)">\ud83d\udd12 verrouill\u00e9 (l\u00e9gal)</span></label>';
@@ -23222,6 +23248,10 @@ async function saveSalonConfig(){
       if(SALON_CONFIG.migrationDataScope !== undefined)   cfg.migrationDataScope   = SALON_CONFIG.migrationDataScope;
       if(SALON_CONFIG.migrationSourceSoftware !== undefined) cfg.migrationSourceSoftware = SALON_CONFIG.migrationSourceSoftware;
       if(SALON_CONFIG.migrationRgpdSentAt !== undefined)  cfg.migrationRgpdSentAt  = SALON_CONFIG.migrationRgpdSentAt;
+      // Réseaux sociaux salon (Facebook / Instagram / TikTok)
+      if(SALON_CONFIG.facebookUrl !== undefined)  cfg.facebookUrl  = SALON_CONFIG.facebookUrl;
+      if(SALON_CONFIG.instagramUrl !== undefined) cfg.instagramUrl = SALON_CONFIG.instagramUrl;
+      if(SALON_CONFIG.tiktokUrl !== undefined)    cfg.tiktokUrl    = SALON_CONFIG.tiktokUrl;
     }
     window._SALON_CONFIG_JSON = cfg;
     // Payload UPDATE : config_json + show_tva_ticket (colonne top-level salons)
@@ -26129,6 +26159,18 @@ function buildRdvEmailHTML(type,vars){
   if(salonAdr) h+='<div style="font-size:12px;color:rgba(255,255,255,.35);margin-bottom:4px">\ud83d\udccd '+salonAdr+'</div>';
   if(salonTel) h+='<div style="font-size:12px;color:rgba(255,255,255,.35);margin-bottom:4px">\ud83d\udcde '+salonTel+'</div>';
   h+='<div style="font-size:12px;color:rgba(255,255,255,.35);margin-bottom:12px">\u2709\ufe0f '+salonEmail+'</div>';
+  // === R\u00e9seaux sociaux du salon (call-to-action "Suivez-nous") ===
+  // Pas de <img> pour compat max emails (Gmail/Outlook bloquent souvent les images)
+  // On utilise des "badges textes" color\u00e9s ronds, lisibles partout.
+  var fbU=SALON_CONFIG.facebookUrl||"", igU=SALON_CONFIG.instagramUrl||"", ttU=SALON_CONFIG.tiktokUrl||"";
+  if(fbU || igU || ttU){
+    h+='<div style="margin-bottom:14px"><div style="font-size:11px;color:rgba(255,255,255,.4);margin-bottom:8px;letter-spacing:1.5px;text-transform:uppercase">Suivez-nous</div>';
+    h+='<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto"><tr>';
+    if(fbU)  h+='<td style="padding:0 5px"><a href="'+fbU+'" target="_blank" style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;background:#1877f2;border-radius:50%;color:#fff;text-decoration:none;font-family:Arial,sans-serif;font-weight:800;font-size:16px" title="Facebook">f</a></td>';
+    if(igU)  h+='<td style="padding:0 5px"><a href="'+igU+'" target="_blank" style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;background:#e91e63;border-radius:50%;color:#fff;text-decoration:none;font-family:Arial,sans-serif;font-weight:800;font-size:11px;letter-spacing:.5px" title="Instagram">IG</a></td>';
+    if(ttU)  h+='<td style="padding:0 5px"><a href="'+ttU+'" target="_blank" style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;background:#000;border:1px solid #ff0050;border-radius:50%;color:#fff;text-decoration:none;font-family:Arial,sans-serif;font-weight:800;font-size:11px;letter-spacing:.5px" title="TikTok">TT</a></td>';
+    h+='</tr></table></div>';
+  }
   h+='<div style="font-size:10px;color:rgba(255,255,255,.2)">Envoy\u00e9 via <span style="color:'+gold+'">Luxyra</span></div>';
   h+='</td></tr>';
 
