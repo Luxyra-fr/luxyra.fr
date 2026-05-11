@@ -598,9 +598,19 @@ async function handleConnectOnboard(request, env) {
       return jsonResponse({ url: link.url, account_id: salon.stripe_connect_id });
     }
 
-    // Create new Express account
+    // Create new connected account
+    // FIX 2026-05-12 : Stripe a déprécié `type: "express"` pour les plateformes EU
+    // en LIVE depuis juin 2024. Il faut utiliser le nouveau format `controller[]`
+    // qui DOIT matcher exactement le profil de plateforme configuré sur Stripe :
+    //   - Dashboard plateforme = "Dashboard Stripe complet"   → stripe_dashboard.type=full
+    //   - Frais de traitement   = "perçus auprès des marchands" → fees.payer=account
+    //   - Responsabilité pertes = "Stripe"                      → losses.payments=stripe
+    //   - Inscription           = "hébergée par Stripe"         → requirement_collection=stripe
     const account = await stripeAPI(env, "accounts", {
-      type: "express",
+      "controller[stripe_dashboard][type]": "full",
+      "controller[fees][payer]": "account",
+      "controller[losses][payments]": "stripe",
+      "controller[requirement_collection]": "stripe",
       country: "FR",
       email: email,
       "capabilities[card_payments][requested]": "true",
