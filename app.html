@@ -7339,6 +7339,16 @@ function dB(a,b){return Math.floor((new Date(b)-new Date(a))/864e5);}
 function dS(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function frM(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
 function toM(t){var p=t.split(":");return parseInt(p[0])*60+parseInt(p[1]);}
+// === Détection ticket fiscalement Luxyra (par opposition à un import LS Coiffure) ===
+// Un ticket Luxyra-fiscal a un hash NF525 OU un tkNum, et son commentaire ne contient pas "Import LS"
+function _isFiscalLuxyra(a){
+  if(!a) return false;
+  if(a.comment && /import\s+(ls|coiffure|lscoiffure)/i.test(String(a.comment))) return false;
+  return !!(a.hash || a.tkNum);
+}
+function _isImportLS(a){
+  return !!(a && a.comment && /import\s+(ls|coiffure|lscoiffure)/i.test(String(a.comment)));
+}
 // === Normalisation modes de paiement (gère toutes les variantes LS/Luxyra/manuelles) ===
 // Retourne le mode canonique : "cb" | "esp" | "chq" | "bon" | "vir" | "aut"
 function _modeCanonique(met){
@@ -19889,7 +19899,12 @@ function printBandeZ(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var mois=accM;var p=mois.split("-");var mLabel=MO[parseInt(p[1])-1]+" "+p[0];
-  var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(mois)===0&&!a.cancelled;});
+  // FISCAL : tickets fiscalement Luxyra (post-migration) UNIQUEMENT
+  // Les imports LS Coiffure sont exclus (leur source fiscale = LS, pas Luxyra)
+  // → la bande Z mensuelle Luxyra ne reflète que ce qui doit être déclaré au titre de Luxyra
+  var dnAll = AP.filter(function(a){return a.st==="done"&&a.date.indexOf(mois)===0&&!a.cancelled;});
+  var dn = dnAll.filter(_isFiscalLuxyra);
+  var dnImports = dnAll.filter(_isImportLS);
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(mois)===0;});
   var ps=PS.filter(function(pp){return pp.date.indexOf(mois)===0;});
   var CD=window.CAISSE_DATA||{fond:200,coffreEsp:0,coffreChq:0,mouvements:[],misesAuCoffre:[],remisesBanque:[]};
@@ -20033,7 +20048,26 @@ function printBandeZ(){
   h+="</div>";
 
   h+="<div class=\"bz-body\">";
-  
+
+  // === Bandeau "P\u00e9riode Luxyra" si imports LS d\u00e9tect\u00e9s (compta partag\u00e9e) ===
+  if(dnImports.length > 0){
+    var _imp_total = 0; dnImports.forEach(function(a){_imp_total += (Number(a.pr)||0);});
+    var _imp_dates = {};
+    dnImports.forEach(function(a){_imp_dates[a.date]=true;});
+    var _imp_dates_arr = Object.keys(_imp_dates).sort();
+    var _imp_from = _imp_dates_arr[0]||"";
+    var _imp_to = _imp_dates_arr[_imp_dates_arr.length-1]||"";
+    var _lux_dates = {}; dn.forEach(function(a){_lux_dates[a.date]=true;});
+    var _lux_dates_arr = Object.keys(_lux_dates).sort();
+    var _lux_from = _lux_dates_arr[0]||"";
+    h+="<div style=\"margin:14px 0;padding:14px 18px;background:#fff7ed;border:2px solid #fb923c;border-radius:8px\">";
+    h+="<div style=\"font-weight:800;font-size:12px;color:#9a3412;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px\">\u26a0 Mois partiel \u2014 Migration en cours</div>";
+    h+="<div style=\"font-size:11px;color:#7c2d12;line-height:1.6\">";
+    h+="Cette bande Z couvre <strong>uniquement la p\u00e9riode Luxyra</strong> (\u00e0 partir du <strong>"+fmt(_lux_from)+"</strong>).<br>";
+    h+="Les <strong>"+dnImports.length+" ticket"+(dnImports.length>1?"s":"")+" ant\u00e9rieur"+(dnImports.length>1?"s":"")+"</strong> ("+_imp_total.toFixed(2)+" \u20ac) du <strong>"+fmt(_imp_from)+"</strong> au <strong>"+fmt(_imp_to)+"</strong> proviennent de <strong>LS Coiffure</strong> (logiciel pr\u00e9c\u00e9dent) \u2014 leur source fiscale est chez LS, \u00e0 fournir s\u00e9par\u00e9ment au comptable.";
+    h+="</div></div>";
+  }
+
   // ===== 1. SYNTHESE =====
   h+="<h2>1. SYNTH\u00c8SE DU MOIS</h2>";
   h+="<table><tr><td>Nombre de tickets</td><td class=\"r b\">"+dn.length+"</td></tr>";
