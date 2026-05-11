@@ -22084,6 +22084,66 @@ function startCaisse(){
   showCaisse();
 }
 
+// === Loupe historique client depuis la caisse ===
+function showClientHistoryFromCaisse(cId){
+  var cl = gC(cId);
+  if(!cl) return;
+  // Récupérer tous les RDV encaissés du client, triés par date desc
+  var histo = AP.filter(function(a){
+    return a.cId === cId && a.st === "done" && !a.cancelled;
+  }).sort(function(a,b){
+    var d = (b.date||"").localeCompare(a.date||"");
+    if(d !== 0) return d;
+    return (b.time||"").localeCompare(a.time||"");
+  }).slice(0, 30);
+  var h = '<div class="mbox" style="max-width:680px;max-height:85vh;overflow-y:auto">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:8px">';
+  h += '<div><h2 style="margin:0;font-size:18px">🔍 Historique de '+cName(cl)+'</h2>';
+  h += '<div style="font-size:11px;color:var(--text2);margin-top:2px">'+histo.length+' RDV encaissé'+(histo.length>1?'s':'')+' • Voir détail prestations et prix</div></div>';
+  h += '<button onclick="cM()" style="background:rgba(255,255,255,.06);border:none;color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;flex-shrink:0">✕</button>';
+  h += '</div>';
+  if(histo.length === 0){
+    h += '<div style="text-align:center;padding:30px 16px;color:var(--text2);font-size:13px">Aucun RDV encaissé pour ce client.<br><span style="font-size:11px;opacity:.6">Les RDV à venir ne sont pas affichés ici.</span></div>';
+  } else {
+    h += '<div style="display:flex;flex-direction:column;gap:8px">';
+    for(var i=0; i<histo.length; i++){
+      var a = histo[i];
+      var sty = gT(a.stId);
+      h += '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-left:3px solid '+(sty&&sty.c?sty.c:'var(--gold)')+';border-radius:8px;padding:10px 12px">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px">';
+      h += '<div style="font-weight:700;font-size:13px">'+fmt(a.date)+' à '+(a.time||'')+(sty?' • '+sty.n:'')+(a.tkNum?' • Ticket #'+a.tkNum:'')+'</div>';
+      h += '<div style="font-family:var(--f1,Georgia,serif);font-size:16px;font-weight:800;color:var(--gold);white-space:nowrap">'+(Number(a.pr)||0).toFixed(2)+' €</div>';
+      h += '</div>';
+      // Mode paiement
+      if(a.met) h += '<div style="font-size:10px;color:var(--text3);margin-bottom:6px">💳 '+a.met+(a.remise>0?' • Remise: -'+Number(a.remise).toFixed(2)+'€':'')+'</div>';
+      // Items détaillés
+      if(a.items && a.items.length){
+        h += '<div style="font-size:12px;display:flex;flex-direction:column;gap:3px;margin-top:4px">';
+        a.items.forEach(function(it){
+          if(it.isSep) return;
+          var qtyStr = (it.qty && it.qty !== 1) ? it.qty+'× ' : '';
+          var pricePart = (Number(it.price)||0).toFixed(2);
+          var remiseStr = it.remise>0 ? ' <span style="color:#4caf50">-'+Number(it.remise).toFixed(2)+'</span>' : '';
+          var totalIt = (Number(it.price)||0) * (Number(it.qty)||1) - (Number(it.remise)||0);
+          h += '<div style="display:flex;justify-content:space-between;padding:2px 0;color:'+(it.isProd?'var(--orange)':'rgba(255,255,255,.8)')+'">';
+          h += '<span>'+(it.isProd?'🛍️ ':'✂️ ')+qtyStr+(it.name||'')+' <span style="color:var(--text3);font-size:11px">@'+pricePart+'€</span>'+remiseStr+'</span>';
+          h += '<span style="font-weight:600">'+totalIt.toFixed(2)+'€</span>';
+          h += '</div>';
+        });
+        h += '</div>';
+      } else if(a.sId){
+        // Fallback : service principal sans items[]
+        var sv = gS(a.sId);
+        h += '<div style="font-size:12px;color:rgba(255,255,255,.8);padding:2px 0">✂️ '+(sv?sv.n:'Prestation')+'</div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
 function showCaisse(){
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){
     var h2='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;background:rgba(20,20,20,.95);border:1px solid rgba(255,255,255,.12)">';
@@ -22199,8 +22259,12 @@ function showCaisse(){
       h+='<div><div style="font-size:11px;color:#e8c873;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Collaborateur</div><div style="font-weight:800;font-size:14px;color:#fff">'+sty.n+'</div></div></div>';
     }
     h+='<div style="width:1px;height:30px;background:rgba(255,255,255,.2)"></div>';
-    // Client
-    h+='<div><div style="font-size:11px;color:#e8c873;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Client</div><div style="font-weight:800;font-size:14px;color:#fff">'+clName+'</div></div>';
+    // Client + loupe historique (visible uniquement si client connu)
+    h+='<div style="display:flex;align-items:center;gap:8px"><div><div style="font-size:11px;color:#e8c873;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Client</div><div style="font-weight:800;font-size:14px;color:#fff">'+clName+'</div></div>';
+    if(cl){
+      h+='<button title="Voir l\'historique du client" onclick="showClientHistoryFromCaisse(\''+cl.id+'\')" style="background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.3);color:var(--gold);width:32px;height:32px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;padding:0">🔍</button>';
+    }
+    h+='</div>';
     // Bon cadeau
     if(cl){var gcBal=0;GC.forEach(function(g){if(g.cId===cl.id&&g.st==="active")gcBal+=g.rem;});
     if(gcBal>0)h+='<div style="margin-left:auto;padding:4px 10px;background:rgba(200,168,78,.15);border:1px solid rgba(200,168,78,.3);border-radius:8px;font-size:11px;color:var(--gold);font-weight:700">\ud83c\udf81 BC: '+gcBal.toFixed(0)+' \u20ac</div>';}
