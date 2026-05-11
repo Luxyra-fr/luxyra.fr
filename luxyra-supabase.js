@@ -2127,20 +2127,33 @@ async function deleteForfaitFromDb(forfaitId) {
 
 async function saveCollaborateurs() {
   if (!_isOnline || !_salonId) return;
-  // First, get all existing collab IDs from Supabase for this salon
-  var existing = await _sb.from("collaborateurs").select("id").eq("salon_id", _salonId);
+  // FIX 2026-05-11 (Manue photo perdue) : récupère img+id pour pouvoir
+  // PRÉSERVER une photo DB existante si la mémoire locale a img="" (race
+  // condition entre 2 sessions / reload partiel). La suppression explicite
+  // passe par clearStyImg → clearCollabPhoto(id) qui force img="" directement.
+  var existing = await _sb.from("collaborateurs").select("id,img").eq("salon_id", _salonId);
   var dbIds = {};
+  var dbImg = {};
   if (existing.data) {
     for (var e = 0; e < existing.data.length; e++) {
       dbIds[existing.data[e].id] = true;
+      dbImg[existing.data[e].id] = existing.data[e].img || "";
     }
   }
   // Now save each collab
   for (var i = 0; i < T.length; i++) {
     var c = T[i];
+    // DÉFENSE : si la mémoire locale a img="" mais la DB a une photo, on garde la DB.
+    // Sinon (mémoire a une img OU DB vide aussi), on écrit la mémoire.
+    var memImg = c.img || "";
+    var preservedImg = (memImg === "" && c.id && dbImg[c.id]) ? dbImg[c.id] : memImg;
+    if (preservedImg && memImg === "") {
+      // On a remis la photo DB en mémoire : synchronise le tableau local
+      c.img = preservedImg;
+    }
     var data = {
       salon_id: _salonId, nom: c.n, initiales: c.i,
-      couleur: c.c, img: c.img || "", horaires: c.hrs || {},
+      couleur: c.c, img: preservedImg, horaires: c.hrs || {},
       pause: c.pause || null,
       date_entree: c.dateEntree || null,
       date_depart: c.dateDepart || null,
@@ -2157,6 +2170,13 @@ async function saveCollaborateurs() {
       if (res.data && res.data[0]) c.id = res.data[0].id;
     }
   }
+}
+
+// Effacement explicite de la photo d'un collaborateur (utilisé par clearStyImg)
+// Bypass la protection anti-écrasement de saveCollaborateurs().
+async function clearCollabPhoto(collabId) {
+  if (!_isOnline || !_salonId || !collabId) return;
+  await _sb.from("collaborateurs").update({ img: "" }).eq("id", collabId);
 }
 
 // Supprimer un client
