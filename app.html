@@ -9982,8 +9982,52 @@ function removePhase(id, idx){
   var ph=getApptPhases(a);
   if(ph.length<=1){ showAlert("Impossible de supprimer la seule phase du RDV. Annulez plutôt le RDV.","warning"); return; }
   showConfirm("Supprimer cette phase du RDV ?", async function(){
+    var removed = ph[idx];
     ph.splice(idx,1);
+    a.aPhases = ph;
+    // Refonte 2026-05-11 : recalcule a.pr et nettoie items quand on retire une phase
+    // Cas 1 : la phase est liée à un item ajouté → retire de items et décrémente pr du prix item
+    var removedPrice = 0;
+    if(removed && removed.l && a.items && a.items.length){
+      // Cherche un item correspondant (par sId si possible, sinon par name)
+      var itemIdx = -1;
+      if(removed.sId){
+        for(var ii=0; ii<a.items.length; ii++){ if(a.items[ii].sId===removed.sId && (a.items[ii].addedDuringRdv || a.items[ii].fromMultiSelect)){ itemIdx=ii; break; } }
+      }
+      if(itemIdx<0){
+        for(var ii=0; ii<a.items.length; ii++){ if(a.items[ii].name===removed.l && (a.items[ii].addedDuringRdv || a.items[ii].fromMultiSelect)){ itemIdx=ii; break; } }
+      }
+      if(itemIdx>=0){
+        removedPrice = Number(a.items[itemIdx].price)||0;
+        a.items.splice(itemIdx, 1);
+      }
+    }
+    // Cas 2 : pas d'item match → essaie via le service du phase ou via a.sId si c'était la première phase
+    if(!removedPrice){
+      if(removed && removed.sId){
+        var rsv = gS(removed.sId);
+        if(rsv) removedPrice = Number(rsv.p)||0;
+      } else if(idx === 0 && a.sId){
+        // La phase supprimée était la principale (création initiale)
+        var rsv2 = gS(a.sId);
+        if(rsv2) removedPrice = Number(rsv2.p)||0;
+      }
+    }
+    a.pr = Math.max(0, (Number(a.pr)||0) - removedPrice);
+    // Met à jour a.sId si la phase supprimée était la 1ère
+    if(idx === 0){
+      var firstWork = null;
+      for(var fi=0; fi<ph.length; fi++){ if(ph[fi].t==="w"){ firstWork = ph[fi]; break; } }
+      if(firstWork){
+        if(firstWork.sId){ a.sId = firstWork.sId; }
+        else if(firstWork.l){
+          // Cherche le service par nom
+          for(var si=0; si<SVC.length; si++){ if(SVC[si].n===firstWork.l){ a.sId = SVC[si].id; break; } }
+        }
+      }
+    }
     if(typeof saveAppointment==="function") await saveAppointment(a);
+    if(typeof auditLog==="function") auditLog("RETRAIT_PHASE_RDV","RDV "+a.id+" — Retrait phase '"+(removed?removed.l:"?")+"' (-"+removedPrice.toFixed(2)+"€)");
     requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(id);},150);});
   });
 }
