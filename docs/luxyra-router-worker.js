@@ -598,16 +598,26 @@ async function handleConnectOnboard(request, env) {
       return jsonResponse({ url: link.url, account_id: salon.stripe_connect_id });
     }
 
-    // Create new connected account — modèle EXPRESS (UX simple pour les salons)
+    // Create new connected account — modèle STANDARD (= controller.dashboard "full")
     // FIX 2026-05-12 : Stripe a déprécié `type: "express"` pour les plateformes EU
     // en LIVE depuis juin 2024. Il faut utiliser le nouveau format `controller[]`
-    // qui DOIT matcher exactement le profil de plateforme configuré sur Stripe :
-    //   - Dashboard          = "Express" (UX simplifiée pour les salons)
-    //   - Frais de traitement = "perçus auprès des marchands" → fees.payer=account
-    //   - Responsabilité pertes = "Stripe"                     → losses.payments=stripe
-    //   - Inscription        = "hébergée par Stripe"           → requirement_collection=stripe
+    // qui DOIT matcher exactement le profil de plateforme configuré sur Stripe.
+    //
+    // Choix de modèle Luxyra (Option B — sécurisé pour la plateforme) :
+    //   - Dashboard          = "Dashboard Stripe complet" → stripe_dashboard.type=full
+    //   - Frais Stripe payés par : le marchand            → fees.payer=account
+    //   - Responsabilité pertes/chargebacks : Stripe      → losses.payments=stripe
+    //   - Inscription : hébergée par Stripe (KYC FR)      → requirement_collection=stripe
+    //
+    // Conséquence : pas de risque financier pour Luxyra (les salons paient leurs
+    // propres frais + assument leurs litiges). Le salon doit faire un onboarding
+    // KYC complet ~15 min mais une seule fois.
+    //
+    // ⚠️ Règle Stripe EU : avec stripe_dashboard=express, la plateforme DOIT
+    // payer les frais ET être responsable des pertes (=Option A risquée).
+    // C'est pour ça qu'on reste sur "full".
     const account = await stripeAPI(env, "accounts", {
-      "controller[stripe_dashboard][type]": "express",
+      "controller[stripe_dashboard][type]": "full",
       "controller[fees][payer]": "account",
       "controller[losses][payments]": "stripe",
       "controller[requirement_collection]": "stripe",
