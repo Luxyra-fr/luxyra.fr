@@ -1943,7 +1943,14 @@ async function saveSalonConfig() {
     var _sc=window.SITE_CONFIG||{};
     var newCfg = {
       nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,
-      slogan:SALON_CONFIG.sousTitre||_sc.slogan,metier:SALON_CONFIG.metier,
+      // Fix 2026-05-11 : on stocke le VRAI slogan (depuis site_config) et non
+      // plus le sousTitre. Avant : slogan=sousTitre||slogan → "by Amandine J"
+      // écrasait silencieusement "Chaque cliente, une création unique" dans
+      // salons.config_json.slogan. Maintenant : slogan = SITE_CONFIG.slogan
+      // (fallback sousTitre seulement si rien).
+      slogan:_sc.slogan||SALON_CONFIG.sousTitre||"",
+      sousTitre:SALON_CONFIG.sousTitre||"",
+      metier:SALON_CONFIG.metier,
       siteActif:_sc.siteActif||false,reservationActive:_sc.reservationActive||false,
       photoHero:_sc.photoHero,photoSalon:_sc.photoSalon,
       slot:typeof SLOT!=="undefined"?SLOT:15,slot_h:typeof SLOT_H!=="undefined"?SLOT_H:28,
