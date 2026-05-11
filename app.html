@@ -10287,12 +10287,10 @@ function delAppt(id){
     h+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="doDelAppt(\''+id+'\')">Confirmer</button></div></div>';
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
   }else{
-    // RDV familial : si lié, demander si annuler les 2
-    var _lkId2=(a.clients && Array.isArray(a.clients) && a.clients[0] && a.clients[0].linkedAppt)?a.clients[0].linkedAppt:null;
-    var _lkApt2=null;
-    if(_lkId2){ for(var _li2=0;_li2<AP.length;_li2++){ if(AP[_li2].id===_lkId2){ _lkApt2=AP[_li2]; break; } } }
-    if(_lkApt2 && _lkApt2.st!=="done" && !_lkApt2.cancelled){
-      _showFamilialCancelConfirm(id, _lkId2);
+    // RDV familial : détection robuste (3 directions) + modale 3 boutons
+    var _lkApt2 = (typeof _findLinkedFamilialAppt==="function") ? _findLinkedFamilialAppt(a) : null;
+    if(_lkApt2){
+      _showFamilialCancelConfirm(id, _lkApt2.id);
       return;
     }
     // Unpaid RDV (sans lien): delete from DB and remove locally
@@ -10314,16 +10312,42 @@ function cancelAppt(id){
   }
   _cancelApptDo(id);
 }
+// === D\u00e9tection robuste du RDV li\u00e9 (3 directions) ===
+function _findLinkedFamilialAppt(a){
+  if(!a) return null;
+  // Direction 1 : a pointe vers linkedAppt valide
+  if(a.clients && Array.isArray(a.clients) && a.clients[0] && a.clients[0].linkedAppt){
+    var id = a.clients[0].linkedAppt;
+    for(var i=0;i<AP.length;i++){ if(AP[i].id===id && AP[i].st!=="done" && !AP[i].cancelled) return AP[i]; }
+  }
+  // Direction 2 : un autre RDV pointe vers MOI (r\u00e9ciprocit\u00e9)
+  for(var j=0;j<AP.length;j++){
+    var b=AP[j];
+    if(b.id===a.id) continue;
+    if(b.clients && Array.isArray(b.clients) && b.clients[0] && b.clients[0].linkedAppt===a.id && b.st!=="done" && !b.cancelled) return b;
+  }
+  // Direction 3 : fallback heuristique (RDV familial cr\u00e9\u00e9 avant fix UUIDs)
+  // M\u00eame date, m\u00eame heure, comment "RDV familial / \ud83d\udc6a"
+  var marker = /RDV familial|\ud83d\udc6a/;
+  if(a.comment && marker.test(a.comment)){
+    for(var k=0;k<AP.length;k++){
+      var c=AP[k];
+      if(c.id===a.id) continue;
+      if(c.date===a.date && c.time===a.time && c.comment && marker.test(c.comment) && c.st!=="done" && !c.cancelled){
+        return c;
+      }
+    }
+  }
+  return null;
+}
 function _cancelApptDo(id){
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
   if(!a)return;
   if(a.st==="done"){delAppt(id);return;}
   // === RDV familial : si li\u00e9, demander si annuler les 2 ===
-  var _lkId = (a.clients && Array.isArray(a.clients) && a.clients[0] && a.clients[0].linkedAppt) ? a.clients[0].linkedAppt : null;
-  var _lkApt = null;
-  if(_lkId){ for(var _li=0;_li<AP.length;_li++){ if(AP[_li].id===_lkId){ _lkApt=AP[_li]; break; } } }
-  if(_lkApt && _lkApt.st!=="done" && !_lkApt.cancelled){
-    _showFamilialCancelConfirm(id, _lkId);
+  var _lkApt = _findLinkedFamilialAppt(a);
+  if(_lkApt){
+    _showFamilialCancelConfirm(id, _lkApt.id);
     return;
   }
   _doCancelApptUnpaid(id);
