@@ -8943,9 +8943,26 @@ function rPlanningDay(dateObj,showDayHeader){
       var totalDur=0;aPhases.forEach(function(p){totalDur+=p.d;});
       var endM=startM+totalDur;
       var endTime=String(Math.floor(endM/60)).padStart(2,"0")+":"+String(endM%60).padStart(2,"0");
-      for(var pi=0;pi<aPhases.length;pi++){
-        var ph=aPhases[pi];
-        var _phOwner=ph.t==="w"?(ph.stId||a.stId):a.stId;
+      // === Fusion des phases consécutives du même collab pour éviter cartes empilées ===
+      // Groupe les phases adjacentes qui ont le même propriétaire (stId ou défaut a.stId)
+      // → 1 phase fusionnée par groupe. Si une phase appartient à un autre collab au milieu,
+      // ça coupe le groupe naturellement.
+      var _fusedPhases = [];
+      for(var _fpi=0; _fpi<aPhases.length; _fpi++){
+        var _fph = aPhases[_fpi];
+        var _fOwner = _fph.t==="w" ? (_fph.stId||a.stId) : a.stId;
+        if(_fusedPhases.length){
+          var _last = _fusedPhases[_fusedPhases.length-1];
+          if(_last.t === _fph.t && _last._owner === _fOwner && (!_fph.sId || !_last.sId || _fph.sId === _last.sId)){
+            _last.d += Number(_fph.d)||0;
+            continue;
+          }
+        }
+        _fusedPhases.push({t:_fph.t, d:Number(_fph.d)||0, l:_fph.l, sId:_fph.sId, _owner:_fOwner});
+      }
+      for(var pi=0;pi<_fusedPhases.length;pi++){
+        var ph=_fusedPhases[pi];
+        var _phOwner=ph._owner;
         if(_phOwner!==sty.id){cur+=ph.d;continue;}
         var topPx=((cur-gs)/SLOT)*SLOT_H;
         var hPx=(ph.d/SLOT)*SLOT_H;
