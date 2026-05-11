@@ -798,7 +798,7 @@ async function loadSalonData() {
     // Limit 5000 clients = filet de sécurité scalabilité (gros salon = 2000-3000 clients
     // actifs+inactifs). Au-delà, le user peut chercher via le moteur de recherche
     // qui fera un fetch ciblé sur le serveur.
-    var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom").limit(5000);
+    var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom").limit(100000);
     if (clRes.data) {
       CL = clRes.data.map(function(c) {
         var obj = {
@@ -849,7 +849,7 @@ async function loadSalonData() {
 
   // 6. Charger rendez-vous/tickets → AP[]
   try {
-    var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(5000);
+    var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(100000);
     if (apRes.data) {
       AP = apRes.data.map(function(a) {
         // Migration : si client_id est null et le comment contient un marqueur passage-E/H/F,
