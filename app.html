@@ -22101,6 +22101,7 @@ function openCaisseToday(){
 
 function startCaisse(){
   _tk={step:1,stId:null,cId:null,items:[],comment:"",remise:0};
+  window._caisseDirectTime=null; // reset heure service (sera re-initialisé à l'arrivée step 3)
   showCaisse();
 }
 
@@ -22330,6 +22331,16 @@ function showCaisse(){
       h+='<button title="Voir l\'historique du client" onclick="showClientHistoryFromCaisse(\''+cl.id+'\')" style="background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.3);color:var(--gold);width:32px;height:32px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;padding:0">🔍</button>';
     }
     h+='</div>';
+    // === Heure du service (encaissement direct uniquement) ===
+    if(!_tk.apptId){
+      if(!window._caisseDirectTime){
+        var _nowD=new Date();
+        window._caisseDirectTime=String(_nowD.getHours()).padStart(2,"0")+":"+String(_nowD.getMinutes()).padStart(2,"0");
+      }
+      h+='<div style="width:1px;height:30px;background:rgba(255,255,255,.2)"></div>';
+      h+='<div title="Heure du service (modifiable pour affichage planning)"><div style="font-size:11px;color:#e8c873;font-weight:700;letter-spacing:.5px;text-transform:uppercase">⏱ Heure service</div>';
+      h+='<input type="time" value="'+window._caisseDirectTime+'" onchange="window._caisseDirectTime=this.value" style="background:rgba(255,255,255,.06);border:1px solid rgba(200,168,78,.3);color:#fff;font-weight:700;font-size:14px;padding:4px 8px;border-radius:6px;width:90px"></div>';
+    }
     // Bon cadeau
     if(cl){var gcBal=0;GC.forEach(function(g){if(g.cId===cl.id&&g.st==="active")gcBal+=g.rem;});
     if(gcBal>0)h+='<div style="margin-left:auto;padding:4px 10px;background:rgba(200,168,78,.15);border:1px solid rgba(200,168,78,.3);border-radius:8px;font-size:11px;color:var(--gold);font-weight:700">\ud83c\udf81 BC: '+gcBal.toFixed(0)+' \u20ac</div>';}
@@ -24374,7 +24385,10 @@ function doFinalPayExecute(method){
   }else{
     // Direct caisse sale (no RDV) -> create new ticket entry
     var _tkClPri=_tk.cId?gC(_tk.cId):null;
-    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:new Date().toTimeString().slice(0,5),ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
+    // Heure du service : utilise window._caisseDirectTime si saisi par l'utilisateur,
+    // sinon prend l'heure actuelle (default). Permet d'afficher correctement sur planning.
+    var _svcTime = window._caisseDirectTime || new Date().toTimeString().slice(0,5);
+    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:_svcTime,ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
       // Persistance DB : nom client lisible + extras multi-client
       clientNom:_tkClPri?_tkClPri.nom:(_tk.passType==="H"?"Passage homme":_tk.passType==="E"?"Passage enfant":"Passage femme"),
       clientPrenom:_tkClPri?_tkClPri.pre:null,
