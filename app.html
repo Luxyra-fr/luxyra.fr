@@ -20415,6 +20415,10 @@ function oM(type,pf){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()">';
   
   if(type==="appt"){
+    // Reset multi-prestations state (refonte 2026-05-11)
+    window._rdvSvcIds=[];
+    window._rdvSvcId=null;
+    window._rdvPhases=null;
     var dk=dS(calD);
     var dow=calD.getDay();
     var dayLabel=DF[dow]+" "+calD.getDate()+" "+MO[calD.getMonth()];
@@ -20646,6 +20650,20 @@ function aAp(){
     return;
   }
   var sv=gS(s);
+  // Multi-prestations (refonte 2026-05-11) : si plusieurs services sélectionnés, calcule prix total
+  var _rdvTotalPrice = Number(sv ? sv.p : 0) || 0;
+  var _rdvItemsMulti = null;
+  if(window._rdvSvcIds && window._rdvSvcIds.length>1){
+    _rdvTotalPrice = 0;
+    _rdvItemsMulti = [];
+    window._rdvSvcIds.forEach(function(sid){
+      var ss=gS(sid);
+      if(ss){
+        _rdvTotalPrice += Number(ss.p)||0;
+        _rdvItemsMulti.push({sId:sid, name:ss.n||"", price:Number(ss.p)||0, qty:1, isProd:false, fromMultiSelect:true});
+      }
+    });
+  }
   // If no client selected, check if passage type was chosen
   if(!c&&window._rdvPassage){c=window._rdvPassage;}
   if(!c){
@@ -20673,19 +20691,22 @@ function aAp(){
   var conflicts=checkConflict(st,d,t,s,null);
   if(conflicts.length>0){
     // Store pending RDV data
-    window._pendingRdv={cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,phases:window._rdvPhases};
+    window._pendingRdv={cId:c,sId:s,stId:st,date:d,time:t,pr:_rdvTotalPrice,phases:window._rdvPhases,items:_rdvItemsMulti};
     var _pLieu=document.getElementById("rdvLieu");
     if(_pLieu&&_pLieu.value==="domicile"){window._pendingRdv.lieu="domicile";window._pendingRdv.adresse=(document.getElementById("rdvAdresse")||{}).value||"";}
-    window._rdvSvcId=null;window._rdvPassage=null;
+    window._rdvSvcId=null;window._rdvSvcIds=null;window._rdvPassage=null;
     showConflictAlert(conflicts,"confirmPendingRdv()");
     return;
   }
-  var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:sv.p,st:"conf",met:""};if(window._rdvPhases)rdvObj.aPhases=window._rdvPhases;window._rdvPhases=null;
+  var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:_rdvTotalPrice,st:"conf",met:""};
+  if(window._rdvPhases)rdvObj.aPhases=window._rdvPhases;
+  if(_rdvItemsMulti)rdvObj.items=_rdvItemsMulti;
+  window._rdvPhases=null;
   // Domicile
   var lieuEl=document.getElementById("rdvLieu");
   if(lieuEl&&lieuEl.value==="domicile"){rdvObj.lieu="domicile";rdvObj.adresse=(document.getElementById("rdvAdresse")||{}).value||"";}
   AP.push(rdvObj);
-  window._rdvSvcId=null;window._rdvPassage=null;
+  window._rdvSvcId=null;window._rdvSvcIds=null;window._rdvPassage=null;
   // Restore multi-day view if we came from it
   if(window._savedCalD){calD=window._savedCalD;window._planDays=window._savedPlanDays||1;window._savedCalD=null;window._savedPlanDays=null;}
   cM();go("planning");
@@ -20698,6 +20719,8 @@ function confirmPendingRdv(){
   var r=window._pendingRdv;
   if(!r)return;
   var rdvObj2={id:U(),cId:r.cId,sId:r.sId,stId:r.stId,date:r.date,time:r.time,pr:r.pr,st:"conf",met:""};if(r.aPhases||r.phases)rdvObj2.aPhases=r.aPhases||r.phases;
+  // Multi-prestations (refonte 2026-05-11) : préserve items si présents
+  if(r.items && r.items.length) rdvObj2.items = r.items;
   if(r.lieu)rdvObj2.lieu=r.lieu;if(r.adresse)rdvObj2.adresse=r.adresse;
   AP.push(rdvObj2);
   window._pendingRdv=null;
@@ -20821,13 +20844,64 @@ function pickRdvCat(cat){
 }
 
 function pickRdvSvc(svcId){
-  window._rdvSvcId=svcId;
+  // Refonte 2026-05-11 : multi-prestations \u00e0 la cr\u00e9ation
+  // pickRdvSvc AJOUTE \u00e0 la s\u00e9lection au lieu de REMPLACER, et concat\u00e8ne les phases.
   var sv=gS(svcId);if(!sv)return;
-  // Copy phases for editing
-  window._rdvPhases=JSON.parse(JSON.stringify(sv.phases));
-  var el=document.getElementById("rdvSvcList");
-  if(el)el.innerHTML='<div style="padding:10px;background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:8px;font-size:14px;margin-top:6px;color:#fff">\u2714 <strong style="color:var(--gold)">'+sv.n+'</strong> <span style="color:rgba(255,255,255,.6)">\u2014 '+sv.p+'\u20ac</span></div>';
+  if(!window._rdvSvcIds) window._rdvSvcIds=[];
+  // Ne pas ajouter en double
+  if(window._rdvSvcIds.indexOf(svcId)<0) window._rdvSvcIds.push(svcId);
+  // Le premier s\u00e9lectionn\u00e9 devient le principal (legacy compatibility avec _rdvSvcId)
+  if(!window._rdvSvcId) window._rdvSvcId=window._rdvSvcIds[0];
+  // Reconstruire _rdvPhases = concat\u00e9nation des phases de tous les services s\u00e9lectionn\u00e9s
+  window._rdvPhases=[];
+  window._rdvSvcIds.forEach(function(sid){
+    var s=gS(sid);
+    if(s && s.phases){
+      s.phases.forEach(function(p){ window._rdvPhases.push(JSON.parse(JSON.stringify(p))); });
+    }
+  });
+  renderSelectedSvcsList();
   renderRdvPhases();
+}
+
+function removeRdvSvc(svcId){
+  if(!window._rdvSvcIds) return;
+  window._rdvSvcIds = window._rdvSvcIds.filter(function(id){return id!==svcId;});
+  // Reconstruire les phases
+  window._rdvPhases=[];
+  window._rdvSvcIds.forEach(function(sid){
+    var s=gS(sid);
+    if(s && s.phases){
+      s.phases.forEach(function(p){ window._rdvPhases.push(JSON.parse(JSON.stringify(p))); });
+    }
+  });
+  // Mettre \u00e0 jour le service principal
+  window._rdvSvcId = window._rdvSvcIds[0] || null;
+  renderSelectedSvcsList();
+  renderRdvPhases();
+}
+
+function renderSelectedSvcsList(){
+  var el=document.getElementById("rdvSvcList");
+  if(!el) return;
+  var ids = window._rdvSvcIds || [];
+  if(ids.length===0){el.innerHTML=''; return;}
+  var total = 0;
+  var h='<div style="padding:10px;background:var(--gold-bg);border:1px solid var(--gold-bg2);border-radius:8px;margin-top:6px">';
+  h+='<div style="font-size:10px;color:rgba(255,255,255,.5);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">Prestations s\u00e9lectionn\u00e9es</div>';
+  ids.forEach(function(sid){
+    var s=gS(sid);
+    if(!s) return;
+    total += Number(s.p)||0;
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);gap:8px">';
+    h += '<div style="flex:1;min-width:0"><strong style="color:var(--gold);font-size:14px">'+s.n+'</strong> <span style="color:rgba(255,255,255,.5);font-size:12px">\u2014 '+(Number(s.p)||0).toFixed(2)+'\u20ac</span></div>';
+    h += '<button onclick="removeRdvSvc('+sid+')" style="background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.3);color:#ef5350;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:12px;flex-shrink:0">\u2716</button>';
+    h += '</div>';
+  });
+  h += '<div style="display:flex;justify-content:space-between;padding-top:8px;margin-top:6px;border-top:1px solid rgba(212,168,67,.3);font-weight:700"><span>Total</span><span style="color:var(--gold);font-size:16px">'+total.toFixed(2)+'\u20ac</span></div>';
+  if(ids.length>0)h += '<div style="font-size:10px;color:rgba(255,255,255,.4);text-align:center;margin-top:6px">\ud83d\udca1 Cliquez sur une autre famille puis prestation pour en ajouter</div>';
+  h += '</div>';
+  el.innerHTML = h;
 }
 
 function renderRdvPhases(){
