@@ -23233,18 +23233,18 @@ async function saveSalonConfig(){
     if(typeof SVCCOLORS!=="undefined" && SVCCOLORS) cfg.svccolors = SVCCOLORS;
     if(typeof window.PRODCOLORS==="object" && window.PRODCOLORS) cfg.prodcolors = window.PRODCOLORS;
     if(typeof window.FIDCONF==="object" && window.FIDCONF) cfg.fidconf = window.FIDCONF;
-    if(window.CAISSE_DATA && typeof window.CAISSE_DATA.fond!=="undefined") cfg.fond_caisse = window.CAISSE_DATA.fond;
-    // Persistance complète CAISSE_DATA (bug fix 2026-05-11) :
-    // sans ces lignes, faire une clôture ou un mouvement ne sauvegarde rien en DB
-    // → au reload, le coffre/mouvements/remises banque sont perdus.
-    if(window.CAISSE_DATA){
-      if(typeof window.CAISSE_DATA.coffreEsp === "number") cfg.coffreEsp = window.CAISSE_DATA.coffreEsp;
-      if(typeof window.CAISSE_DATA.coffreChq === "number") cfg.coffreChq = window.CAISSE_DATA.coffreChq;
-      if(Array.isArray(window.CAISSE_DATA.misesAuCoffre)) cfg.misesAuCoffre = window.CAISSE_DATA.misesAuCoffre;
-      if(Array.isArray(window.CAISSE_DATA.mouvements))    cfg.mouvements    = window.CAISSE_DATA.mouvements;
-      if(Array.isArray(window.CAISSE_DATA.remisesBanque)) cfg.remisesBanque = window.CAISSE_DATA.remisesBanque;
-      if(Array.isArray(window.CAISSE_DATA.retraits))      cfg.retraits      = window.CAISSE_DATA.retraits;
-      if(Array.isArray(window.CAISSE_DATA.pieces))        cfg.pieces        = window.CAISSE_DATA.pieces;
+    // === Persistance COMPLÈTE de CAISSE_DATA en bloc ===
+    // Solution propre : on sérialise l'objet entier au lieu de lister les champs.
+    // Tout nouveau champ ajouté à CAISSE_DATA est automatiquement durable, plus
+    // de "j'ai oublié de l'ajouter à saveSalonConfig" comme on a eu sur fond,
+    // coffreEsp, misesAuCoffre, pay_active, svccolors, etc.
+    if(window.CAISSE_DATA && typeof window.CAISSE_DATA === "object"){
+      try {
+        // Deep clone pour éviter qu'une mutation côté JS post-save n'affecte l'objet stocké
+        cfg.caisse_data = JSON.parse(JSON.stringify(window.CAISSE_DATA));
+        // Rétro-compat : on garde fond_caisse comme champ top-level (utilisé ailleurs)
+        if(typeof window.CAISSE_DATA.fond !== "undefined") cfg.fond_caisse = window.CAISSE_DATA.fond;
+      } catch(e){ console.warn("CAISSE_DATA serialize failed:", e); }
     }
     if(typeof SALON_CONFIG==="object" && SALON_CONFIG && SALON_CONFIG.validiteDevis) cfg.validite_devis = Number(SALON_CONFIG.validiteDevis);
     // Champs SALON_CONFIG top-level pertinents
