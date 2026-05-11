@@ -22085,6 +22085,14 @@ function startCaisse(){
 }
 
 // === Loupe historique client depuis la caisse ===
+// Fermeture : on re-render le POS pour rester sur l'écran encaissement
+function _closeClientHistoryCaisse(){
+  document.getElementById("modal").innerHTML = "";
+  // Si on est en plein encaissement (step 3), re-render pour rester sur l'écran POS
+  if(window._tk && (window._tk.step===3 || window._tk.step===2) && typeof showCaisse==="function"){
+    showCaisse();
+  }
+}
 function showClientHistoryFromCaisse(cId){
   var cl = gC(cId);
   if(!cl) return;
@@ -22096,52 +22104,81 @@ function showClientHistoryFromCaisse(cId){
     if(d !== 0) return d;
     return (b.time||"").localeCompare(a.time||"");
   }).slice(0, 30);
-  var h = '<div class="mbox" style="max-width:680px;max-height:85vh;overflow-y:auto">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:8px">';
-  h += '<div><h2 style="margin:0;font-size:18px">🔍 Historique de '+cName(cl)+'</h2>';
-  h += '<div style="font-size:11px;color:var(--text2);margin-top:2px">'+histo.length+' RDV encaissé'+(histo.length>1?'s':'')+' • Voir détail prestations et prix</div></div>';
-  h += '<button onclick="cM()" style="background:rgba(255,255,255,.06);border:none;color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;flex-shrink:0">✕</button>';
+  // CA cumulé + nb visites pour bandeau résumé
+  var caTotal = 0, nbProds = 0, nbSvcs = 0;
+  histo.forEach(function(a){
+    caTotal += (Number(a.pr)||0);
+    if(a.items && a.items.length){
+      a.items.forEach(function(it){ if(it.isSep) return; if(it.isProd) nbProds++; else nbSvcs++; });
+    } else if(a.sId){ nbSvcs++; }
+  });
+  var h = '<div class="mbox" style="max-width:760px;max-height:85vh;overflow-y:auto;padding:18px">';
+  // ===== Header sticky =====
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">';
+  h += '<div><h2 style="margin:0;font-size:18px;font-family:var(--f1,Georgia,serif)">🔍 Historique de '+cName(cl)+'</h2>';
+  h += '<div style="font-size:12px;color:var(--text2);margin-top:3px"><strong>'+histo.length+'</strong> ticket'+(histo.length>1?'s':'')+' encaissé'+(histo.length>1?'s':'')+' • <strong style="color:var(--gold)">'+caTotal.toFixed(2)+' €</strong> cumulés • '+nbSvcs+' prestation'+(nbSvcs>1?'s':'')+(nbProds>0?' • '+nbProds+' produit'+(nbProds>1?'s':''):'')+'</div></div>';
+  h += '<button onclick="_closeClientHistoryCaisse()" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:16px;flex-shrink:0;font-weight:700">✕</button>';
   h += '</div>';
   if(histo.length === 0){
-    h += '<div style="text-align:center;padding:30px 16px;color:var(--text2);font-size:13px">Aucun RDV encaissé pour ce client.<br><span style="font-size:11px;opacity:.6">Les RDV à venir ne sont pas affichés ici.</span></div>';
+    h += '<div style="text-align:center;padding:30px 16px;color:var(--text2);font-size:13px">Aucun RDV encaissé pour ce client.<br><span style="font-size:11px;opacity:.6">(Les RDV à venir ne sont pas affichés ici.)</span></div>';
   } else {
-    h += '<div style="display:flex;flex-direction:column;gap:8px">';
+    h += '<div style="display:flex;flex-direction:column;gap:10px">';
     for(var i=0; i<histo.length; i++){
       var a = histo[i];
       var sty = gT(a.stId);
-      h += '<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-left:3px solid '+(sty&&sty.c?sty.c:'var(--gold)')+';border-radius:8px;padding:10px 12px">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;gap:8px">';
-      h += '<div style="font-weight:700;font-size:13px">'+fmt(a.date)+' à '+(a.time||'')+(sty?' • '+sty.n:'')+(a.tkNum?' • Ticket #'+a.tkNum:'')+'</div>';
-      h += '<div style="font-family:var(--f1,Georgia,serif);font-size:16px;font-weight:800;color:var(--gold);white-space:nowrap">'+(Number(a.pr)||0).toFixed(2)+' €</div>';
+      var brutTk = 0, totRemise = Number(a.remise)||0;
+      h += '<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-left:4px solid '+(sty&&sty.c?sty.c:'var(--gold)')+';border-radius:10px;padding:12px 14px">';
+      // === Bandeau date/total ===
+      h += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;gap:8px;flex-wrap:wrap">';
+      h += '<div><div style="font-weight:800;font-size:14px;color:#fff">'+fmt(a.date)+(a.time?' à '+a.time:'')+'</div>';
+      h += '<div style="font-size:11px;color:var(--text3);margin-top:2px">'+(sty?'👤 '+sty.n:'')+(a.tkNum?' • Ticket #'+a.tkNum:'')+(a.met?' • 💳 '+a.met:'')+'</div></div>';
+      h += '<div style="text-align:right"><div style="font-family:var(--f1,Georgia,serif);font-size:20px;font-weight:900;color:var(--gold);white-space:nowrap">'+(Number(a.pr)||0).toFixed(2)+' €</div>';
+      h += '<div style="font-size:10px;color:var(--text3);margin-top:1px">TTC payé</div></div>';
       h += '</div>';
-      // Mode paiement
-      if(a.met) h += '<div style="font-size:10px;color:var(--text3);margin-bottom:6px">💳 '+a.met+(a.remise>0?' • Remise: -'+Number(a.remise).toFixed(2)+'€':'')+'</div>';
-      // Items détaillés
-      if(a.items && a.items.length){
-        h += '<div style="font-size:12px;display:flex;flex-direction:column;gap:3px;margin-top:4px">';
-        a.items.forEach(function(it){
-          if(it.isSep) return;
-          var qtyStr = (it.qty && it.qty !== 1) ? it.qty+'× ' : '';
-          var pricePart = (Number(it.price)||0).toFixed(2);
-          var remiseStr = it.remise>0 ? ' <span style="color:#4caf50">-'+Number(it.remise).toFixed(2)+'</span>' : '';
-          var totalIt = (Number(it.price)||0) * (Number(it.qty)||1) - (Number(it.remise)||0);
-          h += '<div style="display:flex;justify-content:space-between;padding:2px 0;color:'+(it.isProd?'var(--orange)':'rgba(255,255,255,.8)')+'">';
-          h += '<span>'+(it.isProd?'🛍️ ':'✂️ ')+qtyStr+(it.name||'')+' <span style="color:var(--text3);font-size:11px">@'+pricePart+'€</span>'+remiseStr+'</span>';
-          h += '<span style="font-weight:600">'+totalIt.toFixed(2)+'€</span>';
-          h += '</div>';
-        });
-        h += '</div>';
-      } else if(a.sId){
-        // Fallback : service principal sans items[]
-        var sv = gS(a.sId);
-        h += '<div style="font-size:12px;color:rgba(255,255,255,.8);padding:2px 0">✂️ '+(sv?sv.n:'Prestation')+'</div>';
+      // === Tableau détaillé items ===
+      var hasItems = a.items && a.items.length;
+      if(hasItems || a.sId){
+        h += '<table style="width:100%;font-size:12px;border-collapse:collapse;background:rgba(0,0,0,.18);border-radius:6px;overflow:hidden">';
+        h += '<thead><tr style="background:rgba(0,0,0,.35);color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.5px"><th style="text-align:left;padding:6px 10px;font-weight:700">Désignation</th><th style="text-align:center;padding:6px 4px;font-weight:700">Qté</th><th style="text-align:right;padding:6px 4px;font-weight:700">Prix u.</th><th style="text-align:right;padding:6px 4px;font-weight:700">Remise</th><th style="text-align:right;padding:6px 10px;font-weight:700">Total</th></tr></thead>';
+        h += '<tbody>';
+        if(hasItems){
+          a.items.forEach(function(it){
+            if(it.isSep) return;
+            var q = Number(it.qty)||1;
+            var p = Number(it.price)||0;
+            var r = Number(it.remise)||0;
+            var lineTot = p*q - r;
+            brutTk += p*q;
+            h += '<tr style="border-top:1px solid rgba(255,255,255,.05)">';
+            h += '<td style="padding:6px 10px;color:'+(it.isProd?'#ffb74d':'rgba(255,255,255,.88)')+'">'+(it.isProd?'🛍️':'✂️')+' '+(it.name||'')+'</td>';
+            h += '<td style="padding:6px 4px;text-align:center;color:rgba(255,255,255,.6)">'+q+'</td>';
+            h += '<td style="padding:6px 4px;text-align:right;color:rgba(255,255,255,.85)">'+p.toFixed(2)+'€</td>';
+            h += '<td style="padding:6px 4px;text-align:right;color:'+(r>0?'#4caf50':'rgba(255,255,255,.25)')+'">'+(r>0?'-'+r.toFixed(2)+'€':'—')+'</td>';
+            h += '<td style="padding:6px 10px;text-align:right;font-weight:700;color:#fff">'+lineTot.toFixed(2)+'€</td>';
+            h += '</tr>';
+          });
+        } else if(a.sId){
+          // Fallback ancien RDV sans items[]
+          var sv = gS(a.sId);
+          var pX = Number(a.pr)||0;
+          h += '<tr><td style="padding:6px 10px;color:rgba(255,255,255,.88)">✂️ '+(sv?sv.n:'Prestation')+'</td>';
+          h += '<td style="padding:6px 4px;text-align:center;color:rgba(255,255,255,.6)">1</td>';
+          h += '<td style="padding:6px 4px;text-align:right;color:rgba(255,255,255,.85)">'+pX.toFixed(2)+'€</td>';
+          h += '<td style="padding:6px 4px;text-align:right;color:rgba(255,255,255,.25)">—</td>';
+          h += '<td style="padding:6px 10px;text-align:right;font-weight:700;color:#fff">'+pX.toFixed(2)+'€</td></tr>';
+        }
+        // Ligne remise RDV si > 0
+        if(totRemise > 0){
+          h += '<tr style="border-top:1px solid rgba(255,255,255,.06)"><td colspan="4" style="padding:6px 10px;text-align:right;color:#4caf50;font-weight:600">Remise ticket :</td><td style="padding:6px 10px;text-align:right;color:#4caf50;font-weight:700">-'+totRemise.toFixed(2)+'€</td></tr>';
+        }
+        h += '</tbody></table>';
       }
       h += '</div>';
     }
     h += '</div>';
   }
   h += '</div>';
-  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="_closeClientHistoryCaisse()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
 
 function showCaisse(){
