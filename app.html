@@ -23235,15 +23235,18 @@ async function saveSalonConfig(){
     if(typeof window.FIDCONF==="object" && window.FIDCONF) cfg.fidconf = window.FIDCONF;
     // === Persistance COMPLÈTE de CAISSE_DATA en bloc ===
     // Solution propre : on sérialise l'objet entier au lieu de lister les champs.
-    // Tout nouveau champ ajouté à CAISSE_DATA est automatiquement durable, plus
-    // de "j'ai oublié de l'ajouter à saveSalonConfig" comme on a eu sur fond,
-    // coffreEsp, misesAuCoffre, pay_active, svccolors, etc.
+    // Auto-migration des anciens salons : si on trouvait des champs racine
+    // (coffreEsp, misesAuCoffre, etc.) hérités de l'ancien format, ils ont été
+    // remontés dans CAISSE_DATA au load, et on les supprime maintenant à la
+    // racine pour ne pas créer de doublons. NF525 non concerné.
     if(window.CAISSE_DATA && typeof window.CAISSE_DATA === "object"){
       try {
-        // Deep clone pour éviter qu'une mutation côté JS post-save n'affecte l'objet stocké
         cfg.caisse_data = JSON.parse(JSON.stringify(window.CAISSE_DATA));
-        // Rétro-compat : on garde fond_caisse comme champ top-level (utilisé ailleurs)
         if(typeof window.CAISSE_DATA.fond !== "undefined") cfg.fond_caisse = window.CAISSE_DATA.fond;
+        // Cleanup auto des champs orphelins racine (anciens salons)
+        ["coffreEsp","coffreChq","misesAuCoffre","mouvements","remisesBanque","retraits","pieces"].forEach(function(k){
+          if(k in cfg) delete cfg[k];
+        });
       } catch(e){ console.warn("CAISSE_DATA serialize failed:", e); }
     }
     if(typeof SALON_CONFIG==="object" && SALON_CONFIG && SALON_CONFIG.validiteDevis) cfg.validite_devis = Number(SALON_CONFIG.validiteDevis);

@@ -677,7 +677,25 @@ async function loadSalonData() {
   // sur réception du 1er invoice.paid Pro en mode LIVE (anti-doublon via le
   // flag salons.welcome_sms_bonus_given). Voir luxyra-router-worker.js,
   // case "invoice.paid". Aucun crédit récurrent ici.
-  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;/* Restore CAISSE_DATA en bloc (solution propre 2026-05-11) : on prend cfg.caisse_data en entier si présent, sinon fallback sur les anciens champs séparés (rétro-compat). */ if(cfg.caisse_data && typeof cfg.caisse_data==="object"){ window.CAISSE_DATA = cfg.caisse_data; if(typeof window.CAISSE_DATA.fond === "undefined" && typeof cfg.fond_caisse !== "undefined") window.CAISSE_DATA.fond = cfg.fond_caisse; } else if(cfg.fond_caisse!==undefined){ if(!window.CAISSE_DATA) window.CAISSE_DATA={}; window.CAISSE_DATA.fond=cfg.fond_caisse; }if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();if(Array.isArray(cfg.categories_services))window._cfgCatsSvc=cfg.categories_services.slice();if(Array.isArray(cfg.categories_forfaits))window._cfgCatsForf=cfg.categories_forfaits.slice();if(typeof cfg.facebookUrl==="string")SALON_CONFIG.facebookUrl=cfg.facebookUrl;if(typeof cfg.instagramUrl==="string")SALON_CONFIG.instagramUrl=cfg.instagramUrl;if(typeof cfg.tiktokUrl==="string")SALON_CONFIG.tiktokUrl=cfg.tiktokUrl;}catch(e){}}
+  if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;/* Restore CAISSE_DATA — robuste pour TOUS les salons (anciens et nouveaux) :
+   1. cfg.caisse_data (nouveau format) → utilisé en priorité
+   2. Champs racine legacy (coffreEsp/misesAuCoffre/mouvements/remisesBanque/retraits/pieces/fond_caisse)
+      → migrés vers CAISSE_DATA automatiquement (compat. tous salons existants)
+   3. Rien en DB → defaults {fond:200} construits ailleurs
+   Auto-migration : la prochaine sauvegarde écrira en format caisse_data et nettoiera les
+   champs racine orphelins. NF525 non concerné (tickets/clotures vivent dans leurs propres tables). */
+if(!window.CAISSE_DATA) window.CAISSE_DATA = {};
+if(cfg.caisse_data && typeof cfg.caisse_data === "object"){
+  Object.keys(cfg.caisse_data).forEach(function(k){ window.CAISSE_DATA[k] = cfg.caisse_data[k]; });
+}
+if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === "undefined"){
+  window.CAISSE_DATA.fond = cfg.fond_caisse;
+}
+["coffreEsp","coffreChq","misesAuCoffre","mouvements","remisesBanque","retraits","pieces"].forEach(function(k){
+  if(typeof cfg[k] !== "undefined" && typeof window.CAISSE_DATA[k] === "undefined"){
+    window.CAISSE_DATA[k] = cfg[k];
+  }
+});if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();if(Array.isArray(cfg.categories_services))window._cfgCatsSvc=cfg.categories_services.slice();if(Array.isArray(cfg.categories_forfaits))window._cfgCatsForf=cfg.categories_forfaits.slice();if(typeof cfg.facebookUrl==="string")SALON_CONFIG.facebookUrl=cfg.facebookUrl;if(typeof cfg.instagramUrl==="string")SALON_CONFIG.instagramUrl=cfg.instagramUrl;if(typeof cfg.tiktokUrl==="string")SALON_CONFIG.tiktokUrl=cfg.tiktokUrl;}catch(e){}}
   // Defaults if not loaded from cfg
   if(!SALON_CONFIG.validiteDevis) SALON_CONFIG.validiteDevis = 30;
 
