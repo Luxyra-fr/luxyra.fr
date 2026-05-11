@@ -22057,6 +22057,41 @@ function printAcompteReceipt(tkNum,amount,apptId){
   setTimeout(function(){w.print();},300);
 }
 
+// === Fusion des items identiques en une ligne avec quantité (sans franchir séparateurs multi-clients) ===
+function _consolidateCartItems(cartItems){
+  if(!Array.isArray(cartItems) || cartItems.length<2) return cartItems;
+  var result = [];
+  var groupStart = 0;
+  for(var i=0; i<cartItems.length; i++){
+    var it = cartItems[i];
+    // Garde toujours les séparateurs et les ouvre un nouveau groupe
+    if(it.isSep){
+      result.push(it);
+      groupStart = result.length;
+      continue;
+    }
+    // Cherche un item compatible dans le groupe courant
+    var merged = false;
+    for(var j=groupStart; j<result.length; j++){
+      var ex = result[j];
+      if(ex.isSep) continue;
+      var sameSId = (ex.sId||null) === (it.sId||null);
+      var sameProd = (ex.prodId||null) === (it.prodId||null);
+      var samePrice = Math.abs((Number(ex.price)||0) - (Number(it.price)||0)) < 0.001;
+      var sameRemise = Math.abs((Number(ex.remise)||0) - (Number(it.remise)||0)) < 0.001;
+      var sameType = (!!ex.isProd) === (!!it.isProd) && (!!ex.isPack) === (!!it.isPack) && (!!ex.isCarteAbo) === (!!it.isCarteAbo);
+      var sameName = String(ex.name||"") === String(it.name||"");
+      if(sameSId && sameProd && samePrice && sameRemise && sameType && sameName){
+        ex.qty = (Number(ex.qty)||1) + (Number(it.qty)||1);
+        merged = true;
+        break;
+      }
+    }
+    if(!merged) result.push(it);
+  }
+  return result;
+}
+
 function mD(id){
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:48px;margin-bottom:10px">\ud83d\udd12</div><h2>Journee cloturee</h2><div style="font-size:14px;margin-bottom:14px">Impossible d\u0027encaisser apres la cloture Z.</div><button class="btn bg bk" onclick="cM()">Fermer</button></div></div>';return;
@@ -22122,6 +22157,8 @@ function mD(id){
     // Cas C : RDV simple
     cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}];
   }
+  // === Consolidation : fusionne les items identiques en une ligne avec quantité ===
+  cartItems = _consolidateCartItems(cartItems);
   // === Option B (refonte 2026-05-11) : RDV familial — merge items du RDV lié ===
   var linkedApptId = null;
   if(a.clients && Array.isArray(a.clients) && a.clients.length && a.clients[0].linkedAppt){
