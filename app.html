@@ -20895,12 +20895,11 @@ function aAp(){
         st: "conf",
         met: "",
         aPhases: aPhases2,
-        comment: "👪 RDV familial lié à #"+rdvObj.id.slice(-6),
-        clients: [{linkedAppt: rdvObj.id}]
+        comment: "👪 RDV familial (lien à confirmer après save)",
+        clients: []
       };
-      // Marquer aussi le RDV principal comme lié
-      rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial lié à #"+rdvObj2nd.id.slice(-6);
-      rdvObj.clients = [{linkedAppt: rdvObj2nd.id}];
+      rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial (lien à confirmer après save)";
+      rdvObj.clients = [];
       AP.push(rdvObj2nd);
     }
   }
@@ -20909,8 +20908,21 @@ function aAp(){
   if(window._savedCalD){calD=window._savedCalD;window._planDays=window._savedPlanDays||1;window._savedCalD=null;window._savedPlanDays=null;}
   cM();go("planning");
   if(typeof saveAppointment==="function"){
-    saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});
-    if(rdvObj2nd){ saveAppointment(rdvObj2nd).catch(function(){}); }
+    if(rdvObj2nd){
+      // Refonte 2026-05-11 v2 : INSERT séquentiel pour récupérer les vrais UUIDs DB, puis lier
+      saveAppointment(rdvObj).then(function(){
+        return saveAppointment(rdvObj2nd);
+      }).then(function(){
+        // Maintenant les 2 RDVs ont leurs UUIDs DB définitifs → on pose les liens et on re-save
+        rdvObj.clients = [{linkedAppt: rdvObj2nd.id}];
+        rdvObj.comment = (rdvObj.comment||"").replace(/\(lien à confirmer après save\)/,"#"+rdvObj2nd.id.slice(-6));
+        rdvObj2nd.clients = [{linkedAppt: rdvObj.id}];
+        rdvObj2nd.comment = (rdvObj2nd.comment||"").replace(/\(lien à confirmer après save\)/,"#"+rdvObj.id.slice(-6));
+        return Promise.all([saveAppointment(rdvObj), saveAppointment(rdvObj2nd)]);
+      }).then(function(){ go("planning"); }).catch(function(e){ console.warn("Lien RDV familial KO:", e); });
+    } else {
+      saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});
+    }
   }
   setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
 }
