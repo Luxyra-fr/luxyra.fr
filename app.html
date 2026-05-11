@@ -21293,7 +21293,9 @@ function pickRdvClient(cId){
   // Update info card
   var info=document.getElementById("rdvClientInfo");
   if(info){
-    var htm='<div style="font-weight:800;font-size:16px">'+cName(cl)+'</div>';
+    var htm='<div style="display:flex;align-items:center;gap:8px;justify-content:space-between"><div style="font-weight:800;font-size:16px">'+cName(cl)+'</div>';
+    htm+='<button title="Voir l\'historique complet du client" onclick="event.stopPropagation();showClientHistoryFromCaisse(\''+cId+'\')" style="background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.3);color:var(--gold);width:30px;height:30px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;padding:0;flex-shrink:0">🔍</button>';
+    htm+='</div>';
     htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;font-size:13px;text-align:left">';
     htm+='<div style="color:var(--gold)">T\u00e9l\u00e9phone</div><div style="color:var(--gold)">Adresse email</div>';
     htm+='<div>'+cl.ph+'</div><div>'+(cl.em||"\u2014")+'</div>';
@@ -22084,14 +22086,12 @@ function startCaisse(){
   showCaisse();
 }
 
-// === Loupe historique client depuis la caisse ===
-// Fermeture : on re-render le POS pour rester sur l'écran encaissement
+// === Loupe historique client (overlay au-dessus de tout modal existant) ===
+// L'overlay vit dans son propre <div> ajouté au body, donc fermer ne touche
+// PAS le modal courant (création RDV, encaissement, etc.)
 function _closeClientHistoryCaisse(){
-  document.getElementById("modal").innerHTML = "";
-  // Si on est en plein encaissement (step 3), re-render pour rester sur l'écran POS
-  if(window._tk && (window._tk.step===3 || window._tk.step===2) && typeof showCaisse==="function"){
-    showCaisse();
-  }
+  var ov = document.getElementById("_histOverlay");
+  if(ov) ov.remove();
 }
 function showClientHistoryFromCaisse(cId){
   var cl = gC(cId);
@@ -22178,7 +22178,17 @@ function showClientHistoryFromCaisse(cId){
     h += '</div>';
   }
   h += '</div>';
-  document.getElementById("modal").innerHTML = '<div class="mbg" onclick="_closeClientHistoryCaisse()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+  // Overlay séparé du #modal : on le crée à la volée et on l'attache au body
+  // pour qu'il flotte AU-DESSUS de tout modal existant (création RDV, encaissement…)
+  var existing = document.getElementById("_histOverlay");
+  if(existing) existing.remove();
+  var ov = document.createElement("div");
+  ov.id = "_histOverlay";
+  ov.className = "mbg";
+  ov.style.zIndex = "10000";
+  ov.onclick = function(e){ if(e.target === ov) _closeClientHistoryCaisse(); };
+  ov.innerHTML = '<div onclick="event.stopPropagation()">'+h+'</div>';
+  document.body.appendChild(ov);
 }
 
 function showCaisse(){
