@@ -19766,7 +19766,23 @@ function rStats(){
   var ps=PS.filter(function(p){return p.date>=df&&p.date<=dt;});
   
   var caPr=0,caPd=0,nbPr=0,nbPd=0;
-  dn.forEach(function(a){caPr+=a.pr*taxR;nbPr++;});
+  // Compter produits/services par ligne items (gère tickets mixtes + données migrées)
+  dn.forEach(function(a){
+    var hasProd=false, hasServ=false, srvAmount=0, prdAmount=0;
+    if(a.items && a.items.length){
+      a.items.forEach(function(it){
+        var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
+        if(it.isProd){prdAmount+=sub*taxR;hasProd=true;}
+        else{srvAmount+=sub*taxR;hasServ=true;}
+      });
+    } else {
+      srvAmount=a.pr*taxR;hasServ=true;
+    }
+    caPr+=srvAmount;caPd+=prdAmount;
+    if(hasServ)nbPr++;
+    if(hasProd)nbPd++;
+  });
+  // PS additionnel (ventes produits hors appointment) — devient marginal mais on le garde
   ps.forEach(function(p){caPd+=p.pr*taxR;nbPd++;});
   var caT=caPr+caPd,nbT=nbPr+nbPd;
   var panPr=nbPr?caPr/nbPr:0,panPd=nbPd?caPd/nbPd:0;
@@ -19778,10 +19794,11 @@ function rStats(){
     var sv=gS(a.sId);var cat=sv?sv.cat:"";
     // Check service category first
     if(cat==="Homme"||cat==="Barbier"){caH+=a.pr*taxR;nbH++;}
-    // Then check passage type
     else if(a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
-    else if(a.cId==="passage-E"||(cl&&cl.genre==="E")){caE+=a.pr*taxR;nbE++;}
+    else if(a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
     else if(cat==="Enfants"){caE+=a.pr*taxR;nbE++;}
+    // Fallback : utiliser le genre du client si aucune info via service/catégorie
+    else if(cl&&cl.sex==="H"){caH+=a.pr*taxR;nbH++;}
     else{caF+=a.pr*taxR;nbF++;}
   });
   var panF=nbF?caF/nbF:0,panH=nbH?caH/nbH:0,panE=nbE?caE/nbE:0;
@@ -19800,7 +19817,25 @@ function rStats(){
   
   // Daily data
   var dayData={};
-  dn.forEach(function(a){if(!dayData[a.date])dayData[a.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[a.date].pr+=a.pr*taxR;var sv=gS(a.sId);var cl2=a.cId?gC(a.cId):null;var cat2=sv?sv.cat:"";if(cat2==="Homme"||cat2==="Barbier"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;else if(cat2==="Enfants"||a.cId==="passage-E"||(cl2&&cl2.genre==="E"))dayData[a.date].e+=a.pr*taxR;else dayData[a.date].f+=a.pr*taxR;});
+  dn.forEach(function(a){
+    if(!dayData[a.date])dayData[a.date]={pr:0,pd:0,f:0,h:0,e:0};
+    // pr/pd via items pour distinguer prestations/produits dans tickets mixtes
+    if(a.items && a.items.length){
+      a.items.forEach(function(it){
+        var sub=((Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0))*taxR;
+        if(it.isProd)dayData[a.date].pd+=sub;
+        else dayData[a.date].pr+=sub;
+      });
+    } else {
+      dayData[a.date].pr+=a.pr*taxR;
+    }
+    // Genre — service cat puis sex client en fallback
+    var sv=gS(a.sId);var cl2=a.cId?gC(a.cId):null;var cat2=sv?sv.cat:"";
+    if(cat2==="Homme"||cat2==="Barbier"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
+    else if(cat2==="Enfants"||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
+    else if(cl2&&cl2.sex==="H")dayData[a.date].h+=a.pr*taxR;
+    else dayData[a.date].f+=a.pr*taxR;
+  });
   ps.forEach(function(p){if(!dayData[p.date])dayData[p.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[p.date].pd+=p.pr*taxR;});
   var days=Object.keys(dayData).sort();
   
@@ -19846,10 +19881,10 @@ function rStats(){
     for(var ti2=0;ti2<3;ti2++){c+="<button style=\"font-size:10px;padding:4px 8px;border:1px solid var(--border);background:"+(mode===tabs2[ti2]?"var(--gold)":"rgba(255,255,255,.15)")+";color:"+(mode===tabs2[ti2]?"#fff":"rgba(255,255,255,.8)")+";cursor:pointer;border-radius:"+(ti2===0?"4px 0 0 4px":ti2===2?"0 4px 4px 0":"0")+"\" onclick=\"window._sc_"+chartKey+"=\'"+tabs2[ti2]+"\';go(\'stats\')\">"+tabL[ti2]+"</button>";}
     c+="</div></div>";
     var cols2=["#f0d060","#7ab8e0","#d4a0d0","#5b9bd5","#2ea043"];
-    for(var si=0;si<items.length;si++){var htVal=(items[si].v*htR);c+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+(items[si].c||cols2[si%5])+"\"></span><span style=\"flex:1\">"+items[si].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htVal.toFixed(0)+" \u20ac <small>HT</small></span><strong>"+items[si].v.toFixed(0)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
+    for(var si=0;si<items.length;si++){var htVal=(items[si].v*htR);c+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+(items[si].c||cols2[si%5])+"\"></span><span style=\"flex:1\">"+items[si].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htVal.toFixed(2)+" \u20ac <small>HT</small></span><strong>"+items[si].v.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
     if(mode==="eval"){c+=don(items,total,160);}
     else if(mode==="comp"){c+=bars(days,barFn,barColors,barLabels);}
-    else{c+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di2=days.length-1;di2>=0;di2--){var dd2=dayData[days[di2]]||{pr:0,pd:0};var detTtc=(dd2.pr+dd2.pd);var detHt=(detTtc*htR);c+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di2])+"</span><span style=\"font-size:10px;color:var(--text3);margin-right:6px\">"+detHt.toFixed(0)+"\u20ac HT</span><strong>"+detTtc.toFixed(0)+" \u20ac TTC</strong></div>";}c+="</div>";}
+    else{c+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di2=days.length-1;di2>=0;di2--){var dd2=dayData[days[di2]]||{pr:0,pd:0};var detTtc=(dd2.pr+dd2.pd);var detHt=(detTtc*htR);c+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di2])+"</span><span style=\"font-size:10px;color:var(--text3);margin-right:6px\">"+detHt.toFixed(2)+"\u20ac HT</span><strong>"+detTtc.toFixed(2)+" \u20ac TTC</strong></div>";}c+="</div>";}
     c+="</div>";return c;
   }
   
@@ -19861,14 +19896,14 @@ function rStats(){
   var genItems=[{l:"Femmes",v:panF,c:"#f0d060"},{l:"Hommes",v:panH,c:"#7ab8e0"},{l:"Enfants",v:panE,c:"#d4a0d0"}];
   var genMode=window._sc_gen||"eval";
   var genC="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:10px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px\">Panier moyen par genre</div><div style=\"display:flex\"><button style=\"font-size:10px;padding:4px 8px;border:1px solid var(--border);background:"+(genMode==="eval"?"var(--gold)":"rgba(255,255,255,.15)")+";color:"+(genMode==="eval"?"#fff":"rgba(255,255,255,.8)")+";cursor:pointer;border-radius:4px 0 0 4px\" onclick=\"window._sc_gen='eval';go('stats')\">evaluer</button><button style=\"font-size:10px;padding:4px 8px;border:1px solid var(--border);background:"+(genMode==="comp"?"var(--gold)":"rgba(255,255,255,.15)")+";color:"+(genMode==="comp"?"#fff":"rgba(255,255,255,.8)")+";cursor:pointer\" onclick=\"window._sc_gen='comp';go('stats')\">comparer</button><button style=\"font-size:10px;padding:4px 8px;border:1px solid var(--border);background:"+(genMode==="det"?"var(--gold)":"rgba(255,255,255,.15)")+";color:"+(genMode==="det"?"#fff":"rgba(255,255,255,.8)")+";cursor:pointer;border-radius:0 4px 4px 0\" onclick=\"window._sc_gen='det';go('stats')\">details</button></div></div>";
-  for(var gi=0;gi<genItems.length;gi++){var htGi=(genItems[gi].v*htR);genC+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+genItems[gi].c+"\"></span><span style=\"flex:1\">"+genItems[gi].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htGi.toFixed(0)+" \u20ac <small>HT</small></span><strong>"+genItems[gi].v.toFixed(0)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
+  for(var gi=0;gi<genItems.length;gi++){var htGi=(genItems[gi].v*htR);genC+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+genItems[gi].c+"\"></span><span style=\"flex:1\">"+genItems[gi].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htGi.toFixed(2)+" \u20ac <small>HT</small></span><strong>"+genItems[gi].v.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
   if(genMode==="eval"){
     var segTotal=panF+panH+panE;
     var genDon=don(genItems,segTotal||1,160);
     genDon=genDon.replace((segTotal||1).toFixed(2)+" \u20ac",panAll.toFixed(2)+" \u20ac");
     genC+=genDon;
   }else if(genMode==="comp"){genC+=bars(days,function(d){var dd=dayData[d]||{f:0,h:0,e:0};return[dd.f,dd.h,dd.e];},["#f0d060","#7ab8e0","#d4a0d0"],["Femmes","Hommes","Enfants"]);}
-  else{genC+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di4=days.length-1;di4>=0;di4--){var dd4=dayData[days[di4]]||{f:0,h:0,e:0};genC+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di4])+"</span><span style=\"color:#f0d060\">F:"+dd4.f.toFixed(0)+"</span><span style=\"color:#7ab8e0;margin-left:8px\">H:"+dd4.h.toFixed(0)+"</span><span style=\"color:#d4a0d0;margin-left:8px\">E:"+dd4.e.toFixed(0)+"</span></div>";}genC+="</div>";}
+  else{genC+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di4=days.length-1;di4>=0;di4--){var dd4=dayData[days[di4]]||{f:0,h:0,e:0};genC+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di4])+"</span><span style=\"color:#f0d060\">F:"+dd4.f.toFixed(2)+"</span><span style=\"color:#7ab8e0;margin-left:8px\">H:"+dd4.h.toFixed(2)+"</span><span style=\"color:#d4a0d0;margin-left:8px\">E:"+dd4.e.toFixed(2)+"</span></div>";}genC+="</div>";}
   genC+="</div>";
   h+=genC;
   
@@ -19926,7 +19961,7 @@ function rStats(){
   
   // 6. Meilleurs clients
   h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px\">Meilleurs clients</div>";
-  for(var ci=0;ci<topCl.length;ci++){var htCl=(topCl[ci].ca*htR);h+="<div style=\"display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px\"><span style=\"flex:1;font-weight:600\">"+topCl[ci].n+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htCl.toFixed(0)+" \u20ac <small>HT</small></span><strong style=\"color:var(--gold)\">"+topCl[ci].ca.toFixed(0)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
+  for(var ci=0;ci<topCl.length;ci++){var htCl=(topCl[ci].ca*htR);h+="<div style=\"display:flex;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);font-size:13px\"><span style=\"flex:1;font-weight:600\">"+topCl[ci].n+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htCl.toFixed(2)+" \u20ac <small>HT</small></span><strong style=\"color:var(--gold)\">"+topCl[ci].ca.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
   if(!topCl.length)h+="<div style=\"color:var(--text3);font-size:13px\">Aucune donnee</div>";
   h+="</div>";
   
