@@ -20624,7 +20624,15 @@ function oM(type,pf){
     
     // Preview
     h+='<div id="depi"></div>';
-    
+
+    // === 2nd client (RDV familial) — refonte 2026-05-11 Option B ===
+    h+='<div style="margin-top:10px;padding:10px 12px;background:rgba(108,92,231,.06);border:1px dashed rgba(108,92,231,.3);border-radius:10px">';
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleRdv2ndClient()">';
+    h+='<div style="font-size:13px;font-weight:700;color:#a29bfe">👪 Ajouter un 2nd client (ex: maman + enfant)</div>';
+    h+='<div id="rdv2ndIcon" style="font-size:20px;color:#a29bfe;font-weight:700;line-height:1">+</div></div>';
+    h+='<div id="rdv2ndBody" style="display:none;margin-top:10px"></div>';
+    h+='</div>';
+
     // Domicile: address field
     if(SALON_CONFIG.modeActivite==="domicile"||SALON_CONFIG.modeActivite==="mixte"){
       h+='<div style="margin-top:10px;padding:12px;background:rgba(255,152,0,.06);border:1px solid rgba(255,152,0,.15);border-radius:10px">';
@@ -20824,11 +20832,42 @@ function aAp(){
   var lieuEl=document.getElementById("rdvLieu");
   if(lieuEl&&lieuEl.value==="domicile"){rdvObj.lieu="domicile";rdvObj.adresse=(document.getElementById("rdvAdresse")||{}).value||"";}
   AP.push(rdvObj);
-  window._rdvSvcId=null;window._rdvSvcIds=null;window._rdvPassage=null;
+  // === Option B (refonte 2026-05-11) : 2nd client = créer un 2nd RDV lié au même horaire ===
+  var rdvObj2nd = null;
+  if(window._rdv2nd && window._rdv2nd.cId && window._rdv2nd.svcId){
+    var st2 = window._rdv2nd.stId || st;
+    var sv2 = gS(window._rdv2nd.svcId);
+    if(sv2){
+      var aPhases2 = sv2.phases ? JSON.parse(JSON.stringify(sv2.phases)) : [{t:"w", d:Number(sv2.d)||30, l:sv2.n}];
+      aPhases2.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId = st2; });
+      rdvObj2nd = {
+        id: U(),
+        cId: window._rdv2nd.cId,
+        sId: window._rdv2nd.svcId,
+        stId: st2,
+        date: d,
+        time: t,
+        pr: Number(sv2.p)||0,
+        st: "conf",
+        met: "",
+        aPhases: aPhases2,
+        comment: "👪 RDV familial lié à #"+rdvObj.id.slice(-6),
+        clients: [{linkedAppt: rdvObj.id}]
+      };
+      // Marquer aussi le RDV principal comme lié
+      rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial lié à #"+rdvObj2nd.id.slice(-6);
+      rdvObj.clients = [{linkedAppt: rdvObj2nd.id}];
+      AP.push(rdvObj2nd);
+    }
+  }
+  window._rdvSvcId=null;window._rdvSvcIds=null;window._rdvPassage=null;window._rdv2nd=null;
   // Restore multi-day view if we came from it
   if(window._savedCalD){calD=window._savedCalD;window._planDays=window._savedPlanDays||1;window._savedCalD=null;window._savedPlanDays=null;}
   cM();go("planning");
-  if(typeof saveAppointment==="function"){saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});}
+  if(typeof saveAppointment==="function"){
+    saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});
+    if(rdvObj2nd){ saveAppointment(rdvObj2nd).catch(function(){}); }
+  }
   setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
 }
 
@@ -21020,6 +21059,101 @@ function renderSelectedSvcsList(){
   if(ids.length>0)h += '<div style="font-size:10px;color:rgba(255,255,255,.4);text-align:center;margin-top:6px">\ud83d\udca1 Cliquez sur une autre famille puis prestation pour en ajouter</div>';
   h += '</div>';
   el.innerHTML = h;
+}
+
+// === Option B (refonte 2026-05-11) : 2nd client à la création (RDV familial) ===
+function toggleRdv2ndClient(){
+  var body=document.getElementById("rdv2ndBody");
+  var icon=document.getElementById("rdv2ndIcon");
+  if(!body||!icon) return;
+  if(body.style.display==="none"){
+    body.style.display="block";
+    icon.textContent="−";
+    if(!window._rdv2nd) window._rdv2nd={cId:null, cName:"", svcId:null, stId:null, passType:null};
+    renderRdv2ndBody();
+  } else {
+    body.style.display="none";
+    icon.textContent="+";
+    window._rdv2nd=null;
+  }
+}
+
+function renderRdv2ndBody(){
+  var el=document.getElementById("rdv2ndBody");
+  if(!el) return;
+  var st2=window._rdv2nd||{};
+  var h='';
+  // Client picker (passage tiles + search)
+  h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin-bottom:4px;letter-spacing:1px;text-transform:uppercase">2nd Client</div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:6px">';
+  var passages2=[{k:"H",l:"Homme",c:"#2196f3"},{k:"F",l:"Femme",c:"#e91e63"},{k:"E",l:"Enfant",c:"#ff9800"}];
+  passages2.forEach(function(p){
+    var sel = st2.passType===p.k;
+    h+='<button onclick="pickRdv2ndPassage(\''+p.k+'\')" style="flex:1;padding:8px 6px;border-radius:8px;border:1.5px solid '+(sel?p.c:'rgba(255,255,255,.1)')+';background:'+(sel?p.c+'22':'rgba(255,255,255,.04)')+';color:'+(sel?p.c:'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer">'+p.l+'</button>';
+  });
+  h+='</div>';
+  h+='<input type="text" id="rdv2ndSearch" autocomplete="off" placeholder="🔍 Ou rechercher un client connu..." oninput="filterRdv2ndClients(this.value)" style="width:100%;padding:8px;margin-bottom:6px;font-size:13px">';
+  h+='<div id="rdv2ndClientList" style="max-height:120px;overflow-y:auto;border:1px solid var(--border2);border-radius:6px;display:none;margin-bottom:6px"></div>';
+  h+='<div id="rdv2ndPicked" style="font-size:12px;color:#a29bfe;margin-bottom:8px">'+(st2.cName?'✓ <strong>'+st2.cName+'</strong>':'<em style="color:rgba(255,255,255,.4)">Aucun client sélectionné</em>')+'</div>';
+  // 2nd collab
+  h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">Coiffeuse</div>';
+  h+='<select id="rdv2ndStSel" onchange="window._rdv2nd.stId=+this.value" style="width:100%;padding:8px;margin-bottom:8px;font-size:13px">';
+  for(var i=0;i<T.length;i++){
+    h+='<option value="'+T[i].id+'"'+(st2.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
+  }
+  h+='</select>';
+  // 2nd prestation (single pick for simplicity)
+  h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">Prestation</div>';
+  h+='<select id="rdv2ndSvcSel" onchange="window._rdv2nd.svcId=+this.value" style="width:100%;padding:8px;font-size:13px">';
+  h+='<option value="">— Choisir une prestation —</option>';
+  var svcSorted=SVC.slice().sort(function(a,b){return(a.cat||"").localeCompare(b.cat||"")||a.n.localeCompare(b.n);});
+  var lastCat=null;
+  for(var i=0;i<svcSorted.length;i++){
+    var s=svcSorted[i];
+    if(s.cat!==lastCat){lastCat=s.cat;h+='<option disabled>— '+s.cat+' —</option>';}
+    h+='<option value="'+s.id+'"'+(st2.svcId===s.id?' selected':'')+'>'+s.n+' — '+(Number(s.p)||0).toFixed(2)+'€</option>';
+  }
+  h+='</select>';
+  el.innerHTML=h;
+  // Init stId default si pas défini
+  if(!st2.stId && T.length){window._rdv2nd.stId=T[0].id;}
+}
+
+function pickRdv2ndPassage(type){
+  var labels={H:"Client de passage Homme",F:"Client de passage Femme",E:"Client de passage Enfant"};
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.cId="passage-"+type;
+  window._rdv2nd.cName=labels[type];
+  window._rdv2nd.passType=type;
+  renderRdv2ndBody();
+}
+
+function filterRdv2ndClients(q){
+  var list=document.getElementById("rdv2ndClientList");
+  if(!list) return;
+  q=(q||"").trim().toLowerCase();
+  if(q.length<2){list.style.display="none";list.innerHTML="";return;}
+  var matches=CL.filter(function(c){var s=(c.nom+" "+c.pre+" "+(c.ph||"")).toLowerCase();return s.indexOf(q)>=0;}).slice(0,10);
+  if(!matches.length){list.style.display="none";return;}
+  var h='';
+  matches.forEach(function(c){
+    h+='<div style="padding:8px 10px;border-bottom:1px solid var(--border2);cursor:pointer;font-size:13px" onclick="pickRdv2ndClient(\''+c.id+'\')">'+c.nom+' '+c.pre+'</div>';
+  });
+  list.innerHTML=h;
+  list.style.display="block";
+}
+
+function pickRdv2ndClient(cId){
+  var c=gC(cId); if(!c) return;
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.cId=cId;
+  window._rdv2nd.cName=(c.nom||"")+" "+(c.pre||"");
+  window._rdv2nd.passType=null;
+  var list=document.getElementById("rdv2ndClientList");
+  if(list){list.style.display="none";list.innerHTML="";}
+  var search=document.getElementById("rdv2ndSearch");
+  if(search) search.value="";
+  renderRdv2ndBody();
 }
 
 function renderRdvPhases(){
@@ -21526,7 +21660,32 @@ function mD(id){
     // Cas C : RDV simple
     cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:a.pr,qty:1,remise:0}];
   }
-  _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||""};
+  // === Option B (refonte 2026-05-11) : RDV familial — merge items du RDV lié ===
+  var linkedApptId = null;
+  if(a.clients && Array.isArray(a.clients) && a.clients.length && a.clients[0].linkedAppt){
+    var linkedId = a.clients[0].linkedAppt;
+    var linkedRdv = null;
+    for(var li=0; li<AP.length; li++){ if(AP[li].id===linkedId){ linkedRdv = AP[li]; break; } }
+    if(linkedRdv && linkedRdv.st!=="done" && !linkedRdv.cancelled){
+      linkedApptId = linkedRdv.id;
+      // Ajouter un séparateur visuel + les items du RDV lié
+      var lc = gC(linkedRdv.cId) || null;
+      var lcName = lc ? (lc.nom+" "+(lc.pre||"")) : (linkedRdv.cId&&String(linkedRdv.cId).indexOf("passage-")===0 ? "Client de passage "+(linkedRdv.cId.slice(-1)==="H"?"Homme":linkedRdv.cId.slice(-1)==="F"?"Femme":"Enfant") : "Client 2");
+      cartItems.push({name:"--- 👪 "+lcName+" ---", price:0, qty:1, remise:0, isSep:true, sepCId:linkedRdv.cId});
+      // Ajout des items du linked
+      if(linkedRdv.items && linkedRdv.items.length){
+        linkedRdv.items.forEach(function(it){
+          if(it.isSep) return;
+          cartItems.push({sId:it.sId||null, name:it.name||"Prestation", price:Number(it.price)||0, qty:Number(it.qty)||1, remise:Number(it.remise)||0, isProd:!!it.isProd});
+        });
+      } else {
+        // Pas d'items, ajouter depuis sId/pr
+        var lsv = gS(linkedRdv.sId);
+        cartItems.push({sId:linkedRdv.sId, name:(lsv?lsv.n:"Prestation"), price:Number(linkedRdv.pr)||0, qty:1, remise:0});
+      }
+    }
+  }
+  _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",_linkedApptId:linkedApptId};
   // Propage les refs devis si le RDV a été planifié depuis un devis : permet à
   // cleanupPendingFromTk() de basculer le statut "planifie" → "converti" en fin d'encaissement
   if(a.fromDevisId) _tk._fromDevisId = a.fromDevisId;
@@ -23655,6 +23814,20 @@ function doFinalPayExecute(method){
   
   tkN++;
   
+  // === Option B : si RDV lié (familial), le marquer aussi done + lui lier le ticket ===
+  if(_tk._linkedApptId){
+    for(var li=0; li<AP.length; li++){
+      if(AP[li].id===_tk._linkedApptId){
+        AP[li].st="done";
+        AP[li].met=metStr;
+        AP[li].tkNum=tkN; // même numéro de ticket — encaissé ensemble
+        AP[li].ts=tsNow;
+        AP[li].comment=(AP[li].comment||"")+" — Encaissé avec ticket principal #"+tkN;
+        if(typeof saveAppointment==="function") saveAppointment(AP[li]);
+        break;
+      }
+    }
+  }
   if(_tk.apptId){
     // Existing RDV -> update it
     for(var i=0;i<AP.length;i++){
