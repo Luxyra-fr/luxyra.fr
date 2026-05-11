@@ -19788,8 +19788,9 @@ function rStats(){
   var panPr=nbPr?caPr/nbPr:0,panPd=nbPd?caPd/nbPd:0;
   
   // Genre: F/H/E
-  // Helper : déterminer la catégorie effective d'un appointment
-  // en regardant items[*].name dans SVC + FORFAITS, ou patterns évidents
+  // Priorité : prestation Enfants > prestation Homme/Barbier > passage marqué > sex client > F
+  // Justification : un enfant est souvent sur la fiche parent → on ne peut pas
+  // se baser sur cl.sex, il faut détecter via la catégorie/nom de la prestation.
   function _detectCat(a){
     var sv=gS(a.sId);
     if(sv&&sv.cat) return sv.cat;
@@ -19798,7 +19799,6 @@ function rStats(){
     for(var ii=0;ii<a.items.length;ii++){
       var nm=(a.items[ii].name||"").trim().toLowerCase();
       if(!nm||a.items[ii].isProd) continue;
-      // 1. Match dans SVC
       for(var sj=0;sj<SVC.length;sj++){
         if((SVC[sj].n||"").trim().toLowerCase()===nm){
           if(SVC[sj].cat==="Homme"||SVC[sj].cat==="Barbier"||SVC[sj].cat==="Enfants") return SVC[sj].cat;
@@ -19806,7 +19806,6 @@ function rStats(){
           break;
         }
       }
-      // 2. Match dans FORFAITS
       if(typeof FORFAITS!=="undefined"&&Array.isArray(FORFAITS)){
         for(var fj=0;fj<FORFAITS.length;fj++){
           if((FORFAITS[fj].n||FORFAITS[fj].nom||"").trim().toLowerCase()===nm){
@@ -19817,20 +19816,18 @@ function rStats(){
           }
         }
       }
-      // 3. Patterns évidents dans le nom (fallback)
-      if(/\b(enfant|gar[çc]on|fille|fillette|ado|bambin|kid)/i.test(nm)) return "Enfants";
-      if(/\b(homme|barbe|barbier|taill?e\s*de\s*barbe)\b/i.test(nm)) return "Homme";
+      // Patterns explicites (kids services qui n'auraient pas de cat)
+      if(/\b(enfant|gar[çc]on|gar[çc]onnet|fille|fillette|ado|bambin|kid|b[ée]b[ée])\b/i.test(nm)) return "Enfants";
+      if(/\b(homme|barbier|taill?e\s*de\s*barbe|barbe)\b/i.test(nm)) return "Homme";
     }
     return foundCat;
   }
   var caF=0,caH=0,caE=0,nbF=0,nbH=0,nbE=0;
   dn.forEach(function(a){
-    var cl=a.cId?gC(a.cId):null;
+    var cl=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
     var cat=_detectCat(a);
-    if(cat==="Homme"||cat==="Barbier"){caH+=a.pr*taxR;nbH++;}
-    else if(a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
-    else if(cat==="Enfants"){caE+=a.pr*taxR;nbE++;}
-    else if(a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
+    if(cat==="Enfants"||a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
+    else if(cat==="Homme"||cat==="Barbier"||a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
     else if(cl&&cl.sex==="H"){caH+=a.pr*taxR;nbH++;}
     else{caF+=a.pr*taxR;nbF++;}
   });
@@ -19862,11 +19859,11 @@ function rStats(){
     } else {
       dayData[a.date].pr+=a.pr*taxR;
     }
-    // Genre — réutilise _detectCat pour cohérence avec le total
-    var cl2=a.cId?gC(a.cId):null;
+    // Genre — même priorité : Enfants > Homme > sex client > F
+    var cl2=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
     var cat2=_detectCat(a);
-    if(cat2==="Homme"||cat2==="Barbier"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
-    else if(cat2==="Enfants"||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
+    if(cat2==="Enfants"||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
+    else if(cat2==="Homme"||cat2==="Barbier"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
     else if(cl2&&cl2.sex==="H")dayData[a.date].h+=a.pr*taxR;
     else dayData[a.date].f+=a.pr*taxR;
   });

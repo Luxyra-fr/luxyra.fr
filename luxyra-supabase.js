@@ -852,8 +852,16 @@ async function loadSalonData() {
     var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(5000);
     if (apRes.data) {
       AP = apRes.data.map(function(a) {
+        // Migration : si client_id est null et le comment contient un marqueur passage-E/H/F,
+        // utiliser la pseudo-clé Luxyra "passage-E/-H/-F" pour que les stats genre fonctionnent
+        var _cId = a.client_id;
+        if (!_cId && a.comment) {
+          if (a.comment.indexOf("passage-E") >= 0) _cId = "passage-E";
+          else if (a.comment.indexOf("passage-H") >= 0) _cId = "passage-H";
+          else if (a.comment.indexOf("passage-F") >= 0) _cId = "passage";
+        }
         return {
-          id: a.id, cId: a.client_id, sId: a.service_id, stId: a.collab_id,
+          id: a.id, cId: _cId, sId: a.service_id, stId: a.collab_id,
           date: a.date_rdv, time: a.heure, pr: Number(a.prix),
           brutTotal: a.brut_total ? Number(a.brut_total) : undefined,
           remise: Number(a.remise || 0),
