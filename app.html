@@ -18006,13 +18006,16 @@ async function lxLoadMigratedInvoices(force){
   var data = window._migratedInvoicesCache;
   if(force || !data){
     try {
+      // Limite augmentée à 5000 (couvre largement 6+ ans d'archives pour un salon
+      // moyen). Pour des salons à très gros volume on basculera sur de la pagination.
       var r = await _sb.from("migrated_invoices")
-        .select("id,date_facture,client_name,total_ttc,source_software,source_invoice_number,modes_paiement,items")
+        .select("id,date_facture,client_name,total_ttc,source_software,source_invoice_number,modes_paiement,items", {count:"exact"})
         .eq("salon_id", window._salonId)
         .order("date_facture", {ascending:false})
-        .limit(500);
+        .limit(5000);
       data = (r && r.data) || [];
       window._migratedInvoicesCache = data;
+      window._migratedInvoicesTotalCount = (r && typeof r.count === "number") ? r.count : data.length;
     } catch(e){
       console.warn("[migrated_invoices] load failed:", e);
       return;
@@ -18033,7 +18036,9 @@ async function lxLoadMigratedInvoices(force){
     firstLuxyraDate = sorted[0].date;
   }
 
-  var h = '<div class="sec" style="margin-top:24px">\ud83d\udcda Archives migr\u00e9es '+(data.length>0?'('+data.length+')':'')+'</div>';
+  var _totalReal = (typeof window._migratedInvoicesTotalCount === "number") ? window._migratedInvoicesTotalCount : data.length;
+  var _showingNote = (data.length < _totalReal) ? ' <span style="font-size:11px;color:var(--text3);font-weight:400">\u2014 affichage des '+data.length+' plus r\u00e9centes</span>' : '';
+  var h = '<div class="sec" style="margin-top:24px">\ud83d\udcda Archives migr\u00e9es ('+_totalReal+')'+_showingNote+'</div>';
   // Bandeau p\u00e9dagogique NF525
   h += '<div class="card" style="background:linear-gradient(135deg,rgba(96,165,250,.06),rgba(96,165,250,.02));border:1px solid rgba(96,165,250,.25);padding:16px;margin-bottom:14px">';
   h += '<div style="display:flex;gap:12px;align-items:flex-start">';
