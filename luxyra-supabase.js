@@ -849,7 +849,7 @@ async function loadSalonData() {
 
   // 6. Charger rendez-vous/tickets → AP[]
   try {
-    var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(500);
+    var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(5000);
     if (apRes.data) {
       AP = apRes.data.map(function(a) {
         return {
