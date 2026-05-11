@@ -14658,9 +14658,11 @@ function editService(id){
 
 function doEditService(id){
   var sv=gS(id);if(!sv)return;
+  var oldPrice = Number(sv.p) || 0;
   var newName=document.getElementById("esName").value.trim()||sv.n;
   sv.n=newName;
   sv.p=parseFloat(document.getElementById("esPrice").value)||sv.p;
+  var newPrice = Number(sv.p) || 0;
   // Permet 0 minute pour les suppl\u00e9ments (ex: Suppl\u00e9ment couleur) \u2014 pas d'impact planning
   var durRaw=document.getElementById("esDur").value;
   var dur=parseInt(durRaw,10);
@@ -14673,8 +14675,76 @@ function doEditService(id){
   sv.bookOnline=document.getElementById("esBookOnline")?document.getElementById("esBookOnline").checked:true;
   aCat=newCat;
   if(typeof saveServices==="function")saveServices();
+  // === Si le prix a chang\u00e9 : proposer de mettre \u00e0 jour les RDV \u00e0 venir ===
+  if(Math.abs(newPrice - oldPrice) >= 0.01){
+    var affected = AP.filter(function(a){
+      if(a.st === "done" || a.cancelled) return false;
+      if(a.sId === id) return true;
+      if(a.items && a.items.length){
+        for(var k=0;k<a.items.length;k++){ if(!a.items[k].isProd && a.items[k].sId === id) return true; }
+      }
+      return false;
+    });
+    if(affected.length > 0){
+      _proposeUpdatePrixRdv(id, oldPrice, newPrice, affected.length, sv.n);
+      return;
+    }
+  }
   cM();go("services");
   if(typeof toast==="function")toast("Prestation modifi\u00e9e","success");
+}
+// === Helper : modale "Mettre \u00e0 jour les RDV existants ?" apr\u00e8s changement de prix ===
+function _proposeUpdatePrixRdv(svcId, oldPrice, newPrice, nbAffected, svcName){
+  var diff = newPrice - oldPrice;
+  var sign = diff > 0 ? "+" : "";
+  var h='<div class="mbox">';
+  h+='<div style="text-align:center;font-size:36px;margin-bottom:8px">\ud83d\udcb0</div>';
+  h+='<h2 style="text-align:center">Mettre \u00e0 jour les RDV existants ?</h2>';
+  h+='<div style="font-size:13px;text-align:center;margin-bottom:14px;line-height:1.5">';
+  h+='<strong>'+nbAffected+' RDV non encaiss\u00e9'+(nbAffected>1?'s':'')+'</strong> utilise'+(nbAffected>1?'nt':'')+' "<strong>'+svcName+'</strong>" \u00e0 <strong>'+oldPrice.toFixed(2)+' \u20ac</strong>.<br>';
+  h+='Appliquer le nouveau tarif <strong>'+newPrice.toFixed(2)+' \u20ac</strong> (<span style="color:'+(diff>0?'var(--red)':'var(--green)')+'">'+sign+diff.toFixed(2)+' \u20ac</span>) ?</div>';
+  h+='<div style="font-size:11px;color:var(--text2);text-align:center;margin-bottom:14px;background:rgba(255,255,255,.04);padding:8px;border-radius:8px">\u26a0\ufe0f Seuls les RDV <strong>\u00e0 venir</strong> sont concern\u00e9s. Les RDV d\u00e9j\u00e0 <strong>encaiss\u00e9s</strong> restent inchang\u00e9s (obligation NF525).</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  h+='<button class="btn" style="width:100%;padding:14px;background:var(--gold);color:#000;font-weight:800" onclick="_applyPrixUpdateRdv('+svcId+','+oldPrice+','+newPrice+')">Oui, mettre \u00e0 jour les '+nbAffected+' RDV</button>';
+  h+='<button class="btn" style="width:100%;padding:10px;background:rgba(255,255,255,.06);color:var(--text);font-size:12px" onclick="cM();go(\'services\');if(typeof toast===\'function\')toast(\'Prestation modifi\u00e9e (anciens RDV inchang\u00e9s)\',\'success\')">Non, garder l\'ancien prix sur les RDV existants</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+function _applyPrixUpdateRdv(svcId, oldPrice, newPrice){
+  var updated = 0;
+  AP.forEach(function(a){
+    if(a.st === "done" || a.cancelled) return;
+    var changed = false;
+    if(a.items && a.items.length){
+      a.items.forEach(function(it){
+        if(!it.isProd && it.sId === svcId){
+          it.price = newPrice;
+          changed = true;
+        }
+      });
+      if(changed){
+        // Recalcule brutTotal + pr en pr\u00e9servant remises items + remise RDV
+        var brut = 0, itemRem = 0;
+        a.items.forEach(function(it){
+          brut += (Number(it.price)||0) * (Number(it.qty)||1);
+          itemRem += (Number(it.remise)||0);
+        });
+        a.brutTotal = brut;
+        a.pr = brut - itemRem - (Number(a.remise)||0);
+      }
+    } else if(a.sId === svcId){
+      // RDV simple sans items[] : mise \u00e0 jour directe (pr\u00e9serve la remise RDV)
+      a.pr = newPrice - (Number(a.remise)||0);
+      changed = true;
+    }
+    if(changed){
+      updated++;
+      if(typeof saveAppointment === "function") saveAppointment(a);
+    }
+  });
+  cM();
+  go("services");
+  if(typeof toast === "function") toast("\u2713 "+updated+" RDV mis \u00e0 jour au nouveau prix","success");
 }
 
 function deleteService(id){
