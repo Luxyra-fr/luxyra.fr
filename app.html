@@ -22057,6 +22057,19 @@ function printAcompteReceipt(tkNum,amount,apptId){
   setTimeout(function(){w.print();},300);
 }
 
+// === Helper : modifier la quantité d'un item du panier (−/+ buttons) ===
+function _posItemQty(idx, delta){
+  if(!_tk || !Array.isArray(_tk.items) || !_tk.items[idx]) return;
+  var it = _tk.items[idx];
+  var newQty = (Number(it.qty)||1) + (Number(delta)||0);
+  if(newQty <= 0){
+    // Si qty tombe à 0, on retire l'item du panier
+    _tk.items.splice(idx, 1);
+  } else {
+    it.qty = newQty;
+  }
+  showCaisse();
+}
 // === Fusion des items identiques en une ligne avec quantité (sans franchir séparateurs multi-clients) ===
 function _consolidateCartItems(cartItems){
   if(!Array.isArray(cartItems) || cartItems.length<2) return cartItems;
@@ -22536,9 +22549,17 @@ function showCaisse(){
       var col=it.isPack?"rgba(200,168,78,.15)":it.isCarteAbo?"rgba(76,175,80,.12)":"transparent";
       h+='<div style="display:grid;grid-template-columns:2fr 40px 70px 50px 70px;padding:6px 12px;align-items:center;font-size:12px;border-bottom:1px solid rgba(255,255,255,.04);background:'+col+'">';
       h+='<div style="display:flex;align-items:center;gap:6px;min-width:0"><button onclick="_tk.items.splice('+idx+',1);showCaisse()" style="background:none;border:none;color:rgba(255,255,255,.25);cursor:pointer;font-size:10px;padding:2px;flex-shrink:0">\u2716</button><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+it.name+'</span></div>';
-      h+='<div style="text-align:center">'+it.qty+'</div>';
+      // === Quantit\u00e9 \u00e9ditable avec \u2212/+ ===
+      h+='<div style="display:flex;align-items:center;justify-content:center;gap:2px">';
+      h+='<button onclick="_posItemQty('+idx+',-1)" style="background:rgba(255,255,255,.08);border:none;color:#fff;width:18px;height:20px;border-radius:3px;cursor:pointer;font-size:11px;line-height:1;padding:0" title="-1">\u2212</button>';
+      h+='<span style="min-width:14px;text-align:center;font-weight:700">'+it.qty+'</span>';
+      h+='<button onclick="_posItemQty('+idx+',1)" style="background:rgba(255,255,255,.08);border:none;color:#fff;width:18px;height:20px;border-radius:3px;cursor:pointer;font-size:11px;line-height:1;padding:0" title="+1">+</button>';
+      h+='</div>';
       h+='<div style="text-align:right;color:rgba(255,255,255,.6)">'+it.price.toFixed(2)+'</div>';
-      h+='<div style="text-align:right;color:'+(it.remise>0?"#4caf50":"rgba(255,255,255,.25)")+'">'+(it.carteAboRemise&&it.carteAboPct?'<div style="font-size:10px">\ud83d\udcb3-'+it.carteAboPct+'%</div><div style="font-size:9px;color:rgba(76,175,80,.7)">-'+it.remise.toFixed(2)+'</div>':it.remise>0?"-"+it.remise.toFixed(2):"-")+'</div>';
+      // === Remise cliquable pour modifier ===
+      var _remCursor = it.carteAboRemise ? 'default' : 'pointer';
+      var _remOnclick = it.carteAboRemise ? '' : 'onclick="addItemRemise('+idx+')" title="Cliquez pour ajouter/modifier une remise"';
+      h+='<div '+_remOnclick+' style="text-align:right;cursor:'+_remCursor+';color:'+(it.remise>0?"#4caf50":"rgba(255,255,255,.45)")+';text-decoration:'+(it.carteAboRemise?"none":"underline dotted")+';text-underline-offset:3px">'+(it.carteAboRemise&&it.carteAboPct?'<div style="font-size:10px">\ud83d\udcb3-'+it.carteAboPct+'%</div><div style="font-size:9px;color:rgba(76,175,80,.7)">-'+it.remise.toFixed(2)+'</div>':it.remise>0?"-"+it.remise.toFixed(2):"+ Remise")+'</div>';
       h+='<div style="text-align:right;font-weight:700;color:#fff">'+itTotal.toFixed(2)+'</div>';
       h+='</div>';
     }
