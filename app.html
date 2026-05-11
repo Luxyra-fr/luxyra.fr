@@ -10287,7 +10287,15 @@ function delAppt(id){
     h+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="doDelAppt(\''+id+'\')">Confirmer</button></div></div>';
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
   }else{
-    // Unpaid RDV: delete from DB and remove locally
+    // RDV familial : si lié, demander si annuler les 2
+    var _lkId2=(a.clients && Array.isArray(a.clients) && a.clients[0] && a.clients[0].linkedAppt)?a.clients[0].linkedAppt:null;
+    var _lkApt2=null;
+    if(_lkId2){ for(var _li2=0;_li2<AP.length;_li2++){ if(AP[_li2].id===_lkId2){ _lkApt2=AP[_li2]; break; } } }
+    if(_lkApt2 && _lkApt2.st!=="done" && !_lkApt2.cancelled){
+      _showFamilialCancelConfirm(id, _lkId2);
+      return;
+    }
+    // Unpaid RDV (sans lien): delete from DB and remove locally
     if(ai>=0)AP.splice(ai,1);
     if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
     else if(typeof saveAppointment==="function"){a.st="canc";saveAppointment(a);}
@@ -10310,11 +10318,55 @@ function _cancelApptDo(id){
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
   if(!a)return;
   if(a.st==="done"){delAppt(id);return;}
+  // === RDV familial : si li\u00e9, demander si annuler les 2 ===
+  var _lkId = (a.clients && Array.isArray(a.clients) && a.clients[0] && a.clients[0].linkedAppt) ? a.clients[0].linkedAppt : null;
+  var _lkApt = null;
+  if(_lkId){ for(var _li=0;_li<AP.length;_li++){ if(AP[_li].id===_lkId){ _lkApt=AP[_li]; break; } } }
+  if(_lkApt && _lkApt.st!=="done" && !_lkApt.cancelled){
+    _showFamilialCancelConfirm(id, _lkId);
+    return;
+  }
+  _doCancelApptUnpaid(id);
+  cM();go("planning");
+}
+function _doCancelApptUnpaid(id){
+  // Annulation simple sans check du lien (utilis\u00e9 par _cancelApptDo direct ou via choix "annuler les 2")
+  var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
+  if(!a)return;
   if(ai>=0)AP.splice(ai,1);
   if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
   else if(typeof saveAppointment==="function"){a.st="canc";saveAppointment(a);}
   if(typeof auditLog==="function")auditLog("RDV_ANNULE","RDV "+id+" annul\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
-  cM();go("planning");
+}
+function _showFamilialCancelConfirm(id1, id2){
+  var h='<div class="mbox">';
+  h+='<div style="text-align:center;font-size:36px;margin-bottom:8px">\ud83d\udc6a</div>';
+  h+='<h2 style="text-align:center">Annuler le RDV familial ?</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);text-align:center;margin-bottom:14px">Ce RDV est li\u00e9 \u00e0 un autre RDV familial. Que souhaitez-vous faire ?</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  h+='<button class="btn" style="width:100%;padding:14px;background:var(--red);color:#fff;font-weight:700" onclick="_doCancelBothFamilial(\''+id1+'\',\''+id2+'\')">Annuler les 2 RDVs li\u00e9s</button>';
+  h+='<button class="btn" style="width:100%;padding:14px;background:var(--orange-bg);color:var(--orange);font-weight:600" onclick="_doCancelOneFamilial(\''+id1+'\',\''+id2+'\')">Annuler ce RDV seul (l\'autre reste)</button>';
+  h+='<button class="btn" style="width:100%;padding:10px;background:var(--bg2);color:var(--text);font-weight:600;font-size:12px" onclick="cM()">Retour</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+function _doCancelBothFamilial(id1, id2){
+  _doCancelApptUnpaid(id1);
+  _doCancelApptUnpaid(id2);
+  cM(); go("planning");
+}
+function _doCancelOneFamilial(id1, id2){
+  // Casser le lien sur le RDV qui reste
+  for(var i=0;i<AP.length;i++){
+    if(AP[i].id===id2){
+      AP[i].clients=[];
+      AP[i].comment=((AP[i].comment||"").replace(/\ud83d\udc6a RDV familial[^.]*\.?/g,"").replace(/#[0-9a-f]{6}/g,"").trim());
+      if(typeof saveAppointment==="function") saveAppointment(AP[i]);
+      break;
+    }
+  }
+  _doCancelApptUnpaid(id1);
+  cM(); go("planning");
 }
 
 function editApptTime(id){
@@ -21276,7 +21328,16 @@ function toggleRdv2ndClient(){
 function renderRdv2ndBody(){
   var el=document.getElementById("rdv2ndBody");
   if(!el) return;
-  var st2=window._rdv2nd||{};
+  if(!window._rdv2nd) window._rdv2nd={};
+  // Default coiffeuse: prefer un collab DIFFÉRENT du principal
+  if(!window._rdv2nd.stId && T.length){
+    var _mstEl=document.getElementById("mst");
+    var _principalSt=_mstEl?parseInt(_mstEl.value):0;
+    var _other=null;
+    for(var _i=0;_i<T.length;_i++){ if(T[_i].id!==_principalSt && T[_i].actif!==false && !T[_i].inactif){ _other=T[_i]; break; } }
+    window._rdv2nd.stId = _other ? _other.id : T[0].id;
+  }
+  var st2=window._rdv2nd;
   var h='';
   // Client picker (passage tiles + search)
   h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin-bottom:4px;letter-spacing:1px;text-transform:uppercase">2nd Client</div>';
@@ -21299,6 +21360,7 @@ function renderRdv2ndBody(){
   h+='</select>';
   // 2nd prestation (single pick for simplicity)
   h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">Prestation</div>';
+  h+='<input type="text" id="rdv2ndSvcSearch" autocomplete="off" placeholder="🔍 Filtrer (ex: coupe, couleur, enfant...)" style="width:100%;padding:8px;margin-bottom:6px;font-size:13px">';
   h+='<select id="rdv2ndSvcSel" onchange="window._rdv2nd.svcId=+this.value" style="width:100%;padding:8px;font-size:13px">';
   h+='<option value="">— Choisir une prestation —</option>';
   var svcSorted=SVC.slice().sort(function(a,b){return(a.cat||"").localeCompare(b.cat||"")||a.n.localeCompare(b.n);});
@@ -21310,8 +21372,21 @@ function renderRdv2ndBody(){
   }
   h+='</select>';
   el.innerHTML=h;
-  // Init stId default si pas défini
-  if(!st2.stId && T.length){window._rdv2nd.stId=T[0].id;}
+  // Filtrage live de la prestation (réduit la liste longue)
+  var _svcSel=document.getElementById("rdv2ndSvcSel");
+  var _svcSearch=document.getElementById("rdv2ndSvcSearch");
+  if(_svcSearch && _svcSel){
+    _svcSearch.oninput=function(){
+      var q=(this.value||"").toLowerCase().trim();
+      var opts=_svcSel.querySelectorAll("option");
+      for(var k=0;k<opts.length;k++){
+        var txt=(opts[k].textContent||"").toLowerCase();
+        var isHeader=opts[k].disabled && txt.indexOf("—")===0;
+        if(!q || txt.indexOf(q)>=0 || isHeader){ opts[k].style.display=""; }
+        else { opts[k].style.display="none"; }
+      }
+    };
+  }
 }
 
 function pickRdv2ndPassage(type){
