@@ -5580,15 +5580,9 @@ function printClotureZ(){
         return a.st === "done" && a.date === c.date && !a.cancelled;
       });
       ticketsDuJour.forEach(function(tk){
-        var m = String(tk.met || "").toLowerCase();
+        var mc = _modeCanonique(tk.met);
         var montant = Number(tk.pr || 0);
-        // Paiement mixte "cb + esp" → split équitable si pas de détail, sinon tout au 1er mode
-        if (m.indexOf("cb") >= 0) c.details.cb += montant;
-        else if (m.indexOf("esp") >= 0) c.details.esp += montant;
-        else if (m.indexOf("ch") >= 0) c.details.chq += montant;
-        else if (m.indexOf("bon") >= 0) c.details.bon += montant;
-        else if (m.indexOf("vir") >= 0) c.details.vir += montant;
-        else c.details.aut += montant;
+        c.details[mc] = (c.details[mc]||0) + montant;
       });
       // Arrondir à 2 décimales
       ["cb","esp","chq","bon","vir","aut"].forEach(function(k){
@@ -7345,6 +7339,18 @@ function dB(a,b){return Math.floor((new Date(b)-new Date(a))/864e5);}
 function dS(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function frM(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
 function toM(t){var p=t.split(":");return parseInt(p[0])*60+parseInt(p[1]);}
+// === Normalisation modes de paiement (gère toutes les variantes LS/Luxyra/manuelles) ===
+// Retourne le mode canonique : "cb" | "esp" | "chq" | "bon" | "vir" | "aut"
+function _modeCanonique(met){
+  var m = String(met||"").toLowerCase().trim();
+  if(!m) return "aut";
+  if(m.indexOf("cb")>=0 || m.indexOf("carte")>=0 || m.indexOf("bancaire")>=0) return "cb";
+  if(m.indexOf("esp")>=0 || m.indexOf("cash")>=0 || m.indexOf("liquide")>=0) return "esp";
+  if(m.indexOf("chèq")>=0 || m.indexOf("cheq")>=0 || m.indexOf("chq")>=0) return "chq";
+  if(m.indexOf("bon")>=0 || m.indexOf("avoir")>=0 || m.indexOf("cadeau")>=0) return "bon";
+  if(m.indexOf("vir")>=0) return "vir";
+  return "aut";
+}
 function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/'/g,"&#39;").replace(/"/g,"&quot;");}
 
 // Set date in header
@@ -17782,7 +17788,7 @@ function rAccounting(){
   var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled;});
   var ps=PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var tPr=0,tPd=0,tCB=0,tE=0;
-  dn.forEach(function(a){tPr+=a.pr;var m=(a.met||"").toLowerCase();if(m.indexOf("cb")>=0)tCB+=a.pr;else tE+=a.pr;});
+  dn.forEach(function(a){tPr+=(Number(a.pr)||0); if(_modeCanonique(a.met)==="cb")tCB+=(Number(a.pr)||0); else tE+=(Number(a.pr)||0);});
   ps.forEach(function(pp){tPd+=pp.pr;});
   var p=accM.split("-");var mL=MO[parseInt(p[1])-1]+" "+p[0];
   var txA=SALON_CONFIG.tauxTVA||20;
@@ -19481,20 +19487,20 @@ async function expExcelComptable(){
   // === ONGLET 1 : SYNTHÈSE ===
   var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0,tRem=0,tBrut=0;
   dn.forEach(function(a){
-    tPrest+=a.pr; tRem+=(a.remise||0); tBrut+=(a.brutTotal||a.pr);
-    var m=(a.met||"").toLowerCase();
-    if(m.indexOf("cb")>=0)tCB+=a.pr;
-    else if(m.indexOf("esp")>=0)tEsp+=a.pr;
-    else if(m.indexOf("ch")>=0)tChq+=a.pr;
-    else if(m.indexOf("bon")>=0)tBon+=a.pr;
-    else if(m.indexOf("vir")>=0)tVir+=a.pr;
-    else tAut+=a.pr;
+    tPrest+=(Number(a.pr)||0); tRem+=(Number(a.remise)||0); tBrut+=(Number(a.brutTotal||a.pr)||0);
+    var mc=_modeCanonique(a.met);
+    if(mc==="cb")tCB+=(Number(a.pr)||0);
+    else if(mc==="esp")tEsp+=(Number(a.pr)||0);
+    else if(mc==="chq")tChq+=(Number(a.pr)||0);
+    else if(mc==="bon")tBon+=(Number(a.pr)||0);
+    else if(mc==="vir")tVir+=(Number(a.pr)||0);
+    else tAut+=(Number(a.pr)||0);
   });
   ps2.forEach(function(pp){
-    tProd+=pp.pr;
-    var m=(pp.met||"").toLowerCase();
-    if(m.indexOf("cb")>=0)tCB+=pp.pr; else if(m.indexOf("esp")>=0)tEsp+=pp.pr;
-    else if(m.indexOf("ch")>=0)tChq+=pp.pr; else tAut+=pp.pr;
+    tProd+=(Number(pp.pr)||0);
+    var mc=_modeCanonique(pp.met);
+    if(mc==="cb")tCB+=(Number(pp.pr)||0); else if(mc==="esp")tEsp+=(Number(pp.pr)||0);
+    else if(mc==="chq")tChq+=(Number(pp.pr)||0); else tAut+=(Number(pp.pr)||0);
   });
   var totalTTC = tPrest+tProd;
   var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
@@ -19893,10 +19899,10 @@ function printBandeZ(){
   var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0;
   dn.forEach(function(a){
     tPrest+=a.pr;
-    var m=(a.met||"").toLowerCase();
-    if(m.indexOf("cb")>=0)tCB+=a.pr;else if(m.indexOf("esp")>=0)tEsp+=a.pr;else if(m.indexOf("ch")>=0)tChq+=a.pr;else if(m.indexOf("bon")>=0)tBon+=a.pr;else if(m.indexOf("vir")>=0)tVir+=a.pr;else tAut+=a.pr;
+    var mc=_modeCanonique(a.met);
+    if(mc==="cb")tCB+=(Number(a.pr)||0); else if(mc==="esp")tEsp+=(Number(a.pr)||0); else if(mc==="chq")tChq+=(Number(a.pr)||0); else if(mc==="bon")tBon+=(Number(a.pr)||0); else if(mc==="vir")tVir+=(Number(a.pr)||0); else tAut+=(Number(a.pr)||0);
   });
-  ps.forEach(function(pp){tProd+=pp.pr;var m=(pp.met||"").toLowerCase();if(m.indexOf("cb")>=0)tCB+=pp.pr;else if(m.indexOf("esp")>=0)tEsp+=pp.pr;else if(m.indexOf("ch")>=0)tChq+=pp.pr;else tAut+=pp.pr;});
+  ps.forEach(function(pp){tProd+=(Number(pp.pr)||0);var mc=_modeCanonique(pp.met);if(mc==="cb")tCB+=(Number(pp.pr)||0); else if(mc==="esp")tEsp+=(Number(pp.pr)||0); else if(mc==="chq")tChq+=(Number(pp.pr)||0); else tAut+=(Number(pp.pr)||0);});
   var tTotal=tPrest+tProd;
   var totRegl=tCB+tEsp+tChq+tBon+tVir+tAut;
   // Remises du mois
@@ -19928,7 +19934,12 @@ function printBandeZ(){
   
   // Par jour
   var perDay={};
-  dn.forEach(function(a){if(!perDay[a.date])perDay[a.date]={nb:0,ca:0,esp:0,cb:0,chq:0,prod:0};perDay[a.date].nb++;perDay[a.date].ca+=a.pr;var m=(a.met||"").toLowerCase();if(m.indexOf("cb")>=0)perDay[a.date].cb+=a.pr;else if(m.indexOf("esp")>=0)perDay[a.date].esp+=a.pr;else if(m.indexOf("ch")>=0)perDay[a.date].chq+=a.pr;});
+  dn.forEach(function(a){
+    if(!perDay[a.date])perDay[a.date]={nb:0,ca:0,esp:0,cb:0,chq:0,bon:0,vir:0,aut:0,prod:0};
+    perDay[a.date].nb++; perDay[a.date].ca+=(Number(a.pr)||0);
+    var mc = _modeCanonique(a.met);
+    perDay[a.date][mc] = (perDay[a.date][mc]||0) + (Number(a.pr)||0);
+  });
   ps.forEach(function(pp){if(!perDay[pp.date])perDay[pp.date]={nb:0,ca:0,esp:0,cb:0,chq:0,prod:0};perDay[pp.date].prod+=pp.pr;});
   var sortedDays=Object.keys(perDay).sort();
   
@@ -20076,7 +20087,7 @@ function printBandeZ(){
   // ===== 5. DETAIL PAR JOUR =====
   h+="<h2>5. D\u00c9TAIL PAR JOUR</h2><table><tr><th>Date</th><th class=\"r\">Tkt</th><th class=\"r\">CB</th><th class=\"r\">Esp.</th><th class=\"r\">Chq.</th><th class=\"r\">Prod.</th><th class=\"r\">Total</th></tr>";
   var cumul=0;
-  sortedDays.forEach(function(d){var dy=perDay[d];var dayTotal=dy.ca+dy.prod;cumul+=dayTotal;h+="<tr><td>"+fmt(d)+"</td><td class=\"r\">"+dy.nb+"</td><td class=\"r\">"+dy.cb.toFixed(0)+"</td><td class=\"r\">"+dy.esp.toFixed(0)+"</td><td class=\"r\">"+dy.chq.toFixed(0)+"</td><td class=\"r\">"+dy.prod.toFixed(0)+"</td><td class=\"r b\">"+dayTotal.toFixed(2)+"</td></tr>";});
+  sortedDays.forEach(function(d){var dy=perDay[d];var dayTotal=dy.ca+dy.prod;cumul+=dayTotal;h+="<tr><td>"+fmt(d)+"</td><td class=\"r\">"+dy.nb+"</td><td class=\"r\">"+(dy.cb||0).toFixed(2)+"</td><td class=\"r\">"+(dy.esp||0).toFixed(2)+"</td><td class=\"r\">"+(dy.chq||0).toFixed(2)+"</td><td class=\"r\">"+(dy.prod||0).toFixed(2)+"</td><td class=\"r b\">"+dayTotal.toFixed(2)+"</td></tr>";});
   h+="<tr class=\"total\"><td colspan=\"6\">CUMUL MOIS</td><td class=\"r\">"+cumul.toFixed(2)+" \u20ac</td></tr></table>";
   
   // ===== 6. MOUVEMENTS CAISSE =====
