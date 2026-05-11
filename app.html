@@ -18444,7 +18444,7 @@ function expCSV(){
   var headers = [
     "Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail des prestations",
     "Total HT (\u20AC)","TVA "+txTVA+"% (\u20AC)","Total TTC (\u20AC)","Remise (\u20AC)",
-    "Mode paiement","Statut","Hash NF525"
+    "Mode paiement","Statut","Source","Hash NF525"
   ];
   var rows = [];
 
@@ -18463,10 +18463,11 @@ function expCSV(){
     var ttc = Number(a.pr) || 0;
     var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
     var tva = Math.round((ttc-ht)*100)/100;
+    var src = (a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
     rows.push([
       a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
       csvNum(ht), csvNum(tva), csvNum(ttc), csvNum(a.remise||0),
-      a.met||"", a.cancelled?"ANNUL\u00C9":"Encaiss\u00e9", (a.hash||"").slice(0,16)
+      a.met||"", a.cancelled?"ANNUL\u00C9":"Encaiss\u00e9", src, (a.hash||"").slice(0,16)
     ]);
   });
 
@@ -18478,7 +18479,7 @@ function expCSV(){
     rows.push([
       p.date, p.time||"", p.tkNum||"", "", "", "\uD83D\uDECD "+p.prod,
       csvNum(ht), csvNum(tva), csvNum(ttc), 0,
-      p.met||"", "Vente produit", ""
+      p.met||"", "Vente produit", "Luxyra", ""
     ]);
   });
 
@@ -18751,18 +18752,19 @@ async function expPackComptable(){
   var txTVA = SALON_CONFIG.tauxTVA||20;
 
   // 1. Journal de caisse d\u00e9taill\u00e9
-  var hJournal = ["Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail","Total HT (\u20AC)","TVA "+txTVA+"% (\u20AC)","Total TTC (\u20AC)","Remise (\u20AC)","Mode paiement","Statut","Hash NF525"];
+  var hJournal = ["Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail","Total HT (\u20AC)","TVA "+txTVA+"% (\u20AC)","Total TTC (\u20AC)","Remise (\u20AC)","Mode paiement","Statut","Source","Hash NF525"];
   var rJournal = [];
   dn.forEach(function(a){
     var sv=gS(a.sId), cl=gC(a.cId), sty=gT(a.stId);
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"\u00D7 "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var ttc=Number(a.pr)||0; var ht=Math.round(ttc/(1+txTVA/100)*100)/100; var tva=Math.round((ttc-ht)*100)/100;
-    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),a.met||"","Encaiss\u00e9",(a.hash||"").slice(0,16)]);
+    var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
+    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),a.met||"","Encaiss\u00e9",src,(a.hash||"").slice(0,16)]);
   });
   ps2.forEach(function(p){
     var ttc=Number(p.pr)||0; var ht=Math.round(ttc/(1+txTVA/100)*100)/100; var tva=Math.round((ttc-ht)*100)/100;
-    rJournal.push([p.date,p.time||"",p.tkNum||"","","","\uD83D\uDECD "+p.prod,csvNum(ht),csvNum(tva),csvNum(ttc),0,p.met||"","Vente produit",""]);
+    rJournal.push([p.date,p.time||"",p.tkNum||"","","","\uD83D\uDECD "+p.prod,csvNum(ht),csvNum(tva),csvNum(ttc),0,p.met||"","Vente produit","Luxyra",""]);
   });
   rJournal.sort(function(a,b){var d=String(a[0]).localeCompare(String(b[0]));return d?d:String(a[1]).localeCompare(String(b[1]));});
   folder.file("01_journal_caisse_"+accM+".csv", csvBuildPro("Journal de caisse détaillé", accM, hJournal, rJournal));
@@ -19152,23 +19154,24 @@ async function expExcelComptable(){
     ["JOURNAL DE CAISSE DÉTAILLÉ — "+mL],
     [SALON_CONFIG.nomComplet()+" · SIRET "+(SALON_CONFIG.siret||"-")],
     [],
-    ["Date","Heure","N° Ticket","Client","Collaborateur","Détail","HT (€)","TVA (€)","TTC (€)","Remise (€)","Mode","Statut","Hash NF525"]
+    ["Date","Heure","N° Ticket","Client","Collaborateur","Détail","HT (€)","TVA (€)","TTC (€)","Remise (€)","Mode","Statut","Source","Hash NF525"]
   ];
   var totHTj=0, totTVAj=0, totTTCj=0, totRemj=0;
-  function pushVente(date,heure,tk,client,collab,detail,ttc,rem,met,statut,hash){
+  function pushVente(date,heure,tk,client,collab,detail,ttc,rem,met,statut,src,hash){
     var ht=Math.round(ttc/(1+txTVA/100)*100)/100;
     var tva=Math.round((ttc-ht)*100)/100;
     totHTj+=ht; totTVAj+=tva; totTTCj+=ttc; totRemj+=rem;
-    jourD.push([toDate(date),heure,tk,client,collab,detail,ht,tva,ttc,rem,met,statut,String(hash||"").slice(0,16)]);
+    jourD.push([toDate(date),heure,tk,client,collab,detail,ht,tva,ttc,rem,met,statut,src||"Luxyra",String(hash||"").slice(0,16)]);
   }
   dn.forEach(function(a){
     var sv=gS(a.sId), cl=gC(a.cId), sty=gT(a.stId);
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"× "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
-    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, a.met||"", "Encaissé", a.hash);
+    var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
+    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, a.met||"", "Encaissé", src, a.hash);
   });
   ps2.forEach(function(p){
-    pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "");
+    pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "Luxyra", "");
   });
   // Tri par date+heure
   var rows = jourD.slice(4);
@@ -19179,11 +19182,11 @@ async function expExcelComptable(){
     return String(a[1]).localeCompare(String(b[1]));
   });
   jourD = jourD.slice(0,4).concat(rows);
-  jourD.push(["","","","","","TOTAL", totHTj, totTVAj, totTTCj, totRemj, "", "", ""]);
+  jourD.push(["","","","","","TOTAL", totHTj, totTVAj, totTTCj, totRemj, "", "", "", ""]);
   XLSX.utils.book_append_sheet(wb, makeSheet(jourD, {
     titleRows:[0], subRows:[1], headerRows:[3], totalRows:[jourD.length-1],
-    numCols:[6,7,8,9], dateCols:[0], titleSpan:13,
-    colWidths:[12, 8, 10, 24, 16, 32, 12, 12, 12, 12, 12, 14, 18]
+    numCols:[6,7,8,9], dateCols:[0], titleSpan:14,
+    colWidths:[12, 8, 10, 24, 16, 32, 12, 12, 12, 12, 12, 14, 12, 18]
   }), "2 — Journal");
 
   // === ONGLET 3 : URSSAF (si micro) OU TVA (si réel) ===
