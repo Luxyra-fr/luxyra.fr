@@ -22102,6 +22102,7 @@ function openCaisseToday(){
 function startCaisse(){
   _tk={step:1,stId:null,cId:null,items:[],comment:"",remise:0};
   window._caisseDirectTime=null; // reset heure service (sera re-initialisé à l'arrivée step 3)
+  window._caisseDirectTimeManual=false; // reset flag édition manuelle
   showCaisse();
 }
 
@@ -22332,14 +22333,31 @@ function showCaisse(){
     }
     h+='</div>';
     // === Heure de début du service (encaissement direct uniquement) ===
+    // Logique : par défaut = heure actuelle - somme des durées prestations dans le panier
+    // (encaissement en fin de service). Si user édite manuellement, on respecte sa saisie.
     if(!_tk.apptId){
-      if(!window._caisseDirectTime){
-        var _nowD=new Date();
-        window._caisseDirectTime=String(_nowD.getHours()).padStart(2,"0")+":"+String(_nowD.getMinutes()).padStart(2,"0");
+      var _totalSvcDur = 0;
+      if(_tk.items && _tk.items.length){
+        _tk.items.forEach(function(it){
+          if(it.isProd || it.isSep || it.isPack || it.isCarteAbo) return;
+          if(it.sId){ var sv = gS(it.sId); if(sv && sv.d) _totalSvcDur += Number(sv.d)||0; }
+        });
+      }
+      if(!window._caisseDirectTimeManual){
+        var _nowD = new Date();
+        var _nowMin = _nowD.getHours()*60 + _nowD.getMinutes();
+        var _startMin = Math.max(0, _nowMin - _totalSvcDur);
+        window._caisseDirectTime = String(Math.floor(_startMin/60)).padStart(2,"0")+":"+String(_startMin%60).padStart(2,"0");
+      }
+      var _hintEnd = "";
+      if(_totalSvcDur > 0 && window._caisseDirectTime){
+        var _sm = toM(window._caisseDirectTime);
+        var _em = _sm + _totalSvcDur;
+        _hintEnd = " → "+String(Math.floor(_em/60)).padStart(2,"0")+":"+String(_em%60).padStart(2,"0");
       }
       h+='<div style="width:1px;height:30px;background:rgba(255,255,255,.2)"></div>';
-      h+='<div title="Heure de DÉBUT du service. Le ticket sera affiché sur le planning de cette heure jusqu\'à heure+durée. Modifiable si la cliente était servie avant l\'encaissement."><div style="font-size:11px;color:#e8c873;font-weight:700;letter-spacing:.5px;text-transform:uppercase">⏱ Début service</div>';
-      h+='<input type="time" value="'+window._caisseDirectTime+'" onchange="window._caisseDirectTime=this.value" style="background:rgba(255,255,255,.06);border:1px solid rgba(200,168,78,.3);color:#fff;font-weight:700;font-size:14px;padding:4px 8px;border-radius:6px;width:90px"></div>';
+      h+='<div title="Heure de DÉBUT du service. Par défaut = heure actuelle - durée du panier. Modifiable."><div style="font-size:11px;color:#e8c873;font-weight:700;letter-spacing:.5px;text-transform:uppercase">⏱ Début service'+_hintEnd+'</div>';
+      h+='<input type="time" value="'+window._caisseDirectTime+'" onchange="window._caisseDirectTime=this.value;window._caisseDirectTimeManual=true;showCaisse()" style="background:rgba(255,255,255,.06);border:1px solid rgba(200,168,78,.3);color:#fff;font-weight:700;font-size:14px;padding:4px 8px;border-radius:6px;width:90px"></div>';
     }
     // Bon cadeau
     if(cl){var gcBal=0;GC.forEach(function(g){if(g.cId===cl.id&&g.st==="active")gcBal+=g.rem;});
