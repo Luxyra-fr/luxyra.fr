@@ -898,8 +898,12 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           cancelled: a.cancelled, cancelReason: a.cancel_reason
         };
       });
-      // Restaurer le dernier hash + tkN
-      var doneH = AP.filter(function(a) { return a.hash; });
+      // FIX 2026-05-12 : tri explicite par tkNum DESC pour récupérer le hash du
+      // DERNIER ticket de la chaîne. Sans tri, doneH[0] dépendait de l'ordre DB
+      // (date_rdv DESC + ordre interne aléatoire dans la même date) → chaîne brisée
+      // si la dernière entrée d'AP n'était pas le ticket de tkNum max.
+      var doneH = AP.filter(function(a) { return a.hash; })
+                    .sort(function(a,b){ return (b.tkNum||0) - (a.tkNum||0); });
       if (doneH.length) _lastTicketHash = doneH[0].hash || "00000000";
       var maxTkN=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>maxTkN)maxTkN=a.tkNum;});if(maxTkN>0)tkN=maxTkN;
     }
