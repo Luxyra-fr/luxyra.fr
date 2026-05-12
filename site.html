@@ -766,14 +766,23 @@ async function loadSalon(){
     var s=r.data[0];
     SALON={id:s.id,slug:s.slug||"",nom:s.nom||"Salon",sousTitre:s.sous_titre||"",adresse:s.adresse||"",cp:s.cp||"",ville:s.ville||"",tel:s.tel||s.telephone||"",email:s.email||"",siret:s.siret||"",logo:s.logo||"",config:s.config||{},connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"",metier:s.metier||"coiffure",latitude:s.latitude!==null&&s.latitude!==undefined?Number(s.latitude):null,longitude:s.longitude!==null&&s.longitude!==undefined?Number(s.longitude):null,note_moyenne:Number(s.note_moyenne)||0,nb_avis:Number(s.nb_avis)||0,mode_activite:s.mode_activite||"salon",zone_deplacement_km:s.zone_deplacement_km!=null?Number(s.zone_deplacement_km):0,frais_deplacement:s.frais_deplacement!=null?Number(s.frais_deplacement):0,frais_deplacement_type:s.frais_deplacement_type||"forfait"};
     // Canonicalisation URL : si arrivé via ?s=uuid et que le salon a un slug, bascule l'URL visible
+    // FIX 2026-05-12 : préserver les params payment/rdv/order/cmd qui doivent être traités
+    // par renderSite() (return Stripe Checkout) — sinon le DELETE/UPDATE post-paiement loupe.
     try{
       if(SALON.slug){
         var _hadUuid=params.get("s")||params.get("salon");
         var _hasSlugQs=params.get("slug")||"";
+        // Params critiques à préserver post-canonicalisation
+        var _preserve=[];
+        ["payment","rdv","order","cmd"].forEach(function(k){
+          var v=params.get(k); if(v) _preserve.push(k+"="+encodeURIComponent(v));
+        });
+        var _preserveQs = _preserve.length ? ("?"+_preserve.join("&")) : "";
         if(LX_CLEAN_URLS && window.location.pathname.indexOf("/"+SALON.slug)!==0){
-          window.history.replaceState({},"","/"+SALON.slug+window.location.hash);
+          window.history.replaceState({},"","/"+SALON.slug+_preserveQs+window.location.hash);
         }else if(!LX_CLEAN_URLS && _hadUuid && !_hasSlugQs){
-          window.history.replaceState({},"",window.location.pathname+"?slug="+SALON.slug+window.location.hash);
+          var _existingQs = _preserveQs ? (_preserveQs+"&slug="+SALON.slug) : ("?slug="+SALON.slug);
+          window.history.replaceState({},"",window.location.pathname+_existingQs+window.location.hash);
         }
       }
     }catch(_){}
@@ -1176,9 +1185,13 @@ function renderSite(){
     return;
   }
   if(_pp==="cancel"&&_rdvId){
-    // Delete the pending RDV
-    sb.from("rdv_online").delete().eq("id",_rdvId).eq("status","pending_payment");
-    window.history.replaceState({},"",buildSalonUrl());
+    // FIX 2026-05-12 : awaité avec .then pour s'assurer que le DELETE part avant la
+    // suite du rendu, et log d'erreur si problème RLS/réseau.
+    sb.from("rdv_online").delete().eq("id",_rdvId).eq("status","pending_payment").then(function(r){
+      if(r.error) console.warn("[cancel cleanup] DELETE failed:", r.error.message);
+      else console.log("[cancel cleanup] RDV", _rdvId, "supprimé");
+      window.history.replaceState({},"",buildSalonUrl());
+    });
   }
   
   // Handle Click & Collect payment return
