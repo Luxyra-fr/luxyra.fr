@@ -690,7 +690,11 @@ async function handleConnectStatus(request, env) {
   } catch(e) { return jsonResponse({ error: "Connect status error: " + e.message }, 500); }
 }
 
-// Get Express dashboard login link for salon
+// Get dashboard link for connected account
+// FIX 2026-05-12 : login_links est réservé aux comptes Express. Pour les
+// comptes Standard (controller.stripe_dashboard.type=full), Stripe ne génère
+// pas de lien de connexion auto — l'utilisateur se logue directement sur
+// dashboard.stripe.com avec ses identifiants Stripe perso.
 async function handleConnectDashboard(request, env) {
   try {
     const { salon_id } = await request.json();
@@ -699,9 +703,23 @@ async function handleConnectDashboard(request, env) {
     const salon = await supabaseGet(env, salon_id);
     if (!salon?.stripe_connect_id) return jsonResponse({ error: "Compte Connect non configuré" }, 400);
 
-    const link = await stripeAPI(env, "accounts/" + salon.stripe_connect_id + "/login_links", {});
-    if (!link?.url) return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(link) }, 500);
-    return jsonResponse({ url: link.url });
+    // Détection du type de compte (Express vs Standard) via l'API account
+    const account = await stripeAPI(env, "accounts/" + salon.stripe_connect_id, null, "GET");
+    const dashboardType = account?.controller?.stripe_dashboard?.type || (account?.type === "express" ? "express" : "full");
+
+    if (dashboardType === "express") {
+      // Express → login_link auto-généré
+      const link = await stripeAPI(env, "accounts/" + salon.stripe_connect_id + "/login_links", {});
+      if (!link?.url) return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(link) }, 500);
+      return jsonResponse({ url: link.url, type: "express" });
+    } else {
+      // Standard → renvoie vers dashboard.stripe.com (login propre du salon)
+      return jsonResponse({
+        url: "https://dashboard.stripe.com/login",
+        type: "standard",
+        message: "Connectez-vous avec vos identifiants Stripe perso pour gérer ce compte."
+      });
+    }
   } catch(e) { return jsonResponse({ error: "Connect dashboard error: " + e.message }, 500); }
 }
 
