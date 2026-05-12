@@ -2615,6 +2615,12 @@ async function loadConnectStatus(){
       body:JSON.stringify({salon_id:window._salonId||""})
     });
     var data=await res.json();
+    // FIX 2026-05-12 : synchronise SALON_CONFIG.stripeConnectStatus en mémoire pour
+    // que les autres sections (Acompte à la résa, garantie no-show) voient le
+    // statut frais sans nécessiter un reload complet de la page.
+    if(window.SALON_CONFIG && data && data.status){
+      window.SALON_CONFIG.stripeConnectStatus = data.status;
+    }
     var h='';
     if(data.status==="active"){
       // Connected and active
@@ -11741,8 +11747,11 @@ function rSettings(){
     // === ACOMPTE ===
     // Option B : acompte en ligne uniquement si Stripe Connect actif (pour que l'argent
     // aille directement sur le compte du salon et non sur celui de Luxyra).
+    // FIX 2026-05-12 : "payouts_pending" = charges_enabled=true mais payouts_enabled=false.
+    // Le salon peut DÉJÀ encaisser (l'argent va sur sa balance Stripe), c'est juste le
+    // virement vers banque qui attend la validation RIB. Donc on l'active aussi.
     var _cnStatus = (window.SALON_CONFIG && SALON_CONFIG.stripeConnectStatus) || "";
-    var _connectActive = (_cnStatus === "active" || _cnStatus === "enabled");
+    var _connectActive = (_cnStatus === "active" || _cnStatus === "enabled" || _cnStatus === "payouts_pending");
     h+='<div class="card"><div class="ct">\ud83d\udcb3 Acompte \u00e0 la r\u00e9servation</div>';
     if(!_connectActive){
       var _msg = _cnStatus === "pending_verification"
