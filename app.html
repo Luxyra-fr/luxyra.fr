@@ -22093,7 +22093,12 @@ function guardDoubleClick(label){
 }
 window.guardDoubleClick=guardDoubleClick;
 
-function aCl(){
+// FIX 2026-05-12 : async + await saveClient AVANT d'utiliser newCl.id
+// Race condition critique : saveClient remplace newCl.id (local "u123_xyz")
+// par le UUID DB. Si on settait _tk.cId à l'ID local AVANT le retour DB,
+// _tk.cId pointait vers un id qui n'existait plus → toutes les références
+// (encaissement, fidélité, historique) étaient cassées.
+async function aCl(){
   if(guardDoubleClick("client")) return;
   var nom=document.getElementById("mnom").value.trim();
   var pre=document.getElementById("mpre").value.trim();
@@ -22108,7 +22113,10 @@ function aCl(){
   var acqParrain=(acqSrc==="recommandation" && document.getElementById("mAcqParrain"))?document.getElementById("mAcqParrain").value.trim():"";
   var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:"",cp:"",ville:"",ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[],acqSrc:acqSrc||null,acqParrain:acqParrain||null};
   CL.push(newCl);
-  if(typeof saveClient==="function")saveClient(newCl);
+  // FIX 2026-05-12 : await pour que newCl.id soit l'UUID DB final avant la suite
+  if(typeof saveClient==="function"){
+    try{ await saveClient(newCl); }catch(e){ console.error("aCl saveClient failed:", e); }
+  }
   // Si email + consentement RGPD : propose d'envoyer l'invitation pour activer le compte client
   if(em && newCl.emOk){
     setTimeout(function(){
@@ -22118,7 +22126,7 @@ function aCl(){
   // If we came from caisse, go back to caisse with this new client
   if(window._fromCaisse){
     window._fromCaisse=false;
-    _tk.cId=newCl.id;
+    _tk.cId=newCl.id; // ← maintenant UUID DB stable (race condition fixée)
     _tk.passType=null;
     _tk.step=3;
     // Also update the linked appointment in AP (passage -> real client)
@@ -22126,6 +22134,8 @@ function aCl(){
       for(var ai=0;ai<AP.length;ai++){
         if(AP[ai].id===_tk.apptId){
           AP[ai].cId=newCl.id;
+          // FIX 2026-05-12 : aussi sauver l'appointment pour persister la liaison
+          if(typeof saveAppointment==="function") saveAppointment(AP[ai]);
           break;
         }
       }
