@@ -1194,6 +1194,33 @@ function renderSite(){
     });
   }
   
+
+  // FIX 2026-05-12 : retour Stripe Checkout pour empreinte (capture_method=manual)
+  // → Worker fetch la session, récupère le PI ID, et met à jour rdv_online (empreinte_payment_intent_id + status=confirmed)
+  var _ep=params.get("empreinte");
+  var _sid=params.get("session_id");
+  if(_ep==="success"&&_rdvId&&_sid){
+    var elE=document.getElementById("app");
+    elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center"><div style="font-size:64px;margin-bottom:16px">\ud83d\udd12</div><h2 style="color:var(--gold)">Pré-autorisation en cours de confirmation…</h2></div></div>';
+    fetch("/api/stripe/empreinte-finalize",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({session_id:_sid, rdv_id:_rdvId})
+    }).then(function(r){return r.json();}).then(function(d){
+      if(d.ok){
+        elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\ud83d\udd12</div><h2 style="color:var(--gold);margin-bottom:8px">Empreinte enregistrée !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Aucun débit effectué. Votre carte est pré-autorisée — la somme sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée en cas d\u0027absence non excusée</strong>.</p><button class="btn btn-gold" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
+      } else {
+        elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u26a0\ufe0f</div><h2 style="color:var(--red);margin-bottom:8px">Erreur de confirmation</h2><p style="color:var(--text2)">'+(d.error||"Contactez le salon avec la référence: "+_sid)+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
+      }
+    }).catch(function(e){
+      elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u26a0\ufe0f</div><h2 style="color:var(--red)">Erreur réseau</h2><p style="color:var(--text2)">Votre carte a peut-être été autorisée. Référence: '+_sid+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
+    });
+    return;
+  }
+  if(_ep==="cancel"&&_rdvId){
+    sb.from("rdv_online").delete().eq("id",_rdvId).eq("status","pending_payment").then(function(){
+      window.history.replaceState({},"",buildSalonUrl());
+    });
+  }
   // Handle Click & Collect payment return
   var _op=params.get("order");
   var _cmdId=params.get("cmd");
@@ -3023,11 +3050,12 @@ async function submitWithStripe(){
     showAlert("Ce cr\u00e9neau n\u2019est plus disponible. Veuillez choisir un autre horaire.","warning");return;
   }
   
-  // EMPREINTE : skip Connect Checkout (incompatible avec capture_method=manual) → flow fallback
-  // ACOMPTE avec Connect actif → Connect Checkout
-  // FIX 2026-05-12 : payouts_pending = charges OK donc inclu
-  if(modeC !== "empreinte" && SALON.connectId && (SALON.connectStatus==="active" || SALON.connectStatus==="enabled" || SALON.connectStatus==="payouts_pending")){
-    // 1. Create RDV with pending_payment status
+  // FIX 2026-05-12 : EMPREINTE désormais aussi en Path A (Stripe Checkout capture_method=manual
+  // + transfer_data → PI créée sur Luxyra mais destination = salon Connect, donc à la capture
+  // les fonds vont chez le salon, pas chez Luxyra). Le retour est différencié via le param URL.
+  if(SALON.connectId && (SALON.connectStatus==="active" || SALON.connectStatus==="enabled" || SALON.connectStatus==="payouts_pending")){
+    var isEmpreinteMode = (modeC === "empreinte");
+    // 1. Create RDV with pending_payment status (commun aux deux modes)
     var rdvData={
       salon_id:salonId,
       client_nom:nom,client_prenom:pre,client_tel:tel,client_email:email,
@@ -3036,10 +3064,17 @@ async function submitWithStripe(){
       items:itemsPayload,
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
-      acompte_montant:acompte,acompte_paye:false,
       status:"pending_payment",message:msg,
       lieu: booking.lieu||'salon'
     };
+    // Branche selon mode : acompte (débit immédiat) ou empreinte (pré-autorisation)
+    if(isEmpreinteMode){
+      rdvData.empreinte_montant = acompte;
+      rdvData.empreinte_status = "pending";
+    } else {
+      rdvData.acompte_montant = acompte;
+      rdvData.acompte_paye = false;
+    }
     if(booking.lieu==='domicile' && booking.clientAdr){
       rdvData.client_adresse = booking.clientAdr.adr;
       rdvData.client_adresse_cp = booking.clientAdr.cp;
@@ -3062,15 +3097,26 @@ async function submitWithStripe(){
               || null;
     if(btn){ btn.textContent="Redirection vers le paiement..."; btn.disabled=true; }
     try{
+      // FIX 2026-05-12 : diff\u00e9rencie acompte vs empreinte dans le metadata + return_url
+      // (l'empreinte utilise capture_method=manual et un endpoint de finalize diff\u00e9rent)
+      var paymentTypeLabel = isEmpreinteMode ? "Empreinte" : "Acompte";
+      var returnFlag = isEmpreinteMode ? "empreinte=success" : "payment=success";
+      var cancelFlag = isEmpreinteMode ? "empreinte=cancel" : "payment=cancel";
       var res=await fetch("/api/stripe/connect-payment",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           salon_id:salonId,
           amount:acompte,
-          description:"Acompte - "+primaryNom+" le "+formatDateFR(booking.date)+" \u00e0 "+booking.time+" - "+SALON.nom,
+          description:paymentTypeLabel+" - "+primaryNom+" le "+formatDateFR(booking.date)+" \u00e0 "+booking.time+" - "+SALON.nom,
           customer_email:email,
           customer_name:(nom+" "+(pre||"")).trim(),
-          metadata:{type:"acompte",rdv_id:rdvId,return_url:window.location.origin+"/site.html?s="+salonId+"&payment=success&rdv="+rdvId,cancel_url:window.location.origin+"/site.html?s="+salonId+"&payment=cancel&rdv="+rdvId}
+          capture_method: isEmpreinteMode ? "manual" : undefined,
+          metadata:{
+            type: isEmpreinteMode ? "empreinte" : "acompte",
+            rdv_id:rdvId,
+            return_url:window.location.origin+"/site.html?s="+salonId+"&"+returnFlag+"&rdv="+rdvId+"&session_id={CHECKOUT_SESSION_ID}",
+            cancel_url:window.location.origin+"/site.html?s="+salonId+"&"+cancelFlag+"&rdv="+rdvId
+          }
         })
       });
       var data=await res.json();
