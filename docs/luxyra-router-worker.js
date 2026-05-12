@@ -670,6 +670,7 @@ async function handleConnectStatus(request, env) {
 
     let status = "pending";
     if (charges && payouts) status = "active";
+    else if (charges && !payouts) status = "payouts_pending";  // FIX 2026-05-12 : encaissements OK mais virements en cours de vérif RIB
     else if (details && !charges) status = "pending_verification";
     else if (!details) status = "incomplete";
 
