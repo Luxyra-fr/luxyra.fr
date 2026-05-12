@@ -187,7 +187,15 @@ function renderProposal(){
   h+='<div id="errBox" class="err"></div>';
 
   if(acompte>0){
-    h+='<button class="btn btn-gold" onclick="openPaymentModal()">💳 Payer '+acompte.toFixed(2)+' € et confirmer</button>';
+    // FIX 2026-05-12 : si Connect actif → Path A (Checkout Session avec transfer_data → $$ direct au salon)
+    // Sinon : Path B (Stripe Elements + Charges API → $$ chez Luxyra, à éviter)
+    var connectActive = s.stripe_connect_id && (s.stripe_connect_status==="active" || s.stripe_connect_status==="enabled" || s.stripe_connect_status==="payouts_pending");
+    if(connectActive){
+      h+='<button class="btn btn-gold" onclick="payViaCheckout()">💳 Payer '+acompte.toFixed(2)+' € et confirmer</button>';
+      h+='<div style="font-size:11px;color:var(--text3);text-align:center;margin:-4px 0 10px">🔒 Paiement sécurisé par Stripe — encaissé directement par le salon</div>';
+    } else {
+      h+='<button class="btn btn-gold" onclick="openPaymentModal()">💳 Payer '+acompte.toFixed(2)+' € et confirmer</button>';
+    }
   } else {
     h+='<button class="btn btn-gold" onclick="confirmFree()">✅ Confirmer le rendez-vous</button>';
   }
@@ -246,6 +254,53 @@ async function confirmFree(){
     renderConfirmed();
   }catch(e){
     document.getElementById("errBox").style.display="block"; document.getElementById("errBox").textContent="Erreur de connexion: "+e.message;
+  }
+}
+
+// FIX 2026-05-12 : Path A — redirige vers Stripe Checkout pour Connect direct au salon
+async function payViaCheckout(){
+  var errEl=document.getElementById("errBox");
+  errEl.style.display="none"; errEl.textContent="";
+  try{
+    var r=await fetch("/api/rdv-demande/connect-pay",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token:STATE.token})
+    });
+    var data=await r.json();
+    if(!r.ok || !data.url){
+      errEl.style.display="block";
+      errEl.textContent=data.error||"Impossible de créer la session de paiement";
+      return;
+    }
+    // Redirige vers Stripe Checkout — au retour, success_url ramène ici avec ?paid=success&session_id=xxx
+    window.location.href=data.url;
+  }catch(e){
+    errEl.style.display="block";
+    errEl.textContent="Erreur de connexion: "+e.message;
+  }
+}
+
+// FIX 2026-05-12 : finalise un retour de Stripe Checkout (Path A)
+async function finalizeCheckoutReturn(token, sessionId){
+  document.getElementById("root").innerHTML='<div class="spin"></div><div style="text-align:center;color:var(--text3);font-size:13px">Confirmation de votre paiement…</div>';
+  try{
+    var r=await fetch("/api/rdv-demande/finalize",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({token:token, session_id:sessionId})
+    });
+    var data=await r.json();
+    if(!r.ok){
+      renderError("Erreur lors de la confirmation", data.error||"Le paiement a réussi mais la confirmation a échoué. Contactez le salon avec la référence: "+sessionId);
+      return;
+    }
+    // Nettoie l'URL et affiche confirmation
+    window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token));
+    // Recharge la proposition (qui est maintenant confirmed) puis affiche
+    await fetchProposal();
+  }catch(e){
+    renderError("Erreur de connexion", e.message+" — votre paiement a peut-être réussi, vérifiez avec le salon.");
   }
 }
 
@@ -337,8 +392,23 @@ async function doPayment(){
   }
 }
 
-// Init
-fetchProposal();
+// Init — FIX 2026-05-12 : intercepte retour Stripe Checkout (Path A) avant fetch normal
+(function(){
+  var p=new URLSearchParams(window.location.search);
+  var paid=p.get("paid");
+  var token=p.get("t");
+  var sessionId=p.get("session_id");
+  if(paid==="success" && token && sessionId){
+    // Retour de Stripe Checkout : finalise via worker
+    finalizeCheckoutReturn(token, sessionId);
+    return;
+  }
+  if(paid==="cancel" && token){
+    // Annulation : nettoie l'URL et affiche la proposition normalement
+    window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token));
+  }
+  fetchProposal();
+})();
 </script>
 </body>
 </html>

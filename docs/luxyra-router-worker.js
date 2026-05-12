@@ -52,6 +52,9 @@ export default {
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
       if (url.pathname === "/api/stripe/connect-dashboard" && request.method === "POST") return await handleConnectDashboard(request, env);
       if (url.pathname === "/api/stripe/connect-payment" && request.method === "POST") return await handleConnectPayment(request, env);
+      // FIX 2026-05-12 : Path A pour RDV sur mesure (acompte direct au salon)
+      if (url.pathname === "/api/rdv-demande/connect-pay" && request.method === "POST") return await handleRdvDemandeConnectPay(request, env);
+      if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
       if (url.pathname === "/api/email/ticket" && request.method === "POST") return await handleEmailTicket(request, env);
       if (url.pathname === "/api/email/welcome" && request.method === "POST") return await handleEmailWelcome(request, env);
       if (url.pathname === "/api/email/custom" && request.method === "POST") return await handleEmailCustom(request, env);
@@ -768,6 +771,201 @@ async function handleConnectPayment(request, env) {
     if (!session?.url) return jsonResponse({ error: "Erreur paiement: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Connect payment error: " + e.message }, 500); }
+}
+
+// ============================================================
+// FIX 2026-05-12 : RDV SUR MESURE — Path A Connect
+// ============================================================
+// AVANT : proposal.html chargeait via Charges API (path B) → $$ chez Luxyra.
+// Problème comptable : Luxyra encaissait pour le salon, virement manuel ensuite.
+//
+// MAINTENANT : Checkout Session avec transfer_data → 100% direct au salon.
+//
+// Flow :
+// 1. POST /api/rdv-demande/connect-pay { token }
+//    → Worker crée Checkout Session avec transfer_data[destination]=connect_id
+//    → returns Stripe URL
+// 2. Stripe redirige vers proposal.html?t=<token>&paid=success&session_id={CHECKOUT_SESSION_ID}
+// 3. POST /api/rdv-demande/finalize { token, session_id }
+//    → Worker vérifie Stripe payment_status="paid" + metadata.proposal_token
+//    → INSERT rdv_online status=pending_payment, UPDATE confirmed (mirror regular flow)
+//    → UPDATE rdv_demandes status=confirmed + rdv_online_id
+// ============================================================
+
+async function handleRdvDemandeConnectPay(request, env) {
+  try {
+    const { token } = await request.json();
+    if (!token) return jsonResponse({ error: "token requis" }, 400);
+
+    // Récupère la demande via service_role
+    const sbUrl = CONFIG.SUPABASE_URL;
+    const dRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?proposal_token=eq.${encodeURIComponent(token)}&select=*&limit=1`, {
+      headers: _sbHeaders(env)
+    });
+    const dRows = await dRes.json();
+    if (!Array.isArray(dRows) || !dRows[0]) return jsonResponse({ error: "Proposition introuvable" }, 404);
+    const demande = dRows[0];
+
+    if (demande.status === "confirmed") return jsonResponse({ error: "Cette proposition est déjà confirmée." }, 409);
+    if (["refused", "cancelled_by_salon", "expired"].includes(demande.status)) {
+      return jsonResponse({ error: "Cette proposition n'est plus active." }, 409);
+    }
+    if (demande.proposal_expires_at && new Date(demande.proposal_expires_at) < new Date()) {
+      return jsonResponse({ error: "Cette proposition a expiré." }, 410);
+    }
+    if (demande.status !== "proposed") return jsonResponse({ error: "État inattendu: " + demande.status }, 409);
+
+    const pd = demande.proposed_data || {};
+    const acompte = Number(pd.acompte_montant) || 0;
+    if (acompte <= 0) return jsonResponse({ error: "Aucun acompte à régler." }, 400);
+
+    // Récupère le salon pour le connect_id
+    const salon = await supabaseGet(env, demande.salon_id);
+    if (!salon?.stripe_connect_id) return jsonResponse({ error: "Le salon n'a pas configuré ses paiements en ligne" }, 400);
+
+    // Vérifie que Connect peut encaisser
+    const account = await stripeAPI(env, `accounts/${salon.stripe_connect_id}`, null, "GET");
+    if (!account?.charges_enabled) return jsonResponse({ error: "Le compte de paiement du salon n'est pas encore actif" }, 400);
+
+    // Description (max 80 chars produit)
+    const items = Array.isArray(pd.items) ? pd.items : [];
+    const itemsLabel = items.map(it => it.nom).join(", ");
+    const description = ("Acompte RDV " + (pd.date || "") + " " + (pd.heure || "") + " — " + itemsLabel).slice(0, 200);
+
+    const customerEmail = demande.client_email || "";
+    const customerName = ((demande.client_prenom || "") + " " + (demande.client_nom || "")).trim();
+
+    const successUrl = `https://luxyra.fr/proposal.html?t=${encodeURIComponent(token)}&paid=success&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `https://luxyra.fr/proposal.html?t=${encodeURIComponent(token)}&paid=cancel`;
+
+    // Checkout Session avec transfer_data → 100% au salon, 0% à Luxyra
+    const session = await stripeAPI(env, "checkout/sessions", {
+      mode: "payment",
+      "line_items[0][price_data][currency]": "eur",
+      "line_items[0][price_data][product_data][name]": description.slice(0, 80),
+      "line_items[0][price_data][unit_amount]": String(Math.round(acompte * 100)),
+      "line_items[0][quantity]": "1",
+      customer_email: customerEmail,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      "metadata[type]": "rdv_demande_acompte",
+      "metadata[salon_id]": demande.salon_id,
+      "metadata[proposal_token]": token,
+      "metadata[demande_id]": demande.id,
+      "metadata[customer_name]": customerName,
+      "payment_intent_data[description]": description,
+      "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id
+    });
+
+    if (!session?.url) return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(session) }, 500);
+    return jsonResponse({ url: session.url, session_id: session.id });
+  } catch (e) {
+    console.error("connect-pay error:", e);
+    return jsonResponse({ error: "Connect-pay error: " + e.message }, 500);
+  }
+}
+
+async function handleRdvDemandeFinalize(request, env) {
+  try {
+    const { token, session_id } = await request.json();
+    if (!token || !session_id) return jsonResponse({ error: "token et session_id requis" }, 400);
+
+    // 1) Vérifie le paiement Stripe (single source of truth)
+    const session = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
+    if (session.payment_status !== "paid") return jsonResponse({ error: "Paiement non confirmé: " + session.payment_status }, 402);
+    // Anti-tampering : le token doit matcher la metadata Stripe
+    if (session.metadata?.proposal_token !== token) return jsonResponse({ error: "Token mismatch (anti-tampering)" }, 403);
+
+    const sbUrl = CONFIG.SUPABASE_URL;
+
+    // 2) Récupère la demande
+    const dRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?proposal_token=eq.${encodeURIComponent(token)}&select=*&limit=1`, {
+      headers: _sbHeaders(env)
+    });
+    const dRows = await dRes.json();
+    if (!Array.isArray(dRows) || !dRows[0]) return jsonResponse({ error: "Proposition introuvable" }, 404);
+    const demande = dRows[0];
+
+    // Idempotence : si déjà finalisé, renvoie success
+    if (demande.status === "confirmed" && demande.rdv_online_id) {
+      return jsonResponse({ ok: true, already_confirmed: true, rdv_online_id: demande.rdv_online_id });
+    }
+
+    const pd = demande.proposed_data || {};
+    const items = Array.isArray(pd.items) ? pd.items : [];
+    const itemNoms = items.map(it => it.nom).join(" + ") || "RDV sur mesure";
+    const primaryServiceId = items[0]?.service_id || null;
+
+    // 3) INSERT rdv_online (status pending_payment d'abord — mirror du flow booking normal)
+    //    Le trigger v3 valide acompte_paye=true uniquement après UPDATE → on INSERT à false.
+    const rdvData = {
+      salon_id: demande.salon_id,
+      client_nom: demande.client_nom || "",
+      client_prenom: demande.client_prenom || "",
+      client_tel: demande.client_tel || "",
+      client_email: demande.client_email || "",
+      client_online_id: null,
+      client_luxyra_id: demande.client_luxyra_id || null,
+      service_id: primaryServiceId,
+      service_nom: itemNoms,
+      service_prix: Number(pd.prix_total) || 0,
+      items: items,
+      collaborateur_id: pd.collaborateur_id || null,
+      collaborateur_nom: pd.collaborateur_nom || null,
+      date_rdv: pd.date,
+      heure_rdv: pd.heure,
+      duree_minutes: pd.duree_minutes || 30,
+      acompte_montant: Number(pd.acompte_montant) || 0,
+      acompte_paye: false,
+      status: "pending_payment",
+      message: pd.message_salon || "",
+      lieu: "salon",
+      payment_intent_id: session.payment_intent || null
+    };
+
+    const insertRes = await fetch(`${sbUrl}/rest/v1/rdv_online`, {
+      method: "POST",
+      headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
+      body: JSON.stringify(rdvData)
+    });
+    const insertBody = await insertRes.json();
+    if (!insertRes.ok || !Array.isArray(insertBody) || !insertBody[0]) {
+      console.error("rdv_online INSERT failed:", insertRes.status, JSON.stringify(insertBody));
+      return jsonResponse({ error: "Insert rdv_online échoué: " + JSON.stringify(insertBody) }, 500);
+    }
+    const rdvOnlineId = insertBody[0].id;
+
+    // 4) UPDATE pour passer en confirmed + acompte_paye=true (mirror flow regular)
+    const updRes = await fetch(`${sbUrl}/rest/v1/rdv_online?id=eq.${rdvOnlineId}`, {
+      method: "PATCH",
+      headers: { ..._sbHeaders(env), "Prefer": "return=minimal" },
+      body: JSON.stringify({ status: "confirmed", acompte_paye: true })
+    });
+    if (!updRes.ok) {
+      console.error("rdv_online UPDATE confirmed failed:", await updRes.text());
+      // On continue quand même — le RDV existe en pending_payment, le salon peut le valider
+    }
+
+    // 5) UPDATE rdv_demandes → confirmed + lien vers rdv_online
+    const demUpdRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}`, {
+      method: "PATCH",
+      headers: { ..._sbHeaders(env), "Prefer": "return=minimal" },
+      body: JSON.stringify({
+        status: "confirmed",
+        confirmed_at: new Date().toISOString(),
+        rdv_online_id: rdvOnlineId
+      })
+    });
+    if (!demUpdRes.ok) {
+      console.error("rdv_demandes UPDATE failed:", await demUpdRes.text());
+    }
+
+    return jsonResponse({ ok: true, rdv_online_id: rdvOnlineId });
+  } catch (e) {
+    console.error("finalize error:", e);
+    return jsonResponse({ error: "Finalize error: " + e.message }, 500);
+  }
 }
 
 // ============================================================
