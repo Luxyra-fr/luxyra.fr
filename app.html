@@ -6024,15 +6024,12 @@ function setStyDayOn(ti,dow){
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function addExceptFermeture(){
-  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udd12 Fermeture exceptionnelle</h2>';
-  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Fermer l\u2019\u00e9tablissement un jour normalement ouvert (jour f\u00e9ri\u00e9, travaux, etc.)</div>';
+  // FIX 2026-05-12 : simplifi\u00e9 \u2014 toujours salon entier (les fermetures par collab
+  // se g\u00e8rent dans le planning Personnalis\u00e9s de chaque collaborateur)
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udd12 Fermeture du salon</h2>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Ferme tout l\u2019\u00e9tablissement une journ\u00e9e pr\u00e9cise (jour f\u00e9ri\u00e9, vacances, travaux). Tous les collaborateurs sont concern\u00e9s.</div>';
   htm+='<div class="fg"><label>Date de fermeture *</label><input type="date" id="exFermDate" value="'+TD+'"></div>';
-  htm+='<div class="fg"><label>Motif</label><input id="exFermMotif" placeholder="Ex: Jour f\u00e9ri\u00e9, travaux..."></div>';
-  htm+='<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:12px;background:rgba(233,30,99,.08);border:1px solid rgba(233,30,99,.2);border-radius:10px;margin-bottom:14px"><input type="checkbox" id="exFermAll" checked> Tout l\u2019\u00e9tablissement (tous les collaborateurs)</label>';
-  htm+='<div id="exFermCollabDiv" style="display:none;margin-bottom:14px"><div style="font-size:12px;font-weight:700;margin-bottom:6px">Ou choisir un collaborateur :</div>';
-  for(var i=0;i<T.length;i++){htm+='<label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer"><input type="radio" name="exFermCollab" value="'+T[i].id+'"> '+T[i].n+'</label>';}
-  htm+='</div>';
-  htm+='<script>document.getElementById("exFermAll").onchange=function(){document.getElementById("exFermCollabDiv").style.display=this.checked?"none":"block";};<\/script>';
+  htm+='<div class="fg"><label>Motif</label><input id="exFermMotif" placeholder="Ex: Jour f\u00e9ri\u00e9, vacances annuelles..."></div>';
   htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
   htm+='<button class="btn" style="flex:1;background:#e91e63;color:#fff;font-weight:700" onclick="doExceptFermeture()">Confirmer la fermeture</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
@@ -6040,11 +6037,9 @@ function addExceptFermeture(){
 function doExceptFermeture(){
   var d=document.getElementById("exFermDate").value;if(!d)return;
   var motif=(document.getElementById("exFermMotif").value||"").trim()||"Fermeture exceptionnelle";
-  var allEtab=document.getElementById("exFermAll").checked;
-  var stId=null;
-  if(!allEtab){var sel=document.querySelector('input[name="exFermCollab"]:checked');if(sel)stId=+sel.value;}
   if(!window.ABSENCES)window.ABSENCES=[];
-  window.ABSENCES.push({id:U(),stId:allEtab?null:stId,type:"fermeture_except",date:d,motif:motif});
+  // FIX 2026-05-12 : toujours stId=null (salon entier)
+  window.ABSENCES.push({id:U(),stId:null,type:"fermeture_except",date:d,motif:motif});
   saveAbsences();cM();go("settings");
 }
 function addExceptOuverture(){
@@ -6079,14 +6074,14 @@ function addAbsence(stId,preType){
   htm+='<div style="font-size:14px;margin-bottom:12px">'+sty.n+'</div>';
   // Type selector - visual radio buttons
   htm+='<div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px">Type</div>';
-  htm+='<div id="abTypeGrid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px">';
+  htm+='<div id="abTypeGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px">';
+  // FIX 2026-05-12 : retir\u00e9 "fermeture_except" (\u2192 R\u00e9glages > Horaires)
+  // et "ouverture_except" (\u2192 planning Personnalis\u00e9s du collab)
   var abTypes=[
     {v:"conge",l:"Cong\u00e9 (jours)",ico:"\ud83c\udfd6",col:"#2196f3"},
     {v:"absent_jour",l:"Absent (jours)",ico:"\u274c",col:"#f44336"},
     {v:"absent_heures",l:"Absent (heures)",ico:"\u23f0",col:"#ff9800"},
-    {v:"pause",l:"Pause",ico:"\u2615",col:"#4caf50"},
-    {v:"fermeture_except",l:"Fermeture except.",ico:"\ud83d\udd12",col:"#e91e63"},
-    {v:"ouverture_except",l:"Ouverture except.",ico:"\ud83d\udd13",col:"#00bcd4"}
+    {v:"pause",l:"Pause",ico:"\u2615",col:"#4caf50"}
   ];
   for(var ai=0;ai<abTypes.length;ai++){
     var at=abTypes[ai];var isSel=defType===at.v;
@@ -11270,12 +11265,13 @@ function rSettings(){
       h+='</div>';
     }
     h+='</div>';
-    // === EXCEPTIONS ===
-    h+='<div class="card" style="margin-top:14px"><div class="ct">\ud83d\udcc5 Jours exceptionnels</div>';
-    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">G\u00e9rez les fermetures (jours f\u00e9ri\u00e9s, travaux) et ouvertures exceptionnelles (jour normalement ferm\u00e9).</div>';
-    h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
-    h+='<button class="btn" style="flex:1;padding:12px;background:rgba(233,30,99,.1);border:1px solid rgba(233,30,99,.3);color:#e91e63;font-weight:700;font-size:13px" onclick="addExceptFermeture()">\ud83d\udd12 Fermeture exceptionnelle</button>';
-    h+='<button class="btn" style="flex:1;padding:12px;background:rgba(0,188,212,.1);border:1px solid rgba(0,188,212,.3);color:#00bcd4;font-weight:700;font-size:13px" onclick="addExceptOuverture()">\ud83d\udd13 Ouverture exceptionnelle</button>';
+    // === EXCEPTIONS \u2014 FIX 2026-05-12 : un seul bouton (fermeture salon entier)
+    // Les fermetures par collab et les ouvertures exceptionnelles se g\u00e8rent
+    // d\u00e9sormais dans le planning Personnalis\u00e9s de chaque collab.
+    h+='<div class="card" style="margin-top:14px"><div class="ct">\ud83d\udd12 Fermeture du salon</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Ferme tout le salon une journ\u00e9e pr\u00e9cise (jour f\u00e9ri\u00e9, vacances annuelles, travaux). Pour fermer un seul collaborateur, utilisez le mode <strong>Personnalis\u00e9s</strong> de son planning.</div>';
+    h+='<div style="margin-bottom:14px">';
+    h+='<button class="btn" style="width:100%;padding:12px;background:rgba(233,30,99,.1);border:1px solid rgba(233,30,99,.3);color:#e91e63;font-weight:700;font-size:13px" onclick="addExceptFermeture()">\ud83d\udd12 Ajouter une fermeture exceptionnelle</button>';
     h+='</div>';
     var allExceptions=(window.ABSENCES||[]).filter(function(a){return a.type==="fermeture_except"||a.type==="ouverture_except";});
     // S\u00e9pare exceptions \u00e0 venir (>= aujourd'hui) et pass\u00e9es
@@ -11436,10 +11432,18 @@ function rSettings(){
         var _wStart=_wDates[0]||"";
         var _wEnd=_wDates[6]||"";
         var _fmtDM=function(s){var p=s.split("-");return p[2]+"/"+p[1];};
-        h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">';
-        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff-1)+';go(\'settings\')" style="font-size:11px;padding:6px 10px">◀ Sem.</button>';
-        h+='<div style="font-weight:700;color:var(--gold);font-size:12px">Du '+_fmtDM(_wStart)+' au '+_fmtDM(_wEnd)+(_wkOff===0?' (cette semaine)':'')+'</div>';
-        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff+1)+';go(\'settings\')" style="font-size:11px;padding:6px 10px">Sem. ▶</button>';
+        // FIX 2026-05-12 : navigation enrichie — saut de mois (±4 sem) + retour "Aujourd'hui"
+        h+='<div style="margin-bottom:8px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">';
+        h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:4px">';
+        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff-4)+';go(\'settings\')" style="font-size:11px;padding:6px 8px" title="Mois précédent">◀◀</button>';
+        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff-1)+';go(\'settings\')" style="font-size:11px;padding:6px 8px" title="Semaine précédente">◀</button>';
+        h+='<div style="font-weight:700;color:var(--gold);font-size:12px;text-align:center;flex:1">Du '+_fmtDM(_wStart)+' au '+_fmtDM(_wEnd)+(_wkOff===0?' (cette semaine)':'')+'</div>';
+        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff+1)+';go(\'settings\')" style="font-size:11px;padding:6px 8px" title="Semaine suivante">▶</button>';
+        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff+4)+';go(\'settings\')" style="font-size:11px;padding:6px 8px" title="Mois suivant">▶▶</button>';
+        h+='</div>';
+        if(_wkOff!==0){
+          h+='<div style="text-align:center;margin-top:6px"><button class="btn bs" onclick="window._sttWeekOffset['+ti+']=0;go(\'settings\')" style="font-size:11px;padding:4px 12px;background:rgba(200,168,78,.12);color:var(--gold);border:1px solid rgba(200,168,78,.3)">↻ Aujourd\'hui</button></div>';
+        }
         h+='</div>';
         var joursL=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
         h+='<div style="display:grid;grid-template-columns:auto 1fr 1fr auto;gap:6px 8px;font-size:12px;align-items:center">';
