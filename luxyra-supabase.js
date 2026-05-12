@@ -717,6 +717,9 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       T = tRes.data.map(function(c) {
         return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
                  hrs: c.horaires || {}, pause: c.pause || null,
+                 // FIX 2026-05-12 : nouveau champ horaires_overrides (mode Personnalisés)
+                 // Format : { "YYYY-MM-DD": {o,c,pause_o?,pause_c?} | null }
+                 hrsOver: c.horaires_overrides || {},
                  dateEntree: c.date_entree || null, dateDepart: c.date_depart || null,
                  inactif: c.inactif === true,
                  photoVisible: c.photo_visible !== false,
@@ -2155,6 +2158,8 @@ async function saveCollaborateurs() {
       salon_id: _salonId, nom: c.n, initiales: c.i,
       couleur: c.c, img: preservedImg, horaires: c.hrs || {},
       pause: c.pause || null,
+      // FIX 2026-05-12 : préserver horaires_overrides aussi dans le bulk save
+      horaires_overrides: c.hrsOver || {},
       date_entree: c.dateEntree || null,
       date_depart: c.dateDepart || null,
       inactif: c.inactif === true,

@@ -927,7 +927,7 @@ async function loadSalon(){
     var tc=await sb.from("collaborateurs").select("*").eq("salon_id",salonId).eq("actif",true);
     // Filtre supplémentaire côté client : exclure les collabs marqués "inactif"
     // (congés, arrêt, départ). Champ ajouté en mai 2026.
-    if(tc.data)COLLABS=tc.data.filter(function(c){return c.inactif!==true;}).map(function(c){return{id:c.id,n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{},pause:c.pause||null,actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
+    if(tc.data)COLLABS=tc.data.filter(function(c){return c.inactif!==true;}).map(function(c){return{id:c.id,n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{},pause:c.pause||null,hrsOver:c.horaires_overrides||{},actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
     
     // 4. Services — on charge tous ceux actifs ET visibles site, peu importe book_online.
     // Les non-réservables (book_online=false) s'affichent avec un bouton "Demander ce RDV"
@@ -2136,6 +2136,8 @@ function findNextAvailableSlot(){
     var dow=dt.getDay();
     var hrs=HORAIRES[dow];
     if(booking.collab && booking.collab.hrs) hrs=booking.collab.hrs[dow];
+    // NEW 2026-05-12 : applique override horaires_overrides[dateStr] si défini
+    hrs = applyHrsOverride(hrs, booking.collab, dateStr);
     var absences=SITE_CFG.absences||[];
     var skipDay=false;
     for(var ai=0;ai<absences.length;ai++){
@@ -2215,10 +2217,12 @@ function renderCalendar(){
     var hrs=HORAIRES[dow];
     // Check if collab works this day
     if(booking.collab&&booking.collab.hrs){hrs=booking.collab.hrs[dow];}
+    var dateKey=formatDate(dt);
+    // NEW 2026-05-12 : applique override horaires_overrides[dateKey] si défini
+    hrs = applyHrsOverride(hrs, booking.collab, dateKey);
     var isPast=dt<today;
     var isTooFar=dt>maxDate;
     var isClosed=!hrs;
-    var dateKey=formatDate(dt);
     // Check exceptional closing (overrides open day)
     var absences=SITE_CFG.absences||[];
     var isExceptClosed=false;
@@ -2307,8 +2311,30 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
   return false;
 }
 
+// NEW 2026-05-12 : applique l'override horaires_overrides[date] sur les horaires de base
+// Format de hrsOver : { "YYYY-MM-DD": {o,c,pause_o?,pause_c?} | null }
+function applyHrsOverride(hrs, collab, dateStr){
+  if(!collab || !collab.hrsOver) return hrs;
+  var ov = collab.hrsOver[dateStr];
+  if(ov === undefined) return hrs; // pas d'override pour ce jour
+  if(ov === null) return null; // absent ce jour pour ce collab
+  if(ov && ov.o && ov.c) return {o: ov.o, c: ov.c};
+  return hrs;
+}
+// Pause effective pour une date donnée (pour usage dans le calcul de slots)
+function getCollabEffectivePause(collab, dateStr){
+  if(!collab) return null;
+  var ov = collab.hrsOver && collab.hrsOver[dateStr];
+  if(ov && typeof ov === 'object' && ov.pause_o && ov.pause_c){
+    return {o: ov.pause_o, c: ov.pause_c};
+  }
+  return collab.pause || null;
+}
 function isCollabDayOff(date,collabId){
   if(!collabId) return false; // garde-fou — passer par isAllCollabsOff
+  // NEW 2026-05-12 : check horaires_overrides null pour ce collab à cette date
+  var _c = (COLLABS||[]).filter(function(c){return c.id===collabId;})[0];
+  if(_c && _c.hrsOver && _c.hrsOver[date] === null) return true;
   var absences=SITE_CFG.absences||[];
   for(var i=0;i<absences.length;i++){
     var ab=absences[i];
@@ -2460,6 +2486,8 @@ function renderTimeSlots(dateStr){
   var dow=dt.getDay();
   var hrs=HORAIRES[dow];
   if(booking.collab&&booking.collab.hrs)hrs=booking.collab.hrs[dow];
+  // NEW 2026-05-12 : applique override horaires_overrides[dateStr] si défini
+  hrs = applyHrsOverride(hrs, booking.collab, dateStr);
   // Check exceptional closing
   var absences=SITE_CFG.absences||[];
   for(var ai=0;ai<absences.length;ai++){

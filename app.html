@@ -5935,6 +5935,63 @@ function setStyHrs(ti,dow,key,val){
   if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
   if(typeof toast==="function") toast("✓ Horaire enregistré","success");
 }
+// NEW 2026-05-12 : helpers mode Personnalisés (overrides date par date)
+function _lxDateStr(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+function _lxWeekDates(offset){
+  // Retourne les 7 dates (Lun à Dim) de la semaine décalée de offset semaines par rapport à aujourd'hui
+  var d=new Date();
+  d.setDate(d.getDate()+(offset||0)*7);
+  var dow=d.getDay(); // 0=Dim, 1=Lun, ..., 6=Sam
+  var diff=(dow===0?-6:1-dow);
+  d.setDate(d.getDate()+diff);
+  var arr=[];
+  for(var i=0;i<7;i++){var dx=new Date(d); dx.setDate(d.getDate()+i); arr.push(_lxDateStr(dx));}
+  return arr;
+}
+function setStyOverrideHrs(ti,dateStr,key,val){
+  if(!T[ti])return;
+  if(!T[ti].hrsOver)T[ti].hrsOver={};
+  var existing=T[ti].hrsOver[dateStr];
+  var base;
+  if(existing&&typeof existing==='object'&&existing.o){
+    base=Object.assign({},existing);
+  }else{
+    // Initialiser depuis horaires fixes du jour
+    var d=new Date(dateStr+'T12:00:00');var dow=d.getDay();
+    var fixed=T[ti].hrs&&T[ti].hrs[dow];
+    base=fixed?{o:fixed.o,c:fixed.c}:{o:"09:00",c:"18:00"};
+  }
+  if(key==='o')base.o=val;
+  else if(key==='c')base.c=val;
+  else if(key==='pause_o')base.pause_o=val;
+  else if(key==='pause_c')base.pause_c=val;
+  T[ti].hrsOver[dateStr]=base;
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
+  if(typeof toast==="function") toast("✓ Personnalisé enregistré","success");
+}
+function setStyOverrideDayOff(ti,dateStr){
+  if(!T[ti])return;
+  if(!T[ti].hrsOver)T[ti].hrsOver={};
+  T[ti].hrsOver[dateStr]=null;
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
+  if(typeof toast==="function") toast("✓ Absence ce jour","success");
+  var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
+}
+function setStyOverrideDayOn(ti,dateStr){
+  if(!T[ti])return;
+  if(!T[ti].hrsOver)T[ti].hrsOver={};
+  T[ti].hrsOver[dateStr]={o:"09:00",c:"18:00"};
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
+  if(typeof toast==="function") toast("✓ Jour activé en personnalisé","success");
+  var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
+}
+function setStyOverrideClear(ti,dateStr){
+  if(!T[ti]||!T[ti].hrsOver)return;
+  delete T[ti].hrsOver[dateStr];
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
+  if(typeof toast==="function") toast("↩ Retour aux horaires Fixes","info");
+  var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
+}
 function setStyDayOff(ti,dow){
   if(!T[ti].hrs)T[ti].hrs={};
   T[ti].hrs[dow]=null;
@@ -6647,15 +6704,25 @@ function getEffectiveHrs(date,stId){
   } else {
     hrs = H[dow];
   }
-  if(!window.ABSENCES)return hrs;
-  // Check fermeture_except first
+  if(!window.ABSENCES)window.ABSENCES=[];
+  // Priorité 1 — fermeture_except (salon fermé ce jour, prime sur tout)
   for(var i=0;i<window.ABSENCES.length;i++){
     var ab=window.ABSENCES[i];
     if(ab.type==="fermeture_except"&&ab.date===date){
       if(ab.stId===null||ab.stId===stId)return null; // closed
     }
   }
-  // Check ouverture_except if normally closed
+  // NEW 2026-05-12 — Priorité 2 : horaires_overrides[date] (mode Personnalisés du collab)
+  // Format : { "YYYY-MM-DD": {o,c,pause_o?,pause_c?} | null }  (null = absent ce jour pour CE collab)
+  if(stId){
+    var _collabOv = gT(stId);
+    var _ov = _collabOv && _collabOv.hrsOver && _collabOv.hrsOver[date];
+    if(_ov !== undefined){
+      if(_ov === null) return null; // absence personnalisée ce jour
+      if(_ov && _ov.o && _ov.c) return {o: _ov.o, c: _ov.c};
+    }
+  }
+  // Priorité 3 — ouverture_except si normalement fermé
   if(!hrs){
     for(var i=0;i<window.ABSENCES.length;i++){
       var ab=window.ABSENCES[i];
@@ -6665,6 +6732,18 @@ function getEffectiveHrs(date,stId){
     }
   }
   return hrs;
+}
+// NEW 2026-05-12 : pause effective pour une date donnée (pour pause overridable par jour)
+// Retourne la pause de l'override si définie (pause_o + pause_c), sinon la pause récurrente
+function getEffectivePause(date, stId){
+  if(!stId) return null;
+  var c = gT(stId);
+  if(!c) return null;
+  var ov = c.hrsOver && c.hrsOver[date];
+  if(ov && typeof ov === 'object' && ov.pause_o && ov.pause_c){
+    return {o: ov.pause_o, c: ov.pause_c};
+  }
+  return c.pause || null;
 }
 function getExceptLabel(date){
   if(!window.ABSENCES)return null;
@@ -8579,9 +8658,10 @@ function getBlockedSlots(stId, date){
     }
   }
   if(!hrs){blocks.push({from:"00:00",to:"23:59",label:"Jour de repos",type:"repos"});return blocks;}
-  // Check recurring pause
-  if(sty.pause&&sty.pause.o&&sty.pause.c){
-    blocks.push({from:sty.pause.o,to:sty.pause.c,label:"Pause",type:"pause"});
+  // Check recurring or override pause (NEW 2026-05-12 : utilise getEffectivePause pour gérer overrides)
+  var _effPause = (typeof getEffectivePause==="function") ? getEffectivePause(date, stId) : (sty.pause||null);
+  if(_effPause && _effPause.o && _effPause.c){
+    blocks.push({from:_effPause.o,to:_effPause.c,label:"Pause",type:"pause"});
   }
   // Check regular absences
   if(window.ABSENCES){
@@ -9068,19 +9148,19 @@ function rPlanningDay(dateObj,showDayHeader){
       if(pHPx>=35)h+='<div style="font-size:9px;font-weight:600;opacity:.7">'+pau.from+' \u2192 '+pau.to+'</div>';
       h+='</div>';
     }
-    // FIX 2026-05-12 : render la PAUSE QUOTIDIENNE R\u00c9CURRENTE (sty.pause) qui \u00e9tait
-    // invisible alors qu'elle est bien respect\u00e9e par getBlockedSlots/isStylistBlockedDuring.
-    // S'affiche uniquement si le collab a des horaires actifs ce jour-l\u00e0 (sinon "Repos" couvre).
+    // FIX 2026-05-12 : render la PAUSE (r\u00e9currente OU override jour-sp\u00e9cifique via hrsOver.pause_*)
+    // Utilise getEffectivePause pour g\u00e9rer les overrides
     var _styHrsForPause = getEffectiveHrs(dk, sty.id);
-    if(_styHrsForPause && sty.pause && sty.pause.o && sty.pause.c){
-      var _pStartM = toM(sty.pause.o), _pEndM = toM(sty.pause.c);
+    var _effP = (typeof getEffectivePause==="function") ? getEffectivePause(dk, sty.id) : (sty.pause||null);
+    if(_styHrsForPause && _effP && _effP.o && _effP.c){
+      var _pStartM = toM(_effP.o), _pEndM = toM(_effP.c);
       if(_pStartM < _pEndM){
         var _pTopPx = ((_pStartM - gs)/SLOT) * SLOT_H;
         var _pHPx = ((_pEndM - _pStartM)/SLOT) * SLOT_H;
         if(_pTopPx >= 0 && _pHPx > 0){
           h+='<div style="position:absolute;top:'+_pTopPx+'px;left:0;right:0;height:'+Math.max(_pHPx-2,SLOT_H-2)+'px;border-radius:6px;background:rgba(255,152,0,.18);background-image:repeating-linear-gradient(135deg,rgba(255,152,0,.13),rgba(255,152,0,.13) 5px,transparent 5px,transparent 10px);border:1.5px dashed rgba(255,152,0,.45);display:flex;align-items:center;justify-content:center;flex-direction:column;font-size:11px;color:#e65100;font-weight:800;z-index:5;pointer-events:none;box-sizing:border-box">';
           h+='\u2615 Pause';
-          if(_pHPx>=35)h+='<div style="font-size:9px;font-weight:600;opacity:.7">'+sty.pause.o+' \u2192 '+sty.pause.c+'</div>';
+          if(_pHPx>=35)h+='<div style="font-size:9px;font-weight:600;opacity:.7">'+_effP.o+' \u2192 '+_effP.c+'</div>';
           h+='</div>';
         }
       }
@@ -11342,21 +11422,92 @@ function rSettings(){
       h+='<span style="display:block;font-size:11px;color:var(--text3);font-weight:400;margin-top:1px">'+(pVis?'Visible des clients sur la fiche salon et la r\u00e9sa':'Seules les initiales seront affich\u00e9es publiquement')+'</span></span>';
       h+='</label>';
       h+='</div></div>';
-      // Individual hours
-      h+='<div style="font-weight:700;font-size:13px;margin-bottom:6px">Horaires individuels</div>';
-      var jours=["Dim","Lun","Mar","Mer","Jeu","Ven","Sam"];
-      h+='<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:4px 8px;font-size:12px;align-items:center">';
-      for(var dj=0;dj<7;dj++){
-        var dh=st2.hrs?st2.hrs[dj]:null;
-        h+='<div style="font-weight:600">'+jours[dj]+'</div>';
-        if(dh){
-          h+='<input type="time" value="'+dh.o+'" style="padding:4px;font-size:12px" onchange="setStyHrs('+ti+','+dj+',0,this.value)">';
-          h+='<div style="display:flex;gap:4px;align-items:center"><input type="time" value="'+dh.c+'" style="padding:4px;font-size:12px;flex:1" onchange="setStyHrs('+ti+','+dj+',1,this.value)"><button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="setStyDayOff('+ti+','+dj+')">X</button></div>';
-        }else{
-          h+='<div style="grid-column:span 2;color:var(--text3);font-style:italic;display:flex;justify-content:space-between;align-items:center"><span>Repos</span><button class="btn bs" style="font-size:10px" onclick="setStyDayOn('+ti+','+dj+')">Activer</button></div>';
+      // NEW 2026-05-12 : Toggle Fixes/Personnalisés
+      if(!window._sttPlanningMode) window._sttPlanningMode={};
+      if(!window._sttWeekOffset) window._sttWeekOffset={};
+      var _sttMode=window._sttPlanningMode[ti]||'fixes';
+      var _wkOff=window._sttWeekOffset[ti]||0;
+      // Compteur d'overrides actifs (info utilisateur)
+      var _nbOverrides=st2.hrsOver?Object.keys(st2.hrsOver).length:0;
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px"><div style="font-weight:700;font-size:13px">Horaires</div>';
+      h+='<div style="display:flex;gap:0;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.08);overflow:hidden;font-size:11px">';
+      h+='<button onclick="window._sttPlanningMode['+ti+']=\'fixes\';go(\'settings\')" style="padding:6px 12px;border:none;background:'+(_sttMode==='fixes'?'var(--gold)':'transparent')+';color:'+(_sttMode==='fixes'?'#0a0a0a':'rgba(255,255,255,.6)')+';font-weight:'+(_sttMode==='fixes'?'800':'600')+';cursor:pointer">Fixes</button>';
+      h+='<button onclick="window._sttPlanningMode['+ti+']=\'personnalises\';go(\'settings\')" style="padding:6px 12px;border:none;background:'+(_sttMode==='personnalises'?'var(--gold)':'transparent')+';color:'+(_sttMode==='personnalises'?'#0a0a0a':'rgba(255,255,255,.6)')+';font-weight:'+(_sttMode==='personnalises'?'800':'600')+';cursor:pointer">Personnalisés'+(_nbOverrides>0?' ('+_nbOverrides+')':'')+'</button>';
+      h+='</div></div>';
+      if(_sttMode==='fixes'){
+        // === MODE FIXES (existant) — horaires récurrents par jour de semaine
+        var jours=["Dim","Lun","Mar","Mer","Jeu","Ven","Sam"];
+        h+='<div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:4px 8px;font-size:12px;align-items:center">';
+        for(var dj=0;dj<7;dj++){
+          var dh=st2.hrs?st2.hrs[dj]:null;
+          h+='<div style="font-weight:600">'+jours[dj]+'</div>';
+          if(dh){
+            h+='<input type="time" value="'+dh.o+'" style="padding:4px;font-size:12px" onchange="setStyHrs('+ti+','+dj+',0,this.value)">';
+            h+='<div style="display:flex;gap:4px;align-items:center"><input type="time" value="'+dh.c+'" style="padding:4px;font-size:12px;flex:1" onchange="setStyHrs('+ti+','+dj+',1,this.value)"><button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="setStyDayOff('+ti+','+dj+')">X</button></div>';
+          }else{
+            h+='<div style="grid-column:span 2;color:var(--text3);font-style:italic;display:flex;justify-content:space-between;align-items:center"><span>Repos</span><button class="btn bs" style="font-size:10px" onclick="setStyDayOn('+ti+','+dj+')">Activer</button></div>';
+          }
         }
+        h+='</div>';
+      } else {
+        // === MODE PERSONNALISÉS — semaine spécifique avec overrides date par date
+        var _wDates=(typeof _lxWeekDates==="function")?_lxWeekDates(_wkOff):[];
+        var _wStart=_wDates[0]||"";
+        var _wEnd=_wDates[6]||"";
+        var _fmtDM=function(s){var p=s.split("-");return p[2]+"/"+p[1];};
+        h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">';
+        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff-1)+';go(\'settings\')" style="font-size:11px;padding:6px 10px">◀ Sem.</button>';
+        h+='<div style="font-weight:700;color:var(--gold);font-size:12px">Du '+_fmtDM(_wStart)+' au '+_fmtDM(_wEnd)+(_wkOff===0?' (cette semaine)':'')+'</div>';
+        h+='<button class="btn bs" onclick="window._sttWeekOffset['+ti+']='+(_wkOff+1)+';go(\'settings\')" style="font-size:11px;padding:6px 10px">Sem. ▶</button>';
+        h+='</div>';
+        var joursL=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+        h+='<div style="display:grid;grid-template-columns:auto 1fr 1fr auto;gap:6px 8px;font-size:12px;align-items:center">';
+        var _wkTotalMin=0;
+        for(var dwi=0;dwi<7;dwi++){
+          var _dk=_wDates[dwi];
+          var _dt=new Date(_dk+'T12:00:00');
+          var _dowR=_dt.getDay();
+          var _fixedHrs=st2.hrs&&st2.hrs[_dowR];
+          var _ov=st2.hrsOver&&st2.hrsOver[_dk];
+          var _hasOv=(st2.hrsOver&&st2.hrsOver.hasOwnProperty(_dk));
+          var _effHrs;
+          if(_ov===null) _effHrs=null;
+          else if(_ov&&_ov.o&&_ov.c) _effHrs={o:_ov.o,c:_ov.c};
+          else _effHrs=_fixedHrs;
+          var _dayLabel=joursL[dwi]+" "+_fmtDM(_dk);
+          h+='<div style="font-weight:600;color:'+(_hasOv?'var(--gold)':'#fff')+'">'+_dayLabel+(_hasOv?' <span title="Personnalisé">●</span>':'')+'</div>';
+          if(_effHrs){
+            h+='<input type="time" value="'+_effHrs.o+'" onchange="setStyOverrideHrs('+ti+',\''+_dk+'\',\'o\',this.value)" style="padding:4px;font-size:12px">';
+            h+='<input type="time" value="'+_effHrs.c+'" onchange="setStyOverrideHrs('+ti+',\''+_dk+'\',\'c\',this.value)" style="padding:4px;font-size:12px">';
+            h+='<button class="btn bs" onclick="setStyOverrideDayOff('+ti+',\''+_dk+'\')" title="Absent ce jour" style="font-size:10px;padding:2px 8px;color:var(--red)">Off</button>';
+            // Cumul total
+            _wkTotalMin+=toM(_effHrs.c)-toM(_effHrs.o);
+            // Soustraire pause effective
+            var _pseDay=(_ov&&_ov.pause_o&&_ov.pause_c)?{o:_ov.pause_o,c:_ov.pause_c}:(st2.pause||null);
+            if(_pseDay&&_pseDay.o&&_pseDay.c) _wkTotalMin-=Math.max(0,toM(_pseDay.c)-toM(_pseDay.o));
+          } else {
+            h+='<div style="grid-column:span 2;color:var(--text3);font-style:italic">Absent ce jour</div>';
+            h+='<button class="btn bs" onclick="setStyOverrideDayOn('+ti+',\''+_dk+'\')" style="font-size:10px;padding:2px 8px">+ Activer</button>';
+          }
+          if(_hasOv){
+            h+='<button class="btn bs" onclick="setStyOverrideClear('+ti+',\''+_dk+'\')" style="grid-column:1/-1;font-size:10px;color:rgba(255,255,255,.5);text-align:left;padding:2px 0;background:transparent;border:none">↩ Retour aux horaires Fixes</button>';
+          }
+        }
+        h+='</div>';
+        // Total semaine + plage salon
+        var _wkH=Math.floor(_wkTotalMin/60);var _wkM=_wkTotalMin%60;
+        var _salonOpen="?",_salonClose="?";
+        if(typeof H==='object'){
+          // Récupère min/max sur la semaine
+          var _minO=null,_maxC=null;
+          for(var dx=0;dx<7;dx++){var _hh=H[dx];if(_hh&&_hh.o&&_hh.c){if(_minO===null||toM(_hh.o)<toM(_minO))_minO=_hh.o;if(_maxC===null||toM(_hh.c)>toM(_maxC))_maxC=_hh.c;}}
+          if(_minO)_salonOpen=_minO;if(_maxC)_salonClose=_maxC;
+        }
+        h+='<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:rgba(200,168,78,.08);border-radius:8px;font-size:11px">';
+        h+='<span style="color:var(--text3)">Plage horaire salon : <strong style="color:#fff">'+_salonOpen+' - '+_salonClose+'</strong></span>';
+        h+='<span style="color:var(--gold);font-weight:700;font-size:13px">Total : '+_wkH+'h'+(_wkM?String(_wkM).padStart(2,'0'):'')+'</span>';
+        h+='</div>';
       }
-      h+='</div>';
       // Pause quotidienne récurrente
       var stPause=st2.pause||null;
       h+='<div style="font-weight:700;font-size:13px;margin-top:12px;margin-bottom:6px">\u2615 Pause quotidienne</div>';
