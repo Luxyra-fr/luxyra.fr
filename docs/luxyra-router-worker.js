@@ -115,6 +115,15 @@ export default {
     } catch (err) {
       console.error(`[cron] pending-cartes-purge FAILED:`, err?.message || err);
     }
+    // FIX 2026-05-12 : job purge RDV pending_payment abandonnés (> 1h, payment_intent_id NULL)
+    // Évite la pollution de la table rdv_online par des paiements Stripe abandonnés.
+    // Le client-side filtre déjà > 15 min, mais on nettoie la DB pour de bon.
+    try {
+      const result3 = await runPendingPaymentRdvPurgeJob(env);
+      console.log(`[cron] pending-payment-rdv-purge done:`, result3);
+    } catch (err) {
+      console.error(`[cron] pending-payment-rdv-purge FAILED:`, err?.message || err);
+    }
   },
 };
 
@@ -1944,6 +1953,51 @@ async function handleSmsLinkDevice(request, env) {
 // paiement effectif). Au-delà de 24 h, c'est une vente abandonnée :
 // double-clic, paiement annulé, salon qui change d'avis. Sans purge, ces
 // rows polluent la fiche client et peuvent générer des appels fantômes.
+// FIX 2026-05-12 : purge des RDV en attente de paiement Stripe abandonnés.
+// Pattern : client crée RDV → status='pending_payment' → redirect Stripe → abandon
+// → RDV reste en pending_payment, ignoré côté UI mais pollue la DB.
+// On supprime ceux > 1 heure (assez pour qu'un paiement normal soit finalisé).
+// Critères de sécurité :
+//   - status='pending_payment' STRICT
+//   - created_at < now - 1h
+//   - payment_intent_id IS NULL (vraiment jamais validé côté Stripe)
+async function runPendingPaymentRdvPurgeJob(env) {
+  const sbKey = env.SUPABASE_SERVICE_KEY;
+  if (!sbKey) {
+    console.warn("[purge-pending-rdv] SUPABASE_SERVICE_KEY missing — abort");
+    return { skipped: "no_service_key" };
+  }
+  const cutoffIso = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h
+  const url = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online`
+    + `?status=eq.pending_payment`
+    + `&payment_intent_id=is.null`
+    + `&created_at=lt.${encodeURIComponent(cutoffIso)}`;
+  try {
+    const r = await fetch(url, {
+      method: "DELETE",
+      headers: {
+        apikey: sbKey,
+        Authorization: `Bearer ${sbKey}`,
+        Prefer: "return=representation"
+      }
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      console.error(`[purge-pending-rdv] DELETE failed: ${r.status} ${txt.slice(0, 200)}`);
+      return { ok: false, status: r.status };
+    }
+    const deleted = await r.json().catch(() => []);
+    const count = Array.isArray(deleted) ? deleted.length : 0;
+    if (count > 0) {
+      console.log(`[purge-pending-rdv] deleted ${count} pending_payment RDV(s) older than 1h`);
+    }
+    return { ok: true, deleted: count, cutoff: cutoffIso };
+  } catch (e) {
+    console.error("[purge-pending-rdv] exception:", e?.message || e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
 async function runPendingCartesAboPurgeJob(env) {
   const sbKey = env.SUPABASE_SERVICE_KEY;
   if (!sbKey) {
