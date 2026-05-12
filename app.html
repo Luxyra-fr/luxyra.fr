@@ -25409,12 +25409,27 @@ function printTicketReceipt(){
   };
   var w=window.open("","_blank","width=380,height=650");if(!w)return;
   var h="<html><head><title>Ticket #"+tkN+"</title>";
-  h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;background:#fff!important}";
-  h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>";
+  // FIX 2026-05-12 : contraste renforcé pour impression — tout en font-weight 600
+  // + pure black + line-height plus aéré pour lisibilité petits caractères
+  h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important;font-weight:600!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:13px;line-height:1.6;background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}";
+  // Renforce les petites lignes (programme fidélité, mentions légales)
+  h+="div[style*='font-size:10px'],div[style*='font-size:11px'],div[style*='font-size:9px']{font-size:12px!important;font-weight:700!important}";
+  h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px;font-size:13px}}</style></head><body>";
   h+=buildTicketHTML(tempA, false);
   h+="</body></html>";
   w.document.write(h);w.document.close();
-  setTimeout(function(){w.print();},500);
+  // FIX 2026-05-12 : fermeture automatique de la fenêtre après impression
+  // L'event afterprint se déclenche quand l'utilisateur ferme la boîte de dialogue
+  // d'impression (Imprimer OU Annuler) → on ferme la fenêtre dans les deux cas
+  setTimeout(function(){
+    try{
+      w.onafterprint = function(){ try{ w.close(); }catch(_){} };
+      w.print();
+      // Fallback : si afterprint ne se déclenche pas (certains navigateurs Android),
+      // on ferme après 30s max pour ne pas laisser une fenêtre orpheline
+      setTimeout(function(){ try{ if(!w.closed) w.close(); }catch(_){} }, 30000);
+    }catch(e){}
+  },500);
 }
 
 function showTicket(method,total){
