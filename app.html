@@ -3527,8 +3527,9 @@ function lxRefreshDispos(){
   // Day of week (T12 pour éviter pb timezone)
   var dt = new Date(date+"T12:00:00");
   var dow = dt.getDay();
-  // Horaires : collab si défini, sinon salon
-  var hrs = (collab.hrs && collab.hrs[dow]) ? collab.hrs[dow] : (window.H && window.H[dow] ? window.H[dow] : null);
+  // FIX 2026-05-12 : utilise getEffectiveHrs pour respecter horaires_overrides
+  var hrs = (typeof getEffectiveHrs==="function") ? getEffectiveHrs(date, stId) :
+            ((collab.hrs && collab.hrs[dow]) ? collab.hrs[dow] : (window.H && window.H[dow] ? window.H[dow] : null));
   if(!hrs || !hrs.o || !hrs.c){
     info.innerHTML = '<div style="color:#f87171;font-weight:700">📵 '+collab.n+' ne travaille pas ce jour-là (jour de repos)</div>';
     return;
@@ -3536,9 +3537,10 @@ function lxRefreshDispos(){
 
   // Récupère tous les slots BUSY (work uniquement, pauses exclues + pause quotidienne)
   var busy = [];
-  // 1. Pause quotidienne fixe du collab
-  if(collab.pause && collab.pause.s && collab.pause.e){
-    busy.push({s:collab.pause.s, e:collab.pause.e});
+  // 1. Pause quotidienne fixe du collab (FIX 2026-05-12 : .o/.c format + override via getEffectivePause)
+  var _pseDev=(typeof getEffectivePause==="function")?getEffectivePause(date,stId):(collab.pause||null);
+  if(_pseDev && _pseDev.o && _pseDev.c){
+    busy.push({s:_pseDev.o, e:_pseDev.c});
   }
   // 2. RDV existants (work uniquement)
   var rdvs = (window.AP||[]).filter(function(a){
@@ -8557,44 +8559,16 @@ function getWorkBlocks(a){
 // Check if stylist is working on a given day/time
 function isStylistAvailable(stId, date, timeStr){
   var sty=gT(stId);if(!sty)return false;
-  var d=new Date(date);var dow=d.getDay();
   var m=toM(timeStr);
-  // Check fermeture exceptionnelle FIRST
-  if(window.ABSENCES){
-    for(var i=0;i<window.ABSENCES.length;i++){
-      var ab=window.ABSENCES[i];
-      if(ab.type==="fermeture_except"&&ab.date===date){
-        if(ab.stId===null||ab.stId===stId)return false; // salon or collab closed
-      }
-    }
-  }
-  // Get normal hours or exceptional opening hours
-  // FIX bug Manue : si la coiffeuse a des horaires perso configurés (sty.hrs existe),
-  // on respecte ses horaires même si null = jour fermé. Sinon fallback horaires salon.
-  var hrs=null;
-  var hasPersoHrs=sty.hrs&&typeof sty.hrs==="object"&&Object.keys(sty.hrs).length>0;
-  if(hasPersoHrs){
-    // Horaires perso actifs : null = jour fermé pour ce coiffeur
-    hrs=sty.hrs[dow]||null;
-  } else {
-    // Pas d'horaires perso : fallback horaires salon
-    hrs=H[dow]||null;
-  }
-  // Check for ouverture exceptionnelle (overrides closed day)
-  if(!hrs&&window.ABSENCES){
-    for(var i=0;i<window.ABSENCES.length;i++){
-      var ab=window.ABSENCES[i];
-      if(ab.type==="ouverture_except"&&ab.date===date&&ab.stId===stId&&ab.horaire_o&&ab.horaire_c){
-        hrs={o:ab.horaire_o,c:ab.horaire_c};
-        break;
-      }
-    }
-  }
+  // FIX 2026-05-12 : utilise getEffectiveHrs qui gère fermeture_except,
+  // horaires_overrides (Personnalisés), horaires fixes, et ouverture_except.
+  var hrs=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,stId):null;
   if(!hrs)return false;
   if(m<toM(hrs.o)||m>=toM(hrs.c))return false;
-  // Check recurring pause
-  if(sty.pause&&sty.pause.o&&sty.pause.c){
-    if(m>=toM(sty.pause.o)&&m<toM(sty.pause.c))return false;
+  // FIX 2026-05-12 : pause via getEffectivePause (gère override pause_o/pause_c)
+  var _pse=(typeof getEffectivePause==="function")?getEffectivePause(date,stId):(sty.pause||null);
+  if(_pse&&_pse.o&&_pse.c){
+    if(m>=toM(_pse.o)&&m<toM(_pse.c))return false;
   }
   // Check regular absences
   if(window.ABSENCES){
@@ -8638,16 +8612,10 @@ function getBlockedSlots(stId, date){
       }
     }
   }
-  // Get hours (normal or exceptional opening)
-  // Use individual hours if set for this day, otherwise fall back to salon hours
-  // FIX bug Manue : si horaires perso configurés, null = fermé (pas fallback salon)
-  var hrs=null;
-  var hasPersoHrs2=sty.hrs&&typeof sty.hrs==="object"&&Object.keys(sty.hrs).length>0;
-  if(hasPersoHrs2){
-    hrs=sty.hrs[dow]||null;
-  } else {
-    hrs=H[dow]||null;
-  }
+  // FIX 2026-05-12 : utilise getEffectiveHrs qui gère horaires_overrides + fixed + ouverture_except
+  // (la fermeture_except est gérée juste au-dessus de cette section, avec un return immédiat)
+  var hrs=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,stId):null;
+  // Garde compatibilité au cas où getEffectiveHrs return null mais ouverture_except devrait s'appliquer
   if(!hrs&&window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
       var ab=window.ABSENCES[i];

@@ -2300,12 +2300,20 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
       if(slotStart<bEnd&&slotEnd>bStart)return true;
     }
   }
-  // Check recurring pause on collab
+  // FIX 2026-05-12 : check horaires_overrides[date] (mode Personnalisés)
+  // - Si override est null → collab absent toute la journée
+  // - Si override existe → check pause éventuelle de l'override (pause_o/pause_c)
   if(collabId){
     var col=COLLABS.find(function(c){return c.id===collabId;});
-    if(col&&col.pause&&col.pause.o&&col.pause.c){
-      var pS=toMin(col.pause.o),pE=toMin(col.pause.c);
-      if(slotStart<pE&&slotEnd>pS)return true;
+    if(col){
+      // Override null = absence personnalisée ce jour-là
+      if(col.hrsOver && col.hrsOver[date] === null) return true;
+      // Pause effective (override ou récurrente)
+      var _pse=(typeof getCollabEffectivePause==="function")?getCollabEffectivePause(col,date):(col.pause||null);
+      if(_pse&&_pse.o&&_pse.c){
+        var pS=toMin(_pse.o),pE=toMin(_pse.c);
+        if(slotStart<pE&&slotEnd>pS)return true;
+      }
     }
   }
   return false;
