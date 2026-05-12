@@ -970,7 +970,16 @@ async function loadSalon(){
       var avData=await avRes.json();
       if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
       if(avData.rdv_online){
-        avData.rdv_online.filter(function(r){return r.status!=="cancelled";}).forEach(function(r){
+        // FIX 2026-05-12 : ignore les pending_payment > 15 min (paiement abandonné = slot libre)
+        var _nowMs2=Date.now();var _staleMs2=15*60*1000;
+        avData.rdv_online.filter(function(r){
+          if(r.status==="cancelled") return false;
+          if(r.status==="pending_payment"){
+            var _cMs=r.created_at?new Date(r.created_at).getTime():0;
+            if(_cMs && (_nowMs2-_cMs) > _staleMs2) return false;
+          }
+          return true;
+        }).forEach(function(r){
           RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
         });
       }
@@ -2749,9 +2758,21 @@ async function refreshRDV(){
     var avData=await avRes.json();
     if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
     else{RDV_EXISTING=[];}
-    if(avData.rdv_online){avData.rdv_online.filter(function(r){return r.status!=="cancelled";}).forEach(function(r){
-      RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
-    });}
+    if(avData.rdv_online){
+      // FIX 2026-05-12 : ignore les pending_payment > 15 min (paiement abandonné, slot doit redevenir libre)
+      var _nowMs=Date.now();
+      var _staleMs=15*60*1000;
+      avData.rdv_online.filter(function(r){
+        if(r.status==="cancelled") return false;
+        if(r.status==="pending_payment"){
+          var _cMs = r.created_at ? new Date(r.created_at).getTime() : 0;
+          if(_cMs && (_nowMs-_cMs) > _staleMs) return false; // stale → ignore
+        }
+        return true;
+      }).forEach(function(r){
+        RDV_EXISTING.push({date_rdv:r.date_rdv,heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,collab_id:r.collaborateur_id,status:"conf",a_phases:[{t:"w",d:r.duree_minutes||60,l:"RDV"}]});
+      });
+    }
   }catch(e){console.log("refreshRDV:",e);}
 }
 

@@ -1582,8 +1582,10 @@ async function handleSalonAvailability(request, env) {
     );
     const appointments = await apRes.json();
     // 2. Online RDV (may also be RLS-protected)
+    // FIX 2026-05-12 : on récupère aussi created_at pour permettre au client de
+    // filtrer les pending_payment stales (paiement abandonné depuis > 15 min).
     const roRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status&salon_id=eq.${salon_id}&date_rdv=gte.${from}&status=neq.cancelled`,
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status,created_at&salon_id=eq.${salon_id}&date_rdv=gte.${from}&status=neq.cancelled`,
       { headers }
     );
     const rdvOnline = await roRes.json();
