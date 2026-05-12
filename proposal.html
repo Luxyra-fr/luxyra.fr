@@ -340,6 +340,15 @@ async function doPayment(){
   var pd=STATE.demande.proposed_data||{};
   var acompte=Number(pd.acompte_montant)||0;
   var name=document.getElementById("payName").value.trim()||"Cliente";
+  // FIX 2026-05-12 : GARDE-FOU ANTI-LUXYRA
+  // Si le salon a Connect configuré, on REFUSE de charger via Charges API (Path B → $$ Luxyra)
+  // Le bon flow est payViaCheckout (Path A → $$ direct salon). Si on arrive ici, c'est un bug.
+  var s=STATE.salon||{};
+  if(s.stripe_connect_id){
+    errEl.textContent="Erreur de routage — paiement bloqué pour sécurité. Contactez le salon.";
+    console.error("doPayment Path B bloqué : salon a stripe_connect_id, utiliser payViaCheckout()");
+    return;
+  }
   btn.disabled=true; btn.textContent="Paiement en cours...";
   try{
     var result=await stripe.createToken(window._proposalCard,{name:name});
