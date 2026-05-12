@@ -23190,14 +23190,31 @@ function showCaisse(){
     h+='<div style="display:flex;justify-content:space-between;padding:14px 16px;background:'+(resteDu>0.01?'rgba(244,67,54,.08)':'rgba(76,175,80,.08)')+';border-top:1px solid rgba(255,255,255,.06)"><span style="font-weight:700;font-size:14px;color:'+(resteDu>0.01?'#ef5350':'#66bb6a')+'">Reste d\u00fb</span><span style="font-weight:900;font-size:18px;font-family:var(--f1);color:'+(resteDu>0.01?'#ef5350':'#66bb6a')+'">'+resteDu.toFixed(2)+' \u20ac</span></div>';
     h+='</div>';
 
-    // Already paid
+    // Already paid - liste des paiements ajout\u00e9s
     if(_tk.payments&&_tk.payments.length>0){
       h+='<div style="padding:0 14px 8px">';
-      _tk.payments.forEach(function(p){
-        h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:4px;border-radius:8px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.15)">';
+      _tk.payments.forEach(function(p, pIdx){
+        h+='<div style="padding:8px 12px;margin-bottom:6px;border-radius:8px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.15)">';
+        h+='<div style="display:flex;align-items:center;gap:8px">';
         h+='<span style="color:#66bb6a;font-size:14px">\u2714</span>';
         h+='<span style="font-size:12px;font-weight:600;color:#66bb6a;flex:1">'+p.method+'</span>';
-        h+='<span style="font-weight:800;font-size:13px;color:#66bb6a">'+p.amount.toFixed(2)+' \u20ac</span></div>';
+        h+='<span style="font-weight:800;font-size:13px;color:#66bb6a">'+(Number(p.amount)||0).toFixed(2)+' \u20ac</span></div>';
+        // FIX 2026-05-12 : pour ESP\u00c8CES, input inline "Donn\u00e9" pour calcul rendu monnaie
+        if(p.method === "Esp\u00e8ces"){
+          var givenVal = (p.given && p.given > 0) ? p.given : p.amount;
+          var renduVal = (p.rendu && p.rendu > 0.001) ? p.rendu : 0;
+          h+='<div style="display:flex;align-items:center;gap:8px;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(76,175,80,.2)">';
+          h+='<span style="font-size:11px;color:rgba(255,255,255,.55);flex:1">Donn\u00e9 par le client</span>';
+          h+='<input type="number" step="0.01" min="0" value="'+(Number(givenVal)||0).toFixed(2)+'" oninput="updateInlineRendu('+pIdx+', this)" onfocus="this.select()" style="width:90px;padding:6px 8px;font-size:13px;font-weight:700;text-align:right;background:rgba(255,255,255,.06);border:1px solid rgba(255,215,106,.3);border-radius:6px;color:#fff">';
+          h+='<span style="font-size:11px;color:rgba(255,255,255,.55)">\u20ac</span>';
+          h+='</div>';
+          // Ligne "\u00c0 rendre" \u2014 affich\u00e9e seulement si > 0
+          h+='<div id="renduRow_'+pIdx+'" style="display:'+(renduVal>0?'flex':'none')+';align-items:center;gap:8px;margin-top:4px;padding-top:4px">';
+          h+='<span style="font-size:12px;color:#ffd76a;font-weight:700;flex:1">\u2192 \u00c0 rendre au client</span>';
+          h+='<span id="rendu_'+pIdx+'" style="font-size:14px;color:#ffd76a;font-weight:900">'+(renduVal>0?renduVal.toFixed(2)+' \u20ac':'0,00 \u20ac')+'</span>';
+          h+='</div>';
+        }
+        h+='</div>';
       });
       h+='</div>';
     }
@@ -23215,42 +23232,34 @@ function showCaisse(){
         {l:"Virement",k:"Virement",ico:"\ud83c\udfe6"}
         
       ];
-      // FIX 2026-05-12 : click → showPayInput pour input montant + rendu monnaie (espèces)
-      // au lieu de finalizePay direct qui paye TOUT le reste avec une seule méthode.
+      // FIX 2026-05-12 v2 : UX simple — TOUTES les méthodes = 1 seul clic = ajout direct
+      //   - Bon cadeau : sous-flow propre (recherche du bon)
+      //   - Autres : quickPay(method) = ajout du reste dû directement
+      //   Le rendu monnaie (espèces) se fait au récap via input inline.
+      //   Le split se fait via le lien "Diviser le paiement" ci-dessous.
       for(var mi=0;mi<methods.length;mi++){
         var m=methods[mi];
-        // Bon cadeau garde son sous-flow propre (recherche du bon)
-        var onClickFn = (m.k === "Bon cadeau") ? "finalizePay('"+m.k+"')" : "showPayInput('"+m.k+"')";
+        var onClickFn = (m.k === "Bon cadeau") ? "finalizePay('"+m.k+"')" : "quickPay('"+m.k+"')";
         h+='<button onclick="'+onClickFn+'" style="display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 12px;border:1.5px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.04);cursor:pointer;transition:all .15s;min-height:56px" onmouseover="this.style.borderColor=\'rgba(200,168,78,.4)\';this.style.background=\'rgba(200,168,78,.08)\'" onmouseout="this.style.borderColor=\'rgba(255,255,255,.1)\';this.style.background=\'rgba(255,255,255,.04)\'">';
         h+='<span style="font-size:24px">'+m.ico+'</span>';
         h+='<span style="font-weight:800;font-size:14px;color:#fff">'+m.l+'</span></button>';
       }
+      // Lien discret pour le cas split / montant personnalisé
+      if(!_tk.payments || _tk.payments.length === 0){
+        h+='<div style="text-align:center;margin-top:12px"><button onclick="showSplitPicker()" style="background:none;border:none;color:rgba(200,168,78,.7);font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline">🔀 Diviser le paiement (CB + espèces…)</button></div>';
+      }
       h+='</div></div>';
     }else{
       // Total is 0 or fully paid → validate button
-      // FIX 2026-05-12 : r\u00e9cap final avant encaissement d\u00e9finitif
-      // Tant que ce bouton n'est pas cliqu\u00e9, RIEN n'est en compta \u2014 l'op\u00e9ratrice
-      // peut encore Annuler / modifier (utile si CB ne passe pas apr\u00e8s validation modale).
+      // FIX 2026-05-12 v2 : r\u00e9cap inline ci-dessus (avec input Donn\u00e9 pour esp\u00e8ces).
+      // Ici juste le bouton final d'encaissement. Tant que pas cliqu\u00e9, rien en DB.
       var _hasMulti = _tk.payments && _tk.payments.length > 0;
-      var _btnLabel = _hasMulti ? "\u2705 Encaisser d\u00e9finitivement le ticket" : "\u2705 Valider le ticket \u00e0 0,00 \u20ac";
+      var _btnLabel = _hasMulti ? "\u2705 Encaisser et imprimer le ticket" : "\u2705 Valider le ticket \u00e0 0,00 \u20ac";
       var _btnAction = _hasMulti ? "finalizePay('done')" : "finalizePay('S\u00e9ance abonnement')";
       h+='<div style="padding:14px">';
-      // R\u00e9cap ventilation + rendu monnaie avant validation finale
-      if(_hasMulti){
-        h+='<div style="background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:12px;margin-bottom:12px">';
-        h+='<div style="font-size:11px;color:#7fc984;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:700">R\u00e9cap avant encaissement</div>';
-        _tk.payments.forEach(function(p){
-          h+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0;color:#fff"><span>'+p.method+'</span><span style="font-weight:700">'+(Number(p.amount)||0).toFixed(2)+' \u20ac</span></div>';
-          if(p.given && p.rendu && p.rendu > 0.001){
-            h+='<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0 1px 14px;color:rgba(255,255,255,.5);font-style:italic"><span>Donn\u00e9 par le client</span><span>'+(Number(p.given)||0).toFixed(2)+' \u20ac</span></div>';
-            h+='<div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#ffd76a;font-weight:800;border-top:1px dashed rgba(255,215,106,.2);margin-top:4px;padding-top:6px"><span>\u2192 \u00c0 rendre au client</span><span>'+(Number(p.rendu)||0).toFixed(2)+' \u20ac</span></div>';
-          }
-        });
-        h+='</div>';
-      }
       h+='<button onclick="'+_btnAction+'" style="width:100%;padding:18px;font-size:16px;font-weight:800;border:none;border-radius:12px;background:linear-gradient(135deg,#2d9a5e,#1b7a3e);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(45,154,94,.3)">'+_btnLabel+'</button>';
       if(_hasMulti){
-        h+='<div style="text-align:center;font-size:11px;color:rgba(255,255,255,.4);margin-top:8px;font-style:italic">Le ticket sera enregistr\u00e9 et imprim\u00e9 apr\u00e8s ce clic</div>';
+        h+='<div style="text-align:center;font-size:11px;color:rgba(255,255,255,.4);margin-top:8px;font-style:italic">Aucun encaissement enregistr\u00e9 tant que vous n\'avez pas cliqu\u00e9</div>';
       }
       h+='</div>';
     }
@@ -24458,9 +24467,67 @@ function doApplyTkRemise(type){
   _tk.step=3;showCaisse();
 }
 
+// NEW 2026-05-12 : ajout DIRECT d'un paiement = full reste dû, sans modal
+// → UX rapide pour cas simple (1 clic = 1 paiement = full montant)
+// Le rendu monnaie pour espèces se gère ensuite via input inline dans le récap.
+function quickPay(method){
+  var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
+  var acompteDeduct=_tk.acompte||0;
+  var resteDu=Math.max(0, total-(_tk.paid||0)-acompteDeduct);
+  if(resteDu <= 0.01) return;
+  if(!_tk.payments) _tk.payments=[];
+  _tk.payments.push({method:method, amount:resteDu});
+  _tk.paid = (_tk.paid||0) + resteDu;
+  _tk.step=5;
+  showCaisse();
+}
+
+// Modale "Diviser le paiement" : ouvre showPayInput pour saisir un montant partiel
+function showSplitPicker(){
+  var htm='<div class="mbox" style="max-width:380px"><h2 style="color:var(--gold);text-align:center;font-size:17px;margin-bottom:8px">🔀 Diviser le paiement</h2>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.7);text-align:center;margin-bottom:14px">Choisissez la méthode pour le 1er versement, vous saisirez ensuite le montant</div>';
+  var methods=[
+    {l:"Espèces",k:"Espèces",ico:"💵"},
+    {l:"Carte bancaire",k:"CB",ico:"💳"},
+    {l:"Chèque",k:"Chèque",ico:"📝"},
+    {l:"Virement",k:"Virement",ico:"🏦"}
+  ];
+  htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  methods.forEach(function(m){
+    htm+='<button onclick="showPayInput(\''+m.k.replace(/'/g,"\\'")+'\')" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;border:1.5px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;font-weight:700"><span style="font-size:20px">'+m.ico+'</span>'+m.l+'</button>';
+  });
+  htm+='</div>';
+  htm+='<button class="btn" style="width:100%;margin-top:14px;background:rgba(255,255,255,.06)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
+  htm+='</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="_tk.step=5;showCaisse()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+
+// Met à jour le rendu monnaie inline au récap (espèces)
+function updateInlineRendu(idx, input){
+  if(!_tk.payments || !_tk.payments[idx]) return;
+  var given = parseFloat(input.value) || 0;
+  var amount = Number(_tk.payments[idx].amount) || 0;
+  var rendu = +(given - amount).toFixed(2);
+  _tk.payments[idx].given = given;
+  _tk.payments[idx].rendu = rendu > 0.001 ? rendu : 0;
+  // Update affichage
+  var renduSpan = document.getElementById('rendu_'+idx);
+  if(renduSpan){
+    if(rendu > 0.001){
+      renduSpan.textContent = rendu.toFixed(2) + " €";
+      renduSpan.style.display = 'inline-block';
+      var renduRow = document.getElementById('renduRow_'+idx);
+      if(renduRow) renduRow.style.display = 'flex';
+    } else {
+      var renduRow2 = document.getElementById('renduRow_'+idx);
+      if(renduRow2) renduRow2.style.display = 'none';
+    }
+  }
+}
+
 // NEW 2026-05-12 : modale intermédiaire pour saisir le montant à encaisser
 // et (pour espèces) le montant donné par le client + monnaie à rendre.
-// Permet le paiement mixte (ex: 30€ CB + 50€ espèces) et le calcul automatique du rendu.
+// Utilisé par le mode "Diviser le paiement" (split).
 function showPayInput(method){
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
   var acompteDeduct=_tk.acompte||0;
