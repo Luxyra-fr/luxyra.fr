@@ -1348,6 +1348,29 @@ var _FICHE_TECH_KEYS = [
   "histoMetier"
 ];
 
+// FIX 2026-05-12 : helper de migration legacy local-id → UUID.
+// U() génère maintenant des UUIDs valides via crypto.randomUUID(), mais des
+// entités créées dans une session précédente (avant ce fix) peuvent encore
+// avoir un id "u17_lxa6" en localStorage. Au prochain saveX, on les normalise
+// en UUID avant l'upsert (le DB column id est de type UUID, refuse autre chose).
+function _ensureUuidId(entity) {
+  if (!entity) return null;
+  var id = entity.id;
+  var isUuid = (typeof id === "string" && id.length === 36 && id.indexOf("-") > 0);
+  if (!isUuid) {
+    try {
+      if (typeof crypto !== "undefined" && crypto.randomUUID) entity.id = crypto.randomUUID();
+      else entity.id = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c){
+        var r = Math.random()*16|0, v = c==="x"?r:(r&0x3|0x8); return v.toString(16);
+      });
+    } catch(e) {
+      entity.id = "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0");
+    }
+  }
+  return entity.id;
+}
+if (typeof window !== "undefined") window._ensureUuidId = _ensureUuidId;
+
 // Sauvegarder un client (create ou update)
 async function saveClient(client) {
   if (!_isOnline || !_salonId) return;
@@ -1376,13 +1399,13 @@ async function saveClient(client) {
     // Liens famille (mai 2026) : array d'IDs UUID des clients liés
     famille_ids: client.famille_ids || []
   };
-  // UUID = update, local ID = insert
-  if (client.id && client.id.indexOf("-") > 0 && client.id.length > 30) {
-    await _sb.from("clients").update(data).eq("id", client.id);
-  } else {
-    var res = await _sb.from("clients").insert(data).select();
-    if (res.data && res.data[0]) client.id = res.data[0].id;
-  }
+  // FIX 2026-05-12 : upsert avec id explicite (U() génère un UUID stable
+  // dès la création) → INSERT ou UPDATE selon existence du PK. Plus de
+  // mutation d'id, plus de race condition.
+  _ensureUuidId(client);
+  data.id = client.id;
+  var res = await _sb.from("clients").upsert(data).select();
+  if (res.error) console.error("saveClient upsert error:", res.error);
   // Cross-salon sync: update all client records + compte with same email
   if (client.em) {
     var syncClients = {}, syncBp = {};
@@ -1494,6 +1517,8 @@ async function saveAppointment(appt) {
   if (appt.stId && typeof gT === "function") { var st = gT(appt.stId); if (st && st.n) collabName = st.n; }
   var data = {
     salon_id: _salonId,
+    // FIX 2026-05-12 : appt.cId est désormais toujours un UUID stable (U() utilise crypto.randomUUID).
+    // Le filtre legacy length>30 est conservé en safety pour les "passage-F" / "online_xxx" etc.
     client_id: (appt.cId && appt.cId.indexOf("-") > 0 && appt.cId.length > 30) ? appt.cId : null, service_id: appt.sId, collab_id: appt.stId,
     date_rdv: appt.date, heure: appt.time, prix: appt.pr,
     brut_total: appt.brutTotal || null, remise: appt.remise || 0,
@@ -1506,14 +1531,17 @@ async function saveAppointment(appt) {
     client_email: clEmail, collab_name: collabName
   };
   try{data.clients=appt.clients||[];data.from_caisse=appt.fromCaisse||false;}catch(e){}
-  var r;
-  if (appt.id && appt.id.indexOf("-") > 0 && appt.id.length > 30) {
-    r=await _sb.from("appointments").update(data).eq("id", appt.id);
-  } else {
-    r=await _sb.from("appointments").insert(data).select();
-    if (r.data && r.data[0]) appt.id = r.data[0].id;
+  // FIX 2026-05-12 : upsert avec id explicite — plus de race condition local/UUID
+  _ensureUuidId(appt);
+  data.id = appt.id;
+  var r = await _sb.from("appointments").upsert(data).select();
+  if (r.error) {
+    // Retry sans les colonnes optionnelles (au cas où le schéma diffère)
+    console.warn("saveAppointment upsert error, retry stripped:", r.error?.message);
+    delete data.clients; delete data.from_caisse; delete data.client_email; delete data.collab_name;
+    r = await _sb.from("appointments").upsert(data).select();
+    if (r.error) console.error("saveAppointment retry failed:", r.error);
   }
-  if(r&&r.error){delete data.clients;delete data.from_caisse;delete data.client_email;delete data.collab_name;if(appt.id&&appt.id.indexOf("-")>0&&appt.id.length>30){await _sb.from("appointments").update(data).eq("id",appt.id);}else{var r2=await _sb.from("appointments").insert(data).select();if(r2.data&&r2.data[0])appt.id=r2.data[0].id;}}
 }
 
 // Supprimer un RDV non-encaissé de la base
@@ -1588,12 +1616,11 @@ async function saveGiftCard(gc) {
     history: gc.history || [],
     tk_num: gc.tkNum || null
   };
-  if (gc.id && gc.id.indexOf("-") > 0 && gc.id.length > 30) {
-    await _sb.from("cartes_cadeaux").update(data).eq("id", gc.id);
-  } else {
-    var res = await _sb.from("cartes_cadeaux").insert(data).select();
-    if (res.data && res.data[0]) gc.id = res.data[0].id;
-  }
+  // FIX 2026-05-12 : upsert avec id explicite (U() génère UUID stable)
+  _ensureUuidId(gc);
+  data.id = gc.id;
+  var res = await _sb.from("cartes_cadeaux").upsert(data).select();
+  if (res.error) console.error("saveGiftCard upsert error:", res.error);
 }
 
 // ============================================================
@@ -1865,15 +1892,15 @@ async function saveCloture(clot) {
     hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256",
     raw_data: raw
   };
-  var res = await _sb.from("clotures").insert(data).select();
-  // Gestion erreur 23505 (unique_violation sur clotures_unique_num_per_salon) :
-  // arrive si un 2e INSERT tente d'utiliser un num déjà pris (cas de double-trigger
-  // qui aurait passé le flag JS pour une raison X, ou tab dupliqué qui resync).
-  // On évite de planter l'app — la clôture est déjà en DB grâce au 1er INSERT.
+  // FIX 2026-05-12 : upsert avec id explicite — préserve la gestion d'erreur
+  // 23505 sur la UNIQUE (salon_id, num) qui peut encore se déclencher en
+  // multi-device si 2 clôtures essaient le même num.
+  _ensureUuidId(clot);
+  data.id = clot.id;
+  var res = await _sb.from("clotures").upsert(data).select();
   if (res.error) {
     if (res.error.code === "23505" || (res.error.message || "").indexOf("clotures_unique_num_per_salon") >= 0) {
       console.warn("[saveCloture] Doublon détecté (UNIQUE constraint), clôture déjà enregistrée. Num=" + clot.num);
-      // On retrouve l'id de la clôture déjà en DB pour synchroniser l'objet local
       try {
         var existing = await _sb.from("clotures").select("id").eq("salon_id", _salonId).eq("num", clot.num).maybeSingle();
         if (existing.data && existing.data.id) clot.id = existing.data.id;
@@ -1881,11 +1908,10 @@ async function saveCloture(clot) {
       if (typeof toast === "function") toast("⚠️ Clôture déjà enregistrée — pas de doublon créé.", "info");
       return;
     }
-    console.error("[saveCloture] Erreur insert:", res.error);
+    console.error("[saveCloture] Erreur upsert:", res.error);
     if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
     return;
   }
-  if (res.data && res.data[0]) clot.id = res.data[0].id;
 }
 
 // Sauvegarder une entrée d'audit
@@ -2103,12 +2129,11 @@ async function savePack(pack) {
     ticket_num: pack.ticketNum || "",
     status: pack.status || "active"
   };
-  if (pack.id) {
-    await _sb.from("packs_clients").update(data).eq("id", pack.id);
-  } else {
-    var res = await _sb.from("packs_clients").insert(data).select();
-    if (res.data && res.data[0]) pack.id = res.data[0].id;
-  }
+  // FIX 2026-05-12 : upsert avec id explicite (U() génère UUID stable)
+  _ensureUuidId(pack);
+  data.id = pack.id;
+  var res = await _sb.from("packs_clients").upsert(data).select();
+  if (res.error) console.error("savePack upsert error:", res.error);
 }
 
 // Valider une séance d'un pack
@@ -2234,12 +2259,11 @@ async function saveFournisseur(f) {
   if (!_isOnline || !_salonId) return;
   var data = { salon_id: _salonId, nom: f.nom, email: f.email || "", telephone: f.tel || "",
                representant: f.representant || "", delai_livraison: f.delai || 7, notes: f.notes || "" };
-  if (f.id && String(f.id).indexOf("-") > 0) {
-    await _sb.from("fournisseurs").update(data).eq("id", f.id);
-  } else {
-    var res = await _sb.from("fournisseurs").insert(data).select();
-    if (res.data && res.data[0]) f.id = res.data[0].id;
-  }
+  // FIX 2026-05-12 : upsert avec id explicite (U() génère UUID stable)
+  _ensureUuidId(f);
+  data.id = f.id;
+  var res = await _sb.from("fournisseurs").upsert(data).select();
+  if (res.error) console.error("saveFournisseur upsert error:", res.error);
 }
 async function deleteFournisseur(fId) {
   if (!_isOnline || !_salonId) return;

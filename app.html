@@ -6829,7 +6829,19 @@ var _lastTicketHash="00000000";
 // salon (varie selon métier) plutôt que "Coupe" hardcodé.
 var calD=new Date(TD),aCat=(CATS&&CATS.length?CATS[0]:""),aPCat="all",cFi="all",cSr="",accM=TD.slice(0,7),selCl=null,uid=0;
 if(!window._planDays)window._planDays=1;
-function U(){return"u"+(++uid)+"_"+Date.now().toString(36);}
+// FIX 2026-05-12 : génère un UUID v4 valide dès la création locale.
+// AVANT : "u123_xyz" → saveX(entity) INSERT → DB génère UUID → entity.id muté
+//         → toute référence captée avant la mutation = orphan (bug Marie-Hélène).
+// MAINTENANT : id = UUID dès la création → pas de mutation, pas de race.
+// La saveX correspondante utilise upsert (INSERT ON CONFLICT DO UPDATE).
+function U(){
+  try{ if(typeof crypto!=="undefined" && crypto.randomUUID) return crypto.randomUUID(); }catch(_){}
+  // Fallback pour environnements sans crypto.randomUUID
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+    var r = Math.random()*16|0, v = c==='x'?r:(r&0x3|0x8);
+    return v.toString(16);
+  });
+}
 
 // === VALIDATION SIRET / TVA INTRACOMMUNAUTAIRE FR (Quick Win 2026-05-06 #2) ===
 // SIRET : 14 chiffres, algo Luhn (sauf cas La Poste 356000... où la somme % 5 = 0)
@@ -23722,18 +23734,13 @@ async function loadCartesAboClients(){
 async function saveCarteAboClient(cc){
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId)return;
   try{
+    // FIX 2026-05-12 : upsert avec id explicite + protection legacy local-id
+    if(typeof window._ensureUuidId==="function") window._ensureUuidId(cc);
+    else if(!cc.id) cc.id = U();
     var payload=_carteAboToDb(cc);
-    if(cc.id){
-      // UPDATE
-      var u=await _sb.from("cartes_abo_clients").update(payload).eq("id",cc.id).select().single();
-      if(u.error){console.warn("saveCarteAboClient UPDATE:",u.error.message);return;}
-    }else{
-      // INSERT (laisser la DB générer l'uuid)
-      delete payload.id;
-      var i=await _sb.from("cartes_abo_clients").insert(payload).select().single();
-      if(i.error){console.warn("saveCarteAboClient INSERT:",i.error.message);return;}
-      if(i.data&&i.data.id)cc.id=i.data.id; // récupère l'id généré
-    }
+    payload.id = cc.id;
+    var u=await _sb.from("cartes_abo_clients").upsert(payload).select().single();
+    if(u.error){console.warn("saveCarteAboClient upsert:",u.error.message);return;}
   }catch(e){console.warn("saveCarteAboClient exception:",e);}
 }
 // Incrémente les économies de la carte (appelé à chaque ticket payé qui utilise la remise)
