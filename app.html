@@ -23202,9 +23202,13 @@ function showCaisse(){
         {l:"Virement",k:"Virement",ico:"\ud83c\udfe6"}
         
       ];
+      // FIX 2026-05-12 : click → showPayInput pour input montant + rendu monnaie (espèces)
+      // au lieu de finalizePay direct qui paye TOUT le reste avec une seule méthode.
       for(var mi=0;mi<methods.length;mi++){
         var m=methods[mi];
-        h+='<button onclick="finalizePay(\''+m.k+'\')" style="display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 12px;border:1.5px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.04);cursor:pointer;transition:all .15s;min-height:56px" onmouseover="this.style.borderColor=\'rgba(200,168,78,.4)\';this.style.background=\'rgba(200,168,78,.08)\'" onmouseout="this.style.borderColor=\'rgba(255,255,255,.1)\';this.style.background=\'rgba(255,255,255,.04)\'">';
+        // Bon cadeau garde son sous-flow propre (recherche du bon)
+        var onClickFn = (m.k === "Bon cadeau") ? "finalizePay('"+m.k+"')" : "showPayInput('"+m.k+"')";
+        h+='<button onclick="'+onClickFn+'" style="display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 12px;border:1.5px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.04);cursor:pointer;transition:all .15s;min-height:56px" onmouseover="this.style.borderColor=\'rgba(200,168,78,.4)\';this.style.background=\'rgba(200,168,78,.08)\'" onmouseout="this.style.borderColor=\'rgba(255,255,255,.1)\';this.style.background=\'rgba(255,255,255,.04)\'">';
         h+='<span style="font-size:24px">'+m.ico+'</span>';
         h+='<span style="font-weight:800;font-size:14px;color:#fff">'+m.l+'</span></button>';
       }
@@ -24415,6 +24419,97 @@ function doApplyTkRemise(type){
   if(type==="eur"){_tk.remise=Math.min(v,total);}
   else{var pct=Math.min(v,100);_tk.remise=Math.round(total*pct/100*100)/100;}
   _tk.step=3;showCaisse();
+}
+
+// NEW 2026-05-12 : modale intermédiaire pour saisir le montant à encaisser
+// et (pour espèces) le montant donné par le client + monnaie à rendre.
+// Permet le paiement mixte (ex: 30€ CB + 50€ espèces) et le calcul automatique du rendu.
+function showPayInput(method){
+  var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
+  var acompteDeduct=_tk.acompte||0;
+  var resteDu=Math.max(0, total-(_tk.paid||0)-acompteDeduct);
+  var isEsp = (method==="Espèces" || method==="Espèces");
+  var icon = isEsp ? "💵" : (method==="CB" ? "💳" : method==="Chèque" || method==="Chèque" ? "📝" : "🏦");
+
+  var htm = '<div class="mbox" style="max-width:420px"><h2 style="color:var(--gold);margin-bottom:14px;text-align:center;font-size:18px">'+icon+' Paiement — '+method+'</h2>';
+  htm += '<div style="background:rgba(255,255,255,.04);border-radius:10px;padding:12px;margin-bottom:14px;text-align:center">';
+  htm += '<div style="font-size:11px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Reste à payer</div>';
+  htm += '<div style="font-size:24px;font-weight:900;color:#fff;font-family:var(--f1)">'+resteDu.toFixed(2)+' €</div></div>';
+
+  // Montant à encaisser pour CE paiement
+  htm += '<div class="fg"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7)">Montant encaissé en '+method+'</label>';
+  htm += '<input type="number" id="payAmount" step="0.01" min="0.01" max="'+resteDu.toFixed(2)+'" value="'+resteDu.toFixed(2)+'" style="width:100%;padding:14px;font-size:22px;text-align:center;font-weight:800;font-family:var(--f1);background:rgba(255,255,255,.04);border:1.5px solid rgba(200,168,78,.3);border-radius:10px;color:#fff" onfocus="this.select()" oninput="updatePayInputs()"></div>';
+
+  if(isEsp){
+    // Montant donné par le client (pour calcul rendu monnaie)
+    htm += '<div class="fg"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7)">Montant donné par le client</label>';
+    htm += '<input type="number" id="payGiven" step="0.01" min="0" value="'+resteDu.toFixed(2)+'" style="width:100%;padding:14px;font-size:22px;text-align:center;font-weight:800;font-family:var(--f1);background:rgba(255,255,255,.04);border:1.5px solid rgba(200,168,78,.3);border-radius:10px;color:#fff" onfocus="this.select()" oninput="updatePayInputs()"></div>';
+    // Affichage rendu
+    htm += '<div id="payRendu" style="background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:14px;margin-bottom:14px;text-align:center;display:none">';
+    htm += '<div style="font-size:11px;color:#7fc984;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">À rendre au client</div>';
+    htm += '<div id="payRenduValue" style="font-size:28px;font-weight:900;color:#7fc984;font-family:var(--f1)">0,00 €</div></div>';
+  }
+
+  // Boutons
+  htm += '<div style="display:flex;gap:8px;margin-top:14px">';
+  htm += '<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
+  htm += '<button class="btn bg" style="flex:2" onclick="applyPayAmount(\''+method.replace(/'/g,"\\'")+'\')">✓ Valider le paiement</button>';
+  htm += '</div>';
+  htm += '</div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="event.target===this&&(function(){_tk.step=5;showCaisse();})()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+
+  // Initial update du rendu
+  setTimeout(updatePayInputs, 50);
+}
+
+// Met à jour le calcul "rendu" en temps réel quand l'utilisateur tape
+function updatePayInputs(){
+  var inputAmount = document.getElementById("payAmount");
+  var inputGiven = document.getElementById("payGiven");
+  var divRendu = document.getElementById("payRendu");
+  var spanRendu = document.getElementById("payRenduValue");
+  if(!inputAmount) return;
+  var amount = parseFloat(inputAmount.value) || 0;
+  if(inputGiven && divRendu && spanRendu){
+    var given = parseFloat(inputGiven.value) || 0;
+    var rendu = given - amount;
+    if(rendu > 0.001){
+      spanRendu.textContent = rendu.toFixed(2) + " €";
+      divRendu.style.display = "block";
+    } else {
+      divRendu.style.display = "none";
+    }
+  }
+}
+
+// Applique le paiement avec le montant saisi
+function applyPayAmount(method){
+  var inputAmount = document.getElementById("payAmount");
+  if(!inputAmount){ if(typeof showAlert==="function")showAlert("Erreur saisie","error"); return; }
+  var amount = parseFloat(inputAmount.value) || 0;
+  if(amount <= 0){ if(typeof showAlert==="function")showAlert("Montant invalide","warning"); return; }
+
+  var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
+  var acompteDeduct=_tk.acompte||0;
+  var resteDu=Math.max(0, total-(_tk.paid||0)-acompteDeduct);
+
+  // Clamp : on n'encaisse jamais plus que le reste dû
+  amount = Math.min(amount, resteDu);
+
+  // Ajoute au tableau de paiements
+  if(!_tk.payments) _tk.payments=[];
+  _tk.payments.push({method:method, amount:amount});
+  _tk.paid = (_tk.paid||0) + amount;
+
+  // Si reste à payer → retour au step 5 pour saisir le prochain paiement
+  var nouvelleResteDu = total - _tk.paid - acompteDeduct;
+  if(nouvelleResteDu > 0.01){
+    _tk.step=5;
+    showCaisse();
+  } else {
+    // Tout est payé → finalise le ticket
+    finalizePay("done");
+  }
 }
 
 function finalizePay(method){
