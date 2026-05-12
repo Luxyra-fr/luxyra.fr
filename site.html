@@ -3090,6 +3090,18 @@ async function submitWithStripe(){
     return;
   }
   
+  // FIX 2026-05-12 : GARDE-FOU ANTI-LUXYRA
+  // Si le salon a Connect configuré, on REFUSE de tomber sur Path B
+  // (rdv-charge-acompte / rdv-empreinte-create encaissent sur le compte Luxyra).
+  // Soit Path A a fonctionné (return ci-dessus), soit le salon doit corriger
+  // sa config (passer en mode 'aucun' tant que Connect pas opérationnel,
+  // ou rester en empreinte mais on bloque le paiement online).
+  if(SALON.connectId){
+    showAlert("Le paiement en ligne pour ce salon n'est pas opérationnel pour ce mode. Le salon vous demandera le règlement sur place.","warning");
+    // Bascule en flow "aucun paiement online" → crée le RDV sans acompte
+    if(typeof submitBooking==="function"){ submitBooking(); }
+    return;
+  }
   // Fallback: no Connect → use card token simulation (test mode)
   // Mode caution : 'acompte' (par défaut, débit immédiat) ou 'empreinte' (pré-autorisation sans débit)
   var modeCaution = (SITE_CFG && SITE_CFG.modeCaution) || 'acompte';
