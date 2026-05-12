@@ -5931,20 +5931,24 @@ function setStyHrs(ti,dow,key,val){
   if(!T[ti].hrs[dow])T[ti].hrs[dow]={o:"09:00",c:"18:00"};
   var k=key===0?"o":"c";
   T[ti].hrs[dow][k]=val;
-  if(typeof saveCollaborateurs==="function")saveCollaborateurs();
+  // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
+  if(typeof toast==="function") toast("✓ Horaire enregistré","success");
 }
 function setStyDayOff(ti,dow){
   if(!T[ti].hrs)T[ti].hrs={};
   T[ti].hrs[dow]=null;
-  // FIX 2026-05-11 : le toggle "jour OFF" ne sauvegardait pas → modif perdue au reload
-  if(typeof saveCollaborateurs==="function") saveCollaborateurs();
+  // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
+  if(typeof toast==="function") toast("✓ Jour de repos enregistré","success");
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function setStyDayOn(ti,dow){
   if(!T[ti].hrs)T[ti].hrs={};
   T[ti].hrs[dow]={o:"09:00",c:"18:00"};
-  // FIX 2026-05-11 : le toggle "activer jour" ne sauvegardait pas → modif perdue au reload
-  if(typeof saveCollaborateurs==="function") saveCollaborateurs();
+  // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
+  if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
+  if(typeof toast==="function") toast("✓ Jour activé","success");
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function addExceptFermeture(){
@@ -11305,9 +11309,10 @@ function rSettings(){
       h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
       if(st2.img)h+='<img src="'+st2.img+'" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:3px solid '+st2.c+'">';
       else h+='<div style="width:56px;height:56px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">'+st2.i+'</div>';
-      h+='<div style="flex:1"><input value="'+st2.n+'" style="font-size:16px;font-weight:800;width:100%" onchange="T['+ti+'].n=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()">';
+      // FIX 2026-05-12 : updates ciblés (nom/couleur) au lieu de bulk save pour éviter écrasement multi-device
+      h+='<div style="flex:1"><input value="'+st2.n+'" style="font-size:16px;font-weight:800;width:100%" onchange="T['+ti+'].n=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{nom:T['+ti+'].n})">';
       h+='<div style="display:flex;gap:8px;margin-top:4px;align-items:center">';
-      h+='<input type="color" value="'+st2.c+'" style="width:32px;height:24px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="T['+ti+'].c=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()">';
+      h+='<input type="color" value="'+st2.c+'" style="width:32px;height:24px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="T['+ti+'].c=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{couleur:T['+ti+'].c})">';
       h+='<label class="btn bs" style="font-size:11px;cursor:pointer">\ud83d\udcf7 Photo<input type="file" accept="image/*" style="display:none" onchange="loadStylistImg('+ti+',this)"></label>';
       if(st2.img)h+='<button class="btn bs" style="font-size:11px;color:var(--red)" onclick="clearStyImg('+ti+')">Suppr.</button>';
       h+='</div>';
@@ -11339,14 +11344,15 @@ function rSettings(){
       var stPause=st2.pause||null;
       h+='<div style="font-weight:700;font-size:13px;margin-top:12px;margin-bottom:6px">\u2615 Pause quotidienne</div>';
       h+='<div style="display:flex;align-items:center;gap:8px;font-size:12px">';
+      // FIX 2026-05-12 : updates cibl\u00e9s (pause) au lieu de bulk save
       if(stPause){
-        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.o=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()">';
+        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.o=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:T['+ti+'].pause})">';
         h+='<span style="color:var(--text3)">\u00e0</span>';
-        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.c=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()">';
-        h+='<button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="delete T['+ti+'].pause;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();go(\'settings\')">Supprimer</button>';
+        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.c=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:T['+ti+'].pause})">';
+        h+='<button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="delete T['+ti+'].pause;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:null});go(\'settings\')">Supprimer</button>';
       }else{
         h+='<span style="color:var(--text3);font-style:italic;flex:1">Aucune pause d\u00e9finie</span>';
-        h+='<button class="btn bs" style="font-size:10px" onclick="T['+ti+'].pause={o:\'12:00\',c:\'13:00\'};if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();go(\'settings\')">+ Ajouter</button>';
+        h+='<button class="btn bs" style="font-size:10px" onclick="T['+ti+'].pause={o:\'12:00\',c:\'13:00\'};if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:T['+ti+'].pause});go(\'settings\')">+ Ajouter</button>';
       }
       h+='</div>';
       // Absences for this stylist - filtre les ouvertures/fermetures exceptionnelles passées

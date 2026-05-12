@@ -2179,6 +2179,21 @@ async function clearCollabPhoto(collabId) {
   await _sb.from("collaborateurs").update({ img: "" }).eq("id", collabId);
 }
 
+// FIX 2026-05-12 : update CIBLÉ d'un seul collab pour éviter le pattern
+// "le bulk save de saveCollaborateurs écrase les autres collabs avec
+// la mémoire locale stale". Quand l'utilisateur modifie un horaire/pause
+// d'un seul collab, on ne touche QUE ce collab en DB.
+async function saveCollabPartial(collabIdx, fields) {
+  if (!_isOnline || !_salonId) return;
+  if (typeof collabIdx !== "number" || !T[collabIdx]) return;
+  var c = T[collabIdx];
+  if (!c.id || typeof fields !== "object") return;
+  try {
+    await _sb.from("collaborateurs").update(fields).eq("id", c.id);
+  } catch (e) { console.warn("saveCollabPartial:", e); }
+}
+window.saveCollabPartial = saveCollabPartial;
+
 // Supprimer un client
 async function deleteClient(clientId) {
   if (!_isOnline || !_salonId) return;
