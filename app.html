@@ -23228,7 +23228,31 @@ function showCaisse(){
       h+='</div></div>';
     }else{
       // Total is 0 or fully paid → validate button
-      h+='<div style="padding:14px"><button onclick="finalizePay(\'S\u00e9ance abonnement\')" style="width:100%;padding:16px;font-size:16px;font-weight:800;border:none;border-radius:12px;background:linear-gradient(135deg,#2d9a5e,#1b7a3e);color:#fff;cursor:pointer">\u2705 Valider le ticket \u00e0 0,00 \u20ac</button></div>';
+      // FIX 2026-05-12 : r\u00e9cap final avant encaissement d\u00e9finitif
+      // Tant que ce bouton n'est pas cliqu\u00e9, RIEN n'est en compta \u2014 l'op\u00e9ratrice
+      // peut encore Annuler / modifier (utile si CB ne passe pas apr\u00e8s validation modale).
+      var _hasMulti = _tk.payments && _tk.payments.length > 0;
+      var _btnLabel = _hasMulti ? "\u2705 Encaisser d\u00e9finitivement le ticket" : "\u2705 Valider le ticket \u00e0 0,00 \u20ac";
+      var _btnAction = _hasMulti ? "finalizePay('done')" : "finalizePay('S\u00e9ance abonnement')";
+      h+='<div style="padding:14px">';
+      // R\u00e9cap ventilation + rendu monnaie avant validation finale
+      if(_hasMulti){
+        h+='<div style="background:rgba(76,175,80,.06);border:1px solid rgba(76,175,80,.25);border-radius:10px;padding:12px;margin-bottom:12px">';
+        h+='<div style="font-size:11px;color:#7fc984;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:700">R\u00e9cap avant encaissement</div>';
+        _tk.payments.forEach(function(p){
+          h+='<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0;color:#fff"><span>'+p.method+'</span><span style="font-weight:700">'+(Number(p.amount)||0).toFixed(2)+' \u20ac</span></div>';
+          if(p.given && p.rendu && p.rendu > 0.001){
+            h+='<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0 1px 14px;color:rgba(255,255,255,.5);font-style:italic"><span>Donn\u00e9 par le client</span><span>'+(Number(p.given)||0).toFixed(2)+' \u20ac</span></div>';
+            h+='<div style="display:flex;justify-content:space-between;font-size:14px;padding:4px 0;color:#ffd76a;font-weight:800;border-top:1px dashed rgba(255,215,106,.2);margin-top:4px;padding-top:6px"><span>\u2192 \u00c0 rendre au client</span><span>'+(Number(p.rendu)||0).toFixed(2)+' \u20ac</span></div>';
+          }
+        });
+        h+='</div>';
+      }
+      h+='<button onclick="'+_btnAction+'" style="width:100%;padding:18px;font-size:16px;font-weight:800;border:none;border-radius:12px;background:linear-gradient(135deg,#2d9a5e,#1b7a3e);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(45,154,94,.3)">'+_btnLabel+'</button>';
+      if(_hasMulti){
+        h+='<div style="text-align:center;font-size:11px;color:rgba(255,255,255,.4);margin-top:8px;font-style:italic">Le ticket sera enregistr\u00e9 et imprim\u00e9 apr\u00e8s ce clic</div>';
+      }
+      h+='</div>';
     }
 
     // Bottom
@@ -24464,10 +24488,14 @@ function showPayInput(method){
   }
 
   // Boutons
+  // FIX 2026-05-12 : libellé clair — ce bouton AJOUTE le paiement à la ventilation
+  // mais N'ENCAISSE PAS encore. L'encaissement définitif se fait au step 5 quand
+  // tout est payé via le bouton "Encaisser le ticket".
   htm += '<div style="display:flex;gap:8px;margin-top:14px">';
   htm += '<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="_tk.step=5;showCaisse()">Annuler</button>';
-  htm += '<button class="btn bg" style="flex:2" onclick="applyPayAmount(\''+method.replace(/'/g,"\\'")+'\')">✓ Valider le paiement</button>';
+  htm += '<button class="btn bg" style="flex:2" onclick="applyPayAmount(\''+method.replace(/'/g,"\\'")+'\')">→ Ajouter ce paiement</button>';
   htm += '</div>';
+  htm += '<div style="text-align:center;font-size:11px;color:rgba(255,255,255,.4);margin-top:10px;font-style:italic">Le ticket sera encaissé définitivement après la dernière étape</div>';
   htm += '</div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="event.target===this&&(function(){_tk.step=5;showCaisse();})()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 
@@ -24525,15 +24553,13 @@ function applyPayAmount(method){
   _tk.payments.push(payObj);
   _tk.paid = (_tk.paid||0) + amount;
 
-  // Si reste à payer → retour au step 5 pour saisir le prochain paiement
-  var nouvelleResteDu = total - _tk.paid - acompteDeduct;
-  if(nouvelleResteDu > 0.01){
-    _tk.step=5;
-    showCaisse();
-  } else {
-    // Tout est payé → finalise le ticket
-    finalizePay("done");
-  }
+  // FIX 2026-05-12 : on ne finalise PLUS automatiquement quand reste=0.
+  // L'utilisateur doit cliquer explicitement sur "Encaisser le ticket" au step 5
+  // (récap + ventilation + rendu monnaie visible) pour valider définitivement.
+  // Ça permet : (1) revérifier les montants, (2) annuler si CB ne passe pas après coup,
+  // (3) voir le rendu monnaie avant de prendre l'espèce dans le tiroir-caisse.
+  _tk.step=5;
+  showCaisse();
 }
 
 function finalizePay(method){
