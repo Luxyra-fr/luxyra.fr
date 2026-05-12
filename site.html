@@ -3039,7 +3039,12 @@ async function submitWithStripe(){
     var rdvId=rdvRes.data[0].id;
     
     // 2. Create Connect Checkout Session via worker
-    var btn=event.target;btn.textContent="Redirection vers le paiement...";btn.disabled=true;
+    // FIX 2026-05-12 : event.target n'est plus d\u00e9fini globalement dans modern Chrome/Edge
+    // \u2192 on r\u00e9cup\u00e8re le bouton via querySelector (fallback safe si non trouv\u00e9).
+    var btn = document.querySelector('#bookingFlow button.btn-gold[onclick*="submitWithStripe"]')
+              || (typeof event!=="undefined" && event && event.target)
+              || null;
+    if(btn){ btn.textContent="Redirection vers le paiement..."; btn.disabled=true; }
     try{
       var res=await fetch("/api/stripe/connect-payment",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -3057,13 +3062,13 @@ async function submitWithStripe(){
         window.location.href=data.url;
       }else{
         showAlert("Erreur paiement: "+(data.error||"Impossible de cr\u00e9er la session de paiement"),"error");
-        btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;
+        if(btn){btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;}
         // Cleanup: delete the pending RDV
         sb.from("rdv_online").delete().eq("id",rdvId);
       }
     }catch(e){
       showAlert("Erreur de connexion","error");
-      btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;
+      if(btn){btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;}
       sb.from("rdv_online").delete().eq("id",rdvId);
     }
     return;
