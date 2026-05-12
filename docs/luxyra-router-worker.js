@@ -52,6 +52,8 @@ export default {
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
       if (url.pathname === "/api/stripe/connect-dashboard" && request.method === "POST") return await handleConnectDashboard(request, env);
       if (url.pathname === "/api/stripe/connect-payment" && request.method === "POST") return await handleConnectPayment(request, env);
+      // FIX 2026-05-12 : Path A empreinte (post-Checkout, stocke le PI ID dans rdv_online)
+      if (url.pathname === "/api/stripe/empreinte-finalize" && request.method === "POST") return await handleEmpreinteFinalize(request, env);
       // FIX 2026-05-12 : Path A pour RDV sur mesure (acompte direct au salon)
       if (url.pathname === "/api/rdv-demande/connect-pay" && request.method === "POST") return await handleRdvDemandeConnectPay(request, env);
       if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
@@ -737,9 +739,11 @@ async function handleConnectDashboard(request, env) {
 
 // Create payment on connected account (acompte or product purchase)
 // 0% Luxyra commission — only Stripe fees apply
+// FIX 2026-05-12 : supporte capture_method=manual pour empreinte bancaire
+// (pré-autorisation sans débit, capture/cancel ultérieur via Worker)
 async function handleConnectPayment(request, env) {
   try {
-    const { salon_id, amount, description, customer_email, customer_name, metadata } = await request.json();
+    const { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await request.json();
     if (!salon_id || !amount) return jsonResponse({ error: "salon_id et amount requis" }, 400);
 
     const salon = await supabaseGet(env, salon_id);
@@ -749,8 +753,8 @@ async function handleConnectPayment(request, env) {
     const account = await stripeAPI(env, `accounts/${salon.stripe_connect_id}`, null, "GET");
     if (!account?.charges_enabled) return jsonResponse({ error: "Le compte de paiement du salon n'est pas encore actif" }, 400);
 
-    // Create Checkout Session on connected account — 0% platform fee
-    const session = await stripeAPI(env, "checkout/sessions", {
+    // Create Checkout Session — 0% platform fee, 100% transfert au salon
+    const sessionParams = {
       mode: "payment",
       "line_items[0][price_data][currency]": "eur",
       "line_items[0][price_data][product_data][name]": description || "Paiement",
@@ -766,11 +770,66 @@ async function handleConnectPayment(request, env) {
       "payment_intent_data[description]": description || "Paiement en ligne",
       // Transfer all money to connected account (0% Luxyra fee)
       "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id,
-    });
+    };
+    // Empreinte : capture manuelle (pré-autorisation, débit différé)
+    if (capture_method === "manual") {
+      sessionParams["payment_intent_data[capture_method]"] = "manual";
+      sessionParams["metadata[subtype]"] = "empreinte";
+    }
+    const session = await stripeAPI(env, "checkout/sessions", sessionParams);
 
     if (!session?.url) return jsonResponse({ error: "Erreur paiement: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Connect payment error: " + e.message }, 500); }
+}
+
+// ============================================================
+// FIX 2026-05-12 : EMPREINTE bancaire Path A Connect
+// ============================================================
+// Après Stripe Checkout (capture_method=manual + transfer_data), le client
+// est de retour sur site.html. Cet endpoint fetch la session pour obtenir
+// le payment_intent_id et le stocker dans rdv_online.empreinte_payment_intent_id.
+// Ensuite, les edge functions existantes rdv-empreinte-capture / rdv-empreinte-release
+// peuvent capturer ou libérer le PI normalement (le destination charge est déjà
+// configuré sur le PI, donc le transfert au salon se fait automatiquement à la capture).
+async function handleEmpreinteFinalize(request, env) {
+  try {
+    const { session_id, rdv_id } = await request.json();
+    if (!session_id || !rdv_id) return jsonResponse({ error: "session_id et rdv_id requis" }, 400);
+
+    // 1) Fetch Stripe session — source of truth
+    const session = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
+    // Pour empreinte (manual capture), payment_status="paid" = client a autorisé (PI en requires_capture)
+    if (session.payment_status !== "paid") return jsonResponse({ error: "Autorisation non confirmée: " + session.payment_status }, 402);
+    // Anti-tampering : vérifier que le rdv_id de la metadata Stripe correspond
+    if (session.metadata?.rdv_id && session.metadata.rdv_id !== String(rdv_id)) {
+      return jsonResponse({ error: "rdv_id mismatch (anti-tampering)" }, 403);
+    }
+    const piId = session.payment_intent;
+    if (!piId) return jsonResponse({ error: "PaymentIntent introuvable dans la session" }, 500);
+
+    // 2) Update rdv_online avec le PI ID + statut empreinte
+    const sbUrl = CONFIG.SUPABASE_URL;
+    const upRes = await fetch(`${sbUrl}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, {
+      method: "PATCH",
+      headers: { ..._sbHeaders(env), "Prefer": "return=minimal" },
+      body: JSON.stringify({
+        status: "confirmed",
+        empreinte_payment_intent_id: piId,
+        empreinte_status: "authorized"
+      })
+    });
+    if (!upRes.ok) {
+      const errTxt = await upRes.text();
+      console.error("empreinte-finalize UPDATE failed:", errTxt);
+      return jsonResponse({ error: "Update rdv_online échoué: " + errTxt }, 500);
+    }
+    return jsonResponse({ ok: true, payment_intent_id: piId });
+  } catch (e) {
+    console.error("empreinte-finalize error:", e);
+    return jsonResponse({ error: "Finalize error: " + e.message }, 500);
+  }
 }
 
 // ============================================================
