@@ -492,6 +492,10 @@ async function loadOlderClotures(yearMonth) {
     var toAdd = newOnes.filter(function(c){return !existingIds.has(c.id);});
     if (toAdd.length) {
       window.CLOTURES = (window.CLOTURES || []).concat(toAdd).sort(function(a,b){return (a.num||0) - (b.num||0);});
+      // FIX 2026-05-12 : sync LOCKED_DAYS aussi pour ces nouvelles clôtures
+      if (!window.LOCKED_DAYS) window.LOCKED_DAYS = {};
+      toAdd.forEach(function(c){ if (c && c.date) window.LOCKED_DAYS[c.date] = true; });
+      try { localStorage.setItem("_cp_locked", JSON.stringify(window.LOCKED_DAYS)); } catch(_){}
       console.log("[loadOlderClotures] +"+toAdd.length+" clôtures pour "+yearMonth);
     }
     return { ok: true, count: toAdd.length };
@@ -1106,6 +1110,13 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   if (clotRes.data) clotRes.data.reverse();
   if (clotRes.data) {
     window.CLOTURES = clotRes.data.map(_mapClotureRow);
+    // FIX 2026-05-12 : reconstitue LOCKED_DAYS depuis CLOTURES après chaque load DB.
+    // Avant ce fix, si Amandine ouvrait l'app sur un autre appareil (ou cache vidé),
+    // LOCKED_DAYS était vide → le check de blocage dans showCaisse()/mD() était bypass
+    // → on pouvait encaisser après cloture Z. Maintenant la source de vérité c'est DB.
+    if (!window.LOCKED_DAYS) window.LOCKED_DAYS = {};
+    window.CLOTURES.forEach(function(c){ if (c && c.date) window.LOCKED_DAYS[c.date] = true; });
+    try { localStorage.setItem("_cp_locked", JSON.stringify(window.LOCKED_DAYS)); } catch(_){}
   }
   } catch(e) { console.warn("[loadSalonData] clotures skipped", e); }
 
