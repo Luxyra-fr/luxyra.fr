@@ -12445,6 +12445,17 @@ function rSettings(){
     h+='<span style="font-size:12px;color:var(--text3)">jours</span>';
     h+='<button class="btn bs" style="padding:10px 14px;font-size:12px" onclick="saveValiditeDevis(parseInt(document.getElementById(\'customValidite\').value)||30)">Personnalis\u00e9</button>';
     h+='</div></div>';
+
+    // === FIX 2026-05-13 : Carte NF525 (archivage l\u00e9gal 6 ans) ===
+    h+='<div class="card" style="margin-top:10px;background:linear-gradient(135deg,rgba(76,175,80,.06),rgba(255,255,255,.02));border:1px solid rgba(76,175,80,.25)">';
+    h+='<div class="ct">\ud83d\udd12 Conformit\u00e9 NF525</div>';
+    h+='<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px">Votre caisse est <strong style="color:#7fc97f">100% conforme NF525</strong> (cha\u00eene cryptographique SHA-256, inalt\u00e9rabilit\u00e9, conservation 6 ans). T\u00e9l\u00e9chargez votre attestation et vos archives \u00e0 tout moment.</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    h+='<button class="btn bs" style="padding:14px;font-size:13px;background:rgba(76,175,80,.1);color:#7fc97f;border:1px solid rgba(76,175,80,.3);font-weight:700" onclick="lxDownloadAttestationNF525()">\ud83d\udccb Mon attestation</button>';
+    h+='<button class="btn bs" style="padding:14px;font-size:13px;background:rgba(76,175,80,.1);color:#7fc97f;border:1px solid rgba(76,175,80,.3);font-weight:700" onclick="lxDownloadArchiveNF525()">\ud83d\udce5 Archive du mois</button>';
+    h+='</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5">\ud83d\udca1 <strong>Recommandation</strong> : t\u00e9l\u00e9chargez l\'archive une fois par mois et sauvegardez-la sur Google Drive, Dropbox ou un disque dur. Garantit la conservation ind\u00e9pendante en cas d\'audit fiscal.</div>';
+    h+='</div>';
   }
 
   return h;
@@ -27785,6 +27796,90 @@ async function sha256Async(str){
 }
 function simpleHash(str){return sha256Sync(str);}
 // _lastTicketHash already initialized above
+// ============================================================
+// FIX 2026-05-13 : Téléchargements NF525 (attestation + archives)
+// ============================================================
+
+// Génère et télécharge l'attestation NF525 pré-remplie (HTML imprimable)
+function lxDownloadAttestationNF525(){
+  var salon = window.SALON_CONFIG || {};
+  var nomSalon = salon.nom || "Mon Salon";
+  var siret = salon.siret || "SIRET non renseigné";
+  var adresse = (salon.adresse || "") + ", " + (salon.cp || "") + " " + (salon.ville || "");
+  var aujourdhui = new Date().toLocaleDateString("fr-FR", {year:"numeric", month:"long", day:"numeric"});
+  var htm = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Attestation NF525 - '+nomSalon+'</title><style>@page{margin:2cm}body{font-family:Georgia,serif;max-width:800px;margin:auto;padding:30px;color:#222;line-height:1.5}h1{text-align:center;color:#1a1a1a;font-size:22px;margin-bottom:6px}.sub{text-align:center;font-size:13px;color:#666;margin-bottom:30px;font-style:italic}h2{font-size:15px;margin-top:24px;color:#c8a84e;border-bottom:1px solid #e0e0e0;padding-bottom:6px}.info-block{background:#f9f9f9;border-left:3px solid #c8a84e;padding:12px 16px;margin:14px 0;font-size:13px}.field{margin:6px 0}.field strong{display:inline-block;width:180px;color:#444}table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px}td{padding:8px 10px;border:1px solid #ddd}td:first-child{background:#f5f5f5;font-weight:600;width:40%}.signature{margin-top:50px;display:flex;justify-content:space-between;gap:40px}.sig-block{flex:1;border-top:1px solid #999;padding-top:8px;font-size:11px;color:#666;text-align:center}.warn{background:#fef9e7;border-left:3px solid #f0c020;padding:10px 14px;font-size:11px;color:#7a5c00;margin:14px 0}@media print{body{padding:15px}}</style></head><body>';
+  htm += '<h1>ATTESTATION INDIVIDUELLE DE CONFORMITÉ NF525</h1>';
+  htm += '<div class="sub">Application loi n°2015-1785 du 29 décembre 2015 article 88 — Article 286-I-3°bis CGI</div>';
+  htm += '<h2>Éditeur certifiant</h2><div class="info-block">';
+  htm += '<div class="field"><strong>Dénomination :</strong> Luxyra</div>';
+  htm += '<div class="field"><strong>Email :</strong> contact@luxyra.fr</div>';
+  htm += '<div class="field"><strong>Site web :</strong> https://luxyra.fr</div>';
+  htm += '<div class="field"><strong>Logiciel :</strong> Luxyra — Caisse pour salons</div>';
+  htm += '<div class="field"><strong>Version :</strong> 1.0 (NF525 actif depuis le 11 mai 2026)</div>';
+  htm += '</div>';
+  htm += '<h2>Salon assujetti</h2><div class="info-block">';
+  htm += '<div class="field"><strong>Raison sociale :</strong> '+escapeHtml(nomSalon)+'</div>';
+  htm += '<div class="field"><strong>SIRET :</strong> '+escapeHtml(siret)+'</div>';
+  htm += '<div class="field"><strong>Adresse :</strong> '+escapeHtml(adresse.trim().replace(/^,/,'').trim())+'</div>';
+  htm += '</div>';
+  htm += '<h2>Déclaration de conformité</h2>';
+  htm += '<p style="font-size:13px">Je soussigné(e), <strong>représentant légal de Luxyra</strong>, atteste que le logiciel de caisse Luxyra fourni à <strong>'+escapeHtml(nomSalon)+'</strong> satisfait aux conditions d\'inaltérabilité, de sécurisation, de conservation et d\'archivage des données de l\'article 286-I-3°bis du CGI et BOI-TVA-DECLA-30-10-30.</p>';
+  htm += '<table>';
+  htm += '<tr><td>Inaltérabilité</td><td>✅ Triggers PostgreSQL <code>tickets_nf525_protect</code> + <code>appointments_nf525_protect</code> : UPDATE et DELETE bloqués sur tickets encaissés (montants, dates, items, hash, mode_paiement). Annulation possible uniquement par contre-ticket.</td></tr>';
+  htm += '<tr><td>Sécurisation</td><td>✅ Chaînage cryptographique <strong>SHA-256</strong> natif PostgreSQL (extensions.digest). Chaque ticket référence le hash du précédent.</td></tr>';
+  htm += '<tr><td>Conservation 6 ans</td><td>✅ Stockage Supabase (hébergement France eu-west-3) + backups quotidiens hébergeur + export utilisateur à la demande</td></tr>';
+  htm += '<tr><td>Archivage</td><td>✅ Export JSON exploitable + récapitulatifs CSV téléchargeables depuis l\'app</td></tr>';
+  htm += '</table>';
+  htm += '<div class="warn">⚠ Le salon assujetti doit conserver cette attestation pendant 6 ans avec ses pièces comptables. En cas de contrôle, il doit pouvoir la présenter à l\'administration fiscale (article L102B du LPF).</div>';
+  htm += '<div class="signature">';
+  htm += '<div class="sig-block"><div style="height:60px"></div><strong>Pour Luxyra (éditeur)</strong><br>Cachet et signature</div>';
+  htm += '<div class="sig-block"><div style="height:60px"></div><strong>Pour '+escapeHtml(nomSalon)+'</strong><br>Cachet et signature</div>';
+  htm += '</div>';
+  htm += '<div style="margin-top:30px;text-align:center;font-size:11px;color:#999">Document généré le '+aujourdhui+' • Réf : Luxyra-ATT-NF525-'+(siret||'XXX').replace(/\s/g,'')+'-'+new Date().toISOString().slice(0,10)+'</div>';
+  htm += '</body></html>';
+  var win = window.open("", "_blank");
+  if(!win){ if(typeof toast==="function") toast("Pop-up bloqué — autorisez les fenêtres","info"); return; }
+  win.document.write(htm);
+  win.document.close();
+  setTimeout(function(){ try{ win.print(); }catch(_){} }, 600);
+}
+window.lxDownloadAttestationNF525 = lxDownloadAttestationNF525;
+
+// Télécharge l'archive NF525 du salon (tickets + clôtures + chaîne hash)
+async function lxDownloadArchiveNF525(){
+  if(typeof toast==="function") toast("Génération de l\'archive en cours…","info");
+  try{
+    var salonId = window._salonId;
+    if(!salonId){ if(typeof toast==="function") toast("Salon non identifié","error"); return; }
+    var resp = await fetch("/api/admin/export-nf525", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ salon_id: salonId })
+    });
+    if(!resp.ok){
+      var err = await resp.json().catch(function(){return {error:"Erreur réseau"};});
+      if(typeof showAlert==="function") showAlert("Erreur export : "+(err.error||"inconnue"),"error");
+      return;
+    }
+    var blob = await resp.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    var siret = (window.SALON_CONFIG && window.SALON_CONFIG.siret) || "salon";
+    a.download = "luxyra-nf525-"+siret.replace(/\s/g,'')+"-"+new Date().toISOString().slice(0,10)+".json";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    if(typeof toast==="function") toast("✓ Archive NF525 téléchargée","success");
+  }catch(e){
+    if(typeof showAlert==="function") showAlert("Erreur : "+e.message,"error");
+  }
+}
+window.lxDownloadArchiveNF525 = lxDownloadArchiveNF525;
+
 function chainTicket(ticket){
   // BUG FIX 2026-05-05 : avant ce fix, on calculait un hash sync (DJB2 fallback)
   // puis on lançait sha256Async() en parallèle qui re-save l'appointment quand
