@@ -1909,12 +1909,17 @@ async function saveCloture(clot) {
     }
   } catch(e) { console.warn("[saveCloture] raw_data build failed", e); }
 
+  // FIX 2026-05-13 : NF525 — la clôture Z DOIT contenir la répartition par mode
+  // de paiement (BOI-CF-COM-10-80-30-10 §80). Le code app.html stocke ces totaux
+  // dans clot.details (cb/esp/chq/bon/vir/aut). On lit clot.perPay en priorité
+  // pour rétrocompatibilité, sinon fallback sur clot.details.
+  var _detailPaiements = clot.perPay || clot.details || {};
   var data = {
     salon_id: _salonId,
     date_cloture: clot.date, num: clot.num,
     total_ca: clot.totalCA, total_ht: clot.totalHT,
     nb_tickets: clot.nbTickets, nb_annulations: clot.nbAnnul,
-    detail_paiements: clot.perPay || {}, detail_collabs: clot.perSty || {},
+    detail_paiements: _detailPaiements, detail_collabs: clot.perSty || {},
     cumul_mois_ca: clot.cumulMoisCA || 0, cumul_mois_tickets: clot.cumulMoisTk || 0,
     cumul_annee_ca: clot.cumulAnCA || 0, cumul_annee_tickets: clot.cumulAnTk || 0,
     hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256",
