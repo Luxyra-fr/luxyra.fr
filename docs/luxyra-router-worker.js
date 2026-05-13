@@ -71,6 +71,8 @@ export default {
       // FIX 2026-05-13 : transparence frais Stripe — pull en temps réel des balance_transactions
       // du compte Stripe Connect du salon. Read-only, authentifié par JWT Supabase.
       if (url.pathname === "/api/stripe/fees" && request.method === "POST") return await handleStripeFees(request, env);
+      // FIX 2026-05-14 : désabonnement RGPD 1-clic depuis lien email
+      if (url.pathname === "/api/unsubscribe" && request.method === "GET") return await handleUnsubscribe(request, env);
       // Endpoints espace client compte.html — bypass RLS via service_role
       // après vérification du session_token JWT (issu de lx-login/lx-signup).
       // Permet de DROP les policies anon USING(true) qui leakaient toutes les
@@ -1263,10 +1265,16 @@ async function handleEmailTicket(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkRateLimit("email_ticket:" + ip, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const body = await request.json();
-  const { clientEmail, clientName, salonName, salonEmail, ticketNum, ticketHtml } = body;
+  const { clientEmail, clientName, salonName, salonEmail, ticketNum, ticketHtml, clientId } = body;
   if (!clientEmail || !ticketNum) return jsonResponse({ error: "clientEmail et ticketNum requis" }, 400);
   if (!ticketHtml) return jsonResponse({ error: "ticketHtml requis" }, 400);
-  const emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.wrapper{max-width:500px;margin:0 auto}.header{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:24px;text-align:center;color:#fff;border-radius:12px 12px 0 0}.header h1{margin:0;font-size:20px;color:#d4a843;letter-spacing:1px}.header p{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.7)}.ticket-container{background:#fff;padding:24px;border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;font-family:'Courier New',monospace;font-size:12px;line-height:1.5;color:#000}.ticket-container table{width:100%;border-collapse:collapse}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 12px 12px;background:#fff}</style></head><body><div class="wrapper"><div class="header"><h1>${salonName||"Votre salon"}</h1><p>Votre ticket de caisse N°${ticketNum}</p></div><div class="ticket-container">${ticketHtml}</div><div class="footer">Envoyé via <strong>Luxyra</strong> — Logiciel de gestion conforme NF525<br>Art. 286-I-3° bis du CGI<br><em style="font-size:10px;color:#bbb">Ce ticket fait office de facture. Conservez-le 6 ans minimum.</em></div></div></body></html>`;
+  // FIX 2026-05-14 : lien désinscription RGPD obligatoire si clientId fourni
+  let unsubLink = "";
+  if (clientId) {
+    try { unsubLink = await buildUnsubscribeUrl(clientId, "email", env); } catch (e) { unsubLink = ""; }
+  }
+  const unsubBlock = unsubLink ? `<div style="margin-top:10px"><a href="${unsubLink}" style="color:#bbb;font-size:10px;text-decoration:underline">Se désinscrire des emails</a></div>` : "";
+  const emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.wrapper{max-width:500px;margin:0 auto}.header{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:24px;text-align:center;color:#fff;border-radius:12px 12px 0 0}.header h1{margin:0;font-size:20px;color:#d4a843;letter-spacing:1px}.header p{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.7)}.ticket-container{background:#fff;padding:24px;border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;font-family:'Courier New',monospace;font-size:12px;line-height:1.5;color:#000}.ticket-container table{width:100%;border-collapse:collapse}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 12px 12px;background:#fff}</style></head><body><div class="wrapper"><div class="header"><h1>${salonName||"Votre salon"}</h1><p>Votre ticket de caisse N°${ticketNum}</p></div><div class="ticket-container">${ticketHtml}</div><div class="footer">Envoyé via <strong>Luxyra</strong> — Logiciel de gestion conforme NF525<br>Art. 286-I-3° bis du CGI<br><em style="font-size:10px;color:#bbb">Ce ticket fait office de facture. Conservez-le 6 ans minimum.</em>${unsubBlock}</div></div></body></html>`;
   const encoder = new TextEncoder();
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket ${salonName} N°${ticketNum}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;color:#000;background:#fff}table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>${ticketHtml}</body></html>`;
   const bytes = encoder.encode(fullHtml);
@@ -2782,6 +2790,125 @@ async function runIntegrityCheckJob(env) {
 // Helper : escape HTML basique pour les emails
 function escapeHtml(s) {
   return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ============================================================
+// UNSUBSCRIBE — Désabonnement RGPD 1-clic via lien email
+// Token HMAC : base64url(clientId|channel|ts).signature
+// Pas de login requis. Met sms_ok ou email_ok à false directement.
+// ============================================================
+async function generateUnsubscribeToken(clientId, channel, env) {
+  // channel : "email" ou "sms" ou "all"
+  const ts = Math.floor(Date.now() / 1000);
+  const payload = `${clientId}|${channel}|${ts}`;
+  const secret = env.STRIPE_WEBHOOK_SECRET || env.SUPABASE_SERVICE_KEY || "luxyra_fallback";
+  const sig = await hmacSignHex(payload, secret);
+  // base64url-safe
+  const b64 = btoa(payload).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return `${b64}.${sig.slice(0, 24)}`;
+}
+
+function buildUnsubscribeUrl(clientId, channel, env) {
+  // Asynchrone réellement, mais on retourne une Promise<string>
+  return generateUnsubscribeToken(clientId, channel, env).then(token =>
+    `https://luxyra.fr/api/unsubscribe?token=${encodeURIComponent(token)}`
+  );
+}
+
+async function handleUnsubscribe(request, env) {
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token");
+  if (!token) return htmlResponse(unsubscribePage("error", "Lien invalide ou expiré."), 400);
+
+  // Vérifie token
+  const parts = token.split(".");
+  if (parts.length !== 2) return htmlResponse(unsubscribePage("error", "Lien malformé."), 400);
+  let payload;
+  try {
+    const b64 = parts[0].replace(/-/g, '+').replace(/_/g, '/');
+    payload = atob(b64 + "===".slice(0, (4 - b64.length % 4) % 4));
+  } catch (e) {
+    return htmlResponse(unsubscribePage("error", "Lien corrompu."), 400);
+  }
+  const secret = env.STRIPE_WEBHOOK_SECRET || env.SUPABASE_SERVICE_KEY || "luxyra_fallback";
+  const expectedSig = (await hmacSignHex(payload, secret)).slice(0, 24);
+  if (!constantTimeEquals(expectedSig, parts[1])) {
+    return htmlResponse(unsubscribePage("error", "Signature invalide."), 403);
+  }
+
+  const [clientId, channel, ts] = payload.split("|");
+  if (!clientId || !channel) return htmlResponse(unsubscribePage("error", "Données manquantes."), 400);
+
+  // Update DB : passer sms_ok/email_ok à false selon le canal
+  const sbKey = env.SUPABASE_SERVICE_KEY;
+  if (!sbKey) return htmlResponse(unsubscribePage("error", "Configuration serveur incorrecte."), 500);
+  const supabaseUrl = env.SUPABASE_URL || "https://kxdgjtvrkwugbifgppai.supabase.co";
+
+  const updates = {};
+  if (channel === "email" || channel === "all") updates.email_ok = false;
+  if (channel === "sms" || channel === "all") updates.sms_ok = false;
+  if (Object.keys(updates).length === 0) {
+    return htmlResponse(unsubscribePage("error", "Canal inconnu."), 400);
+  }
+
+  const resp = await fetch(`${supabaseUrl}/rest/v1/clients?id=eq.${clientId}`, {
+    method: "PATCH",
+    headers: {
+      apikey: sbKey,
+      Authorization: "Bearer " + sbKey,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(updates),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    console.error("[unsubscribe] DB error:", resp.status, t);
+    return htmlResponse(unsubscribePage("error", "Erreur serveur. Veuillez réessayer ou contacter support@luxyra.fr"), 500);
+  }
+  const data = await resp.json();
+  if (!Array.isArray(data) || data.length === 0) {
+    return htmlResponse(unsubscribePage("error", "Client introuvable."), 404);
+  }
+
+  // Trace audit
+  try {
+    const c = data[0];
+    await fetch(`${supabaseUrl}/rest/v1/audit_log`, {
+      method: "POST",
+      headers: { apikey: sbKey, Authorization: "Bearer " + sbKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        salon_id: c.salon_id,
+        action: "RGPD_UNSUBSCRIBE",
+        details: `Client ${c.prenom||""} ${c.nom||""} (${c.email||c.telephone||"?"}) désabonné canal "${channel}" via lien email`,
+        timestamp_action: new Date().toISOString(),
+        operator_name: "Auto (lien email RGPD)",
+      }),
+    });
+  } catch (e) { console.warn("[unsubscribe] audit log fail:", e?.message); }
+
+  return htmlResponse(unsubscribePage("ok", channel === "email" ? "Vous êtes désabonné des emails." : channel === "sms" ? "Vous êtes désabonné des SMS." : "Vous êtes désabonné de toutes les communications."));
+}
+
+function unsubscribePage(status, message) {
+  const color = status === "ok" ? "#2d9a5e" : "#c43838";
+  const icon = status === "ok" ? "✅" : "❌";
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Désinscription — Luxyra</title>
+<style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#0a0a0a;color:#f5f0e8;margin:0;padding:40px 20px;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#fff;color:#1a1a1a;max-width:480px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.3)}
+.head{background:#0a0a0a;color:#c8a84e;padding:20px;text-align:center;letter-spacing:3px;font-weight:800;font-family:Georgia,serif;font-size:22px}
+.body{padding:32px 28px;text-align:center}.icon{font-size:48px;margin-bottom:12px}.title{font-size:20px;font-weight:800;color:${color};margin-bottom:8px}
+.msg{color:#555;font-size:14px;line-height:1.6;margin-bottom:24px}.note{font-size:12px;color:#888;padding-top:18px;border-top:1px solid #eee;line-height:1.6}
+.note a{color:#c8a84e;text-decoration:none}</style></head><body>
+<div class="card"><div class="head">LUXYRA</div><div class="body">
+<div class="icon">${icon}</div><div class="title">${status === "ok" ? "Désinscription confirmée" : "Erreur"}</div>
+<div class="msg">${escapeHtml(message)}</div>
+<div class="note">Vous pouvez à tout moment reprendre vos notifications en vous connectant à votre espace client <a href="https://luxyra.fr/compte">luxyra.fr/compte</a>.<br><br>Pour toute question : <a href="mailto:support@luxyra.fr">support@luxyra.fr</a></div>
+</div></div></body></html>`;
+}
+
+function htmlResponse(html, status) {
+  return new Response(html, { status: status || 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 // ============================================================
