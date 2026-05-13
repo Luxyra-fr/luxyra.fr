@@ -1,4 +1,4 @@
-// Luxyra SW v15 — push notifications only (no fetch interception)
+// Luxyra SW v16 — push notifications only (no fetch interception) + bump for CSS cache
 self.addEventListener('install', function() { self.skipWaiting(); });
 
 self.addEventListener('activate', function(e) {

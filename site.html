@@ -131,14 +131,23 @@ html{overflow-x:hidden}
 .pratique-line a:hover{text-decoration:underline}
 
 /* === PAGE TARIFS — sticky chips + liste par catégorie === */
-.tarifs-chips{display:flex;gap:8px;overflow-x:auto;padding:10px 4px;position:sticky;top:0;background:linear-gradient(180deg,var(--bg) 80%,rgba(6,6,9,0));backdrop-filter:blur(12px);z-index:30;scrollbar-width:none;-ms-overflow-style:none;margin-bottom:14px;border-bottom:1px solid rgba(200,168,78,.06)}
-.tarifs-chips::-webkit-scrollbar{display:none}
-.tarif-chip{flex-shrink:0;padding:8px 16px;border-radius:50px;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.15);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--f2);transition:all .2s;white-space:nowrap}
+/* FIX 2026-05-13 v2 : bandeau catégories — wrap sur PC (toutes chips visibles), scroll horizontal sticky sur mobile uniquement.
+   !important pour neutraliser tout style en cache. */
+.tarifs-chips{display:flex !important;gap:10px;padding:14px 4px;background:transparent;z-index:30;margin-bottom:18px;border-bottom:1px solid rgba(200,168,78,.08);flex-wrap:wrap !important;justify-content:center;overflow:visible !important;position:static}
+/* Mobile : retour à un scroll horizontal compact + sticky en haut au scroll */
+@media (max-width:768px){
+  .tarifs-chips{flex-wrap:nowrap !important;overflow-x:auto !important;justify-content:flex-start;position:sticky;top:0;background:linear-gradient(180deg,var(--bg) 80%,rgba(6,6,9,0));backdrop-filter:blur(12px);scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;user-select:none;cursor:grab;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 18px,#000 calc(100% - 18px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 18px,#000 calc(100% - 18px),transparent 100%)}
+  .tarifs-chips::-webkit-scrollbar{display:none}
+  .tarifs-chips.dragging{cursor:grabbing}
+  .tarifs-chips.dragging .tarif-chip{pointer-events:none}
+}
+.tarif-chip{flex-shrink:0;padding:9px 18px;border-radius:50px;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.18);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--f2);transition:all .2s;white-space:nowrap;letter-spacing:.3px}
 .tarif-chip:hover{border-color:var(--gold);color:var(--text)}
 .tarif-chip.active{background:rgba(212,168,67,.18);border-color:var(--gold);color:var(--gold)}
 
 .tarifs-list{padding-bottom:60px}
-.tarif-cat{margin-bottom:32px;scroll-margin-top:90px}
+.tarif-cat{margin-bottom:32px;scroll-margin-top:90px;transition:background .6s ease}
+.tarif-cat-flash{background:rgba(200,168,78,.06);border-radius:12px;box-shadow:0 0 0 1px rgba(200,168,78,.18)}
 .tarif-cat-title{font-family:var(--f1);font-size:22px;font-weight:700;color:var(--gold);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid rgba(200,168,78,.15)}
 .tarif-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 6px;border-bottom:1px solid rgba(255,255,255,.04)}
 .tarif-row:last-child{border-bottom:none}
@@ -1784,12 +1793,26 @@ function scrollToTarifCat(cat){
     var offset=(chipsBar?chipsBar.offsetHeight:0)+20;
     var top=el.getBoundingClientRect().top+window.scrollY-offset;
     window.scrollTo({top:top,behavior:'smooth'});
+    // Centre la chip cliquée si le bandeau scrolle (mobile uniquement, PC = wrap)
+    if(chipsBar && chipsBar.scrollWidth > chipsBar.clientWidth){
+      var chip=chipsBar.querySelector('.tarif-chip[data-cat-target="'+cat.replace(/"/g,'\\"')+'"]');
+      if(chip){
+        var target=chip.offsetLeft - chipsBar.clientWidth/2 + chip.offsetWidth/2;
+        chipsBar.scrollTo({left:Math.max(0,target), behavior:'smooth'});
+      }
+    }
+    el.classList.remove('tarif-cat-flash');
+    void el.offsetWidth;
+    el.classList.add('tarif-cat-flash');
+    setTimeout(function(){ el.classList.remove('tarif-cat-flash'); }, 1200);
   }
 }
 function initTarifsScrollSpy(){
   var chips=document.querySelectorAll('.tarif-chip');
   var sections=document.querySelectorAll('.tarif-cat');
   if(!chips.length||!sections.length||!('IntersectionObserver' in window))return;
+  // FIX 2026-05-13 : activer drag + molette horizontale sur le bandeau Tarifs (PC)
+  enableChipsHScroll(document.getElementById('tarifsChips'));
   var io=new IntersectionObserver(function(entries){
     entries.forEach(function(e){
       if(e.isIntersecting){
@@ -1932,16 +1955,76 @@ function renderBookingStep1(){
 
 // Scroll vers une cat\u00e9gorie dans la liste de booking
 function scrollToBookingCat(cat){
-  var el=document.querySelector('.tarif-cat[data-cat="'+cat.replace(/"/g,'\\"')+'"]');
+  var el=document.querySelector('#bookingFlow .tarif-cat[data-cat="'+cat.replace(/"/g,'\\"')+'"]');
   if(!el)return;
-  var y=el.getBoundingClientRect().top+window.pageYOffset-90;
+  var chipsBar=document.getElementById('bookingChips');
+  var offset=(chipsBar?chipsBar.offsetHeight:0)+20;
+  var y=el.getBoundingClientRect().top+window.pageYOffset-offset;
   window.scrollTo({top:y,behavior:'smooth'});
+  // Centre la chip cliqu\u00e9e dans le bandeau (utile uniquement en mobile/scroll horizontal)
+  if(chipsBar && chipsBar.scrollWidth > chipsBar.clientWidth){
+    var chip=chipsBar.querySelector('.tarif-chip[data-cat-target="'+cat.replace(/"/g,'\\"')+'"]');
+    if(chip){
+      var target=chip.offsetLeft - chipsBar.clientWidth/2 + chip.offsetWidth/2;
+      chipsBar.scrollTo({left:Math.max(0,target), behavior:'smooth'});
+    }
+  }
+  // Highlight visuel temporaire de la section cibl\u00e9e (confirme l'action sur grand \u00e9cran)
+  el.classList.remove('tarif-cat-flash');
+  void el.offsetWidth;
+  el.classList.add('tarif-cat-flash');
+  setTimeout(function(){ el.classList.remove('tarif-cat-flash'); }, 1200);
+}
+
+// FIX 2026-05-13 : activation du scroll horizontal souris (drag + molette) sur les
+// bandeaux .tarifs-chips. Sur mobile le touch natif fonctionne, mais sur PC sans
+// scrollbar visible et sans handler, l'utilisateur ne peut pas scroller le bandeau.
+function enableChipsHScroll(el){
+  if(!el || el._hscrollReady) return;
+  el._hscrollReady = true;
+  // 1) Molette : convertit le scroll vertical en horizontal sur le bandeau
+  el.addEventListener('wheel', function(e){
+    if(e.deltaY === 0) return;
+    // si le bandeau peut effectivement scroller horizontalement
+    if(el.scrollWidth <= el.clientWidth) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaY;
+  }, {passive:false});
+  // 2) Drag souris : grab + d\u00e9placer
+  var isDown=false, startX=0, startScroll=0, moved=0;
+  el.addEventListener('mousedown', function(e){
+    if(e.button !== 0) return;
+    isDown=true; moved=0;
+    startX = e.pageX - el.offsetLeft;
+    startScroll = el.scrollLeft;
+  });
+  el.addEventListener('mouseleave', function(){ isDown=false; el.classList.remove('dragging'); });
+  el.addEventListener('mouseup', function(){
+    isDown=false;
+    el.classList.remove('dragging');
+  });
+  el.addEventListener('mousemove', function(e){
+    if(!isDown) return;
+    var x = e.pageX - el.offsetLeft;
+    var walk = x - startX;
+    if(Math.abs(walk) > 4 && !el.classList.contains('dragging')){
+      el.classList.add('dragging'); // bloque pointer-events des chips apr\u00e8s ce seuil
+    }
+    el.scrollLeft = startScroll - walk;
+    moved = Math.abs(walk);
+  });
+  // 3) Emp\u00eacher le clic chip de se d\u00e9clencher si l'utilisateur a dragg\u00e9
+  el.addEventListener('click', function(e){
+    if(moved > 4){ e.preventDefault(); e.stopPropagation(); moved=0; }
+  }, true);
 }
 
 // Met \u00e0 jour la chip active selon la position de scroll
 function initBookingScrollSpy(){
   var chips=document.querySelectorAll('#bookingChips .tarif-chip');
   if(!chips.length)return;
+  // FIX 2026-05-13 : activer drag + molette horizontale sur le bandeau Booking (PC)
+  enableChipsHScroll(document.getElementById('bookingChips'));
   var sections=document.querySelectorAll('#bookingFlow .tarif-cat');
   function update(){
     var top=window.scrollY+150;

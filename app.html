@@ -20717,15 +20717,44 @@ function rStats(){
     return "F";
   }
   // FIX 2026-05-13 v5 : helper pour déterminer le genre d'un item (catGenre service prioritaire)
+  // FIX 2026-05-13 v6 : fallback par NOM pour les tickets importés legacy (sId=null)
+  // permet aux tags catGenre des prestations de s'appliquer rétroactivement
+  // même aux RDV historiques importés depuis LS Coiffure ou autres.
   function _itemGenre(it, fallbackCId){
-    if(it && it.sId){
+    if(!it) return _genreOf(fallbackCId);
+    // 1) priorité : sId direct sur le service
+    if(it.sId){
       var sv=gS(it.sId);
       if(sv && sv.catGenre && (sv.catGenre==='H'||sv.catGenre==='F'||sv.catGenre==='E')) return sv.catGenre;
     }
-    // Pour les forfaits (si itemFId existe), même logique
-    if(it && it.fId && typeof FORFAITS!=="undefined" && Array.isArray(FORFAITS)){
+    // 2) forfait via fId
+    if(it.fId && typeof FORFAITS!=="undefined" && Array.isArray(FORFAITS)){
       var ff=FORFAITS.find(function(f){return f.id===it.fId;});
       if(ff && ff.catGenre && (ff.catGenre==='H'||ff.catGenre==='F'||ff.catGenre==='E')) return ff.catGenre;
+    }
+    // 3) FALLBACK NOM : pour les items importés legacy (sId=null), on cherche par nom
+    if(it.name && typeof SVC!=="undefined" && Array.isArray(SVC)){
+      var nm=String(it.name).trim().toLowerCase();
+      if(nm){
+        var match=SVC.find(function(s){
+          return s && s.name && String(s.name).trim().toLowerCase()===nm && s.catGenre &&
+            (s.catGenre==='H'||s.catGenre==='F'||s.catGenre==='E');
+        });
+        if(match) return match.catGenre;
+        // 4) fallback forfait par nom
+        if(typeof FORFAITS!=="undefined" && Array.isArray(FORFAITS)){
+          var matchF=FORFAITS.find(function(f){
+            return f && f.name && String(f.name).trim().toLowerCase()===nm && f.catGenre &&
+              (f.catGenre==='H'||f.catGenre==='F'||f.catGenre==='E');
+          });
+          if(matchF) return matchF.catGenre;
+        }
+        // 5) FALLBACK HEURISTIQUE REGEX : patterns explicites enfants/hommes
+        // pour rattraper les items legacy "coupe garcon -15ans", "coupe tondeuse" etc.
+        // sans aller chercher le genre du client (qui peut être faux : maman F qui amène fils E).
+        if(/\b(enfant|gar[çc]on|gar[çc]onnet|fille|fillette|ado|bambin|kid|b[ée]b[ée])\b/i.test(nm)) return 'E';
+        if(/\b(homme|barbier|barbe|taille\s*barbe|tondeuse)\b/i.test(nm)) return 'H';
+      }
     }
     return _genreOf(fallbackCId);
   }
