@@ -21451,9 +21451,34 @@ function rStats(){
     });
     var dayAppts=dn.filter(function(a){return a.date===dk2;});
     dayAppts.forEach(function(a){
-      var sv5=gS(a.sId);var phases5=a.aPhases||(sv5?sv5.phases:null);
-      if(!phases5||!phases5.length){totalOccupMin+=(sv5?svcTotalDur(sv5):30);}
-      else{phases5.forEach(function(p){if(p.t==="w")totalOccupMin+=p.d;});}
+      // FIX 2026-05-14 : meilleure estimation de la durée pour les encaissements
+      // directs (fromCaisse=true) qui n'ont ni sId ni aPhases sur le RDV lui-même.
+      // On parcourt items[] pour récupérer la durée vraie de chaque prestation.
+      var aDur = 0;
+      var sv5 = gS(a.sId);
+      var phases5 = a.aPhases || (sv5 ? sv5.phases : null);
+      if(phases5 && phases5.length){
+        // Cas 1 : RDV avec phases (cas standard planning)
+        phases5.forEach(function(p){ if(p.t==="w") aDur += (Number(p.d)||0); });
+      } else if(a.items && a.items.length){
+        // Cas 2 : ticket avec items (encaissement direct multi-prestations)
+        a.items.forEach(function(it){
+          if(it.isSep) return;
+          if(it.isProd) return; // produits = pas d'occupation chaise
+          var itQty = (Number(it.qty)||1);
+          if(it.sId){
+            var sv = gS(it.sId);
+            if(sv){ aDur += svcTotalDur(sv) * itQty; return; }
+          }
+          // Pas de sId trouvé : fallback 30 min par prestation
+          aDur += 30 * itQty;
+        });
+        if(aDur === 0) aDur = 30; // protection : au moins 30 min si tout est produit
+      } else {
+        // Cas 3 : ticket sans items et sans phases (très rare)
+        aDur = sv5 ? svcTotalDur(sv5) : 30;
+      }
+      totalOccupMin += aDur;
     });
   });
   var fillRate=totalAvailMin>0?Math.round(totalOccupMin/totalAvailMin*100):0;
