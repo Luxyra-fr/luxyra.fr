@@ -741,7 +741,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       .order("nom", {ascending: true});
     if (svcRes.data) {
       SVC = svcRes.data.map(function(s) {
-        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false };
+        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null };
       });
       // Recalculer CATS — si aucun service encore, applique les defaultCats
       // du métier configuré au lieu de garder les catégories coiffure
@@ -1144,7 +1144,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     var fRes = await _sb.from("forfaits").select("*").eq("salon_id", _salonId).order("id");
     if (fRes.data && fRes.data.length > 0) {
       FORFAITS = fRes.data.map(function(f) {
-        return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false };
+        return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false, catGenre: f.cat_genre || null };
       });
     }
   } catch(e) { console.warn("[loadSalonData] forfaits skipped", e); }
@@ -2094,6 +2094,8 @@ async function saveServices() {
     var data = {
       salon_id: _salonId, nom: s.n, prix: s.p,
       categorie: s.cat, phases: s.phases || [],
+      // FIX 2026-05-13 : cat_genre = tag H/F/E pour les stats genre précises au niveau item
+      cat_genre: (s.catGenre === 'H' || s.catGenre === 'F' || s.catGenre === 'E') ? s.catGenre : null,
       show_site: s.showSite !== false, book_online: s.bookOnline !== false
     };
     if (typeof s.id === "number" && s.id > 0) {
@@ -2120,6 +2122,8 @@ async function saveForfaits() {
       salon_id: _salonId, nom: f.n, prix: f.p,
       categorie: f.cat, services: f.services || [],
       phases: f.phases || [],
+      // FIX 2026-05-13 : cat_genre pour stats (H/F/E) — utile aux forfaits enfant (ado, junior)
+      cat_genre: (f.catGenre === 'H' || f.catGenre === 'F' || f.catGenre === 'E') ? f.catGenre : null,
       show_site: f.showSite !== false, book_online: f.bookOnline !== false
     };
     if (typeof f.id === "number" && f.id > 0) {
