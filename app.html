@@ -20957,19 +20957,47 @@ function rStats(){
     for(var ti2=0;ti2<3;ti2++){c+="<button style=\"font-size:10px;padding:4px 8px;border:1px solid var(--border);background:"+(mode===tabs2[ti2]?"var(--gold)":"rgba(255,255,255,.15)")+";color:"+(mode===tabs2[ti2]?"#fff":"rgba(255,255,255,.8)")+";cursor:pointer;border-radius:"+(ti2===0?"4px 0 0 4px":ti2===2?"0 4px 4px 0":"0")+"\" onclick=\"window._sc_"+chartKey+"=\'"+tabs2[ti2]+"\';go(\'stats\')\">"+tabL[ti2]+"</button>";}
     c+="</div></div>";
     var cols2=["#f0d060","#7ab8e0","#d4a0d0","#5b9bd5","#2ea043"];
-    for(var si=0;si<items.length;si++){var htVal=(items[si].v*htR);c+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+(items[si].c||cols2[si%5])+"\"></span><span style=\"flex:1\">"+items[si].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htVal.toFixed(2)+" \u20ac <small>HT</small></span><strong>"+items[si].v.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
+    // FIX 2026-05-14 : ajout du % de chaque item dans la l\u00e9gende pour rendre
+    // le camembert plus parlant. Total = somme des items pour calcul du %.
+    var _sumItems = 0; items.forEach(function(it){ _sumItems += (Number(it.v)||0); });
+    for(var si=0;si<items.length;si++){
+      var htVal=(items[si].v*htR);
+      var _pct = _sumItems > 0 ? ((items[si].v / _sumItems) * 100) : 0;
+      c+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+(items[si].c||cols2[si%5])+"\"></span><span style=\"flex:1\">"+items[si].l+" <small style=\"opacity:.55;font-weight:400\">"+_pct.toFixed(1)+"%</small></span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htVal.toFixed(2)+" \u20ac <small>HT</small></span><strong>"+items[si].v.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";
+    }
     if(mode==="eval"){c+=don(items,total,160);}
     else if(mode==="comp"){c+=bars(days,barFn,barColors,barLabels);}
     else{
-      c+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";
+      // FIX 2026-05-14 : detailFn peut maintenant retourner soit un nombre
+      // (mode "scalaire" = total du jour), soit un array de breakdown
+      // [{l:..., v:..., c:...}] qui affiche un d\u00e9tail par segment.
+      // Id\u00e9al pour CA par collab, CA par segment, etc.
+      c+="<div style=\"max-height:240px;overflow-y:auto;margin-top:8px\">";
       for(var di2=days.length-1;di2>=0;di2--){
         var _day=days[di2];
         var dd2=dayData[_day]||{pr:0,pd:0};
-        // Si detailFn fourni, l'utiliser pour calculer la valeur du jour (ex: panier moyen)
-        // Sinon valeur par d\u00e9faut = CA total du jour (prestations + produits)
-        var detTtc = (typeof detailFn === "function") ? detailFn(_day) : (dd2.pr+dd2.pd);
-        var detHt = detTtc * htR;
-        c+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(_day)+"</span><span style=\"font-size:10px;color:var(--text3);margin-right:6px\">"+detHt.toFixed(2)+"\u20ac HT</span><strong>"+detTtc.toFixed(2)+" \u20ac TTC</strong></div>";
+        var detData = (typeof detailFn === "function") ? detailFn(_day) : (dd2.pr+dd2.pd);
+        if(Array.isArray(detData)){
+          // Breakdown : afficher chaque segment avec sa valeur et son %
+          var totalDay = detData.reduce(function(s,x){return s+(Number(x.v)||0);},0);
+          c+="<div style=\"padding:6px 0;border-bottom:1px solid var(--border2);font-size:12px\">";
+          c+="<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:4px\">";
+          c+="<span style=\"font-weight:700\">"+fmt(_day)+"</span>";
+          c+="<span style=\"font-size:11px;color:var(--text3)\">"+totalDay.toFixed(2)+" \u20ac total</span></div>";
+          c+="<div style=\"display:flex;flex-wrap:wrap;gap:8px;font-size:11px\">";
+          detData.forEach(function(x){
+            var vv = Number(x.v)||0;
+            if(vv === 0) return; // masque les segments vides du jour
+            var pct = totalDay > 0 ? (vv/totalDay*100).toFixed(0) : 0;
+            c+="<span style=\"display:inline-flex;align-items:center;gap:4px\"><span style=\"width:8px;height:8px;border-radius:2px;background:"+(x.c||"#888")+"\"></span><span style=\"opacity:.8\">"+x.l+"</span><strong>"+vv.toFixed(2)+" \u20ac</strong><small style=\"opacity:.5\">"+pct+"%</small></span>";
+          });
+          c+="</div></div>";
+        } else {
+          // Mode scalaire (r\u00e9trocompatible)
+          var detTtc = Number(detData)||0;
+          var detHt = detTtc * htR;
+          c+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(_day)+"</span><span style=\"font-size:10px;color:var(--text3);margin-right:6px\">"+detHt.toFixed(2)+"\u20ac HT</span><strong>"+detTtc.toFixed(2)+" \u20ac TTC</strong></div>";
+        }
       }
       c+="</div>";
     }
@@ -21002,12 +21030,28 @@ function rStats(){
   genC+="</div>";
   h+=genC;
   
-  // 3. CA
-  h+=sCard("Chiffre d\u0027affaires",[{l:"Produits",v:caPd,c:"#f0d060"},{l:"Prestations",v:caPr,c:"#7ab8e0"}],caT,"ca",function(d){var dd=dayData[d]||{pd:0,pr:0};return[dd.pd,dd.pr];},["#f0d060","#7ab8e0"],["Produits","Prestations"]);
-  
-  // 4. CA par collaborateur — donut classique
+  // 3. CA — détail jour par jour avec breakdown Produits + Prestations + %
+  var _caDetailFn = function(d){
+    var dd = dayData[d] || {pd:0, pr:0};
+    return [
+      {l:"Produits", v:dd.pd, c:"#f0d060"},
+      {l:"Prestations", v:dd.pr, c:"#7ab8e0"}
+    ];
+  };
+  h+=sCard("Chiffre d\u0027affaires",[{l:"Produits",v:caPd,c:"#f0d060"},{l:"Prestations",v:caPr,c:"#7ab8e0"}],caT,"ca",function(d){var dd=dayData[d]||{pd:0,pr:0};return[dd.pd,dd.pr];},["#f0d060","#7ab8e0"],["Produits","Prestations"],_caDetailFn);
+
+  // 4. CA par collaborateur — donut + détail jour par jour avec breakdown par collab
   var stI=[];T.forEach(function(t){if(stCA[t.id])stI.push({l:t.n,v:stCA[t.id].ca,c:t.c});});
-  h+=sCard("CA par collaborateur",stI,caT,"sty",function(d){var vs3=[];T.forEach(function(t){var v=0;dn.filter(function(a){return a.date===d&&a.stId===t.id;}).forEach(function(a){v+=a.pr*taxR;});vs3.push(v);});return vs3;},T.map(function(t){return t.c;}),T.map(function(t){return t.n;}));
+  var _collabDetailFn = function(d){
+    var arr=[];
+    T.forEach(function(t){
+      var v=0;
+      dn.filter(function(a){return a.date===d&&a.stId===t.id;}).forEach(function(a){v+=a.pr*taxR;});
+      arr.push({l:t.n, v:v, c:t.c});
+    });
+    return arr;
+  };
+  h+=sCard("CA par collaborateur",stI,caT,"sty",function(d){var vs3=[];T.forEach(function(t){var v=0;dn.filter(function(a){return a.date===d&&a.stId===t.id;}).forEach(function(a){v+=a.pr*taxR;});vs3.push(v);});return vs3;},T.map(function(t){return t.c;}),T.map(function(t){return t.n;}),_collabDetailFn);
 
   // 4-bis. Détails par collaborateur (table enrichie : tickets, panier moyen, % CA)
   var collabDetails=[];
