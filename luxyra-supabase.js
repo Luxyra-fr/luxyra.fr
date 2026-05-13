@@ -877,13 +877,18 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(100000);
     if (apRes.data) {
       AP = apRes.data.map(function(a) {
-        // Migration : si client_id est null et le comment contient un marqueur passage-E/H/F,
-        // utiliser la pseudo-clé Luxyra "passage-E/-H/-F" pour que les stats genre fonctionnent
+        // FIX 2026-05-13 : reconstruit cId="passage-X" depuis la colonne pass_type
+        // (préserve le genre choisi au RDV même après un reload — bug de Marie-Hélène
+        // étendu aux passages walk-in).
         var _cId = a.client_id;
-        if (!_cId && a.comment) {
+        if (!_cId && a.pass_type && ["H","F","E"].indexOf(a.pass_type) >= 0) {
+          _cId = "passage-" + a.pass_type;
+        }
+        // Migration legacy : si pas de pass_type mais comment contient marqueur, utiliser
+        else if (!_cId && a.comment) {
           if (a.comment.indexOf("passage-E") >= 0) _cId = "passage-E";
           else if (a.comment.indexOf("passage-H") >= 0) _cId = "passage-H";
-          else if (a.comment.indexOf("passage-F") >= 0) _cId = "passage";
+          else if (a.comment.indexOf("passage-F") >= 0) _cId = "passage-F";
         }
         return {
           id: a.id, cId: _cId, sId: a.service_id, stId: a.collab_id,
@@ -1530,11 +1535,19 @@ async function saveAppointment(appt) {
   var clEmail = null, collabName = null;
   if (appt.cId && typeof gC === "function") { var cl = gC(appt.cId); if (cl && cl.em) clEmail = cl.em; }
   if (appt.stId && typeof gT === "function") { var st = gT(appt.stId); if (st && st.n) collabName = st.n; }
+  // FIX 2026-05-13 : extrait le pass_type si cId est "passage-H/F/E" (preserve le genre choisi au reload)
+  var _passType = null;
+  if (appt.cId && typeof appt.cId === "string" && appt.cId.indexOf("passage-") === 0) {
+    var _suffix = appt.cId.slice("passage-".length);
+    if (_suffix === "H" || _suffix === "F" || _suffix === "E") _passType = _suffix;
+  }
   var data = {
     salon_id: _salonId,
     // FIX 2026-05-12 : appt.cId est désormais toujours un UUID stable (U() utilise crypto.randomUUID).
     // Le filtre legacy length>30 est conservé en safety pour les "passage-F" / "online_xxx" etc.
-    client_id: (appt.cId && appt.cId.indexOf("-") > 0 && appt.cId.length > 30) ? appt.cId : null, service_id: appt.sId, collab_id: appt.stId,
+    client_id: (appt.cId && appt.cId.indexOf("-") > 0 && appt.cId.length > 30) ? appt.cId : null,
+    pass_type: _passType,  // FIX 2026-05-13 : persiste H/F/E pour les passages walk-in
+    service_id: appt.sId, collab_id: appt.stId,
     date_rdv: appt.date, heure: appt.time, prix: appt.pr,
     brut_total: appt.brutTotal || null, remise: appt.remise || 0,
     status: appt.st, mode_paiement: appt.met || "",
