@@ -7454,34 +7454,23 @@ function _catKind(cat){
 window._catKind = _catKind;
 
 function passageName(cId,sId){
-  // FIX 2026-05-13 : prend en compte le type de passage choisi (passage-H/F/E)
-  // AVANT : cId="passage-H" tombait dans gC() qui renvoie null \u2192 "Client de passage" sans genre.
-  // AVANT (bis) : cId="passage" sans suffixe \u2192 fallback cat\u00e9gorie service \u2192 "femme" par d\u00e9faut
-  //               m\u00eame si l'utilisateur avait choisi homme dans le picker (passType perdu lors du save).
-  // Cas 1 : cId typ\u00e9 explicitement \u2192 respecter le choix utilisateur
+  // FIX 2026-05-13 v3 : SIMPLIFI\u00c9 \u2014 le choix utilisateur PRIME et c'est tout.
+  // Dans Luxyra il y a TOUJOURS un choix au booking (client r\u00e9el ou passage H/F/E),
+  // sinon on peut pas passer \u00e0 l'encaissement. Pas besoin de deviner par cat\u00e9gorie service.
+  // Le fallback _catKind a \u00e9t\u00e9 retir\u00e9 (servait uniquement aux RDV legacy LS Coiffure).
   if(cId && typeof cId==="string" && cId.indexOf("passage-")===0){
     var typ = cId.slice("passage-".length);
     if(typ==="H") return "\ud83d\udc68 Client de passage homme";
     if(typ==="E") return "\ud83e\uddd2 Client de passage enfant";
     if(typ==="F") return "\ud83d\udc69 Client de passage femme";
   }
-  // Cas 2 : passage g\u00e9n\u00e9rique sans suffixe \u2192 inf\u00e8re depuis cat\u00e9gorie service
-  // FIX 2026-05-13 v2 : utilise _catKind() qui couvre TOUTES les variantes
-  // (Homme/HOMME/homme/Hommes/Barbier/Monsieur, Enfant/ENFANTS/Kid/Junior/Gar\u00e7on/Fille, etc.)
-  if(!cId || cId==="passage"){
-    if(sId){
-      var sv=gS(sId);
-      if(sv && sv.cat){
-        var _kind = _catKind(sv.cat);
-        if(_kind === "H") return "\ud83d\udc68 Client de passage homme";
-        if(_kind === "E") return "\ud83e\uddd2 Client de passage enfant";
-        // _kind === "F" \u2192 tombe sur le default ci-dessous (femme)
-      }
-    }
-    return "\ud83d\udc69 Client de passage femme";
+  // cId est un UUID client r\u00e9el \u2192 cherche le client
+  if(cId && typeof cId==="string" && cId.length === 36 && cId.indexOf("-") > 0){
+    var cl=gC(cId);
+    return cl?cName(cl):"Client de passage";
   }
-  // Cas 3 : cId est un UUID client \u2192 cherche le client r\u00e9el
-  var cl=gC(cId);return cl?cName(cl):"Client de passage";
+  // Aucun choix valable (legacy ou inconnu) \u2192 fallback g\u00e9n\u00e9rique
+  return "Client de passage";
 }
 
 // Label client universel pour un RDV : client connu > nom RDV online > passage g\u00e9n\u00e9rique
@@ -20689,16 +20678,13 @@ function rStats(){
     }
     return foundCat;
   }
-  // FIX 2026-05-13 v2 : utilise _catKind() pour couvrir TOUTES les variantes saisies par les salons
+  // FIX 2026-05-13 v3 : SIMPLIFIÉ — prime au choix utilisateur (cId passage-X) ou sex client réel
   var caF=0,caH=0,caE=0,nbF=0,nbH=0,nbE=0;
   dn.forEach(function(a){
     var cl=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
-    var cat=_detectCat(a);
-    var ck=_catKind(cat);
-    if(ck==="E"||a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
-    else if(ck==="H"||a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
-    else if(cl&&cl.sex==="H"){caH+=a.pr*taxR;nbH++;}
-    else{caF+=a.pr*taxR;nbF++;}
+    if(a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
+    else if(a.cId==="passage-H"||(cl&&cl.sex==="H")){caH+=a.pr*taxR;nbH++;}
+    else{caF+=a.pr*taxR;nbF++;} // passage-F ou défaut
   });
   var panF=nbF?caF/nbF:0,panH=nbH?caH/nbH:0,panE=nbE?caE/nbE:0;
   
@@ -20728,15 +20714,11 @@ function rStats(){
     } else {
       dayData[a.date].pr+=a.pr*taxR;
     }
-    // Genre — même priorité : Enfants > Homme > sex client > F
-    // FIX 2026-05-13 v2 : utilise _catKind()
+    // Genre — FIX 2026-05-13 v3 SIMPLIFIÉ : choix utilisateur (passage-X) ou sex client réel
     var cl2=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
-    var cat2=_detectCat(a);
-    var ck2=_catKind(cat2);
-    if(ck2==="E"||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
-    else if(ck2==="H"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
-    else if(cl2&&cl2.sex==="H")dayData[a.date].h+=a.pr*taxR;
-    else dayData[a.date].f+=a.pr*taxR;
+    if(a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
+    else if(a.cId==="passage-H"||(cl2&&cl2.sex==="H"))dayData[a.date].h+=a.pr*taxR;
+    else dayData[a.date].f+=a.pr*taxR; // passage-F ou défaut
   });
   ps.forEach(function(p){if(!dayData[p.date])dayData[p.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[p.date].pd+=p.pr*taxR;});
   var days=Object.keys(dayData).sort();
