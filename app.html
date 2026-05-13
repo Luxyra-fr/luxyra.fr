@@ -7445,9 +7445,17 @@ function passageName(cId,sId){
     if(typ==="F") return "\ud83d\udc69 Client de passage femme";
   }
   // Cas 2 : passage g\u00e9n\u00e9rique sans suffixe \u2192 inf\u00e8re depuis cat\u00e9gorie service
+  // FIX 2026-05-13 : comparaison CASE-INSENSITIVE (la cat en DB peut \u00eatre "HOMME" ou "Homme")
   if(!cId || cId==="passage"){
-    if(sId){var sv=gS(sId);if(sv&&sv.cat){if(sv.cat==="Homme"||sv.cat==="Barbier")return"\ud83d\udc68 Client de passage homme";if(sv.cat==="Enfants")return"\ud83e\uddd2 Client de passage enfant";}}
-    return"\ud83d\udc69 Client de passage femme";
+    if(sId){
+      var sv=gS(sId);
+      if(sv && sv.cat){
+        var _catU = String(sv.cat).toUpperCase();
+        if(_catU==="HOMME" || _catU==="BARBIER") return "\ud83d\udc68 Client de passage homme";
+        if(_catU==="ENFANTS" || _catU==="ENFANT") return "\ud83e\uddd2 Client de passage enfant";
+      }
+    }
+    return "\ud83d\udc69 Client de passage femme";
   }
   // Cas 3 : cId est un UUID client \u2192 cherche le client r\u00e9el
   var cl=gC(cId);return cl?cName(cl):"Client de passage";
@@ -20635,7 +20643,9 @@ function rStats(){
       if(!nm||a.items[ii].isProd) continue;
       for(var sj=0;sj<SVC.length;sj++){
         if((SVC[sj].n||"").trim().toLowerCase()===nm){
-          if(SVC[sj].cat==="Homme"||SVC[sj].cat==="Barbier"||SVC[sj].cat==="Enfants") return SVC[sj].cat;
+          // FIX 2026-05-13 : case-insensitive (cat peut être "HOMME" ou "Homme")
+          var _cU = String(SVC[sj].cat||"").toUpperCase();
+          if(_cU==="HOMME"||_cU==="BARBIER"||_cU==="ENFANTS"||_cU==="ENFANT") return SVC[sj].cat;
           if(SVC[sj].cat) foundCat=SVC[sj].cat;
           break;
         }
@@ -20656,12 +20666,14 @@ function rStats(){
     }
     return foundCat;
   }
+  // FIX 2026-05-13 : helper de comparaison cat case-insensitive
+  function _isCat(cat, ...targets){ var u = String(cat||"").toUpperCase(); return targets.some(function(t){return u===String(t).toUpperCase();}); }
   var caF=0,caH=0,caE=0,nbF=0,nbH=0,nbE=0;
   dn.forEach(function(a){
     var cl=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
     var cat=_detectCat(a);
-    if(cat==="Enfants"||a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
-    else if(cat==="Homme"||cat==="Barbier"||a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
+    if(_isCat(cat,"Enfants","Enfant")||a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
+    else if(_isCat(cat,"Homme","Barbier")||a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
     else if(cl&&cl.sex==="H"){caH+=a.pr*taxR;nbH++;}
     else{caF+=a.pr*taxR;nbF++;}
   });
@@ -20694,10 +20706,11 @@ function rStats(){
       dayData[a.date].pr+=a.pr*taxR;
     }
     // Genre — même priorité : Enfants > Homme > sex client > F
+    // FIX 2026-05-13 : case-insensitive via _isCat
     var cl2=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
     var cat2=_detectCat(a);
-    if(cat2==="Enfants"||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
-    else if(cat2==="Homme"||cat2==="Barbier"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
+    if(_isCat(cat2,"Enfants","Enfant")||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
+    else if(_isCat(cat2,"Homme","Barbier")||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
     else if(cl2&&cl2.sex==="H")dayData[a.date].h+=a.pr*taxR;
     else dayData[a.date].f+=a.pr*taxR;
   });
