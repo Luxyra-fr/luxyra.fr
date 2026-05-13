@@ -900,7 +900,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           items: a.items || [], comment: a.comment || "",
           aPhases: a.a_phases || [],
           clients: a.clients || [], fromCaisse: a.from_caisse || false,
-          cancelled: a.cancelled, cancelReason: a.cancel_reason
+          cancelled: a.cancelled, cancelReason: a.cancel_reason,
+          // FIX 2026-05-13 : relit le détail des paiements (mode/amount/given/rendu)
+          // pour que le rendu monnaie réapparaisse sur les ré-impressions
+          payments: (a.payments && Array.isArray(a.payments) && a.payments.length > 0) ? a.payments : null
         };
       });
       // FIX 2026-05-12 : tri explicite par tkNum DESC pour récupérer le hash du
@@ -1556,7 +1559,10 @@ async function saveAppointment(appt) {
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || "",
-    client_email: clEmail, collab_name: collabName
+    client_email: clEmail, collab_name: collabName,
+    // FIX 2026-05-13 : persiste les détails de paiement (mode, montant, donné, rendu)
+    // pour que le rendu monnaie réapparaisse sur les réimpressions et duplicatas.
+    payments: (appt.payments && Array.isArray(appt.payments) && appt.payments.length > 0) ? appt.payments : null
   };
   try{data.clients=appt.clients||[];data.from_caisse=appt.fromCaisse||false;}catch(e){}
   // FIX 2026-05-12 : upsert avec id explicite — plus de race condition local/UUID
