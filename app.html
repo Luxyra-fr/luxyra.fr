@@ -20849,10 +20849,20 @@ function rStats(){
   var stCA={};T.forEach(function(t){stCA[t.id]={n:t.n,c:t.c,ca:0};});
   dn.forEach(function(a){if(stCA[a.stId])stCA[a.stId].ca+=a.pr*taxR;});
   
-  // Top clients
+  // Top clients — FIX 2026-05-14 : exclut TOUS les passages (passage, passage-H/F/E)
+  // car ce ne sont pas des clients identifiés (apparaissaient comme "?" dans le top)
   var clCA={};
-  dn.forEach(function(a){if(!a.cId||a.cId==="passage")return;if(!clCA[a.cId])clCA[a.cId]=0;clCA[a.cId]+=a.pr*taxR;});
-  var topCl=Object.keys(clCA).map(function(id){var cl=gC(id);return{n:cl?cName(cl):"?",ca:clCA[id]};}).sort(function(a,b){return b.ca-a.ca;}).slice(0,10);
+  dn.forEach(function(a){
+    if(!a.cId) return;
+    // Filtre les passages (de tout type) + les ID non-UUID (legacy)
+    if(typeof a.cId === "string" && a.cId.indexOf("passage")===0) return;
+    if(!clCA[a.cId])clCA[a.cId]=0;
+    clCA[a.cId]+=a.pr*taxR;
+  });
+  // Filtre supplémentaire : on ne garde que les clients RÉSOLUS (qui existent dans CL).
+  // Les IDs orphelins (client supprimé en DB mais ticket toujours présent) sont
+  // exclus du top — ce ne sont pas des clients récurrents à fidéliser.
+  var topCl=Object.keys(clCA).map(function(id){var cl=gC(id);return cl?{n:cName(cl),ca:clCA[id]}:null;}).filter(function(x){return x!==null;}).sort(function(a,b){return b.ca-a.ca;}).slice(0,10);
   
   // New clients
   var newCl=CL.filter(function(c){return c.cr&&c.cr>=df&&c.cr<=dt;});
