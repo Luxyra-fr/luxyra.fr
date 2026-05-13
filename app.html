@@ -20869,13 +20869,16 @@ function rStats(){
   var days=Object.keys(dayData).sort();
   
   // === HELPERS ===
-  function don(items,total,sz){
-    if(!total)return"<div style=\"width:"+sz+"px;height:"+sz+"px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;margin:10px auto;font-size:13px;color:var(--text3)\">0 \u20ac</div>";
+  // FIX 2026-05-13 : ajout param\u00e8tre centerText optionnel pour \u00e9viter les .replace()
+  // fragiles c\u00f4t\u00e9 appelant (cas "X clients" pour acquisition, panier moyen, etc).
+  function don(items,total,sz,centerText){
+    if(!total)return"<div style=\"width:"+sz+"px;height:"+sz+"px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;margin:10px auto;font-size:13px;color:var(--text3)\">"+(centerText||"0 \u20ac")+"</div>";
     var r=sz/2-8,cx=sz/2,cy=sz/2,off=0;
     var sv2="<svg width=\""+sz+"\" height=\""+sz+"\" viewBox=\"0 0 "+sz+" "+sz+"\">";
     for(var di=0;di<items.length;di++){if(items[di].v<=0)continue;var pc=items[di].v/total;var ln2=2*Math.PI*r*pc;var gp=2*Math.PI*r*(1-pc);sv2+="<circle cx=\""+cx+"\" cy=\""+cy+"\" r=\""+r+"\" fill=\"none\" stroke=\""+(items[di].c||"#c9a227")+"\" stroke-width=\"16\" stroke-dasharray=\""+ln2+" "+gp+"\" stroke-dashoffset=\""+(-off*2*Math.PI*r)+"\" transform=\"rotate(-90 "+cx+" "+cy+")\"/>";off+=pc;}
     sv2+="<circle cx=\""+cx+"\" cy=\""+cy+"\" r=\""+(r-12)+"\" fill=\"rgba(20,20,20,.9)\"/>";
-    sv2+="<text x=\""+cx+"\" y=\""+(cy+6)+"\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"900\" fill=\"#fff\">"+total.toFixed(2)+" \u20ac</text></svg>";
+    var _label=centerText||(total.toFixed(2)+" \u20ac");
+    sv2+="<text x=\""+cx+"\" y=\""+(cy+6)+"\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"900\" fill=\"#fff\">"+_label+"</text></svg>";
     return sv2;
   }
   
@@ -20928,9 +20931,9 @@ function rStats(){
   for(var gi=0;gi<genItems.length;gi++){var htGi=(genItems[gi].v*htR);genC+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+genItems[gi].c+"\"></span><span style=\"flex:1\">"+genItems[gi].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htGi.toFixed(2)+" \u20ac <small>HT</small></span><strong>"+genItems[gi].v.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
   if(genMode==="eval"){
     var segTotal=panF+panH+panE;
-    var genDon=don(genItems,segTotal||1,160);
-    genDon=genDon.replace((segTotal||1).toFixed(2)+" \u20ac",panAll.toFixed(2)+" \u20ac");
-    genC+=genDon;
+    // FIX 2026-05-13 : utilise centerText au lieu du .replace() fragile (risque
+    // d'arrondi qui faisait \u00e9chouer le remplacement silencieusement)
+    genC+=don(genItems,segTotal||1,160,panAll.toFixed(2)+" \u20ac");
   }else if(genMode==="comp"){genC+=bars(days,function(d){var dd=dayData[d]||{f:0,h:0,e:0};return[dd.f,dd.h,dd.e];},["#f0d060","#7ab8e0","#d4a0d0"],["Femmes","Hommes","Enfants"]);}
   else{genC+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di4=days.length-1;di4>=0;di4--){var dd4=dayData[days[di4]]||{f:0,h:0,e:0};genC+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di4])+"</span><span style=\"color:#f0d060\">F:"+dd4.f.toFixed(2)+"</span><span style=\"color:#7ab8e0;margin-left:8px\">H:"+dd4.h.toFixed(2)+"</span><span style=\"color:#d4a0d0;margin-left:8px\">E:"+dd4.e.toFixed(2)+"</span></div>";}genC+="</div>";}
   genC+="</div>";
@@ -21074,10 +21077,8 @@ function rStats(){
       h+='<span style="flex:1;font-style:italic">Non renseigné</span>';
       h+='<strong>'+_acqWithoutSrc+'</strong></div>';
     }
-    // Donut chart
-    var _donHTML = don(_acqItems, _acqTotal || 1, 180);
-    _donHTML = _donHTML.replace((_acqTotal || 1).toFixed(2)+" €", _acqTotal+" clients");
-    h+=_donHTML;
+    // Donut chart — FIX 2026-05-13 : utilise centerText au lieu du .replace() fragile
+    h+=don(_acqItems, _acqTotal || 1, 180, _acqTotal+" clients");
     // Top parrains si recommandations présentes
     var _parrainList = Object.keys(_parrainCounts).map(function(k){return{n:k,v:_parrainCounts[k]};}).sort(function(a,b){return b.v-a.v;}).slice(0,5);
     if(_parrainList.length){
@@ -21274,14 +21275,27 @@ function rStats(){
   h+='</div></div>';
   
   // 12. Taux de remplissage
+  // FIX 2026-05-13 : calcul des minutes disponibles via getEffectiveHrs(date, collabId)
+  // pour chaque (jour \u00d7 collaborateur). Tient compte des horaires personnalis\u00e9s
+  // (horaires_overrides), des jours de repos individuels, et des collaborateurs
+  // inactifs. Avant on faisait juste H[dow]*T.length, ce qui surestimait fortement
+  // les minutes disponibles si certains collabs avaient des horaires diff\u00e9rents
+  // du salon ou \u00e9taient en cong\u00e9.
   h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">\ud83d\udccb Taux de remplissage</div>';
   var totalAvailMin=0,totalOccupMin=0;
   var fillDays=Object.keys(dayData).sort();
+  // Liste collaborateurs actifs (filtre dates d'entr\u00e9e/d\u00e9part si pr\u00e9sentes)
+  var activeCollabs = (T||[]).filter(function(c){ return c && !c.inactif; });
   fillDays.forEach(function(dk2){
-    var dd3=new Date(dk2+'T12:00:00');var dow2=dd3.getDay();
-    var hrs2=H[dow2];if(!hrs2)return;
-    var openMin=toM(hrs2.c)-toM(hrs2.o);
-    totalAvailMin+=openMin*T.length;
+    activeCollabs.forEach(function(collab){
+      // Filtre si collab pas encore entr\u00e9 ou d\u00e9j\u00e0 parti \u00e0 cette date
+      if(collab.date_entree && dk2 < collab.date_entree) return;
+      if(collab.date_depart && dk2 > collab.date_depart) return;
+      var hrs2 = (typeof getEffectiveHrs==="function") ? getEffectiveHrs(dk2, collab.id) : null;
+      if(!hrs2 || !hrs2.o || !hrs2.c) return; // jour de repos pour ce collab
+      var openMin = toM(hrs2.c) - toM(hrs2.o);
+      if(openMin > 0) totalAvailMin += openMin;
+    });
     var dayAppts=dn.filter(function(a){return a.date===dk2;});
     dayAppts.forEach(function(a){
       var sv5=gS(a.sId);var phases5=a.aPhases||(sv5?sv5.phases:null);
