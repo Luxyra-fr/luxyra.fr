@@ -20856,8 +20856,9 @@ function rStats(){
   // Daily data
   var dayData={};
   dn.forEach(function(a){
-    if(!dayData[a.date])dayData[a.date]={pr:0,pd:0,f:0,h:0,e:0};
-    // pr/pd via items pour distinguer prestations/produits dans tickets mixtes
+    // FIX 2026-05-14 : on stocke aussi le NOMBRE de prestations par genre par jour
+    // (nbf/nbh/nbe) pour pouvoir calculer un vrai panier moyen par genre par jour
+    if(!dayData[a.date])dayData[a.date]={pr:0,pd:0,f:0,h:0,e:0,nbf:0,nbh:0,nbe:0};
     if(a.items && a.items.length){
       a.items.forEach(function(it){
         var sub=((Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0))*taxR;
@@ -20867,32 +20868,35 @@ function rStats(){
     } else {
       dayData[a.date].pr+=a.pr*taxR;
     }
-    // Genre — FIX 2026-05-13 v5 : split par item avec catGenre service prioritaire
     if(!a.items || a.items.length === 0){
       var g2 = _genreOf(a.cId);
-      if(g2==="E") dayData[a.date].e+=a.pr*taxR;
-      else if(g2==="H") dayData[a.date].h+=a.pr*taxR;
-      else dayData[a.date].f+=a.pr*taxR;
+      if(g2==="E"){ dayData[a.date].e+=a.pr*taxR; dayData[a.date].nbe++; }
+      else if(g2==="H"){ dayData[a.date].h+=a.pr*taxR; dayData[a.date].nbh++; }
+      else { dayData[a.date].f+=a.pr*taxR; dayData[a.date].nbf++; }
     } else {
       var cur2CId = a.cId;
       var hadCA={F:0,H:0,E:0};
+      var hadNB={F:0,H:0,E:0};
       a.items.forEach(function(it){
         if(it.isSep){ cur2CId=it.sepCId; return; }
+        if(it.isProd) return; // produits exclus du panier prestation par genre
         var sub = (Number(it.price)||0)*(Number(it.qty)||1) - (Number(it.remise)||0);
         if(sub <= 0) return;
         var ig = _itemGenre(it, cur2CId);
         hadCA[ig] += sub*taxR;
+        hadNB[ig] += (Number(it.qty)||1);
       });
       if(hadCA.E===0 && hadCA.H===0 && hadCA.F===0){
         var fb2=_genreOf(a.cId);
         hadCA[fb2] = a.pr*taxR;
+        hadNB[fb2] = 1;
       }
-      dayData[a.date].e += hadCA.E;
-      dayData[a.date].h += hadCA.H;
-      dayData[a.date].f += hadCA.F;
+      dayData[a.date].e += hadCA.E; dayData[a.date].nbe += hadNB.E;
+      dayData[a.date].h += hadCA.H; dayData[a.date].nbh += hadNB.H;
+      dayData[a.date].f += hadCA.F; dayData[a.date].nbf += hadNB.F;
     }
   });
-  ps.forEach(function(p){if(!dayData[p.date])dayData[p.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[p.date].pd+=p.pr*taxR;});
+  ps.forEach(function(p){if(!dayData[p.date])dayData[p.date]={pr:0,pd:0,f:0,h:0,e:0,nbf:0,nbh:0,nbe:0};dayData[p.date].pd+=p.pr*taxR;});
   var days=Object.keys(dayData).sort();
   
   // === HELPERS ===
@@ -21026,7 +21030,27 @@ function rStats(){
     // d'arrondi qui faisait \u00e9chouer le remplacement silencieusement)
     genC+=don(genItems,segTotal||1,160,panAll.toFixed(2)+" \u20ac");
   }else if(genMode==="comp"){genC+=bars(days,function(d){var dd=dayData[d]||{f:0,h:0,e:0};return[dd.f,dd.h,dd.e];},["#f0d060","#7ab8e0","#d4a0d0"],["Femmes","Hommes","Enfants"]);}
-  else{genC+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di4=days.length-1;di4>=0;di4--){var dd4=dayData[days[di4]]||{f:0,h:0,e:0};genC+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di4])+"</span><span style=\"color:#f0d060\">F:"+dd4.f.toFixed(2)+"</span><span style=\"color:#7ab8e0;margin-left:8px\">H:"+dd4.h.toFixed(2)+"</span><span style=\"color:#d4a0d0;margin-left:8px\">E:"+dd4.e.toFixed(2)+"</span></div>";}genC+="</div>";}
+  else{
+    // FIX 2026-05-14 : on affiche le PANIER MOYEN par genre par jour (CA/nb prestations),
+    // pas le CA brut. Cohérent avec le titre de la card "Panier moyen par genre".
+    genC+="<div style=\"max-height:240px;overflow-y:auto;margin-top:8px\">";
+    for(var di4=days.length-1;di4>=0;di4--){
+      var _d4 = days[di4];
+      var dd4 = dayData[_d4]||{f:0,h:0,e:0,nbf:0,nbh:0,nbe:0};
+      var pmF = (dd4.nbf>0) ? (dd4.f/dd4.nbf) : 0;
+      var pmH = (dd4.nbh>0) ? (dd4.h/dd4.nbh) : 0;
+      var pmE = (dd4.nbe>0) ? (dd4.e/dd4.nbe) : 0;
+      genC+="<div style=\"padding:6px 0;border-bottom:1px solid var(--border2);font-size:12px\">";
+      genC+="<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:3px\"><span style=\"font-weight:700\">"+fmt(_d4)+"</span></div>";
+      genC+="<div style=\"display:flex;flex-wrap:wrap;gap:8px;font-size:11px\">";
+      if(dd4.nbf>0) genC+="<span style=\"display:inline-flex;align-items:center;gap:4px\"><span style=\"width:8px;height:8px;border-radius:2px;background:#f0d060\"></span><span style=\"opacity:.8\">F panier</span><strong>"+pmF.toFixed(2)+" €</strong><small style=\"opacity:.5\">("+dd4.nbf+" presta)</small></span>";
+      if(dd4.nbh>0) genC+="<span style=\"display:inline-flex;align-items:center;gap:4px\"><span style=\"width:8px;height:8px;border-radius:2px;background:#7ab8e0\"></span><span style=\"opacity:.8\">H panier</span><strong>"+pmH.toFixed(2)+" €</strong><small style=\"opacity:.5\">("+dd4.nbh+")</small></span>";
+      if(dd4.nbe>0) genC+="<span style=\"display:inline-flex;align-items:center;gap:4px\"><span style=\"width:8px;height:8px;border-radius:2px;background:#d4a0d0\"></span><span style=\"opacity:.8\">E panier</span><strong>"+pmE.toFixed(2)+" €</strong><small style=\"opacity:.5\">("+dd4.nbe+")</small></span>";
+      if(dd4.nbf===0 && dd4.nbh===0 && dd4.nbe===0) genC+="<small style=\"opacity:.5\">Aucune prestation ce jour</small>";
+      genC+="</div></div>";
+    }
+    genC+="</div>";
+  }
   genC+="</div>";
   h+=genC;
   
