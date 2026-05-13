@@ -68,6 +68,9 @@ export default {
       if (url.pathname === "/api/sms/generate-link-token" && request.method === "POST") return await handleSmsGenerateLinkToken(request, env);
       if (url.pathname === "/api/sms/link-device" && request.method === "POST") return await handleSmsLinkDevice(request, env);
       if (url.pathname === "/api/client/tickets" && request.method === "POST") return await handleClientTickets(request, env);
+      // FIX 2026-05-13 : transparence frais Stripe — pull en temps réel des balance_transactions
+      // du compte Stripe Connect du salon. Read-only, authentifié par JWT Supabase.
+      if (url.pathname === "/api/stripe/fees" && request.method === "POST") return await handleStripeFees(request, env);
       // Endpoints espace client compte.html — bypass RLS via service_role
       // après vérification du session_token JWT (issu de lx-login/lx-signup).
       // Permet de DROP les policies anon USING(true) qui leakaient toutes les
@@ -2779,5 +2782,142 @@ async function runIntegrityCheckJob(env) {
 // Helper : escape HTML basique pour les emails
 function escapeHtml(s) {
   return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ============================================================
+// STRIPE FEES — transparence frais bancaires temps réel
+// Pull les balance_transactions du Stripe Connect du salon, agrège, renvoie.
+// READ-ONLY. Aucune modif Stripe. Aucune modif DB. Authentifié JWT Supabase.
+// ============================================================
+async function handleStripeFees(request, env) {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (!checkRateLimit("stripe_fees:" + ip, 30)) return jsonResponse({ error: "Trop de requêtes." }, 429);
+
+  // Auth : JWT Supabase du user
+  const authHeader = request.headers.get("Authorization") || "";
+  if (!authHeader.startsWith("Bearer ")) return jsonResponse({ error: "auth_required" }, 401);
+  const userToken = authHeader.slice(7);
+
+  const supabaseUrl = env.SUPABASE_URL || "https://kxdgjtvrkwugbifgppai.supabase.co";
+  const sbKey = env.SUPABASE_SERVICE_KEY;
+  if (!sbKey) return jsonResponse({ error: "configuration_error" }, 500);
+
+  // Vérifier le token via Supabase /auth/v1/user
+  const userResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { apikey: sbKey, Authorization: "Bearer " + userToken }
+  });
+  if (!userResp.ok) return jsonResponse({ error: "auth_invalid" }, 401);
+  const userData = await userResp.json();
+  const userId = userData?.id;
+  if (!userId) return jsonResponse({ error: "auth_invalid" }, 401);
+
+  // Body
+  let body = {};
+  try { body = await request.json(); } catch (e) { body = {}; }
+  const salonId = body.salon_id;
+  if (!salonId) return jsonResponse({ error: "salon_id requis" }, 400);
+
+  // Vérifier ownership salon
+  const adminHeaders = { apikey: sbKey, Authorization: "Bearer " + sbKey };
+  const salonResp = await fetch(
+    `${supabaseUrl}/rest/v1/salons?id=eq.${salonId}&select=id,user_id,stripe_connect_id,stripe_connect_status,nom`,
+    { headers: adminHeaders }
+  );
+  if (!salonResp.ok) return jsonResponse({ error: "salon_fetch_failed" }, 500);
+  const salons = await salonResp.json();
+  if (!Array.isArray(salons) || !salons[0]) return jsonResponse({ error: "salon_not_found" }, 404);
+  const salon = salons[0];
+  if (salon.user_id !== userId) return jsonResponse({ error: "forbidden" }, 403);
+
+  const stripeAccountId = salon.stripe_connect_id;
+  if (!stripeAccountId) {
+    return jsonResponse({
+      success: true,
+      stripe_connect_active: false,
+      message: "Stripe Connect non configuré pour ce salon. Les frais bancaires des encaissements physiques se font via votre TPE bancaire (non géré par Luxyra).",
+      items: [], totals: { gross: 0, fees: 0, net: 0, count: 0, effective_rate_pct: 0 }
+    });
+  }
+
+  // Période : par défaut le mois en cours
+  const now = new Date();
+  const y = parseInt(body.year) || now.getUTCFullYear();
+  const m = parseInt(body.month) || (now.getUTCMonth() + 1);
+  const startMs = Date.UTC(y, m - 1, 1, 0, 0, 0);
+  const endMs = Date.UTC(y, m, 0, 23, 59, 59);
+  const start = Math.floor(startMs / 1000);
+  const end = Math.floor(endMs / 1000);
+
+  // Pull balance_transactions du compte Stripe Connect du salon
+  const stripeKey = env.STRIPE_SECRET_KEY;
+  if (!stripeKey) return jsonResponse({ error: "stripe_not_configured" }, 500);
+
+  let allTx = [];
+  let hasMore = true;
+  let starting_after = null;
+  let pageCount = 0;
+  while (hasMore && allTx.length < 1000 && pageCount < 10) {
+    pageCount++;
+    let stripeUrl = `https://api.stripe.com/v1/balance_transactions?type=charge&created[gte]=${start}&created[lte]=${end}&limit=100`;
+    if (starting_after) stripeUrl += `&starting_after=${starting_after}`;
+    const stripeResp = await fetch(stripeUrl, {
+      headers: {
+        Authorization: "Bearer " + stripeKey,
+        "Stripe-Account": stripeAccountId
+      }
+    });
+    if (!stripeResp.ok) {
+      const errText = await stripeResp.text();
+      console.error("[stripe_fees] error:", stripeResp.status, errText.slice(0, 300));
+      return jsonResponse({
+        error: "stripe_api_error",
+        status: stripeResp.status,
+        detail: errText.slice(0, 200)
+      }, 502);
+    }
+    const stripeData = await stripeResp.json();
+    if (stripeData.data && stripeData.data.length) {
+      allTx = allTx.concat(stripeData.data);
+      starting_after = stripeData.data[stripeData.data.length - 1].id;
+      hasMore = !!stripeData.has_more;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  // Agréger
+  let totalGrossCents = 0, totalFeesCents = 0, totalNetCents = 0;
+  const items = allTx.map(t => {
+    totalGrossCents += t.amount;
+    totalFeesCents += t.fee;
+    totalNetCents += t.net;
+    return {
+      id: t.id,
+      created: t.created,
+      created_iso: new Date(t.created * 1000).toISOString(),
+      amount: t.amount / 100,
+      fee: t.fee / 100,
+      net: t.net / 100,
+      currency: t.currency,
+      description: t.description || ""
+    };
+  });
+
+  const effectiveRate = totalGrossCents > 0 ? (totalFeesCents / totalGrossCents) * 100 : 0;
+
+  return jsonResponse({
+    success: true,
+    stripe_connect_active: true,
+    salon: { id: salon.id, nom: salon.nom, stripe_connect_status: salon.stripe_connect_status },
+    period: { year: y, month: m, start, end },
+    items,
+    totals: {
+      gross: Math.round(totalGrossCents) / 100,
+      fees: Math.round(totalFeesCents) / 100,
+      net: Math.round(totalNetCents) / 100,
+      count: items.length,
+      effective_rate_pct: Math.round(effectiveRate * 100) / 100
+    }
+  });
 }
 // EOF

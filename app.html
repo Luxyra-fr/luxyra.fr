@@ -12298,6 +12298,14 @@ function rSettings(){
     h+='<div style="padding:10px;background:var(--bg);border-radius:8px"><div style="font-size:20px;font-weight:800">'+totalCanc+'</div><div style="font-size:11px;color:var(--text3)">Annulations totales</div></div>';
     h+='<div style="padding:10px;background:var(--bg);border-radius:8px"><div style="font-size:20px;font-weight:800">'+window.CLOTURES.length+'</div><div style="font-size:11px;color:var(--text3)">Clôtures Z (Luxyra)</div></div>';
     h+='</div></div>';
+
+    // FIX 2026-05-13 : Transparence frais Stripe — bouton pour voir les vrais frais
+    // synchronisés en temps réel avec l'API Stripe Connect du salon.
+    h+='<div class="card" style="margin-top:14px;border-left:4px solid #635bff"><div class="ct">💳 Frais bancaires Stripe (temps réel)</div>';
+    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Voir les <strong>vrais frais</strong> prélevés par Stripe sur vos paiements en ligne (acomptes, empreintes, RDV sur mesure). Données récupérées en direct depuis votre compte Stripe Connect. Aucun intermédiaire, aucun chiffre arrondi.</div>';
+    h+='<button class="btn" style="width:100%;padding:12px;background:rgba(99,91,255,.1);color:#a59cff;border:1px solid rgba(99,91,255,.3);font-weight:700" onclick="showStripeFeesModal()">💳 Voir mes frais Stripe en temps réel</button>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">Encaissements physiques en caisse : non gérés par Luxyra, frais via votre TPE bancaire</div></div>';
+
     h+='<div class="card"><div class="ct">Journal audit (20 derniers)</div>';
     // AUDIT_LOG est en ordre décroissant (plus récent en premier) depuis Supabase
     // On prend les 20 premiers (= 20 plus récents)
@@ -28337,6 +28345,79 @@ function exportAudit(){
   }
   var csv="ID;Date;User;Action;Detail\n";window.AUDIT_LOG.forEach(function(l){csv+=l.id+";"+l.ts+";"+l.user+";"+l.action+";"+l.detail.replace(/;/g,",")+"\n";});
   var b=new Blob([csv],{type:"text/csv"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="audit_"+TD+".csv";a.click();
+}
+
+// FIX 2026-05-13 : Frais Stripe transparents en temps r\u00e9el
+// Modal qui appelle /api/stripe/fees et affiche les vraies donn\u00e9es du Stripe Connect.
+async function showStripeFeesModal(yyyymm){
+  var now=new Date();
+  var y=yyyymm?parseInt(yyyymm.slice(0,4)):now.getFullYear();
+  var m=yyyymm?parseInt(yyyymm.slice(5,7)):(now.getMonth()+1);
+  var loading='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:520px"><h2 style="color:var(--gold)">\ud83d\udcb3 Frais Stripe en temps r\u00e9el</h2><div style="padding:30px;color:var(--text3)">\u23f3 Synchronisation avec votre compte Stripe Connect...</div></div></div>';
+  document.getElementById("modal").innerHTML=loading;
+  try {
+    var token=null;
+    if(window._sb && typeof window._sb.auth.getSession==="function"){
+      var sess=await window._sb.auth.getSession();
+      token=sess?.data?.session?.access_token;
+    }
+    if(!token){throw new Error("Session expir\u00e9e. Veuillez vous reconnecter.");}
+    var salonId=(window.SALON_CONFIG&&window.SALON_CONFIG.id)||window._salonId;
+    if(!salonId){throw new Error("Salon non identifi\u00e9.");}
+    var resp=await fetch("/api/stripe/fees",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+      body:JSON.stringify({salon_id:salonId,year:y,month:m})
+    });
+    var data=await resp.json();
+    if(!resp.ok){throw new Error(data.error||data.detail||"Erreur "+resp.status);}
+    _renderStripeFeesModal(data,y,m);
+  } catch(e){
+    var err='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:480px"><h2 style="color:var(--red)">\u274c Erreur</h2><div style="padding:14px;color:var(--text2)">'+(e.message||String(e))+'</div><button class="btn bg bk" onclick="cM()">Fermer</button></div></div>';
+    document.getElementById("modal").innerHTML=err;
+  }
+}
+function _renderStripeFeesModal(data,y,m){
+  var monthName=new Date(y,m-1,1).toLocaleString("fr-FR",{month:"long",year:"numeric"});
+  var t=data.totals||{};
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:680px;max-height:85vh;overflow-y:auto">';
+  h+='<h2 style="color:#a59cff;margin-bottom:4px">\ud83d\udcb3 Frais Stripe \u2014 '+monthName+'</h2>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:14px">Donn\u00e9es pull\u00e9es en direct du compte Stripe Connect du salon \u00b7 '+(t.count||0)+' transaction(s)</div>';
+  if(!data.stripe_connect_active){
+    h+='<div style="padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.3);border-radius:10px;font-size:13px;color:var(--text2);margin-bottom:14px">'+(data.message||"Stripe Connect non configur\u00e9")+'</div>';
+  } else if((t.count||0)===0){
+    h+='<div style="padding:24px;text-align:center;color:var(--text3);font-style:italic">Aucun paiement Stripe enregistr\u00e9 sur cette p\u00e9riode.</div>';
+  } else {
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;text-align:center">';
+    h+='<div style="padding:14px;background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:10px"><div style="font-size:11px;color:#66bb6a;font-weight:700;text-transform:uppercase;letter-spacing:1px">Brut encaiss\u00e9</div><div style="font-size:22px;font-weight:800;color:#66bb6a">'+t.gross.toFixed(2)+' \u20ac</div></div>';
+    h+='<div style="padding:14px;background:rgba(196,56,56,.1);border:1px solid rgba(196,56,56,.3);border-radius:10px"><div style="font-size:11px;color:#e87878;font-weight:700;text-transform:uppercase;letter-spacing:1px">Frais Stripe</div><div style="font-size:22px;font-weight:800;color:#e87878">-'+t.fees.toFixed(2)+' \u20ac</div><div style="font-size:10px;color:var(--text3);margin-top:2px">taux r\u00e9el : '+t.effective_rate_pct.toFixed(2)+' %</div></div>';
+    h+='<div style="padding:14px;background:rgba(99,91,255,.1);border:1px solid rgba(99,91,255,.3);border-radius:10px"><div style="font-size:11px;color:#a59cff;font-weight:700;text-transform:uppercase;letter-spacing:1px">Net re\u00e7u</div><div style="font-size:22px;font-weight:800;color:#a59cff">'+t.net.toFixed(2)+' \u20ac</div></div>';
+    h+='</div>';
+    // Comparatif vs concurrents
+    var treatwellCost=t.gross*0.25;
+    var freshaCost=t.gross*0.20;
+    h+='<div style="padding:12px;background:rgba(200,168,78,.05);border:1px solid rgba(200,168,78,.15);border-radius:10px;margin-bottom:14px">';
+    h+='<div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:6px">\ud83d\udca1 Comparatif estimatif</div>';
+    h+='<div style="font-size:12px;color:var(--text2);line-height:1.6">Vous payez <strong>'+t.fees.toFixed(2)+' \u20ac</strong> de frais Stripe ce mois.<br>Sur Treatwell (25 % commission), vous auriez pay\u00e9 <strong>~'+treatwellCost.toFixed(2)+' \u20ac</strong>.<br>Sur Fresha (20 % commission), <strong>~'+freshaCost.toFixed(2)+' \u20ac</strong>.<br><span style="color:#66bb6a;font-weight:700">\u00c9conomie vs Treatwell : '+(treatwellCost-t.fees).toFixed(2)+' \u20ac</span></div>';
+    h+='</div>';
+    // Liste d\u00e9taill\u00e9e
+    h+='<div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:6px;letter-spacing:1px">D\u00e9tail des transactions</div>';
+    h+='<div style="max-height:280px;overflow-y:auto;border:1px solid var(--border2);border-radius:8px">';
+    h+='<table style="width:100%;font-size:11px;border-collapse:collapse">';
+    h+='<thead><tr style="background:rgba(255,255,255,.04);position:sticky;top:0"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:right">Brut</th><th style="padding:8px;text-align:right">Frais</th><th style="padding:8px;text-align:right">Net</th></tr></thead><tbody>';
+    (data.items||[]).forEach(function(it){
+      var d=new Date(it.created*1000);
+      var dStr=d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"})+" "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"});
+      var ratePct=it.amount>0?((it.fee/it.amount)*100).toFixed(2):"0";
+      h+='<tr style="border-top:1px solid var(--border2)"><td style="padding:6px 8px;color:var(--text2)">'+dStr+'</td><td style="padding:6px 8px;text-align:right;color:#66bb6a">'+it.amount.toFixed(2)+' \u20ac</td><td style="padding:6px 8px;text-align:right;color:#e87878">-'+it.fee.toFixed(2)+' \u20ac<span style="color:var(--text3);font-size:9px;margin-left:4px">('+ratePct+'%)</span></td><td style="padding:6px 8px;text-align:right;color:#a59cff;font-weight:700">'+it.net.toFixed(2)+' \u20ac</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  // S\u00e9lecteur mois
+  h+='<div style="display:flex;gap:8px;margin-top:14px;align-items:center"><input type="month" id="lxFeeMonth" value="'+y+'-'+(m<10?"0":"")+m+'" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border2);background:var(--bg);color:#fff"><button class="btn bg" style="padding:8px 16px" onclick="showStripeFeesModal(document.getElementById(\'lxFeeMonth\').value)">\ud83d\udd04 Recharger</button></div>';
+  h+='<button class="btn" style="width:100%;margin-top:10px;background:var(--bg)" onclick="cM()">Fermer</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
 }
 function exportAllData(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
