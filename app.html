@@ -7432,6 +7432,27 @@ function gS(id){for(var i=0;i<SVC.length;i++)if(SVC[i].id===id)return SVC[i];ret
 function gT(id){for(var i=0;i<T.length;i++)if(T[i].id===id)return T[i];return null;}
 function gC(id){for(var i=0;i<CL.length;i++)if(CL[i].id===id)return CL[i];return null;}
 function cName(c){return c?(c.nom+" "+c.pre):"";}
+// FIX 2026-05-13 : helper centralisé de normalisation des catégories de service.
+// Couvre les variantes que les salons peuvent saisir : majuscules/minuscules,
+// pluriels (Homme/Hommes/HOMME/HOMMES), accents (Bébé/Bebe), synonymes
+// (Barbier, Monsieur, Kid, Junior...). Retourne 'H', 'F', 'E' ou null.
+function _catKind(cat){
+  if(!cat) return null;
+  var s = String(cat).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
+  var sSing = s.replace(/s$/, ''); // singularise grossièrement (hommes → homme)
+  // Enfants — testé en premier car peut s'appliquer aux autres (ex: "coupe garçon")
+  if(['enfant','kid','junior','ado','bambin','bebe','garcon','fille','fillette','garconnet'].indexOf(sSing) >= 0) return 'E';
+  if(/(^|\s)(enfant|kid|junior|ado|bambin|bebe|garcon|fille|fillette|garconnet)/.test(s)) return 'E';
+  // Hommes
+  if(['homme','barbier','monsieur','men','mister','mr'].indexOf(sSing) >= 0) return 'H';
+  if(/(^|\s)(homme|barbier|monsieur|messieurs|men)/.test(s)) return 'H';
+  // Femmes
+  if(['femme','dame','madame','women','mme','miss'].indexOf(sSing) >= 0) return 'F';
+  if(/(^|\s)(femme|dame|madame|mesdames|mme)/.test(s)) return 'F';
+  return null; // catégorie neutre (Coupe, Couleur, Soin, etc.)
+}
+window._catKind = _catKind;
+
 function passageName(cId,sId){
   // FIX 2026-05-13 : prend en compte le type de passage choisi (passage-H/F/E)
   // AVANT : cId="passage-H" tombait dans gC() qui renvoie null \u2192 "Client de passage" sans genre.
@@ -7445,14 +7466,16 @@ function passageName(cId,sId){
     if(typ==="F") return "\ud83d\udc69 Client de passage femme";
   }
   // Cas 2 : passage g\u00e9n\u00e9rique sans suffixe \u2192 inf\u00e8re depuis cat\u00e9gorie service
-  // FIX 2026-05-13 : comparaison CASE-INSENSITIVE (la cat en DB peut \u00eatre "HOMME" ou "Homme")
+  // FIX 2026-05-13 v2 : utilise _catKind() qui couvre TOUTES les variantes
+  // (Homme/HOMME/homme/Hommes/Barbier/Monsieur, Enfant/ENFANTS/Kid/Junior/Gar\u00e7on/Fille, etc.)
   if(!cId || cId==="passage"){
     if(sId){
       var sv=gS(sId);
       if(sv && sv.cat){
-        var _catU = String(sv.cat).toUpperCase();
-        if(_catU==="HOMME" || _catU==="BARBIER") return "\ud83d\udc68 Client de passage homme";
-        if(_catU==="ENFANTS" || _catU==="ENFANT") return "\ud83e\uddd2 Client de passage enfant";
+        var _kind = _catKind(sv.cat);
+        if(_kind === "H") return "\ud83d\udc68 Client de passage homme";
+        if(_kind === "E") return "\ud83e\uddd2 Client de passage enfant";
+        // _kind === "F" \u2192 tombe sur le default ci-dessous (femme)
       }
     }
     return "\ud83d\udc69 Client de passage femme";
@@ -20643,9 +20666,9 @@ function rStats(){
       if(!nm||a.items[ii].isProd) continue;
       for(var sj=0;sj<SVC.length;sj++){
         if((SVC[sj].n||"").trim().toLowerCase()===nm){
-          // FIX 2026-05-13 : case-insensitive (cat peut être "HOMME" ou "Homme")
-          var _cU = String(SVC[sj].cat||"").toUpperCase();
-          if(_cU==="HOMME"||_cU==="BARBIER"||_cU==="ENFANTS"||_cU==="ENFANT") return SVC[sj].cat;
+          // FIX 2026-05-13 v2 : utilise _catKind() pour couvrir toutes les variantes
+          var _ck = _catKind(SVC[sj].cat);
+          if(_ck === "H" || _ck === "E") return SVC[sj].cat;
           if(SVC[sj].cat) foundCat=SVC[sj].cat;
           break;
         }
@@ -20666,14 +20689,14 @@ function rStats(){
     }
     return foundCat;
   }
-  // FIX 2026-05-13 : helper de comparaison cat case-insensitive
-  function _isCat(cat, ...targets){ var u = String(cat||"").toUpperCase(); return targets.some(function(t){return u===String(t).toUpperCase();}); }
+  // FIX 2026-05-13 v2 : utilise _catKind() pour couvrir TOUTES les variantes saisies par les salons
   var caF=0,caH=0,caE=0,nbF=0,nbH=0,nbE=0;
   dn.forEach(function(a){
     var cl=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
     var cat=_detectCat(a);
-    if(_isCat(cat,"Enfants","Enfant")||a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
-    else if(_isCat(cat,"Homme","Barbier")||a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
+    var ck=_catKind(cat);
+    if(ck==="E"||a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
+    else if(ck==="H"||a.cId==="passage-H"){caH+=a.pr*taxR;nbH++;}
     else if(cl&&cl.sex==="H"){caH+=a.pr*taxR;nbH++;}
     else{caF+=a.pr*taxR;nbF++;}
   });
@@ -20706,11 +20729,12 @@ function rStats(){
       dayData[a.date].pr+=a.pr*taxR;
     }
     // Genre — même priorité : Enfants > Homme > sex client > F
-    // FIX 2026-05-13 : case-insensitive via _isCat
+    // FIX 2026-05-13 v2 : utilise _catKind()
     var cl2=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
     var cat2=_detectCat(a);
-    if(_isCat(cat2,"Enfants","Enfant")||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
-    else if(_isCat(cat2,"Homme","Barbier")||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
+    var ck2=_catKind(cat2);
+    if(ck2==="E"||a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
+    else if(ck2==="H"||a.cId==="passage-H")dayData[a.date].h+=a.pr*taxR;
     else if(cl2&&cl2.sex==="H")dayData[a.date].h+=a.pr*taxR;
     else dayData[a.date].f+=a.pr*taxR;
   });
