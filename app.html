@@ -21001,8 +21001,10 @@ function rStats(){
       if(cd.img)h+='<img src="'+cd.img+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid '+cd.col+';flex-shrink:0">';
       else h+='<div style="width:32px;height:32px;border-radius:50%;background:'+cd.col+';color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0">'+cd.ini+'</div>';
       h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#fff">'+cd.nom+(isTop?' <span style="font-size:11px;color:var(--gold);margin-left:6px">⭐ Top</span>':'')+'</div>';
-      h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:1px">'+cd.nbTk+' ticket'+(cd.nbTk>1?'s':'')+' · panier '+cd.panier.toFixed(2)+' €</div></div>';
-      h+='<div style="text-align:right"><div style="font-weight:800;font-size:15px;color:'+(isTop?'var(--gold)':'#fff')+';font-family:var(--f1,Georgia,serif)">'+cd.ca.toFixed(2)+' €</div>';
+      // FIX 2026-05-13 : panier moyen avec HT+TTC (helper applique la distinction seulement si tauxTVA > 0)
+      h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:1px">'+cd.nbTk+' ticket'+(cd.nbTk>1?'s':'')+' · panier '+fmtPrixDuo(cd.panier)+'</div></div>';
+      // Et CA total collab : idem
+      h+='<div style="text-align:right"><div style="font-weight:800;font-size:15px;color:'+(isTop?'var(--gold)':'#fff')+';font-family:var(--f1,Georgia,serif)">'+fmtPrixDuoStack(cd.ca)+'</div>';
       h+='<div style="font-size:11px;color:rgba(255,255,255,.5)">'+cd.pct.toFixed(1)+'%</div></div>';
       h+='</div>';
       // Progress bar
@@ -21018,9 +21020,8 @@ function rStats(){
   h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px\">Quantites vendues</div>";
   h+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:#f0d060\"></span><span style=\"flex:1\">Produits</span><strong>"+nbPd+"</strong></div>";
   h+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:#7ab8e0\"></span><span style=\"flex:1\">Prestations</span><strong>"+nbPr+"</strong></div>";
-  var qD=don([{l:"P",v:nbPd,c:"#f0d060"},{l:"S",v:nbPr,c:"#7ab8e0"}],nbT,160);
-  qD=qD.replace((nbT).toFixed(2)+" \u20ac",""+nbT);
-  h+=qD+"</div>";
+  // FIX 2026-05-13 : centerText au lieu du .replace() fragile
+  h+=don([{l:"P",v:nbPd,c:"#f0d060"},{l:"S",v:nbPr,c:"#7ab8e0"}],nbT,160,nbT+" articles")+"</div>";
   
   // 6. Meilleurs clients
   h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px\">Meilleurs clients</div>";
@@ -21306,20 +21307,23 @@ function rStats(){
   h+='</div></div>';
   
   // 12. Taux de remplissage
-  // FIX 2026-05-13 : calcul des minutes disponibles via getEffectiveHrs(date, collabId)
-  // pour chaque (jour \u00d7 collaborateur). Tient compte des horaires personnalis\u00e9s
-  // (horaires_overrides), des jours de repos individuels, et des collaborateurs
-  // inactifs. Avant on faisait juste H[dow]*T.length, ce qui surestimait fortement
-  // les minutes disponibles si certains collabs avaient des horaires diff\u00e9rents
-  // du salon ou \u00e9taient en cong\u00e9.
+  // FIX 2026-05-13 v2 : it\u00e8re sur TOUS les jours de la p\u00e9riode (df \u2192 dt),
+  // pas seulement ceux avec un RDV "done". Avant, un jour sans client mais
+  // o\u00f9 Amandine et Manue \u00e9taient ouvertes n'\u00e9tait pas compt\u00e9 dans la dispo,
+  // ce qui faussait gravement le taux (ex: 7h dispo affich\u00e9es au lieu de
+  // 64h/semaine r\u00e9els). Maintenant on calcule la dispo pour chaque jour
+  // calendaire de la p\u00e9riode, puis on agr\u00e8ge l'occupation des RDV done.
   h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;color:var(--gold)">\ud83d\udccb Taux de remplissage</div>';
   var totalAvailMin=0,totalOccupMin=0;
-  var fillDays=Object.keys(dayData).sort();
-  // Liste collaborateurs actifs (filtre dates d'entr\u00e9e/d\u00e9part si pr\u00e9sentes)
   var activeCollabs = (T||[]).filter(function(c){ return c && !c.inactif; });
-  fillDays.forEach(function(dk2){
+  // G\u00e9n\u00e8re TOUS les jours entre df et dt (bornes incluses)
+  var _allFillDays = [];
+  var _dStart = new Date(df + 'T12:00:00'), _dEnd = new Date(dt + 'T12:00:00');
+  for(var _dCur = new Date(_dStart); _dCur <= _dEnd; _dCur.setDate(_dCur.getDate() + 1)){
+    _allFillDays.push(dS(_dCur));
+  }
+  _allFillDays.forEach(function(dk2){
     activeCollabs.forEach(function(collab){
-      // Filtre si collab pas encore entr\u00e9 ou d\u00e9j\u00e0 parti \u00e0 cette date
       if(collab.date_entree && dk2 < collab.date_entree) return;
       if(collab.date_depart && dk2 > collab.date_depart) return;
       var hrs2 = (typeof getEffectiveHrs==="function") ? getEffectiveHrs(dk2, collab.id) : null;
