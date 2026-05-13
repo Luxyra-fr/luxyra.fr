@@ -20934,7 +20934,12 @@ function rStats(){
     return sv3;
   }
   
-  function sCard(title,items,total,chartKey,barFn,barColors,barLabels){
+  // FIX 2026-05-13 : sCard accepte un param\u00e8tre detailFn optionnel pour calculer
+  // la valeur affich\u00e9e pour chaque jour dans l'onglet "d\u00e9tails". Sans cette
+  // option, on tombait toujours sur dd.pr+dd.pd = CA total du jour, ce qui
+  // \u00e9tait faux pour la card "Panier moyen" (devait afficher panier moyen par
+  // jour, pas le CA cumul\u00e9).
+  function sCard(title,items,total,chartKey,barFn,barColors,barLabels,detailFn){
     var mode=window["_sc_"+chartKey]||"eval";
     var c="<div class=\"card\" style=\"margin-bottom:14px\">";
     c+="<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:10px\">";
@@ -20947,12 +20952,31 @@ function rStats(){
     for(var si=0;si<items.length;si++){var htVal=(items[si].v*htR);c+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:"+(items[si].c||cols2[si%5])+"\"></span><span style=\"flex:1\">"+items[si].l+"</span><span style=\"font-size:11px;color:var(--text3);margin-right:6px\">"+htVal.toFixed(2)+" \u20ac <small>HT</small></span><strong>"+items[si].v.toFixed(2)+" \u20ac <small style=\"font-weight:400;font-size:10px;opacity:.6\">TTC</small></strong></div>";}
     if(mode==="eval"){c+=don(items,total,160);}
     else if(mode==="comp"){c+=bars(days,barFn,barColors,barLabels);}
-    else{c+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";for(var di2=days.length-1;di2>=0;di2--){var dd2=dayData[days[di2]]||{pr:0,pd:0};var detTtc=(dd2.pr+dd2.pd);var detHt=(detTtc*htR);c+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(days[di2])+"</span><span style=\"font-size:10px;color:var(--text3);margin-right:6px\">"+detHt.toFixed(2)+"\u20ac HT</span><strong>"+detTtc.toFixed(2)+" \u20ac TTC</strong></div>";}c+="</div>";}
+    else{
+      c+="<div style=\"max-height:200px;overflow-y:auto;margin-top:8px\">";
+      for(var di2=days.length-1;di2>=0;di2--){
+        var _day=days[di2];
+        var dd2=dayData[_day]||{pr:0,pd:0};
+        // Si detailFn fourni, l'utiliser pour calculer la valeur du jour (ex: panier moyen)
+        // Sinon valeur par d\u00e9faut = CA total du jour (prestations + produits)
+        var detTtc = (typeof detailFn === "function") ? detailFn(_day) : (dd2.pr+dd2.pd);
+        var detHt = detTtc * htR;
+        c+="<div style=\"display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border2);font-size:12px\"><span style=\"flex:1\">"+fmt(_day)+"</span><span style=\"font-size:10px;color:var(--text3);margin-right:6px\">"+detHt.toFixed(2)+"\u20ac HT</span><strong>"+detTtc.toFixed(2)+" \u20ac TTC</strong></div>";
+      }
+      c+="</div>";
+    }
     c+="</div>";return c;
   }
   
   // 1. Panier moyen
-  h+=sCard("Panier moyen",[{l:"Produits",v:panPd,c:"#f0d060"},{l:"Prestations",v:panPr,c:"#7ab8e0"}],panPd+panPr,"pan",function(d){var dd=dayData[d]||{pd:0,pr:0};return[dd.pd,dd.pr];},["#f0d060","#7ab8e0"],["Produits","Prestations"]);
+  // FIX 2026-05-13 : le détail jour par jour affichait le CA du jour au lieu
+  // du panier moyen (CA / nb tickets). On passe maintenant un detailFn dédié.
+  var _panierDetailFn = function(d){
+    var dd = dayData[d] || {pr:0, pd:0};
+    var nbT = dn.filter(function(a){return a.date===d;}).length;
+    return nbT > 0 ? (dd.pr + dd.pd) / nbT : 0;
+  };
+  h+=sCard("Panier moyen",[{l:"Produits",v:panPd,c:"#f0d060"},{l:"Prestations",v:panPr,c:"#7ab8e0"}],panPd+panPr,"pan",function(d){var dd=dayData[d]||{pd:0,pr:0};return[dd.pd,dd.pr];},["#f0d060","#7ab8e0"],["Produits","Prestations"],_panierDetailFn);
   
   // 2. Panier moyen par genre (F/H/E)
   var panAll=(nbF+nbH+nbE)?(caF+caH+caE)/(nbF+nbH+nbE):0;
