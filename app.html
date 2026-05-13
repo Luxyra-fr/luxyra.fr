@@ -20678,13 +20678,49 @@ function rStats(){
     }
     return foundCat;
   }
-  // FIX 2026-05-13 v3 : SIMPLIFIÉ — prime au choix utilisateur (cId passage-X) ou sex client réel
+  // FIX 2026-05-13 v4 : split par séparateur multi-client pour le bon rattachement au genre
+  // Helper centralisé pour déterminer le genre d'un cId (passage-X ou UUID client)
+  function _genreOf(cId){
+    var cl=cId&&typeof cId==="string"&&cId.indexOf("passage")!==0?gC(cId):null;
+    if(cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))) return "E";
+    if(cId==="passage-H"||(cl&&cl.sex==="H")) return "H";
+    return "F"; // passage-F, autre, ou défaut
+  }
   var caF=0,caH=0,caE=0,nbF=0,nbH=0,nbE=0;
   dn.forEach(function(a){
-    var cl=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
-    if(a.cId==="passage-E"||(cl&&(cl.genre==="E"||cl.sex==="E"))){caE+=a.pr*taxR;nbE++;}
-    else if(a.cId==="passage-H"||(cl&&cl.sex==="H")){caH+=a.pr*taxR;nbH++;}
-    else{caF+=a.pr*taxR;nbF++;} // passage-F ou défaut
+    // Si pas d'items ou pas de séparateur multi-client → tout va au client principal
+    var hasSep = a.items && a.items.some && a.items.some(function(it){return it.isSep;});
+    if(!hasSep){
+      var g = _genreOf(a.cId);
+      if(g==="E"){caE+=a.pr*taxR;nbE++;}
+      else if(g==="H"){caH+=a.pr*taxR;nbH++;}
+      else{caF+=a.pr*taxR;nbF++;}
+      return;
+    }
+    // Multi-client : split par séparateur. Avant le premier séparateur = client principal.
+    var currentCId = a.cId, currentSub = 0;
+    a.items.forEach(function(it){
+      if(it.isSep){
+        if(currentSub > 0){
+          var gg = _genreOf(currentCId);
+          if(gg==="E"){caE+=currentSub*taxR;nbE++;}
+          else if(gg==="H"){caH+=currentSub*taxR;nbH++;}
+          else{caF+=currentSub*taxR;nbF++;}
+        }
+        currentCId = it.sepCId;
+        currentSub = 0;
+      } else {
+        currentSub += (Number(it.price)||0)*(Number(it.qty)||1) - (Number(it.remise)||0);
+      }
+    });
+    // Dernière section
+    if(currentSub > 0){
+      var gend = _genreOf(currentCId);
+      if(gend==="E"){caE+=currentSub*taxR;nbE++;}
+      else if(gend==="H"){caH+=currentSub*taxR;nbH++;}
+      else{caF+=currentSub*taxR;nbF++;}
+    }
+    return; // skip le rattachement non-splitté ci-dessous
   });
   var panF=nbF?caF/nbF:0,panH=nbH?caH/nbH:0,panE=nbE?caE/nbE:0;
   
@@ -20714,11 +20750,36 @@ function rStats(){
     } else {
       dayData[a.date].pr+=a.pr*taxR;
     }
-    // Genre — FIX 2026-05-13 v3 SIMPLIFIÉ : choix utilisateur (passage-X) ou sex client réel
-    var cl2=a.cId&&typeof a.cId==="string"&&a.cId.indexOf("passage")!==0?gC(a.cId):null;
-    if(a.cId==="passage-E"||(cl2&&(cl2.genre==="E"||cl2.sex==="E")))dayData[a.date].e+=a.pr*taxR;
-    else if(a.cId==="passage-H"||(cl2&&cl2.sex==="H"))dayData[a.date].h+=a.pr*taxR;
-    else dayData[a.date].f+=a.pr*taxR; // passage-F ou défaut
+    // Genre — FIX 2026-05-13 v4 : split par séparateur multi-client
+    var hasSep2 = a.items && a.items.some && a.items.some(function(it){return it.isSep;});
+    if(!hasSep2){
+      var g2 = _genreOf(a.cId);
+      if(g2==="E") dayData[a.date].e+=a.pr*taxR;
+      else if(g2==="H") dayData[a.date].h+=a.pr*taxR;
+      else dayData[a.date].f+=a.pr*taxR;
+    } else {
+      var cur2CId = a.cId, cur2Sub = 0;
+      a.items.forEach(function(it){
+        if(it.isSep){
+          if(cur2Sub > 0){
+            var gg2 = _genreOf(cur2CId);
+            if(gg2==="E") dayData[a.date].e+=cur2Sub*taxR;
+            else if(gg2==="H") dayData[a.date].h+=cur2Sub*taxR;
+            else dayData[a.date].f+=cur2Sub*taxR;
+          }
+          cur2CId = it.sepCId;
+          cur2Sub = 0;
+        } else {
+          cur2Sub += (Number(it.price)||0)*(Number(it.qty)||1) - (Number(it.remise)||0);
+        }
+      });
+      if(cur2Sub > 0){
+        var glast = _genreOf(cur2CId);
+        if(glast==="E") dayData[a.date].e+=cur2Sub*taxR;
+        else if(glast==="H") dayData[a.date].h+=cur2Sub*taxR;
+        else dayData[a.date].f+=cur2Sub*taxR;
+      }
+    }
   });
   ps.forEach(function(p){if(!dayData[p.date])dayData[p.date]={pr:0,pd:0,f:0,h:0,e:0};dayData[p.date].pd+=p.pr*taxR;});
   var days=Object.keys(dayData).sort();
