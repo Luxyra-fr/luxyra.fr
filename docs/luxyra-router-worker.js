@@ -131,6 +131,16 @@ export default {
     } catch (err) {
       console.error(`[cron] pending-payment-rdv-purge FAILED:`, err?.message || err);
     }
+    // FIX 2026-05-13 : Job d'audit intégrité quotidien sur tous les salons actifs.
+    // Appelle public.check_data_integrity() (READ-ONLY) sur chaque salon, agrège les
+    // anomalies, et envoie un email à support@luxyra.fr SEULEMENT si problème détecté.
+    // Inbox vide = tout va bien.
+    try {
+      const result4 = await runIntegrityCheckJob(env);
+      console.log(`[cron] integrity-check done:`, result4);
+    } catch (err) {
+      console.error(`[cron] integrity-check FAILED:`, err?.message || err);
+    }
   },
 };
 
@@ -2598,5 +2608,176 @@ async function sendRetentionPurgedAdminEmail(env, salon) {
   } catch (e) {
     console.error("[retention] admin notif failed:", e?.message || e);
   }
+}
+
+// ============================================================
+// INTEGRITY CHECK JOB (cron quotidien) — audit auto tous salons
+// Appelle public.check_data_integrity(salon_id) en READ-ONLY pour chaque
+// salon actif, agrège les anomalies, et envoie un email à support@luxyra.fr
+// UNIQUEMENT si au moins une anomalie CRITICAL ou WARNING est trouvée.
+// Inbox vide = tout va bien.
+// ============================================================
+async function runIntegrityCheckJob(env) {
+  const supabaseUrl = env.SUPABASE_URL || "https://kxdgjtvrkwugbifgppai.supabase.co";
+  const supabaseKey = env.SUPABASE_SERVICE_KEY;
+  if (!supabaseKey) {
+    console.error("[integrity] SUPABASE_SERVICE_KEY manquant — skip");
+    return { status: "skipped", reason: "no_service_key" };
+  }
+
+  // 1) Lister les salons actifs
+  const salonsResp = await fetch(
+    `${supabaseUrl}/rest/v1/salons?select=id,nom,siret,email,gerant_prenom,gerant_nom&status=neq.cancelled&user_id=not.is.null`,
+    { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+  );
+  if (!salonsResp.ok) {
+    const t = await salonsResp.text();
+    throw new Error(`Liste salons failed: ${salonsResp.status} ${t.slice(0, 200)}`);
+  }
+  const salons = await salonsResp.json();
+
+  let allAnomalies = [];      // anomalies cumulées tous salons
+  let salonsChecked = 0;
+  let salonsWithIssues = 0;
+  let totalCritical = 0;
+  let totalWarning = 0;
+
+  // 2) Pour chaque salon, RPC check_data_integrity
+  for (const salon of salons) {
+    salonsChecked++;
+    try {
+      const rpcResp = await fetch(`${supabaseUrl}/rest/v1/rpc/check_data_integrity`, {
+        method: "POST",
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ p_salon_id: salon.id }),
+      });
+      if (!rpcResp.ok) {
+        console.error(`[integrity] RPC failed pour salon ${salon.nom}: ${rpcResp.status}`);
+        continue;
+      }
+      const anomalies = await rpcResp.json();
+      if (Array.isArray(anomalies) && anomalies.length > 0) {
+        salonsWithIssues++;
+        anomalies.forEach((a) => {
+          if (a.severity === "CRITICAL") totalCritical++;
+          else if (a.severity === "WARNING") totalWarning++;
+          allAnomalies.push({ ...a, salon_id: salon.id, salon_nom: salon.nom, salon_email: salon.email });
+        });
+      }
+    } catch (e) {
+      console.error(`[integrity] erreur salon ${salon.nom}:`, e?.message || e);
+    }
+  }
+
+  console.log(`[integrity] ${salonsChecked} salons checkés, ${salonsWithIssues} avec anomalies (${totalCritical} CRITICAL, ${totalWarning} WARNING)`);
+
+  // 3) Envoi email à support@luxyra.fr SI au moins 1 anomalie CRITICAL ou WARNING
+  if (totalCritical === 0 && totalWarning === 0) {
+    return { status: "ok", salons_checked: salonsChecked, anomalies: 0 };
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  const sev = totalCritical > 0 ? "🚨 CRITICAL" : "⚠️ WARNING";
+  const subject = `[Luxyra] ${sev} — Audit intégrité ${date} (${salonsWithIssues}/${salonsChecked} salons)`;
+
+  // HTML email pro
+  let html = `
+    <div style="font-family:system-ui,Arial,sans-serif;max-width:700px;margin:0 auto;color:#1a1a1a">
+      <div style="background:#0a0a0a;color:#c8a84e;padding:24px 30px;text-align:center">
+        <h1 style="margin:0;font-family:Georgia,serif;font-size:24px;letter-spacing:3px">LUXYRA</h1>
+        <div style="font-size:11px;letter-spacing:2px;margin-top:4px">RAPPORT D'AUDIT INTÉGRITÉ QUOTIDIEN</div>
+      </div>
+      <div style="padding:24px 30px;background:#fff">
+        <h2 style="color:${totalCritical > 0 ? "#c43838" : "#d4a437"};margin:0 0 8px">${sev} — ${date}</h2>
+        <p style="color:#555;font-size:14px;line-height:1.6">
+          Audit automatique exécuté sur <strong>${salonsChecked}</strong> salon(s) actif(s).
+          <strong>${salonsWithIssues}</strong> salon(s) avec anomalies détectées.<br>
+          <strong style="color:#c43838">${totalCritical}</strong> anomalies CRITICAL.
+          <strong style="color:#d4a437">${totalWarning}</strong> anomalies WARNING.
+        </p>
+  `;
+
+  // Grouper par salon
+  const bySalon = {};
+  allAnomalies.forEach((a) => {
+    if (!bySalon[a.salon_id]) bySalon[a.salon_id] = { nom: a.salon_nom, email: a.salon_email, items: [] };
+    bySalon[a.salon_id].items.push(a);
+  });
+
+  for (const salonId of Object.keys(bySalon)) {
+    const s = bySalon[salonId];
+    html += `
+      <div style="margin-top:24px;padding:18px;border-left:4px solid #c8a84e;background:#faf8f3">
+        <div style="font-weight:700;font-size:16px;color:#1a1a1a">${escapeHtml(s.nom)}</div>
+        <div style="font-size:11px;color:#888;margin-bottom:12px">${escapeHtml(s.email || "")} · ${s.items.length} anomalie(s)</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="background:#f0ebe0">
+              <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd">Sév.</th>
+              <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd">Cat.</th>
+              <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd">Règle</th>
+              <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd">Détail</th>
+            </tr>
+          </thead>
+          <tbody>`;
+    s.items.forEach((a) => {
+      const sevColor = a.severity === "CRITICAL" ? "#c43838" : a.severity === "WARNING" ? "#d4a437" : "#888";
+      html += `
+        <tr style="border-bottom:1px solid #eee">
+          <td style="padding:8px;color:${sevColor};font-weight:700">${a.severity}</td>
+          <td style="padding:8px;color:#666">${a.category}</td>
+          <td style="padding:8px;font-family:monospace;font-size:11px;color:#444">${a.rule}</td>
+          <td style="padding:8px;color:#1a1a1a">${escapeHtml(a.detail || "")}</td>
+        </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  html += `
+        <p style="font-size:11px;color:#999;margin-top:30px;padding-top:16px;border-top:1px solid #eee;line-height:1.5">
+          Audit automatique généré par <strong>public.check_data_integrity()</strong> sur la base Luxyra.
+          Action en lecture seule, aucune donnée modifiée. Pour investiguer une anomalie : se connecter
+          au panneau admin Luxyra ou à Supabase SQL Editor.<br>
+          Si tout est OK demain, vous ne recevrez aucun email — c'est normal.
+        </p>
+      </div>
+    </div>`;
+
+  // Plain text fallback
+  let text = `[Luxyra] Audit intégrité ${date}\n\n${salonsChecked} salons checkés, ${salonsWithIssues} avec anomalies\n${totalCritical} CRITICAL, ${totalWarning} WARNING\n\n`;
+  for (const salonId of Object.keys(bySalon)) {
+    const s = bySalon[salonId];
+    text += `--- ${s.nom} (${s.items.length} anomalies) ---\n`;
+    s.items.forEach((a) => {
+      text += `  [${a.severity}] ${a.rule}: ${a.detail}\n`;
+    });
+    text += "\n";
+  }
+
+  try {
+    await brevoSendEmail(env, {
+      to: "support@luxyra.fr",
+      toName: "Support Luxyra",
+      senderEmail: "contact@luxyra.fr",
+      senderName: "Luxyra Audit",
+      subject,
+      htmlContent: html,
+      textContent: text,
+    });
+    console.log("[integrity] email envoyé à support@luxyra.fr");
+  } catch (e) {
+    console.error("[integrity] envoi email échoué:", e?.message || e);
+  }
+
+  return { status: "alert_sent", salons_checked: salonsChecked, salons_with_issues: salonsWithIssues, critical: totalCritical, warning: totalWarning };
+}
+
+// Helper : escape HTML basique pour les emails
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 // EOF
