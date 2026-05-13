@@ -20691,26 +20691,30 @@ function rStats(){
   var dn=AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=df&&a.date<=dt;});
   var ps=PS.filter(function(p){return p.date>=df&&p.date<=dt;});
   
-  var caPr=0,caPd=0,nbPr=0,nbPd=0;
-  // Compter produits/services par ligne items (gère tickets mixtes + données migrées)
+  // FIX 2026-05-14 : on sépare 2 compteurs distincts
+  // - nbPr/nbPd = nombre de TICKETS contenant prestation/produit (pour panier moyen "par ticket")
+  // - qtyPr/qtyPd = NOMBRE RÉEL de prestations/produits vendus (pour card "Quantités vendues")
+  // Un ticket avec coupe + brushing + 2 shampoings = nbPr=1, nbPd=1 MAIS qtyPr=2, qtyPd=2
+  var caPr=0,caPd=0,nbPr=0,nbPd=0,qtyPr=0,qtyPd=0;
   dn.forEach(function(a){
     var hasProd=false, hasServ=false, srvAmount=0, prdAmount=0;
     if(a.items && a.items.length){
       a.items.forEach(function(it){
-        var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
-        if(it.isProd){prdAmount+=sub*taxR;hasProd=true;}
-        else{srvAmount+=sub*taxR;hasServ=true;}
+        if(it.isSep) return; // séparateurs multi-client : ignorés du comptage
+        var qty=(Number(it.qty)||1);
+        var sub=(Number(it.price)||0)*qty-(Number(it.remise)||0);
+        if(it.isProd){prdAmount+=sub*taxR;hasProd=true;qtyPd+=qty;}
+        else{srvAmount+=sub*taxR;hasServ=true;qtyPr+=qty;}
       });
     } else {
-      srvAmount=a.pr*taxR;hasServ=true;
+      srvAmount=a.pr*taxR;hasServ=true;qtyPr+=1;
     }
     caPr+=srvAmount;caPd+=prdAmount;
     if(hasServ)nbPr++;
     if(hasProd)nbPd++;
   });
-  // PS additionnel (ventes produits hors appointment) — devient marginal mais on le garde
-  ps.forEach(function(p){caPd+=p.pr*taxR;nbPd++;});
-  var caT=caPr+caPd,nbT=nbPr+nbPd;
+  ps.forEach(function(p){caPd+=p.pr*taxR;nbPd++;qtyPd+=1;});
+  var caT=caPr+caPd,nbT=nbPr+nbPd,qtyT=qtyPr+qtyPd;
   var panPr=nbPr?caPr/nbPr:0,panPd=nbPd?caPd/nbPd:0;
   
   // Genre: F/H/E
@@ -21116,12 +21120,16 @@ function rStats(){
   }
   h+='</div>';
   
-  // 5. Quantites vendues
-  h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px\">Quantites vendues</div>";
-  h+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:#f0d060\"></span><span style=\"flex:1\">Produits</span><strong>"+nbPd+"</strong></div>";
-  h+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:#7ab8e0\"></span><span style=\"flex:1\">Prestations</span><strong>"+nbPr+"</strong></div>";
-  // FIX 2026-05-13 : centerText au lieu du .replace() fragile
-  h+=don([{l:"P",v:nbPd,c:"#f0d060"},{l:"S",v:nbPr,c:"#7ab8e0"}],nbT,160,nbT+" articles")+"</div>";
+  // 5. Quantités vendues — FIX 2026-05-14 : utilise qtyPr/qtyPd (vraies quantités
+  // par item, qty incluse) au lieu de nbPr/nbPd (compteurs de tickets). Si 1 ticket
+  // a 3 shampoings, c'est 3 produits vendus, pas 1.
+  h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px\">Quantités vendues</div>";
+  var _qtySum = qtyPr + qtyPd;
+  var _qtyPctP = _qtySum>0 ? (qtyPd/_qtySum*100).toFixed(1) : 0;
+  var _qtyPctS = _qtySum>0 ? (qtyPr/_qtySum*100).toFixed(1) : 0;
+  h+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:#f0d060\"></span><span style=\"flex:1\">Produits <small style=\"opacity:.55;font-weight:400\">"+_qtyPctP+"%</small></span><strong>"+qtyPd+"</strong></div>";
+  h+="<div style=\"display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px\"><span style=\"width:10px;height:10px;border-radius:2px;background:#7ab8e0\"></span><span style=\"flex:1\">Prestations <small style=\"opacity:.55;font-weight:400\">"+_qtyPctS+"%</small></span><strong>"+qtyPr+"</strong></div>";
+  h+=don([{l:"P",v:qtyPd,c:"#f0d060"},{l:"S",v:qtyPr,c:"#7ab8e0"}],qtyT,160,qtyT+" articles")+"</div>";
   
   // 6. Meilleurs clients
   h+="<div class=\"card\" style=\"margin-bottom:14px\"><div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px\">Meilleurs clients</div>";
