@@ -7499,6 +7499,25 @@ function apptClientLabel(a){
   return passageName(a.cId, a.sId);
 }
 function fmt(d){return new Date(d).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"});}
+// FIX 2026-05-13 : helper d'affichage prix HT+TTC. Si le salon est en franchise
+// TVA (tauxTVA=0), affiche un seul montant. Sinon affiche "X € TTC · Y € HT".
+// Usage : <strong>+fmtPrixDuo(ttc)+</strong> ou inline.
+function fmtPrixDuo(ttc, opts){
+  var n = Number(ttc) || 0;
+  var taux = (typeof SALON_CONFIG!=="undefined" && SALON_CONFIG.tauxTVA) ? Number(SALON_CONFIG.tauxTVA) : 0;
+  var sep = (opts && opts.sep) || " <small style=\"font-weight:400;opacity:.6\">·</small> ";
+  if(taux <= 0) return n.toFixed(2) + " €";
+  var ht = n / (1 + taux/100);
+  return n.toFixed(2) + " € <small style=\"font-weight:400;opacity:.7;font-size:.85em\">TTC</small>" + sep + ht.toFixed(2) + " € <small style=\"font-weight:400;opacity:.5;font-size:.8em\">HT</small>";
+}
+// Version compacte : un seul TTC + indication HT en dessous (pour fiches/cards)
+function fmtPrixDuoStack(ttc){
+  var n = Number(ttc) || 0;
+  var taux = (typeof SALON_CONFIG!=="undefined" && SALON_CONFIG.tauxTVA) ? Number(SALON_CONFIG.tauxTVA) : 0;
+  if(taux <= 0) return "<span>"+n.toFixed(2)+" €</span>";
+  var ht = n / (1 + taux/100);
+  return "<span>"+n.toFixed(2)+" € <small style=\"opacity:.6;font-size:.7em\">TTC</small></span><div style=\"font-size:.7em;opacity:.55;font-weight:400\">"+ht.toFixed(2)+" € HT</div>";
+}
 function dB(a,b){return Math.floor((new Date(b)-new Date(a))/864e5);}
 function dS(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function frM(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
@@ -13367,7 +13386,7 @@ function _renderClientCaCockpit(c, ap, caTotal, cs){
   h+='<div><div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(212,168,67,.7);letter-spacing:2px;text-transform:uppercase">Statut client</div>';
   h+='<div style="font-size:22px;font-weight:800;color:'+statutCol+';margin-top:2px">'+statut+'</div></div>';
   h+='<div style="text-align:right"><div style="font-family:var(--f1,Georgia,serif);font-size:11px;color:rgba(212,168,67,.7);letter-spacing:2px;text-transform:uppercase">CA total</div>';
-  h+='<div style="font-size:28px;font-weight:900;color:var(--gold);font-family:var(--f1,Georgia,serif)">'+caTotal.toFixed(2)+' €</div></div>';
+  h+='<div style="font-size:28px;font-weight:900;color:var(--gold);font-family:var(--f1,Georgia,serif)">'+fmtPrixDuoStack(caTotal)+'</div></div>';
   h+='</div>';
   h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;border-top:1px solid rgba(200,168,78,.15);padding-top:12px">';
   h+='<div style="text-align:center"><div style="font-size:18px;font-weight:800;color:#fff">'+nbVisitsTotal+'</div><div style="font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:1px;margin-top:2px">Visites</div></div>';
@@ -20870,15 +20889,27 @@ function rStats(){
   
   // === HELPERS ===
   // FIX 2026-05-13 : ajout param\u00e8tre centerText optionnel pour \u00e9viter les .replace()
-  // fragiles c\u00f4t\u00e9 appelant (cas "X clients" pour acquisition, panier moyen, etc).
+  // fragiles c\u00f4t\u00e9 appelant. Si centerText non fourni, affiche TTC + HT en dessous
+  // si tauxTVA > 0 (sinon juste le montant pour les salons en franchise).
   function don(items,total,sz,centerText){
     if(!total)return"<div style=\"width:"+sz+"px;height:"+sz+"px;border-radius:50%;background:var(--border);display:flex;align-items:center;justify-content:center;margin:10px auto;font-size:13px;color:var(--text3)\">"+(centerText||"0 \u20ac")+"</div>";
     var r=sz/2-8,cx=sz/2,cy=sz/2,off=0;
     var sv2="<svg width=\""+sz+"\" height=\""+sz+"\" viewBox=\"0 0 "+sz+" "+sz+"\">";
     for(var di=0;di<items.length;di++){if(items[di].v<=0)continue;var pc=items[di].v/total;var ln2=2*Math.PI*r*pc;var gp=2*Math.PI*r*(1-pc);sv2+="<circle cx=\""+cx+"\" cy=\""+cy+"\" r=\""+r+"\" fill=\"none\" stroke=\""+(items[di].c||"#c9a227")+"\" stroke-width=\"16\" stroke-dasharray=\""+ln2+" "+gp+"\" stroke-dashoffset=\""+(-off*2*Math.PI*r)+"\" transform=\"rotate(-90 "+cx+" "+cy+")\"/>";off+=pc;}
     sv2+="<circle cx=\""+cx+"\" cy=\""+cy+"\" r=\""+(r-12)+"\" fill=\"rgba(20,20,20,.9)\"/>";
-    var _label=centerText||(total.toFixed(2)+" \u20ac");
-    sv2+="<text x=\""+cx+"\" y=\""+(cy+6)+"\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"900\" fill=\"#fff\">"+_label+"</text></svg>";
+    if(centerText){
+      sv2+="<text x=\""+cx+"\" y=\""+(cy+6)+"\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"900\" fill=\"#fff\">"+centerText+"</text>";
+    } else if(tvaR > 0){
+      // Affichage dual TTC (en gros) + HT (en petit) pour salons assujettis
+      var _ttc = total.toFixed(2);
+      var _ht = (total*htR).toFixed(2);
+      sv2+="<text x=\""+cx+"\" y=\""+(cy-2)+"\" text-anchor=\"middle\" font-size=\"13\" font-weight=\"900\" fill=\"#fff\">"+_ttc+" \u20ac TTC</text>";
+      sv2+="<text x=\""+cx+"\" y=\""+(cy+14)+"\" text-anchor=\"middle\" font-size=\"10\" font-weight=\"500\" fill=\"#fff\" opacity=\"0.7\">"+_ht+" \u20ac HT</text>";
+    } else {
+      // Franchise TVA (Excellence en auto-entrepreneur) : un seul chiffre
+      sv2+="<text x=\""+cx+"\" y=\""+(cy+6)+"\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"900\" fill=\"#fff\">"+total.toFixed(2)+" \u20ac</text>";
+    }
+    sv2+="</svg>";
     return sv2;
   }
   
@@ -22885,7 +22916,7 @@ function showClientHistoryFromCaisse(cId){
   // ===== Header sticky =====
   h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px">';
   h += '<div><h2 style="margin:0;font-size:18px;font-family:var(--f1,Georgia,serif)">🔍 Historique de '+cName(cl)+'</h2>';
-  h += '<div style="font-size:12px;color:var(--text2);margin-top:3px"><strong>'+histo.length+'</strong> ticket'+(histo.length>1?'s':'')+' encaissé'+(histo.length>1?'s':'')+' • <strong style="color:var(--gold)">'+caTotal.toFixed(2)+' €</strong> cumulés • '+nbSvcs+' prestation'+(nbSvcs>1?'s':'')+(nbProds>0?' • '+nbProds+' produit'+(nbProds>1?'s':''):'')+'</div></div>';
+  h += '<div style="font-size:12px;color:var(--text2);margin-top:3px"><strong>'+histo.length+'</strong> ticket'+(histo.length>1?'s':'')+' encaissé'+(histo.length>1?'s':'')+' • <strong style="color:var(--gold)">'+fmtPrixDuo(caTotal)+'</strong> cumulés • '+nbSvcs+' prestation'+(nbSvcs>1?'s':'')+(nbProds>0?' • '+nbProds+' produit'+(nbProds>1?'s':''):'')+'</div></div>';
   h += '<button onclick="_closeClientHistoryCaisse()" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:16px;flex-shrink:0;font-weight:700">✕</button>';
   h += '</div>';
   if(histo.length === 0){
