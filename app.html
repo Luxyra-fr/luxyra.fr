@@ -21742,6 +21742,17 @@ function oM(type,pf){
     h+='</div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input id="mp" autocomplete="off" placeholder="06 XX XX XX XX"></div>';
     h+='<div class="fg"><label>Email</label><input id="me" autocomplete="off" placeholder="email@exemple.com"></div>';
+    // FIX 2026-05-14 : Adresse / CP / Ville \u2014 obligatoires si le salon fait du
+    // domicile ou du mixte (sinon impossible d\'aller chez la cliente).
+    var _salonMode = (SALON_CONFIG && SALON_CONFIG.lieuMode) || "salon";
+    var _adrRequired = (_salonMode==="domicile" || _salonMode==="mixte");
+    var _adrLabel = _adrRequired ? "Adresse <span style=\"color:var(--gold)\">*</span>" : "Adresse";
+    var _adrHint = _adrRequired ? " (requis pour les RDV \u00e0 domicile)" : "";
+    h+='<div class="fg"><label>'+_adrLabel+'</label><input id="madr" autocomplete="off" placeholder="12 rue de la R\u00e9publique'+_adrHint+'"></div>';
+    h+='<div style="display:flex;gap:10px">';
+    h+='<div class="fg" style="width:120px"><label>Code postal'+(_adrRequired?" *":"")+'</label><input id="mcp" autocomplete="off" placeholder="75001" maxlength="5"></div>';
+    h+='<div class="fg" style="flex:1"><label>Ville'+(_adrRequired?" *":"")+'</label><input id="mville" autocomplete="off" placeholder="Paris"></div>';
+    h+='</div>';
     h+='<div class="fg"><label>Notes</label><input id="mno" placeholder="Allergies, pr\u00e9f\u00e9rences..."></div>';
     // Source d'acquisition (Quick Win 2026-05-06)
     // Optionnel \u2014 permet stats marketing \u00ab d'o\u00f9 viennent mes clients ? \u00bb
@@ -22539,10 +22550,19 @@ async function aCl(){
   var em=document.getElementById("me")?document.getElementById("me").value.trim():"";
   var no=document.getElementById("mno")?document.getElementById("mno").value.trim():"";
   var ddn=document.getElementById("mddn")?document.getElementById("mddn").value:"";
+  // FIX 2026-05-14 : adresse/CP/ville — obligatoires si salon mode domicile/mixte
+  var adr=document.getElementById("madr")?document.getElementById("madr").value.trim():"";
+  var cp=document.getElementById("mcp")?document.getElementById("mcp").value.trim():"";
+  var ville=document.getElementById("mville")?document.getElementById("mville").value.trim():"";
+  var _salonMode = (SALON_CONFIG && SALON_CONFIG.lieuMode) || "salon";
+  if((_salonMode==="domicile" || _salonMode==="mixte") && (!adr || !cp || !ville)){
+    showAlert("Adresse, code postal et ville requis pour les salons à domicile/mixte","warning");
+    return;
+  }
   // Acquisition source (Quick Win 2026-05-06) — optionnel
   var acqSrc=document.getElementById("mAcqSrc")?document.getElementById("mAcqSrc").value:"";
   var acqParrain=(acqSrc==="recommandation" && document.getElementById("mAcqParrain"))?document.getElementById("mAcqParrain").value.trim():"";
-  var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:"",cp:"",ville:"",ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[],acqSrc:acqSrc||null,acqParrain:acqParrain||null};
+  var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:adr,cp:cp,ville:ville,ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[],acqSrc:acqSrc||null,acqParrain:acqParrain||null};
   CL.push(newCl);
   // FIX 2026-05-12 : await pour que newCl.id soit l'UUID DB final avant la suite
   if(typeof saveClient==="function"){
