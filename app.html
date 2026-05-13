@@ -20805,30 +20805,38 @@ function rStats(){
   }
   var caF=0,caH=0,caE=0,nbF=0,nbH=0,nbE=0;
   dn.forEach(function(a){
-    // Calcul du CA par genre pour ce ticket
+    // FIX 2026-05-14 : panier moyen par genre — compter le NOMBRE de prestations
+    // par genre dans le ticket, pas juste 1 par ticket.
+    // Ex : 1 ticket "3 coupes filles à 25€" → 3 paniers E à 25€ (pas 1 panier à 75€)
+    // Ex : 1 ticket "coupe femme + coupe enfant" → 1 panier F + 1 panier E
     var caPerGenre={F:0,H:0,E:0};
+    var nbPerGenre={F:0,H:0,E:0};
     if(!a.items || a.items.length === 0){
       var g=_genreOf(a.cId);
       caPerGenre[g] = a.pr*taxR;
+      nbPerGenre[g] = 1;
     } else {
       var currentCId = a.cId;
       a.items.forEach(function(it){
         if(it.isSep){ currentCId=it.sepCId; return; }
+        if(it.isProd) return; // produits exclus du panier prestation par genre
         var sub = (Number(it.price)||0)*(Number(it.qty)||1) - (Number(it.remise)||0);
         if(sub <= 0) return;
         var ig = _itemGenre(it, currentCId);
         caPerGenre[ig] += sub*taxR;
+        nbPerGenre[ig] += (Number(it.qty)||1);
       });
-      // Si aucun item n'a généré de CA (cas rare), fallback total sur cId principal
+      // Si aucun item prestation n'a généré de CA (ticket avec uniquement produits ou cas rare),
+      // fallback total sur cId principal
       if(caPerGenre.F===0 && caPerGenre.H===0 && caPerGenre.E===0){
         var fb=_genreOf(a.cId);
         caPerGenre[fb] = a.pr*taxR;
+        nbPerGenre[fb] = 1;
       }
     }
-    // Incrémenter ca et nb selon ce ticket : 1 RDV par genre qui a reçu du CA
-    if(caPerGenre.E > 0){ caE += caPerGenre.E; nbE++; }
-    if(caPerGenre.H > 0){ caH += caPerGenre.H; nbH++; }
-    if(caPerGenre.F > 0){ caF += caPerGenre.F; nbF++; }
+    caE += caPerGenre.E; nbE += nbPerGenre.E;
+    caH += caPerGenre.H; nbH += nbPerGenre.H;
+    caF += caPerGenre.F; nbF += nbPerGenre.F;
     return;
   });
   var panF=nbF?caF/nbF:0,panH=nbH?caH/nbH:0,panE=nbE?caE/nbE:0;
