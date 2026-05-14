@@ -6024,23 +6024,47 @@ function setStyDayOn(ti,dow){
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function addExceptFermeture(){
-  // FIX 2026-05-12 : simplifi\u00e9 \u2014 toujours salon entier (les fermetures par collab
-  // se g\u00e8rent dans le planning Personnalis\u00e9s de chaque collaborateur)
+  // FIX 2026-05-14 : support plage de dates (Du / Au) pour fermer plusieurs jours
+  // cons\u00e9cutifs (vacances, pont) en une seule action. Cr\u00e9e N absences (1 par jour).
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udd12 Fermeture du salon</h2>';
-  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Ferme tout l\u2019\u00e9tablissement une journ\u00e9e pr\u00e9cise (jour f\u00e9ri\u00e9, vacances, travaux). Tous les collaborateurs sont concern\u00e9s.</div>';
-  htm+='<div class="fg"><label>Date de fermeture *</label><input type="date" id="exFermDate" value="'+TD+'"></div>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Ferme tout l\u2019\u00e9tablissement (jour f\u00e9ri\u00e9, vacances, travaux). Tous les collaborateurs sont concern\u00e9s.</div>';
+  htm+='<div style="display:flex;gap:10px;margin-bottom:8px">';
+  htm+='<div class="fg" style="flex:1"><label>Du *</label><input type="date" id="exFermDate" value="'+TD+'" onchange="(function(v){var t=document.getElementById(\'exFermDateTo\');if(t&&(!t.value||t.value<v))t.value=v;})(this.value)"></div>';
+  htm+='<div class="fg" style="flex:1"><label>Au <small style="opacity:.55;font-weight:400">\u2014 laisser vide si 1 jour</small></label><input type="date" id="exFermDateTo" value=""></div>';
+  htm+='</div>';
   htm+='<div class="fg"><label>Motif <small style="opacity:.55;font-weight:400">\u2014 sera affich\u00e9 sur les horaires de votre site public</small></label><input id="exFermMotif" placeholder="Ex: Jour f\u00e9ri\u00e9, vacances annuelles..."></div>';
   htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
   htm+='<button class="btn" style="flex:1;background:#e91e63;color:#fff;font-weight:700" onclick="doExceptFermeture()">Confirmer la fermeture</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 function doExceptFermeture(){
-  var d=document.getElementById("exFermDate").value;if(!d)return;
+  var dFrom=document.getElementById("exFermDate").value;
+  if(!dFrom)return;
+  var dTo=document.getElementById("exFermDateTo").value || dFrom;
+  if(dTo < dFrom){
+    showAlert("La date de fin doit \u00eatre apr\u00e8s la date de d\u00e9but","warning");
+    return;
+  }
   var motif=(document.getElementById("exFermMotif").value||"").trim()||"Fermeture exceptionnelle";
   if(!window.ABSENCES)window.ABSENCES=[];
-  // FIX 2026-05-12 : toujours stId=null (salon entier)
-  window.ABSENCES.push({id:U(),stId:null,type:"fermeture_except",date:d,motif:motif});
-  saveAbsences();cM();go("settings");
+  // Cr\u00e9e une absence par jour de la plage (inclus)
+  var cur = new Date(dFrom+"T12:00:00");
+  var end = new Date(dTo+"T12:00:00");
+  var nbCrees = 0;
+  while(cur <= end){
+    var dStr = cur.getFullYear()+"-"+String(cur.getMonth()+1).padStart(2,"0")+"-"+String(cur.getDate()).padStart(2,"0");
+    // \u00c9vite les doublons sur le m\u00eame jour
+    var exists = window.ABSENCES.find(function(a){return a.type==="fermeture_except"&&a.date===dStr&&!a.stId;});
+    if(!exists){
+      window.ABSENCES.push({id:U(),stId:null,type:"fermeture_except",date:dStr,motif:motif});
+      nbCrees++;
+    }
+    cur.setDate(cur.getDate()+1);
+  }
+  saveAbsences();
+  cM();
+  if(typeof toast==="function") toast("\u2713 "+nbCrees+" jour"+(nbCrees>1?"s":"")+" de fermeture ajout\u00e9"+(nbCrees>1?"s":""),"success");
+  go("settings");
 }
 function addAbsence(stId,preType){
   var sty=gT(stId);if(!sty)return;
