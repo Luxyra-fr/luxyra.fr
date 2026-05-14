@@ -1433,12 +1433,15 @@ function renderSite(){
   var _n = new Date();
   var _today = _n.getFullYear()+"-"+String(_n.getMonth()+1).padStart(2,"0")+"-"+String(_n.getDate()).padStart(2,"0");
   var _fermAuj = _absSal.find(function(ab){return ab.type==="fermeture_except"&&ab.date===_today&&!ab.stId;});
+  var _ouvAuj  = _absSal.find(function(ab){return ab.type==="ouverture_except"&&ab.date===_today&&!ab.stId;});
   for(var d=0;d<7;d++){
     var hr=HORAIRES[d];
     var _isT = (d===dow);
     var _hT;
     if(_isT && _fermAuj){
       _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement'+(_fermAuj.motif?' \u2014 '+String(_fermAuj.motif).replace(/[<>]/g,''):'')+'</span>';
+    } else if(_isT && _ouvAuj && _ouvAuj.horaire_o && _ouvAuj.horaire_c){
+      _hT='<span style="color:#00838f;font-weight:700">\u2728 '+_ouvAuj.horaire_o+' \u2014 '+_ouvAuj.horaire_c+(_ouvAuj.motif?' \u2014 '+String(_ouvAuj.motif).replace(/[<>]/g,''):'')+'</span>';
     } else {
       _hT=hr?hr.o+' \u2014 '+hr.c:'Ferm\u00e9';
     }
@@ -1456,6 +1459,21 @@ function renderSite(){
     _futFerms.forEach(function(f){
       var dp=f.date.split('-');
       h+='<div style="padding:2px 0">'+dp[2]+'/'+dp[1]+(f.motif?' \u2014 '+String(f.motif).replace(/[<>]/g,''):'')+'</div>';
+    });
+    h+='</div>';
+  }
+  // FIX 2026-05-14 : ouvertures exceptionnelles \u00e0 venir (14 prochains jours)
+  var _futOuvs = _absSal.filter(function(ab){
+    if(ab.type!=="ouverture_except"||ab.stId)return false;
+    if(!ab.date||ab.date<=_today)return false;
+    return ((new Date(ab.date) - new Date(_today)) / (1000*60*60*24)) <= 14;
+  }).sort(function(a,b){return a.date<b.date?-1:1;});
+  if(_futOuvs.length){
+    h+='<div style="margin-top:10px;padding:10px 12px;background:rgba(0,188,212,.06);border:1px solid rgba(0,188,212,.25);border-radius:8px;font-size:12px;color:#4dd0e1">';
+    h+='<div style="font-weight:700;margin-bottom:4px">\ud83d\udd13 Ouverture'+(_futOuvs.length>1?'s':'')+' exceptionnelle'+(_futOuvs.length>1?'s':'')+' \u00e0 venir</div>';
+    _futOuvs.forEach(function(o){
+      var dp=o.date.split('-');
+      h+='<div style="padding:2px 0">'+dp[2]+'/'+dp[1]+(o.horaire_o&&o.horaire_c?' \u00b7 '+o.horaire_o+'-'+o.horaire_c:'')+(o.motif?' \u2014 '+String(o.motif).replace(/[<>]/g,''):'')+'</div>';
     });
     h+='</div>';
   }
@@ -2315,7 +2333,8 @@ function findNextAvailableSlot(){
       for(var ai=0;ai<absences.length;ai++){
         var ab=absences[ai];
         if(ab.type==="ouverture_except" && ab.date===dateStr && ab.horaire_o && ab.horaire_c){
-          if(!booking.collabId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
+          // FIX 2026-05-14 : !ab.stId (ouverture salon-wide) doit s'appliquer à tous les collabs
+          if(!booking.collabId||!ab.stId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
         }
       }
     }
@@ -2402,7 +2421,8 @@ function renderCalendar(){
       for(var ai=0;ai<absences.length;ai++){
         var ab=absences[ai];
         if(ab.type==="ouverture_except"&&ab.date===dateKey&&ab.horaire_o&&ab.horaire_c){
-          if(!booking.collabId||ab.stId===booking.collabId){isExceptOpen=true;break;}
+          // FIX 2026-05-14 : !ab.stId (salon-wide) doit ouvrir le jour pour tous
+          if(!booking.collabId||!ab.stId||ab.stId===booking.collabId){isExceptOpen=true;break;}
         }
       }
     }
@@ -2675,7 +2695,8 @@ function renderTimeSlots(dateStr){
     for(var ai=0;ai<absences.length;ai++){
       var ab=absences[ai];
       if(ab.type==="ouverture_except"&&ab.date===dateStr&&ab.horaire_o&&ab.horaire_c){
-        if(!booking.collabId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
+        // FIX 2026-05-14 : !ab.stId (salon-wide) doit ouvrir le jour pour tous
+        if(!booking.collabId||!ab.stId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
       }
     }
   }

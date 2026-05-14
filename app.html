@@ -6066,6 +6066,45 @@ function doExceptFermeture(){
   if(typeof toast==="function") toast("\u2713 "+nbCrees+" jour"+(nbCrees>1?"s":"")+" de fermeture ajout\u00e9"+(nbCrees>1?"s":""),"success");
   go("settings");
 }
+
+// FIX 2026-05-14 : ouverture exceptionnelle \u2014 jour unique, salon ouvert alors qu'il
+// est normalement ferm\u00e9 (\u00e9v\u00e9nement, soldes, dimanche sp\u00e9cial). Pris en compte par
+// getEffectiveHrs() + le calendrier de r\u00e9servation site public.
+function addExceptOuverture(){
+  var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udd13 Ouverture exceptionnelle</h2>';
+  htm+='<div style="font-size:13px;color:var(--text2);margin-bottom:14px">Ouvre le salon un jour normalement ferm\u00e9 (\u00e9v\u00e9nement, dimanche sp\u00e9cial, soldes). Tous les collaborateurs peuvent travailler ce jour-l\u00e0.</div>';
+  htm+='<div class="fg"><label>Date *</label><input type="date" id="exOuvDate" value="'+TD+'"></div>';
+  htm+='<div style="display:flex;gap:10px">';
+  htm+='<div class="fg" style="flex:1"><label>Heure ouverture *</label><input type="time" id="exOuvFrom" value="09:00"></div>';
+  htm+='<div class="fg" style="flex:1"><label>Heure fermeture *</label><input type="time" id="exOuvTo" value="18:00"></div>';
+  htm+='</div>';
+  htm+='<div class="fg"><label>Motif <small style="opacity:.55;font-weight:400">\u2014 sera affich\u00e9 sur les horaires de votre site public</small></label><input id="exOuvMotif" placeholder="Ex: Soldes, \u00e9v\u00e9nement sp\u00e9cial, dimanche f\u00eate des m\u00e8res..."></div>';
+  htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  htm+='<button class="btn" style="flex:1;background:#00bcd4;color:#fff;font-weight:700" onclick="doExceptOuverture()">Confirmer l\'ouverture</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+function doExceptOuverture(){
+  var d=document.getElementById("exOuvDate").value;
+  var hFrom=document.getElementById("exOuvFrom").value;
+  var hTo=document.getElementById("exOuvTo").value;
+  if(!d || !hFrom || !hTo){showAlert("Date et horaires requis","warning");return;}
+  if(hTo <= hFrom){showAlert("L'heure de fermeture doit \u00eatre apr\u00e8s l'ouverture","warning");return;}
+  var motif=(document.getElementById("exOuvMotif").value||"").trim()||"Ouverture exceptionnelle";
+  if(!window.ABSENCES)window.ABSENCES=[];
+  // \u00c9vite doublon : 1 seule ouverture par jour (la nouvelle remplace l'ancienne)
+  var existsIdx = window.ABSENCES.findIndex(function(a){return a.type==="ouverture_except"&&a.date===d&&!a.stId;});
+  var entry = {id:U(),stId:null,type:"ouverture_except",date:d,horaire_o:hFrom,horaire_c:hTo,motif:motif};
+  if(existsIdx >= 0){
+    entry.id = window.ABSENCES[existsIdx].id; // pr\u00e9serve l'id pour update propre
+    window.ABSENCES[existsIdx] = entry;
+  } else {
+    window.ABSENCES.push(entry);
+  }
+  saveAbsences();
+  cM();
+  if(typeof toast==="function") toast("\u2713 Ouverture exceptionnelle le "+d.split("-").reverse().join("/")+" enregistr\u00e9e","success");
+  go("settings");
+}
 function addAbsence(stId,preType){
   var sty=gT(stId);if(!sty)return;
   var defType=preType||"conge";
@@ -6746,11 +6785,12 @@ function getEffectiveHrs(date,stId){
     }
   }
   // Priorité 3 — ouverture_except si normalement fermé
+  // FIX 2026-05-14 : !ab.stId (ouverture salon-wide) doit s'appliquer à TOUS les collabs
   if(!hrs){
     for(var i=0;i<window.ABSENCES.length;i++){
       var ab=window.ABSENCES[i];
       if(ab.type==="ouverture_except"&&ab.date===date&&ab.horaire_o&&ab.horaire_c){
-        if(!stId||ab.stId===stId)return{o:ab.horaire_o,c:ab.horaire_c};
+        if(!stId||!ab.stId||ab.stId===stId)return{o:ab.horaire_o,c:ab.horaire_c};
       }
     }
   }
@@ -8707,10 +8747,11 @@ function getBlockedSlots(stId, date){
   // (la fermeture_except est gérée juste au-dessus de cette section, avec un return immédiat)
   var hrs=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,stId):null;
   // Garde compatibilité au cas où getEffectiveHrs return null mais ouverture_except devrait s'appliquer
+  // FIX 2026-05-14 : !ab.stId (salon-wide) doit aussi matcher
   if(!hrs&&window.ABSENCES){
     for(var i=0;i<window.ABSENCES.length;i++){
       var ab=window.ABSENCES[i];
-      if(ab.type==="ouverture_except"&&ab.date===date&&ab.stId===stId&&ab.horaire_o&&ab.horaire_c){
+      if(ab.type==="ouverture_except"&&ab.date===date&&(!ab.stId||ab.stId===stId)&&ab.horaire_o&&ab.horaire_c){
         hrs={o:ab.horaire_o,c:ab.horaire_c};
         break;
       }
@@ -11344,10 +11385,11 @@ function rSettings(){
     // === EXCEPTIONS \u2014 FIX 2026-05-12 : un seul bouton (fermeture salon entier)
     // Les fermetures par collab et les ouvertures exceptionnelles se g\u00e8rent
     // d\u00e9sormais dans le planning Personnalis\u00e9s de chaque collab.
-    h+='<div class="card" style="margin-top:14px"><div class="ct">\ud83d\udd12 Fermeture du salon</div>';
-    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Ferme tout le salon une journ\u00e9e pr\u00e9cise (jour f\u00e9ri\u00e9, vacances annuelles, travaux). Pour fermer un seul collaborateur, utilisez le mode <strong>Personnalis\u00e9s</strong> de son planning.</div>';
-    h+='<div style="margin-bottom:14px">';
-    h+='<button class="btn" style="width:100%;padding:12px;background:rgba(233,30,99,.1);border:1px solid rgba(233,30,99,.3);color:#e91e63;font-weight:700;font-size:13px" onclick="addExceptFermeture()">\ud83d\udd12 Ajouter une fermeture exceptionnelle</button>';
+    h+='<div class="card" style="margin-top:14px"><div class="ct">\ud83d\udd12 Fermeture / Ouverture exceptionnelle</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Modifiez l\'ouverture du salon pour un ou plusieurs jours : <strong>Fermeture</strong> (jour f\u00e9ri\u00e9, vacances) ou <strong>Ouverture</strong> exceptionnelle (\u00e9v\u00e9nement, soldes). Pour un collaborateur seul, utilisez son planning Personnalis\u00e9.</div>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:14px">';
+    h+='<button class="btn" style="flex:1;padding:12px;background:rgba(233,30,99,.1);border:1px solid rgba(233,30,99,.3);color:#e91e63;font-weight:700;font-size:13px" onclick="addExceptFermeture()">\ud83d\udd12 Fermeture exceptionnelle</button>';
+    h+='<button class="btn" style="flex:1;padding:12px;background:rgba(0,188,212,.1);border:1px solid rgba(0,188,212,.3);color:#00bcd4;font-weight:700;font-size:13px" onclick="addExceptOuverture()">\ud83d\udd13 Ouverture exceptionnelle</button>';
     h+='</div>';
     var allExceptions=(window.ABSENCES||[]).filter(function(a){return a.type==="fermeture_except"||a.type==="ouverture_except";});
     // S\u00e9pare exceptions \u00e0 venir (>= aujourd'hui) et pass\u00e9es
