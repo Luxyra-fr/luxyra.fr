@@ -18192,22 +18192,29 @@ function rAccounting(){
   var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled;});
   var ps=PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var tPr=0,tPd=0,tCB=0,tE=0;
-  // FIX 2026-05-14 : sépare Prest/Prod au niveau des items (a.pr = total ticket,
-  // donc on splittait pas avant → Prod toujours = 0). PS legacy reste en fallback.
+  // FIX 2026-05-14 : split Prest/Prod au pro-rata des items, en GARDANT a.pr
+  // comme source de vérité (inclut remise globale du ticket). Total tPr+tPd
+  // doit rester égal à sum(a.pr) sinon le CA TTC bouge.
   dn.forEach(function(a){
-    var aPrest=0, aProd=0;
+    var sumPrestI=0, sumProdI=0;
     if(a.items && a.items.length){
       a.items.forEach(function(it){
         var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
-        if(it.isProd) aProd+=sub; else aPrest+=sub;
+        if(it.isProd) sumProdI+=sub; else sumPrestI+=sub;
       });
-    } else {
-      aPrest=Number(a.pr)||0; // legacy : pas d'items détaillés
     }
-    tPr+=aPrest;
-    tPd+=aProd;
-    var totA=Number(a.pr)||0;
-    if(_modeCanonique(a.met)==="cb") tCB+=totA; else tE+=totA;
+    var realPr=Number(a.pr)||0;
+    var itemsTot=sumPrestI+sumProdI;
+    var aPrest, aProd;
+    if(itemsTot>0){
+      // Pro-rata : on garde a.pr comme total exact, on splitte selon les items
+      aProd = Math.round((sumProdI/itemsTot)*realPr*100)/100;
+      aPrest = Math.round((realPr-aProd)*100)/100;
+    } else {
+      aPrest=realPr; aProd=0;
+    }
+    tPr+=aPrest; tPd+=aProd;
+    if(_modeCanonique(a.met)==="cb") tCB+=realPr; else tE+=realPr;
   });
   ps.forEach(function(pp){tPd+=pp.pr;});
   var p=accM.split("-");var mL=MO[parseInt(p[1])-1]+" "+p[0];
