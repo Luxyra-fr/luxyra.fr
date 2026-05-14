@@ -6690,12 +6690,14 @@ function showCAInstantane(){
     }
   });
   
-  // CA services vs products
+  // CA services vs products — FIX 2026-05-14 : split via _splitPrestProd
   var caServices=0,caProducts=0;
   done.forEach(function(a){
-    // Check if it has product items
-    caServices+=a.pr; // simplified - services from appointments
+    var sp=_splitPrestProd(a);
+    caServices+=sp.prest; caProducts+=sp.prod;
   });
+  caServices=Math.round(caServices*100)/100;
+  caProducts=Math.round(caProducts*100)/100;
   var psSold=PS.filter(function(p){return p.date===today;});
   psSold.forEach(function(p){caProducts+=p.pr;});
   
@@ -6881,6 +6883,29 @@ var AP=[];
 var GC=[];
 var PS=[];
 
+// === FIX 2026-05-14 : split Prest/Prod centralisé ===========================
+// Source unique de vérité : a.pr (montant encaissé, inclut remise globale ticket)
+// Items isProd splittent au pro-rata. Retourne {prest, prod, total} où
+// total === Number(a.pr)||0 (garanti). Si pas d'items isProd → tout en prest.
+// Utilisée par : rAccounting, rStats, cloturerJournee, expJournalComptable,
+// printBandeZ, _doArchivageAnnuel, expExcelComptable, showCAInstantane, etc.
+function _splitPrestProd(a){
+  var realPr = Number((a&&a.pr)||0)||0;
+  if(!a || !a.items || !a.items.length) return {prest:realPr, prod:0, total:realPr};
+  var sumPrestI=0, sumProdI=0;
+  for(var i=0;i<a.items.length;i++){
+    var it=a.items[i]; if(!it || it.isSep) continue;
+    var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
+    if(it.isProd) sumProdI+=sub; else sumPrestI+=sub;
+  }
+  var itemsTot=sumPrestI+sumProdI;
+  if(itemsTot<=0) return {prest:realPr, prod:0, total:realPr};
+  // Pro-rata sur realPr (qui peut être < itemsTot à cause remise globale)
+  var prod = Math.round((sumProdI/itemsTot)*realPr*100)/100;
+  var prest = Math.round((realPr-prod)*100)/100;
+  return {prest:prest, prod:prod, total:realPr};
+}
+// ============================================================================
 
 // Global state initialization (after all data declarations)
 if(!window.CLOTURES)window.CLOTURES=[];if(window.SHOW_TVA_TICKET===undefined)window.SHOW_TVA_TICKET=true;
@@ -8406,8 +8431,10 @@ function rHome(){
   var remainCount=remaining.length;
   var totalCA=doneCA+remainCA;var totalCount=doneCount+remainCount;
   var totalHT=totalCA/(1+tvaR/100);
+  // FIX 2026-05-14 : split via _splitPrestProd (cohérent avec rAccounting/clôture Z)
   var caServices=0,caProducts=0;
-  done.forEach(function(a){if(a.items){a.items.forEach(function(it){if(it.isProd)caProducts+=(it.price*it.qty-(it.remise||0));else caServices+=(it.price*it.qty-(it.remise||0));});}else{caServices+=a.pr;}});
+  done.forEach(function(a){var sp=_splitPrestProd(a);caServices+=sp.prest;caProducts+=sp.prod;});
+  caServices=Math.round(caServices*100)/100;caProducts=Math.round(caProducts*100)/100;
   var newClients=0;
   AP.filter(function(a){return a.date===today&&a.st!=="canc"&&!a.cancelled;}).forEach(function(a){
     if(a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0){
@@ -18190,33 +18217,13 @@ function rAccounting(){
     }
   }
   var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled;});
-  var ps=PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var tPr=0,tPd=0,tCB=0,tE=0;
-  // FIX 2026-05-14 : split Prest/Prod au pro-rata des items, en GARDANT a.pr
-  // comme source de vérité (inclut remise globale du ticket). Total tPr+tPd
-  // doit rester égal à sum(a.pr) sinon le CA TTC bouge.
+  // FIX 2026-05-14 : utilise _splitPrestProd centralisé (source de vérité = a.pr)
   dn.forEach(function(a){
-    var sumPrestI=0, sumProdI=0;
-    if(a.items && a.items.length){
-      a.items.forEach(function(it){
-        var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
-        if(it.isProd) sumProdI+=sub; else sumPrestI+=sub;
-      });
-    }
-    var realPr=Number(a.pr)||0;
-    var itemsTot=sumPrestI+sumProdI;
-    var aPrest, aProd;
-    if(itemsTot>0){
-      // Pro-rata : on garde a.pr comme total exact, on splitte selon les items
-      aProd = Math.round((sumProdI/itemsTot)*realPr*100)/100;
-      aPrest = Math.round((realPr-aProd)*100)/100;
-    } else {
-      aPrest=realPr; aProd=0;
-    }
-    tPr+=aPrest; tPd+=aProd;
-    if(_modeCanonique(a.met)==="cb") tCB+=realPr; else tE+=realPr;
+    var sp=_splitPrestProd(a);
+    tPr+=sp.prest; tPd+=sp.prod;
+    if(_modeCanonique(a.met)==="cb") tCB+=sp.total; else tE+=sp.total;
   });
-  ps.forEach(function(pp){tPd+=pp.pr;});
   var p=accM.split("-");var mL=MO[parseInt(p[1])-1]+" "+p[0];
   var txA=SALON_CONFIG.tauxTVA||20;
   var tTotal=tPr+tPd;
@@ -19599,15 +19606,24 @@ function expJournalComptable(){
     ecrNum++;
   }
 
+  // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd → écritures 706/707 correctes
   dn.forEach(function(a){
     var sv = gS(a.sId), cl = gC(a.cId);
     var clNom = cl ? cName(cl) : "Passage";
     var libelle = clNom + (sv?" - "+sv.n:"");
-    var ttc = Number(a.pr)||0;
-    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
-    var tva = Math.round((ttc-ht)*100)/100;
-    pushTicket(a.date, "TK"+(a.tkNum||""), libelle, ttc, ht, tva, a.met, "service");
+    var sp = _splitPrestProd(a);
+    if(sp.prest > 0){
+      var ht = Math.round(sp.prest/(1+txTVA/100)*100)/100;
+      var tva = Math.round((sp.prest-ht)*100)/100;
+      pushTicket(a.date, "TK"+(a.tkNum||""), libelle, sp.prest, ht, tva, a.met, "service");
+    }
+    if(sp.prod > 0){
+      var ht = Math.round(sp.prod/(1+txTVA/100)*100)/100;
+      var tva = Math.round((sp.prod-ht)*100)/100;
+      pushTicket(a.date, "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht, tva, a.met, "produit");
+    }
   });
+  // PS legacy (vente produit hors RDV) — toujours géré au cas où jamais alimenté en pratique
   ps2.forEach(function(p){
     var ttc = Number(p.pr)||0;
     var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
@@ -20023,16 +20039,19 @@ async function expExcelComptable(){
   };
 
   // === ONGLET 1 : SYNTHÈSE ===
+  // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd (706/707 correct pour expert)
   var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0,tRem=0,tBrut=0;
   dn.forEach(function(a){
-    tPrest+=(Number(a.pr)||0); tRem+=(Number(a.remise)||0); tBrut+=(Number(a.brutTotal||a.pr)||0);
+    var sp=_splitPrestProd(a);
+    tPrest+=sp.prest; tProd+=sp.prod;
+    tRem+=(Number(a.remise)||0); tBrut+=(Number(a.brutTotal||a.pr)||0);
     var mc=_modeCanonique(a.met);
-    if(mc==="cb")tCB+=(Number(a.pr)||0);
-    else if(mc==="esp")tEsp+=(Number(a.pr)||0);
-    else if(mc==="chq")tChq+=(Number(a.pr)||0);
-    else if(mc==="bon")tBon+=(Number(a.pr)||0);
-    else if(mc==="vir")tVir+=(Number(a.pr)||0);
-    else tAut+=(Number(a.pr)||0);
+    if(mc==="cb")tCB+=sp.total;
+    else if(mc==="esp")tEsp+=sp.total;
+    else if(mc==="chq")tChq+=sp.total;
+    else if(mc==="bon")tBon+=sp.total;
+    else if(mc==="vir")tVir+=sp.total;
+    else tAut+=sp.total;
   });
   ps2.forEach(function(pp){
     tProd+=(Number(pp.pr)||0);
@@ -20040,6 +20059,7 @@ async function expExcelComptable(){
     if(mc==="cb")tCB+=(Number(pp.pr)||0); else if(mc==="esp")tEsp+=(Number(pp.pr)||0);
     else if(mc==="chq")tChq+=(Number(pp.pr)||0); else tAut+=(Number(pp.pr)||0);
   });
+  tPrest=Math.round(tPrest*100)/100; tProd=Math.round(tProd*100)/100;
   var totalTTC = tPrest+tProd;
   var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
   var totalTVAMt = Math.round((totalTTC-totalHT)*100)/100;
@@ -20439,13 +20459,16 @@ function printBandeZ(){
   var txTVA=SALON_CONFIG.tauxTVA||20;
   
   // Totaux par mode
+  // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd au niveau ticket
   var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0;
   dn.forEach(function(a){
-    tPrest+=a.pr;
+    var sp=_splitPrestProd(a);
+    tPrest+=sp.prest; tProd+=sp.prod;
     var mc=_modeCanonique(a.met);
-    if(mc==="cb")tCB+=(Number(a.pr)||0); else if(mc==="esp")tEsp+=(Number(a.pr)||0); else if(mc==="chq")tChq+=(Number(a.pr)||0); else if(mc==="bon")tBon+=(Number(a.pr)||0); else if(mc==="vir")tVir+=(Number(a.pr)||0); else tAut+=(Number(a.pr)||0);
+    if(mc==="cb")tCB+=sp.total; else if(mc==="esp")tEsp+=sp.total; else if(mc==="chq")tChq+=sp.total; else if(mc==="bon")tBon+=sp.total; else if(mc==="vir")tVir+=sp.total; else tAut+=sp.total;
   });
   ps.forEach(function(pp){tProd+=(Number(pp.pr)||0);var mc=_modeCanonique(pp.met);if(mc==="cb")tCB+=(Number(pp.pr)||0); else if(mc==="esp")tEsp+=(Number(pp.pr)||0); else if(mc==="chq")tChq+=(Number(pp.pr)||0); else tAut+=(Number(pp.pr)||0);});
+  tPrest=Math.round(tPrest*100)/100; tProd=Math.round(tProd*100)/100;
   var tTotal=tPrest+tProd;
   var totRegl=tCB+tEsp+tChq+tBon+tVir+tAut;
   // Remises du mois
@@ -20796,20 +20819,22 @@ function rStats(){
   // - qtyPr/qtyPd = NOMBRE RÉEL de prestations/produits vendus (pour card "Quantités vendues")
   // Un ticket avec coupe + brushing + 2 shampoings = nbPr=1, nbPd=1 MAIS qtyPr=2, qtyPd=2
   var caPr=0,caPd=0,nbPr=0,nbPd=0,qtyPr=0,qtyPd=0;
+  // FIX 2026-05-14 : counts au niveau items, montants via _splitPrestProd
+  // (pro-rata sur a.pr pour cohérence avec rAccounting & clôture Z)
   dn.forEach(function(a){
-    var hasProd=false, hasServ=false, srvAmount=0, prdAmount=0;
+    var hasProd=false, hasServ=false;
     if(a.items && a.items.length){
       a.items.forEach(function(it){
-        if(it.isSep) return; // séparateurs multi-client : ignorés du comptage
+        if(it.isSep) return;
         var qty=(Number(it.qty)||1);
-        var sub=(Number(it.price)||0)*qty-(Number(it.remise)||0);
-        if(it.isProd){prdAmount+=sub*taxR;hasProd=true;qtyPd+=qty;}
-        else{srvAmount+=sub*taxR;hasServ=true;qtyPr+=qty;}
+        if(it.isProd){hasProd=true;qtyPd+=qty;}
+        else{hasServ=true;qtyPr+=qty;}
       });
     } else {
-      srvAmount=a.pr*taxR;hasServ=true;qtyPr+=1;
+      hasServ=true;qtyPr+=1;
     }
-    caPr+=srvAmount;caPd+=prdAmount;
+    var sp=_splitPrestProd(a);
+    caPr+=sp.prest*taxR; caPd+=sp.prod*taxR;
     if(hasServ)nbPr++;
     if(hasProd)nbPd++;
   });
@@ -28459,11 +28484,16 @@ function _cancelSecureTicketDo(id,motif){
 function cloturerJournee(){
   var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled;});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===TD;});
-  var totalPrest=0;done.forEach(function(a){totalPrest+=a.pr;});
-  // Produits vendus ce jour (hors tickets)
-  var psSold=PS.filter(function(p){return p.date===TD;});
-  var totalProd=0;psSold.forEach(function(p){totalProd+=p.pr;});
-  // CA global = prestations + produits
+  // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd centralisé.
+  // CA global = sum(a.pr) inchangé (NF525 fiscal intact), juste ventilation correcte
+  var totalPrest=0, totalProd=0;
+  done.forEach(function(a){
+    var sp=_splitPrestProd(a);
+    totalPrest+=sp.prest; totalProd+=sp.prod;
+  });
+  totalPrest=Math.round(totalPrest*100)/100;
+  totalProd=Math.round(totalProd*100)/100;
+  // CA global = prestations + produits (= sum a.pr garanti)
   var totalCA=totalPrest+totalProd;
   // TVA sur le CA global
   var txTVA=SALON_CONFIG.tauxTVA||20;
@@ -28898,13 +28928,19 @@ function _doArchivageAnnuel(year){
   var audit=window.AUDIT_LOG.filter(function(l){return l.ts.indexOf(year)===0;});
   var prodVentes=PS.filter(function(p){return p.date.indexOf(year)===0;});
   
-  // Calculs annuels
-  var totalCA=0,totalHT=0,totalTVA=0,totalRemises=0;
-  tickets.forEach(function(a){totalCA+=a.pr;totalRemises+=(a.remise||0);});
+  // Calculs annuels — FIX 2026-05-14 : split Prest/Prod via _splitPrestProd
+  var totalCA=0,totalHT=0,totalTVA=0,totalRemises=0,totalPrest=0,totalProd=0;
+  tickets.forEach(function(a){
+    var sp=_splitPrestProd(a);
+    totalCA+=sp.total;
+    totalPrest+=sp.prest; totalProd+=sp.prod;
+    totalRemises+=(a.remise||0);
+  });
+  totalPrest=Math.round(totalPrest*100)/100; totalProd=Math.round(totalProd*100)/100;
   var txTVA=SALON_CONFIG.tauxTVA||20;
   totalHT=Math.round(totalCA/(1+txTVA/100)*100)/100;
   totalTVA=Math.round((totalCA-totalHT)*100)/100;
-  var totalProd=0;prodVentes.forEach(function(p){totalProd+=p.pr;});
+  prodVentes.forEach(function(p){totalProd+=p.pr;});
   
   // Hash de l'archive
   var archiveData="ARCHIVE|"+year+"|"+tickets.length+"|"+totalCA.toFixed(2)+"|"+clotures.length+"|"+audit.length;
