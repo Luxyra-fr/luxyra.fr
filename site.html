@@ -1428,9 +1428,36 @@ function renderSite(){
   h+='<div class="pratique-block"><div class="pratique-title">Horaires</div>';
   var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
   var dow=new Date().getDay();
+  // FIX 2026-05-14 : prise en compte des fermetures exceptionnelles du salon entier
+  var _absSal = (SITE_CFG && SITE_CFG.absences) ? SITE_CFG.absences : [];
+  var _n = new Date();
+  var _today = _n.getFullYear()+"-"+String(_n.getMonth()+1).padStart(2,"0")+"-"+String(_n.getDate()).padStart(2,"0");
+  var _fermAuj = _absSal.find(function(ab){return ab.type==="fermeture_except"&&ab.date===_today&&!ab.stId;});
   for(var d=0;d<7;d++){
     var hr=HORAIRES[d];
-    h+='<div class="pratique-jour'+(d===dow?' aujourdhui':'')+'"><span>'+jours[d]+(d===dow?' \u00b7 aujourd\u0027hui':'')+'</span><span>'+(hr?hr.o+' \u2014 '+hr.c:'Ferm\u00e9')+'</span></div>';
+    var _isT = (d===dow);
+    var _hT;
+    if(_isT && _fermAuj){
+      _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement'+(_fermAuj.motif?' \u2014 '+String(_fermAuj.motif).replace(/[<>]/g,''):'')+'</span>';
+    } else {
+      _hT=hr?hr.o+' \u2014 '+hr.c:'Ferm\u00e9';
+    }
+    h+='<div class="pratique-jour'+(_isT?' aujourdhui':'')+'"><span>'+jours[d]+(_isT?' \u00b7 aujourd\u0027hui':'')+'</span><span>'+_hT+'</span></div>';
+  }
+  // Bannière fermetures à venir (14 prochains jours)
+  var _futFerms = _absSal.filter(function(ab){
+    if(ab.type!=="fermeture_except"||ab.stId)return false;
+    if(!ab.date||ab.date<=_today)return false;
+    return ((new Date(ab.date) - new Date(_today)) / (1000*60*60*24)) <= 14;
+  }).sort(function(a,b){return a.date<b.date?-1:1;});
+  if(_futFerms.length){
+    h+='<div style="margin-top:14px;padding:10px 12px;background:rgba(196,56,56,.06);border:1px solid rgba(196,56,56,.2);border-radius:8px;font-size:12px;color:#e08585">';
+    h+='<div style="font-weight:700;margin-bottom:4px">\ud83d\udd12 Fermeture'+(_futFerms.length>1?'s':'')+' exceptionnelle'+(_futFerms.length>1?'s':'')+' \u00e0 venir</div>';
+    _futFerms.forEach(function(f){
+      var dp=f.date.split('-');
+      h+='<div style="padding:2px 0">'+dp[2]+'/'+dp[1]+(f.motif?' \u2014 '+String(f.motif).replace(/[<>]/g,''):'')+'</div>';
+    });
+    h+='</div>';
   }
   h+='</div>';
   h+='<div class="pratique-block"><div class="pratique-title">Contact</div>';
