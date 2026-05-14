@@ -430,6 +430,12 @@ function _mapClotureRow(c) {
   var txTVA = base.txTVA || 20;
   var totalPrest = base.totalPrest != null ? base.totalPrest : totalCA;
   var totalProd  = base.totalProd  != null ? base.totalProd  : 0;
+  // FIX 2026-05-14 : applique correction documentée (raw_data.correction)
+  // Hash original préservé en DB, on lit les valeurs corrigées en mémoire
+  if(base.correction && typeof base.correction === "object"){
+    if(base.correction.apresPrest != null) totalPrest = Number(base.correction.apresPrest)||0;
+    if(base.correction.apresProd  != null) totalProd  = Number(base.correction.apresProd)||0;
+  }
   return Object.assign({
     totalPrest: totalPrest,
     totalProd:  totalProd,
