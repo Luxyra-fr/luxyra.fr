@@ -2134,7 +2134,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
           ua.includes("anthropic") || ua.includes("youbot");
         if (isBot && env.SUPABASE_SERVICE_KEY) {
           const salonRes = await fetch(
-            `${CONFIG.SUPABASE_URL}/rest/v1/salons_public?slug=eq.${encodeURIComponent(safeSlug)}&select=nom,sous_titre,adresse,cp,ville,tel,email,logo,metier,latitude,longitude,note_moyenne,nb_avis,horaires_salon&limit=1`,
+            `${CONFIG.SUPABASE_URL}/rest/v1/salons_public?slug=eq.${encodeURIComponent(safeSlug)}&select=id,nom,sous_titre,adresse,cp,ville,tel,email,logo,metier,latitude,longitude,note_moyenne,nb_avis,horaires_salon&limit=1`,
             {
               headers: {
                 "apikey": env.SUPABASE_SERVICE_KEY,
@@ -2147,6 +2147,22 @@ Sitemap: https://luxyra.fr/sitemap.xml
             const data = await salonRes.json();
             if (data && data[0]) {
               const s = data[0];
+              // FIX 2026-05-14 : fetch des services pour OfferCatalog (Schema.org)
+              // Une erreur ici ne casse pas le SSR — on continue sans catalogue
+              let servicesList = [];
+              try {
+                const svcRes = await fetch(
+                  `${CONFIG.SUPABASE_URL}/rest/v1/services?salon_id=eq.${encodeURIComponent(s.id)}&actif=eq.true&show_site=eq.true&select=nom,prix,categorie,cat_genre,phases&order=ordre&limit=50`,
+                  {
+                    headers: {
+                      "apikey": env.SUPABASE_SERVICE_KEY,
+                      "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`
+                    },
+                    cf: { cacheTtl: 300, cacheEverything: true }
+                  }
+                );
+                if (svcRes.ok) servicesList = await svcRes.json();
+              } catch (_) { /* services fetch optionnel, on continue sans */ }
               const esc = (v) => String(v == null ? "" : v)
                 .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
                 .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -2208,6 +2224,48 @@ Sitemap: https://luxyra.fr/sitemap.xml
                     }
                   });
                   if (horaires.length) ld.openingHours = horaires;
+                }
+              } catch (_) {}
+              // FIX 2026-05-14 : OfferCatalog avec les prestations du salon
+              // Permet aux IA/moteurs d'indexer chaque service avec son prix
+              // (ex: Excellence ressort sur "coupe femme Sarreguemines")
+              try {
+                if (servicesList && servicesList.length) {
+                  const items = [];
+                  for (let i = 0; i < servicesList.length; i++) {
+                    const sv = servicesList[i];
+                    if (!sv.nom || sv.prix == null) continue;
+                    // Durée totale = somme des phases (work + pause)
+                    let dureeMin = 0;
+                    if (Array.isArray(sv.phases)) {
+                      sv.phases.forEach(p => { if (p && typeof p.d === "number") dureeMin += p.d; });
+                    }
+                    const offer = {
+                      "@type": "Offer",
+                      "itemOffered": {
+                        "@type": "Service",
+                        "name": String(sv.nom),
+                        "serviceType": sv.categorie || metierLabel,
+                        "provider": { "@type": schemaType, "name": nom }
+                      },
+                      "price": Number(sv.prix).toFixed(2),
+                      "priceCurrency": "EUR",
+                      "availability": "https://schema.org/InStock"
+                    };
+                    if (dureeMin > 0) {
+                      // ISO 8601 duration : PT30M pour 30 minutes
+                      offer.itemOffered.serviceOutput = "Durée approximative : " + dureeMin + " min";
+                      offer.itemOffered.estimatedDuration = "PT" + dureeMin + "M";
+                    }
+                    items.push(offer);
+                  }
+                  if (items.length) {
+                    ld.hasOfferCatalog = {
+                      "@type": "OfferCatalog",
+                      "name": "Prestations " + (ville ? "à " + ville : nom),
+                      "itemListElement": items
+                    };
+                  }
                 }
               } catch (_) {}
               const ssrMeta =
