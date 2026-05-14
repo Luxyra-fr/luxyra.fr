@@ -2076,6 +2076,9 @@ Sitemap: https://luxyra.fr/sitemap.xml
     "/reset-password": "/reset-password.html",
     "/tarifs": "/tarifs.html",
     "/sans-commission": "/sans-commission.html",
+    "/blog": "/blog/index.html",
+    "/blog/": "/blog/index.html",
+    "/blog/comment-choisir-logiciel-caisse-coiffeur": "/blog/comment-choisir-logiciel-caisse-coiffeur.html",
     "/aide": "/aide.html",
     "/migration": "/migration.html",
   };
@@ -2096,7 +2099,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "proposal", "cgv", "mentions", "mentions-legales",
       "confidentialite", "politique-confidentialite",
       "suppression-donnees", "dpa", "reset-password",
-      "site", "index", "home", "tarifs", "sans-commission", "aide", "migration",
+      "site", "index", "home", "tarifs", "sans-commission", "blog", "aide", "migration",
       "preview-email-confirmation", "clear",
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
