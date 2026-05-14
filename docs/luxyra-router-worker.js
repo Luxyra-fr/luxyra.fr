@@ -2115,6 +2115,128 @@ Sitemap: https://luxyra.fr/sitemap.xml
       let html = await res.text();
       const safeSlug = segmentForSlug.replace(/[^a-z0-9-]/g, "");
       html = html.replace("</head>", `<script>window.__SALON_SLUG=${JSON.stringify(safeSlug)};</script></head>`);
+
+      // ====================================================================
+      // SSR META TAGS POUR BOTS SEO/IA (Googlebot, Bingbot, ChatGPT, Perplexity, Claude, etc.)
+      // Pour les vrais utilisateurs (navigateur humain) → HTML normal inchangé, le JS injecte
+      // les meta côté client comme aujourd'hui. Aucun impact UX si le SSR plante.
+      // FIX 2026-05-14
+      // ====================================================================
+      try {
+        const ua = (request.headers.get("user-agent") || "").toLowerCase();
+        const isBot =
+          ua.includes("googlebot") || ua.includes("bingbot") || ua.includes("yandexbot") ||
+          ua.includes("duckduckbot") || ua.includes("baiduspider") || ua.includes("slurp") ||
+          ua.includes("facebookexternalhit") || ua.includes("twitterbot") || ua.includes("linkedinbot") ||
+          ua.includes("whatsapp") || ua.includes("telegrambot") || ua.includes("discordbot") ||
+          ua.includes("applebot") || ua.includes("chatgpt") || ua.includes("gptbot") ||
+          ua.includes("oai-searchbot") || ua.includes("perplexitybot") || ua.includes("claudebot") ||
+          ua.includes("anthropic") || ua.includes("youbot");
+        if (isBot && env.SUPABASE_SERVICE_KEY) {
+          const salonRes = await fetch(
+            `${CONFIG.SUPABASE_URL}/rest/v1/salons_public?slug=eq.${encodeURIComponent(safeSlug)}&select=nom,sous_titre,adresse,cp,ville,tel,email,logo,metier,latitude,longitude,note_moyenne,nb_avis,horaires_salon&limit=1`,
+            {
+              headers: {
+                "apikey": env.SUPABASE_SERVICE_KEY,
+                "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`
+              },
+              cf: { cacheTtl: 300, cacheEverything: true }
+            }
+          );
+          if (salonRes.ok) {
+            const data = await salonRes.json();
+            if (data && data[0]) {
+              const s = data[0];
+              const esc = (v) => String(v == null ? "" : v)
+                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+              const metierLabels = {
+                coiffure: "Salon de coiffure", barbier: "Barbier",
+                esthetique: "Institut d'esthétique", ongles: "Salon d'ongles",
+                bien_etre: "Spa & bien-être"
+              };
+              const schemaTypes = {
+                coiffure: "HairSalon", barbier: "BarberShop",
+                esthetique: "BeautySalon", ongles: "NailSalon", bien_etre: "DaySpa"
+              };
+              const nom = s.nom || "Salon";
+              const ville = s.ville || "";
+              const metier = s.metier || "coiffure";
+              const metierLabel = metierLabels[metier] || "Salon";
+              const schemaType = schemaTypes[metier] || "LocalBusiness";
+              const url = `https://luxyra.fr/${safeSlug}`;
+              const image = (s.logo && !String(s.logo).startsWith("data:")) ? s.logo : "https://luxyra.fr/luxyra-logo.png";
+              const title = `${nom} — ${metierLabel}${ville ? " à " + ville : ""} | Réservation en ligne`;
+              const desc = `Réservez en ligne chez ${nom}${ville ? " à " + ville : ""}. ${metierLabel}, confirmation immédiate, paiement sécurisé.${s.adresse ? " " + s.adresse : ""}${s.cp ? " " + s.cp : ""}${ville ? " " + ville : ""}.`.replace(/\s+/g, " ").trim();
+              const ld = {
+                "@context": "https://schema.org",
+                "@type": schemaType,
+                "name": nom,
+                "url": url,
+                "image": image,
+                "address": {
+                  "@type": "PostalAddress",
+                  "streetAddress": s.adresse || "",
+                  "postalCode": s.cp || "",
+                  "addressLocality": ville,
+                  "addressCountry": "FR"
+                },
+                "priceRange": "€€"
+              };
+              if (s.tel) ld.telephone = s.tel;
+              if (s.email) ld.email = s.email;
+              if (s.latitude != null && s.longitude != null) {
+                ld.geo = { "@type": "GeoCoordinates", "latitude": Number(s.latitude), "longitude": Number(s.longitude) };
+              }
+              if (s.note_moyenne && s.nb_avis) {
+                ld.aggregateRating = {
+                  "@type": "AggregateRating",
+                  "ratingValue": Number(s.note_moyenne),
+                  "reviewCount": Number(s.nb_avis)
+                };
+              }
+              // Horaires (si dispo)
+              try {
+                const hSal = s.horaires_salon;
+                if (hSal && typeof hSal === "object") {
+                  const jourMap = { lundi: "Mo", mardi: "Tu", mercredi: "We", jeudi: "Th", vendredi: "Fr", samedi: "Sa", dimanche: "Su" };
+                  const horaires = [];
+                  Object.keys(hSal).forEach(j => {
+                    const v = hSal[j];
+                    if (v && v.ouvert && v.creneaux && v.creneaux.length) {
+                      v.creneaux.forEach(c => horaires.push(jourMap[j] + " " + c.debut + "-" + c.fin));
+                    }
+                  });
+                  if (horaires.length) ld.openingHours = horaires;
+                }
+              } catch (_) {}
+              const ssrMeta =
+                `<title>${esc(title)}</title>\n` +
+                `<meta name="description" content="${esc(desc)}">\n` +
+                `<link rel="canonical" href="${esc(url)}">\n` +
+                `<meta property="og:type" content="website">\n` +
+                `<meta property="og:site_name" content="Luxyra">\n` +
+                `<meta property="og:url" content="${esc(url)}">\n` +
+                `<meta property="og:title" content="${esc(title)}">\n` +
+                `<meta property="og:description" content="${esc(desc)}">\n` +
+                `<meta property="og:image" content="${esc(image)}">\n` +
+                `<meta property="og:locale" content="fr_FR">\n` +
+                `<meta name="twitter:card" content="summary_large_image">\n` +
+                `<meta name="twitter:title" content="${esc(title)}">\n` +
+                `<meta name="twitter:description" content="${esc(desc)}">\n` +
+                `<meta name="twitter:image" content="${esc(image)}">\n` +
+                `<script id="ssr-ld-localbusiness" type="application/ld+json">${JSON.stringify(ld)}</script>\n`;
+              // Retire l'ancien <title> et insère le SSR (le JS côté client réécrit
+              // si besoin avec id="ssr-ld-localbusiness" qui sera supprimé)
+              html = html.replace(/<title>[^<]*<\/title>/i, "").replace("</head>", ssrMeta + "</head>");
+            }
+          }
+        }
+      } catch (_) {
+        // Fallback silent : le HTML normal est servi, le JS client gérera les meta
+      }
+      // ====================================================================
+
       return new Response(html, {
         headers: {
           "Content-Type": "text/html;charset=UTF-8",
