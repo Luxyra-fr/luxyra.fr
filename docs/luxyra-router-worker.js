@@ -2075,6 +2075,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     "/dpa": "/dpa.html",
     "/reset-password": "/reset-password.html",
     "/tarifs": "/tarifs.html",
+    "/sans-commission": "/sans-commission.html",
     "/aide": "/aide.html",
     "/migration": "/migration.html",
   };
@@ -2095,7 +2096,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "proposal", "cgv", "mentions", "mentions-legales",
       "confidentialite", "politique-confidentialite",
       "suppression-donnees", "dpa", "reset-password",
-      "site", "index", "home", "tarifs", "aide", "migration",
+      "site", "index", "home", "tarifs", "sans-commission", "aide", "migration",
       "preview-email-confirmation", "clear",
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
