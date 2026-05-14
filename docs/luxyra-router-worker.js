@@ -2079,6 +2079,8 @@ Sitemap: https://luxyra.fr/sitemap.xml
     "/blog": "/blog/index.html",
     "/blog/": "/blog/index.html",
     "/blog/comment-choisir-logiciel-caisse-coiffeur": "/blog/comment-choisir-logiciel-caisse-coiffeur.html",
+    "/blog/nf525-explique-ce-que-tout-salon-doit-savoir": "/blog/nf525-explique-ce-que-tout-salon-doit-savoir.html",
+    "/blog/reservation-en-ligne-sans-commission": "/blog/reservation-en-ligne-sans-commission.html",
     "/aide": "/aide.html",
     "/migration": "/migration.html",
   };
