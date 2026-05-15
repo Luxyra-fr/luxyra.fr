@@ -133,6 +133,106 @@ async function clearAllCache(){
   } catch(e){}
 }
 
+// ============================================================================
+// WAL (Write-Ahead Log) — Filet de sécurité 2026-05-15
+// ============================================================================
+// Persiste chaque action critique en LocalStorage AVANT le save DB. Si quelque
+// chose plante après (bug JS, perte réseau, fermeture onglet), la donnée brute
+// reste récupérable au prochain boot via _walCheck() → popup de récupération.
+//
+// Trigger : 15/05/2026 — Amandine a perdu 1 encaissement + 1 client + 1 RDV
+// à cause d'un bug "ps is not defined" dans rAccounting (refactor _splitPrestProd
+// af401bd du 13/05). L'action a planté avant d'atteindre saveXxxToDb.
+// Avec ce WAL en place, la data aurait été préservée et récupérable.
+// ============================================================================
+var _WAL_KEY = "_lx_wal_v1";
+var _WAL_MAX = 200;
+
+function _walPersist(type, data){
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    var entry = {
+      id: "wal_" + Date.now() + "_" + Math.random().toString(36).slice(2,8),
+      type: type,
+      data: data,
+      salon_id: _salonId,
+      ts: new Date().toISOString(),
+      synced: false
+    };
+    wal.push(entry);
+    if (wal.length > _WAL_MAX) wal = wal.slice(-_WAL_MAX);
+    localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+    return entry.id;
+  } catch(e){ console.warn("[WAL] persist failed:", e); return null; }
+}
+
+function _walMarkSynced(walId){
+  if (!walId) return;
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    for (var i=0; i<wal.length; i++) {
+      if (wal[i].id === walId) {
+        wal[i].synced = true;
+        wal[i].syncedAt = new Date().toISOString();
+        localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+        return;
+      }
+    }
+  } catch(e){}
+}
+
+function _walCleanup(){
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    var weekAgo = Date.now() - 7*24*3600*1000;
+    var kept = wal.filter(function(e){
+      if (!e.synced) return true;
+      var syncedTs = e.syncedAt ? new Date(e.syncedAt).getTime() : 0;
+      return syncedTs > weekAgo;
+    });
+    if (kept.length !== wal.length) localStorage.setItem(_WAL_KEY, JSON.stringify(kept));
+  } catch(e){}
+}
+
+async function _walCheck(){
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    var unsynced = wal.filter(function(e){ return !e.synced && e.salon_id === _salonId; });
+    if (unsynced.length === 0) { _walCleanup(); return; }
+    console.warn("[WAL] " + unsynced.length + " action(s) non synchronisée(s) détectée(s) !");
+    if (typeof window.showWalRecovery === "function") {
+      window.showWalRecovery(unsynced);
+    }
+  } catch(e){ console.warn("[WAL] check failed:", e); }
+}
+
+async function _walResync(walId){
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    var entry = null;
+    for (var i=0; i<wal.length; i++) { if (wal[i].id===walId) { entry=wal[i]; break; } }
+    if (!entry || entry.synced) return { ok: false, reason: "introuvable ou déjà sync" };
+    var fn = ({
+      client: saveClient,
+      appointment: saveAppointment,
+      ticket: saveTicketToDb,
+      cloture: saveCloture
+    })[entry.type];
+    if (!fn) return { ok: false, reason: "type non géré: " + entry.type };
+    // Bypass WAL pour éviter récursion (la 2ème save ne re-persiste pas)
+    window._walBypass = true;
+    try { await fn(entry.data); } finally { window._walBypass = false; }
+    _walMarkSynced(walId);
+    return { ok: true };
+  } catch(e){
+    return { ok: false, reason: e.message || String(e) };
+  }
+}
+
+window._walResync = _walResync;
+window._walCheck = _walCheck;
+window._walGetAll = function(){ try { return JSON.parse(localStorage.getItem(_WAL_KEY)||"[]"); } catch(e){ return []; } };
+
 // Helper : retire les fonctions d'un objet (structuredClone d'IndexedDB ne les
 // supporte pas). Utile pour SALON_CONFIG qui a des méthodes nomComplet/adresseComplete.
 function _stripFunctions(obj){
@@ -538,6 +638,10 @@ async function loadSalonData() {
 
   // Flush queue d'erreurs JS pré-login (hook window.onerror — voir app.html)
   try { if (typeof window._lxFlushErrorQueue === "function") window._lxFlushErrorQueue(); } catch(_){}
+
+  // WAL : vérifier s'il y a des actions non synchronisées et proposer récupération
+  // (filet 15/05/2026 — voir bloc WAL en haut de ce fichier)
+  setTimeout(function(){ try{ _walCheck(); }catch(_){} }, 2000);
 
   // Minimum config pour les écrans de blocage
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
@@ -1406,6 +1510,8 @@ if (typeof window !== "undefined") window._ensureUuidId = _ensureUuidId;
 // Sauvegarder un client (create ou update)
 async function saveClient(client) {
   if (!_isOnline || !_salonId) return;
+  // WAL : persiste l'action en LS AVANT tout traitement (filet 15/05/2026)
+  var _walId = window._walBypass ? null : _walPersist("client", client);
   // Toast auto-save discret (debounced)
   // Construit le bucket fiche_tech à partir des champs étendus présents
   // sur l'objet client en mémoire. On ne pousse que les valeurs définies
@@ -1469,11 +1575,15 @@ async function saveClient(client) {
       }
     } catch(e) { console.log("[FIDELITE SYNC]", e.message); }
   }
+  // WAL : marquer la sauvegarde comme synchronisée si on est arrivé ici sans throw
+  _walMarkSynced(_walId);
 }
 
 // Sauvegarder un rendez-vous/ticket
 async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
+  // WAL : persiste l'action AVANT tout traitement (filet 15/05/2026)
+  var _walId = window._walBypass ? null : _walPersist("appointment", appt);
 
   // === RDV ONLINE : route vers rdv_online (id préfixé "online_") ===
   // FIX 2026-05 : avant ce fix, saveAppointment update appointments avec l'id
@@ -1583,8 +1693,9 @@ async function saveAppointment(appt) {
     console.warn("saveAppointment upsert error, retry stripped:", r.error?.message);
     delete data.clients; delete data.from_caisse; delete data.client_email; delete data.collab_name;
     r = await _sb.from("appointments").upsert(data).select();
-    if (r.error) console.error("saveAppointment retry failed:", r.error);
+    if (r.error) { console.error("saveAppointment retry failed:", r.error); return; /* WAL non marqué : récupération au prochain boot */ }
   }
+  _walMarkSynced(_walId);
 }
 
 // Supprimer un RDV non-encaissé de la base
@@ -1701,6 +1812,8 @@ function _mapPayment(tk) {
 // Safe à appeler plusieurs fois : check si le ticket existe déjà via (salon_id, num).
 async function saveTicketToDb(tk) {
   if (!_isOnline || !_salonId || !tk) return null;
+  // WAL : persiste le ticket en LS AVANT tout traitement (filet 15/05/2026)
+  var _walId = window._walBypass ? null : _walPersist("ticket", tk);
   try {
     var pay = _mapPayment(tk);
     var dateStr = tk.date || new Date().toISOString().slice(0,10);
@@ -1740,6 +1853,7 @@ async function saveTicketToDb(tk) {
     var res = await _sb.from("tickets").insert(data).select().single();
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
+      // WAL non marqué synced → récupération au prochain boot via popup
       return null;
     }
     // Mettre à jour l'objet local avec le num généré par le trigger + l'id + le hash
@@ -1749,9 +1863,11 @@ async function saveTicketToDb(tk) {
       tk.hash = res.data.hash;
       tk.hashPrev = res.data.hash_prev;
     }
+    _walMarkSynced(_walId);
     return res.data;
   } catch (e) {
     console.error("[saveTicketToDb] unexpected", e);
+    // WAL non marqué synced → récupération au prochain boot via popup
     return null;
   }
 }
@@ -1912,6 +2028,8 @@ async function updateRdvOnline(rdvId, status, reason) {
 // Sauvegarder une clôture Z (persistance NF525 + raw_data pour réimpression fidèle)
 async function saveCloture(clot) {
   if (!_isOnline || !_salonId) return;
+  // WAL : persiste la clôture en LS AVANT tout traitement (filet 15/05/2026)
+  var _walId = window._walBypass ? null : _walPersist("cloture", clot);
   // Raw data : tous les champs de la clôture sauf ceux qui ne sont pas sérialisables.
   // On exclut 'id' (réécrit après insert) et toute propriété non-sérialisable.
   var raw = {};
@@ -1954,12 +2072,14 @@ async function saveCloture(clot) {
         if (existing.data && existing.data.id) clot.id = existing.data.id;
       } catch (_e) {}
       if (typeof toast === "function") toast("⚠️ Clôture déjà enregistrée — pas de doublon créé.", "info");
+      _walMarkSynced(_walId);  // déjà existante = équivalent synchronisé
       return;
     }
     console.error("[saveCloture] Erreur upsert:", res.error);
     if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
-    return;
+    return;  // WAL non marqué → récupération au prochain boot
   }
+  _walMarkSynced(_walId);
 }
 
 // Sauvegarder une entrée d'audit

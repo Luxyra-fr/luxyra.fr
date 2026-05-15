@@ -396,6 +396,71 @@ console.log("LUXYRA v6.3");
 })();
 // ====================================================================
 
+// ===== POPUP RÉCUPÉRATION WAL (filet sécurité 15/05/2026) ============
+// Affichée au boot si des actions non synchronisées sont détectées en LS.
+// Permet à l'utilisateur de récupérer ses tickets/clients/RDV perdus suite
+// à un crash JS qui aurait planté avant l'envoi en DB.
+window.showWalRecovery = function(unsynced){
+  if(!unsynced || !unsynced.length) return;
+  var typeLabel = {client:"Fiche client", appointment:"Rendez-vous", ticket:"Ticket de caisse", cloture:"Clôture Z"};
+  var html = '<div class="mbg" id="walRecBg" style="z-index:99999"><div class="mbox" style="max-width:560px;text-align:left">';
+  html += '<div style="font-size:32px;text-align:center;margin-bottom:8px">🔒</div>';
+  html += '<h2 style="color:var(--gold);text-align:center;margin-bottom:6px">Données non synchronisées</h2>';
+  html += '<p style="color:var(--text2);text-align:center;font-size:13px;margin-bottom:14px">Nous avons détecté <b>'+unsynced.length+' action(s)</b> non sauvegardée(s) en base — probablement suite à un crash. Récupérer maintenant ?</p>';
+  html += '<div style="max-height:280px;overflow-y:auto;background:rgba(0,0,0,0.15);border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px">';
+  unsynced.slice(0,20).forEach(function(e){
+    var dt = new Date(e.ts).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+    var summary = "";
+    if(e.type==="client") summary = (e.data.nom||"")+" "+(e.data.pre||"")+" "+(e.data.ph||"");
+    else if(e.type==="appointment") summary = (e.data.date||"")+" "+(e.data.time||"")+" — "+(e.data.pr?e.data.pr+"€":"")+" "+(e.data.st||"");
+    else if(e.type==="ticket") summary = "Ticket "+(e.data.pr||0)+"€ "+(e.data.met||"")+(e.data.cId?" — client "+String(e.data.cId).slice(0,8):"");
+    else if(e.type==="cloture") summary = "Z n°"+(e.data.num||"?")+" "+(e.data.totalCA||0)+"€";
+    html += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><b>'+(typeLabel[e.type]||e.type)+'</b> <span style="color:var(--text3)">— '+dt+'</span><br><span style="color:var(--text2)">'+(summary||"(détails dans console)")+'</span></div>';
+  });
+  if(unsynced.length>20) html += '<div style="padding:8px;text-align:center;color:var(--text3)">+ '+(unsynced.length-20)+' autres…</div>';
+  html += '</div>';
+  html += '<div style="display:flex;gap:8px">';
+  html += '<button class="btn bg" style="flex:1" onclick="_walDoRecover()">Récupérer ('+unsynced.length+')</button>';
+  html += '<button class="btn" style="flex:1" onclick="_walDoIgnore()">Plus tard</button>';
+  html += '</div>';
+  html += '<div style="text-align:center;margin-top:10px;font-size:11px;color:var(--text3)">Les données restent en sécurité tant que vous ne cliquez pas "Plus tard". Vous pourrez les retrouver dans Réglages → Récupération.</div>';
+  html += '</div></div>';
+  var div = document.createElement("div");
+  div.innerHTML = html;
+  document.body.appendChild(div.firstChild);
+};
+window._walDoRecover = async function(){
+  var bg = document.getElementById("walRecBg");
+  if(bg) bg.innerHTML = '<div class="mbox" style="text-align:center"><div style="font-size:32px">⏳</div><h2 style="color:var(--gold)">Récupération en cours…</h2><p id="walRecProgress" style="color:var(--text2)">0 / ?</p></div>';
+  try{
+    var entries = (typeof window._walGetAll==="function"?window._walGetAll():[]).filter(function(e){ return !e.synced; });
+    var ok=0, fail=0;
+    for(var i=0;i<entries.length;i++){
+      var p = document.getElementById("walRecProgress");
+      if(p) p.textContent = (i+1)+" / "+entries.length;
+      try{
+        var r = await window._walResync(entries[i].id);
+        if(r && r.ok) ok++; else fail++;
+      }catch(_){ fail++; }
+    }
+    var msg = "✅ "+ok+" action(s) récupérée(s)";
+    if(fail) msg += " — ⚠ "+fail+" échec(s)";
+    if(typeof toast==="function") toast(msg, fail?"warning":"success");
+    var bg2 = document.getElementById("walRecBg");
+    if(bg2) bg2.remove();
+    // Recharger l'app pour voir les data fraîches
+    setTimeout(function(){ if(typeof go==="function") go("home"); }, 600);
+  }catch(e){
+    if(typeof toast==="function") toast("Erreur récupération : "+(e.message||e), "error");
+  }
+};
+window._walDoIgnore = function(){
+  var bg = document.getElementById("walRecBg");
+  if(bg) bg.remove();
+  if(typeof toast==="function") toast("Données conservées en local — récupération disponible dans Réglages","info");
+};
+// ====================================================================
+
 // ===== TOAST NOTIFICATION SYSTEM =====
 (function(){
   var container=null;
