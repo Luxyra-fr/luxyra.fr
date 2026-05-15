@@ -325,6 +325,7 @@ function renderDashboard(){
   h+='<div class="tab'+(TAB==="photos"?" active":"")+'" onclick="TAB=\'photos\';loadMyPhotos()">\ud83d\udcf8 Photos</div>';
   h+='<div class="tab'+(TAB==="fidelite"?" active":"")+'" onclick="TAB=\'fidelite\';render()">\ud83c\udf1f Fid\u00e9lit\u00e9</div>';
   h+='<div class="tab'+(TAB==="cartes"?" active":"")+'" onclick="TAB=\'cartes\';render()">\ud83d\udcb3 Cartes</div>';
+  h+='<div class="tab'+(TAB==="bons_cadeaux"?" active":"")+'" onclick="TAB=\'bons_cadeaux\';loadMyBonsCadeaux()">\ud83c\udf81 Bons cadeaux</div>';
   h+='<div class="tab'+(TAB==="profile"?" active":"")+'" onclick="TAB=\'profile\';render()">\ud83d\udc64 Profil</div>';
   h+='<div class="tab'+(TAB==="settings"?" active":"")+'" onclick="TAB=\'settings\';render()">\u2699\ufe0f R\u00e9glages</div>';
   h+='</div>';
@@ -334,6 +335,7 @@ function renderDashboard(){
   else if(TAB==="photos")h+=renderPhotosTab();
   else if(TAB==="fidelite")h+=renderFideliteTab();
   else if(TAB==="cartes")h+=renderCartesTab();
+  else if(TAB==="bons_cadeaux")h+=renderBonsCadeauxTab();
   else if(TAB==="profile")h+=renderProfileTab();
   else if(TAB==="settings")h+=renderSettingsTab();
   
@@ -996,6 +998,132 @@ function buildCompteTicketHTML(rdv,salon){
   h+="<div style='font-size:9px;color:#999'>Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</div>";
   h+="<div style='font-weight:700;margin-top:4px'>COPIE ELECTRONIQUE - DUPLICATA</div></div>";
   return h;
+}
+
+// ========== BONS CADEAUX ==========
+// FIX 2026-05-15 : nouvel onglet 🎁 Bons cadeaux. Liste les bons achetés par le client
+// (where buyer_email = CLIENT.email) + propose impression et état (active/utilisé/expiré)
+var _bonsCadeauxData = null;
+var _bonsCadeauxLoaded = false;
+async function loadMyBonsCadeaux(){
+  if(!CLIENT || !CLIENT.email) return;
+  _bonsCadeauxLoaded = false;
+  render();
+  try {
+    var r = await api("cartes_cadeaux?select=*,salons(nom,adresse,cp,ville,tel,logo,slug)&buyer_email=eq."+encodeURIComponent(CLIENT.email.toLowerCase())+"&payment_status=eq.paid&order=created_at.desc");
+    _bonsCadeauxData = r || [];
+  } catch(e) {
+    console.warn("loadMyBonsCadeaux", e);
+    _bonsCadeauxData = [];
+  }
+  _bonsCadeauxLoaded = true;
+  render();
+}
+function renderBonsCadeauxTab(){
+  var h='';
+  h+='<div class="section"><div class="section-title">🎁 Mes bons cadeaux</div>';
+  if(!_bonsCadeauxLoaded){
+    h+='<div class="card" style="text-align:center;padding:30px;color:var(--text3)">Chargement…</div></div>';
+    return h;
+  }
+  if(!_bonsCadeauxData || !_bonsCadeauxData.length){
+    h+='<div class="empty"><div class="ico">🎁</div>Aucun bon cadeau acheté<br><span style="font-size:12px;color:var(--text3)">Achetez un bon cadeau via le site d\'un salon Luxyra et il apparaîtra ici</span></div>';
+    h+='</div>';
+    return h;
+  }
+  _bonsCadeauxData.forEach(function(b){
+    var s = b.salons || {};
+    var dateExp = b.date_expiration ? new Date(b.date_expiration).toLocaleDateString("fr-FR") : "—";
+    var dateAchat = b.created_at ? new Date(b.created_at).toLocaleDateString("fr-FR") : "—";
+    var restant = Number(b.restant || b.valeur || 0);
+    var utilise = Number(b.utilise || 0);
+    var totalValue = Number(b.valeur || 0);
+    var isExpired = b.date_expiration && new Date(b.date_expiration) < new Date();
+    var isUsed = restant <= 0;
+    var statusBg, statusColor, statusLabel;
+    if(isUsed){ statusBg='rgba(158,158,158,.15)'; statusColor='#9e9e9e'; statusLabel='Utilisé'; }
+    else if(isExpired){ statusBg='rgba(244,67,54,.15)'; statusColor='#ef5350'; statusLabel='Expiré'; }
+    else { statusBg='rgba(76,175,80,.15)'; statusColor='#66bb6a'; statusLabel='Actif'; }
+    h+='<div class="card" style="margin-bottom:14px;padding:0;overflow:hidden;border:1px solid rgba(200,168,78,.25);background:linear-gradient(135deg,rgba(28,24,18,.95),rgba(20,17,13,.95))">';
+    // Header
+    h+='<div style="padding:14px 16px;background:linear-gradient(135deg,rgba(232,200,115,.12),rgba(200,168,78,.04));border-bottom:1px solid rgba(232,200,115,.15);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">';
+    h+='<div style="display:flex;align-items:center;gap:10px">';
+    if(s.logo) h+='<img src="'+s.logo+'" style="width:36px;height:36px;border-radius:8px;object-fit:cover;border:1px solid rgba(232,200,115,.3)">';
+    h+='<div><div style="font-weight:800;font-size:14px;color:#fed480">'+_esc(s.nom||"Salon")+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3)">Acheté le '+dateAchat+'</div></div>';
+    h+='</div>';
+    h+='<div style="padding:5px 12px;border-radius:20px;background:'+statusBg+';color:'+statusColor+';font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.5px">'+statusLabel+'</div>';
+    h+='</div>';
+    // Corps
+    h+='<div style="padding:18px 16px;text-align:center">';
+    h+='<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:42px;font-weight:700;color:var(--gold2);line-height:1">'+restant.toFixed(0)+'<span style="font-size:22px;color:var(--gold)">€</span></div>';
+    if(utilise > 0){
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Restant — Total acheté '+totalValue.toFixed(2)+' € · Utilisé '+utilise.toFixed(2)+' €</div>';
+    }
+    h+='<div style="display:inline-block;margin:10px 0 4px;padding:8px 18px;background:rgba(232,200,115,.12);border:1px solid rgba(232,200,115,.3);border-radius:20px;font-family:monospace;font-size:18px;letter-spacing:3px;color:#fed480;font-weight:700">'+_esc(b.code)+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">Valable jusqu\'au '+dateExp+'</div>';
+    if(b.de || b.pour){
+      h+='<div style="font-size:12px;color:var(--text2);margin-top:10px;padding-top:10px;border-top:1px dashed rgba(232,200,115,.15)">';
+      if(b.de) h+='De <strong style="color:var(--text)">'+_esc(b.de)+'</strong>';
+      if(b.de && b.pour) h+=' · ';
+      if(b.pour) h+='Pour <strong style="color:var(--text)">'+_esc(b.pour)+'</strong>';
+      h+='</div>';
+    }
+    if(b.message){
+      h+='<div style="font-style:italic;font-size:13px;color:var(--text2);margin-top:8px;padding:10px;background:rgba(232,200,115,.04);border-radius:8px">« '+_esc(b.message)+' »</div>';
+    }
+    h+='</div>';
+    // Actions
+    if(!isUsed && !isExpired){
+      h+='<div style="padding:0 16px 14px"><button onclick="printBonCadeau(\''+b.id+'\')" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--gold2),var(--gold));color:#1a1815;font-weight:700;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">';
+      h+='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>';
+      h+='Imprimer ce bon</button></div>';
+    }
+    h+='</div>';
+  });
+  h+='</div>';
+  return h;
+}
+function _esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+// Imprime un bon cadeau en ouvrant une fenêtre stylée
+function printBonCadeau(bcId){
+  var b = (_bonsCadeauxData||[]).find(function(x){return x.id===bcId;});
+  if(!b) return;
+  var s = b.salons || {};
+  var addr = [s.adresse, s.cp, s.ville].filter(Boolean).join(" ");
+  var dateExp = b.date_expiration ? new Date(b.date_expiration).toLocaleDateString("fr-FR") : "—";
+  var visuel = b.visuel_url || s.logo || null;
+  var w = window.open("","_blank","width=600,height=800");
+  if(!w){ alert("Pop-up bloqué — autorisez les fenêtres pour imprimer le bon"); return; }
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Bon cadeau '+_esc(b.code)+'</title>'
+    +'<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Cormorant+Garamond:ital@1&family=Inter:wght@400;700&display=swap" rel="stylesheet">'
+    +'<style>@page{margin:1cm}body{font-family:Inter,sans-serif;background:#f5f3ef;padding:20px;margin:0}.bc{max-width:560px;margin:0 auto;background:linear-gradient(135deg,#1c1812,#0f0e0a);border:2px solid #c8a84e;border-radius:18px;padding:32px;color:#fff;text-align:center}'
+    +'.tag{font-family:\'Playfair Display\',serif;font-size:14px;color:#c8a84e;text-transform:uppercase;letter-spacing:3px;font-weight:700;margin-bottom:8px}'
+    +'.sn{font-family:\'Playfair Display\',serif;font-size:22px;color:#fef6e0;font-weight:700;margin-bottom:20px}'
+    +'.vis{width:100%;aspect-ratio:16/9;border-radius:12px;margin-bottom:18px;border:1px solid rgba(232,200,115,.2);background-size:contain;background-repeat:no-repeat;background-position:center;background-color:#0a0907}'
+    +'.amt{font-family:\'Playfair Display\',serif;font-weight:700;font-size:80px;color:#e8c873;line-height:1;margin:10px 0}.amt small{font-size:36px;color:#c8a84e}'
+    +'.code{display:inline-block;background:rgba(232,200,115,.15);border:1.5px solid rgba(232,200,115,.5);padding:10px 24px;border-radius:24px;font-family:monospace;font-size:22px;letter-spacing:4px;color:#fed480;font-weight:700;margin:10px 0 22px}'
+    +'.info{display:flex;justify-content:space-around;gap:14px;padding:16px 0;border-top:1px dashed rgba(232,200,115,.25);border-bottom:1px dashed rgba(232,200,115,.25)}'
+    +'.info div{text-align:center}.info small{font-size:10px;color:#9a9590;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:3px}'
+    +'.info b{font-size:14px;color:#fff}'
+    +'.msg{font-family:\'Cormorant Garamond\',serif;font-style:italic;font-size:18px;color:#fef6e0;padding:16px;line-height:1.5}'
+    +'.foot{font-size:11px;color:#9a9590;margin-top:14px;text-transform:uppercase;letter-spacing:1px}'
+    +'.sinfo{text-align:center;font-size:11px;color:#666;margin-top:14px;line-height:1.6}.sinfo strong{color:#222}'
+    +'</style></head><body><div class="bc">'
+    +'<div class="tag">Bon cadeau</div><div class="sn">'+_esc(s.nom||"Salon")+'</div>'
+    +(visuel ? '<div class="vis" style="background-image:url('+_esc(visuel)+')"></div>' : '')
+    +'<div class="amt">'+(Number(b.restant||b.valeur)).toFixed(0)+'<small>€</small></div>'
+    +'<div class="code">'+_esc(b.code)+'</div>'
+    +'<div class="info">'
+    + (b.de ? '<div><small>De</small><b>'+_esc(b.de)+'</b></div>' : '')
+    + (b.pour ? '<div><small>Pour</small><b>'+_esc(b.pour)+'</b></div>' : '')
+    +'</div>'
+    +(b.message ? '<div class="msg">« '+_esc(b.message)+' »</div>' : '')
+    +'<div class="foot">Valable jusqu\'au '+dateExp+'</div>'
+    +'</div><div class="sinfo" style="max-width:560px;margin:14px auto"><strong>'+_esc(s.nom||"Salon")+'</strong><br>'+_esc(addr)+(s.tel?'<br>Tél : '+_esc(s.tel):'')+'<br><br>Présentez ce bon ou son code <strong>'+_esc(b.code)+'</strong> lors de votre visite.</div>'
+    +'<script>setTimeout(function(){window.print();},500);<\/script>'
+    +'</body></html>');
+  w.document.close();
 }
 
 function renderProfileTab(){
