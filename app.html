@@ -12360,11 +12360,19 @@ function rSettings(){
     ];
     for(var ti=0;ti<toggles.length;ti++){
       var tg=toggles[ti];
-      h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;'+(ti<toggles.length-1?"border-bottom:1px solid var(--border2);":"")+'cursor:pointer">';
+      h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border2);cursor:pointer">';
       h+='<span style="font-size:15px">'+tg[1]+' <strong>'+tg[2]+'</strong></span>';
       h+='<div style="position:relative;width:48px;height:26px"><input type="checkbox" '+(SC[tg[0]]?"checked":"")+' onchange="window.SITE_CONFIG.'+tg[0]+'=this.checked;saveSiteConfig()" style="width:48px;height:26px;cursor:pointer"></div>';
       h+='</label>';
     }
+    // 4\u00e8me toggle : Bons cadeaux en ligne (persiste dans salons.bons_cadeaux_online_actif, pas dans site_config)
+    var _bcOn = !!(window.SALON_CONFIG && SALON_CONFIG.bonsCadeauxOnlineActif);
+    var _cnxStatus = (window.SALON_CONFIG && SALON_CONFIG.stripeConnectStatus) || "";
+    var _cnxOk = (_cnxStatus === "active");
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;cursor:'+(_cnxOk?"pointer":"not-allowed")+';opacity:'+(_cnxOk?"1":".55")+'" title="'+(_cnxOk?"":"Stripe Connect doit \u00eatre actif")+'">';
+    h+='<span style="font-size:15px">\ud83c\udf81 <strong>Bons cadeaux en ligne</strong>'+(_cnxOk?"":' <span style="font-size:11px;color:#ef9a9a;font-weight:600">(Stripe Connect requis)</span>')+'</span>';
+    h+='<div style="position:relative;width:48px;height:26px"><input type="checkbox" '+(_bcOn?"checked":"")+' '+(_cnxOk?"":"disabled")+' onchange="toggleBonsCadeauxOnline(this.checked)" style="width:48px;height:26px;cursor:'+(_cnxOk?"pointer":"not-allowed")+'"></div>';
+    h+='</label>';
     h+='</div>';
     
     // URL du site (slug personnalisable)
@@ -18112,14 +18120,14 @@ async function toggleBonsCadeauxOnline(newVal){
     if(newVal && _cnxStatus !== "active"){
       showAlert("Stripe Connect doit être actif pour vendre des bons cadeaux en ligne.","error");
       // Rerender to restore checkbox state
-      if(typeof go==="function")go("gifts");
+      if(typeof go==="function")go(window._currentPage||"settings");
       return;
     }
     var r = await _sb.from("salons").update({bons_cadeaux_online_actif: newVal===true}).eq("id",_salonId).select("bons_cadeaux_online_actif");
     if(r.error){
       console.error("[toggleBonsCadeauxOnline] error",r.error);
       showAlert("Erreur : "+(r.error.message||"Impossible de mettre à jour"),"error");
-      if(typeof go==="function")go("gifts");
+      if(typeof go==="function")go(window._currentPage||"settings");
       return;
     }
     if(window.SALON_CONFIG) SALON_CONFIG.bonsCadeauxOnlineActif = newVal===true;
@@ -18135,36 +18143,28 @@ async function toggleBonsCadeauxOnline(newVal){
 
 function rGifts(){
   var h='';
-  // === BANNIÈRE "Bons cadeaux en ligne" — toggle vente publique sur site salon ===
+  // === BANNIÈRE info "Vente en ligne" — affiche l'URL si activé, sinon CTA vers Paramètres ===
   try{
     var _bcOn = !!(window.SALON_CONFIG && SALON_CONFIG.bonsCadeauxOnlineActif);
     var _slug = (window.SALON_CONFIG && SALON_CONFIG.slug) || (window.SALON && window.SALON.slug) || "";
-    var _cnxStatus = (window.SALON_CONFIG && SALON_CONFIG.stripeConnectStatus) || "";
-    var _cnxOk = (_cnxStatus === "active");
-    h+='<div style="margin-bottom:14px;border-radius:14px;overflow:hidden;background:linear-gradient(135deg,rgba(232,200,115,.08),rgba(200,168,78,.02));border:1px solid rgba(232,200,115,.22);padding:16px 18px">';
-    h+='<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">';
-    h+='<div style="flex:1;min-width:200px">';
-    h+='<div style="font-size:11px;color:rgba(232,200,115,.7);letter-spacing:1.2px;text-transform:uppercase;font-weight:800;margin-bottom:4px">🌐 Vente en ligne</div>';
-    h+='<div style="font-family:var(--f1);font-size:15px;font-weight:700;color:#fff;margin-bottom:3px">Bons cadeaux sur votre site Luxyra</div>';
-    h+='<div style="font-size:12px;color:rgba(255,255,255,.55);line-height:1.5">Permettez à vos clients d’acheter et d’offrir des bons cadeaux directement depuis votre site, payés par carte bancaire.</div>';
-    if(!_cnxOk){
-      h+='<div style="margin-top:10px;font-size:12px;color:#ef9a9a;padding:8px 12px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.25);border-radius:8px"><strong>⚠️ Stripe Connect requis.</strong> Activez les paiements en ligne dans Paramètres → Paiement en ligne avant d’activer la vente.</div>';
-    }else if(_bcOn && _slug){
+    if(_bcOn && _slug){
       var _bcUrl = "https://luxyra.fr/"+_slug+"/bons-cadeaux";
-      h+='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
-      h+='<div style="font-size:11px;color:rgba(255,255,255,.5);font-family:monospace;padding:6px 10px;background:rgba(0,0,0,.3);border-radius:6px;word-break:break-all">'+_bcUrl+'</div>';
-      h+='<button class="btn" style="font-size:11px;padding:6px 12px" onclick="navigator.clipboard.writeText(\''+_bcUrl+'\').then(function(){var b=event.currentTarget||event.target;if(b){var t=b.textContent;b.textContent=\'✅ Copié\';setTimeout(function(){b.textContent=t;},2000);}});">📋 Copier le lien</button>';
+      h+='<div style="margin-bottom:14px;border-radius:12px;background:linear-gradient(135deg,rgba(127,201,127,.08),rgba(127,201,127,.02));border:1px solid rgba(127,201,127,.25);padding:12px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+      h+='<div style="font-size:18px">🌐</div>';
+      h+='<div style="flex:1;min-width:180px">';
+      h+='<div style="font-size:11px;color:#7fc97f;font-weight:800;letter-spacing:1px;text-transform:uppercase">Vente en ligne activée</div>';
+      h+='<div style="font-size:11px;color:rgba(255,255,255,.5);font-family:monospace;margin-top:2px;word-break:break-all">'+_bcUrl+'</div>';
+      h+='</div>';
+      h+='<button class="btn" style="font-size:11px;padding:6px 12px" onclick="navigator.clipboard.writeText(\''+_bcUrl+'\').then(function(){var b=event.currentTarget||event.target;if(b){var t=b.textContent;b.textContent=\'✅ Copié\';setTimeout(function(){b.textContent=t;},2000);}});">📋 Copier</button>';
       h+='<a class="btn" target="_blank" rel="noopener" href="'+_bcUrl+'" style="font-size:11px;padding:6px 12px;text-decoration:none">↗ Ouvrir</a>';
       h+='</div>';
+    }else{
+      h+='<div style="margin-bottom:14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.12);padding:12px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
+      h+='<div style="font-size:18px;opacity:.6">🌐</div>';
+      h+='<div style="flex:1;min-width:180px;font-size:12px;color:rgba(255,255,255,.55);line-height:1.5">Permettez à vos clients d\'acheter des bons cadeaux depuis votre site Luxyra.</div>';
+      h+='<button class="btn" style="font-size:11px;padding:6px 12px" onclick="window._settTab=\'siteweb\';go(\'settings\')">⚙️ Activer dans Paramètres</button>';
+      h+='</div>';
     }
-    h+='</div>';
-    // Toggle switch
-    var _disabled = !_cnxOk ? "disabled" : "";
-    h+='<label style="display:flex;align-items:center;gap:10px;cursor:'+(!_cnxOk?"not-allowed":"pointer")+';opacity:'+(!_cnxOk?".5":"1")+'">';
-    h+='<input type="checkbox" '+(_bcOn?"checked":"")+' '+_disabled+' onchange="toggleBonsCadeauxOnline(this.checked)" style="width:44px;height:24px;cursor:'+(!_cnxOk?"not-allowed":"pointer")+'">';
-    h+='<span style="font-size:13px;font-weight:800;color:'+(_bcOn?"#7fc97f":"rgba(255,255,255,.5)")+'">'+(_bcOn?"Activé":"Désactivé")+'</span>';
-    h+='</label>';
-    h+='</div></div>';
   }catch(e){console.warn("[rGifts] banner online error",e);}
   // Stats
   var totalActif=0,totalUsed=0,nbActif=0,nbUsed=0,nbExpired=0,nbVoided=0;
