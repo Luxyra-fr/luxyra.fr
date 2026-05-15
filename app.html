@@ -12849,22 +12849,36 @@ var clTab="infos",clPage=0,clPer=50;
 // disparaissait/réapparaissait à chaque lettre (clignotement signalé par Amandine).
 // Après : on met à jour SEULEMENT la div #clBody (filtres+liste+pagination),
 // l'input reste le même DOM element donc le clavier ne se ferme jamais.
+// FIX 2026-05-15 : debounce 150ms — évite le re-render à chaque keystroke
+// avec 467 clients (handler 'input' violation 183ms vu en console). Le bouton ×
+// et la valeur cSr restent instantanés ; seul le re-render lourd est différé.
+var _searchClientDebounce = null;
 function _searchClientInput(input){
   cSr = input.value;
-  clPage = 0;
-  var body = document.getElementById("clBody");
-  if (body) {
-    body.innerHTML = _renderClientBody();
-  } else {
-    // Fallback si la div n'existe pas
-    go("clients");
-  }
-  // Affiche/cache le bouton "×" (clear) selon contenu
+  // Affichage du bouton × INSTANTANÉ (purement visuel, pas de calcul)
   var clearBtn = document.getElementById("clClearBtn");
   if (clearBtn) clearBtn.style.display = cSr ? "flex" : "none";
+  // Le re-render lourd (filter+sort+paginate 467 clients) est différé de 150ms.
+  // Si l'utilisateur tape vite, on annule le timer précédent → seul le dernier
+  // état est rendu. Sur tablette Android = moins de pression CPU = clavier
+  // garanti stable.
+  if (_searchClientDebounce) clearTimeout(_searchClientDebounce);
+  _searchClientDebounce = setTimeout(function(){
+    _searchClientDebounce = null;
+    clPage = 0;
+    var body = document.getElementById("clBody");
+    if (body) {
+      body.innerHTML = _renderClientBody();
+    } else {
+      // Fallback si la div n'existe pas
+      go("clients");
+    }
+  }, 150);
 }
 // Efface la recherche client d'un seul clic
 function _clearClientSearch(){
+  // Annule un éventuel re-render en attente pour éviter une race condition
+  if (_searchClientDebounce) { clearTimeout(_searchClientDebounce); _searchClientDebounce = null; }
   cSr = "";
   clPage = 0;
   var input = document.getElementById("clSrInput");
