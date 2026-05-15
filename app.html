@@ -115,6 +115,11 @@ input[type="radio"]{accent-color:#e8c873;}
 .li .lp{font-weight:800;color:var(--gold);font-family:var(--f1);font-size:15px;flex-shrink:0;}
 
 .tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;cursor:grab;user-select:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 14px,#000 calc(100% - 14px),transparent 100%);}
+/* FIX 2026-05-15 : accordion natif <details> pour Paramètres → Équipe */
+.lx-collab-summary::-webkit-details-marker{display:none;}
+.lx-collab-summary::marker{display:none;content:"";}
+.lx-collab-summary:hover{background:rgba(232,200,115,.06)!important;}
+details[open] > .lx-collab-summary .lx-collab-chev{transform:rotate(180deg);}
 .tabs::-webkit-scrollbar{display:none;}
 .tabs:active{cursor:grabbing;}
 .tab{padding:8px 16px;border-radius:6px;font-family:var(--f1,Georgia,serif);font-size:12px;font-weight:500;letter-spacing:1.5px;text-transform:uppercase;background:rgba(20,20,20,.6);color:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.08);white-space:nowrap;flex-shrink:0;cursor:pointer;transition:all .15s;}
@@ -11973,10 +11978,34 @@ function rSettings(){
         h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">'+(typeof getCollabLabel==="function"?getCollabLabel()+'s du planning':'Coiffeurs du planning')+'</div>';
       }
     }
+    // FIX 2026-05-15 : accordion natif <details> pour replier chaque collab
+    // Plier par défaut sauf le 1er → page lisible même avec 10+ collaborateurs
+    // Pure HTML natif, zéro JS custom, zéro risque de régression
     for(var ti=0;ti<T.length;ti++){
       var st2=T[ti];
-      h+='<div class="card" style="margin-bottom:12px">';
-      // Header: photo + name + color
+      var _cbOpen = (ti === 0) ? ' open' : ''; // 1er collab déplié par défaut
+      h+='<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">';
+      h+='<details'+_cbOpen+' style="background:transparent">';
+      // Summary cliquable : avatar + nom + chevron (toujours visible, même replié)
+      h+='<summary class="lx-collab-summary" style="list-style:none;cursor:pointer;padding:14px;display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06)">';
+      if(st2.img) h+='<img src="'+st2.img+'" style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid '+st2.c+'">';
+      else h+='<div style="width:42px;height:42px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;flex-shrink:0">'+st2.i+'</div>';
+      h+='<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:15px;color:#fff">'+(st2.n||'')+'</div>';
+      // Mini-stats : horaires actifs + nb absences à venir + indicateur RGPD photo
+      var _nbDaysOn = 0;
+      if(st2.hrs) for(var _di=0;_di<7;_di++){ if(st2.hrs[_di]) _nbDaysOn++; }
+      var _nbAbsActives = 0;
+      if(window.ABSENCES) for(var _ai=0;_ai<window.ABSENCES.length;_ai++){
+        var _ab = window.ABSENCES[_ai];
+        if(_ab.stId === st2.id && (_ab.dateFrom||_ab.date||"") >= TD) _nbAbsActives++;
+      }
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_nbDaysOn+' jour'+(_nbDaysOn>1?'s':'')+' travaillés' + (_nbAbsActives>0 ? ' • '+_nbAbsActives+' absence'+(_nbAbsActives>1?'s':'') : '') + '</div>';
+      h+='</div>';
+      h+='<svg class="lx-collab-chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s"><polyline points="6 9 12 15 18 9"/></svg>';
+      h+='</summary>';
+      // Contenu déroulant : tout le bloc édition existant (header édition + horaires + absences + RH + compte)
+      h+='<div style="padding:14px">';
+      // Header: photo + name + color (édition complète)
       h+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
       if(st2.img)h+='<img src="'+st2.img+'" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:3px solid '+st2.c+'">';
       else h+='<div style="width:56px;height:56px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">'+st2.i+'</div>';
@@ -12196,7 +12225,9 @@ function rSettings(){
       h+='</div>';
       // ===== FIN BLOC COMPTE =====
       if(T.length>1)h+='<button class="btn bs" style="margin-top:8px;font-size:12px;color:var(--red);margin-left:8px" onclick="showConfirm(\'Supprimer ce collaborateur ?\',function(){var delId=T['+ti+'].id;T.splice('+ti+',1);deleteCollabFromDB(delId);go(\'settings\')})">Supprimer</button>';
-      h+='</div>';
+      h+='</div>'; // /padding:14px wrapper accordion content
+      h+='</details>'; // FIX 2026-05-15 : fin accordion natif <details>
+      h+='</div>'; // /card
     }
     h+='<button class="btn bg" style="width:100%;padding:14px;margin-top:10px" onclick="addCollab()">+ Ajouter collaborateur</button>';
   }
