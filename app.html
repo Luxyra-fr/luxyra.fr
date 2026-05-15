@@ -14187,6 +14187,34 @@ function rDetail(){
   h+='<div style="flex:1;text-align:center;padding:8px;border:1px solid var(--border2);border-radius:10px"><div style="font-weight:800;font-size:18px">'+(cs?cs.vc:0)+'</div><div style="font-size:10px;color:var(--text3)">Visites 12 mois</div></div>';
   h+='<div style="flex:1;text-align:center;padding:8px;border:1px solid var(--border2);border-radius:10px"><div style="font-weight:700;font-size:13px">'+(cs&&cs.last?fmt(cs.last):"\u2014")+'</div><div style="font-size:10px;color:var(--text3)">Derni\u00e8re visite</div></div>';
   h+='</div>';
+  // FIX 2026-05-15 : afficher prochain(s) RDV à venir (à côté de "dernière visite")
+  // Cas typique : un client a une coloration prévue dans 3 semaines + coupe enfant le mois prochain → utile à voir d'un coup d'œil dans la fiche
+  var _nextRdvs = AP.filter(function(a){
+    return a.cId===c.id && a.st==='conf' && !a.cancelled && a.date >= TD;
+  }).sort(function(a,b){
+    if(a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return (a.time||'').localeCompare(b.time||'');
+  });
+  if(_nextRdvs.length){
+    h += '<div style="margin-top:8px;padding:10px 14px;background:linear-gradient(135deg,rgba(33,150,243,.12),rgba(33,150,243,.04));border:1px solid rgba(33,150,243,.28);border-radius:10px">';
+    h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+    h += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64b5f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+    h += '<span style="font-weight:800;font-size:11px;color:#64b5f6;text-transform:uppercase;letter-spacing:.5px">Prochain'+(_nextRdvs.length>1?'s':'')+' RDV'+(_nextRdvs.length>1?' ('+_nextRdvs.length+')':'')+'</span>';
+    h += '</div>';
+    _nextRdvs.slice(0, 3).forEach(function(a, i){
+      var sv = gS(a.sId);
+      var sty = gT(a.stId);
+      h += '<div style="font-size:12px;color:var(--text2);margin-top:'+(i>0?5:0)+'px;line-height:1.4">';
+      h += '<strong style="color:#fff">'+fmt(a.date)+'</strong> <span style="color:var(--text3)">'+(a.time||'')+'</span>';
+      if(sv) h += ' <span style="color:var(--text2)">• '+sv.n+'</span>';
+      if(sty) h += ' <span style="color:var(--text3)">avec '+sty.n+'</span>';
+      h += '</div>';
+    });
+    if(_nextRdvs.length > 3){
+      h += '<div style="font-size:11px;color:var(--text3);margin-top:6px;font-style:italic">+ '+(_nextRdvs.length-3)+' autre'+(_nextRdvs.length-3>1?'s':'')+' RDV à venir</div>';
+    }
+    h += '</div>';
+  }
   // Badge carte d'abonnement
   var _activeCA=getActiveCarteAbo(c.id);
   if(_activeCA){
