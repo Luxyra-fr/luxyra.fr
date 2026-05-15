@@ -779,6 +779,10 @@ async function loadSalonData() {
   // Toggle "Bons cadeaux en ligne" — vente publique de bons cadeaux via Stripe Checkout
   // Gated par Stripe Connect actif (sinon les fonds ne peuvent pas être encaissés)
   SALON_CONFIG.bonsCadeauxOnlineActif = salon.bons_cadeaux_online_actif === true;
+  // Programme "100 Fondateurs" — badge visible dans Mon abonnement
+  SALON_CONFIG.isFounder = salon.is_founder === true;
+  SALON_CONFIG.founderNum = salon.founder_num ? Number(salon.founder_num) : null;
+  SALON_CONFIG.founderAt = salon.founder_at || null;
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
   if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
