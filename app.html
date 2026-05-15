@@ -22822,88 +22822,116 @@ function renderRdv2ndBody(){
     h+='<option value="'+T[i].id+'"'+(st2.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
   }
   h+='</select>';
-  // 2nd prestation — FIX 2026-05-15 : grid de cartes (plus tactile que select déroulant)
+  // 2nd prestation — FIX 2026-05-15 v2 : sélection catégorie → prestations (comme 1er RDV)
+  // Étape 1 : grid de catégories avec icônes
+  // Étape 2 : prestations de la catégorie cliquée
+  // Sélection finale affichée en haut
   h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">Prestation</div>';
-  h+='<input type="text" id="rdv2ndSvcSearch" autocomplete="off" placeholder="🔍 Filtrer (ex: coupe, couleur, enfant...)" oninput="_filterRdv2ndSvcGrid(this.value)" style="width:100%;padding:8px;margin-bottom:6px;font-size:13px">';
-  // Affichage actuel (carte sélectionnée)
+  // Récap prestation sélectionnée
   var _selSvc = st2.svcId ? gS(st2.svcId) : null;
-  h+='<div id="rdv2ndSelected" style="margin-bottom:6px;'+(_selSvc?'':'display:none;')+'padding:8px 12px;background:rgba(108,92,231,.18);border:1.5px solid #a29bfe;border-radius:8px;font-size:12px;color:#a29bfe;font-weight:700">';
-  if(_selSvc) h+='✓ '+_selSvc.n+' <span style="opacity:.75;font-weight:400">— '+(Number(_selSvc.p)||0).toFixed(2)+'€</span>';
-  h+='</div>';
-  // Grid de cartes prestations groupées par catégorie, scrollable
-  h+='<div id="rdv2ndSvcGrid" style="max-height:200px;overflow-y:auto;padding:6px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(255,255,255,.06)">';
-  var svcSorted=SVC.slice().sort(function(a,b){return(a.cat||"").localeCompare(b.cat||"")||a.n.localeCompare(b.n);});
-  var lastCat=null;
-  for(var i=0;i<svcSorted.length;i++){
-    var s=svcSorted[i];
-    if(s.cat!==lastCat){
-      lastCat=s.cat;
-      var _sc=(typeof getSvcColor==="function")?getSvcColor(s.cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.08)"};
-      h+='<div class="rdv2nd-cat-hd" data-cat="'+(s.cat||"").toLowerCase()+'" style="font-size:10px;font-weight:800;color:'+_sc.text+';text-transform:uppercase;letter-spacing:.5px;margin:6px 0 4px;padding-left:2px">— '+(s.cat||"Autres")+' —</div>';
-      h+='<div class="rdv2nd-cat-grid" data-cat="'+(s.cat||"").toLowerCase()+'" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px;margin-bottom:4px">';
-    }
-    var _ssel = (st2.svcId===s.id);
-    var _sc2=(typeof getSvcColor==="function")?getSvcColor(s.cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.08)"};
-    h+='<button type="button" class="rdv2nd-svc-card" data-name="'+((s.n||"")+" "+(s.cat||"")).toLowerCase()+'" onclick="_pickRdv2ndSvc('+s.id+')" style="padding:8px 6px;border-radius:8px;border:1.5px solid '+(_ssel?'#a29bfe':_sc2.border)+';background:'+(_ssel?'rgba(108,92,231,.22)':_sc2.bg)+';color:'+(_ssel?'#a29bfe':_sc2.text)+';font-size:11px;font-weight:'+(_ssel?'800':'700')+';cursor:pointer;text-align:center;line-height:1.25;min-height:50px;display:flex;flex-direction:column;justify-content:center;align-items:center">';
-    h+='<div>'+s.n+'</div>';
-    h+='<div style="font-size:10px;opacity:.85;margin-top:2px">'+(Number(s.p)||0).toFixed(2)+'€</div>';
-    h+='</button>';
-    // Si dernière prestation de cette cat OU dernière tout court → fermer le grid
-    var isLast = (i===svcSorted.length-1) || (svcSorted[i+1].cat !== s.cat);
-    if(isLast) h+='</div>';
-  }
-  h+='</div>';
-  // FIX 2026-05-15 : choix du timing du 2ème RDV
-  // - 'same'    : même créneau que le 1er RDV (comportement historique)
-  // - 'planning': placement visuel sur le planning après validation du 1er
-  h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:10px 0 6px;letter-spacing:1px;text-transform:uppercase">Quand ?</div>';
-  h+='<div style="display:flex;gap:6px">';
-  var _sameSel = st2.when === "same";
-  var _planSel = st2.when === "planning";
-  h+='<button type="button" onclick="_setRdv2ndWhen(\'same\')" style="flex:1;padding:10px 6px;border-radius:8px;border:1.5px solid '+(_sameSel?'#a29bfe':'rgba(255,255,255,.1)')+';background:'+(_sameSel?'rgba(108,92,231,.18)':'rgba(255,255,255,.04)')+';color:'+(_sameSel?'#a29bfe':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">📅 Même créneau<br><span style="font-size:9px;opacity:.75">que le 1er RDV</span></button>';
-  h+='<button type="button" onclick="_setRdv2ndWhen(\'planning\')" style="flex:1;padding:10px 6px;border-radius:8px;border:1.5px solid '+(_planSel?'#a29bfe':'rgba(255,255,255,.1)')+';background:'+(_planSel?'rgba(108,92,231,.18)':'rgba(255,255,255,.04)')+';color:'+(_planSel?'#a29bfe':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">🎯 Placer après validation<br><span style="font-size:9px;opacity:.75">cliquer sur un créneau libre</span></button>';
-  h+='</div>';
-  // FIX 2026-05-15 : hint visuel clair quand mode planning sélectionné
-  // (sinon confusion : Alex pensait que cliquer ouvrait directement le planning)
-  if(_planSel){
-    h+='<div style="margin-top:8px;padding:10px 12px;background:rgba(232,200,115,.12);border:1.5px dashed rgba(232,200,115,.5);border-radius:8px;font-size:12px;color:#e8c873;line-height:1.45;text-align:center">';
-    h+='<div style="font-weight:700;margin-bottom:2px">↓ Cliquez sur <strong>Valider</strong></div>';
-    h+='<div style="font-size:11px;opacity:.85">Vous arriverez sur le planning pour positionner ce 2ème RDV en cliquant sur un créneau libre</div>';
+  if(_selSvc){
+    var _sCol = (typeof getSvcColor==="function")?getSvcColor(_selSvc.cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.18)"};
+    h+='<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:'+_sCol.bg+';border:1.5px solid '+_sCol.border+';border-radius:8px;margin-bottom:8px">';
+    h+='<div style="flex:1;color:'+_sCol.text+';font-weight:700;font-size:13px">✓ '+_selSvc.n+' <span style="opacity:.75;font-weight:400">— '+(Number(_selSvc.p)||0).toFixed(2)+'€</span></div>';
+    h+='<button type="button" onclick="_rdv2ndClearSvc()" style="background:none;border:1px solid '+_sCol.border+';color:'+_sCol.text+';width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:14px;line-height:1;padding:0">×</button>';
     h+='</div>';
   }
+  // Affichage : catégories OU prestations d'une catégorie sélectionnée
+  if(!st2.viewCat){
+    // === VUE CATÉGORIES (grid de cartes avec icônes — style 1er RDV) ===
+    h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
+    for(var ci=0;ci<CATS.length;ci++){
+      var cat=CATS[ci];
+      var _scc=(typeof getSvcColor==="function")?getSvcColor(cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.08)"};
+      var _ico=(typeof getCatIcon==="function")?getCatIcon(cat):"✂️";
+      var _nbSvc=SVC.filter(function(s){return s.cat===cat;}).length;
+      h+='<button type="button" onclick="_rdv2ndPickCat(\''+cat.replace(/'/g,"\\'")+'\')" style="padding:10px 6px;border-radius:10px;border:2px solid '+_scc.border+';background:'+_scc.bg+';color:'+_scc.text+';font-weight:800;font-size:11px;cursor:pointer;text-align:center;line-height:1.2">';
+      h+='<div style="font-size:22px;margin-bottom:3px">'+_ico+'</div>';
+      h+='<div>'+cat+'</div>';
+      h+='<div style="font-size:9px;opacity:.7;margin-top:2px;font-weight:600">'+_nbSvc+' presta.</div>';
+      h+='</button>';
+    }
+    h+='</div>';
+  } else {
+    // === VUE PRESTATIONS D'UNE CATÉGORIE ===
+    var _cur=st2.viewCat;
+    var _sccc=(typeof getSvcColor==="function")?getSvcColor(_cur):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.08)"};
+    var _icoo=(typeof getCatIcon==="function")?getCatIcon(_cur):"✂️";
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:'+_sccc.bg+';border-radius:8px;border:1px solid '+_sccc.border+'">';
+    h+='<button type="button" onclick="_rdv2ndBackToCat()" style="background:rgba(0,0,0,.25);border:none;color:'+_sccc.text+';width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;font-weight:700;padding:0">‹</button>';
+    h+='<div style="font-size:18px">'+_icoo+'</div>';
+    h+='<div style="flex:1;color:'+_sccc.text+';font-weight:800;font-size:13px">'+_cur+'</div>';
+    h+='</div>';
+    var _catSvcs=SVC.filter(function(s){return s.cat===_cur;}).sort(function(a,b){return a.n.localeCompare(b.n);});
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;max-height:240px;overflow-y:auto">';
+    for(var pi=0;pi<_catSvcs.length;pi++){
+      var ps=_catSvcs[pi];
+      var _psel=(st2.svcId===ps.id);
+      h+='<button type="button" onclick="_pickRdv2ndSvc('+ps.id+')" style="padding:10px 8px;border-radius:10px;border:1.5px solid '+(_psel?'#a29bfe':_sccc.border)+';background:'+(_psel?'rgba(108,92,231,.22)':_sccc.bg)+';color:'+(_psel?'#a29bfe':_sccc.text)+';font-size:11px;font-weight:'+(_psel?'800':'700')+';cursor:pointer;text-align:center;line-height:1.3;min-height:60px;display:flex;flex-direction:column;justify-content:center;align-items:center">';
+      h+='<div>'+ps.n+'</div>';
+      h+='<div style="font-size:10px;opacity:.85;margin-top:3px;font-weight:600">'+(Number(ps.p)||0).toFixed(2)+'€</div>';
+      h+='</button>';
+    }
+    h+='</div>';
+  }
+  // FIX 2026-05-15 v2 : bouton d'action DIRECT (au lieu d'un toggle de mode)
+  // - "Placer sur le planning" → valide le 1er RDV + va direct au planning
+  // - "Valider" en bas → comportement classique (2ème au même créneau)
+  // Visible uniquement si client + prestation sélectionnés (sinon désactivé)
+  var _canPlace = !!(st2.cId && st2.svcId);
+  h+='<div style="margin-top:14px;display:flex;flex-direction:column;gap:6px">';
+  h+='<button type="button" '+(_canPlace?'':'disabled')+' onclick="_rdv2ndPlaceOnPlanning()" style="width:100%;padding:13px;border-radius:10px;border:none;background:'+(_canPlace?'linear-gradient(135deg,#c8a84e,#e8c873)':'rgba(255,255,255,.05)')+';color:'+(_canPlace?'#1a1a1a':'rgba(255,255,255,.3)')+';font-weight:800;font-size:13px;cursor:'+(_canPlace?'pointer':'not-allowed')+';display:flex;align-items:center;justify-content:center;gap:8px;'+(!_canPlace?'border:1px dashed rgba(255,255,255,.15);':'')+'">';
+  h+='<span style="font-size:18px">🎯</span> Placer sur le planning <span style="font-size:16px;font-weight:900">→</span>';
+  h+='</button>';
+  h+='<div style="text-align:center;font-size:10px;color:rgba(255,255,255,.4);font-style:italic">';
+  if(!_canPlace) h+='Choisissez d\'abord client + prestation';
+  else h+='ou cliquez "Valider" en bas pour placer au même créneau que le 1er RDV';
+  h+='</div>';
+  h+='</div>';
   el.innerHTML=h;
 }
 
-// FIX 2026-05-15 : sélection prestation 2ème RDV via clic sur carte (au lieu de select)
+// FIX 2026-05-15 : sélection prestation 2ème RDV via clic sur carte
 function _pickRdv2ndSvc(svcId){
   if(!window._rdv2nd) window._rdv2nd={};
   window._rdv2nd.svcId = +svcId;
+  // Reset viewCat → retour à la vue catégories (UX : sélection terminée)
+  window._rdv2nd.viewCat = null;
   renderRdv2ndBody();
 }
 
-// FIX 2026-05-15 : filtre live de la grid de prestations (recherche dans cartes)
-function _filterRdv2ndSvcGrid(q){
-  q=(q||"").toLowerCase().trim();
-  var cards=document.querySelectorAll(".rdv2nd-svc-card");
-  var cats={};
-  for(var i=0;i<cards.length;i++){
-    var card=cards[i];
-    var nm=card.getAttribute("data-name")||"";
-    var visible = !q || nm.indexOf(q)>=0;
-    card.style.display = visible ? "" : "none";
-    // Track quelles catégories ont au moins 1 carte visible
-    var parentGrid=card.parentElement;
-    if(parentGrid){
-      var cat=parentGrid.getAttribute("data-cat");
-      if(visible) cats[cat]=true;
-    }
+// FIX 2026-05-15 v2 : entrer dans la vue prestations d'une catégorie
+function _rdv2ndPickCat(cat){
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.viewCat = cat;
+  renderRdv2ndBody();
+}
+
+// FIX 2026-05-15 v2 : revenir à la vue catégories (bouton retour)
+function _rdv2ndBackToCat(){
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.viewCat = null;
+  renderRdv2ndBody();
+}
+
+// FIX 2026-05-15 v2 : effacer la prestation sélectionnée (bouton × sur le récap)
+function _rdv2ndClearSvc(){
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.svcId = null;
+  window._rdv2nd.viewCat = null;
+  renderRdv2ndBody();
+}
+
+// FIX 2026-05-15 v2 : bouton d'action direct "Placer sur le planning"
+// Active le mode 'planning' et valide immédiatement le 1er RDV via aAp()
+function _rdv2ndPlaceOnPlanning(){
+  if(!window._rdv2nd || !window._rdv2nd.cId || !window._rdv2nd.svcId){
+    if(typeof toast==="function") toast("Choisissez d'abord le client et la prestation du 2ème RDV","warning");
+    return;
   }
-  // Cache/affiche les headers de cat selon présence d'au moins 1 carte visible
-  var hdrs=document.querySelectorAll(".rdv2nd-cat-hd");
-  for(var j=0;j<hdrs.length;j++){
-    var cat2=hdrs[j].getAttribute("data-cat");
-    hdrs[j].style.display = (!q || cats[cat2]) ? "" : "none";
-  }
+  window._rdv2nd.when = "planning";
+  // Délègue à aAp() qui sait gérer le mode planning (set _pending2ndRdv + go planning)
+  if(typeof aAp === "function") aAp();
 }
 
 function pickRdv2ndPassage(type){
