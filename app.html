@@ -29262,19 +29262,50 @@ function auditLog(action,detail){
 }
 // SHA-256 via Web Crypto API (synchrone fallback + async)
 function sha256Sync(str){
-  // Fallback synchrone robuste (DJB2 x 2 passes + timestamp salt)
-  var h1=5381,h2=52711;
-  for(var i=0;i<str.length;i++){var c=str.charCodeAt(i);h1=((h1<<5)+h1+c)>>>0;h2=((h2<<5)+h2+c)>>>0;}
-  var hex=(h1>>>0).toString(16).padStart(8,"0")+(h2>>>0).toString(16).padStart(8,"0");
-  // Extend to 64 chars (SHA-256 length) with additional mixing
-  var h3=h1^h2,h4=h1+h2;
-  for(var j=0;j<str.length;j++){h3=((h3<<7)^str.charCodeAt(j)^(h3>>>25))>>>0;h4=((h4<<11)+str.charCodeAt(j)+(h4>>>21))>>>0;}
-  hex+=(h3>>>0).toString(16).padStart(8,"0")+(h4>>>0).toString(16).padStart(8,"0");
-  hex+=(((h1^h3)+(h2^h4))>>>0).toString(16).padStart(8,"0");
-  hex+=((h1*3+h2*7+h3*11+h4*13)>>>0).toString(16).padStart(8,"0");
-  hex+=((h2^h4^h1)>>>0).toString(16).padStart(8,"0");
-  hex+=((h1+h3+h4)>>>0).toString(16).padStart(8,"0");
-  return hex.slice(0,64).toUpperCase();
+  // VRAI SHA-256 synchrone (FIPS 180-4) — pure JS, sans dépendance
+  // Cross-validé contre crypto.createHash('sha256') de Node :
+  // sha256("")    = E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855
+  // sha256("abc") = BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD
+  // (avant 15/05/2026 soir, c'était un DJB2 maquillé — non cryptographique. Fixé.)
+  // === 1. UTF-8 encode ===
+  var bytes=[];
+  for(var i=0;i<str.length;i++){
+    var c=str.charCodeAt(i);
+    if(c<0x80)bytes.push(c);
+    else if(c<0x800)bytes.push(0xC0|(c>>6),0x80|(c&0x3F));
+    else if(c>=0xD800&&c<=0xDBFF&&i+1<str.length){
+      var c2=str.charCodeAt(i+1);
+      if(c2>=0xDC00&&c2<=0xDFFF){i++;var cp=0x10000+((c-0xD800)<<10)+(c2-0xDC00);bytes.push(0xF0|(cp>>18),0x80|((cp>>12)&0x3F),0x80|((cp>>6)&0x3F),0x80|(cp&0x3F));}
+      else bytes.push(0xEF,0xBF,0xBD);
+    }
+    else if(c>=0xDC00&&c<=0xDFFF)bytes.push(0xEF,0xBF,0xBD);
+    else bytes.push(0xE0|(c>>12),0x80|((c>>6)&0x3F),0x80|(c&0x3F));
+  }
+  // === 2. Padding (FIPS 180-4 §5.1.1) ===
+  var bitLen=bytes.length*8;
+  bytes.push(0x80);
+  while(bytes.length%64!==56)bytes.push(0);
+  var hi=Math.floor(bitLen/0x100000000),lo=bitLen>>>0;
+  bytes.push((hi>>>24)&0xFF,(hi>>>16)&0xFF,(hi>>>8)&0xFF,hi&0xFF);
+  bytes.push((lo>>>24)&0xFF,(lo>>>16)&0xFF,(lo>>>8)&0xFF,lo&0xFF);
+  // === 3. Initial hash values (FIPS 180-4 §5.3.3) ===
+  var H=[0x6A09E667|0,0xBB67AE85|0,0x3C6EF372|0,0xA54FF53A|0,0x510E527F|0,0x9B05688C|0,0x1F83D9AB|0,0x5BE0CD19|0];
+  // === 4. Round constants (FIPS 180-4 §4.2.2) ===
+  var K=[0x428A2F98|0,0x71374491|0,0xB5C0FBCF|0,0xE9B5DBA5|0,0x3956C25B|0,0x59F111F1|0,0x923F82A4|0,0xAB1C5ED5|0,0xD807AA98|0,0x12835B01|0,0x243185BE|0,0x550C7DC3|0,0x72BE5D74|0,0x80DEB1FE|0,0x9BDC06A7|0,0xC19BF174|0,0xE49B69C1|0,0xEFBE4786|0,0x0FC19DC6|0,0x240CA1CC|0,0x2DE92C6F|0,0x4A7484AA|0,0x5CB0A9DC|0,0x76F988DA|0,0x983E5152|0,0xA831C66D|0,0xB00327C8|0,0xBF597FC7|0,0xC6E00BF3|0,0xD5A79147|0,0x06CA6351|0,0x14292967|0,0x27B70A85|0,0x2E1B2138|0,0x4D2C6DFC|0,0x53380D13|0,0x650A7354|0,0x766A0ABB|0,0x81C2C92E|0,0x92722C85|0,0xA2BFE8A1|0,0xA81A664B|0,0xC24B8B70|0,0xC76C51A3|0,0xD192E819|0,0xD6990624|0,0xF40E3585|0,0x106AA070|0,0x19A4C116|0,0x1E376C08|0,0x2748774C|0,0x34B0BCB5|0,0x391C0CB3|0,0x4ED8AA4A|0,0x5B9CCA4F|0,0x682E6FF3|0,0x748F82EE|0,0x78A5636F|0,0x84C87814|0,0x8CC70208|0,0x90BEFFFA|0,0xA4506CEB|0,0xBEF9A3F7|0,0xC67178F2|0];
+  function rotr(x,n){return (x>>>n)|(x<<(32-n));}
+  // === 5. Process each 512-bit (64-byte) chunk (FIPS 180-4 §6.2.2) ===
+  for(var chunk=0;chunk<bytes.length;chunk+=64){
+    var W=new Array(64);
+    for(var t=0;t<16;t++)W[t]=((bytes[chunk+t*4]&0xFF)<<24)|((bytes[chunk+t*4+1]&0xFF)<<16)|((bytes[chunk+t*4+2]&0xFF)<<8)|(bytes[chunk+t*4+3]&0xFF);
+    for(var t=16;t<64;t++){var s0=rotr(W[t-15],7)^rotr(W[t-15],18)^(W[t-15]>>>3);var s1=rotr(W[t-2],17)^rotr(W[t-2],19)^(W[t-2]>>>10);W[t]=(W[t-16]+s0+W[t-7]+s1)|0;}
+    var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+    for(var t=0;t<64;t++){var S1=rotr(e,6)^rotr(e,11)^rotr(e,25);var ch=(e&f)^(~e&g);var T1=(h+S1+ch+K[t]+W[t])|0;var S0=rotr(a,2)^rotr(a,13)^rotr(a,22);var maj=(a&b)^(a&c)^(b&c);var T2=(S0+maj)|0;h=g;g=f;f=e;e=(d+T1)|0;d=c;c=b;b=a;a=(T1+T2)|0;}
+    H[0]=(H[0]+a)|0;H[1]=(H[1]+b)|0;H[2]=(H[2]+c)|0;H[3]=(H[3]+d)|0;H[4]=(H[4]+e)|0;H[5]=(H[5]+f)|0;H[6]=(H[6]+g)|0;H[7]=(H[7]+h)|0;
+  }
+  // === 6. Hex output (uppercase, NF525 standard) ===
+  var hex='';
+  for(var i=0;i<8;i++){var v=H[i]>>>0;hex+=('00000000'+v.toString(16)).slice(-8);}
+  return hex.toUpperCase();
 }
 async function sha256Async(str){
   try{
@@ -29385,7 +29416,7 @@ function chainTicket(ticket){
   // SHA-256 nominal.
   var data="TK|"+ticket.tkNum+"|"+ticket.date+"|"+ticket.time+"|"+ticket.pr.toFixed(2)+"|"+ticket.met+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret;
   ticket.prevHash=_lastTicketHash;
-  ticket.hashAlgo="DJB2-chain";
+  ticket.hashAlgo="SHA-256";
   ticket.hash=sha256Sync(data);
   _lastTicketHash=ticket.hash;
   return ticket;
@@ -29522,7 +29553,16 @@ function cloturerJournee(){
     c.operator_id=CURRENT_OPERATOR.id;
     c.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");
   }
-  sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){if(h!==c.hash){c.hash=h;if(typeof saveCloture==="function")saveCloture(c);}});
+  // FIX 2026-05-15 (soir) : sha256Sync est maintenant un VRAI SHA-256 (FIPS 180-4).
+  // Plus besoin de double-vérification async qui re-saveCloture et déclenchait
+  // une erreur RLS 42501 (clôtures immuables côté DB par design NF525).
+  // Si jamais sha256Sync diverge de crypto.subtle (impossible en théorie), on logge.
+  sha256Async("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret).then(function(h){
+    if(h!==c.hash){
+      console.warn("[cloturerJournee] sha256 sync/async mismatch — sync="+c.hash+" async="+h);
+      try{ if(typeof saveAuditEntry==="function") saveAuditEntry("HASH_MISMATCH","Cloture num "+c.num+" sync="+c.hash.slice(0,16)+" async="+h.slice(0,16)); }catch(_){}
+    }
+  });
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
   window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);
