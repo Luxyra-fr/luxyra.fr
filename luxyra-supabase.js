@@ -1689,11 +1689,25 @@ async function saveAppointment(appt) {
   data.id = appt.id;
   var r = await _sb.from("appointments").upsert(data).select();
   if (r.error) {
-    // Retry sans les colonnes optionnelles (au cas où le schéma diffère)
     console.warn("saveAppointment upsert error, retry stripped:", r.error?.message);
     delete data.clients; delete data.from_caisse; delete data.client_email; delete data.collab_name;
     r = await _sb.from("appointments").upsert(data).select();
-    if (r.error) { console.error("saveAppointment retry failed:", r.error); return; /* WAL non marqué : récupération au prochain boot */ }
+    if (r.error) {
+      console.error("saveAppointment retry failed:", r.error);
+      // FIX 2026-05-15 : log DB_ERROR pour monitoring admin
+      try {
+        if (typeof saveAuditEntry === "function") {
+          saveAuditEntry("DB_ERROR", JSON.stringify({
+            fn:"saveAppointment",
+            msg: r.error.message || String(r.error),
+            code: r.error.code || null,
+            appt_id: appt.id || null,
+            status: appt.st || null
+          }).slice(0,2000));
+        }
+      } catch(_){}
+      return;
+    }
   }
   _walMarkSynced(_walId);
 }
@@ -1853,6 +1867,20 @@ async function saveTicketToDb(tk) {
     var res = await _sb.from("tickets").insert(data).select().single();
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
+      // FIX 2026-05-15 : log DB_ERROR pour monitoring admin (trigger envoie mail temps réel)
+      try {
+        if (typeof saveAuditEntry === "function") {
+          saveAuditEntry("DB_ERROR", JSON.stringify({
+            fn:"saveTicketToDb",
+            msg: res.error.message || String(res.error),
+            code: res.error.code || null,
+            hint: res.error.hint || null,
+            tk_num: tk.tkNum || null,
+            tk_total: tk.pr || null,
+            tk_id: tk.id || null
+          }).slice(0,2000));
+        }
+      } catch(_){}
       // WAL non marqué synced → récupération au prochain boot via popup
       return null;
     }
@@ -1867,7 +1895,15 @@ async function saveTicketToDb(tk) {
     return res.data;
   } catch (e) {
     console.error("[saveTicketToDb] unexpected", e);
-    // WAL non marqué synced → récupération au prochain boot via popup
+    try {
+      if (typeof saveAuditEntry === "function") {
+        saveAuditEntry("DB_ERROR", JSON.stringify({
+          fn:"saveTicketToDb",
+          msg:"EXCEPTION: "+ (e.message || String(e)),
+          tk_id: tk && tk.id || null
+        }).slice(0,2000));
+      }
+    } catch(_){}
     return null;
   }
 }
@@ -2077,7 +2113,20 @@ async function saveCloture(clot) {
     }
     console.error("[saveCloture] Erreur upsert:", res.error);
     if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
-    return;  // WAL non marqué → récupération au prochain boot
+    // FIX 2026-05-15 : log DB_ERROR pour monitoring admin
+    try {
+      if (typeof saveAuditEntry === "function") {
+        saveAuditEntry("DB_ERROR", JSON.stringify({
+          fn:"saveCloture",
+          msg: res.error.message || String(res.error),
+          code: res.error.code || null,
+          cloture_num: clot.num || null,
+          cloture_date: clot.date || null,
+          cloture_ca: clot.totalCA || null
+        }).slice(0,2000));
+      }
+    } catch(_){}
+    return;
   }
   _walMarkSynced(_walId);
 }
