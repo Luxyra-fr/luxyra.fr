@@ -22822,19 +22822,37 @@ function renderRdv2ndBody(){
     h+='<option value="'+T[i].id+'"'+(st2.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
   }
   h+='</select>';
-  // 2nd prestation (single pick for simplicity)
+  // 2nd prestation — FIX 2026-05-15 : grid de cartes (plus tactile que select déroulant)
   h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">Prestation</div>';
-  h+='<input type="text" id="rdv2ndSvcSearch" autocomplete="off" placeholder="🔍 Filtrer (ex: coupe, couleur, enfant...)" style="width:100%;padding:8px;margin-bottom:6px;font-size:13px">';
-  h+='<select id="rdv2ndSvcSel" onchange="window._rdv2nd.svcId=+this.value" style="width:100%;padding:8px;font-size:13px">';
-  h+='<option value="">— Choisir une prestation —</option>';
+  h+='<input type="text" id="rdv2ndSvcSearch" autocomplete="off" placeholder="🔍 Filtrer (ex: coupe, couleur, enfant...)" oninput="_filterRdv2ndSvcGrid(this.value)" style="width:100%;padding:8px;margin-bottom:6px;font-size:13px">';
+  // Affichage actuel (carte sélectionnée)
+  var _selSvc = st2.svcId ? gS(st2.svcId) : null;
+  h+='<div id="rdv2ndSelected" style="margin-bottom:6px;'+(_selSvc?'':'display:none;')+'padding:8px 12px;background:rgba(108,92,231,.18);border:1.5px solid #a29bfe;border-radius:8px;font-size:12px;color:#a29bfe;font-weight:700">';
+  if(_selSvc) h+='✓ '+_selSvc.n+' <span style="opacity:.75;font-weight:400">— '+(Number(_selSvc.p)||0).toFixed(2)+'€</span>';
+  h+='</div>';
+  // Grid de cartes prestations groupées par catégorie, scrollable
+  h+='<div id="rdv2ndSvcGrid" style="max-height:200px;overflow-y:auto;padding:6px;background:rgba(0,0,0,.18);border-radius:8px;border:1px solid rgba(255,255,255,.06)">';
   var svcSorted=SVC.slice().sort(function(a,b){return(a.cat||"").localeCompare(b.cat||"")||a.n.localeCompare(b.n);});
   var lastCat=null;
   for(var i=0;i<svcSorted.length;i++){
     var s=svcSorted[i];
-    if(s.cat!==lastCat){lastCat=s.cat;h+='<option disabled>— '+s.cat+' —</option>';}
-    h+='<option value="'+s.id+'"'+(st2.svcId===s.id?' selected':'')+'>'+s.n+' — '+(Number(s.p)||0).toFixed(2)+'€</option>';
+    if(s.cat!==lastCat){
+      lastCat=s.cat;
+      var _sc=(typeof getSvcColor==="function")?getSvcColor(s.cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.08)"};
+      h+='<div class="rdv2nd-cat-hd" data-cat="'+(s.cat||"").toLowerCase()+'" style="font-size:10px;font-weight:800;color:'+_sc.text+';text-transform:uppercase;letter-spacing:.5px;margin:6px 0 4px;padding-left:2px">— '+(s.cat||"Autres")+' —</div>';
+      h+='<div class="rdv2nd-cat-grid" data-cat="'+(s.cat||"").toLowerCase()+'" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:4px;margin-bottom:4px">';
+    }
+    var _ssel = (st2.svcId===s.id);
+    var _sc2=(typeof getSvcColor==="function")?getSvcColor(s.cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.08)"};
+    h+='<button type="button" class="rdv2nd-svc-card" data-name="'+((s.n||"")+" "+(s.cat||"")).toLowerCase()+'" onclick="_pickRdv2ndSvc('+s.id+')" style="padding:8px 6px;border-radius:8px;border:1.5px solid '+(_ssel?'#a29bfe':_sc2.border)+';background:'+(_ssel?'rgba(108,92,231,.22)':_sc2.bg)+';color:'+(_ssel?'#a29bfe':_sc2.text)+';font-size:11px;font-weight:'+(_ssel?'800':'700')+';cursor:pointer;text-align:center;line-height:1.25;min-height:50px;display:flex;flex-direction:column;justify-content:center;align-items:center">';
+    h+='<div>'+s.n+'</div>';
+    h+='<div style="font-size:10px;opacity:.85;margin-top:2px">'+(Number(s.p)||0).toFixed(2)+'€</div>';
+    h+='</button>';
+    // Si dernière prestation de cette cat OU dernière tout court → fermer le grid
+    var isLast = (i===svcSorted.length-1) || (svcSorted[i+1].cat !== s.cat);
+    if(isLast) h+='</div>';
   }
-  h+='</select>';
+  h+='</div>';
   // FIX 2026-05-15 : choix du timing du 2ème RDV
   // - 'same'    : même créneau que le 1er RDV (comportement historique)
   // - 'planning': placement visuel sur le planning après validation du 1er
@@ -22846,20 +22864,37 @@ function renderRdv2ndBody(){
   h+='<button type="button" onclick="_setRdv2ndWhen(\'planning\')" style="flex:1;padding:10px 6px;border-radius:8px;border:1.5px solid '+(_planSel?'#a29bfe':'rgba(255,255,255,.1)')+';background:'+(_planSel?'rgba(108,92,231,.18)':'rgba(255,255,255,.04)')+';color:'+(_planSel?'#a29bfe':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">🎯 Choisir<br><span style="font-size:9px;opacity:.75">sur le planning</span></button>';
   h+='</div>';
   el.innerHTML=h;
-  // Filtrage live de la prestation (réduit la liste longue)
-  var _svcSel=document.getElementById("rdv2ndSvcSel");
-  var _svcSearch=document.getElementById("rdv2ndSvcSearch");
-  if(_svcSearch && _svcSel){
-    _svcSearch.oninput=function(){
-      var q=(this.value||"").toLowerCase().trim();
-      var opts=_svcSel.querySelectorAll("option");
-      for(var k=0;k<opts.length;k++){
-        var txt=(opts[k].textContent||"").toLowerCase();
-        var isHeader=opts[k].disabled && txt.indexOf("—")===0;
-        if(!q || txt.indexOf(q)>=0 || isHeader){ opts[k].style.display=""; }
-        else { opts[k].style.display="none"; }
-      }
-    };
+}
+
+// FIX 2026-05-15 : sélection prestation 2ème RDV via clic sur carte (au lieu de select)
+function _pickRdv2ndSvc(svcId){
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.svcId = +svcId;
+  renderRdv2ndBody();
+}
+
+// FIX 2026-05-15 : filtre live de la grid de prestations (recherche dans cartes)
+function _filterRdv2ndSvcGrid(q){
+  q=(q||"").toLowerCase().trim();
+  var cards=document.querySelectorAll(".rdv2nd-svc-card");
+  var cats={};
+  for(var i=0;i<cards.length;i++){
+    var card=cards[i];
+    var nm=card.getAttribute("data-name")||"";
+    var visible = !q || nm.indexOf(q)>=0;
+    card.style.display = visible ? "" : "none";
+    // Track quelles catégories ont au moins 1 carte visible
+    var parentGrid=card.parentElement;
+    if(parentGrid){
+      var cat=parentGrid.getAttribute("data-cat");
+      if(visible) cats[cat]=true;
+    }
+  }
+  // Cache/affiche les headers de cat selon présence d'au moins 1 carte visible
+  var hdrs=document.querySelectorAll(".rdv2nd-cat-hd");
+  for(var j=0;j<hdrs.length;j++){
+    var cat2=hdrs[j].getAttribute("data-cat");
+    hdrs[j].style.display = (!q || cats[cat2]) ? "" : "none";
   }
 }
 
