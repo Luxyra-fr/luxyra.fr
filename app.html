@@ -26256,8 +26256,28 @@ function doFinalPayExecute(method){
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   
   tkN++;
-  
-  // === Option B : si RDV lié (familial), le marquer aussi done + lui lier le ticket ===
+
+  // === Option B : si RDV lié (groupé), le marquer aussi done + lui lier le ticket ===
+  // FIX 2026-05-15 : check défensif AVANT de marquer le 2ème done.
+  // Bug du 15/05 (Muller Murielle) : Amandine a supprimé les items du 2ème dans le panier
+  // pour n'encaisser que le 1er, MAIS le code marquait quand même le 2ème done (perte CA).
+  // Now : si le panier final ne contient AUCUN item du 2ème client (séparateur retiré OU
+  // tous les items après séparateur supprimés), on annule le linkedApptId.
+  if(_tk._linkedApptId){
+    // Détecter présence d'items du 2ème dans le panier final
+    var _has2ndItems = false;
+    var _afterSep = false;
+    for(var _ci=0; _ci<_tk.items.length; _ci++){
+      var _itc = _tk.items[_ci];
+      if(_itc && _itc.isSep){ _afterSep = true; continue; }
+      if(_afterSep && _itc && !_itc.isSep){ _has2ndItems = true; break; }
+    }
+    if(!_has2ndItems){
+      console.warn("[encaissement] linkedApptId annulé : items du 2ème supprimés du panier — RDV lié reste à encaisser");
+      if(typeof auditLog==="function") auditLog("ENCAISSEMENT_SOLO","RDV lié non marqué done (items 2ème supprimés du panier)");
+      _tk._linkedApptId = null;
+    }
+  }
   if(_tk._linkedApptId){
     for(var li=0; li<AP.length; li++){
       if(AP[li].id===_tk._linkedApptId){
