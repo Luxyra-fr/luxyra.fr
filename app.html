@@ -9909,7 +9909,7 @@ function showAddAbsenceAt(stId,preType){
   h+='</div>';
   h+='<div class="fg"><label>Motif (facultatif)</label><input id="absMotif" placeholder="Ex: RDV m\u00e9dical, vacances..."></div>';
   h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-  h+='<button class="btn" style="flex:1;background:var(--red);color:#fff;font-weight:700" onclick="doAddAbsence()">Enregistrer</button></div></div></div>';
+  h+='<button class="btn" style="flex:1;background:var(--red);color:#fff;font-weight:700" onclick="doAddAbsencePlanning()">Enregistrer</button></div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
 function pickAbsType(type){
@@ -9935,16 +9935,31 @@ function pickAbsType(type){
     }
   }
 }
-function doAddAbsence(){
-  var stId=+document.getElementById("absSt").value;
-  var type=document.getElementById("absType").value;
-  var motif=document.getElementById("absMotif")?document.getElementById("absMotif").value.trim():"";
+function doAddAbsencePlanning(){
+  // FIX 2026-05-15 : RENOMMÉE de 'doAddAbsence' (collision avec fonction homonyme
+  // ligne 6310 qui prend un stId en param). Cette fonction-ci lit le DOM de la
+  // modale 'showAddAbsenceAt' (IDs préfixés 'abs*'). L'ancienne 'doAddAbsence(stId)'
+  // de la modale détail collab (IDs préfixés 'ab*') reste intacte.
+  // + protection double-clic / modale fermée
+  var absStEl = document.getElementById("absSt");
+  if(!absStEl){
+    // Modale déjà fermée (1er clic a marché), on ignore le 2ème clic silencieusement
+    return;
+  }
+  var absTypeEl = document.getElementById("absType");
+  if(!absTypeEl){ return; }
+  var stId=+absStEl.value;
+  var type=absTypeEl.value;
+  var motifEl=document.getElementById("absMotif");
+  var motif=motifEl?motifEl.value.trim():"";
   if(!window.ABSENCES) window.ABSENCES=[];
   // Types horaires (heures précises sur 1 date) — FIX 2026-05-12 : retiré ouverture_except
   if(type==="absent_heures"){
-    var ds=document.getElementById("absDateSingle").value;
-    var tFrom=document.getElementById("absTimeFrom").value;
-    var tTo=document.getElementById("absTimeTo").value;
+    var dsEl=document.getElementById("absDateSingle");
+    var tFromEl=document.getElementById("absTimeFrom");
+    var tToEl=document.getElementById("absTimeTo");
+    if(!dsEl || !tFromEl || !tToEl){ return; }
+    var ds=dsEl.value, tFrom=tFromEl.value, tTo=tToEl.value;
     if(!ds || !tFrom || !tTo){ if(typeof toast==="function") toast("Date et heures requises","warning"); return; }
     var lbl="Absent "+tFrom+"→"+tTo+(motif?" — "+motif:"");
     window.ABSENCES.push({id:(typeof U==="function"?U():"abs-"+Date.now()),stId:stId,date:ds,type:"absent_heures",from:tFrom,to:tTo,label:lbl,motif:motif});
@@ -9954,7 +9969,9 @@ function doAddAbsence(){
     return;
   }
   // Types jours (range de dates)
-  var from=document.getElementById("absFrom").value,to=document.getElementById("absTo").value;
+  var fromEl=document.getElementById("absFrom"), toEl=document.getElementById("absTo");
+  if(!fromEl || !toEl){ return; }
+  var from=fromEl.value, to=toEl.value;
   if(!from||!to){ if(typeof toast==="function") toast("Dates requises","warning"); return; }
   var label=type+(motif?" - "+motif:"");
   var d=new Date(from+"T12:00:00"),end=new Date(to+"T12:00:00");
