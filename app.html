@@ -12844,18 +12844,25 @@ function editPhases(svcId){
 
 // === CLIENTS ===
 var clTab="infos",clPage=0,clPer=50;
-// Helper recherche client : préserve focus + curseur après re-render
+// Helper recherche client — FIX 2026-05-15 : update partiel sans toucher à l'input
+// Avant : go("clients") recréait tout le DOM → input détruit → clavier Android
+// disparaissait/réapparaissait à chaque lettre (clignotement signalé par Amandine).
+// Après : on met à jour SEULEMENT la div #clBody (filtres+liste+pagination),
+// l'input reste le même DOM element donc le clavier ne se ferme jamais.
 function _searchClientInput(input){
   cSr = input.value;
   clPage = 0;
-  var pos = input.selectionStart;
-  go("clients");
-  requestAnimationFrame(function(){
-    var i = document.getElementById("clSrInput");
-    if(i){ i.focus(); try{ i.setSelectionRange(pos, pos); }catch(e){} }
-  });
+  var body = document.getElementById("clBody");
+  if (body) {
+    body.innerHTML = _renderClientBody();
+  } else {
+    // Fallback si la div n'existe pas
+    go("clients");
+  }
 }
-function rClients(){
+// Rend la partie variable de la page Clients (tabs + liste + pagination).
+// Extraite de rClients() pour permettre l'update partiel via _searchClientInput.
+function _renderClientBody(){
   var s=cStats();
   if(!window._clSort)window._clSort="nom";
   var f=s.cs.filter(function(c){
@@ -12869,17 +12876,13 @@ function rClients(){
   var totalP=Math.ceil(f.length/clPer)||1;
   if(clPage>=totalP)clPage=totalP-1;
   var paged=f.slice(clPage*clPer,(clPage+1)*clPer);
-  var h='<div style="position:relative">';
-  h+='<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center"><select style="padding:8px;font-size:12px" onchange="window._clSort=this.value;clPage=0;go(\'clients\')">';
-  h+='<option value="nom"'+(window._clSort==="nom"?" selected":"")+'>A \u2192 Z</option>';
-  h+='<option value="recent"'+(window._clSort==="recent"?" selected":"")+'>Derniers ajouts</option>';
-  h+='</select></div>';
-  h+='<div style="margin-bottom:12px"><input id="clSrInput" autocomplete="off" inputmode="search" enterkeyhint="search" placeholder="\ud83d\udd0d Rechercher..." value="'+cSr+'" oninput="_searchClientInput(this)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}"></div>';
+  var h='';
   h+='<div class="tabs">';
   var filters=["all","fidele","risque","perdu"];
   var fLabels=["Tous ("+s.tot+")","Fid\u00e8les ("+s.fi+")","\u00c0 risque ("+s.ri+")","Perdus ("+s.pe+")"];
   for(var i=0;i<filters.length;i++){
-    h+='<div class="tab'+(cFi===filters[i]?" on":"")+'" onclick="cFi=\''+filters[i]+'\';clPage=0;go(\'clients\')">'+fLabels[i]+'</div>';
+    // FIX 2026-05-15 : update partiel pour pr\u00e9server le focus du clavier
+    h+='<div class="tab'+(cFi===filters[i]?" on":"")+'" onclick="cFi=\''+filters[i]+'\';clPage=0;document.getElementById(\'clBody\').innerHTML=_renderClientBody()">'+fLabels[i]+'</div>';
   }
   h+='</div>';
   for(var i=0;i<paged.length;i++){
@@ -12893,13 +12896,27 @@ function rClients(){
     var bl=c.status==="fidele"?"Fid\u00e8le":c.status==="risque"?"\u00c0 risque":"Perdu(e)";
     h+='<div style="text-align:right;flex-shrink:0"><span class="badge '+bc+'">'+bl+'</span><br><span style="font-size:11px;color:var(--text3)">'+(c.last?fmt(c.last):"\u2014")+'</span></div></div>';
   }
-  // Pagination
+  // Pagination \u2014 update partiel aussi
   h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;font-size:12px;color:var(--text3)">';
   h+='<span>'+(clPage*clPer+1)+'-'+Math.min((clPage+1)*clPer,f.length)+' de '+f.length+'</span>';
   h+='<div style="display:flex;gap:6px">';
-  if(clPage>0)h+='<button class="btn bs" onclick="clPage--;go(\'clients\')">\u25C0</button>';
-  if(clPage<totalP-1)h+='<button class="btn bs" onclick="clPage++;go(\'clients\')">\u25B6</button>';
+  if(clPage>0)h+='<button class="btn bs" onclick="clPage--;document.getElementById(\'clBody\').innerHTML=_renderClientBody()">\u25C0</button>';
+  if(clPage<totalP-1)h+='<button class="btn bs" onclick="clPage++;document.getElementById(\'clBody\').innerHTML=_renderClientBody()">\u25B6</button>';
   h+='</div></div>';
+  return h;
+}
+function rClients(){
+  if(!window._clSort)window._clSort="nom";
+  var h='<div style="position:relative">';
+  // S\u00e9lecteur de tri \u2014 update partiel via #clBody
+  h+='<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center"><select style="padding:8px;font-size:12px" onchange="window._clSort=this.value;clPage=0;document.getElementById(\'clBody\').innerHTML=_renderClientBody()">';
+  h+='<option value="nom"'+(window._clSort==="nom"?" selected":"")+'>A \u2192 Z</option>';
+  h+='<option value="recent"'+(window._clSort==="recent"?" selected":"")+'>Derniers ajouts</option>';
+  h+='</select></div>';
+  // Input recherche \u2014 reste TOUJOURS dans le DOM, jamais recr\u00e9\u00e9 (pr\u00e9serve focus clavier mobile)
+  h+='<div style="margin-bottom:12px"><input id="clSrInput" autocomplete="off" inputmode="search" enterkeyhint="search" placeholder="\ud83d\udd0d Rechercher..." value="'+cSr+'" oninput="_searchClientInput(this)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}"></div>';
+  // Body variable (tabs + liste + pagination) \u2014 mis \u00e0 jour par _searchClientInput sans toucher \u00e0 l'input
+  h+='<div id="clBody">'+_renderClientBody()+'</div>';
   // FAB
   h+='<button onclick="oM(\'client\')" style="position:fixed;bottom:80px;right:20px;width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#b8960c,#d4b040);color:#fff;font-size:28px;box-shadow:var(--sh2);border:none;z-index:50;cursor:pointer">+</button>';
   h+='</div>';
