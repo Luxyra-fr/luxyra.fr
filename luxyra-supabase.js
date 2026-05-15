@@ -1180,7 +1180,11 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         tva: Number(g.tva) || 0,
         tvaRate: Number(g.tva_rate) || 0.20,
         history: g.history || [],
-        tkNum: g.tk_num || null
+        tkNum: g.tk_num || null,
+        themeId: g.theme_id || null,   // Style choisi par l'acheteur (bons en ligne)
+        source: g.source || null,      // "web" = vente en ligne, sinon caisse
+        buyerEmail: g.buyer_email || null,
+        buyerPhone: g.buyer_phone || null
       };
     });
   }
