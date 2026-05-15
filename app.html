@@ -394,6 +394,68 @@ console.log("LUXYRA v6.3");
     }catch(_){}
   };
 })();
+
+// ===== HOOK CONSOLE.ERROR (FIX 2026-05-15) ==========================
+// Capte les erreurs que window.onerror ne voit pas : celles swallowed dans
+// des try/catch internes ou loggées via console.error (libs Supabase, code
+// défensif, etc.). Sans alerte mail (sinon trop spam), juste logged en
+// audit_log action='JS_CONSOLE_ERROR' visible dans le panel Monitoring.
+//
+// Filtres pour ne pas polluer :
+// - Skip messages inoffensifs connus (Stripe, deprecation, cookies, etc.)
+// - Debounce 5min par message identique (clé = 100 premiers caractères)
+// - Throttle 20 erreurs max par session
+// - Pas de hook sur console.warn (trop verbeux, souvent inoffensif)
+(function(){
+  if(!window.console || !console.error) return;
+  var _origError = console.error;
+  var _seen = {};
+  var _count = 0;
+  var _MAX = 20;
+  var _DEDUP_MS = 5 * 60 * 1000;
+  // Whitelist : on ignore les messages qui matchent (libs tierces bruyantes)
+  var _skipPat = /^(\[Stripe\.js\]|Cookie|Cross-Origin|deprecat|experimental|preload|stylesheet|Failed to load resource|net::ERR_)/i;
+  console.error = function(){
+    // 1) Toujours appeler l'original (ne pas casser le comportement console)
+    try { _origError.apply(console, arguments); } catch(_){}
+    if(_count >= _MAX) return;
+    try {
+      // Construction du message texte à partir des arguments
+      var msg = "";
+      for(var i=0; i<arguments.length && i<3; i++){
+        try {
+          var a = arguments[i];
+          if(a == null) msg += String(a);
+          else if(typeof a === "string") msg += a;
+          else if(a instanceof Error) msg += a.message + (a.stack?" | "+a.stack.split("\n")[0]:"");
+          else if(typeof a === "object") msg += JSON.stringify(a);
+          else msg += String(a);
+        } catch(_){ msg += "[unserializable]"; }
+        msg += " ";
+      }
+      msg = msg.trim().slice(0, 500);
+      if(!msg) return;
+      // Filtre inoffensifs
+      if(_skipPat.test(msg)) return;
+      // Debounce 5min sur clé = 100 premiers chars
+      var key = msg.slice(0, 100);
+      var now = Date.now();
+      if(_seen[key] && (now - _seen[key]) < _DEDUP_MS) return;
+      _seen[key] = now;
+      _count++;
+      // Push en audit_log action JS_CONSOLE_ERROR (pas JS_ERROR pour distinguer)
+      // Pas d'alerte mail (trigger n'écoute pas cette action) — visible dans Monitoring
+      if(typeof saveAuditEntry === "function"){
+        saveAuditEntry("JS_CONSOLE_ERROR", JSON.stringify({
+          msg: msg,
+          url: location.pathname + (location.hash||""),
+          ua: navigator.userAgent.slice(0,120),
+          ts: new Date().toISOString()
+        }).slice(0, 1500));
+      }
+    } catch(_){}
+  };
+})();
 // ====================================================================
 
 // ===== POPUP RÉCUPÉRATION WAL (filet sécurité 15/05/2026) ============
