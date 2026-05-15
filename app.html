@@ -10914,6 +10914,52 @@ function _findLinkedFamilialAppt(a){
   }
   return null;
 }
+
+// FIX 2026-05-15 : modale de choix à l'encaissement quand RDV lié détecté
+// 3 options : encaisser ensemble (merge auto), encaisser celui-ci seul (sans merge), annuler
+function _showLinkedRdvEncaisseChoice(id1, id2){
+  var a1=null, a2=null;
+  for(var i=0;i<AP.length;i++){
+    if(AP[i].id===id1) a1=AP[i];
+    if(AP[i].id===id2) a2=AP[i];
+  }
+  if(!a1 || !a2){ mD(id1, "together"); return; } // safeguard : fallback
+  var cl1=gC(a1.cId), cl2=gC(a2.cId);
+  var nm1 = cl1 ? cName(cl1) : (a1.cId && String(a1.cId).indexOf("passage-")===0 ? "Passage" : "Client 1");
+  var nm2 = cl2 ? cName(cl2) : (a2.cId && String(a2.cId).indexOf("passage-")===0 ? "Passage" : "Client 2");
+  var sv1=gS(a1.sId), sv2=gS(a2.sId);
+  var sn1 = sv1 ? sv1.n : "Prestation";
+  var sn2 = sv2 ? sv2.n : "Prestation";
+  var pr1 = Number(a1.pr)||0;
+  var pr2 = Number(a2.pr)||0;
+  var total = pr1 + pr2;
+
+  var h='<div class="mbox" style="max-width:480px">';
+  h+='<div style="text-align:center;font-size:36px;margin-bottom:6px">👥</div>';
+  h+='<h2 style="text-align:center;margin-bottom:4px">RDV lié détecté</h2>';
+  h+='<div style="text-align:center;font-size:13px;color:var(--text2);margin-bottom:14px">Comment souhaitez-vous procéder ?</div>';
+  // Récap des 2 RDV
+  h+='<div style="background:rgba(108,92,231,.08);border:1px solid rgba(162,155,254,.25);border-radius:10px;padding:12px;margin-bottom:16px;font-size:13px;line-height:1.5">';
+  h+='<div style="margin-bottom:8px"><strong style="color:#a29bfe">'+nm1+'</strong> — '+sn1+' <span style="float:right;font-weight:700;color:var(--gold)">'+pr1.toFixed(2)+'€</span></div>';
+  h+='<div style="border-top:1px dashed rgba(255,255,255,.15);padding-top:8px"><strong style="color:#a29bfe">'+nm2+'</strong> — '+sn2+' <span style="float:right;font-weight:700;color:var(--gold)">'+pr2.toFixed(2)+'€</span></div>';
+  h+='<div style="border-top:1px solid rgba(200,168,78,.3);margin-top:10px;padding-top:8px;font-weight:800;font-size:14px">Total ensemble <span style="float:right;color:var(--gold);font-size:16px">'+total.toFixed(2)+'€</span></div>';
+  h+='</div>';
+  // Boutons d'action
+  h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  // Option 1 : encaisser ensemble (recommandé : un seul ticket, payeur principal)
+  h+='<button class="btn" style="width:100%;padding:14px;background:linear-gradient(135deg,#c8a84e,#e8c873);color:#1a1a1a;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left" onclick="cM();mD(\''+id1+'\',\'together\')">';
+  h+='<span style="font-size:22px">💳</span><span style="flex:1">Encaisser ensemble<br><span style="font-size:11px;font-weight:500;opacity:.75">1 ticket — '+total.toFixed(2)+'€ payé par '+nm1+' • points fidélité attribués à chaque client</span></span>';
+  h+='</button>';
+  // Option 2 : encaisser celui-ci seul (l'autre reste pour plus tard)
+  h+='<button class="btn" style="width:100%;padding:14px;background:rgba(33,150,243,.12);color:#2196f3;font-weight:700;font-size:14px;border:1px solid rgba(33,150,243,.3);border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;text-align:left" onclick="cM();mD(\''+id1+'\',\'single\')">';
+  h+='<span style="font-size:22px">👤</span><span style="flex:1">Encaisser '+nm1+' uniquement<br><span style="font-size:11px;font-weight:400;opacity:.85">'+pr1.toFixed(2)+'€ — Le RDV de '+nm2+' restera à encaisser plus tard</span></span>';
+  h+='</button>';
+  // Option 3 : annuler
+  h+='<button class="btn" style="width:100%;padding:11px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.55);font-weight:600;font-size:13px;border:1px solid rgba(255,255,255,.08);border-radius:10px;cursor:pointer" onclick="cM()">Annuler</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
 function _cancelApptDo(id){
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
   if(!a)return;
@@ -23509,7 +23555,7 @@ function _consolidateCartItems(cartItems){
   return result;
 }
 
-function mD(id){
+function mD(id, mode){
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){
     // FIX 2026-05-13 : retour accueil au lieu de rester sur page Caisse vide
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();go(\u0027home\u0027)"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:48px;margin-bottom:10px">\ud83d\udd12</div><h2>Journee cloturee</h2><div style="font-size:14px;margin-bottom:14px">Impossible d\u0027encaisser apres la cloture Z.</div><button class="btn bg bk" onclick="cM();go(\u0027home\u0027)">Retour a l\u0027accueil</button></div></div>';return;
@@ -23517,6 +23563,17 @@ function mD(id){
   // From an existing RDV
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
+  // FIX 2026-05-15 : si RDV lié détecté et mode pas encore choisi → modale de choix
+  if(!mode){
+    var _linkedRdv = (typeof _findLinkedFamilialAppt==="function") ? _findLinkedFamilialAppt(a) : null;
+    if(_linkedRdv){
+      _showLinkedRdvEncaisseChoice(id, _linkedRdv.id);
+      return;
+    }
+  }
+  // mode==="single" → on saute le merge des items du RDV lié (encaisser celui-ci seul)
+  // mode==="together" (ou null sans lien) → comportement standard (merge si lien existe)
+  var _mDskipLink = (mode === "single");
   var sv=gS(a.sId);
   var acomp=a.acompte||0;
   // FIX BUG ENCAISSEMENT (2026-05) : 3 cas distincts
@@ -23578,8 +23635,9 @@ function mD(id){
   // === Consolidation : fusionne les items identiques en une ligne avec quantité ===
   cartItems = _consolidateCartItems(cartItems);
   // === Option B (refonte 2026-05-11) : RDV groupé — merge items du RDV lié ===
+  // FIX 2026-05-15 : si mode='single' (encaisser celui-ci seul), on saute le merge
   var linkedApptId = null;
-  if(a.clients && Array.isArray(a.clients) && a.clients.length && a.clients[0].linkedAppt){
+  if(!_mDskipLink && a.clients && Array.isArray(a.clients) && a.clients.length && a.clients[0].linkedAppt){
     var linkedId = a.clients[0].linkedAppt;
     var linkedRdv = null;
     for(var li=0; li<AP.length; li++){ if(AP[li].id===linkedId){ linkedRdv = AP[li]; break; } }
