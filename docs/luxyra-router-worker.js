@@ -2209,14 +2209,27 @@ Sitemap: https://luxyra.fr/sitemap.xml
                 esthetique: "BeautySalon", ongles: "NailSalon", bien_etre: "DaySpa"
               };
               const nom = s.nom || "Salon";
+              const sousTitre = s.sous_titre || "";
               const ville = s.ville || "";
+              const cp = s.cp || "";
+              const adresse = s.adresse || "";
               const metier = s.metier || "coiffure";
               const metierLabel = metierLabels[metier] || "Salon";
               const schemaType = schemaTypes[metier] || "LocalBusiness";
               const url = `https://luxyra.fr/${safeSlug}`;
               const image = (s.logo && !String(s.logo).startsWith("data:")) ? s.logo : "https://luxyra.fr/luxyra-logo.png";
-              const title = `${nom} — ${metierLabel}${ville ? " à " + ville : ""} | Réservation en ligne`;
-              const desc = `Réservez en ligne chez ${nom}${ville ? " à " + ville : ""}. ${metierLabel}, confirmation immédiate, paiement sécurisé.${s.adresse ? " " + s.adresse : ""}${s.cp ? " " + s.cp : ""}${ville ? " " + ville : ""}.`.replace(/\s+/g, " ").trim();
+              // FIX 2026-05-15 SEO LOCAL : ville accolée au nom (expression composée Google),
+              // sous-titre inclus, format dense pour matcher "excellence coiffure sarreguemines"
+              const title = sousTitre
+                ? `${nom}${ville ? " " + ville : ""} ${sousTitre} — ${metierLabel}`
+                : `${nom}${ville ? " " + ville : ""} — ${metierLabel}${cp ? " " + cp : ""}`;
+              // Description ultra-dense en mots-clés locaux
+              const descParts = [];
+              descParts.push(`Réservez en ligne chez ${nom}${sousTitre ? " " + sousTitre : ""}`);
+              descParts.push(`${metierLabel}${ville ? " à " + ville : ""}${cp ? " (" + cp + ")" : ""}`);
+              if (adresse) descParts.push(adresse + (ville ? " " + ville : ""));
+              descParts.push("Confirmation immédiate, sans commission");
+              const desc = descParts.join(". ").replace(/\s+/g, " ").trim() + ".";
               const ld = {
                 "@context": "https://schema.org",
                 "@type": schemaType,
@@ -2320,6 +2333,57 @@ Sitemap: https://luxyra.fr/sitemap.xml
               // Retire l'ancien <title> et insère le SSR (le JS côté client réécrit
               // si besoin avec id="ssr-ld-localbusiness" qui sera supprimé)
               html = html.replace(/<title>[^<]*<\/title>/i, "").replace("</head>", ssrMeta + "</head>");
+
+              // ====================================================================
+              // FALLBACK HTML POUR BOTS (FIX 2026-05-15 SEO LOCAL)
+              // Bloc <noscript> indexable par Google même sans exécuter le JS,
+              // contient h1/h2/services en HTML pur avec mots-clés locaux denses.
+              // Pour les humains : <noscript> n'est pas affiché (ils ont JS),
+              // donc aucun impact UX. Pour Googlebot : contenu structuré direct.
+              // ====================================================================
+              try {
+                let fallback = `<noscript><div style="max-width:900px;margin:0 auto;padding:40px 20px;font-family:Georgia,serif;color:#333">`;
+                fallback += `<h1>${esc(nom)}${ville ? " " + esc(ville) : ""}${sousTitre ? " — " + esc(sousTitre) : ""}</h1>`;
+                fallback += `<p><strong>${esc(metierLabel)}${ville ? " à " + esc(ville) : ""}${cp ? " (" + esc(cp) + ")" : ""}</strong></p>`;
+                if (adresse || ville) {
+                  fallback += `<h2>Adresse</h2><address>${esc(adresse)}${cp ? ", " + esc(cp) : ""}${ville ? " " + esc(ville) : ""}, France</address>`;
+                }
+                if (s.tel) fallback += `<p><strong>Téléphone :</strong> <a href="tel:${esc(s.tel)}">${esc(s.tel)}</a></p>`;
+                // Horaires
+                try {
+                  const hSal = s.horaires_salon;
+                  if (hSal && typeof hSal === "object") {
+                    const jourLabels = { lundi: "Lundi", mardi: "Mardi", mercredi: "Mercredi", jeudi: "Jeudi", vendredi: "Vendredi", samedi: "Samedi", dimanche: "Dimanche" };
+                    const rows = [];
+                    Object.keys(jourLabels).forEach(j => {
+                      const v = hSal[j];
+                      if (v && v.ouvert && v.creneaux && v.creneaux.length) {
+                        const crs = v.creneaux.map(c => c.debut + "–" + c.fin).join(", ");
+                        rows.push(`<li><strong>${jourLabels[j]} :</strong> ${esc(crs)}</li>`);
+                      } else if (v) {
+                        rows.push(`<li><strong>${jourLabels[j]} :</strong> Fermé</li>`);
+                      }
+                    });
+                    if (rows.length) fallback += `<h2>Horaires d'ouverture</h2><ul>${rows.join("")}</ul>`;
+                  }
+                } catch (_) {}
+                // Services + prix
+                if (servicesList && servicesList.length) {
+                  fallback += `<h2>Prestations ${ville ? "à " + esc(ville) : ""}</h2><ul>`;
+                  for (let i = 0; i < Math.min(servicesList.length, 30); i++) {
+                    const sv = servicesList[i];
+                    if (!sv.nom || sv.prix == null) continue;
+                    fallback += `<li>${esc(sv.nom)} — ${Number(sv.prix).toFixed(2)} €${sv.categorie ? " (" + esc(sv.categorie) + ")" : ""}</li>`;
+                  }
+                  fallback += `</ul>`;
+                }
+                fallback += `<h2>Réservation en ligne</h2><p>Prenez rendez-vous chez <strong>${esc(nom)}</strong>${ville ? " à <strong>" + esc(ville) + "</strong>" : ""} 24h/24, 7j/7. Confirmation immédiate par email et SMS.</p>`;
+                fallback += `<p><a href="${esc(url)}#reserver">Réserver maintenant chez ${esc(nom)}${ville ? " " + esc(ville) : ""}</a></p>`;
+                fallback += `<p style="font-size:11px;color:#888">Propulsé par <a href="https://luxyra.fr">Luxyra</a> — logiciel de caisse et réservation en ligne sans commission.</p>`;
+                fallback += `</div></noscript>`;
+                // Insérer juste après <body>
+                html = html.replace(/<body([^>]*)>/i, `<body$1>${fallback}`);
+              } catch (_) { /* fallback HTML optionnel */ }
             }
           }
         }
