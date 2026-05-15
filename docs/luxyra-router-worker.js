@@ -29,6 +29,9 @@ const CONFIG = {
   SUPABASE_URL: "https://kxdgjtvrkwugbifgppai.supabase.co",
   PRICE_ESSENTIAL: "price_1TGPDdPk42Psx94TXOp8t3mB",
   PRICE_PRO: "price_1TGPErPk42Psx94T302k3bXv",
+  // Tarif "Pro Fondateur" — 14,99€/mois à vie pour les 100 premiers Pro
+  // Stripe lookup_key: pro_founder_monthly_eur
+  PRICE_PRO_FOUNDER: "price_1TXTu6Pk42Psx94TokzLzD33",
 };
 
 const CORS_HEADERS = {
@@ -310,19 +313,52 @@ async function handleCreateCheckout(request, env) {
       return jsonResponse({ url: session.url, session_id: session.id });
     }
 
-    const priceId = plan === "pro" ? CONFIG.PRICE_PRO : CONFIG.PRICE_ESSENTIAL;
-    const planLabel = plan === "pro" ? "Pro" : "Essentiel";
-    const session = await stripeAPI(env, "checkout/sessions", {
+    // === Programme "100 Fondateurs" ===
+    // Si plan = pro ET il reste des places fondateur disponibles, on bascule sur
+    // le price Pro Fondateur (14,99€/mois à vie au lieu de 24,99€).
+    // Note importante : on CHECK seulement la dispo ici, on ne CLAIM PAS le slot
+    // (un user qui annule ne consomme pas une place). Le claim réel se fait dans
+    // le webhook Stripe "customer.subscription.created" pour les souscriptions
+    // taggées is_founder=true (voir handleStripeWebhook).
+    let priceId = plan === "pro" ? CONFIG.PRICE_PRO : CONFIG.PRICE_ESSENTIAL;
+    let isFounder = false;
+    if (plan === "pro") {
+      try {
+        const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/founders_stats`, {
+          method: "POST",
+          headers: _sbHeaders(env),
+          body: JSON.stringify({})
+        });
+        if (r.ok) {
+          const stats = await r.json();
+          const remaining = Array.isArray(stats) && stats[0] ? Number(stats[0].remaining) : 0;
+          if (remaining > 0) {
+            priceId = CONFIG.PRICE_PRO_FOUNDER;
+            isFounder = true;
+          }
+        }
+      } catch (e) {
+        // Si l'appel founders_stats échoue, on bascule en mode safe :
+        // price Pro standard (mieux que de bloquer la souscription)
+        console.warn("[founders_stats] check failed, fallback to standard price:", e?.message);
+      }
+    }
+
+    const planLabel = plan === "pro" ? (isFounder ? "Pro Fondateur" : "Pro") : "Essentiel";
+    const sessionParams = {
       customer: customerId, mode: "subscription",
       "payment_method_types[0]": "sepa_debit", "payment_method_types[1]": "card",
       allow_promotion_codes: "true",
       "line_items[0][price]": priceId, "line_items[0][quantity]": "1",
-      success_url: `https://luxyra.fr/app?checkout=success&plan=${plan}`,
+      success_url: `https://luxyra.fr/app?checkout=success&plan=${plan}${isFounder ? "&founder=1" : ""}`,
       cancel_url: "https://luxyra.fr/app?checkout=cancel",
-      "metadata[salon_id]": salon_id, "metadata[plan]": plan,
+      "metadata[salon_id]": salon_id, "metadata[plan]": plan, "metadata[is_founder]": isFounder ? "true" : "false",
       "subscription_data[description]": `Abonnement Luxyra ${planLabel} — Mensuel`,
-      "subscription_data[metadata][salon_id]": salon_id, "subscription_data[metadata][plan]": plan,
-    });
+      "subscription_data[metadata][salon_id]": salon_id,
+      "subscription_data[metadata][plan]": plan,
+      "subscription_data[metadata][is_founder]": isFounder ? "true" : "false",
+    };
+    const session = await stripeAPI(env, "checkout/sessions", sessionParams);
     if (!session?.url) return jsonResponse({ error: "Stripe checkout error: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Checkout error: " + e.message }, 500); }
@@ -355,6 +391,7 @@ async function handleWebhook(request, env) {
     case "checkout.session.completed": {
       const salonId = data.metadata?.salon_id;
       const plan = data.metadata?.plan || "pro";
+      const isFounder = data.metadata?.is_founder === "true";
       if (data.metadata?.type === "sms_pack") {
         const qty = parseInt(data.metadata.sms_qty || "0");
         if (salonId && qty > 0) {
@@ -363,7 +400,30 @@ async function handleWebhook(request, env) {
         }
         break;
       }
-      if (salonId) await updateSalonPlan(env, salonId, plan, data.subscription, data.customer);
+      if (salonId) {
+        await updateSalonPlan(env, salonId, plan, data.subscription, data.customer);
+        // === Programme "100 Fondateurs" : claim atomique du slot ===
+        // Appelé uniquement si la session checkout est taguée is_founder=true.
+        // claim_founder_slot() est atomique côté DB (SELECT FOR UPDATE + counter)
+        // et idempotent (si déjà fondateur, retourne le founder_num existant).
+        if (isFounder) {
+          try {
+            const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/claim_founder_slot`, {
+              method: "POST",
+              headers: _sbHeaders(env),
+              body: JSON.stringify({ p_salon_id: salonId })
+            });
+            if (r.ok) {
+              const founderNum = await r.json();
+              console.log(`[FOUNDER] Salon ${salonId} marqué Fondateur #${founderNum}`);
+            } else {
+              console.warn(`[FOUNDER] claim_founder_slot HTTP ${r.status} pour salon ${salonId}`);
+            }
+          } catch (e) {
+            console.warn(`[FOUNDER] claim_founder_slot exception pour salon ${salonId}:`, e?.message);
+          }
+        }
+      }
       break;
     }
 
