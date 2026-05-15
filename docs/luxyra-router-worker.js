@@ -2100,7 +2100,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
   // ============================================================
   if (path === url.pathname) {
     // Aucune route système n'a matché — peut-être un slug ?
-    const segmentForSlug = path.replace(/^\/+|\/+$/g, "");
+    let segmentForSlug = path.replace(/^\/+|\/+$/g, "");
     const RESERVED_FOR_SLUG = new Set([
       "", "app", "admin", "compte", "inscription", "pro", "recherche",
       "proposal", "cgv", "mentions", "mentions-legales",
