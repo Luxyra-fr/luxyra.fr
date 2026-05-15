@@ -137,6 +137,7 @@ tr:hover{background:rgba(255,255,255,.02)}
     <div class="sb-item" data-tab="finance" onclick="nav('finance','revenus')"><span class="icon">💰</span>Finance</div>
     <div class="sb-item" data-tab="communication" onclick="nav('communication','chat')"><span class="icon">💬</span>Communication<span class="sb-badge" id="badgeChat"></span></div>
     <div class="sb-item" data-tab="analytics" onclick="nav('analytics','kpis')"><span class="icon">📈</span>Analytics</div>
+    <div class="sb-item" data-tab="monitoring" onclick="nav('monitoring')"><span class="icon">🩺</span>Monitoring<span class="sb-badge" id="badgeMonitoring"></span></div>
     <div class="sb-item" data-tab="parametres" onclick="nav('parametres','admin')"><span class="icon">⚙️</span>Paramètres</div>
   </div>
   <div class="sb-footer">
@@ -498,6 +499,9 @@ function render(){
     if(sub==='sms') h+=rSMS();
     else if(sub==='email') h+=rEmail();
     else h+=rChat();
+  }
+  else if(tab==='monitoring'){
+    h=rMonitoring();
   }
   else if(tab==='analytics'){
     h=subBar([{id:'kpis',label:'📊 KPIs'},{id:'cohorts',label:'👥 Cohortes'},{id:'funnel',label:'🔻 Funnel'}]);
@@ -892,6 +896,156 @@ function rEmail(){
   });
   h+='<div style="margin-top:16px;font-size:11px;color:var(--text3)">Édition des templates via <a href="https://app.brevo.com" target="_blank">app.brevo.com</a></div></div>';
   return h;
+}
+
+// ============================================================================
+// MONITORING JS_ERROR (panel admin — alternative au SQL editor Supabase)
+// ============================================================================
+// Affiche les erreurs JavaScript captées par window.onerror dans audit_log.
+// Permet à l'admin de surveiller en temps réel ce qui plante sur les tablettes
+// des salons sans devoir aller dans Supabase SQL editor.
+// Auto-refresh toutes les 30 secondes.
+// ============================================================================
+window._monitoringRefreshTimer = null;
+function rMonitoring(){
+  var h='<div class="topbar"><h1>Monitoring <span>JS Errors</span> <button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button></h1></div>';
+  h+='<div id="monitoringContent" style="padding:20px"><div style="text-align:center;color:var(--text3);padding:40px">Chargement…</div></div>';
+  // Auto-load (async pour ne pas bloquer)
+  setTimeout(rMonitoringRefresh, 50);
+  // Auto-refresh toutes les 30 secondes tant qu'on est sur cette page
+  if(window._monitoringRefreshTimer) clearInterval(window._monitoringRefreshTimer);
+  window._monitoringRefreshTimer = setInterval(function(){
+    if(window._currentTab !== 'monitoring'){
+      clearInterval(window._monitoringRefreshTimer);
+      window._monitoringRefreshTimer = null;
+      return;
+    }
+    rMonitoringRefresh();
+  }, 30000);
+  return h;
+}
+async function rMonitoringRefresh(){
+  var container = document.getElementById('monitoringContent');
+  if(!container) return;
+  try {
+    var [summary, recent] = await Promise.all([
+      _sb.rpc('admin_js_errors_summary'),
+      _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null})
+    ]);
+    if(summary.error) throw new Error('Summary: '+summary.error.message);
+    if(recent.error) throw new Error('Recent: '+recent.error.message);
+    var rowsS = summary.data || [];
+    var rowsR = recent.data || [];
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR);
+  } catch(e){
+    container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
+      + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
+      + '<div style="font-size:13px">'+(e.message||e)+'</div>'
+      + '</div>';
+  }
+}
+function _renderMonitoringHTML(summary, recent){
+  // === Stats globales (KPI cards) ===
+  var total1h=0, total24h=0, total7j=0, nbSalonsAffected=summary.length;
+  summary.forEach(function(s){
+    total1h += Number(s.nb_erreurs_1h)||0;
+    total24h += Number(s.nb_erreurs_24h)||0;
+    total7j += Number(s.nb_erreurs_7j)||0;
+  });
+  var ok = total24h===0;
+  var color1h = total1h>0 ? '#ef5350' : '#9e9e9e';
+  var color24h = total24h>0 ? '#ff9800' : '#9e9e9e';
+  var h='';
+  // Bandeau "tout va bien" si zéro erreur 24h
+  if(ok){
+    h+='<div style="padding:20px;border-radius:14px;background:linear-gradient(135deg,rgba(76,175,80,.15),rgba(76,175,80,.05));border:1px solid rgba(76,175,80,.35);margin-bottom:20px;display:flex;align-items:center;gap:14px">';
+    h+='<div style="font-size:32px">✅</div>';
+    h+='<div><div style="font-weight:800;color:#66bb6a;font-size:15px">Aucune erreur sur 24h</div><div style="font-size:12px;color:var(--text3);margin-top:2px">Tous les salons fonctionnent normalement</div></div>';
+    h+='</div>';
+  }
+  // KPI cards
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:24px">';
+  h+=_kpi('Dernière heure', total1h, color1h, '⏱️');
+  h+=_kpi('Dernières 24h', total24h, color24h, '📅');
+  h+=_kpi('7 derniers jours', total7j, '#a29bfe', '📊');
+  h+=_kpi('Salons concernés', nbSalonsAffected, nbSalonsAffected>0?'#ff9800':'#9e9e9e', '🏠');
+  h+='</div>';
+  // === Tableau résumé par salon ===
+  if(summary.length > 0){
+    h+='<div style="margin-bottom:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold)">📋 Résumé par salon (7 derniers jours)</h2>';
+    h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:13px">';
+    h+='<thead style="background:var(--bg3)"><tr>'
+      +'<th style="text-align:left;padding:10px 12px;color:var(--text3);font-size:11px;text-transform:uppercase">Salon</th>'
+      +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">1h</th>'
+      +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">24h</th>'
+      +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">7j</th>'
+      +'<th style="text-align:left;padding:10px 12px;color:var(--text3);font-size:11px">Message fréquent</th>'
+      +'<th style="text-align:right;padding:10px 12px;color:var(--text3);font-size:11px">Dernière</th>'
+      +'</tr></thead><tbody>';
+    summary.forEach(function(s){
+      var c1 = (s.nb_erreurs_1h>0?'#ef5350':'var(--text3)');
+      var c24 = (s.nb_erreurs_24h>0?'#ff9800':'var(--text3)');
+      var msg = (s.message_le_plus_frequent||'').length>60 ? s.message_le_plus_frequent.slice(0,60)+'…' : (s.message_le_plus_frequent||'—');
+      h+='<tr style="border-top:1px solid var(--border)">'
+        +'<td style="padding:10px 12px"><strong>'+_esc(s.salon_nom)+'</strong> <span style="font-size:10px;color:var(--text3);text-transform:uppercase;background:var(--bg3);padding:2px 6px;border-radius:4px;margin-left:6px">'+(s.salon_plan||'')+'</span></td>'
+        +'<td style="text-align:center;padding:10px 12px;color:'+c1+';font-weight:'+(s.nb_erreurs_1h>0?'800':'500')+'">'+s.nb_erreurs_1h+'</td>'
+        +'<td style="text-align:center;padding:10px 12px;color:'+c24+';font-weight:'+(s.nb_erreurs_24h>0?'800':'500')+'">'+s.nb_erreurs_24h+'</td>'
+        +'<td style="text-align:center;padding:10px 12px;color:var(--text2)">'+s.nb_erreurs_7j+'</td>'
+        +'<td style="padding:10px 12px;color:var(--text2);font-family:monospace;font-size:11px" title="'+_esc(s.message_le_plus_frequent||'')+'">'+_esc(msg)+'</td>'
+        +'<td style="text-align:right;padding:10px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+(s.derniere_erreur_paris||'—')+'</td>'
+      +'</tr>';
+    });
+    h+='</tbody></table></div></div>';
+  }
+  // === Détail des erreurs récentes ===
+  if(recent.length > 0){
+    h+='<h2 style="font-size:16px;margin:0 0 12px;color:var(--gold)">🔍 Détail des erreurs récentes ('+recent.length+' dernières)</h2>';
+    h+='<div style="display:flex;flex-direction:column;gap:10px">';
+    recent.slice(0, 30).forEach(function(r){
+      h+='<div style="background:var(--bg2);border:1px solid var(--border);border-left:3px solid #ef5350;border-radius:10px;padding:12px 14px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:11px">';
+      h+='<div><strong style="color:var(--text)">'+_esc(r.salon_nom)+'</strong> <span style="color:var(--text3);margin-left:6px">'+_esc(r.operator_name||'?')+'</span></div>';
+      h+='<div style="color:var(--text3)">'+(r.quand_paris||'')+'</div>';
+      h+='</div>';
+      h+='<div style="font-family:monospace;font-size:12px;color:#ef5350;margin-bottom:6px;word-break:break-word">'+_esc(r.msg||'')+'</div>';
+      var meta='';
+      if(r.file) meta+='<span style="color:var(--text3);margin-right:10px">📄 '+_esc((r.file||'').split('/').pop().split('?')[0])+(r.line?':'+r.line:'')+'</span>';
+      if(r.url) meta+='<span style="color:var(--text3);margin-right:10px">🔗 '+_esc(r.url)+'</span>';
+      if(r.user_agent){
+        var uaShort = r.user_agent.indexOf('Android')>=0?'Android':r.user_agent.indexOf('iPhone')>=0?'iPhone':r.user_agent.indexOf('iPad')>=0?'iPad':r.user_agent.indexOf('Windows')>=0?'Windows':r.user_agent.indexOf('Macintosh')>=0?'Mac':'Autre';
+        meta+='<span style="color:var(--text3)">📱 '+uaShort+'</span>';
+      }
+      if(meta) h+='<div style="font-size:11px;margin-top:4px">'+meta+'</div>';
+      if(r.stack){
+        h+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:var(--text3)">Stack trace</summary>';
+        h+='<pre style="margin:8px 0 0;padding:10px;background:var(--bg);border-radius:6px;font-size:10px;color:var(--text2);overflow-x:auto;white-space:pre-wrap;word-break:break-all">'+_esc(r.stack)+'</pre>';
+        h+='</details>';
+      }
+      h+='</div>';
+    });
+    h+='</div>';
+  } else {
+    if(summary.length===0){
+      h+='<div style="text-align:center;padding:60px 20px;color:var(--text3)">'
+        +'<div style="font-size:48px;margin-bottom:12px">🎉</div>'
+        +'<div style="font-weight:700;font-size:15px;color:var(--text2)">Pas une seule erreur JavaScript détectée sur 7 jours</div>'
+        +'<div style="font-size:12px;margin-top:6px">Le hook window.onerror est actif sur chaque tablette de salon.</div>'
+        +'</div>';
+    }
+  }
+  h+='<div style="text-align:center;color:var(--text3);font-size:11px;margin-top:24px">Auto-rafraîchi toutes les 30 secondes — dernière mise à jour : '+new Date().toLocaleTimeString('fr-FR')+'</div>';
+  return h;
+}
+function _kpi(label, value, color, icon){
+  return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:12px">'
+    + '<div style="font-size:28px">'+icon+'</div>'
+    + '<div style="flex:1"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">'+label+'</div>'
+    + '<div style="font-weight:800;font-size:24px;color:'+color+'">'+value+'</div></div>'
+    + '</div>';
+}
+function _esc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Analytics
