@@ -9740,15 +9740,16 @@ function _place2ndRdvAtSlot(stId, time, date){
   // 9) Feedback + refresh planning
   if(typeof toast === "function") toast("✓ 2ème RDV placé : "+stName+" à "+time, "success");
   go("planning");
-  // 10) Modales SMS en séquence (espace de 300ms pour le rendu planning)
-  // Note : sendRdvConfirmation ouvre une modale. Pour ne pas en ouvrir 2 simultanées,
-  // on enchaîne. Le user peut envoyer ou skip chaque SMS indépendamment.
-  if(typeof sendRdvConfirmation === "function"){
-    setTimeout(function(){
-      if(_firstForSms) sendRdvConfirmation(_firstForSms);
-      else sendRdvConfirmation(rdvObj2);
-    }, 300);
-  }
+  // 10) Modale SMS groupée (1 seul SMS au client principal avec les 2 RDV)
+  // 300ms d'espace pour laisser le planning se rendre avant la modale
+  setTimeout(function(){
+    if(_firstForSms && typeof sendRdvConfirmationFamilial === "function"){
+      sendRdvConfirmationFamilial(_firstForSms, rdvObj2);
+    } else if(typeof sendRdvConfirmation === "function"){
+      // Fallback : envoi standard si données du 1er RDV indispo (cas refresh)
+      sendRdvConfirmation(rdvObj2);
+    }
+  }, 300);
 }
 
 // FIX 2026-05-15 : annule le placement du 2ème RDV en cours
@@ -22585,11 +22586,16 @@ function aAp(){
   // jusqu'au placement final (sinon la modale SMS couvre la bannière planning).
   // L'envoi sera déclenché à la fin de _place2ndRdvAtSlot pour les 2 RDV d'un coup.
   if(_rdv2ndManualPlacement){
-    // On stocke l'objet 1er RDV pour le SMS différé (envoi groupé après placement 2ème)
     if(window._pending2ndRdv){
       window._pending2ndRdv.firstRdvForSms = rdvObj;
       try { localStorage.setItem("_lx_pending_2nd_rdv", JSON.stringify(window._pending2ndRdv)); } catch(_){}
     }
+  } else if(rdvObj2nd){
+    // FIX 2026-05-15 v3 : 2 RDV familiaux créés au même créneau → SMS groupé
+    setTimeout(function(){
+      if(typeof sendRdvConfirmationFamilial==="function") sendRdvConfirmationFamilial(rdvObj, rdvObj2nd);
+      else sendRdvConfirmation(rdvObj);
+    },300);
   } else {
     setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
   }
@@ -27643,6 +27649,132 @@ function saveSmsConfig(){
 }
 function buildSmsText(template,vars){
   return template.replace(/\{prenom\}/g,vars.prenom||"").replace(/\{nom\}/g,vars.nom||"").replace(/\{heure\}/g,vars.heure||"").replace(/\{date\}/g,vars.date||"").replace(/\{prestation\}/g,vars.prestation||"").replace(/\{salon\}/g,vars.salon||SALON_CONFIG.nom).replace(/\{collab\}/g,vars.collab||"");
+}
+
+// === CONFIRMATION RDV FAMILIAL (2 RDV liés, 1 seul SMS/email groupé) ===
+// FIX 2026-05-15 : envoi groupé au client principal (1er RDV) avec les 2 RDV détaillés
+// Cas d'usage : maman + enfant qui partagent souvent le même numéro / email
+function sendRdvConfirmationFamilial(rdvObj1, rdvObj2){
+  if(!rdvObj1 || !rdvObj2) return;
+  // Client principal = celui du 1er RDV (reçoit le SMS groupé)
+  var cl1 = gC(rdvObj1.cId);
+  if(!cl1) return;
+  var hasPh = cl1.ph && cl1.ph.length>5;
+  var hasEm = cl1.em && cl1.em.indexOf("@")>0;
+  if(!hasPh && !hasEm) return; // pas de moyen de contact
+
+  var cl2 = gC(rdvObj2.cId);
+  var sv1 = gS(rdvObj1.sId), sv2 = gS(rdvObj2.sId);
+  var sty1 = gT(rdvObj1.stId), sty2 = gT(rdvObj2.stId);
+  var clN1 = cName(cl1);
+  var clN2 = cl2 ? cName(cl2) : (rdvObj2.cId && rdvObj2.cId.indexOf("passage")===0 ? "Passage" : "Client");
+  var svcN1 = sv1 ? sv1.n : "Prestation";
+  var svcN2 = sv2 ? sv2.n : "Prestation";
+
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-width:440px">';
+  h+='<h2 style="color:var(--gold)">✉ Confirmation des 2 RDV familiaux</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">Envoyer un récap groupé à <strong>'+clN1+'</strong> :</div>';
+  // Bloc récap des 2 RDV
+  h+='<div style="background:rgba(108,92,231,.08);border:1px solid rgba(162,155,254,.25);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;line-height:1.5">';
+  h+='<div style="margin-bottom:8px"><strong style="color:#a29bfe">RDV 1 — '+clN1+'</strong><br>';
+  h+='<span style="opacity:.85">'+svcN1+' le '+fmt(rdvObj1.date)+' à '+rdvObj1.time;
+  if(sty1) h+=' avec '+sty1.n;
+  h+='</span></div>';
+  h+='<div style="border-top:1px dashed rgba(255,255,255,.15);padding-top:8px"><strong style="color:#a29bfe">RDV 2 — '+clN2+'</strong><br>';
+  h+='<span style="opacity:.85">'+svcN2+' le '+fmt(rdvObj2.date)+' à '+rdvObj2.time;
+  if(sty2) h+=' avec '+sty2.n;
+  h+='</span></div>';
+  h+='</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">';
+  if(hasEm){
+    h+='<button onclick="doSendConfirmFamilial(\'email\')" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);color:var(--gold);font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px"><span style="font-size:20px">✉️</span><span style="flex:1;text-align:left">Envoyer par email<br><span style="font-size:11px;font-weight:400;opacity:.7">'+cl1.em+'</span></span></button>';
+  }
+  if(hasPh){
+    h+='<button onclick="doSendConfirmFamilial(\'sms\')" style="padding:14px;border-radius:10px;border:1px solid rgba(33,150,243,.3);background:rgba(33,150,243,.1);color:#2196f3;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px"><span style="font-size:20px">📲</span><span style="flex:1;text-align:left">Envoyer par SMS<br><span style="font-size:11px;font-weight:400;opacity:.7">'+cl1.ph+'</span></span></button>';
+  }
+  if(hasEm && hasPh){
+    h+='<button onclick="doSendConfirmFamilial(\'both\')" style="padding:14px;border-radius:10px;border:1px solid rgba(76,175,80,.3);background:rgba(76,175,80,.1);color:#4caf50;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:10px"><span style="font-size:20px">✅</span><span style="flex:1;text-align:left">Envoyer les deux</span></button>';
+  }
+  h+='</div>';
+  h+='<button onclick="cM()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer">Ne pas envoyer</button>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+  // Stocker les 2 RDV pour doSendConfirmFamilial
+  window._confirmFamilial = {rdv1:rdvObj1, rdv2:rdvObj2, cl1:cl1, sv1:sv1, sv2:sv2, sty1:sty1, sty2:sty2, clN2:clN2};
+}
+
+// Envoi effectif (appelé depuis les boutons de sendRdvConfirmationFamilial)
+async function doSendConfirmFamilial(mode){
+  var ctx = window._confirmFamilial; if(!ctx) return;
+  var cl=ctx.cl1, rdv1=ctx.rdv1, rdv2=ctx.rdv2;
+  var sent=[], errors=[];
+  cM();
+  // Construction du texte SMS groupé (court, en 2 SMS si besoin)
+  var prenom1 = cl.pre || "";
+  var date1=fmt(rdv1.date), heure1=rdv1.time;
+  var date2=fmt(rdv2.date), heure2=rdv2.time;
+  var salonNom = SALON_CONFIG.nom||"Salon";
+  var smsTxt = "Bonjour "+prenom1+", vos RDV chez "+salonNom+" sont confirmes :\n"
+             + "- "+date1+" a "+heure1+" : "+(ctx.sv1?ctx.sv1.n:"prestation")+(ctx.sty1?" ("+ctx.sty1.n+")":"")+"\n"
+             + "- "+date2+" a "+heure2+" : "+(ctx.sv2?ctx.sv2.n:"prestation")+(ctx.clN2?" pour "+ctx.clN2:"")+(ctx.sty2?" ("+ctx.sty2.n+")":"")+"\n"
+             + "A bientot !";
+
+  if(mode==="sms" || mode==="both"){
+    if(cl.ph && cl.smsOk!==false){
+      var r = await sendSms(cl.ph, smsTxt, "confirmation_rdv_familial", (cl.pre||"")+" "+(cl.nom||""));
+      if(r && r.ok){
+        sent.push("SMS groupé");
+        auditLog("CONFIRM_SMS_FAMILIAL","RDV1 "+date1+" "+heure1+" + RDV2 "+date2+" "+heure2+" - SMS OK");
+      } else {
+        errors.push("SMS: "+(r&&r.error?r.error:"erreur"));
+      }
+    }
+    if(cl.ph && cl.smsOk===false){ errors.push("SMS: client a refusé (RGPD)"); }
+  }
+  if(mode==="email" || mode==="both"){
+    if(cl.em && cl.emOk!==false){
+      // Email : utiliser le template existant pour le 1er RDV + ajouter section RDV2 en bas
+      var vars1 = {
+        prenom:cl.pre||"", nom:cl.nom||"",
+        heure:rdv1.time||"", date:fmt(rdv1.date),
+        prestation: ctx.sv1?ctx.sv1.n:"Prestation",
+        salon: salonNom,
+        slug: SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",
+        collab: ctx.sty1?ctx.sty1.n:""
+      };
+      var baseHtml = buildRdvEmailHTML("confirm", vars1);
+      // Injection d'un encart "+ 2ème RDV familial" avant la fermeture du body
+      var extra = '<div style="max-width:480px;margin:8px auto 24px;padding:16px 18px;background:#141418;border:1px solid #2a2a30;border-left:3px solid #c8a84e;border-radius:10px;color:#e9d9a0;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5">'
+                + '<div style="font-weight:700;color:#c8a84e;margin-bottom:6px;font-size:13px;letter-spacing:1px;text-transform:uppercase">👪 RDV familial associé</div>'
+                + '<div><strong>'+(ctx.clN2||"")+'</strong> — '+(ctx.sv2?ctx.sv2.n:"Prestation")+'</div>'
+                + '<div style="opacity:.85;margin-top:4px">'+fmt(rdv2.date)+' à '+rdv2.time+(ctx.sty2?' avec '+ctx.sty2.n:'')+'</div>'
+                + '</div>';
+      var injectedHtml = baseHtml.replace(/<\/body>/i, extra+'</body>');
+      if(injectedHtml === baseHtml){ injectedHtml = baseHtml + extra; }
+      var r2 = await sendEmailViaWorker(cl.em, cName(cl), "Confirmation de vos 2 RDV - "+salonNom, injectedHtml);
+      if(r2 && r2.ok){
+        sent.push("Email groupé");
+        auditLog("CONFIRM_EMAIL_FAMILIAL","RDV1 "+date1+" "+heure1+" + RDV2 "+date2+" "+heure2+" - Email OK");
+      } else {
+        errors.push("Email: "+(r2&&r2.error?r2.error:"erreur inconnue"));
+      }
+    }
+    if(cl.em && cl.emOk===false){ errors.push("Email: client a refusé (RGPD)"); }
+  }
+  window._confirmFamilial = null;
+  // Marquer comme envoyé pour les 2 RDV (anti-doublon rappels)
+  if(sent.length>0){
+    if(!window._smsSent){ try{ window._smsSent = JSON.parse(localStorage.getItem("_cp_sms_sent"))||{}; }catch(e){ window._smsSent={}; } }
+    [rdv1.id, rdv2.id].forEach(function(rid){
+      window._smsSent["24h_"+rid]=true;
+      window._smsSent["2h_"+rid]=true;
+      window._smsSent["em24_"+rid]=true;
+    });
+    try{ localStorage.setItem("_cp_sms_sent", JSON.stringify(window._smsSent)); }catch(e){}
+  }
+  if(sent.length && !errors.length) showAlert("✅ Confirmation groupée envoyée ("+sent.join(" + ")+")","success");
+  else if(sent.length && errors.length) showAlert("✅ "+sent.join(" + ")+" envoyé(s)\n❌ "+errors.join("\n"),"success");
+  else showAlert("❌ Erreur : "+errors.join("\n"),"error");
 }
 
 // === CONFIRMATION RDV (SMS + Email) ===
