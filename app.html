@@ -9100,6 +9100,25 @@ function rPlanning(){
   h+='<div style="width:1px;height:24px;background:rgba(255,255,255,.15);margin:0 4px"></div>';
   h+='<button onclick="printPlanning()" style="height:34px;padding:0 14px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px">\ud83d\udda8 Imprimer</button>';
   h+='</div>';
+  // FIX 2026-05-15 : banni\u00e8re "Placement 2\u00e8me RDV en attente" (mode familial \u2014 placement visuel)
+  // Affich\u00e9e seulement si _pending2ndRdv est actif. Au clic sur un cr\u00e9neau, le 2\u00e8me RDV est cr\u00e9\u00e9 directement.
+  if(window._pending2ndRdv){
+    var _p2 = window._pending2ndRdv;
+    var _p2st = gT(_p2.preferredStId);
+    var _p2stName = _p2st ? _p2st.n : "?";
+    var _p2cName = _p2.cName || "Client";
+    var _p2svc = _p2.svcName || "Prestation";
+    var _p2dur = _p2.duration || 30;
+    h+='<div style="margin-bottom:12px;padding:14px 16px;background:linear-gradient(135deg,rgba(200,168,78,.18),rgba(200,168,78,.06));border:1.5px solid rgba(200,168,78,.5);border-radius:14px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 12px rgba(0,0,0,.2)">';
+    h+='<div style="font-size:28px;flex-shrink:0">\u23f0</div>';
+    h+='<div style="flex:1;min-width:0">';
+    h+='<div style="font-weight:800;font-size:14px;color:var(--gold);margin-bottom:2px">Placez le 2\u00e8me RDV familial</div>';
+    h+='<div style="font-size:12px;color:rgba(255,255,255,.75);line-height:1.4"><strong>'+_p2cName+'</strong> \u2022 '+_p2svc+' \u2022 '+_p2dur+' min \u2022 Pr\u00e9f\u00e9rence : '+_p2stName+'</div>';
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.55);margin-top:3px;font-style:italic">Cliquez sur un cr\u00e9neau libre du planning pour placer ce 2\u00e8me RDV</div>';
+    h+='</div>';
+    h+='<button onclick="_cancel2ndRdvPlacement()" style="flex-shrink:0;padding:8px 14px;border-radius:10px;border:1px solid rgba(244,67,54,.3);background:rgba(244,67,54,.12);color:#ef5350;font-size:12px;font-weight:700;cursor:pointer">Annuler</button>';
+    h+='</div>';
+  }
   // Render planning
   if(nd===1){
     h+=rPlanningDay(calD,false);
@@ -9579,6 +9598,15 @@ function printPlanning(){
   setTimeout(function(){w.print();},400);
 }
 function clickSlot(stId,time,date,force){
+  // FIX 2026-05-15 : intercept mode "placement 2ème RDV" — placement direct sans modale
+  // Si on est en attente du placement d'un 2ème RDV familial, on essaie de le poser ici.
+  // Si le créneau est invalide (occupé/hors horaires/bloqué), l'utilisateur reçoit un toast
+  // explicatif et peut cliquer un autre créneau ; on ne sort pas du mode tant qu'il n'a pas
+  // soit placé soit annulé via la bannière.
+  if(window._pending2ndRdv && !force){
+    _place2ndRdvAtSlot(stId, time, date);
+    return;
+  }
   // Save current view state to restore after RDV creation
   window._savedCalD=new Date(calD.getTime());
   window._savedPlanDays=window._planDays;
@@ -9629,6 +9657,96 @@ function clickSlot(stId,time,date,force){
   h+='</div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
+
+// FIX 2026-05-15 : place le 2ème RDV familial à un créneau cliqué sur le planning
+// Appelée depuis clickSlot quand window._pending2ndRdv est actif.
+// Vérifie créneau valide (horaires + non bloqué + pas de conflit), crée le RDV,
+// fait le linkage avec le 1er, puis efface le pending state.
+function _place2ndRdvAtSlot(stId, time, date){
+  var p = window._pending2ndRdv;
+  if(!p || !p.cId || !p.svcId){
+    window._pending2ndRdv = null;
+    try { localStorage.removeItem("_lx_pending_2nd_rdv"); } catch(_){}
+    if(typeof toast==="function") toast("Aucun 2ème RDV en attente","info");
+    return;
+  }
+  var dk = date || dS(calD);
+  var slotMin = toM(time);
+  var sty = gT(stId);
+  var stName = sty ? sty.n : "?";
+
+  // 1) Vérif horaires d'ouverture
+  var dkHrs = getEffectiveHrs(dk, stId);
+  if(!dkHrs){
+    if(typeof toast==="function") toast("⛔ "+stName+" est fermé(e) le "+fmt(dk)+" — choisissez un autre créneau", "warning");
+    return;
+  }
+  if(slotMin < toM(dkHrs.o) || slotMin >= toM(dkHrs.c)){
+    if(typeof toast==="function") toast("⛔ "+time+" hors horaires de "+stName+" ("+dkHrs.o+" → "+dkHrs.c+")", "warning");
+    return;
+  }
+  // 2) Vérif absence/pause/bloc
+  var blocked = isStylistBlockedDuring(stId, dk, slotMin, slotMin+1);
+  if(blocked){
+    if(typeof toast==="function") toast("⛔ Créneau bloqué : "+(blocked.label||"Indisponible"), "warning");
+    return;
+  }
+  // 3) Vérif conflit RDV existant
+  var conflicts = checkConflict(stId, dk, time, p.svcId, null);
+  if(conflicts && conflicts.length){
+    if(typeof toast==="function") toast("⛔ Créneau occupé — choisissez un autre horaire", "warning");
+    return;
+  }
+  // 4) Création du 2ème RDV
+  var sv2 = gS(p.svcId);
+  var dur = sv2 ? (Number(sv2.d)||30) : (p.duration||30);
+  var aPhases2 = (sv2 && sv2.phases) ? JSON.parse(JSON.stringify(sv2.phases)) : [{t:"w", d:dur, l:(sv2?sv2.n:p.svcName||"Prestation")}];
+  aPhases2.forEach(function(ph){ if(ph.t==="w" && !ph.stId) ph.stId = stId; });
+  var rdvObj2 = {
+    id: U(),
+    cId: p.cId,
+    sId: p.svcId,
+    stId: stId,
+    date: dk,
+    time: time,
+    pr: sv2 ? (Number(sv2.p)||0) : (p.svcPrice||0),
+    st: "conf",
+    met: "",
+    aPhases: aPhases2,
+    comment: "👪 RDV familial (lié au 1er RDV)",
+    clients: p.linkedAppt ? [{linkedAppt: p.linkedAppt}] : []
+  };
+  AP.push(rdvObj2);
+  // 5) Linkage retour : mettre à jour le 1er RDV pour pointer vers le 2ème
+  if(p.linkedAppt){
+    for(var i=0; i<AP.length; i++){
+      if(AP[i].id === p.linkedAppt){
+        AP[i].clients = [{linkedAppt: rdvObj2.id}];
+        // Remplace la note "(2ème à placer)" par le lien final
+        AP[i].comment = (AP[i].comment||"").replace(/\(2ème à placer\)/, "(lié)");
+        if(typeof saveAppointment === "function") saveAppointment(AP[i]);
+        break;
+      }
+    }
+  }
+  // 6) Save DB
+  if(typeof saveAppointment === "function") saveAppointment(rdvObj2);
+  // 7) Nettoyage state
+  window._pending2ndRdv = null;
+  try { localStorage.removeItem("_lx_pending_2nd_rdv"); } catch(_){}
+  // 8) Feedback + refresh planning
+  if(typeof toast === "function") toast("✓ 2ème RDV placé : "+stName+" à "+time, "success");
+  go("planning");
+}
+
+// FIX 2026-05-15 : annule le placement du 2ème RDV en cours
+function _cancel2ndRdvPlacement(){
+  window._pending2ndRdv = null;
+  try { localStorage.removeItem("_lx_pending_2nd_rdv"); } catch(_){}
+  if(typeof toast === "function") toast("Placement annulé — le 1er RDV reste planifié", "info");
+  go("planning");
+}
+
 function manageAbsence(stId,date){
   var sty=gT(stId);
   // Find all absences for this stylist on this date
@@ -22304,8 +22422,15 @@ function aAp(){
     showConflictAlert(conflicts,"confirmPendingRdv()");
     return;
   }
+  // === FIX 2026-05-15 : Mode "Choisir sur le planning" — skip check conflit 2nd ===
+  // Si l'utilisateur a choisi de placer le 2ème RDV manuellement sur le planning,
+  // on ne fait pas les vérifications de créneau au même horaire (forcément KO car
+  // l'idée c'est justement de choisir un autre créneau). On laisse passer ;
+  // le placement réel se fera via clickSlot après validation du 1er RDV.
+  var _rdv2ndManualPlacement = (window._rdv2nd && window._rdv2nd.when === "planning"
+                                && window._rdv2nd.cId && window._rdv2nd.svcId);
   // === Refonte 2026-05-11 v4 : check 2nd collab + suggestions auto au lieu de bloquer net ===
-  if(window._rdv2nd && window._rdv2nd.cId && window._rdv2nd.svcId){
+  if(!_rdv2ndManualPlacement && window._rdv2nd && window._rdv2nd.cId && window._rdv2nd.svcId){
     var _st2chk = window._rdv2nd.stId || st;
     var _t2name = (gT(_st2chk)?gT(_st2chk).n:"le collaborateur");
     var _sv2chk = gS(window._rdv2nd.svcId);
@@ -22374,28 +22499,51 @@ function aAp(){
   // === Option B (refonte 2026-05-11) : 2nd client = créer un 2nd RDV lié au même horaire ===
   var rdvObj2nd = null;
   if(window._rdv2nd && window._rdv2nd.cId && window._rdv2nd.svcId){
-    var st2 = window._rdv2nd.stId || st;
-    var sv2 = gS(window._rdv2nd.svcId);
-    if(sv2){
-      var aPhases2 = sv2.phases ? JSON.parse(JSON.stringify(sv2.phases)) : [{t:"w", d:Number(sv2.d)||30, l:sv2.n}];
-      aPhases2.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId = st2; });
-      rdvObj2nd = {
-        id: U(),
+    // FIX 2026-05-15 : si placement manuel sur planning, on stocke l'intention
+    // et on n'insère PAS le 2ème RDV maintenant. Le placement se fera via clickSlot.
+    if(_rdv2ndManualPlacement){
+      var _sv2pend = gS(window._rdv2nd.svcId);
+      window._pending2ndRdv = {
         cId: window._rdv2nd.cId,
-        sId: window._rdv2nd.svcId,
-        stId: st2,
-        date: d,
-        time: t,
-        pr: Number(sv2.p)||0,
-        st: "conf",
-        met: "",
-        aPhases: aPhases2,
-        comment: "👪 RDV familial (lien à confirmer après save)",
-        clients: []
+        svcId: window._rdv2nd.svcId,
+        preferredStId: window._rdv2nd.stId || st,
+        cName: window._rdv2nd.cName || "",
+        passType: window._rdv2nd.passType || null,
+        fromDate: d,
+        fromTime: t,
+        duration: _sv2pend ? (Number(_sv2pend.d)||30) : 30,
+        svcName: _sv2pend ? _sv2pend.n : "",
+        svcPrice: _sv2pend ? (Number(_sv2pend.p)||0) : 0,
+        linkedAppt: rdvObj.id,
+        ts: new Date().toISOString()
       };
-      rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial (lien à confirmer après save)";
-      rdvObj.clients = [];
-      AP.push(rdvObj2nd);
+      try { localStorage.setItem("_lx_pending_2nd_rdv", JSON.stringify(window._pending2ndRdv)); } catch(_){}
+      // Note dans le 1er RDV pour traçabilité
+      rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial (2ème à placer)";
+    } else {
+      var st2 = window._rdv2nd.stId || st;
+      var sv2 = gS(window._rdv2nd.svcId);
+      if(sv2){
+        var aPhases2 = sv2.phases ? JSON.parse(JSON.stringify(sv2.phases)) : [{t:"w", d:Number(sv2.d)||30, l:sv2.n}];
+        aPhases2.forEach(function(p){ if(p.t==="w" && !p.stId) p.stId = st2; });
+        rdvObj2nd = {
+          id: U(),
+          cId: window._rdv2nd.cId,
+          sId: window._rdv2nd.svcId,
+          stId: st2,
+          date: d,
+          time: t,
+          pr: Number(sv2.p)||0,
+          st: "conf",
+          met: "",
+          aPhases: aPhases2,
+          comment: "👪 RDV familial (lien à confirmer après save)",
+          clients: []
+        };
+        rdvObj.comment = (rdvObj.comment||"") + " 👪 RDV familial (lien à confirmer après save)";
+        rdvObj.clients = [];
+        AP.push(rdvObj2nd);
+      }
     }
   }
   window._rdvSvcId=null;window._rdvSvcIds=null;window._rdvPassage=null;window._rdv2nd=null;
@@ -22637,14 +22785,22 @@ function renderRdv2ndBody(){
   var el=document.getElementById("rdv2ndBody");
   if(!el) return;
   if(!window._rdv2nd) window._rdv2nd={};
-  // Default coiffeuse: prefer un collab DIFFÉRENT du principal
+  // FIX 2026-05-15 : par défaut, collab du 2nd = MÊME que principal
+  // (cas le plus fréquent : une cliente prend 2 RDV pour elle-même).
+  // L'utilisateur peut toujours changer manuellement via le select si besoin
+  // de répartir entre 2 coiffeuses (ex: maman + enfant).
   if(!window._rdv2nd.stId && T.length){
     var _mstEl=document.getElementById("mst");
     var _principalSt=_mstEl?parseInt(_mstEl.value):0;
-    var _other=null;
-    for(var _i=0;_i<T.length;_i++){ if(T[_i].id!==_principalSt && T[_i].actif!==false && !T[_i].inactif){ _other=T[_i]; break; } }
-    window._rdv2nd.stId = _other ? _other.id : T[0].id;
+    // Si le collab principal est valide, on le réutilise
+    if(_principalSt){
+      window._rdv2nd.stId = _principalSt;
+    } else {
+      window._rdv2nd.stId = T[0].id;
+    }
   }
+  // FIX 2026-05-15 : timing du 2ème RDV — 'same' (même créneau) ou 'planning' (placement visuel)
+  if(!window._rdv2nd.when) window._rdv2nd.when = "same";
   var st2=window._rdv2nd;
   var h='';
   // Client picker (passage tiles + search)
@@ -22679,6 +22835,16 @@ function renderRdv2ndBody(){
     h+='<option value="'+s.id+'"'+(st2.svcId===s.id?' selected':'')+'>'+s.n+' — '+(Number(s.p)||0).toFixed(2)+'€</option>';
   }
   h+='</select>';
+  // FIX 2026-05-15 : choix du timing du 2ème RDV
+  // - 'same'    : même créneau que le 1er RDV (comportement historique)
+  // - 'planning': placement visuel sur le planning après validation du 1er
+  h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:10px 0 6px;letter-spacing:1px;text-transform:uppercase">Quand ?</div>';
+  h+='<div style="display:flex;gap:6px">';
+  var _sameSel = st2.when === "same";
+  var _planSel = st2.when === "planning";
+  h+='<button type="button" onclick="_setRdv2ndWhen(\'same\')" style="flex:1;padding:10px 6px;border-radius:8px;border:1.5px solid '+(_sameSel?'#a29bfe':'rgba(255,255,255,.1)')+';background:'+(_sameSel?'rgba(108,92,231,.18)':'rgba(255,255,255,.04)')+';color:'+(_sameSel?'#a29bfe':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">📅 Même créneau<br><span style="font-size:9px;opacity:.75">que le 1er RDV</span></button>';
+  h+='<button type="button" onclick="_setRdv2ndWhen(\'planning\')" style="flex:1;padding:10px 6px;border-radius:8px;border:1.5px solid '+(_planSel?'#a29bfe':'rgba(255,255,255,.1)')+';background:'+(_planSel?'rgba(108,92,231,.18)':'rgba(255,255,255,.04)')+';color:'+(_planSel?'#a29bfe':'rgba(255,255,255,.6)')+';font-size:11px;font-weight:700;cursor:pointer;line-height:1.3">🎯 Choisir<br><span style="font-size:9px;opacity:.75">sur le planning</span></button>';
+  h+='</div>';
   el.innerHTML=h;
   // Filtrage live de la prestation (réduit la liste longue)
   var _svcSel=document.getElementById("rdv2ndSvcSel");
@@ -22703,6 +22869,12 @@ function pickRdv2ndPassage(type){
   window._rdv2nd.cId="passage-"+type;
   window._rdv2nd.cName=labels[type];
   window._rdv2nd.passType=type;
+  renderRdv2ndBody();
+}
+// FIX 2026-05-15 : change le timing du 2ème RDV ('same' ou 'planning')
+function _setRdv2ndWhen(when){
+  if(!window._rdv2nd) window._rdv2nd={};
+  window._rdv2nd.when = (when==="planning") ? "planning" : "same";
   renderRdv2ndBody();
 }
 
@@ -29504,6 +29676,11 @@ function initApp(){
   try{var ff=localStorage.getItem("_cp_forfaits");if(ff)FORFAITS=JSON.parse(ff);}catch(e){}
   // Load absences from localStorage
   try{var _abs=localStorage.getItem("_cp_absences");if(_abs)window.ABSENCES=JSON.parse(_abs);}catch(e){}
+  // FIX 2026-05-15 : restore d'un placement 2ème RDV en attente (survit aux refresh)
+  try{
+    var _p2 = localStorage.getItem("_lx_pending_2nd_rdv");
+    if(_p2){ window._pending2ndRdv = JSON.parse(_p2); }
+  }catch(e){ try{ localStorage.removeItem("_lx_pending_2nd_rdv"); }catch(_){} }
   // Auto-populate forfaits from services (except Soins) if empty
   if(!FORFAITS.length&&SVC.length>0){
     var fId=1;
