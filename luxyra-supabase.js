@@ -776,6 +776,9 @@ async function loadSalonData() {
   // ("active" = KYC complet, salon peut recevoir des paiements directs)
   SALON_CONFIG.stripeConnectStatus = salon.stripe_connect_status || "";
   SALON_CONFIG.stripeConnectId = salon.stripe_connect_id || "";
+  // Toggle "Bons cadeaux en ligne" — vente publique de bons cadeaux via Stripe Checkout
+  // Gated par Stripe Connect actif (sinon les fonds ne peuvent pas être encaissés)
+  SALON_CONFIG.bonsCadeauxOnlineActif = salon.bons_cadeaux_online_actif === true;
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
   if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
