@@ -2118,6 +2118,16 @@ async function saveCloture(clot) {
       _walMarkSynced(_walId);  // déjà existante = équivalent synchronisé
       return;
     }
+    // FIX 2026-05-15 (soir) : code 42501 = RLS UPDATE block, normal pour clotures.
+    // La table clotures est immuable par design NF525 (BOI-CF-COM-10-80-30-10) :
+    // policies INSERT + SELECT uniquement, pas d'UPDATE/DELETE. Un upsert qui
+    // tape sur une ligne existante (id déjà présent) déclenche ce code.
+    // → On traite comme un succès : la clôture est déjà en DB et NF525-conforme.
+    if (res.error.code === "42501" || (res.error.message || "").indexOf("row-level security") >= 0) {
+      console.warn("[saveCloture] Clôture immutable (RLS UPDATE block) — déjà enregistrée. Num=" + clot.num);
+      _walMarkSynced(_walId);
+      return;
+    }
     console.error("[saveCloture] Erreur upsert:", res.error);
     if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
     // FIX 2026-05-15 : log DB_ERROR pour monitoring admin
