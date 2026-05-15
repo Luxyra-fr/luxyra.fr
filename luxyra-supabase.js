@@ -536,6 +536,9 @@ async function loadSalonData() {
   window._salonId = salon.id; // expose explicitement pour app.html (startCheckout, etc.)
   _isOnline = true;
 
+  // Flush queue d'erreurs JS pré-login (hook window.onerror — voir app.html)
+  try { if (typeof window._lxFlushErrorQueue === "function") window._lxFlushErrorQueue(); } catch(_){}
+
   // Minimum config pour les écrans de blocage
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
   SALON_CONFIG.email = salon.email || "";

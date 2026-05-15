@@ -344,6 +344,58 @@ body{max-width:100%;margin:0 auto;}
 <script>
 console.log("LUXYRA v6.3");
 
+// ===== HOOK ERREURS GLOBALES (depuis 2026-05-15) =====================
+// Capte les erreurs JS non gérées + promesses rejetées et les pousse en DB
+// dans audit_log avec action='JS_ERROR'. Permet de debugger en prod sans
+// dépendre des captures d'écran utilisateur (cas Amandine 15/05 — bug
+// "ps is not defined" passé inaperçu pendant des heures).
+// Rate-limit : max 10 erreurs par session pour ne pas flooder.
+// Queue offline : si saveAuditEntry pas encore dispo (avant login), buffer
+// en LS et flush à la connexion.
+(function(){
+  var _errCount=0, _MAX=10, _LS_KEY="_lx_err_queue";
+  function _pushErr(payload){
+    if(_errCount>=_MAX) return;
+    _errCount++;
+    // Tenter envoi DB immédiat
+    if(typeof saveAuditEntry==="function"){
+      try{ saveAuditEntry("JS_ERROR", JSON.stringify(payload).slice(0,2000)); return; }catch(_){}
+    }
+    // Sinon queue LS
+    try{
+      var q=JSON.parse(localStorage.getItem(_LS_KEY)||"[]");
+      q.push(payload); if(q.length>50)q=q.slice(-50);
+      localStorage.setItem(_LS_KEY, JSON.stringify(q));
+    }catch(_){}
+  }
+  function _buildPayload(e, type){
+    return {
+      type: type,
+      msg: (e && (e.message || e.reason && e.reason.message || String(e.reason))) || "unknown",
+      file: (e && e.filename) || "",
+      line: (e && e.lineno) || 0,
+      col: (e && e.colno) || 0,
+      stack: (e && e.error && e.error.stack ? String(e.error.stack).slice(0,800) :
+              e && e.reason && e.reason.stack ? String(e.reason.stack).slice(0,800) : ""),
+      url: location.pathname + location.hash,
+      ua: navigator.userAgent.slice(0,120),
+      ts: new Date().toISOString()
+    };
+  }
+  window.addEventListener("error", function(e){ _pushErr(_buildPayload(e,"error")); });
+  window.addEventListener("unhandledrejection", function(e){ _pushErr(_buildPayload(e,"rejection")); });
+  // Flush queue LS au login (saveAuditEntry devient dispo)
+  window._lxFlushErrorQueue = function(){
+    try{
+      var q=JSON.parse(localStorage.getItem(_LS_KEY)||"[]");
+      if(!q.length || typeof saveAuditEntry!=="function") return;
+      q.forEach(function(p){ try{ saveAuditEntry("JS_ERROR", JSON.stringify(p).slice(0,2000)); }catch(_){} });
+      localStorage.removeItem(_LS_KEY);
+    }catch(_){}
+  };
+})();
+// ====================================================================
+
 // ===== TOAST NOTIFICATION SYSTEM =====
 (function(){
   var container=null;
