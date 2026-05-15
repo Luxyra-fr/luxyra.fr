@@ -2120,6 +2120,28 @@ Sitemap: https://luxyra.fr/sitemap.xml
       && /^[a-z0-9][a-z0-9-]{1,79}$/i.test(segmentForSlug)
       && !RESERVED_FOR_SLUG.has(segmentForSlug);
 
+    // FIX 2026-05-15 : /<slug>/bons-cadeaux → sert bons-cadeaux.html avec __SALON_SLUG injecté
+    if (!looksLikeSlug && segmentForSlug && segmentForSlug.includes("/")) {
+      const parts = segmentForSlug.split("/");
+      const maybeSlug = parts[0];
+      const subPath = parts.slice(1).join("/");
+      const slugOK = /^[a-z0-9][a-z0-9-]{1,79}$/i.test(maybeSlug) && !RESERVED_FOR_SLUG.has(maybeSlug);
+      if (slugOK && (subPath === "bons-cadeaux" || subPath === "bons-cadeaux/" || subPath === "bons-cadeaux/success")) {
+        const isSuccess = subPath === "bons-cadeaux/success";
+        const fname = isSuccess ? "bons-cadeaux-success.html" : "bons-cadeaux.html";
+        const ghUrl = `https://luxyra-fr.github.io/luxyra.fr/${fname}`;
+        const res = await fetch(ghUrl, { cf: { cacheTtl: 0 } });
+        if (res.ok) {
+          let html = await res.text();
+          const safeSlug = maybeSlug.replace(/[^a-z0-9-]/g, "");
+          html = html.replace("</head>", `<script>window.__SALON_SLUG=${JSON.stringify(safeSlug)};</script></head>`);
+          return new Response(html, {
+            headers: { "Content-Type": "text/html;charset=UTF-8", "Cache-Control": "no-cache, no-store, must-revalidate" }
+          });
+        }
+      }
+    }
+
     if (looksLikeSlug) {
       // Sert site.html avec __SALON_SLUG injecté (URL visible inchangée)
       const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtl: 0 } });
