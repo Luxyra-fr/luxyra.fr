@@ -9731,12 +9731,24 @@ function _place2ndRdvAtSlot(stId, time, date){
   }
   // 6) Save DB
   if(typeof saveAppointment === "function") saveAppointment(rdvObj2);
-  // 7) Nettoyage state
+  // 7) Envoi SMS différé : 1er RDV puis 2ème (en mode placement on l'avait reporté)
+  //    sendRdvConfirmation gère lui-même la modale + l'envoi optionnel par l'utilisateur
+  var _firstForSms = p.firstRdvForSms || null;
+  // 8) Nettoyage state AVANT les SMS (sinon clickSlot suivant pourrait re-déclencher)
   window._pending2ndRdv = null;
   try { localStorage.removeItem("_lx_pending_2nd_rdv"); } catch(_){}
-  // 8) Feedback + refresh planning
+  // 9) Feedback + refresh planning
   if(typeof toast === "function") toast("✓ 2ème RDV placé : "+stName+" à "+time, "success");
   go("planning");
+  // 10) Modales SMS en séquence (espace de 300ms pour le rendu planning)
+  // Note : sendRdvConfirmation ouvre une modale. Pour ne pas en ouvrir 2 simultanées,
+  // on enchaîne. Le user peut envoyer ou skip chaque SMS indépendamment.
+  if(typeof sendRdvConfirmation === "function"){
+    setTimeout(function(){
+      if(_firstForSms) sendRdvConfirmation(_firstForSms);
+      else sendRdvConfirmation(rdvObj2);
+    }, 300);
+  }
 }
 
 // FIX 2026-05-15 : annule le placement du 2ème RDV en cours
@@ -22569,7 +22581,18 @@ function aAp(){
       saveAppointment(rdvObj).then(function(){go("planning");}).catch(function(){});
     }
   }
-  setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
+  // FIX 2026-05-15 v3 : en mode placement 2ème RDV, on diffère l'envoi SMS
+  // jusqu'au placement final (sinon la modale SMS couvre la bannière planning).
+  // L'envoi sera déclenché à la fin de _place2ndRdvAtSlot pour les 2 RDV d'un coup.
+  if(_rdv2ndManualPlacement){
+    // On stocke l'objet 1er RDV pour le SMS différé (envoi groupé après placement 2ème)
+    if(window._pending2ndRdv){
+      window._pending2ndRdv.firstRdvForSms = rdvObj;
+      try { localStorage.setItem("_lx_pending_2nd_rdv", JSON.stringify(window._pending2ndRdv)); } catch(_){}
+    }
+  } else {
+    setTimeout(function(){sendRdvConfirmation(rdvObj);},300);
+  }
 }
 
 function confirmPendingRdv(){
@@ -22827,13 +22850,13 @@ function renderRdv2ndBody(){
   // Étape 2 : prestations de la catégorie cliquée
   // Sélection finale affichée en haut
   h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">Prestation</div>';
-  // Récap prestation sélectionnée
+  // Récap prestation sélectionnée — FIX 2026-05-15 v3 : couleur stable (violet thème)
+  // au lieu de getSvcColor qui produit parfois des contrastes illisibles
   var _selSvc = st2.svcId ? gS(st2.svcId) : null;
   if(_selSvc){
-    var _sCol = (typeof getSvcColor==="function")?getSvcColor(_selSvc.cat):{text:"#a29bfe",border:"rgba(108,92,231,.4)",bg:"rgba(108,92,231,.18)"};
-    h+='<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:'+_sCol.bg+';border:1.5px solid '+_sCol.border+';border-radius:8px;margin-bottom:8px">';
-    h+='<div style="flex:1;color:'+_sCol.text+';font-weight:700;font-size:13px">✓ '+_selSvc.n+' <span style="opacity:.75;font-weight:400">— '+(Number(_selSvc.p)||0).toFixed(2)+'€</span></div>';
-    h+='<button type="button" onclick="_rdv2ndClearSvc()" style="background:none;border:1px solid '+_sCol.border+';color:'+_sCol.text+';width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:14px;line-height:1;padding:0">×</button>';
+    h+='<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;background:rgba(108,92,231,.18);border:1.5px solid rgba(162,155,254,.55);border-radius:10px;margin-bottom:8px">';
+    h+='<div style="flex:1;color:#fff;font-weight:700;font-size:13px;line-height:1.3"><span style="color:#a29bfe">✓</span> '+_selSvc.n+' <span style="opacity:.7;font-weight:500">— '+(Number(_selSvc.p)||0).toFixed(2)+'€</span></div>';
+    h+='<button type="button" onclick="_rdv2ndClearSvc()" title="Changer de prestation" style="background:rgba(244,67,54,.15);border:1px solid rgba(244,67,54,.4);color:#ef5350;width:26px;height:26px;border-radius:50%;cursor:pointer;font-size:14px;line-height:1;padding:0;font-weight:700;flex-shrink:0">×</button>';
     h+='</div>';
   }
   // Affichage : catégories OU prestations d'une catégorie sélectionnée
