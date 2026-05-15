@@ -2121,6 +2121,8 @@ Sitemap: https://luxyra.fr/sitemap.xml
       && !RESERVED_FOR_SLUG.has(segmentForSlug);
 
     // FIX 2026-05-15 : /<slug>/bons-cadeaux → sert bons-cadeaux.html avec __SALON_SLUG injecté
+    // FIX 2026-05-15 (soir) : /<slug>/reserver → sert site.html avec hash forcé sur réservation (Google Business)
+    let _reserverIntent = false;
     if (!looksLikeSlug && segmentForSlug && segmentForSlug.includes("/")) {
       const parts = segmentForSlug.split("/");
       const maybeSlug = parts[0];
@@ -2140,14 +2142,34 @@ Sitemap: https://luxyra.fr/sitemap.xml
           });
         }
       }
+      // NEW : route dédiée /<slug>/reserver pour Google Business Profile
+      // Google ne suit pas les fragments d'URL (#reserver) lors de la validation
+      // du "Lien pour les rendez-vous". Cette route propre sert la page salon
+      // avec un signal explicite pour ouvrir directement le formulaire de RDV.
+      if (slugOK && (subPath === "reserver" || subPath === "reserver/" || subPath === "reservation" || subPath === "reservation/" || subPath === "booking" || subPath === "rdv")) {
+        // On laisse le routing slug en bas reprendre la main avec ce signal
+        segmentForSlug = maybeSlug;
+        _reserverIntent = true;
+        // Re-évalue looksLikeSlug avec le nouveau segment
+      }
     }
+    // Re-test looksLikeSlug si on a stripped le sous-path /reserver
+    const looksLikeSlugFinal = (looksLikeSlug || _reserverIntent)
+      && segmentForSlug
+      && !segmentForSlug.includes("/")
+      && /^[a-z0-9][a-z0-9-]{1,79}$/i.test(segmentForSlug)
+      && !RESERVED_FOR_SLUG.has(segmentForSlug);
 
-    if (looksLikeSlug) {
+    if (looksLikeSlugFinal) {
       // Sert site.html avec __SALON_SLUG injecté (URL visible inchangée)
       const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtl: 0 } });
       let html = await res.text();
       const safeSlug = segmentForSlug.replace(/[^a-z0-9-]/g, "");
-      html = html.replace("</head>", `<script>window.__SALON_SLUG=${JSON.stringify(safeSlug)};</script></head>`);
+      // FIX 2026-05-15 : si on arrive via /<slug>/reserver, injecte un flag JS
+      // qui sera lu côté client pour ouvrir directement le formulaire de RDV
+      // (équivalent au hash #reserver mais survit au crawl Google qui ignore les fragments)
+      const reserverFlag = _reserverIntent ? `window.__OPEN_RESERVATION=true;` : "";
+      html = html.replace("</head>", `<script>window.__SALON_SLUG=${JSON.stringify(safeSlug)};${reserverFlag}</script></head>`);
 
       // ====================================================================
       // SSR META TAGS POUR BOTS SEO/IA (Googlebot, Bingbot, ChatGPT, Perplexity, Claude, etc.)
@@ -2220,9 +2242,13 @@ Sitemap: https://luxyra.fr/sitemap.xml
               const image = (s.logo && !String(s.logo).startsWith("data:")) ? s.logo : "https://luxyra.fr/luxyra-logo.png";
               // FIX 2026-05-15 SEO LOCAL : ville accolée au nom (expression composée Google),
               // sous-titre inclus, format dense pour matcher "excellence coiffure sarreguemines"
-              const title = sousTitre
+              // Variante /reserver : titre orienté "Réservation" pour Google Business
+              const baseTitle = sousTitre
                 ? `${nom}${ville ? " " + ville : ""} ${sousTitre} — ${metierLabel}`
                 : `${nom}${ville ? " " + ville : ""} — ${metierLabel}${cp ? " " + cp : ""}`;
+              const title = _reserverIntent
+                ? `Réserver chez ${nom}${ville ? " " + ville : ""} — Prendre rendez-vous ${metierLabel.toLowerCase()}`
+                : baseTitle;
               // Description ultra-dense en mots-clés locaux
               const descParts = [];
               descParts.push(`Réservez en ligne chez ${nom}${sousTitre ? " " + sousTitre : ""}`);
@@ -2343,7 +2369,15 @@ Sitemap: https://luxyra.fr/sitemap.xml
               // ====================================================================
               try {
                 let fallback = `<noscript><div style="max-width:900px;margin:0 auto;padding:40px 20px;font-family:Georgia,serif;color:#333">`;
-                fallback += `<h1>${esc(nom)}${ville ? " " + esc(ville) : ""}${sousTitre ? " — " + esc(sousTitre) : ""}</h1>`;
+                if (_reserverIntent) {
+                  fallback += `<h1>Réserver chez ${esc(nom)}${ville ? " à " + esc(ville) : ""}</h1>`;
+                  fallback += `<p style="font-size:18px"><strong>Prenez rendez-vous en ligne</strong> chez ${esc(nom)}${sousTitre ? " " + esc(sousTitre) : ""}, ${esc(metierLabel.toLowerCase())}${ville ? " à " + esc(ville) : ""}${cp ? " (" + esc(cp) + ")" : ""}. Confirmation immédiate par email et SMS.</p>`;
+                  fallback += `<p style="margin:20px 0"><a href="${esc(url)}#reserver" style="display:inline-block;padding:16px 32px;background:#c8a84e;color:#000;text-decoration:none;font-weight:700;border-radius:6px;font-size:18px">📅 Prendre rendez-vous maintenant</a></p>`;
+                  fallback += `<h2>${esc(nom)}${sousTitre ? " " + esc(sousTitre) : ""}</h2>`;
+                } else {
+                  fallback += `<h1>${esc(nom)}${ville ? " " + esc(ville) : ""}${sousTitre ? " — " + esc(sousTitre) : ""}</h1>`;
+                  fallback += `<p style="margin:20px 0"><a href="${esc(url)}#reserver" style="display:inline-block;padding:14px 28px;background:#c8a84e;color:#000;text-decoration:none;font-weight:700;border-radius:6px;font-size:16px">📅 Réserver maintenant</a></p>`;
+                }
                 fallback += `<p><strong>${esc(metierLabel)}${ville ? " à " + esc(ville) : ""}${cp ? " (" + esc(cp) + ")" : ""}</strong></p>`;
                 if (adresse || ville) {
                   fallback += `<h2>Adresse</h2><address>${esc(adresse)}${cp ? ", " + esc(cp) : ""}${ville ? " " + esc(ville) : ""}, France</address>`;
