@@ -909,15 +909,16 @@ function rEmail(){
 window._monitoringRefreshTimer = null;
 function rMonitoring(){
   var notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
-  var btnLabel = '🔔 Activer les notifications';
+  var hasSW = (typeof navigator !== 'undefined') && ('serviceWorker' in navigator) && ('PushManager' in window);
+  var btnLabel = '🔔 Activer les notifications Push';
   var btnColor = 'var(--gold)';
-  if(notifPerm === 'granted') { btnLabel = '✅ Notifications activées'; btnColor = '#66bb6a'; }
-  else if(notifPerm === 'denied') { btnLabel = '🚫 Notifications bloquées (Paramètres navigateur)'; btnColor = '#ef5350'; }
-  else if(notifPerm === 'unsupported') { btnLabel = '⚠️ Navigateur non compatible'; btnColor = 'var(--text3)'; }
+  if(!hasSW) { btnLabel = '⚠️ Push non compatible'; btnColor = 'var(--text3)'; }
+  else if(notifPerm === 'granted') { btnLabel = '✅ Notifications activées (push)'; btnColor = '#66bb6a'; }
+  else if(notifPerm === 'denied') { btnLabel = '🚫 Notifications bloquées (Paramètres)'; btnColor = '#ef5350'; }
 
   var h='<div class="topbar"><h1>Monitoring <span>JS Errors</span> '
     + '<button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button>'
-    + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(notifPerm==='unsupported'||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
+    + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(!hasSW||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
     + '</h1></div>';
   h+='<div id="monitoringContent" style="padding:20px"><div style="text-align:center;color:var(--text3);padding:40px">Chargement…</div></div>';
   setTimeout(rMonitoringRefresh, 50);
@@ -938,31 +939,111 @@ function rMonitoring(){
 }
 
 // ====================================================================
-// Notifications natives navigateur + watcher polling
+// Web Push Notifications (RFC 8030/8291/8292) — fonctionne MÊME app fermée
 // ====================================================================
-window.lxRequestMonitoringNotif = function(){
-  if(typeof Notification === 'undefined'){ alert('Votre navigateur ne supporte pas les notifications.'); return; }
-  if(Notification.permission === 'granted'){
-    new Notification('🔔 Notifications déjà activées', { body: 'Vous recevrez les alertes erreurs Luxyra dans cet onglet.', icon: '/icon-192.png' });
+// Helper : convertir base64url en Uint8Array pour applicationServerKey
+function _lxUrlBase64ToUint8Array(base64String) {
+  var padding = '='.repeat((4 - base64String.length % 4) % 4);
+  var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  var raw = atob(base64);
+  var arr = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+window.lxRequestMonitoringNotif = async function(){
+  // Étape 1 : vérifie support
+  if(typeof Notification === 'undefined' || typeof navigator === 'undefined' || !('serviceWorker' in navigator)){
+    alert('Votre navigateur ne supporte pas les Web Push notifications.');
     return;
   }
   if(Notification.permission === 'denied'){
-    alert('Notifications bloquées par votre navigateur. Allez dans les paramètres du site et autorisez les notifications.');
+    alert('Notifications bloquées par votre navigateur. Allez dans les paramètres du site (cadenas à gauche de l\'URL) et autorisez les notifications.');
     return;
   }
-  Notification.requestPermission().then(function(perm){
-    if(perm === 'granted'){
-      new Notification('✅ Notifications Luxyra activées', { body: 'Vous recevrez les alertes erreurs critiques en temps réel tant que cet onglet est ouvert.', icon: '/icon-192.png' });
-      // Refresh la page pour mettre à jour le bouton
-      if(typeof rMonitoring === 'function') document.getElementById('monitoringContent') && rMonitoringRefresh();
-      // Re-render le bouton
-      var btn = document.getElementById('lxNotifBtn');
-      if(btn){ btn.textContent = '✅ Notifications activées'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
-    } else {
-      alert('Notifications refusées. Vous pouvez les réactiver dans les paramètres de votre navigateur.');
+
+  try {
+    // Étape 2 : enregistrer le Service Worker
+    var swReg = await navigator.serviceWorker.register('/admin-sw.js', { scope: '/' });
+    console.log('[lxPush] SW registered', swReg.scope);
+    await navigator.serviceWorker.ready;
+
+    // Étape 3 : demander permission si pas encore accordée
+    if(Notification.permission !== 'granted'){
+      var perm = await Notification.requestPermission();
+      if(perm !== 'granted'){
+        alert('Notifications refusées. Vous pouvez les réactiver dans les paramètres de votre navigateur.');
+        return;
+      }
+    }
+
+    // Étape 4 : récup VAPID public key
+    var keyRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-push-public-key');
+    var keyData = await keyRes.json();
+    if(!keyData.publicKey){ alert('Erreur récupération clé Push : '+(keyData.error||'inconnu')); return; }
+
+    // Étape 5 : subscribe via PushManager
+    var existing = await swReg.pushManager.getSubscription();
+    if(existing) await existing.unsubscribe();
+    var subscription = await swReg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: _lxUrlBase64ToUint8Array(keyData.publicKey)
+    });
+
+    // Étape 6 : extraire endpoint + p256dh + auth
+    var subJson = subscription.toJSON();
+    var endpoint = subJson.endpoint || subscription.endpoint;
+    var p256dh = subJson.keys && subJson.keys.p256dh;
+    var auth = subJson.keys && subJson.keys.auth;
+
+    // Étape 7 : POST à lx-push-subscribe (auth via JWT Supabase admin)
+    var session = await _sb.auth.getSession();
+    var jwt = session?.data?.session?.access_token;
+    if(!jwt){ alert('Vous devez être connecté admin pour activer les notifications.'); return; }
+    var subRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-push-subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+jwt },
+      body: JSON.stringify({ endpoint, p256dh, auth, action: 'subscribe' })
+    });
+    var subResData = await subRes.json();
+    if(!subRes.ok){ alert('Erreur enregistrement subscription : '+(subResData.error||'inconnu')); return; }
+
+    // Étape 8 : notif de confirmation locale + maj du bouton
+    swReg.showNotification('✅ Web Push activé !', {
+      body: 'Vous recevrez les alertes Luxyra même quand l\'app est fermée.',
+      icon: '/icon-192.png',
+      tag: 'lx-confirm'
+    });
+    var btn = document.getElementById('lxNotifBtn');
+    if(btn){ btn.textContent = '✅ Push activé (même app fermée)'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
+
+    // Optionnel : déclencher un push de test depuis le serveur pour valider end-to-end
+    try {
+      await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-web-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: '🎉 Test Web Push Luxyra',
+          body: 'Si tu vois cette notif sans avoir l\'app ouverte, c\'est blindé !',
+          severity: 'high'
+        })
+      });
+    } catch(_) {}
+
+  } catch(e) {
+    console.error('[lxPush] error', e);
+    alert('Erreur activation Web Push : ' + (e.message || e));
+  }
+};
+
+// Si l'utilisateur vient du SW (clic sur notif), on navigue vers monitoring
+if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener('message', function(event){
+    if (event.data && event.data.type === 'navigate' && typeof go === 'function') {
+      go('monitoring');
     }
   });
-};
+}
 
 // Watcher : poll toutes les 15s sur les NOUVELLES erreurs depuis la dernière vérif
 // Tourne en arrière-plan tant que l'admin est ouvert dans un onglet.
