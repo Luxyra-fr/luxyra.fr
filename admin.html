@@ -1106,23 +1106,18 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas] = await Promise.all([
+    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
       _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
-      // erreurs JS des pages publiques anonymes
       _sb.from('js_errors_public').select('id, source, type, message, page, salon_slug, reported_at')
          .order('reported_at', { ascending: false }).limit(50),
-      // erreurs SERVEUR (worker Cloudflare, edge functions, cron failures via trigger)
       _sb.from('server_errors').select('id, source, severity, message, http_path, http_status, salon_id, reported_at')
          .order('reported_at', { ascending: false }).limit(50),
-      // FIX 2026-05-16 nuit : santé des cron jobs (succès/échecs 7j)
       _sb.rpc('admin_cron_health'),
-      // FIX 2026-05-17 : erreurs groupées par signature (24h) — évite scroll infini
       _sb.rpc('admin_errors_grouped', {p_hours: 24}),
-      // FIX 2026-05-17 nuit : détection d'anomalies business (silence = bug)
       _sb.rpc('check_business_anomalies'),
-      // FIX 2026-05-17 nuit : surveillance des quotas / coûts
-      _sb.rpc('check_quotas')
+      _sb.rpc('check_quotas'),
+      _sb.rpc('admin_slow_queries', {p_min_ms: 200, p_limit: 15})
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
     if(recent.error) throw new Error('Recent: '+recent.error.message);
@@ -1134,7 +1129,8 @@ async function rMonitoringRefresh(){
     var rowsGrouped = grouped.error ? [] : (grouped.data || []);
     var rowsAnomalies = anomalies.error ? [] : (anomalies.data || []);
     var rowsQuotas = quotas.error ? [] : (quotas.data || []);
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas);
+    var rowsSlowQ = slowQueries.error ? [] : (slowQueries.data || []);
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas, rowsSlowQ);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -1142,7 +1138,19 @@ async function rMonitoringRefresh(){
       + '</div>';
   }
 }
-function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas){
+// Snooze une signature pour N jours (callback bouton ligne groupée)
+window.lxSnoozeSignature = async function(signature, days){
+  if(!signature) return;
+  days = days || 7;
+  if(!confirm('Ignorer cette signature d\'erreur pendant '+days+' jours ?\n\n'+signature)) return;
+  try {
+    var r = await _sb.rpc('snooze_error_signature', { p_signature: signature, p_days: days, p_reason: 'Manual via panel' });
+    if(r.error) throw new Error(r.error.message);
+    rMonitoringRefresh();
+  } catch(e){ alert('Erreur snooze : '+(e.message||e)); }
+};
+
+function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
   // === Stats globales (KPI cards) ===
@@ -1249,6 +1257,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
       +'<th style="text-align:left;padding:10px 12px;color:var(--text3);font-size:11px">MESSAGE</th>'
       +'<th style="text-align:right;padding:10px 12px;color:var(--text3);font-size:11px">PREMIÈRE</th>'
       +'<th style="text-align:right;padding:10px 12px;color:var(--text3);font-size:11px">DERNIÈRE</th>'
+      +'<th style="text-align:center;padding:10px 12px;color:var(--text3);font-size:11px">ACTION</th>'
       +'</tr></thead><tbody>';
     grouped.forEach(function(g){
       var sevColor = g.severity_max==='critical' ? '#ef5350' : (g.severity_max==='error'?'#ff9800':(g.severity_max==='warning'?'#ffd54f':'#9e9e9e'));
@@ -1257,6 +1266,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
       var msgShort = (g.msg||'').length>80 ? g.msg.slice(0,80)+'…' : (g.msg||'—');
       var firstShort = g.first_seen ? new Date(g.first_seen).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
       var lastShort = g.last_seen ? new Date(g.last_seen).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      var sigEscaped = (g.signature||'').replace(/'/g, "\\'").replace(/"/g, '&quot;');
       h+='<tr style="border-top:1px solid var(--border)" title="'+_esc(g.signature||'')+'">'
         +'<td style="padding:8px 12px;color:var(--text3);font-size:11px">'+_esc(srcLabel)+'</td>'
         +'<td style="padding:8px 12px"><span style="padding:2px 8px;border-radius:6px;background:'+sevBg+';color:'+sevColor+';font-size:10px;font-weight:800">'+_esc(g.category||'')+'</span></td>'
@@ -1265,6 +1275,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
         +'<td style="padding:8px 12px;color:var(--text2);font-family:monospace;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+_esc(g.msg||'')+'">'+_esc(msgShort)+'</td>'
         +'<td style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+_esc(firstShort)+'</td>'
         +'<td style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+_esc(lastShort)+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;white-space:nowrap"><button onclick="lxSnoozeSignature(\''+sigEscaped+'\', 7)" style="padding:4px 8px;background:transparent;border:1px solid var(--text3);color:var(--text3);border-radius:6px;font-size:10px;cursor:pointer" title="Ignorer cette erreur pendant 7 jours">🔕 7j</button></td>'
         +'</tr>';
     });
     h+='</tbody></table></div>';
@@ -1380,6 +1391,37 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
   } else {
     h+='<div style="margin-top:24px;padding:16px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:12px;font-size:13px;color:#66bb6a"><strong>⚙️ Serveur</strong> · Aucune erreur récente sur le worker Cloudflare, les edge functions Supabase ou les jobs cron.</div>';
   }
+  // === FIX 2026-05-17 nuit : Slow queries Postgres (pg_stat_statements) ===
+  slowQueries = slowQueries || [];
+  if(slowQueries.length > 0){
+    h+='<div style="margin-top:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold)">🐌 Slow queries Postgres ('+slowQueries.length+', moyenne ≥ 200ms)</h2>';
+    h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:11px">';
+    h+='<thead style="background:var(--bg3)"><tr>'
+      +'<th style="text-align:left;padding:8px 12px;color:var(--text3);font-size:11px">REQUÊTE</th>'
+      +'<th style="text-align:center;padding:8px 12px;color:var(--text3);font-size:11px">CALLS</th>'
+      +'<th style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px">MOY (ms)</th>'
+      +'<th style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px">MAX (ms)</th>'
+      +'<th style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px">TOTAL (ms)</th>'
+      +'<th style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px">% DB</th>'
+      +'</tr></thead><tbody>';
+    slowQueries.forEach(function(q){
+      var meanColor = q.mean_ms > 1000 ? '#ef5350' : (q.mean_ms > 500 ? '#ff9800' : '#ffd54f');
+      var pctColor = q.pct_total > 20 ? '#ef5350' : (q.pct_total > 10 ? '#ff9800' : 'var(--text3)');
+      var qShort = (q.query_short||'').length > 100 ? q.query_short.slice(0,100)+'…' : (q.query_short||'');
+      h+='<tr style="border-top:1px solid var(--border)" title="'+_esc(q.query_short||'')+'">'
+        +'<td style="padding:8px 12px;color:var(--text2);font-family:monospace;max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_esc(qShort)+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;color:var(--text2)">'+(q.calls||0)+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:'+meanColor+';font-weight:700">'+(q.mean_ms||0)+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:var(--text3)">'+(q.max_ms||0)+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:var(--text3)">'+(q.total_ms||0)+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:'+pctColor+';font-weight:700">'+(q.pct_total||0)+'%</td>'
+        +'</tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Via pg_stat_statements. Cron quotidien alerte si une requête > 1s en moyenne. % DB = part du temps DB cumulé.</div></div>';
+  }
+
   // === Section Cron health (FIX 2026-05-16 nuit : visibilité 100% sur les jobs planifiés) ===
   cronHealth = cronHealth || [];
   if(cronHealth.length > 0){
