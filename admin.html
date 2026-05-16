@@ -1114,7 +1114,7 @@ async function rMonitoringRefresh(){
       _sb.from('server_errors').select('id, source, severity, message, http_path, http_status, salon_id, reported_at')
          .order('reported_at', { ascending: false }).limit(50),
       _sb.rpc('admin_cron_health'),
-      _sb.rpc('admin_errors_grouped', {p_hours: 24}),
+      _sb.rpc('admin_errors_grouped', {p_hours: window._lxGroupHours || 24}),
       _sb.rpc('check_business_anomalies'),
       _sb.rpc('check_quotas'),
       _sb.rpc('admin_slow_queries', {p_min_ms: 200, p_limit: 15})
@@ -1138,6 +1138,12 @@ async function rMonitoringRefresh(){
       + '</div>';
   }
 }
+// Change la période de la vue groupée (24h / 7j / 30j)
+window.lxSetGroupedPeriod = function(hours){
+  window._lxGroupHours = hours;
+  rMonitoringRefresh();
+};
+
 // Snooze une signature pour N jours (callback bouton ligne groupée)
 window.lxSnoozeSignature = async function(signature, days){
   if(!signature) return;
@@ -1245,8 +1251,14 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
   // === FIX 2026-05-17 nuit : Vue groupée par signature (24h) ===
   // Évite que 100 occurrences du même bug polluent le panel.
   grouped = grouped || [];
+  var curHours = window._lxGroupHours || 24;
+  var periodLabel = curHours <= 24 ? '24h' : (curHours <= 168 ? '7 jours' : '30 jours');
+  function periodBtn(h, label, active){
+    return '<button onclick="lxSetGroupedPeriod('+h+')" style="padding:4px 10px;margin-left:4px;border-radius:6px;border:1px solid '+(active?'var(--gold)':'var(--border)')+';background:'+(active?'var(--gold-bg)':'transparent')+';color:'+(active?'var(--gold)':'var(--text3)')+';font-size:11px;font-weight:'+(active?'700':'500')+';cursor:pointer">'+label+'</button>';
+  }
   if(grouped.length > 0){
-    h+='<div style="margin-bottom:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold)">🧩 Vue groupée — '+grouped.length+' signature'+(grouped.length>1?'s':'')+' uniques (24h)</h2>';
+    h+='<div style="margin-bottom:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold);display:flex;align-items:center;flex-wrap:wrap">🧩 Vue groupée — '+grouped.length+' signature'+(grouped.length>1?'s':'')+' uniques ('+periodLabel+')'
+      +'<span style="margin-left:auto">'+periodBtn(24,'24h',curHours===24)+periodBtn(168,'7j',curHours===168)+periodBtn(720,'30j',curHours===720)+'</span></h2>';
     h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
     h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
     h+='<thead style="background:var(--bg3)"><tr>'
