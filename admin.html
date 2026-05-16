@@ -909,12 +909,13 @@ function rEmail(){
 window._monitoringRefreshTimer = null;
 function rMonitoring(){
   var notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
-  var hasSW = (typeof navigator !== 'undefined') && ('serviceWorker' in navigator) && ('PushManager' in window);
-  var btnLabel = '🔔 Activer les notifications Push';
+  var hasNotif = (typeof Notification !== 'undefined');
+  var btnLabel = '🔔 Activer les notifications';
   var btnColor = 'var(--gold)';
-  if(!hasSW) { btnLabel = '⚠️ Push non compatible'; btnColor = 'var(--text3)'; }
-  else if(notifPerm === 'granted') { btnLabel = '✅ Notifications activées (push)'; btnColor = '#66bb6a'; }
+  if(!hasNotif) { btnLabel = '⚠️ Notifications non compatibles'; btnColor = 'var(--text3)'; }
+  else if(notifPerm === 'granted') { btnLabel = '✅ Notifications activées'; btnColor = '#66bb6a'; }
   else if(notifPerm === 'denied') { btnLabel = '🚫 Notifications bloquées (Paramètres)'; btnColor = '#ef5350'; }
+  var hasSW = (typeof navigator !== 'undefined') && ('serviceWorker' in navigator);
 
   var h='<div class="topbar"><h1>Monitoring <span>JS Errors</span> '
     + '<button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button>'
@@ -939,119 +940,50 @@ function rMonitoring(){
 }
 
 // ====================================================================
-// Web Push Notifications (RFC 8030/8291/8292) — fonctionne MÊME app fermée
+// Notifications locales (système initial qui fonctionne)
 // ====================================================================
-// Helper : convertir base64url en Uint8Array pour applicationServerKey
-function _lxUrlBase64ToUint8Array(base64String) {
-  var padding = '='.repeat((4 - base64String.length % 4) % 4);
-  var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  var raw = atob(base64);
-  var arr = new Uint8Array(raw.length);
-  for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return arr;
-}
-
+// On a abandonné Web Push externe (FCM/WNS) qui était bloqué par Android Doze.
+// Stratégie actuelle : watcher local 15s → reg.showNotification (cf. lxStartErrorWatcher).
+// Cette fonction ne fait que demander la permission Notification et déclencher
+// une notif de test pour valider que tout fonctionne.
 window.lxRequestMonitoringNotif = async function(){
-  // Diagnostic visible : on construit un rapport au fur et à mesure
-  var diag = [];
-  function step(msg, ok){ diag.push((ok===false?'❌ ':'✅ ')+msg); console.log('[lxPush]', msg); }
-
-  if(typeof Notification === 'undefined' || typeof navigator === 'undefined' || !('serviceWorker' in navigator)){
-    alert('❌ Votre navigateur ne supporte pas les Web Push notifications.');
+  if(typeof Notification === 'undefined'){
+    alert('❌ Votre navigateur ne supporte pas les notifications.');
     return;
   }
-  step('Support navigateur OK');
   if(Notification.permission === 'denied'){
     alert('❌ Notifications BLOQUÉES par votre navigateur.\n\nCadenas à gauche de l\'URL → Notifications → Autoriser, puis recharger.');
     return;
   }
-  step('Permission actuelle : '+Notification.permission);
-
   try {
-    var swReg = await navigator.serviceWorker.register('/admin-sw.js', { scope: '/' });
-    step('Service Worker enregistré : '+swReg.scope);
-    await navigator.serviceWorker.ready;
-    step('Service Worker ready');
-
     if(Notification.permission !== 'granted'){
       var perm = await Notification.requestPermission();
-      step('Permission demandée → '+perm);
-      if(perm !== 'granted'){ alert(diag.join('\n')+'\n\n❌ Permission refusée par l\'utilisateur.'); return; }
+      if(perm !== 'granted'){ alert('❌ Permission refusée.'); return; }
     }
-
-    step('Fetch VAPID public key...');
-    var keyRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-push-public-key');
-    if(!keyRes.ok){ alert(diag.join('\n')+'\n\n❌ Fetch VAPID HTTP '+keyRes.status); return; }
-    var keyData = await keyRes.json();
-    if(!keyData.publicKey){ alert(diag.join('\n')+'\n\n❌ Pas de publicKey dans la réponse : '+JSON.stringify(keyData)); return; }
-    step('VAPID public key reçue ('+keyData.publicKey.length+' chars)');
-
-    var existing = await swReg.pushManager.getSubscription();
-    if(existing){ await existing.unsubscribe(); step('Ancienne subscription supprimée'); }
-    var subscription = await swReg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: _lxUrlBase64ToUint8Array(keyData.publicKey)
-    });
-    step('PushManager.subscribe OK');
-
-    var subJson = subscription.toJSON();
-    var endpoint = subJson.endpoint || subscription.endpoint;
-    var p256dh = subJson.keys && subJson.keys.p256dh;
-    var auth = subJson.keys && subJson.keys.auth;
-    step('Endpoint : '+(endpoint||'').slice(0,60)+'... · p256dh: '+(p256dh?'OK':'MANQUANT')+' · auth: '+(auth?'OK':'MANQUANT'));
-
-    step('Vérification session Supabase...');
-    var session = await _sb.auth.getSession();
-    var jwt = session && session.data && session.data.session && session.data.session.access_token;
-    if(!jwt){
-      // Pas de session JWT côté admin (admin.html n'utilise peut-être pas Supabase Auth)
-      // Fallback : on stocke directement via service_role en utilisant un endpoint sans JWT
-      step('Pas de session Supabase Auth — fallback sans JWT', false);
-      alert(diag.join('\n')+'\n\n❌ Impossible de récupérer le JWT Supabase. L\'admin n\'est pas connecté via Supabase Auth.\n\nSolution : je vais déployer une variante sans JWT.');
-      return;
-    }
-    step('JWT Supabase OK ('+jwt.length+' chars)');
-
-    step('POST à lx-push-subscribe...');
-    var subRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-push-subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+jwt },
-      body: JSON.stringify({ endpoint, p256dh, auth, action: 'subscribe' })
-    });
-    var subResData;
-    try { subResData = await subRes.json(); } catch(_){ subResData = {}; }
-    if(!subRes.ok){
-      step('lx-push-subscribe HTTP '+subRes.status+' : '+JSON.stringify(subResData), false);
-      alert(diag.join('\n')+'\n\n❌ Le serveur a refusé l\'enregistrement.\nStatus '+subRes.status+'\nErreur : '+(subResData.error||'inconnu'));
-      return;
-    }
-    step('Subscription enregistrée côté serveur ✓');
-
-    swReg.showNotification('✅ Web Push activé !', {
-      body: 'Vous recevrez les alertes Luxyra même quand l\'app est fermée.',
-      icon: '/icon-192.png',
-      tag: 'lx-confirm'
-    });
-    var btn = document.getElementById('lxNotifBtn');
-    if(btn){ btn.textContent = '✅ Push activé (même app fermée)'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
-
-    // Test end-to-end : déclenche un push depuis le serveur
-    step('Déclenche un push de test depuis le serveur...');
+    // S'assure que le SW est prêt pour pouvoir utiliser reg.showNotification
+    // (background-friendly). Fallback Notification() si SW indisponible.
+    var sent = false;
     try {
-      var pushRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-web-push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: '🎉 Test Web Push Luxyra', body: 'Tu reçois bien les push !', severity: 'high' })
-      });
-      var pushData = await pushRes.json().catch(()=>({}));
-      step('Push test : '+(pushData.sent||0)+' envoyé(s), '+(pushData.failed||0)+' échec(s)');
-    } catch(e2) { step('Push test exception: '+e2.message, false); }
-
-    alert(diag.join('\n')+'\n\n🎉 Tout est OK ! Tu devrais voir une 2ème notif "Test Web Push Luxyra" arriver dans quelques secondes.');
-
+      if(navigator.serviceWorker){
+        var reg = await navigator.serviceWorker.ready;
+        await reg.showNotification('✅ Notifications activées', {
+          body: 'Vous recevrez les alertes erreur Luxyra tant que l\'admin est ouvert.',
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          tag: 'lx-confirm-'+Date.now(),
+          data: { url: '/admin?tab=monitoring' }
+        });
+        sent = true;
+      }
+    } catch(_){}
+    if(!sent){
+      try { new Notification('✅ Notifications activées', { body: 'Test OK.' }); } catch(_){}
+    }
+    var btn = document.getElementById('lxNotifBtn');
+    if(btn){ btn.textContent = '✅ Notifications activées'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
   } catch(e) {
-    console.error('[lxPush] error', e);
-    alert(diag.join('\n')+'\n\n❌ Erreur : '+(e.message || e));
+    console.error('[lxNotif] error', e);
+    alert('❌ Erreur : '+(e.message || e));
   }
 };
 
@@ -1062,6 +994,14 @@ if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
       go('monitoring');
     }
   });
+  // Enregistrement silencieux du Service Worker dès l'ouverture de l'admin —
+  // nécessaire pour que `lxStartErrorWatcher` puisse appeler `reg.showNotification()`
+  // (notifs visibles même onglet en arrière-plan / PWA en veille). Aucun Push externe
+  // n'est utilisé : c'est juste le canal d'affichage local.
+  try {
+    navigator.serviceWorker.register('/admin-sw.js', { scope: '/' })
+      .catch(function(e){ console.warn('[admin-sw auto-register]', e); });
+  } catch(_) {}
 }
 
 // Watcher : poll toutes les 15s sur les NOUVELLES erreurs depuis la dernière vérif
@@ -1075,15 +1015,32 @@ window.lxStartErrorWatcher = function(){
 
   function notify(title, body, severity){
     if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    var opts = {
+      body: body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: severity === 'critical' ? 'lx-critical-'+Date.now() : 'lx-error-'+Date.now(),
+      requireInteraction: severity === 'critical', // notif critical reste affichée
+      silent: false,
+      vibrate: severity === 'critical' ? [200,100,200,100,200] : [120,60,120],
+      data: { url: '/admin?tab=monitoring', severity: severity, ts: Date.now() }
+    };
+    // PRIORITÉ 1 : Service Worker showNotification — fonctionne même onglet en arrière-plan / PWA en veille
+    // (le clic est géré par le listener 'notificationclick' dans /admin-sw.js)
     try {
-      var opts = {
-        body: body,
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
-        tag: severity === 'critical' ? 'lx-critical' : 'lx-error',
-        requireInteraction: severity === 'critical', // notif critical reste affichée
-        silent: false
-      };
+      if(navigator.serviceWorker && navigator.serviceWorker.ready){
+        navigator.serviceWorker.ready.then(function(reg){
+          try { reg.showNotification(title, opts); }
+          catch(e){ _fallbackNotify(title, opts); }
+        }).catch(function(){ _fallbackNotify(title, opts); });
+        return;
+      }
+    } catch(_){}
+    // PRIORITÉ 2 (fallback) : Notification API directe — uniquement onglet actif
+    _fallbackNotify(title, opts);
+  }
+  function _fallbackNotify(title, opts){
+    try {
       var n = new Notification(title, opts);
       n.onclick = function(){
         window.focus();
@@ -1149,15 +1106,17 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent, publicErrs, serverErrs] = await Promise.all([
+    var [summary, recent, publicErrs, serverErrs, cronHealth] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
       _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
-      // FIX 2026-05-16 : erreurs JS des pages publiques anonymes
+      // erreurs JS des pages publiques anonymes
       _sb.from('js_errors_public').select('id, source, type, message, page, salon_slug, reported_at')
          .order('reported_at', { ascending: false }).limit(50),
-      // FIX 2026-05-16 soir : erreurs SERVEUR (worker Cloudflare, edge functions, cron)
+      // erreurs SERVEUR (worker Cloudflare, edge functions, cron failures via trigger)
       _sb.from('server_errors').select('id, source, severity, message, http_path, http_status, salon_id, reported_at')
-         .order('reported_at', { ascending: false }).limit(50)
+         .order('reported_at', { ascending: false }).limit(50),
+      // FIX 2026-05-16 nuit : santé des cron jobs (succès/échecs 7j)
+      _sb.rpc('admin_cron_health')
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
     if(recent.error) throw new Error('Recent: '+recent.error.message);
@@ -1165,7 +1124,8 @@ async function rMonitoringRefresh(){
     var rowsR = recent.data || [];
     var rowsP = publicErrs.error ? [] : (publicErrs.data || []);
     var rowsServer = serverErrs.error ? [] : (serverErrs.data || []);
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer);
+    var rowsCron = cronHealth.error ? [] : (cronHealth.data || []);
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -1173,7 +1133,7 @@ async function rMonitoringRefresh(){
       + '</div>';
   }
 }
-function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs){
+function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
   // === Stats globales (KPI cards) ===
@@ -1337,6 +1297,36 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs){
     h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Worker Cloudflare, edge functions Supabase et jobs cron. Les criticals déclenchent une alerte mail automatique.</div>';
   } else {
     h+='<div style="margin-top:24px;padding:16px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:12px;font-size:13px;color:#66bb6a"><strong>⚙️ Serveur</strong> · Aucune erreur récente sur le worker Cloudflare, les edge functions Supabase ou les jobs cron.</div>';
+  }
+  // === Section Cron health (FIX 2026-05-16 nuit : visibilité 100% sur les jobs planifiés) ===
+  cronHealth = cronHealth || [];
+  if(cronHealth.length > 0){
+    var anyFail = cronHealth.some(function(c){ return Number(c.ko_7j||0) > 0; });
+    h+='<div style="margin-top:24px"><h2 style="font-size:16px;margin:0 0 12px;color:'+(anyFail?'#ff9800':'var(--gold)')+'">⏱️ Cron jobs (7j) '
+      +'<span style="font-size:11px;color:var(--text3);font-weight:400">'+cronHealth.length+' job'+(cronHealth.length>1?'s':'')+'</span></h2>';
+    h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+    h+='<thead style="background:var(--bg3)"><tr>'
+      +'<th style="text-align:left;padding:8px 12px;color:var(--text3);font-size:11px">Job</th>'
+      +'<th style="text-align:left;padding:8px 12px;color:var(--text3);font-size:11px">Schedule</th>'
+      +'<th style="text-align:center;padding:8px 12px;color:var(--text3);font-size:11px">OK 7j</th>'
+      +'<th style="text-align:center;padding:8px 12px;color:var(--text3);font-size:11px">KO 7j</th>'
+      +'<th style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px">Dernier succès</th>'
+      +'<th style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px">Dernier échec</th>'
+      +'</tr></thead><tbody>';
+    cronHealth.forEach(function(c){
+      var ko = Number(c.ko_7j||0);
+      var ok = Number(c.ok_7j||0);
+      h+='<tr style="border-top:1px solid var(--border)">'
+        +'<td style="padding:8px 12px;font-weight:600;color:var(--text)">'+_esc(c.jobname||'')+'</td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-family:monospace;font-size:11px">'+_esc(c.schedule||'')+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;color:'+(ok>0?'#66bb6a':'var(--text3)')+';font-weight:'+(ok>0?'700':'500')+'">'+ok+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;color:'+(ko>0?'#ef5350':'var(--text3)')+';font-weight:'+(ko>0?'800':'500')+'">'+ko+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+(c.dernier_succes?new Date(c.dernier_succes).toLocaleString('fr-FR',{timeZone:'Europe/Paris'}):'—')+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:'+(c.dernier_echec?'#ef5350':'var(--text3)')+';font-size:11px;white-space:nowrap" title="'+_esc(c.dernier_msg_echec||'')+'">'+(c.dernier_echec?new Date(c.dernier_echec).toLocaleString('fr-FR',{timeZone:'Europe/Paris'}):'—')+'</td>'
+        +'</tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Tout échec cron est automatiquement reporté dans Server errors via trigger.</div></div>';
   }
   h+='<div style="text-align:center;color:var(--text3);font-size:11px;margin-top:24px">Auto-rafraîchi toutes les 30 secondes — dernière mise à jour : '+new Date().toLocaleTimeString('fr-FR')+'</div>';
   return h;
