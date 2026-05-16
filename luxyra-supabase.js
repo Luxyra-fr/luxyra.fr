@@ -199,9 +199,54 @@ async function _walCheck(){
     var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
     var unsynced = wal.filter(function(e){ return !e.synced && e.salon_id === _salonId; });
     if (unsynced.length === 0) { _walCleanup(); return; }
-    console.warn("[WAL] " + unsynced.length + " action(s) non synchronisée(s) détectée(s) !");
-    if (typeof window.showWalRecovery === "function") {
-      window.showWalRecovery(unsynced);
+    console.warn("[WAL] " + unsynced.length + " action(s) non synchronisée(s) détectée(s) — récupération automatique");
+
+    // FIX 2026-05-16 (UX) : récupération AUTOMATIQUE SILENCIEUSE en arrière-plan
+    // Plus de modale anxiogène "voulez-vous sauvegarder ?" que l'utilisateur ne
+    // comprend pas. Avec l'idempotence dans saveTicketToDb (check par hash) et
+    // les protections dans saveCloture (codes 23505 + 42501), aucun risque de
+    // doublon — la récupération est entièrement safe.
+    //
+    // Cas conservés en MODE MODALE (fallback) :
+    //   - > 20 actions non-sync (crash grave / téléphone changé)
+    //   - Échec récupération auto > 50% (problème réseau persistant)
+    var AUTO_THRESHOLD = 20;
+    if (unsynced.length > AUTO_THRESHOLD) {
+      console.warn("[WAL] Beaucoup d'actions non-sync ("+unsynced.length+") → modale de confirmation");
+      if (typeof window.showWalRecovery === "function") window.showWalRecovery(unsynced);
+      return;
+    }
+
+    // Récupération auto en arrière-plan
+    var ok = 0, fail = 0;
+    for (var i = 0; i < unsynced.length; i++) {
+      try {
+        var r = await _walResync(unsynced[i].id);
+        if (r && r.ok) ok++; else fail++;
+      } catch(_) { fail++; }
+    }
+
+    // Si trop d'échecs (>50%), on bascule sur la modale pour que l'utilisateur sache
+    if (fail > 0 && fail >= unsynced.length / 2) {
+      console.warn("[WAL] " + fail + "/" + unsynced.length + " échecs → fallback modale");
+      // Re-check les vraies non-sync restantes pour la modale
+      var stillUnsynced = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]")
+        .filter(function(e){ return !e.synced && e.salon_id === _salonId; });
+      if (stillUnsynced.length > 0 && typeof window.showWalRecovery === "function") {
+        window.showWalRecovery(stillUnsynced);
+      }
+      return;
+    }
+
+    // Toast discret de succès SI il y a vraiment eu une récupération
+    if (ok > 0) {
+      console.log("[WAL] " + ok + " action(s) récupérée(s) automatiquement");
+      // Toast non-bloquant côté UI (1 ligne, disparait après 4s)
+      if (typeof toast === "function") {
+        toast("✓ " + ok + " donnée" + (ok>1?"s":"") + " synchronisée" + (ok>1?"s":"") + " (récupération auto)", "success");
+      } else if (typeof showAlert === "function") {
+        showAlert("✓ " + ok + " donnée" + (ok>1?"s":"") + " synchronisée" + (ok>1?"s":""), "success");
+      }
     }
   } catch(e){ console.warn("[WAL] check failed:", e); }
 }
