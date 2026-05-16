@@ -70,9 +70,47 @@ async function reportWorkerError(env, source, error, context, severity) {
   }
 }
 
+// /health endpoint pour monitoring externe (UptimeRobot, Better Stack)
+// Renvoie 200 si tout va bien, 503 si le système de monitoring lui-même est dégradé.
+// Couvre : heartbeat PG, Cloudflare worker en vie, DB Supabase accessible.
+async function handleHealth(request, env) {
+  const url = "https://kxdgjtvrkwugbifgppai.supabase.co/rest/v1/rpc/get_monitoring_status";
+  const SB_ANON = env.SUPABASE_ANON_KEY || "";
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SB_ANON,
+        "Authorization": "Bearer " + SB_ANON
+      },
+      body: "{}"
+    });
+    if (!r.ok) {
+      return new Response(JSON.stringify({ status: "degraded", reason: "supabase_unreachable", code: r.status }), {
+        status: 503,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+      });
+    }
+    const data = await r.json();
+    const ok = data && data.alive === true;
+    return new Response(JSON.stringify(Object.assign({ worker: "alive" }, data || {})), {
+      status: ok ? 200 : 503,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ status: "down", reason: "exception", message: String(e && e.message || e).slice(0, 200) }), {
+      status: 503,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+    });
+  }
+}
+
 // Wrapper séparé pour les handlers /api/* (séparé pour clarté)
 async function __wrappedApiHandler(request, url, env) {
     try {
+      // Endpoint /health (GET) — monitoring externe
+      if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
@@ -140,6 +178,11 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
     // ============ TRY/CATCH GLOBAL : toute exception non gérée arrive ici ============
     try {
+      // /health (et /api/health) — monitoring externe (UptimeRobot, Better Stack, etc.)
+      // Capté AVANT le routing normal pour répondre vite (pas de DOM/HTML).
+      if (url.pathname === "/health" || url.pathname === "/api/health") {
+        return await handleHealth(request, env);
+      }
       // Route les pages non-/api/ vers handleExistingRoutes
       if (!url.pathname.startsWith("/api/")) {
         try {
