@@ -928,15 +928,19 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent] = await Promise.all([
+    var [summary, recent, publicErrs] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
-      _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null})
+      _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
+      // FIX 2026-05-16 : erreurs JS des pages publiques anonymes (index, tarifs, pro, etc.)
+      _sb.from('js_errors_public').select('id, source, type, message, page, salon_slug, reported_at')
+         .order('reported_at', { ascending: false }).limit(50)
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
     if(recent.error) throw new Error('Recent: '+recent.error.message);
     var rowsS = summary.data || [];
     var rowsR = recent.data || [];
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR);
+    var rowsP = publicErrs.error ? [] : (publicErrs.data || []);
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -944,7 +948,8 @@ async function rMonitoringRefresh(){
       + '</div>';
   }
 }
-function _renderMonitoringHTML(summary, recent){
+function _renderMonitoringHTML(summary, recent, publicErrs){
+  publicErrs = publicErrs || [];
   // === Stats globales (KPI cards) ===
   var total1h=0, total24h=0, total7j=0, nbSalonsAffected=summary.length;
   summary.forEach(function(s){
@@ -1037,6 +1042,40 @@ function _renderMonitoringHTML(summary, recent){
         +'<div style="font-size:12px;margin-top:6px">Le hook window.onerror est actif sur chaque tablette de salon.</div>'
         +'</div>';
     }
+  }
+  // === Section "Pages publiques anonymes" — index, tarifs, pro, inscription, etc. ===
+  if(publicErrs && publicErrs.length > 0){
+    h+='<div style="margin:30px 0 12px;display:flex;align-items:center;gap:10px"><h2 style="font-size:16px;margin:0;color:var(--gold)">🌐 Erreurs sur pages publiques</h2><span style="font-size:11px;color:var(--text3)">'+publicErrs.length+' erreur(s)</span></div>';
+    h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    h+='<thead style="background:var(--bg3)"><tr>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Source</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Type</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Message</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Page</th>'
+      +'<th style="text-align:right;padding:9px 12px;color:var(--text3);font-size:11px">Quand</th>'
+      +'</tr></thead><tbody>';
+    var sourceColors = {
+      index:'#3b82f6', tarifs:'#a855f7', pro:'#ec4899', inscription:'#10b981',
+      compte:'#f59e0b', bons_cadeaux:'#ef4444', recherche:'#06b6d4', site_salon:'#c8a84e', other:'#71717a'
+    };
+    for(var pi=0; pi<Math.min(publicErrs.length, 20); pi++){
+      var pe = publicErrs[pi];
+      var col = sourceColors[pe.source] || '#71717a';
+      var ago = new Date(pe.reported_at).toLocaleString('fr-FR');
+      var msg = (pe.message || '').replace(/[<>&]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]; });
+      h+='<tr style="border-top:1px solid var(--border)">'
+        +'<td style="padding:8px 12px"><span style="display:inline-block;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:700;background:'+col+'22;color:'+col+';text-transform:uppercase">'+pe.source+'</span></td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-size:11px">'+pe.type+'</td>'
+        +'<td style="padding:8px 12px;color:#ef5350;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+msg+'">'+msg+'</td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(pe.page||'')+(pe.salon_slug ? ' <span style="color:var(--gold)">['+pe.salon_slug+']</span>' : '')+'</td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-size:11px;text-align:right;white-space:nowrap">'+ago+'</td>'
+        +'</tr>';
+    }
+    h+='</tbody></table></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Erreurs capturées sur les pages publiques sans contexte salon (homepage, tarifs, inscription, etc.). Le hook lx-monitoring.js est actif sur toutes les pages HTML publiques.</div>';
+  } else {
+    h+='<div style="margin-top:24px;padding:16px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:12px;font-size:13px;color:#66bb6a"><strong>🌐 Pages publiques</strong> · Aucune erreur récente sur index, tarifs, pro, inscription, compte, bons cadeaux, recherche.</div>';
   }
   h+='<div style="text-align:center;color:var(--text3);font-size:11px;margin-top:24px">Auto-rafraîchi toutes les 30 secondes — dernière mise à jour : '+new Date().toLocaleTimeString('fr-FR')+'</div>';
   return h;
