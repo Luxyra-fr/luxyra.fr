@@ -836,6 +836,22 @@ function closeBarcodeScanner(){
 // ============================================================
 var OPERATEURS = [];
 var CURRENT_OPERATOR = null; // {id, prenom, nom, role, permissions, ...}
+
+// FIX 2026-05-17 nuit : helper "collab par défaut"
+// Retourne l'id du collaborateur dans T qui matche CURRENT_OPERATOR (par prénom),
+// sinon T[0]. Évite que ticket/fiche tech soit attribué à Amandine quand Manue est connectée.
+function _defaultCollabId(){
+  if(typeof CURRENT_OPERATOR!=="undefined" && CURRENT_OPERATOR && typeof T!=="undefined" && T && T.length){
+    var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
+    if(opName){
+      for(var i=0;i<T.length;i++){
+        var tn=(T[i].n||"").trim().toLowerCase();
+        if(tn===opName || tn.indexOf(opName)===0) return T[i].id;
+      }
+    }
+  }
+  return (typeof T!=="undefined" && T && T.length) ? T[0].id : null;
+}
 var _operatorLockTimer = null;
 var _operatorPinBuffer = "";
 var _operatorPinTarget = null;
@@ -4017,7 +4033,7 @@ function saveDevis(){
 
 function convertDevis(idx){
   var dv=window.DEVIS[idx];if(!dv)return;
-  _tk={step:3,stId:T[0].id,cId:dv.cId,items:dv.items.map(function(it){return{sId:it.sId,name:it.name,price:it.price,qty:it.qty,remise:0};}),comment:"",remise:0};
+  _tk={step:3,stId:_defaultCollabId(),cId:dv.cId,items:dv.items.map(function(it){return{sId:it.sId,name:it.name,price:it.price,qty:it.qty,remise:0};}),comment:"",remise:0};
   // On garde le devis dans la liste tant que l'encaissement n'est pas validé.
   // Le devis sera marqué 'converti' (au lieu d'être supprimé) après encaissement
   // réussi via cleanupPendingFromTk(). Si retour en arrière, le devis reste.
@@ -16885,7 +16901,7 @@ function scanProd(code){
       showCaisse();
     } else {
       // Start new ticket with product
-      _tk={step:1,stId:T.length?T[0].id:null,cId:null,items:[{sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id}],comment:"",remise:0};
+      _tk={step:1,stId:_defaultCollabId(),cId:null,items:[{sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id}],comment:"",remise:0};
       showCaisse();
     }
   }else{
@@ -23574,7 +23590,7 @@ function aGi(){
   if(typeof saveGiftCard==="function")saveGiftCard(ng);
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   tkN++;
-  var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:T[0]?T[0].id:1,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN};
+  var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:_defaultCollabId(),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN};
   chainTicket(tk);AP.push(tk);
   ng.tkNum=tk.tkNum; // Store ticket ref on the bon
   if(typeof saveAppointment==="function")saveAppointment(tk);
@@ -26746,13 +26762,50 @@ function askFicheTech(cId){
   document.getElementById("modal").innerHTML=h;
 }
 
+// FIX 2026-05-17 nuit : attribution correcte du collab fiche tech
+// Avant : sty=T[0] toujours (= Amandine propri\u00e9taire) \u2192 bug Manue marqu\u00e9e Amandine
+// Maintenant : 1) CURRENT_OPERATOR (qui est connect\u00e9(e)) si dans la liste collab
+//              2) sinon _tk.stId (collab du ticket en cours si caisse ouverte)
+//              3) sinon T[0]
+// + S\u00e9lecteur dans la modal pour changer manuellement (cas Amandine connect\u00e9e mais Manue fait la presta)
+function _ftDefaultCollab(){
+  // 1) CURRENT_OPERATOR : on cherche un collab qui matche par prenom (les collab dans T sont par nom complet "Manue")
+  if(typeof CURRENT_OPERATOR!=="undefined" && CURRENT_OPERATOR){
+    var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
+    if(opName){
+      for(var i=0;i<T.length;i++){
+        var tn=(T[i].n||"").trim().toLowerCase();
+        if(tn===opName || tn.indexOf(opName)===0) return T[i];
+      }
+    }
+  }
+  // 2) Collab du ticket en cours
+  if(typeof _tk!=="undefined" && _tk && _tk.stId){
+    var sty=gT(_tk.stId);
+    if(sty) return sty;
+  }
+  // 3) Fallback
+  return T[0];
+}
+function _ftCollabSelect(currentId){
+  if(!T||T.length<=1) return ''; // pas la peine si 1 seul collab
+  var h='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Coiffeur/Coiffeuse qui a fait la prestation</label>';
+  h+='<select id="ftCollabSel" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);font-size:13px;font-weight:600">';
+  for(var i=0;i<T.length;i++){
+    var sel=(T[i].id===currentId)?' selected':'';
+    h+='<option value="'+T[i].id+'"'+sel+'>'+(T[i].n||'?')+'</option>';
+  }
+  h+='</select></div>';
+  return h;
+}
 function proposeFicheTechFromDetail(cId){
   var cl=gC(cId);if(!cl)return;
-  var sty=T[0];
+  var sty=_ftDefaultCollab();
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2>\ud83d\udcdd Fiche technique</h2>';
   h+='<div style="font-size:14px;font-weight:700;margin-bottom:4px">'+cName(cl)+'</div>';
-  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">'+fmt(TD)+' \u2022 par '+(sty?sty.n:"")+'</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">'+fmt(TD)+'</div>';
+  h+=_ftCollabSelect(sty?sty.id:null);
   h+='<textarea id="ftTexte" rows="12" style="width:100%;font-size:14px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical" placeholder="Saisir les informations..."></textarea>';
   h+='<div style="display:flex;gap:8px;margin-top:14px">';
   h+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
@@ -26765,20 +26818,27 @@ function saveFicheTechDetail(cId){
   var cl=gC(cId);if(!cl)return;
   var texte=document.getElementById("ftTexte").value;
   if(!texte.trim()){cM();return;}
-  var sty=T[0];
+  // FIX 2026-05-17 nuit : lit le select (modifiable par l'utilisateur)
+  var selEl=document.getElementById("ftCollabSel");
+  var sty=null;
+  if(selEl && selEl.value){ sty=gT(selEl.value); }
+  if(!sty) sty=_ftDefaultCollab();
   if(!cl.fiches)cl.fiches=[];
-  cl.fiches.push({txt:texte,date:TD,collab:sty?sty.n:""});
+  cl.fiches.push({txt:texte,date:TD,collab:sty?sty.n:"",collab_id:sty?sty.id:null});
   if(typeof saveClient==="function")saveClient(cl);
   cM();go("detail");
 }
 
 function proposeFicheTech(cId){
   var cl=gC(cId);if(!cl)return;
-  var sty=gT(_tk?_tk.stId:null)||T[0];
+  // FIX 2026-05-17 nuit : priorit\u00e9 au collaborateur du ticket (qui a fait la presta)
+  // sinon CURRENT_OPERATOR connect\u00e9, sinon T[0]
+  var sty=gT(_tk?_tk.stId:null) || _ftDefaultCollab();
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2>\ud83d\udcdd Fiche technique</h2>';
   h+='<div style="font-size:14px;font-weight:700;margin-bottom:4px">'+cName(cl)+'</div>';
-  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">'+fmt(TD)+' \u2022 par '+(sty?sty.n:"")+'</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">'+fmt(TD)+'</div>';
+  h+=_ftCollabSelect(sty?sty.id:null);
   h+='<textarea id="ftTexte" rows="12" style="width:100%;font-size:14px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical" placeholder="Saisir les informations de la fiche technique...\n\nEx:\nType cheveux: Sec, color\u00e9\nCouleur naturelle: Ch\u00e2tain fonc\u00e9\nFormule: 6.1 + 7.3 Oxy 20vol\nCoupe: D\u00e9grad\u00e9 mi-long\nSoins: Fibreclinix\nTemps de pause: 30 min\nNotes: Sensibilit\u00e9 cuir chevelu"></textarea>';
   h+='<div style="display:flex;gap:8px;margin-top:14px">';
   h+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM();go(\'home\')">Passer</button>';
@@ -26791,8 +26851,12 @@ function saveFicheTech(cId){
   var cl=gC(cId);if(!cl)return;
   var texte=document.getElementById("ftTexte").value;
   if(!texte.trim()){cM();go("home");return;}
-  var sty=gT(_tk?_tk.stId:null)||T[0];
-  var fiche={txt:texte,date:TD,collab:sty?sty.n:""};
+  // FIX 2026-05-17 nuit : lit le select (modifiable par l'utilisateur)
+  var selEl=document.getElementById("ftCollabSel");
+  var sty=null;
+  if(selEl && selEl.value){ sty=gT(selEl.value); }
+  if(!sty) sty=gT(_tk?_tk.stId:null) || _ftDefaultCollab();
+  var fiche={txt:texte,date:TD,collab:sty?sty.n:"",collab_id:sty?sty.id:null};
   if(!cl.fiches)cl.fiches=[];
   cl.fiches.push(fiche);
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
