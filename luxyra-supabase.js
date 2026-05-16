@@ -1875,6 +1875,34 @@ async function saveTicketToDb(tk) {
       raw_data: tk  // backup complet pour réimpression fidèle
     };
 
+    // FIX 2026-05-16 : protection IDEMPOTENCE pour les retry WAL.
+    // Si un ticket avec ce hash existe DÉJÀ en DB → on ne réinsère pas (évite
+    // les doublons quand un retry post-crash est tenté alors que l'INSERT
+    // initial était déjà passé côté serveur).
+    // Le hash est calculé côté app à partir de toutes les données critiques
+    // du ticket (num, date, heure, prix, méthode, hash_prev, siret) → c'est
+    // une clé unique fiable pour détecter un retry.
+    if (tk.hash && typeof tk.hash === "string" && tk.hash.length >= 16) {
+      try {
+        var existingCheck = await _sb.from("tickets")
+          .select("id, num, hash, hash_prev")
+          .eq("salon_id", _salonId)
+          .eq("hash", tk.hash)
+          .limit(1).maybeSingle();
+        if (existingCheck.data && existingCheck.data.id) {
+          console.log("[saveTicketToDb] Idempotence : ticket déjà en DB (hash match), skip insert. num=" + existingCheck.data.num);
+          tk.dbId = existingCheck.data.id;
+          if (!tk.tkNum) tk.tkNum = existingCheck.data.num;
+          tk.hashPrev = existingCheck.data.hash_prev;
+          _walMarkSynced(_walId);
+          return existingCheck.data;
+        }
+      } catch (eIdem) {
+        // Si le check plante, on continue normalement (best-effort)
+        console.warn("[saveTicketToDb] idempotence check failed, fallback to INSERT:", eIdem?.message);
+      }
+    }
+
     var res = await _sb.from("tickets").insert(data).select().single();
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
