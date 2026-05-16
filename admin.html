@@ -1106,7 +1106,7 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped] = await Promise.all([
+    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
       _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
       // erreurs JS des pages publiques anonymes
@@ -1118,7 +1118,11 @@ async function rMonitoringRefresh(){
       // FIX 2026-05-16 nuit : santé des cron jobs (succès/échecs 7j)
       _sb.rpc('admin_cron_health'),
       // FIX 2026-05-17 : erreurs groupées par signature (24h) — évite scroll infini
-      _sb.rpc('admin_errors_grouped', {p_hours: 24})
+      _sb.rpc('admin_errors_grouped', {p_hours: 24}),
+      // FIX 2026-05-17 nuit : détection d'anomalies business (silence = bug)
+      _sb.rpc('check_business_anomalies'),
+      // FIX 2026-05-17 nuit : surveillance des quotas / coûts
+      _sb.rpc('check_quotas')
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
     if(recent.error) throw new Error('Recent: '+recent.error.message);
@@ -1128,7 +1132,9 @@ async function rMonitoringRefresh(){
     var rowsServer = serverErrs.error ? [] : (serverErrs.data || []);
     var rowsCron = cronHealth.error ? [] : (cronHealth.data || []);
     var rowsGrouped = grouped.error ? [] : (grouped.data || []);
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped);
+    var rowsAnomalies = anomalies.error ? [] : (anomalies.data || []);
+    var rowsQuotas = quotas.error ? [] : (quotas.data || []);
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -1136,7 +1142,7 @@ async function rMonitoringRefresh(){
       + '</div>';
   }
 }
-function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped){
+function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
   // === Stats globales (KPI cards) ===
@@ -1192,6 +1198,42 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
     });
     h+='</tbody></table></div></div>';
   }
+  // === FIX 2026-05-17 nuit : Anomalies business (silence = bug) ===
+  anomalies = anomalies || [];
+  if(anomalies.length > 0){
+    h+='<div style="margin-bottom:24px;padding:18px;border-radius:12px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3)">';
+    h+='<h2 style="font-size:16px;margin:0 0 12px;color:#ff9800">📉 Anomalies business détectées ('+anomalies.length+')</h2>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:12px;font-style:italic">Le silence aussi est un bug : on compare l\'activité du jour à la moyenne 14j.</div>';
+    anomalies.forEach(function(a){
+      var ratio = a.ratio != null ? Math.round(a.ratio * 100) + '%' : '—';
+      h+='<div style="padding:10px 12px;background:var(--bg2);border-left:3px solid #ff9800;border-radius:8px;margin-bottom:8px">';
+      h+='<div style="font-weight:700;color:#ff9800;font-size:13px">'+_esc(a.anomaly_kind||'')+' — '+_esc(a.salon_nom||'')+'</div>';
+      h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">'+_esc(a.message||'')+'</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Attendu : '+(a.expected_today||0)+' • Réel : <strong style="color:#ff9800">'+(a.actual_today||0)+'</strong> • Ratio : '+ratio+'</div>';
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+
+  // === FIX 2026-05-17 nuit : Quotas / coûts ===
+  quotas = quotas || [];
+  if(quotas.length > 0){
+    h+='<div style="margin-bottom:24px;padding:18px;border-radius:12px;background:rgba(255,213,79,.05);border:1px solid rgba(255,213,79,.25)">';
+    h+='<h2 style="font-size:16px;margin:0 0 12px;color:#ffd54f">💾 Quotas & ressources surveillées ('+quotas.length+')</h2>';
+    quotas.forEach(function(q){
+      var sevColor = q.severity==='critical' ? '#ef5350' : (q.severity==='error'?'#ff9800':'#ffd54f');
+      h+='<div style="padding:10px 12px;background:var(--bg2);border-left:3px solid '+sevColor+';border-radius:8px;margin-bottom:8px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
+      h+='<div style="font-weight:700;color:'+sevColor+';font-size:13px">'+_esc(q.resource||'')+'</div>';
+      if(q.usage_pct != null) h+='<div style="font-size:14px;font-weight:800;color:'+sevColor+'">'+q.usage_pct+'%</div>';
+      h+='</div>';
+      h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">'+_esc(q.message||'')+'</div>';
+      if(q.usage_label || q.threshold_label) h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">'+_esc(q.usage_label||'')+(q.threshold_label?' / '+_esc(q.threshold_label):'')+'</div>';
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+
   // === FIX 2026-05-17 nuit : Vue groupée par signature (24h) ===
   // Évite que 100 occurrences du même bug polluent le panel.
   grouped = grouped || [];
