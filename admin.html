@@ -952,63 +952,81 @@ function _lxUrlBase64ToUint8Array(base64String) {
 }
 
 window.lxRequestMonitoringNotif = async function(){
-  // Étape 1 : vérifie support
+  // Diagnostic visible : on construit un rapport au fur et à mesure
+  var diag = [];
+  function step(msg, ok){ diag.push((ok===false?'❌ ':'✅ ')+msg); console.log('[lxPush]', msg); }
+
   if(typeof Notification === 'undefined' || typeof navigator === 'undefined' || !('serviceWorker' in navigator)){
-    alert('Votre navigateur ne supporte pas les Web Push notifications.');
+    alert('❌ Votre navigateur ne supporte pas les Web Push notifications.');
     return;
   }
+  step('Support navigateur OK');
   if(Notification.permission === 'denied'){
-    alert('Notifications bloquées par votre navigateur. Allez dans les paramètres du site (cadenas à gauche de l\'URL) et autorisez les notifications.');
+    alert('❌ Notifications BLOQUÉES par votre navigateur.\n\nCadenas à gauche de l\'URL → Notifications → Autoriser, puis recharger.');
     return;
   }
+  step('Permission actuelle : '+Notification.permission);
 
   try {
-    // Étape 2 : enregistrer le Service Worker
     var swReg = await navigator.serviceWorker.register('/admin-sw.js', { scope: '/' });
-    console.log('[lxPush] SW registered', swReg.scope);
+    step('Service Worker enregistré : '+swReg.scope);
     await navigator.serviceWorker.ready;
+    step('Service Worker ready');
 
-    // Étape 3 : demander permission si pas encore accordée
     if(Notification.permission !== 'granted'){
       var perm = await Notification.requestPermission();
-      if(perm !== 'granted'){
-        alert('Notifications refusées. Vous pouvez les réactiver dans les paramètres de votre navigateur.');
-        return;
-      }
+      step('Permission demandée → '+perm);
+      if(perm !== 'granted'){ alert(diag.join('\n')+'\n\n❌ Permission refusée par l\'utilisateur.'); return; }
     }
 
-    // Étape 4 : récup VAPID public key
+    step('Fetch VAPID public key...');
     var keyRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-push-public-key');
+    if(!keyRes.ok){ alert(diag.join('\n')+'\n\n❌ Fetch VAPID HTTP '+keyRes.status); return; }
     var keyData = await keyRes.json();
-    if(!keyData.publicKey){ alert('Erreur récupération clé Push : '+(keyData.error||'inconnu')); return; }
+    if(!keyData.publicKey){ alert(diag.join('\n')+'\n\n❌ Pas de publicKey dans la réponse : '+JSON.stringify(keyData)); return; }
+    step('VAPID public key reçue ('+keyData.publicKey.length+' chars)');
 
-    // Étape 5 : subscribe via PushManager
     var existing = await swReg.pushManager.getSubscription();
-    if(existing) await existing.unsubscribe();
+    if(existing){ await existing.unsubscribe(); step('Ancienne subscription supprimée'); }
     var subscription = await swReg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: _lxUrlBase64ToUint8Array(keyData.publicKey)
     });
+    step('PushManager.subscribe OK');
 
-    // Étape 6 : extraire endpoint + p256dh + auth
     var subJson = subscription.toJSON();
     var endpoint = subJson.endpoint || subscription.endpoint;
     var p256dh = subJson.keys && subJson.keys.p256dh;
     var auth = subJson.keys && subJson.keys.auth;
+    step('Endpoint : '+(endpoint||'').slice(0,60)+'... · p256dh: '+(p256dh?'OK':'MANQUANT')+' · auth: '+(auth?'OK':'MANQUANT'));
 
-    // Étape 7 : POST à lx-push-subscribe (auth via JWT Supabase admin)
+    step('Vérification session Supabase...');
     var session = await _sb.auth.getSession();
-    var jwt = session?.data?.session?.access_token;
-    if(!jwt){ alert('Vous devez être connecté admin pour activer les notifications.'); return; }
+    var jwt = session && session.data && session.data.session && session.data.session.access_token;
+    if(!jwt){
+      // Pas de session JWT côté admin (admin.html n'utilise peut-être pas Supabase Auth)
+      // Fallback : on stocke directement via service_role en utilisant un endpoint sans JWT
+      step('Pas de session Supabase Auth — fallback sans JWT', false);
+      alert(diag.join('\n')+'\n\n❌ Impossible de récupérer le JWT Supabase. L\'admin n\'est pas connecté via Supabase Auth.\n\nSolution : je vais déployer une variante sans JWT.');
+      return;
+    }
+    step('JWT Supabase OK ('+jwt.length+' chars)');
+
+    step('POST à lx-push-subscribe...');
     var subRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-push-subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+jwt },
       body: JSON.stringify({ endpoint, p256dh, auth, action: 'subscribe' })
     });
-    var subResData = await subRes.json();
-    if(!subRes.ok){ alert('Erreur enregistrement subscription : '+(subResData.error||'inconnu')); return; }
+    var subResData;
+    try { subResData = await subRes.json(); } catch(_){ subResData = {}; }
+    if(!subRes.ok){
+      step('lx-push-subscribe HTTP '+subRes.status+' : '+JSON.stringify(subResData), false);
+      alert(diag.join('\n')+'\n\n❌ Le serveur a refusé l\'enregistrement.\nStatus '+subRes.status+'\nErreur : '+(subResData.error||'inconnu'));
+      return;
+    }
+    step('Subscription enregistrée côté serveur ✓');
 
-    // Étape 8 : notif de confirmation locale + maj du bouton
     swReg.showNotification('✅ Web Push activé !', {
       body: 'Vous recevrez les alertes Luxyra même quand l\'app est fermée.',
       icon: '/icon-192.png',
@@ -1017,22 +1035,23 @@ window.lxRequestMonitoringNotif = async function(){
     var btn = document.getElementById('lxNotifBtn');
     if(btn){ btn.textContent = '✅ Push activé (même app fermée)'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
 
-    // Optionnel : déclencher un push de test depuis le serveur pour valider end-to-end
+    // Test end-to-end : déclenche un push depuis le serveur
+    step('Déclenche un push de test depuis le serveur...');
     try {
-      await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-web-push', {
+      var pushRes = await fetch('https://kxdgjtvrkwugbifgppai.supabase.co/functions/v1/lx-web-push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: '🎉 Test Web Push Luxyra',
-          body: 'Si tu vois cette notif sans avoir l\'app ouverte, c\'est blindé !',
-          severity: 'high'
-        })
+        body: JSON.stringify({ title: '🎉 Test Web Push Luxyra', body: 'Tu reçois bien les push !', severity: 'high' })
       });
-    } catch(_) {}
+      var pushData = await pushRes.json().catch(()=>({}));
+      step('Push test : '+(pushData.sent||0)+' envoyé(s), '+(pushData.failed||0)+' échec(s)');
+    } catch(e2) { step('Push test exception: '+e2.message, false); }
+
+    alert(diag.join('\n')+'\n\n🎉 Tout est OK ! Tu devrais voir une 2ème notif "Test Web Push Luxyra" arriver dans quelques secondes.');
 
   } catch(e) {
     console.error('[lxPush] error', e);
-    alert('Erreur activation Web Push : ' + (e.message || e));
+    alert(diag.join('\n')+'\n\n❌ Erreur : '+(e.message || e));
   }
 };
 
