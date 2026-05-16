@@ -70,6 +70,70 @@ async function reportWorkerError(env, source, error, context, severity) {
   }
 }
 
+// Wrapper séparé pour les handlers /api/* (séparé pour clarté)
+async function __wrappedApiHandler(request, url, env) {
+    try {
+      if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
+      if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
+      if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
+      if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
+      // Stripe Connect
+      if (url.pathname === "/api/stripe/connect-onboard" && request.method === "POST") return await handleConnectOnboard(request, env);
+      if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
+      if (url.pathname === "/api/stripe/connect-dashboard" && request.method === "POST") return await handleConnectDashboard(request, env);
+      if (url.pathname === "/api/stripe/connect-payment" && request.method === "POST") return await handleConnectPayment(request, env);
+      // FIX 2026-05-13 : Export NF525 (conservation 6 ans / audit fiscal)
+      if (url.pathname === "/api/admin/export-nf525" && request.method === "POST") return await handleExportNF525(request, env);
+      // FIX 2026-05-12 : Path A empreinte (post-Checkout, stocke le PI ID dans rdv_online)
+      if (url.pathname === "/api/stripe/empreinte-finalize" && request.method === "POST") return await handleEmpreinteFinalize(request, env);
+      // FIX 2026-05-12 : Path A pour RDV sur mesure (acompte direct au salon)
+      if (url.pathname === "/api/rdv-demande/connect-pay" && request.method === "POST") return await handleRdvDemandeConnectPay(request, env);
+      if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
+      if (url.pathname === "/api/email/ticket" && request.method === "POST") return await handleEmailTicket(request, env);
+      if (url.pathname === "/api/email/welcome" && request.method === "POST") return await handleEmailWelcome(request, env);
+      if (url.pathname === "/api/email/custom" && request.method === "POST") return await handleEmailCustom(request, env);
+      if (url.pathname === "/api/sms/rappel" && request.method === "POST") return await handleSmsRappel(request, env);
+      if (url.pathname === "/api/sms/custom" && request.method === "POST") return await handleSmsCustom(request, env);
+      // NEW: SMS Native companion app linking
+      if (url.pathname === "/api/sms/generate-link-token" && request.method === "POST") return await handleSmsGenerateLinkToken(request, env);
+      if (url.pathname === "/api/sms/link-device" && request.method === "POST") return await handleSmsLinkDevice(request, env);
+      if (url.pathname === "/api/client/tickets" && request.method === "POST") return await handleClientTickets(request, env);
+      // FIX 2026-05-13 : transparence frais Stripe — pull en temps réel des balance_transactions
+      // du compte Stripe Connect du salon. Read-only, authentifié par JWT Supabase.
+      if (url.pathname === "/api/stripe/fees" && request.method === "POST") return await handleStripeFees(request, env);
+      // FIX 2026-05-14 : désabonnement RGPD 1-clic depuis lien email
+      if (url.pathname === "/api/unsubscribe" && request.method === "GET") return await handleUnsubscribe(request, env);
+      // Endpoints espace client compte.html — bypass RLS via service_role
+      // après vérification du session_token JWT (issu de lx-login/lx-signup).
+      // Permet de DROP les policies anon USING(true) qui leakaient toutes les
+      // données client cross-salons à n'importe quel détenteur de l'anon key.
+      if (url.pathname === "/api/client/cartes" && request.method === "POST") return await handleClientCartes(request, env);
+      if (url.pathname === "/api/client/fidelite" && request.method === "POST") return await handleClientFidelite(request, env);
+      if (url.pathname === "/api/client/rdvs" && request.method === "POST") return await handleClientRdvs(request, env);
+      if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
+      if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
+      // Invitations clients (magic link "créer mot de passe")
+      if (url.pathname === "/api/client/invite" && request.method === "POST") return await handleClientInvite(request, env);
+      if (url.pathname === "/api/client/invite/verify" && request.method === "POST") return await handleClientInviteVerify(request, env);
+      if (url.pathname === "/api/salon/availability" && request.method === "POST") return await handleSalonAvailability(request, env);
+      if (url.pathname === "/api/rdv/cancel" && request.method === "POST") return await handleRdvCancel(request, env);
+      // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
+      // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
+      if (url.pathname === "/api/admin/retention-purge" && request.method === "POST") {
+        const auth = request.headers.get("Authorization") || "";
+        if (!env.RETENTION_ADMIN_TOKEN || auth !== `Bearer ${env.RETENTION_ADMIN_TOKEN}`) {
+          return jsonResponse({ error: "unauthorized" }, 401);
+        }
+        const result = await runRetentionPurgeJob(env);
+        return jsonResponse({ success: true, ...result });
+      }
+      return jsonResponse({ error: "Not found" }, 404);
+    } catch (err) {
+      console.error("Worker error:", err);
+      return jsonResponse({ error: err.message }, 500);
+    }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -158,71 +222,6 @@ export default {
 
 };
 
-// Wrapper séparé pour les handlers /api/* (séparé pour clarté)
-async function __wrappedApiHandler(request, url, env) {
-    try {
-      if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
-      if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
-      if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
-      if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
-      // Stripe Connect
-      if (url.pathname === "/api/stripe/connect-onboard" && request.method === "POST") return await handleConnectOnboard(request, env);
-      if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
-      if (url.pathname === "/api/stripe/connect-dashboard" && request.method === "POST") return await handleConnectDashboard(request, env);
-      if (url.pathname === "/api/stripe/connect-payment" && request.method === "POST") return await handleConnectPayment(request, env);
-      // FIX 2026-05-13 : Export NF525 (conservation 6 ans / audit fiscal)
-      if (url.pathname === "/api/admin/export-nf525" && request.method === "POST") return await handleExportNF525(request, env);
-      // FIX 2026-05-12 : Path A empreinte (post-Checkout, stocke le PI ID dans rdv_online)
-      if (url.pathname === "/api/stripe/empreinte-finalize" && request.method === "POST") return await handleEmpreinteFinalize(request, env);
-      // FIX 2026-05-12 : Path A pour RDV sur mesure (acompte direct au salon)
-      if (url.pathname === "/api/rdv-demande/connect-pay" && request.method === "POST") return await handleRdvDemandeConnectPay(request, env);
-      if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
-      if (url.pathname === "/api/email/ticket" && request.method === "POST") return await handleEmailTicket(request, env);
-      if (url.pathname === "/api/email/welcome" && request.method === "POST") return await handleEmailWelcome(request, env);
-      if (url.pathname === "/api/email/custom" && request.method === "POST") return await handleEmailCustom(request, env);
-      if (url.pathname === "/api/sms/rappel" && request.method === "POST") return await handleSmsRappel(request, env);
-      if (url.pathname === "/api/sms/custom" && request.method === "POST") return await handleSmsCustom(request, env);
-      // NEW: SMS Native companion app linking
-      if (url.pathname === "/api/sms/generate-link-token" && request.method === "POST") return await handleSmsGenerateLinkToken(request, env);
-      if (url.pathname === "/api/sms/link-device" && request.method === "POST") return await handleSmsLinkDevice(request, env);
-      if (url.pathname === "/api/client/tickets" && request.method === "POST") return await handleClientTickets(request, env);
-      // FIX 2026-05-13 : transparence frais Stripe — pull en temps réel des balance_transactions
-      // du compte Stripe Connect du salon. Read-only, authentifié par JWT Supabase.
-      if (url.pathname === "/api/stripe/fees" && request.method === "POST") return await handleStripeFees(request, env);
-      // FIX 2026-05-14 : désabonnement RGPD 1-clic depuis lien email
-      if (url.pathname === "/api/unsubscribe" && request.method === "GET") return await handleUnsubscribe(request, env);
-      // Endpoints espace client compte.html — bypass RLS via service_role
-      // après vérification du session_token JWT (issu de lx-login/lx-signup).
-      // Permet de DROP les policies anon USING(true) qui leakaient toutes les
-      // données client cross-salons à n'importe quel détenteur de l'anon key.
-      if (url.pathname === "/api/client/cartes" && request.method === "POST") return await handleClientCartes(request, env);
-      if (url.pathname === "/api/client/fidelite" && request.method === "POST") return await handleClientFidelite(request, env);
-      if (url.pathname === "/api/client/rdvs" && request.method === "POST") return await handleClientRdvs(request, env);
-      if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
-      if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
-      // Invitations clients (magic link "créer mot de passe")
-      if (url.pathname === "/api/client/invite" && request.method === "POST") return await handleClientInvite(request, env);
-      if (url.pathname === "/api/client/invite/verify" && request.method === "POST") return await handleClientInviteVerify(request, env);
-      if (url.pathname === "/api/salon/availability" && request.method === "POST") return await handleSalonAvailability(request, env);
-      if (url.pathname === "/api/rdv/cancel" && request.method === "POST") return await handleRdvCancel(request, env);
-      // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
-      // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
-      if (url.pathname === "/api/admin/retention-purge" && request.method === "POST") {
-        const auth = request.headers.get("Authorization") || "";
-        if (!env.RETENTION_ADMIN_TOKEN || auth !== `Bearer ${env.RETENTION_ADMIN_TOKEN}`) {
-          return jsonResponse({ error: "unauthorized" }, 401);
-        }
-        const result = await runRetentionPurgeJob(env);
-        return jsonResponse({ success: true, ...result });
-      }
-      return jsonResponse({ error: "Not found" }, 404);
-    } catch (err) {
-      console.error("Worker error:", err);
-      return jsonResponse({ error: err.message }, 500);
-    }
-  }
-
-}
 
 
 // ============================================================
