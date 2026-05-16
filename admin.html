@@ -908,11 +908,20 @@ function rEmail(){
 // ============================================================================
 window._monitoringRefreshTimer = null;
 function rMonitoring(){
-  var h='<div class="topbar"><h1>Monitoring <span>JS Errors</span> <button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button></h1></div>';
+  var notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+  var btnLabel = '🔔 Activer les notifications';
+  var btnColor = 'var(--gold)';
+  if(notifPerm === 'granted') { btnLabel = '✅ Notifications activées'; btnColor = '#66bb6a'; }
+  else if(notifPerm === 'denied') { btnLabel = '🚫 Notifications bloquées (Paramètres navigateur)'; btnColor = '#ef5350'; }
+  else if(notifPerm === 'unsupported') { btnLabel = '⚠️ Navigateur non compatible'; btnColor = 'var(--text3)'; }
+
+  var h='<div class="topbar"><h1>Monitoring <span>JS Errors</span> '
+    + '<button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button>'
+    + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(notifPerm==='unsupported'||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
+    + '</h1></div>';
   h+='<div id="monitoringContent" style="padding:20px"><div style="text-align:center;color:var(--text3);padding:40px">Chargement…</div></div>';
-  // Auto-load (async pour ne pas bloquer)
   setTimeout(rMonitoringRefresh, 50);
-  // Auto-refresh toutes les 30 secondes tant qu'on est sur cette page
+  // Auto-refresh toutes les 15 secondes (réduit de 30s pour notifs plus rapides)
   if(window._monitoringRefreshTimer) clearInterval(window._monitoringRefreshTimer);
   window._monitoringRefreshTimer = setInterval(function(){
     if(window._currentTab !== 'monitoring'){
@@ -921,9 +930,121 @@ function rMonitoring(){
       return;
     }
     rMonitoringRefresh();
-  }, 30000);
+  }, 15000);
+  // Démarre le watcher de nouvelles erreurs (qui tourne MÊME quand on n'est pas
+  // sur la page monitoring, tant que l'admin est ouvert dans l'onglet)
+  lxStartErrorWatcher();
   return h;
 }
+
+// ====================================================================
+// Notifications natives navigateur + watcher polling
+// ====================================================================
+window.lxRequestMonitoringNotif = function(){
+  if(typeof Notification === 'undefined'){ alert('Votre navigateur ne supporte pas les notifications.'); return; }
+  if(Notification.permission === 'granted'){
+    new Notification('🔔 Notifications déjà activées', { body: 'Vous recevrez les alertes erreurs Luxyra dans cet onglet.', icon: '/icon-192.png' });
+    return;
+  }
+  if(Notification.permission === 'denied'){
+    alert('Notifications bloquées par votre navigateur. Allez dans les paramètres du site et autorisez les notifications.');
+    return;
+  }
+  Notification.requestPermission().then(function(perm){
+    if(perm === 'granted'){
+      new Notification('✅ Notifications Luxyra activées', { body: 'Vous recevrez les alertes erreurs critiques en temps réel tant que cet onglet est ouvert.', icon: '/icon-192.png' });
+      // Refresh la page pour mettre à jour le bouton
+      if(typeof rMonitoring === 'function') document.getElementById('monitoringContent') && rMonitoringRefresh();
+      // Re-render le bouton
+      var btn = document.getElementById('lxNotifBtn');
+      if(btn){ btn.textContent = '✅ Notifications activées'; btn.style.color = '#66bb6a'; btn.style.borderColor = '#66bb6a'; }
+    } else {
+      alert('Notifications refusées. Vous pouvez les réactiver dans les paramètres de votre navigateur.');
+    }
+  });
+};
+
+// Watcher : poll toutes les 15s sur les NOUVELLES erreurs depuis la dernière vérif
+// Tourne en arrière-plan tant que l'admin est ouvert dans un onglet.
+window.lxStartErrorWatcher = function(){
+  if(window._lxErrorWatcherTimer) return; // déjà lancé
+  // Init : ne pas alerter sur les erreurs déjà présentes au boot
+  window._lxLastErrorCheckTs = new Date().toISOString();
+  window._lxLastServerErrTs = window._lxLastErrorCheckTs;
+  window._lxNotifiedIds = new Set();
+
+  function notify(title, body, severity){
+    if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      var opts = {
+        body: body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: severity === 'critical' ? 'lx-critical' : 'lx-error',
+        requireInteraction: severity === 'critical', // notif critical reste affichée
+        silent: false
+      };
+      var n = new Notification(title, opts);
+      n.onclick = function(){
+        window.focus();
+        if(typeof go === 'function') go('monitoring');
+        n.close();
+      };
+    } catch(e){ console.warn('[lxNotif] failed:', e); }
+  }
+
+  async function checkNewErrors(){
+    try {
+      var lastTs = window._lxLastErrorCheckTs;
+      // 1) Nouvelles erreurs audit_log (JS_ERROR, DB_ERROR, NF525_SEAL_TRIGGER_FAIL)
+      var r = await _sb.from('audit_log')
+        .select('id, action, details, salon_id, timestamp_action')
+        .in('action', ['JS_ERROR','DB_ERROR','NF525_SEAL_TRIGGER_FAIL','JS_ERROR_PUBLIC'])
+        .gt('timestamp_action', lastTs)
+        .order('timestamp_action', { ascending: false })
+        .limit(10);
+      if(r.data && r.data.length > 0){
+        for(var i=0; i<r.data.length; i++){
+          var row = r.data[i];
+          var key = 'audit_'+row.id;
+          if(window._lxNotifiedIds.has(key)) continue;
+          window._lxNotifiedIds.add(key);
+          var severity = (row.action === 'DB_ERROR' || row.action === 'NF525_SEAL_TRIGGER_FAIL') ? 'critical' : 'high';
+          var msg = '';
+          try { msg = (JSON.parse(row.details||'{}').msg) || row.details || '(sans détail)'; }
+          catch(_){ msg = String(row.details||'').slice(0,150); }
+          notify('⚠️ '+row.action+' Luxyra', msg.slice(0, 200), severity);
+        }
+        // Met à jour le timestamp
+        window._lxLastErrorCheckTs = r.data[0].timestamp_action;
+      }
+
+      // 2) Nouvelles erreurs server_errors (worker, edge functions)
+      var s = await _sb.from('server_errors')
+        .select('id, source, severity, message, reported_at')
+        .gt('reported_at', window._lxLastServerErrTs)
+        .in('severity', ['critical','error'])
+        .order('reported_at', { ascending: false })
+        .limit(10);
+      if(s.data && s.data.length > 0){
+        for(var j=0; j<s.data.length; j++){
+          var row2 = s.data[j];
+          var key2 = 'server_'+row2.id;
+          if(window._lxNotifiedIds.has(key2)) continue;
+          window._lxNotifiedIds.add(key2);
+          var sev = row2.severity === 'critical' ? 'critical' : 'high';
+          notify('🚨 '+(row2.severity === 'critical' ? 'Erreur CRITIQUE' : 'Erreur serveur'),
+                 '['+row2.source+'] '+ String(row2.message||'').slice(0,200), sev);
+        }
+        window._lxLastServerErrTs = s.data[0].reported_at;
+      }
+    } catch(e){ console.warn('[lxWatcher] tick error:', e); }
+  }
+
+  // Premier check immédiat puis toutes les 15s
+  setTimeout(checkNewErrors, 1000);
+  window._lxErrorWatcherTimer = setInterval(checkNewErrors, 15000);
+};
 async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
