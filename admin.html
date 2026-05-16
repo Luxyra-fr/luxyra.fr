@@ -928,11 +928,14 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent, publicErrs] = await Promise.all([
+    var [summary, recent, publicErrs, serverErrs] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
       _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
-      // FIX 2026-05-16 : erreurs JS des pages publiques anonymes (index, tarifs, pro, etc.)
+      // FIX 2026-05-16 : erreurs JS des pages publiques anonymes
       _sb.from('js_errors_public').select('id, source, type, message, page, salon_slug, reported_at')
+         .order('reported_at', { ascending: false }).limit(50),
+      // FIX 2026-05-16 soir : erreurs SERVEUR (worker Cloudflare, edge functions, cron)
+      _sb.from('server_errors').select('id, source, severity, message, http_path, http_status, salon_id, reported_at')
          .order('reported_at', { ascending: false }).limit(50)
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
@@ -940,7 +943,8 @@ async function rMonitoringRefresh(){
     var rowsS = summary.data || [];
     var rowsR = recent.data || [];
     var rowsP = publicErrs.error ? [] : (publicErrs.data || []);
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP);
+    var rowsServer = serverErrs.error ? [] : (serverErrs.data || []);
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -948,8 +952,9 @@ async function rMonitoringRefresh(){
       + '</div>';
   }
 }
-function _renderMonitoringHTML(summary, recent, publicErrs){
+function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs){
   publicErrs = publicErrs || [];
+  serverErrs = serverErrs || [];
   // === Stats globales (KPI cards) ===
   var total1h=0, total24h=0, total7j=0, nbSalonsAffected=summary.length;
   summary.forEach(function(s){
@@ -1076,6 +1081,41 @@ function _renderMonitoringHTML(summary, recent, publicErrs){
     h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Erreurs capturées sur les pages publiques sans contexte salon (homepage, tarifs, inscription, etc.). Le hook lx-monitoring.js est actif sur toutes les pages HTML publiques.</div>';
   } else {
     h+='<div style="margin-top:24px;padding:16px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:12px;font-size:13px;color:#66bb6a"><strong>🌐 Pages publiques</strong> · Aucune erreur récente sur index, tarifs, pro, inscription, compte, bons cadeaux, recherche.</div>';
+  }
+  // === Section "Erreurs serveur" — Worker Cloudflare, Edge functions Supabase, Cron ===
+  if(serverErrs && serverErrs.length > 0){
+    var nbCritical = serverErrs.filter(function(s){return s.severity==='critical';}).length;
+    h+='<div style="margin:30px 0 12px;display:flex;align-items:center;gap:10px">'
+      +'<h2 style="font-size:16px;margin:0;color:'+(nbCritical>0?'#ef5350':'var(--gold)')+'">⚙️ Erreurs serveur</h2>'
+      +'<span style="font-size:11px;color:var(--text3)">'+serverErrs.length+' erreur(s)'+(nbCritical>0?' · '+nbCritical+' critique(s)':'')+'</span>'
+      +'</div>';
+    h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    h+='<thead style="background:var(--bg3)"><tr>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Sévérité</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Source</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Message</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Path</th>'
+      +'<th style="text-align:right;padding:9px 12px;color:var(--text3);font-size:11px">Quand</th>'
+      +'</tr></thead><tbody>';
+    var sevColors = { critical:'#ef5350', error:'#ff9800', warning:'#fbc02d' };
+    for(var si=0; si<Math.min(serverErrs.length, 20); si++){
+      var se = serverErrs[si];
+      var sevCol = sevColors[se.severity] || '#9e9e9e';
+      var ago = new Date(se.reported_at).toLocaleString('fr-FR');
+      var msg = (se.message || '').replace(/[<>&]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]; });
+      h+='<tr style="border-top:1px solid var(--border)">'
+        +'<td style="padding:8px 12px"><span style="display:inline-block;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;background:'+sevCol+'22;color:'+sevCol+';text-transform:uppercase">'+se.severity+'</span></td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-size:11px;font-family:monospace">'+se.source+'</td>'
+        +'<td style="padding:8px 12px;color:#ef5350;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+msg+'">'+msg+'</td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(se.http_path||'')+(se.http_status?' <span style="color:#ef5350">'+se.http_status+'</span>':'')+'</td>'
+        +'<td style="padding:8px 12px;color:var(--text3);font-size:11px;text-align:right;white-space:nowrap">'+ago+'</td>'
+        +'</tr>';
+    }
+    h+='</tbody></table></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Worker Cloudflare, edge functions Supabase et jobs cron. Les criticals déclenchent une alerte mail automatique.</div>';
+  } else {
+    h+='<div style="margin-top:24px;padding:16px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.25);border-radius:12px;font-size:13px;color:#66bb6a"><strong>⚙️ Serveur</strong> · Aucune erreur récente sur le worker Cloudflare, les edge functions Supabase ou les jobs cron.</div>';
   }
   h+='<div style="text-align:center;color:var(--text3);font-size:11px;margin-top:24px">Auto-rafraîchi toutes les 30 secondes — dernière mise à jour : '+new Date().toLocaleTimeString('fr-FR')+'</div>';
   return h;

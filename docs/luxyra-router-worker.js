@@ -185,6 +185,7 @@ export default {
       console.log(`[cron] retention-purge done:`, result);
     } catch (err) {
       console.error(`[cron] retention-purge FAILED:`, err?.message || err);
+      await reportWorkerError(env, "cron:retention-purge", err, { event_cron: event.cron }, "critical");
       // On ne re-throw pas — on veut que le cron continue de tourner les jours suivants.
     }
     // Job cartes pending orphelines : créées via doVenteCarteAbo mais jamais
@@ -198,6 +199,7 @@ export default {
       console.log(`[cron] pending-cartes-purge done:`, result2);
     } catch (err) {
       console.error(`[cron] pending-cartes-purge FAILED:`, err?.message || err);
+      await reportWorkerError(env, "cron:pending-cartes-purge", err, null, "error");
     }
     // FIX 2026-05-12 : job purge RDV pending_payment abandonnés (> 1h, payment_intent_id NULL)
     // Évite la pollution de la table rdv_online par des paiements Stripe abandonnés.
@@ -207,6 +209,7 @@ export default {
       console.log(`[cron] pending-payment-rdv-purge done:`, result3);
     } catch (err) {
       console.error(`[cron] pending-payment-rdv-purge FAILED:`, err?.message || err);
+      await reportWorkerError(env, "cron:pending-payment-rdv-purge", err, null, "error");
     }
     // FIX 2026-05-13 : Job d'audit intégrité quotidien sur tous les salons actifs.
     // Appelle public.check_data_integrity() (READ-ONLY) sur chaque salon, agrège les
@@ -217,6 +220,7 @@ export default {
       console.log(`[cron] integrity-check done:`, result4);
     } catch (err) {
       console.error(`[cron] integrity-check FAILED:`, err?.message || err);
+      await reportWorkerError(env, "cron:integrity-check", err, null, "critical");
     }
   },
 
