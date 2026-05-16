@@ -40,11 +40,126 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
+// ============================================================
+// reportWorkerError : helper pour logger les erreurs serveur Cloudflare
+// dans server_errors via Supabase REST. Non-throwing (best-effort).
+// ============================================================
+async function reportWorkerError(env, source, error, context, severity) {
+  try {
+    const msg = error && error.message ? String(error.message).slice(0, 800) : String(error || "Unknown error").slice(0, 800);
+    const stack = error && error.stack ? String(error.stack).slice(0, 3000) : null;
+    const sbKey = env.SUPABASE_SERVICE_KEY;
+    if (!sbKey) return; // si pas de clé, on log juste en console
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/report_server_error`, {
+      method: "POST",
+      headers: {
+        "apikey": sbKey,
+        "Authorization": `Bearer ${sbKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        p_source: String(source || "worker:unknown").slice(0, 200),
+        p_message: msg,
+        p_severity: severity || "error",
+        p_stack: stack,
+        p_context: context || null
+      })
+    }).catch(function(e){ console.warn("[reportWorkerError] POST failed:", e?.message); });
+  } catch (e) {
+    console.error("[reportWorkerError] exception:", e?.message);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
-    if (!url.pathname.startsWith("/api/")) return handleExistingRoutes(request, url, env);
+    // ============ TRY/CATCH GLOBAL : toute exception non gérée arrive ici ============
+    try {
+      // Route les pages non-/api/ vers handleExistingRoutes
+      if (!url.pathname.startsWith("/api/")) {
+        try {
+          return await handleExistingRoutes(request, url, env);
+        } catch (eh) {
+          await reportWorkerError(env, "worker:handleExistingRoutes", eh, {
+            method: request.method, path: url.pathname
+          }, "critical");
+          return new Response("Service temporairement indisponible. Veuillez réessayer.", { status: 500 });
+        }
+      }
+      // /api/* — wrapper qui catch les erreurs des handlers individuels
+      const apiResult = await __wrappedApiHandler(request, url, env);
+      // Log les 5xx pour visibilité (sans modifier le comportement)
+      if (apiResult && apiResult.status >= 500) {
+        try {
+          var bodyClone = apiResult.clone();
+          var bodyText = "";
+          try { bodyText = (await bodyClone.text()).slice(0, 500); } catch(_) {}
+          await reportWorkerError(env, "worker:api_5xx", new Error("5xx response: " + bodyText), {
+            method: request.method, path: url.pathname, status: apiResult.status
+          }, "error");
+        } catch(_){}
+      }
+      return apiResult;
+    } catch (eFatal) {
+      // Exception NON-CATCHÉE remontée jusqu'au fetch() → critique
+      try {
+        await reportWorkerError(env, "worker:fatal", eFatal, {
+          method: request.method, path: url.pathname, ua: request.headers.get("user-agent")
+        }, "critical");
+      } catch(_) {}
+      return new Response("Une erreur interne est survenue. Notre équipe a été notifiée.", { status: 500 });
+    }
+  },
+
+  // Cron trigger Cloudflare — appelé selon la config wrangler.toml [triggers].crons.
+  // Pour l'instant 1×/jour à 3h UTC : job de rétention (préavis + purge 6 ans).
+  async scheduled(event, env, ctx) {
+    console.log(`[cron] scheduled event triggered: ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`);
+    try {
+      const result = await runRetentionPurgeJob(env);
+      console.log(`[cron] retention-purge done:`, result);
+    } catch (err) {
+      console.error(`[cron] retention-purge FAILED:`, err?.message || err);
+      // On ne re-throw pas — on veut que le cron continue de tourner les jours suivants.
+    }
+    // Job cartes pending orphelines : créées via doVenteCarteAbo mais jamais
+    // confirmées par un paiement (ex: vente abandonnée, double-clic supprimé).
+    // Sans ce purge, elles restent en "pending" et peuvent réapparaître dans
+    // l'UI. Avec notre fix anti-bug 2026-05-05, l'ancienne carte n'est plus
+    // marquée replaced à tort — mais on veut quand même nettoyer les pending
+    // qui traînent (≥ 24 h).
+    try {
+      const result2 = await runPendingCartesAboPurgeJob(env);
+      console.log(`[cron] pending-cartes-purge done:`, result2);
+    } catch (err) {
+      console.error(`[cron] pending-cartes-purge FAILED:`, err?.message || err);
+    }
+    // FIX 2026-05-12 : job purge RDV pending_payment abandonnés (> 1h, payment_intent_id NULL)
+    // Évite la pollution de la table rdv_online par des paiements Stripe abandonnés.
+    // Le client-side filtre déjà > 15 min, mais on nettoie la DB pour de bon.
+    try {
+      const result3 = await runPendingPaymentRdvPurgeJob(env);
+      console.log(`[cron] pending-payment-rdv-purge done:`, result3);
+    } catch (err) {
+      console.error(`[cron] pending-payment-rdv-purge FAILED:`, err?.message || err);
+    }
+    // FIX 2026-05-13 : Job d'audit intégrité quotidien sur tous les salons actifs.
+    // Appelle public.check_data_integrity() (READ-ONLY) sur chaque salon, agrège les
+    // anomalies, et envoie un email à support@luxyra.fr SEULEMENT si problème détecté.
+    // Inbox vide = tout va bien.
+    try {
+      const result4 = await runIntegrityCheckJob(env);
+      console.log(`[cron] integrity-check done:`, result4);
+    } catch (err) {
+      console.error(`[cron] integrity-check FAILED:`, err?.message || err);
+    }
+  },
+
+};
+
+// Wrapper séparé pour les handlers /api/* (séparé pour clarté)
+async function __wrappedApiHandler(request, url, env) {
     try {
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
@@ -105,52 +220,10 @@ export default {
       console.error("Worker error:", err);
       return jsonResponse({ error: err.message }, 500);
     }
-  },
+  }
 
-  // Cron trigger Cloudflare — appelé selon la config wrangler.toml [triggers].crons.
-  // Pour l'instant 1×/jour à 3h UTC : job de rétention (préavis + purge 6 ans).
-  async scheduled(event, env, ctx) {
-    console.log(`[cron] scheduled event triggered: ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`);
-    try {
-      const result = await runRetentionPurgeJob(env);
-      console.log(`[cron] retention-purge done:`, result);
-    } catch (err) {
-      console.error(`[cron] retention-purge FAILED:`, err?.message || err);
-      // On ne re-throw pas — on veut que le cron continue de tourner les jours suivants.
-    }
-    // Job cartes pending orphelines : créées via doVenteCarteAbo mais jamais
-    // confirmées par un paiement (ex: vente abandonnée, double-clic supprimé).
-    // Sans ce purge, elles restent en "pending" et peuvent réapparaître dans
-    // l'UI. Avec notre fix anti-bug 2026-05-05, l'ancienne carte n'est plus
-    // marquée replaced à tort — mais on veut quand même nettoyer les pending
-    // qui traînent (≥ 24 h).
-    try {
-      const result2 = await runPendingCartesAboPurgeJob(env);
-      console.log(`[cron] pending-cartes-purge done:`, result2);
-    } catch (err) {
-      console.error(`[cron] pending-cartes-purge FAILED:`, err?.message || err);
-    }
-    // FIX 2026-05-12 : job purge RDV pending_payment abandonnés (> 1h, payment_intent_id NULL)
-    // Évite la pollution de la table rdv_online par des paiements Stripe abandonnés.
-    // Le client-side filtre déjà > 15 min, mais on nettoie la DB pour de bon.
-    try {
-      const result3 = await runPendingPaymentRdvPurgeJob(env);
-      console.log(`[cron] pending-payment-rdv-purge done:`, result3);
-    } catch (err) {
-      console.error(`[cron] pending-payment-rdv-purge FAILED:`, err?.message || err);
-    }
-    // FIX 2026-05-13 : Job d'audit intégrité quotidien sur tous les salons actifs.
-    // Appelle public.check_data_integrity() (READ-ONLY) sur chaque salon, agrège les
-    // anomalies, et envoie un email à support@luxyra.fr SEULEMENT si problème détecté.
-    // Inbox vide = tout va bien.
-    try {
-      const result4 = await runIntegrityCheckJob(env);
-      console.log(`[cron] integrity-check done:`, result4);
-    } catch (err) {
-      console.error(`[cron] integrity-check FAILED:`, err?.message || err);
-    }
-  },
-};
+}
+
 
 // ============================================================
 // FIX W1: STRIPE WEBHOOK SIGNATURE VERIFICATION (HMAC SHA-256)
