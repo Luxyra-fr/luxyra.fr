@@ -26748,6 +26748,11 @@ function doFinalPayExecute(method){
   });
   
   showTicket(_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):metStr,total);
+  // FIX 2026-05-17 nuit : sauvegarde le collab du ticket avant le reset, pour que
+  // la fiche technique propos\u00e9e juste apr\u00e8s (qui n'a plus acc\u00e8s \u00e0 _tk) puisse
+  // l'attribuer par d\u00e9faut \u00e0 la personne qui A FAIT la prestation, pas \u00e0 celle
+  // qui encaisse.
+  window._lastTicketCollabId = _tk.stId || null;
   // BUG FIX 2026-05-05 : reset _tk apr\u00e8s finalisation du ticket. Sinon, quand
   // l'utilisateur retourne dans la caisse apr\u00e8s avoir pay\u00e9, il revoit la modal
   // R\u00e8glement avec _tk.step=5 + _tk.payments toujours en m\u00e9moire. Pire : cliquer
@@ -26776,13 +26781,29 @@ function askFicheTech(cId){
 //              2) sinon _tk.stId (collab du ticket en cours si caisse ouverte)
 //              3) sinon T[0]
 // + S\u00e9lecteur dans la modal pour changer manuellement (cas Amandine connect\u00e9e mais Manue fait la presta)
+// La fiche technique doit refléter QUI A FAIT LA PRESTATION (peut être différent de qui encaisse).
+// Ordre de priorité :
+//   1) _tk.stId : collab du ticket/RDV en cours = celui qui a réalisé la presta ← PRIORITÉ
+//   2) CURRENT_OPERATOR.collab_id : si fiche tech hors ticket, la personne connectée fait sans doute la presta
+//   3) Match prénom (fallback robuste si collab_id absent)
+//   4) T[0]
+// L'utilisateur peut de toute façon changer via le <select> de la modal.
 function _ftDefaultCollab(){
-  // 1) CURRENT_OPERATOR.collab_id : lien direct depuis salon_operateurs
+  // 1a) Collab du ticket en cours = celui qui a fait la presta
+  if(typeof _tk!=="undefined" && _tk && _tk.stId){
+    var sty=gT(_tk.stId);
+    if(sty) return sty;
+  }
+  // 1b) Collab du DERNIER ticket finalisé (fiche tech proposée juste après l'encaissement)
+  if(window._lastTicketCollabId){
+    var stl=gT(window._lastTicketCollabId);
+    if(stl) return stl;
+  }
+  // 2) CURRENT_OPERATOR connecté (fiche tech créée hors ticket)
   if(typeof CURRENT_OPERATOR!=="undefined" && CURRENT_OPERATOR){
     if(CURRENT_OPERATOR.collab_id){
       for(var j=0;j<T.length;j++){ if(T[j].id===CURRENT_OPERATOR.collab_id) return T[j]; }
     }
-    // 2) Fallback match par prénom
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
@@ -26791,12 +26812,7 @@ function _ftDefaultCollab(){
       }
     }
   }
-  // 3) Collab du ticket en cours
-  if(typeof _tk!=="undefined" && _tk && _tk.stId){
-    var sty=gT(_tk.stId);
-    if(sty) return sty;
-  }
-  // 4) Fallback
+  // 3) Fallback
   return T[0];
 }
 function _ftCollabSelect(currentId){
