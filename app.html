@@ -838,10 +838,18 @@ var OPERATEURS = [];
 var CURRENT_OPERATOR = null; // {id, prenom, nom, role, permissions, ...}
 
 // FIX 2026-05-17 nuit : helper "collab par défaut"
-// Retourne l'id du collaborateur dans T qui matche CURRENT_OPERATOR (par prénom),
-// sinon T[0]. Évite que ticket/fiche tech soit attribué à Amandine quand Manue est connectée.
+// Évite que ticket/fiche tech soit attribué à Amandine quand Manue est connectée.
+// Priorité :
+//  1) CURRENT_OPERATOR.collab_id (lien explicite stocké dans salon_operateurs)
+//  2) Match par prénom CURRENT_OPERATOR.prenom ↔ T[i].n (fallback robuste)
+//  3) T[0] (1er collab de l'équipe)
 function _defaultCollabId(){
   if(typeof CURRENT_OPERATOR!=="undefined" && CURRENT_OPERATOR && typeof T!=="undefined" && T && T.length){
+    // 1) Lien direct collab_id ?
+    if(CURRENT_OPERATOR.collab_id){
+      for(var j=0;j<T.length;j++){ if(T[j].id===CURRENT_OPERATOR.collab_id) return T[j].id; }
+    }
+    // 2) Match par prénom (au cas où le lien ne soit pas encore configuré)
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
@@ -26769,8 +26777,12 @@ function askFicheTech(cId){
 //              3) sinon T[0]
 // + S\u00e9lecteur dans la modal pour changer manuellement (cas Amandine connect\u00e9e mais Manue fait la presta)
 function _ftDefaultCollab(){
-  // 1) CURRENT_OPERATOR : on cherche un collab qui matche par prenom (les collab dans T sont par nom complet "Manue")
+  // 1) CURRENT_OPERATOR.collab_id : lien direct depuis salon_operateurs
   if(typeof CURRENT_OPERATOR!=="undefined" && CURRENT_OPERATOR){
+    if(CURRENT_OPERATOR.collab_id){
+      for(var j=0;j<T.length;j++){ if(T[j].id===CURRENT_OPERATOR.collab_id) return T[j]; }
+    }
+    // 2) Fallback match par prénom
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
@@ -26779,12 +26791,12 @@ function _ftDefaultCollab(){
       }
     }
   }
-  // 2) Collab du ticket en cours
+  // 3) Collab du ticket en cours
   if(typeof _tk!=="undefined" && _tk && _tk.stId){
     var sty=gT(_tk.stId);
     if(sty) return sty;
   }
-  // 3) Fallback
+  // 4) Fallback
   return T[0];
 }
 function _ftCollabSelect(currentId){
