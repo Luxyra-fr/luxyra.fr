@@ -13424,16 +13424,51 @@ async function rDoublonsClients(){
   }
 }
 window.lxMergeDup = async function(keepId, removeId){
-  if(!confirm('Fusionner ces 2 fiches ?\n\nLa fiche conservée gardera toutes les données (RDV, tickets, fiches techniques, points fidélité…) des 2 clients. L\'autre sera supprimée. Action irréversible.')) return;
+  // Récupère les infos des 2 fiches pour les afficher dans la confirmation
+  var keepClient = (typeof gC==='function') ? gC(keepId) : null;
+  var removeClient = (typeof gC==='function') ? gC(removeId) : null;
+  var keepName = keepClient ? (keepClient.nom||'')+' '+(keepClient.prenom||'') : 'fiche conservée';
+  var removeName = removeClient ? (removeClient.nom||'')+' '+(removeClient.prenom||'') : 'fiche supprimée';
+  var htm = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:480px">';
+  htm += '<div style="text-align:center;margin-bottom:18px">';
+  htm += '<div style="font-size:42px;margin-bottom:6px">🔀</div>';
+  htm += '<h2 style="margin-bottom:4px;font-size:19px">Confirmer la fusion</h2>';
+  htm += '<div style="font-size:12px;color:var(--text3)">Cette action est irréversible</div>';
+  htm += '</div>';
+  htm += '<div style="background:rgba(102,187,106,.06);border:1px solid rgba(102,187,106,.25);border-radius:10px;padding:14px;margin-bottom:14px">';
+  htm += '<div style="font-size:11px;font-weight:800;color:#66bb6a;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">✓ Fiche conservée</div>';
+  htm += '<div style="font-weight:700;font-size:14px">'+esc(keepName)+'</div>';
+  htm += '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.6">Elle récupère <strong>toutes les données</strong> des 2 fiches : RDV, tickets, fiches techniques, points fidélité, notes, cartes d\'abo, bons cadeaux.</div>';
+  htm += '</div>';
+  htm += '<div style="background:rgba(239,83,80,.05);border:1px solid rgba(239,83,80,.2);border-radius:10px;padding:14px;margin-bottom:18px">';
+  htm += '<div style="font-size:11px;font-weight:800;color:#ef5350;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🗑 Fiche supprimée</div>';
+  htm += '<div style="font-weight:700;font-size:14px">'+esc(removeName)+'</div>';
+  htm += '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.6">La fiche elle-même est effacée, mais aucune donnée n\'est perdue — tout est déjà transféré sur la fiche conservée.</div>';
+  htm += '</div>';
+  htm += '<div style="display:flex;gap:10px">';
+  htm += '<button class="btn" style="flex:1;background:var(--bg2);font-size:14px;padding:13px" onclick="cM()">Annuler</button>';
+  htm += '<button class="btn" id="lxMergeDupConfirmBtn" style="flex:2;background:#66bb6a;color:#fff;font-weight:700;font-size:14px;padding:13px" onclick="lxMergeDupDo(\''+keepId+'\',\''+removeId+'\')">✓ Fusionner</button>';
+  htm += '</div>';
+  htm += '</div></div>';
+  document.getElementById('modal').innerHTML = htm;
+};
+window.lxMergeDupDo = async function(keepId, removeId){
+  var btn = document.getElementById('lxMergeDupConfirmBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Fusion en cours…'; btn.style.opacity='.7'; }
   try {
     var r = await _sb.rpc('merge_client_duplicates', { p_keep_id: keepId, p_remove_id: removeId });
     if (r.error) throw new Error(r.error.message);
-    toast('Fusion OK','success');
+    if(typeof cM==='function') cM();
+    if(typeof toast==='function') toast('Fusion effectuée','success');
     // Recharge les données client localement
     if(typeof loadSalonData==='function') await loadSalonData();
     // Rouvre la modale pour voir les doublons restants
     rDoublonsClients();
-  } catch(e) { alert('Erreur fusion : '+(e.message||e)); }
+  } catch(e) {
+    if(btn){ btn.disabled = false; btn.textContent = '✓ Fusionner'; btn.style.opacity='1'; }
+    if(typeof toast==='function') toast('Erreur fusion : '+(e.message||e),'error');
+    else alert('Erreur fusion : '+(e.message||e));
+  }
 };
 window.lxIgnoreDup = async function(aId, bId){
   try {
