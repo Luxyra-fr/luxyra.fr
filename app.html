@@ -421,6 +421,8 @@ console.log("LUXYRA v6.3");
   // Whitelist : on ignore les messages qui matchent (libs tierces bruyantes + AUDIT pour éviter récursion)
   // FIX 2026-05-15 v2 : skip [AUDIT] pour empêcher boucle infinie si saveAuditEntry plante
   // (saveAuditEntry → catch → console.error('[AUDIT] ...') → hook → saveAuditEntry → ...)
+  // FIX 2026-05-18 : NE PAS skip [TOAST] — c'est précisément les erreurs RPC
+  // visibles par le client qu'on veut tracer dans le monitoring.
   var _skipPat = /^(\[Stripe\.js\]|\[AUDIT\]|\[WAL\]|\[cache\]|Cookie|Cross-Origin|deprecat|experimental|preload|stylesheet|Failed to load resource|net::ERR_)/i;
   console.error = function(){
     // 1) Toujours appeler l'original (ne pas casser le comportement console)
@@ -568,6 +570,13 @@ window._walDoIgnore = function(){
     if(!msg)return;
     var s=String(msg);
     if(!type)type=detectType(s);
+    // FIX 2026-05-18 : remonter au monitoring chaque toast 'error' visible par
+    // le client (RPC échouées, save fails, erreurs métier). Sinon ces erreurs
+    // étaient affichées à l'utilisateur mais invisibles dans audit_log.
+    // On préfixe pour distinguer dans le hook console.error.
+    if(type==="error" && typeof console!=="undefined" && console.error){
+      try { console.error("[TOAST]", s.slice(0, 400)); } catch(_){}
+    }
     var el=document.createElement("div");
     el.className="lx-toast lx-toast-"+type;
     var icon=document.createElement("span");
@@ -648,6 +657,10 @@ var _syncConfirmResult=null;
 function showAlert(msg, icon, onOk) {
   if (typeof icon === "function") { onOk = icon; icon = null; }
   icon = icon || "info";
+  // FIX 2026-05-18 : remonter au monitoring les alerts d'erreur visibles au client
+  if(icon==="error" && typeof console!=="undefined" && console.error){
+    try { console.error("[ALERT]", String(msg||"").slice(0, 400)); } catch(_){}
+  }
   var icons = {info:"ℹ️", success:"✅", warning:"⚠️", error:"❌"};
   var colors = {info:"#64b5f6", success:"#22c55e", warning:"#ff9800", error:"#f44336"};
   var ic = icons[icon] || icons.info;
