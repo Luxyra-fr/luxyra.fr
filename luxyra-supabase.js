@@ -2765,21 +2765,32 @@ async function unlockOperateur(id) {
 // ============================================================
 async function syncClientFromOnlineRdv(rdvData) {
   if (!_isOnline || !_salonId) return null;
-  // Check if client already exists by email or beautypro_id
-  var email = rdvData.client_email || "";
+  // FIX 2026-05-18 : matching robuste via colonnes normalisées
+  // (téléphone sans espaces/tirets/+33, email lowercase trim)
+  // Évite les doublons quand l'orthographe / le format diffère entre l'inscription
+  // chez le salon et le compte Luxyra du client.
+  var email = (rdvData.client_email || "").trim().toLowerCase();
   var bpId = rdvData.client_luxyra_id || null;
   var existing = null;
+  // 1) Lien explicite client_luxyra_id
   if (bpId) {
     var r = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("client_luxyra_id", bpId).limit(1);
     if (r.data && r.data.length) existing = r.data[0];
   }
+  // 2) Email normalisé (lowercase)
   if (!existing && email) {
-    var r2 = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("email", email).limit(1);
+    var r2 = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("email_norm", email).limit(1);
     if (r2.data && r2.data.length) existing = r2.data[0];
   }
+  // 3) Téléphone normalisé (mêmes règles que la fonction DB normalize_phone)
   if (!existing && rdvData.client_telephone) {
-    var r3 = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("telephone", rdvData.client_telephone).limit(1);
-    if (r3.data && r3.data.length) existing = r3.data[0];
+    var phNorm = String(rdvData.client_telephone||"").replace(/[^0-9]/g,"");
+    if (phNorm.length === 11 && phNorm.indexOf("33") === 0) phNorm = "0" + phNorm.substring(2);
+    if (phNorm.length === 13 && phNorm.indexOf("0033") === 0) phNorm = "0" + phNorm.substring(4);
+    if (phNorm.length >= 8) {
+      var r3 = await _sb.from("clients").select("*").eq("salon_id", _salonId).eq("telephone_norm", phNorm).limit(1);
+      if (r3.data && r3.data.length) existing = r3.data[0];
+    }
   }
   if (existing) {
     // Link beautypro_id if not set
