@@ -31177,104 +31177,21 @@ function refreshCurrentView(){
   if(document.readyState==='complete')boot();else window.addEventListener('load',boot);
 })();
 
-// === CHANTIER 2 — PUSH SALON ===
-window.VAPID_PUBLIC_KEY='BAg80uDJxWmu1ltDdXbiQbAFEUXn4v5bfNRVbvT1jRh07y29Opxqksn8MeomA-3K-AhVwzxqVXM_UetPDpy2vaI';
-function _urlB64ToU8(b64){var pad='='.repeat((4-b64.length%4)%4);var s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');var raw=atob(s),out=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
-async function lxSalonPushStatus(){
-  if(!('Notification' in window)||!('serviceWorker' in navigator)||!('PushManager' in window))return 'unsupported';
-  if(Notification.permission==='denied')return 'denied';
-  if(Notification.permission==='default')return 'default';
-  try{
-    var reg=await navigator.serviceWorker.ready;
-    var sub=await reg.pushManager.getSubscription();
-    if(!sub)return 'granted_no_sub';
-    if(typeof _sb==='undefined'||!_salonId)return 'granted_no_sub';
-    var r=await _sb.from('push_subscriptions').select('id').eq('endpoint',sub.endpoint).eq('target_type','salon').eq('salon_id',_salonId).maybeSingle();
-    return r.data?'active':'granted_no_sub';
-  }catch(e){return 'error';}
-}
-async function lxSalonPushEnable(){
-  try{
-    if(!('serviceWorker' in navigator)){toast('Push non supporté','error');return;}
-    if(typeof _salonId==='undefined'||!_salonId){toast('Connexion requise','warning');return;}
-    console.log('[push] step 1 - requesting permission');
-    var perm=await Notification.requestPermission();
-    console.log('[push] step 1 OK, permission=',perm);
-    if(perm!=='granted'){toast('Permission refusée','warning');return;}
-    console.log('[push] step 2 - waiting SW ready');
-    var reg=await navigator.serviceWorker.ready;
-    console.log('[push] step 2 OK, scope=',reg.scope);
-    console.log('[push] step 3 - getSubscription');
-    var sub=await reg.pushManager.getSubscription();
-    if(!sub){
-      console.log('[push] step 3b - subscribe');
-      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
-    }
-    console.log('[push] step 3 OK, endpoint=',sub.endpoint.slice(0,50));
-    var j=sub.toJSON();
-    console.log('[push] step 4 - upsert DB, salon_id=',_salonId);
-    var up=await _sb.from('push_subscriptions').upsert({endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,target_type:'salon',salon_id:_salonId,admin_user_id:null,last_used_at:new Date().toISOString()},{onConflict:'endpoint'}).select();
-    if(up.error){console.error('[push] DB error:',up.error);throw up.error;}
-    console.log('[push] step 4 OK, inserted',up.data);
-    try{localStorage.setItem('lx_push_banner_dismissed','1');}catch(e){}
-    toast('🔔 Notifications activées','success');
-    var b=document.getElementById('lxPushBanner');if(b)b.style.display='none';
-    if(typeof renderPushSettings==='function')renderPushSettings();
-  }catch(e){
-    console.error('[push] enable FAIL:',e,e&&e.message,e&&e.code,e&&e.name);
-    toast('Erreur: '+(e&&(e.message||e.name||e.code)||'inconnue'),'error');
-  }
-}
-async function lxSalonPushDisable(){
-  try{
-    var reg=await navigator.serviceWorker.ready;
-    var sub=await reg.pushManager.getSubscription();
-    if(sub){
-      await _sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint).eq('target_type','salon').eq('salon_id',_salonId);
-      await sub.unsubscribe();
-    }
-    toast('Notifications désactivées','info');
-    if(typeof renderPushSettings==='function')renderPushSettings();
-  }catch(e){console.error('push disable',e);toast('Erreur','error');}
-}
-async function lxSalonPushTest(){
-  try{
-    var r=await _sb.functions.invoke('send-push',{body:{event_type:'admin_reply',title:'🧪 Test notification',body:'Si tu vois ça, tout fonctionne !',url:'https://luxyra.fr/app.html',target_salon_id:_salonId}});
-    if(r.error)throw r.error;
-    toast('Test envoyé ('+((r.data&&r.data.sent)||0)+')','success');
-  }catch(e){console.error('push test',e);toast('Erreur test','error');}
-}
+// === CHANTIER 2 — PUSH SALON — DÉSACTIVÉ 2026-05-18 ===
+// La table push_subscriptions a été supprimée lors du cleanup Web Push (FCM/Doze
+// Android non fiable). On garde les fonctions en stub pour ne pas casser un
+// éventuel ancien call. La bannière ne s'affiche plus.
+async function lxSalonPushStatus(){ return 'unsupported'; }
+async function lxSalonPushEnable(){ toast('Notifications push désactivées — utilisez les mails Brevo','info'); }
+async function lxSalonPushDisable(){ /* noop */ }
+async function lxSalonPushTest(){ toast('Notifications push désactivées','info'); }
 async function renderPushSettings(){
   var z=document.getElementById('pushSettingsZone');if(!z)return;
-  var st=await lxSalonPushStatus();
-  var labels={unsupported:'❌ Non supporté',denied:'🚫 Bloqué (paramètres navigateur)',default:'⚪ Non configuré',granted_no_sub:'⚠️ Permission OK, pas abonné',active:'✅ Actif',error:'⚠️ Erreur'};
-  var h='<div style="margin-bottom:10px;font-size:13px">État : <strong>'+(labels[st]||st)+'</strong></div>';
-  if(st==='default'||st==='granted_no_sub')h+='<button class="btn bg bs" onclick="lxSalonPushEnable()">Activer</button>';
-  if(st==='active')h+='<button class="btn bs" onclick="lxSalonPushTest()" style="margin-right:6px">Tester</button><button class="btn bs" onclick="lxSalonPushDisable()">Désactiver</button>';
-  z.innerHTML=h;
+  z.innerHTML='<div style="font-size:13px;color:var(--text3)">Notifications push désactivées. Les alertes critiques arrivent par email.</div>';
 }
-// Push notifications settings — now rendered as a dedicated sub-tab "notifspush"
-// (la tuile est dans la liste sections, le rendu se fait dans settings via _settTab)
-function _removeLegacyPushCard(){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
+function _removeLegacyPushCard(){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old); var b=document.getElementById('lxPushBanner');if(b&&b.parentNode)b.parentNode.removeChild(b);}
 setInterval(_removeLegacyPushCard,1000);
-async function maybeShowPushBanner(){
-  try{
-    if(localStorage.getItem('lx_push_banner_dismissed')==='1')return;
-    if(typeof _salonId==='undefined'||!_salonId)return;
-    var st=await lxSalonPushStatus();
-    if(st==='default'||st==='granted_no_sub'){
-      if(document.getElementById('lxPushBanner'))return;
-      var div=document.createElement('div');
-      div.id='lxPushBanner';
-      div.style.cssText='background:var(--gold-bg2);border:1px solid var(--gold);padding:10px 14px;margin:8px;border-radius:8px;display:flex;align-items:center;gap:10px;font-size:13px;z-index:100';
-      div.innerHTML='<span style="flex:1">🔔 Activez les notifications pour recevoir les alertes support</span><button class="btn bg bs" style="font-size:12px" onclick="lxSalonPushEnable()">Activer</button><button class="btn bs" style="font-size:12px;padding:4px 8px" onclick="document.getElementById(\'lxPushBanner\').style.display=\'none\';localStorage.setItem(\'lx_push_banner_dismissed\',\'1\')">✕</button>';
-      var hdr=document.getElementById('header');
-      if(hdr&&hdr.parentNode)hdr.parentNode.insertBefore(div,hdr.nextSibling);
-      else document.body.insertBefore(div,document.body.firstChild);
-    }
-  }catch(e){}
-}
-setTimeout(maybeShowPushBanner,4000);
+async function maybeShowPushBanner(){ /* désactivé */ }
 
 // Register Service Worker for PWA (scope / pour que /app.html soit couvert + push)
 if('serviceWorker' in navigator){
