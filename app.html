@@ -13340,10 +13340,13 @@ function rClients(){
   if(!window._clSort)window._clSort="nom";
   var h='<div style="position:relative">';
   // S\u00e9lecteur de tri \u2014 update partiel via #clBody
-  h+='<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center"><select style="padding:8px;font-size:12px" onchange="window._clSort=this.value;clPage=0;document.getElementById(\'clBody\').innerHTML=_renderClientBody()">';
+  h+='<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap"><select style="padding:8px;font-size:12px" onchange="window._clSort=this.value;clPage=0;document.getElementById(\'clBody\').innerHTML=_renderClientBody()">';
   h+='<option value="nom"'+(window._clSort==="nom"?" selected":"")+'>A \u2192 Z</option>';
   h+='<option value="recent"'+(window._clSort==="recent"?" selected":"")+'>Derniers ajouts</option>';
-  h+='</select></div>';
+  h+='</select>';
+  // FIX 2026-05-18 : bouton d\u00e9tection de doublons
+  h+='<button onclick="rDoublonsClients()" style="padding:8px 12px;font-size:12px;background:transparent;border:1px solid var(--gold);border-radius:8px;color:var(--gold);font-weight:700;cursor:pointer;margin-left:auto" title="D\u00e9tecter les fiches en double">\ud83d\udd0d Doublons</button>';
+  h+='</div>';
   // Input recherche \u2014 reste TOUJOURS dans le DOM, jamais recr\u00e9\u00e9 (pr\u00e9serve focus clavier mobile)
   // Bouton \u00d7 pour vider d'un clic (appara\u00eet seulement si du texte est saisi)
   h+='<div style="margin-bottom:12px;position:relative">';
@@ -13357,6 +13360,81 @@ function rClients(){
   h+='</div>';
   return h;
 }
+
+// === FIX 2026-05-18 : Détection et fusion de doublons clients ===
+// Lit admin_find_duplicate_clients via RPC, affiche les paires avec actions
+// "Fusionner" (qui appelle merge_client_duplicates) et "Ignorer".
+async function rDoublonsClients(){
+  if(typeof _sb==='undefined'||!_sb||!_salonId){toast('Connexion requise','warning');return;}
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-width:880px;max-height:90vh;overflow-y:auto;width:95vw">';
+  h+='<h2>🔍 Détection de doublons clients</h2>';
+  h+='<div id="dupBody"><div style="padding:30px;text-align:center;color:var(--text3)">⏳ Analyse en cours…</div></div>';
+  h+='<div style="text-align:right;margin-top:14px"><button class="btn" onclick="cM()" style="background:var(--bg2)">Fermer</button></div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+  // Charge les doublons
+  try {
+    var r = await _sb.rpc('admin_find_duplicate_clients', { p_salon_id: _salonId });
+    if (r.error) throw new Error(r.error.message);
+    var pairs = r.data || [];
+    var box = document.getElementById('dupBody'); if(!box) return;
+    if (!pairs.length) {
+      box.innerHTML = '<div style="padding:30px;text-align:center;color:#66bb6a;font-size:14px">✅ Aucun doublon détecté. Votre fichier client est propre.</div>';
+      return;
+    }
+    var html = '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">'+pairs.length+' paire'+(pairs.length>1?'s':'')+' suspecte'+(pairs.length>1?'s':'')+' détectée'+(pairs.length>1?'s':'')+'. Vérifiez visuellement avant de fusionner.</div>';
+    pairs.forEach(function(p){
+      var sevColor = p.score >= 90 ? '#ef5350' : (p.score >= 70 ? '#ff9800' : '#ffd54f');
+      var kindLabel = p.match_kind.replace('phone','📞 même téléphone').replace('email','📧 même email').replace('name','👤 même nom+prénom').split('+').join(' • ');
+      var aLabel = '<strong>'+_esc(p.client_a_nom+' '+(p.client_a_prenom||''))+'</strong>'
+        +'<div style="font-size:11px;color:var(--text3)">📞 '+_esc(p.client_a_tel||'—')+' • '+(p.client_a_nb_visits||0)+' visite'+(p.client_a_nb_visits>1?'s':'')
+        +(p.client_a_email?' • '+_esc(p.client_a_email):'')+'</div>'
+        +'<div style="font-size:10px;color:var(--text3)">Créée le '+(p.client_a_created||'?')+'</div>';
+      var bLabel = '<strong>'+_esc(p.client_b_nom+' '+(p.client_b_prenom||''))+'</strong>'
+        +'<div style="font-size:11px;color:var(--text3)">📞 '+_esc(p.client_b_tel||'—')+' • '+(p.client_b_nb_visits||0)+' visite'+(p.client_b_nb_visits>1?'s':'')
+        +(p.client_b_email?' • '+_esc(p.client_b_email):'')+'</div>'
+        +'<div style="font-size:10px;color:var(--text3)">Créée le '+(p.client_b_created||'?')+'</div>';
+      html += '<div style="border:1px solid var(--border);border-left:4px solid '+sevColor+';border-radius:10px;padding:14px;margin-bottom:12px">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">';
+      html += '<div style="font-weight:700;color:'+sevColor+';font-size:13px">'+kindLabel+'</div>';
+      html += '<div style="font-size:11px;color:var(--text3)">Score : <strong style="color:'+sevColor+'">'+p.score+'/100</strong></div>';
+      html += '</div>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px">';
+      html += '<div style="padding:10px;background:var(--bg2);border-radius:8px">'+aLabel+'</div>';
+      html += '<div style="padding:10px;background:var(--bg2);border-radius:8px">'+bLabel+'</div>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px">';
+      // Préférer celui avec le plus de visites comme "à garder"
+      var aBest = (p.client_a_nb_visits||0) >= (p.client_b_nb_visits||0);
+      html += '<button class="btn" style="flex:1;min-width:120px;background:rgba(102,187,106,.15);border:1px solid #66bb6a;color:#66bb6a;font-weight:700" onclick="lxMergeDup(\''+(aBest?p.client_a_id:p.client_b_id)+'\',\''+(aBest?p.client_b_id:p.client_a_id)+'\')">✓ Fusionner vers '+_esc(aBest?p.client_a_nom:p.client_b_nom)+'</button>';
+      html += '<button class="btn" style="flex:1;min-width:120px;background:rgba(102,187,106,.15);border:1px solid #66bb6a;color:#66bb6a;font-weight:700" onclick="lxMergeDup(\''+(aBest?p.client_b_id:p.client_a_id)+'\',\''+(aBest?p.client_a_id:p.client_b_id)+'\')">✓ Fusionner vers '+_esc(aBest?p.client_b_nom:p.client_a_nom)+'</button>';
+      html += '<button class="btn" style="background:var(--bg2);border:1px solid var(--border);color:var(--text3)" onclick="lxIgnoreDup(\''+p.client_a_id+'\',\''+p.client_b_id+'\')">✗ Ignorer</button>';
+      html += '</div></div>';
+    });
+    box.innerHTML = html;
+  } catch(e) {
+    document.getElementById('dupBody').innerHTML='<div style="padding:30px;color:#ef5350">Erreur : '+_esc(e.message||e)+'</div>';
+  }
+}
+window.lxMergeDup = async function(keepId, removeId){
+  if(!confirm('Fusionner ces 2 fiches ?\n\nLa fiche conservée gardera toutes les données (RDV, tickets, fiches techniques, points fidélité…) des 2 clients. L\'autre sera supprimée. Action irréversible.')) return;
+  try {
+    var r = await _sb.rpc('merge_client_duplicates', { p_keep_id: keepId, p_remove_id: removeId });
+    if (r.error) throw new Error(r.error.message);
+    toast('Fusion OK','success');
+    // Recharge les données client localement
+    if(typeof loadSalonData==='function') await loadSalonData();
+    // Rouvre la modale pour voir les doublons restants
+    rDoublonsClients();
+  } catch(e) { alert('Erreur fusion : '+(e.message||e)); }
+};
+window.lxIgnoreDup = async function(aId, bId){
+  try {
+    var r = await _sb.rpc('ignore_client_duplicate', { p_client_a: aId, p_client_b: bId });
+    if (r.error) throw new Error(r.error.message);
+    rDoublonsClients();
+  } catch(e) { alert('Erreur : '+(e.message||e)); }
+};
 
 // === CLIENT DETAIL ===
 function rgpdDeleteClient(cId){
