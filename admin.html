@@ -1120,7 +1120,7 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations] = await Promise.all([
+    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations, fixQueue] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
       _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
       _sb.from('js_errors_public').select('id, source, type, message, page, salon_slug, reported_at')
@@ -1133,7 +1133,9 @@ async function rMonitoringRefresh(){
       _sb.rpc('check_quotas'),
       _sb.rpc('admin_slow_queries', {p_min_ms: 200, p_limit: 15}),
       _sb.rpc('admin_top_failing_endpoints', {p_hours: 24, p_limit: 5}),
-      _sb.rpc('admin_integrations_health')
+      _sb.rpc('admin_integrations_health'),
+      _sb.from('claude_fix_requests').select('id, signature, sample_message, salon_nom, requested_at, status, claude_notes, classification')
+        .in('status', ['pending','in_progress']).order('requested_at', { ascending: false }).limit(20)
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
     if(recent.error) throw new Error('Recent: '+recent.error.message);
@@ -1148,7 +1150,8 @@ async function rMonitoringRefresh(){
     var rowsSlowQ = slowQueries.error ? [] : (slowQueries.data || []);
     var rowsTopEp = (topEndpoints && !topEndpoints.error) ? (topEndpoints.data || []) : [];
     var rowsIntegrations = (integrations && !integrations.error) ? (integrations.data || []) : [];
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas, rowsSlowQ, rowsTopEp, rowsIntegrations);
+    var rowsFixQueue = (fixQueue && !fixQueue.error) ? (fixQueue.data || []) : [];
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas, rowsSlowQ, rowsTopEp, rowsIntegrations, rowsFixQueue);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -1245,6 +1248,23 @@ window.lxShowErrorDetail = async function(signature){
         if(cls.actionable === false){
           html += '<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">ℹ️ Cette erreur ne nécessite probablement pas d''action — comportement normal ou hors de votre contrôle.</div>';
         }
+        // ===== BOUTONS D'ACTION DEPUIS LE TÉLÉPHONE =====
+        // Sans Cowork mobile, Alex peut quand même agir directement ici.
+        var sigJs = signature.replace(/'/g, "\\'");
+        html += '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">';
+        // Bouton "Demander à Claude" — toujours visible, queue le fix pour la prochaine session Cowork PC
+        html += '<button onclick="lxRequestClaudeFix(\''+sigJs+'\')" style="flex:1;min-width:160px;padding:11px 14px;background:#d4a843;color:#0f0e0c;border:none;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">📨 Demander à Claude de corriger</button>';
+        // Bouton auto-fix si la classif autorise
+        if(cls.autofix_safe && cls.kind==='postgrest_cache'){
+          html += '<button onclick="lxAutoFixPgrst()" style="flex:1;min-width:140px;padding:11px 14px;background:#66bb6a;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">🔧 Recharger schéma (auto)</button>';
+        }
+        // Bouton "Marquer résolu" — pour les cas où tu sais qu'un fix a été appliqué
+        html += '<button onclick="lxMarkResolvedManual(\''+sigJs+'\')" style="flex:1;min-width:140px;padding:11px 14px;background:transparent;border:1px solid #66bb6a;color:#66bb6a;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">✓ Marquer résolu</button>';
+        // Bouton "Pas un bug" (snooze 30j)
+        if(cls.actionable === false){
+          html += '<button onclick="lxSnoozeSignature(\''+sigJs+'\', 30)" style="flex:1;min-width:140px;padding:11px 14px;background:transparent;border:1px solid var(--text3);color:var(--text3);border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">🔕 Ignorer 30j</button>';
+        }
+        html += '</div>';
         html += '</div>';
       }
     } catch(_) {}
@@ -1311,7 +1331,44 @@ window.lxCloseErrorDetail = function(){
   if(modal) modal.style.display = 'none';
 };
 
-function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations){
+// === Actions depuis le tel (sans Cowork mobile) ===
+window.lxRequestClaudeFix = async function(signature){
+  if(!signature) return;
+  var note = prompt('Note pour Claude (optionnel) — décris ce que tu vois côté salon, contexte, ce que tu attendais :');
+  // null = annulé, '' = pas de note mais quand même envoyer
+  if(note === null) return;
+  try {
+    var r = await _sb.rpc('admin_request_claude_fix', { p_signature: signature, p_user_notes: note || null });
+    if(r.error) throw new Error(r.error.message);
+    var msg = r.data && r.data.was_existing
+      ? '✓ Mise à jour de la demande existante (id #'+r.data.id+'). Claude traitera à la prochaine ouverture Cowork.'
+      : '✓ Demande envoyée à Claude (id #'+r.data.id+'). Elle sera traitée à la prochaine ouverture Cowork sur PC.';
+    alert(msg);
+  } catch(e){ alert('Erreur : '+(e.message||e)); }
+};
+
+window.lxAutoFixPgrst = async function(){
+  if(!confirm('Recharger le cache schéma PostgREST ?\n\nCette action est sûre et réversible — elle force Supabase à re-lire la structure de la base. À utiliser si tu vois "Could not find the table" en cache après une migration.')) return;
+  try {
+    var r = await _sb.rpc('admin_autofix_postgrest_reload');
+    if(r.error) throw new Error(r.error.message);
+    alert('✓ Cache schéma rechargé. Attends 5-10 sec puis rafraîchis le panel.');
+  } catch(e){ alert('Erreur : '+(e.message||e)); }
+};
+
+window.lxMarkResolvedManual = async function(signature){
+  if(!signature) return;
+  if(!confirm('Marquer cette erreur comme résolue ?\n\nElle disparaîtra du panel groupé. Si elle réapparaît, un badge "RÉOUVERTE" rouge s\'affichera.')) return;
+  try {
+    var r = await _sb.rpc('mark_error_resolved', { p_signature_hash: signature, p_commit_sha: null, p_notes: 'Marqué manuel depuis panel' });
+    if(r.error) throw new Error(r.error.message);
+    alert('✓ Signature marquée résolue. La ligne disparaîtra du panel groupé au prochain refresh.');
+    lxCloseErrorDetail();
+    if(typeof rMonitoringRefresh==='function') rMonitoringRefresh();
+  } catch(e){ alert('Erreur : '+(e.message||e)); }
+};
+
+function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations, fixQueue){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
   // === Stats globales (KPI cards) ===
@@ -1325,6 +1382,33 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
   var color1h = total1h>0 ? '#ef5350' : '#9e9e9e';
   var color24h = total24h>0 ? '#ff9800' : '#9e9e9e';
   var h='';
+  // Queue des demandes envoyées à Claude (visible depuis tel)
+  fixQueue = fixQueue || [];
+  if(fixQueue.length > 0){
+    h+='<div style="margin-bottom:20px;padding:14px 16px;background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.3);border-radius:12px">';
+    h+='<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">';
+    h+='<h2 style="margin:0;font-size:15px;color:#d4a843">📨 Demandes envoyées à Claude ('+fixQueue.length+')</h2>';
+    h+='<span style="font-size:11px;color:var(--text3)">Sera traité à la prochaine ouverture Cowork PC</span>';
+    h+='</div>';
+    fixQueue.forEach(function(fq){
+      var clsTitle = (fq.classification && fq.classification.human_title) || 'Erreur';
+      var since = fq.requested_at ? new Date(fq.requested_at).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      var statusBadge = fq.status==='in_progress'
+        ? '<span style="padding:2px 8px;border-radius:5px;background:rgba(255,152,0,.15);color:#ff9800;font-size:10px;font-weight:800">🔄 EN COURS</span>'
+        : '<span style="padding:2px 8px;border-radius:5px;background:rgba(212,168,67,.15);color:#d4a843;font-size:10px;font-weight:800">⏳ EN ATTENTE</span>';
+      h+='<div style="padding:10px 12px;background:var(--bg2);border-radius:8px;margin-bottom:6px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">';
+      h+='<div style="font-weight:700;font-size:13px;color:var(--text2)">'+_esc(clsTitle)+'</div>';
+      h+='<div>'+statusBadge+'</div>';
+      h+='</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_esc(fq.salon_nom||'—')+' · demandé le '+since+'</div>';
+      if(fq.claude_notes){
+        h+='<div style="font-size:11px;color:var(--text2);margin-top:6px;font-style:italic">📝 '+_esc(fq.claude_notes)+'</div>';
+      }
+      h+='</div>';
+    });
+    h+='</div>';
+  }
   // Bandeau "tout va bien" si zéro erreur 24h
   if(ok){
     h+='<div style="padding:20px;border-radius:14px;background:linear-gradient(135deg,rgba(76,175,80,.15),rgba(76,175,80,.05));border:1px solid rgba(76,175,80,.35);margin-bottom:20px;display:flex;align-items:center;gap:14px">';
