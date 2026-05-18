@@ -387,7 +387,31 @@ console.log("LUXYRA v6.3");
       ts: new Date().toISOString()
     };
   }
-  window.addEventListener("error", function(e){ _pushErr(_buildPayload(e,"error")); });
+  // FIX 2026-05-18 : capture phase = true pour aussi attraper les erreurs de
+  // chargement de ressources (img/script/link 404/500/CORS), qui ne bubble pas
+  // au niveau window. Sinon on rate les CDN qui tombent, images cassées, etc.
+  window.addEventListener("error", function(e){
+    // Si c'est une erreur de ressource (e.target est un HTMLElement non-window),
+    // construire un payload spécifique avec l'URL de la ressource
+    var t = e && e.target;
+    if(t && t !== window && t.tagName){
+      var resUrl = t.src || t.href || "";
+      // Skip les requêtes vers les CDNs publics non critiques (Google Fonts cache, etc.)
+      if(/fonts\.(googleapis|gstatic)\.com|googletagmanager/.test(resUrl)) return;
+      _pushErr({
+        type: "resource_error",
+        msg: "Resource load failed: <"+(t.tagName||"").toLowerCase()+"> "+(resUrl||"").slice(0,200),
+        file: resUrl.slice(0, 300),
+        line: 0, col: 0,
+        stack: "",
+        url: location.pathname + location.hash,
+        ua: navigator.userAgent.slice(0,120),
+        ts: new Date().toISOString()
+      });
+      return;
+    }
+    _pushErr(_buildPayload(e,"error"));
+  }, true);
   window.addEventListener("unhandledrejection", function(e){ _pushErr(_buildPayload(e,"rejection")); });
   // Flush queue LS au login (saveAuditEntry devient dispo)
   window._lxFlushErrorQueue = function(){
