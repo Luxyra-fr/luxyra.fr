@@ -13595,6 +13595,24 @@ async function doRgpdDelete(cId){
   var delBtn=document.querySelector('button[onclick*="doRgpdDelete"]');
   if(delBtn){delBtn.disabled=true;delBtn.innerHTML='\u23f3 Suppression en cours\u2026';delBtn.style.opacity='0.6';}
 
+  // FIX 2026-05-18 conformite RGPD : RPC atomique en priorite (rollback auto si plantage).
+  // Fallback sur l'ancien chemin JS sequentiel ci-dessous si la RPC indispo.
+  try {
+    if(typeof _sb !== "undefined" && _sb){
+      var _rgpdRpc = await _sb.rpc('rgpd_delete_client_atomic', { p_client_id: cId });
+      if(!_rgpdRpc.error && _rgpdRpc.data && _rgpdRpc.data.ok){
+        for(var _jx=CL.length-1;_jx>=0;_jx--){if(CL[_jx].id===cId){CL.splice(_jx,1);break;}}
+        for(var _ai=0;_ai<AP.length;_ai++){if(AP[_ai].cId===cId){AP[_ai].cId=null;AP[_ai].comment="";}}
+        if(typeof toast==="function") toast("\u2713 Client supprime conformement RGPD","success");
+        cM(); go("clients");
+        return;
+      }
+      console.warn("rgpd_delete_client_atomic erreur, fallback JS:", _rgpdRpc.error || _rgpdRpc);
+    }
+  } catch(_eRpc){
+    console.warn("rgpd_delete_client_atomic exception, fallback JS:", _eRpc);
+  }
+
   try {
     // \u00c9tape 1 : anonymiser les tickets (await chaque save pour persistance garantie)
     var tickets=[];
