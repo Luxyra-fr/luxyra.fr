@@ -1200,7 +1200,42 @@ window.lxShowErrorDetail = async function(signature){
     });
     var firstSeen = rows[rows.length-1].occurred_at;
     var lastSeen = rows[0].occurred_at;
-    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">';
+
+    // Classification automatique : utilise le message de la dernière occurrence
+    var sampleMsg = rows[0].message || '';
+    var html = '';
+    try {
+      var classifyRes = await _sb.rpc('classify_error', { p_msg: sampleMsg });
+      if(!classifyRes.error && classifyRes.data){
+        var cls = classifyRes.data;
+        var kindColors = {
+          schema_missing_column:'#ef5350', schema_missing_table:'#ef5350',
+          rls_denied:'#ff9800', rpc_missing:'#ef5350', postgrest_cache:'#ffd54f',
+          network:'#9e9e9e', js_type_error:'#ff9800', stripe_api:'#ef5350',
+          email_send:'#ff9800', rate_limit:'#ffd54f', cors:'#ff9800',
+          resource_404:'#9e9e9e', push_subscription:'#9e9e9e', unknown:'#9e9e9e'
+        };
+        var kColor = kindColors[cls.kind] || '#9e9e9e';
+        html += '<div style="margin-bottom:18px;padding:14px;background:'+kColor+'11;border:1px solid '+kColor+'44;border-left:4px solid '+kColor+';border-radius:10px">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">';
+        html += '<div style="font-weight:700;color:'+kColor+';font-size:14px">🤖 '+_esc(cls.human_title||'')+'</div>';
+        html += '<span style="font-size:10px;padding:2px 8px;background:'+kColor+'22;color:'+kColor+';border-radius:5px;font-family:monospace;font-weight:800">'+_esc(cls.kind||'')+'</span>';
+        html += '</div>';
+        if(cls.human_explain) html += '<div style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.5">'+_esc(cls.human_explain)+'</div>';
+        if(cls.fix_proposal){
+          html += '<div style="background:var(--bg);border-radius:6px;padding:10px 12px;margin-top:6px">';
+          html += '<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;font-weight:700">💡 Proposition de fix</div>';
+          html += '<div style="font-size:12px;color:var(--text2);line-height:1.5">'+_esc(cls.fix_proposal)+'</div>';
+          html += '</div>';
+        }
+        if(cls.actionable === false){
+          html += '<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">ℹ️ Cette erreur ne nécessite probablement pas d''action — comportement normal ou hors de votre contrôle.</div>';
+        }
+        html += '</div>';
+      }
+    } catch(_) {}
+
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">';
     html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Occurrences (7j)</div><div style="font-size:20px;font-weight:800;color:#ef5350">'+rows.length+'</div></div>';
     html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Salons touchés</div><div style="font-size:20px;font-weight:800;color:#ff9800">'+Object.keys(distinctSalons).length+'</div></div>';
     if(Object.keys(distinctPages).length>0){
