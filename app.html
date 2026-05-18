@@ -9135,7 +9135,7 @@ function getAbsColor(type){
 // Check if a new RDV conflicts with existing ones OR blocked slots (pauses, absences)
 function checkConflict(stId, date, time, svcId, excludeId){
   if(!isStylistAvailable(stId, date, time)){
-    return [{appt:null,clientName:"INDISPONIBLE",svcName:gT(stId)?gT(stId).n+" indisponible":"Indisponible",time:time,overlapStart:toM(time),overlapEnd:toM(time)+30}];
+    return [{appt:null,clientName:"INDISPONIBLE",svcName:gT(stId)?gT(stId).n+" indisponible":"Indisponible",time:time,overlapStart:toM(time),overlapEnd:toM(time)+30,blockedType:"hors_horaire"}];
   }
   var sv=gS(svcId);
   var fakeAppt={sId:svcId,time:time,stId:stId};
@@ -9145,7 +9145,7 @@ function checkConflict(stId, date, time, svcId, excludeId){
   for(var ni=0;ni<newBlocks.length;ni++){
     var blocked=isStylistBlockedDuring(stId, date, newBlocks[ni].start, newBlocks[ni].end);
     if(blocked){
-      conflicts.push({appt:null,clientName:"INDISPONIBLE",svcName:blocked.label||"Indisponible",time:time,overlapStart:newBlocks[ni].start,overlapEnd:newBlocks[ni].end});
+      conflicts.push({appt:null,clientName:"INDISPONIBLE",svcName:blocked.label||"Indisponible",time:time,overlapStart:newBlocks[ni].start,overlapEnd:newBlocks[ni].end,blockedType:blocked.type||"absent"});
       break;
     }
   }
@@ -9172,13 +9172,27 @@ function checkConflict(stId, date, time, svcId, excludeId){
 
 // Show conflict alert modal - manual booking: warn but allow
 function showConflictAlert(conflicts, onConfirm){
-  // Check if any conflict is a hard block (absence, pause, congé) - cannot be forced
-  var hasHardBlock=conflicts.some(function(cf){return !cf.appt&&cf.clientName==="INDISPONIBLE";});
+  // FIX 2026-05-18 : assouplit pour les PAUSES (forçables avec confirmation),
+  // garde le blocage dur pour les vraies absences (congé, maladie, formation,
+  // jour de repos, fermeture exceptionnelle, absent journée).
+  // → pause/absent_heures = forçable, tout le reste reste bloquant.
+  var _forceableBlockedTypes = { pause: true, absent_heures: true };
+  var hasHardBlock = conflicts.some(function(cf){
+    if(!(!cf.appt && cf.clientName === "INDISPONIBLE")) return false;
+    var t = cf.blockedType || "absent";
+    return !_forceableBlockedTypes[t]; // hard block si pas dans la liste forçable
+  });
+  // Détecte le cas spécifique "pause uniquement" pour adapter le message
+  var hasSoftPause = conflicts.some(function(cf){
+    return !cf.appt && cf.clientName === "INDISPONIBLE" && _forceableBlockedTypes[cf.blockedType||""];
+  });
   var h='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
   h+='<div style="text-align:center;font-size:36px;margin-bottom:8px">'+(hasHardBlock?'\ud83d\udeab':'\u26a0\ufe0f')+'</div>';
   h+='<h2 style="text-align:center;color:'+(hasHardBlock?'var(--red)':'var(--orange)')+'">'+(hasHardBlock?'Cr\u00e9neau bloqu\u00e9':'Conflit de RDV')+'</h2>';
   if(hasHardBlock){
-    h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau est bloqu\u00e9 par une indisponibilit\u00e9. Impossible de placer un RDV ici.</div>';
+    h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau est bloqu\u00e9 par une absence (cong\u00e9, maladie, formation, jour ferm\u00e9). Impossible de placer un RDV ici.</div>';
+  } else if(hasSoftPause){
+    h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau chevauche une <strong>pause</strong>. Vous pouvez forcer si vous \u00eates s\u00fbr.</div>';
   } else {
     h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau chevauche '+(conflicts.length===1?'un RDV existant':conflicts.length+' RDV existants')+' :</div>';
   }
@@ -9195,7 +9209,8 @@ function showConflictAlert(conflicts, onConfirm){
   h+='<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">';
   h+='<button class="btn" style="width:100%;padding:14px;background:var(--blue-bg);color:var(--blue);font-weight:700" onclick="cM();cancelPendingConflict()">\ud83d\udd04 Modifier le cr\u00e9neau</button>';
   if(!hasHardBlock){
-    h+='<button class="btn" style="width:100%;padding:10px;background:var(--orange);color:#fff;font-weight:600;font-size:12px" onclick="'+onConfirm+'">Forcer le RDV quand m\u00eame</button>';
+    var _forceLabel = hasSoftPause ? 'Forcer malgr\u00e9 la pause' : 'Forcer le RDV quand m\u00eame';
+    h+='<button class="btn" style="width:100%;padding:10px;background:var(--orange);color:#fff;font-weight:600;font-size:12px" onclick="'+onConfirm+'">'+_forceLabel+'</button>';
   }
   h+='</div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
