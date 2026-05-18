@@ -1106,7 +1106,7 @@ async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
   try {
-    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries] = await Promise.all([
+    var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
       _sb.rpc('admin_js_errors_recent', {p_limit: 100, p_salon_id: null}),
       _sb.from('js_errors_public').select('id, source, type, message, page, salon_slug, reported_at')
@@ -1117,7 +1117,9 @@ async function rMonitoringRefresh(){
       _sb.rpc('admin_errors_grouped', {p_hours: window._lxGroupHours || 24}),
       _sb.rpc('check_business_anomalies'),
       _sb.rpc('check_quotas'),
-      _sb.rpc('admin_slow_queries', {p_min_ms: 200, p_limit: 15})
+      _sb.rpc('admin_slow_queries', {p_min_ms: 200, p_limit: 15}),
+      _sb.rpc('admin_top_failing_endpoints', {p_hours: 24, p_limit: 5}),
+      _sb.rpc('admin_integrations_health')
     ]);
     if(summary.error) throw new Error('Summary: '+summary.error.message);
     if(recent.error) throw new Error('Recent: '+recent.error.message);
@@ -1130,7 +1132,9 @@ async function rMonitoringRefresh(){
     var rowsAnomalies = anomalies.error ? [] : (anomalies.data || []);
     var rowsQuotas = quotas.error ? [] : (quotas.data || []);
     var rowsSlowQ = slowQueries.error ? [] : (slowQueries.data || []);
-    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas, rowsSlowQ);
+    var rowsTopEp = (topEndpoints && !topEndpoints.error) ? (topEndpoints.data || []) : [];
+    var rowsIntegrations = (integrations && !integrations.error) ? (integrations.data || []) : [];
+    container.innerHTML = _renderMonitoringHTML(rowsS, rowsR, rowsP, rowsServer, rowsCron, rowsGrouped, rowsAnomalies, rowsQuotas, rowsSlowQ, rowsTopEp, rowsIntegrations);
   } catch(e){
     container.innerHTML = '<div style="padding:30px;border-radius:12px;background:rgba(244,67,54,.08);border:1px solid rgba(244,67,54,.25);color:#ef5350">'
       + '<div style="font-weight:800;margin-bottom:8px;font-size:15px">❌ Erreur chargement</div>'
@@ -1258,7 +1262,7 @@ window.lxCloseErrorDetail = function(){
   if(modal) modal.style.display = 'none';
 };
 
-function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries){
+function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
   // === Stats globales (KPI cards) ===
@@ -1314,6 +1318,69 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
     });
     h+='</tbody></table></div></div>';
   }
+  // === Intégrations externes : Stripe, Brevo, Supabase, Cloudflare worker ===
+  integrations = integrations || [];
+  if(integrations.length > 0){
+    h+='<div style="margin-bottom:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold)">🔌 Intégrations externes</h2>';
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">';
+    integrations.forEach(function(it){
+      var st = it.status||'no_data';
+      var stColor = st==='ok' ? '#66bb6a' : (st==='stale' ? '#ffd54f' : (st==='down' ? '#ef5350' : '#9e9e9e'));
+      var stBg = st==='ok' ? 'rgba(102,187,106,.08)' : (st==='stale' ? 'rgba(255,213,79,.08)' : (st==='down' ? 'rgba(239,83,80,.08)' : 'rgba(158,158,158,.06)'));
+      var stIcon = st==='ok' ? '✓' : (st==='stale' ? '⏱' : (st==='down' ? '✕' : '?'));
+      var stLabel = st==='ok' ? 'OK' : (st==='stale' ? 'Stale' : (st==='down' ? 'DOWN' : 'Pas de data'));
+      var svcLabels = { supabase_db:'Supabase DB', stripe_api:'Stripe API', brevo_api:'Brevo API', cloudflare_worker:'Cloudflare Worker' };
+      var svcName = svcLabels[it.service] || it.service;
+      var lastCheckTxt = it.last_check_at ? new Date(it.last_check_at).toLocaleString('fr-FR',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : '—';
+      h+='<div style="padding:14px;background:'+stBg+';border:1px solid '+stColor+'33;border-radius:10px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+      h+='<div style="font-weight:700;font-size:13px;color:var(--text2)">'+_esc(svcName)+'</div>';
+      h+='<div style="font-size:11px;font-weight:800;color:'+stColor+';padding:2px 8px;border-radius:5px;background:'+stColor+'22">'+stIcon+' '+stLabel+'</div>';
+      h+='</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-bottom:4px">Dernier check : '+lastCheckTxt+'</div>';
+      if(it.last_error){
+        h+='<div style="font-size:11px;color:'+stColor+';margin-top:6px;font-family:monospace;word-break:break-word">⚠ '+_esc(String(it.last_error).slice(0,120))+'</div>';
+      } else {
+        h+='<div style="font-size:11px;color:var(--text3);margin-top:4px;font-style:italic">'+_esc(it.details||'')+'</div>';
+      }
+      h+='</div>';
+    });
+    h+='</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Synthetic monitoring toutes les 5 min. Stale = pas de check récent (cron en panne ?). DOWN = service répond mais en erreur.</div></div>';
+  }
+
+  // === Top endpoints qui échouent (server_errors groupé par http_path) ===
+  topEndpoints = topEndpoints || [];
+  if(topEndpoints.length > 0){
+    h+='<div style="margin-bottom:24px"><h2 style="font-size:16px;margin:0 0 12px;color:var(--gold)">🎯 Top endpoints en erreur (24h)</h2>';
+    h+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    h+='<thead style="background:var(--bg3)"><tr>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Endpoint</th>'
+      +'<th style="text-align:center;padding:9px 12px;color:var(--text3);font-size:11px">Erreurs</th>'
+      +'<th style="text-align:center;padding:9px 12px;color:var(--text3);font-size:11px">Status</th>'
+      +'<th style="text-align:center;padding:9px 12px;color:var(--text3);font-size:11px">Sévérité</th>'
+      +'<th style="text-align:left;padding:9px 12px;color:var(--text3);font-size:11px">Échantillon</th>'
+      +'<th style="text-align:right;padding:9px 12px;color:var(--text3);font-size:11px">Dernière</th>'
+      +'</tr></thead><tbody>';
+    topEndpoints.forEach(function(ep){
+      var sevColor = ep.worst_severity==='critical' ? '#ef5350' : (ep.worst_severity==='error'?'#ff9800':'#ffd54f');
+      var statusColor = (ep.last_status>=500) ? '#ef5350' : ((ep.last_status>=400)?'#ff9800':'var(--text3)');
+      var msgShort = (ep.sample_msg||'').length>80 ? ep.sample_msg.slice(0,80)+'…' : (ep.sample_msg||'—');
+      var lastShort = ep.last_seen ? new Date(ep.last_seen).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+      h+='<tr style="border-top:1px solid var(--border)">'
+        +'<td style="padding:8px 12px;color:var(--text2);font-family:monospace;font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis" title="'+_esc(ep.http_path||'')+'">'+_esc(ep.http_path||'—')+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;color:'+sevColor+';font-weight:800">'+ep.nb_errors+'</td>'
+        +'<td style="text-align:center;padding:8px 12px;color:'+statusColor+';font-weight:700">'+(ep.last_status||'—')+'</td>'
+        +'<td style="text-align:center;padding:8px 12px"><span style="padding:2px 8px;border-radius:5px;background:'+sevColor+'22;color:'+sevColor+';font-size:10px;font-weight:800">'+_esc(ep.worst_severity||'?')+'</span></td>'
+        +'<td style="padding:8px 12px;color:var(--text2);font-family:monospace;font-size:11px;max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+_esc(ep.sample_msg||'')+'">'+_esc(msgShort)+'</td>'
+        +'<td style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+_esc(lastShort)+'</td>'
+        +'</tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Endpoints (HTTP path) ayant généré le plus d\'erreurs sur 24h. Permet de cibler la fonction edge qui plante le plus.</div></div>';
+  }
+
   // === FIX 2026-05-17 nuit : Anomalies business (silence = bug) ===
   anomalies = anomalies || [];
   if(anomalies.length > 0){
