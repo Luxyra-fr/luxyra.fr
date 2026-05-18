@@ -1156,6 +1156,108 @@ window.lxSnoozeSignature = async function(signature, days){
   } catch(e){ alert('Erreur snooze : '+(e.message||e)); }
 };
 
+// === Drilldown : détail d'une signature d'erreur ===
+window.lxShowErrorDetail = async function(signature){
+  if(!signature) return;
+  var modal = document.getElementById('lxErrorDetailModal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'lxErrorDetailModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
+    modal.onclick = function(e){ if(e.target===modal) lxCloseErrorDetail(); };
+    document.body.appendChild(modal);
+  }
+  modal.style.display = 'flex';
+  modal.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:14px;max-width:920px;width:100%;max-height:90vh;overflow:auto;padding:24px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+    + '<h2 style="margin:0;font-size:18px;color:var(--gold)">🔍 Détail de l\'erreur</h2>'
+    + '<button onclick="lxCloseErrorDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:8px;padding:6px 12px;cursor:pointer">✕ Fermer</button>'
+    + '</div>'
+    + '<div style="font-family:monospace;font-size:11px;color:var(--text3);margin-bottom:14px;padding:8px 12px;background:var(--bg2);border-radius:6px;word-break:break-all">'+_esc(signature)+'</div>'
+    + '<div id="lxErrorDetailBody" style="color:var(--text3);text-align:center;padding:40px">Chargement…</div>'
+    + '</div>';
+  try {
+    var r = await _sb.rpc('admin_error_signature_detail', { p_signature: signature, p_hours: 168 });
+    if(r.error) throw new Error(r.error.message);
+    var rows = r.data || [];
+    var body = document.getElementById('lxErrorDetailBody');
+    if(rows.length === 0){
+      body.innerHTML = '<div style="color:var(--text3);padding:30px;text-align:center">Aucune occurrence trouvée sur 7 jours.</div>';
+      return;
+    }
+    // Statistiques agrégées
+    var distinctSalons = {};
+    var distinctPages = {};
+    var distinctOperators = {};
+    rows.forEach(function(o){
+      if(o.salon_nom) distinctSalons[o.salon_nom] = (distinctSalons[o.salon_nom]||0)+1;
+      if(o.page) distinctPages[o.page] = (distinctPages[o.page]||0)+1;
+      if(o.operator_name) distinctOperators[o.operator_name] = (distinctOperators[o.operator_name]||0)+1;
+    });
+    var firstSeen = rows[rows.length-1].occurred_at;
+    var lastSeen = rows[0].occurred_at;
+    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">';
+    html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Occurrences (7j)</div><div style="font-size:20px;font-weight:800;color:#ef5350">'+rows.length+'</div></div>';
+    html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Salons touchés</div><div style="font-size:20px;font-weight:800;color:#ff9800">'+Object.keys(distinctSalons).length+'</div></div>';
+    if(Object.keys(distinctPages).length>0){
+      html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Pages distinctes</div><div style="font-size:20px;font-weight:800;color:var(--text2)">'+Object.keys(distinctPages).length+'</div></div>';
+    }
+    if(Object.keys(distinctOperators).length>0){
+      html += '<div style="padding:10px 14px;background:var(--bg2);border-radius:8px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Opérateurs</div><div style="font-size:13px;color:var(--text2);margin-top:4px;word-break:break-word">'+_esc(Object.keys(distinctOperators).join(', '))+'</div></div>';
+    }
+    html += '</div>';
+    // Salons concernés
+    var salonList = Object.keys(distinctSalons).sort(function(a,b){return distinctSalons[b]-distinctSalons[a];});
+    if(salonList.length > 0){
+      html += '<div style="margin-bottom:18px"><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Salons concernés</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+      salonList.forEach(function(sn){
+        html += '<span style="padding:3px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--text2)">'+_esc(sn)+' <span style="color:var(--text3)">×'+distinctSalons[sn]+'</span></span>';
+      });
+      html += '</div></div>';
+    }
+    // Liste des occurrences
+    html += '<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Dernières occurrences ('+Math.min(rows.length, 20)+')</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto">';
+    rows.forEach(function(o, idx){
+      var ago = new Date(o.occurred_at).toLocaleString('fr-FR');
+      html += '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:6px">';
+      html += '<div style="font-size:11px;color:var(--text3)"><strong style="color:var(--text2)">#'+(idx+1)+'</strong> · '+_esc(ago)+' · '+_esc(o.salon_nom||'—')+(o.operator_name?' · '+_esc(o.operator_name):'')+'</div>';
+      if(o.severity){
+        var sevC = o.severity==='critical'?'#ef5350':(o.severity==='error'?'#ff9800':'#ffd54f');
+        html += '<span style="padding:2px 8px;border-radius:5px;background:'+sevC+'22;color:'+sevC+';font-size:9px;font-weight:800;letter-spacing:.5px">'+_esc(o.severity)+'</span>';
+      }
+      html += '</div>';
+      html += '<div style="font-family:monospace;font-size:11px;color:#ef5350;word-break:break-word;margin-bottom:6px">'+_esc((o.message||'').slice(0,500))+'</div>';
+      var metaBits = [];
+      if(o.page) metaBits.push('📄 '+_esc(o.page));
+      if(o.url) metaBits.push('🔗 '+_esc((o.url||'').slice(0,80)));
+      if(o.http_path) metaBits.push('🛣️ '+_esc(o.http_path)+(o.http_status?' ('+o.http_status+')':''));
+      if(o.ua){
+        var uaS = o.ua.indexOf('Android')>=0?'Android':o.ua.indexOf('iPhone')>=0?'iPhone':o.ua.indexOf('iPad')>=0?'iPad':o.ua.indexOf('Windows')>=0?'Windows':o.ua.indexOf('Macintosh')>=0?'Mac':'Autre';
+        metaBits.push('📱 '+uaS);
+      }
+      if(metaBits.length) html += '<div style="font-size:11px;color:var(--text3);margin-bottom:6px">'+metaBits.join(' · ')+'</div>';
+      if(o.stack){
+        html += '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--text3)">Stack trace</summary>';
+        html += '<pre style="margin:6px 0 0;padding:8px;background:var(--bg);border-radius:6px;font-size:10px;color:var(--text2);overflow-x:auto;white-space:pre-wrap;word-break:break-all">'+_esc(o.stack)+'</pre>';
+        html += '</details>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    body.innerHTML = html;
+  } catch(e){
+    var body2 = document.getElementById('lxErrorDetailBody');
+    if(body2) body2.innerHTML = '<div style="color:#ef5350;padding:30px;text-align:center">Erreur : '+_esc(e.message||String(e))+'</div>';
+  }
+};
+window.lxCloseErrorDetail = function(){
+  var modal = document.getElementById('lxErrorDetailModal');
+  if(modal) modal.style.display = 'none';
+};
+
 function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
@@ -1279,19 +1381,26 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
       var firstShort = g.first_seen ? new Date(g.first_seen).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
       var lastShort = g.last_seen ? new Date(g.last_seen).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
       var sigEscaped = (g.signature||'').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-      h+='<tr style="border-top:1px solid var(--border)" title="'+_esc(g.signature||'')+'">'
+      // Badge réouverte (priorité visuelle max)
+      var statusBadge = '';
+      var rowBg = '';
+      if(g.reopened){
+        statusBadge = '<span style="display:inline-block;margin-left:6px;padding:2px 6px;border-radius:5px;background:rgba(239,83,80,.18);color:#ef5350;font-size:9px;font-weight:800;letter-spacing:.5px" title="Cette erreur avait été marquée résolue mais elle est réapparue. Le fix n\'a pas fonctionné.">⚠ RÉOUVERTE</span>';
+        rowBg = 'background:rgba(239,83,80,.04);';
+      }
+      h+='<tr style="border-top:1px solid var(--border);cursor:pointer;'+rowBg+'" title="Cliquer pour voir le détail" onclick="lxShowErrorDetail(\''+sigEscaped+'\')">'
         +'<td style="padding:8px 12px;color:var(--text3);font-size:11px">'+_esc(srcLabel)+'</td>'
-        +'<td style="padding:8px 12px"><span style="padding:2px 8px;border-radius:6px;background:'+sevBg+';color:'+sevColor+';font-size:10px;font-weight:800">'+_esc(g.category||'')+'</span></td>'
+        +'<td style="padding:8px 12px"><span style="padding:2px 8px;border-radius:6px;background:'+sevBg+';color:'+sevColor+';font-size:10px;font-weight:800">'+_esc(g.category||'')+'</span>'+statusBadge+'</td>'
         +'<td style="text-align:center;padding:8px 12px;color:'+sevColor+';font-weight:800">'+g.nb_occurrences+'</td>'
         +'<td style="text-align:center;padding:8px 12px;color:var(--text3)">'+(g.salons_count||0)+'</td>'
         +'<td style="padding:8px 12px;color:var(--text2);font-family:monospace;font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+_esc(g.msg||'')+'">'+_esc(msgShort)+'</td>'
         +'<td style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+_esc(firstShort)+'</td>'
         +'<td style="text-align:right;padding:8px 12px;color:var(--text3);font-size:11px;white-space:nowrap">'+_esc(lastShort)+'</td>'
-        +'<td style="text-align:center;padding:8px 12px;white-space:nowrap"><button onclick="lxSnoozeSignature(\''+sigEscaped+'\', 7)" style="padding:4px 8px;background:transparent;border:1px solid var(--text3);color:var(--text3);border-radius:6px;font-size:10px;cursor:pointer" title="Ignorer cette erreur pendant 7 jours">🔕 7j</button></td>'
+        +'<td style="text-align:center;padding:8px 12px;white-space:nowrap" onclick="event.stopPropagation()"><button onclick="lxSnoozeSignature(\''+sigEscaped+'\', 7)" style="padding:4px 8px;background:transparent;border:1px solid var(--text3);color:var(--text3);border-radius:6px;font-size:10px;cursor:pointer" title="Ignorer cette erreur pendant 7 jours">🔕 7j</button></td>'
         +'</tr>';
     });
     h+='</tbody></table></div>';
-    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Sur 24h, regroupé par signature (type + 80 premiers chars du message). Cliquer en bas pour voir les occurrences individuelles.</div></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">Cliquer sur une ligne pour voir les occurrences détaillées (stack, salon, user agent…). Les erreurs résolues sont masquées sauf si elles réapparaissent (badge ⚠ RÉOUVERTE).</div></div>';
   }
 
   // === Détail des erreurs récentes ===
