@@ -8188,7 +8188,23 @@ function cStats(){
     // Inclus aussi les passages multi-client (séparateurs sepCId)
     var v=getApptsForClient(c.id, "done").sort(function(a,b){return new Date(b.date)-new Date(a.date)});
     var l=v.length>0?v[0].date:null;
-    var d=l?dB(l,TD):9999;
+    var d;
+    if(l){
+      // A déjà eu au moins 1 RDV terminé → temps depuis la dernière visite
+      d = dB(l, TD);
+    } else {
+      // Aucun RDV terminé : peut être un nouveau client ou un RDV planifié
+      // → vérifie s'il a un RDV futur planifié (non annulé) : alors actif
+      var hasFuture = AP.some(function(a){return a.cId===c.id && a.date>=TD && a.st!=="canc";});
+      if(hasFuture){
+        d = 0; // Considéré comme actif
+      } else if(c.cr){
+        // Sinon, se base sur la date de création de la fiche
+        d = dB(c.cr, TD);
+      } else {
+        d = 0; // Pas de date de création connue : considéré nouveau
+      }
+    }
     var s="fidele";
     if(d>180){s="perdu";pe++;}else if(d>120){s="risque";ri++;}else fi++;
     return{id:c.id,nom:c.nom,pre:c.pre,ph:c.ph,em:c.em,no:c.no,cr:c.cr,vc:v.length,last:l,days:d,status:s};
