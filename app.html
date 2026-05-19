@@ -29895,9 +29895,43 @@ function cloturerJournee(){
   });
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
-  window.CLOTURES.push(c);if(typeof saveCloture==="function")saveCloture(c);
-  // NF525 : verrouille tous les tickets de la journée clôturée (trigger DB empêche toute modif)
-  if(typeof lockTicketsForCloture==="function") lockTicketsForCloture(c);
+  window.CLOTURES.push(c);
+  // FIX 2026-05-19 : chaîne saveCloture → lockTicketsForCloture proprement.
+  // - saveCloture est awaited (ne plante plus si latence DB)
+  // - lockTicketsForCloture est awaited et propage ses erreurs
+  // - Si verrouillage rate (réseau, RLS, etc.) on logue DB_ERROR + toast
+  //   pour que l'admin (panel monitoring) le voie tout de suite
+  // - Vérifie que le nb de tickets verrouillés correspond à c.nbTickets (alerte sinon)
+  (async function _persistAndLock(){
+    try {
+      if(typeof saveCloture==="function") await saveCloture(c);
+      if(typeof lockTicketsForCloture==="function"){
+        var lockRes = await lockTicketsForCloture(c);
+        // Vérification cohérence : on devrait avoir verrouillé exactement c.nbTickets tickets
+        if(lockRes && typeof lockRes.nbModified === "number" && lockRes.nbModified !== c.nbTickets){
+          var msg = "Clôture Z#"+c.num+" : "+lockRes.nbModified+" tickets verrouillés vs "+c.nbTickets+" attendus";
+          console.warn("[cloturerJournee] "+msg);
+          if(typeof saveAuditEntry==="function"){
+            saveAuditEntry("DB_ERROR", JSON.stringify({
+              fn:"cloturerJournee.lockTicketsForCloture",
+              msg:msg, cloture_num:c.num, cloture_date:c.date,
+              expected:c.nbTickets, got:lockRes.nbModified
+            }).slice(0,2000));
+          }
+        }
+      }
+    } catch(e) {
+      console.error("[cloturerJournee] saveCloture/lockTickets failed:", e);
+      if(typeof saveAuditEntry==="function"){
+        saveAuditEntry("DB_ERROR", JSON.stringify({
+          fn:"cloturerJournee",
+          msg:"Sauvegarde/verrouillage clôture en erreur: "+(e.message||String(e)),
+          cloture_num:c.num, cloture_date:c.date
+        }).slice(0,2000));
+      }
+      if(typeof toast==="function") toast("⚠️ Clôture enregistrée mais verrouillage tickets en erreur — voir monitoring","warning");
+    }
+  })();
   auditLog("CLOTURE_Z",fmt(TD)+" - Z#"+c.num+" - "+c.nbTickets+" tickets - "+totalCA.toFixed(2)+"E");return c;
 }
 function clearDoc(type){
