@@ -1949,10 +1949,24 @@ async function loadSystemHealth(){
     var byService = {};
     rows.forEach(function(x){ byService[x.service] = x; });
 
+    // Récupère le mode Stripe RÉEL depuis le détail du synthetic_check (pas un fallback hardcodé)
+    var _stripeMode = '?';
+    try {
+      var lastSynth = await _sb.from('monitoring_synthetic_log')
+        .select('details').eq('source','synthetic_check')
+        .order('reported_at',{ascending:false}).limit(1).maybeSingle();
+      if(lastSynth.data && Array.isArray(lastSynth.data.details)){
+        var stripeStep = lastSynth.data.details.find(function(s){return s && s.source_label==='stripe_api';});
+        if(stripeStep && stripeStep.mode){
+          _stripeMode = String(stripeStep.mode).toUpperCase();
+        }
+      }
+    } catch(_) {}
+
     // Mapping pour affichage en français
     var serviceLabels = {
       supabase_db: { name:'Supabase DB', sub: (SUPABASE_URL||'').replace('https://','').slice(0,30) },
-      stripe_api: { name:'Stripe API', sub:'Paiements (mode '+((window._appConfig||{}).stripe_mode || 'TEST')+')' },
+      stripe_api: { name:'Stripe API', sub: 'Paiements (mode ' + _stripeMode + ')' },
       brevo_api: { name:'Brevo API', sub:'Emails + SMS transactionnels' },
       cloudflare_worker: { name:'Cloudflare Worker', sub:'Routeur HTTP luxyra.fr' }
     };
