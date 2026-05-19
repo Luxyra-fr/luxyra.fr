@@ -3102,18 +3102,104 @@ async function saveAppConfig(){
 
 // ===== NF525 =====
 function rNF525(){
-  var h='<div class="topbar"><h1>NF525 / RGPD <span>Conformité</span></h1></div>';
-  h+='<div class="kpi-row">';
-  ["Inaltérabilité — SHA-256","Sécurisation — JWT + RLS","Conservation — PostgreSQL","Archivage — Annuel signé"].forEach(function(k){
-    h+='<div class="kpi" style="border-left:3px solid var(--green)"><div class="kpi-value" style="color:var(--green);font-size:20px">✓</div><div class="kpi-sub">'+k+'</div></div>';
-  });
-  h+='</div>';
-  h+='<div class="card"><h3>🛡️ Checklist conformité</h3><div style="font-size:13px;color:var(--text2);line-height:2">';
-  ["Chaînage SHA-256 sur chaque ticket","Clôtures Z numérotées et chaînées","Journal d’audit horodaté","Archivage annuel JSON signé","Attestation art. 286 CGI","Aucune suppression de ticket","Données isolées par salon (RLS)","Hébergement EU (Supabase Paris)"].forEach(function(c){h+='<div>✅ '+c+'</div>';});
-  h+='</div></div>';
-  h+='<div class="card"><h3>🇪🇺 RGPD</h3><div style="font-size:13px;color:var(--text2);line-height:2">';
-  ["DPA (Data Processing Agreement)","Registre des traitements","Chiffrement AES-256 + TLS 1.3","Droit à l’effacement","Droit à la portabilité (JSON/CSV)","Notification CNIL sous 72h"].forEach(function(c){h+='<div>📝 '+c+'</div>';});
-  h+='</div></div>';return h;
+  var h='<div class="topbar"><h1>NF525 / RGPD <span>Conformité</span> <button onclick="loadNF525Status()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button></h1></div>';
+  h+='<div id="nf525StatusBox"><div style="padding:30px;text-align:center;color:var(--text3)">Chargement de l\'état de conformité…</div></div>';
+  setTimeout(loadNF525Status, 50);
+  return h;
+}
+
+async function loadNF525Status(){
+  var box = document.getElementById('nf525StatusBox');
+  if(!box) return;
+  try {
+    var r = await _sb.rpc('verify_nf525_status');
+    if(r.error) throw new Error(r.error.message);
+    var d = r.data || {};
+    function badge(ok, neutralLabel){
+      if(ok === true) return '<span style="color:var(--green);font-weight:800">✓</span>';
+      if(ok === false) return '<span style="color:var(--red);font-weight:800">✕</span>';
+      return '<span style="color:var(--text3)">'+(neutralLabel||'?')+'</span>';
+    }
+    function pilier(title, data){
+      var ok = data && data.ok;
+      var color = ok === true ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--orange)');
+      var icon = ok === true ? '✓' : (ok === false ? '✕' : '?');
+      return '<div class="kpi" style="border-left:3px solid '+color+'">'
+        +'<div class="kpi-value" style="color:'+color+';font-size:20px">'+icon+'</div>'
+        +'<div class="kpi-sub">'+title+'</div></div>';
+    }
+
+    var html = '<div class="kpi-row">';
+    html += pilier('Inaltérabilité — SHA-256', d.inalterabilite);
+    html += pilier('Sécurisation — Chaînage', d.securisation);
+    html += pilier('Conservation 6 ans', d.conservation);
+    html += pilier('Archivage — Annuel signé', d.archivage);
+    html += '</div>';
+
+    // Détails par pilier
+    html += '<div class="card"><h3>🛡️ État réel par pilier</h3><div style="font-size:13px;line-height:1.8">';
+
+    var inalt = d.inalterabilite || {};
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+      + badge(inalt.ok) + ' <strong>Inaltérabilité</strong> — '
+      + (inalt.triggers_actifs||0) + '/' + (inalt.triggers_attendus||9) + ' triggers actifs<br>'
+      + '<span style="color:var(--text3);font-size:11px">' + (inalt.detail||'') + '</span></div>';
+
+    var secu = d.securisation || {};
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+      + badge(secu.ok) + ' <strong>Sécurisation chaînage SHA-256</strong> — '
+      + (secu.pct_hashed||0) + '% tickets hashés ('+(secu.tickets_hashed||0)+'/'+(secu.tickets_total||0)+'), '
+      + (secu.chain_seal_count||0) + ' scellements en chaîne'
+      + (secu.chain_breaks_7j > 0 ? ', <span style="color:var(--red)">'+secu.chain_breaks_7j+' rupture(s) chaîne sur 7j</span>' : '')
+      + '<br><span style="color:var(--text3);font-size:11px">' + (secu.detail||'') + '</span></div>';
+
+    var cons = d.conservation || {};
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+      + badge(cons.ok) + ' <strong>Conservation 6 ans</strong> — '
+      + (cons.nb_clotures||0) + ' clôtures Z, dernier Z #' + (cons.last_z_num||'?') + ' du ' + (cons.last_z_date || '—')
+      + '<br><span style="color:var(--text3);font-size:11px">' + (cons.detail||'') + '</span></div>';
+
+    var arch = d.archivage || {};
+    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+      + badge(arch.ok) + ' <strong>Archivage annuel</strong> — '
+      + (arch.nb_archives||0) + ' archive(s) générée(s)'
+      + (arch.last_archive_year ? ', dernière : ' + arch.last_archive_year : '')
+      + '<br><span style="color:var(--text3);font-size:11px">' + (arch.detail||'') + ' · ' + (arch.cron_next_run||'') + '</span></div>';
+
+    var trac = d.tracabilite || {};
+    html += '<div style="padding:8px 0">'
+      + badge(trac.ok) + ' <strong>Traçabilité (piste d\'audit)</strong> — '
+      + (trac.audit_actions_24h||0) + ' actions tracées sur 24h'
+      + '<br><span style="color:var(--text3);font-size:11px">' + (trac.detail||'') + '</span></div>';
+    html += '</div></div>';
+
+    // RGPD
+    var rgpd = d.rgpd || {};
+    html += '<div class="card"><h3>🇪🇺 RGPD</h3><div style="font-size:13px;line-height:1.8">';
+    [
+      {k:'rgpd_delete', name:'Droit à l\'effacement (art. 17)'},
+      {k:'portabilite', name:'Droit à la portabilité (art. 20)'},
+      {k:'consentement_marketing', name:'Consentement marketing opt-in (art. 7)'},
+      {k:'hebergement_ue', name:'Hébergement Union Européenne'},
+      {k:'notification_violation', name:'Notification violation 72h CNIL (art. 33)'}
+    ].forEach(function(it){
+      var x = rgpd[it.k] || {};
+      html += '<div style="padding:6px 0;border-bottom:1px solid var(--border)">'
+        + badge(x.ok) + ' <strong>'+it.name+'</strong>'
+        + '<br><span style="color:var(--text3);font-size:11px">' + (x.detail||'') + '</span></div>';
+    });
+    html += '</div></div>';
+
+    html += '<div style="margin-top:14px;padding:10px 14px;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.2);border-radius:8px;font-size:12px;color:var(--text3)">';
+    html += '💡 Cette page lit l\'état RÉEL de la base de données (triggers, hash, clôtures, archives, audit log). ';
+    html += 'Rapport généré : ' + (d.generated_at ? new Date(d.generated_at).toLocaleString('fr-FR') : '?') + '. ';
+    html += 'L\'attestation individuelle d\'éditeur reste publiée sur <a href="/nf525-attestation-generale.html" target="_blank" style="color:var(--gold)">/nf525-attestation-generale.html</a>.';
+    html += '</div>';
+
+    box.innerHTML = html;
+  } catch(e){
+    box.innerHTML = '<div style="padding:20px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.25);border-radius:10px;color:var(--red)">❌ Erreur chargement : '+(e.message||e)+'</div>';
+  }
 }
 
 // ===== EDIT LEGAL INFO (super-admin only — champs lockés côté salon) =====
