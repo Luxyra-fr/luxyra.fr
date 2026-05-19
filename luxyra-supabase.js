@@ -1618,7 +1618,23 @@ async function saveClient(client) {
         await _sb.from("clients").update(syncClients).eq("email", client.em).neq("id", client.id);
       }
       if (Object.keys(syncBp).length) {
-        await _sb.from("clients_luxyra").update(syncBp).eq("email", client.em);
+        // FIX 2026-05-19 : passe par la RPC SECURITY DEFINER au lieu de UPDATE direct
+        // (la policy UPDATE clients_luxyra ne sera plus qual=true mais filtrée par
+        // auth.email(). La RPC bypass RLS de façon contrôlée + vérifie que le caller
+        // est bien un salon, et n'autorise QUE les champs non-sensibles.)
+        await _sb.rpc('sync_clients_luxyra_from_salon', {
+          p_email: client.em,
+          p_nom: syncBp.nom || null,
+          p_prenom: syncBp.prenom || null,
+          p_telephone: syncBp.telephone || null,
+          p_genre: syncBp.genre || null,
+          p_adresse: syncBp.adresse || null,
+          p_cp: syncBp.cp || null,
+          p_ville: syncBp.ville || null,
+          p_date_naissance: syncBp.date_naissance || null,
+          p_sms_ok: (syncBp.sms_ok === undefined ? null : syncBp.sms_ok),
+          p_email_ok: (syncBp.email_ok === undefined ? null : syncBp.email_ok)
+        });
       }
     } catch(e) { console.log("[SYNC]", e.message); }
   }
