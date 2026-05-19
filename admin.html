@@ -268,6 +268,8 @@ async function loadPlansFromConfig(){
     var r=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
     if(r.data&&r.data.config){
       var c=r.data.config;
+      // Stocke tout l'app_config en global pour que toutes les pages puissent l'utiliser
+      window._appConfig = c;
       if(c.plan_essential_eur!=null) PLANS[0].prix=Number(c.plan_essential_eur);
       if(c.plan_pro_eur!=null) PLANS[1].prix=Number(c.plan_pro_eur);
     }
@@ -1929,14 +1931,72 @@ function rLegalPage(){
   return h;
 }
 function rSystemPage(){
-  var h='<div class="topbar"><h1>Système <span>État services</span></h1></div>';
-  h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">Supabase</div><div class="kpi-value" style="color:var(--green);font-size:18px">✓ OK</div><div class="kpi-sub">'+(SUPABASE_URL||'').replace('https://','').slice(0,30)+'</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Stripe</div><div class="kpi-value" style="color:var(--orange);font-size:18px">⚠ TEST</div><div class="kpi-sub">acct_1TCS0K…</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Brevo</div><div class="kpi-value" style="color:var(--green);font-size:18px">✓ OK</div><div class="kpi-sub">SMTP + SMS</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Realtime chat</div><div class="kpi-value" style="color:'+(window.CHAT_SUB?'var(--green)':'var(--text3)')+';font-size:18px">'+(window.CHAT_SUB?'✓ ON':'○ OFF')+'</div></div>';
-  h+='</div>';
+  var h='<div class="topbar"><h1>Système <span>État services</span> <button onclick="loadSystemHealth()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button></h1></div>';
+  h+='<div id="systemHealthBox"><div style="padding:30px;text-align:center;color:var(--text3)">Chargement…</div></div>';
+  setTimeout(loadSystemHealth, 50);
   return h;
+}
+
+async function loadSystemHealth(){
+  var box = document.getElementById('systemHealthBox');
+  if(!box) return;
+  // Récupère les vraies infos depuis la RPC admin_integrations_health (qu'on a fixée ce soir)
+  // + Realtime chat (variable côté frontend)
+  try {
+    var r = await _sb.rpc('admin_integrations_health');
+    if(r.error) throw new Error(r.error.message);
+    var rows = r.data || [];
+    var byService = {};
+    rows.forEach(function(x){ byService[x.service] = x; });
+
+    // Mapping pour affichage en français
+    var serviceLabels = {
+      supabase_db: { name:'Supabase DB', sub: (SUPABASE_URL||'').replace('https://','').slice(0,30) },
+      stripe_api: { name:'Stripe API', sub:'Paiements (mode '+((window._appConfig||{}).stripe_mode || 'TEST')+')' },
+      brevo_api: { name:'Brevo API', sub:'Emails + SMS transactionnels' },
+      cloudflare_worker: { name:'Cloudflare Worker', sub:'Routeur HTTP luxyra.fr' }
+    };
+
+    function statusBadge(st){
+      if(st === 'ok') return { color:'var(--green)', icon:'✓', label:'OK' };
+      if(st === 'stale') return { color:'#ffd54f', icon:'⏱', label:'Périmé' };
+      if(st === 'down') return { color:'var(--red)', icon:'✕', label:'EN PANNE' };
+      return { color:'var(--text3)', icon:'?', label:'Pas de données' };
+    }
+
+    var html = '<div class="kpi-row">';
+    ['supabase_db','stripe_api','brevo_api','cloudflare_worker'].forEach(function(key){
+      var data = byService[key] || { status:'no_data' };
+      var lbl = serviceLabels[key] || { name:key, sub:'' };
+      var b = statusBadge(data.status);
+      var lastCheckTxt = '';
+      if(data.last_check_at){
+        var diffSec = Math.floor((Date.now() - new Date(data.last_check_at).getTime()) / 1000);
+        if(diffSec < 60) lastCheckTxt = 'vérifié il y a '+diffSec+' sec';
+        else if(diffSec < 3600) lastCheckTxt = 'vérifié il y a '+Math.floor(diffSec/60)+' min';
+        else if(diffSec < 86400) lastCheckTxt = 'vérifié il y a '+Math.floor(diffSec/3600)+' h';
+        else lastCheckTxt = 'vérifié il y a '+Math.floor(diffSec/86400)+' j';
+      }
+      html += '<div class="kpi"><div class="kpi-label">'+lbl.name+'</div>';
+      html += '<div class="kpi-value" style="color:'+b.color+';font-size:18px">'+b.icon+' '+b.label+'</div>';
+      html += '<div class="kpi-sub">'+lbl.sub+(lastCheckTxt?'<br><span style="font-size:10px;color:var(--text3)">'+lastCheckTxt+'</span>':'')+'</div></div>';
+    });
+    // Realtime chat (frontend uniquement)
+    var chatOn = !!window.CHAT_SUB;
+    html += '<div class="kpi"><div class="kpi-label">Realtime chat</div>';
+    html += '<div class="kpi-value" style="color:'+(chatOn?'var(--green)':'var(--text3)')+';font-size:18px">'+(chatOn?'✓ Actif':'○ Inactif')+'</div>';
+    html += '<div class="kpi-sub">WebSocket Supabase</div></div>';
+    html += '</div>';
+
+    html += '<div style="margin-top:14px;padding:10px 14px;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.2);border-radius:8px;font-size:12px;color:var(--text3)">';
+    html += '💡 Statuts mis à jour automatiquement toutes les 10 min par le cron <code>lx-synthetic-check</code>. ';
+    html += 'Cliquer <strong>⟳ Rafraîchir</strong> pour relire l\'état actuel.';
+    html += '</div>';
+
+    box.innerHTML = html;
+  } catch(e){
+    box.innerHTML = '<div style="padding:20px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.25);border-radius:10px;color:var(--red)">❌ Erreur chargement : '+(e.message||e)+'</div>';
+  }
 }
 
 // ===== ÉTABLISSEMENTS =====
@@ -2850,9 +2910,13 @@ function rRevenue(){
     h+='<div class="chart-bar-row"><div class="chart-bar-label">'+p.nom+' ('+p.prix+'€)</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+pct+'%;background:'+p.couleur+'">'+fmtM(rev)+'</div></div><div class="chart-bar-val">'+pct+'%</div></div>';
   });
   h+='</div>';
-  h+='<div class="chart-card"><div class="chart-title">🔮 Simulation croissance</div><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Si 5 comptes Pro / mois :</div>';
-  [{m:"Mois 3",s:15,r:Math.round(15*24.99)},{m:"Mois 6",s:30,r:Math.round(30*24.99)},{m:"Mois 12",s:60,r:Math.round(60*24.99)},{m:"Mois 24",s:120,r:Math.round(120*24.99)}].forEach(function(p){
-    var pct=Math.round(p.r/2999*100);
+  // FIX 2026-05-19 : prix Pro dynamique depuis app_config (au lieu de 24,99 en dur)
+  var _proP = Number((window._appConfig||{}).plan_pro_eur || 24.99);
+  var _growthPerMonth = 5;  // hypothèse fixe : 5 nouveaux comptes Pro/mois
+  h+='<div class="chart-card"><div class="chart-title">🔮 Simulation croissance</div><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Si '+_growthPerMonth+' comptes Pro / mois :</div>';
+  [{m:"Mois 3",s:_growthPerMonth*3},{m:"Mois 6",s:_growthPerMonth*6},{m:"Mois 12",s:_growthPerMonth*12},{m:"Mois 24",s:_growthPerMonth*24}].forEach(function(p){
+    p.r=Math.round(p.s*_proP);
+    var pct=Math.min(100, Math.round(p.r/(_proP*120)*100));
     h+='<div class="chart-bar-row"><div class="chart-bar-label">'+p.m+'</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+pct+'%;background:linear-gradient(90deg,var(--gold),var(--green))">'+p.s+' → '+fmtM(p.r)+'/mois</div></div></div>';
   });
   h+='</div>';return h;
@@ -2860,14 +2924,23 @@ function rRevenue(){
 
 // ===== PACKS SMS =====
 function rSMS(){
+  var cfg = window._appConfig || {};
+  var smsPrice = Number(cfg.sms_price_ttc != null ? cfg.sms_price_ttc : 0.05);
+  var bonus = Number(cfg.sms_bonus_first_pay != null ? cfg.sms_bonus_first_pay : 150);
+  // Packs : on lit depuis app_config et on calcule la marge automatiquement
+  var pack100Price = Number(cfg.sms_pack_100_eur != null ? cfg.sms_pack_100_eur : 7.99);
+  var pack250Price = Number(cfg.sms_pack_250_eur != null ? cfg.sms_pack_250_eur : 18.99);
+  var pack500Price = Number(cfg.sms_pack_500_eur != null ? cfg.sms_pack_500_eur : 35.99);
+  function margePct(q, p){ var cost = q * smsPrice; var marge = p - cost; return Math.round(marge / p * 100); }
+
   var h='<div class="topbar"><h1>Packs SMS <span>Gestion des crédits</span></h1></div>';
-  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">~0,05€</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">150 SMS offerts</div><div class="kpi-value" style="color:var(--green)">1er paiement Pro</div><div class="kpi-sub">Bonus one-shot, mode LIVE</div></div></div>';
+  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">'+fmtM(smsPrice)+'</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">'+bonus+' SMS offerts</div><div class="kpi-value" style="color:var(--green)">1er paiement Pro</div><div class="kpi-sub">Bonus one-shot, mode LIVE</div></div></div>';
   h+='<div class="card"><h3>📱 Packs disponibles</h3>';
-  [{q:100,p:7.99,m:37},{q:250,p:18.99,m:34},{q:500,p:35.99,m:31}].forEach(function(x){
-    h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+x.m+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
+  [{q:100,p:pack100Price},{q:250,p:pack250Price},{q:500,p:pack500Price}].forEach(function(x){
+    h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+margePct(x.q, x.p)+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
   });
-  h+='</div>';
-  h+='<div class="card"><h3>📨 Configuration envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8"><div>Fournisseur SMS : à configurer (Brevo / Twilio / OVH)</div><div>Rappels automatiques : 24h et 2h avant le RDV</div><div>Campagnes : anniversaires, inactifs, promotions</div></div></div>';
+  h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Tarifs modifiables dans Paramètres → Système (app_config).</div></div>';
+  h+='<div class="card"><h3>📨 Configuration envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8"><div>Fournisseur SMS : Brevo (configuré)</div><div>Rappels automatiques : 24h et 2h avant le RDV</div><div>Campagnes : anniversaires, inactifs, promotions</div></div></div>';
   return h;
 }
 
@@ -2877,8 +2950,16 @@ function rSettings(){
   h+='<div class="settings-card"><h3>📦 Plans & tarifs</h3>';
   PLANS.forEach(function(p){h+='<div class="sf-row"><div class="sf-label">'+p.nom+'</div><div style="font-family:var(--mono);font-weight:700;color:var(--gold)">'+p.prix+'€/mois</div></div>';});
   h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Les prix se configurent dans Stripe.</div></div>';
-  h+='<div class="settings-card"><h3>🆓 Essai gratuit</h3><div class="sf-row"><div class="sf-label">Durée</div><div style="font-weight:700">14 jours</div></div><div class="sf-row"><div class="sf-label">CB requise</div><div style="color:var(--red)">Non</div></div></div>';
-  h+='<div class="settings-card"><h3>🏢 Éditeur</h3><div class="sf-row"><div class="sf-label">Éditeur</div><div>Luxyra</div></div><div class="sf-row"><div class="sf-label">Email support</div><div>support@luxyra.fr</div></div><div class="sf-row"><div class="sf-label">Version app</div><div style="font-family:var(--mono)">v6.3</div></div></div>';
+  // FIX 2026-05-19 : valeurs depuis app_config (au lieu d'être codées en dur)
+  var _cfg = window._appConfig || {};
+  var _trialDays = _cfg.trial_days != null ? _cfg.trial_days : 14;
+  var _trialCb = _cfg.trial_card_required === true ? '<span style="color:var(--green)">Oui</span>' : '<span style="color:var(--red)">Non</span>';
+  var _appVer = _cfg.app_version || 'v6.3';
+  var _commit = _cfg.app_commit_short ? ' · '+_cfg.app_commit_short : '';
+  var _siret = _cfg.luxyra_siret_editeur || '910 928 464 00023';
+  var _forme = _cfg.luxyra_forme_juridique || 'Micro-entrepreneur';
+  h+='<div class="settings-card"><h3>🆓 Essai gratuit</h3><div class="sf-row"><div class="sf-label">Durée</div><div style="font-weight:700">'+_trialDays+' jours</div></div><div class="sf-row"><div class="sf-label">CB requise</div><div>'+_trialCb+'</div></div></div>';
+  h+='<div class="settings-card"><h3>🏢 Éditeur</h3><div class="sf-row"><div class="sf-label">Éditeur</div><div>Luxyra ('+_forme+')</div></div><div class="sf-row"><div class="sf-label">SIRET</div><div style="font-family:var(--mono);font-size:12px">'+_siret+'</div></div><div class="sf-row"><div class="sf-label">Email support</div><div>support@luxyra.fr</div></div><div class="sf-row"><div class="sf-label">Version app</div><div style="font-family:var(--mono)">'+_appVer+_commit+'</div></div></div>';
   // FIX 2026-05-18 : widget Push admin retiré. Les alertes critiques arrivent
   // par mail Brevo (support@luxyra.fr) + push ntfy.sh sur le téléphone d'Alex
   // (topic configuré dans lx-alert-mail). Le Web Push admin FCM avait été
