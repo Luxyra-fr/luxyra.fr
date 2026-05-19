@@ -2002,16 +2002,26 @@ async function cancelTicketDb(ticketDbId, reason) {
   } catch (e) { console.warn("[cancelTicketDb]", e); }
 }
 
-// Verrouille tous les tickets d'une clôture (post-clôture Z)
+// Verrouille tous les tickets d'une clôture (post-clôture Z).
+// FIX 2026-05-19 : propage les erreurs (plus de catch silencieux) + retourne le
+// count de tickets effectivement modifiés. L'appelant peut vérifier que tous
+// les tickets attendus ont bien été verrouillés (audit NF525).
 async function lockTicketsForCloture(cloture) {
-  if (!_isOnline || !_salonId || !cloture || !cloture.date) return;
-  try {
-    await _sb.from("tickets")
-      .update({ locked: true, cloture_id: cloture.id || null })
-      .eq("salon_id", _salonId)
-      .eq("date_ticket", cloture.date)
-      .eq("locked", false);
-  } catch (e) { console.warn("[lockTicketsForCloture]", e); }
+  if (!_isOnline) throw new Error("Mode offline — verrouillage différé");
+  if (!_salonId) throw new Error("salon_id manquant pour lockTicketsForCloture");
+  if (!cloture) throw new Error("cloture argument manquant");
+  if (!cloture.date) throw new Error("cloture.date manquante");
+  var res = await _sb.from("tickets")
+    .update({ locked: true, cloture_id: cloture.id || null })
+    .eq("salon_id", _salonId)
+    .eq("date_ticket", cloture.date)
+    .eq("locked", false)
+    .select("id, num");
+  if (res.error) {
+    throw new Error("UPDATE tickets locked failed: " + res.error.message + (res.error.code ? " ["+res.error.code+"]" : ""));
+  }
+  var tickets = res.data || [];
+  return { nbModified: tickets.length, tickets: tickets };
 }
 
 // ============================================================
