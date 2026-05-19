@@ -230,9 +230,14 @@ function renderStep4Contrat(){
   return h;
 }
 
+// Version du contrat \u2014 incr\u00e9mente \u00e0 CHAQUE modification de getContratHTML.
+// Permet de tracer dans inscriptions_log quelle version exacte a \u00e9t\u00e9 sign\u00e9e.
+var CONTRAT_VERSION = "1.0";
+var CONTRAT_DATE_EFFET = "2026-05-19";
+
 function getContratHTML(){
   var d=new Date();var dateStr=d.toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
-  var h='<h3>Contrat d\u2019abonnement Luxyra</h3>';
+  var h='<h3>Contrat d\u2019abonnement Luxyra <span style="font-size:11px;font-weight:400;color:#999">\u2014 version '+CONTRAT_VERSION+'</span></h3>';
   h+='<p><em>En vigueur au '+dateStr+'</em></p>';
   h+='<h3>Article 1 \u2014 Objet</h3>';
   h+='<p>Le pr\u00e9sent contrat r\u00e9git les conditions d\u2019utilisation du logiciel Luxyra, solution de gestion pour les professionnels de la beaut\u00e9 (coiffure, esth\u00e9tique, barbier, ongles, bien-\u00eatre), \u00e9dit\u00e9 par Alexandre Jensen, micro-entrepreneur, SIRET 910 928 464 00023.</p>';
@@ -348,14 +353,27 @@ async function doSubmit(){
   btn.disabled=true;btn.textContent="\u23f3 Cr\u00e9ation en cours...";
 
   try{
-    // 0. Generate contract signature (SHA-256 hash)
+    // 0. Generate contract signature (SHA-256 hash) — valeur probante renforcée 2026-05-19
     var contratText=getContratHTML().replace(/<[^>]+>/g,"");
+    // Tente de récupérer l'IP publique du signataire (best-effort, non bloquant).
+    // ipify.org est un service public gratuit. Si indispo, l'IP côté serveur (Supabase headers) reste backup.
+    var signataireIp = "";
+    try {
+      var ipRes = await fetch("https://api.ipify.org?format=json", {signal: AbortSignal.timeout(2000)});
+      if (ipRes.ok) {
+        var ipJson = await ipRes.json();
+        signataireIp = ipJson.ip || "";
+      }
+    } catch(_e) { /* non bloquant */ }
     var signatureData={
       signataire:DATA.gerantPrenom.trim()+" "+DATA.gerantNom.trim(),
       email:DATA.email.trim(),
       etablissement:DATA.nom.trim(),
       date:new Date().toISOString(),
       contrat_hash:await sha256(contratText),
+      contrat_version:CONTRAT_VERSION,
+      ip:signataireIp,
+      user_agent:(navigator.userAgent||"").slice(0,500),
       cgv_accepted:true,
       confidentialite_accepted:true
     };
@@ -453,6 +471,12 @@ async function doSubmit(){
           ville:DATA.ville.trim(),
           plan:"trial",
           contrat_hash:signatureData.contrat_hash,
+          contrat_version:signatureData.contrat_version,
+          ip_signataire:signatureData.ip||null,
+          user_agent_signataire:signatureData.user_agent||null,
+          signed_at:signatureData.date,
+          signataire_email:signatureData.email,
+          signataire_nom:signatureData.signataire,
           created_at:new Date().toISOString()
         });
       }catch(e){console.log("inscriptions_log:",e);}
