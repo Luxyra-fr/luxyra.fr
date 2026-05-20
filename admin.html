@@ -533,38 +533,69 @@ function mrrOf(s){
   return gPlan(s.plan).prix||0;
 }
 function mrrTotal(){var t=0;SALONS.forEach(function(s){t+=mrrOf(s);});return t;}
-// MRR rétro 12 mois — pour chaque mois M, on simule "salons existants à fin M qui auraient payé"
+// Historique MRR RÉEL — alimenté par la table mrr_snapshots (cron mensuel), pas de fabrication.
+// window._mrrHist est rempli par loadMrrHistory() qui lit get_mrr_history().
+window._mrrHist=null; // null = pas encore chargé ; objet {'2026-05':valeur,...} sinon
 function mrr12(){
+  var MM=['Jan','Fév','Mar','Avr','Mai','Juin','Jui','Aoû','Sep','Oct','Nov','Déc'];
   var out=[],now=new Date();
+  var hist=window._mrrHist||{};
   for(var i=11;i>=0;i--){
     var d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    var endM=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
-    var t=0;
-    SALONS.forEach(function(s){
-      if(!s.created)return;
-      if(new Date(s.created)>endM)return;
-      // Approximation rétro : on applique mrrOf actuel si le salon existait
-      t+=mrrOf(s);
-    });
-    out.push({label:['Jan','Fév','Mar','Avr','Mai','Juin','Jui','Aoû','Sep','Oct','Nov','Déc'][d.getMonth()],value:t});
+    var key=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    var has=Object.prototype.hasOwnProperty.call(hist,key);
+    // value:null => mois sans mesure réelle (pas de snapshot) → affiché "pas de données", jamais inventé
+    out.push({label:MM[d.getMonth()],value:has?Number(hist[key]):null,nodata:!has});
   }
   return out;
+}
+// Charge l'historique réel et redessine le graphe du cockpit.
+async function loadMrrHistory(){
+  if(!_sb||!_online)return;
+  try{
+    var r=await _sb.rpc('get_mrr_history',{p_months:12});
+    var map={};
+    (r.data||[]).forEach(function(row){
+      var k=String(row.snapshot_month).slice(0,7); // 'YYYY-MM'
+      map[k]=row.mrr_total;
+    });
+    window._mrrHist=map;
+  }catch(e){console.warn('mrr history',e);window._mrrHist={};}
+  var el=document.getElementById('lxMrrChart');
+  if(el)el.innerHTML=svgMRR(mrr12());
 }
 // SVG MRR 12 mois — noir/doré, sans Chart.js
 function svgMRR(data){
   var W=720,H=200,P=32,n=data.length;
-  var max=Math.max.apply(null,data.map(function(d){return d.value;}));max=max||1;
+  // max calculé uniquement sur les mois mesurés (value non null)
+  var measured=data.filter(function(d){return d.value!=null;}).map(function(d){return d.value;});
+  var max=measured.length?Math.max.apply(null,measured):0;max=max||1;
   var bw=(W-P*2)/n*0.7,gap=(W-P*2)/n*0.3;
   var bars='',labels='',values='';
+  var anyData=measured.length>0;
   data.forEach(function(d,i){
     var x=P+i*((W-P*2)/n)+gap/2;
+    if(d.value==null){
+      // Mois sans mesure réelle : repère gris pointillé au sol, AUCUNE barre inventée.
+      var yb=H-P;
+      bars+='<line x1="'+x+'" y1="'+yb+'" x2="'+(x+bw)+'" y2="'+yb+'" stroke="var(--text3)" stroke-width="2" stroke-dasharray="3,3" opacity="0.5"><title>'+d.label+' : pas de données (avant mise en place du suivi)</title></line>';
+      labels+='<text x="'+(x+bw/2)+'" y="'+(H-12)+'" text-anchor="middle" fill="var(--text3)" font-size="10" font-family="var(--mono)" opacity="0.6">'+d.label+'</text>';
+      return;
+    }
     var bh=(d.value/max)*(H-P*2);
     var y=H-P-bh;
-    bars+='<rect x="'+x+'" y="'+y+'" width="'+bw+'" height="'+bh+'" rx="3" fill="url(#gold-grad)" opacity="0.85"><title>'+d.label+': '+fmtM(d.value)+'</title></rect>';
+    if(d.value>0){
+      bars+='<rect x="'+x+'" y="'+y+'" width="'+bw+'" height="'+bh+'" rx="3" fill="url(#gold-grad)" opacity="0.85"><title>'+d.label+': '+fmtM(d.value)+'</title></rect>';
+      values+='<text x="'+(x+bw/2)+'" y="'+(y-4)+'" text-anchor="middle" fill="var(--gold)" font-size="9" font-family="var(--mono)" font-weight="700">'+Math.round(d.value)+'</text>';
+    }else{
+      // Mesuré à 0 € (réel) : trait plein au sol pour le distinguer du "pas de données".
+      var y0=H-P;
+      bars+='<line x1="'+x+'" y1="'+y0+'" x2="'+(x+bw)+'" y2="'+y0+'" stroke="var(--gold)" stroke-width="2" opacity="0.7"><title>'+d.label+': '+fmtM(0)+' (mesuré)</title></line>';
+    }
     labels+='<text x="'+(x+bw/2)+'" y="'+(H-12)+'" text-anchor="middle" fill="var(--text3)" font-size="10" font-family="var(--mono)">'+d.label+'</text>';
-    if(d.value>0)values+='<text x="'+(x+bw/2)+'" y="'+(y-4)+'" text-anchor="middle" fill="var(--gold)" font-size="9" font-family="var(--mono)" font-weight="700">'+Math.round(d.value)+'</text>';
   });
-  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block"><defs><linearGradient id="gold-grad" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#d4a843"/><stop offset="1" stop-color="#b8960f"/></linearGradient></defs>'+bars+labels+values+'</svg>';
+  var legend='<div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.6">'+(anyData?'Barre dorée = MRR mesuré · trait doré = 0 € mesuré · ':'')+'pointillé gris = pas de données (mois antérieurs au suivi mensuel, démarré en mai 2026).</div>';
+  return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block"><defs><linearGradient id="gold-grad" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#d4a843"/><stop offset="1" stop-color="#b8960f"/></linearGradient></defs>'+bars+labels+values+'</svg>'+legend;
 }
 // Raccourcis
 window.ADMIN_SHORTCUTS=[];
@@ -681,8 +712,8 @@ function rDashboard(){
   });
   h+='</div></div>';
 
-  // Graphe MRR 12 mois
-  h+='<div class="card" style="margin-top:16px"><h3>📊 MRR — 12 derniers mois</h3>'+svgMRR(mrr12())+'</div>';
+  // Graphe MRR 12 mois — données réelles (mrr_snapshots), chargées async
+  h+='<div class="card" style="margin-top:16px"><h3>📊 MRR — 12 derniers mois <span style="font-size:11px;color:var(--text3);font-weight:400">données réelles mesurées</span></h3><div id="lxMrrChart">'+svgMRR(mrr12())+'</div></div>';
 
   // Activité récente
   h+='<div class="card" style="margin-top:16px"><h3>🕐 Activité récente</h3>';
@@ -698,6 +729,7 @@ function rDashboard(){
   });
   if(events.length===0)h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucune activité récente</div>';
   h+='</div>';
+  setTimeout(loadMrrHistory, 60);
   return h;
 }
 
