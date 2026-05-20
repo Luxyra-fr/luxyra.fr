@@ -394,9 +394,10 @@ async function handleCreateCheckout(request, env) {
     // Lit les prix de packs SMS depuis app_config (centralisé, modif depuis admin)
     // Fallback hardcodé si la table n'est pas accessible
     const smsPacks = {
-      sms_100: { amount: 799, qty: 100, label: "Pack 100 SMS" },
-      sms_250: { amount: 1899, qty: 250, label: "Pack 250 SMS" },
-      sms_500: { amount: 3599, qty: 500, label: "Pack 500 SMS" },
+      sms_100: { amount: 1099, qty: 100, label: "Pack 100 SMS" },
+      sms_250: { amount: 2399, qty: 250, label: "Pack 250 SMS" },
+      sms_500: { amount: 4499, qty: 500, label: "Pack 500 SMS" },
+      sms_1000: { amount: 8299, qty: 1000, label: "Pack 1000 SMS" },
     };
     try {
       const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, {
@@ -409,6 +410,7 @@ async function handleCreateCheckout(request, env) {
         if (cfg.sms_pack_100_eur != null) smsPacks.sms_100.amount = Math.round(Number(cfg.sms_pack_100_eur) * 100);
         if (cfg.sms_pack_250_eur != null) smsPacks.sms_250.amount = Math.round(Number(cfg.sms_pack_250_eur) * 100);
         if (cfg.sms_pack_500_eur != null) smsPacks.sms_500.amount = Math.round(Number(cfg.sms_pack_500_eur) * 100);
+        if (cfg.sms_pack_1000_eur != null) smsPacks.sms_1000.amount = Math.round(Number(cfg.sms_pack_1000_eur) * 100);
       }
     } catch (e) { console.warn("app_config fetch failed for SMS packs, using fallback:", e?.message); }
 
