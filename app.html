@@ -19577,10 +19577,12 @@ window.LX_CONFIG = window.LX_CONFIG || {
   stripe_fee_sepa_max: 5,
   sms_bonus_first_pay: 150,
   sms_price_ttc: 0.065,
-  sms_pack_100_eur: 7.99,
-  sms_pack_250_eur: 18.99,
-  sms_pack_500_eur: 35.99,
-  urssaf_services_pct: 22.2,
+  sms_pack_100_eur: 10.99,
+  sms_pack_250_eur: 23.99,
+  sms_pack_500_eur: 44.99,
+  sms_pack_1000_eur: 82.99,
+  sms_pack_1000_enabled: false,
+  urssaf_services_pct: 21.2,
   urssaf_ventes_pct: 12.3,
   micro_seuil_ca_services: 77700,
   micro_seuil_ca_ventes: 188700,
@@ -19654,12 +19656,17 @@ function lxPlanPriceTTCLabel(plan){ return lxPlanPriceTTC(plan).toFixed(2).repla
 // Helpers packs SMS (modif depuis admin → propagation auto app + worker)
 function lxSmsPackPrice(qty){
   var c = window.LX_CONFIG || {};
-  if(qty === 100) return Number(c.sms_pack_100_eur != null ? c.sms_pack_100_eur : 7.99);
-  if(qty === 250) return Number(c.sms_pack_250_eur != null ? c.sms_pack_250_eur : 18.99);
-  if(qty === 500) return Number(c.sms_pack_500_eur != null ? c.sms_pack_500_eur : 35.99);
+  if(qty === 100) return Number(c.sms_pack_100_eur != null ? c.sms_pack_100_eur : 10.99);
+  if(qty === 250) return Number(c.sms_pack_250_eur != null ? c.sms_pack_250_eur : 23.99);
+  if(qty === 500) return Number(c.sms_pack_500_eur != null ? c.sms_pack_500_eur : 44.99);
+  if(qty === 1000) return Number(c.sms_pack_1000_eur != null ? c.sms_pack_1000_eur : 82.99);
   return 0;
 }
 function lxSmsPackPriceLabel(qty){ return lxSmsPackPrice(qty).toFixed(2).replace(".",","); }
+// Pack 1000 : visible UNIQUEMENT si le flag DB est actif (le worker Cloudflare doit gérer sms_1000).
+function lxPack1000On(){ return (window.LX_CONFIG||{}).sms_pack_1000_enabled === true; }
+// Génère le bouton 1000 (style aligné sur les autres) ou chaîne vide si désactivé.
+function lxBtn1000(style){ if(!lxPack1000On()) return ''; return '<button onclick="buySMSPack(1000)" style="'+style+'">1000 SMS — '+lxSmsPackPriceLabel(1000)+'€</button>'; }
 // Met à jour tous les éléments [data-lxconfig="plan_essential"] / [data-lxconfig="plan_pro"]
 // sur la page (utilisable depuis le DOM dynamique app)
 function lxRefreshPriceElements(){
@@ -28101,6 +28108,7 @@ function rMarketing(){
   h+='<button onclick="buySMSPack(100)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">100 SMS \u2014 '+lxSmsPackPriceLabel(100)+'\u20ac</button>';
   h+='<button onclick="buySMSPack(250)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">250 SMS \u2014 '+lxSmsPackPriceLabel(250)+'\u20ac</button>';
   h+='<button onclick="buySMSPack(500)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">500 SMS \u2014 '+lxSmsPackPriceLabel(500)+'\u20ac</button>';
+  h+=lxBtn1000('padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px');
   h+='</div></div>';
   
   // Tabs
@@ -28320,6 +28328,7 @@ function rMarketing(){
     h+='<div onclick="buySMSPack(100)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">100</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(100)+' \u20ac</div></div>';
     h+='<div onclick="buySMSPack(250)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">250</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(250)+' \u20ac</div></div>';
     h+='<div onclick="buySMSPack(500)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">500</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(500)+' \u20ac</div></div>';
+    if(lxPack1000On()) h+='<div onclick="buySMSPack(1000)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">1000</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(1000)+' \u20ac</div></div>';
     h+='</div>';
   }
   
@@ -28697,6 +28706,7 @@ async function sendSms(phone,message,context,clientNom){
     htm+='<button onclick="cM();buySMSPack(100)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">100 SMS \u2014 '+lxSmsPackPriceLabel(100)+'\u20ac</button>';
     htm+='<button onclick="cM();buySMSPack(250)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">250 SMS \u2014 '+lxSmsPackPriceLabel(250)+'\u20ac</button>';
     htm+='<button onclick="cM();buySMSPack(500)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">500 SMS \u2014 '+lxSmsPackPriceLabel(500)+'\u20ac</button>';
+    if(lxPack1000On()) htm+='<button onclick="cM();buySMSPack(1000)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">1000 SMS \u2014 '+lxSmsPackPriceLabel(1000)+'\u20ac</button>';
     htm+='</div>';
     if(isPro())htm+='<div style="font-size:11px;color:rgba(255,255,255,.3);margin-bottom:8px">150 SMS bonus offerts une seule fois au 1er paiement Pro effectif</div>';
     htm+='<button onclick="cM()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;cursor:pointer">Fermer</button>';
