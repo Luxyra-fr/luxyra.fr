@@ -30074,12 +30074,15 @@ function printFactureSalon(id){
   });
 }
 
+// NF525 : actions techniques (erreurs JS/DB) exclues des exports de piste d'audit FISCALE.
+// Elles restent consultables dans le panel Monitoring, mais ne polluent plus les documents légaux/certification.
+window.LX_NON_FISCAL_ACTIONS = window.LX_NON_FISCAL_ACTIONS || {JS_ERROR:1,JS_CONSOLE_ERROR:1,JS_ERROR_PUBLIC:1,DB_ERROR:1,NF525_SEAL_TRIGGER_FAIL:1};
 function exportAudit(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal d'audit",exportAudit);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var csv="ID;Date;User;Action;Detail\n";window.AUDIT_LOG.forEach(function(l){csv+=l.id+";"+l.ts+";"+l.user+";"+l.action+";"+l.detail.replace(/;/g,",")+"\n";});
+  var csv="ID;Date;User;Action;Detail\n";window.AUDIT_LOG.forEach(function(l){if(window.LX_NON_FISCAL_ACTIONS&&window.LX_NON_FISCAL_ACTIONS[l.action])return;csv+=l.id+";"+l.ts+";"+l.user+";"+l.action+";"+l.detail.replace(/;/g,",")+"\n";});
   var b=new Blob([csv],{type:"text/csv"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="audit_"+TD+".csv";a.click();
 }
 
@@ -30289,7 +30292,7 @@ function _doArchivageAnnuel(year){
   var tickets=AP.filter(function(a){return a.tkNum&&a.date.indexOf(year)===0;});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(year)===0;});
   var clotures=window.CLOTURES.filter(function(c){return c.date.indexOf(year)===0;});
-  var audit=window.AUDIT_LOG.filter(function(l){return l.ts.indexOf(year)===0;});
+  var audit=window.AUDIT_LOG.filter(function(l){return l.ts.indexOf(year)===0 && !(window.LX_NON_FISCAL_ACTIONS&&window.LX_NON_FISCAL_ACTIONS[l.action]);});
   var prodVentes=PS.filter(function(p){return p.date.indexOf(year)===0;});
   
   // Calculs annuels — FIX 2026-05-14 : split Prest/Prod via _splitPrestProd
