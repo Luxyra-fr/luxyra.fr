@@ -2989,21 +2989,37 @@ function rRevenue(){
 // ===== PACKS SMS =====
 function rSMS(){
   var cfg = window._appConfig || {};
-  var smsPrice = Number(cfg.sms_price_ttc != null ? cfg.sms_price_ttc : 0.05);
+  // Prix unitaire de RÉFÉRENCE facturé au salon (vente), PAS le coût d'achat.
+  var smsPriceSell = Number(cfg.sms_price_ttc != null ? cfg.sms_price_ttc : 0.065);
+  // Coût d'achat RÉEL chez Brevo par SMS. Non récupérable automatiquement (dépend du
+  // palier Brevo + pays destinataire) → doit être saisi à la main par Alex. null = inconnu.
+  var brevoCost = (cfg.sms_cost_brevo_eur != null && cfg.sms_cost_brevo_eur !== '') ? Number(cfg.sms_cost_brevo_eur) : null;
   var bonus = Number(cfg.sms_bonus_first_pay != null ? cfg.sms_bonus_first_pay : 150);
-  // Packs : on lit depuis app_config et on calcule la marge automatiquement
   var pack100Price = Number(cfg.sms_pack_100_eur != null ? cfg.sms_pack_100_eur : 7.99);
   var pack250Price = Number(cfg.sms_pack_250_eur != null ? cfg.sms_pack_250_eur : 18.99);
   var pack500Price = Number(cfg.sms_pack_500_eur != null ? cfg.sms_pack_500_eur : 35.99);
-  function margePct(q, p){ var cost = q * smsPrice; var marge = p - cost; return Math.round(marge / p * 100); }
+  function fmt3(n){return (n||0).toLocaleString('fr-FR',{minimumFractionDigits:3,maximumFractionDigits:3})+'€';}
 
   var h='<div class="topbar"><h1>Packs SMS <span>Gestion des crédits</span></h1></div>';
-  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût / SMS</div><div class="kpi-value">'+fmtM(smsPrice)+'</div><div class="kpi-sub">Via Brevo / Twilio</div></div><div class="kpi"><div class="kpi-label">'+bonus+' SMS offerts</div><div class="kpi-value" style="color:var(--green)">1er paiement Pro</div><div class="kpi-sub">Bonus one-shot, mode LIVE</div></div></div>';
+  // KPI coût Brevo : vrai chiffre si renseigné, sinon "non renseigné" (jaune) — on n'invente pas.
+  var coutKpi = brevoCost!=null
+    ? '<div class="kpi-value">'+fmt3(brevoCost)+'</div><div class="kpi-sub">Saisi manuellement (factures Brevo)</div>'
+    : '<div class="kpi-value" style="color:#ffd54f">non renseigné</div><div class="kpi-sub">À saisir : Paramètres → coût Brevo réel</div>';
+  h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût d\'achat / SMS (Brevo)</div>'+coutKpi+'</div>';
+  h+='<div class="kpi"><div class="kpi-label">Prix unitaire facturé</div><div class="kpi-value">'+fmt3(smsPriceSell)+'</div><div class="kpi-sub">Réf. hors pack (app_config)</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">'+bonus+' SMS offerts</div><div class="kpi-value" style="color:var(--green)">1er paiement Pro</div><div class="kpi-sub">Bonus one-shot, mode LIVE</div></div></div>';
   h+='<div class="card"><h3>📱 Packs disponibles</h3>';
   [{q:100,p:pack100Price},{q:250,p:pack250Price},{q:500,p:pack500Price}].forEach(function(x){
-    h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+margePct(x.q, x.p)+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
+    var margeTxt;
+    if(brevoCost!=null){
+      var cost=x.q*brevoCost; var marge=Math.round((x.p-cost)/x.p*100);
+      margeTxt='Marge réelle '+marge+'% (coût Brevo '+fmtM(cost)+')';
+    }else{
+      margeTxt='Marge inconnue — coût Brevo non renseigné';
+    }
+    h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc"'+(brevoCost==null?' style="color:#ffd54f"':'')+'>'+fmtM(x.p)+' — '+margeTxt+'</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
   });
-  h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Tarifs modifiables dans Paramètres → Système (app_config).</div></div>';
+  h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Tarifs modifiables dans Paramètres → Système (app_config). Le coût d\'achat Brevo n\'est pas remonté automatiquement : relève-le sur tes factures Brevo et saisis-le pour obtenir la vraie marge.</div></div>';
   h+='<div class="card"><h3>📨 Configuration envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8"><div>Fournisseur SMS : Brevo (selon variable d\'environnement Supabase)</div><div>Rappels automatiques : 24h et 2h avant le RDV (si activés par le salon)</div><div>Campagnes : anniversaires, inactifs, promotions</div></div></div>';
   return h;
 }
@@ -3093,7 +3109,8 @@ async function loadAppConfigEditor(){
       {key:"stripe_fee_sepa_max", label:"Plafond frais SEPA (€)", val:cfg.stripe_fee_sepa_max, step:0.5},
       {section:"📱 SMS"},
       {key:"sms_bonus_first_pay", label:"SMS offerts au 1er paiement Pro", val:cfg.sms_bonus_first_pay, step:1, hint:"Actuel = 150"},
-      {key:"sms_price_ttc", label:"Prix unitaire SMS facturé (€ TTC)", val:cfg.sms_price_ttc, step:0.001, hint:"Standard = 0,065"},
+      {key:"sms_price_ttc", label:"Prix unitaire SMS facturé (€ TTC)", val:cfg.sms_price_ttc, step:0.001, hint:"Prix de VENTE de référence hors pack. Standard = 0,065"},
+      {key:"sms_cost_brevo_eur", label:"Coût d'achat réel / SMS chez Brevo (€ TTC)", val:cfg.sms_cost_brevo_eur, step:0.001, hint:"COÛT, pas prix. Relevé sur factures Brevo. Ex. 6€ les 500 = 0,012. Sert au calcul de la vraie marge des packs."},
       {key:"sms_pack_100_eur", label:"Pack 100 SMS (€ TTC)", val:cfg.sms_pack_100_eur, step:0.01, hint:"Affiché dans app + facturé par Stripe"},
       {key:"sms_pack_250_eur", label:"Pack 250 SMS (€ TTC)", val:cfg.sms_pack_250_eur, step:0.01, hint:"Pack médian, accessible côté worker uniquement"},
       {key:"sms_pack_500_eur", label:"Pack 500 SMS (€ TTC)", val:cfg.sms_pack_500_eur, step:0.01, hint:"Affiché dans app + facturé par Stripe"},
@@ -3165,7 +3182,7 @@ async function loadAppConfigEditor(){
 
 async function saveAppConfig(){
   // Champs numériques (validés positifs)
-  var numKeys = ["stripe_fee_pct","stripe_fee_fixed","stripe_fee_uk_pct","stripe_fee_intl_pct","stripe_fee_sepa_pct","stripe_fee_sepa_max","sms_bonus_first_pay","sms_price_ttc","sms_pack_100_eur","sms_pack_250_eur","sms_pack_500_eur","urssaf_services_pct","urssaf_ventes_pct","micro_seuil_ca_services","micro_seuil_ca_ventes","micro_seuil_tva_services","micro_seuil_tva_ventes","plan_essential_eur","plan_pro_eur","luxyra_tva_pct"];
+  var numKeys = ["stripe_fee_pct","stripe_fee_fixed","stripe_fee_uk_pct","stripe_fee_intl_pct","stripe_fee_sepa_pct","stripe_fee_sepa_max","sms_bonus_first_pay","sms_price_ttc","sms_cost_brevo_eur","sms_pack_100_eur","sms_pack_250_eur","sms_pack_500_eur","urssaf_services_pct","urssaf_ventes_pct","micro_seuil_ca_services","micro_seuil_ca_ventes","micro_seuil_tva_services","micro_seuil_tva_ventes","plan_essential_eur","plan_pro_eur","luxyra_tva_pct"];
   // Champs texte (forme juridique, SIRET, n° TVA intra, capital social)
   var textKeys = ["luxyra_forme_juridique","luxyra_siret_editeur","luxyra_tva_intra","luxyra_capital_social"];
   var newConfig = {};
