@@ -3008,20 +3008,62 @@ function rSMS(){
   h+='<div class="kpi-row"><div class="kpi"><div class="kpi-label">Coût d\'achat / SMS (Brevo)</div>'+coutKpi+'</div>';
   h+='<div class="kpi"><div class="kpi-label">Prix unitaire facturé</div><div class="kpi-value">'+fmt3(smsPriceSell)+'</div><div class="kpi-sub">Réf. hors pack (app_config)</div></div>';
   h+='<div class="kpi"><div class="kpi-label">'+bonus+' SMS offerts</div><div class="kpi-value" style="color:var(--green)">1er paiement Pro</div><div class="kpi-sub">Bonus one-shot, mode LIVE</div></div></div>';
-  h+='<div class="card"><h3>📱 Packs disponibles</h3>';
+  // Taux de charges réels (depuis app_config) pour calculer la marge NETTE.
+  var urssaf = Number(cfg.urssaf_services_pct != null ? cfg.urssaf_services_pct : 21.2)/100; // revente SMS = prestation de services
+  var cfp = 0.002; // contribution formation pro (prestations BIC)
+  var sfp = Number(cfg.stripe_fee_pct != null ? cfg.stripe_fee_pct : 1.5)/100;
+  var sff = Number(cfg.stripe_fee_fixed != null ? cfg.stripe_fee_fixed : 0.25);
+  var chargeRate = urssaf + cfp; // sur le CA encaissé
+  // Net = prix - coût Brevo - frais Stripe - (URSSAF+CFP sur CA)
+  function netPack(q,p){ if(brevoCost==null)return null; return p - q*brevoCost - (p*sfp+sff) - p*chargeRate; }
+
+  h+='<div class="card"><h3>📱 Packs disponibles <span style="font-size:11px;color:var(--text3);font-weight:400">marge NETTE (Brevo + Stripe + URSSAF '+(urssaf*100).toFixed(1)+'%)</span></h3>';
   [{q:100,p:pack100Price},{q:250,p:pack250Price},{q:500,p:pack500Price}].forEach(function(x){
-    var margeTxt;
-    if(brevoCost!=null){
-      var cost=x.q*brevoCost; var marge=Math.round((x.p-cost)/x.p*100);
-      margeTxt='Marge réelle '+marge+'% (coût Brevo '+fmtM(cost)+')';
-    }else{
-      margeTxt='Marge inconnue — coût Brevo non renseigné';
+    var net=netPack(x.q,x.p), col, txt;
+    if(net==null){ col='#ffd54f'; txt='Marge inconnue — coût Brevo non renseigné'; }
+    else{
+      var pc=Math.round(net/x.p*100);
+      col = net<0 ? '#f87171' : (pc<15 ? '#ffd54f' : 'var(--green)');
+      txt = 'Net '+fmtM(net)+' ('+pc+'%) · coût Brevo '+fmtM(x.q*brevoCost);
     }
-    h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc"'+(brevoCost==null?' style="color:#ffd54f"':'')+'>'+fmtM(x.p)+' — '+margeTxt+'</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
+    h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc" style="color:'+col+'">'+fmtM(x.p)+' — '+txt+'</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
   });
-  h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Tarifs modifiables dans Paramètres → Système (app_config). Le coût d\'achat Brevo n\'est pas remonté automatiquement : relève-le sur tes factures Brevo et saisis-le pour obtenir la vraie marge.</div></div>';
+  h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Net = prix encaissé − coût Brevo − frais Stripe ('+(sfp*100)+'% + '+fmtM(sff)+') − charges sociales ('+(urssaf*100).toFixed(1)+'% URSSAF + 0,2% CFP). Tarifs et coût Brevo modifiables dans Paramètres → Système.</div></div>';
+
+  // === SIMULATEUR DE PRIX ===
+  h+='<div class="card"><h3>🧮 Simulateur de prix pack</h3>';
+  if(brevoCost==null){
+    h+='<div style="color:#ffd54f;font-size:13px">Renseigne d\'abord le coût d\'achat Brevo (Paramètres → Système) pour simuler.</div>';
+  }else{
+    h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Entre une quantité et une marge nette cible : le prix de vente conseillé se calcule (charges incluses).</div>';
+    h+='<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">';
+    h+='<div><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Quantité SMS</label><input id="simQ" type="number" value="100" step="10" oninput="lxSmsSimul()" style="width:110px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:var(--mono);font-weight:700"></div>';
+    h+='<div><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Marge nette cible (%)</label><input id="simM" type="number" value="30" step="5" oninput="lxSmsSimul()" style="width:110px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-family:var(--mono);font-weight:700"></div>';
+    h+='<div style="flex:1;min-width:200px"><div style="font-size:11px;color:var(--text2);margin-bottom:3px">Prix de vente conseillé</div><div id="simOut" style="font-size:22px;font-weight:800;color:var(--gold);font-family:var(--mono)">—</div></div>';
+    h+='</div>';
+    h+='<div id="simDetail" style="margin-top:12px;font-size:12px;color:var(--text3);line-height:1.7"></div>';
+    // Données passées au simulateur (set direct, car un <script> injecté via innerHTML ne s'exécute pas)
+    window._smsSim={cost:brevoCost,sfp:sfp,sff:sff,charge:chargeRate};
+  }
+  h+='</div>';
+
   h+='<div class="card"><h3>📨 Configuration envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8"><div>Fournisseur SMS : Brevo (selon variable d\'environnement Supabase)</div><div>Rappels automatiques : 24h et 2h avant le RDV (si activés par le salon)</div><div>Campagnes : anniversaires, inactifs, promotions</div></div></div>';
+  if(brevoCost!=null) setTimeout(function(){ if(typeof lxSmsSimul==='function') lxSmsSimul(); },60);
   return h;
+}
+// Simulateur de prix pack SMS : prix = (coût Brevo total + frais fixe Stripe) / (1 - stripe% - charges% - marge cible%)
+function lxSmsSimul(){
+  var s=window._smsSim; if(!s)return;
+  var q=Number((document.getElementById('simQ')||{}).value)||0;
+  var m=Number((document.getElementById('simM')||{}).value)||0;
+  var out=document.getElementById('simOut'), det=document.getElementById('simDetail');
+  if(!out)return;
+  var denom = 1 - s.sfp - s.charge - m/100;
+  if(q<=0 || denom<=0){ out.textContent='—'; if(det)det.innerHTML = denom<=0 ? '<span style="color:#f87171">Marge cible trop élevée : impossible avec ces charges (max ≈ '+Math.floor((1-s.sfp-s.charge)*100)+'%).</span>' : ''; return; }
+  var price = (q*s.cost + s.sff) / denom;
+  var brevo=q*s.cost, stripe=price*s.sfp+s.sff, charges=price*s.charge, net=price-brevo-stripe-charges;
+  out.textContent = price.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+'€';
+  if(det) det.innerHTML='Sur '+q+' SMS à ce prix : coût Brevo '+brevo.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+'€ · Stripe '+stripe.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+'€ · charges '+charges.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+'€ → <strong style="color:var(--green)">net '+net.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+'€</strong>.';
 }
 
 // ===== PARAMÈTRES =====
