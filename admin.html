@@ -1967,8 +1967,8 @@ async function loadSystemHealth(){
     var serviceLabels = {
       supabase_db: { name:'Supabase DB', sub: (SUPABASE_URL||'').replace('https://','').slice(0,30) },
       stripe_api: { name:'Stripe API', sub: 'Paiements (mode ' + _stripeMode + ')' },
-      brevo_api: { name:'Brevo API', sub:'Emails + SMS transactionnels' },
-      cloudflare_worker: { name:'Cloudflare Worker', sub:'Routeur HTTP luxyra.fr' }
+      brevo_api: { name:'Brevo API', sub:'API joignable (envois non vérifiés en temps réel)' },
+      cloudflare_worker: { name:'Cloudflare Worker', sub:'Routeur HTTP luxyra.fr (/health)' }
     };
 
     function statusBadge(st){
@@ -2926,8 +2926,8 @@ function rRevenue(){
   h+='</div>';
   // FIX 2026-05-19 : prix Pro dynamique depuis app_config (au lieu de 24,99 en dur)
   var _proP = Number((window._appConfig||{}).plan_pro_eur || 24.99);
-  var _growthPerMonth = 5;  // hypothèse fixe : 5 nouveaux comptes Pro/mois
-  h+='<div class="chart-card"><div class="chart-title">🔮 Simulation croissance</div><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Si '+_growthPerMonth+' comptes Pro / mois :</div>';
+  var _growthPerMonth = 5;  // HYPOTHÈSE de simulation (pas une donnée réelle) — voir libellé
+  h+='<div class="chart-card"><div class="chart-title">🔮 Simulation croissance <span style="font-size:11px;color:var(--text3);font-weight:400">(projection hypothétique, pas des données réelles)</span></div><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Hypothèse : '+_growthPerMonth+' nouveaux comptes Pro / mois à '+fmtM(_proP)+' :</div>';
   [{m:"Mois 3",s:_growthPerMonth*3},{m:"Mois 6",s:_growthPerMonth*6},{m:"Mois 12",s:_growthPerMonth*12},{m:"Mois 24",s:_growthPerMonth*24}].forEach(function(p){
     p.r=Math.round(p.s*_proP);
     var pct=Math.min(100, Math.round(p.r/(_proP*120)*100));
@@ -2954,7 +2954,7 @@ function rSMS(){
     h+='<div class="sf-row"><div><div class="sf-label">'+x.q+' SMS</div><div class="sf-desc">'+fmtM(x.p)+' — Marge '+margePct(x.q, x.p)+'%</div></div><div style="font-family:var(--mono);color:var(--gold);font-weight:700">'+fmtM(x.p)+'</div></div>';
   });
   h+='<div style="margin-top:10px;font-size:11px;color:var(--text3)">Tarifs modifiables dans Paramètres → Système (app_config).</div></div>';
-  h+='<div class="card"><h3>📨 Configuration envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8"><div>Fournisseur SMS : Brevo (configuré)</div><div>Rappels automatiques : 24h et 2h avant le RDV</div><div>Campagnes : anniversaires, inactifs, promotions</div></div></div>';
+  h+='<div class="card"><h3>📨 Configuration envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8"><div>Fournisseur SMS : Brevo (selon variable d\'environnement Supabase)</div><div>Rappels automatiques : 24h et 2h avant le RDV (si activés par le salon)</div><div>Campagnes : anniversaires, inactifs, promotions</div></div></div>';
   return h;
 }
 
@@ -2973,7 +2973,9 @@ function rSettings(){
   var _siret = _cfg.luxyra_siret_editeur || '910 928 464 00023';
   var _forme = _cfg.luxyra_forme_juridique || 'Micro-entrepreneur';
   h+='<div class="settings-card"><h3>🆓 Essai gratuit</h3><div class="sf-row"><div class="sf-label">Durée</div><div style="font-weight:700">'+_trialDays+' jours</div></div><div class="sf-row"><div class="sf-label">CB requise</div><div>'+_trialCb+'</div></div></div>';
-  h+='<div class="settings-card"><h3>🏢 Éditeur</h3><div class="sf-row"><div class="sf-label">Éditeur</div><div>Luxyra ('+_forme+')</div></div><div class="sf-row"><div class="sf-label">SIRET</div><div style="font-family:var(--mono);font-size:12px">'+_siret+'</div></div><div class="sf-row"><div class="sf-label">Email support</div><div>support@luxyra.fr</div></div><div class="sf-row"><div class="sf-label">Version app</div><div style="font-family:var(--mono)">'+_appVer+_commit+'</div></div></div>';
+  h+='<div class="settings-card"><h3>🏢 Éditeur</h3><div class="sf-row"><div class="sf-label">Éditeur</div><div>Luxyra ('+_forme+')</div></div><div class="sf-row"><div class="sf-label">SIRET</div><div style="font-family:var(--mono);font-size:12px">'+_siret+'</div></div><div class="sf-row"><div class="sf-label">Email support</div><div>support@luxyra.fr</div></div><div class="sf-row"><div class="sf-label">Version app (commit déployé)</div><div id="appVersionLive" style="font-family:var(--mono);font-size:12px;color:var(--text3)">chargement…</div></div></div>';
+  // Lit le VRAI dernier commit déployé via l'API GitHub publique (pas une valeur en dur)
+  setTimeout(loadAppVersionLive, 100);
   // FIX 2026-05-18 : widget Push admin retiré. Les alertes critiques arrivent
   // par mail Brevo (support@luxyra.fr) + push ntfy.sh sur le téléphone d'Alex
   // (topic configuré dans lx-alert-mail). Le Web Push admin FCM avait été
@@ -2993,6 +2995,32 @@ function rSettings(){
   setTimeout(lxRenderPushDevices,50);
   setTimeout(loadAppConfigEditor,100);
   return h;
+}
+
+// Lit le vrai dernier commit déployé via l'API GitHub publique.
+// Reflète le code RÉELLEMENT en ligne (GitHub Pages déploie depuis main).
+async function loadAppVersionLive(){
+  var el = document.getElementById('appVersionLive');
+  if(!el) return;
+  try {
+    var r = await fetch('https://api.github.com/repos/Luxyra-fr/luxyra.fr/commits/main', {
+      headers: { 'Accept': 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(5000)
+    });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    var j = await r.json();
+    var sha = (j.sha || '').slice(0,9);
+    var date = j.commit && j.commit.committer && j.commit.committer.date
+      ? new Date(j.commit.committer.date).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})
+      : '?';
+    var msg = (j.commit && j.commit.message ? j.commit.message : '').split('\n')[0].slice(0,50);
+    el.innerHTML = '<span style="color:var(--text)">'+sha+'</span> · '+date
+      + '<div style="font-size:10px;color:var(--text3);margin-top:2px">'+(msg ? msg.replace(/[<>&]/g,'') : '')+'</div>';
+    el.title = 'Dernier commit déployé sur la branche main (source : API GitHub)';
+  } catch(e){
+    // Honnête : si on ne peut pas joindre GitHub, on le dit (pas de fausse version)
+    el.innerHTML = '<span style="color:#ffd54f">⚠ version non récupérée</span> <span style="font-size:10px;color:var(--text3)">(API GitHub injoignable)</span>';
+  }
 }
 
 // === Édition des constantes globales (singleton app_config) ===
