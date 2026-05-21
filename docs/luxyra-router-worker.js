@@ -1781,6 +1781,49 @@ async function handleClientRdvs(request, env) {
     }
     if (lxId) await _fetch(`client_luxyra_id=eq.${encodeURIComponent(lxId)}`);
     if (email) await _fetch(`client_email=eq.${encodeURIComponent(email)}`);
+    // FIX liaison : inclure les RDV pris EN SALON (table appointments) des fiches reliees au compte Luxyra
+    try {
+      let _clientIds = [];
+      if (lxId) {
+        const _cr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?client_luxyra_id=eq.${encodeURIComponent(lxId)}&select=id,salon_id`, { headers: _sbHeaders(env) });
+        const _cls = await _cr.json();
+        if (Array.isArray(_cls)) _clientIds = _cls.map((c) => c.id).filter(Boolean);
+      }
+      if (_clientIds.length) {
+        const _today = new Date().toISOString().slice(0, 10);
+        const _inList = _clientIds.map((id) => encodeURIComponent(id)).join(",");
+        let _au = `${CONFIG.SUPABASE_URL}/rest/v1/appointments?select=id,salon_id,client_id,date_rdv,heure,prix,status,items,collab_name,cancelled&client_id=in.(${_inList})&date_rdv=gte.${_today}&cancelled=eq.false&status=neq.done&order=date_rdv.desc&limit=50`;
+        if (salonId) _au += `&salon_id=eq.${encodeURIComponent(salonId)}`;
+        const _ar = await fetch(_au, { headers: _sbHeaders(env) });
+        const _appts = await _ar.json();
+        if (Array.isArray(_appts) && _appts.length) {
+          const _sids = [...new Set(_appts.map((a) => a.salon_id).filter(Boolean))];
+          const _snames = {};
+          for (const _sid of _sids) {
+            try {
+              const _sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&id=eq.${_sid}&limit=1`, { headers: _sbHeaders(env) });
+              const _sd = await _sr.json();
+              if (Array.isArray(_sd) && _sd[0]) _snames[_sid] = _sd[0].nom;
+            } catch (e) {}
+          }
+          for (const a of _appts) {
+            if (seen.has(a.id)) continue;
+            seen.add(a.id);
+            let _itemName = "Prestation";
+            if (a.items && a.items.length) {
+              const _ns = a.items.filter((it) => !it.isSep && it.name).map((it) => it.name);
+              if (_ns.length) _itemName = _ns.join(", ");
+            }
+            rdvs.push({
+              id: a.id, salon_id: a.salon_id, salon_nom: _snames[a.salon_id] || "",
+              date_rdv: a.date_rdv, heure_rdv: a.heure, service_nom: _itemName,
+              service_prix: a.prix || 0, status: "confirmed", items: a.items || [],
+              collaborateur_nom: a.collab_name || null, _salon_rdv: true
+            });
+          }
+        }
+      }
+    } catch (e) {}
     rdvs.sort((a, b) => (a.date_rdv || "") > (b.date_rdv || "") ? -1 : 1);
     // Quick Win #3 (2026-05-06) : enrichir chaque RDV avec la politique d'annulation
     // du salon (politique_annulation_h en heures + remboursement_annulation bool).
