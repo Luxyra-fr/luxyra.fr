@@ -14492,7 +14492,22 @@ function rDetail(){
   // Cas typique : un client a une coloration prévue dans 3 semaines + coupe enfant le mois prochain → utile à voir d'un coup d'œil dans la fiche
   var _nextRdvs = AP.filter(function(a){
     return a.cId===c.id && a.st==='conf' && !a.cancelled && a.date >= TD;
-  }).sort(function(a,b){
+  });
+  // FIX liaison : inclure aussi les RDV pris EN LIGNE (rdv_online) rattaches a ce client (match tel/email)
+  try {
+    if(window.RDV_ONLINE && RDV_ONLINE.length){
+      var _normPh=function(x){return String(x||'').replace(/\D/g,'');};
+      var _cph=_normPh(c.ph), _cem=String(c.em||'').toLowerCase().trim();
+      RDV_ONLINE.forEach(function(ro){
+        if(!ro||!ro.date||ro.date<TD) return;
+        var st=ro.status||'';
+        if(st==='cancelled'||st==='cancelled_by_client'||st==='refused'||st==='done'||st==='pending_payment') return;
+        var ok=(_cph&&_normPh(ro.tel)===_cph)||(_cem&&String(ro.email||'').toLowerCase().trim()===_cem);
+        if(ok) _nextRdvs.push({date:ro.date, time:ro.heure, sId:ro.svcId, stId:ro.collabId, _online:true});
+      });
+    }
+  } catch(_e){}
+  _nextRdvs.sort(function(a,b){
     if(a.date !== b.date) return a.date < b.date ? -1 : 1;
     return (a.time||'').localeCompare(b.time||'');
   });
