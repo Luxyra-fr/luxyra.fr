@@ -728,3 +728,41 @@ Total : 15 commits, ~3000 lignes de code, 5 nouvelles features majeures, 2 hotfi
 - Mini-map à sa position (via géocodage BAN au signup)
 - Page Tarifs vide tant qu'il n'a pas créé de service, puis chaque service apparaît auto avec bouton Réserver
 - Booking flow fonctionnel
+
+### Session 2026-05-22 — Liaison comptes Luxyra ↔ salon, points/factures, RDV bidirectionnels, fixes
+
+Travail fait via Cowork (accès Supabase MCP + GitHub push + auto-deploy Worker).
+
+**0. Astuce — session Cowork qui plante**
+Si l'app Claude crashe à l'ouverture d'une session lourde : le fichier `audit.jsonl` (à la racine du dossier de session) peut atteindre plusieurs Go et saturer la RAM. Le renommer (`audit.jsonl` → `audit.jsonl.bak`) débloque l'ouverture sans rien perdre (ce n'est qu'un journal d'audit, pas la conversation). Réversible.
+
+**1. Bug fuseau horaire — règle des 2h (corrigé en base)**
+`rdv_online_validate()` comparait l'heure du RDV (heure de Paris) à `CURRENT_TIMESTAMP` en **UTC** → la règle du délai min (`delai_min_heures`) n'était pas réellement appliquée. Migration `fix_rdv_online_validate_timezone_paris` : "maintenant" calculé via `CURRENT_TIMESTAMP AT TIME ZONE 'Europe/Paris'`.
+
+**2. Alerte monitoring trompeuse (corrigé en base)**
+`check_quotas()` flaguait les salons Pro avec Connect `payouts_pending` et affichait "réservations en ligne désactivées" (FAUX — rien n'est désactivé, le site accepte `payouts_pending`). Migration `fix_check_quotas_stripe_connect_misleading_alert` : `payouts_pending` ajouté aux statuts OK + message corrigé ("encaissement acomptes en ligne indisponible, les réservations fonctionnent normalement").
+
+**3. Liaison automatique comptes Luxyra ↔ fiches salon**
+Avant : `lx-signup` créait un compte `clients_luxyra` SANS le relier à la fiche salon existante (`clients`). Résultat : pas de points/factures/historique côté client.
+- **Schéma** : `clients.client_luxyra_id` (uuid) relie une fiche salon à un compte Luxyra. Colonnes normalisées générées : `telephone_norm`, `email_norm`, `nom_norm`, `prenom_norm` (NE PAS écrire `*_norm` directement, elles sont GENERATED).
+- **Trigger** `fn_autolink_clients_luxyra` (AFTER INSERT ON clients_luxyra) — migrations `autolink_clients_luxyra_to_salon_clients` puis `autolink_v3_fix_generated_email_norm` :
+  - relie par **téléphone normalisé** (chiffres uniquement) OU **email** (insensible casse)
+  - la fiche salon **adopte l'email du compte Luxyra** (le plus récent)
+  - recopie `clients.points_fidelite` → `fidelite_client` sous l'email de connexion Luxyra
+- **Backfill** des comptes existants : migration `backfill_linked_clients_email_and_points_v2`.
+
+**4. Points fidélité en ligne — GOTCHA important**
+`fidelite_client.client_luxyra_id` est un **TEXT contenant l'EMAIL** (pas l'uuid). Le Worker `handleClientFidelite` cherche les points par **l'email de connexion Luxyra**. Si l'email salon ≠ email Luxyra, les points ne remontaient pas. Fix = synchro email (point 3) + re-clé des lignes `fidelite_client` vers l'email de connexion. Source de vérité = `clients.points_fidelite` (salon) ; `fidelite_client` est le miroir en ligne.
+
+**5. Factures en salon en ligne** : `/api/client/tickets` cherche par email → la synchro d'email (point 3) les fait remonter automatiquement. Pas de modif Worker nécessaire pour ça.
+
+**6. RDV bidirectionnels**
+- **Sens B (RDV en ligne → fiche client salon)** : `app.html`, fonction `rDetail` — `_nextRdvs` inclut désormais les `RDV_ONLINE` du client (match tél/email). Aussi : le statut "perdu/risque" d'un NOUVEAU client tient compte des RDV en ligne (`hasFuture`).
+- **Sens A (RDV salon → compte en ligne)** : Worker `handleClientRdvs` renvoie aussi les `appointments` (RDV salon à venir) des fiches reliées, avec drapeau `_salon_rdv:true`. `compte.html` affiche ces RDV en **lecture seule** (pas de bouton Modifier/Annuler qui taperait sur rdv_online).
+
+**7. Pipeline auto-deploy Worker (IMPORTANT)**
+`.github/workflows/deploy-worker.yml` déploie automatiquement le Worker `luxyra-router` à chaque push de `docs/luxyra-router-worker.js` (ou `wrangler.toml`). Secrets requis dans GitHub : `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (configurés). `wrangler.toml` ne touche NI aux routes NI aux secrets (déploie juste le code). → **Pour modifier le Worker : éditer `docs/luxyra-router-worker.js` + push, ça se déploie tout seul.** Plus besoin de manip manuelle Cloudflare.
+
+**Note réseau** : depuis le sandbox Cowork, `api.cloudflare.com` et `api.github.com` sont bloqués (proxy 403). On ne peut donc pas déployer Cloudflare ni lire l'API GitHub Actions directement — mais `git push` sur github.com fonctionne, et l'auto-deploy prend le relais.
+
+**Limite connue restante** : les RDV à venir pris EN SALON (table appointments) n'apparaissaient pas dans le compte en ligne avant le sens A. Maintenant ✅. Les RDV salon y sont en lecture seule (modif/annulation à faire par le salon).
