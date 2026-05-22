@@ -8301,6 +8301,19 @@ async function updateNotifBadge(){
   }catch(e){console.warn('updateNotifBadge',e);}
 }
 // Check for new RDV online every 30 seconds
+function _lxOnlineToAP(rdv){
+  try{
+    if(typeof AP==="undefined"||!AP)return;
+    if(!(rdv.status==="pending"||rdv.status==="confirmed"))return;
+    for(var i=0;i<AP.length;i++){if(AP[i].onlineId===rdv.id)return;}
+    var dur=rdv.duree_minutes||60;
+    var sv=(typeof gS==="function")?gS(rdv.service_id):null;
+    var phases=(sv&&sv.phases&&sv.phases.length>0)?sv.phases:[{t:"w",d:dur,l:rdv.service_nom}];
+    var aptItems=[];
+    if(Array.isArray(rdv.items)&&rdv.items.length>1){aptItems=rdv.items.map(function(it){return {sId:it.sId||it.service_id||null,name:it.name||it.nom||"Prestation",price:Number(it.price||it.prix||0),qty:Number(it.qty||1),remise:Number(it.remise||0)};});}
+    AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:null,sId:rdv.service_id,stId:rdv.collaborateur_id,date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||""),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});
+  }catch(_e){}
+}
 window._rdvPollInterval=setInterval(function(){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     var today=new Date().toISOString().slice(0,10);
@@ -8325,7 +8338,7 @@ window._rdvPollInterval=setInterval(function(){
             upd.empreinteReleasedAt=rdv.empreinte_released_at||null;
           }
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});_lxOnlineToAP(rdv);
             newCount++;
           }
           // Check for modification requests from polling
@@ -8354,6 +8367,7 @@ window._rdvPollInterval=setInterval(function(){
           }
         });
         if(newCount>0){
+          try{if(typeof refreshCurrentView==="function")refreshCurrentView();}catch(_e){}
           updateNotifBadge();
           // Flash notification
           var notif=document.createElement("div");
