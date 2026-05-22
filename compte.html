@@ -1375,18 +1375,26 @@ function confirmDeleteAccount(){
 async function doDeleteAccount(){
   var confirm=document.getElementById("delConfirm");
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="var(--red)";confirm.focus();return;}
+  function _finalizeDeleted(){ try{LX.logout();localStorage.removeItem("lx_account");}catch(e){} window.location.href="/compte"; }
   try{
     // Anonymize rdv_online + clients + delete fidelite_client + client_salon
-    // via endpoint sécurisé (worker valide token + service_role)
     var anonRes = await _clientApi("anonymize", {});
     if(!anonRes.ok){
-      alert("Erreur anonymisation: "+(anonRes.data&&anonRes.data.error?anonRes.data.error:"inconnue"));
+      var _em=(anonRes.data&&anonRes.data.error)||"";
+      // Session deja invalide => compte probablement deja supprime => on finalise proprement
+      if(anonRes.status===401 || /session/i.test(_em)){ _finalizeDeleted(); return; }
+      alert("Erreur anonymisation: "+(_em||"inconnue"));
       return;
     }
     // Delete the LX account via edge function
     var res=await LX.delete();
-    if(!res.ok){alert("Erreur suppression compte: "+(res.data&&res.data.error?res.data.error:""));return;}
-    logout();
+    if(!res.ok){
+      var _em2=(res.data&&res.data.error)||"";
+      if(res.status===401 || /session/i.test(_em2)){ _finalizeDeleted(); return; }
+      alert("Erreur suppression compte: "+_em2);return;
+    }
+    alert("\u2705 Votre compte a bien \u00e9t\u00e9 supprim\u00e9.");
+    _finalizeDeleted();
   }catch(e){alert("Erreur: "+e.message);}
 }
 
