@@ -411,6 +411,7 @@ function _resaFail(err, where, ctx){
     }
   }catch(_e){}
 }
+function _lxNewId(){try{if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();}catch(_e){}return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c==='x'?r:(r&3|8);return v.toString(16);});}
 function rdvErrorMessage(err){
   if(!err)return "Erreur inconnue";
   var m=err.message||String(err);
@@ -3046,7 +3047,8 @@ async function submitBooking(){
   }
 
   try{
-    var r=await sb.from("rdv_online").insert(data).select();
+    data.id=_lxNewId();
+    var r=await sb.from("rdv_online").insert(data);
     if(r.error){_resaFail(r.error,"insert_direct",data);showAlert(rdvErrorMessage(r.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     // Immediately block this slot from being rebooked
     RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
@@ -3245,9 +3247,10 @@ async function submitWithStripe(){
       rdvData.distance_km = booking.clientAdr.distance_km;
       rdvData.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
     }
-    var rdvRes=await sb.from("rdv_online").insert(rdvData).select();
+    rdvData.id=_lxNewId();
+    var rdvRes=await sb.from("rdv_online").insert(rdvData);
     if(rdvRes.error){_resaFail(rdvRes.error,"insert_stripe",rdvData);showAlert(rdvErrorMessage(rdvRes.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
-    var rdvId=rdvRes.data[0].id;
+    var rdvId=rdvData.id;
     
     // 2. Create Connect Checkout Session via worker
     // FIX 2026-05-12 : event.target n'est plus d\u00e9fini globalement dans modern Chrome/Edge
