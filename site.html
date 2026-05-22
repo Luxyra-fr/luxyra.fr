@@ -401,6 +401,16 @@ async function _clientApi(endpoint, body){
 }
 
 // Traduit les erreurs Postgres (trigger + contraintes) en messages user-friendly
+function _resaFail(err, where, ctx){
+  try{
+    var c=ctx||{};
+    var msg=(err&&(err.message||err.error||err.code))||(typeof err==='string'?err:'')||'inconnu';
+    var detail='['+(where||'resa')+'] '+msg+' | salon:'+(typeof salonId!=='undefined'?salonId:'?')+' | svc:'+(c.service_nom||'?')+' | collab:'+(c.collaborateur_id||'?')+' | '+(c.date_rdv||'?')+' '+(c.heure_rdv||'')+' | client:'+(c.client_email||c.client_tel||'?');
+    if(typeof sb!=='undefined' && sb.functions && sb.functions.invoke){
+      sb.functions.invoke('lx-error-report',{body:{kind:'server',source:'site:resa_echec',severity:'warning',message:detail.slice(0,800),salon_id:(typeof salonId!=='undefined'?salonId:null),http_path:'rdv_online'}}).catch(function(){});
+    }
+  }catch(_e){}
+}
 function rdvErrorMessage(err){
   if(!err)return "Erreur inconnue";
   var m=err.message||String(err);
@@ -3037,7 +3047,7 @@ async function submitBooking(){
 
   try{
     var r=await sb.from("rdv_online").insert(data).select();
-    if(r.error){showAlert(rdvErrorMessage(r.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
+    if(r.error){_resaFail(r.error,"insert_direct",data);showAlert(rdvErrorMessage(r.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     // Immediately block this slot from being rebooked
     RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
     // Success
@@ -3236,7 +3246,7 @@ async function submitWithStripe(){
       rdvData.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
     }
     var rdvRes=await sb.from("rdv_online").insert(rdvData).select();
-    if(rdvRes.error){showAlert(rdvErrorMessage(rdvRes.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
+    if(rdvRes.error){_resaFail(rdvRes.error,"insert_stripe",rdvData);showAlert(rdvErrorMessage(rdvRes.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     var rdvId=rdvRes.data[0].id;
     
     // 2. Create Connect Checkout Session via worker
@@ -3275,14 +3285,14 @@ async function submitWithStripe(){
       }else{
         // INSTRUMENTATION : \u00e9chec de cr\u00e9ation du paiement (worker refuse, ex. Connect charges_enabled=false).
         // Logg\u00e9 via console.error \u2192 remont\u00e9 dans le Monitoring (fin de l'angle mort, cf. incident r\u00e9sa 20/05).
-        try{ console.error("[RESA] Echec creation paiement "+paymentTypeLabel+" (rdv "+rdvId+", salon "+salonId+"): "+(data.error||"inconnu")); }catch(_){}
+        try{ console.error("[RESA] Echec creation paiement "+paymentTypeLabel+" (rdv "+rdvId+", salon "+salonId+"): "+(data.error||"inconnu")); _resaFail(data.error,"paiement",rdvData); }catch(_){}
         showAlert("Erreur paiement: "+(data.error||"Impossible de cr\u00e9er la session de paiement"),"error");
         if(btn){btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;}
         // Cleanup: delete the pending RDV
         sb.from("rdv_online").delete().eq("id",rdvId);
       }
     }catch(e){
-      try{ console.error("[RESA] Echec reseau paiement "+paymentTypeLabel+" (rdv "+rdvId+"): "+((e&&e.message)||e)); }catch(_){}
+      try{ console.error("[RESA] Echec reseau paiement "+paymentTypeLabel+" (rdv "+rdvId+"): "+((e&&e.message)||e)); _resaFail(e,"paiement_reseau",rdvData); }catch(_){}
       showAlert("Erreur de connexion","error");
       if(btn){btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;}
       sb.from("rdv_online").delete().eq("id",rdvId);
