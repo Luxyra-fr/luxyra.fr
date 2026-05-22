@@ -8327,7 +8327,7 @@ window._rdvPollInterval=setInterval(function(){
     var today=new Date().toISOString().slice(0,10);
     _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
-        var newCount=0;var newRdvCount=0;
+        var newCount=0;var newRdvCount=0;var newEvents=[];
         r.data.forEach(function(rdv){
           if(!window.RDV_ONLINE)window.RDV_ONLINE=[];
           var exists=false;var existIdx=-1;
@@ -8347,7 +8347,7 @@ window._rdvPollInterval=setInterval(function(){
             if(rdv.status==="cancelled"||rdv.status==="cancelled_by_client"||rdv.status==="done"||rdv.status==="refused"){_lxRemoveOnlineFromAP(rdv.id);}
           }
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});_lxOnlineToAP(rdv);newRdvCount++;
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});_lxOnlineToAP(rdv);newRdvCount++;newEvents.push("\ud83d\udcc5 Nouveau RDV \u2014 "+((rdv.client_nom||"")+" "+(rdv.client_prenom||"")).trim());
             newCount++;
           }
           // Check for modification requests from polling
@@ -8360,7 +8360,7 @@ window._rdvPollInterval=setInterval(function(){
                 ts:new Date().toISOString(),seen:false,confirmed:false,
                 onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null},
                 modifData:{date:rdv.modification_date,heure:rdv.modification_heure,msg:rdv.modification_message}
-              });newCount++;
+              });newCount++;newEvents.push("\u270f\ufe0f Demande de modification \u2014 "+(rdv.client_nom||""));
             }
           }
           // Check for client cancellations from polling
@@ -8371,7 +8371,7 @@ window._rdvPollInterval=setInterval(function(){
                 title:"\u274c RDV annul\u00e9 par le client",
                 detail:(rdv.client_nom||"")+" a annul\u00e9 son RDV du "+rdv.date_rdv+" "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+(rdv.cancel_reason?" - "+rdv.cancel_reason:""),
                 ts:rdv.cancelled_at||new Date().toISOString(),seen:false,confirmed:false
-              });newCount++;
+              });newCount++;newEvents.push("\u274c RDV annul\u00e9 \u2014 "+(rdv.client_nom||""));
             }
           }
         });
@@ -8384,7 +8384,7 @@ window._rdvPollInterval=setInterval(function(){
           // Flash notification
           var notif=document.createElement("div");
           notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:var(--gold);color:#0a0a0a;padding:14px 24px;border-radius:12px;font-weight:800;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(200,168,78,.4);cursor:pointer";
-          notif.textContent=(newRdvCount>0)?("\ud83d\udcc5 "+newRdvCount+" nouveau"+(newRdvCount>1?"x":"")+" RDV en ligne !"):"\ud83d\udd14 Mise \u00e0 jour de tes r\u00e9servations en ligne";
+          notif.textContent=(newEvents.length===1)?newEvents[0]:(newEvents.length+" notifications \u2014 voir le d\u00e9tail");
           notif.onclick=function(){notif.remove();showNotifs();};
           document.body.appendChild(notif);
           setTimeout(function(){if(notif.parentNode)notif.remove();},8000);
