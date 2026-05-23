@@ -8324,6 +8324,11 @@ function _lxRemoveOnlineFromAP(rdvId){
 }
 window._rdvPollInterval=setInterval(function(){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    // FIX 2026-05-23 : filet multi-appareils — recharge les encaissements (appointments)
+    // pour rafraîchir le CA Accueil/Stats/Compta même si le realtime est tombé.
+    if(typeof reloadFromSupabase==="function" && /^(home|stats|accounting|planning)$/.test(window._currentPage||"")){
+      try{reloadFromSupabase("appointments");}catch(_e){}
+    }
     var today=new Date().toISOString().slice(0,10);
     _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
@@ -31068,6 +31073,17 @@ function setupRealtime(){
     })
     .subscribe(function(status){
       console.log("Realtime status:",status);
+      // FIX 2026-05-23 : auto-reconnexion si le canal temps réel tombe (réseau, veille…)
+      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"){
+        if(!window._rtRetryScheduled){
+          window._rtRetryScheduled=true;
+          setTimeout(function(){
+            window._rtRetryScheduled=false;
+            try{if(window._realtimeChannel)_sb.removeChannel(window._realtimeChannel);}catch(e){}
+            try{setupRealtime();}catch(e){console.warn("realtime re-setup",e);}
+          },5000);
+        }
+      }
     });
   
   window._realtimeChannel=channel;
@@ -31230,11 +31246,16 @@ async function reloadFromSupabase(table){
 function refreshCurrentView(){
   var app=document.getElementById("app");
   if(!app)return;
+  // FIX 2026-05-23 : ne pas re-render si l'utilisateur saisit (évite de perdre focus/saisie)
+  try{var ae=document.activeElement;if(ae&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))return;}catch(_e){}
   // Get current page from the header title
   var hdr=document.querySelector("#hdr h1");
   var page=hdr?hdr.textContent:"";
   if(page==="Planning"||window._currentPage==="planning")go("planning");
   else if(page.indexOf("Accueil")>=0||window._currentPage==="home")go("home");
+  // FIX 2026-05-23 : rafraîchir aussi les chiffres (Stats + Compta) en multi-appareils
+  else if(window._currentPage==="stats")go("stats");
+  else if(window._currentPage==="accounting")go("accounting");
   // Don't refresh other pages to avoid losing user input
 }
 
