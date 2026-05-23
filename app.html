@@ -9315,6 +9315,22 @@ function layoutBlocks(allBlocks){
   return allBlocks;
 }
 
+// FIX 2026-05-23 : le bouton actualiser du planning ne faisait que go('planning')
+// (re-dessin avec les données déjà en mémoire) → paraissait inactif. Maintenant il
+// recharge les RDV salon (appointments) + les RDV en ligne (rdv_online) depuis la
+// base, puis re-render. reloadFromSupabase re-render déjà ; le go() final garantit
+// l'affichage même si le rafraîchissement auto a été ignoré.
+async function lxRefreshPlanning(btn){
+  var _old=null;
+  try{ if(btn){ _old=btn.innerHTML; btn.innerHTML="\u2026"; btn.disabled=true; } }catch(_e){}
+  try{
+    if(typeof reloadFromSupabase==="function"){
+      await reloadFromSupabase("appointments");
+      await reloadFromSupabase("rdv_online");
+    }
+  }catch(e){ console.warn("refresh planning:",e); }
+  try{ if(typeof go==="function") go("planning"); }catch(_e){}
+}
 function rPlanning(){
   var nd=window._planDays||1;
   var dk=dS(calD),dow=calD.getDay();
@@ -9328,7 +9344,7 @@ function rPlanning(){
   h+='<button style="border:none;background:none;font-size:22px;cursor:pointer;color:#fff" onclick="nD(1)">\u25B6</button>';
   h+='<span style="flex:1"></span>';
   h+='<input type="date" value="'+dk+'" onchange="calD=new Date(this.value+\u0027T12:00:00\u0027);go(\u0027planning\u0027)" style="padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.75);color:#fff;font-size:13px;font-weight:600;width:auto;color-scheme:dark">';
-  h+='<button style="border:none;background:rgba(30,30,35,.9);color:#fff;padding:9px 12px;border-radius:10px;cursor:pointer;font-size:16px;border:1px solid rgba(255,255,255,.2)" onclick="go(\u0027planning\u0027)">\u21bb</button>';
+  h+='<button style="border:none;background:rgba(30,30,35,.9);color:#fff;padding:9px 12px;border-radius:10px;cursor:pointer;font-size:16px;border:1px solid rgba(255,255,255,.2)" onclick="lxRefreshPlanning(this)" title="Actualiser le planning">\u21bb</button>';
   h+='</div>';
   // Day count selector - opaque segmented control
   // FIX 2026-05-12 : opacité ↑ + backdrop blur pour lisibilité sur fond photo
