@@ -30564,7 +30564,7 @@ async function exportFEC(){
   if(!tickets.length){showAlert("Aucun ticket encaissé sur la période sélectionnée.","info");return;}
 
   // Plan comptable simplifié
-  var ACC_VENTE_SVC="707000", ACC_TVA="445710", ACC_CAISSE="530000", ACC_BANQUE="512000", ACC_CARTE_CADEAU="467000";
+  var ACC_VENTE_PREST="706000", ACC_VENTE_PROD="707000", ACC_TVA="445710", ACC_CAISSE="530000", ACC_BANQUE="512000", ACC_CARTE_CADEAU="467000";
   function payAccount(mode){
     var m=String(mode||"").toLowerCase();
     if(m.indexOf("esp")>=0||m.indexOf("cash")>=0) return ACC_CAISSE;
@@ -30590,15 +30590,23 @@ async function exportFEC(){
     var modeAcc=payAccount(t.mode_paiement);
     var modeLab=String(t.mode_paiement||"Caisse").toUpperCase();
 
+    // FIX 2026-05-23 : ventilation prestations (706) / produits (707) au prorata des items
+    var _sp=(typeof _splitPrestProd==="function")?_splitPrestProd({pr:totalTTC,items:t.items||[]}):{prest:totalTTC,prod:0};
+    var _prodRatio=totalTTC>0?((Number(_sp.prod)||0)/totalTTC):0;
+    var prodHT=Math.round(totalHT*_prodRatio*100)/100;
+    var prestHT=Math.round((totalHT-prodHT)*100)/100;
+
     if(t.status==="cancelled"){
       lines.push(["VTE","Ventes salon",String(ecrNum),dateE,modeAcc,"Caisse / Banque","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTTC),"","",dateE,"",""].join("\t"));
-      lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_SVC,"Ventes services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(totalHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
+      if(prestHT!==0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
+      if(prodHT>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
       if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée","","",pieceRef,dateE,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""].join("\t"));
       return;
     }
 
     lines.push(["VTE","Ventes salon",String(ecrNum),dateE,modeAcc,modeLab,"","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(totalTTC),fmtAmount(0),"","",dateE,"",""].join("\t"));
-    lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_SVC,"Ventes prestations","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(totalHT),"","",dateE,"",""].join("\t"));
+    if(prestHT!==0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(prestHT),"","",dateE,"",""].join("\t"));
+    if(prodHT>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(prodHT),"","",dateE,"",""].join("\t"));
     if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée "+tva+"%","","",pieceRef,dateE,"TVA "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTVA),"","",dateE,"",""].join("\t"));
   });
 
