@@ -30740,6 +30740,30 @@ setTimeout(function(){updateNotifBadge();},2000);
 // Load site config on init
 if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){loadSiteConfig();},1000);
 
+// ============================================================
+// FIX 2026-05-23 : DÉMARRAGE INSTANTANÉ — rendu anticipé depuis le cache
+// ------------------------------------------------------------
+// luxyra-supabase.js hydrate les globales (AP, CL, SALON_CONFIG…) depuis le
+// snapshot IndexedDB AVANT le fetch full, puis appelle window._earlyRenderFromCache
+// si elle existe. Jusqu'ici elle n'était PAS définie → le dashboard n'apparaissait
+// qu'après le fetch complet (tout l'historique en série). On la définit ici : on
+// peint l'accueil immédiatement depuis le cache. Le fetch full continue en arrière-
+// plan et re-render via go("home") final (données fraîches). 100% additif :
+// no-op si pas de cache (1er lancement) ou si quoi que ce soit n'est pas prêt.
+window._earlyRenderFromCache = function(){
+  try{
+    if(window._earlyRendered) return;                       // une seule fois
+    if(window._archiveMode) return;                         // ne pas court-circuiter le mode archives
+    if(typeof go!=="function" || typeof rHome!=="function") return;
+    if(!document.getElementById("app")) return;
+    if(typeof AP==="undefined" || typeof SALON_CONFIG==="undefined") return;
+    window._earlyRendered = true;
+    window._currentPage = "home";
+    go("home");
+    console.log("[cache] rendu anticipé du dashboard depuis le cache");
+  }catch(e){ console.warn("[cache] earlyRender failed:", e); }
+};
+
 // App init — called by luxyra-supabase.js after login, or directly if offline
 function initApp(){
   // Load forfaits from localStorage
