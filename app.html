@@ -8322,6 +8322,26 @@ function _lxRemoveOnlineFromAP(rdvId){
     if(AP.length!==before)window._apDirty=true;
   }catch(_e){}
 }
+// FIX 2026-05-23 : flash "une seule fois" persistant (survit aux réouvertures).
+// Avant, le garde _dismissedNotifs n'était jamais initialisé (toujours undefined),
+// donc un RDV annulé / un nouveau RDV se re-flashait dans la barre du haut à
+// chaque réouverture de l'app (RDV_ONLINE repart vide). On mémorise les events
+// déjà flashés en localStorage.
+function _lxFlashOnce(key){
+  try{
+    var s=JSON.parse(localStorage.getItem("_lx_flashed_events")||"{}");
+    if(s[key]) return false;
+    s[key]=Date.now();
+    var ks=Object.keys(s);
+    if(ks.length>300){var cut=Date.now()-45*864e5;ks.forEach(function(k){if(s[k]<cut)delete s[k];});}
+    localStorage.setItem("_lx_flashed_events",JSON.stringify(s));
+    return true;
+  }catch(_e){
+    window._lxFlashedMem=window._lxFlashedMem||{};
+    if(window._lxFlashedMem[key]) return false;
+    window._lxFlashedMem[key]=1; return true;
+  }
+}
 window._rdvPollInterval=setInterval(function(){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     // FIX 2026-05-23 : filet multi-appareils — recharge les encaissements (appointments)
@@ -8356,8 +8376,8 @@ window._rdvPollInterval=setInterval(function(){
             // FIX 2026-05-23 : ne pas annoncer "Nouveau RDV" pour un RDV deja annule/termine/refuse
             // (reouverture de l'app -> RDV_ONLINE vide -> un RDV annule etait re-flashe comme nouveau)
             if(rdv.status==="pending"||rdv.status==="confirmed"){
-              _lxOnlineToAP(rdv);newRdvCount++;newEvents.push("\ud83d\udcc5 Nouveau RDV \u2014 "+((rdv.client_nom||"")+" "+(rdv.client_prenom||"")).trim());
-              newCount++;
+              _lxOnlineToAP(rdv);
+              if(_lxFlashOnce("new_"+rdv.id)){newRdvCount++;newEvents.push("\ud83d\udcc5 Nouveau RDV \u2014 "+((rdv.client_nom||"")+" "+(rdv.client_prenom||"")).trim());newCount++;}
             }
           }
           // Check for modification requests from polling
@@ -8376,7 +8396,7 @@ window._rdvPollInterval=setInterval(function(){
           // Check for client cancellations from polling
           if(rdv.status==="cancelled"&&rdv.cancelled_by==="client"){
             var canEx=false;for(var ci4=0;ci4<window.NOTIFS.length;ci4++){if(window.NOTIFS[ci4].id==="can_"+rdv.id){canEx=true;break;}}
-            if(!canEx&&!(window._dismissedNotifs&&window._dismissedNotifs["can_"+rdv.id])){
+            if(!canEx&&_lxFlashOnce("can_"+rdv.id)){
               window.NOTIFS.unshift({id:"can_"+rdv.id,rdvOnlineId:rdv.id,type:"cancel_client",
                 title:"\u274c RDV annul\u00e9 par le client",
                 detail:(rdv.client_nom||"")+" a annul\u00e9 son RDV du "+rdv.date_rdv+" "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+(rdv.cancel_reason?" - "+rdv.cancel_reason:""),
