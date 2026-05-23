@@ -1075,15 +1075,18 @@ function showAuthModal(mode){
     h+='<div class="fg"><label>Pr\u00e9nom</label><input id="aRegPre"></div></div>';
     h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
     h+='<div class="fg"><label>Date de naissance</label><input id="aRegDdn" type="date"></div></div>';
-    h+='<div class="fg"><label>Genre</label><select id="aRegGenre" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px"><option value="" style="background:#1a1a2e;color:#fff">Non précisé</option><option value="F" style="background:#1a1a2e;color:#fff">Femme</option><option value="H" style="background:#1a1a2e;color:#fff">Homme</option></select></div>';
+    h+='<div class="fg"><label>Genre *</label><select id="aRegGenre" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px"><option value="" selected disabled style="background:#1a1a2e;color:#fff">Sélectionnez…</option><option value="F" style="background:#1a1a2e;color:#fff">Femme</option><option value="H" style="background:#1a1a2e;color:#fff">Homme</option><option value="E" style="background:#1a1a2e;color:#fff">Enfant</option></select></div>';
+    h+='<div class="fg"><label>Adresse</label><input id="aRegAdr" placeholder="Numéro et rue (utile pour les RDV à domicile)" autocomplete="street-address"></div>';
+    h+='<div class="fg-row"><div class="fg"><label>Code postal</label><input id="aRegCp" placeholder="Code postal" autocomplete="postal-code"></div>';
+    h+='<div class="fg"><label>Ville</label><input id="aRegVille" placeholder="Ville" autocomplete="address-level2"></div></div>';
   }
   h+='<div class="fg"><label>Email *</label><input id="aEmail" type="email" required></div>';
   h+='<div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div>';
   if(!isLogin)h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="aPass2" type="password" required></div>';
   if(!isLogin){
     h+='<div style="padding:8px 0;border-top:1px solid rgba(255,255,255,.1);margin-top:8px">';
-    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer"><input type="checkbox" id="aRegSms"> \ud83d\udcf1 J\u0027accepte de recevoir des SMS</label>';
-    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer"><input type="checkbox" id="aRegEm"> \u2709\ufe0f J\u0027accepte de recevoir des emails</label>';
+    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer"><input type="checkbox" id="aRegSms" checked> \ud83d\udcf1 J\u0027accepte de recevoir des SMS</label>';
+    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer"><input type="checkbox" id="aRegEm" checked> \u2709\ufe0f J\u0027accepte de recevoir des emails</label>';
     h+='</div>';
   }
   h+='<button class="btn btn-gold" style="width:100%;padding:16px;font-size:15px;margin-top:12px" onclick="'+(isLogin?'doClientLogin()':'doClientRegister()')+'">'+(isLogin?"Se connecter":"Cr\u00e9er mon compte")+'</button>';
@@ -1103,6 +1106,8 @@ async function doClientRegister(){
   var pass=document.getElementById("aPass").value;
   var pass2=document.getElementById("aPass2").value;
   if(!nom||!tel||!email||!pass){showAuthError("Remplissez tous les champs obligatoires");return;}
+  var genre=(document.getElementById("aRegGenre")&&document.getElementById("aRegGenre").value)||"";
+  if(!genre){showAuthError("Veuillez sélectionner un genre");return;}
   if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
   // Anti-spam : le salon a-t-il bloqu\u00e9 la cr\u00e9ation de nouveaux comptes ?
@@ -1112,9 +1117,15 @@ async function doClientRegister(){
   }
   var smsOk=document.getElementById("aRegSms")?document.getElementById("aRegSms").checked:false;
   var emOk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
-  var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:(document.getElementById("aRegGenre")&&document.getElementById("aRegGenre").value)||null,sms_ok:smsOk,email_ok:emOk});
+  var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk});
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation du compte");return;}
   CLIENT=res.data.user;
+  // FIX 2026-05-23 : enregistre l'adresse sur le compte AVANT de créer le lien salon,
+  // pour qu'elle soit copiée dans la fiche par sync_client_to_salon.
+  var adr=document.getElementById("aRegAdr")?document.getElementById("aRegAdr").value.trim():"";
+  var cp=document.getElementById("aRegCp")?document.getElementById("aRegCp").value.trim():"";
+  var ville=document.getElementById("aRegVille")?document.getElementById("aRegVille").value.trim():"";
+  if(adr||cp||ville){ try{ var _ru=await LX.update({adresse:adr,cp:cp,ville:ville}); if(_ru&&_ru.ok&&_ru.data&&_ru.data.user) CLIENT=_ru.data.user; }catch(_e){} }
   // Auto-create link to this salon
   await ensureClientSalon(CLIENT.id);
   saveClientSession();
