@@ -13178,6 +13178,7 @@ function rSettings(){
     h+='</div>';
     h+='<button class="btn" style="width:100%;padding:12px;background:rgba(156,39,176,.1);color:#ce93d8;border:1px solid rgba(156,39,176,.3);font-weight:700;font-size:14px" onclick="exportFEC()">\ud83d\udcd1 Telecharger le fichier FEC</button>';
     h+='<button class="btn" style="width:100%;padding:12px;margin-top:8px;background:rgba(99,91,255,.1);color:#a59cff;border:1px solid rgba(99,91,255,.3);font-weight:700;font-size:14px" onclick="exportEBP()">\ud83d\udcd3 Telecharger l\u0027export comptable EBP (par jour)</button>';
+    h+='<button class="btn" style="width:100%;padding:12px;margin-top:8px;background:rgba(61,53,201,.12);color:#b9b3ff;border:1px solid rgba(99,91,255,.35);font-weight:700;font-size:14px" onclick="rapportComptablePeriode()">\ud83d\udcca Rapport "Pour le comptable" (encaissements, reglements, sexe, collaborateurs)</button>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center">Format texte normalise &middot; Conservation 6 ans (CGI art. L102B)</div>';
     h+='</div>';
   }
@@ -30218,7 +30219,7 @@ window.LX_NON_FISCAL_ACTIONS = window.LX_NON_FISCAL_ACTIONS || {
   SMS_MODE_CHANGE:1, SMS_DEVICE_UNLINKED:1, CLIENT_MERGED:1, INVITATION_CLIENT:1,
   BULK_CONSENT_ACTIVATE:1, BONS_CADEAUX_ONLINE_TOGGLE:1,
   STRIPE_PRICE_FOUNDER_CREATED:1, FOUNDER_ATTRIBUTION:1,
-  COMPTA_ACCOUNTS_UPDATE:1, EXPORT_EBP:1, EXPORT_FEC:1
+  COMPTA_ACCOUNTS_UPDATE:1, EXPORT_EBP:1, EXPORT_FEC:1, RAPPORT_COMPTABLE:1
 };
 function exportAudit(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
@@ -30796,6 +30797,175 @@ async function exportEBP(){
   setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);},100);
   if(typeof auditLog==="function") auditLog("EXPORT_EBP","Export EBP "+dateFrom+" -> "+dateTo);
   if(typeof toast==="function") toast("Export EBP telecharge","success");
+}
+
+async function rapportComptablePeriode(){
+  if(typeof hasPermission==="function" && !hasPermission("compta")){ if(typeof toast==="function") toast("Acces non autorise : permission Comptabilite requise","warning"); return; }
+  var dateFrom=document.getElementById("fecDateFrom")?document.getElementById("fecDateFrom").value:"";
+  var dateTo=document.getElementById("fecDateTo")?document.getElementById("fecDateTo").value:"";
+  if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
+  if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
+  if(!(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId)){ showAlert("Connexion base indisponible","error"); return; }
+  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+  var R=function(n){return Math.round((Number(n)||0)*100)/100;};
+  if(typeof toast==="function") toast("Preparation du rapport comptable...","info");
+  try{
+    // 1) Tickets de la periode (source fiscale)
+    var rt=await _sb.from("tickets").select("num,date_ticket,client_id,collaborateur_nom,items,total_ttc,total_ht,total_tva,total_remise,detail_paiement,mode_paiement,status").eq("salon_id",_salonId).gte("date_ticket",dateFrom).lte("date_ticket",dateTo).order("date_ticket").order("num");
+    if(rt.error) throw rt.error;
+    var tickets=(rt.data||[]).filter(function(t){return t.status==="paid"||t.status==="done";});
+    if(!tickets.length){ showAlert("Aucun ticket encaisse sur la periode.","info"); return; }
+    // 2) Genre des services (cat_genre F/H/E)
+    var svcGender={};
+    var rs=await _sb.from("services").select("id,cat_genre").eq("salon_id",_salonId);
+    if(rs.data) rs.data.forEach(function(s){ svcGender[s.id]=(s.cat_genre||"").toUpperCase(); });
+    // 3) Clients de la periode -> sexe (fallback produits) + nouveaux/existants
+    var clientIds={}; tickets.forEach(function(t){ if(t.client_id) clientIds[t.client_id]=1; });
+    var ids=Object.keys(clientIds);
+    var sexeMap={};
+    if(ids.length){
+      var rc=await _sb.from("clients").select("id,sexe").in("id",ids);
+      if(rc.data) rc.data.forEach(function(c){ sexeMap[c.id]=(c.sexe||"").toUpperCase(); });
+    }
+    // existants = clients ayant au moins un ticket AVANT la periode
+    var existant={};
+    if(ids.length){
+      var rh=await _sb.from("tickets").select("client_id").eq("salon_id",_salonId).in("status",["paid","done"]).lt("date_ticket",dateFrom).in("client_id",ids);
+      if(rh.data) rh.data.forEach(function(x){ if(x.client_id) existant[x.client_id]=1; });
+    }
+    // ===== Agregations =====
+    var days={}; // par jour
+    function dget(d){ if(!days[d]) days[d]={nb:0,svcTTC:0,prodTTC:0,ttc:0,ht:0,tva:0,rem:0,esp:0,cb:0,enligne:0,chq:0,autres:0}; return days[d]; }
+    // repartition par sexe : segment (nouveau/existant/passage) x genre (F/H/E)
+    var sexe={ nouveau:{F:0,H:0,E:0}, existant:{F:0,H:0,E:0}, passage:{F:0,H:0,E:0} };
+    var sexeNb={ nouveau:{F:0,H:0,E:0}, existant:{F:0,H:0,E:0}, passage:{F:0,H:0,E:0} };
+    var collab={}; // nom -> {prod,svc,ca,rem,nb}
+    function cget(n){ if(!collab[n]) collab[n]={prod:0,svc:0,ca:0,rem:0,nb:0}; return collab[n]; }
+    var GENMAP={F:"F",H:"H",E:"E"};
+    tickets.forEach(function(t){
+      var d=String(t.date_ticket||"").slice(0,10); if(!d) return;
+      var g=dget(d);
+      var ttc=Number(t.total_ttc)||0;
+      var ht=Number(t.total_ht)||(ttc/(1+tva/100));
+      var tvaT=Number(t.total_tva)||(ttc-ht);
+      var rem=Number(t.total_remise)||0;
+      // split services / produits via items
+      var svcAmt=0, prodAmt=0; var gAcc={F:0,H:0,E:0};
+      var items=t.items; if(typeof items==="string"){try{items=JSON.parse(items);}catch(_e){items=[];}}
+      if(Array.isArray(items)){
+        items.forEach(function(it){
+          var amt=(Number(it.price)||0)*(Number(it.qty)||1);
+          if(it.isProd){ prodAmt+=amt; }
+          else { svcAmt+=amt; var gg=svcGender[it.sId]; if(gg==="F"||gg==="H"||gg==="E") gAcc[gg]+=amt; }
+        });
+      }
+      // ratio produits sur le TTC reel (remises incluses)
+      var base=svcAmt+prodAmt;
+      var prodTTC = base>0 ? R(ttc*(prodAmt/base)) : 0;
+      var svcTTC = R(ttc-prodTTC);
+      g.nb++; g.svcTTC=R(g.svcTTC+svcTTC); g.prodTTC=R(g.prodTTC+prodTTC);
+      g.ttc=R(g.ttc+ttc); g.ht=R(g.ht+ht); g.tva=R(g.tva+tvaT); g.rem=R(g.rem+rem);
+      // reglements du jour
+      var dp=t.detail_paiement; if(typeof dp==="string"){try{dp=JSON.parse(dp);}catch(_e){dp=null;}}
+      if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
+        g.esp=R(g.esp+(Number(dp.esp)||0)); g.cb=R(g.cb+(Number(dp.cb)||0));
+        g.enligne=R(g.enligne+(Number(dp.enligne)||0)); g.chq=R(g.chq+(Number(dp.chq)||0));
+        g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.bon)||0)+(Number(dp.aut)||0));
+      } else {
+        var b=(typeof _mapPaymentBucket==="function")?_mapPaymentBucket(t.mode_paiement):"cb";
+        if(b==="esp")g.esp=R(g.esp+ttc); else if(b==="enligne")g.enligne=R(g.enligne+ttc);
+        else if(b==="chq")g.chq=R(g.chq+ttc); else if(b==="cb")g.cb=R(g.cb+ttc); else g.autres=R(g.autres+ttc);
+      }
+      // genre dominant du ticket
+      var domG=null,domV=-1; ["F","H","E"].forEach(function(k){ if(gAcc[k]>domV){domV=gAcc[k];domG=k;} });
+      if(domV<=0){ var sx=t.client_id?sexeMap[t.client_id]:""; domG=(sx==="H")?"H":(sx==="F"?"F":"F"); }
+      // segment
+      var seg = !t.client_id ? "passage" : (existant[t.client_id] ? "existant" : "nouveau");
+      sexe[seg][domG]=R(sexe[seg][domG]+ttc); sexeNb[seg][domG]++;
+      // collaborateur
+      var cn=t.collaborateur_nom||"(non attribue)"; var c=cget(cn);
+      c.prod=R(c.prod+prodTTC); c.svc=R(c.svc+svcTTC); c.ca=R(c.ca+ttc); c.rem=R(c.rem+rem); c.nb++;
+    });
+    // ===== Rendu HTML =====
+    var dkeys=Object.keys(days).sort();
+    function fr(d){ var p=String(d).split("-"); return p.length===3?(p[2]+"."+p[1]+"."+p[0]):d; }
+    function e2(n){ return R(n).toFixed(2); }
+    var tot={nb:0,svcTTC:0,prodTTC:0,ttc:0,ht:0,tva:0,rem:0,esp:0,cb:0,enligne:0,chq:0,autres:0};
+    dkeys.forEach(function(d){ var g=days[d]; for(var k in tot) tot[k]=R(tot[k]+g[k]); });
+    var nDays=dkeys.length||1;
+
+    var w=window.open("","_blank","width=900,height=1100"); if(!w){ showAlert("Pop-up bloquee : autorisez les fenetres pour imprimer.","warning"); return; }
+    var h="<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Pour le comptable - "+(SALON_CONFIG.nom||"")+" - "+fr(dateFrom)+" a "+fr(dateTo)+"</title>";
+    h+="<style>html{color-scheme:light!important;background:#fff!important}body{font-family:Arial,Helvetica,sans-serif;padding:24px;max-width:880px;margin:0 auto;font-size:12px;color:#111!important;background:#fff!important;}";
+    h+="*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}";
+    h+="h1{font-size:20px;margin:0 0 2px;color:#111;}h2{font-size:14px;margin:22px 0 6px;border-bottom:2px solid #635bff;padding-bottom:3px;color:#3d35c9;}";
+    h+=".sub{color:#666;font-size:12px;margin-bottom:2px;}table{width:100%;border-collapse:collapse;margin:4px 0 8px;}";
+    h+="th,td{border:1px solid #ddd;padding:5px 8px;text-align:right;font-size:11.5px;}th{background:#f3f2ff;color:#3d35c9;font-weight:700;}td:first-child,th:first-child{text-align:left;}";
+    h+="tr.tot td{font-weight:800;background:#faf9ff;border-top:2px solid #635bff;}tr.moy td{font-style:italic;color:#777;}";
+    h+=".pct td{font-weight:700;background:#f7fff7;}";
+    h+="@media print{body{padding:6px;font-size:11px;}h2{margin-top:16px;} .noprint{display:none;}}";
+    h+=".noprint{margin:12px 0;}.btnp{background:#635bff;color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;}</style></head><body>";
+    h+="<div class=\"noprint\"><button class=\"btnp\" onclick=\"window.print()\">Imprimer / Enregistrer en PDF</button></div>";
+    h+="<h1>Pour le comptable</h1>";
+    h+="<div class=\"sub\"><strong>"+(SALON_CONFIG.nomComplet?SALON_CONFIG.nomComplet():(SALON_CONFIG.nom||""))+"</strong></div>";
+    h+="<div class=\"sub\">Periode : "+fr(dateFrom)+" au "+fr(dateTo)+" &middot; Edite le "+new Date().toLocaleString("fr-FR")+"</div>";
+    h+="<div class=\"sub\">Source : tickets NF525 (statut encaisse) &middot; Logiciel Luxyra "+(SALON_CONFIG.version||"")+"</div>";
+
+    // 1. Encaissements
+    h+="<h2>1. Encaissements (par jour)</h2>";
+    h+="<table><tr><th>Date</th><th>Nb tickets</th><th>Services TTC</th><th>Produits TTC</th><th>CA TTC</th><th>CA HT</th><th>TVA</th><th>Remises</th></tr>";
+    dkeys.forEach(function(d){ var g=days[d];
+      h+="<tr><td>"+fr(d)+"</td><td>"+g.nb+"</td><td>"+e2(g.svcTTC)+"</td><td>"+e2(g.prodTTC)+"</td><td>"+e2(g.ttc)+"</td><td>"+e2(g.ht)+"</td><td>"+e2(g.tva)+"</td><td>"+e2(g.rem)+"</td></tr>";
+    });
+    h+="<tr class=\"tot\"><td>Total</td><td>"+tot.nb+"</td><td>"+e2(tot.svcTTC)+"</td><td>"+e2(tot.prodTTC)+"</td><td>"+e2(tot.ttc)+"</td><td>"+e2(tot.ht)+"</td><td>"+e2(tot.tva)+"</td><td>"+e2(tot.rem)+"</td></tr>";
+    h+="<tr class=\"moy\"><td>Moyenne / jour</td><td>"+e2(tot.nb/nDays)+"</td><td>"+e2(tot.svcTTC/nDays)+"</td><td>"+e2(tot.prodTTC/nDays)+"</td><td>"+e2(tot.ttc/nDays)+"</td><td>"+e2(tot.ht/nDays)+"</td><td>"+e2(tot.tva/nDays)+"</td><td>"+e2(tot.rem/nDays)+"</td></tr>";
+    h+="</table>";
+
+    // 2. Reglements
+    h+="<h2>2. Reglements (par jour)</h2>";
+    h+="<table><tr><th>Date</th><th>Especes</th><th>CB</th><th>En ligne</th><th>Cheque</th><th>Autres</th><th>Total</th></tr>";
+    dkeys.forEach(function(d){ var g=days[d]; var tt=R(g.esp+g.cb+g.enligne+g.chq+g.autres);
+      h+="<tr><td>"+fr(d)+"</td><td>"+e2(g.esp)+"</td><td>"+e2(g.cb)+"</td><td>"+e2(g.enligne)+"</td><td>"+e2(g.chq)+"</td><td>"+e2(g.autres)+"</td><td>"+e2(tt)+"</td></tr>";
+    });
+    var totRegl=R(tot.esp+tot.cb+tot.enligne+tot.chq+tot.autres);
+    h+="<tr class=\"tot\"><td>Total</td><td>"+e2(tot.esp)+"</td><td>"+e2(tot.cb)+"</td><td>"+e2(tot.enligne)+"</td><td>"+e2(tot.chq)+"</td><td>"+e2(tot.autres)+"</td><td>"+e2(totRegl)+"</td></tr>";
+    h+="</table>";
+
+    // 3. Repartition par sexe
+    h+="<h2>3. Repartition par sexe</h2>";
+    function segTotal(s){ return R(sexe[s].F+sexe[s].H+sexe[s].E); }
+    var colF=R(sexe.nouveau.F+sexe.existant.F+sexe.passage.F);
+    var colH=R(sexe.nouveau.H+sexe.existant.H+sexe.passage.H);
+    var colE=R(sexe.nouveau.E+sexe.existant.E+sexe.passage.E);
+    var grand=R(colF+colH+colE);
+    h+="<table><tr><th>Repartition</th><th>Femme</th><th>Homme</th><th>Enfant</th><th>Total</th></tr>";
+    function segRow(lbl,s){ h+="<tr><td>"+lbl+"</td><td>"+e2(sexe[s].F)+"</td><td>"+e2(sexe[s].H)+"</td><td>"+e2(sexe[s].E)+"</td><td>"+e2(segTotal(s))+"</td></tr>"; }
+    segRow("Nouveaux clients","nouveau");
+    segRow("Clients existants","existant");
+    segRow("Clients de passage","passage");
+    h+="<tr class=\"tot\"><td>Total</td><td>"+e2(colF)+"</td><td>"+e2(colH)+"</td><td>"+e2(colE)+"</td><td>"+e2(grand)+"</td></tr>";
+    function pc(n){ return grand>0?(R(n/grand*100).toFixed(2)+" %"):"0,00 %"; }
+    h+="<tr class=\"pct\"><td>% de C.A</td><td>"+pc(colF)+"</td><td>"+pc(colH)+"</td><td>"+pc(colE)+"</td><td>100,00 %</td></tr>";
+    h+="</table>";
+    h+="<div class=\"sub\">Genre determine par la categorie des prestations du ticket (cat. Femme/Homme/Enfant) ; ventilation par visite. Nouveau = 1re visite sur la periode, sans historique anterieur ; Passage = encaissement sans fiche client.</div>";
+
+    // 4. Repartition par collaborateur
+    h+="<h2>4. Repartition par collaborateur</h2>";
+    h+="<table><tr><th>Collaborateur</th><th>Nb tickets</th><th>CA Produit</th><th>CA Service</th><th>CA total</th><th>Remises</th></tr>";
+    var cnames=Object.keys(collab).sort(function(a,b){return collab[b].ca-collab[a].ca;});
+    var ctot={prod:0,svc:0,ca:0,rem:0,nb:0};
+    cnames.forEach(function(n){ var c=collab[n]; ctot.prod=R(ctot.prod+c.prod);ctot.svc=R(ctot.svc+c.svc);ctot.ca=R(ctot.ca+c.ca);ctot.rem=R(ctot.rem+c.rem);ctot.nb+=c.nb;
+      h+="<tr><td>"+n+"</td><td>"+c.nb+"</td><td>"+e2(c.prod)+"</td><td>"+e2(c.svc)+"</td><td>"+e2(c.ca)+"</td><td>"+e2(c.rem)+"</td></tr>";
+    });
+    h+="<tr class=\"tot\"><td>Total</td><td>"+ctot.nb+"</td><td>"+e2(ctot.prod)+"</td><td>"+e2(ctot.svc)+"</td><td>"+e2(ctot.ca)+"</td><td>"+e2(ctot.rem)+"</td></tr>";
+    h+="</table>";
+
+    h+="<div class=\"sub\" style=\"margin-top:18px;border-top:1px solid #eee;padding-top:8px\">Document d'aide a la tenue comptable &middot; Luxyra. Le detail fiscal officiel reste l'export FEC et les clotures Z.</div>";
+    h+="</body></html>";
+    w.document.write(h); w.document.close();
+    if(typeof auditLog==="function") auditLog("RAPPORT_COMPTABLE","Rapport comptable "+dateFrom+" -> "+dateTo);
+    if(typeof toast==="function") toast("Rapport comptable genere","success");
+  }catch(e){ console.error("rapportComptablePeriode:",e); showAlert("Erreur: "+(e.message||e),"error"); }
 }
 
 function genererAttestation(){
