@@ -13166,6 +13166,7 @@ function rSettings(){
     h+='<input type="date" id="fecDateTo" value="'+TD+'" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px"></div>';
     h+='</div>';
     h+='<button class="btn" style="width:100%;padding:12px;background:rgba(156,39,176,.1);color:#ce93d8;border:1px solid rgba(156,39,176,.3);font-weight:700;font-size:14px" onclick="exportFEC()">\ud83d\udcd1 Telecharger le fichier FEC</button>';
+    h+='<button class="btn" style="width:100%;padding:12px;margin-top:8px;background:rgba(99,91,255,.1);color:#a59cff;border:1px solid rgba(99,91,255,.3);font-weight:700;font-size:14px" onclick="exportEBP()">\ud83d\udcd3 Telecharger l\u0027export comptable EBP (par jour)</button>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center">Format texte normalise &middot; Conservation 6 ans (CGI art. L102B)</div>';
     h+='</div>';
   }
@@ -30655,6 +30656,96 @@ async function exportFEC(){
 
   if(typeof auditLog==="function") auditLog("EXPORT_FEC", "Période "+dateFrom+" → "+dateTo+" · "+tickets.length+" tickets · "+(lines.length-1)+" écritures");
   if(typeof toast==="function") toast("✓ FEC téléchargé : "+fileName+" ("+tickets.length+" tickets, "+(lines.length-1)+" écritures)","success");
+}
+
+// ============================================================
+// FIX 2026-05-27 : Export comptable EBP (format journalier, façon cabinet)
+// Une écriture équilibrée par jour (journal configurable) : recettes/caisse,
+// CA HT prestations (706) / produits (707), TVA (44571), et règlements par mode
+// (espèces/CB/en ligne/chèque/autres) sur comptes de transit (classe 58).
+// Comptes 100% configurables. ADDITIF : ne touche à aucun flux existant.
+// ============================================================
+function _comptaAccounts(){
+  var d = { services:"70612000", produits:"70712000", bonsCadeaux:"70730000",
+    tva:"44571000", caisse:"53000000", especes:"58300000", cb:"58000000",
+    enligne:"58010000", cheque:"58200000", autres:"58040000", journal:"CS" };
+  try{
+    var cfg = (window._SALON_CONFIG_JSON && window._SALON_CONFIG_JSON.comptaAccounts) || null;
+    if(cfg && typeof cfg==="object"){ for(var k in d){ if(cfg[k]!=null && String(cfg[k]).trim()!=="") d[k]=String(cfg[k]).trim(); } }
+  }catch(_e){}
+  return d;
+}
+async function exportEBP(){
+  if(typeof hasPermission==="function" && !hasPermission("compta")){ if(typeof toast==="function") toast("Acces non autorise : permission Comptabilite requise","warning"); return; }
+  if(typeof hasPermission==="function" && !hasPermission("export_data")){ if(typeof toast==="function") toast("Acces non autorise : permission Exporter des donnees requise","warning"); return; }
+  var dateFrom=document.getElementById("fecDateFrom")?document.getElementById("fecDateFrom").value:"";
+  var dateTo=document.getElementById("fecDateTo")?document.getElementById("fecDateTo").value:"";
+  if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
+  if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
+  var A=_comptaAccounts();
+  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+  if(typeof toast==="function") toast("Preparation de l'export EBP...","info");
+  var ticketsAll=[];
+  try{
+    if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
+      var r=await _sb.from("tickets").select("num,date_ticket,total_ttc,total_ht,total_tva,items,mode_paiement,detail_paiement,status").eq("salon_id",_salonId).gte("date_ticket",dateFrom).lte("date_ticket",dateTo).order("date_ticket").order("num");
+      if(r.data) ticketsAll=r.data;
+    }
+  }catch(e){console.error("EBP fetch:",e); showAlert("Erreur de chargement des tickets : "+e.message,"error"); return;}
+  var tickets=ticketsAll.filter(function(t){return t.status==="paid"||t.status==="done"||t.status==="cancelled";});
+  if(!tickets.length){showAlert("Aucun ticket encaisse sur la periode selectionnee.","info");return;}
+  var R=function(n){return Math.round((Number(n)||0)*100)/100;};
+  var days={};
+  function dget(d){ if(!days[d]) days[d]={ttc:0,prestHT:0,prodHT:0,tva:0,esp:0,cb:0,enligne:0,chq:0,autres:0}; return days[d]; }
+  tickets.forEach(function(t){
+    var d=String(t.date_ticket||"").slice(0,10); if(!d) return;
+    var g=dget(d);
+    var ttc=Number(t.total_ttc)||0;
+    var ht=Number(t.total_ht)||(ttc/(1+tva/100));
+    var tvaT=Number(t.total_tva)||(ttc-ht);
+    var sp=(typeof _splitPrestProd==="function")?_splitPrestProd({pr:ttc,items:t.items||[]}):{prest:ttc,prod:0};
+    var prodRatio= ttc!==0 ? ((Number(sp.prod)||0)/ttc) : 0;
+    var prodHT=R(ht*prodRatio); var prestHT=R(ht-prodHT);
+    g.ttc=R(g.ttc+ttc); g.prestHT=R(g.prestHT+prestHT); g.prodHT=R(g.prodHT+prodHT); g.tva=R(g.tva+tvaT);
+    var dp=t.detail_paiement; if(typeof dp==="string"){try{dp=JSON.parse(dp);}catch(_e){dp=null;}}
+    if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
+      g.esp=R(g.esp+(Number(dp.esp)||0)); g.cb=R(g.cb+(Number(dp.cb)||0));
+      g.enligne=R(g.enligne+(Number(dp.enligne)||0)); g.chq=R(g.chq+(Number(dp.chq)||0));
+      g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.bon)||0)+(Number(dp.aut)||0));
+    } else {
+      var b=(typeof _mapPaymentBucket==="function")?_mapPaymentBucket(t.mode_paiement):"cb";
+      if(b==="esp")g.esp=R(g.esp+ttc); else if(b==="enligne")g.enligne=R(g.enligne+ttc);
+      else if(b==="chq")g.chq=R(g.chq+ttc); else if(b==="cb")g.cb=R(g.cb+ttc); else g.autres=R(g.autres+ttc);
+    }
+  });
+  function jjmmaa(d){ var pp=String(d).slice(0,10).split("-"); return pp.length===3 ? (pp[2]+pp[1]+pp[0].slice(2)) : ""; }
+  function mt(n){ return R(n).toFixed(2).replace(".",","); }
+  var lines=[];
+  lines.push("### Export EBP");
+  lines.push("### Salon : "+(SALON_CONFIG.nom||"")+(SALON_CONFIG.adresse?" - "+SALON_CONFIG.adresse+" "+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||""):""));
+  lines.push("### Periode : "+dateFrom.split("-").reverse().join("/")+" - "+dateTo.split("-").reverse().join("/"));
+  var num=0;
+  function L(date,compte,lib,montant,sens){ num++; lines.push(num+";"+jjmmaa(date)+";"+A.journal+";"+compte+";;"+lib+";"+jjmmaa(date)+";"+mt(montant)+";"+sens+";"+jjmmaa(date)+";EUR"); }
+  Object.keys(days).sort().forEach(function(d){
+    var g=days[d];
+    L(d, A.caisse, "RECETTES DU JOUR", g.ttc, "D");
+    if(Math.abs(g.prestHT)>=0.005) L(d, A.services, "CA services (HT)", g.prestHT, "C");
+    if(Math.abs(g.prodHT)>=0.005) L(d, A.produits, "CA Ventes (HT)", g.prodHT, "C");
+    if(Math.abs(g.tva)>=0.005) L(d, A.tva, "Montant TVA", g.tva, "C");
+    if(Math.abs(g.esp)>=0.005) L(d, A.especes, "REMISE ESPECES", g.esp, "D");
+    if(Math.abs(g.cb)>=0.005) L(d, A.cb, "REMISE CB", g.cb, "D");
+    if(Math.abs(g.enligne)>=0.005) L(d, A.enligne, "ACOMPTES CB EN LIGNE", g.enligne, "D");
+    if(Math.abs(g.chq)>=0.005) L(d, A.cheque, "REMISE CHEQUE", g.chq, "D");
+    if(Math.abs(g.autres)>=0.005) L(d, A.autres, "AUTRES REGLEMENTS", g.autres, "D");
+    L(d, A.caisse, "DEPENSES DU JOUR", g.ttc, "C");
+  });
+  var content=lines.join("\r\n");
+  var fileName="Export_EBP_"+dateFrom.replace(/-/g,"")+"_"+dateTo.replace(/-/g,"")+".csv";
+  var blob=new Blob([new Uint8Array([0xEF,0xBB,0xBF]), content], {type:"text/csv;charset=utf-8"});
+  var url=URL.createObjectURL(blob); var a=document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click();
+  setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);},100);
+  if(typeof auditLog==="function") auditLog("EXPORT_EBP","Export EBP "+dateFrom+" -> "+dateTo);
+  if(typeof toast==="function") toast("Export EBP telecharge","success");
 }
 
 function genererAttestation(){

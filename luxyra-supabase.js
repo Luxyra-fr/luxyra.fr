@@ -1880,7 +1880,10 @@ function _mapPaymentBucket(label){
   if (m.indexOf("ch\u00e8q")>=0 || m.indexOf("cheq")>=0 || m.indexOf("chq")>=0) return "chq";
   if (m.indexOf("vir")>=0) return "vir";
   if (m.indexOf("bon")>=0 || m.indexOf("cadeau")>=0 || m.indexOf("avoir")>=0) return "bon";
-  if (m.indexOf("cb")>=0 || m.indexOf("carte")>=0 || m.indexOf("ligne")>=0 || m.indexOf("stripe")>=0) return "cb";
+  // FIX 2026-05-23 : paiement en ligne (Stripe / acompte en ligne) sur son propre poste,
+  // distinct de la CB encaissee au salon (cf. compte 58010000 "Acomptes CB en ligne").
+  if (m.indexOf("ligne")>=0 || m.indexOf("stripe")>=0 || m.indexOf("online")>=0) return "enligne";
+  if (m.indexOf("cb")>=0 || m.indexOf("carte")>=0) return "cb";
   return "aut";
 }
 function _mapPayment(tk) {
