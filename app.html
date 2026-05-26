@@ -30589,6 +30589,24 @@ async function exportFEC(){
     if(m.indexOf("cadeau")>=0||m.indexOf("avoir")>=0) return ACC_CARTE_CADEAU;
     return ACC_BANQUE;
   }
+  // FIX 2026-05-23 : ventile le reglement par detail_paiement (especes->caisse 530,
+  // en ligne/CB/vir/cheque->banque 512, bon cadeau->467) au lieu d'un seul compte.
+  // Repli sur payAccount(mode) si detail_paiement absent ou incoherent (tickets simples).
+  function _accForBucket(b){
+    if(b==="esp") return {acc:ACC_CAISSE, lib:"Caisse"};
+    if(b==="bon") return {acc:ACC_CARTE_CADEAU, lib:"Bon cadeau / avoir"};
+    return {acc:ACC_BANQUE, lib:"Banque / CB"};
+  }
+  function _fecLegs(t, ttc){
+    var dp=t.detail_paiement;
+    if(typeof dp==="string"){ try{dp=JSON.parse(dp);}catch(_e){dp=null;} }
+    if(dp && typeof dp==="object" && !Array.isArray(dp)){
+      var legs=[], tot=0;
+      for(var k in dp){ var amt=Math.round((Number(dp[k])||0)*100)/100; if(Math.abs(amt)<0.005) continue; var a=_accForBucket(String(k).toLowerCase()); legs.push({acc:a.acc,lib:a.lib,amt:amt}); tot=Math.round((tot+amt)*100)/100; }
+      if(legs.length && Math.abs(tot-ttc)<0.02) return legs;
+    }
+    return [{acc:payAccount(t.mode_paiement), lib:String(t.mode_paiement||"Caisse").toUpperCase(), amt:ttc}];
+  }
   function fmtDate(d){if(!d) return ""; return String(d).slice(0,10).replace(/-/g,"");}
   function fmtAmount(n){var v=Math.round((Number(n)||0)*100)/100; return v.toFixed(2).replace(".",",");}
   function escFEC(s){return String(s||"").replace(/\t/g," ").replace(/[\r\n]/g," ");}
@@ -30615,14 +30633,14 @@ async function exportFEC(){
     var prestHT=Math.round((totalHT-prodHT)*100)/100;
 
     if(t.status==="cancelled"){
-      lines.push(["VTE","Ventes salon",String(ecrNum),dateE,modeAcc,"Caisse / Banque","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTTC),"","",dateE,"",""].join("\t"));
+      _fecLegs(t,totalTTC).forEach(function(lg){ lines.push(["VTE","Ventes salon",String(ecrNum),dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""].join("\t")); });
       if(prestHT!==0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
       if(prodHT>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
       if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée","","",pieceRef,dateE,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""].join("\t"));
       return;
     }
 
-    lines.push(["VTE","Ventes salon",String(ecrNum),dateE,modeAcc,modeLab,"","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(totalTTC),fmtAmount(0),"","",dateE,"",""].join("\t"));
+    _fecLegs(t,totalTTC).forEach(function(lg){ lines.push(["VTE","Ventes salon",String(ecrNum),dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(lg.amt),fmtAmount(0),"","",dateE,"",""].join("\t")); });
     if(prestHT!==0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(prestHT),"","",dateE,"",""].join("\t"));
     if(prodHT>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(prodHT),"","",dateE,"",""].join("\t"));
     if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée "+tva+"%","","",pieceRef,dateE,"TVA "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTVA),"","",dateE,"",""].join("\t"));
