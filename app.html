@@ -9600,7 +9600,15 @@ function rPlanningDay(dateObj,showDayHeader){
   for(var ti=0;ti<_visT.length;ti++){
     var sty=_visT[ti];
     var sa=dayA.filter(function(a){if(a.stId===sty.id)return true;var _ph=a.aPhases||(gS(a.sId)?gS(a.sId).phases:null);if(_ph){for(var _pi=0;_pi<_ph.length;_pi++){if(_ph[_pi].stId===sty.id)return true;}}return false;});
-    var isAbs=ABSENCES.some(function(ab){return ab.date===dk&&ab.stId===sty.id&&ab.type!=="pause"&&ab.type!=="absent_heures"});
+    // FIX 2026-05-23 : isAbs doit aussi détecter les absences en PLAGE de dates (congé,
+    // absent_jour, maladie, formation : dateFrom/dateTo) — pas seulement les dates uniques.
+    // Sinon un congé saisi en plage apparaissait au clic du jour mais pas sur la grille.
+    var isAbs=ABSENCES.some(function(ab){
+      if(ab.stId!==sty.id)return false;
+      var _ty=ab.type||"absent";
+      if(_ty==="pause"||_ty==="absent_heures"||_ty==="fermeture_except"||_ty==="ouverture_except")return false;
+      return (ab.dateFrom&&ab.dateTo&&ab.dateFrom<=dk&&ab.dateTo>=dk)||(ab.date===dk&&!ab.from);
+    });
     var styAvail=!getBlockedSlots(sty.id,dk).some(function(b){return b.type==="conge"||b.type==="absent"||b.type==="repos";});
     h+='<div class="pg-col" data-stid="'+sty.id+'" data-date="'+dk+'"><div class="pg-colhead" style="'+(styAvail?"":"opacity:.5;background:var(--red-bg);")+'">';
     if(sty.img)h+='<img src="'+sty.img+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid '+sty.c+';display:block;margin:0 auto 4px">';
