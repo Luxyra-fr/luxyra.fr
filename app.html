@@ -13155,6 +13155,17 @@ function rSettings(){
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">G\u00e9n\u00e8re l\u0027attestation officielle de conformit\u00e9 NF525 \u00e0 remettre au client du salon. Ce document atteste que Luxyra respecte les 4 conditions l\u00e9gales.</div>';
     h+='<button class="btn btn-outline-green" style="width:100%;padding:12px;font-size:14px" onclick="genererAttestation()">\ud83d\udcc4 G\u00e9n\u00e9rer attestation PDF</button>';
     h+='</div>';
+    // === Comptes comptables pour l'export (configurable, pre-rempli LS) ===
+    var _CA=(typeof _comptaAccounts==="function")?_comptaAccounts():{services:"70612000",produits:"70712000",bonsCadeaux:"70730000",tva:"44571000",caisse:"53000000",especes:"58300000",cb:"58000000",enligne:"58010000",cheque:"58200000",autres:"58040000",journal:"CS"};
+    function _caRow(id,label,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">'+label+'</label><input type="text" id="ca_'+id+'" value="'+(val||"")+'" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px;font-family:monospace"></div>'; }
+    h+='<div class="card" style="margin-top:14px;border-left:4px solid #ff9800"><div class="ct">\ud83e\uddfe Comptes comptables pour l\u0027export</div>';
+    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Numeros de comptes utilises dans les exports comptables (FEC, EBP). Pre-remplis avec des valeurs standard ; votre cabinet peut les adapter a votre plan comptable. Modifiables sans risque, ils n\u0027affectent pas les tickets deja enregistres.</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("services","CA Services (prestations)",_CA.services)+_caRow("produits","CA Ventes (produits)",_CA.produits)+_caRow("bonsCadeaux","Bons cadeaux",_CA.bonsCadeaux)+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("tva","TVA collectee",_CA.tva)+_caRow("caisse","Caisse",_CA.caisse)+_caRow("especes","Especes",_CA.especes)+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("cb","Cartes bancaires",_CA.cb)+_caRow("enligne","Paiements en ligne",_CA.enligne)+_caRow("cheque","Cheques",_CA.cheque)+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'+_caRow("autres","Autres reglements",_CA.autres)+_caRow("journal","Code journal",_CA.journal)+'<div style="flex:1;min-width:150px"></div></div>';
+    h+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,152,0,.1);color:#ffb74d;border:1px solid rgba(255,152,0,.3);font-weight:700;font-size:14px" onclick="saveComptaAccounts()">\ud83d\udcbe Enregistrer les comptes</button>';
+    h+='</div>';
     // === Export FEC (Fichier des Ecritures Comptables) ===
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #9c27b0"><div class="ct">\ud83d\udcd1 Export FEC (controle fiscal)</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Le <strong>Fichier des Ecritures Comptables</strong> est le format legal officiel a fournir a l\'administration fiscale en cas de controle (arrete du 29/07/2013). Genere toutes les ecritures de vente sur la periode selectionnee.</div>';
@@ -30206,7 +30217,8 @@ window.LX_NON_FISCAL_ACTIONS = window.LX_NON_FISCAL_ACTIONS || {
   RDV_ANNULE:1, FIDELITE_POINT:1, SMS_ENVOYE:1, CONFIRM_SMS:1, CONFIRM_EMAIL:1,
   SMS_MODE_CHANGE:1, SMS_DEVICE_UNLINKED:1, CLIENT_MERGED:1, INVITATION_CLIENT:1,
   BULK_CONSENT_ACTIVATE:1, BONS_CADEAUX_ONLINE_TOGGLE:1,
-  STRIPE_PRICE_FOUNDER_CREATED:1, FOUNDER_ATTRIBUTION:1
+  STRIPE_PRICE_FOUNDER_CREATED:1, FOUNDER_ATTRIBUTION:1,
+  COMPTA_ACCOUNTS_UPDATE:1, EXPORT_EBP:1, EXPORT_FEC:1
 };
 function exportAudit(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
@@ -30674,6 +30686,44 @@ function _comptaAccounts(){
     if(cfg && typeof cfg==="object"){ for(var k in d){ if(cfg[k]!=null && String(cfg[k]).trim()!=="") d[k]=String(cfg[k]).trim(); } }
   }catch(_e){}
   return d;
+}
+function saveComptaAccounts(){
+  if(typeof hasPermission==="function" && !hasPermission("compta")){ if(typeof toast==="function") toast("Acces non autorise : permission Comptabilite requise","warning"); return; }
+  var keys=["services","produits","bonsCadeaux","tva","caisse","especes","cb","enligne","cheque","autres","journal"];
+  var acc={};
+  for(var i=0;i<keys.length;i++){
+    var el=document.getElementById("ca_"+keys[i]);
+    if(el){ var v=String(el.value||"").trim(); if(v!=="") acc[keys[i]]=v; }
+  }
+  // garde-fou : ne jamais enregistrer un objet vide (eviterait d'ecraser sans raison)
+  if(!Object.keys(acc).length){ if(typeof toast==="function") toast("Aucun compte renseigne","warning"); return; }
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
+      if(r.error){
+        if(typeof toast==="function") toast("\u26a0 Erreur DB (lecture) \u2014 reessaie","error");
+        console.error("saveComptaAccounts read error:",r.error);
+        return;
+      }
+      var cfg={};
+      if(r.data&&r.data[0]&&r.data[0].config_json){
+        try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}
+      }
+      cfg.comptaAccounts=acc;
+      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId).then(function(u){
+        if(u.error){
+          if(typeof toast==="function") toast("\u26a0 Erreur DB (ecriture) \u2014 reessaie","error");
+          console.error("saveComptaAccounts write error:",u.error);
+        }else{
+          if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.comptaAccounts=acc;
+          if(typeof auditLog==="function") auditLog("COMPTA_ACCOUNTS_UPDATE","Comptes comptables export mis a jour");
+          if(typeof toast==="function") toast("Comptes comptables enregistres","success");
+        }
+      });
+    });
+  } else {
+    if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.comptaAccounts=acc;
+    if(typeof toast==="function") toast("Comptes comptables enregistres (local)","success");
+  }
 }
 async function exportEBP(){
   if(typeof hasPermission==="function" && !hasPermission("compta")){ if(typeof toast==="function") toast("Acces non autorise : permission Comptabilite requise","warning"); return; }
