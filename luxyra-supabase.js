@@ -1869,29 +1869,40 @@ async function saveGiftCard(gc) {
 
 // Map le mode de paiement local ("cb", "esp", "mixte-cb-esp", "cb+esp", etc.)
 // vers {mode_paiement, detail_paiement} pour la DB
+// FIX 2026-05-23 : ventilation correcte des paiements (NF525).
+// AVANT : tout le total était collé sur le 1er mode détecté -> un acompte (payé en
+// ligne ou en caisse) était ignoré (ex: 30€ marqués "espèces" alors que 5€ acompte
+// en ligne + 25€ espèces), et les paiements mixtes étaient mal répartis.
+// MAINTENANT : on ventile l'acompte (sous son mode) + le solde (tk.payments par mode).
+function _mapPaymentBucket(label){
+  var m = String(label||"").toLowerCase();
+  if (m.indexOf("esp")>=0 || m.indexOf("cash")>=0) return "esp";
+  if (m.indexOf("ch\u00e8q")>=0 || m.indexOf("cheq")>=0 || m.indexOf("chq")>=0) return "chq";
+  if (m.indexOf("vir")>=0) return "vir";
+  if (m.indexOf("bon")>=0 || m.indexOf("cadeau")>=0 || m.indexOf("avoir")>=0) return "bon";
+  if (m.indexOf("cb")>=0 || m.indexOf("carte")>=0 || m.indexOf("ligne")>=0 || m.indexOf("stripe")>=0) return "cb";
+  return "aut";
+}
 function _mapPayment(tk) {
-  var met = (tk.met || "cb").toLowerCase();
   var detail = {};
   var total = Number(tk.pr || 0);
-
-  // Si mixte / +, parser la répartition si fournie, sinon mettre tout sur le premier mode détecté
-  var isMixte = /mixte|\+|,/.test(met);
-  var modes = ["cb","esp","chq","bon","vir","aut"];
-
-  if (isMixte && tk.paymentDetail && typeof tk.paymentDetail === "object") {
-    // Format prévu : tk.paymentDetail = {cb: 20, esp: 10}
-    return { mode: "mixte", detail: tk.paymentDetail };
+  function add(b, amt){
+    amt = Math.round((Number(amt)||0)*100)/100;
+    if (Math.abs(amt) < 0.005) return;          // ignore 0 (garde les négatifs = annulations)
+    detail[b] = Math.round(((detail[b]||0) + amt)*100)/100;
   }
-  // Auto-detect : prend le premier mode dans la string
-  for (var i = 0; i < modes.length; i++) {
-    if (met.indexOf(modes[i]) >= 0) {
-      detail[modes[i]] = total;
-      return { mode: isMixte ? "mixte" : modes[i], detail: detail };
-    }
+  // 1) Acompte déjà encaissé (en ligne ou en caisse) -> sous son propre mode
+  var acompte = Number(tk.acompte || 0);
+  if (Math.abs(acompte) >= 0.005) add(_mapPaymentBucket(tk.acompteMode), acompte);
+  // 2) Solde : liste détaillée des paiements si dispo, sinon (total - acompte) sur le mode de `met`
+  if (Array.isArray(tk.payments) && tk.payments.length) {
+    tk.payments.forEach(function(p){ add(_mapPaymentBucket(p.method || p.mode), p.amount); });
+  } else {
+    add(_mapPaymentBucket(tk.met || "cb"), total - acompte);
   }
-  // Fallback
-  detail.aut = total;
-  return { mode: "aut", detail: detail };
+  var keys = Object.keys(detail);
+  if (keys.length === 0) { detail.aut = total; keys = ["aut"]; }
+  return { mode: keys.length > 1 ? "mixte" : keys[0], detail: detail };
 }
 
 // Persiste un ticket (créé dans app.html via AP.push) vers la DB tickets.
