@@ -31720,6 +31720,22 @@ function setupRealtime(){
         }
       }
     })
+    .on("postgres_changes",{event:"INSERT",schema:"public",table:"clotures",filter:"salon_id=eq."+_salonId},function(payload){
+      // Verrou multi-appareils : une clôture Z faite sur un autre appareil verrouille la caisse ICI, en direct.
+      try{
+        var _cz=payload.new;
+        if(_cz && _cz.date_cloture){
+          if(!window.LOCKED_DAYS)window.LOCKED_DAYS={};
+          window.LOCKED_DAYS[_cz.date_cloture]=true;
+          try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
+          if(_cz.date_cloture===TD && window._currentPage==="caisse"){
+            if(typeof toast==="function")toast("🔒 Journée clôturée (Z) sur un autre appareil — caisse verrouillée","warning");
+            if(typeof cM==="function")cM();
+            if(typeof go==="function")go("home");
+          }
+        }
+      }catch(e){console.warn("realtime cloture",e);}
+    })
     .subscribe(function(status){
       console.log("Realtime status:",status);
       // FIX 2026-05-23 : auto-reconnexion si le canal temps réel tombe (réseau, veille…)
