@@ -1772,6 +1772,10 @@ async function handleClientRdvs(request, env) {
     const salonId = body.salon_id ? String(body.salon_id) : null;
     // 2 fetches : par luxyra_id (uuid) puis par email (text). Dedupe sur id.
     const seen = new Set();
+    // Dédup LOGIQUE : un même créneau peut exister dans rdv_online ET appointments
+    // (résa en ligne miroitée au planning). id différents → on déduplique sur salon+date+heure.
+    const seenSlot = new Set();
+    const _slotKey = (sid, d, h) => String(sid || "") + "|" + String(d || "") + "|" + String(h || "").slice(0, 5);
     const rdvs = [];
     async function _fetch(filter) {
       try {
@@ -1786,6 +1790,7 @@ async function handleClientRdvs(request, env) {
           seen.add(d.id);
           d.salon_nom = d.salons ? d.salons.nom : "";
           delete d.salons;
+          seenSlot.add(_slotKey(d.salon_id, d.date_rdv, d.heure_rdv));
           rdvs.push(d);
         }
       } catch (e) {}
@@ -1818,8 +1823,10 @@ async function handleClientRdvs(request, env) {
             } catch (e) {}
           }
           for (const a of _appts) {
-            if (seen.has(a.id)) continue;
+            const _k = _slotKey(a.salon_id, a.date_rdv, a.heure);
+            if (seen.has(a.id) || seenSlot.has(_k)) continue;
             seen.add(a.id);
+            seenSlot.add(_k);
             let _itemName = "Prestation";
             if (a.items && a.items.length) {
               const _ns = a.items.filter((it) => !it.isSep && it.name).map((it) => it.name);
