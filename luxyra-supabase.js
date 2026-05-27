@@ -1669,6 +1669,23 @@ async function saveAppointment(appt) {
   // "online_xxx" qui n'existe pas → 0 row updated → modif perdue au refresh.
   if (appt.id && typeof appt.id === "string" && appt.id.indexOf("online_") === 0) {
     var onlineUuid = appt.id.slice("online_".length);
+    // FIX 2026-05-27 : RDV en ligne ENCAISSE -> persister un vrai rendez-vous "done" dans
+    // appointments (id = uuid de la rdv_online, idempotent via upsert) pour qu'il reste sur
+    // le planning avec le statut/logo "encaisse", exactement comme un RDV cree en salon.
+    // Sinon : pas de ligne appointments -> le RDV disparaissait du planning au rechargement.
+    if (appt.st === "done" || appt.tkNum) {
+      try {
+        var _apClone = {};
+        for (var _k in appt) { if (Object.prototype.hasOwnProperty.call(appt, _k)) _apClone[_k] = appt[_k]; }
+        _apClone.id = onlineUuid; // route vers la branche appointments classique (upsert)
+        var _prevBypass = window._walBypass; window._walBypass = true;
+        try { await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
+      } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); }
+      // Marque la rdv_online encaissee (compte client : RDV passe + facture ; dedup planning)
+      try { _sb.from("rdv_online").update({ status: "done" }).eq("id", onlineUuid).eq("salon_id", _salonId).then(function(){}, function(){}); } catch (e3) {}
+      _walMarkSynced(_walId);
+      return;
+    }
     var onlineData = {
       collaborateur_id: appt.stId,
       date_rdv: appt.date,
