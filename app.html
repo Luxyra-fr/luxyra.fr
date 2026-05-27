@@ -8333,6 +8333,64 @@ function _lxRelinkOnlineAppts(){
     return changed;
   }catch(_e){return false;}
 }
+// FIX 2026-05-27 : reconciliation rdv_online <-> ticket encaisse.
+// L'encaissement (RDV ou caisse directe) cree le ticket NF525 mais ne marquait pas
+// toujours la rdv_online en "done" -> resa "fantome" (toujours "confirme") dans le planning.
+// NON FISCAL : on ne touche qu'au statut d'affichage de rdv_online, jamais au ticket.
+function _lxClientKeys(cId){
+  var c=cId?gC(cId):null; if(!c) return null;
+  return { tel:String(c.ph||"").replace(/\D/g,""), tel2:String(c.ph2||"").replace(/\D/g,""), em:String(c.em||"").toLowerCase().trim(), lux:c.clientBeautyproId||null };
+}
+function _lxOnlineMatchesClient(ro,keys){
+  if(!keys||!ro) return false;
+  var roTel=String(ro.tel||"").replace(/\D/g,""), roEm=String(ro.email||"").toLowerCase().trim(), roLux=ro.luxyraId||null;
+  if(keys.lux&&roLux&&keys.lux===roLux) return true;
+  if(keys.tel&&keys.tel.length>=6&&(roTel===keys.tel||roTel===keys.tel2)) return true;
+  if(keys.em&&roEm&&roEm===keys.em) return true;
+  return false;
+}
+// Retourne l'id de la rdv_online (pending/confirmed) correspondant a un ticket encaisse t, sinon null.
+function _lxFindOnlineRdvForTicket(t){
+  try{
+    if(!t||typeof window.RDV_ONLINE==="undefined"||!window.RDV_ONLINE) return null;
+    if(t.onlineId) return t.onlineId;
+    var keys=_lxClientKeys(t.cId); if(!keys) return null;
+    var cands=[];
+    for(var i=0;i<RDV_ONLINE.length;i++){ var ro=RDV_ONLINE[i];
+      if(!ro||ro.date!==t.date) continue;
+      var st=ro.status||""; if(!(st==="pending"||st==="confirmed")) continue;
+      if(_lxOnlineMatchesClient(ro,keys)) cands.push(ro);
+    }
+    if(!cands.length) return null;
+    for(var k=0;k<cands.length;k++){ if(t.time&&cands[k].heure&&cands[k].heure===t.time) return cands[k].id; }
+    return cands.length===1 ? cands[0].id : null; // sinon ambigu -> on ne touche pas
+  }catch(_e){ return null; }
+}
+// Marque une rdv_online en "done" (DB + memoire) et retire le fantome non encaisse du planning.
+function _lxMarkOnlineRdvDone(roId){
+  try{
+    if(!roId||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
+    _sb.from("rdv_online").update({status:"done"}).eq("id",roId).eq("salon_id",_salonId).then(function(){},function(_e){});
+    if(window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===roId){ RDV_ONLINE[i].status="done"; break; } } }
+    // retire l'entree fantome (online_ encore "conf") du planning ; ne touche jamais un ticket deja "done"
+    if(typeof AP!=="undefined"&&AP){ for(var j=AP.length-1;j>=0;j--){ if(AP[j]&&AP[j].onlineId===roId&&AP[j].st!=="done"){ AP.splice(j,1); } } }
+    window._apDirty=true;
+  }catch(_e){}
+}
+// Filet auto-cicatrisant : pour chaque ticket deja encaisse en memoire, si une rdv_online
+// pending/confirmed lui correspond, on la passe en done (repare les fantomes deja existants).
+function _lxReconcileGhostOnlineRdv(){
+  try{
+    if(typeof AP==="undefined"||!AP||typeof window.RDV_ONLINE==="undefined"||!window.RDV_ONLINE) return;
+    for(var i=0;i<AP.length;i++){ var t=AP[i];
+      if(!t||t.st!=="done"||!t.cId) continue;
+      var roId=_lxFindOnlineRdvForTicket(t);
+      if(!roId) continue;
+      var ro=null; for(var k=0;k<RDV_ONLINE.length;k++){ if(RDV_ONLINE[k].id===roId){ ro=RDV_ONLINE[k]; break; } }
+      if(ro&&(ro.status==="pending"||ro.status==="confirmed")) _lxMarkOnlineRdvDone(roId);
+    }
+  }catch(_e){}
+}
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -8441,6 +8499,7 @@ window._rdvPollInterval=setInterval(function(){
           }
         });
         if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
+        if(typeof _lxReconcileGhostOnlineRdv==="function")_lxReconcileGhostOnlineRdv();
         if(newCount>0||window._apDirty){
           try{if(typeof refreshCurrentView==="function")refreshCurrentView();}catch(_e){}
           }
@@ -27100,10 +27159,9 @@ function doFinalPayExecute(method){
         if(typeof saveAppointment==="function")saveAppointment(AP[i]);
         if(typeof saveTicketToDb==="function")saveTicketToDb(AP[i]); // NF525: table tickets DB
         if(typeof cleanupPendingFromTk==="function")cleanupPendingFromTk();
-        // Update rdv_online status if this was an online booking
-        if(AP[i].onlineId&&typeof _sb!=="undefined"&&_sb){
-          try{_sb.from("rdv_online").update({status:"done"}).eq("id",AP[i].onlineId);}catch(e){}
-        }
+        // Update rdv_online status if this was an online booking (+ reconciliation fantome)
+        if(AP[i].onlineId){ if(typeof _lxMarkOnlineRdvDone==="function") _lxMarkOnlineRdvDone(AP[i].onlineId); }
+        else { if(typeof _lxFindOnlineRdvForTicket==="function"){ var _roA=_lxFindOnlineRdvForTicket(AP[i]); if(_roA&&typeof _lxMarkOnlineRdvDone==="function") _lxMarkOnlineRdvDone(_roA); } }
         break;
       }
     }
@@ -27130,6 +27188,8 @@ function doFinalPayExecute(method){
     // Build ticket HTML and attach for Supabase storage
     try{newTk.ticketHtml=buildTicketHTML(newTk,false);}catch(e){}
     AP.push(newTk);
+    // FIX 2026-05-27 : caisse directe -> relier/cloturer la rdv_online correspondante (resa fantome)
+    if(typeof _lxFindOnlineRdvForTicket==="function"){ var _roB=_lxFindOnlineRdvForTicket(newTk); if(_roB&&typeof _lxMarkOnlineRdvDone==="function") _lxMarkOnlineRdvDone(_roB); }
     if(typeof saveAppointment==="function")saveAppointment(newTk);
     if(typeof saveTicketToDb==="function")saveTicketToDb(newTk); // NF525: table tickets DB
     // Encaissement validé → nettoie le pending/devis source si _tk en venait
@@ -31904,6 +31964,7 @@ async function reloadFromSupabase(table){
       }
     }
     if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
+    if(typeof _lxReconcileGhostOnlineRdv==="function")_lxReconcileGhostOnlineRdv();
     // Refresh current view
     refreshCurrentView();
   }catch(e){console.warn("Realtime reload error:",e);}
