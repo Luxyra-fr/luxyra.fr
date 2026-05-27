@@ -1112,28 +1112,9 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         empreinteReleasedAt: r.empreinte_released_at || null
       };
     });
-    // FIX 2026-05-27 : garantir une fiche salon pour chaque client venu via un compte en ligne.
-    // Cause racine du "client de passage" : syncClientFromOnlineRdv existait mais (1) n'etait
-    // jamais appelee et (2) plantait (colonne "genre" au lieu de "sexe"). Resultat : aucune fiche
-    // creee -> encaissement en passage. La fonction est idempotente (matche luxyra_id/email/tel).
-    try {
-      for (var _ri = 0; _ri < window.RDV_ONLINE.length; _ri++) {
-        var _ro = window.RDV_ONLINE[_ri];
-        if (!_ro || !(_ro.status === "pending" || _ro.status === "confirmed")) continue;
-        if (!(_ro.luxyraId || _ro.email || _ro.tel)) continue;
-        var _have = (typeof _lxResolveClientId === "function") ? _lxResolveClientId(_ro) : null;
-        if (_have) continue; // fiche deja existante -> rien a creer
-        var _fid = await syncClientFromOnlineRdv({
-          client_nom: _ro.nom, client_prenom: _ro.prenom,
-          client_telephone: _ro.tel, client_email: _ro.email,
-          client_luxyra_id: _ro.luxyraId || null
-        });
-        if (_fid) {
-          var _inCL = false; for (var _ci = 0; _ci < CL.length; _ci++) { if (CL[_ci].id === _fid) { _inCL = true; break; } }
-          if (!_inCL) CL.push({ id:_fid, nom:_ro.nom, pre:_ro.prenom, ph:_ro.tel, ph2:"", em:_ro.email, sex:null, fid:0, actif:true, clientBeautyproId:(_ro.luxyraId||null), smsOk:true, emOk:true, fiches:[] });
-        }
-      }
-    } catch (eEnsure) { console.warn("[loadSalonData] ensure fiche online skipped:", eEnsure && eEnsure.message); }
+    // FIX 2026-05-27 (v2) : la creation des fiches manquantes pour les clients en ligne est
+    // DEPORTEE hors du demarrage (un await en boucle ici bloquait l'ecran de chargement).
+    // C'est le rafraichissement periodique _lxEnsureFichesForOnlineAppts (non bloquant) qui s'en charge.
     // Merge pending+confirmed into AP for planning display
     window.RDV_ONLINE.forEach(function(r) {
       if (r.status === "pending" || r.status === "confirmed") {
