@@ -1093,6 +1093,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       return {
         id: r.id, salonId: r.salon_id,
         nom: r.client_nom, prenom: r.client_prenom, tel: r.client_tel, email: r.client_email,
+        luxyraId: r.client_luxyra_id || null,
         svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
         items: r.items || null, // multi-prestation : array d'items si booking multi, sinon null
         collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
@@ -1115,9 +1116,15 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     window.RDV_ONLINE.forEach(function(r) {
       if (r.status === "pending" || r.status === "confirmed") {
         // Check if already in AP (avoid duplicates)
-        var exists = false;
+        var exists = false, _exIdx = -1;
         for (var i = 0; i < AP.length; i++) {
-          if (AP[i].onlineId === r.id) { exists = true; break; }
+          if (AP[i].onlineId === r.id) { exists = true; _exIdx = i; break; }
+        }
+        // FIX 2026-05-27 : entree deja presente (restauree depuis snapshot/cache) mais non reliee
+        // a une fiche -> on tente de la relier maintenant (CL est charge a ce stade).
+        if (exists && _exIdx >= 0 && !AP[_exIdx].cId) {
+          var _rid0 = (typeof _lxResolveClientId === "function") ? _lxResolveClientId(r) : null;
+          if (_rid0) AP[_exIdx].cId = _rid0;
         }
         if (!exists) {
           var dur = r.duree || 60;
@@ -1144,7 +1151,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           AP.push({
             id: "online_" + r.id,
             onlineId: r.id,
-            cId: null,
+            cId: (typeof _lxResolveClientId === "function" ? _lxResolveClientId(r) : null),
             sId: r.svcId,
             stId: r.collabId,
             date: r.date,
