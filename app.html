@@ -8398,6 +8398,31 @@ function _lxReconcileGhostOnlineRdv(){
     }
   }catch(_e){}
 }
+// FIX 2026-05-27 : garantit une fiche salon pour les RDV en ligne decouverts en cours de journee
+// (cree la fiche si absente via syncClientFromOnlineRdv, idempotent) -> plus de "client de passage".
+async function _lxEnsureFichesForOnlineAppts(){
+  try{
+    if(typeof AP==="undefined"||!AP||typeof window.RDV_ONLINE==="undefined"||!window.RDV_ONLINE) return;
+    if(typeof syncClientFromOnlineRdv!=="function") return;
+    var changed=false;
+    for(var i=0;i<AP.length;i++){ var a=AP[i];
+      if(!a||!a.isOnline||a.cId) continue;
+      var o=null; for(var j=0;j<RDV_ONLINE.length;j++){ if(RDV_ONLINE[j].id===a.onlineId){ o=RDV_ONLINE[j]; break; } }
+      if(!o) continue;
+      var rid=(typeof _lxResolveClientId==="function")?_lxResolveClientId(o):null;
+      if(!rid){
+        if(!(o.luxyraId||o.email||o.tel)) continue;
+        rid=await syncClientFromOnlineRdv({client_nom:o.nom,client_prenom:o.prenom,client_telephone:o.tel,client_email:o.email,client_luxyra_id:o.luxyraId||null});
+        if(rid){
+          var inCL=false; for(var k=0;k<CL.length;k++){ if(CL[k].id===rid){ inCL=true; break; } }
+          if(!inCL) CL.push({id:rid,nom:o.nom,pre:o.prenom,ph:o.tel,ph2:"",em:o.email,sex:null,fid:0,actif:true,clientBeautyproId:(o.luxyraId||null),smsOk:true,emOk:true,fiches:[]});
+        }
+      }
+      if(rid){ a.cId=rid; changed=true; }
+    }
+    if(changed){ window._apDirty=true; if(typeof refreshCurrentView==="function") refreshCurrentView(); }
+  }catch(_e){}
+}
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -8507,6 +8532,7 @@ window._rdvPollInterval=setInterval(function(){
         });
         if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
         if(typeof _lxReconcileGhostOnlineRdv==="function")_lxReconcileGhostOnlineRdv();
+        if(typeof _lxEnsureFichesForOnlineAppts==="function"){ try{ _lxEnsureFichesForOnlineAppts(); }catch(_e){} }
         if(newCount>0||window._apDirty){
           try{if(typeof refreshCurrentView==="function")refreshCurrentView();}catch(_e){}
           }
