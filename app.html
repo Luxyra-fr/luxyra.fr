@@ -8354,16 +8354,23 @@ function _lxFindOnlineRdvForTicket(t){
   try{
     if(!t||typeof window.RDV_ONLINE==="undefined"||!window.RDV_ONLINE) return null;
     if(t.onlineId) return t.onlineId;
-    var keys=_lxClientKeys(t.cId); if(!keys) return null;
-    var cands=[];
+    var keys=_lxClientKeys(t.cId);
+    var tPrice=Math.round((Number(t.pr)||0)*100);
+    var clientCands=[], priceCands=[];
     for(var i=0;i<RDV_ONLINE.length;i++){ var ro=RDV_ONLINE[i];
       if(!ro||ro.date!==t.date) continue;
       var st=ro.status||""; if(!(st==="pending"||st==="confirmed")) continue;
-      if(_lxOnlineMatchesClient(ro,keys)) cands.push(ro);
+      if(keys && _lxOnlineMatchesClient(ro,keys)){ clientCands.push(ro); }
+      else if(t.time && ro.heure===t.time && tPrice>0 && Math.round((Number(ro.svcPrix)||0)*100)===tPrice){ priceCands.push(ro); }
     }
-    if(!cands.length) return null;
-    for(var k=0;k<cands.length;k++){ if(t.time&&cands[k].heure&&cands[k].heure===t.time) return cands[k].id; }
-    return cands.length===1 ? cands[0].id : null; // sinon ambigu -> on ne touche pas
+    // 1) match client + heure exacte (le plus fiable)
+    for(var k=0;k<clientCands.length;k++){ if(t.time&&clientCands[k].heure&&clientCands[k].heure===t.time) return clientCands[k].id; }
+    // 2) match client unique dans la journee
+    if(clientCands.length===1) return clientCands[0].id;
+    if(clientCands.length>1) return null; // ambigu cote client -> on ne touche pas
+    // 3) ticket sans fiche (passage) : date + heure + prix exacts, et un seul candidat
+    if(priceCands.length===1) return priceCands[0].id;
+    return null;
   }catch(_e){ return null; }
 }
 // Marque une rdv_online en "done" (DB + memoire) et retire le fantome non encaisse du planning.
