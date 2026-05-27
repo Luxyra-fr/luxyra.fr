@@ -8301,6 +8301,38 @@ async function updateNotifBadge(){
   }catch(e){console.warn('updateNotifBadge',e);}
 }
 // Check for new RDV online every 30 seconds
+// FIX 2026-05-27 : resolution + relink des RDV en ligne vers la fiche client salon.
+// Auto-cicatrisant : rejoue a chaque poll / rechargement clients tant qu'un RDV online n'a pas de fiche.
+function _lxResolveClientId(o){
+  try{
+    if(!o) return null;
+    if(typeof CL==="undefined"||!CL||!CL.length) return null;
+    var _np=function(x){return String(x||"").replace(/\D/g,"");};
+    var rp=_np(o.client_tel||o.tel), re=String(o.client_email||o.email||"").toLowerCase().trim(), rl=o.client_luxyra_id||o.luxyraId||null;
+    for(var i=0;i<CL.length;i++){ var c=CL[i];
+      if(rl&&c.clientBeautyproId&&c.clientBeautyproId===rl) return c.id;
+      if(rp&&rp.length>=6&&(_np(c.ph)===rp||_np(c.ph2)===rp)) return c.id;
+      if(re&&String(c.em||"").toLowerCase().trim()===re) return c.id;
+    }
+  }catch(_e){}
+  return null;
+}
+function _lxRelinkOnlineAppts(){
+  try{
+    if(typeof AP==="undefined"||!AP||!AP.length) return false;
+    var changed=false;
+    for(var i=0;i<AP.length;i++){ var a=AP[i];
+      if(a&&a.isOnline&&!a.cId){
+        var o=null;
+        if(window.RDV_ONLINE){for(var j=0;j<window.RDV_ONLINE.length;j++){if(window.RDV_ONLINE[j].id===a.onlineId){o=window.RDV_ONLINE[j];break;}}}
+        var rid=_lxResolveClientId(o);
+        if(rid){a.cId=rid;changed=true;}
+      }
+    }
+    if(changed)window._apDirty=true;
+    return changed;
+  }catch(_e){return false;}
+}
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -8311,20 +8343,7 @@ function _lxOnlineToAP(rdv){
     var phases=(sv&&sv.phases&&sv.phases.length>0)?sv.phases:[{t:"w",d:dur,l:rdv.service_nom}];
     var aptItems=[];
     if(Array.isArray(rdv.items)&&rdv.items.length>1){aptItems=rdv.items.map(function(it){return {sId:it.sId||it.service_id||null,name:it.name||it.nom||"Prestation",price:Number(it.price||it.prix||0),qty:Number(it.qty||1),remise:Number(it.remise||0)};});}
-    // FIX 2026-05-27 : relier le RDV en ligne a la fiche client salon (historique + fidelite a l'encaissement)
-    // Resolution en memoire (lecture seule) : luxyra_id, puis telephone, puis email. Si aucun match -> reste passage (comportement inchange).
-    var _lxcId=null;
-    try{
-      var _np=function(x){return String(x||"").replace(/\D/g,"");};
-      var _rp=_np(rdv.client_tel), _re=String(rdv.client_email||"").toLowerCase().trim(), _rl=rdv.client_luxyra_id||null;
-      if((typeof CL!=="undefined")&&CL&&CL.length){
-        for(var _ci=0;_ci<CL.length;_ci++){ var _c=CL[_ci];
-          if(_rl&&_c.clientBeautyproId&&_c.clientBeautyproId===_rl){_lxcId=_c.id;break;}
-          if(_rp&&_rp.length>=6&&(_np(_c.ph)===_rp||_np(_c.ph2)===_rp)){_lxcId=_c.id;break;}
-          if(_re&&String(_c.em||"").toLowerCase().trim()===_re){_lxcId=_c.id;break;}
-        }
-      }
-    }catch(_e){}
+    var _lxcId=_lxResolveClientId(rdv);
     AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:_lxcId,sId:rdv.service_id,stId:rdv.collaborateur_id,date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||""),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});window._apDirty=true;
   }catch(_e){}
 }
@@ -8388,7 +8407,7 @@ window._rdvPollInterval=setInterval(function(){
             if(rdv.status==="cancelled"||rdv.status==="cancelled_by_client"||rdv.status==="done"||rdv.status==="refused"){_lxRemoveOnlineFromAP(rdv.id);}
           }
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});
+            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,luxyraId:rdv.client_luxyra_id||null,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});
             // FIX 2026-05-23 : ne pas annoncer "Nouveau RDV" pour un RDV deja annule/termine/refuse
             // (reouverture de l'app -> RDV_ONLINE vide -> un RDV annule etait re-flashe comme nouveau)
             if(rdv.status==="pending"||rdv.status==="confirmed"){
@@ -8421,6 +8440,7 @@ window._rdvPollInterval=setInterval(function(){
             }
           }
         });
+        if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
         if(newCount>0||window._apDirty){
           try{if(typeof refreshCurrentView==="function")refreshCurrentView();}catch(_e){}
           }
@@ -31765,6 +31785,7 @@ async function reloadFromSupabase(table){
         });
       }
     }
+    if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
     // Refresh current view
     refreshCurrentView();
   }catch(e){console.warn("Realtime reload error:",e);}
