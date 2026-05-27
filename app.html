@@ -12958,8 +12958,15 @@ function rSettings(){
       h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type de remise</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.type=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"><option value="amount"'+(fidType==="amount"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="percent"'+(fidType==="percent"?" selected":"")+'>Pourcentage (%)</option></select></div>';
       h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Valeur de la remise</label><input type="number" value="'+fidRemise+'" min="1" style="width:100%;text-align:center;font-size:22px;font-weight:900;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.remise=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')"></div>';
       h+='</div>';
+      // Assiette de la remise (sur quoi elle porte). D\u00e9faut = prestations (services + forfaits), pas les produits.
+      var fidSur=(window.FIDCONF.remiseSur||"prestations");
+      h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">La remise s\u2019applique sur</label>';
+      h+='<select style="width:100%;padding:14px;font-size:14px;border-radius:10px;border:1px solid var(--border);background:var(--bg3);color:var(--text)" onchange="window.FIDCONF.remiseSur=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')">';
+      h+='<option value="prestations"'+(fidSur==="prestations"?" selected":"")+'>Services et forfaits uniquement</option>';
+      h+='<option value="tout"'+(fidSur==="tout"?" selected":"")+'>Tout le ticket (services, forfaits et produits)</option>';
+      h+='</select></div>';
       var fidU=fidType==="percent"?"%":" \u20ac";
-      h+='<div style="margin-top:14px;padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-radius:12px;text-align:center;font-size:15px;color:var(--text)">Apr\u00e8s <strong>'+fidSeuil+' passages</strong>, le client obtient <strong>'+fidRemise+fidU+' de remise</strong></div>';
+      h+='<div style="margin-top:14px;padding:16px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.15);border-radius:12px;text-align:center;font-size:15px;color:var(--text)">Apr\u00e8s <strong>'+fidSeuil+' passages</strong>, le client obtient <strong>'+fidRemise+fidU+' de remise</strong> sur '+(fidSur==="tout"?"tout le ticket":"les services et forfaits")+'</div>';
     }
     else if(fidMode==="cagnotte"){
       // === MODE 2 : CAGNOTTE (% du ticket) ===
@@ -25013,14 +25020,22 @@ function showCaisse(){
     if(_clFidR && _fidOnR && (_fcR.mode||"passages")==="passages"){
       var _seuilR=Number(_fcR.seuil||_scR.fideliteSeuil||10), _ptsR=Number(_clFidR.fid||0);
       if(_ptsR>=_seuilR){
-        var _typeR=(_fcR.type==="percent"||_scR.fideliteType==="pourcentage")?"pourcentage":"montant";
-        var _valR=Number(_fcR.remise||_scR.fideliteValeur||10);
-        var _remiseR=_typeR==="pourcentage"?Math.round(total*_valR/100*100)/100:_valR;
-        h+='<div style="margin:0 14px 12px;padding:12px 14px;border-radius:12px;background:rgba(76,175,80,.13);border:1px solid rgba(76,175,80,.5);display:flex;align-items:center;gap:10px">';
-        h+='<span style="font-size:22px">\ud83c\udfc6</span>';
-        h+='<div style="flex:1"><div style="font-weight:800;font-size:13px;color:#7fe0a0">Fid\u00e9lit\u00e9 '+_ptsR+'/'+_seuilR+' \u2014 remise disponible</div>';
-        h+='<div style="font-size:11px;color:rgba(255,255,255,.65);margin-top:1px">'+_valR+(_typeR==="pourcentage"?"%":"\u20ac")+' (\u2212'+_remiseR.toFixed(2)+' \u20ac) \u00b7 \u00e0 appliquer en validant le paiement</div></div>';
-        h+='</div>';
+        var _remiseR=lxFidRewardAmount();
+        var _surR=(_fcR.remiseSur==="tout")?"tout le ticket":"services et forfaits";
+        var _appliedR=!!(_tk._fidResults && _tk._fidResults[_clFidR.id] && _tk._fidResults[_clFidR.id].action==="discount");
+        if(_appliedR){
+          var _aAmt=_tk._fidResults[_clFidR.id].amount||0;
+          h+='<div style="margin:0 14px 12px;padding:12px 14px;border-radius:12px;background:rgba(76,175,80,.18);border:1px solid rgba(76,175,80,.6);display:flex;align-items:center;gap:10px">';
+          h+='<span style="font-size:22px">\u2705</span>';
+          h+='<div style="flex:1"><div style="font-weight:800;font-size:13px;color:#7fe0a0">Remise fid\u00e9lit\u00e9 appliqu\u00e9e \u00b7 \u2212'+_aAmt.toFixed(2)+' \u20ac</div><div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:1px">D\u00e9j\u00e0 d\u00e9duite du total ci-dessus</div></div>';
+          h+='<button onclick="lxFidUndoReward(\''+_clFidR.id+'\')" style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.6);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">Annuler</button>';
+          h+='</div>';
+        } else {
+          h+='<div style="margin:0 14px 12px;padding:12px 14px;border-radius:12px;background:rgba(76,175,80,.13);border:1px solid rgba(76,175,80,.5)">';
+          h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:22px">\ud83c\udfc6</span><div style="flex:1"><div style="font-weight:800;font-size:13px;color:#7fe0a0">Fid\u00e9lit\u00e9 '+_ptsR+'/'+_seuilR+' \u2014 remise disponible</div><div style="font-size:11px;color:rgba(255,255,255,.65);margin-top:1px">\u2212'+_remiseR.toFixed(2)+' \u20ac sur '+_surR+'</div></div></div>';
+          h+='<button onclick="lxFidUseReward(\''+_clFidR.id+'\')" style="width:100%;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,#4caf50,#2e9a5e);color:#fff;font-weight:800;font-size:13px;cursor:pointer">\ud83c\udfc6 Utiliser la remise fid\u00e9lit\u00e9 (\u2212'+_remiseR.toFixed(2)+' \u20ac)</button>';
+          h+='</div>';
+        }
       }
     }
 
@@ -26618,6 +26633,8 @@ function doFinalPay(method){
     return true;
   });
 
+  // Skip les clients dont la remise fidélité a déjà été appliquée tôt (écran règlement) → pas de double proposition
+  clientIds=clientIds.filter(function(cId){ return !(_tk._fidResults && _tk._fidResults[cId]); });
   // Si tous les clients ont une carte abo, on affiche quand même un mini-récap avant de finaliser
   // (sinon ce serait totalement silencieux). Sinon, on affichera la mention dans la 1ère modal fidélité.
   if(!clientIds.length && _tk._fidSkippedAbo.length && !_tk._fidSkippedAboShown){
@@ -26658,7 +26675,7 @@ function doFinalPay(method){
 
   // Case 1: Client has reached the threshold -> propose discount
   if(currentPoints>=fidSeuil){
-    var remiseAmt=fidType==="pourcentage"?Math.round(total*fidVal/100*100)/100:fidVal;
+    var remiseAmt=fidType==="pourcentage"?Math.round(lxFidEligibleTotal()*fidVal/100*100)/100:fidVal;
     var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
     // Bandeau info clients skipp\u00e9s pour cause de carte abo (multi-client)
     if(_tk._fidSkippedAbo && _tk._fidSkippedAbo.length){
@@ -26728,6 +26745,63 @@ function doFidDiscount(cId,amount,resetTo,method){
   doFinalPay(method);
 }
 
+// === FIDÉLITÉ — APPLICATION ANTICIPÉE (écran de règlement) ===
+// Réutilise la mécanique éprouvée (_tk._fidResults + _tk.remise). Le compteur cl.fid
+// n'est modifié qu'à la FINALISATION (doFinalPayExecute) → si le paiement n'aboutit pas,
+// la fidélité reste intacte.
+function lxFidEligibleTotal(){
+  if(!_tk||!_tk.items)return 0;
+  var sur=(window.FIDCONF&&window.FIDCONF.remiseSur)||"prestations";
+  var b=0;
+  _tk.items.forEach(function(it){
+    if(it.isSep)return;
+    if(sur!=="tout" && (it.isProd||it.prodId||it.isPack||it.isCarteAbo))return; // exclure produits/packs/cartes
+    b+=(it.price||0)*(it.qty||1)-(it.remise||0);
+  });
+  return Math.max(0, Math.round(b*100)/100);
+}
+function lxFidRewardAmount(){
+  var FC=window.FIDCONF||{}, SC=window.SITE_CONFIG||{};
+  var type=(FC.type==="percent"||SC.fideliteType==="pourcentage")?"pourcentage":(FC.type||SC.fideliteType||"pourcentage");
+  var val=Number(FC.remise||SC.fideliteValeur||10);
+  var base=lxFidEligibleTotal();
+  return type==="pourcentage"?Math.round(base*val/100*100)/100:Math.min(val, base);
+}
+function lxFidUseReward(cId){
+  var cl=gC(cId); if(!cl) return;
+  if(_tk._fidResults&&_tk._fidResults[cId]) return; // déjà appliquée (anti-double)
+  var amt=lxFidRewardAmount();
+  if(amt<=0){ if(typeof toast==="function")toast("Aucun montant éligible à la remise","warning"); return; }
+  var surTxt=((window.FIDCONF&&window.FIDCONF.remiseSur==="tout")?"tout le ticket":"services et forfaits");
+  var htm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+  htm+='<div style="font-size:34px;margin-bottom:6px">🏆</div>';
+  htm+='<h2 style="color:var(--gold)">Remise fidélité</h2>';
+  htm+='<div style="font-size:14px;margin-bottom:4px"><strong>'+cName(cl)+'</strong></div>';
+  htm+='<div style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:14px">Remise de <strong style="color:var(--gold)">−'+amt.toFixed(2)+' €</strong> (sur '+surTxt+').<br>Que faire du compteur après ?</div>';
+  htm+='<div style="display:flex;flex-direction:column;gap:8px">';
+  htm+='<button class="btn bg" style="width:100%;padding:14px;text-align:left" onclick="cM();applyFidEarly(\''+cId+'\','+amt+',0)"><strong>✅ Appliquer · compteur à 0</strong><br><span style="font-size:11px;color:rgba(255,255,255,.5)">La remise est posée, le compteur repart de zéro</span></button>';
+  htm+='<button class="btn" style="width:100%;padding:14px;text-align:left;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3)" onclick="cM();applyFidEarly(\''+cId+'\','+amt+',1)"><strong>✅ Appliquer · compteur à 1</strong><br><span style="font-size:11px;color:rgba(255,255,255,.4)">Ce passage compte déjà comme 1er point</span></button>';
+  htm+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5)" onclick="cM()">Annuler</button>';
+  htm+='</div></div></div>';
+  document.getElementById("modal").innerHTML=htm;
+}
+function applyFidEarly(cId,amount,resetTo){
+  if(!_tk._fidResults)_tk._fidResults={};
+  if(_tk._fidResults[cId])return; // anti-double
+  _tk._fidResults[cId]={action:"discount",amount:amount,resetTo:resetTo};
+  _tk.remise=(_tk.remise||0)+amount;
+  _tk._fidDiscountApplied=(_tk._fidDiscountApplied||0)+amount;
+  _tk.step=5; showCaisse();
+}
+function lxFidUndoReward(cId){
+  var fr=_tk._fidResults&&_tk._fidResults[cId];
+  if(fr&&fr.action==="discount"){
+    _tk.remise=Math.max(0,(_tk.remise||0)-(fr.amount||0));
+    _tk._fidDiscountApplied=Math.max(0,(_tk._fidDiscountApplied||0)-(fr.amount||0));
+    delete _tk._fidResults[cId];
+  }
+  _tk.step=5; showCaisse();
+}
 function applyFidDiscount(amount,method){
   _tk.remise=(_tk.remise||0)+amount;
   _tk._fidHandled=true;
