@@ -1704,7 +1704,7 @@ async function saveAppointment(appt) {
         try { await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
       } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); }
       // Marque la rdv_online encaissee (compte client : RDV passe + facture ; dedup planning)
-      try { _sb.from("rdv_online").update({ status: "done" }).eq("id", onlineUuid).eq("salon_id", _salonId).then(function(){}, function(){}); } catch (e3) {}
+      try { _sb.from("rdv_online").update({ status: "done", ticket_num: (appt.tkNum || null) }).eq("id", onlineUuid).eq("salon_id", _salonId).then(function(){}, function(){}); } catch (e3) {}
       _walMarkSynced(_walId);
       return;
     }
