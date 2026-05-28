@@ -5706,6 +5706,45 @@ function doCloture(){
   }
   _doClotureDo();
 }
+// FIX 2026-05-28 : comptage du tiroir a la cloture Z (NF525). Helpers isoles.
+// Theorique = fond + especes encaissees + entrees - sorties - mises au coffre du jour.
+// Tout est ADDITIF : aucune modification du fiscal existant.
+function _lxClotureCaisseTheo(){
+  try{
+    var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
+    var done=AP.filter(function(a){return a&&a.st==="done"&&a.date===TD&&!a.cancelled;});
+    var esp=0; done.forEach(function(a){ var m=String(a.met||"").toLowerCase(); if(m.indexOf("esp")>=0) esp+=Number(a.pr)||0; });
+    var totEntrees=0,totSorties=0;
+    if(Array.isArray(CD.mouvements)){ CD.mouvements.filter(function(m){return m.date===TD;}).forEach(function(m){ var amt=Number(m.montant)||0; if(m.type==="sortie"||m.type==="retrait"||m.type==="depense") totSorties+=amt; else totEntrees+=amt; }); }
+    var macEsp=0;
+    if(Array.isArray(CD.misesAuCoffre)){ CD.misesAuCoffre.filter(function(m){return m.date===TD;}).forEach(function(m){ macEsp+=Number(m.esp)||0; }); }
+    return Math.round((fond+esp+totEntrees-totSorties-macEsp)*100)/100;
+  }catch(_e){ return 0; }
+}
+// Recalcule l\u2019ecart a chaque saisie, affiche/masque la justification, active/desactive Valider.
+function _lxClotureUpdateEcart(){
+  try{
+    var theoEl=document.getElementById("clot_theo"); if(!theoEl) return;
+    var theo=Number(theoEl.getAttribute("data-theo"))||0;
+    var inp=document.getElementById("clot_reel"); var raw=inp?String(inp.value).replace(",","."):"";
+    var reel=(raw===""||isNaN(parseFloat(raw)))?null:Math.round(parseFloat(raw)*100)/100;
+    var ecart=(reel==null)?null:Math.round((reel-theo)*100)/100;
+    var ecartEl=document.getElementById("clot_ecart");
+    if(ecartEl){
+      if(ecart==null){ ecartEl.textContent="--"; ecartEl.style.color="var(--text3)"; }
+      else { ecartEl.textContent=(ecart>=0?"+":"")+ecart.toFixed(2)+" \u20ac"; ecartEl.style.color=(Math.abs(ecart)<=0.01?"var(--green)":(Math.abs(ecart)>10?"#ef5350":"var(--gold)")); }
+    }
+    var needJustif=(reel!=null)&&(Math.abs(ecart)>0.01);
+    var jWrap=document.getElementById("clot_justif_wrap"); if(jWrap) jWrap.style.display=needJustif?"block":"none";
+    var btn=document.getElementById("clot_valider_btn");
+    if(btn){
+      var justifEl=document.getElementById("clot_justif");
+      var hasJustif=justifEl&&String(justifEl.value||"").trim().length>=3;
+      var ok=(reel!=null)&&(!needJustif||hasJustif);
+      btn.disabled=!ok; btn.style.opacity=ok?"1":".5"; btn.style.cursor=ok?"pointer":"not-allowed";
+    }
+  }catch(_e){}
+}
 function _doClotureDo(){
   // Already clotured? Block
   // Also check CLOTURES array
@@ -5726,11 +5765,32 @@ function _doClotureDo(){
   if(tProd>0)h+='<div style="font-size:13px;margin-bottom:14px;color:var(--text2)">Produits: '+tProd.toFixed(2)+' \u20ac</div>';
   else h+='<div style="margin-bottom:14px"></div>';
   h+='<div style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.3);padding:12px;border-radius:8px;font-size:13px;margin-bottom:14px;text-align:left;color:#fff">\u26a0\ufe0f La cl\u00f4ture est <strong>d\u00e9finitive et irr\u00e9versible</strong>. Elle sera enregistr\u00e9e dans le journal NF525.</div>';
+  // FIX 2026-05-28 : section comptage du tiroir (NF525, additif)
+  var _clotTheo=(typeof _lxClotureCaisseTheo==="function")?_lxClotureCaisseTheo():0;
+  h+='<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;margin-bottom:14px;text-align:left">';
+  h+='<div style="font-size:11px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Comptage du tiroir</div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:6px"><span>Solde theorique en caisse</span><strong id="clot_theo" data-theo="'+_clotTheo.toFixed(2)+'" style="color:#fff">'+_clotTheo.toFixed(2)+' \u20ac</strong></div>';
+  h+='<label style="font-size:12px;color:var(--text2);display:block;margin:8px 0 4px">Solde reel compte (especes dans le tiroir)</label>';
+  h+='<input id="clot_reel" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" oninput="_lxClotureUpdateEcart()" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:15px;font-weight:700">';
+  h+='<div style="display:flex;justify-content:space-between;font-size:13px;margin-top:10px"><span style="color:var(--text2)">Ecart</span><strong id="clot_ecart" style="color:var(--text3)">--</strong></div>';
+  h+='<div id="clot_justif_wrap" style="display:none;margin-top:10px">';
+  h+='<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Justification de l\u0027ecart (obligatoire)</label>';
+  h+='<textarea id="clot_justif" rows="2" oninput="_lxClotureUpdateEcart()" placeholder="Ex : arrondi rendu monnaie, comptage a verifier, ..." style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:13px;resize:vertical"></textarea>';
+  h+='</div></div>';
   h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-  h+='<button class="btn bg" style="flex:1" onclick="doConfirmCloture()">Confirmer</button></div></div></div>';
+  h+='<button id="clot_valider_btn" class="btn bg" style="flex:1;opacity:.5;cursor:not-allowed" disabled onclick="doConfirmCloture()">Valider la cloture</button></div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
 function doConfirmCloture(){
+  // FIX 2026-05-28 : capter la saisie de comptage (additif, fallback transparent si absent)
+  try{
+    var _rEl=document.getElementById("clot_reel"); var _tEl=document.getElementById("clot_theo");
+    if(_rEl){ var _raw=String(_rEl.value).replace(",","."); if(_raw!==""&&!isNaN(parseFloat(_raw))){
+      var _reel=Math.round(parseFloat(_raw)*100)/100; var _theo=Number(_tEl&&_tEl.getAttribute("data-theo"))||0; var _ec=Math.round((_reel-_theo)*100)/100;
+      var _jEl=document.getElementById("clot_justif"); var _j=_jEl?String(_jEl.value||"").trim():"";
+      window._lxClotureComptage={ soldeReel:_reel, soldeTheorique:_theo, ecart:_ec, justification:_j };
+    }}
+  }catch(_eC){}
   // GARDE-FOU CRITIQUE NF525 : anti-double-clic. Sans ça, un double-tap rapide sur
   // "Confirmer" appelle cloturerJournee() 2 fois. Les 2 appels lisent CLOTURES.length
   // simultanément → même num attribué → 2 INSERTs en DB avec même num mais hashes
@@ -6070,8 +6130,16 @@ function printClotureZ(){
   h+="<tr><td>E. - Mise au coffre esp\u00e8ces</td><td class=\"tr\">-"+macEsp.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr class=\"tline\"><td class=\"tb\">SOLDE THEORIQUE EN CAISSE</td><td class=\"tr tb\">"+caisseTheo.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td class=\"small\">(A+B+C-D-E = solde th\u00e9orique)</td><td></td></tr>";
-  h+="<tr><td style=\"padding-top:6px\">Solde r\u00e9el compt\u00e9 : _________ \u20ac</td><td></td></tr>";
-  h+="<tr><td>ECART DE CAISSE : _________ \u20ac</td><td></td></tr>";
+  // FIX 2026-05-28 : si la cloture porte une saisie de comptage, on l'affiche au lieu des blancs.
+  if(typeof c.soldeReel==="number"){
+    h+="<tr><td style=\"padding-top:6px\">Solde r\u00e9el compt\u00e9</td><td class=\"tr\">"+c.soldeReel.toFixed(2)+" \u20ac</td></tr>";
+    var _ec=Number(c.ecart)||0; var _ecCol=(Math.abs(_ec)<=0.01)?"#000":(_ec<0?"#c00":"#0a0");
+    h+="<tr><td class=\"tb\">ECART DE CAISSE</td><td class=\"tr tb\" style=\"color:"+_ecCol+"\">"+(_ec>=0?"+":"")+_ec.toFixed(2)+" \u20ac</td></tr>";
+    if(c.ecartJustification){ h+="<tr><td colspan=\"2\" style=\"font-size:10px;color:#333;padding-top:2px\">Justif. : "+String(c.ecartJustification).replace(/</g,"&lt;")+"</td></tr>"; }
+  } else {
+    h+="<tr><td style=\"padding-top:6px\">Solde r\u00e9el compt\u00e9 : _________ \u20ac</td><td></td></tr>";
+    h+="<tr><td>ECART DE CAISSE : _________ \u20ac</td><td></td></tr>";
+  }
   h+="</table>";
   h+="<div class=\"sep2\"></div>";
   h+="<table>";
@@ -30272,6 +30340,17 @@ function cloturerJournee(){
       try{ if(typeof saveAuditEntry==="function") saveAuditEntry("HASH_MISMATCH","Cloture num "+c.num+" sync="+c.hash.slice(0,16)+" async="+h.slice(0,16)); }catch(_){}
     }
   });
+  // FIX 2026-05-28 : attache la saisie de comptage du tiroir (NON FISCAL, n'impacte pas le hash)
+  try{
+    var _cp=window._lxClotureComptage;
+    if(_cp && typeof _cp.soldeReel==="number"){
+      c.soldeReel=_cp.soldeReel; c.soldeTheorique=_cp.soldeTheorique; c.ecart=_cp.ecart; c.ecartJustification=_cp.justification||"";
+      if(typeof auditLog==="function" && Math.abs(_cp.ecart||0)>0.01){
+        auditLog("CLOTURE_Z_ECART","Z #"+c.num+" : ecart "+(_cp.ecart>=0?"+":"")+_cp.ecart.toFixed(2)+" \u20ac - "+(_cp.justification||"(sans motif)"));
+      }
+    }
+    window._lxClotureComptage=null;
+  }catch(_eA){}
   window.LOCKED_DAYS[TD]=true;
   try{localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS));}catch(e){}
   window.CLOTURES.push(c);
