@@ -5350,6 +5350,7 @@ function buildClotureText(c){
   t+="\n--- CUMULS ---\n";
   t+="Cumul mois:         "+(c.cumulMois||c.totalCA).toFixed(2)+" EUR\n";
   t+="Cumul annuel:       "+(c.cumulAnnuel||c.totalCA).toFixed(2)+" EUR\n";
+  t+="Grand Total perpetuel: "+(typeof c.cumulPerpetuelCA==="number"?c.cumulPerpetuelCA:(c.cumulAnnuel||c.totalCA)).toFixed(2)+" EUR\n";
   t+="\n--- CONFORMITÉ NF525 ---\n";
   t+="Cloture Z #"+c.num+"\n";
   t+="Hash: "+c.hash+"\n";
@@ -6160,7 +6161,8 @@ function printClotureZ(){
   h+="<h2>10. Cumuls</h2>";
   h+="<table>";
   h+="<tr><td>Cumul mois en cours</td><td class=\"tr tb\">"+(c.cumulMois||c.totalCA).toFixed(2)+" \u20ac</td></tr>";
-  h+="<tr><td>Cumul annuel (Grand Total)</td><td class=\"tr tb\">"+(c.cumulAnnuel||c.totalCA).toFixed(2)+" \u20ac</td></tr>";
+  h+="<tr><td>Cumul annuel</td><td class=\"tr tb\">"+(c.cumulAnnuel||c.totalCA).toFixed(2)+" \u20ac</td></tr>";
+  h+="<tr class=\"tline\"><td class=\"tb\">CUMUL PERP\u00c9TUEL (Grand Total)</td><td class=\"tr tb\">"+(typeof c.cumulPerpetuelCA==="number"?c.cumulPerpetuelCA:(c.cumulAnnuel||c.totalCA)).toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
   
   // ===== PIED DE PAGE - CERTIFICATION =====
@@ -13984,7 +13986,7 @@ async function doRgpdDelete(cId){
 // S\u00e9curit\u00e9 c\u00f4t\u00e9 serveur : la fonction Postgres factory_reset_salon refuse si le
 // salon est en abonnement payant (trial expir\u00e9 + is_free=false).
 function lxOpenFactoryReset(){
-  var _isTest = (window.IS_FREE_PLAN === true) || (window._trialDaysLeft && window._trialDaysLeft > 0);
+  var _isTest = (window._trialDaysLeft && window._trialDaysLeft > 0); // NF525: aligne sur le serveur (reset reserve a l essai actif)
   if(!_isTest){
     showAlert("Le factory reset est r\u00e9serv\u00e9 aux salons en mode essai ou plan offert. Votre salon est en abonnement payant \u2014 les donn\u00e9es NF525 doivent \u00eatre conserv\u00e9es l\u00e9galement.","warning");
     return;
@@ -30332,6 +30334,9 @@ function cloturerJournee(){
   var clotAn=window.CLOTURES.filter(function(x){return x.date.indexOf(anKey)===0;});
   var cumulAn=totalCA;clotAn.forEach(function(x){cumulAn+=x.totalCA;});
   c.cumulAnnuel=cumulAn;
+  // Grand total perpetuel (NF525): valeur affichee best-effort; autorite = trigger serveur clotures_set_cumul_perpetuel.
+  var _maxPerp=0; window.CLOTURES.forEach(function(x){ if(typeof x.cumulPerpetuelCA==="number"&&x.cumulPerpetuelCA>_maxPerp)_maxPerp=x.cumulPerpetuelCA; });
+  c.cumulPerpetuelCA=Math.round((_maxPerp+totalCA)*100)/100;
   c.hash=sha256Sync("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret);
   c.hashAlgo="SHA-256";
   // NF525: opérateur qui a effectué la clôture Z

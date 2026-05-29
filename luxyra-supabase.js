@@ -607,6 +607,8 @@ function _mapClotureRow(c) {
     perSty: base.perSty || c.detail_collabs || {},
     cumulMoisCA: Number(c.cumul_mois_ca), cumulMoisTk: c.cumul_mois_tickets,
     cumulAnCA: Number(c.cumul_annee_ca), cumulAnTk: c.cumul_annee_tickets,
+    cumulPerpetuelCA: (c.cumul_perpetuel_ca!=null?Number(c.cumul_perpetuel_ca):undefined),
+    cumulPerpetuelTk: (c.cumul_perpetuel_tickets!=null?Number(c.cumul_perpetuel_tickets):undefined),
     hash: c.hash, hashAlgo: c.hash_algo
   });
 }
