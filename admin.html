@@ -2079,25 +2079,55 @@ function rSalons(){
   var h='<div class="topbar"><h1>Établissements <span>'+SALONS.length+' comptes</span></h1><div><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
   h+='<div class="search-box"><span>🔍</span><input id="sSearch" placeholder="Rechercher..." oninput="filterS()"></div>';
   h+='<div class="table-wrap"><div class="table-header"><div class="table-title">🏠 Liste</div><div class="table-filter">';
-  [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"},{k:"pending",l:"⏳ Non vérifiés"}].forEach(function(f){
+  [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"},{k:"pending",l:"⏳ Non vérifiés"},{k:"risk",l:"⚠️ À risque"}].forEach(function(f){
     h+='<button class="tf-btn'+(curFilter===f.k?" active":"")+'" onclick="setF(&#39;'+f.k+'&#39;)">'+f.l+'</button>';
   });
-  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Vérif.</th><th>Clients</th><th>Créé le</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
+  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Vérif.</th><th>Clients</th><th>Créé le</th><th>Activité</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
+  setTimeout(lxLoadSalonHealth,60);
   return h;
 }
 
+function _salonHealthOf(id){ return (window._SALON_HEALTH||{})[id]||null; }
+function _salonRisk(s){
+  if(!(s.status==='active'||s.status==='trial')) return {risk:false};
+  var hh=_salonHealthOf(s.id);
+  if(!hh) return {risk:false, pending:true};
+  if(!hh.last_ticket) return {risk:true, days:null};
+  var days=Math.floor((Date.now()-new Date(hh.last_ticket+'T12:00:00').getTime())/86400000);
+  return {risk: days>=7, days:days};
+}
+function _salonActivityCell(s){
+  var hh=_salonHealthOf(s.id);
+  var live=(s.status==='active'||s.status==='trial');
+  if(!hh){ return '<td style="font-size:11px;color:var(--text3)">'+(live?'…':'—')+'</td>'; }
+  var rk=_salonRisk(s);
+  var col=rk.risk?'var(--red)':((rk.days!=null&&rk.days<=2)?'var(--green)':'var(--text2)');
+  var main=hh.last_ticket?(rk.days===0?'aujourd\'hui':(rk.days===1?'hier':rk.days+'j')):'jamais';
+  return '<td style="font-size:11px"><div style="color:'+col+';font-weight:'+(rk.risk?'700':'400')+'">'+(rk.risk?'⚠️ ':'')+main+'</div><div style="color:var(--text3);font-size:10px">'+(hh.tickets_30d||0)+' tk · '+fmtM(hh.ca_30d||0)+' /30j</div></td>';
+}
+async function lxLoadSalonHealth(){
+  try{
+    var r=await _sb.rpc('admin_salon_health');
+    if(r.error) throw new Error(r.error.message);
+    var map={}; (r.data||[]).forEach(function(x){ map[x.salon_id]=x; });
+    window._SALON_HEALTH=map;
+    var tb=document.getElementById('sTbody');
+    if(tb) tb.innerHTML=buildRows(SALONS, curFilter);
+  }catch(e){ console.warn('[salon health]', e&&e.message); }
+}
 function buildRows(list,f){
   var mI={coiffure:"✂️",barbier:"💈",esthetique:"💆",ongles:"💅",bien_etre:"🧘"};
   var h="";
   list.forEach(function(s){
-    if(f!=="all"&&f!=="pending"&&s.status!==f)return;
-    if(f==="pending"&&s.verif==="verified")return;
+    if(f==="risk"){ if(!_salonRisk(s).risk) return; }
+    else { if(f!=="all"&&f!=="pending"&&s.status!==f)return; if(f==="pending"&&s.verif==="verified")return; }
     h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
+    h+=_salonActivityCell(s);
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
   });
-  if(!h)h='<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
+  if(!h)h='<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
   return h;
 }
 
