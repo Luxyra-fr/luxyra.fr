@@ -22147,7 +22147,11 @@ function rStats(){
   });
   ps.forEach(function(p){caPd+=p.pr*taxR;nbPd++;qtyPd+=1;});
   var caT=caPr+caPd,nbT=nbPr+nbPd,qtyT=qtyPr+qtyPd;
-  var panPr=nbPr?caPr/nbPr:0,panPd=nbPd?caPd/nbPd:0;
+  // FIX 2026-05-29 : panier moyen = CA / nombre de tickets (coherent avec la cloture Z).
+  // Avant: (caPr/nbPr)+(caPd/nbPd) additionnait deux moyennes a denominateurs differents
+  // -> panier surestime des qu un ticket melait prestation et produit.
+  var nbTk=dn.length+ps.length;
+  var panPr=nbTk?caPr/nbTk:0,panPd=nbTk?caPd/nbTk:0;
   
   // Genre: F/H/E
   // Priorité : prestation Enfants > prestation Homme/Barbier > passage marqué > sex client > F
@@ -22279,7 +22283,12 @@ function rStats(){
   
   // Per stylist
   var stCA={};T.forEach(function(t){stCA[t.id]={n:t.n,c:t.c,ca:0};});
-  dn.forEach(function(a){if(stCA[a.stId])stCA[a.stId].ca+=a.pr*taxR;});
+  // FIX 2026-05-29 : repartition au prorata (comme cloture Z / Accueil) pour coherence multi-collaborateur.
+  dn.forEach(function(a){
+    var dist=(typeof caPerCollabForAppt==="function")?caPerCollabForAppt(a):null;
+    if(dist){ for(var _sid in dist){ if(stCA[_sid]) stCA[_sid].ca+=dist[_sid]*taxR; } }
+    else if(stCA[a.stId]) stCA[a.stId].ca+=a.pr*taxR;
+  });
   
   // Top clients — FIX 2026-05-14 : exclut TOUS les passages (passage, passage-H/F/E)
   // car ce ne sont pas des clients identifiés (apparaissaient comme "?" dans le top)
