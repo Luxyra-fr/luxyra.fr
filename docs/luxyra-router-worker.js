@@ -115,6 +115,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
+      if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
       // Stripe Connect
       if (url.pathname === "/api/stripe/connect-onboard" && request.method === "POST") return await handleConnectOnboard(request, env);
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
@@ -774,6 +775,53 @@ async function handlePortal(request, env) {
 // ============================================================
 // 4. SWITCH PLAN
 // ============================================================
+async function handleOfferMonth(request, env) {
+  try {
+    const { salon_id, months, jwt } = await request.json();
+    if (!salon_id || !months) return jsonResponse({ error: "salon_id et months requis" }, 400);
+    const n = Math.max(1, Math.min(12, parseInt(months) || 0));
+    if (!n) return jsonResponse({ error: "Nombre de mois invalide (1 a 12)" }, 400);
+    // Verif admin : on rejoue is_admin() dans le contexte du JWT admin du panel
+    if (!jwt) return jsonResponse({ error: "Authentification requise" }, 401);
+    let isAdmin = false;
+    try {
+      const chk = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/is_admin`, {
+        method: "POST",
+        headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: "Bearer " + jwt, "Content-Type": "application/json" },
+        body: "{}"
+      });
+      isAdmin = (await chk.json()) === true;
+    } catch (_) { isAdmin = false; }
+    if (!isAdmin) return jsonResponse({ error: "Acces refuse (admin requis)" }, 403);
+    const salon = await supabaseGet(env, salon_id);
+    if (!salon) return jsonResponse({ error: "Salon introuvable" }, 404);
+    if (!salon.stripe_subscription_id) return jsonResponse({ error: "Ce salon n'a pas d'abonnement Stripe : aucune echeance a decaler (geste reserve aux abonnes payants)." }, 400);
+    const sub = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, null, "GET");
+    if (!sub || !sub.id || sub.status === "canceled") return jsonResponse({ error: "Abonnement Stripe introuvable ou annule" }, 400);
+    // Nouvelle echeance = max(fin de periode courante, maintenant) + N mois (calendaire)
+    const nowS = Math.floor(Date.now() / 1000);
+    const baseS = Math.max(Number(sub.current_period_end) || nowS, nowS);
+    const d = new Date(baseS * 1000);
+    d.setMonth(d.getMonth() + n);
+    const newTrialEnd = Math.floor(d.getTime() / 1000);
+    const updated = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, {
+      trial_end: String(newTrialEnd),
+      proration_behavior: "none"
+    });
+    if (!updated || !updated.id) return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(updated).slice(0, 300) }, 500);
+    const nextStr = d.toISOString().slice(0, 10);
+    try { await supabaseUpdate(env, salon_id, { free_until: nextStr }); } catch (_) {}
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, {
+        method: "POST",
+        headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ action: "OFFER_MONTHS", salon_id: salon_id, details: "+" + n + " mois offerts — prochaine echeance Stripe repoussee au " + nextStr })
+      });
+    } catch (_) {}
+    return jsonResponse({ success: true, months: n, next_billing: nextStr });
+  } catch (e) { return jsonResponse({ error: "offer-month error: " + (e && e.message) }, 500); }
+}
+
 async function handleSwitchPlan(request, env) {
   try {
     const { salon_id, plan } = await request.json();

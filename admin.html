@@ -2215,6 +2215,7 @@ function openD(id){
   h+='<div class="dp-field"><span class="k">Inscrit le</span><span class="v">'+fmtD(s.created)+'</span></div>';
   if(s.trialEnd){var days=dBetween(new Date().toISOString().slice(0,10),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
   if(s.stripeCust)h+='<div class="dp-field"><span class="k">Stripe</span><span class="v"><a href="https://dashboard.stripe.com/test/customers/'+s.stripeCust+'" target="_blank" style="color:var(--gold);font-size:11px">Voir dans Stripe ↗</a></span></div>';
+  h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Geste</span><span class="v">'+(s.stripeSub?('<button class="dp-btn" style="font-size:12px;padding:6px 10px" onclick="lxOfferMonths(&#39;'+s.id+'&#39;)">🎁 Offrir des mois</button>'):'<span style="font-size:11px;color:var(--text3)">Pas d\'abonnement Stripe — geste indisponible</span>')+'</span></div>';
   h+='</div>';
 
   // PLAN GRATUIT
@@ -3605,6 +3606,21 @@ async function saveNotes(id){
   alert("Notes enregistrées !");
 }
 
+async function lxOfferMonths(salonId){
+  var n=prompt("Offrir combien de mois a ce salon ? (1 a 12)\n\nCela REPOUSSE sa prochaine echeance Stripe d'autant (aucune facture pendant ces mois). A utiliser uniquement sur un salon reellement abonne payant.","1");
+  if(n===null) return;
+  n=parseInt(n,10); if(!n||n<1||n>12){ alert("Nombre invalide (1 a 12)."); return; }
+  if(!confirm("Confirmer : offrir "+n+" mois ? La prochaine facture Stripe du salon sera repoussee de "+n+" mois.")) return;
+  try{
+    var sess=await _sb.auth.getSession();
+    var jwt=(sess&&sess.data&&sess.data.session)?sess.data.session.access_token:null;
+    if(!jwt){ alert("Session expiree, reconnecte-toi."); return; }
+    var r=await fetch("/api/admin/offer-month",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,months:n,jwt:jwt})});
+    var j=await r.json().catch(function(){return{};});
+    if(r.ok && j.success){ alert("✅ "+n+" mois offerts. Prochaine echeance : "+(j.next_billing||"?")); if(typeof loadData==="function") loadData(); }
+    else { alert("❌ "+(j.error||("Erreur "+r.status))); }
+  }catch(e){ alert("❌ "+(e&&e.message)); }
+}
 async function saveFreePlan(id){
   var isFree=document.getElementById("dpFree").checked;
   var plan=document.getElementById("dpFreePlan").value;
