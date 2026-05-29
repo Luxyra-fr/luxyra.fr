@@ -901,6 +901,7 @@ var _operatorLockTimer = null;
 var _operatorPinBuffer = "";
 var _operatorPinTarget = null;
 var _operatorPinCallback = null;
+var _operatorPinError = "";
 var _operatorAdminOverrideUntil = 0; // timestamp jusqu'auquel admin override est valide
 var _operatorInactivityTimer = null;
 
@@ -1480,6 +1481,7 @@ function showPinPad(operatorId, callback) {
   _operatorPinBuffer = "";
   _operatorPinTarget = op;
   _operatorPinCallback = callback || null;
+  _operatorPinError = "";
   renderPinPad();
 }
 
@@ -1513,6 +1515,10 @@ function renderPinPad() {
     h += '<div style="width:18px;height:18px;border-radius:50%;border:2px solid '+roleColor+';background:'+(filled?roleColor:"transparent")+';transition:all .15s"></div>';
   }
   h += '</div>';
+  // FIX 2026-05-29 : message d'erreur AFFICHE DANS le pave PIN (le toast passait derriere l'overlay plein ecran, meme z-index 99999 -> invisible).
+  if (_operatorPinError) {
+    h += '<div style="margin:-16px 0 22px;color:#ef5350;font-size:13px;font-weight:700;text-align:center;max-width:280px;line-height:1.3">'+_operatorPinError+'</div>';
+  }
   // Numpad
   h += '<div style="display:grid;grid-template-columns:repeat(3,80px);gap:14px;max-width:280px">';
   var nums = [1,2,3,4,5,6,7,8,9,"",0,"\u232b"];
@@ -1538,6 +1544,7 @@ function renderPinPad() {
 
 function pinPadPress(n) {
   if (!_operatorPinTarget) return;
+  if (_operatorPinError) _operatorPinError = ""; // efface le message des qu'on retape
   var maxLen = _operatorPinTarget.pin_length || 4;
   if (_operatorPinBuffer.length >= maxLen) return;
   _operatorPinBuffer += String(n);
@@ -1583,21 +1590,20 @@ async function validatePinPad() {
       if (typeof updateOperatorAvatar === "function") setTimeout(updateOperatorAvatar, 50);
     }
   } else {
-    // Wrong PIN - shake effect
+    // PIN faux : message VISIBLE dans le pave + essais restants (le toast passait derriere l'overlay).
     _operatorPinBuffer = "";
-    var pad = document.getElementById("pinPadOverlay");
-    if (pad) {
-      pad.style.animation = "shake .4s";
-      setTimeout(function(){pad.style.animation="";}, 400);
-    }
-    toast(result.error || "PIN incorrect", "error");
     if (result.locked) {
-      setTimeout(function(){
-        closePinPad();
-        refreshOperateurs(); // refresh to show locked state
-      }, 1500);
+      _operatorPinError = "\ud83d\udd12 Trop d'erreurs \u2014 compte verrouill\u00e9 30 min";
+    } else if (typeof result.remaining === "number") {
+      _operatorPinError = "Code incorrect \u2014 il reste " + result.remaining + " essai" + (result.remaining > 1 ? "s" : "");
     } else {
-      renderPinPad();
+      _operatorPinError = result.error || "Code incorrect";
+    }
+    renderPinPad();
+    var pad = document.getElementById("pinPadOverlay");
+    if (pad) { pad.style.animation = "shake .4s"; setTimeout(function(){pad.style.animation="";}, 400); }
+    if (result.locked) {
+      setTimeout(function(){ closePinPad(); refreshOperateurs(); }, 1800);
     }
   }
 }

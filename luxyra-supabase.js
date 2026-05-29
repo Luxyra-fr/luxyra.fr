@@ -2795,7 +2795,7 @@ async function operatorLogin(operatorId, pin) {
     var op = r.data[0];
     if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
     if (op.locked_until && new Date(op.locked_until) > new Date()) {
-      return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true};
+      return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true, remaining:0, max:5, lockedUntil:op.locked_until};
     }
     var pinHash = await hashPIN(pin, _salonId);
     if (pinHash !== op.pin_hash) {
@@ -2807,7 +2807,7 @@ async function operatorLogin(operatorId, pin) {
         update.locked_until = new Date(Date.now() + 30*60*1000).toISOString();
       }
       await _sb.from("salon_operateurs").update(update).eq("id", operatorId);
-      return {ok:false, error:"PIN incorrect ("+fails+"/5)", locked:fails>=5};
+      return {ok:false, error:"PIN incorrect ("+fails+"/5)", locked:fails>=5, fails:fails, remaining:Math.max(0,5-fails), max:5, lockedUntil:update.locked_until||null};
     }
     // Success
     await _sb.from("salon_operateurs").update({
