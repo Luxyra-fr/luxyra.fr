@@ -22887,8 +22887,32 @@ function rStats(){
       if(collab.date_depart && dk2 > collab.date_depart) return;
       var hrs2 = (typeof getEffectiveHrs==="function") ? getEffectiveHrs(dk2, collab.id) : null;
       if(!hrs2 || !hrs2.o || !hrs2.c) return; // jour de repos pour ce collab
-      var openMin = toM(hrs2.c) - toM(hrs2.o);
-      if(openMin > 0) totalAvailMin += openMin;
+      var _oM=toM(hrs2.o), _cM=toM(hrs2.c);
+      var openMin = _cM - _oM;
+      if(openMin > 0){
+        // FIX 2026-05-29 : retirer pause + absences (conge/maladie/absent) du temps disponible
+        // (comptees indisponibles dans le planning) sinon le taux d occupation est sous-estime.
+        var _busy=[];
+        var _pse=(typeof getEffectivePause==="function")?getEffectivePause(dk2,collab.id):(collab.pause||null);
+        if(_pse&&_pse.o&&_pse.c)_busy.push([toM(_pse.o),toM(_pse.c)]);
+        if(window.ABSENCES){
+          for(var _ai=0;_ai<window.ABSENCES.length;_ai++){
+            var _ab=window.ABSENCES[_ai];
+            if(_ab.stId!==collab.id)continue;
+            var _at=_ab.type||"absent";
+            if((_at==="conge"||_at==="absent_jour"||_at==="absent"||_at==="maladie"||_at==="formation")&&((_ab.dateFrom&&_ab.dateFrom<=dk2&&_ab.dateTo>=dk2)||(_ab.date===dk2&&!_ab.from))){
+              _busy.push([_oM,_cM]);
+            }else if((_at==="absent_heures"||_at==="pause")&&_ab.date===dk2&&_ab.from&&_ab.to){
+              _busy.push([toM(_ab.from),toM(_ab.to)]);
+            }
+          }
+        }
+        var _clip=_busy.map(function(b){return [Math.max(_oM,b[0]),Math.min(_cM,b[1])];}).filter(function(b){return b[1]>b[0];}).sort(function(a,b){return a[0]-b[0];});
+        var _busyMin=0,_curEnd=-1;
+        _clip.forEach(function(b){ var s=(b[0]<_curEnd)?_curEnd:b[0]; if(b[1]>s)_busyMin+=b[1]-s; if(b[1]>_curEnd)_curEnd=b[1]; });
+        openMin -= _busyMin;
+        if(openMin > 0) totalAvailMin += openMin;
+      }
     });
     var dayAppts=dn.filter(function(a){return a.date===dk2;});
     dayAppts.forEach(function(a){
