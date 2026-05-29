@@ -2994,7 +2994,48 @@ function rRevenue(){
     var pct=Math.min(100, Math.round(p.r/(_proP*120)*100));
     h+='<div class="chart-bar-row"><div class="chart-bar-label">'+p.m+'</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+pct+'%;background:linear-gradient(90deg,var(--gold),var(--green))">'+p.s+' → '+fmtM(p.r)+'/mois</div></div></div>';
   });
-  h+='</div>';return h;
+  h+='</div>';  h+='<div class="chart-card"><div class="chart-title">🔄 Churn & mouvements de MRR <span style="font-size:11px;color:var(--text3);font-weight:400">(mois sur mois, donnees reelles mesurees)</span></div><div id="lxMrrMovements"><div style="color:var(--text3);font-size:13px">Chargement…</div></div></div>';
+  setTimeout(lxLoadMrrMovements,60);
+  return h;
+}
+
+// ===== CHURN & MOUVEMENTS DE MRR (axe 3) =====
+// Lit les 2 derniers snapshots mensuels (mrr_snapshots.breakdown = MRR par salon)
+// et decompose la variation : nouveau / expansion / contraction / churn + taux de churn.
+function _ymLabel(d){ if(!d) return '?'; var p=String(d).slice(0,7).split('-'); var mo=["janv","fevr","mars","avr","mai","juin","juil","aout","sept","oct","nov","dec"]; return (mo[(+p[1]||1)-1]||'')+' '+p[0]; }
+async function lxLoadMrrMovements(){
+  var box=document.getElementById('lxMrrMovements'); if(!box) return;
+  try{
+    var r=await _sb.from('mrr_snapshots').select('snapshot_month, mrr_total, paying_salons, breakdown').order('snapshot_month',{ascending:false}).limit(2);
+    if(r.error) throw new Error(r.error.message);
+    var snaps=r.data||[];
+    if(snaps.length<2){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Disponible des 2 mois mesures (le suivi mensuel a demarre en mai 2026). Le 2e point sera capture au 1er du mois prochain.</div>'; return; }
+    var cur=snaps[0], prev=snaps[1];
+    var bCur=(cur.breakdown&&typeof cur.breakdown==='object')?cur.breakdown:{};
+    var bPrev=(prev.breakdown&&typeof prev.breakdown==='object')?prev.breakdown:{};
+    var ids={}; Object.keys(bCur).forEach(function(k){ids[k]=1;}); Object.keys(bPrev).forEach(function(k){ids[k]=1;});
+    var mNew=0,mExp=0,mContr=0,mChurn=0,nNew=0,nChurn=0,payStart=0;
+    Object.keys(ids).forEach(function(id){
+      var p=Number(bPrev[id])||0, c=Number(bCur[id])||0;
+      if(p>0) payStart++;
+      if(p===0&&c>0){mNew+=c;nNew++;}
+      else if(p>0&&c===0){mChurn+=p;nChurn++;}
+      else if(c>p){mExp+=(c-p);}
+      else if(c<p){mContr+=(p-c);}
+    });
+    var net=mNew+mExp-mContr-mChurn;
+    var churnRate=payStart>0?Math.round(nChurn/payStart*1000)/10:0;
+    if(payStart===0 && mNew===0){ box.innerHTML='<div style="color:var(--text3);font-size:13px">Aucun salon payant sur la periode — rien a decomposer. La card s\'activera des tes premiers abonnements payants.</div>'; return; }
+    function row(lbl,val,col){ return '<div class="chart-bar-row"><div class="chart-bar-label">'+lbl+'</div><div class="chart-bar-val" style="color:'+col+';font-family:var(--mono)">'+(val>=0?'+':'')+fmtM(val)+'</div></div>'; }
+    var html='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">'+_ymLabel(prev.snapshot_month)+' → '+_ymLabel(cur.snapshot_month)+'</div>';
+    html+=row('🆕 Nouveau',mNew,'var(--green)');
+    html+=row('⬆️ Expansion',mExp,'var(--green)');
+    html+=row('⬇️ Contraction',-mContr,'var(--orange)');
+    html+=row('❌ Churn',-mChurn,'var(--red)');
+    html+='<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">'+row('= Variation nette',net,net>=0?'var(--gold)':'var(--red)')+'</div>';
+    html+='<div style="font-size:12px;color:var(--text2);margin-top:12px">Taux de churn : <strong style="color:'+(churnRate>5?'var(--red)':'var(--green)')+'">'+churnRate+'%</strong> <span style="color:var(--text3)">('+nChurn+' / '+payStart+' salons payants en debut de periode)</span></div>';
+    box.innerHTML=html;
+  }catch(e){ box.innerHTML='<div style="color:var(--red);font-size:13px">Erreur : '+(e.message||e)+'</div>'; }
 }
 
 // ===== PACKS SMS =====
