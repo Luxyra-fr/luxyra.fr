@@ -10943,6 +10943,7 @@ function clickAppt(id){
   htm+='<div style="display:flex;gap:8px;margin-top:8px">';
   if(a.st==="done"){
     htm+='<div style="flex:1;text-align:center;font-size:11px;color:rgba(255,255,255,.3);padding:8px">\ud83d\udd12 Ticket encaiss\u00e9 \u2014 Non modifiable</div>';
+    htm+='<button class="btn" style="background:rgba(108,92,231,.10);border:1px solid rgba(108,92,231,.3);color:#a29bfe;font-weight:700;font-size:11px;padding:7px 10px;white-space:nowrap" onclick="corrigerCollabVente(\''+a.id+'\')">✏️ Corriger collab</button>';
   } else {
     var cancelLabel = a.isOnline ? "Annuler RDV (notifie le client)" : "Annuler RDV";
     htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06);color:#ef5350" onclick="confirmCancelAppt(\''+a.id+'\')">'+cancelLabel+'</button>';
@@ -10954,6 +10955,50 @@ function clickAppt(id){
   htm+='</div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
+
+// NF525 (2026-05-29) : correction de l'attribution collaborateur d'une vente encaissee.
+// NON FISCAL : met a jour appointments (source des stats/commissions), laisse le ticket scelle
+// intact, et trace l'operation dans le journal (CORRECTION_MANUELLE). Reserve admin via requireAdmin.
+function corrigerCollabVente(apptId){
+  if(typeof requireAdmin==="function"){ requireAdmin("Corriger le collaborateur d'une vente", function(){ _corrigerCollabVenteUI(apptId); }); }
+  else { _corrigerCollabVenteUI(apptId); }
+}
+function _corrigerCollabVenteUI(apptId){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ a=AP[i]; break; } }
+  if(!a){ if(typeof toast==="function") toast("Vente introuvable","error"); return; }
+  var cur=gT(a.stId); var curName=cur?cur.n:"(non attribue)";
+  var opts='';
+  for(var j=0;j<T.length;j++){ if(T[j].actif===false) continue; opts+='<option value="'+T[j].id+'"'+(String(T[j].id)===String(a.stId)?' selected':'')+'>'+T[j].n+'</option>'; }
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:420px">';
+  h+='<h2 style="color:var(--gold);font-size:18px;margin-bottom:4px">✏️ Corriger le collaborateur</h2>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Vente '+(a.tkNum?("ticket #"+a.tkNum):("du "+fmt(a.date)))+' - actuellement attribuee a <strong style="color:#fff">'+curName+'</strong>.<br>Le ticket fiscal n\'est pas modifie ; seule l\'attribution (stats / commissions) est corrigee, et l\'operation est tracee dans le journal.</div>';
+  h+='<label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Nouveau collaborateur</label>';
+  h+='<select id="ccvSel" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:14px;margin-bottom:10px">'+opts+'</select>';
+  h+='<label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Motif (optionnel)</label>';
+  h+='<input id="ccvMotif" placeholder="Ex : erreur de saisie a l\'encaissement" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:13px;margin-bottom:14px">';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="doCorrigerCollabVente(\''+apptId+'\')">Valider la correction</button></div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+async function doCorrigerCollabVente(apptId){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ a=AP[i]; break; } }
+  if(!a){ if(typeof toast==="function") toast("Vente introuvable","error"); return; }
+  var sel=document.getElementById("ccvSel"); var newId=sel?sel.value:null;
+  var newT=null; for(var k=0;k<T.length;k++){ if(String(T[k].id)===String(newId)){ newT=T[k]; break; } }
+  if(!newT){ if(typeof toast==="function") toast("Choisissez un collaborateur valide","warning"); return; }
+  var oldId=a.stId; var oldName=(gT(oldId)?gT(oldId).n:"(non attribue)");
+  if(String(oldId)===String(newT.id)){ if(typeof toast==="function") toast("Meme collaborateur, aucune modification","info"); cM(); return; }
+  var motif=((document.getElementById("ccvMotif")||{}).value||"").trim();
+  a.stId=newT.id;
+  if(Array.isArray(a.aPhases)){ a.aPhases.forEach(function(p){ if(p && (String(p.stId)===String(oldId) || p.stId==null)) p.stId=newT.id; }); }
+  try{ if(typeof saveAppointment==="function") await saveAppointment(a); }catch(e){ console.warn("[corrigerCollab] save",e); }
+  try{ if(typeof auditLog==="function") auditLog("CORRECTION_MANUELLE","Correction collaborateur - "+(a.tkNum?("ticket #"+a.tkNum):("vente "+String(a.id).slice(0,8)))+" : "+oldName+" -> "+newT.n+(motif?(" ("+motif+")"):"")+" [ticket fiscal inchange]"); }catch(_){}
+  if(typeof toast==="function") toast("Attribution corrigee : "+newT.n,"success");
+  cM();
+  try{ if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_){}
+}
+window.corrigerCollabVente=corrigerCollabVente; window.doCorrigerCollabVente=doCorrigerCollabVente;
 
 // Appointment editing helpers
 function getApptPhases(a){
