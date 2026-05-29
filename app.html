@@ -28635,7 +28635,7 @@ function rMarketing(){
   
   // Tabs
   h+='<div style="display:flex;gap:0;margin-bottom:16px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.1)">';
-  var tabs=[{k:"campagnes",l:"\ud83d\udce3 Campagnes"},{k:"auto",l:"\ud83d\udcb3 Automatisations"},{k:"rappels",l:"\ud83d\udd14 Rappels RDV"},{k:"config",l:"\u2699\ufe0f Configuration"}];
+  var tabs=[{k:"campagnes",l:"\ud83d\udce3 Campagnes"},{k:"auto",l:"\ud83d\udcb3 Automatisations"},{k:"rappels",l:"\ud83d\udd14 Rappels RDV"},{k:"histo",l:"\ud83d\udcdc Historique"},{k:"config",l:"\u2699\ufe0f Configuration"}];
   for(var i=0;i<tabs.length;i++){
     var t=tabs[i];var isSel=tab===t.k;
     h+='<button onclick="window.MKT_TAB=\''+t.k+'\';go(\'marketing\')" style="flex:1;padding:12px 8px;font-size:12px;font-weight:700;border:none;cursor:pointer;'+(isSel?"background:var(--gold);color:#000":"background:rgba(255,255,255,.04);color:rgba(255,255,255,.6)")+'">'+t.l+'</button>';
@@ -28854,7 +28854,38 @@ function rMarketing(){
     h+='</div>';
   }
   
+  else if(tab==="histo"){
+    h+='<div class="sec">📜 Historique des SMS</div>';
+    h+='<div id="smsHistoBox"><div style="text-align:center;padding:30px;color:var(--text3)">Chargement…</div></div>';
+    setTimeout(lxLoadSmsHistory,60);
+  }
   return h;
+}
+
+async function lxLoadSmsHistory(){
+  var box=document.getElementById('smsHistoBox'); if(!box) return;
+  try{
+    var r=await _sb.from('messaging_log').select('created_at,recipient,content,via,context,client_nom').eq('salon_id',_salonId).eq('type','sms').order('created_at',{ascending:false}).limit(150);
+    if(r.error) throw new Error(r.error.message);
+    var rows=r.data||[];
+    if(!rows.length){ box.innerHTML='<div style="text-align:center;padding:30px;color:var(--text3)">Aucun SMS envoyé pour le moment.</div>'; return; }
+    var ctxLbl={confirmation_rdv:'Confirmation RDV',confirmation_rdv_groupe:'Confirmation RDV',rappel_24h:'Rappel RDV',rappel:'Rappel RDV',anniversaire:'Anniversaire',relance:'Relance',campagne:'Campagne',luxyra_auto:'Automatique'};
+    var html='<div class="card"><div class="ct">Derniers SMS envoyés ('+rows.length+')</div>';
+    rows.forEach(function(m){
+      var d=new Date(m.created_at);
+      var ds=isNaN(d.getTime())?'':d.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+      var lbl=ctxLbl[m.context]||(m.context||'SMS');
+      var via=(m.via==='native')?'📱 Tél.':'☁️ Brevo';
+      var who=m.client_nom||('•••'+(m.recipient||''));
+      html+='<div style="padding:10px 0;border-bottom:1px solid var(--border2)">';
+      html+='<div style="display:flex;justify-content:space-between;font-size:12px;gap:8px"><strong style="color:#fff">'+String(who).replace(/</g,"&lt;")+'</strong><span style="color:var(--text3);white-space:nowrap">'+ds+'</span></div>';
+      html+='<div style="font-size:11px;color:var(--text3);margin-top:2px"><span style="color:#2196f3">'+lbl+'</span> · '+via+(m.recipient?(' · •••'+m.recipient):'')+'</div>';
+      html+='<div style="font-size:12px;color:var(--text2);margin-top:4px">'+String(m.content||'').replace(/</g,"&lt;")+'</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+    box.innerHTML=html;
+  }catch(e){ box.innerHTML='<div style="color:#ef5350;padding:20px;font-size:13px">Erreur : '+((e&&e.message)||e)+'</div>'; }
 }
 
 // === SMS & EMAIL FUNCTIONS ===
@@ -29257,7 +29288,7 @@ async function sendSms(phone,message,context,clientNom){
       // Log uniquement (le worker a déjà patch sms_credits/sms_used en DB)
       if(typeof _sb!=="undefined"&&_salonId){
         try{
-          _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:message.slice(0,50)});
+          _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:String(message||"").slice(0,320),via:"brevo",context:context||null,client_nom:clientNom||null});
         }catch(e){}
       }
       auditLog("SMS_ENVOYE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - OK - Cr\u00e9dits: "+window.SMS_CREDITS);
@@ -29302,7 +29333,7 @@ async function sendSmsNative(phone,message,context,clientNom){
         salon_id:_salonId,
         type:"sms",
         recipient:cleanPhone.slice(-4),
-        content:message.slice(0,50),
+        content:String(message||"").slice(0,320),
         via:"native",
         context:context||"luxyra_auto",
         client_nom:clientNom||null
