@@ -18965,6 +18965,9 @@ function chooseGiftTheme(gcId){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2 style="text-align:center">🖨 Imprimer '+g.code+'</h2>';
   h+='<div style="font-size:13px;color:#888;text-align:center;margin-bottom:14px">'+g.val.toFixed(0)+' € • '+(g.from||"?")+''+(g.to?' → '+g.to:'')+'</div>';
+  if(_salonId==='e0cf27c7-d402-4d76-8e91-9ef5231b3582'){
+    h+='<div onclick="printGiftTexteSeul(\''+gcId+'\')" style="cursor:pointer;border-radius:12px;border:1.5px solid var(--gold);background:rgba(200,168,78,.12);padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px"><span style="font-size:22px">📝</span><div style="flex:1"><div style="font-weight:800;color:var(--gold);font-size:13px">Mes bons pré-imprimés (texte seul)</div><div style="font-size:11px;color:#999">Imprime le texte + réf/QR sur tes bons 21×9,5 cm — calage réglable.</div></div></div>';
+  }
   var themes=getGiftThemes();
   // Bandeau "Style choisi par l'acheteur" si vente en ligne avec theme_id (bons online)
   if(g.themeId){
@@ -18997,6 +19000,56 @@ function chooseGiftTheme(gcId){
   h+='<button class="btn" style="width:100%" onclick="cM()">Annuler</button>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
+}
+
+// === Bon cadeau "texte seul" pour les bons pre-imprimes 21x9,5 (Excellence) ===
+// Imprime uniquement les valeurs (pre-remplies depuis la carte) + reference + QR,
+// positionnees pour tomber sur le bon physique. Calage X/Y reglable et memorise.
+function printGiftTexteSeul(gcId){
+  var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
+  if(!g)return;
+  if(typeof cM==="function")cM();
+  var scopeTxt=(!g.scope||g.scope==="tout")?"":(g.scope==="prestations"?"Prestations":"Produits");
+  var pour=((g.val!=null)?g.val.toFixed(0)+" €":"")+(scopeTxt?(" — "+scopeTxt):"");
+  var fields={offert:g.to||"",part:g.from||"",pour:pour,valable:(g.exp?fmt(g.exp):""),msg:(g.msg&&g.msg!=="Bon offert")?g.msg:""};
+  var ref=g.code||"";
+  var off={};try{off=JSON.parse(localStorage.getItem("_lx_bon_calage")||"{}");}catch(e){}
+  var ox=Number(off.x)||0, oy=Number(off.y)||0;
+  // positions (mm) calibrees sur le bon 21x9,5 — ajustables au 1er essai
+  var P={offert:{x:40,y:14},part:{x:50,y:27},pour:{x:28,y:40},valable:{x:56,y:53},msg:{x:116,y:18,w:84},qr:{x:12,y:64}};
+  function esc(t){return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");}
+  var w=window.open("","_blank","width=900,height=560");if(!w){if(typeof toast==="function")toast("Autorise les fenetres pop-up pour imprimer","warning");return;}
+  var d='<!doctype html><html><head><meta charset="utf-8"><title>Bon '+esc(ref)+'</title>';
+  d+='<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>';
+  d+='<style>@page{size:210mm 95mm;margin:0}*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,Helvetica,sans-serif;color:#000;background:#e6e6e6}';
+  d+='.bar{padding:8px 12px;background:#222;color:#fff;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}';
+  d+='.bar input{width:62px;padding:4px;border-radius:5px;border:1px solid #555}.bar button{padding:7px 12px;font-weight:700;cursor:pointer;border:none;border-radius:6px}';
+  d+='.page{position:relative;width:210mm;height:95mm;background:#fff;margin:14px auto;box-shadow:0 4px 20px rgba(0,0,0,.3)}';
+  d+='.shift{position:absolute;inset:0}.v{position:absolute;font-size:4mm;font-weight:600;color:#111}';
+  d+='.m{position:absolute;font-size:3.7mm;line-height:6.3mm;color:#111;white-space:pre-wrap}';
+  d+='.qr{position:absolute;width:18mm;height:18mm}.qr canvas,.qr img{width:100%!important;height:100%!important}';
+  d+='.rf{position:absolute;font-family:monospace;font-size:3mm;color:#111}';
+  d+='@media print{.bar{display:none}.page{margin:0;box-shadow:none}body{background:#fff}}</style></head><body>';
+  d+='<div class="bar">Calage (mm) &nbsp; H <input id="ox" type="number" step="0.5" value="'+ox+'"> &nbsp; V <input id="oy" type="number" step="0.5" value="'+oy+'">';
+  d+=' <button onclick="ap()">Appliquer</button> <button onclick="sv()" style="background:#c8a84e">Enregistrer le calage</button>';
+  d+=' <button onclick="window.print()" style="background:#2d9a5e;color:#fff">🖨️ Imprimer</button>';
+  d+=' <span style="opacity:.75;font-size:11px">Imprime sur une feuille blanche, superpose a ton bon, ajuste, puis Enregistre.</span></div>';
+  d+='<div class="page"><div class="shift" id="sh" style="transform:translate('+ox+'mm,'+oy+'mm)">';
+  d+='<div class="v" style="left:'+P.offert.x+'mm;top:'+P.offert.y+'mm">'+esc(fields.offert)+'</div>';
+  d+='<div class="v" style="left:'+P.part.x+'mm;top:'+P.part.y+'mm">'+esc(fields.part)+'</div>';
+  d+='<div class="v" style="left:'+P.pour.x+'mm;top:'+P.pour.y+'mm">'+esc(fields.pour)+'</div>';
+  d+='<div class="v" style="left:'+P.valable.x+'mm;top:'+P.valable.y+'mm">'+esc(fields.valable)+'</div>';
+  d+='<div class="m" style="left:'+P.msg.x+'mm;top:'+P.msg.y+'mm;width:'+P.msg.w+'mm">'+esc(fields.msg)+'</div>';
+  d+='<div class="qr" id="qr" style="left:'+P.qr.x+'mm;top:'+P.qr.y+'mm"></div>';
+  d+='<div class="rf" style="left:'+(P.qr.x+20)+'mm;top:'+(P.qr.y+6)+'mm">Ref : '+esc(ref)+'</div>';
+  d+='</div></div>';
+  d+='<script>var R='+JSON.stringify(ref)+';';
+  d+='function ap(){var x=parseFloat(document.getElementById("ox").value)||0,y=parseFloat(document.getElementById("oy").value)||0;document.getElementById("sh").style.transform="translate("+x+"mm,"+y+"mm)";}';
+  d+='function sv(){try{localStorage.setItem("_lx_bon_calage",JSON.stringify({x:parseFloat(document.getElementById("ox").value)||0,y:parseFloat(document.getElementById("oy").value)||0}));ap();alert("Calage enregistre.");}catch(e){alert("Impossible d\'enregistrer le calage.");}}';
+  d+='function drawQR(){try{new QRCode(document.getElementById("qr"),{text:R||" ",width:120,height:120,correctLevel:QRCode.CorrectLevel.M});}catch(e){document.getElementById("qr").innerHTML="<div style=\\"font-size:2.4mm\\">"+R+"</div>";}}';
+  d+='if(window.QRCode){drawQR();}else{var t=0,iv=setInterval(function(){if(window.QRCode||t++>40){clearInterval(iv);drawQR();}},100);}';
+  d+='<\/script></body></html>';
+  w.document.write(d);w.document.close();
 }
 
 function getGiftThemes(){
