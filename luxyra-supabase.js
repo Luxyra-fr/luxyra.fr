@@ -1060,6 +1060,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         return {
           id: a.id, cId: _cId, sId: a.service_id, stId: a.collab_id,
           date: a.date_rdv, time: a.heure, pr: Number(a.prix),
+          heureEncaiss: a.heure_encaissement || null,
           brutTotal: a.brut_total ? Number(a.brut_total) : undefined,
           remise: Number(a.remise || 0),
           st: a.status, met: a.mode_paiement,
@@ -1772,6 +1773,7 @@ async function saveAppointment(appt) {
     pass_type: _passType,  // FIX 2026-05-13 : persiste H/F/E pour les passages walk-in
     service_id: appt.sId, collab_id: appt.stId,
     date_rdv: appt.date, heure: appt.time, prix: appt.pr,
+    heure_encaissement: appt.heureEncaiss || null,  // NF525 : heure reelle d'encaissement (distincte heure RDV)
     brut_total: appt.brutTotal || null, remise: appt.remise || 0,
     status: appt.st, mode_paiement: appt.met || "",
     ticket_num: appt.tkNum || null, ticket_html: appt.ticketHtml || null, hash: appt.hash || "",
@@ -1946,7 +1948,7 @@ async function saveTicketToDb(tk) {
   try {
     var pay = _mapPayment(tk);
     var dateStr = tk.date || new Date().toISOString().slice(0,10);
-    var timeStr = tk.time || new Date().toTimeString().slice(0,5);
+    var timeStr = tk.heureEncaiss || tk.time || new Date().toTimeString().slice(0,5);
     if (timeStr.length === 5) timeStr = timeStr + ":00"; // HH:MM → HH:MM:SS
 
     // Calcul TVA à partir du taux salon

@@ -27335,6 +27335,7 @@ function doFinalPayExecute(method){
     });
   } catch(e){ console.warn("[carte abo] activation pending failed:", e); }
   var tsNow=new Date().toISOString();
+  var heureNow=new Date().toTimeString().slice(0,5); // NF525 : heure d'emission du ticket = encaissement
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   
   tkN++;
@@ -27367,6 +27368,7 @@ function doFinalPayExecute(method){
         AP[li].met=metStr;
         AP[li].tkNum=tkN; // même numéro de ticket — encaissé ensemble
         AP[li].ts=tsNow;
+        AP[li].heureEncaiss=heureNow;
         AP[li].comment=(AP[li].comment||"")+" — Encaissé avec ticket principal #"+tkN;
         if(typeof saveAppointment==="function") saveAppointment(AP[li]);
         break;
@@ -27387,6 +27389,7 @@ function doFinalPayExecute(method){
         AP[i].items=savedItems;
         AP[i].tkNum=tkN;
         AP[i].ts=tsNow;
+        AP[i].heureEncaiss=heureNow; // ticket porte l'heure d'encaissement; a.time reste l'heure du RDV (planning)
         // Persistance DB : nom client lisible + extras multi-client
         var _apClPri=AP[i].cId?gC(AP[i].cId):null;
         if(_apClPri){AP[i].clientNom=_apClPri.nom;AP[i].clientPrenom=_apClPri.pre;}
@@ -27908,7 +27911,7 @@ function rTickets(){
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">';
     h+='<div>';
     h+='<div style="font-weight:800;font-size:15px;color:var(--gold)">Ticket #'+(a.tkNum||"--")+'</div>';
-    h+='<div style="font-size:12px;color:var(--text3)">'+fmt(a.date)+' \u00e0 '+a.time+'</div>';
+    h+='<div style="font-size:12px;color:var(--text3)">'+fmt(a.date)+' \u00e0 '+(a.heureEncaiss||a.time)+'</div>';
     h+='</div>';
     h+='<div style="text-align:right">';
     h+='<div style="font-size:20px;font-weight:900;color:'+(isCancelled?"var(--red)":"#fff")+'">'+(isCancelled?"\u274c ":"")+a.pr.toFixed(2)+' \u20ac</div>';
@@ -28106,7 +28109,7 @@ function exportTicketsCSV(){
   var csv="Date;Heure;Collaborateur;Client;Prestation;Montant;Paiement\n";
   done.forEach(function(a){
     var sv=gS(a.sId),cl=gC(a.cId),sty=gT(a.stId);
-    csv+=a.date+";"+a.time+";"+(sty?sty.n:"")+";"+(cl?cName(cl):"Passage")+";"+(sv?sv.n:"")+";"+a.pr.toFixed(2)+";"+a.met+"\n";
+    csv+=a.date+";"+(a.heureEncaiss||a.time)+";"+(sty?sty.n:"")+";"+(cl?cName(cl):"Passage")+";"+(sv?sv.n:"")+";"+a.pr.toFixed(2)+";"+a.met+"\n";
   });
   try{
     var blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
@@ -28143,7 +28146,7 @@ function buildTicketHTML(a, isDuplicate){
   // Numéro ticket + date
   h+="<div style=\"text-align:center;margin-bottom:8px\">";
   h+="<div style=\"font-weight:900;font-size:13px\">Ticket de vente N\u00b0"+(a.tkNum||"--")+"</div>";
-  h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+a.time+"</div>";
+  h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+(a.heureEncaiss||a.time)+"</div>";
   h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
   h+="<div style=\"font-size:12px\">Client: "+clN+"</div>";
   h+="</div>";
@@ -30364,7 +30367,7 @@ function chainTicket(ticket){
   // TODO future : implémenter un vrai SHA-256 sync en JS pour conformité
   // NF525 stricte. La chaîne actuelle est intègre mais le hash n'est pas
   // SHA-256 nominal.
-  var data="TK|"+ticket.tkNum+"|"+ticket.date+"|"+ticket.time+"|"+ticket.pr.toFixed(2)+"|"+ticket.met+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret;
+  var data="TK|"+ticket.tkNum+"|"+ticket.date+"|"+(ticket.heureEncaiss||ticket.time)+"|"+ticket.pr.toFixed(2)+"|"+ticket.met+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret;
   ticket.prevHash=_lastTicketHash;
   ticket.hashAlgo="SHA-256";
   ticket.hash=sha256Sync(data);
