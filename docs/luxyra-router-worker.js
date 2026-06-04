@@ -2540,6 +2540,16 @@ Sitemap: https://luxyra.fr/sitemap.xml
     });
   }
 
+  // Page de purge cache PWA — servie INLINE par le worker (bulletproof : independant
+  // de GitHub Pages, toujours 200 + no-cache). Repond a /clear ET /clear.html.
+  if (url.pathname === "/clear" || url.pathname === "/clear.html") {
+    const clearHtml = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luxyra - Mise a jour</title><style>body{font-family:system-ui,Arial,sans-serif;background:#0e0e12;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;padding:20px}h1{color:#c8a84e;font-weight:800;font-size:22px}#s{opacity:.75;font-size:14px;margin-top:10px}</style></head><body><h1>Mise a jour en cours...</h1><div id="s">Nettoyage du cache...</div><script>(async function(){var s=document.getElementById("s");try{if(navigator.serviceWorker){var regs=await navigator.serviceWorker.getRegistrations();for(var i=0;i<regs.length;i++){await regs[i].unregister();}}if(window.caches){var keys=await caches.keys();for(var j=0;j<keys.length;j++){await caches.delete(keys[j]);}}}catch(e){}s.textContent="Termine, redirection...";location.href="/app.html?_c="+Date.now();})();<\/script></body></html>`;
+    return new Response(clearHtml, {
+      status: 200,
+      headers: { "Content-Type": "text/html;charset=UTF-8", "Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache" }
+    });
+  }
+
   if (host !== "luxyra.fr" && host !== "www.luxyra.fr" && host.endsWith(".luxyra.fr")) {
     const subdomain = host.replace(".luxyra.fr", "");
     if (url.pathname !== "/" && url.pathname !== "/index.html" && url.pathname !== "/site.html") {
