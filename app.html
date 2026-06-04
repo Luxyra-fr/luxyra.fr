@@ -22972,29 +22972,32 @@ function rStats(){
       // FIX 2026-05-14 : meilleure estimation de la durée pour les encaissements
       // directs (fromCaisse=true) qui n'ont ni sId ni aPhases sur le RDV lui-même.
       // On parcourt items[] pour récupérer la durée vraie de chaque prestation.
-      var aDur = 0;
+      // FIX 2026-06-04 : occupation = MAX(durée des phases du RDV, durée des items encaissés).
+      // Avant, si le RDV avait des phases on IGNORAIT a.items -> une prestation AJOUTÉE à
+      // l'encaissement (ex. coupe du conjoint sur la même facture, sans RDV séparé) n'était
+      // pas comptée -> taux d'occupation sous-évalué. Le MAX corrige sans sur-compter les
+      // RDV multi-prestations déjà planifiés (phases ≈ items dans ce cas).
       var sv5 = gS(a.sId);
       var phases5 = a.aPhases || (sv5 ? sv5.phases : null);
-      if(phases5 && phases5.length){
-        // Cas 1 : RDV avec phases (cas standard planning)
-        phases5.forEach(function(p){ if(p.t==="w") aDur += (Number(p.d)||0); });
-      } else if(a.items && a.items.length){
-        // Cas 2 : ticket avec items (encaissement direct multi-prestations)
+      var _hasPhases = !!(phases5 && phases5.length);
+      var _hasItems = !!(a.items && a.items.length);
+      var _pDur = 0, _iDur = 0;
+      if(_hasPhases){
+        phases5.forEach(function(p){ if(p.t==="w") _pDur += (Number(p.d)||0); });
+      }
+      if(_hasItems){
         a.items.forEach(function(it){
           if(it.isSep) return;
           if(it.isProd) return; // produits = pas d'occupation chaise
           var itQty = (Number(it.qty)||1);
-          // Tentative 1 : sId direct sur l'item
           if(it.sId){
             var sv = gS(it.sId);
-            if(sv){ aDur += svcTotalDur(sv) * itQty; return; }
+            if(sv){ _iDur += svcTotalDur(sv) * itQty; return; }
           }
-          // Tentative 2 : match par nom (cas import LS legacy avec sId=null)
           if(it.name && typeof SVC!=="undefined" && Array.isArray(SVC)){
             var nm = String(it.name).trim().toLowerCase();
             var match = SVC.find(function(s){ return s && s.n && String(s.n).trim().toLowerCase() === nm; });
-            if(match){ aDur += svcTotalDur(match) * itQty; return; }
-            // Tentative 3 : forfaits par nom
+            if(match){ _iDur += svcTotalDur(match) * itQty; return; }
             if(typeof FORFAITS !== "undefined" && Array.isArray(FORFAITS)){
               var matchF = FORFAITS.find(function(f){
                 var fn = String(f.n||f.nom||"").trim().toLowerCase();
@@ -23002,19 +23005,18 @@ function rStats(){
               });
               if(matchF){
                 var fdur = Number(matchF.dur)||0;
-                if(fdur>0){ aDur += fdur * itQty; return; }
+                if(fdur>0){ _iDur += fdur * itQty; return; }
               }
             }
           }
-          // Fallback final : 30 min par prestation (rare, prestation custom inconnue)
-          aDur += 30 * itQty;
+          _iDur += 30 * itQty; // prestation inconnue : fallback 30 min
         });
-        // Si total à 0 (ticket exclusivement produits), pas de blocage chaise → 0 min
-        // (au lieu de 30 min comme avant qui sur-évaluait)
-      } else {
-        // Cas 3 : ticket sans items et sans phases (très rare)
-        aDur = sv5 ? svcTotalDur(sv5) : 30;
       }
+      var aDur;
+      if(_hasPhases && _hasItems){ aDur = Math.max(_pDur, _iDur); } // RDV encaissé : items = prestations réellement faites (dont ajouts)
+      else if(_hasPhases){ aDur = _pDur; }
+      else if(_hasItems){ aDur = _iDur; }
+      else { aDur = sv5 ? svcTotalDur(sv5) : 30; } // ni phases ni items (très rare)
       totalOccupMin += aDur;
     });
   });
