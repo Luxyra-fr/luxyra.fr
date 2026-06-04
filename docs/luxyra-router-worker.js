@@ -1000,7 +1000,7 @@ async function handleConnectDashboard(request, env) {
 // (pré-autorisation sans débit, capture/cancel ultérieur via Worker)
 async function handleConnectPayment(request, env) {
   try {
-    const { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await request.json();
+    const { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await readJsonBody(request);
     if (!salon_id || !amount) return jsonResponse({ error: "salon_id et amount requis" }, 400);
 
     const salon = await supabaseGet(env, salon_id);
@@ -1008,6 +1008,7 @@ async function handleConnectPayment(request, env) {
 
     // Check Connect account is active
     const account = await stripeAPI(env, `accounts/${salon.stripe_connect_id}`, null, "GET");
+    if (account?.error?.type === "upstream_non_json") { console.error("connect stripe accounts non-JSON:", account.error.http_status, account.error.raw); return jsonResponse({ error: "Service de paiement momentanément indisponible, merci de réessayer." }, 502); }
     if (!account?.charges_enabled) return jsonResponse({ error: "Le compte de paiement du salon n'est pas encore actif" }, 400);
 
     // Create Checkout Session — 0% platform fee, 100% transfert au salon
@@ -1035,6 +1036,7 @@ async function handleConnectPayment(request, env) {
     }
     const session = await stripeAPI(env, "checkout/sessions", sessionParams);
 
+    if (session?.error?.type === "upstream_non_json") { console.error("connect session non-JSON:", session.error.http_status, session.error.raw); return jsonResponse({ error: "Service de paiement momentanément indisponible, merci de réessayer." }, 502); }
     if (!session?.url) return jsonResponse({ error: "Erreur paiement: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Connect payment error: " + e.message }, 500); }
@@ -1142,7 +1144,7 @@ async function handleExportNF525(request, env) {
 // configuré sur le PI, donc le transfert au salon se fait automatiquement à la capture).
 async function handleEmpreinteFinalize(request, env) {
   try {
-    const { session_id, rdv_id } = await request.json();
+    const { session_id, rdv_id } = await readJsonBody(request);
     if (!session_id || !rdv_id) return jsonResponse({ error: "session_id et rdv_id requis" }, 400);
 
     // 1) Fetch Stripe session — source of truth
@@ -1201,7 +1203,7 @@ async function handleEmpreinteFinalize(request, env) {
 
 async function handleRdvDemandeConnectPay(request, env) {
   try {
-    const { token } = await request.json();
+    const { token } = await readJsonBody(request);
     if (!token) return jsonResponse({ error: "token requis" }, 400);
 
     // Récupère la demande via service_role
@@ -1232,6 +1234,7 @@ async function handleRdvDemandeConnectPay(request, env) {
 
     // Vérifie que Connect peut encaisser
     const account = await stripeAPI(env, `accounts/${salon.stripe_connect_id}`, null, "GET");
+    if (account?.error?.type === "upstream_non_json") { console.error("connect stripe accounts non-JSON:", account.error.http_status, account.error.raw); return jsonResponse({ error: "Service de paiement momentanément indisponible, merci de réessayer." }, 502); }
     if (!account?.charges_enabled) return jsonResponse({ error: "Le compte de paiement du salon n'est pas encore actif" }, 400);
 
     // Description (max 80 chars produit)
@@ -1274,7 +1277,7 @@ async function handleRdvDemandeConnectPay(request, env) {
 
 async function handleRdvDemandeFinalize(request, env) {
   try {
-    const { token, session_id } = await request.json();
+    const { token, session_id } = await readJsonBody(request);
     if (!token || !session_id) return jsonResponse({ error: "token et session_id requis" }, 400);
 
     // 1) Vérifie le paiement Stripe (single source of truth)
@@ -1378,13 +1381,23 @@ async function handleRdvDemandeFinalize(request, env) {
 // ============================================================
 // HELPERS
 // ============================================================
+async function readJsonBody(request) {
+  // Corps vide ou JSON invalide -> {} (au lieu d'un throw -> 500 + alerte monitoring)
+  try { const _t = await request.text(); return _t ? JSON.parse(_t) : {}; }
+  catch (_e) { return {}; }
+}
+
 async function stripeAPI(env, endpoint, params, method = "POST") {
   const options = { method, headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } };
   if (params && method === "POST") {
     options.headers["Content-Type"] = "application/x-www-form-urlencoded";
     options.body = new URLSearchParams(params).toString();
   }
-  return await (await fetch(`https://api.stripe.com/v1/${endpoint}`, options)).json();
+  const _resp = await fetch(`https://api.stripe.com/v1/${endpoint}`, options);
+  const _txt = await _resp.text();
+  if (!_txt) return { error: { type: "upstream_non_json", message: "Réponse Stripe vide (HTTP " + _resp.status + ")", http_status: _resp.status, raw: "" } };
+  try { return JSON.parse(_txt); }
+  catch (_e) { return { error: { type: "upstream_non_json", message: "Réponse Stripe non-JSON (HTTP " + _resp.status + ")", http_status: _resp.status, raw: String(_txt).slice(0, 200) } }; }
 }
 
 async function getOrCreateStripeCustomer(env, email, salonId) {
