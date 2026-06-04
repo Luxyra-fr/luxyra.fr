@@ -1103,6 +1103,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
         duree: r.duree_minutes,
         acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye,
+        acompteRembourse: r.acompte_rembourse || false, refundedAt: r.refunded_at || null, stripePaymentId: r.payment_intent_id || null,
         status: r.status, message: r.message,
         createdAt: r.created_at, confirmedAt: r.confirmed_at,
         isOnline: true,
