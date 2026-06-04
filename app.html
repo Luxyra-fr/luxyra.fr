@@ -26878,13 +26878,23 @@ function doBonPay(){
   bon.used=(bon.used||0)+use;
   if(!bon.history)bon.history=[];
   bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
-  if(bon.rem<=0){bon.st="used";bon.rem=0;auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E - Transfert compte 4191 \u2192 701 (CA reconnu)");}
+  if(bon.rem<=0){bon.st="used";bon.rem=0;auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E"+((bon.isOffert===true||bon.payMethod==="Offert")?" (offert: remise, hors CA)":" - Transfert compte 4191 \u2192 701 (CA reconnu)"));}
   if(typeof saveGiftCard==="function")saveGiftCard(bon);
   auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Utilisé: "+use.toFixed(2)+"E - Reste: "+bon.rem.toFixed(2)+"E");
   if(!_tk.payments)_tk.payments=[];
-  _tk.payments.push({method:"Bon cadeau "+code,amount:use});
-  _tk.paid=(_tk.paid||0)+use;
-  resteDu=total-_tk.paid;
+  if(bon.isOffert===true||bon.payMethod==="Offert"){
+    // Bon OFFERT : appliqué comme REMISE (et non un paiement) -> le montant offert
+    // n'entre PAS dans le CA ni le FEC (service à titre gracieux, charge 6234).
+    _tk.remise=(_tk.remise||0)+use;
+    _tk.offertRemise=(_tk.offertRemise||0)+use;
+    _tk.payments.push({method:"Offert "+code,amount:0});
+    total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
+    resteDu=total-(_tk.paid||0);
+  } else {
+    _tk.payments.push({method:"Bon cadeau "+code,amount:use});
+    _tk.paid=(_tk.paid||0)+use;
+    resteDu=total-_tk.paid;
+  }
   if(resteDu>0.01){_tk.step=5;showCaisse();return;}
   doFinalPay("done");
 }
