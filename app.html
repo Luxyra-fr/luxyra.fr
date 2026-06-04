@@ -21086,16 +21086,17 @@ function expBordereauStripe(){
     return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;
   });
   var headers = ["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte (\u20AC)","Frais Stripe estim\u00e9s (1,5% + 0,25\u20AC)","Net re\u00E7u (\u20AC)","Statut RDV","ID Stripe"];
-  var totalBrut = 0, totalFrais = 0, totalNet = 0;
+  var totalBrut = 0, totalFrais = 0, totalNet = 0, nbRembourse = 0;
   var rows = rdvOnline.map(function(r){
+    var rembourse = !!r.acompteRembourse;
     var brut = Number(r.acompte)||0;
     var frais = lxStripeFee(brut);
-    var net = Math.round((brut - frais)*100)/100;
-    totalBrut += brut; totalFrais += frais; totalNet += net;
+    var net = rembourse ? 0 : Math.round((brut - frais)*100)/100;
+    if(rembourse){ nbRembourse++; } else { totalBrut += brut; totalFrais += frais; totalNet += net; }
     return [
       r.date, r.heure||"", (r.nom||"")+" "+(r.prenom||""), r.tel||"",
       r.svcNom||"", csvNum(brut), csvNum(frais), csvNum(net),
-      r.status||"", r.stripePaymentId||""
+      rembourse ? "Rembours\u00e9" : (r.status||""), r.stripePaymentId||""
     ];
   });
   // Ligne total
@@ -21104,7 +21105,8 @@ function expBordereauStripe(){
   var dataRows = rows.slice(0, -1); // sans la ligne TOTAL
   var footer = [
     ["Nombre d'acomptes", rdvOnline.length],
-    ["Montant brut encaiss\u00e9", csvNum(totalBrut)+" \u20ac"],
+    ["dont rembours\u00e9s (net 0, exclus du total)", nbRembourse],
+    ["Montant brut encaiss\u00e9 (hors rembours\u00e9s)", csvNum(totalBrut)+" \u20ac"],
     ["Frais Stripe estim\u00e9s (1,5% + 0,25\u20ac \u2014 CB EU)", csvNum(totalFrais)+" \u20ac"],
     ["Note", "Tarif standard Stripe France 2024-2026 pour CB europ\u00e9ennes. V\u00e9rifiez vos frais r\u00e9els sur dashboard.stripe.com \u2192 Activit\u00e9"],
     ["Tarifs sp\u00e9cifiques", "CB hors EU : 3,25% + 0,25\u20ac \u00b7 UK : 2,5% + 0,25\u20ac \u00b7 SEPA : 0,8% (max 5\u20ac) + 0,25\u20ac"],
@@ -21242,7 +21244,7 @@ async function expPackComptable(){
   // 5. Bordereau Stripe (si acomptes en ligne)
   if(rdvOnline.length){
     var totalBrut2=0,totalFrais2=0,totalNet2=0;
-    var rStripe = rdvOnline.map(function(r){var brut=Number(r.acompte)||0;var frais=lxStripeFee(brut);var net=Math.round((brut-frais)*100)/100;totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),r.status||"",r.stripePaymentId||""];});
+    var rStripe = rdvOnline.map(function(r){var remb=!!r.acompteRembourse;var brut=Number(r.acompte)||0;var frais=lxStripeFee(brut);var net=remb?0:Math.round((brut-frais)*100)/100;if(!remb){totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;}return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),remb?"Rembours\u00e9":(r.status||""),r.stripePaymentId||""];});
     rStripe.push(["","","","","TOTAL",csvNum(totalBrut2),csvNum(totalFrais2),csvNum(totalNet2),rdvOnline.length+" RDV",""]);
     var stripeFooter = [
       ["Note", "Frais estim\u00e9s selon tarif standard Stripe France 2024-2026 (CB EU 1,5% + 0,25\u20ac)"],
@@ -21705,11 +21707,12 @@ async function expExcelComptable(){
     ];
     var totBrut=0, totFrais=0, totNet=0;
     rdvOnline.forEach(function(r){
+      var remb=!!r.acompteRembourse;
       var brut=Number(r.acompte)||0;
       var frais = (typeof lxStripeFee==="function") ? lxStripeFee(brut) : Math.round((brut*0.015+0.25)*100)/100;
-      var net=Math.round((brut-frais)*100)/100;
-      totBrut+=brut; totFrais+=frais; totNet+=net;
-      stripeD.push([toDate(r.date),r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",brut,frais,net,r.status||"",r.stripePaymentId||""]);
+      var net=remb?0:Math.round((brut-frais)*100)/100;
+      if(!remb){ totBrut+=brut; totFrais+=frais; totNet+=net; }
+      stripeD.push([toDate(r.date),r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",brut,frais,net,remb?"Rembours\u00e9":(r.status||""),r.stripePaymentId||""]);
     });
     stripeD.push(["","","","","TOTAL", totBrut, totFrais, totNet, rdvOnline.length+" RDV", ""]);
     XLSX.utils.book_append_sheet(wb, makeSheet(stripeD, {
