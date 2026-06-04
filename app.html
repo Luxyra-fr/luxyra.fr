@@ -10069,7 +10069,8 @@ function printPlanning(){
         h+='<div class="rdv-row">';
         h+='<div class="rdv-time">'+a.time+' \u2192 '+endT+'</div>';
         h+='<div class="rdv-client">'+apptClientLabel(a)+'</div>';
-        h+='<div class="rdv-svc">'+(sv?sv.n:"")+'</div>';
+        var _addPr=(typeof lxAddedPresta==="function")?lxAddedPresta(a):"";
+        h+='<div class="rdv-svc">'+(sv?sv.n:"")+(_addPr?' <span style="color:#2d9a5e;font-weight:700">+ '+_addPr+'</span>':'')+'</div>';
         h+='<div class="rdv-dur">'+td+'min</div>';
         h+='<div class="rdv-price">'+(a.pr||0).toFixed(2)+'\u20ac</div>';
         h+='<div class="rdv-status '+(a.st==="done"?"st-done":"st-conf")+'">'+(a.st==="done"?"Encaiss\u00e9":(a.isOnline?"Confirm\u00e9":"Pr\u00e9vu"))+'</div>';
@@ -10669,6 +10670,37 @@ function dragEnd(e){
 function reprendre(id){for(var i=0;i<AP.length;i++){if(AP[i].id===id){oM("appt",{cId:AP[i].cId,stId:AP[i].stId,time:AP[i].time});return;}}}
 function updateRdvDay(){}
 // === RDV QUICK POPUP (hover/tap) ===
+// Prestation(s) encaissee(s) EN PLUS de ce qui etait planifie sur le RDV (badge planning).
+// Lecture seule. Garde-fou anti-faux-positif : on ne signale que si la duree des items
+// encaisses depasse nettement les phases planifiees ET qu'on identifie un item hors planning
+// (sinon un RDV multi-prestations deja prevu, ex. coupe+couleur, serait signale a tort).
+function lxAddedPresta(a){
+  try{
+    if(!a || a.st!=="done" || !a.items || !a.items.length) return "";
+    var sv0=(typeof gS==="function")?gS(a.sId):null;
+    var phs=a.aPhases||(sv0?sv0.phases:null)||[];
+    var pDur=0; phs.forEach(function(p){ if(p&&p.t==="w") pDur+=(Number(p.d)||0); });
+    var planned={}, pNames={};
+    if(a.sId) planned[String(a.sId)]=1;
+    if(sv0&&sv0.n) pNames[String(sv0.n).trim().toLowerCase()]=1;
+    phs.forEach(function(p){ if(p&&p.sId) planned[String(p.sId)]=1; if(p&&p.l) pNames[String(p.l).trim().toLowerCase()]=1; });
+    var iDur=0, extras=[];
+    a.items.forEach(function(it){
+      if(!it||it.isSep||it.isProd) return;
+      var q=(Number(it.qty)||1);
+      var svc=it.sId?gS(it.sId):null;
+      iDur += svc?(svcTotalDur(svc)*q):(30*q);
+      var inP=(it.sId&&planned[String(it.sId)])||(it.name&&pNames[String(it.name).trim().toLowerCase()]);
+      if(!inP) extras.push(it.name||(svc?svc.n:"Prestation"));
+    });
+    if(iDur<=pDur+5) return "";          // pas de temps en plus -> rien d'ajoute
+    if(!extras.length) return "";        // rien d'identifiable hors planning
+    var seen={}, out=[];
+    extras.forEach(function(n){ var k=String(n).trim().toLowerCase(); if(!seen[k]){seen[k]=1;out.push(n);} });
+    return out.slice(0,2).join(", ")+(out.length>2?" +":"");
+  }catch(e){ return ""; }
+}
+
 function showRdvPopup(id,evt){
   if(window._dragInProgress||window._pendingDrag)return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
@@ -10680,6 +10712,8 @@ function showRdvPopup(id,evt){
   var pop=document.getElementById("rdvPopup");
   var h='<div class="rp-name">'+apptClientLabel(a)+'</div>';
   h+='<div class="rp-svc">'+(sv?sv.n:"")+(sty?" \u2022 "+sty.n:"")+'</div>';
+  var _addP=(typeof lxAddedPresta==="function")?lxAddedPresta(a):"";
+  if(_addP) h+='<div class="rp-svc" style="color:#2d9a5e;font-weight:700">+ '+_addP+' (ajout\u00e9 \u00e0 la facture)</div>';
   h+='<div class="rp-info">';
   h+='\ud83d\udd52 '+a.time+' \u2192 '+endTime+' ('+td+'min)';
   if(cl&&cl.ph)h+='<br>\ud83d\udcf1 '+cl.ph;
