@@ -5716,11 +5716,30 @@ function doCloture(){
 // FIX 2026-05-28 : comptage du tiroir a la cloture Z (NF525). Helpers isoles.
 // Theorique = fond + especes encaissees + entrees - sorties - mises au coffre du jour.
 // Tout est ADDITIF : aucune modification du fiscal existant.
+// Ventile un encaissement par mode de reglement (gere le mixte via a.payments).
+// FIX 2026-06-10 : un paiement mixte (ex. "Especes + CB") doit etre reparti selon sa vraie
+// ventilation (a.payments : methode + montant net apres rendu), et non mis en entier dans
+// un seul bucket selon la chaine a.met (qui contenait "cb" -> tout en CB, faux ; ou "esp" -> tout en especes).
+function _lxPayBuckets(a){
+  var b={cb:0,esp:0,chq:0,bon:0,vir:0,aut:0};
+  function add(method,amt){
+    var m=String(method||"").toLowerCase(); amt=Number(amt)||0;
+    if(m.indexOf("esp")>=0) b.esp+=amt;
+    else if(m.indexOf("cb")>=0) b.cb+=amt;
+    else if(m.indexOf("ch")>=0) b.chq+=amt;
+    else if(m.indexOf("bon")>=0) b.bon+=amt;
+    else if(m.indexOf("vir")>=0) b.vir+=amt;
+    else b.aut+=amt;
+  }
+  if(a && a.payments && a.payments.length){ a.payments.forEach(function(p){ add(p.method,p.amount); }); }
+  else if(a){ add(a.met,a.pr); }
+  return b;
+}
 function _lxClotureCaisseTheo(){
   try{
     var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
     var done=AP.filter(function(a){return a&&a.st==="done"&&a.date===TD&&!a.cancelled;});
-    var esp=0; done.forEach(function(a){ var m=String(a.met||"").toLowerCase(); if(m.indexOf("esp")>=0) esp+=Number(a.pr)||0; });
+    var esp=0; done.forEach(function(a){ esp += _lxPayBuckets(a).esp; });
     var totEntrees=0,totSorties=0;
     if(Array.isArray(CD.mouvements)){ CD.mouvements.filter(function(m){return m.date===TD;}).forEach(function(m){ var amt=Number(m.montant)||0; if(m.type==="sortie"||m.type==="retrait"||m.type==="depense") totSorties+=amt; else totEntrees+=amt; }); }
     var macEsp=0;
@@ -30537,7 +30556,7 @@ function cloturerJournee(){
     panierMoyen:done.length>0?Math.round(totalCA/done.length*100)/100:0,
     details:{cb:0,esp:0,chq:0,bon:0,vir:0,aut:0},
     perSty:perSty,hash:""};
-  done.forEach(function(a){var m=(a.met||"").toLowerCase();if(m.indexOf("cb")>=0)c.details.cb+=a.pr;else if(m.indexOf("esp")>=0)c.details.esp+=a.pr;else if(m.indexOf("ch")>=0)c.details.chq+=a.pr;else if(m.indexOf("bon")>=0)c.details.bon+=a.pr;else if(m.indexOf("vir")>=0)c.details.vir+=a.pr;else c.details.aut+=a.pr;});
+  done.forEach(function(a){var bk=_lxPayBuckets(a);c.details.cb+=bk.cb;c.details.esp+=bk.esp;c.details.chq+=bk.chq;c.details.bon+=bk.bon;c.details.vir+=bk.vir;c.details.aut+=bk.aut;});
   // Cumul mensuel
   var moisKey=TD.slice(0,7);
   var clotMois=window.CLOTURES.filter(function(x){return x.date.indexOf(moisKey)===0;});
