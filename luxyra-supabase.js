@@ -1003,6 +1003,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           actif: c.actif, fid: c.points_fidelite,
           smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
           clientBeautyproId: c.client_luxyra_id || null,
+          acompteOnline: c.acompte_online || 'defaut',
           // Acquisition source (Quick Win 2026-05-06)
           acqSrc: c.acquisition_source || null,
           acqParrain: c.acquisition_parrain || null,
@@ -1600,6 +1601,7 @@ async function saveClient(client) {
     details_cheveux: client.detChev, collab_pref: client.collab,
     actif: client.actif, points_fidelite: client.fid,
     sms_ok: client.smsOk, email_ok: client.emOk, fiches: client.fiches || [],
+    acompte_online: client.acompteOnline || 'defaut',
     fiche_tech: ft,
     // Acquisition source (Quick Win 2026-05-06) — optionnel, NULL si pas renseigné
     acquisition_source: client.acqSrc || null,
