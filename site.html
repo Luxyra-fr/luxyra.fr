@@ -818,7 +818,7 @@ async function loadSalon(){
       var d=sc.data[0];
       SITE_CFG={actif:d.site_actif,resa:d.reservation_active,boutique:d.boutique_active,
         acompte:d.acompte_obligatoire,acompteMt:Number(d.acompte_montant),acompteType:d.acompte_type,
-        acompteMin:Number(d.acompte_min)||0,acompteDesc:d.acompte_description||"",
+        acompteMin:Number(d.acompte_min)||0,acompteSeuil:Number(d.acompte_seuil)||0,acompteDesc:d.acompte_description||"",
         politiqueAnnul:d.politique_annulation||"48h",remboursementAnnul:d.remboursement_annulation,
         delaiMin:d.delai_min_heures||2,delaiMax:d.delai_max_jours||30,interval:d.creneau_intervalle||15,
         bloquerNouveauxComptes:d.bloquer_nouveaux_comptes===true,
@@ -2864,8 +2864,8 @@ function renderBookingStep4(){
   if(SITE_CFG.acompte){
     // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte)
     var acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(prixFinal*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
-    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
-    h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
+    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;if(SITE_CFG.acompteSeuil&&prixFinal<SITE_CFG.acompteSeuil)acompte=0;/*seuil: acompte seulement si total>=seuil*/
+    if(acompte>0)h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
     if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+SITE_CFG.acompteDesc+'</div>';
     if(SITE_CFG.politiqueAnnul&&SITE_CFG.politiqueAnnul!=="jamais")h+='<div style="font-size:11px;color:var(--text3);text-align:center">Annulation gratuite jusqu\u0027\u00e0 '+SITE_CFG.politiqueAnnul+' avant le rendez-vous</div>';
     else if(SITE_CFG.politiqueAnnul==="jamais")h+='<div style="font-size:11px;color:var(--red);text-align:center;font-weight:700">Acompte non remboursable</div>';
@@ -2964,6 +2964,7 @@ function renderBookingStep4(){
       ? Math.round((_prixForAc * (Number(SITE_CFG.acompteMt)||0)) / 100)
       : (Number(SITE_CFG.acompteMt) || 0);
     if(SITE_CFG.acompteMin && _acomCalc < SITE_CFG.acompteMin) _acomCalc = SITE_CFG.acompteMin;
+    if(SITE_CFG.acompteSeuil && _prixForAc < SITE_CFG.acompteSeuil) _acomCalc = 0;/*seuil*/
     if(_acomCalc > 0){
       h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">💳 Payer acompte '+_acomCalc.toFixed(2)+' € et confirmer</button>';
     } else {
@@ -3042,7 +3043,7 @@ async function submitBooking(){
   if(SITE_CFG.acompte){
     // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte d'abonnement si applicable)
     acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(prixFinal*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
-    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;
+    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;if(SITE_CFG.acompteSeuil&&prixFinal<SITE_CFG.acompteSeuil)acompte=0;/*seuil: acompte seulement si total>=seuil*/
   }
 
   var data={
@@ -3229,6 +3230,7 @@ async function submitWithStripe(){
       ? Math.round(totalPrix * SITE_CFG.acompteMt / 100)
       : SITE_CFG.acompteMt;
     if(SITE_CFG.acompteMin && acompte < SITE_CFG.acompteMin) acompte = SITE_CFG.acompteMin;
+    if(SITE_CFG.acompteSeuil && totalPrix < SITE_CFG.acompteSeuil) acompte = 0;/*seuil*/
   }
   if(modeC === "aucun" || acompte <= 0){ submitBooking(); return; }
 
