@@ -30162,6 +30162,7 @@ function sendCampaign(type){
 }
 
 // Load SMS config on startup
+try{window._SMS_CONFIG_DEFAULT=JSON.parse(JSON.stringify(window.SMS_CONFIG||{}));}catch(e){}
 try{var _smsC=localStorage.getItem("_cp_sms_config");if(_smsC)window.SMS_CONFIG=JSON.parse(_smsC);}catch(e){}
 try{var _smsH=localStorage.getItem("_cp_sms_campaigns");if(_smsH)window.SMS_CAMPAIGNS=JSON.parse(_smsH);}catch(e){}
 try{var _smsS=localStorage.getItem("_cp_sms_sent");if(_smsS)window._smsSent=JSON.parse(_smsS);}catch(e){}
@@ -31805,6 +31806,25 @@ window._earlyRenderFromCache = function(){
 
 // App init — called by luxyra-supabase.js after login, or directly if offline
 function initApp(){
+  // FIX 2026-06-16 : cache localStorage scopé par salon. localStorage est par DOMAINE
+  // (luxyra.fr), pas par salon -> ouvrir un 2e salon sur le meme appareil heritait des
+  // fragments de config du salon precedent (absences, forfaits, SMS, fond d ecran).
+  // Au changement de salon (ou 1er chargement non tague), on purge ces caches AVANT
+  // hydratation et on remet les globales lues au parse a leur defaut. Re-hydratees
+  // ensuite depuis config_json (DB = source de verite). Sans perte (meme salon -> no-op).
+  try{
+    if(typeof _salonId!=="undefined" && _salonId){
+      var _lxPrev=null; try{_lxPrev=localStorage.getItem("_cp_active_salon");}catch(e){}
+      if(_lxPrev!==_salonId){
+        ["_cp_absences","_cp_forfaits","_cp_sms_config","_cp_sms_campaigns","_cp_sms_sent","_cp_app_bg"].forEach(function(k){try{localStorage.removeItem(k);}catch(e){}});
+        try{window.SMS_CAMPAIGNS=[];}catch(e){}
+        try{window._smsSent=[];}catch(e){}
+        try{APP_BG="https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80";}catch(e){}
+        try{if(window._SMS_CONFIG_DEFAULT)window.SMS_CONFIG=JSON.parse(JSON.stringify(window._SMS_CONFIG_DEFAULT));}catch(e){}
+      }
+      try{localStorage.setItem("_cp_active_salon",_salonId);}catch(e){}
+    }
+  }catch(e){}
   // Load forfaits from localStorage
   try{var ff=localStorage.getItem("_cp_forfaits");if(ff)FORFAITS=JSON.parse(ff);}catch(e){}
   // Load absences from localStorage
