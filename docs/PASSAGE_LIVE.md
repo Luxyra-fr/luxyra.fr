@@ -48,13 +48,14 @@ Les deux paths sont dans `site.html` autour de `processStripePayment()` (ligne 1
 
 ## 🔐 Valeurs à changer lors du passage test → live
 
-### Au total : 3 valeurs à remplacer à 3 endroits
+### Au total : 4 valeurs à remplacer
 
 | # | Valeur | Où la modifier | Type |
 |---|---|---|---|
 | 1 | `sk_live_51TCS0K...` | **Supabase** Dashboard → Functions → Settings → Secrets → `STRIPE_SECRET_KEY` | Secret |
 | 2 | `sk_live_51TCS0K...` | **Cloudflare** Dashboard → Workers → luxyra-router → Variables and Secrets → (secret Stripe) | Secret |
 | 3 | `pk_live_51TCS0K...` | **GitHub / code** → `site.html` ligne ~206 + `proposal.html` | Public (normal, dans le JS client) |
+| 4 | **Price IDs d'abonnement** (`PRICE_ESSENTIAL`, `PRICE_PRO`, `PRICE_PRO_FOUNDER`) | **GitHub / code** → `docs/luxyra-router-worker.js` lignes ~30-34 (objet `CONFIG`) → puis re-deploy Worker | ⚠️ **CRITIQUE** : les Price IDs de TEST ne fonctionnent PAS avec `sk_live`. Il faut créer les Produits/Prix dans le **Stripe LIVE** (Essentiel 14,99 / Pro 24,99 / Pro Fondateur 14,99 lookup_key `pro_founder_monthly_eur`) et coller leurs **Price IDs live** ici. Sinon le 1er « S'abonner » en live échoue (`No such price`). |
 
 ### Récupérer les clés live
 
