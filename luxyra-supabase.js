@@ -799,6 +799,7 @@ async function loadSalonData() {
   SALON_CONFIG.couleurSecondaire = salon.couleur_secondaire || "#1a1a1a";
   SALON_CONFIG.subdomain = salon.subdomain || "";
   SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
+  SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
   SALON_CONFIG.plan = salon.plan || "essential";
   SALON_CONFIG.metier = salon.metier || "coiffure";
   SALON_CONFIG.modeActivite = salon.mode_activite || "salon";
