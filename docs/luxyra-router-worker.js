@@ -480,7 +480,9 @@ async function handleCreateCheckout(request, env) {
     const planLabel = plan === "pro" ? (isFounder ? "Pro Fondateur" : "Pro") : "Essentiel";
     const sessionParams = {
       customer: customerId, mode: "subscription",
-      "payment_method_types[0]": "sepa_debit", "payment_method_types[1]": "card",
+      // 2026-06-17 : on NE force PLUS payment_method_types. Stripe Checkout utilise
+      // les moyens de paiement actives dans le dashboard (carte par defaut ; SEPA si/quand
+      // tu l'actives). Evite l'erreur "sepa_debit is invalid" si SEPA non active en live.
       allow_promotion_codes: "true",
       "line_items[0][price]": priceId, "line_items[0][quantity]": "1",
       success_url: `https://luxyra.fr/app?checkout=success&plan=${plan}${isFounder ? "&founder=1" : ""}`,
