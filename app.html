@@ -24565,6 +24565,10 @@ function doRemoveAcompte(apptId){
 
 function nextTicketNum(){
   var max=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>max)max=a.tkNum;});
+  // FIX 2026-06-17 : numerotation a source UNIQUE. On avance aussi le compteur global tkN
+  // (sinon un tkN++ ulterieur reutilisait ce numero -> collision rejetee par UNIQUE(num,salon)
+  // -> saveTicketToDb echouait en silence). Plancher sur le max reel des tkNum en memoire.
+  if(typeof tkN!=="undefined"){ if(max>tkN)tkN=max; return ++tkN; }
   return max+1;
 }
 function printAcompteReceipt(tkNum,amount,apptId){
@@ -28556,7 +28560,7 @@ function doModifTicket(id,isPast){
   for(var i=0;i<AP.length;i++){
     if(AP[i].id===id){
       var old=AP[i];
-      if(isPast){
+      if(true){/* NF525 FIX 2026-06-17 : une modif d un ticket emis = TOUJOURS contre-passation (annule + nouveau ticket chaine), jamais edition en place meme le jour meme. La branche else ci-dessous est desormais morte (conservee inerte). */
         old.st="canc";old.cancelMotif=motif;old.cancelDate=TD;
         tkN++;
         var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,pr:newPr||old.pr,st:"done",met:newMet||old.met,tkNum:tkN,modifFrom:old.tkNum||"--",modifMotif:motif};
