@@ -124,7 +124,7 @@ var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var sb=supabase.createClient(SB_URL,SB_KEY);
 
 var STEP=1;
-var DATA={nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",formeJur:"",gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
+var DATA={nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",pays:"France",formeJur:"",gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
 
 function render(){
   var h='';
@@ -160,7 +160,10 @@ function renderStep1(){
   h+='<div class="fg-row"><div class="fg"><label>Code postal</label><input id="fCp" value="'+esc(DATA.cp)+'" placeholder="Code postal" maxlength="5" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville</label><input id="fVille" value="'+esc(DATA.ville)+'" placeholder="Ville" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input id="fTel" type="tel" value="'+esc(DATA.tel)+'" placeholder="Num\u00e9ro de t\u00e9l\u00e9phone"></div>';
-  h+='<div class="fg"><label>SIRET *</label><input id="fSiret" value="'+esc(DATA.siret)+'" placeholder="14 chiffres" maxlength="14"></div>';
+  h+='<div class="fg"><label>Pays *</label><select id="fPays" onchange="saveFields1();DATA.pays=this.value;render()"><option value="France"'+(DATA.pays==="France"?" selected":"")+'>France</option><option value="Belgique"'+(DATA.pays==="Belgique"?" selected":"")+'>Belgique</option><option value="Luxembourg"'+(DATA.pays==="Luxembourg"?" selected":"")+'>Luxembourg</option></select></div>';
+  var _idLbl=DATA.pays==="Belgique"?"N° d'entreprise (BCE)":(DATA.pays==="Luxembourg"?"N° de TVA / matricule":"SIRET");
+  var _idPh=DATA.pays==="Belgique"?"0123.456.789":(DATA.pays==="Luxembourg"?"LU + n° de TVA":"14 chiffres");
+  h+='<div class="fg"><label>'+_idLbl+' *</label><input id="fSiret" value="'+esc(DATA.siret)+'" placeholder="'+_idPh+'"></div>';
   h+='<div class="fg"><label>Forme juridique *</label><select id="fForme" onchange="DATA.formeJur=this.value"><option value=""'+(DATA.formeJur===""?" selected":"")+'>S\u00e9lectionnez...</option><option value="micro"'+(DATA.formeJur==="micro"?" selected":"")+'>Micro-entreprise</option><option value="ei"'+(DATA.formeJur==="ei"?" selected":"")+'>Entreprise individuelle (EI)</option><option value="eirl"'+(DATA.formeJur==="eirl"?" selected":"")+'>EIRL</option><option value="sarl"'+(DATA.formeJur==="sarl"?" selected":"")+'>SARL</option><option value="eurl"'+(DATA.formeJur==="eurl"?" selected":"")+'>EURL</option><option value="sas"'+(DATA.formeJur==="sas"?" selected":"")+'>SAS</option><option value="sasu"'+(DATA.formeJur==="sasu"?" selected":"")+'>SASU</option><option value="sa"'+(DATA.formeJur==="sa"?" selected":"")+'>SA</option><option value="autre"'+(DATA.formeJur==="autre"?" selected":"")+'>Autre</option></select></div>';
   h+='<div class="btn-row"><div></div><button class="btn btn-gold" onclick="nextStep1()" style="flex:1">Continuer \u2192</button></div>';
   return h;
@@ -169,7 +172,9 @@ function renderStep1(){
 function nextStep1(){
   saveFields1();
   if(!DATA.nom.trim()){showErr("Le nom de l\u2019\u00e9tablissement est obligatoire");return;}
-  if(!DATA.siret.trim()||!/^\d{14}$/.test(DATA.siret.trim())){showErr("Le SIRET est obligatoire (14 chiffres)");return;}
+  var _id=DATA.siret.trim();
+  if(DATA.pays==="France"){ if(!/^\d{14}$/.test(_id)){showErr("Le SIRET est obligatoire (14 chiffres)");return;} }
+  else if(_id.replace(/[^A-Za-z0-9]/g,"").length<8){showErr("Le numéro d'entreprise est obligatoire");return;}
   if(!DATA.formeJur){showErr("Veuillez s\u00e9lectionner la forme juridique");return;}
   STEP=2;render();
 }
@@ -181,6 +186,7 @@ function saveFields1(){
   DATA.ville=(document.getElementById("fVille")||{}).value||"";
   DATA.tel=(document.getElementById("fTel")||{}).value||"";
   DATA.siret=(document.getElementById("fSiret")||{}).value||"";
+  DATA.pays=(document.getElementById("fPays")||{}).value||DATA.pays||"France";
   DATA.formeJur=(document.getElementById("fForme")||{}).value||"";
 }
 
@@ -426,6 +432,7 @@ async function doSubmit(){
       siret:DATA.siret.trim(),
       metier:DATA.metier,
       forme_juridique:DATA.formeJur,
+      taux_tva: DATA.pays==="Belgique"?21:(DATA.pays==="Luxembourg"?((DATA.metier==="coiffure"||DATA.metier==="barbier")?8:17):null),
       mode_activite:DATA.modeActivite,
       gerant_nom:DATA.gerantNom.trim(),
       gerant_prenom:DATA.gerantPrenom.trim(),
@@ -439,7 +446,7 @@ async function doSubmit(){
       longitude: _geo ? _geo.lng : null,
       geocoded_at: _geo ? new Date().toISOString() : null,
       config_json:JSON.stringify({nom:DATA.nom.trim(),metier:DATA.metier,
-      forme_juridique:DATA.formeJur,mode_activite:DATA.modeActivite,adresse:DATA.adresse.trim(),cp:DATA.cp.trim(),ville:DATA.ville.trim(),tel:DATA.tel.trim()}),
+      forme_juridique:DATA.formeJur,mode_activite:DATA.modeActivite,adresse:DATA.adresse.trim(),cp:DATA.cp.trim(),ville:DATA.ville.trim(),tel:DATA.tel.trim(),pays:DATA.pays}),
       sms_credits:0,
       sms_used:0,
       cgv_accepted_at:new Date().toISOString(),
