@@ -27,8 +27,8 @@ function checkRateLimit(key, maxPerMinute) {
 
 const CONFIG = {
   SUPABASE_URL: "https://kxdgjtvrkwugbifgppai.supabase.co",
-  PRICE_ESSENTIAL: "price_1TGPDdPk42Psx94TXOp8t3mB",
-  PRICE_PRO: "price_1TGPErPk42Psx94T302k3bXv",
+  PRICE_ESSENTIAL: "price_1TIBRRPk42Psx94TsYdIG0UF",
+  PRICE_PRO: "price_1TIBROPk42Psx94Tjr6g8OEF",
   // Tarif "Pro Fondateur" — 14,99€/mois à vie pour les 100 premiers Pro
   // Stripe lookup_key: pro_founder_monthly_eur
   PRICE_PRO_FOUNDER: "price_1TXTu6Pk42Psx94TokzLzD33",
