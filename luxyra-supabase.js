@@ -2247,8 +2247,8 @@ async function saveCloture(clot) {
     total_ca: clot.totalCA, total_ht: clot.totalHT,
     nb_tickets: clot.nbTickets, nb_annulations: clot.nbAnnul,
     detail_paiements: _detailPaiements, detail_collabs: clot.perSty || {},
-    cumul_mois_ca: clot.cumulMoisCA || 0, cumul_mois_tickets: clot.cumulMoisTk || 0,
-    cumul_annee_ca: clot.cumulAnCA || 0, cumul_annee_tickets: clot.cumulAnTk || 0,
+    cumul_mois_ca: clot.cumulMois || clot.cumulMoisCA || 0, cumul_mois_tickets: clot.cumulMoisTk || 0,
+    cumul_annee_ca: clot.cumulAnnuel || clot.cumulAnCA || 0, cumul_annee_tickets: clot.cumulAnTk || 0,
     hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256",
     // FIX 2026-05-28 : comptage tiroir (non fiscal, immuable une fois cloture)
     solde_reel: (typeof clot.soldeReel === "number") ? clot.soldeReel : null,
