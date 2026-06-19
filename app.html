@@ -7295,6 +7295,25 @@ function _splitPrestProd(a){
   var prest = Math.round((realPr-prod)*100)/100;
   return {prest:prest, prod:prod, total:realPr};
 }
+// Ventile un encaissement `a` en {ht, tva} en gérant un éventuel DOUBLE TAUX produits
+// (ex. Luxembourg : prestations 8% / produits 17%). GARDE-FOU : si le taux produits
+// est absent ou égal au taux services (France, Belgique, défaut), retourne EXACTEMENT
+// le calcul mono-taux historique round(ttc/(1+t)) — comportement byte-identique.
+function _lxHtTva(a){
+  var txS=Number((SALON_CONFIG&&SALON_CONFIG.tauxTVA)||20);
+  var ttc=Math.round((Number(a&&a.pr)||0)*100)/100;
+  var dual=(SALON_CONFIG && SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==txS);
+  if(!dual){ var h=Math.round(ttc/(1+txS/100)*100)/100; return {ht:h, tva:Math.round((ttc-h)*100)/100}; }
+  var txP=Number(SALON_CONFIG.tvaProduits);
+  var sp=_splitPrestProd(a);
+  var hP=Math.round(sp.prest/(1+txS/100)*100)/100;
+  var hQ=Math.round(sp.prod/(1+txP/100)*100)/100;
+  var ht=Math.round((hP+hQ)*100)/100;
+  return {ht:ht, tva:Math.round((ttc-ht)*100)/100};
+}
+function _lxHtTvaProd(ttc){
+  return _lxHtTva({pr:ttc, items:[{price:Number(ttc)||0, qty:1, remise:0, isProd:true}]});
+}
 // ============================================================================
 
 // Global state initialization (after all data declarations)
@@ -20234,8 +20253,22 @@ function _buildRapportHTML(periodM){
     var _bk=_lxPayBuckets(pp);
     totalCB += _bk.cb; totalEsp += _bk.esp; totalCheq += _bk.chq; totalVir += _bk.vir; totalAutre += _bk.bon + _bk.aut;
   });
-  var totalHT = isMicro ? totalTTC : Math.round(totalTTC/(1+txTVA/100)*100)/100;
-  var totalTVA = isMicro ? 0 : Math.round((totalTTC-totalHT)*100)/100;
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var totalHT, totalTVA;
+  if(isMicro){ totalHT=totalTTC; totalTVA=0; }
+  else if(_dualTVA){
+    var _tPR=0,_tQR=0;
+    dn.forEach(function(a){var _s=_splitPrestProd(a);_tPR+=_s.prest;_tQR+=_s.prod;});
+    ps2.forEach(function(pp){_tQR+=(Number(pp.pr)||0);});
+    var _txpR=Number(SALON_CONFIG.tvaProduits);
+    var _hPR=Math.round(_tPR/(1+txTVA/100)*100)/100;
+    var _hQR=Math.round(_tQR/(1+_txpR/100)*100)/100;
+    totalHT=Math.round((_hPR+_hQR)*100)/100;
+    totalTVA=Math.round((totalTTC-totalHT)*100)/100;
+  } else {
+    totalHT=Math.round(totalTTC/(1+txTVA/100)*100)/100;
+    totalTVA=Math.round((totalTTC-totalHT)*100)/100;
+  }
   var totalAnnul = 0; annul.forEach(function(a){ totalAnnul += Number(a.pr)||0; });
   var nbTickets = dn.length + ps2.length;
 
@@ -20869,8 +20902,9 @@ function expCSV(){
       detail = sv.n;
     }
     var ttc = Number(a.pr) || 0;
-    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
-    var tva = Math.round((ttc-ht)*100)/100;
+    var _v = _lxHtTva(a);
+    var ht = _v.ht;
+    var tva = _v.tva;
     var src = (a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
     rows.push([
       a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
@@ -20882,8 +20916,9 @@ function expCSV(){
   // Lignes ventes produits hors tickets (PS)
   ps2.forEach(function(p){
     var ttc = Number(p.pr) || 0;
-    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
-    var tva = Math.round((ttc-ht)*100)/100;
+    var _v = _lxHtTvaProd(ttc);
+    var ht = _v.ht;
+    var tva = _v.tva;
     rows.push([
       p.date, p.time||"", p.tkNum||"", "", "", "\uD83D\uDECD "+p.prod,
       csvNum(ht), csvNum(tva), csvNum(ttc), 0,
@@ -20930,24 +20965,46 @@ function expRecapTVA(){
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var txTVA = SALON_CONFIG.tauxTVA || 20;
-  var totalTTC = 0;
-  dn.forEach(function(a){ totalTTC += (Number(a.pr)||0); });
-  ps2.forEach(function(p){ totalTTC += (Number(p.pr)||0); });
-  var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
-  var totalTVA = Math.round((totalTTC-totalHT)*100)/100;
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
+  var totalTTC = 0, _totPrest = 0, _totProd = 0;
+  dn.forEach(function(a){ totalTTC += (Number(a.pr)||0); if(_dualTVA){var _sp=_splitPrestProd(a); _totPrest+=_sp.prest; _totProd+=_sp.prod;} });
+  ps2.forEach(function(p){ totalTTC += (Number(p.pr)||0); if(_dualTVA){_totProd+=(Number(p.pr)||0);} });
+  _totPrest=Math.round(_totPrest*100)/100; _totProd=Math.round(_totProd*100)/100;
+  var totalHT, totalTVA, _htPrest=0, _tvaPrest=0, _htProd=0, _tvaProd=0;
+  if(_dualTVA){
+    _htPrest=Math.round(_totPrest/(1+txTVA/100)*100)/100; _tvaPrest=Math.round((_totPrest-_htPrest)*100)/100;
+    _htProd=Math.round(_totProd/(1+txTVAprod/100)*100)/100; _tvaProd=Math.round((_totProd-_htProd)*100)/100;
+    totalHT=Math.round((_htPrest+_htProd)*100)/100; totalTVA=Math.round((totalTTC-totalHT)*100)/100;
+  } else {
+    totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
+    totalTVA = Math.round((totalTTC-totalHT)*100)/100;
+  }
   var nbTickets = dn.length + ps2.length;
 
   // Section 1 : R\u00e9cap par taux
   var headers = ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"];
-  var rows = [
+  var rows = _dualTVA ? [
+    [txTVA+"% (prestations)", csvNum(_htPrest), csvNum(_tvaPrest), csvNum(_totPrest), ""],
+    [txTVAprod+"% (produits)", csvNum(_htProd), csvNum(_tvaProd), csvNum(_totProd), ""],
+    ["TOTAL", csvNum(totalHT), csvNum(totalTVA), csvNum(totalTTC), nbTickets]
+  ] : [
     [txTVA+"%", csvNum(totalHT), csvNum(totalTVA), csvNum(totalTTC), nbTickets]
   ];
   // R\u00e9cap par jour pour le footer
   var byDay = {};
-  dn.concat(ps2).forEach(function(x){
+  dn.forEach(function(x){
     var d = x.date;
-    if(!byDay[d]) byDay[d] = {ttc:0, n:0};
+    if(!byDay[d]) byDay[d] = {ttc:0, prest:0, prod:0, n:0};
     byDay[d].ttc += (Number(x.pr)||0);
+    if(_dualTVA){ var _spd=_splitPrestProd(x); byDay[d].prest+=_spd.prest; byDay[d].prod+=_spd.prod; }
+    byDay[d].n++;
+  });
+  ps2.forEach(function(x){
+    var d = x.date;
+    if(!byDay[d]) byDay[d] = {ttc:0, prest:0, prod:0, n:0};
+    byDay[d].ttc += (Number(x.pr)||0);
+    if(_dualTVA){ byDay[d].prod += (Number(x.pr)||0); }
     byDay[d].n++;
   });
   // Footer avec d\u00e9tail par jour + totaux
@@ -20956,8 +21013,15 @@ function expRecapTVA(){
   footer.push(["Date","Base HT","TVA","Total TTC","Nb op\u00e9rations"]);
   Object.keys(byDay).sort().forEach(function(d){
     var t = byDay[d].ttc;
-    var h = Math.round(t/(1+txTVA/100)*100)/100;
-    var tv = Math.round((t-h)*100)/100;
+    var h, tv;
+    if(_dualTVA){
+      var _hp=Math.round(byDay[d].prest/(1+txTVA/100)*100)/100;
+      var _hq=Math.round(byDay[d].prod/(1+txTVAprod/100)*100)/100;
+      h=Math.round((_hp+_hq)*100)/100; tv=Math.round((t-h)*100)/100;
+    } else {
+      h = Math.round(t/(1+txTVA/100)*100)/100;
+      tv = Math.round((t-h)*100)/100;
+    }
     footer.push([d, csvNum(h)+" \u20ac", csvNum(tv)+" \u20ac", csvNum(t)+" \u20ac", byDay[d].n]);
   });
   footer.push(["TOTAL", csvNum(totalHT)+" \u20ac", csvNum(totalTVA)+" \u20ac", csvNum(totalTTC)+" \u20ac", nbTickets]);
@@ -20979,6 +21043,8 @@ function expJournalComptable(){
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
 
   // Mapping mode paiement \u2192 compte g\u00e9n\u00e9ral (plan comptable g\u00e9n\u00e9ral FR)
   function compteContrePartie(met){
@@ -20997,7 +21063,8 @@ function expJournalComptable(){
   var rows = [];
   var ecrNum = 1;
 
-  function pushTicket(date, num, libelle, ttc, ht, tva, met, type){
+  function pushTicket(date, num, libelle, ttc, ht, tva, met, type, rate){
+    var _r = (typeof rate!=="undefined" && rate!==null) ? Number(rate) : txTVA;
     var contrep = compteContrePartie(met);
     var compteVente = type==="produit" ? "707000" : "706000"; // 706 prestations services, 707 ventes marchandises
     var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
@@ -21012,10 +21079,10 @@ function expJournalComptable(){
       rows.push(["VE","Ventes",ecrNum,date,contrep,"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
       rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
       if(tva > 0){
-        var compteTVA = "445710"; // TVA collect\u00e9e 20%
-        if(txTVA===10) compteTVA = "445720";
-        else if(txTVA===5.5) compteTVA = "445730";
-        rows.push(["VE","Ventes",ecrNum,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);
+        var compteTVA = "445710"; // TVA collect\u00e9e (par défaut 20%)
+        if(_r===10) compteTVA = "445720";
+        else if(_r===5.5) compteTVA = "445730";
+        rows.push(["VE","Ventes",ecrNum,date,compteTVA,"TVA collect\u00e9e "+_r+"%",num||"",date,lib,"",csvNum(tva),"",""]);
       }
     }
     ecrNum++;
@@ -21033,17 +21100,17 @@ function expJournalComptable(){
       pushTicket(a.date, "TK"+(a.tkNum||""), libelle, sp.prest, ht, tva, a.met, "service");
     }
     if(sp.prod > 0){
-      var ht = Math.round(sp.prod/(1+txTVA/100)*100)/100;
+      var ht = Math.round(sp.prod/(1+txTVAprod/100)*100)/100;
       var tva = Math.round((sp.prod-ht)*100)/100;
-      pushTicket(a.date, "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht, tva, a.met, "produit");
+      pushTicket(a.date, "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht, tva, a.met, "produit", txTVAprod);
     }
   });
   // PS legacy (vente produit hors RDV) — toujours géré au cas où jamais alimenté en pratique
   ps2.forEach(function(p){
     var ttc = Number(p.pr)||0;
-    var ht = Math.round(ttc/(1+txTVA/100)*100)/100;
+    var ht = Math.round(ttc/(1+txTVAprod/100)*100)/100;
     var tva = Math.round((ttc-ht)*100)/100;
-    pushTicket(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, tva, p.met, "produit");
+    pushTicket(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, tva, p.met, "produit", txTVAprod);
   });
 
   // Footer avec totaux d\u00e9bit/cr\u00e9dit
@@ -21177,23 +21244,32 @@ async function expPackComptable(){
     var sv=gS(a.sId), cl=gC(a.cId), sty=gT(a.stId);
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"\u00D7 "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
-    var ttc=Number(a.pr)||0; var ht=Math.round(ttc/(1+txTVA/100)*100)/100; var tva=Math.round((ttc-ht)*100)/100;
+    var ttc=Number(a.pr)||0; var _v=_lxHtTva(a); var ht=_v.ht, tva=_v.tva;
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
     rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),a.met||"","Encaiss\u00e9",src,(a.hash||"").slice(0,16)]);
   });
   ps2.forEach(function(p){
-    var ttc=Number(p.pr)||0; var ht=Math.round(ttc/(1+txTVA/100)*100)/100; var tva=Math.round((ttc-ht)*100)/100;
+    var ttc=Number(p.pr)||0; var _v=_lxHtTvaProd(ttc); var ht=_v.ht, tva=_v.tva;
     rJournal.push([p.date,p.time||"",p.tkNum||"","","","\uD83D\uDECD "+p.prod,csvNum(ht),csvNum(tva),csvNum(ttc),0,p.met||"","Vente produit","Luxyra",""]);
   });
   rJournal.sort(function(a,b){var d=String(a[0]).localeCompare(String(b[0]));return d?d:String(a[1]).localeCompare(String(b[1]));});
   folder.file("01_journal_caisse_"+accM+".csv", csvBuildPro("Journal de caisse détaillé", accM, hJournal, rJournal));
 
   // 2. R\u00e9cap TVA OU D\u00e9claration URSSAF (selon r\u00e9gime)
-  var totalTTC = 0;
-  dn.forEach(function(a){totalTTC += (Number(a.pr)||0);});
-  ps2.forEach(function(p){totalTTC += (Number(p.pr)||0);});
-  var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
-  var totalTVA = Math.round((totalTTC-totalHT)*100)/100;
+  var totalTTC = 0, _tPrest = 0, _tProd = 0;
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  dn.forEach(function(a){totalTTC += (Number(a.pr)||0); if(_dualTVA){var _s=_splitPrestProd(a); _tPrest+=_s.prest; _tProd+=_s.prod;}});
+  ps2.forEach(function(p){totalTTC += (Number(p.pr)||0); if(_dualTVA){_tProd+=(Number(p.pr)||0);}});
+  var totalHT, totalTVA;
+  if(_dualTVA){
+    var _txpP=Number(SALON_CONFIG.tvaProduits);
+    var _hPP=Math.round(_tPrest/(1+txTVA/100)*100)/100;
+    var _hQP=Math.round(_tProd/(1+_txpP/100)*100)/100;
+    totalHT=Math.round((_hPP+_hQP)*100)/100;
+  } else {
+    totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
+  }
+  totalTVA = Math.round((totalTTC-totalHT)*100)/100;
   var isMicro = isMicroEntrepreneur();
   if(isMicro){
     // Pour micro : d\u00e9claration URSSAF \u00E0 la place du r\u00e9cap TVA
@@ -21252,8 +21328,8 @@ async function expPackComptable(){
     }
     ecrNum2++;
   }
-  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
-  ps2.forEach(function(p){var ttc=Number(p.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcr(p.date,"PR"+(p.tkNum||""),p.prod||"Vente produit",ttc,ht,tva,p.met,"produit");});
+  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var _v=_lxHtTva(a);var ht=_v.ht,tva=_v.tva;pushEcr(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
+  ps2.forEach(function(p){var ttc=Number(p.pr)||0;var _v=_lxHtTvaProd(ttc);var ht=_v.ht,tva=_v.tva;pushEcr(p.date,"PR"+(p.tkNum||""),p.prod||"Vente produit",ttc,ht,tva,p.met,"produit");});
   folder.file("03_journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (écritures comptables)", accM, hCompta, rCompta));
 
   // 4. Annulations
@@ -21478,7 +21554,16 @@ async function expExcelComptable(){
   });
   tPrest=Math.round(tPrest*100)/100; tProd=Math.round(tProd*100)/100;
   var totalTTC = tPrest+tProd;
-  var totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var totalHT;
+  if(_dualTVA){
+    var _txpX=Number(SALON_CONFIG.tvaProduits);
+    var _hPX=Math.round(tPrest/(1+txTVA/100)*100)/100;
+    var _hQX=Math.round(tProd/(1+_txpX/100)*100)/100;
+    totalHT=Math.round((_hPX+_hQX)*100)/100;
+  } else {
+    totalHT = Math.round(totalTTC/(1+txTVA/100)*100)/100;
+  }
   var totalTVAMt = Math.round((totalTTC-totalHT)*100)/100;
   var panierMoy = dn.length ? Math.round(totalTTC/dn.length*100)/100 : 0;
   var totRegl = tCB+tEsp+tChq+tBon+tVir+tAut;
@@ -21580,9 +21665,10 @@ async function expExcelComptable(){
     ["Date","Heure","N° Ticket","Client","Collaborateur","Détail","HT (€)","TVA (€)","TTC (€)","Remise (€)","Mode","Statut","Source","Hash NF525"]
   ];
   var totHTj=0, totTVAj=0, totTTCj=0, totRemj=0;
-  function pushVente(date,heure,tk,client,collab,detail,ttc,rem,met,statut,src,hash){
-    var ht=Math.round(ttc/(1+txTVA/100)*100)/100;
-    var tva=Math.round((ttc-ht)*100)/100;
+  function pushVente(date,heure,tk,client,collab,detail,ttc,rem,met,statut,src,hash,vatA){
+    var _v = vatA ? _lxHtTva(vatA) : null;
+    var ht = _v ? _v.ht : Math.round(ttc/(1+txTVA/100)*100)/100;
+    var tva = _v ? _v.tva : Math.round((ttc-ht)*100)/100;
     totHTj+=ht; totTVAj+=tva; totTTCj+=ttc; totRemj+=rem;
     jourD.push([toDate(date),heure,tk,client,collab,detail,ht,tva,ttc,rem,met,statut,src||"Luxyra",String(hash||"").slice(0,16)]);
   }
@@ -21591,10 +21677,10 @@ async function expExcelComptable(){
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"× "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, a.met||"", "Encaissé", src, a.hash);
+    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, a.met||"", "Encaissé", src, a.hash, a);
   });
   ps2.forEach(function(p){
-    pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "Luxyra", "");
+    pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "Luxyra", "", {pr:Number(p.pr)||0,items:[{price:Number(p.pr)||0,qty:1,remise:0,isProd:true}]});
   });
   // Tri par date+heure
   var rows = jourD.slice(4);
@@ -21687,8 +21773,8 @@ async function expExcelComptable(){
     }
     ecrNum++;
   }
-  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcrXLS(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
-  ps2.forEach(function(pp){var ttc=Number(pp.pr)||0;var ht=Math.round(ttc/(1+txTVA/100)*100)/100;var tva=Math.round((ttc-ht)*100)/100;pushEcrXLS(pp.date,"PR"+(pp.tkNum||""),pp.prod||"Vente produit",ttc,ht,tva,pp.met,"produit");});
+  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var _v=_lxHtTva(a);var ht=_v.ht,tva=_v.tva;pushEcrXLS(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
+  ps2.forEach(function(pp){var ttc=Number(pp.pr)||0;var _v=_lxHtTvaProd(ttc);var ht=_v.ht,tva=_v.tva;pushEcrXLS(pp.date,"PR"+(pp.tkNum||""),pp.prod||"Vente produit",ttc,ht,tva,pp.met,"produit");});
   XLSX.utils.book_append_sheet(wb, makeSheet(comptaD, {
     titleRows:[0], subRows:[1,2], headerRows:[4],
     numCols:[9,10], dateCols:[3,7], intCols:[2],
@@ -21893,10 +21979,12 @@ function printBandeZ(){
   var tRemises=0;var tBrut=0;
   dn.forEach(function(a){tRemises+=(a.remise||0);tBrut+=(a.brutTotal||a.pr);});
   
-  // TVA
+  // TVA — double taux produits (ex. Luxembourg). Garde-fou : taux produits == services -> inchangé.
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var _txProdZ=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
   var prestHT=Math.round(tPrest/(1+txTVA/100)*100)/100;
   var prestTVA=Math.round((tPrest-prestHT)*100)/100;
-  var prodHT=Math.round(tProd/(1+txTVA/100)*100)/100;
+  var prodHT=Math.round(tProd/(1+_txProdZ/100)*100)/100;
   var prodTVA=Math.round((tProd-prodHT)*100)/100;
   var totalHT=prestHT+prodHT;var totalTVAmt=prestTVA+prodTVA;
   
@@ -28202,8 +28290,20 @@ function buildTicketHTML(a, isDuplicate){
   var clN=apptClientLabel(a);
   var total=a.pr;
   var txTVA=SALON_CONFIG.tauxTVA||20;
-  var ht=Math.round(total/(1+txTVA/100)*100)/100;
-  var tva=Math.round((total-ht)*100)/100;
+  // Double taux produits (ex. Luxembourg). Garde-fou : taux produits == taux services -> calcul inchangé.
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var ht,tva;
+  if(_dualTVA){
+    var _sp=_splitPrestProd(a);
+    var _txp=Number(SALON_CONFIG.tvaProduits);
+    var _hP=Math.round(_sp.prest/(1+txTVA/100)*100)/100;
+    var _hQ=Math.round(_sp.prod/(1+_txp/100)*100)/100;
+    ht=Math.round((_hP+_hQ)*100)/100;
+    tva=Math.round((total-ht)*100)/100;
+  } else {
+    ht=Math.round(total/(1+txTVA/100)*100)/100;
+    tva=Math.round((total-ht)*100)/100;
+  }
 
   var h="";
   // DUPLICATA
@@ -30503,13 +30603,16 @@ function cloturerJournee(){
   var totalCA=totalPrest+totalProd;
   // TVA sur le CA global
   var txTVA=SALON_CONFIG.tauxTVA||20;
-  var totalHT=Math.round(totalCA/(1+txTVA/100)*100)/100;
-  var totalTVA=Math.round((totalCA-totalHT)*100)/100;
-  // TVA ventilee: prestations et produits (meme taux pour salon standard)
+  // Double taux produits (ex. Luxembourg 8%/17%). Garde-fou : taux produits == taux
+  // services (France/Belgique/défaut) -> calcul mono-taux STRICTEMENT inchangé.
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
   var prestHT=Math.round(totalPrest/(1+txTVA/100)*100)/100;
   var prestTVA=Math.round((totalPrest-prestHT)*100)/100;
-  var prodHT=Math.round(totalProd/(1+txTVA/100)*100)/100;
+  var prodHT=Math.round(totalProd/(1+txTVAprod/100)*100)/100;
   var prodTVA=Math.round((totalProd-prodHT)*100)/100;
+  var totalHT=_dualTVA?Math.round((prestHT+prodHT)*100)/100:Math.round(totalCA/(1+txTVA/100)*100)/100;
+  var totalTVA=Math.round((totalCA-totalHT)*100)/100;
   // Ticket range + heures
   var tkNums=done.map(function(a){return a.tkNum||0;}).filter(function(n){return n>0;});
   var tkMin=tkNums.length?Math.min.apply(null,tkNums):0;
@@ -31015,7 +31118,15 @@ function _doArchivageAnnuel(year){
   });
   totalPrest=Math.round(totalPrest*100)/100; totalProd=Math.round(totalProd*100)/100;
   var txTVA=SALON_CONFIG.tauxTVA||20;
-  totalHT=Math.round(totalCA/(1+txTVA/100)*100)/100;
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  if(_dualTVA){
+    var _txpA=Number(SALON_CONFIG.tvaProduits);
+    var _hPA=Math.round(totalPrest/(1+txTVA/100)*100)/100;
+    var _hQA=Math.round(totalProd/(1+_txpA/100)*100)/100;
+    totalHT=Math.round((_hPA+_hQA)*100)/100;
+  } else {
+    totalHT=Math.round(totalCA/(1+txTVA/100)*100)/100;
+  }
   totalTVA=Math.round((totalCA-totalHT)*100)/100;
   prodVentes.forEach(function(p){totalProd+=p.pr;});
   
@@ -31208,9 +31319,17 @@ async function exportFEC(){
 
     // FIX 2026-05-23 : ventilation prestations (706) / produits (707) au prorata des items
     var _sp=(typeof _splitPrestProd==="function")?_splitPrestProd({pr:totalTTC,items:t.items||[]}):{prest:totalTTC,prod:0};
-    var _prodRatio=totalTTC>0?((Number(_sp.prod)||0)/totalTTC):0;
-    var prodHT=Math.round(totalHT*_prodRatio*100)/100;
-    var prestHT=Math.round((totalHT-prodHT)*100)/100;
+    var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(tva));
+    var prodHT, prestHT;
+    if(_dualTVA){
+      var _txProdF=Number(SALON_CONFIG.tvaProduits);
+      prodHT=Math.round((Number(_sp.prod)||0)/(1+_txProdF/100)*100)/100;
+      prestHT=Math.round((totalHT-prodHT)*100)/100;
+    } else {
+      var _prodRatio=totalTTC>0?((Number(_sp.prod)||0)/totalTTC):0;
+      prodHT=Math.round(totalHT*_prodRatio*100)/100;
+      prestHT=Math.round((totalHT-prodHT)*100)/100;
+    }
 
     if(t.status==="cancelled"){
       _fecLegs(t,totalTTC).forEach(function(lg){ lines.push(["VTE","Ventes salon",String(ecrNum),dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""].join("\t")); });
@@ -31321,8 +31440,14 @@ async function exportEBP(){
     var ht=Number(t.total_ht)||(ttc/(1+tva/100));
     var tvaT=Number(t.total_tva)||(ttc-ht);
     var sp=(typeof _splitPrestProd==="function")?_splitPrestProd({pr:ttc,items:t.items||[]}):{prest:ttc,prod:0};
-    var prodRatio= ttc!==0 ? ((Number(sp.prod)||0)/ttc) : 0;
-    var prodHT=R(ht*prodRatio); var prestHT=R(ht-prodHT);
+    var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(tva));
+    var prodHT, prestHT;
+    if(_dualTVA){
+      prodHT=R((Number(sp.prod)||0)/(1+Number(SALON_CONFIG.tvaProduits)/100)); prestHT=R(ht-prodHT);
+    } else {
+      var prodRatio= ttc!==0 ? ((Number(sp.prod)||0)/ttc) : 0;
+      prodHT=R(ht*prodRatio); prestHT=R(ht-prodHT);
+    }
     g.ttc=R(g.ttc+ttc); g.prestHT=R(g.prestHT+prestHT); g.prodHT=R(g.prodHT+prodHT); g.tva=R(g.tva+tvaT);
     var dp=t.detail_paiement; if(typeof dp==="string"){try{dp=JSON.parse(dp);}catch(_e){dp=null;}}
     if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
@@ -31563,8 +31688,14 @@ async function exportQuadratus(){
     var ht=Number(t.total_ht)||(ttc/(1+tva/100));
     var tvaT=Number(t.total_tva)||(ttc-ht);
     var sp=(typeof _splitPrestProd==="function")?_splitPrestProd({pr:ttc,items:t.items||[]}):{prest:ttc,prod:0};
-    var prodRatio= ttc!==0 ? ((Number(sp.prod)||0)/ttc) : 0;
-    var prodHT=R(ht*prodRatio); var prestHT=R(ht-prodHT);
+    var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(tva));
+    var prodHT, prestHT;
+    if(_dualTVA){
+      prodHT=R((Number(sp.prod)||0)/(1+Number(SALON_CONFIG.tvaProduits)/100)); prestHT=R(ht-prodHT);
+    } else {
+      var prodRatio= ttc!==0 ? ((Number(sp.prod)||0)/ttc) : 0;
+      prodHT=R(ht*prodRatio); prestHT=R(ht-prodHT);
+    }
     g.ttc=R(g.ttc+ttc); g.prestHT=R(g.prestHT+prestHT); g.prodHT=R(g.prodHT+prodHT); g.tva=R(g.tva+tvaT);
     var dp=t.detail_paiement; if(typeof dp==="string"){try{dp=JSON.parse(dp);}catch(_e){dp=null;}}
     if(dp&&typeof dp==="object"&&!Array.isArray(dp)){

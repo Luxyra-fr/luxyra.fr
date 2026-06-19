@@ -1958,8 +1958,29 @@ async function saveTicketToDb(tk) {
     // Calcul TVA à partir du taux salon
     var taux = Number(SALON_CONFIG.tauxTVA || 20);
     var ttc = Number(tk.pr || 0);
-    var ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
-    var tva = Math.round((ttc - ht) * 100) / 100;
+    var ht, tva;
+    // Double taux (ex. Luxembourg : prestations 8% / produits 17%). Garde-fou :
+    // si taux produits == taux services (France, Belgique, défaut) -> calcul mono-taux
+    // STRICTEMENT inchangé (byte-identique). Sinon -> ventilation prestations/produits.
+    var _txProd = (SALON_CONFIG.tvaProduits != null && Number(SALON_CONFIG.tvaProduits) !== taux) ? Number(SALON_CONFIG.tvaProduits) : taux;
+    if (_txProd === taux) {
+      ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
+      tva = Math.round((ttc - ht) * 100) / 100;
+    } else {
+      var _sumP = 0, _sumQ = 0, _its = tk.items || [];
+      for (var _i = 0; _i < _its.length; _i++) {
+        var _it = _its[_i]; if (!_it || _it.isSep) continue;
+        var _sub = (Number(_it.price)||0) * (Number(_it.qty)||1) - (Number(_it.remise)||0);
+        if (_it.isProd) _sumQ += _sub; else _sumP += _sub;
+      }
+      var _tot = _sumP + _sumQ;
+      var _prodTTC = (_tot > 0) ? Math.round((_sumQ/_tot) * ttc * 100) / 100 : 0;
+      var _prestTTC = Math.round((ttc - _prodTTC) * 100) / 100;
+      var _htP = Math.round(_prestTTC / (1 + taux/100) * 100) / 100;
+      var _htQ = Math.round(_prodTTC / (1 + _txProd/100) * 100) / 100;
+      ht = Math.round((_htP + _htQ) * 100) / 100;
+      tva = Math.round((ttc - ht) * 100) / 100;
+    }
 
     var data = {
       salon_id: _salonId,
