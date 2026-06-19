@@ -2553,13 +2553,21 @@ async function saveCollaborateurs() {
   // PRÉSERVER une photo DB existante si la mémoire locale a img="" (race
   // condition entre 2 sessions / reload partiel). La suppression explicite
   // passe par clearStyImg → clearCollabPhoto(id) qui force img="" directement.
-  var existing = await _sb.from("collaborateurs").select("id,img").eq("salon_id", _salonId);
+  var existing = await _sb.from("collaborateurs").select("id,img,nom,initiales,couleur").eq("salon_id", _salonId);
   var dbIds = {};
   var dbImg = {};
+  // FIX 2026-06-19 : signature nom|initiales|couleur -> id existant. Permet d'ADOPTER
+  // une ligne déjà en base au lieu d'INSÉRER un clone quand l'id en mémoire ne matche
+  // pas (état transitoire au démarrage : T hydraté depuis le cache avant le load DB,
+  // puis save déclenché par une navigation). Évite la duplication des collaborateurs.
+  var dbBySig = {};
   if (existing.data) {
     for (var e = 0; e < existing.data.length; e++) {
-      dbIds[existing.data[e].id] = true;
-      dbImg[existing.data[e].id] = existing.data[e].img || "";
+      var ex = existing.data[e];
+      dbIds[ex.id] = true;
+      dbImg[ex.id] = ex.img || "";
+      var sig = (ex.nom||"")+"|"+(ex.initiales||"")+"|"+(ex.couleur||"");
+      if (dbBySig[sig] === undefined) dbBySig[sig] = ex.id;
     }
   }
   // Now save each collab
@@ -2589,9 +2597,17 @@ async function saveCollaborateurs() {
       // Exists in DB → UPDATE
       await _sb.from("collaborateurs").update(data).eq("id", c.id);
     } else {
-      // New → INSERT
-      var res = await _sb.from("collaborateurs").insert(data).select();
-      if (res.data && res.data[0]) c.id = res.data[0].id;
+      // FIX 2026-06-19 : avant d'insérer, on cherche un collaborateur identique déjà
+      // en base (même nom + initiales + couleur). S'il existe, on l'ADOPTE (UPDATE +
+      // récupération de son id) au lieu de créer un doublon. Sinon -> vrai nouveau -> INSERT.
+      var _sig = (c.n||"")+"|"+(c.i||"")+"|"+(c.c||"");
+      if (dbBySig[_sig] !== undefined) {
+        c.id = dbBySig[_sig];
+        await _sb.from("collaborateurs").update(data).eq("id", c.id);
+      } else {
+        var res = await _sb.from("collaborateurs").insert(data).select();
+        if (res.data && res.data[0]) { c.id = res.data[0].id; dbIds[c.id] = true; dbBySig[_sig] = c.id; }
+      }
     }
   }
 }
