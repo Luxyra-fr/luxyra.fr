@@ -8540,6 +8540,23 @@ async function _lxEnsureFichesForOnlineAppts(){
     if(changed){ window._apDirty=true; if(typeof refreshCurrentView==="function") refreshCurrentView(); }
   }catch(_e){}
 }
+// Determine si un collaborateur TRAVAILLE une date donnee (horaires effectifs + absences journee).
+function _lxCollabWorksOn(stId, date){
+  try{
+    var hrs=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,stId):null;
+    if(!hrs||!hrs.o||!hrs.c) return false;
+    if(window.ABSENCES){
+      for(var i=0;i<window.ABSENCES.length;i++){
+        var ab=window.ABSENCES[i]; if(ab.stId!==stId) continue;
+        var t=ab.type||"absent";
+        if(t==="conge"||t==="absent_jour"||t==="absent"||t==="maladie"||t==="formation"){
+          if((ab.dateFrom&&ab.dateFrom<=date&&ab.dateTo>=date)||(ab.date===date&&!ab.from)) return false;
+        }
+      }
+    }
+    return true;
+  }catch(_e){ return true; }
+}
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -8551,7 +8568,14 @@ function _lxOnlineToAP(rdv){
     var aptItems=[];
     if(Array.isArray(rdv.items)&&rdv.items.length>1){aptItems=rdv.items.map(function(it){return {sId:it.sId||it.service_id||null,name:it.name||it.nom||"Prestation",price:Number(it.price||it.prix||0),qty:Number(it.qty||1),remise:Number(it.remise||0)};});}
     var _lxcId=_lxResolveClientId(rdv);
-    AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:_lxcId,sId:rdv.service_id,stId:(rdv.collaborateur_id||((typeof T!=="undefined"&&T&&T.length)?T[0].id:null)),date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||"")+(rdv.collaborateur_id?"":" \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)"),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});window._apDirty=true;
+    var _stId=rdv.collaborateur_id, _needAssign=false;
+    if(!_stId){
+      var _act=(typeof T!=="undefined"&&T)?T.filter(function(c){return c&&c.inactif!==true;}):[];
+      var _work=_act.filter(function(c){return _lxCollabWorksOn(c.id, rdv.date_rdv);});
+      if(_work.length===1){ _stId=_work[0].id; }
+      else { _stId=((_work[0]||_act[0]||(T&&T[0])||{}).id)||null; _needAssign=true; }
+    }
+    AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:_lxcId,sId:rdv.service_id,stId:_stId,date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||"")+(!_needAssign?"":" \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)"),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});window._apDirty=true;
   }catch(_e){}
 }
 function _lxRemoveOnlineFromAP(rdvId){
