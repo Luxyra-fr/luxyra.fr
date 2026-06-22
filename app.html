@@ -10761,6 +10761,44 @@ function lxAddedPresta(a){
   }catch(e){ return ""; }
 }
 
+// Collaborateur LIBRE a un creneau precis : travaille ce jour + pas absent/ferme + pas deja un RDV qui chevauche.
+// Lecture seule, fail-safe (erreur -> considere libre, ne bloque jamais l'assignation).
+function _lxCollabFreeAt(stId,date,startMin,endMin,excludeId){
+  try{
+    if(typeof _lxCollabWorksOn==="function" && !_lxCollabWorksOn(stId,date)) return false;
+    if(typeof isStylistBlockedDuring==="function" && isStylistBlockedDuring(stId,date,startMin,endMin)) return false;
+    for(var i=0;i<AP.length;i++){
+      var a2=AP[i]; if(!a2||a2.id===excludeId) continue;
+      if(a2.cancelled===true||a2.st==="cancelled"||a2.st==="annule"||a2.st==="annulé") continue;
+      if(a2.date!==date) continue;
+      var t2=a2.time||a2.heure; if(!t2) continue;
+      var base=toM(t2), ph2=a2.aPhases||[], cur=base, hit=false;
+      if(ph2.length){
+        for(var p=0;p<ph2.length;p++){ var pd=ph2[p].d||0; if(ph2[p].t==="w"){ var pc=ph2[p].stId||a2.stId; if(pc===stId && startMin<cur+pd && endMin>cur){ hit=true; break; } } cur+=pd; }
+      } else if(a2.stId===stId){
+        var sv2=(typeof gS==="function")?gS(a2.sId):null; var d2=0; if(sv2&&sv2.phases){ sv2.phases.forEach(function(p){d2+=p.d||0;}); } if(!d2)d2=30;
+        if(startMin<base+d2 && endMin>base) hit=true;
+      }
+      if(hit) return false;
+    }
+    return true;
+  }catch(_e){ return true; }
+}
+// Reassigne un RDV en ligne a un collaborateur (persiste dans rdv_online = source de verite).
+function lxAssignOnlineRdv(apptId,newId){
+  newId=parseInt(newId,10); if(!newId) return;
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ a=AP[i]; break; } }
+  if(!a||!a.onlineId) return;
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    _sb.from("rdv_online").update({collaborateur_id:newId}).eq("id",a.onlineId).eq("salon_id",_salonId).then(function(){},function(_e){});
+  }
+  a.stId=newId;
+  if(a.comment){ var _i=a.comment.indexOf("SANS PR"); if(_i>0){ a.comment=a.comment.substring(0,_i).replace(/[^\w)]+$/,""); } }
+  window._apDirty=true;
+  hideRdvPopup();
+  if(typeof refreshCurrentView==="function") refreshCurrentView(); else if(typeof go==="function") go("planning");
+  if(typeof toast==="function"){ var _n=(typeof gT==="function"&&gT(newId))?gT(newId).n:""; toast("RDV assigné à "+_n,"success"); }
+}
 function showRdvPopup(id,evt){
   if(window._dragInProgress||window._pendingDrag)return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
@@ -10790,6 +10828,15 @@ function showRdvPopup(id,evt){
         break;
       }
     }
+  }
+  if(a.isOnline&&a.onlineId){
+    var _st=toM(a.time), _en=_st+td, _cur=a.stId, _opts="";
+    for(var _ci=0;_ci<(T||[]).length;_ci++){
+      var _c=T[_ci]; if(!_c||_c.inactif===true) continue;
+      var _free=(typeof _lxCollabFreeAt==="function")?_lxCollabFreeAt(_c.id,a.date,_st,_en,a.id):true;
+      if(_free||_c.id===_cur){ _opts+='<option value="'+_c.id+'"'+(_c.id===_cur?' selected':'')+'>'+_c.n+(_c.id===_cur?' (actuel)':'')+'</option>'; }
+    }
+    h+='<div class="rp-info" style="margin-top:6px">👥 Assigner à : <select onchange="lxAssignOnlineRdv(\''+a.id+'\',this.value)" style="background:#1a1a1a;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:6px 8px;font-size:13px;max-width:170px">'+_opts+'</select></div>';
   }
   h+='<div class="rp-btns">';
   h+='<button style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.5)" onclick="hideRdvPopup()">Fermer</button>';
