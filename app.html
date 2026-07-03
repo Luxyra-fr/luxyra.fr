@@ -8606,6 +8606,19 @@ function _lxFlashOnce(key){
     window._lxFlashedMem[key]=1; return true;
   }
 }
+// FIX 2026-07-03 : resync immediate au retour au premier plan. Sur mobile, le navigateur
+// gele les setInterval quand l'app passe en arriere-plan (ecran verrouille) -> le poll 30s
+// ne tourne plus -> planning/CA figes au retour. Au refocus, on recharge tout de suite
+// (meme logique que le poll : appointments sur home/stats/compta/planning, clients sinon).
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden) return;
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
+    if(typeof reloadFromSupabase!=="function") return;
+    if(/^(home|stats|accounting|planning)$/.test(window._currentPage||"")){ reloadFromSupabase("appointments"); }
+    else if(/^(clients|detail)$/.test(window._currentPage||"")){ reloadFromSupabase("clients"); }
+  }catch(_e){}
+});
 window._rdvPollInterval=setInterval(function(){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     // FIX 2026-05-23 : filet multi-appareils — recharge les encaissements (appointments)
