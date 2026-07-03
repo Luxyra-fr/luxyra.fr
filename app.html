@@ -28926,6 +28926,32 @@ function doRemiseBanque(){
 }
 
 // === MARKETING PAGE ===
+// Historique des SMS envoyés (lit messaging_log). Lecture seule, aucun impact fiscal.
+async function lxSmsHistorique(){
+  var box=document.getElementById("modal");
+  if(box) box.innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:520px;max-height:88vh;overflow-y:auto"><h2>📜 Historique des SMS</h2><div id="_smsHistoBody" style="font-size:13px;color:var(--text2)">Chargement…</div><button class="btn" style="margin-top:12px;width:100%" onclick="cM()">Fermer</button></div></div>';
+  function _mot(c){ c=c||""; if(c.indexOf("rappel_24h")>=0)return "Rappel 24h"; if(c.indexOf("rappel_2h")>=0)return "Rappel 2h"; if(c.indexOf("carte_rappel")>=0)return "Rappel carte"; if(c==="test")return "Test"; if(c.indexOf("confirm")>=0)return "Confirmation"; if(c.indexOf("campagne")>=0)return "Campagne"; return c||"SMS"; }
+  try{
+    if(typeof _sb==="undefined"||!_salonId) throw new Error("hors ligne");
+    var r=await _sb.from("messaging_log").select("created_at,recipient,client_nom,context,content,via").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(100);
+    var rows=(r&&r.data)||[];
+    var body=document.getElementById("_smsHistoBody"); if(!body) return;
+    if(!rows.length){ body.innerHTML='<div style="color:var(--text3);font-style:italic;padding:12px 0">Aucun SMS enregistré pour le moment. Les prochains envois apparaîtront ici (nom de la cliente, motif, contenu).</div>'; return; }
+    var html='';
+    rows.forEach(function(m){
+      var d=m.created_at?new Date(m.created_at):null;
+      var ds=d?(d.toLocaleDateString('fr-FR')+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})):'';
+      var who=((m.client_nom||'').trim())||('...'+(m.recipient||''));
+      html+='<div style="padding:10px 0;border-bottom:1px solid var(--border2)">';
+      html+='<div style="display:flex;justify-content:space-between;gap:8px"><strong style="color:#fff">'+who+'</strong><span style="color:var(--text3);font-size:11px">'+ds+'</span></div>';
+      html+='<div style="font-size:11px;color:var(--gold);margin:2px 0">'+_mot(m.context)+(m.recipient?' · ...'+m.recipient:'')+(m.via?' · '+m.via:'')+'</div>';
+      if(m.content) html+='<div style="font-size:12px;color:var(--text2)">'+String(m.content).replace(/</g,'&lt;').slice(0,160)+'</div>';
+      html+='</div>';
+    });
+    body.innerHTML=html;
+  }catch(e){ var b=document.getElementById("_smsHistoBody"); if(b) b.innerHTML='<div style="color:#ef5350">Erreur de chargement : '+((e&&e.message)||e)+'</div>'; }
+}
+window.lxSmsHistorique=lxSmsHistorique;
 function rMarketing(){
   if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\\n\u00c0 bient\u00f4t !",confirmSms:true,confirmEmail:true};
   if(!window.MKT_TAB)window.MKT_TAB="campagnes";
@@ -28953,6 +28979,7 @@ function rMarketing(){
   h+='</div>';
   h+='</div>';
   
+  h+='<button onclick="lxSmsHistorique()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#fff;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:16px">📜 Historique des SMS envoyés — qui / quand / pourquoi</button>';
   // === BUY SMS PACKS ===
   h+='<div style="padding:14px;border-radius:12px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
   h+='<div style="flex:1;min-width:160px"><div style="font-size:13px;font-weight:700;color:var(--gold)">Besoin de plus de SMS ?</div>';
