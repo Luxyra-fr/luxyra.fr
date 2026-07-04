@@ -11727,12 +11727,34 @@ function _cancelApptDo(id){
   _doCancelApptUnpaid(id);
   cM();go("planning");
 }
+// FIX 2026-07-04 (BUG A) : annulation salon d'un RDV EN LIGNE (ghost "online_<uuid>").
+// Avant, _doCancelApptUnpaid retirait le fantome de AP puis appelait
+// deleteAppointmentFromDb("online_<uuid>") qui NO-OP (l'id n'est pas un uuid appointments)
+// -> rdv_online restait "confirmed"/"pending" en base => (1) client PAS notifie, et surtout
+// (2) le poll 30s / le refocus re-appelaient _lxOnlineToAP -> le fantome REVENAIT au planning.
+// Ici on passe rdv_online a "cancelled" (cancelled_by='salon') de facon FIABLE (.then, piege
+// Supabase paresseux) -> le trigger notif tombe, le client voit l'annulation, et _lxOnlineToAP
+// n'ajoute plus le RDV (il ne reprend que pending/confirmed). Additif, fail-safe.
+function _lxCancelOnlineRdv(rdvId, reason){
+  try{
+    if(!rdvId||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
+    // reflet memoire immediat : empeche le poll/reconcile de re-ajouter le fantome
+    if(window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===rdvId){ RDV_ONLINE[i].status="cancelled"; RDV_ONLINE[i].cancelled_by="salon"; break; } } }
+    _sb.from("rdv_online").update({status:"cancelled",cancelled_by:"salon",cancel_reason:(reason||"Annul\u00e9 par le salon"),cancelled_at:new Date().toISOString()}).eq("id",rdvId).eq("salon_id",_salonId).then(function(){},function(_e){});
+  }catch(_e){}
+}
 function _doCancelApptUnpaid(id){
   // Annulation simple sans check du lien (utilis\u00e9 par _cancelApptDo direct ou via choix "annuler les 2")
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
   if(!a)return;
+  var _isOnlineGhost=!!(a.isOnline&&a.onlineId);
+  var _onlineId=a.onlineId||null;
   if(ai>=0)AP.splice(ai,1);
-  if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
+  if(_isOnlineGhost){
+    // RDV en ligne : ne PAS toucher a appointments (aucune ligne pour un ghost) ;
+    // persiste l'annulation sur rdv_online (notifie le client + empeche le re-ajout au refresh).
+    _lxCancelOnlineRdv(_onlineId,"Annul\u00e9 par le salon");
+  }else if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
   else if(typeof saveAppointment==="function"){a.st="canc";saveAppointment(a);}
   if(typeof auditLog==="function")auditLog("RDV_ANNULE","RDV "+id+" annul\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
 }
