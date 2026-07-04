@@ -8571,9 +8571,17 @@ function _lxOnlineToAP(rdv){
     var _stId=rdv.collaborateur_id, _needAssign=false;
     if(!_stId){
       var _act=(typeof T!=="undefined"&&T)?T.filter(function(c){return c&&c.inactif!==true;}):[];
-      var _work=_act.filter(function(c){return _lxCollabWorksOn(c.id, rdv.date_rdv);});
-      if(_work.length===1){ _stId=_work[0].id; }
-      else { _stId=((_work[0]||_act[0]||(T&&T[0])||{}).id)||null; _needAssign=true; }
+      // FIX 2026-07-04 : auto-assigner à une coiffeuse RÉELLEMENT LIBRE au créneau (pas juste "travaille ce jour"),
+      // pour ne pas empiler un RDV en ligne sur quelqu'un déjà booké.
+      var _sm=(typeof toM==="function")?toM(String(rdv.heure_rdv||"00:00").slice(0,5)):0;
+      var _em=_sm+(dur||60);
+      var _free=(typeof _lxCollabFreeAt==="function")?_act.filter(function(c){return _lxCollabFreeAt(c.id, rdv.date_rdv, _sm, _em, null);}):[];
+      if(_free.length===1){ _stId=_free[0].id; }
+      else if(_free.length>1){ _stId=_free[0].id; _needAssign=true; }
+      else {
+        var _work=_act.filter(function(c){return _lxCollabWorksOn(c.id, rdv.date_rdv);});
+        _stId=((_work[0]||_act[0]||(T&&T[0])||{}).id)||null; _needAssign=true;
+      }
     }
     AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:_lxcId,sId:rdv.service_id,stId:_stId,date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||"")+(!_needAssign?"":" \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)"),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});window._apDirty=true;
   }catch(_e){}
