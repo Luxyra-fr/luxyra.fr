@@ -24949,11 +24949,25 @@ function mD(id, mode){
   // === Option B (refonte 2026-05-11) : RDV groupé — merge items du RDV lié ===
   // FIX 2026-05-15 : si mode='single' (encaisser celui-ci seul), on saute le merge
   var linkedApptId = null;
-  if(!_mDskipLink && a.clients && Array.isArray(a.clients) && a.clients.length && a.clients[0].linkedAppt){
-    var linkedId = a.clients[0].linkedAppt;
-    var linkedRdv = null;
-    for(var li=0; li<AP.length; li++){ if(AP[li].id===linkedId){ linkedRdv = AP[li]; break; } }
-    if(linkedRdv && linkedRdv.st!=="done" && !linkedRdv.cancelled){
+  // FIX 2026-07-04 (BUG B) : le RDV lie a fusionner est detecte via _findLinkedFamilialAppt
+  // (3 directions : lien direct, reciprocite, heuristique) — EXACTEMENT le meme detecteur que
+  // la modale "RDV lie detecte" (mD gate). Avant, le merge ne regardait QUE a.clients[0].linkedAppt
+  // (direction 1). Quand le lien etait detecte par reciprocite/heuristique (direction 2/3), la modale
+  // proposait "encaisser ensemble" mais _linkedApptId restait null -> le 2e RDV n'etait jamais marque
+  // "done" et restait "prevu" (pollue le a-venir / CA previsionnel). Additif : si direction 1 existe,
+  // le detecteur renvoie le meme RDV -> comportement inchange.
+  var linkedRdv = null;
+  if(!_mDskipLink){
+    if(typeof _findLinkedFamilialAppt==="function"){ linkedRdv = _findLinkedFamilialAppt(a); }
+    if(!linkedRdv && a.clients && Array.isArray(a.clients) && a.clients.length && a.clients[0].linkedAppt){
+      var _lid0 = a.clients[0].linkedAppt;
+      for(var _lz=0; _lz<AP.length; _lz++){ if(AP[_lz].id===_lid0){ linkedRdv = AP[_lz]; break; } }
+    }
+    // garde-fou : ne jamais fusionner un RDV lie deja encaisse ou annule
+    if(linkedRdv && (linkedRdv.st==="done" || linkedRdv.cancelled)) linkedRdv = null;
+  }
+  if(!_mDskipLink && linkedRdv){
+    {
       linkedApptId = linkedRdv.id;
       // Ajouter un séparateur visuel + les items du RDV lié
       var lc = gC(linkedRdv.cId) || null;
