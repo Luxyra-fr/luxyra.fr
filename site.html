@@ -2639,9 +2639,36 @@ function isAllCollabsOff(date){
 // Check si UN collab spécifique est indispo (absences, pauses, RDV existants)
 // pour un créneau donné. NE PAS appeler avec collabId=null directement —
 // utiliser isSlotTaken qui gère le mode "sans préférence".
+// FIX 2026-07-04 : horaires EFFECTIFS d'un collab pour une date (hebdo base + override + ouverture except.).
+// Sans ça, un collab qui ne TRAVAILLE pas ce jour (ex. Manue le samedi) était compté "dispo"
+// -> en "sans préférence" le site laissait réserver un créneau déjà pris (double booking).
+function _lxSiteEffHrs(col, collabId, date){
+  try{
+    var d=new Date(date+"T12:00:00"), dow=d.getDay();
+    var hasPerso=col && col.hrs && typeof col.hrs==="object" && Object.keys(col.hrs).some(function(k){var v=col.hrs[k];return v&&v.o&&v.c;});
+    var hrs=hasPerso ? (col.hrs[dow]||null) : ((typeof HORAIRES!=="undefined"&&HORAIRES)?HORAIRES[dow]:null);
+    if(typeof applyHrsOverride==="function") hrs=applyHrsOverride(hrs, col, date);
+    if(!hrs){
+      var abs=(typeof SITE_CFG!=="undefined"&&SITE_CFG.absences)||[];
+      for(var i=0;i<abs.length;i++){ var ab=abs[i];
+        if(ab.type==="ouverture_except"&&ab.date===date&&ab.horaire_o&&ab.horaire_c){
+          if(!ab.stId||!collabId||ab.stId===collabId){ hrs={o:ab.horaire_o,c:ab.horaire_c}; break; }
+        }
+      }
+    }
+    return hrs;
+  }catch(_e){ return null; }
+}
 function isSpecificCollabBusy(date,time,duration,collabId){
   if(!collabId)return false; // garde-fou (sans collab on passe par isSlotTaken)
   var slotStart=toMin(time),slotEnd=slotStart+duration;
+  // 0) Le collab TRAVAILLE-t-il ce jour, et le créneau tient-il dans ses horaires ?
+  var _col=(COLLABS||[]).find(function(c){return c.id===collabId;});
+  if(_col){
+    var _eh=_lxSiteEffHrs(_col, collabId, date);
+    if(!_eh || !_eh.o || !_eh.c) return true;                      // ne travaille pas ce jour
+    if(slotStart < toMin(_eh.o) || slotEnd > toMin(_eh.c)) return true; // hors de ses horaires
+  }
   // 1) Absences/pauses/congés de ce collab
   if(isCollabBlocked(date,collabId,slotStart,slotEnd))return true;
   // 2) RDV existants impliquant ce collab
