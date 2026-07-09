@@ -5735,10 +5735,34 @@ function _lxPayBuckets(a){
   else if(a){ add(a.met,a.pr); }
   return b;
 }
+// FIX 2026-07-09 (NF525) : annulation MEME JOUR doit nette a ZERO dans la cloture Z.
+// L original annule est deja exclu des totaux du jour (via !cancelled) ; son contre-ticket
+// negatif (isCancel) etait pourtant compte -> le jour perdait le montant en DOUBLE.
+// Pour une annulation MEME JOUR la paire doit s annuler -> on exclut aussi le contre-ticket.
+// Annulation JOUR ANTERIEUR (cross-day) : l original n est PAS dans le jour courant, donc son
+// contre-ticket DOIT rester compte (applique le remboursement aujourd hui) -> inchange.
+// Jour SANS annulation : ensemble de refs vide + aucun ticket isCancel -> filtre byte-identique.
+function _lxSameDayCancelRefs(){
+  var refs={};
+  for(var i=0;i<AP.length;i++){ var a=AP[i];
+    if(a && a.cancelled && a.cancelDate===TD && a.date===TD){
+      if(a.tkNum!=null) refs["n"+a.tkNum]=1;
+      if(a.id!=null) refs["i"+a.id]=1;
+    }
+  }
+  return refs;
+}
+function _lxIsSameDayContra(a,refs){
+  if(!a || !a.isCancel) return false;
+  var ref=a.cancelRef;
+  if(ref==null) return false;
+  return !!(refs["n"+ref] || refs["i"+ref]);
+}
 function _lxClotureCaisseTheo(){
   try{
     var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
-    var done=AP.filter(function(a){return a&&a.st==="done"&&a.date===TD&&!a.cancelled;});
+    var _sdcRefs=(typeof _lxSameDayCancelRefs==="function")?_lxSameDayCancelRefs():{};
+    var done=AP.filter(function(a){return a&&a.st==="done"&&a.date===TD&&!a.cancelled&&!(typeof _lxIsSameDayContra==="function"&&_lxIsSameDayContra(a,_sdcRefs));});
     var esp=0; done.forEach(function(a){ esp += _lxPayBuckets(a).esp; });
     var totEntrees=0,totSorties=0;
     if(Array.isArray(CD.mouvements)){ CD.mouvements.filter(function(m){return m.date===TD;}).forEach(function(m){ var amt=Number(m.montant)||0; if(m.type==="sortie"||m.type==="retrait"||m.type==="depense") totSorties+=amt; else totEntrees+=amt; }); }
@@ -28882,7 +28906,8 @@ function rCaisseGestion(){
   h+='</div>';
   
   if(caisseSubTab==="especes"){
-    var espEnc=0;AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled;}).forEach(function(a){espEnc+=(typeof _lxPayBuckets==="function"?_lxPayBuckets(a).esp:(String(a.met||"").toLowerCase().indexOf("esp")>=0?Number(a.pr)||0:0));});
+    var _sdcRefsE=(typeof _lxSameDayCancelRefs==="function")?_lxSameDayCancelRefs():{};
+    var espEnc=0;AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!(typeof _lxIsSameDayContra==="function"&&_lxIsSameDayContra(a,_sdcRefsE));}).forEach(function(a){espEnc+=(typeof _lxPayBuckets==="function"?_lxPayBuckets(a).esp:(String(a.met||"").toLowerCase().indexOf("esp")>=0?Number(a.pr)||0:0));});
     var espCof=0;CD.misesAuCoffre.filter(function(m){return m.date===TD;}).forEach(function(m){espCof+=m.esp;});
     var mvRetraits=0,mvAjouts=0;
     CD.mouvements.filter(function(m){return m.date===TD;}).forEach(function(m){
@@ -30790,10 +30815,14 @@ function _cancelSecureTicketDo(id,motif){
   chainTicket(cancelTicket);
   AP.push(cancelTicket);
   if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
+  // FIX 2026-07-09 (NF525) : scelle le contre-ticket dans le journal tickets (mirror annulerAcompte).
+  // Avant, l annulation n etait ecrite que dans appointments -> jamais dans la table tickets scellee.
+  if(typeof saveTicketToDb==="function")saveTicketToDb(cancelTicket);
   auditLog("TICKET_ANNULATION","Annulation #"+(orig.tkNum||"--")+" \u2192 Contre-ticket #"+tkN+" - Montant: -"+(orig.pr||0).toFixed(2)+"E - Motif: "+motif);
 }
 function cloturerJournee(){
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled;});
+  var _sdcRefs=_lxSameDayCancelRefs();
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!_lxIsSameDayContra(a,_sdcRefs);});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===TD;});
   // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd centralisé.
   // CA global = sum(a.pr) inchangé (NF525 fiscal intact), juste ventilation correcte
