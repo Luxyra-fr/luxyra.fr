@@ -6576,6 +6576,14 @@ function doAddAbsence(stId){
     var df=document.getElementById("abDateFrom").value;
     var dt=document.getElementById("abDateTo").value;
     if(!df||!dt)return;
+    // FIX 2026-07-09 : alerte si des RDV existent deja sur la periode avant d ajouter l absence.
+    // Lecture seule sur AP ; try/catch -> en cas d erreur on n interrompt jamais (on ajoute).
+    try{
+      var _nRdvAbs=(typeof AP!=="undefined"?AP:[]).filter(function(a){
+        return a && String(a.stId)===String(stId) && a.st!=="canc" && !a.cancelled && a.date && a.date>=df && a.date<=dt;
+      }).length;
+      if(_nRdvAbs>0 && !confirm("⚠️ Il y a déjà "+_nRdvAbs+" rendez-vous sur cette période pour ce collaborateur. Ajouter quand même l'absence ?")){ return; }
+    }catch(_eAbsChk){}
     window.ABSENCES.push({id:U(),stId:stId,type:type,dateFrom:df,dateTo:dt,motif:motif});
   }else{
     // absent_heures ou pause : date unique + plage horaire
@@ -6583,6 +6591,13 @@ function doAddAbsence(stId){
     var fr=document.getElementById("abFrom").value;
     var to=document.getElementById("abTo").value;
     if(!d||!fr||!to)return;
+    // FIX 2026-07-09 : alerte si des RDV existent deja ce jour-la avant d ajouter l absence (heures/pause).
+    try{
+      var _nRdvAbsH=(typeof AP!=="undefined"?AP:[]).filter(function(a){
+        return a && String(a.stId)===String(stId) && a.st!=="canc" && !a.cancelled && a.date===d;
+      }).length;
+      if(_nRdvAbsH>0 && !confirm("⚠️ Il y a déjà "+_nRdvAbsH+" rendez-vous ce jour-là pour ce collaborateur. Ajouter quand même l'absence ?")){ return; }
+    }catch(_eAbsChkH){}
     window.ABSENCES.push({id:U(),stId:stId,type:type,date:d,from:fr,to:to,motif:motif});
   }
   saveAbsences();
@@ -24582,7 +24597,7 @@ function aGi(){
   GC.push(ng);
   if(typeof saveGiftCard==="function")saveGiftCard(ng);
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
-  tkN++;
+  nextTicketNum(); // FIX 2026-07-09 : self-healing (cf. doFinalPayExecute) - plus de reutilisation de numero display sur la vente d un bon cadeau. Cas normal identique a tkN++.
   var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:_defaultCollabId(),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN};
   chainTicket(tk);AP.push(tk);
   ng.tkNum=tk.tkNum; // Store ticket ref on the bon
@@ -27645,7 +27660,13 @@ function doFinalPayExecute(method){
   var heureNow=new Date().toTimeString().slice(0,5); // NF525 : heure d'emission du ticket = encaissement
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   
-  tkN++;
+  // FIX 2026-07-09 : numerotation display self-healing via nextTicketNum() (au lieu
+  // d un tkN++ naif). Empeche toute reutilisation d un numero de ticket affiche si
+  // tkN a pris du retard sur max(AP.tkNum) (ex. apres un encaissement bon cadeau).
+  // Cas normal (tkN deja >= max) : STRICTEMENT identique a l ancien tkN++.
+  // N affecte QUE le compteur d affichage tkN/AP.tkNum ; la chaine NF525 (chainTicket,
+  // saveTicketToDb, tickets.num serveur) est inchangee.
+  nextTicketNum();
 
   // === Option B : si RDV lié (groupé), le marquer aussi done + lui lier le ticket ===
   // FIX 2026-05-15 : check défensif AVANT de marquer le 2ème done.
