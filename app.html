@@ -28862,7 +28862,35 @@ function doModifTicket(id,isPast){
   for(var i=0;i<AP.length;i++){
     if(AP[i].id===id){
       var old=AP[i];
-      if(true){/* NF525 FIX 2026-06-17 : une modif d un ticket emis = TOUJOURS contre-passation (annule + nouveau ticket chaine), jamais edition en place meme le jour meme. La branche else ci-dessous est desormais morte (conservee inerte). */
+      if(isPast){
+        // FIX 2026-07-09 (NF525) : modif d un ticket d un JOUR ANTERIEUR (deja cloture).
+        // Avant : old.st="canc" + nouveau ticket, MAIS aucune contre-passation scellee ni reversal
+        // negatif -> +oldPr restait dans la Z passee ET +newPr s ajoutait aujourd hui => cumul
+        // perpetuel/annuel sur-compte de oldPr, et le journal tickets scelle ne recevait rien.
+        // Desormais on scelle un contre-ticket NEGATIF (-oldPr) aujourd hui + le nouveau ticket
+        // (+newPr), exactement comme _cancelSecureTicketDo/annulerAcompte. Net a travers les jours
+        // = newPr (oldPr passe - oldPr aujourd hui + newPr aujourd hui).
+        old.cancelled=true;old.cancelMotif=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
+        if(typeof saveAppointment==="function")saveAppointment(old);
+        var _tkContra=nextTicketNum();
+        var contraTk={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContra,isCancel:true,cancelRef:old.tkNum||old.id,cancelMotif:motif,fromCaisse:true};
+        if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){contraTk.operator_id=CURRENT_OPERATOR.id;contraTk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");}
+        chainTicket(contraTk);
+        AP.push(contraTk);
+        if(typeof saveAppointment==="function")saveAppointment(contraTk);
+        if(typeof saveTicketToDb==="function")saveTicketToDb(contraTk);
+        var _tkNew=nextTicketNum();
+        var _svN=(typeof gS==="function")?gS(newSId||old.sId):null;
+        var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,ts:new Date().toISOString(),pr:newPr||old.pr,brutTotal:newPr||old.pr,remise:0,items:[{name:(_svN?_svN.n:"Prestation"),price:(newPr||old.pr),qty:1,remise:0}],st:"done",met:newMet||old.met,tkNum:_tkNew,modifFrom:old.tkNum||"--",modifMotif:motif,fromCaisse:true};
+        if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){newModTk.operator_id=CURRENT_OPERATOR.id;newModTk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");}
+        chainTicket(newModTk);
+        AP.push(newModTk);
+        if(typeof saveAppointment==="function")saveAppointment(newModTk);
+        if(typeof saveTicketToDb==="function")saveTicketToDb(newModTk);
+        auditLog("TICKET_MODIF","Ancien #"+(old.tkNum||"--")+" annule (contre-ticket #"+_tkContra+") -> Nouveau #"+_tkNew+" - "+motif);
+      }else{
+        // SAME-DAY : INCHANGE (byte-identique avec l ancien if(true)). L original du jour est
+        // retire de la Z par st!=="done" ; le nouveau ticket s ajoute. Deja correct avant ce fix.
         old.st="canc";old.cancelMotif=motif;old.cancelDate=TD;
         tkN++;
         var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,pr:newPr||old.pr,st:"done",met:newMet||old.met,tkNum:tkN,modifFrom:old.tkNum||"--",modifMotif:motif};
@@ -28870,9 +28898,6 @@ function doModifTicket(id,isPast){
         AP.push(newModTk);
         if(typeof saveAppointment==="function")saveAppointment(newModTk);
         auditLog("TICKET_MODIF","Ancien #"+(old.tkNum||"--")+" -> Nouveau #"+tkN+" - "+motif);
-      }else{
-        old.pr=newPr||old.pr;if(newSId)old.sId=newSId;old.stId=newStId||old.stId;old.met=newMet||old.met;old.modifMotif=motif;old.modifDate=TD;
-        auditLog("TICKET_MODIF","Ticket #"+(old.tkNum||"--")+" modifie - "+motif);
       }
       break;
     }
