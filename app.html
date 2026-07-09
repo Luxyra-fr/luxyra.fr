@@ -27190,7 +27190,7 @@ function doBonPay(){
   bon.used=(bon.used||0)+use;
   if(!bon.history)bon.history=[];
   bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
-  if(bon.rem<=0){bon.st="used";bon.rem=0;auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E"+((bon.isOffert===true||bon.payMethod==="Offert")?" (offert: remise, hors CA)":" - Transfert compte 4191 \u2192 701 (CA reconnu)"));}
+  if(bon.rem<=0){bon.st="used";bon.rem=0;auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E"+((bon.isOffert===true||bon.payMethod==="Offert")?" (offert: remise, hors CA)":" (bon vendu : d\u00e9j\u00e0 r\u00e9gl\u00e9 \u00e0 la vente, remise, hors CA)"));}
   if(typeof saveGiftCard==="function")saveGiftCard(bon);
   auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Utilisé: "+use.toFixed(2)+"E - Reste: "+bon.rem.toFixed(2)+"E");
   if(!_tk.payments)_tk.payments=[];
@@ -27203,9 +27203,19 @@ function doBonPay(){
     total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
     resteDu=total-(_tk.paid||0);
   } else {
-    _tk.payments.push({method:"Bon cadeau "+code,amount:use});
-    _tk.paid=(_tk.paid||0)+use;
-    resteDu=total-_tk.paid;
+    // Bon VENDU : le montant a DEJA ete facture / compte au CA au moment de la VENTE
+    // du bon (ticket de vente dedie). A l'utilisation, on l'applique comme REMISE
+    // (exactement comme le bon offert) -> le montant NE compte PAS une 2e fois dans le
+    // CA du jour (rHome/rStats somment AP.pr) et NE recollecte PAS de TVA a l'usage.
+    // Difference avec l'offert : ce n'est PAS un cadeau a titre gracieux (aucune charge
+    // 6234) -> libelle "deja regle a la vente" + champ dedie bonVenduRemise.
+    // Cloture Z equilibree : recette (AP.pr) ET le montant couvert par le bon baissent
+    // de `use` a l'identique, et le paiement bon est pousse a 0 -> somme des modes = total.
+    _tk.remise=(_tk.remise||0)+use;
+    _tk.bonVenduRemise=(_tk.bonVenduRemise||0)+use;
+    _tk.payments.push({method:"Bon cadeau r\u00e9gl\u00e9 "+code,amount:0});
+    total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
+    resteDu=total-(_tk.paid||0);
   }
   if(resteDu>0.01){_tk.step=5;showCaisse();return;}
   doFinalPay("done");
@@ -27746,7 +27756,7 @@ function doFinalPayExecute(method){
     // Heure du service : utilise window._caisseDirectTime si saisi par l'utilisateur,
     // sinon prend l'heure actuelle (default). Permet d'afficher correctement sur planning.
     var _svcTime = window._caisseDirectTime || new Date().toTimeString().slice(0,5);
-    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:_svcTime,ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
+    var newTk={id:U(),cId:_tk.cId||(_tk.passType?"passage-"+_tk.passType:"passage"),fromCaisse:true,sId:_tk.items[0]?_tk.items[0].sId:null,stId:_tk.stId||T[0].id,date:TD,time:_svcTime,heureEncaiss:heureNow,ts:tsNow,pr:total,brutTotal:brutTotal,remise:totalRemise,items:savedItems,st:"done",met:metStr,tkNum:tkN,
       // FIX 2026-05-12 : détail des paiements multi (méthode + montant + rendu espèces)
       payments: (_tk.payments && _tk.payments.length) ? JSON.parse(JSON.stringify(_tk.payments)) : null,
       // Persistance DB : nom client lisible + extras multi-client
