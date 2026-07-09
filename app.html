@@ -5077,7 +5077,7 @@ async function _devisSendEmail(idx){
       // Audit + log dans messaging_log si dispo
       if(typeof auditLog === "function") auditLog("EMAIL_DEVIS","Devis "+(dv.num||"")+" \u2192 "+email);
       if(typeof _sb !== "undefined" && _sb && typeof _salonId !== "undefined" && _salonId){
-        try{ _sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:email,content:subject}); }catch(e){}
+        try{ _sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:email,content:subject}).then(function(){},function(_e){}); }catch(e){}
       }
       // Marque le devis comme envoyé en DB
       if(dv.dbId && typeof updateDevisStatus === "function" && (dv.status==="brouillon"||!dv.status)){
@@ -5143,7 +5143,7 @@ function _devisAskEmailValid(idx){
   if(dv){
     dv.clientEmail = email;
     if(dv.dbId && typeof _sb !== "undefined" && _sb){
-      try{ _sb.from("devis").update({client_email:email}).eq("id", dv.dbId); }catch(e){}
+      try{ _sb.from("devis").update({client_email:email}).eq("id", dv.dbId).then(function(){},function(_e){}); }catch(e){}
     }
   }
   cM();
@@ -6576,6 +6576,9 @@ function doAddAbsence(stId){
     var df=document.getElementById("abDateFrom").value;
     var dt=document.getElementById("abDateTo").value;
     if(!df||!dt)return;
+    // FIX 2026-07-09 : garde-fou plage inversee — si dateFrom > dateTo on echange les bornes
+    // (une plage inversee ne bloquerait rien cote client ni serveur). Jour unique/heures non concernes.
+    if(df>dt){ var _dSwap=df; df=dt; dt=_dSwap; }
     // FIX 2026-07-09 : alerte si des RDV existent deja sur la periode avant d ajouter l absence.
     // Lecture seule sur AP ; try/catch -> en cas d erreur on n interrompt jamais (on ajoute).
     try{
@@ -29916,7 +29919,7 @@ async function sendEmailViaWorker(to,toName,subject,htmlContent){
     var data=await resp.json();
     if(data.success){
       if(typeof _sb!=="undefined"&&_salonId){
-        _sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:to,content:subject});
+        _sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:to,content:subject}).then(function(){},function(_e){});
       }
       return{ok:true};
     }
@@ -30033,7 +30036,7 @@ async function checkSmsReminders(){
           var rappelHtml=buildRdvEmailHTML("rappel",vars);
           sendEmailViaWorker(cl.em,cName(cl),"Rappel : votre rendez-vous demain - "+SALON_CONFIG.nom,rappelHtml);
           // Log dans messaging_log côté client pour tracer
-          try{_sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:cl.em,content:"Rappel 24h",context:"rappel_24h",client_nom:(cl.pre||"")+" "+(cl.nom||"")});}catch(e){}
+          try{_sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:cl.em,content:"Rappel 24h",context:"rappel_24h",client_nom:(cl.pre||"")+" "+(cl.nom||"")}).then(function(){},function(_e){});}catch(e){}
         }
         window._smsSent[keyEm]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
@@ -32200,7 +32203,7 @@ function initApp(){
         window.SALON.slug=rs.data[0].slug;
       }
     });
-    // Charge les cartes d'abonnement clients depuis la DB (jusqu'ici jamais persistées !,"success")nnement clients depuis la DB (jusqu'ici jamais persistées !)
+    // Charge les cartes d'abonnement clients depuis la DB (jusqu'ici jamais persistées !)
     if(typeof loadCartesAboClients==="function")loadCartesAboClients();
     // Charge la liste des avis pour badge + UI réactive
     if(typeof loadAvisList==="function")loadAvisList().then(function(){
