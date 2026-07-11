@@ -750,6 +750,12 @@ function lxMapApptRow(a) {
   // (`a.lieu==="domicile"`, `if(a.adresse)`).
   if (a.lieu) _ap.lieu = a.lieu;
   if (a.adresse_domicile) _ap.adresse = a.adresse_domicile;
+  // FIX 2026-07-11 : `printed` (ticket deja imprime -> une reimpression doit porter la mention
+  // DUPLICATA). Colonne existante mais jamais relue : apres un rechargement, un ticket deja
+  // imprime repartait "vierge" et sa reimpression ne portait plus la banniere DUPLICATA.
+  // Cle posee UNIQUEMENT si true -> forme d'un RDV normal inchangee (absence de cle == false
+  // pour tous les lecteurs : `!!a.printed`, `a.printed||false`).
+  if (a.printed === true) _ap.printed = true;
   return _ap;
 }
 if (typeof window !== "undefined") window.lxMapApptRow = lxMapApptRow;
@@ -1873,6 +1879,21 @@ async function saveAppointment(appt) {
   if (typeof appt.ticketHtml === "string" && appt.ticketHtml.length > 0) {
     data.ticket_html = appt.ticketHtml;
   }
+
+  // FIX 2026-07-11 : persiste le RDV A DOMICILE (lieu + adresse) et le flag `printed`.
+  // Les colonnes `lieu`, `adresse_domicile` et `printed` existent depuis toujours mais
+  // n'etaient JAMAIS ecrites par saveAppointment -> le "RDV a domicile" (badge planning,
+  // adresse + lien Maps sur la fiche) et le marquage "deja imprime" (banniere DUPLICATA sur
+  // une reimpression) etaient perdus a chaque rechargement de l'app. Un salon mixte ou 100%
+  // itinerant perdait donc l'info a chaque reload.
+  // MEME GARDE-FOU que ticket_html / cancel_date : la cle n'est envoyee QUE si on a une valeur
+  // reelle -> (a) le payload d'un RDV normal (en salon, jamais imprime) reste STRICTEMENT
+  // INCHANGE, (b) une re-sauvegarde ne peut jamais NULLifier une valeur deja en base.
+  // Aucun de ces 3 champs n'est protege par le trigger appointments_nf525_protect -> l'ecriture
+  // reste acceptee meme sur une ligne scellee (cas reel : reimpression d'un ticket encaisse).
+  if (appt.lieu) data.lieu = String(appt.lieu);
+  if (appt.adresse) data.adresse_domicile = String(appt.adresse);
+  if (appt.printed === true) data.printed = true;
 
   // FIX 2026-05-12 : upsert avec id explicite — plus de race condition local/UUID
   // FIX 2026-07-11 : persiste la DATE d annulation (colonne cancel_date, jusqu ici jamais ecrite).

@@ -24987,18 +24987,27 @@ function mD(id, mode){
   //  C) RDV simple : pas d'a.items → un seul item depuis a.sId/a.pr.
   // Détection A vs B : si a.isOnline ET items contient le main (sId match) OU
   // si la somme items = a.pr → cas A (online multi).
+  // FIX 2026-07-11 : l item technique isAcompteData (support de persistance de l acompte,
+  // cf. doSaveAcompte) n est PAS une prestation -> il ne doit JAMAIS entrer dans le panier.
+  // Sur un RDV EN LIGNE multi-prestation (branche « itemsContainAll »), il etait mappe en une
+  // ligne fantome « Prestation 0,00 EUR » qui finissait SCELLEE dans le ticket et IMPRIMEE sur
+  // le recu. Sur les autres RDV il etait deja ecarte par le garde-fou anti-dechet (name vide +
+  // prix 0) -> filtrer a la source rend le panier identique dans TOUS les cas sans acompte
+  // (l item n existe pas) et supprime la ligne fantome dans le cas avec acompte.
+  // Aucun impact montant : cet item n a ni prix ni quantite.
+  var _mdItems = Array.isArray(a.items) ? a.items.filter(function(it){ return !(it && it.isAcompteData); }) : a.items;
   var cartItems;
-  if(Array.isArray(a.items)&&a.items.length){
-    var addonsTotal=a.items.reduce(function(s,it){return s+(Number(it.price)||0);},0);
-    var hasMainInItems=a.items.some(function(it){return it.sId&&String(it.sId)===String(a.sId);});
+  if(Array.isArray(_mdItems)&&_mdItems.length){
+    var addonsTotal=_mdItems.reduce(function(s,it){return s+(Number(it.price)||0);},0);
+    var hasMainInItems=_mdItems.some(function(it){return it.sId&&String(it.sId)===String(a.sId);});
     var sumMatchesPr=Math.abs(addonsTotal-(Number(a.pr)||0))<0.01;
     // Refonte 2026-05-11 : étendu pour RDV multi-prestation créés à la création (offline)
     // Détection "items contient TOUT" : online multi OU somme = a.pr OU flag fromMultiSelect présent
-    var hasMultiSelectFlag = a.items.some(function(it){return it.fromMultiSelect;});
+    var hasMultiSelectFlag = _mdItems.some(function(it){return it.fromMultiSelect;});
     var itemsContainAll = (a.isOnline && (hasMainInItems || sumMatchesPr)) || hasMultiSelectFlag || (sumMatchesPr && hasMainInItems);
     if(itemsContainAll){
       // Cas A : a.items contient déjà toutes les prestations (booking online multi)
-      cartItems=a.items.map(function(it){
+      cartItems=_mdItems.map(function(it){
         return {
           sId:it.sId||null,
           name:it.name||"Prestation",
@@ -25013,7 +25022,7 @@ function mD(id, mode){
       // Cas B : items = additions seulement, on rajoute le main au début
       var mainPrice=Math.max(0,(Number(a.pr)||0)-addonsTotal);
       cartItems=[{sId:a.sId,name:sv?sv.n:"Prestation",price:mainPrice,qty:1,remise:0}];
-      a.items.forEach(function(it){
+      _mdItems.forEach(function(it){
         // Garde-fou anti-déchet : skip les placeholders vides (name vide + price 0 + pas un produit)
         var nm = String(it.name||"").trim();
         var pr = Number(it.price)||0;
