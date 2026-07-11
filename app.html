@@ -5753,7 +5753,16 @@ function _lxSameDayCancelRefs(){
   return refs;
 }
 function _lxIsSameDayContra(a,refs){
-  if(!a || !a.isCancel) return false;
+  if(!a) return false;
+  // FIX 2026-07-11 : le contre-ticket porte LUI-MEME le marqueur (pose a sa creation, persiste
+  // en DB : appointments.contra_same_day). Plus besoin de retrouver l original "cancelled" :
+  //  - robuste apres un rechargement de l app (avant, isCancel/cancelRef n existaient qu en
+  //    memoire -> le contra redevenait un ticket normal et etait RE-COMPTE) ;
+  //  - independant de l etat de l original (le RDV annule est desormais relibere).
+  // Un contra CROSS-DAY a contraSameDay=false -> il reste COMPTE (il applique le remboursement
+  // sur le jour courant), exactement comme avant.
+  if(a.contraSameDay===true) return true;
+  if(!a.isCancel) return false;
   var ref=a.cancelRef;
   if(ref==null) return false;
   return !!(refs["n"+ref] || refs["i"+ref]);
@@ -5783,7 +5792,10 @@ function _lxSameDayCancelRefsOn(dk){
 // Fail-safe : toute erreur -> false (rien n est exclu, l affichage ne casse jamais).
 function _lxIsSameDayContraAny(a){
   try{
-    if(!a || !a.isCancel) return false;
+    if(!a) return false;
+    // Marqueur porte par le contre-ticket (persiste) -> source de verite, aucun scan d AP.
+    if(a.contraSameDay===true) return true;
+    if(!a.isCancel) return false;
     if(typeof _lxIsSameDayContra!=="function") return false;
     return _lxIsSameDayContra(a, _lxSameDayCancelRefsOn(a.date));
   }catch(_e){ return false; }
@@ -5791,7 +5803,7 @@ function _lxIsSameDayContraAny(a){
 // Un contre-ticket d annulation est un ENREGISTREMENT FISCAL, pas un rendez-vous :
 // jamais de bloc au planning, jamais compte comme un RDV, jamais vu comme "prestation ajoutee".
 function _lxIsContraTicket(a){
-  try{ return !!(a && a.isCancel); }catch(_e){ return false; }
+  try{ return !!(a && (a.isCancel===true || a.contraSameDay===true)); }catch(_e){ return false; }
 }
 // Predicat commun aux filtres d affichage. Garde typeof -> un helper manquant ne casse jamais
 // le rendu (retourne false = comportement d avant le fix).
@@ -30869,9 +30881,25 @@ function _cancelSecureTicketDo(id,motif){
   var orig=null;
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){orig=AP[i];break;}}
   if(!orig)return;
+  // === FIX 2026-07-11 : annulation MEME JOUR d un VRAI RDV -> le RDV doit redevenir "a encaisser" ===
+  // Incident du 11/07 : un ticket encaisse PAR ERREUR sur le RDV d une autre cliente a ete annule
+  // (bon reflexe) ; le RDV restait "verrouille / encaisse" et sa vraie prestation ne pouvait PLUS
+  // etre encaissee (deverrouillage manuel en base). Detection AVANT de toucher a l original.
+  //  - VRAI RDV      : rendez-vous planifie (fromCaisse!==true, vrai client, pas un passage)  -> relibere
+  //  - VENTE DIRECTE : passage / vente comptoir (fromCaisse===true)                            -> inchange
+  var _sameDay=false,_isRealRdv=false;
+  try{
+    _sameDay=(orig.date===TD);
+    _isRealRdv = _sameDay
+      && orig.fromCaisse!==true
+      && orig.isCancel!==true && orig.contraSameDay!==true && orig.isAcompte!==true
+      && !!orig.cId
+      && !(typeof orig.cId==="string" && orig.cId.indexOf("passage-")===0);
+  }catch(_eDet){ _sameDay=(orig.date===TD); _isRealRdv=false; }
   // Mark original as cancelled
   orig.cancelled=true;orig.cancelDate=TD;orig.cancelMotif=motif;orig.cancelTs=new Date().toISOString();
-  if(typeof saveAppointment==="function")saveAppointment(orig);
+  var _pOrig=null;
+  if(typeof saveAppointment==="function")_pOrig=saveAppointment(orig);
   // NF525: Create counter-ticket (annulation) with negative amount
   var tkN=nextTicketNum();
   var cancelTicket={
@@ -30883,6 +30911,12 @@ function _cancelSecureTicketDo(id,motif){
     items:[{name:"ANNULATION #"+(orig.tkNum||"--"),price:-(orig.pr||0),qty:1,remise:0}],
     st:"done",met:orig.met||"",tkNum:tkN,
     isCancel:true,cancelRef:orig.tkNum||orig.id,cancelMotif:motif,
+    // FIX 2026-07-11 : le contre-ticket porte lui-meme le marqueur "annulation du MEME JOUR"
+    // (persiste en DB : appointments.contra_same_day). La paire (original + contra) nette a ZERO
+    // dans tous les totaux du jour, SANS dependre de l etat de l original ni d un scan d AP,
+    // et le marqueur survit a un rechargement de l app. Annulation CROSS-DAY -> false (inchange :
+    // le contra reste compte, il applique le remboursement sur le jour courant).
+    contraSameDay:_sameDay,
     fromCaisse:true
   };
   // NF525: opérateur qui annule
@@ -30896,7 +30930,41 @@ function _cancelSecureTicketDo(id,motif){
   // FIX 2026-07-09 (NF525) : scelle le contre-ticket dans le journal tickets (mirror annulerAcompte).
   // Avant, l annulation n etait ecrite que dans appointments -> jamais dans la table tickets scellee.
   if(typeof saveTicketToDb==="function")saveTicketToDb(cancelTicket);
-  auditLog("TICKET_ANNULATION","Annulation #"+(orig.tkNum||"--")+" \u2192 Contre-ticket #"+tkN+" - Montant: -"+(orig.pr||0).toFixed(2)+"E - Motif: "+motif);
+  // === FIX 2026-07-11 : RELIBERATION DU RDV (annulation MEME JOUR d un vrai RDV) ===
+  // La ligne "orig" EST le ticket scelle (n\u00b0 de ticket, montant, items, hash NF525) : on n y
+  // touche PAS (elle reste visible "Annule" dans Gestion des tickets, reimprimable, et son
+  // contre-ticket -montant reste dans le journal). On recree a la place un NOUVEAU rendez-vous
+  // "a encaisser" (nouvel id, status conf, aucune donnee de ticket) identique au RDV d origine :
+  // meme cliente, meme collaboratrice, meme date/heure, meme prestation, memes phases.
+  // -> le RDV reapparait au planning et peut etre reencaisse normalement.
+  // Prix : repris du catalogue (prix de la prestation du RDV), 0 si introuvable. Aucun impact
+  // fiscal (un RDV "conf" n entre dans AUCUN total : CA, cloture Z et exports ne comptent que
+  // les tickets st==="done").
+  if(_isRealRdv){
+    try{
+      var _relPr=0;
+      try{ var _relSv=(orig.sId&&typeof gS==="function")?gS(orig.sId):null; if(_relSv&&Number(_relSv.p)>0)_relPr=Number(_relSv.p); }catch(_eSv){ _relPr=0; }
+      var _rel={
+        id:U(),
+        cId:orig.cId,sId:orig.sId,stId:orig.stId,
+        date:orig.date,time:orig.time,
+        pr:_relPr,st:"conf",met:"",payments:null,
+        items:[],remise:0,tkNum:null,
+        aPhases:(orig.aPhases&&orig.aPhases.length)?JSON.parse(JSON.stringify(orig.aPhases)):[],
+        comment:((orig.comment||"")+" \u2014 Ticket #"+(orig.tkNum||"--")+" annul\u00e9 : RDV \u00e0 r\u00e9encaisser").trim(),
+        fromCaisse:false,cancelled:false
+      };
+      if(orig.lieu){_rel.lieu=orig.lieu;_rel.adresse=orig.adresse||"";}
+      AP.push(_rel);
+      // Persistance APRES la mise a jour de l original (cancelled=true) : garantit qu un garde
+      // serveur anti-doublon ne voie jamais 2 RDV identiques (l original est deja annule).
+      if(typeof saveAppointment==="function"){
+        try{ Promise.resolve(_pOrig).then(function(){saveAppointment(_rel);},function(){saveAppointment(_rel);}); }
+        catch(_ePr){ saveAppointment(_rel); }
+      }
+    }catch(_eRel){ console.warn("[annulation] reliberation du RDV impossible:",_eRel); }
+  }
+  auditLog("TICKET_ANNULATION","Annulation #"+(orig.tkNum||"--")+" \u2192 Contre-ticket #"+tkN+" - Montant: -"+(orig.pr||0).toFixed(2)+"E - Motif: "+motif+(_isRealRdv?" \u2014 RDV relib\u00e9r\u00e9 (\u00e0 r\u00e9encaisser)":""));
 }
 function cloturerJournee(){
   var _sdcRefs=_lxSameDayCancelRefs();
