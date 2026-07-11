@@ -28366,7 +28366,6 @@ function rTickets(){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
-      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="modifReglement(\''+a.id+'\')">\ud83d\udcb3 Modifier r\u00e8glement</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#a29bfe;border-color:rgba(108,92,231,.3)" onclick="corrigerCollabVente(\''+a.id+'\')">✏️ Modifier collaborateur</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:rgba(244,67,54,.2)" onclick="deleteTicket(\''+a.id+'\')">\u274c Avoir / Annuler</button>';
       h+='</div>';
@@ -28827,45 +28826,32 @@ function doDeleteTicket(id){
 }
 
 function modifReglement(id){
+  // FIX 2026-07-11 (NF525) : le mode de reglement d'un ticket SCELLE ne peut pas etre reecrit.
+  // L'ancien flux (doModifReglement) faisait un UPDATE de mode_paiement sur une ligne deja
+  // hashee -> interdit par la norme, et desormais REJETE par le trigger appointments_nf525_protect.
+  // La seule procedure conforme est la contre-passation : avoir/annulation puis re-encaissement
+  // avec le bon mode. 0 usage en production (aucun MODIF_REGLEMENT au journal).
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   var htm='<div class="mbox"><h2>Modifier le r\u00e8glement</h2>';
-  htm+='<div style="text-align:center;font-size:14px;margin-bottom:10px">Ticket: <strong>'+a.pr.toFixed(2)+' \u20ac</strong></div>';
-  htm+='<div style="font-size:13px;margin-bottom:8px">Actuel: <strong>'+a.met+'</strong></div>';
-  htm+='<div class="fg"><label>Nouveau mode de paiement</label><select id="mrMet">';
-  ["CB","Esp\u00e8ces","Ch\u00e8que","Bon cadeau","Virement","Acompte","Autre"].forEach(function(m){
-    htm+='<option value="'+m+'"'+(a.met===m?' selected':'')+'>'+m+'</option>';
-  });
-  htm+='</select></div>';
-  htm+='<div style="color:var(--pink);font-weight:600;margin-top:10px;margin-bottom:4px;font-size:13px">Motif de modification (obligatoire)</div>';
-  htm+='<textarea id="mrMotif" rows="2" style="width:100%;border:1px solid var(--pink);border-radius:8px;padding:8px;font-size:13px" placeholder="Ex: Erreur mode paiement..."></textarea>';
+  htm+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-bottom:14px">';
+  htm+='Le mode de r\u00e8glement d\u0027un ticket d\u00e9j\u00e0 encaiss\u00e9 ne peut pas \u00eatre modifi\u00e9 (NF525 : ticket inalt\u00e9rable).<br><br>';
+  htm+='Pour corriger un r\u00e8glement, faites un <strong>avoir / annulation</strong> (motif obligatoire), puis r\u00e9-encaissez avec le bon mode de paiement.</div>';
+  htm+='<div style="font-size:13px;margin-bottom:8px">Ticket <strong>#'+(a.tkNum||"--")+'</strong> \u2014 '+(Number(a.pr)||0).toFixed(2)+' \u20ac \u2014 R\u00e8glement actuel : <strong>'+(a.met||"--")+'</strong></div>';
   htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-  htm+='<button class="btn bg" style="flex:1" onclick="doModifReglement(\''+a.id+'\')">Valider</button>';
+  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
+  htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">\u274c Avoir / Annuler</button>';
   htm+='</div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
 function doModifReglement(id){
-  var met=document.getElementById("mrMet").value;
-  var motif=document.getElementById("mrMotif")?document.getElementById("mrMotif").value.trim():"";
-  if(!motif){
-    if(document.getElementById("mrMotif")){document.getElementById("mrMotif").style.borderColor="var(--red)";return;}
-  }
-  for(var i=0;i<AP.length;i++){
-    if(AP[i].id===id){
-      var oldMet=AP[i].met;
-      AP[i].met=met;
-      AP[i].modifReglMotif=motif;
-      AP[i].modifReglDate=TD;
-      if(typeof saveAppointment==="function")saveAppointment(AP[i]);
-      auditLog("MODIF_REGLEMENT","Ticket #"+(AP[i].tkNum||"--")+": "+oldMet+" -> "+met+" - "+motif);
-      break;
-    }
-  }
+  // FIX 2026-07-11 (NF525) : conserve uniquement comme garde-fou. N'ecrit plus jamais
+  // mode_paiement sur un ticket scelle (l'ancien code faisait saveAppointment(AP[i]) apres
+  // avoir reecrit AP[i].met -> UPDATE interdit, rejete par le trigger, et l'UI affichait
+  // "Regle modifie" alors que la base refusait => divergence silencieuse).
   cM();
-  showAlert("\u2705 R\u00e8glement modifi\u00e9 : "+met+"\nMotif : "+motif,"success");
-  go("tickets");
+  if(typeof modifReglement==="function")modifReglement(id);
 }
 
 function modifTicket(id){
