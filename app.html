@@ -6136,7 +6136,14 @@ function printClotureZ(){
   h+="<tr class=\"tline\"><td class=\"tb\">TOTAL REGLEMENTS</td><td class=\"tr tb\">"+totRegl.toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
   // Controle ecart
-  var ecart=Math.round((c.totalPrest-totRegl)*100)/100;
+  // FIX 2026-07-11 : le controle comparait les reglements au CA PRESTATIONS (c.totalPrest) alors
+  // que les reglements encaissent la TOTALITE des tickets (prestations + PRODUITS). Des qu une
+  // journee contenait un produit, la Z imprimee affichait une FAUSSE alerte
+  // "ECART CA/REGLEMENTS" (= montant des produits) sur une journee pourtant equilibree.
+  // La bonne reference est le CA NET TOTAL TTC (c.totalCA = totalPrest + totalProd), qui est la
+  // recette contre laquelle la somme des modes est batie dans cloturerJournee (_lxPayBuckets
+  // applique a TOUS les tickets du jour, produits inclus).
+  var ecart=Math.round((c.totalCA-totRegl)*100)/100;
   if(Math.abs(ecart)>0.01)h+="<div class=\"warn\">\u26a0 ECART CA/REGLEMENTS: "+ecart.toFixed(2)+" \u20ac</div>";
   else h+="<p style=\"color:green;text-align:center;font-size:10px\">\u2713 Contr\u00f4le CA/R\u00e8glements: OK</p>";
   
@@ -29042,7 +29049,9 @@ function doModifTicket(id,isPast){
         // Desormais on scelle un contre-ticket NEGATIF (-oldPr) aujourd hui + le nouveau ticket
         // (+newPr), exactement comme _cancelSecureTicketDo/annulerAcompte. Net a travers les jours
         // = newPr (oldPr passe - oldPr aujourd hui + newPr aujourd hui).
-        old.cancelled=true;old.cancelMotif=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
+        // FIX 2026-07-11 : + cancelReason -> persiste le motif en DB (colonne cancel_reason),
+        // comme la branche meme-jour ci-dessous. Sans lui le motif etait perdu au rechargement.
+        old.cancelled=true;old.cancelMotif=motif;old.cancelReason=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
         if(typeof saveAppointment==="function")saveAppointment(old);
         var _tkContra=nextTicketNum();
         var contraTk={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContra,isCancel:true,cancelRef:old.tkNum||old.id,cancelMotif:motif,fromCaisse:true};
@@ -29105,14 +29114,10 @@ function doModifTicket(id,isPast){
 }
 
 
-function doPrintSingleTicket(id){
-  var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
-  if(!a)return;
-  // FIX 2026-07-11 : ne pas heriter du dernier encaissement (showTicket lit _lastSealedApptId).
-  try{ window._lastSealedApptId=null; }catch(_e){}
-  _tk={items:[{name:gS(a.sId)?gS(a.sId).n:"Prestation",price:a.pr,qty:1,remise:0}],cId:a.cId,stId:a.stId,remise:0,payments:[{method:a.met,amount:a.pr}]};
-  showTicket(a.met,a.pr);
-}
+// FIX 2026-07-11 : doPrintSingleTicket SUPPRIMEE (code mort, aucun appelant dans tout le repo).
+// Elle reconstruisait un faux panier a UNE ligne dans la globale _tk (perte des items reels, de
+// la remise et du detail des paiements) et ecrasait _tk du panier en cours. Le duplicata reel
+// passe par reprintTicket() -> buildTicketHTML(a, isDuplicate), qui lit la ligne SCELLEE.
 
 // === GESTION DE LA CAISSE (sub-menu page) ===
 var caisseSubTab="especes";
@@ -31033,7 +31038,12 @@ function _cancelSecureTicketDo(id,motif){
       && !(typeof orig.cId==="string" && orig.cId.indexOf("passage-")===0);
   }catch(_eDet){ _sameDay=(orig.date===TD); _isRealRdv=false; }
   // Mark original as cancelled
-  orig.cancelled=true;orig.cancelDate=TD;orig.cancelMotif=motif;orig.cancelTs=new Date().toISOString();
+  // FIX 2026-07-11 : le motif n etait pose QUE sur cancelMotif (memoire seule) -> la colonne DB
+  // cancel_reason (ecrite par saveAppointment depuis appt.cancelReason) restait vide, et le motif
+  // disparaissait de l app + des exports au premier rechargement (il ne survivait que dans
+  // audit_log). cancelReason/cancelDate sont AUTORISES sur une ligne scellee (cancel_reason /
+  // cancel_date ne sont pas des champs proteges par appointments_nf525_protect).
+  orig.cancelled=true;orig.cancelDate=TD;orig.cancelMotif=motif;orig.cancelReason=motif;orig.cancelTs=new Date().toISOString();
   var _pOrig=null;
   if(typeof saveAppointment==="function")_pOrig=saveAppointment(orig);
   // NF525: Create counter-ticket (annulation) with negative amount
@@ -32883,6 +32893,9 @@ async function reloadFromSupabase(table){
               cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
             };
             if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;mapped.acompteTkNum=it.acompteTkNum||null;}});}
+            // FIX 2026-07-11 : date + motif d annulation (colonnes cancel_date / cancel_reason).
+            // Ajoutes UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal reste inchange.
+            if(a.cancelled){ if(a.cancel_date)mapped.cancelDate=String(a.cancel_date).slice(0,10); if(a.cancel_reason){mapped.cancelReason=a.cancel_reason;mapped.cancelMotif=a.cancel_reason;} }
             Object.assign(AP[i],mapped);
             delete dbMap[a.id]; // processed
           }
@@ -32912,6 +32925,9 @@ async function reloadFromSupabase(table){
               cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
             };
             if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;mapped.acompteTkNum=it.acompteTkNum||null;}});}
+            // FIX 2026-07-11 : date + motif d annulation (colonnes cancel_date / cancel_reason).
+            // Ajoutes UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal reste inchange.
+            if(a.cancelled){ if(a.cancel_date)mapped.cancelDate=String(a.cancel_date).slice(0,10); if(a.cancel_reason){mapped.cancelReason=a.cancel_reason;mapped.cancelMotif=a.cancel_reason;} }
             AP.push(mapped);
           }
         }

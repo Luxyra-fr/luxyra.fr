@@ -1059,7 +1059,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           else if (a.comment.indexOf("passage-H") >= 0) _cId = "passage-H";
           else if (a.comment.indexOf("passage-F") >= 0) _cId = "passage-F";
         }
-        return {
+        var _ap = {
           id: a.id, cId: _cId, sId: a.service_id, stId: a.collab_id,
           date: a.date_rdv, time: a.heure, pr: Number(a.prix),
           heureEncaiss: a.heure_encaissement || null,
@@ -1084,6 +1084,17 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           // pour que le rendu monnaie réapparaisse sur les ré-impressions
           payments: (a.payments && Array.isArray(a.payments) && a.payments.length > 0) ? a.payments : null
         };
+        // FIX 2026-07-11 : restitue la DATE et le MOTIF d annulation apres un rechargement.
+        // Les ecrans/exports filtrent sur `cancelled && cancelDate` et affichent `cancelReason`
+        // (Z, exports CSV/Excel) ou `cancelMotif` (bande mensuelle, archive annuelle) : sans ce
+        // remapping, une annulation rechargee perdait sa date ET son motif.
+        // Cles ajoutees UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal garde EXACTEMENT
+        // la meme forme qu avant (aucune cle en plus, aucune valeur changee).
+        if (a.cancelled) {
+          if (a.cancel_date) _ap.cancelDate = String(a.cancel_date).slice(0, 10);
+          if (a.cancel_reason) _ap.cancelMotif = a.cancel_reason;
+        }
+        return _ap;
       });
       // FIX 2026-05-12 : tri explicite par tkNum DESC pour récupérer le hash du
       // DERNIER ticket de la chaîne. Sans tri, doneH[0] dépendait de l'ordre DB
@@ -1818,6 +1829,18 @@ async function saveAppointment(appt) {
   }
 
   // FIX 2026-05-12 : upsert avec id explicite — plus de race condition local/UUID
+  // FIX 2026-07-11 : persiste la DATE d annulation (colonne cancel_date, jusqu ici jamais ecrite).
+  // Sans elle, TOUTES les vues du motif d annulation (bande Z section "Annulations", exports CSV/
+  // Excel/archive annuel, bande mensuelle) sont muettes apres un rechargement : elles filtrent
+  // toutes sur `a.cancelled && a.cancelDate` — or cancelDate n existait qu en memoire.
+  // Valeur canonique = date METIER (TD, "YYYY-MM-DD") a 12:00 UTC : le loader relit les 10
+  // premiers caracteres, donc la date reste juste quel que soit le fuseau de rendu (±12 h).
+  // Ecrite UNIQUEMENT quand l appointment est annule -> payload d un ticket normal INCHANGE, et
+  // aucune valeur existante ne peut etre ecrasee par un null (meme garde-fou que ticket_html).
+  if (appt.cancelled && appt.cancelDate) {
+    data.cancel_date = String(appt.cancelDate).slice(0, 10) + "T12:00:00Z";
+  }
+
   _ensureUuidId(appt);
   data.id = appt.id;
   var r = await _sb.from("appointments").upsert(data).select();
