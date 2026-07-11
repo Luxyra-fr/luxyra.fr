@@ -1068,6 +1068,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           st: a.status, met: a.mode_paiement,
           tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
           items: a.items || [], comment: a.comment || "",
+          // FIX 2026-07-11 : ticket_html etait ecrit mais JAMAIS relu -> voir saveAppointment.
+          ticketHtml: a.ticket_html || null,
           aPhases: a.a_phases || [],
           clients: a.clients || [], fromCaisse: a.from_caisse || false,
           cancelled: a.cancelled, cancelReason: a.cancel_reason,
@@ -1787,7 +1789,7 @@ async function saveAppointment(appt) {
     heure_encaissement: appt.heureEncaiss || null,  // NF525 : heure reelle d'encaissement (distincte heure RDV)
     brut_total: appt.brutTotal || null, remise: appt.remise || 0,
     status: appt.st, mode_paiement: appt.met || "",
-    ticket_num: appt.tkNum || null, ticket_html: appt.ticketHtml || null, hash: appt.hash || "",
+    ticket_num: appt.tkNum || null, hash: appt.hash || "",
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
@@ -1804,6 +1806,17 @@ async function saveAppointment(appt) {
     payments: (appt.payments && Array.isArray(appt.payments) && appt.payments.length > 0) ? appt.payments : null
   };
   try{data.clients=appt.clients||[];data.from_caisse=appt.fromCaisse||false;}catch(e){}
+  // FIX 2026-07-11 : ne JAMAIS detruire un recu deja stocke.
+  // Avant : `ticket_html: appt.ticketHtml || null` etait envoye a CHAQUE save, alors que le
+  // loader ne remappait JAMAIS ticket_html -> apres un rechargement de l'app, appt.ticketHtml
+  // est undefined -> toute re-sauvegarde d'un ticket scelle (reimpression, edition de
+  // commentaire, correction de collaborateur) NULLifiait le recu stocke en base.
+  // Desormais la colonne n'est envoyee QUE si on a reellement un HTML a ecrire ; sinon la cle
+  // est omise du payload -> l'upsert PostgREST ne touche pas la colonne (valeur conservee).
+  if (typeof appt.ticketHtml === "string" && appt.ticketHtml.length > 0) {
+    data.ticket_html = appt.ticketHtml;
+  }
+
   // FIX 2026-05-12 : upsert avec id explicite — plus de race condition local/UUID
   _ensureUuidId(appt);
   data.id = appt.id;
