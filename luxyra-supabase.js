@@ -659,6 +659,101 @@ async function loadOlderClotures(yearMonth) {
 }
 if (typeof window !== "undefined") window.loadOlderClotures = loadOlderClotures;
 
+// ============================================================================
+// FIX 2026-07-11 : MAPPER UNIQUE ligne DB `appointments` -> objet AP en memoire.
+// ----------------------------------------------------------------------------
+// AVANT : la conversion existait en DOUBLE — une version complete dans
+// loadSalonData (chargement initial) et une version TRONQUEE, recopiee deux fois,
+// dans reloadFromSupabase("appointments") (poll 30 s, resync au refocus, merge
+// realtime). La version tronquee oubliait : hash / prev_hash / hash_algo,
+// brut_total, remise, heure_encaissement, payments, ticket_html, clients,
+// is_cancel / cancel_ref / contra_same_day, et la reconstruction du cId
+// "passage-H/F/E" depuis pass_type.
+// CONSEQUENCES (salon sur 2 appareils) :
+//   - un contre-ticket d'annulation cree sur l'appareil A et recupere par le poll
+//     de l'appareil B arrivait SANS contra_same_day -> RE-COMPTE dans le CA et la
+//     cloture Z de B (chiffres faux sur le 2e appareil) ;
+//   - un ticket encaisse sur A arrivait sur B sans hash / sans payments
+//     (ventilation des reglements de la Z fausse, chaine NF525 incomplete) ;
+//   - pire : sur une ligne DEJA en memoire, le merge ECRASAIT cId="passage-F"
+//     avec client_id=null (colonne vide pour un walk-in) -> le genre du passage
+//     etait perdu toutes les 30 s.
+// DESORMAIS : une seule fonction, utilisee par loadSalonData ET par les deux
+// merges de reloadFromSupabase -> impossible de re-diverger.
+// LECTURE SEULE : aucune ecriture ajoutee, aucun champ scelle modifie.
+// ============================================================================
+function lxMapApptRow(a) {
+  // FIX 2026-05-13 : reconstruit cId="passage-X" depuis la colonne pass_type
+  // (preserve le genre choisi au RDV meme apres un reload / un merge).
+  var _cId = a.client_id;
+  if (!_cId && a.pass_type && ["H","F","E"].indexOf(a.pass_type) >= 0) {
+    _cId = "passage-" + a.pass_type;
+  }
+  // Migration legacy : si pas de pass_type mais comment contient marqueur, utiliser
+  else if (!_cId && a.comment) {
+    if (a.comment.indexOf("passage-E") >= 0) _cId = "passage-E";
+    else if (a.comment.indexOf("passage-H") >= 0) _cId = "passage-H";
+    else if (a.comment.indexOf("passage-F") >= 0) _cId = "passage-F";
+  }
+  var _ap = {
+    id: a.id, cId: _cId, sId: a.service_id, stId: a.collab_id,
+    date: a.date_rdv, time: a.heure, pr: Number(a.prix),
+    heureEncaiss: a.heure_encaissement || null,
+    brutTotal: a.brut_total ? Number(a.brut_total) : undefined,
+    remise: Number(a.remise || 0),
+    st: a.status, met: a.mode_paiement,
+    tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
+    items: a.items || [], comment: a.comment || "",
+    // FIX 2026-07-11 : ticket_html etait ecrit mais JAMAIS relu -> voir saveAppointment.
+    ticketHtml: a.ticket_html || null,
+    aPhases: a.a_phases || [],
+    clients: a.clients || [], fromCaisse: a.from_caisse || false,
+    cancelled: a.cancelled, cancelReason: a.cancel_reason,
+    // FIX 2026-07-11 : marqueurs du CONTRE-TICKET d'annulation (avant : memoire seule,
+    // jamais relus -> apres un reload le contre-ticket negatif etait RE-COMPTE dans le
+    // CA du jour et la cloture Z). contraSameDay : la paire original+contra du MEME JOUR
+    // doit netter a ZERO. Un contra CROSS-DAY reste false -> toujours compte.
+    isCancel: a.is_cancel === true,
+    cancelRef: (a.cancel_ref != null ? a.cancel_ref : null),
+    contraSameDay: a.contra_same_day === true,
+    // FIX 2026-05-13 : relit le detail des paiements (mode/amount/given/rendu)
+    // pour que le rendu monnaie reapparaisse sur les re-impressions
+    payments: (a.payments && Array.isArray(a.payments) && a.payments.length > 0) ? a.payments : null
+  };
+  // FIX 2026-07-11 : restitue la DATE et le MOTIF d annulation apres un rechargement.
+  // Les ecrans/exports filtrent sur `cancelled && cancelDate` et affichent `cancelReason`
+  // (Z, exports CSV/Excel) ou `cancelMotif` (bande mensuelle, archive annuelle) : sans ce
+  // remapping, une annulation rechargee perdait sa date ET son motif.
+  // Cles ajoutees UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal garde EXACTEMENT
+  // la meme forme qu avant (aucune cle en plus, aucune valeur changee).
+  if (a.cancelled) {
+    if (a.cancel_date) _ap.cancelDate = String(a.cancel_date).slice(0, 10);
+    if (a.cancel_reason) _ap.cancelMotif = a.cancel_reason;
+  }
+  // Acompte : seul support persiste = items[].isAcompteData (cf. doSaveAcompte).
+  // Restitue ici pour que le merge cross-appareils voie l'acompte comme le loader
+  // (initApp faisait deja cette passe apres loadSalonData -> devient un no-op).
+  if (_ap.items && _ap.items.length) {
+    for (var _ii = 0; _ii < _ap.items.length; _ii++) {
+      var _it = _ap.items[_ii];
+      if (_it && _it.isAcompteData) {
+        _ap.acompte = _it.acompte; _ap.acompteMode = _it.acompteMode;
+        _ap.acompteDate = _it.acompteDate; _ap.acompteTkNum = _it.acompteTkNum || null;
+        break;
+      }
+    }
+  }
+  // lieu / adresse_domicile : colonnes JAMAIS ecrites par saveAppointment (RDV a domicile
+  // saisi en memoire seulement). On ne pose la cle QUE si la base a une valeur -> le merge
+  // ne peut plus ecraser avec null le "domicile" saisi localement (l'ancien mapping du poll
+  // le faisait toutes les 30 s). Absence de cle == null pour tous les lecteurs
+  // (`a.lieu==="domicile"`, `if(a.adresse)`).
+  if (a.lieu) _ap.lieu = a.lieu;
+  if (a.adresse_domicile) _ap.adresse = a.adresse_domicile;
+  return _ap;
+}
+if (typeof window !== "undefined") window.lxMapApptRow = lxMapApptRow;
+
 async function loadSalonData() {
   if (!_sb || !_userId) { startOffline(); return; }
   try{
@@ -1045,57 +1140,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   try {
     var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(100000);
     if (apRes.data) {
-      AP = apRes.data.map(function(a) {
-        // FIX 2026-05-13 : reconstruit cId="passage-X" depuis la colonne pass_type
-        // (préserve le genre choisi au RDV même après un reload — bug de Marie-Hélène
-        // étendu aux passages walk-in).
-        var _cId = a.client_id;
-        if (!_cId && a.pass_type && ["H","F","E"].indexOf(a.pass_type) >= 0) {
-          _cId = "passage-" + a.pass_type;
-        }
-        // Migration legacy : si pas de pass_type mais comment contient marqueur, utiliser
-        else if (!_cId && a.comment) {
-          if (a.comment.indexOf("passage-E") >= 0) _cId = "passage-E";
-          else if (a.comment.indexOf("passage-H") >= 0) _cId = "passage-H";
-          else if (a.comment.indexOf("passage-F") >= 0) _cId = "passage-F";
-        }
-        var _ap = {
-          id: a.id, cId: _cId, sId: a.service_id, stId: a.collab_id,
-          date: a.date_rdv, time: a.heure, pr: Number(a.prix),
-          heureEncaiss: a.heure_encaissement || null,
-          brutTotal: a.brut_total ? Number(a.brut_total) : undefined,
-          remise: Number(a.remise || 0),
-          st: a.status, met: a.mode_paiement,
-          tkNum: a.ticket_num, hash: a.hash, prevHash: a.prev_hash, hashAlgo: a.hash_algo,
-          items: a.items || [], comment: a.comment || "",
-          // FIX 2026-07-11 : ticket_html etait ecrit mais JAMAIS relu -> voir saveAppointment.
-          ticketHtml: a.ticket_html || null,
-          aPhases: a.a_phases || [],
-          clients: a.clients || [], fromCaisse: a.from_caisse || false,
-          cancelled: a.cancelled, cancelReason: a.cancel_reason,
-          // FIX 2026-07-11 : marqueurs du CONTRE-TICKET d'annulation (avant : memoire seule,
-          // jamais relus -> apres un reload le contre-ticket negatif etait RE-COMPTE dans le
-          // CA du jour et la cloture Z). contraSameDay : la paire original+contra du MEME JOUR
-          // doit netter a ZERO. Un contra CROSS-DAY reste false -> toujours compte.
-          isCancel: a.is_cancel === true,
-          cancelRef: (a.cancel_ref != null ? a.cancel_ref : null),
-          contraSameDay: a.contra_same_day === true,
-          // FIX 2026-05-13 : relit le détail des paiements (mode/amount/given/rendu)
-          // pour que le rendu monnaie réapparaisse sur les ré-impressions
-          payments: (a.payments && Array.isArray(a.payments) && a.payments.length > 0) ? a.payments : null
-        };
-        // FIX 2026-07-11 : restitue la DATE et le MOTIF d annulation apres un rechargement.
-        // Les ecrans/exports filtrent sur `cancelled && cancelDate` et affichent `cancelReason`
-        // (Z, exports CSV/Excel) ou `cancelMotif` (bande mensuelle, archive annuelle) : sans ce
-        // remapping, une annulation rechargee perdait sa date ET son motif.
-        // Cles ajoutees UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal garde EXACTEMENT
-        // la meme forme qu avant (aucune cle en plus, aucune valeur changee).
-        if (a.cancelled) {
-          if (a.cancel_date) _ap.cancelDate = String(a.cancel_date).slice(0, 10);
-          if (a.cancel_reason) _ap.cancelMotif = a.cancel_reason;
-        }
-        return _ap;
-      });
+      // Mapping DB->AP : MAPPER UNIQUE partage avec reloadFromSupabase (voir lxMapApptRow).
+      AP = apRes.data.map(lxMapApptRow);
       // FIX 2026-05-12 : tri explicite par tkNum DESC pour récupérer le hash du
       // DERNIER ticket de la chaîne. Sans tri, doneH[0] dépendait de l'ordre DB
       // (date_rdv DESC + ordre interne aléatoire dans la même date) → chaîne brisée
