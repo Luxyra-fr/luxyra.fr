@@ -1071,6 +1071,13 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           aPhases: a.a_phases || [],
           clients: a.clients || [], fromCaisse: a.from_caisse || false,
           cancelled: a.cancelled, cancelReason: a.cancel_reason,
+          // FIX 2026-07-11 : marqueurs du CONTRE-TICKET d'annulation (avant : memoire seule,
+          // jamais relus -> apres un reload le contre-ticket negatif etait RE-COMPTE dans le
+          // CA du jour et la cloture Z). contraSameDay : la paire original+contra du MEME JOUR
+          // doit netter a ZERO. Un contra CROSS-DAY reste false -> toujours compte.
+          isCancel: a.is_cancel === true,
+          cancelRef: (a.cancel_ref != null ? a.cancel_ref : null),
+          contraSameDay: a.contra_same_day === true,
           // FIX 2026-05-13 : relit le détail des paiements (mode/amount/given/rendu)
           // pour que le rendu monnaie réapparaisse sur les ré-impressions
           payments: (a.payments && Array.isArray(a.payments) && a.payments.length > 0) ? a.payments : null
@@ -1785,6 +1792,12 @@ async function saveAppointment(appt) {
     items: appt.items || [], comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || "",
+    // FIX 2026-07-11 : persiste les marqueurs du contre-ticket d'annulation (voir loader).
+    // Un appointment normal ecrit is_cancel=false / contra_same_day=false (= defaut colonne)
+    // -> aucun changement de comportement pour les tickets et RDV existants.
+    is_cancel: appt.isCancel === true,
+    cancel_ref: (appt.cancelRef != null ? String(appt.cancelRef) : null),
+    contra_same_day: appt.contraSameDay === true,
     client_email: clEmail, collab_name: collabName,
     // FIX 2026-05-13 : persiste les détails de paiement (mode, montant, donné, rendu)
     // pour que le rendu monnaie réapparaisse sur les réimpressions et duplicatas.
