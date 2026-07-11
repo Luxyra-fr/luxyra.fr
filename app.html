@@ -32870,6 +32870,18 @@ async function reloadFromSupabase(table){
   if(!_sb||!_salonId)return;
   try{
     if(table==="appointments"){
+      // FIX 2026-07-11 : ce merge utilise desormais le MAPPER UNIQUE `lxMapApptRow`
+      // (luxyra-supabase.js), le MEME que le chargement initial `loadSalonData`. Avant, il avait
+      // sa PROPRE conversion DB->AP, tronquee : pas de hash/prevHash/hashAlgo, pas de brutTotal/
+      // remise, pas de payments, pas de heureEncaiss, pas de isCancel/cancelRef/contraSameDay,
+      // pas de ticketHtml/clients, et cId ecrase par client_id (= null pour un passage walk-in).
+      // Salon a 2 appareils : un ticket -- ou un CONTRE-TICKET d'annulation -- encaisse sur
+      // l'appareil A et recupere ici par le poll 30 s / le refocus / le realtime arrivait donc
+      // incomplet -> il etait RE-COMPTE dans le CA et la cloture Z de l'appareil B.
+      // Garde-fou : si un luxyra-supabase.js perime (cache) ne fournit pas le mapper, on ne merge
+      // PAS avec un mapping degrade (afficher des donnees perimees < afficher des chiffres faux).
+      var _mapRow=(typeof window.lxMapApptRow==="function")?window.lxMapApptRow:null;
+      if(!_mapRow){ console.warn("[reloadFromSupabase] lxMapApptRow indisponible - merge appointments ignore"); return; }
       var today=new Date().toISOString().slice(0,10);
       var past30=new Date();past30.setDate(past30.getDate()-30);var past30Str=past30.toISOString().slice(0,10);
       var r=await _sb.from("appointments").select("*").eq("salon_id",_salonId).gte("date_rdv",past30Str).order("date_rdv");
@@ -32884,18 +32896,8 @@ async function reloadFromSupabase(table){
             var a=dbMap[AP[i].id];
             // Only update if not currently being dragged
             if(window._pendingDrag&&window._pendingDrag.id===AP[i].id) continue;
-            var mapped={
-              id:a.id,cId:a.client_id,sId:a.service_id,stId:a.collab_id,
-              date:a.date_rdv,time:a.heure,pr:Number(a.prix),
-              st:a.status,met:a.mode_paiement,
-              tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
-              aPhases:a.a_phases||[],
-              cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
-            };
-            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;mapped.acompteTkNum=it.acompteTkNum||null;}});}
-            // FIX 2026-07-11 : date + motif d annulation (colonnes cancel_date / cancel_reason).
-            // Ajoutes UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal reste inchange.
-            if(a.cancelled){ if(a.cancel_date)mapped.cancelDate=String(a.cancel_date).slice(0,10); if(a.cancel_reason){mapped.cancelReason=a.cancel_reason;mapped.cancelMotif=a.cancel_reason;} }
+            // Mapping DB->AP : MAPPER UNIQUE, identique au chargement initial (loadSalonData).
+            var mapped=_mapRow(a);
             Object.assign(AP[i],mapped);
             delete dbMap[a.id]; // processed
           }
@@ -32916,19 +32918,7 @@ async function reloadFromSupabase(table){
             }
           }
           if(!alreadyLocal){
-            var mapped={
-              id:a.id,cId:a.client_id,sId:a.service_id,stId:a.collab_id,
-              date:a.date_rdv,time:a.heure,pr:Number(a.prix),
-              st:a.status,met:a.mode_paiement,
-              tkNum:a.ticket_num,items:a.items||[],comment:a.comment||"",
-              aPhases:a.a_phases||[],
-              cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
-            };
-            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;mapped.acompteTkNum=it.acompteTkNum||null;}});}
-            // FIX 2026-07-11 : date + motif d annulation (colonnes cancel_date / cancel_reason).
-            // Ajoutes UNIQUEMENT sur une ligne annulee -> un ticket/RDV normal reste inchange.
-            if(a.cancelled){ if(a.cancel_date)mapped.cancelDate=String(a.cancel_date).slice(0,10); if(a.cancel_reason){mapped.cancelReason=a.cancel_reason;mapped.cancelMotif=a.cancel_reason;} }
-            AP.push(mapped);
+            AP.push(_mapRow(a));
           }
         }
         // Only remove cancelled appointments that DB confirms are cancelled
