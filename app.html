@@ -2727,7 +2727,7 @@ function showPostCheckoutPurgeModal(plan){
     h+='<div style="display:flex;flex-direction:column;gap:10px">';
     h+='<button onclick="confirmPurgeTestData()" style="width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,#ef5350,#c62828);color:#fff;font-weight:800;font-size:15px;border:none;cursor:pointer">\ud83d\uddd1 Purger les donn\u00e9es de test</button>';
     h+='<button onclick="document.getElementById(\'purgeModal\').remove();go(\'home\')" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:transparent;color:rgba(255,255,255,.4);font-size:13px;cursor:pointer">Conserver les donn\u00e9es (non recommand\u00e9)</button>';
-    h+='<div style="font-size:10px;color:rgba(255,255,255,.2);margin-top:4px">Les clients, services, param\u00e8tres et \u00e9quipe sont toujours conserv\u00e9s.</div>';
+    h+='<div style="font-size:10px;color:rgba(255,255,255,.2);margin-top:4px">R\u00e9initialisation compl\u00e8te du salon (r\u00e9serv\u00e9e \u00e0 la p\u00e9riode d\u0027essai) : la config du salon et l\u0027\u00e9quipe sont conserv\u00e9es.</div>';
     h+='</div>';
   }else{
     h+='<div style="background:rgba(45,154,94,.08);border:1px solid rgba(45,154,94,.2);border-radius:12px;padding:14px;margin-bottom:20px;font-size:14px;color:#4ade80">\u2705 Aucune donn\u00e9e de test d\u00e9tect\u00e9e. Votre comptabilit\u00e9 est propre.</div>';
@@ -2752,9 +2752,10 @@ function confirmPurgeTestData(){
   h+='<div style="background:rgba(239,83,80,.1);border-radius:10px;padding:14px;margin-bottom:16px;text-align:left;font-size:13px;color:rgba(255,255,255,.7);line-height:2">';
   h+='\u274c '+nbTickets+' ticket'+(nbTickets>1?'s':'')+' de caisse (num\u00e9rotation remise \u00e0 z\u00e9ro)<br>';
   h+='\u274c '+nbClotures+' cl\u00f4ture'+(nbClotures>1?'s':'')+' Z (cha\u00eene hash r\u00e9initialis\u00e9e)<br>';
-  h+='\u274c Tous les RDV encaiss\u00e9s<br>';
-  h+='\u274c Mouvements de caisse et journaux<br>';
-  h+='<div style="margin-top:8px;color:#4ade80">\u2705 Conserv\u00e9s : clients, services, \u00e9quipe, param\u00e8tres, horaires</div>';
+  h+='\u274c Tous les RDV (pass\u00e9s et futurs) et le journal d\u0027audit<br>';
+  h+='\u274c Clients, services, produits, bons cadeaux, fid\u00e9lit\u00e9<br>';
+  h+='<div style="margin-top:8px;color:#4ade80">\u2705 Conserv\u00e9s : config du salon (nom, SIRET, abonnement) et \u00e9quipe</div>';
+  h+='<div style="margin-top:6px;color:rgba(255,255,255,.45);font-size:11px">R\u00e9initialisation compl\u00e8te c\u00f4t\u00e9 serveur (r\u00e9serv\u00e9e \u00e0 la p\u00e9riode d\u0027essai). Une confirmation suppl\u00e9mentaire vous sera demand\u00e9e.</div>';
   h+='</div>';
   h+='<div style="font-size:12px;color:rgba(255,255,255,.3);margin-bottom:16px">Action irr\u00e9versible. Tapez PURGER pour confirmer.</div>';
   h+='<input type="text" id="purgeConfirmInput" placeholder="Tapez PURGER" style="width:100%;padding:12px;border:2px solid rgba(239,83,80,.3);border-radius:10px;background:rgba(255,255,255,.05);color:#fff;font-size:16px;font-weight:800;text-align:center;letter-spacing:4px;margin-bottom:14px">';
@@ -2768,86 +2769,28 @@ function confirmPurgeTestData(){
 
 // ========== EXÉCUTION DE LA PURGE ==========
 async function executePurge(){
+  // === FIX 2026-07-11 (NF525) : la purge ne supprime PLUS rien elle-meme. ===
+  // L ancien code faisait, en role `authenticated` :
+  //     DELETE FROM appointments WHERE salon_id=... AND status='done'
+  //     DELETE FROM appointments WHERE salon_id=... AND cancelled=true
+  // -> il effacait des LIGNES SCELLEES (hashees) sans jamais supprimer les lignes
+  //    correspondantes de `tickets` / `clotures` : divergence garantie entre l app et le
+  //    journal fiscal. Depuis la reparation des garde-fous (trigger appointments_nf525_protect),
+  //    ce DELETE est de toute facon REJETE par la base.
+  // La seule remise a zero autorisee est le FACTORY RESET serveur (RPC factory_reset_salon,
+  // via l edge function salon-factory-reset) : reserve a la periode d essai, verifie le
+  // proprietaire, pose la trappe `luxyra.allow_nf525_unlock`, supprime appointments + tickets +
+  // clotures (+ clients, services, produits...) de facon COHERENTE et ecrit un audit FACTORY_RESET.
+  // On y renvoie l utilisateur (il devra retaper RESET) au lieu de tenter une suppression
+  // partielle qui echouerait en base tout en affichant « purge terminee » a l ecran.
   var inp=document.getElementById("purgeConfirmInput");
   if(!inp||inp.value.trim().toUpperCase()!=="PURGER"){
     showAlert("Veuillez taper PURGER pour confirmer.","warning");return;
   }
-  var btn=document.getElementById("purgeExecBtn");
-  if(btn){btn.textContent="Purge en cours...";btn.disabled=true;btn.style.opacity=".5";}
-
-  try{
-    // 1. Delete done appointments from Supabase
-    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-      await _sb.from("appointments").delete().eq("salon_id",_salonId).eq("status","done");
-      // Also delete cancelled ones
-      await _sb.from("appointments").delete().eq("salon_id",_salonId).eq("cancelled",true);
-      console.log("[PURGE] Appointments purged from Supabase");
-    }
-
-    // 2. Clear local done/cancelled appointments (keep future conf ones)
-    AP=AP.filter(function(a){return a.st!=="done"&&!a.cancelled;});
-    // Reset all tkNum on remaining (shouldn't have any)
-    AP.forEach(function(a){delete a.tkNum;});
-
-    // 3. Clear clotures Z
-    window.CLOTURES=[];
-    window.LOCKED_DAYS={};
-
-    // 4. Clear CAISSE_DATA movements
-    window.CAISSE_DATA={fond:window.CAISSE_DATA?window.CAISSE_DATA.fond:200,coffreEsp:0,coffreChq:0,remisesBanque:[],retraits:[],mouvements:[],misesAuCoffre:[],pieces:[]};
-
-    // 5. Clear localStorage caches
-    try{
-      localStorage.removeItem("_cp_locked");
-      localStorage.removeItem("_cp_clotures");
-      localStorage.removeItem("_cp_caisse");
-      localStorage.removeItem("_cp_sms_sent");
-      // Keep: _cp_forfaits, _cp_absences (config data)
-    }catch(e){}
-
-    // 6. Save clean state to Supabase config_json
-    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-      var r=await _sb.from("salons").select("config_json").eq("id",_salonId).limit(1);
-      var cfg={};
-      if(r.data&&r.data[0]&&r.data[0].config_json){
-        try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}
-      }
-      // Reset transactional data, keep config
-      cfg.clotures=[];
-      cfg.locked_days={};
-      cfg.caisse_data=window.CAISSE_DATA;
-      delete cfg.derniere_cloture;
-      await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
-      console.log("[PURGE] Config_json cleaned in Supabase");
-    }
-
-    // 7. Log the purge (for audit - this is the ONLY trace)
-    if(typeof auditLog==="function")auditLog("PURGE_TEST_DATA","Purge des donn\u00e9es de test effectu\u00e9e lors du passage en abonnement. Compteurs remis \u00e0 z\u00e9ro.");
-
-    // 8. Show success and reload
-    var pm=document.getElementById("purgeConfirm");if(pm)pm.remove();
-    var pm2=document.getElementById("purgeModal");if(pm2)pm2.remove();
-
-    var h2='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;padding:20px">';
-    h2+='<div style="background:#12141e;border:2px solid rgba(45,154,94,.4);border-radius:20px;padding:32px;max-width:400px;width:100%;text-align:center">';
-    h2+='<div style="font-size:48px;margin-bottom:12px">\u2705</div>';
-    h2+='<h2 style="color:#4ade80;font-size:20px;margin-bottom:12px">Purge termin\u00e9e !</h2>';
-    h2+='<div style="font-size:14px;color:rgba(255,255,255,.6);margin-bottom:8px;line-height:1.7">';
-    h2+='Toutes les donn\u00e9es de test ont \u00e9t\u00e9 supprim\u00e9es.<br>';
-    h2+='Votre comptabilit\u00e9 repart \u00e0 z\u00e9ro :<br>';
-    h2+='<strong style="color:#4ade80">Ticket #1 \u2022 Cl\u00f4ture Z #1</strong>';
-    h2+='</div>';
-    h2+='<div style="font-size:12px;color:rgba(255,255,255,.3);margin-bottom:16px">Vos clients, services, \u00e9quipe et param\u00e8tres sont intacts.</div>';
-    h2+='<button onclick="location.reload()" style="width:100%;padding:14px;border-radius:12px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:800;font-size:15px;border:none;cursor:pointer">D\u00e9marrer Luxyra \u2192</button>';
-    h2+='</div></div>';
-    var el2=document.createElement("div");el2.innerHTML=h2;
-    document.body.appendChild(el2);
-
-  }catch(e){
-    console.error("[PURGE] Error:",e);
-    showAlert("Erreur lors de la purge : "+e.message+"\nContactez support@luxyra.fr","error");
-    if(btn){btn.textContent="\ud83d\uddd1 R\u00e9essayer";btn.disabled=false;btn.style.opacity="1";}
-  }
+  var pm=document.getElementById("purgeConfirm");if(pm)pm.remove();
+  var pm2=document.getElementById("purgeModal");if(pm2)pm2.remove();
+  if(typeof lxOpenFactoryReset==="function"){ lxOpenFactoryReset(); return; }
+  showAlert("R\u00e9initialisation indisponible ici. Utilisez Param\u00e8tres \u2192 \u00c9tablissement \u2192 R\u00e9initialiser le salon (r\u00e9serv\u00e9 \u00e0 la p\u00e9riode d\u0027essai).","warning");
 }
 
 // Customer Portal (gérer son abonnement)
@@ -5343,6 +5286,7 @@ function buildClotureText(c){
   t+="Bons cadeaux:       "+c.details.bon.toFixed(2)+" EUR\n";
   t+="Virements:          "+c.details.vir.toFixed(2)+" EUR\n";
   if(c.details.aut>0)t+="Autre:              "+c.details.aut.toFixed(2)+" EUR\n";
+  if(Number(c.details.enligne)>0)t+="Acomptes en ligne:  "+Number(c.details.enligne).toFixed(2)+" EUR\n";
   t+="                    ----------\n";
   t+="TOTAL REGLEMENTS:   "+c.totalCA.toFixed(2)+" EUR\n";
   t+="\n--- CA PAR COLLABORATEUR ---\n";
@@ -5721,7 +5665,7 @@ function doCloture(){
 // ventilation (a.payments : methode + montant net apres rendu), et non mis en entier dans
 // un seul bucket selon la chaine a.met (qui contenait "cb" -> tout en CB, faux ; ou "esp" -> tout en especes).
 function _lxPayBuckets(a){
-  var b={cb:0,esp:0,chq:0,bon:0,vir:0,aut:0};
+  var b={cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0};
   function add(method,amt){
     var m=String(method||"").toLowerCase(); amt=Number(amt)||0;
     if(m.indexOf("esp")>=0) b.esp+=amt;
@@ -5731,8 +5675,29 @@ function _lxPayBuckets(a){
     else if(m.indexOf("vir")>=0) b.vir+=amt;
     else b.aut+=amt;
   }
-  if(a && a.payments && a.payments.length){ a.payments.forEach(function(p){ add(p.method,p.amount); }); }
+  var _usedPayments=!!(a && a.payments && a.payments.length);
+  if(_usedPayments){ a.payments.forEach(function(p){ add(p.method,p.amount); }); }
   else if(a){ add(a.met,a.pr); }
+  // === FIX 2026-07-11 : ACOMPTE EN LIGNE (Stripe) = un MODE DE REGLEMENT a part entiere ===
+  // Un acompte paye en ligne n est PAS dans a.payments (qui ne contient que le SOLDE encaisse
+  // au comptoir) : la cloture Z sous-estimait donc les reglements du montant de l acompte
+  // (somme des modes != recette du ticket). On le remet dans son propre bucket « enligne »
+  // (mapping comptable valide : compte 58010000 « acomptes CB en ligne » — ni especes, ni CB,
+  // ni virement) -> Z equilibree, et le tiroir especes (.esp) n est PAS touche.
+  // ACOMPTE EN SALON : depuis le fix 31aaf9a le ticket final book LE SOLDE et a.acompte=0
+  // -> rien a ajouter (et _lxIsAcompteOnline le filtrerait de toute facon).
+  // Garde-fou : on n ajoute QUE si les buckets viennent de a.payments (= le solde). Sans
+  // a.payments, le fallback add(a.met,a.pr) a deja mis la recette TOTALE dans un bucket :
+  // ajouter l acompte la-dessus la ferait compter deux fois.
+  // Fail-safe : toute erreur -> buckets inchanges (comportement d avant le fix).
+  try{
+    if(_usedPayments && a){
+      var _acOn=Number(a.acompte)||0;
+      if(_acOn>0.004 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(a.acompteMode)){
+        b.enligne+=Math.round(_acOn*100)/100;
+      }
+    }
+  }catch(_eAc){}
   return b;
 }
 // FIX 2026-07-09 (NF525) : annulation MEME JOUR doit nette a ZERO dans la cloture Z.
@@ -5959,7 +5924,9 @@ function doConfirmCloture(){
   h+='<div style="display:flex;justify-content:space-between"><span>Ch\u00e8ques</span><strong>'+c.details.chq.toFixed(2)+' \u20ac</strong></div>';
   h+='<div style="display:flex;justify-content:space-between"><span>Bons cadeaux</span><strong>'+c.details.bon.toFixed(2)+' \u20ac</strong></div>';
   h+='<div style="display:flex;justify-content:space-between"><span>Virements</span><strong>'+c.details.vir.toFixed(2)+' \u20ac</strong></div>';
-  h+='<div style="display:flex;justify-content:space-between"><span>Autre</span><strong>'+c.details.aut.toFixed(2)+' \u20ac</strong></div></div>';
+  h+='<div style="display:flex;justify-content:space-between"><span>Autre</span><strong>'+c.details.aut.toFixed(2)+' \u20ac</strong></div>';
+  if(Number(c.details.enligne)>0)h+='<div style="display:flex;justify-content:space-between"><span>Acomptes en ligne</span><strong>'+Number(c.details.enligne).toFixed(2)+' \u20ac</strong></div>';
+  h+='</div>';
   h+='<div style="display:flex;justify-content:space-between;padding:12px 0;font-weight:900;font-size:18px;border-bottom:2px solid #000"><span>TOTAL TTC</span><span>'+c.totalCA.toFixed(2)+' \u20ac</span></div>';
   h+='<div style="padding:6px 0;font-size:12px;color:#666;border-bottom:1px dashed var(--border)">';
   h+='<div style="display:flex;justify-content:space-between"><span>Total HT</span><span>'+c.totalHT.toFixed(2)+' \u20ac</span></div>';
@@ -6034,12 +6001,12 @@ function printClotureZ(){
   c.tkMax           = c.tkMax || 0;
   // hPremier/hDernier : on les hydrate plus bas après calcul de `done` (les vieilles
   // clôtures n'ont pas ces champs, on les reconstruit depuis les tickets du jour).
-  if(!c.details || typeof c.details !== "object") c.details = {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0};
-  ["cb","esp","chq","bon","vir","aut"].forEach(function(k){ c.details[k] = _n(c.details[k]); });
+  if(!c.details || typeof c.details !== "object") c.details = {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0};
+  ["cb","esp","chq","bon","vir","aut","enligne"].forEach(function(k){ c.details[k] = _n(c.details[k]); });
 
   // FIX anciennes clôtures : si tous les modes sont à 0 mais qu'il y a des tickets,
   // on reconstruit la ventilation depuis AP[] (tickets encaissés ce jour-là).
-  var sumDet = c.details.cb + c.details.esp + c.details.chq + c.details.bon + c.details.vir + c.details.aut;
+  var sumDet = c.details.cb + c.details.esp + c.details.chq + c.details.bon + c.details.vir + c.details.aut + c.details.enligne;
   if (sumDet === 0 && c.nbTickets > 0 && Array.isArray(AP)) {
     try {
       var ticketsDuJour = AP.filter(function(a){
@@ -6164,7 +6131,8 @@ function printClotureZ(){
   h+="<tr><td>Bons cadeaux / avoirs</td><td class=\"tr\">"+c.details.bon.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Virements</td><td class=\"tr\">"+c.details.vir.toFixed(2)+" \u20ac</td></tr>";
   if(c.details.aut>0)h+="<tr><td>Autre</td><td class=\"tr\">"+c.details.aut.toFixed(2)+" \u20ac</td></tr>";
-  var totRegl=c.details.cb+c.details.esp+c.details.chq+c.details.bon+c.details.vir+c.details.aut;
+  if(c.details.enligne>0)h+="<tr><td>Acomptes en ligne (Stripe)</td><td class=\"tr\">"+c.details.enligne.toFixed(2)+" \u20ac</td></tr>";
+  var totRegl=c.details.cb+c.details.esp+c.details.chq+c.details.bon+c.details.vir+c.details.aut+c.details.enligne;
   h+="<tr class=\"tline\"><td class=\"tb\">TOTAL REGLEMENTS</td><td class=\"tr tb\">"+totRegl.toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
   // Controle ecart
@@ -27744,6 +27712,10 @@ function doFinalPayExecute(method){
     return;
   }
   window._payingInProgress=true;
+  // FIX 2026-07-11 : identifiant de la LIGNE SCELLEE (AP) creee par cet encaissement.
+  // showTicket / printTicketReceipt s en servent comme SOURCE UNIQUE du recu -> le recu
+  // imprime ne depend plus de _tk (remis a zero en fin de fonction) et ne peut plus etre vide.
+  window._lastSealedApptId=null;
   // D\u00e9sactive tous les boutons de la modal de paiement pour bloquer le double-tap
   try{
     var modalBtns=document.querySelectorAll(".mbox button, .mbg button");
@@ -27943,6 +27915,7 @@ function doFinalPayExecute(method){
         try{AP[i].ticketHtml=buildTicketHTML(AP[i],false);}catch(e){}
         if(typeof saveAppointment==="function")saveAppointment(AP[i]);
         if(typeof saveTicketToDb==="function")saveTicketToDb(AP[i]); // NF525: table tickets DB
+        window._lastSealedApptId=AP[i].id; // FIX 2026-07-11 : source du recu (ecran + impression)
         if(typeof cleanupPendingFromTk==="function")cleanupPendingFromTk();
         // Update rdv_online status if this was an online booking (+ reconciliation fantome)
         if(AP[i].onlineId){ if(typeof _lxMarkOnlineRdvDone==="function") _lxMarkOnlineRdvDone(AP[i].onlineId, AP[i].tkNum); }
@@ -27977,6 +27950,7 @@ function doFinalPayExecute(method){
     if(typeof _lxFindOnlineRdvForTicket==="function"){ var _roB=_lxFindOnlineRdvForTicket(newTk); if(_roB&&typeof _lxMarkOnlineRdvDone==="function") _lxMarkOnlineRdvDone(_roB, newTk.tkNum); }
     if(typeof saveAppointment==="function")saveAppointment(newTk);
     if(typeof saveTicketToDb==="function")saveTicketToDb(newTk); // NF525: table tickets DB
+    window._lastSealedApptId=newTk.id; // FIX 2026-07-11 : source du recu (ecran + impression)
     // Encaissement validé → nettoie le pending/devis source si _tk en venait
     if(typeof cleanupPendingFromTk==="function")cleanupPendingFromTk();
   }
@@ -28242,26 +28216,45 @@ function saveFicheTech(cId){
 }
 
 function printTicketReceipt(){
-  var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
-  var metStr=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"CB";
-  if(_tk.apptId){for(var pi2=0;pi2<AP.length;pi2++){if(AP[pi2].id===_tk.apptId){AP[pi2].printed=true;if(typeof saveAppointment==="function")saveAppointment(AP[pi2]);break;}}}
-  var now=new Date();
-  var tempA={
-    id:_tk.apptId||"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items[0]?_tk.items[0].sId:null,
-    date:TD,time:now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-    pr:total,met:metStr,items:_tk.items,remise:_tk.remise||0,
-    acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||"",
-    payments:_tk.payments||null,tkNum:tkN
-  };
+  // === FIX 2026-07-11 (NF525) : imprimer EXACTEMENT le recu affiche a l ecran. ===
+  // Avant : la fonction reconstruisait le ticket depuis _tk — or doFinalPayExecute remet
+  // _tk a zero ({step:0,items:[]}) a sa derniere ligne -> le ticket IMPRIME sortait VIDE
+  // (« PRESTATION — Total TTC 0,00 EUR ») alors que l ecran, lui, etait juste.
+  // showTicket depose desormais dans window._lastReceipt le HTML EXACT qu il affiche
+  // (construit depuis la ligne scellee) -> imprime == ecran == duplicata.
+  var R=(typeof window!=="undefined")?window._lastReceipt:null;
+  var body=null,tkNumP=tkN,apptIdP=null;
+  if(R&&(R.html||R.a)){
+    tkNumP=R.tkNum||tkN; apptIdP=R.apptId||null; body=R.html||null;
+    if(!body){ try{ body=buildTicketHTML(R.a,false); }catch(_eB){ body=null; } }
+  }
+  if(body===null){
+    // Repli legacy (aucun snapshot : ne peut pas arriver depuis la modale du recu).
+    var total=0;(_tk.items||[]).forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
+    var metStr=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"CB";
+    var now=new Date();
+    var tempA={
+      id:_tk.apptId||"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items&&_tk.items[0]?_tk.items[0].sId:null,
+      date:TD,time:now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
+      pr:total,met:metStr,items:_tk.items||[],remise:_tk.remise||0,
+      acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||"",
+      payments:_tk.payments||null,tkNum:tkN
+    };
+    apptIdP=_tk.apptId||null;
+    body=buildTicketHTML(tempA,false);
+  }
+  // Marquage « imprime » : semantique INCHANGEE (seul un RDV encaisse etait marque).
+  // `printed` n est PAS un champ protege par appointments_nf525_protect.
+  if(apptIdP){for(var pi2=0;pi2<AP.length;pi2++){if(AP[pi2].id===apptIdP){AP[pi2].printed=true;if(typeof saveAppointment==="function")saveAppointment(AP[pi2]);break;}}}
   var w=window.open("","_blank","width=380,height=650");if(!w)return;
-  var h="<html><head><title>Ticket #"+tkN+"</title>";
+  var h="<html><head><title>Ticket #"+tkNumP+"</title>";
   // FIX 2026-05-12 : contraste renforcé pour impression — tout en font-weight 600
   // + pure black + line-height plus aéré pour lisibilité petits caractères
   h+="<style>html{color-scheme:light!important}*,body,div,span,p,h1,h2,h3,td,th,tr{color:#000!important;background:transparent!important;font-weight:600!important}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:13px;line-height:1.6;background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}";
   // Renforce les petites lignes (programme fidélité, mentions légales)
   h+="div[style*='font-size:10px'],div[style*='font-size:11px'],div[style*='font-size:9px']{font-size:12px!important;font-weight:700!important}";
   h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px;font-size:13px}}</style></head><body>";
-  h+=buildTicketHTML(tempA, false);
+  h+=body;
   h+="</body></html>";
   w.document.write(h);w.document.close();
   // FIX 2026-05-12 : fermeture automatique de la fenêtre après impression
@@ -28307,7 +28300,27 @@ function showTicket(method,total){
     }
   }
 
-  var ticketHtmlFull=buildTicketHTML(tempA, false);
+  // === FIX 2026-07-11 (NF525) : le recu vient de la LIGNE SCELLEE (AP), pas de _tk. ===
+  // _tk est remis a zero a la derniere ligne de doFinalPayExecute -> le bouton « Imprimer »
+  // (printTicketReceipt) relisait un _tk VIDE et imprimait « Total TTC 0,00 EUR ».
+  // La ligne scellee (celle qui porte tkNum, items, pr, remise, acompte, hash) est desormais
+  // la SOURCE UNIQUE : ecran == impression == ticket_html archive == duplicata (reprintTicket).
+  // Fail-safe : si la ligne est introuvable, on retombe sur tempA (comportement d avant).
+  var srcA=null;
+  try{
+    var _sid=(typeof window!=="undefined"&&window._lastSealedApptId)?window._lastSealedApptId:(_tk.apptId||null);
+    if(_sid){ for(var _si=0;_si<AP.length;_si++){ if(AP[_si].id===_sid){ srcA=AP[_si]; break; } } }
+    if(srcA && srcA.tkNum!==tkN) srcA=null; // garde-fou : jamais un autre ticket que celui qu on vient d encaisser
+  }catch(_eSrc){ srcA=null; }
+  var recA=srcA||tempA;
+  var ticketHtmlFull=buildTicketHTML(recA, false);
+  // Snapshot du recu affiche -> imprime a l identique meme apres le reset de _tk.
+  // apptId reste _tk.apptId (et NON recA.id) : le marquage `printed` garde exactement
+  // la semantique d avant le fix (seuls les RDV etaient marques imprimes).
+  try{
+    window._lastReceipt={html:ticketHtmlFull,tkNum:(recA.tkNum||tkN),apptId:(_tk.apptId||null),
+      a:(function(){try{return JSON.parse(JSON.stringify(recA));}catch(_e){return recA;}})()};
+  }catch(_eSnap){ window._lastReceipt=null; }
   
   var h='<div class="mbg"><div style="max-width:380px;margin:auto;max-height:95vh;overflow-y:auto" onclick="event.stopPropagation()">';
   h+='<div class="ticket-receipt" style="font-family:\'Courier New\',monospace;padding:20px;font-size:14px;line-height:1.5;border-radius:16px 16px 0 0">';
@@ -29048,15 +29061,42 @@ function doModifTicket(id,isPast){
         if(typeof saveTicketToDb==="function")saveTicketToDb(newModTk);
         auditLog("TICKET_MODIF","Ancien #"+(old.tkNum||"--")+" annule (contre-ticket #"+_tkContra+") -> Nouveau #"+_tkNew+" - "+motif);
       }else{
-        // SAME-DAY : INCHANGE (byte-identique avec l ancien if(true)). L original du jour est
-        // retire de la Z par st!=="done" ; le nouveau ticket s ajoute. Deja correct avant ce fix.
-        old.st="canc";old.cancelMotif=motif;old.cancelDate=TD;
-        tkN++;
-        var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,pr:newPr||old.pr,st:"done",met:newMet||old.met,tkNum:tkN,modifFrom:old.tkNum||"--",modifMotif:motif};
+        // === FIX 2026-07-11 (NF525) : modif d un ticket DU JOUR = MEME contre-passation scellee ===
+        // L ancien code etait bancal sur 3 points :
+        //   1) old.st="canc" -> valeur INTERDITE par la CHECK appointments_status_check
+        //      (conf|done|noshow|cancelled) : l ecriture serait de toute facon rejetee ;
+        //   2) aucun saveAppointment(old) -> l annulation n etait JAMAIS persistee (au rechargement
+        //      l original redevenait un ticket normal => montant compte 2 fois) ;
+        //   3) aucun saveTicketToDb(newModTk) -> le ticket de remplacement n entrait PAS dans le
+        //      journal scelle (tickets) => app != journal fiscal.
+        // Desormais, strictement le meme mecanisme que la branche jour anterieur (et que
+        // _cancelSecureTicketDo / annulerAcompte) :
+        //   - l original est marque cancelled (champ AUTORISE sur une ligne scellee ; aucun champ
+        //     protege — prix/items/mode_paiement/ticket_num/hash — n est touche) ;
+        //   - un contre-ticket NEGATIF (-oldPr) est chaine + scelle dans le journal ;
+        //   - le nouveau ticket (+newPr) est chaine + scelle dans le journal.
+        // contraSameDay=true -> la paire (original exclu par !cancelled + contra exclu par
+        // _lxExclCA/_lxIsSameDayContra) nette a ZERO : le CA et la cloture Z du jour ne retiennent
+        // que le NOUVEAU montant, et CA du jour == somme des tickets scelles du jour
+        // (oldPr - oldPr + newPr = newPr).
+        old.cancelled=true;old.cancelMotif=motif;old.cancelReason=motif;old.cancelDate=TD;old.cancelTs=new Date().toISOString();
+        if(typeof saveAppointment==="function")saveAppointment(old);
+        var _tkContraSD=nextTicketNum();
+        var contraSD={id:U(),cId:old.cId,sId:old.sId,stId:old.stId,date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:-(old.pr||0),brutTotal:-(old.brutTotal||old.pr||0),remise:0,items:[{name:"ANNULATION (modif) #"+(old.tkNum||"--"),price:-(old.pr||0),qty:1,remise:0}],st:"done",met:old.met||"",tkNum:_tkContraSD,isCancel:true,cancelRef:old.tkNum||old.id,cancelMotif:motif,contraSameDay:true,fromCaisse:true};
+        if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){contraSD.operator_id=CURRENT_OPERATOR.id;contraSD.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");}
+        chainTicket(contraSD);
+        AP.push(contraSD);
+        if(typeof saveAppointment==="function")saveAppointment(contraSD);
+        if(typeof saveTicketToDb==="function")saveTicketToDb(contraSD);
+        var _tkNewSD=nextTicketNum();
+        var _svNSD=(typeof gS==="function")?gS(newSId||old.sId):null;
+        var newModTk={id:U(),cId:old.cId,sId:newSId||old.sId,stId:newStId||old.stId,date:TD,time:old.time,ts:new Date().toISOString(),pr:newPr||old.pr,brutTotal:newPr||old.pr,remise:0,items:[{name:(_svNSD?_svNSD.n:"Prestation"),price:(newPr||old.pr),qty:1,remise:0}],st:"done",met:newMet||old.met,tkNum:_tkNewSD,modifFrom:old.tkNum||"--",modifMotif:motif,fromCaisse:true};
+        if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){newModTk.operator_id=CURRENT_OPERATOR.id;newModTk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"");}
         chainTicket(newModTk);
         AP.push(newModTk);
         if(typeof saveAppointment==="function")saveAppointment(newModTk);
-        auditLog("TICKET_MODIF","Ancien #"+(old.tkNum||"--")+" -> Nouveau #"+tkN+" - "+motif);
+        if(typeof saveTicketToDb==="function")saveTicketToDb(newModTk);
+        auditLog("TICKET_MODIF","Ancien #"+(old.tkNum||"--")+" annule (contre-ticket #"+_tkContraSD+") -> Nouveau #"+_tkNewSD+" - "+motif);
       }
       break;
     }
@@ -29068,6 +29108,8 @@ function doModifTicket(id,isPast){
 function doPrintSingleTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
+  // FIX 2026-07-11 : ne pas heriter du dernier encaissement (showTicket lit _lastSealedApptId).
+  try{ window._lastSealedApptId=null; }catch(_e){}
   _tk={items:[{name:gS(a.sId)?gS(a.sId).n:"Prestation",price:a.pr,qty:1,remise:0}],cId:a.cId,stId:a.stId,remise:0,payments:[{method:a.met,amount:a.pr}]};
   showTicket(a.met,a.pr);
 }
@@ -31139,9 +31181,14 @@ function cloturerJournee(){
     prestHT:prestHT,prestTVA:prestTVA,prodHT:prodHT,prodTVA:prodTVA,
     totalRemises:totalRemises,brutTotalGlobal:brutTotalGlobal,
     panierMoyen:done.length>0?Math.round(totalCA/done.length*100)/100:0,
-    details:{cb:0,esp:0,chq:0,bon:0,vir:0,aut:0},
+    details:{cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0},
     perSty:perSty,hash:""};
-  done.forEach(function(a){var bk=_lxPayBuckets(a);c.details.cb+=bk.cb;c.details.esp+=bk.esp;c.details.chq+=bk.chq;c.details.bon+=bk.bon;c.details.vir+=bk.vir;c.details.aut+=bk.aut;});
+  // FIX 2026-07-11 : « enligne » = acomptes payes en ligne (Stripe) consommes par les tickets du
+  // jour. Sans ce bucket, la somme des modes de reglement de la Z etait inferieure a la recette.
+  // Aucun impact sur le hash de la cloture (il ne porte pas sur details) ni sur les cloture deja
+  // scellees ; la valeur est persistee dans clotures.detail_paiements (jsonb) via saveCloture.
+  done.forEach(function(a){var bk=_lxPayBuckets(a);c.details.cb+=bk.cb;c.details.esp+=bk.esp;c.details.chq+=bk.chq;c.details.bon+=bk.bon;c.details.vir+=bk.vir;c.details.aut+=bk.aut;c.details.enligne+=(bk.enligne||0);});
+  c.details.enligne=Math.round(c.details.enligne*100)/100;
   // Cumul mensuel
   var moisKey=TD.slice(0,7);
   var clotMois=window.CLOTURES.filter(function(x){return x.date.indexOf(moisKey)===0;});
