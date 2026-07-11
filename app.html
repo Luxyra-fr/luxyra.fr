@@ -5758,6 +5758,46 @@ function _lxIsSameDayContra(a,refs){
   if(ref==null) return false;
   return !!(refs["n"+ref] || refs["i"+ref]);
 }
+// FIX 2026-07-11 (AFFICHAGE SEUL) : meme regle que la cloture Z, mais applicable a
+// N IMPORTE QUELLE date (planning d un autre jour, stats sur une periode, duplicata de Z).
+// _lxSameDayCancelRefs() (scope TD) reste INCHANGE -> cloturerJournee non touche.
+function _lxSameDayCancelRefsOn(dk){
+  var refs={};
+  try{
+    if(!dk) return refs;
+    for(var i=0;i<AP.length;i++){ var a=AP[i];
+      if(a && a.cancelled && a.cancelDate===dk && a.date===dk){
+        if(a.tkNum!=null) refs["n"+a.tkNum]=1;
+        if(a.id!=null) refs["i"+a.id]=1;
+      }
+    }
+  }catch(_e){}
+  return refs;
+}
+// Contre-ticket d une annulation MEME JOUR (quelle que soit la date) -> a EXCLURE des CA et
+// comptages d affichage : la paire (original annule + contre-ticket) doit netter a ZERO,
+// exactement comme dans la cloture Z (fix 940794f). L original est deja exclu par !cancelled ;
+// sans cette exclusion le contre-ticket negatif retirait le montant UNE 2e fois.
+// Un contra CROSS-DAY (annulation d un ticket d un jour anterieur) reste COMPTE : il applique
+// le remboursement sur le jour courant, exactement comme dans cloturerJournee.
+// Fail-safe : toute erreur -> false (rien n est exclu, l affichage ne casse jamais).
+function _lxIsSameDayContraAny(a){
+  try{
+    if(!a || !a.isCancel) return false;
+    if(typeof _lxIsSameDayContra!=="function") return false;
+    return _lxIsSameDayContra(a, _lxSameDayCancelRefsOn(a.date));
+  }catch(_e){ return false; }
+}
+// Un contre-ticket d annulation est un ENREGISTREMENT FISCAL, pas un rendez-vous :
+// jamais de bloc au planning, jamais compte comme un RDV, jamais vu comme "prestation ajoutee".
+function _lxIsContraTicket(a){
+  try{ return !!(a && a.isCancel); }catch(_e){ return false; }
+}
+// Predicat commun aux filtres d affichage. Garde typeof -> un helper manquant ne casse jamais
+// le rendu (retourne false = comportement d avant le fix).
+function _lxExclCA(a){
+  return (typeof _lxIsSameDayContraAny==="function") && _lxIsSameDayContraAny(a);
+}
 function _lxClotureCaisseTheo(){
   try{
     var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
@@ -5803,7 +5843,7 @@ function _doClotureDo(){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:48px;margin-bottom:10px">\ud83d\udd12</div><h2>D\u00e9j\u00e0 cl\u00f4tur\u00e9e</h2><div style="font-size:14px;margin-bottom:14px">La cl\u00f4ture quotidienne du '+fmt(TD)+' a d\u00e9j\u00e0 \u00e9t\u00e9 effectu\u00e9e.</div><button class="btn bg bk" onclick="cM()">OK</button></div></div>';
     return;
   }
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled});
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!_lxExclCA(a);});
   if(!done.length){document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><h2>Aucun ticket</h2><p>Aucun ticket \u00e0 cl\u00f4turer aujourd\u0027hui</p><button class="btn bg bk" onclick="cM()">OK</button></div></div>';return;}
   var t=0;done.forEach(function(a){t+=a.pr});
   var psSold=PS.filter(function(p){return p.date===TD;});var tProd=0;psSold.forEach(function(p){tProd+=p.pr;});
@@ -6005,7 +6045,7 @@ function printClotureZ(){
     } catch(_e) { /* silent */ }
   }
   var CD=window.CAISSE_DATA||{fond:200,coffreEsp:0,coffreChq:0};
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===c.date&&!a.cancelled;});
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===c.date&&!a.cancelled&&!_lxExclCA(a);});
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===c.date;});
   var perSty=c.perSty||{};
   // Reconstruction des heures premier/dernier ticket si absentes (vieilles clôtures
@@ -7099,7 +7139,7 @@ window.migrateClientPhotosToStorage = migrateClientPhotosToStorage;
 function showCAInstantane(){
   var today=TD;
   // Done today
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled;});
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled&&!_lxExclCA(a);});
   var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
   var doneCount=done.length;
   
@@ -9134,7 +9174,9 @@ function rHome(){
     h+='</div>';
   }
   // Data
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled;});
+  // FIX 2026-07-11 : exclut le contre-ticket d une annulation MEME JOUR (paire nette a zero,
+  // comme la cloture Z) -> le CA/nb de l accueil ne perd plus le montant en double.
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled&&!_lxExclCA(a);});
   var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
   var doneCount=done.length;
   var remaining=AP.filter(function(a){return a.st==="conf"&&a.date===today;});
@@ -9147,7 +9189,7 @@ function rHome(){
   done.forEach(function(a){var sp=_splitPrestProd(a);caServices+=sp.prest;caProducts+=sp.prod;});
   caServices=Math.round(caServices*100)/100;caProducts=Math.round(caProducts*100)/100;
   var newClients=0;
-  AP.filter(function(a){return a.date===today&&a.st!=="canc"&&!a.cancelled;}).forEach(function(a){
+  AP.filter(function(a){return a.date===today&&a.st!=="canc"&&!a.cancelled&&!_lxIsContraTicket(a);}).forEach(function(a){
     if(a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0){
       if(AP.filter(function(b){return b.cId===a.cId&&b.date<today&&b.st==="done"&&!b.cancelled;}).length===0)newClients++;
     }
@@ -9183,7 +9225,7 @@ function rHome(){
   var lastOfMonth=nowD.getFullYear()+"-"+String(nowD.getMonth()+1).padStart(2,"0")+"-"+String(lastDay).padStart(2,"0");
   // Past: done CA from 1st to today (inclusive)
   var caPasseMois=0;var rdvPasseMois=0;
-  AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=firstOfMonth&&a.date<=today;}).forEach(function(a){caPasseMois+=a.pr;rdvPasseMois++;});
+  AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=firstOfMonth&&a.date<=today&&!_lxExclCA(a);}).forEach(function(a){caPasseMois+=a.pr;rdvPasseMois++;});
   // Future: confirmed RDV from tomorrow to end of month
   var caFuturMois=0;var rdvFuturMois=0;
   AP.filter(function(a){return a.st==="conf"&&!a.cancelled&&a.date>today&&a.date<=lastOfMonth;}).forEach(function(a){var p=Number(a.pr);if(!p){var sv=gS(a.sId);if(sv)p=Number(sv.p)||0;}caFuturMois+=p;rdvFuturMois++;});
@@ -9907,6 +9949,9 @@ function rPlanningDay(dateObj,showDayHeader){
     if(a.date!==dk) return false;
     if(a.st==="canc"||a.st==="pause") return false;
     if(a.cancelled) return false;
+    // FIX 2026-07-11 : un contre-ticket d annulation (isCancel, montant negatif, sans phases) est
+    // un ENREGISTREMENT FISCAL, pas un rendez-vous -> pas de bloc (0 min) au planning.
+    if(_lxIsContraTicket(a)) return false;
     // Exclure les tickets done sans service (pas de durée à représenter, ex: vente produit pure)
     if(a.st==="done" && !a.sId && (!a.aPhases||!a.aPhases.length) && (!a.items||!a.items.length)) return false;
     return true;
@@ -10096,16 +10141,21 @@ function rPlanningDay(dateObj,showDayHeader){
   // Summary with TTC + HT (inclut TOUS les RDV du jour pour coh\u00e9rence avec dashboard,
   // y compris les tickets caisse directs fromCaisse \u2014 exclus uniquement les annul\u00e9s)
   var txTVA=SALON_CONFIG.tauxTVA||20;
+  // FIX 2026-07-11 : annulation MEME JOUR -> la paire (original annule + contre-ticket) doit
+  // netter a ZERO, comme dans la cloture Z. L original est deja exclu (!cancelled) ; on exclut
+  // donc aussi son contre-ticket (sinon le CA du jour perdait le montant EN DOUBLE).
+  // Et un contre-ticket n est jamais compte comme un RDV.
   var dayAllForStylists = AP.filter(function(a){
-    return a.date===dk && a.st!=="canc" && a.st!=="pause" && !a.cancelled;
+    return a.date===dk && a.st!=="canc" && a.st!=="pause" && !a.cancelled && !_lxExclCA(a);
   });
   h+='<div class="pg-summary">';
   for(var ti=0;ti<T.length;ti++){
     var sty=T[ti];
     var sa = dayAllForStylists.filter(function(a){ return a.stId===sty.id; });
     var tca = 0; sa.forEach(function(a){ tca += (Number(a.pr)||0); });
+    var nbRdv = sa.filter(function(a){ return !_lxIsContraTicket(a); }).length;
     var ht = Math.round(tca*100/(100+txTVA)*100)/100;
-    h+='<div class="ps-card"><div class="ps-name" style="color:'+sty.c+'">'+sty.n+'</div><div class="ps-info">'+sa.length+' RDV</div><div class="ps-ca">'+tca.toFixed(2)+' \u20ac <span style="font-size:11px;color:rgba(255,255,255,.45);font-weight:500">TTC</span></div><div style="font-size:11px;color:rgba(255,255,255,.45);margin-top:2px">'+ht.toFixed(2)+' \u20ac HT</div></div>';
+    h+='<div class="ps-card"><div class="ps-name" style="color:'+sty.c+'">'+sty.n+'</div><div class="ps-info">'+nbRdv+' RDV</div><div class="ps-ca">'+tca.toFixed(2)+' \u20ac <span style="font-size:11px;color:rgba(255,255,255,.45);font-weight:500">TTC</span></div><div style="font-size:11px;color:rgba(255,255,255,.45);margin-top:2px">'+ht.toFixed(2)+' \u20ac HT</div></div>';
   }
   h+='</div>';
   return h;
@@ -10800,6 +10850,8 @@ function updateRdvDay(){}
 function lxAddedPresta(a){
   try{
     if(!a || a.st!=="done" || !a.items || !a.items.length) return "";
+    // FIX 2026-07-11 : un contre-ticket d annulation n est pas une "prestation ajoutee".
+    if(typeof _lxIsContraTicket==="function" && _lxIsContraTicket(a)) return "";
     var sv0=(typeof gS==="function")?gS(a.sId):null;
     var phs=a.aPhases||(sv0?sv0.phases:null)||[];
     var pDur=0; phs.forEach(function(p){ if(p&&p.t==="w") pDur+=(Number(p.d)||0); });
@@ -10813,6 +10865,7 @@ function lxAddedPresta(a){
       var q=(Number(it.qty)||1);
       var svc=it.sId?gS(it.sId):null;
       iDur += svc?(svcTotalDur(svc)*q):(30*q);
+      if(it.name && String(it.name).indexOf("ANNULATION")===0) return; // ligne de contre-passation
       var inP=(it.sId&&planned[String(it.sId)])||(it.name&&pNames[String(it.name).trim().toLowerCase()]);
       if(!inP) extras.push(it.name||(svc?svc.n:"Prestation"));
     });
@@ -19806,7 +19859,7 @@ function rAccounting(){
       });
     }
   }
-  var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled;});
+  var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled&&!_lxExclCA(a);});
   var tPr=0,tPd=0,tCB=0,tE=0;
   // FIX 2026-05-14 : utilise _splitPrestProd centralisé (source de vérité = a.pr)
   dn.forEach(function(a){
@@ -22476,7 +22529,7 @@ function rStats(){
   h+='</div></div>';
   
   // Filter data
-  var dn=AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=df&&a.date<=dt;});
+  var dn=AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=df&&a.date<=dt&&!_lxExclCA(a);});
   var ps=PS.filter(function(p){return p.date>=df&&p.date<=dt;});
   
   // FIX 2026-05-14 : on sépare 2 compteurs distincts
@@ -23194,7 +23247,7 @@ function rStats(){
     var md=new Date(nowM2.getFullYear(),nowM2.getMonth()-mi,1);
     var mk=md.getFullYear()+"-"+String(md.getMonth()+1).padStart(2,"0");
     var mCA=0,mNb=0,mNewCl=0;
-    AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date.indexOf(mk)===0;}).forEach(function(a){mCA+=a.pr*taxR;mNb++;});
+    AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date.indexOf(mk)===0&&!_lxExclCA(a);}).forEach(function(a){mCA+=a.pr*taxR;mNb++;});
     CL.forEach(function(c){if(c.cr&&c.cr.indexOf(mk)===0)mNewCl++;});
     moData.push({k:mk,label:MO[md.getMonth()].slice(0,3)+" "+md.getFullYear(),ca:mCA,nb:mNb,newCl:mNewCl});
   }
@@ -23353,7 +23406,7 @@ function rAffl(){
     aflFrom=dS(dy);aflTo=TD;
   }
   var taxR2=1;
-  var afflDn=AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=aflFrom&&a.date<=aflTo;});
+  var afflDn=AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=aflFrom&&a.date<=aflTo&&!_lxExclCA(a);});
   var dCnt=[0,0,0,0,0,0,0],dCA=[0,0,0,0,0,0,0];
   afflDn.forEach(function(a){var dw=new Date(a.date).getDay();dCnt[dw]++;dCA[dw]+=a.pr*taxR2;});
   
@@ -28314,7 +28367,7 @@ function rTickets(){
   }
   
   // Total bar
-  var totalMontant=0;done.forEach(function(a){if(!a.cancelled&&a.st==="done")totalMontant+=a.pr;});
+  var totalMontant=0;done.forEach(function(a){if(!a.cancelled&&a.st==="done"&&!_lxExclCA(a))totalMontant+=a.pr;});
   h+='<div style="display:flex;justify-content:space-between;padding:14px;background:rgba(200,168,78,.1);border:1px solid rgba(200,168,78,.2);border-radius:10px;margin-top:12px;font-weight:800">';
   h+='<span>TOTAL P\u00c9RIODE</span><span style="color:var(--gold);font-size:18px">'+totalMontant.toFixed(2)+' \u20ac</span></div>';
   
