@@ -1955,14 +1955,27 @@ function _mapPayment(tk) {
     if (Math.abs(amt) < 0.005) return;          // ignore 0 (garde les négatifs = annulations)
     detail[b] = Math.round(((detail[b]||0) + amt)*100)/100;
   }
-  // 1) Acompte déjà encaissé (en ligne ou en caisse) -> sous son propre mode
+  // 1) Acompte déjà encaissé -> sous son propre mode.
+  //    ACOMPTE EN LIGNE (Stripe) : INCHANGÉ. Aucun ticket NF525 n'a été scellé à la
+  //    réservation -> l'acompte est un MODE DE RÈGLEMENT du ticket de prestation
+  //    (compte 58010000), CA + TVA reconnus au jour de la prestation (validé comptable).
+  //    ACOMPTE EN SALON (FIX 2026-07-11) : il a DÉJÀ son propre ticket scellé (+montant).
+  //    Le ticket final ne book que le SOLDE via une ligne d'items négative
+  //    « Acompte déjà versé (ticket #X) » (isAcompteDeduct) et porte acompte=0.
+  //    Garde-fou : si une telle ligne est présente, on ne ré-ajoute JAMAIS l'acompte au
+  //    détail de paiement (sinon Σ modes > recette du ticket -> clôture Z déséquilibrée).
   var acompte = Number(tk.acompte || 0);
-  if (Math.abs(acompte) >= 0.005) add(_mapPaymentBucket(tk.acompteMode), acompte);
+  var _acNetted = false;
+  try {
+    var _its0 = tk.items || [];
+    for (var _z = 0; _z < _its0.length; _z++) { if (_its0[_z] && _its0[_z].isAcompteDeduct) { _acNetted = true; break; } }
+  } catch (_e0) {}
+  if (!_acNetted && Math.abs(acompte) >= 0.005) add(_mapPaymentBucket(tk.acompteMode), acompte);
   // 2) Solde : liste détaillée des paiements si dispo, sinon (total - acompte) sur le mode de `met`
   if (Array.isArray(tk.payments) && tk.payments.length) {
     tk.payments.forEach(function(p){ add(_mapPaymentBucket(p.method || p.mode), p.amount); });
   } else {
-    add(_mapPaymentBucket(tk.met || "cb"), total - acompte);
+    add(_mapPaymentBucket(tk.met || "cb"), _acNetted ? total : (total - acompte));
   }
   var keys = Object.keys(detail);
   if (keys.length === 0) { detail.aut = total; keys = ["aut"]; }
