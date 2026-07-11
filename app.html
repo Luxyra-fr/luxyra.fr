@@ -24759,7 +24759,7 @@ function annulerAcompte(apptId){
       auditLog("ANNUL_ACOMPTE","Annulation acompte "+oldAmount.toFixed(2)+"E pour RDV "+apptId+" - Ticket annulation #"+tkNum+" (ref #"+(origTkNum||"?")+")");
       
       // Clear acompte on the RDV
-      a.acompte=0;a.acompteMode="";a.acompteDate="";
+      a.acompte=0;a.acompteMode="";a.acompteDate="";a.acompteTkNum=null;
       if(a.items)a.items=a.items.filter(function(it){return !it.isAcompteData;});
       if(typeof saveAppointment==="function")saveAppointment(a);
       
@@ -24861,6 +24861,14 @@ function doSaveAcompte(apptId){
   AP.push(acompteTicket);
   if(typeof saveAppointment==="function")saveAppointment(acompteTicket);
   if(typeof saveTicketToDb==="function")saveTicketToDb(acompteTicket); // NF525
+  // FIX 2026-07-11 : memorise le NUMERO du ticket d acompte sur le RDV (et dans l item
+  // isAcompteData, seul support persiste en base) -> a l encaissement, la ligne de deduction
+  // du ticket final peut citer « Acompte deja verse (ticket #X) » meme apres un rechargement.
+  // Le RDV n est PAS scelle a ce stade (status conf, hash vide) -> re-save autorise par le
+  // garde appointments_nf525_protect.
+  a.acompteTkNum=tkNum;
+  for(var _ai=0;_ai<a.items.length;_ai++){ if(a.items[_ai].isAcompteData){ a.items[_ai].acompteTkNum=tkNum; } }
+  if(typeof saveAppointment==="function")saveAppointment(a);
   auditLog("ACOMPTE","Acompte "+amount.toFixed(2)+"E ("+window._acompteMode+") pour RDV "+apptId+" - Ticket #"+tkNum);
   var sv2=gS(a.sId);var cl2=gC(a.cId);var sty2=gT(a.stId);
   var htm='<div class="mbox" style="text-align:center">';
@@ -24880,7 +24888,7 @@ function doRemoveAcompte(apptId){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
   if(!a)return;
   showConfirmDelete("Supprimer l\u0027acompte de "+a.acompte.toFixed(2)+" \u20ac ?","",function(){
-    a.acompte=0;a.acompteMode="";a.acompteDate="";
+    a.acompte=0;a.acompteMode="";a.acompteDate="";a.acompteTkNum=null;
     if(a.items)a.items=a.items.filter(function(it){return !it.isAcompteData;});
     if(typeof saveAppointment==="function")saveAppointment(a);
     cM();clickAppt(apptId);
@@ -25093,7 +25101,7 @@ function mD(id, mode){
       }
     }
   }
-  _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",_linkedApptId:linkedApptId};
+  _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",acompteTkNum:a.acompteTkNum||null,_linkedApptId:linkedApptId};
   // Propage les refs devis si le RDV a été planifié depuis un devis : permet à
   // cleanupPendingFromTk() de basculer le statut "planifie" → "converti" en fin d'encaissement
   if(a.fromDevisId) _tk._fromDevisId = a.fromDevisId;
@@ -27663,6 +27671,66 @@ function doFidCaDiscount(cId, remiseAmt, method){
   doFinalPay(method);
 }
 
+// =====================================================================
+// FIX 2026-07-11 (NF525) — ACOMPTE EN SALON : le ticket final book LE SOLDE.
+// -------------------------------------------------------------------
+// Un acompte encaisse EN SALON (doSaveAcompte) est SCELLE dans son propre ticket
+// NF525 (+montant) : il compte DEJA dans le CA, la cloture Z et le FEC (TVA a
+// l encaissement). Si le ticket final bookait la prestation COMPLETE, l acompte
+// serait reconnu DEUX FOIS (montant + TVA) et la cloture Z serait desequilibree
+// (somme des modes = solde, mais recette = total).
+// -> Le ticket final porte une ligne d items NEGATIVE « Acompte deja verse
+//    (ticket #X) » et son acompte est remis a 0. Invariant ttc = brut - remise tenu.
+//
+// L acompte EN LIGNE (Stripe) est un cas DIFFERENT et reste STRICTEMENT INCHANGE :
+// aucun ticket n a ete scelle a la reservation -> c est un MODE DE REGLEMENT
+// (compte 58010000 « acomptes CB en ligne »), CA + TVA reconnus au jour de la
+// prestation. Modele valide par le comptable (cf. LS Coiffure).
+// =====================================================================
+function _lxIsAcompteOnline(mode){
+  var m=String(mode||"").toLowerCase();
+  return m.indexOf("ligne")>=0 || m.indexOf("stripe")>=0 || m.indexOf("online")>=0;
+}
+// Montant d un acompte SALON (deja scelle dans un ticket). 0 si aucun acompte,
+// ou si l acompte a ete paye EN LIGNE (mode de reglement -> aucune deduction).
+function _lxAcompteSalonAmount(tk){
+  try{
+    var a=Number(tk&&tk.acompte)||0;
+    if(!(a>0.004)) return 0;
+    if(_lxIsAcompteOnline(tk&&tk.acompteMode)) return 0;
+    return Math.round(a*100)/100;
+  }catch(_e){ return 0; }
+}
+// Numero du ticket d acompte deja scelle, pour le libelle de la ligne de deduction.
+// 1) tk.acompteTkNum (persiste dans items[].isAcompteData depuis 2026-07-11)
+// 2) scan memoire du ticket d acompte (flags isAcompte/apptId, non persistes)
+// 3) scan des tickets scelles portant un item isAcompte du meme client/montant
+// Echec -> null (libelle « #? »). Purement cosmetique : aucun impact sur les montants.
+function _lxAcompteTicketNum(tk){
+  try{
+    if(tk && tk.acompteTkNum) return tk.acompteTkNum;
+    var apptId=tk?tk.apptId:null;
+    var amt=Math.round((Number(tk&&tk.acompte)||0)*100)/100;
+    var i,t;
+    if(apptId){
+      for(i=0;i<AP.length;i++){ t=AP[i];
+        if(t && t.isAcompte && t.apptId===apptId && t.tkNum) return t.tkNum;
+      }
+    }
+    var best=null;
+    for(i=0;i<AP.length;i++){ t=AP[i];
+      if(!t || t.st!=="done" || !t.tkNum || !t.items || !t.items.length) continue;
+      if(tk && tk.cId && t.cId!==tk.cId) continue;
+      for(var j=0;j<t.items.length;j++){
+        var it=t.items[j];
+        if(it && it.isAcompte && Math.abs((Number(it.price)||0)-amt)<0.005){
+          if(best===null || t.tkNum>best) best=t.tkNum;
+        }
+      }
+    }
+    return best;
+  }catch(_e){ return null; }
+}
 function doFinalPayExecute(method){
   // GARDE-FOU CRITIQUE NF525 : anti-double-clic. Sans \u00e7a, un double-tap rapide
   // sur le bouton de validation du paiement appelle doFinalPayExecute() 2 fois.
@@ -27704,7 +27772,39 @@ function doFinalPayExecute(method){
     _tk.paid=total;
   }
   var metStr=_tk.payments?_tk.payments.map(function(p){return p.method}).join(" + "):(method||"CB");
-  
+
+  // === FIX 2026-07-11 (NF525) : ACOMPTE EN SALON -> le ticket final book LE SOLDE ===
+  // Le montant a payer maintenant (resteDu2, ci-dessus) est DEJA le solde : ne pas y toucher.
+  // Ici on nette le TICKET lui-meme (celui qui est scelle, hashe, compte dans le CA / la Z /
+  // le FEC) : on ajoute une ligne d items negative « Acompte deja verse (ticket #X) » et on
+  // remet l acompte a 0 -> l acompte n est plus reconnu qu UNE SEULE fois (sur son propre
+  // ticket scelle), et la Z reste equilibree (somme des modes == recette du ticket).
+  // ACOMPTE EN LIGNE (Stripe) : _lxAcompteSalonAmount renvoie 0 -> AUCUN changement.
+  // AUCUN acompte : _acApplied=0 -> aucune ligne ajoutee, tout est byte-identique.
+  var _acSalon=_lxAcompteSalonAmount(_tk);
+  var _acApplied=0, _acTkNum=null;
+  if(_acSalon>0){
+    // Garde-fou : ne jamais depasser le total du ticket (un panier reduit apres la prise
+    // d acompte produirait sinon un ticket NEGATIF). Le trop-percu eventuel reste sur le
+    // ticket d acompte -> a rembourser / annuler manuellement (bouton « Annuler l acompte »).
+    _acApplied=Math.min(_acSalon, Math.round(total*100)/100);
+    if(_acApplied>0.004){
+      _acTkNum=_lxAcompteTicketNum(_tk);
+      _tk.items.push({name:"Acompte d\u00e9j\u00e0 vers\u00e9 (ticket #"+(_acTkNum||"?")+")",price:-_acApplied,qty:1,remise:0,isAcompteDeduct:true,acompteTkNum:(_acTkNum||null)});
+      total=Math.round((total-_acApplied)*100)/100;
+      // L acompte est desormais porte par la ligne d items : on le neutralise pour que
+      // _mapPayment (detail_paiement scelle) et buildTicketHTML (recu + duplicata) ne le
+      // deduisent pas une seconde fois.
+      _tk.acompte=0; _tk.acompteMode="";
+      _tk._acompteSalonApplied=_acApplied; _tk._acompteSalonTkNum=(_acTkNum||null);
+    } else { _acApplied=0; }
+    // Neutralisation INCONDITIONNELLE de l acompte SALON sur le ticket final (meme si
+    // _acApplied vaut 0, ex. panier ramene a 0 apres la prise d acompte) : sans ca,
+    // _mapPayment re-ajouterait l acompte au detail_paiement scelle -> cloture Z
+    // desequilibree (somme des modes > recette du ticket).
+    _tk.acompte=0; _tk.acompteMode="";
+  }
+
   // Calcul brut et remises
   var brutTotal=0;var itemRemises=0;
   _tk.items.forEach(function(it){brutTotal+=it.price*it.qty;itemRemises+=(it.remise||0);});
@@ -27720,6 +27820,9 @@ function doFinalPayExecute(method){
     if(it.isCagnotteUse)o.isCagnotteUse=true;
     if(it.isCaCredit)o.isCaCredit=true;
     if(it.isCaDiscount)o.isCaDiscount=true;
+    // FIX 2026-07-11 : ligne de deduction de l acompte SALON (deja scelle) — flag persiste
+    // pour la tracabilite (aucun impact calcul : c est un item normal a prix negatif).
+    if(it.isAcompteDeduct){o.isAcompteDeduct=true;o.acompteTkNum=it.acompteTkNum||null;}
     if(it.sId)o.sId=it.sId;
     if(it.fidApplied)o.fidApplied=true;
     return o;
@@ -27817,6 +27920,11 @@ function doFinalPayExecute(method){
         AP[i].brutTotal=brutTotal;
         AP[i].remise=totalRemise;
         AP[i].items=savedItems;
+        // FIX 2026-07-11 : acompte SALON deduit en ligne d items -> l acompte du RDV est
+        // consomme. On le neutralise sur la ligne du ticket pour que _mapPayment (detail
+        // paiement scelle) et buildTicketHTML (recu/duplicata) ne le rededuisent pas.
+        // Acompte EN LIGNE : _acApplied=0 -> champs conserves (mode de reglement) = inchange.
+        if(_acSalon>0){ AP[i].acompte=0; AP[i].acompteMode=""; AP[i].acompteDate=""; AP[i].acompteTkNum=null; }
         AP[i].tkNum=tkN;
         AP[i].ts=tsNow;
         AP[i].heureEncaiss=heureNow; // ticket porte l'heure d'encaissement; a.time reste l'heure du RDV (planning)
@@ -27874,7 +27982,7 @@ function doFinalPayExecute(method){
   }
   
   // NF525: audit log
-  auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+" - "+metStr);
+  auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+(_acApplied>0?" (solde apres acompte de "+_acApplied.toFixed(2)+"E deja encaisse - ticket #"+(_acTkNum||"?")+")":"")+" - "+metStr);
   
   // NF525: log si l'opérateur qui encaisse n'est pas le coiffeur attribué
   // (traçabilité des encaissements "pour un autre")
@@ -32421,6 +32529,7 @@ function initApp(){
           ap.acompte=ap.items[ii].acompte;
           ap.acompteMode=ap.items[ii].acompteMode;
           ap.acompteDate=ap.items[ii].acompteDate;
+          ap.acompteTkNum=ap.items[ii].acompteTkNum||null; // FIX 2026-07-11 : n du ticket d acompte scelle
           break;
         }
       }
@@ -32726,7 +32835,7 @@ async function reloadFromSupabase(table){
               aPhases:a.a_phases||[],
               cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
             };
-            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}});}
+            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;mapped.acompteTkNum=it.acompteTkNum||null;}});}
             Object.assign(AP[i],mapped);
             delete dbMap[a.id]; // processed
           }
@@ -32755,7 +32864,7 @@ async function reloadFromSupabase(table){
               aPhases:a.a_phases||[],
               cancelled:a.cancelled,fromCaisse:a.from_caisse||false,lieu:a.lieu||null,adresse:a.adresse_domicile||null
             };
-            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;}});}
+            if(mapped.items){mapped.items.forEach(function(it){if(it.isAcompteData){mapped.acompte=it.acompte;mapped.acompteMode=it.acompteMode;mapped.acompteDate=it.acompteDate;mapped.acompteTkNum=it.acompteTkNum||null;}});}
             AP.push(mapped);
           }
         }
