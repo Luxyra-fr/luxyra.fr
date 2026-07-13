@@ -7,6 +7,118 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=Inter:wght@300;400;500;600;700;800&family=Nunito:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+/* ============================================================================
+   FIX 2026-07-13 — RAPPORTEUR D'ERREUR PRECOCE (doit rester LE PREMIER script)
+   ----------------------------------------------------------------------------
+   POURQUOI : le rapporteur d'erreurs du site (lx-monitoring.js) est charge en
+   "defer" => il ne s'execute qu'APRES le parsing du document. Donc TOUTE panne
+   qui survient PENDANT le parsing (erreur de syntaxe dans un script, SDK
+   Supabase bloque/non charge, script vital en 404...) ne pose AUCUN listener
+   d'erreur : l'erreur part dans le vide, RIEN n'est loggue, et le salon voit
+   juste une page morte. C'est exactement la signature "ca ne marche pas sur
+   iPhone et il n'y a aucune erreur dans le monitoring".
+   -> Ce bloc pose window.onerror AVANT tout le reste et remonte dans le meme
+      canal (edge function lx-error-report -> audit_log = JS_ERROR_PUBLIC).
+   -> Il se tait des que lx-monitoring.js a pris le relais (pas de doublon).
+   -> Chien de garde : si le script principal n'a pas fini de s'evaluer au bout
+      de 9 s, on remonte "boot_failed" AVEC l'user-agent => on saura enfin
+      QUEL navigateur/version echoue.
+
+   ⚠️ ES5 STRICT + XMLHttpRequest OBLIGATOIRE : ce bloc doit pouvoir tourner sur
+   un WebKit tres ancien (c'est TOUT son interet). N'y mettre JAMAIS : ?. ?? =>
+   class let const `template` fetch async/await.
+   ============================================================================ */
+(function(){
+  if (window.__LX_EARLY_ERR) return;
+  window.__LX_EARLY_ERR = true;
+  var SB  = "https://kxdgjtvrkwugbifgppai.supabase.co";
+  var KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
+  var sent = 0, lastTs = 0;
+  function send(type, message, stack, extra, force){
+    try{
+      /* lx-monitoring.js a demarre : c'est lui qui reporte (evite les doublons).
+         Le chien de garde, lui, force l'envoi (il decrit une panne que
+         lx-monitoring ne peut PAS voir : le script principal n'a jamais tourne). */
+      if (!force && window.__LX_MONITORING_LOADED) return;
+      var t = +new Date();
+      if (!force && (t - lastTs) < 1000) return;
+      if (sent >= 10) return;
+      lastTs = t; sent++;
+      var p = {
+        type: type,
+        message: String(message == null ? "" : message).slice(0, 800),
+        stack: stack ? String(stack).slice(0, 3000) : null,
+        page: location.pathname,
+        url: String(location.href).slice(0, 500),
+        salon_slug: window.__SALON_SLUG || null,
+        ua: String(navigator.userAgent || "").slice(0, 300),
+        ts: new Date().toISOString()
+      };
+      if (extra) {
+        if (extra.file) p.file = String(extra.file).slice(0, 300);
+        if (extra.line != null) p.line = Number(extra.line);
+        if (extra.col != null) p.col = Number(extra.col);
+      }
+      var x = new XMLHttpRequest();
+      x.open("POST", SB + "/functions/v1/lx-error-report", true);
+      x.setRequestHeader("Content-Type", "application/json");
+      x.setRequestHeader("apikey", KEY);
+      x.setRequestHeader("Authorization", "Bearer " + KEY);
+      x.send(JSON.stringify(p));
+    }catch(_e){ /* le rapporteur ne doit JAMAIS casser la page */ }
+  }
+  window.__lxEarlyReport = send;
+
+  window.addEventListener("error", function(e){
+    try{
+      if (!e) return;
+      var tg = e.target;
+      if (tg && tg !== window && tg.nodeName) {
+        /* Erreur de RESSOURCE. On ne remonte que les scripts VITAUX
+           (un <img> casse n'interesse personne, un SDK bloque = page morte). */
+        var src = String(tg.src || "");
+        if (tg.nodeName === "SCRIPT" && (src.indexOf("supabase-js") >= 0 || src.indexOf("lx-client") >= 0 || src.indexOf("stripe") >= 0)) {
+          send("resource_error", "Script vital NON charge (bloque/404) : " + src, null, { file: src }, true);
+        }
+        return;
+      }
+      send("error", e.message || "Unknown error",
+           (e.error && e.error.stack) ? e.error.stack : null,
+           { file: e.filename, line: e.lineno, col: e.colno });
+    }catch(_e){}
+  }, true);
+
+  window.addEventListener("unhandledrejection", function(e){
+    try{
+      var r = e ? e.reason : null;
+      send("unhandledrejection", (r && r.message) ? r.message : String(r), (r && r.stack) ? r.stack : null);
+    }catch(_e){}
+  });
+
+  /* Chien de garde : window.__LX_SITE_JS_OK est pose a la TOUTE FIN du script
+     principal de site.html. S'il manque encore au bout de 9 s, c'est que ce
+     script n'a jamais fini de s'evaluer (SyntaxError, SDK absent, etc.). */
+  setTimeout(function(){
+    try{
+      if (window.__LX_SITE_JS_OK) return;
+      send("boot_failed",
+           "SITE JS NON DEMARRE (le script principal de site.html n'a pas fini de s'evaluer)"
+           + " — supabase=" + (typeof window.supabase)
+           + " LX=" + (typeof window.LX)
+           + " Stripe=" + (typeof window.Stripe),
+           null, { file: "site.html" }, true);
+      var ld = document.getElementById("loadingScreen");
+      if (ld) {
+        ld.innerHTML = '<div style="text-align:center;padding:26px;max-width:420px;font-family:-apple-system,Segoe UI,sans-serif;color:#f5f0e8">'
+          + '<div style="font-size:34px;margin-bottom:10px">&#128533;</div>'
+          + '<div style="font-size:16px;font-weight:700;margin-bottom:8px">Réservation momentanément indisponible</div>'
+          + '<div style="font-size:13px;opacity:.7;line-height:1.55">Votre navigateur n\'a pas réussi à charger la page.<br>Mettez-le à jour, réessayez, ou appelez directement le salon.</div></div>';
+      }
+    }catch(_e){}
+  }, 9000);
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/lx-client.js"></script>
 <script>
@@ -98,7 +210,7 @@ html{overflow-x:hidden}
 /* === Bannière hero visuelle (photoHero) === */
 .salon-hero-banner{position:relative;min-height:380px;background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;text-align:center;padding:56px 24px 80px;margin-bottom:0;overflow:hidden}
 /* Overlay renforcé + fondu en bas qui se confond avec la couleur de la page */
-.salon-hero-banner::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55) 0%,rgba(0,0,0,.7) 50%,rgba(0,0,0,.92) 85%,var(--bg) 100%);z-index:1}
+.salon-hero-banner::before{content:"";position:absolute;top:0;right:0;bottom:0;left:0;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55) 0%,rgba(0,0,0,.7) 50%,rgba(0,0,0,.92) 85%,var(--bg) 100%);z-index:1}
 /* Petit séparateur ornement doré qui flotte en bas, façon "magazine" — bcp plus élégant qu'une bordure droite */
 .salon-hero-banner::after{content:"";position:absolute;left:50%;bottom:24px;transform:translateX(-50%);width:80px;height:1px;background:linear-gradient(90deg,transparent,rgba(200,168,78,.6),transparent);z-index:2}
 .salon-hero-banner>.salon-hero-content{position:relative;z-index:2;max-width:820px;width:100%}
@@ -282,7 +394,11 @@ html{overflow-x:hidden}
 .footer-info{font-size:12px;color:var(--text3);line-height:1.8}
 
 /* CLIENT ACCOUNT */
-.auth-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;overflow:hidden}
+/* FIX 2026-07-13 (iOS) : `inset` n'existe pas avant Safari 14.1 -> la fenetre de
+   connexion (OBLIGATOIRE pour reserver) n'etait plus positionnee ni centree sur
+   les vieux iPhone/iPad. On remet les 4 proprietes longues AVANT `inset` : rendu
+   strictement identique sur les navigateurs modernes, repare les anciens. */
+.auth-modal{position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,.7);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;overflow:hidden}
 .auth-box{background:var(--bg3);border:2px solid var(--gold);border-radius:20px;padding:28px 20px;max-width:520px;width:calc(100% - 40px);max-height:96vh;overflow-y:auto;overflow-x:hidden;box-sizing:border-box}
 .auth-box h2{font-family:var(--f1);font-size:24px;color:var(--gold);text-align:center;margin-bottom:6px}
 .auth-box .sub{font-size:13px;color:var(--text2);text-align:center;margin-bottom:20px}
@@ -375,7 +491,7 @@ function showAlert(msg, icon, onOk){
   var ic = icons[icon] || icons.info;
   var col = colors[icon] || colors.info;
   var safe = String(msg).replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  var h = '<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--f2,system-ui,sans-serif)" onclick="_lxCloseModal();if(window._lxAlertOk)window._lxAlertOk()">'
+  var h = '<div style="position:fixed;top:0;right:0;bottom:0;left:0;inset:0;z-index:99999;background:rgba(0,0,0,.7);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--f2,system-ui,sans-serif)" onclick="_lxCloseModal();if(window._lxAlertOk)window._lxAlertOk()">'
     + '<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid '+col+';border-radius:16px;padding:28px;max-width:420px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     + '<div style="font-size:36px;margin-bottom:12px">'+ic+'</div>'
     + '<div style="font-size:15px;font-weight:600;color:#fff;margin-bottom:8px;line-height:1.5;white-space:pre-line">'+safe+'</div>'
@@ -386,7 +502,7 @@ function showAlert(msg, icon, onOk){
 }
 function showConfirm(msg, onYes, onNo){
   var safe = String(msg).replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");
-  var h = '<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--f2,system-ui,sans-serif)" onclick="_lxCloseModal();if(window._lxConfirmNo)window._lxConfirmNo()">'
+  var h = '<div style="position:fixed;top:0;right:0;bottom:0;left:0;inset:0;z-index:99999;background:rgba(0,0,0,.7);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:var(--f2,system-ui,sans-serif)" onclick="_lxCloseModal();if(window._lxConfirmNo)window._lxConfirmNo()">'
     + '<div onclick="event.stopPropagation()" style="background:#12141e;border:1.5px solid rgba(200,168,78,.35);border-radius:16px;padding:28px;max-width:380px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
     + '<div style="font-size:36px;margin-bottom:12px">⚠️</div>'
     + '<div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:8px;line-height:1.4">'+safe+'</div>'
@@ -969,7 +1085,7 @@ async function loadSalon(){
     // Apply fond style overlay using a full-page pseudo-element
     var fondStyle=SITE_CFG.fondStyle||"uni";
     var overlay=document.getElementById("fondOverlay");
-    if(!overlay){overlay=document.createElement("div");overlay.id="fondOverlay";overlay.style.cssText="position:fixed;inset:0;pointer-events:none;z-index:0";document.body.prepend(overlay);}
+    if(!overlay){overlay=document.createElement("div");overlay.id="fondOverlay";overlay.style.cssText="position:fixed;top:0;right:0;bottom:0;left:0;inset:0;pointer-events:none;z-index:0";document.body.prepend(overlay);}
     if(fondStyle==="brume"){
       overlay.style.background="none";
       overlay.innerHTML='<div style="position:absolute;inset:-50%;width:200%;height:200%;background:radial-gradient(ellipse at 30% 20%,rgba(200,168,78,.1),transparent 40%),radial-gradient(ellipse at 70% 60%,rgba(200,168,78,.07),transparent 45%),radial-gradient(ellipse at 50% 80%,rgba(200,168,78,.05),transparent 35%);animation:fogDrift 20s ease-in-out infinite alternate;filter:blur(60px)"></div>';
@@ -2443,7 +2559,7 @@ function findNextAvailableSlot(){
     var interval=15;
     for(var m=startM;m+dur<=endM;m+=interval){
       var timeStr=fromMin(m);
-      var slotDt=new Date(dateStr+"T"+timeStr);
+      var slotDt=_lxLocalDT(dateStr,timeStr); // FIX iOS : plus de parsing de chaine
       if((slotDt-now)/60000 < minDelay) continue;
       if(isSlotTaken(dateStr,timeStr,dur,booking.collabId)) continue;
       var jours=["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
@@ -2800,7 +2916,7 @@ function isSlotTaken(date,time,duration,collabId){
 function renderTimeSlots(dateStr){
   var el=document.getElementById("timeSlotsArea");
   if(!el) return; // garde-fou : zone créneaux non montée (course async / navigation) — évite le crash null
-  var dt=new Date(dateStr);
+  var dt=_lxLocalDate(dateStr); // FIX iOS : plus de parsing de chaine
   var dow=dt.getDay();
   var hrs=HORAIRES[dow];
   if(booking.collab&&booking.collab.hrs)hrs=booking.collab.hrs[dow];
@@ -2845,7 +2961,7 @@ function renderTimeSlots(dateStr){
     if(!hours[hr])hours[hr]={available:0,total:0,slots:[]};
     var timeStr=fromMin(m);
     var isTaken=isSlotTaken(dateStr,timeStr,dur,booking.collabId);
-    var slotDt=new Date(dateStr+"T"+timeStr);
+    var slotDt=_lxLocalDT(dateStr,timeStr); // FIX iOS : plus de parsing de chaine
     var tooSoon=(slotDt-now)/60000<minDelay;
     var avail=!isTaken&&!tooSoon;
     hours[hr].total++;
@@ -3530,8 +3646,14 @@ async function processStripePayment(){
     // Branche selon mode : acompte (token débit immédiat) ou empreinte (PaymentMethod + PaymentIntent capture_method=manual)
     var tokenId = isEmp ? null : result.token.id;
     var paymentMethodId = isEmp ? result.paymentMethod.id : null;
-    var last4 = isEmp ? (result.paymentMethod.card?.last4 || null) : result.token.card.last4;
-    var brand = isEmp ? (result.paymentMethod.card?.brand || null) : result.token.card.brand;
+    // FIX 2026-07-13 (iOS) : l'optional chaining (?.) est de l'ES2020. Sur Safari < 13.1
+    // (iPhone/iPad restes en iOS 12 / 13.0-13.3) c'est une ERREUR DE SYNTAXE : le
+    // navigateur refuse de compiler TOUT le script de la page -> plus une seule
+    // fonction n'existe -> reservation impossible, et AUCUNE erreur n'est loggee.
+    // Reecrit en ES5 strict, semantique IDENTIQUE (card absente -> null).
+    var _pmCard = (isEmp && result.paymentMethod) ? result.paymentMethod.card : null;
+    var last4 = isEmp ? ((_pmCard && _pmCard.last4) || null) : result.token.card.last4;
+    var brand = isEmp ? ((_pmCard && _pmCard.brand) || null) : result.token.card.brand;
 
     var t=bookingTotals();
     var dur=t.dur;
@@ -3686,7 +3808,7 @@ async function askCancelRdv(rdvId){
   if(policy==="jamais"||policy==="non"||policy==="no") policyHours=-1;
   else if(policy==="0"||policy==="0h"||policy==="aucun") policyHours=0;
   else { var _m=policy.match(/(\d+)/); policyHours=_m?parseInt(_m[1],10):48; }
-  var rdvDate=new Date(rdv.date_rdv+"T"+(rdv.heure_rdv||"09:00"));
+  var rdvDate=_lxLocalDT(rdv.date_rdv,(rdv.heure_rdv||"09:00")); // FIX iOS : plus de parsing de chaine
   var now=new Date();
   var hoursUntil=(rdvDate-now)/(1000*60*60);
   var canCancel=(policyHours===0)?true:(policyHours===-1)?false:(hoursUntil>=policyHours);
@@ -3888,7 +4010,7 @@ function openLightbox(idx){
   renderLightbox();
 }
 function renderLightbox(){
-  var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:300;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="closeLightbox()">';
+  var h='<div style="position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,.95);z-index:300;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="closeLightbox()">';
   h+='<img src="'+_lbPhotos[_lbIdx]+'" style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px" onclick="event.stopPropagation()">';
   // Nav arrows
   if(_lbPhotos.length>1){
@@ -3905,6 +4027,24 @@ function renderLightbox(){
 function closeLightbox(){document.getElementById("authModal").innerHTML="";}
 
 // Helpers
+// FIX 2026-07-13 (iOS/Safari) — Construction de dates SANS parsing de chaine.
+// Safari/WebKit est BEAUCOUP plus strict que Chrome sur new Date("..."): la
+// moindre forme non normalisee (separateur espace, heure non zero-paddee, etc.)
+// renvoie Invalid Date -> creneaux vides / comparaisons fausses, UNIQUEMENT sur
+// Apple. Et selon les versions de WebKit, "YYYY-MM-DDTHH:MM" (sans fuseau) a pu
+// etre interprete en UTC au lieu du local -> decalage de 1 a 2 h sur le filtre
+// "delai minimum" => des creneaux valides disparaissent chez les clients iPhone.
+// On ne parse plus RIEN : on construit la date champ par champ (100% local,
+// identique sur tous les moteurs).
+function _lxLocalDate(ymd){                 // "2026-07-15" -> Date locale a minuit
+  var p=String(ymd||"").split("-");
+  return new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+}
+function _lxLocalDT(ymd,hm){                // "2026-07-15" + "09:00"/"09:00:00" -> Date locale
+  var p=String(ymd||"").split("-"), t=String(hm||"0:0").split(":");
+  return new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10),
+                  parseInt(t[0],10)||0, parseInt(t[1],10)||0, parseInt(t[2],10)||0);
+}
 function toMin(t){var p=t.split(":");return parseInt(p[0])*60+parseInt(p[1]);}
 function fromMin(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
 // === Carte d'abonnement (site) ===
@@ -4054,6 +4194,16 @@ async function submitSouscrireCarte(idx){
     // La carte pending_payment sera nettoy\u00e9e par cron \u2014 pas de delete c\u00f4t\u00e9 client (RLS)
   }
 })();
+
+// ============================================================================
+// FIX 2026-07-13 (iOS) — DERNIERE LIGNE DU SCRIPT PRINCIPAL, NE RIEN METTRE APRES.
+// Si ce drapeau n'est pas pose, c'est que le script n'a pas fini de s'evaluer
+// (erreur de syntaxe non supportee par le navigateur, SDK Supabase absent...).
+// Le chien de garde pose en tete de <head> le detecte au bout de 9 s et remonte
+// l'incident AVEC l'user-agent (canal JS_ERROR_PUBLIC). C'est ce qui manquait :
+// une page morte sur un vieil iPhone ne produisait AUCUNE trace.
+// ============================================================================
+window.__LX_SITE_JS_OK = 1;
 </script>
 </body>
 </html>
