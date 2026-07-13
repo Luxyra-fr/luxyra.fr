@@ -1197,10 +1197,14 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     window.RDV_ONLINE.forEach(function(r) {
       if (r.status === "pending" || r.status === "confirmed") {
         // Check if already in AP (avoid duplicates)
-        var exists = false, _exIdx = -1;
+        // FIX 2026-07-13 : garde-fou d'idempotence renforce (onlineId OU id "online_<uuid>")
+        // -> 1 reservation en ligne = 1 SEULE entree dans AP, quel que soit l'etat de depart
+        // (AP hydrate depuis le snapshot IndexedDB, entree sans onlineId, etc.).
+        var exists = false, _exIdx = -1, _apId = "online_" + r.id;
         for (var i = 0; i < AP.length; i++) {
-          if (AP[i].onlineId === r.id) { exists = true; _exIdx = i; break; }
+          if (AP[i] && (AP[i].onlineId === r.id || String(AP[i].id || "") === _apId)) { exists = true; _exIdx = i; break; }
         }
+        if (exists && _exIdx >= 0 && !AP[_exIdx].onlineId) AP[_exIdx].onlineId = r.id;
         // FIX 2026-05-27 : entree deja presente (restauree depuis snapshot/cache) mais non reliee
         // a une fiche -> on tente de la relier maintenant (CL est charge a ce stade).
         if (exists && _exIdx >= 0 && !AP[_exIdx].cId) {

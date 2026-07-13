@@ -8674,9 +8674,33 @@ window._lxResolveOnlineStId=_lxResolveOnlineStId;
 // Filet idempotent : aucun RDV en ligne ne doit rester sans colonne (= invisible au planning).
 // Ne touche QUE les entrees d'AFFICHAGE "online_<uuid>" (jamais une ligne encaissee/scellee).
 // No-op complet quand tous les RDV en ligne ont deja une colonne valide.
+// FIX 2026-07-13 : GARANTIE D'UNICITE — 1 reservation en ligne => 1 SEULE entree dans AP.
+// Deux chemins mappent rdv_online -> AP (loadSalonData au demarrage, _lxOnlineToAP au poll).
+// Les deux ont un garde-fou "existe deja ?", mais rien ne rattrapait une entree dupliquee
+// arrivee autrement (hydratation depuis le snapshot IndexedDB puis re-push, garde-fou
+// contourne par une entree sans onlineId...). Ce balayage, idempotent, ne touche QUE les
+// entrees d'AFFICHAGE "online_<uuid>" (jamais une ligne encaissee/scellee, dont l'id est un
+// uuid nu) et garde TOUJOURS la premiere. No-op complet s'il n'y a aucun RDV en ligne.
+function _lxDedupOnlineAP(){
+  try{
+    if(typeof AP==="undefined"||!AP||!AP.length) return 0;
+    var _seenId={}, _rm=0;
+    for(var _d0=0;_d0<AP.length;_d0++){
+      var _e0=AP[_d0]; if(!_e0) continue;
+      var _id0=String(_e0.id||"");
+      if(_id0.indexOf("online_")!==0) continue; // securite : entrees d'affichage uniquement
+      if(_seenId[_id0]){ AP.splice(_d0,1); _d0--; _rm++; continue; }
+      _seenId[_id0]=true;
+    }
+    if(_rm) window._apDirty=true;
+    return _rm;
+  }catch(_e){ return 0; }
+}
+window._lxDedupOnlineAP=_lxDedupOnlineAP;
 function _lxFixOnlineStId(){
   try{
     if(typeof AP==="undefined"||!AP||!AP.length) return false;
+    _lxDedupOnlineAP(); // 1 reservation = 1 entree (avant toute reparation de colonne)
     if(typeof T==="undefined"||!T||!T.length) return false; // equipe pas encore chargee -> on retentera
     var _known={}; for(var _t0=0;_t0<T.length;_t0++){ if(T[_t0]&&T[_t0].id!=null) _known[String(T[_t0].id)]=true; }
     var _fixed=false;
@@ -8702,7 +8726,16 @@ function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
     if(!(rdv.status==="pending"||rdv.status==="confirmed"))return;
-    for(var i=0;i<AP.length;i++){if(AP[i].onlineId===rdv.id)return;}
+    // Garde-fou d'idempotence : deja dans AP (par onlineId OU par id "online_<uuid>") -> on
+    // ne pousse JAMAIS une 2e copie (on met a jour sur place ce qui doit l'etre).
+    var _apId="online_"+rdv.id;
+    for(var i=0;i<AP.length;i++){
+      if(AP[i]&&(AP[i].onlineId===rdv.id||String(AP[i].id||"")===_apId)){
+        if(!AP[i].onlineId) AP[i].onlineId=rdv.id;
+        if(!AP[i].cId){ var _rc=_lxResolveClientId(rdv); if(_rc) AP[i].cId=_rc; }
+        return;
+      }
+    }
     var dur=rdv.duree_minutes||60;
     var sv=(typeof gS==="function")?gS(rdv.service_id):null;
     var phases=(sv&&sv.phases&&sv.phases.length>0)?sv.phases:[{t:"w",d:dur,l:rdv.service_nom}];
@@ -15211,16 +15244,30 @@ function rDetail(){
     return a.cId===c.id && a.st==='conf' && !a.cancelled && a.date >= TD;
   });
   // FIX liaison : inclure aussi les RDV pris EN LIGNE (rdv_online) rattaches a ce client (match tel/email)
+  // FIX 2026-07-13 (DOUBLON FICHE CLIENT) : ce bloc est un FILET pour le cas ou l'entree
+  // d'affichage "online_<uuid>" d'AP n'est PAS reliee a la fiche (cId non resolu).
+  // Des lors que la fiche EST reliee (cId resolu par _lxResolveClientId), le RDV en ligne
+  // est DEJA dans _nextRdvs via le AP.filter ci-dessus -> il etait pousse une SECONDE fois
+  // ici (match tel/email) => "Prochains RDV (2)" avec la meme date/heure deux fois.
+  // (Bug PRE-EXISTANT, sans rapport avec l'auto-assignation "sans preference" de aa03b44 :
+  //  rDetail n'a jamais ete touche par ce commit.) On dedoublonne sur l'id du rdv_online.
   try {
     if(window.RDV_ONLINE && RDV_ONLINE.length){
+      var _seenOnl={};
+      for(var _so=0;_so<_nextRdvs.length;_so++){
+        var _sa=_nextRdvs[_so];
+        var _sid=(_sa&&_sa.onlineId)?String(_sa.onlineId):((_sa&&String(_sa.id||'').indexOf('online_')===0)?String(_sa.id).slice(7):'');
+        if(_sid) _seenOnl[_sid]=true;
+      }
       var _normPh=function(x){return String(x||'').replace(/\D/g,'');};
       var _cph=_normPh(c.ph), _cem=String(c.em||'').toLowerCase().trim();
       RDV_ONLINE.forEach(function(ro){
         if(!ro||!ro.date||ro.date<TD) return;
+        if(_seenOnl[String(ro.id)]) return; // deja liste (entree AP "online_<uuid>" du meme RDV)
         var st=ro.status||'';
         if(st==='cancelled'||st==='cancelled_by_client'||st==='refused'||st==='done'||st==='pending_payment') return;
         var ok=(_cph&&_normPh(ro.tel)===_cph)||(_cem&&String(ro.email||'').toLowerCase().trim()===_cem);
-        if(ok) _nextRdvs.push({date:ro.date, time:ro.heure, sId:ro.svcId, stId:ro.collabId, _online:true});
+        if(ok){ _seenOnl[String(ro.id)]=true; _nextRdvs.push({date:ro.date, time:ro.heure, sId:ro.svcId, stId:ro.collabId, onlineId:ro.id, _online:true}); }
       });
     }
   } catch(_e){}
