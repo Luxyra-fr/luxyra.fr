@@ -1229,18 +1229,31 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
               };
             });
           }
+          // FIX 2026-07-13 : "SANS PREFERENCE" (collaborateur_id NULL). Avant, on poussait
+          // `stId: r.collabId` VERBATIM => stId=null => AUCUNE colonne dans la grille du
+          // planning => le RDV etait INVISIBLE apres tout rechargement de l'app (la logique
+          // d'auto-assignation n'existait que dans _lxOnlineToAP, cote poll 30s, pour un RDV
+          // NOUVEAU). On utilise maintenant le MEME resolveur que le poll (app.html).
+          // Affichage uniquement : rien n'est ecrit dans rdv_online ici.
+          var _oStId = r.collabId, _oNeed = false;
+          if (!_oStId && typeof window._lxResolveOnlineStId === "function") {
+            try {
+              var _oRes = window._lxResolveOnlineStId(r.date, r.heure, dur, null);
+              if (_oRes && _oRes.ok && _oRes.stId != null) { _oStId = _oRes.stId; _oNeed = !!_oRes.needAssign; }
+            } catch (_eo) {}
+          }
           AP.push({
             id: "online_" + r.id,
             onlineId: r.id,
             cId: (typeof _lxResolveClientId === "function" ? _lxResolveClientId(r) : null),
             sId: r.svcId,
-            stId: r.collabId,
+            stId: _oStId,
             date: r.date,
             time: r.heure,
             pr: r.svcPrix,
             st: r.status === "confirmed" ? "conf" : "conf",
             items: aptItems,
-            comment: "RDV EN LIGNE - " + r.nom + (r.prenom ? " " + r.prenom : "") + " - " + r.tel + (r.message ? " - " + r.message : ""),
+            comment: "RDV EN LIGNE - " + r.nom + (r.prenom ? " " + r.prenom : "") + " - " + r.tel + (r.message ? " - " + r.message : "") + (_oNeed ? " \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)" : ""),
             aPhases: phases,
             isOnline: true,
             onlineStatus: r.status,
