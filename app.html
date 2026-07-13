@@ -8626,6 +8626,78 @@ function _lxCollabWorksOn(stId, date){
     return true;
   }catch(_e){ return true; }
 }
+// ============================================================================
+// FIX 2026-07-13 — RDV EN LIGNE "SANS PRÉFÉRENCE" (rdv_online.collaborateur_id = NULL)
+// ----------------------------------------------------------------------------
+// CAUSE RACINE : la conversion rdv_online -> AP existait en DOUBLE.
+//   (1) _lxOnlineToAP (ci-dessous) : appelé par le poll 30 s, UNIQUEMENT pour un RDV NOUVEAU.
+//       Seule copie qui avait reçu l'auto-assignation (commits ddbc6a9 / 544458b / e5f6754).
+//   (2) loadSalonData (luxyra-supabase.js) = chargement initial de l'app : poussait le RDV
+//       avec `stId: r.collabId` VERBATIM, donc stId = null pour un "sans préférence".
+// Le planning est une grille PAR COLLABORATEUR : stId=null => aucune colonne => RDV INVISIBLE.
+// Et le poll ne rappelle _lxOnlineToAP que si le RDV n'est PAS déjà dans RDV_ONLINE -> rien
+// ne le réparait jamais. D'où : visible le jour où il arrive (app ouverte -> poll), puis
+// INVISIBLE dès le premier rechargement de l'app.
+// Le résolveur ci-dessous est désormais PARTAGÉ (app.html + loadSalonData) et un filet
+// idempotent (_lxFixOnlineStId) répare toute entrée restée sans colonne (snapshot/cache,
+// équipe pas encore chargée, collaborateur supprimé...).
+// AFFICHAGE UNIQUEMENT : rien n'est persisté ici (la réassignation explicite reste
+// lxAssignOnlineRdv), aucun champ fiscal touché.
+// Retourne {stId, needAssign, ok}. ok=false => équipe pas (encore) chargée : on ne touche à rien.
+function _lxResolveOnlineStId(date, heure, dur, curStId){
+  try{
+    if(curStId!=null&&curStId!=="") return {stId:curStId,needAssign:false,ok:true};
+    var _all=(typeof T!=="undefined"&&T)?T:[];
+    if(!_all.length) return {stId:null,needAssign:false,ok:false};
+    var _act=_all.filter(function(c){return c&&c.inactif!==true;});
+    if(!_act.length) _act=_all; // tous inactifs : on prend quand meme une colonne (jamais invisible)
+    var _sm=(typeof toM==="function")?toM(String(heure||"00:00").slice(0,5)):0;
+    var _em=_sm+(dur||60);
+    // 1) coiffeuse REELLEMENT LIBRE au creneau (ne pas empiler sur quelqu'un deja booke)
+    var _free=(typeof _lxCollabFreeAt==="function")?_act.filter(function(c){return _lxCollabFreeAt(c.id,date,_sm,_em,null);}):[];
+    if(_free.length===1) return {stId:_free[0].id,needAssign:false,ok:true};
+    if(_free.length>1)   return {stId:_free[0].id,needAssign:true,ok:true};
+    // 2) personne de libre : au moins quelqu'un qui TRAVAILLE ce jour, sinon la 1re de l'equipe.
+    //    Le RDV doit rester VISIBLE (marque "a assigner"), jamais disparaître.
+    var _work=(typeof _lxCollabWorksOn==="function")?_act.filter(function(c){return _lxCollabWorksOn(c.id,date);}):[];
+    var _fb=_work[0]||_act[0];
+    return {stId:(_fb?_fb.id:null),needAssign:true,ok:!!_fb};
+  }catch(_e){
+    try{
+      if(curStId!=null&&curStId!=="") return {stId:curStId,needAssign:false,ok:true};
+      var _t=(typeof T!=="undefined"&&T&&T.length)?T[0]:null;
+      return {stId:(_t?_t.id:null),needAssign:true,ok:!!_t};
+    }catch(_e2){ return {stId:(curStId||null),needAssign:false,ok:false}; }
+  }
+}
+window._lxResolveOnlineStId=_lxResolveOnlineStId;
+// Filet idempotent : aucun RDV en ligne ne doit rester sans colonne (= invisible au planning).
+// Ne touche QUE les entrees d'AFFICHAGE "online_<uuid>" (jamais une ligne encaissee/scellee).
+// No-op complet quand tous les RDV en ligne ont deja une colonne valide.
+function _lxFixOnlineStId(){
+  try{
+    if(typeof AP==="undefined"||!AP||!AP.length) return false;
+    if(typeof T==="undefined"||!T||!T.length) return false; // equipe pas encore chargee -> on retentera
+    var _known={}; for(var _t0=0;_t0<T.length;_t0++){ if(T[_t0]&&T[_t0].id!=null) _known[String(T[_t0].id)]=true; }
+    var _fixed=false;
+    for(var _i0=0;_i0<AP.length;_i0++){
+      var _a0=AP[_i0];
+      if(!_a0||!_a0.isOnline) continue;
+      if(String(_a0.id||"").indexOf("online_")!==0) continue; // securite : entree d'affichage seulement
+      if(_a0.stId!=null&&_a0.stId!==""&&_known[String(_a0.stId)]) continue; // deja une colonne valide
+      var _dur0=0;
+      if(_a0.aPhases&&_a0.aPhases.length){ for(var _p0=0;_p0<_a0.aPhases.length;_p0++){ _dur0+=Number((_a0.aPhases[_p0]||{}).d||0); } }
+      if(!_dur0) _dur0=60;
+      var _r0=_lxResolveOnlineStId(_a0.date,_a0.time,_dur0,null);
+      if(!_r0||!_r0.ok||_r0.stId==null) continue;
+      _a0.stId=_r0.stId; _fixed=true;
+      if(_r0.needAssign&&String(_a0.comment||"").indexOf("SANS PR")<0){ _a0.comment=(_a0.comment||"")+" \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)"; }
+    }
+    if(_fixed) window._apDirty=true;
+    return _fixed;
+  }catch(_e){ return false; }
+}
+window._lxFixOnlineStId=_lxFixOnlineStId;
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -8639,18 +8711,11 @@ function _lxOnlineToAP(rdv){
     var _lxcId=_lxResolveClientId(rdv);
     var _stId=rdv.collaborateur_id, _needAssign=false;
     if(!_stId){
-      var _act=(typeof T!=="undefined"&&T)?T.filter(function(c){return c&&c.inactif!==true;}):[];
-      // FIX 2026-07-04 : auto-assigner à une coiffeuse RÉELLEMENT LIBRE au créneau (pas juste "travaille ce jour"),
-      // pour ne pas empiler un RDV en ligne sur quelqu'un déjà booké.
-      var _sm=(typeof toM==="function")?toM(String(rdv.heure_rdv||"00:00").slice(0,5)):0;
-      var _em=_sm+(dur||60);
-      var _free=(typeof _lxCollabFreeAt==="function")?_act.filter(function(c){return _lxCollabFreeAt(c.id, rdv.date_rdv, _sm, _em, null);}):[];
-      if(_free.length===1){ _stId=_free[0].id; }
-      else if(_free.length>1){ _stId=_free[0].id; _needAssign=true; }
-      else {
-        var _work=_act.filter(function(c){return _lxCollabWorksOn(c.id, rdv.date_rdv);});
-        _stId=((_work[0]||_act[0]||(T&&T[0])||{}).id)||null; _needAssign=true;
-      }
+      // FIX 2026-07-13 : même résolveur que loadSalonData (plus de logique dupliquée).
+      // Si l'équipe n'est pas encore chargée (ok=false), _lxFixOnlineStId réparera plus tard.
+      var _rr=_lxResolveOnlineStId(rdv.date_rdv, rdv.heure_rdv, dur, null);
+      if(_rr&&_rr.ok&&_rr.stId!=null){ _stId=_rr.stId; _needAssign=!!_rr.needAssign; }
+      else { _stId=null; _needAssign=true; }
     }
     AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:_lxcId,sId:rdv.service_id,stId:_stId,date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||"")+(!_needAssign?"":" \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)"),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});window._apDirty=true;
   }catch(_e){}
@@ -8761,6 +8826,7 @@ window._rdvPollInterval=setInterval(function(){
             }
           }
         });
+        if(typeof _lxFixOnlineStId==="function"){ try{ _lxFixOnlineStId(); }catch(_e){} }
         if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
         if(typeof _lxReconcileGhostOnlineRdv==="function")_lxReconcileGhostOnlineRdv();
         if(typeof _lxEnsureFichesForOnlineAppts==="function"){ try{ _lxEnsureFichesForOnlineAppts(); }catch(_e){} }
@@ -9916,6 +9982,8 @@ function rPlanning(){
 }
 
 function rPlanningDay(dateObj,showDayHeader){
+  // FIX 2026-07-13 : filet — un RDV en ligne "sans préférence" ne doit JAMAIS rester sans colonne (invisible).
+  try{ if(typeof _lxFixOnlineStId==="function") _lxFixOnlineStId(); }catch(_e){}
   var dk=dS(dateObj),dow=dateObj.getDay();
   var h='';
   if(showDayHeader){
@@ -32615,6 +32683,9 @@ function initApp(){
       }
     });
   }
+  // FIX 2026-07-13 : avant le 1er render, garantir une colonne à tout RDV en ligne "sans préférence"
+  // (le chargement initial les poussait avec stId=null => invisibles au planning).
+  try{ if(typeof _lxFixOnlineStId==="function") _lxFixOnlineStId(); }catch(_e){}
   // Mode Archives : setup UI (bandeau + verrouillage CSS) avant le 1er render
   if(window._archiveMode && typeof setupArchiveModeUI === "function"){
     setupArchiveModeUI();
