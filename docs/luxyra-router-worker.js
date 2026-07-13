@@ -27,6 +27,10 @@ function checkRateLimit(key, maxPerMinute) {
 
 const CONFIG = {
   SUPABASE_URL: "https://kxdgjtvrkwugbifgppai.supabase.co",
+  // Cle ANON (publique — deja exposee dans luxyra-supabase.js / le navigateur).
+  // Utilisee UNIQUEMENT pour le SSR SEO : la RLS garantit qu'on ne lit que du
+  // public. Ne JAMAIS s'en servir pour une ecriture privilegiee.
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI",
   PRICE_ESSENTIAL: "price_1TIBRRPk42Psx94TsYdIG0UF",
   PRICE_PRO: "price_1TIBROPk42Psx94Tjr6g8OEF",
   // Tarif "Pro Fondateur" — 14,99€/mois à vie pour les 100 premiers Pro
@@ -2479,6 +2483,321 @@ async function handleSalonAvailability(request, env) {
 // FIX W7: Added /suppression-donnees
 // NEW SLUG: rewrite /<slug> → /site.html avec window.__SALON_SLUG injecté
 // ============================================================
+// ============================================================================
+// SEO SSR SALON — FIX 2026-07-13
+// ----------------------------------------------------------------------------
+// POURQUOI : la page salon (/<slug> et /<slug>/reserver) est rendue 100% en JS.
+// Le HTML brut renvoye ne contenait QUE "Chargement..." => Google indexait une
+// page vide et le salon ne ressortait pas sur son propre nom.
+//
+// L'ancien bloc SSR (2026-05-14) etait MORT depuis le 1er jour, pour 2 raisons :
+//   1. il selectionnait `horaires_salon` sur la vue `salons_public` — colonne qui
+//      N'EXISTE PAS dessus (elle est sur `site_config`) => PostgREST repondait
+//      HTTP 400 => `salonRes.ok` faux => TOUT le bloc etait saute, toujours.
+//   2. il lisait les horaires au format {lundi:{ouvert,creneaux:[{debut,fin}]}}
+//      alors que le format REEL est {"0":null,"1":{"o":"14:00","c":"18:00"}}.
+//
+// CE QUI CHANGE :
+//   - Les donnees sont lues aux bons endroits (salons_public + site_config + services).
+//   - Le SEO est injecte pour TOUT LE MONDE (plus de sniffing d'user-agent : servir
+//     un contenu different a Googlebot = risque de cloaking).
+//   - Le texte indexable est du VRAI HTML visible (plus de <noscript>, que Google
+//     ecarte du DOM rendu qu'il indexe), pose dans #lx-seo-ssr, SOUS le loader
+//     plein ecran => 1er paint humain inchange, et le JS l'efface au boot.
+//
+// GARDE-FOU ABSOLU : tout est en try/catch + timeout court. La moindre erreur
+// (Supabase down, salon inconnu, JSON casse) => on renvoie la page EXACTEMENT
+// comme aujourd'hui. Jamais de 500, jamais de page blanche.
+//
+// Cle utilisee : la cle ANON (publique, deja dans le repo). C'est volontaire :
+// la RLS garantit alors qu'on ne peut lire QUE ce qu'un visiteur pourrait deja
+// lire depuis son navigateur => impossible de fuiter user_id/plan/stripe/sms.
+// ============================================================================
+
+const LX_SEO_TIMEOUT_MS = 2000;
+
+const LX_METIER = {
+  coiffure:  { schema: "HairSalon",   label: "Salon de coiffure",    noun: "Coiffeur" },
+  barbier:   { schema: "BarberShop",  label: "Barbier",              noun: "Barbier" },
+  esthetique:{ schema: "BeautySalon", label: "Institut de beauté",   noun: "Institut de beauté" },
+  ongles:    { schema: "NailSalon",   label: "Onglerie",             noun: "Onglerie" },
+  bien_etre: { schema: "DaySpa",      label: "Spa & bien-être",      noun: "Spa & bien-être" },
+};
+const LX_SEO_FALLBACK_METIER = { schema: "LocalBusiness", label: "Salon", noun: "Salon" };
+
+// 0 = dimanche (cle = getDay() cote app)
+const LX_SEO_DOW_SCHEMA = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const LX_SEO_DOW_FR = ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
+
+function lxEsc(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// Empeche toute evasion de <script type="application/ld+json">
+function lxJsonLd(obj) {
+  return JSON.stringify(obj)
+    .replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
+}
+
+// Une image de carte sociale / schema.org doit etre une URL http(s).
+// Les logos salon sont souvent des data:URI base64 (50 Ko) => inutilisables.
+function lxSeoImage(v) {
+  const s = String(v || "");
+  return /^https?:\/\//i.test(s) ? s : "";
+}
+
+async function lxSeoFetch(path) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), LX_SEO_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${path}`, {
+      headers: {
+        apikey: CONFIG.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+      },
+      // Petit cache edge : les changements d'un salon remontent en <=5 min,
+      // et le HTML lui-meme n'est jamais mis en cache long (no-store).
+      cf: { cacheTtl: 300, cacheEverything: true },
+      signal: ctl.signal,
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Renvoie { head, body } ou null. NE JETTE JAMAIS.
+async function lxBuildSalonSeo(slug, reserverIntent) {
+  try {
+    const rows = await lxSeoFetch(
+      `salons_public?slug=eq.${encodeURIComponent(slug)}` +
+      `&select=id,nom,sous_titre,metier,mode_activite,adresse,cp,ville,tel,email,logo,site_web,latitude,longitude,note_moyenne,nb_avis&limit=1`
+    );
+    if (!Array.isArray(rows) || !rows[0]) return null;
+    const s = rows[0];
+
+    const [cfgRows, svcRows] = await Promise.all([
+      lxSeoFetch(
+        `site_config?salon_id=eq.${encodeURIComponent(s.id)}` +
+        `&select=horaires_salon,description_salon,slogan,site_actif,reservation_active,photo_hero&limit=1`
+      ),
+      lxSeoFetch(
+        `services?salon_id=eq.${encodeURIComponent(s.id)}&actif=eq.true&show_site=eq.true` +
+        `&select=nom,prix,categorie,phases,ordre&order=ordre.asc.nullslast,nom.asc&limit=60`
+      ),
+    ]);
+    const cfg = (Array.isArray(cfgRows) && cfgRows[0]) ? cfgRows[0] : {};
+
+    // Site explicitement desactive par le salon => on n'indexe rien.
+    if (cfg.site_actif === false) return null;
+
+    const services = Array.isArray(svcRows) ? svcRows : [];
+    const m = LX_METIER[s.metier] || LX_SEO_FALLBACK_METIER;
+
+    const nom = s.nom || "Salon";
+    const sousTitre = s.sous_titre || "";
+    const ville = s.ville || "";
+    const cp = s.cp || "";
+    const adresse = s.adresse || "";
+    const canonical = `https://luxyra.fr/${slug}`;
+    const image =
+      lxSeoImage(cfg.photo_hero) ||
+      lxSeoImage(s.logo) ||
+      "https://luxyra.fr/luxyra-logo.png";
+
+    // ---- Titre (unique par salon, metier + ville = la requete locale visee) ----
+    const lieu = ville ? ` à ${ville}` : "";
+    const title = reserverIntent
+      ? `Réserver chez ${nom} — ${m.noun}${lieu} | Prendre rendez-vous`
+      : `${nom} — ${m.noun}${lieu} | Réserver en ligne`;
+
+    // ---- Description (~150 car., naturelle) ----
+    let desc = `${nom}${sousTitre ? ", " + sousTitre : ""}, ${m.noun.toLowerCase()}${lieu}${cp ? " (" + cp + ")" : ""}. `
+             + `Réservez votre rendez-vous en ligne 24h/24, confirmation immédiate.`;
+    if (desc.length > 160) desc = desc.slice(0, 157).replace(/\s+\S*$/, "") + "…";
+
+    // ---- Horaires : format REEL {"0":null,"1":{"o":"09:00","c":"18:00"}} ----
+    const ohSchema = [];
+    const ohRows = [];
+    try {
+      const h = cfg.horaires_salon;
+      if (h && typeof h === "object") {
+        for (let d = 0; d < 7; d++) {
+          const v = h[String(d)] != null ? h[String(d)] : h[d];
+          if (v && v.o && v.c) {
+            ohSchema.push({
+              "@type": "OpeningHoursSpecification",
+              dayOfWeek: `https://schema.org/${LX_SEO_DOW_SCHEMA[d]}`,
+              opens: String(v.o),
+              closes: String(v.c),
+            });
+            ohRows.push(`<li><strong>${LX_SEO_DOW_FR[d]}</strong> : ${lxEsc(v.o)} – ${lxEsc(v.c)}</li>`);
+          } else {
+            ohRows.push(`<li><strong>${LX_SEO_DOW_FR[d]}</strong> : Fermé</li>`);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // ---- Prestations ----
+    const offers = [];
+    const svcRowsHtml = [];
+    let minP = Infinity, maxP = -Infinity;
+    for (const sv of services) {
+      if (!sv || !sv.nom || sv.prix == null) continue;
+      const prix = Number(sv.prix);
+      if (!isFinite(prix)) continue;
+      if (prix < minP) minP = prix;
+      if (prix > maxP) maxP = prix;
+      let dureeMin = 0;
+      if (Array.isArray(sv.phases)) {
+        for (const p of sv.phases) { if (p && typeof p.d === "number") dureeMin += p.d; }
+      }
+      const item = {
+        "@type": "Service",
+        name: String(sv.nom),
+        serviceType: sv.categorie || m.label,
+        provider: { "@type": m.schema, name: nom },
+      };
+      if (dureeMin > 0) item.estimatedDuration = `PT${dureeMin}M`;
+      offers.push({
+        "@type": "Offer",
+        itemOffered: item,
+        price: prix.toFixed(2),
+        priceCurrency: "EUR",
+        availability: "https://schema.org/InStock",
+        url: `${canonical}#reserver`,
+      });
+      svcRowsHtml.push(
+        `<li>${lxEsc(sv.nom)}${sv.categorie ? ` <em>(${lxEsc(sv.categorie)})</em>` : ""} — <strong>${prix.toFixed(2).replace(".", ",")} €</strong>${dureeMin > 0 ? ` · ${dureeMin} min` : ""}</li>`
+      );
+    }
+    const priceRange = (isFinite(minP) && isFinite(maxP))
+      ? `${Math.round(minP)}€ - ${Math.round(maxP)}€`
+      : "€€";
+
+    // ---- JSON-LD ----
+    const ld = {
+      "@context": "https://schema.org",
+      "@type": m.schema,
+      "@id": canonical,
+      name: nom,
+      url: canonical,
+      image: image,
+      priceRange: priceRange,
+      currenciesAccepted: "EUR",
+    };
+    if (sousTitre) ld.alternateName = nom + " " + sousTitre;
+    if (cfg.description_salon) ld.description = String(cfg.description_salon).slice(0, 900);
+    else if (cfg.slogan) ld.description = String(cfg.slogan);
+    if (adresse || ville || cp) {
+      ld.address = {
+        "@type": "PostalAddress",
+        streetAddress: adresse,
+        postalCode: cp,
+        addressLocality: ville,
+        addressCountry: "FR",
+      };
+    }
+    if (s.tel) ld.telephone = String(s.tel);
+    if (s.email) ld.email = String(s.email);
+    if (s.site_web) ld.sameAs = [String(s.site_web)];
+    if (s.latitude != null && s.longitude != null) {
+      const la = Number(s.latitude), lo = Number(s.longitude);
+      if (isFinite(la) && isFinite(lo)) ld.geo = { "@type": "GeoCoordinates", latitude: la, longitude: lo };
+    }
+    if (Number(s.note_moyenne) > 0 && Number(s.nb_avis) > 0) {
+      ld.aggregateRating = {
+        "@type": "AggregateRating",
+        ratingValue: Number(s.note_moyenne),
+        reviewCount: Number(s.nb_avis),
+      };
+    }
+    if (ohSchema.length) ld.openingHoursSpecification = ohSchema;
+    if (cfg.reservation_active !== false) {
+      ld.potentialAction = {
+        "@type": "ReserveAction",
+        name: "Prendre rendez-vous",
+        target: {
+          "@type": "EntryPoint",
+          urlTemplate: `${canonical}/reserver`,
+          inLanguage: "fr-FR",
+          actionPlatform: [
+            "https://schema.org/DesktopWebPlatform",
+            "https://schema.org/MobileWebPlatform",
+          ],
+        },
+        result: { "@type": "Reservation", name: `Rendez-vous chez ${nom}` },
+      };
+    }
+    if (offers.length) {
+      // hasOfferCatalog seulement : dupliquer les 45 offres dans makesOffer
+      // doublait le poids du <head> sans rien apporter a Google.
+      ld.hasOfferCatalog = {
+        "@type": "OfferCatalog",
+        name: `Prestations ${ville ? "à " + ville : nom}`,
+        itemListElement: offers,
+      };
+    }
+
+    // ---- <head> ----
+    const head =
+      `<meta name="lx-ssr" content="1">\n` +
+      `<title>${lxEsc(title)}</title>\n` +
+      `<meta name="description" content="${lxEsc(desc)}">\n` +
+      `<link rel="canonical" href="${lxEsc(canonical)}">\n` +
+      `<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">\n` +
+      `<meta property="og:type" content="business.business">\n` +
+      `<meta property="og:site_name" content="Luxyra">\n` +
+      `<meta property="og:locale" content="fr_FR">\n` +
+      `<meta property="og:url" content="${lxEsc(canonical)}">\n` +
+      `<meta property="og:title" content="${lxEsc(title)}">\n` +
+      `<meta property="og:description" content="${lxEsc(desc)}">\n` +
+      `<meta property="og:image" content="${lxEsc(image)}">\n` +
+      `<meta name="twitter:card" content="summary_large_image">\n` +
+      `<meta name="twitter:title" content="${lxEsc(title)}">\n` +
+      `<meta name="twitter:description" content="${lxEsc(desc)}">\n` +
+      `<meta name="twitter:image" content="${lxEsc(image)}">\n` +
+      `<script id="ssr-ld-localbusiness" type="application/ld+json">${lxJsonLd(ld)}</script>\n`;
+
+    // ---- Texte indexable (vrai HTML visible, efface par le JS au boot) ----
+    let body = `<section id="lx-seo-content" style="max-width:920px;margin:0 auto;padding:40px 20px 60px;font-family:Georgia,'Times New Roman',serif;line-height:1.65;color:#d8d8dc">`;
+    body += `<h1 style="font-size:28px;color:#c8a84e;margin:0 0 6px">${lxEsc(nom)} — ${lxEsc(m.noun)}${ville ? " à " + lxEsc(ville) : ""}</h1>`;
+    if (sousTitre) body += `<p style="margin:0 0 18px;font-style:italic;color:#a9a9b2">${lxEsc(sousTitre)}</p>`;
+    if (cfg.slogan) body += `<p style="margin:0 0 18px;color:#a9a9b2">${lxEsc(cfg.slogan)}</p>`;
+    if (cfg.description_salon) body += `<p>${lxEsc(cfg.description_salon)}</p>`;
+    if (adresse || ville) {
+      body += `<h2 style="font-size:20px;color:#c8a84e;margin:26px 0 8px">Adresse</h2>`;
+      body += `<address style="font-style:normal">${lxEsc(adresse)}${cp ? ", " + lxEsc(cp) : ""}${ville ? " " + lxEsc(ville) : ""}, France</address>`;
+    }
+    if (s.tel) {
+      body += `<p><strong>Téléphone :</strong> <a href="tel:${lxEsc(String(s.tel).replace(/\s+/g, ""))}" style="color:#c8a84e">${lxEsc(s.tel)}</a></p>`;
+    }
+    if (ohSchema.length) {
+      body += `<h2 style="font-size:20px;color:#c8a84e;margin:26px 0 8px">Horaires d'ouverture</h2>`;
+      body += `<ul style="list-style:none;padding:0;margin:0">${ohRows.join("")}</ul>`;
+    }
+    if (svcRowsHtml.length) {
+      body += `<h2 style="font-size:20px;color:#c8a84e;margin:26px 0 8px">Prestations et tarifs${ville ? " à " + lxEsc(ville) : ""}</h2>`;
+      body += `<ul style="padding-left:20px;margin:0">${svcRowsHtml.join("")}</ul>`;
+    }
+    body += `<h2 style="font-size:20px;color:#c8a84e;margin:26px 0 8px">Réservation en ligne</h2>`;
+    body += `<p>Prenez rendez-vous chez <strong>${lxEsc(nom)}</strong>${ville ? " à " + lxEsc(ville) : ""} en ligne, 24h/24 et 7j/7. Confirmation immédiate par e-mail et SMS.</p>`;
+    body += `<p><a href="${lxEsc(canonical)}/reserver" style="display:inline-block;padding:14px 28px;background:#c8a84e;color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:8px">Prendre rendez-vous</a></p>`;
+    body += `<p style="font-size:12px;color:#7a7a84;margin-top:32px">Propulsé par <a href="https://luxyra.fr" style="color:#7a7a84">Luxyra</a> — caisse et réservation en ligne pour salons.</p>`;
+    body += `</section>`;
+
+    return { head, body };
+  } catch (_) {
+    return null; // Toute erreur => page servie telle qu'aujourd'hui.
+  }
+}
+
 async function handleExistingRoutes(request, url, env) {
   const host = url.hostname;
 
@@ -2667,270 +2986,46 @@ Sitemap: https://luxyra.fr/sitemap.xml
       && !RESERVED_FOR_SLUG.has(segmentForSlug);
 
     if (looksLikeSlugFinal) {
-      // Sert site.html avec __SALON_SLUG injecté (URL visible inchangée)
+      // Sert site.html avec __SALON_SLUG injecte (URL visible inchangee)
       const res = await fetch(`https://luxyra-fr.github.io/luxyra.fr/site.html`, { cf: { cacheTtl: 0 } });
       let html = await res.text();
       const safeSlug = segmentForSlug.replace(/[^a-z0-9-]/g, "");
       // FIX 2026-05-15 : si on arrive via /<slug>/reserver, injecte un flag JS
-      // qui sera lu côté client pour ouvrir directement le formulaire de RDV
-      // (équivalent au hash #reserver mais survit au crawl Google qui ignore les fragments)
+      // qui sera lu cote client pour ouvrir directement le formulaire de RDV
+      // (equivalent au hash #reserver mais survit au crawl Google qui ignore les fragments)
       const reserverFlag = _reserverIntent ? `window.__OPEN_RESERVATION=true;` : "";
       html = html.replace("</head>", `<script>window.__SALON_SLUG=${JSON.stringify(safeSlug)};${reserverFlag}</script></head>`);
 
-      // ====================================================================
-      // SSR META TAGS POUR BOTS SEO/IA (Googlebot, Bingbot, ChatGPT, Perplexity, Claude, etc.)
-      // Pour les vrais utilisateurs (navigateur humain) → HTML normal inchangé, le JS injecte
-      // les meta côté client comme aujourd'hui. Aucun impact UX si le SSR plante.
-      // FIX 2026-05-14
-      // ====================================================================
+      // ==================================================================
+      // SSR SEO (FIX 2026-07-13) — cf. lxBuildSalonSeo() plus haut.
+      // Injecte pour TOUT LE MONDE (pas de sniffing d'user-agent = pas de
+      // cloaking). Si quoi que ce soit echoue -> `seo` vaut null et la page
+      // part EXACTEMENT comme aujourd'hui (aucune 500, aucune page blanche).
+      // ==================================================================
       try {
-        const ua = (request.headers.get("user-agent") || "").toLowerCase();
-        const isBot =
-          ua.includes("googlebot") || ua.includes("bingbot") || ua.includes("yandexbot") ||
-          ua.includes("duckduckbot") || ua.includes("baiduspider") || ua.includes("slurp") ||
-          ua.includes("facebookexternalhit") || ua.includes("twitterbot") || ua.includes("linkedinbot") ||
-          ua.includes("whatsapp") || ua.includes("telegrambot") || ua.includes("discordbot") ||
-          ua.includes("applebot") || ua.includes("chatgpt") || ua.includes("gptbot") ||
-          ua.includes("oai-searchbot") || ua.includes("perplexitybot") || ua.includes("claudebot") ||
-          ua.includes("anthropic") || ua.includes("youbot");
-        if (isBot && env.SUPABASE_SERVICE_KEY) {
-          const salonRes = await fetch(
-            `${CONFIG.SUPABASE_URL}/rest/v1/salons_public?slug=eq.${encodeURIComponent(safeSlug)}&select=id,nom,sous_titre,adresse,cp,ville,tel,email,logo,metier,latitude,longitude,note_moyenne,nb_avis,horaires_salon&limit=1`,
-            {
-              headers: {
-                "apikey": env.SUPABASE_SERVICE_KEY,
-                "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`
-              },
-              cf: { cacheTtl: 300, cacheEverything: true }
-            }
-          );
-          if (salonRes.ok) {
-            const data = await salonRes.json();
-            if (data && data[0]) {
-              const s = data[0];
-              // FIX 2026-05-14 : fetch des services pour OfferCatalog (Schema.org)
-              // Une erreur ici ne casse pas le SSR — on continue sans catalogue
-              let servicesList = [];
-              try {
-                const svcRes = await fetch(
-                  `${CONFIG.SUPABASE_URL}/rest/v1/services?salon_id=eq.${encodeURIComponent(s.id)}&actif=eq.true&show_site=eq.true&select=nom,prix,categorie,cat_genre,phases&order=ordre&limit=50`,
-                  {
-                    headers: {
-                      "apikey": env.SUPABASE_SERVICE_KEY,
-                      "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`
-                    },
-                    cf: { cacheTtl: 300, cacheEverything: true }
-                  }
-                );
-                if (svcRes.ok) servicesList = await svcRes.json();
-              } catch (_) { /* services fetch optionnel, on continue sans */ }
-              const esc = (v) => String(v == null ? "" : v)
-                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-              const metierLabels = {
-                coiffure: "Salon de coiffure", barbier: "Barbier",
-                esthetique: "Institut d'esthétique", ongles: "Salon d'ongles",
-                bien_etre: "Spa & bien-être"
-              };
-              const schemaTypes = {
-                coiffure: "HairSalon", barbier: "BarberShop",
-                esthetique: "BeautySalon", ongles: "NailSalon", bien_etre: "DaySpa"
-              };
-              const nom = s.nom || "Salon";
-              const sousTitre = s.sous_titre || "";
-              const ville = s.ville || "";
-              const cp = s.cp || "";
-              const adresse = s.adresse || "";
-              const metier = s.metier || "coiffure";
-              const metierLabel = metierLabels[metier] || "Salon";
-              const schemaType = schemaTypes[metier] || "LocalBusiness";
-              const url = `https://luxyra.fr/${safeSlug}`;
-              const image = (s.logo && !String(s.logo).startsWith("data:")) ? s.logo : "https://luxyra.fr/luxyra-logo.png";
-              // FIX 2026-05-15 SEO LOCAL : ville accolée au nom (expression composée Google),
-              // sous-titre inclus, format dense pour matcher "excellence coiffure sarreguemines"
-              // Variante /reserver : titre orienté "Réservation" pour Google Business
-              const baseTitle = sousTitre
-                ? `${nom}${ville ? " " + ville : ""} ${sousTitre} — ${metierLabel}`
-                : `${nom}${ville ? " " + ville : ""} — ${metierLabel}${cp ? " " + cp : ""}`;
-              const title = _reserverIntent
-                ? `Réserver chez ${nom}${ville ? " " + ville : ""} — Prendre rendez-vous ${metierLabel.toLowerCase()}`
-                : baseTitle;
-              // Description ultra-dense en mots-clés locaux
-              const descParts = [];
-              descParts.push(`Réservez en ligne chez ${nom}${sousTitre ? " " + sousTitre : ""}`);
-              descParts.push(`${metierLabel}${ville ? " à " + ville : ""}${cp ? " (" + cp + ")" : ""}`);
-              if (adresse) descParts.push(adresse + (ville ? " " + ville : ""));
-              descParts.push("Confirmation immédiate, sans commission");
-              const desc = descParts.join(". ").replace(/\s+/g, " ").trim() + ".";
-              const ld = {
-                "@context": "https://schema.org",
-                "@type": schemaType,
-                "name": nom,
-                "url": url,
-                "image": image,
-                "address": {
-                  "@type": "PostalAddress",
-                  "streetAddress": s.adresse || "",
-                  "postalCode": s.cp || "",
-                  "addressLocality": ville,
-                  "addressCountry": "FR"
-                },
-                "priceRange": "€€"
-              };
-              if (s.tel) ld.telephone = s.tel;
-              if (s.email) ld.email = s.email;
-              if (s.latitude != null && s.longitude != null) {
-                ld.geo = { "@type": "GeoCoordinates", "latitude": Number(s.latitude), "longitude": Number(s.longitude) };
-              }
-              if (s.note_moyenne && s.nb_avis) {
-                ld.aggregateRating = {
-                  "@type": "AggregateRating",
-                  "ratingValue": Number(s.note_moyenne),
-                  "reviewCount": Number(s.nb_avis)
-                };
-              }
-              // Horaires (si dispo)
-              try {
-                const hSal = s.horaires_salon;
-                if (hSal && typeof hSal === "object") {
-                  const jourMap = { lundi: "Mo", mardi: "Tu", mercredi: "We", jeudi: "Th", vendredi: "Fr", samedi: "Sa", dimanche: "Su" };
-                  const horaires = [];
-                  Object.keys(hSal).forEach(j => {
-                    const v = hSal[j];
-                    if (v && v.ouvert && v.creneaux && v.creneaux.length) {
-                      v.creneaux.forEach(c => horaires.push(jourMap[j] + " " + c.debut + "-" + c.fin));
-                    }
-                  });
-                  if (horaires.length) ld.openingHours = horaires;
-                }
-              } catch (_) {}
-              // FIX 2026-05-14 : OfferCatalog avec les prestations du salon
-              // Permet aux IA/moteurs d'indexer chaque service avec son prix
-              // (ex: Excellence ressort sur "coupe femme Sarreguemines")
-              try {
-                if (servicesList && servicesList.length) {
-                  const items = [];
-                  for (let i = 0; i < servicesList.length; i++) {
-                    const sv = servicesList[i];
-                    if (!sv.nom || sv.prix == null) continue;
-                    // Durée totale = somme des phases (work + pause)
-                    let dureeMin = 0;
-                    if (Array.isArray(sv.phases)) {
-                      sv.phases.forEach(p => { if (p && typeof p.d === "number") dureeMin += p.d; });
-                    }
-                    const offer = {
-                      "@type": "Offer",
-                      "itemOffered": {
-                        "@type": "Service",
-                        "name": String(sv.nom),
-                        "serviceType": sv.categorie || metierLabel,
-                        "provider": { "@type": schemaType, "name": nom }
-                      },
-                      "price": Number(sv.prix).toFixed(2),
-                      "priceCurrency": "EUR",
-                      "availability": "https://schema.org/InStock"
-                    };
-                    if (dureeMin > 0) {
-                      // ISO 8601 duration : PT30M pour 30 minutes
-                      offer.itemOffered.serviceOutput = "Durée approximative : " + dureeMin + " min";
-                      offer.itemOffered.estimatedDuration = "PT" + dureeMin + "M";
-                    }
-                    items.push(offer);
-                  }
-                  if (items.length) {
-                    ld.hasOfferCatalog = {
-                      "@type": "OfferCatalog",
-                      "name": "Prestations " + (ville ? "à " + ville : nom),
-                      "itemListElement": items
-                    };
-                  }
-                }
-              } catch (_) {}
-              const ssrMeta =
-                `<title>${esc(title)}</title>\n` +
-                `<meta name="description" content="${esc(desc)}">\n` +
-                `<link rel="canonical" href="${esc(url)}">\n` +
-                `<meta property="og:type" content="website">\n` +
-                `<meta property="og:site_name" content="Luxyra">\n` +
-                `<meta property="og:url" content="${esc(url)}">\n` +
-                `<meta property="og:title" content="${esc(title)}">\n` +
-                `<meta property="og:description" content="${esc(desc)}">\n` +
-                `<meta property="og:image" content="${esc(image)}">\n` +
-                `<meta property="og:locale" content="fr_FR">\n` +
-                `<meta name="twitter:card" content="summary_large_image">\n` +
-                `<meta name="twitter:title" content="${esc(title)}">\n` +
-                `<meta name="twitter:description" content="${esc(desc)}">\n` +
-                `<meta name="twitter:image" content="${esc(image)}">\n` +
-                `<script id="ssr-ld-localbusiness" type="application/ld+json">${JSON.stringify(ld)}</script>\n`;
-              // Retire l'ancien <title> et insère le SSR (le JS côté client réécrit
-              // si besoin avec id="ssr-ld-localbusiness" qui sera supprimé)
-              html = html.replace(/<title>[^<]*<\/title>/i, "").replace("</head>", ssrMeta + "</head>");
-
-              // ====================================================================
-              // FALLBACK HTML POUR BOTS (FIX 2026-05-15 SEO LOCAL)
-              // Bloc <noscript> indexable par Google même sans exécuter le JS,
-              // contient h1/h2/services en HTML pur avec mots-clés locaux denses.
-              // Pour les humains : <noscript> n'est pas affiché (ils ont JS),
-              // donc aucun impact UX. Pour Googlebot : contenu structuré direct.
-              // ====================================================================
-              try {
-                let fallback = `<noscript><div style="max-width:900px;margin:0 auto;padding:40px 20px;font-family:Georgia,serif;color:#333">`;
-                if (_reserverIntent) {
-                  fallback += `<h1>Réserver chez ${esc(nom)}${ville ? " à " + esc(ville) : ""}</h1>`;
-                  fallback += `<p style="font-size:18px"><strong>Prenez rendez-vous en ligne</strong> chez ${esc(nom)}${sousTitre ? " " + esc(sousTitre) : ""}, ${esc(metierLabel.toLowerCase())}${ville ? " à " + esc(ville) : ""}${cp ? " (" + esc(cp) + ")" : ""}. Confirmation immédiate par email et SMS.</p>`;
-                  fallback += `<p style="margin:20px 0"><a href="${esc(url)}#reserver" style="display:inline-block;padding:16px 32px;background:#c8a84e;color:#000;text-decoration:none;font-weight:700;border-radius:6px;font-size:18px">📅 Prendre rendez-vous maintenant</a></p>`;
-                  fallback += `<h2>${esc(nom)}${sousTitre ? " " + esc(sousTitre) : ""}</h2>`;
-                } else {
-                  fallback += `<h1>${esc(nom)}${ville ? " " + esc(ville) : ""}${sousTitre ? " — " + esc(sousTitre) : ""}</h1>`;
-                  fallback += `<p style="margin:20px 0"><a href="${esc(url)}#reserver" style="display:inline-block;padding:14px 28px;background:#c8a84e;color:#000;text-decoration:none;font-weight:700;border-radius:6px;font-size:16px">📅 Réserver maintenant</a></p>`;
-                }
-                fallback += `<p><strong>${esc(metierLabel)}${ville ? " à " + esc(ville) : ""}${cp ? " (" + esc(cp) + ")" : ""}</strong></p>`;
-                if (adresse || ville) {
-                  fallback += `<h2>Adresse</h2><address>${esc(adresse)}${cp ? ", " + esc(cp) : ""}${ville ? " " + esc(ville) : ""}, France</address>`;
-                }
-                if (s.tel) fallback += `<p><strong>Téléphone :</strong> <a href="tel:${esc(s.tel)}">${esc(s.tel)}</a></p>`;
-                // Horaires
-                try {
-                  const hSal = s.horaires_salon;
-                  if (hSal && typeof hSal === "object") {
-                    const jourLabels = { lundi: "Lundi", mardi: "Mardi", mercredi: "Mercredi", jeudi: "Jeudi", vendredi: "Vendredi", samedi: "Samedi", dimanche: "Dimanche" };
-                    const rows = [];
-                    Object.keys(jourLabels).forEach(j => {
-                      const v = hSal[j];
-                      if (v && v.ouvert && v.creneaux && v.creneaux.length) {
-                        const crs = v.creneaux.map(c => c.debut + "–" + c.fin).join(", ");
-                        rows.push(`<li><strong>${jourLabels[j]} :</strong> ${esc(crs)}</li>`);
-                      } else if (v) {
-                        rows.push(`<li><strong>${jourLabels[j]} :</strong> Fermé</li>`);
-                      }
-                    });
-                    if (rows.length) fallback += `<h2>Horaires d'ouverture</h2><ul>${rows.join("")}</ul>`;
-                  }
-                } catch (_) {}
-                // Services + prix
-                if (servicesList && servicesList.length) {
-                  fallback += `<h2>Prestations ${ville ? "à " + esc(ville) : ""}</h2><ul>`;
-                  for (let i = 0; i < Math.min(servicesList.length, 30); i++) {
-                    const sv = servicesList[i];
-                    if (!sv.nom || sv.prix == null) continue;
-                    fallback += `<li>${esc(sv.nom)} — ${Number(sv.prix).toFixed(2)} €${sv.categorie ? " (" + esc(sv.categorie) + ")" : ""}</li>`;
-                  }
-                  fallback += `</ul>`;
-                }
-                fallback += `<h2>Réservation en ligne</h2><p>Prenez rendez-vous chez <strong>${esc(nom)}</strong>${ville ? " à <strong>" + esc(ville) + "</strong>" : ""} 24h/24, 7j/7. Confirmation immédiate par email et SMS.</p>`;
-                fallback += `<p><a href="${esc(url)}#reserver">Réserver maintenant chez ${esc(nom)}${ville ? " " + esc(ville) : ""}</a></p>`;
-                fallback += `<p style="font-size:11px;color:#888">Propulsé par <a href="https://luxyra.fr">Luxyra</a> — logiciel de caisse et réservation en ligne sans commission.</p>`;
-                fallback += `</div></noscript>`;
-                // Insérer juste après <body>
-                html = html.replace(/<body([^>]*)>/i, `<body$1>${fallback}`);
-              } catch (_) { /* fallback HTML optionnel */ }
-            }
+        const seo = await lxBuildSalonSeo(safeSlug, _reserverIntent);
+        if (seo && seo.head) {
+          // Remplace le <title> statique de site.html, puis pose les meta.
+          // NB : remplacements par FONCTION et pas par chaine — une chaine de
+          // remplacement interprete les motifs $& / $1 / $$, donc un salon dont le
+          // nom contiendrait un "$" corromprait le HTML injecte.
+          html = html
+            .replace(/<title>[\s\S]*?<\/title>/i, "")
+            .replace("</head>", () => seo.head + "</head>");
+          // Texte indexable : remplit l'ancre vide #lx-seo-ssr (dans #root, SOUS
+          // le loader plein ecran). Le JS l'efface au boot via root.innerHTML.
+          // Si l'ancre n'existe pas (vieux site.html en cache) -> on ne pose que
+          // les meta, sans rien casser.
+          if (seo.body && html.indexOf('<div id="lx-seo-ssr"></div>') !== -1) {
+            html = html.replace(
+              '<div id="lx-seo-ssr"></div>',
+              () => `<div id="lx-seo-ssr">${seo.body}</div>`
+            );
           }
         }
       } catch (_) {
-        // Fallback silent : le HTML normal est servi, le JS client gérera les meta
+        // Silence total : la page normale est servie, le JS client fera le rendu.
       }
-      // ====================================================================
 
       return new Response(html, {
         headers: {
