@@ -2314,60 +2314,64 @@ document.addEventListener('keydown',function(e){
 });
 
 async function deleteSalonCascade(id){
-  // Cascade déterministe Phase 1 — ordre figé enfants → parents.
-  // Chaque étape try/catch indépendante pour ne pas bloquer la chaîne.
+  // ⚠️ Suppression d'un salon = SERVEUR (RPC admin_delete_salon_cascade), plus la boucle client.
+  //
+  // Pourquoi : l'ancienne boucle table-par-table était doublement cassée.
+  //  1) Sa liste contenait 17 tables FANTÔMES (ticket_lines, cash_movements, z_closures,
+  //     photos_clients, sms_logs, gift_cards, loyalty_points, absences, horaires…) qui
+  //     n'existent plus dans le schéma → "Échecs ignorés : 19" à chaque suppression.
+  //  2) Elle OUBLIAIT ~20 tables réelles (clotures, audit_log, site_config, fidelite_client,
+  //     packs_clients, cartes_cadeaux, salon_operateurs, mouvements_stock, fournisseurs…).
+  //  3) Surtout : en rôle `authenticated`, la plupart de ces DELETE ne supprimaient RIEN
+  //     (RLS sans policy DELETE → 0 ligne, AUCUNE erreur → comptés "OK"), pendant que
+  //     appointments/tickets étaient REJETÉS par les garde-fous NF525 → lignes orphelines.
+  //
+  // Le RPC (SECURITY DEFINER, gate is_admin() — le même public qu'avant, cf. la policy RLS
+  // salons.salon_delete) purge TOUTES les tables portant salon_id dans un ordre FK-safe,
+  // supprime la ligne salons en dernier, et renvoie un POST-CHECK des orphelins.
+  // Les garde-fous NF525 ne sont pas modifiés : il utilise la trappe encadrée
+  // (luxyra.allow_nf525_unlock), comme factory_reset_salon().
   if(!_online||!id)return{ok:false,err:"offline"};
   var s=gSalon(id);
-  var purged=[],failed=[],steps=[];
-  async function step(name,fn){
-    try{var r=await fn();if(r&&r.error){failed.push(name+':'+r.error.message);steps.push({name:name,ok:false,err:r.error.message});}
-    else{purged.push(name);steps.push({name:name,ok:true});}}
-    catch(e){failed.push(name+':'+(e.message||'err'));steps.push({name:name,ok:false,err:e.message||'err'});}
-  }
-  // 1. support_messages
-  await step('support_messages',function(){return _sb.from('support_messages').delete().eq('salon_id',id);});
-  // 2. support_conversations
-  await step('support_conversations',function(){return _sb.from('support_conversations').delete().eq('salon_id',id);});
-  // 3. salon_promotions
-  await step('salon_promotions',function(){return _sb.from('salon_promotions').delete().eq('salon_id',id);});
-  // 4. salon_admin_notes
-  await step('salon_admin_notes',function(){return _sb.from('salon_admin_notes').delete().eq('salon_id',id);});
-  // 5. admin_shortcuts (où action_url référence ce salon — best effort, table indexée par admin_user_id)
-  // Pas de filtre salon_id sur cette table : on ne purge rien ici, c'est lié à l'admin pas au salon. Skip.
-  // 6. cartes_abo_clients
-  await step('cartes_abo_clients',function(){return _sb.from('cartes_abo_clients').delete().eq('salon_id',id);});
-  // 7. Tables métier (sécurité — appointments, tickets, etc.)
-  var metierTables=['appointments','tickets','ticket_lines','cash_movements','z_closures','rdv_online','clients_online','photos_clients','sms_queue','sms_logs','email_logs','cartes_abonnement','cartes_passages','gift_cards','gift_transactions','loyalty_points','forfaits','forfait_phases','absences','horaires','services','produits','stock_movements','webhook_events','nf525_events'];
-  for(var i=0;i<metierTables.length;i++){
-    var t=metierTables[i];
-    await step(t,(function(t){return function(){return _sb.from(t).delete().eq('salon_id',id);};})(t));
-  }
-  // 8. clients (clients_luxyra)
-  await step('clients_luxyra',function(){return _sb.from('clients_luxyra').delete().eq('salon_id',id);});
-  await step('clients',function(){return _sb.from('clients').delete().eq('salon_id',id);});
-  // 9. collaborateurs
-  await step('collaborateurs',function(){return _sb.from('collaborateurs').delete().eq('salon_id',id);});
-  // 10. admin_log (entrées du salon)
-  await step('admin_log',function(){return _sb.from('admin_log').delete().eq('salon_id',id);});
-  // 11. inscriptions_log (par email du salon)
-  if(s&&s.email){
-    await step('inscriptions_log',function(){return _sb.from('inscriptions_log').delete().eq('email',s.email);});
-  }
-  // 12. Storage : documents/{id}/*
+  var steps=[],failed=[],report=null;
+
+  // 1. Cascade base de données (toutes les tables salon_id, ordre FK-safe, salons en dernier)
+  try{
+    var rc=await _sb.rpc('admin_delete_salon_cascade',{p_salon_id:id});
+    if(rc.error)return{ok:false,err:'cascade:'+rc.error.message,steps:steps,failed:failed};
+    report=rc.data||{};
+    if(report.ok===false)return{ok:false,err:report.err||'cascade refusée',steps:steps,failed:failed};
+  }catch(e){return{ok:false,err:'cascade:'+(e.message||'err'),steps:steps,failed:failed};}
+  steps.push({name:'db_cascade',ok:true,rows:report.rows_deleted,tables:report.tables_touched});
+
+  // 2. Échecs RÉELS : une table réelle qui n'a pas pu être purgée (valeur non numérique).
+  //    Plus aucun bruit de "table fantôme" pour les noyer.
+  try{
+    var dl=report.deleted||{};
+    Object.keys(dl).forEach(function(t){
+      if(typeof dl[t]!=='number')failed.push('ÉCHEC '+t+' : '+dl[t]);
+    });
+  }catch(e){}
+
+  // 3. POST-CHECK orphelins (fait côté serveur, après le DELETE de la ligne salons)
+  var orphans=report.orphans||{};
+  var orphanTotal=report.orphans_total||0;
+  Object.keys(orphans).forEach(function(t){
+    failed.push('ORPHELINS '+t+' : '+orphans[t]+' ligne(s) restantes');
+  });
+
+  // 4. Storage : documents/{id}/*   (inchangé)
   try{
     var list=await _sb.storage.from('salon-documents').list('documents/'+id);
     if(list&&list.data&&list.data.length){
       var paths=list.data.map(function(f){return 'documents/'+id+'/'+f.name;});
       var rm=await _sb.storage.from('salon-documents').remove(paths);
       if(rm&&rm.error){failed.push('storage:'+rm.error.message);steps.push({name:'storage',ok:false,err:rm.error.message});}
-      else{purged.push('storage('+paths.length+')');steps.push({name:'storage',ok:true,count:paths.length});}
+      else{steps.push({name:'storage',ok:true,count:paths.length});}
     }else{steps.push({name:'storage',ok:true,count:0});}
   }catch(e){failed.push('storage:'+(e.message||'err'));steps.push({name:'storage',ok:false,err:e.message});}
-  // 13. salons (la ligne principale)
-  var rs=await _sb.from('salons').delete().eq('id',id);
-  if(rs.error)return{ok:false,err:'salons:'+rs.error.message,purged:purged,failed:failed,steps:steps};
-  steps.push({name:'salons',ok:true});
-  // 14. auth.admin.deleteUser via Worker (service_role côté serveur)
+
+  // 5. auth.admin.deleteUser via Worker (service_role côté serveur)   (inchangé)
   if(s&&s.userId){
     try{
       var r=await fetch('/api/admin/delete-user',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:s.userId})});
@@ -2375,25 +2379,42 @@ async function deleteSalonCascade(id){
       if(!r.ok)failed.push('auth.deleteUser:'+r.status);
     }catch(e){failed.push('auth.deleteUser:'+(e.message||'err'));steps.push({name:'auth.deleteUser',ok:false});}
   }
-  // 15. Log final SALON_DELETED_CASCADE
+
+  // 6. Log final SALON_DELETED_CASCADE   (inchangé — pas de salon_id : la ligne survit)
   try{
-    await _sb.from('admin_log').insert({admin_user_id:_uid,action:'SALON_DELETED_CASCADE',target_id:id,details:JSON.stringify({nom:s&&s.nom,email:s&&s.email,purged:purged.length,failed:failed.length,steps:steps})});
+    await _sb.from('admin_log').insert({admin_user_id:_uid,action:'SALON_DELETED_CASCADE',target_id:id,details:JSON.stringify({nom:s&&s.nom,email:s&&s.email,rows:report.rows_deleted,tables:report.tables_touched,orphans:orphanTotal,failed:failed.length,report:report})});
   }catch(e){}
-  return{ok:true,purged:purged,failed:failed,steps:steps};
+
+  return{ok:true,report:report,orphanTotal:orphanTotal,rows:report.rows_deleted||0,tables:report.tables_touched||0,failed:failed,steps:steps};
 }
 
-// Wrapper avec double confirmation — appelé depuis la fiche salon
+// Wrapper avec double confirmation — appelé depuis la fiche salon   (INCHANGÉ)
 async function confirmDeleteSalon(id){
   var s=gSalon(id);if(!s)return;
-  if(!confirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, documents, compte auth).\n\nContinuer ?'))return;
+  if(!confirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, clôtures, documents, compte auth).\n\nContinuer ?'))return;
   var word=prompt('Pour confirmer, tapez exactement le nom du salon :\n\n'+s.nom);
   if(word!==s.nom){alert('❌ Nom incorrect, suppression annulée');return;}
   var res=await deleteSalonCascade(id);
   if(res.ok){
-    alert('🗑️ Salon supprimé\n\nÉtapes OK : '+res.purged.length+'\nÉchecs ignorés : '+res.failed.length+(res.failed.length?'\n\nDétails : '+res.failed.slice(0,5).join('\n'):''));
+    // Rapport HONNÊTE : on ne dit "tout est propre" que si le post-check serveur
+    // ne trouve AUCUNE ligne restante pour ce salon_id, nulle part.
+    var msg='🗑️ Salon supprimé\n\n'+
+            'Lignes supprimées : '+res.rows+'\n'+
+            'Tables purgées : '+res.tables+'\n';
+    if(res.orphanTotal>0){
+      msg+='\n🔴 ATTENTION : '+res.orphanTotal+' ligne(s) ORPHELINE(S) subsistent en base !\n'+
+           'Le salon est supprimé mais des données lui appartenant restent :\n'+
+           Object.keys(res.report.orphans).map(function(t){return '  • '+t+' : '+res.report.orphans[t];}).join('\n')+
+           '\n\n→ À signaler (nettoyage manuel nécessaire).';
+    }else if(res.failed.length){
+      msg+='\n⚠️ '+res.failed.length+' avertissement(s) (hors base de données) :\n'+res.failed.slice(0,5).join('\n');
+    }else{
+      msg+='\n✅ Aucune donnée orpheline : la purge est complète.';
+    }
+    alert(msg);
     closeDetail();await loadData();render();
   }else{
-    alert('❌ Erreur critique : '+res.err);
+    alert('❌ Erreur critique : '+res.err+'\n\nLe salon N\'A PAS été supprimé.');
   }
 }
 
