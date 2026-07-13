@@ -467,6 +467,17 @@ html{overflow-x:hidden}
     <div class="spin"></div>
     <div style="font-size:14px;color:var(--text3)">Chargement...</div>
   </div>
+  <!-- ==========================================================================
+       ANCRE SEO SSR (FIX 2026-07-13)
+       Le Worker Cloudflare "luxyra-router" REMPLACE ce div vide par le contenu
+       indexable du salon (h1, adresse, horaires, prestations+prix) AVANT de
+       renvoyer la page. Googlebot voit donc du vrai texte dans le HTML brut.
+       - Worker non deploye / Supabase KO -> le div reste VIDE => zero impact.
+       - Il est SOUS le loader (min-height:100vh) => 1er paint humain inchange.
+       - Il n'est PAS masque (pas de display:none) => pas de cloaking.
+       - Le JS l'efface au boot (root.innerHTML = h) => l'app rend par-dessus.
+       ========================================================================== -->
+  <div id="lx-seo-ssr"></div>
 </div>
 
 <script>
@@ -829,6 +840,15 @@ function buildSalonUrl(extraQs){
 // SEO : injecte les meta Open Graph, Twitter Card et JSON-LD LocalBusiness dans <head>
 function injectSeoMeta(SALON, SITE_CFG){
   if(!SALON || !SALON.id) return;
+  // FIX 2026-07-13 : si le Worker Cloudflare a deja pose le SEO cote serveur
+  // (meta lx-ssr), on NE TOUCHE A RIEN. Sa version est batie depuis la MEME base
+  // mais elle est plus riche (titre metier+ville, horaires, catalogue des 45
+  // prestations avec prix). L'ancien code ecrasait tout ca avec une version
+  // pauvre + supprimait le JSON-LD SSR => le DOM rendu (celui que Google indexe)
+  // PERDAIT les donnees. Et ca garantit : HTML brut == DOM rendu (zero cloaking).
+  // Si le SSR est absent (?s=uuid, sous-domaine, Worker non deploye) => comportement
+  // strictement identique a avant.
+  try{ if(document.querySelector('meta[name="lx-ssr"]')) return; }catch(_){}
   var slug = SALON.slug || "";
   var url = "https://luxyra.fr" + (slug ? "/"+slug : "/site.html?s="+SALON.id);
   var nom = SALON.nom || "Salon";
@@ -908,27 +928,32 @@ function injectSeoMeta(SALON, SITE_CFG){
     };
   }
   // Horaires si dispo
+  // FIX 2026-07-13 : l'ancien code lisait {lundi:{ouvert:true,creneaux:[{debut,fin}]}}
+  // alors que le format REEL en base est {"0":null,"1":{"o":"14:00","c":"18:00"},...}
+  // (cle = jour JS, 0=dimanche). Resultat : openingHours n'etait JAMAIS emis.
   try{
     var hSal = SITE_CFG && SITE_CFG.horaires_salon;
-    if(hSal){
-      var jourMap = {lundi:"Mo", mardi:"Tu", mercredi:"We", jeudi:"Th", vendredi:"Fr", samedi:"Sa", dimanche:"Su"};
-      var horaires = [];
-      Object.keys(hSal).forEach(function(j){
-        var v = hSal[j];
-        if(v && v.ouvert && v.creneaux && v.creneaux.length){
-          v.creneaux.forEach(function(c){ horaires.push(jourMap[j] + " " + c.debut + "-" + c.fin); });
+    if(hSal && typeof hSal === "object"){
+      var dowNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      var ohs = [];
+      for(var di=0; di<7; di++){
+        var v = hSal[String(di)] || hSal[di];
+        if(v && v.o && v.c){
+          ohs.push({
+            "@type":"OpeningHoursSpecification",
+            "dayOfWeek":"https://schema.org/"+dowNames[di],
+            "opens":String(v.o),
+            "closes":String(v.c)
+          });
         }
-      });
-      if(horaires.length) ld.openingHours = horaires;
+      }
+      if(ohs.length) ld.openingHoursSpecification = ohs;
     }
   }catch(e){}
 
   // Inject ou remplace le JSON-LD
-  // FIX 2026-05-14 : retire aussi celui injecté en SSR (par le worker Cloudflare pour les bots)
   var existing = document.getElementById("ld-localbusiness");
   if(existing) existing.remove();
-  var ssrExisting = document.getElementById("ssr-ld-localbusiness");
-  if(ssrExisting) ssrExisting.remove();
   var script = document.createElement("script");
   script.id = "ld-localbusiness";
   script.type = "application/ld+json";
@@ -965,7 +990,11 @@ async function loadSalon(){
         }
       }
     }catch(_){}
-    document.title=SALON.nom+" — R\u00e9servation en ligne";
+    // FIX 2026-07-13 : ne PAS ecraser le titre pose en SSR par le Worker
+    // (il porte le metier + la ville = ce sur quoi Google fait matcher la recherche locale).
+    if(!document.querySelector('meta[name="lx-ssr"]')){
+      document.title=SALON.nom+" — R\u00e9servation en ligne";
+    }
     
     // 2. Site config
     var sc=await sb.from("site_config").select("*").eq("salon_id",salonId).limit(1);
