@@ -1944,22 +1944,52 @@ async function loadInscriptionsLogForFunnel(){
   try{var r=await _sb.from('inscriptions_log').select('created_at,status,email').order('created_at',{ascending:false}).limit(500);window.INSCRIPTIONS_LOG=r.data||[];}catch(e){window.INSCRIPTIONS_LOG=[];}
 }
 async function loadClotures(){
-  try{var r=await _sb.from('z_closures').select('*').order('closure_date',{ascending:false}).limit(50);window.Z_CLOSURES=r.data||[];}catch(e){window.Z_CLOSURES=[];}
+  // FIX 2026-07-13 : la table 'z_closures' N'EXISTE PAS (table fantome). L'appel echouait,
+  // le catch retombait sur [] => la vue "Clotures Z" du panel etait TOUJOURS VIDE.
+  // La vraie table est 'clotures' (date_cloture, num, total_ca, nb_tickets, hash...).
+  // RLS : la policy salon_clotures_select autorise is_admin() => lecture cross-salons OK.
+  try{
+    var r=await _sb.from('clotures')
+      .select('id,salon_id,date_cloture,num,total_ca,total_ht,nb_tickets,nb_annulations,ecart_caisse,hash,timestamp_cloture')
+      .order('date_cloture',{ascending:false})
+      .order('num',{ascending:false})
+      .limit(50);
+    if(r.error) throw r.error;
+    window.Z_CLOSURES=r.data||[];
+  }catch(e){ window.Z_CLOSURES=[]; }
 }
 function rClotures(){
   if(!window.Z_CLOSURES){loadClotures().then(render);return '<div style="padding:20px;color:var(--text3)">Chargement…</div>';}
   var zs=window.Z_CLOSURES;
   var today=new Date().toISOString().slice(0,10);
-  var todayZ=zs.filter(function(z){return (z.closure_date||'').slice(0,10)===today;});
+  // FIX 2026-07-13 : colonnes reelles de 'clotures' (date_cloture / total_ca), pas 'z_closures'.
+  var todayZ=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===today;});
+  var totCA=zs.reduce(function(a,z){return a+(Number(z.total_ca)||0);},0);
+  var nbEcart=zs.filter(function(z){return Number(z.ecart_caisse||0)!==0;}).length;
   var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôtures</span></h1></div>';
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">Z aujourd\'hui</div><div class="kpi-value" style="color:var(--gold)">'+todayZ.length+'</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Total 50 derniers</div><div class="kpi-value" style="color:var(--blue)">'+zs.length+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">CA cumul\u00e9 (50 derniers)</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(totCA)+'</div></div>';
+  h+='<div class="kpi"><div class="kpi-label">\u00c9carts de caisse</div><div class="kpi-value" style="color:'+(nbEcart?'var(--red)':'var(--green)')+'">'+nbEcart+'</div></div>';
   h+='</div>';
-  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Date</th><th>Salon</th><th>CA TTC</th><th>Tickets</th><th>Hash</th></tr><tbody>';
+  if(!zs.length){
+    h+='<div class="card" style="padding:20px;color:var(--text3);font-size:13px">Aucune cl\u00f4ture Z trouv\u00e9e.</div>';
+    return h;
+  }
+  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Date</th><th>N\u00b0</th><th>Salon</th><th>CA TTC</th><th>Dont HT</th><th>Tickets</th><th>Annul.</th><th>\u00c9cart caisse</th><th>Hash</th></tr><tbody>';
   zs.forEach(function(z){
-    var s=gSalon(z.salon_id);
-    h+='<tr><td>'+fmtD(z.closure_date)+'</td><td>'+(s?s.nom:'?')+'</td><td style="font-family:var(--mono);color:var(--gold)">'+fmtM(z.total_ttc||0)+'</td><td>'+(z.nb_tickets||0)+'</td><td style="font-family:var(--mono);font-size:10px;color:var(--text3)">'+(z.hash||'').slice(0,12)+'…</td></tr>';
+    var sa=gSalon(z.salon_id);
+    var ec=Number(z.ecart_caisse||0);
+    h+='<tr><td>'+fmtD(z.date_cloture)+'</td>'
+      +'<td style="font-family:var(--mono)">#'+(z.num||'?')+'</td>'
+      +'<td>'+(sa?sa.nom:'?')+'</td>'
+      +'<td style="font-family:var(--mono);color:var(--gold)">'+fmtM(z.total_ca||0)+'</td>'
+      +'<td style="font-family:var(--mono);color:var(--text3)">'+fmtM(z.total_ht||0)+'</td>'
+      +'<td>'+(z.nb_tickets||0)+'</td>'
+      +'<td>'+(z.nb_annulations||0)+'</td>'
+      +'<td style="font-family:var(--mono);color:'+(ec!==0?'var(--red)':'var(--text3)')+'">'+(ec!==0?fmtM(ec):'\u2014')+'</td>'
+      +'<td style="font-family:var(--mono);font-size:10px;color:var(--text3)">'+String(z.hash||'').slice(0,12)+'\u2026</td></tr>';
   });
   h+='</tbody></table></div></div>';
   return h;

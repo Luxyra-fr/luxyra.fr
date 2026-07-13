@@ -8,7 +8,38 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400&family=Inter:wght@300;400;500;600;700;800&family=Nunito:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="lx-client.js"></script>
+<script src="/lx-client.js"></script>
+<script>
+/* ============================================================================
+   FIX 2026-07-13 — RESERVATION IMPOSSIBLE sur /<slug>/reserver ("Can't find variable: LX")
+   La balise de chargement de lx-client.js etait en chemin RELATIF. Sur l'URL propre
+   /excellence-coiffure/reserver, le navigateur le resolvait en
+   /excellence-coiffure/lx-client.js -> 404 -> window.LX jamais defini.
+   Or la reservation EXIGE un compte (renderBooking -> showAuthModal) :
+   LX.login()/LX.signup() levaient "LX is not defined" => AUCUNE reservation possible.
+   (Sur /excellence-coiffure, le chemin relatif tombait sur /lx-client.js => ca marchait.
+    D'ou un bug invisible depuis la home et fatal depuis le lien Google Business.)
+   -> Chemin ABSOLU. + Filet ci-dessous pour tout autre echec de chargement
+   (reseau, cache, proxy) : on recharge le script depuis la racine.
+   ============================================================================ */
+window._lxEnsure=function(){
+  try{
+    if(window.LX) return Promise.resolve(true);
+    if(window._lxLoadingP) return window._lxLoadingP;
+    window._lxLoadingP=new Promise(function(resolve){
+      var done=false;
+      function fin(){ if(done)return; done=true; resolve(!!window.LX); }
+      var sc=document.createElement("script");
+      sc.src="/lx-client.js?_r="+Date.now();
+      sc.onload=fin; sc.onerror=fin;
+      (document.head||document.documentElement).appendChild(sc);
+      setTimeout(fin,8000);
+    });
+    return window._lxLoadingP;
+  }catch(e){ return Promise.resolve(!!window.LX); }
+};
+if(!window.LX){ try{ window._lxEnsure(); }catch(e){} }
+</script>
 <script src="https://js.stripe.com/v3/"></script>
 <style>
 :root{--gold:#c8a84e;--gold-l:#e8d994;--bg:#0a0a0a;--bg2:#111;--bg3:#1a1a1e;--card-bg:linear-gradient(135deg,rgba(200,168,78,.035) 0%,rgba(255,255,255,.018) 50%,rgba(200,168,78,.025) 100%);--card-border:rgba(200,168,78,.12);--text:#f5f0e8;--text2:rgba(245,240,232,.6);--text3:rgba(245,240,232,.35);--green:#2d9a5e;--red:#c43838;--f1:'Playfair Display',serif;--f2:'Inter','Nunito','-apple-system','Segoe UI',sans-serif;--f3:'Cormorant Garamond',serif;--max:900px}
@@ -1125,6 +1156,8 @@ async function doClientRegister(){
   }
   var smsOk=document.getElementById("aRegSms")?document.getElementById("aRegSms").checked:false;
   var emOk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
+  if(!window.LX){ try{ await window._lxEnsure(); }catch(_e){} }
+  if(!window.LX){ showAuthError("Service de connexion momentan\u00e9ment indisponible. Rechargez la page, ou appelez le salon pour r\u00e9server."); return; }
   var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk});
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation du compte");return;}
   CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){}
@@ -1150,6 +1183,8 @@ async function doClientLogin(){
   var email=document.getElementById("aEmail").value.trim().toLowerCase();
   var pass=document.getElementById("aPass").value;
   if(!email||!pass){showAuthError("Remplissez email et mot de passe");return;}
+  if(!window.LX){ try{ await window._lxEnsure(); }catch(_e){} }
+  if(!window.LX){ showAuthError("Service de connexion momentan\u00e9ment indisponible. Rechargez la page, ou appelez le salon pour r\u00e9server."); return; }
   var res=await LX.login(email,pass);
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Email ou mot de passe incorrect");return;}
   CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){}
@@ -1180,7 +1215,8 @@ async function ensureClientSalon(clientId){
 
 function doClientLogout(){
   CLIENT=null;CLIENT_RDVS=[];
-  LX.logout();
+  try{ if(window.LX&&LX.logout) LX.logout(); }catch(_e){}
+  try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); }catch(_e){}
   try{sessionStorage.removeItem("cp_client");}catch(e){}
   renderSite();
 }
@@ -3149,6 +3185,8 @@ async function submitBooking(){
 // Save client profile
 async function saveClientProfile(){
   if(!CLIENT)return;
+  if(!window.LX){ try{ await window._lxEnsure(); }catch(_e){} }
+  if(!window.LX){ showAlert("Service momentan\u00e9ment indisponible. Rechargez la page.","error"); return; }
   var res=await LX.update({nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone});
   if(!res.ok){showAlert("Erreur: "+(res.data&&res.data.error?res.data.error:"mise \u00e0 jour impossible"),"error");return;}
   CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){}
