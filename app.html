@@ -29079,21 +29079,41 @@ function doDeleteTicket(id){
 }
 
 function modifReglement(id){
-  // NF525 (sécurisé) : la correction directe du mode de règlement est désactivée
-  // tant que la propagation multi-registres (tickets NF525 + appointments) n'est pas
-  // reconstruite et testée. Numérotation NF525 != numéro planning -> risque de viser
-  // le mauvais ticket. La procédure conforme qui fonctionne : avoir + ré-encaissement.
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
+  var cur=(a.met||"");
+  var isLocked=!!(window.LOCKED_DAYS&&window.LOCKED_DAYS[a.date]);
+  var mixte=(Array.isArray(a.payments)&&a.payments.length>1);
   var htm='<div class="mbox"><h2>Modifier le règlement</h2>';
   htm+='<div style="font-size:13px;margin-bottom:12px">Ticket <strong>#'+(a.tkNum||"--")+'</strong> — '+(Number(a.pr)||0).toFixed(2)+' € — Règlement actuel : <strong>'+(a.met||"--")+'</strong></div>';
-  htm+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-bottom:14px">';
-  htm+='Pour corriger le mode de règlement d\'un ticket encaissé, faites un <strong>avoir / annulation</strong> (motif obligatoire), puis <strong>ré-encaissez</strong> avec le bon mode. C\'est la procédure conforme NF525.';
-  htm+='</div>';
-  htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
-  htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">❌ Avoir / Annuler</button></div>';
+  if(isLocked||mixte){
+    htm+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-bottom:14px">';
+    if(isLocked)htm+='La journée est <strong>clôturée (Z)</strong> : le règlement ne peut plus être corrigé directement (NF525).<br><br>Faites un <strong>avoir / annulation</strong>, puis ré-encaissez.';
+    else htm+='Règlement <strong>mixte</strong> : correction via <strong>avoir + ré-encaissement</strong>.';
+    htm+='</div><div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
+    htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">❌ Avoir / Annuler</button></div>';
+  } else {
+    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Choisissez le nouveau mode. Le montant ne change pas, seul le règlement est corrigé (tracé au journal NF525).</div>';
+    htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    [{k:"Espèces",l:"💵 Espèces"},{k:"CB",l:"💳 Carte bancaire"},{k:"Chèque",l:"📝 Chèque"},{k:"Virement",l:"🏦 Virement"}].forEach(function(m){
+      if(m.k===cur)return;
+      htm+='<button class="btn" style="padding:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;font-weight:700" onclick="doCorrigerReglementRdv(\''+a.id+'\',\''+m.k+'\')">'+m.l+'</button>';
+    });
+    htm+='</div><button class="btn" style="width:100%;margin-top:12px;background:var(--bg)" onclick="cM()">Annuler</button>';
+  }
   htm+='</div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+async function doCorrigerReglementRdv(apptId, method){
+  try{
+    var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?(CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")):"caisse";
+    var r=await _sb.rpc('corriger_reglement_rdv',{p_appt_id:apptId,p_new_method:method,p_operateur:op});
+    if(r.error){ if(typeof toast==="function")toast("❌ "+r.error.message,"error"); return; }
+    for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ AP[i].met=method; AP[i].payments=[{amount:Number(AP[i].pr)||0, method:method}]; break; } }
+    cM();
+    if(typeof toast==="function")toast("✅ Règlement corrigé → "+method,"success");
+    if(typeof go==="function")go("tickets");
+  }catch(e){ if(typeof toast==="function")toast("❌ Erreur : "+(e.message||e),"error"); }
 }
 
 function doModifReglement(id){
