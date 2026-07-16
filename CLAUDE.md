@@ -791,3 +791,25 @@ Le site faisait `sb.from("rdv_online").insert(data).select()`. Le `.select()` = 
 - `last_login` (clients_luxyra) n'est rempli QUE par `lx-login` (connexion explicite). L'inscription (`lx-signup`) auto-connecte SANS le remplir → NULL pour les comptes qui n'ont jamais re-loggé. Normal.
 - Genre vide sur certains comptes : l'inscription rapide du site (`showAuthModal`) ne demande pas le genre ; seul `/compte` le demande. Genre optionnel.
 - Réseau sandbox Cowork : `api.cloudflare.com` ET `api.github.com` bloqués (proxy 403). Déploiement Worker = via push GitHub → workflow `deploy-worker.yml` (auto). Lecture API GitHub Actions impossible depuis le sandbox → vérifier l'onglet Actions manuellement.
+
+---
+
+## À TRAITER (noté 2026-07-16) — Clôture Z d'une journée OUBLIÉE
+
+**Problème constaté (Alexandre) :** que se passe-t-il si un salon oublie de clôturer le soir ?
+
+**Comportement actuel vérifié dans le code :**
+- `cloturerJournee()` (app.html ~L31261) filtre `a.date===TD` où `TD` = **date du jour**. Il n'y a **AUCUN sélecteur de date** de clôture. Donc le bouton « Clôturer » ferme **toujours la journée EN COURS**, jamais une journée passée.
+- Une journée oubliée reste **ouverte** : elle est seulement **signalée** par le cron `detect_z_journalier_manquant` (1h du matin) → action audit_log `NF525_Z_JOURNALIER_MANQUANT` → alerte mail monitoring. Mais **le bouton normal ne peut PAS la clôturer**.
+- Filet mensuel : `cloture_mensuelle_auto` (1er du mois 3h15) ferme le mois même si des Z quotidiens manquent.
+
+**Double risque identifié :**
+1. Une journée oubliée n'est **pas clôturable** proprement (le bouton ne cible que le jour même).
+2. **PIÈGE** : si on clique « Clôturer » le matin (croyant rattraper la veille), on ferme **aujourd'hui** trop tôt → le trigger `tickets_block_post_cloture` **bloque le reste des encaissements du jour en cours**.
+
+**Cadre NF525 (à confirmer avec expert-comptable) :** la norme n'interdit pas un Z fait a posteriori pour une journée oubliée ; ce qui compte = chaque journée finit par avoir son Z inaltérable, bons totaux, sans altération.
+
+**À concevoir à froid (avec accord Alexandre, PAS en urgence) :**
+- Permettre de clôturer une **journée passée précise** (fermer la veille oubliée avec SES tickets, sans toucher au jour en cours), déclenchable depuis l'alerte « Z manquant ».
+- Empêcher / avertir en cas de clôture du jour en cours en pleine journée (garde-fou UX contre le blocage prématuré).
+- Tester sur ticket bidon avant déploiement. Ne PAS improviser.
