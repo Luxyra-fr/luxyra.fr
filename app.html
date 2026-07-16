@@ -11321,6 +11321,7 @@ function _corrigerCollabVenteUI(apptId){
   h+='<label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Motif (optionnel)</label>';
   h+='<input id="ccvMotif" placeholder="Ex : erreur de saisie a l\'encaissement" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:13px;margin-bottom:14px">';
   h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM()">Annuler</button>';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#e8c873;border-color:rgba(200,168,78,.3)" onclick="modifReglement(\''+a.id+'\')">💳 Modifier règlement</button>';
   h+='<button class="btn bg" style="flex:1" onclick="doCorrigerCollabVente(\''+apptId+'\')">Valider la correction</button></div>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML=h;
@@ -29078,23 +29079,45 @@ function doDeleteTicket(id){
 }
 
 function modifReglement(id){
-  // FIX 2026-07-11 (NF525) : le mode de reglement d'un ticket SCELLE ne peut pas etre reecrit.
-  // L'ancien flux (doModifReglement) faisait un UPDATE de mode_paiement sur une ligne deja
-  // hashee -> interdit par la norme, et desormais REJETE par le trigger appointments_nf525_protect.
-  // La seule procedure conforme est la contre-passation : avoir/annulation puis re-encaissement
-  // avec le bon mode. 0 usage en production (aucun MODIF_REGLEMENT au journal).
+  // NF525 : correction du mode de reglement AUTORISEE avant la cloture Z (tracee au journal),
+  // via corriger_mode_paiement_num (ne touche QUE le mode, jamais le montant/hash).
+  // Apres cloture : interdit -> avoir + re-encaissement.
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
-  var htm='<div class="mbox"><h2>Modifier le r\u00e8glement</h2>';
-  htm+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-bottom:14px">';
-  htm+='Le mode de r\u00e8glement d\u0027un ticket d\u00e9j\u00e0 encaiss\u00e9 ne peut pas \u00eatre modifi\u00e9 (NF525 : ticket inalt\u00e9rable).<br><br>';
-  htm+='Pour corriger un r\u00e8glement, faites un <strong>avoir / annulation</strong> (motif obligatoire), puis r\u00e9-encaissez avec le bon mode de paiement.</div>';
-  htm+='<div style="font-size:13px;margin-bottom:8px">Ticket <strong>#'+(a.tkNum||"--")+'</strong> \u2014 '+(Number(a.pr)||0).toFixed(2)+' \u20ac \u2014 R\u00e8glement actuel : <strong>'+(a.met||"--")+'</strong></div>';
-  htm+='<div style="display:flex;gap:8px;margin-top:14px">';
-  htm+='<button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
-  htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">\u274c Avoir / Annuler</button>';
-  htm+='</div></div>';
+  var num=a.tkNum, cur=(a.met||"").toLowerCase();
+  var isLocked=!!(window.LOCKED_DAYS&&window.LOCKED_DAYS[a.date]);
+  var mixte=(cur==="mixte");
+  var htm='<div class="mbox"><h2>Modifier le règlement</h2>';
+  htm+='<div style="font-size:13px;margin-bottom:12px">Ticket <strong>#'+(num||"--")+'</strong> — '+(Number(a.pr)||0).toFixed(2)+' € — Règlement actuel : <strong>'+(a.met||"--")+'</strong></div>';
+  if(isLocked||mixte){
+    htm+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-bottom:14px">';
+    if(isLocked)htm+='La journée est <strong>clôturée (Z)</strong> : le règlement ne peut plus être corrigé directement (NF525).<br><br>Faites un <strong>avoir / annulation</strong> (motif obligatoire), puis ré-encaissez avec le bon mode.';
+    else htm+='Règlement <strong>mixte</strong> : la correction se fait par <strong>avoir + ré-encaissement</strong>.';
+    htm+='</div><div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
+    htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">❌ Avoir / Annuler</button></div>';
+  } else {
+    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Correction autorisée avant la clôture Z. Le montant reste identique, seul le mode change (tracé au journal NF525).</div>';
+    htm+='<div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Nouveau mode de règlement</div>';
+    htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+    [{k:"esp",l:"💵 Espèces"},{k:"cb",l:"💳 Carte bancaire"},{k:"cheque",l:"📝 Chèque"},{k:"vir",l:"🏦 Virement"}].forEach(function(m){
+      if(m.k===cur)return;
+      htm+='<button class="btn" style="padding:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;font-weight:700" onclick="doCorrigerReglement('+num+',\''+m.k+'\')">'+m.l+'</button>';
+    });
+    htm+='</div><button class="btn" style="width:100%;margin-top:12px;background:var(--bg)" onclick="cM()">Annuler</button>';
+  }
+  htm+='</div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+}
+async function doCorrigerReglement(num, mode){
+  try{
+    var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?(CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")):"caisse";
+    var r=await _sb.rpc('corriger_mode_paiement_num',{p_salon_id:_salonId,p_num:num,p_nouveau_mode:mode,p_operateur:op});
+    if(r.error){ if(typeof toast==="function")toast("❌ "+r.error.message,"error"); return; }
+    for(var i=0;i<AP.length;i++){ if(AP[i].tkNum===num){ AP[i].met=mode; break; } }
+    cM();
+    if(typeof toast==="function")toast("✅ Règlement corrigé → "+mode+" (tracé NF525)","success");
+    if(typeof go==="function")go("tickets");
+  }catch(e){ if(typeof toast==="function")toast("❌ Erreur : "+(e.message||e),"error"); }
 }
 
 function doModifReglement(id){
