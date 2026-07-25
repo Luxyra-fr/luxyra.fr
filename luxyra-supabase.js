@@ -2720,9 +2720,13 @@ async function saveCollaborateurs() {
   // PRÉSERVER une photo DB existante si la mémoire locale a img="" (race
   // condition entre 2 sessions / reload partiel). La suppression explicite
   // passe par clearStyImg → clearCollabPhoto(id) qui force img="" directement.
-  var existing = await _sb.from("collaborateurs").select("id,img,nom,initiales,couleur").eq("salon_id", _salonId);
+  // FIX : on récupère AUSSI horaires_overrides pour ne jamais écraser en base des
+  // dates personnalisées absentes de la mémoire locale (état périmé/cache) —
+  // cause de "le planning redevient comme avant" (overrides du 24/25/28-07 effacés).
+  var existing = await _sb.from("collaborateurs").select("id,img,nom,initiales,couleur,horaires_overrides").eq("salon_id", _salonId);
   var dbIds = {};
   var dbImg = {};
+  var dbOver = {};
   // FIX 2026-06-19 : signature nom|initiales|couleur -> id existant. Permet d'ADOPTER
   // une ligne déjà en base au lieu d'INSÉRER un clone quand l'id en mémoire ne matche
   // pas (état transitoire au démarrage : T hydraté depuis le cache avant le load DB,
@@ -2733,6 +2737,7 @@ async function saveCollaborateurs() {
       var ex = existing.data[e];
       dbIds[ex.id] = true;
       dbImg[ex.id] = ex.img || "";
+      dbOver[ex.id] = ex.horaires_overrides || {};
       var sig = (ex.nom||"")+"|"+(ex.initiales||"")+"|"+(ex.couleur||"");
       if (dbBySig[sig] === undefined) dbBySig[sig] = ex.id;
     }
@@ -2753,7 +2758,19 @@ async function saveCollaborateurs() {
       couleur: c.c, img: preservedImg, horaires: c.hrs || {},
       pause: c.pause || null,
       // FIX 2026-05-12 : préserver horaires_overrides aussi dans le bulk save
-      horaires_overrides: c.hrsOver || {},
+      // FIX : FUSION DB + mémoire (au lieu d'écraser). Une sauvegarde partie d'un état
+      // local périmé ne peut plus effacer des dates personnalisées enregistrées en base.
+      // La mémoire reste prioritaire pour les dates qu'elle connaît (modif volontaire).
+      horaires_overrides: (function(){
+        var _mem = c.hrsOver || {};
+        var _db  = (c.id && dbOver[c.id]) ? dbOver[c.id] : {};
+        var _merged = {};
+        try{
+          Object.keys(_db).forEach(function(k){ _merged[k] = _db[k]; });
+          Object.keys(_mem).forEach(function(k){ _merged[k] = _mem[k]; });
+        }catch(_e){ _merged = _mem; }
+        return _merged;
+      })(),
       date_entree: c.dateEntree || null,
       date_depart: c.dateDepart || null,
       inactif: c.inactif === true,
