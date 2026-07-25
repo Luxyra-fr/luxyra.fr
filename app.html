@@ -8792,6 +8792,8 @@ document.addEventListener("visibilitychange",function(){
     if(typeof reloadFromSupabase!=="function") return;
     if(/^(home|stats|accounting|planning)$/.test(window._currentPage||"")){ reloadFromSupabase("appointments"); }
     else if(/^(clients|detail)$/.test(window._currentPage||"")){ reloadFromSupabase("clients"); }
+    // Recharge aussi les horaires collaborateurs (mode Personnalisés) au retour sur le planning
+    if(window._currentPage==="planning"){ try{reloadFromSupabase("collaborateurs");}catch(_e){} }
   }catch(_e){}
 });
 window._rdvPollInterval=setInterval(function(){
@@ -32916,6 +32918,11 @@ function setupRealtime(){
       console.log("Realtime: client change",payload.eventType);
       reloadFromSupabase("clients");
     })
+    .on("postgres_changes",{event:"*",schema:"public",table:"collaborateurs",filter:"salon_id=eq."+_salonId},function(payload){
+      // Horaires collaborateurs (dont mode Personnalisés) modifiés sur un autre appareil → resync direct
+      console.log("Realtime: collaborateur change",payload.eventType);
+      reloadFromSupabase("collaborateurs");
+    })
     .on("postgres_changes",{event:"INSERT",schema:"public",table:"avis_salon",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: nouvel avis",payload.new);
       var av=payload.new;
@@ -33156,6 +33163,23 @@ async function reloadFromSupabase(table){
             actif:c.actif,fid:c.points_fidelite||0,
             smsOk:c.sms_ok,emOk:c.email_ok,fiches:c.fiches||[],
             clientBeautyproId:c.client_luxyra_id||null};
+        });
+      }
+    }
+    else if(table==="collaborateurs"){
+      // FIX : recharge les collaborateurs (dont horaires_overrides / mode Personnalisés) depuis la base.
+      // Manquait : un changement d'horaire perso ne se voyait qu'après un redémarrage complet.
+      // Même mapping que loadSalonData (luxyra-supabase.js) pour rester cohérent.
+      var r=await _sb.from("collaborateurs").select("*").eq("salon_id",_salonId).order("id");
+      if(r.data){
+        T=r.data.map(function(c){
+          return { id:c.id, n:c.nom, i:c.initiales, c:c.couleur, img:c.img||"",
+                   hrs:c.horaires||{}, pause:c.pause||null,
+                   hrsOver:c.horaires_overrides||{},
+                   dateEntree:c.date_entree||null, dateDepart:c.date_depart||null,
+                   inactif:c.inactif===true,
+                   photoVisible:c.photo_visible!==false,
+                   competences:c.competences||{all:true} };
         });
       }
     }
