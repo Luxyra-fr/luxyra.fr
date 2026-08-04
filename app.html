@@ -15571,7 +15571,7 @@ function rDetail(){
         var f=c.fiches[i];
         h+='<div style="padding:10px 0;border-bottom:1px solid var(--border2)">';
         h+='<div style="font-weight:700;font-size:13px">'+fmt(f.date)+' \u2014 '+f.collab+'</div>';
-        h+='<textarea rows="2" style="width:100%;margin-top:4px;border:1px solid var(--border2);border-radius:8px;padding:8px;font-size:13px" onchange="gC(\''+c.id+'\').fiches['+i+'].txt=this.value">'+f.txt+'</textarea>';
+        h+='<textarea rows="2" style="width:100%;margin-top:4px;border:1px solid var(--border2);border-radius:8px;padding:8px;font-size:13px" onchange="_lxEditFicheTxt(\''+c.id+'\','+i+',this.value)">'+f.txt+'</textarea>';
         h+='</div>';
       }
     }
@@ -28212,6 +28212,16 @@ function doFinalPayExecute(method){
   // d\u00e9j\u00e0 interpol\u00e9 dans le HTML \u2014 donc safe.
   _tk={step:0,stId:null,cId:null,items:[],comment:"",remise:0};
 }
+// FIX 2026-08-04 : editer le texte d'une fiche existante (onglet Fiches de la fiche
+// client) PERSISTE desormais. Avant, l'onchange faisait seulement
+// gC(cId).fiches[i].txt=... en memoire -> l'edition etait perdue au prochain
+// reloadFromSupabase("clients"). Meme classe de bug que le modal post-ticket.
+function _lxEditFicheTxt(cId,i,val){
+  var cl=(typeof gC==="function")?gC(cId):null;
+  if(!cl||!cl.fiches||!cl.fiches[i])return;
+  cl.fiches[i].txt=val;
+  if(typeof saveClient==="function")saveClient(cl);
+}
 function askFicheTech(cId){
   var cl=gC(cId);if(!cl){cM();go("home");return;}
   var hasExisting=cl.fiche?"mettre \u00e0 jour":"cr\u00e9er";
@@ -28338,6 +28348,12 @@ function saveFicheTech(cId){
   var fiche={txt:texte,date:TD,collab:sty?sty.n:"",collab_id:sty?sty.id:null};
   if(!cl.fiches)cl.fiches=[];
   cl.fiches.push(fiche);
+  // FIX 2026-08-04 : PERSISTER la fiche. Le modal post-ticket poussait la fiche en
+  // memoire et affichait "Fiche enregistree" SANS jamais appeler saveClient -> au
+  // prochain reloadFromSupabase("clients") (poll 30s / realtime / refocus) CL etait
+  // remplace depuis la base et la fiche non persistee disparaissait. Miroir exact de
+  // saveFicheTechDetail (chemin fiche client), qui, lui, persiste.
+  if(typeof saveClient==="function")saveClient(cl);
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
   h2+='<h2>Fiche enregistr\u00e9e</h2>';
