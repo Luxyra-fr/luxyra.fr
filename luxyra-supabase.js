@@ -760,6 +760,131 @@ function lxMapApptRow(a) {
 }
 if (typeof window !== "undefined") window.lxMapApptRow = lxMapApptRow;
 
+// ============================================================
+// MAPPER UNIQUE DB -> CL (clients)
+// FIX 2026-08-04 : la conversion ligne DB -> objet client existait en DOUBLE
+// (loadSalonData ici, ET une copie TRONQUEE dans reloadFromSupabase("clients")
+// cote app.html). La copie tronquee oubliait :
+//   - le DEBALLAGE de fiche_tech (formules couleur, photos avant/apres,
+//     allergies, type de peau/ongles/bien-etre... = _FICHE_TECH_KEYS)
+//   - acompteOnline, acqSrc, acqParrain, famille_ids
+// Or reloadFromSupabase("clients") fait CL = data.map(...) = REMPLACEMENT
+// INTEGRAL (poll 30 s / realtime / refocus) et saveClient reconstruit
+// fiche_tech A PARTIR DE LA MEMOIRE -> apres un simple resync, la sauvegarde
+// suivante ecrivait fiche_tech={}, acompte_online='defaut', famille_ids=[],
+// acquisition_*=null => EFFACEMENT EN BASE, en silence.
+// Un seul mapper partage par les deux chemins => impossible de re-diverger.
+// (Meme remede que lxMapApptRow, commit 4e3b515.)
+// ============================================================
+function lxMapClientRow(c) {
+  var obj = {
+    id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
+    ph: c.telephone, ph2: c.telephone2, em: c.email,
+    adr: c.adresse, cp: c.cp, ville: c.ville, ddn: c.date_naissance,
+    cr: c.created_at ? c.created_at.slice(0,10) : "",
+    no: c.notes, natChev: c.nature_cheveux, typeChev: c.type_cheveux,
+    detChev: c.details_cheveux, collab: c.collab_pref,
+    actif: c.actif, fid: c.points_fidelite,
+    smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
+    clientBeautyproId: c.client_luxyra_id || null,
+    acompteOnline: c.acompte_online || 'defaut',
+    acqSrc: c.acquisition_source || null,
+    acqParrain: c.acquisition_parrain || null,
+    famille_ids: Array.isArray(c.famille_ids) ? c.famille_ids : []
+  };
+  // Deballe la fiche technique etendue (peau, ongles, bien-etre, formules
+  // couleur, photos...) sur l'objet client : le code UI lit directement
+  // c.typePeau / c.formules / c.photos / etc.
+  if (c.fiche_tech && typeof c.fiche_tech === "object") {
+    for (var k in c.fiche_tech) {
+      if (Object.prototype.hasOwnProperty.call(c.fiche_tech, k)) {
+        obj[k] = c.fiche_tech[k];
+      }
+    }
+  }
+  return obj;
+}
+if (typeof window !== "undefined") window.lxMapClientRow = lxMapClientRow;
+
+// ============================================================
+// MAPPER UNIQUE DB -> RDV_ONLINE
+// FIX 2026-08-04 : cette conversion existait en TRIPLE (loadSalonData ici, le merge
+// de reloadFromSupabase("rdv_online") et le push du poll 30 s, tous deux dans
+// app.html), avec TROIS listes de champs DIFFERENTES. Le merge de reloadFromSupabase
+// fait window.RDV_ONLINE = data.map(...) = REMPLACEMENT INTEGRAL -> apres la moindre
+// reservation/annulation en ligne, il effacait en memoire : email, luxyraId,
+// collabNom, salonId, confirmedAt, acompteRembourse, refundedAt, stripePaymentId et
+// tout le bloc empreinte. Consequence concrete : un acompte REMBOURSE redevenait
+// "net recu" dans le bordereau Stripe (regression silencieuse du fix bc032d1) et le
+// RDV ne se rattachait plus a la fiche cliente (_lxResolveClientId lit email/luxyraId).
+// Ce mapper est l'UNION STRICTE des trois anciennes versions (aucun champ perdu).
+// ============================================================
+function lxMapRdvOnlineRow(r) {
+  return {
+    id: r.id, salonId: r.salon_id,
+    nom: r.client_nom, prenom: r.client_prenom, tel: r.client_tel, email: r.client_email,
+    luxyraId: r.client_luxyra_id || null,
+    svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
+    items: r.items || null,
+    collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
+    date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
+    duree: r.duree_minutes,
+    acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye,
+    acompteRembourse: r.acompte_rembourse || false,
+    refundedAt: r.refunded_at || null,
+    stripePaymentId: r.payment_intent_id || null,
+    status: r.status, message: r.message,
+    createdAt: r.created_at, confirmedAt: r.confirmed_at,
+    isOnline: true,
+    paymentIntentId: r.payment_intent_id || null,
+    empreinteStatus: r.empreinte_status || "none",
+    empreinteAmount: r.empreinte_amount ? Number(r.empreinte_amount) : null,
+    empreinteHeldAt: r.empreinte_held_at || null,
+    empreinteCapturedAt: r.empreinte_captured_at || null,
+    empreinteReleasedAt: r.empreinte_released_at || null,
+    modification_demandee: r.modification_demandee,
+    modification_date: r.modification_date,
+    modification_heure: r.modification_heure,
+    modification_message: r.modification_message,
+    modification_status: r.modification_status,
+    cancelled_by: r.cancelled_by, cancel_reason: r.cancel_reason, cancelled_at: r.cancelled_at
+  };
+}
+if (typeof window !== "undefined") window.lxMapRdvOnlineRow = lxMapRdvOnlineRow;
+
+// ============================================================
+// ECRIVAIN DEDIE des colonnes top-level de `salons`
+// FIX 2026-08-04 : deux `saveSalonConfig` coexistaient (ici et dans app.html).
+// app.html etant charge APRES, sa version ecrasait celle-ci -> la seule qui savait
+// ecrire nom/adresse/tel/email/siret/tva/logo/taux_tva/metier/... etait DU CODE MORT.
+// Resultat : "✅ Infos enregistrees" et "✅ Taux de TVA modifie" s'affichaient, mais
+// RIEN n'etait ecrit -> retour aux anciennes valeurs au rechargement.
+// On n'ajoute PAS ces colonnes au payload generique de saveSalonConfig (appele depuis
+// des dizaines d'endroits) : un seul ecrivain explicite, appele par les 2 ecrans
+// concernes, avec les valeurs VALIDEES. Evite notamment de reecrire `taux_tva` par
+// effet de bord (le loader fait `salon.taux_tva || 20` : un salon en franchise de TVA
+// a 0 % serait repasse a 20 % => corruption fiscale).
+// ============================================================
+function lxSaveSalonColumns(patch) {
+  try {
+    if (!_isOnline || !_salonId || !patch) return Promise.resolve();
+    var data = {};
+    for (var k in patch) {
+      if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
+      var v = patch[k];
+      if (v === undefined || v === null) continue;      // jamais de NULL par omission
+      if (typeof v === "number" && !isFinite(v)) continue; // jamais de NaN
+      data[k] = v;
+    }
+    if (Object.keys(data).length === 0) return Promise.resolve();
+    return _sb.from("salons").update(data).eq("id", _salonId).then(function(res){
+      if (res && res.error) console.warn("lxSaveSalonColumns:", res.error.message);
+      return res;
+    }, function(e){ console.warn("lxSaveSalonColumns exception:", e); });
+  } catch (e) { console.warn("lxSaveSalonColumns threw:", e); return Promise.resolve(); }
+}
+if (typeof window !== "undefined") window.lxSaveSalonColumns = lxSaveSalonColumns;
+
 async function loadSalonData() {
   if (!_sb || !_userId) { startOffline(); return; }
   try{
@@ -845,7 +970,9 @@ async function loadSalonData() {
       if(new Date()>freeEnd){
         // Free plan expired, revert to trial
         salon.is_free=false;
-        _sb.from("salons").update({is_free:false}).eq("id",salon.id);
+        // FIX 2026-08-04 : requete PARESSEUSE -> sans .then()/await le client Supabase ne
+    // l'envoie JAMAIS. Le salon restait "offert" a vie en base apres expiration du plan.
+    _sb.from("salons").update({is_free:false}).eq("id",salon.id).then(function(){},function(){});
       }
     }
     // If still free, skip trial/payment checks
@@ -968,7 +1095,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   if(typeof cfg[k] !== "undefined" && typeof window.CAISSE_DATA[k] === "undefined"){
     window.CAISSE_DATA[k] = cfg[k];
   }
-});if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();if(Array.isArray(cfg.categories_services))window._cfgCatsSvc=cfg.categories_services.slice();if(Array.isArray(cfg.categories_forfaits))window._cfgCatsForf=cfg.categories_forfaits.slice();if(typeof cfg.facebookUrl==="string")SALON_CONFIG.facebookUrl=cfg.facebookUrl;if(typeof cfg.instagramUrl==="string")SALON_CONFIG.instagramUrl=cfg.instagramUrl;if(typeof cfg.tiktokUrl==="string")SALON_CONFIG.tiktokUrl=cfg.tiktokUrl;}catch(e){}}
+});if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();if(Array.isArray(cfg.categories_services))window._cfgCatsSvc=cfg.categories_services.slice();if(Array.isArray(cfg.categories_forfaits))window._cfgCatsForf=cfg.categories_forfaits.slice();if(typeof cfg.facebookUrl==="string")SALON_CONFIG.facebookUrl=cfg.facebookUrl;if(typeof cfg.instagramUrl==="string")SALON_CONFIG.instagramUrl=cfg.instagramUrl;if(typeof cfg.tiktokUrl==="string")SALON_CONFIG.tiktokUrl=cfg.tiktokUrl;/* FIX 2026-08-04 : `domicile` (zone couverte, gratuit jusqu'a X km, type de tarif, forfait, prix/km) etait ECRIT dans config_json par saveSalonConfig mais JAMAIS RELU -> tous les reglages "deplacement a domicile" revenaient aux valeurs par defaut {type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:5} a chaque rechargement. */if(cfg.domicile&&typeof cfg.domicile==="object")SALON_CONFIG.domicile=cfg.domicile;}catch(e){}}
   // Defaults if not loaded from cfg
   if(!SALON_CONFIG.validiteDevis) SALON_CONFIG.validiteDevis = 30;
 
@@ -1094,37 +1221,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     // qui fera un fetch ciblé sur le serveur.
     var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom").limit(100000);
     if (clRes.data) {
-      CL = clRes.data.map(function(c) {
-        var obj = {
-          id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
-          ph: c.telephone, ph2: c.telephone2, em: c.email,
-          adr: c.adresse, cp: c.cp, ville: c.ville, ddn: c.date_naissance,
-          cr: c.created_at ? c.created_at.slice(0,10) : "",
-          no: c.notes, natChev: c.nature_cheveux, typeChev: c.type_cheveux,
-          detChev: c.details_cheveux, collab: c.collab_pref,
-          actif: c.actif, fid: c.points_fidelite,
-          smsOk: c.sms_ok, emOk: c.email_ok, fiches: c.fiches || [],
-          clientBeautyproId: c.client_luxyra_id || null,
-          acompteOnline: c.acompte_online || 'defaut',
-          // Acquisition source (Quick Win 2026-05-06)
-          acqSrc: c.acquisition_source || null,
-          acqParrain: c.acquisition_parrain || null,
-          // Liens famille (mai 2026)
-          famille_ids: Array.isArray(c.famille_ids) ? c.famille_ids : []
-        };
-        // Déballe la fiche technique étendue (peau, ongles, bien-être,
-        // formules couleur, photos…) sur l'objet client. Le code UI
-        // existant lit directement c.typePeau / c.formules / c.photos /
-        // etc. — pas besoin de toucher au rendu.
-        if (c.fiche_tech && typeof c.fiche_tech === "object") {
-          for (var k in c.fiche_tech) {
-            if (Object.prototype.hasOwnProperty.call(c.fiche_tech, k)) {
-              obj[k] = c.fiche_tech[k];
-            }
-          }
-        }
-        return obj;
-      });
+      // MAPPER UNIQUE partage avec reloadFromSupabase("clients") (voir lxMapClientRow).
+      CL = clRes.data.map(lxMapClientRow);
     }
   } catch(e) { console.warn("[loadSalonData] clients skipped", e); }
 
@@ -1166,30 +1264,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   // pas besoin d'être en mémoire. Si plus tard nécessaire, lazy load via fetch ciblé.
   var roRes = await _sb.from("rdv_online").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false }).limit(500);
   if (roRes.data) {
-    window.RDV_ONLINE = roRes.data.map(function(r) {
-      return {
-        id: r.id, salonId: r.salon_id,
-        nom: r.client_nom, prenom: r.client_prenom, tel: r.client_tel, email: r.client_email,
-        luxyraId: r.client_luxyra_id || null,
-        svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
-        items: r.items || null, // multi-prestation : array d'items si booking multi, sinon null
-        collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
-        date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
-        duree: r.duree_minutes,
-        acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye,
-        acompteRembourse: r.acompte_rembourse || false, refundedAt: r.refunded_at || null, stripePaymentId: r.payment_intent_id || null,
-        status: r.status, message: r.message,
-        createdAt: r.created_at, confirmedAt: r.confirmed_at,
-        isOnline: true,
-        // Empreinte bancaire (mai 2026)
-        paymentIntentId: r.payment_intent_id || null,
-        empreinteStatus: r.empreinte_status || "none",
-        empreinteAmount: r.empreinte_amount ? Number(r.empreinte_amount) : null,
-        empreinteHeldAt: r.empreinte_held_at || null,
-        empreinteCapturedAt: r.empreinte_captured_at || null,
-        empreinteReleasedAt: r.empreinte_released_at || null
-      };
-    });
+    // MAPPER UNIQUE partage avec app.html (voir lxMapRdvOnlineRow).
+    window.RDV_ONLINE = roRes.data.map(lxMapRdvOnlineRow);
     // FIX 2026-05-27 (v2) : la creation des fiches manquantes pour les clients en ligne est
     // DEPORTEE hors du demarrage (un await en boucle ici bloquait l'ecran de chargement).
     // C'est le rafraichissement periodique _lxEnsureFichesForOnlineAppts (non bloquant) qui s'en charge.
@@ -1692,13 +1768,19 @@ async function saveClient(client) {
     actif: client.actif, points_fidelite: client.fid,
     sms_ok: client.smsOk, email_ok: client.emOk, fiches: client.fiches || [],
     acompte_online: client.acompteOnline || 'defaut',
-    fiche_tech: ft,
     // Acquisition source (Quick Win 2026-05-06) — optionnel, NULL si pas renseigné
     acquisition_source: client.acqSrc || null,
     acquisition_parrain: client.acqParrain || null,
     // Liens famille (mai 2026) : array d'IDs UUID des clients liés
     famille_ids: client.famille_ids || []
   };
+  // CEINTURE + BRETELLES (FIX 2026-08-04) : n'ecrire `fiche_tech` QUE s'il porte
+  // reellement du contenu. `ft` est reconstruit depuis la MEMOIRE ; si un jour un
+  // chemin de chargement oubliait de deballer fiche_tech, `ft` vaudrait {} et cette
+  // colonne serait ECRASEE (formules couleur, photos avant/apres...). Cle absente du
+  // payload => l'upsert PostgREST ne touche pas la colonne (meme garde que ticket_html).
+  if (Object.keys(ft).length > 0) data.fiche_tech = ft;
+
   // FIX 2026-05-12 : upsert avec id explicite (U() génère un UUID stable
   // dès la création) → INSERT ou UPDATE selon existence du PK. Plus de
   // mutation d'id, plus de race condition.

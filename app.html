@@ -8806,7 +8806,7 @@ window._rdvPollInterval=setInterval(function(){
       else if(/^(clients|detail)$/.test(window._currentPage||"")){ try{reloadFromSupabase("clients");}catch(_e){} }
     }
     var today=new Date().toISOString().slice(0,10);
-    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
+    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
         var newCount=0;var newRdvCount=0;var newEvents=[];
         r.data.forEach(function(rdv){
@@ -8828,7 +8828,9 @@ window._rdvPollInterval=setInterval(function(){
             if(rdv.status==="cancelled"||rdv.status==="cancelled_by_client"||rdv.status==="done"||rdv.status==="refused"){_lxRemoveOnlineFromAP(rdv.id);}
           }
           if(!exists){
-            window.RDV_ONLINE.push({id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,luxyraId:rdv.client_luxyra_id||null,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});
+            // FIX 2026-08-04 : MAPPER UNIQUE (le select ci-dessus a ete complete en
+            // consequence) -> plus de 3e liste de champs divergente.
+            window.RDV_ONLINE.push((typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow(rdv):{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,tel:rdv.client_tel,email:rdv.client_email,luxyraId:rdv.client_luxyra_id||null,svcId:rdv.service_id,svcNom:rdv.service_nom,svcPrix:Number(rdv.service_prix),items:rdv.items||null,collabId:rdv.collaborateur_id,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,duree:rdv.duree_minutes,status:rdv.status,createdAt:rdv.created_at,isOnline:true,acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,modification_demandee:rdv.modification_demandee,modification_date:rdv.modification_date,modification_heure:rdv.modification_heure,modification_message:rdv.modification_message,modification_status:rdv.modification_status,cancelled_by:rdv.cancelled_by,cancel_reason:rdv.cancel_reason,cancelled_at:rdv.cancelled_at,paymentIntentId:rdv.payment_intent_id||null,empreinteStatus:rdv.empreinte_status||"none",empreinteAmount:rdv.empreinte_amount?Number(rdv.empreinte_amount):null,empreinteHeldAt:rdv.empreinte_held_at||null,empreinteCapturedAt:rdv.empreinte_captured_at||null,empreinteReleasedAt:rdv.empreinte_released_at||null});
             // FIX 2026-05-23 : ne pas annoncer "Nouveau RDV" pour un RDV deja annule/termine/refuse
             // (reouverture de l'app -> RDV_ONLINE vide -> un RDV annule etait re-flashe comme nouveau)
             if(rdv.status==="pending"||rdv.status==="confirmed"){
@@ -12165,6 +12167,19 @@ function saveSalonInfo(){
   if(S.logo){var hl=document.getElementById("hlogo");if(hl)hl.src=S.logo;}
   // Save to Supabase
   if(typeof saveSalonConfig==="function")saveSalonConfig();
+  // FIX 2026-08-04 : saveSalonConfig n'ecrit QUE config_json (+show_tva_ticket). Les colonnes
+  // top-level de `salons` n'avaient plus AUCUN ecrivain cote app (la fonction qui savait le
+  // faire, dans luxyra-supabase.js, est ecrasee par celle d'app.html chargee apres) -> le
+  // toast "Infos enregistrees" mentait : nom, adresse, tel, email, SIRET, n TVA et logo
+  // revenaient a l'ancien au rechargement. Ecriture explicite, sans toucher taux_tva.
+  if(typeof window.lxSaveSalonColumns==="function"){
+    window.lxSaveSalonColumns({
+      nom:SALON_CONFIG.nom, sous_titre:SALON_CONFIG.sousTitre, logo:SALON_CONFIG.logo,
+      adresse:SALON_CONFIG.adresse, cp:SALON_CONFIG.cp, ville:SALON_CONFIG.ville,
+      tel:SALON_CONFIG.tel, email:SALON_CONFIG.email,
+      siret:SALON_CONFIG.siret, tva:SALON_CONFIG.tva
+    });
+  }
   // Confirmation
   var notif=document.createElement("div");
   notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#2d9a5e;color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)";
@@ -14014,6 +14029,11 @@ function saveTVA(){
   SALON_CONFIG.tauxTVA=val;
   if(window.SALON)window.SALON.tauxTVA=val;
   if(typeof saveSalonConfig==="function")saveSalonConfig();
+  // FIX 2026-08-04 : `salons.taux_tva` n'etait ECRIT NULLE PART depuis l'app -> la modale
+  // annoncait "Taux de TVA modifie" mais l'ancien taux revenait au rechargement (impact
+  // fiscal direct sur les tickets et bandes Z suivants). `val` est deja validee (0-30) :
+  // on ecrit la valeur SAISIE, jamais une valeur reconstruite depuis la memoire.
+  if(typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({taux_tva:val});
   auditLog("CONFIG_TVA","Taux TVA modifie: "+val+"%");
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
@@ -14061,7 +14081,11 @@ function editPhases(svcId){
   htm+='<button class="btn bs bg" onclick="gS('+svcId+').phases.push({t:\'w\',d:15,l:\'Travail\'});editPhases('+svcId+')">+ Phase travail</button>';
   htm+='<button class="btn bs" style="background:var(--orange-bg);color:var(--orange)" onclick="gS('+svcId+').phases.push({t:\'p\',d:20});editPhases('+svcId+')">+ Pause</button>';
   htm+='</div>';
-  htm+='<button class="btn bk" style="margin-top:14px" onclick="cM();go(\'services\')">Valider</button></div>';
+  // FIX 2026-08-04 : les handlers de cet editeur mutent gS(svcId).phases DIRECTEMENT en
+  // memoire, et "Valider" ne faisait que fermer la modale -> aucune sauvegarde (saveServices
+  // ecrit pourtant bien la colonne `phases`). Fonction aujourd'hui sans appelant (dormante),
+  // corrigee avant toute remise en service.
+  htm+='<button class="btn bk" style="margin-top:14px" onclick="if(typeof saveServices===\'function\')saveServices();cM();go(\'services\')">Valider</button></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();go(\'services\')"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
@@ -33098,7 +33122,11 @@ async function reloadFromSupabase(table){
       }
     }
     else if(table==="rdv_online"){
-      var r=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(50);
+      var _mapRo=(typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow:null;
+      if(!_mapRo){ console.warn("[reloadFromSupabase] lxMapRdvOnlineRow indisponible - merge rdv_online ignore"); return; }
+      // limit 500 (et non 50) = meme fenetre que le chargement initial : au-dela, les RDV en
+      // ligne les plus anciens disparaissaient de la memoire et tronquaient les exports.
+      var r=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(500);
       if(r.data){
         // Check for new notifications BEFORE updating RDV_ONLINE
         var oldIds={};(window.RDV_ONLINE||[]).forEach(function(o){oldIds[o.id]=o;});
@@ -33152,34 +33180,32 @@ async function reloadFromSupabase(table){
           }
         });
         
-        window.RDV_ONLINE=r.data.map(function(r){
-          return{id:r.id,nom:r.client_nom,prenom:r.client_prenom,tel:r.client_tel,
-            svcId:r.service_id,svcNom:r.service_nom,svcPrix:Number(r.service_prix),
-            items:r.items||null,duree:r.duree_minutes,
-            collabId:r.collaborateur_id,date:r.date_rdv,
-            heure:r.heure_rdv?r.heure_rdv.slice(0,5):null,
-            acompte:Number(r.acompte_montant),acomptePaye:r.acompte_paye,
-            status:r.status,message:r.message,createdAt:r.created_at,isOnline:true,
-            modification_demandee:r.modification_demandee,modification_date:r.modification_date,
-            modification_heure:r.modification_heure,modification_status:r.modification_status};
-        });
+        // FIX 2026-08-04 : MAPPER UNIQUE `lxMapRdvOnlineRow` (union stricte des 3 anciennes
+        // copies). Avant, ce remplacement integral effacait email/luxyraId/collabNom/salonId/
+        // confirmedAt/acompteRembourse/refundedAt/stripePaymentId + tout le bloc empreinte
+        // -> un acompte REMBOURSE recomptait comme "net recu" dans le bordereau Stripe.
+        window.RDV_ONLINE=r.data.map(_mapRo);
         updateNotifBadge();
       }
     }
     else if(table==="clients"){
+      // FIX 2026-08-04 : ce merge utilise desormais le MAPPER UNIQUE `lxMapClientRow`
+      // (luxyra-supabase.js), le MEME que le chargement initial `loadSalonData`. Avant, il
+      // avait sa PROPRE conversion DB->CL, TRONQUEE : pas de deballage de `fiche_tech`
+      // (formules couleur, photos avant/apres, allergies, peau/ongles/bien-etre), pas de
+      // `acompteOnline`, `acqSrc`, `acqParrain`, `famille_ids`.
+      // Comme ce bloc fait CL = data.map(...) = REMPLACEMENT INTEGRAL (poll 30 s / realtime
+      // / refocus) et que `saveClient` reconstruit `fiche_tech` A PARTIR DE LA MEMOIRE, la
+      // 1re sauvegarde client qui suivait un resync ecrivait fiche_tech={},
+      // acompte_online='defaut', famille_ids=[], acquisition_*=null => EFFACEMENT EN BASE,
+      // en silence (ex. le simple +1 point de fidelite a l'encaissement suffisait).
+      // Garde-fou : si un luxyra-supabase.js perime (cache) ne fournit pas le mapper, on ne
+      // merge PAS avec un mapping degrade (donnees perimees < donnees effacees).
+      var _mapCl=(typeof window.lxMapClientRow==="function")?window.lxMapClientRow:null;
+      if(!_mapCl){ console.warn("[reloadFromSupabase] lxMapClientRow indisponible - merge clients ignore"); return; }
       var r=await _sb.from("clients").select("*").eq("salon_id",_salonId).order("nom");
       if(r.data){
-        CL=r.data.map(function(c){
-          return{id:c.id,nom:c.nom,pre:c.prenom,sex:c.sexe,
-            ph:c.telephone,ph2:c.telephone2,em:c.email,
-            adr:c.adresse,cp:c.cp,ville:c.ville,ddn:c.date_naissance,
-            cr:c.created_at?c.created_at.slice(0,10):"",
-            no:c.notes,natChev:c.nature_cheveux,typeChev:c.type_cheveux,
-            detChev:c.details_cheveux,collab:c.collab_pref,
-            actif:c.actif,fid:c.points_fidelite||0,
-            smsOk:c.sms_ok,emOk:c.email_ok,fiches:c.fiches||[],
-            clientBeautyproId:c.client_luxyra_id||null};
-        });
+        CL=r.data.map(_mapCl);
       }
     }
     else if(table==="collaborateurs"){
