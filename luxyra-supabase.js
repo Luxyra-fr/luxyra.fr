@@ -1745,6 +1745,34 @@ function _ensureUuidId(entity) {
 if (typeof window !== "undefined") window._ensureUuidId = _ensureUuidId;
 
 // Sauvegarder un client (create ou update)
+// ============================================================
+// REMONTEE UNIFORME DES ECHECS DE SAUVEGARDE (FIX 2026-08-04)
+// Constat : seuls saveAppointment et saveTicketToDb journalisaient un DB_ERROR
+// (seule action, avec NF525_SEAL_TRIGGER_FAIL, ecoutee par le trigger d'alerte
+// => mail support@luxyra.fr + notification telephone). Les autres sauvegardes se
+// contentaient d'un console.warn/console.error : au mieux visibles dans le panneau
+// Monitoring, au pire TOTALEMENT MUETTES (console.warn n'est pas intercepte).
+// Une sauvegarde qui echoue = des donnees perdues sans que personne ne le sache :
+// c'est exactement ce qui a laisse durer 3 mois le bug des fiches techniques.
+// Best-effort : n'echoue jamais, ne bloque jamais l'appelant.
+// ============================================================
+function _lxReportDbError(fnName, err, extra) {
+  try {
+    if (!err) return;
+    var payload = { fn: fnName,
+      msg: (err && (err.message || err.details)) || String(err),
+      code: (err && err.code) || null,
+      hint: (err && err.hint) || null };
+    if (extra && typeof extra === "object") {
+      for (var k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) payload[k] = extra[k]; }
+    }
+    if (typeof saveAuditEntry === "function") {
+      saveAuditEntry("DB_ERROR", JSON.stringify(payload).slice(0, 2000));
+    }
+  } catch (_) {}
+}
+if (typeof window !== "undefined") window._lxReportDbError = _lxReportDbError;
+
 async function saveClient(client) {
   if (!_isOnline || !_salonId) return;
   // WAL : persiste l'action en LS AVANT tout traitement (filet 15/05/2026)
@@ -1787,7 +1815,7 @@ async function saveClient(client) {
   _ensureUuidId(client);
   data.id = client.id;
   var res = await _sb.from("clients").upsert(data).select();
-  if (res.error) console.error("saveClient upsert error:", res.error);
+  if (res.error) { console.error("saveClient upsert error:", res.error); _lxReportDbError("saveClient", res.error, {client_id: client.id || null}); }
   // Cross-salon sync: update all client records + compte with same email
   if (client.em) {
     var syncClients = {}, syncBp = {};
@@ -2376,11 +2404,11 @@ async function saveDevisToDb(dv) {
     if (dv.dbId) {
       // Update existant
       var upd = await _sb.from("devis").update(data).eq("id", dv.dbId).select().single();
-      if (upd.error) { console.warn("[saveDevisToDb] update error", upd.error); return null; }
+      if (upd.error) { _lxReportDbError("saveDevisToDb.update", upd.error); console.warn("[saveDevisToDb] update error", upd.error); return null; }
       return upd.data;
     } else {
       var ins = await _sb.from("devis").insert(data).select().single();
-      if (ins.error) { console.warn("[saveDevisToDb] insert error", ins.error); return null; }
+      if (ins.error) { _lxReportDbError("saveDevisToDb.insert", ins.error); console.warn("[saveDevisToDb] insert error", ins.error); return null; }
       if (ins.data) {
         dv.dbId = ins.data.id;
         if (!dv.num) dv.num = ins.data.num;
@@ -2670,7 +2698,7 @@ async function deleteServiceDb(id) {
   if (!_sb || !_salonId || !id) return false;
   try {
     var r = await _sb.from("services").delete().eq("id", id).eq("salon_id", _salonId).select();
-    if (r && r.error) { console.warn("[deleteServiceDb] error", r.error); return false; }
+    if (r && r.error) { _lxReportDbError("deleteServiceDb", r.error); console.warn("[deleteServiceDb] error", r.error); return false; }
     if (!r.data || r.data.length === 0) return false;
     return true;
   } catch(e) { console.error("[deleteServiceDb]", e); return false; }
@@ -2682,7 +2710,7 @@ async function deleteServicesDbBulk(ids) {
   try {
     var r = await _sb.from("services").delete().in("id", ids).eq("salon_id", _salonId).select();
     var count = (r && r.data) ? r.data.length : 0;
-    if (r && r.error) { console.warn("[deleteServicesDbBulk] error", r.error); return false; }
+    if (r && r.error) { _lxReportDbError("deleteServicesDbBulk", r.error); console.warn("[deleteServicesDbBulk] error", r.error); return false; }
     if (count === 0 && ids.length > 0) return false;
     if (count < ids.length) {
       // Partiel = on continue (au moins une partie a été nettoyée)
