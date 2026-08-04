@@ -28240,11 +28240,17 @@ function doFinalPayExecute(method){
 // client) PERSISTE desormais. Avant, l'onchange faisait seulement
 // gC(cId).fiches[i].txt=... en memoire -> l'edition etait perdue au prochain
 // reloadFromSupabase("clients"). Meme classe de bug que le modal post-ticket.
-function _lxEditFicheTxt(cId,i,val){
+async function _lxEditFicheTxt(cId,i,val){
   var cl=(typeof gC==="function")?gC(cId):null;
   if(!cl||!cl.fiches||!cl.fiches[i])return;
+  var _old=cl.fiches[i].txt;
   cl.fiches[i].txt=val;
-  if(typeof saveClient==="function")saveClient(cl);
+  // FIX 2026-08-04 (2) : une modification qui n'atteint pas la base doit se VOIR.
+  var _res=(typeof saveClient==="function")?await saveClient(cl):{ok:false};
+  if(!_res||_res.ok!==true){
+    cl.fiches[i].txt=_old;
+    if(typeof showAlert==="function")showAlert("\u26a0\ufe0f Modification NON enregistr\u00e9e \u2014 v\u00e9rifiez la connexion","error");
+  }
 }
 function askFicheTech(cId){
   var cl=gC(cId);if(!cl){cM();go("home");return;}
@@ -28327,7 +28333,7 @@ function proposeFicheTechFromDetail(cId){
   document.getElementById("modal").innerHTML=h;
   setTimeout(function(){var el=document.getElementById("ftTexte");if(el)el.focus();},100);
 }
-function saveFicheTechDetail(cId){
+async function saveFicheTechDetail(cId){
   var cl=gC(cId);if(!cl)return;
   var texte=document.getElementById("ftTexte").value;
   if(!texte.trim()){cM();return;}
@@ -28337,8 +28343,15 @@ function saveFicheTechDetail(cId){
   if(selEl && selEl.value){ sty=gT(selEl.value); }
   if(!sty) sty=_ftDefaultCollab();
   if(!cl.fiches)cl.fiches=[];
-  cl.fiches.push({txt:texte,date:TD,collab:sty?sty.n:"",collab_id:sty?sty.id:null});
-  if(typeof saveClient==="function")saveClient(cl);
+  var _f={txt:texte,date:TD,collab:sty?sty.n:"",collab_id:sty?sty.id:null};
+  cl.fiches.push(_f);
+  // FIX 2026-08-04 (2) : on ne ferme la modale QUE si la base a confirme (cf. saveFicheTech).
+  var _res=(typeof saveClient==="function")?await saveClient(cl):{ok:false};
+  if(!_res||_res.ok!==true){
+    var _ix=cl.fiches.indexOf(_f); if(_ix>=0)cl.fiches.splice(_ix,1);
+    if(typeof showAlert==="function")showAlert("\u26a0\ufe0f Fiche NON enregistr\u00e9e \u2014 v\u00e9rifiez la connexion puis recliquez sur Enregistrer","error");
+    return;
+  }
   cM();go("detail");
 }
 
@@ -28360,7 +28373,7 @@ function proposeFicheTech(cId){
   document.getElementById("modal").innerHTML=h;
   setTimeout(function(){var el=document.getElementById("ftTexte");if(el)el.focus();},100);
 }
-function saveFicheTech(cId){
+async function saveFicheTech(cId){
   var cl=gC(cId);if(!cl)return;
   var texte=document.getElementById("ftTexte").value;
   if(!texte.trim()){cM();go("home");return;}
@@ -28372,12 +28385,23 @@ function saveFicheTech(cId){
   var fiche={txt:texte,date:TD,collab:sty?sty.n:"",collab_id:sty?sty.id:null};
   if(!cl.fiches)cl.fiches=[];
   cl.fiches.push(fiche);
+  // FIX 2026-08-04 (2) : NE PLUS ANNONCER LE SUCCES A L'AVANCE. Le message
+  // "Fiche enregistree" etait ecrit en dur juste apres la modification de la memoire,
+  // sans que personne ne verifie que la base avait recu quoi que ce soit -> c'est ce
+  // mensonge qui a laisse le bug vivre 3 mois. On attend la confirmation reelle ; en
+  // cas d'echec on retire la fiche de la memoire et on LAISSE LA MODALE OUVERTE
+  // (le texte saisi est conserve, l'utilisateur peut simplement recliquer Enregistrer).
   // FIX 2026-08-04 : PERSISTER la fiche. Le modal post-ticket poussait la fiche en
   // memoire et affichait "Fiche enregistree" SANS jamais appeler saveClient -> au
   // prochain reloadFromSupabase("clients") (poll 30s / realtime / refocus) CL etait
   // remplace depuis la base et la fiche non persistee disparaissait. Miroir exact de
   // saveFicheTechDetail (chemin fiche client), qui, lui, persiste.
-  if(typeof saveClient==="function")saveClient(cl);
+  var _res=(typeof saveClient==="function")?await saveClient(cl):{ok:false};
+  if(!_res||_res.ok!==true){
+    var _ix=cl.fiches.indexOf(fiche); if(_ix>=0)cl.fiches.splice(_ix,1);
+    if(typeof showAlert==="function")showAlert("\u26a0\ufe0f Fiche NON enregistr\u00e9e \u2014 v\u00e9rifiez la connexion puis recliquez sur Enregistrer","error");
+    return;
+  }
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
   h2+='<h2>Fiche enregistr\u00e9e</h2>';

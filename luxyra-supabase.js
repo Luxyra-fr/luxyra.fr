@@ -1774,7 +1774,10 @@ function _lxReportDbError(fnName, err, extra) {
 if (typeof window !== "undefined") window._lxReportDbError = _lxReportDbError;
 
 async function saveClient(client) {
-  if (!_isOnline || !_salonId) return;
+  // FIX 2026-08-04 : renvoie desormais un STATUT REEL {ok:...}. Sans lui, aucun appelant ne
+  // pouvait savoir si la sauvegarde avait abouti -> les ecrans affichaient "enregistre" en
+  // aveugle. Les appelants existants qui ignorent la valeur de retour ne changent pas.
+  if (!_isOnline || !_salonId) return { ok: false, skipped: true };
   // WAL : persiste l'action en LS AVANT tout traitement (filet 15/05/2026)
   var _walId = window._walBypass ? null : _walPersist("client", client);
   // Toast auto-save discret (debounced)
@@ -1815,7 +1818,11 @@ async function saveClient(client) {
   _ensureUuidId(client);
   data.id = client.id;
   var res = await _sb.from("clients").upsert(data).select();
-  if (res.error) { console.error("saveClient upsert error:", res.error); _lxReportDbError("saveClient", res.error, {client_id: client.id || null}); }
+  if (res.error) {
+    console.error("saveClient upsert error:", res.error);
+    _lxReportDbError("saveClient", res.error, {client_id: client.id || null});
+    return { ok: false, error: res.error };
+  }
   // Cross-salon sync: update all client records + compte with same email
   if (client.em) {
     var syncClients = {}, syncBp = {};
@@ -1865,6 +1872,7 @@ async function saveClient(client) {
   }
   // WAL : marquer la sauvegarde comme synchronisée si on est arrivé ici sans throw
   _walMarkSynced(_walId);
+  return { ok: true };
 }
 
 // Sauvegarder un rendez-vous/ticket
