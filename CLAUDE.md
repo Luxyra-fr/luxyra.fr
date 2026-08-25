@@ -813,3 +813,26 @@ Le site faisait `sb.from("rdv_online").insert(data).select()`. Le `.select()` = 
 - Permettre de clôturer une **journée passée précise** (fermer la veille oubliée avec SES tickets, sans toucher au jour en cours), déclenchable depuis l'alerte « Z manquant ».
 - Empêcher / avertir en cas de clôture du jour en cours en pleine journée (garde-fou UX contre le blocage prématuré).
 - Tester sur ticket bidon avant déploiement. Ne PAS improviser.
+
+---
+
+## À ANTICIPER (noté 2026-08-25) — Facturation électronique / e-reporting
+
+**Calendrier légal (vérifié 08/2026) :**
+- **01/09/2026** : obligation de **RECEVOIR** des factures électroniques (toutes entreprises) + émission pour GE/ETI. Rien à développer dans Luxyra (concerne les factures FOURNISSEURS, pas les ventes).
+- **01/09/2027** : obligation d'**ÉMETTRE** (B2B) + **e-reporting** des données B2C pour TPE/PME/micro. **C'est là que Luxyra est concerné.**
+
+**Entités :**
+- Excellence Coiffure = **SASU**, assujettie TVA 20 % → plateforme payante (Pennylane 10 €HT/mois via comptable ; prix public 14 €).
+- Luxyra (éditeur) = **EI micro-entrepreneur, franchise TVA** → éligible au **plan gratuit micro** de Pennylane (0 €, ~1200 factures/an). Ne pas payer d'abonnement pour cette entité.
+- Pennylane = plateforme agréée (immatriculation définitive DGFiP du 11/12/2025).
+
+**CHANTIER PRODUIT e-reporting 2027 (à faire, ~1 an devant) :**
+Données exigées = **CA par taux de TVA + TVA collectée + ventilation par mode de paiement**, agrégées (PAS les tickets individuels).
+→ **Luxyra les calcule DÉJÀ** : c'est le contenu de la clôture Z (`clotures.total_ca`, `total_ht`, `detail_paiements`).
+Reste à faire : transmettre ces données via une **plateforme agréée** (~138 immatriculées, liste sur impots.gouv.fr).
+Deux options : (a) connecteur Luxyra → PA (transmission auto = argument commercial fort « conforme 2027 sans rien saisir »),
+(b) à défaut, le salon saisit manuellement sur sa PA depuis le Z.
+Exports déjà en place et réutilisables : FEC, CEGID Quadratus, EBP, pack comptable.
+
+**NB** : la franchise de TVA n'exonère de rien (assujetti non redevable).
