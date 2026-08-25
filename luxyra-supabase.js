@@ -2052,7 +2052,21 @@ async function saveAppointment(appt) {
     r = await _sb.from("appointments").upsert(data).select();
     if (r.error) {
       console.error("saveAppointment retry failed:", r.error);
-      // FIX 2026-05-15 : log DB_ERROR pour monitoring admin
+      // FIX 2026-08-25 (a) : DOUBLON PERMANENT (23505) -> ne JAMAIS re-tenter.
+      // Un RDV refuse parce qu'il existe DEJA (meme client + collab + creneau) ne pourra
+      // jamais s'inserer : on sort l'entree de la file WAL, sinon elle est rejouee a chaque
+      // demarrage de l'app et spamme le monitoring en boucle (cas reel du 25/08, RDV
+      // da15bcc1 rejoue 5 h apres avoir ete annule). Aucune perte : le RDV est deja en base.
+      var _isDupPerm = (r.error.code === "23505") || ((r.error.message || "").indexOf("existe deja") >= 0);
+      // FIX 2026-08-25 (b) : identifier le RDV dans l'alerte (client/date/heure). Sans ca,
+      // impossible de savoir DE QUI il s'agit : l'entree n'atteint jamais la base.
+      var _cliLabel = null;
+      try {
+        if (appt.cId && typeof gC === "function") {
+          var _c = gC(appt.cId);
+          if (_c) _cliLabel = ((_c.pre || "") + " " + (_c.nom || "")).trim();
+        }
+      } catch(_eCli){}
       try {
         if (typeof saveAuditEntry === "function") {
           saveAuditEntry("DB_ERROR", JSON.stringify({
@@ -2060,10 +2074,18 @@ async function saveAppointment(appt) {
             msg: r.error.message || String(r.error),
             code: r.error.code || null,
             appt_id: appt.id || null,
-            status: appt.st || null
+            status: appt.st || null,
+            client: _cliLabel || appt.cId || null,
+            date: appt.date || null,
+            heure: appt.time || null,
+            collab_id: appt.stId || null,
+            abandon: _isDupPerm
           }).slice(0,2000));
         }
       } catch(_){}
+      // Doublon = echec DEFINITIF -> on marque l'entree WAL traitee pour stopper les rejeux.
+      // Les autres erreurs (reseau, RLS...) restent rejouables : comportement inchange.
+      if (_isDupPerm) { try { _walMarkSynced(_walId); } catch(_eW){} }
       return;
     }
   }
