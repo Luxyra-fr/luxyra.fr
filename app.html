@@ -33750,6 +33750,46 @@ async function renderPushSettings(){
 }
 function _removeLegacyPushCard(){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
 setInterval(_removeLegacyPushCard,1000);
+// FIX 2026-08-30 : un abonnement push peut disparaitre sans que personne le sache
+// (passage par /clear, donnees du site effacees, service worker reinitialise,
+// endpoint expire...). Or lxSalonPushEnable() pose l'indicateur
+// lx_push_banner_dismissed : la banniere « Activez les notifications » ne revient
+// alors JAMAIS, et le salon cesse silencieusement de recevoir ses notifications.
+// Constate en production ce soir : apres un /clear, l'abonnement du telephone avait
+// disparu et les envois partaient vers un autre appareil.
+// Ici : si la permission est DEJA accordee, on retablit l'abonnement sans rien
+// demander a l'utilisateur, et on s'assure qu'il est bien enregistre en base.
+async function lxEnsurePushSubscription(){
+  try{
+    if(!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    if(typeof _salonId === 'undefined' || !_salonId) return;
+    if(typeof _sb === 'undefined' || !_sb || !window.VAPID_PUBLIC_KEY) return;
+
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    var created = false;
+    if(!sub){
+      sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
+      created = true;
+    }
+    // L'abonnement existe cote appareil : est-il connu en base ?
+    var chk = await _sb.from('push_subscriptions').select('id')
+                 .eq('endpoint', sub.endpoint).eq('target_type','salon').eq('salon_id', _salonId).maybeSingle();
+    if(chk && chk.data && !created) return; // deja en place, rien a faire
+
+    var j = sub.toJSON();
+    var up = await _sb.from('push_subscriptions').upsert({
+      endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth,
+      target_type: 'salon', salon_id: _salonId, admin_user_id: null,
+      last_used_at: new Date().toISOString()
+    }, {onConflict:'endpoint'});
+    if(up && up.error) { console.error('[push] restauration abonnement KO:', up.error); return; }
+    console.log('[push] abonnement '+(created?'recree':'reenregistre')+' automatiquement');
+  }catch(e){ console.log('lxEnsurePushSubscription:', e && (e.message||e)); }
+}
+setTimeout(function(){ lxEnsurePushSubscription(); }, 5000);
+
 async function maybeShowPushBanner(){
   try{
     if(localStorage.getItem('lx_push_banner_dismissed')==='1')return;
