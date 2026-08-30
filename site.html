@@ -2486,6 +2486,28 @@ function selectService(svcId){
 }
 
 function renderBookingStep2(){
+  // FIX 2026-08-30 : s'il n'y a qu'UN SEUL professionnel eligible, on saute cette etape.
+  // Demander de choisir entre "Pas de preference" et l'unique personne du salon n'a aucun
+  // sens et ajoute un clic inutile (cas reel : Manue partie, il ne reste qu'Amandine).
+  // Garde-fou _skipCollabDone : si le client revient en arriere depuis l'etape 3, l'etape
+  // s'affiche normalement (pas de boucle, pas de blocage).
+  try{
+    if(!booking._skipCollabDone){
+      var _svcId0 = booking.svcId || (booking.items && booking.items.length ? booking.items[0].svcId : null);
+      var _elig0 = (COLLABS||[]).filter(function(c){
+        if(!_svcId0) return true;
+        var cp = c.competences || {all:true};
+        if(cp.all === true) return true;
+        if(!cp.services || !Array.isArray(cp.services)) return false;
+        return cp.services.indexOf(Number(_svcId0)) >= 0 || cp.services.indexOf(String(_svcId0)) >= 0;
+      });
+      if(_elig0.length === 1){
+        booking._skipCollabDone = true;
+        selectCollab(_elig0[0].id);
+        return;
+      }
+    }
+  }catch(_e){}
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">2</div><div class="step-title">Choisissez votre '+getCollabLabel().toLowerCase()+'</div></div>';
 
