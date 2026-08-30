@@ -413,46 +413,18 @@ footer .f-bottom{margin-top:14px;font-size:11px}
   </div>
 </section>
 
-<!-- TÉMOIGNAGES -->
-<section class="section s-center" id="temoignages">
+<!-- TÉMOIGNAGES — avis réels et vérifiés, chargés depuis la base -->
+<!-- 2026-08-30 : cette section contenait TROIS témoignages écrits en dur (Marie L.,
+     Sophie R., Laure V.), avec des noms et des notes inventés, présentés comme de
+     vrais retours d'utilisateurs. Publier de faux avis de consommateurs est une
+     pratique commerciale trompeuse. Ils sont remplacés par les avis REELS laissés
+     par des clients après un rendez-vous honoré. Si aucun avis ne remplit les
+     critères, la section ne s'affiche pas du tout : jamais de contenu inventé. -->
+<section class="section s-center" id="temoignages" style="display:none">
   <div class="s-label reveal">Ils nous font confiance</div>
-  <div class="s-title reveal">Ce que disent nos <em>premiers utilisateurs</em></div>
-
-  <div class="temoignages-grid" style="margin-top:36px">
-    <div class="temoignage reveal">
-      <div class="quote">Réservation rapide et claire, j'ai trouvé mon salon en 2 minutes et confirmé mon RDV sans avoir à téléphoner.</div>
-      <div class="author">
-        <div class="avatar">M</div>
-        <div class="meta-author">
-          <div class="name">Marie L.</div>
-          <div class="ctx">Cliente · Coiffure</div>
-          <div class="stars">★★★★★</div>
-        </div>
-      </div>
-    </div>
-    <div class="temoignage reveal">
-      <div class="quote">Pratique pour planifier en avance. Le rappel par email la veille est un vrai plus, je ne rate plus mes rendez-vous.</div>
-      <div class="author">
-        <div class="avatar">S</div>
-        <div class="meta-author">
-          <div class="name">Sophie R.</div>
-          <div class="ctx">Cliente · Esthétique</div>
-          <div class="stars">★★★★★</div>
-        </div>
-      </div>
-    </div>
-    <div class="temoignage reveal">
-      <div class="quote">Mes clients adorent pouvoir réserver le soir depuis leur canapé. Et de mon côté, mon planning se remplit tout seul.</div>
-      <div class="author">
-        <div class="avatar">L</div>
-        <div class="meta-author">
-          <div class="name">Laure V.</div>
-          <div class="ctx">Salon partenaire</div>
-          <div class="stars">★★★★★</div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <div class="s-title reveal">Ce que disent <em>nos clients</em></div>
+  <div class="temoignages-grid" id="temoignagesGrid" style="margin-top:36px"></div>
+  <div id="temoignagesNote" style="margin-top:18px;font-size:12px;opacity:.55"></div>
 </section>
 
 <!-- FAQ -->
@@ -527,6 +499,71 @@ footer .f-bottom{margin-top:14px;font-size:11px}
 var SB_URL = "https://kxdgjtvrkwugbifgppai.supabase.co";
 var SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI";
 var sb = supabase.createClient(SB_URL, SB_KEY);
+
+// === Témoignages : avis RÉELS, sélection aléatoire ===
+// Remplace trois témoignages inventés (noms et notes fictifs) presents jusqu'au
+// 2026-08-30. Regle : on n'affiche QUE des avis reels, laisses par des clients
+// apres un rendez-vous honore. Aucun avis exploitable -> la section reste masquee.
+// La selection est aleatoire : avec plusieurs salons, la vitrine tourne d'elle-meme.
+async function lxChargerTemoignages(){
+  var sec = document.getElementById('temoignages');
+  var grid = document.getElementById('temoignagesGrid');
+  if(!sec || !grid) return;
+  try{
+    var r = await sb.from('avis_salon')
+      .select('nom,note,texte,date,salon_id')
+      .eq('approved', true)
+      .gte('note', 4)
+      .not('texte','is',null)
+      .order('date',{ascending:false})
+      .limit(40);
+    if(r.error) throw r.error;
+    var avis = (r.data||[]).filter(function(a){
+      return a && a.texte && String(a.texte).trim().length >= 25;
+    });
+    if(!avis.length) return; // rien de reel a montrer : on n'affiche rien
+
+    // Nom du salon, pour attribuer chaque avis
+    var ids = avis.map(function(a){return a.salon_id;}).filter(function(v,i,t){return t.indexOf(v)===i;});
+    var salons = {};
+    try{
+      var rs = await sb.from('salons_public').select('id,nom,ville,metier').in('id', ids);
+      (rs.data||[]).forEach(function(x){ salons[x.id] = x; });
+    }catch(_e){}
+
+    // Melange (Fisher-Yates) puis 3 au maximum
+    for(var i=avis.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=avis[i]; avis[i]=avis[j]; avis[j]=t; }
+    var choisis = avis.slice(0,3);
+
+    var esc = function(v){ return String(v==null?'':v).replace(/[<>&"]/g, function(c){
+      return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]; }); };
+
+    var html = choisis.map(function(a){
+      var sal = salons[a.salon_id] || {};
+      var qui = esc(a.nom || 'Client');
+      var ini = qui.charAt(0).toUpperCase() || 'C';
+      var ctx = 'Cliente' + (sal.nom ? ' · ' + esc(sal.nom) : '') + (sal.ville ? ', ' + esc(sal.ville) : '');
+      var etoiles = '';
+      for(var k=1;k<=5;k++) etoiles += (k <= Number(a.note||0) ? '★' : '☆');
+      return '<div class="temoignage reveal">'
+        + '<div class="quote">' + esc(a.texte) + '</div>'
+        + '<div class="author"><div class="avatar">' + ini + '</div>'
+        + '<div class="meta-author"><div class="name">' + qui + '</div>'
+        + '<div class="ctx">' + ctx + '</div>'
+        + '<div class="stars">' + etoiles + '</div></div></div></div>';
+    }).join('');
+
+    grid.innerHTML = html;
+    var note = document.getElementById('temoignagesNote');
+    if(note) note.textContent = 'Avis vérifiés : déposés par des clients disposant d\'un compte Luxyra, après un rendez-vous honoré.';
+    sec.style.display = '';
+    // Les animations d'apparition sont posees au chargement : on revele nous-memes.
+    try{ grid.querySelectorAll('.reveal').forEach(function(el){ el.classList.add('visible'); }); }catch(_e){}
+  }catch(e){
+    console.warn('[temoignages]', e); // en cas d'echec : section masquee, jamais de faux avis
+  }
+}
+document.addEventListener('DOMContentLoaded', function(){ setTimeout(lxChargerTemoignages, 300); });
 
 // === Nav ===
 function toggleMenu(){
