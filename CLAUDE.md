@@ -809,6 +809,11 @@ Le site faisait `sb.from("rdv_online").insert(data).select()`. Le `.select()` = 
 
 **Cadre NF525 (à confirmer avec expert-comptable) :** la norme n'interdit pas un Z fait a posteriori pour une journée oubliée ; ce qui compte = chaque journée finit par avoir son Z inaltérable, bons totaux, sans altération.
 
+**MISE À JOUR 2026-08-30 :**
+- Vérifié : AUCUNE journée encaissée n'est actuellement sans clôture Z (requête sur tickets paid sans clôture correspondante → 0 résultat). Il n'y a donc rien à régulariser à ce jour.
+- Le garde-fou UX contre le piège n°2 est FAIT : la modale de clôture affiche désormais un avertissement rouge listant les RDV du jour non encore encaissés, avec le nombre et les heures (`_lxRdvRestantsAujourdhui()` dans app.html). On avertit, on ne bloque pas.
+- RESTE À FAIRE : la clôture d'une journée passée précise (point 1 ci-dessous). Toujours à concevoir à froid, ne pas improviser.
+
 **À concevoir à froid (avec accord Alexandre, PAS en urgence) :**
 - Permettre de clôturer une **journée passée précise** (fermer la veille oubliée avec SES tickets, sans toucher au jour en cours), déclenchable depuis l'alerte « Z manquant ».
 - Empêcher / avertir en cas de clôture du jour en cours en pleine journée (garde-fou UX contre le blocage prématuré).
