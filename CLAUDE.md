@@ -1017,3 +1017,39 @@ navigateur ne peut pas déchiffrer, donc **rien ne s'affiche, silencieusement**)
 select id, length(p256dh) as p256dh, length(auth) as auth from push_subscriptions;
 -- attendu : p256dh 87-88, auth 22
 ```
+
+### Notifications — état final au 30/08/2026 (session complète)
+
+**Ce qui déclenche désormais une notification (cloche dans l'app + push) :**
+tout ce qui atterrit dans la table `notifications` — nouveau RDV en ligne, annulation,
+demande de modification, demande de RDV sur mesure, et **nouvel avis client**
+(`trg_notif_avis` sur `avis_salon`, INSERT + UPDATE quand la note ou le texte change ;
+les réponses du salon et la modération ne déclenchent rien). Tout type ajouté plus tard
+sera couvert automatiquement, sans nouvelle intervention.
+
+**Défauts corrigés dans la chaîne push :**
+1. Aucun push n'était envoyé pour un RDV (branché uniquement sur le support).
+2. `notify_salon` coupait l'appel à 5 s → notifications perdues sans trace.
+3. `urgency: normal` → FCM retenait le message pendant la veille Android.
+4. Toutes les notifs partageaient une étiquette → une notif écrasait la précédente,
+   **deux réservations = une seule visible**.
+5. La bannière d'activation ne revenait jamais → un salon sans aucun abonné n'en
+   était jamais averti.
+6. Un abonnement lié à l'**ancienne clé VAPID** s'affichait « Actif » sans jamais rien
+   recevoir → `_lxSubscribePush()` compare la clé et se réabonne si elle diffère.
+7. Le bouton « Tester » annonçait un succès dès l'acceptation serveur, sans vérifier
+   l'affichage réel.
+
+**FAUSSE PISTE — ne pas refaire :** avoir voulu unifier le scope du service worker
+('/app' → '/') et désenregistrer l'ancien a CASSÉ la réception sur PWA installée
+(manifeste de scope `/app`). Le double enregistrement est un vrai défaut, mais le
+corriger ainsi est pire que le mal. `lxFixSwScope()` est conservée NON APPELÉE.
+
+**Xiaomi / MIUI :** le refus « Registration failed - push service error » a été levé
+côté téléphone (démarrage automatique pour Chrome dans l'app Sécurité + batterie sans
+restriction). À reverifier si les notifications s'arrêtent : MIUI peut réinitialiser
+ces réglages après une mise à jour système.
+
+**Notification Chrome « Appuyez pour copier l'URL » :** comportement normal de Chrome
+quand une application web tourne. Se désactive par appui long → engrenage, en prenant
+garde à ne pas toucher la catégorie « Sites » qui porte les notifications Luxyra.
