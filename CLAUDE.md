@@ -995,3 +995,25 @@ order by created desc limit 5;
 ```
 Attention : la sonde de monitoring synthétique tourne toutes les 10 min et pollue cette
 table — filtrer sur le contenu, pas seulement sur la date.
+
+### PIÈGE — deux paires de clés VAPID différentes (constaté 2026-08-30)
+
+- `app_secrets.VAPID_PUBLIC_KEY` = `BFh9-tutkjOTEJUFGvVMkq4L1uTrXS…` (**obsolète, inutilisée**)
+- Variable d'environnement des edge functions = `BAg80uDJxWmu1ltDdXbiQbAFEUXn4v5bfNRVbvT1jRh07y29Opxqksn8MeomA-3K-AhVwzxqVXM_UetPDpy2vaI`
+- `window.VAPID_PUBLIC_KEY` codée en dur dans app.html = **la même que l'environnement** ✅
+
+Vérifié le 30/08 : `send-push` lit `Deno.env.get("VAPID_PUBLIC_KEY")` et
+`lx-push-public-key` renvoie bien `BAg80uDJ…`. L'app et l'envoi sont donc cohérents.
+
+**DANGER :** si quelqu'un fait un jour lire `app_secrets` à `send-push` « pour centraliser
+les secrets », **tous les abonnements existants cesseront de fonctionner** — un abonnement
+est lié à la clé VAPID utilisée au moment de la souscription. Il faudrait alors forcer
+tous les salons à se réabonner. Soit supprimer cette entrée obsolète d'`app_secrets`,
+soit y écrire la bonne valeur.
+
+Contrôle des clés d'un abonnement (une clé invalide = message accepté par FCM mais que le
+navigateur ne peut pas déchiffrer, donc **rien ne s'affiche, silencieusement**) :
+```sql
+select id, length(p256dh) as p256dh, length(auth) as auth from push_subscriptions;
+-- attendu : p256dh 87-88, auth 22
+```
