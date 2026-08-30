@@ -841,3 +841,64 @@ Deux options : (a) connecteur Luxyra → PA (transmission auto = argument commer
 Exports déjà en place et réutilisables : FEC, CEGID Quadratus, EBP, pack comptable.
 
 **NB** : la franchise de TVA n'exonère de rien (assujetti non redevable).
+
+---
+
+## AUDIT SÉCURITÉ BASE DE DONNÉES — 2026-08-30
+
+Balayage effectué avec le linter Supabase (242 constats) + vérifications manuelles.
+**Ce n'est PAS un audit complet de l'application** : il porte sur la base de données
+(RLS, droits d'exécution, fonctions SECURITY DEFINER, vues). Le code front, les edge
+functions et le worker n'ont pas été audités ligne à ligne.
+
+### CORRIGÉ — faille critique
+
+**`_exec_raw_sql(text)` et `_exec_blob(text)` — SUPPRIMÉES.**
+`_exec_raw_sql` exécutait `EXECUTE p_sql` en SECURITY DEFINER, propriété de `postgres`,
+et était **appelable sans authentification** via `/rest/v1/rpc/_exec_raw_sql`. La clé
+anon étant publique (lisible dans le code du site), n'importe qui pouvait exécuter du
+SQL arbitraire avec les droits `postgres` : lecture de tous les salons et de tous les
+clients, modification/suppression de n'importe quelle donnée, désactivation de RLS.
+Reliquats d'outillage de migration, aucun appel applicatif. Migration
+`urgence_supprimer_exec_raw_sql_acces_anonyme`.
+
+### CORRIGÉ — durcissement
+
+- `creer_ticket_avoir` : authentification désormais obligatoire (le contrôle de
+  propriété était sauté pour un appelant anonyme). Droits limités à `authenticated` +
+  `service_role`. Idem `corriger_reglement_rdv` (défense en profondeur).
+- 33 fonctions internes (cron, purges, clôtures périodiques, notifications, stats,
+  RGPD) : accès anonyme retiré. Notamment `run_cloture_mensuelle_pour_tous()`, qui
+  aurait permis à un inconnu de déclencher les clôtures mensuelles NF525 de TOUS les
+  salons. Migrations `revoquer_acces_anonyme_fonctions_internes` puis `..._v2`.
+
+**PIÈGE RENCONTRÉ DEUX FOIS — à retenir :** `REVOKE ... FROM anon` est **sans effet**
+quand le droit est hérité de `PUBLIC`. Il faut `REVOKE ... FROM PUBLIC` puis
+`GRANT ... TO authenticated, service_role`. Toujours vérifier après coup avec
+`has_function_privilege('anon', oid, 'EXECUTE')`, pas avec
+`information_schema.routine_privileges` (qui ne montre que les droits visibles du rôle courant).
+
+**Vérifications avant révocation (à refaire pour toute nouvelle révocation) :**
+1. La fonction est-elle utilisée dans une politique RLS ? Si oui, retirer le droit à
+   `anon` **casse les requêtes anonymes du site public** (l'EXECUTE est vérifié).
+2. Est-elle appelée par une page publique ? Les seules RPC publiques sont
+   `get_client_acompte_mode` (site.html) et `fn_salon_next_available_slot` (recherche.html).
+3. Les edge functions utilisent `service_role` (vérifié sur avis-create) — non affectées.
+4. Les 26 tâches cron tournent sous `postgres` — non affectées.
+
+### RESTE À TRAITER (non urgent, à froid)
+
+- **8 tables sans RLS**, lisibles ET écrivables par anon : `js_error_alerts_sent`,
+  `_pg_net_scan_cursor`, `admin_push_payloads`, `monitoring_heartbeat`,
+  `monitoring_synthetic_log`, `client_duplicate_ignored`, `monitoring_snooze`,
+  `error_signature_resolved`. Contenu = monitoring interne (pas de données de caisse),
+  mais un anonyme peut les polluer. Attention : `monitoring_synthetic_log` est lue par
+  admin.html (ligne ~2046) — prévoir une policy admin avant d'activer RLS.
+- **~60 autres fonctions SECURITY DEFINER encore appelables par anon** — à passer en
+  revue une par une avec la checklist ci-dessus. Les plus sensibles ont été traitées.
+- **5 vues SECURITY DEFINER** : `salons_public`, `clients_beautypro`, `admin_cron_health`,
+  `v_js_errors_recent`, `v_js_errors_summary`. `clients_beautypro` est à vérifier en
+  priorité (vue sur des données clients).
+- **25 fonctions avec `search_path` mutable** (durcissement classique).
+- **Protection « mot de passe compromis » désactivée** dans Supabase Auth — à activer
+  depuis le tableau de bord.
