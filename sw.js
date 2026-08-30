@@ -1,5 +1,5 @@
 // ============================================================================
-// Luxyra Service Worker — v20 (2026-08-30)
+// Luxyra Service Worker — v21 (2026-08-30)
 //
 // OBJECTIF : auto-update SANS /clear.
 //   Après avoir été chargé une fois, un simple rafraîchissement (ou relance de
@@ -70,7 +70,7 @@
 // Bumper cette chaine a CHAQUE deploiement qui doit invalider l'ancien cache
 // (la strategie network-first sert deja du frais ; le bump nettoie surtout les
 // vieux caches et marque le SW comme "mis a jour").
-var LX_CACHE = 'luxyra-sw-shell-v20-2026-08-30';
+var LX_CACHE = 'luxyra-sw-shell-v21-2026-08-30';
 
 // Shell precache pour un 1er chargement hors-ligne. RESILIENT : un echec
 // unitaire (404, reseau) ne fait PAS echouer l'installation (allSettled).
@@ -209,11 +209,14 @@ self.addEventListener('push', function(e) {
   // si un push arrive jusqu'a l'appareil : le serveur voit « accepte par FCM », mais
   // rien ne dit si le service worker a ete reveille. On trace donc CHAQUE reception
   // dans server_errors (source sw_push_recu), avant tout traitement.
+  // Le temoin ne doit jamais retarder ni empecher l'affichage : Chrome exige qu'un
+  // push aboutisse RAPIDEMENT a une notification visible. On trace donc SANS
+  // e.waitUntil, en pur « au mieux ».
   try {
     var _sbu='https://kxdgjtvrkwugbifgppai.supabase.co';
     var _ak='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1MDc2NTksImV4cCI6MjA1NzA4MzY1OX0.qIaCntFlYqp_TQrkmgUrtTNzaIddtfWG7tIBNqcwdcw';
     var _raw=''; try { _raw = e.data ? e.data.text() : '(vide)'; } catch(_x){ _raw='(illisible: '+_x+')'; }
-    e.waitUntil(fetch(_sbu+'/rest/v1/rpc/report_server_error',{
+    fetch(_sbu+'/rest/v1/rpc/report_server_error',{
       method:'POST',
       headers:{'Content-Type':'application/json','apikey':_ak,'Authorization':'Bearer '+_ak},
       body:JSON.stringify({
@@ -221,7 +224,7 @@ self.addEventListener('push', function(e) {
         p_message:'Push recu par le service worker — '+String(_raw).slice(0,300),
         p_severity:'warning', p_stack:'', p_context:null
       })
-    }).catch(function(){}));
+    }).catch(function(){});
   } catch(_e) {}
 
   var data = {};
