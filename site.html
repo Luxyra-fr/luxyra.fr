@@ -1662,26 +1662,54 @@ function renderSite(){
   var _absSal = (SITE_CFG && SITE_CFG.absences) ? SITE_CFG.absences : [];
   var _n = new Date();
   var _today = _n.getFullYear()+"-"+String(_n.getMonth()+1).padStart(2,"0")+"-"+String(_n.getDate()).padStart(2,"0");
-  var _fermAuj = _absSal.find(function(ab){return ab.type==="fermeture_except"&&ab.date===_today&&!ab.stId;});
-  var _ouvAuj  = _absSal.find(function(ab){return ab.type==="ouverture_except"&&ab.date===_today&&!ab.stId;});
+  // FIX 2026-08-30 : l'exception n'etait appliquee qu'a AUJOURD'HUI. Resultat : une
+  // ouverture exceptionnelle demain laissait la ligne du lundi afficher les horaires
+  // habituels (14h-18h) alors que la reservation proposait bien 10h -> le client lisait
+  // deux informations contradictoires sur la meme page.
+  // Desormais chaque ligne de la semaine affiche les horaires REELS de sa prochaine
+  // occurrence (7 jours glissants), avec la meme regle que la reservation :
+  // une ouverture exceptionnelle ELARGIT la plage, elle ne la reduit jamais.
+  var _dateForDow = function(d){
+    var _dt = new Date(_n.getFullYear(), _n.getMonth(), _n.getDate());
+    _dt.setDate(_dt.getDate() + ((d - dow + 7) % 7));
+    return _dt.getFullYear()+"-"+String(_dt.getMonth()+1).padStart(2,"0")+"-"+String(_dt.getDate()).padStart(2,"0");
+  };
+  var _jjmm = function(iso){ var p2=iso.split("-"); return p2[2]+"/"+p2[1]; };
   for(var d=0;d<7;d++){
     var hr=HORAIRES[d];
     var _isT = (d===dow);
-    var _hT;
-    if(_isT && _fermAuj){
-      _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement'+(_fermAuj.motif?' \u2014 '+String(_fermAuj.motif).replace(/[<>]/g,''):'')+'</span>';
-    } else if(_isT && _ouvAuj && _ouvAuj.horaire_o && _ouvAuj.horaire_c){
-      _hT='<span style="color:#00838f;font-weight:700">\u2728 '+_ouvAuj.horaire_o+' \u2014 '+_ouvAuj.horaire_c+(_ouvAuj.motif?' \u2014 '+String(_ouvAuj.motif).replace(/[<>]/g,''):'')+'</span>';
+    var _dIso = _dateForDow(d);
+    var _ferm = _absSal.find(function(ab){return ab.type==="fermeture_except"&&ab.date===_dIso&&!ab.stId;});
+    var _ouv  = _absSal.find(function(ab){return ab.type==="ouverture_except"&&ab.date===_dIso&&!ab.stId&&ab.horaire_o&&ab.horaire_c;});
+    var _hT, _note='';
+    if(_ferm){
+      _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement</span>';
+      _note=(_isT?'':' le '+_jjmm(_dIso))+(_ferm.motif?' \u2014 '+String(_ferm.motif).replace(/[<>]/g,''):'');
+      if(_note) _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement'+_note+'</span>';
+    } else if(_ouv){
+      // Plage effective = habituelle elargie par l'exceptionnelle (jamais reduite)
+      var _eo=_ouv.horaire_o, _ec=_ouv.horaire_c;
+      if(hr && hr.o && hr.c){
+        if(toMin(hr.o) < toMin(_eo)) _eo = hr.o;
+        if(toMin(hr.c) > toMin(_ec)) _ec = hr.c;
+      }
+      _note=(_isT?'':' le '+_jjmm(_dIso))+(_ouv.motif?' \u2014 '+String(_ouv.motif).replace(/[<>]/g,''):'');
+      _hT='<span style="color:#00838f;font-weight:700">\u2728 '+_eo+' \u2014 '+_ec+'</span>'
+         +'<span style="display:block;font-size:11px;color:#4dd0e1;font-weight:600">Ouverture exceptionnelle'+_note+'</span>';
     } else {
       _hT=hr?hr.o+' \u2014 '+hr.c:'Ferm\u00e9';
     }
-    h+='<div class="pratique-jour'+(_isT?' aujourdhui':'')+'"><span>'+jours[d]+(_isT?' \u00b7 aujourd\u0027hui':'')+'</span><span>'+_hT+'</span></div>';
+    h+='<div class="pratique-jour'+(_isT?' aujourdhui':'')+'"><span>'+jours[d]+(_isT?' \u00b7 aujourd\u0027hui':'')+'</span><span style="text-align:right">'+_hT+'</span></div>';
   }
   // Bannière fermetures à venir (14 prochains jours)
+  // FIX 2026-08-30 : les 7 prochains jours sont deja detailles dans le tableau
+  // ci-dessus. L'encart ne liste donc que ce qui vient APRES, pour ne pas afficher
+  // deux fois la meme date.
   var _futFerms = _absSal.filter(function(ab){
     if(ab.type!=="fermeture_except"||ab.stId)return false;
     if(!ab.date||ab.date<=_today)return false;
-    return ((new Date(ab.date) - new Date(_today)) / (1000*60*60*24)) <= 14;
+    var _j=(new Date(ab.date) - new Date(_today)) / (1000*60*60*24);
+    return _j > 6 && _j <= 21;
   }).sort(function(a,b){return a.date<b.date?-1:1;});
   if(_futFerms.length){
     h+='<div style="margin-top:14px;padding:10px 12px;background:rgba(196,56,56,.06);border:1px solid rgba(196,56,56,.2);border-radius:8px;font-size:12px;color:#e08585">';
@@ -1696,11 +1724,12 @@ function renderSite(){
   var _futOuvs = _absSal.filter(function(ab){
     if(ab.type!=="ouverture_except"||ab.stId)return false;
     if(!ab.date||ab.date<=_today)return false;
-    return ((new Date(ab.date) - new Date(_today)) / (1000*60*60*24)) <= 14;
+    var _j2=(new Date(ab.date) - new Date(_today)) / (1000*60*60*24);
+    return _j2 > 6 && _j2 <= 21;
   }).sort(function(a,b){return a.date<b.date?-1:1;});
   if(_futOuvs.length){
     h+='<div style="margin-top:10px;padding:10px 12px;background:rgba(0,188,212,.06);border:1px solid rgba(0,188,212,.25);border-radius:8px;font-size:12px;color:#4dd0e1">';
-    h+='<div style="font-weight:700;margin-bottom:4px">\ud83d\udd13 Ouverture'+(_futOuvs.length>1?'s':'')+' exceptionnelle'+(_futOuvs.length>1?'s':'')+' \u00e0 venir</div>';
+    h+='<div style="font-weight:700;margin-bottom:4px">\u2728 Ouverture'+(_futOuvs.length>1?'s':'')+' exceptionnelle'+(_futOuvs.length>1?'s':'')+' \u00e0 venir</div>';
     _futOuvs.forEach(function(o){
       var dp=o.date.split('-');
       h+='<div style="padding:2px 0">'+dp[2]+'/'+dp[1]+(o.horaire_o&&o.horaire_c?' \u00b7 '+o.horaire_o+'-'+o.horaire_c:'')+(o.motif?' \u2014 '+String(o.motif).replace(/[<>]/g,''):'')+'</div>';
