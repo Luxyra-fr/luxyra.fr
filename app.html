@@ -33766,13 +33766,43 @@ async function lxSalonPushTest(){
     }
   }catch(e){console.error('push test',e);toast('Erreur test','error');}
 }
+// FIX 2026-08-30 : test d'AFFICHAGE pur, sans passer par le serveur ni par le reseau.
+// Il appelle directement showNotification() depuis le service worker de l'appareil.
+// - si la notification apparait  -> le telephone sait afficher, le probleme est la livraison
+// - si elle n'apparait pas       -> le blocage est au niveau du systeme (Android/Chrome)
+// C'est LE test qui separe les deux causes, impossible a distinguer autrement.
+async function lxSalonPushTestLocal(){
+  try{
+    if(typeof Notification==='undefined' || Notification.permission!=='granted'){
+      if(typeof showAlert==='function') showAlert("La permission d'afficher des notifications n'est pas accordée sur cet appareil.","warning");
+      return;
+    }
+    var reg=await navigator.serviceWorker.ready;
+    await reg.showNotification('🔍 Test d\'affichage', {
+      body:"Créée directement sur l'appareil, sans passer par le serveur.",
+      icon:'/icon-192.png', tag:'lx_local_test', renotify:true, requireInteraction:true
+    });
+    await new Promise(function(r){setTimeout(r,1500);});
+    var list=await reg.getNotifications({tag:'lx_local_test'});
+    if(list && list.length){
+      toast('✅ Affichage OK — l\'appareil sait afficher les notifications','success');
+    } else if(typeof showAlert==='function'){
+      showAlert("Même une notification créée directement sur l'appareil ne s'affiche pas.\n\nLe blocage est donc au niveau du téléphone, pas du serveur ni de l'application :\n\n• Réglages → Applications → Luxyra → Notifications\n• Mode Ne pas déranger\n• Mode concentration / silencieux","warning");
+    }
+  }catch(e){ console.error('push test local',e); if(typeof showAlert==='function') showAlert("Test impossible : "+(e&&(e.message||e.name)||'erreur inconnue'),"warning"); }
+}
 async function renderPushSettings(){
   var z=document.getElementById('pushSettingsZone');if(!z)return;
   var st=await lxSalonPushStatus();
   var labels={unsupported:'❌ Non supporté',denied:'🚫 Bloqué (paramètres navigateur)',default:'⚪ Non configuré',granted_no_sub:'⚠️ Permission OK, pas abonné',active:'✅ Actif',error:'⚠️ Erreur'};
   var h='<div style="margin-bottom:10px;font-size:13px">État : <strong>'+(labels[st]||st)+'</strong></div>';
   if(st==='default'||st==='granted_no_sub')h+='<button class="btn bg bs" onclick="lxSalonPushEnable()">Activer</button>';
-  if(st==='active')h+='<button class="btn bs" onclick="lxSalonPushTest()" style="margin-right:6px">Tester</button><button class="btn bs" onclick="lxSalonPushDisable()">Désactiver</button>';
+  if(st==='active')h+='<button class="btn bs" onclick="lxSalonPushTest()" style="margin-right:6px">Tester l\'envoi</button><button class="btn bs" onclick="lxSalonPushDisable()">Désactiver</button>';
+  // Disponible des que la permission est accordee : c'est le test qui distingue
+  // « le telephone n'affiche pas » de « le message n'arrive pas ».
+  if(st==='active'||st==='granted_no_sub')
+    h+='<div style="margin-top:8px"><button class="btn bs" onclick="lxSalonPushTestLocal()" style="font-size:12px">Tester l\'affichage (sans envoi)</button>'
+      +'<div style="font-size:11px;color:var(--text3);margin-top:4px">Crée une notification directement sur cet appareil, sans passer par le serveur.</div></div>';
   z.innerHTML=h;
 }
 function _removeLegacyPushCard(){var old=document.getElementById('pushSettingsCard');if(old&&old.parentNode)old.parentNode.removeChild(old);}
