@@ -2571,15 +2571,7 @@ function findNextAvailableSlot(){
       }
     }
     if(skipDay) continue;
-    if(!hrs){
-      for(var ai=0;ai<absences.length;ai++){
-        var ab=absences[ai];
-        if(ab.type==="ouverture_except" && ab.date===dateStr && ab.horaire_o && ab.horaire_c){
-          // FIX 2026-05-14 : !ab.stId (ouverture salon-wide) doit s'appliquer à tous les collabs
-          if(!booking.collabId||!ab.stId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
-        }
-      }
-    }
+    hrs=_lxOuvExcept(hrs, dateStr, booking.collabId);
     if(!hrs) continue;
     // Skip si tout le monde est absent ce jour
     if(booking.collabId && isCollabDayOff(dateStr,booking.collabId)) continue;
@@ -2747,6 +2739,28 @@ function isCollabBlocked(date,collabId,slotStart,slotEnd){
 
 // NEW 2026-05-12 : applique l'override horaires_overrides[date] sur les horaires de base
 // Format de hrsOver : { "YYYY-MM-DD": {o,c,pause_o?,pause_c?} | null }
+// FIX 2026-08-30 : OUVERTURE EXCEPTIONNELLE ignoree quand le jour etait deja ouvert.
+// Avant, elle n'etait appliquee que `if(!hrs)` (jour normalement ferme). Cas reel :
+// lundi 31/08 normalement 14h-18h + ouverture exceptionnelle 10h-18h (rentree scolaire)
+// -> le site gardait 14h-18h et ne proposait donc rien le matin.
+// Regle : une ouverture exceptionnelle ne peut qu'ELARGIR la plage du jour, jamais la reduire
+// (pour fermer, il y a la fermeture exceptionnelle) -> aucune dispo ne peut etre perdue.
+function _lxOuvExcept(hrs, dateStr, collabId){
+  try{
+    var abs=(typeof SITE_CFG!=="undefined"&&SITE_CFG.absences)||[];
+    for(var i=0;i<abs.length;i++){
+      var ab=abs[i];
+      if(!ab||ab.type!=="ouverture_except"||ab.date!==dateStr||!ab.horaire_o||!ab.horaire_c) continue;
+      if(collabId && ab.stId && ab.stId!==collabId) continue; // ouverture ciblee sur un autre collab
+      if(!hrs || !hrs.o || !hrs.c) return {o:ab.horaire_o, c:ab.horaire_c};
+      return {
+        o: (toMin(ab.horaire_o) < toMin(hrs.o)) ? ab.horaire_o : hrs.o,
+        c: (toMin(ab.horaire_c) > toMin(hrs.c)) ? ab.horaire_c : hrs.c
+      };
+    }
+  }catch(_e){}
+  return hrs;
+}
 function applyHrsOverride(hrs, collab, dateStr){
   if(!collab || !collab.hrsOver) return hrs;
   var ov = collab.hrsOver[dateStr];
@@ -2829,14 +2843,7 @@ function _lxSiteEffHrs(col, collabId, date){
     var hasPerso=col && col.hrs && typeof col.hrs==="object" && Object.keys(col.hrs).some(function(k){var v=col.hrs[k];return v&&v.o&&v.c;});
     var hrs=hasPerso ? (col.hrs[dow]||null) : ((typeof HORAIRES!=="undefined"&&HORAIRES)?HORAIRES[dow]:null);
     if(typeof applyHrsOverride==="function") hrs=applyHrsOverride(hrs, col, date);
-    if(!hrs){
-      var abs=(typeof SITE_CFG!=="undefined"&&SITE_CFG.absences)||[];
-      for(var i=0;i<abs.length;i++){ var ab=abs[i];
-        if(ab.type==="ouverture_except"&&ab.date===date&&ab.horaire_o&&ab.horaire_c){
-          if(!ab.stId||!collabId||ab.stId===collabId){ hrs={o:ab.horaire_o,c:ab.horaire_c}; break; }
-        }
-      }
-    }
+    hrs=_lxOuvExcept(hrs, date, collabId);
     return hrs;
   }catch(_e){ return null; }
 }
@@ -2961,16 +2968,7 @@ function renderTimeSlots(dateStr){
       }
     }
   }
-  // Check exceptional opening (overrides closed day)
-  if(!hrs){
-    for(var ai=0;ai<absences.length;ai++){
-      var ab=absences[ai];
-      if(ab.type==="ouverture_except"&&ab.date===dateStr&&ab.horaire_o&&ab.horaire_c){
-        // FIX 2026-05-14 : !ab.stId (salon-wide) doit ouvrir le jour pour tous
-        if(!booking.collabId||!ab.stId||ab.stId===booking.collabId){hrs={o:ab.horaire_o,c:ab.horaire_c};break;}
-      }
-    }
-  }
+  hrs=_lxOuvExcept(hrs, dateStr, booking.collabId); // ouverture exceptionnelle (elargit meme si le jour est deja ouvert)
   if(!hrs){document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Ferm\u00e9 ce jour</div>';return;}
   // Check if collaborator is on full-day absence
   if(booking.collabId&&isCollabDayOff(dateStr,booking.collabId)){
