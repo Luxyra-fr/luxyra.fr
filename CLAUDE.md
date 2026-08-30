@@ -966,3 +966,32 @@ d'une reprise.
 **Si ça ne suffit pas :** le reste est côté appareil — Réglages Android → Applications →
 Luxyra → Batterie → « Non restreinte ». Xiaomi, Huawei, Oppo et Samsung sont les plus
 agressifs et tuent les processus en arrière-plan malgré une urgence haute.
+
+### Push : délai pg_net trop court (2026-08-30, suite)
+
+**Constaté en production** lors des essais : `Timeout of 5000 ms reached. Total time:
+5001 ms` sur un envoi réel. `notify_salon` utilisait le délai par défaut de `net.http_post`,
+soit **5 secondes**, alors que `send-push` en démarrage à froid dépasse régulièrement ce
+délai (chargement du module web-push + envoi à chaque abonnement).
+
+Conséquence : l'appel était coupé, la réponse perdue, et impossible de savoir si la
+notification était partie. En production, une notification de rendez-vous pouvait donc
+disparaître silencieusement.
+
+**Correction :** `timeout_milliseconds := 30000` dans `notify_salon`. L'appel restant
+asynchrone, allonger ce délai ne ralentit ni la réservation ni l'encaissement qui
+déclenchent la notification.
+
+**À vérifier un jour :** `notify_admins` a probablement le même défaut (non corrigé ce
+soir, non testé). Et `net._http_response` ne conserve les réponses que peu de temps —
+pour diagnostiquer un envoi, il faut regarder rapidement après coup.
+
+**Méthode de diagnostic qui a marché**, à réutiliser :
+```sql
+select status_code, error_msg, created, content
+from net._http_response
+where content like '%sent%' or error_msg is not null
+order by created desc limit 5;
+```
+Attention : la sonde de monitoring synthétique tourne toutes les 10 min et pollue cette
+table — filtrer sur le contenu, pas seulement sur la date.
