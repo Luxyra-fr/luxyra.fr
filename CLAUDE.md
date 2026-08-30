@@ -1053,3 +1053,28 @@ ces réglages après une mise à jour système.
 **Notification Chrome « Appuyez pour copier l'URL » :** comportement normal de Chrome
 quand une application web tourne. Se désactive par appui long → engrenage, en prenant
 garde à ne pas toucher la catégorie « Sites » qui porte les notifications Luxyra.
+
+### COÛT RÉEL DES SMS — découverte du 30/08/2026
+
+**Un SMS = 1 crédit seulement s'il n'utilise que l'alphabet GSM-7** (160 caractères).
+Un seul caractère hors de cet alphabet fait basculer tout le message en UCS-2, limité
+à **70 caractères** — un texte de 90 caractères passe alors à **2 segments**.
+
+Pièges les plus courants en français : **« ô »** (bientôt), **« À » majuscule**,
+« û », « î », les guillemets typographiques « » et l'apostrophe courbe ’.
+Sont en revanche autorisés : à, é, è, ù, ì, ò, ç minuscule, Ä, Ö, Ñ, Ü.
+
+**Le modèle de rappel 24h par défaut coûte 2 crédits** : « Bonjour {prenom}, nous vous
+rappelons votre RDV demain à {heure} chez {salon}. À bientôt ! » — 90 caractères, mais
+« À » et « ô » le font basculer en UCS-2. Sans ces deux caractères : 96 caractères,
+1 seul segment.
+
+**IMPACT ÉDITEUR, à ne pas manquer :** `decrement_sms_credit` retire **1 crédit par
+appel**, quel que soit le nombre de segments. Un salon dont le modèle fait 2 segments
+consomme donc 1 crédit mais coûte **2 SMS chez Brevo**. La marge par SMS est divisée
+par deux sans que rien ne l'indique. À arbitrer : soit compter les segments côté
+worker, soit livrer des modèles par défaut sans caractères fautifs (fait pour la
+confirmation en ligne).
+
+Un compteur en direct sous chaque modèle affiche désormais taille, encodage et coût
+en crédits, et signale les caractères fautifs (`lxSmsInfo` / `lxRenderSmsCost`).
