@@ -5817,6 +5817,18 @@ function _lxClotureUpdateEcart(){
     }
   }catch(_e){}
 }
+// FIX 2026-08-30 : garde-fou contre la cloture prematuree (piege documente).
+// Cloturer en pleine journee verrouille la caisse : le trigger tickets_block_post_cloture
+// refuse ensuite TOUT encaissement sur cette date. Les RDV restants du jour ne seraient
+// plus encaissables. On previent AVANT, on ne bloque pas (le salon reste maitre).
+function _lxRdvRestantsAujourdhui(){
+  try{
+    if(typeof AP==="undefined"||!AP) return [];
+    return AP.filter(function(a){
+      return a && a.date===TD && !a.cancelled && a.st!=="done";
+    });
+  }catch(_e){ return []; }
+}
 function _doClotureDo(){
   // Already clotured? Block
   // Also check CLOTURES array
@@ -5837,6 +5849,15 @@ function _doClotureDo(){
   if(tProd>0)h+='<div style="font-size:13px;margin-bottom:14px;color:var(--text2)">Produits: '+tProd.toFixed(2)+' \u20ac</div>';
   else h+='<div style="margin-bottom:14px"></div>';
   h+='<div style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.3);padding:12px;border-radius:8px;font-size:13px;margin-bottom:14px;text-align:left;color:#fff">\u26a0\ufe0f La cl\u00f4ture est <strong>d\u00e9finitive et irr\u00e9versible</strong>. Elle sera enregistr\u00e9e dans le journal NF525.</div>';
+  // Alerte si des rendez-vous du jour ne sont pas encore encaisses
+  var _rest=_lxRdvRestantsAujourdhui();
+  if(_rest.length>0){
+    var _restH=_rest.map(function(a){return a.time||"";}).filter(function(x){return x;}).sort();
+    var _restTxt=_restH.length?(' (' + _restH.slice(0,4).join(', ') + (_restH.length>4?'\u2026':'') + ')'):'';
+    h+='<div style="background:rgba(244,67,54,.12);border:1px solid rgba(244,67,54,.45);padding:12px;border-radius:8px;font-size:13px;margin-bottom:14px;text-align:left;color:#fff">';
+    h+='\ud83d\uded1 <strong>'+_rest.length+' rendez-vous</strong> du jour '+(_rest.length>1?'ne sont':'n\'est')+' pas encore encaiss\u00e9'+(_rest.length>1?'s':'')+_restTxt+'.<br>';
+    h+='<span style="color:rgba(255,255,255,.85)">Si vous cl\u00f4turez maintenant, '+(_rest.length>1?'ils ne pourront plus \u00eatre encaiss\u00e9s':'il ne pourra plus \u00eatre encaiss\u00e9')+' sur la journ\u00e9e d\'aujourd\'hui. Cl\u00f4turez plut\u00f4t en fin de journ\u00e9e.</span></div>';
+  }
   // FIX 2026-05-28 : section comptage du tiroir (NF525, additif)
   var _clotTheo=(typeof _lxClotureCaisseTheo==="function")?_lxClotureCaisseTheo():0;
   h+='<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;margin-bottom:14px;text-align:left">';
