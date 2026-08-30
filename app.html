@@ -33732,11 +33732,38 @@ async function lxSalonPushDisable(){
     if(typeof renderPushSettings==='function')renderPushSettings();
   }catch(e){console.error('push disable',e);toast('Erreur','error');}
 }
+// FIX 2026-08-30 : ce test annoncait « Test envoye » des que le SERVEUR avait accepte
+// l'envoi. Ce n'etait en rien une preuve que le telephone affichait la notification :
+// on pouvait donc croire les notifications fonctionnelles alors qu'aucune ne s'est
+// jamais affichee. Le test verifie desormais l'AFFICHAGE reel sur cet appareil.
 async function lxSalonPushTest(){
   try{
     var r=await _sb.functions.invoke('send-push',{body:{event_type:'admin_reply',title:'🧪 Test notification',body:'Si tu vois ça, tout fonctionne !',url:'https://luxyra.fr/app.html',target_salon_id:_salonId}});
     if(r.error)throw r.error;
-    toast('Test envoyé ('+((r.data&&r.data.sent)||0)+')','success');
+    var _sent=(r.data&&r.data.sent)||0;
+    if(!_sent){
+      if(typeof showAlert==='function') showAlert("Aucun appareil abonné n'a reçu l'envoi. Activez les notifications sur cet appareil, puis refaites le test.","warning");
+      else toast('Aucun appareil abonné','warning');
+      return;
+    }
+    toast('Envoi accepté ('+_sent+') — vérification de l\'affichage…','info');
+    // Verification de l'affichage REEL : la notification est-elle visible sur CET appareil ?
+    var _shown=false;
+    try{
+      var reg=await navigator.serviceWorker.ready;
+      for(var _i=0;_i<8 && !_shown;_i++){
+        await new Promise(function(res){setTimeout(res,700);});
+        var _list=await reg.getNotifications();
+        _shown=(_list||[]).some(function(n){
+          return String(n.title||'').indexOf('Test notification')>=0 || String(n.tag||'').indexOf('admin_reply')>=0;
+        });
+      }
+    }catch(_e){ console.log('[push] verification affichage impossible:',_e); }
+    if(_shown){
+      toast('🔔 Notification affichée : tout fonctionne','success');
+    } else if(typeof showAlert==='function'){
+      showAlert("Le serveur a bien envoyé la notification ("+_sent+" appareil"+(_sent>1?'s':'')+"), mais elle ne s'affiche pas ici.\n\nC'est presque toujours un blocage au niveau du téléphone, pas de l'application :\n\n• Réglages Android → Applications → Luxyra → Notifications → autoriser\n• Android 13 et plus : l'autorisation est demandée à l'installation ; refusée une fois, elle reste bloquée jusqu'à réactivation manuelle\n• Vérifiez aussi le mode Ne pas déranger et l'économiseur de batterie","warning");
+    }
   }catch(e){console.error('push test',e);toast('Erreur test','error');}
 }
 async function renderPushSettings(){
