@@ -30334,6 +30334,30 @@ async function sendSms(phone,message,context,clientNom){
   var cleanPhone=phone.replace(/[\s\.\-]/g,"");
   if(cleanPhone.startsWith("0"))cleanPhone="+33"+cleanPhone.slice(1);
   if(!cleanPhone.startsWith("+"))cleanPhone="+33"+cleanPhone;
+  // FIX 2026-08-30 : le journal etait ecrit APRES l'envoi. Deux envois simultanes
+  // (deux appareils, deux onglets, ou un double-clic sur « envoyer confirmation »)
+  // ne se voyaient donc pas : Elodie LETT a recu 3 confirmations en une minute.
+  // Pour les SMS AUTOMATIQUES, on reserve desormais la ligne AVANT d'envoyer. Un
+  // index unique en base (salon + contexte + destinataire + jour) fait que la
+  // deuxieme reservation echoue : on n'envoie pas. Les campagnes et envois libres
+  // ne sont pas concernes.
+  var _autoCtx=["rappel_24h","rappel_2h","confirmation_rdv","anniversaire","relance"];
+  var _claimId=null, _claimed=false;
+  if(context && _autoCtx.indexOf(context)>=0 && typeof _sb!=="undefined" && _sb && _salonId){
+    try{
+      var _ins=await _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:String(message||"").slice(0,320),via:"brevo",context:context,client_nom:clientNom||null}).select("id").single();
+      if(_ins&&_ins.error){
+        if(String(_ins.error.code||"")==="23505"){
+          console.log("[sms] doublon evite ("+context+") — un envoi identique a deja eu lieu aujourd'hui");
+          return {ok:false,error:"doublon_evite"};
+        }
+        // Autre erreur : on n'empeche pas l'envoi, on retombe sur l'ancien comportement.
+        console.warn("[sms] reservation impossible:",_ins.error);
+      } else if(_ins&&_ins.data){
+        _claimId=_ins.data.id; _claimed=true;
+      }
+    }catch(_e){ console.warn("[sms] reservation exception:",_e); }
+  }
   try{
     var resp=await fetch("/api/sms/custom",{
       method:"POST",
@@ -30350,7 +30374,8 @@ async function sendSms(phone,message,context,clientNom){
       }
       window.SMS_USED=(window.SMS_USED||0)+1;
       // Log uniquement (le worker a déjà patch sms_credits/sms_used en DB)
-      if(typeof _sb!=="undefined"&&_salonId){
+      // Si la ligne a deja ete reservee avant l'envoi, on ne la reecrit pas.
+      if(typeof _sb!=="undefined"&&_salonId&&!_claimed){
         try{
           _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:String(message||"").slice(0,320),via:"brevo",context:context||null,client_nom:clientNom||null}).then(function(){},function(_e){});
         }catch(e){}
@@ -30358,14 +30383,26 @@ async function sendSms(phone,message,context,clientNom){
       auditLog("SMS_ENVOYE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - OK - Cr\u00e9dits: "+window.SMS_CREDITS);
       return{ok:true};
     }else{
+      _lxLibererReservationSms(_claimId);
       auditLog("SMS_ERREUR","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+(data.error||"Erreur"));
       return{ok:false,error:data.error||"Erreur envoi"};
     }
   }catch(e){
+    _lxLibererReservationSms(_claimId);
     console.error("[SMS]",e);
     auditLog("SMS_ERREUR","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+e.message);
     return{ok:false,error:e.message};
   }
+}
+// Si l'envoi echoue, la ligne reservee avant envoi doit etre retiree : sinon elle
+// bloquerait une nouvelle tentative legitime pour le reste de la journee.
+function _lxLibererReservationSms(claimId){
+  if(!claimId) return;
+  try{
+    if(typeof _sb!=="undefined"&&_sb) _sb.from("messaging_log").delete().eq("id",claimId).then(function(){
+      console.log("[sms] reservation liberee apres echec d'envoi");
+    },function(_e){});
+  }catch(_e){}
 }
 // === MODE SMS NATIF : envoi via app companion Android (SIM du téléphone) ===
 // Insère le SMS dans la queue Supabase, l'app companion le récupère et l'envoie via SmsManager
