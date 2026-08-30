@@ -12189,6 +12189,41 @@ function saveSalonInfo(){
 }
 
 
+// FIX 2026-08-25 : DEPART d'un collaborateur (a quitte le salon).
+// Avant : la "date de depart" n'etait utilisee QUE par le taux de remplissage -> la personne
+// restait sur le planning ET sur le site de reservation. Les salons se rabattaient sur un
+// "conge" (notion temporaire, fausse) ou sur "Supprimer" (destructeur : casse l'historique).
+// Desormais : renseigner la date de depart retire aussi la personne du planning et du site,
+// en CONSERVANT tout son historique (RDV, tickets, stats, NF525).
+function setCollabDepart(ti, val){
+  if(!T[ti]) return;
+  var nom = T[ti].n || "Ce collaborateur";
+  T[ti].dateDepart = val || null;
+  if(val){
+    T[ti].inactif = true;
+    if(typeof toast==="function") toast("\u2713 "+nom+" marque comme parti le "+String(val).split("-").reverse().join("/")+" \u2014 retire du planning et du site, historique conserve","success");
+  } else if(typeof toast==="function"){
+    toast("Date de depart effacee pour "+nom,"info");
+  }
+  if(typeof saveCollaborateurs==="function") saveCollaborateurs();
+  if(typeof saveSiteConfig==="function") saveSiteConfig();
+  if(typeof go==="function") go("settings");
+}
+// Garde-fou suppression : un collaborateur rattache a des RDV ne doit PAS etre supprime
+// (perte d'attribution sur tout l'historique). On oriente vers la date de depart.
+function confirmDeleteCollab(ti){
+  if(!T[ti]) return;
+  var c = T[ti], nom = c.n || "ce collaborateur", nb = 0;
+  try { nb = (typeof AP!=="undefined"?AP:[]).filter(function(a){ return a && String(a.stId)===String(c.id); }).length; } catch(_e){}
+  if(nb > 0){
+    if(typeof showAlert==="function") showAlert("Impossible de supprimer "+nom+" : "+nb+" rendez-vous lui sont rattaches. Supprimer la fiche ferait perdre l'attribution de tout cet historique (statistiques, ventes, NF525). Pour un depart : renseignez la DATE DE DEPART dans Informations RH \u2014 la personne est retiree du planning et du site, et l'historique est conserve.","warning");
+    return;
+  }
+  if(typeof showConfirm==="function") showConfirm("Supprimer "+nom+" ? (aucun rendez-vous rattache)", function(){
+    var delId = T[ti].id; T.splice(ti,1); deleteCollabFromDB(delId);
+    if(typeof go==="function") go("settings");
+  });
+}
 function deleteCollabFromDB(collabId){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     _sb.from("collaborateurs").delete().eq("id",collabId).eq("salon_id",_salonId).then(function(r){
@@ -12240,7 +12275,18 @@ function toggleProdOnline(prodId,on){
   saveSiteConfig();
 }
 function saveSiteConfig(){
-  var SC=window.SITE_CONFIG;if(!SC)return;
+  var SC=window.SITE_CONFIG;
+  // FIX 2026-08-25 : ECHEC SILENCIEUX. Avant, si SITE_CONFIG n'etait pas (encore) charge,
+  // on abandonnait sans rien dire -> la config du SITE PUBLIC restait figee (constate :
+  // aucune mise a jour du 21/07 au 25/08, donc un mois d'horaires/absences jamais publies).
+  if(!SC){
+    try{
+      if(typeof toast==="function") toast("\u26a0 Configuration du site non chargee - modification non publiee, reessayez","warning");
+      if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:"SITE_CONFIG absent en memoire - ecriture site abandonnee"}).slice(0,2000));
+      if(typeof loadSiteConfig==="function") loadSiteConfig(); // recharge pour la prochaine fois
+    }catch(_e){}
+    return;
+  }
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     var data={
       salon_id:_salonId,
@@ -12291,6 +12337,15 @@ function saveSiteConfig(){
     // Upsert using Supabase native upsert
     _sb.from("site_config").upsert(data,{onConflict:"salon_id"}).then(function(r){
       console.log("[SITE CONFIG]",r.error?r.error.message:"Saved OK");
+      // FIX 2026-08-25 : une ecriture refusee n'etait QUE console.log -> invisible.
+      // Desormais : message utilisateur + DB_ERROR (mail/monitoring), car une config site
+      // non publiee = le site de reservation propose de faux creneaux.
+      if(r.error){
+        try{
+          if(typeof toast==="function") toast("\u26a0 Publication vers le site echouee : "+(r.error.message||"erreur"),"error");
+          if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:r.error.message||String(r.error), code:r.error.code||null}).slice(0,2000));
+        }catch(_e){}
+      }
     });
     // Also sync siteActif/reservation to salons.config_json for annuaire
     if(typeof saveSalonConfig==="function")saveSalonConfig();
@@ -13028,7 +13083,7 @@ function rSettings(){
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date d\'entr\u00e9e</label>';
       h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()"></div>';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date de d\u00e9part</label>';
-      h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateDepart=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()"></div>';
+      h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="setCollabDepart('+ti+',this.value)"></div>';
       h+='</div>';
       h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:'+(_isInactif?'rgba(244,67,54,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(_isInactif?'rgba(244,67,54,.3)':'rgba(255,255,255,.06)')+';border-radius:8px;cursor:pointer">';
       h+='<div><div style="font-size:13px;font-weight:700;color:'+(_isInactif?'#ef5350':'#fff')+'">\u23f8 Inactif (cong\u00e9s, arr\u00eat, d\u00e9part...)</div>';
@@ -13079,7 +13134,7 @@ function rSettings(){
       }
       h+='</div>';
       // ===== FIN BLOC COMPTE =====
-      if(T.length>1)h+='<button class="btn bs" style="margin-top:8px;font-size:12px;color:var(--red);margin-left:8px" onclick="showConfirm(\'Supprimer ce collaborateur ?\',function(){var delId=T['+ti+'].id;T.splice('+ti+',1);deleteCollabFromDB(delId);go(\'settings\')})">Supprimer</button>';
+      if(T.length>1)h+='<button class="btn bs" style="margin-top:8px;font-size:12px;color:var(--red);margin-left:8px" onclick="confirmDeleteCollab('+ti+')">Supprimer</button>';
       h+='</div>'; // /padding:14px wrapper accordion content
       h+='</details>'; // FIX 2026-05-15 : fin accordion natif <details>
       h+='</div>'; // /card
