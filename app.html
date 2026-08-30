@@ -30554,7 +30554,13 @@ function testSms(){
 // Check and send reminders (called periodically)
 // Fix anti-doublons : vérifie dans messaging_log Supabase avant envoi pour éviter les renvois multi-onglets
 async function hasAlreadySent(context,phone,rdvId){
-  if(typeof _sb==="undefined"||!_salonId)return false;
+  // FIX 2026-08-30 : renvoyait false (= « pas encore envoye », donc ON ENVOIE)
+  // quand la session n'etait pas prete. Combine a un checkSmsReminders() lance
+  // 30 s apres chaque chargement, cela pouvait renvoyer un rappel a chaque
+  // ouverture de l'app. Constate en prod : 5 SMS au meme client dans la soiree.
+  // Desormais : si on ne PEUT PAS verifier, on n'envoie pas. Un rappel en moins
+  // vaut mieux que cinq rappels au meme client (et cinq credits brules).
+  if(typeof _sb==="undefined"||!_sb||!_salonId)return true;
   try{
     // On cherche un envoi du même context pour ce RDV dans les dernières 25h (couvre rappel_24h) ou 3h (rappel_2h)
     var windowMs=context==="rappel_2h"?3*3600*1000:25*3600*1000;
@@ -30573,7 +30579,7 @@ async function hasAlreadySent(context,phone,rdvId){
     return res.data&&res.data.length>0;
   }catch(e){
     console.warn("[hasAlreadySent]",e);
-    return false; // en cas d'erreur on laisse passer, mieux que de bloquer tout
+    return true; // verification impossible -> on s'abstient (voir commentaire ci-dessus)
   }
 }
 async function checkSmsReminders(){
@@ -30600,7 +30606,11 @@ async function checkSmsReminders(){
     
     // Rappel 24h: send today for tomorrow's appointments
     if(cfg.rappel24h&&a.date===tomorrowStr){
-      var key24="24h_"+a.id;
+      // FIX 2026-08-30 : cle indexee sur la date du RDV + les 4 derniers chiffres du
+      // telephone, et non plus sur l'identifiant du rendez-vous. Un identifiant qui
+      // change (resynchronisation, doublon corrige) relançait sinon un envoi deja fait.
+      var _tail24=String(cl.ph||"").replace(/[\s\.\-]/g,"").slice(-4);
+      var key24="24h_"+a.date+"_"+_tail24;
       if(!window._smsSent[key24]&&canSms){
         // Double vérification Supabase anti-doublon multi-onglets
         var alreadySent24=await hasAlreadySent("rappel_24h",cl.ph,a.id);
@@ -30618,7 +30628,10 @@ async function checkSmsReminders(){
       var nowMin=now.getHours()*60+now.getMinutes();
       var diff=apptMin-nowMin;
       if(diff>0&&diff<=120){
-        var key2="2h_"+a.id;
+        // Meme correction que pour le rappel 24h : cle par client + date, pas par
+        // identifiant de rendez-vous.
+        var _tail2=String(cl.ph||"").replace(/[\s\.\-]/g,"").slice(-4);
+        var key2="2h_"+a.date+"_"+_tail2;
         if(!window._smsSent[key2]&&canSms){
           var alreadySent2=await hasAlreadySent("rappel_2h",cl.ph,a.id);
           if(!alreadySent2){
