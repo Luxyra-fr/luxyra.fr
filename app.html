@@ -12200,6 +12200,18 @@ function saveSalonInfo(){
 // "conge" (notion temporaire, fausse) ou sur "Supprimer" (destructeur : casse l'historique).
 // Desormais : renseigner la date de depart retire aussi la personne du planning et du site,
 // en CONSERVANT tout son historique (RDV, tickets, stats, NF525).
+// FIX 2026-08-30 : re-rendu des reglages sans perdre de vue la fiche modifiee.
+// La fiche peut changer de place (passage en "Anciens collaborateurs"), on la recentre.
+function lxRefreshSettings(collabId){
+  if(typeof go==="function") go("settings");
+  if(collabId===null||typeof collabId==="undefined") return;
+  requestAnimationFrame(function(){
+    try{
+      var el=document.getElementById("collab_"+collabId);
+      if(el&&typeof el.scrollIntoView==="function") el.scrollIntoView({block:"center"});
+    }catch(_e){}
+  });
+}
 function setCollabDepart(ti, val){
   if(!T[ti]) return;
   var nom = T[ti].n || "Ce collaborateur";
@@ -12212,7 +12224,7 @@ function setCollabDepart(ti, val){
   }
   if(typeof saveCollaborateurs==="function") saveCollaborateurs();
   if(typeof saveSiteConfig==="function") saveSiteConfig();
-  if(typeof go==="function") go("settings");
+  lxRefreshSettings(T[ti]?T[ti].id:null);
 }
 // Garde-fou suppression : un collaborateur rattache a des RDV ne doit PAS etre supprime
 // (perte d'attribution sur tout l'historique). On oriente vers la date de depart.
@@ -12224,17 +12236,35 @@ function confirmDeleteCollab(ti){
     if(typeof showAlert==="function") showAlert("Impossible de supprimer "+nom+" : "+nb+" rendez-vous lui sont rattaches. Supprimer la fiche ferait perdre l'attribution de tout cet historique (statistiques, ventes, NF525). Pour un depart : renseignez la DATE DE DEPART dans Informations RH \u2014 la personne est retiree du planning et du site, et l'historique est conserve.","warning");
     return;
   }
+  // FIX 2026-08-30 : on ne retire la fiche de l'ecran QU'APRES confirmation de la base.
+  // Avant, la fiche disparaissait localement meme si la base refusait la suppression
+  // -> le collaborateur "revenait" a la prochaine actualisation (bug constate en prod).
   if(typeof showConfirm==="function") showConfirm("Supprimer "+nom+" ? (aucun rendez-vous rattache)", function(){
-    var delId = T[ti].id; T.splice(ti,1); deleteCollabFromDB(delId);
-    if(typeof go==="function") go("settings");
+    var delId = T[ti].id;
+    deleteCollabFromDB(delId, function(ok, errMsg){
+      if(!ok){
+        if(typeof showAlert==="function") showAlert("Suppression refusee : "+nom+" possede de l'historique encaisse (tickets). La reglementation NF525 impose de conserver le lien entre chaque ticket et son operateur, la fiche est donc conservee. Pour acter un depart, renseignez la DATE DE DEPART dans Informations RH : la personne sort du planning et du site, et tout son historique reste intact.","warning");
+        try{ if(typeof auditLog==="function") auditLog("COLLAB_DELETE_REFUSED","Suppression refusee pour "+nom+" (id="+delId+") : historique encaisse present. "+(errMsg||"")); }catch(_e){}
+        return;
+      }
+      var _i = -1;
+      for(var _k=0;_k<T.length;_k++){ if(String(T[_k].id)===String(delId)){ _i=_k; break; } }
+      if(_i>=0) T.splice(_i,1);
+      if(typeof go==="function") go("settings");
+    });
   });
 }
-function deleteCollabFromDB(collabId){
+function deleteCollabFromDB(collabId, cb){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     _sb.from("collaborateurs").delete().eq("id",collabId).eq("salon_id",_salonId).then(function(r){
-      console.log("[COLLAB DELETE] id="+collabId,r.status,r.error?r.error.message:"OK");
+      var _err = r && r.error ? r.error : null;
+      console.log("[COLLAB DELETE] id="+collabId,r.status,_err?_err.message:"OK");
+      if(typeof cb==="function") cb(!_err, _err?(_err.code||"")+" "+(_err.message||""):"");
+    }, function(e){
+      console.error("[COLLAB DELETE] echec reseau id="+collabId,e);
+      if(typeof cb==="function") cb(false, "reseau");
     });
-  }
+  } else if(typeof cb==="function") cb(false, "hors ligne");
   // DO NOT call saveCollaborateurs here - it would re-insert the remaining collabs
 }
 
@@ -12896,16 +12926,41 @@ function rSettings(){
     // FIX 2026-05-15 : accordion natif <details> pour replier chaque collab
     // Plier par défaut sauf le 1er → page lisible même avec 10+ collaborateurs
     // Pure HTML natif, zéro JS custom, zéro risque de régression
-    for(var ti=0;ti<T.length;ti++){
+    // FIX 2026-08-30 : les collaborateurs partis (case Inactif ou date de depart renseignee)
+    // sont regroupes en bas dans une section "Anciens collaborateurs".
+    // RIEN n'est supprime : la fiche reste consultable et tout l'historique
+    // (tickets NF525, rendez-vous, fiches clients) est integralement conserve.
+    window._lxCollabOpen = window._lxCollabOpen || {};
+    var _lxIsFormer = function(c){ return !!(c && (c.inactif===true || c.dateDepart)); };
+    var _ordAct=[], _ordOld=[];
+    for(var _oi=0;_oi<T.length;_oi++){ (_lxIsFormer(T[_oi]) ? _ordOld : _ordAct).push(_oi); }
+    var _ordAll=_ordAct.concat(_ordOld);
+    var _oldHeadDone=false;
+    for(var _idx=0;_idx<_ordAll.length;_idx++){
+      var ti=_ordAll[_idx];
       var st2=T[ti];
-      var _cbOpen = (ti === 0) ? ' open' : ''; // 1er collab déplié par défaut
+      var _isFormer=_lxIsFormer(st2);
+      if(_isFormer && !_oldHeadDone){
+        _oldHeadDone=true;
+        h+='<div style="margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border2)">';
+        h+='<div style="font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">\ud83d\uddc4\ufe0f Anciens collaborateurs ('+_ordOld.length+')</div>';
+        h+='<div style="font-size:11px;color:rgba(255,255,255,.42);margin-top:3px;line-height:1.45">Retir\u00e9s du planning et de la r\u00e9servation en ligne. Leur historique (tickets, rendez-vous, fiches clients) est <strong style="color:rgba(255,255,255,.6)">conserv\u00e9 et reste consultable</strong>, comme l\'exige la r\u00e9glementation.</div>';
+        h+='</div>';
+      }
+      // Memoire d'ouverture : sans elle, chaque modification refermait la fiche
+      // et faisait remonter la page en haut (la page raccourcit -> scroll remis a 0).
+      var _cbKey = String(st2.id);
+      var _cbOpen;
+      if(Object.prototype.hasOwnProperty.call(window._lxCollabOpen,_cbKey)) _cbOpen = window._lxCollabOpen[_cbKey] ? ' open' : '';
+      else _cbOpen = (_idx === 0 && !_isFormer) ? ' open' : ''; // 1er collab actif déplié par défaut
       h+='<div class="card" style="margin-bottom:12px;padding:0;overflow:hidden">';
-      h+='<details'+_cbOpen+' style="background:transparent">';
+      h+='<details id="collab_'+_cbKey+'"'+_cbOpen+' ontoggle="if(window._lxCollabOpen)window._lxCollabOpen[\''+_cbKey+'\']=this.open" style="background:transparent">';
       // Summary cliquable : avatar + nom + chevron (toujours visible, même replié)
       h+='<summary class="lx-collab-summary" style="list-style:none;cursor:pointer;padding:14px;display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.06)">';
       if(st2.img) h+='<img src="'+st2.img+'" style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid '+st2.c+'">';
       else h+='<div style="width:42px;height:42px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;flex-shrink:0">'+st2.i+'</div>';
-      h+='<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:15px;color:#fff">'+(st2.n||'')+'</div>';
+      var _formerBadge = _isFormer ? ' <span style="font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#b0bec5;background:rgba(176,190,197,.14);border:1px solid rgba(176,190,197,.28);padding:2px 7px;border-radius:6px;vertical-align:middle;margin-left:6px">Ancien</span>' : '';
+      h+='<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:15px;color:'+(_isFormer?'rgba(255,255,255,.62)':'#fff')+'">'+(st2.n||'')+_formerBadge+'</div>';
       // Mini-stats : horaires actifs + nb absences à venir + indicateur RGPD photo
       var _nbDaysOn = 0;
       if(st2.hrs) for(var _di=0;_di<7;_di++){ if(st2.hrs[_di]) _nbDaysOn++; }
@@ -12914,7 +12969,12 @@ function rSettings(){
         var _ab = window.ABSENCES[_ai];
         if(_ab.stId === st2.id && (_ab.dateFrom||_ab.date||"") >= TD) _nbAbsActives++;
       }
-      h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_nbDaysOn+' jour'+(_nbDaysOn>1?'s':'')+' travaillés' + (_nbAbsActives>0 ? ' • '+_nbAbsActives+' absence'+(_nbAbsActives>1?'s':'') : '') + '</div>';
+      if(_isFormer){
+        var _depTxt = st2.dateDepart ? ('Parti le '+(typeof fmt==='function'?fmt(st2.dateDepart):st2.dateDepart)) : 'Archiv\u00e9';
+        h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_depTxt+' \u2022 historique conserv\u00e9</div>';
+      } else {
+        h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_nbDaysOn+' jour'+(_nbDaysOn>1?'s':'')+' travaillés' + (_nbAbsActives>0 ? ' • '+_nbAbsActives+' absence'+(_nbAbsActives>1?'s':'') : '') + '</div>';
+      }
       h+='</div>';
       h+='<svg class="lx-collab-chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s"><polyline points="6 9 12 15 18 9"/></svg>';
       h+='</summary>';
@@ -13093,7 +13153,7 @@ function rSettings(){
       h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:'+(_isInactif?'rgba(244,67,54,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(_isInactif?'rgba(244,67,54,.3)':'rgba(255,255,255,.06)')+';border-radius:8px;cursor:pointer">';
       h+='<div><div style="font-size:13px;font-weight:700;color:'+(_isInactif?'#ef5350':'#fff')+'">\u23f8 Inactif (cong\u00e9s, arr\u00eat, d\u00e9part...)</div>';
       h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Masqu\u00e9 du planning et de la r\u00e9servation en ligne. Reste dans les statistiques.</div></div>';
-      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();if(typeof toast===\'function\')toast(this.checked?\''+st2.n.replace(/\'/g,"\\\\'")+' marqu\u00e9 inactif\':\''+st2.n.replace(/\'/g,"\\\\'")+' r\u00e9activ\u00e9\',\'info\');go(\'settings\')"></label>';
+      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();if(typeof toast===\'function\')toast((T['+ti+'].n||\'\')+(this.checked?\' marqu\u00e9 inactif\':\' r\u00e9activ\u00e9\'),\'info\');lxRefreshSettings('+st2.id+')"></label>';
       h+='</div>';
       // ===== FIN INFORMATIONS RH =====
       // ===== COMP\u00c9TENCES =====
