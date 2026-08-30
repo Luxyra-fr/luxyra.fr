@@ -902,3 +902,35 @@ quand le droit est hérité de `PUBLIC`. Il faut `REVOKE ... FROM PUBLIC` puis
 - **25 fonctions avec `search_path` mutable** (durcissement classique).
 - **Protection « mot de passe compromis » désactivée** dans Supabase Auth — à activer
   depuis le tableau de bord.
+
+---
+
+## NOTIFICATIONS PUSH — 2026-08-30
+
+**Constat :** le test push fonctionnait, mais aucune notification n'arrivait pour un
+nouveau rendez-vous. Cause : le push n'était branché QUE sur les messages support
+(`trg_push_admin_reply`, `trg_push_support_msg`). `trg_notif_rdv_online` se contentait
+d'insérer dans la table `notifications` (notification *dans l'app*) sans jamais appeler
+`notify_salon`. Preuve en prod : notification `rdv_online_new` du 30/08 à 19h22, sans
+push associé.
+
+**Correction :** nouveau déclencheur `trg_push_notification_ins` AFTER INSERT sur la
+table `notifications`. Tout ce qui atterrit dans cette table part désormais en push :
+nouveaux RDV, annulations, demandes de modification, demandes de RDV sur mesure — et
+les types futurs seront couverts automatiquement, sans nouvelle intervention.
+
+**Garde-fous :** fonction SECURITY DEFINER, envoi asynchrone via pg_net, et
+`EXCEPTION WHEN OTHERS` qui avale toute erreur. Un push en échec ne peut jamais faire
+échouer la réservation ou l'encaissement qui l'a déclenché.
+
+**Points à connaître :**
+- La branche « salon » de `send-push` ne filtre PAS par `event_type` (contrairement à la
+  branche admin qui teste une colonne `events_<type>`). Inutile donc d'ajouter une
+  colonne `events_rdv` pour chaque nouveau type.
+- `send-push` supprime automatiquement les abonnements qui répondent 410/404. Lors du
+  test : 4 abonnements, 2 envoyés, 2 expirés nettoyés (dont un endpoint Windows de mai).
+  Il reste 2 abonnements FCM actifs.
+- Un abonnement push est lié à un appareil ET un navigateur. Si Amandine change de
+  téléphone ou vide les données du site, il faut réactiver les notifications dans l'app.
+- L'URL de clic est `https://luxyra.fr/app.html` sans ancre : `handleHash()` ne gère que
+  `#support` et `#settings/migration`, une ancre `#planning` ne ferait rien.
