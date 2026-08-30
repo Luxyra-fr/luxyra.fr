@@ -316,50 +316,10 @@ async function loadSalons(){
   applyFilters();
 }
 
-// Calcul du prochain créneau approximatif basé sur les horaires d'ouverture
-// (ne tient pas compte des RDV déjà pris, mais donne un signal "Prochaine dispo : X")
-function computeNextOpenSlot(horaires, absences){
-  if(!horaires) return null;
-  var now = new Date();
-  var jours = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
-  for(var d = 0; d < 14; d++){
-    var probe = new Date(now); probe.setDate(probe.getDate() + d);
-    var dow = probe.getDay();
-    var h = horaires[dow] || horaires[String(dow)];
-    if(!h || !h.o || !h.c) continue;
-    // Vérifier absence salon entière ce jour-là (si absences[].sid===null couvre la date)
-    var iso = probe.toISOString().slice(0,10);
-    var blocked = false;
-    if(Array.isArray(absences)){
-      absences.forEach(function(ab){
-        if(ab && (!ab.stId && !ab.sid)){ // absence "salon" globale
-          if(ab.df && ab.dt && iso >= ab.df && iso <= ab.dt){ blocked = true; }
-          else if(ab.d && ab.d === iso){ blocked = true; }
-        }
-      });
-    }
-    if(blocked) continue;
-    // Si c'est aujourd'hui : vérifier qu'il reste du temps avant fermeture (1h avant clôture)
-    if(d === 0){
-      var nowMin = now.getHours()*60 + now.getMinutes();
-      var cParts = h.c.split(':');
-      var closeMin = parseInt(cParts[0])*60 + parseInt(cParts[1] || 0);
-      if(nowMin >= closeMin - 60) continue; // moins d'1h avant fermeture
-      var oParts = h.o.split(':');
-      var openMin = parseInt(oParts[0])*60 + parseInt(oParts[1] || 0);
-      // Premier créneau après maintenant, arrondi à la prochaine demi-heure
-      var startMin = Math.max(openMin, Math.ceil((nowMin + 30) / 30) * 30);
-      if(startMin >= closeMin - 30) continue;
-      var hh = Math.floor(startMin/60), mm = startMin%60;
-      return { dayLabel: "Aujourd'hui", time: (hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm };
-    }
-    if(d === 1){
-      return { dayLabel: 'Demain', time: h.o };
-    }
-    return { dayLabel: jours[dow], time: h.o };
-  }
-  return null;
-}
+// NOTE 2026-08-30 : l'ancienne fonction locale computeNextOpenSlot() a ete retiree.
+// Elle n'etait plus appelee (le calcul se fait cote base via la RPC
+// fn_salon_next_available_slot) et lisait de mauvais noms de champs pour les
+// absences, ce qui aurait fausse tout retour a cette logique.
 
 // ---- Géolocalisation ----
 // Distance haversine entre 2 points GPS (en km)
