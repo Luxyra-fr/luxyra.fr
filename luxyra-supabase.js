@@ -2277,7 +2277,19 @@ async function saveTicketToDb(tk) {
       client_nom: tk.clientNom || null,
       client_prenom: tk.clientPrenom || null,
       collaborateur_id: tk.stId || null,
-      collaborateur_nom: tk.stNom || null,
+      // FIX 2026-08-30 (NF525) : FIGER le nom de l'operateur dans le ticket.
+      // tk.stNom n'etait renseigne que sur 1 des 7 chemins de creation de ticket ->
+      // collaborateur_nom etait NULL sur 100% des tickets en base, et l'information
+      // "qui a realise/encaisse" ne tenait QUE par la jointure sur collaborateur_id.
+      // Si la fiche du collaborateur disparait, l'info fiscale est perdue. On resout
+      // ici (point de passage unique de TOUS les tickets) plutot que sur chaque chemin.
+      collaborateur_nom: tk.stNom || (function(){
+        try{
+          if(!tk.stId || typeof gT!=="function") return null;
+          var _c = gT(tk.stId);
+          return (_c && _c.n) ? _c.n : null;
+        }catch(_e){ return null; }
+      })() || null,
       items: tk.items || [],
       total_brut: Number(tk.brutTotal || tk.pr || 0),
       total_remise: Number(tk.remise || 0),
