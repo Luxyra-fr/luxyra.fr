@@ -33849,8 +33849,20 @@ setTimeout(function(){ lxEnsurePushSubscription(); }, 5000);
 
 async function maybeShowPushBanner(){
   try{
-    if(localStorage.getItem('lx_push_banner_dismissed')==='1')return;
     if(typeof _salonId==='undefined'||!_salonId)return;
+    var _masquee=(localStorage.getItem('lx_push_banner_dismissed')==='1');
+    // FIX 2026-08-30 : la banniere etait masquee DEFINITIVEMENT au premier refus ou
+    // a la premiere activation. Consequence : un salon dont plus aucun appareil n'est
+    // abonne ne recoit plus rien et n'en est jamais averti. Constate ce soir — le
+    // telephone d'Amandine n'avait aucun abonnement, sans aucun signal dans l'app.
+    // On repropose donc si PLUS AUCUN appareil du salon n'est abonne.
+    if(_masquee){
+      try{
+        var _cnt=await _sb.from('push_subscriptions').select('id',{count:'exact',head:true})
+                   .eq('target_type','salon').eq('salon_id',_salonId);
+        if(_cnt && typeof _cnt.count==='number' && _cnt.count>0) return; // au moins un appareil : on n'insiste pas
+      }catch(_e){ return; }
+    }
     var st=await lxSalonPushStatus();
     if(st==='default'||st==='granted_no_sub'){
       if(document.getElementById('lxPushBanner'))return;
