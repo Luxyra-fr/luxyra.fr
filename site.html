@@ -1682,10 +1682,19 @@ function renderSite(){
     var _ferm = _absSal.find(function(ab){return ab.type==="fermeture_except"&&ab.date===_dIso&&!ab.stId;});
     var _ouv  = _absSal.find(function(ab){return ab.type==="ouverture_except"&&ab.date===_dIso&&!ab.stId&&ab.horaire_o&&ab.horaire_c;});
     var _hT, _note='';
+    // Rappel du regime habituel : sans lui, on ne distingue pas une rallonge d'un
+    // jour normalement ferme qu'on ouvre exceptionnellement.
+    var _habit = (hr && hr.o && hr.c) ? (hr.o+' \u2014 '+hr.c) : 'ferm\u00e9';
+    var _quand = _isT ? "aujourd'hui" : 'le '+_jjmm(_dIso);
+    var _motifLine = function(m, col){
+      if(!m) return '';
+      return '<span style="display:block;font-size:11px;color:'+col+';font-weight:400;font-style:italic">'
+             +String(m).replace(/[<>]/g,'')+'</span>';
+    };
     if(_ferm){
-      _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement</span>';
-      _note=(_isT?'':' le '+_jjmm(_dIso))+(_ferm.motif?' \u2014 '+String(_ferm.motif).replace(/[<>]/g,''):'');
-      if(_note) _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement'+_note+'</span>';
+      _hT='<span style="color:#c43838;font-weight:700">Ferm\u00e9 exceptionnellement</span>'
+         +'<span style="display:block;font-size:11px;color:#e08585;font-weight:600">'+_quand+' \u00b7 habituellement '+_habit+'</span>'
+         +_motifLine(_ferm.motif,'#e08585');
     } else if(_ouv){
       // Plage effective = habituelle elargie par l'exceptionnelle (jamais reduite)
       var _eo=_ouv.horaire_o, _ec=_ouv.horaire_c;
@@ -1693,9 +1702,11 @@ function renderSite(){
         if(toMin(hr.o) < toMin(_eo)) _eo = hr.o;
         if(toMin(hr.c) > toMin(_ec)) _ec = hr.c;
       }
-      _note=(_isT?'':' le '+_jjmm(_dIso))+(_ouv.motif?' \u2014 '+String(_ouv.motif).replace(/[<>]/g,''):'');
+      // Rallonge d'un jour deja ouvert, ou ouverture d'un jour normalement ferme ?
+      var _libelle = (hr && hr.o && hr.c) ? 'Horaires \u00e9largis' : 'Ouverture exceptionnelle';
       _hT='<span style="color:#00838f;font-weight:700">\u2728 '+_eo+' \u2014 '+_ec+'</span>'
-         +'<span style="display:block;font-size:11px;color:#4dd0e1;font-weight:600">Ouverture exceptionnelle'+_note+'</span>';
+         +'<span style="display:block;font-size:11px;color:#4dd0e1;font-weight:600">'+_libelle+' '+_quand+' \u00b7 habituellement '+_habit+'</span>'
+         +_motifLine(_ouv.motif,'#4dd0e1');
     } else {
       _hT=hr?hr.o+' \u2014 '+hr.c:'Ferm\u00e9';
     }
