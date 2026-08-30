@@ -33684,6 +33684,49 @@ function refreshCurrentView(){
 // avis, bon cadeau acheté, message support. Critique business.
 window.VAPID_PUBLIC_KEY='BAg80uDJxWmu1ltDdXbiQbAFEUXn4v5bfNRVbvT1jRh07y29Opxqksn8MeomA-3K-AhVwzxqVXM_UetPDpy2vaI';
 function _urlB64ToU8(b64){var pad='='.repeat((4-b64.length%4)%4);var s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');var raw=atob(s),out=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
+// FIX 2026-08-30 : « Registration failed - push service error ».
+// Chrome REFUSE de creer un abonnement si l'enregistrement en porte deja un cree
+// avec une AUTRE cle VAPID. Ce projet a connu deux paires de cles : un appareil
+// abonne a l'epoque de l'ancienne ne peut plus se reabonner, et le code se
+// contentait de reutiliser l'abonnement existant — donc lie a une cle avec laquelle
+// le serveur ne signe plus, et aucun push n'arrive jamais.
+// Ici : on compare la cle de l'abonnement existant a la cle courante, on se
+// desabonne si elle differe, et on retente une fois en cas d'echec.
+function _lxSameKey(sub, keyU8){
+  try{
+    var cur = sub && sub.options && sub.options.applicationServerKey;
+    if(!cur) return false;
+    var a = new Uint8Array(cur);
+    if(a.length !== keyU8.length) return false;
+    for(var i=0;i<a.length;i++){ if(a[i] !== keyU8[i]) return false; }
+    return true;
+  }catch(_e){ return false; }
+}
+async function _lxSubscribePush(reg){
+  var keyU8 = _urlB64ToU8(window.VAPID_PUBLIC_KEY);
+  var sub = await reg.pushManager.getSubscription();
+  if(sub && !_lxSameKey(sub, keyU8)){
+    console.log('[push] abonnement existant cree avec une autre cle VAPID : desabonnement');
+    try{ if(typeof _sb!=='undefined' && _sb) await _sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); }catch(_e1){}
+    try{ await sub.unsubscribe(); }catch(_e2){}
+    sub = null;
+  }
+  if(sub) return sub;
+  try{
+    return await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:keyU8});
+  }catch(err){
+    // Deuxieme chance : on purge tout abonnement residuel puis on retente.
+    console.log('[push] 1re tentative echouee ('+(err&&(err.message||err.name))+'), purge puis nouvel essai');
+    try{
+      var stale = await reg.pushManager.getSubscription();
+      if(stale){
+        try{ if(typeof _sb!=='undefined' && _sb) await _sb.from('push_subscriptions').delete().eq('endpoint', stale.endpoint); }catch(_e3){}
+        await stale.unsubscribe();
+      }
+    }catch(_e4){}
+    return await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:keyU8});
+  }
+}
 async function lxSalonPushStatus(){
   if(!('Notification' in window)||!('serviceWorker' in navigator)||!('PushManager' in window))return 'unsupported';
   if(Notification.permission==='denied')return 'denied';
@@ -33704,10 +33747,7 @@ async function lxSalonPushEnable(){
     var perm=await Notification.requestPermission();
     if(perm!=='granted'){toast('Permission refusée','warning');return;}
     var reg=await navigator.serviceWorker.ready;
-    var sub=await reg.pushManager.getSubscription();
-    if(!sub){
-      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
-    }
+    var sub=await _lxSubscribePush(reg);
     var j=sub.toJSON();
     var up=await _sb.from('push_subscriptions').upsert({endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,target_type:'salon',salon_id:_salonId,admin_user_id:null,last_used_at:new Date().toISOString()},{onConflict:'endpoint'}).select();
     if(up.error){console.error('[push] DB error:',up.error);throw up.error;}
@@ -33717,7 +33757,12 @@ async function lxSalonPushEnable(){
     if(typeof renderPushSettings==='function')renderPushSettings();
   }catch(e){
     console.error('[push] enable FAIL:',e);
-    toast('Erreur: '+(e&&(e.message||e.name||e.code)||'inconnue'),'error');
+    var _m=String(e&&(e.message||e.name||e.code)||'inconnue');
+    if(typeof showAlert==='function' && /push service|registration failed|AbortError/i.test(_m)){
+      showAlert("Le téléphone a refusé de créer l'abonnement (« push service error »).\n\nÀ vérifier dans l'ordre :\n\n• Le téléphone est-il connecté à un compte Google ? Les notifications passent par les services Google Play, qui les exigent.\n• Une connexion internet stable (pas de données coupées ni de VPN).\n• Les services Google Play sont-ils à jour et non désactivés ?\n\nRéessayez ensuite. Détail technique : "+_m,"warning");
+    } else {
+      toast('Erreur: '+_m,'error');
+    }
   }
 }
 async function lxSalonPushDisable(){
@@ -33826,8 +33871,8 @@ async function lxEnsurePushSubscription(){
     var reg = await navigator.serviceWorker.ready;
     var sub = await reg.pushManager.getSubscription();
     var created = false;
-    if(!sub){
-      sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
+    if(!sub || !_lxSameKey(sub, _urlB64ToU8(window.VAPID_PUBLIC_KEY))){
+      sub = await _lxSubscribePush(reg);
       created = true;
     }
     // L'abonnement existe cote appareil : est-il connu en base ?
