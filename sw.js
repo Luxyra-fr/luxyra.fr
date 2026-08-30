@@ -1,5 +1,5 @@
 // ============================================================================
-// Luxyra Service Worker — v18 (2026-07-09)
+// Luxyra Service Worker — v19 (2026-08-30)
 //
 // OBJECTIF : auto-update SANS /clear.
 //   Après avoir été chargé une fois, un simple rafraîchissement (ou relance de
@@ -70,7 +70,7 @@
 // Bumper cette chaine a CHAQUE deploiement qui doit invalider l'ancien cache
 // (la strategie network-first sert deja du frais ; le bump nettoie surtout les
 // vieux caches et marque le SW comme "mis a jour").
-var LX_CACHE = 'luxyra-sw-shell-v18-2026-07-09';
+var LX_CACHE = 'luxyra-sw-shell-v19-2026-08-30';
 
 // Shell precache pour un 1er chargement hors-ligne. RESILIENT : un echec
 // unitaire (404, reseau) ne fait PAS echouer l'installation (allSettled).
@@ -212,11 +212,18 @@ self.addEventListener('push', function(e) {
     data = { title: 'Luxyra', body: e.data ? e.data.text() : '' };
   }
   var title = data.title || 'Luxyra';
+  // FIX 2026-08-30 : l'URL de destination est envoyee par send-push DANS data.data
+  // ({title, body, icon, badge, data:{url, event_type, ...}, tag}), pas a la racine.
+  // On lisait data.url, toujours undefined -> le clic retombait systematiquement sur
+  // /app.html et le lien profond (conversation support, etc.) etait perdu.
+  // On lit les deux, en gardant la racine en repli pour ne rien casser.
+  var _payload = (data && typeof data.data === 'object' && data.data) ? data.data : {};
+  var _url = _payload.url || data.url || '/app.html';
   var opts = {
     body: data.body || '',
     icon: data.icon || '/icon-192.png',
     badge: data.badge || '/icon-192.png',
-    data: { url: data.url || '/app.html' },
+    data: { url: _url, event_type: _payload.event_type || data.event_type || '' },
     tag: data.tag || undefined,
     renotify: !!data.tag,
     requireInteraction: !!data.requireInteraction
