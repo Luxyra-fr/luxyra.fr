@@ -12,7 +12,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
-if(navigator.serviceWorker){navigator.serviceWorker.register('/sw.js',{scope:'/app'}).catch(function(){});}
+if(navigator.serviceWorker){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(){});} // FIX 2026-08-30 : scope '/' (etait '/app') — voir lxFixSwScope()
 </script>
 <meta name="apple-mobile-web-app-title" content="Luxyra">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -33773,6 +33773,55 @@ setTimeout(maybeShowPushBanner,4000);
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('/sw.js',{scope:'/'}).then(function(reg){ try{ if(reg) reg.update(); }catch(_){}  /* verifie une mise a jour au chargement — le network-first sert deja du frais, pas de reload force (anti-boucle) */ }).catch(function(e){console.log('SW register:',e);});
 }
+
+// FIX 2026-08-30 : le meme sw.js etait enregistre DEUX fois, sous les scopes '/app'
+// et '/'. Cela cree deux enregistrements distincts, donc deux abonnements push pour
+// un seul telephone (constate en prod : deux abonnements crees a une seconde
+// d'intervalle). Consequences : notifications en double, et abonnement actif porte
+// par un enregistrement qui peut etre remplace -> push perdus.
+// On ne garde que le scope '/', on supprime l'ancien, et on re-abonne dans la foulee
+// pour que le salon n'ait RIEN a refaire.
+async function lxFixSwScope(){
+  try{
+    if(!('serviceWorker' in navigator)) return;
+    var regs = await navigator.serviceWorker.getRegistrations();
+    if(!regs || regs.length < 2) return; // rien a nettoyer
+    var keep = null;
+    for(var i=0;i<regs.length;i++){
+      var sc = String(regs[i].scope||"");
+      if(/\/$/.test(sc) && !/\/app\/?$/.test(sc)) { keep = regs[i]; break; }
+    }
+    if(!keep) return; // pas d'enregistrement racine actif : on ne touche a rien
+    var removed = 0;
+    for(var j=0;j<regs.length;j++){
+      if(regs[j] === keep) continue;
+      try{
+        var sub = await regs[j].pushManager.getSubscription();
+        if(sub){
+          try{ if(typeof _sb!=="undefined" && _sb) await _sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); }catch(_e1){}
+          try{ await sub.unsubscribe(); }catch(_e2){}
+        }
+        await regs[j].unregister();
+        removed++;
+      }catch(_e3){}
+    }
+    if(!removed) return;
+    console.log('[SW] '+removed+' enregistrement(s) en doublon supprime(s)');
+    // Re-abonnement silencieux si la permission est deja accordee
+    try{
+      if(typeof Notification!=="undefined" && Notification.permission==='granted'
+         && typeof _salonId!=="undefined" && _salonId
+         && typeof _sb!=="undefined" && _sb && window.VAPID_PUBLIC_KEY){
+        var s2 = await keep.pushManager.getSubscription();
+        if(!s2) s2 = await keep.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_urlB64ToU8(window.VAPID_PUBLIC_KEY)});
+        var jj = s2.toJSON();
+        await _sb.from('push_subscriptions').upsert({endpoint:s2.endpoint,p256dh:jj.keys.p256dh,auth:jj.keys.auth,target_type:'salon',salon_id:_salonId,admin_user_id:null,last_used_at:new Date().toISOString()},{onConflict:'endpoint'});
+        console.log('[SW] re-abonnement push OK');
+      }
+    }catch(_e4){ console.log('[SW] re-abonnement impossible:',_e4); }
+  }catch(e){ console.log('lxFixSwScope:',e); }
+}
+setTimeout(function(){ lxFixSwScope(); }, 6000);
 </script>
 </body>
 </html>
