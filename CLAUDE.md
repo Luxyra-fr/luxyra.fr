@@ -1078,3 +1078,28 @@ confirmation en ligne).
 
 Un compteur en direct sous chaque modèle affiche désormais taille, encodage et coût
 en crédits, et signale les caractères fautifs (`lxSmsInfo` / `lxRenderSmsCost`).
+
+### SMS : pourquoi le doublon du 30/08 à 23h41 est passé malgré le verrou
+
+Le verrou unique ne compare que les clés **non nulles**. Les SMS envoyés AVANT la pose
+du déclencheur n'en ont pas : un nouvel envoi vers le même client ne rencontrait donc
+aucun conflit. Marina a reçu un rappel à 21h28 (sans clé) puis un second à 23h41 (avec
+clé) — aucun conflit entre les deux. Les clés de la journée en cours ont été calculées
+après coup, en gardant la première ligne de chaque groupe.
+
+**Point important pour la suite :** le verrou n'empêche l'ENVOI que si l'application
+tourne avec le code qui réserve la ligne AVANT d'envoyer. Avec l'ancien code (log écrit
+après envoi), le verrou bloque seulement l'écriture du journal — le SMS est déjà parti.
+Toujours s'assurer que les appareils ont rechargé l'app après ce genre de correctif.
+
+**Heures de silence ajoutées :** les rappels ne partent plus qu'entre 8h et 21h. Rien
+n'est perdu, la vérification repasse toutes les 10 minutes.
+
+**PISTE À VÉRIFIER (non conclue) :** la politique de lecture de `messaging_log` exige
+`salons.user_id = auth.uid()` OR `is_admin()`. Le salon appartient à
+`amandinej@excellence-coiffure.fr`. Si un appareil ouvre l'app avec un autre compte non
+admin, il ne peut PAS lire `messaging_log` — `hasAlreadySent()` ne voit alors jamais les
+envois précédents et renvoie systématiquement des doublons. Cela expliquerait les
+doublons chroniques constatés depuis juillet. À confirmer en vérifiant sous quel compte
+chaque appareil est connecté, et si besoin élargir la politique de lecture aux
+opérateurs du salon.
