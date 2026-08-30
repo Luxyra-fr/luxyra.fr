@@ -934,3 +934,35 @@ les types futurs seront couverts automatiquement, sans nouvelle intervention.
   téléphone ou vide les données du site, il faut réactiver les notifications dans l'app.
 - L'URL de clic est `https://luxyra.fr/app.html` sans ancre : `handleHash()` ne gère que
   `#support` et `#settings/migration`, une ancre `#planning` ne ferait rien.
+
+### Push : livraison application fermée (2026-08-30, suite)
+
+Après correction du double service worker, le push partait bien (`sent:2, failed:0`)
+mais **rien n'arrivait sur le téléphone application fermée** — la notification
+n'apparaissait qu'à la réouverture de l'app.
+
+**Cause identifiée :** `web-push` envoie par défaut avec `urgency: 'normal'`. Cette
+urgence autorise FCM à **retenir** le message tant que l'appareil Android est en veille
+profonde (doze), et à ne le délivrer qu'au réveil — c'est-à-dire au moment où l'on
+rouvre l'application. C'est exactement le symptôme observé.
+
+**Correction :** `send-push` v15 envoie avec `urgency: 'high'` (livraison immédiate même
+en veille) et `TTL: 86400` (une notif de RDV n'a plus d'intérêt au-delà de 24 h ; le
+défaut de web-push était 4 semaines). La réponse renvoie désormais aussi un tableau
+`errors` détaillant les échecs par abonnement (code HTTP + corps), ce qui manquait pour
+diagnostiquer.
+
+**ATTENTION — effet de bord du déploiement :** déployer send-push via l'outil MCP a
+remis `verify_jwt` à **true** (il était à `false`). Vérifié : `notify_salon` et
+`notify_admins` envoient tous deux un en-tête `Authorization` avec la clé service_role,
+et l'app appelle via `_sb.functions.invoke` (jeton de session) — les deux passent.
+Test après déploiement : 200, `sent:2, failed:0`. Si un jour un appel sans jeton doit
+fonctionner, il faudra repasser `verify_jwt` à false dans le tableau de bord Supabase.
+
+**Le code des edge functions n'est PAS versionné dans ce dépôt** (pas de dossier
+`supabase/functions`). La source de vérité est Supabase. À penser lors d'un audit ou
+d'une reprise.
+
+**Si ça ne suffit pas :** le reste est côté appareil — Réglages Android → Applications →
+Luxyra → Batterie → « Non restreinte ». Xiaomi, Huawei, Oppo et Samsung sont les plus
+agressifs et tuent les processus en arrière-plan malgré une urgence haute.
