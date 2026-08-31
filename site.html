@@ -2593,12 +2593,45 @@ function renderBookingStep2(){
   document.getElementById("bookingFlow").innerHTML=h;
 }
 
+// FIX 2026-08-31 : filet de securite unique. Un salon qui n'a qu'UN professionnel
+// ne doit jamais produire de reservation « sans preference » — le salon doit ensuite
+// l'affecter a la main, et l'anomalie est signalee chaque nuit par le controle
+// d'integrite. L'etape de choix est deja sautee quand il n'y a qu'un pro, mais
+// d'autres chemins contournent cette etape (raccourci « prochain creneau »
+// notamment). On resout donc le collaborateur au moment de reserver, quel que soit
+// le chemin emprunte.
+function _lxCollabParDefaut(svcId){
+  try{
+    var elig = (COLLABS||[]).filter(function(c){
+      if(!svcId) return true;
+      var cp = c.competences || {all:true};
+      if(cp.all === true) return true;
+      if(!cp.services || !Array.isArray(cp.services)) return false;
+      return cp.services.indexOf(Number(svcId)) >= 0 || cp.services.indexOf(String(svcId)) >= 0;
+    });
+    return (elig.length === 1) ? elig[0] : null;
+  }catch(_e){ return null; }
+}
+function _lxResoudreCollab(){
+  try{
+    if(booking.collabId) return;
+    var svc = booking.svcId || (booking.items && booking.items.length ? booking.items[0].svcId : null);
+    var seul = _lxCollabParDefaut(svc);
+    if(seul){
+      booking.collabId = seul.id;
+      booking.collab   = seul;
+      console.log("[RESA] un seul professionnel eligible -> affecte automatiquement :", seul.n);
+    }
+  }catch(_e){}
+}
+
 // R\u00e9serve directement le prochain cr\u00e9neau dispo (pas de pr\u00e9f\u00e9rence collab)
 function bookNextSlot(dateStr, timeStr){
   booking.collabId=null;
   booking.collab=null;
   booking.date=dateStr;
   booking.time=timeStr;
+  _lxResoudreCollab();
   renderBookingStep4();
 }
 
@@ -3283,6 +3316,9 @@ async function refreshRDV(){
 }
 
 async function submitBooking(){
+  // FIX 2026-08-31 : dernier filet avant enregistrement — si un seul professionnel
+  // est eligible, il est affecte, quel que soit le chemin emprunte dans le tunnel.
+  try{ _lxResoudreCollab(); }catch(_e){}
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
   if(!nom||!tel){showAlert("Nom et t\u00e9l\u00e9phone obligatoires","warning");return;}
@@ -3481,6 +3517,9 @@ async function loadDashboardRdvs(){
 
 
 async function submitWithStripe(){
+  // FIX 2026-08-31 : dernier filet avant enregistrement — si un seul professionnel
+  // est eligible, il est affecte, quel que soit le chemin emprunte dans le tunnel.
+  try{ _lxResoudreCollab(); }catch(_e){}
   var nom=document.getElementById("bkNom").value.trim();
   var tel=document.getElementById("bkTel").value.trim();
   if(!nom||!tel){showAlert("Nom et telephone obligatoires","warning");return;}
@@ -3685,6 +3724,9 @@ async function submitWithStripe(){
 }
 
 async function processStripePayment(){
+  // FIX 2026-08-31 : dernier filet avant enregistrement — si un seul professionnel
+  // est eligible, il est affecte, quel que soit le chemin emprunte dans le tunnel.
+  try{ _lxResoudreCollab(); }catch(_e){}
   var btn=document.getElementById("stripePayBtn");
   btn.disabled=true;
   btn.textContent="Paiement en cours...";
