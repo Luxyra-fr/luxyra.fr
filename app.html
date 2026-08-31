@@ -3182,7 +3182,18 @@ function savePendingTicket(){
     styName:sty?sty.n:"",
     items:JSON.parse(JSON.stringify(_tk.items)),
     remise:_tk.remise||0,
-    total:_tk.items.reduce(function(a,b){return a+b.price*b.qty-b.remise;},0)-(_tk.remise||0)
+    // FIX 2026-08-31 : ces champs n'etaient PAS sauvegardes. A la reprise du ticket,
+    // l'acompte deja verse n'etait plus deduit : la cliente payait l'acompte une
+    // seconde fois, le chiffre d'affaires et la TVA du jour etaient majores d'autant,
+    // et le rendez-vous d'origine — dont le lien etait perdu — pouvait etre encaisse
+    // une deuxieme fois.
+    apptId:_tk.apptId||null,
+    acompte:Number(_tk.acompte)||0,
+    acompteMode:_tk.acompteMode||null,
+    acompteTkNum:_tk.acompteTkNum||null,
+    extraClients:_tk.extraClients?JSON.parse(JSON.stringify(_tk.extraClients)):null,
+    linkedApptId:_tk._linkedApptId||null,
+    total:_tk.items.reduce(function(a,b){return a+b.price*b.qty-(b.remise||0);},0)-(_tk.remise||0)
   };
   window.PENDING_TK.push(pk);
   // Persistance DB : on attend la fin du save avant de naviguer pour qu'un
@@ -3256,6 +3267,28 @@ function rPendingTk(){
 function resumePendingTk(idx){
   var pk=window.PENDING_TK[idx];if(!pk)return;
   _tk={step:3,stId:pk.stId,cId:pk.cId,items:JSON.parse(JSON.stringify(pk.items)),comment:"",remise:pk.remise};
+  // FIX 2026-08-31 : restauration du contexte (voir savePendingTicket). Sans cela,
+  // l'acompte deja verse etait perdu et le ticket se detachait de son rendez-vous.
+  if(pk.apptId) _tk.apptId = pk.apptId;
+  if(Number(pk.acompte)) _tk.acompte = Number(pk.acompte);
+  if(pk.acompteMode) _tk.acompteMode = pk.acompteMode;
+  if(pk.acompteTkNum) _tk.acompteTkNum = pk.acompteTkNum;
+  if(pk.extraClients) _tk.extraClients = JSON.parse(JSON.stringify(pk.extraClients));
+  if(pk.linkedApptId) _tk._linkedApptId = pk.linkedApptId;
+  // Filet : si le pending est ancien (enregistre avant ce correctif) et qu'il porte
+  // un rendez-vous, on va rechercher l'acompte dans le planning plutot que de le perdre.
+  if(_tk.apptId && !_tk.acompte){
+    try{
+      for(var _ai=0;_ai<AP.length;_ai++){
+        if(AP[_ai].id===_tk.apptId && Number(AP[_ai].acompte)>0){
+          _tk.acompte = Number(AP[_ai].acompte);
+          _tk.acompteMode = AP[_ai].acompteMode || _tk.acompteMode;
+          console.log("[caisse] acompte recupere depuis le RDV :", _tk.acompte);
+          break;
+        }
+      }
+    }catch(_e){}
+  }
   // On garde le pending tant que l'encaissement n'est pas validé.
   // _fromPendingId / _fromPendingDbId permettent de le retrouver pour suppression
   // après encaissement réussi (cf cleanupPendingFromTk).
@@ -27333,8 +27366,17 @@ function _doApplyTkRemiseUI(type){
 function doApplyTkRemise(type){
   var v=parseFloat(document.getElementById("tkRemVal").value)||0;
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});
-  if(type==="eur"){_tk.remise=Math.min(v,total);}
-  else{var pct=Math.min(v,100);_tk.remise=Math.round(total*pct/100*100)/100;}
+  // FIX 2026-08-31 : cette fonction ECRASAIT _tk.remise, alors que le paiement par
+  // bon cadeau et les remises fidelite y CUMULENT. Une remise saisie apres l'usage
+  // d'un bon effacait donc la deduction du bon — la cliente repayait le montant du
+  // bon, et le bon restait debite en base. On conserve la part deja acquise.
+  var _dejaAcquis = Number(_tk.remiseAuto)||0;   // bon cadeau + fidelite deja appliques
+  var _base = Math.max(0, total - _dejaAcquis);  // assiette de la remise manuelle
+  var _manuelle;
+  if(type==="eur"){ _manuelle = Math.min(v, _base); }
+  else { var pct=Math.min(v,100); _manuelle = Math.round(_base*pct/100*100)/100; }
+  _tk.remiseManuelle = _manuelle;
+  _tk.remise = Math.min(total, _dejaAcquis + _manuelle);
   _tk.step=3;showCaisse();
 }
 
@@ -27617,6 +27659,7 @@ async function doBonPay(){
     // Bon OFFERT : appliqué comme REMISE (et non un paiement) -> le montant offert
     // n'entre PAS dans le CA ni le FEC (service à titre gracieux, charge 6234).
     _tk.remise=(_tk.remise||0)+use;
+    _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+use; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
     _tk.offertRemise=(_tk.offertRemise||0)+use;
     _tk.payments.push({method:"Offert "+code,amount:0});
     total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
@@ -27631,6 +27674,7 @@ async function doBonPay(){
     // Cloture Z equilibree : recette (AP.pr) ET le montant couvert par le bon baissent
     // de `use` a l'identique, et le paiement bon est pousse a 0 -> somme des modes = total.
     _tk.remise=(_tk.remise||0)+use;
+    _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+use; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
     _tk.bonVenduRemise=(_tk.bonVenduRemise||0)+use;
     _tk.payments.push({method:"Bon cadeau r\u00e9gl\u00e9 "+code,amount:0});
     total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
@@ -27795,6 +27839,7 @@ function doFidDiscount(cId,amount,resetTo,method){
   if(!_tk._fidResults)_tk._fidResults={};
   _tk._fidResults[cId]={action:"discount",amount:amount,resetTo:resetTo};
   _tk.remise=(_tk.remise||0)+amount;
+  _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+amount; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
   _tk._fidDiscountApplied=(_tk._fidDiscountApplied||0)+amount;
   doFinalPay(method);
 }
@@ -27844,6 +27889,7 @@ function applyFidEarly(cId,amount,resetTo){
   if(_tk._fidResults[cId])return; // anti-double
   _tk._fidResults[cId]={action:"discount",amount:amount,resetTo:resetTo};
   _tk.remise=(_tk.remise||0)+amount;
+  _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+amount; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
   _tk._fidDiscountApplied=(_tk._fidDiscountApplied||0)+amount;
   _tk.step=5; showCaisse();
 }
@@ -27858,6 +27904,7 @@ function lxFidUndoReward(cId){
 }
 function applyFidDiscount(amount,method){
   _tk.remise=(_tk.remise||0)+amount;
+  _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+amount; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
   _tk._fidHandled=true;
   _tk._fidAdd=false;
   _tk._fidReset=true;
@@ -27921,6 +27968,7 @@ function doFidCagnotteUse(cId, useAmt, newCredit, method){
   if(!_tk._fidResults)_tk._fidResults={};
   _tk._fidResults[cId]={action:"cagnotte_use", use:useAmt, credit:newCredit};
   _tk.remise=(_tk.remise||0)+useAmt;
+  _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+useAmt; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
   _tk._fidDiscountApplied=(_tk._fidDiscountApplied||0)+useAmt;
   doFinalPay(method);
 }
@@ -27986,6 +28034,7 @@ function doFidCaDiscount(cId, remiseAmt, method){
   if(!_tk._fidResults)_tk._fidResults={};
   _tk._fidResults[cId]={action:"ca_discount", remise:remiseAmt};
   _tk.remise=(_tk.remise||0)+remiseAmt;
+  _tk.remiseAuto=(Number(_tk.remiseAuto)||0)+remiseAmt; // FIX 2026-08-31 : part non manuelle, protegee de l'ecrasement par une remise saisie
   _tk._fidDiscountApplied=(_tk._fidDiscountApplied||0)+remiseAmt;
   doFinalPay(method);
 }
