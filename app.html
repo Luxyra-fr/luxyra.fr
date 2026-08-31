@@ -20037,8 +20037,8 @@ function doVoidGift(gcId){
   var g=null;for(var i=0;i<GC.length;i++){if(GC[i].id===gcId){g=GC[i];break;}}
   if(!g)return;
   var oldRem=g.rem;g.st="voided";g.rem=0;
-  // Save to Supabase - try BOTH methods
-  if(typeof saveGiftCard==="function"){saveGiftCard(g);}
+  // Annulation : modification VOLONTAIRE du solde (voir correctif du 31/08).
+  if(typeof saveGiftCard==="function"){saveGiftCard(g,{soldeIntentionnel:true});}
   // Also direct update as backup
   if(typeof _sb!=="undefined"&&_sb){
     _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("id",gcId).then(function(r){
@@ -27552,7 +27552,7 @@ function finalizePay(method){
   doFinalPay(method);
 }
 function doBonPayDirect(code){document.getElementById("bcCode").value=code;doBonPay();}
-function doBonPay(){
+async function doBonPay(){
   var code=document.getElementById("bcCode").value.trim().toUpperCase();
   if(!code){_tk.step=5;showCaisse();return;}
     var bon=null;
@@ -27585,12 +27585,32 @@ function doBonPay(){
     useMax = Math.min(useMax, totalEligible);
   }
   var use=Math.min(useMax,resteDu);
-  bon.rem-=use;
-  bon.used=(bon.used||0)+use;
-  if(!bon.history)bon.history=[];
-  bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
-  if(bon.rem<=0){bon.st="used";bon.rem=0;auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E"+((bon.isOffert===true||bon.payMethod==="Offert")?" (offert: remise, hors CA)":" (bon vendu : d\u00e9j\u00e0 r\u00e9gl\u00e9 \u00e0 la vente, remise, hors CA)"));}
-  if(typeof saveGiftCard==="function")saveGiftCard(bon);
+  // FIX 2026-08-31 : la deduction se fait EN BASE, de facon atomique. Elle etait
+  // calculee ici depuis la memoire : deux postes encaissant en meme temps avec le
+  // meme bon partaient tous deux du solde du matin, et le bon etait depense deux
+  // fois. La base refuse desormais de descendre sous zero.
+  if(typeof consommerBonCadeau==="function"){
+    var _rb=await consommerBonCadeau(bon.id, use, tkN||0);
+    if(!_rb || !_rb.ok){
+      if(typeof showAlert==="function") showAlert("Bon cadeau non appliqu\u00e9 : "+((_rb&&_rb.error)||"erreur")+(typeof _rb!=="undefined"&&_rb&&typeof _rb.restant!=="undefined"?"\n\nSolde r\u00e9el du bon : "+Number(_rb.restant).toFixed(2)+" \u20ac":""),"warning");
+      else if(typeof toast==="function") toast("Bon cadeau non appliqu\u00e9","error");
+      return;
+    }
+    // On aligne la memoire sur ce que la base a REELLEMENT enregistre
+    bon.rem  = _rb.restant;
+    bon.used = _rb.utilise;
+    bon.st   = _rb.status || bon.st;
+    if(!bon.history)bon.history=[];
+    bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
+    if(bon.rem<=0){auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E"+((bon.isOffert===true||bon.payMethod==="Offert")?" (offert: remise, hors CA)":" (bon vendu : d\u00e9j\u00e0 r\u00e9gl\u00e9 \u00e0 la vente, remise, hors CA)"));}
+  } else {
+    bon.rem-=use;
+    bon.used=(bon.used||0)+use;
+    if(!bon.history)bon.history=[];
+    bon.history.push({date:TD,amount:use,tkNum:tkN||0,time:new Date().toTimeString().slice(0,5)});
+    if(bon.rem<=0){bon.st="used";bon.rem=0;}
+    if(typeof saveGiftCard==="function")saveGiftCard(bon,{soldeIntentionnel:true});
+  }
   auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Utilisé: "+use.toFixed(2)+"E - Reste: "+bon.rem.toFixed(2)+"E");
   if(!_tk.payments)_tk.payments=[];
   if(bon.isOffert===true||bon.payMethod==="Offert"){
