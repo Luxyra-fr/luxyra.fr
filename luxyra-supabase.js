@@ -2930,8 +2930,17 @@ async function saveCollaborateurs() {
       competences: c.competences || {all:true}
     };
     if (c.id && dbIds[c.id]) {
-      // Exists in DB → UPDATE
-      await _sb.from("collaborateurs").update(data).eq("id", c.id);
+      // FIX 2026-08-31 : la sauvegarde en masse n'ecrit PLUS le statut RH d'une fiche
+      // existante. Elle l'ecrivait depuis la memoire de l'appareil : un appareil dont
+      // l'application datait d'avant un archivage reactivait le collaborateur a son
+      // insu (Manue, reapparue active le 31/08). Le statut RH ne se modifie desormais
+      // que par le chemin dedie (saveCollabRH), qui exprime une intention explicite.
+      var dataUpd = {};
+      Object.keys(data).forEach(function(k){
+        if (k === "inactif" || k === "date_depart" || k === "date_entree") return;
+        dataUpd[k] = data[k];
+      });
+      await _sb.from("collaborateurs").update(dataUpd).eq("id", c.id);
     } else {
       // FIX 2026-06-19 : avant d'insérer, on cherche un collaborateur identique déjà
       // en base (même nom + initiales + couleur). S'il existe, on l'ADOPTE (UPDATE +
@@ -2947,6 +2956,29 @@ async function saveCollaborateurs() {
     }
   }
 }
+
+// Modification VOLONTAIRE du statut RH d'un collaborateur (depart / inactif).
+// Renseigne rh_updated_at : c'est ce champ qui signale a la base une intention
+// explicite. Sans lui, la protection en base refuse toute reactivation, ce qui
+// empeche un appareil non recharge d'annuler un archivage.
+async function saveCollabRH(collabId, fields) {
+  if (!_isOnline || !_salonId || !collabId) return { ok:false, error:"hors ligne" };
+  var payload = {};
+  if (Object.prototype.hasOwnProperty.call(fields||{}, "inactif"))     payload.inactif = fields.inactif === true;
+  if (Object.prototype.hasOwnProperty.call(fields||{}, "dateDepart"))  payload.date_depart = fields.dateDepart || null;
+  if (Object.prototype.hasOwnProperty.call(fields||{}, "dateEntree"))  payload.date_entree = fields.dateEntree || null;
+  if (!Object.keys(payload).length) return { ok:true };
+  payload.rh_updated_at = new Date().toISOString();
+  try {
+    var r = await _sb.from("collaborateurs").update(payload).eq("id", collabId).eq("salon_id", _salonId).select("id,inactif,date_depart");
+    if (r && r.error) { console.error("[saveCollabRH]", r.error); return { ok:false, error:r.error.message }; }
+    return { ok:true, data:(r && r.data && r.data[0]) || null };
+  } catch (e) {
+    console.error("[saveCollabRH]", e);
+    return { ok:false, error:(e && e.message) || "erreur" };
+  }
+}
+window.saveCollabRH = saveCollabRH;
 
 // Effacement explicite de la photo d'un collaborateur (utilisé par clearStyImg)
 // Bypass la protection anti-écrasement de saveCollaborateurs().

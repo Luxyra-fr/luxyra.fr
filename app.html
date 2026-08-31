@@ -12243,9 +12243,23 @@ function setCollabDepart(ti, val){
   } else if(typeof toast==="function"){
     toast("Date de depart effacee pour "+nom,"info");
   }
-  if(typeof saveCollaborateurs==="function") saveCollaborateurs();
+  // FIX 2026-08-31 : passe par le chemin RH dedie (intention explicite). La
+  // sauvegarde en masse n'ecrit plus ce statut : un appareil dont l'application
+  // n'est pas a jour ne peut donc plus annuler l'archivage. On confirme aussi que
+  // la base a bien accepte, au lieu de supposer que c'est enregistre.
+  var _cid = T[ti] ? T[ti].id : null;
+  if(typeof saveCollabRH==="function" && _cid){
+    saveCollabRH(_cid, {inactif: T[ti].inactif === true, dateDepart: T[ti].dateDepart || null})
+      .then(function(r){
+        if(!r || !r.ok){
+          if(typeof showAlert==="function") showAlert("La date de départ n'a PAS pu être enregistrée : "+((r&&r.error)||"erreur inconnue")+"\n\nRéessayez, et si le problème persiste ne fermez pas l'application avant d'avoir vérifié.","warning");
+          return;
+        }
+        if(typeof auditLog==="function") auditLog("COLLAB_STATUT_RH", nom+" : depart="+(T[ti].dateDepart||"aucun")+", inactif="+(T[ti].inactif===true));
+      });
+  } else if(typeof saveCollaborateurs==="function") saveCollaborateurs();
   if(typeof saveSiteConfig==="function") saveSiteConfig();
-  lxRefreshSettings(T[ti]?T[ti].id:null);
+  lxRefreshSettings(_cid);
 }
 // Garde-fou suppression : un collaborateur rattache a des RDV ne doit PAS etre supprime
 // (perte d'attribution sur tout l'historique). On oriente vers la date de depart.
@@ -13167,14 +13181,14 @@ function rSettings(){
       h+='<div style="font-size:13px;font-weight:800;color:var(--gold);margin-bottom:10px">\ud83d\udccb Informations RH</div>';
       h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date d\'entr\u00e9e</label>';
-      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs()"></div>';
+      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;if(typeof saveCollabRH===\'function\')saveCollabRH('+st2.id+',{dateEntree:this.value})"></div>';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date de d\u00e9part</label>';
       h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="setCollabDepart('+ti+',this.value)"></div>';
       h+='</div>';
       h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:'+(_isInactif?'rgba(244,67,54,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(_isInactif?'rgba(244,67,54,.3)':'rgba(255,255,255,.06)')+';border-radius:8px;cursor:pointer">';
       h+='<div><div style="font-size:13px;font-weight:700;color:'+(_isInactif?'#ef5350':'#fff')+'">\u23f8 Inactif (cong\u00e9s, arr\u00eat, d\u00e9part...)</div>';
       h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Masqu\u00e9 du planning et de la r\u00e9servation en ligne. Reste dans les statistiques.</div></div>';
-      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollaborateurs===\'function\')saveCollaborateurs();if(typeof toast===\'function\')toast((T['+ti+'].n||\'\')+(this.checked?\' marqu\u00e9 inactif\':\' r\u00e9activ\u00e9\'),\'info\');lxRefreshSettings('+st2.id+')"></label>';
+      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollabRH===\'function\')saveCollabRH('+st2.id+',{inactif:this.checked});if(typeof toast===\'function\')toast((T['+ti+'].n||\'\')+(this.checked?\' marqu\u00e9 inactif\':\' r\u00e9activ\u00e9\'),\'info\');lxRefreshSettings('+st2.id+')"></label>';
       h+='</div>';
       // ===== FIN INFORMATIONS RH =====
       // ===== COMP\u00c9TENCES =====
