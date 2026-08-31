@@ -1103,3 +1103,29 @@ envois précédents et renvoie systématiquement des doublons. Cela expliquerait
 doublons chroniques constatés depuis juillet. À confirmer en vérifiant sous quel compte
 chaque appareil est connecté, et si besoin élargir la politique de lecture aux
 opérateurs du salon.
+
+### Monitoring — anomalies relevées le 31/08/2026
+
+1. **`column push_subscriptions.events_fiscal_integrity does not exist` → HTTP 500.**
+   La branche ADMIN de `send-push` construisait un nom de colonne à partir du type
+   d'événement. Pour tout type sans colonne dédiée, la requête échouait et **l'alerte
+   n'était jamais délivrée** — y compris celle du contrôle d'intégrité fiscal NF525 de
+   5h du matin. Corrigé en v17 : seules les colonnes réellement existantes servent de
+   filtre (`admin_reply`, `new_signup`, `payment_failed`, `critical`, `migration`), tout
+   autre type est traité comme critique. Vérifié : HTTP 200, `filtre=events_critical`.
+
+2. **`notify_admins` avait le même délai de 5 s que `notify_salon`** (corrigé la veille).
+   Porté à 30 s.
+
+3. **AUCUN abonnement push de type `admin`** n'existe : les 4 abonnements sont
+   `target_type='salon'`. Les alertes admin ne peuvent donc atteindre personne par push,
+   même corrigées — elles reposent uniquement sur l'email. À activer depuis admin.html
+   si on veut les recevoir sur le téléphone.
+
+4. **`RDV_ONLINE_SANS_COLLABORATEUR`** : la réservation de Leana Fuhrmann du 26/09
+   (« sans préférence ») n'a toujours pas de collaborateur affecté. À assigner dans le
+   planning, sinon elle restera signalée chaque nuit.
+
+5. **`site:resa_echec` ×2 le 30/08 à 21h21** : « Ce créneau vient d'être réservé » —
+   collision normale entre deux tentatives simultanées, la cliente a pu réserver ensuite.
+   Pas d'action.
