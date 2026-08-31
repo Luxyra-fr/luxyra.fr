@@ -5963,7 +5963,11 @@ function doConfirmCloture(){
   CD.coffreEsp+=espCoffre;
   CD.coffreChq+=chqCoffre;
   CD.misesAuCoffre.push({date:TD,esp:espCoffre,chq:chqCoffre});
-  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  // FIX 2026-08-31 : mise au coffre de la cloture -> ecriture dediee de la caisse.
+  // C'est le mouvement le plus important de la journee : il ne doit pas dependre
+  // d'une sauvegarde generale qui reecrit tout depuis la memoire.
+  if(typeof _lxCaisseSaveEtAlerte==="function") _lxCaisseSaveEtAlerte("La mise au coffre de la cloture");
+  else if(typeof saveSalonConfig==="function") saveSalonConfig();
   auditLog("MISE_AU_COFFRE","Auto: Especes "+espCoffre.toFixed(2)+"E + Cheques "+chqCoffre.toFixed(2)+"E (retraits "+espRetraits.toFixed(2)+"E deduits)");
   
   // Show Z receipt + confirmation
@@ -14220,7 +14224,7 @@ function saveFondCaisse(){
   var val=parseFloat(document.getElementById("fondCaisseInput").value)||0;
   if(!window.CAISSE_DATA)window.CAISSE_DATA={};
   window.CAISSE_DATA.fond=val;
-  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  _lxCaisseSaveEtAlerte("Le fond de caisse"); // FIX 2026-08-31 : ecriture dediee de la caisse
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
   h2+='<h2>Fond de caisse modifi\u00e9</h2>';
@@ -26538,15 +26542,22 @@ async function saveSalonConfig(){
     // (coffreEsp, misesAuCoffre, etc.) hérités de l'ancien format, ils ont été
     // remontés dans CAISSE_DATA au load, et on les supprime maintenant à la
     // racine pour ne pas créer de doublons. NF525 non concerné.
+    // FIX 2026-08-31 : la sauvegarde generale n'ecrit PLUS la caisse.
+    // Elle reecrivait tout le bloc (coffre, pieces de caisse, remises en banque,
+    // fond) depuis la memoire du navigateur, depuis 47 endroits de l'application.
+    // Une sortie de caisse saisie sur un telephone etait annulee des que quelqu'un
+    // modifiait le taux de TVA ou une info du salon sur la tablette ouverte depuis
+    // le matin — et le numero de piece de caisse suivant reutilisait un numero deja
+    // emis. La caisse ne s'ecrit desormais que par saveCaisseData(), qui relit la
+    // base juste avant d'ecrire.
     if(window.CAISSE_DATA && typeof window.CAISSE_DATA === "object"){
       try {
-        cfg.caisse_data = JSON.parse(JSON.stringify(window.CAISSE_DATA));
-        if(typeof window.CAISSE_DATA.fond !== "undefined") cfg.fond_caisse = window.CAISSE_DATA.fond;
-        // Cleanup auto des champs orphelins racine (anciens salons)
+        // Nettoyage des champs orphelins a la racine (anciens salons) : sans effet
+        // sur les donnees de caisse elles-memes, conservees telles quelles en base.
         ["coffreEsp","coffreChq","misesAuCoffre","mouvements","remisesBanque","retraits","pieces"].forEach(function(k){
           if(k in cfg) delete cfg[k];
         });
-      } catch(e){ console.warn("CAISSE_DATA serialize failed:", e); }
+      } catch(e){ console.warn("nettoyage caisse:", e); }
     }
     if(typeof SALON_CONFIG==="object" && SALON_CONFIG && SALON_CONFIG.validiteDevis) cfg.validite_devis = Number(SALON_CONFIG.validiteDevis);
     // Champs SALON_CONFIG top-level pertinents
@@ -29673,6 +29684,41 @@ function newMouvement(type){
   htm+='<button class="btn bg" style="flex:1" onclick="doNewMouvement(\''+type+'\')">Valider</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
+// FIX 2026-08-31 : ecriture DEDIEE de la caisse. Relit config_json juste avant
+// d'ecrire, pour ne jamais reposer sur un etat charge le matin, puis n'y remplace
+// que le bloc caisse. Confirme l'enregistrement et alerte en cas d'echec — un
+// mouvement de caisse perdu en silence est pire qu'un message d'erreur.
+async function saveCaisseData(){
+  try{
+    if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return {ok:false,error:"hors ligne"};
+    if(!window.CAISSE_DATA || typeof window.CAISSE_DATA!=="object") return {ok:false,error:"aucune donnee"};
+    var r = await _sb.from("salons").select("config_json").eq("id",_salonId).single();
+    if(r.error) return {ok:false,error:r.error.message};
+    var cfg = {};
+    try{
+      var raw = r.data && r.data.config_json;
+      cfg = (typeof raw === "string") ? JSON.parse(raw) : (raw || {});
+    }catch(_e){ cfg = {}; }
+    cfg.caisse_data = JSON.parse(JSON.stringify(window.CAISSE_DATA));
+    if(typeof window.CAISSE_DATA.fond !== "undefined") cfg.fond_caisse = window.CAISSE_DATA.fond;
+    ["coffreEsp","coffreChq","misesAuCoffre","mouvements","remisesBanque","retraits","pieces"].forEach(function(k){
+      if(k in cfg) delete cfg[k];
+    });
+    var w = await _sb.from("salons").update({config_json: JSON.stringify(cfg)}).eq("id",_salonId);
+    if(w.error) return {ok:false,error:w.error.message};
+    try{ if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.caisse_data = cfg.caisse_data; }catch(_e2){}
+    return {ok:true};
+  }catch(e){ return {ok:false,error:(e&&e.message)||"erreur"}; }
+}
+function _lxCaisseSaveEtAlerte(libelle){
+  if(typeof saveCaisseData!=="function"){ if(typeof saveSalonConfig==="function")saveSalonConfig(); return; }
+  saveCaisseData().then(function(r){
+    if(!r || !r.ok){
+      if(typeof showAlert==="function") showAlert(libelle+" n'a PAS pu etre enregistre : "+((r&&r.error)||"erreur inconnue")+"\n\nRefaites l'operation avant de fermer la caisse.","warning");
+      else if(typeof toast==="function") toast("Enregistrement caisse echoue","error");
+    }
+  });
+}
 function doNewMouvement(type){
   var val=parseFloat(document.getElementById("mvVal").value)||0;
   var motif=document.getElementById("mvMotif").value.trim();
@@ -29684,7 +29730,7 @@ function doNewMouvement(type){
   var num=CD.mouvements.length+1;
   var mv={id:"PC-"+num,date:TD,type:type,motif:motif,montant:val};
   CD.mouvements.push(mv);
-  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  _lxCaisseSaveEtAlerte("La piece de caisse"); // FIX 2026-08-31 : ecriture dediee de la caisse
   auditLog("MOUVEMENT_CAISSE","PC-"+num+" "+type+" "+val.toFixed(2)+"E - "+motif);
   cM();go("caisseGestion");
 }
@@ -29710,7 +29756,7 @@ function doRemiseBanque(){
   if(type==="Ch\u00e8ques")window.CAISSE_DATA.coffreChq=Math.max(0,window.CAISSE_DATA.coffreChq-val);
   else if(type==="Esp\u00e8ces")window.CAISSE_DATA.coffreEsp=Math.max(0,window.CAISSE_DATA.coffreEsp-val);
   else{var hf=val/2;window.CAISSE_DATA.coffreEsp=Math.max(0,window.CAISSE_DATA.coffreEsp-hf);window.CAISSE_DATA.coffreChq=Math.max(0,window.CAISSE_DATA.coffreChq-(val-hf));}
-  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  _lxCaisseSaveEtAlerte("La remise en banque"); // FIX 2026-08-31 : ecriture dediee de la caisse
   cM();go("caisseGestion");
 }
 
