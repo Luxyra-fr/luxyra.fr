@@ -1414,7 +1414,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         themeId: g.theme_id || null,   // Style choisi par l'acheteur (bons en ligne)
         source: g.source || null,      // "web" = vente en ligne, sinon caisse
         buyerEmail: g.buyer_email || null,
-        buyerPhone: g.buyer_phone || null
+        buyerPhone: g.buyer_phone || null,
+        // Marque le bon comme deja present en base : saveGiftCard n'ecrira alors plus
+        // son solde depuis la memoire (voir le correctif du 31/08).
+        _dejaEnBase: true
       };
     });
   }
@@ -2147,13 +2150,21 @@ async function saveProduct(prod) {
 }
 
 // Sauvegarder une carte cadeau
-async function saveGiftCard(gc) {
+// FIX 2026-08-31 : le SOLDE d'un bon cadeau n'est plus ecrit depuis la memoire.
+// Il l'etait, et la liste des bons n'est jamais rechargee apres l'ouverture de
+// l'application : modifier la date d'expiration d'un bon depuis un appareil dont la
+// memoire datait du matin remettait le solde a sa valeur d'origine — de l'argent
+// offert, sans aucune trace. Le solde ne se modifie desormais que par les deux
+// chemins qui en ont l'intention (consommation, annulation), via l'option
+// {soldeIntentionnel:true} — la consommation passant elle-meme par une deduction
+// atomique en base (consommer_bon_cadeau).
+async function saveGiftCard(gc, opts) {
   if (!_isOnline || !_salonId) return;
+  var soldeIntentionnel = !!(opts && opts.soldeIntentionnel);
   var data = {
     salon_id: _salonId,
     valeur: gc.val, de: gc.from, pour: gc.to, message: gc.msg,
     code: gc.code, date_creation: gc.cr, date_expiration: gc.exp,
-    utilise: gc.used, restant: gc.rem, status: gc.st,
     scope: gc.scope || "tout",
     gc_num: gc.gcNum || null,
     pay_method: gc.payMethod || null,
@@ -2161,15 +2172,48 @@ async function saveGiftCard(gc) {
     ht: gc.ht || 0,
     tva: gc.tva || 0,
     tva_rate: gc.tvaRate || 0.20,
-    history: gc.history || [],
     tk_num: gc.tkNum || null
   };
   // FIX 2026-05-12 : upsert avec id explicite (U() génère UUID stable)
   _ensureUuidId(gc);
   data.id = gc.id;
+
+  // Les champs de SOLDE ne partent que si l'appelant en a explicitement l'intention.
+  // Sinon ils sont omis : la valeur en base fait foi, un etat perime ne peut plus
+  // recrediter un bon deja consomme.
+  var estNouveau = !gc._dejaEnBase;
+  if (soldeIntentionnel || estNouveau) {
+    data.utilise = gc.used || 0;
+    data.restant = (typeof gc.rem === "number") ? gc.rem : gc.val;
+    data.status  = gc.st || "active";
+    data.history = gc.history || [];
+  }
+
   var res = await _sb.from("cartes_cadeaux").upsert(data).select();
-  if (res.error) console.error("saveGiftCard upsert error:", res.error);
+  if (res.error) { console.error("saveGiftCard upsert error:", res.error); return { ok:false, error:res.error.message }; }
+  gc._dejaEnBase = true;
+  return { ok:true };
 }
+
+// Consommation ATOMIQUE d'un bon cadeau : la deduction est faite en base, jamais en
+// memoire. Empeche qu'un meme bon soit depense deux fois depuis deux postes, et
+// qu'un solde soit recalcule a partir d'une copie perimee.
+async function consommerBonCadeau(bonId, montant, ticketNum) {
+  if (!_isOnline || !_salonId) return { ok:false, error:"hors ligne" };
+  try {
+    var r = await _sb.rpc("consommer_bon_cadeau", {
+      p_bon_id: bonId, p_montant: Number(montant), p_ticket: String(ticketNum || "")
+    });
+    if (r.error) { console.error("[bon cadeau]", r.error); return { ok:false, error:r.error.message }; }
+    var d = r.data || {};
+    if (!d.ok) return { ok:false, error:d.erreur || "refus", restant:d.restant };
+    return { ok:true, restant:Number(d.restant), utilise:Number(d.utilise), status:d.status };
+  } catch (e) {
+    console.error("[bon cadeau]", e);
+    return { ok:false, error:(e && e.message) || "erreur" };
+  }
+}
+window.consommerBonCadeau = consommerBonCadeau;
 
 // ============================================================
 // TICKETS (NF525) — persistance DB avec hash chaîné
