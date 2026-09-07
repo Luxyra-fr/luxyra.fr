@@ -30885,15 +30885,21 @@ async function hasAlreadySent(context,phone,rdvId){
 // glissante mais par rapport a l'heure du rendez-vous : une confirmation envoyee la
 // semaine derniere pour un autre rendez-vous ne supprime donc pas ce rappel-ci.
 async function _lxConfirmationTientLieuDeRappel(phone, dateRdv, heureRdv){
+  // dateRdv / heureRdv conserves pour la journalisation et d'eventuelles evolutions
   try{
     if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return false;
     var propre=String(phone||"").replace(/[\s\.\-]/g,"");
     if(propre.charAt(0)==="0") propre="+33"+propre.slice(1);
     var tail=propre.slice(-4);
     if(tail.length<4) return false;
-    var tsRdv=new Date(String(dateRdv)+"T"+String(heureRdv||"12:00")+":00");
-    if(isNaN(tsRdv.getTime())) return false;
-    var depuis=new Date(tsRdv.getTime()-24*3600*1000).toISOString();
+    // FIX 2026-09-07 (2e passe) : la fenetre etait « 24 h avant le rendez-vous ».
+    // Trop etroite : une cliente qui reserve LUNDI 9h pour MARDI 14h est a 29 h du
+    // rendez-vous, donc hors fenetre — elle recevait la confirmation le lundi matin
+    // ET le rappel le lundi apres-midi. Deux SMS le meme jour.
+    // La bonne regle est donc : une confirmation envoyee AUJOURD'HUI rend le rappel
+    // du jour inutile, puisque le rappel part la veille du rendez-vous.
+    var _minuit=new Date(); _minuit.setHours(0,0,0,0);
+    var depuis=_minuit.toISOString();
     var r=await _sb.from("messaging_log").select("id")
             .eq("salon_id",_salonId).eq("type","sms")
             .in("context",["confirmation_rdv","confirmation_rdv_groupe"])
