@@ -1166,3 +1166,39 @@ priorité, puis ceux du salon (`coalesce(v_col_horaires->dow, v_cfg_horaires->do
 Un collaborateur dont la grille hebdomadaire est plus large que celle du salon rendrait
 donc réservables des créneaux hors ouverture du salon. Non corrigé : ce serait un
 changement de règle métier, à décider avec Alexandre.
+
+### Historique des horaires et exceptions (07/09/2026)
+
+Table `historique_horaires`, alimentée par deux déclencheurs :
+
+- `site_config` → changement de `horaires_salon` ou de `absences`
+- `collaborateurs` → changement de `horaires` ou de `horaires_overrides`
+
+Chaque entrée porte un **résumé lisible** (« Lundi : 14:00-18:00 -> 09:00-18:00 »,
+« SUPPRIME : ouverture_except du 2026-09-14 (09:00-18:00) »), l'ancienne et la nouvelle
+valeur complètes, l'utilisateur et son email, et l'horodatage.
+
+**Pourquoi :** impossible de déterminer pourquoi la réservation d'Ophélie du 07/09 à 9h
+avait été acceptée un lundi ouvrant à 14h. Toutes les pistes ont été éliminées
+(validation testée sur 7 cas, horaires d'Amandine confirmés à 14h-18h, aucune demande
+de RDV sur mesure, aucune ouverture exceptionnelle subsistante) sauf deux, invérifiables
+faute d'historique : horaires modifiés depuis, ou ouverture exceptionnelle créée puis
+effacée — ce que la republication de `site_config` depuis un appareil périmé peut faire
+sans laisser de trace.
+
+**Pour interroger :**
+```sql
+select modifie_le, quoi, resume, modifie_par_email
+from historique_horaires
+where salon_id = '...' order by modifie_le desc limit 30;
+```
+
+**Points de conception :**
+- `modifie_le` utilise `clock_timestamp()`, PAS `now()` : `now()` renvoie l'heure de
+  début de transaction, donc plusieurs modifications d'une même transaction auraient
+  porté un horodatage identique et leur ordre aurait été indéterminable — exactement le
+  flou qu'on cherche à supprimer. Trouvé par un test qui a échoué pour cette raison.
+- Les déclencheurs avalent toute erreur : l'historique ne doit JAMAIS empêcher un
+  enregistrement.
+- RLS : lecture réservée au propriétaire du salon et à l'admin. Aucune policy
+  d'écriture — l'historique n'est pas modifiable depuis l'application.
