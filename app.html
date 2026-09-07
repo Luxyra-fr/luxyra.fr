@@ -30548,6 +30548,26 @@ async function sendSms(phone,message,context,clientNom){
     htm+='<button onclick="cM()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;cursor:pointer">Fermer</button>';
     htm+='</div></div>';
     document.getElementById("modal").innerHTML=htm;
+    // FIX 2026-09-07 : sans credits, l'envoi etait purement PERDU — aucune trace,
+    // aucune reprise. Une cliente pouvait ne jamais recevoir son rappel sans que
+    // personne ne le sache. On met desormais le SMS en attente, avec une date limite
+    // de pertinence : au rechargement, seuls ceux qui ont encore un sens partiront.
+    try{
+      if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
+        var _lim=null;
+        try{
+          // Un rappel ou une confirmation n'a plus d'objet une fois le RDV commence.
+          if(window._lxSmsEcheance instanceof Date && !isNaN(window._lxSmsEcheance)) _lim=window._lxSmsEcheance.toISOString();
+        }catch(_e0){}
+        if(!_lim) _lim=new Date(Date.now()+48*3600*1000).toISOString();
+        _sb.from("sms_differes").insert({
+          salon_id:_salonId, telephone:phone, message:message,
+          contexte:context||null, client_nom:clientNom||null, pertinent_jusqu_a:_lim
+        }).then(function(){
+          if(typeof toast==="function") toast("SMS mis en attente \u2014 il partira au rechargement des cr\u00e9dits","warning");
+        },function(_e){ console.warn("[sms] mise en attente impossible:",_e); });
+      }
+    }catch(_e){ console.warn("[sms] mise en attente:",_e); }
     return{ok:false,error:"no_credits"};
   }
   var cleanPhone=phone.replace(/[\s\.\-]/g,"");
@@ -30857,6 +30877,31 @@ async function hasAlreadySent(context,phone,rdvId){
     return true; // verification impossible -> on s'abstient (voir commentaire ci-dessus)
   }
 }
+// FIX 2026-09-07 : une cliente qui reserve aujourd'hui pour demain recevait la
+// confirmation, puis le rappel 24h quelques minutes plus tard — deux SMS pour dire la
+// meme chose, un credit gaspille et une cliente agacee.
+// Regle : si une confirmation a deja ete envoyee a ce numero DANS la fenetre des 24 h
+// precedant le rendez-vous, elle tient lieu de rappel. On ne compare pas sur une duree
+// glissante mais par rapport a l'heure du rendez-vous : une confirmation envoyee la
+// semaine derniere pour un autre rendez-vous ne supprime donc pas ce rappel-ci.
+async function _lxConfirmationTientLieuDeRappel(phone, dateRdv, heureRdv){
+  try{
+    if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return false;
+    var propre=String(phone||"").replace(/[\s\.\-]/g,"");
+    if(propre.charAt(0)==="0") propre="+33"+propre.slice(1);
+    var tail=propre.slice(-4);
+    if(tail.length<4) return false;
+    var tsRdv=new Date(String(dateRdv)+"T"+String(heureRdv||"12:00")+":00");
+    if(isNaN(tsRdv.getTime())) return false;
+    var depuis=new Date(tsRdv.getTime()-24*3600*1000).toISOString();
+    var r=await _sb.from("messaging_log").select("id")
+            .eq("salon_id",_salonId).eq("type","sms")
+            .in("context",["confirmation_rdv","confirmation_rdv_groupe"])
+            .eq("recipient",tail).gte("created_at",depuis).limit(1);
+    if(r && r.error){ console.warn("[rappel] verification confirmation impossible:",r.error); return false; }
+    return !!(r && r.data && r.data.length);
+  }catch(e){ console.warn("[rappel] verification confirmation:",e); return false; }
+}
 async function checkSmsReminders(){
   var cfg=window.SMS_CONFIG;if(!cfg||!cfg.rappelActif)return;
   // FIX 2026-08-30 : heures de silence. Un rappel est parti a 23h41 chez une cliente
@@ -30899,9 +30944,18 @@ async function checkSmsReminders(){
       if(!window._smsSent[key24]&&canSms){
         // Double vérification Supabase anti-doublon multi-onglets
         var alreadySent24=await hasAlreadySent("rappel_24h",cl.ph,a.id);
-        if(!alreadySent24){
+        // La confirmation envoyee dans les 24 h precedant le RDV tient lieu de rappel :
+        // inutile de dire deux fois la meme chose, et de payer deux SMS.
+        var _confirmVaut = alreadySent24 ? false : await _lxConfirmationTientLieuDeRappel(cl.ph, a.date, a.time);
+        if(_confirmVaut){
+          console.log("[rappel] confirmation deja envoyee pour ce RDV -> rappel 24h inutile ("+(cl.pre||"")+" "+(cl.nom||"")+")");
+        }
+        if(!alreadySent24 && !_confirmVaut){
           var msg=buildSmsText(cfg.rappelTexte24h,vars);
+          // Echeance de pertinence : passe l'heure du RDV, ce rappel n'a plus d'objet.
+          try{ window._lxSmsEcheance=new Date(a.date+"T"+(a.time||"12:00")+":00"); }catch(_e){ window._lxSmsEcheance=null; }
           sendSms(cl.ph,msg,"rappel_24h",(cl.pre||"")+" "+(cl.nom||""));
+          window._lxSmsEcheance=null;
         }
         window._smsSent[key24]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
