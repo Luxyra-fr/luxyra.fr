@@ -10097,7 +10097,41 @@ function rPlanningDay(dateObj,showDayHeader){
     var shrs=getEffectiveHrs(dk,T[hi].id);
     if(shrs){anyOpen=true;var so=toM(shrs.o),sc=toM(shrs.c);if(so<earliestO)earliestO=so;if(sc>latestC)latestC=sc;}
   }
+  // FIX 2026-09-07 : la grille etait bornee AUX SEULES heures d'ouverture. Un
+  // rendez-vous hors de cette plage — reservation prise pendant une ouverture
+  // exceptionnelle ensuite supprimee, ou horaires modifies apres coup — comptait
+  // dans le chiffre d'affaires mais n'apparaissait NULLE PART dans le planning.
+  // Constate en production : Ophelie Rozpadek, lundi 07/09 a 9h00, alors que le
+  // salon ouvre a 14h ce jour-la. La cliente etait invisible pour le salon.
+  // On elargit donc la grille pour englober TOUT rendez-vous du jour.
+  var _apDebut=1440, _apFin=0, _apHorsPlage=false;
+  try{
+    for(var _pi=0;_pi<AP.length;_pi++){
+      var _pa=AP[_pi];
+      if(!_pa || _pa.date!==dk) continue;
+      if(_pa.st==="canc" || _pa.st==="pause" || _pa.cancelled) continue;
+      if(typeof _lxIsContraTicket==="function" && _lxIsContraTicket(_pa)) continue;
+      if(!_pa.time) continue;
+      var _deb=toM(_pa.time);
+      if(!(_deb>=0)) continue;
+      var _dur=0;
+      if(_pa.aPhases && _pa.aPhases.length){ for(var _ph=0;_ph<_pa.aPhases.length;_ph++) _dur+=Number(_pa.aPhases[_ph].d)||0; }
+      if(!_dur) _dur=60;
+      if(_deb<_apDebut) _apDebut=_deb;
+      if(_deb+_dur>_apFin) _apFin=_deb+_dur;
+    }
+  }catch(_e){}
+  if(_apFin>0){
+    if(!anyOpen){ earliestO=_apDebut; latestC=_apFin; anyOpen=true; _apHorsPlage=true; }
+    else {
+      if(_apDebut<earliestO){ earliestO=_apDebut; _apHorsPlage=true; }
+      if(_apFin>latestC){ latestC=_apFin; _apHorsPlage=true; }
+    }
+  }
   var hrs=anyOpen?{o:Math.floor(earliestO/60)+":"+("0"+earliestO%60).slice(-2),c:Math.floor(latestC/60)+":"+("0"+latestC%60).slice(-2)}:H[dow];
+  if(_apHorsPlage){
+    h+='<div style="margin:0 8px 8px;padding:8px 10px;border-radius:8px;background:rgba(255,152,0,.10);border:1px solid rgba(255,152,0,.3);font-size:11px;color:#ffb74d">\u26a0 Un ou plusieurs rendez-vous sont <strong>hors des heures d\'ouverture</strong> de ce jour. La grille a \u00e9t\u00e9 \u00e9largie pour ne pas les masquer.</div>';
+  }
   // Inclut maintenant les tickets caisse directs (fromCaisse=true) pour visualiser l'occupation
   // Exclus uniquement : annulés, pauses, et tickets done sans sId+sans aPhases (purs produits sans durée)
   var dayA=AP.filter(function(a){
