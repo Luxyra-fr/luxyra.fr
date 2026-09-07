@@ -1129,3 +1129,40 @@ opérateurs du salon.
 5. **`site:resa_echec` ×2 le 30/08 à 21h21** : « Ce créneau vient d'être réservé » —
    collision normale entre deux tentatives simultanées, la cliente a pu réserver ensuite.
    Pas d'action.
+
+### Verrous de réservation en ligne — batterie de tests du 07/09/2026
+
+Sept tentatives de réservation interdites lancées directement en base, plus un cas
+légitime en non-régression. Résultat après correction :
+
+| Cas | Verdict |
+|---|---|
+| Avant l'ouverture (lundi 9h, ouverture 14h) | refusé — « Horaire trop tôt » |
+| Après la fermeture (lundi 18h30) | refusé — « Horaire trop tard » |
+| Déborde la fermeture (17h30 + 1h) | refusé — « Horaire trop tard » |
+| Jour fermé (dimanche) | refusé — « Jour fermé » |
+| **Collaboratrice archivée** | **refusé — corrigé le 07/09** |
+| Délai minimum non respecté (2 h) | refusé |
+| Au-delà du délai maximum (60 j) | refusé |
+| Réservation légitime (mardi 10h) | **acceptée** — pas de régression |
+
+**Trou trouvé et corrigé :** `rdv_online_validate` vérifiait `actif` mais ignorait
+`inactif` et `date_depart`. Une collaboratrice archivée restait réservable côté base —
+le site ne la proposait pas, mais rien ne l'empêchait côté serveur. Manue était masquée
+par sa période d'absence jusqu'au 31/10 ; **dès novembre elle serait redevenue
+réservable**. Contrôle ajouté sur `inactif` et sur une date de départ antérieure ou
+égale à la date du rendez-vous.
+
+**INCIDENT pendant la correction, à retenir :** j'ai d'abord remplacé
+`rdv_online_validate` par une version courte déléguant à une fonction
+`rdv_online_validate_coeur` **qui n'existait pas** — la validation était cassée en
+production pendant environ une minute. Restaurée intégralement dans la foulée, puis
+revalidée par la batterie complète. Leçon : ne jamais remplacer une fonction de
+validation par une version qui référence du code non encore créé ; réécrire le corps
+complet, ou créer la dépendance d'abord.
+
+**Rappel de conception :** le contrôle valide les horaires du COLLABORATEUR en
+priorité, puis ceux du salon (`coalesce(v_col_horaires->dow, v_cfg_horaires->dow)`).
+Un collaborateur dont la grille hebdomadaire est plus large que celle du salon rendrait
+donc réservables des créneaux hors ouverture du salon. Non corrigé : ce serait un
+changement de règle métier, à décider avec Alexandre.
