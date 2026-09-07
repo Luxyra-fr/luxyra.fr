@@ -1202,3 +1202,31 @@ where salon_id = '...' order by modifie_le desc limit 30;
   enregistrement.
 - RLS : lecture réservée au propriétaire du salon et à l'admin. Aucune policy
   d'écriture — l'historique n'est pas modifiable depuis l'application.
+
+### Rappels 24h : passage côté serveur (07/09/2026)
+
+**Constat mesuré :** sur les 3 semaines précédentes, 102 rendez-vous honorés avec
+téléphone et consentement SMS — seuls **29 ont reçu leur rappel la veille**. Plus de
+70 % des clientes n'ont rien reçu. Cause : le rappel était envoyé par l'APPLICATION
+(`checkSmsReminders`, toutes les 10 min), donc uniquement si un appareil était ouvert
+au bon moment. Aucune tâche serveur n'existait. Exemple : mercredi 19/08, 6 rendez-vous,
+zéro rappel.
+
+**Correction :** `envoyer_rappels_24h()`, planifiée à 08h00 UTC (10h Paris l'été).
+Couvre `appointments` ET `rdv_online`. Même règle anti-doublon que l'application : une
+confirmation envoyée le jour même rend le rappel inutile. Sans crédits, le rappel part
+dans `sms_differes` avec l'heure du rendez-vous comme limite de pertinence.
+
+**L'envoi côté application reste actif en secours.** Les deux ne peuvent pas faire
+doublon : le premier qui passe « réserve » sa ligne dans `messaging_log` (index unique
+sur salon+contexte+destinataire+jour), le second est ignoré.
+
+**Piège rencontré :** `appointments.heure` est du **TEXTE** ('14:30'), pas un type
+`time` — contrairement à `rdv_online.heure_rdv`. `to_char()` échouait et la fonction
+serait tombée en erreur chaque nuit, en silence. Détecté par un essai à blanc
+(crédits mis à 0 → mise en file au lieu d'envoi, aucun SMS réel). **Toujours tester
+ainsi une fonction qui envoie des SMS.**
+
+**Confirmation en production le 07/09 :** Geoffrey KNOBLOCH a reçu sa confirmation à
+10h48 et son rappel à 10h48 — la même minute. C'est exactement le doublon signalé par
+Alexandre, désormais impossible.
