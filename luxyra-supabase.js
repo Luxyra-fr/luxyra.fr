@@ -783,6 +783,62 @@ if (typeof window !== "undefined") window.lxMapApptRow = lxMapApptRow;
 // Un seul mapper partage par les deux chemins => impossible de re-diverger.
 // (Meme remede que lxMapApptRow, commit 4e3b515.)
 // ============================================================
+// ============================================================
+// 2026-10-07 : SYNCHRONISATION ENTRE APPAREILS — FICHES CLIENTS ET PRODUITS
+// Avant : saveClient / saveProduct reecrivaient la fiche ENTIERE depuis la memoire de l'appareil.
+// Un telephone ouvert avant une modification faite sur la tablette (points de fidelite, fiche
+// technique, stock vendu...) l'effacait a sa prochaine sauvegarde. Desormais chaque fiche garde
+// une reference (_lxBase, non enumerable) = son etat au chargement ; a la sauvegarde on relit la
+// base et on n'ecrit que ce qui a change sur CET appareil. Compteurs (points, stock) : on applique
+// la DIFFERENCE faite ici sur la valeur en base, donc deux appareils qui ajoutent chacun des points
+// ou vendent chacun un produit s'additionnent au lieu de s'ecraser.
+// ============================================================
+function _lxCanon(v){
+  if(v===undefined) return undefined;
+  if(v===null || typeof v!=="object") return JSON.stringify(v);
+  if(Array.isArray(v)) return "["+v.map(function(x){ var c=_lxCanon(x); return c===undefined?"null":c; }).join(",")+"]";
+  var ks=Object.keys(v).sort(), out=[];
+  for(var i=0;i<ks.length;i++){ var c=_lxCanon(v[ks[i]]); if(c!==undefined) out.push(JSON.stringify(ks[i])+":"+c); }
+  return "{"+out.join(",")+"}";
+}
+function _lxBaseDe(data){ var b={}; Object.keys(data).forEach(function(k){ b[k]=_lxCanon(data[k]); }); return b; }
+function _lxPoserBase(obj, base){ try{ Object.defineProperty(obj,"_lxBase",{value:base,enumerable:false,writable:true,configurable:true}); }catch(_e){} }
+function _lxNum(x){ var n=Number(x); return isNaN(n)?0:n; }
+// Liste sans identifiant (ex. fiches techniques) : base + ajouts faits ici - suppressions faites ici.
+function _lxFusionListe(baseL, memL, dbL){
+  baseL=Array.isArray(baseL)?baseL:[]; memL=Array.isArray(memL)?memL:[]; dbL=Array.isArray(dbL)?dbL:[];
+  var cB={}, cM={}, cD={};
+  baseL.forEach(function(x){ var k=_lxCanon(x); cB[k]=(cB[k]||0)+1; });
+  memL.forEach(function(x){ var k=_lxCanon(x); cM[k]=(cM[k]||0)+1; });
+  var out=[];
+  dbL.forEach(function(x){ var k=_lxCanon(x); if(cB[k] && !cM[k]) { return; } out.push(x); cD[k]=(cD[k]||0)+1; }); // supprime ici -> retire
+  memL.forEach(function(x){ var k=_lxCanon(x); if(!cB[k] && !cD[k]) { out.push(x); cD[k]=1; } });                  // ajoute ici -> ajoute
+  return out;
+}
+// Fusion generique. compteurs : colonnes ou l'on applique la difference ; listes : fusion de liste ;
+// objets : fusion cle par cle ; absolus : colonnes « compteur » a ecrire telles quelles si modifiees ici.
+function _lxFusionFiche(base, mem, db, opts){
+  opts=opts||{}; var out={};
+  var cles={}; Object.keys(mem).forEach(function(k){cles[k]=1;}); Object.keys(db).forEach(function(k){cles[k]=1;});
+  Object.keys(cles).forEach(function(k){
+    var memS=_lxCanon(mem[k]), change=(memS!==base[k]);
+    if(mem[k]===undefined && db[k]===undefined) return;
+    if(!change){ if(db[k]!==undefined) out[k]=db[k]; else out[k]=mem[k]; return; }
+    if(opts.compteurs && opts.compteurs.indexOf(k)>=0 && !(opts.absolus && opts.absolus.indexOf(k)>=0)){
+      var b=(base[k]===undefined)?0:_lxNum(JSON.parse(base[k])); out[k]=_lxNum(db[k])+(_lxNum(mem[k])-b); return;
+    }
+    if(opts.listes && opts.listes.indexOf(k)>=0){ out[k]=_lxFusionListe(base[k]?JSON.parse(base[k]):[], mem[k], db[k]); return; }
+    if(opts.objets && opts.objets.indexOf(k)>=0){
+      var bo=base[k]?JSON.parse(base[k]):{}, mo=mem[k]||{}, dO=db[k]||{}, r=JSON.parse(JSON.stringify(dO)), ks={};
+      Object.keys(bo).forEach(function(x){ks[x]=1;}); Object.keys(mo).forEach(function(x){ks[x]=1;});
+      Object.keys(ks).forEach(function(x){ if(_lxCanon(mo[x])!==_lxCanon(bo[x])){ if(mo[x]===undefined) delete r[x]; else r[x]=mo[x]; } });
+      out[k]=r; return;
+    }
+    out[k]=mem[k];
+  });
+  return out;
+}
+
 function lxMapClientRow(c) {
   var obj = {
     id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
@@ -809,6 +865,7 @@ function lxMapClientRow(c) {
       }
     }
   }
+  _lxPoserBase(obj, _lxBaseDe(_lxClientData(obj))); // 2026-10-07 : reference pour la synchro entre appareils
   return obj;
 }
 if (typeof window !== "undefined") window.lxMapClientRow = lxMapClientRow;
@@ -1395,29 +1452,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   try {
   var prRes = await _sb.from("produits").select("*").eq("salon_id", _salonId).order("nom");
   if (prRes.data) {
-    PRODS = prRes.data.map(function(p) {
-      return {
-        id: p.id, n: p.nom, p: Number(p.prix), pa: Number(p.prix_achat || 0),
-        pamp: p.pamp != null ? Number(p.pamp) : null, pampQty: Number(p.pamp_qty || 0),
-        cat: p.categorie, cb: p.code_barre, stk: p.stock, stkMin: p.stock_min,
-        cc: p.coup_coeur, img: p.img || "",
-        forSale: p.for_sale !== false, forUse: p.for_use || false,
-        fournisseurId: p.fournisseur_id || null,
-        datePeremption: p.date_peremption || null,
-        paoMois: p.pao_mois || null,
-        dateOuverture: p.date_ouverture || null,
-        contenance: p.contenance || null,
-        cbSupp: p.code_barre_supp || null,
-        coefMulti: p.coef_multi != null ? Number(p.coef_multi) : null,
-        tvaTaux: p.tva_taux != null ? Number(p.tva_taux) : null,
-        promoActif: p.promo_actif || false,
-        promoPrix: p.promo_prix != null ? Number(p.promo_prix) : null,
-        promoDebut: p.promo_debut || null,
-        promoFin: p.promo_fin || null,
-        promoLabel: p.promo_label || null,
-        description: p.description || null
-      };
-    });
+    PRODS = prRes.data.map(lxMapProduitRow);
     var pcatSet = {};
     PRODS.forEach(function(p) { if (p.cat) pcatSet[p.cat] = true; });
     PCATS = Object.keys(pcatSet);
@@ -1836,24 +1871,15 @@ function _lxReportDbError(fnName, err, extra) {
 }
 if (typeof window !== "undefined") window._lxReportDbError = _lxReportDbError;
 
-async function saveClient(client) {
-  // FIX 2026-08-04 : renvoie desormais un STATUT REEL {ok:...}. Sans lui, aucun appelant ne
-  // pouvait savoir si la sauvegarde avait abouti -> les ecrans affichaient "enregistre" en
-  // aveugle. Les appelants existants qui ignorent la valeur de retour ne changent pas.
-  if (!_isOnline || !_salonId) return { ok: false, skipped: true };
-  // WAL : persiste l'action en LS AVANT tout traitement (filet 15/05/2026)
-  var _walId = window._walBypass ? null : _walPersist("client", client);
-  // Toast auto-save discret (debounced)
-  // Construit le bucket fiche_tech à partir des champs étendus présents
-  // sur l'objet client en mémoire. On ne pousse que les valeurs définies
-  // pour ne pas écraser une fiche existante avec des undefined.
+
+// 2026-10-07 : colonnes ecrites pour une fiche client (sans salon_id ni id), depuis l'objet memoire.
+function _lxClientData(client) {
   var ft = {};
   _FICHE_TECH_KEYS.forEach(function(k){
     if (client[k] !== undefined && client[k] !== null) ft[k] = client[k];
   });
   var data = {
-    salon_id: _salonId,
-    nom: client.nom, prenom: client.pre, sexe: client.sex,
+        nom: client.nom, prenom: client.pre, sexe: client.sex,
     telephone: client.ph, telephone2: client.ph2, email: client.em,
     adresse: client.adr, cp: client.cp, ville: client.ville,
     date_naissance: client.ddn, notes: client.no,
@@ -1874,13 +1900,65 @@ async function saveClient(client) {
   // colonne serait ECRASEE (formules couleur, photos avant/apres...). Cle absente du
   // payload => l'upsert PostgREST ne touche pas la colonne (meme garde que ticket_html).
   if (Object.keys(ft).length > 0) data.fiche_tech = ft;
+  return data;
+}
+// 2026-10-07 : sauvegardes d'une meme fiche mises en file (deux sauvegardes rapprochees ne doivent
+// pas appliquer deux fois la meme difference de points / de stock).
+var _lxFileFiches = {};
+function _lxEnFile(cle, fn){
+  var prec = _lxFileFiches[cle] || Promise.resolve();
+  var p = prec.then(fn, fn);
+  _lxFileFiches[cle] = p.then(function(){}, function(){});
+  return p;
+}
+function saveClient(client) { return _lxEnFile("c:" + ((client && client.id) || "nouveau"), function(){ return _saveClientUneFois(client); }); }
+async function _saveClientUneFois(client) {
+  // FIX 2026-08-04 : renvoie desormais un STATUT REEL {ok:...}. Sans lui, aucun appelant ne
+  // pouvait savoir si la sauvegarde avait abouti -> les ecrans affichaient "enregistre" en
+  // aveugle. Les appelants existants qui ignorent la valeur de retour ne changent pas.
+  if (!_isOnline || !_salonId) return { ok: false, skipped: true };
+  // WAL : persiste l'action en LS AVANT tout traitement (filet 15/05/2026)
+  var _walId = window._walBypass ? null : _walPersist("client", client);
+  // Toast auto-save discret (debounced)
+  // Construit le bucket fiche_tech à partir des champs étendus présents
+  // sur l'objet client en mémoire. On ne pousse que les valeurs définies
+  // pour ne pas écraser une fiche existante avec des undefined.
+  var ft = {};
+  _FICHE_TECH_KEYS.forEach(function(k){
+    if (client[k] !== undefined && client[k] !== null) ft[k] = client[k];
+  });
+  var data = _lxClientData(client);
+  data.salon_id = _salonId;
 
   // FIX 2026-05-12 : upsert avec id explicite (U() génère un UUID stable
   // dès la création) → INSERT ou UPDATE selon existence du PK. Plus de
   // mutation d'id, plus de race condition.
   _ensureUuidId(client);
   data.id = client.id;
+  // 2026-10-07 : fiche deja en base -> fusion avec la version en base (synchro entre appareils)
+  var _fusionRow = null;
+  if (client._lxBase) {
+    try {
+      var _cur = await _sb.from("clients").select("*").eq("id", client.id).eq("salon_id", _salonId).maybeSingle();
+      if (!_cur.error && _cur.data) {
+        _fusionRow = _cur.data;
+        var _dbData = _lxClientData(lxMapClientRow(_cur.data));
+        var _mem = Object.assign({}, data); delete _mem.id; delete _mem.salon_id;
+        var _fus = _lxFusionFiche(client._lxBase, _mem, _dbData, { compteurs:["points_fidelite"], listes:["fiches","famille_ids"], objets:["fiche_tech"] });
+        if (_fus.points_fidelite !== undefined && _fus.points_fidelite < 0) _fus.points_fidelite = 0;
+        data = Object.assign({ id: client.id, salon_id: _salonId }, _fus);
+      }
+    } catch(_eF) { _fusionRow = null; }
+  }
   var res = await _sb.from("clients").upsert(data).select();
+  if (!res.error) {
+    // memoire de l'appareil = ce qui est maintenant en base ; nouvelle reference
+    try {
+      var _apres = lxMapClientRow(Object.assign({}, _fusionRow || {}, (res.data && res.data[0]) || data));
+      Object.keys(_apres).forEach(function(k){ client[k] = _apres[k]; });
+      _lxPoserBase(client, _apres._lxBase);
+    } catch(_eM) {}
+  }
   if (res.error) {
     console.error("saveClient upsert error:", res.error);
     _lxReportDbError("saveClient", res.error, {client_id: client.id || null});
@@ -2168,10 +2246,36 @@ async function deleteAppointmentFromDb(apptId) {
 }
 
 // Sauvegarder un produit
-async function saveProduct(prod) {
-  if (!_isOnline || !_salonId) return;
+// 2026-10-07 : mapper unique DB -> PRODS (+ reference pour la synchro entre appareils)
+function lxMapProduitRow(p) {
+  var o = (function(){ return {
+        id: p.id, n: p.nom, p: Number(p.prix), pa: Number(p.prix_achat || 0),
+        pamp: p.pamp != null ? Number(p.pamp) : null, pampQty: Number(p.pamp_qty || 0),
+        cat: p.categorie, cb: p.code_barre, stk: p.stock, stkMin: p.stock_min,
+        cc: p.coup_coeur, img: p.img || "",
+        forSale: p.for_sale !== false, forUse: p.for_use || false,
+        fournisseurId: p.fournisseur_id || null,
+        datePeremption: p.date_peremption || null,
+        paoMois: p.pao_mois || null,
+        dateOuverture: p.date_ouverture || null,
+        contenance: p.contenance || null,
+        cbSupp: p.code_barre_supp || null,
+        coefMulti: p.coef_multi != null ? Number(p.coef_multi) : null,
+        tvaTaux: p.tva_taux != null ? Number(p.tva_taux) : null,
+        promoActif: p.promo_actif || false,
+        promoPrix: p.promo_prix != null ? Number(p.promo_prix) : null,
+        promoDebut: p.promo_debut || null,
+        promoFin: p.promo_fin || null,
+        promoLabel: p.promo_label || null,
+        description: p.description || null
+      }; })();
+  _lxPoserBase(o, _lxBaseDe(_lxProduitData(o)));
+  return o;
+}
+if (typeof window !== "undefined") window.lxMapProduitRow = lxMapProduitRow;
+// 2026-10-07 : colonnes ecrites pour un produit (sans salon_id), depuis l'objet memoire.
+function _lxProduitData(prod) {
   var data = {
-    salon_id: _salonId,
     nom: prod.n, prix: prod.p, prix_achat: prod.pa || 0,
     pamp: prod.pamp != null ? prod.pamp : null,
     pamp_qty: prod.pampQty || 0,
@@ -2193,19 +2297,42 @@ async function saveProduct(prod) {
     promo_fin: prod.promoFin || null,
     promo_label: prod.promoLabel || null,
     description: prod.description || null
-  };
+  };  return data;
+}
+function saveProduct(prod, opts) { return _lxEnFile("p:" + ((prod && prod.id) || "nouveau"), function(){ return _saveProductUneFois(prod, opts); }); }
+async function _saveProductUneFois(prod, opts) {
+  if (!_isOnline || !_salonId) return;
+  var data = _lxProduitData(prod);
+  data.salon_id = _salonId;
+
   if (typeof prod.id === "number" && prod.id > 0) {
     // Check if exists in Supabase
     var check = await _sb.from("produits").select("id").eq("id", prod.id).eq("salon_id", _salonId);
     if (check.data && check.data.length > 0) {
-      await _sb.from("produits").update(data).eq("id", prod.id);
+      // 2026-10-07 : fusion avec la version en base (stock et quantite PAMP par difference ;
+      // un inventaire ecrit le stock compte tel quel : opts.stockAbsolu)
+      if (prod._lxBase) {
+        try {
+          var _cur = await _sb.from("produits").select("*").eq("id", prod.id).eq("salon_id", _salonId).maybeSingle();
+          if (!_cur.error && _cur.data) {
+            var _mem = Object.assign({}, data); delete _mem.salon_id;
+            var _fus = _lxFusionFiche(prod._lxBase, _mem, _lxProduitData(lxMapProduitRow(_cur.data)),
+              { compteurs:["stock","pamp_qty"], absolus:(opts && opts.stockAbsolu) ? ["stock"] : [] });
+            data = Object.assign({ salon_id: _salonId }, _fus);
+          }
+        } catch(_eF) {}
+      }
+      var _up = await _sb.from("produits").update(data).eq("id", prod.id).select();
+      if (!_up.error && _up.data && _up.data[0]) {
+        try { var _apres = lxMapProduitRow(_up.data[0]); Object.keys(_apres).forEach(function(k){ prod[k] = _apres[k]; }); _lxPoserBase(prod, _apres._lxBase); } catch(_eM) {}
+      } else if (_up.error) { try { _lxReportDbError("saveProduct", _up.error, { produit_id: prod.id }); } catch(_e) {} }
     } else {
       var res = await _sb.from("produits").insert(data).select();
-      if (res.data && res.data[0]) prod.id = res.data[0].id;
+      if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} }
     }
   } else {
     var res = await _sb.from("produits").insert(data).select();
-    if (res.data && res.data[0]) prod.id = res.data[0].id;
+    if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} }
   }
 }
 

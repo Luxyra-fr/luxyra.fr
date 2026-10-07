@@ -1353,4 +1353,15 @@ autre appareil sont repris en mémoire. Écritures en file (`_lxSiteFile`).
 Récap synchro multi-appareils : RDV/clients/équipe = rafraîchis en direct ; config salon (familles, forfaits,
 paiements, SMS…) = fusion par section ; config du site = fusion par champ ; clôtures = relues avant chaque Z +
 index unique (salon, date) ; encaissement après Z bloqué en base (tickets_block_post_cloture).
-RESTE exposé (audit d'août) : fiches/points/statut clients, stock et prix d'achat produits.
+FICHES CLIENTS ET PRODUITS : traitées le même jour (voir section suivante).
+
+
+## 2026-10-07 — Synchro multi-appareils des FICHES CLIENTS et des PRODUITS
+`saveClient` / `saveProduct` réécrivaient la fiche entière depuis la mémoire (banc, ancien code : points 5+3+2 → 7,
+fiche technique de la tablette perdue, stock 10-1+5 → 15). Désormais : référence `_lxBase` (non énumérable) posée
+par les mappers uniques `lxMapClientRow` / `lxMapProduitRow` ; à la sauvegarde, relecture de la ligne et fusion
+`_lxFusionFiche` : champs modifiés ici écrits, autres gardés de la base ; COMPTEURS (points_fidelite, stock,
+pamp_qty) = valeur en base + différence faite ici ; fiches techniques (liste sans id) = ajouts/suppressions faits
+ici appliqués à la base ; fiche_tech = clé par clé. Inventaire : `saveProduct(p,{stockAbsolu:true})` (stock compté
+écrit tel quel). Sauvegardes d'une même fiche en file (`_lxEnFile`). Mémoire de l'appareil mise à jour après chaque
+sauvegarde. Banc : 10/10 (points 10, 3 fiches, stock 14, inventaire 12, double encaissement rapide +2).
