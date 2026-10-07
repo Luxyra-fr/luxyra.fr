@@ -1343,3 +1343,14 @@ doit être reportée DANS LA MÊME INTERVENTION dans la base de connaissances du
   `{"mode":"verify","salon_id":…}` avant de déployer.**
 - App : la fenêtre de clôture l'explique ; en caisse simplifiée (auto-entrepreneur) la clôture et le comptage du
   tiroir sont FACULTATIFS. Base du bot mise à jour (lignes `cloture`, `inexistant`).
+
+## 2026-10-07 — Synchronisation tablette / téléphone de la configuration du SITE (site_config)
+`saveSiteConfig` réécrivait toute la ligne site_config depuis la mémoire : un appareil ouvert avant une modification
+faite sur l'autre l'effaçait (banc : horaires modifiés sur la tablette, message modifié ensuite sur le téléphone →
+horaires de la tablette perdus). Désormais `_lxSiteEcrire` relit la ligne et n'écrit que les champs modifiés sur
+l'appareil depuis le chargement (référence `_lxSiteBase`, fixée par loadSiteConfig) ; les horaires reçus d'un
+autre appareil sont repris en mémoire. Écritures en file (`_lxSiteFile`).
+Récap synchro multi-appareils : RDV/clients/équipe = rafraîchis en direct ; config salon (familles, forfaits,
+paiements, SMS…) = fusion par section ; config du site = fusion par champ ; clôtures = relues avant chaque Z +
+index unique (salon, date) ; encaissement après Z bloqué en base (tickets_block_post_cloture).
+RESTE exposé (audit d'août) : fiches/points/statut clients, stock et prix d'achat produits.

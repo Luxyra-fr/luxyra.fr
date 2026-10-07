@@ -347,7 +347,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261007-05"></script>
+<script src="luxyra-supabase.js?v=20261007-06"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -12540,6 +12540,19 @@ function saveSiteConfig(){
     return;
   }
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
+    var data=_lxSiteData(SC);
+    // 2026-10-07 : SYNCHRONISATION ENTRE APPAREILS (tablette / telephone). Avant, la page entiere etait
+    // reecrite depuis la memoire de l'appareil : un appareil ouvert avant une modification faite sur
+    // l'autre (horaires, message, photos...) l'effacait a sa prochaine sauvegarde. Desormais on relit
+    // la base et on n'ecrit QUE les champs modifies sur CET appareil depuis le chargement ; les autres
+    // gardent la valeur en base (les horaires recus d'un autre appareil sont aussi repris en memoire).
+    _lxSiteFile=(_lxSiteFile||Promise.resolve()).then(function(){ return _lxSiteEcrire(data); },function(){ return _lxSiteEcrire(data); });
+    // Also sync siteActif/reservation to salons.config_json for annuaire
+    if(typeof saveSalonConfig==="function")saveSalonConfig();
+  }
+}
+var _lxSiteFile=null;
+function _lxSiteData(SC){
     var data={
       salon_id:_salonId,
       site_actif:SC.siteActif,
@@ -12583,28 +12596,43 @@ function saveSiteConfig(){
       absences:window.ABSENCES||[],
       collaborateurs:T.map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null,pause:t.pause||null};}),
       horaires_salon:H,
-      accept_rdv_sur_mesure:SC.acceptRdvSurMesure===true,
-      updated_at:new Date().toISOString()
+      accept_rdv_sur_mesure:SC.acceptRdvSurMesure===true
     };
-    // FIX 2026-10-07 : ne publier l'equipe et les absences que si elles ont ete chargees depuis
-    // la base de CE salon (sinon une liste vide ou par defaut remplacait celles du site).
+    // ne publier l'equipe et les absences que si elles ont ete chargees depuis la base de CE salon
     if(!(window._lxTableOk && window._lxTableOk.collaborateurs===true)) delete data.collaborateurs;
     if(!window._lxCfgChargee) delete data.absences;
-    // Upsert using Supabase native upsert
-    _sb.from("site_config").upsert(data,{onConflict:"salon_id"}).then(function(r){
-      console.log("[SITE CONFIG]",r.error?r.error.message:"Saved OK");
-      // FIX 2026-08-25 : une ecriture refusee n'etait QUE console.log -> invisible.
-      // Desormais : message utilisateur + DB_ERROR (mail/monitoring), car une config site
-      // non publiee = le site de reservation propose de faux creneaux.
-      if(r.error){
-        try{
-          if(typeof toast==="function") toast("\u26a0 Publication vers le site echouee : "+(r.error.message||"erreur"),"error");
-          if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:r.error.message||String(r.error), code:r.error.code||null}).slice(0,2000));
-        }catch(_e){}
-      }
-    });
-    // Also sync siteActif/reservation to salons.config_json for annuaire
-    if(typeof saveSalonConfig==="function")saveSalonConfig();
+    return data;
+}
+function _lxSiteFixerBase(){
+  try{ var d=_lxSiteData(window.SITE_CONFIG||{}); var b={}; Object.keys(d).forEach(function(k){ b[k]=lxJsonCanon(d[k]); }); window._lxSiteBase=b; }catch(_e){}
+}
+async function _lxSiteEcrire(data){
+  try{
+    var r=await _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1);
+    if(!r || r.error){ throw new Error((r&&r.error&&r.error.message)||"lecture impossible"); }
+    var row=(r.data&&r.data[0])||null, base=window._lxSiteBase||null, ecrits=[];
+    if(row && base){
+      Object.keys(data).forEach(function(k){
+        if(k==="salon_id") return;
+        var memS=lxJsonCanon(data[k]);
+        if(memS===base[k] && Object.prototype.hasOwnProperty.call(row,k)){
+          data[k]=row[k];                                   // inchange ici -> on garde la base
+          if(k==="horaires_salon" && row[k] && typeof row[k]==="object" && !Array.isArray(row[k])){ try{ H=row[k]; }catch(_e){} }
+        } else { ecrits.push(k); }
+      });
+    }
+    data.updated_at=new Date().toISOString();
+    var u=await _sb.from("site_config").upsert(data,{onConflict:"salon_id"});
+    console.log("[SITE CONFIG]",u.error?u.error.message:"Saved OK");
+    if(u.error) throw new Error(u.error.message||"ecriture refusee");
+    if(base){ ecrits.forEach(function(k){ base[k]=lxJsonCanon(data[k]); }); }
+    return true;
+  }catch(e){
+    try{
+      if(typeof toast==="function") toast("\u26a0 Publication vers le site echouee : "+(e.message||"erreur"),"error");
+      if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:String(e.message||e)}).slice(0,2000));
+    }catch(_e){}
+    return false;
   }
 }
 // FIX 2026-10-07 : loadSiteConfig renvoie une Promise<boolean> (true = chargée depuis la base).
@@ -12655,6 +12683,7 @@ function loadSiteConfig(opts){
           // Aucun horaire en base : salon VIERGE (tous jours fermes), jamais les horaires codes en dur.
           try{ H = {0:null,1:null,2:null,3:null,4:null,5:null,6:null}; window._lxHCharge = true; }catch(e){}
         }
+        if(!opts.garderH || !window._lxSiteBase) _lxSiteFixerBase(); // reference pour la synchro entre appareils
         return true;
       }
       console.warn("[SITE CONFIG] aucune ligne site_config pour ce salon");
