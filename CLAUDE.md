@@ -1256,3 +1256,36 @@ de défauts ; salon sans horaires en base = vierge (jamais ceux d'Excellence). 8
   de Paramètres, d'emplacements vérifiés, et de règles : jamais de menu non listé, jamais d'argument légal/NF525,
   escalade immédiate sur bug/perte de données. À TENIR À JOUR si les rubriques changent.
 - Horaires de Delphinecoiff restaurés (migration `restaurer_horaires_salon_delphinecoiff`, tracée dans historique_horaires).
+
+## 2026-10-07 (suite) — CLOISONNEMENT DES COMPTES + FIN DES ÉCRASEMENTS DE CONFIG
+
+**Demande d'Alexandre :** « les nouveaux comptes ne doivent rien avoir d'un autre compte, et rien effacer du salon
+d'Amandine ». Constaté chez Delphinecoiff : couleurs des 8 marques d'Excellence en base, sms_config vidé,
+familles créées puis perdues.
+
+**Causes (toutes reproduites dans un banc jsdom qui démarre app.html avec un faux Supabase — /tmp/lx, non versionné) :**
+1. Déconnexion SANS rechargement → toute la mémoire du compte précédent passait au suivant (équipe, catalogue,
+   clients, minuteries SMS…). → `doLogout` recharge la page.
+2. Valeurs codées en dur = données d'Excellence : `SVC` (41 prestations), `T` (« Membre 1/2 »), `H`, `CATS`,
+   couleurs de marques. Sur une panne réseau au chargement, `saveServices`/`saveCollaborateurs` les INSÉRAIENT
+   (banc : 47 insertions dans un salon neuf). → tout vidé ; `_lxTableOk` + `_lxListeChargee()` bloquent les
+   enregistrements en masse d'une liste non chargée.
+3. Clés localStorage non propres à un salon (`_lx_prodcolors`, `_lx_svccolors`, `_cp_sms_config`, `_cp_app_bg`,
+   `_lx_pending_2nd_rdv`) lues au démarrage puis ENREGISTRÉES chez le salon connecté. → plus lues / purgées ;
+   SMS_CONFIG et APP_BG réinitialisés au chargement puis pris de la base uniquement.
+4. `saveSalonConfig` (≈50 appels) recopiait TOUTES les sections depuis la mémoire : un 2e appareil ouvert avant
+   effaçait les familles créées sur le 1er (banc : « Lissage » perdu, ancien code ; conservé, nouveau code).
+   → FUSION PAR SECTION (`LX_CFG_SECTIONS`, références `_lxCfgBaseDb/_lxCfgBaseMem` fixées par
+   `lxCfgFixerBase` à la fin du chargement de initApp) : n'écrit que ce que CET appareil a modifié, rafraîchit
+   la mémoire avec ce qui a changé ailleurs, n'écrit rien avant chargement, file d'attente, erreurs visibles.
+   `saveAppBg`/`saveSmsConfig` → `lxCfgEcrireSections` (une seule section). 20 tests unitaires + parcours.
+5. Sauvegarde NON SOLLICITÉE au démarrage (`initApp` → `applyTheme` → `saveSalonConfig`) : supprimée
+   (`applyTheme(...,true)`).
+6. Forfaits fabriqués automatiquement depuis les prestations quand un salon n'en avait aucun : supprimé.
+7. Chargement des familles : la « réparation » depuis l'ancienne clé `categories` ne s'applique plus qu'en
+   migration (sinon familles supprimées ressuscitées) ; suggestions du métier seulement si jamais enregistrées.
+8. Site public : sans horaires configurés → fermé (avant : horaires d'Excellence).
+
+**Excellence vérifiée identique** (banc, ancien vs nouveau) : équipe, 72 prestations, horaires, 11/11 familles,
+22 forfaits, 34 réglages SMS, couleurs, TVA 20 ; toutes les pages s'affichent ; 0 écriture de config au
+démarrage (l'ancien code en faisait 1 à chaque ouverture).

@@ -437,6 +437,13 @@ async function doLogout() {
   // Cleanup polling and realtime
   if(window._rdvPollInterval){clearInterval(window._rdvPollInterval);window._rdvPollInterval=null;}
   if(window._realtimeChannel&&_sb){try{_sb.removeChannel(window._realtimeChannel);}catch(e){}window._realtimeChannel=null;}
+  try { sessionStorage.removeItem("luxyra_archive_mode"); } catch(_){}
+  // FIX 2026-10-07 : CLOISONNEMENT ENTRE COMPTES. La deconnexion ne rechargeait pas la page :
+  // equipe, prestations, clients, absences, caisse, configuration du site, horaires, minuteries
+  // (rappels SMS) du compte precedent restaient EN MEMOIRE et passaient au compte suivant
+  // ouvert dans le meme onglet. On recharge : la memoire repart de zero, le prochain compte
+  // ne charge que ses propres donnees.
+  try { window.location.replace(window.location.pathname); return; } catch(_){}
   showLoginScreen();
 }
 
@@ -1102,6 +1109,7 @@ async function loadSalonData() {
   // sur réception du 1er invoice.paid Pro en mode LIVE (anti-doublon via le
   // flag salons.welcome_sms_bonus_given). Voir luxyra-router-worker.js,
   // case "invoice.paid". Aucun crédit récurrent ici.
+  /* 2026-10-07 : rien du stockage navigateur (autre compte possible) ne survit au chargement */ window.SMS_CONFIG=undefined; try{ if(typeof APP_BG!=="undefined") APP_BG="https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80"; }catch(_eB){}
   if(salon.config_json){try{var cfg=typeof salon.config_json==="string"?JSON.parse(salon.config_json):salon.config_json;if(cfg.slot)SLOT=cfg.slot;if(cfg.slot_h)SLOT_H=cfg.slot_h;if(cfg.fidconf)window.FIDCONF=cfg.fidconf;if(cfg.pay_active)window.PAY_ACTIVE=cfg.pay_active;/* Restore CAISSE_DATA — robuste pour TOUS les salons (anciens et nouveaux) :
    1. cfg.caisse_data (nouveau format) → utilisé en priorité
    2. Champs racine legacy (coffreEsp/misesAuCoffre/mouvements/remisesBanque/retraits/pieces/fond_caisse)
@@ -1120,7 +1128,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   if(typeof cfg[k] !== "undefined" && typeof window.CAISSE_DATA[k] === "undefined"){
     window.CAISSE_DATA[k] = cfg[k];
   }
-});if(cfg.sms_config)window.SMS_CONFIG=cfg.sms_config;if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();/* FIX 2026-10-07 : les familles de prestations sont stockees sous DEUX cles (categories_services/cats_svc et categories_forfaits/cats_forf), ecrites par des chemins differents, mais le chargement ne lisait QUE les premieres. Constate chez Delphinecoiff : cats_forf contenait ses 7 familles de forfaits, categories_forfaits etait un tableau VIDE -> ses familles disparaissaient a chaque ouverture, ce qu elle a signale au support. On prend desormais la liste NON VIDE, quelle que soit la cle. */window._cfgCatsSvc=(function(){var a=Array.isArray(cfg.categories_services)?cfg.categories_services:null;var b=Array.isArray(cfg.cats_svc)?cfg.cats_svc:null;if(a&&a.length)return a.slice(); if(b&&b.length)return b.slice(); return (a||b||null)?[]:undefined;})();window._cfgCatsForf=(function(){var a=Array.isArray(cfg.categories_forfaits)?cfg.categories_forfaits:null;var b=Array.isArray(cfg.cats_forf)?cfg.cats_forf:null;if(a&&a.length)return a.slice(); if(b&&b.length)return b.slice(); return (a||b||null)?[]:undefined;})();if(typeof cfg.facebookUrl==="string")SALON_CONFIG.facebookUrl=cfg.facebookUrl;if(typeof cfg.instagramUrl==="string")SALON_CONFIG.instagramUrl=cfg.instagramUrl;if(typeof cfg.tiktokUrl==="string")SALON_CONFIG.tiktokUrl=cfg.tiktokUrl;/* FIX 2026-08-04 : `domicile` (zone couverte, gratuit jusqu'a X km, type de tarif, forfait, prix/km) etait ECRIT dans config_json par saveSalonConfig mais JAMAIS RELU -> tous les reglages "deplacement a domicile" revenaient aux valeurs par defaut {type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:5} a chaque rechargement. */if(cfg.domicile&&typeof cfg.domicile==="object")SALON_CONFIG.domicile=cfg.domicile;}catch(e){}}
+});/* 2026-10-07 : config SMS = celle du salon, ou AUCUNE (l ecran SMS cree alors les reglages par defaut). Avant, une config lue au demarrage dans le stockage du navigateur (autre compte possible) restait en place. */if(cfg.sms_config&&typeof cfg.sms_config==="object"&&Object.keys(cfg.sms_config).length){window.SMS_CONFIG=cfg.sms_config;}else{window.SMS_CONFIG=undefined;}/* 2026-10-07 : fond d ecran charge ici aussi (avant : seulement apres coup, la valeur d un autre compte restait affichee/enregistrable) */try{if(typeof cfg.app_bg!=="undefined"&&typeof APP_BG!=="undefined"){APP_BG=cfg.app_bg||"";}}catch(_eBg){}if(cfg.prodcolors){window.PRODCOLORS=cfg.prodcolors;try{localStorage.setItem("_lx_prodcolors",JSON.stringify(cfg.prodcolors));}catch(e){}}if(cfg.svccolors){window.SVCCOLORS=cfg.svccolors;try{localStorage.setItem("_lx_svccolors",JSON.stringify(cfg.svccolors));}catch(e){}}if(cfg.validite_devis)SALON_CONFIG.validiteDevis=Number(cfg.validite_devis);if(Array.isArray(cfg.categories))window._cfgCategories=cfg.categories.slice();/* FIX 2026-10-07 : les familles de prestations sont stockees sous DEUX cles (categories_services/cats_svc et categories_forfaits/cats_forf), ecrites par des chemins differents, mais le chargement ne lisait QUE les premieres. Constate chez Delphinecoiff : cats_forf contenait ses 7 familles de forfaits, categories_forfaits etait un tableau VIDE -> ses familles disparaissaient a chaque ouverture, ce qu elle a signale au support. On prend desormais la liste NON VIDE, quelle que soit la cle. */window._cfgCatsSvc=(function(){var a=Array.isArray(cfg.categories_services)?cfg.categories_services:null;var b=Array.isArray(cfg.cats_svc)?cfg.cats_svc:null;if(a&&a.length)return a.slice(); if(b&&b.length)return b.slice(); return (a||b||null)?[]:undefined;})();window._cfgCatsForf=(function(){var a=Array.isArray(cfg.categories_forfaits)?cfg.categories_forfaits:null;var b=Array.isArray(cfg.cats_forf)?cfg.cats_forf:null;if(a&&a.length)return a.slice(); if(b&&b.length)return b.slice(); return (a||b||null)?[]:undefined;})();if(typeof cfg.facebookUrl==="string")SALON_CONFIG.facebookUrl=cfg.facebookUrl;if(typeof cfg.instagramUrl==="string")SALON_CONFIG.instagramUrl=cfg.instagramUrl;if(typeof cfg.tiktokUrl==="string")SALON_CONFIG.tiktokUrl=cfg.tiktokUrl;/* FIX 2026-08-04 : `domicile` (zone couverte, gratuit jusqu'a X km, type de tarif, forfait, prix/km) etait ECRIT dans config_json par saveSalonConfig mais JAMAIS RELU -> tous les reglages "deplacement a domicile" revenaient aux valeurs par defaut {type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:5} a chaque rechargement. */if(cfg.domicile&&typeof cfg.domicile==="object")SALON_CONFIG.domicile=cfg.domicile;}catch(e){}}
   // Defaults if not loaded from cfg
   if(!SALON_CONFIG.validiteDevis) SALON_CONFIG.validiteDevis = 30;
 
@@ -1138,7 +1146,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   // 3. Charger collaborateurs → T[]
   try {
     var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
-    if (tRes.data) {
+    if (tRes.data && !tRes.error) {
+      window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.collaborateurs = true;
       T = tRes.data.map(function(c) {
         return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
                  hrs: c.horaires || {}, pause: c.pause || null,
@@ -1160,7 +1169,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       .order("categorie", {ascending: true})
       .order("ordre", {ascending: true, nullsFirst: false})
       .order("nom", {ascending: true});
-    if (svcRes.data) {
+    if (svcRes.data && !svcRes.error) {
+      window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.services = true;
       SVC = svcRes.data.map(function(s) {
         return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null };
       });
@@ -1217,7 +1227,11 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       // a disparu de Services (et inversement). On restaure : toute
       // famille présente dans cfg.categories doit être dans LES DEUX
       // listes. L'utilisateur peut ensuite supprimer de l'un ou l'autre.
-      if (Array.isArray(window._cfgCategories)) {
+      // FIX 2026-10-07 : reparation limitee a la MIGRATION (aucune liste typee en base).
+      // Avant, elle s'appliquait a chaque chargement : l'ancienne cle "categories" (encore
+      // reecrite par d'anciens chemins) ressuscitait les familles supprimees et recopiait
+      // chaque famille de prestations dans les forfaits (et inversement).
+      if (Array.isArray(window._cfgCategories) && window._cfgCatsSvc === undefined && window._cfgCatsForf === undefined) {
         window._cfgCategories.forEach(function(c){
           if (!c) return;
           if (window.CATS_SVC.indexOf(c) < 0) window.CATS_SVC.push(c);
@@ -1226,7 +1240,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       }
 
       // Salon vierge ? Applique les defaultCats du métier en SERVICES
+      // 2026-10-07 : suggestions du metier UNIQUEMENT pour un salon qui n'a jamais enregistre
+      // de familles. Un salon qui a supprime toutes les siennes ne les voit plus revenir.
       if (!window.CATS_SVC.length && !window.CATS_FORF.length
+          && window._cfgCatsSvc === undefined && window._cfgCatsForf === undefined && !Array.isArray(window._cfgCategories)
           && typeof METIER_CONFIG !== "undefined" && SALON_CONFIG.metier && METIER_CONFIG[SALON_CONFIG.metier]) {
         window.CATS_SVC = METIER_CONFIG[SALON_CONFIG.metier].defaultCats.slice();
       }
@@ -1523,6 +1540,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   // 11. Charger forfaits → FORFAITS[]
   try {
     var fRes = await _sb.from("forfaits").select("*").eq("salon_id", _salonId).order("id");
+    if (fRes.data && !fRes.error) { window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.forfaits = true; }
     if (fRes.data && fRes.data.length > 0) {
       FORFAITS = fRes.data.map(function(f) {
         return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false, catGenre: f.cat_genre || null };
@@ -2856,8 +2874,25 @@ if (typeof window !== "undefined") {
 
 // Sauvegarder les collaborateurs
 // Sauvegarder les services
+// FIX 2026-10-07 : garde-fou commun aux enregistrements « en masse » (qui parcourent une liste
+// en memoire et INSERENT ce qui n'existe pas en base). Si la liste n'a pas ete chargee depuis la
+// base de CE salon, on n'ecrit rien : sinon on risquait d'inserer des donnees qui ne sont pas les
+// siennes (valeurs par defaut, ou etat d'un autre compte).
+function _lxListeChargee(table, silencieux){
+  if (window._lxTableOk && window._lxTableOk[table] === true) return true;
+  try{
+    if (!window._lxListeAlerte) window._lxListeAlerte = {};
+    if (!window._lxListeAlerte[table]) {
+      window._lxListeAlerte[table] = true;
+      if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"save_"+table, msg:"liste "+table+" non chargee depuis la base - enregistrement bloque"}));
+    }
+    if (!silencieux && typeof toast === "function") toast("\u26a0 Donnees non chargees - rechargez l'application avant de modifier", "error");
+  }catch(_e){}
+  return false;
+}
 async function saveServices() {
   if (!_sb || !_salonId) return;
+  if (!_lxListeChargee("services")) return;
   for (var i = 0; i < SVC.length; i++) {
     var s = SVC[i];
     var data = {
@@ -2885,6 +2920,7 @@ async function saveServices() {
 // Sauvegarder les forfaits
 async function saveForfaits() {
   if (!_sb || !_salonId) return;
+  if (!_lxListeChargee("forfaits")) return;
   for (var i = 0; i < FORFAITS.length; i++) {
     var f = FORFAITS[i];
     var data = {
@@ -2956,6 +2992,8 @@ async function deleteForfaitFromDb(forfaitId) {
 
 async function saveCollaborateurs() {
   if (!_isOnline || !_salonId) return;
+  // appelee a chaque changement de page : blocage silencieux (une seule alerte monitoring)
+  if (!_lxListeChargee("collaborateurs", true)) return;
   // FIX 2026-05-11 (Manue photo perdue) : récupère img+id pour pouvoir
   // PRÉSERVER une photo DB existante si la mémoire locale a img="" (race
   // condition entre 2 sessions / reload partiel). La suppression explicite
