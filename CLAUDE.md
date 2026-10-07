@@ -1301,9 +1301,26 @@ doit être reportée DANS LA MÊME INTERVENTION dans la base de connaissances du
   dans la ligne `inexistant`. Les cas à transmettre à un humain portent `<ESCALATE/>`.
 - Vérifier après chaque mise à jour avec le banc `lx-bot-eval` (même consigne/base/contexte que bot-reply,
   AUCUNE écriture, réservé au rôle service — refuse la clé anon) : appel via `net.http_post` avec le jeton
-  service, `{salon_id, questions:[...]}`, lire `net._http_response`. Questions de référence : désactiver le
+  service (`'Bearer ' || lx_prive.cle_service()`), `{salon_id, questions:[...]}`, lire `net._http_response`. Questions de référence : désactiver le
   PIN, délai de verrouillage, créer une famille, clôture oubliée (→ ESCALATE), TVA qui ne reste pas
   (→ ESCALATE), congé d'une collègue, rappels SMS en Essentiel, rubrique « Sécurité », horaires du samedi,
   remboursement, salutations.
 - Si la consigne du bot change (BASE_PROMPT), redéployer `bot-reply` ET `lx-bot-eval` (même texte).
 - Affichage côté client : messages en `white-space:pre-line`, `**gras**` rendu pour l'assistant (texte échappé).
+
+
+## SÉCURITÉ (07/10/2026) — clé service_role dans le coffre Vault
+
+- La clé service_role était écrite EN CLAIR dans `fn_trigger_bot_reply`, `notify_salon`, `notify_admins`
+  (et recopiée dans 2 migrations de l'historique : notify_*_timeout_30s). Désormais : secret Vault
+  `service_role_key`, lu par `lx_prive.cle_service()` (schéma `lx_prive` non exposé à l'API, EXECUTE retiré
+  à public/anon/authenticated). Les 3 fonctions appellent `'Bearer ' || lx_prive.cle_service()`.
+  Historique des migrations masqué. Vérifié : 0 clé en clair (fonctions, cron, migrations, dépôt git) ;
+  notify_salon testé de bout en bout (200, aucune notification envoyée).
+- **RÈGLE : ne JAMAIS écrire une clé dans le texte d'une fonction, d'une migration, d'un cron ou du dépôt.**
+  Utiliser `lx_prive.cle_service()` (ou un autre secret Vault).
+- **RESTE À FAIRE (planifié, pas en urgence)** : faire tourner la clé service_role (elle a été visible dans
+  le texte des fonctions). Avec les nouvelles clés API Supabase (sb_secret_…) : créer une clé secrète,
+  mettre à jour le secret Vault + les secrets des edge functions / du worker Cloudflare, puis désactiver
+  l'ancienne. NE PAS régénérer le « JWT secret » legacy sans plan : il invaliderait aussi la clé anon
+  écrite dans app.html, site.html, inscription.html…
