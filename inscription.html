@@ -124,7 +124,7 @@ var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var sb=supabase.createClient(SB_URL,SB_KEY);
 
 var STEP=1;
-var DATA={nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",pays:"France",formeJur:"",gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
+var DATA={nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",pays:"France",formeJur:"",franchiseTva:null,_tvaChoisie:false,gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
 
 function render(){
   var h='';
@@ -164,7 +164,20 @@ function renderStep1(){
   var _idLbl=DATA.pays==="Belgique"?"N° d'entreprise (BCE)":(DATA.pays==="Luxembourg"?"N° de TVA / matricule":"SIRET");
   var _idPh=DATA.pays==="Belgique"?"0123.456.789":(DATA.pays==="Luxembourg"?"LU + n° de TVA":"14 chiffres");
   h+='<div class="fg"><label>'+_idLbl+' *</label><input id="fSiret" value="'+esc(DATA.siret)+'" placeholder="'+_idPh+'"></div>';
-  h+='<div class="fg"><label>Forme juridique *</label><select id="fForme" onchange="DATA.formeJur=this.value"><option value=""'+(DATA.formeJur===""?" selected":"")+'>S\u00e9lectionnez...</option><option value="micro"'+(DATA.formeJur==="micro"?" selected":"")+'>Micro-entreprise</option><option value="ei"'+(DATA.formeJur==="ei"?" selected":"")+'>Entreprise individuelle (EI)</option><option value="eirl"'+(DATA.formeJur==="eirl"?" selected":"")+'>EIRL</option><option value="sarl"'+(DATA.formeJur==="sarl"?" selected":"")+'>SARL</option><option value="eurl"'+(DATA.formeJur==="eurl"?" selected":"")+'>EURL</option><option value="sas"'+(DATA.formeJur==="sas"?" selected":"")+'>SAS</option><option value="sasu"'+(DATA.formeJur==="sasu"?" selected":"")+'>SASU</option><option value="sa"'+(DATA.formeJur==="sa"?" selected":"")+'>SA</option><option value="autre"'+(DATA.formeJur==="autre"?" selected":"")+'>Autre</option></select></div>';
+  h+='<div class="fg"><label>Forme juridique *</label><select id="fForme" onchange="saveFields1();DATA.formeJur=this.value;if(!DATA._tvaChoisie){DATA.franchiseTva=(this.value===\'micro\');}render()"><option value=""'+(DATA.formeJur===""?" selected":"")+'>S\u00e9lectionnez...</option><option value="micro"'+(DATA.formeJur==="micro"?" selected":"")+'>Micro-entreprise</option><option value="ei"'+(DATA.formeJur==="ei"?" selected":"")+'>Entreprise individuelle (EI)</option><option value="eirl"'+(DATA.formeJur==="eirl"?" selected":"")+'>EIRL</option><option value="sarl"'+(DATA.formeJur==="sarl"?" selected":"")+'>SARL</option><option value="eurl"'+(DATA.formeJur==="eurl"?" selected":"")+'>EURL</option><option value="sas"'+(DATA.formeJur==="sas"?" selected":"")+'>SAS</option><option value="sasu"'+(DATA.formeJur==="sasu"?" selected":"")+'>SASU</option><option value="sa"'+(DATA.formeJur==="sa"?" selected":"")+'>SA</option><option value="autre"'+(DATA.formeJur==="autre"?" selected":"")+'>Autre</option></select></div>';
+  // 2026-10-07 : franchise de TVA demandee a l'inscription. Avant, tout salon francais demarrait
+  // a 20 % : un auto-entrepreneur en franchise facturait de la TVA sans le savoir.
+  // Oui pre-coche pour une micro-entreprise ; modifiable ; non pre-coche pour les autres formes.
+  if(DATA.formeJur){
+    if(DATA.franchiseTva===null) DATA.franchiseTva=(DATA.formeJur==="micro");
+    var _ft=DATA.franchiseTva===true;
+    var _mention=DATA.pays==="France"?" (mention \u00ab TVA non applicable, art. 293 B du CGI \u00bb)":"";
+    h+='<div class="fg"><label>Franchise de TVA *</label>';
+    h+='<div style="display:flex;flex-direction:column;gap:8px">';
+    h+='<div onclick="saveFields1();DATA.franchiseTva=true;DATA._tvaChoisie=true;render()" style="cursor:pointer;padding:12px 14px;border-radius:10px;border:2px solid '+(_ft?'var(--gold,#c8a84e)':'rgba(255,255,255,.12)')+';background:'+(_ft?'rgba(200,168,78,.10)':'transparent')+'">'+(_ft?'\u25c9':'\u25cb')+' <strong>Oui</strong>, je suis en franchise de TVA : je ne facture pas de TVA'+_mention+'</div>';
+    h+='<div onclick="saveFields1();DATA.franchiseTva=false;DATA._tvaChoisie=true;render()" style="cursor:pointer;padding:12px 14px;border-radius:10px;border:2px solid '+(!_ft?'var(--gold,#c8a84e)':'rgba(255,255,255,.12)')+';background:'+(!_ft?'rgba(200,168,78,.10)':'transparent')+'">'+(!_ft?'\u25c9':'\u25cb')+' <strong>Non</strong>, je facture la TVA</div>';
+    h+='</div><div class="hint">Vos tickets appliqueront '+(_ft?'0 % de TVA':'le taux de TVA de votre pays')+'. Modifiable ensuite dans Param\u00e8tres \u2192 Caisse et paiements.</div></div>';
+  }
   h+='<div class="btn-row"><div></div><button class="btn btn-gold" onclick="nextStep1()" style="flex:1">Continuer \u2192</button></div>';
   return h;
 }
@@ -176,6 +189,7 @@ function nextStep1(){
   if(DATA.pays==="France"){ if(!/^\d{14}$/.test(_id)){showErr("Le SIRET est obligatoire (14 chiffres)");return;} }
   else if(_id.replace(/[^A-Za-z0-9]/g,"").length<8){showErr("Le numéro d'entreprise est obligatoire");return;}
   if(!DATA.formeJur){showErr("Veuillez s\u00e9lectionner la forme juridique");return;}
+  if(DATA.franchiseTva!==true && DATA.franchiseTva!==false){ DATA.franchiseTva=(DATA.formeJur==="micro"); }
   STEP=2;render();
 }
 
@@ -354,6 +368,7 @@ async function geocodeBANSafe(adresse, cp, ville){
 }
 
 async function doSubmit(){
+  if(DATA.franchiseTva!==true && DATA.franchiseTva!==false){ DATA.franchiseTva=(DATA.formeJur==="micro"); } // filet
   DATA.cgvAccepted=document.getElementById("chkCGV")&&document.getElementById("chkCGV").checked;
   DATA.confAccepted=document.getElementById("chkConf")&&document.getElementById("chkConf").checked;
   if(!DATA.cgvAccepted){showErr("Veuillez accepter les CGV et le contrat d\u2019abonnement");return;}
@@ -432,8 +447,10 @@ async function doSubmit(){
       siret:DATA.siret.trim(),
       metier:DATA.metier,
       forme_juridique:DATA.formeJur,
-      taux_tva: DATA.pays==="Belgique"?21:(DATA.pays==="Luxembourg"?((DATA.metier==="coiffure"||DATA.metier==="barbier")?8:17):null),
-      taux_tva_produits: DATA.pays==="Luxembourg"?17:null,
+      // 2026-10-07 : franchise -> 0 % ; sinon taux du pays (France : 20 % explicite).
+      taux_tva: (DATA.franchiseTva===true) ? 0 : (DATA.pays==="Belgique"?21:(DATA.pays==="Luxembourg"?((DATA.metier==="coiffure"||DATA.metier==="barbier")?8:17):20)),
+      // produits : null = meme taux que les prestations (ne pas figer 0 : un passage ulterieur a 20 % ne le changerait pas)
+      taux_tva_produits: (DATA.franchiseTva===true) ? null : (DATA.pays==="Luxembourg"?17:null),
       mode_activite:DATA.modeActivite,
       gerant_nom:DATA.gerantNom.trim(),
       gerant_prenom:DATA.gerantPrenom.trim(),
@@ -447,7 +464,7 @@ async function doSubmit(){
       longitude: _geo ? _geo.lng : null,
       geocoded_at: _geo ? new Date().toISOString() : null,
       config_json:JSON.stringify({nom:DATA.nom.trim(),metier:DATA.metier,
-      forme_juridique:DATA.formeJur,mode_activite:DATA.modeActivite,adresse:DATA.adresse.trim(),cp:DATA.cp.trim(),ville:DATA.ville.trim(),tel:DATA.tel.trim(),pays:DATA.pays}),
+      forme_juridique:DATA.formeJur,franchise_tva:(DATA.franchiseTva===true),mode_activite:DATA.modeActivite,adresse:DATA.adresse.trim(),cp:DATA.cp.trim(),ville:DATA.ville.trim(),tel:DATA.tel.trim(),pays:DATA.pays}),
       sms_credits:0,
       sms_used:0,
       cgv_accepted_at:new Date().toISOString(),
@@ -532,6 +549,7 @@ function renderSuccess(){
   h+='<div class="box">';
   h+='<div class="row"><span class="k">\u00c9tablissement</span><span class="v">'+esc(DATA.nom)+'</span></div>';
   h+='<div class="row"><span class="k">SIRET</span><span class="v">'+esc(DATA.siret)+'</span></div>';
+  h+='<div class="row"><span class="k">TVA</span><span class="v">'+(DATA.franchiseTva===true?'Franchise (0 %)':'Factur\u00e9e')+'</span></div>';
   h+='<div class="row"><span class="k">G\u00e9rant</span><span class="v">'+esc(DATA.gerantPrenom)+' '+esc(DATA.gerantNom)+'</span></div>';
   h+='<div class="row"><span class="k">Email</span><span class="v">'+esc(DATA.email)+'</span></div>';
   h+='<div class="row"><span class="k">Plan</span><span class="v">Essai gratuit (14 jours)</span></div>';
