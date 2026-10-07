@@ -5861,6 +5861,8 @@ function _lxClotureCaisseTheo(){
   }catch(_e){ return 0; }
 }
 // Recalcule l\u2019ecart a chaque saisie, affiche/masque la justification, active/desactive Valider.
+// 2026-10-07 : en mode caisse simplifiee (auto-entrepreneur), le comptage du tiroir est FACULTATIF.
+function _lxCaisseSimple(){ try{ return !!(window.SITE_CONFIG && window.SITE_CONFIG.gestionCaisseSimple===true); }catch(_e){ return false; } }
 function _lxClotureUpdateEcart(){
   try{
     var theoEl=document.getElementById("clot_theo"); if(!theoEl) return;
@@ -5880,6 +5882,7 @@ function _lxClotureUpdateEcart(){
       var justifEl=document.getElementById("clot_justif");
       var hasJustif=justifEl&&String(justifEl.value||"").trim().length>=3;
       var ok=(reel!=null)&&(!needJustif||hasJustif);
+      if(reel==null && _lxCaisseSimple()) ok=true; // comptage facultatif en caisse simplifiee
       btn.disabled=!ok; btn.style.opacity=ok?"1":".5"; btn.style.cursor=ok?"pointer":"not-allowed";
     }
   }catch(_e){}
@@ -5925,10 +5928,15 @@ function _doClotureDo(){
     h+='\ud83d\uded1 <strong>'+_rest.length+' rendez-vous</strong> du jour '+(_rest.length>1?'ne sont':'n\'est')+' pas encore encaiss\u00e9'+(_rest.length>1?'s':'')+_restTxt+'.<br>';
     h+='<span style="color:rgba(255,255,255,.85)">Si vous cl\u00f4turez maintenant, '+(_rest.length>1?'ils ne pourront plus \u00eatre encaiss\u00e9s':'il ne pourra plus \u00eatre encaiss\u00e9')+' sur la journ\u00e9e d\'aujourd\'hui. Cl\u00f4turez plut\u00f4t en fin de journ\u00e9e.</span></div>';
   }
+  // 2026-10-07 : cloture automatique de nuit (filet). Le comptage du tiroir n'est possible qu'a la main.
+  var _simpleZ=_lxCaisseSimple();
+  h+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px;text-align:left">\ud83c\udf19 '+(_simpleZ
+    ?'Mode caisse simplifi\u00e9e : la cl\u00f4ture est <strong>facultative</strong>. Si vous ne la faites pas, la journ\u00e9e est cl\u00f4tur\u00e9e automatiquement dans la nuit.'
+    :'En cas d\u2019oubli, la journ\u00e9e est cl\u00f4tur\u00e9e automatiquement dans la nuit, <strong>sans comptage du tiroir</strong>. La cl\u00f4ture du soir reste le moment de v\u00e9rifier votre caisse.')+'</div>';
   // FIX 2026-05-28 : section comptage du tiroir (NF525, additif)
   var _clotTheo=(typeof _lxClotureCaisseTheo==="function")?_lxClotureCaisseTheo():0;
   h+='<div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:14px;margin-bottom:14px;text-align:left">';
-  h+='<div style="font-size:11px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Comptage du tiroir</div>';
+  h+='<div style="font-size:11px;color:var(--gold);font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Comptage du tiroir'+(_simpleZ?' (facultatif)':'')+'</div>';
   h+='<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:6px"><span>Solde theorique en caisse</span><strong id="clot_theo" data-theo="'+_clotTheo.toFixed(2)+'" style="color:#fff">'+_clotTheo.toFixed(2)+' \u20ac</strong></div>';
   h+='<label style="font-size:12px;color:var(--text2);display:block;margin:8px 0 4px">Solde reel compte (especes dans le tiroir)</label>';
   h+='<input id="clot_reel" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" oninput="_lxClotureUpdateEcart()" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:15px;font-weight:700">';
@@ -5938,7 +5946,7 @@ function _doClotureDo(){
   h+='<textarea id="clot_justif" rows="2" oninput="_lxClotureUpdateEcart()" placeholder="Ex : arrondi rendu monnaie, comptage a verifier, ..." style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:13px;resize:vertical"></textarea>';
   h+='</div></div>';
   h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-  h+='<button id="clot_valider_btn" class="btn bg" style="flex:1;opacity:.5;cursor:not-allowed" disabled onclick="doConfirmCloture()">Valider la cloture</button></div></div></div>';
+  h+='<button id="clot_valider_btn" class="btn bg" style="flex:1;'+(_simpleZ?'':'opacity:.5;cursor:not-allowed')+'" '+(_simpleZ?'':'disabled ')+'onclick="doConfirmCloture()">Valider la cloture</button></div></div></div>';
   document.getElementById("modal").innerHTML=h;
 }
 function doConfirmCloture(){

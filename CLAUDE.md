@@ -1324,3 +1324,22 @@ doit être reportée DANS LA MÊME INTERVENTION dans la base de connaissances du
   mettre à jour le secret Vault + les secrets des edge functions / du worker Cloudflare, puis désactiver
   l'ancienne. NE PAS régénérer le « JWT secret » legacy sans plan : il invaliderait aussi la clé anon
   écrite dans app.html, site.html, inscription.html…
+
+## 2026-10-07 — CLÔTURE Z AUTOMATIQUE DE NUIT (filet en cas d'oubli) — validée par Alexandre
+
+- Base légale : BOI-TVA-DECLA-30-10-30 — le LOGICIEL doit « prévoir obligatoirement une clôture journalière,
+  mensuelle et annuelle » (cumulatives). Une clôture automatique en cas d'oubli remplit cette obligation.
+- Edge function `lx-cloture-auto` (rôle service uniquement) : calculs RECOPIÉS de l'app (cloturerJournee →
+  calculerZ, _splitPrestProd, _lxPayBuckets, caPerCollabForAppt, lxMapApptRow…), état « à la fin du jour D »
+  (annulations postérieures ignorées), empreinte SHA-256 identique (« Z|num|date|CA|HT|nb|annul|dernier ticket|siret »).
+  Modes : `verify` (recalcule les Z existantes), `simulate`, `run`. Écrit la Z (raw_data.auto=true,
+  operator_name « Clôture automatique », pas de comptage), verrouille les tickets du jour, trace CLOTURE_Z.
+- VALIDATION : 120 Z d'Excellence recalculées → totaux/HT/nb tickets identiques sur les 120 ; empreinte identique
+  sur 116 (les 4 non identiques = Z1-4 scellées en mai avec l'ancien algorithme) ; tout identique depuis le 18/06
+  (avant : cumuls mois/année non stockés par l'ancienne version de l'app, et Z25 avec un règlement modifié après coup).
+- Cron `cloture_z_auto_nuit` 23:30 UTC → `lx_prive.lancer_cloture_auto()` (clé lue au coffre).
+  `detect_z_manquant_daily` (01:00 UTC) reste le second filet.
+- **SI cloturerJournee OU SES FONCTIONS CHANGENT DANS L'APP : reporter le changement dans lx-cloture-auto ET relancer
+  `{"mode":"verify","salon_id":…}` avant de déployer.**
+- App : la fenêtre de clôture l'explique ; en caisse simplifiée (auto-entrepreneur) la clôture et le comptage du
+  tiroir sont FACULTATIFS. Base du bot mise à jour (lignes `cloture`, `inexistant`).

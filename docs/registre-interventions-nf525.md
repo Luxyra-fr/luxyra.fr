@@ -183,6 +183,19 @@ registre :
 | Date | Objet |
 |---|---|
 | 30/08/2026 | Établissement du registre. Consignation des interventions du 19/05/2026 et du 29/05/2026, et des vérifications associées. |
+| 07/10/2026 | Mise en service de la clôture journalière automatique (voir ci-dessous). |
+
+---
+
+## Évolution du 7 octobre 2026 — clôture journalière automatique
+
+Conformément au BOI-TVA-DECLA-30-10-30 (le logiciel « doit prévoir obligatoirement une clôture
+journalière »), une journée encaissée qui n'a pas été clôturée par l'utilisateur est désormais clôturée
+automatiquement la nuit suivante. La clôture automatique applique exactement les mêmes calculs et la même
+empreinte chaînée que la clôture manuelle ; elle porte la mention « Clôture automatique » et ne comporte pas
+de comptage du tiroir. Avant sa mise en service, le calcul a été rejoué sur les 120 clôtures existantes
+d'Excellence Coiffure : totaux, HT et nombres de tickets identiques sur les 120, empreintes identiques sur
+toutes les clôtures scellées en SHA-256. Cette évolution ne laisse aucune trace de type « bypass ».
 
 ---
 
