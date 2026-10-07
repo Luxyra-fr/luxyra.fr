@@ -1382,3 +1382,21 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 - Collaborateurs partis (complément) : devis→RDV et absence depuis le planning passent par `lxEquipeSelection`/`getActiveTeam` ;
   côté base, `fn_salon_next_available_slot` et `rdv_online_block_double_booking` excluent aussi `inactif` et `date_depart` passée
   (migrations `next_slot_exclut_collaborateurs_partis`, `double_booking_exclut_collaborateurs_partis`).
+
+## 2026-10-07 (soir) — Date de départ, sécurité, clôture auto
+
+- **Date de départ = PREMIER jour d'absence définitive** (règle unique, celle de `rdv_online_validate`).
+  App : `lxCollabPartiAu(c,date)` (Inactif OU date atteinte) / `lxCollabDepartAu(c,date)` (date seule) ;
+  `getEffectiveHrs` → null à partir de la date (bloque `aAp`, créneaux, planning) ; colonne et récap du planning
+  masqués à partir de la date sauf RDV ce jour-là ; `setCollabDepart` : date future ⇒ PAS coché Inactif
+  (reste dans l'équipe jusqu'à la veille), date passée ⇒ Inactif ; année hors 19xx/20xx refusée ;
+  alerte s'il reste des RDV à réaffecter. Site : `COLLABS[].dep` + `applyHrsOverride`/`isCollabDayOff`.
+  SQL : `fn_salon_next_available_slot`, `rdv_online_block_double_booking` en `date_depart > date`.
+  Test : `/tmp/lx/dep.js` 11/11.
+- **Sécurité** (migrations du 07/10) : `clients_beautypro` (password_hash !) plus lisible par anon/authenticated ;
+  `admin_find_duplicate_clients` réservé au propriétaire du salon ou admin ; 8 tables monitoring en RLS
+  (policy `is_admin()`) ; fonctions internes révoquées pour anon ; `salons_public.config_json` passe par
+  `lx_config_publique()` (retire caisse_data, fond_caisse, sms_config, pay_active, verrouillage, migration*) ;
+  vues `v_js_errors_*`, `admin_cron_health` plus lisibles par anon.
+- **Clôture auto** : `lx_prive.lancer_cloture_auto()` saute Delphinecoiff UNIQUEMENT si date Paris = 2026-10-08
+  (registre NF525). Code mort ensuite — pourra être retiré.

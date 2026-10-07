@@ -184,6 +184,7 @@ registre :
 |---|---|
 | 30/08/2026 | Établissement du registre. Consignation des interventions du 19/05/2026 et du 29/05/2026, et des vérifications associées. |
 | 07/10/2026 | Mise en service de la clôture journalière automatique (voir ci-dessous). |
+| 07/10/2026 | Suspension ponctuelle de la clôture automatique pour un salon, nuit du 07 au 08/10/2026 (voir ci-dessous). |
 
 ---
 
@@ -196,6 +197,16 @@ empreinte chaînée que la clôture manuelle ; elle porte la mention « Clôture
 de comptage du tiroir. Avant sa mise en service, le calcul a été rejoué sur les 120 clôtures existantes
 d'Excellence Coiffure : totaux, HT et nombres de tickets identiques sur les 120, empreintes identiques sur
 toutes les clôtures scellées en SHA-256. Cette évolution ne laisse aucune trace de type « bypass ».
+
+---
+
+## 7 octobre 2026 — suspension ponctuelle (une nuit) de la clôture automatique, Delphinecoiff
+
+À la demande de l'éditeur, la clôture automatique n'est pas lancée pour le salon Delphinecoiff
+(44b0d224-…) la nuit du 07 au 08/10/2026 : une question est en cours avec la cliente sur le taux de TVA
+de tickets du 05/10/2026, déjà scellés. Aucune donnée fiscale n'est modifiée ; la suspension est tracée dans
+le journal du salon (action `CLOTURE_AUTO_SUSPENDUE`). Les autres salons sont traités normalement cette nuit-là,
+et tous les salons, dont Delphinecoiff, reprennent le fonctionnement normal dès la nuit suivante.
 
 ---
 
