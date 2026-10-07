@@ -892,6 +892,7 @@ function _defaultCollabId(){
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
+        if(T[i].inactif===true) continue;
         var tn=(T[i].n||"").trim().toLowerCase();
         if(tn===opName || tn.indexOf(opName)===0) return T[i].id;
       }
@@ -974,7 +975,19 @@ function hasPermission(perm) {
 // les anciennes performances même des collabs partis).
 function getActiveTeam(){
   if(typeof T==="undefined"||!T)return[];
-  return T.filter(function(t){return t.inactif!==true;});
+  // 2026-10-07 : parti = archive (inactif) OU date de depart passee
+  var _auj=(typeof TD!=="undefined"&&TD)?TD:new Date().toISOString().slice(0,10);
+  return T.filter(function(t){return t.inactif!==true && !(t.dateDepart && String(t.dateDepart)<_auj);});
+}
+// 2026-10-07 : collaborateurs PROPOSES dans une selection (encaissement, RDV, absences, fiches...) :
+// equipe active uniquement, pour TOUS les salons. Un ancien collaborateur n'apparait que s'il est
+// DEJA la valeur choisie (consultation / correction d'un ancien RDV ou ticket) : l'historique reste juste.
+function lxEquipeSelection(idDejaChoisi){
+  var act=getActiveTeam().slice();
+  if(idDejaChoisi!=null && typeof T!=="undefined" && T){
+    for(var i=0;i<T.length;i++){ if(String(T[i].id)===String(idDejaChoisi) && act.indexOf(T[i])<0){ act.push(T[i]); break; } }
+  }
+  return act;
 }
 window.getActiveTeam=getActiveTeam;
 
@@ -9175,7 +9188,7 @@ function renderDemandeComposer(d){
   h += '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:4px">Avec qui</label>';
   h += '<select id="dpCollab" style="width:100%;padding:9px;background:var(--bg3);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px">';
   h += '<option value="">— Pas de préférence / au choix du salon —</option>';
-  if(typeof T!=="undefined" && T) T.forEach(function(c){ if(c.actif!==false) h += '<option value="'+c.id+'" data-nom="'+escapeHtml(c.n)+'">'+escapeHtml(c.n)+'</option>'; });
+  if(typeof T!=="undefined" && T) lxEquipeSelection().forEach(function(c){ if(c) h += '<option value="'+c.id+'" data-nom="'+escapeHtml(c.n)+'">'+escapeHtml(c.n)+'</option>'; });
   h += '</select></div>';
   // Liste des services à composer
   h += '<div style="margin-bottom:10px"><label style="font-size:11px;color:var(--text3);font-weight:700;display:block;margin-bottom:6px">Prestations à inclure</label>';
@@ -10766,7 +10779,7 @@ function showAddPauseAt(stId,time){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()">';
   h+='<h2>\u23f8 Pause</h2>';
   h+='<div class="fg"><label>Collaborateur</label><select id="pauseSt">';
-  for(var i=0;i<T.length;i++)h+='<option value="'+T[i].id+'"'+(T[i].id===stId?" selected":"")+'>'+T[i].n+'</option>';
+  var _eqS=lxEquipeSelection(stId); for(var i=0;i<_eqS.length;i++)h+='<option value="'+_eqS[i].id+'"'+(_eqS[i].id===stId?" selected":"")+'>'+_eqS[i].n+'</option>';
   h+='</select></div>';
   h+='<div style="display:flex;gap:10px"><div class="fg" style="flex:1"><label>Heure</label><input type="time" id="pauseFrom" value="'+time+'"></div>';
   h+='<div class="fg" style="flex:1"><label>Dur\u00e9e (min)</label><input type="number" id="pauseDur" value="60" min="15" step="15"></div></div>';
@@ -10792,7 +10805,7 @@ function showAddAbsenceAt(stId,preType){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<h2>Absence / Cong\u00e9 / Horaires</h2>';
   h+='<div class="fg"><label>Collaborateur</label><select id="absSt">';
-  for(var i=0;i<T.length;i++)h+='<option value="'+T[i].id+'"'+(T[i].id===stId?" selected":"")+'>'+T[i].n+'</option>';
+  var _eqS=lxEquipeSelection(stId); for(var i=0;i<_eqS.length;i++)h+='<option value="'+_eqS[i].id+'"'+(_eqS[i].id===stId?" selected":"")+'>'+_eqS[i].n+'</option>';
   h+='</select></div>';
   // Visual type selector \u2014 refonte 2026-05-11 : +2 types horaires/exceptionnels
   h+='<div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px">Type</div>';
@@ -11361,7 +11374,7 @@ function clickAppt(id){
         htm+='<div style="grid-area:collab;font-size:11px;font-weight:700;color:'+(phSty?phSty.c:'#fff')+';text-align:left">'+(phSty?phSty.n:'')+'</div>';
       } else {
         htm+='<select style="grid-area:collab;width:100%;padding:5px 4px;font-size:11px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff" onchange="updApptPhaseCollab(\''+a.id+'\','+i+',+this.value)">';
-        for(var ti=0;ti<T.length;ti++){htm+='<option value="'+T[ti].id+'"'+(T[ti].id===phStId?' selected':'')+' style="color:#000;background:#fff">'+T[ti].n+'</option>';}
+        var _eqPh=lxEquipeSelection(phStId); for(var ti=0;ti<_eqPh.length;ti++){htm+='<option value="'+_eqPh[ti].id+'"'+(_eqPh[ti].id===phStId?' selected':'')+' style="color:#000;background:#fff">'+_eqPh[ti].n+'</option>';}
         htm+='</select>';
       }
       htm+='<div style="grid-area:name;font-weight:600;font-size:12px;line-height:1.2;min-width:0;overflow-wrap:anywhere">'+ph.l.toUpperCase()+'</div>';
@@ -11482,7 +11495,7 @@ function _corrigerCollabVenteUI(apptId){
   if(!a){ if(typeof toast==="function") toast("Vente introuvable","error"); return; }
   var cur=gT(a.stId); var curName=cur?cur.n:"(non attribue)";
   var opts='';
-  for(var j=0;j<T.length;j++){ if(T[j].actif===false) continue; opts+='<option value="'+T[j].id+'"'+(String(T[j].id)===String(a.stId)?' selected':'')+'>'+T[j].n+'</option>'; }
+  for(var j=0;j<T.length;j++){ if((T[j].inactif===true || (T[j].dateDepart && String(T[j].dateDepart)<TD)) && String(T[j].id)!==String(a.stId)) continue; opts+='<option value="'+T[j].id+'"'+(String(T[j].id)===String(a.stId)?' selected':'')+'>'+T[j].n+'</option>'; }
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:420px">';
   h+='<h2 style="color:var(--gold);font-size:18px;margin-bottom:4px">✏️ Corriger le collaborateur</h2>';
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Vente '+(a.tkNum?("ticket #"+a.tkNum):("du "+fmt(a.date)))+' - actuellement attribuee a <strong style="color:#fff">'+curName+'</strong>.<br>Le ticket fiscal n\'est pas modifie ; seule l\'attribution (stats / commissions) est corrigee, et l\'operation est tracee dans le journal.</div>';
@@ -12149,7 +12162,7 @@ function editApptTime(id){
   htm+='<div class="fg"><label>Date</label><input type="date" id="eaDate" value="'+a.date+'"></div>';
   htm+='<div class="fg"><label>Heure</label><input type="time" id="eaTime" value="'+a.time+'"></div>';
   htm+='<div class="fg"><label>'+getCollabLabel()+'</label><select id="eaSt">';
-  for(var i=0;i<T.length;i++)htm+='<option value="'+T[i].id+'"'+(a.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
+  var _eqA=lxEquipeSelection(a.stId); for(var i=0;i<_eqA.length;i++)htm+='<option value="'+_eqA[i].id+'"'+(a.stId===_eqA[i].id?' selected':'')+'>'+_eqA[i].n+'</option>';
   htm+='</select></div>';
   htm+='<button class="btn bg bk" style="margin-top:10px" onclick="saveApptTime(\''+a.id+'\')">Valider</button>';
   htm+='<button class="btn bk" style="margin-top:6px" onclick="clickAppt(\''+a.id+'\')">Retour</button>';
@@ -12594,7 +12607,7 @@ function _lxSiteData(SC){
       fidelite_type:SC.fideliteType||"pourcentage",
       fidelite_valeur:SC.fideliteValeur||10,
       absences:window.ABSENCES||[],
-      collaborateurs:T.map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null,pause:t.pause||null};}),
+      collaborateurs:getActiveTeam().map(function(t){return{id:t.id,n:t.n,hrs:t.hrs||null,pause:t.pause||null};}),
       horaires_salon:H,
       accept_rdv_sur_mesure:SC.acceptRdvSurMesure===true
     };
@@ -15792,7 +15805,7 @@ function rDetail(){
     h+='<div class="fg"><label>Date de naissance</label><input type="date" value="'+(c.ddn||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ddn=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div class="fg"><label>Type de client</label><select onchange="gC(\''+c.id+'\').sex=this.value;gC(\''+c.id+'\').genre=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"><option value="F"'+(c.sex==="F"?" selected":"")+'>Femme</option><option value="H"'+(c.sex==="H"?" selected":"")+'>Homme</option><option value="E"'+((c.sex==="E"||c.genre==="E")?" selected":"")+'>Enfant</option></select></div>';
     h+='<div class="fg"><label>Collaborateur habituel</label><select onchange="gC(\''+c.id+'\').collab=+this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">';
-    for(var ti=0;ti<T.length;ti++)h+='<option value="'+T[ti].id+'"'+(c.collab===T[ti].id?" selected":"")+'>'+T[ti].n+'</option>';
+    var _eqC=lxEquipeSelection(c.collab); for(var ti=0;ti<_eqC.length;ti++)h+='<option value="'+_eqC[ti].id+'"'+(c.collab===_eqC[ti].id?" selected":"")+'>'+_eqC[ti].n+'</option>';
     h+='</select></div>';
     h+='<div class="ct" style="margin-top:16px">Contact</div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone portable</label><input value="'+c.ph+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ph=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
@@ -24137,8 +24150,9 @@ function oM(type,pf){
     // Coiffeuse selector with avatars
     h+='<div style="font-size:13px;color:var(--gold);font-weight:700;margin:10px 0 6px">\ud83d\udc87 Collaborateur</div>';
     h+='<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">';
-    for(var i=0;i<T.length;i++){
-      var st2=T[i];var isSel=st2.id===preStId;
+    var _eqR=lxEquipeSelection(preStId);
+    for(var i=0;i<_eqR.length;i++){
+      var st2=_eqR[i];var isSel=st2.id===preStId;
       h+='<button onclick="document.getElementById(\'mst\').value='+st2.id+';document.querySelectorAll(\'.rdv-sty\').forEach(function(b){b.style.borderColor=\'rgba(255,255,255,.1)\';b.style.background=\'rgba(255,255,255,.04)\'});this.style.borderColor=\''+st2.c+'\';this.style.background=\''+st2.c+'22\'" class="rdv-sty" style="flex:1;min-width:70px;padding:10px 6px;border-radius:10px;border:2px solid '+(isSel?st2.c:'rgba(255,255,255,.1)')+';background:'+(isSel?st2.c+'22':'rgba(255,255,255,.04)')+';cursor:pointer;text-align:center">';
       if(st2.img)h+='<img src="'+st2.img+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid '+st2.c+';display:block;margin:0 auto 4px">';
       else h+='<div style="width:32px;height:32px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;margin:0 auto 4px">'+st2.i+'</div>';
@@ -24146,7 +24160,7 @@ function oM(type,pf){
     }
     h+='</div>';
     h+='<select id="mst" style="display:none">';
-    for(var i=0;i<T.length;i++)h+='<option value="'+T[i].id+'"'+(pf.stId&&T[i].id===pf.stId?' selected':'')+'>'+T[i].n+'</option>';
+    var _eqF=lxEquipeSelection(pf.stId); for(var i=0;i<_eqF.length;i++)h+='<option value="'+_eqF[i].id+'"'+(pf.stId&&_eqF[i].id===pf.stId?' selected':'')+'>'+_eqF[i].n+'</option>';
     h+='</select>';
     
     // Preview
@@ -24857,8 +24871,9 @@ function renderRdv2ndBody(){
   // 2nd collab
   h+='<div style="font-size:11px;color:#a29bfe;font-weight:700;margin:6px 0 4px;letter-spacing:1px;text-transform:uppercase">'+(typeof getCollabLabel==="function"?getCollabLabel():"Coiffeuse")+'</div>';
   h+='<select id="rdv2ndStSel" onchange="window._rdv2nd.stId=+this.value" style="width:100%;padding:8px;margin-bottom:8px;font-size:13px">';
-  for(var i=0;i<T.length;i++){
-    h+='<option value="'+T[i].id+'"'+(st2.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
+  var _eq2=lxEquipeSelection(st2.stId);
+  for(var i=0;i<_eq2.length;i++){
+    h+='<option value="'+_eq2[i].id+'"'+(st2.stId===_eq2[i].id?' selected':'')+'>'+_eq2[i].n+'</option>';
   }
   h+='</select>';
   // 2nd prestation — FIX 2026-05-15 v2 : sélection catégorie → prestations (comme 1er RDV)
@@ -25031,7 +25046,7 @@ function renderRdvPhases(){
     h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid var(--border2)">';
     h+='<div style="flex:1;font-weight:700;font-size:12px;color:'+color+'">'+label+'</div>';
     h+='<select style="width:100px;padding:6px;font-size:12px" onchange="window._rdvPhases['+i+'].stId=+this.value">';
-    for(var ti=0;ti<T.length;ti++){h+='<option value="'+T[ti].id+'"'+(ph.stId===T[ti].id||(!ph.stId&&T[ti].id===defSt)?" selected":"")+'>'+T[ti].n+'</option>';}
+    var _eqRp=lxEquipeSelection(ph.stId||defSt); for(var ti=0;ti<_eqRp.length;ti++){h+='<option value="'+_eqRp[ti].id+'"'+(ph.stId===_eqRp[ti].id||(!ph.stId&&_eqRp[ti].id===defSt)?" selected":"")+'>'+_eqRp[ti].n+'</option>';}
     h+='</select>';
     h+='<select style="width:80px;padding:6px;font-size:12px;text-align:center" onchange="window._rdvPhases['+i+'].d=+this.value">';
     for(var d=5;d<=120;d+=5){h+='<option value="'+d+'"'+(ph.d===d?" selected":"")+'>'+d+' Min</option>';}
@@ -25852,8 +25867,9 @@ function showCaisse(){
     h+='<div style="text-align:center;font-family:var(--f1);font-size:13px;font-weight:700;color:var(--gold);margin-bottom:12px;letter-spacing:.5px">'+getCollabLabel()+' de la prestation</div>';
     h+='<div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap">';
     if(T.length===0){h+='<div style="text-align:center;padding:6px 2px;font-size:12px;color:rgba(255,255,255,.6);line-height:1.5">Aucun collaborateur.<br>Ajoutez-en un pour encaisser.<br><button onclick="cM();go(\'settings\')" style="margin-top:8px;padding:8px 12px;font-size:12px;font-weight:700;border:1px solid var(--gold);border-radius:8px;background:rgba(200,168,78,.12);color:var(--gold);cursor:pointer">+ Collaborateur</button></div>';}
-    for(var i=0;i<T.length;i++){
-      var t=T[i];
+    var _eqK=lxEquipeSelection(_tk.stId);
+    for(var i=0;i<_eqK.length;i++){
+      var t=_eqK[i];
       var sel=_tk.stId===t.id;
       h+='<div onclick="_tk.stId='+t.id+';showCaisse()" style="cursor:pointer;text-align:center">';
       if(t.img){
@@ -28852,6 +28868,7 @@ function _ftDefaultCollab(){
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
+        if(T[i].inactif===true) continue;
         var tn=(T[i].n||"").trim().toLowerCase();
         if(tn===opName || tn.indexOf(opName)===0) return T[i];
       }
@@ -28864,9 +28881,10 @@ function _ftCollabSelect(currentId){
   if(!T||T.length<=1) return ''; // pas la peine si 1 seul collab
   var h='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Coiffeur/Coiffeuse qui a fait la prestation</label>';
   h+='<select id="ftCollabSel" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);font-size:13px;font-weight:600">';
-  for(var i=0;i<T.length;i++){
-    var sel=(T[i].id===currentId)?' selected':'';
-    h+='<option value="'+T[i].id+'"'+sel+'>'+(T[i].n||'?')+'</option>';
+  var _eqT=lxEquipeSelection(currentId);
+  for(var i=0;i<_eqT.length;i++){
+    var sel=(_eqT[i].id===currentId)?' selected':'';
+    h+='<option value="'+_eqT[i].id+'"'+sel+'>'+(_eqT[i].n||'?')+'</option>';
   }
   h+='</select></div>';
   return h;
@@ -29781,7 +29799,7 @@ function modifTicket(id){
   for(var ci=0;ci<CATS.length;ci++){var svcs=SVC.filter(function(s){return s.cat===CATS[ci]});for(var si=0;si<svcs.length;si++){var s=svcs[si];htm+='<option value="'+s.id+'"'+(a.sId===s.id?' selected':'')+'>'+s.n+'</option>';}}
   htm+='</select></div>';
   htm+='<div class="fg"><label>'+getCollabLabel()+'</label><select id="mtSt">';
-  for(var i=0;i<T.length;i++)htm+='<option value="'+T[i].id+'"'+(a.stId===T[i].id?' selected':'')+'>'+T[i].n+'</option>';
+  var _eqA=lxEquipeSelection(a.stId); for(var i=0;i<_eqA.length;i++)htm+='<option value="'+_eqA[i].id+'"'+(a.stId===_eqA[i].id?' selected':'')+'>'+_eqA[i].n+'</option>';
   htm+='</select></div>';
   htm+='<div class="fg"><label>Paiement</label><select id="mtMet">';
   ["CB","Esp\u00e8ces","Ch\u00e8que","Bon cadeau","Virement","Acompte"].forEach(function(m){htm+='<option value="'+m+'"'+(a.met===m?' selected':'')+'>'+m+'</option>';});
