@@ -4391,7 +4391,7 @@ function printDevis(idx,printFmt){
   var clientEmail=dv.clientEmail||(cl?cl.em:"")||"";
 
   // TVA config salon
-  var txTVA=Number(SALON_CONFIG.tauxTVA||20);
+  var txTVA=lxTauxTVA();
   var isAutoEntr=(txTVA===0);
   var showTVA=(typeof SHOW_TVA_TICKET!=="undefined")?SHOW_TVA_TICKET:!isAutoEntr;
 
@@ -4596,7 +4596,7 @@ function printDevisThermal(idx){
   var clientLine=dv.clientName||dv.clientNom||"Client de passage";
   var clientTel=dv.clientTel||(cl?cl.tel:"")||"";
   var clientEmail=dv.clientEmail||(cl?cl.em:"")||"";
-  var txTVA=Number(SALON_CONFIG.tauxTVA||20);
+  var txTVA=lxTauxTVA();
   var isAutoEntr=(txTVA===0);
   var showTVA=(typeof SHOW_TVA_TICKET!=="undefined")?SHOW_TVA_TICKET:!isAutoEntr;
 
@@ -4902,7 +4902,7 @@ function _buildDevisEmailHtml(dv){
   var siret = SALON_CONFIG.siret || "";
   var tvaIntra = SALON_CONFIG.tvaIntra || SALON_CONFIG.tva || "";
   var siteWeb = SALON_CONFIG.siteWeb || "";
-  var txTVA = Number(SALON_CONFIG.tauxTVA || 20);
+  var txTVA = lxTauxTVA();
   var isAutoEntr = (txTVA === 0);
   var showTVA = (typeof SHOW_TVA_TICKET !== "undefined") ? SHOW_TVA_TICKET : !isAutoEntr;
 
@@ -7486,6 +7486,30 @@ function U(){
 // SIRET : 14 chiffres, algo Luhn (sauf cas La Poste 356000... où la somme % 5 = 0)
 // TVA   : "FR" + clé 2 chiffres + SIREN 9 chiffres ; clé = (12 + 3 × (SIREN mod 97)) mod 97
 // Retournent un objet {ok:bool, msg:string} pour rendu UX.
+// FIX 2026-10-07 : taux de TVA. Le chargement faisait `salon.taux_tva || 20`, et une
+// trentaine d'endroits faisaient `lxTauxTVA()`. En JavaScript, 0 || 20
+// vaut 20 : un salon en FRANCHISE DE TVA (taux 0, art. 293 B du CGI) se retrouvait
+// donc a 20 % partout, y compris dans ses tickets scelles.
+// Constate en production le 07/10 chez Delphinecoiff : les 5 premiers tickets portent
+// 20 % de TVA et un montant de TVA, alors qu'elle n'en collecte aucune.
+// Cette fonction distingue « taux absent » (-> 20 par defaut) de « taux a zero »
+// (-> 0, valeur legitime). Elle doit etre utilisee PARTOUT a la place de `|| 20`.
+if (typeof window !== "undefined" && typeof window.lxTauxTVA !== "function") {
+  window.lxTauxTVA = function(){
+    try{
+      var t = (typeof SALON_CONFIG !== "undefined" && SALON_CONFIG) ? SALON_CONFIG.tauxTVA : null;
+      if (t === null || t === undefined || t === "" || isNaN(Number(t))) return 20;
+      return Number(t);
+    }catch(_e){ return 20; }
+  };
+  window.lxTauxTVAProduits = function(){
+    try{
+      var t = (typeof SALON_CONFIG !== "undefined" && SALON_CONFIG) ? SALON_CONFIG.tvaProduits : null;
+      if (t === null || t === undefined || t === "" || isNaN(Number(t))) return window.lxTauxTVA();
+      return Number(t);
+    }catch(_e){ return window.lxTauxTVA(); }
+  };
+}
 function lxValidateSiret(raw){
   if(!raw) return {ok:false, msg:"Non renseigné"};
   var s = String(raw).replace(/[\s.\-]/g, "");
@@ -9323,7 +9347,7 @@ function buildDemandeProposalEmailHtml(data, url, client, salonNom){
 function rHome(){
   var h='';
   var today=TD;
-  var tvaR=SALON_CONFIG.tauxTVA||20;
+  var tvaR=lxTauxTVA();
   // === Bandeau "Demandes sur mesure en attente" ===
   var pendingDemandes = (window.RDV_DEMANDES||[]).filter(function(x){return x.status==="pending";});
   if(pendingDemandes.length){
@@ -10250,7 +10274,7 @@ function rPlanningDay(dateObj,showDayHeader){
           }
           var colW=myBlock?100/myBlock.maxCol:100;
           var leftPct=myBlock?myBlock.col*colW:0;
-          var _htip=Math.round((a.pr||0)*100/(100+(SALON_CONFIG.tauxTVA||20))*100)/100;
+          var _htip=Math.round((a.pr||0)*100/(100+(lxTauxTVA()))*100)/100;
           var _ttip=apptClientLabel(a)+"\n"+(sv?sv.n:"")+"\n"+sty.n+"\n\u23f1 "+totalDur+"min ("+a.time+" \u2192 "+endTime+")\n"+(a.pr||0).toFixed(2)+"\u20ac TTC / "+_htip.toFixed(2)+"\u20ac HT\n"+(a.st==="done"?"\u2705 Encaiss\u00e9 ("+a.met+")":(a.isOnline?"\u2714 Confirm\u00e9 en ligne":"\ud83d\udcc5 Pr\u00e9vu"));
           var _isDirect = !!a.fromCaisse;
           var _borderStyle = _isDirect ? 'border-style:dashed;border-width:2px;' : '';
@@ -10337,7 +10361,7 @@ function rPlanningDay(dateObj,showDayHeader){
   h+='</div></div>';
   // Summary with TTC + HT (inclut TOUS les RDV du jour pour coh\u00e9rence avec dashboard,
   // y compris les tickets caisse directs fromCaisse \u2014 exclus uniquement les annul\u00e9s)
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   // FIX 2026-07-11 : annulation MEME JOUR -> la paire (original annule + contre-ticket) doit
   // netter a ZERO, comme dans la cloture Z. L original est deja exclu (!cancelled) ; on exclut
   // donc aussi son contre-ticket (sinon le CA du jour perdait le montant EN DOUBLE).
@@ -10362,7 +10386,7 @@ function nD(d){if(d===0)calD=new Date(TD);else{var step=window._planDays>1?windo
 
 function printPlanning(){
   var nd=window._planDays||1;
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   // Collect days
   var days=[];
   if(nd===1){
@@ -14216,7 +14240,7 @@ function rSettings(){
     }
     h+='<div class="card" style="margin-bottom:0;display:flex;flex-direction:column"><div class="ct">Taux TVA</div>';
     h+='<div style="display:flex;gap:6px;align-items:center">';
-    h+='<input type="number" id="tvaInput" value="'+(SALON_CONFIG.tauxTVA||20)+'" min="0" max="30" step="0.1" style="flex:1;text-align:center;font-size:16px;font-weight:800;padding:10px">';
+    h+='<input type="number" id="tvaInput" value="'+(lxTauxTVA())+'" min="0" max="30" step="0.1" style="flex:1;text-align:center;font-size:16px;font-weight:800;padding:10px">';
     h+='<span style="font-size:13px;color:var(--text3)">%</span></div>';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">M\u00e9tropole: 20% | Micro: 0%</div>';
     h+='<div style="flex:1"></div>'; // spacer
@@ -20249,7 +20273,7 @@ function rAccounting(){
     if(_modeCanonique(a.met)==="cb") tCB+=sp.total; else tE+=sp.total;
   });
   var p=accM.split("-");var mL=MO[parseInt(p[1])-1]+" "+p[0];
-  var txA=SALON_CONFIG.tauxTVA||20;
+  var txA=lxTauxTVA();
   var tTotal=tPr+tPd;
   var totHT=Math.round(tTotal/(1+txA/100)*100)/100;
   var totTVA=Math.round((tTotal-totHT)*100)/100;
@@ -20830,7 +20854,7 @@ function _buildRapportHTML(periodM){
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(periodM)===0 && !a.cancelled;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(periodM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(periodM)===0;});
-  var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var txTVA = lxTauxTVA();
   var isMicro = isMicroEntrepreneur();
   var p = periodM.split("-");var mLabel = MO[parseInt(p[1])-1]+" "+p[0];
 
@@ -21473,7 +21497,7 @@ function expCSV(){
   }
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
-  var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var txTVA = lxTauxTVA();
 
   var headers = [
     "Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail des prestations",
@@ -21557,7 +21581,7 @@ function expRecapTVA(){
   }
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
-  var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var txTVA = lxTauxTVA();
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
   var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
   var totalTTC = 0, _totPrest = 0, _totProd = 0;
@@ -21635,7 +21659,7 @@ function expJournalComptable(){
   }
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
-  var txTVA = SALON_CONFIG.tauxTVA || 20;
+  var txTVA = lxTauxTVA();
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
   var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
 
@@ -21828,7 +21852,7 @@ async function expPackComptable(){
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
-  var txTVA = SALON_CONFIG.tauxTVA||20;
+  var txTVA = lxTauxTVA();
 
   // 1. Journal de caisse d\u00e9taill\u00e9
   var hJournal = ["Date","Heure","N\u00B0 Ticket","Client","Collaborateur","D\u00e9tail","Total HT (\u20AC)","TVA "+txTVA+"% (\u20AC)","Total TTC (\u20AC)","Remise (\u20AC)","Mode paiement","Statut","Source","Hash NF525"];
@@ -21990,7 +22014,7 @@ async function expExcelComptable(){
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
-  var txTVA = SALON_CONFIG.tauxTVA||20;
+  var txTVA = lxTauxTVA();
   var isMicro = isMicroEntrepreneur();
   var p = accM.split("-"); var mL = MO[parseInt(p[1])-1]+" "+p[0];
   var CD = window.CAISSE_DATA||{fond:200,mouvements:[],misesAuCoffre:[],remisesBanque:[]};
@@ -22553,7 +22577,7 @@ function printBandeZ(){
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(mois)===0;});
   var ps=PS.filter(function(pp){return pp.date.indexOf(mois)===0;});
   var CD=window.CAISSE_DATA||{fond:200,coffreEsp:0,coffreChq:0,mouvements:[],misesAuCoffre:[],remisesBanque:[]};
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   
   // Totaux par mode
   // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd au niveau ticket
@@ -22890,7 +22914,7 @@ function rStats(){
   if(!window._stTax)window._stTax="TTC";
   if(!window._stAffl)window._stAffl="mois";
   var df=window._stFrom,dt=window._stTo;
-  var taxR=1;var tvaR=(SALON_CONFIG.tauxTVA||20)/100;var htR=1/(1+tvaR);
+  var taxR=1;var tvaR=(lxTauxTVA())/100;var htR=1/(1+tvaR);
   
   var h="";
   // Period selector
@@ -25051,7 +25075,8 @@ function aGi(){
   var code=(document.getElementById("newBcCode")?document.getElementById("newBcCode").value.trim().toUpperCase():"")||"BC-"+String(gcNum).padStart(4,"0");
   for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){showAlert("Ce code existe d\u00e9j\u00e0 !","warning");return;}}
   // TVA calculation (20% standard for gift cards = prestation de service)
-  var tvaRate=0.20;
+  // FIX 2026-10-07 : taux figé a 20 % en dur -> faux pour un salon en franchise.
+  var tvaRate=(typeof lxTauxTVA==="function"?lxTauxTVA():20)/100;
   var ht=v/(1+tvaRate);
   var tva=v-ht;
   var ng={id:U(),val:v,ht:ht,tva:tva,tvaRate:tvaRate,from:f,to:t,msg:m,cr:TD,exp:dS(e),used:0,st:"active",code:code,rem:v,scope:scope,payMethod:pay,gcNum:gcNum,history:[]};
@@ -27261,7 +27286,7 @@ function doCreateBon(){
   var code=(document.getElementById("newBcCode")?document.getElementById("newBcCode").value.trim().toUpperCase():"")||"BC-"+String(gcNum).padStart(4,"0");
   for(var ci=0;ci<GC.length;ci++){if(GC[ci].code===code){showAlert("Ce code existe d\u00e9j\u00e0 !","warning");return;}}
   var expD=new Date();expD.setMonth(expD.getMonth()+expM);
-  var tvaRate=0.20;var ht=montant/(1+tvaRate);var tva=montant-ht;
+  var tvaRate=(typeof lxTauxTVA==="function"?lxTauxTVA():20)/100;var ht=montant/(1+tvaRate);var tva=montant-ht;
   var ng={id:U(),code:code,val:montant,ht:ht,tva:tva,tvaRate:tvaRate,rem:montant,date:TD,from:from.trim(),to:to.trim(),msg:msg.trim(),cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,history:[]};
   GC.push(ng);
   if(typeof saveGiftCard==="function")saveGiftCard(ng);
@@ -29170,7 +29195,7 @@ function buildTicketHTML(a, isDuplicate){
   var cl=gC(a.cId),sty=gT(a.stId);
   var clN=apptClientLabel(a);
   var total=a.pr;
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   // Double taux produits (ex. Luxembourg). Garde-fou : taux produits == taux services -> calcul inchangé.
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
   var ht,tva;
@@ -31839,7 +31864,7 @@ function cloturerJournee(){
   // CA global = prestations + produits (= sum a.pr garanti)
   var totalCA=totalPrest+totalProd;
   // TVA sur le CA global
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   // Double taux produits (ex. Luxembourg 8%/17%). Garde-fou : taux produits == taux
   // services (France/Belgique/défaut) -> calcul mono-taux STRICTEMENT inchangé.
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
@@ -32237,7 +32262,7 @@ function genererBandeMensuelle(){
   var mois=month;
   var MN=["Janvier","F\u00e9vrier","Mars","Avril","Mai","Juin","Juillet","Ao\u00fbt","Septembre","Octobre","Novembre","D\u00e9cembre"];
   var mLabel=MN[parseInt(mois.slice(5,7))-1]+" "+mois.slice(0,4);
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   
   // Tickets du mois
   var tickets=AP.filter(function(a){return a.st==="done"&&a.date&&a.date.indexOf(mois)===0&&!a.cancelled;}).sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
@@ -32364,7 +32389,7 @@ function _doArchivageAnnuel(year){
     totalRemises+=(a.remise||0);
   });
   totalPrest=Math.round(totalPrest*100)/100; totalProd=Math.round(totalProd*100)/100;
-  var txTVA=SALON_CONFIG.tauxTVA||20;
+  var txTVA=lxTauxTVA();
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
   if(_dualTVA){
     var _txpA=Number(SALON_CONFIG.tvaProduits);
@@ -33077,7 +33102,7 @@ function genererAttestation(){
   h+="<span>Tickets emis :</span><strong>"+totalTk+"</strong>";
   h+="<span>Cl\u00f4tures Z effectuees :</span><strong>"+(window.CLOTURES?window.CLOTURES.length:0)+"</strong>";
   h+="<span>Algorithme de hachage :</span><strong>SHA-256 (FIPS 180-4)</strong>";
-  h+="<span>Taux de TVA configure :</span><strong>"+(salon.tauxTVA||20)+" %</strong>";
+  h+="<span>Taux de TVA configure :</span><strong>"+((salon.tauxTVA===0||salon.tauxTVA)?salon.tauxTVA:20)+" %</strong>";
   h+="</div></div>";
 
   // ENGAGEMENT EDITEUR
