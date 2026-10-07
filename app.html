@@ -345,7 +345,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20260508-09"></script>
+<script src="luxyra-supabase.js?v=20261007-01"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -12455,12 +12455,54 @@ function saveSiteConfig(){
   // FIX 2026-08-25 : ECHEC SILENCIEUX. Avant, si SITE_CONFIG n'etait pas (encore) charge,
   // on abandonnait sans rien dire -> la config du SITE PUBLIC restait figee (constate :
   // aucune mise a jour du 21/07 au 25/08, donc un mois d'horaires/absences jamais publies).
-  if(!SC){
-    try{
-      if(typeof toast==="function") toast("\u26a0 Configuration du site non chargee - modification non publiee, reessayez","warning");
-      if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:"SITE_CONFIG absent en memoire - ecriture site abandonnee"}).slice(0,2000));
-      if(typeof loadSiteConfig==="function") loadSiteConfig(); // recharge pour la prochaine fois
-    }catch(_e){}
+  // FIX 2026-10-07 : la config n'est publiee QUE si elle a ete reellement chargee depuis la base
+  // (marqueur _lxCharge). Avant : (1) si absente, on abandonnait PUIS on rechargeait -> le
+  // rechargement remettait les horaires de la base en memoire et EFFACAIT la modification que
+  // l'utilisatrice venait de faire ; (2) si un objet partiel avait ete cree en memoire
+  // (ex. bouton caisse simplifiee), on publiait des valeurs par defaut par-dessus les photos,
+  // la description, le slogan... Desormais : on charge la vraie config, on y reporte les seuls
+  // champs modifies, et on publie. Les horaires deja charges en memoire sont conserves.
+  if(!SC || !SC._lxCharge){
+    var _partiel = SC ? Object.assign({}, SC) : null;
+    if(window._lxSiteSaveReprise) return; // une reprise est deja en cours : elle publiera l'etat courant
+    window._lxSiteSaveReprise = true;
+    var _hAvant = !!window._lxHCharge;
+    Promise.resolve(typeof loadSiteConfig==="function" ? loadSiteConfig({garderH:true}) : false).then(function(ok){
+      window._lxSiteSaveReprise = false;
+      if(ok && window.SITE_CONFIG && window.SITE_CONFIG._lxCharge){
+        if(_partiel){ for(var k in _partiel){ if(k!=="_lxCharge" && Object.prototype.hasOwnProperty.call(_partiel,k)) window.SITE_CONFIG[k]=_partiel[k]; } }
+        if(!_hAvant){
+          try{ if(typeof toast==="function") toast("\u26a0 Horaires du salon recharges depuis la base : verifiez-les avant de les modifier","warning"); }catch(_e){}
+          try{ if(typeof go==="function" && window._currentPage==="settings") go("settings"); }catch(_e){}
+        }
+        saveSiteConfig();
+      } else {
+        try{
+          if(typeof toast==="function") toast("\u26a0 Configuration du site non chargee - modification non publiee, reessayez","warning");
+          if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:"SITE_CONFIG non chargee (reprise echouee) - ecriture site abandonnee"}).slice(0,2000));
+        }catch(_e){}
+      }
+    }, function(){ window._lxSiteSaveReprise = false; });
+    return;
+  }
+  // Garde-fou : jamais publier des horaires qui n'ont pas ete charges depuis la base
+  // (ce seraient les horaires codes en dur, ceux d'Excellence Coiffure).
+  if(!window._lxHCharge){
+    if(window._lxSiteSaveReprise) return;
+    window._lxSiteSaveReprise = true;
+    var _scAvant = Object.assign({}, SC);
+    Promise.resolve(loadSiteConfig({garderH:true})).then(function(ok){
+      window._lxSiteSaveReprise = false;
+      if(ok && window._lxHCharge){
+        for(var k in _scAvant){ if(k!=="_lxCharge" && Object.prototype.hasOwnProperty.call(_scAvant,k)) window.SITE_CONFIG[k]=_scAvant[k]; }
+        saveSiteConfig();
+      } else {
+        try{
+          if(typeof toast==="function") toast("\u26a0 Horaires du salon non charges - modification non publiee, reessayez","warning");
+          if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:"horaires non charges depuis la base - ecriture site abandonnee"}).slice(0,2000));
+        }catch(_e){}
+      }
+    }, function(){ window._lxSiteSaveReprise = false; });
     return;
   }
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
@@ -12527,9 +12569,19 @@ function saveSiteConfig(){
     if(typeof saveSalonConfig==="function")saveSalonConfig();
   }
 }
-function loadSiteConfig(){
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1).then(function(r){
+// FIX 2026-10-07 : loadSiteConfig renvoie une Promise<boolean> (true = chargée depuis la base).
+// - Appelée et ATTENDUE par loadSalonData avant le lancement de l'app (voir luxyra-supabase.js).
+// - Marqueur SITE_CONFIG._lxCharge : distingue la config REELLE d'un objet partiel/par défaut
+//   créé en mémoire faute de chargement (qui écrasait photos, description, horaires...).
+// - opts.garderH : ne pas écraser les horaires en mémoire si ELLES ONT déjà été chargées
+//   depuis la base (sinon une modification d'horaires en cours serait perdue).
+// - En cas d'erreur réseau : on ne touche à RIEN en mémoire.
+function loadSiteConfig(opts){
+  opts=opts||{};
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return Promise.resolve(false);
+  if(window._lxSiteConfigEnCours) return window._lxSiteConfigEnCours;
+  var p=_sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1).then(function(r){
+      if(r.error){ console.warn("[SITE CONFIG] chargement echoue:", r.error.message); return false; }
       if(r.data&&r.data[0]){
         var d=r.data[0];
         window.SITE_CONFIG={
@@ -12551,21 +12603,27 @@ function loadSiteConfig(){
           photoHero:d.photo_hero||"",photoSalon:d.photo_salon||"",photosSalon:d.photos_salon||[],descSalon:d.description_salon||"",slogan:d.slogan||"",
           fideliteActive:d.fidelite_active!==false,fideliteSeuil:d.fidelite_seuil||10,
           fideliteType:d.fidelite_type||"pourcentage",fideliteValeur:Number(d.fidelite_valeur)||10,
-          acceptRdvSurMesure:d.accept_rdv_sur_mesure===true
+          acceptRdvSurMesure:d.accept_rdv_sur_mesure===true,
+          _lxCharge:true
         };
         console.log("[SITE CONFIG] Loaded",window.SITE_CONFIG);
-        // 2026-06-16 : horaires salon (H) desormais persistes PAR SALON depuis
-        // site_config.horaires_salon (source de verite). Avant, H restait sur le
-        // defaut hardcode (jamais recharge) -> les horaires ne persistaient pas en
-        // in-app, et un salon neuf affichait 9-18 au lieu de vierge. Excellence a
-        // deja le defaut en base => aucun changement. Salon neuf seede tous fermes
-        // => vierge. Jour null = ferme, deja gere partout (pas de crash).
+        // 2026-06-16 : horaires salon (H) persistes PAR SALON dans site_config.horaires_salon
+        // (source de verite). Jour null = ferme.
         if(d.horaires_salon && typeof d.horaires_salon==="object" && !Array.isArray(d.horaires_salon)){
-          try{ H = d.horaires_salon; }catch(e){}
+          if(!(opts.garderH && window._lxHCharge)){
+            try{ H = d.horaires_salon; window._lxHCharge = true; }catch(e){}
+          }
+        } else if(!(opts.garderH && window._lxHCharge)){
+          // Aucun horaire en base : salon VIERGE (tous jours fermes), jamais les horaires codes en dur.
+          try{ H = {0:null,1:null,2:null,3:null,4:null,5:null,6:null}; window._lxHCharge = true; }catch(e){}
         }
+        return true;
       }
-    });
-  }
+      console.warn("[SITE CONFIG] aucune ligne site_config pour ce salon");
+      return false;
+    }, function(e){ console.warn("[SITE CONFIG] chargement echoue:", e); return false; });
+  window._lxSiteConfigEnCours=p.then(function(ok){ window._lxSiteConfigEnCours=null; return ok; },function(){ window._lxSiteConfigEnCours=null; return false; });
+  return window._lxSiteConfigEnCours;
 }
 
 // ============================================================================
@@ -13462,7 +13520,20 @@ function rSettings(){
 
   else if(settTab==="siteweb"){
     if(!isPro()){showUpgradeModal("Site en ligne");window._settTab=null;go("settings");return h;}
-    if(!window.SITE_CONFIG)window.SITE_CONFIG={siteActif:false,reservationActive:false,boutiqueActive:false,acompteObligatoire:false,acompteMontant:10,acompteType:"fixe",acompteMin:0,acompteSeuil:0,acompteDesc:"",politiqueAnnul:"48h",remboursementAnnul:true,delaiMinH:2,delaiMaxJ:30,creneauMin:15,confirmAuto:false,servicesEnLigne:[],produitsEnLigne:[],msgAccueil:"",msgConfirmation:"",couleur:"var(--gold)",couleur2:"#0a0a0a",theme:"dark_gold",photoHero:"",photoSalon:"",descSalon:"",slogan:"",fideliteActive:true,fideliteSeuil:10,fideliteType:"pourcentage",fideliteValeur:10};
+    // FIX 2026-10-07 : ne plus fabriquer une config PAR DEFAUT si la vraie n'est pas chargee
+    // (le moindre clic publiait alors ces defauts par-dessus le vrai site du salon).
+    if(!window.SITE_CONFIG || !window.SITE_CONFIG._lxCharge){
+      if(!window._lxSiteTabChargement){
+        window._lxSiteTabChargement=true;
+        Promise.resolve(loadSiteConfig({garderH:true})).then(function(ok){
+          window._lxSiteTabChargement=false;
+          if(ok){ if(window._currentPage==="settings") go("settings"); }
+          else if(typeof toast==="function") toast("\u26a0 Configuration du site indisponible - verifiez la connexion puis rouvrez cet onglet","warning");
+        },function(){ window._lxSiteTabChargement=false; });
+      }
+      h+='<div class="card" style="text-align:center;padding:30px;color:var(--text2)">Chargement de la configuration du site\u2026</div>';
+      return h;
+    }
     var SC=window.SITE_CONFIG;
     h+='<div class="sec">\ud83c\udf10 Site en ligne</div>';
     
@@ -33195,7 +33266,8 @@ function applyTheme(k,c,c2){
 setTimeout(function(){updateNotifBadge();},2000);
 
 // Load site config on init
-if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){loadSiteConfig();},1000);
+// 2026-10-07 : filet seulement — le chargement principal est attendu dans loadSalonData.
+if(typeof _sb!=="undefined"&&_sb)setTimeout(function(){ if(!(window.SITE_CONFIG&&window.SITE_CONFIG._lxCharge)) loadSiteConfig({garderH:true}); },1000);
 
 // ============================================================
 // FIX 2026-05-23 : DÉMARRAGE INSTANTANÉ — rendu anticipé depuis le cache

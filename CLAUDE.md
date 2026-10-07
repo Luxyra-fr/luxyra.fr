@@ -1230,3 +1230,18 @@ ainsi une fonction qui envoie des SMS.**
 **Confirmation en production le 07/09 :** Geoffrey KNOBLOCH a reçu sa confirmation à
 10h48 et son rappel à 10h48 — la même minute. C'est exactement le doublon signalé par
 Alexandre, désormais impossible.
+
+## INCIDENT 2026-10-07 — Config du site jamais chargée (1re cliente en essai, Delphinecoiff)
+
+**Symptôme :** « chaque fois que je ferme et reviens, tout ce que j'avais modifié a disparu ».
+**Preuve (historique_horaires) :** horaires salon réglés le 04/10 (lun 8h30→13h30, mar/mer/ven 8h30, jeu 9h30, sam 9h-12h30)
+remplacés le 05/10 17:16 et le 06/10 21:41 par le `H` codé en dur = **horaires d'Excellence Coiffure**.
+**Cause :** `loadSiteConfig()` n'était appelée qu'une fois, `setTimeout 1000` après le parse. Sur un login frais,
+`_salonId` est null à ce moment → aucun chargement, jamais de nouvel essai. SITE_CONFIG vide → 4 DB_ERROR
+« SITE_CONFIG absent » ; et H par défaut republié par `saveSiteConfig` à la 1re modif. En plus, l'ancien
+abandon rechargeait la config, ce qui écrasait en mémoire la modif d'horaire en cours.
+**Correctif :** chargement ATTENDU dans `loadSalonData` avant `initApp()` (8 s max) ; marqueurs
+`SITE_CONFIG._lxCharge` et `window._lxHCharge` ; `saveSiteConfig` ne publie jamais une config ni des horaires
+non chargés (reprise : charge, reporte les champs modifiés, publie) ; onglet « Site en ligne » n'invente plus
+de défauts ; salon sans horaires en base = vierge (jamais ceux d'Excellence). 8 scénarios testés (harnais mock).
+**Règle :** ne JAMAIS publier un état mémoire qui n'a pas été chargé depuis la base.
