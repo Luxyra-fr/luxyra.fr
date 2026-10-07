@@ -1245,3 +1245,14 @@ abandon rechargeait la config, ce qui écrasait en mémoire la modif d'horaire e
 non chargés (reprise : charge, reporte les champs modifiés, publie) ; onglet « Site en ligne » n'invente plus
 de défauts ; salon sans horaires en base = vierge (jamais ceux d'Excellence). 8 scénarios testés (harnais mock).
 **Règle :** ne JAMAIS publier un état mémoire qui n'a pas été chargé depuis la base.
+
+**Même journée (07/10), côté serveur :**
+- `rdv-demande-create` v6 et `rdv-demande-proposal-action` v8 : colonne `client_beautypro_id` → `client_luxyra_id`
+  (renommage non propagé ; toutes les demandes sur mesure échouaient depuis le renommage, et toute proposition
+  était « introuvable »). Victime constatée : Julie Wagner (Excellence), 9 essais les 04-05/10 — RDV finalement pris
+  par le salon. Audit des 39 autres fonctions : aucune autre référence à l'ancien nom.
+- `bot-reply` v10 : le bot inventait des menus (« Paramètres → Sécurité »), un délai de verrouillage réglable
+  (15 min — c'est 5 min, codé en dur) et une obligation NF525 du PIN. Prompt doté de la liste EXACTE des rubriques
+  de Paramètres, d'emplacements vérifiés, et de règles : jamais de menu non listé, jamais d'argument légal/NF525,
+  escalade immédiate sur bug/perte de données. À TENIR À JOUR si les rubriques changent.
+- Horaires de Delphinecoiff restaurés (migration `restaurer_horaires_salon_delphinecoiff`, tracée dans historique_horaires).
