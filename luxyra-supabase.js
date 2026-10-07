@@ -885,6 +885,30 @@ function lxSaveSalonColumns(patch) {
 }
 if (typeof window !== "undefined") window.lxSaveSalonColumns = lxSaveSalonColumns;
 
+// FIX 2026-10-07 : taux de TVA. Le chargement faisait `salon.taux_tva || 20`, et une
+// trentaine d'endroits faisaient `lxTauxTVA()`. En JavaScript, 0 || 20
+// vaut 20 : un salon en FRANCHISE DE TVA (taux 0, art. 293 B du CGI) se retrouvait
+// donc a 20 % partout, y compris dans ses tickets scelles.
+// Constate en production le 07/10 chez Delphinecoiff : les 5 premiers tickets portent
+// 20 % de TVA et un montant de TVA, alors qu'elle n'en collecte aucune.
+// Cette fonction distingue « taux absent » (-> 20 par defaut) de « taux a zero »
+// (-> 0, valeur legitime). Elle doit etre utilisee PARTOUT a la place de `|| 20`.
+if (typeof window !== "undefined" && typeof window.lxTauxTVA !== "function") {
+  window.lxTauxTVA = function(){
+    try{
+      var t = (typeof SALON_CONFIG !== "undefined" && SALON_CONFIG) ? SALON_CONFIG.tauxTVA : null;
+      if (t === null || t === undefined || t === "" || isNaN(Number(t))) return 20;
+      return Number(t);
+    }catch(_e){ return 20; }
+  };
+  window.lxTauxTVAProduits = function(){
+    try{
+      var t = (typeof SALON_CONFIG !== "undefined" && SALON_CONFIG) ? SALON_CONFIG.tvaProduits : null;
+      if (t === null || t === undefined || t === "" || isNaN(Number(t))) return window.lxTauxTVA();
+      return Number(t);
+    }catch(_e){ return window.lxTauxTVA(); }
+  };
+}
 async function loadSalonData() {
   if (!_sb || !_userId) { startOffline(); return; }
   try{
@@ -1026,7 +1050,8 @@ async function loadSalonData() {
   SALON_CONFIG.couleurPrimaire = salon.couleur_primaire || "#c8a84e";
   SALON_CONFIG.couleurSecondaire = salon.couleur_secondaire || "#1a1a1a";
   SALON_CONFIG.subdomain = salon.subdomain || "";
-  SALON_CONFIG.tauxTVA = salon.taux_tva || 20;
+  // FIX 2026-10-07 : `|| 20` ecrasait un taux a 0 (franchise de TVA). Voir lxTauxTVA().
+  SALON_CONFIG.tauxTVA = (salon.taux_tva !== null && salon.taux_tva !== undefined && salon.taux_tva !== "") ? Number(salon.taux_tva) : 20;
   SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
   SALON_CONFIG.plan = salon.plan || "essential";
   SALON_CONFIG.metier = salon.metier || "coiffure";
@@ -2286,7 +2311,7 @@ async function saveTicketToDb(tk) {
     if (timeStr.length === 5) timeStr = timeStr + ":00"; // HH:MM → HH:MM:SS
 
     // Calcul TVA à partir du taux salon
-    var taux = Number(SALON_CONFIG.tauxTVA || 20);
+    var taux = lxTauxTVA();
     var ttc = Number(tk.pr || 0);
     var ht, tva;
     // Double taux (ex. Luxembourg : prestations 8% / produits 17%). Garde-fou :
@@ -2459,7 +2484,7 @@ async function lockTicketsForCloture(cloture) {
 async function saveDevisToDb(dv) {
   if (!_isOnline || !_salonId || !dv) return null;
   try {
-    var taux = Number(SALON_CONFIG.tauxTVA || 20);
+    var taux = lxTauxTVA();
     var ttc = Number(dv.total || 0);
     var ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
     var tva = Math.round((ttc - ht) * 100) / 100;
