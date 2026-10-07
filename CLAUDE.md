@@ -1365,3 +1365,17 @@ pamp_qty) = valeur en base + différence faite ici ; fiches techniques (liste sa
 ici appliqués à la base ; fiche_tech = clé par clé. Inventaire : `saveProduct(p,{stockAbsolu:true})` (stock compté
 écrit tel quel). Sauvegardes d'une même fiche en file (`_lxEnFile`). Mémoire de l'appareil mise à jour après chaque
 sauvegarde. Banc : 10/10 (points 10, 3 fiches, stock 14, inventaire 12, double encaissement rapide +2).
+
+## 2026-10-07 — Conflits : le MÊME champ modifié sur deux appareils
+
+Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Maintenant :
+- **Fiches clientes / produits** (`_lxFusionFiche` dans luxyra-supabase.js, option `conflits`) :
+  texte complété des deux côtés (notes…) → les deux ajouts sont gardés (`_lxFusionTexte`) ;
+  sinon version de l'appareil qui enregistre en dernier + ancienne valeur au journal.
+- **Config salon** (`_lxSaveSalonConfigUneFois` → `_lxCfgFusionValeur` dans app.html) : listes avec `id`
+  (forfaits, absences, cartes) fusionnées par id ; familles = ajouts/suppressions des deux côtés ;
+  objets clé par clé ; valeur simple → dernière version + journal. Mémoire rafraîchie (`sec.set`).
+- **Site** (`_lxSiteEcrire`) : même fusion (horaires jour par jour…), sauf `collaborateurs` (dérivé de l'équipe) ;
+  après fusion, `loadSiteConfig({})` remet la mémoire à jour.
+- Journal : action `CONFLIT_SYNCHRO` (dans `LX_NON_FISCAL_ACTIONS`, hors export d'audit fiscal) + toast.
+- Test : `/tmp/lx/conflit.js` (2 appareils jsdom) — ancien code 4/14, nouveau 14/14.

@@ -817,6 +817,18 @@ function _lxFusionListe(baseL, memL, dbL){
 }
 // Fusion generique. compteurs : colonnes ou l'on applique la difference ; listes : fusion de liste ;
 // objets : fusion cle par cle ; absolus : colonnes « compteur » a ecrire telles quelles si modifiees ici.
+// Conflit = le MEME champ modifie ici ET sur un autre appareil depuis le chargement.
+// Texte complete des deux cotes (ex. notes) : les deux ajouts sont gardes. Sinon : la version de cet
+// appareil (la plus recente) est gardee et l'autre est consignee dans opts.conflits (journal), rien ne se perd.
+function _lxFusionTexte(baseTxt, memTxt, dbTxt){
+  baseTxt=String(baseTxt||""); memTxt=String(memTxt||""); dbTxt=String(dbTxt||"");
+  if(memTxt.indexOf(baseTxt)===0 && dbTxt.indexOf(baseTxt)===0){
+    var ajoutIci=memTxt.slice(baseTxt.length);
+    if(ajoutIci.length && dbTxt.slice(-ajoutIci.length)===ajoutIci) return dbTxt;
+    return dbTxt + ajoutIci;
+  }
+  return null;
+}
 function _lxFusionFiche(base, mem, db, opts){
   opts=opts||{}; var out={};
   var cles={}; Object.keys(mem).forEach(function(k){cles[k]=1;}); Object.keys(db).forEach(function(k){cles[k]=1;});
@@ -831,12 +843,29 @@ function _lxFusionFiche(base, mem, db, opts){
     if(opts.objets && opts.objets.indexOf(k)>=0){
       var bo=base[k]?JSON.parse(base[k]):{}, mo=mem[k]||{}, dO=db[k]||{}, r=JSON.parse(JSON.stringify(dO)), ks={};
       Object.keys(bo).forEach(function(x){ks[x]=1;}); Object.keys(mo).forEach(function(x){ks[x]=1;});
-      Object.keys(ks).forEach(function(x){ if(_lxCanon(mo[x])!==_lxCanon(bo[x])){ if(mo[x]===undefined) delete r[x]; else r[x]=mo[x]; } });
+      Object.keys(ks).forEach(function(x){ if(_lxCanon(mo[x])!==_lxCanon(bo[x])){
+        if(opts.conflits && _lxCanon(dO[x])!==_lxCanon(bo[x]) && _lxCanon(dO[x])!==_lxCanon(mo[x])) opts.conflits.push({ champ:k+"."+x, remplace:dO[x], garde:mo[x] });
+        if(mo[x]===undefined) delete r[x]; else r[x]=mo[x]; } });
       out[k]=r; return;
     }
+    var dbChange=(_lxCanon(db[k])!==base[k]) && (_lxCanon(db[k])!==memS);
+    if(dbChange && typeof mem[k]==="string" && (typeof db[k]==="string" || db[k]==null)){
+      var b0=base[k]?JSON.parse(base[k]):""; var f=_lxFusionTexte(b0, mem[k], db[k]);
+      if(f!==null){ out[k]=f; return; }
+    }
+    if(dbChange && opts.conflits) opts.conflits.push({ champ:k, remplace:db[k], garde:mem[k] });
     out[k]=mem[k];
   });
   return out;
+}
+// Signale un conflit : journal (non fiscal) + message a l'utilisateur.
+function _lxSignalerConflits(type, nom, conflits){
+  if(!conflits || !conflits.length) return;
+  try{
+    var champs=conflits.map(function(c){ return c.champ; }).join(", ");
+    if(typeof auditLog==="function") auditLog("CONFLIT_SYNCHRO", (type+" « "+(nom||"?")+" » : "+conflits.map(function(c){ return c.champ+" — valeur remplacee : "+JSON.stringify(c.remplace); }).join(" ; ")).slice(0,1900));
+    if(typeof toast==="function") toast("Cette fiche a aussi \u00e9t\u00e9 modifi\u00e9e sur un autre appareil ("+champs+") : votre version est enregistr\u00e9e, l\u2019autre reste dans le journal.","warning");
+  }catch(_e){}
 }
 
 function lxMapClientRow(c) {
@@ -1944,7 +1973,9 @@ async function _saveClientUneFois(client) {
         _fusionRow = _cur.data;
         var _dbData = _lxClientData(lxMapClientRow(_cur.data));
         var _mem = Object.assign({}, data); delete _mem.id; delete _mem.salon_id;
-        var _fus = _lxFusionFiche(client._lxBase, _mem, _dbData, { compteurs:["points_fidelite"], listes:["fiches","famille_ids"], objets:["fiche_tech"] });
+        var _confC = [];
+        var _fus = _lxFusionFiche(client._lxBase, _mem, _dbData, { compteurs:["points_fidelite"], listes:["fiches","famille_ids"], objets:["fiche_tech"], conflits:_confC });
+        _lxSignalerConflits("Fiche cliente", ((client.pre||"")+" "+(client.nom||"")).trim(), _confC);
         if (_fus.points_fidelite !== undefined && _fus.points_fidelite < 0) _fus.points_fidelite = 0;
         data = Object.assign({ id: client.id, salon_id: _salonId }, _fus);
       }
@@ -2316,8 +2347,10 @@ async function _saveProductUneFois(prod, opts) {
           var _cur = await _sb.from("produits").select("*").eq("id", prod.id).eq("salon_id", _salonId).maybeSingle();
           if (!_cur.error && _cur.data) {
             var _mem = Object.assign({}, data); delete _mem.salon_id;
+            var _confP = [];
             var _fus = _lxFusionFiche(prod._lxBase, _mem, _lxProduitData(lxMapProduitRow(_cur.data)),
-              { compteurs:["stock","pamp_qty"], absolus:(opts && opts.stockAbsolu) ? ["stock"] : [] });
+              { compteurs:["stock","pamp_qty"], absolus:(opts && opts.stockAbsolu) ? ["stock"] : [], conflits:_confP });
+            _lxSignalerConflits("Produit", prod.n, _confP);
             data = Object.assign({ salon_id: _salonId }, _fus);
           }
         } catch(_eF) {}
