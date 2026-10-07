@@ -892,7 +892,7 @@ function _defaultCollabId(){
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
-        if(T[i].inactif===true || (T[i].dateDepart && String(T[i].dateDepart)<((typeof TD!=="undefined"&&TD)||new Date().toISOString().slice(0,10)))) continue;
+        if(lxCollabPartiAu(T[i], (typeof TD!=="undefined"&&TD)||new Date().toISOString().slice(0,10))) continue;
         var tn=(T[i].n||"").trim().toLowerCase();
         if(tn===opName || tn.indexOf(opName)===0) return T[i].id;
       }
@@ -977,7 +977,17 @@ function getActiveTeam(){
   if(typeof T==="undefined"||!T)return[];
   // 2026-10-07 : parti = archive (inactif) OU date de depart passee
   var _auj=(typeof TD!=="undefined"&&TD)?TD:new Date().toISOString().slice(0,10);
-  return T.filter(function(t){return t.inactif!==true && !(t.dateDepart && String(t.dateDepart)<_auj);});
+  return T.filter(function(t){return !lxCollabPartiAu(t,_auj);});
+}
+// 2026-10-07 : « Date de depart » = premier jour ou la personne ne fait plus partie de l'equipe
+// (meme regle que la reservation en ligne, controlee par la base). Avant cette date : equipe normale.
+function lxCollabPartiAu(c, dateIso){
+  if(!c) return false;
+  if(c.inactif===true) return true;
+  return !!(c.dateDepart && dateIso && String(dateIso) >= String(c.dateDepart).slice(0,10));
+}
+function lxCollabDepartAu(c, dateIso){ // uniquement la date de depart (pas la case Inactif)
+  return !!(c && c.dateDepart && dateIso && String(dateIso) >= String(c.dateDepart).slice(0,10));
 }
 // 2026-10-07 : collaborateurs PROPOSES dans une selection (encaissement, RDV, absences, fiches...) :
 // equipe active uniquement, pour TOUS les salons. Un ancien collaborateur n'apparait que s'il est
@@ -7351,6 +7361,7 @@ function getEffectiveHrs(date,stId){
   var hrs;
   if(stId){
     var collab = gT(stId);
+    if(lxCollabDepartAu(collab, date)) return null; // 2026-10-07 : parti a cette date -> plus de creneaux
     var collabHrs = collab && collab.hrs;
     var hasPersonalHrs = collabHrs && typeof collabHrs === 'object' && Object.keys(collabHrs).some(function(k){
       var v = collabHrs[k]; return v && v.o && v.c;
@@ -10238,6 +10249,8 @@ function rPlanningDay(dateObj,showDayHeader){
         if(_visT.indexOf(t)<0 && dayA.some(function(a){ return a.stId===t.id; })) _visT.push(t);
       });
     }
+    // Depart prevu : a partir de la date de depart, plus de colonne (sauf s'il reste des RDV ce jour-la)
+    _visT=_visT.filter(function(t){ return !lxCollabDepartAu(t, dk) || dayA.some(function(a){ return a.stId===t.id; }); });
   }catch(_eF){}
   for(var ti=0;ti<_visT.length;ti++){
     var sty=_visT[ti];
@@ -10421,7 +10434,7 @@ function rPlanningDay(dateObj,showDayHeader){
     var sa = dayAllForStylists.filter(function(a){ return a.stId===sty.id; });
     // 2026-10-07 : un ancien collaborateur n'apparait dans ce recapitulatif que s'il a de
     // l'activite ce jour-la (avant : Manue, partie le 19/08, s'affichait chaque jour a 0 EUR).
-    if(sty.inactif===true && !sa.length) continue;
+    if(lxCollabPartiAu(sty, dk) && !sa.length) continue; // parti (Inactif ou date de depart atteinte ce jour-la)
     var tca = 0; sa.forEach(function(a){ tca += (Number(a.pr)||0); });
     var nbRdv = sa.filter(function(a){ return !_lxIsContraTicket(a); }).length;
     var ht = Math.round(tca*100/(100+txTVA)*100)/100;
@@ -11494,7 +11507,7 @@ function _corrigerCollabVenteUI(apptId){
   if(!a){ if(typeof toast==="function") toast("Vente introuvable","error"); return; }
   var cur=gT(a.stId); var curName=cur?cur.n:"(non attribue)";
   var opts='';
-  for(var j=0;j<T.length;j++){ if((T[j].inactif===true || (T[j].dateDepart && String(T[j].dateDepart)<TD)) && String(T[j].id)!==String(a.stId)) continue; opts+='<option value="'+T[j].id+'"'+(String(T[j].id)===String(a.stId)?' selected':'')+'>'+T[j].n+'</option>'; }
+  for(var j=0;j<T.length;j++){ if(lxCollabPartiAu(T[j], a.date||TD) && String(T[j].id)!==String(a.stId)) continue; opts+='<option value="'+T[j].id+'"'+(String(T[j].id)===String(a.stId)?' selected':'')+'>'+T[j].n+'</option>'; }
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:420px">';
   h+='<h2 style="color:var(--gold);font-size:18px;margin-bottom:4px">✏️ Corriger le collaborateur</h2>';
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Vente '+(a.tkNum?("ticket #"+a.tkNum):("du "+fmt(a.date)))+' - actuellement attribuee a <strong style="color:#fff">'+curName+'</strong>.<br>Le ticket fiscal n\'est pas modifie ; seule l\'attribution (stats / commissions) est corrigee, et l\'operation est tracee dans le journal.</div>';
@@ -12388,11 +12401,34 @@ function lxRefreshSettings(collabId){
 function setCollabDepart(ti, val){
   if(!T[ti]) return;
   var nom = T[ti].n || "Ce collaborateur";
+  // 2026-10-07 : date invalide (ex. annee « 0002 » mal saisie) -> refusee
+  if(val && !/^(19|20)\d\d-\d\d-\d\d$/.test(String(val))){
+    if(typeof showAlert==="function") showAlert("Date de d\u00e9part invalide ("+val+"). V\u00e9rifiez l\u2019ann\u00e9e.","error");
+    try{ lxRefreshSettings(T[ti].id); }catch(_e){}
+    return;
+  }
   T[ti].dateDepart = val || null;
-  if(val){
+  var _auj = (typeof TD!=="undefined"&&TD) ? TD : new Date().toISOString().slice(0,10);
+  if(val && String(val) <= _auj){
+    // Depart aujourd'hui ou passe : retire tout de suite
     T[ti].inactif = true;
     if(typeof toast==="function") toast("\u2713 "+nom+" marque comme parti le "+String(val).split("-").reverse().join("/")+" \u2014 retire du planning et du site, historique conserve","success");
-  } else if(typeof toast==="function"){
+  } else if(val){
+    // Depart FUTUR : reste dans l'equipe jusqu'a la veille ; a partir de cette date, plus aucun rendez-vous
+    // (planning, prise de RDV, reservation en ligne). « Inactif » n'est pas coche maintenant.
+    if(typeof toast==="function") toast("\u2713 D\u00e9part de "+nom+" pr\u00e9vu le "+String(val).split("-").reverse().join("/")+" \u2014 plus aucun rendez-vous possible \u00e0 partir de cette date (planning et en ligne)","success");
+  }
+  // RDV deja pris a partir de la date de depart : a reaffecter (on ne les touche pas automatiquement)
+  if(val){
+    try{
+      var _aRe=(typeof AP!=="undefined"?AP:[]).filter(function(a){ return a && String(a.stId)===String(T[ti].id) && a.date && String(a.date)>=String(val) && !a.cancelled && a.st!=="done" && a.st!=="canc" && a.st!=="pause" && !(typeof _lxIsContraTicket==="function" && _lxIsContraTicket(a)); });
+      if(_aRe.length && typeof showAlert==="function"){
+        var _dts=_aRe.map(function(a){ return String(a.date).split("-").reverse().join("/")+" "+(a.time||""); }).sort().slice(0,8).join(", ");
+        showAlert("\u26a0 "+_aRe.length+" rendez-vous de "+nom+" sont pr\u00e9vus \u00e0 partir du "+String(val).split("-").reverse().join("/")+" : "+_dts+(_aRe.length>8?"\u2026":"")+".\n\nPensez \u00e0 les r\u00e9affecter \u00e0 une autre personne depuis le planning (ils ne sont pas modifi\u00e9s automatiquement).","warning");
+      }
+    }catch(_eR){}
+  }
+  if(!val && typeof toast==="function"){
     toast("Date de depart effacee pour "+nom,"info");
   }
   // FIX 2026-08-31 : passe par le chemin RH dedie (intention explicite). La
@@ -13238,7 +13274,7 @@ function rSettings(){
     // RIEN n'est supprime : la fiche reste consultable et tout l'historique
     // (tickets NF525, rendez-vous, fiches clients) est integralement conserve.
     window._lxCollabOpen = window._lxCollabOpen || {};
-    var _lxIsFormer = function(c){ return !!(c && (c.inactif===true || c.dateDepart)); };
+    var _lxIsFormer = function(c){ return lxCollabPartiAu(c, TD); }; // 2026-10-07 : depart FUTUR = encore dans l'equipe
     var _ordAct=[], _ordOld=[];
     for(var _oi=0;_oi<T.length;_oi++){ (_lxIsFormer(T[_oi]) ? _ordOld : _ordAct).push(_oi); }
     var _ordAll=_ordAct.concat(_ordOld);
@@ -13280,7 +13316,7 @@ function rSettings(){
         var _depTxt = st2.dateDepart ? ('Parti le '+(typeof fmt==='function'?fmt(st2.dateDepart):st2.dateDepart)) : 'Archiv\u00e9';
         h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_depTxt+' \u2022 historique conserv\u00e9</div>';
       } else {
-        h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_nbDaysOn+' jour'+(_nbDaysOn>1?'s':'')+' travaillés' + (_nbAbsActives>0 ? ' • '+_nbAbsActives+' absence'+(_nbAbsActives>1?'s':'') : '') + '</div>';
+        h+='<div style="font-size:11px;color:var(--text3);margin-top:2px">'+_nbDaysOn+' jour'+(_nbDaysOn>1?'s':'')+' travaillés' + (_nbAbsActives>0 ? ' • '+_nbAbsActives+' absence'+(_nbAbsActives>1?'s':'') : '') + (st2.dateDepart ? ' • <span style="color:#ffb74d">D\u00e9part le '+(typeof fmt==='function'?fmt(String(st2.dateDepart).slice(0,10)):st2.dateDepart)+'</span>' : '') + '</div>';
       }
       h+='</div>';
       h+='<svg class="lx-collab-chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .2s"><polyline points="6 9 12 15 18 9"/></svg>';
@@ -13455,7 +13491,7 @@ function rSettings(){
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date d\'entr\u00e9e</label>';
       h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;if(typeof saveCollabRH===\'function\')saveCollabRH('+st2.id+',{dateEntree:this.value})"></div>';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date de d\u00e9part</label>';
-      h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="setCollabDepart('+ti+',this.value)"></div>';
+      h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="setCollabDepart('+ti+',this.value)"><div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:4px;line-height:1.35">Premier jour d\u2019absence d\u00e9finitive. \u00c0 partir de cette date : plus de rendez-vous (planning et en ligne).</div></div>';
       h+='</div>';
       h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:'+(_isInactif?'rgba(244,67,54,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(_isInactif?'rgba(244,67,54,.3)':'rgba(255,255,255,.06)')+';border-radius:8px;cursor:pointer">';
       h+='<div><div style="font-size:13px;font-weight:700;color:'+(_isInactif?'#ef5350':'#fff')+'">\u23f8 Inactif (cong\u00e9s, arr\u00eat, d\u00e9part...)</div>';
@@ -24445,6 +24481,12 @@ function aAp(){
     var dp=document.getElementById("depi");if(dp)dp.innerHTML=htm;
     return;
   }
+  // 2026-10-07 : collaborateur parti a la date du RDV (date de depart atteinte)
+  var _stDep=gT(st);
+  if(lxCollabDepartAu(_stDep, d)){
+    showAlert("\u26d4 Impossible : "+(_stDep.n||"ce collaborateur")+" ne fait plus partie de l\u2019\u00e9quipe \u00e0 partir du "+fmt(String(_stDep.dateDepart).slice(0,10))+".","error");
+    return;
+  }
   // Block if establishment closed or collab absent
   var _effHrs=getEffectiveHrs(d,st);
   if(!_effHrs){
@@ -28929,7 +28971,7 @@ function _ftDefaultCollab(){
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
-        if(T[i].inactif===true || (T[i].dateDepart && String(T[i].dateDepart)<((typeof TD!=="undefined"&&TD)||new Date().toISOString().slice(0,10)))) continue;
+        if(lxCollabPartiAu(T[i], (typeof TD!=="undefined"&&TD)||new Date().toISOString().slice(0,10))) continue;
         var tn=(T[i].n||"").trim().toLowerCase();
         if(tn===opName || tn.indexOf(opName)===0) return T[i];
       }
