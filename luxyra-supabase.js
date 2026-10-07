@@ -1552,6 +1552,21 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   } catch(e) {}
   console.log("[Luxyra] Pending="+(window.PENDING_TK||[]).length+" Devis="+(window.DEVIS||[]).length);
 
+  // FIX 2026-10-07 : CONFIG DU SITE + HORAIRES DU SALON chargés AVANT le lancement de l'app.
+  // Avant, loadSiteConfig() n'était appelée qu'UNE fois, 1 s après l'ouverture de la page :
+  // sur un login frais (_salonId pas encore posé) elle ne faisait rien, et ne retentait jamais.
+  // SITE_CONFIG restait vide (réglages du site abandonnés) et H gardait les horaires codés en dur
+  // — ceux d'Excellence Coiffure — que l'app republiait ensuite par-dessus les vrais horaires
+  // du salon (constaté chez Delphinecoiff les 05/10 et 06/10). Attente bornée à 8 s.
+  try {
+    if (typeof loadSiteConfig === "function") {
+      await Promise.race([
+        Promise.resolve(loadSiteConfig()),
+        new Promise(function(res){ setTimeout(function(){ res(false); }, 8000); })
+      ]);
+    }
+  } catch(e) { console.warn("[loadSalonData] site_config non chargée", e); }
+
   // Lancer l'app !
   console.log("Luxyra: Données chargées depuis Supabase (" + CL.length + " clients, " + AP.length + " RDV, " + PRODS.length + " produits)");
   // Show header again after login
