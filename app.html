@@ -62,6 +62,8 @@ select option:checked,select option:hover{background:rgba(200,168,78,.12);}
 .card{background:linear-gradient(180deg,rgba(15,12,18,.85),rgba(10,10,14,.92));border:1px solid rgba(212,168,67,.15);border-radius:var(--r);padding:16px;box-shadow:0 4px 16px rgba(0,0,0,.25);margin-bottom:12px;}
 /* Cohérence globale : toutes les checkboxes en or doré (au lieu du bleu navigateur) */
 input[type="checkbox"]{accent-color:#e8c873;}
+/* 2026-10-07 : champs date/heure lisibles sur fond sombre (icone calendrier claire) et cliquables partout */
+input[type="date"],input[type="time"],input[type="month"],input[type="datetime-local"]{color-scheme:dark;cursor:pointer;}
 /* Cohérence : tous les radios en or aussi */
 input[type="radio"]{accent-color:#e8c873;}
 .ct{font-family:var(--f1,Georgia,serif);font-size:13px;font-weight:500;color:#e8c873;margin-bottom:14px;letter-spacing:2.5px;text-transform:uppercase;}
@@ -33977,6 +33979,9 @@ async function reloadFromSupabase(table){
 function refreshCurrentView(){
   var app=document.getElementById("app");
   if(!app)return;
+  // 2026-10-07 : ne pas re-dessiner la page pendant qu'un calendrier de date est ouvert
+  // (le rafraichissement toutes les 30 s le refermait, surtout sur mobile ou le champ perd le focus).
+  if(window._lxCalendrierOuvertJusqua && Date.now() < window._lxCalendrierOuvertJusqua) return;
   // FIX 2026-05-23 : ne pas re-render si l'utilisateur saisit (évite de perdre focus/saisie)
   try{var ae=document.activeElement;if(ae&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName))return;}catch(_e){}
   // Get current page from the header title
@@ -33992,6 +33997,21 @@ function refreshCurrentView(){
   else if(window._currentPage==="detail")go("detail");
   // Don't refresh other pages to avoid losing user input
 }
+// 2026-10-07 : cliquer n'importe ou dans un champ date ouvre le calendrier (avant, sur ordinateur,
+// seule la petite icone l'ouvrait, et elle etait quasi invisible sur fond sombre).
+(function(){
+  if(typeof document==="undefined") return;
+  var _types={date:1,time:1,month:1,"datetime-local":1};
+  document.addEventListener("click",function(ev){
+    var el=ev.target;
+    if(!el||el.tagName!=="INPUT"||!_types[el.type]||el.disabled||el.readOnly) return;
+    window._lxCalendrierOuvertJusqua=Date.now()+60000;
+    if(typeof el.showPicker==="function"){ try{ el.showPicker(); }catch(_e){} }
+  },true);
+  document.addEventListener("change",function(ev){
+    var el=ev.target; if(el&&el.tagName==="INPUT"&&_types[el.type]) window._lxCalendrierOuvertJusqua=0;
+  },true);
+})();
 
 // ============================================================
 // LUXYRA CHAT WIDGET - support client (Chantier 3 — multi-conv)
