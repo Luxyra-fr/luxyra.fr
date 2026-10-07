@@ -936,6 +936,7 @@ async function loadSalonData() {
   }
 
   var salon = sRes.data[0];
+  window._lxChargementEnCours = true; // 2026-10-07 : chargement en cours (voir _lxListeChargee)
   _salonId = salon.id;
   window._salonId = salon.id; // expose explicitement pour app.html (startCheckout, etc.)
   _isOnline = true;
@@ -1585,6 +1586,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     }
   } catch(e) { console.warn("[loadSalonData] site_config non chargée", e); }
 
+  window._lxChargementEnCours = false;
   // Lancer l'app !
   console.log("Luxyra: Données chargées depuis Supabase (" + CL.length + " clients, " + AP.length + " RDV, " + PRODS.length + " produits)");
   // Show header again after login
@@ -1631,7 +1633,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       }, 0);
     } catch(e){ console.warn("[cache] capture failed:", e); }
   }
-  }catch(err){console.error("loadSalonData error:",err);}
+  }catch(err){window._lxChargementEnCours = false; console.error("loadSalonData error:",err);}
 }
 
 function showSuspendedScreen(status, salon) {
@@ -2880,6 +2882,11 @@ if (typeof window !== "undefined") {
 // siennes (valeurs par defaut, ou etat d'un autre compte).
 function _lxListeChargee(table, silencieux){
   if (window._lxTableOk && window._lxTableOk[table] === true) return true;
+  // 2026-10-07 : pendant le chargement (affichage anticipe depuis le cache, qui appelle go()),
+  // la liste n'est pas encore chargee : c'est NORMAL. On n'ecrit pas (la sauvegarde suivante,
+  // apres chargement, le fera) et on ne declenche AUCUNE alerte. Faux positif constate chez
+  // Excellence Coiffure le 07/10 (2 DB_ERROR « liste collaborateurs non chargee »).
+  if (window._lxChargementEnCours === true) return false;
   try{
     if (!window._lxListeAlerte) window._lxListeAlerte = {};
     if (!window._lxListeAlerte[table]) {
