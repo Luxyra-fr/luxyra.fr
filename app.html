@@ -892,7 +892,7 @@ function _defaultCollabId(){
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
-        if(T[i].inactif===true) continue;
+        if(T[i].inactif===true || (T[i].dateDepart && String(T[i].dateDepart)<((typeof TD!=="undefined"&&TD)||new Date().toISOString().slice(0,10)))) continue;
         var tn=(T[i].n||"").trim().toLowerCase();
         if(tn===opName || tn.indexOf(opName)===0) return T[i].id;
       }
@@ -4160,10 +4160,10 @@ function convertDevisToRdv(idx){
   // Collab
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;color:var(--text2);font-weight:700;display:block;margin-bottom:6px">Avec qui ?</label>';
   h+='<select id="cdrCollab" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px">';
-  for(var ti=0;ti<T.length;ti++){
-    // BUG FIX : T n'a plus de champ "actif", on filtre via "inactif" (cohérent avec getActiveTeam())
-    if(T[ti].inactif===true) continue;
-    h+='<option value="'+T[ti].id+'"'+(T[ti].id===defaultStId?' selected':'')+' style="color:#000;background:#fff">'+T[ti].n+'</option>';
+  var _eqD=lxEquipeSelection(defaultStId);
+  for(var ti=0;ti<_eqD.length;ti++){
+    // 2026-10-07 : equipe active uniquement (collaborateurs partis exclus, y compris par date de depart)
+    h+='<option value="'+_eqD[ti].id+'"'+(_eqD[ti].id===defaultStId?' selected':'')+' style="color:#000;background:#fff">'+_eqD[ti].n+'</option>';
   }
   h+='</select></div>';
   // Date + heure
@@ -6666,8 +6666,7 @@ function addAbsence(stId,preType){
   } else {
     // Mode "depuis planning" : permet de choisir le collaborateur
     htm+='<div class="fg"><label>Collaborateur</label><select id="abStId" style="width:100%;padding:10px;font-size:14px">';
-    var _actCollabs = T.filter(function(t){return t && t.actif!==false && !t.inactif;});
-    if(_actCollabs.length===0) _actCollabs = T;
+    var _actCollabs = getActiveTeam(); // 2026-10-07 : collaborateurs partis exclus (inactif OU date de depart passee)
     for(var _ci=0;_ci<_actCollabs.length;_ci++){
       htm+='<option value="'+_actCollabs[_ci].id+'">'+_actCollabs[_ci].n+'</option>';
     }
@@ -28930,7 +28929,7 @@ function _ftDefaultCollab(){
     var opName=(CURRENT_OPERATOR.prenom||"").trim().toLowerCase();
     if(opName){
       for(var i=0;i<T.length;i++){
-        if(T[i].inactif===true) continue;
+        if(T[i].inactif===true || (T[i].dateDepart && String(T[i].dateDepart)<((typeof TD!=="undefined"&&TD)||new Date().toISOString().slice(0,10)))) continue;
         var tn=(T[i].n||"").trim().toLowerCase();
         if(tn===opName || tn.indexOf(opName)===0) return T[i];
       }
