@@ -1289,3 +1289,21 @@ familles créées puis perdues.
 **Excellence vérifiée identique** (banc, ancien vs nouveau) : équipe, 72 prestations, horaires, 11/11 familles,
 22 forfaits, 34 réglages SMS, couleurs, TVA 20 ; toutes les pages s'affichent ; 0 écriture de config au
 démarrage (l'ancien code en faisait 1 à chaque ouverture).
+
+## RÈGLE PERMANENTE (Alexandre, 07/10/2026) — LE BOT SUPPORT SE MET À JOUR À CHAQUE MODIFICATION
+
+**Toute modification de l'app visible par l'utilisateur (menu, libellé, bouton, réglage, comportement)
+doit être reportée DANS LA MÊME INTERVENTION dans la base de connaissances du bot.**
+
+- Base : table `public.support_bot_kb` (cle, titre, ordre, contenu, actif). Lue à CHAQUE réponse par
+  `bot-reply` (v12+) → une mise à jour SQL suffit, sans redéploiement. RLS active, aucun accès anon/authenticated.
+- Contenu : uniquement des faits VÉRIFIÉS dans le code (libellés exacts entre « »). Ce qui n'existe pas va
+  dans la ligne `inexistant`. Les cas à transmettre à un humain portent `<ESCALATE/>`.
+- Vérifier après chaque mise à jour avec le banc `lx-bot-eval` (même consigne/base/contexte que bot-reply,
+  AUCUNE écriture, réservé au rôle service — refuse la clé anon) : appel via `net.http_post` avec le jeton
+  service, `{salon_id, questions:[...]}`, lire `net._http_response`. Questions de référence : désactiver le
+  PIN, délai de verrouillage, créer une famille, clôture oubliée (→ ESCALATE), TVA qui ne reste pas
+  (→ ESCALATE), congé d'une collègue, rappels SMS en Essentiel, rubrique « Sécurité », horaires du samedi,
+  remboursement, salutations.
+- Si la consigne du bot change (BASE_PROMPT), redéployer `bot-reply` ET `lx-bot-eval` (même texte).
+- Affichage côté client : messages en `white-space:pre-line`, `**gras**` rendu pour l'assistant (texte échappé).
