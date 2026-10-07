@@ -10192,6 +10192,19 @@ function rPlanningDay(dateObj,showDayHeader){
   h+='</div></div>';
   // One column per stylist (filtered by NF525 permissions)
   var _visT=(typeof getVisibleStylists==="function")?getVisibleStylists():T;
+  // 2026-10-07 : un ANCIEN collaborateur (archive) n'a pas de colonne... sauf les jours ou il a des
+  // rendez-vous (consultation de l'historique : ses RDV passes restent visibles). Seulement pour
+  // qui voit deja toute l'equipe active (pas d'elargissement de droits pour un collaborateur).
+  try{
+    var _actifs=(typeof getActiveTeam==="function")?getActiveTeam():T;
+    var _voitTout=_actifs.every(function(t){ return _visT.indexOf(t)>=0; });
+    if(_voitTout){
+      _visT=_visT.slice();
+      T.forEach(function(t){
+        if(_visT.indexOf(t)<0 && dayA.some(function(a){ return a.stId===t.id; })) _visT.push(t);
+      });
+    }
+  }catch(_eF){}
   for(var ti=0;ti<_visT.length;ti++){
     var sty=_visT[ti];
     var sa=dayA.filter(function(a){if(a.stId===sty.id)return true;var _ph=a.aPhases||(gS(a.sId)?gS(a.sId).phases:null);if(_ph){for(var _pi=0;_pi<_ph.length;_pi++){if(_ph[_pi].stId===sty.id)return true;}}return false;});
@@ -10372,6 +10385,9 @@ function rPlanningDay(dateObj,showDayHeader){
   for(var ti=0;ti<T.length;ti++){
     var sty=T[ti];
     var sa = dayAllForStylists.filter(function(a){ return a.stId===sty.id; });
+    // 2026-10-07 : un ancien collaborateur n'apparait dans ce recapitulatif que s'il a de
+    // l'activite ce jour-la (avant : Manue, partie le 19/08, s'affichait chaque jour a 0 EUR).
+    if(sty.inactif===true && !sa.length) continue;
     var tca = 0; sa.forEach(function(a){ tca += (Number(a.pr)||0); });
     var nbRdv = sa.filter(function(a){ return !_lxIsContraTicket(a); }).length;
     var ht = Math.round(tca*100/(100+txTVA)*100)/100;
