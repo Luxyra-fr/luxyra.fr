@@ -345,7 +345,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261007-02"></script>
+<script src="luxyra-supabase.js?v=20261007-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -1390,9 +1390,9 @@ async function refreshOperateurs() {
   if (saved) {
     try {
       var op = JSON.parse(saved);
-      var INACTIVITY_MS = 5 * 60 * 1000; // 5 min — même seuil que startInactivityTimer
+      var INACTIVITY_MS = lxDelaiVerrouMs(); // 2026-10-07 : delai reglable (0 = jamais en cours de session)
       var elapsed = op.lastActivity ? (Date.now() - op.lastActivity) : Infinity;
-      if (elapsed > INACTIVITY_MS) {
+      if (INACTIVITY_MS && elapsed > INACTIVITY_MS) {
         // Session expirée (PC fermé, app en background...) → reset + selector
         localStorage.removeItem("lx_current_op");
         CURRENT_OPERATOR = null;
@@ -1663,20 +1663,56 @@ function operatorLogout() {
   showOperatorSelector();
 }
 
-// Inactivité 5 minutes → re-demander PIN
+// 2026-10-07 : DELAI DE VERROUILLAGE REGLABLE (Parametres -> Equipe -> Verrouillage automatique).
+// Stocke en base : config_json.verrouillage_min (5, 15, 30, 60 ; 0 = jamais en cours de session).
+// Sans reglage enregistre : 5 min (comportement historique, inchange pour les salons existants).
+// La NF525 exige l'identification de l'operateur (PIN) ; le delai de verrouillage est un choix du salon.
+var LX_VERROU_CHOIX = [5, 15, 30, 60, 0];
+function lxDelaiVerrouMin(){
+  var v = window.LX_VERROU_MIN;
+  if (v === undefined || v === null || v === "") return 5;
+  v = Number(v);
+  return (isNaN(v) || LX_VERROU_CHOIX.indexOf(v) < 0) ? 5 : v;
+}
+function lxDelaiVerrouMs(){ return lxDelaiVerrouMin() * 60 * 1000; }
+function lxLibelleVerrou(min){ return min === 0 ? "jamais en journ\u00e9e (PIN redemand\u00e9 apr\u00e8s 4 h sans activit\u00e9)" : (min + " min"); }
+// Inactivité (délai réglable) → re-demander PIN
 function startInactivityTimer() {
   if (_operatorInactivityTimer) clearTimeout(_operatorInactivityTimer);
   if (!CURRENT_OPERATOR) return;
+  var _ms = lxDelaiVerrouMs();
+  if (!_ms) return; // "jamais" : pas de verrouillage en cours de session
   _operatorInactivityTimer = setTimeout(function(){
     if (CURRENT_OPERATOR) {
       var op = CURRENT_OPERATOR;
       CURRENT_OPERATOR = null;
       _operatorAdminOverrideUntil = 0;
       saveCurrentOperator();
-      toast("Verrouillage automatique apr\u00e8s 5 min", "warning");
+      toast("Verrouillage automatique apr\u00e8s " + lxDelaiVerrouMin() + " min", "warning");
       showOperatorSelector();
     }
-  }, 5*60*1000);
+  }, _ms);
+}
+// Changement du delai (administrateur uniquement), enregistre en base puis trace au journal.
+function lxChoisirVerrouillage(min){
+  min = Number(min);
+  if (LX_VERROU_CHOIX.indexOf(min) < 0) return;
+  requireAdmin("Modifier le verrouillage automatique", function(){
+    var avant = lxDelaiVerrouMin(), valeurAvant = window.LX_VERROU_MIN;
+    if (avant === min && valeurAvant !== undefined) { go("settings"); return; }
+    window.LX_VERROU_MIN = min;
+    Promise.resolve(typeof lxCfgEcrireSections === "function" ? lxCfgEcrireSections({verrouillage_min: min}) : false).then(function(ok){
+      if (ok) {
+        try { auditLog("CONFIG_VERROUILLAGE", "Verrouillage automatique : " + lxLibelleVerrou(avant) + " -> " + lxLibelleVerrou(min)); } catch(_e){}
+        try { touchOperatorActivity(); } catch(_e){}
+        startInactivityTimer();
+        toast("Verrouillage automatique : " + lxLibelleVerrou(min), "success");
+      } else {
+        window.LX_VERROU_MIN = valeurAvant; // ecriture refusee : on revient a l'etat enregistre
+      }
+      go("settings");
+    });
+  });
 }
 function resetInactivityTimer() {
   if (CURRENT_OPERATOR) startInactivityTimer();
@@ -2795,7 +2831,7 @@ async function executePurge(){
   var pm=document.getElementById("purgeConfirm");if(pm)pm.remove();
   var pm2=document.getElementById("purgeModal");if(pm2)pm2.remove();
   if(typeof lxOpenFactoryReset==="function"){ lxOpenFactoryReset(); return; }
-  showAlert("R\u00e9initialisation indisponible ici. Utilisez Param\u00e8tres \u2192 \u00c9tablissement \u2192 R\u00e9initialiser le salon (r\u00e9serv\u00e9 \u00e0 la p\u00e9riode d\u0027essai).","warning");
+  showAlert("R\u00e9initialisation indisponible ici. Utilisez Param\u00e8tres \u2192 Infos \u00e9tablissement \u2192 R\u00e9initialiser le salon (r\u00e9serv\u00e9 \u00e0 la p\u00e9riode d\u0027essai).","warning");
 }
 
 // Customer Portal (gérer son abonnement)
@@ -12966,10 +13002,10 @@ function rSettings(){
         h+='<input type="time" value="'+hr.o+'" style="width:90px;padding:8px;font-size:14px" onchange="H['+d+'].o=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();if(typeof saveSiteConfig===\'function\')saveSiteConfig()">';
         h+='<span style="font-size:12px;color:var(--text3)">\u00e0</span>';
         h+='<input type="time" value="'+hr.c+'" style="width:90px;padding:8px;font-size:14px" onchange="H['+d+'].c=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();if(typeof saveSiteConfig===\'function\')saveSiteConfig()">';
-        h+='<button class="btn bs" style="color:var(--red);font-size:11px" onclick="H['+d+']=null;go(\'settings\')">Ferm\u00e9</button>';
+        h+='<button class="btn bs" style="color:var(--red);font-size:11px" onclick="H['+d+']=null;if(typeof saveSiteConfig===\'function\')saveSiteConfig();go(\'settings\')">Ferm\u00e9</button>';
       }else{
         h+='<span style="font-size:13px;color:var(--text3);font-style:italic;flex:1">Ferm\u00e9</span>';
-        h+='<button class="btn bs bg" style="font-size:11px" onclick="H['+d+']={o:\'09:00\',c:\'18:00\'};go(\'settings\')">Ouvrir</button>';
+        h+='<button class="btn bs bg" style="font-size:11px" onclick="H['+d+']={o:\'09:00\',c:\'18:00\'};if(typeof saveSiteConfig===\'function\')saveSiteConfig();go(\'settings\')">Ouvrir</button>';
       }
       h+='</div>';
     }
@@ -13047,6 +13083,21 @@ function rSettings(){
   
   else if(settTab==="equipe"){
     h+='<div class="sec">\ud83d\udc65 \u00c9quipe</div>';
+    // 2026-10-07 : verrouillage automatique reglable (administrateur), visible des qu'il y a des operateurs
+    if (typeof OPERATEURS !== "undefined" && OPERATEURS && OPERATEURS.length) {
+      var _vm = (typeof lxDelaiVerrouMin === "function") ? lxDelaiVerrouMin() : 5;
+      h+='<div class="card" style="margin-bottom:12px">';
+      h+='<div style="font-weight:800;font-size:14px;margin-bottom:4px">\ud83d\udd12 Verrouillage automatique</div>';
+      h+='<div style="font-size:11px;color:var(--text3);line-height:1.4;margin-bottom:10px">Apr\u00e8s ce d\u00e9lai sans activit\u00e9, l\u2019application redemande le code PIN. Chaque encaissement reste attribu\u00e9 \u00e0 la personne connect\u00e9e. R\u00e9serv\u00e9 \u00e0 l\u2019administrateur.</div>';
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+      [[5,"5 min"],[15,"15 min"],[30,"30 min"],[60,"1 h"],[0,"Jamais"]].forEach(function(o){
+        var _on = (_vm === o[0]);
+        h+='<button class="btn bs" style="flex:1;min-width:64px;padding:10px 6px;font-size:12px;font-weight:700;'+(_on?'background:rgba(200,168,78,.18);color:var(--gold);border:1.5px solid var(--gold)':'')+'" onclick="lxChoisirVerrouillage('+o[0]+')">'+o[1]+'</button>';
+      });
+      h+='</div>';
+      if (_vm === 0) h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">\u00ab Jamais \u00bb : pas de verrouillage en journ\u00e9e ; le PIN est redemand\u00e9 apr\u00e8s 4 h sans activit\u00e9. Vous pouvez verrouiller \u00e0 tout moment depuis votre avatar \u2192 \u00ab Verrouiller maintenant \u00bb.</div>';
+      h+='</div>';
+    }
     // Bouton pour créer un opérateur sans être un coiffeur (patron, gérant, comptable...)
     h+='<div class="card" style="margin-bottom:12px;background:linear-gradient(135deg,rgba(200,168,78,.08),rgba(200,168,78,.02));border:1px solid rgba(200,168,78,.25)">';
     h+='<div style="display:flex;align-items:center;gap:12px">';
@@ -19577,7 +19628,7 @@ function rGifts(){
   h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:14px" onclick="oM(\u0027giftSearch\u0027)">\ud83d\udd0d</button>';
   h+='<button class="btn" style="padding:14px 16px;border-radius:12px;font-size:12px" onclick="exportGiftRegister()">\ud83d\udcc4 Export CSV</button>';
   h+='</div>';
-  h+='<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text3)">\ud83d\udca1 Cr\u00e9er un bon : <strong>Encaissement</strong> \u2192 menu \u22ee \u2192 Nouveau bon cadeau</div>';
+  h+='<div style="background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text3)">\ud83d\udca1 Cr\u00e9er un bon : <strong>Encaissement</strong> \u2192 bouton \ud83c\udf81 Bon cadeau \u2192 Cr\u00e9er un bon cadeau</div>';
 
   if(!window._gcTab)window._gcTab="actifs";
   h+='<div class="tabs" style="margin-bottom:14px">';
@@ -26300,7 +26351,7 @@ function tkAddForfait(){
   h2+='<div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);font-size:16px;font-weight:800;font-family:var(--f1);color:#fff">\ud83d\udce6 Choisir un forfait</div>';
   h2+='<div style="max-height:50vh;overflow-y:auto;padding:6px 0">';
   if(!FORFAITS.length){
-    h2+='<div style="padding:30px;text-align:center;color:rgba(255,255,255,.3)">Aucun forfait cr\u00e9\u00e9.<br>Allez dans Prestations \u2192 Forfaits pour en cr\u00e9er.</div>';
+    h2+='<div style="padding:30px;text-align:center;color:rgba(255,255,255,.3)">Aucun forfait cr\u00e9\u00e9.<br>Allez dans Services et Forfaits \u2192 onglet Forfaits pour en cr\u00e9er.</div>';
   }
   for(var i=0;i<filteredForf.length;i++){
     var f=filteredForf[i];var fIdx=FORFAITS.indexOf(f);
@@ -26659,6 +26710,7 @@ var LX_CFG_SECTIONS = [
   {k:"svccolors", mem:function(){return (typeof SVCCOLORS!=="undefined"&&SVCCOLORS)?SVCCOLORS:undefined;}, set:function(v){SVCCOLORS=v;}},
   {k:"prodcolors", mem:function(){return (window.PRODCOLORS && typeof window.PRODCOLORS==="object")?window.PRODCOLORS:undefined;}, set:function(v){window.PRODCOLORS=v;}},
   {k:"fidconf", mem:function(){return (window.FIDCONF && typeof window.FIDCONF==="object")?window.FIDCONF:undefined;}, set:function(v){window.FIDCONF=v;}},
+  {k:"verrouillage_min", mem:function(){return (window.LX_VERROU_MIN===undefined||window.LX_VERROU_MIN===null)?undefined:Number(window.LX_VERROU_MIN);}, set:function(v){window.LX_VERROU_MIN=Number(v); try{ if(typeof startInactivityTimer==="function") startInactivityTimer(); }catch(_e){}}},
   {k:"validite_devis", mem:function(){return (SALON_CONFIG&&SALON_CONFIG.validiteDevis)?Number(SALON_CONFIG.validiteDevis):undefined;}, set:function(v){SALON_CONFIG.validiteDevis=Number(v);}}
 ].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl"].map(function(n){
   return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && SALON_CONFIG[n]!=="") ? SALON_CONFIG[n] : undefined; },
