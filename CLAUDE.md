@@ -1379,3 +1379,6 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
   après fusion, `loadSiteConfig({})` remet la mémoire à jour.
 - Journal : action `CONFLIT_SYNCHRO` (dans `LX_NON_FISCAL_ACTIONS`, hors export d'audit fiscal) + toast.
 - Test : `/tmp/lx/conflit.js` (2 appareils jsdom) — ancien code 4/14, nouveau 14/14.
+- Collaborateurs partis (complément) : devis→RDV et absence depuis le planning passent par `lxEquipeSelection`/`getActiveTeam` ;
+  côté base, `fn_salon_next_available_slot` et `rdv_online_block_double_booking` excluent aussi `inactif` et `date_depart` passée
+  (migrations `next_slot_exclut_collaborateurs_partis`, `double_booking_exclut_collaborateurs_partis`).
