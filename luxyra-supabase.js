@@ -2644,6 +2644,26 @@ async function updateRdvOnline(rdvId, status, reason) {
 }
 
 // Sauvegarder une clôture Z (persistance NF525 + raw_data pour réimpression fidèle)
+// 2026-10-07 : relit les cloture Z depuis la base juste avant une cloture manuelle. Une Z peut avoir
+// ete creee ailleurs depuis l'ouverture de l'app (cloture automatique de nuit, autre appareil) : sans
+// cette relecture, l'app proposait de recloturer une journee deja close, et calculait le numero et les
+// cumuls sans tenir compte de cette Z (numero en collision -> cloture du jour non enregistree).
+async function _lxRafraichirClotures() {
+  if (!_sb || !_salonId) return false;
+  try {
+    var r = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num", { ascending: false }).limit(500);
+    if (r.error || !r.data) return false;
+    var fresh = r.data.slice().reverse().map(_mapClotureRow);
+    var ids = {}; fresh.forEach(function(c){ ids[c.id] = true; });
+    var older = (window.CLOTURES || []).filter(function(c){ return c && c.id && !ids[c.id] && (c.num||0) < ((fresh[0] && fresh[0].num) || 0); });
+    window.CLOTURES = older.concat(fresh).sort(function(a,b){ return (a.num||0) - (b.num||0); });
+    if (!window.LOCKED_DAYS) window.LOCKED_DAYS = {};
+    window.CLOTURES.forEach(function(c){ if (c && c.date) window.LOCKED_DAYS[c.date] = true; });
+    return true;
+  } catch (e) { return false; }
+}
+if (typeof window !== "undefined") window._lxRafraichirClotures = _lxRafraichirClotures;
+
 async function saveCloture(clot) {
   if (!_isOnline || !_salonId) return;
   // WAL : persiste la clôture en LS AVANT tout traitement (filet 15/05/2026)

@@ -347,7 +347,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261007-04"></script>
+<script src="luxyra-supabase.js?v=20261007-05"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -5900,6 +5900,18 @@ function _lxRdvRestantsAujourdhui(){
   }catch(_e){ return []; }
 }
 function _doClotureDo(){
+  // 2026-10-07 : (1) la cloture porte sur la date REELLE du jour (une tablette restee ouverte la nuit
+  // gardait la date de la veille) ; (2) on relit les Z en base avant tout (cloture automatique de nuit
+  // ou autre appareil) -> jamais de seconde cloture d'une meme journee, numero et cumuls exacts.
+  try{ var _dj=new Date(); TD=_dj.getFullYear()+"-"+String(_dj.getMonth()+1).padStart(2,"0")+"-"+String(_dj.getDate()).padStart(2,"0"); }catch(_eTD){}
+  if(!window._lxClotRelue && typeof _lxRafraichirClotures==="function" && typeof _sb!=="undefined" && _sb){
+    window._lxClotRelue=true;
+    Promise.resolve(_lxRafraichirClotures()).then(function(ok){
+      if(!ok){ window._lxClotRelue=false; if(typeof toast==="function") toast("\u26a0 V\u00e9rification des cl\u00f4tures impossible (connexion) \u2014 r\u00e9essayez","error"); return; }
+      try{ _doClotureDo(); }finally{ window._lxClotRelue=false; }
+    },function(){ window._lxClotRelue=false; });
+    return;
+  }
   // Already clotured? Block
   // Also check CLOTURES array
   if(window.CLOTURES){for(var ci=0;ci<window.CLOTURES.length;ci++){if(window.CLOTURES[ci].date===TD){window.LOCKED_DAYS[TD]=true;break;}}}
