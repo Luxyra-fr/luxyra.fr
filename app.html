@@ -347,7 +347,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261007-07"></script>
+<script src="luxyra-supabase.js?v=20261007-08"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -12623,7 +12623,7 @@ async function _lxSiteEcrire(data){
   try{
     var r=await _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1);
     if(!r || r.error){ throw new Error((r&&r.error&&r.error.message)||"lecture impossible"); }
-    var row=(r.data&&r.data[0])||null, base=window._lxSiteBase||null, ecrits=[];
+    var row=(r.data&&r.data[0])||null, base=window._lxSiteBase||null, ecrits=[], conflitsSite=[], fusionne=false;
     if(row && base){
       Object.keys(data).forEach(function(k){
         if(k==="salon_id") return;
@@ -12631,7 +12631,19 @@ async function _lxSiteEcrire(data){
         if(memS===base[k] && Object.prototype.hasOwnProperty.call(row,k)){
           data[k]=row[k];                                   // inchange ici -> on garde la base
           if(k==="horaires_salon" && row[k] && typeof row[k]==="object" && !Array.isArray(row[k])){ try{ H=row[k]; }catch(_e){} }
-        } else { ecrits.push(k); }
+        } else {
+          // Modifie ici ET sur un autre appareil depuis le chargement : fusion (horaires jour par jour,
+          // listes par element...) au lieu d'ecraser. La liste des collaborateurs vient de l'equipe : pas de fusion.
+          if(k!=="collaborateurs" && k!=="updated_at" && Object.prototype.hasOwnProperty.call(row,k)){
+            var dbS=lxJsonCanon(row[k]);
+            if(dbS!==base[k] && dbS!==memS && row[k]!==null && row[k]!==undefined){
+              var bV; try{ bV = base[k]!==undefined ? JSON.parse(base[k]) : undefined; }catch(_b){ bV=undefined; }
+              data[k]=_lxCfgFusionValeur(bV, data[k], row[k], "site."+k, conflitsSite);
+              if(lxJsonCanon(data[k])!==memS) fusionne=true;
+            }
+          }
+          ecrits.push(k);
+        }
       });
     }
     data.updated_at=new Date().toISOString();
@@ -12639,6 +12651,8 @@ async function _lxSiteEcrire(data){
     console.log("[SITE CONFIG]",u.error?u.error.message:"Saved OK");
     if(u.error) throw new Error(u.error.message||"ecriture refusee");
     if(base){ ecrits.forEach(function(k){ base[k]=lxJsonCanon(data[k]); }); }
+    if(conflitsSite.length){ try{ if(typeof _lxSignalerConflits==="function") _lxSignalerConflits("Site / horaires", (SALON_CONFIG&&SALON_CONFIG.nom)||"salon", conflitsSite); }catch(_e){} }
+    if(fusionne){ try{ await loadSiteConfig({}); if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} } // memoire = version fusionnee
     return true;
   }catch(e){
     try{
@@ -26834,6 +26848,44 @@ function saveSalonConfig(){
   _lxCfgFile = (_lxCfgFile||Promise.resolve()).then(_lxSaveSalonConfigUneFois, _lxSaveSalonConfigUneFois);
   return _lxCfgFile;
 }
+// Fusion d'une valeur modifiee ICI et sur un AUTRE appareil depuis le chargement.
+// Listes d'elements avec id (forfaits, absences, cartes) : fusion par id (ajouts/suppressions des deux cotes,
+// element modifie ici = version d'ici). Listes simples (familles) : ajouts/suppressions des deux cotes.
+// Objets : cle par cle. Valeur simple : version d'ici, l'autre est signalee (conflits).
+function _lxCfgFusionValeur(base, mem, db, chemin, conflits){
+  var C=lxJsonCanon;
+  if(C(mem)===C(db)) return mem;
+  if(Array.isArray(mem) && Array.isArray(db)){
+    base=Array.isArray(base)?base:[];
+    var avecId=function(l){ return l.length>0 && l.every(function(x){ return x && typeof x==="object" && x.id!==undefined && x.id!==null; }); };
+    if((avecId(mem)||mem.length===0) && (avecId(db)||db.length===0) && (avecId(base)||base.length===0) && (mem.length||db.length)){
+      var parId=function(l){ var o={}; l.forEach(function(x){ o[String(x.id)]=x; }); return o; };
+      var b=parId(base), m=parId(mem), d=parId(db), out=[], vus={};
+      db.forEach(function(x){ var id=String(x.id); vus[id]=1;
+        if(b[id] && !m[id]){ if(C(b[id])!==C(x) && conflits) conflits.push({champ:chemin+"#"+id, remplace:x, garde:null}); return; } // supprime ici
+        if(m[id] && C(m[id])!==C(b[id])){ if(b[id] && C(x)!==C(b[id]) && C(x)!==C(m[id]) && conflits) conflits.push({champ:chemin+"#"+id, remplace:x, garde:m[id]}); out.push(m[id]); return; }
+        out.push(x);
+      });
+      mem.forEach(function(x){ var id=String(x.id); if(!vus[id] && !b[id]) out.push(x); }); // ajoute ici
+      return out;
+    }
+    return _lxFusionListe(base, mem, db);
+  }
+  var estObj=function(v){ return v && typeof v==="object" && !Array.isArray(v); };
+  if(estObj(mem) && estObj(db)){
+    base=estObj(base)?base:{};
+    var r=JSON.parse(JSON.stringify(db)), ks={};
+    Object.keys(base).forEach(function(x){ks[x]=1;}); Object.keys(mem).forEach(function(x){ks[x]=1;});
+    Object.keys(ks).forEach(function(x){
+      if(C(mem[x])===C(base[x])) return; // pas touche ici : on garde la base
+      if(C(db[x])!==C(base[x])) { r[x]=_lxCfgFusionValeur(base[x], mem[x], db[x], chemin+"."+x, conflits); if(mem[x]===undefined) delete r[x]; return; }
+      if(mem[x]===undefined) delete r[x]; else r[x]=mem[x];
+    });
+    return r;
+  }
+  if(conflits) conflits.push({champ:chemin, remplace:db, garde:mem});
+  return mem;
+}
 async function _lxSaveSalonConfigUneFois(){
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return false;
   try{
@@ -26848,15 +26900,23 @@ async function _lxSaveSalonConfigUneFois(){
     }
     if(typeof cfg!=="object"||cfg===null||Array.isArray(cfg)){ _lxCfgErreur("Configuration illisible - modification non enregistree","type"); return false; }
     var bDb=window._lxCfgBaseDb||{}, bMem=window._lxCfgBaseMem||{};
-    var aEcrire=[], aRafraichir=[], nouvBase={};
+    var aEcrire=[], aRafraichir=[], nouvBase={}, conflitsCfg=[];
     LX_CFG_SECTIONS.forEach(function(sec){
       var memV; try{ memV=sec.mem(); }catch(_e){ memV=undefined; }
       var memS=lxJsonCanon(memV), dbV=_lxCfgValeurBase(sec,cfg), dbS=lxJsonCanon(dbV);
       var changeIci = (memS!==undefined) && (memS!==bMem[sec.k]);
       var changeAilleurs = (dbS!==bDb[sec.k]);
       if(changeIci){
-        if(sec.ecrire) sec.ecrire(cfg, memV); else cfg[sec.k]=memV;
-        aEcrire.push(sec.k); nouvBase[sec.k]={db:memS, mem:memS};
+        var aMettre=memV;
+        if(changeAilleurs && dbV!==undefined && dbV!==null && dbS!==memS){
+          // Modifie aussi sur un autre appareil depuis le chargement : on fusionne au lieu d'ecraser.
+          var baseV; try{ baseV = bMem[sec.k]!==undefined ? JSON.parse(bMem[sec.k]) : undefined; }catch(_b){ baseV=undefined; }
+          aMettre=_lxCfgFusionValeur(baseV, memV, dbV, sec.k, conflitsCfg);
+          if(lxJsonCanon(aMettre)!==memS) aRafraichir.push({sec:sec, v:aMettre});
+        }
+        var aMettreS=lxJsonCanon(aMettre);
+        if(sec.ecrire) sec.ecrire(cfg, aMettre); else cfg[sec.k]=aMettre;
+        aEcrire.push(sec.k); nouvBase[sec.k]={db:aMettreS, mem:aMettreS};
       } else if(changeAilleurs && dbV!==undefined && dbV!==null){
         aRafraichir.push({sec:sec, v:dbV}); nouvBase[sec.k]={db:dbS, mem:dbS};
       }
@@ -26876,6 +26936,8 @@ async function _lxSaveSalonConfigUneFois(){
       try{ var un={}; (window.CATS_SVC||[]).forEach(function(c){un[c]=true;}); (window.CATS_FORF||[]).forEach(function(c){un[c]=true;}); CATS=Object.keys(un); }catch(_e){}
     }
     window._SALON_CONFIG_JSON = cfg;
+    if(conflitsCfg.length){ try{ if(typeof _lxSignalerConflits==="function") _lxSignalerConflits("Configuration", (SALON_CONFIG&&SALON_CONFIG.nom)||"salon", conflitsCfg); }catch(_e){} }
+    if(aRafraichir.length){ try{ if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} }
     return true;
   }catch(e){ _lxCfgErreur("Enregistrement de la configuration echoue", String(e&&e.message||e)); return false; }
 }
@@ -32406,7 +32468,8 @@ window.LX_NON_FISCAL_ACTIONS = window.LX_NON_FISCAL_ACTIONS || {
   // Elles ne doivent pas polluer un export d'audit presente a un controle.
   RDV_HORS_HORAIRES:1, COLLAB_DESARCHIVAGE_REFUSE:1, COLLAB_DELETE_REFUSED:1,
   COLLAB_STATUT_RH:1, COLLAB_ARCHIVAGE_RESTAURE:1, SECURITE_DURCISSEMENT:1,
-  SECURITE_CORRECTION_CRITIQUE:1, NF525_SCHEMA_HARDENING:1, RDV_COLLAB_AFFECTE:1
+  SECURITE_CORRECTION_CRITIQUE:1, NF525_SCHEMA_HARDENING:1, RDV_COLLAB_AFFECTE:1,
+  CONFLIT_SYNCHRO:1
 };
 function exportAudit(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
