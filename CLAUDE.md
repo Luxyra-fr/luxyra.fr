@@ -1425,7 +1425,11 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 
 ## 2026-10-08 — Textes : essai, conservation après résiliation, offre Pro Fondateur
 
-**Essai** : 14 jours sur le forfait **Essentiel** (code : salons.plan='essential', status='trial'). Les textes ne disent plus « accès complet / toutes les fonctionnalités ». Ouvrir le Pro pendant l'essai = changement de comportement, à faire seulement avec l'accord d'Alexandre.
+**Essai = fonctions Pro ouvertes SAUF SMS (accord Alexandre 08/10 : « surtout pas de SMS offerts, seulement après le 1er paiement ils sont offerts une fois »)**. En base l'essai reste plan='essential', status='trial'.
+- App : `isPro()` = plan pro OU essai en cours (`lxEssaiProActif()`) ; `isProPaid()` = plan pro réellement payé → TOUT ce qui touche aux SMS (sendSms, rappels auto, cartes, QR natif, achat de packs) utilise `isProPaid()`.
+- Serveur : `gateSmsAndDecrementCredit` et le mode natif exigent plan='pro' (inchangé) ; checkout des packs SMS refusé si plan≠'pro' ; bonus 150 SMS seulement si invoice.paid live, plan pro ET amount_paid > 0, une seule fois (welcome_sms_bonus_given).
+- Base : `lx_salon_pro_actif(plan,status,trial_end)` → vue `salons_public` (site, annuaire, sitemap, bons cadeaux) et trigger `rdv_online_validate` (réservation refusée si ni Pro ni essai en cours). Essai expiré → site hors ligne automatiquement.
+- ⚠️ FAILLE CORRIGÉE : trigger `trg_salons_proteger_facturation` (lx_prive.salons_proteger_facturation). Un salon connecté pouvait se mettre lui-même plan='pro', status='active', is_free, sms_credits=9999, Fondateur… via l'API. Désormais, pour les rôles authenticated/anon non admin : à l'INSERT valeurs forcées (essential/trial/0 SMS/≤15 j d'essai), à l'UPDATE les colonnes de facturation sont remises à l'ancienne valeur (sans erreur). Autorisé côté salon : is_free true→false, baisse de sms_credits, verification_status → pending/pending_review. service_role, postgres (cron) et admin : libres. Testé en transaction annulée.
 
 **Conservation après résiliation (règle unique, la même partout : CGV art. 9, politique de confidentialité §3/3.1, contrat 7.7 de l'inscription, tarifs, aide, securite-rgpd, bot)** :
 - résiliation effective → mode archives (lecture seule) ;

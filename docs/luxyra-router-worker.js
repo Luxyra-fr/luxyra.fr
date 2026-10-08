@@ -511,6 +511,15 @@ async function handleCreateCheckout(request, env) {
       }
     } catch (e) { console.warn("app_config fetch failed for SMS packs, using fallback:", e?.message); }
 
+    // 2026-10-08 : packs SMS réservés au forfait Pro PAYÉ (pas pendant l'essai, ni en Essentiel :
+    // l'envoi serait de toute façon refusé par gateSmsAndDecrementCredit → crédits payés inutilisables).
+    if (smsPacks[plan]) {
+      const sPack = await supabaseGet(env, salon_id);
+      if (!sPack || sPack.plan !== "pro") {
+        return jsonResponse({ error: "Les SMS sont disponibles avec l'abonnement Pro (pas pendant l'essai gratuit)." }, 403);
+      }
+    }
+
     let customerId = await getOrCreateStripeCustomer(env, email, salon_id);
     if (!customerId) return jsonResponse({ error: "Impossible de créer le client Stripe." }, 500);
 
@@ -682,7 +691,8 @@ async function handleWebhook(request, env) {
         // - data.livemode = true sur les paiements réels (false en mode test Stripe)
         // - welcome_sms_bonus_given = false → bonus pas encore donné
         // - plan === "pro" → seul le plan Pro a le bonus SMS
-        if (data.livemode === true && plan === "pro") {
+        // amount_paid > 0 : un VRAI 1er paiement (pas une facture à 0 € : code promo 100 %, prorata…)
+        if (data.livemode === true && plan === "pro" && Number(data.amount_paid || 0) > 0) {
           try {
             const salonRow = await supabaseGet(env, salonId);
             if (salonRow && salonRow.welcome_sms_bonus_given !== true) {
