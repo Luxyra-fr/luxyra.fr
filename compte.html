@@ -387,6 +387,7 @@ function renderDashboard(){
   h+='<div class="tab'+(TAB==="fidelite"?" active":"")+'" onclick="TAB=\'fidelite\';render()">\ud83c\udf1f Fid\u00e9lit\u00e9</div>';
   h+='<div class="tab'+(TAB==="cartes"?" active":"")+'" onclick="TAB=\'cartes\';render()">\ud83d\udcb3 Cartes</div>';
   h+='<div class="tab'+(TAB==="bons_cadeaux"?" active":"")+'" onclick="TAB=\'bons_cadeaux\';loadMyBonsCadeaux()">\ud83c\udf81 Bons cadeaux</div>';
+  h+='<div class="tab'+(TAB==="commandes"?" active":"")+'" onclick="TAB=\'commandes\';loadMyCommandes()">\ud83d\udecd Commandes</div>';
   h+='<div class="tab'+(TAB==="profile"?" active":"")+'" onclick="TAB=\'profile\';render()">\ud83d\udc64 Profil</div>';
   h+='<div class="tab'+(TAB==="settings"?" active":"")+'" onclick="TAB=\'settings\';render()">\u2699\ufe0f R\u00e9glages</div>';
   h+='</div>';
@@ -397,6 +398,7 @@ function renderDashboard(){
   else if(TAB==="fidelite")h+=renderFideliteTab();
   else if(TAB==="cartes")h+=renderCartesTab();
   else if(TAB==="bons_cadeaux")h+=renderBonsCadeauxTab();
+  else if(TAB==="commandes")h+=renderCommandesTab();
   else if(TAB==="profile")h+=renderProfileTab();
   else if(TAB==="settings")h+=renderSettingsTab();
   
@@ -434,6 +436,38 @@ function lxRenderSalonPicker(opts){
     h += '<div style="padding:6px 10px;color:#888;font-size:12px;font-style:italic">Aucun résultat pour « '+escAttr(searchVal)+' »</div>';
   }
   h += '</div></div>';
+  return h;
+}
+
+// --- COMMANDES CLICK & COLLECT (2026-10-08) ---
+window.MY_COMMANDES=null;
+async function loadMyCommandes(){
+  window.MY_COMMANDES=null; render();
+  try{
+    var token=(window.LX&&LX.getToken)?LX.getToken():"";
+    var r=await fetch("/api/client/commandes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:token})});
+    var d=await r.json(); window.MY_COMMANDES=r.ok?(d.commandes||[]):{error:d.error||"Erreur"};
+  }catch(e){ window.MY_COMMANDES={error:e.message}; }
+  render();
+}
+function renderCommandesTab(){
+  var L=window.MY_COMMANDES;
+  if(L===null) return '<div style="text-align:center;padding:30px;color:#888">Chargement\u2026</div>';
+  if(L&&L.error) return '<div style="text-align:center;padding:30px;color:#e57373">'+escAttr(L.error)+'</div>';
+  if(!L.length) return '<div style="text-align:center;padding:30px;color:#888">Aucune commande Click &amp; Collect</div>';
+  var ST={a_preparer:["En pr\u00e9paration","#ffb74d"],prete:["Pr\u00eate \u00e0 retirer","#64b5f6"],retiree:["Retir\u00e9e","#81c784"],annulee:["Annul\u00e9e","#e57373"]};
+  var h='';
+  L.forEach(function(c){
+    var st=ST[c.status]||[c.status,"#aaa"];
+    var d=function(x){try{return new Date(x).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});}catch(e){return"";}};
+    h+='<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-left:4px solid '+st[1]+';border-radius:12px;padding:14px;margin-bottom:10px">';
+    h+='<div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:800">'+escAttr(c.salon_nom)+' \u2014 n\u00b0'+c.numero+'</div><div style="color:'+st[1]+';font-weight:800;font-size:12px">'+st[0]+'</div></div>';
+    h+='<div style="font-size:12px;color:#999;margin:4px 0 8px">Pass\u00e9e le '+d(c.created_at)+' \u2022 '+Number(c.total).toFixed(2)+' \u20ac '+(c.paye?'(pay\u00e9e en ligne)':'(\u00e0 r\u00e9gler au salon)')+'</div>';
+    (c.items||[]).forEach(function(it){ h+='<div style="font-size:13px">'+escAttr(it.nom)+' \u00d7 '+(it.qty||1)+'</div>'; });
+    if(c.code_retrait) h+='<div style="margin-top:10px;padding:10px;border:1px dashed #c8a84e;border-radius:10px;text-align:center"><div style="font-size:11px;color:#999">Code de retrait \u00e0 pr\u00e9senter</div><div style="font-size:24px;font-weight:800;letter-spacing:4px;color:#c8a84e">'+escAttr(c.code_retrait)+'</div></div>';
+    if(c.status==="retiree") h+='<div style="margin-top:8px;font-size:12px;color:#81c784">Retir\u00e9e le '+d(c.collected_at)+'</div>';
+    h+='</div>';
+  });
   return h;
 }
 

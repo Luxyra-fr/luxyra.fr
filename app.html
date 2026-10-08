@@ -8461,7 +8461,7 @@ function go(pg,arg){
   // Map page → required permission
   var _pagePerm={
     planning:"planning", clients:"clients", detail:"clients",
-    services:"manage_services", products:"products", gifts:"caisse",
+    services:"manage_services", products:"products", gifts:"caisse", commandes:"caisse",
     accounting:"compta", stats:"stats", marketing:"marketing",
     caisse:"caisse", settings:"settings",
     tickets:"caisse", caisseGestion:"caisse", pendingTk:"caisse",
@@ -8551,6 +8551,7 @@ function go(pg,arg){
     else if(pg==="accounting")app.innerHTML='<div class="app-content">'+rAccounting()+'</div>';
     else if(pg==="stats"){app.innerHTML='<div class="app-content">'+rStats()+'</div>';setTimeout(rAffl,50);}
     else if(pg==="marketing"){if(!isPro()){showUpgradeModal("SMS & Email Marketing");return;}var _smy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rMarketing()+'</div>';if(pg===_prevPage){window.scrollTo(0,_smy);requestAnimationFrame(function(){window.scrollTo(0,_smy);});}}
+    else if(pg==="commandes")app.innerHTML='<div class="app-content">'+rCommandes()+'</div>';
     else if(pg==="caisse")app.innerHTML=rCaisse();
     else if(pg==="settings"){var _sy=(pg===_prevPage)?window.scrollY:0;app.innerHTML='<div class="app-content">'+rSettings()+'</div>';if(pg===_prevPage){window.scrollTo(0,_sy);requestAnimationFrame(function(){window.scrollTo(0,_sy);});}}
     else if(pg==="tickets")app.innerHTML='<div class="app-content">'+rTickets()+'</div>';
@@ -8766,9 +8767,28 @@ function _lxFindOnlineRdvForTicket(t){
   }catch(_e){ return null; }
 }
 // Marque une rdv_online en "done" (DB + memoire) et retire le fantome non encaisse du planning.
+// 2026-10-08 : RDV honoré (encaissé) -> l'empreinte bancaire est libérée automatiquement (CGV art. 12 bis).
+// Sans ça, les fonds de la cliente restaient bloqués jusqu'à 7 jours.
+function _lxEmpreinteHeldDe(roId){
+  if(!window.RDV_ONLINE) return false;
+  for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===roId) return RDV_ONLINE[i].empreinteStatus==="held"; }
+  return false;
+}
+async function lxEmpreinteReleaseAuto(roId, reason){
+  try{
+    if(!roId||!_lxEmpreinteHeldDe(roId)) return;
+    var sess=await _sb.auth.getSession(); var token=sess&&sess.data&&sess.data.session?sess.data.session.access_token:"";
+    var r=await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/rdv-empreinte-release",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({rdv_id:roId,reason:reason||"rdv_honore"})});
+    if(r.ok){
+      for(var i=0;i<RDV_ONLINE.length;i++) if(RDV_ONLINE[i].id===roId){ RDV_ONLINE[i].empreinteStatus="released"; RDV_ONLINE[i].empreinteReleasedAt=new Date().toISOString(); break; }
+      if(typeof toast==="function") toast("\u2713 Empreinte bancaire lib\u00e9r\u00e9e (RDV honor\u00e9)","success");
+    } else { console.error("[EMPREINTE] liberation auto echouee pour "+roId); }
+  }catch(e){ console.error("[EMPREINTE] liberation auto : "+(e&&e.message||e)); }
+}
 function _lxMarkOnlineRdvDone(roId, tkNum){
   try{
     if(!roId||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
+    lxEmpreinteReleaseAuto(roId,"rdv_honore");
     var _upd={status:"done"}; if(tkNum) _upd.ticket_num=tkNum;
     _sb.from("rdv_online").update(_upd).eq("id",roId).eq("salon_id",_salonId).then(function(){},function(_e){});
     if(window.RDV_ONLINE){ for(var _z=0;_z<RDV_ONLINE.length;_z++){ if(RDV_ONLINE[_z].id===roId){ if(tkNum)RDV_ONLINE[_z].ticket_num=tkNum; break; } } }
@@ -9648,6 +9668,10 @@ function rHome(){
     h+='<div class="tile" style="background:linear-gradient(135deg,#d4a843,#b8960f);position:relative" onclick="go(\'avis\')"><div class="ti" style="color:#fff">★</div><div class="tl">Avis clients</div>';
     if(_avisNoReply>0) h+='<div style="position:absolute;top:6px;right:6px;background:#fff;color:#b8960f;font-size:10px;font-weight:800;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center" title="Avis sans réponse">'+_avisNoReply+'</div>';
     h+='</div>';
+  }
+  if(hasPermission("caisse") && isPro() && typeof lxCcActif==="function" && lxCcActif()){
+    var _ccN=lxCcATraiter();
+    h+='<div class="tile" style="position:relative;background:linear-gradient(135deg,#6d4c41,#a1887f)" onclick="lxCcCharger();go(\'commandes\')"><div class="ti" style="color:#fff">\ud83d\udecd</div><div class="tl">Commandes</div><div id="ccBadge" style="position:absolute;top:6px;right:6px;background:#fff;color:#6d4c41;font-size:11px;font-weight:800;padding:2px 7px;border-radius:10px;'+(_ccN?'':'display:none')+'">'+_ccN+'</div></div>';
   }
   if(hasPermission("marketing")){
     if(isPro()){
@@ -12236,7 +12260,10 @@ function _lxCancelOnlineRdv(rdvId, reason){
   try{
     if(!rdvId||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
     // reflet memoire immediat : empeche le poll/reconcile de re-ajouter le fantome
+    var _empHeld=_lxEmpreinteHeldDe(rdvId);
     if(window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===rdvId){ RDV_ONLINE[i].status="cancelled"; RDV_ONLINE[i].cancelled_by="salon"; break; } } }
+    // 2026-10-08 : empreinte active -> le salon choisit (libérer, ou garder pour un no-show)
+    if(_empHeld && typeof lxEmpreinteRelease==="function") setTimeout(function(){ lxEmpreinteRelease(rdvId); }, 400);
     _sb.from("rdv_online").update({status:"cancelled",cancelled_by:"salon",cancel_reason:(reason||"Annul\u00e9 par le salon"),cancelled_at:new Date().toISOString()}).eq("id",rdvId).eq("salon_id",_salonId).then(function(){},function(_e){});
   }catch(_e){}
 }
@@ -28904,6 +28931,8 @@ function doFinalPayExecute(method){
     if(typeof saveAppointment==="function")saveAppointment(newTk);
     if(typeof saveTicketToDb==="function")saveTicketToDb(newTk); // NF525: table tickets DB
     window._lastSealedApptId=newTk.id; // FIX 2026-07-11 : source du recu (ecran + impression)
+    // 2026-10-08 : commande Click & Collect réglée au salon -> marquée remise (ticket rattaché)
+    try{ if(_tk&&_tk._ccCommandeId&&typeof lxCcApresEncaissement==="function") lxCcApresEncaissement(_tk._ccCommandeId,_tk._ccCode,_tk._ccSansCode,newTk.tkNum); }catch(_eCc){}
     // Encaissement validé → nettoie le pending/devis source si _tk en venait
     if(typeof cleanupPendingFromTk==="function")cleanupPendingFromTk();
   }
@@ -31291,6 +31320,151 @@ async function showSmsNativeLinkQR(){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px"><div style="font-size:32px;margin-bottom:12px">\u274c</div><h3 style="color:#ef5350;margin-bottom:10px">Erreur r\u00e9seau</h3><div style="font-size:13px;color:var(--text3);margin-bottom:16px">'+e.message+'</div><button class="btn" style="width:100%;padding:12px" onclick="cM()">Fermer</button></div></div>';
   }
 }
+// ============================================================
+// CLICK & COLLECT — côté salon (2026-10-08)
+// Tuile « Commandes » + page de traitement. Toutes les actions passent par le worker
+// (/api/cc/action) qui trace le statut, l'heure, l'opérateur et prévient la cliente.
+// Retrait : code de retrait à 6 caractères (email de la cliente) — une commande remise
+// affiche « Remise le … par … » : impossible de la remettre une 2e fois.
+// ============================================================
+window.CC_CMDS = window.CC_CMDS || [];
+window._ccOnglet = window._ccOnglet || "a_traiter";
+function lxCcActif(){ return !!((window.SITE_CONFIG||{}).boutiqueActive) || window._ccBoutiqueActive===true || (window.CC_CMDS||[]).length>0; }
+function lxCcATraiter(){ return (window.CC_CMDS||[]).filter(function(c){return c.status==="a_preparer"||c.status==="prete";}).length; }
+function lxCcCharger(){
+  try{
+    if(typeof _sb==="undefined"||!_sb||!window._salonId) return Promise.resolve();
+    var depuis=new Date(Date.now()-60*86400000).toISOString();
+    // La boutique est-elle active ? (site_config n'est chargé qu'à l'ouverture des Paramètres)
+    _sb.from("site_config").select("boutique_active").eq("salon_id",window._salonId).limit(1).then(function(r){
+      var on=!!(r&&r.data&&r.data[0]&&r.data[0].boutique_active===true);
+      var chg=(on!==window._ccBoutiqueActive); window._ccBoutiqueActive=on;
+      if(chg&&on&&window._currentPage==="home"&&typeof go==="function"&&!document.querySelector("#modal .mbox")) go("home");
+    },function(){});
+    return _sb.from("commandes_online").select("*").eq("salon_id",window._salonId).neq("status","pending_payment")
+      .or("status.in.(a_preparer,prete),created_at.gte."+depuis).order("created_at",{ascending:false}).limit(300)
+      .then(function(r){
+        if(r&&!r.error&&Array.isArray(r.data)){
+          var avant=lxCcATraiter(); window.CC_CMDS=r.data; var apres=lxCcATraiter();
+          if(apres>avant&&avant>=0&&window._ccDejaCharge&&typeof toast==="function") toast("🛍 Nouvelle commande Click & Collect","success");
+          window._ccDejaCharge=true;
+          var b=document.getElementById("ccBadge"); if(b){ b.textContent=apres; b.style.display=apres?"":"none"; }
+          if(window._currentPage==="commandes" && !document.querySelector("#modal .mbox")) go("commandes");
+        }
+      },function(){});
+  }catch(e){ return Promise.resolve(); }
+}
+setInterval(function(){ if(document.visibilityState==="visible") lxCcCharger(); }, 90*1000);
+setTimeout(lxCcCharger, 4000);
+function _ccOp(){ try{ if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR) return ((CURRENT_OPERATOR.prenom||"")+" "+(CURRENT_OPERATOR.nom||"")).trim(); }catch(e){} return (SALON_CONFIG&&SALON_CONFIG.nom)||"Salon"; }
+async function _ccAction(cmd, action, extra){
+  var res=await fetch("/api/cc/action",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(Object.assign({salon_id:window._salonId,commande_id:cmd.id,action:action,operateur:_ccOp()},extra||{}))});
+  var d=await res.json().catch(function(){return {};});
+  if(d&&d.commande){ for(var i=0;i<CC_CMDS.length;i++) if(CC_CMDS[i].id===cmd.id){ CC_CMDS[i]=d.commande; break; } }
+  return {ok:res.ok&&d.ok, d:d};
+}
+function _ccCmd(id){ for(var i=0;i<(window.CC_CMDS||[]).length;i++) if(CC_CMDS[i].id===id) return CC_CMDS[i]; return null; }
+function _ccDate(s){ try{ return new Date(s).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } }
+var _CC_STATUTS={a_preparer:["À préparer","#ffb74d"],prete:["Prête","#64b5f6"],retiree:["Remise","#81c784"],annulee:["Annulée","#e57373"]};
+function rCommandes(){
+  var h='<div class="sec">🛍 Commandes Click &amp; Collect</div>';
+  var all=window.CC_CMDS||[];
+  var onglets=[["a_traiter","À traiter",all.filter(function(c){return c.status==="a_preparer"||c.status==="prete";})],["retiree","Remises",all.filter(function(c){return c.status==="retiree";})],["annulee","Annulées",all.filter(function(c){return c.status==="annulee";})]];
+  h+='<div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">';
+  onglets.forEach(function(o){ var on=window._ccOnglet===o[0]; h+='<button class="btn '+(on?'bg':'bs')+'" style="font-size:12px;padding:8px 14px" onclick="window._ccOnglet=\''+o[0]+'\';go(\'commandes\')">'+o[1]+' ('+o[2].length+')</button>'; });
+  h+='<button class="btn bs" style="font-size:12px;padding:8px 14px;margin-left:auto" onclick="lxCcCharger()">↻ Actualiser</button></div>';
+  if(!(window.SITE_CONFIG||{}).boutiqueActive) h+='<div class="card" style="font-size:12px;color:var(--text3)">La boutique en ligne est désactivée (Paramètres → Site en ligne). Les commandes déjà passées restent à traiter ici.</div>';
+  var liste=(onglets.filter(function(o){return o[0]===window._ccOnglet;})[0]||onglets[0])[2];
+  if(!liste.length){ h+='<div class="card" style="text-align:center;padding:30px;color:var(--text3)">Aucune commande</div>'; return h; }
+  liste.forEach(function(c){
+    var st=_CC_STATUTS[c.status]||[c.status,"#aaa"];
+    h+='<div class="card" style="border-left:4px solid '+st[1]+';margin-bottom:10px">';
+    h+='<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><div style="font-weight:800;font-size:15px">N°'+c.numero+' — '+escapeHtml(c.client_nom)+'</div>';
+    h+='<div style="font-size:12px;color:var(--text3)">'+escapeHtml(c.client_tel||"")+(c.client_email?' • '+escapeHtml(c.client_email):'')+' • passée le '+_ccDate(c.created_at)+'</div></div>';
+    h+='<div style="text-align:right"><span style="background:'+st[1]+'22;color:'+st[1]+';font-weight:800;font-size:11px;padding:3px 9px;border-radius:10px">'+st[0]+'</span>';
+    h+='<div style="font-size:12px;margin-top:4px;font-weight:700;color:'+(c.paye?'#81c784':'#ffb74d')+'">'+(c.paye?'✅ Payée en ligne':'💶 À régler au salon')+'</div></div></div>';
+    h+='<div style="margin:10px 0;font-size:13px">';
+    (c.items||[]).forEach(function(it){ h+='<div style="display:flex;justify-content:space-between"><span>'+escapeHtml(it.nom)+' × '+(it.qty||1)+'</span><span>'+((Number(it.prix)||0)*(Number(it.qty)||1)).toFixed(2)+' €</span></div>'; });
+    h+='<div style="display:flex;justify-content:space-between;font-weight:800;border-top:1px solid var(--border2);margin-top:6px;padding-top:6px"><span>Total</span><span>'+Number(c.total).toFixed(2)+' €</span></div></div>';
+    if(c.message) h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">💬 '+escapeHtml(c.message)+'</div>';
+    if(c.status==="retiree") h+='<div style="font-size:12px;color:#81c784;font-weight:700">✅ Remise le '+_ccDate(c.collected_at)+' par '+escapeHtml(c.collected_by||"?")+(c.ticket_num?' • ticket n°'+escapeHtml(c.ticket_num):'')+'</div>';
+    if(c.status==="annulee") h+='<div style="font-size:12px;color:#e57373">Annulée le '+_ccDate(c.cancelled_at)+' par '+escapeHtml(c.cancelled_by||"?")+(c.cancel_reason?' — '+escapeHtml(c.cancel_reason):'')+(c.refund_id?' • remboursée':'')+'</div>';
+    if(c.status==="prete") h+='<div style="font-size:12px;color:#64b5f6;margin-bottom:6px">Prête depuis le '+_ccDate(c.ready_at)+' (cliente prévenue par email)</div>';
+    if(c.status==="a_preparer"||c.status==="prete"){
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+      if(c.status==="a_preparer") h+='<button class="btn bs" style="flex:1;font-size:12px" onclick="lxCcPrete(\''+c.id+'\')">📦 Marquer prête</button>';
+      h+='<button class="btn bg" style="flex:1;font-size:12px" onclick="lxCcRemettre(\''+c.id+'\')">🤝 Remettre à la cliente</button>';
+      h+='<button class="btn bs" style="font-size:12px;color:#e57373" onclick="lxCcAnnuler(\''+c.id+'\')">Annuler</button></div>';
+    }
+    h+='</div>';
+  });
+  return h;
+}
+async function lxCcPrete(id){
+  var c=_ccCmd(id); if(!c) return;
+  var r=await _ccAction(c,"prete");
+  if(r.ok){ toast("Commande n°"+c.numero+" prête — cliente prévenue","success"); } else showAlert(r.d.error||"Erreur","error");
+  go("commandes");
+}
+function lxCcRemettre(id){
+  var c=_ccCmd(id); if(!c) return;
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:420px">';
+  h+='<h2 style="margin-bottom:6px">Remise de la commande n°'+c.numero+'</h2>';
+  h+='<div style="font-size:13px;color:var(--text3);margin-bottom:12px">'+escapeHtml(c.client_nom)+' — '+Number(c.total).toFixed(2)+' € '+(c.paye?'(déjà payée)':'(à encaisser)')+'</div>';
+  h+='<label style="font-size:12px;color:var(--text3)">Code de retrait présenté par la cliente</label>';
+  h+='<input id="ccCode" autocomplete="off" style="width:100%;font-size:22px;letter-spacing:4px;text-transform:uppercase;text-align:center;margin:6px 0 10px" maxlength="6" placeholder="XXXXXX">';
+  h+='<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text2);margin-bottom:14px"><input type="checkbox" id="ccSansCode"> Pas de code : identité de la cliente vérifiée</label>';
+  h+='<button class="btn bg" style="width:100%" onclick="lxCcRemettreValider(\''+c.id+'\')">'+(c.paye?'Confirmer la remise':'Encaisser puis remettre')+'</button>';
+  h+='<button class="btn bs" style="width:100%;margin-top:8px" onclick="cM()">Annuler</button></div></div>';
+  document.getElementById("modal").innerHTML=h;
+  setTimeout(function(){ var e=document.getElementById("ccCode"); if(e) e.focus(); },100);
+}
+async function lxCcRemettreValider(id){
+  var c=_ccCmd(id); if(!c) return;
+  var code=String((document.getElementById("ccCode")||{}).value||"").trim().toUpperCase();
+  var sansCode=!!((document.getElementById("ccSansCode")||{}).checked);
+  if(!sansCode && code!==String(c.code_retrait||"").toUpperCase()){ showAlert("Code de retrait incorrect. Si la cliente n’a pas son code, vérifiez son identité et cochez la case.","warning"); return; }
+  if(c.status==="retiree"){ showAlert("Déjà remise le "+_ccDate(c.collected_at)+" par "+(c.collected_by||"?"),"warning"); return; }
+  if(!c.paye){
+    // Encaissement normal en caisse (ticket NF525 habituel), puis remise automatique
+    cM();
+    _tk={step:3,stId:_defaultCollabId(),cId:null,items:(c.items||[]).map(function(it){return {sId:null,name:it.nom,price:Number(it.prix)||0,qty:Number(it.qty)||1,remise:0,isProd:true,prodId:it.produit_id};}),comment:"Click & Collect n°"+c.numero,remise:0};
+    _tk._ccCommandeId=c.id; _tk._ccCode=sansCode?null:code; _tk._ccSansCode=sansCode;
+    showCaisse();
+    return;
+  }
+  var r=await _ccAction(c,"retiree",{code:code,sans_code:sansCode});
+  if(!r.ok){ showAlert(r.d.error||"Erreur","error"); go("commandes"); return; }
+  // Commande payée en ligne : sortie du stock au moment de la remise
+  (c.items||[]).forEach(function(it){
+    for(var i=0;i<PRODS.length;i++) if(PRODS[i].id===it.produit_id){
+      var av=PRODS[i].stk; PRODS[i].stk=Math.max(0,(Number(PRODS[i].stk)||0)-(Number(it.qty)||1));
+      if(typeof saveProduct==="function") saveProduct(PRODS[i]);
+      if(typeof logMouvementStock==="function") logMouvementStock(PRODS[i].id,it.nom,"vente",Number(it.qty)||1,av,PRODS[i].stk,"Click & Collect n°"+c.numero);
+      break;
+    }
+  });
+  cM(); toast("✅ Commande n°"+c.numero+" remise","success"); go("commandes");
+}
+// Appelé juste après le scellement du ticket d'une commande à régler au salon
+async function lxCcApresEncaissement(cmdId, code, sansCode, tkNum){
+  var c=_ccCmd(cmdId); if(!c) return;
+  var r=await _ccAction(c,"retiree",{code:code||"",sans_code:!!sansCode||!code,ticket_num:String(tkNum||"")});
+  if(r.ok) toast("✅ Commande n°"+c.numero+" encaissée et remise","success");
+  else showAlert("Ticket enregistré, mais la commande n’a pas pu être marquée remise : "+(r.d.error||"erreur")+". Ouvrez la tuile Commandes.","warning");
+}
+function lxCcAnnuler(id){
+  var c=_ccCmd(id); if(!c) return;
+  var motif=prompt("Motif de l’annulation (envoyé à la cliente) :"+(c.paye?"\n\nLa cliente sera remboursée de "+Number(c.total).toFixed(2)+" €.":""),"");
+  if(motif===null) return;
+  _ccAction(c,"annulee",{motif:motif}).then(function(r){
+    if(r.ok) toast("Commande annulée"+(r.d.rembourse?" et remboursée":""),"success"); else showAlert(r.d.error||"Erreur","error");
+    go("commandes");
+  });
+}
+window.rCommandes=rCommandes; window.lxCcCharger=lxCcCharger; window.lxCcApresEncaissement=lxCcApresEncaissement;
+
 // === D\u00e9lier un t\u00e9l\u00e9phone Android ===
 function unlinkSmsDevice(){
   showConfirm("D\u00e9lier votre t\u00e9l\u00e9phone Android ?\n\nLes SMS basculeront automatiquement en mode Brevo. Vous pourrez relier un autre t\u00e9l\u00e9phone quand vous voudrez.", async function(){
