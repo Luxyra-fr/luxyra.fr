@@ -187,13 +187,18 @@ function _abToB64(a){if(!a)return null;var b="",u=new Uint8Array(a);for(var i=0;
 async function lxPushSupported(){return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;}
 async function lxPushEnable(){
   try{
-    if(!await lxPushSupported()){alert("Push non supporté sur ce navigateur.");return false;}
+    if(!await lxPushSupported()){alert("Les notifications ne sont pas disponibles sur ce navigateur. Sur iPhone : ajoutez d'abord l'admin à l'écran d'accueil et ouvrez-la depuis l'icône.");return false;}
+    if(typeof toast==="function") toast("Activation des notifications…");
+    if(Notification.permission==="denied"){alert("Les notifications sont bloquées pour luxyra.fr sur ce téléphone.\n\nRéglages du téléphone → Applications → Luxyra Admin (ou Chrome) → Notifications → Autoriser, puis réessayez.");return false;}
     var perm=await Notification.requestPermission();
-    if(perm!=="granted"){alert("Permission refusée.");return false;}
+    if(perm!=="granted"){alert("Notifications non autorisées. Réessayez et choisissez « Autoriser ».");return false;}
+    // 2026-10-08 : attente de l'activation du service worker SANS risque de blocage (avant : si l'activation
+    // arrivait avant l'ecoute, l'attente ne se terminait jamais -> le bouton « ne faisait rien »).
     var reg=await navigator.serviceWorker.register("/admin/sw-admin.js",{scope:"/admin/"});
-    if(reg.installing){await new Promise(function(res){reg.installing.addEventListener("statechange",function(e){if(e.target.state==="activated"||e.target.state==="redundant")res();});});}
+    var _t0=Date.now(); while(!reg.active && Date.now()-_t0<10000){ await new Promise(function(r){setTimeout(r,250);}); }
+    if(!reg.active){alert("Le service de notifications ne démarre pas. Fermez complètement l'appli et réessayez.");return false;}
     var sub=await reg.pushManager.getSubscription();
-    if(!sub){sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_b64ToU8(VAPID_PUBLIC_KEY)});}
+    if(!sub){sub=await Promise.race([reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_b64ToU8(VAPID_PUBLIC_KEY)}), new Promise(function(_,rej){setTimeout(function(){rej(new Error("délai dépassé"));},15000);})]);}
     var j=sub.toJSON();
     // 2026-10-08 : colonnes REELLES de la table + target_type "admin" (exige par la securite de la table).
     // Avant : colonnes inexistantes (events_chat, device_label...) et pas de target_type -> l'enregistrement
