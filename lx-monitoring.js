@@ -24,7 +24,7 @@
   var reportsThisSession = 0;
   var MAX_REPORTS_PER_SESSION = 30;
   var THROTTLE_MS = 1500;
-  var skipPat = /ResizeObserver loop|Script error|Non-Error promise|Load failed|AbortError|cancelled/i;
+  var skipPat = /ResizeObserver loop|Script error|Non-Error promise|Load failed|AbortError|cancelled|window\.ethereum|ethereum\.selectedAddress|__firefox__|webkit\.messageHandlers/i; // 2026-10-08 : scripts injectes par certains navigateurs (portefeuilles crypto, navigateurs integres Facebook\/Instagram) : pas des erreurs Luxyra
 
   function report(type, message, stack, extra) {
     try {
