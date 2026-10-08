@@ -1685,7 +1685,23 @@ async function handleEmailCustom(request, env) {
   if (!checkRateLimit("email_custom:" + ip, 20)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   // SECURITE 2026-10-08 : plus d'envoi anonyme depuis contact@luxyra.fr (appel serveur ou utilisateur connecte).
   const _acces = await lxGuardConnecte(request, env);
-  if (!_acces.ok) return jsonResponse({ error: "Authentification requise" }, 401);
+  if (!_acces.ok) {
+    // Cas de l'inscription (session parfois absente) : seulement vers l'equipe Luxyra, ou vers l'email
+    // d'un salon cree il y a moins de 30 minutes (email de bienvenue).
+    let _permis = false;
+    try {
+      const _b = await lxBodyCopie(request);
+      const _to = String((_b && _b.to) || "").toLowerCase().trim();
+      if (_to === "contact@luxyra.fr" || _to === "support@luxyra.fr") _permis = checkRateLimit("email_custom_equipe:" + ip, 5);
+      else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(_to)) {
+        const _depuis = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id&email=eq.${encodeURIComponent(_to)}&created_at=gte.${encodeURIComponent(_depuis)}&limit=1`, { headers: _sbHeaders(env) });
+        const _a = _r.ok ? await _r.json() : [];
+        _permis = Array.isArray(_a) && _a.length > 0 && checkRateLimit("email_custom_bienvenue:" + _to, 2);
+      }
+    } catch (_e) { _permis = false; }
+    if (!_permis) return jsonResponse({ error: "Authentification requise" }, 401);
+  }
   if (_acces.user && !checkRateLimit("email_custom_u:" + _acces.user.id, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const { to, toName, salonName, salonEmail, subject, htmlContent, textContent } = await request.json();
   if (!to || !subject) return jsonResponse({ error: "to et subject requis" }, 400);
