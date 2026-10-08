@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&display=swap" rel="stylesheet">
-<script src="lx-client.js"></script>
+<script src="/lx-client.js?v=20261008"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -169,7 +169,11 @@ function logout(){CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localS
 window.INVITE_TOKEN = (function(){
   try { var p = new URLSearchParams(window.location.search); return p.get("invite") || null; } catch(e){ return null; }
 })();
-if(window.INVITE_TOKEN){
+window.RESET_TOKEN = (function(){ try { var p = new URLSearchParams(window.location.search); return p.get("reset") || null; } catch(e){ return null; } })();
+window.RESET_RETOUR = (function(){ try { var p = new URLSearchParams(window.location.search); var r = p.get("retour") || ""; var u = new URL(r); return (u.protocol==="https:" && (u.hostname==="luxyra.fr" || /\.luxyra\.fr$/.test(u.hostname))) ? u.toString() : ""; } catch(e){ return ""; } })();
+if(window.RESET_TOKEN){
+  PAGE = "reset";
+} else if(window.INVITE_TOKEN){
   PAGE = "invite";  // override
 } else {
   loadSession();
@@ -204,6 +208,8 @@ function render(){
   if(PAGE==="login")h+=renderLogin();
   else if(PAGE==="register")h+=renderRegister();
   else if(PAGE==="invite")h+=renderInvite();
+  else if(PAGE==="forgot")h+=renderForgot();
+  else if(PAGE==="reset")h+=renderReset();
   else if(PAGE==="dashboard")h+=renderDashboard();
   
   h+='<div class="footer">Luxyra \u00a9 2026 \u2014 Tous droits r\u00e9serv\u00e9s</div>';
@@ -219,9 +225,59 @@ function renderLogin(){
   h+='<div class="fg"><label>Email</label><input id="lEmail" type="email" placeholder="votre@email.fr"></div>';
   h+='<div class="fg"><label>Mot de passe</label><input id="lPass" type="password" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" onkeydown="if(event.key===\'Enter\')doLogin()"></div>';
   h+='<button class="btn btn-gold" onclick="doLogin()">Se connecter</button>';
+  h+='<div style="text-align:center;margin-top:12px;font-size:14px"><a href="#" onclick="event.preventDefault();PAGE=\'forgot\';render()">Mot de passe oubli\u00e9 ?</a></div>';
   h+='<div style="text-align:center;margin-top:16px;font-size:14px">Pas encore de compte ? <a href="#" onclick="event.preventDefault();PAGE=\'register\';render()">Cr\u00e9er un compte</a></div>';
   h+='</div></div>';
   return h;
+}
+
+// ========== MOT DE PASSE OUBLIE (2026-10-08) ==========
+function renderForgot(){
+  var h='<div class="auth-page"><div class="auth-card">';
+  h+='<h1>Mot de passe oubli\u00e9</h1>';
+  h+='<div class="sub">Indiquez l\u2019email de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.</div>';
+  h+='<div class="err" id="forgotErr"></div><div id="forgotOk" style="display:none;color:#81c784;font-size:14px;margin:10px 0"></div>';
+  h+='<div class="fg"><label>Email</label><input id="fEmail" type="email" placeholder="votre@email.fr"></div>';
+  h+='<button class="btn btn-gold" id="btnForgot" onclick="doForgot()">Recevoir le lien</button>';
+  h+='<div style="text-align:center;margin-top:16px;font-size:14px"><a href="#" onclick="event.preventDefault();PAGE=\'login\';render()">Retour \u00e0 la connexion</a></div>';
+  h+='</div></div>';
+  return h;
+}
+async function doForgot(){
+  var email=(document.getElementById("fEmail").value||"").trim().toLowerCase();
+  if(!email){showErr("forgotErr","Indiquez votre email");return;}
+  var b=document.getElementById("btnForgot"); if(b){b.disabled=true;b.textContent="Envoi\u2026";}
+  var res=await LX.requestReset(email, "");
+  if(b){b.disabled=false;b.textContent="Recevoir le lien";}
+  if(!res.ok){showErr("forgotErr",res.data&&res.data.error?res.data.error:"Erreur, r\u00e9essayez");return;}
+  showMsg("forgotOk","Si un compte existe avec cet email, un lien vient de vous \u00eatre envoy\u00e9 (pensez \u00e0 regarder dans les courriers ind\u00e9sirables).","#81c784");
+}
+function renderReset(){
+  var h='<div class="auth-page"><div class="auth-card">';
+  h+='<h1>Nouveau mot de passe</h1>';
+  h+='<div class="sub">Choisissez un nouveau mot de passe (8 caract\u00e8res minimum).</div>';
+  h+='<div class="err" id="resetErr"></div>';
+  h+='<div class="fg"><label>Nouveau mot de passe</label><input id="rPass" type="password"></div>';
+  h+='<div class="fg"><label>Confirmer</label><input id="rPass2" type="password" onkeydown="if(event.key===\'Enter\')doReset()"></div>';
+  h+='<button class="btn btn-gold" id="btnResetC" onclick="doReset()">Enregistrer et me connecter</button>';
+  h+='</div></div>';
+  return h;
+}
+async function doReset(){
+  var p1=document.getElementById("rPass").value, p2=document.getElementById("rPass2").value;
+  if(!p1||p1.length<8){showErr("resetErr","Mot de passe : 8 caract\u00e8res minimum");return;}
+  if(p1!==p2){showErr("resetErr","Les mots de passe ne correspondent pas");return;}
+  try{ if(LX.checkPasswordLeaked && await LX.checkPasswordLeaked(p1)){ showErr("resetErr","Ce mot de passe a \u00e9t\u00e9 expos\u00e9 dans une fuite de donn\u00e9es connue. Choisissez-en un autre."); return; } }catch(_e){}
+  var b=document.getElementById("btnResetC"); if(b){b.disabled=true;b.textContent="Enregistrement\u2026";}
+  var res=await LX.confirmReset(window.RESET_TOKEN, p1);
+  if(!res.ok){ if(b){b.disabled=false;b.textContent="Enregistrer et me connecter";} showErr("resetErr",res.data&&res.data.error?res.data.error:"Lien invalide ou expir\u00e9"); return; }
+  var lg=await LX.login(res.data.email, p1);
+  try{ history.replaceState({},"","/compte.html"); }catch(_e){}
+  if(lg.ok){
+    CLIENT=lg.data.user; saveSession();
+    if(window.RESET_RETOUR){ window.location.href=window.RESET_RETOUR; return; }
+    PAGE="dashboard";TAB="rdv";loadMyRdvs();render();
+  } else { PAGE="login"; render(); }
 }
 
 // ========== REGISTER ==========

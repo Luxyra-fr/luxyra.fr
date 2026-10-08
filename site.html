@@ -126,7 +126,7 @@
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/lx-client.js"></script>
+<script src="/lx-client.js?v=20261008"></script>
 <script>
 /* ============================================================================
    FIX 2026-07-13 — RESERVATION IMPOSSIBLE sur /<slug>/reserver ("Can't find variable: LX")
@@ -1282,11 +1282,34 @@ function showAuthModal(mode){
     h+='</div>';
   }
   h+='<button class="btn btn-gold" style="width:100%;padding:10px;font-size:15px;margin-top:6px" onclick="'+(isLogin?'doClientLogin()':'doClientRegister()')+'">'+(isLogin?"Se connecter":"Cr\u00e9er mon compte")+'</button>';
+  if(isLogin) h+='<div class="auth-switch" style="margin-top:8px"><a onclick="showResetModal()">Mot de passe oubli\u00e9 ?</a></div>';
   h+='<div class="auth-switch">'+(isLogin?'Pas encore de compte ? <a onclick="showAuthModal(\'register\')">S\'inscrire</a>':'D\u00e9j\u00e0 un compte ? <a onclick="showAuthModal(\'login\')">Se connecter</a>')+'</div>';
   h+='</div></div>';
   document.getElementById("authModal").innerHTML=h;
 }
 function closeAuth(){document.getElementById("authModal").innerHTML="";}
+// 2026-10-08 : mot de passe oublie -> lien par email (valable 1 h), retour sur cette page apres changement.
+function showResetModal(){
+  var h='<div class="auth-modal" onclick="closeAuth()"><div class="auth-box" onclick="event.stopPropagation()">';
+  h+='<h2>Mot de passe oubli\u00e9</h2><div class="sub">Indiquez l\u2019email de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.</div>';
+  h+='<div class="err" id="authErr"></div><div id="resetOk" style="display:none;color:#81c784;font-size:13px;margin:8px 0"></div>';
+  h+='<div class="fg"><label>Email *</label><input id="aResetEmail" type="email" required></div>';
+  h+='<button class="btn btn-gold" id="btnReset" style="width:100%;padding:10px;font-size:15px;margin-top:6px" onclick="doResetRequest()">Recevoir le lien</button>';
+  h+='<div class="auth-switch"><a onclick="showAuthModal(\'login\')">Retour \u00e0 la connexion</a></div>';
+  h+='</div></div>';
+  document.getElementById("authModal").innerHTML=h;
+}
+async function doResetRequest(){
+  var email=(document.getElementById("aResetEmail").value||"").trim().toLowerCase();
+  if(!email){showAuthError("Indiquez votre email");return;}
+  if(!window.LX){ try{ await window._lxEnsure(); }catch(_e){} }
+  if(!window.LX||!LX.requestReset){showAuthError("Service momentan\u00e9ment indisponible. R\u00e9essayez dans un instant.");return;}
+  var b=document.getElementById("btnReset"); if(b){b.disabled=true;b.textContent="Envoi\u2026";}
+  var res=await LX.requestReset(email, window.location.href);
+  if(b){b.disabled=false;b.textContent="Recevoir le lien";}
+  if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Erreur, r\u00e9essayez");return;}
+  var ok=document.getElementById("resetOk"); if(ok){ok.style.display="block";ok.textContent="Si un compte existe avec cet email, un lien vient de vous \u00eatre envoy\u00e9 (pensez \u00e0 regarder dans les courriers ind\u00e9sirables).";}
+}
 function showAuthError(msg){var el=document.getElementById("authErr");if(el){el.textContent=msg;el.style.display="block";}}
 
 async function doClientRegister(){
