@@ -176,8 +176,14 @@
     }
   }
 
+  // 2026-10-08 : mot de passe oublie (lien par email, valable 1 h)
+  async function lxRequestReset(email, retour){ return await call("lx-password-reset", { action: "request", email: email, retour: retour || "" }); }
+  async function lxConfirmReset(token, password){ return await call("lx-password-reset", { action: "confirm", token: token, password: password }); }
+
   // Expose globalement
   window.LX = {
+    requestReset: lxRequestReset,
+    confirmReset: lxConfirmReset,
     signup: lxSignup,
     login: lxLogin,
     get: lxGet,
