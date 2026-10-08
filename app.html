@@ -2635,8 +2635,18 @@ SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.so
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
 
 // ===== PLAN PRO GATING =====
-function isPro(){return SALON_CONFIG.plan==="pro";}
-function isEssential(){return SALON_CONFIG.plan==="essential";}
+// 2026-10-08 (accord Alexandre) : pendant l'essai gratuit, toutes les fonctions Pro sont
+// ouvertes POUR LES MONTRER, SAUF l'envoi de SMS (aucun SMS offert avant le 1er paiement Pro).
+// isPro()      = fonctions Pro visibles/utilisables (abonné Pro OU essai en cours)
+// isProPaid()  = vraiment abonné Pro (SMS, affichage du forfait payé)
+function lxEssaiProActif(){ return SALON_CONFIG.plan!=="pro" && !hasActiveSubscription() && Number(window._trialDaysLeft)>0; }
+function isProPaid(){return SALON_CONFIG.plan==="pro";}
+function isPro(){return SALON_CONFIG.plan==="pro" || lxEssaiProActif();}
+function isEssential(){return SALON_CONFIG.plan==="essential" && !lxEssaiProActif();}
+function lxSmsEssaiInfo(){
+  var n=((window.LX_CONFIG&&LX_CONFIG.sms_bonus_first_pay)||150);
+  showAlert("\ud83d\udcf1 Les SMS ne sont pas disponibles pendant l\u2019essai gratuit.\n\nIls s\u2019activent d\u00e8s votre abonnement au forfait Pro : "+n+" SMS vous sont alors offerts, une seule fois, au 1er paiement.","info");
+}
 function hasActiveSubscription(){return window._trialDaysLeft===null||window._trialDaysLeft===undefined;}
 function isTrialExpired(){
   if(hasActiveSubscription())return false;
@@ -3011,7 +3021,7 @@ async function openConnectDashboard(){
 function proGate(feature){if(isPro())return true;showUpgradeModal(feature);return false;}
 
 function showSwitchPlanModal(){
-  var curPro=isPro();
+  var curPro=isProPaid();
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:500px">';
   h+='<div style="text-align:center;margin-bottom:20px"><h2 style="color:var(--gold)">Changer de forfait</h2>';
   h+='<div style="font-size:13px;color:var(--text3)">Forfait actuel : <strong>'+(curPro?'Pro '+lxPlanPriceLabel("pro")+'\u20ac':'Essentiel '+lxPlanPriceLabel("essential")+'\u20ac')+'</strong>/mois</div></div>';
@@ -13001,7 +13011,7 @@ function rSettings(){
       h+='<div class="card" style="display:flex;align-items:center;gap:14px;border:1px solid '+(dLeft<=3?'rgba(239,83,80,.3)':'rgba(212,168,67,.3)')+';margin-bottom:16px">';
       h+='<div style="font-size:28px">'+(dLeft<=0?'\u23f0':'\u2728')+'</div>';
       h+='<div style="flex:1"><div style="font-weight:700;font-size:15px">'+(dLeft<=0?'<span style="color:#ef5350">Essai termin\u00e9</span>':'<span style="color:var(--gold)">Essai gratuit</span>')+'</div>';
-      h+='<div style="font-size:12px;color:var(--text3)">'+(dLeft>0?dLeft+' jour'+(dLeft>1?'s':'')+' restant'+(dLeft>1?'s':''):'Choisissez un forfait pour continuer')+'</div></div>';
+      h+='<div style="font-size:12px;color:var(--text3)">'+(dLeft>0?dLeft+' jour'+(dLeft>1?'s':'')+' restant'+(dLeft>1?'s':''):'Choisissez un forfait pour continuer')+'</div>'+(dLeft>0?'<div style="font-size:11px;color:var(--text3);margin-top:3px">Toutes les fonctions Pro sont ouvertes pour l\u2019essai (site, r\u00e9servation en ligne, paiements en ligne\u2026). Les SMS s\u2019activent \u00e0 l\u2019abonnement Pro.</div>':'')+'</div>';
       h+='<button onclick="showPlanChoiceModal(false)" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">S\u2019abonner</button>';
       h+='</div>';
     }else{
@@ -14170,7 +14180,7 @@ function rSettings(){
     h+='<div style="display:flex;justify-content:space-between;align-items:center">';
     h+='<div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:700">\ud83d\udcf1 Solde SMS</div>';
     h+='<div style="font-size:28px;font-weight:900;color:#4caf50">'+smsCreds+'</div>';
-    h+='<div style="font-size:11px;color:var(--text3)">30 offerts chaque mois avec le plan Pro</div></div>';
+    h+='<div style="font-size:11px;color:var(--text3)">'+(lxEssaiProActif()?'Les SMS s\u2019activent \u00e0 l\u2019abonnement Pro':(((window.LX_CONFIG&&LX_CONFIG.sms_bonus_first_pay)||150)+' offerts une seule fois au 1er paiement Pro'))+'</div></div>';
     h+='<button class="btn" style="background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3);font-weight:700;padding:10px 16px" onclick="go(\'marketing\')">Acheter des SMS</button>';
     h+='</div></div>';
 
@@ -30936,7 +30946,7 @@ async function doSendConfirm(mode,rdvId){
   else showAlert("\u274c Erreur : "+errors.join("\n"),"error");
 }
 async function sendSms(phone,message,context,clientNom){
-  if(!isPro()){showUpgradeModal("SMS");return{ok:false,error:"pro_required"};}
+  if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); return{ok:false,error:"pro_required"};}
   if((window.SMS_MODE||"brevo")==="native"){
     return await sendSmsNative(phone,message,context,clientNom);
   }
@@ -30953,7 +30963,7 @@ async function sendSms(phone,message,context,clientNom){
     htm+='<button onclick="cM();buySMSPack(500)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">500 SMS \u2014 '+lxSmsPackPriceLabel(500)+'\u20ac</button>';
     if(lxPack1000On()) htm+='<button onclick="cM();buySMSPack(1000)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">1000 SMS \u2014 '+lxSmsPackPriceLabel(1000)+'\u20ac</button>';
     htm+='</div>';
-    if(isPro())htm+='<div style="font-size:11px;color:rgba(255,255,255,.3);margin-bottom:8px">150 SMS bonus offerts une seule fois au 1er paiement Pro effectif</div>';
+    if(isProPaid())htm+='<div style="font-size:11px;color:rgba(255,255,255,.3);margin-bottom:8px">150 SMS bonus offerts une seule fois au 1er paiement Pro effectif</div>';
     htm+='<button onclick="cM()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;cursor:pointer">Fermer</button>';
     htm+='</div></div>';
     document.getElementById("modal").innerHTML=htm;
@@ -31119,6 +31129,7 @@ async function setSmsMode(mode){
 }
 // === Affiche le modal avec QR code pour lier un t\u00e9l\u00e9phone Android ===
 async function showSmsNativeLinkQR(){
+  if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); return; }
   // Loader pendant la g\u00e9n\u00e9ration du token
   var loadingHtm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px"><div style="padding:40px 20px"><div style="font-size:32px;margin-bottom:12px">\u23f3</div><div style="font-size:14px;color:var(--text3)">G\u00e9n\u00e9ration du QR code...</div></div></div></div>';
   document.getElementById("modal").innerHTML=loadingHtm;
@@ -31329,7 +31340,7 @@ async function checkSmsReminders(){
     return;
   }
   window._lxSmsSilenceLogged=false;
-  var canSms=isPro(); // SMS requires Pro plan
+  var canSms=isProPaid(); // SMS : forfait Pro PAYE uniquement (jamais pendant l'essai)
   var now=new Date();
   var todayStr=dS(now);
   var tomorrowD=new Date(now);tomorrowD.setDate(tomorrowD.getDate()+1);
@@ -31506,6 +31517,7 @@ function testEmail(){
 }
 
 async function buySMSPack(qty){
+  if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); return; }
   // Prix lus dynamiquement depuis app_config via lxSmsPackPrice (centralisation)
   var priceDisplay = lxSmsPackPriceLabel(qty) || "?";
   showConfirm("Acheter "+qty+" SMS pour "+priceDisplay+"\u20ac ?",async function(){
@@ -31910,7 +31922,7 @@ function sendCarteWelcome(clientId,carteClient){
 
 function checkCarteReminders(){
   var cfg=window.SMS_CONFIG;if(!cfg)return;
-  var canSms=isPro();
+  var canSms=isProPaid();
   var today=new Date();var todayStr=dS(today);
   var d30=new Date(today);d30.setDate(d30.getDate()+30);var d30Str=dS(d30);
   var d7=new Date(today);d7.setDate(d7.getDate()+7);var d7Str=dS(d7);
