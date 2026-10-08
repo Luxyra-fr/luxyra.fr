@@ -223,3 +223,5 @@ n'est pas modifiée ; aucune donnée fiscale (tickets, clôtures, journal) n'a �
 le journal d'audit doit faire l'objet d'une nouvelle entrée dans ce registre, décrivant
 la nature de l'intervention, sa cause, et les vérifications établissant l'absence
 d'altération des données fiscales.*
+
+- **2026-10-08 (soir)** — Clôture automatique de nuit : Delphinecoiff suspendue aussi la nuit du 08→09/10 (`lx_prive.lancer_cloture_auto`, condition de date étendue au 09/10). Motif : décision reportée par Alexandre (appel avec la cliente le 09/10) sur la clôture du 05/10 et les 5 tickets à 20 %. Aucune donnée fiscale modifiée, aucun autre salon concerné. À partir du 10/10 : comportement normal.
