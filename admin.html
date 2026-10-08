@@ -215,13 +215,18 @@ async function lxPushDisable(id){
     if(typeof render==="function")render();
   }catch(e){console.error(e);}
 }
+// 2026-10-07 : les fonctions serveur exigent la session de l'admin (plus la cle publique).
+async function lxAdminJeton(){
+  try{ var s=await _sb.auth.getSession(); return (s&&s.data&&s.data.session&&s.data.session.access_token)||SUPABASE_KEY; }catch(e){ return SUPABASE_KEY; }
+}
 async function lxPushToggleEvent(id,field,val){
   var u={};u[field]=val;await _sb.from("push_subscriptions").update(u).eq("id",id);
 }
 async function lxPushTest(){
   try{
+    var _jt=await lxAdminJeton();
     var r=await fetch((window.SUPABASE_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/send-push",{
-      method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+SUPABASE_KEY,"apikey":SUPABASE_KEY},
+      method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+_jt,"apikey":SUPABASE_KEY},
       body:JSON.stringify({event_type:"chat",title:"🔔 Test Luxyra",body:"Notification push fonctionnelle ✓",url:"https://luxyra.fr/admin",target_user_id:_uid})});
     var j=await r.json();alert("Envoyées: "+(j.sent||0)+" / Échecs: "+(j.failed||0)+" / Nettoyées: "+(j.cleaned||0));
   }catch(e){alert("Erreur test : "+e.message);}
@@ -2911,11 +2916,12 @@ async function updMig(id,st){
 
 async function lxTestMigrationPush(){
   try {
+    var _jt=await lxAdminJeton();
     var r = await fetch((window.SUPABASE_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/send-push",{
       method:"POST",
       headers:{
         "Content-Type":"application/json",
-        "Authorization":"Bearer "+SUPABASE_KEY,
+        "Authorization":"Bearer "+_jt,
         "apikey":SUPABASE_KEY
       },
       body:JSON.stringify({

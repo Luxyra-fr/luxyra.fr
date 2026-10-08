@@ -1411,12 +1411,16 @@ function renderSite(){
       }).then(function(r){return r.json();}).then(function(){
         window.history.replaceState({},"",buildSalonUrl());
       }).catch(function(){
-        sb.from("rdv_online").update({status:_finStatus,acompte_paye:true}).eq("id",_rdvId).then(function(){window.history.replaceState({},"",buildSalonUrl());});
+        // 2026-10-08 : plus de validation directe depuis le navigateur (contournable). Nouvel essai,
+        // puis signalement : le salon voit le paiement Stripe et peut valider le RDV.
+        setTimeout(function(){
+          fetch("/api/stripe/acompte-finalize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:_sidPay,rdv_id:_rdvId,status:_finStatus})})
+            .catch(function(){ try{ if(typeof _lxReportPublic==="function") _lxReportPublic("acompte-finalize indisponible rdv "+_rdvId); }catch(_e){} });
+          window.history.replaceState({},"",buildSalonUrl());
+        },2000);
       });
     }else{
-      sb.from("rdv_online").update({status:_finStatus,acompte_paye:true}).eq("id",_rdvId).then(function(){
-        window.history.replaceState({},"",buildSalonUrl());
-      });
+      window.history.replaceState({},"",buildSalonUrl());
     }
     // Show success page
     var el=document.getElementById("app"); if(!el) return; // garde-fou : conteneur absent
@@ -3975,7 +3979,7 @@ async function askCancelRdv(rdvId){
 async function doCancelRdv(rdvId){
   var msg=(document.getElementById("cancelMsg")||{}).value||"";
   try{
-    var res=await fetch("/api/rdv/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rdv_id:rdvId,reason:msg,cancelled_by:"client"})});
+    var res=await fetch("/api/rdv/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rdv_id:rdvId,reason:msg,cancelled_by:"client",session_token:(window.LX&&LX.getToken)?LX.getToken():""})});
     var result=await res.json();
     if(!result.success){showAlert("Erreur: "+(result.error||"annulation impossible"),"error");return;}
     document.querySelector(".modify-modal").remove();

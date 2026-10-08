@@ -341,6 +341,35 @@ body{max-width:100%;margin:0 auto;}
 <body>
 <div class="app-bg" id="appBg"></div>
 <div class="header" id="hdr" style="display:none"></div><div id="app"></div><div id="modal"></div><div id="rdvPopup"></div>
+<script>
+// SECURITE 2026-10-08 : les routes serveur /api/* exigent la session du salon. Ce relais ajoute
+// automatiquement le jeton de connexion aux appels vers luxyra.fr/api/ qui n'en ont pas.
+(function(){
+  if(window.__lxFetchAuth) return; window.__lxFetchAuth=true;
+  var _f=window.fetch.bind(window);
+  window.fetch=function(input, init){
+    try{
+      var url=(typeof input==="string")?input:null;
+      if(url){
+        var u=new URL(url, window.location.href);
+        if(u.origin===window.location.origin && u.pathname.indexOf("/api/")===0){
+          init=init||{};
+          var h=new Headers(init.headers||{});
+          if(!h.has("Authorization") && typeof _sb!=="undefined" && _sb && _sb.auth && _sb.auth.getSession){
+            return _sb.auth.getSession().then(function(s){
+              var t=s&&s.data&&s.data.session&&s.data.session.access_token;
+              if(t) h.set("Authorization","Bearer "+t);
+              init.headers=h;
+              return _f(input, init);
+            }, function(){ return _f(input, init); });
+          }
+        }
+      }
+    }catch(e){}
+    return _f(input, init);
+  };
+})();
+</script>
 <script src="supabase.min.js"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
      HTML (nécessaire pour que checkSession() soit défini AVANT tout inline script de
@@ -8054,14 +8083,18 @@ function lxSubmitMigrationModal(){
   var SB_URL = window.SB_URL_GLOBAL || "https://kxdgjtvrkwugbifgppai.supabase.co";
   var SB_KEY = window.SB_KEY_GLOBAL || "";
 
-  fetch(SB_URL + "/functions/v1/migration-request", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": SB_KEY,
-      "Authorization": "Bearer " + SB_KEY
-    },
-    body: JSON.stringify(payload)
+  // 2026-10-08 : la session du salon est envoyee (le serveur verifie que la demande vient bien du salon).
+  Promise.resolve((typeof _sb!=="undefined"&&_sb&&_sb.auth)?_sb.auth.getSession().catch(function(){return null;}):null).then(function(_s){
+    var _tok=(_s&&_s.data&&_s.data.session&&_s.data.session.access_token)||SB_KEY;
+    return fetch(SB_URL + "/functions/v1/migration-request", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SB_KEY,
+        "Authorization": "Bearer " + _tok
+      },
+      body: JSON.stringify(payload)
+    });
   }).then(function(res){
     return res.json().then(function(data){ return { ok: res.ok, status: res.status, data: data }; }).catch(function(){ return { ok: res.ok, status: res.status, data: null }; });
   }).then(function(r){
