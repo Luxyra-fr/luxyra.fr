@@ -210,6 +210,15 @@ et tous les salons, dont Delphinecoiff, reprennent le fonctionnement normal dès
 
 ---
 
+## 8 octobre 2026 — durcissement de sécurité (sans effet sur les données fiscales)
+
+Dans le cadre d'une revue de sécurité, les fonctions de déclencheur de la base (dont celles qui protègent l'inaltérabilité :
+`audit_log_inalterable`, `archives_nf525_inalterable`, `clotures_periodiques_inalterable`, `factures_clients_inalterable`)
+ont reçu un chemin de recherche figé (`search_path`) et ne sont plus appelables directement depuis l'extérieur. Leur logique
+n'est pas modifiée ; aucune donnée fiscale (tickets, clôtures, journal) n'a été lue en écriture ni modifiée.
+
+---
+
 *Toute intervention technique ultérieure laissant une trace de type « bypass » dans
 le journal d'audit doit faire l'objet d'une nouvelle entrée dans ce registre, décrivant
 la nature de l'intervention, sa cause, et les vérifications établissant l'absence

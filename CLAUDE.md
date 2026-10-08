@@ -1400,3 +1400,25 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
   vues `v_js_errors_*`, `admin_cron_health` plus lisibles par anon.
 - **Clôture auto** : `lx_prive.lancer_cloture_auto()` saute Delphinecoiff UNIQUEMENT si date Paris = 2026-10-08
   (registre NF525). Code mort ensuite — pourra être retiré.
+
+## 2026-10-08 — Revue de sécurité complète (base, fonctions serveur, worker)
+
+**Règles à respecter désormais**
+- Worker `/api/*` : les routes d'UN salon (`LX_ROUTES_SALON` : stripe create-checkout/portal/switch-plan/connect-*,
+  admin/export-nf525, sms/rappel, sms/custom, sms/generate-link-token, client/invite) exigent
+  `Authorization: Bearer <JWT du propriétaire>` (vérifié via /auth/v1/user + salons.user_id) OU l'en-tête
+  `x-lx-internal: <clé service>` (appels serveur) OU le JWT de support@luxyra.fr.
+  `email/custom` : appel serveur ou utilisateur connecté. `email/ticket` : idem ou session cliente (`session_token`,
+  destinataire forcé). `email/welcome` : 410. `client/tickets` et `rdv/cancel` : `session_token` cliente obligatoire.
+- app.html : relais `window.fetch` qui ajoute automatiquement le jeton de session aux appels same-origin `/api/`.
+- Toute NOUVELLE edge function / fonction SQL qui appelle le worker doit envoyer `x-lx-internal`
+  (edge : `SB_SR` ; SQL : `lx_prive.cle_service()`).
+- Finalisations Stripe (acompte, empreinte, carte abo, bon cadeau) : métadonnée = cet objet, même salon, montant ≥ attendu,
+  jamais deux fois. Plus d'UPDATE anonyme de `rdv_online` (policy supprimée).
+- Webhooks Stripe sans secret : l'événement est relu chez Stripe, jamais cru sur parole.
+- Fonctions SECURITY DEFINER : déclencheurs et fonctions internes non exécutables par anon/authenticated ;
+  fonctions admin gardées par `is_caller_admin()` ; seules restent publiques : fn_salon_next_available_slot,
+  founders_stats, get_client_acompte_mode, get_monitoring_status, get_salon_id, is_admin, is_caller_admin, report_server_error.
+- `salons_public` : vue en lecture seule (elle était modifiable !), config filtrée par `lx_config_publique()`.
+- Connexion clientes (lx-login) : 8 échecs / 15 min par email, 30 par IP (table `login_attempts`). bp-* désactivées (410).
+- Tests : `/tmp/wt/test.mjs` (worker, 17/17), `/tmp/lx/fw.js` (relais du jeton).
