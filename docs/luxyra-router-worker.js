@@ -113,6 +113,12 @@ async function handleHealth(request, env) {
 // Wrapper séparé pour les handlers /api/* (séparé pour clarté)
 async function __wrappedApiHandler(request, url, env) {
     try {
+      // SECURITE 2026-10-08 : routes d'un salon -> proprietaire du salon (ou appel serveur / admin)
+      if (request.method === "POST" && LX_ROUTES_SALON.has(url.pathname)) {
+        const _b = await lxBodyCopie(request);
+        const _refus = await lxGuardSalon(request, env, _b && _b.salon_id);
+        if (_refus) return _refus;
+      }
       // Endpoint /health (GET) — monitoring externe
       if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
@@ -399,6 +405,80 @@ function _sbHeaders(env, opts = {}) {
 }
 
 // ============================================================
+// SECURITE 2026-10-08 : identification de l'appelant des routes /api/*
+// - appel serveur (edge functions, base) : en-tete x-lx-internal = cle service du projet ;
+// - salon connecte : Authorization: Bearer <JWT Supabase> + proprietaire du salon_id ;
+// - admin Luxyra : JWT de support@luxyra.fr.
+// ============================================================
+function lxEgal(a, b) { a = String(a || ""); b = String(b || ""); if (!a || a.length !== b.length) return false; let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r === 0; }
+const _lxInternalCache = new Map();
+async function lxIsInternal(request, env) {
+  const t = String(request.headers.get("x-lx-internal") || "").trim();
+  if (!t) return false;
+  if (env.SUPABASE_SERVICE_KEY && lxEgal(t, env.SUPABASE_SERVICE_KEY)) return true;
+  if (_lxInternalCache.has(t)) return _lxInternalCache.get(t);
+  let ok = false;
+  try {
+    const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (p && p.role === "service_role" && p.ref === "kxdgjtvrkwugbifgppai") {
+      // Cle service presentee sous une autre forme : verifiee aupres de Supabase (une seule fois)
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users?per_page=1`, { headers: { apikey: t, Authorization: "Bearer " + t } });
+      ok = r.ok;
+    }
+  } catch (e) { ok = false; }
+  if (_lxInternalCache.size > 50) _lxInternalCache.clear();
+  _lxInternalCache.set(t, ok);
+  return ok;
+}
+async function lxAuthUser(request) {
+  const t = String(request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (!t || t === CONFIG.SUPABASE_ANON_KEY) return null;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: CONFIG.SUPABASE_ANON_KEY, Authorization: "Bearer " + t } });
+    if (!r.ok) return null;
+    const u = await r.json();
+    return (u && u.id) ? u : null;
+  } catch (e) { return null; }
+}
+function lxIsAdminUser(u) { return !!(u && String(u.email || "").toLowerCase() === "support@luxyra.fr"); }
+async function lxOwnsSalon(env, userId, salonId) {
+  if (!userId || !salonId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId))) return false;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id&id=eq.${encodeURIComponent(salonId)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`, { headers: _sbHeaders(env) });
+    if (!r.ok) return false;
+    const a = await r.json();
+    return Array.isArray(a) && a.length > 0;
+  } catch (e) { return false; }
+}
+async function lxBodyCopie(request) { try { return await request.clone().json(); } catch (e) { return {}; } }
+// null si autorise, sinon une reponse 401/403 a renvoyer telle quelle.
+async function lxGuardSalon(request, env, salonId) {
+  if (await lxIsInternal(request, env)) return null;
+  const u = await lxAuthUser(request);
+  if (!u) return jsonResponse({ error: "Authentification requise" }, 401);
+  if (lxIsAdminUser(u)) return null;
+  if (!(await lxOwnsSalon(env, u.id, salonId))) return jsonResponse({ error: "Accès refusé" }, 403);
+  return null;
+}
+// Appel serveur OU utilisateur connecte (n'importe quel salon) OU admin.
+async function lxGuardConnecte(request, env) {
+  if (await lxIsInternal(request, env)) return { ok: true, internal: true, user: null };
+  const u = await lxAuthUser(request);
+  if (!u) return { ok: false, user: null };
+  return { ok: true, internal: false, user: u };
+}
+// Routes qui agissent pour UN salon (salon_id dans le corps) : proprietaire du salon obligatoire.
+const LX_ROUTES_SALON = new Set([
+  "/api/stripe/create-checkout", "/api/stripe/portal", "/api/stripe/switch-plan",
+  "/api/stripe/connect-onboard", "/api/stripe/connect-status", "/api/stripe/connect-dashboard",
+  "/api/admin/export-nf525", "/api/sms/rappel", "/api/sms/custom", "/api/sms/generate-link-token",
+  "/api/client/invite"
+]);
+function lxUrlLuxyra(u) {
+  try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
+}
+
+// ============================================================
 // 1. CRÉER UNE SESSION CHECKOUT
 // ============================================================
 async function handleCreateCheckout(request, env) {
@@ -518,8 +598,16 @@ async function handleWebhook(request, env) {
       return jsonResponse({ error: "Invalid signature" }, 401);
     }
   } else {
-    console.warn("⚠️ STRIPE_WEBHOOK_SECRET not set — signature NOT verified!");
-    try { event = JSON.parse(payload); } catch (e) { return jsonResponse({ error: "Invalid payload" }, 400); }
+    // SECURITE 2026-10-08 : sans secret, l'evenement recu n'est PAS cru : il est relu chez Stripe.
+    let recu = null;
+    try { recu = JSON.parse(payload); } catch (e) { return jsonResponse({ error: "Invalid payload" }, 400); }
+    if (!recu || typeof recu.id !== "string" || !/^evt_[A-Za-z0-9]+$/.test(recu.id)) return jsonResponse({ error: "Invalid event" }, 400);
+    const relu = await stripeAPI(env, `events/${recu.id}`, null, "GET");
+    if (!relu || relu.error || relu.id !== recu.id) {
+      await reportWorkerError(env, "worker:stripe-webhook", new Error("STRIPE_WEBHOOK_SECRET absent et evenement non verifiable"), { event_id: recu.id }, "critical");
+      return jsonResponse({ error: "Event not verifiable" }, 401);
+    }
+    event = relu;
   }
 
   const type = event.type;
@@ -1008,6 +1096,20 @@ async function handleConnectPayment(request, env) {
   try {
     const { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await readJsonBody(request);
     if (!salon_id || !amount) return jsonResponse({ error: "salon_id et amount requis" }, 400);
+    // SECURITE 2026-10-08 : montants et redirections bornes ; un acompte/une empreinte doit viser un RDV de CE salon.
+    if (!(Number(amount) > 0 && Number(amount) <= 5000)) return jsonResponse({ error: "Montant invalide" }, 400);
+    if (metadata?.return_url && !lxUrlLuxyra(metadata.return_url)) return jsonResponse({ error: "URL de retour invalide" }, 400);
+    if (metadata?.cancel_url && !lxUrlLuxyra(metadata.cancel_url)) return jsonResponse({ error: "URL d'annulation invalide" }, 400);
+    {
+      const _type = metadata?.type || "acompte";
+      if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
+        const _rid = String(metadata?.rdv_id || "");
+        if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _a = _r.ok ? await _r.json() : [];
+        if (!Array.isArray(_a) || !_a[0] || String(_a[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Rendez-vous introuvable pour ce salon" }, 400);
+      }
+    }
 
     const salon = await supabaseGet(env, salon_id);
     if (!salon?.stripe_connect_id) return jsonResponse({ error: "Ce salon n'a pas configuré ses paiements en ligne" }, 400);
@@ -1158,12 +1260,24 @@ async function handleEmpreinteFinalize(request, env) {
     if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
     // Pour empreinte (manual capture), payment_status="paid" = client a autorisé (PI en requires_capture)
     if (session.payment_status !== "paid") return jsonResponse({ error: "Autorisation non confirmée: " + session.payment_status }, 402);
-    // Anti-tampering : vérifier que le rdv_id de la metadata Stripe correspond
-    if (session.metadata?.rdv_id && session.metadata.rdv_id !== String(rdv_id)) {
-      return jsonResponse({ error: "rdv_id mismatch (anti-tampering)" }, 403);
+    // SECURITE 2026-10-08 : la session doit porter CE rdv, etre une empreinte, et du meme salon.
+    if (!session.metadata || String(session.metadata.rdv_id || "") !== String(rdv_id) || session.metadata.subtype !== "empreinte") {
+      return jsonResponse({ error: "Session non liée à ce rendez-vous" }, 403);
     }
     const piId = session.payment_intent;
     if (!piId) return jsonResponse({ error: "PaymentIntent introuvable dans la session" }, 500);
+    {
+      const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,empreinte_payment_intent_id&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const _a = _r.ok ? await _r.json() : [];
+      const _rdv = Array.isArray(_a) ? _a[0] : null;
+      if (!_rdv) return jsonResponse({ error: "RDV introuvable" }, 404);
+      if (String(session.metadata.salon_id || "") !== String(_rdv.salon_id)) return jsonResponse({ error: "Session non liée à ce salon" }, 403);
+      if (_rdv.empreinte_payment_intent_id) {
+        if (String(_rdv.empreinte_payment_intent_id) === String(piId)) return jsonResponse({ ok: true, payment_intent_id: piId, deja: true });
+        return jsonResponse({ error: "Empreinte déjà enregistrée pour ce rendez-vous" }, 409);
+      }
+      if (_rdv.status && _rdv.status !== "pending_payment") return jsonResponse({ error: "Rendez-vous déjà traité" }, 409);
+    }
 
     // 2) Update rdv_online avec le PI ID + statut empreinte
     const sbUrl = CONFIG.SUPABASE_URL;
@@ -1524,7 +1638,14 @@ async function handleEmailTicket(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkRateLimit("email_ticket:" + ip, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const body = await request.json();
-  const { clientEmail, clientName, salonName, salonEmail, ticketNum, ticketHtml, clientId } = body;
+  let { clientEmail, clientName, salonName, salonEmail, ticketNum, ticketHtml, clientId } = body;
+  // SECURITE 2026-10-08 : salon connecte / appel serveur, OU cliente connectee (uniquement vers SA propre adresse)
+  const _acces = await lxGuardConnecte(request, env);
+  if (!_acces.ok) {
+    const _cl = body.session_token ? await verifyClientSession(body.session_token, env) : null;
+    if (!_cl || !_cl.email) return jsonResponse({ error: "Authentification requise" }, 401);
+    clientEmail = _cl.email; clientId = null; salonEmail = null;
+  }
   if (!clientEmail || !ticketNum) return jsonResponse({ error: "clientEmail et ticketNum requis" }, 400);
   if (!ticketHtml) return jsonResponse({ error: "ticketHtml requis" }, 400);
   // FIX 2026-05-14 : lien désinscription RGPD obligatoire si clientId fourni
@@ -1548,6 +1669,8 @@ async function handleEmailTicket(request, env) {
 }
 
 async function handleEmailWelcome(request, env) {
+  // SECURITE 2026-10-08 : route sans appelant connu -> reservee aux appels serveur.
+  if (!(await lxIsInternal(request, env))) return jsonResponse({ error: "Route desactivee" }, 410);
   const body = await request.json();
   const { email, nom, prenom, nomSalon, plan, identifiant, motDePasse } = body;
   if (!email) return jsonResponse({ error: "email requis" }, 400);
@@ -1559,6 +1682,10 @@ async function handleEmailWelcome(request, env) {
 async function handleEmailCustom(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkRateLimit("email_custom:" + ip, 20)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
+  // SECURITE 2026-10-08 : plus d'envoi anonyme depuis contact@luxyra.fr (appel serveur ou utilisateur connecte).
+  const _acces = await lxGuardConnecte(request, env);
+  if (!_acces.ok) return jsonResponse({ error: "Authentification requise" }, 401);
+  if (_acces.user && !checkRateLimit("email_custom_u:" + _acces.user.id, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const { to, toName, salonName, salonEmail, subject, htmlContent, textContent } = await request.json();
   if (!to || !subject) return jsonResponse({ error: "to et subject requis" }, 400);
   const result = await brevoSendEmail(env, { to, toName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: salonEmail, subject, htmlContent: htmlContent || "", textContent: textContent || "", attachment: null });
@@ -1689,8 +1816,11 @@ async function handleSmsCustom(request, env) {
 
 async function handleClientTickets(request, env) {
   try {
-    const { email } = await request.json();
-    if (!email) return jsonResponse({ error: "email requis" }, 400);
+    const _body = await request.json().catch(() => ({}));
+    // SECURITE 2026-10-08 : l'email vient de la SESSION de la cliente, jamais du corps de la requete.
+    const _sess = await verifyClientSession(_body.session_token, env);
+    if (!_sess || !_sess.email) return jsonResponse({ error: "session_token invalide ou expiré", tickets: [] }, 401);
+    const email = _sess.email;
     const sbKey = env.SUPABASE_SERVICE_KEY;
     if (!sbKey) return jsonResponse({ error: "configuration_error", tickets: [] });
     const headers = { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" };
@@ -1970,15 +2100,37 @@ async function handleAcompteFinalize(request, env) {
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
     const { session_id, rdv_id } = body;
     if (!session_id || !rdv_id) return jsonResponse({ error: "session_id et rdv_id requis" }, 400);
-    const wantStatus = (body.status === "pending" || body.status === "confirmed") ? body.status : "confirmed";
+    let wantStatus = (body.status === "pending" || body.status === "confirmed") ? body.status : "confirmed";
     const session = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
     if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
-    // Anti-tampering : le rdv_id de la metadata doit correspondre
-    if (session.metadata?.rdv_id && session.metadata.rdv_id !== String(rdv_id)) {
-      return jsonResponse({ error: "rdv_id mismatch (anti-tampering)" }, 403);
+    // SECURITE 2026-10-08 : la session doit porter CE rdv (acompte), du meme salon, du bon montant, payee une seule fois.
+    if (!session.metadata || String(session.metadata.rdv_id || "") !== String(rdv_id) || session.metadata.subtype === "empreinte" || (session.metadata.type && session.metadata.type !== "acompte")) {
+      return jsonResponse({ error: "Session non liée à ce rendez-vous" }, 403);
     }
     if (session.payment_status !== "paid") return jsonResponse({ error: "Paiement non confirmé: " + session.payment_status }, 402);
     const piId = session.payment_intent || null;
+    {
+      const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,payment_intent_id&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const _a = _r.ok ? await _r.json() : [];
+      const _rdv = Array.isArray(_a) ? _a[0] : null;
+      if (!_rdv) return jsonResponse({ error: "RDV introuvable" }, 404);
+      if (String(session.metadata.salon_id || "") !== String(_rdv.salon_id)) return jsonResponse({ error: "Session non liée à ce salon" }, 403);
+      if (_rdv.acompte_paye === true) {
+        if (piId && String(_rdv.payment_intent_id || "") === String(piId)) return jsonResponse({ ok: true, payment_intent_id: piId, deja: true });
+        return jsonResponse({ error: "Acompte déjà enregistré pour ce rendez-vous" }, 409);
+      }
+      const _attendu = Math.round((Number(_rdv.acompte_montant) || 0) * 100);
+      if (_attendu > 0 && typeof session.amount_total === "number" && session.amount_total < _attendu) {
+        await reportWorkerError(env, "worker:acompte-finalize", new Error("Montant paye different de l'acompte"), { rdv_id, paye: session.amount_total, attendu: _attendu }, "critical");
+        return jsonResponse({ error: "Montant payé incohérent" }, 409);
+      }
+      // Statut decide par le salon (confirmation automatique ou non), pas par la page.
+      try {
+        const _c = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=confirmation_auto&salon_id=eq.${encodeURIComponent(_rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+        const _ca = _c.ok ? await _c.json() : [];
+        if (Array.isArray(_ca) && _ca[0] && typeof _ca[0].confirmation_auto === "boolean") wantStatus = _ca[0].confirmation_auto ? "confirmed" : "pending";
+      } catch (_e) {}
+    }
     const patch = { acompte_paye: true, status: wantStatus };
     if (piId) { patch.payment_intent_id = piId; patch.stripe_payment_id = piId; }
     const upRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, {
@@ -2165,6 +2317,10 @@ async function handleClientRdvUpdate(request, env) {
     ];
     const patch = {};
     for (const k of ALLOWED) if (k in body) patch[k] = body[k];
+    // SECURITE 2026-10-08 : la cliente ne peut que ANNULER (statut), avec une date d'annulation serveur.
+    if ("status" in patch && patch.status !== "cancelled") delete patch.status;
+    delete patch.cancelled_at; delete patch.cancelled_by;
+    if (patch.status === "cancelled") { patch.cancelled_at = new Date().toISOString(); patch.cancelled_by = "client"; }
     if (Object.keys(patch).length === 0) return jsonResponse({ error: "rien à patcher" }, 400);
     const upd = await fetch(
       `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdvId)}`,
@@ -2277,18 +2433,30 @@ async function handleClientAnonymize(request, env) {
 // ============================================================
 async function handleRdvCancel(request, env) {
   try {
-    const { rdv_id, reason, cancelled_by } = await request.json();
-    if (!rdv_id) return jsonResponse({ error: "rdv_id requis" }, 400);
+    const { rdv_id, reason, session_token } = await request.json();
+    if (!rdv_id || !/^[0-9a-f-]{36}$/i.test(String(rdv_id))) return jsonResponse({ error: "rdv_id requis" }, 400);
     const sbKey = env.SUPABASE_SERVICE_KEY;
     if (!sbKey) return jsonResponse({ error: "config_error" }, 500);
-    const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${rdv_id}`, {
+    // SECURITE 2026-10-08 : seule la cliente proprietaire du RDV (session) peut l'annuler ici.
+    const session = await verifyClientSession(session_token, env);
+    if (!session) return jsonResponse({ error: "Connectez-vous pour annuler ce rendez-vous" }, 401);
+    const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+    const own = await ownRes.json();
+    if (!Array.isArray(own) || !own[0]) return jsonResponse({ error: "RDV introuvable" }, 404);
+    const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
+                 (own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
+    if (!owns) return jsonResponse({ error: "RDV non rattaché à votre compte" }, 403);
+    const patch = { status: "cancelled", cancel_reason: String(reason || "").slice(0, 500), cancelled_at: new Date().toISOString(), cancelled_by: "client" };
+    const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, {
       method: "PATCH",
       headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ status: "cancelled", cancel_reason: reason || "", cancelled_at: new Date().toISOString(), cancelled_by: cancelled_by || "client" })
+      body: JSON.stringify(patch)
     });
-    if (res.ok) return jsonResponse({ success: true });
-    return jsonResponse({ error: "Update failed", status: res.status }, 500);
-  } catch (err) { return jsonResponse({ error: err.message }); }
+    if (!res.ok) return jsonResponse({ error: "Update failed", status: res.status }, 500);
+    let refund = null;
+    try { refund = await refundAndRecord(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("refund on cancel:", e); }
+    return jsonResponse({ success: true, refund });
+  } catch (err) { return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 
 // ============================================================
@@ -2302,6 +2470,12 @@ async function handleClientInvite(request, env) {
     const { salon_id, client_id, email, client_nom, client_prenom, salon_nom, operator_name } = await request.json();
     if (!salon_id || !client_id || !email) return jsonResponse({ error: "salon_id, client_id, email requis" }, 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonResponse({ error: "Email invalide" }, 400);
+    // SECURITE 2026-10-08 : la fiche doit appartenir au salon et l'email etre celui de la fiche.
+    if (!/^[0-9a-f-]{36}$/i.test(String(client_id))) return jsonResponse({ error: "client_id invalide" }, 400);
+    const _clRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id,email&id=eq.${encodeURIComponent(client_id)}&salon_id=eq.${encodeURIComponent(salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+    const _cl = _clRes.ok ? await _clRes.json() : [];
+    if (!Array.isArray(_cl) || !_cl[0]) return jsonResponse({ error: "Fiche client introuvable pour ce salon" }, 403);
+    if (String(_cl[0].email || "").toLowerCase().trim() !== String(email).toLowerCase().trim()) return jsonResponse({ error: "L'email ne correspond pas à la fiche client" }, 403);
 
     // Insert l'invitation (token UUID auto via DEFAULT gen_random_uuid())
     const insertRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites`, {
@@ -2362,7 +2536,7 @@ async function handleClientInvite(request, env) {
       htmlContent: html, textContent, attachment: null
     });
 
-    return jsonResponse({ ok: true, token, inviteUrl });
+    return jsonResponse({ ok: true });
   } catch (e) {
     console.error("handleClientInvite error:", e);
     return jsonResponse({ error: e.message || "Erreur serveur" }, 500);
@@ -2400,20 +2574,8 @@ async function handleClientInviteVerify(request, env) {
       const signupData = await signupRes.json();
       authUserId = signupData.id || signupData.user?.id;
     } else if (signupRes.status === 422) {
-      // L'utilisateur existe déjà → on update juste le mot de passe
-      const findRes = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(invite.email)}`, {
-        headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
-      });
-      const found = await findRes.json();
-      const existingId = found.users?.[0]?.id;
-      if (existingId) {
-        await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users/${existingId}`, {
-          method: "PUT",
-          headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ password, email_confirm: true })
-        });
-        authUserId = existingId;
-      }
+      // SECURITE 2026-10-08 : un compte existe deja -> on ne change JAMAIS son mot de passe ici.
+      return jsonResponse({ error: "Un compte existe déjà avec cet email. Connectez-vous, ou utilisez « Mot de passe oublié »." }, 409);
     } else {
       const t = await signupRes.text();
       console.error("auth signup failed:", signupRes.status, t);
@@ -2449,7 +2611,8 @@ async function handleClientInviteVerify(request, env) {
 async function handleSalonAvailability(request, env) {
   try {
     const { salon_id, date_from, date_to } = await request.json();
-    if (!salon_id) return jsonResponse({ error: "salon_id requis" }, 400);
+    if (!salon_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salon_id))) return jsonResponse({ error: "salon_id requis" }, 400);
+    if ((date_from && !/^\d{4}-\d{2}-\d{2}$/.test(String(date_from))) || (date_to && !/^\d{4}-\d{2}-\d{2}$/.test(String(date_to)))) return jsonResponse({ error: "dates invalides" }, 400);
     const sbKey = env.SUPABASE_SERVICE_KEY;
     if (!sbKey) return jsonResponse({ error: "config_error" }, 500);
     const headers = { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" };
