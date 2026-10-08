@@ -810,8 +810,10 @@ async function handleWebhook(request, env) {
         // cancelled_at = ancrage légal des 6 ans de conservation des données comptables.
         // On ne l'écrase pas s'il est déjà défini (ré-résiliation, ou l'utilisateur a
         // résilié via /api/cancel-subscription qui set déjà cancelled_at).
-        const updates = { plan: "essential", status: "cancelled", past_due_since: null };
-        if (!salon?.cancelled_at) updates.cancelled_at = new Date().toISOString();
+        // Toujours la date de la DERNIÈRE résiliation effective : les 6 ans courent à partir
+        // de la fin réelle de l'abonnement (un ancien cancelled_at, ex. résiliation puis
+        // réabonnement, raccourcirait à tort la durée légale de conservation).
+        const updates = { plan: "essential", status: "cancelled", past_due_since: null, cancelled_at: new Date().toISOString() };
         await supabaseUpdate(env, salonId, updates);
         await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
       }
@@ -934,11 +936,26 @@ async function handleSwitchPlan(request, env) {
     if (!salon?.stripe_subscription_id) return jsonResponse({ error: "Pas d'abonnement actif" }, 400);
     const sub = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, {}, "GET");
     if (!sub?.items?.data?.[0]) return jsonResponse({ error: "Impossible de lire l'abonnement" }, 500);
-    const updated = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, {
+    // 2026-10-08 : même règle que create-checkout (CGV art. 5 bis) — un passage Essentiel → Pro
+    // bénéficie du tarif Fondateur tant qu'il reste des places (ou si le salon est déjà Fondateur).
+    // claim_founder_slot est atomique et idempotent : NULL = plus de place → tarif Pro standard.
+    let priceId = plan === "pro" ? CONFIG.PRICE_PRO : CONFIG.PRICE_ESSENTIAL;
+    let isFounder = false;
+    if (plan === "pro") {
+      try {
+        const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/claim_founder_slot`, {
+          method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon_id: salon_id })
+        });
+        if (r.ok) { const num = await r.json(); if (num !== null && num !== undefined) { priceId = CONFIG.PRICE_PRO_FOUNDER; isFounder = true; } }
+      } catch (e) { console.warn("[switch-plan] claim_founder_slot:", e?.message); }
+    }
+    const subParams = {
       "items[0][id]": sub.items.data[0].id,
-      "items[0][price]": plan === "pro" ? CONFIG.PRICE_PRO : CONFIG.PRICE_ESSENTIAL,
+      "items[0][price]": priceId,
       proration_behavior: "create_prorations",
-    });
+    };
+    if (plan === "pro") subParams["metadata[is_founder]"] = isFounder ? "true" : "false";
+    const updated = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, subParams);
     if (updated?.id) {
       await supabaseUpdate(env, salon_id, { plan: plan === "pro" ? "pro" : "essential" });
       if (plan !== "pro") await patchSiteConfig(env, salon_id, { site_actif: false, reservation_active: false });
@@ -3657,7 +3674,7 @@ async function sendRetentionWarningEmail(env, salon) {
   <div style="padding:32px 28px">
     <h2 style="color:#1a1a1a;font-size:20px;margin:0 0 16px">⏰ Préavis de suppression de vos données</h2>
     <p style="font-size:15px;line-height:1.6;color:#333">Bonjour,</p>
-    <p style="font-size:15px;line-height:1.6;color:#333">Votre abonnement Luxyra a été résilié il y a <strong>près de 6 ans</strong>. Conformément à la législation française (CGI art. L102 B), nous avons conservé vos documents comptables pendant cette période obligatoire.</p>
+    <p style="font-size:15px;line-height:1.6;color:#333">Votre abonnement Luxyra a été résilié il y a <strong>près de 6 ans</strong>. Conformément à la législation française (art. L102 B du Livre des procédures fiscales), nous avons conservé vos documents comptables pendant cette période obligatoire.</p>
     <div style="background:#fff8e6;border-left:4px solid #d4a843;padding:16px;margin:20px 0;border-radius:6px">
       <p style="margin:0;font-size:14px;color:#1a1a1a"><strong>📅 Vos données seront supprimées définitivement le <span style="color:#b8960f">${purgeFmt}</span></strong> (dans environ 30 jours).</p>
     </div>

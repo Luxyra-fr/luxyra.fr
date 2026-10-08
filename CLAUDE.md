@@ -1422,3 +1422,19 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 - `salons_public` : vue en lecture seule (elle était modifiable !), config filtrée par `lx_config_publique()`.
 - Connexion clientes (lx-login) : 8 échecs / 15 min par email, 30 par IP (table `login_attempts`). bp-* désactivées (410).
 - Tests : `/tmp/wt/test.mjs` (worker, 17/17), `/tmp/lx/fw.js` (relais du jeton).
+
+## 2026-10-08 — Textes : essai, conservation après résiliation, offre Pro Fondateur
+
+**Essai** : 14 jours sur le forfait **Essentiel** (code : salons.plan='essential', status='trial'). Les textes ne disent plus « accès complet / toutes les fonctionnalités ». Ouvrir le Pro pendant l'essai = changement de comportement, à faire seulement avec l'accord d'Alexandre.
+
+**Conservation après résiliation (règle unique, la même partout : CGV art. 9, politique de confidentialité §3/3.1, contrat 7.7 de l'inscription, tarifs, aide, securite-rgpd, bot)** :
+- résiliation effective → mode archives (lecture seule) ;
+- 60 jours : export complet ou réactivation à l'identique ;
+- après 60 jours : suppression des données personnelles non fiscales (fiches clients, notes, photos, RDV), art. 28 RGPD ;
+- documents comptables (tickets, Z, journal) : 6 ans à compter de la résiliation (art. L102 B LPF), préavis 30 jours, puis purge (worker, phase 6 ans, déjà en place, filtre status='cancelled').
+- ⚠️ À FAIRE AVANT LA PREMIÈRE VRAIE RÉSILIATION : la suppression automatique des données non fiscales à J+60 n'existe pas encore (aucun salon résilié aujourd'hui). Suppression = action irréversible → accord d'Alexandre avant d'activer.
+- Worker `customer.subscription.deleted` : `cancelled_at` = toujours la date de la DERNIÈRE résiliation (avant : l'ancien cancelled_at était gardé et raccourcissait les 6 ans). Le salon d'Amandine (status active) a un cancelled_at du 10/05/2026 resté d'un ancien abonnement : sans effet tant qu'il est actif.
+
+**Offre Pro Fondateur — CGV article 5 bis** : 100 premiers salons Pro, 14,99 €/mois au lieu de 24,99 €, prix garanti tant que l'abonnement Pro reste actif sans interruption ; fin en cas de résiliation, de passage à Essentiel ou d'impayé non régularisé ; nouvelle souscription au tarif Fondateur seulement s'il reste des places. Exception ajoutée à l'art. 5 (hausse de prix). Plus de « à vie » nulle part.
+- Worker `switch-plan` Essentiel → Pro : même règle que create-checkout (claim_founder_slot, NULL = plus de place → prix standard). Avant : 24,99 € facturés même s'il restait des places.
+- App : `lxPlanPrice("pro")` affiche 14,99 si `window._lxProFondateur` (salon Fondateur déjà au Pro, ou places restantes via founders_stats) → le prix affiché = le prix facturé.
