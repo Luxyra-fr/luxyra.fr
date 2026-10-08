@@ -1442,3 +1442,18 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 **Offre Pro Fondateur — CGV article 5 bis** : 100 premiers salons Pro, 14,99 €/mois au lieu de 24,99 €, prix garanti tant que l'abonnement Pro reste actif sans interruption ; fin en cas de résiliation, de passage à Essentiel ou d'impayé non régularisé ; nouvelle souscription au tarif Fondateur seulement s'il reste des places. Exception ajoutée à l'art. 5 (hausse de prix). Plus de « à vie » nulle part.
 - Worker `switch-plan` Essentiel → Pro : même règle que create-checkout (claim_founder_slot, NULL = plus de place → prix standard). Avant : 24,99 € facturés même s'il restait des places.
 - App : `lxPlanPrice("pro")` affiche 14,99 si `window._lxProFondateur` (salon Fondateur déjà au Pro, ou places restantes via founders_stats) → le prix affiché = le prix facturé.
+
+## 2026-10-08 (soir) — Fin d'essai bloquante, ventes produit hors planning, revue des écritures publiques
+
+**Fin d'essai** : écran de choix de forfait BLOQUANT (déjà au démarrage) + `lxControleFinEssai()` toutes les 5 min et au retour sur l'onglet (tablette jamais rechargée). Le retour `?checkout=success` ne débloque plus rien tant que la base n'a pas confirmé le paiement (`lxVerifierRetourPaiement`, 2 min max puis re-blocage) — avant, ajouter ce paramètre à l'URL contournait le blocage.
+
+**Vente de produit = 0 min au planning** (signalé par Amandine) : un encaissement direct a `a_phases = []` → le planning mettait 30 min par défaut. `_lxDureeTicketDirect(a)` = somme des PRESTATIONS uniquement (produits, bons, cartes, packs achetés, acomptes : 0). Vente sans prestation → aucun bloc ; vente produit + prestation → durée de la prestation seule. Même règle côté serveur : `lx_appt_sans_duree()` dans `rdv_online_block_double_booking`, et le worker `/availability` n'envoie plus ces ventes au site.
+
+**Revue des écritures publiques (RLS)** :
+- `rdv_online` : trigger `a_trg_rdv_online_insert_public_propre` — depuis le site (anon / pas le salon) impossible de créer une réservation « acompte payé », avec ids Stripe, remboursée, etc. ; « confirmed » seulement si `site_config.confirmation_auto`.
+- `commandes_online` : idem (`paye=false`, statut pending/pending_payment).
+- `salons` : création réservée à un compte connecté pour lui-même (avant : WITH CHECK true, même anonyme).
+- `produits_prix_historique` : insertion réservée au salon propriétaire.
+- `rdv_online_validate` : une réservation « sans préférence » était refusée dès qu'UN collaborateur avait une période d'absence (ex. collaboratrice partie, absence 31/08→31/10 chez Amandine). Corrigé.
+- site.html : le mode empreinte écrivait `empreinte_montant` (colonne inexistante → réservation refusée). Corrigé en `empreinte_amount` (aucun salon n'utilise ce mode aujourd'hui).
+- À savoir : Click & Collect (`commandes_online`) n'est lu nulle part dans l'app salon → fonction inachevée.

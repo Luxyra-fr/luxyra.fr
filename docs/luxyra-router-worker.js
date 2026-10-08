@@ -2673,10 +2673,17 @@ async function handleSalonAvailability(request, env) {
     const to = date_to || new Date(Date.now() + 31 * 86400000).toISOString().slice(0, 10);
     // 1. App appointments (RLS-protected table - needs service key)
     const apRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/appointments?select=date_rdv,heure,collab_id,service_id,status,a_phases,cancelled&salon_id=eq.${salon_id}&date_rdv=gte.${from}&date_rdv=lte.${to}&status=neq.canc`,
+      `${CONFIG.SUPABASE_URL}/rest/v1/appointments?select=date_rdv,heure,collab_id,service_id,status,a_phases,cancelled,from_caisse,items&salon_id=eq.${salon_id}&date_rdv=gte.${from}&date_rdv=lte.${to}&status=neq.canc`,
       { headers }
     );
-    const appointments = await apRes.json();
+    const appointmentsBrut = await apRes.json();
+    // 2026-10-08 : une vente directe sans prestation (produit, bon cadeau, carte…) n'occupe pas
+    // de créneau (avant : comptée 30 min côté site). On n'expose pas non plus le contenu des tickets.
+    const _sansDuree = (a) => a && a.from_caisse === true && !(Array.isArray(a.a_phases) && a.a_phases.length) && !a.service_id
+      && !(Array.isArray(a.items) && a.items.some((it) => it && (it.sId || it.isForfait)));
+    const appointments = Array.isArray(appointmentsBrut)
+      ? appointmentsBrut.filter((a) => !_sansDuree(a)).map(({ from_caisse, items, ...r }) => r)
+      : appointmentsBrut;
     // 2. Online RDV (may also be RLS-protected)
     // FIX 2026-05-12 : on récupère aussi created_at pour permettre au client de
     // filtrer les pending_payment stales (paiement abandonné depuis > 15 min).

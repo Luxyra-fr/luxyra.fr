@@ -2770,6 +2770,37 @@ async function startCheckout(plan){
   }
 }
 
+// === Fin d'essai : blocage obligatoire (2026-10-08, demande Alexandre) ===
+// 1) Retour de paiement : on attend la confirmation en base (2 min max), sinon on rebloque.
+function lxVerifierRetourPaiement(t0){
+  var sb=(typeof _sb!=="undefined"&&_sb)?_sb:window._sb;
+  if(!sb || !window._salonId){ if(Date.now()-t0 < 120000) setTimeout(function(){lxVerifierRetourPaiement(t0);},1500); return; }
+  sb.from("salons").select("plan,status,trial_end,is_free").eq("id",window._salonId).single().then(function(r){
+    var d=r&&r.data;
+    if(d && (d.status==="active" || d.is_free===true)){ SALON_CONFIG.plan=d.plan||SALON_CONFIG.plan; return; }
+    if(Date.now()-t0 < 120000){ setTimeout(function(){lxVerifierRetourPaiement(t0);},4000); return; }
+    // Paiement non confirmé : on remet l'état réel de l'essai
+    if(d){
+      SALON_CONFIG.plan=d.plan||"essential";
+      if(d.status==="trial" && d.trial_end){ window._trialEnd=d.trial_end; window._trialDaysLeft=Math.ceil((new Date(d.trial_end)-new Date())/86400000); }
+      lxControleFinEssai();
+    }
+  },function(){ if(Date.now()-t0 < 120000) setTimeout(function(){lxVerifierRetourPaiement(t0);},4000); });
+}
+// 2) L'app reste ouverte (tablette du salon) : on revérifie régulièrement l'échéance.
+function lxControleFinEssai(){
+  try{
+    if(!window._trialEnd || window._trialDaysLeft===null || window._trialDaysLeft===undefined) return;
+    window._trialDaysLeft=Math.ceil((new Date(window._trialEnd)-new Date())/86400000);
+    if(window._trialDaysLeft<=0 && !document.getElementById("planChoiceModal")){
+      if(typeof cM==="function") try{cM();}catch(_e){}
+      showPlanChoiceModal(true);
+    }
+  }catch(_e){}
+}
+setInterval(lxControleFinEssai, 5*60*1000);
+document.addEventListener("visibilitychange", function(){ if(document.visibilityState==="visible") lxControleFinEssai(); });
+
 // Gérer le retour de Stripe Checkout
 (function(){
   var params=new URLSearchParams(window.location.search);
@@ -2780,6 +2811,10 @@ async function startCheckout(plan){
     var _oldBanner=document.getElementById("trialBanner");if(_oldBanner)_oldBanner.remove();
     var _oldPlan=document.getElementById("planChoiceModal");if(_oldPlan)_oldPlan.remove();
     window.history.replaceState({},"",window.location.pathname);
+    // 2026-10-08 : le retour « checkout=success » ne débloque l'app QUE si le paiement est
+    // confirmé en base (webhook Stripe). Avant : ajouter ?checkout=success à l'adresse
+    // suffisait à contourner le blocage de fin d'essai.
+    lxVerifierRetourPaiement(Date.now());
     // POST-CHECKOUT : on n'affiche PLUS de modal "purge". Le user doit
     // utiliser le bouton "Réinitialiser le salon" dans Paramètres →
     // Établissement AVANT de souscrire (pendant l'essai). Une fois en abo
@@ -9727,6 +9762,45 @@ var SLOT=15,SLOT_H=28;
 
 // Get total duration of a service (sum of all phases)
 function svcTotalDur(sv){if(!sv||!sv.phases)return 30;var t=0;sv.phases.forEach(function(p){t+=p.d;});return t;}
+// 2026-10-08 : duree reelle d'un encaissement DIRECT (vente sans RDV) = somme des PRESTATIONS
+// seulement. Produits, bons cadeaux, cartes, packs achetes, acomptes, frais : 0 min.
+// Avant : une vente de produit seule apparaissait 30 min au planning (defaut "RDV").
+function _lxItemDuree(it){
+  if(!it||it.isSep||it.isProd||it.isBon||it.isCarteAbo||it.isAcompteDeduct) return 0;
+  if((Number(it.price)||0)<0) return 0;
+  var q=Number(it.qty)||1;
+  if(it.sId){ var sv=gS(it.sId); return sv?svcTotalDur(sv)*q:0; }
+  if(it.isForfait && typeof FORFAITS!=="undefined" && Array.isArray(FORFAITS)){
+    var f=null;
+    if(it.forfaitId) f=FORFAITS.find(function(x){return x.id===it.forfaitId;});
+    if(!f && typeof it.forfaitIdx==="number") f=FORFAITS[it.forfaitIdx];
+    if(f){
+      var d=Number(f.dur)||0;
+      if(!d && Array.isArray(f.phases)) f.phases.forEach(function(p){ if(p&&p.t!=="p") d+=Number(p.d)||0; });
+      if(!d && Array.isArray(f.services)) f.services.forEach(function(id){ var s2=gS(id); if(s2) d+=svcTotalDur(s2); });
+      return d*q;
+    }
+    return 0;
+  }
+  if(it.isPack) return 0;
+  if(it.name && typeof SVC!=="undefined" && Array.isArray(SVC)){
+    var nm=String(it.name).trim().toLowerCase();
+    var m=SVC.find(function(x){return x&&x.n&&String(x.n).trim().toLowerCase()===nm;});
+    if(m) return svcTotalDur(m)*q;
+  }
+  return 0;
+}
+function _lxDureeTicketDirect(a){
+  if(!a||!Array.isArray(a.items)) return 0;
+  var t=0; a.items.forEach(function(it){ t+=_lxItemDuree(it); }); return t;
+}
+// Phases a dessiner au planning pour un encaissement direct sans phases propres.
+function _lxPhasesTicketDirect(a){
+  var d=_lxDureeTicketDirect(a);
+  if(d<=0) return null;
+  var sv=gS(a.sId);
+  return [{t:"w",d:d,l:sv?sv.n:"Encaissement"}];
+}
 // Get work-only phases with absolute time offsets for an appointment
 function getWorkBlocks(a){
   var sv=gS(a.sId);var phases=a.aPhases||(sv?sv.phases:null);
@@ -10262,6 +10336,8 @@ function rPlanningDay(dateObj,showDayHeader){
     if(_lxIsContraTicket(a)) return false;
     // Exclure les tickets done sans service (pas de durée à représenter, ex: vente produit pure)
     if(a.st==="done" && !a.sId && (!a.aPhases||!a.aPhases.length) && (!a.items||!a.items.length)) return false;
+    // Vente directe sans aucune prestation (produits, bon cadeau, carte...) -> rien au planning
+    if(a.fromCaisse && (!a.aPhases||!a.aPhases.length) && _lxDureeTicketDirect(a)<=0) return false;
     return true;
   }).sort(function(a,b){return a.time<b.time?-1:1});
   if(!hrs){
@@ -10321,7 +10397,7 @@ function rPlanningDay(dateObj,showDayHeader){
     // Collect work blocks for this stylist only (handles delegated phases)
     var allWork=[];
     for(var j=0;j<sa.length;j++){
-      var _a2=sa[j],_sv2=gS(_a2.sId),_ph2=_a2.aPhases||(_sv2?_sv2.phases:null);
+      var _a2=sa[j],_sv2=gS(_a2.sId),_ph2=(_a2.aPhases&&_a2.aPhases.length)?_a2.aPhases:((_a2.fromCaisse&&_lxPhasesTicketDirect(_a2))||(_sv2?_sv2.phases:null));
       if(!_ph2||!_ph2.length){if(_a2.stId===sty.id){var _dd=_sv2?svcTotalDur(_sv2):30;allWork.push({start:toM(_a2.time),end:toM(_a2.time)+(_dd||30),a:_a2});}continue;}
       var _cur2=toM(_a2.time);
       for(var _pi2=0;_pi2<_ph2.length;_pi2++){var _p2=_ph2[_pi2];var _pStId=_p2.stId||_a2.stId;if(_p2.t==="w"&&_pStId===sty.id){allWork.push({start:_cur2,end:_cur2+_p2.d,a:_a2,label:_p2.l});}_cur2+=_p2.d;}
@@ -10332,7 +10408,7 @@ function rPlanningDay(dateObj,showDayHeader){
     for(var j=0;j<sa.length;j++){
       var a=sa[j],sv=gS(a.sId),cl=gC(a.cId);
       var colors=getSvcColor(sv?sv.cat:"Coupe");
-      var aPhases=a.aPhases||(sv?sv.phases:null);
+      var aPhases=(a.aPhases&&a.aPhases.length)?a.aPhases:((a.fromCaisse&&_lxPhasesTicketDirect(a))||(sv?sv.phases:null));
       if(!aPhases||!aPhases.length){
         var defDur=sv?svcTotalDur(sv):30;if(defDur<=0)defDur=30;
         aPhases=[{t:"w",d:defDur,l:sv?sv.n:"RDV"}];
@@ -24015,6 +24091,8 @@ function rStats(){
         a.items.forEach(function(it){
           if(it.isSep) return;
           if(it.isProd) return; // produits = pas d'occupation chaise
+          if(it.isBon||it.isCarteAbo||it.isAcompteDeduct||(it.isPack&&!it.sId)||(Number(it.price)||0)<0) return; // 2026-10-08 : pas une prestation
+          if(it.isForfait){ _iDur += _lxItemDuree(it); return; }
           var itQty = (Number(it.qty)||1);
           if(it.sId){
             var sv = gS(it.sId);
