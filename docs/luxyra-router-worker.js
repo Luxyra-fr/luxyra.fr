@@ -716,9 +716,18 @@ async function handleWebhook(request, env) {
           // Calcul HT/TVA/TTC : planPrix est interprété comme HT
           // → en franchise (tvaPct=0) : HT = TTC, TVA = 0 (comportement actuel inchangé)
           // → en SAS (tvaPct=20) : TVA et TTC calculés automatiquement
-          const ht = planPrix;
-          const tvaAmount = Math.round(ht * tvaPct) / 100;  // arrondi au centime
-          const ttc = Math.round((ht + tvaAmount) * 100) / 100;
+          let ht = planPrix;
+          let tvaAmount = Math.round(ht * tvaPct) / 100;  // arrondi au centime
+          let ttc = Math.round((ht + tvaAmount) * 100) / 100;
+          // 2026-10-08 : la facture reprend le montant REELLEMENT paye (tarif Fondateur, prorata, remise).
+          // Avant : prix catalogue -> un Pro Fondateur (14,99 EUR) aurait recu une facture a 24,99 EUR.
+          if (typeof data.amount_paid === "number" && data.amount_paid > 0) {
+            ttc = Math.round(data.amount_paid) / 100;
+            ht = Math.round((ttc / (1 + tvaPct / 100)) * 100) / 100;
+            tvaAmount = Math.round((ttc - ht) * 100) / 100;
+          }
+          let _fondateur = false;
+          try { const _s = await supabaseGet(env, salonId); _fondateur = !!(_s && _s.is_founder); } catch (_e) {}
           const sbUrl = CONFIG.SUPABASE_URL;
           const numRes = await fetch(`${sbUrl}/rest/v1/rpc/next_facture_numero`, {
             method: "POST",
@@ -743,7 +752,7 @@ async function handleWebhook(request, env) {
           } catch(e) {}
           const insertBody = {
             salon_id: salonId, numero, montant_ht: ht, taux_tva: tvaPct, montant_tva: tvaAmount, montant_ttc: ttc,
-            description: `Abonnement Luxyra ${plan === "pro" ? "Pro" : "Essentiel"} - Mensuel`,
+            description: `Abonnement Luxyra ${plan === "pro" ? (_fondateur ? "Pro Fondateur" : "Pro") : "Essentiel"} - Mensuel`,
             plan, periode_debut: periodStart, periode_fin: periodEnd,
             stripe_invoice_id: data.id || null, stripe_payment_intent: data.payment_intent || data.charge || null,
             mode_paiement: modePaiement, status: "paid"
