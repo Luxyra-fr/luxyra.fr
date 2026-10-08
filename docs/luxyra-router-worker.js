@@ -419,10 +419,11 @@ async function lxIsInternal(request, env) {
   if (_lxInternalCache.has(t)) return _lxInternalCache.get(t);
   let ok = false;
   try {
-    const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-    if (p && p.role === "service_role" && p.ref === "kxdgjtvrkwugbifgppai") {
-      // Cle service presentee sous une autre forme : verifiee aupres de Supabase (une seule fois)
-      const r = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users?per_page=1`, { headers: { apikey: t, Authorization: "Bearer " + t } });
+    // Cle service sous une autre forme (JWT ou cle secrete « sb_secret_… ») : seule une cle service
+    // du projet peut lister les comptes. Verifiee aupres de Supabase une fois par isolat.
+    if (t.length >= 30 && t !== CONFIG.SUPABASE_ANON_KEY) {
+      const _jwt = t.split(".").length === 3;
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users?per_page=1`, { headers: _jwt ? { apikey: t, Authorization: "Bearer " + t } : { apikey: t } });
       ok = r.ok;
     }
   } catch (e) { ok = false; }
