@@ -195,11 +195,15 @@ async function lxPushEnable(){
     var sub=await reg.pushManager.getSubscription();
     if(!sub){sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_b64ToU8(VAPID_PUBLIC_KEY)});}
     var j=sub.toJSON();
-    var row={admin_user_id:_uid,endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,
-      device_label:(navigator.userAgentData&&navigator.userAgentData.platform)||"Navigateur",
-      user_agent:navigator.userAgent,events_chat:true,events_inscription:true,events_kbis:true,events_stripe:true,
+    // 2026-10-08 : colonnes REELLES de la table + target_type "admin" (exige par la securite de la table).
+    // Avant : colonnes inexistantes (events_chat, device_label...) et pas de target_type -> l'enregistrement
+    // echouait en silence et AUCUN appareil admin n'etait abonne (aucune notification recue).
+    var row={target_type:"admin",admin_user_id:_uid,endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,
+      events_admin_reply:true,events_new_signup:true,events_critical:true,events_payment_failed:true,events_migration:true,
       last_used_at:new Date().toISOString()};
-    await _sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"});
+    var _up=await _sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"});
+    if(_up&&_up.error){ alert("Enregistrement de l'appareil impossible : "+_up.error.message); return false; }
+    alert("✅ Notifications activées sur cet appareil.");
     if(typeof render==="function")render();
     return true;
   }catch(e){console.error("lxPushEnable",e);alert("Erreur activation push : "+e.message);return false;}
@@ -239,7 +243,7 @@ async function lxRenderPushDevices(){
   var box=document.getElementById("pushDevicesBox");if(!box)return;
   var devs=await lxPushListDevices();
   if(!devs.length){box.innerHTML='<div style="padding:10px;color:var(--text3)">Aucun appareil enregistré. Cliquez sur <b>Activer cet appareil</b> ci-dessous.</div>';return;}
-  var EV=[["events_chat","💬 Chat"],["events_inscription","📝 Inscriptions"],["events_kbis","📄 Kbis"],["events_stripe","💳 Stripe"]];
+  var EV=[["events_admin_reply","💬 Chat support"],["events_new_signup","📝 Inscriptions"],["events_critical","🚨 Erreurs / alertes"],["events_payment_failed","💳 Paiements"],["events_migration","📦 Migrations"]];
   var h="";
   devs.forEach(function(d){
     var last=d.last_used_at?new Date(d.last_used_at).toLocaleDateString("fr-FR"):"jamais";
