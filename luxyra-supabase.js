@@ -1178,6 +1178,17 @@ async function loadSalonData() {
   SALON_CONFIG.isFounder = salon.is_founder === true;
   SALON_CONFIG.founderNum = salon.founder_num ? Number(salon.founder_num) : null;
   SALON_CONFIG.founderAt = salon.founder_at || null;
+  // Prix Pro affiché dans l'app = prix réellement facturé (CGV art. 5 bis) :
+  // tarif Fondateur si le salon est déjà Pro Fondateur, ou s'il reste des places.
+  try {
+    window._lxProFondateur = (salon.is_founder === true && salon.plan === "pro");
+    if (!window._lxProFondateur && salon.plan !== "pro") {
+      _sb.rpc("founders_stats").then(function(r){
+        var st = r && r.data && r.data[0];
+        if (st && Number(st.remaining) > 0) { window._lxProFondateur = true; if (typeof lxRefreshPriceElements === "function") lxRefreshPriceElements(); }
+      }, function(){});
+    }
+  } catch (_eF) {}
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
   if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
     var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
@@ -1787,7 +1798,7 @@ function showTrialExpiredScreen(salon) {
     '<div style="text-align:center;max-width:440px;padding:32px">'+
     '<div style="font-size:56px;margin-bottom:16px">⏰</div>'+
     '<h2 style="color:var(--gold,#d4a843);margin-bottom:8px;font-size:24px">Votre essai est terminé</h2>'+
-    '<p style="color:#94a3b8;margin-bottom:24px;font-size:15px;line-height:1.6">Merci d\u2019avoir testé Luxyra !<br>Pour continuer à utiliser toutes les fonctionnalités, choisissez votre formule.</p>'+
+    '<p style="color:#94a3b8;margin-bottom:24px;font-size:15px;line-height:1.6">Merci d\u2019avoir testé Luxyra !<br>Pour continuer à utiliser Luxyra, choisissez votre formule.</p>'+
     '<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;justify-content:center">'+
     '<div style="flex:1;min-width:180px;background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.2);border-radius:14px;padding:20px;text-align:center">'+
     '<div style="font-size:12px;color:#60a5fa;font-weight:700;letter-spacing:1px;margin-bottom:8px">ESSENTIEL</div>'+
