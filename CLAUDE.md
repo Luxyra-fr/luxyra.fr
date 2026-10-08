@@ -1457,3 +1457,20 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 - `rdv_online_validate` : une réservation « sans préférence » était refusée dès qu'UN collaborateur avait une période d'absence (ex. collaboratrice partie, absence 31/08→31/10 chez Amandine). Corrigé.
 - site.html : le mode empreinte écrivait `empreinte_montant` (colonne inexistante → réservation refusée). Corrigé en `empreinte_amount` (aucun salon n'utilise ce mode aujourd'hui).
 - À savoir : Click & Collect (`commandes_online`) n'est lu nulle part dans l'app salon → fonction inachevée.
+
+## 2026-10-08 (nuit) — Empreinte bancaire, « sans préférence », Click & Collect, faille webhook
+
+**FAILLE GRAVE CORRIGÉE (webhook Stripe)** : `checkout.session.completed` traitait TOUT paiement Checkout portant un `salon_id` (acompte d'une cliente, carte, etc.) comme un abonnement → `updateSalonPlan` : salon passé Pro/actif ET son vrai abonnement Luxyra ANNULÉ chez Stripe (anti-double-facturation). Désormais seules les sessions `mode === "subscription"` touchent au forfait. 1 seul acompte payé dans l'historique (Amandine, 20/05, salon offert → sans effet).
+
+**Empreinte bancaire** (aucun salon ne l'utilisait, elle ne pouvait pas marcher) :
+- site.html écrivait `empreinte_montant` → insertion refusée ; worker `empreinte-finalize` lisait/écrivait `empreinte_payment_intent_id` (colonne inexistante) et `empreinte_status:"authorized"` alors que capture/release/cron attendent `payment_intent_id` + `"held"`. Corrigé (+ `empreinte_held_at`, statut final selon `confirmation_auto`).
+- RDV encaissé → empreinte libérée automatiquement (`lxEmpreinteReleaseAuto` dans `_lxMarkOnlineRdvDone`). Annulation cliente dans les délais → libérée (worker `releaseEmpreinteOnCancel`, sur /api/rdv/cancel et /api/client/rdv-update) ; hors délai → décision du salon. Annulation par le salon → l'app propose de libérer.
+
+**Réservation** : « Pas de préférence » affiché seulement s'il y a ≥ 2 professionnels éligibles (1 seul → choisi d'office, déjà le cas avant + filet `_lxResoudreCollab`).
+
+**Click & Collect** (fonction inachevée : commande impossible — insert+select refusé par la RLS —, prix/total envoyés par le navigateur, paiement jamais enregistré, rien dans l'app salon) :
+- Worker : `/api/cc/commande` (session cliente obligatoire ; prix, promos, total, stock et produits « en vente » vérifiés côté serveur ; code de retrait 6 caractères ; paiement Stripe Connect si actif sinon « à régler au salon »), `/api/cc/finalize` (+ webhook `click_collect`), `/api/cc/action` (route salon : prete / retiree / annulee, emails cliente, remboursement auto si payée), `/api/client/commandes` (espace client).
+- Base `commandes_online` : numero (par salon), code_retrait, mode_paiement, ready_at, collected_at/by, ticket_num, cancelled_*, refund_id ; statuts `pending_payment → a_preparer → prete → retiree | annulee`. Plus d'insert/update depuis le navigateur.
+- App : tuile « Commandes » (badge, actualisation 90 s, perm. caisse), page à 3 onglets. Remise = code vérifié (ou « identité vérifiée ») ; une commande remise affiche date/heure/opérateur et ne peut plus être remise. Payée en ligne → sortie de stock à la remise. À régler au salon → « Encaisser puis remettre » : ticket NF525 normal (aucune modif fiscale), puis remise avec n° de ticket.
+- ⚠️ DÉCISION ALEXANDRE (NF525) : une commande payée EN LIGNE ne génère pas de ticket de caisse (aucun mode de paiement « en ligne » en caisse). La créer = toucher à la caisse NF525 → accord requis.
+- compte.html : onglet « Commandes » avec le code de retrait.

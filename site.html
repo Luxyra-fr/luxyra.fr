@@ -1174,7 +1174,7 @@ async function loadSalon(){
     
     // 5. Products
     var pr=await sb.from("produits").select("*").eq("salon_id",salonId).order("nom");
-    if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.image||"",stk:p.stock||0,cc:p.click_collect,contenance:p.contenance||null,description:p.description||null,promoActif:p.promo_actif||false,promoPrix:p.promo_prix!=null?Number(p.promo_prix):null,promoDebut:p.promo_debut||null,promoFin:p.promo_fin||null,promoLabel:p.promo_label||null};});
+    if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.img||p.image||"",stk:(p.stock==null?null:Number(p.stock)),actif:p.actif,forSale:p.for_sale,cc:p.click_collect,contenance:p.contenance||null,description:p.description||null,promoActif:p.promo_actif||false,promoPrix:p.promo_prix!=null?Number(p.promo_prix):null,promoDebut:p.promo_debut||null,promoFin:p.promo_fin||null,promoLabel:p.promo_label||null};});
     
     // 5b. Avis clients (note moyenne déjà dans SALON.note_moyenne, mais on charge la liste pour affichage)
     window.SALON_AVIS=[];
@@ -1498,15 +1498,20 @@ function renderSite(){
   var _op=params.get("order");
   var _cmdId=params.get("cmd");
   if(_op==="success"&&_cmdId){
-    sb.from("commandes_online").update({status:"pending",paid_online:true}).eq("id",_cmdId).then(function(){
-      window.history.replaceState({},"",buildSalonUrl());
-    });
-    var el=document.getElementById("app"); if(!el) return; // garde-fou : conteneur absent
-    el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Commande pay\u00e9e !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre paiement a \u00e9t\u00e9 accept\u00e9. Le salon pr\u00e9pare votre commande. Vous recevrez une notification quand elle sera pr\u00eate \u00e0 retirer.</p><button class="btn btn-gold" onclick="window.history.replaceState({},\'\',buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
-    return;
+    // 2026-10-08 : le paiement est vérifié par le serveur chez Stripe (avant : le navigateur
+    // marquait lui-même la commande « payée », et la base refusait de toute façon l'écriture).
+    var _sid=params.get("session_id")||"";
+    window.history.replaceState({},"",buildSalonUrl());
+    fetch("/api/cc/finalize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({commande_id:_cmdId,session_id:_sid})})
+      .then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d};});})
+      .then(function(x){
+        setTimeout(function(){
+          if(x.ok&&x.d.ok) _ccAfficherConfirmation(x.d.numero,x.d.code_retrait,x.d.total,true);
+          else showAlert("Paiement en cours de v\u00e9rification. Vous recevrez un email de confirmation d\u00e8s qu\u2019il sera valid\u00e9.","info");
+        },800);
+      }).catch(function(){});
   }
   if(_op==="cancel"&&_cmdId){
-    sb.from("commandes_online").delete().eq("id",_cmdId).eq("status","pending_payment");
     window.history.replaceState({},"",buildSalonUrl());
   }
   
@@ -1943,6 +1948,8 @@ function renderSite(){
     h+='<div class="sec">Nos produits</div><div class="gold-sep"></div>';
     h+='<p class="sec-sub">Commandez en ligne et r\u00e9cup\u00e9rez au salon</p>';
     var shopProds=PRODUCTS.filter(function(p){
+      // 2026-10-08 : jamais les produits d'usage interne ou désactivés
+      if(p.actif===false||p.forSale===false) return false;
       if(SITE_CFG.prodOnline&&SITE_CFG.prodOnline.length>0)return SITE_CFG.prodOnline.indexOf(p.id)>=0;
       return true;
     });
@@ -1969,7 +1976,8 @@ function renderSite(){
           } else {
             h+='<div class="prod-price">'+p.p.toFixed(2)+' \u20ac</div>';
           }
-          h+='<button class="prod-btn" onclick="addToCart('+p.id+')">Ajouter au panier</button>';
+          if(p.stk!=null&&Number(p.stk)<=0) h+='<button class="prod-btn" disabled style="opacity:.5;cursor:not-allowed">Rupture de stock</button>';
+          else h+='<button class="prod-btn" onclick="addToCart('+p.id+')">Ajouter au panier</button>';
           h+='</div></div>';
         });
         h+='</div>';
@@ -2614,7 +2622,8 @@ function renderBookingStep2(){
     h+='<div style="margin-bottom:10px;padding:8px 12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:8px;font-size:12px;color:#64b5f6"><strong>\u2139\ufe0f</strong> Seuls les '+getCollabLabel().toLowerCase()+'s habilit\u00e9s \u00e0 effectuer cette prestation sont affich\u00e9s.</div>';
   }
   h+='<div class="collab-grid">';
-  h+='<div class="collab-card" onclick="selectCollab(null)"><div class="collab-av">\ud83d\udc87</div><div class="collab-name">Pas de pr\u00e9f\u00e9rence</div></div>';
+  // 2026-10-08 : « Pas de préférence » seulement s'il y a un vrai choix (au moins 2 professionnels)
+  if(_eligibleCollabs.length > 1) h+='<div class="collab-card" onclick="selectCollab(null)"><div class="collab-av">\ud83d\udc87</div><div class="collab-name">Pas de pr\u00e9f\u00e9rence</div></div>';
   for(var i=0;i<_eligibleCollabs.length;i++){
     var c=_eligibleCollabs[i];
     h+='<div class="collab-card" onclick="selectCollab('+c.id+')">';
@@ -4111,64 +4120,33 @@ function cartQty(idx,delta){
 }
 
 async function submitOrder(){
+  // 2026-10-08 : commande calculée et enregistrée par le serveur (prix, total, stock, code de retrait).
   if(!CLIENT){showAuthModal("login");return;}
-  var total=0;var items=[];
-  CART.forEach(function(c){total+=c.p*c.qty;items.push({produit_id:c.id,nom:c.n,prix:c.p,qty:c.qty});});
-  
-  // If salon has Connect → pay online before order
-  // FIX 2026-05-12 : payouts_pending = charges OK donc encaissement boutique possible
-  if(SALON.connectId&&(SALON.connectStatus==="active"||SALON.connectStatus==="enabled"||SALON.connectStatus==="payouts_pending")&&total>0){
-    var data={
-      salon_id:salonId,
-      client_nom:CLIENT.nom+(CLIENT.prenom?" "+CLIENT.prenom:""),
-      client_tel:CLIENT.telephone||"",
-      client_email:CLIENT.email,
-      items:items,total:total,
-      status:"pending_payment"
-    };
-    var r=await sb.from("commandes_online").insert(data).select();
-    if(r.error){showAlert("Erreur: "+r.error.message,"error");return;}
-    var cmdId=r.data[0].id;
-    try{
-      var itemNames=items.map(function(i){return i.nom;}).join(", ");
-      var res=await fetch("/api/stripe/connect-payment",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          salon_id:salonId,
-          amount:total,
-          description:"Commande Click & Collect - "+SALON.nom+" - "+itemNames.slice(0,80),
-          customer_email:CLIENT.email,
-          customer_name:CLIENT.nom+(CLIENT.prenom?" "+CLIENT.prenom:""),
-          metadata:{type:"click_collect",commande_id:cmdId,return_url:window.location.origin+"/site.html?s="+salonId+"&order=success&cmd="+cmdId,cancel_url:window.location.origin+"/site.html?s="+salonId+"&order=cancel&cmd="+cmdId}
-        })
-      });
-      var pData=await res.json();
-      if(pData.url){CART=[];updateCartBadge();window.location.href=pData.url;return;}
-      else{showAlert("Erreur paiement: "+(pData.error||"Impossible de créer la session"),"error");sb.from("commandes_online").delete().eq("id",cmdId);}
-    }catch(e){showAlert("Erreur de connexion","error");sb.from("commandes_online").delete().eq("id",cmdId);}
-    return;
-  }
-  
-  // No Connect → order without online payment (pay at salon)
-  var data={
-    salon_id:salonId,
-    client_nom:CLIENT.nom+(CLIENT.prenom?" "+CLIENT.prenom:""),
-    client_tel:CLIENT.telephone||"",
-    client_email:CLIENT.email,
-    items:items,total:total,
-    status:"pending"
-  };
-  var r=await sb.from("commandes_online").insert(data).select();
-  if(r.error){showAlert("Erreur: "+r.error.message,"error");return;}
-  CART=[];updateCartBadge();
-  var h='<div class="auth-modal" onclick="closeCart()">';
-  h+='<div class="auth-box" onclick="event.stopPropagation()" style="text-align:center">';
+  var token=(window.LX&&LX.getToken)?LX.getToken():"";
+  if(!token){showAuthModal("login");return;}
+  var btns=document.querySelectorAll('#authModal button.btn-gold');btns.forEach(function(x){x.disabled=true;x.textContent="Envoi de la commande\u2026";});
+  try{
+    var res=await fetch("/api/cc/commande",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      session_token:token, salon_id:salonId,
+      items:CART.map(function(c){return {id:c.id,qty:c.qty};}),
+      nom:((CLIENT.prenom||"")+" "+(CLIENT.nom||"")).trim(), tel:CLIENT.telephone||"",
+      retour:window.location.origin+"/site.html"
+    })});
+    var d=await res.json().catch(function(){return {};});
+    if(!res.ok||!d.ok){ showAlert(d.error||"La commande n\u2019a pas pu \u00eatre enregistr\u00e9e","error"); btns.forEach(function(x){x.disabled=false;x.textContent="Commander (retrait au salon)";}); return; }
+    if(d.url){ CART=[];updateCartBadge(); window.location.href=d.url; return; }
+    CART=[];updateCartBadge();
+    _ccAfficherConfirmation(d.numero,d.code_retrait,d.total,false);
+  }catch(e){ showAlert("Erreur de connexion","error"); btns.forEach(function(x){x.disabled=false;x.textContent="Commander (retrait au salon)";}); }
+}
+function _ccAfficherConfirmation(numero,code,total,payee){
+  var h='<div class="auth-modal" onclick="closeCart()"><div class="auth-box" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:48px;margin-bottom:12px">\u2705</div>';
-  h+='<h2 style="color:var(--green)">Commande envoy\u00e9e !</h2>';
-  h+='<p style="color:var(--text2);margin-top:8px">Votre commande de '+total.toFixed(2)+' \u20ac a \u00e9t\u00e9 transmise au salon. Nous vous pr\u00e9viendrons quand elle sera pr\u00eate \u00e0 retirer.</p>';
-  h+='<button class="btn btn-gold" style="margin-top:16px;padding:12px 32px" onclick="closeCart()">Fermer</button>';
-  h+='</div></div>';
-  document.getElementById("authModal").innerHTML=h;
+  h+='<h2 style="color:var(--green)">Commande n\u00b0'+numero+' envoy\u00e9e !</h2>';
+  h+='<p style="color:var(--text2);margin-top:8px">'+(payee?'Paiement de '+Number(total).toFixed(2)+' \u20ac accept\u00e9.':'Montant de '+Number(total).toFixed(2)+' \u20ac \u00e0 r\u00e9gler au salon lors du retrait.')+' Vous recevrez un email d\u00e8s qu\u2019elle sera pr\u00eate.</p>';
+  if(code)h+='<div style="margin:16px auto;padding:14px;border:1px dashed var(--gold);border-radius:12px;max-width:260px"><div style="font-size:12px;color:var(--text3)">Code de retrait</div><div style="font-size:28px;font-weight:800;letter-spacing:4px;color:var(--gold)">'+code+'</div><div style="font-size:11px;color:var(--text3)">\u00c0 pr\u00e9senter au salon (aussi envoy\u00e9 par email)</div></div>';
+  h+='<button class="btn btn-gold" style="margin-top:8px;padding:12px 32px" onclick="closeCart()">Fermer</button></div></div>';
+  var m=document.getElementById("authModal"); if(m) m.innerHTML=h;
 }
 
 // Lightbox

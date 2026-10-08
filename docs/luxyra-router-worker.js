@@ -131,6 +131,11 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
       if (url.pathname === "/api/stripe/connect-dashboard" && request.method === "POST") return await handleConnectDashboard(request, env);
       if (url.pathname === "/api/stripe/connect-payment" && request.method === "POST") return await handleConnectPayment(request, env);
+      // 2026-10-08 : Click & Collect
+      if (url.pathname === "/api/cc/commande" && request.method === "POST") return await handleCcCommande(request, env);
+      if (url.pathname === "/api/cc/finalize" && request.method === "POST") return await handleCcFinalize(request, env);
+      if (url.pathname === "/api/cc/action" && request.method === "POST") return await handleCcAction(request, env);
+      if (url.pathname === "/api/client/commandes" && request.method === "POST") return await handleClientCommandes(request, env);
       // FIX 2026-05-13 : Export NF525 (conservation 6 ans / audit fiscal)
       if (url.pathname === "/api/admin/export-nf525" && request.method === "POST") return await handleExportNF525(request, env);
       // FIX 2026-05-12 : Path A empreinte (post-Checkout, stocke le PI ID dans rdv_online)
@@ -473,7 +478,7 @@ const LX_ROUTES_SALON = new Set([
   "/api/stripe/create-checkout", "/api/stripe/portal", "/api/stripe/switch-plan",
   "/api/stripe/connect-onboard", "/api/stripe/connect-status", "/api/stripe/connect-dashboard",
   "/api/admin/export-nf525", "/api/sms/rappel", "/api/sms/custom", "/api/sms/generate-link-token",
-  "/api/client/invite"
+  "/api/client/invite", "/api/cc/action"
 ]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
@@ -637,6 +642,16 @@ async function handleWebhook(request, env) {
         }
         break;
       }
+      // 2026-10-08 : Click & Collect payé en ligne (filet si la cliente ferme l'onglet avant le retour)
+      if (data.metadata?.type === "click_collect") {
+        try { await ccFinaliserPaiement(env, data.metadata.commande_id, data); } catch (e) { console.error("cc finalize webhook:", e); }
+        break;
+      }
+      // FAILLE CORRIGÉE 2026-10-08 : TOUT paiement Checkout portant un salon_id (acompte d'une cliente,
+      // bon cadeau, carte...) passait ici comme un ABONNEMENT : le salon passait Pro/actif, et son
+      // véritable abonnement Luxyra était ANNULÉ chez Stripe (anti-double-facturation de updateSalonPlan).
+      // Seules les sessions d'abonnement modifient le forfait.
+      if (data.mode !== "subscription" || !data.subscription) break;
       if (salonId) {
         await updateSalonPlan(env, salonId, plan, data.subscription, data.customer);
         // === Programme "100 Fondateurs" : claim atomique du slot ===
@@ -1139,6 +1154,7 @@ async function handleConnectPayment(request, env) {
     if (metadata?.cancel_url && !lxUrlLuxyra(metadata.cancel_url)) return jsonResponse({ error: "URL d'annulation invalide" }, 400);
     {
       const _type = metadata?.type || "acompte";
+      if (_type === "click_collect") return jsonResponse({ error: "Utilisez /api/cc/commande (prix calculés côté serveur)" }, 400);
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
@@ -1185,6 +1201,258 @@ async function handleConnectPayment(request, env) {
     if (!session?.url) return jsonResponse({ error: "Erreur paiement: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Connect payment error: " + e.message }, 500); }
+}
+
+// ============================================================
+// CLICK & COLLECT (2026-10-08) — commande, paiement, préparation, retrait
+// ============================================================
+// Toute la logique est côté serveur : prix et total recalculés ici (avant : envoyés par le
+// navigateur, donc falsifiables), numéro de commande, code de retrait, statuts tracés.
+// Statuts : pending_payment -> a_preparer -> prete -> retiree ; annulee (avant retrait).
+const CC_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function ccCode() {
+  const b = new Uint8Array(6); crypto.getRandomValues(b);
+  let s = ""; for (const x of b) s += CC_ALPHABET[x % CC_ALPHABET.length];
+  return s;
+}
+function ccPrix(p) {
+  const today = new Date().toISOString().slice(0, 10);
+  const promo = p.promo_actif === true && p.promo_prix != null && (!p.promo_debut || p.promo_debut <= today) && (!p.promo_fin || p.promo_fin >= today);
+  return Math.round(Number(promo ? p.promo_prix : p.prix) * 100) / 100;
+}
+function ccEsc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function ccEur(n) { return (Number(n) || 0).toFixed(2).replace(".", ",") + " €"; }
+function ccLignesHtml(items) {
+  return (items || []).map((i) => `<tr><td style="padding:6px 0">${ccEsc(i.nom)} × ${Number(i.qty) || 1}</td><td style="padding:6px 0;text-align:right">${ccEur((Number(i.prix) || 0) * (Number(i.qty) || 1))}</td></tr>`).join("");
+}
+function ccMail(titre, corps) {
+  return `<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
+    <div style="background:#0a0a0a;padding:22px;text-align:center"><div style="color:#d4a843;font-size:20px;letter-spacing:2px;font-weight:700">LUXYRA</div></div>
+    <div style="padding:26px 24px"><h2 style="margin:0 0 14px;font-size:20px">${titre}</h2>${corps}</div>
+    <div style="padding:14px 24px;font-size:11px;color:#999;border-top:1px solid #eee">Commande Click &amp; Collect passée via Luxyra.</div></div>`;
+}
+async function ccSalonEtConfig(env, salonId) {
+  const salon = await supabaseGet(env, salonId);
+  if (!salon) return { erreur: "Salon introuvable" };
+  const proActif = salon.plan === "pro" || (salon.status === "trial" && salon.trial_end && new Date(salon.trial_end) > new Date());
+  if (!proActif || salon.status === "suspended" || salon.status === "cancelled") return { erreur: "La boutique de ce salon n'est pas disponible" };
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=boutique_active,produits_en_ligne&salon_id=eq.${encodeURIComponent(salonId)}&limit=1`, { headers: _sbHeaders(env) });
+  const c = r.ok ? (await r.json())[0] : null;
+  if (!c || c.boutique_active !== true) return { erreur: "La boutique de ce salon n'est pas active" };
+  return { salon, cfg: c };
+}
+async function ccLire(env, id) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?select=*&id=eq.${encodeURIComponent(id)}&limit=1`, { headers: _sbHeaders(env) });
+  const a = r.ok ? await r.json() : [];
+  return Array.isArray(a) ? a[0] || null : null;
+}
+async function ccMaj(env, id, patch, filtreStatuts) {
+  let q = `${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?id=eq.${encodeURIComponent(id)}`;
+  if (filtreStatuts) q += `&status=in.(${filtreStatuts.join(",")})`;
+  const r = await fetch(q, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify(patch) });
+  const a = r.ok ? await r.json() : [];
+  return Array.isArray(a) ? a[0] || null : null;
+}
+async function ccMailsNouvelleCommande(env, cmd, salon) {
+  const lignes = ccLignesHtml(cmd.items);
+  const reglement = cmd.paye ? "Payée en ligne" : "À régler au salon lors du retrait";
+  try {
+    if (cmd.client_email) await brevoSendEmail(env, {
+      to: cmd.client_email, toName: cmd.client_nom, senderName: salon.nom || "Luxyra", replyTo: salon.email || undefined,
+      subject: `Commande n°${cmd.numero} reçue — ${salon.nom || ""}`,
+      htmlContent: ccMail(`Commande n°${cmd.numero} reçue`, `<p>Bonjour ${ccEsc(cmd.client_nom)},</p><p>${ccEsc(salon.nom)} a bien reçu votre commande. Vous recevrez un email dès qu'elle sera prête.</p>
+        <table style="width:100%;font-size:14px;border-collapse:collapse">${lignes}<tr><td style="padding-top:10px;font-weight:700">Total</td><td style="padding-top:10px;text-align:right;font-weight:700">${ccEur(cmd.total)}</td></tr></table>
+        <p style="margin-top:14px">${reglement}</p>
+        <div style="margin:18px 0;padding:14px;background:#fff8e6;border-left:4px solid #d4a843"><div style="font-size:12px;color:#666">Votre code de retrait</div><div style="font-size:26px;font-weight:800;letter-spacing:4px">${ccEsc(cmd.code_retrait)}</div><div style="font-size:12px;color:#666">À présenter au salon pour récupérer votre commande.</div></div>`)
+    });
+  } catch (e) { console.error("cc mail client:", e); }
+  try {
+    if (salon.email) await brevoSendEmail(env, {
+      to: salon.email, toName: salon.nom, subject: `🛍 Nouvelle commande Click & Collect n°${cmd.numero}`,
+      htmlContent: ccMail(`Nouvelle commande n°${cmd.numero}`, `<p><b>${ccEsc(cmd.client_nom)}</b> — ${ccEsc(cmd.client_tel)}</p>
+        <table style="width:100%;font-size:14px;border-collapse:collapse">${lignes}<tr><td style="padding-top:10px;font-weight:700">Total</td><td style="padding-top:10px;text-align:right;font-weight:700">${ccEur(cmd.total)}</td></tr></table>
+        <p>${reglement}</p><p>À traiter dans l'application : tuile <b>Commandes</b>.</p>`)
+    });
+  } catch (e) { console.error("cc mail salon:", e); }
+}
+
+// POST /api/cc/commande  {salon_id, items:[{id,qty}], nom, tel, message, session_token}
+async function handleCcCommande(request, env) {
+  try {
+    const b = await readJsonBody(request);
+    const session = await verifyClientSession(b.session_token, env);
+    if (!session) return jsonResponse({ error: "Connectez-vous pour commander" }, 401);
+    if (!/^[0-9a-f-]{36}$/i.test(String(b.salon_id || ""))) return jsonResponse({ error: "Salon invalide" }, 400);
+    const sc = await ccSalonEtConfig(env, b.salon_id);
+    if (sc.erreur) return jsonResponse({ error: sc.erreur }, 403);
+    const demandes = (Array.isArray(b.items) ? b.items : []).map((i) => ({ id: parseInt(i.id), qty: parseInt(i.qty) })).filter((i) => i.id > 0 && i.qty > 0);
+    if (!demandes.length || demandes.length > 30) return jsonResponse({ error: "Panier vide ou invalide" }, 400);
+    if (demandes.some((i) => i.qty > 20)) return jsonResponse({ error: "Quantité maximale : 20 par produit" }, 400);
+    const ids = [...new Set(demandes.map((i) => i.id))];
+    const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/produits?select=id,nom,prix,promo_actif,promo_prix,promo_debut,promo_fin,stock,actif,for_sale&salon_id=eq.${encodeURIComponent(b.salon_id)}&id=in.(${ids.join(",")})`, { headers: _sbHeaders(env) });
+    const prods = pr.ok ? await pr.json() : [];
+    const enLigne = Array.isArray(sc.cfg.produits_en_ligne) ? sc.cfg.produits_en_ligne.map(Number) : [];
+    const items = []; let total = 0;
+    for (const d of demandes) {
+      const p = (prods || []).find((x) => Number(x.id) === d.id);
+      if (!p || p.actif === false || p.for_sale === false || (enLigne.length && enLigne.indexOf(d.id) < 0)) return jsonResponse({ error: "Un produit n'est plus disponible à la vente" }, 409);
+      const qtyTot = demandes.filter((x) => x.id === d.id).reduce((a, x) => a + x.qty, 0);
+      if (p.stock != null && Number(p.stock) < qtyTot) return jsonResponse({ error: `« ${p.nom} » : stock insuffisant (${Math.max(0, Number(p.stock) || 0)} disponible)` }, 409);
+      const prix = ccPrix(p);
+      items.push({ produit_id: p.id, nom: p.nom, prix, qty: d.qty });
+      total += prix * d.qty;
+    }
+    total = Math.round(total * 100) / 100;
+    if (!(total > 0) || total > 5000) return jsonResponse({ error: "Montant de commande invalide" }, 400);
+    const salon = sc.salon;
+    const connectOk = !!salon.stripe_connect_id && ["active", "enabled", "payouts_pending"].includes(String(salon.stripe_connect_status || ""));
+    const row = {
+      salon_id: b.salon_id, client_nom: String(b.nom || session.email).slice(0, 120), client_tel: String(b.tel || "").slice(0, 30),
+      client_email: session.email, client_luxyra_id: session.lx_id, items, total,
+      message: b.message ? String(b.message).slice(0, 500) : null,
+      code_retrait: ccCode(), mode_paiement: connectOk ? "en_ligne" : "au_salon",
+      status: connectOk ? "pending_payment" : "a_preparer", paye: false
+    };
+    const ins = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/commandes_online`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify(row) });
+    const insA = ins.ok ? await ins.json() : null;
+    const cmd = Array.isArray(insA) ? insA[0] : null;
+    if (!cmd) { console.error("cc insert:", ins.status, await ins.text().catch(() => "")); return jsonResponse({ error: "Commande non enregistrée" }, 500); }
+    if (!connectOk) {
+      await ccMailsNouvelleCommande(env, cmd, salon);
+      return jsonResponse({ ok: true, commande_id: cmd.id, numero: cmd.numero, code_retrait: cmd.code_retrait, total, paiement: "au_salon" });
+    }
+    const base = lxUrlLuxyra(b.retour) ? String(b.retour).split("?")[0] : "https://luxyra.fr/site.html";
+    const sep = `?s=${encodeURIComponent(b.salon_id)}&`;
+    const params = {
+      mode: "payment", customer_email: session.email,
+      success_url: `${base}${sep}order=success&cmd=${cmd.id}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}${sep}order=cancel&cmd=${cmd.id}`,
+      "metadata[type]": "click_collect", "metadata[commande_id]": cmd.id, "metadata[salon_id]": b.salon_id,
+      "payment_intent_data[description]": `Click & Collect n°${cmd.numero} — ${salon.nom || ""}`.slice(0, 200),
+      "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id,
+      "payment_intent_data[metadata][commande_id]": cmd.id,
+      expires_at: String(Math.floor(Date.now() / 1000) + 31 * 60),
+    };
+    items.forEach((it, i) => {
+      params[`line_items[${i}][price_data][currency]`] = "eur";
+      params[`line_items[${i}][price_data][product_data][name]`] = String(it.nom).slice(0, 120);
+      params[`line_items[${i}][price_data][unit_amount]`] = String(Math.round(it.prix * 100));
+      params[`line_items[${i}][quantity]`] = String(it.qty);
+    });
+    const s = await stripeAPI(env, "checkout/sessions", params);
+    if (!s?.url) {
+      await ccMaj(env, cmd.id, { status: "annulee", cancelled_at: new Date().toISOString(), cancelled_by: "systeme", cancel_reason: "paiement impossible" });
+      return jsonResponse({ error: "Paiement en ligne indisponible pour ce salon : " + (s?.error?.message || "erreur Stripe") }, 502);
+    }
+    return jsonResponse({ ok: true, url: s.url, commande_id: cmd.id, numero: cmd.numero });
+  } catch (e) { console.error("cc commande:", e); return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// Vérifie le paiement Stripe et passe la commande « à préparer » (idempotent). Webhook + retour client.
+async function ccFinaliserPaiement(env, commandeId, sessionStripe) {
+  if (!/^[0-9a-f-]{36}$/i.test(String(commandeId || ""))) return { erreur: "commande invalide", code: 400 };
+  const s = sessionStripe;
+  if (!s || s.payment_status !== "paid") return { erreur: "Paiement non confirmé", code: 402 };
+  if (!s.metadata || s.metadata.type !== "click_collect" || String(s.metadata.commande_id) !== String(commandeId)) return { erreur: "Paiement non lié à cette commande", code: 403 };
+  const cmd = await ccLire(env, commandeId);
+  if (!cmd) return { erreur: "Commande introuvable", code: 404 };
+  if (String(cmd.salon_id) !== String(s.metadata.salon_id)) return { erreur: "Paiement non lié à ce salon", code: 403 };
+  if (cmd.paye === true) return { ok: true, deja: true, cmd };
+  if (Number(s.amount_total || 0) + 1 < Math.round(Number(cmd.total) * 100)) return { erreur: "Montant payé insuffisant", code: 402 };
+  const maj = await ccMaj(env, cmd.id, { paye: true, stripe_payment_id: s.id, payment_intent_id: s.payment_intent || null, status: "a_preparer" }, ["pending_payment", "annulee"]);
+  if (!maj) { const re = await ccLire(env, commandeId); return re && re.paye ? { ok: true, deja: true, cmd: re } : { erreur: "Mise à jour impossible", code: 409 }; }
+  const salon = await supabaseGet(env, maj.salon_id);
+  await ccMailsNouvelleCommande(env, maj, salon || {});
+  return { ok: true, cmd: maj };
+}
+// POST /api/cc/finalize {commande_id, session_id}
+async function handleCcFinalize(request, env) {
+  try {
+    const { commande_id, session_id } = await readJsonBody(request);
+    if (!/^cs_[A-Za-z0-9_]+$/.test(String(session_id || ""))) return jsonResponse({ error: "session invalide" }, 400);
+    const s = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    const r = await ccFinaliserPaiement(env, commande_id, s);
+    if (r.erreur) return jsonResponse({ error: r.erreur }, r.code || 400);
+    return jsonResponse({ ok: true, numero: r.cmd.numero, code_retrait: r.cmd.code_retrait, total: r.cmd.total });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// POST /api/cc/action {salon_id, commande_id, action: prete|retiree|annulee, code, sans_code, operateur, ticket_num, motif}
+// (route salon : propriétaire du salon vérifié par LX_ROUTES_SALON)
+async function handleCcAction(request, env) {
+  try {
+    const b = await readJsonBody(request);
+    const cmd = await ccLire(env, b.commande_id);
+    if (!cmd || String(cmd.salon_id) !== String(b.salon_id)) return jsonResponse({ error: "Commande introuvable" }, 404);
+    const op = String(b.operateur || "").slice(0, 80) || "Salon";
+    const now = new Date().toISOString();
+    const salon = await supabaseGet(env, cmd.salon_id) || {};
+    if (b.action === "prete") {
+      const maj = await ccMaj(env, cmd.id, { status: "prete", ready_at: now }, ["a_preparer"]);
+      if (!maj) return jsonResponse({ error: "Commande déjà " + cmd.status.replace("_", " ") }, 409);
+      try {
+        if (maj.client_email) await brevoSendEmail(env, {
+          to: maj.client_email, toName: maj.client_nom, senderName: salon.nom || "Luxyra", replyTo: salon.email || undefined,
+          subject: `Votre commande n°${maj.numero} est prête — ${salon.nom || ""}`,
+          htmlContent: ccMail(`Votre commande est prête ✅`, `<p>Bonjour ${ccEsc(maj.client_nom)},</p><p>Votre commande n°${maj.numero} vous attend chez <b>${ccEsc(salon.nom)}</b>${salon.adresse ? " — " + ccEsc(salon.adresse) + " " + ccEsc(salon.cp || "") + " " + ccEsc(salon.ville || "") : ""}.</p>
+            <p>${maj.paye ? "Elle est déjà payée." : "Montant à régler au salon : <b>" + ccEur(maj.total) + "</b>."}</p>
+            <div style="margin:18px 0;padding:14px;background:#fff8e6;border-left:4px solid #d4a843"><div style="font-size:12px;color:#666">Code de retrait à présenter</div><div style="font-size:26px;font-weight:800;letter-spacing:4px">${ccEsc(maj.code_retrait)}</div></div>`)
+        });
+      } catch (e) { console.error("cc mail prete:", e); }
+      return jsonResponse({ ok: true, commande: maj });
+    }
+    if (b.action === "retiree") {
+      if (cmd.status === "retiree") return jsonResponse({ error: `Déjà remise le ${new Date(cmd.collected_at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} par ${cmd.collected_by || "?"}`, deja: true, commande: cmd }, 409);
+      const codeOk = String(b.code || "").trim().toUpperCase() === String(cmd.code_retrait || "").toUpperCase();
+      if (!codeOk && b.sans_code !== true) return jsonResponse({ error: "Code de retrait incorrect" }, 403);
+      if (!cmd.paye && !String(b.ticket_num || "").trim()) return jsonResponse({ error: "Commande non payée : encaissez-la d'abord en caisse" }, 409);
+      const maj = await ccMaj(env, cmd.id, {
+        status: "retiree", collected_at: now,
+        collected_by: op + (codeOk ? " (code vérifié)" : " (sans code, identité vérifiée)"),
+        ticket_num: b.ticket_num ? String(b.ticket_num).slice(0, 40) : cmd.ticket_num
+      }, ["a_preparer", "prete"]);
+      if (!maj) { const re = await ccLire(env, cmd.id); return jsonResponse({ error: re && re.status === "retiree" ? `Déjà remise le ${new Date(re.collected_at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} par ${re.collected_by || "?"}` : "Commande non remettable (" + (re ? re.status : "?") + ")", deja: !!(re && re.status === "retiree"), commande: re }, 409); }
+      return jsonResponse({ ok: true, commande: maj });
+    }
+    if (b.action === "annulee") {
+      if (!["pending_payment", "a_preparer", "prete"].includes(cmd.status)) return jsonResponse({ error: "Commande non annulable (" + cmd.status + ")" }, 409);
+      let refundId = null;
+      if (cmd.paye && cmd.payment_intent_id) {
+        const rf = await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, reverse_transfer: "true", "metadata[commande_id]": cmd.id });
+        if (!rf?.id) return jsonResponse({ error: "Remboursement refusé par Stripe : " + (rf?.error?.message || "erreur") }, 502);
+        refundId = rf.id;
+      }
+      const maj = await ccMaj(env, cmd.id, { status: "annulee", cancelled_at: now, cancelled_by: op, cancel_reason: b.motif ? String(b.motif).slice(0, 300) : null, refund_id: refundId }, ["pending_payment", "a_preparer", "prete"]);
+      try {
+        if (maj && maj.client_email) await brevoSendEmail(env, {
+          to: maj.client_email, toName: maj.client_nom, senderName: salon.nom || "Luxyra", replyTo: salon.email || undefined,
+          subject: `Commande n°${maj.numero} annulée — ${salon.nom || ""}`,
+          htmlContent: ccMail("Commande annulée", `<p>Bonjour ${ccEsc(maj.client_nom)},</p><p>Votre commande n°${maj.numero} chez ${ccEsc(salon.nom)} a été annulée${b.motif ? " : " + ccEsc(b.motif) : ""}.</p>${refundId ? "<p>Le paiement de " + ccEur(maj.total) + " vous est remboursé (délai bancaire de 5 à 10 jours).</p>" : ""}`)
+        });
+      } catch (e) { console.error("cc mail annulee:", e); }
+      return jsonResponse({ ok: true, commande: maj, rembourse: !!refundId });
+    }
+    return jsonResponse({ error: "Action inconnue" }, 400);
+  } catch (e) { console.error("cc action:", e); return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// POST /api/client/commandes {session_token} — commandes de la cliente connectée
+async function handleClientCommandes(request, env) {
+  try {
+    const { session_token } = await readJsonBody(request);
+    const session = await verifyClientSession(session_token, env);
+    if (!session) return jsonResponse({ error: "Session invalide" }, 401);
+    const q = `${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?select=id,salon_id,numero,items,total,status,paye,mode_paiement,code_retrait,created_at,ready_at,collected_at,cancelled_at&or=(client_luxyra_id.eq.${encodeURIComponent(session.lx_id)},client_email.eq.%22${encodeURIComponent(session.email)}%22)&status=neq.pending_payment&order=created_at.desc&limit=50`;
+    const r = await fetch(q, { headers: _sbHeaders(env) });
+    const rows = r.ok ? await r.json() : [];
+    const salonIds = [...new Set((rows || []).map((x) => x.salon_id))];
+    let noms = {};
+    if (salonIds.length) {
+      const s = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom&id=in.(${salonIds.join(",")})`, { headers: _sbHeaders(env) });
+      (s.ok ? await s.json() : []).forEach((x) => { noms[x.id] = x.nom; });
+    }
+    return jsonResponse({ commandes: (rows || []).map((x) => Object.assign({}, x, { salon_nom: noms[x.salon_id] || "", code_retrait: x.status === "retiree" || x.status === "annulee" ? null : x.code_retrait })) });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 
 // ============================================================
@@ -1304,27 +1572,40 @@ async function handleEmpreinteFinalize(request, env) {
     const piId = session.payment_intent;
     if (!piId) return jsonResponse({ error: "PaymentIntent introuvable dans la session" }, 500);
     {
-      const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,empreinte_payment_intent_id&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+      // FIX 2026-10-08 : la colonne s'appelle payment_intent_id (empreinte_payment_intent_id n'existe pas :
+      // la finalisation échouait -> empreinte jamais enregistrée, RDV resté en attente de paiement).
+      const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,payment_intent_id&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
       const _a = _r.ok ? await _r.json() : [];
       const _rdv = Array.isArray(_a) ? _a[0] : null;
       if (!_rdv) return jsonResponse({ error: "RDV introuvable" }, 404);
       if (String(session.metadata.salon_id || "") !== String(_rdv.salon_id)) return jsonResponse({ error: "Session non liée à ce salon" }, 403);
-      if (_rdv.empreinte_payment_intent_id) {
-        if (String(_rdv.empreinte_payment_intent_id) === String(piId)) return jsonResponse({ ok: true, payment_intent_id: piId, deja: true });
+      if (_rdv.payment_intent_id) {
+        if (String(_rdv.payment_intent_id) === String(piId)) return jsonResponse({ ok: true, payment_intent_id: piId, deja: true });
         return jsonResponse({ error: "Empreinte déjà enregistrée pour ce rendez-vous" }, 409);
       }
       if (_rdv.status && _rdv.status !== "pending_payment") return jsonResponse({ error: "Rendez-vous déjà traité" }, 409);
+      var _empSalonId = _rdv.salon_id;
     }
+    // Statut final = réglage du salon (confirmation automatique ou validation manuelle)
+    let _empStatus = "confirmed";
+    try {
+      const _c = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=confirmation_auto&salon_id=eq.${encodeURIComponent(_empSalonId)}&limit=1`, { headers: _sbHeaders(env) });
+      const _ca = _c.ok ? await _c.json() : [];
+      if (Array.isArray(_ca) && _ca[0] && typeof _ca[0].confirmation_auto === "boolean") _empStatus = _ca[0].confirmation_auto ? "confirmed" : "pending";
+    } catch (_) {}
 
     // 2) Update rdv_online avec le PI ID + statut empreinte
     const sbUrl = CONFIG.SUPABASE_URL;
     const upRes = await fetch(`${sbUrl}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, {
       method: "PATCH",
       headers: { ..._sbHeaders(env), "Prefer": "return=minimal" },
+      // "held" = valeur attendue par rdv-empreinte-capture / -release et par le cron (avant : "authorized")
       body: JSON.stringify({
-        status: "confirmed",
-        empreinte_payment_intent_id: piId,
-        empreinte_status: "authorized"
+        status: _empStatus,
+        payment_intent_id: piId,
+        empreinte_status: "held",
+        empreinte_held_at: new Date().toISOString(),
+        empreinte_amount: (Number(session.amount_total) || 0) / 100 || undefined
       })
     });
     if (!upRes.ok) {
@@ -2299,6 +2580,38 @@ async function findAcompteChargePI(env, rdv, montant) {
 }
 
 // Tente le remboursement et enregistre le résultat dans rdv_online (idempotent).
+// 2026-10-08 : annulation par la cliente d'un RDV garanti par empreinte.
+// Dans le délai de la politique d'annulation -> empreinte libérée tout de suite (sinon les fonds
+// restaient bloqués jusqu'à 7 jours). Hors délai -> on la laisse : le salon décide (bouton
+// « Capturer » ou « Libérer » dans le planning), sinon Stripe la libère seul après 7 jours.
+async function releaseEmpreinteOnCancel(env, rdv) {
+  if (!rdv || rdv.empreinte_status !== "held" || !rdv.payment_intent_id) return { skipped: "pas d'empreinte active" };
+  let policyHours = 48;
+  try {
+    const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+    const rows = cfgRes.ok ? await cfgRes.json() : [];
+    const raw = String((rows && rows[0] && rows[0].politique_annulation) || "48h").trim().toLowerCase();
+    const m = raw.match(/(\d+)/);
+    if (m) { policyHours = parseInt(m[1]); if (raw.includes("j") || raw.includes("jour") || raw.includes("day")) policyHours = parseInt(m[1]) * 24; }
+  } catch (_) {}
+  const rdvStart = new Date(`${rdv.date_rdv}T${rdv.heure_rdv}`);
+  const hoursBefore = (rdvStart.getTime() - Date.now()) / 3600000;
+  if (isFinite(hoursBefore) && hoursBefore < policyHours) return { skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h) : décision du salon` };
+  const res = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(rdv.payment_intent_id)}/cancel`, {
+    method: "POST", headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" }, body: "cancellation_reason=requested_by_customer"
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && !/canceled/i.test(String(data?.error?.message || ""))) {
+    try { await reportWorkerError(env, "empreinte:release_on_cancel", new Error(data?.error?.message || ("HTTP " + res.status)), { rdv_id: rdv.id }, "error"); } catch (_) {}
+    return { error: data?.error?.message || "échec libération" };
+  }
+  await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv.id)}`, {
+    method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
+    body: JSON.stringify({ empreinte_status: "released", empreinte_released_at: new Date().toISOString(), empreinte_capture_reason: "annulation_dans_les_delais" })
+  });
+  return { released: true };
+}
+
 async function refundAndRecord(env, rdv) {
   const r = await attemptAcompteRefund(env, rdv);
   const nowIso = new Date().toISOString();
@@ -2353,7 +2666,7 @@ async function handleClientRdvUpdate(request, env) {
     if (!rdvId) return jsonResponse({ error: "rdv_id requis" }, 400);
     // Vérif ownership : le RDV doit appartenir au client (lx_id ou email)
     const ownRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at&id=eq.${encodeURIComponent(rdvId)}&limit=1`,
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdvId)}&limit=1`,
       { headers: _sbHeaders(env) }
     );
     const own = await ownRes.json();
@@ -2392,6 +2705,7 @@ async function handleClientRdvUpdate(request, env) {
       } catch (e) {
         console.error("refund on cancel error:", e);
       }
+      try { await releaseEmpreinteOnCancel(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("empreinte on cancel:", e); }
     }
     return jsonResponse({ success: true, refund: refundResult });
   } catch (e) {
@@ -2493,7 +2807,7 @@ async function handleRdvCancel(request, env) {
     // SECURITE 2026-10-08 : seule la cliente proprietaire du RDV (session) peut l'annuler ici.
     const session = await verifyClientSession(session_token, env);
     if (!session) return jsonResponse({ error: "Connectez-vous pour annuler ce rendez-vous" }, 401);
-    const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+    const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
     const own = await ownRes.json();
     if (!Array.isArray(own) || !own[0]) return jsonResponse({ error: "RDV introuvable" }, 404);
     const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
@@ -2508,7 +2822,9 @@ async function handleRdvCancel(request, env) {
     if (!res.ok) return jsonResponse({ error: "Update failed", status: res.status }, 500);
     let refund = null;
     try { refund = await refundAndRecord(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("refund on cancel:", e); }
-    return jsonResponse({ success: true, refund });
+    let empreinte = null;
+    try { empreinte = await releaseEmpreinteOnCancel(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("empreinte on cancel:", e); }
+    return jsonResponse({ success: true, refund, empreinte });
   } catch (err) { return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 
