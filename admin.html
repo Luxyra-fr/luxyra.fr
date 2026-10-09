@@ -505,8 +505,9 @@ function render(){
     else h+=rSalons();
   }
   else if(tab==='finance'){
-    h=subBar([{id:'revenus',label:'💰 Revenus'},{id:'clotures',label:'📋 Clôtures Z'},{id:'nf525',label:'🛡️ NF525'}]);
-    if(sub==='nf525') h+=rNF525();
+    h=subBar([{id:'revenus',label:'💰 Revenus'},{id:'stripe',label:'💳 Stripe'},{id:'clotures',label:'📋 Clôtures Z'},{id:'nf525',label:'🛡️ NF525'}]);
+    if(sub==='stripe') h+=rStripe();
+    else if(sub==='nf525') h+=rNF525();
     else if(sub==='clotures') h+=rClotures();
     else h+=rRevenue();
   }
@@ -2262,6 +2263,8 @@ function openD(id){
   h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Geste</span><span class="v">'+(s.stripeSub?('<button class="dp-btn" style="font-size:12px;padding:6px 10px" onclick="lxOfferMonths(&#39;'+s.id+'&#39;)">🎁 Offrir des mois</button>'):'<span style="font-size:11px;color:var(--text3)">Pas d\'abonnement Stripe — geste indisponible</span>')+'</span></div>';
   h+='</div>';
 
+  h+=saBlocSalon(s);
+
   // PLAN GRATUIT
   h+='<div class="dp-section"><div class="dp-label">🎁 Plan offert</div>';
   h+='<div class="dp-field"><span class="k">Gratuit\u00e9</span><span class="v"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="dpFree" '+(s.isFree?'checked':'')+'> <span style="font-weight:700;color:'+(s.isFree?'var(--green)':'var(--text2)')+'">Plan offert'+(s.isFree?' \u2705':'')+'</span></label></span></div>';
@@ -3670,6 +3673,167 @@ async function saveNotes(id){
   var n=document.getElementById("dpNotes");if(!n)return;
   await _sb.from("salons").update({notes_admin:n.value}).eq("id",id);
   alert("Notes enregistrées !");
+}
+
+// ============================================================
+// STRIPE — gestion depuis le panneau admin (2026-10-09)
+// Lecture + actions via /api/admin/stripe (réservé admin, chaque action journalisée).
+// ============================================================
+async function saApi(body){
+  var tok=await lxAdminJeton();
+  var r=await fetch("/api/admin/stripe",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify(body)});
+  var d=await r.json().catch(function(){return {error:"Réponse illisible ("+r.status+")"};});
+  if(!r.ok&&!d.error) d.error="Erreur "+r.status;
+  return d;
+}
+function saE(v){ return (Number(v)||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" €"; }
+function saD(s){ try{ return new Date(s).toLocaleDateString("fr-FR"); }catch(e){ return s||""; } }
+function saEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+var SA_FORFAIT={essentiel:"Essentiel",pro:"Pro",pro_fondateur:"Pro Fondateur",autre:"Autre"};
+function saCarte(t,v,sub,c){ return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;min-width:150px;flex:1"><div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">'+t+'</div><div style="font-size:22px;font-weight:800;margin-top:4px;color:'+(c||'var(--text)')+'">'+v+'</div>'+(sub?'<div style="font-size:11px;color:var(--text2);margin-top:2px">'+sub+'</div>':'')+'</div>'; }
+
+function rStripe(){
+  setTimeout(saChargerOverview,0);
+  return '<div id="saOverview" style="padding:20px;color:var(--text2)">Chargement des données Stripe…</div>';
+}
+async function saChargerOverview(){
+  var el=document.getElementById("saOverview"); if(!el) return;
+  var d=await saApi({op:"overview"});
+  if(d.error){ el.innerHTML='<div style="color:var(--red)">❌ '+saEsc(d.error)+'</div>'; return; }
+  var a=d.abonnements||{}, f=a.par_forfait||{};
+  var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:12px;color:var(--text2)">Stripe en mode <b style="color:'+(d.mode==="live"?"var(--green)":"var(--orange)")+'">'+(d.mode==="live"?"RÉEL":"TEST")+'</b></div><button class="tb-btn" onclick="saChargerOverview()">↻ Actualiser</button></div>';
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">';
+  h+=saCarte("Revenu mensuel (abonnements)",saE(a.mrr),"remises déduites, hors essais","var(--gold)");
+  h+=saCarte("Abonnés actifs",a.actifs||0,"Essentiel "+(f.essentiel||0)+" · Pro "+(f.pro||0)+" · Fondateur "+(f.pro_fondateur||0));
+  h+=saCarte("Ce mois-ci","+"+(a.nouveaux_mois||0)+" / −"+(a.departs_mois||0),"nouveaux / départs");
+  h+=saCarte("Impayés",a.impayes||0,(a.fin_de_periode||0)+" résiliation(s) programmée(s)",(a.impayes?"var(--red)":null));
+  h+=saCarte("Solde Stripe",saE(d.solde&&d.solde.disponible),"+ "+saE(d.solde&&d.solde.en_attente)+" en attente");
+  h+='</div>';
+  // Litiges
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;margin-bottom:8px">⚠️ Litiges à traiter ('+(d.litiges||[]).length+')</div>';
+  if(!(d.litiges||[]).length) h+='<div style="font-size:12px;color:var(--text2)">Aucun litige en cours 👍</div>';
+  (d.litiges||[]).forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saE(x.montant)+' — '+saEsc(x.raison)+' — <b style="color:var(--red)">réponse avant le '+saD(x.echeance)+'</b></span><a href="https://dashboard.stripe.com/disputes/'+saEsc(x.id)+'" target="_blank" style="color:var(--gold)">Répondre dans Stripe ↗</a></div>'; });
+  h+='</div>';
+  // Factures impayées
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;margin-bottom:8px">🧾 Factures d\'abonnement impayées ('+(d.factures_impayees||[]).length+')</div>';
+  if(!(d.factures_impayees||[]).length) h+='<div style="font-size:12px;color:var(--text2)">Aucune</div>';
+  (d.factures_impayees||[]).forEach(function(x){
+    h+='<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span><b>'+saEsc(x.salon)+'</b> — '+saE(x.montant)+' — '+(x.tentatives||0)+' tentative(s)'+(x.prochaine?' · prochaine le '+saD(x.prochaine):'')+'</span><span style="display:flex;gap:6px">';
+    if(x.url) h+='<a class="dp-btn" style="font-size:11px" href="'+saEsc(x.url)+'" target="_blank">Voir</a>';
+    if(x.salon_id) h+='<button class="dp-btn" style="font-size:11px" onclick="saRelancer(\''+x.salon_id+'\',\''+x.id+'\',true)">Relancer le prélèvement</button>';
+    h+='</span></div>';
+  });
+  h+='</div>';
+  // Virements
+  h+='<div class="card" style="margin-bottom:14px"><div style="font-weight:800;margin-bottom:8px">🏦 Virements vers ton compte bancaire</div>';
+  if(!(d.virements||[]).length) h+='<div style="font-size:12px;color:var(--text2)">Aucun virement</div>';
+  (d.virements||[]).forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saD(x.arrivee)+'</span><span>'+saE(x.montant)+' · '+saEsc(x.statut==="paid"?"versé":x.statut==="in_transit"?"en cours":x.statut)+'</span></div>'; });
+  h+='</div>';
+  // Comptes Stripe des salons
+  h+='<div class="card"><div style="font-weight:800;margin-bottom:8px">💳 Comptes Stripe des salons (paiements en ligne)</div>';
+  if(!(d.salons_connect||[]).length) h+='<div style="font-size:12px;color:var(--text2)">Aucun salon</div>';
+  (d.salons_connect||[]).forEach(function(x){ h+='<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px;cursor:pointer" onclick="if(typeof openD===\'function\')openD(\''+x.id+'\')"><span>'+saEsc(x.nom)+'</span><span>'+saEsc(x.statut||"?")+'</span></div>'; });
+  h+='</div>';
+  el.innerHTML=h;
+}
+
+// --- Bloc « Gestion Stripe » dans la fiche d'un salon ---
+function saBlocSalon(s){
+  if(!s.stripeSub&&!s.stripeCust&&!s.connectId) return '';
+  return '<div class="dp-section"><div class="dp-label">⚙️ Gestion Stripe</div><div id="saSalon-'+s.id+'"><button class="dp-btn" style="width:100%" onclick="saChargerSalon(\''+s.id+'\')">Charger abonnement, factures et paiements</button></div></div>';
+}
+async function saChargerSalon(id){
+  var el=document.getElementById("saSalon-"+id); if(!el) return;
+  el.innerHTML='<div style="font-size:12px;color:var(--text2)">Chargement…</div>';
+  var d=await saApi({op:"salon",salon_id:id});
+  if(d.error){ el.innerHTML='<div style="color:var(--red)">❌ '+saEsc(d.error)+'</div>'; return; }
+  var h='';
+  var ab=d.abonnement;
+  if(ab){
+    h+='<div class="dp-field"><span class="k">Abonnement</span><span class="v"><b>'+(SA_FORFAIT[ab.forfait]||ab.forfait)+'</b> · '+saE(ab.mensuel)+'/mois · '+saEsc(ab.statut)+'</span></div>';
+    h+='<div class="dp-field"><span class="k">Prochaine échéance</span><span class="v">'+saD(ab.fin_periode)+(ab.annule_fin_periode?' <b style="color:var(--red)">(résiliation programmée)</b>':'')+'</span></div>';
+    if(ab.essai_jusqu) h+='<div class="dp-field"><span class="k">Offert jusqu\'au</span><span class="v">'+saD(ab.essai_jusqu)+'</span></div>';
+    (ab.remises||[]).forEach(function(r){ h+='<div class="dp-field"><span class="k">Remise</span><span class="v">'+saEsc(r.nom)+(r.fin?' (jusqu\'au '+saD(r.fin)+')':'')+'</span></div>'; });
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">';
+    h+='<button class="dp-btn" style="font-size:11px" onclick="saRemise(\''+id+'\')">🏷 Appliquer une remise</button>';
+    if((ab.remises||[]).length) h+='<button class="dp-btn" style="font-size:11px" onclick="saAction(\''+id+'\',{op:\'retirer_coupon\'},\'Retirer la remise de ce salon ?\')">Retirer la remise</button>';
+    h+='<button class="dp-btn" style="font-size:11px" onclick="saForfait(\''+id+'\',\''+ab.forfait+'\')">🔁 Changer de forfait</button>';
+    if(ab.annule_fin_periode) h+='<button class="dp-btn success" style="font-size:11px" onclick="saAction(\''+id+'\',{op:\'reprendre\'},\'Annuler la résiliation programmée ? L\\\'abonnement continuera normalement.\')">↩ Annuler la résiliation</button>';
+    else h+='<button class="dp-btn" style="font-size:11px;color:var(--red)" onclick="saAction(\''+id+'\',{op:\'annuler_fin_periode\'},\'Résilier cet abonnement à la fin de la période payée ('+saD(ab.fin_periode)+') ?\',true)">Résilier en fin de période</button>';
+    h+='</div>';
+  }
+  if((d.factures||[]).length){
+    h+='<div style="font-weight:700;font-size:12px;margin:10px 0 4px">Factures Luxyra</div>';
+    d.factures.forEach(function(f){
+      var st={paid:"payée",open:"<b style='color:var(--red)'>impayée</b>",void:"annulée",draft:"brouillon",uncollectible:"irrécouvrable"}[f.statut]||f.statut;
+      h+='<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px;padding:4px 0;border-top:1px solid var(--border)"><span>'+saD(f.date)+' · '+saEsc(f.numero||"")+' · '+saE(f.statut==="paid"?f.paye:f.du)+' · '+st+'</span><span style="display:flex;gap:4px">';
+      if(f.pdf) h+='<a class="dp-btn" style="font-size:10px;padding:3px 7px" href="'+saEsc(f.pdf)+'" target="_blank">PDF</a>';
+      if(f.statut==="open") h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRelancer(\''+id+'\',\''+f.id+'\')">Relancer</button>';
+      if(f.statut==="paid"&&f.payment_intent) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRembourser(\''+id+'\',\''+f.payment_intent+'\','+f.paye+',\'abonnement Luxyra\')">Rembourser</button>';
+      h+='</span></div>';
+    });
+  }
+  var c=d.connect;
+  if(c){
+    h+='<div style="font-weight:700;font-size:12px;margin:12px 0 4px">Compte Stripe du salon</div>';
+    h+='<div style="font-size:12px">Encaissements : '+(c.encaissements?'✅':'❌')+' · Virements : '+(c.virements?'✅':'❌')+' · Dossier envoyé : '+(c.dossier_envoye?'✅':'❌')+'</div>';
+    if(c.blocage) h+='<div style="font-size:12px;color:var(--red)">Blocage : '+saEsc(c.blocage)+'</div>';
+    if((c.en_retard||[]).length) h+='<div style="font-size:12px;color:var(--red)">En retard : '+saEsc(c.en_retard.join(", "))+'</div>';
+    if((c.a_fournir||[]).length) h+='<div style="font-size:12px;color:var(--orange)">À fournir : '+saEsc(c.a_fournir.join(", "))+'</div>';
+    if(!c.encaissements||!c.virements||(c.a_fournir||[]).length) h+='<button class="dp-btn" style="font-size:11px;margin-top:6px" onclick="saLienInscription(\''+id+'\')">🔗 Lien pour terminer son inscription Stripe</button>';
+    var P=d.paiements_clientes||[];
+    h+='<div style="font-weight:700;font-size:12px;margin:12px 0 4px">Paiements des clientes (90 jours) : '+P.length+'</div>';
+    P.forEach(function(p){
+      var stl={succeeded:"payé",requires_capture:"empreinte en attente",canceled:"annulé",processing:"en cours"}[p.statut]||p.statut;
+      h+='<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px;padding:4px 0;border-top:1px solid var(--border)"><span>'+saD(p.date)+' · '+saE(p.montant)+' · '+saEsc(p.type||"")+' · '+stl+(p.rembourse?' · <b>remboursé '+saE(p.rembourse)+'</b>':'')+'<br><span style="color:var(--text2)">'+saEsc(p.description).slice(0,90)+'</span></span>';
+      if(p.statut==="succeeded"&&p.rembourse<p.montant) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRembourser(\''+id+'\',\''+p.id+'\','+(p.montant-p.rembourse)+',\'paiement d\\\'une cliente (repris sur le compte du salon)\')">Rembourser</button>';
+      h+='</div>';
+    });
+  }
+  if(!h) h='<div style="font-size:12px;color:var(--text2)">Aucune donnée Stripe pour ce salon.</div>';
+  h+='<button class="dp-btn" style="width:100%;margin-top:10px;font-size:11px" onclick="saChargerSalon(\''+id+'\')">↻ Actualiser</button>';
+  el.innerHTML=h;
+}
+async function saAction(id,body,question,danger){
+  if(question && !confirm((danger?"⚠️ ":"")+question)) return;
+  body.salon_id=id;
+  var m=prompt("Motif (gardé dans le journal admin) :",""); if(m===null) return; body.motif=m;
+  var d=await saApi(body);
+  if(d.error) alert("❌ "+d.error); else alert("✅ Fait");
+  saChargerSalon(id);
+}
+function saRemise(id){
+  var t=prompt("Remise : tape un pourcentage (ex. 50%) ou un montant en euros (ex. 5€)","50%"); if(t===null) return;
+  var pct=/%/.test(t)?parseFloat(t):0, mt=/€|eur/i.test(t)||!/%/.test(t)?parseFloat(String(t).replace(",",".")):0; if(pct) mt=0;
+  var dur=prompt("Durée : 1 = une seule facture, 2 = plusieurs mois, 3 = pour toujours","1"); if(dur===null) return;
+  var body={op:"coupon",pourcentage:pct||0,montant:mt||0,duree:dur==="3"?"forever":dur==="2"?"repeating":"once"};
+  if(dur==="2"){ var n=prompt("Combien de mois ?","3"); if(n===null) return; body.mois=parseInt(n)||1; }
+  saAction(id,body,"Appliquer "+(pct?pct+" %":saE(mt))+" de remise ("+(body.duree==="once"?"1 facture":body.duree==="forever"?"pour toujours":body.mois+" mois")+") ?");
+}
+function saForfait(id,actuel){
+  var cible=(actuel==="essentiel")?"pro":"essential";
+  saAction(id,{op:"changer_forfait",plan:cible},"Passer ce salon au forfait "+(cible==="pro"?"Pro (tarif Fondateur s'il reste des places)":"Essentiel (le site et la réservation en ligne seront coupés)")+" ? La différence est calculée au prorata par Stripe.",true);
+}
+async function saRelancer(id,fid,depuisOverview){
+  if(!confirm("Relancer maintenant le prélèvement de cette facture ?")) return;
+  var d=await saApi({op:"relancer_facture",salon_id:id,facture_id:fid});
+  alert(d.error?"❌ "+d.error:"✅ Facture payée");
+  if(depuisOverview) saChargerOverview(); else saChargerSalon(id);
+}
+async function saRembourser(id,pi,max,nature){
+  var m=prompt("Rembourser un "+nature+".\nMontant à rembourser (max "+saE(max)+") :",String(max).replace(".",",")); if(m===null) return;
+  var mt=parseFloat(String(m).replace(",",".")); if(!(mt>0)||mt>max+0.001){ alert("Montant invalide"); return; }
+  var motif=prompt("Motif du remboursement (obligatoire) :",""); if(!motif) return;
+  if(!confirm("⚠️ Confirmer le remboursement de "+saE(mt)+" ? Action irréversible.")) return;
+  var d=await saApi({op:"rembourser",salon_id:id,payment_intent:pi,montant:mt,motif:motif});
+  alert(d.error?"❌ "+d.error:"✅ "+saE(d.montant)+" remboursés");
+  saChargerSalon(id);
+}
+async function saLienInscription(id){
+  var d=await saApi({op:"lien_inscription",salon_id:id});
+  if(d.error){ alert("❌ "+d.error); return; }
+  try{ await navigator.clipboard.writeText(d.url); }catch(e){}
+  prompt("Lien copié (valable quelques minutes) — à envoyer au salon :",d.url);
 }
 
 async function lxOfferMonths(salonId){
