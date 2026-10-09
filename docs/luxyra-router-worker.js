@@ -648,7 +648,10 @@ async function handleWebhook(request, env) {
         const qty = parseInt(data.metadata.sms_qty || "0");
         if (salonId && qty > 0) {
           const salon = await supabaseGet(env, salonId);
-          await supabaseUpdate(env, salonId, { sms_credits: (salon?.sms_credits || 0) + qty });
+          const _solde = (salon?.sms_credits || 0) + qty;
+          await supabaseUpdate(env, salonId, { sms_credits: _solde });
+          // 2026-10-09 : historique des crédits (admin → SMS → salon)
+          try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_mouvements`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ salon_id: salonId, type: "achat_pack", delta: qty, solde_apres: _solde, montant_eur: (Number(data.amount_total) || 0) / 100, motif: "Pack " + qty + " SMS (Stripe)", auteur: "salon" }) }); } catch (_) {}
         }
         break;
       }
@@ -726,6 +729,7 @@ async function handleWebhook(request, env) {
                 sms_credits: newCredits,
                 welcome_sms_bonus_given: true
               });
+              try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_mouvements`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ salon_id: salonId, type: "bonus", delta: 150, solde_apres: newCredits, motif: "Bonus 1er paiement Pro", auteur: "systeme" }) }); } catch (_) {}
               console.log("invoice.paid: 150 SMS bonus credited to salon", salonId, "new total=", newCredits);
             }
           } catch (e) { console.warn("SMS bonus error:", e?.message || e); }
@@ -2552,6 +2556,8 @@ async function gateSmsAndDecrementCredit(env, salonId) {
   if (!salon) return { ok: false, status: 404, error: "Salon introuvable" };
   // Plan Pro requis
   if (salon.plan !== "pro") return { ok: false, status: 403, error: "Plan Pro requis pour envoyer des SMS" };
+  // 2026-10-09 : envoi suspendu par l'admin
+  if (salon.sms_bloque === true) return { ok: false, status: 403, error: "Envoi de SMS suspendu pour ce salon — contactez le support Luxyra" };
   // Compte actif (pas suspended/cancelled)
   if (salon.status === "suspended" || salon.status === "cancelled") {
     return { ok: false, status: 403, error: "Compte suspendu — régularisez votre abonnement" };
