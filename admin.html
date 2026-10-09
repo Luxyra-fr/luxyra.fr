@@ -316,7 +316,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
-      if(c.data){_online=true;await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
+      if(c.data){_online=true;await loadPlansFromConfig();await loadData();try{await asChargerSuivi();}catch(_e){}loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
     }
   }catch(e){}
   showLogin();
@@ -343,7 +343,7 @@ async function doLogin(){
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
   document.getElementById("mainContent").style.marginLeft="";
-  await loadPlansFromConfig();await loadData();loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
+  await loadPlansFromConfig();await loadData();try{await asChargerSuivi();}catch(_e){}loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();bootRoute();
 }
 function showErr(m){var e=document.getElementById("loginErr");if(e){e.style.display="block";e.textContent=m;}}
 async function doAdminLogout(){await _sb.auth.signOut();_online=false;_uid=null;SALONS=[];INSCRIPTIONS=[];showLogin();}
@@ -373,6 +373,7 @@ async function loadData(){
           trialEnd:s.trial_end,color:colors[i%colors.length],
           smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,welcomeSmsBonusGiven:s.welcome_sms_bonus_given===true,
           isFree:s.is_free||false,freeUntil:s.free_until,customPrice:s.custom_price_amount,
+          created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,
           contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||""};
       });
       for(var i=0;i<SALONS.length;i++){
@@ -532,7 +533,7 @@ function render(){
     h+=rAnalytics(sub);
   }
   else if(tab==='parametres'){
-    h=subBar([{id:'admin',label:'👤 Admins'},{id:'legal',label:'⚖️ Légal'},{id:'system',label:'🔧 Système'}]);
+    h=subBar([{id:'admin',label:'⚙️ Réglages'},{id:'legal',label:'⚖️ Légal'},{id:'system',label:'🔧 Système'}]);
     if(sub==='legal') h+=rLegalPage();
     else if(sub==='system') h+=rSystemPage();
     else h+=rSettings();
@@ -552,6 +553,8 @@ function mrrOf(s){
     if(new Date(s.freeUntil)>new Date())return 0;
   }
   if(s.customPrice!=null&&s.customPrice!=='')return Number(s.customPrice)||0;
+  // 2026-10-09 : un Pro Fondateur paie le tarif Fondateur
+  if(s.plan==='pro'&&s.isFounder){ var c=window._appConfig||{}; return Number(c.plan_pro_founder_eur!=null?c.plan_pro_founder_eur:14.99); }
   return gPlan(s.plan).prix||0;
 }
 function mrrTotal(){var t=0;SALONS.forEach(function(s){t+=mrrOf(s);});return t;}
@@ -651,6 +654,12 @@ function shortcutClick(url){
   // Parse query string et appelle nav()
   var q=url.replace(/^\?/,''),p={};
   q.split('&').forEach(function(kv){var a=kv.split('=');p[a[0]]=decodeURIComponent(a[1]||'');});
+  // 2026-10-09 : les filtres des raccourcis sont appliqués
+  if(p.filter==='trial-expiring'){ window._AF=Object.assign(window._AF||{}, {statut:'trial',essai:'3'}); }
+  if(p.filter==='pending'){ window._AF=Object.assign(window._AF||{}, {statut:'pending'}); }
+  if(p.filter==='unpaid'){ window._AF=Object.assign(window._AF||{}, {statut:'past_due'}); }
+  if(p.filter==='unread'){ window._chatFiltre='unread'; }
+  window._clotDate=(p.date==='today')?new Date().toISOString().slice(0,10):null;
   nav(p.tab||'cockpit',p.sub||null);
 }
 
@@ -658,7 +667,9 @@ function rDashboard(){
   var now=new Date();
   var active=SALONS.filter(function(s){return s.status==='active';}).length;
   var trial=SALONS.filter(function(s){return s.status==='trial';}).length;
-  var pendingInscr=INSCRIPTIONS.filter(function(i){return (i.status||'pending')==='pending';}).length;
+  // 2026-10-09 : « à traiter » = salons inscrits depuis moins de 30 j encore à l'étape « Nouveau » du suivi
+  // (avant : statut d'inscriptions_log que rien ne faisait jamais évoluer -> compteur bloqué)
+  var pendingInscr=SALONS.filter(function(s){ return (typeof asSuivi==='function'?asSuivi(s.id).etape:'nouveau')==='nouveau' && (Date.now()-new Date(s.created).getTime())<30*86400000; }).length;
   var unreadChat=window.ADMIN_UNREAD_CHAT||0;
   var mrr=mrrTotal();
   var caCum=mrr*12; // estimation annuelle
@@ -672,7 +683,15 @@ function rDashboard(){
   var migPending=MIGRATIONS.filter(function(m){return m.status==='new'||m.status==='contacted'||m.status==='in_progress';});
   var migNew=MIGRATIONS.filter(function(m){return m.status==='new';});
   var demNew=DEMANDES.filter(function(d){return d.status==='new';});
-  var todoCount=pendingInscr+unreadChat+trialExp.length+pendingVerif.length+migPending.length+demNew.length;
+  // 2026-10-09 : Cockpit complet
+  var impayes=SALONS.filter(function(s){return s.status==='past_due';});
+  var auj=new Date().toISOString().slice(0,10);
+  var rappels=SALONS.filter(function(s){var su=(typeof asSuivi==='function')?asSuivi(s.id):{};return su.rappel_le&&su.rappel_le<=auj;});
+  var sante=window._SALON_HEALTH?SALONS.filter(function(s){var hh=_salonHealthOf(s.id);return hh&&hh.score!=null&&hh.score<40&&(s.status==='active'||s.status==='past_due')&&(Date.now()-new Date(s.created).getTime())>14*86400000;}):[];
+  if(!window._SALON_HEALTH && !window._cockpitSanteDemandee){ window._cockpitSanteDemandee=true; setTimeout(function(){ lxLoadSalonHealth().then(function(){ if(window._currentTab==='cockpit') render(); }); },50); }
+  var alertesMon=window._cockpitAlertes||0;
+  if(!window._cockpitAlertesDemandee){ window._cockpitAlertesDemandee=true; setTimeout(async function(){ try{ var r=await _sb.rpc('get_monitoring_status'); window._cockpitAlertes=(r.data&&r.data.recent_critical_1h)||0; if(window._cockpitAlertes&&window._currentTab==='cockpit') render(); }catch(e){} },80); }
+  var todoCount=pendingInscr+unreadChat+trialExp.length+pendingVerif.length+migPending.length+demNew.length+impayes.length+rappels.length+sante.length+(alertesMon?1:0);
 
   var h='<div class="topbar"><h1>Cockpit <span>Vue temps réel</span></h1><div style="font-size:12px;color:var(--text3);font-family:var(--mono)">'+fmtD(now.toISOString())+'</div></div>';
   // Bannière activation push (si permission === 'default')
@@ -690,7 +709,7 @@ function rDashboard(){
   h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Salons actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements en cours</div><div class="kpi-icon">✅</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Essais en cours</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
-  h+='<div class="kpi" style="cursor:pointer" onclick="nav(\'salons\',\'inscriptions\')"><div class="kpi-label">Inscriptions pending</div><div class="kpi-value" style="color:var(--blue)">'+pendingInscr+'</div><div class="kpi-sub">À traiter</div><div class="kpi-icon">📝</div></div>';
+  h+='<div class="kpi" style="cursor:pointer" onclick="window._AF=Object.assign(window._AF||{},{etape:\'nouveau\'});nav(\'salons\',\'liste\')"><div class="kpi-label">Nouveaux à accueillir</div><div class="kpi-value" style="color:var(--blue)">'+pendingInscr+'</div><div class="kpi-sub">À traiter</div><div class="kpi-icon">📝</div></div>';
   h+='<div class="kpi" style="cursor:pointer" onclick="nav(\'communication\',\'chat\')"><div class="kpi-label">Support non lu</div><div class="kpi-value" style="color:'+(unreadChat>0?'var(--red)':'var(--text2)')+'">'+unreadChat+'</div><div class="kpi-sub">Messages clients</div><div class="kpi-icon">💬</div></div>';
   h+='<div class="kpi"><div class="kpi-label">CA annuel projeté</div><div class="kpi-value" style="color:var(--purple)">'+fmtM(caCum)+'</div><div class="kpi-sub">MRR × 12 (projection, pas du réalisé)</div><div class="kpi-icon">📈</div></div>';
   h+='</div>';
@@ -701,6 +720,11 @@ function rDashboard(){
     h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">✨ Tout est à jour, rien à traiter.</div>';
   }else{
     // Ordre : migrations urgentes (new) en premier, puis demandes, puis chat, puis le reste
+    var _row=function(ico,txt,onclick,urgent){ return '<div class="todo-row" onclick="'+onclick+'" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer'+(urgent?';background:linear-gradient(90deg,rgba(231,76,60,.08),transparent)':'')+'"><span style="font-size:18px">'+ico+'</span><span style="flex:1">'+txt+'</span><span style="color:var(--text3)">→</span></div>'; };
+    if(alertesMon) h+=_row('🚨','<strong>'+alertesMon+'</strong> alerte(s) critique(s) dans la dernière heure',"nav('monitoring')",true);
+    if(impayes.length) h+=_row('💳','<strong>'+impayes.length+'</strong> salon(s) en impayé : '+impayes.map(function(x){return x.nom;}).join(', '),"window._AF=Object.assign(window._AF||{},{statut:'past_due'});nav('salons','liste')",true);
+    if(rappels.length) h+=_row('📞','<strong>'+rappels.length+'</strong> rappel(s) prévu(s) : '+rappels.map(function(x){return x.nom+(asSuivi(x.id).rappel_note?' ('+asSuivi(x.id).rappel_note+')':'');}).join(', '),"window._AF=Object.assign(window._AF||{},{rappel:'1',tri:'rappel'});nav('salons','liste')");
+    if(sante.length) h+=_row('📉','<strong>'+sante.length+'</strong> client(s) avec une santé faible (< 40) : '+sante.map(function(x){return x.nom;}).join(', '),"window._AF=Object.assign(window._AF||{},{tri:'sante'});nav('salons','liste')");
     if(migNew.length>0){
       var urgC = '#e74c3c';
       h+='<div class="todo-row" onclick="nav(\'salons\',\'migrations\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer;background:linear-gradient(90deg,rgba(231,76,60,.08),transparent)"><span style="font-size:18px">📥</span><span style="flex:1"><strong style="color:'+urgC+'">'+migNew.length+'</strong> nouvelle'+(migNew.length>1?'s':'')+' demande'+(migNew.length>1?'s':'')+' de <strong>migration</strong></span><span style="color:'+urgC+';font-weight:700">→</span></div>';
@@ -711,7 +735,7 @@ function rDashboard(){
     }
     if(demNew.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'demandes\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📩</span><span style="flex:1"><strong>'+demNew.length+'</strong> demande'+(demNew.length>1?'s':'')+' d’essai (formulaire site)</span><span style="color:var(--gold)">→</span></div>';
     if(unreadChat>0)h+='<div class="todo-row" onclick="nav(\'communication\',\'chat\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">💬</span><span style="flex:1"><strong>'+unreadChat+'</strong> message'+(unreadChat>1?'s':'')+' support non lu</span><span style="color:var(--gold)">→</span></div>';
-    if(pendingInscr>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'inscriptions\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📝</span><span style="flex:1"><strong>'+pendingInscr+'</strong> inscription'+(pendingInscr>1?'s':'')+' en attente d’activation</span><span style="color:var(--gold)">→</span></div>';
+    if(pendingInscr>0)h+='<div class="todo-row" onclick="window._AF=Object.assign(window._AF||{},{etape:\'nouveau\'});nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📝</span><span style="flex:1"><strong>'+pendingInscr+'</strong> nouveau'+(pendingInscr>1?'x':'')+' salon'+(pendingInscr>1?'s':'')+' à accueillir (étape « Nouveau » dans le suivi)</span><span style="color:var(--gold)">→</span></div>';
     if(trialExp.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">⏰</span><span style="flex:1"><strong>'+trialExp.length+'</strong> essai'+(trialExp.length>1?'s':'')+' expire'+(trialExp.length>1?'nt':'')+' dans &lt;3j</span><span style="color:var(--gold)">→</span></div>';
     if(pendingVerif.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;cursor:pointer"><span style="font-size:18px">🛡️</span><span style="flex:1"><strong>'+pendingVerif.length+'</strong> vérification'+(pendingVerif.length>1?'s':'')+' KBIS/ID en attente</span><span style="color:var(--gold)">→</span></div>';
   }
@@ -937,26 +961,96 @@ function subscribeChatRealtime(){
 }
 
 // Communication / Email — fonctions d'envoi réellement déployées
+// ============================================================
+// EMAILS (2026-10-09) : relances d'essai automatiques, modèles, historique
+// ============================================================
+window._emailOnglet = window._emailOnglet || "relances";
+var EM_TYPES = {essai_j3:"J+3 · Besoin d'aide ?",essai_j7:"J+7 · Ce qu'il reste à configurer",essai_fin:"J-2 · Fin d'essai"};
 function rEmail(){
-  var h='<div class="topbar"><h1>Emails <span>Fonctions d\'envoi déployées</span></h1></div>';
-  h+='<div class="card"><h3>📧 Edge Functions email (Supabase)</h3>';
-  // VRAIE liste des edge functions d'envoi email déployées (et non une liste inventée).
-  // Le contenu des emails (HTML) est dans le code de chaque fonction, pas dans des templates Brevo.
-  var fns=[
-    {fn:'salon-onboarding-email',name:'Onboarding salon',desc:'Séquence de bienvenue après inscription (J+0, J+3...)'},
-    {fn:'salon-billing-email',name:'Facturation salon',desc:'Notifications liées à l\'abonnement Stripe'},
-    {fn:'avis-invite-email',name:'Invitation avis',desc:'Demande d\'avis client après prestation'},
-    {fn:'rdv-online-modified-email',name:'RDV modifié',desc:'Notification au client si le salon modifie son RDV'},
-    {fn:'lx-alert-mail',name:'Alertes monitoring',desc:'Erreurs critiques + audit intégrité → support@luxyra.fr'}
-  ];
-  fns.forEach(function(t){
-    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)"><div><div style="font-weight:600;font-size:13px">'+t.name+'</div><div style="font-size:11px;color:var(--text3);margin-top:2px">'+t.desc+'</div><div style="font-size:10px;color:var(--text3);font-family:var(--mono,monospace);margin-top:2px">'+t.fn+'</div></div><span style="font-size:10px;color:var(--text3)">déployée</span></div>';
+  var t=window._emailOnglet;
+  var h='<div class="topbar"><h1>Emails <span>Relances, modèles, historique</span></h1></div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:14px">'+[["relances","🤖 Relances d'essai"],["modeles","📝 Modèles"],["historique","📜 Historique"]].map(function(o){return '<button class="tf-btn'+(t===o[0]?' active':'')+'" onclick="window._emailOnglet=\''+o[0]+'\';render()">'+o[1]+'</button>';}).join("")+'</div>';
+  setTimeout(emCharger,0);
+  return h+'<div id="emZone" style="color:var(--text2)">Chargement…</div>';
+}
+async function emCharger(){
+  var el=document.getElementById("emZone"); if(!el) return; var t=window._emailOnglet;
+  if(t==="modeles"){ var r=await _sb.from("admin_email_modeles").select("*").order("nom"); window._EM_MODELES=r.data||[]; el.innerHTML=emVueModeles(); return; }
+  var a=await _sb.from("salon_emails_auto").select("*").order("envoye_le",{ascending:false}).limit(500);
+  var auto=a.data||[];
+  if(t==="historique"){
+    var n=await _sb.from("admin_notes_salons").select("*").eq("type","email").order("cree_le",{ascending:false}).limit(200);
+    var L=auto.map(function(x){return {d:x.envoye_le,salon:x.salon_id,txt:"🤖 "+(EM_TYPES[x.type]||x.type)+(x.sujet?" — "+x.sujet:""),ouvert:x.ouvert_le};}).concat((n.data||[]).map(function(x){return {d:x.cree_le,salon:x.salon_id,txt:"✉️ "+x.note,ouvert:null};})).sort(function(p,q){return new Date(q.d)-new Date(p.d);});
+    el.innerHTML='<div class="card">'+(L.length?L.map(function(x){var s=gSalon(x.salon);return '<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.d).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b style="cursor:pointer" onclick="openD(\''+x.salon+'\')">'+saEsc(s?s.nom:"?")+'</b> '+saEsc(x.txt)+'</span><span style="font-size:11px">'+(x.ouvert?'<span style="color:var(--green)">👁 ouvert '+new Date(x.ouvert).toLocaleDateString("fr-FR")+'</span>':'')+'</span></div>';}).join(""):'<i>Aucun email envoyé pour l\'instant</i>')+'</div>';
+    return;
+  }
+  // relances
+  var cfg=window._appConfig||{}, on=cfg.relances_essai_actives===true;
+  var h='<div class="card" style="margin-bottom:14px;border-left:4px solid '+(on?'var(--green)':'var(--orange)')+'"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><div style="font-weight:800">Relances automatiques pendant l\'essai : '+(on?'<span style="color:var(--green)">ACTIVÉES</span>':'<span style="color:var(--orange)">désactivées</span>')+'</div><div style="font-size:12px;color:var(--text2);margin-top:4px">Chaque matin vers 10 h, un email signé Alexandre part aux salons en essai : J+3 (besoin d\'aide ?), J+7 (les étapes qui leur manquent, personnalisées), 2 jours avant la fin (choisir son forfait). Une seule fois par étape. Les salons à l\'étape « Client » ou « Perdu » du suivi ne reçoivent rien.</div></div><button class="tb-btn'+(on?'':' primary')+'" onclick="emBasculer('+(!on)+')">'+(on?'Désactiver':'Activer les relances')+'</button></div></div>';
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">';
+  Object.keys(EM_TYPES).forEach(function(k){
+    var L=auto.filter(function(x){return x.type===k;}), ouv=L.filter(function(x){return x.ouvert_le;}).length;
+    var conv=L.filter(function(x){var s=gSalon(x.salon_id);return s&&(s.stripeSub||s.status==="active")&&!s.isFree;}).length;
+    h+=saCarte(EM_TYPES[k],L.length+" envoyé(s)",(L.length?Math.round(ouv*100/L.length):0)+" % ouverts · "+conv+" devenu(s) client(s)");
   });
-  h+='<div style="margin-top:16px;font-size:11px;color:var(--text3)">⚠️ « Déployée » = la fonction existe sur Supabase. Le statut d\'exécution réel (envois OK/KO) est visible dans <strong>Monitoring</strong> (erreurs serveur source edge_fn:*) et dans le dashboard Supabase → Edge Functions → Logs.</div></div>';
-  // Note : l'envoi physique des emails passe par Brevo (clé API en variable d'env).
-  h+='<div class="card"><h3>📨 Fournisseur d\'envoi</h3><div style="font-size:13px;color:var(--text2);line-height:1.8">Les emails sont expédiés via <strong>Brevo</strong> (clé API configurée en variable d\'environnement Supabase). Le statut de joignabilité de l\'API Brevo est affiché dans <strong>Paramètres → Système</strong>.</div></div>';
+  h+='</div><div class="card"><h3>Derniers envois</h3>'+(auto.length?auto.slice(0,50).map(function(x){var s=gSalon(x.salon_id);return '<div style="display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--border);font-size:13px"><span><span style="color:var(--text3)">'+new Date(x.envoye_le).toLocaleDateString("fr-FR")+'</span> <b style="cursor:pointer" onclick="openD(\''+x.salon_id+'\')">'+saEsc(s?s.nom:"?")+'</b> — '+EM_TYPES[x.type]+'</span><span style="font-size:11px">'+(x.ouvert_le?'<span style="color:var(--green)">👁 ouvert</span>':'<span style="color:var(--text3)">non ouvert</span>')+'</span></div>';}).join(""):'<i style="font-size:13px">Aucune relance envoyée pour l\'instant</i>')+'</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">« Ouvert » est mesuré par une image invisible : certaines messageries la bloquent, le vrai taux est donc un peu plus élevé.</div>';
+  el.innerHTML=h;
+}
+async function emBasculer(on){
+  if(!confirm(on?"Activer les relances automatiques ? Les salons en essai concernés recevront le prochain email demain matin.":"Désactiver les relances automatiques ?")) return;
+  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
+  var merged=Object.assign({},(cur.data&&cur.data.config)||{},{relances_essai_actives:on});
+  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (relances)"}).eq("id",1);
+  if(r.error){ alert("❌ "+r.error.message); return; } window._appConfig=merged;
+  try{ await _sb.from("admin_log").insert({action:on?"RELANCES_ESSAI_ON":"RELANCES_ESSAI_OFF",details:""}); }catch(e){}
+  emCharger();
+}
+function emVueModeles(){
+  var L=window._EM_MODELES||[];
+  var h='<div style="margin-bottom:10px"><button class="tb-btn primary" onclick="emEditer(null)">+ Nouveau modèle</button> <span style="font-size:12px;color:var(--text3)">Variables : {nom} = nom du salon, {prenom} = prénom du gérant. Utilisables dans « Envoyer un email » (fiche ou sélection).</span></div>';
+  L.forEach(function(m){ h+='<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:8px"><b>'+saEsc(m.nom)+'</b><span><button class="dp-btn" style="font-size:11px" onclick="emEditer('+m.id+')">✏️ Modifier</button> <button class="dp-btn" style="font-size:11px;color:var(--red)" onclick="emSupprimer('+m.id+')">🗑</button></span></div><div style="font-size:12px;color:var(--text2);margin-top:4px">Objet : '+saEsc(m.sujet)+'</div><div style="font-size:12px;color:var(--text3);white-space:pre-line;margin-top:4px;max-height:90px;overflow:hidden">'+saEsc(m.corps)+'</div></div>'; });
+  return h||'<i>Aucun modèle</i>';
+}
+function emEditer(id){
+  var m=(window._EM_MODELES||[]).find(function(x){return x.id===id;})||{nom:"",sujet:"",corps:""};
+  var h='<div class="mbg" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)this.remove()"><div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;width:100%;max-width:640px">';
+  h+='<h3 style="margin-bottom:10px">'+(id?'Modifier':'Nouveau')+' modèle</h3>';
+  h+='<input id="emNom" placeholder="Nom du modèle" value="'+saEsc(m.nom)+'" style="width:100%;padding:8px;margin-bottom:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">';
+  h+='<input id="emSujet" placeholder="Objet" value="'+saEsc(m.sujet)+'" style="width:100%;padding:8px;margin-bottom:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">';
+  h+='<textarea id="emCorps" rows="10" placeholder="Texte ({nom}, {prenom})" style="width:100%;padding:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">'+saEsc(m.corps)+'</textarea>';
+  h+='<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px"><button class="dp-btn" onclick="this.closest(\'.mbg\').remove()">Annuler</button><button class="tb-btn primary" onclick="emSauver('+(id||'null')+')">💾 Enregistrer</button></div></div></div>';
+  var d=document.createElement("div"); d.innerHTML=h; document.body.appendChild(d.firstChild);
+}
+async function emSauver(id){
+  var row={nom:document.getElementById("emNom").value.trim(),sujet:document.getElementById("emSujet").value.trim(),corps:document.getElementById("emCorps").value,maj_le:new Date().toISOString()};
+  if(!row.nom||!row.sujet||!row.corps.trim()){ alert("Nom, objet et texte sont obligatoires"); return; }
+  var r=id?await _sb.from("admin_email_modeles").update(row).eq("id",id):await _sb.from("admin_email_modeles").insert(row);
+  if(r.error){ alert("❌ "+r.error.message); return; }
+  var m=document.querySelector(".mbg"); if(m) m.remove(); emCharger();
+}
+async function emSupprimer(id){ if(!confirm("Supprimer ce modèle ?")) return; await _sb.from("admin_email_modeles").delete().eq("id",id); emCharger(); }
+
+// === Étapes de démarrage (fiche + liste) ===
+var DEMARRAGE = [["prestations","Prestations"],["horaires","Horaires"],["equipe","Équipe"],["clients","Clientes"],["rdv","1er RDV"],["tickets","1er encaissement"],["clotures","1re clôture Z"],["site","Site en ligne"],["stripe","Paiements en ligne"],["logo","Logo"]];
+async function asChargerDemarrage(){ try{ var r=await _sb.rpc("admin_salons_demarrage"); var m={}; (r.data||[]).forEach(function(x){m[x.salon_id]=x.etapes;}); window._DEMARRAGE=m; }catch(e){} }
+function asDemarrageScore(id){ var e=(window._DEMARRAGE||{})[id]; if(!e) return null; var ok=0; DEMARRAGE.slice(0,7).forEach(function(d){ var v=e[d[0]]; if(v===true||Number(v)>0) ok++; }); return ok; }
+function asBlocDemarrage(s){
+  var e=(window._DEMARRAGE||{})[s.id];
+  if(!e){ setTimeout(function(){ asChargerDemarrage().then(function(){ if(window._DEMARRAGE&&window._DEMARRAGE[s.id]&&window._curSalonId===s.id) openD(s.id); }); },10); return '<div class="dp-section"><div class="dp-label">🚀 Démarrage</div><div style="font-size:12px;color:var(--text2)">Chargement…</div></div>'; }
+  var h='<div class="dp-section"><div class="dp-label">🚀 Démarrage ('+asDemarrageScore(s.id)+'/7 essentiels)</div><div style="display:flex;flex-wrap:wrap;gap:6px">';
+  DEMARRAGE.forEach(function(d,i){ var v=e[d[0]]; var ok=(v===true||Number(v)>0); h+='<span style="font-size:12px;padding:4px 9px;border-radius:12px;border:1px solid '+(ok?'rgba(76,175,80,.4)':'var(--border)')+';background:'+(ok?'rgba(76,175,80,.1)':'transparent')+';color:'+(ok?'var(--green)':(i<7?'var(--orange)':'var(--text3)'))+'">'+(ok?'✓ ':'○ ')+d[1]+(typeof v==="number"&&v>0?' ('+v+')':'')+'</span>'; });
+  h+='</div><div id="asEmAuto-'+s.id+'" style="font-size:12px;color:var(--text2);margin-top:8px"></div></div>';
+  setTimeout(async function(){ var el=document.getElementById("asEmAuto-"+s.id); if(!el) return; var r=await _sb.from("salon_emails_auto").select("*").eq("salon_id",s.id).order("envoye_le"); el.innerHTML=(r.data||[]).length?'Relances reçues : '+(r.data||[]).map(function(x){return (EM_TYPES[x.type]||x.type)+' le '+new Date(x.envoye_le).toLocaleDateString("fr-FR")+(x.ouvert_le?' (👁 ouvert)':' (non ouvert)');}).join(' · '):''; },20);
   return h;
 }
+async function emChoisirModele(){
+  var r=await _sb.from("admin_email_modeles").select("*").order("nom"); var L=r.data||[];
+  if(!L.length) return null;
+  var c=prompt("Modèle (laisser vide pour écrire librement) :\n"+L.map(function(m,i){return (i+1)+" = "+m.nom;}).join("\n"),"");
+  if(c===null) return false; var m=L[parseInt(c,10)-1]; return m||null;
+}
+
 
 // ============================================================================
 // MONITORING JS_ERROR (panel admin — alternative au SQL editor Supabase)
@@ -1897,7 +1991,7 @@ function rAnalyticsCohorts(h){
       if(!byMonth[k])byMonth[k]={key:k,date:new Date(d.getFullYear(),d.getMonth(),1),inscrits:0,m1:0,m3:0,m6:0};
       byMonth[k].inscrits++;
       var ageMonths=(now.getFullYear()-d.getFullYear())*12+(now.getMonth()-d.getMonth());
-      var stillActive=(s.status==='active'||(s.plan&&s.plan!=='trial'&&!s.is_free));
+      var stillActive=(mrrOf(s)>0); // 2026-10-09 : toujours abonné payant
       if(ageMonths>=1&&stillActive)byMonth[k].m1++;
       if(ageMonths>=3&&stillActive)byMonth[k].m3++;
       if(ageMonths>=6&&stillActive)byMonth[k].m6++;
@@ -1933,11 +2027,11 @@ function rAnalyticsFunnel(h){
     var logs=(window.INSCRIPTIONS_LOG||[]).filter(function(l){var d=new Date(l.created_at).getTime();return d>=limit90;});
     var salons90=SALONS.filter(function(s){var d=new Date(s.created_at).getTime();return d>=limit90;});
     var step1=logs.length||salons90.length;
-    var step2=logs.filter(function(l){return l.status==='completed'||l.status==='success'||!l.status;}).length||salons90.length;
+    var step2=salons90.length; // un salon créé = inscription complétée
     var step3=salons90.length;
-    var step4=salons90.filter(function(s){return s.plan&&s.plan!=='trial'&&!s.is_free;}).length;
+    var step4=salons90.filter(function(s){return mrrOf(s)>0||!!s.stripeSub;}).length;
     var limit30=now-30*86400000;
-    var step5=salons90.filter(function(s){var d=new Date(s.created_at).getTime();return d<=limit30&&s.plan&&s.plan!=='trial'&&!s.is_free&&s.status==='active';}).length;
+    var step5=salons90.filter(function(s){var d=new Date(s.created_at).getTime();return d<=limit30&&mrrOf(s)>0;}).length;
     data={steps:[{label:'Inscriptions tentées',n:step1,icon:'📝'},{label:'Inscriptions complétées',n:step2,icon:'✅'},{label:'Essai activé (1er login)',n:step3,icon:'🚀'},{label:'Conversion payante',n:step4,icon:'💳'},{label:'Rétention 30 jours',n:step5,icon:'🏆'}]};
     lxAnaCacheSet('funnel',data);
   }
@@ -1984,11 +2078,13 @@ function rClotures(){
   if(!window.Z_CLOSURES){loadClotures().then(render);return '<div style="padding:20px;color:var(--text3)">Chargement…</div>';}
   var zs=window.Z_CLOSURES;
   var today=new Date().toISOString().slice(0,10);
+  if(window._clotDate) zs=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===window._clotDate;});
+  if(window._clotSalon) zs=zs.filter(function(z){return z.salon_id===window._clotSalon;});
   // FIX 2026-07-13 : colonnes reelles de 'clotures' (date_cloture / total_ca), pas 'z_closures'.
   var todayZ=zs.filter(function(z){return String(z.date_cloture||'').slice(0,10)===today;});
   var totCA=zs.reduce(function(a,z){return a+(Number(z.total_ca)||0);},0);
   var nbEcart=zs.filter(function(z){return Number(z.ecart_caisse||0)!==0;}).length;
-  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôtures</span></h1></div>';
+  var h='<div class="topbar"><h1>Clôtures Z <span>'+zs.length+' clôtures</span></h1><div style="display:flex;gap:6px"><select onchange="window._clotSalon=this.value||null;render()" style="padding:6px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="">Tous les salons</option>'+SALONS.map(function(x){return '<option value="'+x.id+'"'+(window._clotSalon===x.id?' selected':'')+'>'+x.nom+'</option>';}).join('')+'</select><button class="tb-btn'+(window._clotDate?' primary':'')+'" onclick="window._clotDate=window._clotDate?null:new Date().toISOString().slice(0,10);render()">'+(window._clotDate?'✓ Aujourd\'hui':'Aujourd\'hui seulement')+'</button></div></div>';
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">Z aujourd\'hui</div><div class="kpi-value" style="color:var(--gold)">'+todayZ.length+'</div></div>';
   h+='<div class="kpi"><div class="kpi-label">Total 50 derniers</div><div class="kpi-value" style="color:var(--blue)">'+zs.length+'</div></div>';
@@ -2163,6 +2259,7 @@ function asFiltrer(){
     if(t==="ca") return (hh(b).ca_30d||0)-(hh(a).ca_30d||0);
     if(t==="essai") return (asJoursEssai(a)==null?9999:asJoursEssai(a))-(asJoursEssai(b)==null?9999:asJoursEssai(b));
     if(t==="rappel") return String(asSuivi(a.id).rappel_le||"9999").localeCompare(String(asSuivi(b.id).rappel_le||"9999"));
+    if(t==="sante") return ((hh(a).score==null)?999:hh(a).score)-((hh(b).score==null)?999:hh(b).score);
     return new Date(b.created)-new Date(a.created);
   });
   return L;
@@ -2176,7 +2273,7 @@ function asSet(k,v){ window._AF[k]=v; asRafraichir(); }
 function asRafraichir(){ var tb=document.getElementById("sTbody"); var L=asFiltrer(); if(tb) tb.innerHTML=asLignes(L); var c=document.getElementById("asCompte"); if(c) c.textContent=L.length+" / "+SALONS.length; asMajBarre(); }
 function asSelect(k,opts){ var v=window._AF[k]; return '<select onchange="asSet(\''+k+'\',this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(v)===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join("")+'</select>'; }
 function rSalons(){
-  setTimeout(function(){ asChargerSuivi().then(asRafraichir); lxLoadSalonHealth(); },30);
+  setTimeout(function(){ asChargerSuivi().then(asRafraichir); lxLoadSalonHealth(); asChargerDemarrage().then(asRafraichir); },30);
   var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
   h+='<div class="search-box"><span>🔍</span><input id="sSearch" value="'+saEsc(window._AF.q)+'" placeholder="Nom, ville, email, SIRET, gérant, téléphone…" oninput="window._AF.q=this.value;asRafraichir()"></div>';
   h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">';
@@ -2188,11 +2285,11 @@ function rSalons(){
   h+=asSelect("essai",[["","Fin d'essai : tous"],["3","Essai finit ≤ 3 j"],["7","Essai finit ≤ 7 j"]]);
   h+=asSelect("inactif",[["","Activité : tous"],["7","Sans ticket ≥ 7 j"],["30","Sans ticket ≥ 30 j"]]);
   h+=asSelect("rappel",[["","Rappels : tous"],["1","Avec rappel"]]);
-  h+=asSelect("tri",[["created_desc","Tri : plus récents"],["created_asc","Plus anciens"],["nom","Nom A→Z"],["ca","CA 30 j"],["essai","Fin d'essai proche"],["rappel","Prochain rappel"]]);
+  h+=asSelect("tri",[["created_desc","Tri : plus récents"],["created_asc","Plus anciens"],["nom","Nom A→Z"],["ca","CA 30 j"],["essai","Fin d'essai proche"],["rappel","Prochain rappel"],["sante","Santé (plus faible d'abord)"]]);
   h+='</div>';
   h+='<div id="asBarre" style="display:none;gap:6px;flex-wrap:wrap;align-items:center;padding:10px;border:1px solid var(--gold);border-radius:10px;margin-bottom:10px;background:rgba(200,168,78,.06)"><b><span id="asNb">0</span> sélectionné(s)</b>';
   h+='<button class="dp-btn" onclick="asGroupe(\'email\')">✉️ Email</button><button class="dp-btn" onclick="asGroupe(\'sms\')">📱 Ajouter des SMS</button><button class="dp-btn" onclick="asGroupe(\'essai\')">⏰ Prolonger l\'essai</button><button class="dp-btn" onclick="asGroupe(\'etape\')">🧭 Étape</button><button class="dp-btn" onclick="asGroupe(\'etiquette\')">🏷 Étiquette</button><button class="dp-btn" onclick="asExport(true)">⬇️ Exporter</button><button class="dp-btn" onclick="window._ASEL={};asRafraichir()">✕ Vider</button></div>';
-  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th><input type="checkbox" onchange="asSelTout(this.checked)"></th><th>Établissement</th><th>Forfait</th><th>Statut</th><th>Étape</th><th>Clients</th><th>Créé le</th><th>Activité</th><th>Rappel</th><th></th></tr><tbody id="sTbody">'+asLignes(asFiltrer())+'</tbody></table></div></div>';
+  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th><input type="checkbox" onchange="asSelTout(this.checked)"></th><th>Établissement</th><th>Forfait</th><th>Statut</th><th>Étape</th><th>Santé</th><th>Clients</th><th>Démarrage</th><th>Créé le</th><th>Activité</th><th>Rappel</th><th></th></tr><tbody id="sTbody">'+asLignes(asFiltrer())+'</tbody></table></div></div>';
   return h;
 }
 function asLignes(L){
@@ -2203,11 +2300,11 @@ function asLignes(L){
     h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
     h+='<td>'+statusB(s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
-    h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
+    h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
     h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=new Date().toISOString().slice(0,10)?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(\''+s.id+'\')" title="Fiche">👁</button><button class="td-btn" onclick="window.open(\'mailto:'+saEsc(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" onclick="window.open(\'tel:'+saEsc(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
   });
-  return h||'<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
+  return h||'<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
 }
 function asExport(selection){
   var L=selection?asSelection():asFiltrer();
@@ -2222,8 +2319,9 @@ function asExport(selection){
 async function asGroupe(action){
   var L=asSelection(); if(!L.length) return;
   if(action==="email"){
-    var sujet=prompt("Objet de l'email ("+L.length+" salon(s)) :",""); if(!sujet) return;
-    var corps=prompt("Message (texte simple, {nom} = nom du salon, {prenom} = prénom du gérant) :",""); if(!corps) return;
+    var mod=await emChoisirModele(); if(mod===false) return;
+    var sujet=prompt("Objet de l'email ("+L.length+" salon(s)) :",mod?mod.sujet:""); if(!sujet) return;
+    var corps=mod?(confirm("Envoyer le modèle « "+mod.nom+" » tel quel ?\n\n"+mod.corps.slice(0,400))?mod.corps:null):prompt("Message (texte simple, {nom} = nom du salon, {prenom} = prénom du gérant) :",""); if(!corps) return;
     if(!confirm("Envoyer cet email à "+L.length+" salon(s) ?")) return;
     var tok=await lxAdminJeton(), ok=0, ko=0;
     for(var i=0;i<L.length;i++){ var s=L[i]; if(!s.email){ko++;continue;}
@@ -2269,7 +2367,7 @@ async function asSauverSuivi(id,patch){
 // --- Fiche : onglet Suivi commercial ---
 function asOngletSuivi(s){
   var su=asSuivi(s.id);
-  var h='<div class="dp-section"><div class="dp-label">🧭 Suivi commercial</div>';
+  var h=asBlocDemarrage(s)+'<div class="dp-section"><div class="dp-label">🧭 Suivi commercial</div>';
   h+='<div class="dp-field"><span class="k">Étape</span><span class="v"><select onchange="asSauverSuivi(\''+s.id+'\',{etape:this.value})" style="padding:4px 8px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">'+Object.keys(ETAPES).map(function(k){return '<option value="'+k+'"'+(su.etape===k?' selected':'')+'>'+ETAPES[k]+'</option>';}).join("")+'</select></span></div>';
   h+='<div class="dp-field"><span class="k">Étiquettes</span><span class="v">'+(su.etiquettes||[]).map(function(e){return '<span class="badge" style="cursor:pointer" title="Retirer" onclick="asRetirerEtiquette(\''+s.id+'\',\''+saEsc(e).replace(/'/g,"")+'\')">'+saEsc(e)+' ✕</span>';}).join(" ")+' <button class="dp-btn" style="font-size:10px;padding:2px 8px" onclick="asAjouterEtiquette(\''+s.id+'\')">+ Ajouter</button></span></div>';
   h+='<div class="dp-field"><span class="k">Rappel</span><span class="v"><input type="date" id="asRappel-'+s.id+'" value="'+(su.rappel_le||"")+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></span></div>';
@@ -2305,7 +2403,8 @@ function asOngletActivite(s){
   var hh=_salonHealthOf(s.id);
   var h='<div class="dp-section"><div class="dp-label">📈 Activité</div>';
   if(!hh){ setTimeout(function(){ lxLoadSalonHealth().then(function(){ if(_salonHealthOf(s.id) && window._curSalonId===s.id && window._asOngletCourant==="activite") openD(s.id); }); },10); h+='<div style="font-size:12px;color:var(--text2)">Chargement…</div>'; hh={}; }
-  [["Dernier ticket",hh.last_ticket?fmtD(hh.last_ticket):"jamais"],["Dernière clôture Z",hh.last_cloture?fmtD(hh.last_cloture):"—"],["CA ce mois",fmtM(hh.ca_mois||0)],["CA 30 jours",fmtM(hh.ca_30d||0)+" ("+(hh.tickets_30d||0)+" tickets)"],["CA total depuis l'inscription",fmtM(hh.ca_total||0)+" ("+(hh.tickets_total||0)+" tickets)"],["Clients",hh.clients!=null?hh.clients:s.clients],["Collaborateurs actifs",hh.collaborateurs!=null?hh.collaborateurs:s.collabs],["RDV à venir",hh.rdv_a_venir||0],["Réservations en ligne (30 j)",hh.rdv_en_ligne_30d||0],["Crédits SMS",s.smsCredits]].forEach(function(f){ h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+f[1]+'</span></div>'; });
+  if(hh.score!=null) h+='<div class="dp-field"><span class="k">Score de santé</span><span class="v" style="font-size:16px">'+asScoreBadge(s.id)+' / 100</span></div><div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Activité récente (40) + volume de tickets (25) + tendance vs mois précédent (20) + RDV à venir (15). Alerte sur ton téléphone si chute de 25 points en 7 jours.</div>';
+  [["Tickets mois précédent",(hh.tickets_prec_30d||0)],["Dernier ticket",hh.last_ticket?fmtD(hh.last_ticket):"jamais"],["Dernière clôture Z",hh.last_cloture?fmtD(hh.last_cloture):"—"],["CA ce mois",fmtM(hh.ca_mois||0)],["CA 30 jours",fmtM(hh.ca_30d||0)+" ("+(hh.tickets_30d||0)+" tickets)"],["CA total depuis l'inscription",fmtM(hh.ca_total||0)+" ("+(hh.tickets_total||0)+" tickets)"],["Clients",hh.clients!=null?hh.clients:s.clients],["Collaborateurs actifs",hh.collaborateurs!=null?hh.collaborateurs:s.collabs],["RDV à venir",hh.rdv_a_venir||0],["Réservations en ligne (30 j)",hh.rdv_en_ligne_30d||0],["Crédits SMS",s.smsCredits]].forEach(function(f){ h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+f[1]+'</span></div>'; });
   h+='</div><div class="dp-section"><div class="dp-label">📜 Journal admin (actions sur ce salon)</div><div id="asJournal-'+s.id+'" style="font-size:12px;color:var(--text2)">Chargement…</div></div>';
   setTimeout(async function(){ var el=document.getElementById("asJournal-"+s.id); if(!el) return; var r=await _sb.from("admin_log").select("*").eq("salon_id",s.id).order("timestamp_action",{ascending:false}).limit(60);
     el.innerHTML=(r.data||[]).length?(r.data||[]).map(function(x){return '<div style="padding:5px 0;border-top:1px solid var(--border)"><span style="color:var(--text3)">'+new Date(x.timestamp_action).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b>'+saEsc(x.action)+'</b> '+saEsc(x.details||"")+'</div>';}).join(""):'<i>Aucune action enregistrée</i>'; },20);
@@ -2313,6 +2412,8 @@ function asOngletActivite(s){
 }
 function asOnglet(t){ document.querySelectorAll("#detailPanel .dpTab").forEach(function(d){ d.style.display=(d.getAttribute("data-t")===t)?"":"none"; }); document.querySelectorAll("#detailPanel .dpTabBtn").forEach(function(b){ b.classList.toggle("active",b.getAttribute("data-t")===t); }); window._asOngletCourant=t; }
 
+// === Score de santé (2026-10-09) ===
+function asScoreBadge(id){ var hh=_salonHealthOf(id); if(!hh||hh.score==null) return '…'; var v=hh.score, c=v>=70?'var(--green)':v>=40?'var(--orange)':'var(--red)'; var d=(hh.score_7j!=null)?v-hh.score_7j:null; return '<span style="font-weight:800;color:'+c+'">'+v+'</span>'+(d?'<span style="font-size:10px;color:'+(d>0?'var(--green)':'var(--red)')+'"> '+(d>0?'▲':'▼')+Math.abs(d)+'</span>':''); }
 function _salonHealthOf(id){ return (window._SALON_HEALTH||{})[id]||null; }
 function _salonRisk(s){
   if(!(s.status==='active'||s.status==='trial')) return {risk:false};
@@ -3260,8 +3361,9 @@ function rAlerts(){
 
 // ===== REVENUS =====
 function rRevenue(){
-  var mrr=0;SALONS.forEach(function(s){if((s.status==="active"||s.status==="past_due")&&!s.isFree)mrr+=gPlan(s.plan).prix;});
-  var arr=mrr*12;var ac=SALONS.filter(function(s){return s.status==="active";}).length;
+  // 2026-10-09 : même calcul que le Cockpit (mrrOf : offerts, prix personnalisés, tarif Fondateur)
+  var mrr=mrrTotal();
+  var arr=mrr*12;var ac=SALONS.filter(function(s){return mrrOf(s)>0;}).length;
   var h='<div class="topbar"><h1>Revenus <span>Analyse financière</span></h1></div>';
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Mensuel</div><div class="kpi-icon">💰</div></div>';
@@ -3269,7 +3371,7 @@ function rRevenue(){
   h+='<div class="kpi"><div class="kpi-label">ARPU</div><div class="kpi-value">'+fmtM(Math.round(mrr/Math.max(1,ac)*100)/100)+'</div><div class="kpi-sub">Par établissement</div><div class="kpi-icon">🏠</div></div></div>';
   h+='<div class="chart-card"><div class="chart-title">💰 MRR par plan</div>';
   PLANS.forEach(function(p){
-    var rev=0;SALONS.forEach(function(s){if(s.plan===p.id&&s.status!=="suspended")rev+=p.prix;});
+    var rev=0;SALONS.forEach(function(s){if(s.plan===p.id)rev+=mrrOf(s);});
     var pct=mrr>0?Math.round(rev/mrr*100):0;
     h+='<div class="chart-bar-row"><div class="chart-bar-label">'+p.nom+' ('+p.prix+'€)</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+pct+'%;background:'+p.couleur+'">'+fmtM(rev)+'</div></div><div class="chart-bar-val">'+pct+'%</div></div>';
   });
