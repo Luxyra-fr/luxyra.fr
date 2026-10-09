@@ -2620,6 +2620,14 @@ function lxSmsGsm(txt) {
   return out.replace(/ {2,}/g, " ").trim();
 }
 
+// Nombre de SMS facturés par Brevo pour un texte déjà converti : 1 jusqu'à 160 unités, puis tranches de 153
+// (les caractères ^{}\\[~]|€ comptent double dans l'alphabet SMS).
+function lxSmsSegments(txt) {
+  let n = 0; for (const c of String(txt || "")) n += (LX_GSM7_EXT.indexOf(c) >= 0 ? 2 : 1);
+  if (n === 0) return 1;
+  return n <= 160 ? 1 : Math.ceil(n / 153);
+}
+
 async function brevoSendSms(env, { to, content, sender }) {
   content = lxSmsGsm(content);
   return await (await fetch("https://api.brevo.com/v3/transactionalSMS/sms", {
@@ -2711,7 +2719,7 @@ async function handleEmailCustom(request, env) {
 // Retourne { ok: true } si autorisé et crédits décrémentés, sinon { ok: false, status, error }
 // Race-safe : utilise la RPC Postgres decrement_sms_credit (UPDATE WHERE > 0 RETURNING).
 // → impossible de descendre sous 0 même avec des envois parallèles en burst.
-async function gateSmsAndDecrementCredit(env, salonId) {
+async function gateSmsAndDecrementCredit(env, salonId, nbSms = 1) {
   if (!salonId) return { ok: false, status: 400, error: "salon_id requis" };
   const salon = await supabaseGet(env, salonId);
   if (!salon) return { ok: false, status: 404, error: "Salon introuvable" };
@@ -2726,14 +2734,14 @@ async function gateSmsAndDecrementCredit(env, salonId) {
   // Décrément ATOMIQUE via RPC (race-safe — UPDATE WHERE sms_credits > 0)
   // Si 0 lignes mises à jour (crédits déjà à 0), renvoie {ok:false, remaining:0} sans rien modifier.
   try {
-    const rpcRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/decrement_sms_credit`, {
+    const rpcRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/decrement_sms_credits`, {
       method: "POST",
       headers: {
         "apikey": env.SUPABASE_SERVICE_KEY,
         "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ p_salon_id: salonId })
+      body: JSON.stringify({ p_salon_id: salonId, p_nb: nbSms })
     });
     if (!rpcRes.ok) {
       console.error("decrement_sms_credit RPC HTTP error:", rpcRes.status);
@@ -2741,9 +2749,12 @@ async function gateSmsAndDecrementCredit(env, salonId) {
     }
     const rpcData = await rpcRes.json();
     if (!rpcData || rpcData.ok !== true) {
-      return { ok: false, status: 402, error: "Plus de crédits SMS — rechargez via Paramètres > SMS" };
+      const reste = Number(rpcData && rpcData.remaining || 0);
+      return { ok: false, status: 402, error: nbSms > 1 && reste > 0
+        ? `Ce message compte ${nbSms} SMS (plus de 160 caractères) et il ne reste que ${reste} crédit(s) — raccourcissez-le ou rechargez via Paramètres > SMS`
+        : "Plus de crédits SMS — rechargez via Paramètres > SMS" };
     }
-    return { ok: true, remainingCredits: Number(rpcData.remaining || 0) };
+    return { ok: true, remainingCredits: Number(rpcData.remaining || 0), nbSms };
   } catch (e) {
     console.error("decrement_sms_credit RPC error:", e?.message || e);
     return { ok: false, status: 500, error: "Erreur décrément crédit SMS" };
@@ -2801,8 +2812,9 @@ async function handleSmsRappel(request, env) {
   if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
   const { telephone, clientPrenom, salonName, date, heure, prestation, salon_id } = await request.json();
   if (!telephone) return jsonResponse({ error: "telephone requis" }, 400);
-  // === Gate Pro + crédits + décrément ===
-  const gate = await gateSmsAndDecrementCredit(env, salon_id);
+  const contenuRappel = lxSmsGsm(`${salonName||"Votre salon"} : Rappel RDV le ${date} à ${heure}${prestation?" ("+prestation+")":""}. Pour modifier/annuler, contactez-nous. A bientôt !`);
+  // === Gate Pro + crédits + décrément (nombre réel de SMS facturés par Brevo) ===
+  const gate = await gateSmsAndDecrementCredit(env, salon_id, lxSmsSegments(contenuRappel));
   if (!gate.ok) {
     // Si le blocage est dû à des crédits 0 (status 402) → alerte email auto au salon
     // (rate-limité 24h dans la fonction). Fire & forget — ne bloque pas la réponse.
@@ -2812,8 +2824,8 @@ async function handleSmsRappel(request, env) {
     return jsonResponse({ error: gate.error }, gate.status);
   }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const result = await brevoSendSms(env, { to: phone, content: `${salonName||"Votre salon"} : Rappel RDV le ${date} à ${heure}${prestation?" ("+prestation+")":""}. Pour modifier/annuler, contactez-nous. A bientôt !`, sender: (salonName||"Luxyra").slice(0,11).trim() });
-  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits });
+  const result = await brevoSendSms(env, { to: phone, content: contenuRappel, sender: (salonName||"Luxyra").slice(0,11).trim() });
+  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits, smsDebites: gate.nbSms });
 }
 
 async function handleSmsCustom(request, env) {
@@ -2821,12 +2833,14 @@ async function handleSmsCustom(request, env) {
   if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
   const { telephone, message, salonName, salon_id } = await request.json();
   if (!telephone || !message) return jsonResponse({ error: "telephone et message requis" }, 400);
-  // === Gate Pro + crédits + décrément ===
-  const gate = await gateSmsAndDecrementCredit(env, salon_id);
+  const contenu = lxSmsGsm(message);
+  if (!contenu) return jsonResponse({ error: "Message vide" }, 400);
+  // === Gate Pro + crédits + décrément (nombre réel de SMS facturés par Brevo) ===
+  const gate = await gateSmsAndDecrementCredit(env, salon_id, lxSmsSegments(contenu));
   if (!gate.ok) return jsonResponse({ error: gate.error }, gate.status);
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const result = await brevoSendSms(env, { to: phone, content: message, sender: (salonName||"Luxyra").slice(0,11).trim() });
-  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits });
+  const result = await brevoSendSms(env, { to: phone, content: contenu, sender: (salonName||"Luxyra").slice(0,11).trim() });
+  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits, smsDebites: gate.nbSms });
 }
 
 async function handleClientTickets(request, env) {
