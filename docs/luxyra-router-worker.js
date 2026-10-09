@@ -1556,6 +1556,8 @@ async function handleWebhookConnect(request, env) {
   if (!event || event.id !== recu.id) return jsonResponse({ error: "Event not verifiable" }, 401);
   const compte = recu.account;
   const data = event.data?.object || {};
+  // Trace (visible dans l'admin) : preuve que le webhook « comptes connectés » fonctionne
+  try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?on_conflict=key`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify({ key: "stripe_webhook_connect_dernier", value: new Date().toISOString() + " " + event.type, description: "Dernier évènement reçu sur /api/stripe/webhook-connect" }) }); } catch (_) {}
   try {
     if ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && data.payment_status === "paid") {
       const t = data.metadata?.type;
@@ -1604,7 +1606,9 @@ async function handleAdminStripe(request, env) {
         stripeAPI(env, "webhook_endpoints?limit=50", null, "GET"),
         lxChargesDirectes(env),
       ]);
-      const whConnect = (whs?.data || []).some((w) => w.status === "enabled" && w.application == null && String(w.url || "").includes("/api/stripe/webhook-connect"));
+      const whConnect = (whs?.data || []).some((w) => w.status === "enabled" && String(w.url || "").includes("/api/stripe/webhook-connect"));
+      let dernierConnect = null;
+      try { const r0 = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?select=value&key=eq.stripe_webhook_connect_dernier`, { headers: _sbHeaders(env) }); const a0 = r0.ok ? await r0.json() : []; dernierConnect = (a0[0] && a0[0].value) || null; } catch (_) {}
       const parCust = {}; const parConnect = {};
       (salons || []).forEach((s) => { if (s.stripe_customer_id) parCust[s.stripe_customer_id] = s; if (s.stripe_connect_id) parConnect[s.stripe_connect_id] = s; });
       const debutMois = new Date(); debutMois.setUTCDate(1); debutMois.setUTCHours(0, 0, 0, 0);
@@ -1636,7 +1640,8 @@ async function handleAdminStripe(request, env) {
       }));
       return jsonResponse({
         mode: balance?.livemode === false ? "test" : "live",
-        paiements_clientes: { charges_directes: !!direct, webhook_connect: whConnect },
+        paiements_clientes: { charges_directes: !!direct, webhook_connect: whConnect, dernier_evenement: dernierConnect,
+          webhooks: (whs?.data || []).map((w) => ({ url: w.url, statut: w.status, evenements: (w.enabled_events || []).length, liste: (w.enabled_events || []).slice(0, 12) })) },
         solde: { disponible: saEur(eur(balance?.available)), en_attente: saEur(eur(balance?.pending)) },
         abonnements: { actifs, impayes, fin_de_periode: finPeriode, nouveaux_mois: nouveaux, departs_mois: departs, par_forfait: compte, mrr: saEur(mrr) },
         virements: (payouts?.data || []).map((p) => ({ id: p.id, montant: saEur(p.amount), statut: p.status, arrivee: new Date(p.arrival_date * 1000).toISOString().slice(0, 10) })),
