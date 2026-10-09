@@ -2602,7 +2602,26 @@ async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subjec
   })).json();
 }
 
+// SMS 2026-10-09 : un seul caractère hors alphabet SMS standard (GSM-7) — ô, â, ê, î, û, ç, À, ’, …, emoji —
+// fait passer TOUT le message en Unicode, limité à 70 caractères → 2 crédits Brevo au lieu de 1.
+// On convertit donc chaque SMS juste avant l'envoi (é è ù à É Ç restent, ils font partie de l'alphabet SMS).
+const LX_GSM7 = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+const LX_GSM7_EXT = "^{}\\[~]|€";
+const LX_SMS_REMPL = { "À":"A","Â":"A","Á":"A","Ã":"A","â":"a","á":"a","ã":"a","Ê":"E","È":"E","Ë":"E","ê":"e","ë":"e","Î":"I","Ï":"I","Í":"I","Ì":"I","î":"i","ï":"i","í":"i","Ô":"O","Ó":"O","Ò":"O","Õ":"O","ô":"o","ó":"o","õ":"o","Û":"U","Ú":"U","Ù":"U","û":"u","ú":"u","ç":"c","ÿ":"y","Ÿ":"Y","œ":"oe","Œ":"OE","’":"'","‘":"'","‚":",","“":"\"","”":"\"","„":"\"","«":"\"","»":"\"","…":"...","–":"-","—":"-","•":"-","·":"-","\u00a0":" ","\u202f":" ","\u2009":" ","\t":" " };
+function lxSmsGsm(txt) {
+  let out = "";
+  for (const c of String(txt == null ? "" : txt).normalize("NFC")) {
+    if (LX_GSM7.indexOf(c) >= 0 || LX_GSM7_EXT.indexOf(c) >= 0) { out += c; continue; }
+    if (LX_SMS_REMPL[c] !== undefined) { out += LX_SMS_REMPL[c]; continue; }
+    const base = c.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (base && base.length === 1 && LX_GSM7.indexOf(base) >= 0) { out += base; continue; }
+    // caractère sans équivalent (emoji, symbole) : supprimé
+  }
+  return out.replace(/ {2,}/g, " ").trim();
+}
+
 async function brevoSendSms(env, { to, content, sender }) {
+  content = lxSmsGsm(content);
   return await (await fetch("https://api.brevo.com/v3/transactionalSMS/sms", {
     method: "POST", headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ type: "transactional", sender: sender || "Luxyra", recipient: to, content }),

@@ -30698,7 +30698,25 @@ function saveSmsConfig(){
 // Sur 90 SMS par mois, cela double la facture.
 window.LX_GSM7 = "@\u00a3$\u00a5\u00e8\u00e9\u00f9\u00ec\u00f2\u00c7\n\u00d8\u00f8\r\u00c5\u00e5\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039e\u00c6\u00e6\u00df\u00c9 !\"#\u00a4%&'()*+,-./0123456789:;<=>?\u00a1ABCDEFGHIJKLMNOPQRSTUVWXYZ\u00c4\u00d6\u00d1\u00dc\u00a7\u00bfabcdefghijklmnopqrstuvwxyz\u00e4\u00f6\u00f1\u00fc\u00e0";
 window.LX_GSM7_EXT = "^{}\\[~]|\u20ac"; // comptent double
+// 2026-10-09 : le serveur convertit chaque SMS avant l'envoi (ô→o, â→a, ç→c, À→A, ’→', emoji supprimés)
+// pour rester dans l'alphabet SMS standard : le compteur calcule donc sur le texte converti.
+window.LX_SMS_REMPL = {"\u00c0":"A","\u00c2":"A","\u00c1":"A","\u00c3":"A","\u00e2":"a","\u00e1":"a","\u00e3":"a","\u00ca":"E","\u00c8":"E","\u00cb":"E","\u00ea":"e","\u00eb":"e","\u00ce":"I","\u00cf":"I","\u00cd":"I","\u00cc":"I","\u00ee":"i","\u00ef":"i","\u00ed":"i","\u00d4":"O","\u00d3":"O","\u00d2":"O","\u00d5":"O","\u00f4":"o","\u00f3":"o","\u00f5":"o","\u00db":"U","\u00da":"U","\u00d9":"U","\u00fb":"u","\u00fa":"u","\u00e7":"c","\u00ff":"y","\u0178":"Y","\u0153":"oe","\u0152":"OE","\u2019":"'","\u2018":"'","\u201a":",","\u201c":"\"","\u201d":"\"","\u201e":"\"","\u00ab":"\"","\u00bb":"\"","\u2026":"...","\u2013":"-","\u2014":"-","\u2022":"-","\u00b7":"-","\u00a0":" ","\u202f":" ","\u2009":" ","\t":" "};
+function lxSmsGsm(txt){
+  var out = "", src = String(txt==null?"":txt); try{ src = src.normalize("NFC"); }catch(e){}
+  Array.from(src).forEach(function(c){
+    if (window.LX_GSM7.indexOf(c) >= 0 || window.LX_GSM7_EXT.indexOf(c) >= 0) { out += c; return; }
+    if (window.LX_SMS_REMPL[c] !== undefined) { out += window.LX_SMS_REMPL[c]; return; }
+    var base = c; try{ base = c.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }catch(e){}
+    if (base && base.length === 1 && window.LX_GSM7.indexOf(base) >= 0) out += base;
+  });
+  return out.replace(/ {2,}/g, " ").trim();
+}
 function lxSmsInfo(txt){
+  var brut = String(txt==null?"":txt), conv = lxSmsGsm(brut);
+  var convertis = {}; Array.from(brut).forEach(function(c){ if (window.LX_GSM7.indexOf(c) < 0 && window.LX_GSM7_EXT.indexOf(c) < 0 && c !== " ") convertis[c] = true; });
+  var r = lxSmsInfoBrut(conv); r.convertis = Object.keys(convertis); return r;
+}
+function lxSmsInfoBrut(txt){
   txt = String(txt==null?"":txt);
   var unites = 0, horsAlphabet = {};
   for (var i=0;i<txt.length;i++){
@@ -30725,9 +30743,9 @@ function lxSmsCostHtml(txt){
   var coul = info.segments <= 1 ? "var(--text3)" : "#ef5350";
   var h = '<span style="color:'+coul+'">'+info.taille+'/'+max+' caractères · <strong>'
         + (info.segments<=1 ? '1 crédit' : info.segments+' crédits') + '</strong></span>';
-  if (info.ucs2){
-    var liste = info.fautifs.slice(0,6).map(function(c){return '« '+c+' »';}).join(' ');
-    h += '<div style="color:#ef5350;margin-top:2px">⚠ '+liste+' : hors alphabet SMS, limite ramenée à 70 caractères. Remplacez-les pour rester à 1 crédit.</div>';
+  if ((info.convertis||[]).length){
+    var liste = info.convertis.slice(0,6).map(function(c){return '« '+c+' »';}).join(' ');
+    h += '<div style="color:var(--text3);margin-top:2px">ℹ️ '+liste+' : converti(s) automatiquement à l\'envoi (ex. « ô » → « o », émojis retirés) pour rester au tarif normal.</div>';
   }
   return h;
 }
