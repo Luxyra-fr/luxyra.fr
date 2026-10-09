@@ -654,8 +654,13 @@ async function handleWebhook(request, env) {
       if (data.metadata?.type === "sms_pack") {
         const qty = parseInt(data.metadata.sms_qty || "0");
         if (salonId && qty > 0) {
+          // 2026-10-09 : idempotent — un même paiement Stripe (évènement rejoué) ne crédite qu'une fois
+          try {
+            const _deja = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_mouvements?select=id&salon_id=eq.${encodeURIComponent(salonId)}&type=eq.achat_pack&motif=ilike.*${encodeURIComponent(String(data.id || "x"))}*&limit=1`, { headers: _sbHeaders(env) })).json();
+            if (Array.isArray(_deja) && _deja.length) { console.log("[sms_pack] déjà crédité :", data.id); break; }
+          } catch (_) {}
           // 2026-10-09 : crédit ATOMIQUE + historique (avant : lecture puis écriture, un SMS envoyé entre les deux était perdu)
-          const _cr = await lxCrediterSms(env, salonId, qty, "achat_pack", (Number(data.amount_total) || 0) / 100, "Pack " + qty + " SMS (Stripe " + String(data.id || "").slice(-10) + ")", "salon");
+          const _cr = await lxCrediterSms(env, salonId, qty, "achat_pack", (Number(data.amount_total) || 0) / 100, "Pack " + qty + " SMS (Stripe " + String(data.id || "") + ")", "salon");
           if (!_cr || !_cr.ok) {
             const salon = await supabaseGet(env, salonId);
             await supabaseUpdate(env, salonId, { sms_credits: (salon?.sms_credits || 0) + qty });
@@ -887,7 +892,11 @@ async function handleWebhook(request, env) {
           console.log(`[ignored] subscription.updated pour ${data.id} ≠ sub active ${salon.stripe_subscription_id} du salon ${salonId}`);
           break;
         }
-        const newPlan = priceId === CONFIG.PRICE_PRO ? "pro" : "essential";
+        // FIX 2026-10-09 : le prix Fondateur est un forfait Pro (avant : il repassait le salon en Essentiel
+        // à chaque évènement Stripe). Un prix inconnu ne change plus le forfait.
+        const newPlan = (priceId === CONFIG.PRICE_PRO || priceId === CONFIG.PRICE_PRO_FOUNDER) ? "pro"
+          : (priceId === CONFIG.PRICE_ESSENTIAL ? "essential" : null);
+        if (!newPlan) { console.warn(`[subscription.updated] prix inconnu ${priceId} pour ${salonId} : forfait inchangé`); break; }
         // Si la sub est marquée pour annulation à la fin de période (cancel_at_period_end),
         // on garde status=active jusqu'à l'expiration réelle (c'est subscription.deleted qui passera à cancelled).
         // L'utilisateur conserve son accès jusqu'à la fin de la période payée.
@@ -1012,6 +1021,7 @@ async function handleSwitchPlan(request, env) {
       proration_behavior: "create_prorations",
     };
     if (plan === "pro") subParams["metadata[is_founder]"] = isFounder ? "true" : "false";
+    subParams["metadata[plan]"] = plan === "pro" ? "pro" : "essential"; // FIX 2026-10-09 : facture et bonus SMS au bon forfait
     const updated = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, subParams);
     if (updated?.id) {
       await supabaseUpdate(env, salon_id, { plan: plan === "pro" ? "pro" : "essential" });
@@ -1288,9 +1298,10 @@ async function ccLire(env, id) {
   const a = r.ok ? await r.json() : [];
   return Array.isArray(a) ? a[0] || null : null;
 }
-async function ccMaj(env, id, patch, filtreStatuts) {
+async function ccMaj(env, id, patch, filtreStatuts, filtreSup) {
   let q = `${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?id=eq.${encodeURIComponent(id)}`;
   if (filtreStatuts) q += `&status=in.(${filtreStatuts.join(",")})`;
+  if (filtreSup) q += filtreSup;
   const r = await fetch(q, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify(patch) });
   const a = r.ok ? await r.json() : [];
   return Array.isArray(a) ? a[0] || null : null;
@@ -1472,7 +1483,10 @@ async function handleCcAction(request, env) {
         if (!rf?.id) return jsonResponse({ error: "Remboursement refusé par Stripe : " + (rf?.error?.message || "erreur") }, 502);
         refundId = rf.id;
       }
-      const maj = await ccMaj(env, cmd.id, { status: "annulee", cancelled_at: now, cancelled_by: op, cancel_reason: b.motif ? String(b.motif).slice(0, 300) : null, refund_id: refundId }, ["pending_payment", "a_preparer", "prete"]);
+      // FIX 2026-10-09 : si la commande n'était pas payée à la lecture, on n'annule que si elle ne l'est toujours pas
+      // (un paiement finalisé entre-temps ne doit jamais finir « annulée sans remboursement »).
+      const maj = await ccMaj(env, cmd.id, { status: "annulee", cancelled_at: now, cancelled_by: op, cancel_reason: b.motif ? String(b.motif).slice(0, 300) : null, refund_id: refundId }, ["pending_payment", "a_preparer", "prete"], cmd.paye ? "" : "&paye=eq.false");
+      if (!maj && !cmd.paye) { const re = await ccLire(env, cmd.id); if (re && re.paye && re.status !== "annulee") return jsonResponse({ error: "La cliente vient de payer cette commande : relancez l'annulation pour la rembourser.", commande: re }, 409); }
       try {
         if (maj && maj.client_email) await brevoSendEmail(env, {
           to: maj.client_email, toName: maj.client_nom, senderName: salon.nom || "Luxyra", replyTo: salon.email || undefined,
@@ -2768,7 +2782,7 @@ async function gateSmsAndDecrementCredit(env, salonId, nbSms = 1) {
     const rpcData = await rpcRes.json();
     if (!rpcData || rpcData.ok !== true) {
       const reste = Number(rpcData && rpcData.remaining || 0);
-      return { ok: false, status: 402, error: nbSms > 1 && reste > 0
+      return { ok: false, status: 402, soldeZero: reste <= 0, error: nbSms > 1 && reste > 0
         ? `Ce message compte ${nbSms} SMS (plus de 160 caractères) et il ne reste que ${reste} crédit(s) — raccourcissez-le ou rechargez via Paramètres > SMS`
         : "Plus de crédits SMS — rechargez via Paramètres > SMS" };
     }
@@ -2886,7 +2900,7 @@ async function handleSmsRappel(request, env) {
   if (!gate.ok) {
     // Si le blocage est dû à des crédits 0 (status 402) → alerte email auto au salon
     // (rate-limité 24h dans la fonction). Fire & forget — ne bloque pas la réponse.
-    if (gate.status === 402 && salon_id) {
+    if (gate.status === 402 && salon_id && gate.soldeZero) {
       notifySalonCreditExhausted(env, salon_id).catch(function(e){ console.warn("alert email failed:", e?.message); });
     }
     return jsonResponse({ error: gate.error }, gate.status);

@@ -389,7 +389,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261009-03"></script>
+<script src="luxyra-supabase.js?v=20261009-04"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -31508,13 +31508,24 @@ async function lxCcRemettreValider(id){
   var sansCode=!!((document.getElementById("ccSansCode")||{}).checked);
   if(!sansCode && code!==String(c.code_retrait||"").toUpperCase()){ showAlert("Code de retrait incorrect. Si la cliente n’a pas son code, vérifiez son identité et cochez la case.","warning"); return; }
   if(c.status==="retiree"){ showAlert("Déjà remise le "+_ccDate(c.collected_at)+" par "+(c.collected_by||"?"),"warning"); return; }
+  // FIX 2026-10-09 : relecture en base AVANT d'ouvrir la caisse (autre poste, liste pas encore actualisée)
+  // -> jamais deux tickets pour une même commande.
+  try{
+    var _rc=await _sb.from("commandes_online").select("*").eq("id",c.id).single();
+    if(_rc&&_rc.data){
+      for(var _i=0;_i<CC_CMDS.length;_i++) if(CC_CMDS[_i].id===c.id){ CC_CMDS[_i]=_rc.data; break; }
+      c=_rc.data;
+      if(c.status!=="a_preparer"&&c.status!=="prete"){ cM(); showAlert(c.status==="retiree"?("Déjà remise le "+_ccDate(c.collected_at)+" par "+(c.collected_by||"?")+(c.ticket_num?" (ticket n°"+c.ticket_num+")":"")):"Cette commande n'est plus à remettre ("+((_CC_STATUTS[c.status]||[c.status])[0])+").","warning"); go("commandes"); return; }
+    } else { showAlert("Vérification de la commande impossible (connexion). Réessayez.","warning"); return; }
+  }catch(_eRc){ showAlert("Vérification de la commande impossible (connexion). Réessayez.","warning"); return; }
+  if(window._lxCcEnCaisse===c.id && _tk && _tk._ccCommandeId===c.id){ cM(); showCaisse(); return; }
   // 2026-10-09 (NF525, accord Alexandre) : TOUTE remise passe par la caisse et produit un ticket scellé.
   //  - à régler au salon : encaissement normal ;
   //  - payée en ligne : le seul mode proposé est « Payé en ligne (Click & Collect) » (poste « en ligne »
   //    de la clôture Z, compte 58010000), pour le montant payé sur le site. Le stock sort par le ticket.
   cM();
   _tk={step:3,stId:_defaultCollabId(),cId:null,items:(c.items||[]).map(function(it){return {sId:null,name:it.nom,price:Number(it.prix)||0,qty:Number(it.qty)||1,remise:0,isProd:true,prodId:it.produit_id};}),comment:"Click & Collect n°"+c.numero,remise:0};
-  _tk._ccCommandeId=c.id; _tk._ccCode=sansCode?null:code; _tk._ccSansCode=sansCode;
+  _tk._ccCommandeId=c.id; _tk._ccCode=sansCode?null:code; _tk._ccSansCode=sansCode; window._lxCcEnCaisse=c.id;
   if(c.paye){ _tk._ccPayeEnLigne=true; _tk._ccMontantEnLigne=Math.round((Number(c.total)||0)*100)/100; _tk._ccNumero=c.numero; }
   showCaisse();
 }
