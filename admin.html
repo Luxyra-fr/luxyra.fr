@@ -2120,17 +2120,190 @@ async function loadSystemHealth(){
 }
 
 // ===== ÉTABLISSEMENTS =====
-function rSalons(){
-  var h='<div class="topbar"><h1>Établissements <span>'+SALONS.length+' comptes</span></h1><div><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
-  h+='<div class="search-box"><span>🔍</span><input id="sSearch" placeholder="Rechercher..." oninput="filterS()"></div>';
-  h+='<div class="table-wrap"><div class="table-header"><div class="table-title">🏠 Liste</div><div class="table-filter">';
-  [{k:"all",l:"Tous"},{k:"active",l:"Actifs"},{k:"trial",l:"Essai"},{k:"past_due",l:"Impayés"},{k:"suspended",l:"Suspendus"},{k:"pending",l:"⏳ Non vérifiés"},{k:"risk",l:"⚠️ À risque"}].forEach(function(f){
-    h+='<button class="tf-btn'+(curFilter===f.k?" active":"")+'" onclick="setF(&#39;'+f.k+'&#39;)">'+f.l+'</button>';
+// ============================================================
+// GESTION PRO DES SALONS (2026-10-09) : filtres, tri, export, suivi commercial, actions groupées
+// ============================================================
+window._AF = window._AF || {q:"",statut:"all",forfait:"all",etape:"all",etiquette:"",metier:"all",essai:"",inactif:"",tri:"created_desc"};
+window._ASEL = window._ASEL || {};
+window._SUIVI = window._SUIVI || {};
+var ETAPES = {nouveau:"🆕 Nouveau",essai:"🧪 En essai",a_relancer:"📞 À relancer",client:"✅ Client",fidele:"⭐ Fidèle",a_risque:"⚠️ À risque",perdu:"❌ Perdu"};
+async function asChargerSuivi(){
+  try{ var r=await _sb.from("admin_suivi_salons").select("*"); var m={}; (r.data||[]).forEach(function(x){m[x.salon_id]=x;}); window._SUIVI=m; }catch(e){}
+}
+function asSuivi(id){ return window._SUIVI[id]||{etape:"nouveau",etiquettes:[],rappel_le:null,rappel_note:""}; }
+function asJoursEssai(s){ if(s.status!=="trial"||!s.trialEnd) return null; return Math.ceil((new Date(s.trialEnd)-new Date())/86400000); }
+function asFiltrer(){
+  var F=window._AF, q=(F.q||"").toLowerCase();
+  var L=SALONS.filter(function(s){
+    if(q && (s.nom+" "+s.ville+" "+s.email+" "+s.siret+" "+s.gerantNom+" "+s.gerantPrenom+" "+s.tel).toLowerCase().indexOf(q)<0) return false;
+    if(F.statut==="pending"){ if(s.verif==="verified") return false; }
+    else if(F.statut==="risk"){ if(!_salonRisk(s).risk) return false; }
+    else if(F.statut!=="all" && s.status!==F.statut) return false;
+    if(F.forfait==="offert"){ if(!s.isFree) return false; } else if(F.forfait!=="all" && (s.plan!==F.forfait || s.isFree)) return false;
+    var su=asSuivi(s.id);
+    if(F.etape!=="all" && su.etape!==F.etape) return false;
+    if(F.etiquette && (su.etiquettes||[]).indexOf(F.etiquette)<0) return false;
+    if(F.metier!=="all" && s.metier!==F.metier) return false;
+    if(F.essai){ var j=asJoursEssai(s); if(j===null||j>Number(F.essai)) return false; }
+    if(F.inactif){ var rk=_salonRisk(s); var hh=_salonHealthOf(s.id); var jours=hh&&hh.last_ticket?Math.floor((Date.now()-new Date(hh.last_ticket+"T12:00:00"))/86400000):9999; if(jours<Number(F.inactif)) return false; }
+    if(F.rappel==="1"){ if(!su.rappel_le) return false; }
+    return true;
   });
-  h+='</div></div><div style="overflow-x:auto"><table><tr><th>Établissement</th><th>Plan</th><th>Statut</th><th>Vérif.</th><th>Clients</th><th>Créé le</th><th>Activité</th><th>Actions</th></tr><tbody id="sTbody">'+buildRows(SALONS,curFilter)+'</tbody></table></div></div>';
-  setTimeout(lxLoadSalonHealth,60);
+  var t=F.tri, hh=function(s){return _salonHealthOf(s.id)||{};};
+  L.sort(function(a,b){
+    if(t==="nom") return a.nom.localeCompare(b.nom);
+    if(t==="created_asc") return new Date(a.created)-new Date(b.created);
+    if(t==="ca") return (hh(b).ca_30d||0)-(hh(a).ca_30d||0);
+    if(t==="essai") return (asJoursEssai(a)==null?9999:asJoursEssai(a))-(asJoursEssai(b)==null?9999:asJoursEssai(b));
+    if(t==="rappel") return String(asSuivi(a.id).rappel_le||"9999").localeCompare(String(asSuivi(b.id).rappel_le||"9999"));
+    return new Date(b.created)-new Date(a.created);
+  });
+  return L;
+}
+function asToutesEtiquettes(){ var t={}; Object.keys(window._SUIVI).forEach(function(k){ (window._SUIVI[k].etiquettes||[]).forEach(function(e){t[e]=1;}); }); return Object.keys(t).sort(); }
+function asSel(id,v){ if(v) window._ASEL[id]=1; else delete window._ASEL[id]; asMajBarre(); }
+function asSelTout(v){ asFiltrer().forEach(function(s){ if(v) window._ASEL[s.id]=1; else delete window._ASEL[s.id]; }); asRafraichir(); }
+function asSelection(){ return SALONS.filter(function(s){return window._ASEL[s.id];}); }
+function asMajBarre(){ var n=asSelection().length, b=document.getElementById("asBarre"); if(!b) return; b.style.display=n?"flex":"none"; var c=document.getElementById("asNb"); if(c) c.textContent=n; }
+function asSet(k,v){ window._AF[k]=v; asRafraichir(); }
+function asRafraichir(){ var tb=document.getElementById("sTbody"); var L=asFiltrer(); if(tb) tb.innerHTML=asLignes(L); var c=document.getElementById("asCompte"); if(c) c.textContent=L.length+" / "+SALONS.length; asMajBarre(); }
+function asSelect(k,opts){ var v=window._AF[k]; return '<select onchange="asSet(\''+k+'\',this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(v)===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join("")+'</select>'; }
+function rSalons(){
+  setTimeout(function(){ asChargerSuivi().then(asRafraichir); lxLoadSalonHealth(); },30);
+  var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
+  h+='<div class="search-box"><span>🔍</span><input id="sSearch" value="'+saEsc(window._AF.q)+'" placeholder="Nom, ville, email, SIRET, gérant, téléphone…" oninput="window._AF.q=this.value;asRafraichir()"></div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">';
+  h+=asSelect("statut",[["all","Tous statuts"],["active","Actifs"],["trial","Essai"],["past_due","Impayés"],["suspended","Suspendus"],["cancelled","Résiliés"],["pending","⏳ Non vérifiés"],["risk","⚠️ Inactifs ≥ 7 j"]]);
+  h+=asSelect("forfait",[["all","Tous forfaits"],["essential","Essentiel"],["pro","Pro"],["offert","🎁 Offerts"]]);
+  h+=asSelect("etape",[["all","Toutes étapes"]].concat(Object.keys(ETAPES).map(function(k){return [k,ETAPES[k]];})));
+  h+=asSelect("etiquette",[["","Toutes étiquettes"]].concat(asToutesEtiquettes().map(function(e){return [e,"🏷 "+e];})));
+  h+=asSelect("metier",[["all","Tous métiers"],["coiffure","Coiffure"],["barbier","Barbier"],["esthetique","Esthétique"],["ongles","Ongles"],["bien_etre","Bien-être"]]);
+  h+=asSelect("essai",[["","Fin d'essai : tous"],["3","Essai finit ≤ 3 j"],["7","Essai finit ≤ 7 j"]]);
+  h+=asSelect("inactif",[["","Activité : tous"],["7","Sans ticket ≥ 7 j"],["30","Sans ticket ≥ 30 j"]]);
+  h+=asSelect("rappel",[["","Rappels : tous"],["1","Avec rappel"]]);
+  h+=asSelect("tri",[["created_desc","Tri : plus récents"],["created_asc","Plus anciens"],["nom","Nom A→Z"],["ca","CA 30 j"],["essai","Fin d'essai proche"],["rappel","Prochain rappel"]]);
+  h+='</div>';
+  h+='<div id="asBarre" style="display:none;gap:6px;flex-wrap:wrap;align-items:center;padding:10px;border:1px solid var(--gold);border-radius:10px;margin-bottom:10px;background:rgba(200,168,78,.06)"><b><span id="asNb">0</span> sélectionné(s)</b>';
+  h+='<button class="dp-btn" onclick="asGroupe(\'email\')">✉️ Email</button><button class="dp-btn" onclick="asGroupe(\'sms\')">📱 Ajouter des SMS</button><button class="dp-btn" onclick="asGroupe(\'essai\')">⏰ Prolonger l\'essai</button><button class="dp-btn" onclick="asGroupe(\'etape\')">🧭 Étape</button><button class="dp-btn" onclick="asGroupe(\'etiquette\')">🏷 Étiquette</button><button class="dp-btn" onclick="asExport(true)">⬇️ Exporter</button><button class="dp-btn" onclick="window._ASEL={};asRafraichir()">✕ Vider</button></div>';
+  h+='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th><input type="checkbox" onchange="asSelTout(this.checked)"></th><th>Établissement</th><th>Forfait</th><th>Statut</th><th>Étape</th><th>Clients</th><th>Créé le</th><th>Activité</th><th>Rappel</th><th></th></tr><tbody id="sTbody">'+asLignes(asFiltrer())+'</tbody></table></div></div>';
   return h;
 }
+function asLignes(L){
+  var mI={coiffure:"✂️",barbier:"💈",esthetique:"💆",ongles:"💅",bien_etre:"🧘"}, h="";
+  L.forEach(function(s){
+    var su=asSuivi(s.id), j=asJoursEssai(s);
+    h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' onchange="asSel(\''+s.id+'\',this.checked)"></td>';
+    h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
+    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
+    h+='<td>'+statusB(s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
+    h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+s.clients+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
+    h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=new Date().toISOString().slice(0,10)?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
+    h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(\''+s.id+'\')" title="Fiche">👁</button><button class="td-btn" onclick="window.open(\'mailto:'+saEsc(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" onclick="window.open(\'tel:'+saEsc(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
+  });
+  return h||'<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">Aucun établissement</td></tr>';
+}
+function asExport(selection){
+  var L=selection?asSelection():asFiltrer();
+  var cols=["Nom","Ville","CP","Adresse","Email","Téléphone","SIRET","Forme","Gérant","Forfait","Offert","Statut","Fin essai","Étape","Étiquettes","Rappel","Clients","Collaborateurs","Tickets 30 j","CA 30 j","Dernier ticket","Crédits SMS","Créé le"];
+  var q=function(v){ v=(v==null?"":String(v)); return '"'+v.replace(/"/g,'""')+'"'; };
+  var rows=[cols.map(q).join(";")];
+  L.forEach(function(s){ var su=asSuivi(s.id), hh=_salonHealthOf(s.id)||{};
+    rows.push([s.nom,s.ville,s.cp,s.adresse,s.email,s.tel,s.siret,s.formeJur,(s.gerantPrenom+" "+s.gerantNom).trim(),s.plan,s.isFree?"oui":"",s.status,s.trialEnd?String(s.trialEnd).slice(0,10):"",ETAPES[su.etape]||su.etape,(su.etiquettes||[]).join(", "),su.rappel_le||"",s.clients,s.collabs,hh.tickets_30d||0,String(hh.ca_30d||0).replace(".",","),hh.last_ticket||"",s.smsCredits,String(s.created||"").slice(0,10)].map(q).join(";")); });
+  var blob=new Blob(["﻿"+rows.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="luxyra-salons-"+new Date().toISOString().slice(0,10)+".csv"; a.click();
+}
+async function asGroupe(action){
+  var L=asSelection(); if(!L.length) return;
+  if(action==="email"){
+    var sujet=prompt("Objet de l'email ("+L.length+" salon(s)) :",""); if(!sujet) return;
+    var corps=prompt("Message (texte simple, {nom} = nom du salon, {prenom} = prénom du gérant) :",""); if(!corps) return;
+    if(!confirm("Envoyer cet email à "+L.length+" salon(s) ?")) return;
+    var tok=await lxAdminJeton(), ok=0, ko=0;
+    for(var i=0;i<L.length;i++){ var s=L[i]; if(!s.email){ko++;continue;}
+      var txt=corps.replace(/\{nom\}/g,s.nom).replace(/\{prenom\}/g,s.gerantPrenom||"");
+      try{ var r=await fetch("/api/email/custom",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({to:s.email,toName:s.nom,salonName:"Luxyra",salonEmail:"support@luxyra.fr",subject:sujet,htmlContent:"<div style='font-family:sans-serif;font-size:15px;line-height:1.6'>"+saEsc(txt).replace(/\n/g,"<br>")+"<br><br>— L'équipe Luxyra</div>",textContent:txt})}); if(r.ok) ok++; else ko++; }catch(e){ko++;}
+      if(i<L.length-1) await new Promise(function(r){setTimeout(r,2100);});
+      try{ await _sb.from("admin_notes_salons").insert({salon_id:s.id,type:"email",note:"Email groupé : "+sujet,auteur:"admin"}); }catch(e){}
+    }
+    alert("✉️ "+ok+" envoyé(s)"+(ko?", "+ko+" échec(s)":"")); return;
+  }
+  if(action==="sms"){
+    var n=parseInt(prompt("Combien de SMS ajouter à chacun des "+L.length+" salon(s) ?","50"),10); if(!(n>0&&n<=5000)) return;
+    var motif=prompt("Motif (gardé dans l'historique) :","Geste commercial"); if(motif===null) return;
+    for(var k=0;k<L.length;k++){ await smsMouvement(L[k].id,n,motif,true); }
+    alert("📱 +"+n+" SMS ajoutés à "+L.length+" salon(s)"); if(typeof loadData==="function") loadData(); return;
+  }
+  if(action==="essai"){
+    var jours=parseInt(prompt("Prolonger l'essai de combien de jours ? (salons en essai uniquement)","7"),10); if(!(jours>0&&jours<=90)) return;
+    var nb=0; for(var m=0;m<L.length;m++){ var x=L[m]; if(x.status!=="trial") continue; var d=new Date(Math.max(Date.now(), new Date(x.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+jours);
+      await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",x.id); nb++;
+      try{ await _sb.from("admin_notes_salons").insert({salon_id:x.id,type:"autre",note:"Essai prolongé de "+jours+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} }
+    alert("⏰ Essai prolongé pour "+nb+" salon(s)"); if(typeof loadData==="function") loadData(); return;
+  }
+  if(action==="etape"){
+    var liste=Object.keys(ETAPES).map(function(k,i){return (i+1)+" = "+ETAPES[k];}).join("\n");
+    var c=parseInt(prompt("Nouvelle étape :\n"+liste,"4"),10); var e=Object.keys(ETAPES)[c-1]; if(!e) return;
+    for(var p=0;p<L.length;p++) await asSauverSuivi(L[p].id,{etape:e});
+    asRafraichir(); return;
+  }
+  if(action==="etiquette"){
+    var et=(prompt("Étiquette à ajouter (ex. VIP, Salon de Metz, Ambassadeur) :","")||"").trim(); if(!et) return;
+    for(var w=0;w<L.length;w++){ var su=asSuivi(L[w].id); var arr=(su.etiquettes||[]).slice(); if(arr.indexOf(et)<0) arr.push(et); await asSauverSuivi(L[w].id,{etiquettes:arr}); }
+    asRafraichir(); return;
+  }
+}
+async function asSauverSuivi(id,patch){
+  var cur=asSuivi(id); var row=Object.assign({salon_id:id,etape:cur.etape||"nouveau",etiquettes:cur.etiquettes||[],rappel_le:cur.rappel_le||null,rappel_note:cur.rappel_note||null},patch,{maj_le:new Date().toISOString(),maj_par:"admin"});
+  var r=await _sb.from("admin_suivi_salons").upsert(row,{onConflict:"salon_id"}).select().single();
+  if(r.error){ alert("❌ "+r.error.message); return; }
+  window._SUIVI[id]=r.data;
+}
+
+// --- Fiche : onglet Suivi commercial ---
+function asOngletSuivi(s){
+  var su=asSuivi(s.id);
+  var h='<div class="dp-section"><div class="dp-label">🧭 Suivi commercial</div>';
+  h+='<div class="dp-field"><span class="k">Étape</span><span class="v"><select onchange="asSauverSuivi(\''+s.id+'\',{etape:this.value})" style="padding:4px 8px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">'+Object.keys(ETAPES).map(function(k){return '<option value="'+k+'"'+(su.etape===k?' selected':'')+'>'+ETAPES[k]+'</option>';}).join("")+'</select></span></div>';
+  h+='<div class="dp-field"><span class="k">Étiquettes</span><span class="v">'+(su.etiquettes||[]).map(function(e){return '<span class="badge" style="cursor:pointer" title="Retirer" onclick="asRetirerEtiquette(\''+s.id+'\',\''+saEsc(e).replace(/'/g,"")+'\')">'+saEsc(e)+' ✕</span>';}).join(" ")+' <button class="dp-btn" style="font-size:10px;padding:2px 8px" onclick="asAjouterEtiquette(\''+s.id+'\')">+ Ajouter</button></span></div>';
+  h+='<div class="dp-field"><span class="k">Rappel</span><span class="v"><input type="date" id="asRappel-'+s.id+'" value="'+(su.rappel_le||"")+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></span></div>';
+  h+='<input id="asRappelNote-'+s.id+'" value="'+saEsc(su.rappel_note||"")+'" placeholder="Objet du rappel (ex. rappeler pour passer au Pro)" style="width:100%;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px">';
+  h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="dp-btn" onclick="asSauverRappel(\''+s.id+'\')">💾 Enregistrer le rappel</button>'+(su.rappel_le?'<button class="dp-btn" onclick="asSauverSuivi(\''+s.id+'\',{rappel_le:null,rappel_note:null}).then(function(){openD(\''+s.id+'\')})">✓ Rappel fait</button>':'')+'</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Le jour du rappel, tu reçois une notification sur ton téléphone (9 h).</div></div>';
+  h+='<div class="dp-section"><div class="dp-label">🗒 Historique des échanges</div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:6px"><select id="asNoteType-'+s.id+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><option value="note">📝 Note</option><option value="appel">📞 Appel</option><option value="email">✉️ Email</option><option value="rdv">🤝 Rendez-vous</option></select><input id="asNote-'+s.id+'" placeholder="Ce qui a été dit / fait…" style="flex:1;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px"><button class="dp-btn" onclick="asAjouterNote(\''+s.id+'\')">Ajouter</button></div>';
+  h+='<div id="asNotes-'+s.id+'" style="font-size:12px;color:var(--text2)">Chargement…</div></div>';
+  setTimeout(function(){ asChargerNotes(s.id); },20);
+  return h;
+}
+async function asChargerNotes(id){
+  var el=document.getElementById("asNotes-"+id); if(!el) return;
+  var r=await _sb.from("admin_notes_salons").select("*").eq("salon_id",id).order("cree_le",{ascending:false}).limit(100);
+  var ic={note:"📝",appel:"📞",email:"✉️",rdv:"🤝",autre:"•"};
+  el.innerHTML=(r.data||[]).length?(r.data||[]).map(function(n){return '<div style="padding:6px 0;border-top:1px solid var(--border)"><span style="color:var(--text3)">'+new Date(n.cree_le).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> '+(ic[n.type]||"•")+' '+saEsc(n.note)+'</div>';}).join(""):'<i>Aucun échange noté</i>';
+}
+async function asAjouterNote(id){
+  var i=document.getElementById("asNote-"+id), t=document.getElementById("asNoteType-"+id); var v=(i&&i.value||"").trim(); if(!v) return;
+  var r=await _sb.from("admin_notes_salons").insert({salon_id:id,type:t?t.value:"note",note:v,auteur:"admin"}); if(r.error){alert("❌ "+r.error.message);return;}
+  i.value=""; asChargerNotes(id);
+}
+async function asSauverRappel(id){
+  var d=document.getElementById("asRappel-"+id).value||null, n=document.getElementById("asRappelNote-"+id).value||null;
+  await asSauverSuivi(id,{rappel_le:d,rappel_note:n}); alert(d?"📞 Rappel enregistré pour le "+new Date(d).toLocaleDateString("fr-FR"):"Rappel retiré");
+}
+async function asAjouterEtiquette(id){ var e=(prompt("Étiquette :","")||"").trim(); if(!e) return; var arr=(asSuivi(id).etiquettes||[]).slice(); if(arr.indexOf(e)<0) arr.push(e); await asSauverSuivi(id,{etiquettes:arr}); openD(id); }
+async function asRetirerEtiquette(id,e){ var arr=(asSuivi(id).etiquettes||[]).filter(function(x){return x!==e;}); await asSauverSuivi(id,{etiquettes:arr}); openD(id); }
+
+// --- Fiche : onglet Activité & journal ---
+function asOngletActivite(s){
+  var hh=_salonHealthOf(s.id)||{};
+  var h='<div class="dp-section"><div class="dp-label">📈 Activité</div>';
+  [["Dernier ticket",hh.last_ticket?fmtD(hh.last_ticket):"jamais"],["Tickets 30 j",hh.tickets_30d||0],["CA 30 j",fmtM(hh.ca_30d||0)],["Dernière connexion",s.lastLogin?fmtD(s.lastLogin):"—"],["Clients",s.clients],["Collaborateurs",s.collabs],["Crédits SMS",s.smsCredits]].forEach(function(f){ h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+f[1]+'</span></div>'; });
+  h+='</div><div class="dp-section"><div class="dp-label">📜 Journal admin (actions sur ce salon)</div><div id="asJournal-'+s.id+'" style="font-size:12px;color:var(--text2)">Chargement…</div></div>';
+  setTimeout(async function(){ var el=document.getElementById("asJournal-"+s.id); if(!el) return; var r=await _sb.from("admin_log").select("*").eq("salon_id",s.id).order("timestamp_action",{ascending:false}).limit(60);
+    el.innerHTML=(r.data||[]).length?(r.data||[]).map(function(x){return '<div style="padding:5px 0;border-top:1px solid var(--border)"><span style="color:var(--text3)">'+new Date(x.timestamp_action).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b>'+saEsc(x.action)+'</b> '+saEsc(x.details||"")+'</div>';}).join(""):'<i>Aucune action enregistrée</i>'; },20);
+  return h;
+}
+function asOnglet(t){ document.querySelectorAll("#detailPanel .dpTab").forEach(function(d){ d.style.display=(d.getAttribute("data-t")===t)?"":"none"; }); document.querySelectorAll("#detailPanel .dpTabBtn").forEach(function(b){ b.classList.toggle("active",b.getAttribute("data-t")===t); }); window._asOngletCourant=t; }
 
 function _salonHealthOf(id){ return (window._SALON_HEALTH||{})[id]||null; }
 function _salonRisk(s){
@@ -2156,8 +2329,7 @@ async function lxLoadSalonHealth(){
     if(r.error) throw new Error(r.error.message);
     var map={}; (r.data||[]).forEach(function(x){ map[x.salon_id]=x; });
     window._SALON_HEALTH=map;
-    var tb=document.getElementById('sTbody');
-    if(tb) tb.innerHTML=buildRows(SALONS, curFilter);
+    if(typeof asRafraichir==="function") asRafraichir();
   }catch(e){ console.warn('[salon health]', e&&e.message); }
 }
 function buildRows(list,f){
@@ -2189,6 +2361,10 @@ function openD(id){
   window._curSalonId=id;
   var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+s.nom+'</div><div style="font-size:11px;color:var(--text3)">'+(s.ville||"")+'</div></div></div><div style="display:flex;align-items:center"><button class="dp-expand" onclick="toggleDrawerFull()" title="Plein écran" id="dpExpandBtn">⛶</button><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div></div>';
   h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
+  // 2026-10-09 : fiche à onglets
+  var _ot=window._asOngletCourant||"identite";
+  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 12px">'+[["identite","🏢 Identité"],["abonnement","💳 Abonnement"],["suivi","🧭 Suivi"],["activite","📈 Activité"],["technique","⚙️ Technique & SMS"]].map(function(t){return '<button class="tf-btn dpTabBtn'+(_ot===t[0]?' active':'')+'" data-t="'+t[0]+'" onclick="asOnglet(\''+t[0]+'\')">'+t[1]+'</button>';}).join("")+'</div>';
+  h+='<div class="dpTab" data-t="identite"'+(_ot==="identite"?'':' style="display:none"')+'>';
 
   // VERIFICATION
   if(s.verif!=="verified"){
@@ -2243,6 +2419,7 @@ function openD(id){
   h+='<div class="dp-field" style="margin-top:8px"><span class="k">Contrat</span><span class="v"><button class="dp-btn" style="font-size:11px" onclick="showSalonContrat(&#39;'+s.id+'&#39;)">\ud83d\udcdd Voir la signature</button></span></div>';
   h+='</div>';
 
+  h+='</div><div class="dpTab" data-t="abonnement"'+(_ot==="abonnement"?'':' style="display:none"')+'>';
   // STRIPE CONNECT
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcb3 Paiements en ligne (Connect)</div>';
   var cSt=s.connectStatus||"not_started";
@@ -2275,6 +2452,9 @@ function openD(id){
   h+='<button class="dp-btn success" style="margin-top:8px;width:100%" onclick="saveFreePlan(&#39;'+s.id+'&#39;)">💾 Enregistrer le plan offert</button>';
   h+='</div>';
 
+  h+='</div><div class="dpTab" data-t="suivi"'+(_ot==="suivi"?'':' style="display:none"')+'>'+asOngletSuivi(s)+'</div>';
+  h+='<div class="dpTab" data-t="activite"'+(_ot==="activite"?'':' style="display:none"')+'>'+asOngletActivite(s)+'</div>';
+  h+='<div class="dpTab" data-t="technique"'+(_ot==="technique"?'':' style="display:none"')+'>';
   // TECHNIQUE
   h+='<div class="dp-section"><div class="dp-label">⚙️ Technique</div>';
   h+='<div class="dp-field"><span class="k">Salon ID</span><span class="v" style="font-size:10px;font-family:var(--mono)">'+s.id.slice(0,18)+'...</span></div>';
@@ -2320,6 +2500,7 @@ function openD(id){
     }catch(e){var el2=document.getElementById("dpCartes_"+sId);if(el2)el2.innerHTML='<div style="color:var(--text3);font-size:11px">Erreur chargement</div>';}
   })(s.id);
 
+  h+='</div>';
   // NOTES
   h+='<div class="dp-section"><div class="dp-label">📝 Notes internes</div>';
   h+='<textarea id="dpNotes" style="width:100%;height:60px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px;font-size:12px;font-family:var(--f1);resize:vertical">'+(s.notesAdmin||"")+'</textarea>';
@@ -3143,7 +3324,106 @@ async function lxLoadMrrMovements(){
 }
 
 // ===== PACKS SMS =====
+// ============================================================
+// SMS — GESTION PRO (2026-10-09) : tableau de bord, par salon, réglages
+// ============================================================
+window._smsOnglet = window._smsOnglet || "dash";
+var SMS_CTX = {rappel_24h:"Rappels 24 h",rappel_2h:"Rappels 2 h",confirmation_rdv:"Confirmations RDV",confirmation_rdv_groupe:"Confirmations (groupe)",campagne:"Campagnes",custom:"Messages manuels",anniversaire:"Anniversaires",autre:"Autres"};
 function rSMS(){
+  var t=window._smsOnglet;
+  var h='<div style="display:flex;gap:6px;margin-bottom:14px">'+[["dash","📊 Tableau de bord"],["salons","🏠 Par salon"],["reglages","⚙️ Réglages & packs"]].map(function(o){return '<button class="tf-btn'+(t===o[0]?' active':'')+'" onclick="window._smsOnglet=\''+o[0]+'\';render()">'+o[1]+'</button>';}).join("")+'</div>';
+  if(t==="reglages") return h+smsFormReglages()+rSMSReglages();
+  setTimeout(smsCharger,0);
+  return h+'<div id="smsZone" style="color:var(--text2)">Chargement…</div>';
+}
+async function smsCharger(){
+  var el=document.getElementById("smsZone"); if(!el) return;
+  var r=await _sb.rpc("admin_sms_stats"); if(r.error){ el.innerHTML='<div style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
+  window._SMSST=r.data; el.innerHTML=(window._smsOnglet==="salons")?smsVueSalons(r.data):smsVueDash(r.data);
+}
+function smsCfg(){ var c=window._appConfig||{}; return {cout:c.sms_cost_brevo_eur!=null&&c.sms_cost_brevo_eur!==''?Number(c.sms_cost_brevo_eur):null, seuil:Number(c.sms_seuil_alerte!=null?c.sms_seuil_alerte:20)}; }
+function smsVueDash(d){
+  var C=smsCfg(), mois=(d.par_mois||[]), ceMois=mois.length?mois[mois.length-1]:{brevo:0,natif:0};
+  var moisCour=new Date().toISOString().slice(0,7); if(ceMois.mois!==moisCour) ceMois={brevo:0,natif:0};
+  var cout=C.cout!=null?ceMois.brevo*C.cout:null, packs=d.packs_mois||{};
+  var bas=(d.salons||[]).filter(function(s){return (s.plan==="pro") && s.credits<C.seuil;});
+  var h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">';
+  h+=saCarte("SMS envoyés ce mois",ceMois.brevo,"+ "+ceMois.natif+" via téléphone (gratuits)");
+  h+=saCarte("Coût Brevo du mois",cout!=null?saE(cout):"?",C.cout!=null?"à "+C.cout.toLocaleString("fr-FR")+" € / SMS":"coût unitaire à renseigner (Réglages)");
+  h+=saCarte("Packs vendus ce mois",saE(packs.eur||0),(packs.nb||0)+" pack(s) · "+(packs.sms||0)+" SMS","var(--gold)");
+  h+=saCarte("Marge brute du mois",cout!=null?saE((packs.eur||0)-cout):"?","packs vendus − coût Brevo",cout!=null&&((packs.eur||0)-cout)<0?"var(--red)":"var(--green)");
+  h+=saCarte("Salons Pro sous "+C.seuil+" SMS",bas.length,bas.map(function(s){return s.nom+" ("+s.credits+")";}).join(", ")||"aucun",bas.length?"var(--orange)":null);
+  h+='</div>';
+  // 30 derniers jours (barres)
+  var jours={}; (d.par_jour||[]).forEach(function(x){jours[x.jour]=x;});
+  var max=1, L=[]; for(var i=29;i>=0;i--){ var dt=new Date(Date.now()-i*86400000).toISOString().slice(0,10); var v=jours[dt]||{brevo:0,natif:0}; L.push([dt,v]); max=Math.max(max,v.brevo+v.natif); }
+  h+='<div class="card" style="margin-bottom:14px"><h3>📈 30 derniers jours</h3><div style="display:flex;align-items:flex-end;gap:3px;height:120px;margin-top:10px">';
+  L.forEach(function(p){ var v=p[1], hb=Math.round(v.brevo/max*110), hn=Math.round(v.natif/max*110); h+='<div title="'+new Date(p[0]).toLocaleDateString("fr-FR")+' : '+v.brevo+' Brevo, '+v.natif+' téléphone" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end"><div style="height:'+hn+'px;background:#64b5f6"></div><div style="height:'+hb+'px;background:var(--gold);border-radius:3px 3px 0 0"></div></div>'; });
+  h+='</div><div style="font-size:11px;color:var(--text3);margin-top:6px"><span style="color:var(--gold)">■</span> Brevo (payants) &nbsp; <span style="color:#64b5f6">■</span> téléphone du salon (gratuits)</div></div>';
+  // Par type ce mois
+  var ctx=d.par_contexte_mois||{}; var kk=Object.keys(ctx).sort(function(a,b){return ctx[b]-ctx[a];});
+  h+='<div class="card" style="margin-bottom:14px"><h3>🏷 Par type ce mois</h3>'+(kk.length?kk.map(function(k){return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saEsc(SMS_CTX[k]||k)+'</span><b>'+ctx[k]+'</b></div>';}).join(""):'<div style="font-size:12px;color:var(--text3)">Aucun SMS ce mois</div>')+'</div>';
+  // 12 mois
+  h+='<div class="card"><h3>📅 12 derniers mois</h3>'+(mois.length?mois.slice().reverse().map(function(m){return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px"><span>'+m.mois+'</span><span>'+m.brevo+' Brevo'+(m.natif?' · '+m.natif+' téléphone':'')+(C.cout!=null?' · coût '+saE(m.brevo*C.cout):'')+'</span></div>';}).join(""):'<div style="font-size:12px;color:var(--text3)">—</div>')+'</div>';
+  return h;
+}
+function smsVueSalons(d){
+  var C=smsCfg();
+  var h='<div class="table-wrap"><div style="overflow-x:auto"><table><tr><th>Salon</th><th>Solde</th><th>Ce mois</th><th>30 j</th><th>Dernier envoi</th><th>En attente</th><th>Mode</th><th>État</th><th>Actions</th></tr>';
+  (d.salons||[]).forEach(function(s){
+    var bas=s.plan==="pro"&&s.credits<C.seuil;
+    h+='<tr><td><b>'+saEsc(s.nom)+'</b><div style="font-size:10px;color:var(--text3)">'+saEsc(s.plan)+' · '+saEsc(s.status)+'</div></td>';
+    h+='<td style="font-weight:800;color:'+(s.credits<=0?'var(--red)':bas?'var(--orange)':'var(--green)')+'">'+s.credits+'</td><td>'+s.envoyes_mois+'</td><td>'+s.envoyes_30j+'</td>';
+    h+='<td style="font-size:11px">'+(s.dernier_envoi?new Date(s.dernier_envoi).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—")+'</td>';
+    h+='<td>'+(s.en_attente?'<span title="SMS non envoyés faute de crédits" style="color:var(--orange)">'+s.en_attente+'</span>':'0')+'</td><td style="font-size:11px">'+(s.mode==="native"?"📱 téléphone":"Brevo")+'</td>';
+    h+='<td>'+(s.bloque?'<span style="color:var(--red);font-weight:700">⛔ Bloqué</span>':'<span style="color:var(--green)">Actif</span>')+'</td>';
+    h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsAjuster(\''+s.id+'\',1)">+ SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsAjuster(\''+s.id+'\',-1)">− SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsHistorique(\''+s.id+'\',\''+saEsc(s.nom).replace(/'/g,"")+'\')">Historique</button><button class="dp-btn" style="font-size:10px;padding:3px 7px;color:'+(s.bloque?'var(--green)':'var(--red)')+'" onclick="smsBloquer(\''+s.id+'\','+(!s.bloque)+')">'+(s.bloque?'Débloquer':'Bloquer')+'</button></div></td></tr>';
+  });
+  return h+'</table></div></div><div style="font-size:11px;color:var(--text3);margin-top:8px">« En attente » = rappels non envoyés faute de crédits (ils partent dès la recharge s\'ils sont encore utiles). « Bloqué » = plus aucun SMS payant envoyé pour ce salon.</div>';
+}
+async function smsMouvement(id,delta,motif,silencieux){
+  var r=await _sb.rpc("admin_sms_ajuster",{p_salon:id,p_delta:delta,p_motif:motif||""});
+  if(r.error){ if(!silencieux) alert("❌ "+r.error.message); return null; }
+  return r.data;
+}
+async function smsAjuster(id,signe){
+  var n=parseInt(prompt(signe>0?"Combien de SMS ajouter ?":"Combien de SMS retirer ?","50"),10); if(!(n>0)) return;
+  var m=prompt("Motif (gardé dans l'historique) :",signe>0?"Geste commercial":"Correction"); if(m===null) return;
+  var v=await smsMouvement(id,signe*n,m); if(v!==null){ alert("✅ Nouveau solde : "+v+" SMS"); smsCharger(); if(typeof loadData==="function") loadData(); }
+}
+async function smsBloquer(id,b){
+  var m=prompt(b?"Bloquer l'envoi de SMS payants pour ce salon. Motif :":"Débloquer l'envoi. Motif :",""); if(m===null) return;
+  var r=await _sb.rpc("admin_sms_bloquer",{p_salon:id,p_bloque:b,p_motif:m}); if(r.error){ alert("❌ "+r.error.message); return; } smsCharger();
+}
+async function smsHistorique(id,nom){
+  var r=await _sb.from("sms_mouvements").select("*").eq("salon_id",id).order("cree_le",{ascending:false}).limit(100);
+  var T={achat_pack:"🛒 Achat pack",bonus:"🎁 Bonus",ajout_admin:"➕ Ajout admin",retrait_admin:"➖ Retrait admin"};
+  var L=(r.data||[]).map(function(x){return new Date(x.cree_le).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+"  "+(T[x.type]||x.type)+"  "+(x.delta>0?"+":"")+x.delta+" → solde "+(x.solde_apres==null?"?":x.solde_apres)+(x.montant_eur?"  ("+Number(x.montant_eur).toFixed(2)+" €)":"")+(x.motif?"  — "+x.motif:"");});
+  alert("Historique des crédits SMS — "+nom+"\n\n"+(L.length?L.join("\n"):"Aucun mouvement enregistré (historique tenu depuis le 09/10/2026)."));
+}
+function smsFormReglages(){
+  var c=window._appConfig||{};
+  var champs=[["sms_pack_100_eur","Prix pack 100 SMS (€)"],["sms_pack_250_eur","Prix pack 250 SMS (€)"],["sms_pack_500_eur","Prix pack 500 SMS (€)"],["sms_pack_1000_eur","Prix pack 1000 SMS (€)"],["sms_bonus_first_pay","SMS offerts au 1er paiement Pro"],["sms_price_ttc","Prix unitaire de référence (€)"],["sms_cost_brevo_eur","Coût réel Brevo par SMS (€)"],["sms_seuil_alerte","Seuil « solde bas » (SMS)"]];
+  var h='<div class="card" style="margin-bottom:14px"><h3>⚙️ Réglages SMS</h3><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">';
+  champs.forEach(function(f){ var v=c[f[0]]; if(f[0]==="sms_seuil_alerte"&&v==null) v=20; h+='<div><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">'+f[1]+'</label><input id="smsC_'+f[0]+'" type="number" step="0.001" value="'+(v==null?'':v)+'" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text)"></div>'; });
+  h+='</div><button class="tb-btn primary" style="margin-top:12px" onclick="smsSauverReglages()">💾 Enregistrer les réglages</button><div style="font-size:11px;color:var(--text3);margin-top:6px">Les nouveaux prix s\'appliquent immédiatement dans l\'app des salons, sur le site et au paiement.</div></div>';
+  return h;
+}
+async function smsSauverReglages(){
+  var keys=["sms_pack_100_eur","sms_pack_250_eur","sms_pack_500_eur","sms_pack_1000_eur","sms_bonus_first_pay","sms_price_ttc","sms_cost_brevo_eur","sms_seuil_alerte"];
+  var patch={}, err=null;
+  keys.forEach(function(k){ var el=document.getElementById("smsC_"+k); if(!el) return; var v=el.value.trim(); if(v===""){ if(k==="sms_cost_brevo_eur") patch[k]=null; return; } var n=Number(v.replace(",",".")); if(!isFinite(n)||n<0){ err=k; return; } patch[k]=(k==="sms_bonus_first_pay"||k==="sms_seuil_alerte")?Math.round(n):n; });
+  if(err){ alert("Valeur invalide : "+err); return; }
+  if(!confirm("Enregistrer ces réglages SMS ?")) return;
+  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
+  var merged=Object.assign({},(cur.data&&cur.data.config)||{},patch);
+  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (réglages SMS)"}).eq("id",1);
+  if(r.error){ alert("❌ "+r.error.message); return; }
+  window._appConfig=merged; try{ await _sb.from("admin_log").insert({action:"SMS_REGLAGES",details:JSON.stringify(patch)}); }catch(e){}
+  alert("✅ Réglages enregistrés"); render();
+}
+
+function rSMSReglages(){
   var cfg = window._appConfig || {};
   // Prix unitaire de RÉFÉRENCE facturé au salon (vente), PAS le coût d'achat.
   var smsPriceSell = Number(cfg.sms_price_ttc != null ? cfg.sms_price_ttc : 0.065);
@@ -3910,12 +4190,8 @@ async function saveFreePlan(id){
 }
 
 async function addSmsCredits(id,nb){
-  var s=gSalon(id);if(!s)return;
-  var newCredits=(s.smsCredits||0)+nb;
-  await _sb.from("salons").update({sms_credits:newCredits}).eq("id",id);
-  s.smsCredits=newCredits;
-  alert("\u2705 "+nb+" SMS ajout\u00e9s. Nouveau solde: "+newCredits+" SMS");
-  openD(id);
+  var m=prompt("Motif (gardé dans l'historique) :","Geste commercial"); if(m===null) return;
+  var v=await smsMouvement(id,nb,m); if(v!==null){ var s=gSalon(id); if(s) s.smsCredits=v; alert("✅ +"+nb+" SMS — solde "+v); openD(id); }
 }
 
 async function addSmsCreditsCustom(id){
@@ -3925,10 +4201,11 @@ async function addSmsCreditsCustom(id){
 }
 
 async function resetSmsCredits(id){
-  if(!confirm("Remettre le solde SMS \u00e0 0 ?"))return;
-  var today=new Date().toISOString().slice(0,10);
-  await _sb.from("salons").update({sms_credits:0,sms_last_reset:today}).eq("id",id);
-  var s=gSalon(id);if(s){s.smsCredits=0;s.smsLastReset=today;}
+  var s=gSalon(id); var cur=s?(s.smsCredits||0):0; if(!cur){ alert("Solde déjà à 0"); return; }
+  if(!confirm("Remettre le solde SMS à 0 ("+cur+" SMS retirés) ?"))return;
+  var m=prompt("Motif (gardé dans l'historique) :",""); if(m===null) return;
+  var v=await smsMouvement(id,-cur,m||"Remise à zéro"); if(v===null) return;
+  if(s){s.smsCredits=v;}
   alert("\u2705 Solde SMS remis \u00e0 0");
   openD(id);
 }
