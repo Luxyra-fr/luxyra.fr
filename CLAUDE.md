@@ -1515,3 +1515,10 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
   - Lecture via les policies `admin_lecture_vue` (10 tables). Aucune écriture NF525 possible depuis cette vue.
 - **Export factures Luxyra** : Finance → Stripe → « ⬇️ Export factures (CSV) » → worker `/api/admin/stripe` op `factures` (mois AAAA-MM ou 12 derniers mois), lecture seule, journalisé `STRIPE_EXPORT_FACTURES`.
 - **Recherche globale Ctrl+K** (ou « 🔍 Rechercher » dans la barre latérale) : salons (côté client) + RPC `admin_recherche(p_q)` (security definer, `is_admin()` obligatoire) sur clientes (nom, email, téléphone) et tickets (numéro exact). Lecture seule.
+
+## SMS : conversion GSM-7 avant envoi (2026-10-09)
+- Problème : nos propres modèles par défaut (« À bientôt ! ») contenaient À et ô, hors alphabet SMS → message en Unicode (70 car.) → **2 crédits Brevo par SMS** alors qu'on ne débite qu'1 crédit au salon.
+- Worker : `lxSmsGsm()` appliqué dans `brevoSendSms` (seul point d'envoi SMS de tout Luxyra) : ô→o, â→a, ê→e, î→i, û→u, ç→c, À→A, ’→', «»→", …→..., espaces insécables, émojis supprimés. é è ù à É Ç restent (alphabet GSM). Expéditeur inchangé.
+- app.html : `lxSmsInfo` calcule sur le texte converti, le compteur affiche « converti(s) automatiquement » au lieu de l'avertissement rouge.
+- Reste : un SMS > 160 caractères coûte toujours 2 crédits Brevo mais 1 crédit salon (débit unitaire dans `decrement_sms_credit`). Non modifié sans accord d'Alexandre.
+- Bot : entrée `sms` complétée.
