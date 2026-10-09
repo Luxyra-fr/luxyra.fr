@@ -1731,6 +1731,17 @@ async function handleAdminStripe(request, env) {
       await saLog(env, op === "reprendre" ? "STRIPE_REPRISE" : "STRIPE_ANNULATION_FIN_PERIODE", salon.id, `par ${admin}${motif ? " — " + motif : ""}`);
       return jsonResponse({ ok: true });
     }
+    // Plan offert depuis l'admin : suspendre / reprendre la facturation Stripe (pas de facture pendant l'offre)
+    if (op === "pause_facturation" || op === "reprendre_facturation") {
+      if (!subId) return jsonResponse({ ok: true, sans_abonnement: true });
+      const params = op === "pause_facturation"
+        ? { "pause_collection[behavior]": "void", ...(b.jusqu_au && /^\d{4}-\d{2}-\d{2}$/.test(String(b.jusqu_au)) ? { "pause_collection[resumes_at]": String(Math.floor(new Date(b.jusqu_au + "T00:00:00Z").getTime() / 1000)) } : {}) }
+        : { pause_collection: "" };
+      const s = await stripeAPI(env, `subscriptions/${subId}`, params);
+      if (!s?.id) return jsonResponse({ error: "Stripe : " + (s?.error?.message || "échec") }, 502);
+      await saLog(env, op === "pause_facturation" ? "STRIPE_FACTURATION_SUSPENDUE" : "STRIPE_FACTURATION_REPRISE", salon.id, `${b.jusqu_au ? "jusqu'au " + b.jusqu_au + " " : ""}par ${admin}${motif ? " — " + motif : ""}`);
+      return jsonResponse({ ok: true });
+    }
     if (op === "relancer_facture") {
       const inv = await stripeAPI(env, `invoices/${encodeURIComponent(String(b.facture_id || ""))}`, null, "GET");
       if (!inv?.id || inv.customer !== salon.stripe_customer_id) return jsonResponse({ error: "Facture introuvable pour ce salon" }, 404);
