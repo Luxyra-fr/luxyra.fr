@@ -1509,7 +1509,8 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
 
 ## Admin pro, lot 3 (2026-10-09)
 - **Onglet 💬 Support** dans la fiche salon (`asOngletSupport` / `asChargerSupport` / `asRepondreSupport`) : mêmes tables et mêmes écritures que la page Chat support (support_conversations / support_messages).
-- **Vue de l'app du salon en lecture seule** : menu Actions → « 👁 Voir l'app du salon » → `asVoirApp` (journal admin_log `VUE_ADMIN_LECTURE`) → `/app.html?vue_admin=<salon_id>`.
+- **Vue de l'app du salon en lecture seule** : menu Actions → « 👁 Voir l'app du salon » → `asVoirApp` (PAS de journal, demande d'Alexandre) → `/app.html?vue_admin=<salon_id>`.
+  - Isolation navigateur (script en tête d'app.html) : localStorage/sessionStorage remplacés par une mémoire vide, cache IndexedDB coupé → la session et les données du salon habituellement connecté (Amandine) ne sont ni lues ni modifiées. Le client Supabase utilise la session du PANNEAU ADMIN (`sb-luxyra-admin-auth`), signOut neutralisé, pas d'écran de connexion (message à la place).
   - luxyra-supabase.js : `window._lxVueAdmin` ; refuse si l'utilisateur n'est pas support@luxyra.fr ; charge le salon par id ; bloque TOUTES les écritures (`_sb.from` insert/update/upsert/delete, `_sb.rpc` sauf founders_stats/admin_find_duplicate_clients, storage, fetch non-GET vers /api/ (sauf availability/fees/siret), /functions/v1/, /rest/v1/). Bandeau rouge. Pas de PIN opérateur, pas de déconnexion d'inactivité.
   - Lecture via les policies `admin_lecture_vue` (10 tables). Aucune écriture NF525 possible depuis cette vue.
 - **Export factures Luxyra** : Finance → Stripe → « ⬇️ Export factures (CSV) » → worker `/api/admin/stripe` op `factures` (mois AAAA-MM ou 12 derniers mois), lecture seule, journalisé `STRIPE_EXPORT_FACTURES`.
