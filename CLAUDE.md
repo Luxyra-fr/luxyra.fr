@@ -1520,5 +1520,5 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
 - Problème : nos propres modèles par défaut (« À bientôt ! ») contenaient À et ô, hors alphabet SMS → message en Unicode (70 car.) → **2 crédits Brevo par SMS** alors qu'on ne débite qu'1 crédit au salon.
 - Worker : `lxSmsGsm()` appliqué dans `brevoSendSms` (seul point d'envoi SMS de tout Luxyra) : ô→o, â→a, ê→e, î→i, û→u, ç→c, À→A, ’→', «»→", …→..., espaces insécables, émojis supprimés. é è ù à É Ç restent (alphabet GSM). Expéditeur inchangé.
 - app.html : `lxSmsInfo` calcule sur le texte converti, le compteur affiche « converti(s) automatiquement » au lieu de l'avertissement rouge.
-- Reste : un SMS > 160 caractères coûte toujours 2 crédits Brevo mais 1 crédit salon (débit unitaire dans `decrement_sms_credit`). Non modifié sans accord d'Alexandre.
+- Débit au nombre RÉEL de SMS Brevo (accord d'Alexandre) : RPC `decrement_sms_credits(p_salon_id, p_nb)` (service_role seul, atomique, exige sms_credits >= nb). Le worker calcule `lxSmsSegments` sur le texte converti (1 si ≤ 160 unités, sinon ceil(n/153) ; ^{}\[~]|€ = 2 unités) dans `/api/sms/custom` et `/api/sms/rappel`. Crédits insuffisants pour un long message → 402 explicite. Réponse : `smsDebites`. L'ancienne `decrement_sms_credit(uuid)` n'est plus appelée (gardée).
 - Bot : entrée `sms` complétée.
