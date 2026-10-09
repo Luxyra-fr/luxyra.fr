@@ -123,6 +123,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
+      if (url.pathname === "/api/stripe/webhook-connect" && request.method === "POST") return await handleWebhookConnect(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
       if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
@@ -1204,18 +1205,28 @@ async function handleConnectPayment(request, env) {
       "metadata[rdv_id]": metadata?.rdv_id || "",
       "metadata[customer_name]": customer_name || "",
       "payment_intent_data[description]": description || "Paiement en ligne",
-      // Transfer all money to connected account (0% Luxyra fee)
-      "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id,
     };
+    // 2026-10-09 : charge directe sur le compte du salon (ou ancien mode destination si interrupteur OFF)
+    const _direct = await lxChargesDirectes(env);
+    lxParamsPaiementSalon(sessionParams, _direct, salon.stripe_connect_id);
     // Empreinte : capture manuelle (pré-autorisation, débit différé)
     if (capture_method === "manual") {
       sessionParams["payment_intent_data[capture_method]"] = "manual";
       sessionParams["metadata[subtype]"] = "empreinte";
     }
-    const session = await stripeAPI(env, "checkout/sessions", sessionParams);
+    const session = await stripeAPI(env, "checkout/sessions", sessionParams, "POST", _direct ? salon.stripe_connect_id : null);
 
     if (session?.error?.type === "upstream_non_json") { console.error("connect session non-JSON:", session.error.http_status, session.error.raw); return jsonResponse({ error: "Service de paiement momentanément indisponible, merci de réessayer." }, 502); }
     if (!session?.url) return jsonResponse({ error: "Erreur paiement: " + JSON.stringify(session) }, 500);
+    // Mémorise le compte Stripe qui porte le paiement (finalisation, capture, remboursement)
+    if (_direct) {
+      try {
+        const _t = metadata?.type || "acompte";
+        const _tbl = _t === "carte_abo" ? "cartes_abo_clients" : "rdv_online";
+        const _id = _t === "carte_abo" ? (metadata?.carte_abo_id || metadata?.rdv_id) : metadata?.rdv_id;
+        if (_id && /^[0-9a-f-]{36}$/i.test(String(_id))) await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${_tbl}?id=eq.${encodeURIComponent(_id)}&salon_id=eq.${encodeURIComponent(salon_id)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ stripe_account: salon.stripe_connect_id }) });
+      } catch (_) {}
+    }
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Connect payment error: " + e.message }, 500); }
 }
@@ -1346,7 +1357,6 @@ async function handleCcCommande(request, env) {
       cancel_url: `${base}${sep}order=cancel&cmd=${cmd.id}`,
       "metadata[type]": "click_collect", "metadata[commande_id]": cmd.id, "metadata[salon_id]": b.salon_id,
       "payment_intent_data[description]": `Click & Collect n°${cmd.numero} — ${salon.nom || ""}`.slice(0, 200),
-      "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id,
       "payment_intent_data[metadata][commande_id]": cmd.id,
       expires_at: String(Math.floor(Date.now() / 1000) + 31 * 60),
     };
@@ -1356,7 +1366,10 @@ async function handleCcCommande(request, env) {
       params[`line_items[${i}][price_data][unit_amount]`] = String(Math.round(it.prix * 100));
       params[`line_items[${i}][quantity]`] = String(it.qty);
     });
-    const s = await stripeAPI(env, "checkout/sessions", params);
+    const _directCc = await lxChargesDirectes(env);
+    lxParamsPaiementSalon(params, _directCc, salon.stripe_connect_id);
+    const s = await stripeAPI(env, "checkout/sessions", params, "POST", _directCc ? salon.stripe_connect_id : null);
+    if (_directCc && s?.url) await ccMaj(env, cmd.id, { stripe_account: salon.stripe_connect_id });
     if (!s?.url) {
       await ccMaj(env, cmd.id, { status: "annulee", cancelled_at: new Date().toISOString(), cancelled_by: "systeme", cancel_reason: "paiement impossible" });
       return jsonResponse({ error: "Paiement en ligne indisponible pour ce salon : " + (s?.error?.message || "erreur Stripe") }, 502);
@@ -1387,7 +1400,10 @@ async function handleCcFinalize(request, env) {
   try {
     const { commande_id, session_id } = await readJsonBody(request);
     if (!/^cs_[A-Za-z0-9_]+$/.test(String(session_id || ""))) return jsonResponse({ error: "session invalide" }, 400);
-    const s = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    const _c = /^[0-9a-f-]{36}$/i.test(String(commande_id || "")) ? await ccLire(env, commande_id) : null;
+    let _comptes = [];
+    if (_c) { _comptes.push(_c.stripe_account); const _sl = await supabaseGet(env, _c.salon_id); if (_sl) _comptes.push(_sl.stripe_connect_id); }
+    const { session: s } = await lxSessionOu(env, session_id, _comptes);
     const r = await ccFinaliserPaiement(env, commande_id, s);
     if (r.erreur) return jsonResponse({ error: r.erreur }, r.code || 400);
     return jsonResponse({ ok: true, numero: r.cmd.numero, code_retrait: r.cmd.code_retrait, total: r.cmd.total });
@@ -1435,7 +1451,9 @@ async function handleCcAction(request, env) {
       if (!["pending_payment", "a_preparer", "prete"].includes(cmd.status)) return jsonResponse({ error: "Commande non annulable (" + cmd.status + ")" }, 409);
       let refundId = null;
       if (cmd.paye && cmd.payment_intent_id) {
-        const rf = await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, reverse_transfer: "true", "metadata[commande_id]": cmd.id });
+        const rf = cmd.stripe_account
+          ? await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, "metadata[commande_id]": cmd.id }, "POST", cmd.stripe_account)
+          : await stripeAPI(env, "refunds", { payment_intent: cmd.payment_intent_id, reverse_transfer: "true", "metadata[commande_id]": cmd.id });
         if (!rf?.id) return jsonResponse({ error: "Remboursement refusé par Stripe : " + (rf?.error?.message || "erreur") }, 502);
         refundId = rf.id;
       }
@@ -1485,11 +1503,11 @@ function saPlanDuPrix(priceId) {
   if (priceId === CONFIG.PRICE_ESSENTIAL) return "essentiel";
   return "autre";
 }
-async function saListe(env, chemin, max = 500) {
+async function saListe(env, chemin, max = 500, compte = null) {
   const out = []; let after = null;
   for (let i = 0; i < 10 && out.length < max; i++) {
     const sep = chemin.includes("?") ? "&" : "?";
-    const r = await stripeAPI(env, `${chemin}${sep}limit=100${after ? "&starting_after=" + after : ""}`, null, "GET");
+    const r = await stripeAPI(env, `${chemin}${sep}limit=100${after ? "&starting_after=" + after : ""}`, null, "GET", compte);
     if (!r || !Array.isArray(r.data)) { if (r && r.error) throw new Error(r.error.message || "Stripe"); break; }
     out.push(...r.data);
     if (!r.has_more || !r.data.length) break;
@@ -1524,6 +1542,49 @@ function saMontantMensuel(sub) {
   return t;
 }
 
+
+// ============================================================
+// WEBHOOK « COMPTES CONNECTÉS » (2026-10-09) — /api/stripe/webhook-connect
+// Reçoit les évènements des comptes Stripe des salons (paiements directs des clientes).
+// Authenticité : l'évènement est RELU chez Stripe au nom du compte (aucun secret à configurer).
+// ============================================================
+async function handleWebhookConnect(request, env) {
+  let recu = null;
+  try { recu = JSON.parse(await request.text()); } catch (e) { return jsonResponse({ error: "Invalid payload" }, 400); }
+  if (!recu || !/^evt_[A-Za-z0-9]+$/.test(String(recu.id || "")) || !/^acct_[A-Za-z0-9]+$/.test(String(recu.account || ""))) return jsonResponse({ error: "Invalid event" }, 400);
+  const event = await stripeAPI(env, `events/${recu.id}`, null, "GET", recu.account);
+  if (!event || event.id !== recu.id) return jsonResponse({ error: "Event not verifiable" }, 401);
+  const compte = recu.account;
+  const data = event.data?.object || {};
+  try {
+    if ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && data.payment_status === "paid") {
+      const t = data.metadata?.type;
+      if (t === "click_collect") await ccFinaliserPaiement(env, data.metadata.commande_id, data);
+      else if (t === "bon_cadeau") {
+        // Traitement confié à la fonction des bons cadeaux (emails, notification), évènement déjà vérifié ici.
+        await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/gc-stripe-webhook`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "x-lx-internal": env.SUPABASE_SERVICE_KEY },
+          body: JSON.stringify(event)
+        });
+      }
+    } else if (event.type === "charge.dispute.created") {
+      const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&stripe_connect_id=eq.${encodeURIComponent(compte)}&limit=1`, { headers: _sbHeaders(env) });
+      const sa = sr.ok ? await sr.json() : [];
+      const ech = data.evidence_details?.due_by ? new Date(data.evidence_details.due_by * 1000).toLocaleDateString("fr-FR") : "?";
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "⚠️ Litige chez un salon", p_body: `${(sa[0] && sa[0].nom) || compte} : ${(data.amount || 0) / 100} € — motif ${data.reason} — réponse avant le ${ech} (dans son Stripe)`, p_url: "/admin.html?tab=finance&sub=stripe", p_payload: {} }) });
+    } else if (event.type === "account.updated") {
+      const ch = !!data.charges_enabled, po = !!data.payouts_enabled, de = !!data.details_submitted;
+      const statut = ch && po ? "active" : (ch ? "payouts_pending" : (de ? "pending_verification" : "incomplete"));
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?stripe_connect_id=eq.${encodeURIComponent(compte)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ stripe_connect_status: statut }) });
+    }
+  } catch (e) {
+    try { await reportWorkerError(env, "worker:stripe-webhook-connect", e, { type: event.type, account: compte }, "error"); } catch (_) {}
+    return jsonResponse({ error: "processing" }, 500);  // Stripe réessaiera
+  }
+  return jsonResponse({ received: true });
+}
+
 async function handleAdminStripe(request, env) {
   try {
     const u = await lxAuthUser(request);
@@ -1533,14 +1594,17 @@ async function handleAdminStripe(request, env) {
     const admin = String(u.email || "admin");
 
     if (op === "overview") {
-      const [balance, subs, payouts, disputes, openInv, salons] = await Promise.all([
+      const [balance, subs, payouts, disputes, openInv, salons, whs, direct] = await Promise.all([
         stripeAPI(env, "balance", null, "GET"),
         saListe(env, "subscriptions?status=all&expand[]=data.discounts", 1000),
         stripeAPI(env, "payouts?limit=12", null, "GET"),
         stripeAPI(env, "disputes?limit=50", null, "GET"),
         stripeAPI(env, "invoices?status=open&limit=50", null, "GET"),
         saSalons(env),
+        stripeAPI(env, "webhook_endpoints?limit=50", null, "GET"),
+        lxChargesDirectes(env),
       ]);
+      const whConnect = (whs?.data || []).some((w) => w.status === "enabled" && w.application == null && String(w.url || "").includes("/api/stripe/webhook-connect"));
       const parCust = {}; const parConnect = {};
       (salons || []).forEach((s) => { if (s.stripe_customer_id) parCust[s.stripe_customer_id] = s; if (s.stripe_connect_id) parConnect[s.stripe_connect_id] = s; });
       const debutMois = new Date(); debutMois.setUTCDate(1); debutMois.setUTCHours(0, 0, 0, 0);
@@ -1572,6 +1636,7 @@ async function handleAdminStripe(request, env) {
       }));
       return jsonResponse({
         mode: balance?.livemode === false ? "test" : "live",
+        paiements_clientes: { charges_directes: !!direct, webhook_connect: whConnect },
         solde: { disponible: saEur(eur(balance?.available)), en_attente: saEur(eur(balance?.pending)) },
         abonnements: { actifs, impayes, fin_de_periode: finPeriode, nouveaux_mois: nouveaux, departs_mois: departs, par_forfait: compte, mrr: saEur(mrr) },
         virements: (payouts?.data || []).map((p) => ({ id: p.id, montant: saEur(p.amount), statut: p.status, arrivee: new Date(p.arrival_date * 1000).toISOString().slice(0, 10) })),
@@ -1608,8 +1673,13 @@ async function handleAdminStripe(request, env) {
         if (a && a.id) {
           res.connect = { id: a.id, encaissements: !!a.charges_enabled, virements: !!a.payouts_enabled, dossier_envoye: !!a.details_submitted, blocage: a.requirements?.disabled_reason || null, a_fournir: a.requirements?.currently_due || [], en_retard: a.requirements?.past_due || [], plus_tard: a.requirements?.eventually_due || [] };
           const depuis = Math.floor(Date.now() / 1000) - 90 * 86400;
-          const pis = await saListe(env, `payment_intents?created[gte]=${depuis}&expand[]=data.latest_charge`, 300);
-          res.paiements_clientes = pis.filter((p) => p.transfer_data?.destination === salon.stripe_connect_id).slice(0, 60).map((p) => ({
+          // Paiements directs sur le compte du salon + anciens paiements « destination » sur la plateforme
+          const [pisDirects, pisPlateforme] = await Promise.all([
+            saListe(env, `payment_intents?created[gte]=${depuis}&expand[]=data.latest_charge`, 300, salon.stripe_connect_id).catch(() => []),
+            saListe(env, `payment_intents?created[gte]=${depuis}&expand[]=data.latest_charge`, 300),
+          ]);
+          const pis = pisDirects.concat(pisPlateforme.filter((p) => p.transfer_data?.destination === salon.stripe_connect_id)).sort((x, y) => y.created - x.created);
+          res.paiements_clientes = pis.slice(0, 60).map((p) => ({
             id: p.id, montant: saEur(p.amount), statut: p.status, type: p.metadata?.type || (p.capture_method === "manual" ? "empreinte" : ""), description: p.description || "",
             date: new Date(p.created * 1000).toISOString(), rembourse: saEur(p.latest_charge?.amount_refunded || 0),
           }));
@@ -1665,20 +1735,24 @@ async function handleAdminStripe(request, env) {
       return jsonResponse({ error: "Paiement refusé : " + (p?.error?.message || p?.status || "échec") }, 402);
     }
     if (op === "rembourser") {
-      const pi = await stripeAPI(env, `payment_intents/${encodeURIComponent(String(b.payment_intent || ""))}?expand[]=latest_charge`, null, "GET");
+      const _piId = encodeURIComponent(String(b.payment_intent || ""));
+      // 1) paiement direct sur le compte du salon ? 2) sinon paiement sur la plateforme (abonnement ou ancien mode)
+      let piCompte = null;
+      let pi = salon.stripe_connect_id ? await stripeAPI(env, `payment_intents/${_piId}?expand[]=latest_charge`, null, "GET", salon.stripe_connect_id) : null;
+      if (pi && pi.id) piCompte = salon.stripe_connect_id; else pi = await stripeAPI(env, `payment_intents/${_piId}?expand[]=latest_charge`, null, "GET");
       if (!pi?.id) return jsonResponse({ error: "Paiement introuvable" }, 404);
-      const estAbo = salon.stripe_customer_id && pi.customer === salon.stripe_customer_id;
-      const estClient = salon.stripe_connect_id && pi.transfer_data?.destination === salon.stripe_connect_id;
+      const estAbo = !piCompte && salon.stripe_customer_id && pi.customer === salon.stripe_customer_id;
+      const estClient = !!piCompte || (salon.stripe_connect_id && pi.transfer_data?.destination === salon.stripe_connect_id);
       if (!estAbo && !estClient) return jsonResponse({ error: "Ce paiement n'appartient pas à ce salon" }, 403);
       const reste = Number(pi.latest_charge?.amount || pi.amount_received || 0) - Number(pi.latest_charge?.amount_refunded || 0);
       const montant = b.montant ? Math.round(Number(b.montant) * 100) : reste;
       if (!(montant > 0) || montant > reste) return jsonResponse({ error: `Montant invalide (reste remboursable : ${saEur(reste)} €)` }, 400);
       if (!motif) return jsonResponse({ error: "Motif obligatoire" }, 400);
       const params = { payment_intent: pi.id, amount: String(montant), "metadata[par]": admin, "metadata[motif]": motif };
-      if (estClient) params.reverse_transfer = "true";
-      const rf = await stripeAPI(env, "refunds", params);
+      if (estClient && !piCompte) params.reverse_transfer = "true";
+      const rf = await stripeAPI(env, "refunds", params, "POST", piCompte);
       if (!rf?.id) return jsonResponse({ error: "Stripe : " + (rf?.error?.message || "remboursement refusé") }, 502);
-      await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${estClient ? "paiement cliente, repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
+      await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${piCompte ? "paiement cliente sur le compte du salon" : estClient ? "paiement cliente (ancien mode), repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
       return jsonResponse({ ok: true, refund_id: rf.id, montant: saEur(montant) });
     }
     if (op === "lien_inscription") {
@@ -1717,6 +1791,15 @@ async function runStripeSurveillanceJob(env) {
     const ch = !!a.charges_enabled, po = !!a.payouts_enabled, de = !!a.details_submitted;
     const statut = ch && po ? "active" : (ch ? "payouts_pending" : (de ? "pending_verification" : "incomplete"));
     if (statut !== s.stripe_connect_status) { try { await supabaseUpdate(env, s.id, { stripe_connect_status: statut }); } catch (_) {} }
+    // Litiges sur les paiements directs (compte du salon)
+    try {
+      const dl = await stripeAPI(env, "disputes?limit=20", null, "GET", s.stripe_connect_id);
+      for (const x of (dl?.data || [])) {
+        if (!["needs_response", "warning_needs_response"].includes(x.status)) continue;
+        const ech = x.evidence_details?.due_by ? new Date(x.evidence_details.due_by * 1000).toLocaleDateString("fr-FR") : "?";
+        alertes.push({ titre: "⚠️ Litige chez un salon", corps: `${s.nom} : ${saEur(x.amount)} € — motif ${x.reason} — réponse avant le ${ech} (dans son Stripe)` });
+      }
+    } catch (_) {}
     if ((a.requirements?.past_due || []).length || (s.stripe_connect_status === "active" && statut !== "active")) {
       alertes.push({ titre: "🏦 Compte Stripe d'un salon à régulariser", corps: `${s.nom} : ${a.requirements?.disabled_reason || "pièces en retard"} (${(a.requirements?.past_due || []).length} élément(s))` });
     }
@@ -1834,8 +1917,14 @@ async function handleEmpreinteFinalize(request, env) {
     const { session_id, rdv_id } = await readJsonBody(request);
     if (!session_id || !rdv_id) return jsonResponse({ error: "session_id et rdv_id requis" }, 400);
 
-    // 1) Fetch Stripe session — source of truth
-    const session = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    // 1) Fetch Stripe session — source of truth (compte du salon d'abord : charges directes)
+    let _comptesE = [];
+    try {
+      const _q = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=salon_id,stripe_account&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const _qa = _q.ok ? await _q.json() : [];
+      if (_qa && _qa[0]) { _comptesE.push(_qa[0].stripe_account); const _sl = await supabaseGet(env, _qa[0].salon_id); if (_sl) _comptesE.push(_sl.stripe_connect_id); }
+    } catch (_) {}
+    const { session, compte: _compteE } = await lxSessionOu(env, session_id, _comptesE);
     if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
     // Pour empreinte (manual capture), payment_status="paid" = client a autorisé (PI en requires_capture)
     if (session.payment_status !== "paid") return jsonResponse({ error: "Autorisation non confirmée: " + session.payment_status }, 402);
@@ -1877,6 +1966,7 @@ async function handleEmpreinteFinalize(request, env) {
       body: JSON.stringify({
         status: _empStatus,
         payment_intent_id: piId,
+        stripe_account: _compteE || null,
         empreinte_status: "held",
         empreinte_held_at: new Date().toISOString(),
         empreinte_amount: (Number(session.amount_total) || 0) / 100 || undefined
@@ -1976,8 +2066,8 @@ async function handleRdvDemandeConnectPay(request, env) {
       "metadata[demande_id]": demande.id,
       "metadata[customer_name]": customerName,
       "payment_intent_data[description]": description,
-      "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id
-    });
+      ...(await lxChargesDirectes(env) ? {} : { "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id })
+    }, "POST", (await lxChargesDirectes(env)) ? salon.stripe_connect_id : null);
 
     if (!session?.url) return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
@@ -1992,8 +2082,14 @@ async function handleRdvDemandeFinalize(request, env) {
     const { token, session_id } = await readJsonBody(request);
     if (!token || !session_id) return jsonResponse({ error: "token et session_id requis" }, 400);
 
-    // 1) Vérifie le paiement Stripe (single source of truth)
-    const session = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    // 1) Vérifie le paiement Stripe (single source of truth) — compte du salon d'abord
+    let _comptesD = [];
+    try {
+      const _q = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_demandes?select=salon_id&proposal_token=eq.${encodeURIComponent(token)}&limit=1`, { headers: _sbHeaders(env) });
+      const _qa = _q.ok ? await _q.json() : [];
+      if (_qa && _qa[0]) { const _sl = await supabaseGet(env, _qa[0].salon_id); if (_sl) _comptesD.push(_sl.stripe_connect_id); }
+    } catch (_) {}
+    const { session, compte: _compteD } = await lxSessionOu(env, session_id, _comptesD);
     if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
     if (session.payment_status !== "paid") return jsonResponse({ error: "Paiement non confirmé: " + session.payment_status }, 402);
     // Anti-tampering : le token doit matcher la metadata Stripe
@@ -2043,7 +2139,8 @@ async function handleRdvDemandeFinalize(request, env) {
       status: "pending_payment",
       message: pd.message_salon || "",
       lieu: "salon",
-      payment_intent_id: session.payment_intent || null
+      payment_intent_id: session.payment_intent || null,
+      stripe_account: _compteD || null
     };
 
     const insertRes = await fetch(`${sbUrl}/rest/v1/rdv_online`, {
@@ -2099,8 +2196,44 @@ async function readJsonBody(request) {
   catch (_e) { return {}; }
 }
 
-async function stripeAPI(env, endpoint, params, method = "POST") {
+// ============================================================
+// CHARGES DIRECTES (2026-10-09, décision Alexandre)
+// Les paiements des clientes sont créés SUR le compte Stripe du salon : frais Stripe, litiges et
+// remboursements chez le salon ; le compte Luxyra ne porte que les abonnements et les packs SMS.
+// Interrupteur app_config.stripe_charges_directes (false tant que le webhook « comptes connectés »
+// n'est pas branché). Les anciens paiements (stripe_account NULL) restent gérés sur la plateforme.
+// ============================================================
+let _lxDirectCache = { v: null, t: 0 };
+async function lxChargesDirectes(env) {
+  if (_lxDirectCache.v !== null && Date.now() - _lxDirectCache.t < 60000) return _lxDirectCache.v;
+  let v = false;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    v = !!(a && a[0] && a[0].config && a[0].config.stripe_charges_directes === true);
+  } catch (_) {}
+  _lxDirectCache = { v, t: Date.now() };
+  return v;
+}
+// Lit une session Checkout où qu'elle soit : compte du salon d'abord, puis plateforme (anciens paiements).
+async function lxSessionOu(env, sessionId, comptes) {
+  const essais = [...new Set((comptes || []).filter(Boolean))].concat([null]);
+  for (const c of essais) {
+    const s = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(sessionId)}`, null, "GET", c);
+    if (s && s.id && !s.error) return { session: s, compte: c };
+  }
+  return { session: null, compte: null };
+}
+// Paramètres Checkout d'un paiement de cliente : direct (sur le compte du salon) ou ancien mode destination.
+function lxParamsPaiementSalon(params, direct, connectId) {
+  if (!direct) params["payment_intent_data[transfer_data][destination]"] = connectId;
+  return params;
+}
+
+async function stripeAPI(env, endpoint, params, method = "POST", compte = null) {
   const options = { method, headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } };
+  // 2026-10-09 : appel « au nom » du compte Stripe d'un salon (charges directes)
+  if (compte) options.headers["Stripe-Account"] = String(compte);
   if (params && method === "POST") {
     options.headers["Content-Type"] = "application/x-www-form-urlencoded";
     options.body = new URLSearchParams(params).toString();
@@ -2709,7 +2842,14 @@ async function handleAcompteFinalize(request, env) {
     const { session_id, rdv_id } = body;
     if (!session_id || !rdv_id) return jsonResponse({ error: "session_id et rdv_id requis" }, 400);
     let wantStatus = (body.status === "pending" || body.status === "confirmed") ? body.status : "confirmed";
-    const session = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(session_id)}`, null, "GET");
+    // 2026-10-09 : la session peut être sur le compte Stripe du salon (charges directes)
+    let _comptesA = [];
+    try {
+      const _q = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=salon_id,stripe_account&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const _qa = _q.ok ? await _q.json() : [];
+      if (_qa && _qa[0]) { _comptesA.push(_qa[0].stripe_account); const _sl = await supabaseGet(env, _qa[0].salon_id); if (_sl) _comptesA.push(_sl.stripe_connect_id); }
+    } catch (_) {}
+    const { session, compte: _compteA } = await lxSessionOu(env, session_id, _comptesA);
     if (!session || session.error) return jsonResponse({ error: "Session Stripe introuvable" }, 404);
     // SECURITE 2026-10-08 : la session doit porter CE rdv (acompte), du meme salon, du bon montant, payee une seule fois.
     if (!session.metadata || String(session.metadata.rdv_id || "") !== String(rdv_id) || session.metadata.subtype === "empreinte" || (session.metadata.type && session.metadata.type !== "acompte")) {
@@ -2739,7 +2879,7 @@ async function handleAcompteFinalize(request, env) {
         if (Array.isArray(_ca) && _ca[0] && typeof _ca[0].confirmation_auto === "boolean") wantStatus = _ca[0].confirmation_auto ? "confirmed" : "pending";
       } catch (_e) {}
     }
-    const patch = { acompte_paye: true, status: wantStatus };
+    const patch = { acompte_paye: true, status: wantStatus, stripe_account: _compteA || null };
     if (piId) { patch.payment_intent_id = piId; patch.stripe_payment_id = piId; }
     const upRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, {
       method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify(patch)
@@ -2800,6 +2940,12 @@ async function attemptAcompteRefund(env, rdv) {
     } catch (_) {}
 
     // 3) Résolution du PaymentIntent
+    // 2026-10-09 : paiement direct sur le compte du salon -> remboursement sur ce compte, sans reverse_transfer
+    if (rdv.stripe_account && rdv.payment_intent_id) {
+      const rfd = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, "metadata[rdv_id]": String(rdv.id || ""), "metadata[salon_id]": String(rdv.salon_id || "") }, "POST", rdv.stripe_account);
+      if (!rfd || rfd.error || !rfd.id) return { refunded: false, error: (rfd && rfd.error && rfd.error.message) || "échec refund Stripe", payment_intent: rdv.payment_intent_id };
+      return { refunded: true, refund_id: rfd.id, payment_intent: rdv.payment_intent_id, status: rfd.status };
+    }
     let piId = rdv.payment_intent_id || null;
     if (!piId && rdv.stripe_payment_id && String(rdv.stripe_payment_id).startsWith("pi_")) piId = rdv.stripe_payment_id;
     if (!piId) piId = await findAcompteChargePI(env, rdv, montant);
@@ -2871,8 +3017,10 @@ async function releaseEmpreinteOnCancel(env, rdv) {
   const rdvStart = new Date(`${rdv.date_rdv}T${rdv.heure_rdv}`);
   const hoursBefore = (rdvStart.getTime() - Date.now()) / 3600000;
   if (isFinite(hoursBefore) && hoursBefore < policyHours) return { skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h) : décision du salon` };
+  const _hE = { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" };
+  if (rdv.stripe_account) _hE["Stripe-Account"] = rdv.stripe_account;  // charge directe sur le compte du salon
   const res = await fetch(`https://api.stripe.com/v1/payment_intents/${encodeURIComponent(rdv.payment_intent_id)}/cancel`, {
-    method: "POST", headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" }, body: "cancellation_reason=requested_by_customer"
+    method: "POST", headers: _hE, body: "cancellation_reason=requested_by_customer"
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok && !/canceled/i.test(String(data?.error?.message || ""))) {
@@ -2916,7 +3064,7 @@ async function refundAndRecord(env, rdv) {
 // sécurité + rattrapage des annulations passées). Idempotent.
 async function runRefundReconcileJob(env) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at,cancelled_at,client_email,refund_error";
+  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,client_email,refund_error";
   const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&status=eq.cancelled&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&cancelled_at=gte.${encodeURIComponent(since)}&limit=50`;
   const res = await fetch(q, { headers: _sbHeaders(env) });
   if (!res.ok) return { ok: false, error: await res.text() };
@@ -2940,7 +3088,7 @@ async function handleClientRdvUpdate(request, env) {
     if (!rdvId) return jsonResponse({ error: "rdv_id requis" }, 400);
     // Vérif ownership : le RDV doit appartenir au client (lx_id ou email)
     const ownRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdvId)}&limit=1`,
+      `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdvId)}&limit=1`,
       { headers: _sbHeaders(env) }
     );
     const own = await ownRes.json();
@@ -3081,7 +3229,7 @@ async function handleRdvCancel(request, env) {
     // SECURITE 2026-10-08 : seule la cliente proprietaire du RDV (session) peut l'annuler ici.
     const session = await verifyClientSession(session_token, env);
     if (!session) return jsonResponse({ error: "Connectez-vous pour annuler ce rendez-vous" }, 401);
-    const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+    const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
     const own = await ownRes.json();
     if (!Array.isArray(own) || !own[0]) return jsonResponse({ error: "RDV introuvable" }, 404);
     const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
