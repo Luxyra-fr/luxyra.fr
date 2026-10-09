@@ -124,6 +124,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
       if (url.pathname === "/api/siret" && request.method === "GET") return await handleSiret(request, env);
+      if (url.pathname.startsWith("/api/e/o/") && request.method === "GET") return await handlePixelOuverture(request, env, url);
       if (url.pathname === "/api/stripe/webhook-connect" && request.method === "POST") return await handleWebhookConnect(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
@@ -244,6 +245,12 @@ export default {
   // Pour l'instant 1×/jour à 3h UTC : job de rétention (préavis + purge 6 ans).
   async scheduled(event, env, ctx) {
     console.log(`[cron] scheduled event triggered: ${event.cron} at ${new Date(event.scheduledTime).toISOString()}`);
+    // 2026-10-09 : cron de 08:00 UTC = relances d'essai uniquement
+    if (event.cron === "0 8 * * *") {
+      try { console.log("[cron] relances essai:", await runRelancesEssaiJob(env)); }
+      catch (err) { await reportWorkerError(env, "cron:relances-essai", err, null, "error"); }
+      return;
+    }
     try {
       const result = await runRetentionPurgeJob(env);
       console.log(`[cron] retention-purge done:`, result);
@@ -1921,6 +1928,106 @@ async function handleSiret(request, env) {
   } catch (e) {
     return jsonResponse({ ok: false, error: "Vérification impossible pour le moment" }, 500);
   }
+}
+
+// ============================================================
+// RELANCES D'ESSAI AUTOMATIQUES (2026-10-09) — cron 08:00 UTC
+// J+3 « besoin d'aide ? », J+7 « ce qu'il vous reste à configurer » (personnalisé), J-2 « fin d'essai ».
+// Interrupteur : app_config.relances_essai_actives (false par défaut). Une seule fois par type et par salon
+// (table salon_emails_auto) ; ouverture suivie par un pixel /api/e/o/<id>.gif.
+// ============================================================
+const ETAPES_LIB = {
+  prestations: ["Créer vos prestations", "Paramètres → Services et forfaits"],
+  horaires: ["Renseigner vos horaires", "Paramètres → Horaires"],
+  equipe: ["Ajouter votre équipe", "Paramètres → Équipe"],
+  clients: ["Importer ou créer vos clientes", "tuile Clients (ou Paramètres → Migration depuis votre ancien logiciel)"],
+  rdv: ["Placer un premier rendez-vous", "tuile Planning"],
+  tickets: ["Faire un premier encaissement", "tuile Encaissement"],
+  site: ["Mettre votre site en ligne (réservation 24/7)", "Paramètres → Site en ligne"],
+};
+function relMail(prenom, corpsHtml, idSuivi) {
+  return `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;font-size:15px;line-height:1.6">
+    <div style="background:#0a0a0a;padding:20px;text-align:center"><span style="color:#d4a843;font-size:20px;letter-spacing:2px;font-weight:700">LUXYRA</span></div>
+    <div style="padding:24px">${corpsHtml}<p style="margin-top:24px">Alexandre<br><span style="color:#888;font-size:13px">Fondateur de Luxyra — répondez simplement à cet email</span></p></div>
+    <img src="https://luxyra.fr/api/e/o/${idSuivi}.gif" width="1" height="1" alt="" style="display:block;border:0"></div>`;
+}
+async function runRelancesEssaiJob(env) {
+  const stats = { candidats: 0, envoyes: 0, ignores: 0, erreurs: 0, actif: false };
+  try {
+    const c = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, { headers: _sbHeaders(env) });
+    const cfg = c.ok ? ((await c.json())[0] || {}).config || {} : {};
+    if (cfg.relances_essai_actives !== true) return stats;
+    stats.actif = true;
+  } catch (_) { return stats; }
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,gerant_prenom,created_at,trial_end,is_free&status=eq.trial&is_free=eq.false`, { headers: _sbHeaders(env) });
+  const salons = r.ok ? await r.json() : [];
+  const suivi = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_suivi_salons?select=salon_id,etape`, { headers: _sbHeaders(env) })).json().catch(() => []);
+  const etapeDe = {}; (Array.isArray(suivi) ? suivi : []).forEach((x) => { etapeDe[x.salon_id] = x.etape; });
+  const now = Date.now();
+  for (const s of salons) {
+    if (!s.email) continue;
+    if (["perdu", "client"].includes(etapeDe[s.id])) { stats.ignores++; continue; }
+    const age = (now - new Date(s.created_at).getTime()) / 86400000;
+    const reste = s.trial_end ? (new Date(s.trial_end).getTime() - now) / 86400000 : null;
+    let type = null;
+    if (reste !== null && reste > 0 && reste <= 2.5) type = "essai_fin";
+    else if (age >= 7 && age < 12) type = "essai_j7";
+    else if (age >= 3 && age < 6) type = "essai_j3";
+    if (!type) continue;
+    stats.candidats++;
+    // Réservation (dédoublonnage) AVANT envoi : unique (salon_id, type)
+    const ins = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?on_conflict=salon_id,type`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation,resolution=ignore-duplicates" }), body: JSON.stringify({ salon_id: s.id, type }) });
+    const rowA = ins.ok ? await ins.json() : [];
+    const row = Array.isArray(rowA) ? rowA[0] : null;
+    if (!row) { stats.ignores++; continue; } // déjà envoyé
+    const prenom = s.gerant_prenom ? String(s.gerant_prenom).trim() : "";
+    const bonjour = `<p>Bonjour${prenom ? " " + ccEsc(prenom) : ""},</p>`;
+    let sujet, corps;
+    if (type === "essai_j3") {
+      sujet = `${s.nom} : comment se passent vos débuts sur Luxyra ?`;
+      corps = bonjour + `<p>Cela fait quelques jours que vous testez Luxyra pour <b>${ccEsc(s.nom)}</b>. Je voulais simplement savoir si tout se passe bien.</p>
+        <p>Si quelque chose vous bloque (prestations, planning, caisse, site), répondez à cet email ou écrivez-moi dans le chat de l'application (bouton support) : je vous aide personnellement, et rapidement.</p>
+        <p>Astuce : vous pouvez importer vos clientes et vos prestations depuis votre ancien logiciel (Paramètres → Migration).</p>`;
+    } else if (type === "essai_j7") {
+      let manque = [];
+      try {
+        const e = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/salon_demarrage_etapes`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: s.id }) });
+        const et = e.ok ? await e.json() : {};
+        Object.keys(ETAPES_LIB).forEach((k) => { const v = et[k]; if (v === false || v === 0) manque.push(ETAPES_LIB[k]); });
+      } catch (_) {}
+      sujet = manque.length ? `${s.nom} : ${manque.length} étape${manque.length > 1 ? "s" : ""} pour profiter pleinement de Luxyra` : `${s.nom} : une semaine sur Luxyra`;
+      corps = bonjour + (manque.length
+        ? `<p>Vous êtes à mi-parcours de votre essai. Voici ce qu'il vous reste pour que Luxyra travaille vraiment pour vous :</p><ul>${manque.map((m) => `<li><b>${m[0]}</b> — ${m[1]}</li>`).join("")}</ul><p>Pendant l'essai, toutes les fonctions Pro sont ouvertes (site, réservation en ligne, paiements en ligne) : c'est le moment de tout essayer.</p>`
+        : `<p>Bravo, votre salon est déjà bien configuré sur Luxyra ! Pendant l'essai, toutes les fonctions Pro sont ouvertes : réservation en ligne 24/7, site vitrine, paiements en ligne. N'hésitez pas à les tester.</p>`)
+        + `<p>Une question ? Répondez simplement à cet email.</p>`;
+    } else {
+      const fin = new Date(s.trial_end).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+      sujet = `${s.nom} : votre essai Luxyra se termine ${fin}`;
+      corps = bonjour + `<p>Votre essai gratuit de Luxyra se termine <b>${fin}</b>. Pour continuer sans interruption et garder toutes vos données (clientes, rendez-vous, caisse), choisissez votre forfait dans <b>Paramètres → S'abonner</b>.</p>
+        <p>Les 100 premiers salons au forfait Pro bénéficient du tarif Fondateur (14,99 €/mois au lieu de 24,99 €), garanti tant que l'abonnement reste actif.</p>
+        <p>Un doute, une question sur le choix du forfait ? Répondez à cet email, je vous conseille volontiers.</p>`;
+    }
+    try {
+      const res = await brevoSendEmail(env, { to: s.email, toName: s.nom, senderName: "Alexandre de Luxyra", senderEmail: "contact@luxyra.fr", replyTo: "support@luxyra.fr", subject: sujet, htmlContent: relMail(prenom, corps, row.id) });
+      if (res && (res.messageId || res.messageIds)) {
+        stats.envoyes++;
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ sujet }) });
+      } else {
+        stats.erreurs++;
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "DELETE", headers: _sbHeaders(env) }); // réessai demain
+      }
+    } catch (e) { stats.erreurs++; await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "DELETE", headers: _sbHeaders(env) }).catch(() => {}); }
+  }
+  return stats;
+}
+// GET /api/e/o/<uuid>.gif — ouverture d'un email automatique
+const PIXEL_GIF = Uint8Array.from(atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), (c) => c.charCodeAt(0));
+async function handlePixelOuverture(request, env, url) {
+  const m = url.pathname.match(/^\/api\/e\/o\/([0-9a-f-]{36})\.gif$/i);
+  if (m) {
+    try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${m[1]}&ouvert_le=is.null`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ ouvert_le: new Date().toISOString() }) }); } catch (_) {}
+  }
+  return new Response(PIXEL_GIF, { status: 200, headers: { "Content-Type": "image/gif", "Cache-Control": "no-store, max-age=0" } });
 }
 
 // ============================================================
