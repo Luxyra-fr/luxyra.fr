@@ -1567,7 +1567,8 @@ async function handleWebhookConnect(request, env) {
         await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/gc-stripe-webhook`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "x-lx-internal": env.SUPABASE_SERVICE_KEY },
-          body: JSON.stringify(event)
+          // account inclus : si la clé interne n'est pas reconnue, la fonction relit elle-même l'évènement chez Stripe
+          body: JSON.stringify(Object.assign({}, event, { account: compte }))
         });
       }
     } else if (event.type === "charge.dispute.created") {
