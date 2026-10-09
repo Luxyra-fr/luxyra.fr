@@ -1902,7 +1902,7 @@ async function handleSiret(request, env) {
       raison_sociale: nd(e.nom_raison_sociale) || nd(e.nom_complet),
       enseigne,
       adresse: nd([etab.numero_voie, etab.indice_repetition, etab.type_voie, etab.libelle_voie].filter(Boolean).join(" "))
-        || nd(String(etab.adresse || "").replace(new RegExp("\\s*" + String(etab.code_postal || "") + "\\s+.*$"), "").trim()) || "",
+        || (/^\d{5}$/.test(String(etab.code_postal || "")) ? nd(String(etab.adresse || "").replace(new RegExp("\\s*" + etab.code_postal + "\\s+.*$"), "").trim()) : "") || "",
       complement: nd(etab.complement_adresse),
       cp: nd(etab.code_postal), ville: nd(etab.libelle_commune),
       latitude: nd(etab.latitude) ? Number(etab.latitude) : null, longitude: nd(etab.longitude) ? Number(etab.longitude) : null,

@@ -74,6 +74,13 @@ tr:hover{background:rgba(255,255,255,.02)}
 .dp-panel{position:absolute;right:0;top:0;bottom:0;width:480px;max-width:100%;background:var(--bg2);border-left:1px solid var(--border);padding:24px;overflow-y:auto;transform:translateX(100%);transition:transform .28s cubic-bezier(.2,.8,.2,1),width .28s cubic-bezier(.2,.8,.2,1)}
 .dp-overlay.open .dp-panel{transform:translateX(0)}
 .dp-overlay.fullscreen .dp-panel{width:100%;max-width:100%}
+/* 2026-10-09 : fiche salon pleine page (2 colonnes sur grand écran), adaptée mobile */
+.dp-overlay.fullscreen .dp-panel{padding:24px 32px}
+.dp-overlay.fullscreen .dpTab{column-count:2;column-gap:28px}
+.dp-overlay.fullscreen .dpTab .dp-section{break-inside:avoid;display:inline-block;width:100%}
+@media (max-width:1100px){.dp-overlay.fullscreen .dpTab{column-count:1}}
+@media (max-width:700px){.dp-panel{padding:14px!important}.dp-field{flex-wrap:wrap;gap:4px}.dp-field .v{text-align:left!important;max-width:100%;word-break:break-word}.dp-stats{flex-wrap:wrap}.dpTabBtn{font-size:11px!important;padding:6px 8px!important}}
+.dp-actions-select{padding:8px 12px;border-radius:10px;border:1px solid var(--gold);background:var(--bg3);color:var(--text);font-size:13px;font-weight:600;cursor:pointer}
 .dp-expand{background:none;border:1px solid var(--border);color:var(--text2);font-size:14px;cursor:pointer;padding:6px 10px;border-radius:8px;margin-right:6px;transition:all .15s}
 .dp-expand:hover{border-color:var(--gold);color:var(--gold)}
 .dp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
@@ -2196,7 +2203,7 @@ function asLignes(L){
     h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
     h+='<td>'+statusB(s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
-    h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+s.clients+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
+    h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
     h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=new Date().toISOString().slice(0,10)?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(\''+s.id+'\')" title="Fiche">👁</button><button class="td-btn" onclick="window.open(\'mailto:'+saEsc(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" onclick="window.open(\'tel:'+saEsc(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
   });
@@ -2295,9 +2302,10 @@ async function asRetirerEtiquette(id,e){ var arr=(asSuivi(id).etiquettes||[]).fi
 
 // --- Fiche : onglet Activité & journal ---
 function asOngletActivite(s){
-  var hh=_salonHealthOf(s.id)||{};
+  var hh=_salonHealthOf(s.id);
   var h='<div class="dp-section"><div class="dp-label">📈 Activité</div>';
-  [["Dernier ticket",hh.last_ticket?fmtD(hh.last_ticket):"jamais"],["Tickets 30 j",hh.tickets_30d||0],["CA 30 j",fmtM(hh.ca_30d||0)],["Dernière connexion",s.lastLogin?fmtD(s.lastLogin):"—"],["Clients",s.clients],["Collaborateurs",s.collabs],["Crédits SMS",s.smsCredits]].forEach(function(f){ h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+f[1]+'</span></div>'; });
+  if(!hh){ setTimeout(function(){ lxLoadSalonHealth().then(function(){ if(_salonHealthOf(s.id) && window._curSalonId===s.id && window._asOngletCourant==="activite") openD(s.id); }); },10); h+='<div style="font-size:12px;color:var(--text2)">Chargement…</div>'; hh={}; }
+  [["Dernier ticket",hh.last_ticket?fmtD(hh.last_ticket):"jamais"],["Dernière clôture Z",hh.last_cloture?fmtD(hh.last_cloture):"—"],["CA ce mois",fmtM(hh.ca_mois||0)],["CA 30 jours",fmtM(hh.ca_30d||0)+" ("+(hh.tickets_30d||0)+" tickets)"],["CA total depuis l'inscription",fmtM(hh.ca_total||0)+" ("+(hh.tickets_total||0)+" tickets)"],["Clients",hh.clients!=null?hh.clients:s.clients],["Collaborateurs actifs",hh.collaborateurs!=null?hh.collaborateurs:s.collabs],["RDV à venir",hh.rdv_a_venir||0],["Réservations en ligne (30 j)",hh.rdv_en_ligne_30d||0],["Crédits SMS",s.smsCredits]].forEach(function(f){ h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+f[1]+'</span></div>'; });
   h+='</div><div class="dp-section"><div class="dp-label">📜 Journal admin (actions sur ce salon)</div><div id="asJournal-'+s.id+'" style="font-size:12px;color:var(--text2)">Chargement…</div></div>';
   setTimeout(async function(){ var el=document.getElementById("asJournal-"+s.id); if(!el) return; var r=await _sb.from("admin_log").select("*").eq("salon_id",s.id).order("timestamp_action",{ascending:false}).limit(60);
     el.innerHTML=(r.data||[]).length?(r.data||[]).map(function(x){return '<div style="padding:5px 0;border-top:1px solid var(--border)"><span style="color:var(--text3)">'+new Date(x.timestamp_action).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+'</span> <b>'+saEsc(x.action)+'</b> '+saEsc(x.details||"")+'</div>';}).join(""):'<i>Aucune action enregistrée</i>'; },20);
@@ -2359,8 +2367,8 @@ function filterS(){
 function openD(id){
   var s=gSalon(id);if(!s)return;
   window._curSalonId=id;
-  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+s.nom+'</div><div style="font-size:11px;color:var(--text3)">'+(s.ville||"")+'</div></div></div><div style="display:flex;align-items:center"><button class="dp-expand" onclick="toggleDrawerFull()" title="Plein écran" id="dpExpandBtn">⛶</button><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div></div>';
-  h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+s.clients+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+s.collabs+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
+  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+s.nom+'</div><div style="font-size:11px;color:var(--text3)">'+(s.ville||"")+'</div></div></div><div style="display:flex;align-items:center"><span style="margin-right:8px">'+asMenuActions(s)+'</span><button class="dp-expand" onclick="toggleDrawerFull()" title="Plein écran" id="dpExpandBtn">⛶</button><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div></div>';
+  h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+((_salonHealthOf(s.id)||{}).collaborateurs!=null?_salonHealthOf(s.id).collaborateurs:s.collabs)+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
   // 2026-10-09 : fiche à onglets
   var _ot=window._asOngletCourant||"identite";
   h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 12px">'+[["identite","🏢 Identité"],["abonnement","💳 Abonnement"],["suivi","🧭 Suivi"],["activite","📈 Activité"],["technique","⚙️ Technique & SMS"]].map(function(t){return '<button class="tf-btn dpTabBtn'+(_ot===t[0]?' active':'')+'" data-t="'+t[0]+'" onclick="asOnglet(\''+t[0]+'\')">'+t[1]+'</button>';}).join("")+'</div>';
@@ -2506,17 +2514,12 @@ function openD(id){
   h+='<textarea id="dpNotes" style="width:100%;height:60px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px;font-size:12px;font-family:var(--f1);resize:vertical">'+(s.notesAdmin||"")+'</textarea>';
   h+='<button class="dp-btn" style="margin-top:6px" onclick="saveNotes(&#39;'+s.id+'&#39;)">💾 Enregistrer</button></div>';
 
-  // ACTIONS
-  h+='<div class="dp-section"><div class="dp-label">Actions</div><div class="dp-actions">';
-  if(s.status==="trial")h+='<button class="dp-btn success" onclick="actS(&#39;'+s.id+'&#39;,&#39;extend&#39;)">⏰ +7j essai</button>';
-  if(s.status==="active"||s.status==="trial")h+='<button class="dp-btn" onclick="actS(&#39;'+s.id+'&#39;,&#39;plan&#39;)">📦 Changer plan</button>';
-  if(s.status!=="suspended")h+='<button class="dp-btn danger" onclick="actS(&#39;'+s.id+'&#39;,&#39;suspend&#39;)">⛔ Suspendre</button>';
-  if(s.status==="suspended")h+='<button class="dp-btn success" onclick="actS(&#39;'+s.id+'&#39;,&#39;reactivate&#39;)">✅ Réactiver</button>';
-  h+='<button class="dp-btn" onclick="actS(&#39;'+s.id+'&#39;,&#39;reset&#39;)">🔑 Reset mdp</button>';
-  h+='<button class="dp-btn danger" onclick="actS(&#39;'+s.id+'&#39;,&#39;delete&#39;)">🗑️ Supprimer</button>';
-  h+='</div></div>';
+  // ACTIONS (menu déroulant, 2026-10-09)
+  h+='<div class="dp-section"><div class="dp-label">Actions</div>'+asMenuActions(s)+'</div>';
   document.getElementById("detailPanel").innerHTML=h;
-  document.getElementById("detailOverlay").classList.add("open");
+  var _ov=document.getElementById("detailOverlay");
+  if(window.innerWidth>=900 && window._dpReduit!==true) _ov.classList.add("fullscreen");
+  _ov.classList.add("open");
 }
 function closeDetail(){
   var ov=document.getElementById("detailOverlay");
@@ -2529,6 +2532,7 @@ function toggleDrawerFull(){
   var ov=document.getElementById("detailOverlay");
   if(!ov)return;
   ov.classList.toggle("fullscreen");
+  window._dpReduit=!ov.classList.contains("fullscreen");
   var btn=document.getElementById("dpExpandBtn");
   if(btn)btn.textContent=ov.classList.contains("fullscreen")?"⛶":"⛶";
   if(btn)btn.title=ov.classList.contains("fullscreen")?"Réduire":"Plein écran";
@@ -3964,6 +3968,45 @@ async function saveNotes(id){
 // Lecture + actions via /api/admin/stripe (réservé admin, chaque action journalisée).
 // ============================================================
 
+
+// === Fiche salon : menu d'actions déroulant (2026-10-09) ===
+function asMenuActions(s){
+  var o=[["","⚙️ Actions…"]];
+  if(s.status==="trial"){ o.push(["essai7","⏰ Prolonger l'essai de 7 jours"],["essai14","⏰ Prolonger l'essai de 14 jours"],["essai30","⏰ Prolonger l'essai de 30 jours"]); }
+  if(s.status==="active"||s.status==="trial") o.push(["plan","📦 Changer de forfait ("+(s.plan==="pro"?"→ Essentiel":"→ Pro")+")"]);
+  if(s.stripeSub) o.push(["mois","🎁 Offrir des mois d'abonnement"]);
+  o.push(["sms","📱 Ajouter des SMS"],["email","✉️ Envoyer un email"],["note","📝 Noter un échange"],["rappel","📞 Programmer un rappel"]);
+  if(s.subdomain) o.push(["site","🌐 Ouvrir son site"]);
+  if(s.status!=="suspended") o.push(["suspend","⛔ Suspendre le compte"]); else o.push(["reactivate","✅ Réactiver le compte"]);
+  o.push(["reset","🔑 Envoyer un lien de nouveau mot de passe"],["delete","🗑️ Supprimer le salon"]);
+  return '<select class="dp-actions-select" onchange="asAction(\''+s.id+'\',this.value);this.selectedIndex=0">'+o.map(function(x){return '<option value="'+x[0]+'">'+x[1]+'</option>';}).join("")+'</select>';
+}
+async function asAction(id,v){
+  if(!v) return; var s=gSalon(id); if(!s) return;
+  if(/^essai\d+$/.test(v)){ var j=parseInt(v.slice(5),10); if(!confirm("Prolonger l'essai de "+s.nom+" de "+j+" jours ?")) return; var d=new Date(Math.max(Date.now(), new Date(s.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+j);
+    await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id); s.trialEnd=d.toISOString(); try{ await _sb.from("admin_notes_salons").insert({salon_id:id,type:"autre",note:"Essai prolongé de "+j+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} alert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR")); openD(id); return; }
+  if(v==="plan"||v==="suspend"||v==="reactivate"||v==="reset"||v==="delete"){ return actS(id,v); }
+  if(v==="mois") return lxOfferMonths(id);
+  if(v==="sms") return addSmsCreditsCustom(id);
+  if(v==="email"){ window._ASEL={}; window._ASEL[id]=1; return asGroupe("email"); }
+  if(v==="note"||v==="rappel"){ window._asOngletCourant="suivi"; openD(id); setTimeout(function(){ var el=document.getElementById(v==="note"?"asNote-"+id:"asRappel-"+id); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } },150); return; }
+  if(v==="site") return window.open("https://"+s.subdomain+".luxyra.fr","_blank");
+}
+
+// === SIRET : appliquer les informations officielles à la fiche (2026-10-09) ===
+async function lxAppliquerSiret(id,mode){
+  var s=gSalon(id), d=window._siretData&&window._siretData[id]; if(!s||!d) return;
+  var map=[["siren","siren",d.siren],["tva_intra","tva",d.tva_intra],["forme_juridique","formeJur",d.forme_libelle],["adresse","adresse",d.adresse],["cp","cp",d.cp],["ville","ville",d.ville],["gerant_nom","gerantNom",d.dirigeant_nom],["gerant_prenom","gerantPrenom",d.dirigeant_prenom]];
+  var patch={}, champs=[];
+  map.forEach(function(m){ var val=m[2]; if(!val) return; var cur=String(s[m[1]]||"").trim(); if(mode==="vides" && cur) return; if(cur===String(val)) return; patch[m[0]]=val; champs.push(m[0]); });
+  if(!champs.length){ alert("Rien à compléter : la fiche est déjà à jour."); return; }
+  if(!confirm((mode==="vides"?"Compléter les champs vides :\n":"Remplacer par les données officielles :\n")+champs.join(", ")+" ?")) return;
+  var r=await _sb.from("salons").update(patch).eq("id",id); if(r.error){ alert("❌ "+r.error.message); return; }
+  try{ await _sb.from("admin_log").insert({salon_id:id,action:"SIRET_APPLIQUE",details:"Champs mis à jour depuis le répertoire officiel : "+champs.join(", ")}); }catch(e){}
+  map.forEach(function(m){ if(patch[m[0]]!=null) s[m[1]]=patch[m[0]]; });
+  alert("✅ Fiche mise à jour ("+champs.length+" champ(s))"); openD(id);
+}
+
 // 2026-10-09 : vérification du SIRET d'un salon dans le répertoire officiel des entreprises
 async function lxVerifierSiret(id){
   var s=gSalon(id); var el=document.getElementById("siretCheck-"+id); if(!s||!el) return;
@@ -3971,6 +4014,7 @@ async function lxVerifierSiret(id){
   try{
     var r=await fetch("/api/siret?siret="+encodeURIComponent(String(s.siret||"").replace(/\s+/g,""))); var d=await r.json();
     if(!d.ok){ el.innerHTML='<div style="font-size:12px;color:var(--red);margin-top:6px">⚠️ '+saEsc(d.error||"SIRET introuvable")+'</div>'; return; }
+    window._siretData=window._siretData||{}; window._siretData[id]=d;
     var lignes=[["État",d.actif?'<b style="color:var(--green)">Active</b>':'<b style="color:var(--red)">FERMÉE'+(d.date_fermeture?' le '+saD(d.date_fermeture):'')+'</b>'],["Raison sociale",d.raison_sociale],["Enseigne",d.enseigne],["Forme",d.forme_libelle],["Adresse officielle",[d.adresse,d.cp,d.ville].filter(Boolean).join(" ")],["Code NAF",d.naf],["Dirigeant",[d.dirigeant_prenom,d.dirigeant_nom].filter(Boolean).join(" ")],["TVA intracom.",d.tva_intra],["Créée le",d.date_creation?saD(d.date_creation):""]];
     var ecarts=[];
     if(d.cp&&s.cp&&String(d.cp)!==String(s.cp)) ecarts.push("code postal différent ("+saEsc(s.cp)+" dans Luxyra)");
@@ -3979,6 +4023,8 @@ async function lxVerifierSiret(id){
     lignes.forEach(function(l){ if(l[1]) h+='<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0"><span style="color:var(--text2)">'+l[0]+'</span><span style="text-align:right">'+(l[0]==="État"?l[1]:saEsc(l[1]))+'</span></div>'; });
     if(d.non_diffusible) h+='<div style="color:var(--text2);margin-top:4px">Fiche partiellement privée au répertoire (choix de l\'entrepreneur).</div>';
     if(ecarts.length) h+='<div style="color:var(--orange);margin-top:4px">⚠️ '+ecarts.join(" · ")+'</div>';
+    if(!d.actif) h+='<div style="color:var(--red);margin-top:6px;font-weight:700">⛔ Ce SIRET correspond à un établissement FERMÉ : les tickets de ce salon portent un SIRET qui n\'est plus valable. Demande-lui son SIRET actuel.</div>';
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button class="dp-btn" onclick="lxAppliquerSiret(&#39;'+id+'&#39;,&#39;vides&#39;)">✍️ Compléter les champs vides</button><button class="dp-btn" onclick="lxAppliquerSiret(&#39;'+id+'&#39;,&#39;tout&#39;)">🔄 Remplacer par les données officielles</button></div>';
     h+='</div>'; el.innerHTML=h;
   }catch(e){ el.innerHTML='<div style="font-size:12px;color:var(--red)">Vérification impossible</div>'; }
 }
