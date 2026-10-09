@@ -1819,8 +1819,6 @@ async function runStripeSurveillanceJob(env) {
       const ss = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(bc.stripe_session_id)}`, null, "GET", bc.stripe_account);
       if (ss && ss.payment_status === "paid") alertes.push({ titre: "🎁 Bon cadeau payé mais non validé", corps: `Bon ${bc.code} (${bc.valeur} €) payé chez Stripe mais resté « en attente » : webhook comptes connectés à vérifier.` });
     }
-    const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?select=id,numero,salon_id,stripe_account,stripe_payment_id&status=eq.pending_payment&stripe_account=not.is.null&created_at=lt.${encodeURIComponent(avant)}&created_at=gt.${encodeURIComponent(depuis)}&limit=30`, { headers: _sbHeaders(env) });
-    for (const c of (rc.ok ? await rc.json() : [])) alertes.push({ titre: "🛍 Commande en attente de paiement depuis > 2 h", corps: `Commande n°${c.numero} : vérifier dans le Stripe du salon si elle a été payée.` });
   } catch (_) {}
   for (const al of alertes) {
     try {
