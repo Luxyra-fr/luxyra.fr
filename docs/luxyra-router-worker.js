@@ -1810,6 +1810,18 @@ async function runStripeSurveillanceJob(env) {
       alertes.push({ titre: "🏦 Compte Stripe d'un salon à régulariser", corps: `${s.nom} : ${a.requirements?.disabled_reason || "pièces en retard"} (${(a.requirements?.past_due || []).length} élément(s))` });
     }
   }
+  // 3) Filet charges directes : paiement réussi chez Stripe mais jamais validé chez nous (webhook perdu)
+  try {
+    const avant = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+    const depuis = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,code,valeur,salon_id,stripe_account,stripe_session_id&payment_status=eq.pending&stripe_account=not.is.null&stripe_session_id=not.is.null&created_at=lt.${encodeURIComponent(avant)}&created_at=gt.${encodeURIComponent(depuis)}&limit=30`, { headers: _sbHeaders(env) });
+    for (const bc of (rq.ok ? await rq.json() : [])) {
+      const ss = await stripeAPI(env, `checkout/sessions/${encodeURIComponent(bc.stripe_session_id)}`, null, "GET", bc.stripe_account);
+      if (ss && ss.payment_status === "paid") alertes.push({ titre: "🎁 Bon cadeau payé mais non validé", corps: `Bon ${bc.code} (${bc.valeur} €) payé chez Stripe mais resté « en attente » : webhook comptes connectés à vérifier.` });
+    }
+    const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?select=id,numero,salon_id,stripe_account,stripe_payment_id&status=eq.pending_payment&stripe_account=not.is.null&created_at=lt.${encodeURIComponent(avant)}&created_at=gt.${encodeURIComponent(depuis)}&limit=30`, { headers: _sbHeaders(env) });
+    for (const c of (rc.ok ? await rc.json() : [])) alertes.push({ titre: "🛍 Commande en attente de paiement depuis > 2 h", corps: `Commande n°${c.numero} : vérifier dans le Stripe du salon si elle a été payée.` });
+  } catch (_) {}
   for (const al of alertes) {
     try {
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: al.titre, p_body: al.corps, p_url: "/admin.html#stripe", p_payload: {} }) });
