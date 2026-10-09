@@ -3453,15 +3453,21 @@ function smsCfg(){ var c=window._appConfig||{}; return {cout:c.sms_cost_brevo_eu
 function smsVueDash(d){
   var C=smsCfg(), mois=(d.par_mois||[]), ceMois=mois.length?mois[mois.length-1]:{brevo:0,natif:0};
   var moisCour=new Date().toISOString().slice(0,7); if(ceMois.mois!==moisCour) ceMois={brevo:0,natif:0};
-  var cout=C.cout!=null?ceMois.brevo*C.cout:null, packs=d.packs_mois||{};
+  // 2026-10-09 : nombre RÉEL de SMS facturés par Brevo (un message long compte 2 ou 3) quand il est connu
+  var cm=d.conso_mois||{}, depuisM=d.conso_depuis?String(d.conso_depuis).slice(0,7):null;
+  var smsFactures=(depuisM && depuisM<moisCour) ? (Number(cm.sms)||0) : Math.max(Number(cm.sms)||0, ceMois.brevo); // mois du démarrage du comptage exact : estimation prudente
+  var cout=C.cout!=null?smsFactures*C.cout:null, packs=d.packs_mois||{};
   var bas=(d.salons||[]).filter(function(s){return (s.plan==="pro") && s.credits<C.seuil;});
   var h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">';
-  h+=saCarte("SMS envoyés ce mois",ceMois.brevo,"+ "+ceMois.natif+" via téléphone (gratuits)");
+  h+=saCarte("SMS facturés ce mois",smsFactures,ceMois.brevo+" message(s) · + "+ceMois.natif+" via téléphone (gratuits)"+(Number(cm.rembourses)?" · "+cm.rembourses+" rendu(s) après échec":""));
   h+=saCarte("Coût Brevo du mois",cout!=null?saE(cout):"?",C.cout!=null?"à "+C.cout.toLocaleString("fr-FR")+" € / SMS":"coût unitaire à renseigner (Réglages)");
   h+=saCarte("Packs vendus ce mois",saE(packs.eur||0),(packs.nb||0)+" pack(s) · "+(packs.sms||0)+" SMS","var(--gold)");
   h+=saCarte("Marge brute du mois",cout!=null?saE((packs.eur||0)-cout):"?","packs vendus − coût Brevo",cout!=null&&((packs.eur||0)-cout)<0?"var(--red)":"var(--green)");
   h+=saCarte("Salons Pro sous "+C.seuil+" SMS",bas.length,bas.map(function(s){return s.nom+" ("+s.credits+")";}).join(", ")||"aucun",bas.length?"var(--orange)":null);
   h+='</div>';
+  // Revenus SMS sur 12 mois : ventes de packs (Stripe) face au coût Brevo
+  h+='<div class="card" style="margin-bottom:14px"><h3>💶 Revenus SMS (12 mois)</h3><div id="smsRevenus" style="font-size:13px;color:var(--text2)">Chargement des ventes Stripe…</div></div>';
+  setTimeout(function(){ smsChargerRevenus(d); },20);
   // 30 derniers jours (barres)
   var jours={}; (d.par_jour||[]).forEach(function(x){jours[x.jour]=x;});
   var max=1, L=[]; for(var i=29;i>=0;i--){ var dt=new Date(Date.now()-i*86400000).toISOString().slice(0,10); var v=jours[dt]||{brevo:0,natif:0}; L.push([dt,v]); max=Math.max(max,v.brevo+v.natif); }
@@ -3474,6 +3480,28 @@ function smsVueDash(d){
   // 12 mois
   h+='<div class="card"><h3>📅 12 derniers mois</h3>'+(mois.length?mois.slice().reverse().map(function(m){return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:13px"><span>'+m.mois+'</span><span>'+m.brevo+' Brevo'+(m.natif?' · '+m.natif+' téléphone':'')+(C.cout!=null?' · coût '+saE(m.brevo*C.cout):'')+'</span></div>';}).join(""):'<div style="font-size:12px;color:var(--text3)">—</div>')+'</div>';
   return h;
+}
+async function smsChargerRevenus(d){
+  var el=document.getElementById("smsRevenus"); if(!el) return;
+  var C=smsCfg(), r=await saApi({op:"sms_revenus"});
+  if(r.error){ el.innerHTML='<span style="color:var(--red)">'+saEsc(r.error)+'</span>'; return; }
+  var pm=r.par_mois||{}, cpm=d.conso_par_mois||{}, envois={}; (d.par_mois||[]).forEach(function(m){ envois[m.mois]=m.brevo; });
+  var depuis=d.conso_depuis?String(d.conso_depuis).slice(0,7):null;
+  var mois=[]; for(var i=11;i>=0;i--){ var dt=new Date(); dt.setDate(1); dt.setMonth(dt.getMonth()-i); mois.push(dt.toISOString().slice(0,7)); }
+  var T={eur:0,sms:0,cout:0,nb:0};
+  var h='<div style="overflow-x:auto"><table><tr><th>Mois</th><th>Packs vendus</th><th>Encaissé</th><th>SMS facturés Brevo</th><th>Coût Brevo</th><th>Marge</th></tr>';
+  mois.slice().reverse().forEach(function(m){
+    var p=pm[m]||{nb:0,eur:0,sms:0};
+    var reel=(depuis && m>=depuis && cpm[m]!=null), nbs=reel?Number(cpm[m]):(Number(envois[m])||0);
+    if(reel && m===depuis) nbs=Math.max(nbs, Number(envois[m])||0);
+    var cout=C.cout!=null?nbs*C.cout:null, marge=cout!=null?p.eur-cout:null;
+    T.eur+=p.eur; T.nb+=p.nb; T.sms+=nbs; if(cout!=null) T.cout+=cout;
+    h+='<tr><td>'+m+'</td><td>'+(p.nb?p.nb+' ('+p.sms+' SMS)':'—')+'</td><td>'+saE(p.eur)+'</td><td>'+nbs+(reel?'':' <span title="avant le 09/10/2026 : nombre de messages, un message long a pu compter double" style="color:var(--text3)">≈</span>')+'</td><td>'+(cout!=null?saE(cout):'?')+'</td><td style="font-weight:800;color:'+(marge==null?'inherit':marge<0?'var(--red)':'var(--green)')+'">'+(marge!=null?saE(marge):'?')+'</td></tr>';
+  });
+  var mT=C.cout!=null?T.eur-T.cout:null;
+  h+='<tr style="font-weight:900"><td>Total</td><td>'+T.nb+'</td><td>'+saE(T.eur)+'</td><td>'+T.sms+'</td><td>'+(C.cout!=null?saE(T.cout):'?')+'</td><td style="color:'+(mT==null?'inherit':mT<0?'var(--red)':'var(--green)')+'">'+(mT!=null?saE(mT):'?')+'</td></tr></table></div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">Encaissé = montant payé par les salons pour les packs (Stripe). Coût = SMS facturés × '+(C.cout!=null?C.cout.toLocaleString("fr-FR")+' €':'coût unitaire à renseigner dans Réglages')+'. Les 30 SMS inclus chaque mois dans le forfait Pro sont comptés dans le coût mais payés par l\'abonnement, d\'où une marge des packs parfois négative. ≈ : mois antérieurs au comptage exact.</div>';
+  el.innerHTML=h;
 }
 function smsVueSalons(d){
   var C=smsCfg();

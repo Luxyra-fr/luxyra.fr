@@ -654,11 +654,13 @@ async function handleWebhook(request, env) {
       if (data.metadata?.type === "sms_pack") {
         const qty = parseInt(data.metadata.sms_qty || "0");
         if (salonId && qty > 0) {
-          const salon = await supabaseGet(env, salonId);
-          const _solde = (salon?.sms_credits || 0) + qty;
-          await supabaseUpdate(env, salonId, { sms_credits: _solde });
-          // 2026-10-09 : historique des crédits (admin → SMS → salon)
-          try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_mouvements`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ salon_id: salonId, type: "achat_pack", delta: qty, solde_apres: _solde, montant_eur: (Number(data.amount_total) || 0) / 100, motif: "Pack " + qty + " SMS (Stripe)", auteur: "salon" }) }); } catch (_) {}
+          // 2026-10-09 : crédit ATOMIQUE + historique (avant : lecture puis écriture, un SMS envoyé entre les deux était perdu)
+          const _cr = await lxCrediterSms(env, salonId, qty, "achat_pack", (Number(data.amount_total) || 0) / 100, "Pack " + qty + " SMS (Stripe " + String(data.id || "").slice(-10) + ")", "salon");
+          if (!_cr || !_cr.ok) {
+            const salon = await supabaseGet(env, salonId);
+            await supabaseUpdate(env, salonId, { sms_credits: (salon?.sms_credits || 0) + qty });
+          }
+          // (les SMS en attente repartent via le déclencheur trg_sms_recharge sur salons)
         }
         break;
       }
@@ -1450,7 +1452,8 @@ async function handleCcAction(request, env) {
       if (cmd.status === "retiree") return jsonResponse({ error: `Déjà remise le ${new Date(cmd.collected_at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} par ${cmd.collected_by || "?"}`, deja: true, commande: cmd }, 409);
       const codeOk = String(b.code || "").trim().toUpperCase() === String(cmd.code_retrait || "").toUpperCase();
       if (!codeOk && b.sans_code !== true) return jsonResponse({ error: "Code de retrait incorrect" }, 403);
-      if (!cmd.paye && !String(b.ticket_num || "").trim()) return jsonResponse({ error: "Commande non payée : encaissez-la d'abord en caisse" }, 409);
+      // 2026-10-09 (NF525) : toute remise est rattachée à un ticket de caisse scellé (payée en ligne ou au salon)
+      if (!String(b.ticket_num || "").trim()) return jsonResponse({ error: cmd.paye ? "Remise sans ticket impossible : passez par la caisse (mode « Payé en ligne »). Mettez l'application à jour (rechargez la page)." : "Commande non payée : encaissez-la d'abord en caisse" }, 409);
       const maj = await ccMaj(env, cmd.id, {
         status: "retiree", collected_at: now,
         collected_by: op + (codeOk ? " (code vérifié)" : " (sans code, identité vérifiée)"),
@@ -1661,6 +1664,21 @@ async function handleAdminStripe(request, env) {
         litiges, factures_impayees: factures,
         salons_connect: (salons || []).filter((s) => s.stripe_connect_id).map((s) => ({ id: s.id, nom: s.nom, statut: s.stripe_connect_status })),
       });
+    }
+
+    // Ventes de packs SMS sur 12 mois (source : Stripe) — lecture seule (2026-10-09)
+    if (op === "sms_revenus") {
+      const debut = Math.floor(Date.now() / 1000) - 366 * 86400;
+      const sessions = await saListe(env, `checkout/sessions?status=complete&created[gte]=${debut}`, 3000);
+      const parMois = {}; let nb = 0, eur = 0, sms = 0;
+      sessions.filter((x) => x.metadata && x.metadata.type === "sms_pack" && x.payment_status === "paid").forEach((x) => {
+        const m = new Date(x.created * 1000).toISOString().slice(0, 7);
+        const e = (Number(x.amount_total) || 0) / 100, q = parseInt(x.metadata.sms_qty || "0", 10) || 0;
+        parMois[m] = parMois[m] || { nb: 0, eur: 0, sms: 0 };
+        parMois[m].nb++; parMois[m].eur = Math.round((parMois[m].eur + e) * 100) / 100; parMois[m].sms += q;
+        nb++; eur += e; sms += q;
+      });
+      return jsonResponse({ ok: true, par_mois: parMois, total: { nb, eur: Math.round(eur * 100) / 100, sms } });
     }
 
     // Export des factures Luxyra (abonnements) — lecture seule (2026-10-09)
@@ -2764,6 +2782,58 @@ async function gateSmsAndDecrementCredit(env, salonId, nbSms = 1) {
 // === Helper : alerte email quand un SMS automatique est bloqué (crédits 0) ===
 // Rate-limité à 1 email/24h par salon via salons.last_sms_credit_alert_at.
 // Ne block pas la réponse — fire & forget (waitUntil-style).
+// 2026-10-09 : crédit atomique (packs, remboursements) + historique sms_mouvements
+async function lxCrediterSms(env, salonId, nb, type, montant, motif, auteur) {
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/crediter_sms`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon_id: salonId, p_nb: nb, p_type: type, p_montant: montant, p_motif: motif, p_auteur: auteur }) });
+    return r.ok ? await r.json() : { ok: false };
+  } catch (e) { console.error("crediter_sms:", e?.message || e); return { ok: false }; }
+}
+// Envoi Brevo + contrôle du résultat : si Brevo refuse, les crédits débités sont rendus automatiquement.
+// Si Brevo facture plus de SMS que prévu (cas rare), la différence est débitée si le solde le permet.
+async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender) {
+  let result = null;
+  try { result = await brevoSendSms(env, { to: phone, content: contenu, sender }); } catch (e) { result = { code: "exception", message: String(e?.message || e) }; }
+  const ok = !!(result && (result.messageId || result.reference));
+  let remaining = gate.remainingCredits, debites = gate.nbSms || 1;
+  if (!ok) {
+    const rb = await lxCrediterSms(env, salonId, debites, "remboursement_echec", null, "SMS non envoyé par Brevo (" + String(result?.code || "erreur") + " : " + String(result?.message || "").slice(0, 150) + ") — crédit rendu", "automatique");
+    if (rb && rb.ok) remaining = rb.solde;
+    return { ok: false, result, remaining, debites: 0, error: "SMS non envoyé (" + String(result?.message || "refus de l'opérateur") + ") — le crédit a été rendu" };
+  }
+  const facture = Number(result.smsCount || result.usedCredits || 0);
+  if (facture > debites && facture <= 10) {
+    const extra = await gateSmsAndDecrementCredit(env, salonId, facture - debites).catch(() => null);
+    if (extra && extra.ok) { remaining = extra.remainingCredits; debites = facture; }
+  }
+  // Alerte au gérant quand le solde passe sous 10 (une fois par passage, et pas plus d'une fois par 24 h)
+  if (remaining <= 10 && remaining > 0 && (remaining + debites) > 10) {
+    notifySalonCreditBas(env, salonId, remaining).catch(() => {});
+  }
+  return { ok: true, result, remaining, debites };
+}
+async function notifySalonCreditBas(env, salonId, reste) {
+  try {
+    const salon = await supabaseGet(env, salonId);
+    if (!salon || !salon.email) return;
+    if (salon.sms_alerte_basse_le && Date.now() - new Date(salon.sms_alerte_basse_le).getTime() < 24 * 3600 * 1000) return;
+    const salonName = salon.nom || "votre salon";
+    const subject = `📱 Plus que ${reste} SMS — ${salonName}`;
+    const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a">
+      <div style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a);padding:24px;border-radius:14px 14px 0 0;text-align:center"><div style="color:#d4a843;font-size:24px;font-weight:900;letter-spacing:2px">LUXYRA</div></div>
+      <div style="background:#fff;border:1px solid #e8e0d0;border-top:none;padding:28px;border-radius:0 0 14px 14px">
+        <h2 style="text-align:center;color:#c8a84e;margin:0 0 16px">Plus que ${reste} SMS</h2>
+        <p style="font-size:14px;line-height:1.6;color:#333">Bonjour,</p>
+        <p style="font-size:14px;line-height:1.6;color:#333">Le solde SMS de <strong>${salonName}</strong> est presque épuisé : il reste <strong>${reste} SMS</strong>. Quand il arrivera à 0, les rappels de rendez-vous seront mis en attente jusqu'à la recharge.</p>
+        <div style="text-align:center;margin:24px 0"><a href="https://luxyra.fr/app#sms" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;text-decoration:none;border-radius:10px;font-size:14px">📱 Recharger mes SMS</a></div>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:11px;color:#999;text-align:center;margin:0">Email automatique — Luxyra</p>
+      </div></div>`;
+    const textContent = `Plus que ${reste} SMS pour ${salonName}. Quand le solde arrivera à 0, les rappels seront mis en attente jusqu'à la recharge.\n\nRecharger : https://luxyra.fr/app#sms\n\nLuxyra.`;
+    await brevoSendEmail(env, { to: salon.email, toName: salonName, senderEmail: "contact@luxyra.fr", senderName: "Luxyra", subject, htmlContent: html, textContent, replyTo: null, attachment: null });
+    await supabaseUpdate(env, salonId, { sms_alerte_basse_le: new Date().toISOString() });
+  } catch (e) { console.error("notifySalonCreditBas:", e?.message || e); }
+}
+
 async function notifySalonCreditExhausted(env, salonId) {
   try {
     const salon = await supabaseGet(env, salonId);
@@ -2824,8 +2894,9 @@ async function handleSmsRappel(request, env) {
     return jsonResponse({ error: gate.error }, gate.status);
   }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const result = await brevoSendSms(env, { to: phone, content: contenuRappel, sender: (salonName||"Luxyra").slice(0,11).trim() });
-  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits, smsDebites: gate.nbSms });
+  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenuRappel, (salonName||"Luxyra").slice(0,11).trim());
+  if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);
+  return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites });
 }
 
 async function handleSmsCustom(request, env) {
@@ -2839,8 +2910,9 @@ async function handleSmsCustom(request, env) {
   const gate = await gateSmsAndDecrementCredit(env, salon_id, lxSmsSegments(contenu));
   if (!gate.ok) return jsonResponse({ error: gate.error }, gate.status);
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const result = await brevoSendSms(env, { to: phone, content: contenu, sender: (salonName||"Luxyra").slice(0,11).trim() });
-  return jsonResponse({ success: true, result, remainingCredits: gate.remainingCredits, smsDebites: gate.nbSms });
+  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra").slice(0,11).trim());
+  if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);
+  return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites });
 }
 
 async function handleClientTickets(request, env) {
