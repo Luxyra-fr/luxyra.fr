@@ -2470,6 +2470,10 @@ async function actS(id,act){
   if(act==="suspend"){await _sb.from("salons").update({status:"suspended"}).eq("id",id);alert("⛔ Salon suspendu");}
   else if(act==="reactivate"){await _sb.from("salons").update({status:"active"}).eq("id",id);alert("✅ Salon réactivé");}
   else if(act==="extend"){var d=new Date(s.trialEnd||new Date());d.setDate(d.getDate()+7);await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id);alert("⏰ Essai prolongé de 7 jours");}
+  else if(act==="plan"&&s.stripeSub){ // 2026-10-09 : abonné Stripe -> le changement passe par Stripe (prix + prorata), sinon la facture ne suivait pas
+    var np2=s.plan==="essential"?"pro":"essential"; if(!confirm("Changer le forfait de "+s.nom+" en "+np2.toUpperCase()+" ? Stripe facturera la différence au prorata.")) return;
+    var d2=await saApi({op:"changer_forfait",salon_id:id,plan:np2,motif:"bouton forfait admin"}); alert(d2.error?"❌ "+d2.error:"📦 Forfait changé (Stripe + application)"); if(typeof loadData==="function") loadData(); return;
+  }
   else if(act==="plan"){var np=s.plan==="essential"?"pro":"essential";if(!confirm("Changer le plan de "+s.nom+" en "+np.toUpperCase()+" ?"))return;await _sb.from("salons").update({plan:np}).eq("id",id);alert("📦 Plan changé en "+np);}
   else if(act==="reset"){await _sb.auth.resetPasswordForEmail(s.email);alert("🔑 Lien de réinitialisation envoyé à "+s.email);return;}
   else if(act==="delete"){await confirmDeleteSalon(id);return;}
@@ -3873,6 +3877,12 @@ async function saveFreePlan(id){
   }
   var update={is_free:isFree,free_until:freeUntil};
   if(isFree){update.plan=plan;update.status="active";update.trial_end=null;}
+  // 2026-10-09 : salon abonné chez Stripe -> pas de facture pendant l'offre (pause de facturation), reprise à la fin
+  var _s0=gSalon(id);
+  if(_s0&&_s0.stripeSub){
+    var dz=await saApi({op:isFree?"pause_facturation":"reprendre_facturation",salon_id:id,jusqu_au:freeUntil||"",motif:"plan offert (admin)"});
+    if(dz.error){ alert("❌ Stripe : "+dz.error+"\nRien n'a été modifié."); return; }
+  }
   await _sb.from("salons").update(update).eq("id",id);
   var s=gSalon(id);
   if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
