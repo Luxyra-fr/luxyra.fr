@@ -123,6 +123,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
+      if (url.pathname === "/api/siret" && request.method === "GET") return await handleSiret(request, env);
       if (url.pathname === "/api/stripe/webhook-connect" && request.method === "POST") return await handleWebhookConnect(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
@@ -1837,6 +1838,84 @@ async function runStripeSurveillanceJob(env) {
     } catch (_) {}
   }
   return { alertes: alertes.length };
+}
+
+// ============================================================
+// SIRET -> fiche entreprise officielle (2026-10-09)
+// GET /api/siret?siret=14 chiffres — API publique « Recherche d'entreprises » (data.gouv, gratuite).
+// Normalise : nom, enseigne, adresse, forme juridique (code Luxyra), NAF + métier suggéré, dirigeant,
+// n° TVA intracom, état (active / fermée), date de création. Données « non diffusibles » respectées.
+// ============================================================
+function siretValideLuhn(s) {
+  if (!/^\d{14}$/.test(s)) return false;
+  let t = 0;
+  for (let i = 0; i < 14; i++) { let d = Number(s[13 - i]); if (i % 2 === 1) { d *= 2; if (d > 9) d -= 9; } t += d; }
+  return t % 10 === 0 || s.startsWith("356000000"); // La Poste : exception connue
+}
+function tvaIntraDepuisSiren(siren) { const n = Number(siren); if (!isFinite(n)) return null; const cle = (12 + 3 * (n % 97)) % 97; return "FR" + String(cle).padStart(2, "0") + siren; }
+function formeLuxyra(code) {
+  const c = String(code || "");
+  if (c === "1000") return "micro"; // entrepreneur individuel (micro ou réel : à confirmer par le salon)
+  if (c === "5498") return "eurl";
+  if (c === "5720") return "sasu";
+  if (c === "5710") return "sas";
+  if (/^54/.test(c)) return "sarl";
+  if (/^55|^56/.test(c)) return "sa";
+  return c ? "autre" : "";
+}
+const FORMES_LIB = { "1000": "Entrepreneur individuel", "5498": "EURL", "5499": "SARL", "5710": "SAS", "5720": "SASU" };
+function metierDepuisNaf(naf) {
+  const n = String(naf || "").toUpperCase();
+  if (n === "96.02A") return "coiffure";
+  if (n === "96.02B") return "esthetique";
+  if (n === "96.04Z") return "bien_etre";
+  return null;
+}
+async function handleSiret(request, env) {
+  try {
+    const u = new URL(request.url);
+    const siret = String(u.searchParams.get("siret") || "").replace(/\s+/g, "");
+    if (!/^\d{14}$/.test(siret)) return jsonResponse({ ok: false, error: "Le SIRET doit faire 14 chiffres" }, 400);
+    if (!siretValideLuhn(siret)) return jsonResponse({ ok: false, error: "Ce numéro SIRET n'est pas valide (erreur de saisie ?)" }, 400);
+    const cache = caches.default;
+    const cleCache = new Request(`https://cache.luxyra.internal/siret/${siret}`);
+    const enCache = await cache.match(cleCache);
+    if (enCache) return new Response(enCache.body, { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+    const r = await fetch(`https://recherche-entreprises.api.gouv.fr/search?q=${siret}&per_page=1&minimal=false`, { headers: { Accept: "application/json" } });
+    if (!r.ok) return jsonResponse({ ok: false, error: "Service officiel momentanément indisponible, remplissez à la main" }, 503);
+    const d = await r.json();
+    const e = (d.results || []).find((x) => String(x.siren) === siret.slice(0, 9)) || null;
+    if (!e) return jsonResponse({ ok: false, error: "SIRET introuvable dans le répertoire officiel" }, 404);
+    const etab = (e.matching_etablissements || []).find((x) => x.siret === siret) || (e.siege && e.siege.siret === siret ? e.siege : null) || e.siege || {};
+    const nd = (v) => (v && !String(v).includes("NON-DIFFUSIBLE") ? v : "");
+    const dir = (e.dirigeants || []).find((x) => x.type_dirigeant === "personne physique") || null;
+    const enseigne = nd((etab.liste_enseignes || [])[0]) || nd(etab.nom_commercial);
+    const res = {
+      ok: true, siret, siren: e.siren,
+      actif: etab.etat_administratif ? etab.etat_administratif === "A" : e.etat_administratif === "A",
+      date_fermeture: etab.date_fermeture || e.date_fermeture || null,
+      nom: nd(enseigne) || nd(e.nom_raison_sociale) || nd(e.nom_complet),
+      raison_sociale: nd(e.nom_raison_sociale) || nd(e.nom_complet),
+      enseigne,
+      adresse: nd([etab.numero_voie, etab.indice_repetition, etab.type_voie, etab.libelle_voie].filter(Boolean).join(" ")) || "",
+      complement: nd(etab.complement_adresse),
+      cp: nd(etab.code_postal), ville: nd(etab.libelle_commune),
+      latitude: nd(etab.latitude) ? Number(etab.latitude) : null, longitude: nd(etab.longitude) ? Number(etab.longitude) : null,
+      forme_code: e.nature_juridique || null, forme: formeLuxyra(e.nature_juridique), forme_libelle: FORMES_LIB[e.nature_juridique] || (e.nature_juridique ? "Autre (" + e.nature_juridique + ")" : ""),
+      entrepreneur_individuel: !!(e.complements && e.complements.est_entrepreneur_individuel),
+      naf: etab.activite_principale || e.activite_principale || null, metier: metierDepuisNaf(etab.activite_principale || e.activite_principale),
+      dirigeant_nom: dir ? nd(dir.nom) : "", dirigeant_prenom: dir ? nd(String(dir.prenoms || "").split(" ")[0]) : "",
+      tva_intra: (e.tva && typeof e.tva === "object" && e.tva.numero) ? e.tva.numero : tvaIntraDepuisSiren(e.siren),
+      date_creation: etab.date_creation || e.date_creation || null,
+      non_diffusible: String(e.statut_diffusion || "") !== "O" || !nd(e.nom_complet),
+      siege: !!etab.est_siege,
+    };
+    const corps = JSON.stringify(res);
+    try { await cache.put(cleCache, new Response(corps, { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=86400" } })); } catch (_) {}
+    return new Response(corps, { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+  } catch (e) {
+    return jsonResponse({ ok: false, error: "Vérification impossible pour le moment" }, 500);
+  }
 }
 
 // ============================================================

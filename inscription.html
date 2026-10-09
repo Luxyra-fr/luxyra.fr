@@ -147,12 +147,17 @@ function render(){
 function renderStep1(){
   var h='<div class="step-head"><div class="step-num">\ud83c\udfe0</div><div class="step-title">\u00c9tablissement</div><div class="step-desc">Parlez-nous de votre activit\u00e9</div></div>';
   h+='<div id="stepErr" class="err"></div>';
+  // 2026-10-09 : SIRET en premier (France) -> fiche officielle, champs remplis automatiquement
+  if((DATA.pays||"France")==="France"){
+    h+='<div class="fg"><label>SIRET * <span style="font-weight:400;font-size:11px;opacity:.7">\u2014 on remplit le reste pour vous</span></label><input id="fSiret" inputmode="numeric" maxlength="17" value="'+esc(DATA.siret)+'" placeholder="14 chiffres" oninput="lxSiretSaisie(this.value)"></div>';
+    h+='<div id="siretInfo" style="margin:-6px 0 12px;font-size:12px;line-height:1.5">'+(DATA._siretMsg||"")+'</div>';
+  }
   h+='<div class="fg"><label>Nom de l\u2019\u00e9tablissement *</label><input id="fNom" value="'+esc(DATA.nom)+'" placeholder="Nom de votre établissement"></div>';
   h+='<div class="fg"><label>M\u00e9tier *</label><div class="metier-grid">';
   var metiers=[["coiffure","Coiffure","\u2702\ufe0f"],["barbier","Barbier","\ud83d\udc88"],["esthetique","Esth\u00e9tique","\ud83d\udc86"],["ongles","Ongles","\ud83d\udc85"],["bien_etre","Bien-\u00eatre","\ud83e\uddd8"]];
   for(var i=0;i<metiers.length;i++){
     var m=metiers[i];
-    h+='<div class="metier-btn'+(DATA.metier===m[0]?' active':'')+'" onclick="DATA.metier=\''+m[0]+'\';render()"><div class="ico">'+m[2]+'</div><div class="lbl">'+m[1]+'</div></div>';
+    h+='<div class="metier-btn'+(DATA.metier===m[0]?' active':'')+'" onclick="DATA.metier=\''+m[0]+'\';DATA._metierChoisi=true;render()"><div class="ico">'+m[2]+'</div><div class="lbl">'+m[1]+'</div></div>';
   }
   h+='</div></div>';
   h+='<div class="fg"><label>Mode d\u2019activit\u00e9</label><select id="fMode" onchange="DATA.modeActivite=this.value"><option value="salon"'+(DATA.modeActivite==="salon"?" selected":"")+'>En \u00e9tablissement</option><option value="domicile"'+(DATA.modeActivite==="domicile"?" selected":"")+'>\u00c0 domicile</option><option value="mixte"'+(DATA.modeActivite==="mixte"?" selected":"")+'>Mixte</option></select></div>';
@@ -163,7 +168,7 @@ function renderStep1(){
   h+='<div class="fg"><label>Pays *</label><select id="fPays" onchange="saveFields1();DATA.pays=this.value;render()"><option value="France"'+(DATA.pays==="France"?" selected":"")+'>France</option><option value="Belgique"'+(DATA.pays==="Belgique"?" selected":"")+'>Belgique</option><option value="Luxembourg"'+(DATA.pays==="Luxembourg"?" selected":"")+'>Luxembourg</option></select></div>';
   var _idLbl=DATA.pays==="Belgique"?"N° d'entreprise (BCE)":(DATA.pays==="Luxembourg"?"N° de TVA / matricule":"SIRET");
   var _idPh=DATA.pays==="Belgique"?"0123.456.789":(DATA.pays==="Luxembourg"?"LU + n° de TVA":"14 chiffres");
-  h+='<div class="fg"><label>'+_idLbl+' *</label><input id="fSiret" value="'+esc(DATA.siret)+'" placeholder="'+_idPh+'"></div>';
+  if((DATA.pays||"France")!=="France") h+='<div class="fg"><label>'+_idLbl+' *</label><input id="fSiret" value="'+esc(DATA.siret)+'" placeholder="'+_idPh+'"></div>';
   h+='<div class="fg"><label>Forme juridique *</label><select id="fForme" onchange="saveFields1();DATA.formeJur=this.value;if(!DATA._tvaChoisie){DATA.franchiseTva=(this.value===\'micro\');}render()"><option value=""'+(DATA.formeJur===""?" selected":"")+'>S\u00e9lectionnez...</option><option value="micro"'+(DATA.formeJur==="micro"?" selected":"")+'>Micro-entreprise</option><option value="ei"'+(DATA.formeJur==="ei"?" selected":"")+'>Entreprise individuelle (EI)</option><option value="eirl"'+(DATA.formeJur==="eirl"?" selected":"")+'>EIRL</option><option value="sarl"'+(DATA.formeJur==="sarl"?" selected":"")+'>SARL</option><option value="eurl"'+(DATA.formeJur==="eurl"?" selected":"")+'>EURL</option><option value="sas"'+(DATA.formeJur==="sas"?" selected":"")+'>SAS</option><option value="sasu"'+(DATA.formeJur==="sasu"?" selected":"")+'>SASU</option><option value="sa"'+(DATA.formeJur==="sa"?" selected":"")+'>SA</option><option value="autre"'+(DATA.formeJur==="autre"?" selected":"")+'>Autre</option></select></div>';
   // 2026-10-07 : franchise de TVA demandee a l'inscription. Avant, tout salon francais demarrait
   // a 20 % : un auto-entrepreneur en franchise facturait de la TVA sans le savoir.
@@ -182,11 +187,43 @@ function renderStep1(){
   return h;
 }
 
+// === SIRET -> fiche officielle (2026-10-09) ===
+var _lxSiretT=null;
+function lxSiretSaisie(v){
+  var s=String(v||"").replace(/\s+/g,"");
+  DATA.siret=s;
+  var el=document.getElementById("siretInfo");
+  clearTimeout(_lxSiretT);
+  if(s.length<14){ DATA._siretOk=null; if(el) el.innerHTML=""; DATA._siretMsg=""; return; }
+  if(el) el.innerHTML='<span style="opacity:.7">\u23f3 Recherche dans le r\u00e9pertoire officiel des entreprises\u2026</span>';
+  _lxSiretT=setTimeout(function(){ lxSiretChercher(s); },350);
+}
+async function lxSiretChercher(s){
+  var el=document.getElementById("siretInfo");
+  try{
+    var r=await fetch("/api/siret?siret="+encodeURIComponent(s)); var d=await r.json();
+    if(!d.ok){ DATA._siretOk=false; DATA._siretMsg='<span style="color:#ef5350">\u26a0 '+esc(d.error||"SIRET introuvable")+'</span>'; if(el) el.innerHTML=DATA._siretMsg; return; }
+    if(!d.actif){ DATA._siretOk=false; DATA._siretMsg='<span style="color:#ef5350">\u26d4 Cet \u00e9tablissement est indiqu\u00e9 comme <b>ferm\u00e9</b>'+(d.date_fermeture?' depuis le '+new Date(d.date_fermeture).toLocaleDateString("fr-FR"):'')+' au r\u00e9pertoire officiel. V\u00e9rifiez votre SIRET (celui de votre \u00e9tablissement actuel).</span>'; if(el) el.innerHTML=DATA._siretMsg; return; }
+    saveFields1(); DATA.siret=s;
+    var rempli=[];
+    function remplir(k,v,lib){ if(v && !String(DATA[k]||"").trim()){ DATA[k]=v; rempli.push(lib); } }
+    remplir("nom",d.nom,"nom"); remplir("adresse",d.adresse,"adresse"); remplir("cp",d.cp,"code postal"); remplir("ville",d.ville,"ville");
+    if(d.forme && !DATA.formeJur){ DATA.formeJur=d.forme; rempli.push("forme juridique"); if(!DATA._tvaChoisie) DATA.franchiseTva=(d.forme==="micro"); }
+    if(d.metier && DATA.metier==="coiffure" && d.metier!=="coiffure" && !DATA._metierChoisi){ DATA.metier=d.metier; rempli.push("m\u00e9tier"); }
+    if(d.dirigeant_nom && !DATA.gerantNom){ DATA.gerantNom=d.dirigeant_nom.charAt(0)+d.dirigeant_nom.slice(1).toLowerCase(); }
+    if(d.dirigeant_prenom && !DATA.gerantPrenom){ DATA.gerantPrenom=d.dirigeant_prenom.charAt(0)+d.dirigeant_prenom.slice(1).toLowerCase(); }
+    DATA._siretInfo=d; DATA._siretOk=true;
+    DATA._siretMsg='<span style="color:#4caf50">\u2705 <b>'+esc(d.raison_sociale||d.nom||"Entreprise")+'</b> \u2014 active'+(d.date_creation?' depuis '+new Date(d.date_creation).getFullYear():'')+(d.forme_libelle?' \u2022 '+esc(d.forme_libelle):'')+'</span>'+(rempli.length?'<br><span style="opacity:.75">Rempli automatiquement : '+rempli.join(", ")+'. V\u00e9rifiez et corrigez si besoin.</span>':'')+(d.non_diffusible?'<br><span style="opacity:.75">Fiche partiellement priv\u00e9e au r\u00e9pertoire : compl\u00e9tez les champs manquants.</span>':'');
+    render();
+  }catch(e){ if(el) el.innerHTML='<span style="opacity:.7">V\u00e9rification automatique indisponible, remplissez \u00e0 la main.</span>'; }
+}
+
 function nextStep1(){
   saveFields1();
   if(!DATA.nom.trim()){showErr("Le nom de l\u2019\u00e9tablissement est obligatoire");return;}
   var _id=DATA.siret.trim();
-  if(DATA.pays==="France"){ if(!/^\d{14}$/.test(_id)){showErr("Le SIRET est obligatoire (14 chiffres)");return;} }
+  if(DATA.pays==="France"){ if(!/^\d{14}$/.test(_id.replace(/\s+/g,""))){showErr("Le SIRET est obligatoire (14 chiffres)");return;} DATA.siret=_id.replace(/\s+/g,"");
+    if(DATA._siretInfo && DATA._siretInfo.siret===DATA.siret && DATA._siretInfo.actif===false){showErr("Cet \u00e9tablissement est ferm\u00e9 au r\u00e9pertoire officiel : v\u00e9rifiez votre SIRET.");return;} }
   else if(_id.replace(/[^A-Za-z0-9]/g,"").length<8){showErr("Le numéro d'entreprise est obligatoire");return;}
   if(!DATA.formeJur){showErr("Veuillez s\u00e9lectionner la forme juridique");return;}
   if(DATA.franchiseTva!==true && DATA.franchiseTva!==false){ DATA.franchiseTva=(DATA.formeJur==="micro"); }

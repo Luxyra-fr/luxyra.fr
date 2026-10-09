@@ -2204,7 +2204,7 @@ function openD(id){
   [["Gérant",s.gerantPrenom+" "+s.gerantNom],["Forme juridique",s.formeJur],["SIRET",s.siret],["SIREN",s.siren],["TVA Intra.",s.tva]].forEach(function(f){
     h+='<div class="dp-field"><span class="k">'+f[0]+'</span><span class="v">'+(f[1]&&f[1].trim()?f[1]:'<span style="color:var(--text3);font-style:italic">—</span>')+'</span></div>';
   });
-  h+='<button class="dp-btn" style="margin-top:8px" onclick="editLegal(&#39;'+s.id+'&#39;)">✏️ Modifier infos légales</button></div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button class="dp-btn" onclick="editLegal(&#39;'+s.id+'&#39;)">✏️ Modifier infos légales</button>'+(s.siret?'<button class="dp-btn" onclick="lxVerifierSiret(&#39;'+s.id+'&#39;)">🔎 Vérifier le SIRET (répertoire officiel)</button>':'')+'</div><div id="siretCheck-'+s.id+'"></div></div>';
 
   // COORDONNEES
   h+='<div class="dp-section"><div class="dp-label">📍 Coordonnées</div>';
@@ -3683,6 +3683,25 @@ async function saveNotes(id){
 // STRIPE — gestion depuis le panneau admin (2026-10-09)
 // Lecture + actions via /api/admin/stripe (réservé admin, chaque action journalisée).
 // ============================================================
+
+// 2026-10-09 : vérification du SIRET d'un salon dans le répertoire officiel des entreprises
+async function lxVerifierSiret(id){
+  var s=gSalon(id); var el=document.getElementById("siretCheck-"+id); if(!s||!el) return;
+  el.innerHTML='<div style="font-size:12px;color:var(--text2);margin-top:6px">Recherche…</div>';
+  try{
+    var r=await fetch("/api/siret?siret="+encodeURIComponent(String(s.siret||"").replace(/\s+/g,""))); var d=await r.json();
+    if(!d.ok){ el.innerHTML='<div style="font-size:12px;color:var(--red);margin-top:6px">⚠️ '+saEsc(d.error||"SIRET introuvable")+'</div>'; return; }
+    var lignes=[["État",d.actif?'<b style="color:var(--green)">Active</b>':'<b style="color:var(--red)">FERMÉE'+(d.date_fermeture?' le '+saD(d.date_fermeture):'')+'</b>'],["Raison sociale",d.raison_sociale],["Enseigne",d.enseigne],["Forme",d.forme_libelle],["Adresse officielle",[d.adresse,d.cp,d.ville].filter(Boolean).join(" ")],["Code NAF",d.naf],["Dirigeant",[d.dirigeant_prenom,d.dirigeant_nom].filter(Boolean).join(" ")],["TVA intracom.",d.tva_intra],["Créée le",d.date_creation?saD(d.date_creation):""]];
+    var ecarts=[];
+    if(d.cp&&s.cp&&String(d.cp)!==String(s.cp)) ecarts.push("code postal différent ("+saEsc(s.cp)+" dans Luxyra)");
+    if(d.tva_intra&&s.tva&&String(s.tva).replace(/\s+/g,"").toUpperCase()!==d.tva_intra) ecarts.push("n° TVA différent");
+    var h='<div style="margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:10px;font-size:12px">';
+    lignes.forEach(function(l){ if(l[1]) h+='<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0"><span style="color:var(--text2)">'+l[0]+'</span><span style="text-align:right">'+(l[0]==="État"?l[1]:saEsc(l[1]))+'</span></div>'; });
+    if(d.non_diffusible) h+='<div style="color:var(--text2);margin-top:4px">Fiche partiellement privée au répertoire (choix de l\'entrepreneur).</div>';
+    if(ecarts.length) h+='<div style="color:var(--orange);margin-top:4px">⚠️ '+ecarts.join(" · ")+'</div>';
+    h+='</div>'; el.innerHTML=h;
+  }catch(e){ el.innerHTML='<div style="font-size:12px;color:var(--red)">Vérification impossible</div>'; }
+}
 async function saApi(body){
   var tok=await lxAdminJeton();
   var r=await fetch("/api/admin/stripe",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify(body)});
