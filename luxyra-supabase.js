@@ -23,15 +23,34 @@ var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 // ===== INIT SUPABASE CLIENT =====
 var _sb = null;
 if (typeof supabase !== "undefined" && supabase.createClient) {
-  _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  if (/[?&]vue_admin=/.test(location.search) && window._lxVraiLS) {
+    // Vue admin : on utilise la session du PANNEAU ADMIN (support@luxyra.fr), jamais celle du salon
+    // connecté sur ce navigateur. Seule la clé de session admin est lue/écrite dans le vrai stockage.
+    var _lxCleAdmin = "sb-luxyra-admin-auth";
+    var _lxStockAdmin = {
+      getItem: function(k){ return String(k).indexOf(_lxCleAdmin) === 0 ? window._lxVraiLS.getItem(k) : null; },
+      setItem: function(k, x){ if (String(k).indexOf(_lxCleAdmin) === 0) window._lxVraiLS.setItem(k, x); },
+      removeItem: function(){ /* jamais : ne déconnecte pas le panneau admin */ }
+    };
+    _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storageKey: _lxCleAdmin, storage: _lxStockAdmin, detectSessionInUrl: false } });
+  } else {
+    _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
 }
 
 // ===== VUE ADMIN EN LECTURE SEULE (2026-10-09) =====
 // app.html?vue_admin=<salon_id> ouvert depuis le panneau admin (compte support@luxyra.fr) :
 // l'app affiche les données du salon et TOUTE écriture est bloquée (base, fonctions, worker, stockage).
 window._lxVueAdmin = (function(){ try{ var v=new URLSearchParams(location.search).get("vue_admin"); return /^[0-9a-f-]{36}$/i.test(v||"")?v:null; }catch(e){ return null; } })();
+function _lxVueAdminStop(msg){
+  if (!document.body) { document.addEventListener("DOMContentLoaded", function(){ _lxVueAdminStop(msg); }); return; }
+  window._lxVueAdminArret = true;
+  document.body.innerHTML = '<div style="padding:40px;font-family:sans-serif;color:#fff;background:#111;min-height:100vh"><h2>👁 Vue admin</h2><p>'+String(msg).replace(/</g,"&lt;")+'</p></div>';
+}
 if (window._lxVueAdmin && _sb) {
   (function(){
+    // Jamais de déconnexion depuis la vue admin (elle couperait la session du panneau admin)
+    try { _sb.auth.signOut = function(){ console.warn("[VUE ADMIN] déconnexion ignorée"); return Promise.resolve({ error: null }); }; } catch(_e) {}
     var refus = { data: null, error: { message: "Lecture seule (vue admin) : modification bloquée", code: "LX_LECTURE_SEULE" } };
     function bloque(){ var p = Promise.resolve(refus); var prox = new Proxy(function(){}, { get: function(t,k){ if(k==="then") return p.then.bind(p); if(k==="catch") return p.catch.bind(p); if(k==="finally") return p.finally.bind(p); return function(){ return prox; }; }, apply: function(){ return prox; } }); return prox; }
     var fromOrig = _sb.from.bind(_sb);
@@ -514,10 +533,11 @@ async function checkSession() {
     try { localStorage.setItem("lx_salon_last_activity", Date.now().toString()); } catch(_){}
     await loadSalonData();
   } else {
+    if (window._lxVueAdmin) { _lxVueAdminStop("Connecte-toi d'abord au panneau admin (support@luxyra.fr) dans ce navigateur, puis rouvre la vue depuis la fiche du salon."); return; }
     try { localStorage.removeItem("lx_salon_last_activity"); } catch(_){}
     showLoginScreen();
   }
-  }catch(err){showLoginScreen();}
+  }catch(err){ if (window._lxVueAdmin) { _lxVueAdminStop("Erreur de chargement de la vue admin."); return; } showLoginScreen();}
 }
 // Touch salon activity (throttle) — appelé depuis app.html sur user activity
 window.lxTouchSalonActivity = function() {
@@ -1044,8 +1064,9 @@ async function loadSalonData() {
   var sRes;
   if (window._lxVueAdmin) {
     var _u = null; try { _u = (await _sb.auth.getUser()).data.user; } catch(_e) {}
-    if (!_u || String(_u.email||"").toLowerCase() !== "support@luxyra.fr") { alert("Vue admin réservée au compte support@luxyra.fr"); location.href = "/app.html"; return; }
+    if (!_u || String(_u.email||"").toLowerCase() !== "support@luxyra.fr") { _lxVueAdminStop("Connecte-toi d'abord au panneau admin (support@luxyra.fr) dans ce navigateur, puis rouvre la vue depuis la fiche du salon."); return; }
     sRes = await _sb.from("salons").select("*").eq("id", window._lxVueAdmin).limit(1);
+    if (sRes.error || !sRes.data || !sRes.data.length) { _lxVueAdminStop("Salon introuvable."); return; }
   } else {
     sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
   }
