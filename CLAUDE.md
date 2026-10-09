@@ -1522,3 +1522,4 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
 - app.html : `lxSmsInfo` calcule sur le texte converti, le compteur affiche « converti(s) automatiquement » au lieu de l'avertissement rouge.
 - Débit au nombre RÉEL de SMS Brevo (accord d'Alexandre) : RPC `decrement_sms_credits(p_salon_id, p_nb)` (service_role seul, atomique, exige sms_credits >= nb). Le worker calcule `lxSmsSegments` sur le texte converti (1 si ≤ 160 unités, sinon ceil(n/153) ; ^{}\[~]|€ = 2 unités) dans `/api/sms/custom` et `/api/sms/rappel`. Crédits insuffisants pour un long message → 402 explicite. Réponse : `smsDebites`. L'ancienne `decrement_sms_credit(uuid)` n'est plus appelée (gardée).
 - Bot : entrée `sms` complétée.
+- Compteur app (`lxSmsCostHtml`) : estime la taille une fois les variables remplacées (`lxSmsRempli`, vrai nom du salon + valeurs normales / longues). Rouge = >1 crédit, orange = peut dépasser avec des valeurs longues.

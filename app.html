@@ -30737,12 +30737,23 @@ function lxRenderSmsCost(id, txt){
   var el = document.getElementById(id); if(!el) return;
   el.innerHTML = lxSmsCostHtml(txt);
 }
+// 2026-10-09 : le compteur estime la taille RÉELLE à l'envoi ({prenom}, {salon}… remplacés),
+// avec le vrai nom du salon et des valeurs longues pour le reste → alerte AVANT que ça coûte 2 crédits.
+function lxSmsRempli(txt, long){
+  var salon = (window.SALON_CONFIG && SALON_CONFIG.nom) || "Mon salon";
+  var v = long ? {prenom:"Marie-Christine",nom:"Dupont-Martin",heure:"14:30",date:"25/12/2026",prestation:"Coupe brushing + soin profond",collab:"Christophe"}
+               : {prenom:"Marie",nom:"Martin",heure:"14:30",date:"25/12/2026",prestation:"Coupe brushing",collab:"Julie"};
+  return String(txt==null?"":txt).replace(/\{prenom\}/g,v.prenom).replace(/\{nom\}/g,v.nom).replace(/\{heure\}/g,v.heure).replace(/\{date\}/g,v.date).replace(/\{prestation\}/g,v.prestation).replace(/\{salon\}/g,salon).replace(/\{collab\}/g,v.collab);
+}
 function lxSmsCostHtml(txt){
-  var info = lxSmsInfo(txt);
-  var max  = info.ucs2 ? 70 : 160;
-  var coul = info.segments <= 1 ? "var(--text3)" : "#ef5350";
-  var h = '<span style="color:'+coul+'">'+info.taille+'/'+max+' caractères · <strong>'
-        + (info.segments<=1 ? '1 crédit' : info.segments+' crédits') + '</strong></span>';
+  var aVar = /\{(prenom|nom|heure|date|prestation|salon|collab)\}/.test(String(txt||""));
+  var info = lxSmsInfo(aVar ? lxSmsRempli(txt,false) : txt);
+  var pire = aVar ? lxSmsInfo(lxSmsRempli(txt,true)) : info;
+  var coul = info.segments > 1 ? "#ef5350" : (pire.segments > 1 ? "#f0a030" : "var(--text3)");
+  var h = '<span style="color:'+coul+'">'+(aVar?'≈ ':'')+info.taille+'/160 caractères'+(aVar?' une fois rempli':'')+' · <strong>'
+        + (info.segments<=1 ? '1 crédit' : info.segments+' crédits') + ' par SMS</strong></span>';
+  if (info.segments > 1) h += '<div style="color:#ef5350;margin-top:2px">⚠ Message trop long : chaque envoi coûtera '+info.segments+' crédits. Raccourcissez-le sous 160 caractères pour rester à 1 crédit.</div>';
+  else if (pire.segments > 1) h += '<div style="color:#f0a030;margin-top:2px">⚠ Proche de la limite : avec un prénom ou une prestation longs, le SMS peut dépasser 160 caractères et coûter '+pire.segments+' crédits. Raccourcissez un peu le texte pour être tranquille.</div>';
   if ((info.convertis||[]).length){
     var liste = info.convertis.slice(0,6).map(function(c){return '« '+c+' »';}).join(' ');
     h += '<div style="color:var(--text3);margin-top:2px">ℹ️ '+liste+' : converti(s) automatiquement à l\'envoi (ex. « ô » → « o », émojis retirés) pour rester au tarif normal.</div>';
