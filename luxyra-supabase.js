@@ -1139,6 +1139,7 @@ async function loadSalonData() {
   SALON_CONFIG.tel = salon.tel || "";
   SALON_CONFIG.email = salon.email || "";
   SALON_CONFIG.siteWeb = salon.site_web || "";
+  SALON_CONFIG.noteTicket = salon.note_ticket || "";  // 2026-10-09 : note en bas des tickets
   SALON_CONFIG.siret = salon.siret || "";
   SALON_CONFIG.tva = salon.tva || "";
   SALON_CONFIG.couleurPrimaire = salon.couleur_primaire || "#c8a84e";

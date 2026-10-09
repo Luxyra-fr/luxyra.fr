@@ -1474,3 +1474,6 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 - App : tuile « Commandes » (badge, actualisation 90 s, perm. caisse), page à 3 onglets. Remise = code vérifié (ou « identité vérifiée ») ; une commande remise affiche date/heure/opérateur et ne peut plus être remise. Payée en ligne → sortie de stock à la remise. À régler au salon → « Encaisser puis remettre » : ticket NF525 normal (aucune modif fiscale), puis remise avec n° de ticket.
 - ⚠️ DÉCISION ALEXANDRE (NF525) : une commande payée EN LIGNE ne génère pas de ticket de caisse (aucun mode de paiement « en ligne » en caisse). La créer = toucher à la caisse NF525 → accord requis.
 - compte.html : onglet « Commandes » avec le code de retrait.
+
+## 2026-10-09 — Note en bas des tickets (demande Delphinecoiff, promise par Alexandre dans le chat)
+Paramètres → Infos établissement → « Note en bas des tickets » (colonne `salons.note_ticket`, 600 car. max, `SALON_CONFIG.noteTicket`). Rendue dans `buildTicketHTML` juste avant les mentions NF525 (affichage seulement : le hash est calculé avant le rendu, aucune donnée chaînée touchée). Bot mis à jour (clé `parametres`).

@@ -376,7 +376,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261008-01"></script>
+<script src="luxyra-supabase.js?v=20261009-01"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -12495,6 +12495,7 @@ function saveSalonInfo(){
   SALON_CONFIG.facebookUrl = _normalizeSocialUrl(S.facebookUrl||"", "facebook");
   SALON_CONFIG.instagramUrl = _normalizeSocialUrl(S.instagramUrl||"", "instagram");
   SALON_CONFIG.tiktokUrl = _normalizeSocialUrl(S.tiktokUrl||"", "tiktok");
+  SALON_CONFIG.noteTicket = String(S.noteTicket||"").slice(0,600);
   // Also shortcut fields used by bons
   SALON_CONFIG.adr=SALON_CONFIG.adresseComplete();
   // Update header
@@ -12514,7 +12515,8 @@ function saveSalonInfo(){
       nom:SALON_CONFIG.nom, sous_titre:SALON_CONFIG.sousTitre, logo:SALON_CONFIG.logo,
       adresse:SALON_CONFIG.adresse, cp:SALON_CONFIG.cp, ville:SALON_CONFIG.ville,
       tel:SALON_CONFIG.tel, email:SALON_CONFIG.email,
-      siret:SALON_CONFIG.siret, tva:SALON_CONFIG.tva
+      siret:SALON_CONFIG.siret, tva:SALON_CONFIG.tva,
+      note_ticket:SALON_CONFIG.noteTicket  // "" = effacer la note (chaîne vide, jamais null par omission)
     });
   }
   // Confirmation
@@ -13748,7 +13750,7 @@ function rSettings(){
   else if(settTab==="salon"){
     // Init/merge depuis SALON_CONFIG (avant : si window.SALON existait déjà avec {}, les champs restaient undefined → "undefined" affiché en value)
     if(!window.SALON) window.SALON={};
-    var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||"",facebookUrl:SALON_CONFIG.facebookUrl||"",instagramUrl:SALON_CONFIG.instagramUrl||"",tiktokUrl:SALON_CONFIG.tiktokUrl||""};
+    var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||"",facebookUrl:SALON_CONFIG.facebookUrl||"",instagramUrl:SALON_CONFIG.instagramUrl||"",tiktokUrl:SALON_CONFIG.tiktokUrl||"",noteTicket:SALON_CONFIG.noteTicket||""};
     Object.keys(_salonDefaults).forEach(function(k){ if(window.SALON[k]==null||typeof window.SALON[k]==="undefined") window.SALON[k]=_salonDefaults[k]; });
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos établissement</div><div class="card">';
@@ -13791,6 +13793,10 @@ function rSettings(){
     h+='<input id="tvaInput" value="'+(S.tva||"").replace(/"/g,"&quot;")+'" placeholder="FR12345678901" onchange="window.SALON.tva=this.value" oninput="(function(self){var v=lxValidateTvaFr(self.value);var b=document.getElementById(\'tvaBadge\');if(b)b.innerHTML=lxValidationBadge(v);})(this)">';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px" id="tvaHelpMsg">'+(_tvaValid.ok?'<span style="color:#4caf50">\u2713 '+_tvaValid.msg+'</span>':_tvaValid.msg!=="Non renseign\u00e9"?'<span style="color:#ef5350">\u26a0 '+_tvaValid.msg+'</span>':'<span style="color:rgba(255,255,255,.5)">Optionnel \u2014 laissez vide si non assujetti TVA (r\u00e9gime micro-BIC sans option)</span>')+'</div></div>';
     h+='</div>';
+    // 2026-10-09 : note libre imprimée en bas de chaque ticket (ex. conditions d'échange)
+    h+='<div class="fg" style="margin-top:12px"><label>Note en bas des tickets <span style="font-size:10px;color:var(--text3)">(ex. conditions d\u2019\u00e9change des produits)</span></label>';
+    h+='<textarea id="noteTicketInput" maxlength="600" rows="4" style="width:100%;resize:vertical" placeholder="Ex. : Les produits peuvent \u00eatre \u00e9chang\u00e9s sous 15 jours, non ouverts, sur pr\u00e9sentation du ticket." oninput="window.SALON.noteTicket=this.value;var c=document.getElementById(\'noteTicketCount\');if(c)c.textContent=this.value.length+\'/600\'">'+escapeHtml(S.noteTicket||"")+'</textarea>';
+    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">Imprim\u00e9e automatiquement en bas de tous vos tickets (et des tickets envoy\u00e9s par email). <span id="noteTicketCount">'+String(S.noteTicket||"").length+'/600</span></div></div>';
     // Save button
     h+='<button class="btn bg bk" style="width:100%;margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="saveSalonInfo()">\u2705 Enregistrer les infos salon</button>';
     // Zone "Mode test" \u2014 bouton factory reset visible UNIQUEMENT pendant la
@@ -29873,6 +29879,12 @@ function buildTicketHTML(a, isDuplicate){
     }
   }
 
+  // 2026-10-09 : note libre du salon (ex. conditions d'échange). Affichage seulement,
+  // ne fait pas partie des données chaînées NF525 (le hash est calculé avant ce rendu).
+  if(SALON_CONFIG.noteTicket && String(SALON_CONFIG.noteTicket).trim()){
+    h+="<div style=\"border-top:1px dashed #999;margin:6px 0\"></div>";
+    h+="<div style=\"font-size:10px;text-align:center;white-space:pre-line;line-height:1.35\">"+escapeHtml(String(SALON_CONFIG.noteTicket).trim())+"</div>";
+  }
   // Mentions légales NF525
   h+="<div style=\"border-top:1px dashed #999;margin:6px 0\"></div>";
   h+="<div style=\"text-align:center;font-size:10px;color:#666\">";
