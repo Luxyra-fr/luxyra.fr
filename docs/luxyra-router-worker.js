@@ -1663,6 +1663,41 @@ async function handleAdminStripe(request, env) {
       });
     }
 
+    // Export des factures Luxyra (abonnements) — lecture seule (2026-10-09)
+    if (op === "factures") {
+      const mois = String(b.mois || "").trim();
+      let debut, fin;
+      if (/^\d{4}-\d{2}$/.test(mois)) {
+        const [y, m] = mois.split("-").map(Number);
+        debut = Math.floor(Date.UTC(y, m - 1, 1) / 1000); fin = Math.floor(Date.UTC(y, m, 1) / 1000);
+      } else if (!mois) {
+        fin = Math.floor(Date.now() / 1000); debut = fin - 366 * 86400;
+      } else return jsonResponse({ error: "Format attendu : AAAA-MM" }, 400);
+      const [inv, salons] = await Promise.all([
+        saListe(env, `invoices?created[gte]=${debut}&created[lt]=${fin}`, 1000),
+        saSalons(env),
+      ]);
+      const parCust = {}; (salons || []).forEach((s) => { if (s.stripe_customer_id) parCust[s.stripe_customer_id] = s; });
+      const e2 = (c) => Math.round((Number(c) || 0)) / 100;
+      const factures = inv.filter((f) => f.status !== "draft").map((f) => {
+        const lt = Array.isArray(f.total_taxes) ? f.total_taxes : (Array.isArray(f.total_tax_amounts) ? f.total_tax_amounts : null);
+        const tva = lt ? lt.reduce((a, t) => a + (Number(t.amount) || 0), 0) : (Number(f.tax) || 0);
+        const ttc = Number(f.total) || 0;
+        return {
+          date: new Date((f.status_transitions?.finalized_at || f.created) * 1000).toISOString().slice(0, 10),
+          numero: f.number || f.id,
+          salon: parCust[f.customer]?.nom || f.customer_name || "",
+          email: f.customer_email || "",
+          statut: ({ paid: "payée", open: "à payer", void: "annulée", uncollectible: "irrécouvrable" })[f.status] || f.status,
+          ht: e2(ttc - tva), tva: e2(tva), ttc: e2(ttc),
+          paye: e2(f.amount_paid), rembourse: e2(f.post_payment_credit_notes_amount || 0),
+          pdf: f.invoice_pdf || f.hosted_invoice_url || "",
+        };
+      }).sort((x, y) => (x.date < y.date ? -1 : 1));
+      await saLog(env, "STRIPE_EXPORT_FACTURES", null, `${mois || "12 derniers mois"} — ${factures.length} facture(s) par ${admin}`);
+      return jsonResponse({ ok: true, factures });
+    }
+
     // Les autres opérations portent sur UN salon
     if (!/^[0-9a-f-]{36}$/i.test(String(b.salon_id || ""))) return jsonResponse({ error: "salon_id requis" }, 400);
     const salon = await supabaseGet(env, b.salon_id);
