@@ -2806,8 +2806,8 @@ async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender) {
     const extra = await gateSmsAndDecrementCredit(env, salonId, facture - debites).catch(() => null);
     if (extra && extra.ok) { remaining = extra.remainingCredits; debites = facture; }
   }
-  // Alerte au gérant quand le solde passe sous 10 (une fois par passage, et pas plus d'une fois par 24 h)
-  if (remaining <= 10 && remaining > 0 && (remaining + debites) > 10) {
+  // Alerte au gérant quand le solde passe sous 10 : une seule fois, jusqu'à la prochaine recharge
+  if (remaining <= 10 && remaining > 0) {
     notifySalonCreditBas(env, salonId, remaining).catch(() => {});
   }
   return { ok: true, result, remaining, debites };
@@ -2816,7 +2816,8 @@ async function notifySalonCreditBas(env, salonId, reste) {
   try {
     const salon = await supabaseGet(env, salonId);
     if (!salon || !salon.email) return;
-    if (salon.sms_alerte_basse_le && Date.now() - new Date(salon.sms_alerte_basse_le).getTime() < 24 * 3600 * 1000) return;
+    // UNE seule fois par épisode : le marqueur n'est remis à zéro que par une recharge au-dessus de 10 (trg_sms_alertes_reset)
+    if (salon.sms_alerte_basse_le) return;
     const salonName = salon.nom || "votre salon";
     const subject = `📱 Plus que ${reste} SMS — ${salonName}`;
     const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a">
@@ -2838,11 +2839,8 @@ async function notifySalonCreditExhausted(env, salonId) {
   try {
     const salon = await supabaseGet(env, salonId);
     if (!salon || !salon.email) return;
-    // Rate-limit : si déjà notifié dans les 24 dernières heures, skip
-    if (salon.last_sms_credit_alert_at) {
-      const last = new Date(salon.last_sms_credit_alert_at).getTime();
-      if (Date.now() - last < 24 * 3600 * 1000) return;
-    }
+    // 2026-10-09 : UNE seule fois par épisode (plus de relance quotidienne) ; remis à zéro par une recharge (trg_sms_alertes_reset)
+    if (salon.last_sms_credit_alert_at) return;
     const salonName = salon.nom || "votre salon";
     const subject = `⚠️ Crédits SMS épuisés — ${salonName}`;
     const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a">
@@ -2858,7 +2856,7 @@ async function notifySalonCreditExhausted(env, salonId) {
         <div style="text-align:center;margin:24px 0">
           <a href="https://luxyra.fr/app#sms" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;text-decoration:none;border-radius:10px;font-size:14px">📱 Recharger mes SMS</a>
         </div>
-        <p style="font-size:12px;line-height:1.6;color:#666">Vous recevrez ce mail 1 fois maximum par 24h tant que votre solde reste à 0. Vous pouvez continuer à envoyer des emails normalement (les emails ne consomment pas de crédits SMS).</p>
+        <p style="font-size:12px;line-height:1.6;color:#666">Ce message ne vous sera pas renvoyé. Vous pouvez continuer à envoyer des emails normalement (les emails ne consomment pas de crédits SMS).</p>
         <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
         <p style="font-size:11px;color:#999;text-align:center;margin:0">Email automatique — Luxyra</p>
       </div>
