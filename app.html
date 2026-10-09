@@ -5484,7 +5484,7 @@ function buildClotureText(c){
   t+="Bons cadeaux:       "+c.details.bon.toFixed(2)+" EUR\n";
   t+="Virements:          "+c.details.vir.toFixed(2)+" EUR\n";
   if(c.details.aut>0)t+="Autre:              "+c.details.aut.toFixed(2)+" EUR\n";
-  if(Number(c.details.enligne)>0)t+="Acomptes en ligne:  "+Number(c.details.enligne).toFixed(2)+" EUR\n";
+  if(Number(c.details.enligne)>0)t+="Payes en ligne:     "+Number(c.details.enligne).toFixed(2)+" EUR\n";
   t+="                    ----------\n";
   t+="TOTAL REGLEMENTS:   "+c.totalCA.toFixed(2)+" EUR\n";
   t+="\n--- CA PAR COLLABORATEUR ---\n";
@@ -5866,7 +5866,10 @@ function _lxPayBuckets(a){
   var b={cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0};
   function add(method,amt){
     var m=String(method||"").toLowerCase(); amt=Number(amt)||0;
-    if(m.indexOf("esp")>=0) b.esp+=amt;
+    // 2026-10-09 : reglement EN LIGNE (Click & Collect paye sur le site) -> poste « enligne »,
+    // comme _mapPaymentBucket (detail_paiement du ticket). Aucun ticket anterieur ne porte ce libelle.
+    if(m.indexOf("ligne")>=0||m.indexOf("stripe")>=0||m.indexOf("online")>=0) b.enligne+=amt;
+    else if(m.indexOf("esp")>=0) b.esp+=amt;
     else if(m.indexOf("cb")>=0) b.cb+=amt;
     else if(m.indexOf("ch")>=0) b.chq+=amt;
     else if(m.indexOf("bon")>=0) b.bon+=amt;
@@ -6168,7 +6171,7 @@ function doConfirmCloture(){
   h+='<div style="display:flex;justify-content:space-between"><span>Bons cadeaux</span><strong>'+c.details.bon.toFixed(2)+' \u20ac</strong></div>';
   h+='<div style="display:flex;justify-content:space-between"><span>Virements</span><strong>'+c.details.vir.toFixed(2)+' \u20ac</strong></div>';
   h+='<div style="display:flex;justify-content:space-between"><span>Autre</span><strong>'+c.details.aut.toFixed(2)+' \u20ac</strong></div>';
-  if(Number(c.details.enligne)>0)h+='<div style="display:flex;justify-content:space-between"><span>Acomptes en ligne</span><strong>'+Number(c.details.enligne).toFixed(2)+' \u20ac</strong></div>';
+  if(Number(c.details.enligne)>0)h+='<div style="display:flex;justify-content:space-between"><span>Payés en ligne (acomptes, Click &amp; Collect)</span><strong>'+Number(c.details.enligne).toFixed(2)+' \u20ac</strong></div>';
   h+='</div>';
   h+='<div style="display:flex;justify-content:space-between;padding:12px 0;font-weight:900;font-size:18px;border-bottom:2px solid #000"><span>TOTAL TTC</span><span>'+c.totalCA.toFixed(2)+' \u20ac</span></div>';
   h+='<div style="padding:6px 0;font-size:12px;color:#666;border-bottom:1px dashed var(--border)">';
@@ -6374,7 +6377,7 @@ function printClotureZ(){
   h+="<tr><td>Bons cadeaux / avoirs</td><td class=\"tr\">"+c.details.bon.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Virements</td><td class=\"tr\">"+c.details.vir.toFixed(2)+" \u20ac</td></tr>";
   if(c.details.aut>0)h+="<tr><td>Autre</td><td class=\"tr\">"+c.details.aut.toFixed(2)+" \u20ac</td></tr>";
-  if(c.details.enligne>0)h+="<tr><td>Acomptes en ligne (Stripe)</td><td class=\"tr\">"+c.details.enligne.toFixed(2)+" \u20ac</td></tr>";
+  if(c.details.enligne>0)h+="<tr><td>Payés en ligne (acomptes, Click &amp; Collect)</td><td class=\"tr\">"+c.details.enligne.toFixed(2)+" \u20ac</td></tr>";
   var totRegl=c.details.cb+c.details.esp+c.details.chq+c.details.bon+c.details.vir+c.details.aut+c.details.enligne;
   h+="<tr class=\"tline\"><td class=\"tb\">TOTAL REGLEMENTS</td><td class=\"tr tb\">"+totRegl.toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
@@ -26618,6 +26621,11 @@ function showCaisse(){
         if(!window.PAY_ACTIVE) return true;
         return window.PAY_ACTIVE[m.pak] !== false;
       });
+      // 2026-10-09 : commande Click & Collect payée en ligne -> d'abord (et seulement) le règlement en ligne
+      if(_tk._ccPayeEnLigne && (_tk._ccMontantEnLigne-_lxCcEnLigneDeja())>0.009){
+        methods=[];
+        h+='<button onclick="lxCcPayerEnLigne()" style="grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:10px;padding:18px 12px;border:1.5px solid rgba(129,199,132,.5);border-radius:14px;background:rgba(129,199,132,.1);cursor:pointer;min-height:56px"><span style="font-size:24px">🛍</span><span style="font-weight:800;font-size:14px;color:#fff">Payée en ligne — '+(_tk._ccMontantEnLigne-_lxCcEnLigneDeja()).toFixed(2)+' € (commande n°'+_tk._ccNumero+')</span></button>';
+      }
       // FIX 2026-05-12 v3 : UX simple — TOUTES les méthodes = 1 seul clic = ajout direct
       //   - Bon cadeau : sous-flow propre (recherche du bon)
       //   - MIXTE : tuile dédiée qui ouvre le picker pour saisir un montant partiel
@@ -31129,11 +31137,13 @@ async function sendSms(phone,message,context,clientNom){
   }
   // Check credits
   var creds=window.SMS_CREDITS||0;
-  if(creds<=0){
+  // 2026-10-09 : un message de plus de 160 caractères compte plusieurs SMS (débit réel côté serveur)
+  var _nbSmsMsg=1; try{ _nbSmsMsg=Math.max(1,lxSmsInfo(message).segments||1); }catch(_eN){}
+  if(creds<_nbSmsMsg){
     var htm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
     htm+='<div style="font-size:48px;margin-bottom:8px">\ud83d\udcf1</div>';
-    htm+='<h2 style="color:#ef5350">Plus de cr\u00e9dits SMS</h2>';
-    htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">Votre solde SMS est \u00e0 0. Rechargez pour continuer \u00e0 envoyer des SMS \u00e0 vos clients.</div>';
+    htm+='<h2 style="color:#ef5350">'+(creds>0?'Cr\u00e9dits SMS insuffisants':'Plus de cr\u00e9dits SMS')+'</h2>';
+    htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'+(creds>0?'Ce message compte '+_nbSmsMsg+' SMS (plus de 160 caract\u00e8res) et il ne reste que '+creds+' cr\u00e9dit(s). Il est mis en attente : rechargez, ou raccourcissez vos messages.':'Votre solde SMS est \u00e0 0. Rechargez pour continuer \u00e0 envoyer des SMS \u00e0 vos clients.')+'</div>';
     htm+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">';
     htm+='<button onclick="cM();buySMSPack(100)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">100 SMS \u2014 '+lxSmsPackPriceLabel(100)+'\u20ac</button>';
     htm+='<button onclick="cM();buySMSPack(250)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">250 SMS \u2014 '+lxSmsPackPriceLabel(250)+'\u20ac</button>';
@@ -31487,7 +31497,7 @@ function lxCcRemettre(id){
   h+='<label style="font-size:12px;color:var(--text3)">Code de retrait présenté par la cliente</label>';
   h+='<input id="ccCode" autocomplete="off" style="width:100%;font-size:22px;letter-spacing:4px;text-transform:uppercase;text-align:center;margin:6px 0 10px" maxlength="6" placeholder="XXXXXX">';
   h+='<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text2);margin-bottom:14px"><input type="checkbox" id="ccSansCode"> Pas de code : identité de la cliente vérifiée</label>';
-  h+='<button class="btn bg" style="width:100%" onclick="lxCcRemettreValider(\''+c.id+'\')">'+(c.paye?'Confirmer la remise':'Encaisser puis remettre')+'</button>';
+  h+='<button class="btn bg" style="width:100%" onclick="lxCcRemettreValider(\''+c.id+'\')">'+(c.paye?'Remettre (ticket de caisse « payé en ligne »)':'Encaisser puis remettre')+'</button>';
   h+='<button class="btn bs" style="width:100%;margin-top:8px" onclick="cM()">Annuler</button></div></div>';
   document.getElementById("modal").innerHTML=h;
   setTimeout(function(){ var e=document.getElementById("ccCode"); if(e) e.focus(); },100);
@@ -31498,26 +31508,34 @@ async function lxCcRemettreValider(id){
   var sansCode=!!((document.getElementById("ccSansCode")||{}).checked);
   if(!sansCode && code!==String(c.code_retrait||"").toUpperCase()){ showAlert("Code de retrait incorrect. Si la cliente n’a pas son code, vérifiez son identité et cochez la case.","warning"); return; }
   if(c.status==="retiree"){ showAlert("Déjà remise le "+_ccDate(c.collected_at)+" par "+(c.collected_by||"?"),"warning"); return; }
-  if(!c.paye){
-    // Encaissement normal en caisse (ticket NF525 habituel), puis remise automatique
-    cM();
-    _tk={step:3,stId:_defaultCollabId(),cId:null,items:(c.items||[]).map(function(it){return {sId:null,name:it.nom,price:Number(it.prix)||0,qty:Number(it.qty)||1,remise:0,isProd:true,prodId:it.produit_id};}),comment:"Click & Collect n°"+c.numero,remise:0};
-    _tk._ccCommandeId=c.id; _tk._ccCode=sansCode?null:code; _tk._ccSansCode=sansCode;
-    showCaisse();
+  // 2026-10-09 (NF525, accord Alexandre) : TOUTE remise passe par la caisse et produit un ticket scellé.
+  //  - à régler au salon : encaissement normal ;
+  //  - payée en ligne : le seul mode proposé est « Payé en ligne (Click & Collect) » (poste « en ligne »
+  //    de la clôture Z, compte 58010000), pour le montant payé sur le site. Le stock sort par le ticket.
+  cM();
+  _tk={step:3,stId:_defaultCollabId(),cId:null,items:(c.items||[]).map(function(it){return {sId:null,name:it.nom,price:Number(it.prix)||0,qty:Number(it.qty)||1,remise:0,isProd:true,prodId:it.produit_id};}),comment:"Click & Collect n°"+c.numero,remise:0};
+  _tk._ccCommandeId=c.id; _tk._ccCode=sansCode?null:code; _tk._ccSansCode=sansCode;
+  if(c.paye){ _tk._ccPayeEnLigne=true; _tk._ccMontantEnLigne=Math.round((Number(c.total)||0)*100)/100; _tk._ccNumero=c.numero; }
+  showCaisse();
+}
+var LX_CC_MODE_EN_LIGNE="Payé en ligne (Click & Collect)";
+function _lxCcEnLigneDeja(){ var s=0; (_tk&&_tk.payments||[]).forEach(function(p){ if(p&&p.method===LX_CC_MODE_EN_LIGNE) s+=Number(p.amount)||0; }); return Math.round(s*100)/100; }
+// Règlement d'une commande payée sur le site : uniquement pour le montant réellement payé en ligne.
+function lxCcPayerEnLigne(){
+  if(!_tk||!_tk._ccPayeEnLigne) return;
+  var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
+  total=Math.round(total*100)/100;
+  if(total < _tk._ccMontantEnLigne-0.009){
+    showAlert("Le ticket doit reprendre toute la commande n°"+_tk._ccNumero+" payée en ligne ("+_tk._ccMontantEnLigne.toFixed(2)+" €). Si un article manque, annulez la commande (la cliente est remboursée) et refaites une vente en caisse.","warning");
     return;
   }
-  var r=await _ccAction(c,"retiree",{code:code,sans_code:sansCode});
-  if(!r.ok){ showAlert(r.d.error||"Erreur","error"); go("commandes"); return; }
-  // Commande payée en ligne : sortie du stock au moment de la remise
-  (c.items||[]).forEach(function(it){
-    for(var i=0;i<PRODS.length;i++) if(PRODS[i].id===it.produit_id){
-      var av=PRODS[i].stk; PRODS[i].stk=Math.max(0,(Number(PRODS[i].stk)||0)-(Number(it.qty)||1));
-      if(typeof saveProduct==="function") saveProduct(PRODS[i]);
-      if(typeof logMouvementStock==="function") logMouvementStock(PRODS[i].id,it.nom,"vente",Number(it.qty)||1,av,PRODS[i].stk,"Click & Collect n°"+c.numero);
-      break;
-    }
-  });
-  cM(); toast("✅ Commande n°"+c.numero+" remise","success"); go("commandes");
+  var dispo=Math.round((_tk._ccMontantEnLigne-_lxCcEnLigneDeja())*100)/100;
+  var resteDu=Math.round((total-(_tk.paid||0)-(_tk.acompte||0))*100)/100;
+  var m=Math.min(dispo,resteDu); if(m<=0.009) return;
+  if(!_tk.payments) _tk.payments=[];
+  _tk.payments.push({method:LX_CC_MODE_EN_LIGNE, amount:m});
+  _tk.paid=(_tk.paid||0)+m;
+  _tk.step=5; showCaisse();
 }
 // Appelé juste après le scellement du ticket d'une commande à régler au salon
 async function lxCcApresEncaissement(cmdId, code, sansCode, tkNum){
