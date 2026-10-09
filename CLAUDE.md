@@ -1506,3 +1506,11 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
 - **Modèles d'emails** : `admin_email_modeles` (3 modèles de départ), choix du modèle à l'envoi groupé ; Historique = relances auto + emails admin.
 - **Score de santé** : `lx_score_sante(salon)` 0-100 (activité 40 / volume 25 / tendance 20 / RDV à venir 15), historisé chaque jour (`salons_scores`, cron `scores-sante-salons` 07:15 UTC) + push admin si chute ≥ 25 pts en 7 j (salons > 14 j). Colonne + tri « Santé », détail dans l'onglet Activité.
 - **Cockpit** : + alertes critiques (1 h), impayés, rappels du jour, clients en santé faible (< 40).
+
+## Admin pro, lot 3 (2026-10-09)
+- **Onglet 💬 Support** dans la fiche salon (`asOngletSupport` / `asChargerSupport` / `asRepondreSupport`) : mêmes tables et mêmes écritures que la page Chat support (support_conversations / support_messages).
+- **Vue de l'app du salon en lecture seule** : menu Actions → « 👁 Voir l'app du salon » → `asVoirApp` (journal admin_log `VUE_ADMIN_LECTURE`) → `/app.html?vue_admin=<salon_id>`.
+  - luxyra-supabase.js : `window._lxVueAdmin` ; refuse si l'utilisateur n'est pas support@luxyra.fr ; charge le salon par id ; bloque TOUTES les écritures (`_sb.from` insert/update/upsert/delete, `_sb.rpc` sauf founders_stats/admin_find_duplicate_clients, storage, fetch non-GET vers /api/ (sauf availability/fees/siret), /functions/v1/, /rest/v1/). Bandeau rouge. Pas de PIN opérateur, pas de déconnexion d'inactivité.
+  - Lecture via les policies `admin_lecture_vue` (10 tables). Aucune écriture NF525 possible depuis cette vue.
+- **Export factures Luxyra** : Finance → Stripe → « ⬇️ Export factures (CSV) » → worker `/api/admin/stripe` op `factures` (mois AAAA-MM ou 12 derniers mois), lecture seule, journalisé `STRIPE_EXPORT_FACTURES`.
+- **Recherche globale Ctrl+K** (ou « 🔍 Rechercher » dans la barre latérale) : salons (côté client) + RPC `admin_recherche(p_q)` (security definer, `is_admin()` obligatoire) sur clientes (nom, email, téléphone) et tickets (numéro exact). Lecture seule.

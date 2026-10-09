@@ -26,6 +26,40 @@ if (typeof supabase !== "undefined" && supabase.createClient) {
   _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
+// ===== VUE ADMIN EN LECTURE SEULE (2026-10-09) =====
+// app.html?vue_admin=<salon_id> ouvert depuis le panneau admin (compte support@luxyra.fr) :
+// l'app affiche les données du salon et TOUTE écriture est bloquée (base, fonctions, worker, stockage).
+window._lxVueAdmin = (function(){ try{ var v=new URLSearchParams(location.search).get("vue_admin"); return /^[0-9a-f-]{36}$/i.test(v||"")?v:null; }catch(e){ return null; } })();
+if (window._lxVueAdmin && _sb) {
+  (function(){
+    var refus = { data: null, error: { message: "Lecture seule (vue admin) : modification bloquée", code: "LX_LECTURE_SEULE" } };
+    function bloque(){ var p = Promise.resolve(refus); var prox = new Proxy(function(){}, { get: function(t,k){ if(k==="then") return p.then.bind(p); if(k==="catch") return p.catch.bind(p); if(k==="finally") return p.finally.bind(p); return function(){ return prox; }; }, apply: function(){ return prox; } }); return prox; }
+    var fromOrig = _sb.from.bind(_sb);
+    _sb.from = function(t){ var q = fromOrig(t); ["insert","update","upsert","delete"].forEach(function(m){ q[m] = function(){ console.warn("[VUE ADMIN] écriture bloquée :", t, m); return bloque(); }; }); return q; };
+    var rpcOrig = _sb.rpc.bind(_sb); var rpcLecture = { founders_stats:1, admin_find_duplicate_clients:1 };
+    _sb.rpc = function(n, a, o){ if (rpcLecture[n]) return rpcOrig(n, a, o); console.warn("[VUE ADMIN] RPC bloquée :", n); return bloque(); };
+    try { var stOrig = _sb.storage.from.bind(_sb.storage); _sb.storage.from = function(b){ var x = stOrig(b); ["upload","update","remove","move","copy"].forEach(function(m){ x[m] = function(){ return Promise.resolve(refus); }; }); return x; }; } catch(_e) {}
+    var fetchOrig = window.fetch.bind(window); var lectureApi = { "/api/salon/availability":1, "/api/stripe/fees":1, "/api/siret":1 };
+    window.fetch = function(u, o){
+      try {
+        var m = String((o && o.method) || (u && u.method) || "GET").toUpperCase();
+        var url = new URL(typeof u === "string" ? u : (u && u.url) || "", location.href);
+        var ecriture = m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
+        var sensible = (url.origin === location.origin && url.pathname.indexOf("/api/") === 0 && !lectureApi[url.pathname]) || /\/functions\/v1\//.test(url.pathname) || (/\/rest\/v1\//.test(url.pathname) && !/\/rest\/v1\/rpc\/(founders_stats)$/.test(url.pathname));
+        if (ecriture && sensible) { console.warn("[VUE ADMIN] requête bloquée :", m, url.pathname); return Promise.resolve(new Response(JSON.stringify({ error: "Lecture seule (vue admin)" }), { status: 403, headers: { "Content-Type": "application/json" } })); }
+      } catch (_e) {}
+      return fetchOrig(u, o);
+    };
+    document.addEventListener("DOMContentLoaded", function(){
+      var b = document.createElement("div");
+      b.id = "lxVueAdminBandeau";
+      b.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:2147483000;background:#b71c1c;color:#fff;font:700 13px/1.4 system-ui,sans-serif;padding:8px 12px;text-align:center;box-shadow:0 -2px 12px rgba(0,0,0,.4)";
+      b.textContent = "👁 VUE ADMIN — lecture seule : rien de ce que vous faites ici n'est enregistré";
+      document.body.appendChild(b);
+    });
+  })();
+}
+
 // ===== STATE =====
 var _salonId = null;       // UUID du salon connecté
 var _userId = null;        // UUID auth de l'utilisateur
@@ -465,7 +499,7 @@ async function checkSession() {
     // Check inactivité salon avant de restaurer
     var lastSalonActivity = parseInt(localStorage.getItem("lx_salon_last_activity") || "0", 10);
     var elapsed = lastSalonActivity ? (Date.now() - lastSalonActivity) : Infinity;
-    if (elapsed > SALON_SESSION_INACTIVITY_MS) {
+    if (elapsed > SALON_SESSION_INACTIVITY_MS && !window._lxVueAdmin) {
       // Session salon expirée → signOut Supabase + cleanup + login screen.
       // On vide aussi lx_current_op pour forcer le re-PIN après re-login
       // (sinon Amandine resterait active après que le salon se reconnecte).
@@ -1007,7 +1041,14 @@ async function loadSalonData() {
   try{
 
   // 1. Charger le salon
-  var sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
+  var sRes;
+  if (window._lxVueAdmin) {
+    var _u = null; try { _u = (await _sb.auth.getUser()).data.user; } catch(_e) {}
+    if (!_u || String(_u.email||"").toLowerCase() !== "support@luxyra.fr") { alert("Vue admin réservée au compte support@luxyra.fr"); location.href = "/app.html"; return; }
+    sRes = await _sb.from("salons").select("*").eq("id", window._lxVueAdmin).limit(1);
+  } else {
+    sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
+  }
   if (sRes.error || !sRes.data || sRes.data.length === 0) {
     // Session existe mais aucun salon lié au user → on déconnecte proprement
     // (évite le "zombie state" où l'UI se charge sans données)

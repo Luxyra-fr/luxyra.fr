@@ -140,6 +140,7 @@ tr:hover{background:rgba(255,255,255,.02)}
   </div>
   <div class="sb-nav">
     <div class="sb-item active" data-tab="cockpit" onclick="nav('cockpit')"><span class="icon">📊</span>Cockpit<span class="sb-badge" id="badgeAlerts"></span></div>
+    <div class="sb-item" onclick="lxRechercheOuvrir()" title="Ctrl+K"><span class="icon">🔍</span>Rechercher<span style="margin-left:auto;font-size:10px;color:var(--text3)">Ctrl K</span></div>
     <div class="sb-item" data-tab="salons" onclick="nav('salons','liste')"><span class="icon">🏠</span>Salons<span class="sb-badge" id="badgeSalons"></span></div>
     <div class="sb-item" data-tab="finance" onclick="nav('finance','revenus')"><span class="icon">💰</span>Finance</div>
     <div class="sb-item" data-tab="communication" onclick="nav('communication','chat')"><span class="icon">💬</span>Communication<span class="sb-badge" id="badgeChat"></span></div>
@@ -2472,7 +2473,7 @@ function openD(id){
   h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+((_salonHealthOf(s.id)||{}).collaborateurs!=null?_salonHealthOf(s.id).collaborateurs:s.collabs)+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
   // 2026-10-09 : fiche à onglets
   var _ot=window._asOngletCourant||"identite";
-  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 12px">'+[["identite","🏢 Identité"],["abonnement","💳 Abonnement"],["suivi","🧭 Suivi"],["activite","📈 Activité"],["technique","⚙️ Technique & SMS"]].map(function(t){return '<button class="tf-btn dpTabBtn'+(_ot===t[0]?' active':'')+'" data-t="'+t[0]+'" onclick="asOnglet(\''+t[0]+'\')">'+t[1]+'</button>';}).join("")+'</div>';
+  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0 12px">'+[["identite","🏢 Identité"],["abonnement","💳 Abonnement"],["suivi","🧭 Suivi"],["activite","📈 Activité"],["support","💬 Support"],["technique","⚙️ Technique & SMS"]].map(function(t){return '<button class="tf-btn dpTabBtn'+(_ot===t[0]?' active':'')+'" data-t="'+t[0]+'" onclick="asOnglet(\''+t[0]+'\')">'+t[1]+'</button>';}).join("")+'</div>';
   h+='<div class="dpTab" data-t="identite"'+(_ot==="identite"?'':' style="display:none"')+'>';
 
   // VERIFICATION
@@ -2563,6 +2564,7 @@ function openD(id){
 
   h+='</div><div class="dpTab" data-t="suivi"'+(_ot==="suivi"?'':' style="display:none"')+'>'+asOngletSuivi(s)+'</div>';
   h+='<div class="dpTab" data-t="activite"'+(_ot==="activite"?'':' style="display:none"')+'>'+asOngletActivite(s)+'</div>';
+  h+='<div class="dpTab" data-t="support"'+(_ot==="support"?'':' style="display:none"')+'>'+asOngletSupport(s)+'</div>';
   h+='<div class="dpTab" data-t="technique"'+(_ot==="technique"?'':' style="display:none"')+'>';
   // TECHNIQUE
   h+='<div class="dp-section"><div class="dp-label">⚙️ Technique</div>';
@@ -4077,6 +4079,7 @@ function asMenuActions(s){
   if(s.status==="trial"){ o.push(["essai7","⏰ Prolonger l'essai de 7 jours"],["essai14","⏰ Prolonger l'essai de 14 jours"],["essai30","⏰ Prolonger l'essai de 30 jours"]); }
   if(s.status==="active"||s.status==="trial") o.push(["plan","📦 Changer de forfait ("+(s.plan==="pro"?"→ Essentiel":"→ Pro")+")"]);
   if(s.stripeSub) o.push(["mois","🎁 Offrir des mois d'abonnement"]);
+  o.push(["vue","👁 Voir l'app du salon (lecture seule)"],["support","💬 Ouvrir le support"]);
   o.push(["sms","📱 Ajouter des SMS"],["email","✉️ Envoyer un email"],["note","📝 Noter un échange"],["rappel","📞 Programmer un rappel"]);
   if(s.subdomain) o.push(["site","🌐 Ouvrir son site"]);
   if(s.status!=="suspended") o.push(["suspend","⛔ Suspendre le compte"]); else o.push(["reactivate","✅ Réactiver le compte"]);
@@ -4093,7 +4096,97 @@ async function asAction(id,v){
   if(v==="email"){ window._ASEL={}; window._ASEL[id]=1; return asGroupe("email"); }
   if(v==="note"||v==="rappel"){ window._asOngletCourant="suivi"; openD(id); setTimeout(function(){ var el=document.getElementById(v==="note"?"asNote-"+id:"asRappel-"+id); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } },150); return; }
   if(v==="site") return window.open("https://"+s.subdomain+".luxyra.fr","_blank");
+  if(v==="vue") return asVoirApp(id);
+  if(v==="support"){ window._asOngletCourant="support"; openD(id); return; }
 }
+
+// ============================================================
+// ADMIN PRO, LOT 3 (2026-10-09) : support dans la fiche, vue salon, export factures, recherche globale
+// ============================================================
+// --- Onglet Support de la fiche ---
+function asOngletSupport(s){
+  setTimeout(function(){ asChargerSupport(s.id); },20);
+  return '<div class="dp-section"><div class="dp-label">💬 Conversations support</div><div id="asSupport-'+s.id+'" style="font-size:13px;color:var(--text2)">Chargement…</div></div>';
+}
+async function asChargerSupport(id, convChoisie){
+  var el=document.getElementById("asSupport-"+id); if(!el) return;
+  var cv=await _sb.from("support_conversations").select("*").eq("salon_id",id).order("last_message_at",{ascending:false});
+  var convs=cv.data||[];
+  if(!convs.length){ el.innerHTML='<i>Aucune conversation avec ce salon pour l\'instant.</i>'; return; }
+  var cur=convChoisie||(convs[0]&&convs[0].id);
+  var h='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'+convs.map(function(c){ return '<button class="tf-btn'+(c.id===cur?' active':'')+'" onclick="asChargerSupport(\''+id+'\',\''+c.id+'\')">'+new Date(c.last_message_at||c.created_at).toLocaleDateString("fr-FR")+(c.status==="open"?' • ouverte':' • résolue')+(c.unread_count_admin?' ('+c.unread_count_admin+' non lu)':'')+'</button>'; }).join("")+'</div>';
+  var ms=await _sb.from("support_messages").select("*").eq("conversation_id",cur).order("created_at",{ascending:true}).limit(300);
+  h+='<div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg3)">';
+  (ms.data||[]).forEach(function(m){
+    var moi=m.sender==="admin", bot=m.sender==="bot";
+    h+='<div style="display:flex;justify-content:'+(moi?'flex-end':'flex-start')+';margin:4px 0"><div style="max-width:80%;padding:7px 10px;border-radius:10px;background:'+(moi?'rgba(200,168,78,.18)':bot?'rgba(100,181,246,.12)':'var(--bg2)')+';font-size:13px;white-space:pre-wrap"><div style="font-size:10px;color:var(--text3)">'+(moi?'Toi':bot?'Bot':'Salon')+' · '+new Date(m.created_at).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+'</div>'+saEsc(m.message)+'</div></div>';
+  });
+  h+='</div><div style="display:flex;gap:6px;margin-top:8px"><textarea id="asSupRep-'+id+'" rows="2" placeholder="Répondre au salon…" style="flex:1;padding:8px;border-radius:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></textarea><button class="tb-btn primary" onclick="asRepondreSupport(\''+id+'\',\''+cur+'\')">Envoyer</button></div>';
+  el.innerHTML=h;
+  var box=el.querySelector('div[style*="max-height:420px"]'); if(box) box.scrollTop=box.scrollHeight;
+  try{ await _sb.from("support_messages").update({read_by_admin:true}).eq("conversation_id",cur).eq("sender","client"); await _sb.from("support_conversations").update({unread_count_admin:0}).eq("id",cur); }catch(e){}
+}
+async function asRepondreSupport(id,conv){
+  var t=document.getElementById("asSupRep-"+id); var msg=(t&&t.value||"").trim(); if(!msg) return;
+  var r=await _sb.from("support_messages").insert({salon_id:id,conversation_id:conv,sender:"admin",message:msg,read_by_admin:true,read_by_client:false});
+  if(r.error){ alert("❌ "+r.error.message); return; }
+  await _sb.from("support_conversations").update({last_message_at:new Date().toISOString(),unread_count_client:1}).eq("id",conv);
+  asChargerSupport(id,conv);
+}
+
+// --- Voir l'app comme le salon (lecture seule) ---
+async function asVoirApp(id){
+  var s=gSalon(id); if(!s) return;
+  if(!confirm("Ouvrir l'application de « "+s.nom+" » en LECTURE SEULE ?\n\nTu vois exactement ce que voit le salon. Rien de ce que tu fais dans cette fenêtre n'est enregistré (toute modification est bloquée). L'ouverture est notée dans le journal.")) return;
+  try{ await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"VUE_ADMIN_LECTURE",details:"Ouverture de l'app du salon en lecture seule"}); }catch(e){}
+  window.open("/app.html?vue_admin="+encodeURIComponent(id),"_blank");
+}
+
+// --- Export des factures Luxyra (Stripe) ---
+async function saExportFactures(){
+  var m=prompt("Mois à exporter (AAAA-MM), ou laisse vide pour les 12 derniers mois :", new Date().toISOString().slice(0,7)); if(m===null) return;
+  var d=await saApi({op:"factures",mois:m.trim()});
+  if(d.error){ alert("❌ "+d.error); return; }
+  var L=d.factures||[]; if(!L.length){ alert("Aucune facture sur cette période."); return; }
+  var q=function(v){ v=(v==null?"":String(v)); return '"'+v.replace(/"/g,'""')+'"'; };
+  var cols=["Date","Numéro","Salon","Email","Statut","HT","TVA","TTC","Payé","Remboursé","Lien PDF"];
+  var rows=[cols.map(q).join(";")].concat(L.map(function(f){ return [f.date,f.numero,f.salon,f.email,f.statut,String(f.ht).replace(".",","),String(f.tva).replace(".",","),String(f.ttc).replace(".",","),String(f.paye).replace(".",","),String(f.rembourse).replace(".",","),f.pdf].map(q).join(";"); }));
+  var tot=L.reduce(function(a,f){return a+(Number(f.paye)||0)-(Number(f.rembourse)||0);},0);
+  rows.push(["","","","","TOTAL encaissé net","","","","",String(Math.round(tot*100)/100).replace(".",","),""].map(q).join(";"));
+  var blob=new Blob(["﻿"+rows.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="luxyra-factures-"+(m.trim()||"12-mois")+".csv"; a.click();
+}
+
+// --- Recherche globale (Ctrl+K) ---
+function lxRechercheOuvrir(){
+  if(document.getElementById("lxRech")) return;
+  var d=document.createElement("div"); d.id="lxRech";
+  d.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:10vh 12px 12px";
+  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher un salon, une cliente (nom, téléphone, email), un ticket (n°)…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border);outline:none"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
+  d.addEventListener("click",function(e){ if(e.target===d) d.remove(); });
+  document.body.appendChild(d);
+  var i=document.getElementById("lxRechQ"); i.focus();
+  var tm=null; i.addEventListener("input",function(){ clearTimeout(tm); tm=setTimeout(function(){ lxRechercher(i.value); },250); });
+}
+async function lxRechercher(q){
+  var el=document.getElementById("lxRechR"); if(!el) return; q=String(q||"").trim();
+  if(q.length<2){ el.innerHTML='<div style="padding:10px 16px">Tape au moins 2 caractères</div>'; return; }
+  var ql=q.toLowerCase();
+  var sal=SALONS.filter(function(s){ return (s.nom+" "+s.ville+" "+s.email+" "+s.siret+" "+s.tel+" "+s.gerantNom+" "+s.gerantPrenom).toLowerCase().indexOf(ql)>=0; }).slice(0,8);
+  var h='';
+  if(sal.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Salons</div>'+sal.map(function(s){ return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+s.id+'\')},120)">🏠 <b>'+saEsc(s.nom)+'</b> <span style="color:var(--text3)">'+saEsc(s.ville)+' · '+saEsc(s.email)+'</span></div>'; }).join("");
+  el.innerHTML=h+'<div style="padding:10px 16px;color:var(--text3)">Recherche des clientes et tickets…</div>';
+  var r=await _sb.rpc("admin_recherche",{p_q:q});
+  if(r.error){ el.innerHTML=h+'<div style="padding:10px 16px;color:var(--red)">'+saEsc(r.error.message)+'</div>'; return; }
+  var d=r.data||{}, cl=d.clients||[], tk=d.tickets||[];
+  if(cl.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Clientes</div>'+cl.map(function(c){ var s=gSalon(c.salon_id); return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+c.salon_id+'\')},120)">👤 <b>'+saEsc((c.prenom||"")+" "+(c.nom||""))+'</b> <span style="color:var(--text3)">'+saEsc(c.telephone||"")+' '+saEsc(c.email||"")+' · chez '+saEsc(s?s.nom:"?")+'</span></div>'; }).join("");
+  if(tk.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Tickets</div>'+tk.map(function(t){ var s=gSalon(t.salon_id); return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+t.salon_id+'\')},120)">🧾 Ticket n°<b>'+saEsc(t.num)+'</b> <span style="color:var(--text3)">'+saEsc(t.date_ticket)+' · '+(Number(t.total_ttc)||0).toFixed(2)+' € · '+saEsc(t.client_nom||"")+' · '+saEsc(s?s.nom:"?")+(t.status==="cancelled"?' · annulé':'')+'</span></div>'; }).join("");
+  el.innerHTML=h||'<div style="padding:10px 16px">Aucun résultat</div>';
+}
+document.addEventListener("keydown",function(e){
+  if((e.ctrlKey||e.metaKey)&&String(e.key).toLowerCase()==="k"){ e.preventDefault(); lxRechercheOuvrir(); }
+  if(e.key==="Escape"){ var r=document.getElementById("lxRech"); if(r) r.remove(); }
+});
 
 // === SIRET : appliquer les informations officielles à la fiche (2026-10-09) ===
 async function lxAppliquerSiret(id,mode){
@@ -4152,7 +4245,7 @@ async function saChargerOverview(){
   var d=await saApi({op:"overview"});
   if(d.error){ el.innerHTML='<div style="color:var(--red)">❌ '+saEsc(d.error)+'</div>'; return; }
   var a=d.abonnements||{}, f=a.par_forfait||{};
-  var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:12px;color:var(--text2)">Stripe en mode <b style="color:'+(d.mode==="live"?"var(--green)":"var(--orange)")+'">'+(d.mode==="live"?"RÉEL":"TEST")+'</b></div><button class="tb-btn" onclick="saChargerOverview()">↻ Actualiser</button></div>';
+  var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:12px;color:var(--text2)">Stripe en mode <b style="color:'+(d.mode==="live"?"var(--green)":"var(--orange)")+'">'+(d.mode==="live"?"RÉEL":"TEST")+'</b></div><div style="display:flex;gap:6px"><button class="tb-btn" onclick="saExportFactures()">⬇️ Export factures (CSV)</button><button class="tb-btn" onclick="saChargerOverview()">↻ Actualiser</button></div></div>';
   h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">';
   h+=saCarte("Revenu mensuel (abonnements)",saE(a.mrr),"remises déduites, hors essais","var(--gold)");
   h+=saCarte("Abonnés actifs",a.actifs||0,"Essentiel "+(f.essentiel||0)+" · Pro "+(f.pro||0)+" · Fondateur "+(f.pro_fondateur||0));
