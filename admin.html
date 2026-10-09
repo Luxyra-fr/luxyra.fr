@@ -1001,7 +1001,8 @@ async function emCharger(){
 async function emBasculer(on){
   if(!confirm(on?"Activer les relances automatiques ? Les salons en essai concernés recevront le prochain email demain matin.":"Désactiver les relances automatiques ?")) return;
   var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-  var merged=Object.assign({},(cur.data&&cur.data.config)||{},{relances_essai_actives:on});
+  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié. Réessaie."); return; }
+  var merged=Object.assign({},cur.data.config,{relances_essai_actives:on});
   var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (relances)"}).eq("id",1);
   if(r.error){ alert("❌ "+r.error.message); return; } window._appConfig=merged;
   try{ await _sb.from("admin_log").insert({action:on?"RELANCES_ESSAI_ON":"RELANCES_ESSAI_OFF",details:""}); }catch(e){}
@@ -2370,7 +2371,7 @@ function asOngletSuivi(s){
   var su=asSuivi(s.id);
   var h=asBlocDemarrage(s)+'<div class="dp-section"><div class="dp-label">🧭 Suivi commercial</div>';
   h+='<div class="dp-field"><span class="k">Étape</span><span class="v"><select onchange="asSauverSuivi(\''+s.id+'\',{etape:this.value})" style="padding:4px 8px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)">'+Object.keys(ETAPES).map(function(k){return '<option value="'+k+'"'+(su.etape===k?' selected':'')+'>'+ETAPES[k]+'</option>';}).join("")+'</select></span></div>';
-  h+='<div class="dp-field"><span class="k">Étiquettes</span><span class="v">'+(su.etiquettes||[]).map(function(e){return '<span class="badge" style="cursor:pointer" title="Retirer" onclick="asRetirerEtiquette(\''+s.id+'\',\''+saEsc(e).replace(/'/g,"")+'\')">'+saEsc(e)+' ✕</span>';}).join(" ")+' <button class="dp-btn" style="font-size:10px;padding:2px 8px" onclick="asAjouterEtiquette(\''+s.id+'\')">+ Ajouter</button></span></div>';
+  h+='<div class="dp-field"><span class="k">Étiquettes</span><span class="v">'+(su.etiquettes||[]).map(function(e){return '<span class="badge" style="cursor:pointer" title="Retirer" onclick="asRetirerEtiquette(\''+s.id+'\','+(su.etiquettes||[]).indexOf(e)+')">'+saEsc(e)+' ✕</span>';}).join(" ")+' <button class="dp-btn" style="font-size:10px;padding:2px 8px" onclick="asAjouterEtiquette(\''+s.id+'\')">+ Ajouter</button></span></div>';
   h+='<div class="dp-field"><span class="k">Rappel</span><span class="v"><input type="date" id="asRappel-'+s.id+'" value="'+(su.rappel_le||"")+'" style="padding:4px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"></span></div>';
   h+='<input id="asRappelNote-'+s.id+'" value="'+saEsc(su.rappel_note||"")+'" placeholder="Objet du rappel (ex. rappeler pour passer au Pro)" style="width:100%;padding:6px;border-radius:6px;background:var(--bg3);color:var(--text);border:1px solid var(--border);font-size:12px">';
   h+='<div style="display:flex;gap:6px;margin-top:6px"><button class="dp-btn" onclick="asSauverRappel(\''+s.id+'\')">💾 Enregistrer le rappel</button>'+(su.rappel_le?'<button class="dp-btn" onclick="asSauverSuivi(\''+s.id+'\',{rappel_le:null,rappel_note:null}).then(function(){openD(\''+s.id+'\')})">✓ Rappel fait</button>':'')+'</div>';
@@ -2397,7 +2398,7 @@ async function asSauverRappel(id){
   await asSauverSuivi(id,{rappel_le:d,rappel_note:n}); alert(d?"📞 Rappel enregistré pour le "+new Date(d).toLocaleDateString("fr-FR"):"Rappel retiré");
 }
 async function asAjouterEtiquette(id){ var e=(prompt("Étiquette :","")||"").trim(); if(!e) return; var arr=(asSuivi(id).etiquettes||[]).slice(); if(arr.indexOf(e)<0) arr.push(e); await asSauverSuivi(id,{etiquettes:arr}); openD(id); }
-async function asRetirerEtiquette(id,e){ var arr=(asSuivi(id).etiquettes||[]).filter(function(x){return x!==e;}); await asSauverSuivi(id,{etiquettes:arr}); openD(id); }
+async function asRetirerEtiquette(id,e){ var _l=asSuivi(id).etiquettes||[]; if(typeof e==="number") e=_l[e]; var arr=_l.filter(function(x){return x!==e;}); await asSauverSuivi(id,{etiquettes:arr}); openD(id); }
 
 // --- Fiche : onglet Activité & journal ---
 function asOngletActivite(s){
@@ -3513,7 +3514,7 @@ function smsVueSalons(d){
     h+='<td style="font-size:11px">'+(s.dernier_envoi?new Date(s.dernier_envoi).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—")+'</td>';
     h+='<td>'+(s.en_attente?'<span title="SMS non envoyés faute de crédits" style="color:var(--orange)">'+s.en_attente+'</span>':'0')+'</td><td style="font-size:11px">'+(s.mode==="native"?"📱 téléphone":"Brevo")+'</td>';
     h+='<td>'+(s.bloque?'<span style="color:var(--red);font-weight:700">⛔ Bloqué</span>':'<span style="color:var(--green)">Actif</span>')+'</td>';
-    h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsAjuster(\''+s.id+'\',1)">+ SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsAjuster(\''+s.id+'\',-1)">− SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsHistorique(\''+s.id+'\',\''+saEsc(s.nom).replace(/'/g,"")+'\')">Historique</button><button class="dp-btn" style="font-size:10px;padding:3px 7px;color:'+(s.bloque?'var(--green)':'var(--red)')+'" onclick="smsBloquer(\''+s.id+'\','+(!s.bloque)+')">'+(s.bloque?'Débloquer':'Bloquer')+'</button></div></td></tr>';
+    h+='<td><div style="display:flex;gap:4px;flex-wrap:wrap"><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsAjuster(\''+s.id+'\',1)">+ SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsAjuster(\''+s.id+'\',-1)">− SMS</button><button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="smsHistorique(\''+s.id+'\')">Historique</button><button class="dp-btn" style="font-size:10px;padding:3px 7px;color:'+(s.bloque?'var(--green)':'var(--red)')+'" onclick="smsBloquer(\''+s.id+'\','+(!s.bloque)+')">'+(s.bloque?'Débloquer':'Bloquer')+'</button></div></td></tr>';
   });
   return h+'</table></div></div><div style="font-size:11px;color:var(--text3);margin-top:8px">« En attente » = rappels non envoyés faute de crédits (ils partent dès la recharge s\'ils sont encore utiles). « Bloqué » = plus aucun SMS payant envoyé pour ce salon.</div>';
 }
@@ -3532,6 +3533,7 @@ async function smsBloquer(id,b){
   var r=await _sb.rpc("admin_sms_bloquer",{p_salon:id,p_bloque:b,p_motif:m}); if(r.error){ alert("❌ "+r.error.message); return; } smsCharger();
 }
 async function smsHistorique(id,nom){
+  if(nom==null){ var _sx=(window._smsStats&&window._smsStats.salons||[]).filter(function(x){return x.id===id;})[0]||gSalon(id); nom=_sx?_sx.nom:""; }
   var r=await _sb.from("sms_mouvements").select("*").eq("salon_id",id).order("cree_le",{ascending:false}).limit(100);
   var T={achat_pack:"🛒 Achat pack",bonus:"🎁 Bonus",ajout_admin:"➕ Ajout admin",retrait_admin:"➖ Retrait admin"};
   var L=(r.data||[]).map(function(x){return new Date(x.cree_le).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"})+"  "+(T[x.type]||x.type)+"  "+(x.delta>0?"+":"")+x.delta+" → solde "+(x.solde_apres==null?"?":x.solde_apres)+(x.montant_eur?"  ("+Number(x.montant_eur).toFixed(2)+" €)":"")+(x.motif?"  — "+x.motif:"");});
@@ -3552,7 +3554,8 @@ async function smsSauverReglages(){
   if(err){ alert("Valeur invalide : "+err); return; }
   if(!confirm("Enregistrer ces réglages SMS ?")) return;
   var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
-  var merged=Object.assign({},(cur.data&&cur.data.config)||{},patch);
+  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié. Réessaie."); return; }
+  var merged=Object.assign({},cur.data.config,patch);
   var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (réglages SMS)"}).eq("id",1);
   if(r.error){ alert("❌ "+r.error.message); return; }
   window._appConfig=merged; try{ await _sb.from("admin_log").insert({action:"SMS_REGLAGES",details:JSON.stringify(patch)}); }catch(e){}
@@ -4118,6 +4121,9 @@ async function asAction(id,v){
   if(!v) return; var s=gSalon(id); if(!s) return;
   if(/^essai\d+$/.test(v)){ var j=parseInt(v.slice(5),10); if(!confirm("Prolonger l'essai de "+s.nom+" de "+j+" jours ?")) return; var d=new Date(Math.max(Date.now(), new Date(s.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+j);
     await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id); s.trialEnd=d.toISOString(); try{ await _sb.from("admin_notes_salons").insert({salon_id:id,type:"autre",note:"Essai prolongé de "+j+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} alert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR")); openD(id); return; }
+  if(v==="suspend"&&!confirm("Suspendre le compte de « "+s.nom+" » ? Le salon n'aura plus accès à l'application.")) return;
+  if(v==="reactivate"&&!confirm("Réactiver le compte de « "+s.nom+" » ?")) return;
+  if(v==="reset"&&!confirm("Envoyer à « "+s.nom+" » ("+s.email+") un lien pour choisir un nouveau mot de passe ?")) return;
   if(v==="plan"||v==="suspend"||v==="reactivate"||v==="reset"||v==="delete"){ return actS(id,v); }
   if(v==="mois") return lxOfferMonths(id);
   if(v==="sms") return addSmsCreditsCustom(id);

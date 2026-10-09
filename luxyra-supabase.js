@@ -32,7 +32,9 @@ if (typeof supabase !== "undefined" && supabase.createClient) {
       setItem: function(k, x){ if (String(k).indexOf(_lxCleAdmin) === 0) window._lxVraiLS.setItem(k, x); },
       removeItem: function(){ /* jamais : ne déconnecte pas le panneau admin */ }
     };
-    _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storageKey: _lxCleAdmin, storage: _lxStockAdmin, detectSessionInUrl: false } });
+    // global.fetch renvoie vers window.fetch AU MOMENT de l'appel : supabase-js (base, RPC, fonctions serveur,
+    // stockage) passe donc aussi par le filtre lecture seule posé plus bas (sinon il garde le fetch d'origine).
+    _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storageKey: _lxCleAdmin, storage: _lxStockAdmin, detectSessionInUrl: false }, global: { fetch: function(u, o){ return window.fetch(u, o); } } });
   } else {
     _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   }
@@ -64,7 +66,7 @@ if (window._lxVueAdmin && _sb) {
         var m = String((o && o.method) || (u && u.method) || "GET").toUpperCase();
         var url = new URL(typeof u === "string" ? u : (u && u.url) || "", location.href);
         var ecriture = m !== "GET" && m !== "HEAD" && m !== "OPTIONS";
-        var sensible = (url.origin === location.origin && url.pathname.indexOf("/api/") === 0 && !lectureApi[url.pathname]) || /\/functions\/v1\//.test(url.pathname) || (/\/rest\/v1\//.test(url.pathname) && !/\/rest\/v1\/rpc\/(founders_stats)$/.test(url.pathname));
+        var sensible = (url.origin === location.origin && url.pathname.indexOf("/api/") === 0 && !lectureApi[url.pathname]) || /\/functions\/v1\//.test(url.pathname) || (/\/rest\/v1\//.test(url.pathname) && !/\/rest\/v1\/rpc\/(founders_stats|admin_find_duplicate_clients)$/.test(url.pathname)) || (/\/storage\/v1\//.test(url.pathname) && !/\/storage\/v1\/object\/(sign|list)\//.test(url.pathname));
         if (ecriture && sensible) { console.warn("[VUE ADMIN] requête bloquée :", m, url.pathname); return Promise.resolve(new Response(JSON.stringify({ error: "Lecture seule (vue admin)" }), { status: 403, headers: { "Content-Type": "application/json" } })); }
       } catch (_e) {}
       return fetchOrig(u, o);
@@ -2888,8 +2890,11 @@ async function _lxRafraichirClotures() {
     var r = await _sb.from("clotures").select("*").eq("salon_id", _salonId).order("num", { ascending: false }).limit(500);
     if (r.error || !r.data) return false;
     var fresh = r.data.slice().reverse().map(_mapClotureRow);
-    var ids = {}; fresh.forEach(function(c){ ids[c.id] = true; });
-    var older = (window.CLOTURES || []).filter(function(c){ return c && c.id && !ids[c.id] && (c.num||0) < ((fresh[0] && fresh[0].num) || 0); });
+    var ids = {}, jours = {}; fresh.forEach(function(c){ ids[c.id] = true; if (c.date) jours[c.date] = true; });
+    // FIX 2026-10-09 : on garde aussi une Z locale pas encore enregistrée (réseau coupé, file WAL),
+    // même si son numéro dépasse ceux de la base -> la Z suivante ne reprend jamais le même numéro.
+    // Une Z locale dont la journée existe déjà en base est écartée (la base fait foi).
+    var older = (window.CLOTURES || []).filter(function(c){ return c && c.id && !ids[c.id] && !(c.date && jours[c.date]); });
     window.CLOTURES = older.concat(fresh).sort(function(a,b){ return (a.num||0) - (b.num||0); });
     if (!window.LOCKED_DAYS) window.LOCKED_DAYS = {};
     window.CLOTURES.forEach(function(c){ if (c && c.date) window.LOCKED_DAYS[c.date] = true; });

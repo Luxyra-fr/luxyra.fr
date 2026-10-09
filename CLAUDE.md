@@ -1532,3 +1532,12 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
 - Packs SMS : crédit ATOMIQUE `crediter_sms` (avant : lecture puis écriture). Les SMS en attente repartent via le déclencheur existant `trg_sms_recharge`.
 - `sms_conso_jour` (salon, jour, nb_sms, nb_rembourses) alimentée par `decrement_sms_credits` / `crediter_sms`. `admin_sms_stats` : `en_attente` = statut en_attente seulement (affichait 9 chez Amandine alors que tout était parti), + `conso_mois`, `conso_par_mois`, `conso_depuis`.
 - Admin SMS : carte « SMS facturés ce mois » (nb réel) + tableau « 💶 Revenus SMS (12 mois) » : packs vendus (worker `/api/admin/stripe` op `sms_revenus`, sessions Checkout `metadata.type=sms_pack`), SMS facturés, coût (`sms_cost_brevo_eur` = 0,06), marge.
+
+## 2026-10-09 (nuit) — Revue complète des 4 derniers jours + corrections
+- Alertes SMS gérant : UNE fois par épisode (`trg_sms_alertes_reset` remet `sms_alerte_basse_le` / `last_sms_credit_alert_at` à null quand le solde remonte > 10). Alerte « épuisé » seulement si solde réellement à 0 (`gate.soldeZero`).
+- Worker : `customer.subscription.updated` reconnaît PRICE_PRO_FOUNDER (repassait les Fondateurs en Essentiel) ; prix inconnu = forfait inchangé. `handleSwitchPlan` met `metadata[plan]`. Pack SMS idempotent (id de session Stripe dans `sms_mouvements.motif`). Annulation C&C non payée filtrée `paye=eq.false` (paiement concurrent jamais annulé sans remboursement).
+- Vue admin : `createClient(..., {global:{fetch: → window.fetch}})` pour que supabase-js (fonctions serveur, stockage = getters qui recréent un client) passe par le filtre lecture seule ; stockage en écriture bloqué (sauf sign/list).
+- C&C : relecture du statut en base avant d'ouvrir la caisse (jamais deux tickets pour une commande).
+- `_lxRafraichirClotures` garde une Z locale non encore enregistrée (sauf si la journée existe en base).
+- Admin : garde lecture `app_config` avant fusion (emBasculer, smsSauverReglages) ; apostrophes dans onclick (historique SMS, étiquettes) ; confirmations Suspendre / Réactiver / Lien mot de passe.
+- Connu, non traité : webhook Connect ne finalise pas acomptes/empreintes/cartes si la cliente ferme l'onglet (finalisation au retour seulement, déjà le cas avant) ; bande mensuelle `_modeCanonique` range « Payé en ligne » en « Autre » (affichage).
