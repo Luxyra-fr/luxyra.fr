@@ -1477,3 +1477,8 @@ Avant : la dernière sauvegarde écrasait silencieusement l'autre appareil. Main
 
 ## 2026-10-09 — Note en bas des tickets (demande Delphinecoiff, promise par Alexandre dans le chat)
 Paramètres → Infos établissement → « Note en bas des tickets » (colonne `salons.note_ticket`, 600 car. max, `SALON_CONFIG.noteTicket`). Rendue dans `buildTicketHTML` juste avant les mentions NF525 (affichage seulement : le hash est calculé avant le rendu, aucune donnée chaînée touchée). Bot mis à jour (clé `parametres`).
+
+## 2026-10-09 — Gestion Stripe dans le panneau admin
+- Worker `POST /api/admin/stripe` (JWT admin support@luxyra.fr obligatoire) : `overview` (revenu mensuel remises déduites, abonnés par forfait, nouveaux/départs du mois, impayés, solde, virements, litiges, factures impayées, comptes Stripe des salons) ; `salon` (abonnement, remises, factures + PDF, compte Stripe du salon et pièces manquantes, paiements des clientes 90 j) ; actions `coupon`, `retirer_coupon`, `changer_forfait` (même règle Fondateur que switch-plan), `annuler_fin_periode`, `reprendre`, `relancer_facture`, `rembourser` (motif obligatoire ; paiement cliente → `reverse_transfer` repris au salon ; refus si le paiement n'appartient pas au salon), `lien_inscription` (account_link). Toute action → `admin_log` (STRIPE_*).
+- Alertes push admin : webhook `charge.dispute.created` (⚠️ à cocher dans Stripe → Webhooks) + cron quotidien `runStripeSurveillanceJob` (litiges à traiter, comptes Stripe des salons bloqués, et resynchronise `stripe_connect_status`).
+- admin.html : Finance → « 💳 Stripe » ; fiche salon → « ⚙️ Gestion Stripe ». Liens Stripe en mode réel (plus `/test/`).

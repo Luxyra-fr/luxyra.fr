@@ -126,6 +126,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
       if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
+      if (url.pathname === "/api/admin/stripe" && request.method === "POST") return await handleAdminStripe(request, env);
       // Stripe Connect
       if (url.pathname === "/api/stripe/connect-onboard" && request.method === "POST") return await handleConnectOnboard(request, env);
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
@@ -282,6 +283,13 @@ export default {
     } catch (err) {
       console.error(`[cron] integrity-check FAILED:`, err?.message || err);
       await reportWorkerError(env, "cron:integrity-check", err, null, "critical");
+    }
+    // 2026-10-09 : surveillance Stripe (litiges à traiter, comptes Stripe des salons bloqués)
+    try {
+      const resS = await runStripeSurveillanceJob(env);
+      console.log(`[cron] stripe-surveillance done:`, resS);
+    } catch (err) {
+      await reportWorkerError(env, "cron:stripe-surveillance", err, null, "error");
     }
     // FIX 2026-05-23 : réconciliation des remboursements d'acompte (annulations
     // non encore remboursées dans le délai). Filet + rattrapage.
@@ -797,6 +805,15 @@ async function handleWebhook(request, env) {
       } else {
         console.log("invoice.paid: NO salonId found anywhere");
       }
+      break;
+    }
+
+    case "charge.dispute.created": {
+      // 2026-10-09 : alerte immédiate (à activer dans Stripe : évènement charge.dispute.created sur ce webhook)
+      try {
+        const ech = data.evidence_details?.due_by ? new Date(data.evidence_details.due_by * 1000).toLocaleDateString("fr-FR") : "?";
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "⚠️ Nouveau litige Stripe", p_body: `${(data.amount || 0) / 100} € — motif ${data.reason} — réponse avant le ${ech}`, p_url: "/admin.html#stripe", p_payload: {} }) });
+      } catch (_) {}
       break;
     }
 
@@ -1453,6 +1470,263 @@ async function handleClientCommandes(request, env) {
     }
     return jsonResponse({ commandes: (rows || []).map((x) => Object.assign({}, x, { salon_nom: noms[x.salon_id] || "", code_retrait: x.status === "retiree" || x.status === "annulee" ? null : x.code_retrait })) });
   } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// ============================================================
+// STRIPE — GESTION DEPUIS LE PANNEAU ADMIN (2026-10-09)
+// ============================================================
+// POST /api/admin/stripe {op, ...}  — réservé au compte admin (support@luxyra.fr, JWT vérifié).
+// Lecture : overview, salon. Actions (toutes journalisées dans admin_log) : coupon, retirer_coupon,
+// changer_forfait, annuler_fin_periode, reprendre, relancer_facture, rembourser, lien_inscription.
+function saEur(c) { return Math.round(Number(c || 0)) / 100; }
+function saPlanDuPrix(priceId) {
+  if (priceId === CONFIG.PRICE_PRO_FOUNDER) return "pro_fondateur";
+  if (priceId === CONFIG.PRICE_PRO) return "pro";
+  if (priceId === CONFIG.PRICE_ESSENTIAL) return "essentiel";
+  return "autre";
+}
+async function saListe(env, chemin, max = 500) {
+  const out = []; let after = null;
+  for (let i = 0; i < 10 && out.length < max; i++) {
+    const sep = chemin.includes("?") ? "&" : "?";
+    const r = await stripeAPI(env, `${chemin}${sep}limit=100${after ? "&starting_after=" + after : ""}`, null, "GET");
+    if (!r || !Array.isArray(r.data)) { if (r && r.error) throw new Error(r.error.message || "Stripe"); break; }
+    out.push(...r.data);
+    if (!r.has_more || !r.data.length) break;
+    after = r.data[r.data.length - 1].id;
+  }
+  return out;
+}
+async function saSalons(env) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,plan,status,is_free,is_founder,stripe_customer_id,stripe_subscription_id,stripe_connect_id,stripe_connect_status`, { headers: _sbHeaders(env) });
+  return r.ok ? await r.json() : [];
+}
+async function saLog(env, action, salonId, details) {
+  try {
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ action, salon_id: salonId || null, details: String(details || "").slice(0, 1000) }) });
+  } catch (_) {}
+}
+function saMontantMensuel(sub) {
+  let t = 0;
+  for (const it of (sub.items?.data || [])) {
+    const p = it.price || {}; const q = Number(it.quantity || 1);
+    let m = Number(p.unit_amount || 0) * q;
+    if (p.recurring?.interval === "year") m = m / 12;
+    t += m;
+  }
+  const remises = [].concat(sub.discount ? [sub.discount] : [], Array.isArray(sub.discounts) ? sub.discounts.filter((d) => d && typeof d === "object") : []);
+  for (const d of remises) {
+    const c = d.coupon || d.source?.coupon || {};
+    if (d.end && d.end * 1000 < Date.now()) continue;
+    if (c.percent_off) t = t * (1 - c.percent_off / 100);
+    else if (c.amount_off) t = Math.max(0, t - c.amount_off);
+  }
+  return t;
+}
+
+async function handleAdminStripe(request, env) {
+  try {
+    const u = await lxAuthUser(request);
+    if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
+    const b = await readJsonBody(request);
+    const op = String(b.op || "");
+    const admin = String(u.email || "admin");
+
+    if (op === "overview") {
+      const [balance, subs, payouts, disputes, openInv, salons] = await Promise.all([
+        stripeAPI(env, "balance", null, "GET"),
+        saListe(env, "subscriptions?status=all&expand[]=data.discounts", 1000),
+        stripeAPI(env, "payouts?limit=12", null, "GET"),
+        stripeAPI(env, "disputes?limit=50", null, "GET"),
+        stripeAPI(env, "invoices?status=open&limit=50", null, "GET"),
+        saSalons(env),
+      ]);
+      const parCust = {}; const parConnect = {};
+      (salons || []).forEach((s) => { if (s.stripe_customer_id) parCust[s.stripe_customer_id] = s; if (s.stripe_connect_id) parConnect[s.stripe_connect_id] = s; });
+      const debutMois = new Date(); debutMois.setUTCDate(1); debutMois.setUTCHours(0, 0, 0, 0);
+      const t0 = Math.floor(debutMois.getTime() / 1000);
+      const compte = { essentiel: 0, pro: 0, pro_fondateur: 0, autre: 0 };
+      let mrr = 0, actifs = 0, impayes = 0, nouveaux = 0, departs = 0, finPeriode = 0;
+      for (const s of subs) {
+        if (s.created >= t0 && s.status !== "incomplete_expired") nouveaux++;
+        if (s.canceled_at && s.canceled_at >= t0) departs++;
+        if (!["active", "trialing", "past_due"].includes(s.status)) continue;
+        actifs++;
+        if (s.status === "past_due") impayes++;
+        if (s.cancel_at_period_end) finPeriode++;
+        const pid = s.items?.data?.[0]?.price?.id;
+        compte[saPlanDuPrix(pid)]++;
+        if (s.status !== "trialing") mrr += saMontantMensuel(s);
+      }
+      const eur = (arr) => (arr || []).filter((x) => x.currency === "eur").reduce((a, x) => a + x.amount, 0);
+      const litiges = (disputes?.data || []).filter((d) => ["needs_response", "warning_needs_response", "under_review", "warning_under_review"].includes(d.status)).map((d) => ({
+        id: d.id, montant: saEur(d.amount), raison: d.reason, statut: d.status,
+        echeance: d.evidence_details?.due_by ? new Date(d.evidence_details.due_by * 1000).toISOString() : null,
+        cree: new Date(d.created * 1000).toISOString(), payment_intent: d.payment_intent,
+      }));
+      const factures = (openInv?.data || []).map((i) => ({
+        id: i.id, numero: i.number, montant: saEur(i.amount_due), tentatives: i.attempt_count,
+        prochaine: i.next_payment_attempt ? new Date(i.next_payment_attempt * 1000).toISOString() : null,
+        salon: parCust[i.customer]?.nom || i.customer_email || i.customer, salon_id: parCust[i.customer]?.id || null,
+        url: i.hosted_invoice_url,
+      }));
+      return jsonResponse({
+        mode: balance?.livemode === false ? "test" : "live",
+        solde: { disponible: saEur(eur(balance?.available)), en_attente: saEur(eur(balance?.pending)) },
+        abonnements: { actifs, impayes, fin_de_periode: finPeriode, nouveaux_mois: nouveaux, departs_mois: departs, par_forfait: compte, mrr: saEur(mrr) },
+        virements: (payouts?.data || []).map((p) => ({ id: p.id, montant: saEur(p.amount), statut: p.status, arrivee: new Date(p.arrival_date * 1000).toISOString().slice(0, 10) })),
+        litiges, factures_impayees: factures,
+        salons_connect: (salons || []).filter((s) => s.stripe_connect_id).map((s) => ({ id: s.id, nom: s.nom, statut: s.stripe_connect_status })),
+      });
+    }
+
+    // Les autres opérations portent sur UN salon
+    if (!/^[0-9a-f-]{36}$/i.test(String(b.salon_id || ""))) return jsonResponse({ error: "salon_id requis" }, 400);
+    const salon = await supabaseGet(env, b.salon_id);
+    if (!salon) return jsonResponse({ error: "Salon introuvable" }, 404);
+    const motif = b.motif ? String(b.motif).slice(0, 300) : "";
+
+    if (op === "salon") {
+      const res = { salon: { id: salon.id, nom: salon.nom, plan: salon.plan, status: salon.status, is_free: salon.is_free, is_founder: salon.is_founder } };
+      if (salon.stripe_subscription_id) {
+        const s = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}?expand[]=discounts`, null, "GET");
+        if (s && s.id) {
+          const remises = (Array.isArray(s.discounts) ? s.discounts : []).filter((d) => d && typeof d === "object").map((d) => ({ nom: d.coupon?.name || d.source?.coupon?.name || "", pct: d.coupon?.percent_off || d.source?.coupon?.percent_off || null, montant: d.coupon?.amount_off ? saEur(d.coupon.amount_off) : null, fin: d.end ? new Date(d.end * 1000).toISOString().slice(0, 10) : null }));
+          res.abonnement = {
+            id: s.id, statut: s.status, forfait: saPlanDuPrix(s.items?.data?.[0]?.price?.id), mensuel: saEur(saMontantMensuel(s)),
+            fin_periode: s.current_period_end ? new Date(s.current_period_end * 1000).toISOString().slice(0, 10) : (s.items?.data?.[0]?.current_period_end ? new Date(s.items.data[0].current_period_end * 1000).toISOString().slice(0, 10) : null),
+            annule_fin_periode: !!s.cancel_at_period_end, essai_jusqu: s.trial_end ? new Date(s.trial_end * 1000).toISOString().slice(0, 10) : null, remises,
+          };
+        }
+      }
+      if (salon.stripe_customer_id) {
+        const inv = await stripeAPI(env, `invoices?customer=${encodeURIComponent(salon.stripe_customer_id)}&limit=24`, null, "GET");
+        res.factures = (inv?.data || []).map((i) => ({ id: i.id, numero: i.number, statut: i.status, du: saEur(i.amount_due), paye: saEur(i.amount_paid), date: new Date(i.created * 1000).toISOString().slice(0, 10), tentatives: i.attempt_count, url: i.hosted_invoice_url, pdf: i.invoice_pdf, payment_intent: typeof i.payment_intent === "string" ? i.payment_intent : (i.payments?.data?.[0]?.payment?.payment_intent || null) }));
+      }
+      if (salon.stripe_connect_id) {
+        const a = await stripeAPI(env, `accounts/${salon.stripe_connect_id}`, null, "GET");
+        if (a && a.id) {
+          res.connect = { id: a.id, encaissements: !!a.charges_enabled, virements: !!a.payouts_enabled, dossier_envoye: !!a.details_submitted, blocage: a.requirements?.disabled_reason || null, a_fournir: a.requirements?.currently_due || [], en_retard: a.requirements?.past_due || [], plus_tard: a.requirements?.eventually_due || [] };
+          const depuis = Math.floor(Date.now() / 1000) - 90 * 86400;
+          const pis = await saListe(env, `payment_intents?created[gte]=${depuis}&expand[]=data.latest_charge`, 300);
+          res.paiements_clientes = pis.filter((p) => p.transfer_data?.destination === salon.stripe_connect_id).slice(0, 60).map((p) => ({
+            id: p.id, montant: saEur(p.amount), statut: p.status, type: p.metadata?.type || (p.capture_method === "manual" ? "empreinte" : ""), description: p.description || "",
+            date: new Date(p.created * 1000).toISOString(), rembourse: saEur(p.latest_charge?.amount_refunded || 0),
+          }));
+        }
+      }
+      return jsonResponse(res);
+    }
+
+    const subId = salon.stripe_subscription_id;
+    if (op === "coupon") {
+      if (!subId) return jsonResponse({ error: "Ce salon n'a pas d'abonnement Stripe" }, 400);
+      const pct = Number(b.pourcentage || 0), mt = Number(b.montant || 0);
+      if (!(pct > 0 && pct <= 100) && !(mt > 0 && mt <= 100)) return jsonResponse({ error: "Remise invalide (1 à 100 %, ou 0,01 à 100 €)" }, 400);
+      const duree = ["once", "repeating", "forever"].includes(b.duree) ? b.duree : "once";
+      const params = { duration: duree, name: (`Geste Luxyra ${pct ? pct + " %" : mt + " €"}` + (motif ? " — " + motif : "")).slice(0, 40), "metadata[salon_id]": salon.id, "metadata[par]": admin };
+      if (pct) params.percent_off = String(pct); else { params.amount_off = String(Math.round(mt * 100)); params.currency = "eur"; }
+      if (duree === "repeating") params.duration_in_months = String(Math.max(1, Math.min(24, parseInt(b.mois) || 1)));
+      const c = await stripeAPI(env, "coupons", params);
+      if (!c?.id) return jsonResponse({ error: "Stripe : " + (c?.error?.message || "coupon refusé") }, 502);
+      const s = await stripeAPI(env, `subscriptions/${subId}`, { "discounts[0][coupon]": c.id });
+      if (!s?.id) return jsonResponse({ error: "Stripe : " + (s?.error?.message || "remise non appliquée") }, 502);
+      await saLog(env, "STRIPE_REMISE", salon.id, `${params.name} (${duree}${params.duration_in_months ? " " + params.duration_in_months + " mois" : ""}) par ${admin}`);
+      return jsonResponse({ ok: true });
+    }
+    if (op === "retirer_coupon") {
+      if (!subId) return jsonResponse({ error: "Pas d'abonnement" }, 400);
+      const s = await stripeAPI(env, `subscriptions/${subId}`, { discounts: "" });
+      if (!s?.id) return jsonResponse({ error: "Stripe : " + (s?.error?.message || "échec") }, 502);
+      await saLog(env, "STRIPE_REMISE_RETIREE", salon.id, `par ${admin}${motif ? " — " + motif : ""}`);
+      return jsonResponse({ ok: true });
+    }
+    if (op === "changer_forfait") {
+      if (!["pro", "essential"].includes(b.plan)) return jsonResponse({ error: "Forfait invalide" }, 400);
+      const r = await handleSwitchPlan(new Request("https://interne/switch", { method: "POST", body: JSON.stringify({ salon_id: salon.id, plan: b.plan }) }), env);
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 200) await saLog(env, "STRIPE_FORFAIT", salon.id, `${salon.plan} → ${b.plan} par ${admin}${motif ? " — " + motif : ""}`);
+      return jsonResponse(d, r.status);
+    }
+    if (op === "annuler_fin_periode" || op === "reprendre") {
+      if (!subId) return jsonResponse({ error: "Pas d'abonnement" }, 400);
+      const s = await stripeAPI(env, `subscriptions/${subId}`, { cancel_at_period_end: op === "annuler_fin_periode" ? "true" : "false" });
+      if (!s?.id) return jsonResponse({ error: "Stripe : " + (s?.error?.message || "échec") }, 502);
+      await saLog(env, op === "reprendre" ? "STRIPE_REPRISE" : "STRIPE_ANNULATION_FIN_PERIODE", salon.id, `par ${admin}${motif ? " — " + motif : ""}`);
+      return jsonResponse({ ok: true });
+    }
+    if (op === "relancer_facture") {
+      const inv = await stripeAPI(env, `invoices/${encodeURIComponent(String(b.facture_id || ""))}`, null, "GET");
+      if (!inv?.id || inv.customer !== salon.stripe_customer_id) return jsonResponse({ error: "Facture introuvable pour ce salon" }, 404);
+      if (inv.status !== "open") return jsonResponse({ error: "Facture non due (" + inv.status + ")" }, 409);
+      const p = await stripeAPI(env, `invoices/${inv.id}/pay`, {});
+      await saLog(env, "STRIPE_RELANCE_FACTURE", salon.id, `${inv.number || inv.id} : ${p?.status || p?.error?.message || "?"} par ${admin}`);
+      if (p?.status === "paid") return jsonResponse({ ok: true, statut: "paid" });
+      return jsonResponse({ error: "Paiement refusé : " + (p?.error?.message || p?.status || "échec") }, 402);
+    }
+    if (op === "rembourser") {
+      const pi = await stripeAPI(env, `payment_intents/${encodeURIComponent(String(b.payment_intent || ""))}?expand[]=latest_charge`, null, "GET");
+      if (!pi?.id) return jsonResponse({ error: "Paiement introuvable" }, 404);
+      const estAbo = salon.stripe_customer_id && pi.customer === salon.stripe_customer_id;
+      const estClient = salon.stripe_connect_id && pi.transfer_data?.destination === salon.stripe_connect_id;
+      if (!estAbo && !estClient) return jsonResponse({ error: "Ce paiement n'appartient pas à ce salon" }, 403);
+      const reste = Number(pi.latest_charge?.amount || pi.amount_received || 0) - Number(pi.latest_charge?.amount_refunded || 0);
+      const montant = b.montant ? Math.round(Number(b.montant) * 100) : reste;
+      if (!(montant > 0) || montant > reste) return jsonResponse({ error: `Montant invalide (reste remboursable : ${saEur(reste)} €)` }, 400);
+      if (!motif) return jsonResponse({ error: "Motif obligatoire" }, 400);
+      const params = { payment_intent: pi.id, amount: String(montant), "metadata[par]": admin, "metadata[motif]": motif };
+      if (estClient) params.reverse_transfer = "true";
+      const rf = await stripeAPI(env, "refunds", params);
+      if (!rf?.id) return jsonResponse({ error: "Stripe : " + (rf?.error?.message || "remboursement refusé") }, 502);
+      await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${estClient ? "paiement cliente, repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
+      return jsonResponse({ ok: true, refund_id: rf.id, montant: saEur(montant) });
+    }
+    if (op === "lien_inscription") {
+      if (!salon.stripe_connect_id) return jsonResponse({ error: "Ce salon n'a pas encore de compte Stripe" }, 400);
+      const l = await stripeAPI(env, "account_links", { account: salon.stripe_connect_id, refresh_url: "https://luxyra.fr/app?connect=refresh", return_url: "https://luxyra.fr/app?connect=success", type: "account_onboarding" });
+      if (!l?.url) return jsonResponse({ error: "Stripe : " + (l?.error?.message || "échec") }, 502);
+      await saLog(env, "STRIPE_LIEN_INSCRIPTION", salon.id, `généré par ${admin}`);
+      return jsonResponse({ ok: true, url: l.url, expire: new Date((l.expires_at || 0) * 1000).toISOString() });
+    }
+    return jsonResponse({ error: "Opération inconnue" }, 400);
+  } catch (e) {
+    console.error("admin stripe:", e);
+    try { await reportWorkerError(env, "admin:stripe", e, null, "error"); } catch (_) {}
+    return jsonResponse({ error: "Erreur : " + (e?.message || e) }, 500);
+  }
+}
+
+// Contrôle quotidien (cron) : litiges ouverts + comptes Stripe des salons bloqués -> alerte admin.
+async function runStripeSurveillanceJob(env) {
+  const alertes = [];
+  const salons = await saSalons(env);
+  const parConnect = {}; (salons || []).forEach((s) => { if (s.stripe_connect_id) parConnect[s.stripe_connect_id] = s; });
+  // 1) Litiges à traiter
+  const d = await stripeAPI(env, "disputes?limit=50", null, "GET");
+  for (const x of (d?.data || [])) {
+    if (!["needs_response", "warning_needs_response"].includes(x.status)) continue;
+    const ech = x.evidence_details?.due_by ? new Date(x.evidence_details.due_by * 1000).toLocaleDateString("fr-FR") : "?";
+    alertes.push({ titre: "⚠️ Litige Stripe à traiter", corps: `${saEur(x.amount)} € — motif ${x.reason} — réponse avant le ${ech}` });
+  }
+  // 2) Comptes Connect : statut réel synchronisé + alerte si blocage
+  for (const s of (salons || [])) {
+    if (!s.stripe_connect_id) continue;
+    const a = await stripeAPI(env, `accounts/${s.stripe_connect_id}`, null, "GET");
+    if (!a?.id) continue;
+    // même codification que handleConnectStatus (utilisée par l'app et le site)
+    const ch = !!a.charges_enabled, po = !!a.payouts_enabled, de = !!a.details_submitted;
+    const statut = ch && po ? "active" : (ch ? "payouts_pending" : (de ? "pending_verification" : "incomplete"));
+    if (statut !== s.stripe_connect_status) { try { await supabaseUpdate(env, s.id, { stripe_connect_status: statut }); } catch (_) {} }
+    if ((a.requirements?.past_due || []).length || (s.stripe_connect_status === "active" && statut !== "active")) {
+      alertes.push({ titre: "🏦 Compte Stripe d'un salon à régulariser", corps: `${s.nom} : ${a.requirements?.disabled_reason || "pièces en retard"} (${(a.requirements?.past_due || []).length} élément(s))` });
+    }
+  }
+  for (const al of alertes) {
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: al.titre, p_body: al.corps, p_url: "/admin.html#stripe", p_payload: {} }) });
+    } catch (_) {}
+  }
+  return { alertes: alertes.length };
 }
 
 // ============================================================
