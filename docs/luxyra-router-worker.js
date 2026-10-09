@@ -1959,9 +1959,17 @@ async function handleSiret(request, env) {
     const cleCache = new Request(`https://cache.luxyra.internal/siret/${siret}`);
     const enCache = await cache.match(cleCache);
     if (enCache) return new Response(enCache.body, { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
-    const r = await fetch(`https://recherche-entreprises.api.gouv.fr/search?q=${siret}&per_page=1&minimal=false`, { headers: { Accept: "application/json" } });
-    if (!r.ok) return jsonResponse({ ok: false, error: "Service officiel momentanément indisponible, remplissez à la main" }, 503);
-    const d = await r.json();
+    // 2026-10-09 : l'annuaire officiel est parfois lent ou indisponible : 1 nouvel essai, puis réponse
+    // « indisponible » en 200 (ce n'est pas une panne Luxyra : plus d'alerte 5xx inutile).
+    let r = null, d = null;
+    for (let essai = 0; essai < 2 && !d; essai++) {
+      try {
+        r = await fetch(`https://recherche-entreprises.api.gouv.fr/search?q=${siret}&per_page=1&minimal=false`, { headers: { Accept: "application/json" } });
+        if (r.ok) d = await r.json();
+      } catch (_) {}
+      if (!d && essai === 0) await new Promise((ok) => setTimeout(ok, 700));
+    }
+    if (!d) return jsonResponse({ ok: false, indisponible: true, error: "Service officiel momentanément indisponible, réessayez dans un instant ou remplissez à la main" }, 200);
     const e = (d.results || []).find((x) => String(x.siren) === siret.slice(0, 9)) || null;
     if (!e) return jsonResponse({ ok: false, error: "SIRET introuvable dans le répertoire officiel" }, 404);
     const etab = (e.matching_etablissements || []).find((x) => x.siret === siret) || (e.siege && e.siege.siret === siret ? e.siege : null) || e.siege || {};
@@ -1993,7 +2001,8 @@ async function handleSiret(request, env) {
     try { await cache.put(cleCache, new Response(corps, { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=86400" } })); } catch (_) {}
     return new Response(corps, { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
   } catch (e) {
-    return jsonResponse({ ok: false, error: "Vérification impossible pour le moment" }, 500);
+    console.error("[siret]", e?.message || e);
+    return jsonResponse({ ok: false, indisponible: true, error: "Vérification impossible pour le moment, réessayez dans un instant" }, 200);
   }
 }
 
