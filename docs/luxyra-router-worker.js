@@ -127,6 +127,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname.startsWith("/api/e/o/") && request.method === "GET") return await handlePixelOuverture(request, env, url);
       if (url.pathname === "/api/stripe/webhook-connect" && request.method === "POST") return await handleWebhookConnect(request, env);
       if (url.pathname === "/api/brevo/sms-event" && request.method === "POST") return await handleBrevoSmsEvent(request, env);
+      if (url.pathname === "/api/sms/recharge-auto" && request.method === "POST") return await handleSmsRechargeAuto(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
       if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
@@ -498,7 +499,7 @@ const LX_ROUTES_SALON = new Set([
   "/api/stripe/create-checkout", "/api/stripe/portal", "/api/stripe/switch-plan",
   "/api/stripe/connect-onboard", "/api/stripe/connect-status", "/api/stripe/connect-dashboard",
   "/api/admin/export-nf525", "/api/sms/rappel", "/api/sms/custom", "/api/sms/generate-link-token",
-  "/api/client/invite", "/api/cc/action"
+  "/api/client/invite", "/api/cc/action", "/api/sms/recharge-auto"
 ]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
@@ -1719,6 +1720,18 @@ async function handleAdminStripe(request, env) {
         parMois[m].nb++; parMois[m].eur = Math.round((parMois[m].eur + e) * 100) / 100; parMois[m].sms += q;
         nb++; eur += e; sms += q;
       });
+      // + recharges automatiques (paiements hors session, pas de session Checkout)
+      try {
+        const q = encodeURIComponent(`metadata['type']:'sms_recharge_auto' AND status:'succeeded' AND created>${debut}`);
+        const ra = await stripeAPI(env, `payment_intents/search?query=${q}&limit=100`, null, "GET");
+        (ra && Array.isArray(ra.data) ? ra.data : []).forEach((x) => {
+          const m = new Date(x.created * 1000).toISOString().slice(0, 7);
+          const e = (Number(x.amount_received || x.amount) || 0) / 100, qn = parseInt((x.metadata && x.metadata.sms_qty) || "0", 10) || 0;
+          parMois[m] = parMois[m] || { nb: 0, eur: 0, sms: 0 };
+          parMois[m].nb++; parMois[m].eur = Math.round((parMois[m].eur + e) * 100) / 100; parMois[m].sms += qn;
+          nb++; eur += e; sms += qn;
+        });
+      } catch (_) {}
       return jsonResponse({ ok: true, par_mois: parMois, total: { nb, eur: Math.round(eur * 100) / 100, sms } });
     }
 
@@ -2983,12 +2996,118 @@ async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender) {
       if (ref) { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?id=eq.${ref}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ nb_sms: facture }) }); } catch (_) {} }
     }
   }
+  // Recharge automatique (option du salon) quand le solde passe sous son seuil
+  // (attendu : une promesse non attendue peut être coupée par Cloudflare après la réponse -> paiement sans crédit)
+  try { const ra = await lxRechargeAutoSiBesoin(env, salonId, remaining); if (ra && ra.fait && typeof ra.solde === "number") remaining = ra.solde; } catch (e) { console.error("recharge auto:", e?.message || e); }
   // Alerte au gérant quand le solde passe sous 10 : une seule fois, jusqu'à la prochaine recharge
   if (remaining <= 10 && remaining > 0) {
-    notifySalonCreditBas(env, salonId, remaining).catch(() => {});
+    try { await notifySalonCreditBas(env, salonId, remaining); } catch (_) {}
   }
   return { ok: true, result, remaining, debites };
 }
+// ============================================================
+// RECHARGE SMS AUTOMATIQUE (2026-10-10) — option du salon (Paramètres → SMS)
+// Sous le seuil choisi : achat du pack choisi sur la carte enregistrée de l'abonnement Luxyra (paiement hors
+// session). Verrou 10 min (pas de double débit), crédit atomique + historique, idempotent par PaymentIntent.
+// Carte refusée / authentification demandée : option désactivée + UN email au gérant (pas de tentatives répétées).
+// ============================================================
+async function lxPrixPackSms(env, qty) {
+  const def = { 100: 1099, 250: 2399, 500: 4499, 1000: 8299 };
+  let cents = def[qty] || null;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    const c = a[0] && a[0].config || {};
+    if (c["sms_pack_" + qty + "_eur"] != null) cents = Math.round(Number(c["sms_pack_" + qty + "_eur"]) * 100);
+  } catch (_) {}
+  return cents;
+}
+async function lxCarteAbonnement(env, salon) {
+  if (!salon || !salon.stripe_customer_id) return null;
+  const cu = await stripeAPI(env, `customers/${encodeURIComponent(salon.stripe_customer_id)}?expand[]=invoice_settings.default_payment_method`, null, "GET");
+  let pm = cu && cu.invoice_settings && cu.invoice_settings.default_payment_method;
+  if (!pm && salon.stripe_subscription_id) {
+    const sub = await stripeAPI(env, `subscriptions/${encodeURIComponent(salon.stripe_subscription_id)}?expand[]=default_payment_method`, null, "GET");
+    pm = sub && sub.default_payment_method;
+  }
+  if (!pm) {
+    const l = await stripeAPI(env, `payment_methods?customer=${encodeURIComponent(salon.stripe_customer_id)}&type=card&limit=1`, null, "GET");
+    pm = l && Array.isArray(l.data) ? l.data[0] : null;
+  }
+  if (!pm || typeof pm !== "object" || !pm.id) return null;
+  return { id: pm.id, marque: pm.card && pm.card.brand || "carte", fin: pm.card && pm.card.last4 || "", exp: pm.card ? (String(pm.card.exp_month).padStart(2, "0") + "/" + String(pm.card.exp_year).slice(-2)) : "" };
+}
+async function lxRechargeAutoSiBesoin(env, salonId, solde) {
+  const salon = await supabaseGet(env, salonId);
+  if (!salon || salon.sms_recharge_auto !== true || salon.plan !== "pro" || salon.sms_bloque === true) return { fait: false };
+  if (salon.status === "suspended" || salon.status === "cancelled") return { fait: false };
+  if (Number(solde) >= Number(salon.sms_recharge_seuil || 20)) return { fait: false };
+  // verrou atomique (10 min)
+  const vr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/sms_recharge_verrou`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: salonId }) });
+  if (!vr.ok || (await vr.json()) !== true) return { fait: false, verrou: true };
+  const qty = [100, 250, 500, 1000].includes(Number(salon.sms_recharge_pack)) ? Number(salon.sms_recharge_pack) : 100;
+  const cents = await lxPrixPackSms(env, qty);
+  const carte = await lxCarteAbonnement(env, salon);
+  const echouer = async (motif) => {
+    await supabaseUpdate(env, salonId, { sms_recharge_auto: false, sms_recharge_echec: String(motif).slice(0, 300) });
+    try {
+      if (salon.email) await brevoSendEmail(env, { to: salon.email, toName: salon.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
+        subject: `📱 Recharge SMS automatique impossible — ${salon.nom || "votre salon"}`,
+        htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Recharge SMS automatique impossible</h2><p>Bonjour,</p><p>Le solde SMS de <b>${salon.nom || "votre salon"}</b> est passé sous votre seuil, mais la recharge automatique de ${qty} SMS n'a pas pu être payée : <b>${String(motif).replace(/</g, "&lt;")}</b>.</p><p>La recharge automatique a été <b>désactivée</b> pour éviter de nouvelles tentatives. Vous pouvez acheter un pack et la réactiver dans l'application (Paramètres → SMS), après avoir mis à jour votre carte si besoin.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app#sms" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Ouvrir Luxyra</a></p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+        textContent: `La recharge SMS automatique de ${qty} SMS n'a pas pu être payée (${motif}). Elle a été désactivée. Rechargez dans l'application : https://luxyra.fr/app#sms`, replyTo: null, attachment: null });
+    } catch (_) {}
+    try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "📱 Recharge SMS auto refusée", p_body: `${salon.nom} : ${motif}`, p_url: "/admin.html#sms", p_payload: {} }) }); } catch (_) {}
+    return { fait: false, echec: motif };
+  };
+  if (!cents) return await echouer("tarif du pack introuvable");
+  if (!carte) return await echouer("aucune carte enregistrée sur l'abonnement");
+  const pi = await stripeAPI(env, "payment_intents", {
+    amount: String(cents), currency: "eur", customer: salon.stripe_customer_id, payment_method: carte.id,
+    off_session: "true", confirm: "true",
+    description: `Recharge automatique ${qty} SMS — Luxyra (${salon.nom || ""})`,
+    receipt_email: salon.email || "",
+    "metadata[type]": "sms_recharge_auto", "metadata[salon_id]": salonId, "metadata[sms_qty]": String(qty),
+  });
+  if (!pi || pi.status !== "succeeded") {
+    const motif = (pi && pi.error && (pi.error.decline_code || pi.error.code || pi.error.message)) || (pi && pi.status) || "paiement refusé";
+    return await echouer(motif === "authentication_required" ? "la banque demande une validation (3D Secure)" : motif);
+  }
+  // idempotent : un même paiement ne crédite qu'une fois
+  try {
+    const d = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_mouvements?select=id&salon_id=eq.${encodeURIComponent(salonId)}&motif=ilike.*${encodeURIComponent(pi.id)}*&limit=1`, { headers: _sbHeaders(env) })).json();
+    if (Array.isArray(d) && d.length) return { fait: true, deja: true };
+  } catch (_) {}
+  const cr = await lxCrediterSms(env, salonId, qty, "achat_pack", cents / 100, `Recharge automatique ${qty} SMS (Stripe ${pi.id})`, "automatique");
+  if (!cr || !cr.ok) await reportWorkerError(env, "worker:sms-recharge-auto", new Error("crédit après paiement échoué"), { salonId, pi: pi.id, qty }, "critical");
+  await supabaseUpdate(env, salonId, { sms_recharge_echec: null });
+  return { fait: true, qty, montant: cents / 100, solde: cr && cr.solde };
+}
+// POST /api/sms/recharge-auto {salon_id, op:"etat"|"regler", actif, seuil, pack} — route salon (propriétaire)
+async function handleSmsRechargeAuto(request, env) {
+  try {
+    const b = await readJsonBody(request);
+    const salon = await supabaseGet(env, b.salon_id);
+    if (!salon) return jsonResponse({ error: "Salon introuvable" }, 404);
+    if (b.op === "regler") {
+      const actif = b.actif === true, seuil = Math.max(5, Math.min(500, parseInt(b.seuil, 10) || 20));
+      const pack = [100, 250, 500, 1000].includes(Number(b.pack)) ? Number(b.pack) : 100;
+      if (actif) {
+        if (salon.plan !== "pro") return jsonResponse({ error: "Disponible avec l'abonnement Pro" }, 403);
+        if (!await lxCarteAbonnement(env, salon)) return jsonResponse({ error: "Aucune carte enregistrée sur votre abonnement : la recharge automatique n'est pas possible." }, 400);
+      }
+      await supabaseUpdate(env, salon.id, { sms_recharge_auto: actif, sms_recharge_seuil: seuil, sms_recharge_pack: pack, sms_recharge_echec: actif ? null : salon.sms_recharge_echec });
+      let recharge = null;
+      if (actif && Number(salon.sms_credits || 0) < seuil) recharge = await lxRechargeAutoSiBesoin(env, salon.id, Number(salon.sms_credits || 0));
+      return jsonResponse({ ok: true, actif, seuil, pack, recharge });
+    }
+    const carte = salon.plan === "pro" ? await lxCarteAbonnement(env, salon) : null;
+    const prix = {}; for (const q of [100, 250, 500, 1000]) prix[q] = (await lxPrixPackSms(env, q)) / 100;
+    return jsonResponse({ ok: true, actif: salon.sms_recharge_auto === true, seuil: salon.sms_recharge_seuil || 20, pack: salon.sms_recharge_pack || 100, echec: salon.sms_recharge_echec || null, carte: carte ? { marque: carte.marque, fin: carte.fin, exp: carte.exp } : null, prix });
+  } catch (e) {
+    return jsonResponse({ error: "Erreur recharge automatique : " + (e?.message || e) }, 500);
+  }
+}
+
 async function notifySalonCreditBas(env, salonId, reste) {
   try {
     const salon = await supabaseGet(env, salonId);
@@ -3063,8 +3182,9 @@ async function handleSmsRappel(request, env) {
   if (!gate.ok) {
     // Si le blocage est dû à des crédits 0 (status 402) → alerte email auto au salon
     // (rate-limité 24h dans la fonction). Fire & forget — ne bloque pas la réponse.
+    if (gate.status === 402 && salon_id) { try { await lxRechargeAutoSiBesoin(env, salon_id, 0); } catch (_) {} }
     if (gate.status === 402 && salon_id && gate.soldeZero) {
-      notifySalonCreditExhausted(env, salon_id).catch(function(e){ console.warn("alert email failed:", e?.message); });
+      try { await notifySalonCreditExhausted(env, salon_id); } catch (e) { console.warn("alert email failed:", e?.message); }
     }
     return jsonResponse({ error: gate.error }, gate.status);
   }
@@ -3083,7 +3203,10 @@ async function handleSmsCustom(request, env) {
   if (!contenu) return jsonResponse({ error: "Message vide" }, 400);
   // === Gate Pro + crédits + décrément (nombre réel de SMS facturés par Brevo) ===
   const gate = await gateSmsAndDecrementCredit(env, salon_id, lxSmsSegments(contenu));
-  if (!gate.ok) return jsonResponse({ error: gate.error }, gate.status);
+  if (!gate.ok) {
+    if (gate.status === 402 && salon_id) { try { await lxRechargeAutoSiBesoin(env, salon_id, 0); } catch (_) {} }
+    return jsonResponse({ error: gate.error }, gate.status);
+  }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
   const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra").slice(0,11).trim());
   if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);

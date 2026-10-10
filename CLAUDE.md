@@ -1582,3 +1582,9 @@ Tables existantes : inchangées.
 - inscription.html : `lxSiretIncoherence()` compare le gérant saisi au dirigeant / raison sociale officiels (fiche non diffusible ou « en cours d'immatriculation » : pas de contrôle). Avertissement non bloquant (confirm) ; résultat stocké dans `config_json.siret_controle` ({coherent:false, detail} / {coherent:true} / {en_cours:true}).
 - admin.html : `s.siretAlerte` (incohérence ou SIRET manquant) -> badge « ⚠️ SIRET » dans la liste + encadré dans Informations légales.
 - `.github/workflows/test-restauration.yml` (1er du mois 03:30 UTC + manuel) : comptage lecture seule de la base réelle -> pg_dump -> gpg -> déchiffrement -> pg_restore (--disable-triggers) dans un Postgres 17 jetable -> comparaison des comptages (tickets, clôtures, audit_log, clients, appointments, salons, cartes_cadeaux, nf525_hash_seal, auth.users). Échec = mail GitHub.
+
+## 2026-10-10 — Recharge SMS automatique
+- Colonnes salons : `sms_recharge_auto`, `sms_recharge_seuil` (5-500), `sms_recharge_pack` (100/250/500/1000), `sms_recharge_dernier`, `sms_recharge_echec`. RPC `sms_recharge_verrou` (1 tentative / 10 min, service_role).
+- Worker : `lxRechargeAutoSiBesoin` appelé (ATTENDU, pas en arrière-plan) après chaque SMS débité et sur refus 402 ; PaymentIntent hors session (`off_session`, `confirm`) sur la carte de l'abonnement (`lxCarteAbonnement` : défaut client > abonnement > 1re carte), metadata `type=sms_recharge_auto`, reçu Stripe ; crédit `crediter_sms` idempotent (id du paiement dans le motif). Échec → option désactivée + email gérant + push admin (aucune tentative répétée).
+- Route salon `/api/sms/recharge-auto` (op `etat` / `regler`) ; app : carte « 🔁 Recharge automatique » dans Paramètres → SMS (`lxRechargeAutoCharger` / `lxRechargeAutoRegler`, confirmation à l'activation). Admin revenus SMS : inclut les recharges auto (recherche Stripe des PaymentIntents).
+- Bot : entrée `sms` complétée.
