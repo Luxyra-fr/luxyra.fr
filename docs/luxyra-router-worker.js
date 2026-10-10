@@ -464,10 +464,16 @@ async function lxAuthUser(request) {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: CONFIG.SUPABASE_ANON_KEY, Authorization: "Bearer " + t } });
     if (!r.ok) return null;
     const u = await r.json();
+    if (u && u.id) { try { u._aal = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aal || "aal1"; } catch (_) { u._aal = "aal1"; } }
     return (u && u.id) ? u : null;
   } catch (e) { return null; }
 }
-function lxIsAdminUser(u) { return !!(u && String(u.email || "").toLowerCase() === "support@luxyra.fr"); }
+// 2026-10-10 : si l'admin a activé la double authentification, la session doit l'avoir validée (aal2)
+function lxIsAdminUser(u) {
+  if (!(u && String(u.email || "").toLowerCase() === "support@luxyra.fr")) return false;
+  const aDeuxFacteurs = Array.isArray(u.factors) && u.factors.some((f) => f && f.status === "verified");
+  return !aDeuxFacteurs || u._aal === "aal2";
+}
 async function lxOwnsSalon(env, userId, salonId) {
   if (!userId || !salonId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId))) return false;
   try {
