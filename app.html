@@ -9698,16 +9698,19 @@ function rHome(){
   var h='';
   var today=TD;
   // 2026-10-10 : entreprise inscrite « en cours d'immatriculation » -> rappel d'ajouter le SIRET
+  var _lxNbBandeaux=0; // 2026-10-10 : un seul bandeau d'information à la fois (priorité : SIRET, attestation, parrainage)
   if(!window._lxVueAdmin && !String((SALON_CONFIG&&SALON_CONFIG.siret)||"").trim() && (typeof hasPermission!=="function"||hasPermission("settings"))){
+    _lxNbBandeaux++;
     h+='<div onclick="window._settTab=\'salon\';go(\'settings\')" style="cursor:pointer;background:rgba(255,152,0,.1);border:1.5px solid rgba(255,152,0,.45);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center"><div style="font-size:26px">\ud83d\udcc4</div><div style="flex:1"><div style="font-weight:800;color:#ffb74d">Entreprise en cours d\u2019immatriculation</div><div style="font-size:12px;color:var(--text2)">Ajoutez votre SIRET d\u00e8s r\u00e9ception : Param\u00e8tres \u2192 Infos \u00e9tablissement. Il est obligatoire pour activer votre abonnement.</div></div><div style="color:#ffb74d;font-size:18px">\u203a</div></div>';
   }
   // 2026-10-10 : attestation de conformité de la caisse à signer (volet 2) — rappel sur l'accueil, masquable 7 jours
-  try{ if(window._lxAttStatut==="a_signer" && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && !(Number(localStorage.getItem("lx_att_masque_jusqu")||0)>Date.now())){
+  try{ if(!_lxNbBandeaux && window._lxAttStatut==="a_signer" && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && !(Number(localStorage.getItem("lx_att_masque_jusqu")||0)>Date.now())){
+    _lxNbBandeaux++;
     h+='<div style="display:flex;align-items:center;gap:10px;background:rgba(76,175,80,.09);border:1.5px solid rgba(76,175,80,.45);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">\u270d\ufe0f</div><div style="flex:1;cursor:pointer" onclick="lxAttestationNF525()"><div style="font-weight:800;color:#7fc97f">Attestation de conformit\u00e9 de votre caisse \u00e0 signer</div><div style="font-size:12px;color:var(--text2)">Document obligatoire \u00e0 pr\u00e9senter en cas de contr\u00f4le fiscal. Pr\u00e9-rempli, sign\u00e9 en 1 minute \u203a</div></div><button onclick="try{localStorage.setItem(\'lx_att_masque_jusqu\',String(Date.now()+7*864e5))}catch(e){};go(\'home\')" title="Me le rappeler plus tard" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">\u2715</button></div>';
   } }catch(_eA){}
   var tvaR=lxTauxTVA();
   // 2026-10-10 : rappel discret du parrainage (fermable)
-  try{ if(!window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && localStorage.getItem("lx_parr_masque")!=="1"){
+  try{ if(!_lxNbBandeaux && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && localStorage.getItem("lx_parr_masque")!=="1"){
     h+='<div style="display:flex;align-items:center;gap:10px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.3);border-radius:14px;padding:10px 12px;margin-bottom:12px"><div style="font-size:22px">\ud83c\udf81</div><div style="flex:1;cursor:pointer" onclick="window._settTab=\'parrainage\';go(\'settings\')"><div style="font-weight:800;font-size:13px;color:var(--gold)">Parrainez un professionnel, gagnez 1 mois offert</div><div style="font-size:11px;color:var(--text2)">Votre code et un message pr\u00eat \u00e0 envoyer \u203a</div></div><button onclick="try{localStorage.setItem(\'lx_parr_masque\',\'1\')}catch(e){};go(\'home\')" title="Masquer" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">\u2715</button></div>';
   } }catch(_eP){}
   // === Bandeau "Demandes sur mesure en attente" ===
@@ -32732,6 +32735,9 @@ async function lxAttStatutCharger(){
     var a = await _sb.from("nf525_attestations").select("id").eq("salon_id", window._salonId).eq("version_majeure", LX_ATT.versionMajeure).maybeSingle();
     if (a.error) throw a.error;
     if (a.data) { window._lxAttStatut = "signee"; return; }
+    // Rappel seulement une fois l'abonnement payé (choix d'Alexandre) : en essai, l'attestation reste accessible dans Paramètres → Caisse
+    var sa = await _sb.from("salons").select("status").eq("id", window._salonId).maybeSingle();
+    if (!sa.data || sa.data.status !== "active") { window._lxAttStatut = "essai"; return; }
     var t = await _sb.from("tickets").select("id").eq("salon_id", window._salonId).limit(1);
     window._lxAttStatut = (t.data && t.data.length) ? "a_signer" : "pas_de_ticket";
     if (window._lxAttStatut === "a_signer" && (window._currentPage || "home") === "home" && typeof go === "function" && !document.getElementById("lxAttModal")) go("home");
