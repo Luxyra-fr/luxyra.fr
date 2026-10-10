@@ -1320,11 +1320,28 @@ function ccEur(n) { return (Number(n) || 0).toFixed(2).replace(".", ",") + " €
 function ccLignesHtml(items) {
   return (items || []).map((i) => `<tr><td style="padding:6px 0">${ccEsc(i.nom)} × ${Number(i.qty) || 1}</td><td style="padding:6px 0;text-align:right">${ccEur((Number(i.prix) || 0) * (Number(i.qty) || 1))}</td></tr>`).join("");
 }
+// 2026-10-10 : mise en page commune des emails Luxyra (logo, noir et or, mentions de l'expéditeur)
+function lxMailLayout(corpsHtml, opts) {
+  opts = opts || {};
+  const titre = opts.titre ? `<h1 style="margin:0 0 16px;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:400;color:#1a1a1a;line-height:1.3">${opts.titre}</h1>` : "";
+  const pixel = opts.idSuivi ? `<img src="https://luxyra.fr/api/e/o/${opts.idSuivi}.gif" width="1" height="1" alt="" style="display:block;border:0">` : "";
+  const pied = opts.pied ? `<div style="margin-bottom:6px">${opts.pied}</div>` : "";
+  return `<div style="background:#f4f1ea;padding:24px 10px;margin:0">
+  <div style="max-width:580px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6dcc3;font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;font-size:15px;line-height:1.6">
+    <div style="background:#0b0b0b;padding:26px 20px 20px;text-align:center;border-bottom:3px solid #c8a84e">
+      <img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">
+      <div style="color:#d4a843;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:6px">LUXYRA</div>
+      <div style="color:#8c8270;font-size:11px;letter-spacing:1px;margin-top:4px">GESTION &amp; CAISSE POUR LES PROFESSIONNELS DE LA BEAUTÉ</div>
+    </div>
+    <div style="padding:28px 26px 8px">${titre}${corpsHtml}</div>
+    <div style="padding:16px 26px 22px;font-size:11px;color:#8a8a8a;border-top:1px solid #eee;margin-top:18px;line-height:1.5">${pied}Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023<br>29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — <a href="mailto:contact@luxyra.fr" style="color:#b8922e">contact@luxyra.fr</a> — <a href="https://luxyra.fr" style="color:#b8922e">luxyra.fr</a></div>
+  </div>${pixel}</div>`;
+}
+function lxMailBouton(texte, url) {
+  return `<p style="text-align:center;margin:22px 0"><a href="${url}" style="display:inline-block;background:#c8a84e;color:#111;text-decoration:none;font-weight:700;padding:13px 26px;border-radius:30px">${texte}</a></p>`;
+}
 function ccMail(titre, corps) {
-  return `<div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
-    <div style="background:#0a0a0a;padding:22px;text-align:center"><div style="color:#d4a843;font-size:20px;letter-spacing:2px;font-weight:700">LUXYRA</div></div>
-    <div style="padding:26px 24px"><h2 style="margin:0 0 14px;font-size:20px">${titre}</h2>${corps}</div>
-    <div style="padding:14px 24px;font-size:11px;color:#999;border-top:1px solid #eee">Commande Click &amp; Collect passée via Luxyra.</div></div>`;
+  return lxMailLayout(corps, { titre, pied: "Commande Click &amp; Collect passée via Luxyra." });
 }
 async function ccSalonEtConfig(env, salonId) {
   const salon = await supabaseGet(env, salonId);
@@ -2109,10 +2126,7 @@ const ETAPES_LIB = {
   site: ["Mettre votre site en ligne (réservation 24/7)", "Paramètres → Site en ligne"],
 };
 function relMail(prenom, corpsHtml, idSuivi) {
-  return `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;font-size:15px;line-height:1.6">
-    <div style="background:#0a0a0a;padding:20px;text-align:center"><span style="color:#d4a843;font-size:20px;letter-spacing:2px;font-weight:700">LUXYRA</span></div>
-    <div style="padding:24px">${corpsHtml}<p style="margin-top:24px">Alexandre<br><span style="color:#888;font-size:13px">Fondateur de Luxyra — répondez simplement à cet email</span></p></div>
-    <img src="https://luxyra.fr/api/e/o/${idSuivi}.gif" width="1" height="1" alt="" style="display:block;border:0"></div>`;
+  return lxMailLayout(`${corpsHtml}<p style="margin-top:24px">Alexandre<br><span style="color:#888;font-size:13px">Fondateur de Luxyra — répondez simplement à cet email</span></p>`, { idSuivi });
 }
 async function runRelancesEssaiJob(env) {
   const stats = { candidats: 0, envoyes: 0, ignores: 0, erreurs: 0, actif: false };
@@ -2185,7 +2199,8 @@ async function runRelancesEssaiJob(env) {
 }
 // 2026-10-10 : rappel UNIQUE de signature de l'attestation de conformité de la caisse (volet 2, modèle BOI-LETTRE-000242).
 // Interrupteur app_config.relance_attestation_active (false par défaut). Un seul email par établissement et par version
-// majeure (salon_emails_auto type « attestation_v<majeure> »), 2 jours après le 1er encaissement, si non signée.
+// majeure (salon_emails_auto type « attestation_v<majeure> »), UNIQUEMENT pour un abonnement payé (status active), au moins
+// 1 jour après le début de l'abonnement (abonne_depuis), s'il a déjà encaissé et n'a pas signé.
 async function runAttestationRelanceJob(env) {
   const stats = { actif: false, candidats: 0, envoyes: 0, erreurs: 0 };
   try {
@@ -2198,29 +2213,43 @@ async function runAttestationRelanceJob(env) {
   const ed = er.ok ? (await er.json())[0] : null;
   if (!ed) return stats;
   const type = "attestation_v" + ed.version_majeure;
-  const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,gerant_prenom,status,is_free&or=(status.eq.active,status.eq.trial,is_free.eq.true)`, { headers: _sbHeaders(env) });
+  const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,gerant_prenom,abonne_depuis&status=eq.active`, { headers: _sbHeaders(env) });
   const salons = sr.ok ? await sr.json() : [];
   const ar = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/nf525_attestations?select=salon_id&version_majeure=eq.${encodeURIComponent(ed.version_majeure)}`, { headers: _sbHeaders(env) });
   const signes = new Set((ar.ok ? await ar.json() : []).map((x) => x.salon_id));
-  const limite = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  const hier = Date.now() - 86400000;
   for (const s of salons) {
     if (!s.email || signes.has(s.id)) continue;
+    if (s.abonne_depuis && new Date(s.abonne_depuis).getTime() > hier) continue; // laisser 1 jour après le paiement
     const tr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/tickets?select=date_ticket&salon_id=eq.${s.id}&order=date_ticket.asc&limit=1`, { headers: _sbHeaders(env) });
     const t = tr.ok ? (await tr.json())[0] : null;
-    if (!t || !t.date_ticket || String(t.date_ticket).slice(0, 10) > limite) continue;
+    if (!t || !t.date_ticket) continue;
     stats.candidats++;
     const ins = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?on_conflict=salon_id,type`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation,resolution=ignore-duplicates" }), body: JSON.stringify({ salon_id: s.id, type }) });
     const rowA = ins.ok ? await ins.json() : [];
     const row = Array.isArray(rowA) ? rowA[0] : null;
     if (!row) continue; // déjà envoyé une fois : jamais de second email
     const prenom = s.gerant_prenom ? String(s.gerant_prenom).trim() : "";
-    const sujet = `${s.nom} : signez l'attestation de conformité de votre caisse (1 minute)`;
+    const sujet = `${s.nom} : votre attestation de conformité de caisse à signer`;
     const corps = `<p>Bonjour${prenom ? " " + ccEsc(prenom) : ""},</p>
-      <p>Comme tout commerçant qui encaisse des particuliers, vous devez pouvoir présenter en cas de contrôle fiscal une <b>attestation de conformité de votre logiciel de caisse</b> (article 286, I, 3° bis du code général des impôts).</p>
-      <p>Luxyra vous la fournit, au modèle officiel de l'administration : notre partie est déjà signée, il ne reste que la vôtre, <b>pré-remplie</b>. Cela prend une minute :</p>
-      <p style="background:#f6f1e3;border-radius:8px;padding:12px 14px">Application Luxyra → <b>Paramètres → Caisse → Conformité de la caisse → Mon attestation</b><br>(ou le bandeau vert sur votre écran d'accueil)</p>
-      <p>Ensuite, téléchargez le PDF et gardez-le avec vos papiers comptables.</p>
-      <p>Ceci est un rappel unique : vous ne recevrez pas d'autre email à ce sujet.</p>`;
+      <p>Merci pour votre confiance. Il reste une petite formalité légale pour que <b>${ccEsc(s.nom)}</b> soit parfaitement en règle : <b>signer l'attestation de conformité de votre caisse</b>.</p>
+      <h3 style="font-family:Georgia,serif;font-weight:400;font-size:17px;color:#b8922e;margin:22px 0 6px">Pourquoi ?</h3>
+      <p style="margin-top:0">Depuis 2018, tout professionnel assujetti à la TVA qui encaisse des particuliers doit utiliser une caisse sécurisée et pouvoir le <b>prouver en cas de contrôle fiscal</b> (article 286, I, 3° bis du code général des impôts). Sans justificatif, l'amende est de <b>7 500 € par caisse</b> (article 1770 duodecies du même code).</p>
+      <p>Ce justificatif est l'<b>attestation individuelle</b>, établie selon le <b>modèle officiel de l'administration fiscale</b> (BOI-LETTRE-000242). Elle comporte deux volets :</p>
+      <ul style="padding-left:20px;margin:6px 0 0">
+        <li><b>Volet 1 — l'éditeur</b> : Luxyra atteste que le logiciel respecte les conditions d'inaltérabilité, de sécurisation, de conservation et d'archivage. <span style="color:#3a7d44">Déjà signé ✔</span></li>
+        <li><b>Volet 2 — votre établissement</b> : vous indiquez depuis quand vous utilisez la caisse. <b>Sans lui, l'attestation n'a pas de valeur.</b></li>
+      </ul>
+      <h3 style="font-family:Georgia,serif;font-weight:400;font-size:17px;color:#b8922e;margin:22px 0 6px">Comment ? (1 minute)</h3>
+      <ol style="padding-left:20px;margin:6px 0 0">
+        <li>Ouvrez l'application Luxyra : le bandeau vert <b>« Attestation de conformité de votre caisse à signer »</b> s'affiche sur l'accueil (ou <b>Paramètres → Caisse → Conformité de la caisse → Mon attestation</b>).</li>
+        <li>Vérifiez les informations, <b>déjà pré-remplies</b> (représentant légal, dates, ville).</li>
+        <li>Saisissez votre mot de passe Luxyra, cochez la case et touchez <b>« Signer électroniquement »</b>. La signature électronique a la même valeur qu'une signature manuscrite (code civil, art. 1366-1367).</li>
+        <li>Téléchargez le PDF et <b>conservez-le avec vos pièces comptables</b> pendant toute la durée d'utilisation puis 6 ans (art. L102 B du livre des procédures fiscales).</li>
+      </ol>
+      ${lxMailBouton("Ouvrir Luxyra et signer", "https://luxyra.fr/app")}
+      <p style="font-size:13px;color:#666">Vous préférez le papier ? Le bouton « Imprimer pour signer à la main » est aussi proposé. Une question : répondez simplement à cet email.</p>
+      <p style="font-size:12px;color:#999">Ceci est un rappel unique : vous ne recevrez pas d'autre email à ce sujet.</p>`;
     try {
       const res = await brevoSendEmail(env, { to: s.email, toName: s.nom, senderName: "Alexandre de Luxyra", senderEmail: "contact@luxyra.fr", replyTo: "support@luxyra.fr", subject: sujet, htmlContent: relMail(prenom, corps, row.id) });
       if (res && (res.messageId || res.messageIds)) {
@@ -3076,7 +3105,7 @@ async function lxParrainageMailParrain(env, parrain, filleulNom, montant) {
     if (!parrain || !parrain.email) return;
     await brevoSendEmail(env, { to: parrain.email, toName: parrain.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
       subject: "🎁 Votre parrainage : 1 mois offert !",
-      htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Merci pour votre parrainage !</h2><p>Bonjour,</p><p><b>${String(filleulNom || "L’établissement que vous avez parrainé").replace(/</g, "&lt;")}</b> vient de souscrire son abonnement Luxyra. Comme promis, <b>votre prochain mois est offert</b>${montant ? ` (${String(montant.toFixed(2)).replace(".", ",")} € déduits de votre prochaine facture)` : ""}.</p><p>Continuez à partager votre code : chaque nouvel établissement abonné vous offre un mois de plus (jusqu'à 12 par an).</p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+      htmlContent: lxMailLayout(`<p>Bonjour,</p><p><b>${String(filleulNom || "L’établissement que vous avez parrainé").replace(/</g, "&lt;")}</b> vient de souscrire son abonnement Luxyra. Comme promis, <b>votre prochain mois est offert</b>${montant ? ` (${String(montant.toFixed(2)).replace(".", ",")} € déduits de votre prochaine facture)` : ""}.</p><p>Continuez à partager votre code : chaque nouvel établissement abonné vous offre un mois de plus (jusqu'à 12 par an).</p>`, { titre: "Merci pour votre parrainage !" }),
       textContent: `Merci pour votre parrainage ! ${filleulNom || "L’établissement parrainé"} vient de s'abonner : votre prochain mois Luxyra est offert.`, replyTo: null, attachment: null });
   } catch (_) {}
 }
