@@ -2965,7 +2965,7 @@ async function handleEmailTicket(request, env) {
     try { unsubLink = await buildUnsubscribeUrl(clientId, "email", env); } catch (e) { unsubLink = ""; }
   }
   const unsubBlock = unsubLink ? `<div style="margin-top:10px"><a href="${unsubLink}" style="color:#bbb;font-size:10px;text-decoration:underline">Se désinscrire des emails</a></div>` : "";
-  const emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.wrapper{max-width:500px;margin:0 auto}.header{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:24px;text-align:center;color:#fff;border-radius:12px 12px 0 0}.header h1{margin:0;font-size:20px;color:#d4a843;letter-spacing:1px}.header p{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.7)}.ticket-container{background:#fff;padding:24px;border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;font-family:'Courier New',monospace;font-size:12px;line-height:1.5;color:#000}.ticket-container table{width:100%;border-collapse:collapse}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 12px 12px;background:#fff}</style></head><body><div class="wrapper"><div class="header"><h1>${salonName||"Votre salon"}</h1><p>Votre ticket de caisse N°${ticketNum}</p></div><div class="ticket-container">${ticketHtml}</div><div class="footer">Envoyé via <strong>Luxyra</strong> — Caisse conforme à la loi anti-fraude TVA<br>Art. 286-I-3° bis du CGI<br><em style="font-size:10px;color:#bbb">Ce ticket fait office de facture. Conservez-le 6 ans minimum.</em>${unsubBlock}</div></div></body></html>`;
+  const emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.wrapper{max-width:500px;margin:0 auto}.header{background:#0b0b0b;padding:24px;text-align:center;color:#fff;border-radius:12px 12px 0 0;border-bottom:3px solid #c8a84e}.header h1{margin:0;font-size:20px;color:#d4a843;letter-spacing:1px}.header p{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.7)}.ticket-container{background:#fff;padding:24px;border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;font-family:'Courier New',monospace;font-size:12px;line-height:1.5;color:#000}.ticket-container table{width:100%;border-collapse:collapse}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 12px 12px;background:#fff}</style></head><body><div class="wrapper"><div class="header"><h1>${salonName||"Votre salon"}</h1><p>Votre ticket de caisse N°${ticketNum}</p></div><div class="ticket-container">${ticketHtml}</div><div class="footer"><img src="https://luxyra.fr/luxyra-logo.png" width="28" height="28" alt="Luxyra" style="display:block;margin:0 auto 6px;border-radius:6px">Envoyé via <strong>Luxyra</strong> — Caisse conforme à la loi anti-fraude TVA<br>Art. 286-I-3° bis du CGI<br><em style="font-size:10px;color:#bbb">Ce ticket fait office de facture. Conservez-le 6 ans minimum.</em>${unsubBlock}</div></div></body></html>`;
   const encoder = new TextEncoder();
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket ${salonName} N°${ticketNum}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;color:#000;background:#fff}table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>${ticketHtml}</body></html>`;
   const bytes = encoder.encode(fullHtml);
@@ -2985,7 +2985,7 @@ async function handleEmailWelcome(request, env) {
   const body = await request.json();
   const { email, nom, prenom, nomSalon, plan, identifiant, motDePasse } = body;
   if (!email) return jsonResponse({ error: "email requis" }, 400);
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.card{max-width:520px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)}.header{background:linear-gradient(135deg,#1a1a2e,#16213e);padding:30px;text-align:center;color:#fff}.header h1{margin:0;font-size:24px;color:#d4a843}.body{padding:30px}.creds{background:#f8f6f0;border:1px solid #e8e0d0;border-radius:10px;padding:20px;margin:20px 0;text-align:center}.creds .label{font-size:12px;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}.creds .value{font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:12px}.btn{display:inline-block;padding:14px 40px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border-top:1px solid #f0f0f0}</style></head><body><div class="card"><div class="header"><h1>Bienvenue sur Luxyra !</h1><p style="color:rgba(255,255,255,.7);margin-top:8px">Votre essai gratuit de 14 jours commence maintenant</p></div><div class="body"><p>Bonjour ${prenom||""} ${nom||""},</p><p>Votre établissement <strong>${nomSalon||""}</strong> est prêt.</p><div class="creds"><div class="label">Email de connexion</div><div class="value">${identifiant||email}</div><div class="label">Mot de passe</div><div class="value">${motDePasse||"(celui que vous avez choisi)"}</div></div><div style="text-align:center;margin:24px 0"><a href="https://luxyra.fr/app" class="btn">Accéder à mon salon →</a></div><p style="font-size:13px;color:#666">Votre formule d'essai <strong>${plan||"Essentiel"}</strong> est active pendant 14 jours.</p></div><div class="footer">Luxyra — luxyra.fr | contact@luxyra.fr</div></div></body></html>`;
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.card{max-width:520px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)}.header{background:#0b0b0b;padding:26px 30px 22px;text-align:center;color:#fff;border-bottom:3px solid #c8a84e}.header h1{margin:0;font-size:24px;color:#d4a843}.body{padding:30px}.creds{background:#f8f6f0;border:1px solid #e8e0d0;border-radius:10px;padding:20px;margin:20px 0;text-align:center}.creds .label{font-size:12px;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}.creds .value{font-size:16px;font-weight:700;color:#1a1a2e;margin-bottom:12px}.btn{display:inline-block;padding:14px 40px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#fff;text-decoration:none;border-radius:10px;font-weight:700;font-size:15px}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border-top:1px solid #f0f0f0}</style></head><body><div class="card"><div class="header"><img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px"><h1>Bienvenue sur Luxyra !</h1><p style="color:rgba(255,255,255,.7);margin-top:8px">Votre essai gratuit de 14 jours commence maintenant</p></div><div class="body"><p>Bonjour ${prenom||""} ${nom||""},</p><p>Votre établissement <strong>${nomSalon||""}</strong> est prêt.</p><div class="creds"><div class="label">Email de connexion</div><div class="value">${identifiant||email}</div><div class="label">Mot de passe</div><div class="value">${motDePasse||"(celui que vous avez choisi)"}</div></div><div style="text-align:center;margin:24px 0"><a href="https://luxyra.fr/app" class="btn">Accéder à mon salon →</a></div><p style="font-size:13px;color:#666">Votre formule d'essai <strong>${plan||"Essentiel"}</strong> est active pendant 14 jours.</p></div><div class="footer">Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023<br>29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — luxyra.fr — contact@luxyra.fr</div></div></body></html>`;
   const result = await brevoSendEmail(env, { to: email, toName: `${prenom||""} ${nom||""}`.trim(), senderName: "Luxyra", senderEmail: "contact@luxyra.fr", subject: "Bienvenue sur Luxyra — Vos identifiants", htmlContent: html, textContent: "", replyTo: null, attachment: null });
   return jsonResponse({ success: true, messageId: result.messageId, result });
 }
@@ -3262,7 +3262,7 @@ async function lxRechargeAutoSiBesoin(env, salonId, solde) {
     try {
       if (salon.email) await brevoSendEmail(env, { to: salon.email, toName: salon.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
         subject: `📱 Recharge SMS automatique impossible — ${salon.nom || "votre salon"}`,
-        htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Recharge SMS automatique impossible</h2><p>Bonjour,</p><p>Le solde SMS de <b>${salon.nom || "votre salon"}</b> est passé sous votre seuil, mais la recharge automatique de ${qty} SMS n'a pas pu être payée : <b>${String(motif).replace(/</g, "&lt;")}</b>.</p><p>La recharge automatique a été <b>désactivée</b> pour éviter de nouvelles tentatives. Vous pouvez acheter un pack et la réactiver dans l'application (Paramètres → SMS), après avoir mis à jour votre carte si besoin.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app#sms" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Ouvrir Luxyra</a></p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+        htmlContent: lxMailLayout(`<p>Bonjour,</p><p>Le solde SMS de <b>${salon.nom || "votre salon"}</b> est passé sous votre seuil, mais la recharge automatique de ${qty} SMS n'a pas pu être payée : <b>${String(motif).replace(/</g, "&lt;")}</b>.</p><p>La recharge automatique a été <b>désactivée</b> pour éviter de nouvelles tentatives. Vous pouvez acheter un pack et la réactiver dans l'application (Paramètres → SMS), après avoir mis à jour votre carte si besoin.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app#sms" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Ouvrir Luxyra</a></p>`, { titre: `Recharge SMS automatique impossible` }),
         textContent: `La recharge SMS automatique de ${qty} SMS n'a pas pu être payée (${motif}). Elle a été désactivée. Rechargez dans l'application : https://luxyra.fr/app#sms`, replyTo: null, attachment: null });
     } catch (_) {}
     try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "📱 Recharge SMS auto refusée", p_body: `${salon.nom} : ${motif}`, p_url: "/admin.html#sms", p_payload: {} }) }); } catch (_) {}
@@ -3326,15 +3326,10 @@ async function notifySalonCreditBas(env, salonId, reste) {
     if (salon.sms_alerte_basse_le) return;
     const salonName = salon.nom || "votre salon";
     const subject = `📱 Plus que ${reste} SMS — ${salonName}`;
-    const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a">
-      <div style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a);padding:24px;border-radius:14px 14px 0 0;text-align:center"><div style="color:#d4a843;font-size:24px;font-weight:900;letter-spacing:2px">LUXYRA</div></div>
-      <div style="background:#fff;border:1px solid #e8e0d0;border-top:none;padding:28px;border-radius:0 0 14px 14px">
-        <h2 style="text-align:center;color:#c8a84e;margin:0 0 16px">Plus que ${reste} SMS</h2>
-        <p style="font-size:14px;line-height:1.6;color:#333">Bonjour,</p>
-        <p style="font-size:14px;line-height:1.6;color:#333">Le solde SMS de <strong>${salonName}</strong> est presque épuisé : il reste <strong>${reste} SMS</strong>. Quand il arrivera à 0, les rappels de rendez-vous seront mis en attente jusqu'à la recharge.</p>
-        <div style="text-align:center;margin:24px 0"><a href="https://luxyra.fr/app#sms" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;text-decoration:none;border-radius:10px;font-size:14px">📱 Recharger mes SMS</a></div>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:11px;color:#999;text-align:center;margin:0">Email automatique — Luxyra</p>
-      </div></div>`;
+    const html = lxMailLayout(`<p>Bonjour,</p>
+        <p>Le solde SMS de <strong>${ccEsc(salonName)}</strong> est presque épuisé : il reste <strong>${reste} SMS</strong>. Quand il arrivera à 0, les rappels de rendez-vous seront mis en attente jusqu'à la recharge.</p>
+        ${lxMailBouton("📱 Recharger mes SMS", "https://luxyra.fr/app#sms")}
+        <p style="font-size:12px;color:#888">Astuce : activez la recharge automatique (Paramètres → SMS) pour ne jamais tomber à zéro. Ce message ne vous sera envoyé qu'une fois.</p>`, { titre: `Plus que ${reste} SMS` });
     const textContent = `Plus que ${reste} SMS pour ${salonName}. Quand le solde arrivera à 0, les rappels seront mis en attente jusqu'à la recharge.\n\nRecharger : https://luxyra.fr/app#sms\n\nLuxyra.`;
     await brevoSendEmail(env, { to: salon.email, toName: salonName, senderEmail: "contact@luxyra.fr", senderName: "Luxyra", subject, htmlContent: html, textContent, replyTo: null, attachment: null });
     await supabaseUpdate(env, salonId, { sms_alerte_basse_le: new Date().toISOString() });
@@ -3349,24 +3344,11 @@ async function notifySalonCreditExhausted(env, salonId) {
     if (salon.last_sms_credit_alert_at) return;
     const salonName = salon.nom || "votre salon";
     const subject = `⚠️ Crédits SMS épuisés — ${salonName}`;
-    const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#1a1a1a">
-      <div style="background:linear-gradient(135deg,#1a1a1a,#0a0a0a);padding:24px;border-radius:14px 14px 0 0;text-align:center">
-        <div style="color:#d4a843;font-size:24px;font-weight:900;letter-spacing:2px">LUXYRA</div>
-      </div>
-      <div style="background:#fff;border:1px solid #e8e0d0;border-top:none;padding:28px;border-radius:0 0 14px 14px">
-        <div style="font-size:48px;text-align:center;margin-bottom:8px">📱</div>
-        <h2 style="text-align:center;color:#c8a84e;margin:0 0 16px">Vos crédits SMS sont épuisés</h2>
-        <p style="font-size:14px;line-height:1.6;color:#333">Bonjour,</p>
-        <p style="font-size:14px;line-height:1.6;color:#333">Le compte SMS de <strong>${salonName}</strong> est arrivé à 0. Vos rappels de RDV automatiques (24h, 2h), SMS d'anniversaire et notifications fidélité <strong style="color:#ef5350">ne sont plus envoyés</strong>.</p>
-        <p style="font-size:14px;line-height:1.6;color:#333">Pour rétablir les envois immédiatement, rechargez un pack SMS depuis votre application :</p>
-        <div style="text-align:center;margin:24px 0">
-          <a href="https://luxyra.fr/app#sms" style="display:inline-block;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;text-decoration:none;border-radius:10px;font-size:14px">📱 Recharger mes SMS</a>
-        </div>
-        <p style="font-size:12px;line-height:1.6;color:#666">Ce message ne vous sera pas renvoyé. Vous pouvez continuer à envoyer des emails normalement (les emails ne consomment pas de crédits SMS).</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-        <p style="font-size:11px;color:#999;text-align:center;margin:0">Email automatique — Luxyra</p>
-      </div>
-    </div>`;
+    const html = lxMailLayout(`<p>Bonjour,</p>
+        <p>Le compte SMS de <strong>${ccEsc(salonName)}</strong> est arrivé à 0. Vos rappels de rendez-vous automatiques, SMS d'anniversaire et notifications fidélité <strong style="color:#c0392b">ne sont plus envoyés</strong>.</p>
+        <p>Pour rétablir les envois immédiatement, rechargez un pack SMS depuis votre application :</p>
+        ${lxMailBouton("📱 Recharger mes SMS", "https://luxyra.fr/app#sms")}
+        <p style="font-size:12px;color:#888">Ce message ne vous sera pas renvoyé. Les emails continuent d'être envoyés normalement (ils ne consomment pas de crédits SMS).</p>`, { titre: "Vos crédits SMS sont épuisés" });
     const textContent = `Vos crédits SMS sont épuisés.\n\nLe compte SMS de ${salonName} est à 0. Vos rappels RDV automatiques, SMS anniversaire et notifications fidélité ne sont plus envoyés.\n\nPour recharger : https://luxyra.fr/app#sms\n\nLuxyra.`;
     await brevoSendEmail(env, {
       to: salon.email, toName: salonName,
@@ -4163,8 +4145,9 @@ async function handleClientInvite(request, env) {
 
     // Email Brevo — design premium Luxyra noir + or
     const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;max-width:560px;margin:0 auto;padding:0;color:#1a1a1a;background:#fff">
-      <div style="background:linear-gradient(135deg,#0a0a0a,#1a1a1a);padding:30px 28px;text-align:center">
-        <div style="color:#d4a843;font-family:Georgia,serif;font-size:32px;font-weight:300;letter-spacing:6px;margin:0">LUXYRA</div>
+      <div style="background:#0b0b0b;padding:26px 28px 20px;text-align:center;border-bottom:3px solid #c8a84e">
+        <img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">
+        <div style="color:#d4a843;font-family:Georgia,serif;font-size:26px;font-weight:300;letter-spacing:6px;margin:0">LUXYRA</div>
         <div style="color:#9a9a9a;font-size:11px;letter-spacing:3px;text-transform:uppercase;margin-top:6px">Espace client</div>
       </div>
       <div style="padding:32px 28px">
@@ -5164,7 +5147,7 @@ async function runRgpdPurgeJ60(env) {
       if (s.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)) {
         await brevoSendEmail(env, { to: s.email, toName: s.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
           subject: `Vos données Luxyra seront supprimées le ${le}`,
-          htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Suppression prochaine de vos données</h2><p>Bonjour,</p><p>Votre service Luxyra pour <b>${String(s.nom || "votre établissement").replace(/</g, "&lt;")}</b> n'est plus actif. Conformément à nos conditions et au RGPD, <b>les données personnelles de vos clientes</b> (fiches, notes, photos, rendez-vous, réservations en ligne) <b>seront supprimées le ${le}</b>.</p><p>D'ici là, vous pouvez vous reconnecter pour <b>exporter vos données</b> ou <b>réactiver votre abonnement</b> : tout sera conservé à l'identique.</p><p>Vos documents de caisse (tickets, clôtures, journal) restent conservés 6 ans, comme l'exige la loi, et consultables en mode archives.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Me connecter</a></p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+          htmlContent: lxMailLayout(`<p>Bonjour,</p><p>Votre service Luxyra pour <b>${String(s.nom || "votre établissement").replace(/</g, "&lt;")}</b> n'est plus actif. Conformément à nos conditions et au RGPD, <b>les données personnelles de vos clientes</b> (fiches, notes, photos, rendez-vous, réservations en ligne) <b>seront supprimées le ${le}</b>.</p><p>D'ici là, vous pouvez vous reconnecter pour <b>exporter vos données</b> ou <b>réactiver votre abonnement</b> : tout sera conservé à l'identique.</p><p>Vos documents de caisse (tickets, clôtures, journal) restent conservés 6 ans, comme l'exige la loi, et consultables en mode archives.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Me connecter</a></p>`, { titre: `Suppression prochaine de vos données` }),
           textContent: `Les données personnelles de vos clientes (fiches, notes, photos, rendez-vous) seront supprimées le ${le}. Reconnectez-vous d'ici là pour exporter vos données ou réactiver votre abonnement : https://luxyra.fr/app . Vos documents de caisse restent conservés 6 ans.`, replyTo: null, attachment: null });
       }
       await supabaseUpdate(env, s.id, { rgpd_preavis_le: new Date().toISOString() });
@@ -5342,8 +5325,9 @@ async function sendRetentionWarningEmail(env, salon) {
   const purgeFmt = purgeDate.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
   const html = `
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;color:#1a1a1a">
-  <div style="background:linear-gradient(135deg,#d4a843,#b8960f);padding:24px;text-align:center">
-    <h1 style="color:#0a0a0a;margin:0;font-size:24px;letter-spacing:1px">LUXYRA</h1>
+  <div style="background:#0b0b0b;padding:26px 20px 20px;text-align:center;border-bottom:3px solid #c8a84e">
+    <img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">
+    <div style="color:#d4a843;font-family:Georgia,serif;font-size:22px;letter-spacing:6px">LUXYRA</div>
   </div>
   <div style="padding:32px 28px">
     <h2 style="color:#1a1a1a;font-size:20px;margin:0 0 16px">⏰ Préavis de suppression de vos données</h2>
@@ -5354,15 +5338,15 @@ async function sendRetentionWarningEmail(env, salon) {
     </div>
     <p style="font-size:15px;line-height:1.6;color:#333">Si vous souhaitez récupérer vos clôtures Z, factures, ou tout autre document comptable, connectez-vous dès maintenant en mode archives :</p>
     <div style="text-align:center;margin:28px 0">
-      <a href="https://app.luxyra.fr" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:10px;letter-spacing:.5px;text-transform:uppercase;font-size:13px">Accéder à mes archives</a>
+      <a href="https://luxyra.fr/app" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:10px;letter-spacing:.5px;text-transform:uppercase;font-size:13px">Accéder à mes archives</a>
     </div>
     <p style="font-size:14px;line-height:1.6;color:#666">Une fois connecté, cliquez sur <strong>"Accéder à mes archives comptables"</strong> pour télécharger vos documents en quelques clics.</p>
     <hr style="border:none;border-top:1px solid #eee;margin:28px 0">
-    <p style="font-size:12px;color:#999;line-height:1.5">Vous pouvez également <a href="https://app.luxyra.fr" style="color:#d4a843">reprendre un abonnement</a> à tout moment pour continuer d'utiliser Luxyra.</p>
-    <p style="font-size:12px;color:#999;margin-top:18px">Luxyra • contact@luxyra.fr</p>
+    <p style="font-size:12px;color:#999;line-height:1.5">Vous pouvez également <a href="https://luxyra.fr/app" style="color:#d4a843">reprendre un abonnement</a> à tout moment pour continuer d'utiliser Luxyra.</p>
+    <p style="font-size:11px;color:#999;margin-top:18px">Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023 — 29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — contact@luxyra.fr</p>
   </div>
 </div>`;
-  const text = `Préavis suppression de vos données — Luxyra\n\nVotre abonnement résilié atteint bientôt 6 ans. Vos documents comptables seront supprimés définitivement le ${purgeFmt} (dans environ 30 jours).\n\nPour récupérer vos clôtures Z, factures et autres documents : connectez-vous sur https://app.luxyra.fr et cliquez sur "Accéder à mes archives comptables".\n\nLuxyra • contact@luxyra.fr`;
+  const text = `Préavis suppression de vos données — Luxyra\n\nVotre abonnement résilié atteint bientôt 6 ans. Vos documents comptables seront supprimés définitivement le ${purgeFmt} (dans environ 30 jours).\n\nPour récupérer vos clôtures Z, factures et autres documents : connectez-vous sur https://luxyra.fr/app et cliquez sur "Accéder à mes archives comptables".\n\nLuxyra • contact@luxyra.fr`;
   try {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
