@@ -3279,6 +3279,7 @@ function calcFraisDeplacement(distKm){
   if(mode!=="domicile"&&mode!=="mixte")return 0;
   var dom=SALON_CONFIG.domicile;if(!dom)return 0;
   if(dom.type==="gratuit")return 0;
+  if(distKm<=(Number(dom.gratuitKm)||0))return 0; // 2026-10-10 : « gratuit jusqu'à X km » vaut aussi pour le forfait (comme le mini-site)
   if(dom.type==="km"){var kmFacturable=Math.max(0,distKm-(dom.gratuitKm||0));return Math.round(kmFacturable*(dom.prixKm||0.5)*100)/100;}
   return dom.forfait||0; // forfait
 }
@@ -9056,6 +9057,13 @@ async function _lxEnsureFichesForOnlineAppts(){
         }
       }
       if(rid){ a.cId=rid; changed=true; }
+      // 2026-10-10 : adresse saisie par la cliente pour un RDV à domicile -> recopiée dans sa fiche si elle n'en a pas
+      try{
+        if(rid && o.lieu==="domicile" && o.adresseRue){
+          var _cc=gC(rid);
+          if(_cc && !String(_cc.adr||"").trim()){ _cc.adr=o.adresseRue; if(!_cc.cp) _cc.cp=o.adresseCp||""; if(!_cc.ville) _cc.ville=o.adresseVille||""; if(typeof saveClient==="function") saveClient(_cc); }
+        }
+      }catch(_eAdr){}
     }
     if(changed){ window._apDirty=true; if(typeof refreshCurrentView==="function") refreshCurrentView(); }
   }catch(_e){}
@@ -9173,6 +9181,36 @@ function _lxFixOnlineStId(){
   }catch(_e){ return false; }
 }
 window._lxFixOnlineStId=_lxFixOnlineStId;
+// 2026-10-10 : complète une entrée du planning issue d'une réservation en ligne :
+//  - RDV à domicile : lieu, adresse de la cliente, frais de déplacement (séparés du prix des prestations) ;
+//  - acompte payé en ligne (non remboursé) : repris pour être déduit à l'encaissement, même si la
+//    réservation arrive pendant que l'app est ouverte (avant : seulement au démarrage).
+// m = réservation au format lxMapRdvOnlineRow. Ne touche jamais un RDV déjà encaissé.
+function _lxApOnlineEnrichir(ap, m){
+  try{
+    if(!ap||!m||ap.st==="done"||ap.tkNum) return;
+    if(m.lieu==="domicile"){
+      ap.lieu="domicile";
+      if(m.adresse) ap.adresse=m.adresse+(m.adresseComplement?" ("+m.adresseComplement+")":"");
+      var frais=Number(m.fraisDepl)||0;
+      if(frais>0 && !ap._fraisDeplAppl){
+        ap.fraisDepl=frais; ap.distanceKm=m.distanceKm;
+        // Le prix enregistré inclut parfois les frais (réservation sans paiement) : on les retire pour
+        // qu'ils apparaissent sur une ligne « Déplacement » séparée à l'encaissement.
+        var its=Array.isArray(m.items)?m.items:[], somme=0;
+        its.forEach(function(it){ somme+=Number(it.prix||it.price||0)*(Number(it.qty)||1); });
+        var prv=Number(ap.pr)||0;
+        if(somme>0 && Math.abs(prv-(somme-(Number(m.remiseCarte)||0)+frais))<0.02) ap.pr=Math.round((prv-frais)*100)/100;
+        ap._fraisDeplAppl=true;
+      }
+    }
+    if(m.acomptePaye && Number(m.acompte)>0 && !m.acompteRembourse && !(Number(ap.acompte)>0)){
+      ap.acompte=Number(m.acompte); ap.acompteMode="En ligne (Stripe)";
+      ap.acompteDate=m.createdAt?String(m.createdAt).slice(0,10):TD;
+    }
+  }catch(_e){}
+}
+window._lxApOnlineEnrichir=_lxApOnlineEnrichir;
 function _lxOnlineToAP(rdv){
   try{
     if(typeof AP==="undefined"||!AP)return;
@@ -9184,6 +9222,7 @@ function _lxOnlineToAP(rdv){
       if(AP[i]&&(AP[i].onlineId===rdv.id||String(AP[i].id||"")===_apId)){
         if(!AP[i].onlineId) AP[i].onlineId=rdv.id;
         if(!AP[i].cId){ var _rc=_lxResolveClientId(rdv); if(_rc) AP[i].cId=_rc; }
+        try{ _lxApOnlineEnrichir(AP[i], (typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow(rdv):null); }catch(_e2){}
         return;
       }
     }
@@ -9202,6 +9241,7 @@ function _lxOnlineToAP(rdv){
       else { _stId=null; _needAssign=true; }
     }
     AP.push({id:"online_"+rdv.id,onlineId:rdv.id,cId:_lxcId,sId:rdv.service_id,stId:_stId,date:rdv.date_rdv,time:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,pr:Number(rdv.service_prix),st:"conf",items:aptItems,comment:"RDV EN LIGNE - "+(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")+" - "+(rdv.client_tel||"")+(!_needAssign?"":" \u2014 SANS PR\u00c9F\u00c9RENCE (\u00e0 assigner)"),aPhases:phases,isOnline:true,onlineStatus:rdv.status,clientName:(rdv.client_nom||"")+(rdv.client_prenom?" "+rdv.client_prenom:"")});window._apDirty=true;
+    try{ _lxApOnlineEnrichir(AP[AP.length-1], (typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow(rdv):null); }catch(_e3){}
   }catch(_e){}
 }
 function _lxRemoveOnlineFromAP(rdvId){
@@ -9257,7 +9297,7 @@ window._rdvPollInterval=setInterval(function(){
       else if(/^(clients|detail)$/.test(window._currentPage||"")){ try{reloadFromSupabase("clients");}catch(_e){} }
     }
     var today=new Date().toISOString().slice(0,10);
-    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
+    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at,lieu,client_adresse,client_adresse_cp,client_adresse_ville,adresse_complement,client_lat,client_lng,distance_km,frais_deplacement_montant,remise_carte_montant").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
         var newCount=0;var newRdvCount=0;var newEvents=[];
         r.data.forEach(function(rdv){
@@ -9267,6 +9307,7 @@ window._rdvPollInterval=setInterval(function(){
           if(exists){
             // Update existing entry with fresh data
             var upd=window.RDV_ONLINE[existIdx];
+            var _prevSt=upd.status;
             upd.status=rdv.status;upd.modification_demandee=rdv.modification_demandee;
             upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
             upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
@@ -9276,7 +9317,14 @@ window._rdvPollInterval=setInterval(function(){
             upd.empreinteAmount=rdv.empreinte_amount?Number(rdv.empreinte_amount):null;
             upd.empreinteCapturedAt=rdv.empreinte_captured_at||null;
             upd.empreinteReleasedAt=rdv.empreinte_released_at||null;
+            // 2026-10-10 : acompte et remboursement toujours à jour ; une réservation qui vient d'être
+            // payée (pending_payment -> confirmée) apparaît au planning sans recharger l'app.
+            upd.acompte=Number(rdv.acompte_montant)||0; upd.acomptePaye=!!rdv.acompte_paye; upd.acompteRembourse=!!rdv.acompte_rembourse;
             if(rdv.status==="cancelled"||rdv.status==="cancelled_by_client"||rdv.status==="done"||rdv.status==="refused"){_lxRemoveOnlineFromAP(rdv.id);}
+            else if(rdv.status==="pending"||rdv.status==="confirmed"){
+              _lxOnlineToAP(rdv);
+              if(_prevSt==="pending_payment" && _lxFlashOnce("new_"+rdv.id)){newRdvCount++;newEvents.push("\ud83d\udcc5 Nouveau RDV \u2014 "+((rdv.client_nom||"")+" "+(rdv.client_prenom||"")).trim());newCount++;}
+            }
           }
           if(!exists){
             // FIX 2026-08-04 : MAPPER UNIQUE (le select ci-dessus a ete complete en
@@ -9588,7 +9636,7 @@ function updateDemandePropTotals(){
   if(totEl){
     var h = '<div style="display:flex;justify-content:space-between;font-weight:700"><span>Prix total</span><span style="color:var(--gold);font-size:16px">'+data.prix_total.toFixed(2)+' €</span></div>';
     h += '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-top:4px"><span>Acompte ('+data.acompte_pct+'%)</span><span>'+data.acompte_montant.toFixed(2)+' €</span></div>';
-    h += '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2)"><span>Reste à payer au salon</span><span>'+(data.prix_total - data.acompte_montant).toFixed(2)+' €</span></div>';
+    h += '<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2)"><span>Reste à payer le jour du rendez-vous</span><span>'+(data.prix_total - data.acompte_montant).toFixed(2)+' €</span></div>';
     totEl.innerHTML = h;
   }
 }
@@ -26128,6 +26176,11 @@ function mD(id, mode){
   }
   // === Consolidation : fusionne les items identiques en une ligne avec quantité ===
   cartItems = _consolidateCartItems(cartItems);
+  // 2026-10-10 : RDV à domicile réservé en ligne -> frais de déplacement ajoutés automatiquement
+  // (même ligne que le bouton « Déplacement » de la caisse ; modifiable/supprimable avant validation)
+  if(Number(a.fraisDepl)>0 && !cartItems.some(function(it){ return /d(é|\u00e9)placement/i.test(String(it.name||"")); })){
+    cartItems.push({name:"\ud83d\ude97 D\u00e9placement"+(Number(a.distanceKm)>0?" ("+(Math.round(Number(a.distanceKm)*10)/10).toString().replace(".",",")+" km)":""),price:Math.round(Number(a.fraisDepl)*100)/100,qty:1,remise:0,ci:0});
+  }
   // === Option B (refonte 2026-05-11) : RDV groupé — merge items du RDV lié ===
   // FIX 2026-05-15 : si mode='single' (encaisser celui-ci seul), on saute le merge
   var linkedApptId = null;
@@ -26169,6 +26222,18 @@ function mD(id, mode){
     }
   }
   _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",acompteTkNum:a.acompteTkNum||null,_linkedApptId:linkedApptId};
+  // 2026-10-10 : un acompte payé EN LIGNE ne peut pas être déduit au-delà du total du panier
+  // (prestations retirées / modifiées) : déduction plafonnée + avertissement (surplus à rembourser).
+  try{
+    if(_tk.acompte>0 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(_tk.acompteMode)){
+      var _tot=0; cartItems.forEach(function(it){ if(!it.isSep) _tot+=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0); });
+      _tot=Math.round(_tot*100)/100;
+      if(_tot>=0 && _tk.acompte>_tot+0.004){
+        var _sur=Math.round((_tk.acompte-_tot)*100)/100; _tk.acompte=_tot;
+        if(typeof toast==="function") toast("Acompte en ligne supérieur au total : "+_sur.toFixed(2).replace(".",",")+" € à rembourser à la cliente","warning");
+      }
+    }
+  }catch(_eCap){}
   // Propage les refs devis si le RDV a été planifié depuis un devis : permet à
   // cleanupPendingFromTk() de basculer le statut "planifie" → "converti" en fin d'encaissement
   if(a.fromDevisId) _tk._fromDevisId = a.fromDevisId;
@@ -27327,7 +27392,27 @@ function _lxCfgErreur(msg, detail){
   try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSalonConfig", msg:msg, detail:detail||null}).slice(0,2000)); }catch(_e){}
 }
 var _lxCfgFile = Promise.resolve();
+// 2026-10-10 : le mode d'exercice et les frais de déplacement réglés dans l'app sont recopiés dans les colonnes
+// de `salons` lues par le mini-site et la recherche (avant : réglages jamais transmis -> frais 0 €, zone 25 km).
+function lxSyncDomicileColonnes(){
+  try{
+    if(typeof window.lxSaveSalonColumns!=="function"||!SALON_CONFIG) return;
+    var mode=SALON_CONFIG.modeActivite||"salon", d=SALON_CONFIG.domicile||{};
+    var type=d.type||"forfait";
+    var patch={ mode_activite: mode };
+    if(mode!=="salon"){
+      patch.zone_deplacement_km = Number(d.zone)>0 ? Number(d.zone) : 20;
+      patch.frais_deplacement_type = (type==="km") ? "par_km" : "forfait";
+      patch.frais_deplacement = (type==="gratuit") ? 0 : (type==="km" ? (Number(d.prixKm)||0) : (Number(d.forfait)||0));
+    }
+    var sig=JSON.stringify(patch);
+    if(window._lxDomSig===sig) return;
+    window._lxDomSig=sig;
+    window.lxSaveSalonColumns(patch);
+  }catch(e){}
+}
 function saveSalonConfig(){
+  lxSyncDomicileColonnes();
   // Enregistrements mis en file : jamais deux lectures-ecritures entremelees.
   _lxCfgFile = (_lxCfgFile||Promise.resolve()).then(_lxSaveSalonConfigUneFois, _lxSaveSalonConfigUneFois);
   return _lxCfgFile;
@@ -31298,6 +31383,14 @@ function buildRdvEmailHTML(type,vars){
     h+='<tr><td style="padding:0 0 8px"></td></tr>';
   }
 
+  // 2026-10-10 : RDV à domicile -> lieu et adresse rappelés à la cliente
+  if(vars.lieu==="domicile"){
+    h+='<tr><td style="padding:0 24px"><div style="height:1px;background:'+borderC+'"></div></td></tr>';
+    h+='<tr><td style="padding:12px 24px 20px">';
+    h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">\ud83c\udfe0 Lieu</div>';
+    h+='<div style="font-size:15px;font-weight:600;color:#fff">\u00c0 votre domicile'+(vars.adresse?'<br><span style="font-weight:400;font-size:13px;color:rgba(255,255,255,.7)">'+_lxEsc(vars.adresse)+'</span>':'')+'</div>';
+    h+='</td></tr>';
+  }
   h+='</table></td></tr>'; // end card
 
   // Info text
@@ -31342,7 +31435,8 @@ async function doSendConfirm(mode,rdvId){
     prestation:sv?sv.n:"Prestation",
     salon:SALON_CONFIG.nom,
     slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",
-    collab:sty?sty.n:""
+    collab:sty?sty.n:"",
+    lieu:rdvObj.lieu||"", adresse:rdvObj.adresse||""
   };
   var sent=[];
   var errors=[];
@@ -31960,7 +32054,7 @@ async function checkSmsReminders(){
     if(a.st==="canc"||a.st==="done"||a.cancelled)continue;
     var cl=gC(a.cId);if(!cl||!cl.ph||!cl.smsOk)continue;
     var sv=gS(a.sId);var sty=gT(a.stId);
-    var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:""};
+    var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:"",lieu:a.lieu||"",adresse:a.adresse||""};
     
     // Rappel 24h: send today for tomorrow's appointments
     if(cfg.rappel24h&&a.date===tomorrowStr){
@@ -32494,11 +32588,13 @@ function _lxEsc(x){ return String(x==null?"":x).replace(/&/g,"&amp;").replace(/<
 // Coordonnées complètes de l'établissement (cliquables) + réseaux sociaux — bas des emails envoyés aux clientes
 function lxSalonCoordonneesHtml(){
   var C=SALON_CONFIG||{}, gold="#c8a84e", e=_lxEsc, lien='color:rgba(255,255,255,.75);text-decoration:none';
-  var adr=[C.adresse,[C.cp,C.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  var _domSeul=(C.modeActivite==="domicile");
+  var adr=_domSeul?"":[C.adresse,[C.cp,C.ville].filter(Boolean).join(" ")].filter(Boolean).join(", ");
   var slug=C.slug||(window.SALON&&window.SALON.slug)||"";
   var h='<div style="font-family:Helvetica,Arial,sans-serif;text-align:center;padding:4px 18px 8px">';
   h+='<div style="font-family:Georgia,serif;font-size:17px;color:'+gold+';letter-spacing:1px;margin-bottom:8px">'+e(C.nom||"")+'</div>';
   if(adr) h+='<div style="font-size:13px;line-height:1.7"><a href="https://www.google.com/maps/search/?api=1&amp;query='+encodeURIComponent((C.nom||"")+" "+adr)+'" style="'+lien+'">📍 '+e(adr)+'</a></div>';
+  if(_domSeul) h+='<div style="font-size:13px;line-height:1.7;color:rgba(255,255,255,.75)">🚗 Se déplace à domicile'+(C.ville?' — '+e(C.ville):'')+'</div>';
   if(C.tel) h+='<div style="font-size:13px;line-height:1.7"><a href="tel:'+String(C.tel).replace(/[^0-9+]/g,"")+'" style="'+lien+'">📞 '+e(C.tel)+'</a></div>';
   if(C.email) h+='<div style="font-size:13px;line-height:1.7"><a href="mailto:'+e(C.email)+'" style="'+lien+'">✉️ '+e(C.email)+'</a></div>';
   if(slug) h+='<div style="font-size:13px;line-height:1.7"><a href="https://luxyra.fr/'+e(slug)+'" style="color:'+gold+';text-decoration:none">🗓 Réserver en ligne : luxyra.fr/'+e(slug)+'</a></div>';
@@ -34419,7 +34515,8 @@ function initApp(){
   // Auto-apply acompte from online RDVs
   if(window.RDV_ONLINE){
     window.RDV_ONLINE.forEach(function(r){
-      if(r.acomptePaye&&r.acompte>0){
+      for(var _ae=0;_ae<AP.length;_ae++){ if(AP[_ae].onlineId===r.id) _lxApOnlineEnrichir(AP[_ae], r); }
+      if(r.acomptePaye&&r.acompte>0&&!r.acompteRembourse){
         for(var ai=0;ai<AP.length;ai++){
           if(AP[ai].onlineId===r.id&&!AP[ai].acompte){
             AP[ai].acompte=r.acompte;
@@ -34782,7 +34879,7 @@ async function reloadFromSupabase(table){
                 onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,
                   tel:rdv.client_tel,email:rdv.client_email,
                   genre:rdv.client_genre||"",ddn:rdv.client_ddn||"",
-                  adresse:rdv.client_adresse||"",cp:rdv.client_cp||"",ville:rdv.client_ville||"",
+                  adresse:rdv.client_adresse||"",cp:rdv.client_adresse_cp||rdv.client_cp||"",ville:rdv.client_adresse_ville||rdv.client_ville||"",
                   svcNom:rdv.service_nom,svcPrix:rdv.service_prix,
                   collabNom:rdv.collaborateur_nom,
                   date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,

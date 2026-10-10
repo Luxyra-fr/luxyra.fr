@@ -996,7 +996,16 @@ function lxMapRdvOnlineRow(r) {
     modification_heure: r.modification_heure,
     modification_message: r.modification_message,
     modification_status: r.modification_status,
-    cancelled_by: r.cancelled_by, cancel_reason: r.cancel_reason, cancelled_at: r.cancelled_at
+    cancelled_by: r.cancelled_by, cancel_reason: r.cancel_reason, cancelled_at: r.cancelled_at,
+    // 2026-10-10 : RDV à domicile (lieu, adresse de la cliente, frais de déplacement) + remise carte
+    lieu: r.lieu || null,
+    adresse: [r.client_adresse, [r.client_adresse_cp, r.client_adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null,
+    adresseComplement: r.adresse_complement || null,
+    adresseRue: r.client_adresse || null, adresseCp: r.client_adresse_cp || null, adresseVille: r.client_adresse_ville || null,
+    clientLat: (r.client_lat != null ? Number(r.client_lat) : null), clientLng: (r.client_lng != null ? Number(r.client_lng) : null),
+    distanceKm: (r.distance_km != null ? Number(r.distance_km) : null),
+    fraisDepl: Number(r.frais_deplacement_montant) || 0,
+    remiseCarte: Number(r.remise_carte_montant) || 0
   };
 }
 if (typeof window !== "undefined") window.lxMapRdvOnlineRow = lxMapRdvOnlineRow;
@@ -1212,6 +1221,15 @@ async function loadSalonData() {
   // FIX 2026-10-07 : `|| 20` ecrasait un taux a 0 (franchise de TVA). Voir lxTauxTVA().
   SALON_CONFIG.tauxTVA = (salon.taux_tva !== null && salon.taux_tva !== undefined && salon.taux_tva !== "") ? Number(salon.taux_tva) : 20;
   SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
+  // 2026-10-10 : mode d'exercice choisi à l'inscription (colonne) quand la config de l'app ne l'a pas encore ;
+  // la config (si présente) reste prioritaire. Idem pour les frais de déplacement.
+  try {
+    if (salon.mode_activite && !SALON_CONFIG.modeActivite) SALON_CONFIG.modeActivite = salon.mode_activite;
+    if (salon.mode_activite && salon.mode_activite !== "salon" && !SALON_CONFIG.domicile) {
+      var _fd = Number(salon.frais_deplacement) || 0, _pk = salon.frais_deplacement_type === "par_km";
+      SALON_CONFIG.domicile = { type: _pk ? "km" : (_fd > 0 ? "forfait" : "gratuit"), forfait: _pk ? 15 : (_fd || 15), prixKm: _pk ? _fd : 0.5, zone: Number(salon.zone_deplacement_km) || 20, gratuitKm: 0 };
+    }
+  } catch (_eDom) {}
   SALON_CONFIG.plan = salon.plan || "essential";
   SALON_CONFIG.metier = salon.metier || "coiffure";
   SALON_CONFIG.modeActivite = salon.mode_activite || "salon";
@@ -1545,6 +1563,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
             onlineStatus: r.status,
             clientName: r.nom + (r.prenom ? " " + r.prenom : "")
           });
+          try { if (typeof window._lxApOnlineEnrichir === "function") window._lxApOnlineEnrichir(AP[AP.length - 1], r); } catch (_eEn) {}
         }
       }
     });
@@ -2144,6 +2163,19 @@ async function saveAppointment(appt) {
         var _apClone = {};
         for (var _k in appt) { if (Object.prototype.hasOwnProperty.call(appt, _k)) _apClone[_k] = appt[_k]; }
         _apClone.id = onlineUuid; // route vers la branche appointments classique (upsert)
+        // 2026-10-10 : l'acompte payé EN LIGNE déduit à l'encaissement est conservé avec le RDV encaissé
+        // (même support que l'acompte versé au salon : items[].isAcompteData) -> après un rechargement
+        // ou sur un autre appareil, la clôture Z le range toujours en « Payé en ligne ».
+        try {
+          var _acOn = Number(appt.acompte) || 0;
+          if (_acOn > 0 && /ligne|stripe|online/i.test(String(appt.acompteMode || ""))) {
+            var _its = Array.isArray(appt.items) ? appt.items.slice() : [];
+            if (!_its.some(function (x) { return x && x.isAcompteData; })) {
+              _its.push({ isAcompteData: true, acompte: _acOn, acompteMode: appt.acompteMode, acompteDate: appt.acompteDate || null });
+              _apClone.items = _its;
+            }
+          }
+        } catch (_eAc) {}
         var _prevBypass = window._walBypass; window._walBypass = true;
         try { await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
       } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); }
