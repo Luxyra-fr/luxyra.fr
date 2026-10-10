@@ -9326,7 +9326,7 @@ window._rdvPollInterval=setInterval(function(){
             var upd=window.RDV_ONLINE[existIdx];
             var _prevSt=upd.status;
             // 2026-10-10 : statut posé localement (annulé / encaissé) pas encore visible en base -> on le garde
-            var _localFin=(_prevSt==="cancelled"||_prevSt==="done")&&(rdv.status==="pending"||rdv.status==="confirmed");
+            var _localFin=((_prevSt==="cancelled"||_prevSt==="done"||_prevSt==="refused")&&(rdv.status==="pending"||rdv.status==="confirmed"))||(_prevSt==="confirmed"&&rdv.status==="pending");
             upd.status=_localFin?_prevSt:rdv.status;upd.modification_demandee=rdv.modification_demandee;
             upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
             upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
@@ -33005,14 +33005,14 @@ function lxCommunesRendu(q){
   var nb=L.filter(function(c){return c.on;}).length;
   var h='<div class="mbox" style="max-width:480px;max-height:90vh;display:flex;flex-direction:column"><h2 style="margin-bottom:4px">🏘️ Communes desservies</h2>';
   h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'+nb+' cochée'+(nb>1?'s':'')+' · pré-cochées dans un rayon de '+(Number(dom.zone)||20)+' km. Décochez celles où vous n’allez pas.'+(parCom?' Forfait vide = montant par défaut ('+(Number(dom.forfait)||0)+' €).':'')+'</div>';
-  h+='<input id="lxComQ" placeholder="Rechercher une commune" value="'+_lxAttr(q||"")+'" oninput="lxCommunesRendu(this.value)" style="margin-bottom:8px">';
+  h+='<input id="lxComQ" placeholder="Rechercher une commune" value="'+_lxAttr(q||"")+'" oninput="window._lxComQFocus=true;lxCommunesRendu(this.value)" style="margin-bottom:8px">';
   h+='<div style="display:flex;gap:6px;margin-bottom:8px"><button class="btn bs" style="flex:1;font-size:12px" onclick="(window._lxComL||[]).forEach(function(c){c.on=true});lxCommunesRendu(document.getElementById(\'lxComQ\').value)">Tout cocher</button><button class="btn bs" style="flex:1;font-size:12px" onclick="(window._lxComL||[]).forEach(function(c){c.on=false});lxCommunesRendu(document.getElementById(\'lxComQ\').value)">Tout décocher</button></div>';
   h+='<div style="flex:1;overflow:auto;border:1px solid var(--border2);border-radius:10px">';
   L.forEach(function(c,i){ if(qq && (c.nom+" "+c.cp).toLowerCase().indexOf(qq)<0) return;
     h+='<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border2);font-size:13px;cursor:pointer"><input type="checkbox" '+(c.on?'checked':'')+' onchange="window._lxComL['+i+'].on=this.checked" style="width:18px;height:18px"><span style="flex:1">'+_lxEsc(c.nom)+' <span style="color:var(--text3);font-size:11px">'+_lxEsc(c.cp)+' · '+String(c.dist).replace(".",",")+' km</span></span>'+(parCom?'<input type="number" min="0" step="0.5" placeholder="€" value="'+(c.forfait!=null?c.forfait:'')+'" onclick="event.stopPropagation()" onchange="window._lxComL['+i+'].forfait=(this.value===\'\'?null:+this.value)" style="width:64px;padding:6px;text-align:center">':'')+'</label>'; });
   h+='</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM();go(\'settings\')">Annuler</button><button class="btn bg" style="flex:1" onclick="lxCommunesEnregistrer()">Enregistrer</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
-  var qi=document.getElementById("lxComQ"); if(qi&&q){ qi.focus(); qi.setSelectionRange(qi.value.length,qi.value.length); }
+  var qi=document.getElementById("lxComQ"); if(qi&&q!==undefined&&window._lxComQFocus){ qi.focus(); qi.setSelectionRange(qi.value.length,qi.value.length); }
 }
 function lxCommunesEnregistrer(){
   var L=(window._lxComL||[]).filter(function(c){return c.on;}).map(function(c){ var o={code:c.code,nom:c.nom,cp:c.cp}; if(c.forfait!=null&&!isNaN(c.forfait)) o.forfait=Number(c.forfait); return o; });
@@ -33026,13 +33026,13 @@ function lxCommunesEnregistrer(){
 // horaire ou refuse. Si un acompte est prévu et que les paiements en ligne sont actifs, la cliente reçoit à
 // l'acceptation un lien de paiement (luxyra.fr/acompte.html?t=…) ; sinon il se règle sur place.
 function _lxRdvOnlineDe(a){ if(!a||!a.onlineId||!window.RDV_ONLINE) return null; for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===a.onlineId) return RDV_ONLINE[i]; } return null; }
-function _lxRdvEnAttente(){ var L=[]; try{ (AP||[]).forEach(function(a){ var r=_lxRdvOnlineDe(a); if(r&&r.status==="pending"&&a.st!=="done") L.push(a); }); }catch(e){} return L; }
+function _lxRdvEnAttente(){ var L=[]; try{ (AP||[]).forEach(function(a){ var r=_lxRdvOnlineDe(a); if(r&&r.status==="pending"&&a.st!=="done"&&String(a.date||"")>=TD) L.push(a); }); }catch(e){} return L; }
 function lxOuvrirRdv(id){ var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a) return; try{ calD=new Date(a.date+"T12:00:00"); }catch(e){} clickAppt(id); }
 function _lxBlocValidationRdv(a, ro){
   var dom=(ro.lieu==="domicile"), ac=Number(ro.acompte)||0;
   var h='<div style="background:rgba(255,152,0,.1);border:1.5px solid rgba(255,152,0,.5);border-radius:14px;padding:14px;margin-bottom:14px">';
   h+='<div style="font-weight:800;color:#ffb74d;font-size:15px;margin-bottom:4px">📩 Demande de rendez-vous à valider</div>';
-  h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:10px">'+(dom?'🏠 À domicile'+(ro.adresse?' — '+_lxEsc(ro.adresse):'')+(Number(ro.distanceKm)>0?' ('+String(Math.round(Number(ro.distanceKm)*10)/10).replace(".",",")+' km)':'')+'<br>':'')+(ac>0?'Acompte prévu : '+ac.toFixed(2).replace(".",",")+' € (lien de paiement envoyé à la cliente après acceptation)':'Sans acompte')+'</div>';
+  h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:10px">'+(dom?'🏠 À domicile'+(ro.adresse?' — '+_lxEsc(ro.adresse):'')+(Number(ro.distanceKm)>0?' ('+String(Math.round(Number(ro.distanceKm)*10)/10).replace(".",",")+' km)':'')+'<br>':'')+(ac>0?(ro.acomptePaye?'✅ Acompte de '+ac.toFixed(2).replace(".",",")+' € déjà payé (remboursé automatiquement en cas de refus)':'Acompte prévu : '+ac.toFixed(2).replace(".",",")+' € (lien de paiement envoyé à la cliente après acceptation)'):'Sans acompte')+'</div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">';
   h+='<button class="btn" style="padding:10px 4px;background:#2e7d32;color:#fff;font-weight:800;font-size:12px" onclick="lxRdvAccepter(\''+a.id+'\')">✅ Accepter</button>';
   h+='<button class="btn" style="padding:10px 4px;background:rgba(33,150,243,.15);color:#64b5f6;font-weight:800;font-size:12px" onclick="lxRdvProposer(\''+a.id+'\')">🕒 Autre horaire</button>';
@@ -33047,8 +33047,8 @@ async function _lxMessageCliente(ro, titre, icone, texteEmail, texteSms, lien){
     if(ro.email){
       var corps=_lxEsc(texteEmail).replace(/\n/g,"<br>");
       var bt=lien?[{t:"💳 Régler l’acompte",u:lien,principal:true}]:_lxBoutonsSalon();
-      await sendEmailViaWorker(ro.email,((ro.prenom||"")+" "+(ro.nom||"")).trim(),titre+" - "+(SALON_CONFIG.nom||""),lxEmailSalon({icone:icone,titre:titre,salutation:ro.prenom||"",carte:corps,boutons:bt}));
-      return "email";
+      var re=await sendEmailViaWorker(ro.email,((ro.prenom||"")+" "+(ro.nom||"")).trim(),titre+" - "+(SALON_CONFIG.nom||""),lxEmailSalon({icone:icone,titre:titre,salutation:ro.prenom||"",carte:corps,boutons:bt}));
+      if(re&&re.ok) return "email";
     }
     if(ro.tel && typeof sendSms==="function"){
       var t=(typeof lxSmsGsm==="function")?lxSmsGsm(texteSms):texteSms;
@@ -33071,13 +33071,15 @@ async function lxRdvAccepter(apId, msgHoraire){
       if(ok){ var tok=_lxJetonAcompte(); upd.acompte_token=tok; upd.acompte_lien_envoye_at=new Date().toISOString(); lien="https://luxyra.fr/acompte.html?t="+tok; }
     }catch(e){}
   }
-  var r=await _sb.from("rdv_online").update(upd).eq("id",ro.id).eq("salon_id",_salonId);
+  var r=await _sb.from("rdv_online").update(upd).eq("id",ro.id).eq("salon_id",_salonId).eq("status","pending").select("id");
   if(r&&r.error){ toast("Erreur : "+r.error.message,"error"); return; }
+  if(!r||!r.data||!r.data.length){ toast("Cette demande n’est plus en attente (annulée ou déjà traitée)","warning"); cM(); go(window._currentPage||"planning"); return; }
   ro.status="confirmed"; a.onlineStatus="confirmed";
   var quand=_lxDateCourte(a.date,a.time), nom=(SALON_CONFIG.nom||"").slice(0,22);
   var txtE=(msgHoraire?msgHoraire+"\n\n":"")+"Votre rendez-vous"+(ro.lieu==="domicile"?" à domicile":"")+" du "+quand+" est confirmé."+(lien?"\n\nPour le garantir, merci de régler l’acompte de "+ac.toFixed(2).replace(".",",")+" € (déduit du prix le jour du rendez-vous) :":(ac>0&&!ro.acomptePaye?"\n\nL’acompte de "+ac.toFixed(2).replace(".",",")+" € sera à régler sur place.":""));
-  var txtS=nom+": RDV confirme le "+quand+"."+(lien?" Acompte "+Math.round(ac)+"EUR: "+lien.replace("https://",""):"");
+  var txtS=nom+": RDV confirme le "+quand+"."+(lien?" Acompte "+ac.toFixed(2).replace(".",",").replace(",00","")+"EUR: "+lien.replace("https://",""):"");
   var canal=await _lxMessageCliente(ro,"Rendez-vous confirmé","✅",txtE,txtS,lien);
+  if(!canal && lien){ setTimeout(function(){ showPrompt({title:"Lien d’acompte à transmettre",label:"La cliente n’a pas pu être prévenue automatiquement. Copiez ce lien et envoyez-le-lui :",defaultValue:lien,okLabel:"Fermer",onOk:function(){}}); },400); }
   if(typeof auditLog==="function") auditLog("RDV_EN_LIGNE_ACCEPTE",(ro.prenom||"")+" "+(ro.nom||"")+" "+quand+(lien?" - lien acompte envoyé":""));
   toast("✅ Rendez-vous accepté"+(canal?" — cliente prévenue par "+canal:""),"success");
   cM(); go(window._currentPage||"planning");
@@ -33095,17 +33097,24 @@ async function lxRdvProposerValider(apId){
   var d=(document.getElementById("lxPrD")||{}).value, hh=(document.getElementById("lxPrH")||{}).value, m=((document.getElementById("lxPrM")||{}).value||"").trim();
   if(!d||!hh){ toast("Choisissez la date et l’heure","warning"); return; }
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } } if(!a) return;
-  a.date=d; a.time=hh.slice(0,5);
-  try{ if(typeof saveAppointment==="function") await saveAppointment(a); }catch(e){}
+  var ro=_lxRdvOnlineDe(a); if(!ro){ toast("Rendez-vous introuvable","error"); return; }
+  var r=await _sb.from("rdv_online").update({date_rdv:d,heure_rdv:hh.slice(0,5)+":00"}).eq("id",ro.id).eq("salon_id",_salonId).eq("status","pending").select("id");
+  if(r&&r.error){ toast("Ce créneau n’a pas pu être enregistré : "+r.error.message,"error"); return; }
+  if(!r||!r.data||!r.data.length){ toast("Cette demande n’est plus en attente","warning"); cM(); go(window._currentPage||"planning"); return; }
+  a.date=d; a.time=hh.slice(0,5); ro.date=d; ro.heure=hh.slice(0,5);
   await lxRdvAccepter(apId, "Nous vous proposons un nouvel horaire : le "+_lxDateCourte(d,hh)+"."+(m?"\n« "+m+" »":"")+"\nSi cet horaire ne vous convient pas, répondez à ce message ou annulez depuis votre espace cliente.");
 }
 function lxRdvRefuser(apId){
   showPrompt({title:"Refuser la demande",okLabel:"Refuser",label:"Motif transmis à la cliente (facultatif)",placeholder:"Ex : je ne me déplace pas dans votre secteur ce jour-là",onOk:async function(motif){
     var a=null,ai=-1; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; ai=i; break; } }
     var ro=_lxRdvOnlineDe(a); if(!a||!ro) return;
-    var r=await _sb.from("rdv_online").update({status:"refused",cancelled_by:"salon",cancel_reason:(motif||"Demande non retenue"),cancelled_at:new Date().toISOString()}).eq("id",ro.id).eq("salon_id",_salonId);
+    // Statut « cancelled » par le salon (« refused » n'existe pas en base) : acompte éventuel remboursé automatiquement, empreinte libérée.
+    var _st="cancelled";
+    var r=await _sb.from("rdv_online").update({status:_st,cancelled_by:"salon",cancel_reason:(motif||"Demande non retenue"),cancelled_at:new Date().toISOString()}).eq("id",ro.id).eq("salon_id",_salonId).eq("status","pending").select("id");
     if(r&&r.error){ toast("Erreur : "+r.error.message,"error"); return; }
-    ro.status="refused"; if(ai>=0) AP.splice(ai,1);
+    if(!r||!r.data||!r.data.length){ toast("Cette demande n’est plus en attente (annulée ou déjà traitée)","warning"); cM(); go(window._currentPage||"planning"); return; }
+    try{ if(typeof lxEmpreinteReleaseAuto==="function") lxEmpreinteReleaseAuto(ro.id,"refus_demande"); }catch(_eE){}
+    ro.status=_st; if(ai>=0) AP.splice(ai,1);
     var quand=_lxDateCourte(a.date,a.time);
     await _lxMessageCliente(ro,"Demande de rendez-vous","ℹ️","Nous ne pouvons malheureusement pas honorer votre demande de rendez-vous du "+quand+"."+(motif?"\n« "+motif+" »":"")+"\n\nN’hésitez pas à choisir un autre créneau en ligne.",(SALON_CONFIG.nom||"").slice(0,22)+": desole, votre demande de RDV du "+quand+" ne peut pas etre honoree. Merci de choisir un autre creneau en ligne.",null);
     if(typeof auditLog==="function") auditLog("RDV_EN_LIGNE_REFUSE",(ro.prenom||"")+" "+(ro.nom||"")+" "+quand);
