@@ -2492,6 +2492,14 @@ async function handleRdvDemandeConnectPay(request, env) {
     const pd = demande.proposed_data || {};
     const acompte = Number(pd.acompte_montant) || 0;
     if (acompte <= 0) return jsonResponse({ error: "Aucun acompte à régler." }, 400);
+    // 2026-10-10 : le créneau proposé est-il toujours libre ? (une proposition ne bloque pas le planning)
+    try {
+      const cr = await fetch(`${sbUrl}/rest/v1/rpc/lx_creneau_libre`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: demande.salon_id, p_collab: pd.collaborateur_id ? Number(pd.collaborateur_id) : null, p_date: pd.date, p_heure: pd.heure, p_duree: Number(pd.duree_minutes) || 30 }) });
+      if (cr.ok && (await cr.json()) === false) {
+        await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ refuse_reason: "Créneau pris entre-temps (vérifié avant paiement)" }) });
+        return jsonResponse({ error: "Ce créneau vient d'être pris entre-temps. Le salon a été prévenu et va vous proposer un autre horaire. Aucun paiement n'a été effectué.", creneau_pris: true }, 409);
+      }
+    } catch (_) { /* en cas d'erreur de vérification, on ne bloque pas */ }
 
     // Récupère le salon pour le connect_id
     const salon = await supabaseGet(env, demande.salon_id);
