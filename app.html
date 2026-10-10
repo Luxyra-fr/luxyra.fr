@@ -389,7 +389,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261009-04"></script>
+<script src="luxyra-supabase.js?v=20261010-01"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -1433,7 +1433,16 @@ function getVisibleStylists() {
 // Charger tous les opérateurs au démarrage
 async function refreshOperateurs() {
   if (typeof loadOperateurs !== "function") return;
-  OPERATEURS = await loadOperateurs();
+  var _ops = await loadOperateurs();
+  if (_ops === null) {
+    // Lecture ratée : on garde la liste déjà connue (jamais de bandeau ni de passage sans PIN pour une panne réseau)
+    // et on réessaie dans 20 s.
+    if (!window._lxOpsRetry) { window._lxOpsRetry = setTimeout(function(){ window._lxOpsRetry = null; refreshOperateurs().then(function(){ if (typeof updateOperatorAvatar === "function") updateOperatorAvatar(); }); }, 20000); }
+    window._lxOpsIndispo = true;
+    return;
+  }
+  window._lxOpsIndispo = false;
+  OPERATEURS = _ops;
   // Toujours rafraîchir le bandeau de setup (apparaît/disparaît selon état admin)
   try {
     var noOps = !OPERATEURS || !OPERATEURS.length;
@@ -2366,6 +2375,7 @@ function removeCollabAccountUI(opId, collabId) {
 
 // Bandeau de configuration au démarrage si aucun opérateur
 function showOperateursSetupBanner() {
+  if (window._lxOpsIndispo) return; // 2026-10-10 : liste pas encore lue (réseau) -> pas de fausse alerte NF525
   // Show banner in 2 cases:
   // 1. No operators at all
   // 2. Operators exist but none of them is admin (bootstrap incomplete)

@@ -3492,8 +3492,11 @@ async function loadOperateurs() {
   if (!_isOnline || !_salonId) return [];
   try {
     var r = await _sb.from("salon_operateurs").select("*").eq("salon_id", _salonId).order("created_at");
-    return r.data || [];
-  } catch(e) { console.error("[OP LOAD]", e.message); return []; }
+    // FIX 2026-10-10 : une lecture ratée (réseau, base lente) renvoyait une liste VIDE -> bandeau orange
+    // « NF525 — Configurez vos opérateurs » et passage sans code PIN. On signale l'échec (null) à la place.
+    if (r.error || !Array.isArray(r.data)) { console.warn("[OP LOAD] lecture impossible :", r.error && r.error.message); return null; }
+    return r.data;
+  } catch(e) { console.error("[OP LOAD]", e.message); return null; }
 }
 
 // Créer un opérateur (avec hash du PIN)
