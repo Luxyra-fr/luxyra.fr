@@ -126,6 +126,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/siret" && request.method === "GET") return await handleSiret(request, env);
       if (url.pathname.startsWith("/api/e/o/") && request.method === "GET") return await handlePixelOuverture(request, env, url);
       if (url.pathname === "/api/stripe/webhook-connect" && request.method === "POST") return await handleWebhookConnect(request, env);
+      if (url.pathname === "/api/brevo/sms-event" && request.method === "POST") return await handleBrevoSmsEvent(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
       if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
@@ -249,6 +250,8 @@ export default {
     if (event.cron === "0 8 * * *") {
       try { console.log("[cron] relances essai:", await runRelancesEssaiJob(env)); }
       catch (err) { await reportWorkerError(env, "cron:relances-essai", err, null, "error"); }
+      try { console.log("[cron] rapprochement SMS:", await runSmsRapprochementJob(env)); }
+      catch (err) { await reportWorkerError(env, "cron:sms-rapprochement", err, null, "warning"); }
       return;
     }
     try {
@@ -2701,12 +2704,110 @@ function lxSmsSegments(txt) {
   return n <= 160 ? 1 : Math.ceil(n / 153);
 }
 
-async function brevoSendSms(env, { to, content, sender }) {
+// 2026-10-10 : nouvel endpoint Brevo `/v3/transactionalSMS/send` (l'ancien `/sms` est déprécié) avec accusés de
+// réception (webUrl) et un tag par salon. Repli automatique sur l'ancien endpoint si le nouveau est indisponible
+// (5xx / 404) : un rappel ne doit jamais être perdu à cause du changement.
+async function brevoSendSms(env, { to, content, sender, tag, webUrl }) {
   content = lxSmsGsm(content);
-  return await (await fetch("https://api.brevo.com/v3/transactionalSMS/sms", {
-    method: "POST", headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ type: "transactional", sender: sender || "Luxyra", recipient: to, content }),
-  })).json();
+  const headers = { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" };
+  const destinataire = String(to || "").replace(/^\+/, "").replace(/\D/g, "");
+  const corps = { type: "transactional", sender: sender || "Luxyra", recipient: destinataire, content };
+  if (tag) corps.tag = tag;
+  if (webUrl) corps.webUrl = webUrl;
+  let r = null, j = null;
+  try {
+    r = await fetch("https://api.brevo.com/v3/transactionalSMS/send", { method: "POST", headers, body: JSON.stringify(corps) });
+    j = await r.json().catch(() => ({}));
+    if (r.ok && j && j.messageId) return Object.assign({ endpoint: "send" }, j);
+    if (r.status >= 400 && r.status < 500 && r.status !== 404) return Object.assign({ endpoint: "send", httpStatus: r.status }, j || {});
+  } catch (_) {}
+  // Repli : ancien endpoint (format de numéro d'origine)
+  const corpsAncien = { type: "transactional", sender: sender || "Luxyra", recipient: to, content };
+  if (tag) corpsAncien.tag = tag;
+  if (webUrl) corpsAncien.webUrl = webUrl;
+  const r2 = await fetch("https://api.brevo.com/v3/transactionalSMS/sms", { method: "POST", headers, body: JSON.stringify(corpsAncien) });
+  const j2 = await r2.json().catch(() => ({}));
+  return Object.assign({ endpoint: "sms", httpStatus: r2.status }, j2 || {});
+}
+// 2026-10-10 : rapprochement quotidien Luxyra <-> Brevo (veille, heure de Paris) + solde SMS du compte Brevo Luxyra
+async function runSmsRapprochementJob(env) {
+  const hier = new Date(Date.now() - 86400000);
+  const jour = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(hier);
+  // décalage hiver/été : on prend l'offset réel de Paris ce jour-là
+  const off = (() => { try { const p = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", timeZoneName: "shortOffset" }).formatToParts(hier).find((x) => x.type === "timeZoneName"); const m = /GMT([+-]\d+)/.exec(p ? p.value : ""); return m ? Number(m[1]) : 2; } catch (_) { return 2; } })();
+  const d0 = new Date(Date.parse(jour + "T00:00:00Z") - off * 3600000), d1 = new Date(d0.getTime() + 86400000);
+  const q = `${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?select=statut,nb_sms,rembourse,message_id&cree_le=gte.${encodeURIComponent(d0.toISOString())}&cree_le=lt.${encodeURIComponent(d1.toISOString())}&limit=5000`;
+  const rr = await fetch(q, { headers: _sbHeaders(env) });
+  const L = rr.ok ? await rr.json() : [];
+  const acceptes = L.filter((x) => x.message_id).length;
+  const echecs = L.filter((x) => x.statut === "echec").length, rembourses = L.filter((x) => x.rembourse).length;
+  const rb = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/reports?startDate=${jour}&endDate=${jour}`, { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" } });
+  const jb = rb.ok ? await rb.json() : null;
+  const repB = jb && Array.isArray(jb.reports) ? (jb.reports.find((x) => x.date === jour) || jb.reports[0] || null) : null;
+  const brevo = repB ? Number(repB.requests || 0) : null;
+  const alertes = [];
+  // Pas de comparaison pour une journée antérieure au début du suivi (sinon fausse alerte le 1er jour)
+  let suiviComplet = false;
+  try { const rm = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?select=cree_le&order=cree_le.asc&limit=1`, { headers: _sbHeaders(env) }); const am = rm.ok ? await rm.json() : []; suiviComplet = !!(am[0] && new Date(am[0].cree_le) <= d0); } catch (_) {}
+  if (suiviComplet && brevo !== null && brevo !== acceptes) alertes.push(`Écart SMS du ${jour} : Brevo ${brevo} envoi(s), Luxyra ${acceptes}.`);
+  // Solde SMS du compte Brevo de Luxyra (si épuisé, plus AUCUN salon ne reçoit ses rappels)
+  let soldeBrevo = null;
+  try {
+    const ra = await fetch("https://api.brevo.com/v3/account", { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" } });
+    const ja = ra.ok ? await ra.json() : null;
+    const planSms = ja && Array.isArray(ja.plan) ? ja.plan.find((x) => String(x.type || "").toLowerCase() === "sms") : null;
+    if (planSms && planSms.credits != null) soldeBrevo = Number(planSms.credits);
+  } catch (_) {}
+  const seuil = 200;
+  let dejaSolde = null;
+  try { const rs = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?select=value&key=eq.brevo_sms_alerte_solde&limit=1`, { headers: _sbHeaders(env) }); const as = rs.ok ? await rs.json() : []; dejaSolde = as[0] ? as[0].value : null; } catch (_) {}
+  if (soldeBrevo !== null && soldeBrevo < seuil && !dejaSolde) {
+    alertes.push(`Solde SMS du compte Brevo Luxyra bas : ${soldeBrevo} crédit(s). À recharger chez Brevo, sinon plus aucun salon ne reçoit ses SMS.`);
+    try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?on_conflict=key`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify({ key: "brevo_sms_alerte_solde", value: String(soldeBrevo), description: "Alerte solde SMS Brevo envoyée (une fois, effacée quand le solde remonte)" }) }); } catch (_) {}
+  } else if (soldeBrevo !== null && soldeBrevo >= seuil && dejaSolde) {
+    try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?key=eq.brevo_sms_alerte_solde`, { method: "DELETE", headers: _sbHeaders(env, { Prefer: "return=minimal" }) }); } catch (_) {}
+  }
+  for (const a of alertes) {
+    try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "📱 SMS — à vérifier", p_body: a, p_url: "/admin.html#sms", p_payload: {} }) }); } catch (_) {}
+  }
+  const res = { jour, luxyra: acceptes, brevo, echecs, rembourses, soldeBrevo, alertes: alertes.length };
+  try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?on_conflict=key`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify({ key: "sms_rapprochement_dernier", value: JSON.stringify(res), description: "Dernier rapprochement SMS Luxyra/Brevo (cron 08:00 UTC)" }) }); } catch (_) {}
+  return res;
+}
+
+async function lxSigneRef(env, ref) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(env.SUPABASE_SERVICE_KEY || "lx")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("sms-event:" + ref));
+  return Array.from(new Uint8Array(sig)).slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// POST /api/brevo/sms-event?r=<id sms_envois>&s=<signature> — accusés de réception Brevo (livré, échec…)
+// Un SMS définitivement non distribué (numéro invalide, refusé, bloqué) est remboursé au salon, une seule fois.
+async function handleBrevoSmsEvent(request, env) {
+  try {
+    const u = new URL(request.url);
+    const ref = String(u.searchParams.get("r") || "");
+    if (!/^[0-9a-f-]{36}$/i.test(ref) || u.searchParams.get("s") !== await lxSigneRef(env, ref)) return jsonResponse({ error: "refusé" }, 403);
+    let b = {}; try { b = await request.json(); } catch (_) {}
+    const ev = String(b.event || b.msg_status || b.status || b.type || "").toLowerCase().replace(/[\s_-]/g, "");
+    const raison = String(b.reason || b.description || b.error || "").slice(0, 200);
+    const echec = ["hardbounce", "rejected", "blocked", "skipped", "error", "invalid", "undelivered", "failed", "expired"].includes(ev);
+    const statut = ev === "delivered" ? "livre" : (echec ? "echec" : (ev === "softbounce" ? "en_attente" : null));
+    const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?select=evenements,statut&id=eq.${encodeURIComponent(ref)}&limit=1`, { headers: _sbHeaders(env) });
+    const ra = rq.ok ? await rq.json() : [];
+    if (!ra[0]) return jsonResponse({ ok: true, inconnu: true });
+    const evts = Array.isArray(ra[0].evenements) ? ra[0].evenements.slice(-19) : [];
+    evts.push({ e: ev || "?", r: raison || undefined, t: new Date().toISOString() });
+    const patch = { evenements: evts, dernier_evenement: ev || null, maj_le: new Date().toISOString() };
+    if (statut && ra[0].statut !== "livre") patch.statut = statut; // « livré » reste définitif
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?id=eq.${encodeURIComponent(ref)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(patch) });
+    if (echec && ra[0].statut !== "livre") {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/sms_envoi_rembourser`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_id: ref, p_motif: "SMS non distribué (" + ev + (raison ? " : " + raison : "") + ") — crédit rendu" }) });
+    }
+    return jsonResponse({ ok: true });
+  } catch (e) {
+    return jsonResponse({ ok: false }, 200); // jamais de nouvel essai en boucle côté Brevo
+  }
 }
 
 // ============================================================
@@ -2848,18 +2949,33 @@ async function lxCrediterSms(env, salonId, nb, type, montant, motif, auteur) {
 // Si Brevo facture plus de SMS que prévu (cas rare), la différence est débitée si le solde le permet.
 async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender) {
   let result = null;
-  try { result = await brevoSendSms(env, { to: phone, content: contenu, sender }); } catch (e) { result = { code: "exception", message: String(e?.message || e) }; }
-  const ok = !!(result && (result.messageId || result.reference));
   let remaining = gate.remainingCredits, debites = gate.nbSms || 1;
+  // 2026-10-10 : chaque envoi est suivi (sms_envois) -> accusés de réception, remboursement, rapprochement Brevo
+  let ref = null;
+  try {
+    const ri = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify({ salon_id: salonId, nb_sms: debites }) });
+    const ra = ri.ok ? await ri.json() : []; ref = ra[0] ? ra[0].id : null;
+  } catch (_) {}
+  const webUrl = ref ? `https://luxyra.fr/api/brevo/sms-event?r=${ref}&s=${await lxSigneRef(env, ref)}` : null;
+  try { result = await brevoSendSms(env, { to: phone, content: contenu, sender, tag: "salon_" + salonId, webUrl }); } catch (e) { result = { code: "exception", message: String(e?.message || e) }; }
+  const ok = !!(result && (result.messageId || result.reference));
+  if (ref) { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?id=eq.${ref}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ message_id: result && result.messageId ? String(result.messageId) : null, statut: ok ? "envoye" : "echec", endpoint: result && result.endpoint || null, dernier_evenement: ok ? "accepted" : String(result?.code || "erreur").slice(0, 60), maj_le: new Date().toISOString() }) }); } catch (_) {} }
   if (!ok) {
-    const rb = await lxCrediterSms(env, salonId, debites, "remboursement_echec", null, "SMS non envoyé par Brevo (" + String(result?.code || "erreur") + " : " + String(result?.message || "").slice(0, 150) + ") — crédit rendu", "automatique");
+    const motif = "SMS non envoyé par Brevo (" + String(result?.code || "erreur") + " : " + String(result?.message || "").slice(0, 150) + ") — crédit rendu";
+    let rb = null;
+    if (ref) { try { const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/sms_envoi_rembourser`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_id: ref, p_motif: motif }) }); rb = rr.ok ? await rr.json() : null; } catch (_) {} }
+    else rb = await lxCrediterSms(env, salonId, debites, "remboursement_echec", null, motif, "automatique");
     if (rb && rb.ok) remaining = rb.solde;
     return { ok: false, result, remaining, debites: 0, error: "SMS non envoyé (" + String(result?.message || "refus de l'opérateur") + ") — le crédit a été rendu" };
   }
-  const facture = Number(result.smsCount || result.usedCredits || 0);
+  // Ancien endpoint (repli) : Brevo indique le nombre de SMS facturés ; s'il est supérieur, on débite la différence
+  const facture = Number(result.smsCount || 0);
   if (facture > debites && facture <= 10) {
     const extra = await gateSmsAndDecrementCredit(env, salonId, facture - debites).catch(() => null);
-    if (extra && extra.ok) { remaining = extra.remainingCredits; debites = facture; }
+    if (extra && extra.ok) {
+      remaining = extra.remainingCredits; debites = facture;
+      if (ref) { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?id=eq.${ref}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ nb_sms: facture }) }); } catch (_) {} }
+    }
   }
   // Alerte au gérant quand le solde passe sous 10 : une seule fois, jusqu'à la prochaine recharge
   if (remaining <= 10 && remaining > 0) {
