@@ -385,7 +385,7 @@ body{max-width:100%;margin:0 auto;}
 </script>
 <script src="supabase.min.js"></script>
 <script src="lx-qrcode.js"></script>
-<script src="lx-nf525-attestation.js?v=20261010-04"></script>
+<script src="lx-nf525-attestation.js?v=20261010-05"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
      HTML (nécessaire pour que checkSession() soit défini AVANT tout inline script de
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
@@ -9701,6 +9701,10 @@ function rHome(){
   if(!window._lxVueAdmin && !String((SALON_CONFIG&&SALON_CONFIG.siret)||"").trim() && (typeof hasPermission!=="function"||hasPermission("settings"))){
     h+='<div onclick="window._settTab=\'salon\';go(\'settings\')" style="cursor:pointer;background:rgba(255,152,0,.1);border:1.5px solid rgba(255,152,0,.45);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center"><div style="font-size:26px">\ud83d\udcc4</div><div style="flex:1"><div style="font-weight:800;color:#ffb74d">Entreprise en cours d\u2019immatriculation</div><div style="font-size:12px;color:var(--text2)">Ajoutez votre SIRET d\u00e8s r\u00e9ception : Param\u00e8tres \u2192 Infos \u00e9tablissement. Il est obligatoire pour activer votre abonnement.</div></div><div style="color:#ffb74d;font-size:18px">\u203a</div></div>';
   }
+  // 2026-10-10 : attestation de conformité de la caisse à signer (volet 2) — rappel sur l'accueil, masquable 7 jours
+  try{ if(window._lxAttStatut==="a_signer" && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && !(Number(localStorage.getItem("lx_att_masque_jusqu")||0)>Date.now())){
+    h+='<div style="display:flex;align-items:center;gap:10px;background:rgba(76,175,80,.09);border:1.5px solid rgba(76,175,80,.45);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">\u270d\ufe0f</div><div style="flex:1;cursor:pointer" onclick="lxAttestationNF525()"><div style="font-weight:800;color:#7fc97f">Attestation de conformit\u00e9 de votre caisse \u00e0 signer</div><div style="font-size:12px;color:var(--text2)">Document obligatoire \u00e0 pr\u00e9senter en cas de contr\u00f4le fiscal. Pr\u00e9-rempli, sign\u00e9 en 1 minute \u203a</div></div><button onclick="try{localStorage.setItem(\'lx_att_masque_jusqu\',String(Date.now()+7*864e5))}catch(e){};go(\'home\')" title="Me le rappeler plus tard" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">\u2715</button></div>';
+  } }catch(_eA){}
   var tvaR=lxTauxTVA();
   // 2026-10-10 : rappel discret du parrainage (fermable)
   try{ if(!window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && localStorage.getItem("lx_parr_masque")!=="1"){
@@ -32711,11 +32715,29 @@ async function lxAttSigner(){
       p_ville: d.ville, p_date_acquisition: d.dateAcquisition, p_date_debut: d.dateDebut, p_texte: texte, p_user_agent: navigator.userAgent });
     if (r.error) throw new Error(r.error.message);
     if (typeof auditLog === "function") auditLog("NF525_ATTESTATION_SIGNEE", "Attestation individuelle (modèle BOI-LETTRE-000242), version " + LX_ATT.versionMajeure + ", volet 2 signé électroniquement par " + d.representant + " (réf. " + r.data + ")");
+    window._lxAttStatut = "signee";
     toast("✅ Attestation signée", "success");
     lxAttestationNF525();
   } catch(e) { err.textContent = e.message || String(e); btn.disabled = false; btn.textContent = "✍️ Signer électroniquement"; }
 }
 function lxDownloadAttestationNF525(){ return lxAttestationNF525(); }
+// Statut de l'attestation de l'établissement (pour le rappel sur l'accueil) : chargé une fois par session
+async function lxAttStatutCharger(){
+  if (window._lxAttStatutCharge || !window._salonId || typeof _sb === "undefined" || !_sb || window._lxVueAdmin || !window.LX_ATT) return;
+  window._lxAttStatutCharge = true;
+  try {
+    var e = await _sb.from("nf525_attestation_editeur").select("id").eq("version_majeure", LX_ATT.versionMajeure).maybeSingle();
+    if (e.error) throw e.error;
+    if (!e.data) { window._lxAttStatut = "attente"; return; }
+    var a = await _sb.from("nf525_attestations").select("id").eq("salon_id", window._salonId).eq("version_majeure", LX_ATT.versionMajeure).maybeSingle();
+    if (a.error) throw a.error;
+    if (a.data) { window._lxAttStatut = "signee"; return; }
+    var t = await _sb.from("tickets").select("id").eq("salon_id", window._salonId).limit(1);
+    window._lxAttStatut = (t.data && t.data.length) ? "a_signer" : "pas_de_ticket";
+    if (window._lxAttStatut === "a_signer" && (window._currentPage || "home") === "home" && typeof go === "function" && !document.getElementById("lxAttModal")) go("home");
+  } catch(x) { window._lxAttStatutCharge = false; }
+}
+setInterval(function(){ try { if (window._salonId && !window._lxAttStatutCharge) lxAttStatutCharger(); } catch(e) {} }, 6000);
 window.lxDownloadAttestationNF525 = lxDownloadAttestationNF525;
 
 // Télécharge l'archive NF525 du salon (tickets + clôtures + chaîne hash)

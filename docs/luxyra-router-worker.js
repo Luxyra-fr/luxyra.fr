@@ -251,6 +251,8 @@ export default {
     if (event.cron === "0 8 * * *") {
       try { console.log("[cron] relances essai:", await runRelancesEssaiJob(env)); }
       catch (err) { await reportWorkerError(env, "cron:relances-essai", err, null, "error"); }
+      try { console.log("[cron] rappel attestation:", await runAttestationRelanceJob(env)); }
+      catch (err) { await reportWorkerError(env, "cron:rappel-attestation", err, null, "warning"); }
       try { console.log("[cron] rapprochement SMS:", await runSmsRapprochementJob(env)); }
       catch (err) { await reportWorkerError(env, "cron:sms-rapprochement", err, null, "warning"); }
       return;
@@ -2176,6 +2178,57 @@ async function runRelancesEssaiJob(env) {
       } else {
         stats.erreurs++;
         await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "DELETE", headers: _sbHeaders(env) }); // réessai demain
+      }
+    } catch (e) { stats.erreurs++; await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "DELETE", headers: _sbHeaders(env) }).catch(() => {}); }
+  }
+  return stats;
+}
+// 2026-10-10 : rappel UNIQUE de signature de l'attestation de conformité de la caisse (volet 2, modèle BOI-LETTRE-000242).
+// Interrupteur app_config.relance_attestation_active (false par défaut). Un seul email par établissement et par version
+// majeure (salon_emails_auto type « attestation_v<majeure> »), 2 jours après le 1er encaissement, si non signée.
+async function runAttestationRelanceJob(env) {
+  const stats = { actif: false, candidats: 0, envoyes: 0, erreurs: 0 };
+  try {
+    const c = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, { headers: _sbHeaders(env) });
+    const cfg = c.ok ? ((await c.json())[0] || {}).config || {} : {};
+    if (cfg.relance_attestation_active !== true) return stats;
+    stats.actif = true;
+  } catch (_) { return stats; }
+  const er = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/nf525_attestation_editeur?select=id,version_majeure&order=id.desc&limit=1`, { headers: _sbHeaders(env) });
+  const ed = er.ok ? (await er.json())[0] : null;
+  if (!ed) return stats;
+  const type = "attestation_v" + ed.version_majeure;
+  const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,gerant_prenom,status,is_free&or=(status.eq.active,status.eq.trial,is_free.eq.true)`, { headers: _sbHeaders(env) });
+  const salons = sr.ok ? await sr.json() : [];
+  const ar = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/nf525_attestations?select=salon_id&version_majeure=eq.${encodeURIComponent(ed.version_majeure)}`, { headers: _sbHeaders(env) });
+  const signes = new Set((ar.ok ? await ar.json() : []).map((x) => x.salon_id));
+  const limite = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  for (const s of salons) {
+    if (!s.email || signes.has(s.id)) continue;
+    const tr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/tickets?select=date_ticket&salon_id=eq.${s.id}&order=date_ticket.asc&limit=1`, { headers: _sbHeaders(env) });
+    const t = tr.ok ? (await tr.json())[0] : null;
+    if (!t || !t.date_ticket || String(t.date_ticket).slice(0, 10) > limite) continue;
+    stats.candidats++;
+    const ins = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?on_conflict=salon_id,type`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation,resolution=ignore-duplicates" }), body: JSON.stringify({ salon_id: s.id, type }) });
+    const rowA = ins.ok ? await ins.json() : [];
+    const row = Array.isArray(rowA) ? rowA[0] : null;
+    if (!row) continue; // déjà envoyé une fois : jamais de second email
+    const prenom = s.gerant_prenom ? String(s.gerant_prenom).trim() : "";
+    const sujet = `${s.nom} : signez l'attestation de conformité de votre caisse (1 minute)`;
+    const corps = `<p>Bonjour${prenom ? " " + ccEsc(prenom) : ""},</p>
+      <p>Comme tout commerçant qui encaisse des particuliers, vous devez pouvoir présenter en cas de contrôle fiscal une <b>attestation de conformité de votre logiciel de caisse</b> (article 286, I, 3° bis du code général des impôts).</p>
+      <p>Luxyra vous la fournit, au modèle officiel de l'administration : notre partie est déjà signée, il ne reste que la vôtre, <b>pré-remplie</b>. Cela prend une minute :</p>
+      <p style="background:#f6f1e3;border-radius:8px;padding:12px 14px">Application Luxyra → <b>Paramètres → Caisse → Conformité de la caisse → Mon attestation</b><br>(ou le bandeau vert sur votre écran d'accueil)</p>
+      <p>Ensuite, téléchargez le PDF et gardez-le avec vos papiers comptables.</p>
+      <p>Ceci est un rappel unique : vous ne recevrez pas d'autre email à ce sujet.</p>`;
+    try {
+      const res = await brevoSendEmail(env, { to: s.email, toName: s.nom, senderName: "Alexandre de Luxyra", senderEmail: "contact@luxyra.fr", replyTo: "support@luxyra.fr", subject: sujet, htmlContent: relMail(prenom, corps, row.id) });
+      if (res && (res.messageId || res.messageIds)) {
+        stats.envoyes++;
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ sujet }) });
+      } else {
+        stats.erreurs++;
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "DELETE", headers: _sbHeaders(env) });
       }
     } catch (e) { stats.erreurs++; await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salon_emails_auto?id=eq.${row.id}`, { method: "DELETE", headers: _sbHeaders(env) }).catch(() => {}); }
   }
