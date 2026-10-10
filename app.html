@@ -9308,7 +9308,9 @@ window._rdvPollInterval=setInterval(function(){
             // Update existing entry with fresh data
             var upd=window.RDV_ONLINE[existIdx];
             var _prevSt=upd.status;
-            upd.status=rdv.status;upd.modification_demandee=rdv.modification_demandee;
+            // 2026-10-10 : statut posé localement (annulé / encaissé) pas encore visible en base -> on le garde
+            var _localFin=(_prevSt==="cancelled"||_prevSt==="done")&&(rdv.status==="pending"||rdv.status==="confirmed");
+            upd.status=_localFin?_prevSt:rdv.status;upd.modification_demandee=rdv.modification_demandee;
             upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
             upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
             upd.cancelled_by=rdv.cancelled_by;upd.cancel_reason=rdv.cancel_reason;
@@ -9321,7 +9323,7 @@ window._rdvPollInterval=setInterval(function(){
             // payée (pending_payment -> confirmée) apparaît au planning sans recharger l'app.
             upd.acompte=Number(rdv.acompte_montant)||0; upd.acomptePaye=!!rdv.acompte_paye; upd.acompteRembourse=!!rdv.acompte_rembourse;
             if(rdv.status==="cancelled"||rdv.status==="cancelled_by_client"||rdv.status==="done"||rdv.status==="refused"){_lxRemoveOnlineFromAP(rdv.id);}
-            else if(rdv.status==="pending"||rdv.status==="confirmed"){
+            else if(!_localFin&&(rdv.status==="pending"||rdv.status==="confirmed")){
               _lxOnlineToAP(rdv);
               if(_prevSt==="pending_payment" && _lxFlashOnce("new_"+rdv.id)){newRdvCount++;newEvents.push("\ud83d\udcc5 Nouveau RDV \u2014 "+((rdv.client_nom||"")+" "+(rdv.client_prenom||"")).trim());newCount++;}
             }
@@ -12520,7 +12522,19 @@ function _cancelApptDo(id){
     _showFamilialCancelConfirm(id, _lkApt.id);
     return;
   }
+  // 2026-10-10 : RDV en ligne avec acompte payé -> le salon précise s'il annule (acompte remboursé) ou si la
+  // cliente ne s'est pas présentée (acompte conservé).
+  if(a.isOnline && a.onlineId && Number(a.acompte)>0 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(a.acompteMode) && !window._lxCancelBy){
+    var _m='<div class="mbox" style="max-width:440px"><h2 style="text-align:center">Annuler ce rendez-vous</h2>';
+    _m+='<div style="font-size:13px;color:var(--text2);text-align:center;margin-bottom:14px">La cliente a payé un acompte en ligne de <b>'+Number(a.acompte).toFixed(2).replace(".",",")+' \u20ac</b>.</div>';
+    _m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:8px;background:var(--red);color:#fff;font-weight:700" onclick="window._lxCancelBy=\'salon\';_cancelApptDo(\''+id+'\')">L\u2019\u00e9tablissement annule<br><span style="font-size:11px;font-weight:400">L\u2019acompte est rembours\u00e9 \u00e0 la cliente</span></button>';
+    _m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:8px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="window._lxCancelBy=\'no_show\';_cancelApptDo(\''+id+'\')">La cliente ne s\u2019est pas pr\u00e9sent\u00e9e<br><span style="font-size:11px;font-weight:400">L\u2019acompte est conserv\u00e9</span></button>';
+    _m+='<button class="btn" style="width:100%;padding:10px;background:var(--bg2);font-size:12px" onclick="cM()">Retour</button></div>';
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+_m+'</div></div>';
+    return;
+  }
   _doCancelApptUnpaid(id);
+  window._lxCancelBy=null;
   cM();go("planning");
 }
 // FIX 2026-07-04 (BUG A) : annulation salon d'un RDV EN LIGNE (ghost "online_<uuid>").
@@ -12539,7 +12553,8 @@ function _lxCancelOnlineRdv(rdvId, reason){
     if(window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===rdvId){ RDV_ONLINE[i].status="cancelled"; RDV_ONLINE[i].cancelled_by="salon"; break; } } }
     // 2026-10-08 : empreinte active -> le salon choisit (libérer, ou garder pour un no-show)
     if(_empHeld && typeof lxEmpreinteRelease==="function") setTimeout(function(){ lxEmpreinteRelease(rdvId); }, 400);
-    _sb.from("rdv_online").update({status:"cancelled",cancelled_by:"salon",cancel_reason:(reason||"Annul\u00e9 par le salon"),cancelled_at:new Date().toISOString()}).eq("id",rdvId).eq("salon_id",_salonId).then(function(){},function(_e){});
+    var _by=(window._lxCancelBy==="no_show")?"no_show":"salon";
+    _sb.from("rdv_online").update({status:"cancelled",cancelled_by:_by,cancel_reason:(_by==="no_show"?"Cliente absente (no-show)":(reason||"Annul\u00e9 par le salon")),cancelled_at:new Date().toISOString()}).eq("id",rdvId).eq("salon_id",_salonId).then(function(){},function(_e){});
   }catch(_e){}
 }
 function _doCancelApptUnpaid(id){
@@ -26222,16 +26237,12 @@ function mD(id, mode){
     }
   }
   _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",acompteTkNum:a.acompteTkNum||null,_linkedApptId:linkedApptId};
-  // 2026-10-10 : un acompte payé EN LIGNE ne peut pas être déduit au-delà du total du panier
-  // (prestations retirées / modifiées) : déduction plafonnée + avertissement (surplus à rembourser).
+  // 2026-10-10 : simple avertissement (aucune modification du calcul de caisse) si l'acompte payé en ligne
+  // dépasse le total du panier à l'ouverture : le surplus est à rembourser à la cliente.
   try{
     if(_tk.acompte>0 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(_tk.acompteMode)){
       var _tot=0; cartItems.forEach(function(it){ if(!it.isSep) _tot+=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0); });
-      _tot=Math.round(_tot*100)/100;
-      if(_tot>=0 && _tk.acompte>_tot+0.004){
-        var _sur=Math.round((_tk.acompte-_tot)*100)/100; _tk.acompte=_tot;
-        if(typeof toast==="function") toast("Acompte en ligne supérieur au total : "+_sur.toFixed(2).replace(".",",")+" € à rembourser à la cliente","warning");
-      }
+      if(_tk.acompte>Math.round(_tot*100)/100+0.004 && typeof toast==="function") toast("Attention : l’acompte payé en ligne ("+Number(_tk.acompte).toFixed(2).replace(".",",")+" €) dépasse le total du panier","warning");
     }
   }catch(_eCap){}
   // Propage les refs devis si le RDV a été planifié depuis un devis : permet à
