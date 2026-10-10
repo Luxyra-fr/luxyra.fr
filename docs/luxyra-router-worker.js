@@ -760,6 +760,13 @@ async function handleWebhook(request, env) {
           } catch (e) { console.warn("SMS bonus error:", e?.message || e); }
         }
 
+        // === PARRAINAGE (2026-10-10) : 1er VRAI paiement du filleul -> 1 mois offert au parrain ;
+        // et si CE salon est un parrain qui vient de s'abonner, ses mois offerts en attente sont appliqués.
+        if (Number(data.amount_paid || 0) > 0) {
+          try { await lxParrainageRecompenser(env, salonId); } catch (e) { console.error("parrainage:", e?.message || e); }
+        }
+        try { await lxParrainageAppliquerEnAttente(env, salonId); } catch (e) { console.error("parrainage attente:", e?.message || e); }
+
         try {
           // Lit le prix réel + TVA réelle depuis app_config (centralisation : un seul endroit à modifier)
           // Fallback hardcodé si la table n'est pas accessible (planPrix = HT, tvaPct = % TVA Luxyra)
@@ -796,7 +803,11 @@ async function handleWebhook(request, env) {
             remise = Math.round((brut - ttc) * 100) / 100;
             if (remise > 0.004) {
               const libs = [];
-              if (Number(data.starting_balance || 0) < 0) libs.push("crédit (parrainage / geste commercial)");
+              if (Number(data.starting_balance || 0) < 0) {
+                let estParrainage = false;
+                try { const pp = await lxSbGet(env, `parrainages?select=id&parrain_id=eq.${salonId}&statut=eq.recompense&limit=1`); estParrainage = pp.length > 0; } catch (_) {}
+                libs.push(estParrainage ? "mois offert — parrainage" : "crédit (geste commercial)");
+              }
               const ds = (data.total_discount_amounts || []).filter((x) => Number(x.amount) > 0);
               if (ds.length || (data.discount && data.discount.coupon)) libs.push("remise" + (data.discount && data.discount.coupon && data.discount.coupon.name ? " « " + data.discount.coupon.name + " »" : ""));
               remiseLib = libs.join(" + ") || "remise";
@@ -2968,6 +2979,89 @@ async function gateSmsAndDecrementCredit(env, salonId, nbSms = 1) {
 // Rate-limité à 1 email/24h par salon via salons.last_sms_credit_alert_at.
 // Ne block pas la réponse — fire & forget (waitUntil-style).
 // 2026-10-09 : crédit atomique (packs, remboursements) + historique sms_mouvements
+// ============================================================
+// PARRAINAGE ENTRE SALONS (2026-10-10)
+// Au 1er paiement réel d'un filleul, le parrain reçoit un crédit Stripe égal à UN mois de son abonnement
+// (déduit automatiquement de sa prochaine facture, qui le mentionne). Parrain sans abonnement payant :
+// récompense « en attente », appliquée dès son abonnement. Garde-fous : un filleul = une récompense,
+// pas soi-même (même SIRET ou même client Stripe refusé), 12 mois offerts maximum par an et par parrain.
+// ============================================================
+async function lxSbGet(env, chemin) { const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${chemin}`, { headers: _sbHeaders(env) }); return r.ok ? await r.json() : []; }
+async function lxSbPatch(env, chemin, corps) { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${chemin}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(corps) }); }
+async function lxParrainageCrediter(env, parrain, par, filleulNom) {
+  // abonnement payant actif requis pour créditer
+  if (!parrain || !parrain.stripe_customer_id || !parrain.stripe_subscription_id || parrain.is_free) return { ok: false, attente: true };
+  const sub = await stripeAPI(env, `subscriptions/${encodeURIComponent(parrain.stripe_subscription_id)}`, null, "GET");
+  if (!sub || !["active", "trialing", "past_due"].includes(sub.status)) return { ok: false, attente: true };
+  const it = sub.items && sub.items.data && sub.items.data[0];
+  const cents = Number(it && it.price && it.price.unit_amount || 0) * Number(it && it.quantity || 1);
+  if (!(cents > 0)) return { ok: false, attente: true };
+  // plafond annuel
+  const an = new Date(Date.now() - 365 * 86400000).toISOString();
+  const deja = await lxSbGet(env, `parrainages?select=id&parrain_id=eq.${parrain.id}&statut=eq.recompense&recompense_le=gte.${encodeURIComponent(an)}`);
+  if (Array.isArray(deja) && deja.length >= 12) return { ok: false, refus: "plafond de 12 mois offerts par an atteint" };
+  const bt = await stripeAPI(env, `customers/${encodeURIComponent(parrain.stripe_customer_id)}/balance_transactions`, {
+    amount: String(-cents), currency: "eur",
+    description: `Parrainage : 1 mois offert (filleul ${String(filleulNom || "").slice(0, 60)})`,
+    "metadata[type]": "parrainage", "metadata[parrainage_id]": par.id,
+  });
+  if (!bt || !bt.id) return { ok: false, erreur: (bt && bt.error && bt.error.message) || "crédit Stripe refusé" };
+  return { ok: true, montant: cents / 100, ref: bt.id };
+}
+async function lxParrainageMailParrain(env, parrain, filleulNom, montant) {
+  try {
+    if (!parrain || !parrain.email) return;
+    await brevoSendEmail(env, { to: parrain.email, toName: parrain.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
+      subject: "🎁 Votre parrainage : 1 mois offert !",
+      htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Merci pour votre parrainage !</h2><p>Bonjour,</p><p><b>${String(filleulNom || "Le salon que vous avez parrainé").replace(/</g, "&lt;")}</b> vient de souscrire son abonnement Luxyra. Comme promis, <b>votre prochain mois est offert</b>${montant ? ` (${String(montant.toFixed(2)).replace(".", ",")} € déduits de votre prochaine facture)` : ""}.</p><p>Continuez à partager votre code : chaque nouveau salon abonné vous offre un mois de plus (jusqu'à 12 par an).</p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+      textContent: `Merci pour votre parrainage ! ${filleulNom || "Le salon parrainé"} vient de s'abonner : votre prochain mois Luxyra est offert.`, replyTo: null, attachment: null });
+  } catch (_) {}
+}
+async function lxParrainageRecompenser(env, filleulId) {
+  const ps = await lxSbGet(env, `parrainages?select=*&filleul_id=eq.${filleulId}&statut=eq.inscrit&limit=1`);
+  const par = ps[0]; if (!par) return;
+  const [filleul, parrain] = [await supabaseGet(env, filleulId), await supabaseGet(env, par.parrain_id)];
+  if (!filleul || !parrain) return;
+  // garde-fous anti-abus
+  const memeSiret = filleul.siret && parrain.siret && String(filleul.siret).slice(0, 9) === String(parrain.siret).slice(0, 9);
+  const memeClient = filleul.stripe_customer_id && filleul.stripe_customer_id === parrain.stripe_customer_id;
+  if (memeSiret || memeClient || filleul.id === parrain.id) {
+    await lxSbPatch(env, `parrainages?id=eq.${par.id}`, { statut: "refuse", motif: memeSiret ? "même entreprise (SIREN identique)" : "même client" });
+    return;
+  }
+  // verrou : passe de « inscrit » à « en cours » une seule fois (deux webhooks simultanés)
+  const vr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/parrainages?id=eq.${par.id}&statut=eq.inscrit`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify({ statut: "en_cours" }) });
+  const va = vr.ok ? await vr.json() : []; if (!va.length) return;
+  const r = await lxParrainageCrediter(env, parrain, par, filleul.nom);
+  if (r.ok) {
+    await lxSbPatch(env, `parrainages?id=eq.${par.id}`, { statut: "recompense", montant: r.montant, stripe_ref: r.ref, recompense_le: new Date().toISOString(), motif: null });
+    await lxParrainageMailParrain(env, parrain, filleul.nom, r.montant);
+  } else if (r.attente) {
+    await lxSbPatch(env, `parrainages?id=eq.${par.id}`, { statut: "en_attente", motif: "appliqué dès que le parrain a un abonnement payant" });
+  } else {
+    await lxSbPatch(env, `parrainages?id=eq.${par.id}`, { statut: r.refus ? "refuse" : "en_attente", motif: r.refus || r.erreur || "à reprendre" });
+  }
+  try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "🎁 Parrainage", p_body: `${parrain.nom} ← ${filleul.nom} : ${r.ok ? "1 mois offert (" + r.montant + " €)" : (r.attente ? "en attente (parrain sans abonnement payant)" : (r.refus || r.erreur))}`, p_url: "/admin.html", p_payload: {} }) }); } catch (_) {}
+}
+async function lxParrainageAppliquerEnAttente(env, parrainId) {
+  const ps = await lxSbGet(env, `parrainages?select=*&parrain_id=eq.${parrainId}&statut=eq.en_attente&order=cree_le.asc&limit=12`);
+  if (!ps.length) return;
+  const parrain = await supabaseGet(env, parrainId);
+  for (const par of ps) {
+    const vr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/parrainages?id=eq.${par.id}&statut=eq.en_attente`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify({ statut: "en_cours" }) });
+    const va = vr.ok ? await vr.json() : []; if (!va.length) continue;
+    const filleul = await supabaseGet(env, par.filleul_id);
+    const r = await lxParrainageCrediter(env, parrain, par, filleul && filleul.nom);
+    if (r.ok) {
+      await lxSbPatch(env, `parrainages?id=eq.${par.id}`, { statut: "recompense", montant: r.montant, stripe_ref: r.ref, recompense_le: new Date().toISOString(), motif: null });
+      await lxParrainageMailParrain(env, parrain, filleul && filleul.nom, r.montant);
+    } else {
+      await lxSbPatch(env, `parrainages?id=eq.${par.id}`, { statut: r.refus ? "refuse" : "en_attente", motif: r.refus || r.erreur || par.motif });
+      if (r.attente) break;
+    }
+  }
+}
+
 // 2026-10-10 : facture Luxyra pour un achat de SMS (pack ou recharge automatique) — une par paiement Stripe
 async function lxFactureSms(env, salonId, qty, montantEur, piId, auto) {
   try {

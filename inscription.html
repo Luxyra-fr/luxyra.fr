@@ -124,7 +124,9 @@ var SB_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI
 var sb=supabase.createClient(SB_URL,SB_KEY);
 
 var STEP=1;
-var DATA={nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",pays:"France",formeJur:"",franchiseTva:null,_tvaChoisie:false,gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
+// 2026-10-10 : parrainage (lien luxyra.fr/inscription.html?parrain=CODE)
+var _lxParrainUrl=(function(){ try{ return (new URLSearchParams(location.search).get("parrain")||"").toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12); }catch(e){ return ""; } })();
+var DATA={parrainCode:_lxParrainUrl,nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",pays:"France",formeJur:"",franchiseTva:null,_tvaChoisie:false,gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
 
 function render(){
   var h='';
@@ -255,6 +257,8 @@ function renderStep2(){
   h+='<div class="fg"><label>Email (identifiant de connexion) *</label><input id="fEmail" type="email" value="'+esc(DATA.email)+'" placeholder="votre@email.fr"></div>';
   h+='<div class="fg"><label>Mot de passe *</label><input id="fPass" type="password" value="'+esc(DATA.pass)+'" placeholder="Minimum 6 caract\u00e8res"><div class="hint">Choisissez un mot de passe s\u00e9curis\u00e9</div></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="fPass2" type="password" placeholder="Retapez le mot de passe"></div>';
+  h+='<div class="fg"><label>Code parrainage <span style="font-weight:400;font-size:11px;opacity:.7">(facultatif \u2014 si un salon vous a recommand\u00e9 Luxyra)</span></label><input id="fParrain" value="'+esc(DATA.parrainCode||"")+'" placeholder="Ex. LX7K2M9P" style="text-transform:uppercase" oninput="lxParrainVerifier(this.value)"><div id="parrainInfo" class="hint">'+(DATA._parrainMsg||"")+'</div></div>';
+  if(DATA.parrainCode && !DATA._parrainMsg) setTimeout(function(){ lxParrainVerifier(DATA.parrainCode); },50);
   h+='<div class="btn-row"><button class="btn btn-outline" onclick="STEP=1;saveFields2();render()">\u25c0 Retour</button><button class="btn btn-gold" onclick="nextStep2()">Continuer \u2192</button></div>';
   return h;
 }
@@ -282,11 +286,24 @@ function lxSiretIncoherence(){
   return "Le g\u00e9rant indiqu\u00e9 ("+DATA.gerantPrenom+" "+DATA.gerantNom+") ne correspond pas au dirigeant connu pour ce SIRET ("+(d.dirigeant_prenom?d.dirigeant_prenom+" ":"")+(d.dirigeant_nom||d.raison_sociale||"?")+").";
 }
 
+var _lxParrT=null;
+function lxParrainVerifier(v){
+  var c=String(v||"").toUpperCase().replace(/[^A-Z0-9]/g,""); DATA.parrainCode=c;
+  var el=document.getElementById("parrainInfo"); clearTimeout(_lxParrT);
+  if(!c){ DATA._parrainMsg=""; if(el) el.innerHTML=""; return; }
+  _lxParrT=setTimeout(async function(){
+    try{ var r=await sb.rpc("parrainage_verifier",{p_code:c}); var d=r&&r.data;
+      DATA._parrainMsg = (d&&d.ok) ? '<span style="color:#4caf50">\u2705 Parrain\u00e9 par <b>'+esc(d.salon||"")+'</b></span>' : '<span style="color:#ef5350">Code inconnu (vous pouvez laisser vide)</span>';
+    }catch(e){ DATA._parrainMsg=""; }
+    var e2=document.getElementById("parrainInfo"); if(e2) e2.innerHTML=DATA._parrainMsg;
+  },350);
+}
 function saveFields2(){
   DATA.gerantNom=(document.getElementById("fGNom")||{}).value||"";
   DATA.gerantPrenom=(document.getElementById("fGPrenom")||{}).value||"";
   DATA.email=(document.getElementById("fEmail")||{}).value||"";
   DATA.pass=(document.getElementById("fPass")||{}).value||"";
+  var _fp=document.getElementById("fParrain"); if(_fp) DATA.parrainCode=String(_fp.value||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 }
 
 
@@ -500,6 +517,7 @@ async function doSubmit(){
       cp:DATA.cp.trim(),
       ville:DATA.ville.trim(),
       siret:DATA.enCoursImmat?null:DATA.siret.trim(),
+      parrain_code:DATA.parrainCode||null,
       metier:DATA.metier,
       forme_juridique:DATA.formeJur,
       // 2026-10-07 : franchise -> 0 % ; sinon taux du pays (France : 20 % explicite).

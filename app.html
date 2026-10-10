@@ -7720,6 +7720,31 @@ async function lxRechargeAutoRegler(){
   else toast(actif?"Recharge automatique activ\u00e9e":"Recharge automatique d\u00e9sactiv\u00e9e","success");
   lxRechargeAutoCharger();
 }
+// === Parrainage (2026-10-10) ===
+async function lxParrainageCharger(){
+  var el=document.getElementById("lxParrainageZone"); if(!el) return;
+  try{
+    var rs=await _sb.from("salons").select("code_parrainage").eq("id",_salonId).single();
+    var code=rs&&rs.data&&rs.data.code_parrainage;
+    if(!code){ el.textContent="Code indisponible pour le moment."; return; }
+    var lien="https://luxyra.fr/inscription.html?parrain="+code;
+    var msg="Je g\u00e8re mon salon avec Luxyra (planning, caisse, rappels SMS, r\u00e9servation en ligne). Essaie-le gratuitement avec mon lien : "+lien+" (code "+code+")";
+    var h='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px"><div style="font-size:12px;color:var(--text3)">Votre code</div><div style="font-size:24px;font-weight:900;letter-spacing:3px;color:var(--gold);font-family:monospace">'+code+'</div></div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:10px"><input readonly value="'+lien+'" style="flex:1;font-size:12px" onclick="this.select()"><button class="btn bg" style="font-size:12px" onclick="lxCopier(\''+lien+'\')">Copier le lien</button></div>';
+    h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">';
+    h+='<a class="btn bs" style="font-size:12px;text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text='+encodeURIComponent(msg)+'">WhatsApp</a>';
+    h+='<a class="btn bs" style="font-size:12px;text-decoration:none" href="sms:?&body='+encodeURIComponent(msg)+'">SMS</a>';
+    h+='<a class="btn bs" style="font-size:12px;text-decoration:none" href="mailto:?subject='+encodeURIComponent("Luxyra pour ton salon")+'&body='+encodeURIComponent(msg)+'">Email</a></div>';
+    var rp=await _sb.from("parrainages").select("statut,motif,montant,cree_le,recompense_le,filleul_id").eq("parrain_id",_salonId).order("cree_le",{ascending:false});
+    var L=(rp&&rp.data)||[];
+    var lib={inscrit:["Inscrit, en essai","var(--text3)"],en_cours:["En cours","var(--text3)"],en_attente:["Mois offert en attente de votre abonnement","#ffb74d"],recompense:["\u2705 Mois offert","#81c784"],refuse:["Non retenu","#e57373"]};
+    h+='<div style="font-weight:700;font-size:13px;margin-bottom:6px">Vos salons parrain\u00e9s ('+L.length+')</div>';
+    if(!L.length) h+='<div style="font-size:12px;color:var(--text3)">Aucun pour l\u2019instant.</div>';
+    L.forEach(function(p){ var l=lib[p.statut]||[p.statut,"var(--text3)"]; h+='<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border2);font-size:12px"><span>Inscrit le '+new Date(p.cree_le).toLocaleDateString("fr-FR")+'</span><span style="color:'+l[1]+';font-weight:700">'+l[0]+(p.statut==="recompense"&&p.montant?' ('+Number(p.montant).toFixed(2).replace(".",",")+' \u20ac)':'')+'</span></div>'; });
+    el.innerHTML=h;
+  }catch(e){ el.textContent="Chargement impossible : "+(e&&e.message||e); }
+}
+function lxCopier(t){ try{ navigator.clipboard.writeText(t).then(function(){ toast("Lien copi\u00e9","success"); }); }catch(e){ prompt("Copiez le lien :",t); } }
 function lxValidateSiret(raw){
   if(!raw) return {ok:false, msg:"Non renseigné"};
   var s = String(raw).replace(/[\s.\-]/g, "");
@@ -13252,6 +13277,7 @@ function rSettings(){
       {k:"sms",i:"\ud83d\udcf2",t:"SMS et Marketing",d:"Rappels RDV, campagnes SMS"},
       {k:"nf525",i:"\ud83d\udee1",t:"NF525",d:"Audit, chaines, clotures Z"},
       {k:"factures",i:"\ud83e\uddfe",t:"Mes factures",d:"Factures Luxyra, historique paiements"},
+      {k:"parrainage",i:"\ud83c\udf81",t:"Parrainer un salon",d:"1 mois offert par salon parrain\u00e9"},
       {k:"documents",i:"\ud83d\udcc1",t:"Mes documents",d:"Kbis, pi\u00e8ce d\u2019identit\u00e9, v\u00e9rification"},
       {k:"notifspush",i:"\ud83d\udd14",t:"Notifications push",d:"Activation, test, d\u00e9sactivation"},
       {k:"support",i:"\ud83d\udcac",t:"Support Luxyra",d:"Nouvelle conversation, historique"}
@@ -14596,6 +14622,12 @@ function rSettings(){
     h+='<div class="card"><div style="font-size:13px;color:var(--text2);margin-bottom:14px">Historique des factures li\u00e9es \u00e0 votre abonnement Luxyra.</div>';
     h+='<div id="facturesListApp" style="text-align:center;color:var(--text3);padding:20px">\u23f3 Chargement...</div></div>';
     setTimeout(loadMesFactures,100);
+  }
+  else if(settTab==="parrainage"){
+    h+='<div class="sec">\ud83c\udf81 Parrainer un salon</div>';
+    h+='<div class="card"><div style="font-size:14px;line-height:1.6;margin-bottom:12px">Recommandez Luxyra \u00e0 un autre salon : <b>quand il s\u2019abonne et paie son premier mois, votre prochain mois est offert</b> (d\u00e9duit automatiquement de votre facture). Jusqu\u2019\u00e0 12 mois offerts par an.</div>';
+    h+='<div id="lxParrainageZone" style="color:var(--text3);font-size:13px">\u23f3 Chargement\u2026</div></div>';
+    setTimeout(lxParrainageCharger,60);
   }
   else if(settTab==="documents"){
     h+='<div class="sec">\ud83d\udcc1 Documents justificatifs</div>';
