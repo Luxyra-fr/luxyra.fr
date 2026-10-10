@@ -303,6 +303,16 @@ function fmtM(n){return(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,ma
 function fmtD(d){if(!d)return"—";try{return new Date(d).toLocaleDateString("fr-FR");}catch(e){return d;}}
 function ini(n){return(n||"?").split(" ").map(function(w){return w[0];}).join("").slice(0,2).toUpperCase();}
 function gPlan(id){return PLANS.find(function(p){return p.id===id;})||PLANS[0];}
+// 2026-10-10 : justificatifs (Kbis, pièce d'identité) en stockage PRIVÉ : ouverture par lien temporaire (5 min)
+async function lxOuvrirDoc(u){
+  try{
+    var s=String(u||""), i=s.indexOf("/salon-documents/"), path=i>=0?decodeURIComponent(s.slice(i+17).split("?")[0]):s;
+    var w=window.open("about:blank","_blank");
+    var r=await _sb.storage.from("salon-documents").createSignedUrl(path,300);
+    if(r.error||!r.data||!r.data.signedUrl){ if(w) w.close(); alert("Document inaccessible : "+((r.error&&r.error.message)||"erreur")); return; }
+    if(w) w.location.href=r.data.signedUrl; else window.location.href=r.data.signedUrl;
+  }catch(e){ alert("Document inaccessible : "+(e&&e.message||e)); }
+}
 function gSalon(id){return SALONS.find(function(s){return s.id===id;});}
 function planB(p){var pl=gPlan(p);return '<span class="badge badge-'+(p==="pro"?"gold":"blue")+'">'+pl.nom+'</span>';}
 function statusB(s){var m={active:{c:"green",l:"Actif"},trial:{c:"orange",l:"Essai"},past_due:{c:"red",l:"Impayé"},suspended:{c:"red",l:"Suspendu"}};var x=m[s]||{c:"blue",l:s};return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
@@ -2509,9 +2519,9 @@ function openD(id){
 
   // DOCUMENTS
   h+='<div class="dp-section"><div class="dp-label">\ud83d\udcc4 Documents</div>';
-  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="'+s.docKbis+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="'+s.docId+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (verso)</span><span class="v">'+(s.docIdVerso?'<a href="'+s.docIdVerso+'" target="_blank" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--text3);font-style:italic">Non fourni</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Kbis / INSEE</span><span class="v">'+(s.docKbis?'<a href="#" onclick="lxOuvrirDoc(\''+s.docKbis+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir / T\u00e9l\u00e9charger \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (recto)</span><span class="v">'+(s.docId?'<a href="#" onclick="lxOuvrirDoc(\''+s.docId+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--orange)">\u23f3 En attente</span>')+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Pi\u00e8ce d\u2019identit\u00e9 (verso)</span><span class="v">'+(s.docIdVerso?'<a href="#" onclick="lxOuvrirDoc(\''+s.docIdVerso+'\');return false" style="color:var(--green);font-weight:700">\u2705 Re\u00e7u \u2014 Voir \u2197</a>':'<span style="color:var(--text3);font-style:italic">Non fourni</span>')+'</span></div>';
   h+='<div class="dp-field"><span class="k">V\u00e9rification</span><span class="v" style="color:'+(s.verif==="verified"?"var(--green)":s.verif==="pending_review"?"var(--gold)":"var(--orange)")+'"><strong>'+(s.verif==="verified"?"\u2705 V\u00e9rifi\u00e9":s.verif==="pending_review"?"\ud83d\udd0d \u00c0 v\u00e9rifier":"\u23f3 En attente des documents")+'</strong></span></div>';
   // Verrouillage des documents
   h+='<div class="dp-field"><span class="k">Verrouillage</span><span class="v">';
@@ -2900,8 +2910,8 @@ function rInscriptions(){
         h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">';
         h+='<div><strong>'+s.nom+'</strong> <span style="font-size:12px;color:var(--text3)">'+s.ville+'</span></div>';
         h+='<div style="display:flex;gap:6px">';
-        if(s.docKbis)h+='<a href="'+s.docKbis+'" target="_blank" style="padding:4px 10px;border-radius:6px;background:rgba(45,154,94,.1);color:var(--green);font-size:11px;font-weight:700;text-decoration:none">\ud83d\udcc4 Kbis</a>';
-        if(s.docId)h+='<a href="'+s.docId+'" target="_blank" style="padding:4px 10px;border-radius:6px;background:rgba(45,154,94,.1);color:var(--green);font-size:11px;font-weight:700;text-decoration:none">\ud83c\udd94 Pi\u00e8ce ID</a>';
+        if(s.docKbis)h+='<a href="#" onclick="lxOuvrirDoc(\''+s.docKbis+'\');return false" style="padding:4px 10px;border-radius:6px;background:rgba(45,154,94,.1);color:var(--green);font-size:11px;font-weight:700;text-decoration:none">\ud83d\udcc4 Kbis</a>';
+        if(s.docId)h+='<a href="#" onclick="lxOuvrirDoc(\''+s.docId+'\');return false" style="padding:4px 10px;border-radius:6px;background:rgba(45,154,94,.1);color:var(--green);font-size:11px;font-weight:700;text-decoration:none">\ud83c\udd94 Pi\u00e8ce ID</a>';
         h+='<button class="td-btn" onclick="verifSalon(&#39;'+s.id+'&#39;,&#39;verified&#39;)" style="color:var(--green)" title="Valider">\u2705</button>';
         h+='</div></div>';
       });
