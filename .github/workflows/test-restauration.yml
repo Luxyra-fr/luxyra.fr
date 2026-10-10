@@ -22,14 +22,6 @@ jobs:
     env:
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
       BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
-    services:
-      jetable:
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: jetable
-        ports: ["5433:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - name: Vérifier la configuration
         run: |
@@ -72,13 +64,17 @@ jobs:
               --decrypt --output luxyra.dump luxyra.dump.gpg
           ls -l luxyra.dump
 
-      - name: Restauration dans la base jetable
+      - name: Restauration dans une base jetable
+        shell: bash {0}
         run: |
-          set -uo pipefail
-          # Rôles et extensions présents chez Supabase, pour que les règles d'accès se recréent aussi
-          cat > /tmp/prep.sql <<'SQL'
+          set -u
+          echo "== Démarrage d'une base Postgres 17 jetable =="
+          docker run -d --name jetable -e POSTGRES_PASSWORD=jetable postgres:17 >/dev/null || { echo "ERREUR : démarrage du conteneur"; exit 1; }
+          for i in $(seq 1 60); do docker exec jetable pg_isready -U postgres -q && break; sleep 2; done
+          docker exec jetable pg_isready -U postgres || { echo "ERREUR : la base jetable ne démarre pas"; docker logs jetable | tail -20; exit 1; }
+          sleep 3
+          cat > prep.sql <<'SQL'
           do $$ begin
-            perform 1;
             if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
             if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
             if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin bypassrls; end if;
@@ -91,18 +87,22 @@ jobs:
           create extension if not exists pgcrypto with schema extensions;
           create extension if not exists "uuid-ossp" with schema extensions;
           SQL
-          docker run --rm --network host -v /tmp:/tmp postgres:17 \
-            psql "postgresql://postgres:jetable@127.0.0.1:5433/postgres" -q -f /tmp/prep.sql
-          docker run --rm --network host -v "$PWD:/w" postgres:17 \
-            pg_restore --no-owner --no-privileges --disable-triggers -d "postgresql://postgres:jetable@127.0.0.1:5433/postgres" /w/luxyra.dump 2> /tmp/restore-err.txt
-          echo "Avertissements de restauration (objets propres à Supabase, normal) : $(grep -c 'error' /tmp/restore-err.txt || true)"
-          tail -n 15 /tmp/restore-err.txt || true
+          docker cp prep.sql jetable:/tmp/prep.sql
+          docker cp luxyra.dump jetable:/tmp/luxyra.dump
+          docker cp /tmp/compte.sql jetable:/tmp/compte.sql
+          docker exec jetable psql -U postgres -q -f /tmp/prep.sql || echo "(préparation : avertissements ignorés)"
+          echo "== Restauration (pg_restore) =="
+          docker exec jetable pg_restore -U postgres --no-owner --no-privileges --disable-triggers -d postgres /tmp/luxyra.dump 2> restore-err.txt
+          code=$?
+          echo "pg_restore terminé (code $code). Messages d'objets propres à Supabase ignorés : $(grep -c 'error' restore-err.txt || true)"
+          tail -n 15 restore-err.txt || true
+          echo "== Comptage dans la sauvegarde restaurée =="
+          docker exec jetable psql -U postgres -At -F '|' -v ON_ERROR_STOP=1 -f /tmp/compte.sql > /tmp/restaure.txt || { echo "ERREUR : lecture de la base restaurée impossible"; cat /tmp/restaure.txt; exit 1; }
+          cat /tmp/restaure.txt
 
       - name: Comparer les données restaurées
         run: |
           set -euo pipefail
-          docker run --rm --network host -v /tmp:/tmp postgres:17 \
-            psql "postgresql://postgres:jetable@127.0.0.1:5433/postgres" -At -F '|' -v ON_ERROR_STOP=1 -f /tmp/compte.sql > /tmp/restaure.txt
           echo "== Base réelle ==" && cat /tmp/reel.txt
           echo "== Sauvegarde restaurée ==" && cat /tmp/restaure.txt
           python3 - <<'PY'
@@ -123,4 +123,6 @@ jobs:
 
       - name: Nettoyage
         if: always()
-        run: rm -f luxyra.dump luxyra.dump.gpg
+        run: |
+          docker rm -f jetable >/dev/null 2>&1 || true
+          rm -f luxyra.dump luxyra.dump.gpg prep.sql restore-err.txt
