@@ -1914,8 +1914,22 @@ async function runStripeSurveillanceJob(env) {
         alertes.push({ titre: "⚠️ Litige chez un salon", corps: `${s.nom} : ${saEur(x.amount)} € — motif ${x.reason} — réponse avant le ${ech} (dans son Stripe)` });
       }
     } catch (_) {}
-    if ((a.requirements?.past_due || []).length || (s.stripe_connect_status === "active" && statut !== "active")) {
-      alertes.push({ titre: "🏦 Compte Stripe d'un salon à régulariser", corps: `${s.nom} : ${a.requirements?.disabled_reason || "pièces en retard"} (${(a.requirements?.past_due || []).length} élément(s))` });
+    // 2026-10-09 : alerte UNIQUEMENT pour un compte qui encaissait déjà (actif) et qui est bloqué ou a des pièces
+    // en retard. Une inscription Stripe commencée puis abandonnée (ex. salon en essai) n'est pas une panne :
+    // elle reste visible dans la fiche salon, sans alerte. Une seule alerte par situation (pas de relance quotidienne).
+    const encaissait = s.stripe_connect_status === "active" || ch;
+    const probleme = encaissait && ((a.requirements?.past_due || []).length || (s.stripe_connect_status === "active" && statut !== "active"));
+    const cleAl = "stripe_alerte_" + s.stripe_connect_id;
+    if (probleme) {
+      const sig = statut + "|" + (a.requirements?.disabled_reason || "") + "|" + (a.requirements?.past_due || []).slice().sort().join(",");
+      let deja = null;
+      try { const rr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?select=value&key=eq.${encodeURIComponent(cleAl)}&limit=1`, { headers: _sbHeaders(env) }); const ra = rr.ok ? await rr.json() : []; deja = ra[0] ? ra[0].value : null; } catch (_) {}
+      if (deja !== sig) {
+        alertes.push({ titre: "🏦 Compte Stripe d'un salon à régulariser", corps: `${s.nom} : ${a.requirements?.disabled_reason || "pièces en retard"} (${(a.requirements?.past_due || []).length} élément(s))` });
+        try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?on_conflict=key`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify({ key: cleAl, value: sig, description: "Dernière alerte compte Stripe salon (anti-répétition)" }) }); } catch (_) {}
+      }
+    } else {
+      try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?key=eq.${encodeURIComponent(cleAl)}`, { method: "DELETE", headers: _sbHeaders(env, { Prefer: "return=minimal" }) }); } catch (_) {}
     }
   }
   // 3) Filet charges directes : paiement réussi chez Stripe mais jamais validé chez nous (webhook perdu)
