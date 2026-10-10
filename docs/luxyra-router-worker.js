@@ -3768,36 +3768,40 @@ async function attemptAcompteRefund(env, rdv) {
     if (montant <= 0) return { refunded: false, skipped: "montant nul" };
     if (rdv.status !== "cancelled") return { refunded: false, skipped: "non annulé" };
 
-    // 1) Politique d'annulation du salon (site_config — SINGULIER)
-    let policyHours = 48, remboursementOn = true;
-    try {
-      const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation,remboursement_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
-      if (cfgRes.ok) {
-        const rows = await cfgRes.json();
-        if (Array.isArray(rows) && rows[0]) {
-          remboursementOn = rows[0].remboursement_annulation !== false;
-          const raw = String(rows[0].politique_annulation || "48h").trim().toLowerCase();
-          const m = raw.match(/(\d+)/);
-          if (m) {
-            policyHours = parseInt(m[1]);
-            if (raw.includes("j") || raw.includes("jour") || raw.includes("day")) policyHours = parseInt(m[1]) * 24;
+    // 2026-10-10 : annulation PAR LE SALON -> l'acompte est TOUJOURS remboursé (la politique d'annulation
+    // et son délai ne s'appliquent qu'aux annulations de la cliente).
+    if (rdv.cancelled_by !== "salon") {
+      // 1) Politique d'annulation du salon (site_config — SINGULIER)
+      let policyHours = 48, remboursementOn = true;
+      try {
+        const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation,remboursement_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+        if (cfgRes.ok) {
+          const rows = await cfgRes.json();
+          if (Array.isArray(rows) && rows[0]) {
+            remboursementOn = rows[0].remboursement_annulation !== false;
+            const raw = String(rows[0].politique_annulation || "48h").trim().toLowerCase();
+            const m = raw.match(/(\d+)/);
+            if (m) {
+              policyHours = parseInt(m[1]);
+              if (raw.includes("j") || raw.includes("jour") || raw.includes("day")) policyHours = parseInt(m[1]) * 24;
+            }
           }
         }
-      }
-    } catch (_) {}
-    if (!remboursementOn) return { refunded: false, skipped: "remboursement désactivé par le salon" };
+      } catch (_) {}
+      if (!remboursementOn) return { refunded: false, skipped: "remboursement désactivé par le salon" };
 
-    // 2) Délai : annulation au moins policyHours avant le RDV
-    try {
-      if (rdv.date_rdv && rdv.heure_rdv) {
-        const rdvStart = new Date(`${rdv.date_rdv}T${rdv.heure_rdv}`);
-        const cancelTime = rdv.cancelled_at ? new Date(rdv.cancelled_at) : new Date();
-        const hoursBefore = (rdvStart.getTime() - cancelTime.getTime()) / 3600000;
-        if (isFinite(hoursBefore) && hoursBefore < policyHours) {
-          return { refunded: false, skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h)` };
+      // 2) Délai : annulation au moins policyHours avant le RDV
+      try {
+        if (rdv.date_rdv && rdv.heure_rdv) {
+          const rdvStart = new Date(`${rdv.date_rdv}T${rdv.heure_rdv}`);
+          const cancelTime = rdv.cancelled_at ? new Date(rdv.cancelled_at) : new Date();
+          const hoursBefore = (rdvStart.getTime() - cancelTime.getTime()) / 3600000;
+          if (isFinite(hoursBefore) && hoursBefore < policyHours) {
+            return { refunded: false, skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h)` };
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     // 3) Résolution du PaymentIntent
     // 2026-10-09 : paiement direct sur le compte du salon -> remboursement sur ce compte, sans reverse_transfer
@@ -3924,7 +3928,7 @@ async function refundAndRecord(env, rdv) {
 // sécurité + rattrapage des annulations passées). Idempotent.
 async function runRefundReconcileJob(env) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,client_email,refund_error";
+  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,cancelled_by,client_email,refund_error";
   const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&status=eq.cancelled&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&cancelled_at=gte.${encodeURIComponent(since)}&limit=50`;
   const res = await fetch(q, { headers: _sbHeaders(env) });
   if (!res.ok) return { ok: false, error: await res.text() };
