@@ -1227,6 +1227,9 @@ async function loadSalonData() {
   // FIX 2026-10-07 : `|| 20` ecrasait un taux a 0 (franchise de TVA). Voir lxTauxTVA().
   SALON_CONFIG.tauxTVA = (salon.taux_tva !== null && salon.taux_tva !== undefined && salon.taux_tva !== "") ? Number(salon.taux_tva) : 20;
   SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
+  // 2026-10-11 : forme juridique (choisie à l'inscription) et mois de clôture de l'exercice comptable.
+  SALON_CONFIG.formeJuridiqueCode = salon.forme_juridique || "";
+  SALON_CONFIG.exerciceFinMois = (Number(salon.exercice_fin_mois) >= 1 && Number(salon.exercice_fin_mois) <= 12) ? Number(salon.exercice_fin_mois) : 12;
   // 2026-10-10 : frais de déplacement enregistrés dans les colonnes (mini-site) quand la config de l'app n'en a
   // pas encore (la config, chargée plus loin, reste prioritaire). Frais à 0 = jamais réglés -> défauts inchangés.
   try {

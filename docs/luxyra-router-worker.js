@@ -3802,7 +3802,8 @@ async function attemptAcompteRefund(env, rdv) {
     if (rdv.status !== "cancelled") return { refunded: false, skipped: "non annulé" };
 
     // 2026-10-10 : cliente absente (choix du salon dans le planning) -> acompte conservé.
-    if (rdv.cancelled_by === "no_show") return { refunded: false, skipped: "cliente absente : acompte conservé" };
+    if (rdv.retenue_at) return { refunded: false, skipped: "acompte déjà conservé (enregistré en caisse)" };
+    if (rdv.cancelled_by === "no_show") return { refunded: false, skipped: "cliente absente : acompte conservé", conserve: true };
     // 2026-10-10 : annulation PAR LE SALON (à partir de cette version) -> acompte TOUJOURS remboursé ; la politique
     // d'annulation et son délai ne s'appliquent qu'aux annulations de la cliente (et aux annulations antérieures).
     const _parSalon = rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00";
@@ -3824,7 +3825,7 @@ async function attemptAcompteRefund(env, rdv) {
           }
         }
       } catch (_) {}
-      if (!remboursementOn) return { refunded: false, skipped: "remboursement désactivé par le salon" };
+      if (!remboursementOn) return { refunded: false, skipped: "remboursement désactivé par le salon", conserve: true };
 
       // 2) Délai : annulation au moins policyHours avant le RDV
       try {
@@ -3833,7 +3834,7 @@ async function attemptAcompteRefund(env, rdv) {
           const cancelTime = rdv.cancelled_at ? new Date(rdv.cancelled_at) : new Date();
           const hoursBefore = (rdvStart.getTime() - cancelTime.getTime()) / 3600000;
           if (isFinite(hoursBefore) && hoursBefore < policyHours) {
-            return { refunded: false, skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h)` };
+            return { refunded: false, skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h)`, conserve: true };
           }
         }
       } catch (_) {}
@@ -3948,6 +3949,9 @@ async function refundAndRecord(env, rdv) {
     patch.refund_error = String(r.error).slice(0, 500);
   } else if (r.skipped) {
     patch.refund_error = "skip: " + r.skipped;
+    // 2026-10-11 : décision DÉFINITIVE « acompte conservé » -> l'app l'enregistre en caisse (ticket scellé)
+    // et le cron ne reviendra plus dessus.
+    if (r.conserve && !rdv.retenue_at) patch.retenue_at = nowIso;
   }
   try {
     await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv.id)}`, {
@@ -3964,8 +3968,8 @@ async function refundAndRecord(env, rdv) {
 // sécurité + rattrapage des annulations passées). Idempotent.
 async function runRefundReconcileJob(env) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,cancelled_by,client_email,refund_error";
-  const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&status=eq.cancelled&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&cancelled_at=gte.${encodeURIComponent(since)}&limit=50`;
+  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,cancelled_by,client_email,refund_error,retenue_at";
+  const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&status=eq.cancelled&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&retenue_at=is.null&cancelled_at=gte.${encodeURIComponent(since)}&limit=50`;
   const res = await fetch(q, { headers: _sbHeaders(env) });
   if (!res.ok) return { ok: false, error: await res.text() };
   const rows = await res.json();
