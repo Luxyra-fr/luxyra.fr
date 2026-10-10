@@ -9754,6 +9754,13 @@ function rHome(){
     _lxNbBandeaux++;
     h+='<div style="display:flex;align-items:center;gap:10px;background:rgba(76,175,80,.09);border:1.5px solid rgba(76,175,80,.45);border-radius:14px;padding:12px 14px;margin-bottom:12px"><div style="font-size:26px">\u270d\ufe0f</div><div style="flex:1;cursor:pointer" onclick="lxAttestationNF525()"><div style="font-weight:800;color:#7fc97f">Attestation de conformit\u00e9 de votre caisse \u00e0 signer</div><div style="font-size:12px;color:var(--text2)">Document obligatoire \u00e0 pr\u00e9senter en cas de contr\u00f4le fiscal. Pr\u00e9-rempli, sign\u00e9 en 1 minute \u203a</div></div><button onclick="try{localStorage.setItem(\'lx_att_masque_jusqu\',String(Date.now()+7*864e5))}catch(e){};go(\'home\')" title="Me le rappeler plus tard" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">\u2715</button></div>';
   } }catch(_eA){}
+  // 2026-10-10 : demandes de RDV en ligne à valider (domicile / confirmation manuelle)
+  try{ var _att=_lxRdvEnAttente(); if(_att.length && !window._lxVueAdmin){
+    h+='<div style="background:rgba(255,152,0,.1);border:1.5px solid rgba(255,152,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px">';
+    h+='<div style="font-weight:800;color:#ffb74d;margin-bottom:6px">\ud83d\udce9 '+_att.length+' demande'+(_att.length>1?'s':'')+' de rendez-vous \u00e0 valider</div>';
+    _att.slice(0,4).forEach(function(x){ var r=_lxRdvOnlineDe(x)||{}; h+='<div onclick="lxOuvrirRdv(\''+x.id+'\')" style="cursor:pointer;display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid rgba(255,255,255,.06);font-size:13px"><span>'+_lxEsc(((r.prenom||"")+" "+(r.nom||"")).trim()||"Cliente")+(r.lieu==="domicile"?" \ud83c\udfe0":"")+'</span><span style="color:var(--text2)">'+_lxDateCourte(x.date,x.time)+' \u203a</span></div>'; });
+    h+='</div>';
+  } }catch(_eAt){}
   var tvaR=lxTauxTVA();
   // 2026-10-10 : rappel discret du parrainage (fermable)
   // 2026-10-10 : proposer d'installer l'application (si pas déjà installée), après les autres bandeaux
@@ -10537,7 +10544,8 @@ function rPlanning(){
                   h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+_endTime1+'</div>';
                   // Badge statut texte (identique au mono-jour) si la place le permet
                   if(hPx>=50){
-                    if(a.lieu==="domicile") h+='<div class="pb-badge" style="background:rgba(255,152,0,.15);color:#ff9800">\ud83d\ude97 Domicile</div>';
+                    if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})()) h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
+                    else if(a.lieu==="domicile") h+='<div class="pb-badge" style="background:rgba(255,152,0,.15);color:#ff9800">\ud83d\ude97 Domicile</div>';
                     else if(a.isOnline) h+='<div class="pb-badge" style="background:rgba(108,92,231,.4);color:#fff;font-weight:800">\ud83c\udf10 En ligne</div>';
                     else if(a.acompte&&a.acompte>0&&a.st!=="done") h+='<div class="pb-badge" style="background:rgba(45,154,94,.15);color:#2d9a5e">\ud83d\udcb3 Acompte '+a.acompte+'\u20ac</div>';
                     else h+='<div class="pb-badge" style="background:'+(a.st==="done"?"var(--green-bg);color:var(--green)":"var(--blue-bg);color:var(--blue)")+'">'+(a.st==="done"?"\u2713 Encaiss\u00e9":(a.isOnline?"\u2713 Confirm\u00e9":"\ud83d\udcc5 Pr\u00e9vu"))+'</div>';
@@ -10763,6 +10771,7 @@ function rPlanningDay(dateObj,showDayHeader){
           h+='<div class="pb-svc" style="opacity:.7">'+ph.l+' \u2022 '+a.time+'\u2192'+endTime+'</div>';
           if(hPx>=50){
             if(_isDirect)h+='<div class="pb-badge" style="background:rgba(255,193,7,.2);color:#ffc107;font-weight:700">\ud83d\udcb3 Encaiss\u00e9 direct</div>';
+            else if(a.isOnline&&a.st!=="done"&&(function(){var _r=_lxRdvOnlineDe(a);return _r&&_r.status==="pending";})())h+='<div class="pb-badge" style="background:rgba(255,152,0,.9);color:#111">\u23f3 \u00c0 valider</div>';
             else if(a.lieu==="domicile")h+='<div class="pb-badge" style="background:rgba(255,152,0,.15);color:#ff9800">\ud83d\ude97 Domicile</div>';
             else if(a.isOnline)h+='<div class="pb-badge" style="background:rgba(108,92,231,.4);color:#fff;font-weight:800">\ud83c\udf10 En ligne</div>';
             else if(a.acompte&&a.acompte>0&&a.st!=="done")h+='<div class="pb-badge" style="background:rgba(45,154,94,.15);color:#2d9a5e">\ud83d\udcb3 Acompte '+a.acompte+'\u20ac</div>';
@@ -11725,6 +11734,8 @@ function clickAppt(id){
   var label=DF[calD.getDay()]+" "+calD.getDate()+" "+MO[calD.getMonth()]+" \u00e0 "+a.time;
   
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
+  // 2026-10-10 : réservation en ligne EN ATTENTE -> accepter, proposer un autre horaire ou refuser
+  try{ var _roV=_lxRdvOnlineDe(a); if(_roV && _roV.status==="pending") htm+=_lxBlocValidationRdv(a,_roV); }catch(_eV){}
   
   // === CLIENT INFO CARD (like LS Coiffure top) ===
   htm+='<div style="background:var(--gold);color:#fff;text-align:center;padding:10px;border-radius:12px 12px 0 0;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Informations client</div>';
@@ -32925,6 +32936,97 @@ function lxAttConcerne(){
     var p = window._lxPays || (typeof SALON_CONFIG !== "undefined" && SALON_CONFIG && SALON_CONFIG.pays) || "France";
     return /^\s*france\s*$/i.test(String(p));
   } catch(e) { return true; }
+}
+// ===== VALIDATION DES DEMANDES DE RDV EN LIGNE (2026-10-10) =====
+// RDV à domicile (toujours) et RDV en mode « confirmation manuelle » : le professionnel accepte, propose un autre
+// horaire ou refuse. Si un acompte est prévu et que les paiements en ligne sont actifs, la cliente reçoit à
+// l'acceptation un lien de paiement (luxyra.fr/acompte.html?t=…) ; sinon il se règle sur place.
+function _lxRdvOnlineDe(a){ if(!a||!a.onlineId||!window.RDV_ONLINE) return null; for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===a.onlineId) return RDV_ONLINE[i]; } return null; }
+function _lxRdvEnAttente(){ var L=[]; try{ (AP||[]).forEach(function(a){ var r=_lxRdvOnlineDe(a); if(r&&r.status==="pending"&&a.st!=="done") L.push(a); }); }catch(e){} return L; }
+function lxOuvrirRdv(id){ var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a) return; try{ calD=new Date(a.date+"T12:00:00"); }catch(e){} clickAppt(id); }
+function _lxBlocValidationRdv(a, ro){
+  var dom=(ro.lieu==="domicile"), ac=Number(ro.acompte)||0;
+  var h='<div style="background:rgba(255,152,0,.1);border:1.5px solid rgba(255,152,0,.5);border-radius:14px;padding:14px;margin-bottom:14px">';
+  h+='<div style="font-weight:800;color:#ffb74d;font-size:15px;margin-bottom:4px">📩 Demande de rendez-vous à valider</div>';
+  h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:10px">'+(dom?'🏠 À domicile'+(ro.adresse?' — '+_lxEsc(ro.adresse):'')+(Number(ro.distanceKm)>0?' ('+String(Math.round(Number(ro.distanceKm)*10)/10).replace(".",",")+' km)':'')+'<br>':'')+(ac>0?'Acompte prévu : '+ac.toFixed(2).replace(".",",")+' € (lien de paiement envoyé à la cliente après acceptation)':'Sans acompte')+'</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">';
+  h+='<button class="btn" style="padding:10px 4px;background:#2e7d32;color:#fff;font-weight:800;font-size:12px" onclick="lxRdvAccepter(\''+a.id+'\')">✅ Accepter</button>';
+  h+='<button class="btn" style="padding:10px 4px;background:rgba(33,150,243,.15);color:#64b5f6;font-weight:800;font-size:12px" onclick="lxRdvProposer(\''+a.id+'\')">🕒 Autre horaire</button>';
+  h+='<button class="btn" style="padding:10px 4px;background:rgba(239,83,80,.15);color:#ef5350;font-weight:800;font-size:12px" onclick="lxRdvRefuser(\''+a.id+'\')">❌ Refuser</button>';
+  h+='</div></div>';
+  return h;
+}
+function _lxJetonAcompte(){ var c="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789",b=new Uint8Array(12),x=""; crypto.getRandomValues(b); for(var i=0;i<12;i++) x+=c[b[i]%c.length]; return x; }
+// Message à la cliente : email (mise en page du salon) si adresse, sinon SMS court (1 crédit).
+async function _lxMessageCliente(ro, titre, icone, texteEmail, texteSms, lien){
+  try{
+    if(ro.email){
+      var corps=_lxEsc(texteEmail).replace(/\n/g,"<br>");
+      var bt=lien?[{t:"💳 Régler l’acompte",u:lien,principal:true}]:_lxBoutonsSalon();
+      await sendEmailViaWorker(ro.email,((ro.prenom||"")+" "+(ro.nom||"")).trim(),titre+" - "+(SALON_CONFIG.nom||""),lxEmailSalon({icone:icone,titre:titre,salutation:ro.prenom||"",carte:corps,boutons:bt}));
+      return "email";
+    }
+    if(ro.tel && typeof sendSms==="function"){
+      var t=(typeof lxSmsGsm==="function")?lxSmsGsm(texteSms):texteSms;
+      if(t.length>160) t=t.slice(0,160);
+      var r=await sendSms(ro.tel,t,"validation_rdv",((ro.prenom||"")+" "+(ro.nom||"")).trim());
+      return (r&&r.ok)?"sms":null;
+    }
+  }catch(e){}
+  return null;
+}
+function _lxDateCourte(d,h){ try{ var x=new Date(d+"T12:00:00"); return String(x.getDate()).padStart(2,"0")+"/"+String(x.getMonth()+1).padStart(2,"0")+" "+(h?String(h).slice(0,5).replace(":","h"):""); }catch(e){ return d+" "+h; } }
+async function lxRdvAccepter(apId, msgHoraire){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } }
+  var ro=_lxRdvOnlineDe(a); if(!a||!ro){ toast("Rendez-vous introuvable","error"); return; }
+  var upd={status:"confirmed", confirmed_at:new Date().toISOString()}, lien=null, ac=Number(ro.acompte)||0;
+  if(ac>0 && !ro.acomptePaye){
+    try{
+      var sr=await _sb.from("salons").select("stripe_connect_id,stripe_connect_status").eq("id",_salonId).maybeSingle();
+      var ok=sr.data&&sr.data.stripe_connect_id&&["active","enabled","payouts_pending"].indexOf(String(sr.data.stripe_connect_status||""))>=0;
+      if(ok){ var tok=_lxJetonAcompte(); upd.acompte_token=tok; upd.acompte_lien_envoye_at=new Date().toISOString(); lien="https://luxyra.fr/acompte.html?t="+tok; }
+    }catch(e){}
+  }
+  var r=await _sb.from("rdv_online").update(upd).eq("id",ro.id).eq("salon_id",_salonId);
+  if(r&&r.error){ toast("Erreur : "+r.error.message,"error"); return; }
+  ro.status="confirmed"; a.onlineStatus="confirmed";
+  var quand=_lxDateCourte(a.date,a.time), nom=(SALON_CONFIG.nom||"").slice(0,22);
+  var txtE=(msgHoraire?msgHoraire+"\n\n":"")+"Votre rendez-vous"+(ro.lieu==="domicile"?" à domicile":"")+" du "+quand+" est confirmé."+(lien?"\n\nPour le garantir, merci de régler l’acompte de "+ac.toFixed(2).replace(".",",")+" € (déduit du prix le jour du rendez-vous) :":(ac>0&&!ro.acomptePaye?"\n\nL’acompte de "+ac.toFixed(2).replace(".",",")+" € sera à régler sur place.":""));
+  var txtS=nom+": RDV confirme le "+quand+"."+(lien?" Acompte "+Math.round(ac)+"EUR: "+lien.replace("https://",""):"");
+  var canal=await _lxMessageCliente(ro,"Rendez-vous confirmé","✅",txtE,txtS,lien);
+  if(typeof auditLog==="function") auditLog("RDV_EN_LIGNE_ACCEPTE",(ro.prenom||"")+" "+(ro.nom||"")+" "+quand+(lien?" - lien acompte envoyé":""));
+  toast("✅ Rendez-vous accepté"+(canal?" — cliente prévenue par "+canal:""),"success");
+  cM(); go(window._currentPage||"planning");
+}
+function lxRdvProposer(apId){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } } if(!a) return;
+  var h='<div class="mbox" style="max-width:400px"><h2>🕒 Proposer un autre horaire</h2>';
+  h+='<div class="fg"><label>Date</label><input type="date" id="lxPrD" value="'+a.date+'" min="'+TD+'"></div>';
+  h+='<div class="fg"><label>Heure</label><input type="time" id="lxPrH" value="'+(a.time||"")+'" step="300"></div>';
+  h+='<div class="fg"><label>Message à la cliente (facultatif)</label><input id="lxPrM" placeholder="Ex : je suis déjà en déplacement à cette heure-là"></div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="lxOuvrirRdv(\''+apId+'\')">Retour</button><button class="btn bg" style="flex:1" onclick="lxRdvProposerValider(\''+apId+'\')">Envoyer</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+async function lxRdvProposerValider(apId){
+  var d=(document.getElementById("lxPrD")||{}).value, hh=(document.getElementById("lxPrH")||{}).value, m=((document.getElementById("lxPrM")||{}).value||"").trim();
+  if(!d||!hh){ toast("Choisissez la date et l’heure","warning"); return; }
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } } if(!a) return;
+  a.date=d; a.time=hh.slice(0,5);
+  try{ if(typeof saveAppointment==="function") await saveAppointment(a); }catch(e){}
+  await lxRdvAccepter(apId, "Nous vous proposons un nouvel horaire : le "+_lxDateCourte(d,hh)+"."+(m?"\n« "+m+" »":"")+"\nSi cet horaire ne vous convient pas, répondez à ce message ou annulez depuis votre espace cliente.");
+}
+function lxRdvRefuser(apId){
+  showPrompt({title:"Refuser la demande",okLabel:"Refuser",label:"Motif transmis à la cliente (facultatif)",placeholder:"Ex : je ne me déplace pas dans votre secteur ce jour-là",onOk:async function(motif){
+    var a=null,ai=-1; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; ai=i; break; } }
+    var ro=_lxRdvOnlineDe(a); if(!a||!ro) return;
+    var r=await _sb.from("rdv_online").update({status:"refused",cancelled_by:"salon",cancel_reason:(motif||"Demande non retenue"),cancelled_at:new Date().toISOString()}).eq("id",ro.id).eq("salon_id",_salonId);
+    if(r&&r.error){ toast("Erreur : "+r.error.message,"error"); return; }
+    ro.status="refused"; if(ai>=0) AP.splice(ai,1);
+    var quand=_lxDateCourte(a.date,a.time);
+    await _lxMessageCliente(ro,"Demande de rendez-vous","ℹ️","Nous ne pouvons malheureusement pas honorer votre demande de rendez-vous du "+quand+"."+(motif?"\n« "+motif+" »":"")+"\n\nN’hésitez pas à choisir un autre créneau en ligne.",(SALON_CONFIG.nom||"").slice(0,22)+": desole, votre demande de RDV du "+quand+" ne peut pas etre honoree. Merci de choisir un autre creneau en ligne.",null);
+    if(typeof auditLog==="function") auditLog("RDV_EN_LIGNE_REFUSE",(ro.prenom||"")+" "+(ro.nom||"")+" "+quand);
+    toast("Demande refusée — cliente prévenue","success"); cM(); go(window._currentPage||"planning");
+  }});
 }
 // Statut de l'attestation de l'établissement (pour le rappel sur l'accueil) : chargé une fois par session
 async function lxAttStatutCharger(){

@@ -148,6 +148,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/stripe/empreinte-finalize" && request.method === "POST") return await handleEmpreinteFinalize(request, env);
       // FIX 2026-05-23 : Path A acompte (post-Checkout, stocke le PI ID → remboursement auto possible)
       if (url.pathname === "/api/stripe/acompte-finalize" && request.method === "POST") return await handleAcompteFinalize(request, env);
+      if (url.pathname === "/api/rdv/acompte-info" && request.method === "POST") return await handleRdvAcompteInfo(request, env);
       // FIX 2026-05-12 : Path A pour RDV sur mesure (acompte direct au salon)
       if (url.pathname === "/api/rdv-demande/connect-pay" && request.method === "POST") return await handleRdvDemandeConnectPay(request, env);
       if (url.pathname === "/api/rdv-demande/finalize" && request.method === "POST") return await handleRdvDemandeFinalize(request, env);
@@ -3695,6 +3696,26 @@ async function handleClientRdvs(request, env) {
 // Cet endpoint (appelé au retour payment=success) récupère le PI depuis
 // la session Stripe et l'écrit dans rdv_online.payment_intent_id.
 // ============================================================
+// 2026-10-10 : page publique de paiement de l'acompte d'un RDV accepté par le professionnel (lien envoyé par SMS/email).
+// Accès par jeton aléatoire uniquement ; ne renvoie que le strict nécessaire à l'affichage.
+async function handleRdvAcompteInfo(request, env) {
+  try {
+    const b = await readJsonBody(request);
+    const t = String(b.t || "");
+    if (!/^[A-Za-z0-9]{10,40}$/.test(t)) return jsonResponse({ error: "Lien invalide" }, 400);
+    if (!checkRateLimit("acompte_info:" + (request.headers.get("CF-Connecting-IP") || "?"), 30)) return jsonResponse({ error: "Trop de requêtes" }, 429);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,client_email,client_prenom,lieu&acompte_token=eq.${encodeURIComponent(t)}&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    const rdv = Array.isArray(a) ? a[0] : null;
+    if (!rdv) return jsonResponse({ error: "Lien invalide ou expiré" }, 404);
+    const salon = await supabaseGet(env, rdv.salon_id);
+    const connectOk = !!(salon && salon.stripe_connect_id && ["active", "enabled", "payouts_pending"].includes(String(salon.stripe_connect_status || "")));
+    return jsonResponse({ ok: true, rdv_id: rdv.id, salon_id: rdv.salon_id, salon_nom: salon ? salon.nom : "", salon_logo: salon ? (salon.logo || "") : "",
+      prestation: rdv.service_nom || "", date: rdv.date_rdv, heure: rdv.heure_rdv ? String(rdv.heure_rdv).slice(0, 5) : "",
+      montant: Number(rdv.acompte_montant) || 0, paye: rdv.acompte_paye === true, annule: rdv.status === "cancelled" || rdv.status === "refused",
+      email: rdv.client_email || "", prenom: rdv.client_prenom || "", domicile: rdv.lieu === "domicile", paiement_en_ligne: connectOk });
+  } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
+}
 async function handleAcompteFinalize(request, env) {
   try {
     const body = await request.json().catch(() => null);
@@ -3738,6 +3759,8 @@ async function handleAcompteFinalize(request, env) {
         const _ca = _c.ok ? await _c.json() : [];
         if (Array.isArray(_ca) && _ca[0] && typeof _ca[0].confirmation_auto === "boolean") wantStatus = _ca[0].confirmation_auto ? "confirmed" : "pending";
       } catch (_e) {}
+      // 2026-10-10 : acompte réglé APRÈS acceptation par le professionnel -> le RDV reste confirmé
+      if (_rdv.status === "confirmed") wantStatus = "confirmed";
     }
     const patch = { acompte_paye: true, status: wantStatus, stripe_account: _compteA || null };
     if (piId) { patch.payment_intent_id = piId; patch.stripe_payment_id = piId; }

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Régler mon acompte — Luxyra</title>
+<link rel="icon" href="/icon-192.png">
+<style>
+:root{--gold:#c8a84e;--bg:#0b0b0b;--bg2:#15151a;--text:#f5f5f7;--text2:rgba(255,255,255,.7);--text3:rgba(255,255,255,.45)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{width:100%;max-width:440px;background:var(--bg2);border:1px solid rgba(200,168,78,.3);border-radius:18px;padding:26px 22px;text-align:center}
+.logo{height:64px;border-radius:14px;margin-bottom:10px}.nom{font-family:Georgia,serif;color:var(--gold);font-size:22px;letter-spacing:1px;margin-bottom:4px}
+.sub{color:var(--text3);font-size:13px;margin-bottom:18px}.row{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid rgba(255,255,255,.07);font-size:14px;text-align:left}
+.row span:first-child{color:var(--text3)}.mt{font-size:30px;font-weight:800;color:var(--gold);margin:18px 0 6px}
+.btn{display:block;width:100%;padding:15px;border:none;border-radius:12px;background:var(--gold);color:#111;font-weight:800;font-size:16px;cursor:pointer;margin-top:14px}
+.btn:disabled{opacity:.6}.note{font-size:12px;color:var(--text3);margin-top:12px;line-height:1.5}.ok{font-size:46px}.err{color:#ef5350}
+.via{margin-top:20px;font-size:11px;color:var(--text3)}.via img{width:18px;height:18px;border-radius:4px;vertical-align:middle;margin-right:5px}
+</style>
+</head>
+<body>
+<div class="card" id="app"><div class="sub">Chargement…</div></div>
+<script>
+// 2026-10-10 : paiement de l'acompte d'un rendez-vous confirmé par le professionnel (lien reçu par SMS ou email).
+(function(){
+  var p=new URLSearchParams(location.search), t=p.get("t")||"", el=document.getElementById("app"), INFO=null;
+  function esc(x){return String(x==null?"":x).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+  function dFr(d){try{return new Date(d+"T12:00:00").toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});}catch(e){return d;}}
+  function eur(n){return (Number(n)||0).toFixed(2).replace(".",",")+" €";}
+  function via(){return '<div class="via"><img src="/luxyra-logo.png" alt="">Paiement sécurisé via Luxyra · Stripe</div>';}
+  function entete(){return (INFO.salon_logo?'<img class="logo" src="'+esc(INFO.salon_logo)+'" alt="">':'')+'<div class="nom">'+esc(INFO.salon_nom)+'</div>';}
+  function recap(){return '<div class="row"><span>Prestation</span><span>'+esc(INFO.prestation)+'</span></div><div class="row"><span>Date</span><span>'+esc(dFr(INFO.date))+' à '+esc(INFO.heure)+'</span></div>'+(INFO.domicile?'<div class="row"><span>Lieu</span><span>À votre domicile</span></div>':'');}
+  function erreur(m){el.innerHTML='<div class="ok">⚠️</div><div class="err" style="margin-top:8px">'+esc(m)+'</div>'+via();}
+  async function charger(){
+    var r=await fetch("/api/rdv/acompte-info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({t:t})});
+    var d=await r.json(); if(!r.ok||!d.ok){ erreur(d.error||"Lien invalide ou expiré"); return null; }
+    INFO=d; return d;
+  }
+  function succes(){ el.innerHTML=entete()+'<div class="ok" style="margin-top:6px">✅</div><h2 style="margin:6px 0">Acompte réglé</h2><div class="sub">Votre rendez-vous est confirmé. À bientôt !</div>'+recap()+via(); }
+  async function payer(){
+    var b=document.getElementById("pay"); b.disabled=true; b.textContent="Redirection vers le paiement…";
+    try{
+      var base=location.origin+"/acompte.html?t="+encodeURIComponent(t);
+      var r=await fetch("/api/stripe/connect-payment",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+        salon_id:INFO.salon_id, amount:INFO.montant, customer_email:INFO.email||"", customer_name:INFO.prenom||"",
+        description:"Acompte - "+INFO.prestation+" le "+dFr(INFO.date)+" à "+INFO.heure+" - "+INFO.salon_nom,
+        metadata:{type:"acompte", rdv_id:INFO.rdv_id, return_url:base+"&paid=1&session_id={CHECKOUT_SESSION_ID}", cancel_url:base}
+      })});
+      var d=await r.json(); if(d.url){ location.href=d.url; return; }
+      b.disabled=false; b.textContent="Payer "+eur(INFO.montant); alert(d.error||"Paiement impossible pour le moment");
+    }catch(e){ b.disabled=false; b.textContent="Payer "+eur(INFO.montant); alert("Erreur de connexion"); }
+  }
+  window._lxPayer=payer;
+  (async function(){
+    if(!t){ erreur("Lien incomplet"); return; }
+    var d=await charger(); if(!d) return;
+    if(p.get("paid")==="1" && p.get("session_id") && !d.paye){
+      el.innerHTML='<div class="sub">Confirmation du paiement…</div>';
+      try{ await fetch("/api/stripe/acompte-finalize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:p.get("session_id"),rdv_id:d.rdv_id})}); }catch(e){}
+      d=await charger(); if(!d) return;
+      history.replaceState({},"","/acompte.html?t="+encodeURIComponent(t));
+    }
+    if(d.annule){ erreur("Ce rendez-vous a été annulé."); return; }
+    if(d.paye){ succes(); return; }
+    if(!d.paiement_en_ligne||!(d.montant>0)){ el.innerHTML=entete()+'<div class="sub">Rendez-vous confirmé</div>'+recap()+'<div class="note">L’acompte éventuel se règle directement auprès du professionnel.</div>'+via(); return; }
+    el.innerHTML=entete()+'<div class="sub">Votre rendez-vous est confirmé : il reste à régler l’acompte</div>'+recap()+'<div class="mt">'+eur(d.montant)+'</div><div class="sub" style="margin:0">Acompte, déduit du prix le jour du rendez-vous</div><button class="btn" id="pay" onclick="_lxPayer()">Payer '+eur(d.montant)+'</button><div class="note">Paiement sécurisé par carte bancaire (Stripe). Le montant est versé directement au professionnel.</div>'+via();
+  })();
+})();
+</script>
+</body>
+</html>
