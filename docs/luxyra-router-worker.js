@@ -769,6 +769,8 @@ async function handleWebhook(request, env) {
         // === PARRAINAGE (2026-10-10) : 1er VRAI paiement du filleul -> 1 mois offert au parrain ;
         // et si CE salon est un parrain qui vient de s'abonner, ses mois offerts en attente sont appliqués.
         if (Number(data.amount_paid || 0) > 0) {
+          // 2026-10-10 : date du 1er paiement (départ des 15 jours pour fournir les justificatifs)
+          try { const _sa = await supabaseGet(env, salonId); if (_sa && !_sa.abonne_depuis) await supabaseUpdate(env, salonId, { abonne_depuis: new Date().toISOString() }); } catch (_) {}
           try { await lxParrainageRecompenser(env, salonId); } catch (e) { console.error("parrainage:", e?.message || e); }
         }
         try { await lxParrainageAppliquerEnAttente(env, salonId); } catch (e) { console.error("parrainage attente:", e?.message || e); }
@@ -912,7 +914,8 @@ async function handleWebhook(request, env) {
         // Toujours la date de la DERNIÈRE résiliation effective : les 6 ans courent à partir
         // de la fin réelle de l'abonnement (un ancien cancelled_at, ex. résiliation puis
         // réabonnement, raccourcirait à tort la durée légale de conservation).
-        const updates = { plan: "essential", status: "cancelled", past_due_since: null, cancelled_at: new Date().toISOString() };
+        // 2026-10-10 : fin de la garantie Fondateur à la résiliation (CGV art. 5 bis) — la place redevient disponible
+        const updates = { plan: "essential", status: "cancelled", past_due_since: null, cancelled_at: new Date().toISOString(), is_founder: false, founder_num: null };
         await supabaseUpdate(env, salonId, updates);
         await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
       }
@@ -937,7 +940,8 @@ async function handleWebhook(request, env) {
         // Si la sub est marquée pour annulation à la fin de période (cancel_at_period_end),
         // on garde status=active jusqu'à l'expiration réelle (c'est subscription.deleted qui passera à cancelled).
         // L'utilisateur conserve son accès jusqu'à la fin de la période payée.
-        await supabaseUpdate(env, salonId, { plan: newPlan });
+        // 2026-10-10 : passage en Essentiel = fin de la garantie Fondateur (CGV art. 5 bis)
+        await supabaseUpdate(env, salonId, newPlan === "pro" ? { plan: newPlan } : { plan: newPlan, is_founder: false, founder_num: null });
         if (newPlan !== "pro") await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
         else await patchSiteConfig(env, salonId, { site_actif: true, reservation_active: true });
       }
@@ -1061,7 +1065,7 @@ async function handleSwitchPlan(request, env) {
     subParams["metadata[plan]"] = plan === "pro" ? "pro" : "essential"; // FIX 2026-10-09 : facture et bonus SMS au bon forfait
     const updated = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, subParams);
     if (updated?.id) {
-      await supabaseUpdate(env, salon_id, { plan: plan === "pro" ? "pro" : "essential" });
+      await supabaseUpdate(env, salon_id, plan === "pro" ? { plan: "pro" } : { plan: "essential", is_founder: false, founder_num: null });
       if (plan !== "pro") await patchSiteConfig(env, salon_id, { site_actif: false, reservation_active: false });
       else await patchSiteConfig(env, salon_id, { site_actif: true, reservation_active: true });
       return jsonResponse({ success: true, plan });

@@ -1256,7 +1256,8 @@ async function loadSalonData() {
   } catch (_eF) {}
   var hasAllDocs = salon.documents_kbis && salon.documents_id;
   if (!salon.is_free && salon.status === "active" && salon.stripe_subscription_id && !hasAllDocs) {
-    var subStart = salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
+    // 2026-10-10 : 15 jours à compter du 1er paiement d'abonnement (CGV art. 4), pas de l'inscription
+    var subStart = salon.abonne_depuis || salon.contrat_accepted_at || salon.cgv_accepted_at || salon.created_at;
     if (subStart) {
       var daysSinceSub = Math.floor((new Date() - new Date(subStart)) / 86400000);
       window._docsMissing = true;
