@@ -635,7 +635,7 @@ function _mapClotureRow(c) {
   var base = (c.raw_data && typeof c.raw_data === "object") ? c.raw_data : {};
   var totalCA = Number(c.total_ca) || 0;
   var totalHT = Number(c.total_ht) || 0;
-  var txTVA = base.txTVA || 20;
+  var txTVA = (typeof base.txTVA === "number" && !isNaN(base.txTVA)) ? base.txTVA : (typeof window.lxTauxTVA === "function" ? window.lxTauxTVA() : 20);
   var totalPrest = base.totalPrest != null ? base.totalPrest : totalCA;
   var totalProd  = base.totalProd  != null ? base.totalProd  : 0;
   // FIX 2026-05-14 : applique correction documentée (raw_data.correction)
@@ -984,7 +984,7 @@ function lxMapRdvOnlineRow(r) {
     collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
     date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
     duree: r.duree_minutes,
-    acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye,
+    acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye, acomptePayeAt: r.acompte_paye_at || null,
     acompteRembourse: r.acompte_rembourse || false,
     refundedAt: r.refunded_at || null,
     stripePaymentId: r.payment_intent_id || null,
@@ -1227,6 +1227,8 @@ async function loadSalonData() {
   // FIX 2026-10-07 : `|| 20` ecrasait un taux a 0 (franchise de TVA). Voir lxTauxTVA().
   SALON_CONFIG.tauxTVA = (salon.taux_tva !== null && salon.taux_tva !== undefined && salon.taux_tva !== "") ? Number(salon.taux_tva) : 20;
   SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
+  // 2026-10-11 : franchise en base (TVA 0 %) -> jamais de TVA sur les produits non plus
+  if (Number(SALON_CONFIG.tauxTVA) === 0) SALON_CONFIG.tvaProduits = 0;
   // 2026-10-11 : forme juridique (choisie à l'inscription) et mois de clôture de l'exercice comptable.
   SALON_CONFIG.formeJuridiqueCode = salon.forme_juridique || "";
   SALON_CONFIG.exerciceFinMois = (Number(salon.exercice_fin_mois) >= 1 && Number(salon.exercice_fin_mois) <= 12) ? Number(salon.exercice_fin_mois) : 12;
@@ -1494,7 +1496,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   var today = new Date().toISOString().slice(0,10);
   // Limit 500 = filet sécurité. Les RDV online cancellés/done/refused vieux n'ont
   // pas besoin d'être en mémoire. Si plus tard nécessaire, lazy load via fetch ciblé.
-  var roRes = await _sb.from("rdv_online").select("*").eq("salon_id", _salonId).order("created_at", { ascending: false }).limit(500);
+  var roRes = await lxChargerRdvOnline();
   if (roRes.data) {
     // MAPPER UNIQUE partage avec app.html (voir lxMapRdvOnlineRow).
     window.RDV_ONLINE = roRes.data.map(lxMapRdvOnlineRow);
@@ -1949,7 +1951,9 @@ var _FICHE_TECH_KEYS = [
   "photos",
   // Historique structuré par métier (barbier/esthétique/ongles/bien-être).
   // Coiffure utilise toujours `formules` ci-dessus pour les formules couleur.
-  "histoMetier"
+  "histoMetier",
+  // 2026-10-11 : soldes fidélité des modes « cagnotte » et « CA cumulé » (perdus au rechargement avant)
+  "cagnotte","caTotal"
 ];
 
 // FIX 2026-05-12 : helper de migration legacy local-id → UUID.
@@ -2164,6 +2168,26 @@ function _lxItemsAvecAcompteEnLigne(appt) {
   } catch (_e) {}
   return its;
 }
+// 2026-10-11 : chargement des RDV en ligne = TOUS les RDV actifs (en attente / confirmés, quelle que soit
+// leur date de création) + l'historique des 13 derniers mois (exports mensuels), par pages de 1000
+// (limite par requête de l'API). Avant : les 500 derniers créés seulement.
+async function lxChargerRdvOnline() {
+  var depuis = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+  var vus = {}, out = [], err = null;
+  async function pages(q) {
+    for (var p = 0; p < 20; p++) {
+      var r = await q().range(p * 1000, p * 1000 + 999);
+      if (r.error) { err = r.error; return; }
+      (r.data || []).forEach(function (x) { if (!vus[x.id]) { vus[x.id] = 1; out.push(x); } });
+      if (!r.data || r.data.length < 1000) return;
+    }
+  }
+  await pages(function () { return _sb.from("rdv_online").select("*").eq("salon_id", _salonId).in("status", ["pending", "confirmed", "pending_payment"]).order("created_at", { ascending: false }); });
+  await pages(function () { return _sb.from("rdv_online").select("*").eq("salon_id", _salonId).gte("date_rdv", depuis).order("created_at", { ascending: false }); });
+  out.sort(function (a, b) { return String(b.created_at || "").localeCompare(String(a.created_at || "")); });
+  return err && !out.length ? { data: null, error: err } : { data: out, error: null };
+}
+if (typeof window !== "undefined") window.lxChargerRdvOnline = lxChargerRdvOnline;
 async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
   // WAL : persiste l'action AVANT tout traitement (filet 15/05/2026)
@@ -2209,9 +2233,10 @@ async function saveAppointment(appt) {
       date_rdv: appt.date,
       heure_rdv: appt.time,
       service_id: appt.sId,
-      service_prix: appt.pr,
-      message: appt.comment || "",
-      items: appt.items || []
+      service_prix: appt.pr
+      // 2026-10-11 : NI message NI items ici. En mémoire, appt.comment est un libellé construit
+      // (« RDV EN LIGNE - nom - tel - message ») et appt.items a la forme de l'app : les réécrire
+      // empilait le préfixe dans le message vu par la cliente et vidait les prestations du RDV.
     };
     // Calculer la nouvelle durée à partir des phases si disponible
     if (appt.aPhases && Array.isArray(appt.aPhases) && appt.aPhases.length) {
@@ -2225,9 +2250,6 @@ async function saveAppointment(appt) {
     if (onlineCollabName) onlineData.collaborateur_nom = onlineCollabName;
     // Recalculer service_nom si la prestation principale a changé
     if (appt.sId && typeof gS === "function") { var sv0 = gS(appt.sId); if (sv0 && sv0.n) onlineData.service_nom = sv0.n; }
-    // Reset la demande de modif client (puisque le salon vient de modifier de son côté)
-    onlineData.modification_demandee = false;
-    onlineData.modification_status = null;
     // Tracking de la modif salon : on lit l'état actuel pour calculer le diff
     try {
       var oldRes = await _sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,collaborateur_nom,duree_minutes,service_id,service_nom,service_prix,items").eq("id", onlineUuid).eq("salon_id", _salonId).maybeSingle();
@@ -2251,6 +2273,9 @@ async function saveAppointment(appt) {
         diffField("service_id", old.service_id, onlineData.service_id);
         diffField("service_nom", old.service_nom, onlineData.service_nom);
         if (Object.keys(diff).length > 0) {
+          // Le salon a réellement modifié le RDV : la demande de modification de la cliente est traitée.
+          onlineData.modification_demandee = false;
+          onlineData.modification_status = null;
           onlineData.salon_modified_at = new Date().toISOString();
           onlineData.salon_modified_fields = diff;
           onlineData.salon_modified_acknowledged_by_client = false;
@@ -2260,8 +2285,13 @@ async function saveAppointment(appt) {
     } catch (eDiff) { console.warn("[saveAppointment online] diff calc skipped:", eDiff && eDiff.message); }
     try {
       var r = await _sb.from("rdv_online").update(onlineData).eq("id", onlineUuid).eq("salon_id", _salonId);
-      if (r && r.error) console.warn("[saveAppointment online] update rdv_online failed:", r.error.message);
-      else console.log("[saveAppointment online] rdv_online updated:", onlineUuid, onlineData.salon_modified_fields ? "(modif tracked)" : "(no diff)");
+      if (r && r.error) {
+        console.warn("[saveAppointment online] update rdv_online failed:", r.error.message);
+        try { if (typeof toast === "function") toast("La modification du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : " + r.error.message, "error"); } catch (_t) {}
+      } else {
+        console.log("[saveAppointment online] rdv_online updated:", onlineUuid, onlineData.salon_modified_fields ? "(modif tracked)" : "(no diff)");
+        _walMarkSynced(_walId); // 2026-10-11 : sinon rejoué à chaque démarrage (écrasait les changements d'un autre appareil)
+      }
     } catch (e) { console.error("[saveAppointment online] exception:", e); }
     return;
   }
@@ -2630,7 +2660,7 @@ async function saveTicketToDb(tk) {
   var _walId = window._walBypass ? null : _walPersist("ticket", tk);
   try {
     var pay = _mapPayment(tk);
-    var dateStr = tk.date || new Date().toISOString().slice(0,10);
+    var dateStr = tk.date || (function(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); })(); // 2026-10-11 : date locale (pas UTC)
     var timeStr = tk.heureEncaiss || tk.time || new Date().toTimeString().slice(0,5);
     if (timeStr.length === 5) timeStr = timeStr + ":00"; // HH:MM → HH:MM:SS
 

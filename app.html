@@ -391,7 +391,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-03"></script>
+<script src="luxyra-supabase.js?v=20261011-04"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -5593,8 +5593,8 @@ function buildClotureText(c){
   t+="                    ----------\n";
   t+="CA NET TOTAL TTC:   "+c.totalCA.toFixed(2)+" EUR\n";
   t+="\n--- VENTILATION TVA ---\n";
-  t+="Prestations "+(c.txTVA||20)+"%: HT "+(c.prestHT||0).toFixed(2)+" / TVA "+(c.prestTVA||0).toFixed(2)+" / TTC "+c.totalPrest.toFixed(2)+"\n";
-  if(c.totalProd>0)t+="Produits "+(c.txTVA||20)+"%:    HT "+(c.prodHT||0).toFixed(2)+" / TVA "+(c.prodTVA||0).toFixed(2)+" / TTC "+c.totalProd.toFixed(2)+"\n";
+  t+="Prestations "+(c.txTVA!=null&&!isNaN(c.txTVA)?c.txTVA:lxTauxTVA())+"%: HT "+(c.prestHT||0).toFixed(2)+" / TVA "+(c.prestTVA||0).toFixed(2)+" / TTC "+c.totalPrest.toFixed(2)+"\n";
+  if(c.totalProd>0)t+="Produits "+(c.txTVA!=null&&!isNaN(c.txTVA)?c.txTVA:lxTauxTVA())+"%:    HT "+(c.prodHT||0).toFixed(2)+" / TVA "+(c.prodTVA||0).toFixed(2)+" / TTC "+c.totalProd.toFixed(2)+"\n";
   t+="TOTAL:       HT "+c.totalHT.toFixed(2)+" / TVA "+c.totalTVA.toFixed(2)+" / TTC "+c.totalCA.toFixed(2)+" EUR\n";
   t+="\n--- VENTILATION REGLEMENTS ---\n";
   t+="CB:                 "+c.details.cb.toFixed(2)+" EUR\n";
@@ -6096,6 +6096,13 @@ function _lxIsContraTicket(a){
 function _lxExclCA(a){
   return (typeof _lxIsSameDayContraAny==="function") && _lxIsSameDayContraAny(a);
 }
+// 2026-10-11 — Règle unique des totaux mensuels/annuels = somme des clôtures Z journalières :
+//  - annulation le MÊME jour : l'original et son contre-ticket sont exclus (net 0, comme la Z) ;
+//  - annulation un AUTRE jour : l'original reste dans le chiffre de SON jour (il est dans la Z de ce
+//    jour, déjà déclarée) et le contre-ticket négatif compte le jour de l'annulation.
+// Avant : l'original était retiré rétroactivement ET le contre-ticket compté -> double déduction.
+function _lxCaOrig(a){ return !a.cancelled || (!!a.cancelDate && String(a.cancelDate)!==String(a.date)); }
+function _lxCaOk(a){ return _lxCaOrig(a) && !_lxExclCA(a); }
 function _lxClotureCaisseTheo(){
   try{
     var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
@@ -6296,7 +6303,7 @@ function doConfirmCloture(){
   h+='<div style="display:flex;justify-content:space-between;padding:12px 0;font-weight:900;font-size:18px;border-bottom:2px solid #000"><span>TOTAL TTC</span><span>'+c.totalCA.toFixed(2)+' \u20ac</span></div>';
   h+='<div style="padding:6px 0;font-size:12px;color:#666;border-bottom:1px dashed var(--border)">';
   h+='<div style="display:flex;justify-content:space-between"><span>Total HT</span><span>'+c.totalHT.toFixed(2)+' \u20ac</span></div>';
-  h+='<div style="display:flex;justify-content:space-between"><span>TVA '+(c.txTVA||20)+'%</span><span>'+c.totalTVA.toFixed(2)+' \u20ac</span></div>';
+  h+='<div style="display:flex;justify-content:space-between"><span>TVA '+(c.txTVA!=null&&!isNaN(c.txTVA)?c.txTVA:lxTauxTVA())+'%</span><span>'+c.totalTVA.toFixed(2)+' \u20ac</span></div>';
   if(c.panierMoyen)h+='<div style="display:flex;justify-content:space-between"><span>Panier moyen</span><span>'+c.panierMoyen.toFixed(2)+' \u20ac</span></div>';
   if(c.tkMin)h+='<div style="display:flex;justify-content:space-between"><span>Tickets</span><span>#'+c.tkMin+' \u00e0 #'+c.tkMax+'</span></div>';
   if(c.totalRemises>0)h+='<div style="display:flex;justify-content:space-between;color:#c00"><span>Remises</span><span>-'+c.totalRemises.toFixed(2)+' \u20ac</span></div>';
@@ -6332,7 +6339,7 @@ function printClotureZ(){
   c.totalCA         = _n(c.totalCA);
   c.totalHT         = _n(c.totalHT);
   c.totalTVA        = _n(c.totalTVA);
-  c.txTVA           = _n(c.txTVA) || 20;
+  c.txTVA           = (typeof c.txTVA === "number" && !isNaN(c.txTVA)) ? c.txTVA : lxTauxTVA(); // 2026-10-11 : 0 % (franchise) n'est plus remplacé par 20 %
   c.totalPrest      = _n(c.totalPrest);
   c.totalProd       = _n(c.totalProd);
   // FIX 2026-05-14 : si correction documentée existe (raw_data.correction),
@@ -6398,10 +6405,9 @@ function printClotureZ(){
   // ts (ISO complet), puis time ("HH:MM") en fallback. Les vieux tickets pré-NF525
   // n'avaient parfois que `time`, ce qui rendait le `.slice(11,16)` sur ts inutile.
   function _extractHr(a){
-    if(a.ts && typeof a.ts==="string" && a.ts.length>=16){
-      var s=a.ts.slice(11,16);
-      if(s && /^\d{2}:\d{2}$/.test(s)) return s;
-    }
+    // 2026-10-11 : heure LOCALE (ts est en UTC : 1 à 2 h d'écart avec l'heure de Paris)
+    if(a.heureEncaiss && /^\d{2}:\d{2}$/.test(String(a.heureEncaiss).slice(0,5))) return String(a.heureEncaiss).slice(0,5);
+    if(a.ts){ try{ var _d=new Date(a.ts); if(!isNaN(_d)) return _d.toTimeString().slice(0,5); }catch(_e){} }
     if(a.time && typeof a.time==="string" && /^\d{2}:\d{2}$/.test(a.time.slice(0,5))) return a.time.slice(0,5);
     return "";
   }
@@ -6483,8 +6489,8 @@ function printClotureZ(){
   h+="<h2>3. Ventilation TVA</h2>";
   h+="<table>";
   h+="<tr><th>Libell\u00e9</th><th class=\"tr\">Base HT</th><th class=\"tr\">TVA</th><th class=\"tr\">TTC</th></tr>";
-  h+="<tr><td>Prestations ("+(c.txTVA||20)+"%)</td><td class=\"tr\">"+(c.prestHT||0).toFixed(2)+"</td><td class=\"tr\">"+(c.prestTVA||0).toFixed(2)+"</td><td class=\"tr\">"+c.totalPrest.toFixed(2)+"</td></tr>";
-  if(c.totalProd>0)h+="<tr><td>Produits ("+(c.txTVA||20)+"%)</td><td class=\"tr\">"+(c.prodHT||0).toFixed(2)+"</td><td class=\"tr\">"+(c.prodTVA||0).toFixed(2)+"</td><td class=\"tr\">"+c.totalProd.toFixed(2)+"</td></tr>";
+  h+="<tr><td>Prestations ("+(c.txTVA!=null&&!isNaN(c.txTVA)?c.txTVA:lxTauxTVA())+"%)</td><td class=\"tr\">"+(c.prestHT||0).toFixed(2)+"</td><td class=\"tr\">"+(c.prestTVA||0).toFixed(2)+"</td><td class=\"tr\">"+c.totalPrest.toFixed(2)+"</td></tr>";
+  if(c.totalProd>0)h+="<tr><td>Produits ("+(c.txTVA!=null&&!isNaN(c.txTVA)?c.txTVA:lxTauxTVA())+"%)</td><td class=\"tr\">"+(c.prodHT||0).toFixed(2)+"</td><td class=\"tr\">"+(c.prodTVA||0).toFixed(2)+"</td><td class=\"tr\">"+c.totalProd.toFixed(2)+"</td></tr>";
   h+="<tr class=\"tline\"><td class=\"tb\">TOTAUX</td><td class=\"tr tb\">"+c.totalHT.toFixed(2)+" \u20ac</td><td class=\"tr tb\">"+c.totalTVA.toFixed(2)+" \u20ac</td><td class=\"tr tb\">"+c.totalCA.toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
   
@@ -6515,7 +6521,7 @@ function printClotureZ(){
   
   // ===== 5. REPARTITION PAR COLLABORATEUR =====
   h+="<h2>5. R\u00e9partition par collaborateur</h2>";
-  var txZ=c.txTVA||20;
+  var txZ=(c.txTVA!=null&&!isNaN(c.txTVA))?c.txTVA:lxTauxTVA();
   h+="<table><tr><th>Nom</th><th class=\"tr\">Tkt</th><th class=\"tr\">CA TTC</th><th class=\"tr\">CA HT</th><th class=\"tr\">TVA incl.</th><th class=\"tr\">Remises</th></tr>";
   T.forEach(function(t){var s=perSty[t.id];if(s){
     var sHT=Math.round(s.ca/(1+txZ/100)*100)/100;
@@ -7027,31 +7033,10 @@ function doAddAbsence(stId){
 function saveAbsences(cb){
   try{localStorage.setItem("_cp_absences",JSON.stringify(window.ABSENCES||[]));}catch(e){}
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
-      if(r.error){
-        if(typeof toast==="function") toast("⚠ Erreur DB (lecture) — réessaie","error");
-        console.error("saveAbsences read error:",r.error);
-        if(typeof cb==="function") cb(false);
-        return;
-      }
-      var cfg={};
-      if(r.data&&r.data[0]&&r.data[0].config_json){
-        try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}
-      }
-      cfg.absences=window.ABSENCES||[];
-      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId).then(function(u){
-        if(u.error){
-          if(typeof toast==="function") toast("⚠ Erreur DB (écriture) — réessaie","error");
-          console.error("saveAbsences write error:",u.error);
-          if(typeof cb==="function") cb(false);
-        }else{
-          // Garde la copie en mémoire à jour pour éviter race avec saveSmsConfig & co
-          if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.absences=window.ABSENCES||[];
-          try{ if(typeof lxCfgMajBase==="function") lxCfgMajBase("absences", window.ABSENCES||[]); }catch(_e){}
-          if(typeof cb==="function") cb(true);
-        }
-      });
-    });
+    // 2026-10-11 : via la file unique de la configuration (plus de collision ni d'écrasement sur config illisible)
+    lxCfgEcrireSections({absences: JSON.parse(JSON.stringify(window.ABSENCES||[]))}).then(function(ok){
+      if(typeof cb==="function") cb(!!ok);
+    }, function(){ if(typeof cb==="function") cb(false); });
   } else {
     if(typeof cb==="function") cb(true);
   }
@@ -7698,7 +7683,8 @@ function _splitPrestProd(a){
     if(it.isProd) sumProdI+=sub; else sumPrestI+=sub;
   }
   var itemsTot=sumPrestI+sumProdI;
-  if(itemsTot<=0) return {prest:realPr, prod:0, total:realPr};
+  // 2026-10-11 : un contre-ticket (montants négatifs) est ventilé comme l'original ; cas positif inchangé.
+  if(Math.abs(itemsTot)<0.005 || itemsTot*realPr<0 || (itemsTot<0 && realPr===0)) return {prest:realPr, prod:0, total:realPr};
   // Pro-rata sur realPr (qui peut être < itemsTot à cause remise globale)
   var prod = Math.round((sumProdI/itemsTot)*realPr*100)/100;
   var prest = Math.round((realPr-prod)*100)/100;
@@ -7709,7 +7695,7 @@ function _splitPrestProd(a){
 // est absent ou égal au taux services (France, Belgique, défaut), retourne EXACTEMENT
 // le calcul mono-taux historique round(ttc/(1+t)) — comportement byte-identique.
 function _lxHtTva(a){
-  var txS=Number((SALON_CONFIG&&SALON_CONFIG.tauxTVA)||20);
+  var txS=Number(lxTauxTVA()); // 2026-10-11 : 0 % (franchise) respecté
   var ttc=Math.round((Number(a&&a.pr)||0)*100)/100;
   var dual=(SALON_CONFIG && SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==txS);
   if(!dual){ var h=Math.round(ttc/(1+txS/100)*100)/100; return {ht:h, tva:Math.round((ttc-h)*100)/100}; }
@@ -9032,7 +9018,7 @@ function _lxMarkOnlineRdvDone(roId, tkNum){
     if(!roId||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
     lxEmpreinteReleaseAuto(roId,"rdv_honore");
     var _upd={status:"done"}; if(tkNum) _upd.ticket_num=tkNum;
-    _sb.from("rdv_online").update(_upd).eq("id",roId).eq("salon_id",_salonId).then(function(){},function(_e){});
+    _sb.from("rdv_online").update(_upd).eq("id",roId).eq("salon_id",_salonId).then(function(res){ if(res&&res.error){ console.warn("[rdv_online done]",res.error.message); try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxMarkOnlineRdvDone",msg:res.error.message,rdv:roId})); }catch(_e2){} } },function(_e){});
     if(window.RDV_ONLINE){ for(var _z=0;_z<RDV_ONLINE.length;_z++){ if(RDV_ONLINE[_z].id===roId){ if(tkNum)RDV_ONLINE[_z].ticket_num=tkNum; break; } } }
     if(window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===roId){ RDV_ONLINE[i].status="done"; break; } } }
     // retire l'entree fantome (online_ encore "conf") du planning ; ne touche jamais un ticket deja "done"
@@ -9852,7 +9838,7 @@ function rHome(){
   var lastOfMonth=nowD.getFullYear()+"-"+String(nowD.getMonth()+1).padStart(2,"0")+"-"+String(lastDay).padStart(2,"0");
   // Past: done CA from 1st to today (inclusive)
   var caPasseMois=0;var rdvPasseMois=0;
-  AP.filter(function(a){return a.st==="done"&&!a.cancelled&&a.date>=firstOfMonth&&a.date<=today&&!_lxExclCA(a);}).forEach(function(a){caPasseMois+=a.pr;rdvPasseMois++;});
+  AP.filter(function(a){return a.st==="done"&&_lxCaOrig(a)&&a.date>=firstOfMonth&&a.date<=today&&!_lxExclCA(a);}).forEach(function(a){caPasseMois+=a.pr;rdvPasseMois++;});
   // Future: confirmed RDV from tomorrow to end of month
   var caFuturMois=0;var rdvFuturMois=0;
   AP.filter(function(a){return a.st==="conf"&&!a.cancelled&&a.date>today&&a.date<=lastOfMonth;}).forEach(function(a){var p=Number(a.pr);if(!p){var sv=gS(a.sId);if(sv)p=Number(sv.p)||0;}caFuturMois+=p;rdvFuturMois++;});
@@ -11916,7 +11902,7 @@ function clickAppt(id){
       // Manual acompte - can cancel and redo (NF525)
       htm+='<div style="display:flex;gap:6px;margin-top:8px">';
       htm+='<button class="btn" style="flex:1;background:rgba(239,83,80,.06);border:1px solid rgba(239,83,80,.2);color:#ef5350;font-weight:700;font-size:12px" onclick="annulerAcompte(\''+a.id+'\')">\u274c Annuler l\u0027acompte</button>';
-      htm+='<button class="btn" style="flex:1;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:700;font-size:12px" onclick="showAcompteForm(\''+a.id+'\')">\ud83d\udcb3 Nouvel acompte</button>';
+      htm+='<button class="btn" style="flex:1;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:700;font-size:12px" onclick="showAcompteForm(\''+a.id+'\')">\u2795 Acompte suppl\u00e9mentaire</button>';
       htm+='</div>';
     }else{
       htm+='<button class="btn" style="width:100%;margin-top:8px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);color:var(--gold);font-weight:700;font-size:13px" onclick="showAcompteForm(\''+a.id+'\')">\ud83d\udcb3 Encaisser un acompte</button>';
@@ -12588,7 +12574,9 @@ function _lxCancelOnlineRdv(rdvId, reason){
     // 2026-10-11 : cliente absente -> l'acompte en ligne est définitivement conservé : il est enregistré en caisse
     // (ticket scellé « Acompte conservé ») par lxRetenuesSync.
     if(_by==="no_show") _upd.retenue_at=new Date().toISOString();
-    _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).then(function(){ if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200); },function(_e){});
+    _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).then(function(res){
+      if(res&&res.error){ try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
+      if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200); },function(_e){ try{ toast("Annulation non enregistr\u00e9e (r\u00e9seau)","error"); }catch(_eT){} });
   }catch(_e){}
 }
 // =====================================================================
@@ -13631,7 +13619,7 @@ function rSettings(){
     h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">';
     for(var di=0;di<modes.length;di++){
       var dsel=(SALON_CONFIG.modeActivite||"salon")===modes[di][0];
-      h+='<div onclick="SALON_CONFIG.modeActivite=\''+modes[di][0]+'\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')" style="padding:12px 8px;border-radius:10px;cursor:pointer;text-align:center;background:'+(dsel?"rgba(200,168,78,.12)":"rgba(255,255,255,.03)")+';border:2px solid '+(dsel?"var(--gold)":"rgba(255,255,255,.08)")+';transition:all .15s">';
+      h+='<div onclick="SALON_CONFIG.modeActivite=\''+modes[di][0]+'\';if(SALON_CONFIG.modeActivite!==\'salon\'&&!SALON_CONFIG.domicile)SALON_CONFIG.domicile={type:\'forfait\',forfait:15,prixKm:0.5,zone:20,gratuitKm:5};if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')" style="padding:12px 8px;border-radius:10px;cursor:pointer;text-align:center;background:'+(dsel?"rgba(200,168,78,.12)":"rgba(255,255,255,.03)")+';border:2px solid '+(dsel?"var(--gold)":"rgba(255,255,255,.08)")+';transition:all .15s">';
       h+='<div style="font-size:22px;margin-bottom:4px">'+modes[di][1]+'</div>';
       h+='<div style="font-size:11px;font-weight:700;color:'+(dsel?"var(--gold)":"rgba(255,255,255,.5)")+'">'+modes[di][2]+'</div></div>';
     }
@@ -20234,12 +20222,12 @@ function exportGiftRegister(){
     var isOffert=g.isOffert||g.payMethod==="Offert";
     var type=isOffert?"Offert":"Vendu";
     var status=g.st==="voided"?"Annul\u00e9":g.st==="used"||rem<=0?"Utilis\u00e9":"Actif";
-    var compte=isOffert?"6234 (Cadeaux)":"4191 (Avances clients)";
-    if(g.st==="used"||rem<=0)compte="701 (Ventes prestations)";
-    var isMulti=(!g.scope||g.scope==="tout");
-    var htVal=isMulti?"N/A (multi-usages)":(g.ht||0).toFixed(2);
-    var tvaVal=isMulti?"N/A":(g.tva||0).toFixed(2);
-    var tvaRate=isMulti?"N/A":((g.tvaRate||0.20)*100).toFixed(0)+"%";
+    // 2026-10-11 : le bon vendu est en chiffre d'affaires à la vente (ticket scellé, TVA incluse) ; son utilisation = remise
+    var compte=isOffert?"6234 (Cadeaux)":"706 (CA \u00e0 la vente, TVA incluse)";
+    var _txG=(g.tvaRate!=null&&!isNaN(Number(g.tvaRate)))?Number(g.tvaRate):(lxTauxTVA()/100);
+    var htVal=(g.ht!=null?Number(g.ht):(Number(g.val)||0)/(1+_txG)).toFixed(2);
+    var tvaVal=(g.tva!=null?Number(g.tva):(Number(g.val)||0)-(Number(g.val)||0)/(1+_txG)).toFixed(2);
+    var tvaRate=(_txG*100).toFixed(_txG*100%1?1:0)+"%";
     lines.push([
       g.gcNum||"",g.code,(g.val||0).toFixed(2),htVal,tvaVal,tvaRate,
       type,g.scope||"tout",g.from||"",g.to||"",'"'+(g.msg||"").replace(/"/g,'""')+'"',
@@ -20408,7 +20396,7 @@ function rGifts(){
     var stCol=isVoided?"#666":isUsed?"#c43838":isExpired?"#c43838":isPartial?"#d48a1a":"#2d9a5e";
     var stBg=isVoided?"#e0e0e0":isUsed?"#fde8e8":isExpired?"#fde8e8":isPartial?"#fdf2e4":"#e6f7ee";
     // Compta
-    var compteInfo=isOff?"Charge 6234":((isUsed)?"CA 701":"Avance 4191");
+    var compteInfo=isOff?"Charge 6234":"CA 706 \u00e0 la vente";
     // Card
     h+='<div style="margin-bottom:10px;border-radius:14px;overflow:hidden;background:linear-gradient(135deg,#1a1a2e,#222);border:1px solid rgba(255,255,255,.08);box-shadow:0 2px 12px rgba(0,0,0,.2)">';
     // Top row: code + amount + status
@@ -20811,8 +20799,9 @@ function printGiftThemed(gcId,themeId){
   var logoSrc=SALON_CONFIG.logo||(document.getElementById("hlogo")?(document.getElementById("hlogo")||{}).src||"":"");
   var scopeLabel=!g.scope||g.scope==="tout"?"Prestations & Produits":g.scope==="prestations"?"Prestations uniquement":"Produits uniquement";
   var isOff=g.isOffert||g.payMethod==="Offert";
-  var isMultiUsage=(!g.scope||g.scope==="tout");
-  var tvaLine=isMultiUsage?"Bon multi-usages (art. 256 ter CGI) — TVA applicable lors de l\u2019utilisation":"Bon \u00e0 usage unique — TVA "+(g.tvaRate?Math.round(g.tvaRate*100):20)+"% incluse";
+  // 2026-10-11 : mention conforme au traitement réel (TVA due à la vente, taux unique du salon)
+  var _txB=(g.tvaRate!=null&&!isNaN(Number(g.tvaRate)))?Number(g.tvaRate)*100:lxTauxTVA();
+  var tvaLine=(_txB<=0)?"TVA non applicable, art. 293 B du CGI":("TVA "+(Math.round(_txB*10)/10).toString().replace(".",",")+" % incluse");
   
   // Theme colors [bg, accent, text, textSoft, border, bodyBg, footBg, footTxt, labelFont, msgFont, decoChar, decoCol, headerLabel]
   var themes={
@@ -21097,7 +21086,7 @@ function rAccounting(){
       });
     }
   }
-  var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&!a.cancelled&&!_lxExclCA(a);});
+  var dn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(accM)===0&&_lxCaOk(a);});
   var tPr=0,tPd=0,tCB=0,tE=0;
   // FIX 2026-05-14 : utilise _splitPrestProd centralisé (source de vérité = a.pr)
   dn.forEach(function(a){
@@ -21570,10 +21559,10 @@ window.LX_CONFIG = window.LX_CONFIG || {
   sms_pack_1000_enabled: false,
   urssaf_services_pct: 21.2,
   urssaf_ventes_pct: 12.3,
-  micro_seuil_ca_services: 77700,
-  micro_seuil_ca_ventes: 188700,
-  micro_seuil_tva_services: 36800,
-  micro_seuil_tva_ventes: 91900,
+  micro_seuil_ca_services: 83600,
+  micro_seuil_ca_ventes: 203100,
+  micro_seuil_tva_services: 37500,
+  micro_seuil_tva_ventes: 85000,
   plan_essential_eur: 14.99,
   plan_pro_eur: 24.99,
   // Identité éditeur Luxyra (TVA + forme juridique) — bascule micro → SAS
@@ -21696,7 +21685,7 @@ function _nextMonth(ym){
 // - Mentions l\u00e9gales NF525 + 293B si micro
 // Helper : g\u00e9n\u00e8re le HTML du rapport (utilis\u00e9 par expRapportComptablePDF + expPackComptable)
 function _buildRapportHTML(periodM){
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(periodM)===0 && !a.cancelled;});
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(periodM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(periodM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(periodM)===0;});
   var txTVA = lxTauxTVA();
@@ -21950,17 +21939,21 @@ function isMicroEntrepreneur(){
   return false;
 }
 
-// Seuils micro-entrepreneur 2024-2026 (\u00e0 mettre \u00e0 jour si la loi change)
+// 2026-10-11 : cotisations micro 2026 = taux URSSAF (app_config, défaut 21,2 % services BIC / 12,3 % ventes)
+// + contribution à la formation professionnelle (0,3 % artisans-services / 0,1 % commerce). Estimation.
+function _lxTxUrssaf(k){ var C=window.LX_CONFIG||{}; var t=(k==="prod")?((Number(C.urssaf_ventes_pct)||12.3)+(C.urssaf_cfp_ventes_pct!=null?Number(C.urssaf_cfp_ventes_pct):0.1)):((Number(C.urssaf_services_pct)||21.2)+(C.urssaf_cfp_services_pct!=null?Number(C.urssaf_cfp_services_pct):0.3)); return Math.round(t*10)/1000; }
+function _lxTxUrssafLib(k){ return (Math.round(_lxTxUrssaf(k)*1000)/10).toString().replace(".",",")+" %"; }
+// Seuils micro-entrepreneur 2026-2028 (\u00e0 mettre \u00e0 jour si la loi change)
 var MICRO_SEUILS = {
   // Plafond CA pour rester en micro (au-del\u00e0 \u2192 bascule r\u00e9gime r\u00e9el)
-  ca_services: 77700,        // BIC services + BNC
-  ca_ventes:   188700,       // ventes marchandises + restauration
+  ca_services: 83600,        // BIC services + BNC (plafonds 2026-2028)
+  ca_ventes:   203100,       // ventes marchandises + restauration (2026-2028)
   // Plafond franchise en base TVA (au-del\u00e0 \u2192 TVA obligatoire)
-  tva_services: 36800,       // 39100\u20ac avec tol\u00e9rance 1\u00e8re ann\u00e9e
-  tva_ventes:   91900,       // 101000\u20ac avec tol\u00e9rance 1\u00e8re ann\u00e9e
+  tva_services: 37500,       // franchise en base ; seuil major\u00e9 41 250 \u20ac
+  tva_ventes:   85000,       // franchise en base ; seuil major\u00e9 93 500 \u20ac
   // Tol\u00e9rance majoration (limite haute)
-  tva_services_max: 39100,
-  tva_ventes_max:   101000
+  tva_services_max: 41250,
+  tva_ventes_max:   93500
 };
 
 // Calcule le CA YTD (year-to-date) pour les seuils micro
@@ -21968,17 +21961,10 @@ function getCAYearToDate(){
   var year = new Date().getFullYear();
   var prefix = year + "-";
   var totalSvc = 0, totalProd = 0;
-  AP.filter(function(a){return a.st==="done" && !a.cancelled && a.date.indexOf(prefix)===0;})
+  AP.filter(function(a){return a.st==="done" && _lxCaOk(a) && a.date.indexOf(prefix)===0;})
     .forEach(function(a){
-      // Distinguer prestation vs vente produit selon les items
-      if(a.items && a.items.length){
-        a.items.forEach(function(it){
-          if(it.isProd) totalProd += (Number(it.price)||0)*(Number(it.qty)||1);
-          else totalSvc += (Number(it.price)||0)*(Number(it.qty)||1);
-        });
-      } else {
-        totalSvc += Number(a.pr)||0;
-      }
+      // 2026-10-11 : montant réellement encaissé (remises, bon cadeau utilisé déduits), ventilé prestations / produits
+      var sp=_splitPrestProd(a); totalSvc += Number(sp.prest)||0; totalProd += Number(sp.prod)||0;
     });
   PS.filter(function(p){return p.date.indexOf(prefix)===0;}).forEach(function(p){
     totalProd += Number(p.pr)||0;
@@ -22029,27 +22015,20 @@ function expDeclarationURSSAF(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   // P\u00e9riode : mois s\u00e9lectionn\u00e9
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var totalSvc = 0, totalProd = 0;
   dn.forEach(function(a){
-    if(a.items && a.items.length){
-      a.items.forEach(function(it){
-        if(it.isProd) totalProd += (Number(it.price)||0)*(Number(it.qty)||1);
-        else totalSvc += (Number(it.price)||0)*(Number(it.qty)||1);
-      });
-    } else {
-      totalSvc += Number(a.pr)||0;
-    }
+    // 2026-10-11 : montant réellement encaissé (remises, bon cadeau utilisé déduits), ventilé prestations / produits
+    var sp=_splitPrestProd(a); totalSvc += Number(sp.prest)||0; totalProd += Number(sp.prod)||0;
   });
   ps2.forEach(function(p){ totalProd += Number(p.pr)||0; });
   var totalCA = totalSvc + totalProd;
   // Cotisations URSSAF approximatives (taux 2024-2026)
-  // Services BIC : 22.2% (cotisations + CFP + CFE)
-  // Ventes BIC : 12.3%
+  // Services BIC : 21,2 % + formation 0,3 % ; ventes BIC : 12,3 % + formation 0,1 % (2026)
   // \u2192 On donne juste les ordres de grandeur, le calcul officiel est sur urssaf.fr
-  var cotisSvc = Math.round(totalSvc * 0.222 * 100) / 100;
-  var cotisProd = Math.round(totalProd * 0.123 * 100) / 100;
+  var cotisSvc = Math.round(totalSvc * _lxTxUrssaf("svc") * 100) / 100;
+  var cotisProd = Math.round(totalProd * _lxTxUrssaf("prod") * 100) / 100;
   var cotisTotal = cotisSvc + cotisProd;
   var net = totalCA - cotisTotal;
 
@@ -22058,8 +22037,8 @@ function expDeclarationURSSAF(){
 
   var headers = ["Cat\u00e9gorie","CA brut (\u20ac)","Taux URSSAF","Cotisations estim\u00e9es (\u20ac)","Net apr\u00e8s URSSAF (\u20ac)"];
   var rows = [
-    ["Prestations de services (BIC)", csvNum(totalSvc)+" \u20ac", "22,2 %", csvNum(cotisSvc)+" \u20ac", csvNum(totalSvc - cotisSvc)+" \u20ac"],
-    ["Ventes marchandises (BIC)", csvNum(totalProd)+" \u20ac", "12,3 %", csvNum(cotisProd)+" \u20ac", csvNum(totalProd - cotisProd)+" \u20ac"],
+    ["Prestations de services (BIC)", csvNum(totalSvc)+" \u20ac", _lxTxUrssafLib("svc"), csvNum(cotisSvc)+" \u20ac", csvNum(totalSvc - cotisSvc)+" \u20ac"],
+    ["Ventes marchandises (BIC)", csvNum(totalProd)+" \u20ac", _lxTxUrssafLib("prod"), csvNum(cotisProd)+" \u20ac", csvNum(totalProd - cotisProd)+" \u20ac"],
     ["TOTAL "+mLabel, csvNum(totalCA)+" \u20ac", "", csvNum(cotisTotal)+" \u20ac", csvNum(net)+" \u20ac"]
   ];
   // Footer : r\u00e9cap annuel YTD avec seuils
@@ -22104,10 +22083,10 @@ function showExportsComptables(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var p = accM.split("-");var mL = MO[parseInt(p[1])-1]+" "+p[0];
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
-  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
+  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;});
   var totalCA = 0; dn.forEach(function(a){totalCA+=Number(a.pr)||0;}); ps2.forEach(function(p){totalCA+=Number(p.pr)||0;});
 
   var isMicro = isMicroEntrepreneur();
@@ -22205,16 +22184,16 @@ function showExportsComptables(){
 
   var exports = [];
   // Bande Z = document fiscal obligatoire NF525 (\u00e0 imprimer, signer, conserver 6 ans)
-  exports.push({id:"bandez", svg:SVG_BANDEZ, color:"#d4a843", title:"Bande Z mensuelle (PDF) \u2014 obligatoire", desc:"Document fiscal NF525 obligatoire. \u00c0 imprimer, signer et conserver 6 ans. R\u00e9capitulatif caisse complet : modes paiement, collab, jour, mouvements, coffre, banque, cl\u00f4tures Z.", fn:"printBandeZ", count:""});
+  exports.push({id:"bandez", svg:SVG_BANDEZ, color:"#d4a843", title:"Bande Z mensuelle (PDF)"+((typeof lxAttConcerne!=="function"||lxAttConcerne())?" \u2014 obligatoire":""), desc:((typeof lxAttConcerne!=="function"||lxAttConcerne())?"Document fiscal de la caisse anti-fraude (obligatoire).":"Récapitulatif mensuel de caisse (franchise de TVA : non obligatoire, conseillé).")+" \u00c0 imprimer, signer et conserver 6 ans. R\u00e9capitulatif caisse complet : modes paiement, collab, jour, mouvements, coffre, banque, cl\u00f4tures Z.", fn:"printBandeZ", count:""});
   if(isMicro){
-    exports.push({id:"urssaf", svg:SVG_URSSAF, color:"#a78bfa", title:"D\u00e9claration URSSAF mensuelle (CSV)", desc:"CA brut + cotisations estim\u00e9es (services 22,2% / ventes 12,3%) \u00e0 reporter sur autoentrepreneur.urssaf.fr", fn:"expDeclarationURSSAF", count:""});
+    exports.push({id:"urssaf", svg:SVG_URSSAF, color:"#a78bfa", title:"D\u00e9claration URSSAF mensuelle (CSV)", desc:"CA brut + cotisations estim\u00e9es (services "+_lxTxUrssafLib("svc")+" / ventes "+_lxTxUrssafLib("prod")+", formation professionnelle incluse) \u00e0 reporter sur autoentrepreneur.urssaf.fr", fn:"expDeclarationURSSAF", count:""});
   }
   exports.push({id:"journal", svg:SVG_JOURNAL, color:"#34d399", title:"Journal de caisse d\u00e9taill\u00e9 (CSV)", desc:"Toutes les ventes ("+(isMicro?'CA brut, sans TVA collect\u00e9e':'HT/TVA/TTC')+"), mode paiement, hash. Format CSV Excel FR (UTF-8 BOM, s\u00e9parateur ;).", fn:"expCSV", count:dn.length+ps2.length+" lignes"});
   if(!isMicro){
     exports.push({id:"tva", svg:SVG_TVA, color:"#fbbf24", title:"R\u00e9cap TVA mensuel (CSV)", desc:"Pour la d\u00e9claration CA3/CA12 : base HT, TVA collect\u00e9e, total TTC par taux.", fn:"expRecapTVA", count:""});
   }
   exports.push({id:"compta", svg:SVG_COMPTA, color:"#f472b6", title:"Journal des ventes \u2014 \u00e9critures comptables (CSV)", desc:"\u00c9critures d\u00e9bit/cr\u00e9dit FR ("+(isMicro?'706/707/512 sans TVA':'706/707/4457/512')+"). Importable Sage / EBP / Cegid.", fn:"expJournalComptable", count:dn.length+ps2.length+" \u00e9critures"});
-  exports.push({id:"annul", svg:SVG_ANNUL, color:"#f87171", title:"Annulations & remboursements (CSV)", desc:"Tickets annul\u00e9s avec motifs et hash original (obligation l\u00e9gale art. 286 CGI).", fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")});
+  exports.push({id:"annul", svg:SVG_ANNUL, color:"#f87171", title:"Annulations & remboursements (CSV)", desc:"Tickets annul\u00e9s avec motifs et hash original"+((typeof lxAttConcerne!=="function"||lxAttConcerne())?" (tra\u00e7abilit\u00e9 exig\u00e9e, art. 286 CGI).":"."), fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")});
   exports.push({id:"stripe", svg:SVG_STRIPE, color:"#818cf8", title:"Bordereau acomptes en ligne (CSV)", desc:"R\u00e9conciliation Stripe Connect : montant brut, frais Stripe, net re\u00e7u en banque.", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")});
   // 2026-10-11 : encaissements en ligne datés du jour du PAIEMENT (TVA exigible à l'encaissement / recettes des micro)
   if(isMicro || (typeof lxEstMicro==="function" && lxEstMicro())) exports.push({id:"recettes", svg:SVG_URSSAF, color:"#a78bfa", title:"Livre des recettes encaiss\u00e9es (CSV)", desc:"Registre obligatoire en micro-entreprise : chaque recette \u00e0 la date o\u00f9 elle est encaiss\u00e9e (acomptes en ligne le jour du paiement, solde le jour de la prestation, remboursements).", fn:"expLivreRecettes", count:""});
@@ -22427,7 +22406,7 @@ function expRecapTVA(){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le r\u00e9cap TVA",expRecapTVA);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var txTVA = lxTauxTVA();
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
@@ -22500,98 +22479,98 @@ function expRecapTVA(){
 // =====================================================================
 // Format \u00E0 importer dans logiciel comptable (Sage, EBP, Cegid, Quadratus, ...)
 // 1 \u00e9criture par ticket avec ventilation : 707 ventes / 4457 TVA collect\u00e9e / 5XX banque-caisse
+// 2026-10-11 : journal des ventes UNIQUE (export CSV, pack comptable, classeur Excel).
+// Règles : totaux = somme des Z (annulations même jour exclues, autres jours comptées le jour de
+// l'annulation), montants négatifs en sens inverse, contrepartie ventilée par mode de règlement réel,
+// 706 prestations / 707 produits, TVA au taux du salon (aucune ligne de TVA en franchise 293 B).
+function _lxJournalVentes(mois){
+  var dn = AP.filter(function(a){return a.st==="done" && String(a.date||"").indexOf(mois)===0 && _lxCaOk(a);});
+  var ps2 = PS.filter(function(p){return String(p.date||"").indexOf(mois)===0;});
+  var txTVA = lxTauxTVA();
+  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
+  var sansTVA = !(Number(txTVA)>0);
+  function compteContrePartie(met){
+    var m = String(met||"").toLowerCase();
+    if(m.indexOf("ligne")>=0 || m.indexOf("stripe")>=0) return "580100";
+    if(m.indexOf("esp")>=0 || m.indexOf("cash")>=0) return "530000";
+    if(m.indexOf("cb")>=0 || m.indexOf("carte")>=0) return "512100";
+    if(m.indexOf("cheq")>=0 || m.indexOf("ch\u00e8q")>=0) return "511200";
+    if(m.indexOf("vir")>=0) return "512000";
+    return "511000";
+  }
+  var CPT={cb:"512100",esp:"530000",chq:"511200",vir:"512000",enligne:"580100",bon:"419100",aut:"511000"};
+  var LIB={cb:"CB",esp:"Esp\u00e8ces",chq:"Ch\u00e8que",vir:"Virement",enligne:"Pay\u00e9 en ligne",bon:"Bon cadeau / avoir",aut:"Autre"};
+  var E=[], ecrNum=1;
+  function ligne(date,cpt,cptLib,piece,lib,montant,sensNormal,mode){
+    var m=Math.round((Number(montant)||0)*100)/100, sens=sensNormal; if(Math.abs(m)<0.005) return;
+    if(m<0){ m=-m; sens=(sensNormal==="D")?"C":"D"; }
+    E.push({ecr:ecrNum,date:date,compte:cpt,compteLib:cptLib,piece:piece||"",lib:lib,debit:sens==="D"?m:0,credit:sens==="C"?m:0,mode:mode||""});
+  }
+  function bucketsPart(a, part){
+    var b=_lxPayBuckets(a), ks=["cb","esp","chq","vir","enligne","bon","aut"], tb=0, out={}, sum=0;
+    ks.forEach(function(k){ tb+=Number(b[k])||0; });
+    if(Math.abs(tb)<0.005) return null;
+    ks.forEach(function(k){ var v=Math.round((Number(b[k])||0)*(part/tb)*100)/100; out[k]=v; sum+=v; });
+    var diff=Math.round((part-sum)*100)/100;
+    if(Math.abs(diff)>=0.005){ var kmax=ks.reduce(function(mx,k){return Math.abs(out[k])>Math.abs(out[mx])?k:mx;},"cb"); out[kmax]=Math.round((out[kmax]+diff)*100)/100; }
+    return out;
+  }
+  function ecriture(date, num, libelle, ttc, ht, tva, met, type, rate, buckets){
+    var _r = (rate!=null) ? Number(rate) : txTVA;
+    var compteVente = type==="produit" ? "707000" : "706000";
+    var lib = "VE"+String(date).replace(/-/g,"")+" "+(libelle||"").slice(0,40);
+    var parts=[];
+    if(buckets){ Object.keys(buckets).forEach(function(k){ if(Math.abs(buckets[k])>=0.005) parts.push({cpt:CPT[k]||"511000", lib:LIB[k]||k, m:buckets[k]}); }); }
+    if(!parts.length) parts.push({cpt:compteContrePartie(met), lib:met||"", m:ttc});
+    parts.forEach(function(p){ ligne(date,p.cpt,"Encaissement "+p.lib,num,lib,p.m,"D",p.lib); });
+    if(sansTVA){
+      ligne(date,compteVente,type==="produit"?"Ventes produits (293B)":"Prestations services (293B)",num,lib,ttc,"C","");
+    } else {
+      ligne(date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num,lib,ht,"C","");
+      var compteTVA="445710"; if(_r===10) compteTVA="445720"; else if(_r===5.5) compteTVA="445730";
+      ligne(date,compteTVA,"TVA collect\u00e9e "+_r+"%",num,lib,tva,"C","");
+    }
+    ecrNum++;
+  }
+  dn.forEach(function(a){
+    var sv = gS(a.sId), cl = gC(a.cId);
+    var libelle = (cl ? cName(cl) : "Passage") + (sv?" - "+sv.n:"");
+    if(a.isCancel) libelle = "ANNULATION " + (a.cancelRef?("#"+a.cancelRef+" "):"") + libelle;
+    var sp = _splitPrestProd(a);
+    if(Math.abs(sp.prest) >= 0.005){
+      var ht = Math.round(sp.prest/(1+txTVA/100)*100)/100;
+      ecriture(a.date, "TK"+(a.tkNum||""), libelle, sp.prest, ht, Math.round((sp.prest-ht)*100)/100, a.met, "service", null, bucketsPart(a, sp.prest));
+    }
+    if(Math.abs(sp.prod) >= 0.005){
+      var ht2 = Math.round(sp.prod/(1+txTVAprod/100)*100)/100;
+      ecriture(a.date, "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht2, Math.round((sp.prod-ht2)*100)/100, a.met, "produit", txTVAprod, bucketsPart(a, sp.prod));
+    }
+  });
+  ps2.forEach(function(p){
+    var ttc = Number(p.pr)||0, ht = Math.round(ttc/(1+txTVAprod/100)*100)/100;
+    ecriture(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, Math.round((ttc-ht)*100)/100, p.met, "produit", txTVAprod, null);
+  });
+  return {lignes:E, nbEcritures:ecrNum-1};
+}
 function expJournalComptable(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le journal comptable",expJournalComptable);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
-  var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
-  var txTVA = lxTauxTVA();
-  var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
-  var txTVAprod=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
-
-  // Mapping mode paiement \u2192 compte g\u00e9n\u00e9ral (plan comptable g\u00e9n\u00e9ral FR)
-  function compteContrePartie(met){
-    var m = String(met||"").toLowerCase();
-    if(m.indexOf("cb")>=0 || m.indexOf("carte")>=0) return "512100"; // Banque - encaissements CB
-    if(m.indexOf("esp")>=0 || m.indexOf("cash")>=0) return "530000"; // Caisse
-    if(m.indexOf("cheq")>=0 || m.indexOf("ch\u00e8q")>=0) return "511200"; // Ch\u00e8ques \u00E0 encaisser
-    if(m.indexOf("vir")>=0) return "512000"; // Banque - virements
-    return "511000"; // Banque (g\u00e9n\u00e9rique)
-  }
-
-  var headers = [
-    "JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib",
-    "PieceRef","PieceDate","EcritureLib","Debit","Credit","Lettrage","ModePaiement"
-  ];
-  var rows = [];
-  var ecrNum = 1;
-
-  function pushTicket(date, num, libelle, ttc, ht, tva, met, type, rate){
-    var _r = (typeof rate!=="undefined" && rate!==null) ? Number(rate) : txTVA;
-    var contrep = compteContrePartie(met);
-    var compteVente = type==="produit" ? "707000" : "706000"; // 706 prestations services, 707 ventes marchandises
-    var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
-    var isMicro = isMicroEntrepreneur();
-    // En micro-entrepreneur (franchise TVA art. 293B), HT = TTC car pas de TVA collect\u00e9e
-    if(isMicro){
-      // \u00c9criture simplifi\u00e9e : D\u00e9bit banque/caisse = Cr\u00e9dit ventes (au CA brut)
-      rows.push(["VE","Ventes",ecrNum,date,contrep,"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
-      rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits (293B)":"Prestations services (293B)",num||"",date,lib,"",csvNum(ttc),"",""]);
-    } else {
-      // R\u00e9gime r\u00e9el TVA : 3 lignes (banque + ventes HT + TVA)
-      rows.push(["VE","Ventes",ecrNum,date,contrep,"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
-      rows.push(["VE","Ventes",ecrNum,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
-      if(tva > 0){
-        var compteTVA = "445710"; // TVA collect\u00e9e (par défaut 20%)
-        if(_r===10) compteTVA = "445720";
-        else if(_r===5.5) compteTVA = "445730";
-        rows.push(["VE","Ventes",ecrNum,date,compteTVA,"TVA collect\u00e9e "+_r+"%",num||"",date,lib,"",csvNum(tva),"",""]);
-      }
-    }
-    ecrNum++;
-  }
-
-  // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd → écritures 706/707 correctes
-  dn.forEach(function(a){
-    var sv = gS(a.sId), cl = gC(a.cId);
-    var clNom = cl ? cName(cl) : "Passage";
-    var libelle = clNom + (sv?" - "+sv.n:"");
-    var sp = _splitPrestProd(a);
-    if(sp.prest > 0){
-      var ht = Math.round(sp.prest/(1+txTVA/100)*100)/100;
-      var tva = Math.round((sp.prest-ht)*100)/100;
-      pushTicket(a.date, "TK"+(a.tkNum||""), libelle, sp.prest, ht, tva, a.met, "service");
-    }
-    if(sp.prod > 0){
-      var ht = Math.round(sp.prod/(1+txTVAprod/100)*100)/100;
-      var tva = Math.round((sp.prod-ht)*100)/100;
-      pushTicket(a.date, "TK"+(a.tkNum||"")+"-P", libelle+" (produits)", sp.prod, ht, tva, a.met, "produit", txTVAprod);
-    }
-  });
-  // PS legacy (vente produit hors RDV) — toujours géré au cas où jamais alimenté en pratique
-  ps2.forEach(function(p){
-    var ttc = Number(p.pr)||0;
-    var ht = Math.round(ttc/(1+txTVAprod/100)*100)/100;
-    var tva = Math.round((ttc-ht)*100)/100;
-    pushTicket(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, tva, p.met, "produit", txTVAprod);
-  });
-
-  // Footer avec totaux d\u00e9bit/cr\u00e9dit
+  var J=_lxJournalVentes(accM);
+  var headers = ["JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib","PieceRef","PieceDate","EcritureLib","Debit","Credit","Lettrage","ModePaiement"];
   var sumDebit = 0, sumCredit = 0;
-  rows.forEach(function(r){
-    sumDebit += parseFloat(String(r[9]).replace(",","."))||0;
-    sumCredit += parseFloat(String(r[10]).replace(",","."))||0;
-  });
+  var rows = J.lignes.map(function(l){ sumDebit+=l.debit; sumCredit+=l.credit;
+    return ["VE","Ventes",l.ecr,l.date,l.compte,l.compteLib,l.piece,l.date,l.lib,l.debit?csvNum(l.debit):"",l.credit?csvNum(l.credit):"","",l.mode]; });
   var footer = [
-    ["Nombre d'\u00e9critures comptables", (ecrNum-1)],
+    ["Nombre d'\u00e9critures comptables", J.nbEcritures],
     ["Total D\u00e9bit", csvNum(sumDebit)+" \u20ac"],
     ["Total Cr\u00e9dit", csvNum(sumCredit)+" \u20ac"],
     ["\u00c9quilibre", Math.abs(sumDebit-sumCredit)<0.01 ? "\u2713 \u00e9quilibr\u00e9" : "\u26a0\ufe0f D\u00c9S\u00c9QUILIBRE "+csvNum(sumDebit-sumCredit)+" \u20ac"]
   ];
   csvDownload("journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (\u00e9critures comptables)", accM, headers, rows, footer));
-  if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_COMPTABLE","P\u00e9riode "+accM+" - "+(ecrNum-1)+" \u00e9critures");
+  if(typeof auditLog==="function") auditLog("EXPORT_JOURNAL_COMPTABLE","P\u00e9riode "+accM+" - "+J.nbEcritures+" \u00e9critures");
 }
 
 // =====================================================================
@@ -22604,12 +22583,17 @@ function expAnnulations(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var annul = AP.filter(function(a){
-    return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;
+    return (a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0)
+      || ((a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})) && a.st==="done" && String(a.date||"").indexOf(accM)===0); // 2026-10-11 : annulations d'acompte
   });
   var headers = ["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC (\u20AC)","Motif d'annulation","Hash original"];
   var rows = annul.map(function(a){
     var sv = gS(a.sId), cl = gC(a.cId);
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
+    if(a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})){
+      return [ "", "", (a.origTkNum?"#"+a.origTkNum:"")+" \u2192 #"+(a.tkNum||""), a.date, clNom, "Acompte"+(sv?" - "+sv.n:""),
+        csvNum(Math.abs(Number(a.pr)||0)), a.comment||"Annulation d'acompte", (a.hash||"").slice(0,16) ];
+    }
     return [
       a.date, a.time||"", a.tkNum||"", a.cancelDate||"", clNom, sv?sv.n:"",
       csvNum(a.pr||0), a.cancelReason||"(non pr\u00e9cis\u00e9)", (a.hash||"").slice(0,16)
@@ -22636,9 +22620,9 @@ function expBordereauStripe(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){
-    return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;
+    return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;
   });
-  var headers = ["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte (\u20AC)","Frais Stripe estim\u00e9s (1,5% + 0,25\u20AC)","Net re\u00E7u (\u20AC)","Statut RDV","ID Stripe"];
+  var headers = ["Date RDV (pay\u00e9 le)","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte (\u20AC)","Frais Stripe estim\u00e9s (1,5% + 0,25\u20AC)","Net re\u00E7u (\u20AC)","Statut RDV","ID Stripe"];
   var totalBrut = 0, totalFrais = 0, totalNet = 0, nbRembourse = 0;
   var rows = rdvOnline.map(function(r){
     var rembourse = !!r.acompteRembourse;
@@ -22647,7 +22631,7 @@ function expBordereauStripe(){
     var net = rembourse ? 0 : Math.round((brut - frais)*100)/100;
     if(rembourse){ nbRembourse++; } else { totalBrut += brut; totalFrais += frais; totalNet += net; }
     return [
-      r.date, r.heure||"", (r.nom||"")+" "+(r.prenom||""), r.tel||"",
+      r.date+(r.acomptePayeAt?" (pay\u00e9 le "+_lxDateParis(r.acomptePayeAt)+")":""), r.heure||"", (r.nom||"")+" "+(r.prenom||""), r.tel||"",
       r.svcNom||"", csvNum(brut), csvNum(frais), csvNum(net),
       rembourse ? "Rembours\u00e9" : (r.status||""), r.stripePaymentId||""
     ];
@@ -22823,10 +22807,10 @@ async function expPackComptable(){
 
   // Helper : run un export et capture le contenu (au lieu de download)
   // On va dupliquer la logique des 4 exports en y mettant le contenu dans le ZIP.
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
-  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
+  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;});
   var txTVA = lxTauxTVA();
 
   // 1. Journal de caisse d\u00e9taill\u00e9
@@ -22866,17 +22850,10 @@ async function expPackComptable(){
   if(isMicro){
     // Pour micro : d\u00e9claration URSSAF \u00E0 la place du r\u00e9cap TVA
     var totalSvcM = 0, totalProdM = 0;
-    dn.forEach(function(a){
-      if(a.items && a.items.length){
-        a.items.forEach(function(it){
-          if(it.isProd) totalProdM += (Number(it.price)||0)*(Number(it.qty)||1);
-          else totalSvcM += (Number(it.price)||0)*(Number(it.qty)||1);
-        });
-      } else { totalSvcM += Number(a.pr)||0; }
-    });
+    dn.forEach(function(a){ var sp=_splitPrestProd(a); totalSvcM += Number(sp.prest)||0; totalProdM += Number(sp.prod)||0; }); // 2026-10-11 : montant encaissé
     ps2.forEach(function(p){ totalProdM += Number(p.pr)||0; });
-    var cotisSvcM = Math.round(totalSvcM * 0.222 * 100) / 100;
-    var cotisProdM = Math.round(totalProdM * 0.123 * 100) / 100;
+    var cotisSvcM = Math.round(totalSvcM * _lxTxUrssaf("svc") * 100) / 100;
+    var cotisProdM = Math.round(totalProdM * _lxTxUrssaf("prod") * 100) / 100;
     var urssafFooter = [
       ["Notes","",""],
       ["\u26A0\uFE0F","Cotisations estim\u00e9es \u00E0 titre indicatif uniquement",""],
@@ -22886,8 +22863,8 @@ async function expPackComptable(){
     folder.file("02_declaration_urssaf_"+accM+".csv", csvBuildPro("D\u00e9claration URSSAF auto-entrepreneur", accM,
       ["Cat\u00e9gorie","CA brut (\u20AC)","Taux URSSAF","Cotisations estim\u00e9es (\u20AC)","Net apr\u00E8s URSSAF (\u20AC)"],
       [
-        ["Prestations services (BIC)", csvNum(totalSvcM)+" \u20AC", "22,2 %", csvNum(cotisSvcM)+" \u20AC", csvNum(totalSvcM-cotisSvcM)+" \u20AC"],
-        ["Ventes marchandises (BIC)", csvNum(totalProdM)+" \u20AC", "12,3 %", csvNum(cotisProdM)+" \u20AC", csvNum(totalProdM-cotisProdM)+" \u20AC"],
+        ["Prestations services (BIC)", csvNum(totalSvcM)+" \u20AC", _lxTxUrssafLib("svc"), csvNum(cotisSvcM)+" \u20AC", csvNum(totalSvcM-cotisSvcM)+" \u20AC"],
+        ["Ventes marchandises (BIC)", csvNum(totalProdM)+" \u20AC", _lxTxUrssafLib("prod"), csvNum(cotisProdM)+" \u20AC", csvNum(totalProdM-cotisProdM)+" \u20AC"],
         ["TOTAL", csvNum(totalTTC)+" \u20AC", "", csvNum(cotisSvcM+cotisProdM)+" \u20AC", csvNum(totalTTC-cotisSvcM-cotisProdM)+" \u20AC"]
       ],
       urssafFooter
@@ -22904,24 +22881,8 @@ async function expPackComptable(){
   var hCompta = ["JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib","PieceRef","PieceDate","EcritureLib","Debit","Credit","Lettrage","ModePaiement"];
   var rCompta = [];
   var ecrNum2 = 1;
-  function compte(met){var m=String(met||"").toLowerCase();if(m.indexOf("cb")>=0||m.indexOf("carte")>=0)return "512100";if(m.indexOf("esp")>=0||m.indexOf("cash")>=0)return "530000";if(m.indexOf("cheq")>=0||m.indexOf("ch\u00e8q")>=0)return "511200";if(m.indexOf("vir")>=0)return "512000";return "511000";}
-  function pushEcr(date, num, libelle, ttc, ht, tva, met, type){
-    var compteVente = type==="produit"?"707000":"706000";
-    var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
-    var isMicroPack = isMicroEntrepreneur();
-    if(isMicroPack){
-      // Micro : pas d'\u00e9criture TVA, 2 lignes \u00e9quilibr\u00e9es au CA brut
-      rCompta.push(["VE","Ventes",ecrNum2,date,compte(met),"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
-      rCompta.push(["VE","Ventes",ecrNum2,date,compteVente,(type==="produit"?"Ventes produits":"Prestations services")+" (293B)",num||"",date,lib,"",csvNum(ttc),"",""]);
-    } else {
-      rCompta.push(["VE","Ventes",ecrNum2,date,compte(met),"Encaissement",num||"",date,lib,csvNum(ttc),"","",met||""]);
-      rCompta.push(["VE","Ventes",ecrNum2,date,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",date,lib,"",csvNum(ht),"",""]);
-      if(tva>0){var compteTVA="445710";if(txTVA===10)compteTVA="445720";else if(txTVA===5.5)compteTVA="445730";rCompta.push(["VE","Ventes",ecrNum2,date,compteTVA,"TVA collect\u00e9e "+txTVA+"%",num||"",date,lib,"",csvNum(tva),"",""]);}
-    }
-    ecrNum2++;
-  }
-  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var _v=_lxHtTva(a);var ht=_v.ht,tva=_v.tva;pushEcr(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
-  ps2.forEach(function(p){var ttc=Number(p.pr)||0;var _v=_lxHtTvaProd(ttc);var ht=_v.ht,tva=_v.tva;pushEcr(p.date,"PR"+(p.tkNum||""),p.prod||"Vente produit",ttc,ht,tva,p.met,"produit");});
+  // 2026-10-11 : même journal que l'export « Journal des ventes » (_lxJournalVentes)
+  _lxJournalVentes(accM).lignes.forEach(function(l){ rCompta.push(["VE","Ventes",l.ecr,l.date,l.compte,l.compteLib,l.piece,l.date,l.lib,l.debit?csvNum(l.debit):"",l.credit?csvNum(l.credit):"","",l.mode]); });
   folder.file("03_journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (écritures comptables)", accM, hCompta, rCompta));
 
   // 4. Annulations
@@ -22985,10 +22946,10 @@ async function expExcelComptable(){
     }).catch(function(e){ showAlert("Impossible de charger l'outil Excel. Réessayez avec une connexion stable.","error"); throw e; });
   }
   // Données identiques à expPackComptable
-  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && !a.cancelled;});
+  var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(accM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(accM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0;});
-  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && r.date && String(r.date).indexOf(accM)===0;});
+  var rdvOnline = (window.RDV_ONLINE||[]).filter(function(r){return r.acomptePaye && String(r.acomptePayeAt?_lxDateParis(r.acomptePayeAt):(r.date||"")).indexOf(accM)===0;});
   var txTVA = lxTauxTVA();
   var isMicro = isMicroEntrepreneur();
   var p = accM.split("-"); var mL = MO[parseInt(p[1])-1]+" "+p[0];
@@ -23200,25 +23161,20 @@ async function expExcelComptable(){
   ];
   // Calculs cumul YTD (year-to-date)
   var anKey = accM.slice(0,4);
-  var allDnAn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(anKey)===0 && !a.cancelled;});
+  var allDnAn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(anKey)===0 && _lxCaOk(a);});
   var allPsAn = PS.filter(function(p){return p.date.indexOf(anKey)===0;});
   var caTotAn = 0; allDnAn.forEach(function(a){caTotAn += Number(a.pr)||0;}); allPsAn.forEach(function(p){caTotAn += Number(p.pr)||0;});
   // Distinguer services vs ventes pour micro
   var caSvcAn = 0, caProdAn = 0;
   allDnAn.forEach(function(a){
-    if(a.items && a.items.length){
-      a.items.forEach(function(it){
-        if(it.isProd) caProdAn += (Number(it.price)||0)*(Number(it.qty)||1);
-        else caSvcAn += (Number(it.price)||0)*(Number(it.qty)||1);
-      });
-    } else { caSvcAn += Number(a.pr)||0; }
+    var _spA=_splitPrestProd(a); caSvcAn += Number(_spA.prest)||0; caProdAn += Number(_spA.prod)||0; // 2026-10-11 : montant encaissé
   });
   allPsAn.forEach(function(p){ caProdAn += Number(p.pr)||0; });
-  // Seuils micro 2024-2026 : services 77 700 € (CA) / 36 800 € (TVA franchise) | ventes 188 700 € / 91 900 €
-  var seuilCAsvc = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_ca_services) || 77700;
-  var seuilTVAsvc = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_tva_services) || 36800;
-  var seuilCAvtes = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_ca_ventes) || 188700;
-  var seuilTVAvtes = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_tva_ventes) || 91900;
+  // Seuils micro 2026-2028 : services 83 600 € (CA) / 37 500 € (TVA franchise) | ventes 203 100 € / 85 000 €
+  var seuilCAsvc = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_ca_services) || 83600;
+  var seuilTVAsvc = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_tva_services) || 37500;
+  var seuilCAvtes = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_ca_ventes) || 203100;
+  var seuilTVAvtes = (window.LX_CONFIG && window.LX_CONFIG.micro_seuil_tva_ventes) || 85000;
   var pctCAsvc = seuilCAsvc>0 ? Math.round(caSvcAn/seuilCAsvc*100) : 0;
   var pctTVAsvc = seuilTVAsvc>0 ? Math.round(caSvcAn/seuilTVAsvc*100) : 0;
   // Lignes cumul annuel
@@ -23293,25 +23249,18 @@ async function expExcelComptable(){
   // === ONGLET 3 : URSSAF (si micro) OU TVA (si réel) ===
   if(isMicro){
     var totalSvcM=0, totalProdM=0;
-    dn.forEach(function(a){
-      if(a.items && a.items.length){
-        a.items.forEach(function(it){
-          if(it.isProd) totalProdM += (Number(it.price)||0)*(Number(it.qty)||1);
-          else totalSvcM += (Number(it.price)||0)*(Number(it.qty)||1);
-        });
-      } else { totalSvcM += Number(a.pr)||0; }
-    });
+    dn.forEach(function(a){ var sp=_splitPrestProd(a); totalSvcM += Number(sp.prest)||0; totalProdM += Number(sp.prod)||0; }); // 2026-10-11 : montant encaissé
     ps2.forEach(function(pp){ totalProdM += Number(pp.pr)||0; });
-    var cotisSvcM = Math.round(totalSvcM * 0.222 * 100) / 100;
-    var cotisProdM = Math.round(totalProdM * 0.123 * 100) / 100;
+    var cotisSvcM = Math.round(totalSvcM * _lxTxUrssaf("svc") * 100) / 100;
+    var cotisProdM = Math.round(totalProdM * _lxTxUrssaf("prod") * 100) / 100;
     var urssafD = [
       ["DÉCLARATION URSSAF — "+mL],
       [SALON_CONFIG.nomComplet()+" · SIRET "+(SALON_CONFIG.siret||"-")],
       ["TVA non applicable, art. 293B du CGI (régime micro-entrepreneur)"],
       [],
       ["Catégorie","CA brut encaissé (€)","Taux URSSAF","Cotisations (€)","Net après URSSAF (€)"],
-      ["Prestations services (BIC)", totalSvcM, "22,2 %", cotisSvcM, totalSvcM-cotisSvcM],
-      ["Ventes marchandises (BIC)", totalProdM, "12,3 %", cotisProdM, totalProdM-cotisProdM],
+      ["Prestations services (BIC)", totalSvcM, _lxTxUrssafLib("svc"), cotisSvcM, totalSvcM-cotisSvcM],
+      ["Ventes marchandises (BIC)", totalProdM, _lxTxUrssafLib("prod"), cotisProdM, totalProdM-cotisProdM],
       ["TOTAL", totalSvcM+totalProdM, "", cotisSvcM+cotisProdM, (totalSvcM+totalProdM)-(cotisSvcM+cotisProdM)],
       [],
       ["Notes :"],
@@ -23349,24 +23298,8 @@ async function expExcelComptable(){
     [],
     ["Journal","Lib","N°Écr","Date","Compte","Libellé compte","Pièce","Date pièce","Libellé écriture","Débit (€)","Crédit (€)","Mode"]
   ];
-  var ecrNum = 1;
-  function compte(met){var m=String(met||"").toLowerCase();if(m.indexOf("cb")>=0||m.indexOf("carte")>=0)return "512100";if(m.indexOf("esp")>=0||m.indexOf("cash")>=0)return "530000";if(m.indexOf("cheq")>=0||m.indexOf("chèq")>=0)return "511200";if(m.indexOf("vir")>=0)return "512000";return "511000";}
-  function pushEcrXLS(date, num, libelle, ttc, ht, tva, met, type){
-    var compteVente = type==="produit"?"707000":"706000";
-    var lib = "VE"+date.replace(/-/g,"")+" "+(libelle||"").slice(0,40);
-    var dDate = toDate(date);
-    if(isMicro){
-      comptaD.push(["VE","Ventes",ecrNum,dDate,compte(met),"Encaissement",num||"",dDate,lib,ttc,"",met||""]);
-      comptaD.push(["VE","Ventes",ecrNum,dDate,compteVente,(type==="produit"?"Ventes produits":"Prestations services")+" (293B)",num||"",dDate,lib,"",ttc,""]);
-    } else {
-      comptaD.push(["VE","Ventes",ecrNum,dDate,compte(met),"Encaissement",num||"",dDate,lib,ttc,"",met||""]);
-      comptaD.push(["VE","Ventes",ecrNum,dDate,compteVente,type==="produit"?"Ventes produits":"Prestations services",num||"",dDate,lib,"",ht,""]);
-      if(tva>0){var compteTVA="445710"; if(txTVA===10)compteTVA="445720"; else if(txTVA===5.5)compteTVA="445730"; comptaD.push(["VE","Ventes",ecrNum,dDate,compteTVA,"TVA collectée "+txTVA+"%",num||"",dDate,lib,"",tva,""]);}
-    }
-    ecrNum++;
-  }
-  dn.forEach(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";var ttc=Number(a.pr)||0;var _v=_lxHtTva(a);var ht=_v.ht,tva=_v.tva;pushEcrXLS(a.date,"TK"+(a.tkNum||""),clNom+(sv?" - "+sv.n:""),ttc,ht,tva,a.met,"service");});
-  ps2.forEach(function(pp){var ttc=Number(pp.pr)||0;var _v=_lxHtTvaProd(ttc);var ht=_v.ht,tva=_v.tva;pushEcrXLS(pp.date,"PR"+(pp.tkNum||""),pp.prod||"Vente produit",ttc,ht,tva,pp.met,"produit");});
+  // 2026-10-11 : même journal que l'export « Journal des ventes » (_lxJournalVentes)
+  _lxJournalVentes(accM).lignes.forEach(function(l){ comptaD.push(["VE","Ventes",l.ecr,toDate(l.date),l.compte,l.compteLib,l.piece,toDate(l.date),l.lib,l.debit||"",l.credit||"",l.mode]); });
   XLSX.utils.book_append_sheet(wb, makeSheet(comptaD, {
     titleRows:[0], subRows:[1,2], headerRows:[4],
     numCols:[9,10], dateCols:[3,7], intCols:[2],
@@ -23505,7 +23438,7 @@ async function expExcelComptable(){
     ["Onglet","Contenu","Notes"],
     ["1 — Synthèse", "KPI du mois (CA, TVA, modes paiement, panier moyen)", "Vue d'ensemble"],
     ["2 — Journal", "Toutes les ventes ligne par ligne (date, ticket, client, HT/TVA/TTC, hash)", "Importable"],
-    [isMicro?"3 — URSSAF":"3 — TVA", isMicro?"CA encaissé + cotisations URSSAF estimées (services 22,2% / ventes 12,3%)":"Récap TVA pour déclaration CA3/CA12", "Officiel"],
+    [isMicro?"3 — URSSAF":"3 — TVA", isMicro?"CA encaissé + cotisations URSSAF estimées (services "+_lxTxUrssafLib("svc")+" / ventes "+_lxTxUrssafLib("prod")+", formation professionnelle incluse)":"Récap TVA pour déclaration CA3/CA12", "Officiel"],
     ["4 — Compta", "Écritures débit/crédit format PCG FR (706/707/4457/512)", "Importable Sage/EBP/Cegid"],
     ["5 — Annulations", "Tickets annulés avec motifs et hash", "Obligation art. 286 CGI"],
     ["6 — Stripe", "Acomptes en ligne via Stripe Connect (brut, frais, net)", "Si Stripe Connect actif"],
@@ -23546,7 +23479,7 @@ function printBandeZ(){
   // FISCAL : tickets fiscalement Luxyra (post-migration) UNIQUEMENT
   // Les imports LS Coiffure sont exclus (leur source fiscale = LS, pas Luxyra)
   // → la bande Z mensuelle Luxyra ne reflète que ce qui doit être déclaré au titre de Luxyra
-  var dnAll = AP.filter(function(a){return a.st==="done"&&a.date.indexOf(mois)===0&&!a.cancelled;});
+  var dnAll = AP.filter(function(a){return a.st==="done"&&a.date.indexOf(mois)===0&&_lxCaOk(a);});
   var dn = dnAll.filter(_isFiscalLuxyra);
   var dnImports = dnAll.filter(_isImportLS);
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(mois)===0;});
@@ -23560,9 +23493,8 @@ function printBandeZ(){
   dn.forEach(function(a){
     var sp=_splitPrestProd(a);
     tPrest+=sp.prest; tProd+=sp.prod;
-    var mc=_modeCanonique(a.met);
-    if(_lxEstEnLigne(a.met)) tEnL+=sp.total;
-    else if(mc==="cb")tCB+=sp.total; else if(mc==="esp")tEsp+=sp.total; else if(mc==="chq")tChq+=sp.total; else if(mc==="bon")tBon+=sp.total; else if(mc==="vir")tVir+=sp.total; else tAut+=sp.total;
+    // 2026-10-11 : ventilation réelle (paiements mixtes, acompte en ligne) = même règle que la Z journalière
+    var _b=_lxPayBuckets(a); tCB+=_b.cb; tEsp+=_b.esp; tChq+=_b.chq; tBon+=_b.bon; tVir+=_b.vir; tAut+=_b.aut; tEnL+=_b.enligne;
   });
   ps.forEach(function(pp){tProd+=(Number(pp.pr)||0);var mc=_modeCanonique(pp.met);if(mc==="cb")tCB+=(Number(pp.pr)||0); else if(mc==="esp")tEsp+=(Number(pp.pr)||0); else if(mc==="chq")tChq+=(Number(pp.pr)||0); else tAut+=(Number(pp.pr)||0);});
   tPrest=Math.round(tPrest*100)/100; tProd=Math.round(tProd*100)/100;
@@ -23822,7 +23754,7 @@ function printBandeZ(){
   
   // ===== CUMUL ANNUEL =====
   var anKey=mois.slice(0,4);
-  var allDnAn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(anKey)===0&&!a.cancelled;});
+  var allDnAn=AP.filter(function(a){return a.st==="done"&&a.date.indexOf(anKey)===0&&_lxCaOk(a);});
   var allPsAn=PS.filter(function(pp){return pp.date.indexOf(anKey)===0;});
   var caTotAn=0;allDnAn.forEach(function(a){caTotAn+=a.pr;});allPsAn.forEach(function(pp){caTotAn+=pp.pr;});
   h+="<h2>CUMUL ANNUEL "+anKey+"</h2>";
@@ -23926,6 +23858,7 @@ function rStats(){
     if(a.items && a.items.length){
       a.items.forEach(function(it){
         if(it.isSep) return;
+        if(a.isCancel || it.isAcompteDeduct || it.isAcompteData) return; // 2026-10-11 : pas une vente
         var qty=(Number(it.qty)||1);
         if(it.isProd){hasProd=true;qtyPd+=qty;}
         else{hasServ=true;qtyPr+=qty;}
@@ -24606,7 +24539,7 @@ function rStats(){
   var svcCA={};
   dn.forEach(function(a){
     if(a.items){a.items.forEach(function(it){
-      if(!it.isProd&&!it.isSep){var key=it.name||"Prestation";if(!svcCA[key])svcCA[key]={name:key,qty:0,ca:0};svcCA[key].qty++;svcCA[key].ca+=it.price*it.qty-(it.remise||0);}
+      if(!it.isProd&&!it.isSep&&!a.isCancel&&!it.isAcompteDeduct&&!it.isAcompteData){var key=it.name||"Prestation";if(!svcCA[key])svcCA[key]={name:key,qty:0,ca:0};svcCA[key].qty++;svcCA[key].ca+=it.price*it.qty-(it.remise||0);}
     });}else{var sv2=gS(a.sId);var sn=sv2?sv2.n:"Prestation";if(!svcCA[sn])svcCA[sn]={name:sn,qty:0,ca:0};svcCA[sn].qty++;svcCA[sn].ca+=a.pr*taxR;}
   });
   var svcList=Object.values(svcCA).sort(function(a,b){return b.ca-a.ca;});
@@ -26077,7 +26010,7 @@ function aGi(){
   if(typeof saveAppointment==="function")saveAppointment(tk);
   if(typeof saveTicketToDb==="function")saveTicketToDb(tk); // NF525: table tickets DB avec hash chaîné
   var isMultiU=(!scope||scope==="tout");
-  auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC"+(isMultiU?" (multi-usages, TVA diff\u00e9r\u00e9e)":" (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+")")+" - "+pay+" - Compte 4191 (avance client) - De:"+f+(t?" Pour:"+t:""));
+  auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+v.toFixed(2)+"E TTC"+" (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+")"+" - "+pay+" - CA \u00e0 la vente (706) - De:"+f+(t?" Pour:"+t:""));
   // Success screen with print option
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:48px;margin-bottom:10px">\ud83c\udf81</div>';
@@ -26125,15 +26058,22 @@ function annulerAcompte(apptId){
       // NF525: create cancellation ticket
       var sv=gS(a.sId);
       var tkNum=nextTicketNum();
+      // 2026-10-11 : acompte versé en plusieurs fois -> remboursé sur le mode de CHAQUE versement
+      var _versA=null;
+      try{ (a.items||[]).forEach(function(it){ if(it&&it.isAcompteData&&Array.isArray(it.versements)&&it.versements.length>1) _versA=it.versements; }); }catch(_eVA){}
+      var _payA=null;
+      if(_versA){ var _sv=0; _payA=_versA.map(function(v){ _sv+=Number(v.m)||0; return {method:v.mode||oldMode, amount:-(Math.round((Number(v.m)||0)*100)/100)}; });
+        if(Math.abs(_sv-oldAmount)>0.01) _payA=null; }
       var cancelTicket={
         id:U(),date:TD,time:frM(Math.floor(new Date().getHours()*60+new Date().getMinutes())),
         stId:a.stId,cId:a.cId,
-        pr:-oldAmount,st:"done",met:oldMode,
+        pr:-oldAmount,st:"done",met:(_payA?_payA.map(function(p){return p.method;}).join(" + "):oldMode),payments:(_payA||undefined),
         items:[{name:"ANNULATION Acompte - "+(sv?sv.n:"Prestation"),price:-oldAmount,qty:1,remise:0,isAcompteCancel:true}],
         comment:"Annulation acompte du "+fmt(oldDate)+" (ticket #"+(origTkNum||"?")+")",
         tkNum:tkNum,isAcompteCancel:true,apptId:apptId,origTkNum:origTkNum,
         fromCaisse:true
       };
+      if(typeof chainTicket==="function") chainTicket(cancelTicket); // 2026-10-11 : chaînage comme tous les tickets
       AP.push(cancelTicket);
       if(typeof saveAppointment==="function")saveAppointment(cancelTicket);
       if(typeof saveTicketToDb==="function")saveTicketToDb(cancelTicket); // NF525
@@ -26173,7 +26113,7 @@ function showAcompteForm(apptId){
   htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:"Prestation")+' \u2014 <strong>'+total.toFixed(2)+' \u20ac</strong></div>';
   
   if(curA>0){
-    htm+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#2d9a5e;font-weight:700">Acompte actuel: '+curA.toFixed(2)+' \u20ac ('+(a.acompteMode||"")+' le '+(a.acompteDate?fmt(a.acompteDate):"")+')</div>';
+    htm+='<div style="background:rgba(45,154,94,.1);border:1px solid rgba(45,154,94,.3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px;color:#2d9a5e;font-weight:700">D\u00e9j\u00e0 vers\u00e9 : '+curA.toFixed(2)+' \u20ac ('+(a.acompteMode||"")+' le '+(a.acompteDate?fmt(a.acompteDate):"")+')<br><span style="font-weight:400;font-size:12px">Le montant saisi ci-dessous s\u2019ajoute \u00e0 cet acompte.</span></div>';
   }
   
   // Quick percentage buttons
@@ -26188,7 +26128,7 @@ function showAcompteForm(apptId){
   
   // Custom amount
   htm+='<div class="fg"><label>Ou montant libre (\u20ac)</label>';
-  htm+='<input type="number" id="acompteAmount" min="0" max="'+total+'" step="1" value="'+(curA||Math.round(total*0.3))+'" style="font-size:20px;text-align:center;padding:14px"></div>';
+  htm+='<input type="number" id="acompteAmount" min="0" max="'+Math.max(0,total-curA)+'" step="1" value="'+(curA>0?'':Math.round(total*0.3))+'" placeholder="'+(curA>0?'Montant suppl\u00e9mentaire':'')+'" style="font-size:20px;text-align:center;padding:14px"></div>';
   
   // Payment mode
   htm+='<div class="fg"><label>Mode de paiement</label>';
@@ -26218,13 +26158,22 @@ function doSaveAcompte(apptId){
   if(!a)return;
   var amount=parseFloat(document.getElementById("acompteAmount").value)||0;
   if(amount<=0){clickAppt(apptId);return;}
-  a.acompte=amount;
+  amount=Math.round(amount*100)/100;
+  // 2026-10-11 : un acompte déjà versé au salon reste dû à la cliente -> le nouveau montant S'AJOUTE
+  // (avant : il remplaçait l'ancien, qui restait encaissé mais n'était plus déduit -> payé deux fois).
+  var _acPrec=(Number(a.acompte)>0 && !(typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(a.acompteMode))) ? Math.round(Number(a.acompte)*100)/100 : 0;
+  a._acModePrec=a.acompteMode||"CB"; a._acDatePrec=a.acompteDate||null;
+  a.acompte=Math.round((_acPrec+amount)*100)/100;
   a.acompteMode=window._acompteMode||"CB";
   a.acompteDate=TD;
   // Store in items for Supabase persistence
   if(!a.items)a.items=[];
+  var _vers=[];
+  try{ (a.items||[]).forEach(function(it){ if(it&&it.isAcompteData&&Array.isArray(it.versements)) _vers=it.versements.slice(); }); }catch(_eV){}
+  if(!_vers.length && _acPrec>0) _vers=[{m:_acPrec, mode:(a._acModePrec||"CB"), tk:(a.acompteTkNum||null), d:(a._acDatePrec||null)}];
   a.items=a.items.filter(function(it){return !it.isAcompteData;});
-  a.items.push({isAcompteData:true,acompte:amount,acompteMode:window._acompteMode||"CB",acompteDate:TD});
+  var _acItem={isAcompteData:true,acompte:a.acompte,acompteMode:window._acompteMode||"CB",acompteDate:TD,versements:_vers};
+  a.items.push(_acItem);
   console.log("Saving acompte:",a.id,"items:",JSON.stringify(a.items));
   if(typeof saveAppointment==="function")saveAppointment(a);
   // NF525: generate acompte ticket
@@ -26234,11 +26183,12 @@ function doSaveAcompte(apptId){
     id:U(),date:TD,time:frM(Math.floor(new Date().getHours()*60+new Date().getMinutes())),
     stId:a.stId,cId:a.cId,
     pr:amount,st:"done",met:window._acompteMode||"CB",
-    items:[{name:"Acompte - "+(sv?sv.n:"Prestation"),price:amount,qty:1,remise:0,isAcompte:true}],
-    comment:"Acompte pour RDV du "+fmt(a.date)+" a "+a.time,
+    items:[{name:(_acPrec>0?"Acompte compl\u00e9mentaire - ":"Acompte - ")+(sv?sv.n:"Prestation"),price:amount,qty:1,remise:0,isAcompte:true}],
+    comment:(_acPrec>0?"Acompte compl\u00e9mentaire (total vers\u00e9 "+a.acompte.toFixed(2)+" \u20ac)":"Acompte")+" pour RDV du "+fmt(a.date)+" a "+a.time,
     tkNum:tkNum,isAcompte:true,apptId:apptId,
     fromCaisse:true
   };
+  if(typeof chainTicket==="function") chainTicket(acompteTicket); // 2026-10-11 : chaînage comme tous les tickets
   AP.push(acompteTicket);
   if(typeof saveAppointment==="function")saveAppointment(acompteTicket);
   if(typeof saveTicketToDb==="function")saveTicketToDb(acompteTicket); // NF525
@@ -26248,7 +26198,7 @@ function doSaveAcompte(apptId){
   // Le RDV n est PAS scelle a ce stade (status conf, hash vide) -> re-save autorise par le
   // garde appointments_nf525_protect.
   a.acompteTkNum=tkNum;
-  for(var _ai=0;_ai<a.items.length;_ai++){ if(a.items[_ai].isAcompteData){ a.items[_ai].acompteTkNum=tkNum; } }
+  for(var _ai=0;_ai<a.items.length;_ai++){ if(a.items[_ai].isAcompteData){ a.items[_ai].acompteTkNum=tkNum; if(Array.isArray(a.items[_ai].versements)) a.items[_ai].versements.push({m:amount, mode:(window._acompteMode||"CB"), tk:tkNum, d:TD}); } }
   if(typeof saveAppointment==="function")saveAppointment(a);
   auditLog("ACOMPTE","Acompte "+amount.toFixed(2)+"E ("+window._acompteMode+") pour RDV "+apptId+" - Ticket #"+tkNum);
   var sv2=gS(a.sId);var cl2=gC(a.cId);var sty2=gT(a.stId);
@@ -26307,9 +26257,9 @@ function printAcompteReceipt(tkNum,amount,apptId){
   h+="<div class=\"line bold\"><span>ACOMPTE</span><span>"+amount.toFixed(2)+" \u20ac</span></div>";
   h+="<div class=\"line\"><span>Mode</span><span>"+(window._acompteMode||"CB")+"</span></div>";
   h+="<div class=\"sep\"></div>";
-  if(a&&sv)h+="<p style=\"font-size:10px\">Reste \u00e0 payer: "+(a.pr-amount).toFixed(2)+" \u20ac</p>";
+  if(a&&sv)h+="<p style=\"font-size:10px\">"+(Number(a.acompte)>amount+0.004?"Total des acomptes vers\u00e9s : "+Number(a.acompte).toFixed(2)+" \u20ac<br>":"")+"Reste \u00e0 payer: "+(a.pr-(Number(a.acompte)>0?Number(a.acompte):amount)).toFixed(2)+" \u20ac</p>";
   h+="<p style=\"font-size:9px;color:#666;margin-top:10px\">"+SALON_CONFIG.siret+"</p>";
-  h+="<p style=\"font-size:9px;color:#666\">TVA "+SALON_CONFIG.tauxTVA+"%</p>";
+  h+="<p style=\"font-size:9px;color:#666\">"+(lxTauxTVA()>0?"TVA "+lxTauxTVA()+" % incluse":"TVA non applicable, art. 293 B du CGI")+"</p>";
   h+="</body></html>";
   w.document.write(h);w.document.close();
   setTimeout(function(){w.print();},300);
@@ -27628,9 +27578,12 @@ var LX_CFG_SECTIONS = [
   {k:"prodcolors", mem:function(){return (window.PRODCOLORS && typeof window.PRODCOLORS==="object")?window.PRODCOLORS:undefined;}, set:function(v){window.PRODCOLORS=v;}},
   {k:"fidconf", mem:function(){return (window.FIDCONF && typeof window.FIDCONF==="object")?window.FIDCONF:undefined;}, set:function(v){window.FIDCONF=v;}},
   {k:"verrouillage_min", mem:function(){return (window.LX_VERROU_MIN===undefined||window.LX_VERROU_MIN===null)?undefined:Number(window.LX_VERROU_MIN);}, set:function(v){window.LX_VERROU_MIN=Number(v); try{ if(typeof startInactivityTimer==="function") startInactivityTimer(); }catch(_e){}}},
+  {k:"slot", mem:function(){return (typeof SLOT!=="undefined"&&Number(SLOT)>0)?Number(SLOT):undefined;}, set:function(v){if(Number(v)>0)SLOT=Number(v);}},
+  {k:"slot_h", mem:function(){return (typeof SLOT_H!=="undefined"&&Number(SLOT_H)>0)?Number(SLOT_H):undefined;}, set:function(v){if(Number(v)>0)SLOT_H=Number(v);}},
   {k:"validite_devis", mem:function(){return (SALON_CONFIG&&SALON_CONFIG.validiteDevis)?Number(SALON_CONFIG.validiteDevis):undefined;}, set:function(v){SALON_CONFIG.validiteDevis=Number(v);}}
 ].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl"].map(function(n){
-  return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && SALON_CONFIG[n]!=="") ? SALON_CONFIG[n] : undefined; },
+  var _vide=/Url$/.test(n); // 2026-10-11 : un lien de réseau social effacé ("") doit rester effacé
+  return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && (_vide || SALON_CONFIG[n]!=="")) ? SALON_CONFIG[n] : undefined; },
           set:function(v){ SALON_CONFIG[n]=v; }};
 }));
 function _lxCfgValeurBase(sec, cfg){ return sec.db ? sec.db(cfg) : cfg[sec.k]; }
@@ -30939,22 +30892,12 @@ async function saveCaisseData(){
   try{
     if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return {ok:false,error:"hors ligne"};
     if(!window.CAISSE_DATA || typeof window.CAISSE_DATA!=="object") return {ok:false,error:"aucune donnee"};
-    var r = await _sb.from("salons").select("config_json").eq("id",_salonId).single();
-    if(r.error) return {ok:false,error:r.error.message};
-    var cfg = {};
-    try{
-      var raw = r.data && r.data.config_json;
-      cfg = (typeof raw === "string") ? JSON.parse(raw) : (raw || {});
-    }catch(_e){ cfg = {}; }
-    cfg.caisse_data = JSON.parse(JSON.stringify(window.CAISSE_DATA));
-    if(typeof window.CAISSE_DATA.fond !== "undefined") cfg.fond_caisse = window.CAISSE_DATA.fond;
-    ["coffreEsp","coffreChq","misesAuCoffre","mouvements","remisesBanque","retraits","pieces"].forEach(function(k){
-      if(k in cfg) delete cfg[k];
-    });
-    var w = await _sb.from("salons").update({config_json: JSON.stringify(cfg)}).eq("id",_salonId);
-    if(w.error) return {ok:false,error:w.error.message};
-    try{ if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.caisse_data = cfg.caisse_data; }catch(_e2){}
-    return {ok:true};
+    // 2026-10-11 : écriture via la file unique de la configuration (relecture juste avant, jamais
+    // d'écrasement de la config si elle est illisible, pas de collision avec un autre enregistrement).
+    var v = { caisse_data: JSON.parse(JSON.stringify(window.CAISSE_DATA)) };
+    if(typeof window.CAISSE_DATA.fond !== "undefined") v.fond_caisse = window.CAISSE_DATA.fond;
+    var ok = await lxCfgEcrireSections(v);
+    return ok ? {ok:true} : {ok:false,error:"enregistrement de la configuration impossible"};
   }catch(e){ return {ok:false,error:(e&&e.message)||"erreur"}; }
 }
 function _lxCaisseSaveEtAlerte(libelle){
@@ -33550,7 +33493,30 @@ function _cancelSecureTicketDo(id,motif){
     date:TD,time:new Date().toTimeString().slice(0,5),
     ts:new Date().toISOString(),
     pr:-(orig.pr||0),brutTotal:-(orig.brutTotal||orig.pr),remise:0,
-    items:[{name:"ANNULATION #"+(orig.tkNum||"--"),price:-(orig.pr||0),qty:1,remise:0}],
+    items:(function(){
+      // 2026-10-11 : ventilation prestations / produits de l'original (TVA et comptes 706/707 corrects)
+      try{ var _so=_splitPrestProd(orig), _n="ANNULATION #"+(orig.tkNum||"--"), L=[];
+        if(Math.abs(Number(_so.prod)||0)>=0.005){
+          if(Math.abs(Number(_so.prest)||0)>=0.005) L.push({name:_n+" - prestations",price:-Math.round(_so.prest*100)/100,qty:1,remise:0});
+          L.push({name:_n+" - produits",price:-Math.round(_so.prod*100)/100,qty:1,remise:0,isProd:true});
+          return L; } }catch(_eS){}
+      return [{name:"ANNULATION #"+(orig.tkNum||"--"),price:-(orig.pr||0),qty:1,remise:0}];
+    })(),
+    // 2026-10-11 : remboursement sur les MÊMES modes de règlement que l'original (mixte, en ligne)
+    payments:(function(){
+      var _onl=(Number(orig.acompte)>0.004 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(orig.acompteMode));
+      if(!(Array.isArray(orig.payments)&&orig.payments.length)){
+        if(!_onl) return undefined;
+        var _ac=Math.round(Number(orig.acompte)*100)/100, _rest=Math.round(((Number(orig.pr)||0)-_ac)*100)/100, Q=[];
+        if(Math.abs(_rest)>=0.005) Q.push({method:orig.met||"CB", amount:-_rest});
+        Q.push({method:orig.acompteMode, amount:-_ac});
+        return Q;
+      }
+      var P=orig.payments.map(function(p){ return {method:p.method||p.mode, amount:-(Math.round((Number(p.amount)||0)*100)/100)}; });
+      // acompte payé en ligne (hors a.payments dans l'original) : remboursé sur le poste « en ligne »
+      try{ if(Number(orig.acompte)>0.004 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(orig.acompteMode)) P.push({method:orig.acompteMode, amount:-Math.round(Number(orig.acompte)*100)/100}); }catch(_eP){}
+      return P;
+    })(),
     st:"done",met:orig.met||"",tkNum:tkN,
     isCancel:true,cancelRef:orig.tkNum||orig.id,cancelMotif:motif,
     // FIX 2026-07-11 : le contre-ticket porte lui-meme le marqueur "annulation du MEME JOUR"
@@ -33597,6 +33563,21 @@ function _cancelSecureTicketDo(id,motif){
         fromCaisse:false,cancelled:false
       };
       if(orig.lieu){_rel.lieu=orig.lieu;_rel.adresse=orig.adresse||"";}
+      // 2026-10-11 : l'acompte déjà versé reste acquis à la cliente -> il est repris sur le RDV à réencaisser
+      try{
+        var _acOnl=(Number(orig.acompte)>0.004 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(orig.acompteMode));
+        var _acDed=0, _acDedTk=null;
+        (orig.items||[]).forEach(function(it){ if(it&&it.isAcompteDeduct){ _acDed+=-(Number(it.price)||0); if(it.acompteTkNum)_acDedTk=it.acompteTkNum; } });
+        _acDed=Math.round(_acDed*100)/100;
+        if(_acOnl){ _rel.acompte=Math.round(Number(orig.acompte)*100)/100; _rel.acompteMode=orig.acompteMode; _rel.acompteDate=orig.acompteDate||orig.date; }
+        var _versR=[];
+        if(!_acOnl && _acDed>0.004){
+          AP.forEach(function(t){ if(t&&t.isAcompte&&t.apptId===orig.id&&t.st==="done"&&!t.cancelled&&Number(t.pr)>0) _versR.push({m:Math.round(Number(t.pr)*100)/100, mode:t.met||"CB", tk:t.tkNum||null, d:t.date||null}); });
+          var _sR=0; _versR.forEach(function(v){_sR+=v.m;}); if(Math.abs(_sR-_acDed)>0.01) _versR=[];
+          _rel.acompte=_acDed; _rel.acompteMode=_versR.length?_versR[_versR.length-1].mode:"CB"; _rel.acompteDate=orig.date; _rel.acompteTkNum=_acDedTk;
+        }
+        if(_rel.acompte>0) _rel.items=[{isAcompteData:true,acompte:_rel.acompte,acompteMode:_rel.acompteMode,acompteDate:_rel.acompteDate,acompteTkNum:(_rel.acompteTkNum||null),versements:_versR}];
+      }catch(_eAcR){}
       AP.push(_rel);
       // Persistance APRES la mise a jour de l original (cancelled=true) : garantit qu un garde
       // serveur anti-doublon ne voie jamais 2 RDV identiques (l original est deja annule).
@@ -33642,10 +33623,9 @@ function cloturerJournee(){
   // Heure premier/dernier ticket — essaie ts (ISO) puis time ("HH:MM") en fallback.
   // Les tickets sans ts (vieux passages, créations manuelles) ont au moins `time`.
   var heures=done.map(function(a){
-    if(a.ts && typeof a.ts==="string" && a.ts.length>=16){
-      var s=a.ts.slice(11,16);
-      if(/^\d{2}:\d{2}$/.test(s)) return s;
-    }
+    // 2026-10-11 : heure LOCALE (ts est en UTC : 1 à 2 h d'écart avec l'heure de Paris)
+    if(a.heureEncaiss && /^\d{2}:\d{2}$/.test(String(a.heureEncaiss).slice(0,5))) return String(a.heureEncaiss).slice(0,5);
+    if(a.ts){ try{ var _d=new Date(a.ts); if(!isNaN(_d)) return _d.toTimeString().slice(0,5); }catch(_e){} }
     if(a.time && typeof a.time==="string" && /^\d{2}:\d{2}$/.test(a.time.slice(0,5))) return a.time.slice(0,5);
     return "";
   }).filter(function(h){return h;}).sort();
@@ -34322,7 +34302,7 @@ async function exportFEC(){
     showAlert("SIRET non renseigné. Renseignez-le dans Paramètres > Mon salon avant d'exporter le FEC.","info");
     return;
   }
-  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+  var tva=Number(lxTauxTVA());
 
   if(typeof toast==="function") toast("Préparation de l'export FEC…","info");
   var ticketsAll=[];
@@ -34398,7 +34378,7 @@ async function exportFEC(){
       prodHT=Math.round((Number(_sp.prod)||0)/(1+_txProdF/100)*100)/100;
       prestHT=Math.round((totalHT-prodHT)*100)/100;
     } else {
-      var _prodRatio=totalTTC>0?((Number(_sp.prod)||0)/totalTTC):0;
+      var _prodRatio=Math.abs(totalTTC)>0.004?((Number(_sp.prod)||0)/totalTTC):0;
       prodHT=Math.round(totalHT*_prodRatio*100)/100;
       prestHT=Math.round((totalHT-prodHT)*100)/100;
     }
@@ -34411,10 +34391,14 @@ async function exportFEC(){
       return;
     }
 
-    _fecLegs(t,totalTTC).forEach(function(lg){ lines.push(["VTE","Ventes salon",String(ecrNum),dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(lg.amt),fmtAmount(0),"","",dateE,"",""].join("\t")); });
-    if(prestHT!==0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(prestHT),"","",dateE,"",""].join("\t"));
-    if(prodHT>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"VENTE "+escFEC(libBase),fmtAmount(0),fmtAmount(prodHT),"","",dateE,"",""].join("\t"));
-    if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée "+tva+"%","","",pieceRef,dateE,"TVA "+escFEC(libBase),fmtAmount(0),fmtAmount(totalTVA),"","",dateE,"",""].join("\t"));
+    // 2026-10-11 : montants négatifs (contre-ticket d'annulation) -> sens inversé, montant positif, écriture équilibrée
+    var _lib=(totalTTC<0?"ANNULATION ":"VENTE ")+escFEC(libBase);
+    function _fl(acc,accLib,lib,amt,sens){ var v=Math.round((Number(amt)||0)*100)/100; if(Math.abs(v)<0.005) return; if(v<0){ v=-v; sens=(sens==="D")?"C":"D"; }
+      lines.push(["VTE","Ventes salon",String(ecrNum),dateE,acc,accLib,"","",pieceRef,dateE,lib,fmtAmount(sens==="D"?v:0),fmtAmount(sens==="C"?v:0),"","",dateE,"",""].join("\t")); }
+    _fecLegs(t,totalTTC).forEach(function(lg){ _fl(lg.acc,lg.lib,_lib,lg.amt,"D"); });
+    _fl(ACC_VENTE_PREST,"Prestations de services",_lib,prestHT,"C");
+    _fl(ACC_VENTE_PROD,"Ventes de produits",_lib,prodHT,"C");
+    _fl(ACC_TVA,"TVA collectée "+tva+"%",_lib,totalTVA,"C");
   });
 
   var content=lines.join("\r\n");
@@ -34456,27 +34440,16 @@ function saveComptaAccounts(){
   // garde-fou : ne jamais enregistrer un objet vide (eviterait d'ecraser sans raison)
   if(!Object.keys(acc).length){ if(typeof toast==="function") toast("Aucun compte renseigne","warning"); return; }
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
-      if(r.error){
-        if(typeof toast==="function") toast("\u26a0 Erreur DB (lecture) \u2014 reessaie","error");
-        console.error("saveComptaAccounts read error:",r.error);
-        return;
-      }
-      var cfg={};
-      if(r.data&&r.data[0]&&r.data[0].config_json){
-        try{cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;}catch(e){}
-      }
-      cfg.comptaAccounts=acc;
-      _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId).then(function(u){
+    lxCfgEcrireSections({comptaAccounts:acc}).catch(function(){ return false; }).then(function(okW){ var u={error:okW?null:{message:"echec"}};
+      (function(u){
         if(u.error){
           if(typeof toast==="function") toast("\u26a0 Erreur DB (ecriture) \u2014 reessaie","error");
-          console.error("saveComptaAccounts write error:",u.error);
         }else{
           if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.comptaAccounts=acc;
           if(typeof auditLog==="function") auditLog("COMPTA_ACCOUNTS_UPDATE","Comptes comptables export mis a jour");
           if(typeof toast==="function") toast("Comptes comptables enregistres","success");
         }
-      });
+      })(u);
     });
   } else {
     if(window._SALON_CONFIG_JSON) window._SALON_CONFIG_JSON.comptaAccounts=acc;
@@ -34491,7 +34464,7 @@ async function exportEBP(){
   if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
   if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
   var A=_comptaAccounts();
-  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+  var tva=Number(lxTauxTVA());
   if(typeof toast==="function") toast("Preparation de l'export EBP...","info");
   var ticketsAll=[];
   try{
@@ -34569,7 +34542,7 @@ async function rapportComptablePeriode(){
   if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
   if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
   if(!(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId)){ showAlert("Connexion base indisponible","error"); return; }
-  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+  var tva=Number(lxTauxTVA());
   var R=function(n){return Math.round((Number(n)||0)*100)/100;};
   if(typeof toast==="function") toast("Preparation du rapport comptable...","info");
   try{
@@ -34739,7 +34712,7 @@ async function exportQuadratus(){
   if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
   if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
   var A=_comptaAccounts();
-  var tva=Number(SALON_CONFIG.tauxTVA)||20;
+  var tva=Number(lxTauxTVA());
   if(typeof toast==="function") toast("Preparation de l'export Quadratus...","info");
   var ticketsAll=[];
   try{
@@ -34866,6 +34839,8 @@ function applyTheme(k,c,c2,auDemarrage){
   // 2026-10-07 : au demarrage, on applique les couleurs sans enregistrer ni naviguer
   // (cet enregistrement non sollicite reecrivait la configuration a chaque ouverture).
   if(auDemarrage) return;
+  // 2026-10-11 : la couleur est relue depuis salons.couleur_primaire -> on l'y écrit (sinon retour à l'or).
+  try{ if(/^#[0-9a-f]{6}$/i.test(String(c)) && typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({couleur_primaire:c}); }catch(_eTh){}
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   go("settings");
 }
@@ -34971,7 +34946,8 @@ function initApp(){
           var cfg=typeof r.data[0].config_json==="string"?JSON.parse(r.data[0].config_json):r.data[0].config_json;
           // Garder une copie complète en mémoire pour saveSmsConfig() (anti-race condition)
           window._SALON_CONFIG_JSON=cfg;
-          if(cfg.forfaits&&cfg.forfaits.length>0){FORFAITS=cfg.forfaits;localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}
+          // 2026-10-11 : la table forfaits fait foi (la copie de la config pouvait ressusciter un forfait supprimé)
+          if(cfg.forfaits&&cfg.forfaits.length>0&&!(window._lxTableOk&&window._lxTableOk.forfaits)){FORFAITS=cfg.forfaits;localStorage.setItem("_cp_forfaits",JSON.stringify(FORFAITS));}
           // FIX 2026-05-12 : DB source de vérité même si vide (avant : >0 → résurrection fantôme)
           if(Array.isArray(cfg.absences)){window.ABSENCES=cfg.absences;localStorage.setItem("_cp_absences",JSON.stringify(window.ABSENCES));}
           // Charge les modèles de cartes d'abonnement (templates) + le toggle activation
@@ -35373,7 +35349,7 @@ async function reloadFromSupabase(table){
       if(!_mapRo){ console.warn("[reloadFromSupabase] lxMapRdvOnlineRow indisponible - merge rdv_online ignore"); return; }
       // limit 500 (et non 50) = meme fenetre que le chargement initial : au-dela, les RDV en
       // ligne les plus anciens disparaissaient de la memoire et tronquaient les exports.
-      var r=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(500);
+      var r=(typeof window.lxChargerRdvOnline==="function")?await window.lxChargerRdvOnline():await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(1000);
       if(r.data){
         // Check for new notifications BEFORE updating RDV_ONLINE
         var oldIds={};(window.RDV_ONLINE||[]).forEach(function(o){oldIds[o.id]=o;});

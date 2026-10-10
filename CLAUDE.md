@@ -1655,3 +1655,12 @@ Tables existantes : inchangées.
 - rdv_online.acompte_paye_at / commandes_online.paye_at posés par trigger (historique = confirmed_at/created_at).
 - Exports (lecture seule) : expTvaPaiementsEnLigne (ajustement TVA à l'encaissement, régime réel) ; expLivreRecettes (micro : recettes encaissées, bons cadeaux exclus au règlement).
 - Le modèle de caisse de l'acompte en ligne (mode de règlement « enligne » au jour de la prestation) est INCHANGÉ.
+
+## 2026-10-11 (soir) — Audit persistance + comptabilité
+- Persistance : slot/slot_h en section config ; liens sociaux effaçables ; thème -> salons.couleur_primaire ; table forfaits fait foi ; défauts domicile avant enregistrement ; cagnotte/caTotal dans fiche_tech ; édition RDV en ligne n'écrit plus message/items ; caisse/absences/comptes via lxCfgEcrireSections ; lxChargerRdvOnline (actifs + 400 j, pages de 1000).
+- Règle unique des totaux mensuels : _lxCaOk(a) (annulation même jour exclue, autre jour : original au jour d'origine + contre-ticket au jour d'annulation) = somme des Z.
+- _lxJournalVentes : journal unique (CSV, ZIP, Excel), montants négatifs inversés, contrepartie par mode réel (_lxPayBuckets), 293B sans TVA. FEC négatifs équilibrés.
+- Contre-ticket : items ventilés prestations/produits, payments inversés (+ ligne acompte en ligne). RDV relibéré garde l'acompte. _splitPrestProd gère les négatifs.
+- Acompte salon cumulatif (versements[] dans l'item isAcompteData ; annulation remboursée par mode de chaque versement).
+- lxTauxTVA partout (plus de ||20) ; franchise -> tvaProduits=0 ; URSSAF 2026 = taux + CFP (_lxTxUrssaf) ; seuils micro 2026-2028 (83 600 / 203 100 ; TVA 37 500 / 85 000).
+- Bons cadeaux : libellés = CA à la vente (706), TVA incluse ; « obligatoire » seulement si lxAttConcerne().
