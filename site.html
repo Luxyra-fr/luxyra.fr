@@ -660,7 +660,8 @@ async function geocodeBANSimple(query){
         lng: f.geometry.coordinates[0],
         label: f.properties.label,
         cp: f.properties.postcode||"",
-        ville: f.properties.city||""
+        ville: f.properties.city||"",
+        citycode: f.properties.citycode||""
       };
     }
   }catch(e){console.warn("geocode:",e);}
@@ -683,7 +684,9 @@ function computeFraisDepl(distanceKm){
   var d=SALON.domicileCfg;
   if(d&&typeof d==="object"){
     var gk=Number(d.gratuitKm)||0;
-    if(d.type==="gratuit"||distanceKm<=gk) return 0;
+    if(d.type==="gratuit") return 0;
+    if(d.type==="commune") return Number(d.forfait)||0;
+    if(distanceKm<=gk) return 0;
     if(d.type==="km") return Math.round((Number(d.prixKm)||0)*(distanceKm-gk)*100)/100;
     return Number(d.forfait)||0;
   }
@@ -731,12 +734,23 @@ async function validateClientAdresse(){
     return false;
   }
   var zoneKm=(SALON.domicileCfg&&Number(SALON.domicileCfg.zone)>0)?Number(SALON.domicileCfg.zone):(Number(SALON.zone_deplacement_km||0)||25);
-  if(dist>zoneKm){
+  // 2026-10-10 : liste de communes cochées par le professionnel -> seule référence (remplace le rayon)
+  var _coms=(SALON.domicileCfg&&Array.isArray(SALON.domicileCfg.communes)&&SALON.domicileCfg.communes.length)?SALON.domicileCfg.communes:null;
+  var _comTrouvee=null;
+  if(_coms){
+    for(var _ci=0;_ci<_coms.length;_ci++){ if(String(_coms[_ci].code)===String(geo.citycode||"")){ _comTrouvee=_coms[_ci]; break; } }
+    if(!_comTrouvee){
+      if(statusEl){statusEl.style.color='var(--red)';statusEl.textContent='❌ Le professionnel ne se déplace pas à '+(geo.ville||'cette commune')+'. Communes desservies : '+_coms.slice(0,8).map(function(c){return c.nom;}).join(', ')+(_coms.length>8?'…':'')+'.';}
+      booking.clientAdr=null;
+      return false;
+    }
+  }
+  if(!_coms && dist>zoneKm){
     if(statusEl){statusEl.style.color='var(--red)';statusEl.textContent='❌ Vous êtes à '+dist.toFixed(1)+' km — au-delà de la zone de déplacement ('+zoneKm+' km).';}
     booking.clientAdr=null;
     return false;
   }
-  var frais=computeFraisDepl(dist);
+  var frais=(_comTrouvee&&SALON.domicileCfg&&SALON.domicileCfg.type==="commune"&&_comTrouvee.forfait!=null)?Number(_comTrouvee.forfait):computeFraisDepl(dist);
   booking.clientAdr={
     adr: adr.value.trim(),
     cp: cp?cp.value.trim():'',
@@ -1677,6 +1691,7 @@ function renderSite(){
     if(Number(_dc.zone)>0) zoneKm=Number(_dc.zone);
     var _gk=Number(_dc.gratuitKm)||0;
     if(_dc.type==="gratuit") fraisLabel="Frais de déplacement offerts";
+    else if(_dc.type==="commune") fraisLabel="Frais de déplacement selon la commune (calculés à la réservation)";
     else if(_dc.type==="km") fraisLabel="Frais de déplacement : "+(Number(_dc.prixKm)||0).toFixed(2).replace(".",",")+" \u20ac/km"+(_gk>0?" au-delà de "+_gk+" km":"");
     else fraisLabel="Frais de déplacement : "+(Number(_dc.forfait)||0).toFixed(2).replace(".",",")+" \u20ac (forfait)"+(_gk>0?", offerts jusqu'à "+_gk+" km":"");
   }
@@ -1706,6 +1721,10 @@ function renderSite(){
       h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">Je me déplace chez vous dans un rayon de <strong>'+(zoneKm||25)+' km</strong> autour de '+escapeHtmlSimple(SALON.ville||"ma zone")+'.</div></div></div>';
       h+='<div style="font-size:13px;color:var(--text2);padding-top:10px;border-top:1px solid rgba(255,255,255,.05)">\ud83d\udcb6 '+fraisLabel+'</div>';
       h+='</div>';
+    }
+    if(_dc&&Array.isArray(_dc.communes)&&_dc.communes.length){
+      var _cn=_dc.communes.map(function(c){return c.nom;});
+      h+='<div style="font-size:12px;color:var(--text2);margin-top:10px;line-height:1.6">🏘️ <strong>Communes desservies</strong> : '+escapeHtmlSimple(_cn.slice(0,25).join(", "))+(_cn.length>25?" et "+(_cn.length-25)+" autres":"")+'</div>';
     }
     h+='</div>';
   }
