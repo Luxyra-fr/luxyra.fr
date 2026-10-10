@@ -5056,12 +5056,63 @@ async function runPendingCartesAboPurgeJob(env) {
   }
 }
 
+// ============================================================
+// RGPD J+60 (2026-10-10) — 60 jours après la fin du service (résiliation, essai non transformé, impayé non
+// régularisé) : suppression des données personnelles non fiscales (fiches clientes, photos, réservations et
+// commandes en ligne anonymisées). Préavis par email à J-7. Tickets, clôtures, journal NF525 : conservés 6 ans.
+// ============================================================
+async function runRgpdPurgeJ60(env) {
+  const out = { prevenus: 0, purges: 0, erreurs: 0 };
+  const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/rgpd_purge_candidats`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
+  const c = rc.ok ? await rc.json() : null;
+  if (!c) return { erreur: "candidats illisibles" };
+  for (const s of (c.a_prevenir || [])) {
+    try {
+      const fin = new Date(s.fin); const le = new Date(fin.getTime() + 60 * 86400000).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" });
+      if (s.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)) {
+        await brevoSendEmail(env, { to: s.email, toName: s.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
+          subject: `Vos données Luxyra seront supprimées le ${le}`,
+          htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Suppression prochaine de vos données</h2><p>Bonjour,</p><p>Votre service Luxyra pour <b>${String(s.nom || "votre établissement").replace(/</g, "&lt;")}</b> n'est plus actif. Conformément à nos conditions et au RGPD, <b>les données personnelles de vos clientes</b> (fiches, notes, photos, rendez-vous, réservations en ligne) <b>seront supprimées le ${le}</b>.</p><p>D'ici là, vous pouvez vous reconnecter pour <b>exporter vos données</b> ou <b>réactiver votre abonnement</b> : tout sera conservé à l'identique.</p><p>Vos documents de caisse (tickets, clôtures, journal) restent conservés 6 ans, comme l'exige la loi, et consultables en mode archives.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Me connecter</a></p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+          textContent: `Les données personnelles de vos clientes (fiches, notes, photos, rendez-vous) seront supprimées le ${le}. Reconnectez-vous d'ici là pour exporter vos données ou réactiver votre abonnement : https://luxyra.fr/app . Vos documents de caisse restent conservés 6 ans.`, replyTo: null, attachment: null });
+      }
+      await supabaseUpdate(env, s.id, { rgpd_preavis_le: new Date().toISOString() });
+      out.prevenus++;
+    } catch (e) { out.erreurs++; console.error("rgpd préavis", s.id, e?.message || e); }
+  }
+  for (const s of (c.a_purger || [])) {
+    try {
+      const rp = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/rgpd_purge_salon`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: s.id }) });
+      const r = rp.ok ? await rp.json() : null;
+      if (!r || !r.ok) { out.erreurs++; continue; }
+      // photos des clientes (stockage) : dossier client-photos/<salon_id>/
+      try {
+        const lst = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/client-photos`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: s.id, limit: 1000 }) });
+        const items = lst.ok ? await lst.json() : [];
+        const chemins = [];
+        for (const it of (items || [])) {
+          if (it.id) chemins.push(`${s.id}/${it.name}`);
+          else { // sous-dossier (un niveau)
+            const l2 = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/client-photos`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: `${s.id}/${it.name}`, limit: 1000 }) });
+            for (const x of (l2.ok ? await l2.json() : [])) if (x.id) chemins.push(`${s.id}/${it.name}/${x.name}`);
+          }
+        }
+        if (chemins.length) await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/client-photos`, { method: "DELETE", headers: _sbHeaders(env), body: JSON.stringify({ prefixes: chemins }) });
+        r.photos = chemins.length;
+      } catch (_) {}
+      out.purges++;
+      try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "🧹 RGPD J+60", p_body: `${s.nom} : ${r.clients} fiche(s) cliente(s) supprimée(s)${r.photos ? ", " + r.photos + " photo(s)" : ""}. Données de caisse conservées.`, p_url: "/admin.html", p_payload: {} }) }); } catch (_) {}
+    } catch (e) { out.erreurs++; console.error("rgpd purge", s.id, e?.message || e); }
+  }
+  return out;
+}
+
 async function runRetentionPurgeJob(env) {
   const sbKey = env.SUPABASE_SERVICE_KEY;
   if (!sbKey) {
     console.warn("[retention] SUPABASE_SERVICE_KEY missing — abort");
     return { skipped: "no_service_key" };
   }
+  try { console.log("[rgpd J+60]", JSON.stringify(await runRgpdPurgeJ60(env))); } catch (e) { console.error("[rgpd J+60]", e?.message || e); }
   const now = new Date();
   // Bornes : on calcule "now - X années" en ms. ATTENTION aux années bissextiles
   // → on utilise setFullYear sur un Date pour rester précis.
