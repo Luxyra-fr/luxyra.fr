@@ -489,7 +489,7 @@ async function loadData(){
           userId:s.user_id||"",
           stripeCust:s.stripe_customer_id||"",stripeSub:s.stripe_subscription_id||"",
           connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"not_started",
-          plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",modeActivite:s.mode_activite||"salon",
+          plan:s.plan||"essential",status:s.status||"active",metier:cfg.metier||s.metier||"coiffure",modeActivite:s.mode_activite||"salon",zoneKm:s.zone_deplacement_km,tauxTva:s.taux_tva,
           subdomain:s.subdomain||"",clients:0,collabs:0,ca:0,
           codeParr:s.code_parrainage||"", parrainId:s.parrain_id||null,
           siretAlerte:(cfg.siret_controle&&cfg.siret_controle.coherent===false)?String(cfg.siret_controle.detail||"SIRET à vérifier"):(!s.siret?"SIRET manquant (en cours d'immatriculation)":""),
@@ -2422,7 +2422,7 @@ function asLignes(L){
   L.forEach(function(s){
     var su=asSuivi(s.id), j=asJoursEssai(s);
     h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' onchange="asSel(\''+s.id+'\',this.checked)"></td>';
-    h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
+    h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
     h+='<td>'+statusB(s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
     h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
@@ -2626,6 +2626,8 @@ function openD(id){
   h+='<div class="dp-field"><span class="k">Email</span><span class="v">'+s.email+'</span></div>';
   h+='<div class="dp-field"><span class="k">Tél</span><span class="v">'+(s.tel||"—")+'</span></div>';
   h+='<div class="dp-field"><span class="k">Métier</span><span class="v">'+s.metier+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Exercice</span><span class="v">'+saModeLib(s)+'</span></div>';
+  h+='<div class="dp-field"><span class="k">TVA</span><span class="v">'+(s.tauxTva===null||s.tauxTva===undefined||s.tauxTva===""?'—':(Number(s.tauxTva)<=0?'Franchise (art. 293 B) — non concerné par l’attestation de caisse':'Assujetti ('+Number(s.tauxTva)+' %)'))+'</span></div>';
   h+='<div class="dp-field"><span class="k">Sous-domaine</span><span class="v">'+(s.subdomain?'<a href="https://'+s.subdomain+'.luxyra.fr" target="_blank" style="color:var(--gold)">'+s.subdomain+'.luxyra.fr</a>':'—')+'</span></div></div>';
 
   // DOCUMENTS
@@ -4305,6 +4307,10 @@ async function asRepondreSupport(id,conv){
   asChargerSupport(id,conv);
 }
 
+// Mode d'exercice (2026-10-10)
+function saModeCourt(s){ var m=s.modeActivite||"salon"; return m==="domicile"?"🚗 À domicile":(m==="mixte"?"🔀 Mixte":"🏠 En salon"); }
+function saModeLib(s){ var m=s.modeActivite||"salon", z=(s.zoneKm!==null&&s.zoneKm!==undefined&&Number(s.zoneKm)>0)?" — zone de déplacement "+Number(s.zoneKm)+" km":"";
+  return m==="domicile"?"🚗 À domicile"+z:(m==="mixte"?"🔀 Mixte (en salon et à domicile)"+z:"🏠 En salon / institut"); }
 // --- Voir l'app comme le salon (lecture seule) ---
 async function asVoirApp(id){
   var s=gSalon(id); if(!s) return;
