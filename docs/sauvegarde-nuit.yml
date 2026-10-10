@@ -1,0 +1,100 @@
+name: Sauvegarde de nuit (base Luxyra -> Gmail, chiffrée)
+
+# Chaque nuit : copie complète de la base (salons, clientes, tickets, clôtures, journal NF525, comptes),
+# CHIFFRÉE (AES-256, mot de passe que seul Alexandre connaît), envoyée en pièce jointe sur sa boîte Gmail.
+# Rien n'est stocké sur GitHub (pas d'artefact).
+#
+# PRÉREQUIS — à faire UNE SEULE FOIS par Alexandre dans GitHub :
+#   Settings > Secrets and variables > Actions > New repository secret
+#   1. SUPABASE_DB_URL     : Supabase > Connect > « Session pooler » (URI postgresql://postgres.xxx:MOTDEPASSE@aws-...pooler.supabase.com:5432/postgres)
+#   2. GMAIL_USER          : l'adresse Gmail qui reçoit la sauvegarde
+#   3. GMAIL_APP_PASSWORD  : « mot de passe d'application » Google (16 lettres), PAS le mot de passe Gmail
+#   4. BACKUP_PASSPHRASE   : mot de passe de chiffrement des sauvegardes (à garder précieusement, sans lui pas de restauration)
+# Tant que ces 4 secrets n'existent pas, le travail s'arrête proprement sans erreur.
+#
+# RESTAURER (si un jour nécessaire) :
+#   gpg --decrypt luxyra-AAAA-MM-JJ.dump.gpg > luxyra.dump     (demande BACKUP_PASSPHRASE)
+#   pg_restore --no-owner --no-privileges -d "URL_DE_LA_BASE" luxyra.dump
+
+on:
+  schedule:
+    - cron: "30 0 * * *"   # 00:30 UTC = 01:30/02:30 à Paris, après les clôtures automatiques
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sauvegarde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      GMAIL_USER: ${{ secrets.GMAIL_USER }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: Vérifier la configuration
+        id: cfg
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ] || [ -z "$GMAIL_USER" ] || [ -z "$GMAIL_APP_PASSWORD" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "Secrets de sauvegarde non configurés : rien à faire."
+            echo "pret=non" >> "$GITHUB_OUTPUT"
+          else
+            echo "pret=oui" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Copie de la base (pg_dump 17)
+        if: steps.cfg.outputs.pret == 'oui'
+        run: |
+          set -euo pipefail
+          JOUR=$(TZ=Europe/Paris date +%F)
+          echo "JOUR=$JOUR" >> "$GITHUB_ENV"
+          docker run --rm -e PGURL="$SUPABASE_DB_URL" -v "$PWD:/out" postgres:17 \
+            sh -c 'pg_dump "$PGURL" --format=custom --compress=9 --no-owner --no-privileges \
+              --schema=public --schema=auth --schema=lx_prive --schema=storage --schema=supabase_migrations \
+              --file=/out/luxyra.dump'
+          ls -l luxyra.dump
+
+      - name: Chiffrement (AES-256)
+        if: steps.cfg.outputs.pret == 'oui'
+        run: |
+          set -euo pipefail
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+              --symmetric --cipher-algo AES256 --output "luxyra-$JOUR.dump.gpg" luxyra.dump
+          shred -u luxyra.dump || rm -f luxyra.dump
+          ls -l "luxyra-$JOUR.dump.gpg"
+
+      - name: Envoi sur Gmail
+        if: steps.cfg.outputs.pret == 'oui'
+        run: |
+          python3 - <<'PY'
+          import os, smtplib, ssl, hashlib
+          from email.message import EmailMessage
+          jour = os.environ["JOUR"]
+          f = f"luxyra-{jour}.dump.gpg"
+          data = open(f, "rb").read()
+          taille = len(data)
+          sha = hashlib.sha256(data).hexdigest()
+          msg = EmailMessage()
+          msg["From"] = os.environ["GMAIL_USER"]
+          msg["To"] = os.environ["GMAIL_USER"]
+          trop_gros = taille > 22 * 1024 * 1024
+          msg["Subject"] = f"[Luxyra] Sauvegarde du {jour}" + (" — TROP VOLUMINEUSE, non jointe" if trop_gros else "")
+          corps = (f"Sauvegarde chiffrée de la base Luxyra du {jour}.\n"
+                   f"Taille : {taille/1024/1024:.1f} Mo — empreinte SHA-256 : {sha}\n\n"
+                   "Restauration : gpg --decrypt FICHIER > luxyra.dump (mot de passe BACKUP_PASSPHRASE), "
+                   "puis pg_restore --no-owner --no-privileges -d URL_BASE luxyra.dump\n")
+          if trop_gros:
+              corps += "\nATTENTION : la sauvegarde dépasse la limite de Gmail (25 Mo). Il faut passer à un autre stockage.\n"
+          msg.set_content(corps)
+          if not trop_gros:
+              msg.add_attachment(data, maintype="application", subtype="octet-stream", filename=f)
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
+              s.login(os.environ["GMAIL_USER"], os.environ["GMAIL_APP_PASSWORD"])
+              s.send_message(msg)
+          print("Envoyé :", f, taille, "octets")
+          if trop_gros:
+              raise SystemExit(1)
+          PY
+          rm -f luxyra-*.dump.gpg
