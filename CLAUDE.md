@@ -1549,3 +1549,15 @@ Constat : en mode « destination » (transfer_data), Stripe prélevait ses frais
 - Surveillance Stripe (`runStripeSurveillanceJob`) : alerte « compte Stripe à régulariser » seulement pour un compte qui encaissait (actif) ; une inscription Stripe commencée puis abandonnée (Delphinecoiff, statut incomplete) n'alerte plus. Une seule alerte par situation (signature dans app_secrets `stripe_alerte_<acct>`, effacée quand tout redevient normal).
 - 2026-10-10 : bandeau orange « NF525 — Configurez vos opérateurs » qui apparaissait par moments chez Amandine : `loadOperateurs` renvoyait `[]` quand la lecture échouait (réseau / base lente) -> bandeau + passage sans PIN. Désormais `null` en cas d'échec ; `refreshOperateurs` garde la liste connue, pose `window._lxOpsIndispo` (bandeau masqué) et réessaie 20 s plus tard.
 - 2026-10-10 : `verify_nf525_status` (panneau admin « Inaltérabilité ») cherchait un déclencheur « tickets_nf525_protect » inexistant (nom de la fonction) -> 8/9 en permanence. Remplacé par `ticket_nf525_update_trg` et seuls les déclencheurs actifs (tgenabled<>'D') comptent : 9/9. Aucune protection ni donnée modifiée.
+
+## RÈGLE (à partir du 30/10/2026) — GRANT explicites sur toute nouvelle table public
+Supabase ne donne plus automatiquement l'accès API aux nouvelles tables du schéma public. Toute migration qui crée une table DOIT inclure dans la même migration les GRANT nécessaires (et rien de plus que nécessaire), en plus de RLS + policies :
+- table lue/écrite par l'app (session salon) : `grant select, insert, update, delete on public.X to authenticated;`
+- table publique (site) : `grant select on public.X to anon;` seulement si une policy anon existe
+- toujours : `grant select, insert, update, delete on public.X to service_role;` (worker, edge functions)
+- table interne lue seulement via RPC security definer : service_role uniquement.
+Tables existantes : inchangées.
+
+## À savoir (2026-10-10)
+- Projet Supabase en offre GRATUITE (org « Luxyra », plan free) : sauvegardes non garanties / non téléchargeables ; ni PITR. Pour une caisse NF525 (conservation 6 ans), prévoir offre Pro (+ sauvegarde externe).
+- Brevo : le worker utilise `POST /v3/transactionalSMS/sms` (DÉPRÉCIÉ par Brevo, toujours fonctionnel ; renvoie smsCount/usedCredits). Le nouveau `POST /v3/transactionalSMS/send` ne renvoie que messageId (débit alors basé uniquement sur `lxSmsSegments`). Statistiques : `/v3/transactionalSMS/statistics/reports` (par jour), `/events`.
