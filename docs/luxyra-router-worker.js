@@ -4425,7 +4425,9 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
     const sousTitre = s.sous_titre || "";
     const ville = s.ville || "";
     const cp = s.cp || "";
-    const adresse = s.adresse || "";
+    // 2026-10-10 : pro 100 % à domicile -> adresse personnelle et position exacte jamais publiées
+    const _domicileSeul = String(s.mode_activite || "").toLowerCase() === "domicile";
+    const adresse = _domicileSeul ? "" : (s.adresse || "");
     const canonical = `https://luxyra.fr/${slug}`;
     const image =
       lxSeoImage(cfg.photo_hero) ||
@@ -4529,7 +4531,7 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
     if (s.tel) ld.telephone = String(s.tel);
     if (s.email) ld.email = String(s.email);
     if (s.site_web) ld.sameAs = [String(s.site_web)];
-    if (s.latitude != null && s.longitude != null) {
+    if (!_domicileSeul && s.latitude != null && s.longitude != null) {
       const la = Number(s.latitude), lo = Number(s.longitude);
       if (isFinite(la) && isFinite(lo)) ld.geo = { "@type": "GeoCoordinates", latitude: la, longitude: lo };
     }
