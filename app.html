@@ -3279,6 +3279,7 @@ function calcFraisDeplacement(distKm){
   if(mode!=="domicile"&&mode!=="mixte")return 0;
   var dom=SALON_CONFIG.domicile;if(!dom)return 0;
   if(dom.type==="gratuit")return 0;
+  if(dom.type==="commune")return dom.forfait||0; // forfait par commune : montant exact choisi selon la commune côté réservation
   if(distKm<=(Number(dom.gratuitKm)||0))return 0; // 2026-10-10 : « gratuit jusqu'à X km » vaut aussi pour le forfait (comme le mini-site)
   if(dom.type==="km"){var kmFacturable=Math.max(0,distKm-(dom.gratuitKm||0));return Math.round(kmFacturable*(dom.prixKm||0.5)*100)/100;}
   return dom.forfait||0; // forfait
@@ -13547,8 +13548,8 @@ function rSettings(){
       h+='</div>';
       // Tarification type
       h+='<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:6px">Mode de tarification</div>';
-      var domTypes=[["forfait","\ud83d\udcb0","Forfait fixe"],["km","\ud83d\udecf\ufe0f","Prix au km"],["gratuit","\ud83c\udd93","Gratuit"]];
-      h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">';
+      var domTypes=[["forfait","\ud83d\udcb0","Forfait fixe"],["km","\ud83d\udecf\ufe0f","Prix au km"],["commune","\ud83c\udfd8\ufe0f","Par commune"],["gratuit","\ud83c\udd93","Gratuit"]];
+      h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">';
       for(var dti=0;dti<domTypes.length;dti++){
         var dt=domTypes[dti];var dtSel=(dom.type||"forfait")===dt[0];
         h+='<div onclick="SALON_CONFIG.domicile.type=\''+dt[0]+'\';if(typeof saveSalonConfig===\'function\')saveSalonConfig();go(\'settings\')" style="padding:10px 6px;border-radius:8px;cursor:pointer;text-align:center;background:'+(dtSel?'rgba(200,168,78,.12)':'rgba(255,255,255,.03)')+';border:2px solid '+(dtSel?'var(--gold)':'rgba(255,255,255,.08)')+'">';
@@ -13563,9 +13564,19 @@ function rSettings(){
         h+='<div class="fg" style="margin-bottom:0"><label>Prix par km (\u20ac/km)</label><input type="number" value="'+(dom.prixKm||0.5)+'" min="0" step="0.1" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.prixKm=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
         var exKm=10;var exPrix=Math.max(0,(exKm-(dom.gratuitKm||0)))*dom.prixKm;
         h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Ex: '+exKm+' km = '+exPrix.toFixed(2)+' \u20ac'+(dom.gratuitKm>0?' ('+dom.gratuitKm+' km gratuits)':'')+'</div>';
+      }else if(dom.type==="commune"){
+        h+='<div style="font-size:12px;color:var(--text2);padding:4px 0 8px">Un forfait par commune desservie (r\u00e9glable dans la liste ci-dessous). Montant par d\u00e9faut :</div>';
+        h+='<div class="fg" style="margin-bottom:0"><input type="number" value="'+(dom.forfait||15)+'" min="0" step="0.5" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.forfait=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
       }else{
         h+='<div style="font-size:12px;color:var(--green);padding:8px;text-align:center">\u2705 D\u00e9placement gratuit dans la zone couverte</div>';
       }
+      // 2026-10-10 : communes desservies (cochées) — la réservation à domicile n'est possible que dans ces communes
+      var _nbCom=(dom.communes&&dom.communes.length)||0;
+      h+='<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border2)">';
+      h+='<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:6px">\ud83c\udfd8\ufe0f Communes desservies</div>';
+      h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'+(_nbCom?_nbCom+' commune'+(_nbCom>1?'s':'')+' coch\u00e9e'+(_nbCom>1?'s':'')+' : seules ces communes peuvent r\u00e9server \u00e0 domicile.':'Aucune liste : toute adresse dans la zone de '+(dom.zone||20)+' km est accept\u00e9e.')+'</div>';
+      h+='<button class="btn bs" style="width:100%" onclick="lxCommunesOuvrir()">'+(_nbCom?'Modifier mes communes':'Choisir mes communes')+'</button>';
+      h+='</div>';
       h+='</div>';
     }
     h+='</div>';
@@ -28090,7 +28101,7 @@ function addFraisDeplacement(){
     _tk.items.push({name:"\ud83d\ude97 D\u00e9placement (gratuit)",price:0,qty:1,remise:0,ci:0});
     showCaisse();return;
   }
-  if(dom.type==="forfait"){
+  if(dom.type==="forfait"||dom.type==="commune"){
     var prix=dom.forfait||15;
     var htm='<div class="mbox" style="text-align:center"><h2>\ud83d\ude97 Frais de d\u00e9placement</h2>';
     htm+='<div style="font-size:24px;font-weight:900;color:var(--gold);margin:14px 0">'+prix.toFixed(2)+' \u20ac</div>';
@@ -32936,6 +32947,53 @@ function lxAttConcerne(){
     var p = window._lxPays || (typeof SALON_CONFIG !== "undefined" && SALON_CONFIG && SALON_CONFIG.pays) || "France";
     return /^\s*france\s*$/i.test(String(p));
   } catch(e) { return true; }
+}
+// ===== COMMUNES DESSERVIES À DOMICILE (2026-10-10) =====
+// Liste officielle (geo.api.gouv.fr) : communes du département de l'établissement et des départements voisins
+// touchés par la zone ; pré-cochées si leur centre est dans le rayon. Forfait par commune si tarification « par commune ».
+function _lxDistKm(a,b,c,d){ var R=6371,x=(c-a)*Math.PI/180,y=(d-b)*Math.PI/180,z=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(y/2)*Math.sin(y/2); return R*2*Math.atan2(Math.sqrt(z),Math.sqrt(1-z)); }
+async function lxCommunesOuvrir(){
+  var dom=SALON_CONFIG.domicile||{}; var zone=Number(dom.zone)||20;
+  document.getElementById("modal").innerHTML='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">Chargement des communes…</div></div>';
+  try{
+    var adr=[SALON_CONFIG.adresse,SALON_CONFIG.cp,SALON_CONFIG.ville].filter(Boolean).join(" ");
+    var g=await (await fetch("https://api-adresse.data.gouv.fr/search/?q="+encodeURIComponent(adr)+"&limit=1")).json();
+    var f=g&&g.features&&g.features[0]; if(!f) throw new Error("Adresse de l’établissement introuvable (Paramètres → Infos établissement)");
+    var lat=f.geometry.coordinates[1], lon=f.geometry.coordinates[0];
+    // Départements touchés : centre + 8 points sur le cercle de la zone
+    var deps={}; var pts=[[lat,lon]];
+    for(var k=0;k<8;k++){ var ang=k*Math.PI/4, dLat=(zone/111)*Math.cos(ang), dLon=(zone/(111*Math.cos(lat*Math.PI/180)))*Math.sin(ang); pts.push([lat+dLat,lon+dLon]); }
+    await Promise.all(pts.map(async function(p){ try{ var r=await (await fetch("https://geo.api.gouv.fr/communes?lat="+p[0]+"&lon="+p[1]+"&fields=codeDepartement&format=json")).json(); if(r&&r[0]&&r[0].codeDepartement) deps[r[0].codeDepartement]=1; }catch(e){} }));
+    var L=[];
+    for(var dep in deps){ var r2=await (await fetch("https://geo.api.gouv.fr/departements/"+dep+"/communes?fields=nom,code,codesPostaux,centre&format=json")).json();
+      (r2||[]).forEach(function(c){ if(!c.centre) return; var dk=_lxDistKm(lat,lon,c.centre.coordinates[1],c.centre.coordinates[0]); if(dk<=zone*1.6) L.push({code:c.code,nom:c.nom,cp:(c.codesPostaux||[])[0]||"",dist:Math.round(dk*10)/10}); }); }
+    L.sort(function(a,b){return a.dist-b.dist;});
+    var deja={}; (dom.communes||[]).forEach(function(c){ deja[c.code]=c; });
+    var premier=!(dom.communes&&dom.communes.length);
+    window._lxComL=L.map(function(c){ var d=deja[c.code]; return {code:c.code,nom:c.nom,cp:c.cp,dist:c.dist,on:premier?(c.dist<=zone):!!d,forfait:d&&d.forfait!=null?d.forfait:null}; });
+    lxCommunesRendu("");
+  }catch(e){ document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()"><h2>Communes</h2><div style="color:var(--red)">'+_lxEsc(e.message||e)+'</div><button class="btn bs" style="width:100%;margin-top:10px" onclick="cM()">Fermer</button></div></div>'; }
+}
+function lxCommunesRendu(q){
+  var dom=SALON_CONFIG.domicile||{}, parCom=dom.type==="commune", L=window._lxComL||[], qq=String(q||"").toLowerCase();
+  var nb=L.filter(function(c){return c.on;}).length;
+  var h='<div class="mbox" style="max-width:480px;max-height:90vh;display:flex;flex-direction:column"><h2 style="margin-bottom:4px">🏘️ Communes desservies</h2>';
+  h+='<div style="font-size:12px;color:var(--text2);margin-bottom:8px">'+nb+' cochée'+(nb>1?'s':'')+' · pré-cochées dans un rayon de '+(Number(dom.zone)||20)+' km. Décochez celles où vous n’allez pas.'+(parCom?' Forfait vide = montant par défaut ('+(Number(dom.forfait)||0)+' €).':'')+'</div>';
+  h+='<input id="lxComQ" placeholder="Rechercher une commune" value="'+_lxAttr(q||"")+'" oninput="lxCommunesRendu(this.value)" style="margin-bottom:8px">';
+  h+='<div style="display:flex;gap:6px;margin-bottom:8px"><button class="btn bs" style="flex:1;font-size:12px" onclick="(window._lxComL||[]).forEach(function(c){c.on=true});lxCommunesRendu(document.getElementById(\'lxComQ\').value)">Tout cocher</button><button class="btn bs" style="flex:1;font-size:12px" onclick="(window._lxComL||[]).forEach(function(c){c.on=false});lxCommunesRendu(document.getElementById(\'lxComQ\').value)">Tout décocher</button></div>';
+  h+='<div style="flex:1;overflow:auto;border:1px solid var(--border2);border-radius:10px">';
+  L.forEach(function(c,i){ if(qq && (c.nom+" "+c.cp).toLowerCase().indexOf(qq)<0) return;
+    h+='<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border2);font-size:13px;cursor:pointer"><input type="checkbox" '+(c.on?'checked':'')+' onchange="window._lxComL['+i+'].on=this.checked" style="width:18px;height:18px"><span style="flex:1">'+_lxEsc(c.nom)+' <span style="color:var(--text3);font-size:11px">'+_lxEsc(c.cp)+' · '+String(c.dist).replace(".",",")+' km</span></span>'+(parCom?'<input type="number" min="0" step="0.5" placeholder="€" value="'+(c.forfait!=null?c.forfait:'')+'" onclick="event.stopPropagation()" onchange="window._lxComL['+i+'].forfait=(this.value===\'\'?null:+this.value)" style="width:64px;padding:6px;text-align:center">':'')+'</label>'; });
+  h+='</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM();go(\'settings\')">Annuler</button><button class="btn bg" style="flex:1" onclick="lxCommunesEnregistrer()">Enregistrer</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+  var qi=document.getElementById("lxComQ"); if(qi&&q){ qi.focus(); qi.setSelectionRange(qi.value.length,qi.value.length); }
+}
+function lxCommunesEnregistrer(){
+  var L=(window._lxComL||[]).filter(function(c){return c.on;}).map(function(c){ var o={code:c.code,nom:c.nom,cp:c.cp}; if(c.forfait!=null&&!isNaN(c.forfait)) o.forfait=Number(c.forfait); return o; });
+  if(!SALON_CONFIG.domicile) SALON_CONFIG.domicile={type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:0};
+  SALON_CONFIG.domicile.communes=L;
+  if(typeof saveSalonConfig==="function") saveSalonConfig();
+  toast("✅ "+L.length+" commune"+(L.length>1?"s":"")+" enregistrée"+(L.length>1?"s":""),"success"); cM(); go("settings");
 }
 // ===== VALIDATION DES DEMANDES DE RDV EN LIGNE (2026-10-10) =====
 // RDV à domicile (toujours) et RDV en mode « confirmation manuelle » : le professionnel accepte, propose un autre
