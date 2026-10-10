@@ -391,7 +391,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-02"></script>
+<script src="luxyra-supabase.js?v=20261011-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -1246,6 +1246,7 @@ function lxEmpreinteCapture(rdvId){
       var data=await r.json();
       if(!r.ok){toast(data.error||"Échec capture","error");return;}
       toast("💸 Empreinte capturée — "+(data.amount_captured?data.amount_captured.toFixed(2)+" €":""),"success");
+      setTimeout(function(){ try{ if(typeof lxRetenuesSync==="function") lxRetenuesSync(true); }catch(_eR){} },1500); // 2026-10-11 : enregistrée en caisse
       // Sync local
       if(window.RDV_ONLINE){
         for(var i=0;i<RDV_ONLINE.length;i++)if(RDV_ONLINE[i].id===rdvId){RDV_ONLINE[i].empreinteStatus="captured";RDV_ONLINE[i].empreinteCapturedAt=new Date().toISOString();break;}
@@ -9305,6 +9306,7 @@ document.addEventListener("visibilitychange",function(){
   }catch(_e){}
 });
 window._rdvPollInterval=setInterval(function(){
+  try{ if(typeof lxRetenuesSync==="function") lxRetenuesSync(false); }catch(_eRet){} // 2026-10-11 (limité à 1 passage / 5 min)
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     // FIX 2026-05-23 : filet multi-appareils — recharge les encaissements (appointments)
     // pour rafraîchir le CA Accueil/Stats/Compta même si le realtime est tombé.
@@ -12582,9 +12584,92 @@ function _lxCancelOnlineRdv(rdvId, reason){
     // 2026-10-08 : empreinte active -> le salon choisit (libérer, ou garder pour un no-show)
     if(_empHeld && typeof lxEmpreinteRelease==="function") setTimeout(function(){ lxEmpreinteRelease(rdvId); }, 400);
     var _by=(window._lxCancelBy==="no_show")?"no_show":"salon";
-    _sb.from("rdv_online").update({status:"cancelled",cancelled_by:_by,cancel_reason:(_by==="no_show"?"Cliente absente (no-show)":(reason||"Annul\u00e9 par le salon")),cancelled_at:new Date().toISOString()}).eq("id",rdvId).eq("salon_id",_salonId).then(function(){},function(_e){});
+    var _upd={status:"cancelled",cancelled_by:_by,cancel_reason:(_by==="no_show"?"Cliente absente (no-show)":(reason||"Annul\u00e9 par le salon")),cancelled_at:new Date().toISOString()};
+    // 2026-10-11 : cliente absente -> l'acompte en ligne est définitivement conservé : il est enregistré en caisse
+    // (ticket scellé « Acompte conservé ») par lxRetenuesSync.
+    if(_by==="no_show") _upd.retenue_at=new Date().toISOString();
+    _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).then(function(){ if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200); },function(_e){});
   }catch(_e){}
 }
+// =====================================================================
+// 2026-10-11 — RETENUES ENREGISTRÉES EN CAISSE (loi anti-fraude : toute recette est enregistrée)
+// Un acompte payé en ligne puis CONSERVÉ (cliente absente, annulation hors délai, remboursement
+// désactivé) et une empreinte bancaire CAPTURÉE sont des recettes : un ticket scellé est créé le jour
+// où la retenue devient définitive, au mode « En ligne (Stripe) ».
+// TVA : appliquée au taux de l'établissement (position prudente : l'administration considère que les
+// sommes conservées pour un no-show / une annulation non remboursable rémunèrent la réservation ;
+// BOI-TVA-BASE-10-10-50). Franchise de TVA : 0 %.
+// Anti-doublon : verrou sur rdv_online (*_claim_at, 24 h) + contrôle local + contrôle base + index
+// unique tickets(salon_id, raw_data->>retenueKey). Jamais sur une journée déjà clôturée (Z).
+// =====================================================================
+var _lxRetenuesDernier=0, _lxRetenuesEnCours=false;
+function _lxDateFrCourte(d){ try{ var p=String(d||"").split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }catch(e){ return d; } }
+async function lxRetenuesSync(force){
+  if(_lxRetenuesEnCours) return;
+  if(!force && Date.now()-_lxRetenuesDernier<5*60*1000) return;
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin) return;
+  if(typeof _isOnline!=="undefined" && !_isOnline) return;
+  if(new Date().getHours()>=23) return; // jamais pendant la fenêtre de clôture automatique (23:30)
+  _lxRetenuesDernier=Date.now(); _lxRetenuesEnCours=true;
+  try{
+    TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+    if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]) return;
+    var sel="id,salon_id,status,cancelled_by,client_nom,client_prenom,client_luxyra_id,client_email,client_tel,service_id,service_nom,collaborateur_id,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_rembourse,retenue_at,retenue_tk_num,retenue_claim_at,empreinte_status,empreinte_amount,empreinte_captured_at,empreinte_tk_num,empreinte_claim_at";
+    var a1=await _sb.from("rdv_online").select(sel).eq("salon_id",_salonId).eq("status","cancelled").eq("acompte_paye",true).eq("acompte_rembourse",false).not("retenue_at","is",null).is("retenue_tk_num",null).gt("acompte_montant",0).limit(20);
+    var a2=await _sb.from("rdv_online").select(sel).eq("salon_id",_salonId).eq("empreinte_status","captured").is("empreinte_tk_num",null).gt("empreinte_amount",0).limit(20);
+    var travaux=[];
+    ((a1&&a1.data)||[]).forEach(function(r){ travaux.push({r:r,type:"acompte",montant:Math.round(Number(r.acompte_montant)*100)/100}); });
+    ((a2&&a2.data)||[]).forEach(function(r){ travaux.push({r:r,type:"empreinte",montant:Math.round(Number(r.empreinte_amount)*100)/100}); });
+    if(!travaux.length) return;
+    // Journée déjà clôturée en base ? (clôture automatique ou autre appareil)
+    var cz=await _sb.from("clotures").select("id").eq("salon_id",_salonId).eq("date_cloture",TD).limit(1);
+    if(cz&&cz.data&&cz.data.length){ if(!window.LOCKED_DAYS)window.LOCKED_DAYS={}; window.LOCKED_DAYS[TD]=true; return; }
+    for(var i=0;i<travaux.length;i++){ try{ await _lxRetenueTicket(travaux[i]); }catch(_eT){ console.warn("[retenue]",_eT); } }
+  }catch(e){ console.warn("[lxRetenuesSync]",e); }
+  finally{ _lxRetenuesEnCours=false; }
+}
+async function _lxRetenueTicket(t){
+  var r=t.r, acompte=(t.type==="acompte"), key=t.type+":"+r.id;
+  var colNum=acompte?"retenue_tk_num":"empreinte_tk_num", colClaim=acompte?"retenue_claim_at":"empreinte_claim_at";
+  if(!(t.montant>0)) return;
+  // 1) déjà en base ? -> on reporte juste le numéro
+  var ex=await _sb.from("tickets").select("id,num").eq("salon_id",_salonId).eq("raw_data->>retenueKey",key).limit(1);
+  if(!ex||ex.error) return;
+  if(ex.data&&ex.data.length){ var p0={}; p0[colNum]=ex.data[0].num; await _sb.from("rdv_online").update(p0).eq("id",r.id).eq("salon_id",_salonId); return; }
+  // 2) déjà créé sur cet appareil (enregistrement en attente de réseau) ?
+  for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].retenueKey===key) return; }
+  // 3) verrou définitif : un seul appareil crée le ticket. Jamais repris automatiquement (le ticket
+  //    local non transmis est renvoyé par la file de secours au démarrage) -> aucun doublon possible.
+  if(r[colClaim]){
+    // Verrou posé mais ticket absent depuis plus de 24 h : alerte à l'administrateur (une fois par session).
+    try{ if(Date.now()-new Date(r[colClaim]).getTime()>24*3600*1000 && !window["_lxRetAlerte_"+key]){ window["_lxRetAlerte_"+key]=1;
+      if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"lxRetenuesSync",msg:"Retenue verrouillée sans ticket depuis +24h",key:key,montant:t.montant}).slice(0,2000)); } }catch(_eA){}
+    return;
+  }
+  var pc={}; pc[colClaim]=new Date().toISOString();
+  var cl=await _sb.from("rdv_online").update(pc).eq("id",r.id).eq("salon_id",_salonId).is(colNum,null).is(colClaim,null).select("id");
+  if(!cl||cl.error||!cl.data||!cl.data.length) return;
+  // 4) ticket scellé
+  var quand=_lxDateFrCourte(r.date_rdv)+(r.heure_rdv?" "+String(r.heure_rdv).slice(0,5):"");
+  var motif=acompte?(r.cancelled_by==="no_show"?"cliente absente":(r.cancelled_by==="client"?"annulation hors délai":"conditions d\u2019annulation")):"cliente absente";
+  var lib=acompte?("Acompte conservé - "+(r.service_nom||"Prestation")+" (RDV du "+quand+", "+motif+")")
+                 :("Empreinte encaissée - "+(r.service_nom||"Prestation")+" (RDV du "+quand+", "+motif+")");
+  TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+  nextTicketNum();
+  var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:(r.collaborateur_id!=null?r.collaborateur_id:_defaultCollabId()),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),
+    pr:t.montant,brutTotal:t.montant,remise:0,items:[{name:lib,price:t.montant,qty:1,remise:0,ci:0,isRetenue:true}],st:"done",met:"En ligne (Stripe)",tkNum:tkN,
+    clientNom:r.client_nom||null,clientPrenom:r.client_prenom||null,isRetenue:true,retenueKey:key,retenueRdv:r.id,
+    comment:(acompte?"Acompte payé en ligne et conservé":"Empreinte bancaire capturée")+" - RDV du "+quand+" - "+[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim()};
+  chainTicket(tk); AP.push(tk);
+  if(typeof saveAppointment==="function") saveAppointment(tk);
+  var res=(typeof saveTicketToDb==="function")?await saveTicketToDb(tk):null;
+  var numRef=(res&&res.num)?res.num:tk.tkNum;
+  if(res&&res.num){ var pn={}; pn[colNum]=res.num; await _sb.from("rdv_online").update(pn).eq("id",r.id).eq("salon_id",_salonId); }
+  if(typeof auditLog==="function") auditLog(acompte?"ACOMPTE_CONSERVE":"EMPREINTE_ENCAISSEE",lib+" - "+t.montant.toFixed(2)+"E - Ticket #"+numRef+(res?"":" (envoi en attente)"));
+  try{ if(typeof toast==="function") toast((acompte?"Acompte conservé":"Empreinte encaissée")+" enregistré en caisse : "+t.montant.toFixed(2).replace(".",",")+" \u20ac (ticket #"+numRef+")","info"); }catch(_e){}
+}
+window.lxRetenuesSync=lxRetenuesSync;
+
 function _doCancelApptUnpaid(id){
   // Annulation simple sans check du lien (utilis\u00e9 par _cancelApptDo direct ou via choix "annuler les 2")
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
@@ -14991,6 +15076,8 @@ function rSettings(){
     h+='<button class="btn bs" style="padding:10px 14px;font-size:12px" onclick="saveValiditeDevis(parseInt(document.getElementById(\'customValidite\').value)||30)">Personnalis\u00e9</button>';
     h+='</div></div>';
 
+    // === 2026-10-11 : exercice comptable (clôture annuelle par exercice, BOI-TVA-DECLA-30-10-30 §170) ===
+    h+=lxExerciceCarte();
     // === FIX 2026-05-13 : Carte NF525 (archivage l\u00e9gal 6 ans) ===
     h+='<div class="card" style="margin-top:10px;background:linear-gradient(135deg,rgba(76,175,80,.06),rgba(255,255,255,.02));border:1px solid rgba(76,175,80,.25)">';
     h+='<div class="ct">\ud83d\udd12 Conformit\u00e9 de la caisse (loi anti-fraude)</div>';
@@ -22129,9 +22216,12 @@ function showExportsComptables(){
   exports.push({id:"compta", svg:SVG_COMPTA, color:"#f472b6", title:"Journal des ventes \u2014 \u00e9critures comptables (CSV)", desc:"\u00c9critures d\u00e9bit/cr\u00e9dit FR ("+(isMicro?'706/707/512 sans TVA':'706/707/4457/512')+"). Importable Sage / EBP / Cegid.", fn:"expJournalComptable", count:dn.length+ps2.length+" \u00e9critures"});
   exports.push({id:"annul", svg:SVG_ANNUL, color:"#f87171", title:"Annulations & remboursements (CSV)", desc:"Tickets annul\u00e9s avec motifs et hash original (obligation l\u00e9gale art. 286 CGI).", fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")});
   exports.push({id:"stripe", svg:SVG_STRIPE, color:"#818cf8", title:"Bordereau acomptes en ligne (CSV)", desc:"R\u00e9conciliation Stripe Connect : montant brut, frais Stripe, net re\u00e7u en banque.", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")});
+  // 2026-10-11 : encaissements en ligne datés du jour du PAIEMENT (TVA exigible à l'encaissement / recettes des micro)
+  if(isMicro || (typeof lxEstMicro==="function" && lxEstMicro())) exports.push({id:"recettes", svg:SVG_URSSAF, color:"#a78bfa", title:"Livre des recettes encaiss\u00e9es (CSV)", desc:"Registre obligatoire en micro-entreprise : chaque recette \u00e0 la date o\u00f9 elle est encaiss\u00e9e (acomptes en ligne le jour du paiement, solde le jour de la prestation, remboursements).", fn:"expLivreRecettes", count:""});
+  if(!isMicro || lxTauxTVA()>0) exports.push({id:"enligne", svg:SVG_TVA, color:"#fbbf24", title:"Paiements en ligne \u2014 TVA \u00e0 l\u2019encaissement (CSV)", desc:"Acomptes et commandes pay\u00e9s en ligne : TVA due le mois du paiement (art. 269-2-c CGI). Donne l\u2019ajustement \u00e0 reporter sur la d\u00e9claration de TVA du mois.", fn:"expTvaPaiementsEnLigne", count:""});
 
   exports.forEach(function(e){
-    var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez");
+    var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne");
     h += '<div style="display:flex;align-items:center;gap:14px;padding:14px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:12px;margin-bottom:8px;'+(disabled?'opacity:.4;':'cursor:pointer;')+'transition:all .2s"'+(disabled?'':' onmouseover="this.style.background=\'rgba(212,168,67,.06)\';this.style.borderColor=\'rgba(212,168,67,.25)\'" onmouseout="this.style.background=\'rgba(255,255,255,.025)\';this.style.borderColor=\'rgba(255,255,255,.05)\'" onclick="cM();'+e.fn+'()"')+'>';
     h += '<div style="width:42px;height:42px;flex-shrink:0;border-radius:11px;background:'+e.color+'22;border:1px solid '+e.color+'44;display:flex;align-items:center;justify-content:center;color:'+e.color+'">'+e.svg+'</div>';
     h += '<div style="flex:1;min-width:0">';
@@ -22578,6 +22668,133 @@ function expBordereauStripe(){
   ];
   csvDownload("bordereau_stripe_"+accM+".csv", csvBuildPro("Bordereau acomptes en ligne (Stripe Connect)", accM, headers, dataRows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_BORDEREAU_STRIPE","P\u00e9riode "+accM+" - "+rdvOnline.length+" acomptes - Brut "+csvNum(totalBrut));
+}
+
+// =====================================================================
+// 2026-10-11 — PAIEMENTS EN LIGNE DATÉS DU JOUR D'ENCAISSEMENT
+// Dans la caisse, un acompte payé en ligne entre dans le chiffre d'affaires le jour de la prestation
+// (mode de règlement « en ligne », compte 58010000). Or :
+//  - la TVA d'une prestation de services est due à l'ENCAISSEMENT, acomptes compris (CGI art. 269-2-c) ;
+//  - un micro-entrepreneur déclare les recettes ENCAISSÉES.
+// Ces exports donnent, pour le mois choisi, les montants à la date du paiement et l'ajustement à faire.
+// Lecture seule : aucune donnée de caisse n'est modifiée.
+// =====================================================================
+function _lxMoisBornes(m){ var y=Number(m.slice(0,4)), mo=Number(m.slice(5,7)); var fin=new Date(Date.UTC(mo===12?y+1:y, mo===12?0:mo, 1)); return {debut:m+"-01", finExcl:fin.toISOString().slice(0,10)}; }
+function _lxDateParis(iso){ if(!iso) return ""; try{ var d=new Date(iso); var p=new Intl.DateTimeFormat("fr-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(d); return p; }catch(e){ return String(iso).slice(0,10); } }
+async function _lxPaiementsEnLigne(mois){
+  // Retourne la liste des paiements en ligne utiles au mois : {type, ref, client, libelle, montant, paye, rembourse, reconnu}
+  var b=_lxMoisBornes(mois), L=[], nums={};
+  // Fenêtre : 18 mois avant la fin du mois (un acompte est payé au plus quelques mois avant le RDV)
+  var d0=new Date(b.finExcl+"T00:00:00Z"); d0.setUTCMonth(d0.getUTCMonth()-18); var depuis=d0.toISOString();
+  var fin=b.finExcl+"T23:59:59Z"; // filtrage exact au jour de Paris ensuite
+  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_paye_at,acompte_rembourse,refunded_at,status,ticket_num,retenue_tk_num").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).gte("acompte_paye_at",depuis).lt("acompte_paye_at",fin).order("acompte_paye_at",{ascending:false}).limit(5000);
+  if(r1.error) throw new Error(r1.error.message);
+  var r2=await _sb.from("commandes_online").select("id,numero,client_nom,total,paye,paye_at,status,collected_at,ticket_num,refund_id,cancelled_at").eq("salon_id",_salonId).eq("paye",true).gte("paye_at",depuis).lt("paye_at",fin).order("paye_at",{ascending:false}).limit(5000);
+  if(r2.error) throw new Error(r2.error.message);
+  var r3=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,empreinte_amount,empreinte_captured_at,empreinte_tk_num").eq("salon_id",_salonId).eq("empreinte_status","captured").gt("empreinte_amount",0).gte("empreinte_captured_at",depuis).lt("empreinte_captured_at",fin).limit(5000);
+  if(r3.error) throw new Error(r3.error.message);
+  (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1; });
+  (r3.data||[]).forEach(function(r){ if(r.empreinte_tk_num) nums[r.empreinte_tk_num]=1; });
+  var dTk={}, lst=Object.keys(nums).map(Number).filter(function(n){return n>0;});
+  for(var i=0;i<lst.length;i+=200){
+    var tr=await _sb.from("tickets").select("num,date_ticket").eq("salon_id",_salonId).in("num",lst.slice(i,i+200));
+    ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=t.date_ticket; });
+  }
+  (r1.data||[]).forEach(function(r){
+    var reconnu="";
+    if(r.acompte_rembourse) reconnu="";
+    else if(r.retenue_tk_num) reconnu=dTk[r.retenue_tk_num]||"";
+    else if(r.status==="done") reconnu=(r.ticket_num&&dTk[r.ticket_num])||r.date_rdv||"";
+    L.push({type:"Acompte RDV", ref:"RDV du "+_lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), client:[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim(),
+      libelle:r.service_nom||"", montant:Math.round(Number(r.acompte_montant)*100)/100, paye:_lxDateParis(r.acompte_paye_at), taux:lxTauxTVA(),
+      rembourse:(r.acompte_rembourse?_lxDateParis(r.refunded_at)||"":""), rembInconnu:!!(r.acompte_rembourse&&!r.refunded_at), reconnu:reconnu,
+      etat:r.acompte_rembourse?"Rembours\u00e9":(r.retenue_tk_num?"Conserv\u00e9 (ticket #"+r.retenue_tk_num+")":(r.status==="done"?"Prestation r\u00e9alis\u00e9e":(r.status==="cancelled"?"Annul\u00e9 (remboursement en cours)":"RDV \u00e0 venir")))});
+  });
+  (r2.data||[]).forEach(function(c){
+    var annule=!!(c.refund_id||c.status==="annulee"||c.status==="cancelled");
+    var tp=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):lxTauxTVA();
+    L.push({type:"Commande en ligne", ref:"Commande n\u00b0"+(c.numero||""), client:c.client_nom||"", libelle:"Click & Collect", montant:Math.round(Number(c.total)*100)/100, taux:tp,
+      paye:_lxDateParis(c.paye_at), rembourse:annule?_lxDateParis(c.cancelled_at):"", rembInconnu:!!(annule&&!c.cancelled_at), reconnu:(!annule&&c.status==="retiree")?_lxDateParis(c.collected_at):"",
+      etat:annule?"Rembours\u00e9e":(c.status==="retiree"?"Remise":"\u00c0 retirer")});
+  });
+  (r3.data||[]).forEach(function(r){
+    L.push({type:"Empreinte encaiss\u00e9e", ref:"RDV du "+_lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), client:[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim(),
+      libelle:(r.service_nom||"")+" (absence)", montant:Math.round(Number(r.empreinte_amount)*100)/100, taux:lxTauxTVA(), paye:_lxDateParis(r.empreinte_captured_at),
+      rembourse:"", rembInconnu:false, reconnu:(r.empreinte_tk_num&&dTk[r.empreinte_tk_num])||"", etat:r.empreinte_tk_num?"Enregistr\u00e9e en caisse (ticket #"+r.empreinte_tk_num+")":"En attente d\u2019enregistrement en caisse"});
+  });
+  return L;
+}
+async function expTvaPaiementsEnLigne(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter les paiements en ligne",expTvaPaiementsEnLigne);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var L; try{ L=await _lxPaiementsEnLigne(accM); }catch(e){ toast("Export impossible : "+e.message,"error"); return; }
+  var t=lxTauxTVA(), inM=function(d){ return d && String(d).indexOf(accM)===0; }, avant=function(d){ return d && String(d).slice(0,7)<accM; };
+  var plus=0, moins=0, regul=0, enc=0, rows=[], tvaNet=0;
+  L.forEach(function(p){
+    var ajust=0, note="", tx=(p.taux!=null?p.taux:t);
+    if(inM(p.paye)) enc+=p.montant;
+    if(p.rembInconnu){ if(inM(p.paye)) rows.push([p.paye, p.type, p.ref, p.client, p.libelle, csvNum(p.montant), "", "date inconnue", p.etat, "0", "0", "0", "Rembours\u00e9 (date du remboursement non enregistr\u00e9e) : v\u00e9rifier sur Stripe"]); return; }
+    if(inM(p.paye) && !inM(p.reconnu) && !inM(p.rembourse)){ ajust=p.montant; plus+=p.montant; note="Encaiss\u00e9 ce mois, pas encore dans le chiffre du mois : TVA \u00e0 AJOUTER"; }
+    else if(avant(p.paye) && inM(p.reconnu)){ ajust=-p.montant; moins+=p.montant; note="D\u00e9j\u00e0 d\u00e9clar\u00e9 au mois du paiement et compris dans le chiffre de ce mois : \u00e0 RETIRER"; }
+    else if(avant(p.paye) && inM(p.rembourse)){ ajust=-p.montant; regul+=p.montant; note="Rembours\u00e9 ce mois apr\u00e8s avoir \u00e9t\u00e9 d\u00e9clar\u00e9 : TVA \u00e0 R\u00c9CUP\u00c9RER"; }
+    else if(inM(p.paye) && inM(p.reconnu)) note="Pay\u00e9 et factur\u00e9 dans le mois : d\u00e9j\u00e0 dans le chiffre, rien \u00e0 faire";
+    else if(inM(p.paye) && inM(p.rembourse)) note="Pay\u00e9 et rembours\u00e9 dans le mois : rien \u00e0 d\u00e9clarer";
+    else return;
+    var ht=Math.round(ajust/(1+tx/100)*100)/100, tv=Math.round((ajust-ht)*100)/100; tvaNet+=tv;
+    rows.push([p.paye, p.type, p.ref, p.client, p.libelle, csvNum(p.montant), p.reconnu||"", p.rembourse||"", p.etat, csvNum(ajust), csvNum(ht), csvNum(tv)+" ("+tx+"%)", note]);
+  });
+  rows.sort(function(x,y){ return String(x[0]).localeCompare(String(y[0])); });
+  var net=Math.round((plus-moins-regul)*100)/100; tvaNet=Math.round(tvaNet*100)/100; var netHT=Math.round((net-tvaNet)*100)/100;
+  var headers=["Pay\u00e9 le","Type","R\u00e9f\u00e9rence","Client","D\u00e9tail","Montant TTC (\u20AC)","Dans le chiffre le","Rembours\u00e9 le","\u00c9tat","Ajustement TTC (\u20AC)","Ajustement HT (\u20AC)","Ajustement TVA (\u20AC)","Explication"];
+  var footer=[
+    ["Paiements en ligne encaiss\u00e9s ce mois", csvNum(enc)+" \u20ac"],
+    ["\u00c0 ajouter (encaiss\u00e9s, pas encore dans le chiffre)", csvNum(plus)+" \u20ac TTC"],
+    ["\u00c0 retirer (d\u00e9j\u00e0 d\u00e9clar\u00e9s un mois pr\u00e9c\u00e9dent)", csvNum(moins)+" \u20ac TTC"],
+    ["\u00c0 r\u00e9gulariser (rembours\u00e9s apr\u00e8s d\u00e9claration)", csvNum(regul)+" \u20ac TTC"],
+    ["AJUSTEMENT NET \u00c0 REPORTER", csvNum(net)+" \u20ac TTC = "+csvNum(netHT)+" \u20ac HT + "+csvNum(tvaNet)+" \u20ac TVA"],
+    ["Mode d'emploi", "D\u00e9claration de TVA du mois = R\u00e9cap TVA mensuel (chiffre de caisse) + cet ajustement net."],
+    ["Base l\u00e9gale", "TVA des prestations de services exigible \u00e0 l'encaissement, acomptes compris (CGI art. 269-2-c ; CE 24/02/2021 n\u00b0429647). Sommes conserv\u00e9es (absence, annulation tardive) soumises \u00e0 TVA par prudence (BOI-TVA-BASE-10-10-50)."],
+    ["Note", "Si votre entreprise a opt\u00e9 pour la TVA sur les d\u00e9bits, cet ajustement ne s'applique pas."]
+  ];
+  csvDownload("tva_paiements_en_ligne_"+accM+".csv", csvBuildPro("Paiements en ligne \u2014 TVA \u00e0 l'encaissement", accM, headers, rows, footer));
+  if(typeof auditLog==="function") auditLog("EXPORT_TVA_EN_LIGNE","P\u00e9riode "+accM+" - ajustement net "+csvNum(net));
+}
+async function expLivreRecettes(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le livre des recettes",expLivreRecettes);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var L; try{ L=await _lxPaiementsEnLigne(accM); }catch(e){ toast("Export impossible : "+e.message,"error"); return; }
+  var rows=[], tot=0;
+  function ligne(date,heure,ref,client,nature,mode,montant){ montant=Math.round(montant*100)/100; if(Math.abs(montant)<0.005) return; tot+=montant; rows.push([date,heure||"",ref,client,nature,mode,csvNum(montant)]); }
+  // 1) Encaissements au comptoir (tickets du mois), hors part déjà payée en ligne
+  AP.filter(function(a){ return a.st==="done" && a.tkNum && String(a.date||"").indexOf(accM)===0; }).forEach(function(a){
+    // Règlement par bon cadeau / avoir : pas une nouvelle recette (le bon a été compté à sa vente).
+    var b=_lxPayBuckets(a), comptoir=(b.cb+b.esp+b.chq+b.vir+b.aut);
+    var modes=[]; ["cb","esp","chq","vir","aut"].forEach(function(k){ if(Math.abs(b[k])>0.004) modes.push({cb:"CB",esp:"Esp\u00e8ces",chq:"Ch\u00e8que",vir:"Virement",aut:"Autre"}[k]); });
+    var cl=(typeof gC==="function")?gC(a.cId):null;
+    var nom=cl?cName(cl):((typeof apptClientLabel==="function")?apptClientLabel(a):"");
+    var nat=(a.items&&a.items.length)?a.items.filter(function(it){return !it.isSep && !it.isAcompteData;}).map(function(it){return it.name||"";}).join(" + "):"Prestation";
+    ligne(a.date,a.time,"Ticket #"+a.tkNum,nom,nat,modes.join(" + "),comptoir);
+  });
+  (typeof PS!=="undefined"?PS:[]).filter(function(p){ return String(p.date||"").indexOf(accM)===0; }).forEach(function(p){ ligne(p.date,p.time,"Vente #"+(p.tkNum||""),"","Vente produit : "+(p.prod||""),p.met||"",Number(p.pr)||0); });
+  // 2) Paiements en ligne : au jour du paiement ; remboursements : au jour du remboursement
+  L.forEach(function(p){
+    if(String(p.paye).indexOf(accM)===0) ligne(p.paye,"",p.ref,p.client,p.type+" pay\u00e9 en ligne"+(p.libelle?" : "+p.libelle:""),"En ligne (carte)",p.montant);
+    if(p.rembourse && !p.rembInconnu && String(p.rembourse).indexOf(accM)===0) ligne(p.rembourse,"",p.ref,p.client,"Remboursement "+p.type.toLowerCase(),"En ligne (carte)",-p.montant);
+  });
+  rows.sort(function(x,y){ return String(x[0]).localeCompare(String(y[0])) || String(x[1]).localeCompare(String(y[1])); });
+  var headers=["Date d'encaissement","Heure","R\u00e9f\u00e9rence","Client","Nature","Mode de r\u00e8glement","Montant (\u20AC)"];
+  var footer=[
+    ["TOTAL DES RECETTES ENCAISS\u00c9ES DU MOIS", csvNum(Math.round(tot*100)/100)+" \u20ac"],
+    ["\u00c0 d\u00e9clarer", "Montant \u00e0 reporter sur votre d\u00e9claration de chiffre d'affaires (autoentrepreneur.urssaf.fr) pour ce mois."],
+    ["Rappel", "Les acomptes pay\u00e9s en ligne comptent le jour du paiement ; le jour du rendez-vous, seul le solde pay\u00e9 sur place est compt\u00e9. Un acompte conserv\u00e9 (cliente absente) a d\u00e9j\u00e0 \u00e9t\u00e9 compt\u00e9 le jour du paiement."],
+    ["Base l\u00e9gale", "Micro-entreprise : recettes encaiss\u00e9es (CGI art. 50-0 et 102 ter) ; livre-journal des recettes obligatoire."]
+  ];
+  csvDownload("livre_recettes_"+accM+".csv", csvBuildPro("Livre des recettes encaiss\u00e9es", accM, headers, rows, footer));
+  if(typeof auditLog==="function") auditLog("EXPORT_LIVRE_RECETTES","P\u00e9riode "+accM+" - total "+csvNum(tot));
 }
 
 // =====================================================================
@@ -33146,6 +33363,96 @@ setInterval(function(){ try { if (window._salonId && !window._lxAttStatutCharge)
 window.lxDownloadAttestationNF525 = lxDownloadAttestationNF525;
 
 // Télécharge l'archive NF525 du salon (tickets + clôtures + chaîne hash)
+// =====================================================================
+// 2026-10-11 — EXERCICE COMPTABLE
+// La caisse fait une clôture journalière, mensuelle et annuelle « ou par exercice lorsque
+// l'exercice ne coïncide pas avec l'année civile » (BOI-TVA-DECLA-30-10-30 §170).
+// salons.exercice_fin_mois = mois de fin (dernier jour du mois). 12 = 31 décembre.
+// Micro-entreprise : 31 décembre obligatoire (forcé aussi côté base).
+// La clôture scellée de l'exercice est faite par la base (cloturer_exercice, cron 03:50) ;
+// la clôture civile au 31/12 reste faite comme avant.
+// =====================================================================
+var LX_MOIS_FIN=["","31 janvier","fin février","31 mars","30 avril","31 mai","30 juin","31 juillet","31 août","30 septembre","31 octobre","30 novembre","31 décembre"];
+function lxEstMicro(){ var c=String(SALON_CONFIG.formeJuridiqueCode||"").toLowerCase(); return c.indexOf("micro")>=0 || /micro|auto-entrepreneur/i.test(String(SALON_CONFIG.formeJur||"")); }
+function lxExercicePeriode(dateStr){
+  // Exercice contenant la date (YYYY-MM-DD) : {debut, fin}
+  var m=Number(SALON_CONFIG.exerciceFinMois)||12; if(lxEstMicro()) m=12;
+  var d=new Date((dateStr||TD)+"T12:00:00"), y=d.getFullYear();
+  function fin(an){ var x=new Date(an,m,0); return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0"); }
+  var f=fin(y); if(f<(dateStr||TD)) f=fin(y+1);
+  var fp=fin(Number(f.slice(0,4))-1), dp=new Date(fp+"T12:00:00"); dp.setDate(dp.getDate()+1);
+  var deb=dp.getFullYear()+"-"+String(dp.getMonth()+1).padStart(2,"0")+"-"+String(dp.getDate()).padStart(2,"0");
+  return {debut:deb, fin:f};
+}
+function lxExerciceCarte(){
+  var m=Number(SALON_CONFIG.exerciceFinMois)||12, micro=lxEstMicro(); if(micro) m=12;
+  var p=lxExercicePeriode(TD);
+  var h='<div class="card" style="margin-top:10px">';
+  h+='<div class="ct">\ud83d\udcc5 Exercice comptable</div>';
+  h+='<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">Clôture de l\u2019exercice : <strong style="color:var(--gold)">'+LX_MOIS_FIN[m]+'</strong><br>Exercice en cours : du '+fmt(p.debut)+' au '+fmt(p.fin)+'</div>';
+  if(micro){
+    h+='<div style="font-size:11px;color:var(--text3);line-height:1.5">Micro-entreprise : l\u2019exercice se termine obligatoirement le 31 décembre.</div>';
+  } else {
+    h+='<button class="btn bs" style="width:100%;padding:11px;font-size:12px" onclick="lxExerciceModifier()">Modifier la date de clôture</button>';
+  }
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5">\ud83d\udd12 À la fin de chaque exercice, la caisse enregistre automatiquement une clôture scellée de l\u2019exercice (en plus des clôtures du jour, du mois et de l\u2019année civile).</div>';
+  h+='<button class="btn bs" style="width:100%;margin-top:8px;padding:10px;font-size:12px;background:rgba(255,255,255,.04)" onclick="lxExerciceClotures()">Voir les clôtures d\u2019exercice</button>';
+  h+='</div>';
+  return h;
+}
+function lxExerciceModifier(){
+  if(lxEstMicro()){ toast("Micro-entreprise : clôture au 31 décembre obligatoire","info"); return; }
+  if(typeof requireAdmin==="function" && typeof hasPermission==="function" && !hasPermission("compta")){ requireAdmin("Exercice comptable",_lxExerciceModale); return; }
+  _lxExerciceModale();
+}
+function _lxExerciceModale(){
+  var cur=Number(SALON_CONFIG.exerciceFinMois)||12;
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:420px">';
+  h+='<h2 style="margin-bottom:6px">Date de clôture de l\u2019exercice</h2>';
+  h+='<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:12px">Indiquez la date qui figure dans vos statuts (ou celle choisie à la création de l\u2019entreprise). L\u2019exercice dure normalement 12 mois.</div>';
+  h+='<select id="lxExoMois" style="width:100%;padding:12px;font-size:14px;margin-bottom:12px">';
+  for(var i=1;i<=12;i++) h+='<option value="'+i+'"'+(i===cur?' selected':'')+'>'+LX_MOIS_FIN[i]+'</option>';
+  h+='</select>';
+  h+='<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:14px">\u26a0\ufe0f Changer la date de clôture d\u2019une société demande une décision des associés (et un dépôt au greffe). Ne modifiez ce réglage que s\u2019il correspond à votre situation réelle. Le changement est enregistré dans le journal de la caisse.</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn bs" style="flex:1" onclick="cM()">Annuler</button><button class="btn bg" style="flex:1" onclick="lxExerciceEnregistrer()">Enregistrer</button></div>';
+  h+='</div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+async function lxExerciceEnregistrer(){
+  var el=document.getElementById("lxExoMois"); var m=el?parseInt(el.value,10):NaN;
+  if(!(m>=1&&m<=12)){ toast("Mois invalide","error"); return; }
+  if(m===(Number(SALON_CONFIG.exerciceFinMois)||12)){ cM(); return; }
+  try{
+    var r=await _sb.from("salons").update({exercice_fin_mois:m}).eq("id",_salonId).select("exercice_fin_mois");
+    if(r.error||!r.data||!r.data.length){ toast("Enregistrement impossible"+(r.error?" : "+r.error.message:""),"error"); return; }
+    SALON_CONFIG.exerciceFinMois=Number(r.data[0].exercice_fin_mois)||12;
+    if(typeof auditLog==="function") auditLog("CONFIG_EXERCICE","Clôture de l'exercice : "+LX_MOIS_FIN[SALON_CONFIG.exerciceFinMois]);
+    toast("Clôture de l\u2019exercice : "+LX_MOIS_FIN[SALON_CONFIG.exerciceFinMois],"success");
+    cM(); if(typeof go==="function") go(window._currentPage||"settings");
+  }catch(e){ toast("Erreur réseau","error"); }
+}
+async function lxExerciceClotures(){
+  var L=[];
+  try{ var r=await _sb.from("clotures_exercices").select("*").eq("salon_id",_salonId).order("date_fin",{ascending:false}); L=(r&&r.data)||[]; }catch(e){}
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:480px">';
+  h+='<h2 style="margin-bottom:10px">Clôtures d\u2019exercice</h2>';
+  if(!L.length) h+='<div style="font-size:13px;color:var(--text2);line-height:1.6">Aucune pour l\u2019instant. La première sera enregistrée automatiquement le lendemain de la fin de l\u2019exercice en cours ('+fmt(lxExercicePeriode(TD).fin)+').</div>';
+  L.forEach(function(c){
+    var det=c.detail_paiements||{}, lignes=[];
+    Object.keys(det).forEach(function(k){ if(Number(det[k])) lignes.push(_lxEsc(k)+" : "+Number(det[k]).toFixed(2).replace(".",",")+" \u20ac"); });
+    h+='<div style="border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px;margin-bottom:10px;font-size:12px;line-height:1.6">';
+    h+='<div style="font-weight:800;color:var(--gold);font-size:13px">Du '+fmt(c.date_debut)+' au '+fmt(c.date_fin)+'</div>';
+    h+='CA TTC : <strong>'+Number(c.total_ca).toFixed(2).replace(".",",")+' \u20ac</strong> · HT : '+Number(c.total_ht).toFixed(2).replace(".",",")+' \u20ac · TVA : '+Number(c.total_tva).toFixed(2).replace(".",",")+' \u20ac<br>';
+    h+=c.nb_tickets+' tickets · '+c.nb_annulations+' annulations · '+c.nb_jours_clotures+' clôtures journalières<br>';
+    if(c.cumul_perpetuel_ca!=null) h+='Total perpétuel : '+Number(c.cumul_perpetuel_ca).toFixed(2).replace(".",",")+' \u20ac<br>';
+    if(lignes.length) h+='<span style="color:var(--text3)">'+lignes.join(" · ")+'</span><br>';
+    h+='<span style="font-family:monospace;font-size:10px;color:var(--text3);word-break:break-all">Empreinte : '+_lxEsc(c.hash)+'</span>';
+    h+='</div>';
+  });
+  h+='<button class="btn bs" style="width:100%" onclick="cM()">Fermer</button></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+
 async function lxDownloadArchiveNF525(){
   if(typeof toast==="function") toast("Génération de l\'archive en cours…","info");
   try{

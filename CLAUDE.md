@@ -1647,3 +1647,11 @@ Tables existantes : inchangées.
 - Worker : connect-payment refuse un RDV non actif ou acompte déjà payé (409) ; acompte-finalize ne touche jamais un RDV cancelled/refused/done (enregistre le paiement + alerte critique pour remboursement) ; acompte-info : done = non payable.
 - site.html : arrondissements Paris/Lyon/Marseille normalisés (75056/69123/13055) avant la comparaison des communes.
 - compte.html : statut refused affiché « Non retenu ».
+
+## 2026-10-11 — Exercice comptable, retenues en caisse, TVA à l'encaissement (NF525 — accord d'Alexandre)
+- salons.exercice_fin_mois (1..12, fin de mois ; micro forcé 12 par trigger lx_prive.salons_exercice_trace, changement tracé audit_log CONFIG_EXERCICE). Amandine = 3 (31 mars).
+- clotures_exercices (inaltérable, chaînée 'ZE|debut|fin|ca|nb|prev|siret', depuis les Z journaliers) ; cloturer_exercice(salon, date_fin) ; run_cloture_exercice_pour_tous() cron 03:50 (mois<>12 ; le 31/12 = clôture annuelle civile inchangée). factory_reset_salon purge aussi la table. UI : carte « Exercice comptable » (lxExerciceCarte…).
+- Retenues : rdv_online.retenue_at (décision définitive : no_show app / worker conserve:true hors délai ou remboursement désactivé), retenue_tk_num/claim_at, empreinte_tk_num/claim_at. lxRetenuesSync (poll ≤ 1×/5 min, jamais après 23 h, jamais jour clôturé) crée un ticket scellé met « En ligne (Stripe) », cId passage, TVA au taux du salon (prudence BOI-TVA-BASE-10-10-50). Verrou définitif + index unique tickets(salon_id, raw_data->>'retenueKey'). Le cron de remboursement ignore retenue_at non nul.
+- rdv_online.acompte_paye_at / commandes_online.paye_at posés par trigger (historique = confirmed_at/created_at).
+- Exports (lecture seule) : expTvaPaiementsEnLigne (ajustement TVA à l'encaissement, régime réel) ; expLivreRecettes (micro : recettes encaissées, bons cadeaux exclus au règlement).
+- Le modèle de caisse de l'acompte en ligne (mode de règlement « enligne » au jour de la prestation) est INCHANGÉ.
