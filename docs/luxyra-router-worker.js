@@ -4374,6 +4374,10 @@ const LX_METIER = {
   esthetique:{ schema: "BeautySalon", label: "Institut de beauté",   noun: "Institut de beauté" },
   ongles:    { schema: "NailSalon",   label: "Onglerie",             noun: "Onglerie" },
   bien_etre: { schema: "DaySpa",      label: "Spa & bien-être",      noun: "Spa & bien-être" },
+  regard:    { schema: "BeautySalon",  label: "Cils & sourcils",      noun: "Studio regard" },
+  maquillage:{ schema: "BeautySalon",  label: "Maquillage",           noun: "Studio maquillage" },
+  tatouage:  { schema: "TattooParlor", label: "Tatouage & piercing",  noun: "Studio de tatouage" },
+  spa:       { schema: "DaySpa",       label: "Spa & massages",       noun: "Spa & massages" },
 };
 const LX_SEO_FALLBACK_METIER = { schema: "LocalBusiness", label: "Salon", noun: "Salon" };
 
