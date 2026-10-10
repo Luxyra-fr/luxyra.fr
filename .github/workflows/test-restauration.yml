@@ -1,0 +1,126 @@
+name: Test de restauration de la sauvegarde
+
+# Vérifie qu'une sauvegarde peut VRAIMENT être rouverte : même procédure que la sauvegarde de nuit
+# (copie pg_dump 17 + chiffrement AES-256 avec BACKUP_PASSPHRASE), puis déchiffrement et restauration
+# dans une base Postgres 17 JETABLE (détruite à la fin), et comparaison du nombre de lignes des tables
+# essentielles (tickets, clôtures, journal NF525, clientes, rendez-vous, salons…) avec la base réelle.
+# La base réelle n'est jamais modifiée (lecture seule). Rien n'est conservé sur GitHub.
+# Lancement : 1er de chaque mois à 03:30 UTC, ou à la main (Actions > Run workflow).
+
+on:
+  schedule:
+    - cron: "30 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restauration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    services:
+      jetable:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: jetable
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - name: Vérifier la configuration
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then echo "Secrets manquants"; exit 1; fi
+
+      - name: Comptage dans la base réelle (lecture seule)
+        run: |
+          set -euo pipefail
+          cat > /tmp/compte.sql <<'SQL'
+          select 'tickets', count(*) from public.tickets
+          union all select 'clotures', count(*) from public.clotures
+          union all select 'audit_log', count(*) from public.audit_log
+          union all select 'clients', count(*) from public.clients
+          union all select 'appointments', count(*) from public.appointments
+          union all select 'salons', count(*) from public.salons
+          union all select 'cartes_cadeaux', count(*) from public.cartes_cadeaux
+          union all select 'nf525_hash_seal', count(*) from public.nf525_hash_seal
+          union all select 'auth_users', count(*) from auth.users
+          order by 1;
+          SQL
+          docker run --rm -e PGURL="$SUPABASE_DB_URL" -v /tmp:/tmp postgres:17 \
+            psql "$PGURL" -At -F '|' -v ON_ERROR_STOP=1 -f /tmp/compte.sql > /tmp/reel.txt
+          cat /tmp/reel.txt
+
+      - name: Copie + chiffrement (comme la sauvegarde de nuit)
+        run: |
+          set -euo pipefail
+          docker run --rm -e PGURL="$SUPABASE_DB_URL" -v "$PWD:/out" postgres:17 \
+            sh -c 'pg_dump "$PGURL" --format=custom --compress=9 --no-owner --no-privileges \
+              --schema=public --schema=auth --schema=lx_prive --schema=storage --schema=supabase_migrations \
+              --file=/out/luxyra.dump'
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+              --symmetric --cipher-algo AES256 --output luxyra.dump.gpg luxyra.dump
+          rm -f luxyra.dump
+
+      - name: Déchiffrement avec le mot de passe
+        run: |
+          set -euo pipefail
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$BACKUP_PASSPHRASE" \
+              --decrypt --output luxyra.dump luxyra.dump.gpg
+          ls -l luxyra.dump
+
+      - name: Restauration dans la base jetable
+        run: |
+          set -uo pipefail
+          # Rôles et extensions présents chez Supabase, pour que les règles d'accès se recréent aussi
+          cat > /tmp/prep.sql <<'SQL'
+          do $$ begin
+            perform 1;
+            if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin bypassrls; end if;
+            if not exists (select 1 from pg_roles where rolname='supabase_admin') then create role supabase_admin nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='supabase_auth_admin') then create role supabase_auth_admin nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='supabase_storage_admin') then create role supabase_storage_admin nologin; end if;
+            if not exists (select 1 from pg_roles where rolname='authenticator') then create role authenticator nologin; end if;
+          end $$;
+          create schema if not exists extensions;
+          create extension if not exists pgcrypto with schema extensions;
+          create extension if not exists "uuid-ossp" with schema extensions;
+          SQL
+          docker run --rm --network host -v /tmp:/tmp postgres:17 \
+            psql "postgresql://postgres:jetable@127.0.0.1:5433/postgres" -q -f /tmp/prep.sql
+          docker run --rm --network host -v "$PWD:/w" postgres:17 \
+            pg_restore --no-owner --no-privileges --disable-triggers -d "postgresql://postgres:jetable@127.0.0.1:5433/postgres" /w/luxyra.dump 2> /tmp/restore-err.txt
+          echo "Avertissements de restauration (objets propres à Supabase, normal) : $(grep -c 'error' /tmp/restore-err.txt || true)"
+          tail -n 15 /tmp/restore-err.txt || true
+
+      - name: Comparer les données restaurées
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v /tmp:/tmp postgres:17 \
+            psql "postgresql://postgres:jetable@127.0.0.1:5433/postgres" -At -F '|' -v ON_ERROR_STOP=1 -f /tmp/compte.sql > /tmp/restaure.txt
+          echo "== Base réelle ==" && cat /tmp/reel.txt
+          echo "== Sauvegarde restaurée ==" && cat /tmp/restaure.txt
+          python3 - <<'PY'
+          reel = dict(l.split("|") for l in open("/tmp/reel.txt").read().split())
+          rest = dict(l.split("|") for l in open("/tmp/restaure.txt").read().split())
+          ok = True
+          for k, v in reel.items():
+              r = rest.get(k)
+              # quelques secondes séparent le comptage de la copie : on tolère un petit nombre de nouvelles lignes
+              if r is None or int(r) < int(v) or int(r) - int(v) > 50:
+                  ok = False; print(f"ÉCART {k} : réel {v} / restauré {r}")
+              else:
+                  print(f"OK {k} : {r}")
+          if not ok:
+              raise SystemExit("La sauvegarde restaurée ne contient pas toutes les données")
+          print("RESTAURATION RÉUSSIE : la sauvegarde est complète et se rouvre avec le mot de passe.")
+          PY
+
+      - name: Nettoyage
+        if: always()
+        run: rm -f luxyra.dump luxyra.dump.gpg

@@ -266,7 +266,20 @@ function nextStep2(){
   if(!DATA.pass||DATA.pass.length<6){showErr("Le mot de passe doit contenir au moins 6 caract\u00e8res");return;}
   var pass2=(document.getElementById("fPass2")||{}).value||"";
   if(DATA.pass!==pass2){showErr("Les mots de passe ne correspondent pas");return;}
+  // 2026-10-10 : cohérence gérant saisi / dirigeant officiel du SIRET (avertissement, non bloquant)
+  DATA._siretAlerte = lxSiretIncoherence();
+  if(DATA._siretAlerte && !confirm("\u26a0\ufe0f "+DATA._siretAlerte+"\n\nV\u00e9rifiez votre SIRET et le nom du g\u00e9rant. Continuer quand m\u00eame ?")) return;
   STEP=3;render();
+}
+function lxNormNom(x){ return String(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z]/g,""); }
+function lxSiretIncoherence(){
+  var d=DATA._siretInfo;
+  if(!d || DATA.enCoursImmat || d.non_diffusible || d.siret!==DATA.siret) return "";
+  var g=lxNormNom(DATA.gerantNom); if(!g) return "";
+  var officiels=[d.dirigeant_nom, d.raison_sociale, d.nom].map(lxNormNom).filter(Boolean);
+  if(!officiels.length) return "";
+  for(var i=0;i<officiels.length;i++){ if(officiels[i].indexOf(g)>=0 || g.indexOf(officiels[i])>=0) return ""; }
+  return "Le g\u00e9rant indiqu\u00e9 ("+DATA.gerantPrenom+" "+DATA.gerantNom+") ne correspond pas au dirigeant connu pour ce SIRET ("+(d.dirigeant_prenom?d.dirigeant_prenom+" ":"")+(d.dirigeant_nom||d.raison_sociale||"?")+").";
 }
 
 function saveFields2(){
@@ -506,6 +519,7 @@ async function doSubmit(){
       longitude: _geo ? _geo.lng : null,
       geocoded_at: _geo ? new Date().toISOString() : null,
       config_json:JSON.stringify({nom:DATA.nom.trim(),metier:DATA.metier,
+      siret_controle:(DATA.enCoursImmat?{en_cours:true}:(DATA._siretAlerte?{coherent:false,detail:DATA._siretAlerte}:(DATA._siretInfo?{coherent:true}:null))),
       forme_juridique:DATA.formeJur,franchise_tva:(DATA.franchiseTva===true),mode_activite:DATA.modeActivite,adresse:DATA.adresse.trim(),cp:DATA.cp.trim(),ville:DATA.ville.trim(),tel:DATA.tel.trim(),pays:DATA.pays}),
       sms_credits:0,
       sms_used:0,

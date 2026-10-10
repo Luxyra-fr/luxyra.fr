@@ -1577,3 +1577,8 @@ Tables existantes : inchangées.
 
 - 2026-10-10 : tickets / devis d'un salon sans SIRET : « SIRET : en cours d'attribution (immatriculation en cours) » (affichage seulement, hors empreinte).
 - 2026-10-10 : sauvegarde de nuit Google Drive EN SERVICE (premier essai OK, fichier reçu dans « Sauvegardes Luxyra »).
+
+## 2026-10-10 — Alerte SIRET incohérent + test de restauration
+- inscription.html : `lxSiretIncoherence()` compare le gérant saisi au dirigeant / raison sociale officiels (fiche non diffusible ou « en cours d'immatriculation » : pas de contrôle). Avertissement non bloquant (confirm) ; résultat stocké dans `config_json.siret_controle` ({coherent:false, detail} / {coherent:true} / {en_cours:true}).
+- admin.html : `s.siretAlerte` (incohérence ou SIRET manquant) -> badge « ⚠️ SIRET » dans la liste + encadré dans Informations légales.
+- `.github/workflows/test-restauration.yml` (1er du mois 03:30 UTC + manuel) : comptage lecture seule de la base réelle -> pg_dump -> gpg -> déchiffrement -> pg_restore (--disable-triggers) dans un Postgres 17 jetable -> comparaison des comptages (tickets, clôtures, audit_log, clients, appointments, salons, cartes_cadeaux, nf525_hash_seal, auth.users). Échec = mail GitHub.
