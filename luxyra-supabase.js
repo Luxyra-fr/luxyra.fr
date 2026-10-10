@@ -806,6 +806,12 @@ function lxMapApptRow(a) {
       }
     }
   }
+  // 2026-10-10 : sur un ticket ENCAISSÉ, l'élément technique de l'acompte (acompte en ligne conservé à
+  // l'encaissement) ne doit pas apparaître comme une ligne dans les stats, listes, exports et historiques.
+  // L'acompte reste porté par _ap.acompte ; saveAppointment le ré-ajoute à chaque enregistrement.
+  if ((_ap.st === "done" || _ap.tkNum) && _ap.items && _ap.items.length) {
+    _ap.items = _ap.items.filter(function (x) { return !(x && x.isAcompteData && /ligne|stripe|online/i.test(String(x.acompteMode || ""))); });
+  }
   // lieu / adresse_domicile : colonnes JAMAIS ecrites par saveAppointment (RDV a domicile
   // saisi en memoire seulement). On ne pose la cle QUE si la base a une valeur -> le merge
   // ne peut plus ecraser avec null le "domicile" saisi localement (l'ancien mapping du poll
@@ -1221,11 +1227,10 @@ async function loadSalonData() {
   // FIX 2026-10-07 : `|| 20` ecrasait un taux a 0 (franchise de TVA). Voir lxTauxTVA().
   SALON_CONFIG.tauxTVA = (salon.taux_tva !== null && salon.taux_tva !== undefined && salon.taux_tva !== "") ? Number(salon.taux_tva) : 20;
   SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
-  // 2026-10-10 : mode d'exercice choisi à l'inscription (colonne) quand la config de l'app ne l'a pas encore ;
-  // la config (si présente) reste prioritaire. Idem pour les frais de déplacement.
+  // 2026-10-10 : frais de déplacement enregistrés dans les colonnes (mini-site) quand la config de l'app n'en a
+  // pas encore (la config, chargée plus loin, reste prioritaire). Frais à 0 = jamais réglés -> défauts inchangés.
   try {
-    if (salon.mode_activite && !SALON_CONFIG.modeActivite) SALON_CONFIG.modeActivite = salon.mode_activite;
-    if (salon.mode_activite && salon.mode_activite !== "salon" && !SALON_CONFIG.domicile) {
+    if (salon.mode_activite && salon.mode_activite !== "salon" && !SALON_CONFIG.domicile && ((Number(salon.frais_deplacement) || 0) > 0 || salon.frais_deplacement_type === "par_km")) {
       var _fd = Number(salon.frais_deplacement) || 0, _pk = salon.frais_deplacement_type === "par_km";
       SALON_CONFIG.domicile = { type: _pk ? "km" : (_fd > 0 ? "forfait" : "gratuit"), forfait: _pk ? 15 : (_fd || 15), prixKm: _pk ? _fd : 0.5, zone: Number(salon.zone_deplacement_km) || 20, gratuitKm: 0 };
     }
@@ -2144,6 +2149,18 @@ async function _saveClientUneFois(client) {
 }
 
 // Sauvegarder un rendez-vous/ticket
+// 2026-10-10 : ticket ENCAISSÉ avec acompte payé EN LIGNE -> l'acompte est conservé dans items[].isAcompteData
+// (retiré de la liste en mémoire par lxMapApptRow pour ne pas fausser stats/listes ; ré-ajouté ici à chaque écriture).
+function _lxItemsAvecAcompteEnLigne(appt) {
+  var its = Array.isArray(appt.items) ? appt.items : [];
+  try {
+    var ac = Number(appt.acompte) || 0;
+    if ((appt.st === "done" || appt.tkNum) && ac > 0 && /ligne|stripe|online/i.test(String(appt.acompteMode || "")) && !its.some(function (x) { return x && x.isAcompteData; })) {
+      return its.concat([{ isAcompteData: true, acompte: ac, acompteMode: appt.acompteMode, acompteDate: appt.acompteDate || null }]);
+    }
+  } catch (_e) {}
+  return its;
+}
 async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
   // WAL : persiste l'action AVANT tout traitement (filet 15/05/2026)
@@ -2270,7 +2287,7 @@ async function saveAppointment(appt) {
     status: appt.st, mode_paiement: appt.met || "",
     ticket_num: appt.tkNum || null, hash: appt.hash || "",
     prev_hash: appt.prevHash || "", hash_algo: appt.hashAlgo || "",
-    items: appt.items || [], comment: appt.comment || "",
+    items: _lxItemsAvecAcompteEnLigne(appt), comment: appt.comment || "",
     a_phases: appt.aPhases || appt.phases || [],
     cancelled: appt.cancelled || false, cancel_reason: appt.cancelReason || "",
     // FIX 2026-07-11 : persiste les marqueurs du contre-ticket d'annulation (voir loader).

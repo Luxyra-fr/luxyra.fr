@@ -3768,9 +3768,12 @@ async function attemptAcompteRefund(env, rdv) {
     if (montant <= 0) return { refunded: false, skipped: "montant nul" };
     if (rdv.status !== "cancelled") return { refunded: false, skipped: "non annulé" };
 
-    // 2026-10-10 : annulation PAR LE SALON -> l'acompte est TOUJOURS remboursé (la politique d'annulation
-    // et son délai ne s'appliquent qu'aux annulations de la cliente).
-    if (rdv.cancelled_by !== "salon") {
+    // 2026-10-10 : cliente absente (choix du salon dans le planning) -> acompte conservé.
+    if (rdv.cancelled_by === "no_show") return { refunded: false, skipped: "cliente absente : acompte conservé" };
+    // 2026-10-10 : annulation PAR LE SALON (à partir de cette version) -> acompte TOUJOURS remboursé ; la politique
+    // d'annulation et son délai ne s'appliquent qu'aux annulations de la cliente (et aux annulations antérieures).
+    const _parSalon = rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00";
+    if (!_parSalon) {
       // 1) Politique d'annulation du salon (site_config — SINGULIER)
       let policyHours = 48, remboursementOn = true;
       try {
