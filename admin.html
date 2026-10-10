@@ -319,6 +319,47 @@ function statusB(s){var m={active:{c:"green",l:"Actif"},trial:{c:"orange",l:"Ess
 function verifB(v){var m={pending:{c:"orange",l:"En attente"},verified:{c:"green",l:"Vérifié"},rejected:{c:"red",l:"Rejeté"},incomplete:{c:"blue",l:"Incomplet"}};var x=m[v]||m.pending;return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
 function dBetween(a,b){return Math.ceil((new Date(b)-new Date(a))/(864e5));}
 
+// ===== DOUBLE AUTHENTIFICATION (2026-10-10) =====
+// Code à 6 chiffres d'une application d'authentification (Google Authenticator, Microsoft Authenticator…).
+// Une fois activée, la base EXIGE ce second facteur pour tout droit administrateur (is_admin() vérifie « aal2 »).
+function lxMfaModale(html){ var m=document.getElementById("lxMfa"); if(!m){ m=document.createElement("div"); m.id="lxMfa"; m.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px"; document.body.appendChild(m); } m.innerHTML='<div style="background:var(--bg2);border:1px solid var(--gold);border-radius:16px;padding:26px;max-width:380px;width:100%;text-align:center">'+html+'</div>'; return m; }
+function lxMfaFermer(){ var m=document.getElementById("lxMfa"); if(m) m.remove(); }
+async function lxMfaGate(){
+  try{
+    var a=await _sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    if(a.error||!a.data) return true;
+    if(a.data.currentLevel==="aal2"){ window._lxMfaActive=true; return true; }
+    if(a.data.nextLevel!=="aal2"){ window._lxMfaActive=false; return true; } // pas encore activée : bandeau d'invitation
+    var f=await _sb.auth.mfa.listFactors(); var tot=(f.data&&f.data.totp||[]).filter(function(x){return x.status==="verified";})[0];
+    if(!tot) return true;
+    return await new Promise(function(ok){
+      lxMfaModale('<div style="font-size:30px">🔐</div><h2 style="color:var(--gold);margin:6px 0">Double authentification</h2><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Saisissez le code à 6 chiffres de votre application d’authentification.</div><input id="lxMfaCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="width:100%;font-size:24px;letter-spacing:6px;text-align:center;padding:10px;border-radius:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><div id="lxMfaErr" style="color:var(--red);font-size:12px;min-height:18px;margin-top:6px"></div><button id="lxMfaOk" class="tb-btn primary" style="width:100%;margin-top:6px">Valider</button><button id="lxMfaOut" class="tb-btn" style="width:100%;margin-top:6px">Se déconnecter</button>');
+      var inp=document.getElementById("lxMfaCode"); inp.focus();
+      async function valider(){ var code=inp.value.replace(/\D/g,""); if(code.length!==6){ document.getElementById("lxMfaErr").textContent="6 chiffres attendus"; return; }
+        var r=await _sb.auth.mfa.challengeAndVerify({factorId:tot.id, code:code});
+        if(r.error){ document.getElementById("lxMfaErr").textContent="Code incorrect"; inp.value=""; inp.focus(); return; }
+        window._lxMfaActive=true; lxMfaFermer(); ok(true); }
+      document.getElementById("lxMfaOk").onclick=valider;
+      inp.onkeydown=function(e){ if(e.key==="Enter") valider(); };
+      document.getElementById("lxMfaOut").onclick=async function(){ await _sb.auth.signOut(); lxMfaFermer(); ok(false); showLogin(); };
+    });
+  }catch(e){ return true; }
+}
+async function lxMfaActiver(){
+  var en=await _sb.auth.mfa.enroll({factorType:"totp", friendlyName:"Luxyra admin "+new Date().toISOString().slice(0,10)});
+  if(en.error){ alert("Activation impossible : "+en.error.message); return; }
+  var t=en.data.totp||{};
+  lxMfaModale('<h2 style="color:var(--gold);margin-bottom:6px">Activer la double authentification</h2><div style="font-size:13px;color:var(--text2);margin-bottom:10px">1. Scannez ce QR code avec Google Authenticator, Microsoft Authenticator ou une application équivalente.</div><div style="background:#fff;border-radius:10px;padding:10px;display:inline-block"><img src="'+t.qr_code+'" style="width:190px;height:190px"></div><div style="font-size:11px;color:var(--text3);margin:8px 0;word-break:break-all">Clé manuelle : '+saEsc(t.secret||"")+'</div><div style="font-size:13px;color:var(--text2);margin:6px 0">2. Saisissez le code affiché :</div><input id="lxMfaCode" inputmode="numeric" maxlength="6" style="width:100%;font-size:22px;letter-spacing:6px;text-align:center;padding:8px;border-radius:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><div id="lxMfaErr" style="color:var(--red);font-size:12px;min-height:18px;margin-top:6px"></div><button id="lxMfaOk" class="tb-btn primary" style="width:100%">Activer</button><button class="tb-btn" style="width:100%;margin-top:6px" onclick="lxMfaFermer()">Plus tard</button>');
+  document.getElementById("lxMfaOk").onclick=async function(){
+    var code=document.getElementById("lxMfaCode").value.replace(/\D/g,"");
+    var r=await _sb.auth.mfa.challengeAndVerify({factorId:en.data.id, code:code});
+    if(r.error){ document.getElementById("lxMfaErr").textContent="Code incorrect, réessayez"; return; }
+    window._lxMfaActive=true; lxMfaFermer(); alert("✅ Double authentification activée. Elle sera demandée à chaque connexion à l’admin.");
+    var b=document.getElementById("lxMfaBandeau"); if(b) b.remove();
+  };
+}
+setInterval(function(){ try{ if(_online && window._lxMfaActive===false && !document.getElementById("lxMfaBandeau")){ var b=document.createElement("div"); b.id="lxMfaBandeau"; b.style.cssText="position:fixed;bottom:14px;right:14px;z-index:9999;background:rgba(239,83,80,.15);border:1px solid var(--red);color:var(--text);border-radius:12px;padding:10px 14px;font-size:13px;max-width:320px"; b.innerHTML='🔐 <b>Sécurisez l’admin</b> : activez la double authentification. <button class="tb-btn primary" style="margin-top:6px;width:100%" onclick="lxMfaActiver()">Activer maintenant</button>'; document.body.appendChild(b); } }catch(e){} }, 3000);
+
 // ===== AUTH =====
 async function checkSession(){
   try{
@@ -327,6 +368,7 @@ async function checkSession(){
     if(s.data.session){
       _uid=s.data.session.user.id;
       var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
+      if(c.data && !(await lxMfaGate())) return;
       if(c.data){_online=true;await loadPlansFromConfig();await loadData();try{await asChargerSuivi();}catch(_e){}loadDemandes();loadInscriptions();loadMigrations();loadInscriptionsLogForFunnel();await loadShortcuts();await loadChatConvs();subscribeChatRealtime();document.querySelector(".sidebar").style.display="flex";bootRoute();return;}
     }
   }catch(e){}
@@ -350,6 +392,7 @@ async function doLogin(){
   _uid=r.data.user.id;
   var c=await _sb.from("admin_users").select("*").eq("user_id",_uid).single();
   if(!c.data){showErr("Compte non administrateur");await _sb.auth.signOut();return;}
+  if(!(await lxMfaGate())) return;
   _online=true;
   document.querySelector(".sidebar").style.display="flex";
   document.querySelector(".burger").style.display="";
