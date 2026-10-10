@@ -390,7 +390,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261010-02"></script>
+<script src="luxyra-supabase.js?v=20261010-03"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -1567,6 +1567,7 @@ function showPinPad(operatorId, callback) {
   _operatorPinCallback = callback || null;
   _operatorPinError = "";
   renderPinPad();
+  if (lxBioEnregistre(op.id)) setTimeout(lxBioDeverrouiller, 250);
 }
 
 function renderPinPad() {
@@ -1617,6 +1618,10 @@ function renderPinPad() {
     }
   }
   h += '</div>';
+  if (lxBioEnregistre(op.id)) {
+    h += '<button onclick="lxBioDeverrouiller()" style="margin-top:22px;padding:12px 22px;border-radius:999px;border:1px solid '+roleColor+';background:rgba(255,255,255,.05);color:#fff;font-size:14px;font-weight:700;cursor:pointer">\ud83d\udd13 Face ID / empreinte</button>';
+    h += '<button onclick="lxBioOublier(\''+op.id+'\')" style="margin-top:6px;background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;text-decoration:underline">Ne plus utiliser la biom\u00e9trie sur cet appareil</button>';
+  }
   h += '<button onclick="closePinPad()" style="margin-top:24px;padding:10px 24px;background:none;border:none;color:var(--text3);font-size:13px;cursor:pointer">\u2190 Retour</button>';
   h += '</div>';
   var existing = document.getElementById("pinPadOverlay");
@@ -1648,6 +1653,71 @@ function closePinPad() {
   var ov = document.getElementById("pinPadOverlay");
   if (ov) ov.remove();
 }
+// ============================================================
+// DÉVERROUILLAGE BIOMÉTRIQUE (2026-10-10) — Face ID, Touch ID, empreinte Android, Windows Hello.
+// Norme WebAuthn : l'empreinte ou le visage sont vérifiés PAR L'APPAREIL ; Luxyra ne reçoit ni ne stocke
+// aucune donnée biométrique (seulement un identifiant de clé propre à l'appareil). Le code PIN reste
+// toujours disponible. Activation par opérateur et par appareil, après une connexion par PIN.
+// ============================================================
+function _lxBioCle(){ return "lx_bio_" + (window._salonId || ""); }
+function _lxBioListe(){ try { return JSON.parse(localStorage.getItem(_lxBioCle()) || "{}") || {}; } catch(e) { return {}; } }
+function lxBioEnregistre(opId){ return !!(window.PublicKeyCredential && _lxBioListe()[opId]); }
+function _b64u(buf){ var b=String.fromCharCode.apply(null, new Uint8Array(buf)); return btoa(b).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function _b64uDec(s){ s=String(s).replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s+="="; var b=atob(s), a=new Uint8Array(b.length); for(var i=0;i<b.length;i++) a[i]=b.charCodeAt(i); return a.buffer; }
+async function lxBioDisponible(){ try { return !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch(e) { return false; } }
+async function lxBioActiver(op){
+  try {
+    var cred = await navigator.credentials.create({ publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rp: { name: "Luxyra", id: location.hostname },
+      user: { id: new TextEncoder().encode(String(op.id)).slice(0,64), name: (op.prenom||"Opérateur") + " — " + ((SALON_CONFIG&&SALON_CONFIG.nom)||"Luxyra"), displayName: (op.prenom||"") + (op.nom ? " " + op.nom : "") },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" },
+      timeout: 60000, attestation: "none" } });
+    if (!cred) return false;
+    var l = _lxBioListe(); l[op.id] = _b64u(cred.rawId); localStorage.setItem(_lxBioCle(), JSON.stringify(l));
+    if (typeof auditLog === "function") auditLog("OPERATEUR_BIOMETRIE_ACTIVEE", (op.prenom||"") + " — déverrouillage biométrique activé sur cet appareil");
+    toast("\u2705 Face ID / empreinte activé sur cet appareil", "success");
+    return true;
+  } catch(e) { if (e && e.name !== "NotAllowedError") toast("Activation impossible : " + (e.message || e), "warning"); return false; }
+}
+function lxBioOublier(opId){
+  var l = _lxBioListe(); delete l[opId]; try { localStorage.setItem(_lxBioCle(), JSON.stringify(l)); } catch(e) {}
+  renderPinPad(); toast("Biométrie désactivée sur cet appareil — utilisez votre code PIN", "info");
+}
+async function lxBioDeverrouiller(){
+  var op = _operatorPinTarget; if (!op) return;
+  var id = _lxBioListe()[op.id]; if (!id) return;
+  try {
+    var a = await navigator.credentials.get({ publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)), rpId: location.hostname,
+      allowCredentials: [{ type: "public-key", id: _b64uDec(id), transports: ["internal"] }],
+      userVerification: "required", timeout: 60000 } });
+    if (!a || _b64u(a.rawId) !== id) return;
+    var r = await operatorLoginBio(op.id);
+    if (r.ok) { if (typeof auditLog === "function") auditLog("OPERATEUR_CONNEXION_BIOMETRIE", (op.prenom||"") + " — connexion par biométrie de l'appareil"); await _lxPinSucces(op, r.op, _operatorPinCallback); }
+    else { _operatorPinError = r.error || "Connexion impossible"; renderPinPad(); }
+  } catch(e) { /* annulé par l'utilisateur : le code PIN reste disponible */ }
+}
+async function _lxPinSucces(op, opBase, cb){
+  closePinPad();
+  if (cb) { cb(opBase); return; }
+  CURRENT_OPERATOR = opBase;
+  saveCurrentOperator();
+  var sel = document.getElementById("opSelectorOverlay"); if (sel) sel.remove();
+  startInactivityTimer();
+  toast("Bienvenue " + op.prenom + " !", "success");
+  if (typeof go === "function") go(window._currentPage || "home");
+  if (typeof updateOperatorAvatar === "function") setTimeout(updateOperatorAvatar, 50);
+  // Proposer la biométrie une fois par opérateur et par appareil
+  try {
+    if (!lxBioEnregistre(op.id) && localStorage.getItem("lx_bio_refus_" + op.id) !== "1" && await lxBioDisponible()) {
+      setTimeout(function(){
+        showConfirm("Déverrouiller Luxyra avec Face ID ou votre empreinte sur cet appareil ?\n\nVotre visage ou votre empreinte restent dans l’appareil : Luxyra ne les reçoit jamais. Le code PIN reste toujours utilisable.", function(){ lxBioActiver(op); }, function(){ try { localStorage.setItem("lx_bio_refus_" + op.id, "1"); } catch(e) {} });
+      }, 900);
+    }
+  } catch(e) {}
+}
 async function validatePinPad() {
   if (!_operatorPinTarget) return;
   var op = _operatorPinTarget;
@@ -1655,6 +1725,7 @@ async function validatePinPad() {
   var cb = _operatorPinCallback;
   // Login attempt
   var result = await operatorLogin(op.id, pin);
+  if (result.ok && !cb) { await _lxPinSucces(op, result.op, null); return; }
   if (result.ok) {
     closePinPad();
     if (cb) {

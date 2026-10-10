@@ -3607,6 +3607,21 @@ async function operatorLogin(operatorId, pin) {
   } catch(e) { console.error("[OP LOGIN]", e.message); return {ok:false, error:e.message}; }
 }
 
+// 2026-10-10 : connexion après vérification biométrique PAR L'APPAREIL (WebAuthn) — mêmes contrôles que le PIN
+// (opérateur actif, non verrouillé), sans code.
+async function operatorLoginBio(operatorId) {
+  if (!_isOnline || !_salonId) return {ok:false, error:"Hors ligne"};
+  try {
+    var r = await _sb.from("salon_operateurs").select("*").eq("id", operatorId).limit(1);
+    if (!r.data || !r.data.length) return {ok:false, error:"Op\u00e9rateur introuvable"};
+    var op = r.data[0];
+    if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
+    if (op.locked_until && new Date(op.locked_until) > new Date()) return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true};
+    await _sb.from("salon_operateurs").update({ failed_attempts: 0, last_login_at: new Date().toISOString() }).eq("id", operatorId);
+    return {ok:true, op:op};
+  } catch(e) { return {ok:false, error:e.message}; }
+}
+
 // Débloquer manuellement un opérateur (admin only)
 async function unlockOperateur(id) {
   if (!_isOnline || !_salonId) return false;
