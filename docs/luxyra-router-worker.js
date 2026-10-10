@@ -1244,9 +1244,12 @@ async function handleConnectPayment(request, env) {
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
-        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
         const _a = _r.ok ? await _r.json() : [];
         if (!Array.isArray(_a) || !_a[0] || String(_a[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Rendez-vous introuvable pour ce salon" }, 400);
+        // 2026-10-11 : jamais de paiement pour un RDV annulé / refusé / terminé, ni d'acompte déjà payé
+        if (!["pending", "pending_payment", "confirmed"].includes(String(_a[0].status || ""))) return jsonResponse({ error: "Ce rendez-vous n'est plus actif" }, 409);
+        if (_type === "acompte" && _a[0].acompte_paye === true) return jsonResponse({ error: "L'acompte de ce rendez-vous est déjà réglé" }, 409);
       }
     }
 
@@ -3712,7 +3715,7 @@ async function handleRdvAcompteInfo(request, env) {
     const connectOk = !!(salon && salon.stripe_connect_id && ["active", "enabled", "payouts_pending"].includes(String(salon.stripe_connect_status || "")));
     return jsonResponse({ ok: true, rdv_id: rdv.id, salon_id: rdv.salon_id, salon_nom: salon ? salon.nom : "", salon_logo: salon ? (salon.logo || "") : "",
       prestation: rdv.service_nom || "", date: rdv.date_rdv, heure: rdv.heure_rdv ? String(rdv.heure_rdv).slice(0, 5) : "",
-      montant: Number(rdv.acompte_montant) || 0, paye: rdv.acompte_paye === true, annule: rdv.status === "cancelled" || rdv.status === "refused",
+      montant: Number(rdv.acompte_montant) || 0, paye: rdv.acompte_paye === true, annule: rdv.status === "cancelled" || rdv.status === "refused" || rdv.status === "done",
       email: rdv.client_email || "", prenom: rdv.client_prenom || "", domicile: rdv.lieu === "domicile", paiement_en_ligne: connectOk });
   } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
 }
@@ -3761,6 +3764,13 @@ async function handleAcompteFinalize(request, env) {
       } catch (_e) {}
       // 2026-10-10 : acompte réglé APRÈS acceptation par le professionnel -> le RDV reste confirmé
       if (_rdv.status === "confirmed") wantStatus = "confirmed";
+      // 2026-10-11 : RDV annulé / refusé / terminé entre-temps -> on n'y touche pas (paiement à rembourser)
+      if (["cancelled", "refused", "done"].includes(String(_rdv.status || ""))) {
+        await reportWorkerError(env, "worker:acompte-finalize", new Error("Acompte payé sur un RDV " + _rdv.status + " : à rembourser"), { rdv_id, payment_intent: piId }, "critical");
+        const _p = { acompte_paye: true, stripe_account: _compteA || null }; if (piId) { _p.payment_intent_id = piId; _p.stripe_payment_id = piId; }
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify(_p) });
+        return jsonResponse({ error: "Ce rendez-vous n'est plus actif : le paiement sera remboursé", a_rembourser: true }, 409);
+      }
     }
     const patch = { acompte_paye: true, status: wantStatus, stripe_account: _compteA || null };
     if (piId) { patch.payment_intent_id = piId; patch.stripe_payment_id = piId; }

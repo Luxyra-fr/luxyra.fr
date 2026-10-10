@@ -1639,3 +1639,11 @@ Tables existantes : inchangées.
 - 2026-10-11 : RDV à domicile = demande « pending » (site : bouton « Envoyer ma demande », aucun paiement) ; app : bloc « Demande à valider » dans la fiche RDV (`lxRdvAccepter` / `lxRdvProposer` / `lxRdvRefuser`), badge « ⏳ À valider », carte accueil ; à l'acceptation, si acompte et Stripe Connect actif : jeton `rdv_online.acompte_token` + lien https://luxyra.fr/acompte.html?t=… (endpoint worker /api/rdv/acompte-info ; finalize garde « confirmed »). Message cliente : email (gabarit salon) sinon SMS ≤160 car. Trigger SMS de confirmation : plus envoyé pour une demande « pending ».
 - 2026-10-11 : communes desservies `SALON_CONFIG.domicile.communes` [{code INSEE, nom, cp, forfait?}] (geo.api.gouv.fr), type de tarif « commune » ; site : contrôle par citycode BAN + forfait de la commune.
 - 2026-10-11 : 4 nouveaux métiers : regard, maquillage, tatouage, spa (app METIER_CONFIG/TEXTES, histo, photos, onglet fiche ; inscription ; site ; recherche ; admin ; index ; worker SEO).
+
+## 2026-10-11 — Correctifs relecture validation domicile
+- Refus d'une demande : statut `cancelled` + cancelled_by salon (« refused » interdit par rdv_online_status_check) → acompte remboursé par le cron, empreinte libérée (lxEmpreinteReleaseAuto).
+- Accepter / refuser / autre horaire : update gardé par `.eq("status","pending").select()` ; autre horaire = update direct date_rdv/heure_rdv SANS salon_modified_at (évite le double email).
+- _lxMessageCliente : vérifie r.ok de l'email, repli SMS, sinon affiche le lien d'acompte au pro.
+- Worker : connect-payment refuse un RDV non actif ou acompte déjà payé (409) ; acompte-finalize ne touche jamais un RDV cancelled/refused/done (enregistre le paiement + alerte critique pour remboursement) ; acompte-info : done = non payable.
+- site.html : arrondissements Paris/Lyon/Marseille normalisés (75056/69123/13055) avant la comparaison des communes.
+- compte.html : statut refused affiché « Non retenu ».
