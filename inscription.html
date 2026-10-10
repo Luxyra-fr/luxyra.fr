@@ -149,8 +149,12 @@ function renderStep1(){
   h+='<div id="stepErr" class="err"></div>';
   // 2026-10-09 : SIRET en premier (France) -> fiche officielle, champs remplis automatiquement
   if((DATA.pays||"France")==="France"){
-    h+='<div class="fg"><label>SIRET * <span style="font-weight:400;font-size:11px;opacity:.7">\u2014 on remplit le reste pour vous</span></label><input id="fSiret" inputmode="numeric" maxlength="17" value="'+esc(DATA.siret)+'" placeholder="14 chiffres" oninput="lxSiretSaisie(this.value)"></div>';
-    h+='<div id="siretInfo" style="margin:-6px 0 12px;font-size:12px;line-height:1.5">'+(DATA._siretMsg||"")+'</div>';
+    if(!DATA.enCoursImmat){
+      h+='<div class="fg"><label>SIRET * <span style="font-weight:400;font-size:11px;opacity:.7">\u2014 on remplit le reste pour vous</span></label><input id="fSiret" inputmode="numeric" maxlength="17" value="'+esc(DATA.siret)+'" placeholder="14 chiffres" oninput="lxSiretSaisie(this.value)"></div>';
+      h+='<div id="siretInfo" style="margin:-6px 0 12px;font-size:12px;line-height:1.5">'+(DATA._siretMsg||"")+'</div>';
+    }
+    // 2026-10-10 : entreprise qui ouvre / en cours d'immatriculation -> essai sans SIRET (obligatoire pour s'abonner)
+    h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin:-4px 0 14px;cursor:pointer"><input type="checkbox" '+(DATA.enCoursImmat?'checked':'')+' onchange="saveFields1();DATA.enCoursImmat=this.checked;if(this.checked){DATA.siret=\'\';DATA._siretMsg=\'\';DATA._siretInfo=null;}render()" style="margin-top:3px"><span>Mon entreprise est <b>en cours d\u2019immatriculation</b> (pas encore de SIRET)'+(DATA.enCoursImmat?'<br><span style="font-size:12px;opacity:.75">Vous pouvez d\u00e9marrer l\u2019essai. Ajoutez votre SIRET d\u00e8s r\u00e9ception (Param\u00e8tres \u2192 Infos \u00e9tablissement) : il sera demand\u00e9 pour activer l\u2019abonnement.</span>':'')+'</span></label>';
   }
   h+='<div class="fg"><label>Nom de l\u2019\u00e9tablissement *</label><input id="fNom" value="'+esc(DATA.nom)+'" placeholder="Nom de votre établissement"></div>';
   h+='<div class="fg"><label>M\u00e9tier *</label><div class="metier-grid">';
@@ -222,7 +226,8 @@ function nextStep1(){
   saveFields1();
   if(!DATA.nom.trim()){showErr("Le nom de l\u2019\u00e9tablissement est obligatoire");return;}
   var _id=DATA.siret.trim();
-  if(DATA.pays==="France"){ if(!/^\d{14}$/.test(_id.replace(/\s+/g,""))){showErr("Le SIRET est obligatoire (14 chiffres)");return;} DATA.siret=_id.replace(/\s+/g,"");
+  if(DATA.pays==="France" && DATA.enCoursImmat){ DATA.siret=""; }
+  else if(DATA.pays==="France"){ if(!/^\d{14}$/.test(_id.replace(/\s+/g,""))){showErr("Le SIRET est obligatoire (14 chiffres) \u2014 ou cochez \u00ab en cours d\u2019immatriculation \u00bb");return;} DATA.siret=_id.replace(/\s+/g,"");
     if(DATA._siretInfo && DATA._siretInfo.siret===DATA.siret && DATA._siretInfo.actif===false){showErr("Cet \u00e9tablissement est ferm\u00e9 au r\u00e9pertoire officiel : v\u00e9rifiez votre SIRET.");return;} }
   else if(_id.replace(/[^A-Za-z0-9]/g,"").length<8){showErr("Le numéro d'entreprise est obligatoire");return;}
   if(!DATA.formeJur){showErr("Veuillez s\u00e9lectionner la forme juridique");return;}
@@ -236,7 +241,7 @@ function saveFields1(){
   DATA.cp=(document.getElementById("fCp")||{}).value||"";
   DATA.ville=(document.getElementById("fVille")||{}).value||"";
   DATA.tel=(document.getElementById("fTel")||{}).value||"";
-  DATA.siret=(document.getElementById("fSiret")||{}).value||"";
+  DATA.siret=DATA.enCoursImmat?"":((document.getElementById("fSiret")||{}).value||"");
   DATA.pays=(document.getElementById("fPays")||{}).value||DATA.pays||"France";
   DATA.formeJur=(document.getElementById("fForme")||{}).value||"";
 }
@@ -481,7 +486,7 @@ async function doSubmit(){
       adresse:DATA.adresse.trim(),
       cp:DATA.cp.trim(),
       ville:DATA.ville.trim(),
-      siret:DATA.siret.trim(),
+      siret:DATA.enCoursImmat?null:DATA.siret.trim(),
       metier:DATA.metier,
       forme_juridique:DATA.formeJur,
       // 2026-10-07 : franchise -> 0 % ; sinon taux du pays (France : 20 % explicite).
@@ -585,7 +590,7 @@ function renderSuccess(){
   // R\u00e9cap
   h+='<div class="box">';
   h+='<div class="row"><span class="k">\u00c9tablissement</span><span class="v">'+esc(DATA.nom)+'</span></div>';
-  h+='<div class="row"><span class="k">SIRET</span><span class="v">'+esc(DATA.siret)+'</span></div>';
+  h+='<div class="row"><span class="k">SIRET</span><span class="v">'+(DATA.enCoursImmat?'En cours d\u2019immatriculation':esc(DATA.siret))+'</span></div>';
   h+='<div class="row"><span class="k">TVA</span><span class="v">'+(DATA.franchiseTva===true?'Franchise (0 %)':'Factur\u00e9e')+'</span></div>';
   h+='<div class="row"><span class="k">G\u00e9rant</span><span class="v">'+esc(DATA.gerantPrenom)+' '+esc(DATA.gerantNom)+'</span></div>';
   h+='<div class="row"><span class="k">Email</span><span class="v">'+esc(DATA.email)+'</span></div>';

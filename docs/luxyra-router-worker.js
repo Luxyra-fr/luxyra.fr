@@ -572,6 +572,12 @@ async function handleCreateCheckout(request, env) {
     // (un user qui annule ne consomme pas une place). Le claim réel se fait dans
     // le webhook Stripe "customer.subscription.created" pour les souscriptions
     // taggées is_founder=true (voir handleStripeWebhook).
+    // 2026-10-10 : un salon inscrit « en cours d'immatriculation » doit renseigner son SIRET avant de s'abonner
+    // (la base refuse un salon actif sans SIRET : sans ce contrôle, le paiement passerait sans activer le compte).
+    {
+      const _sal = await supabaseGet(env, salon_id);
+      if (_sal && !String(_sal.siret || "").trim()) return jsonResponse({ error: "Ajoutez d'abord votre SIRET (Paramètres → Infos établissement) : il est obligatoire pour activer l'abonnement.", code: "siret_requis" }, 400);
+    }
     let priceId = plan === "pro" ? CONFIG.PRICE_PRO : CONFIG.PRICE_ESSENTIAL;
     let isFounder = false;
     if (plan === "pro") {
