@@ -2213,13 +2213,15 @@ async function runAttestationRelanceJob(env) {
   const ed = er.ok ? (await er.json())[0] : null;
   if (!ed) return stats;
   const type = "attestation_v" + ed.version_majeure;
-  const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,gerant_prenom,abonne_depuis&status=eq.active`, { headers: _sbHeaders(env) });
+  // Non concernés : franchise de TVA (art. 293 B, taux 0) et établissements hors de France
+  const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,gerant_prenom,abonne_depuis,config_json&status=eq.active&taux_tva=gt.0`, { headers: _sbHeaders(env) });
   const salons = sr.ok ? await sr.json() : [];
   const ar = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/nf525_attestations?select=salon_id&version_majeure=eq.${encodeURIComponent(ed.version_majeure)}`, { headers: _sbHeaders(env) });
   const signes = new Set((ar.ok ? await ar.json() : []).map((x) => x.salon_id));
   const hier = Date.now() - 86400000;
   for (const s of salons) {
     if (!s.email || signes.has(s.id)) continue;
+    try { let cj = s.config_json; if (typeof cj === "string") cj = JSON.parse(cj); if (cj && cj.pays && !/^\s*france\s*$/i.test(String(cj.pays))) continue; } catch (_) {}
     if (s.abonne_depuis && new Date(s.abonne_depuis).getTime() > hier) continue; // laisser 1 jour après le paiement
     const tr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/tickets?select=date_ticket&salon_id=eq.${s.id}&order=date_ticket.asc&limit=1`, { headers: _sbHeaders(env) });
     const t = tr.ok ? (await tr.json())[0] : null;
