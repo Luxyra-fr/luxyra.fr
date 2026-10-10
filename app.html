@@ -1664,9 +1664,19 @@ function _lxBioListe(){ try { return JSON.parse(localStorage.getItem(_lxBioCle()
 function lxBioEnregistre(opId){ return !!(window.PublicKeyCredential && _lxBioListe()[opId]); }
 function _b64u(buf){ var b=String.fromCharCode.apply(null, new Uint8Array(buf)); return btoa(b).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
 function _b64uDec(s){ s=String(s).replace(/-/g,"+").replace(/_/g,"/"); while(s.length%4) s+="="; var b=atob(s), a=new Uint8Array(b.length); for(var i=0;i<b.length;i++) a[i]=b.charCodeAt(i); return a.buffer; }
+// Un seul profil biométrique par appareil : l'appareil reconnaît TOUT visage/empreinte enregistré dans ses réglages,
+// il ne sait pas « qui » est le collaborateur. Sur un appareil partagé, cela ruinerait la traçabilité des opérateurs (NF525).
+function _lxBioAutreProfil(opId){
+  try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i);
+    if (!/^lx_bio_[0-9a-f-]{36}$/.test(k)) continue;
+    var l = JSON.parse(localStorage.getItem(k) || "{}") || {};
+    for (var id in l) if (String(id) !== String(opId)) return true; } } catch(e) {}
+  return false;
+}
 async function lxBioDisponible(){ try { return !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch(e) { return false; } }
 async function lxBioActiver(op){
   try {
+    if (_lxBioAutreProfil(op.id)) { toast("Un autre profil utilise déjà Face ID / empreinte sur cet appareil : réservé à l’appareil personnel d’un seul collaborateur", "warning"); return false; }
     var cred = await navigator.credentials.create({ publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       rp: { name: "Luxyra", id: location.hostname },
@@ -1711,9 +1721,9 @@ async function _lxPinSucces(op, opBase, cb){
   if (typeof updateOperatorAvatar === "function") setTimeout(updateOperatorAvatar, 50);
   // Proposer la biométrie une fois par opérateur et par appareil
   try {
-    if (!lxBioEnregistre(op.id) && localStorage.getItem("lx_bio_refus_" + op.id) !== "1" && await lxBioDisponible()) {
+    if (!lxBioEnregistre(op.id) && !_lxBioAutreProfil(op.id) && localStorage.getItem("lx_bio_refus_" + op.id) !== "1" && await lxBioDisponible()) {
       setTimeout(function(){
-        showConfirm("Déverrouiller Luxyra avec Face ID ou votre empreinte sur cet appareil ?\n\nVotre visage ou votre empreinte restent dans l’appareil : Luxyra ne les reçoit jamais. Le code PIN reste toujours utilisable.", function(){ lxBioActiver(op); }, function(){ try { localStorage.setItem("lx_bio_refus_" + op.id, "1"); } catch(e) {} });
+        showConfirm("Cet appareil est-il VOTRE téléphone ou ordinateur personnel ?\n\nSi oui, vous pouvez déverrouiller votre profil avec Face ID ou votre empreinte. Votre visage ou votre empreinte restent dans l’appareil : Luxyra ne les reçoit jamais. Le code PIN reste toujours utilisable.\n\n⚠️ À ne pas activer sur la tablette ou l’ordinateur partagé de l’établissement : toute personne dont le visage ou l’empreinte y est enregistré pourrait ouvrir votre profil.", function(){ lxBioActiver(op); }, function(){ try { localStorage.setItem("lx_bio_refus_" + op.id, "1"); } catch(e) {} });
       }, 900);
     }
   } catch(e) {}
