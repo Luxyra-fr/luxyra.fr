@@ -1588,3 +1588,4 @@ Tables existantes : inchangées.
 - Worker : `lxRechargeAutoSiBesoin` appelé (ATTENDU, pas en arrière-plan) après chaque SMS débité et sur refus 402 ; PaymentIntent hors session (`off_session`, `confirm`) sur la carte de l'abonnement (`lxCarteAbonnement` : défaut client > abonnement > 1re carte), metadata `type=sms_recharge_auto`, reçu Stripe ; crédit `crediter_sms` idempotent (id du paiement dans le motif). Échec → option désactivée + email gérant + push admin (aucune tentative répétée).
 - Route salon `/api/sms/recharge-auto` (op `etat` / `regler`) ; app : carte « 🔁 Recharge automatique » dans Paramètres → SMS (`lxRechargeAutoCharger` / `lxRechargeAutoRegler`, confirmation à l'activation). Admin revenus SMS : inclut les recharges auto (recherche Stripe des PaymentIntents).
 - Bot : entrée `sms` complétée.
+- 2026-10-10 : test de restauration RÉUSSI (premier essai manuel vert : déchiffrement + restauration + comptages identiques).
