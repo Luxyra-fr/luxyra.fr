@@ -55,6 +55,7 @@
   }
 
   // Document imprimable (PDF via « Enregistrer au format PDF »). att = attestation signée, ou null pour une version papier à signer à la main.
+  function esig(nom, role, quand){ return '<div class="esig"><div class="lbl">✔ Signé électroniquement</div><div class="nom">' + esc(nom) + '</div><div class="det">' + esc(role) + '<br>le ' + esc(hFr(quand)) + '</div></div>'; }
   function imprimer(ed, att, d){
     var w = window.open("", "_blank", "width=820,height=1100"); if(!w) { alert("Autorisez l'ouverture des fenêtres pour imprimer l'attestation."); return; }
     var p = function(t){ return esc(t).split("\n\n").map(function(x){ return "<p>"+x.replace(/\n/g,"<br>")+"</p>"; }).join(""); };
@@ -64,20 +65,21 @@
       '@page{margin:16mm}body{font-family:Georgia,serif;max-width:760px;margin:20px auto;padding:0 20px;color:#1a1a1a;font-size:12.5px;line-height:1.6}' +
       'h1{font-size:16px;text-align:center;margin:0 0 4px;text-transform:uppercase;letter-spacing:.5px}.sub{text-align:center;color:#555;font-size:11px;margin-bottom:18px}' +
       'h2{font-size:13.5px;margin:22px 0 8px;padding:6px 10px;background:#f4efe2;border-left:4px solid #c8a84e}.note{font-size:11px;color:#444;border:1px solid #ddd;border-radius:6px;padding:10px;margin-top:10px}' +
-      '.sig{margin-top:10px;padding:10px;border:1px dashed #999;border-radius:6px;font-size:11.5px}.sig b{color:#1a1a1a}.hash{font-family:monospace;font-size:10px;word-break:break-all;color:#555}' +
+      '.sig{margin-top:10px;padding:10px;border:1px dashed #999;border-radius:6px;font-size:11.5px}.sig b{color:#1a1a1a}.hash{font-family:monospace;font-size:10px;word-break:break-all;color:#555}.esig{margin-top:8px;padding:10px 12px;border:2px solid #1a4480;border-radius:8px;background:#f5f8fd;color:#1a4480}.esig .nom{font-family:"Brush Script MT","Segoe Script",cursive;font-size:26px;line-height:1.1}.esig .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#1a4480;font-weight:700}.esig .det{font-size:11px;color:#333;margin-top:2px}.recap{display:flex;gap:14px;margin-top:22px}.recap>div{flex:1}@media (max-width:640px){.recap{flex-direction:column;gap:8px}}' +
       'p{margin:0 0 10px;text-align:justify;-webkit-hyphens:auto;hyphens:auto}.sigrow{display:flex;gap:30px}.sigrow>div{flex:1}@media (max-width:640px){body{margin:0 auto;padding:12px 14px;font-size:14px;line-height:1.55}h1{font-size:15px;letter-spacing:0}.sub{font-size:11.5px}h2{font-size:14px;margin:18px 0 8px}p{text-align:left}.sig,.note{font-size:12.5px}.sigrow{flex-direction:column;gap:0}.btn{width:100%}}.blank{height:70px;border-bottom:1px solid #333;margin-top:30px}.btn{margin:20px auto;display:block;padding:10px 22px;font-size:14px;cursor:pointer}@media print{.btn{display:none}}</style></head><body>' +
       '<h1>Attestation individuelle relative à l’utilisation d’un logiciel ou d’un système de caisse sécurisé</h1>' +
       '<div class="sub">Article 286, I, 3° bis du code général des impôts — modèle officiel BOI-LETTRE-000242 (25/03/2026) — Logiciel Luxyra, version ' + esc(att ? att.version_logiciel : LX_ATT.versionLogiciel) + '</div>' +
       '<div class="note">Les volets 1 et 2 de cette attestation doivent être présentés à l’administration fiscale en cas de contrôle. Elle n’a de valeur que si son volet 2 est dûment complété et signé par l’entreprise utilisatrice du logiciel / système.</div>' +
       '<h2>Volet 1 : partie remplie par l’éditeur du logiciel de caisse</h2>' + p(ed.texte) +
-      '<div class="sig">Signature du représentant légal de l’éditeur : <b>signé électroniquement par ' + esc(ed.signataire) + ' le ' + esc(hFr(ed.signe_le)) + '</b><br>Empreinte SHA-256 du volet 1 signé : <span class="hash">' + esc(ed.texte_sha256) + '</span></div>' +
+      '<div class="sig">Signature du représentant légal de l’éditeur :' + esig(ed.signataire, 'Éditeur — Luxyra', ed.signe_le) + 'Empreinte SHA-256 du volet 1 signé : <span class="hash">' + esc(ed.texte_sha256) + '</span></div>' +
       '<h2>Volet 2 : partie remplie par l’entreprise qui utilise le logiciel de caisse</h2>' + p(volet2(dd));
     if (att) {
-      h += '<div class="sig">Signature du représentant légal : <b>signé électroniquement par ' + esc(att.representant) + ' le ' + esc(hFr(att.signe_le)) + '</b><br>' +
+      h += '<div class="sig">Signature du représentant légal :' + esig(att.representant, (att.qualite||'') + ' — ' + (att.etablissement||''), att.signe_le) +
         'Procédé : ' + esc(att.methode) + '. Référence n° ' + esc(att.id) + '.<br>Empreinte SHA-256 du document signé (volets 1 et 2) : <span class="hash">' + esc(att.texte_sha256) + '</span></div>';
     } else {
       h += '<div class="sigrow"><div>Signature du représentant légal :<div class="blank"></div></div><div>Cachet de l’entreprise :<div class="blank"></div></div></div>';
     }
+    if (att) h += '<h2>Signatures</h2><div class="recap"><div>' + esig(ed.signataire, 'Pour l’éditeur (volet 1)', ed.signe_le) + '</div><div>' + esig(att.representant, 'Pour l’établissement (volet 2)', att.signe_le) + '</div></div>';
     h += '<div class="note">Conservez ce document avec vos pièces comptables pendant toute la durée d’utilisation du logiciel puis six ans (art. L102 B du livre des procédures fiscales). ' +
       'Une nouvelle attestation vous sera demandée à chaque nouvelle version majeure du logiciel.</div>' +
       '<button class="btn" onclick="window.print()">Imprimer / enregistrer en PDF</button></body></html>';
