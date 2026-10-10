@@ -1576,3 +1576,4 @@ Tables existantes : inchangées.
 - Bot : entrée `abonnement` complétée.
 
 - 2026-10-10 : tickets / devis d'un salon sans SIRET : « SIRET : en cours d'attribution (immatriculation en cours) » (affichage seulement, hors empreinte).
+- 2026-10-10 : sauvegarde de nuit Google Drive EN SERVICE (premier essai OK, fichier reçu dans « Sauvegardes Luxyra »).
