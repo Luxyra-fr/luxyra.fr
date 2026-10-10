@@ -1331,7 +1331,7 @@ function lxMailLayout(corpsHtml, opts) {
     <div style="background:#0b0b0b;padding:26px 20px 20px;text-align:center;border-bottom:3px solid #c8a84e">
       <img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">
       <div style="color:#d4a843;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:6px">LUXYRA</div>
-      <div style="color:#8c8270;font-size:11px;letter-spacing:1px;margin-top:4px">GESTION &amp; CAISSE POUR LES PROFESSIONNELS DE LA BEAUTÉ</div>
+      <div style="color:#8c8270;font-size:11px;letter-spacing:1px;margin-top:4px">GESTION &amp; CAISSE POUR LES PROFESSIONNELS DE LA BEAUTÉ ET DU BIEN-ÊTRE</div>
     </div>
     <div style="padding:28px 26px 8px">${titre}${corpsHtml}</div>
     <div style="padding:16px 26px 22px;font-size:11px;color:#8a8a8a;border-top:1px solid #eee;margin-top:18px;line-height:1.5">${pied}Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023<br>29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — <a href="mailto:contact@luxyra.fr" style="color:#b8922e">contact@luxyra.fr</a> — <a href="https://luxyra.fr" style="color:#b8922e">luxyra.fr</a></div>
