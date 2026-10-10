@@ -7690,6 +7690,36 @@ async function lxSiretAjouter(){
     toast("\u2705 SIRET enregistr\u00e9","success"); go("settings");
   });
 }
+// === Recharge SMS automatique (2026-10-10) ===
+async function lxRechargeAutoCharger(){
+  var el=document.getElementById("lxRechargeAuto"); if(!el) return;
+  var d=null; try{ d=await (await fetch("/api/sms/recharge-auto",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:_salonId,op:"etat"})})).json(); }catch(e){}
+  if(!d||!d.ok){ el.innerHTML='<div style="font-size:12px;color:var(--text3)">Recharge automatique indisponible pour le moment.</div>'; return; }
+  window._lxRA=d;
+  var prix=d.prix||{}, packs=[100,250,500].concat((typeof lxPack1000On==="function"&&lxPack1000On())?[1000]:[]);
+  var h='<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div><div style="font-weight:800">\ud83d\udd01 Recharge automatique</div><div style="font-size:12px;color:var(--text3);margin-top:2px">Quand votre solde passe sous le seuil, un pack est achet\u00e9 automatiquement : vos rappels ne s\u2019arr\u00eatent jamais.</div></div>';
+  h+='<input type="checkbox" id="raActif" '+(d.actif?'checked':'')+' style="width:22px;height:22px;flex-shrink:0" onchange="lxRechargeAutoRegler()"></div>';
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:13px"><label>Quand il reste moins de <select id="raSeuil" onchange="lxRechargeAutoRegler()">'+[10,20,50,100].map(function(v){return '<option value="'+v+'"'+(Number(d.seuil)===v?' selected':'')+'>'+v+' SMS</option>';}).join("")+'</select></label>';
+  h+='<label>acheter <select id="raPack" onchange="lxRechargeAutoRegler()">'+packs.map(function(q){return '<option value="'+q+'"'+(Number(d.pack)===q?' selected':'')+'>'+q+' SMS \u2014 '+(prix[q]!=null?Number(prix[q]).toFixed(2).replace(".",","):"?")+' \u20ac</option>';}).join("")+'</select></label></div>';
+  h+='<div style="font-size:12px;margin-top:8px;color:var(--text3)">'+(d.carte?'Carte utilis\u00e9e : '+escapeHtml(String(d.carte.marque).toUpperCase())+' \u2022\u2022\u2022\u2022 '+escapeHtml(d.carte.fin)+(d.carte.exp?' (exp. '+escapeHtml(d.carte.exp)+')':'')+' \u2014 celle de votre abonnement Luxyra. Un re\u00e7u vous est envoy\u00e9 \u00e0 chaque recharge.':'<span style="color:#ffb74d">Aucune carte enregistr\u00e9e sur votre abonnement : option indisponible.</span>')+'</div>';
+  if(d.echec) h+='<div style="font-size:12px;margin-top:6px;color:#ef5350">\u26a0 Derni\u00e8re tentative refus\u00e9e : '+escapeHtml(d.echec)+'. L\u2019option a \u00e9t\u00e9 d\u00e9sactiv\u00e9e.</div>';
+  el.innerHTML=h;
+}
+async function lxRechargeAutoRegler(){
+  var actif=!!(document.getElementById("raActif")||{}).checked, seuil=Number((document.getElementById("raSeuil")||{}).value||20), pack=Number((document.getElementById("raPack")||{}).value||100);
+  var d0=window._lxRA||{};
+  if(actif && !d0.actif){
+    var px=(d0.prix||{})[pack];
+    if(!confirm("Activer la recharge automatique ?\n\nQuand il restera moins de "+seuil+" SMS, un pack de "+pack+" SMS ("+(px!=null?Number(px).toFixed(2).replace(".",","):"?")+" \u20ac) sera pay\u00e9 automatiquement avec la carte de votre abonnement.")){ lxRechargeAutoCharger(); return; }
+  }
+  var r=null; try{ r=await (await fetch("/api/sms/recharge-auto",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:_salonId,op:"regler",actif:actif,seuil:seuil,pack:pack})})).json(); }catch(e){}
+  if(!r||!r.ok){ showAlert((r&&r.error)||"Enregistrement impossible","error"); lxRechargeAutoCharger(); return; }
+  if(typeof auditLog==="function") auditLog("SMS_RECHARGE_AUTO",(actif?"Activ\u00e9e":"D\u00e9sactiv\u00e9e")+" \u2014 seuil "+seuil+", pack "+pack);
+  if(r.recharge&&r.recharge.fait&&typeof r.recharge.solde==="number"){ window.SMS_CREDITS=r.recharge.solde; if(typeof lxMajPastilleSms==="function") lxMajPastilleSms(); toast("\u2705 "+r.recharge.qty+" SMS ajout\u00e9s (recharge automatique)","success"); go("settings"); return; }
+  if(r.recharge&&r.recharge.echec){ showAlert("Recharge refus\u00e9e : "+r.recharge.echec,"error"); }
+  else toast(actif?"Recharge automatique activ\u00e9e":"Recharge automatique d\u00e9sactiv\u00e9e","success");
+  lxRechargeAutoCharger();
+}
 function lxValidateSiret(raw){
   if(!raw) return {ok:false, msg:"Non renseigné"};
   var s = String(raw).replace(/[\s.\-]/g, "");
@@ -14368,6 +14398,8 @@ function rSettings(){
     h+='<div style="font-size:11px;color:var(--text3)">'+(lxEssaiProActif()?'Les SMS s\u2019activent \u00e0 l\u2019abonnement Pro':(((window.LX_CONFIG&&LX_CONFIG.sms_bonus_first_pay)||150)+' offerts une seule fois au 1er paiement Pro'))+'</div></div>';
     h+='<button class="btn" style="background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3);font-weight:700;padding:10px 16px" onclick="go(\'marketing\')">Acheter des SMS</button>';
     h+='</div></div>';
+    // 2026-10-10 : recharge automatique (option) — chargée à l'ouverture
+    if(isProPaid()){ h+='<div class="card" id="lxRechargeAuto" style="margin-bottom:16px"><div style="font-size:12px;color:var(--text3)">Recharge automatique : chargement\u2026</div></div>'; setTimeout(lxRechargeAutoCharger,30); }
 
     // === Mode d'envoi SMS (brevo ou native via app Android) ===
     var smsMode=window.SMS_MODE||"brevo";
