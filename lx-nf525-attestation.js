@@ -60,7 +60,7 @@
     var p = function(t){ return esc(t).split("\n\n").map(function(x){ return "<p>"+x.replace(/\n/g,"<br>")+"</p>"; }).join(""); };
     var v2 = att ? att : null;
     var dd = v2 ? { representant:v2.representant, qualite:v2.qualite, etablissement:v2.etablissement, siret:v2.siret, dateAcquisition:v2.date_acquisition, dateDebut:v2.date_debut_utilisation, ville:v2.ville_signature, dateSignature:v2.signe_le } : d;
-    var h = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attestation NF525 — ' + esc(dd.etablissement||"") + '</title><style>' +
+    var h = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attestation de conformité de la caisse — ' + esc(dd.etablissement||"") + '</title><style>' +
       '@page{margin:16mm}body{font-family:Georgia,serif;max-width:760px;margin:20px auto;padding:0 20px;color:#1a1a1a;font-size:12.5px;line-height:1.6}' +
       'h1{font-size:16px;text-align:center;margin:0 0 4px;text-transform:uppercase;letter-spacing:.5px}.sub{text-align:center;color:#555;font-size:11px;margin-bottom:18px}' +
       'h2{font-size:13.5px;margin:22px 0 8px;padding:6px 10px;background:#f4efe2;border-left:4px solid #c8a84e}.note{font-size:11px;color:#444;border:1px solid #ddd;border-radius:6px;padding:10px;margin-top:10px}' +
