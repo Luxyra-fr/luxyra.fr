@@ -675,6 +675,7 @@ async function handleWebhook(request, env) {
             const salon = await supabaseGet(env, salonId);
             await supabaseUpdate(env, salonId, { sms_credits: (salon?.sms_credits || 0) + qty });
           }
+          await lxFactureSms(env, salonId, qty, (Number(data.amount_total) || 0) / 100, data.payment_intent || data.id, false);
           // (les SMS en attente repartent via le déclencheur trg_sms_recharge sur salons)
         }
         break;
@@ -783,22 +784,29 @@ async function handleWebhook(request, env) {
           let tvaAmount = Math.round(ht * tvaPct) / 100;  // arrondi au centime
           let ttc = Math.round((ht + tvaAmount) * 100) / 100;
           // 2026-10-08 : la facture reprend le montant REELLEMENT paye (tarif Fondateur, prorata, remise).
-          // Avant : prix catalogue -> un Pro Fondateur (14,99 EUR) aurait recu une facture a 24,99 EUR.
-          if (typeof data.amount_paid === "number" && data.amount_paid > 0) {
+          // 2026-10-10 : y compris 0 € (mois offert, parrainage, code 100 %) : avant, une facture à 0 € était
+          // émise au prix catalogue. Le prix avant remise et la remise sont détaillés sur la facture.
+          let brut = null, remise = 0, remiseLib = null;
+          if (typeof data.amount_paid === "number") {
             ttc = Math.round(data.amount_paid) / 100;
             ht = Math.round((ttc / (1 + tvaPct / 100)) * 100) / 100;
             tvaAmount = Math.round((ttc - ht) * 100) / 100;
+            const sub0 = typeof data.subtotal === "number" ? data.subtotal / 100 : ttc;
+            brut = Math.max(sub0, ttc);
+            remise = Math.round((brut - ttc) * 100) / 100;
+            if (remise > 0.004) {
+              const libs = [];
+              if (Number(data.starting_balance || 0) < 0) libs.push("crédit (parrainage / geste commercial)");
+              const ds = (data.total_discount_amounts || []).filter((x) => Number(x.amount) > 0);
+              if (ds.length || (data.discount && data.discount.coupon)) libs.push("remise" + (data.discount && data.discount.coupon && data.discount.coupon.name ? " « " + data.discount.coupon.name + " »" : ""));
+              remiseLib = libs.join(" + ") || "remise";
+            }
           }
           let _fondateur = false;
           try { const _s = await supabaseGet(env, salonId); _fondateur = !!(_s && _s.is_founder); } catch (_e) {}
           const sbUrl = CONFIG.SUPABASE_URL;
-          const numRes = await fetch(`${sbUrl}/rest/v1/rpc/next_facture_numero`, {
-            method: "POST",
-            headers: { "apikey": env.SUPABASE_SERVICE_KEY, "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-            body: "{}"
-          });
-          const numero = await numRes.json();
-          console.log("invoice.paid: numero=", JSON.stringify(numero));
+          // 2026-10-10 : numéro attribué par la base à l'insertion (verrou : ni trou ni doublon) ; une seule facture par facture Stripe
+          const numero = null;
           const periodStart = data.lines?.data?.[0]?.period?.start ? new Date(data.lines.data[0].period.start * 1000).toISOString().slice(0, 10) : null;
           const periodEnd = data.lines?.data?.[0]?.period?.end ? new Date(data.lines.data[0].period.end * 1000).toISOString().slice(0, 10) : null;
           // Detect actual payment method used
@@ -815,10 +823,12 @@ async function handleWebhook(request, env) {
           } catch(e) {}
           const insertBody = {
             salon_id: salonId, numero, montant_ht: ht, taux_tva: tvaPct, montant_tva: tvaAmount, montant_ttc: ttc,
+            type: "abonnement", montant_brut: brut, remise, remise_libelle: remiseLib,
+            date_paiement: data.status_transitions?.paid_at ? new Date(data.status_transitions.paid_at * 1000).toISOString() : new Date().toISOString(),
             description: `Abonnement Luxyra ${plan === "pro" ? (_fondateur ? "Pro Fondateur" : "Pro") : "Essentiel"} - Mensuel`,
             plan, periode_debut: periodStart, periode_fin: periodEnd,
             stripe_invoice_id: data.id || null, stripe_payment_intent: data.payment_intent || data.charge || null,
-            mode_paiement: modePaiement, status: "paid"
+            mode_paiement: Number(data.amount_paid || 0) > 0 ? modePaiement : "aucun (montant nul)", status: "paid"
           };
           console.log("invoice.paid: inserting facture", numero);
           const insertRes = await fetch(`${sbUrl}/rest/v1/factures_luxyra`, {
@@ -2958,6 +2968,19 @@ async function gateSmsAndDecrementCredit(env, salonId, nbSms = 1) {
 // Rate-limité à 1 email/24h par salon via salons.last_sms_credit_alert_at.
 // Ne block pas la réponse — fire & forget (waitUntil-style).
 // 2026-10-09 : crédit atomique (packs, remboursements) + historique sms_mouvements
+// 2026-10-10 : facture Luxyra pour un achat de SMS (pack ou recharge automatique) — une par paiement Stripe
+async function lxFactureSms(env, salonId, qty, montantEur, piId, auto) {
+  try {
+    let tvaPct = 0;
+    try { const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_config?id=eq.1&select=config`, { headers: _sbHeaders(env) }); const a = r.ok ? await r.json() : []; if (a[0] && a[0].config && a[0].config.luxyra_tva_pct != null) tvaPct = Number(a[0].config.luxyra_tva_pct); } catch (_) {}
+    const ttc = Math.round(Number(montantEur) * 100) / 100, ht = Math.round(ttc / (1 + tvaPct / 100) * 100) / 100;
+    const corps = { salon_id: salonId, numero: null, type: auto ? "sms_recharge_auto" : "sms_pack", description: `Pack ${qty} SMS${auto ? " (recharge automatique)" : ""}`,
+      plan: null, montant_brut: ttc, remise: 0, montant_ht: ht, taux_tva: tvaPct, montant_tva: Math.round((ttc - ht) * 100) / 100, montant_ttc: ttc,
+      stripe_payment_intent: piId || null, mode_paiement: "carte", status: "paid", date_paiement: new Date().toISOString() };
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/factures_luxyra`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(corps) });
+    if (!r.ok && r.status !== 409) console.error("facture SMS:", r.status, (await r.text()).slice(0, 200));
+  } catch (e) { console.error("facture SMS:", e?.message || e); }
+}
 async function lxCrediterSms(env, salonId, nb, type, montant, motif, auteur) {
   try {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/crediter_sms`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon_id: salonId, p_nb: nb, p_type: type, p_montant: montant, p_motif: motif, p_auteur: auteur }) });
@@ -3080,6 +3103,7 @@ async function lxRechargeAutoSiBesoin(env, salonId, solde) {
   const cr = await lxCrediterSms(env, salonId, qty, "achat_pack", cents / 100, `Recharge automatique ${qty} SMS (Stripe ${pi.id})`, "automatique");
   if (!cr || !cr.ok) await reportWorkerError(env, "worker:sms-recharge-auto", new Error("crédit après paiement échoué"), { salonId, pi: pi.id, qty }, "critical");
   await supabaseUpdate(env, salonId, { sms_recharge_echec: null });
+  await lxFactureSms(env, salonId, qty, cents / 100, pi.id, true);
   return { fait: true, qty, montant: cents / 100, solde: cr && cr.solde };
 }
 // POST /api/sms/recharge-auto {salon_id, op:"etat"|"regler", actif, seuil, pack} — route salon (propriétaire)

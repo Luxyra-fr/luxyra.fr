@@ -15255,6 +15255,25 @@ function exportClientData(cId){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var cl=gC(cId);if(!cl)return;
+  // 2026-10-10 : export COMPLET côté serveur (fiche, RDV, tickets, réservations et commandes en ligne, cartes,
+  // forfaits, devis, factures, consentements) via rgpd_export_client_data ; repli sur l'export local si indisponible.
+  if(typeof _sb!=="undefined"&&_sb&&!String(cId).startsWith("passage")){
+    _sb.rpc("rgpd_export_client_data",{p_client_id:cId}).then(function(r){
+      if(r&&!r.error&&r.data){ _lxTelechargerJson(r.data,"donnees_client_"+cl.nom+"_"+cl.pre+".json"); auditLog("RGPD_EXPORT","Export complet donn\u00e9es client "+cName(cl)+" (Art. 15/20 RGPD)"); if(typeof toast==="function") toast("\u2705 Export RGPD t\u00e9l\u00e9charg\u00e9","success"); }
+      else _lxExportClientLocal(cId);
+    },function(){ _lxExportClientLocal(cId); });
+    return;
+  }
+  _lxExportClientLocal(cId);
+}
+function _lxTelechargerJson(obj,nom){
+  var blob=new Blob([JSON.stringify(obj,null,2)],{type:"application/json"});
+  var url=URL.createObjectURL(blob);
+  var a2=document.createElement("a");a2.href=url;a2.download=String(nom).replace(/[^\w.\-]+/g,"_");a2.click();
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+}
+function _lxExportClientLocal(cId){
+  var cl=gC(cId);if(!cl)return;
   var ap=AP.filter(function(a){return a.cId===cId&&a.st==="done"&&!a.cancelled;});
   var data={
     identite:{nom:cl.nom,prenom:cl.pre,telephone:cl.ph,email:cl.em,dateNaissance:cl.ddn,genre:cl.genre||cl.sex,dateCreation:cl.cr},
@@ -21214,7 +21233,8 @@ window.LX_CONFIG = window.LX_CONFIG || {
   plan_pro_eur: 24.99,
   // Identité éditeur Luxyra (TVA + forme juridique) — bascule micro → SAS
   luxyra_tva_pct: 0,
-  luxyra_siret_editeur: "910928464",
+  luxyra_siret_editeur: "91092846400023",
+  luxyra_adresse: "",
   luxyra_tva_intra: "",
   luxyra_forme_juridique: "Entreprise individuelle (micro-entrepreneur)",
   luxyra_capital_social: "",
@@ -32899,8 +32919,8 @@ async function loadMesFactures(){
     if(!r.data||!r.data.length){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--text3)">Aucune facture pour le moment.</div>';return;}
     var h='';
     r.data.forEach(function(f){
-      var planLabel=(f.plan==="pro"?"Pro":"Essentiel");
-      var modeLabel=f.mode_paiement==="sepa"?"SEPA":"CB";
+      var planLabel=(f.type&&f.type!=="abonnement")?(f.description||"SMS"):(f.plan==="pro"?"Pro":"Essentiel");
+      var modeLabel=f.mode_paiement==="sepa"?"SEPA":(Number(f.montant_ttc)>0?"CB":"offert");
       h+='<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2)">';
       h+='<div><div style="font-weight:700;font-size:13px;color:var(--gold);font-family:var(--mono2)">'+f.numero+'</div>';
       h+='<div style="font-size:12px;color:var(--text3)">'+new Date(f.date_facture).toLocaleDateString("fr-FR")+' \u2022 '+planLabel+' \u2022 '+modeLabel+'</div></div>';
@@ -32928,13 +32948,14 @@ function printFactureSalon(id){
     html+='@media print{body{padding:20px}}</style></head><body>';
     html+='<div style="display:flex;justify-content:space-between;margin-bottom:30px"><div>';
     html+='<div style="font-size:24px;font-weight:900;color:#c8a84e;letter-spacing:2px">LUXYRA</div>';
-    var _editName = "Alexandre Jensen";
+    var _editName = "Alexandre Jensen EI";  // 2026-10-10 : mention « EI » obligatoire pour un entrepreneur individuel
     var _editForme = (window.LX_CONFIG && window.LX_CONFIG.luxyra_forme_juridique) || "Entreprise individuelle (micro-entrepreneur)";
-    var _editSiret = (window.LX_CONFIG && window.LX_CONFIG.luxyra_siret_editeur) || "910928464";
+    var _editSiret = (window.LX_CONFIG && window.LX_CONFIG.luxyra_siret_editeur) || "91092846400023";
+    var _editAdresse = (window.LX_CONFIG && window.LX_CONFIG.luxyra_adresse) || "";
     var _editTvaIntra = (window.LX_CONFIG && window.LX_CONFIG.luxyra_tva_intra) || "";
     var _editCapital = (window.LX_CONFIG && window.LX_CONFIG.luxyra_capital_social) || "";
     var _siretFmt = String(_editSiret).replace(/(\d{3})(\d{3})(\d{3})(\d{0,5})/, function(_,a,b,c,d){return a+" "+b+" "+c+(d?" "+d:"");});
-    html+='<div style="font-size:10px;color:#888">'+_editName+'<br>SIRET '+_siretFmt+(_editTvaIntra?'<br>TVA Intra : '+_editTvaIntra:'')+(_editCapital?'<br>Capital social : '+_editCapital:'')+'<br>support@luxyra.fr</div>';
+    html+='<div style="font-size:10px;color:#888">'+_editName+(_editAdresse?'<br>'+escapeHtml(_editAdresse):'')+'<br>SIRET '+_siretFmt+(_editTvaIntra?'<br>TVA Intra : '+_editTvaIntra:'')+(_editCapital?'<br>Capital social : '+_editCapital:'')+'<br>support@luxyra.fr</div>';
     html+='</div><div style="text-align:right"><h1>FACTURE</h1>';
     html+='<div style="font-size:16px;font-weight:700;color:#c8a84e">'+f.numero+'</div>';
     html+='<div style="font-size:12px;margin-top:6px">Date : '+new Date(f.date_facture).toLocaleDateString("fr-FR")+'</div></div></div>';
@@ -32942,14 +32963,21 @@ function printFactureSalon(id){
     html+='<div style="font-weight:700">'+SALON_CONFIG.nom+'</div>';
     if(SALON_CONFIG.adresse)html+='<div style="font-size:12px;color:#666">'+SALON_CONFIG.adresse+'</div>';
     if(SALON_CONFIG.cp||SALON_CONFIG.ville)html+='<div style="font-size:12px;color:#666">'+(SALON_CONFIG.cp||"")+' '+(SALON_CONFIG.ville||"")+'</div>';
-    if(SALON_CONFIG.siret)html+='<div style="font-size:11px;color:#888;margin-top:4px">SIRET : '+SALON_CONFIG.siret+'</div>';
+    if(SALON_CONFIG.siret)html+='<div style="font-size:11px;color:#888;margin-top:4px">SIRET : '+SALON_CONFIG.siret+(SALON_CONFIG.siret.length>=9?' (SIREN '+SALON_CONFIG.siret.slice(0,9)+')':'')+'</div>';
+    if(SALON_CONFIG.tva)html+='<div style="font-size:11px;color:#888">TVA intracom. : '+escapeHtml(SALON_CONFIG.tva)+'</div>';
     html+='</div>';
+    html+='<div style="font-size:11px;color:#666;margin-bottom:10px">Nature de l\u2019op\u00e9ration : prestation de services (logiciel en ligne)</div>';
     var _tauxTva = Number(f.taux_tva || 0);
     var _isAssujetti = _tauxTva > 0;
     html+='<table><tr><th>Description</th><th>P\u00e9riode</th><th style="text-align:right">Montant '+(_isAssujetti?'HT':'')+'</th></tr>';
-    html+='<tr><td>Abonnement Luxyra '+planLabel+' \u2014 Mensuel</td>';
+    var _lib=(f.type&&f.type!=="abonnement")?escapeHtml(f.description||"Pack SMS"):('Abonnement Luxyra '+planLabel+' \u2014 Mensuel');
+    var _brut=(f.montant_brut!=null)?Number(f.montant_brut):Number(f.montant_ttc), _rem=Number(f.remise||0);
+    var _brutHT=_isAssujetti?Math.round(_brut/(1+_tauxTva/100)*100)/100:_brut, _remHT=_isAssujetti?Math.round(_rem/(1+_tauxTva/100)*100)/100:_rem;
+    html+='<tr><td>'+_lib+'</td>';
     html+='<td>'+(f.periode_debut?new Date(f.periode_debut).toLocaleDateString("fr-FR")+' au '+new Date(f.periode_fin).toLocaleDateString("fr-FR"):'\u2014')+'</td>';
-    html+='<td style="text-align:right;font-weight:700">'+Number(f.montant_ht).toFixed(2)+' \u20ac</td></tr></table>';
+    html+='<td style="text-align:right;font-weight:700">'+(_rem>0.004?_brutHT:Number(f.montant_ht)).toFixed(2)+' \u20ac</td></tr>';
+    if(_rem>0.004) html+='<tr><td colspan="2">'+(f.remise_libelle?escapeHtml(f.remise_libelle.charAt(0).toUpperCase()+f.remise_libelle.slice(1)):'Remise')+'</td><td style="text-align:right">\u2212 '+_remHT.toFixed(2)+' \u20ac</td></tr>';
+    html+='</table>';
     html+='<div style="text-align:right;margin-top:20px">';
     if(_isAssujetti){
       html+='<div>Total HT : '+Number(f.montant_ht).toFixed(2)+' \u20ac</div>';
@@ -32962,11 +32990,13 @@ function printFactureSalon(id){
       html+='<div style="font-size:18px;font-weight:bold;margin-top:6px;color:#c8a84e">Total TTC : '+Number(f.montant_ttc).toFixed(2)+' \u20ac</div>';
     }
     html+='</div>';
-    html+='<div style="margin-top:24px;font-size:11px;color:#888">Paiement : '+(f.mode_paiement==="sepa"?"Pr\u00e9l\u00e8vement SEPA":"Carte bancaire")+'</div>';
+    var _payeLe=f.date_paiement?new Date(f.date_paiement).toLocaleDateString("fr-FR"):new Date(f.date_facture).toLocaleDateString("fr-FR");
+    html+='<div style="margin-top:24px;font-size:11px;color:#888">'+(Number(f.montant_ttc)>0?('Facture acquitt\u00e9e le '+_payeLe+' \u2014 paiement : '+(f.mode_paiement==="sepa"?"pr\u00e9l\u00e8vement SEPA":"carte bancaire")):'Montant nul : aucun paiement d\u00fb')+'</div>';
+    html+='<div style="margin-top:6px;font-size:10px;color:#999;line-height:1.5">Pas d\u2019escompte pour paiement anticip\u00e9. En cas de retard de paiement : p\u00e9nalit\u00e9s au taux d\u2019int\u00e9r\u00eat appliqu\u00e9 par la BCE \u00e0 son op\u00e9ration de refinancement la plus r\u00e9cente major\u00e9 de 10 points, et indemnit\u00e9 forfaitaire pour frais de recouvrement de 40 \u20ac (art. L441-10 et D441-5 du Code de commerce).</div>';
     var _footerMention = _isAssujetti
       ? 'TVA acquitt\u00e9e sur les encaissements'+(_editTvaIntra?' \u2014 TVA Intra '+_editTvaIntra:'')
       : 'TVA non applicable, art. 293B du CGI';
-    html+='<div class="footer">Luxyra \u2014 '+_editName+' \u2014 '+_editForme+'<br>SIRET '+_siretFmt+(_editCapital?' \u2014 Capital social '+_editCapital:'')+' \u2014 '+_footerMention+'<br>support@luxyra.fr \u2014 www.luxyra.fr</div>';
+    html+='<div class="footer">Luxyra \u2014 '+_editName+' \u2014 '+_editForme+(_editAdresse?'<br>'+escapeHtml(_editAdresse):'')+'<br>SIRET '+_siretFmt+(_editCapital?' \u2014 Capital social '+_editCapital:'')+' \u2014 '+_footerMention+'<br>support@luxyra.fr \u2014 www.luxyra.fr</div>';
     html+='</body></html>';
     w.document.write(html);w.document.close();
     setTimeout(function(){w.print();},500);
