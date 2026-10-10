@@ -60,12 +60,12 @@
     var p = function(t){ return esc(t).split("\n\n").map(function(x){ return "<p>"+x.replace(/\n/g,"<br>")+"</p>"; }).join(""); };
     var v2 = att ? att : null;
     var dd = v2 ? { representant:v2.representant, qualite:v2.qualite, etablissement:v2.etablissement, siret:v2.siret, dateAcquisition:v2.date_acquisition, dateDebut:v2.date_debut_utilisation, ville:v2.ville_signature, dateSignature:v2.signe_le } : d;
-    var h = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Attestation NF525 — ' + esc(dd.etablissement||"") + '</title><style>' +
+    var h = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attestation NF525 — ' + esc(dd.etablissement||"") + '</title><style>' +
       '@page{margin:16mm}body{font-family:Georgia,serif;max-width:760px;margin:20px auto;padding:0 20px;color:#1a1a1a;font-size:12.5px;line-height:1.6}' +
       'h1{font-size:16px;text-align:center;margin:0 0 4px;text-transform:uppercase;letter-spacing:.5px}.sub{text-align:center;color:#555;font-size:11px;margin-bottom:18px}' +
       'h2{font-size:13.5px;margin:22px 0 8px;padding:6px 10px;background:#f4efe2;border-left:4px solid #c8a84e}.note{font-size:11px;color:#444;border:1px solid #ddd;border-radius:6px;padding:10px;margin-top:10px}' +
       '.sig{margin-top:10px;padding:10px;border:1px dashed #999;border-radius:6px;font-size:11.5px}.sig b{color:#1a1a1a}.hash{font-family:monospace;font-size:10px;word-break:break-all;color:#555}' +
-      '.blank{height:70px;border-bottom:1px solid #333;margin-top:30px}.btn{margin:20px auto;display:block;padding:10px 22px;font-size:14px;cursor:pointer}@media print{.btn{display:none}}</style></head><body>' +
+      'p{margin:0 0 10px;text-align:justify;-webkit-hyphens:auto;hyphens:auto}.sigrow{display:flex;gap:30px}.sigrow>div{flex:1}@media (max-width:640px){body{margin:0 auto;padding:12px 14px;font-size:14px;line-height:1.55}h1{font-size:15px;letter-spacing:0}.sub{font-size:11.5px}h2{font-size:14px;margin:18px 0 8px}p{text-align:left}.sig,.note{font-size:12.5px}.sigrow{flex-direction:column;gap:0}.btn{width:100%}}.blank{height:70px;border-bottom:1px solid #333;margin-top:30px}.btn{margin:20px auto;display:block;padding:10px 22px;font-size:14px;cursor:pointer}@media print{.btn{display:none}}</style></head><body>' +
       '<h1>Attestation individuelle relative à l’utilisation d’un logiciel ou d’un système de caisse sécurisé</h1>' +
       '<div class="sub">Article 286, I, 3° bis du code général des impôts — modèle officiel BOI-LETTRE-000242 (25/03/2026) — Logiciel Luxyra, version ' + esc(att ? att.version_logiciel : LX_ATT.versionLogiciel) + '</div>' +
       '<div class="note">Les volets 1 et 2 de cette attestation doivent être présentés à l’administration fiscale en cas de contrôle. Elle n’a de valeur que si son volet 2 est dûment complété et signé par l’entreprise utilisatrice du logiciel / système.</div>' +
@@ -76,7 +76,7 @@
       h += '<div class="sig">Signature du représentant légal : <b>signé électroniquement par ' + esc(att.representant) + ' le ' + esc(hFr(att.signe_le)) + '</b><br>' +
         'Procédé : ' + esc(att.methode) + '. Référence n° ' + esc(att.id) + '.<br>Empreinte SHA-256 du document signé (volets 1 et 2) : <span class="hash">' + esc(att.texte_sha256) + '</span></div>';
     } else {
-      h += '<div style="display:flex;gap:30px"><div style="flex:1">Signature du représentant légal :<div class="blank"></div></div><div style="flex:1">Cachet de l’entreprise :<div class="blank"></div></div></div>';
+      h += '<div class="sigrow"><div>Signature du représentant légal :<div class="blank"></div></div><div>Cachet de l’entreprise :<div class="blank"></div></div></div>';
     }
     h += '<div class="note">Conservez ce document avec vos pièces comptables pendant toute la durée d’utilisation du logiciel puis six ans (art. L102 B du livre des procédures fiscales). ' +
       'Une nouvelle attestation vous sera demandée à chaque nouvelle version majeure du logiciel.</div>' +
