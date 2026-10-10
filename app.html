@@ -384,6 +384,7 @@ body{max-width:100%;margin:0 auto;}
 })();
 </script>
 <script src="supabase.min.js"></script>
+<script src="lx-qrcode.js"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
      HTML (nécessaire pour que checkSession() soit défini AVANT tout inline script de
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
@@ -20257,7 +20258,6 @@ function printGiftTexteSeul(gcId){
   function esc(t){return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");}
   var w=window.open("","_blank","width=900,height=560");if(!w){if(typeof toast==="function")toast("Autorise les fenetres pop-up pour imprimer","warning");return;}
   var d='<!doctype html><html><head><meta charset="utf-8"><title>Bon '+esc(ref)+'</title>';
-  d+='<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>';
   d+='<style>@page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,Helvetica,sans-serif;color:#000;background:#e6e6e6}';
   d+='.bar{padding:8px 12px;background:#222;color:#fff;font-size:13px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}';
   d+='.bar input{width:62px;padding:4px;border-radius:5px;border:1px solid #555}.bar button{padding:7px 12px;font-weight:700;cursor:pointer;border:none;border-radius:6px}';
@@ -20283,8 +20283,7 @@ function printGiftTexteSeul(gcId){
   d+='<script>var R='+JSON.stringify(ref)+';';
   d+='function ap(){var x=parseFloat(document.getElementById("ox").value)||0,y=parseFloat(document.getElementById("oy").value)||0;document.getElementById("sh").style.transform="translate("+x+"mm,"+y+"mm)";}';
   d+='function sv(){try{localStorage.setItem("_lx_bon_calage",JSON.stringify({x:parseFloat(document.getElementById("ox").value)||0,y:parseFloat(document.getElementById("oy").value)||0}));ap();alert("Calage enregistre.");}catch(e){alert("Impossible d\'enregistrer le calage.");}}';
-  d+='function drawQR(){try{new QRCode(document.getElementById("qr"),{text:R||" ",width:120,height:120,correctLevel:QRCode.CorrectLevel.M});}catch(e){document.getElementById("qr").innerHTML="<div style=\\"font-size:2.4mm\\">"+R+"</div>";}}';
-  d+='if(window.QRCode){drawQR();}else{var t=0,iv=setInterval(function(){if(window.QRCode||t++>40){clearInterval(iv);drawQR();}},100);}';
+  d+='document.getElementById("qr").innerHTML='+JSON.stringify('<img src="'+lxQrDataUrl(ref||" ",240)+'" alt="QR">')+';';
   d+='<\/script></body></html>';
   w.document.write(d);w.document.close();
 }
@@ -20613,7 +20612,7 @@ function printGiftThemed(gcId,themeId){
   // Maintenant : api.qrserver.com (gratuit, stable, vrai QR ISO/IEC 18004).
   // Fallback automatique : si l'image ne charge pas (offline), le code texte
   // BC-XXXXXX reste affiché juste à côté.
-  var qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=200x200&qzone=2&format=svg&color=000000&bgcolor=FFFFFF&data=" + encodeURIComponent(g.code);
+  var qrUrl = lxQrDataUrl(g.code, 200); // 2026-10-10 : généré localement (plus de service tiers)
   // Code texte : couleur adaptée pour max contraste (or vif sur sombre,
   // accent du thème sur clair)
   var _codeColor = _gcDark ? "#f5e9c3" : t.acc;
@@ -31478,7 +31477,7 @@ async function showSmsNativeLinkQR(){
     var qrUrl=data.qr_url;
     var encodedUrl=encodeURIComponent(qrUrl);
     // Utilise l'API publique qrserver.com pour g\u00e9n\u00e9rer l'image QR (gratuit, sans cl\u00e9)
-    var qrImgUrl="https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=10&data="+encodedUrl;
+    var qrImgUrl=lxQrDataUrl(qrUrl, 280); // 2026-10-10 : généré localement — le lien de liaison ne quitte plus Luxyra
     
     var htm='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:440px">';
     htm+='<div style="font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:4px">\u00c9tape 1 sur 3</div>';
@@ -32927,6 +32926,14 @@ function clearDoc(type){
 }
 
 // 2026-10-10 : justificatifs (Kbis, pièce d'identité) en stockage PRIVÉ : ouverture par lien temporaire (5 min)
+// 2026-10-10 : QR codes générés DANS l'application (avant : envoi du contenu à un service tiers, qrserver.com)
+function lxQrDataUrl(texte, px){
+  try{
+    var q=qrcode(0,"M"); q.addData(String(texte||" ")); q.make();
+    var n=q.getModuleCount(), marge=2, cell=Math.max(2,Math.floor((px||200)/(n+2*marge)));
+    return q.createDataURL(cell, cell*marge);
+  }catch(e){ return ""; }
+}
 async function lxOuvrirDoc(u){
   try{
     var s=String(u||""), i=s.indexOf("/salon-documents/"), path=i>=0?decodeURIComponent(s.slice(i+17).split("?")[0]):s;
