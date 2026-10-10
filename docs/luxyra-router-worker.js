@@ -1599,6 +1599,24 @@ async function handleWebhookConnect(request, env) {
           // account inclus : si la clé interne n'est pas reconnue, la fonction relit elle-même l'évènement chez Stripe
           body: JSON.stringify(Object.assign({}, event, { account: compte }))
         });
+      } else {
+        // 2026-10-09 : filet si la cliente ferme la page avant le retour du paiement. On rejoue EXACTEMENT la
+        // finalisation de la page (mêmes contrôles, idempotente : « déjà enregistré » si la page l'a déjà fait).
+        const md = data.metadata || {};
+        const appel = (corps) => new Request("https://luxyra.fr/interne", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corps) });
+        let rep = null;
+        if (md.subtype === "empreinte" && md.rdv_id) rep = await handleEmpreinteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env);
+        else if ((!t || t === "acompte") && md.rdv_id) rep = await handleAcompteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env);
+        else if (t === "rdv_demande_acompte" && md.proposal_token) rep = await handleRdvDemandeFinalize(appel({ token: md.proposal_token, session_id: data.id }), env);
+        else if (t === "carte_abo" && (md.carte_abo_id || md.rdv_id)) {
+          rep = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/carte-abo-confirm-payment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ carte_id: md.carte_abo_id || md.rdv_id, stripe_session_id: data.id }) });
+        }
+        if (rep) {
+          const st = rep.status, txt = await rep.text().catch(() => "");
+          // 5xx -> Stripe réessaiera ; 4xx « déjà traité / déjà enregistré » = normal (la page l'a fait)
+          if (st >= 500) throw new Error(`finalisation ${t || md.subtype || "?"} ${st} ${txt.slice(0, 200)}`);
+          if (st >= 400 && !/d[ée]j[àa]|already/i.test(txt)) await reportWorkerError(env, "worker:stripe-webhook-connect", new Error(`finalisation refusée ${t || md.subtype} ${st}`), { session: data.id, compte, reponse: txt.slice(0, 300) }, "warning");
+        }
       }
     } else if (event.type === "charge.dispute.created") {
       const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&stripe_connect_id=eq.${encodeURIComponent(compte)}&limit=1`, { headers: _sbHeaders(env) });

@@ -8344,6 +8344,8 @@ function _isImportLS(a){
 }
 // === Normalisation modes de paiement (gère toutes les variantes LS/Luxyra/manuelles) ===
 // Retourne le mode canonique : "cb" | "esp" | "chq" | "bon" | "vir" | "aut"
+// 2026-10-09 : règlement « Payé en ligne (Click & Collect) » (affichage des rapports mensuels)
+function _lxEstEnLigne(met){ var m=String(met||"").toLowerCase(); return m.indexOf("ligne")>=0||m.indexOf("stripe")>=0||m.indexOf("online")>=0; }
 function _modeCanonique(met){
   var m = String(met||"").toLowerCase().trim();
   if(!m) return "aut";
@@ -22554,7 +22556,7 @@ async function expExcelComptable(){
 
   // === ONGLET 1 : SYNTHÈSE ===
   // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd (706/707 correct pour expert)
-  var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0,tRem=0,tBrut=0;
+  var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0,tRem=0,tBrut=0,tEnLX=0;
   dn.forEach(function(a){
     var sp=_splitPrestProd(a);
     tPrest+=sp.prest; tProd+=sp.prod;
@@ -22565,7 +22567,7 @@ async function expExcelComptable(){
     else if(mc==="chq")tChq+=sp.total;
     else if(mc==="bon")tBon+=sp.total;
     else if(mc==="vir")tVir+=sp.total;
-    else tAut+=sp.total;
+    else { tAut+=sp.total; if(_lxEstEnLigne(a.met)) tEnLX+=sp.total; }
   });
   ps2.forEach(function(pp){
     tProd+=(Number(pp.pr)||0);
@@ -22620,7 +22622,7 @@ async function expExcelComptable(){
     ["Chèques", tChq],
     ["Bons cadeaux / avoirs", tBon],
     ["Virements", tVir],
-    ["Autres", tAut],
+    [tEnLX>0.004?("Autres (dont payés en ligne : "+(Math.round(tEnLX*100)/100).toFixed(2).replace(".",",")+" €)"):"Autres", tAut],
     ["TOTAL RÈGLEMENTS", totRegl],                                      // 29 total
     ["Écart CA / Règlements", ecart],                                   // 30 eur
     [],                                                                 // 31 vide
@@ -22985,17 +22987,18 @@ function printBandeZ(){
   
   // Totaux par mode
   // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd au niveau ticket
-  var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0;
+  var tCB=0,tEsp=0,tChq=0,tBon=0,tVir=0,tAut=0,tProd=0,tPrest=0,tEnL=0;
   dn.forEach(function(a){
     var sp=_splitPrestProd(a);
     tPrest+=sp.prest; tProd+=sp.prod;
     var mc=_modeCanonique(a.met);
-    if(mc==="cb")tCB+=sp.total; else if(mc==="esp")tEsp+=sp.total; else if(mc==="chq")tChq+=sp.total; else if(mc==="bon")tBon+=sp.total; else if(mc==="vir")tVir+=sp.total; else tAut+=sp.total;
+    if(_lxEstEnLigne(a.met)) tEnL+=sp.total;
+    else if(mc==="cb")tCB+=sp.total; else if(mc==="esp")tEsp+=sp.total; else if(mc==="chq")tChq+=sp.total; else if(mc==="bon")tBon+=sp.total; else if(mc==="vir")tVir+=sp.total; else tAut+=sp.total;
   });
   ps.forEach(function(pp){tProd+=(Number(pp.pr)||0);var mc=_modeCanonique(pp.met);if(mc==="cb")tCB+=(Number(pp.pr)||0); else if(mc==="esp")tEsp+=(Number(pp.pr)||0); else if(mc==="chq")tChq+=(Number(pp.pr)||0); else tAut+=(Number(pp.pr)||0);});
   tPrest=Math.round(tPrest*100)/100; tProd=Math.round(tProd*100)/100;
   var tTotal=tPrest+tProd;
-  var totRegl=tCB+tEsp+tChq+tBon+tVir+tAut;
+  var totRegl=tCB+tEsp+tChq+tBon+tVir+tAut+tEnL;
   // Remises du mois
   var tRemises=0;var tBrut=0;
   dn.forEach(function(a){tRemises+=(a.remise||0);tBrut+=(a.brutTotal||a.pr);});
@@ -23175,6 +23178,7 @@ function printBandeZ(){
   h+="<tr><td>Ch\u00e8ques</td><td class=\"r\">"+tChq.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Bons cadeaux / avoirs</td><td class=\"r\">"+tBon.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Virements</td><td class=\"r\">"+tVir.toFixed(2)+" \u20ac</td></tr>";
+  if(tEnL>0)h+="<tr><td>Pay\u00e9s en ligne (Click &amp; Collect)</td><td class=\"r\">"+tEnL.toFixed(2)+" \u20ac</td></tr>";
   if(tAut>0)h+="<tr><td>Autre</td><td class=\"r\">"+tAut.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr class=\"total\"><td>TOTAL R\u00c8GLEMENTS</td><td class=\"r\">"+totRegl.toFixed(2)+" \u20ac</td></tr></table>";
   var ecart=Math.round((tTotal-totRegl)*100)/100;
