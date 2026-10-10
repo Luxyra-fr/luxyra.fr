@@ -3013,8 +3013,8 @@ async function lxParrainageMailParrain(env, parrain, filleulNom, montant) {
     if (!parrain || !parrain.email) return;
     await brevoSendEmail(env, { to: parrain.email, toName: parrain.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
       subject: "🎁 Votre parrainage : 1 mois offert !",
-      htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Merci pour votre parrainage !</h2><p>Bonjour,</p><p><b>${String(filleulNom || "Le salon que vous avez parrainé").replace(/</g, "&lt;")}</b> vient de souscrire son abonnement Luxyra. Comme promis, <b>votre prochain mois est offert</b>${montant ? ` (${String(montant.toFixed(2)).replace(".", ",")} € déduits de votre prochaine facture)` : ""}.</p><p>Continuez à partager votre code : chaque nouveau salon abonné vous offre un mois de plus (jusqu'à 12 par an).</p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
-      textContent: `Merci pour votre parrainage ! ${filleulNom || "Le salon parrainé"} vient de s'abonner : votre prochain mois Luxyra est offert.`, replyTo: null, attachment: null });
+      htmlContent: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;font-size:14px;line-height:1.6;color:#222"><h2 style="color:#c8a84e">Merci pour votre parrainage !</h2><p>Bonjour,</p><p><b>${String(filleulNom || "L’établissement que vous avez parrainé").replace(/</g, "&lt;")}</b> vient de souscrire son abonnement Luxyra. Comme promis, <b>votre prochain mois est offert</b>${montant ? ` (${String(montant.toFixed(2)).replace(".", ",")} € déduits de votre prochaine facture)` : ""}.</p><p>Continuez à partager votre code : chaque nouvel établissement abonné vous offre un mois de plus (jusqu'à 12 par an).</p><p style="font-size:12px;color:#888">Email automatique — Luxyra</p></div>`,
+      textContent: `Merci pour votre parrainage ! ${filleulNom || "L’établissement parrainé"} vient de s'abonner : votre prochain mois Luxyra est offert.`, replyTo: null, attachment: null });
   } catch (_) {}
 }
 async function lxParrainageRecompenser(env, filleulId) {
