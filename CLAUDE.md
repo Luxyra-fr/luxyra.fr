@@ -1567,3 +1567,10 @@ Tables existantes : inchangées.
 - Table `sms_envois` (un enregistrement par SMS : nb_sms, message_id, statut en_cours/envoye/livre/en_attente/echec, événements, rembourse). `/api/brevo/sms-event` (signature HMAC de la référence, clé = service key) : delivered → livré (définitif) ; hardBounce/rejected/blocked/skipped/error… → échec + `sms_envoi_rembourser` (crédit rendu UNE fois) ; softBounce → en attente.
 - Cron 08:00 UTC : `runSmsRapprochementJob` compare la veille (heure de Paris) Luxyra vs Brevo (`/statistics/reports`) → alerte push si écart (pas le 1er jour du suivi), et solde SMS du compte Brevo Luxyra (`/v3/account`) → alerte UNE fois sous 200. Résultat dans `app_secrets.sms_rapprochement_dernier`, affiché dans Admin → SMS (carte « Distribution »).
 - Sauvegarde : modèle `docs/sauvegarde-nuit.yml` (à placer dans `.github/workflows/` : le jeton de Claude n'a pas le droit « workflow ») (00:30 UTC) : pg_dump 17 (public, auth, lx_prive, storage, supabase_migrations) → gpg AES-256 (BACKUP_PASSPHRASE) → Gmail (SMTP, mot de passe d'application). Secrets GitHub à créer par Alexandre : SUPABASE_DB_URL (Session pooler), GMAIL_USER, GMAIL_APP_PASSWORD, BACKUP_PASSPHRASE. Sans eux : arrêt propre. Rien n'est stocké sur GitHub.
+
+## 2026-10-10 — Entreprise en cours d'immatriculation
+- inscription.html : case « en cours d'immatriculation » (`DATA.enCoursImmat`) -> essai sans SIRET (`siret: null`).
+- app.html : bandeau orange sur l'accueil tant que `SALON_CONFIG.siret` est vide ; Paramètres → Infos établissement : champ + `lxSiretAjouter()` (vérif `/api/siret`, établissement actif, confirmation, complète SIREN/TVA si vides, audit `SIRET_AJOUTE`).
+- Worker `handleCreateCheckout` : abonnement refusé sans SIRET (`code: siret_requis`) — sinon paiement accepté mais passage « actif » refusé par `salon_siret_required_trg`.
+- Base : `trg_salons_siret_verrou` (lx_prive.salons_siret_verrou) : un salon ne peut qu'AJOUTER un SIRET vide (14 chiffres) ; le modifier = admin/service uniquement (avant : verrou seulement dans l'écran).
+- Bot : entrée `abonnement` complétée.

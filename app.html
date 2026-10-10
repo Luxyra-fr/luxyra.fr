@@ -7669,6 +7669,27 @@ if (typeof window !== "undefined" && typeof window.lxTauxTVA !== "function") {
     }catch(_e){ return window.lxTauxTVA(); }
   };
 }
+// 2026-10-10 : ajout du SIRET par un salon inscrit « en cours d'immatriculation » (une seule fois, vérifié)
+async function lxSiretAjouter(){
+  var el=document.getElementById("lxSiretAjout"), msg=document.getElementById("lxSiretAjoutMsg");
+  var s=String((el&&el.value)||"").replace(/\s+/g,"");
+  if(!/^\d{14}$/.test(s)){ if(msg) msg.innerHTML='<span style="color:#ef5350">Le SIRET doit faire 14 chiffres.</span>'; return; }
+  if(msg) msg.textContent="V\u00e9rification au r\u00e9pertoire officiel\u2026";
+  var d=null; try{ d=await (await fetch("/api/siret?siret="+s)).json(); }catch(e){}
+  if(!d||!d.ok){ if(msg) msg.innerHTML='<span style="color:#ef5350">'+((d&&d.error)||"V\u00e9rification impossible, r\u00e9essayez dans un instant.")+'</span>'; return; }
+  if(d.actif===false){ if(msg) msg.innerHTML='<span style="color:#ef5350">Cet \u00e9tablissement est indiqu\u00e9 comme ferm\u00e9 au r\u00e9pertoire officiel : v\u00e9rifiez le num\u00e9ro.</span>'; return; }
+  var nom=d.raison_sociale||d.nom||"";
+  showConfirm("Enregistrer le SIRET "+s+(nom?" ("+nom+")":"")+" ?\n\nIl appara\u00eetra sur vos tickets et ne pourra plus \u00eatre modifi\u00e9 ensuite.", async function(){
+    var patch={siret:s};
+    if(d.siren && !String((window.SALON||{}).siren||"").trim()) patch.siren=d.siren;
+    if(d.tva_intra && !String((window.SALON||{}).tva||"").trim()) patch.tva=d.tva_intra;
+    var r=await _sb.from("salons").update(patch).eq("id",_salonId);
+    if(r.error){ showAlert("Enregistrement impossible : "+r.error.message,"error"); return; }
+    SALON_CONFIG.siret=s; if(window.SALON){ window.SALON.siret=s; if(patch.siren) window.SALON.siren=patch.siren; if(patch.tva) window.SALON.tva=patch.tva; }
+    if(typeof auditLog==="function") auditLog("SIRET_AJOUTE","SIRET "+s+" ajout\u00e9 (entreprise immatricul\u00e9e)");
+    toast("\u2705 SIRET enregistr\u00e9","success"); go("settings");
+  });
+}
 function lxValidateSiret(raw){
   if(!raw) return {ok:false, msg:"Non renseigné"};
   var s = String(raw).replace(/[\s.\-]/g, "");
@@ -9532,6 +9553,10 @@ function buildDemandeProposalEmailHtml(data, url, client, salonNom){
 function rHome(){
   var h='';
   var today=TD;
+  // 2026-10-10 : entreprise inscrite « en cours d'immatriculation » -> rappel d'ajouter le SIRET
+  if(!window._lxVueAdmin && !String((SALON_CONFIG&&SALON_CONFIG.siret)||"").trim() && (typeof hasPermission!=="function"||hasPermission("settings"))){
+    h+='<div onclick="window._settTab=\'salon\';go(\'settings\')" style="cursor:pointer;background:rgba(255,152,0,.1);border:1.5px solid rgba(255,152,0,.45);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center"><div style="font-size:26px">\ud83d\udcc4</div><div style="flex:1"><div style="font-weight:800;color:#ffb74d">Entreprise en cours d\u2019immatriculation</div><div style="font-size:12px;color:var(--text2)">Ajoutez votre SIRET d\u00e8s r\u00e9ception : Param\u00e8tres \u2192 Infos \u00e9tablissement. Il est obligatoire pour activer votre abonnement.</div></div><div style="color:#ffb74d;font-size:18px">\u203a</div></div>';
+  }
   var tvaR=lxTauxTVA();
   // === Bandeau "Demandes sur mesure en attente" ===
   var pendingDemandes = (window.RDV_DEMANDES||[]).filter(function(x){return x.status==="pending";});
@@ -13826,6 +13851,13 @@ function rSettings(){
     h+='<div class="fg"><label>Instagram <span style="font-size:10px;color:var(--text3)">(URL ou @pseudo)</span></label><input value="'+(S.instagramUrl||"").replace(/"/g,"&quot;")+'" placeholder="https://instagram.com/votre-pseudo ou @pseudo" onchange="window.SALON.instagramUrl=this.value.trim()"></div>';
     h+='<div class="fg"><label>TikTok <span style="font-size:10px;color:var(--text3)">(URL ou @pseudo)</span></label><input value="'+(S.tiktokUrl||"").replace(/"/g,"&quot;")+'" placeholder="https://tiktok.com/@votre-pseudo ou @pseudo" onchange="window.SALON.tiktokUrl=this.value.trim()"></div>';
     // SIRET - VERROUILLE (legal NF525, immuable apres 1er ticket) + validation visuelle (Quick Win #2 2026-05-06)
+    // 2026-10-10 : salon inscrit « en cours d'immatriculation » -> il saisit son SIRET UNE fois (vérifié au
+    // répertoire officiel), ensuite le champ est verrouillé comme pour tout le monde.
+    if(!String(S.siret||"").trim()){
+      h+='<div class="fg" style="border:1px solid rgba(255,152,0,.4);border-radius:10px;padding:10px;background:rgba(255,152,0,.06)"><label>SIRET <span style="font-size:10px;color:#ffb74d">en cours d\u2019immatriculation</span></label>';
+      h+='<div style="display:flex;gap:6px"><input id="lxSiretAjout" inputmode="numeric" maxlength="17" placeholder="14 chiffres, d\u00e8s r\u00e9ception" style="flex:1;font-family:monospace"><button class="btn bg" style="font-size:12px;padding:8px 12px" onclick="lxSiretAjouter()">V\u00e9rifier et enregistrer</button></div>';
+      h+='<div id="lxSiretAjoutMsg" style="font-size:11px;color:var(--text3);margin-top:6px">Obligatoire pour activer votre abonnement. Une fois enregistr\u00e9, il ne peut plus \u00eatre modifi\u00e9 (il appara\u00eet sur vos tickets).</div></div>';
+    }
     var _siretValid = lxValidateSiret(S.siret);
     h+='<div class="fg"><label>SIRET '+lxValidationBadge(_siretValid)+lxHelpIcon("Num\u00e9ro \u00e0 14 chiffres d\u00e9livr\u00e9 par l'INSEE lors de l'immatriculation. Visible sur votre extrait KBis ou via l'avis SIRENE de l'URSSAF.")+' <span style="font-size:10px;color:var(--text3)">\ud83d\udd12 verrouill\u00e9 (l\u00e9gal)</span></label>';
     h+='<input value="'+(S.siret||"").replace(/"/g,"&quot;")+'" disabled style="opacity:.65;cursor:not-allowed;background:rgba(255,255,255,.02);font-family:monospace">';
