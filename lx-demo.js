@@ -94,7 +94,7 @@
   T.clients = [];
   for (var ci = 0; ci < 32; ci++) {
     var h = homme ? rnd() < 0.85 : rnd() < 0.15;
-    var pr = h ? pick(PRENOMS_H) : pick(PRENOMS_F), nm = pick(NOMS);
+    var pr, nm, tries = 0; do { pr = h ? pick(PRENOMS_H) : pick(PRENOMS_F); nm = pick(NOMS); tries++; } while (T.clients.some(function (x) { return x.prenom === pr && x.nom === nm; }) && tries < 50);
     T.clients.push({ id: uuid(), salon_id: SALON_ID, nom: nm, prenom: pr, sexe: h ? "H" : "F", telephone: "06 " + String(10 + ci).padStart(2, "0") + " " + String(Math.floor(rnd() * 90 + 10)) + " " + String(Math.floor(rnd() * 90 + 10)) + " " + String(Math.floor(rnd() * 90 + 10)), email: (pr + "." + nm).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") + "@exemple.fr", adresse: MODE === "salon" ? "" : (Math.floor(rnd() * 40) + 1) + " rue des Lilas", cp: "57000", ville: "Metz", actif: true, points_fidelite: Math.floor(rnd() * 9), sms_ok: true, email_ok: true, fiches: [], fiche_tech: {}, created_at: addDays(NOW, -Math.floor(rnd() * 300)).toISOString(), acompte_online: "defaut", collab_pref: T.collaborateurs[ci % T.collaborateurs.length].id });
   }
   T.appointments = []; T.tickets = []; T.clotures = [];
