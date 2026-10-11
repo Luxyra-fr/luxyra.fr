@@ -1732,4 +1732,5 @@ Tables existantes : inchangées.
 - `.well-known/assetlinks.json` : empreinte Google (6A:C9:…:49:44) + clé d'importation (05:D3:…:72:64). Clé d'importation = fichiers keystore chez Alexandre uniquement (jamais dans le repo).
 - Visuels Play dans /store (icône, image 1024x500, captures 1080x1920).
 - Fait : politique conf., annonces=non, AD_ID=non, gouv=non, finance=aucune, santé=aucune, classification IARC (PEGI 3), fiche Store, catégorie Beauté, coordonnées contact@luxyra.fr, Sécurité des données (brouillon).
-- Reste : « Informations de connexion » (compte test créé par Alexandre, mot de passe saisi par lui), « Cible et contenu » (18+), puis envoi en examen par Alexandre.
+- Compte test Google : client contact@luxyra.fr (TEST Google, tel 0000000000 ; mot de passe connu d'Alexandre seul). Cible : 16-17 + 18+. Pays : France.
+- 11/10/2026 ~22h : envoyé en examen par Alexandre (production 1.0.0.0). Publication gérée désactivée → en ligne dès approbation.
