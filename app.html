@@ -11788,6 +11788,13 @@ function confirmCancelAppt(id){
   htm+='<div style="color:rgba(255,255,255,.6)">'+(sv?sv.n:"")+'</div>';
   htm+='<div style="color:rgba(255,255,255,.6)">\ud83d\udcc5 '+fmt(a.date)+' \u00e0 '+a.time+(sty?' \u2022 '+sty.n:'')+'</div>';
   htm+='</div>';
+  // 2026-10-11 : RDV pris en ligne -> motif transmis à la cliente + elle est prévenue (email, sinon SMS)
+  var _enLigne=!!(a.onlineId||String(a.id).indexOf("online_")===0);
+  window._lxCancelMotif=""; window._lxCancelPrevenir=true;
+  if(_enLigne){
+    htm+='<div style="text-align:left;margin-bottom:10px"><label style="font-size:12px;color:var(--text2)">Motif transmis \u00e0 la cliente (facultatif)</label><textarea id="lxCancelMotif" rows="2" maxlength="300" placeholder="Ex : collaboratrice malade, nous vous proposons un autre cr\u00e9neau" style="width:100%;margin-top:4px" oninput="window._lxCancelMotif=this.value"></textarea>';
+    htm+='<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);margin-top:6px;cursor:pointer"><input type="checkbox" checked onchange="window._lxCancelPrevenir=this.checked" style="width:18px;height:18px"> Pr\u00e9venir la cliente (email, ou SMS si pas d\u2019email)</label></div>';
+  }
   htm+='<div style="font-size:12px;color:rgba(255,255,255,.4);margin-bottom:14px">Cette action est irr\u00e9versible.</div>';
   htm+='<div style="display:flex;gap:8px">';
   htm+='<button class="btn" style="flex:1;padding:14px;background:rgba(255,255,255,.06);color:#fff;font-weight:700" onclick="cM()">Non, garder</button>';
@@ -12691,13 +12698,27 @@ function _lxCancelOnlineRdv(rdvId, reason){
     // 2026-10-08 : empreinte active -> le salon choisit (libérer, ou garder pour un no-show)
     if(_empHeld && typeof lxEmpreinteRelease==="function") setTimeout(function(){ lxEmpreinteRelease(rdvId); }, 400);
     var _by=(window._lxCancelBy==="no_show")?"no_show":"salon";
-    var _upd={status:"cancelled",cancelled_by:_by,cancel_reason:(_by==="no_show"?"Cliente absente (no-show)":(reason||"Annul\u00e9 par le salon")),cancelled_at:new Date().toISOString()};
+    var _motif=String(window._lxCancelMotif||"").trim().slice(0,300), _prevenir=window._lxCancelPrevenir!==false;
+    window._lxCancelMotif=""; window._lxCancelPrevenir=true;
+    var _upd={status:"cancelled",cancelled_by:_by,cancel_reason:(_by==="no_show"?"Cliente absente (no-show)":(_motif||reason||"Annul\u00e9 par le salon")),cancelled_at:new Date().toISOString()};
+    var _roMsg=null; if(window.RDV_ONLINE){ for(var _j=0;_j<RDV_ONLINE.length;_j++){ if(RDV_ONLINE[_j].id===rdvId){ _roMsg=RDV_ONLINE[_j]; break; } } }
     // 2026-10-11 : cliente absente -> l'acompte en ligne est définitivement conservé : il est enregistré en caisse
     // (ticket scellé « Acompte conservé ») par lxRetenuesSync.
     if(_by==="no_show") _upd.retenue_at=new Date().toISOString();
     _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).then(function(res){
       if(res&&res.error){ try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
-      if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200); },function(_e){ try{ toast("Annulation non enregistr\u00e9e (r\u00e9seau)","error"); }catch(_eT){} });
+      if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200);
+      // 2026-10-11 : la cliente est prévenue quand l'établissement annule (avant : elle ne le voyait qu'en ouvrant son espace)
+      if(_by==="salon" && _prevenir && _roMsg && typeof _lxMessageCliente==="function"){
+        try{
+          var _q=(typeof _lxDateCourte==="function")?_lxDateCourte(_roMsg.date,_roMsg.heure):(_roMsg.date+" "+_roMsg.heure);
+          var _ac=Number(_roMsg.acompte)||0, _acTxt=(_ac>0&&_roMsg.acomptePaye)?"\n\nL\u2019acompte de "+_ac.toFixed(2).replace(".",",")+" \u20ac vous est rembours\u00e9 automatiquement (d\u00e9lai bancaire de quelques jours).":"";
+          var _txtE="Nous sommes d\u00e9sol\u00e9s : votre rendez-vous du "+_q+(_roMsg.svcNom?" ("+_roMsg.svcNom+")":"")+" est annul\u00e9 par l\u2019\u00e9tablissement."+(_motif?"\n\u00ab "+_motif+" \u00bb":"")+_acTxt+"\n\nVous pouvez reprendre rendez-vous en ligne quand vous le souhaitez.";
+          var _txtS=(SALON_CONFIG.nom||"").slice(0,22)+": RDV du "+_q+" annule par l etablissement."+(_motif?" "+_motif.slice(0,60):"")+" Reprenez RDV en ligne.";
+          _lxMessageCliente(_roMsg,"Rendez-vous annul\u00e9","\u274c",_txtE,_txtS,null).then(function(c){ try{ if(c) toast("Cliente pr\u00e9venue par "+c,"success"); }catch(_t){} },function(){});
+        }catch(_eMsg){ console.warn("[annulation] message cliente",_eMsg); }
+      }
+    },function(_e){ try{ toast("Annulation non enregistr\u00e9e (r\u00e9seau)","error"); }catch(_eT){} });
   }catch(_e){}
 }
 // =====================================================================
