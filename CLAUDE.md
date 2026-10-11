@@ -1725,3 +1725,11 @@ Tables existantes : inchangées.
 - RAPPEL : le 18/10/2026, préparer (sans envoyer sans accord) le mail aux établissements (Amandine, Delphine) sur les changements CGV art. 3 / contrat 1.7 (mode test) + autres changements depuis le 11/10 (les tâches planifiées ne sont plus créables localement : Alexandre doit le créer dans « Scheduled » ou y penser).
 - `salons_public` n'est plus SECURITY DEFINER : vue security_invoker sur la table `salons_vitrine` (colonnes publiques uniquement, RLS lecture anon/auth si `lx_salon_pro_actif`), tenue à jour par trigger `salons_vitrine_sync` sur salons. Toute nouvelle colonne publique = l'ajouter à la table + trigger + vue.
 - Questionnaire santé : table `clients_sante` (RLS propriétaire, FK clients cascade, consentement_at obligatoire), app : onglet fiche cliente « sante », `lxSanteCharger/lxSanteFormulaire/lxSanteEnregistrer/lxSanteEffacer/lxSanteAlerte` (bandeau rouge fiche RDV + fiche cliente), audit SANTE_QUESTIONNAIRE/SANTE_EFFACEE (sans détail de santé). Export RGPD inclut `questionnaire_sante`. Politique de confidentialité (ligne art. 9.2.a), DPA, aide fichier-clients, bot `questionnaire_sante`, page pro.
+
+## Application clientes Google Play (TWA) — 11/10/2026
+- Package `fr.luxyra.client`, nom Play « Luxyra – Beauté & bien-être » (30 car. max), compte Play d'organisation « Luxyra » (dev id 6960219191496082736, app id 4972872055406133723).
+- Démarre sur `/client.html?source=app` ; `lx-client-app.js` = barre d'onglets en mode app + « récemment consultés » (localStorage lx_recents). PAS de service worker client : la portée « / » est réservée à sw.js de la caisse.
+- `.well-known/assetlinks.json` : empreinte Google (6A:C9:…:49:44) + clé d'importation (05:D3:…:72:64). Clé d'importation = fichiers keystore chez Alexandre uniquement (jamais dans le repo).
+- Visuels Play dans /store (icône, image 1024x500, captures 1080x1920).
+- Fait : politique conf., annonces=non, AD_ID=non, gouv=non, finance=aucune, santé=aucune, classification IARC (PEGI 3), fiche Store, catégorie Beauté, coordonnées contact@luxyra.fr, Sécurité des données (brouillon).
+- Reste : « Informations de connexion » (compte test créé par Alexandre, mot de passe saisi par lui), « Cible et contenu » (18+), puis envoi en examen par Alexandre.
