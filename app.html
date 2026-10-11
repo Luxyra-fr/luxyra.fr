@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-08"></script>
+<script src="luxyra-supabase.js?v=20261011-09"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -5766,6 +5766,7 @@ function notifTypeMeta(type){
     "rdv_online_new":   {icon:"📅", color:"#4ade80", bg:"rgba(74,222,128,.12)", label:"Nouveau RDV"},
     "rdv_online_modif": {icon:"✏️", color:"#fb923c", bg:"rgba(251,146,60,.12)", label:"Modification demandée"},
     "rdv_online_cancel":{icon:"❌", color:"#f87171", bg:"rgba(248,113,113,.12)", label:"RDV annulé"},
+    "rdv_online_vu":{icon:"👁", color:"#81c784", bg:"rgba(76,175,80,.12)", label:"Modification vue"}, // 2026-10-11
     "rdv_online":       {icon:"📅", color:"#4ade80", bg:"rgba(74,222,128,.12)", label:"RDV en ligne"},
     "demande_creneau_pris": {icon:"⚠️", color:"#fb923c", bg:"rgba(251,146,60,.12)", label:"Créneau pris : proposition à refaire"},
     "rdv_demande_new":  {icon:"✨", color:"#c8a84e", bg:"rgba(200,168,78,.12)", label:"Demande sur mesure"},
@@ -9374,7 +9375,7 @@ window._rdvPollInterval=setInterval(function(){
       else if(/^(clients|detail)$/.test(window._currentPage||"")){ try{reloadFromSupabase("clients");}catch(_e){} }
     }
     var today=new Date().toISOString().slice(0,10);
-    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,salon_edit,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at,lieu,client_adresse,client_adresse_cp,client_adresse_ville,adresse_complement,client_lat,client_lng,distance_km,frais_deplacement_montant,remise_carte_montant").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
+    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,salon_edit,salon_modified_at,salon_modified_acknowledged_by_client,salon_modified_acknowledged_at,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at,lieu,client_adresse,client_adresse_cp,client_adresse_ville,adresse_complement,client_lat,client_lng,distance_km,frais_deplacement_montant,remise_carte_montant").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
         var newCount=0;var newRdvCount=0;var newEvents=[];
         r.data.forEach(function(rdv){
@@ -9391,6 +9392,7 @@ window._rdvPollInterval=setInterval(function(){
             upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
             upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
             upd.cancelled_by=rdv.cancelled_by;upd.cancel_reason=rdv.cancel_reason;
+            upd.salonModifAt=rdv.salon_modified_at||null; upd.salonModifVue=rdv.salon_modified_acknowledged_by_client===true; upd.salonModifVueAt=rdv.salon_modified_acknowledged_at||null; // 2026-10-11
             // Empreinte states (toujours sync)
             upd.empreinteStatus=rdv.empreinte_status||"none";
             upd.empreinteAmount=rdv.empreinte_amount?Number(rdv.empreinte_amount):null;
@@ -10734,6 +10736,9 @@ function rPlanningDay(dateObj,showDayHeader){
   }
   var openM=toM(hrs.o),closeM=toM(hrs.c);
   var gs=Math.floor(openM/60)*60,ge=Math.ceil(closeM/60)*60;
+  // 2026-10-11 : une heure de marge avant l'ouverture et après la fermeture (grisée) pour placer
+  // un rendez-vous exceptionnel (ex. 8h30 alors qu'on ouvre à 9h) sans changer ses horaires.
+  gs=Math.max(0,gs-60); ge=Math.min(24*60,ge+60);
   var totalSlots=(ge-gs)/SLOT;
   var gridH=totalSlots*SLOT_H;
   h+='<div class="pg-wrap"><div class="pg-grid">';
@@ -10777,9 +10782,12 @@ function rPlanningDay(dateObj,showDayHeader){
     h+=sty.n;
     if(!styAvail){var bReason=getBlockedSlots(sty.id,dk);h+='<div style="font-size:10px;color:var(--red);font-weight:400">'+(bReason[0]?bReason[0].label:"Indispo.")+'</div>';}
     h+='</div>';
-    h+='<div class="pg-slots" style="height:'+gridH+'px;position:relative">';
+    h+='<div class="pg-slots" data-gs="'+gs+'" style="height:'+gridH+'px;position:relative">';
     // Background slots
-    for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");h+='<div class="pg-slot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px" data-time="'+tm+'" onclick="clickSlot('+sty.id+',\''+tm+'\',\''+dk+'\')"></div>';}
+    // 2026-10-11 : créneaux hors des heures de travail du collaborateur = hachurés (cliquables : RDV exceptionnel)
+    var _effCol=null; try{ _effCol=(typeof getEffectiveHrs==="function")?getEffectiveHrs(dk,sty.id):null; }catch(_eEH){}
+    var _hO=_effCol&&_effCol.o?toM(_effCol.o):null, _hC=_effCol&&_effCol.c?toM(_effCol.c):null;
+    for(var s=0;s<totalSlots;s++){var m=gs+s*SLOT;var hh=Math.floor(m/60),mm=m%60;var isH=mm===0;var tm=String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");var _hors=(_hO!==null&&_hC!==null)&&(m<_hO||m>=_hC);h+='<div class="pg-slot'+(isH?' hr':'')+'" style="height:'+SLOT_H+'px'+(_hors?';background:repeating-linear-gradient(135deg,rgba(255,255,255,.035) 0 6px,rgba(0,0,0,.18) 6px 12px)':'')+'" data-time="'+tm+'"'+(_hors?' title="Hors horaires : rendez-vous exceptionnel possible"':'')+' onclick="clickSlot('+sty.id+',\''+tm+'\',\''+dk+'\')"></div>';}
     
     // Collect work blocks for this stylist only (handles delegated phases)
     var allWork=[];
@@ -11055,6 +11063,7 @@ function printPlanning(){
   setTimeout(function(){w.print();},400);
 }
 function clickSlot(stId,time,date,force){
+  window._lxHorsHorairesOkTime = force ? time : null; // 2026-10-11 : déjà confirmé « hors horaires » depuis le planning
   // FIX 2026-05-15 : intercept mode "placement 2ème RDV" — placement direct sans modale
   // Si on est en attente du placement d'un 2ème RDV groupé, on essaie de le poser ici.
   // Si le créneau est invalide (occupé/hors horaires/bloqué), l'utilisateur reçoit un toast
@@ -11580,6 +11589,8 @@ function dragEnd(e){
     var hrs=H[targetDow];
     if(hrs){
       var gs=Math.floor(toM(hrs.o)/60)*60;
+      // 2026-10-11 : début réel de la grille affichée (marge avant ouverture, RDV hors horaires)
+      var _gsAttr=targetSlots.getAttribute('data-gs'); if(_gsAttr!==null&&_gsAttr!==""&&!isNaN(+_gsAttr)) gs=+_gsAttr;
       var newMin=gs+slotIdx*SLOT;
       var newTime=String(Math.floor(newMin/60)).padStart(2,'0')+':'+String(newMin%60).padStart(2,'0');
       var dragAppt=null;for(var di=0;di<AP.length;di++){if(AP[di].id===_drag.aid){dragAppt=AP[di];break;}}
@@ -11880,6 +11891,11 @@ function clickAppt(id){
   // Bandeau info pour RDV online
   if(a.isOnline && a.st!=="done"){
     try{ var _roRp=(typeof _lxRdvOnlineDe==="function")?_lxRdvOnlineDe(a):null; var _rp=_lxReservePar(_roRp); if(_rp) htm+='<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.25);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:var(--gold)">\ud83d\udc64 R\u00e9serv\u00e9 par <strong>'+_lxEsc(_rp)+'</strong> depuis son compte, pour <strong>'+_lxEsc(((_roRp.prenom||"")+" "+(_roRp.nom||"")).trim())+'</strong></div>'; }catch(_eRp){}
+    // 2026-10-11 : le salon voit si la cliente a pris connaissance de sa dernière modification
+    try{ var _roV=_lxRdvOnlineDe(a); if(_roV&&_roV.salonModifAt){
+      var _fmV=function(x){ try{ return new Date(x).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}); }catch(_e){ return ""; } };
+      htm+='<div style="margin-bottom:6px;padding:7px 10px;border-radius:8px;font-size:12px;'+(_roV.salonModifVue?'background:rgba(76,175,80,.1);border:1px solid rgba(76,175,80,.35);color:#81c784">\u2705 La cliente a pris connaissance de votre modification'+(_roV.salonModifVueAt?' ('+_fmV(_roV.salonModifVueAt)+')':''):'background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);color:#ffb74d">\u23f3 Modification du '+_fmV(_roV.salonModifAt)+' pas encore vue par la cliente (email envoy\u00e9)')+'</div>';
+    } }catch(_eV){}
     htm+='<div style="background:rgba(108,92,231,.08);border:1px solid rgba(108,92,231,.2);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#a29bfe;display:flex;align-items:center;gap:8px">';
     htm+='<span>\ud83c\udf10</span><span><strong>RDV pris en ligne.</strong> Vos modifications (date, heure, collaborateur, dur\u00e9e, prestations) sont automatiquement visibles dans l\'espace client avec un bandeau d\'alerte \u00ab Modification par le salon \u00bb.</span>';
     htm+='</div>';
@@ -25351,8 +25367,12 @@ function aAp(){
     return;
   }
   var _rdvMin=toM(t);
-  if(_rdvMin<toM(_effHrs.o)||_rdvMin>=toM(_effHrs.c)){
-    showAlert("\u26d4 Impossible : l\u2019horaire "+t+" est en dehors des heures de travail ("+_effHrs.o+" \u2192 "+_effHrs.c+").","error");
+  // 2026-10-11 : hors horaires = rendez-vous exceptionnel possible après confirmation (avant : refus
+  // systématique, même quand on venait de « forcer » le créneau depuis le planning).
+  if((_rdvMin<toM(_effHrs.o)||_rdvMin>=toM(_effHrs.c)) && !window._lxHorsHorairesOk && window._lxHorsHorairesOkTime!==t){
+    var _dpH=document.getElementById("depi");
+    if(_dpH){ _dpH.innerHTML='<div style="background:rgba(255,152,0,.12);border:1px solid rgba(255,152,0,.45);color:#ffb74d;padding:10px;border-radius:8px;font-size:13px;margin-top:6px">\u26a0\ufe0f '+t+' est en dehors des heures de travail ('+_effHrs.o+' \u2192 '+_effHrs.c+'). Rendez-vous exceptionnel : vos horaires et la r\u00e9servation en ligne ne changent pas.<button class="btn bg" style="display:block;width:100%;margin-top:8px;padding:10px;font-weight:700" onclick="window._lxHorsHorairesOk=true;try{aAp();}finally{window._lxHorsHorairesOk=false;}">Cr\u00e9er quand m\u00eame \u00e0 '+t+'</button></div>'; try{_dpH.scrollIntoView({block:"center"});}catch(_eS){} }
+    else showAlert("\u26d4 L\u2019horaire "+t+" est en dehors des heures de travail ("+_effHrs.o+" \u2192 "+_effHrs.c+").","error");
     return;
   }
   var _rdvBlocked=isStylistBlockedDuring(st,d,_rdvMin,_rdvMin+1);

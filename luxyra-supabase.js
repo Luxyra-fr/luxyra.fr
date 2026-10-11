@@ -982,6 +982,7 @@ function lxMapRdvOnlineRow(r) {
     svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
     items: r.items || null,
     salonEdit: r.salon_edit || null, // 2026-10-11 : contenu modifié par l'établissement (phases + prestations)
+    salonModifAt: r.salon_modified_at || null, salonModifVue: r.salon_modified_acknowledged_by_client === true, salonModifVueAt: r.salon_modified_acknowledged_at || null, // 2026-10-11
     collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
     date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
     duree: r.duree_minutes,
