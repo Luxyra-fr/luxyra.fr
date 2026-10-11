@@ -1738,5 +1738,10 @@ Tables existantes : inchangées.
 ## Luxyra SMS Companion (fr.luxyra.sms, app id 4974729537663482636) — préparation Play
 - Décision 11/10 : envoi en examen SEULEMENT après acceptation de l'appli clientes (protéger le compte dev).
 - Fait : fiche réécrite (transactionnel RDV, sans « illimité »/marketing/prix/concurrents), icône + store/sms-feature-graphic.png.
-- Reste : 2e capture d'écran (téléphone d'Alexandre), confirmer que le bundle « Première version » (22/04) est le dernier, déclaration SMS (catégorie « Archivage, CRM… entreprises » + texte d'examen prêt, 4 attestations à cocher avec accord), déclaration service de premier plan, release production.
+- Fiche complète et ENREGISTRÉE (2 captures, icône, image). Bundle 22/04 = dernière version (confirmé par Alexandre).
+- Reste au moment de l'envoi :
+  * Déclaration SMS : cocher « Archivage, CRM et gestion des appareils pour les entreprises » + texte d'examen (EN) ci-dessous + 4 attestations (accord d'Alexandre requis).
+    Texte : "B2B companion app for Luxyra, a booking/POS SaaS for beauty salons (luxyra.fr). Only SEND_SMS is used; the app never reads SMS or call logs. A salon links its own phone by QR code; the app then sends that salon's appointment messages (confirmation, reminder, change) to its own customers from the salon's SIM. Requires a Luxyra pro account. Login: see App access."
+  * Service de premier plan (FOREGROUND_SERVICE_DATA_SYNC) : « Traitement en réseau › Autre » + VIDÉO YouTube (non répertoriée) obligatoire montrant liaison QR + notification du service + envoi d'un SMS. Texte : "Once the salon owner links the phone to their Luxyra account, the app runs a foreground service with a persistent notification. It keeps a network connection to the salon's message queue and sends each appointment SMS (confirmation, reminder, change) as soon as Luxyra requests it, even when the app is not open. The user can stop it at any time by unlinking the phone."
+  * Release production depuis la bibliothèque (version 1), pays France, puis envoi par Alexandre.
 - Risque : SEND_SMS hors exceptions → refus probable ; distribution hors Play déjà enregistrée (validation développeurs Android).
