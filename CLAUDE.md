@@ -1676,3 +1676,10 @@ Tables existantes : inchangées.
 - BUG CORRIGÉ : l'annulation du ticket original n'était pas enregistrée en base quand le hash en mémoire différait (saveTicketToDb remplace tk.hash par celui de la table tickets) -> CA du jour faux après rechargement. saveAppointment retombe sur une mise à jour des seules colonnes non protégées. Fausse alerte « tickets verrouillés vs attendus » corrigée.
 - lx-cp-ville.js (code postal -> liste des communes) sur inscription, compte, site, app ; RPC lx_email_deja_inscrit + vérification à l'étape email (client Supabase séparé sans session).
 - Réinitialisation d'essai : factory_reset_salon refusait toujours (appel par la fonction serveur en rôle service -> auth.uid() vide) ; corrigé. Nouvelle RPC reset_ventes_test_salon (essai uniquement) : efface ventes/RDV/clôtures/bons/devis/fidélité gagnée, garde clientèle, prestations, forfaits, produits, équipe, réglages. Edge salon-factory-reset v6 : body.mode "ventes" | "tout". Modale à 2 choix (défaut : ventes seules).
+
+## 2026-10-11 — RDV en ligne réservé pour une autre personne
+- `_lxResolveClientId(o)` (app.html) : parmi les fiches liées au compte (luxyraId/email/tél, `_lxCandidatsCompte`), retient la 1re dont le prénom correspond (`_lxPrenomOk` : égal ou préfixe ≥3, normalisé `_lxNormNom`) ; sinon fiche au prénom+nom exacts ; sinon null (le planning affiche le nom saisi).
+- `_lxReservePar(o)` : nom du titulaire du compte quand le prénom diffère → bandeau doré « Réservé par X depuis son compte, pour Y » dans clickAppt.
+- `syncClientFromOnlineRdv` (luxyra-supabase.js) : prénom différent → ne rattache pas au titulaire ; cherche fiche prénom+nom, sinon crée une fiche SANS client_luxyra_id.
+- Testé en mode démo (sans BDD) : Evan sur compte Delphine → null puis fiche Evan ; Delphine → sa fiche ; prénom vide → fiche titulaire.
+- KB bot : `rdv_reserve_pour_autrui`.
