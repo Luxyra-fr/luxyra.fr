@@ -15045,6 +15045,12 @@ function rSettings(){
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">G\u00e9n\u00e8re un fichier d\u0027archive sign\u00e9 (SHA-256) contenant tous les tickets, cl\u00f4tures Z, annulations et journal d\u0027audit d\u0027une ann\u00e9e compl\u00e8te. Obligatoire pour la conformit\u00e9 fiscale.</div>';
     h+='<button class="btn" style="width:100%;padding:12px;background:var(--gold-bg);color:var(--gold);font-weight:700;font-size:14px" onclick="archivageAnnuel()">\ud83d\udcc1 G\u00e9n\u00e9rer archive annuelle</button>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center">Art. 286-I-3\u00b0 bis du CGI - Conservation 6 ans</div></div>';
+    // 2026-10-11 : archive fiscale signée (signatures ES256 + JET + duplicatas + corrections), vérifiable
+    h+='<div class="card" style="margin-top:14px;border-left:4px solid #8e24aa"><div class="ct">\ud83d\udd0f Archive fiscale sign\u00e9e (v\u00e9rifiable)</div>';
+    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Tickets, cl\u00f4tures, corrections, duplicatas et journal des \u00e9v\u00e9nements techniques de la p\u00e9riode, avec leurs <strong>signatures \u00e9lectroniques</strong> et la cl\u00e9 publique. Contr\u00f4lable par toute personne sur <strong>luxyra.fr/verif-nf525</strong>.</div>';
+    h+='<div style="display:flex;gap:8px;margin-bottom:10px"><input type="date" id="arcSigDu" value="'+(TD.slice(0,4)+'-01-01')+'" style="flex:1"><input type="date" id="arcSigAu" value="'+TD+'" style="flex:1"></div>';
+    h+='<button class="btn" style="width:100%;padding:12px;background:rgba(142,36,170,.12);color:#ce93d8;border:1px solid rgba(142,36,170,.35);font-weight:700;font-size:14px" onclick="lxArchiveSignee()">\ud83d\udd0f T\u00e9l\u00e9charger l\u2019archive sign\u00e9e</button>';
+    h+='<a href="/verif-nf525" target="_blank" rel="noopener" style="display:block;text-align:center;font-size:12px;margin-top:8px;color:var(--gold)">Ouvrir l\u2019outil de v\u00e9rification \u2197</a></div>';
     // Bande de contrôle mensuelle
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #2196f3"><div class="ct">\ud83d\udcca Bande de contr\u00f4le mensuelle</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">G\u00e9n\u00e8re la bande de contr\u00f4le mensuelle regroupant tous les tickets, annulations et cl\u00f4tures Z du mois s\u00e9lectionn\u00e9.</div>';
@@ -33410,6 +33416,38 @@ function sha256Sync(str){
   for(var i=0;i<8;i++){var v=H[i]>>>0;hex+=('00000000'+v.toString(16)).slice(-8);}
   return hex.toUpperCase();
 }
+
+// 2026-10-11 : archive fiscale signée et vérifiable (format LUXYRA-NF525-ARCHIVE-1)
+async function lxArchiveSignee(){
+  var du=(document.getElementById("arcSigDu")||{}).value, au=(document.getElementById("arcSigAu")||{}).value;
+  if(!du||!au||du>au){ toast("Choisissez une période valide","warning"); return; }
+  toast("Préparation de l’archive…","info");
+  try{
+    await _lxSignerMaintenant();
+    async function tout(q){ var out=[], pas=1000, i=0; while(true){ var r=await q().range(i,i+pas-1); if(r.error) throw r.error; out=out.concat(r.data||[]); if(!r.data||r.data.length<pas) break; i+=pas; } return out; }
+    var tk=await tout(function(){ return _sb.from("tickets").select("id,num,date_ticket,heure_ticket,ts_created,created_at,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status,hash,hash_prev,hash_algo,raw_data->>tkNum").eq("salon_id",_salonId).gte("date_ticket",du).lte("date_ticket",au).order("num"); });
+    var z=await tout(function(){ return _sb.from("clotures").select("id,num,date_cloture,timestamp_cloture,created_at,total_ca,total_ht,nb_tickets,nb_annulations,detail_paiements,cumul_perpetuel_ca,cumul_perpetuel_tickets,hash").eq("salon_id",_salonId).gte("date_cloture",du).lte("date_cloture",au).order("num"); });
+    var cr=await tout(function(){ return _sb.from("corrections_reglement").select("*").eq("salon_id",_salonId).gte("date_correction",du).lte("date_correction",au).order("num"); });
+    var dup=await tout(function(){ return _sb.from("nf525_duplicatas").select("*").eq("salon_id",_salonId).gte("horodatage",du+"T00:00:00").lte("horodatage",au+"T23:59:59").order("seq"); });
+    var jet=await tout(function(){ return _sb.from("nf525_jet").select("*").eq("salon_id",_salonId).gte("horodatage",du+"T00:00:00").lte("horodatage",au+"T23:59:59").order("seq"); });
+    var ids={}; [tk,z,cr,dup,jet].forEach(function(L){ L.forEach(function(r){ ids[r.id]=1; }); });
+    var sig=(await tout(function(){ return _sb.from("nf525_signatures").select("type,seq,source_table,source_id,source_num,data_to_sign,signature,prev_signature,algo,key_id,signed_at").eq("salon_id",_salonId).order("type").order("seq"); })).filter(function(g){ return ids[g.source_id]; });
+    var cles=(await _sb.from("nf525_cles").select("key_id,algo,public_jwk,created_at")).data||[];
+    var arc={ format:"LUXYRA-NF525-ARCHIVE-1", genere_le:new Date().toISOString(), logiciel:{nom:"Luxyra",version:LX_VERSION,caisse:LX_CAISSE},
+      etablissement:{nom:SALON_CONFIG.nom||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",adresse:[SALON_CONFIG.adresse,SALON_CONFIG.cp,SALON_CONFIG.ville].filter(Boolean).join(" ")},
+      periode:{du:du,au:au}, cles_publiques:cles,
+      donnees:{tickets:tk,clotures:z,corrections_reglement:cr,duplicatas:dup,jet:jet}, signatures:sig };
+    var corps=JSON.stringify(arc);
+    var emp=await sha256Async(corps);
+    arc.empreinte_sha256=emp;
+    var blob=new Blob([JSON.stringify(arc,null,1)],{type:"application/json"});
+    var url=URL.createObjectURL(blob), a=document.createElement("a");
+    a.href=url; a.download="archive-nf525-"+(SALON_CONFIG.siret||"salon")+"-"+du+"_"+au+".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },3000);
+    if(typeof auditLog==="function") auditLog("ARCHIVE_INTERMEDIAIRE","Archive signée du "+du+" au "+au+" — "+tk.length+" tickets, "+z.length+" clôtures, "+sig.length+" signatures — empreinte SHA-256 "+emp);
+    toast("✅ Archive signée téléchargée ("+sig.length+" signatures)","success");
+  }catch(e){ toast("❌ Archive : "+(e.message||e),"error"); }
+}
+
 async function sha256Async(str){
   try{
     var buf=new TextEncoder().encode(str);
