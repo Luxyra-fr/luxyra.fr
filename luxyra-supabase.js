@@ -3666,6 +3666,7 @@ async function createOperateur(data) {
     };
     var r = await _sb.from("salon_operateurs").insert(insert).select();
     if (r.error) throw r.error;
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_CREE", "Opérateur " + (data.prenom || "") + " " + (data.nom || "") + " créé — rôle " + insert.role); } catch(_eA){}
     return r.data && r.data[0] ? r.data[0] : null;
   } catch(e) { console.error("[OP CREATE]", e.message); return null; }
 }
@@ -3688,6 +3689,9 @@ async function updateOperateur(id, data) {
       update.avatar_initials = ini.toUpperCase();
     }
     var r = await _sb.from("salon_operateurs").update(update).eq("id", id);
+    // 2026-10-11 (NF525, JET 130) : trace des changements d'habilitations
+    try { if (!r.error && (update.role != null || update.permissions != null || update.actif != null) && typeof saveAuditEntry === "function")
+      saveAuditEntry(update.permissions != null ? "OPERATEUR_PERMISSIONS" : "OPERATEUR_ROLE", "Opérateur " + id + " : " + JSON.stringify({ role: update.role, actif: update.actif, permissions: update.permissions }).slice(0, 700)); } catch(_eA){}
     return !r.error;
   } catch(e) { console.error("[OP UPDATE]", e.message); return false; }
 }
@@ -3712,6 +3716,7 @@ async function deleteOperateur(id) {
   if (!_isOnline || !_salonId) return false;
   try {
     var r = await _sb.from("salon_operateurs").delete().eq("id", id);
+    try { if (!r.error && typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_SUPPRIME", "Opérateur " + id + " supprimé"); } catch(_eA){}
     return !r.error;
   } catch(e) { console.error("[OP DEL]", e.message); return false; }
 }
