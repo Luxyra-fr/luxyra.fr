@@ -4803,6 +4803,8 @@ Sitemap: https://luxyra.fr/sitemap.xml
 
   let path = url.pathname;
   if (cleanRoutes[path]) path = cleanRoutes[path];
+  // 2026-10-11 : guides illustrés du centre d'aide (/aide/<guide> → /aide/<guide>.html)
+  else if (/^\/aide\/[a-z0-9-]+\/?$/.test(path)) path = path.replace(/\/$/, "") + ".html";
 
   // ============================================================
   // SLUG ROUTING : rewrite /<slug> → /site.html

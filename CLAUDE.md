@@ -1683,3 +1683,11 @@ Tables existantes : inchangées.
 - `syncClientFromOnlineRdv` (luxyra-supabase.js) : prénom différent → ne rattache pas au titulaire ; cherche fiche prénom+nom, sinon crée une fiche SANS client_luxyra_id.
 - Testé en mode démo (sans BDD) : Evan sur compte Delphine → null puis fiche Evan ; Delphine → sa fiche ; prénom vide → fiche titulaire.
 - KB bot : `rdv_reserve_pour_autrui`.
+
+## 2026-10-11 — Centre d'aide : guides illustrés
+- 21 guides `aide/<slug>.html` (route worker `/aide/<slug>` → `.html`), images `aide/img/*.webp` = vraies captures du mode démo annotées (pastilles numérotées = ordre des légendes).
+- Texte : `docs/generateurs/aide_guides.py` ; build : `docs/generateurs/aide_build.py [dossier_webp]` (section « Guides » de aide.html entre marqueurs GUIDES:DEBUT/FIN, recherche filtre aussi les guides). Outillage captures : `docs/generateurs/captures/` (README).
+- FAQ aide.html corrigée (chemins réels : Infos établissement, Compte gestionnaire, Caisse › Gestion des tickets › Avoir / Annuler, Conformité caisse › Export FEC, Options commerciales, Paiements en ligne › Configurer, « Mot de passe oublié ? »…).
+- App : entrée « Centre d'aide » dans Paramètres (ouvre luxyra.fr/aide#guides) ; notification « Voir le RDV » ouvre directement la fiche (clickAppt) ; carte « Demandes de RDV » à fond opaque ; accents corrigés (Conformité caisse, clôture : solde théorique / réel compté / Valider la clôture, modale « Annulation du ticket ») ; lien FEC des documents comptables → « Paramètres › Conformité caisse ».
+- Sitemap v13 : + /aide/<guide>. KB bot : `guides_aide`.
+- Si l'UI change : refaire les captures concernées (shots.json) et relancer aide_build.py.
