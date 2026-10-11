@@ -96,7 +96,7 @@ dict(slug="prestations-et-forfaits", ic="✂️", cat="Démarrer", titre="Presta
 dict(slug="planning", ic="📅", cat="Rendez-vous", titre="Le planning au quotidien",
  resume="Naviguer dans l'agenda, prendre un rendez-vous, poser une absence.",
  sections=[
-  dict(h="Se repérer dans le planning", p="""<p>Une colonne par collaborateur, une couleur par famille de prestation. Un rendez-vous encaissé porte la mention « Encaissé ». Glissez-déposez un rendez-vous pour le déplacer.</p>""",
+  dict(h="Se repérer dans le planning", p="""<p>Une colonne par collaborateur, une couleur par famille de prestation. Un rendez-vous encaissé porte la mention « Encaissé ». Glissez-déposez un rendez-vous pour le déplacer.</p><p><strong>Rendez-vous exceptionnel hors horaires</strong> (ex. 8h30 alors que vous ouvrez à 9h) : le planning affiche une heure hachurée avant l'ouverture et après la fermeture. Touchez le créneau, confirmez « Créer quand même » : vos horaires et la réservation en ligne ne changent pas.</p>""",
    img="planning", alt="Planning du jour", leg=[
     "<strong>Aujourd'hui</strong> et les flèches ◀ ▶ : revenir au jour même, passer au jour précédent ou suivant.",
     "<strong>Calendrier</strong> : aller directement à une date.",
@@ -145,7 +145,7 @@ dict(slug="rendez-vous-en-ligne", ic="📩", cat="Rendez-vous", titre="Demandes 
     "<strong>Autre horaire</strong> : choisissez une nouvelle date ou heure et un message ; la cliente reçoit la proposition et peut annuler depuis son espace si elle ne lui convient pas.",
     "<strong>Refuser</strong> : avec un motif facultatif. Rien n'est prélevé ; un acompte déjà payé serait remboursé.",
     "<strong>RDV pris en ligne</strong> : vos modifications (heure, collaborateur, prestations) sont visibles par la cliente dans son espace."]),
-  dict(h="Les notifications", p="""<p>La cloche liste les nouveaux rendez-vous en ligne, les annulations, les demandes de modification et les commandes. <strong>« Voir le RDV »</strong> ouvre directement la fiche du rendez-vous dans le planning. Une demande de modification de la cliente s'accepte ou se refuse directement depuis la notification. Pour un rendez-vous <strong>annulé</strong>, « Voir le RDV » affiche sa fiche : qui l'a annulé et quand, le motif, et ce qu'il advient de l'acompte ou de l'empreinte.</p>
+  dict(h="Les notifications", p="""<p>La cloche liste les nouveaux rendez-vous en ligne, les annulations, les demandes de modification et les commandes. <strong>« Voir le RDV »</strong> ouvre directement la fiche du rendez-vous dans le planning. Une demande de modification de la cliente s'accepte ou se refuse directement depuis la notification. Quand la cliente a vu une modification faite par vous, une notification « 👁 Modification vue par la cliente » arrive, et la fiche du rendez-vous l'indique. Pour un rendez-vous <strong>annulé</strong>, « Voir le RDV » affiche sa fiche : qui l'a annulé et quand, le motif, et ce qu'il advient de l'acompte ou de l'empreinte.</p>
 <p>Si un proche réserve <strong>pour une autre personne</strong> depuis son propre compte, le rendez-vous est au nom de la personne réservée, et la fiche indique « Réservé par … ».</p>""",
    img="notifs", alt="Panneau des notifications", leg=[]),
  ]),
