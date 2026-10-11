@@ -299,7 +299,8 @@ dict(slug="sms-et-rappels", ic="📲", cat="En ligne", titre="SMS, rappels et ca
     "<strong>Depuis mon téléphone</strong> (Android) : envoi gratuit avec votre forfait mobile.",
     "<strong>Rappel 24 h avant</strong> : texte modifiable, avec les variables {prenom}, {heure}, {salon}…",
     "<strong>Rappel 2 h avant</strong> : facultatif."]),
-  dict(h="Les campagnes", p="""<p>Tuile <strong>Marketing</strong> : anniversaires, clientes inactives, offre promo, fidélité, cartes à renouveler… Choisissez une campagne, vérifiez l'audience (clientes joignables par SMS ou par email) et envoyez par SMS ou email. L'historique indique qui a reçu quoi.</p>""",
+  dict(h="Les campagnes", p="""<p>Tuile <strong>Marketing</strong> : anniversaires, clientes inactives, offre promo, fidélité, cartes à renouveler… Choisissez une campagne, vérifiez l'audience (clientes joignables par SMS ou par email) et envoyez par SMS ou email. L'historique indique qui a reçu quoi.</p>
+<p><strong>Relancer les clientes inactives</strong> : choisissez le délai sans visite (3 à 12 mois, 4 par défaut), décochez les personnes à ne pas relancer, choisissez SMS et/ou email. Pour ne pas les harceler, Luxyra applique automatiquement trois règles : <strong>6 mois minimum</strong> entre deux relances d'une même cliente, <strong>2 relances au plus</strong> sans retour (elle redevient relançable après sa prochaine visite), et jamais si un rendez-vous est déjà prévu. Même si vous lancez la campagne chaque mois, une cliente ne reçoit donc pas un message tous les mois.</p>""",
    img="marketing", alt="Campagnes marketing", leg=[]),
  ]),
 
