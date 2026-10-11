@@ -692,6 +692,8 @@ async function doSubmit(){
       }catch(e){console.log("onboarding J+0:", e);}
     }
     sendAdminNotification(DATA.nom.trim(),DATA.gerantPrenom.trim()+" "+DATA.gerantNom.trim(),DATA.email.trim(),DATA.tel.trim(),DATA.ville.trim(),DATA.metier);
+    // 2026-10-11 : copie des documents contractuels acceptés envoyée par email (support durable)
+    try{ sendContratEmail(DATA.email.trim(), DATA.gerantPrenom.trim(), window._lastSignature||null); }catch(_eCt){}
     STEP=4;render();
   }catch(e){
     showErr("Erreur inattendue: "+e.message);
@@ -785,6 +787,30 @@ async function sendWelcomeEmail(email,prenom,salonNom,trialEnd){
     });
     console.log("[INSCRIPTION] Welcome email sent to "+email);
   }catch(e){console.log("[INSCRIPTION] Welcome email error:",e);}
+}
+
+// === 2026-10-11 : COPIE DES DOCUMENTS CONTRACTUELS (contrat complet + liens CGV, confidentialité, DPA) ===
+async function sendContratEmail(email, prenom, sig){
+  try{
+    var esc2=function(t){ return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); };
+    var quand=sig&&sig.date?new Date(sig.date).toLocaleString("fr-FR"):new Date().toLocaleString("fr-FR");
+    var html='<div style="background:#f4f1ea;padding:24px 10px"><div style="max-width:620px;margin:0 auto;background:#fff;border-radius:14px;border:1px solid #e6dcc3;font-family:Arial,sans-serif;color:#1a1a1a;font-size:14px;line-height:1.6">';
+    html+='<div style="background:#0b0b0b;padding:22px;text-align:center;border-bottom:3px solid #c8a84e;border-radius:14px 14px 0 0"><div style="color:#d4a843;font-family:Georgia,serif;font-size:22px;letter-spacing:6px">LUXYRA</div></div><div style="padding:24px">';
+    html+='<h1 style="font-family:Georgia,serif;font-weight:400;font-size:20px;margin:0 0 12px">Vos documents contractuels</h1>';
+    html+='<p>Bonjour '+esc2(prenom)+',</p><p>Voici, pour vos archives, la copie du contrat d\u2019abonnement que vous avez accept\u00e9 en cr\u00e9ant votre compte, ainsi que les liens vers nos conditions. Conservez ce message.</p>';
+    html+='<div style="background:#faf6ec;border:1px solid #e6dcc3;border-radius:10px;padding:14px;margin:14px 0;font-size:13px">';
+    html+='<b>Acceptation :</b> le '+esc2(quand)+(sig&&sig.signataire?' par '+esc2(sig.signataire):'')+(sig&&sig.etablissement?' pour '+esc2(sig.etablissement):'')+'<br>';
+    html+='<b>Contrat :</b> version '+esc2((sig&&sig.contrat_version)||CONTRAT_VERSION)+(sig&&sig.contrat_hash?' \u2014 empreinte SHA-256 '+esc2(String(sig.contrat_hash).slice(0,24))+'\u2026':'')+'<br>';
+    html+='<b>Conditions g\u00e9n\u00e9rales de vente :</b> <a href="https://luxyra.fr/cgv" style="color:#b8922e">luxyra.fr/cgv</a><br>';
+    html+='<b>Politique de confidentialit\u00e9 :</b> <a href="https://luxyra.fr/politique-confidentialite" style="color:#b8922e">luxyra.fr/politique-confidentialite</a><br>';
+    html+='<b>Accord de traitement des donn\u00e9es (DPA) :</b> <a href="https://luxyra.fr/dpa" style="color:#b8922e">luxyra.fr/dpa</a></div>';
+    html+='<p style="font-size:13px"><b>\u00c0 savoir :</b> pendant l\u2019essai gratuit, votre caisse est en <b>mode test</b> (tickets \u00ab TEST \u00bb). Au plus tard \u00e0 l\u2019abonnement, elle passe d\u00e9finitivement en <b>caisse r\u00e9elle</b> ; vos tests sont alors archiv\u00e9s et vous d\u00e9marrez \u00e0 z\u00e9ro.</p>';
+    html+='<div style="border-top:1px solid #eee;margin-top:18px;padding-top:14px;font-size:12.5px;color:#333">'+getContratHTML()+'</div>';
+    html+='</div><div style="padding:14px 24px;font-size:11px;color:#888;border-top:1px solid #eee">Luxyra \u2014 Alexandre JENSEN, entrepreneur individuel \u2014 SIRET 910 928 464 00023 \u2014 29 rue de l\u2019Abb\u00e9 Alexandre Pax, 57200 Sarreguemines \u2014 contact@luxyra.fr</div></div></div>';
+    var _tokI=""; try{ var _sI=await sb.auth.getSession(); _tokI=(_sI&&_sI.data&&_sI.data.session&&_sI.data.session.access_token)||""; }catch(_e){}
+    await fetch("/api/email/custom",{ method:"POST", headers:Object.assign({"Content-Type":"application/json"}, _tokI?{"Authorization":"Bearer "+_tokI}:{}),
+      body:JSON.stringify({to:email,toName:prenom,salonName:"Luxyra",salonEmail:"contact@luxyra.fr",subject:"Vos documents contractuels Luxyra (contrat v"+((sig&&sig.contrat_version)||CONTRAT_VERSION)+", CGV)",htmlContent:html}) });
+  }catch(e){ console.log("[INSCRIPTION] email contrat:", e); }
 }
 
 // === NOTIFICATION ADMIN ===
