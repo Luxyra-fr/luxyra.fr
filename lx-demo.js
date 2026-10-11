@@ -291,10 +291,10 @@
     b.id = "lxDemoBandeau";
     b.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:2147483000;background:linear-gradient(90deg,#1a1408,#2a2010);border-top:1px solid #c8a84e;color:#fff;font:600 12px/1.4 system-ui,sans-serif;padding:5px 8px;display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap";
     var opts = METIERS.map(function (m) { return '<option value="' + m + '"' + (m === METIER ? " selected" : "") + ">" + LABELS[m] + "</option>"; }).join("");
-    b.innerHTML = '<span style="color:#c8a84e">✨ DÉMO Luxyra</span><span style="opacity:.7;font-size:11px">fictif · rien n\'est enregistré</span>' +
+    b.innerHTML = '<span style="color:#c8a84e">✨ MODE DÉMO</span><span style="opacity:.8;font-size:11px">données d\'exemple · rien n\'est enregistré</span>' +
       '<select id="lxDemoMetier" style="background:#111;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 6px;font-size:12px;width:auto;min-width:0;max-width:150px;margin:0">' + opts + "</select>" +
       '<select id="lxDemoMode" style="background:#111;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 6px;font-size:12px;width:auto;min-width:0;max-width:150px;margin:0">' + ["salon", "domicile", "mixte"].map(function (m) { return '<option value="' + m + '"' + (m === MODE ? " selected" : "") + ">" + (m === "salon" ? "En établissement" : m === "domicile" ? "À domicile" : "Mixte") + "</option>"; }).join("") + "</select>" +
-      '<a href="/inscription.html" target="_top" style="background:#c8a84e;color:#111;border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:800">Essai gratuit 14 j</a>';
+      '<a href="/inscription.html" target="_top" style="background:#c8a84e;color:#111;border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:800">Créer mon compte réel (essai 14 j)</a>';
     if (P.get("embed") !== "1") document.body.appendChild(b);
     function go() { location.href = "/app.html?demo=" + document.getElementById("lxDemoMetier").value + "&mode=" + document.getElementById("lxDemoMode").value; }
     document.getElementById("lxDemoMetier") && document.getElementById("lxDemoMetier").addEventListener("change", go);
