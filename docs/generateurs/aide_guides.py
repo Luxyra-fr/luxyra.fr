@@ -235,7 +235,7 @@ dict(slug="conformite-caisse", ic="🛡️", cat="Comptabilité", titre="Conform
 <li>Chaque ticket, clôture (jour, mois, année, exercice), duplicata et correction est <strong>signé électroniquement</strong> (algorithme ES256) et chaîné au précédent, automatiquement, en moins de 2 minutes.</li>
 <li>Le ticket imprimé indique la version du logiciel, le nombre de lignes et <strong>4 caractères de la signature</strong>. Une réimpression porte la mention <strong>DUPLICATA</strong> et son numéro de copie.</li>
 <li>Le <strong>journal des événements techniques</strong> (JET) enregistre démarrages et arrêts de caisse, clôtures, annulations de ligne, abandons de vente, réimpressions, archivages et changements de version.</li></ul>"""),
-  dict(h="Archive signée et vérification", p="""<p>Dans <strong>Paramètres › Conformité caisse › Archive signée</strong>, choisissez une période puis téléchargez le fichier. Il contient les tickets, clôtures, corrections, duplicatas, le JET, les signatures et la clé publique.</p>
+  dict(h="Archive signée et vérification", p="""<p>Dans <strong>Paramètres › Conformité caisse › Archive fiscale signée</strong>, choisissez une période puis téléchargez le fichier. Il contient les tickets, clôtures, corrections, duplicatas, le JET, les signatures et la clé publique.</p>
 <p>Vous (ou un contrôleur) pouvez le vérifier sur <a href="/verif-nf525">luxyra.fr/verif-nf525</a> : la vérification se fait dans le navigateur, le fichier n'est envoyé nulle part. Toute modification d'un seul chiffre est détectée.</p>"""),
  ]),
 
