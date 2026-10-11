@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Luxyra v6.5.0</title>
+<title>Luxyra v6.6.0</title>
 <link rel="manifest" href="/manifest-app.json">
 <meta name="theme-color" content="#c8a84e">
 <meta name="mobile-web-app-capable" content="yes">
@@ -394,9 +394,9 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-15"></script>
+<script src="luxyra-supabase.js?v=20261011-16"></script>
 <script>
-console.log("LUXYRA v6.5");
+console.log("LUXYRA v6.6");
 
 // ===== HOOK ERREURS GLOBALES (depuis 2026-05-15) =====================
 // Capte les erreurs JS non gérées + promesses rejetées et les pousse en DB
@@ -2758,7 +2758,7 @@ function getInvTournantProducts(){
   return sorted.slice(0,5);
 }
 
-var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.5.0",subdomain:"",slug:"",plan:"essential"};
+var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.6.0",subdomain:"",slug:"",plan:"essential"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
 
@@ -2826,30 +2826,58 @@ function showPlanChoiceModal(blocking){
   document.body.appendChild(el);
 }
 
-// 2026-10-11 (NF525) : avant l'abonnement, l'établissement dit explicitement si les encaissements de l'essai
-// étaient des tests (à effacer, archivés) ou de vraies ventes (conservées). Choix tracé au journal (JET 260).
+// 2026-10-11 (NF525, mode école) : une caisse en MODE TEST doit passer en caisse réelle avant l'abonnement
 function _lxEssaiStats(){ var L=(window.AP||[]).filter(function(x){ return x&&x.tkNum&&!x.cancelled; }); var t=0; L.forEach(function(x){ t+=Number(x.pr)||0; }); return {n:L.length, total:Math.round(t*100)/100}; }
 function _lxEssaiEncadre(){
-  var st=_lxEssaiStats(); if(!st.n) return "";
-  var c=window._lxChoixEssai||"";
-  var opt=function(k,titre,txt){ return '<label style="display:flex;gap:8px;align-items:flex-start;padding:9px;border-radius:10px;cursor:pointer;border:1.5px solid '+(c===k?'#ef9a9a':'rgba(255,255,255,.12)')+';margin-top:8px"><input type="radio" name="lxChoixEssai" '+(c===k?'checked':'')+' onclick="lxChoixEssai(\''+k+'\')" style="margin:3px 0 0;width:auto;flex:0 0 auto;padding:0"><span style="flex:1;text-align:left"><b>'+titre+'</b><br><span style="color:rgba(255,255,255,.6)">'+txt+'</span></span></label>'; };
-  var h='<div id="lxEssaiBox" style="font-size:12.5px;line-height:1.55;text-align:left;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.35);border-radius:12px;padding:12px;margin:-8px 0 18px;color:rgba(255,255,255,.85)">';
-  h+='<b>Avant de vous abonner : vos '+st.n+' encaissement'+(st.n>1?'s':'')+' de l\u2019essai ('+st.total.toFixed(2)+' \u20ac)</b><br>Pendant l\u2019essai, votre caisse est r\u00e9elle : chaque encaissement est enregistr\u00e9, sign\u00e9 et trac\u00e9 (loi anti-fraude). Une fois abonn\u00e9, plus rien ne pourra \u00eatre effac\u00e9.';
-  h+=opt("tests","C\u2019\u00e9taient des tests : je repars de z\u00e9ro","Les ventes d\u2019essai sont effac\u00e9es (copie scell\u00e9e conserv\u00e9e 6 ans, inscrite au journal) et ne comptent pas dans votre chiffre d\u2019affaires.");
-  h+=opt("reelles","Ce sont de vraies ventes : je les conserve","Elles restent votre chiffre d\u2019affaires et vos cl\u00f4tures. Votre choix est inscrit au journal de caisse.");
-  if(c==="tests") h+='<button onclick="var _pm=document.getElementById(\'planChoiceModal\');if(_pm)_pm.remove();window._lxResetDepuisBlocage=(typeof isTrialExpired===\'function\'&&isTrialExpired());window._frMode=\'ventes\';lxOpenFactoryReset();" style="display:block;width:100%;margin-top:10px;padding:10px;border-radius:9px;border:none;background:#ef5350;color:#fff;font-weight:800;cursor:pointer">Effacer mes ventes de test maintenant</button>';
-  h+='</div>'; return h;
+  if(window.LX_MODE_CAISSE!=="test") return "";
+  var st=_lxEssaiStats();
+  var h='<div id="lxEssaiBox" style="font-size:12.5px;line-height:1.55;text-align:left;background:rgba(124,58,237,.12);border:1px solid rgba(124,58,237,.5);border-radius:12px;padding:12px;margin:-8px 0 18px;color:rgba(255,255,255,.88)">';
+  h+='<b>\ud83e\uddea Votre caisse est en mode test</b><br>Avant de vous abonner, elle passe en <b>caisse r\u00e9elle</b> : ';
+  h+=(st.n? 'vos '+st.n+' encaissement'+(st.n>1?'s':'')+' de test ('+st.total.toFixed(2)+' \u20ac) sont archiv\u00e9s (copie scell\u00e9e, 6 ans) puis retir\u00e9s : ils ne comptent pas dans votre chiffre d\u2019affaires. ' : '')+'Votre client\u00e8le, vos prestations, vos r\u00e9glages et vos rendez-vous \u00e0 venir sont conserv\u00e9s. Ensuite, chaque encaissement est d\u00e9finitif.';
+  h+='<button onclick="lxPasserEnReel()" style="display:block;width:100%;margin-top:10px;padding:10px;border-radius:9px;border:none;background:#7c3aed;color:#fff;font-weight:800;cursor:pointer">Passer en caisse r\u00e9elle</button></div>';
+  return h;
 }
-function lxChoixEssai(k){ window._lxChoixEssai=k; var b=document.getElementById("lxEssaiBox"); if(b){ var t=document.createElement("div"); t.innerHTML=_lxEssaiEncadre(); b.replaceWith(t.firstChild); } }
 function checkCgvPlanAndPay(plan){
   var cb=document.getElementById("cgvPlanCheck");
   if(!cb||!cb.checked){showAlert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.","warning");return;}
-  var st=_lxEssaiStats();
-  if(st.n){
-    if(window._lxChoixEssai!=="reelles"){ showAlert(window._lxChoixEssai==="tests"?"Effacez d\u2019abord vos ventes de test (bouton rouge), puis abonnez-vous.":"Indiquez d\u2019abord si les encaissements de l\u2019essai \u00e9taient des tests ou de vraies ventes.","warning"); var b=document.getElementById("lxEssaiBox"); if(b) b.scrollIntoView({behavior:"smooth",block:"center"}); return; }
-    try{ if(typeof auditLog==="function") auditLog("MISE_EN_SERVICE_REELLE","Avant abonnement, le titulaire confirme que les "+st.n+" encaissements de l\u2019essai ("+st.total.toFixed(2)+" \u20ac) sont de vraies ventes, conserv\u00e9es"); }catch(_eA){}
-  }
+  if(window.LX_MODE_CAISSE==="test"){ lxPasserEnReel("plan:"+plan); return; }
   startCheckout(plan);
+}
+// Passage en caisse réelle (irréversible) : archive + retrait des données de test, compteurs à zéro (JET 105 + 260)
+async function lxPasserEnReel(suite){
+  if(window.LX_MODE_CAISSE!=="test"){ toast("Votre caisse est d\u00e9j\u00e0 r\u00e9elle","info"); return; }
+  var nT=0,nL=0;
+  try{ var q1=await _sb.from("tickets").select("id",{count:"exact",head:true}).eq("salon_id",_salonId).eq("mode_caisse","test"); nT=q1.count||0;
+       var q2=await _sb.from("tickets").select("id",{count:"exact",head:true}).eq("salon_id",_salonId).is("mode_caisse",null); nL=q2.count||0; }catch(_e){}
+  window._lxPasseSuite=suite||"";
+  var pm=document.getElementById("planChoiceModal"); if(pm) pm.remove();
+  var h='<div class="mbg" onclick="lxFermerPassage()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:500px;text-align:left">';
+  h+='<h2 style="color:var(--gold);font-size:19px;margin-bottom:8px">Passer en caisse r\u00e9elle</h2>';
+  h+='<div style="font-size:13px;line-height:1.6;color:var(--text2)">\u00c0 partir de maintenant, chaque encaissement sera <b>r\u00e9el et d\u00e9finitif</b> (loi anti-fraude) : il ne pourra plus jamais \u00eatre effac\u00e9, seulement annul\u00e9 par un ticket d\u2019annulation trac\u00e9. <b>Ce passage est d\u00e9finitif.</b></div>';
+  h+='<ul style="font-size:13px;line-height:1.6;color:var(--text2);margin:10px 0 0 18px">';
+  if(nT) h+='<li>Vos <b>'+nT+' encaissement'+(nT>1?'s':'')+' de test</b> (et leurs cl\u00f4tures) sont copi\u00e9s dans une archive scell\u00e9e conserv\u00e9e 6 ans, puis retir\u00e9s : ils ne comptent pas dans votre chiffre d\u2019affaires.</li>';
+  h+='<li>Votre caisse d\u00e9marre \u00e0 z\u00e9ro (chiffre d\u2019affaires, cl\u00f4tures, cumuls).</li><li>Client\u00e8le, prestations, produits, \u00e9quipe, r\u00e9glages et rendez-vous \u00e0 venir sont conserv\u00e9s.</li><li>Le passage est inscrit au journal des \u00e9v\u00e9nements de la caisse.</li></ul>';
+  if(nL && !nT){
+    h+='<div style="font-size:13px;margin-top:12px;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.15)"><b>'+nL+' encaissement'+(nL>1?'s':'')+' enregistr\u00e9'+(nL>1?'s':'')+' avant la mise en place du mode test.</b> \u00c9taient-ce des tests ou de vraies ventes ?';
+    h+='<label style="display:flex;gap:8px;margin-top:8px;cursor:pointer"><input type="radio" name="lxPasseChoix" value="effacer" checked style="width:auto;flex:0 0 auto;margin-top:3px"><span>Des tests : les archiver et repartir de z\u00e9ro</span></label>';
+    h+='<label style="display:flex;gap:8px;margin-top:6px;cursor:pointer"><input type="radio" name="lxPasseChoix" value="conserver" style="width:auto;flex:0 0 auto;margin-top:3px"><span>De vraies ventes : je les conserve (d\u00e9claration inscrite au journal)</span></label></div>';
+  }
+  h+='<div style="font-size:13px;margin:14px 0 6px">Pour confirmer, tapez <b>REEL</b> :</div><input id="lxPasseConf" placeholder="REEL" style="width:100%;padding:12px;border-radius:10px;text-align:center;font-weight:800;letter-spacing:3px;text-transform:uppercase">';
+  h+='<div style="display:flex;gap:10px;margin-top:12px"><button class="btn" style="flex:1;background:var(--bg)" onclick="lxFermerPassage()">Annuler</button><button id="lxPasseBtn" class="btn bg" style="flex:1;font-weight:800" onclick="lxConfirmerPassage()">Passer en caisse r\u00e9elle</button></div></div></div>';
+  document.getElementById("modal").innerHTML=h;
+}
+function lxFermerPassage(){ cM(); try{ if(typeof isTrialExpired==="function" && isTrialExpired()) showPlanChoiceModal(true); }catch(_e){} }
+async function lxConfirmerPassage(){
+  var v=String((document.getElementById("lxPasseConf")||{}).value||"").trim().toUpperCase();
+  if(v!=="REEL"&&v!=="R\u00c9EL"){ showAlert("Tapez REEL pour confirmer.","warning"); return; }
+  var ch=document.querySelector('input[name="lxPasseChoix"]:checked'); var conserver=!!(ch&&ch.value==="conserver");
+  var b=document.getElementById("lxPasseBtn"); if(b){ b.disabled=true; b.textContent="Passage en cours\u2026"; }
+  var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+  var r=await _sb.rpc("nf525_passer_en_reel",{p_salon:_salonId,p_conserver:conserver,p_operateur:op||null});
+  if(r.error){ showAlert("Erreur : "+r.error.message,"error"); if(b){ b.disabled=false; b.textContent="Passer en caisse r\u00e9elle"; } return; }
+  try{ ["_cp_caisse","_cp_clotures","_cp_locked","caisseOpenDate"].forEach(function(k){ localStorage.removeItem(k); }); }catch(_e){}
+  try{ if(window._lxPasseSuite) sessionStorage.setItem("lx_apres_passage", window._lxPasseSuite); }catch(_e){}
+  cM(); showAlert("\u2705 Votre caisse est maintenant r\u00e9elle. Rechargement\u2026","success",function(){ location.reload(); });
 }
 
 function showUpgradeModal(feature){
@@ -2880,11 +2908,7 @@ function checkCgvAndPay(plan){
 
 async function startCheckout(plan){
   // 2026-10-11 (NF525) : en essai, le choix « tests / vraies ventes » doit être fait avant tout abonnement (tous les chemins)
-  try{ if(typeof hasActiveSubscription==="function" && !hasActiveSubscription() && _lxEssaiStats().n && window._lxChoixEssai!=="reelles"){
-    var _ov=document.querySelector(".upgrade-overlay"); if(_ov) _ov.remove(); try{ cM(); }catch(_e){}
-    if(!document.getElementById("planChoiceModal")) showPlanChoiceModal(typeof isTrialExpired==="function"&&isTrialExpired());
-    var _b=document.getElementById("lxEssaiBox"); if(_b) _b.scrollIntoView({behavior:"smooth",block:"center"});
-    showAlert("Avant de vous abonner, indiquez si les encaissements de l\u2019essai \u00e9taient des tests ou de vraies ventes.","warning"); return; } }catch(_eG){}
+  try{ if(window.LX_MODE_CAISSE==="test"){ var _ov=document.querySelector(".upgrade-overlay"); if(_ov) _ov.remove(); lxPasserEnReel("plan:"+plan); return; } }catch(_eG){}
   var btn=document.getElementById("upgradeBtn");
   if(btn){btn.textContent="Chargement...";btn.disabled=true;}
 
@@ -6530,6 +6554,7 @@ function printClotureZ(){
   
   // ===== EN-TETE =====
   if(window._isReprint){h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA</div>";}
+  if(window.LX_MODE_CAISSE==="test") h+="<div style=\"text-align:center;border:2px dashed #000;padding:5px;margin-bottom:8px;font-weight:900;font-size:13px\">MODE TEST - SANS VALEUR FISCALE</div>";
   h+="<h1>BANDE Z</h1>";
   h+="<p style=\"font-size:14px;font-weight:900\">CL\u00d4TURE QUOTIDIENNE N\u00b0"+(c.num||window.CLOTURES.length)+"</p>";
   h+="<div class=\"sep\"></div>";
@@ -15098,7 +15123,7 @@ function rSettings(){
     h+='<a href="/verif-nf525" target="_blank" rel="noopener" style="display:block;text-align:center;font-size:12px;margin-top:8px;color:var(--gold)">Ouvrir l\u2019outil de v\u00e9rification \u2197</a></div>';
     // 2026-10-11 (NF525 §6.1.1) : identification du logiciel + opérations de contrôle fiscal (JET 280)
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #607d8b"><div class="ct">\u2139\ufe0f Identification du logiciel</div>';
-    h+='<div style="font-size:13px;color:var(--text2);line-height:1.7">Produit : <strong>Luxyra</strong> (logiciel de caisse et de gestion en ligne)<br>Version : <strong>'+LX_VERSION+'</strong> (version majeure '+String(LX_VERSION).split(".")[0]+')<br>Caisse : <strong>'+LX_CAISSE+'</strong> (num\u00e9rotation unique) &middot; Poste de cet appareil : <strong>'+(window.LX_POSTE||"\u2026")+'</strong> &middot; Licence : <strong>'+String(typeof _salonId!=="undefined"&&_salonId?_salonId:"").slice(0,8).toUpperCase()+'</strong><br>\u00c9diteur : Luxyra, contact@luxyra.fr<br>Justificatif de conformit\u00e9 : <strong>attestation individuelle de l\u2019\u00e9diteur</strong> (art. 286-I-3\u00b0 bis du CGI, BOI-LETTRE-000242), voir ci-dessus<br>Signature \u00e9lectronique : ES256 (ECDSA P-256 / SHA-256)</div><div style="font-size:12px;color:var(--text3);margin-top:8px">Postes de caisse :</div><div id="lxPostesListe" style="font-size:12px;color:var(--text2);line-height:1.6">\u2026</div></div>';
+    h+='<div style="font-size:13px;color:var(--text2);line-height:1.7">Produit : <strong>Luxyra</strong> (logiciel de caisse et de gestion en ligne)<br>Version : <strong>'+LX_VERSION+'</strong> (version majeure '+String(LX_VERSION).split(".")[0]+')<br>Mode de caisse : <strong>'+(window.LX_MODE_CAISSE==="test"?"TEST (essai, sans valeur fiscale)":"R\u00e9elle")+'</strong>'+(window.LX_MODE_CAISSE==="test"?' <a href="javascript:lxPasserEnReel()" style="color:var(--gold)">passer en caisse r\u00e9elle</a>':'')+'<br>Caisse : <strong>'+LX_CAISSE+'</strong> (num\u00e9rotation unique) &middot; Poste de cet appareil : <strong>'+(window.LX_POSTE||"\u2026")+'</strong> &middot; Licence : <strong>'+String(typeof _salonId!=="undefined"&&_salonId?_salonId:"").slice(0,8).toUpperCase()+'</strong><br>\u00c9diteur : Luxyra, contact@luxyra.fr<br>Justificatif de conformit\u00e9 : <strong>attestation individuelle de l\u2019\u00e9diteur</strong> (art. 286-I-3\u00b0 bis du CGI, BOI-LETTRE-000242), voir ci-dessus<br>Signature \u00e9lectronique : ES256 (ECDSA P-256 / SHA-256)</div><div style="font-size:12px;color:var(--text3);margin-top:8px">Postes de caisse :</div><div id="lxPostesListe" style="font-size:12px;color:var(--text2);line-height:1.6">\u2026</div></div>';
     setTimeout(function(){ try{ lxPostesAfficher(); }catch(_eP){} },300);
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #455a64"><div class="ct">\ud83d\udd0e Contr\u00f4le fiscal</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Indiquez le d\u00e9but et la fin d\u2019une op\u00e9ration de contr\u00f4le de l\u2019administration : elles sont inscrites au journal des \u00e9v\u00e9nements techniques.</div>';
@@ -15764,9 +15789,9 @@ function lxOpenFactoryReset(){
     requireAdmin("R\u00e9initialiser le salon", lxOpenFactoryReset); return;
   }
   // 2026-10-11 : autorisé tant que l'établissement n'a jamais été abonné (essai en cours ou terminé ; contrôle serveur essai_reinitialisable)
-  var _isTest = (window._trialDaysLeft && window._trialDaysLeft > 0) || (typeof isTrialExpired==="function" && isTrialExpired() && !(typeof hasActiveSubscription==="function" && hasActiveSubscription()));
+  var _isTest = window.LX_MODE_CAISSE==="test" && ((window._trialDaysLeft && window._trialDaysLeft > 0) || (typeof isTrialExpired==="function" && isTrialExpired() && !(typeof hasActiveSubscription==="function" && hasActiveSubscription())));
   if(!_isTest){
-    showAlert("Le factory reset est r\u00e9serv\u00e9 aux salons en mode essai ou plan offert. Votre salon est en abonnement payant \u2014 les donn\u00e9es NF525 doivent \u00eatre conserv\u00e9es l\u00e9galement.","warning");
+    showAlert("La r\u00e9initialisation est r\u00e9serv\u00e9e \u00e0 la caisse en mode test (essai). Une caisse r\u00e9elle ne peut rien effacer. Votre salon est en abonnement payant \u2014 les donn\u00e9es NF525 doivent \u00eatre conserv\u00e9es l\u00e9galement.","warning");
     return;
   }
   var htm = '<div class="mbg" onclick="lxFrFermer()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:480px;text-align:center">';
@@ -22145,7 +22170,7 @@ function _buildRapportHTML(periodM){
   }
 
   html += '<div class="footer">';
-  html += '<strong>Document \u00e9dit\u00e9 par Luxyra '+(SALON_CONFIG.version||"v6.5.0")+'</strong> \u2014 Caisse conforme art. 286-I-3 bis du CGI (cha\u00eenage SHA-256)<br>';
+  html += '<strong>Document \u00e9dit\u00e9 par Luxyra '+(SALON_CONFIG.version||"v6.6.0")+'</strong> \u2014 Caisse conforme art. 286-I-3 bis du CGI (cha\u00eenage SHA-256)<br>';
   if(isMicro) html += 'R\u00e9gime micro-entrepreneur \u2014 TVA non applicable, art. 293B du CGI<br>';
   else html += 'Taux TVA appliqu\u00e9 : '+txTVA+'%<br>';
   html += 'Pour le contr\u00f4le fiscal : utilisez l\'export FEC (Param\u00e8tres &gt; Caisse) \u2014 format l\u00e9gal arr\u00eat\u00e9 du 29/07/2013<br>';
@@ -30686,7 +30711,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.5.0", LX_CAISSE="C01";
+var LX_VERSION="6.6.0", LX_CAISSE="C01";
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -30754,6 +30779,8 @@ function buildTicketHTML(a, isDuplicate){
   }
 
   var h="";
+  // 2026-10-11 : caisse en MODE TEST (mode école NF525) -> mention sur chaque ticket
+  if(!window._lxDemo && window.LX_MODE_CAISSE==="test") h+="<div style=\"text-align:center;border:2px dashed #000;padding:5px;margin-bottom:8px;font-weight:900;font-size:13px;letter-spacing:1px\">TEST - DOCUMENT SANS VALEUR FISCALE<br><span style=\"font-size:9px;font-weight:400;letter-spacing:0\">Caisse en mode test (essai Luxyra)</span></div>";
   // 2026-10-11 : démonstration (données fictives, rien d'enregistré) -> mention de simulation (exigence « mode école »)
   if(window._lxDemo) h+="<div style=\"text-align:center;border:2px dashed #000;padding:5px;margin-bottom:8px;font-weight:900;font-size:12px;letter-spacing:1px\">SIMULATION - DOCUMENT FACTICE<br><span style=\"font-size:9px;font-weight:400;letter-spacing:0\">D\u00e9monstration Luxyra, sans valeur fiscale</span></div>";
   // DUPLICATA
@@ -33512,6 +33539,8 @@ function sha256Sync(str){
   return hex.toUpperCase();
 }
 
+// 2026-10-11 : après un passage en caisse réelle lancé depuis l'abonnement, on rouvre le choix du forfait
+setTimeout(function(){ try{ var _sp=sessionStorage.getItem("lx_apres_passage"); if(_sp){ sessionStorage.removeItem("lx_apres_passage"); setTimeout(function(){ if(typeof showPlanChoiceModal==="function") showPlanChoiceModal(typeof isTrialExpired==="function"&&isTrialExpired()); },2500); } }catch(_e){} },500);
 // 2026-10-11 : identification du poste (appareil) — enregistré côté serveur, jamais renuméroté (JET 126 à l'ajout)
 window.LX_POSTE = window.LX_POSTE || null;
 function _lxPosteLibelle(){ var u=navigator.userAgent||""; var d=/iPad/.test(u)?"iPad":/iPhone/.test(u)?"iPhone":/Android/.test(u)?"Android":/Mac/.test(u)?"Mac":/Windows/.test(u)?"Windows":"Appareil"; var b=/Edg\//.test(u)?"Edge":/Chrome\//.test(u)?"Chrome":/Firefox\//.test(u)?"Firefox":/Safari\//.test(u)?"Safari":""; return (d+" "+b).trim(); }
@@ -35688,14 +35717,16 @@ function initApp(){
     var _urgent=_dLeft<=3;
     _tb.id="trialBanner";
     _tb.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9998;padding:8px 16px;display:flex;align-items:center;justify-content:center;gap:12px;font-size:13px;font-weight:600;flex-wrap:wrap;"+(_urgent?"background:linear-gradient(90deg,#dc2626,#b91c1c);color:#fff":"background:linear-gradient(90deg,#d4a843,#b8960f);color:#000");
-    _tb.innerHTML=(_urgent?"\u26a0\ufe0f ":"\u23f0 ")+
-      "Compte r\u00e9el \u00b7 essai gratuit : <strong>"+_dLeft+" jour"+(_dLeft>1?"s":"")+"</strong> restant"+(_dLeft>1?"s":"")+
-      "<span class=\"lx-hide-mobile\"> \u2014 tout est ouvert, Pro inclus (sauf SMS)</span>"+
-      "<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:12px;"+(_urgent?"background:#fff;color:#dc2626":"background:#000;color:#d4a843")+"\">S\u2019abonner maintenant</button>"+
-      // Rappel : pendant l'essai uniquement, possibilit\u00e9 de tout reset avant
-      // de souscrire (factory reset complet). Une fois l'abo souscrit, NF525
-      // prot\u00e8ge les donn\u00e9es = reset impossible. Lien direct vers la zone.
-      "<button onclick=\"window._settTab='salon';if(typeof go==='function')go('settings');setTimeout(function(){window.scrollTo(0,document.body.scrollHeight);},200);\" style=\"margin-left:6px;padding:4px 12px;border-radius:8px;border:1px solid "+(_urgent?"rgba(255,255,255,.5)":"rgba(0,0,0,.4)")+";background:transparent;cursor:pointer;font-weight:600;font-size:11px;color:"+(_urgent?"#fff":"#000")+"\" title=\"Effacer toutes les donn\u00e9es de test avant de souscrire\">\ud83e\uddf9 R\u00e9initialiser le salon</button>";
+    // 2026-10-11 (NF525, mode école) : bandeau selon le mode de caisse
+    var _modeTest=(window.LX_MODE_CAISSE==="test");
+    if(_modeTest) _tb.style.background="linear-gradient(90deg,#6d28d9,#7c3aed)", _tb.style.color="#fff";
+    _tb.innerHTML=(_modeTest
+      ? "\ud83e\uddea <strong>MODE TEST</strong> \u00b7 vos encaissements sont des essais (tickets \u00ab TEST \u00bb, sans valeur fiscale) \u00b7 essai gratuit : <strong>"+_dLeft+" j</strong>"+
+        "<button onclick=\"lxPasserEnReel()\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:800;font-size:12px;background:#fff;color:#6d28d9\">Passer en caisse r\u00e9elle</button>"+
+        "<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:6px;padding:4px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;cursor:pointer;font-weight:700;font-size:12px\">S\u2019abonner</button>"
+      : (_urgent?"\u26a0\ufe0f ":"\u23f0 ")+"<strong>Caisse r\u00e9elle</strong> \u00b7 essai gratuit : <strong>"+_dLeft+" jour"+(_dLeft>1?"s":"")+"</strong> restant"+(_dLeft>1?"s":"")+
+        "<span class=\"lx-hide-mobile\"> \u2014 tout est ouvert, Pro inclus (sauf SMS)</span>"+
+        "<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:12px;"+(_urgent?"background:#fff;color:#dc2626":"background:#000;color:#d4a843")+"\">S\u2019abonner</button>");
     document.body.appendChild(_tb);
     var _hdr=document.getElementById("hdr");if(_hdr)_hdr.style.marginTop="36px";
     document.getElementById("app").style.paddingTop="36px";
