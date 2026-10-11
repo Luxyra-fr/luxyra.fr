@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-06"></script>
+<script src="luxyra-supabase.js?v=20261011-07"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -5930,7 +5930,7 @@ async function openRdvFromNotif(rdvId, notifId){
   var rdv = null;
   try{
     if(typeof _sb !== "undefined" && _sb){
-      var res = await _sb.from("rdv_online").select("date_rdv,heure_rdv,client_nom,client_prenom,status").eq("id", rdvId).single();
+      var res = await _sb.from("rdv_online").select("id,date_rdv,heure_rdv,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,status,service_nom,service_prix,collaborateur_nom,cancel_reason,cancelled_by,cancelled_at,acompte_montant,acompte_paye,acompte_rembourse,refunded_at,retenue_at,retenue_tk_num,empreinte_status,empreinte_amount,lieu,message").eq("id", rdvId).single();
       rdv = res.data;
     }
   }catch(_){}
@@ -5944,6 +5944,8 @@ async function openRdvFromNotif(rdvId, notifId){
   }
   // Aller sur le planning (page = "planning")
   if(typeof go === "function") go("planning");
+  // 2026-10-11 : RDV annulé -> il n'est plus dans le planning : on affiche sa fiche (motif, qui, acompte)
+  if(rdv && rdv.status==="cancelled"){ setTimeout(function(){ lxFicheRdvAnnule(rdv); }, 250); return; }
   // 2026-10-11 : ouvrir directement la fiche du RDV (plus besoin de le chercher dans le planning)
   var _apId = null;
   try{ if(typeof AP !== "undefined" && AP){ for(var _i=0;_i<AP.length;_i++){ var _a=AP[_i]; if(_a && (_a.onlineId===rdvId || _a.id==="online_"+rdvId)){ _apId=_a.id; if(_a.st!=="cancelled") break; } } } }catch(_){}
@@ -5956,6 +5958,37 @@ async function openRdvFromNotif(rdvId, notifId){
       toast("RDV du " + rdv.date_rdv + " " + (rdv.heure_rdv||"").slice(0,5) + " — " + (rdv.client_prenom||"") + " " + (rdv.client_nom||""), "info");
     }, 300);
   }
+}
+// 2026-10-11 : fiche (lecture seule) d'un rendez-vous en ligne annulé, ouverte depuis la notification.
+function lxFicheRdvAnnule(r){
+  if(!r) return;
+  var nom=((r.client_prenom||"")+" "+(r.client_nom||"")).trim()||"Cliente";
+  var quand=(typeof _lxDateCourte==="function")?_lxDateCourte(r.date_rdv,(r.heure_rdv||"").slice(0,5)):(r.date_rdv+" "+(r.heure_rdv||"").slice(0,5));
+  var par=r.cancelled_by==="salon"?"l\u2019\u00e9tablissement":r.cancelled_by==="client"?"la cliente":r.cancelled_by==="no_show"?"l\u2019\u00e9tablissement (cliente absente)":(r.cancelled_by==="system"||r.cancelled_by==="systeme")?"automatiquement (d\u00e9lai d\u00e9pass\u00e9 ou paiement non finalis\u00e9)":(r.cancelled_by||"\u2014");
+  var le=r.cancelled_at?new Date(r.cancelled_at).toLocaleString("fr-FR",{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"}):"";
+  var ac=Number(r.acompte_montant)||0, acTxt="";
+  if(ac>0&&r.acompte_paye){
+    if(r.acompte_rembourse||r.refunded_at) acTxt="\u2705 Acompte de "+ac.toFixed(2)+" \u20ac rembours\u00e9 \u00e0 la cliente.";
+    else if(r.retenue_at) acTxt="\ud83d\udcb6 Acompte de "+ac.toFixed(2)+" \u20ac conserv\u00e9"+(r.retenue_tk_num?" (ticket n\u00b0"+r.retenue_tk_num+")":"")+".";
+    else acTxt="\u23f3 Acompte de "+ac.toFixed(2)+" \u20ac pay\u00e9 : remboursement en cours de traitement.";
+  } else if(ac>0) acTxt="Acompte pr\u00e9vu ("+ac.toFixed(2)+" \u20ac) non pay\u00e9 : rien \u00e0 rembourser.";
+  if(r.empreinte_status==="captured") acTxt+=(acTxt?"<br>":"")+"\ud83d\udcb3 Empreinte bancaire encaiss\u00e9e ("+(Number(r.empreinte_amount)||0).toFixed(2)+" \u20ac).";
+  else if(r.empreinte_status==="released") acTxt+=(acTxt?"<br>":"")+"\ud83d\udcb3 Empreinte bancaire lib\u00e9r\u00e9e (rien n\u2019a \u00e9t\u00e9 d\u00e9bit\u00e9).";
+  var cId=null; try{ if(typeof _lxResolveClientId==="function") cId=_lxResolveClientId({prenom:r.client_prenom,nom:r.client_nom,tel:r.client_tel,email:r.client_email,luxyraId:r.client_luxyra_id}); }catch(_e){}
+  var h='<div class="mbox" style="max-width:440px">';
+  h+='<div style="background:rgba(239,83,80,.1);border:1.5px solid rgba(239,83,80,.45);border-radius:12px;padding:12px 14px;margin-bottom:14px"><div style="font-weight:800;color:#ef9a9a;font-size:15px">\u274c Rendez-vous annul\u00e9</div>';
+  h+='<div style="font-size:12px;color:var(--text2);margin-top:3px">Annul\u00e9 par '+par+(le?' \u2014 le '+le:'')+'</div></div>';
+  h+='<div style="font-size:18px;font-weight:800;margin-bottom:2px">'+_lxEsc(nom)+'</div>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:12px">'+_lxEsc(quand)+(r.collaborateur_nom?' \u00b7 avec '+_lxEsc(r.collaborateur_nom):'')+(r.lieu==="domicile"?' \u00b7 \ud83c\udfe0 \u00e0 domicile':'')+'</div>';
+  h+='<div style="padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;margin-bottom:10px;font-size:13px"><strong>'+_lxEsc(r.service_nom||"Prestation")+'</strong>'+(r.service_prix!=null?' <span style="float:right;color:var(--gold);font-weight:700">'+Number(r.service_prix).toFixed(2)+' \u20ac</span>':'')+'</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Motif</div>';
+  h+='<div style="padding:10px 12px;background:rgba(255,255,255,.04);border-radius:10px;font-size:14px;margin-bottom:10px;white-space:pre-wrap">'+(r.cancel_reason?_lxEsc(r.cancel_reason):'<em style="color:var(--text3)">Aucun motif indiqu\u00e9</em>')+'</div>';
+  if(acTxt) h+='<div style="font-size:13px;line-height:1.6;margin-bottom:10px">'+acTxt+'</div>';
+  if(r.client_tel||r.client_email) h+='<div style="font-size:12px;color:var(--text2);margin-bottom:12px">'+(r.client_tel?'\ud83d\udcde <a href="tel:'+_lxEsc(String(r.client_tel).replace(/\s/g,""))+'">'+_lxEsc(r.client_tel)+'</a>':'')+(r.client_tel&&r.client_email?' \u00b7 ':'')+(r.client_email?'\u2709\ufe0f '+_lxEsc(r.client_email):'')+'</div>';
+  h+='<div style="display:flex;gap:8px">';
+  if(cId) h+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM();go(\'detail\','+JSON.stringify(cId).replace(/"/g,"&quot;")+')">\ud83d\udc64 Fiche cliente</button>';
+  h+='<button class="btn bg" style="flex:1" onclick="cM()">Fermer</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
 async function confirmNotif(id){
   try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);}catch(e){}
@@ -9270,6 +9303,10 @@ function _lxOnlineToAP(rdv){
     var phases=(sv&&sv.phases&&sv.phases.length>0)?sv.phases:[{t:"w",d:dur,l:rdv.service_nom}];
     var aptItems=[];
     if(Array.isArray(rdv.items)&&rdv.items.length>1){aptItems=rdv.items.map(function(it){return {sId:it.sId||it.service_id||null,name:it.name||it.nom||"Prestation",price:Number(it.price||it.prix||0),qty:Number(it.qty||1),remise:Number(it.remise||0)};});}
+    // 2026-10-11 : contenu modifié par l'établissement (forfait changé, prestation remplacée/ajoutée)
+    var _se=(rdv.salon_edit&&typeof rdv.salon_edit==="object")?rdv.salon_edit:null;
+    if(_se&&Array.isArray(_se.phases)&&_se.phases.length) phases=JSON.parse(JSON.stringify(_se.phases));
+    if(_se&&Array.isArray(_se.items)) aptItems=JSON.parse(JSON.stringify(_se.items));
     var _lxcId=_lxResolveClientId(rdv);
     var _stId=rdv.collaborateur_id, _needAssign=false;
     if(!_stId){
@@ -9337,7 +9374,7 @@ window._rdvPollInterval=setInterval(function(){
       else if(/^(clients|detail)$/.test(window._currentPage||"")){ try{reloadFromSupabase("clients");}catch(_e){} }
     }
     var today=new Date().toISOString().slice(0,10);
-    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at,lieu,client_adresse,client_adresse_cp,client_adresse_ville,adresse_complement,client_lat,client_lng,distance_km,frais_deplacement_montant,remise_carte_montant").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
+    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,salon_edit,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at,lieu,client_adresse,client_adresse_cp,client_adresse_ville,adresse_complement,client_lat,client_lng,distance_km,frais_deplacement_montant,remise_carte_montant").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
         var newCount=0;var newRdvCount=0;var newEvents=[];
         r.data.forEach(function(rdv){
@@ -11843,7 +11880,9 @@ function clickAppt(id){
   
   // Phases detail table
   var isDone=a.st==="done";
-  htm+='<div style="color:var(--gold);font-weight:700;font-size:13px;margin-bottom:6px">D\u00e9tails du RDV'+(isDone?' <span style="font-size:10px;color:rgba(255,255,255,.3);font-weight:500">(lecture seule)</span>':'')+'</div>';
+  htm+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px"><div style="color:var(--gold);font-weight:700;font-size:13px">D\u00e9tails du RDV'+(isDone?' <span style="font-size:10px;color:rgba(255,255,255,.3);font-weight:500">(lecture seule)</span>':'')+'</div>'
+    // 2026-10-11 : changer tout le contenu du RDV (prestation ou forfait) en un geste
+    +(isDone?'':'<button onclick="lxChangerPrestationRdv(\''+a.id+'\')" style="padding:5px 10px;font-size:11px;font-weight:700;border-radius:8px;border:1px solid rgba(232,200,115,.45);background:rgba(232,200,115,.1);color:#e8c873;cursor:pointer;white-space:nowrap">\ud83d\udd04 Changer la prestation</button>')+'</div>';
   htm+='<div style="font-size:13px" class="phases-list">';
   var cur=toM(a.time);
   for(var i=0;i<phases.length;i++){
@@ -12290,6 +12329,51 @@ function showReplacePhaseModal(apptId, phaseIdx){
   h+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="cM();clickAppt(\''+apptId+'\')">Annuler</button>';
   h+='</div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();clickAppt(\''+apptId+'\')"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+// 2026-10-11 : changer TOUTE la prestation d'un RDV (y compris pour un forfait en plusieurs étapes),
+// sans supprimer / recréer le RDV. RDV en ligne : la cliente voit le changement dans son espace.
+function lxChangerPrestationRdv(apptId){
+  var a=_findAppt(apptId); if(!a||a.st==="done") return;
+  var all=(typeof SVC!=="undefined"?SVC:[]).filter(function(s){ return s&&s.n&&s.actif!==false; });
+  var byCat={}; all.forEach(function(s){ var c=s.cat||"Autre"; (byCat[c]=byCat[c]||[]).push(s); });
+  var cur=gS(a.sId);
+  var h='<div class="mbox" style="max-width:520px;max-height:90vh;overflow-y:auto">';
+  h+='<h2 style="margin:0 0 4px;color:#e8c873;text-align:center">Changer la prestation</h2>';
+  h+='<div style="font-size:12px;color:rgba(255,255,255,.55);text-align:center;margin-bottom:10px">Actuel : <strong>'+_lxEsc(cur?cur.n:(a.clientName||"?"))+'</strong> \u2014 la nouvelle prestation remplace tout le contenu du rendez-vous (heure, collaborateur et acompte conservés).</div>';
+  h+='<input id="lxChgFiltre" placeholder="\ud83d\udd0d Rechercher une prestation ou un forfait\u2026" oninput="var q=this.value.toLowerCase();document.querySelectorAll(\'.lx-chg-it\').forEach(function(e){e.style.display=e.dataset.n.indexOf(q)>=0?\'\':\'none\';})" style="width:100%;margin-bottom:10px">';
+  Object.keys(byCat).sort().forEach(function(cat){
+    var sc=getSvcColor(cat);
+    h+='<div style="margin-bottom:10px"><div style="font-weight:700;font-size:12px;color:'+sc.border+';margin-bottom:6px;padding:4px 8px;background:'+sc.bg+';border-radius:4px;display:inline-block">'+_lxEsc(cat)+'</div><div style="display:flex;flex-direction:column;gap:4px">';
+    byCat[cat].forEach(function(s){
+      var ph=s.phases&&s.phases.length?s.phases:null, dur=0;
+      if(ph) ph.forEach(function(p){ dur+=Number(p.d)||0; }); else dur=Number(s.d)||30;
+      var etapes=ph&&ph.length>1?' \u00b7 forfait '+ph.length+' \u00e9tapes':'';
+      var actuel=cur&&cur.id===s.id;
+      h+='<div class="lx-chg-it" data-n="'+_lxEsc(String(s.n).toLowerCase())+'" onclick="lxAppliquerChangementPrestation(\''+apptId+'\','+s.id+')" style="cursor:pointer;padding:10px 12px;background:'+(actuel?'rgba(232,200,115,.12)':'rgba(255,255,255,.04)')+';border:1px solid '+(actuel?'rgba(232,200,115,.5)':'rgba(255,255,255,.08)')+';border-radius:6px;display:flex;justify-content:space-between;gap:10px;align-items:center">';
+      h+='<span style="font-size:13px;font-weight:600">'+_lxEsc(s.n)+'<span style="display:block;font-size:11px;font-weight:400;color:rgba(255,255,255,.45)">'+dur+' min'+etapes+(actuel?' \u00b7 actuelle':'')+'</span></span>';
+      h+='<span style="color:var(--gold);font-weight:700;white-space:nowrap">'+(Number(s.p)||0).toFixed(2)+' \u20ac</span></div>';
+    });
+    h+='</div></div>';
+  });
+  h+='<button class="btn" style="width:100%;margin-top:8px;background:rgba(255,255,255,.06)" onclick="cM();clickAppt(\''+apptId+'\')">Annuler</button></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();clickAppt(\''+apptId+'\')"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+async function lxAppliquerChangementPrestation(apptId, svcId){
+  var a=_findAppt(apptId); if(!a||a.st==="done") return;
+  var sv=gS(svcId); if(!sv) return;
+  var avant=(gS(a.sId)||{}).n||"?", prAvant=Number(a.pr)||0;
+  var st=a.stId;
+  var phases=(sv.phases&&sv.phases.length)?JSON.parse(JSON.stringify(sv.phases)):[{t:"w",d:Number(sv.d)||30,l:sv.n}];
+  phases.forEach(function(p){ if(p.t==="w"&&!p.stId) p.stId=st; });
+  a.sId=svcId; a.aPhases=phases; a.pr=Number(sv.p)||0;
+  // On garde uniquement les données d'acompte ; les prestations ajoutées/remplacées de l'ancien contenu disparaissent.
+  a.items=(Array.isArray(a.items)?a.items:[]).filter(function(x){ return x&&x.isAcompteData; });
+  if(typeof saveAppointment==="function") await saveAppointment(a);
+  if(typeof auditLog==="function") auditLog("CHANGEMENT_PRESTATION_RDV","RDV "+a.id+" — '"+avant+"' ("+prAvant.toFixed(2)+"€) → '"+sv.n+"' ("+(Number(sv.p)||0).toFixed(2)+"€)");
+  cM();
+  if(typeof toast==="function") toast("\u2713 Prestation changée : "+sv.n+(a.onlineId||String(a.id).indexOf("online_")===0?" — la cliente voit le changement dans son espace":""),"success");
+  requestAnimationFrame(function(){ go("planning"); setTimeout(function(){ clickAppt(apptId); },150); });
 }
 
 async function doReplacePhase(apptId, phaseIdx, newSvcId){
