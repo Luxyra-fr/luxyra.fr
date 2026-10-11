@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-05"></script>
+<script src="luxyra-supabase.js?v=20261011-06"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -8929,19 +8929,42 @@ async function updateNotifBadge(){
 // Check for new RDV online every 30 seconds
 // FIX 2026-05-27 : resolution + relink des RDV en ligne vers la fiche client salon.
 // Auto-cicatrisant : rejoue a chaque poll / rechargement clients tant qu'un RDV online n'a pas de fiche.
+// 2026-10-11 : une personne peut réserver pour une autre (enfant, conjoint...) depuis SON compte Luxyra.
+// Le RDV doit alors être rattaché à la personne RÉSERVÉE (prénom/nom saisis), pas au titulaire du compte.
+function _lxNormNom(x){ return String(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z]/g,""); }
+function _lxPrenomOk(a,b){ a=_lxNormNom(a); b=_lxNormNom(b); if(!a||!b) return true; if(a===b) return true; return a.length>=3&&b.length>=3&&(a.indexOf(b)===0||b.indexOf(a)===0); }
+function _lxCandidatsCompte(o){
+  var out=[]; try{
+    if(!o||typeof CL==="undefined"||!CL) return out;
+    var _np=function(x){return String(x||"").replace(/\D/g,"");};
+    var rp=_np(o.client_tel||o.tel), re=String(o.client_email||o.email||"").toLowerCase().trim(), rl=o.client_luxyra_id||o.luxyraId||null;
+    for(var i=0;i<CL.length;i++){ var c=CL[i];
+      if((rl&&c.clientBeautyproId&&c.clientBeautyproId===rl) || (rp&&rp.length>=6&&(_np(c.ph)===rp||_np(c.ph2)===rp)) || (re&&String(c.em||"").toLowerCase().trim()===re)) out.push(c);
+    }
+  }catch(_e){} return out;
+}
 function _lxResolveClientId(o){
   try{
     if(!o) return null;
     if(typeof CL==="undefined"||!CL||!CL.length) return null;
-    var _np=function(x){return String(x||"").replace(/\D/g,"");};
-    var rp=_np(o.client_tel||o.tel), re=String(o.client_email||o.email||"").toLowerCase().trim(), rl=o.client_luxyra_id||o.luxyraId||null;
-    for(var i=0;i<CL.length;i++){ var c=CL[i];
-      if(rl&&c.clientBeautyproId&&c.clientBeautyproId===rl) return c.id;
-      if(rp&&rp.length>=6&&(_np(c.ph)===rp||_np(c.ph2)===rp)) return c.id;
-      if(re&&String(c.em||"").toLowerCase().trim()===re) return c.id;
-    }
+    var pre=o.client_prenom!=null?o.client_prenom:o.prenom, nom=o.client_nom!=null?o.client_nom:o.nom;
+    var cands=_lxCandidatsCompte(o);
+    if(!cands.length) return null;
+    if(!_lxNormNom(pre)) return cands[0].id;
+    for(var i=0;i<cands.length;i++){ if(_lxPrenomOk(cands[i].pre,pre)) return cands[i].id; }
+    // réservé pour quelqu'un d'autre : fiche à son nom si elle existe, sinon aucune (elle sera créée à son nom)
+    for(var k=0;k<CL.length;k++){ if(_lxNormNom(CL[k].pre)===_lxNormNom(pre) && _lxNormNom(CL[k].nom)===_lxNormNom(nom)) return CL[k].id; }
+    return null;
   }catch(_e){}
   return null;
+}
+// Titulaire du compte quand le RDV a été pris pour une autre personne (sinon "")
+function _lxReservePar(o){
+  try{
+    if(!o) return ""; var pre=o.client_prenom!=null?o.client_prenom:o.prenom; if(!_lxNormNom(pre)) return "";
+    var c=_lxCandidatsCompte(o).filter(function(x){ return x.clientBeautyproId && x.clientBeautyproId===(o.client_luxyra_id||o.luxyraId); })[0] || _lxCandidatsCompte(o)[0];
+    if(c && !_lxPrenomOk(c.pre,pre)) return ((c.pre||"")+" "+(c.nom||"")).trim();
+  }catch(_e){} return "";
 }
 function _lxRelinkOnlineAppts(){
   try{
@@ -11804,6 +11827,7 @@ function clickAppt(id){
   htm+='</div>';
   // Bandeau info pour RDV online
   if(a.isOnline && a.st!=="done"){
+    try{ var _roRp=(typeof _lxRdvOnlineDe==="function")?_lxRdvOnlineDe(a):null; var _rp=_lxReservePar(_roRp); if(_rp) htm+='<div style="background:rgba(212,168,67,.08);border:1px solid rgba(212,168,67,.25);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:12px;color:var(--gold)">\ud83d\udc64 R\u00e9serv\u00e9 par <strong>'+_lxEsc(_rp)+'</strong> depuis son compte, pour <strong>'+_lxEsc(((_roRp.prenom||"")+" "+(_roRp.nom||"")).trim())+'</strong></div>'; }catch(_eRp){}
     htm+='<div style="background:rgba(108,92,231,.08);border:1px solid rgba(108,92,231,.2);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#a29bfe;display:flex;align-items:center;gap:8px">';
     htm+='<span>\ud83c\udf10</span><span><strong>RDV pris en ligne.</strong> Vos modifications (date, heure, collaborateur, dur\u00e9e, prestations) sont automatiquement visibles dans l\'espace client avec un bandeau d\'alerte \u00ab Modification par le salon \u00bb.</span>';
     htm+='</div>';

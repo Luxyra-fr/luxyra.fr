@@ -3764,6 +3764,17 @@ async function syncClientFromOnlineRdv(rdvData) {
       if (r3.data && r3.data.length) existing = r3.data[0];
     }
   }
+  // 2026-10-11 : réservation faite POUR une autre personne depuis le compte du titulaire (même email /
+  // téléphone / compte Luxyra) -> on ne rattache pas au titulaire : fiche au nom de la personne réservée.
+  var _nn = function (x) { return String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z]/g, ""); };
+  var _pOk = function (a, b) { a = _nn(a); b = _nn(b); if (!a || !b || a === b) return true; return a.length >= 3 && b.length >= 3 && (a.indexOf(b) === 0 || b.indexOf(a) === 0); };
+  if (existing && rdvData.client_prenom && !_pOk(existing.prenom, rdvData.client_prenom)) {
+    existing = null; bpId = null;
+    try {
+      var rn = await _sb.from("clients").select("*").eq("salon_id", _salonId).ilike("prenom", String(rdvData.client_prenom).trim()).ilike("nom", String(rdvData.client_nom || "").trim()).limit(1);
+      if (rn.data && rn.data.length) return rn.data[0].id;
+    } catch (_eN) {}
+  }
   if (existing) {
     // Link beautypro_id if not set
     if (bpId && !existing.client_luxyra_id) {
