@@ -2271,7 +2271,7 @@ async function saveAppointment(appt) {
     } catch (_eSe) {}
     // Tracking de la modif salon : on lit l'état actuel pour calculer le diff
     try {
-      var oldRes = await _sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,collaborateur_nom,duree_minutes,service_id,service_nom,service_prix,items").eq("id", onlineUuid).eq("salon_id", _salonId).maybeSingle();
+      var oldRes = await _sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,collaborateur_nom,duree_minutes,service_id,service_nom,service_prix,items,salon_modified_at,salon_modified_fields,salon_modified_acknowledged_by_client").eq("id", onlineUuid).eq("salon_id", _salonId).maybeSingle();
       if (oldRes && oldRes.data) {
         var old = oldRes.data;
         var diff = {};
@@ -2297,6 +2297,19 @@ async function saveAppointment(appt) {
           onlineData.modification_demandee = false;
           onlineData.modification_status = null;
           onlineData.salon_modified_at = new Date().toISOString();
+          // 2026-10-11 : modifications successives pas encore vues par la cliente -> on les CUMULE
+          // (avant : la dernière écrasait la précédente, ex. prestation changée puis durée ajustée
+          // -> la cliente ne voyait plus que « Durée »). Ancien = valeur d'origine, nouveau = actuelle.
+          try {
+            var _prev = (old.salon_modified_at && !old.salon_modified_acknowledged_by_client && old.salon_modified_fields && typeof old.salon_modified_fields === "object") ? old.salon_modified_fields : null;
+            if (_prev) {
+              var _m = {};
+              Object.keys(_prev).forEach(function (k) { _m[k] = _prev[k]; });
+              Object.keys(diff).forEach(function (k) { _m[k] = { old: (_m[k] ? _m[k].old : diff[k].old), new: diff[k].new }; });
+              Object.keys(_m).forEach(function (k) { if (_m[k] && String(_m[k].old) === String(_m[k].new)) delete _m[k]; });
+              diff = _m;
+            }
+          } catch (_eM) {}
           onlineData.salon_modified_fields = diff;
           onlineData.salon_modified_acknowledged_by_client = false;
           onlineData.salon_modified_acknowledged_at = null;
