@@ -163,7 +163,7 @@
   function val(row, col) { if (col.indexOf("->>") > 0) { var p = col.split("->>"); var o = row[p[0]]; if (typeof o === "string") { try { o = JSON.parse(o); } catch (e) { o = null; } } return o ? o[p[1]] : undefined; } return row[col]; }
   function cmp(a, b) { if (a == null) return -1; if (b == null) return 1; return a < b ? -1 : a > b ? 1 : 0; }
   function parseVal(v) { if (v === "null") return null; if (v === "true") return true; if (v === "false") return false; return v; }
-  function Q(table) { this.t = table; this.f = []; this.o = []; this.lim = null; this.rg = null; this.op = "select"; this.single = 0; this.ret = false; this.cnt = null; this.head = false; }
+  function Q(table) { this.t = table; this.f = []; this.o = []; this.lim = null; this.rg = null; this.op = "select"; this.sg = 0; this.ret = false; this.cnt = null; this.head = false; }
   var QP = Q.prototype;
   QP.select = function (c, o) { if (this.op !== "select") this.ret = true; if (o && o.count) this.cnt = o.count; if (o && o.head) this.head = true; return this; };
   function add(name, fn) { QP[name] = function () { var a = arguments, me = this; this.f.push(function (r) { return fn.apply(null, [r].concat(Array.prototype.slice.call(a))); }); return me; }; }
@@ -195,8 +195,8 @@
   QP.order = function (c, o) { this.o.push([c, !(o && o.ascending === false)]); return this; };
   QP.limit = function (n) { this.lim = n; return this; };
   QP.range = function (a, b) { this.rg = [a, b]; return this; };
-  QP.single = function () { this.single = 1; return this; };
-  QP.maybeSingle = function () { this.single = 2; return this; };
+  QP.single = function () { this.sg = 1; return this; };
+  QP.maybeSingle = function () { this.sg = 2; return this; };
   QP.abortSignal = function () { return this; };
   QP.returns = function () { return this; };
   QP.csv = function () { return this; };
@@ -226,12 +226,12 @@
       if (this.lim != null) out = out.slice(0, this.lim);
       if (this.cnt) { if (this.head) return { data: null, count: total, error: null, status: 200 }; }
       out = JSON.parse(JSON.stringify(out));
-      if (this.single) { if (!out.length) return this.single === 1 ? { data: null, error: { message: "No rows", code: "PGRST116" } } : { data: null, error: null }; return { data: out[0], error: null, count: total }; }
+      if (this.sg) { if (!out.length) return this.sg === 1 ? { data: null, error: { message: "No rows", code: "PGRST116" } } : { data: null, error: null }; return { data: out[0], error: null, count: total }; }
       return { data: out, error: null, count: total, status: 200 };
     }
     if (this.op !== "select" && !this.ret) return { data: null, error: null, status: 204 };
     out = JSON.parse(JSON.stringify(out || []));
-    if (this.single) return { data: out[0] || null, error: null };
+    if (this.sg) return { data: out[0] || null, error: null };
     return { data: out, error: null };
   };
   QP.then = function (res, rej) { var me = this; return new Promise(function (ok) { setTimeout(function () { ok(me.exec()); }, 0); }).then(res, rej); };
