@@ -313,13 +313,25 @@ function renderStep2(){
   return h;
 }
 
-function nextStep2(){
+async function nextStep2(){
   saveFields2();
   if(!DATA.gerantNom.trim()||!DATA.gerantPrenom.trim()){showErr("Le nom et pr\u00e9nom du g\u00e9rant sont obligatoires");return;}
   if(!DATA.email.trim()||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(DATA.email.trim())){showErr("Email invalide");return;}
   if(!DATA.pass||DATA.pass.length<6){showErr("Le mot de passe doit contenir au moins 6 caract\u00e8res");return;}
   var pass2=(document.getElementById("fPass2")||{}).value||"";
   if(DATA.pass!==pass2){showErr("Les mots de passe ne correspondent pas");return;}
+  // 2026-10-11 : compte déjà existant -> on le dit tout de suite, sur cette page
+  try{ var _ex=await sb.rpc("lx_email_deja_inscrit",{p_email:DATA.email.trim()}); if(_ex&&_ex.data===true){
+    if(/@luxyra\.fr$/i.test(DATA.email.trim())){ showErr("Cette adresse est r\u00e9serv\u00e9e \u00e0 l\u2019\u00e9quipe Luxyra : utilisez une autre adresse email."); return; }
+    // Client séparé, sans session enregistrée : ne touche jamais à une connexion déjà ouverte sur ce navigateur.
+    var _sbChk=supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false,storageKey:"lx-insc-verif"}});
+    var _ok=await _sbChk.auth.signInWithPassword({email:DATA.email.trim(),password:DATA.pass});
+    if(_ok.error||!_ok.data||!_ok.data.user){ showErr("Un compte Luxyra existe d\u00e9j\u00e0 avec cet email. Connectez-vous sur luxyra.fr/app (mot de passe oubli\u00e9 ? lien sur la page de connexion) ou utilisez une autre adresse."); return; }
+    var _s=await _sbChk.from("salons").select("id").eq("user_id",_ok.data.user.id).limit(1);
+    try{ await _sbChk.auth.signOut({scope:"local"}); }catch(_e){}
+    if(_s.data&&_s.data.length){ showErr("Un \u00e9tablissement existe d\u00e9j\u00e0 avec cet email : connectez-vous sur luxyra.fr/app."); return; }
+    // sinon : inscription interrompue avec ce même mot de passe -> elle sera reprise et terminée à la dernière étape
+  } }catch(_eE){}
   // 2026-10-10 : cohérence gérant saisi / dirigeant officiel du SIRET (avertissement, non bloquant)
   DATA._siretAlerte = lxSiretIncoherence();
   if(DATA._siretAlerte && !confirm("\u26a0\ufe0f "+DATA._siretAlerte+"\n\nV\u00e9rifiez votre SIRET et le nom du g\u00e9rant. Continuer quand m\u00eame ?")) return;
@@ -839,5 +851,6 @@ render();
     }).catch(function(e){console.warn("[lxConfig]",e);});
 })();
 </script>
+<script src="/lx-cp-ville.js?v=20261011-01" defer></script>
 </body>
 </html>
