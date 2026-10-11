@@ -1117,6 +1117,8 @@ async function loadSalonData() {
   _salonId = salon.id;
   window._salonId = salon.id; // expose explicitement pour app.html (startCheckout, etc.)
   _isOnline = true;
+  // 2026-10-11 (NF525) : poste de caisse de cet appareil connu dès la connexion (avant tout encaissement)
+  setTimeout(function(){ try { if (typeof window.lxPosteInit === "function" && !window.LX_POSTE) window.lxPosteInit(); } catch(_eP){} }, 1500);
 
   // Flush queue d'erreurs JS pré-login (hook window.onerror — voir app.html)
   try { if (typeof window._lxFlushErrorQueue === "function") window._lxFlushErrorQueue(); } catch(_){}
