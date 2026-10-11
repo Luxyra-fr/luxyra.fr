@@ -96,7 +96,7 @@ dict(slug="prestations-et-forfaits", ic="✂️", cat="Démarrer", titre="Presta
 dict(slug="planning", ic="📅", cat="Rendez-vous", titre="Le planning au quotidien",
  resume="Naviguer dans l'agenda, prendre un rendez-vous, poser une absence.",
  sections=[
-  dict(h="Se repérer dans le planning", p="""<p>Une colonne par collaborateur, une couleur par famille de prestation. Un rendez-vous encaissé porte la mention « Encaissé ». Glissez-déposez un rendez-vous pour le déplacer.</p><p><strong>Rendez-vous exceptionnel hors horaires</strong> (ex. 8h30 alors que vous ouvrez à 9h) : le planning affiche une heure hachurée avant l'ouverture et après la fermeture. Touchez le créneau, confirmez « Créer quand même » : vos horaires et la réservation en ligne ne changent pas.</p>""",
+  dict(h="Se repérer dans le planning", p="""<p>Une colonne par collaborateur, une couleur par famille de prestation. Un rendez-vous encaissé porte la mention « Encaissé ». Glissez-déposez un rendez-vous pour le déplacer.</p><p><strong>Rendez-vous exceptionnel hors horaires</strong> (ex. 8h30 alors que vous ouvrez à 9h) : « + Nouveau RDV », saisissez l'heure, puis « Créer quand même ». Vos horaires et la réservation en ligne ne changent pas ; le planning s'élargit automatiquement pour afficher ce rendez-vous.</p>""",
    img="planning", alt="Planning du jour", leg=[
     "<strong>Aujourd'hui</strong> et les flèches ◀ ▶ : revenir au jour même, passer au jour précédent ou suivant.",
     "<strong>Calendrier</strong> : aller directement à une date.",
