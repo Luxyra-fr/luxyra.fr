@@ -322,6 +322,11 @@ dict(slug="fichier-clients", ic="👤", cat="Clients", titre="Le fichier clients
     "<strong>Fiche technique</strong> : formules, références, notes de soin.",
     "<strong>Fidélité</strong> : passages, cagnotte, remise disponible.",
     "<strong>RGPD</strong> : consentements SMS et email, invitation à l'espace client, export et effacement de ses données."]),
+  dict(h="Questionnaire santé (allergies, contre-indications)", p="""<p>Onglet <strong>🩺 Santé</strong> de la fiche cliente : allergies connues (coloration/PPD, latex, nickel, colles…), test de tolérance (date et résultat), grossesse ou allaitement, contre-indications (diabète, anticoagulants, troubles circulatoires…) et une précision libre.</p>
+<ul>
+<li>Ce sont des <strong>données de santé</strong> : elles ne s'enregistrent qu'avec le <strong>consentement explicite</strong> de la cliente (case à cocher obligatoire, date conservée).</li>
+<li>Dès qu'une information est saisie, un <strong>bandeau rouge</strong> la rappelle dans la fiche rendez-vous et dans la fiche cliente. Un test de tolérance de plus de 6 mois est signalé « à refaire », un questionnaire de plus d'un an « à revoir ».</li>
+<li>Visible uniquement par votre établissement. <strong>Effacer</strong> retire tout à la demande de la cliente ; ces informations figurent dans l'export de ses données.</li></ul>"""),
  ]),
 
 dict(slug="fidelite-et-bons-cadeaux", ic="🎁", cat="Clients", titre="Fidélité, cartes d'abonnement et bons cadeaux",
