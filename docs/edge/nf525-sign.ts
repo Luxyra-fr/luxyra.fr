@@ -1,4 +1,4 @@
-// nf525-sign v2 — 2026-10-11 (v2 : archives signées AR + autocontrôle d'intégrité quotidien -> JET 90) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
+// nf525-sign v3 — 2026-10-11 (v2 : archives AR + autocontrôle -> JET 90 ; v3 : réinitialisations d'essai archivées (nf525_archives_purge)) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
 // fiscales, chaînée par établissement et par type (référentiel NF525 v2.3) :
 //   TK (tickets), Z (clôtures journalières), ZM / ZA (mensuelles / annuelles), ZE (exercice),
 //   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques), AR (archives).
@@ -104,12 +104,15 @@ async function clePub(kid: string) {
 function unb64url(s: string) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
 async function verifierSalon(salon: string) {
   const anomalies: string[] = []; let n = 0;
+  const purges: any[] = ((await sb.from("nf525_archives_purge").select("contenu").eq("salon_id", salon)).data || []);
   for (const S of SOURCES) {
     const sigs: any[] = []; let i = 0;
     while (true) { const r = await sb.from("nf525_signatures").select("*").eq("salon_id", salon).eq("type", S.type).order("seq").range(i, i + 999); if (r.error) break; sigs.push(...(r.data || [])); if (!r.data || r.data.length < 1000) break; i += 1000; }
     if (!sigs.length) continue;
     const ids = sigs.map((g) => g.source_id); const rows: Record<string, any> = {};
     for (let k = 0; k < ids.length; k += 80) { const q = await sb.from(S.table).select("*").in("id", ids.slice(k, k + 80)); (q.data || []).forEach((x: any) => rows[x.id] = x); }
+    // enregistrements effacés lors d'une réinitialisation d'essai : vérifiés sur leur copie archivée (inaltérable)
+    for (const pa of purges) for (const x of ((pa.contenu || {})[S.table] || [])) if (!rows[x.id]) rows[x.id] = x;
     let prev = "";
     for (const g of sigs) {
       n++;
@@ -149,9 +152,13 @@ async function signerSalon(salon: string, max = 600) {
       let seq = last.data && last.data[0] ? last.data[0].seq : 0;
       let prev = last.data && last.data[0] ? last.data[0].signature : "";
       const signes = new Set<string>();
-      if (!S.num) { const s2 = await sb.from("nf525_signatures").select("source_id").eq("salon_id", salon).eq("type", S.type); (s2.data || []).forEach((x: any) => signes.add(x.source_id)); }
+      // après une réinitialisation d'essai, la numérotation repart : on ne filtre plus sur le dernier numéro signé
+      const lastAt = last.data && last.data[0] ? (await sb.from("nf525_signatures").select("signed_at").eq("salon_id", salon).eq("type", S.type).eq("seq", seq).maybeSingle()).data?.signed_at : null;
+      const purgeApres = lastAt ? !!((await sb.from("nf525_archives_purge").select("id").eq("salon_id", salon).gt("created_at", lastAt).limit(1)).data || []).length : false;
+      const parNumero = !!S.num && !purgeApres && !!(last.data && last.data[0] && last.data[0].source_num != null);
+      if (!parNumero) { let i = 0; while (true) { const s2 = await sb.from("nf525_signatures").select("source_id").eq("salon_id", salon).eq("type", S.type).range(i, i + 999); (s2.data || []).forEach((x: any) => signes.add(x.source_id)); if (!s2.data || s2.data.length < 1000) break; i += 1000; } }
       let q = sb.from(S.table).select("*").eq("salon_id", salon);
-      if (S.num && last.data && last.data[0] && last.data[0].source_num != null) q = q.gt(S.order[0], last.data[0].source_num);
+      if (parNumero) q = q.gt(S.order[0], last.data![0].source_num);
       for (const o of S.order) q = q.order(o, { ascending: true });
       const rows = await q.limit(max);
       if (rows.error) { out[S.type + "_err"] = 1; continue; }

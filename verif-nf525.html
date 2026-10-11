@@ -188,6 +188,8 @@ async function verifier(txt){
     if(!arcSig.ok) pb.push("Signature de l'archive : "+arcSig.etat); }
   else if(SA&&SA.statut){ arcSig.etat=SA.statut; }
   var tkById={}; (A.donnees.tickets||[]).forEach(function(t){ tkById[t.id]=t; });
+  // tickets effacés lors d'une réinitialisation d'essai : copie scellée jointe à l'archive
+  var purTk={}; (A.donnees.reinitialisations_essai||[]).forEach(function(pa){ ((pa.contenu||{}).tickets||[]).forEach(function(t){ tkById[t.id]=t; purTk[t.id]=1; }); });
   var parType={}, nOk=0, nKo=0, recalc=0, recalcKo=0;
   for(var g of (A.signatures||[])){
     var key=cles[g.key_id]; var ok=false;
@@ -209,6 +211,7 @@ async function verifier(txt){
     chaine.push([ty,L.length,L.length?L[0].seq+" → "+L[L.length-1].seq:"",rupt]); });
   var signes={}; (parType.TK||[]).forEach(function(g){ signes[g.source_id]=1; });
   var nonSignes=(A.donnees.tickets||[]).filter(function(t){ return !signes[t.id]; });
+  var nbPur=(A.donnees.reinitialisations_essai||[]).length;
   nonSignes.slice(0,20).forEach(function(t){ pb.push("Ticket n°"+t.num+" sans signature dans l'archive"); });
   var lib={TK:"Tickets",Z:"Clôtures journalières",ZM:"Clôtures mensuelles",ZA:"Clôtures annuelles",ZE:"Clôtures d'exercice",CR:"Corrections de règlement",DUP:"Duplicatas",JET:"Journal des événements techniques",AR:"Archives"};
   var tout=empOk&&nKo===0&&recalcKo===0&&!pb.length;
@@ -220,6 +223,7 @@ async function verifier(txt){
   h+='<div>Signatures valides : <span class="'+(nKo?"ko":"ok")+'">'+nOk+' / '+(nOk+nKo)+'</span> — tickets recalculés : <span class="'+(recalcKo?"ko":"ok")+'">'+(recalc-recalcKo)+' / '+recalc+'</span> — tickets sans signature : <span class="'+(nonSignes.length?"ko":"ok")+'">'+nonSignes.length+'</span></div>';
   h+='<table class="v"><tr><th>Type</th><th>Signatures</th><th>Séquence</th><th>Ruptures</th></tr>'+chaine.map(function(c){ return '<tr><td>'+(lib[c[0]]||c[0])+'</td><td>'+c[1]+'</td><td>'+c[2]+'</td><td class="'+(c[3]?"ko":"ok")+'">'+c[3]+'</td></tr>'; }).join("")+'</table>';
   if(pb.length) h+='<div style="margin-top:10px"><strong>Détail</strong><br>'+pb.slice(0,60).map(esc).join("<br>")+(pb.length>60?"<br>…":"")+'</div>';
+  if(nbPur) h+='<div style="margin-top:6px">Réinitialisations en période d\'essai : '+nbPur+' (données effacées jointes à l\'archive et vérifiées)</div>';
   h+='<div style="margin-top:10px;font-size:12px;color:var(--text3)">Remarque : une archive d\'une période qui ne commence pas au premier ticket démarre en cours de chaîne ; seule la continuité à l\'intérieur de la période est contrôlée.</div></div>';
   out.innerHTML=h;
 }
