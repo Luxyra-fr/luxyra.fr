@@ -23532,6 +23532,23 @@ async function expExcelComptable(){
     }), "5 — Annulations");
   }
 
+  // === 2026-10-11 : CORRECTIONS DE RÈGLEMENT (pièces tracées, mois de la correction OU du ticket) ===
+  try{
+    var _crX=(window.LX_CORR_REGL||[]).filter(function(c){ return String(c.date_correction||"").indexOf(accM)===0 || String(c.ticket_date||"").indexOf(accM)===0; });
+    if(_crX.length){
+      var crD=[["CORRECTIONS DE RÈGLEMENT — "+mL],[SALON_CONFIG.nomComplet()+" · Pièces numérotées, scellées et tracées (tickets et clôtures d'origine inchangés)"],[],
+        ["Pièce n°","Date correction","Ticket n°","Date ticket","Total ticket (€)","Règlement enregistré","Règlement réel","Écart CB (€)","Écart espèces (€)","Autres écarts","Motif","Par"]];
+      _crX.forEach(function(c){
+        var f=function(o){ return Object.keys(o||{}).map(function(k){ return k.toUpperCase()+" "+Number(o[k]).toFixed(2); }).join(" + "); };
+        var e={}; (c.lignes||[]).forEach(function(l){ e[l.mode]=(e[l.mode]||0)+Number(l.montant||0); });
+        var aut=Object.keys(e).filter(function(k){return k!=="cb"&&k!=="esp";}).map(function(k){ return k.toUpperCase()+" "+e[k].toFixed(2); }).join(", ");
+        crD.push([c.num, toDate(c.date_correction), c.ticket_num_affiche||c.ticket_num, toDate(c.ticket_date), Number(c.total_ttc_ticket)||0, f(c.regle_avant), f(c.regle_apres), e.cb||0, e.esp||0, aut, c.motif||"", c.operateur||""]);
+      });
+      XLSX.utils.book_append_sheet(wb, makeSheet(crD, { titleRows:[0], subRows:[1], headerRows:[3], numCols:[4,7,8], dateCols:[1,3], titleSpan:12,
+        colWidths:[8,12,9,12,12,20,20,11,11,16,40,14] }), "5b — Corrections règlement");
+    }
+  }catch(_eCrX){ console.warn("[pack] corrections", _eCrX); }
+
   // === ONGLET 6 : STRIPE ACOMPTES ===
   if(rdvOnline.length){
     var stripeD = [
