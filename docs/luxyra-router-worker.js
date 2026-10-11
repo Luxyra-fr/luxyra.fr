@@ -4785,6 +4785,20 @@ Sitemap: https://luxyra.fr/sitemap.xml
     "/blog/reservation-en-ligne-sans-commission": "/blog/reservation-en-ligne-sans-commission.html",
     "/aide": "/aide.html",
     "/migration": "/migration.html",
+    // 2026-10-11 : pages métier, démo libre, nouveaux articles
+    "/logiciel-coiffure": "/logiciel-coiffure.html",
+    "/logiciel-barbier": "/logiciel-barbier.html",
+    "/logiciel-institut-beaute": "/logiciel-institut-beaute.html",
+    "/logiciel-onglerie": "/logiciel-onglerie.html",
+    "/logiciel-cils-sourcils": "/logiciel-cils-sourcils.html",
+    "/logiciel-maquilleuse": "/logiciel-maquilleuse.html",
+    "/logiciel-tatouage-piercing": "/logiciel-tatouage-piercing.html",
+    "/logiciel-spa-massage": "/logiciel-spa-massage.html",
+    "/logiciel-bien-etre": "/logiciel-bien-etre.html",
+    "/demo": "/demo.html",
+    "/blog/acompte-arrhes-empreinte-bancaire": "/blog/acompte-arrhes-empreinte-bancaire.html",
+    "/blog/micro-entreprise-ou-societe-caisse-et-comptabilite": "/blog/micro-entreprise-ou-societe-caisse-et-comptabilite.html",
+    "/blog/prestations-a-domicile-frais-de-deplacement": "/blog/prestations-a-domicile-frais-de-deplacement.html",
   };
 
   let path = url.pathname;
