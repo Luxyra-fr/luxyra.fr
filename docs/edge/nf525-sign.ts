@@ -1,7 +1,7 @@
-// nf525-sign v1 — 2026-10-11 — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
+// nf525-sign v2 — 2026-10-11 (v2 : archives signées AR + autocontrôle d'intégrité quotidien -> JET 90) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
 // fiscales, chaînée par établissement et par type (référentiel NF525 v2.3) :
 //   TK (tickets), Z (clôtures journalières), ZM / ZA (mensuelles / annuelles), ZE (exercice),
-//   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques).
+//   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques), AR (archives).
 // Données signées = champs séparés par des virgules + signature précédente du même type (chaînage).
 // Signature brute r||s (64 octets) encodée en base64url. Clé privée générée ici, stockée dans Vault,
 // jamais exposée ; clé publique dans nf525_cles (lecture libre) pour l'outil de vérification.
@@ -87,7 +87,50 @@ const SOURCES: Src[] = [
     build: (r, _s, first, prev) => [r.caisse || CAISSE, r.seq, "TK", r.copie_num, String(r.operateur || "").replace(/,/g, " "), ts(r.horodatage), r.caisse || CAISSE, r.ticket_num, first ? "O" : "N", prev].join(",") },
   { type: "JET", table: "nf525_jet", order: ["seq"], num: (r) => r.seq,
     build: (r, _s, first, prev) => [r.seq, r.code, String(r.libelle || "").replace(/,/g, " "), ts(r.horodatage), String(r.operateur || "").replace(/,/g, " "), r.caisse || CAISSE, first ? "O" : "N", prev].join(",") },
+  { type: "AR", table: "nf525_archives_signees", order: ["seq"], num: (r) => r.seq,
+    build: (r, _s, first, prev) => [r.seq, String(r.empreinte || "").toUpperCase(), d8(r.du), d8(r.au), r.motif || "periodique", ts(r.horodatage), CAISSE, first ? "O" : "N", prev].join(",") },
 ];
+
+// ---- Autocontrôle d'intégrité (quotidien) : recalcul des données signées + vérification des signatures et du chaînage.
+// Toute anomalie est inscrite au JET (code 90), une seule fois par anomalie.
+let PUB: Record<string, CryptoKey> = {};
+async function clePub(kid: string) {
+  if (PUB[kid]) return PUB[kid];
+  const r = await sb.from("nf525_cles").select("public_jwk").eq("key_id", kid).maybeSingle();
+  const jwk: any = r.data && r.data.public_jwk; if (!jwk) throw new Error("clé publique " + kid + " introuvable");
+  PUB[kid] = await crypto.subtle.importKey("jwk", { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y }, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+  return PUB[kid];
+}
+function unb64url(s: string) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+async function verifierSalon(salon: string) {
+  const anomalies: string[] = []; let n = 0;
+  for (const S of SOURCES) {
+    const sigs: any[] = []; let i = 0;
+    while (true) { const r = await sb.from("nf525_signatures").select("*").eq("salon_id", salon).eq("type", S.type).order("seq").range(i, i + 999); if (r.error) break; sigs.push(...(r.data || [])); if (!r.data || r.data.length < 1000) break; i += 1000; }
+    if (!sigs.length) continue;
+    const ids = sigs.map((g) => g.source_id); const rows: Record<string, any> = {};
+    for (let k = 0; k < ids.length; k += 80) { const q = await sb.from(S.table).select("*").in("id", ids.slice(k, k + 80)); (q.data || []).forEach((x: any) => rows[x.id] = x); }
+    let prev = "";
+    for (const g of sigs) {
+      n++;
+      if (g.seq !== (sigs.indexOf(g) + 1)) anomalies.push(`${S.type} : rupture de séquence au n°${g.seq}`);
+      if ((g.prev_signature || "") !== prev) anomalies.push(`${S.type} n°${g.seq} : chaînage rompu`);
+      prev = g.signature;
+      const r = rows[g.source_id];
+      if (!r) { anomalies.push(`${S.type} n°${g.seq} : enregistrement d'origine absent`); continue; }
+      const attendu = await S.build(r, salon, g.seq === 1, g.prev_signature || "");
+      if (attendu !== g.data_to_sign) anomalies.push(`${S.type} n°${g.seq}${S.num ? " (pièce " + S.num(r) + ")" : ""} : données différentes des données signées`);
+      try { const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, await clePub(g.key_id), unb64url(g.signature), new TextEncoder().encode(g.data_to_sign)); if (!ok) anomalies.push(`${S.type} n°${g.seq} : signature invalide`); }
+      catch (e) { anomalies.push(`${S.type} n°${g.seq} : vérification impossible (${(e as Error).message})`); }
+    }
+  }
+  let nouvelles = 0;
+  for (const a of anomalies.slice(0, 50)) {
+    const deja = await sb.from("nf525_jet").select("id").eq("salon_id", salon).eq("code", 90).ilike("details", "%" + a.replace(/[%_]/g, " ") + "%").limit(1);
+    if (!deja.error && !(deja.data || []).length) { await sb.rpc("nf525_jet_ajouter", { p_salon: salon, p_code: 90, p_details: "Autocontrôle d'intégrité : " + a, p_operateur: "Luxyra (contrôle automatique)" }); nouvelles++; }
+  }
+  return { salon, controles: n, anomalies: anomalies.length, nouvelles, detail: anomalies.slice(0, 10) };
+}
 
 async function signerSalon(salon: string, max = 600) {
   const ok = (await sb.rpc("nf525_verrou", { p_salon: salon, p_secondes: 120 })).data;
@@ -147,6 +190,10 @@ Deno.serve(async (req) => {
       salons = [body.salon_id];
     }
     const res = [];
+    if (isCron && body.verif === true) {
+      for (const id of salons) { try { res.push(await verifierSalon(id)); } catch (e) { res.push({ salon: id, error: String((e as Error).message || e) }); } }
+      return json(200, { ok: true, verif: true, res });
+    }
     for (const id of salons) { try { res.push(await signerSalon(id, isCron ? 600 : 100)); } catch (e) { res.push({ salon: id, error: String((e as Error).message || e) }); } }
     return json(200, { ok: true, res });
   } catch (e) { return json(500, { error: String((e as Error).message || e) }); }
