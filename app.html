@@ -8736,6 +8736,7 @@ function goBack(){
   go("home");
 }
 function go(pg,arg){
+  if(pg==="accounting"||pg==="tickets"){ try{ if(typeof lxCorrReglCharger==="function") lxCorrReglCharger(); }catch(_eCg){} } // 2026-10-11
   // === Nav history : push la page courante avant de changer (pour goBack) ===
   // Skip si on est en train de revenir via goBack (sinon boucle infinie).
   // Limite à 10 entrées pour ne pas accumuler indéfiniment en mémoire.
@@ -22709,6 +22710,8 @@ function _lxJournalVentes(mois){
   }
   function bucketsPart(a, part){
     var b=_lxPayBuckets(a), ks=["cb","esp","chq","vir","enligne","bon","aut"], tb=0, out={}, sum=0;
+    // 2026-10-11 : pièces de correction de règlement du ticket (mode réellement encaissé)
+    try{ if(typeof _lxCorrDeTicket==="function"){ _lxCorrDeTicket(a.id).forEach(function(c){ (c.lignes||[]).forEach(function(l){ if(b[l.mode]!=null) b[l.mode]=Math.round((b[l.mode]+Number(l.montant||0))*100)/100; }); }); } }catch(_eCj){}
     ks.forEach(function(k){ tb+=Number(b[k])||0; });
     if(Math.abs(tb)<0.005) return null;
     ks.forEach(function(k){ var v=Math.round((Number(b[k])||0)*(part/tb)*100)/100; out[k]=v; sum+=v; });
@@ -23889,7 +23892,8 @@ function printBandeZ(){
     h+="<h3 style=\"font-size:12px;margin:8px 0 4px\">Corrections de r\u00e8glement (pi\u00e8ces trac\u00e9es)</h3><table>";
     _crM.forEach(function(c){ var tkA=(c.ticket_num_affiche||c.ticket_num); h+="<tr><td>Pi\u00e8ce n\u00b0"+c.num+" du "+fmt(c.date_correction)+" \u2014 ticket n\u00b0"+tkA+" du "+fmt(c.ticket_date)+"<br><span style=\"font-size:9px;color:#666\">"+String(c.motif||"").replace(/</g,"&lt;")+"</span></td><td class=\"r\">"+(c.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2); }).join("<br>")+" \u20ac</td></tr>"; });
     Object.keys(_ctM).forEach(function(k){ _crSum+=_ctM[k]; });
-    h+="<tr class=\"total\"><td>CB apr\u00e8s corrections</td><td class=\"r\">"+(tCB+(_ctM.cb||0)).toFixed(2)+" \u20ac</td></tr>";
+    var _baseM={cb:tCB,esp:tEsp,chq:tChq,bon:tBon,vir:tVir,aut:tAut,enligne:tEnL}, _libM={cb:"CB",esp:"Esp\u00e8ces",chq:"Ch\u00e8ques",bon:"Bons cadeaux / avoirs",vir:"Virements",aut:"Autre",enligne:"Pay\u00e9s en ligne"};
+    Object.keys(_ctM).forEach(function(k){ if(Math.abs(_ctM[k])<0.005) return; h+="<tr class=\"total\"><td>"+(_libM[k]||k)+" apr\u00e8s corrections</td><td class=\"r\">"+((_baseM[k]||0)+_ctM[k]).toFixed(2)+" \u20ac</td></tr>"; });
     h+="<tr class=\"total\"><td>TOTAL R\u00c8GLEMENTS APR\u00c8S CORRECTIONS</td><td class=\"r\">"+(totRegl+_crSum).toFixed(2)+" \u20ac</td></tr></table>";
     ecart=Math.round((tTotal-(totRegl+_crSum))*100)/100;
   } }catch(_eCrM){}
@@ -34648,6 +34652,7 @@ async function exportFEC(){
   var dateFrom=document.getElementById("fecDateFrom").value;
   var dateTo=document.getElementById("fecDateTo").value;
   if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
+  try{ if(typeof lxCorrReglCharger==="function") await lxCorrReglCharger(); }catch(_eCl){}
   if(dateFrom>dateTo){showAlert("Date de début > date de fin","info");return;}
 
   var siret=(SALON_CONFIG.siret||"").replace(/\s/g,"");
@@ -34663,7 +34668,7 @@ async function exportFEC(){
   try{
     if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
       var r=await _sb.from("tickets")
-        .select("num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status")
+        .select("id,num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status")
         .eq("salon_id",_salonId)
         .gte("date_ticket",dateFrom)
         .lte("date_ticket",dateTo)
@@ -34697,6 +34702,10 @@ async function exportFEC(){
   function _fecLegs(t, ttc){
     var dp=t.detail_paiement;
     if(typeof dp==="string"){ try{dp=JSON.parse(dp);}catch(_e){dp=null;} }
+    // 2026-10-11 : pièces de correction de règlement (mode réellement encaissé)
+    try{ var _crT=(window.LX_CORR_REGL||[]).filter(function(c){ return c.ticket_id===t.id; });
+      if(_crT.length&&dp&&typeof dp==="object"&&!Array.isArray(dp)){ var _d2={}; for(var _k in dp) _d2[_k]=Number(dp[_k])||0;
+        _crT.forEach(function(c){ (c.lignes||[]).forEach(function(l){ _d2[l.mode]=Math.round(((_d2[l.mode]||0)+Number(l.montant||0))*100)/100; }); }); dp=_d2; } }catch(_eCf){}
     if(dp && typeof dp==="object" && !Array.isArray(dp)){
       var legs=[], tot=0;
       for(var k in dp){ var amt=Math.round((Number(dp[k])||0)*100)/100; if(Math.abs(amt)<0.005) continue; var a=_accForBucket(String(k).toLowerCase()); legs.push({acc:a.acc,lib:a.lib,amt:amt}); tot=Math.round((tot+amt)*100)/100; }
