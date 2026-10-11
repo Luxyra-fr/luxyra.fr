@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-09"></script>
+<script src="luxyra-supabase.js?v=20261011-10"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -9392,6 +9392,10 @@ document.addEventListener("visibilitychange",function(){
 window._rdvPollInterval=setInterval(function(){
   try{ if(typeof lxRetenuesSync==="function") lxRetenuesSync(false); }catch(_eRet){} // 2026-10-11 (limité à 1 passage / 5 min)
   try{ if(!window._lxCorrLoaded && typeof lxCorrReglCharger==="function") lxCorrReglCharger(); }catch(_eCr){} // 2026-10-11 corrections de règlement
+  // 2026-10-11 : JET 80 (démarrage) une fois par session + version installée (JET 250/255, une fois par version)
+  try{ if(_salonId && !window._lxJetDemarre && !window._lxVueAdmin){ window._lxJetDemarre=true;
+    var _kS="lx_jet_demarrage_"+_salonId; if(!sessionStorage.getItem(_kS)){ sessionStorage.setItem(_kS,"1"); if(typeof auditLog==="function") auditLog("DEMARRAGE_CAISSE","Luxyra v"+LX_VERSION+" - "+(navigator.userAgent||"").slice(0,80)); }
+    _sb.rpc("nf525_version",{p_salon:_salonId,p_version:LX_VERSION}).then(function(){},function(){}); } }catch(_eJ){}
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     // FIX 2026-05-23 : filet multi-appareils — recharge les encaissements (appointments)
     // pour rafraîchir le CA Accueil/Stats/Compta même si le realtime est tombé.
@@ -27057,7 +27061,7 @@ function showCaisse(){
       var itTotal=it.price*it.qty-(it.remise||0);
       var col=it.isPack?"rgba(200,168,78,.15)":it.isCarteAbo?"rgba(76,175,80,.12)":"transparent";
       h+='<div style="display:grid;grid-template-columns:2fr 40px 70px 50px 70px;padding:6px 12px;align-items:center;font-size:12px;border-bottom:1px solid rgba(255,255,255,.04);background:'+col+'">';
-      h+='<div style="display:flex;align-items:center;gap:6px;min-width:0"><button onclick="_tk.items.splice('+idx+',1);showCaisse()" style="background:none;border:none;color:rgba(255,255,255,.25);cursor:pointer;font-size:10px;padding:2px;flex-shrink:0">\u2716</button><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+it.name+'</span></div>';
+      h+='<div style="display:flex;align-items:center;gap:6px;min-width:0"><button onclick="lxRetirerLigne('+idx+')" style="background:none;border:none;color:rgba(255,255,255,.25);cursor:pointer;font-size:10px;padding:2px;flex-shrink:0">\u2716</button><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+it.name+'</span></div>';
       // === Quantit\u00e9 \u00e9ditable avec \u2212/+ ===
       h+='<div style="display:flex;align-items:center;justify-content:center;gap:2px">';
       h+='<button onclick="_posItemQty('+idx+',-1)" style="background:rgba(255,255,255,.08);border:none;color:#fff;width:18px;height:20px;border-radius:3px;cursor:pointer;font-size:11px;line-height:1;padding:0" title="-1">\u2212</button>';
@@ -28610,6 +28614,8 @@ function handleTkOption(idx){
     go("pendingTk");
   }else if(idx===6){
     // Abandon : action directe sans confirmation (simple panier sans valeur fiscale)
+    // 2026-10-11 : tracé au journal des événements techniques (JET 320)
+    try{ var _nbA=(_tk.items||[]).filter(function(it){return it&&!it.isSep;}).length; if(_nbA&&typeof auditLog==="function"){ var _tA=0;(_tk.items||[]).forEach(function(it){ if(!it.isSep) _tA+=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0); }); auditLog("ABANDON_VENTE",_nbA+" ligne(s), "+_tA.toFixed(2)+" € non encaissés"); } }catch(_eAb){}
     if(typeof doAbandon === "function") doAbandon();
   }
   else if(idx===2){
@@ -30194,7 +30200,8 @@ function printTicketReceipt(){
   // FIX 2026-05-12 : fermeture automatique de la fenêtre après impression
   // L'event afterprint se déclenche quand l'utilisateur ferme la boîte de dialogue
   // d'impression (Imprimer OU Annuler) → on ferme la fenêtre dans les deux cas
-  setTimeout(function(){
+  // 2026-10-11 : extrait de signature NF525 inséré avant impression (3,5 s maximum)
+  var _imprimer=function(){ setTimeout(function(){
     try{
       w.onafterprint = function(){ try{ w.close(); }catch(_){} };
       w.print();
@@ -30202,7 +30209,8 @@ function printTicketReceipt(){
       // on ferme après 5s max — l'info est envoyée à l'imprimante en 1-2s normalement
       setTimeout(function(){ try{ if(!w.closed) w.close(); }catch(_){} }, 5000);
     }catch(e){}
-  },500);
+  },200); };
+  if(apptIdP) lxSigRemplir(w.document, apptIdP, 3500).then(_imprimer,_imprimer); else _imprimer();
 }
 
 function showTicket(method,total){
@@ -30610,6 +30618,46 @@ function exportTicketsCSV(){
 }
 
 // ===== TICKET FORMAT UNIQUE (NF525) — utilisé partout =====
+// =====================================================================
+// 2026-10-11 — NF525 renforcé : signature électronique ES256 (serveur nf525-sign), extrait imprimé
+// (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
+// duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
+// =====================================================================
+var LX_VERSION="6.3.0", LX_CAISSE="C01";
+window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
+function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
+async function _lxSignerMaintenant(){
+  try{ var se=await _sb.auth.getSession(); var tok=se&&se.data&&se.data.session&&se.data.session.access_token; if(!tok||!_salonId) return;
+    await fetch((window.SB_URL||"https://kxdgjtvrkwugbifgppai.supabase.co")+"/functions/v1/nf525-sign",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok,"apikey":(typeof SUPABASE_ANON_KEY!=="undefined"?SUPABASE_ANON_KEY:"")},body:JSON.stringify({salon_id:_salonId})});
+  }catch(_e){}
+}
+async function lxSigTicket(apId, attendre){
+  if(!apId||typeof _sb==="undefined"||!_sb||!_salonId) return null;
+  if(window.LX_SIG_CACHE[apId]) return window.LX_SIG_CACHE[apId];
+  async function lire(){
+    var t=await _sb.from("tickets").select("id").eq("salon_id",_salonId).eq("raw_data->>id",apId).maybeSingle();
+    if(!t||!t.data) return null;
+    var g=await _sb.from("nf525_signatures").select("signature,seq").eq("source_table","tickets").eq("source_id",t.data.id).maybeSingle();
+    return (g&&g.data)?g.data.signature:null;
+  }
+  try{
+    var sg=await lire();
+    if(!sg&&attendre){ await _lxSignerMaintenant(); sg=await lire(); if(!sg){ await new Promise(function(r){setTimeout(r,1200);}); await _lxSignerMaintenant(); sg=await lire(); } }
+    if(sg) window.LX_SIG_CACHE[apId]=_lxSigExtrait(sg);
+    return sg?window.LX_SIG_CACHE[apId]:null;
+  }catch(_e){ return null; }
+}
+async function lxSigRemplir(doc, apId, maxMs){
+  var fini=false;
+  var p=lxSigTicket(apId,true).then(function(ex){ fini=true; try{ doc.querySelectorAll(".lxSig").forEach(function(e){ e.textContent=ex||"en cours (voir duplicata)"; }); }catch(_e){} });
+  var t=new Promise(function(r){ setTimeout(r, maxMs||3500); });
+  await Promise.race([p,t]);
+  if(!fini){ try{ doc.querySelectorAll(".lxSig").forEach(function(e){ if(e.textContent==="…") e.textContent="en cours (voir duplicata)"; }); }catch(_e){} }
+}
+function lxRetirerLigne(idx){
+  try{ var it=_tk&&_tk.items&&_tk.items[idx]; if(it&&!it.isSep&&!it.isAcompteData&&typeof auditLog==="function") auditLog("ANNULATION_LIGNE",(it.name||"Ligne")+" — "+((Number(it.price)||0)*(Number(it.qty)||1)).toFixed(2)+" € (avant encaissement)"); }catch(_e){}
+  _tk.items.splice(idx,1); showCaisse();
+}
 function buildTicketHTML(a, isDuplicate){
   var cl=gC(a.cId),sty=gT(a.stId);
   var clN=apptClientLabel(a);
@@ -30632,7 +30680,7 @@ function buildTicketHTML(a, isDuplicate){
 
   var h="";
   // DUPLICATA
-  if(isDuplicate)h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA</div>";
+  if(isDuplicate)h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA<span class=\"lxDupNum\" style=\"display:block;font-size:10px;letter-spacing:0\"></span></div>";
 
   // En-tête salon
   h+="<div style=\"text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px\">";
@@ -30798,8 +30846,12 @@ function buildTicketHTML(a, isDuplicate){
   if(SALON_CONFIG.siret)h+="<div>SIRET: "+SALON_CONFIG.siret+"</div>";
   else h+="<div>SIRET : en cours d'attribution (immatriculation en cours)</div>"; // 2026-10-10 : affichage seulement (hors empreinte)
   if(SALON_CONFIG.tva)h+="<div>N\u00b0 TVA: "+SALON_CONFIG.tva+"</div>";
-  h+="<div>Logiciel securise - attestation de conformite de l'editeur</div>";
-  h+="<div>Luxyra - contact@luxyra.fr</div>";
+  h+="<div>Logiciel s\u00e9curis\u00e9 - attestation de conformit\u00e9 de l'\u00e9diteur</div>";
+  h+="<div>Luxyra v"+LX_VERSION+" - caisse "+LX_CAISSE+" - contact@luxyra.fr</div>";
+  // 2026-10-11 : nombre de lignes + extrait de la signature électronique (ES256)
+  try{ var _nbL=(a.items||[]).filter(function(it){ return it&&!it.isSep&&!it.isAcompteData; }).length||1;
+    var _ex=(window.LX_SIG_CACHE&&window.LX_SIG_CACHE[a.id])||"\u2026";
+    h+="<div>Lignes : "+_nbL+" - Signature : <span class=\"lxSig\">"+_ex+"</span></div>"; }catch(_eS){}
   if(a.hash)h+="<div style=\"font-family:monospace;font-size:8px;color:#999;margin-top:4px\">R\u00e9f. : "+a.hash.slice(0,16)+"</div>";
   if(a.prevHash)h+="<div style=\"font-family:monospace;font-size:8px;color:#bbb\">Pr\u00e9c. : "+a.prevHash.slice(0,8)+"</div>";
   h+="<div style=\"font-size:9px;color:#999\">Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</div>";
@@ -30872,7 +30924,15 @@ function reprintTicket(id){
   h+=buildTicketHTML(a, isDuplicate);
   h+="</body></html>";
   w.document.write(h);w.document.close();
-  setTimeout(function(){w.print();},500);
+  // 2026-10-11 : duplicata numéroté et enregistré (signé côté serveur) + extrait de signature du ticket
+  var _taches=[lxSigRemplir(w.document, a.id, 3500)];
+  if(isDuplicate){
+    var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+    _taches.push(_sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
+      try{ if(r&&r.data){ var d=new Date(r.data.horodatage||Date.now()); w.document.querySelectorAll(".lxDupNum").forEach(function(e){ e.textContent="Copie n\u00b0"+r.data.copie+" - "+d.toLocaleDateString("fr-FR")+" "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }); } }catch(_e){}
+    },function(){}));
+  }
+  Promise.all(_taches).then(function(){ setTimeout(function(){w.print();},200); },function(){ setTimeout(function(){w.print();},200); });
 }
 
 function deleteTicket(id){
