@@ -277,6 +277,7 @@
     localStorage.setItem("lx_salon_last_activity", String(Date.now()));
     localStorage.setItem("lx_current_op", JSON.stringify({ id: T.salon_operateurs[0].id, prenom: T.salon_operateurs[0].prenom, nom: "", role: "admin", lastActivity: Date.now() }));
     localStorage.setItem("_cp_active_salon", SALON_ID);
+    localStorage.setItem("caisseOpenDate", TODAY);
   } catch (e) {}
 
   // ---------- bandeau + page de départ ----------
