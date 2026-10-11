@@ -2751,6 +2751,8 @@ async function saveTicketToDb(tk) {
       tva = Math.round((ttc - ht) * 100) / 100;
     }
 
+    // 2026-10-11 (NF525) : poste de caisse ayant enregistré le ticket (tous les chemins d'encaissement)
+    try { if (!tk.poste && window.LX_POSTE) tk.poste = window.LX_POSTE; } catch(_eP){}
     var data = {
       salon_id: _salonId,
       // num : laisser le trigger auto-calculer

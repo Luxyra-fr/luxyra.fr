@@ -240,7 +240,8 @@ dict(slug="conformite-caisse", ic="🛡️", cat="Comptabilité", titre="Conform
   dict(h="En cas de contrôle fiscal", p="""<ul>
 <li><strong>Paramètres › NF525 › Contrôle fiscal</strong> : appuyez sur « Début du contrôle » puis « Fin du contrôle » ; les deux sont inscrits au journal des événements.</li>
 <li>Présentez l'attestation (volets 1 et 2), remettez une archive signée de la période et, si demandé, le FEC.</li>
-<li><strong>Identification du logiciel</strong> (même page) : version, numéro de caisse, licence et justificatif de conformité.</li>
+<li><strong>Identification du logiciel</strong> (même page) : version, numéro de caisse, licence, liste des postes et justificatif de conformité.</li>
+<li><strong>Plusieurs appareils</strong> : chaque appareil qui encaisse reçoit automatiquement un numéro de poste (P01, P02…) imprimé sur le ticket ; la numérotation des tickets reste unique pour l'établissement.</li>
 <li>Chaque nuit, Luxyra contrôle automatiquement toutes les signatures ; une anomalie serait inscrite au journal et signalée à l'éditeur.</li></ul>"""),
  ]),
 
