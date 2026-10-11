@@ -237,7 +237,7 @@ function renderStep1(){
     h+='<div style="display:flex;flex-direction:column;gap:8px">';
     h+='<div onclick="saveFields1();DATA.franchiseTva=true;DATA._tvaChoisie=true;render()" style="cursor:pointer;padding:12px 14px;border-radius:10px;border:2px solid '+(_ft?'var(--gold,#c8a84e)':'rgba(255,255,255,.12)')+';background:'+(_ft?'rgba(200,168,78,.10)':'transparent')+'">'+(_ft?'\u25c9':'\u25cb')+' <strong>Oui</strong>, je suis en franchise de TVA : je ne facture pas de TVA'+_mention+'</div>';
     h+='<div onclick="saveFields1();DATA.franchiseTva=false;DATA._tvaChoisie=true;render()" style="cursor:pointer;padding:12px 14px;border-radius:10px;border:2px solid '+(!_ft?'var(--gold,#c8a84e)':'rgba(255,255,255,.12)')+';background:'+(!_ft?'rgba(200,168,78,.10)':'transparent')+'">'+(!_ft?'\u25c9':'\u25cb')+' <strong>Non</strong>, je facture la TVA</div>';
-    h+='</div><div class="hint">Vos tickets appliqueront '+(_ft?'0 % de TVA':'le taux de TVA de votre pays')+'. Modifiable ensuite dans Param\u00e8tres \u2192 Caisse et paiements.</div></div>';
+    h+='</div><div class="hint">Vos tickets appliqueront '+(_ft?'0 % de TVA':'le taux de TVA de votre pays')+'. Une soci\u00e9t\u00e9 (SARL, SAS\u2026) peut aussi \u00eatre en franchise si son chiffre d\u2019affaires reste sous les seuils (37 500 \u20ac pour les services). En cas de doute : vos factures mentionnent-elles de la TVA ? Modifiable ensuite dans Param\u00e8tres \u2192 Caisse et paiements.</div></div>';
   }
   h+='<div class="btn-row"><div></div><button class="btn btn-gold" onclick="nextStep1()" style="flex:1">Continuer \u2192</button></div>';
   return h;
@@ -555,7 +555,16 @@ async function doSubmit(){
 
     // 2. Create auth user
     var auth=await sb.auth.signUp({email:DATA.email.trim(),password:DATA.pass});
-    if(auth.error){showErr("Erreur: "+auth.error.message);btn.disabled=false;btn.textContent="\u2705 Cr\u00e9er mon compte gratuit";return;}
+    // 2026-10-11 : email déjà inscrit (souvent une inscription interrompue avant la création de l'établissement).
+    // Si le mot de passe est le bon et qu'aucun établissement n'est rattaché, on reprend l'inscription là où elle s'était arrêtée.
+    if(auth.error && /already|registered|exists/i.test(String(auth.error.message||""))){
+      var _si=await sb.auth.signInWithPassword({email:DATA.email.trim(),password:DATA.pass});
+      if(_si.error||!_si.data||!_si.data.user){ showErr("Cet email a d\u00e9j\u00e0 un compte Luxyra. Connectez-vous (luxyra.fr/app) ou utilisez une autre adresse email.");btn.disabled=false;btn.textContent="\u2705 Cr\u00e9er mon compte gratuit";return; }
+      var _deja=await sb.from("salons").select("id").eq("user_id",_si.data.user.id).limit(1);
+      if(_deja.data&&_deja.data.length){ showErr("Un \u00e9tablissement existe d\u00e9j\u00e0 avec cet email : connectez-vous sur luxyra.fr/app.");btn.disabled=false;btn.textContent="\u2705 Cr\u00e9er mon compte gratuit";return; }
+      auth={data:{user:_si.data.user,session:_si.data.session},error:null};
+    }
+    if(auth.error){showErr("Erreur : "+auth.error.message);btn.disabled=false;btn.textContent="\u2705 Cr\u00e9er mon compte gratuit";return;}
     var userId=auth.data.user?auth.data.user.id:null;
 
     // 3. Calculate trial end
