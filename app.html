@@ -6026,6 +6026,15 @@ function doCloture(){
 // FIX 2026-06-10 : un paiement mixte (ex. "Especes + CB") doit etre reparti selon sa vraie
 // ventilation (a.payments : methode + montant net apres rendu), et non mis en entier dans
 // un seul bucket selon la chaine a.met (qui contenait "cb" -> tout en CB, faux ; ou "esp" -> tout en especes).
+// 2026-10-11 : tickets dont les règlements saisis dépassent la recette (ex. remise appliquée après la saisie du
+// paiement, ticket 701 Excellence Coiffure du 02/10). La ventilation n'est PAS retouchée (les totaux mensuels
+// restent égaux à la somme des clôtures scellées) ; l'écart est seulement EXPLIQUÉ sur la clôture.
+function _lxEcartsReglement(tickets){
+  var L=[];
+  try{ (tickets||[]).forEach(function(a){ var b=_lxPayBuckets(a), s=0; ["cb","esp","chq","vir","enligne","bon","aut"].forEach(function(k){ s+=Number(b[k])||0; });
+    var pr=Number(a.pr)||0, e=Math.round((s-pr)*100)/100; if((pr>=0&&e>0.009)||(pr<0&&e<-0.009)) L.push({num:a.tkNum,pr:pr,regle:Math.round(s*100)/100,ecart:e,met:a.met||""}); }); }catch(_e){}
+  return L;
+}
 function _lxPayBuckets(a){
   var b={cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0};
   function add(method,amt){
@@ -6562,7 +6571,15 @@ function printClotureZ(){
   // recette contre laquelle la somme des modes est batie dans cloturerJournee (_lxPayBuckets
   // applique a TOUS les tickets du jour, produits inclus).
   var ecart=Math.round((c.totalCA-totRegl)*100)/100;
-  if(Math.abs(ecart)>0.01)h+="<div class=\"warn\">\u26a0 ECART CA/REGLEMENTS: "+ecart.toFixed(2)+" \u20ac</div>";
+  if(Math.abs(ecart)>0.01){
+    h+="<div class=\"warn\">\u26a0 ECART CA/REGLEMENTS: "+ecart.toFixed(2)+" \u20ac</div>";
+    // 2026-10-11 : explication de l'écart pour le comptable (clôture scellée non modifiée)
+    try{ var _ecL=_lxEcartsReglement(done); if(_ecL.length){
+      h+="<div style=\"font-size:10px;border:1px dashed #999;padding:6px;margin:4px 0;line-height:1.5\"><b>Explication de l'\u00e9cart</b> (cl\u00f4ture scell\u00e9e, non modifi\u00e9e) :<br>";
+      _ecL.forEach(function(x){ h+="Ticket n\u00b0"+(x.num||"?")+" : r\u00e8glement saisi "+x.regle.toFixed(2)+" \u20ac ("+String(x.met).replace(/</g,"&lt;")+") pour un ticket de "+x.pr.toFixed(2)+" \u20ac \u2014 remise appliqu\u00e9e apr\u00e8s la saisie du paiement. \u00c0 rapprocher du ticket du terminal : si "+x.pr.toFixed(2)+" \u20ac ont \u00e9t\u00e9 d\u00e9bit\u00e9s, la ligne "+String(x.met).replace(/</g,"&lt;")+" est sur\u00e9valu\u00e9e de "+x.ecart.toFixed(2)+" \u20ac ; si "+x.regle.toFixed(2)+" \u20ac ont \u00e9t\u00e9 d\u00e9bit\u00e9s, il s'agit d'un trop-per\u00e7u de "+x.ecart.toFixed(2)+" \u20ac \u00e0 restituer \u00e0 la cliente.<br>"; });
+      h+="Le chiffre d'affaires et la TVA de la journ\u00e9e sont exacts (montant des tickets) ; l'\u00e9cart porte uniquement sur la ventilation par mode de paiement.</div>";
+    } }catch(_eEx){}
+  }
   else h+="<p style=\"color:green;text-align:center;font-size:10px\">\u2713 Contr\u00f4le CA/R\u00e8glements: OK</p>";
   
   // ===== 5. REPARTITION PAR COLLABORATEUR =====
