@@ -1577,7 +1577,7 @@ async function submitModifyRdv(rdvId,salonId){
   }catch(e){alert("Erreur: "+e.message);}
 }
 
-function showCancelRdv(rdvId,salonId){
+async function showCancelRdv(rdvId,salonId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   // Quick Win #3 (2026-05-06) : check d\u00e9lai d'annulation par rapport \u00e0 la politique du salon.
   // Le worker enrichit chaque RDV avec politique_annulation_h (-1=jamais, 0=aucun d\u00e9lai, N=heures).
@@ -1597,9 +1597,13 @@ function showCancelRdv(rdvId,salonId){
       ? "Ce salon n'autorise pas les annulations en ligne. Contactez-le directement par t\u00e9l\u00e9phone."
       : "Annulation impossible : le d\u00e9lai de "+policyH+"h avant le rendez-vous est d\u00e9pass\u00e9 (il reste "+Math.max(0,Math.round(hoursUntil*10)/10)+"h). Contactez le salon par t\u00e9l\u00e9phone si vous ne pouvez vraiment pas venir.";
     h+='<div style="background:rgba(239,83,80,.1);border:1px solid rgba(239,83,80,.2);border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;color:#ef5350;text-align:left;line-height:1.5">\u26a0\ufe0f '+msgBloquant+'</div>';
+    h+='<div id="cancelTelSalon" style="margin-bottom:10px"></div>';
     h+='<button onclick="closePopup(\'cancelModal\')" class="btn btn-outline" style="width:100%;padding:14px">Compris</button>';
     h+='</div></div>';
     var el=document.createElement("div");el.id="cancelModal";el.innerHTML=h;document.body.appendChild(el);
+    // 2026-10-11 : le numéro du salon, pour appeler en un geste (avant : « contactez le salon » sans numéro)
+    try{ var _tr=await api("salons_public?select=tel&id=eq."+rdv.salon_id); var _td=await _tr.json(); var _tel=Array.isArray(_td)&&_td[0]&&_td[0].tel; var _bx=document.getElementById("cancelTelSalon");
+      if(_tel&&_bx) _bx.innerHTML='<a href="tel:'+escAttr(String(_tel).replace(/\s/g,""))+'" class="btn" style="display:block;width:100%;padding:14px;background:var(--gold);color:#111;font-weight:800;text-decoration:none;border-radius:12px">\ud83d\udcde Appeler le salon ('+escAttr(_tel)+')</a>'; }catch(_eT){}
     return;
   }
   if(policyH > 0){
