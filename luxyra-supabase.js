@@ -1208,6 +1208,8 @@ async function loadSalonData() {
     // Old vulnerable code removed: _sb.from("salons").update({plan, status}).eq("id", salon.id)
   }
 
+  // 2026-10-11 (NF525, mode école) : mode de caisse de l'établissement, fixé par le serveur
+  window.LX_MODE_CAISSE = (salon.mode_caisse === "test") ? "test" : "reel";
   // Vérifier expiration essai (sauf plan offert)
   if(!salon.is_free && salon.status === "trial" && salon.trial_end) {
     var now = new Date();
