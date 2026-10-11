@@ -195,7 +195,7 @@ dict(slug="tickets-et-annulations", ic="🎫", cat="Caisse", titre="Tickets : r�
     "<strong>Imprimer</strong> une copie du ticket.",
     "<strong>Email</strong> : envoyer le ticket à la cliente.",
     "<strong>Modifier collaborateur</strong> : réattribuer la vente (tracé dans le journal).",
-    "<strong>Modifier règlement</strong> : corriger le mode de paiement (carte au lieu d'espèces, par exemple). Si la journée est déjà clôturée : « 🧾 Corriger le moyen de paiement (pièce tracée) » (administrateur, motif obligatoire) crée une pièce de correction numérotée et scellée, sans toucher au ticket ni à la clôture ; le montant du ticket ne peut pas changer.",
+    "<strong>Modifier règlement</strong> : corriger le mode de paiement le jour même (carte au lieu d'espèces, par exemple). Le ticket enregistré n'est jamais modifié : une pièce de correction numérotée est créée et la clôture du soir tient compte du bon mode. Si la journée est déjà clôturée : « 🧾 Corriger le moyen de paiement (pièce tracée) » (administrateur, motif obligatoire) crée une pièce de correction numérotée et scellée, sans toucher au ticket ni à la clôture ; le montant du ticket ne peut pas changer.",
     "<strong>Avoir / Annuler</strong> : annuler un ticket encaissé."]),
   dict(h="Annuler un ticket", p="""<p>Un ticket encaissé n'est <strong>jamais supprimé</strong> : il reste dans la caisse, marqué comme annulé, et un <strong>contre-ticket</strong> du même montant en négatif est créé. Le motif est obligatoire et tout est tracé. Pour corriger une erreur, annulez puis encaissez de nouveau correctement.</p>
 <p>Une journée déjà clôturée ne peut plus être modifiée : l'annulation apparaît alors à la date du jour où elle est faite.</p>""",
@@ -236,7 +236,12 @@ dict(slug="conformite-caisse", ic="🛡️", cat="Comptabilité", titre="Conform
 <li>Le ticket imprimé indique la version du logiciel, le nombre de lignes et <strong>4 caractères de la signature</strong>. Une réimpression porte la mention <strong>DUPLICATA</strong> et son numéro de copie.</li>
 <li>Le <strong>journal des événements techniques</strong> (JET) enregistre démarrages et arrêts de caisse, clôtures, annulations de ligne, abandons de vente, réimpressions, archivages et changements de version.</li></ul>"""),
   dict(h="Archive signée et vérification", p="""<p>Dans <strong>Paramètres › Conformité caisse › Archive fiscale signée</strong>, choisissez une période puis téléchargez le fichier. Il contient les tickets, clôtures, corrections, duplicatas, le JET, les signatures et la clé publique.</p>
-<p>Vous (ou un contrôleur) pouvez le vérifier sur <a href="/verif-nf525">luxyra.fr/verif-nf525</a> : la vérification se fait dans le navigateur, le fichier n'est envoyé nulle part. Toute modification d'un seul chiffre est détectée.</p>"""),
+<p>Vous (ou un contrôleur) pouvez le vérifier sur <a href="/verif-nf525">luxyra.fr/verif-nf525</a> : la vérification se fait dans le navigateur, le fichier n'est envoyé nulle part. Toute modification d'un seul chiffre est détectée. L'archive elle-même est signée par le serveur au moment de l'export. Cochez « Fichier remis à l'administration fiscale » si vous la remettez lors d'un contrôle.</p>"""),
+  dict(h="En cas de contrôle fiscal", p="""<ul>
+<li><strong>Paramètres › NF525 › Contrôle fiscal</strong> : appuyez sur « Début du contrôle » puis « Fin du contrôle » ; les deux sont inscrits au journal des événements.</li>
+<li>Présentez l'attestation (volets 1 et 2), remettez une archive signée de la période et, si demandé, le FEC.</li>
+<li><strong>Identification du logiciel</strong> (même page) : version, numéro de caisse, licence et justificatif de conformité.</li>
+<li>Chaque nuit, Luxyra contrôle automatiquement toutes les signatures ; une anomalie serait inscrite au journal et signalée à l'éditeur.</li></ul>"""),
  ]),
 
 dict(slug="site-et-reservation-en-ligne", ic="🌐", cat="En ligne", titre="Site et réservation en ligne",
