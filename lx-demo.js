@@ -131,7 +131,8 @@
       var t = (dow === 0 ? 10 : 9) * 60 + Math.floor(rnd() * 3) * 15, fin = (dow === 0 || dow === 6 ? 17 : 19) * 60, n = 0;
       while (t < fin - 30 && n < 6) {
         if (t >= 12 * 60 + 30 && t < 13 * 60 + 30) { t = 13 * 60 + 30; continue; }
-        var st = d < 0 ? "done" : (d === 0 ? (t < NOW.getHours() * 60 + NOW.getMinutes() - 60 ? "done" : "conf") : "conf");
+        // aujourd'hui : les 2 premiers rendez-vous de chaque collaborateur sont déjà encaissés (démo parlante à toute heure)
+        var st = d < 0 ? "done" : (d === 0 ? ((n < 2 || t < NOW.getHours() * 60 + NOW.getMinutes() - 60) ? "done" : "conf") : "conf");
         if (d > 0 && rnd() < 0.3) { t += 60; continue; }
         var dur = mkAppt(ds, t, st, co); t += dur + (rnd() < 0.5 ? 15 : 45); n++;
       }
@@ -278,6 +279,8 @@
     localStorage.setItem("lx_current_op", JSON.stringify({ id: T.salon_operateurs[0].id, prenom: T.salon_operateurs[0].prenom, nom: "", role: "admin", lastActivity: Date.now() }));
     localStorage.setItem("_cp_active_salon", SALON_ID);
     localStorage.setItem("caisseOpenDate", TODAY);
+    localStorage.setItem("lx_parr_masque", "1");
+    localStorage.setItem("lx_install_masque", "1");
   } catch (e) {}
 
   // ---------- bandeau + page de départ ----------
