@@ -1740,7 +1740,9 @@ Tables existantes : inchangées.
 - Fait : fiche réécrite (transactionnel RDV, sans « illimité »/marketing/prix/concurrents), icône + store/sms-feature-graphic.png.
 - Fiche complète et ENREGISTRÉE (2 captures, icône, image). Bundle 22/04 = dernière version (confirmé par Alexandre).
 - Reste au moment de l'envoi :
-  * Déclaration SMS : cocher « Archivage, CRM et gestion des appareils pour les entreprises » + texte d'examen (EN) ci-dessous + 4 attestations (accord d'Alexandre requis).
+  * FAIT 11/10 : déclaration SMS enregistrée (attestations cochées avec accord d'Alexandre), pays France, release production brouillon avec bundle 4 (1.3).
+  * ERREUR à traiter : « l'appli ne prend pas en charge les tailles de page de 16 Ko » (bouton « Continuer quand même » proposé ; correctif propre = recompiler avec NDK r28+/AGP 8.5.1+ et libs natives à jour, ex. ML Kit/CameraX).
+  * (historique) Déclaration SMS : cocher « Archivage, CRM et gestion des appareils pour les entreprises » + texte d'examen (EN) ci-dessous + 4 attestations (accord d'Alexandre requis).
     Texte : "B2B companion app for Luxyra, a booking/POS SaaS for beauty salons (luxyra.fr). Only SEND_SMS is used; the app never reads SMS or call logs. A salon links its own phone by QR code; the app then sends that salon's appointment messages (confirmation, reminder, change) to its own customers from the salon's SIM. Requires a Luxyra pro account. Login: see App access."
   * Service de premier plan (FOREGROUND_SERVICE_DATA_SYNC) : « Traitement en réseau › Autre » + VIDÉO YouTube (non répertoriée) obligatoire montrant liaison QR + notification du service + envoi d'un SMS. Texte : "Once the salon owner links the phone to their Luxyra account, the app runs a foreground service with a persistent notification. It keeps a network connection to the salon's message queue and sends each appointment SMS (confirmation, reminder, change) as soon as Luxyra requests it, even when the app is not open. The user can stop it at any time by unlinking the phone."
   * Release production depuis la bibliothèque (version 1), pays France, puis envoi par Alexandre.
