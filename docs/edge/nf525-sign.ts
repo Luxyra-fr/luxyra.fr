@@ -1,4 +1,4 @@
-// nf525-sign v3 — 2026-10-11 (v2 : archives AR + autocontrôle -> JET 90 ; v3 : réinitialisations d'essai archivées (nf525_archives_purge)) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
+// nf525-sign v4 — 2026-10-11 (v2 : archives AR + autocontrôle -> JET 90 ; v3 : réinitialisations d'essai archivées ; v4 : ventes de test hors grands totaux, recalcul à l'instant de signature) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
 // fiscales, chaînée par établissement et par type (référentiel NF525 v2.3) :
 //   TK (tickets), Z (clôtures journalières), ZM / ZA (mensuelles / annuelles), ZE (exercice),
 //   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques), AR (archives).
@@ -51,7 +51,7 @@ async function signer(data: string) {
   return { sig: b64url(sig), key_id: k.key_id };
 }
 
-type Src = { type: string; table: string; order: string[]; build: (r: any, salon: string, first: boolean, prev: string) => Promise<string> | string; num?: (r: any) => number | null };
+type Src = { type: string; table: string; order: string[]; build: (r: any, salon: string, first: boolean, prev: string, at?: string | null) => Promise<string> | string; num?: (r: any) => number | null };
 const SOURCES: Src[] = [
   { type: "TK", table: "tickets", order: ["num"], num: (r) => r.num,
     build: (r, _s, first, prev) => {
@@ -60,25 +60,25 @@ const SOURCES: Src[] = [
       return [`${m2(r.taux_tva)}:${m2(ttc)}`, m2(ttc), ts(quand), CAISSE, r.num, ttc < 0 ? "R" : "V", first ? "O" : "N", prev].join(",");
     } },
   { type: "Z", table: "clotures", order: ["num"], num: (r) => r.num,
-    build: async (r, salon, first, prev) => {
-      const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: r.date_cloture })).data || {};
+    build: async (r, salon, first, prev, at) => {
+      const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: r.date_cloture, p_a: at || null })).data || {};
       return [m2(r.total_ca), m2(r.total_ht), m2(gt.reel), m2(gt.absolu), ts(r.timestamp_cloture || r.created_at), d8(r.date_cloture), r.num, first ? "O" : "N", prev].join(",");
     } },
   { type: "ZM", table: "clotures_mensuelles", order: ["annee", "mois"],
-    build: async (r, salon, first, prev) => {
+    build: async (r, salon, first, prev, at) => {
       const fin = new Date(Date.UTC(r.annee, r.mois, 0)).toISOString().slice(0, 10);
-      const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: fin })).data || {};
+      const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: fin, p_a: at || null })).data || {};
       const deb = `${r.annee}-${String(r.mois).padStart(2, "0")}-01`;
       return [m2(r.total_ca), m2(r.total_ht), m2(r.total_tva), m2(gt.reel), m2(gt.absolu), ts(r.created_at), d8(deb), d8(fin), first ? "O" : "N", prev].join(",");
     } },
   { type: "ZA", table: "clotures_annuelles", order: ["annee"],
-    build: async (r, salon, first, prev) => {
-      const fin = `${r.annee}-12-31`; const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: fin })).data || {};
+    build: async (r, salon, first, prev, at) => {
+      const fin = `${r.annee}-12-31`; const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: fin, p_a: at || null })).data || {};
       return [m2(r.total_ca), m2(r.total_ht), m2(r.total_tva), m2(gt.reel), m2(gt.absolu), ts(r.created_at), d8(`${r.annee}-01-01`), d8(fin), first ? "O" : "N", prev].join(",");
     } },
   { type: "ZE", table: "clotures_exercices", order: ["date_fin"],
-    build: async (r, salon, first, prev) => {
-      const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: r.date_fin })).data || {};
+    build: async (r, salon, first, prev, at) => {
+      const gt: any = (await sb.rpc("nf525_grands_totaux", { p_salon: salon, p_date: r.date_fin, p_a: at || null })).data || {};
       return [m2(r.total_ca), m2(r.total_ht), m2(r.total_tva), m2(gt.reel), m2(gt.absolu), ts(r.created_at), d8(r.date_debut), d8(r.date_fin), first ? "O" : "N", prev].join(",");
     } },
   { type: "CR", table: "corrections_reglement", order: ["num"], num: (r) => r.num,
@@ -121,7 +121,7 @@ async function verifierSalon(salon: string) {
       prev = g.signature;
       const r = rows[g.source_id];
       if (!r) { anomalies.push(`${S.type} n°${g.seq} : enregistrement d'origine absent`); continue; }
-      const attendu = await S.build(r, salon, g.seq === 1, g.prev_signature || "");
+      const attendu = await S.build(r, salon, g.seq === 1, g.prev_signature || "", g.signed_at);
       if (attendu !== g.data_to_sign) anomalies.push(`${S.type} n°${g.seq}${S.num ? " (pièce " + S.num(r) + ")" : ""} : données différentes des données signées`);
       try { const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, await clePub(g.key_id), unb64url(g.signature), new TextEncoder().encode(g.data_to_sign)); if (!ok) anomalies.push(`${S.type} n°${g.seq} : signature invalide`); }
       catch (e) { anomalies.push(`${S.type} n°${g.seq} : vérification impossible (${(e as Error).message})`); }
