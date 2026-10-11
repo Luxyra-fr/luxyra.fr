@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-14"></script>
+<script src="luxyra-supabase.js?v=20261011-15"></script>
 <script>
 console.log("LUXYRA v6.5");
 
@@ -15750,14 +15750,14 @@ function lxOpenFactoryReset(){
   htm += '<div onclick="window._frMode=\'ventes\';lxOpenFactoryReset()" style="cursor:pointer;padding:12px;border-radius:10px;border:2px solid '+(_fv?'var(--gold)':'rgba(255,255,255,.12)')+'"><b>'+(_fv?'\u25c9':'\u25cb')+' Effacer seulement mes essais de caisse et de rendez-vous</b><div style="font-size:12px;color:var(--text3);margin-top:4px">Tickets, cl\u00f4tures, rendez-vous, bons cadeaux, devis, fid\u00e9lit\u00e9 gagn\u00e9e. <b>Conserv\u00e9s</b> : client\u00e8le, prestations, forfaits, produits, \u00e9quipe, r\u00e9glages.</div></div>';
   htm += '<div onclick="window._frMode=\'tout\';lxOpenFactoryReset()" style="cursor:pointer;padding:12px;border-radius:10px;border:2px solid '+(!_fv?'#ef5350':'rgba(255,255,255,.12)')+'"><b>'+(!_fv?'\u25c9':'\u25cb')+' Tout effacer (repartir de z\u00e9ro)</b><div style="font-size:12px;color:var(--text3);margin-top:4px">Aussi la client\u00e8le, les prestations, forfaits et produits.</div></div>';
   htm += '</div>';
-  htm += '<div style="font-size:12px;color:#ef9a9a;margin-bottom:12px">\u26a0\ufe0f \u00c0 utiliser uniquement si ces ventes \u00e9taient des <b>tests</b> : de vraies ventes doivent \u00eatre conserv\u00e9es (loi anti-fraude).</div>';
+  htm += '<div style="font-size:12px;color:#ef9a9a;margin-bottom:12px">\u26a0\ufe0f \u00c0 utiliser uniquement si ces ventes \u00e9taient des <b>tests</b>. Loi anti-fraude : avant l\u2019effacement, les tickets et cl\u00f4tures sont copi\u00e9s dans une <b>archive scell\u00e9e conserv\u00e9e 6 ans</b>, et la r\u00e9initialisation est inscrite au journal (qui n\u2019est jamais effac\u00e9).</div>';
   htm += '<div style="font-size:13px;color:rgba(255,255,255,.65);line-height:1.6;margin-bottom:14px;'+(_fv?'display:none':'')+'">Cette action va <strong style="color:#ef5350">EFFACER D\u00c9FINITIVEMENT</strong> :<br><br>';
   htm += '\u2022 Tous les RDV pass\u00e9s et futurs<br>';
   htm += '\u2022 Tous les tickets et cl\u00f4tures Z<br>';
   htm += '\u2022 Tous les clients et leur historique<br>';
   htm += '\u2022 Tous les services, forfaits, produits<br>';
   htm += '\u2022 Tous les bons cadeaux et cartes d\'abonnement<br>';
-  htm += '\u2022 Toute la fid\u00e9lit\u00e9 et l\'audit<br><br>';
+  htm += '\u2022 Toute la fid\u00e9lit\u00e9<br><br>';
   htm += '\u2705 <strong>Conserv\u00e9</strong> : config salon (nom, SIRET, KBIS, abonnement), \u00e9quipe et codes PIN.<br><br>';
   htm += '<strong style="color:#ef5350">Action IRR\u00c9VERSIBLE.</strong></div>';
   htm += '<div style="font-size:13px;color:rgba(255,255,255,.6);margin-bottom:8px;text-align:center">Pour confirmer, tapez <strong style="color:#ef5350">RESET</strong> ci-dessous :</div>';
@@ -33527,12 +33527,15 @@ async function lxArchiveSignee(){
     var za=(await tout(function(){ return _sb.from("clotures_annuelles").select("*").eq("salon_id",_salonId).order("annee"); })).filter(function(r){ return String(r.annee)>=du.slice(0,4)&&String(r.annee)<=au.slice(0,4); });
     var ze=(await tout(function(){ return _sb.from("clotures_exercices").select("*").eq("salon_id",_salonId).order("date_fin"); })).filter(function(r){ return r.date_fin>=du&&r.date_debut<=au; });
     var ids={}; [tk,z,cr,dup,jet,zm,za,ze].forEach(function(L){ L.forEach(function(r){ ids[r.id]=1; }); });
+    // 2026-10-11 : réinitialisations d'essai de la période (copies scellées des données effacées) et leurs signatures
+    var pur=((await _sb.from("nf525_archives_purge").select("id,created_at,motif,nb,contenu,empreinte").eq("salon_id",_salonId).gte("created_at",du+"T00:00:00").lte("created_at",au+"T23:59:59")).data)||[];
+    pur.forEach(function(pa){ Object.keys(pa.contenu||{}).forEach(function(k){ (pa.contenu[k]||[]).forEach(function(r){ ids[r.id]=1; }); }); });
     var sig=(await tout(function(){ return _sb.from("nf525_signatures").select("type,seq,source_table,source_id,source_num,data_to_sign,signature,prev_signature,algo,key_id,signed_at").eq("salon_id",_salonId).order("type").order("seq"); })).filter(function(g){ return ids[g.source_id]; });
     var cles=(await _sb.from("nf525_cles").select("key_id,algo,public_jwk,created_at")).data||[];
     var arc={ format:"LUXYRA-NF525-ARCHIVE-1", genere_le:new Date().toISOString(), logiciel:{nom:"Luxyra",version:LX_VERSION,caisse:LX_CAISSE},
       etablissement:{nom:SALON_CONFIG.nom||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",adresse:[SALON_CONFIG.adresse,SALON_CONFIG.cp,SALON_CONFIG.ville].filter(Boolean).join(" ")},
       periode:{du:du,au:au}, cles_publiques:cles,
-      donnees:{tickets:tk,clotures:z,clotures_mensuelles:zm,clotures_annuelles:za,clotures_exercices:ze,corrections_reglement:cr,duplicatas:dup,jet:jet}, signatures:sig };
+      donnees:{tickets:tk,clotures:z,clotures_mensuelles:zm,clotures_annuelles:za,clotures_exercices:ze,corrections_reglement:cr,duplicatas:dup,jet:jet,reinitialisations_essai:pur}, signatures:sig };
     var corps=JSON.stringify(arc);
     var emp=await sha256Async(corps);
     arc.empreinte_sha256=emp;
