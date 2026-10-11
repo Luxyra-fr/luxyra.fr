@@ -1,5 +1,14 @@
 # Luxyra — Mémoire projet pour Claude
 
+## RÈGLE PERMANENTE (Alexandre, 2026-10-11) — à chaque changement fonctionnel
+Toujours mettre à jour, dans le même lot, AVANT de dire « c'est fait » :
+1. le bot de support (`support_bot_kb`) ;
+2. le centre d'aide (`docs/generateurs/aide_guides.py` → `aide_build.py` ; captures à refaire si l'écran change ; FAQ d'aide.html) ;
+3. le site public concerné (index FAQ, pro, tarifs, pages métier, blog si concerné) ;
+4. les pages conditions / légales si le changement les touche (cgv, politique-confidentialite, mentions, dpa, securite-rgpd, suppression-donnees) ;
+5. CLAUDE.md (notes).
+Et tester en réel (Salon Démo / compte client test) avant d'annoncer.
+
 > À lire en premier à chaque session. Ce fichier résume tout ce que tu dois savoir pour reprendre le travail rapidement. Garde-le à jour.
 
 ## Owner
