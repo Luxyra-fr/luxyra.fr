@@ -1,4 +1,4 @@
-// nf525-sign v4 — 2026-10-11 (v2 : archives AR + autocontrôle -> JET 90 ; v3 : réinitialisations d'essai archivées ; v4 : ventes de test hors grands totaux, recalcul à l'instant de signature) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
+// nf525-sign v5 — 2026-10-11 (v2 : archives AR + autocontrôle ; v3 : réinitialisations d'essai ; v4 : GT sans ventes de test ; v5 : factures FA, alerte éditeur sur anomalie, ancrage externe quotidien) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
 // fiscales, chaînée par établissement et par type (référentiel NF525 v2.3) :
 //   TK (tickets), Z (clôtures journalières), ZM / ZA (mensuelles / annuelles), ZE (exercice),
 //   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques), AR (archives).
@@ -87,6 +87,8 @@ const SOURCES: Src[] = [
     build: (r, _s, first, prev) => [r.caisse || CAISSE, r.seq, "TK", r.copie_num, String(r.operateur || "").replace(/,/g, " "), ts(r.horodatage), r.caisse || CAISSE, r.ticket_num, first ? "O" : "N", prev].join(",") },
   { type: "JET", table: "nf525_jet", order: ["seq"], num: (r) => r.seq,
     build: (r, _s, first, prev) => [r.seq, r.code, String(r.libelle || "").replace(/,/g, " "), ts(r.horodatage), String(r.operateur || "").replace(/,/g, " "), r.caisse || CAISSE, first ? "O" : "N", prev].join(",") },
+  { type: "FA", table: "factures_clients", order: ["num"], num: (r) => r.num,
+    build: (r, _s, first, prev) => [r.num, d8(r.date_facture), `${m2(r.taux_tva)}:${m2(r.total_ttc)}`, m2(r.total_ttc), m2(r.total_ht), m2(r.total_tva), ts(r.ts_created || r.created_at), CAISSE, String(r.client_siret || "").replace(/,/g, " "), first ? "O" : "N", prev].join(",") },
   { type: "AR", table: "nf525_archives_signees", order: ["seq"], num: (r) => r.seq,
     build: (r, _s, first, prev) => [r.seq, String(r.empreinte || "").toUpperCase(), d8(r.du), d8(r.au), r.motif || "periodique", ts(r.horodatage), CAISSE, first ? "O" : "N", prev].join(",") },
 ];
@@ -130,9 +132,40 @@ async function verifierSalon(salon: string) {
   let nouvelles = 0;
   for (const a of anomalies.slice(0, 50)) {
     const deja = await sb.from("nf525_jet").select("id").eq("salon_id", salon).eq("code", 90).ilike("details", "%" + a.replace(/[%_]/g, " ") + "%").limit(1);
-    if (!deja.error && !(deja.data || []).length) { await sb.rpc("nf525_jet_ajouter", { p_salon: salon, p_code: 90, p_details: "Autocontrôle d'intégrité : " + a, p_operateur: "Luxyra (contrôle automatique)" }); nouvelles++; }
+    // via le journal d'audit : inscrit au JET (90) et alerte immédiate de l'éditeur (anomalie critique)
+    if (!deja.error && !(deja.data || []).length) { await sb.from("audit_log").insert({ salon_id: salon, action: "NF525_SIGNATURE_KO", details: "Autocontrôle d'intégrité : " + a, operator_name: "Luxyra (contrôle automatique)" }); nouvelles++; }
   }
   return { salon, controles: n, anomalies: anomalies.length, nouvelles, detail: anomalies.slice(0, 10) };
+}
+
+// ---- Ancrage externe quotidien : empreinte des têtes de chaînes de tous les établissements, envoyée hors de la base
+async function sha256hex(t: string) { const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase(); }
+async function ancrer() {
+  const jour = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const deja = await sb.from("nf525_ancrages").select("id").eq("jour", jour).maybeSingle();
+  if (deja.data) return { jour, deja: true };
+  const s = await sb.from("salons").select("id,nom").order("created_at");
+  const salons: any[] = [];
+  for (const sl of (s.data || [])) {
+    const tetes: Record<string, any> = {};
+    for (const S of SOURCES) {
+      const l = await sb.from("nf525_signatures").select("seq,signature").eq("salon_id", sl.id).eq("type", S.type).order("seq", { ascending: false }).limit(1);
+      if (l.data && l.data[0]) tetes[S.type] = { seq: l.data[0].seq, signature: l.data[0].signature };
+    }
+    if (Object.keys(tetes).length) salons.push({ salon_id: sl.id, nom: sl.nom, tetes, empreinte: await sha256hex(JSON.stringify(tetes)) });
+  }
+  const contenu = { jour, genere_le: new Date().toISOString(), salons };
+  const empreinte = await sha256hex(JSON.stringify(contenu));
+  const dest = "support@luxyra.fr";
+  const lignes = salons.map((x) => `<tr><td style="padding:4px 8px">${String(x.nom || "").replace(/</g, "&lt;")}</td><td style="padding:4px 8px">TK n°${x.tetes.TK ? x.tetes.TK.seq : "-"} · Z n°${x.tetes.Z ? x.tetes.Z.seq : "-"} · JET n°${x.tetes.JET ? x.tetes.JET.seq : "-"}</td><td style="padding:4px 8px;font-family:monospace;font-size:11px">${x.empreinte.slice(0, 32)}…</td></tr>`).join("");
+  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a"><h2 style="font-family:Georgia,serif;font-weight:400">Ancrage NF525 du ${jour}</h2><p>Empreinte globale (SHA-256) :<br><b style="font-family:monospace;font-size:12px">${empreinte}</b></p><table style="border-collapse:collapse;font-size:13px">${lignes}</table><p style="font-size:12px;color:#666">Preuve externe quotidienne : ce courriel horodaté par la messagerie, hors de la base de données, fige l'état des chaînes signées de chaque établissement. À conserver (ne pas supprimer). Contenu complet : table nf525_ancrages.</p></div>`;
+  let envoye: string | null = null;
+  try {
+    const r = await fetch("https://luxyra.fr/api/email/custom", { method: "POST", headers: { "Content-Type": "application/json", "x-lx-internal": SB_SR }, body: JSON.stringify({ to: dest, toName: "Luxyra", salonName: "Luxyra NF525", subject: `Ancrage NF525 ${jour} — ${empreinte.slice(0, 16)}`, htmlContent: html, textContent: `Ancrage NF525 ${jour}\nEmpreinte : ${empreinte}` }) });
+    if (r.ok) envoye = dest;
+  } catch (_) { /* l'ancrage reste enregistré ; envoi retenté le lendemain */ }
+  await sb.from("nf525_ancrages").insert({ jour, empreinte, contenu, envoye_a: envoye });
+  return { jour, empreinte, salons: salons.length, envoye };
 }
 
 async function signerSalon(salon: string, max = 600) {
@@ -197,6 +230,7 @@ Deno.serve(async (req) => {
       salons = [body.salon_id];
     }
     const res = [];
+    if (isCron && body.ancrage === true) { return json(200, { ok: true, ancrage: await ancrer() }); }
     if (isCron && body.verif === true) {
       for (const id of salons) { try { res.push(await verifierSalon(id)); } catch (e) { res.push({ salon: id, error: String((e as Error).message || e) }); } }
       return json(200, { ok: true, verif: true, res });
