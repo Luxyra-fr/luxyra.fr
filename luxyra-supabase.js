@@ -1210,6 +1210,7 @@ async function loadSalonData() {
 
   // 2026-10-11 (NF525, mode école) : mode de caisse de l'établissement, fixé par le serveur
   window.LX_MODE_CAISSE = (salon.mode_caisse === "test") ? "test" : "reel";
+  window.LX_PARR_MASQUE = salon.parr_bandeau_masque === true; // bandeau parrainage fermé définitivement (tous appareils)
   // Vérifier expiration essai (sauf plan offert)
   if(!salon.is_free && salon.status === "trial" && salon.trial_end) {
     var now = new Date();
