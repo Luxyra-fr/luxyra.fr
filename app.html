@@ -6586,8 +6586,8 @@ function printClotureZ(){
   else h+="<p style=\"color:green;text-align:center;font-size:10px\">\u2713 Contr\u00f4le CA/R\u00e8glements: OK</p>";
   // 2026-10-11 : pièces de correction de règlement enregistrées ce jour (concernent des tickets de jours antérieurs)
   try{ var _crJ=_lxCorrDuJour(c.date); if(_crJ.length){
-    h+="<div style=\"font-size:10px;border:1px solid #999;padding:6px;margin:4px 0;line-height:1.5\"><b>Corrections de r\u00e8glement enregistr\u00e9es ce jour</b> (tickets d'origine et cl\u00f4tures inchang\u00e9s) :<br>";
-    _crJ.forEach(function(cr){ h+="Pi\u00e8ce n\u00b0"+cr.num+" \u2014 ticket n\u00b0"+(cr.ticket_num_affiche||cr.ticket_num)+" du "+fmt(cr.ticket_date)+" : "+(cr.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2)+" \u20ac"; }).join(", ")+" \u2014 "+String(cr.motif||"").replace(/</g,"&lt;")+" ("+String(cr.operateur||"").replace(/</g,"&lt;")+")<br>"; });
+    h+="<div style=\"font-size:10px;border:1px solid #999;padding:6px;margin:4px 0;line-height:1.5\"><b>Corrections de r\u00e8glement enregistr\u00e9es ce jour</b> (pi\u00e8ces trac\u00e9es ; tickets d'origine inchang\u00e9s) :<br>";
+    _crJ.forEach(function(cr){ h+="Pi\u00e8ce n\u00b0"+cr.num+(cr.avant_cloture?" (avant cl\u00f4ture, incluse ci-dessus)":"")+" \u2014 ticket n\u00b0"+(cr.ticket_num_affiche||cr.ticket_num)+" du "+fmt(cr.ticket_date)+" : "+(cr.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2)+" \u20ac"; }).join(", ")+" \u2014 "+String(cr.motif||"").replace(/</g,"&lt;")+" ("+String(cr.operateur||"").replace(/</g,"&lt;")+")<br>"; });
     h+="</div>";
   } }catch(_eCrJ){}
   
@@ -22744,7 +22744,7 @@ function _lxJournalVentes(mois){
   function bucketsPart(a, part){
     var b=_lxPayBuckets(a), ks=["cb","esp","chq","vir","enligne","bon","aut"], tb=0, out={}, sum=0;
     // 2026-10-11 : pièces de correction de règlement du ticket (mode réellement encaissé)
-    try{ if(typeof _lxCorrDeTicket==="function"){ _lxCorrDeTicket(a.id).forEach(function(c){ (c.lignes||[]).forEach(function(l){ if(b[l.mode]!=null) b[l.mode]=Math.round((b[l.mode]+Number(l.montant||0))*100)/100; }); }); } }catch(_eCj){}
+    try{ if(typeof _lxCorrDeTicket==="function"){ _lxCorrDeTicket(a.id).forEach(function(c){ if(c.avant_cloture) return; (c.lignes||[]).forEach(function(l){ if(b[l.mode]!=null) b[l.mode]=Math.round((b[l.mode]+Number(l.montant||0))*100)/100; }); }); } }catch(_eCj){}
     ks.forEach(function(k){ tb+=Number(b[k])||0; });
     if(Math.abs(tb)<0.005) return null;
     ks.forEach(function(k){ var v=Math.round((Number(b[k])||0)*(part/tb)*100)/100; out[k]=v; sum+=v; });
@@ -23938,9 +23938,9 @@ function printBandeZ(){
   var ecart=Math.round((tTotal-totRegl)*100)/100;
   // 2026-10-11 : pièces de correction de règlement du mois (opérations de plus / moins, tickets inchangés)
   try{ var _crM=_lxCorrDuMois(mois); if(_crM.length){
-    var _ctM=_lxCorrTotaux(_crM), _crSum=0;
+    var _ctM=_lxCorrTotaux(_crM.filter(function(c){ return !c.avant_cloture; })), _crSum=0;
     h+="<h3 style=\"font-size:12px;margin:8px 0 4px\">Corrections de r\u00e8glement (pi\u00e8ces trac\u00e9es)</h3><table>";
-    _crM.forEach(function(c){ var tkA=(c.ticket_num_affiche||c.ticket_num); h+="<tr><td>Pi\u00e8ce n\u00b0"+c.num+" du "+fmt(c.date_correction)+" \u2014 ticket n\u00b0"+tkA+" du "+fmt(c.ticket_date)+"<br><span style=\"font-size:9px;color:#666\">"+String(c.motif||"").replace(/</g,"&lt;")+"</span></td><td class=\"r\">"+(c.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2); }).join("<br>")+" \u20ac</td></tr>"; });
+    _crM.forEach(function(c){ var tkA=(c.ticket_num_affiche||c.ticket_num); h+="<tr><td>Pi\u00e8ce n\u00b0"+c.num+" du "+fmt(c.date_correction)+" \u2014 ticket n\u00b0"+tkA+" du "+fmt(c.ticket_date)+"<br><span style=\"font-size:9px;color:#666\">"+String(c.motif||"").replace(/</g,"&lt;")+(c.avant_cloture?" \u2014 avant cl\u00f4ture, d\u00e9j\u00e0 incluse dans les r\u00e8glements du jour":"")+"</span></td><td class=\"r\">"+(c.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2); }).join("<br>")+" \u20ac</td></tr>"; });
     Object.keys(_ctM).forEach(function(k){ _crSum+=_ctM[k]; });
     var _baseM={cb:tCB,esp:tEsp,chq:tChq,bon:tBon,vir:tVir,aut:tAut,enligne:tEnL}, _libM={cb:"CB",esp:"Esp\u00e8ces",chq:"Ch\u00e8ques",bon:"Bons cadeaux / avoirs",vir:"Virements",aut:"Autre",enligne:"Pay\u00e9s en ligne"};
     Object.keys(_ctM).forEach(function(k){ if(Math.abs(_ctM[k])<0.005) return; h+="<tr class=\"total\"><td>"+(_libM[k]||k)+" apr\u00e8s corrections</td><td class=\"r\">"+((_baseM[k]||0)+_ctM[k]).toFixed(2)+" \u20ac</td></tr>"; });
@@ -30824,6 +30824,8 @@ function buildTicketHTML(a, isDuplicate){
     h+="<div style=\"display:flex;justify-content:space-between;font-size:12px;padding:3px 0\"><span>R\u00e8glement :</span><span>"+(a.met||"")+"</span></div>";
   }
 
+  // 2026-10-11 : règlement corrigé par pièce(s) tracée(s) -> mention (le ticket d'origine n'est jamais modifié)
+  try{ var _crTk=(typeof _lxCorrDeTicket==="function")?_lxCorrDeTicket(a.id):[]; if(_crTk.length) h+="<div style=\"font-size:10px;padding:2px 0\">R\u00e8glement corrig\u00e9 par pi\u00e8ce n\u00b0"+_crTk.map(function(c){ return c.num+" du "+fmt(c.date_correction); }).join(", ")+"</div>"; }catch(_eCt){}
   // Fidélité par client
   var SC=window.SITE_CONFIG||{};
   var fidActive=SC.fideliteActive!==false;
@@ -31105,7 +31107,7 @@ function modifReglement(id){
     htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
     htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">❌ Avoir / Annuler</button></div>';
   } else {
-    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Choisissez le nouveau mode. Le montant ne change pas, seul le règlement est corrigé (tracé au journal NF525).</div>';
+    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Choisissez le nouveau mode. Le montant ne change pas. Le ticket enregistré n\u2019est jamais modifi\u00e9 : le changement est trac\u00e9 par une pi\u00e8ce de correction num\u00e9rot\u00e9e et sign\u00e9e.</div>';
     htm+='<label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Motif (optionnel)</label>';
     htm+='<input id="mrMotif" placeholder="Ex : CB refusée, réglé en espèces" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:13px;margin-bottom:12px">';
     htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
@@ -31125,8 +31127,9 @@ async function doCorrigerReglementRdv(apptId, method){
     var r=await _sb.rpc('corriger_reglement_rdv',{p_appt_id:apptId,p_new_method:method,p_operateur:op,p_motif:_motif||null});
     if(r.error){ if(typeof toast==="function")toast("❌ "+r.error.message,"error"); return; }
     for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ AP[i].met=method; AP[i].payments=[{amount:Number(AP[i].pr)||0, method:method}]; break; } }
+    try{ window._lxCorrLoaded=false; if(typeof lxCorrReglCharger==="function") await lxCorrReglCharger(true); }catch(_eRl){}
     cM();
-    if(typeof toast==="function")toast("✅ Règlement corrigé → "+method,"success");
+    if(typeof toast==="function")toast("✅ Règlement corrigé → "+method+(r.data&&r.data.piece?" (pièce n°"+r.data.piece+")":""),"success");
     if(typeof go==="function")go("tickets");
   }catch(e){ if(typeof toast==="function")toast("❌ Erreur : "+(e.message||e),"error"); }
 }
