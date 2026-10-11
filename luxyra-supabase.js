@@ -1970,6 +1970,8 @@ var _FICHE_TECH_KEYS = [
   "zonesSensibles","contrIndBE","detBE",
   // Photos avant/après
   "photos",
+  // 2026-10-11 : historique des relances « clientes inactives » (anti-harcèlement)
+  "relances",
   // Historique structuré par métier (barbier/esthétique/ongles/bien-être).
   // Coiffure utilise toujours `formules` ci-dessus pour les formules couleur.
   "histoMetier",
