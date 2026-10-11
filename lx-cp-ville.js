@@ -39,7 +39,15 @@
     if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } return; }
     charger(code).then(function (noms) {
       if (String(cp.value || "").replace(/\D/g, "") !== code) return;
-      if (!noms.length) { if (v.__lxSel) { v.__lxSel.remove(); v.__lxSel = null; } v.style.display = ""; return; }
+      var _msg = cp.parentNode && cp.parentNode.querySelector(".lx-cp-msg");
+      if (!noms.length) {
+        if (v.__lxSel) { v.__lxSel.remove(); v.__lxSel = null; } v.style.display = "";
+        // 2026-10-11 : code postal inexistant (ex. 75000) -> on le signale, sans bloquer
+        if (!_msg && cp.parentNode) { _msg = document.createElement("div"); _msg.className = "lx-cp-msg"; _msg.style.cssText = "font-size:11px;color:#ef9a9a;margin-top:4px"; cp.parentNode.appendChild(_msg); }
+        if (_msg) _msg.textContent = "Code postal introuvable : vérifiez-le.";
+        return;
+      }
+      if (_msg) _msg.remove();
       if (!v.__lxSel) {
         sel = document.createElement("select");
         sel.className = v.className; sel.setAttribute("style", v.getAttribute("style") || ""); sel.style.display = "";
