@@ -265,6 +265,10 @@ async function _walCheck(){
     // Cas conservés en MODE MODALE (fallback) :
     //   - > 20 actions non-sync (crash grave / téléphone changé)
     //   - Échec récupération auto > 50% (problème réseau persistant)
+    // 2026-10-11 (NF525, JET 70/125/120) : des opérations ont été conservées sur l'appareil faute de
+    // connexion au serveur (mode dégradé) -> trace du mode dégradé puis de la centralisation.
+    var _degTs = unsynced.map(function(e){ return e.ts || e.created_at || ""; }).filter(Boolean).sort()[0] || "";
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("MODE_DEGRADE_DEBUT", unsynced.length + " opération(s) conservée(s) sur l'appareil, non transmise(s) au serveur" + (_degTs ? " (première : " + _degTs + ")" : "")); } catch(_eD){}
     var AUTO_THRESHOLD = 20;
     if (unsynced.length > AUTO_THRESHOLD) {
       console.warn("[WAL] Beaucoup d'actions non-sync ("+unsynced.length+") → modale de confirmation");
@@ -281,6 +285,10 @@ async function _walCheck(){
       } catch(_) { fail++; }
     }
 
+    try { if (typeof saveAuditEntry === "function") {
+      saveAuditEntry("CENTRALISATION_DEGRADE", ok + " opération(s) transmise(s) au serveur après le mode dégradé" + (fail ? ", " + fail + " en attente" : ""));
+      if (!fail) saveAuditEntry("MODE_DEGRADE_FIN", "Toutes les opérations conservées sur l'appareil sont centralisées");
+    } } catch(_eC){}
     // Si trop d'échecs (>50%), on bascule sur la modale pour que l'utilisateur sache
     if (fail > 0 && fail >= unsynced.length / 2) {
       console.warn("[WAL] " + fail + "/" + unsynced.length + " échecs → fallback modale");

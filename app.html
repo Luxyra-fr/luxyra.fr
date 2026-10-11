@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-10"></script>
+<script src="luxyra-supabase.js?v=20261011-11"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -6266,6 +6266,8 @@ function _doClotureDo(){
   h+='<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Justification de l\u0027ecart (obligatoire)</label>';
   h+='<textarea id="clot_justif" rows="2" oninput="_lxClotureUpdateEcart()" placeholder="Ex : arrondi rendu monnaie, comptage a verifier, ..." style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:13px;resize:vertical"></textarea>';
   h+='</div></div>';
+  // 2026-10-11 (NF525) : avertissement de responsabilité avant une clôture manuelle
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px;text-align:left;line-height:1.45">⚠️ En validant, vous clôturez définitivement la journée sous votre responsabilité : plus aucun encaissement, modification ou annulation ne sera possible sur cette date (seules des opérations de correction tracées resteront possibles).</div>';
   h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
   h+='<button id="clot_valider_btn" class="btn bg" style="flex:1;'+(_simpleZ?'':'opacity:.5;cursor:not-allowed')+'" '+(_simpleZ?'':'disabled ')+'onclick="doConfirmCloture()">Valider la clôture</button></div></div></div>';
   document.getElementById("modal").innerHTML=h;
@@ -6675,6 +6677,10 @@ function printClotureZ(){
   h+="<tr><td>Cumul mois en cours</td><td class=\"tr tb\">"+(c.cumulMois||c.totalCA).toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Cumul annuel</td><td class=\"tr tb\">"+(c.cumulAnnuel||c.totalCA).toFixed(2)+" \u20ac</td></tr>";
   h+="<tr class=\"tline\"><td class=\"tb\">CUMUL PERP\u00c9TUEL (Grand Total)</td><td class=\"tr tb\">"+(typeof c.cumulPerpetuelCA==="number"?c.cumulPerpetuelCA:(c.cumulAnnuel||c.totalCA)).toFixed(2)+" \u20ac</td></tr>";
+  // 2026-10-11 : grands totaux perpétuels réel / absolu + ventes / retours (valeur absolue), calculés serveur
+  h+="<tr><td>Ventes TTC du jour / Retours (val. abs.)</td><td class=\"tr\"><span class=\"lxZv\">\u2026</span> / <span class=\"lxZr\">\u2026</span></td></tr>";
+  h+="<tr><td>GT perp\u00e9tuel r\u00e9el</td><td class=\"tr tb\"><span class=\"lxZgt\">\u2026</span></td></tr>";
+  h+="<tr><td>GT perp\u00e9tuel absolu</td><td class=\"tr tb\"><span class=\"lxZabs\">\u2026</span></td></tr>";
   h+="</table>";
   
   // ===== PIED DE PAGE - CERTIFICATION =====
@@ -6685,7 +6691,8 @@ function printClotureZ(){
   if(window.CLOTURES.length>=2){var prev=window.CLOTURES[window.CLOTURES.length-2];h+="<p class=\"small\">Hash pr\u00e9c\u00e9dent: "+prev.hash+"</p>";}
   h+="<p class=\"small\">Cha\u00eene inalt\u00e9rable - S\u00e9quence continue v\u00e9rifiable</p>";
   h+="<div class=\"sep\"></div>";
-  h+="<p class=\"small\">Logiciel: Luxyra "+SALON_CONFIG.version+" \u2013 contact@luxyra.fr</p>";
+  h+="<p class=\"small\">Signature \u00e9lectronique (ES256) : <span class=\"lxZsig\">en cours</span></p>";
+  h+="<p class=\"small\">Logiciel : Luxyra v"+LX_VERSION+" - caisse "+LX_CAISSE+" \u2013 contact@luxyra.fr</p>";
   h+="<p class=\"small\">\u00a9 Luxyra - Tous droits r\u00e9serv\u00e9s</p>";
   h+="<div class=\"sep\"></div>";
   h+="<p style=\"font-size:10px;font-weight:700\">DOCUMENT COMPTABLE OBLIGATOIRE</p>";
@@ -6700,6 +6707,7 @@ function printClotureZ(){
   
   h+="</body></html>";
   w.document.write(h);w.document.close();
+  try{ lxZInfosRemplir(w.document, c.date); }catch(_eZi){}
   // Injecte la barre d'actions premium (Imprimer + Enregistrer PDF + Fermer) — pas
   // de w.print() auto : l'utilisateur choisit explicitement Imprimer ou Enregistrer PDF.
   setTimeout(function(){
@@ -13055,6 +13063,13 @@ function _normalizeSocialUrl(input, platform){
 function saveSalonInfo(){
   var S=window.SALON;
   if(!S)return;
+  // 2026-10-11 (NF525, JET 410) : trace du changement des données d'identification de l'assujetti
+  try{
+    var _idAv={nom:SALON_CONFIG.nom||"",adresse:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||""};
+    var _idAp={nom:S.nom||SALON_CONFIG.nom||"",adresse:S.adr||"",cp:S.cp||"",ville:S.ville||"",siret:S.siret||"",tva:S.tva||""};
+    var _idCh=Object.keys(_idAv).filter(function(k){ return String(_idAv[k]).trim()!==String(_idAp[k]).trim(); });
+    if(_idCh.length&&typeof auditLog==="function") auditLog("CONFIG_IDENTITE", _idCh.map(function(k){ return k+" : « "+_idAv[k]+" » → « "+_idAp[k]+" »"; }).join(" ; ").slice(0,900));
+  }catch(_eId){}
   // Update SALON_CONFIG
   SALON_CONFIG.nom=S.nom||SALON_CONFIG.nom;
   SALON_CONFIG.sousTitre=S.sousTitre||"";
@@ -15050,7 +15065,14 @@ function rSettings(){
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Tickets, cl\u00f4tures, corrections, duplicatas et journal des \u00e9v\u00e9nements techniques de la p\u00e9riode, avec leurs <strong>signatures \u00e9lectroniques</strong> et la cl\u00e9 publique. Contr\u00f4lable par toute personne sur <strong>luxyra.fr/verif-nf525</strong>.</div>';
     h+='<div style="display:flex;gap:8px;margin-bottom:10px"><input type="date" id="arcSigDu" value="'+(TD.slice(0,4)+'-01-01')+'" style="flex:1"><input type="date" id="arcSigAu" value="'+TD+'" style="flex:1"></div>';
     h+='<button class="btn" style="width:100%;padding:12px;background:rgba(142,36,170,.12);color:#ce93d8;border:1px solid rgba(142,36,170,.35);font-weight:700;font-size:14px" onclick="lxArchiveSignee()">\ud83d\udd0f T\u00e9l\u00e9charger l\u2019archive sign\u00e9e</button>';
+    h+='<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text2);margin:0 0 10px"><input type="checkbox" id="arcSigAdm"> Fichier remis \u00e0 l\u2019administration fiscale (contr\u00f4le)</label>';
     h+='<a href="/verif-nf525" target="_blank" rel="noopener" style="display:block;text-align:center;font-size:12px;margin-top:8px;color:var(--gold)">Ouvrir l\u2019outil de v\u00e9rification \u2197</a></div>';
+    // 2026-10-11 (NF525 §6.1.1) : identification du logiciel + opérations de contrôle fiscal (JET 280)
+    h+='<div class="card" style="margin-top:14px;border-left:4px solid #607d8b"><div class="ct">\u2139\ufe0f Identification du logiciel</div>';
+    h+='<div style="font-size:13px;color:var(--text2);line-height:1.7">Produit : <strong>Luxyra</strong> (logiciel de caisse et de gestion en ligne)<br>Version : <strong>'+LX_VERSION+'</strong> (version majeure '+String(LX_VERSION).split(".")[0]+')<br>Caisse : <strong>'+LX_CAISSE+'</strong> &middot; Licence : <strong>'+String(typeof _salonId!=="undefined"&&_salonId?_salonId:"").slice(0,8).toUpperCase()+'</strong><br>\u00c9diteur : Luxyra, contact@luxyra.fr<br>Justificatif de conformit\u00e9 : <strong>attestation individuelle de l\u2019\u00e9diteur</strong> (art. 286-I-3\u00b0 bis du CGI, BOI-LETTRE-000242), voir ci-dessus<br>Signature \u00e9lectronique : ES256 (ECDSA P-256 / SHA-256)</div></div>';
+    h+='<div class="card" style="margin-top:14px;border-left:4px solid #455a64"><div class="ct">\ud83d\udd0e Contr\u00f4le fiscal</div>';
+    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Indiquez le d\u00e9but et la fin d\u2019une op\u00e9ration de contr\u00f4le de l\u2019administration : elles sont inscrites au journal des \u00e9v\u00e9nements techniques.</div>';
+    h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;padding:11px" onclick="lxControleFiscal(true)">D\u00e9but du contr\u00f4le</button><button class="btn" style="flex:1;padding:11px" onclick="lxControleFiscal(false)">Fin du contr\u00f4le</button></div></div>';
     // Bande de contrôle mensuelle
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #2196f3"><div class="ct">\ud83d\udcca Bande de contr\u00f4le mensuelle</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">G\u00e9n\u00e8re la bande de contr\u00f4le mensuelle regroupant tous les tickets, annulations et cl\u00f4tures Z du mois s\u00e9lectionn\u00e9.</div>';
@@ -30629,7 +30651,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.3.0", LX_CAISSE="C01";
+var LX_VERSION="6.4.0", LX_CAISSE="C01";
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -30652,6 +30674,18 @@ async function lxSigTicket(apId, attendre){
     if(sg) window.LX_SIG_CACHE[apId]=_lxSigExtrait(sg);
     return sg?window.LX_SIG_CACHE[apId]:null;
   }catch(_e){ return null; }
+}
+// 2026-10-11 : bande Z — grands totaux perpétuels réel/absolu et extrait de signature (serveur, propriétaire)
+async function lxZInfosRemplir(doc, dateZ){
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||!dateZ) return;
+    var r=await _sb.rpc("nf525_infos_z",{p_salon:_salonId,p_date:String(dateZ).slice(0,10)});
+    var d=(r&&r.data)||{}; var f=function(n){ return (Number(n)||0).toFixed(2)+" \u20ac"; };
+    var put=function(cls,v){ var els=doc.querySelectorAll("."+cls); for(var i=0;i<els.length;i++) els[i].textContent=v; };
+    if(r&&r.error){ put("lxZsig","indisponible"); return; }
+    put("lxZv",f(d.ventes)); put("lxZr",f(d.retours)); put("lxZgt",f(d.reel)); put("lxZabs",f(d.absolu));
+    put("lxZsig", d.signature ? _lxSigExtrait(d.signature)+" (sign\u00e9e)" : "en attente (sign\u00e9e sous 2 min)");
+  }catch(e){}
 }
 async function lxSigRemplir(doc, apId, maxMs){
   var fini=false;
@@ -30685,8 +30719,10 @@ function buildTicketHTML(a, isDuplicate){
   }
 
   var h="";
+  // 2026-10-11 : démonstration (données fictives, rien d'enregistré) -> mention de simulation (exigence « mode école »)
+  if(window._lxDemo) h+="<div style=\"text-align:center;border:2px dashed #000;padding:5px;margin-bottom:8px;font-weight:900;font-size:12px;letter-spacing:1px\">SIMULATION - DOCUMENT FACTICE<br><span style=\"font-size:9px;font-weight:400;letter-spacing:0\">D\u00e9monstration Luxyra, sans valeur fiscale</span></div>";
   // DUPLICATA
-  if(isDuplicate)h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA<span class=\"lxDupNum\" style=\"display:block;font-size:10px;letter-spacing:0\"></span></div>";
+  if(isDuplicate)h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA<span class=\"lxDupNum\" style=\"display:block;font-size:10px;letter-spacing:0\"></span><span class=\"lxDupSig\" style=\"display:block;font-size:9px;letter-spacing:0;font-weight:400\"></span></div>";
 
   // En-tête salon
   h+="<div style=\"text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px\">";
@@ -30703,6 +30739,11 @@ function buildTicketHTML(a, isDuplicate){
   h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+(a.heureEncaiss||a.time)+"</div>";
   h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
   h+="<div style=\"font-size:12px\">Client: "+clN+"</div>";
+  // 2026-10-11 (NF525 v2.3) : opérateur qui encaisse, type de document / d'opération, nature de la vente
+  if(a.operator_name) h+="<div style=\"font-size:11px\">Op\u00e9rateur caisse : "+escapeHtml(String(a.operator_name))+"</div>";
+  try{ var _nP=0,_nS=0; (a.items||[]).forEach(function(it){ if(!it||it.isSep||it.isAcompteData) return; if(it.isProd) _nP++; else _nS++; });
+    var _nat=(_nP&&_nS)?"mixte (prestations et produits)":(_nP?"produits":"prestations");
+    h+="<div style=\"font-size:10px\">Ticket - "+((Number(a.pr)||0)<0?"Retour / annulation":"Vente")+" - "+_nat+" - client particulier</div>"; }catch(_eN){}
   h+="</div>";
 
   // Tableau articles
@@ -30916,6 +30957,17 @@ function viewClientTicket(apptId){
   document.getElementById("modal").innerHTML = '<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+html+'</div></div>';
 }
 
+async function lxDupSigRemplir(doc, seq, maxMs){
+  var put=function(t){ try{ doc.querySelectorAll(".lxDupSig").forEach(function(e){ e.textContent=t; }); }catch(_e){} };
+  var fin=Date.now()+(maxMs||3000);
+  try{ if(typeof _lxSignerMaintenant==="function") await Promise.race([_lxSignerMaintenant(), new Promise(function(r){ setTimeout(r, maxMs||3000); })]); }catch(_e){}
+  while(Date.now()<fin+400){
+    try{ var q=await _sb.from("nf525_signatures").select("signature").eq("salon_id",_salonId).eq("type","DUP").eq("source_num",seq).limit(1);
+      if(q.data&&q.data[0]){ put("Signature duplicata : "+_lxSigExtrait(q.data[0].signature)); return; } }catch(_e){}
+    if(Date.now()>fin) break; await new Promise(function(r){ setTimeout(r,700); });
+  }
+  put("Duplicata enregistr\u00e9 n\u00b0"+seq+" (signature sous 2 min)");
+}
 function reprintTicket(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
@@ -30936,6 +30988,8 @@ function reprintTicket(id){
     var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
     _taches.push(_sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
       try{ if(r&&r.data){ var d=new Date(r.data.horodatage||Date.now()); w.document.querySelectorAll(".lxDupNum").forEach(function(e){ e.textContent="Copie n\u00b0"+r.data.copie+" - "+d.toLocaleDateString("fr-FR")+" "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }); } }catch(_e){}
+      // 2026-10-11 : extrait de la signature propre au duplicata (chaîne DUP), attente bornée
+      if(r&&r.data&&r.data.seq) return lxDupSigRemplir(w.document, r.data.seq, 3000);
     },function(){}));
   }
   Promise.all(_taches).then(function(){ setTimeout(function(){w.print();},200); },function(){ setTimeout(function(){w.print();},200); });
@@ -33417,6 +33471,14 @@ function sha256Sync(str){
   return hex.toUpperCase();
 }
 
+// 2026-10-11 : opération de contrôle fiscal (JET 280)
+function lxControleFiscal(debut){
+  var lib=debut?"D\u00e9but":"Fin";
+  if(!confirm(lib+" d\u2019une op\u00e9ration de contr\u00f4le fiscal : l\u2019\u00e9v\u00e9nement sera inscrit au journal des \u00e9v\u00e9nements techniques. Confirmer ?")) return;
+  var who=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+  auditLog(debut?"CONTROLE_FISCAL_DEBUT":"CONTROLE_FISCAL_FIN", lib+" de contr\u00f4le fiscal"+(who?" (saisi par "+who+")":""));
+  if(typeof toast==="function") toast(lib+" du contr\u00f4le enregistr\u00e9","success");
+}
 // 2026-10-11 : archive fiscale signée et vérifiable (format LUXYRA-NF525-ARCHIVE-1)
 async function lxArchiveSignee(){
   var du=(document.getElementById("arcSigDu")||{}).value, au=(document.getElementById("arcSigAu")||{}).value;
@@ -33430,20 +33492,35 @@ async function lxArchiveSignee(){
     var cr=await tout(function(){ return _sb.from("corrections_reglement").select("*").eq("salon_id",_salonId).gte("date_correction",du).lte("date_correction",au).order("num"); });
     var dup=await tout(function(){ return _sb.from("nf525_duplicatas").select("*").eq("salon_id",_salonId).gte("horodatage",du+"T00:00:00").lte("horodatage",au+"T23:59:59").order("seq"); });
     var jet=await tout(function(){ return _sb.from("nf525_jet").select("*").eq("salon_id",_salonId).gte("horodatage",du+"T00:00:00").lte("horodatage",au+"T23:59:59").order("seq"); });
-    var ids={}; [tk,z,cr,dup,jet].forEach(function(L){ L.forEach(function(r){ ids[r.id]=1; }); });
+    // 2026-10-11 : clôtures mensuelles, annuelles et d'exercice de la période (signées ZM / ZA / ZE)
+    var zm=(await tout(function(){ return _sb.from("clotures_mensuelles").select("*").eq("salon_id",_salonId).order("annee").order("mois"); })).filter(function(r){ var d=r.annee+"-"+String(r.mois).padStart(2,"0")+"-01"; return d>=du.slice(0,8)+"01"&&d<=au; });
+    var za=(await tout(function(){ return _sb.from("clotures_annuelles").select("*").eq("salon_id",_salonId).order("annee"); })).filter(function(r){ return String(r.annee)>=du.slice(0,4)&&String(r.annee)<=au.slice(0,4); });
+    var ze=(await tout(function(){ return _sb.from("clotures_exercices").select("*").eq("salon_id",_salonId).order("date_fin"); })).filter(function(r){ return r.date_fin>=du&&r.date_debut<=au; });
+    var ids={}; [tk,z,cr,dup,jet,zm,za,ze].forEach(function(L){ L.forEach(function(r){ ids[r.id]=1; }); });
     var sig=(await tout(function(){ return _sb.from("nf525_signatures").select("type,seq,source_table,source_id,source_num,data_to_sign,signature,prev_signature,algo,key_id,signed_at").eq("salon_id",_salonId).order("type").order("seq"); })).filter(function(g){ return ids[g.source_id]; });
     var cles=(await _sb.from("nf525_cles").select("key_id,algo,public_jwk,created_at")).data||[];
     var arc={ format:"LUXYRA-NF525-ARCHIVE-1", genere_le:new Date().toISOString(), logiciel:{nom:"Luxyra",version:LX_VERSION,caisse:LX_CAISSE},
       etablissement:{nom:SALON_CONFIG.nom||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",adresse:[SALON_CONFIG.adresse,SALON_CONFIG.cp,SALON_CONFIG.ville].filter(Boolean).join(" ")},
       periode:{du:du,au:au}, cles_publiques:cles,
-      donnees:{tickets:tk,clotures:z,corrections_reglement:cr,duplicatas:dup,jet:jet}, signatures:sig };
+      donnees:{tickets:tk,clotures:z,clotures_mensuelles:zm,clotures_annuelles:za,clotures_exercices:ze,corrections_reglement:cr,duplicatas:dup,jet:jet}, signatures:sig };
     var corps=JSON.stringify(arc);
     var emp=await sha256Async(corps);
     arc.empreinte_sha256=emp;
+    // 2026-10-11 : l'empreinte de l'archive est enregistrée (inaltérable) puis signée par le serveur (chaîne AR)
+    var adm=!!((document.getElementById("arcSigAdm")||{}).checked);
+    var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+    try{
+      var reg=await _sb.rpc("nf525_archive_enregistrer",{p_salon:_salonId,p_du:du,p_au:au,p_empreinte:emp,p_motif:adm?"administration":"periodique",p_operateur:_op||null,p_stats:{tickets:tk.length,clotures:z.length,signatures:sig.length}});
+      if(reg.error) throw reg.error;
+      var fin=Date.now()+8000, sa=null;
+      while(Date.now()<fin&&!sa){ try{ await _lxSignerMaintenant(); }catch(_e){} var q=await _sb.from("nf525_signatures").select("seq,data_to_sign,signature,prev_signature,algo,key_id,signed_at").eq("salon_id",_salonId).eq("type","AR").eq("source_num",reg.data.seq).limit(1); if(q.data&&q.data[0]) sa=q.data[0]; else await new Promise(function(r){ setTimeout(r,800); }); }
+      arc.signature_archive=sa||{seq:reg.data.seq,statut:"enregistr\u00e9e, signature en cours (sous 2 min)"};
+    }catch(_eAr){ arc.signature_archive={statut:"non sign\u00e9e : "+(_eAr.message||_eAr)}; }
     var blob=new Blob([JSON.stringify(arc,null,1)],{type:"application/json"});
     var url=URL.createObjectURL(blob), a=document.createElement("a");
     a.href=url; a.download="archive-nf525-"+(SALON_CONFIG.siret||"salon")+"-"+du+"_"+au+".json"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },3000);
     if(typeof auditLog==="function") auditLog("ARCHIVE_INTERMEDIAIRE","Archive signée du "+du+" au "+au+" — "+tk.length+" tickets, "+z.length+" clôtures, "+sig.length+" signatures — empreinte SHA-256 "+emp);
+    if(adm&&typeof auditLog==="function") auditLog("TRANSFERT_ADMINISTRATION","Archive du "+du+" au "+au+" remise \u00e0 l'administration fiscale \u2014 empreinte "+emp);
     toast("✅ Archive signée téléchargée ("+sig.length+" signatures)","success");
   }catch(e){ toast("❌ Archive : "+(e.message||e),"error"); }
 }

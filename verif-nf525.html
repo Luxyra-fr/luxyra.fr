@@ -141,7 +141,8 @@ document.addEventListener('DOMContentLoaded',function(){
 2. Chaque <strong>signature électronique</strong> (ECDSA P-256 / SHA-256, « ES256 ») avec la clé publique de l'éditeur.<br>
 3. Le <strong>chaînage</strong> : numéros continus et signature précédente incluse, pour chaque type (tickets, clôtures, corrections, duplicatas, journal des événements techniques).<br>
 4. Pour chaque ticket : les <strong>données signées sont recalculées</strong> à partir du ticket (montants, taux, date-heure, numéro) et comparées.<br>
-5. Les tickets de la période <strong>sans signature</strong> sont signalés.</div>
+5. Les tickets de la période <strong>sans signature</strong> sont signalés.<br>
+6. La <strong>signature de l'archive</strong> elle-même : son empreinte a été enregistrée puis signée par le serveur au moment de l'export.</div>
 </main>
 <footer>
   <div class="f-logo">Luxyra</div>
@@ -176,9 +177,16 @@ async function verifier(txt){
   out.innerHTML='<div class="v-res">Vérification en cours…</div>';
   var A=JSON.parse(txt), pb=[];
   if(A.format!=="LUXYRA-NF525-ARCHIVE-1") throw new Error("format inconnu");
-  var emp=A.empreinte_sha256; var copie=JSON.parse(txt); delete copie.empreinte_sha256;
+  var emp=A.empreinte_sha256; var copie=JSON.parse(txt); delete copie.empreinte_sha256; delete copie.signature_archive;
   var empOk=(await sha(JSON.stringify(copie)))===emp;
   var cles={}; for(var i=0;i<(A.cles_publiques||[]).length;i++){ var k=A.cles_publiques[i]; var j=Object.assign({},k.public_jwk); delete j.key_ops; delete j.ext; cles[k.key_id]=await crypto.subtle.importKey("jwk",j,{name:"ECDSA",namedCurve:"P-256"},false,["verify"]); }
+  // Signature de l'archive elle-même (chaîne AR) : l'empreinte doit figurer dans les données signées
+  var SA=A.signature_archive, arcSig={etat:"absente",ok:false};
+  if(SA&&SA.signature&&SA.data_to_sign){ var kA=cles[SA.key_id]; var vA=false; if(kA){ try{ vA=await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},kA,b64u(SA.signature),new TextEncoder().encode(SA.data_to_sign)); }catch(e){} }
+    var empDans=(SA.data_to_sign.split(",")[1]||"").toUpperCase()===String(emp||"").toUpperCase();
+    arcSig={ok:vA&&empDans, etat:(vA&&empDans)?"valide (archive n°"+SA.seq+")":(!vA?"INVALIDE":"ne correspond pas à cette archive")};
+    if(!arcSig.ok) pb.push("Signature de l'archive : "+arcSig.etat); }
+  else if(SA&&SA.statut){ arcSig.etat=SA.statut; }
   var tkById={}; (A.donnees.tickets||[]).forEach(function(t){ tkById[t.id]=t; });
   var parType={}, nOk=0, nKo=0, recalc=0, recalcKo=0;
   for(var g of (A.signatures||[])){
@@ -202,12 +210,13 @@ async function verifier(txt){
   var signes={}; (parType.TK||[]).forEach(function(g){ signes[g.source_id]=1; });
   var nonSignes=(A.donnees.tickets||[]).filter(function(t){ return !signes[t.id]; });
   nonSignes.slice(0,20).forEach(function(t){ pb.push("Ticket n°"+t.num+" sans signature dans l'archive"); });
-  var lib={TK:"Tickets",Z:"Clôtures journalières",ZM:"Clôtures mensuelles",ZA:"Clôtures annuelles",ZE:"Clôtures d'exercice",CR:"Corrections de règlement",DUP:"Duplicatas",JET:"Journal des événements techniques"};
+  var lib={TK:"Tickets",Z:"Clôtures journalières",ZM:"Clôtures mensuelles",ZA:"Clôtures annuelles",ZE:"Clôtures d'exercice",CR:"Corrections de règlement",DUP:"Duplicatas",JET:"Journal des événements techniques",AR:"Archives"};
   var tout=empOk&&nKo===0&&recalcKo===0&&!pb.length;
   var h='<div class="v-res"><div style="font-size:18px" class="'+(tout?"ok":"ko")+'">'+(tout?"✅ Archive intègre : aucune anomalie":"⚠️ Anomalies détectées")+'</div>';
   h+='<div>Établissement : <strong>'+esc(A.etablissement&&A.etablissement.nom)+'</strong> — SIRET '+esc(A.etablissement&&A.etablissement.siret)+' — période du '+esc(A.periode.du)+' au '+esc(A.periode.au)+'</div>';
   h+='<div>Logiciel : '+esc(A.logiciel.nom)+' v'+esc(A.logiciel.version)+' — généré le '+esc(new Date(A.genere_le).toLocaleString("fr-FR"))+'</div>';
   h+='<div>Empreinte de l\'archive : <span class="'+(empOk?"ok":"ko")+'">'+(empOk?"conforme":"NON conforme (fichier modifié)")+'</span> <code>'+esc(emp)+'</code></div>';
+  h+='<div>Signature électronique de l\'archive : <span class="'+(arcSig.ok?"ok":"ko")+'">'+esc(arcSig.etat)+'</span></div>';
   h+='<div>Signatures valides : <span class="'+(nKo?"ko":"ok")+'">'+nOk+' / '+(nOk+nKo)+'</span> — tickets recalculés : <span class="'+(recalcKo?"ko":"ok")+'">'+(recalc-recalcKo)+' / '+recalc+'</span> — tickets sans signature : <span class="'+(nonSignes.length?"ko":"ok")+'">'+nonSignes.length+'</span></div>';
   h+='<table class="v"><tr><th>Type</th><th>Signatures</th><th>Séquence</th><th>Ruptures</th></tr>'+chaine.map(function(c){ return '<tr><td>'+(lib[c[0]]||c[0])+'</td><td>'+c[1]+'</td><td>'+c[2]+'</td><td class="'+(c[3]?"ko":"ok")+'">'+c[3]+'</td></tr>'; }).join("")+'</table>';
   if(pb.length) h+='<div style="margin-top:10px"><strong>Détail</strong><br>'+pb.slice(0,60).map(esc).join("<br>")+(pb.length>60?"<br>…":"")+'</div>';
