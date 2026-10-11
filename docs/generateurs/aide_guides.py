@@ -191,7 +191,7 @@ dict(slug="tickets-et-annulations", ic="🎫", cat="Caisse", titre="Tickets : r�
  sections=[
   dict(h="La gestion des tickets", p="""<p>Tuile <strong>Caisse › Gestion des tickets</strong>. Filtrez par période et par mode de paiement ; le bouton <strong>Excel</strong> exporte la liste.</p>""",
    img="tickets", alt="Gestion des tickets", leg=[
-    "<strong>Période</strong> et mode de paiement, puis la loupe.",
+    "<strong>Période</strong> (date de début et de fin, la liste se met à jour dès que vous changez une date) et mode de paiement.",
     "<strong>Imprimer</strong> une copie du ticket.",
     "<strong>Email</strong> : envoyer le ticket à la cliente.",
     "<strong>Modifier collaborateur</strong> : réattribuer la vente (tracé dans le journal).",
