@@ -1664,3 +1664,9 @@ Tables existantes : inchangées.
 - Acompte salon cumulatif (versements[] dans l'item isAcompteData ; annulation remboursée par mode de chaque versement).
 - lxTauxTVA partout (plus de ||20) ; franchise -> tvaProduits=0 ; URSSAF 2026 = taux + CFP (_lxTxUrssaf) ; seuils micro 2026-2028 (83 600 / 203 100 ; TVA 37 500 / 85 000).
 - Bons cadeaux : libellés = CA à la vente (706), TVA incluse ; « obligatoire » seulement si lxAttConcerne().
+
+## 2026-10-11 — Démo libre + site par métier
+- app.html?demo=<metier>[&mode=salon|domicile|mixte][&page=…][&embed=1] : lx-demo.js (chargé après supabase.min.js) remplace supabase.createClient par un client SIMULÉ en mémoire (données fictives générées par métier), bloque tout appel réseau API, isole le stockage (comme vue_admin), opérateur ouvert sans PIN. Rien n'est jamais écrit en base. Testé : 9 métiers × 3 modes × 13 pages sans erreur, encaissement + clôture Z complets.
+- Pages métier générées par docs/generateurs/build.py (logiciel-coiffure, -barbier, -institut-beaute, -onglerie, -cils-sourcils, -maquilleuse, -tatouage-piercing, -spa-massage, -bien-etre) + demo.html ; iframe de la vraie app (démo) avec onglets. Routes propres dans le worker, slugs réservés (is_reserved_slug), sitemap v12.
+- pro.html : section démo en direct (sélecteur de métier), grille 9 métiers ; a-propos multi-métiers ; blog : 3 articles (domicile, acompte/arrhes/empreinte, micro vs société) via docs/generateurs/blog.py.
+- Ne JAMAIS revendiquer dans les pages une fonction inexistante (ex. questionnaire santé : pas encore fait).
