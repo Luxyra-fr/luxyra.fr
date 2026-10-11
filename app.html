@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-17"></script>
+<script src="luxyra-supabase.js?v=20261011-18"></script>
 <script>
 console.log("LUXYRA v6.6");
 
@@ -33584,7 +33584,8 @@ async function lxArchiveSignee(){
     var zm=(await tout(function(){ return _sb.from("clotures_mensuelles").select("*").eq("salon_id",_salonId).order("annee").order("mois"); })).filter(function(r){ var d=r.annee+"-"+String(r.mois).padStart(2,"0")+"-01"; return d>=du.slice(0,8)+"01"&&d<=au; });
     var za=(await tout(function(){ return _sb.from("clotures_annuelles").select("*").eq("salon_id",_salonId).order("annee"); })).filter(function(r){ return String(r.annee)>=du.slice(0,4)&&String(r.annee)<=au.slice(0,4); });
     var ze=(await tout(function(){ return _sb.from("clotures_exercices").select("*").eq("salon_id",_salonId).order("date_fin"); })).filter(function(r){ return r.date_fin>=du&&r.date_debut<=au; });
-    var ids={}; [tk,z,cr,dup,jet,zm,za,ze].forEach(function(L){ L.forEach(function(r){ ids[r.id]=1; }); });
+    var fa=await tout(function(){ return _sb.from("factures_clients").select("*").eq("salon_id",_salonId).gte("date_facture",du).lte("date_facture",au).order("num"); });
+    var ids={}; [tk,z,cr,dup,jet,zm,za,ze,fa].forEach(function(L){ L.forEach(function(r){ ids[r.id]=1; }); });
     // 2026-10-11 : réinitialisations d'essai de la période (copies scellées des données effacées) et leurs signatures
     var pur=((await _sb.from("nf525_archives_purge").select("id,created_at,motif,nb,contenu,empreinte").eq("salon_id",_salonId).gte("created_at",du+"T00:00:00").lte("created_at",au+"T23:59:59")).data)||[];
     pur.forEach(function(pa){ Object.keys(pa.contenu||{}).forEach(function(k){ (pa.contenu[k]||[]).forEach(function(r){ ids[r.id]=1; }); }); });
@@ -33593,7 +33594,7 @@ async function lxArchiveSignee(){
     var arc={ format:"LUXYRA-NF525-ARCHIVE-1", genere_le:new Date().toISOString(), logiciel:{nom:"Luxyra",version:LX_VERSION,caisse:LX_CAISSE},
       etablissement:{nom:SALON_CONFIG.nom||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",adresse:[SALON_CONFIG.adresse,SALON_CONFIG.cp,SALON_CONFIG.ville].filter(Boolean).join(" ")},
       periode:{du:du,au:au}, cles_publiques:cles,
-      donnees:{tickets:tk,clotures:z,clotures_mensuelles:zm,clotures_annuelles:za,clotures_exercices:ze,corrections_reglement:cr,duplicatas:dup,jet:jet,reinitialisations_essai:pur}, signatures:sig };
+      donnees:{tickets:tk,clotures:z,clotures_mensuelles:zm,clotures_annuelles:za,clotures_exercices:ze,corrections_reglement:cr,duplicatas:dup,factures:fa,jet:jet,reinitialisations_essai:pur}, signatures:sig };
     var corps=JSON.stringify(arc);
     var emp=await sha256Async(corps);
     arc.empreinte_sha256=emp;
