@@ -28801,7 +28801,37 @@ function doApplyTkRemise(type){
 // NEW 2026-05-12 : ajout DIRECT d'un paiement = full reste dû, sans modal
 // → UX rapide pour cas simple (1 clic = 1 paiement = full montant)
 // Le rendu monnaie pour espèces se gère ensuite via input inline dans le récap.
+// 2026-10-11 : la remise fidélité au seuil était proposée À LA FIN (bouton Encaisser), APRÈS la saisie du
+// règlement -> ticket 2079 Excellence Coiffure : CB 32 € saisie puis remise 10 % -> ticket 28,80 €, CB 32 €.
+// Désormais la décision fidélité est demandée AVANT le premier règlement. Retourne true si interception.
+function _lxFidAvantReglement(suite){
+  try{
+    if(!_tk||!_tk.cId) return false;
+    if(Array.isArray(_tk.payments)&&_tk.payments.some(function(p){ return Number(p&&p.amount)>0; })) return false;
+    var cl=gC(_tk.cId); if(!cl) return false;
+    var FC=window.FIDCONF||{}, SC=window.SITE_CONFIG||{};
+    var on=(FC.active!==undefined?FC.active!==false:SC.fideliteActive!==false);
+    if(!on||(FC.mode||"passages")!=="passages") return false;
+    if(_tk._fidResults&&_tk._fidResults[cl.id]) return false;
+    var seuil=Number(FC.seuil||SC.fideliteSeuil||10), pts=Number(cl.fid||0);
+    if(pts<seuil) return false;
+    var amt=(typeof lxFidRewardAmount==="function")?lxFidRewardAmount():0; if(!(amt>0)) return false;
+    window._lxFidSuite=suite;
+    var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+    htm+='<div style="font-size:34px;margin-bottom:6px">\ud83c\udfc6</div><h2 style="color:var(--gold)">Remise fid\u00e9lit\u00e9 disponible</h2>';
+    htm+='<div style="font-size:14px;margin-bottom:4px"><strong>'+cName(cl)+'</strong> a atteint '+pts+'/'+seuil+' points.</div>';
+    htm+='<div style="font-size:13px;color:rgba(255,255,255,.65);margin-bottom:14px">Remise de <strong style="color:var(--gold)">\u2212'+amt.toFixed(2)+' \u20ac</strong>. D\u00e9cidez <strong>avant</strong> le r\u00e8glement pour que le montant \u00e0 encaisser soit le bon.</div>';
+    htm+='<div style="display:flex;flex-direction:column;gap:8px">';
+    htm+='<button class="btn bg" style="width:100%;padding:13px" onclick="cM();applyFidEarly(\''+cl.id+'\','+amt+',0);var f=window._lxFidSuite;window._lxFidSuite=null;f&&f();">\u2705 Appliquer \u00b7 compteur \u00e0 0</button>';
+    htm+='<button class="btn" style="width:100%;padding:13px;background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3)" onclick="cM();applyFidEarly(\''+cl.id+'\','+amt+',1);var f=window._lxFidSuite;window._lxFidSuite=null;f&&f();">\u2705 Appliquer \u00b7 compteur \u00e0 1</button>';
+    htm+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.6)" onclick="cM();if(!_tk._fidResults)_tk._fidResults={};_tk._fidResults[\''+cl.id+'\']={action:\'skip\'};var f=window._lxFidSuite;window._lxFidSuite=null;f&&f();">Pas cette fois (garder les points)</button>';
+    htm+='</div></div></div>';
+    document.getElementById("modal").innerHTML=htm;
+    return true;
+  }catch(_e){ return false; }
+}
 function quickPay(method){
+  if(_lxFidAvantReglement(function(){ quickPay(method); })) return;
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
   var acompteDeduct=_tk.acompte||0;
   var resteDu=Math.max(0, total-(_tk.paid||0)-acompteDeduct);
@@ -28864,6 +28894,7 @@ function updateInlineRendu(idx, input){
 // et (pour espèces) le montant donné par le client + monnaie à rendre.
 // Utilisé par le mode "Diviser le paiement" (split).
 function showPayInput(method){
+  if(_lxFidAvantReglement(function(){ showPayInput(method); })) return; // 2026-10-11
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
   var acompteDeduct=_tk.acompte||0;
   var resteDu=Math.max(0, total-(_tk.paid||0)-acompteDeduct);
