@@ -6576,11 +6576,18 @@ function printClotureZ(){
     // 2026-10-11 : explication de l'écart pour le comptable (clôture scellée non modifiée)
     try{ var _ecL=_lxEcartsReglement(done); if(_ecL.length){
       h+="<div style=\"font-size:10px;border:1px dashed #999;padding:6px;margin:4px 0;line-height:1.5\"><b>Explication de l'\u00e9cart</b> (cl\u00f4ture scell\u00e9e, non modifi\u00e9e) :<br>";
-      _ecL.forEach(function(x){ h+="Ticket n\u00b0"+(x.num||"?")+" : r\u00e8glement saisi "+x.regle.toFixed(2)+" \u20ac ("+String(x.met).replace(/</g,"&lt;")+") pour un ticket de "+x.pr.toFixed(2)+" \u20ac \u2014 remise appliqu\u00e9e apr\u00e8s la saisie du paiement. \u00c0 rapprocher du ticket du terminal : si "+x.pr.toFixed(2)+" \u20ac ont \u00e9t\u00e9 d\u00e9bit\u00e9s, la ligne "+String(x.met).replace(/</g,"&lt;")+" est sur\u00e9valu\u00e9e de "+x.ecart.toFixed(2)+" \u20ac ; si "+x.regle.toFixed(2)+" \u20ac ont \u00e9t\u00e9 d\u00e9bit\u00e9s, il s'agit d'un trop-per\u00e7u de "+x.ecart.toFixed(2)+" \u20ac \u00e0 restituer \u00e0 la cliente.<br>"; });
+      _ecL.forEach(function(x){ try{ var _cx=(done.find(function(a){return a.tkNum===x.num;})||{}).id; var _cL=_cx?_lxCorrDeTicket(_cx):[]; if(_cL.length){ h+="Ticket n\u00b0"+(x.num||"?")+" : <b>corrig\u00e9 par la pi\u00e8ce n\u00b0"+_cL.map(function(c){return c.num+" du "+fmt(c.date_correction);}).join(", ")+"</b> ("+String(_cL[_cL.length-1].motif||"").replace(/</g,"&lt;")+").<br>"; return; } }catch(_eC){}
+        h+="Ticket n\u00b0"+(x.num||"?")+" : r\u00e8glement saisi "+x.regle.toFixed(2)+" \u20ac ("+String(x.met).replace(/</g,"&lt;")+") pour un ticket de "+x.pr.toFixed(2)+" \u20ac \u2014 remise appliqu\u00e9e apr\u00e8s la saisie du paiement. \u00c0 rapprocher du ticket du terminal : si "+x.pr.toFixed(2)+" \u20ac ont \u00e9t\u00e9 d\u00e9bit\u00e9s, la ligne "+String(x.met).replace(/</g,"&lt;")+" est sur\u00e9valu\u00e9e de "+x.ecart.toFixed(2)+" \u20ac ; si "+x.regle.toFixed(2)+" \u20ac ont \u00e9t\u00e9 d\u00e9bit\u00e9s, il s'agit d'un trop-per\u00e7u de "+x.ecart.toFixed(2)+" \u20ac \u00e0 restituer \u00e0 la cliente.<br>"; });
       h+="Le chiffre d'affaires et la TVA de la journ\u00e9e sont exacts (montant des tickets) ; l'\u00e9cart porte uniquement sur la ventilation par mode de paiement.</div>";
     } }catch(_eEx){}
   }
   else h+="<p style=\"color:green;text-align:center;font-size:10px\">\u2713 Contr\u00f4le CA/R\u00e8glements: OK</p>";
+  // 2026-10-11 : pièces de correction de règlement enregistrées ce jour (concernent des tickets de jours antérieurs)
+  try{ var _crJ=_lxCorrDuJour(c.date); if(_crJ.length){
+    h+="<div style=\"font-size:10px;border:1px solid #999;padding:6px;margin:4px 0;line-height:1.5\"><b>Corrections de r\u00e8glement enregistr\u00e9es ce jour</b> (tickets d'origine et cl\u00f4tures inchang\u00e9s) :<br>";
+    _crJ.forEach(function(cr){ h+="Pi\u00e8ce n\u00b0"+cr.num+" \u2014 ticket n\u00b0"+(cr.ticket_num_affiche||cr.ticket_num)+" du "+fmt(cr.ticket_date)+" : "+(cr.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2)+" \u20ac"; }).join(", ")+" \u2014 "+String(cr.motif||"").replace(/</g,"&lt;")+" ("+String(cr.operateur||"").replace(/</g,"&lt;")+")<br>"; });
+    h+="</div>";
+  } }catch(_eCrJ){}
   
   // ===== 5. REPARTITION PAR COLLABORATEUR =====
   h+="<h2>5. R\u00e9partition par collaborateur</h2>";
@@ -9383,6 +9390,7 @@ document.addEventListener("visibilitychange",function(){
 });
 window._rdvPollInterval=setInterval(function(){
   try{ if(typeof lxRetenuesSync==="function") lxRetenuesSync(false); }catch(_eRet){} // 2026-10-11 (limité à 1 passage / 5 min)
+  try{ if(!window._lxCorrLoaded && typeof lxCorrReglCharger==="function") lxCorrReglCharger(); }catch(_eCr){} // 2026-10-11 corrections de règlement
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
     // FIX 2026-05-23 : filet multi-appareils — recharge les encaissements (appointments)
     // pour rafraîchir le CA Accueil/Stats/Compta même si le realtime est tombé.
@@ -23875,6 +23883,16 @@ function printBandeZ(){
   if(tAut>0)h+="<tr><td>Autre</td><td class=\"r\">"+tAut.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr class=\"total\"><td>TOTAL R\u00c8GLEMENTS</td><td class=\"r\">"+totRegl.toFixed(2)+" \u20ac</td></tr></table>";
   var ecart=Math.round((tTotal-totRegl)*100)/100;
+  // 2026-10-11 : pièces de correction de règlement du mois (opérations de plus / moins, tickets inchangés)
+  try{ var _crM=_lxCorrDuMois(mois); if(_crM.length){
+    var _ctM=_lxCorrTotaux(_crM), _crSum=0;
+    h+="<h3 style=\"font-size:12px;margin:8px 0 4px\">Corrections de r\u00e8glement (pi\u00e8ces trac\u00e9es)</h3><table>";
+    _crM.forEach(function(c){ var tkA=(c.ticket_num_affiche||c.ticket_num); h+="<tr><td>Pi\u00e8ce n\u00b0"+c.num+" du "+fmt(c.date_correction)+" \u2014 ticket n\u00b0"+tkA+" du "+fmt(c.ticket_date)+"<br><span style=\"font-size:9px;color:#666\">"+String(c.motif||"").replace(/</g,"&lt;")+"</span></td><td class=\"r\">"+(c.lignes||[]).map(function(l){ return l.mode.toUpperCase()+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2); }).join("<br>")+" \u20ac</td></tr>"; });
+    Object.keys(_ctM).forEach(function(k){ _crSum+=_ctM[k]; });
+    h+="<tr class=\"total\"><td>CB apr\u00e8s corrections</td><td class=\"r\">"+(tCB+(_ctM.cb||0)).toFixed(2)+" \u20ac</td></tr>";
+    h+="<tr class=\"total\"><td>TOTAL R\u00c8GLEMENTS APR\u00c8S CORRECTIONS</td><td class=\"r\">"+(totRegl+_crSum).toFixed(2)+" \u20ac</td></tr></table>";
+    ecart=Math.round((tTotal-(totRegl+_crSum))*100)/100;
+  } }catch(_eCrM){}
   if(Math.abs(ecart)>0.01)h+="<div class=\"warn\">\u26a0 \u00c9CART CA/R\u00e8glements: "+ecart.toFixed(2)+" \u20ac</div>";
   else h+="<p style=\"color:green;text-align:center;font-size:10px\">\u2713 Contr\u00f4le CA/R\u00e8glements: OK</p>";
   
@@ -30849,6 +30867,78 @@ function doDeleteTicket(id){
   cancelSecureTicket(id,motif);cM();go("tickets");
 }
 
+
+// =====================================================================
+// 2026-10-11 — CORRECTION DE RÈGLEMENT APRÈS CLÔTURE (pièce tracée)
+// BOI-TVA-DECLA-30-10-30 §90 : les corrections se font par opérations de « plus » et de « moins »,
+// enregistrées et inaltérables, sans modifier les données d'origine. Le ticket et la clôture Z restent
+// intacts ; une pièce numérotée (table corrections_reglement, chaînée + scellée nf525_hash_seal) porte
+// la correction du MODE de paiement uniquement (le total doit rester égal au total du ticket).
+// =====================================================================
+window.LX_CORR_REGL = window.LX_CORR_REGL || [];
+async function lxCorrReglCharger(){
+  try{
+    if(typeof _sb==="undefined"||!_sb||!_salonId) return [];
+    var r=await _sb.from("corrections_reglement").select("*,tickets(raw_id:raw_data->>id,tk_affiche:raw_data->>tkNum)").eq("salon_id",_salonId).order("num",{ascending:true});
+    if(r&&!r.error){ window.LX_CORR_REGL=(r.data||[]).map(function(c){ c.appt_id=c.tickets&&c.tickets.raw_id||null; return c; }); window._lxCorrLoaded=true; }
+  }catch(e){ console.warn("[corrections_reglement]",e); }
+  return window.LX_CORR_REGL||[];
+}
+function _lxCorrDeTicket(apId){ return (window.LX_CORR_REGL||[]).filter(function(c){ return c.appt_id===apId; }); }
+function _lxCorrDuJour(d){ return (window.LX_CORR_REGL||[]).filter(function(c){ return c.date_correction===d; }); }
+function _lxCorrDuMois(m){ return (window.LX_CORR_REGL||[]).filter(function(c){ return String(c.date_correction||"").indexOf(m)===0; }); }
+function _lxCorrTotaux(L){ var t={}; (L||[]).forEach(function(c){ (c.lignes||[]).forEach(function(l){ t[l.mode]=Math.round(((t[l.mode]||0)+Number(l.montant||0))*100)/100; }); }); return t; }
+var LX_CORR_MODES=[{k:"cb",l:"Carte bancaire"},{k:"esp",l:"Espèces"},{k:"chq",l:"Chèque"},{k:"vir",l:"Virement"},{k:"aut",l:"Autre"},{k:"enligne",l:"Payé en ligne"},{k:"bon",l:"Bon cadeau"}];
+function lxCorrReglOuvrir(apId){
+  var go2=function(){ _lxCorrReglModale(apId); };
+  if(typeof requireAdmin==="function"){ requireAdmin("Corriger un moyen de paiement (pièce tracée)", go2); } else go2();
+}
+async function _lxCorrReglModale(apId){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } } if(!a) return;
+  var tk=await _sb.from("tickets").select("id,num,total_ttc,detail_paiement,date_ticket,status,raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>id",apId).maybeSingle();
+  if(!tk||tk.error||!tk.data){ toast("Ticket scellé introuvable en base","error"); return; }
+  var T0=tk.data; await lxCorrReglCharger();
+  var cur={}; Object.keys(T0.detail_paiement||{}).forEach(function(k){ var v=Number(T0.detail_paiement[k]); if(!isNaN(v)&&v) cur[k]=Math.round(((cur[k]||0)+v)*100)/100; });
+  window.LX_CORR_REGL.filter(function(c){ return c.ticket_id===T0.id; }).forEach(function(c){ (c.lignes||[]).forEach(function(l){ cur[l.mode]=Math.round(((cur[l.mode]||0)+Number(l.montant||0))*100)/100; }); });
+  window._lxCorrT=T0;
+  var tot=Number(T0.total_ttc)||0, num=T0.tkNum||a.tkNum||T0.num;
+  var h='<div class="mbox" style="max-width:460px"><h2 style="margin-bottom:4px">🧾 Correction de règlement</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Ticket <strong>n°'+num+'</strong> du '+fmt(T0.date_ticket)+' — total <strong>'+tot.toFixed(2)+' €</strong> (inchangé).<br>Indiquez comment le ticket a <strong>réellement</strong> été payé.</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 110px 110px;gap:6px;align-items:center;font-size:13px;margin-bottom:6px"><span style="color:var(--text3);font-size:11px">Mode</span><span style="color:var(--text3);font-size:11px;text-align:right">Enregistré</span><span style="color:var(--text3);font-size:11px;text-align:right">Réel</span>';
+  LX_CORR_MODES.forEach(function(m){
+    var v=Number(cur[m.k]||0); if(!v && (m.k==="enligne"||m.k==="bon")) return;
+    h+='<span>'+m.l+'</span><span style="text-align:right;color:var(--text2)">'+v.toFixed(2)+' €</span><input type="number" step="0.01" min="0" class="lxCorrIn" data-k="'+m.k+'" value="'+(v?v.toFixed(2):"")+'" oninput="_lxCorrMaj()" style="text-align:right;padding:8px">';
+  });
+  h+='</div><div id="lxCorrSum" style="font-size:12px;margin:6px 0 10px"></div>';
+  h+='<label style="font-size:12px;color:var(--text2)">Motif (obligatoire, conservé au journal)</label><textarea id="lxCorrMotif" rows="2" maxlength="300" style="width:100%;margin-top:4px" placeholder="Ex : remise fidélité appliquée après la saisie du paiement, CB réelle 28,80 €"></textarea>';
+  h+='<div style="font-size:11px;color:var(--text3);margin:8px 0 12px;line-height:1.5">Une pièce numérotée et scellée est créée à la date d’aujourd’hui (opérations de « plus » et de « moins »). Le ticket et la clôture d’origine ne sont pas modifiés. Correction irréversible (une nouvelle correction reste possible).</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn bg" id="lxCorrBtn" style="flex:1" onclick="lxCorrReglValider()">Enregistrer la correction</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+  _lxCorrMaj();
+}
+function _lxCorrMaj(){
+  var T0=window._lxCorrT; if(!T0) return; var s=0;
+  document.querySelectorAll(".lxCorrIn").forEach(function(i){ s+=Number(i.value)||0; });
+  s=Math.round(s*100)/100; var tot=Number(T0.total_ttc)||0, ok=Math.abs(s-tot)<0.005;
+  var el=document.getElementById("lxCorrSum"); if(el) el.innerHTML=ok?'<span style="color:#81c784">✓ Total réel '+s.toFixed(2)+' € = total du ticket</span>':'<span style="color:#ef9a9a">Total réel '+s.toFixed(2)+' € — doit être égal à '+tot.toFixed(2)+' €</span>';
+  var b=document.getElementById("lxCorrBtn"); if(b){ b.disabled=!ok; b.style.opacity=ok?"1":".5"; }
+}
+async function lxCorrReglValider(){
+  var T0=window._lxCorrT; if(!T0) return;
+  var apres={}; document.querySelectorAll(".lxCorrIn").forEach(function(i){ var v=Math.round((Number(i.value)||0)*100)/100; if(v) apres[i.dataset.k]=v; });
+  var motif=((document.getElementById("lxCorrMotif")||{}).value||"").trim();
+  if(motif.length<5){ toast("Indiquez le motif de la correction","warning"); return; }
+  var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"administrateur";
+  var b=document.getElementById("lxCorrBtn"); if(b){ b.disabled=true; b.textContent="Enregistrement…"; }
+  var r=await _sb.rpc("corriger_reglement",{p_ticket_id:T0.id,p_regle_apres:apres,p_motif:motif,p_operateur:op});
+  if(r.error){ if(b){ b.disabled=false; b.textContent="Enregistrer la correction"; } toast("❌ "+r.error.message,"error"); return; }
+  await lxCorrReglCharger();
+  cM();
+  var lig=(r.data&&r.data.lignes||[]).map(function(l){ var m=LX_CORR_MODES.find(function(x){return x.k===l.mode;}); return (m?m.l:l.mode)+" "+(l.montant>0?"+":"")+Number(l.montant).toFixed(2)+" €"; }).join(", ");
+  toast("✅ Pièce de correction n°"+(r.data&&r.data.num)+" enregistrée : "+lig,"success");
+  if(typeof go==="function") go(window._currentPage||"tickets");
+}
+
 function modifReglement(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
@@ -30859,9 +30949,12 @@ function modifReglement(id){
   htm+='<div style="font-size:13px;margin-bottom:12px">Ticket <strong>#'+(a.tkNum||"--")+'</strong> — '+(Number(a.pr)||0).toFixed(2)+' € — Règlement actuel : <strong>'+(a.met||"--")+'</strong></div>';
   if(isLocked||mixte){
     htm+='<div style="background:var(--orange-bg);padding:12px;border-radius:8px;font-size:13px;line-height:1.5;margin-bottom:14px">';
-    if(isLocked)htm+='La journée est <strong>clôturée (Z)</strong> : le règlement ne peut plus être corrigé directement (NF525).<br><br>Faites un <strong>avoir / annulation</strong>, puis ré-encaissez.';
-    else htm+='Règlement <strong>mixte</strong> : correction via <strong>avoir + ré-encaissement</strong>.';
-    htm+='</div><div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
+    if(isLocked)htm+='La journée est <strong>clôturée (Z)</strong> : le ticket et la clôture ne sont jamais modifiés. Le <strong>moyen de paiement</strong> peut être corrigé par une <strong>pièce de correction</strong> numérotée, scellée et tracée (le montant du ticket, le CA et la TVA ne changent pas).';
+    else htm+='Règlement <strong>mixte</strong> : correction via une <strong>pièce de correction</strong> tracée, ou avoir + ré-encaissement.';
+    htm+='</div>';
+    // 2026-10-11 : correction de règlement par opérations de plus / moins (BOI-TVA-DECLA-30-10-30 §90)
+    htm+='<button class="btn bg" style="width:100%;padding:13px;margin-bottom:8px;font-weight:800" onclick="cM();lxCorrReglOuvrir(\''+a.id+'\')">🧾 Corriger le moyen de paiement (pièce tracée)</button>';
+    htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
     htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">❌ Avoir / Annuler</button></div>';
   } else {
     htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Choisissez le nouveau mode. Le montant ne change pas, seul le règlement est corrigé (tracé au journal NF525).</div>';
