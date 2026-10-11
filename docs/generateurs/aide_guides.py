@@ -195,7 +195,7 @@ dict(slug="tickets-et-annulations", ic="🎫", cat="Caisse", titre="Tickets : r�
     "<strong>Imprimer</strong> une copie du ticket.",
     "<strong>Email</strong> : envoyer le ticket à la cliente.",
     "<strong>Modifier collaborateur</strong> : réattribuer la vente (tracé dans le journal).",
-    "<strong>Modifier règlement</strong> : corriger le mode de paiement (carte au lieu d'espèces, par exemple), tant que la journée n'est pas clôturée.",
+    "<strong>Modifier règlement</strong> : corriger le mode de paiement (carte au lieu d'espèces, par exemple). Si la journée est déjà clôturée : « 🧾 Corriger le moyen de paiement (pièce tracée) » (administrateur, motif obligatoire) crée une pièce de correction numérotée et scellée, sans toucher au ticket ni à la clôture ; le montant du ticket ne peut pas changer.",
     "<strong>Avoir / Annuler</strong> : annuler un ticket encaissé."]),
   dict(h="Annuler un ticket", p="""<p>Un ticket encaissé n'est <strong>jamais supprimé</strong> : il reste dans la caisse, marqué comme annulé, et un <strong>contre-ticket</strong> du même montant en négatif est créé. Le motif est obligatoire et tout est tracé. Pour corriger une erreur, annulez puis encaissez de nouveau correctement.</p>
 <p>Une journée déjà clôturée ne peut plus être modifiée : l'annulation apparaît alors à la date du jour où elle est faite.</p>""",
