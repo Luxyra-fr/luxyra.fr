@@ -475,6 +475,8 @@ async function doResetPwd() {
 
 // Logout
 async function doLogout() {
+  // 2026-10-11 : JET 40 (arrêt / déconnexion), écrit avant la perte de session
+  try { if (_sb && _salonId) await _sb.from("audit_log").insert({ salon_id: _salonId, action: "ARRET_CAISSE", details: "Déconnexion de la caisse", operator_name: (typeof CURRENT_OPERATOR !== "undefined" && CURRENT_OPERATOR) ? ((CURRENT_OPERATOR.prenom || "") + " " + (CURRENT_OPERATOR.nom || "")).trim() : "titulaire" }); } catch (_eJ) {}
   // Clear le cache IndexedDB du salon courant AVANT de perdre _salonId
   // (sécurité : un user qui se déconnecte ne doit pas laisser ses data sur la machine)
   if (_salonId) {
