@@ -1734,3 +1734,9 @@ Tables existantes : inchangées.
 - Fait : politique conf., annonces=non, AD_ID=non, gouv=non, finance=aucune, santé=aucune, classification IARC (PEGI 3), fiche Store, catégorie Beauté, coordonnées contact@luxyra.fr, Sécurité des données (brouillon).
 - Compte test Google : client contact@luxyra.fr (TEST Google, tel 0000000000 ; mot de passe connu d'Alexandre seul). Cible : 16-17 + 18+. Pays : France.
 - 11/10/2026 ~22h : envoyé en examen par Alexandre (production 1.0.0.0). Publication gérée désactivée → en ligne dès approbation.
+
+## Luxyra SMS Companion (fr.luxyra.sms, app id 4974729537663482636) — préparation Play
+- Décision 11/10 : envoi en examen SEULEMENT après acceptation de l'appli clientes (protéger le compte dev).
+- Fait : fiche réécrite (transactionnel RDV, sans « illimité »/marketing/prix/concurrents), icône + store/sms-feature-graphic.png.
+- Reste : 2e capture d'écran (téléphone d'Alexandre), confirmer que le bundle « Première version » (22/04) est le dernier, déclaration SMS (catégorie « Archivage, CRM… entreprises » + texte d'examen prêt, 4 attestations à cocher avec accord), déclaration service de premier plan, release production.
+- Risque : SEND_SMS hors exceptions → refus probable ; distribution hors Play déjà enregistrée (validation développeurs Android).
