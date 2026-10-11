@@ -26792,6 +26792,7 @@ function showClientHistoryFromCaisse(cId){
 }
 
 function showCaisse(){
+  try{ if(window._tk&&_tk.items&&_tk.items.length) _lxReglementTotalAJour(); }catch(_eRg){} // 2026-10-11 : total baissé après règlement
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){
     // FIX 2026-05-13 : retour accueil après fermeture (sinon page Caisse vide en arrière-plan)
     var h2='<div class="mbg" onclick="cM();go(\'home\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;background:rgba(20,20,20,.95);border:1px solid rgba(255,255,255,.12)">';
@@ -28469,6 +28470,7 @@ function doApplyRemise(idx,type){
   var it=_tk.items[idx];
   if(type==="eur"){it.remise=Math.min(v,it.price*it.qty);}
   else{var pct=Math.min(v,100);it.remise=Math.round(it.price*it.qty*pct/100*100)/100;}
+  _lxReglementTotalAJour();
   showCaisse();
 }
 
@@ -28744,6 +28746,23 @@ function _doApplyTkRemiseUI(type){
   document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
   setTimeout(function(){document.getElementById("tkRemVal").focus();},100);
 }
+// 2026-10-11 : un règlement saisi AVANT une remise (ou une baisse du total) restait à l'ancien montant
+// (cas réel : ticket 32 € remisé à 28,80 €, règlement CB enregistré 32 € -> Z : CB surévaluée de 3,20 €).
+// Si les règlements dépassent le nouveau reste dû, on remet les règlements à zéro (les bons/offerts, à 0 €,
+// sont conservés) et on prévient. Retourne true si une remise à zéro a eu lieu.
+function _lxReglementTotalAJour(){
+  try{
+    if(!_tk||!Array.isArray(_tk.payments)||!_tk.payments.length) return false;
+    var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-(it.remise||0);});total-=(_tk.remise||0);
+    var du=Math.max(0, Math.round((total-(_tk.acompte||0))*100)/100);
+    var regle=0; _tk.payments.forEach(function(p){ regle+=Number(p&&p.amount)||0; });
+    if(regle<=du+0.009) return false;
+    _tk.payments=_tk.payments.filter(function(p){ return !(Number(p&&p.amount)>0); });
+    _tk.paid=0;
+    if(typeof toast==="function") toast("Le total a changé : règlement remis à zéro, à refaire ("+du.toFixed(2).replace(".",",")+" €)","warning");
+    return true;
+  }catch(_e){ return false; }
+}
 function doApplyTkRemise(type){
   var v=parseFloat(document.getElementById("tkRemVal").value)||0;
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});
@@ -28758,6 +28777,7 @@ function doApplyTkRemise(type){
   else { var pct=Math.min(v,100); _manuelle = Math.round(_base*pct/100*100)/100; }
   _tk.remiseManuelle = _manuelle;
   _tk.remise = Math.min(total, _dejaAcquis + _manuelle);
+  _lxReglementTotalAJour();
   _tk.step=3;showCaisse();
 }
 
@@ -29507,6 +29527,8 @@ function doFinalPayExecute(method){
   // Lib\u00e8re le flag apr\u00e8s 5s (le temps que les INSERTs DB aient fini). Au-del\u00e0,
   // un 2e clic est OK \u2014 s\u00e9curit\u00e9, pas un retry intentionnel.
   setTimeout(function(){ window._payingInProgress=false; },5000);
+  // 2026-10-11 : jamais de ticket scellé dont les règlements dépassent le total (sinon Z faussée)
+  { if(_lxReglementTotalAJour()){ window._payingInProgress=false; _tk.step=5; showCaisse(); return; } }
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
   if(total<0||!_tk.items.length){
     window._payingInProgress=false; // lib\u00e8re imm\u00e9diatement, on n'a rien cr\u00e9\u00e9
