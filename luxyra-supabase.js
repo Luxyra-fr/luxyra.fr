@@ -981,6 +981,7 @@ function lxMapRdvOnlineRow(r) {
     luxyraId: r.client_luxyra_id || null,
     svcId: r.service_id, svcNom: r.service_nom, svcPrix: Number(r.service_prix),
     items: r.items || null,
+    salonEdit: r.salon_edit || null, // 2026-10-11 : contenu modifié par l'établissement (phases + prestations)
     collabId: r.collaborateur_id, collabNom: r.collaborateur_nom,
     date: r.date_rdv, heure: r.heure_rdv ? r.heure_rdv.slice(0,5) : null,
     duree: r.duree_minutes,
@@ -1527,6 +1528,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           var realSvc = null;
           for (var si = 0; si < SVC.length; si++) { if (SVC[si].id === r.svcId) { realSvc = SVC[si]; break; } }
           var phases = realSvc && realSvc.phases && realSvc.phases.length > 0 ? realSvc.phases : [{t:"w", d: dur, l: r.svcNom}];
+          // 2026-10-11 : RDV modifié par l'établissement (forfait changé, prestation remplacée/ajoutée,
+          // durée d'une phase) -> on reprend SON contenu, pas celui du catalogue.
+          var _se = r.salonEdit && typeof r.salonEdit === "object" ? r.salonEdit : null;
+          if (_se && Array.isArray(_se.phases) && _se.phases.length) phases = JSON.parse(JSON.stringify(_se.phases));
           // Items : si multi-prestation (r.items contient plusieurs entrées), on stocke
           // tout. Sinon on laisse VIDE (le main service est déjà dans a.sId/a.pr).
           // Important : ne pas pré-remplir avec un duplicat du main, sinon mD(id) à
@@ -1543,6 +1548,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
               };
             });
           }
+          if (_se && Array.isArray(_se.items)) aptItems = JSON.parse(JSON.stringify(_se.items));
           // FIX 2026-07-13 : "SANS PREFERENCE" (collaborateur_id NULL). Avant, on poussait
           // `stId: r.collabId` VERBATIM => stId=null => AUCUNE colonne dans la grille du
           // planning => le RDV etait INVISIBLE apres tout rechargement de l'app (la logique
@@ -2250,6 +2256,19 @@ async function saveAppointment(appt) {
     if (onlineCollabName) onlineData.collaborateur_nom = onlineCollabName;
     // Recalculer service_nom si la prestation principale a changé
     if (appt.sId && typeof gS === "function") { var sv0 = gS(appt.sId); if (sv0 && sv0.n) onlineData.service_nom = sv0.n; }
+    // 2026-10-11 : contenu modifié par l'établissement conservé (phases + prestations ajoutées/remplacées),
+    // sinon tout revenait au catalogue au rechargement. Le nom vu par la cliente liste les ajouts.
+    try {
+      var _seItems = (Array.isArray(appt.items) ? appt.items : []).filter(function (x) { return x && !x.isAcompteData; });
+      if ((Array.isArray(appt.aPhases) && appt.aPhases.length) || _seItems.length) {
+        onlineData.salon_edit = { phases: (Array.isArray(appt.aPhases) && appt.aPhases.length) ? appt.aPhases : null, items: _seItems, at: new Date().toISOString() };
+      }
+      if (onlineData.service_nom) {
+        var _ajouts = [];
+        _seItems.forEach(function (x) { if ((x.addedDuringRdv || x.fromReplace || x.fromMultiSelect) && x.name && x.name !== onlineData.service_nom && _ajouts.indexOf(x.name) < 0) _ajouts.push(x.name); });
+        if (_ajouts.length) onlineData.service_nom = (onlineData.service_nom + " + " + _ajouts.join(" + ")).slice(0, 200);
+      }
+    } catch (_eSe) {}
     // Tracking de la modif salon : on lit l'état actuel pour calculer le diff
     try {
       var oldRes = await _sb.from("rdv_online").select("date_rdv,heure_rdv,collaborateur_id,collaborateur_nom,duree_minutes,service_id,service_nom,service_prix,items").eq("id", onlineUuid).eq("salon_id", _salonId).maybeSingle();
@@ -2272,6 +2291,7 @@ async function saveAppointment(appt) {
         diffField("duree_minutes", old.duree_minutes, onlineData.duree_minutes);
         diffField("service_id", old.service_id, onlineData.service_id);
         diffField("service_nom", old.service_nom, onlineData.service_nom);
+        diffField("service_prix", old.service_prix == null ? null : Number(old.service_prix).toFixed(2), onlineData.service_prix == null ? undefined : Number(onlineData.service_prix).toFixed(2));
         if (Object.keys(diff).length > 0) {
           // Le salon a réellement modifié le RDV : la demande de modification de la cliente est traitée.
           onlineData.modification_demandee = false;

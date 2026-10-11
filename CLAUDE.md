@@ -1691,3 +1691,8 @@ Tables existantes : inchangées.
 - App : entrée « Centre d'aide » dans Paramètres (ouvre luxyra.fr/aide#guides) ; notification « Voir le RDV » ouvre directement la fiche (clickAppt) ; carte « Demandes de RDV » à fond opaque ; accents corrigés (Conformité caisse, clôture : solde théorique / réel compté / Valider la clôture, modale « Annulation du ticket ») ; lien FEC des documents comptables → « Paramètres › Conformité caisse ».
 - Sitemap v13 : + /aide/<guide>. KB bot : `guides_aide`.
 - Si l'UI change : refaire les captures concernées (shots.json) et relancer aide_build.py.
+
+## 2026-10-11 — RDV : changer la prestation, contenu modifié conservé, fiche RDV annulé
+- Fiche RDV (non encaissé) : bouton « 🔄 Changer la prestation » → `lxChangerPrestationRdv` / `lxAppliquerChangementPrestation` : remplace tout (sId, aPhases du catalogue avec stId du RDV, pr), garde seulement items isAcompteData. Audit `CHANGEMENT_PRESTATION_RDV`.
+- RDV en ligne : nouvelle colonne `rdv_online.salon_edit` jsonb {phases, items, at} écrite par saveAppointment (branche online) ; relue au chargement (luxyra-supabase loader + `_lxOnlineToAP`, select du poll) → les modifs (forfait changé, phase remplacée/ajoutée, durées) ne reviennent plus au catalogue après rechargement. service_nom = nom + « + ajouts » ; diff `service_prix` suivi (compte.html bandeau « Prix », email rdv-online-modified-email v8 ligne Prix).
+- Notification d'un RDV annulé : `openRdvFromNotif` → `lxFicheRdvAnnule(row)` (qui/quand, motif, acompte remboursé/conservé, empreinte, contact, fiche cliente) au lieu du planning vide.
