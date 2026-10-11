@@ -86,7 +86,8 @@
     cgv_accepted_at: NOW.toISOString(), contrat_accepted_at: NOW.toISOString(), contrat_signature: { demo: true }, code_parrainage: "DEMO2026", exercice_fin_mois: 12,
     couleur_primaire: "#c8a84e", couleur_secondaire: "#1a1a1a", abonne_depuis: NOW.toISOString(), created_at: addDays(NOW, -200).toISOString(), note_moyenne: 4.9, nb_avis: 37
   }];
-  var hor = { "0": null, "1": null, "2": { o: "09:00", c: "19:00" }, "3": { o: "09:00", c: "19:00" }, "4": { o: "09:00", c: "19:00" }, "5": { o: "09:00", c: "19:00" }, "6": { o: "09:00", c: "17:00" } };
+  // Démo : ouvert tous les jours (une visite le dimanche montre aussi une journée remplie)
+  var hor = { "0": { o: "10:00", c: "17:00" }, "1": { o: "09:00", c: "19:00" }, "2": { o: "09:00", c: "19:00" }, "3": { o: "09:00", c: "19:00" }, "4": { o: "09:00", c: "19:00" }, "5": { o: "09:00", c: "19:00" }, "6": { o: "09:00", c: "17:00" } };
   T.collaborateurs = CAT.collabs.map(function (n, i) { return { id: 9001 + i, salon_id: SALON_ID, nom: n, initiales: n.slice(0, 2).toUpperCase(), couleur: COULEURS[i % COULEURS.length], img: "", horaires: hor, actif: true, inactif: false, pause: { o: "12:30", c: "13:30" }, competences: null, photo_visible: false, horaires_overrides: {}, date_entree: "2024-01-08", created_at: NOW.toISOString() }; });
   T.services = CAT.svc.map(function (s, i) { var ph = s[4] ? [{ l: s[0], d: Math.round((s[2] - s[4]) / 2), t: "w" }, { l: "Temps de pose", d: s[4], t: "p" }, { l: "Finition", d: s[2] - s[4] - Math.round((s[2] - s[4]) / 2), t: "w" }] : [{ l: s[0], d: s[2], t: "w" }]; return { id: 7001 + i, salon_id: SALON_ID, nom: s[0], prix: s[1], categorie: s[3], phases: ph, actif: true, show_site: true, book_online: true, ordre: i, cat_genre: homme ? "H" : "F", created_at: NOW.toISOString() }; });
   T.produits = CAT.prod.map(function (p, i) { return { id: 8001 + i, salon_id: SALON_ID, nom: p[0], prix: p[1], prix_achat: r2(p[1] * 0.45), categorie: "Revente", stock: 6 + i * 3, stock_min: 3, actif: true, for_sale: true, for_use: false, tva_taux: 20, created_at: NOW.toISOString() }; });
@@ -127,7 +128,7 @@
     var day = addDays(NOW, d), dow = day.getDay(), ds = ymd(day);
     if (!hor[String(dow)]) continue;
     T.collaborateurs.forEach(function (co) {
-      var t = 9 * 60 + Math.floor(rnd() * 3) * 15, fin = (dow === 6 ? 17 : 19) * 60, n = 0;
+      var t = (dow === 0 ? 10 : 9) * 60 + Math.floor(rnd() * 3) * 15, fin = (dow === 0 || dow === 6 ? 17 : 19) * 60, n = 0;
       while (t < fin - 30 && n < 6) {
         if (t >= 12 * 60 + 30 && t < 13 * 60 + 30) { t = 13 * 60 + 30; continue; }
         var st = d < 0 ? "done" : (d === 0 ? (t < NOW.getHours() * 60 + NOW.getMinutes() - 60 ? "done" : "conf") : "conf");
@@ -284,17 +285,17 @@
     if (P.get("embed") === "1") document.documentElement.classList.add("lx-demo-embed");
     var b = document.createElement("div");
     b.id = "lxDemoBandeau";
-    b.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:2147483000;background:linear-gradient(90deg,#1a1408,#2a2010);border-top:1px solid #c8a84e;color:#fff;font:600 12px/1.4 system-ui,sans-serif;padding:7px 10px;display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap";
+    b.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:2147483000;background:linear-gradient(90deg,#1a1408,#2a2010);border-top:1px solid #c8a84e;color:#fff;font:600 12px/1.4 system-ui,sans-serif;padding:5px 8px;display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap";
     var opts = METIERS.map(function (m) { return '<option value="' + m + '"' + (m === METIER ? " selected" : "") + ">" + LABELS[m] + "</option>"; }).join("");
-    b.innerHTML = '<span style="color:#c8a84e">✨ DÉMO Luxyra</span><span style="opacity:.75">données fictives · rien n\'est enregistré</span>' +
-      '<select id="lxDemoMetier" style="background:#111;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 6px;font-size:12px">' + opts + "</select>" +
-      '<select id="lxDemoMode" style="background:#111;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 6px;font-size:12px">' + ["salon", "domicile", "mixte"].map(function (m) { return '<option value="' + m + '"' + (m === MODE ? " selected" : "") + ">" + (m === "salon" ? "En établissement" : m === "domicile" ? "À domicile" : "Mixte") + "</option>"; }).join("") + "</select>" +
+    b.innerHTML = '<span style="color:#c8a84e">✨ DÉMO Luxyra</span><span style="opacity:.7;font-size:11px">fictif · rien n\'est enregistré</span>' +
+      '<select id="lxDemoMetier" style="background:#111;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 6px;font-size:12px;width:auto;min-width:0;max-width:150px;margin:0">' + opts + "</select>" +
+      '<select id="lxDemoMode" style="background:#111;color:#fff;border:1px solid #555;border-radius:6px;padding:3px 6px;font-size:12px;width:auto;min-width:0;max-width:150px;margin:0">' + ["salon", "domicile", "mixte"].map(function (m) { return '<option value="' + m + '"' + (m === MODE ? " selected" : "") + ">" + (m === "salon" ? "En établissement" : m === "domicile" ? "À domicile" : "Mixte") + "</option>"; }).join("") + "</select>" +
       '<a href="/inscription.html" target="_top" style="background:#c8a84e;color:#111;border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:800">Essai gratuit 14 j</a>';
     if (P.get("embed") !== "1") document.body.appendChild(b);
     function go() { location.href = "/app.html?demo=" + document.getElementById("lxDemoMetier").value + "&mode=" + document.getElementById("lxDemoMode").value; }
     document.getElementById("lxDemoMetier") && document.getElementById("lxDemoMetier").addEventListener("change", go);
     document.getElementById("lxDemoMode") && document.getElementById("lxDemoMode").addEventListener("change", go);
     var page = P.get("page");
-    if (page) { var tries = 0; var iv = setInterval(function () { tries++; if (typeof window.go === "function" && window._salonId && document.getElementById("content")) { clearInterval(iv); try { window.go(page); } catch (e) {} } if (tries > 80) clearInterval(iv); }, 150); }
+    if (page) { var tries = 0; var iv = setInterval(function () { tries++; if (typeof window.go === "function" && window._salonId && typeof CURRENT_OPERATOR !== "undefined" && CURRENT_OPERATOR && !document.getElementById("opSelectorOverlay")) { clearInterval(iv); try { window.go(page); } catch (e) {} } if (tries > 80) clearInterval(iv); }, 150); }
   });
 })();
