@@ -1749,3 +1749,8 @@ Tables existantes : inchangées.
 - Risque : SEND_SMS hors exceptions → refus probable ; distribution hors Play déjà enregistrée (validation développeurs Android).
 - REPRISE PRÉVUE : quand l'appli clientes est acceptée par Google → finir SMS Companion (vidéo YouTube d'Alexandre + déclaration service premier plan + correctif 16 Ko) puis envoi par Alexandre.
 - Source Android de SMS Companion : construite par Claude dans une session d'avril 2026 (pas d'Android Studio chez Alexandre). Introuvable dans ce dépôt et dans le sandbox du 11/10 → à rechercher sur le PC d'Alexandre (dossier outputs d'une ancienne session Cowork, ou zip dans Téléchargements). Les clés de signature (upload key) de cette appli doivent aussi être retrouvées pour publier une nouvelle version.
+
+## À FAIRE 12/10/2026 — Service worker caisse (sw.js v21) : 2 faiblesses (accord d'Alexandre le 11/10)
+1. Cache qui grossit sans fin : chaque variante ?v= / ?x= / ?demo= est stockée séparément (constaté : des centaines d'entrées). Correctif : clé de cache = chemin SANS query (cache.put + match ignoreSearch), bump LX_CACHE v22 (purge des vieux).
+2. Pas de délai sur réseau faible (network-first sans timeout → écran blanc possible, vécu par Alexandre le 11/10, résolu en effaçant les données). Correctif : timeout ~4 s sur navigation puis repli cache ; ATTENTION cohérence app.html / luxyra-supabase.js (même lot de versions) — appliquer le même repli aux fichiers de code, ou servir le couple depuis le cache.
+- Ne jamais toucher IndexedDB (snapshot fiscal LX_CACHE) ni les POST. Tester : 1er chargement en ligne, hors ligne (ouverture + encaissement en mode dégradé + JET), retour réseau (renvoi + signature), mise à jour après déploiement. Puis registre + aide/bot si besoin.
