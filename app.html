@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261011-04"></script>
+<script src="luxyra-supabase.js?v=20261011-05"></script>
 <script>
 console.log("LUXYRA v6.3");
 
@@ -33734,7 +33734,11 @@ function cloturerJournee(){
       if(typeof lockTicketsForCloture==="function"){
         var lockRes = await lockTicketsForCloture(c);
         // Vérification cohérence : on devrait avoir verrouillé exactement c.nbTickets tickets
-        if(lockRes && typeof lockRes.nbModified === "number" && lockRes.nbModified !== c.nbTickets){
+        // 2026-10-11 : les tickets du jour annulés le jour même (original + contre-ticket) sont aussi
+        // verrouillés mais ne comptent pas dans nbTickets -> on les ajoute à l'attendu (fausses alertes avant).
+        var _attendu = c.nbTickets;
+        try{ _attendu = AP.filter(function(a){ return a && a.st==="done" && a.date===c.date && a.tkNum; }).length; }catch(_eA){ _attendu = c.nbTickets; }
+        if(lockRes && typeof lockRes.nbModified === "number" && lockRes.nbModified !== c.nbTickets && lockRes.nbModified !== _attendu){
           var msg = "Clôture Z#"+c.num+" : "+lockRes.nbModified+" tickets verrouillés vs "+c.nbTickets+" attendus";
           console.warn("[cloturerJournee] "+msg);
           if(typeof saveAuditEntry==="function"){

@@ -2381,6 +2381,22 @@ async function saveAppointment(appt) {
     console.warn("saveAppointment upsert error, retry stripped:", r.error?.message);
     delete data.clients; delete data.from_caisse; delete data.client_email; delete data.collab_name;
     r = await _sb.from("appointments").upsert(data).select();
+    // 2026-10-11 : ticket SCELLÉ (encaissé) -> seules les colonnes non protégées peuvent changer
+    // (annulation, impression, commentaire...). En mémoire, le hash du ticket peut différer de celui
+    // de la ligne (copie du hash de la table tickets après scellement) : l'upsert complet était alors
+    // refusé et l'annulation du ticket original n'était PAS enregistrée (CA faux après rechargement).
+    if (r.error && /inalterable/i.test(String(r.error.message || "")) && (appt.st === "done" || appt.tkNum)) {
+      var _mut = { cancelled: !!appt.cancelled, cancel_reason: appt.cancelReason || "" };
+      if (appt.cancelled && appt.cancelDate) _mut.cancel_date = String(appt.cancelDate).slice(0, 10) + "T12:00:00Z";
+      if (appt.printed === true) _mut.printed = true;
+      if (typeof appt.ticketHtml === "string" && appt.ticketHtml.length > 0) _mut.ticket_html = appt.ticketHtml;
+      if (typeof appt.comment === "string") _mut.comment = appt.comment;
+      if (appt.lieu) _mut.lieu = String(appt.lieu);
+      if (appt.adresse) _mut.adresse_domicile = String(appt.adresse);
+      var _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id");
+      if (!_rm.error && _rm.data && _rm.data.length) { _walMarkSynced(_walId); return _rm; }
+      r = _rm.error ? _rm : r;
+    }
     if (r.error) {
       console.error("saveAppointment retry failed:", r.error);
       // FIX 2026-08-25 (a) : DOUBLON PERMANENT (23505) -> ne JAMAIS re-tenter.
