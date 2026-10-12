@@ -1775,3 +1775,4 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Admin > fiche > Actions > « 🔒 Fermer définitivement » → RPC `admin_fermer_salon` (motif + nom à retaper). Garde tout le fiscal 6 ans ; le gérant garde le Mode archives (status `cancelled`) ; vitrine retirée ; clientes anonymisées ; JET 40.
 - « Supprimer » ne marche plus que pour un compte SANS historique de caisse (`salon_a_historique_fiscal`).
 - Salon Démo fermé le 12/10/2026 (tests finis). Textes : CGV art. 7, aide FAQ « supprimer mon compte », bot `fermeture_definitive`.
+- Admin : un établissement fermé sort de tout le suivi (étape « Perdu », plus de rappel, plus dans « Nouveaux à accueillir » ni « Documents à contrôler ») et n'apparaît plus dans la liste des salons sauf avec le filtre « 🔒 Fermés ». `admin_fermer_salon` met aussi admin_suivi_salons à « perdu » ; `rappels_admin_du_jour` ignore les fermés.
