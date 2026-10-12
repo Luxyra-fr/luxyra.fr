@@ -821,7 +821,7 @@ function rDashboard(){
     var d=(new Date(s.trialEnd)-now)/86400000;
     return d>=0&&d<3;
   });
-  var pendingVerif=SALONS.filter(function(s){return s.verif==='pending_review';});
+  var pendingVerif=SALONS.filter(function(s){return s.verif==='pending_review'&&!s.fermeLe;});
   var migPending=MIGRATIONS.filter(function(m){return m.status==='new'||m.status==='contacted'||m.status==='in_progress';});
   var migNew=MIGRATIONS.filter(function(m){return m.status==='new';});
   var demNew=DEMANDES.filter(function(d){return d.status==='new';});
@@ -2545,15 +2545,18 @@ var ETAPES = {nouveau:"🆕 Nouveau",essai:"🧪 En essai",a_relancer:"📞 À r
 async function asChargerSuivi(){
   try{ var r=await _sb.from("admin_suivi_salons").select("*"); var m={}; (r.data||[]).forEach(function(x){m[x.salon_id]=x;}); window._SUIVI=m; }catch(e){}
 }
-function asSuivi(id){ return window._SUIVI[id]||{etape:"nouveau",etiquettes:[],rappel_le:null,rappel_note:""}; }
+function asSuivi(id){ var sx=(typeof gSalon==="function")?gSalon(id):null; var su=window._SUIVI[id]||{etape:"nouveau",etiquettes:[],rappel_le:null,rappel_note:""};
+  if(sx&&sx.fermeLe) return Object.assign({},su,{etape:"perdu",rappel_le:null}); // 2026-10-12 : fermé = hors suivi
+  return su; }
 function asJoursEssai(s){ if(s.status!=="trial"||!s.trialEnd) return null; return Math.ceil((new Date(s.trialEnd)-new Date())/86400000); }
 function asFiltrer(){
   var F=window._AF, q=(F.q||"").toLowerCase();
   var L=SALONS.filter(function(s){
     if(q && (s.nom+" "+s.ville+" "+s.email+" "+s.siret+" "+s.gerantNom+" "+s.gerantPrenom+" "+s.tel).toLowerCase().indexOf(q)<0) return false;
+    if(F.statut==="ferme"){ if(!s.fermeLe) return false; } else if(s.fermeLe) return false; // 2026-10-12 : fermés à part
     if(F.statut==="pending"){ if(s.verif==="verified") return false; }
     else if(F.statut==="risk"){ if(!_salonRisk(s).risk) return false; }
-    else if(F.statut!=="all" && s.status!==F.statut) return false;
+    else if(F.statut!=="all" && F.statut!=="ferme" && s.status!==F.statut) return false;
     if(F.forfait==="offert"){ if(!s.isFree) return false; } else if(F.forfait!=="all" && (s.plan!==F.forfait || s.isFree)) return false;
     var su=asSuivi(s.id);
     if(F.etape!=="all" && su.etape!==F.etape) return false;
@@ -2589,7 +2592,7 @@ function rSalons(){
   var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
   h+='<div class="search-box"><span>🔍</span><input id="sSearch" value="'+saEsc(window._AF.q)+'" placeholder="Nom, ville, email, SIRET, gérant, téléphone…" oninput="window._AF.q=this.value;asRafraichir()"></div>';
   h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">';
-  h+=asSelect("statut",[["all","Tous statuts"],["active","Actifs"],["trial","Essai"],["past_due","Impayés"],["suspended","Suspendus"],["cancelled","Résiliés"],["pending","⏳ Non vérifiés"],["risk","⚠️ Inactifs ≥ 7 j"]]);
+  h+=asSelect("statut",[["all","Tous statuts"],["active","Actifs"],["trial","Essai"],["past_due","Impayés"],["suspended","Suspendus"],["cancelled","Résiliés"],["ferme","🔒 Fermés"],["pending","⏳ Non vérifiés"],["risk","⚠️ Inactifs ≥ 7 j"]]);
   h+=asSelect("forfait",[["all","Tous forfaits"],["essential","Essentiel"],["pro","Pro"],["offert","🎁 Offerts"]]);
   h+=asSelect("etape",[["all","Toutes étapes"]].concat(Object.keys(ETAPES).map(function(k){return [k,ETAPES[k]];})));
   h+=asSelect("etiquette",[["","Toutes étiquettes"]].concat(asToutesEtiquettes().map(function(e){return [e,"🏷 "+e];})));
@@ -3227,7 +3230,7 @@ function rInscriptions(){
 
   // Documents r\u00e9capitulatif
   var docsNeeded=SALONS.filter(function(s){return s.status==="active"&&s.stripeSub&&(!s.docKbis||!s.docId);});
-  var docsPending=SALONS.filter(function(s){return s.verif==="pending_review";});
+  var docsPending=SALONS.filter(function(s){return s.verif==="pending_review"&&!s.fermeLe;});
   if(docsNeeded.length||docsPending.length){
     h+='<div class="card"><h3>\ud83d\udcc1 Documents \u00e0 contr\u00f4ler</h3>';
     if(docsPending.length){
