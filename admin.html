@@ -217,6 +217,7 @@ async function lxPushEnable(){
       last_used_at:new Date().toISOString()};
     var _up=await _sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"});
     if(_up&&_up.error){ alert("Enregistrement de l'appareil impossible : "+_up.error.message); return false; }
+    window._lxAdminPushOk=true;
     alert("✅ Notifications activées sur cet appareil.");
     if(typeof render==="function")render();
     return true;
@@ -819,13 +820,22 @@ function rDashboard(){
 
   var h='<div class="topbar"><h1>Cockpit <span>Vue temps réel</span></h1><div style="font-size:12px;color:var(--text3);font-family:var(--mono)">'+fmtD(now.toISOString())+'</div></div>';
   // Bannière activation push (si permission === 'default')
-  if(("Notification" in window) && Notification.permission==="default"){
+  // 2026-10-12 : le bandeau s'affichait seulement si la permission n'avait jamais été demandée ;
+  // un téléphone ayant déjà « Autorisé » n'était donc jamais abonné aux alertes (aucun appareil admin
+  // enregistré). On vérifie maintenant l'abonnement réel de CET appareil (service /admin/).
+  if(window._lxAdminPushOk===undefined && !window._lxAdminPushChk && ("serviceWorker" in navigator) && ("PushManager" in window)){
+    window._lxAdminPushChk=true;
+    navigator.serviceWorker.getRegistration('/admin/').then(function(r){ return r ? r.pushManager.getSubscription() : null; })
+      .then(function(sub){ window._lxAdminPushOk=!!sub; if(!sub && window._currentTab==='cockpit' && typeof render==='function') render(); })
+      .catch(function(){ window._lxAdminPushOk=true; });
+  }
+  if(("Notification" in window) && Notification.permission!=="denied" && (Notification.permission==="default" || window._lxAdminPushOk===false) && !window._lxAdminPushLater){
     h+='<div id="pushBanner" style="margin:0 0 12px;padding:14px 18px;border-radius:12px;background:var(--gold-bg2);border:1px solid var(--gold);display:flex;align-items:center;gap:14px;flex-wrap:wrap">'
       +'<div style="font-size:22px">🔔</div>'
       +'<div style="flex:1;min-width:200px"><div style="font-weight:700;color:var(--gold);margin-bottom:2px">Activer les notifications</div>'
-      +'<div style="font-size:12px;color:var(--text2)">Recevez une alerte instantanée pour chaque nouveau message support ou nouvelle inscription.</div></div>'
+      +'<div style="font-size:12px;color:var(--text2)">Recevez les alertes (erreurs, nouveaux messages support, inscriptions, paiements) sur ce téléphone, même quand l\'admin est fermée.</div></div>'
       +'<button class="btn gold" onclick="lxPushEnable()">Activer</button>'
-      +'<button class="btn ghost" onclick="document.getElementById(\'pushBanner\').style.display=\'none\'">Plus tard</button>'
+      +'<button class="btn ghost" onclick="window._lxAdminPushLater=true;document.getElementById(\'pushBanner\').style.display=\'none\'">Plus tard</button>'
       +'</div>';
   }
   // KPIs (6)
