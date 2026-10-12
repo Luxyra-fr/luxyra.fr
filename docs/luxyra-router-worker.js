@@ -4448,7 +4448,16 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
       `salons_public?slug=eq.${encodeURIComponent(slug)}` +
       `&select=id,nom,sous_titre,metier,mode_activite,adresse,cp,ville,tel,email,logo,site_web,latitude,longitude,note_moyenne,nb_avis&limit=1`
     );
-    if (!Array.isArray(rows) || !rows[0]) return null;
+    if (!Array.isArray(rows)) return null;          // erreur / délai : page normale, rien de plus
+    if (!rows[0]) {                                  // 2026-10-12 : adresse inconnue ou établissement fermé
+      // ancienne adresse d'un salon renommé -> redirection permanente vers la nouvelle
+      const al = await lxSeoFetch(`salon_slug_aliases?slug=eq.${encodeURIComponent(slug)}&select=salon_id&limit=1`);
+      if (Array.isArray(al) && al[0] && al[0].salon_id) {
+        const cur = await lxSeoFetch(`salons_public?id=eq.${encodeURIComponent(al[0].salon_id)}&select=slug&limit=1`);
+        if (Array.isArray(cur) && cur[0] && cur[0].slug && cur[0].slug !== slug) return { notFound: true, redirect: cur[0].slug };
+      }
+      return { notFound: true };
+    }
     const s = rows[0];
 
     const [cfgRows, svcRows] = await Promise.all([
@@ -4464,7 +4473,7 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
     const cfg = (Array.isArray(cfgRows) && cfgRows[0]) ? cfgRows[0] : {};
 
     // Site explicitement desactive par le salon => on n'indexe rien.
-    if (cfg.site_actif === false) return null;
+    if (cfg.site_actif === false) return { notFound: true };
 
     const services = Array.isArray(svcRows) ? svcRows : [];
     const m = LX_METIER[s.metier] || LX_SEO_FALLBACK_METIER;
@@ -4721,6 +4730,10 @@ Disallow: /reset-password
 Disallow: /reset-password.html
 Disallow: /clear
 Disallow: /clear.html
+# 2026-10-12 : adresses techniques (API) et modèle brut des pages salons, jamais à indexer
+Disallow: /api/
+Disallow: /rest/
+Disallow: /site.html
 
 Sitemap: https://luxyra.fr/sitemap.xml
 `;
@@ -4891,6 +4904,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       // cloaking). Si quoi que ce soit echoue -> `seo` vaut null et la page
       // part EXACTEMENT comme aujourd'hui (aucune 500, aucune page blanche).
       // ==================================================================
+      let _lxSlugIntrouvable = false;
       try {
         const seo = await lxBuildSalonSeo(safeSlug, _reserverIntent);
         if (seo && seo.head) {
@@ -4912,11 +4926,20 @@ Sitemap: https://luxyra.fr/sitemap.xml
             );
           }
         }
+        // 2026-10-12 : adresse inconnue / établissement fermé / site désactivé -> « page introuvable » pour
+        // Google (statut 404 + noindex) : avant, n'importe quelle adresse (ex. /100) répondait 200 et
+        // finissait indexée comme une page vide. Le visiteur voit toujours le message de site.html.
+        if (seo && seo.redirect && /^[a-z0-9][a-z0-9-]{1,79}$/i.test(seo.redirect)) {
+          return Response.redirect(`https://luxyra.fr/${seo.redirect}${_reserverIntent ? "/reserver" : ""}`, 301);
+        }
+        if (seo && seo.notFound) _lxSlugIntrouvable = true;
       } catch (_) {
         // Silence total : la page normale est servie, le JS client fera le rendu.
       }
+      if (_lxSlugIntrouvable) html = html.replace("</head>", () => '<meta name="robots" content="noindex,follow">\n</head>');
 
       return new Response(html, {
+        status: _lxSlugIntrouvable ? 404 : 200,
         headers: {
           "Content-Type": "text/html;charset=UTF-8",
           "Cache-Control": "no-cache, no-store, must-revalidate"

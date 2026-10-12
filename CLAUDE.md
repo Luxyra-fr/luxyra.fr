@@ -1786,3 +1786,8 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Comptes clients Luxyra : 3 ans sans activité → préavis J-30 → `purge_compte_client_inactif` (worker `runComptesClientsInactifs`). Une connexion annule le préavis (trigger `trg_clients_luxyra_reprise`).
 - Fermeture : fiches/RDV liés à un compte client Luxyra gardés ; adresse du site libérée ; même e-mail réutilisable (inscription accepte un compte dont l'établissement est fermé ; l'app ouvre l'établissement actif, archives de l'ancien depuis la Comptabilité via `lxOuvrirArchivesAncien`).
 - Questionnaire santé : `LX_SANTE_METIERS` (listes par métier), lien « Voir les questions des autres métiers », grossesse masquée pour les hommes.
+
+## SEO (12/10/2026, Search Console ouverte dans le navigateur intégré, compte d'Alexandre)
+- robots.txt (worker) : + Disallow /api/, /rest/, /site.html.
+- Adresse de salon inconnue / fermée / site désactivé → statut 404 + noindex (avant : 200, ex. luxyra.fr/100 indexée). Ancienne adresse (alias) → redirection 301 vers la nouvelle.
+- Pieds de page (accueil, pro, tarifs, blog, aide) : liens vers les 9 pages « logiciel par métier » et tous les articles du blog (maillage interne).
