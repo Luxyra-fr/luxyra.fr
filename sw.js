@@ -1,5 +1,6 @@
 // ============================================================================
-// Luxyra Service Worker — v21 (2026-08-30)
+// Luxyra Service Worker — v22 (2026-10-12) — cle de cache sans parametres + delai reseau (voir plus bas)
+// (v21 2026-08-30)
 //
 // OBJECTIF : auto-update SANS /clear.
 //   Après avoir été chargé une fois, un simple rafraîchissement (ou relance de
@@ -70,7 +71,24 @@
 // Bumper cette chaine a CHAQUE deploiement qui doit invalider l'ancien cache
 // (la strategie network-first sert deja du frais ; le bump nettoie surtout les
 // vieux caches et marque le SW comme "mis a jour").
-var LX_CACHE = 'luxyra-sw-shell-v21-2026-08-30';
+var LX_CACHE = 'luxyra-sw-shell-v22-2026-10-12';
+
+// v22 (2026-10-12) — deux correctifs de robustesse :
+//  1. CLE DE CACHE SANS PARAMETRES : avant, chaque variante d'URL (?v=, ?x=, ?demo=...)
+//     etait stockee a part -> le cache grossissait sans fin (des centaines d'entrees
+//     constatees). Desormais une seule copie par fichier (la derniere vue en ligne).
+//     Les anciennes entrees sont migrees (la plus recente par fichier) puis purgees.
+//  2. DELAI RESEAU : sur reseau tres faible, la page attendait le reseau sans limite
+//     (ecran blanc). Si une copie existe en cache et que le reseau ne repond pas sous
+//     LX_NET_TIMEOUT ms, on sert la copie ; la reponse reseau, si elle arrive, met
+//     quand meme le cache a jour pour la prochaine ouverture.
+var LX_NET_TIMEOUT = 4000;
+
+// Cle de cache normalisee : meme origine + chemin, SANS parametres.
+function lxKey(req) {
+  try { var u = new URL(req.url); return new Request(u.origin + u.pathname); } catch (_) { return req; }
+}
+function lxNoop() {}
 
 // Shell precache pour un 1er chargement hors-ligne. RESILIENT : un echec
 // unitaire (404, reseau) ne fait PAS echouer l'installation (allSettled).
@@ -126,8 +144,9 @@ self.addEventListener('install', function(e) {
 
 self.addEventListener('activate', function(e) {
   e.waitUntil(
-    caches.keys().then(function(keys) {
-      // Supprimer UNIQUEMENT les caches d'autres versions (pas le notre).
+    lxMigrateOldCaches().then(function() {
+      return caches.keys();
+    }).then(function(keys) {
       return Promise.all(keys.map(function(n) {
         return n === LX_CACHE ? null : caches.delete(n);
       }));
@@ -136,6 +155,38 @@ self.addEventListener('activate', function(e) {
     }).catch(function(){ /* activate jamais bloquante */ })
   );
 });
+
+// Recopie dans le nouveau cache la copie la plus recente de chaque fichier des
+// anciens caches (cle sans parametres), sans ecraser ce que l'install vient de
+// precharger (plus frais). Garantit que le hors-ligne reste complet juste apres
+// la mise a jour. Ne touche qu'a Cache Storage (jamais a IndexedDB).
+function lxMigrateOldCaches() {
+  return caches.keys().then(function(names) {
+    var olds = names.filter(function(n) { return n !== LX_CACHE && n.indexOf('luxyra-sw-') === 0; });
+    if (!olds.length) return null;
+    return caches.open(LX_CACHE).then(function(dest) {
+      var latest = {}; // chemin normalise -> {cache, req}
+      return olds.reduce(function(p, name) {
+        return p.then(function() {
+          return caches.open(name).then(function(c) {
+            return c.keys().then(function(reqs) {
+              reqs.forEach(function(r) { latest[lxKey(r).url] = { c: c, r: r }; }); // dernier ecrit = plus recent
+            });
+          });
+        });
+      }, Promise.resolve()).then(function() {
+        return Promise.all(Object.keys(latest).map(function(k) {
+          return dest.match(k).then(function(have) {
+            if (have) return null;
+            return latest[k].c.match(latest[k].r).then(function(res) {
+              return (res && res.status === 200) ? dest.put(k, res) : null;
+            });
+          }).catch(lxNoop);
+        }));
+      });
+    });
+  }).catch(lxNoop);
+}
 
 self.addEventListener('fetch', function(e) {
   var req = e.request;
@@ -158,7 +209,7 @@ self.addEventListener('fetch', function(e) {
 
   if (isNav || lxIsCodeFile(url)) {
     // CODE : reseau d'abord (frais a chaque refresh), cache en repli offline.
-    e.respondWith(lxNetworkFirst(req, isNav));
+    e.respondWith(lxNetworkFirst(req, isNav, e));
   } else if (lxIsStaticAsset(url)) {
     // ASSET STATIQUE : cache d'abord (rapide), revalidation en arriere-plan.
     e.respondWith(lxCacheFirst(req));
@@ -168,34 +219,46 @@ self.addEventListener('fetch', function(e) {
 
 // NETWORK-FIRST : reseau prioritaire (fraicheur du code), repli cache si le
 // reseau echoue. Chaque reponse OK re-alimente le cache. Ne rejette jamais.
-function lxNetworkFirst(req, isNav) {
+function lxNetworkFirst(req, isNav, evt) {
+  var key = lxKey(req);
   return caches.open(LX_CACHE).then(function(cache) {
-    return fetch(req).then(function(net) {
-      if (lxCacheable(net)) { cache.put(req, net.clone()).catch(function(){}); }
+    var netP = fetch(req).then(function(net) {
+      if (lxCacheable(net)) { cache.put(key, net.clone()).catch(lxNoop); }
       return net;
-    }).catch(function() {
-      // Reseau KO -> on sert le cache si dispo.
-      return cache.match(req).then(function(hit) {
-        if (hit) return hit;
-        // Navigation hors-ligne sans copie : repli sur le shell app.
-        if (isNav) {
-          return cache.match('/app.html').then(function(shell) {
-            return shell || lxOffline();
-          });
-        }
-        return lxOffline();
+    });
+    // La mise a jour du cache continue meme si on a deja repondu avec la copie.
+    try { if (evt && evt.waitUntil) evt.waitUntil(netP.catch(lxNoop)); } catch (_) {}
+    return cache.match(key).then(function(hit) {
+      return new Promise(function(resolve) {
+        var done = false;
+        var timer = hit ? setTimeout(function() {
+          if (!done) { done = true; resolve(hit); }
+        }, LX_NET_TIMEOUT) : null;
+        netP.then(function(net) {
+          if (done) return;
+          done = true; if (timer) clearTimeout(timer);
+          resolve(net);
+        }, function() {
+          if (done) return;
+          done = true; if (timer) clearTimeout(timer);
+          if (hit) { resolve(hit); return; }
+          if (isNav) {
+            resolve(cache.match('/app.html').then(function(shell) { return shell || lxOffline(); }));
+            return;
+          }
+          resolve(lxOffline());
+        });
       });
     });
   }).catch(function() { return lxOffline(); });
 }
 
-// CACHE-FIRST (stale-while-revalidate) : renvoie le cache tout de suite s'il
-// existe, et rafraichit la copie en arriere-plan. Ne rejette jamais.
 function lxCacheFirst(req) {
+  var key = lxKey(req);
   return caches.open(LX_CACHE).then(function(cache) {
-    return cache.match(req).then(function(hit) {
+    return cache.match(key).then(function(hit) {
       var fromNet = fetch(req).then(function(res) {
-        if (lxCacheable(res)) { cache.put(req, res.clone()).catch(function(){}); }
+        if (lxCacheable(res)) { cache.put(key, res.clone()).catch(lxNoop); }
         return res;
       }).catch(function() { return hit || lxOffline(); });
       return hit || fromNet;
@@ -203,7 +266,6 @@ function lxCacheFirst(req) {
   }).catch(function() { return lxOffline(); });
 }
 
-// --- Push reception (inchange depuis v17) --------------------------------
 self.addEventListener('push', function(e) {
   // FIX 2026-08-30 : temoin de reception. Sans lui, impossible de savoir a distance
   // si un push arrive jusqu'a l'appareil : le serveur voit « accepte par FCM », mais
