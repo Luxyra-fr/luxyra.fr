@@ -1791,3 +1791,4 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - robots.txt (worker) : + Disallow /api/, /rest/, /site.html.
 - Adresse de salon inconnue / fermée / site désactivé → statut 404 + noindex (avant : 200, ex. luxyra.fr/100 indexée). Ancienne adresse (alias) → redirection 301 vers la nouvelle.
 - Pieds de page (accueil, pro, tarifs, blog, aide) : liens vers les 9 pages « logiciel par métier » et tous les articles du blog (maillage interne).
+- Bouton Réserver Google : la carte de Paramètres › Site en ligne donne maintenant le lien /<slug>/reserver (+ conseils Site Web, avis, fiche complète) ; aide et bot (google_reserver) à jour. 9 demandes d'indexation faites le 12/10 (logiciel-coiffure, institut, onglerie, barbier, cils, aide, 2 articles blog, delphinecoiff) ; sitemap renvoyé.
