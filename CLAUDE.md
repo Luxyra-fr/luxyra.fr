@@ -1756,3 +1756,9 @@ Tables existantes : inchangées.
 2. Pas de délai sur réseau faible (network-first sans timeout → écran blanc possible, vécu par Alexandre le 11/10, résolu en effaçant les données). Correctif : timeout ~4 s sur navigation puis repli cache ; ATTENTION cohérence app.html / luxyra-supabase.js (même lot de versions) — appliquer le même repli aux fichiers de code, ou servir le couple depuis le cache.
 - Ne jamais toucher IndexedDB (snapshot fiscal LX_CACHE) ni les POST. Tester : 1er chargement en ligne, hors ligne (ouverture + encaissement en mode dégradé + JET), retour réseau (renvoi + signature), mise à jour après déploiement. Puis registre + aide/bot si besoin.
 - 12/10 : admin-sw.js enregistré sur la portée « /admin » (et plus « / ») + retrait de l'ancien enregistrement admin-sw.js sur « / » ; lxPushDisable vise « /admin/ ». La portée « / » est réservée à sw.js (caisse).
+
+## Boîte « Demandes à Claude » (12/10/2026)
+- Table `claude_demandes` (RLS is_admin) + onglet admin « 🤖 Claude » (envoi, réponses, boutons OK/Non, badge). Notification téléphone automatique quand une réponse est écrite (trigger → notify_admins 'admin_reply').
+- Statuts : nouvelle → en_cours → faite | attente_ok (accord requis, champ proposition) → (accord true → en_cours → faite) | refusee | annulee.
+- Tâche planifiée « Luxyra — Demandes à Claude » (toutes les 2 h, 6h-18h) : à créer par Alexandre depuis la section Scheduled (création locale impossible) ; instructions dans outputs/tache-demandes-claude.md.
+- Urgent en direct : Dispatch (appli Claude du téléphone ↔ PC allumé).
