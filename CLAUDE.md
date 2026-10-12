@@ -1780,3 +1780,9 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 ## Vocabulaire « client » (12/10/2026, demande d'Alexandre)
 - Toujours « client(s) » (mot neutre), jamais « cliente(s) » : app, admin, site, aide, blog, e-mails du worker, bot (support_bot_kb). Accorder au masculin (« le client est prévenu », « client absent », « il »).
 - Les identifiants techniques gardent leur nom (`paiements_clientes`, `_lxMessageCliente`, `clientes_anonymisees`…).
+
+## Conservation des données (12/10/2026)
+- Établissement : 6 ans après résiliation/fermeture (ou dernière opération de caisse) → préavis J-30 → `purge_salon_6ans` (worker cron 03:00, `runRetentionPurgeJob`). Trace : table `salons_purges`.
+- Comptes clients Luxyra : 3 ans sans activité → préavis J-30 → `purge_compte_client_inactif` (worker `runComptesClientsInactifs`). Une connexion annule le préavis (trigger `trg_clients_luxyra_reprise`).
+- Fermeture : fiches/RDV liés à un compte client Luxyra gardés ; adresse du site libérée ; même e-mail réutilisable (inscription accepte un compte dont l'établissement est fermé ; l'app ouvre l'établissement actif, archives de l'ancien depuis la Comptabilité via `lxOuvrirArchivesAncien`).
+- Questionnaire santé : `LX_SANTE_METIERS` (listes par métier), lien « Voir les questions des autres métiers », grossesse masquée pour les hommes.
