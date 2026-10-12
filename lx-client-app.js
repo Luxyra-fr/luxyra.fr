@@ -1,4 +1,4 @@
-/* lx-client-app.js — 2026-10-11 : mode « application » pour les clientes (Play Store / écran d'accueil).
+/* lx-client-app.js — 2026-10-11 : mode « application » pour les clients (Play Store / écran d'accueil).
    - détecte l'ouverture depuis l'application (TWA Android, PWA installée, ?source=app)
    - ajoute la barre d'onglets en bas : Accueil · Trouver · Mes RDV
    - mémorise les établissements consultés (« récemment consultés »)
