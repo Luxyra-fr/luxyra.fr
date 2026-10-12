@@ -318,7 +318,7 @@ async function lxOuvrirDoc(u){
 }
 function gSalon(id){return SALONS.find(function(s){return s.id===id;});}
 function planB(p){var pl=gPlan(p);return '<span class="badge badge-'+(p==="pro"?"gold":"blue")+'">'+pl.nom+'</span>';}
-function statusB(s){var m={active:{c:"green",l:"Actif"},trial:{c:"orange",l:"Essai"},past_due:{c:"red",l:"Impayé"},suspended:{c:"red",l:"Suspendu"}};var x=m[s]||{c:"blue",l:s};return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
+function statusB(s){var m={active:{c:"green",l:"Actif"},trial:{c:"orange",l:"Essai"},past_due:{c:"red",l:"Impayé"},suspended:{c:"red",l:"Suspendu"},cancelled:{c:"red",l:"Résilié"},ferme:{c:"red",l:"🔒 Fermé"}};var x=m[s]||{c:"blue",l:s};return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
 function verifB(v){var m={pending:{c:"orange",l:"En attente"},verified:{c:"green",l:"Vérifié"},rejected:{c:"red",l:"Rejeté"},incomplete:{c:"blue",l:"Incomplet"}};var x=m[v]||m.pending;return '<span class="badge badge-'+x.c+'">'+x.l+'</span>';}
 function dBetween(a,b){return Math.ceil((new Date(b)-new Date(a))/(864e5));}
 
@@ -512,7 +512,7 @@ async function loadData(){
           trialEnd:s.trial_end,color:colors[i%colors.length],
           smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,welcomeSmsBonusGiven:s.welcome_sms_bonus_given===true,
           isFree:s.is_free||false,freeUntil:s.free_until,customPrice:s.custom_price_amount,
-          created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,
+          created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,fermeLe:s.ferme_le||null,fermeMotif:s.ferme_motif||"",fermePar:s.ferme_par||"",
           contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||""};
       });
       for(var i=0;i<SALONS.length;i++){
@@ -2611,7 +2611,7 @@ function asLignes(L){
     h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' onchange="asSel(\''+s.id+'\',this.checked)"></td>';
     h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
-    h+='<td>'+statusB(s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
+    h+='<td>'+statusB(s.fermeLe?"ferme":s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
     h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
     h+='<td style="font-size:11px">'+(su.rappel_le?'<span style="color:'+(su.rappel_le<=new Date().toISOString().slice(0,10)?'var(--red)':'var(--text2)')+'">📞 '+fmtD(su.rappel_le)+'</span>':'—')+'</td>';
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(\''+s.id+'\')" title="Fiche">👁</button><button class="td-btn" onclick="window.open(\'mailto:'+saEsc(s.email)+'\')" title="Email">✉️</button>'+(s.tel?'<button class="td-btn" onclick="window.open(\'tel:'+saEsc(s.tel)+'\')" title="Appeler">📞</button>':'')+'</div></td></tr>';
@@ -2760,7 +2760,7 @@ function buildRows(list,f){
     if(f==="risk"){ if(!_salonRisk(s).risk) return; }
     else { if(f!=="all"&&f!=="pending"&&s.status!==f)return; if(f==="pending"&&s.verif==="verified")return; }
     h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+s.nom+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+s.ville+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
-    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
+    h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.fermeLe?"ferme":s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+=_salonActivityCell(s);
     h+='<td><div class="td-actions"><button class="td-btn" onclick="openD(&#39;'+s.id+'&#39;)" title="Détails">👁</button><button class="td-btn" onclick="window.open(&#39;mailto:'+s.email+'&#39;)" title="Email">✉️</button></div></td></tr>';
@@ -2859,7 +2859,8 @@ function openD(id){
   // ABONNEMENT + STRIPE
   h+='<div class="dp-section"><div class="dp-label">💳 Abonnement</div>';
   h+='<div class="dp-field"><span class="k">Plan</span><span class="v">'+planB(s.plan)+'</span></div>';
-  h+='<div class="dp-field"><span class="k">Statut</span><span class="v">'+statusB(s.status)+'</span></div>';
+  h+='<div class="dp-field"><span class="k">Statut</span><span class="v">'+statusB(s.fermeLe?"ferme":s.status)+'</span></div>';
+  if(s.fermeLe) h+='<div class="dp-field"><span class="k">Fermé le</span><span class="v">'+new Date(s.fermeLe).toLocaleDateString("fr-FR")+' — '+saEsc(s.fermeMotif||"")+'<div style="font-size:11px;color:var(--text3)">Caisse, clôtures, signatures et journal conservés 6 ans (jusqu\'au '+(function(){var d=new Date(s.fermeLe);d.setFullYear(d.getFullYear()+6);return d.toLocaleDateString("fr-FR");})()+'). Le gérant garde l\'accès en lecture seule (Mode archives).</div></span></div>';
   h+='<div class="dp-field"><span class="k">Inscrit le</span><span class="v">'+fmtD(s.created)+'</span></div>';
   if(s.trialEnd){var days=dBetween(new Date().toISOString().slice(0,10),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
   if(s.stripeCust)h+='<div class="dp-field"><span class="k">Stripe</span><span class="v"><a href="https://dashboard.stripe.com/customers/'+s.stripeCust+'" target="_blank" style="color:var(--gold);font-size:11px">Voir dans Stripe ↗</a></span></div>';
@@ -3033,15 +3034,40 @@ async function deleteSalonCascade(id){
 
   // 6. Log final SALON_DELETED_CASCADE   (inchangé — pas de salon_id : la ligne survit)
   try{
-    await _sb.from('admin_log').insert({admin_user_id:_uid,action:'SALON_DELETED_CASCADE',target_id:id,details:JSON.stringify({nom:s&&s.nom,email:s&&s.email,rows:report.rows_deleted,tables:report.tables_touched,orphans:orphanTotal,failed:failed.length,report:report})});
+    await _sb.from('admin_log').insert({admin_user_id:_uid,action:'SALON_DELETED_CASCADE',details:JSON.stringify({salon_id:id,nom:s&&s.nom,email:s&&s.email,rows:report.rows_deleted,tables:report.tables_touched,orphans:orphanTotal,failed:failed.length,report:report})});
   }catch(e){}
 
   return{ok:true,report:report,orphanTotal:orphanTotal,rows:report.rows_deleted||0,tables:report.tables_touched||0,failed:failed,steps:steps};
 }
 
+// 2026-10-12 : FERMETURE DÉFINITIVE (remplace la suppression dès qu'il y a un historique de caisse).
+// Serveur : admin_fermer_salon -> retire la page publique + la recherche, annule les RDV en ligne à venir,
+// anonymise les clientes, désactive l'équipe ; GARDE tickets/clôtures/signatures/JET/archives 6 ans.
+// Le gérant garde le Mode archives (lecture seule + exports). Trace : audit « ARRET_CAISSE » (JET 40).
+async function lxFermerSalon(id){
+  var s=gSalon(id); if(!s||!_online) return;
+  if(s.fermeLe){ alert("Déjà fermé le "+new Date(s.fermeLe).toLocaleDateString("fr-FR")); return; }
+  if(!confirm("🔒 FERMER DÉFINITIVEMENT « "+s.nom+" » ?\n\n• Page publique et présence dans la recherche retirées\n• Réservations en ligne à venir annulées (sans message aux clientes)\n• Fiches clientes anonymisées\n• Accès de l'équipe coupés ; le gérant garde l'accès en lecture seule (Mode archives)\n\nCONSERVÉ 6 ANS : tickets, clôtures, signatures, journal, archives, factures.\n\nAction irréversible. Continuer ?")) return;
+  var motif=prompt("Motif de la fermeture (obligatoire) :\nex. « cessation d'activité », « compte de démonstration »");
+  if(!motif||motif.trim().length<3){ alert("Motif obligatoire : fermeture annulée."); return; }
+  var word=prompt("Pour confirmer, tapez exactement le nom de l'établissement :\n\n"+s.nom);
+  if(word!==s.nom){ alert("❌ Nom incorrect, fermeture annulée."); return; }
+  var r=await _sb.rpc("admin_fermer_salon",{p_salon:id,p_motif:motif.trim(),p_operateur:null});
+  if(r.error){ alert("❌ "+r.error.message+"\n\nRien n'a été modifié."); return; }
+  var d=r.data||{};
+  if(!d.ok){ alert("❌ "+(d.err||"Fermeture refusée")+"\n\nRien n'a été modifié."); return; }
+  alert("🔒 « "+s.nom+" » est fermé définitivement.\n\n"+(d.clientes_anonymisees||0)+" fiche(s) cliente(s) anonymisée(s)\n"+(d.rdv_annules||0)+" réservation(s) à venir annulée(s)\n"+(d.operateurs_desactives||0)+" accès équipe coupé(s)\n\nDonnées de caisse conservées 6 ans.");
+  await loadData(); render(); openD(id);
+}
+
 // Wrapper avec double confirmation — appelé depuis la fiche salon   (INCHANGÉ)
 async function confirmDeleteSalon(id){
   var s=gSalon(id);if(!s)return;
+  // 2026-10-12 : un établissement avec historique de caisse ne se supprime JAMAIS (conservation 6 ans)
+  try{ var hf=await _sb.rpc("salon_a_historique_fiscal",{p_salon:id}); if(hf.error) throw hf.error;
+    if(hf.data===true){ if(s.fermeLe){ alert("🔒 « "+s.nom+" » est déjà fermé.\n\nSes données de caisse sont conservées 6 ans (obligation légale) : la suppression n'est pas possible."); return; }
+      if(confirm("« "+s.nom+" » a un historique de caisse (tickets, clôtures, journal) qui doit être conservé 6 ans.\n\nLa suppression n'est pas possible. Voulez-vous plutôt le FERMER DÉFINITIVEMENT ?")) return lxFermerSalon(id); return; } }
+  catch(e){ alert("❌ Vérification impossible ("+(e.message||e)+"). Rien n'a été supprimé."); return; }
   if(!confirm('⚠️ SUPPRESSION DÉFINITIVE\n\nSalon : '+s.nom+'\nEmail : '+(s.email||'?')+'\n\nToutes les données seront purgées (RDV, clients, tickets, clôtures, documents, compte auth).\n\nContinuer ?'))return;
   var word=prompt('Pour confirmer, tapez exactement le nom du salon :\n\n'+s.nom);
   if(word!==s.nom){alert('❌ Nom incorrect, suppression annulée');return;}
@@ -4439,8 +4465,10 @@ function asMenuActions(s){
   o.push(["vue","👁 Voir l'app du salon (lecture seule)"],["support","💬 Ouvrir le support"]);
   o.push(["sms","📱 Ajouter des SMS"],["email","✉️ Envoyer un email"],["note","📝 Noter un échange"],["rappel","📞 Programmer un rappel"]);
   if(s.subdomain) o.push(["site","🌐 Ouvrir son site"]);
-  if(s.status!=="suspended") o.push(["suspend","⛔ Suspendre le compte"]); else o.push(["reactivate","✅ Réactiver le compte"]);
-  o.push(["reset","🔑 Envoyer un lien de nouveau mot de passe"],["delete","🗑️ Supprimer le salon"]);
+  if(!s.fermeLe){ if(s.status!=="suspended") o.push(["suspend","⛔ Suspendre le compte"]); else o.push(["reactivate","✅ Réactiver le compte"]); }
+  o.push(["reset","🔑 Envoyer un lien de nouveau mot de passe"]);
+  if(!s.fermeLe) o.push(["fermer","🔒 Fermer définitivement (garde la caisse 6 ans)"]);
+  o.push(["delete","🗑️ Supprimer (compte vide uniquement)"]);
   return '<select class="dp-actions-select" onchange="asAction(\''+s.id+'\',this.value);this.selectedIndex=0">'+o.map(function(x){return '<option value="'+x[0]+'">'+x[1]+'</option>';}).join("")+'</select>';
 }
 async function asAction(id,v){
@@ -4451,6 +4479,7 @@ async function asAction(id,v){
   if(v==="reactivate"&&!confirm("Réactiver le compte de « "+s.nom+" » ?")) return;
   if(v==="reset"&&!confirm("Envoyer à « "+s.nom+" » ("+s.email+") un lien pour choisir un nouveau mot de passe ?")) return;
   if(v==="plan"||v==="suspend"||v==="reactivate"||v==="reset"||v==="delete"){ return actS(id,v); }
+  if(v==="fermer") return lxFermerSalon(id);
   if(v==="mois") return lxOfferMonths(id);
   if(v==="sms") return addSmsCreditsCustom(id);
   if(v==="email"){ window._ASEL={}; window._ASEL[id]=1; return asGroupe("email"); }

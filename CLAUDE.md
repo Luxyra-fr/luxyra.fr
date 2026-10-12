@@ -1770,3 +1770,8 @@ Tickets 9 (espèces), 10 (remise 10 % + mixte CB/esp), 11 (bon cadeau BC-0001 + 
 2. Mention « MODE TEST – SANS VALEUR FISCALE » absente du récapitulatif Z affiché après clôture et du Z envoyé par e-mail (présente sur la bande Z complète).
 3. Fenêtre « Passer en caisse réelle » : annonce seulement les encaissements mode test (4) alors que les tickets antérieurs sans mode (8) sont aussi archivés/retirés.
 Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
+
+## Fermeture définitive d'un établissement (12/10/2026)
+- Admin > fiche > Actions > « 🔒 Fermer définitivement » → RPC `admin_fermer_salon` (motif + nom à retaper). Garde tout le fiscal 6 ans ; le gérant garde le Mode archives (status `cancelled`) ; vitrine retirée ; clientes anonymisées ; JET 40.
+- « Supprimer » ne marche plus que pour un compte SANS historique de caisse (`salon_a_historique_fiscal`).
+- Salon Démo fermé le 12/10/2026 (tests finis). Textes : CGV art. 7, aide FAQ « supprimer mon compte », bot `fermeture_definitive`.
