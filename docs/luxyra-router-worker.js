@@ -5403,54 +5403,27 @@ async function runRetentionPurgeJob(env) {
   return stats;
 }
 
-// Email préavis 30 jours avant suppression
+// Email préavis 30 jours avant suppression (2026-10-12 : mise en page Luxyra commune, lxMailLayout)
 async function sendRetentionWarningEmail(env, salon) {
   if (!env.BREVO_API_KEY) { console.warn("[retention] BREVO_API_KEY missing — skip email"); return; }
-  // 2026-10-12 : date calculée en base (6 ans après la dernière opération de caisse ou la fin du service)
+  // date calculée en base (6 ans après la dernière opération de caisse ou la fin du service)
   let purgeDate;
   if (salon.fin) purgeDate = new Date(salon.fin);
   else { purgeDate = new Date(salon.cancelled_at); purgeDate.setFullYear(purgeDate.getFullYear() + 6); }
-  const purgeFmt = purgeDate.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
-  const html = `
-<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;color:#1a1a1a">
-  <div style="background:#0b0b0b;padding:26px 20px 20px;text-align:center;border-bottom:3px solid #c8a84e">
-    <img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">
-    <div style="color:#d4a843;font-family:Georgia,serif;font-size:22px;letter-spacing:6px">LUXYRA</div>
-  </div>
-  <div style="padding:32px 28px">
-    <h2 style="color:#1a1a1a;font-size:20px;margin:0 0 16px">⏰ Préavis de suppression de vos données</h2>
-    <p style="font-size:15px;line-height:1.6;color:#333">Bonjour,</p>
-    <p style="font-size:15px;line-height:1.6;color:#333">Votre abonnement Luxyra a été résilié il y a <strong>près de 6 ans</strong>. Conformément à la législation française (art. L102 B du Livre des procédures fiscales), nous avons conservé vos documents comptables pendant cette période obligatoire.</p>
-    <div style="background:#fff8e6;border-left:4px solid #d4a843;padding:16px;margin:20px 0;border-radius:6px">
-      <p style="margin:0;font-size:14px;color:#1a1a1a"><strong>📅 Vos données seront supprimées définitivement le <span style="color:#b8960f">${purgeFmt}</span></strong> (dans environ 30 jours).</p>
-    </div>
-    <p style="font-size:15px;line-height:1.6;color:#333">Si vous souhaitez récupérer vos clôtures Z, factures, ou tout autre document comptable, connectez-vous dès maintenant en mode archives :</p>
-    <div style="text-align:center;margin:28px 0">
-      <a href="https://luxyra.fr/app" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:10px;letter-spacing:.5px;text-transform:uppercase;font-size:13px">Accéder à mes archives</a>
-    </div>
-    <p style="font-size:14px;line-height:1.6;color:#666">Une fois connecté, cliquez sur <strong>"Accéder à mes archives comptables"</strong> pour télécharger vos documents en quelques clics.</p>
-    <hr style="border:none;border-top:1px solid #eee;margin:28px 0">
-    <p style="font-size:12px;color:#999;line-height:1.5">Vous pouvez également <a href="https://luxyra.fr/app" style="color:#d4a843">reprendre un abonnement</a> à tout moment pour continuer d'utiliser Luxyra.</p>
-    <p style="font-size:11px;color:#999;margin-top:18px">Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023 — 29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — contact@luxyra.fr</p>
-  </div>
-</div>`;
-  const text = `Préavis suppression de vos données — Luxyra\n\nVotre abonnement résilié atteint bientôt 6 ans. Vos documents comptables seront supprimés définitivement le ${purgeFmt} (dans environ 30 jours).\n\nPour récupérer vos clôtures Z, factures et autres documents : connectez-vous sur https://luxyra.fr/app et cliquez sur "Accéder à mes archives comptables".\n\nLuxyra • contact@luxyra.fr`;
+  const purgeFmt = purgeDate.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long", year: "numeric" });
+  const nom = String(salon.nom || "votre établissement").replace(/</g, "&lt;");
+  const corps = `<p>Bonjour,</p>
+<p>Le service Luxyra de <b>${nom}</b> a pris fin il y a près de 6 ans. Comme la loi l'impose (art. L102 B du Livre des procédures fiscales), nous avons conservé vos documents de caisse pendant toute cette durée.</p>
+<div style="background:#fbf6e9;border-left:4px solid #c8a84e;padding:14px 16px;margin:18px 0;border-radius:6px"><b>Vos données seront supprimées définitivement le ${purgeFmt}</b> (dans environ 30 jours) : tickets, clôtures, journal, factures et toutes les autres données de l'établissement.</div>
+<p>Pour garder une copie, connectez-vous d'ici là en mode archives (lecture seule) et téléchargez vos documents : tickets, FEC pour votre expert-comptable, archive fiscale signée.</p>
+${lxMailBouton("Accéder à mes archives", "https://luxyra.fr/app")}
+<p style="font-size:13px;color:#666">Une fois connecté, choisissez « Accéder à mes archives comptables ». Après le ${purgeFmt}, plus aucune récupération ne sera possible.</p>`;
   try {
-    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", "accept": "application/json" },
-      body: JSON.stringify({
-        sender: { name: "Luxyra", email: "contact@luxyra.fr" },
-        to: [{ email: salon.email, name: salon.nom || "" }],
-        subject: `⏰ Préavis : suppression de vos données Luxyra le ${purgeFmt}`,
-        htmlContent: html,
-        textContent: text
-      })
-    });
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error(`[retention] Brevo email failed for salon ${salon.id}: ${res.status} ${errBody}`);
-    }
+    await brevoSendEmail(env, { to: salon.email, toName: salon.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
+      subject: `Vos données Luxyra seront supprimées le ${purgeFmt}`,
+      htmlContent: lxMailLayout(corps, { titre: "Suppression prochaine de vos archives" }),
+      textContent: `Le service Luxyra de ${salon.nom || "votre établissement"} a pris fin il y a près de 6 ans. Vos documents de caisse et toutes les données de l'établissement seront supprimés définitivement le ${purgeFmt}. Pour garder une copie, connectez-vous en mode archives d'ici là : https://luxyra.fr/app`,
+      replyTo: null, attachment: null });
   } catch (e) {
     console.error(`[retention] sendRetentionWarningEmail exception:`, e?.message || e);
   }
