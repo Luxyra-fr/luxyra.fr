@@ -1762,3 +1762,11 @@ Tables existantes : inchangées.
 - Statuts : nouvelle → en_cours → faite | attente_ok (accord requis, champ proposition) → (accord true → en_cours → faite) | refusee | annulee.
 - Tâche planifiée cloud « Luxyra file Claude » CRÉÉE le 12/10 (5h56, 7h56 … 17h56), sans jeton : accès GitHub du compte ; si publication impossible → analyse/base + « modif site en session PC ». Premier passage 13/10 5h56. (Le « Luxyra controle quotidien » cloud tourne aussi chaque jour à 8 h, lecture seule.)
 - Dispatch indisponible pour les nouveaux utilisateurs ; urgent = session cloud depuis l'appli Claude du téléphone.
+
+## Tests finaux Salon Démo — 12/10/2026 (soir) : TOUS OK
+Tickets 9 (espèces), 10 (remise 10 % + mixte CB/esp), 11 (bon cadeau BC-0001 + complément CB), avoir 12 (annulation du ticket 4 de la veille), Z n°2 (70,80 €, tiroir 209,80 juste), archive signée (54/54 signatures, 12/12 tickets recalculés ; falsification détectée), FEC (débit = crédit 426,80), passage en caisse réelle (purge archivée, JET 200/105/260, RDV à venir conservés, effacement et retour test refusés), bandeau parrainage masqué côté serveur.
+À valider par Alexandre (affichage seulement) :
+1. Bon cadeau utilisé affiché « REMISE TICKET » sur le ticket et compté dans « Remises » de la Z → libellé « Bon cadeau BC-xxxx (déjà encaissé) » + ligne dédiée en Z.
+2. Mention « MODE TEST – SANS VALEUR FISCALE » absente du récapitulatif Z affiché après clôture et du Z envoyé par e-mail (présente sur la bande Z complète).
+3. Fenêtre « Passer en caisse réelle » : annonce seulement les encaissements mode test (4) alors que les tickets antérieurs sans mode (8) sont aussi archivés/retirés.
+Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
