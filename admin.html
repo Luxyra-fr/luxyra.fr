@@ -1210,6 +1210,7 @@ function rMonitoring(){
     + '<button onclick="rMonitoringRefresh()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button>'
     + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(!hasSW||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
     + '</h1></div>';
+  h+='<style>#monitoringContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#monitoringContent td,#monitoringContent th{word-break:break-word}#monitoringContent pre,#monitoringContent code{white-space:pre-wrap;word-break:break-all}@media(max-width:700px){#monitoringContent{padding:8px!important}#monitoringContent>div{padding-left:10px!important;padding-right:10px!important}.topbar h1{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:18px}.topbar h1 button{margin-left:0!important}#monitoringContent [style*="grid-template-columns"]{grid-template-columns:1fr 1fr!important}}</style>';
   h+='<div id="monitoringContent" style="padding:20px"><div style="text-align:center;color:var(--text3);padding:40px">Chargement…</div></div>';
   setTimeout(rMonitoringRefresh, 50);
   // FIX 2026-05-18 : auto-open drilldown si ?open_signature=... dans l'URL
@@ -1667,6 +1668,60 @@ window.lxMarkResolvedManual = async function(signature){
   } catch(e){ alert('Erreur : '+(e.message||e)); }
 };
 
+// 2026-10-12 : résumé « en clair » des erreurs des dernières 24 h (lisible sur téléphone).
+// Chaque message technique est traduit : gravité, explication simple, action à faire.
+function _lxExpliquerErreur(msg, source, t){
+  var m=String(msg||''); var src=String(source||'');
+  var R=function(n,t,e,a){return {niveau:n,titre:t,explication:e,action:a||''};};
+  if(/NF525_TEST_NUIT_KO/.test(m)){
+    if((m.match(/ACCEPTE/g)||[]).length===1 && /journal audit: suppression ACCEPTEE/.test(m) && t && new Date(t).getTime()<Date.parse('2026-10-12T20:00:00Z'))
+      return R('info','Test de nuit de la caisse : fausse alerte (corrigée le 12/10)','Le test visait une ligne technique du journal (erreur d\'affichage), effaçable par conception. Aucune donnée de caisse n\'a été touchée.','Rien à faire.');
+    return R('grave','Test de nuit : une protection de la caisse ne répond pas','Chaque nuit, Luxyra essaie de modifier ou supprimer des données de caisse ; tout doit être refusé. Ici, une tentative est passée (elle a été annulée aussitôt).','Prévenir Claude immédiatement.');
+  }
+  if(/NF525_SIGNATURE_KO|signature.*(invalide|KO)/i.test(m)) return R('grave','Contrôle des signatures de caisse en échec','Le contrôle automatique a trouvé un enregistrement de caisse dont la signature ne correspond plus.','Prévenir Claude immédiatement.');
+  if(/^Slow query|slow_query/i.test(m)||src==='slow_query') return R('info','Requête un peu lente','Une opération de la base a pris plus d\'une seconde en moyenne. Sans effet visible tant que l\'appli reste fluide.','Rien à faire.');
+  if(/Map container is already initialized/i.test(m)) return R('info','Carte de la page du salon affichée deux fois','Erreur d\'affichage sans conséquence pour la cliente (corrigée le 12/10).','Rien à faire.');
+  if(/ticket encaiss[eé] inalt[eé]rable/i.test(m)) return R('info','Tentative de modifier un ticket déjà encaissé','La caisse a refusé, comme prévu par la loi : un ticket encaissé ne se modifie pas (on fait un avoir).','Rien à faire.');
+  if(/ferm[eé]\/absent ce jour/i.test(m)) return R('info','Message affiché : jour fermé ou collaborateur absent','Simple avertissement montré à l\'utilisateur.','Rien à faire.');
+  if(/Aucun administrateur configur/i.test(m)) return R('surveiller','Aucun administrateur défini dans l\'établissement','Certaines actions (annulation, remise…) demandent un code administrateur.','Vérifier l\'équipe de l\'établissement concerné.');
+  if(/Acc[eè]s refus[eé]/i.test(m)) return R('info','Action refusée faute de droits','Un utilisateur a tenté une action réservée au titulaire du compte.','Rien à faire.');
+  if(/Failed to fetch|NetworkError|Load failed|network|ERR_INTERNET|timeout/i.test(m)) return R('info','Coupure de réseau chez l\'utilisateur','Le téléphone ou l\'ordinateur a perdu la connexion un instant.','Rien à faire si cela reste rare.');
+  if(/stripe/i.test(m)) return R('grave','Problème avec les paiements en ligne (Stripe)','Un paiement, un acompte ou un abonnement a pu échouer.','Regarder le détail ou prévenir Claude.');
+  if(/permission denied|row-level security|RLS/i.test(m)) return R('surveiller','Accès aux données refusé','Une page a tenté de lire ou d\'écrire une donnée sans autorisation.','Prévenir Claude si cela se répète.');
+  if(/does not exist|column|relation|function .* not exist|PGRST/i.test(m)) return R('grave','Élément manquant dans la base','Une fonction de l\'appli appelle un élément qui n\'existe pas : une fonctionnalité peut être en panne.','Prévenir Claude.');
+  if(/email|brevo|smtp/i.test(m)) return R('surveiller','Envoi d\'e-mail en échec','Un e-mail (confirmation, rappel…) n\'est peut-être pas parti.','Prévenir Claude si cela se répète.');
+  if(/sms/i.test(m)) return R('surveiller','Envoi de SMS en échec','Un SMS n\'est peut-être pas parti.','Prévenir Claude si cela se répète.');
+  if(/TypeError|ReferenceError|is not a function|undefined|null/i.test(m)) return R('surveiller','Erreur dans une page de l\'appli','Un bouton ou un écran a rencontré un problème technique.','Prévenir Claude si cela se répète ou si quelqu\'un s\'en plaint.');
+  return R('surveiller','Erreur technique','Message d\'origine : '+m.slice(0,140),'Prévenir Claude si cela se répète.');
+}
+function _lxMonitoringEnClair(serverErrs, publicErrs, recent){
+  var since=Date.now()-86400000, items=[];
+  var nomSalon=function(id,slug){ try{ var s=(typeof SALONS!=='undefined'&&SALONS)?SALONS.find(function(x){return (id&&x.id===id)||(slug&&x.slug===slug);}):null; return s?(s.nom||s.name||''):''; }catch(_){return '';} };
+  (serverErrs||[]).forEach(function(e){ if(e&&e.reported_at&&new Date(e.reported_at).getTime()>=since) items.push({msg:e.message,src:e.source,salon:nomSalon(e.salon_id),t:e.reported_at}); });
+  (publicErrs||[]).forEach(function(e){ if(e&&e.reported_at&&new Date(e.reported_at).getTime()>=since) items.push({msg:e.message,src:'site public',salon:nomSalon(null,e.salon_slug)||e.salon_slug||'',t:e.reported_at}); });
+  (recent||[]).forEach(function(e){ var t=e.occurred_at||e.created_at||e.timestamp_action||e.reported_at; if(t&&new Date(t).getTime()>=since) items.push({msg:e.message||e.msg||e.details,src:'appli',salon:e.salon_nom||'',t:t}); });
+  var groups={};
+  items.forEach(function(it){ var x=_lxExpliquerErreur(it.msg,it.src,it.t); var k=x.niveau+'|'+x.titre; if(!groups[k]) groups[k]={x:x,n:0,salons:{},last:it.t}; var g=groups[k]; g.n++; if(it.salon) g.salons[it.salon]=1; if(new Date(it.t)>new Date(g.last)) g.last=it.t; });
+  var ordre={grave:0,surveiller:1,info:2}, arr=Object.keys(groups).map(function(k){return groups[k];}).sort(function(a,b){return ordre[a.x.niveau]-ordre[b.x.niveau]||b.n-a.n;});
+  var nbG=arr.filter(function(g){return g.x.niveau==='grave';}).length, nbS=arr.filter(function(g){return g.x.niveau==='surveiller';}).length;
+  var etat = nbG? ['#ef5350','🔴 À traiter maintenant'] : nbS? ['#ff9800','🟠 À surveiller'] : ['#66bb6a','🟢 Tout va bien'];
+  var h='<div class="lx-clair" style="margin-bottom:18px;padding:14px;border-radius:12px;background:var(--bg2);border:1px solid var(--border);border-left:4px solid '+etat[0]+'">';
+  h+='<div style="font-weight:800;font-size:15px;color:'+etat[0]+';margin-bottom:4px">'+etat[1]+'</div>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Résumé en clair des dernières 24 h'+(arr.length?'':' : aucune erreur.')+'</div>';
+  var coul={grave:'#ef5350',surveiller:'#ff9800',info:'#9e9e9e'}, lib={grave:'Grave',surveiller:'À surveiller',info:'Sans gravité'};
+  arr.forEach(function(g){
+    var hh=new Date(g.last).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    var sal=Object.keys(g.salons);
+    h+='<div style="padding:10px 0;border-top:1px solid var(--border)">';
+    h+='<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:'+coul[g.x.niveau]+'22;color:'+coul[g.x.niveau]+';white-space:nowrap">'+lib[g.x.niveau]+'</span>';
+    h+='<span style="font-weight:700;font-size:13px;flex:1;min-width:180px;word-break:break-word">'+_esc(g.x.titre)+(g.n>1?' <span style="color:var(--text3);font-weight:400">×'+g.n+'</span>':'')+'</span></div>';
+    h+='<div style="font-size:12px;color:var(--text2);margin-top:4px;line-height:1.45;word-break:break-word">'+_esc(g.x.explication)+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Dernière fois : '+hh+(sal.length?' · '+_esc(sal.join(', ')):'')+(g.x.action?' · <b style="color:var(--text2)">'+_esc(g.x.action)+'</b>':'')+'</div>';
+    h+='</div>';
+  });
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">Le détail technique complet est plus bas.</div></div>';
+  return h;
+}
 function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations, fixQueue){
   publicErrs = publicErrs || [];
   serverErrs = serverErrs || [];
@@ -1692,6 +1747,7 @@ function _renderMonitoringHTML(summary, recent, publicErrs, serverErrs, cronHeal
   var color1h = total1h>0 ? '#ef5350' : '#9e9e9e';
   var color24h = total24h>0 ? '#ff9800' : '#9e9e9e';
   var h='';
+  try{ h+=_lxMonitoringEnClair(serverErrs, publicErrs, recent); }catch(_e){}
   // Queue des demandes envoyées à Claude (visible depuis tel)
   fixQueue = fixQueue || [];
   if(fixQueue.length > 0){
