@@ -1236,7 +1236,7 @@ async function lxCdCharger(){
   var box=document.getElementById('lxCdListe'); if(!box) return;
   var r=await _sb.from('claude_demandes').select('*').order('cree_le',{ascending:false}).limit(60);
   if(r.error){ box.innerHTML='<div style="color:var(--red)">Erreur : '+_esc(r.error.message)+'</div>'; return; }
-  var L=r.data||[]; lxCdBadge(L);
+  var L=r.data||[]; try{ localStorage.setItem('lx_cd_vu', new Date().toISOString()); }catch(_){} lxCdBadge(L);
   if(!L.length){ box.innerHTML='<div style="padding:20px;text-align:center">Aucune demande pour l\'instant.</div>'; return; }
   var lib={nouvelle:['En attente','#9e9e9e'],en_cours:['En cours','#42a5f5'],attente_ok:['Attend ton OK','#ff9800'],faite:['Fait','#66bb6a'],refusee:['Non faisable','#ef5350'],annulee:['Annulée','#757575']};
   var f=function(d){ return d? new Date(d).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''; };
@@ -1259,7 +1259,8 @@ async function lxCdCharger(){
   });
   box.innerHTML=h;
 }
-function lxCdBadge(L){ try{ var n=(L||[]).filter(function(d){return d.statut==='attente_ok'&&d.accord===null;}).length; var b=document.getElementById('badgeClaude'); if(b){ b.textContent=n?String(n):''; b.style.display=n?'':'none'; } }catch(_){} }
+function lxCdVu(){ try{ return localStorage.getItem('lx_cd_vu')||''; }catch(_){ return ''; } }
+function lxCdBadge(L){ try{ var vu=lxCdVu(); var n=(L||[]).filter(function(d){return (d.statut==='attente_ok'&&d.accord===null) || (d.repondu_le && (!vu || new Date(d.repondu_le)>new Date(vu)) && window._currentTab!=='claude');}).length; var b=document.getElementById('badgeClaude'); if(b){ b.textContent=n?String(n):''; b.style.display=n?'':'none'; } }catch(_){} }
 async function lxCdEnvoyer(){
   var t=(document.getElementById('lxCdTexte').value||'').trim(); if(t.length<3){ alert('Écris ta demande.'); return; }
   var u=document.getElementById('lxCdUrg').checked?'urgente':'normale';
@@ -1279,7 +1280,9 @@ async function lxCdAnnuler(id){
   if(!confirm('Annuler cette demande ?')) return;
   await _sb.from('claude_demandes').update({statut:'annulee'}).eq('id',id).eq('statut','nouvelle'); lxCdCharger();
 }
-setInterval(function(){ try{ if(_online && _sb){ _sb.from('claude_demandes').select('id,statut,accord').eq('statut','attente_ok').then(function(r){ if(!r.error) lxCdBadge(r.data); }); } }catch(_){} }, 60000);
+window._lxCdTick=function(){ try{ if(_online && _sb){ _sb.from('claude_demandes').select('id,statut,accord,repondu_le').order('repondu_le',{ascending:false,nullsFirst:false}).limit(30).then(function(r){ if(!r.error) lxCdBadge(r.data); }); } }catch(_){} };
+setInterval(window._lxCdTick, 30000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) window._lxCdTick(); });
 function rMonitoring(){
   var notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
   var hasNotif = (typeof Notification !== 'undefined');
@@ -1378,6 +1381,10 @@ window.lxRequestMonitoringNotif = async function(){
 // Si l'utilisateur vient du SW (clic sur notif), on navigue vers monitoring
 if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
   navigator.serviceWorker.addEventListener('message', function(event){
+    // 2026-10-12 : clic sur une notification -> aller directement à la page indiquée (?tab=…)
+    if (event.data && event.data.type === 'lx-notif-click' && typeof nav === 'function') {
+      try { var _u = new URL(event.data.url || '', location.origin); var _t = _u.searchParams.get('tab'); if (_t) { nav(_t, _u.searchParams.get('sub') || null); return; } } catch (_) {}
+    }
     if (event.data && event.data.type === 'navigate' && typeof go === 'function') {
       go('monitoring');
     }

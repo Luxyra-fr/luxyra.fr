@@ -4,7 +4,7 @@
 // Séparé de sw.js (app.html) pour ne pas interférer
 // ============================================================
 
-const SW_VERSION = 'lx-admin-sw-v1';
+const SW_VERSION = 'lx-admin-sw-v2';
 
 self.addEventListener('install', function(event) {
   console.log('[lx-admin-sw] install', SW_VERSION);
@@ -32,7 +32,8 @@ self.addEventListener('push', function(event) {
     badge: data.badge || '/icon-96.png',
     tag: data.tag || 'lx-admin-' + Date.now(),
     data: {
-      url: data.url || '/admin.html',
+      // 2026-10-12 : send-push place l'adresse dans data.data.url
+      url: data.url || (data.data && data.data.url) || '/admin',
       type: data.type || 'generic'
     },
     requireInteraction: data.requireInteraction || false,
@@ -43,23 +44,23 @@ self.addEventListener('push', function(event) {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// Click sur la notification → ouvre/focus admin.html
+// Click sur la notification → ouvre l'admin sur la bonne page (2026-10-12)
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/admin.html';
-
+  var targetUrl = (event.notification.data && event.notification.data.url) || '/admin';
+  try { targetUrl = new URL(targetUrl, self.location.origin).href; } catch (_) {}
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-      for (let i = 0; i < clientList.length; i++) {
-        const c = clientList[i];
-        if (c.url.indexOf('/admin.html') !== -1 && 'focus' in c) {
-          c.postMessage({ type: 'lx-notif-click', payload: event.notification.data });
+      for (var i = 0; i < clientList.length; i++) {
+        var c = clientList[i];
+        var u = '';
+        try { u = new URL(c.url).pathname; } catch (_) {}
+        if ((u === '/admin' || u === '/admin.html' || u.indexOf('/admin/') === 0) && 'focus' in c) {
+          c.postMessage({ type: 'lx-notif-click', url: targetUrl, payload: event.notification.data });
           return c.focus();
         }
       }
-      if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
-      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
     })
   );
 });
