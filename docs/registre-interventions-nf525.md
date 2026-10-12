@@ -267,3 +267,4 @@ d'altération des données fiscales.*
 - **Comptes clients inactifs 3 ans (CNIL)** : `lx_prive.client_derniere_activite`, `comptes_inactifs_candidats`, `purge_compte_client_inactif` (préavis e-mail 30 j, une connexion l'annule), job worker `runComptesClientsInactifs`. Fiches des établissements en activité : seulement déliées ; établissements fermés : anonymisées.
 - **RGPD J+60** (`rgpd_purge_salon`) : ne supprime plus les fiches/réservations liées à un compte client Luxyra.
 - Aucune donnée fiscale d'un établissement en conservation n'a été modifiée.
+- Vérification finale : tests de protection NF525 11/11 refusés ; purge 6 ans retestée à blanc (OK, annulée) ; `salon_a_historique_fiscal` restreinte à l'admin / au gérant de l'établissement.
