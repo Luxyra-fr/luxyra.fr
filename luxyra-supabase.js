@@ -1162,7 +1162,8 @@ async function loadSalonData() {
     // avec le flag _archiveMode qui désactive toutes les écritures côté UI.
     // Le flag est posé par showSuspendedScreen → bouton "Accéder à mes archives"
     // (sessionStorage = nettoyé à fermeture onglet, pas localStorage).
-    if (sessionStorage.getItem("luxyra_archive_mode") === "1" && salon.status === "cancelled") {
+    // 2026-10-12 : en vue admin, le stockage est en mémoire (perdu au rechargement) -> archives directement
+    if ((sessionStorage.getItem("luxyra_archive_mode") === "1" || window._lxVueAdmin) && salon.status === "cancelled") {
       window._archiveMode = true;
       window._archiveSalon = salon;
       // Continue le chargement normal — le bandeau + le verrouillage des routes
