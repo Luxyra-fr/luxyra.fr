@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261012-3"></script>
+<script src="luxyra-supabase.js?v=20261012-4"></script>
 <script>
 console.log("LUXYRA v6.6");
 
@@ -33622,8 +33622,45 @@ async function lxSanteCharger(force){
     var r=await _sb.from("clients_sante").select("client_id,donnees,consentement_at,consentement_mode,updated_at,updated_by").eq("salon_id",_salonId);
     if(!r.error){ var m={}; (r.data||[]).forEach(function(x){ m[x.client_id]=x; }); window.LX_SANTE=m; window._lxSanteCharge=true; } }catch(e){}
 }
-var LX_SANTE_ALLERGIES=["Coloration / PPD","Ammoniaque","Produits décolorants","Latex","Nickel / métaux","Parfums / huiles essentielles","Colles (cils, faux ongles)","Acrylique / gel UV","Cire / résine"];
-var LX_SANTE_COND=["Peau ou cuir chevelu sensible / irrité","Eczéma / psoriasis","Diabète","Traitement anticoagulant","Problèmes cardiaques / tension","Épilepsie","Troubles circulatoires (phlébite, varices)","Traitement lourd en cours (chimiothérapie…)","Traitement rétinoïdes / Roaccutane","Pacemaker / implant électronique"];
+// 2026-10-12 : questionnaire adapté au métier (demande d'Alexandre). Libellés identiques à l'ancienne liste quand le sens
+// est le même, pour que les réponses déjà enregistrées restent cochées. Grossesse / allaitement : commun à tous.
+var LX_SANTE_METIERS={
+  coiffure:{nom:"Coiffure",test:"Test de tolérance coloration (48 h avant)",
+    allergies:["Coloration / PPD","Ammoniaque","Produits décolorants","Parfums / huiles essentielles","Latex","Nickel / métaux"],
+    cond:["Peau ou cuir chevelu sensible / irrité","Eczéma / psoriasis","Chute de cheveux importante / traitement en cours","Lissage ou défrisage récent (moins de 3 mois)","Traitement lourd en cours (chimiothérapie…)"]},
+  barbier:{nom:"Barbier",test:"Test de tolérance coloration barbe (48 h avant)",
+    allergies:["Coloration / PPD","Parfums / huiles essentielles","Latex","Nickel / métaux"],
+    cond:["Peau ou cuir chevelu sensible / irrité","Folliculite / poils incarnés","Acné / boutons en cours","Traitement anticoagulant","Diabète"]},
+  esthetique:{nom:"Esthétique / épilation",test:"Test de tolérance (cire, produit de soin)",
+    allergies:["Cire / résine","Parfums / huiles essentielles","Latex","Produits cosmétiques (crèmes, masques)","Acides / peelings"],
+    cond:["Peau ou cuir chevelu sensible / irrité","Eczéma / psoriasis","Traitement rétinoïdes / Roaccutane","Exposition au soleil / UV récente","Troubles circulatoires (phlébite, varices)","Diabète","Traitement anticoagulant","Problèmes cardiaques / tension","Pacemaker / implant électronique"]},
+  ongles:{nom:"Ongles",test:"Test de tolérance (gel, colle)",
+    allergies:["Acrylique / gel UV","Colles (cils, faux ongles)","Dissolvant / acétone","Latex","Parfums / huiles essentielles"],
+    cond:["Mycose ou infection d’ongle","Ongles fragiles / décollés","Plaie ou eczéma des mains","Diabète","Traitement anticoagulant","Troubles circulatoires (phlébite, varices)"]},
+  regard:{nom:"Cils & sourcils",test:"Test de tolérance colle / teinture (48 h avant)",
+    allergies:["Colles (cils, faux ongles)","Teinture cils / sourcils (PPD)","Produits de rehaussement","Latex","Patchs / adhésifs"],
+    cond:["Yeux sensibles / conjonctivite","Port de lentilles","Opération ou traitement des yeux récent","Irritation des paupières (blépharite)","Traitement lourd en cours (chimiothérapie…)","Traitement anticoagulant","Cicatrisation difficile / chéloïdes"]},
+  maquillage:{nom:"Maquillage",test:"Essai / test de tolérance produit",
+    allergies:["Produits cosmétiques (crèmes, masques)","Parfums / huiles essentielles","Latex","Colles (cils, faux ongles)","Nickel / métaux"],
+    cond:["Peau ou cuir chevelu sensible / irrité","Acné / boutons en cours","Yeux sensibles / conjonctivite","Port de lentilles","Eczéma / psoriasis"]},
+  tatouage:{nom:"Tatouage & piercing",test:"Test de tolérance (encre, métal)",
+    allergies:["Encres / pigments","Latex","Nickel / métaux","Antiseptiques / désinfectants","Patchs / adhésifs"],
+    cond:["Traitement anticoagulant","Diabète","Cicatrisation difficile / chéloïdes","Problèmes cardiaques / tension","Épilepsie","Eczéma / psoriasis","Défenses immunitaires affaiblies (traitement en cours)","Malaise possible (aiguilles, prise de sang)"]},
+  spa:{nom:"Spa & massages",test:null,
+    allergies:["Parfums / huiles essentielles","Huiles de massage (amande, noix…)","Latex","Algues / iode"],
+    cond:["Problèmes cardiaques / tension","Troubles circulatoires (phlébite, varices)","Épilepsie","Diabète","Douleurs dos / articulations, opération récente","Peau ou cuir chevelu sensible / irrité"]}
+};
+LX_SANTE_METIERS.bien_etre={nom:"Bien-être",test:null,allergies:LX_SANTE_METIERS.spa.allergies,cond:LX_SANTE_METIERS.spa.cond};
+// Métiers du salon : le métier principal (+ liste éventuelle), ou tous si « afficher tout »
+function lxSanteMetiers(){
+  var m=[(typeof SALON_CONFIG!=="undefined"&&SALON_CONFIG&&SALON_CONFIG.metier)||"coiffure"];
+  try{ (SALON_CONFIG.metiers||[]).forEach(function(x){ if(m.indexOf(x)<0) m.push(x); }); }catch(_e){}
+  if(window._lxSaTous) Object.keys(LX_SANTE_METIERS).forEach(function(k){ if(m.indexOf(k)<0) m.push(k); });
+  return m.filter(function(k){ return !!LX_SANTE_METIERS[k]; });
+}
+function lxSanteListe(cle){ var out=[]; lxSanteMetiers().forEach(function(k){ (LX_SANTE_METIERS[k][cle]||[]).forEach(function(v){ if(out.indexOf(v)<0) out.push(v); }); }); return out; }
+// anciennes listes conservées (compatibilité)
+var LX_SANTE_ALLERGIES=lxSanteListe("allergies"); var LX_SANTE_COND=lxSanteListe("cond");
 function lxSanteAlerte(cId){
   var x=(window.LX_SANTE||{})[cId]; if(!x||!x.donnees) return "";
   var d=x.donnees, parts=[];
@@ -33644,17 +33681,27 @@ function lxSanteFormulaire(c){
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Informations de santé utiles à la sécurité des prestations. Elles ne sont enregistrées qu’avec le <b>consentement explicite</b> du client, ne sont visibles que par votre établissement et peuvent être effacées à tout moment.</div>';
   if(x) h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Consentement recueilli le '+new Date(x.consentement_at).toLocaleDateString("fr-FR")+(x.consentement_mode==="en_ligne"?" (en ligne)":" (en salon)")+' · mis à jour le '+new Date(x.updated_at).toLocaleDateString("fr-FR")+(x.updated_by?' par '+escapeHtml(x.updated_by):'')+'</div>';
   h+='<div style="font-weight:700;font-size:13px;margin:6px 0">Allergies connues</div>';
-  LX_SANTE_ALLERGIES.forEach(function(v){ h+=chk("lxSaAll",v,d.allergies); });
+  var _mets=lxSanteMetiers(), _all=lxSanteListe("allergies"), _cond=lxSanteListe("cond");
+  // réponses déjà enregistrées hors de la liste du métier : toujours affichées (cochées)
+  (d.allergies||[]).forEach(function(v){ if(_all.indexOf(v)<0) _all.push(v); }); (d.conditions||[]).forEach(function(v){ if(_cond.indexOf(v)<0) _cond.push(v); });
+  h+='<div style="font-size:12px;color:var(--text3);margin:-4px 0 10px">Questions adaptées à : <b>'+_mets.map(function(k){ return escapeHtml(LX_SANTE_METIERS[k].nom); }).join(", ")+'</b> · <a href="#" onclick="window._lxSaTous=!window._lxSaTous;go(\'detail\');return false" style="color:var(--gold)">'+(window._lxSaTous?'Seulement mon métier':'Voir les questions des autres métiers')+'</a></div>';
+  _all.forEach(function(v){ h+=chk("lxSaAll",v,d.allergies); });
   h+='<input id="lxSaAllAutre" maxlength="150" placeholder="Autre allergie…" value="'+escapeHtml(d.allergieAutre||"")+'" style="margin-top:6px">';
-  h+='<div style="font-weight:700;font-size:13px;margin:12px 0 6px">Test de tolérance (coloration, teinture, extensions, colles)</div>';
-  h+='<div style="display:flex;gap:8px"><input type="date" id="lxSaTestDate" value="'+escapeHtml(d.testDate||"")+'" style="flex:1"><select id="lxSaTestRes" style="flex:1">'+["","Négatif (aucune réaction)","Positif (réaction)"].map(function(v){ return '<option value="'+v+'"'+(d.testResultat===v?' selected':'')+'>'+(v||"Résultat…")+'</option>'; }).join("")+'</select></div>';
+  var _tests=[]; _mets.forEach(function(k){ var t=LX_SANTE_METIERS[k].test; if(t&&_tests.indexOf(t)<0) _tests.push(t); });
+  if(_tests.length||d.testDate){
+    h+='<div style="font-weight:700;font-size:13px;margin:12px 0 6px">'+escapeHtml(_tests.length===1?_tests[0]:"Test de tolérance")+'</div>';
+    h+='<div style="display:flex;gap:8px"><input type="date" id="lxSaTestDate" value="'+escapeHtml(d.testDate||"")+'" style="flex:1"><select id="lxSaTestRes" style="flex:1">'+["","Négatif (aucune réaction)","Positif (réaction)"].map(function(v){ return '<option value="'+v+'"'+(d.testResultat===v?' selected':'')+'>'+(v||"Résultat…")+'</option>'; }).join("")+'</select></div>';
+  }
+  var _homme=/^(h|homme|m|masculin)$/i.test(String(c.sexe||"").trim());
+  if(!_homme||(d.grossesse&&d.grossesse!=="non")){
   h+='<div style="font-weight:700;font-size:13px;margin:12px 0 6px">Grossesse / allaitement</div>';
   h+='<select id="lxSaGross">'+[["non","Non"],["enceinte","Enceinte"],["allaitement","Allaitement"]].map(function(o){ return '<option value="'+o[0]+'"'+((d.grossesse||"non")===o[0]?' selected':'')+'>'+o[1]+'</option>'; }).join("")+'</select>';
+  }
   h+='<div style="font-weight:700;font-size:13px;margin:12px 0 6px">Contre-indications / situations à connaître</div>';
-  LX_SANTE_COND.forEach(function(v){ h+=chk("lxSaCond",v,d.conditions); });
+  _cond.forEach(function(v){ h+=chk("lxSaCond",v,d.conditions); });
   h+='<textarea id="lxSaNote" maxlength="300" rows="2" placeholder="Précision utile (traitement, réaction passée…)" style="margin-top:6px">'+escapeHtml(d.note||"")+'</textarea>';
   h+='<div style="margin-top:14px;padding:10px;border-radius:10px;border:1px solid rgba(200,168,78,.35);background:rgba(200,168,78,.06)">';
-  h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;text-transform:none;letter-spacing:0;font-family:inherit;color:var(--text2)"><input type="checkbox" id="lxSaConsent" '+(x?'checked':'')+' style="width:auto;flex:0 0 auto;margin-top:3px"><span><b>Le client consent expresément</b> à l’enregistrement de ces informations de santé, uniquement pour la sécurité de ses prestations. Il peut les consulter, les modifier ou demander leur effacement à tout moment.</span></label>';
+  h+='<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;text-transform:none;letter-spacing:0;font-family:inherit;color:var(--text2)"><input type="checkbox" id="lxSaConsent" '+(x?'checked':'')+' style="width:auto;flex:0 0 auto;margin-top:3px"><span><b>Le client consent expressément</b> à l’enregistrement de ces informations de santé, uniquement pour la sécurité de ses prestations. Il peut les consulter, les modifier ou demander leur effacement à tout moment.</span></label>';
   h+='<select id="lxSaMode" style="margin-top:8px"><option value="salon"'+(!x||x.consentement_mode!=="en_ligne"?' selected':'')+'>Consentement donné en salon</option><option value="en_ligne"'+(x&&x.consentement_mode==="en_ligne"?' selected':'')+'>Consentement donné par écrit / en ligne</option></select></div>';
   h+='<div style="display:flex;gap:8px;margin-top:12px"><button class="btn bg" style="flex:2;font-weight:800" onclick="lxSanteEnregistrer(\''+c.id+'\')">Enregistrer</button>';
   if(x) h+='<button class="btn" style="flex:1;color:#ef5350;border:1px solid rgba(239,83,80,.4)" onclick="lxSanteEffacer(\''+c.id+'\')">Effacer</button>';
