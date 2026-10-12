@@ -1097,7 +1097,14 @@ async function loadSalonData() {
     sRes = await _sb.from("salons").select("*").eq("id", window._lxVueAdmin).limit(1);
     if (sRes.error || !sRes.data || !sRes.data.length) { _lxVueAdminStop("Salon introuvable."); return; }
   } else {
-    sRes = await _sb.from("salons").select("*").eq("user_id", _userId).limit(1);
+    // 2026-10-12 : un même compte peut avoir un établissement fermé (archives) puis un nouveau :
+    // on ouvre l'établissement en activité ; les archives d'un fermé s'ouvrent via « luxyra_archive_salon ».
+    var _arcId = null; try { _arcId = sessionStorage.getItem("luxyra_archive_salon"); } catch(_e) {}
+    if (_arcId) sRes = await _sb.from("salons").select("*").eq("user_id", _userId).eq("id", _arcId).limit(1);
+    if (!_arcId || !sRes || sRes.error || !sRes.data || !sRes.data.length)
+      sRes = await _sb.from("salons").select("*").eq("user_id", _userId).order("ferme_le", { ascending: true, nullsFirst: true }).order("created_at", { ascending: false }).limit(1);
+    try { var _autres = await _sb.from("salons").select("id,nom,ferme_le").eq("user_id", _userId).not("ferme_le", "is", null);
+      window._lxSalonsFermes = (_autres.data || []); } catch(_e) { window._lxSalonsFermes = []; }
   }
   if (sRes.error || !sRes.data || sRes.data.length === 0) {
     // Session existe mais aucun salon lié au user → on déconnecte proprement
@@ -1836,6 +1843,12 @@ function showSuspendedScreen(status, salon) {
   var msg   = status === "suspended"
     ? "Votre abonnement est suspendu suite à un défaut de paiement. Mettez à jour votre moyen de paiement pour réactiver l'accès immédiatement."
     : "Votre abonnement a été résilié. Vous pouvez reprendre un abonnement à tout moment, ou accéder à vos documents comptables en lecture seule.";
+  // 2026-10-12 : établissement fermé définitivement
+  var _ferme = !!(salon && salon.ferme_le);
+  if (_ferme) {
+    titre = "Établissement fermé";
+    msg = "Cet établissement a été fermé définitivement le " + new Date(salon.ferme_le).toLocaleDateString("fr-FR") + ". Ses documents de caisse restent consultables en lecture seule pendant 6 ans. Vous pouvez ouvrir un nouvel établissement avec cette même adresse e-mail.";
+  }
   var iconSvg = status === "suspended"
     ? '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
     : '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
@@ -1878,9 +1891,9 @@ function showSuspendedScreen(status, salon) {
     +     '<div style="display:inline-block;padding:18px;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.25);border-radius:18px;margin-bottom:18px">'+iconSvg+'</div>'
     +     '<h2 style="color:#fff;font-family:Georgia,\'Times New Roman\',serif;font-weight:600;font-size:24px;margin:0 0 8px;letter-spacing:.3px">'+titre+'</h2>'
     +     '<p style="color:#94a3b8;font-size:14px;line-height:1.6;margin:0 0 24px">'+msg+'</p>'
-    +     '<button onclick="openCustomerPortal()" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-weight:800;border:none;border-radius:12px;cursor:pointer;font-size:14px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s;width:100%" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'">'
+    +     '<button onclick="'+(_ferme?'location.href=\'/inscription.html\'':'openCustomerPortal()')+'" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;padding:14px 28px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#0a0a0a;font-weight:800;border:none;border-radius:12px;cursor:pointer;font-size:14px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s;width:100%" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'">'
     +       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 15h0M2 9h20"/></svg>'
-    +       (status === "suspended" ? 'Régulariser mon paiement' : 'Reprendre un abonnement')
+    +       (_ferme ? 'Ouvrir un nouvel établissement' : (status === "suspended" ? 'Régulariser mon paiement' : 'Reprendre un abonnement'))
     +     '</button>'
     +     archiveBlock
     +     '<div style="margin-top:18px"><button onclick="doLogout()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:13px;text-decoration:underline">Se déconnecter</button></div>'
@@ -1893,6 +1906,12 @@ function showSuspendedScreen(status, salon) {
 // Bouton "Accéder à mes archives" → set le flag sessionStorage et reload.
 // Le flag est lu au prochain loadSalonData(), qui skip le showSuspendedScreen
 // et continue le chargement normal avec _archiveMode=true.
+// 2026-10-12 : archives d'un ancien établissement fermé du même compte
+function lxOuvrirArchivesAncien(id){
+  try { sessionStorage.setItem("luxyra_archive_salon", id); sessionStorage.setItem("luxyra_archive_mode", "1"); } catch(e){}
+  window.location.reload();
+}
+window.lxOuvrirArchivesAncien = lxOuvrirArchivesAncien;
 function enterArchiveMode(){
   try {
     sessionStorage.setItem("luxyra_archive_mode", "1");
@@ -1903,7 +1922,7 @@ function enterArchiveMode(){
 
 // Quitter le mode archives (retour à l'écran "Abonnement annulé")
 function exitArchiveMode(){
-  try { sessionStorage.removeItem("luxyra_archive_mode"); } catch(e){}
+  try { sessionStorage.removeItem("luxyra_archive_mode"); sessionStorage.removeItem("luxyra_archive_salon"); } catch(e){}
   window.location.reload();
 }
 window.enterArchiveMode = enterArchiveMode;
