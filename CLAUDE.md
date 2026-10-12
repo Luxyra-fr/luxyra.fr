@@ -1760,5 +1760,5 @@ Tables existantes : inchangées.
 ## Boîte « Demandes à Claude » (12/10/2026)
 - Table `claude_demandes` (RLS is_admin) + onglet admin « 🤖 Claude » (envoi, réponses, boutons OK/Non, badge). Notification téléphone automatique quand une réponse est écrite (trigger → notify_admins 'admin_reply').
 - Statuts : nouvelle → en_cours → faite | attente_ok (accord requis, champ proposition) → (accord true → en_cours → faite) | refusee | annulee.
-- Tâche planifiée « Luxyra — Demandes à Claude » (toutes les 2 h, 6h-18h) : à créer par Alexandre depuis la section Scheduled (création locale impossible) ; instructions dans outputs/tache-demandes-claude.md.
-- Urgent en direct : Dispatch (appli Claude du téléphone ↔ PC allumé).
+- Tâche planifiée cloud « Luxyra file Claude » CRÉÉE le 12/10 (5h56, 7h56 … 17h56), sans jeton : accès GitHub du compte ; si publication impossible → analyse/base + « modif site en session PC ». Premier passage 13/10 5h56. (Le « Luxyra controle quotidien » cloud tourne aussi chaque jour à 8 h, lecture seule.)
+- Dispatch indisponible pour les nouveaux utilisateurs ; urgent = session cloud depuis l'appli Claude du téléphone.
