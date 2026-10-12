@@ -226,7 +226,7 @@ async function lxPushDisable(id){
   try{
     if(id){await _sb.from("push_subscriptions").delete().eq("id",id);}
     else{
-      var reg=await navigator.serviceWorker.getRegistration("/");
+      var reg=await navigator.serviceWorker.getRegistration("/admin/"); // 2026-10-12 : celui des notifications admin (jamais celui de la caisse)
       var sub=reg&&await reg.pushManager.getSubscription();
       if(sub){await _sb.from("push_subscriptions").delete().eq("endpoint",sub.endpoint);await sub.unsubscribe();}
     }
@@ -1292,8 +1292,18 @@ if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
   // (notifs visibles même onglet en arrière-plan / PWA en veille). Aucun Push externe
   // n'est utilisé : c'est juste le canal d'affichage local.
   try {
-    navigator.serviceWorker.register('/admin-sw.js', { scope: '/' })
+    // 2026-10-12 : portée limitée à /admin. Avant, la portée « / » était la même que celle
+    // du service worker de la caisse (sw.js) : sur un téléphone qui ouvre l'admin ET l'appli,
+    // les deux se remplaçaient à tour de rôle. On retire aussi l'ancien enregistrement
+    // admin-sw.js sur « / » s'il existe encore (jamais celui de la caisse).
+    navigator.serviceWorker.register('/admin-sw.js', { scope: '/admin' })
       .catch(function(e){ console.warn('[admin-sw auto-register]', e); });
+    navigator.serviceWorker.getRegistration('/').then(function(r){
+      try{
+        var w = r && (r.active || r.waiting || r.installing);
+        if (r && r.scope === location.origin + '/' && w && /\/admin-sw\.js$/.test(w.scriptURL)) { r.unregister(); }
+      }catch(_){}
+    }).catch(function(){});
   } catch(_) {}
 }
 
