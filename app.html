@@ -2855,7 +2855,8 @@ async function lxPasserEnReel(suite){
   h+='<h2 style="color:var(--gold);font-size:19px;margin-bottom:8px">Passer en caisse r\u00e9elle</h2>';
   h+='<div style="font-size:13px;line-height:1.6;color:var(--text2)">\u00c0 partir de maintenant, chaque encaissement sera <b>r\u00e9el et d\u00e9finitif</b> (loi anti-fraude) : il ne pourra plus jamais \u00eatre effac\u00e9, seulement annul\u00e9 par un ticket d\u2019annulation trac\u00e9. <b>Ce passage est d\u00e9finitif.</b></div>';
   h+='<ul style="font-size:13px;line-height:1.6;color:var(--text2);margin:10px 0 0 18px">';
-  if(nT) h+='<li>Vos <b>'+nT+' encaissement'+(nT>1?'s':'')+' de test</b> (et leurs cl\u00f4tures) sont copi\u00e9s dans une archive scell\u00e9e conserv\u00e9e 6 ans, puis retir\u00e9s : ils ne comptent pas dans votre chiffre d\u2019affaires.</li>';
+  // 2026-10-12 : s'il y a des encaissements de test, ceux d'avant le mode test sont aussi archivés puis retirés (serveur) -> on annonce le vrai total.
+  if(nT) h+='<li>Vos <b>'+(nT+nL)+' encaissement'+((nT+nL)>1?'s':'')+' de test</b>'+(nL?' (dont '+nL+' enregistr\u00e9'+(nL>1?'s':'')+' avant la mise en place du mode test)':'')+' (et leurs cl\u00f4tures) sont copi\u00e9s dans une archive scell\u00e9e conserv\u00e9e 6 ans, puis retir\u00e9s : ils ne comptent pas dans votre chiffre d\u2019affaires.</li>';
   h+='<li>Votre caisse d\u00e9marre \u00e0 z\u00e9ro (chiffre d\u2019affaires, cl\u00f4tures, cumuls).</li><li>Client\u00e8le, prestations, produits, \u00e9quipe, r\u00e9glages et rendez-vous \u00e0 venir sont conserv\u00e9s.</li><li>Le passage est inscrit au journal des \u00e9v\u00e9nements de la caisse.</li></ul>';
   if(nL && !nT){
     h+='<div style="font-size:13px;margin-top:12px;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.15)"><b>'+nL+' encaissement'+(nL>1?'s':'')+' enregistr\u00e9'+(nL>1?'s':'')+' avant la mise en place du mode test.</b> \u00c9taient-ce des tests ou de vraies ventes ?';
@@ -3514,7 +3515,7 @@ function savePendingTicket(){
     clientName:cl?cName(cl):passageName(_tk.cId),
     styName:sty?sty.n:"",
     items:JSON.parse(JSON.stringify(_tk.items)),
-    remise:_tk.remise||0,
+    remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,
     // FIX 2026-08-31 : ces champs n'etaient PAS sauvegardes. A la reprise du ticket,
     // l'acompte deja verse n'etait plus deduit : la cliente payait l'acompte une
     // seconde fois, le chiffre d'affaires et la TVA du jour etaient majores d'autant,
@@ -5619,6 +5620,7 @@ function buildDevisText(dv){
 // Build plain text for cloture Z
 function buildClotureText(c){
   var t="============================================\n";
+  if(window.LX_MODE_CAISSE==="test"||c.mode_caisse==="test") t+="   *** MODE TEST - SANS VALEUR FISCALE ***\n";
   t+="         CLOTURE Z #"+c.num+"\n";
   t+="============================================\n";
   t+=SALON_CONFIG.nomComplet()+"\n";
@@ -5640,6 +5642,7 @@ function buildClotureText(c){
   if(c.brutTotalGlobal>0&&c.totalRemises>0){
   t+="CA BRUT TTC:        "+(c.brutTotalGlobal||c.totalCA).toFixed(2)+" EUR\n";
   t+="Remises accordees:  -"+(c.totalRemises||0).toFixed(2)+" EUR\n";
+  if(c.totalBonsUtilises>0) t+="  dont bons cadeaux utilises (deja encaisses): "+c.totalBonsUtilises.toFixed(2)+" EUR\n";
   t+="                    ----------\n";
   }
   t+="CA Prestations TTC: "+c.totalPrest.toFixed(2)+" EUR\n";
@@ -6390,6 +6393,7 @@ function doConfirmCloture(){
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-height:90vh;overflow-y:auto">';
   h+='<div class="receipt-printable" style="font-family:monospace;max-width:320px;margin:0 auto;background:#fff;color:#000;padding:16px;border-radius:12px">';
   h+='<div style="text-align:center;border-bottom:2px dashed var(--border);padding-bottom:10px">';
+  if(window.LX_MODE_CAISSE==="test"||c.mode_caisse==="test") h+='<div style="border:2px dashed #000;padding:5px;margin-bottom:8px;font-weight:900;font-size:12px">MODE TEST - SANS VALEUR FISCALE</div>';
   h+='<div style="font-weight:900;font-size:16px">CLOTURE Z #'+c.num+'</div>';
   h+='<div style="font-size:11px">'+SALON_CONFIG.sousTitre+'</div>';
   h+='<div style="font-size:11px">'+SALON_CONFIG.adresseComplete()+'</div>';
@@ -6413,6 +6417,7 @@ function doConfirmCloture(){
   if(c.panierMoyen)h+='<div style="display:flex;justify-content:space-between"><span>Panier moyen</span><span>'+c.panierMoyen.toFixed(2)+' \u20ac</span></div>';
   if(c.tkMin)h+='<div style="display:flex;justify-content:space-between"><span>Tickets</span><span>#'+c.tkMin+' \u00e0 #'+c.tkMax+'</span></div>';
   if(c.totalRemises>0)h+='<div style="display:flex;justify-content:space-between;color:#c00"><span>Remises</span><span>-'+c.totalRemises.toFixed(2)+' \u20ac</span></div>';
+  if(c.totalBonsUtilises>0)h+='<div style="display:flex;justify-content:space-between;font-size:11px"><span>dont bons cadeaux utilis\u00e9s (d\u00e9j\u00e0 encaiss\u00e9s)</span><span>'+c.totalBonsUtilises.toFixed(2)+' \u20ac</span></div>';
   if(c.brutTotalGlobal>0&&c.totalRemises>0)h+='<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3)"><span>CA brut avant remises</span><span>'+c.brutTotalGlobal.toFixed(2)+' \u20ac</span></div>';
   h+='</div>';
   h+='<div style="text-align:center;font-size:9px;color:var(--text3);padding:8px 6px;word-break:break-all;line-height:1.4;font-family:monospace">Hash:<br>'+c.hash+'</div>';
@@ -6580,6 +6585,7 @@ function printClotureZ(){
   h+="<tr><td>Annulations</td><td class=\"tr\">"+c.nbAnnul+"</td></tr>";
   if(c.totalAnnul>0)h+="<tr><td>Montant annul\u00e9</td><td class=\"tr\">"+c.totalAnnul.toFixed(2)+" \u20ac</td></tr>";
   if(c.totalRemises>0)h+="<tr><td>Remises accord\u00e9es</td><td class=\"tr\">-"+c.totalRemises.toFixed(2)+" \u20ac</td></tr>";
+  if(c.totalBonsUtilises>0)h+="<tr><td>&nbsp;&nbsp;dont bons cadeaux utilis\u00e9s (d\u00e9j\u00e0 encaiss\u00e9s)</td><td class=\"tr\">"+c.totalBonsUtilises.toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
   
   // ===== 2. CHIFFRE D'AFFAIRES =====
@@ -8852,7 +8858,7 @@ function go(pg,arg){
           clientName:_autoCl?(typeof cName==="function"?cName(_autoCl):""):(typeof passageName==="function"?passageName(_tk.cId):"Passage"),
           styName:_autoSty?_autoSty.n:"",
           items:JSON.parse(JSON.stringify(_tk.items)),
-          remise:_tk.remise||0,
+          remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,
           total:_autoTotal
         };
         if(!window.PENDING_TK)window.PENDING_TK=[];
@@ -30270,7 +30276,7 @@ function printTicketReceipt(){
     var tempA={
       id:_tk.apptId||"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items&&_tk.items[0]?_tk.items[0].sId:null,
       date:TD,time:now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-      pr:total,met:metStr,items:_tk.items||[],remise:_tk.remise||0,
+      pr:total,met:metStr,items:_tk.items||[],remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,
       acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||"",
       payments:_tk.payments||null,tkNum:tkN
     };
@@ -30321,7 +30327,7 @@ function showTicket(method,total){
     pr:total,
     met:metStr,
     items:_tk.items,
-    remise:_tk.remise||0,
+    remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,
     acompte:_tk.acompte||0,
     acompteMode:_tk.acompteMode||"",
     payments:_tk.payments||null,
@@ -30558,7 +30564,7 @@ function emailTicket(id){
     var metStr2=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
     a={id:"temp",cId:_tk.cId,stId:_tk.stId,sId:_tk.items[0]?_tk.items[0].sId:null,
        date:TD,time:now2.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-       pr:0,met:metStr2,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--"};
+       pr:0,met:metStr2,items:_tk.items,remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,tkNum:tkN||"--"};
     var tot2=0;_tk.items.forEach(function(it){tot2+=it.price*it.qty-(it.remise||0);});tot2-=(_tk.remise||0);
     a.pr=tot2;
   }
@@ -30595,7 +30601,7 @@ async function sendTicketByEmail(id){
     var now3=new Date();
     var metStr3=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
     a={id:"temp",cId:_tk.cId,stId:_tk.stId,date:TD,time:now3.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-       pr:0,met:metStr3,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||"",
+       pr:0,met:metStr3,items:_tk.items,remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||"",
        payments:_tk.payments||null,acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||""};
     var tot3=0;_tk.items.forEach(function(it){tot3+=it.price*it.qty-(it.remise||0);});tot3-=(_tk.remise||0);
     a.pr=tot3;
@@ -30653,7 +30659,7 @@ function downloadTicketPDF(id){
     var now4=new Date();
     var metStr4=_tk.payments?_tk.payments.map(function(p){return p.method+" "+p.amount.toFixed(2)+"\u20ac"}).join(" + "):"";
     a={id:"temp",cId:_tk.cId,stId:_tk.stId,date:TD,time:now4.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}),
-       pr:0,met:metStr4,items:_tk.items,remise:_tk.remise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||"",
+       pr:0,met:metStr4,items:_tk.items,remise:_tk.remise||0,bonVenduRemise:_tk.bonVenduRemise||0,offertRemise:_tk.offertRemise||0,tkNum:tkN||"--",hash:_tk.hash||"",prevHash:_tk.prevHash||"",
        payments:_tk.payments||null,acompte:_tk.acompte||0,acompteMode:_tk.acompteMode||""};
     var tot4=0;_tk.items.forEach(function(it){tot4+=it.price*it.qty-(it.remise||0);});tot4-=(_tk.remise||0);
     a.pr=tot4;
@@ -30855,7 +30861,16 @@ function buildTicketHTML(a, isDuplicate){
     var sv=gS(a.sId);
     h+="<tr><td>1</td><td style=\"font-weight:700\">"+(sv?sv.n.toUpperCase():"PRESTATION")+"</td><td style=\"text-align:right\">"+total.toFixed(2)+"</td></tr>";
   }
-  if(a.remise>0)h+="<tr><td>1</td><td style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+a.remise.toFixed(2)+"</td></tr>";
+  // 2026-10-12 : un bon cadeau utilisé n'est pas une remise commerciale -> ligne dédiée et explicite.
+  (function(){
+    var _bonV=Number(a.bonVenduRemise)||0, _bonO=Number(a.offertRemise)||0, _codes=[], _codesO=[];
+    (a.payments||[]).forEach(function(p){ var m=String(p&&p.method||""); var mm=m.match(/^Bon cadeau r\u00e9gl\u00e9 (.+)$/); if(mm) _codes.push(mm[1]); var mo=m.match(/^Offert (.+)$/); if(mo) _codesO.push(mo[1]); });
+    var _man=Math.round(((Number(a.remise)||0)-_bonV-_bonO)*100)/100;
+    if(!_bonV && !_bonO && _codes.length && a.remise>0){ h+="<tr><td>1</td><td style=\"font-weight:700\">REMISE / BON CADEAU</td><td style=\"text-align:right\">-"+a.remise.toFixed(2)+"</td></tr>"; return; }
+    if(_man>0.004) h+="<tr><td>1</td><td style=\"font-weight:700\">REMISE TICKET</td><td style=\"text-align:right\">-"+_man.toFixed(2)+"</td></tr>";
+    if(_bonV>0) h+="<tr><td>1</td><td style=\"font-weight:700\">BON CADEAU "+(_codes.join(", ")||"")+" (D\u00c9J\u00c0 ENCAISS\u00c9 \u00c0 LA VENTE)</td><td style=\"text-align:right\">-"+_bonV.toFixed(2)+"</td></tr>";
+    if(_bonO>0) h+="<tr><td>1</td><td style=\"font-weight:700\">BON CADEAU OFFERT "+(_codesO.join(", ")||"")+"</td><td style=\"text-align:right\">-"+_bonO.toFixed(2)+"</td></tr>";
+  })();
   h+="</table>";
 
   // Total HT
@@ -34393,6 +34408,8 @@ function cloturerJournee(){
   // Remises / rabais
   var totalRemises=0;var brutTotalGlobal=0;
   done.forEach(function(a){totalRemises+=(a.remise||0);brutTotalGlobal+=(a.brutTotal||a.pr);});
+  // 2026-10-12 : part des « remises » qui sont en fait des bons cadeaux utilisés (affichage Z)
+  var totalBonsUtilises=0; done.forEach(function(a){ totalBonsUtilises+=(Number(a.bonVenduRemise)||0)+(Number(a.offertRemise)||0); });
   // Total annulations
   var totalAnnul=0;annul.forEach(function(a){totalAnnul+=a.pr||0;});
   // Build closure object
@@ -34409,7 +34426,7 @@ function cloturerJournee(){
     totalCA:totalCA,totalPrest:totalPrest,totalProd:totalProd,
     totalHT:totalHT,totalTVA:totalTVA,txTVA:txTVA,
     prestHT:prestHT,prestTVA:prestTVA,prodHT:prodHT,prodTVA:prodTVA,
-    totalRemises:totalRemises,brutTotalGlobal:brutTotalGlobal,
+    totalRemises:totalRemises,brutTotalGlobal:brutTotalGlobal,totalBonsUtilises:Math.round(totalBonsUtilises*100)/100,
     panierMoyen:done.length>0?Math.round(totalCA/done.length*100)/100:0,
     details:{cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0},
     perSty:perSty,hash:""};
