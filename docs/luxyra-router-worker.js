@@ -5213,6 +5213,41 @@ async function runPendingCartesAboPurgeJob(env) {
 // régularisé) : suppression des données personnelles non fiscales (fiches clientes, photos, réservations et
 // commandes en ligne anonymisées). Préavis par email à J-7. Tickets, clôtures, journal NF525 : conservés 6 ans.
 // ============================================================
+// ============================================================
+// COMPTES CLIENTS INACTIFS (2026-10-12) — recommandation CNIL : 3 ans sans activité (connexion, réservation,
+// demande, commande, avis). E-mail de préavis 30 jours avant ; une connexion annule tout. Puis suppression
+// du compte (purge_compte_client_inactif) : les établissements gardent l'historique sans l'identité.
+// ============================================================
+async function runComptesClientsInactifs(env) {
+  const out = { prevenus: 0, supprimes: 0, erreurs: 0 };
+  const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/comptes_inactifs_candidats`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
+  const c = rc.ok ? await rc.json() : null;
+  if (!c) return { erreur: "candidats illisibles" };
+  const le = new Date(Date.now() + 30 * 86400000).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long", year: "numeric" });
+  for (const x of (c.a_prevenir || [])) {
+    try {
+      if (x.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.email)) {
+        const prenom = String(x.prenom || "").replace(/</g, "&lt;");
+        await brevoSendEmail(env, { to: x.email, toName: x.prenom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
+          subject: `Votre compte Luxyra sera supprimé le ${le}`,
+          htmlContent: lxMailLayout(`<p>Bonjour${prenom ? " " + prenom : ""},</p><p>Vous n'avez pas utilisé votre compte Luxyra depuis <b>3 ans</b>. Pour protéger vos données, nous supprimons les comptes inactifs : <b>votre compte sera supprimé le ${le}</b> (historique de rendez-vous, factures et photos consultables dans votre espace).</p><p><b>Vous souhaitez le garder ?</b> Il suffit de vous connecter une fois avant cette date.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/compte" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Me connecter</a></p><p style="font-size:13px;color:#666">Sans action de votre part, le compte sera supprimé. Les établissements que vous avez fréquentés conservent leurs propres documents (factures, tickets) comme la loi l'exige.</p>`, { titre: "Votre compte va être supprimé" }),
+          textContent: `Votre compte Luxyra est inactif depuis 3 ans et sera supprimé le ${le}. Pour le garder, connectez-vous une fois avant cette date : https://luxyra.fr/compte`, replyTo: null, attachment: null });
+      }
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?id=eq.${x.id}`, { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify({ inactivite_preavis_le: new Date().toISOString() }) });
+      out.prevenus++;
+    } catch (e) { out.erreurs++; console.error("compte inactif préavis", x.id, e?.message || e); }
+  }
+  for (const x of (c.a_supprimer || [])) {
+    try {
+      const rp = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/purge_compte_client_inactif`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_id: x.id }) });
+      const r = rp.ok ? await rp.json() : null;
+      if (r && r.ok) out.supprimes++; else out.erreurs++;
+    } catch (e) { out.erreurs++; console.error("compte inactif purge", x.id, e?.message || e); }
+  }
+  if (out.supprimes) { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "🧹 Comptes clients inactifs", p_body: `${out.supprimes} compte(s) client inactif(s) depuis 3 ans supprimé(s).`, p_url: "/admin.html", p_payload: {} }) }); } catch (_) {} }
+  return out;
+}
+
 async function runRgpdPurgeJ60(env) {
   const out = { prevenus: 0, purges: 0, erreurs: 0 };
   const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/rgpd_purge_candidats`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
@@ -5265,6 +5300,7 @@ async function runRetentionPurgeJob(env) {
     return { skipped: "no_service_key" };
   }
   try { console.log("[rgpd J+60]", JSON.stringify(await runRgpdPurgeJ60(env))); } catch (e) { console.error("[rgpd J+60]", e?.message || e); }
+  try { console.log("[comptes inactifs 3 ans]", JSON.stringify(await runComptesClientsInactifs(env))); } catch (e) { console.error("[comptes inactifs]", e?.message || e); }
   const now = new Date();
   // Bornes : on calcule "now - X années" en ms. ATTENTION aux années bissextiles
   // → on utilise setFullYear sur un Date pour rester précis.
@@ -5278,89 +5314,62 @@ async function runRetentionPurgeJob(env) {
 
   const stats = { warned: 0, purged: 0, errors: 0, details: [] };
 
-  // === PHASE 1 — PRÉAVIS 30 JOURS ===
-  // Salons cancelled depuis ≥ 5 ans 11 mois et < 6 ans, sans retention_warned_at.
+  // === PHASES 1 & 2 — CONSERVATION 6 ANS (2026-10-12) ===
+  // Fin de conservation = 6 ans après la DERNIÈRE opération de caisse ou la fin du service (la plus tardive),
+  // calculée en base (lx_prive.salon_fin_conservation). Préavis e-mail 30 jours avant, puis suppression complète
+  // par purge_salon_6ans (vérifie elle-même délai + préavis, trace dans salons_purges / admin_log).
+  // (Avant : simple DELETE sur salons, qui échouait sur les garde-fous NF525.)
   try {
-    const warnRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,cancelled_at,retention_warned_at` +
-      `&status=eq.cancelled&cancelled_at=lte.${encodeURIComponent(fiveYrsElevenMonths)}` +
-      `&cancelled_at=gt.${encodeURIComponent(sixYears)}` +
-      `&retention_warned_at=is.null`,
-      { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
-    );
-    if (warnRes.ok) {
-      const toWarn = await warnRes.json();
-      console.log(`[retention] phase 1 (préavis) : ${toWarn.length} salons à notifier`);
-      for (const salon of toWarn) {
-        try {
-          if (salon.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(salon.email)) {
-            await sendRetentionWarningEmail(env, salon);
-          }
-          // Marque comme prévenu (même si pas d'email — sinon on retente tous les jours)
-          await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salon.id}`, {
-            method: "PATCH",
-            headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-            body: JSON.stringify({ retention_warned_at: new Date().toISOString() })
-          });
-          stats.warned++;
-          stats.details.push({ phase: "warned", id: salon.id, nom: salon.nom, email: salon.email || "(no email)" });
-        } catch (e) {
-          stats.errors++;
-          console.error(`[retention] warn salon ${salon.id} failed:`, e?.message || e);
+    const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/retention_6ans_candidats`, { method: "POST", headers: _sbHeaders(env), body: "{}" });
+    const c = rc.ok ? await rc.json() : null;
+    if (!c) { stats.errors++; console.warn(`[retention] candidats illisibles: ${rc.status}`); }
+    for (const salon of ((c && c.a_prevenir) || [])) {
+      try {
+        if (salon.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(salon.email)) await sendRetentionWarningEmail(env, salon);
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salon.id}`, {
+          method: "PATCH",
+          headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ retention_warned_at: new Date().toISOString() })
+        });
+        stats.warned++;
+        stats.details.push({ phase: "warned", id: salon.id, nom: salon.nom });
+      } catch (e) { stats.errors++; console.error(`[retention] préavis ${salon.id}:`, e?.message || e); }
+    }
+    for (const salon of ((c && c.a_supprimer) || [])) {
+      try {
+        const rp = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/purge_salon_6ans`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: salon.id }) });
+        const r = rp.ok ? await rp.json() : null;
+        if (!r || !r.ok) { stats.errors++; console.error(`[retention] purge ${salon.id} refusée:`, r && r.err); continue; }
+        // Fichiers : justificatifs + photos clients du salon
+        for (const [bucket, prefixe] of [["salon-documents", `documents/${salon.id}`], ["client-photos", salon.id]]) {
+          try {
+            const chemins = [];
+            const lst = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/${bucket}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: prefixe, limit: 1000 }) });
+            for (const it of (lst.ok ? await lst.json() : [])) {
+              if (it.id) chemins.push(`${prefixe}/${it.name}`);
+              else {
+                const l2 = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/${bucket}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: `${prefixe}/${it.name}`, limit: 1000 }) });
+                for (const x of (l2.ok ? await l2.json() : [])) if (x.id) chemins.push(`${prefixe}/${it.name}/${x.name}`);
+              }
+            }
+            if (chemins.length) await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/${bucket}`, { method: "DELETE", headers: _sbHeaders(env), body: JSON.stringify({ prefixes: chemins }) });
+          } catch (_) {}
         }
-      }
-    } else {
-      console.warn(`[retention] phase 1 query failed: ${warnRes.status}`);
+        // Compte de connexion du gérant : supprimé seulement s'il n'a aucun autre établissement et n'est pas un compte Luxyra
+        try {
+          if (r.user_id && Number(r.autres_salons) === 0) {
+            const adm = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_users?select=user_id&user_id=eq.${r.user_id}`, { headers: _sbHeaders(env) });
+            const estAdmin = adm.ok ? ((await adm.json()) || []).length > 0 : true;
+            if (!estAdmin) await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users/${r.user_id}`, { method: "DELETE", headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } });
+          }
+        } catch (_) {}
+        stats.purged++;
+        stats.details.push({ phase: "purged", id: salon.id, nom: salon.nom, lignes: r.lignes });
+        try { await sendRetentionPurgedAdminEmail(env, { id: salon.id, nom: salon.nom, cancelled_at: salon.fin }); } catch (_e) {}
+      } catch (e) { stats.errors++; console.error(`[retention] purge ${salon.id}:`, e?.message || e); }
     }
   } catch (e) {
-    console.error("[retention] phase 1 exception:", e?.message || e);
-    stats.errors++;
-  }
-
-  // === PHASE 2 — PURGE EFFECTIVE ===
-  // Salons cancelled depuis ≥ 6 ans ET retention_warned_at non null (préavis envoyé).
-  // Délai supplémentaire : on attend 30 jours après le préavis (au cas où on
-  // aurait warné juste avant les 6 ans).
-  try {
-    const purgeBefore = (() => { const d = new Date(now); d.setDate(d.getDate() - 30); return d.toISOString(); })();
-    const purgeRes = await fetch(
-      `${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id,nom,email,cancelled_at,retention_warned_at` +
-      `&status=eq.cancelled&cancelled_at=lte.${encodeURIComponent(sixYears)}` +
-      `&retention_warned_at=lte.${encodeURIComponent(purgeBefore)}`,
-      { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
-    );
-    if (purgeRes.ok) {
-      const toPurge = await purgeRes.json();
-      console.log(`[retention] phase 2 (purge) : ${toPurge.length} salons à supprimer`);
-      for (const salon of toPurge) {
-        try {
-          // Suppression cascade — la FK ON DELETE CASCADE de Postgres supprimera
-          // appointments, tickets, clotures, clients, services, products, etc.
-          // Si certaines tables n'ont pas la cascade, il faudra ajouter les DELETE
-          // explicites ici (à vérifier après tests).
-          const delRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?id=eq.${salon.id}`, {
-            method: "DELETE",
-            headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}`, Prefer: "return=minimal" }
-          });
-          if (delRes.ok) {
-            stats.purged++;
-            stats.details.push({ phase: "purged", id: salon.id, nom: salon.nom, cancelled_at: salon.cancelled_at });
-            // Notifie l'admin Luxyra (pour audit interne)
-            try { await sendRetentionPurgedAdminEmail(env, salon); } catch (_e) {}
-          } else {
-            stats.errors++;
-            console.error(`[retention] delete salon ${salon.id} failed: ${delRes.status}`);
-          }
-        } catch (e) {
-          stats.errors++;
-          console.error(`[retention] purge salon ${salon.id} exception:`, e?.message || e);
-        }
-      }
-    } else {
-      console.warn(`[retention] phase 2 query failed: ${purgeRes.status}`);
-    }
-  } catch (e) {
-    console.error("[retention] phase 2 exception:", e?.message || e);
+    console.error("[retention] 6 ans exception:", e?.message || e);
     stats.errors++;
   }
 
@@ -5397,8 +5406,10 @@ async function runRetentionPurgeJob(env) {
 // Email préavis 30 jours avant suppression
 async function sendRetentionWarningEmail(env, salon) {
   if (!env.BREVO_API_KEY) { console.warn("[retention] BREVO_API_KEY missing — skip email"); return; }
-  const cancelDate = new Date(salon.cancelled_at);
-  const purgeDate = new Date(cancelDate); purgeDate.setFullYear(purgeDate.getFullYear() + 6);
+  // 2026-10-12 : date calculée en base (6 ans après la dernière opération de caisse ou la fin du service)
+  let purgeDate;
+  if (salon.fin) purgeDate = new Date(salon.fin);
+  else { purgeDate = new Date(salon.cancelled_at); purgeDate.setFullYear(purgeDate.getFullYear() + 6); }
   const purgeFmt = purgeDate.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
   const html = `
 <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;color:#1a1a1a">
