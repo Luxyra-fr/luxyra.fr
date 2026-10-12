@@ -1184,7 +1184,7 @@ async function emSauver(id){
 async function emSupprimer(id){ if(!confirm("Supprimer ce modèle ?")) return; await _sb.from("admin_email_modeles").delete().eq("id",id); emCharger(); }
 
 // === Étapes de démarrage (fiche + liste) ===
-var DEMARRAGE = [["prestations","Prestations"],["horaires","Horaires"],["equipe","Équipe"],["clients","Clientes"],["rdv","1er RDV"],["tickets","1er encaissement"],["clotures","1re clôture Z"],["site","Site en ligne"],["stripe","Paiements en ligne"],["logo","Logo"]];
+var DEMARRAGE = [["prestations","Prestations"],["horaires","Horaires"],["equipe","Équipe"],["clients","Clients"],["rdv","1er RDV"],["tickets","1er encaissement"],["clotures","1re clôture Z"],["site","Site en ligne"],["stripe","Paiements en ligne"],["logo","Logo"]];
 async function asChargerDemarrage(){ try{ var r=await _sb.rpc("admin_salons_demarrage"); var m={}; (r.data||[]).forEach(function(x){m[x.salon_id]=x.etapes;}); window._DEMARRAGE=m; }catch(e){} }
 function asDemarrageScore(id){ var e=(window._DEMARRAGE||{})[id]; if(!e) return null; var ok=0; DEMARRAGE.slice(0,7).forEach(function(d){ var v=e[d[0]]; if(v===true||Number(v)>0) ok++; }); return ok; }
 function asBlocDemarrage(s){
@@ -1791,7 +1791,7 @@ function _lxExpliquerErreur(msg, source, t){
   }
   if(/NF525_SIGNATURE_KO|signature.*(invalide|KO)/i.test(m)) return R('grave','Contrôle des signatures de caisse en échec','Le contrôle automatique a trouvé un enregistrement de caisse dont la signature ne correspond plus.','Prévenir Claude immédiatement.');
   if(/^Slow query|slow_query/i.test(m)||src==='slow_query') return R('info','Requête un peu lente','Une opération de la base a pris plus d\'une seconde en moyenne. Sans effet visible tant que l\'appli reste fluide.','Rien à faire.');
-  if(/Map container is already initialized/i.test(m)) return R('info','Carte de la page du salon affichée deux fois','Erreur d\'affichage sans conséquence pour la cliente (corrigée le 12/10).','Rien à faire.');
+  if(/Map container is already initialized/i.test(m)) return R('info','Carte de la page du salon affichée deux fois','Erreur d\'affichage sans conséquence pour le client (corrigée le 12/10).','Rien à faire.');
   if(/ticket encaiss[eé] inalt[eé]rable/i.test(m)) return R('info','Tentative de modifier un ticket déjà encaissé','La caisse a refusé, comme prévu par la loi : un ticket encaissé ne se modifie pas (on fait un avoir).','Rien à faire.');
   if(/ferm[eé]\/absent ce jour/i.test(m)) return R('info','Message affiché : jour fermé ou collaborateur absent','Simple avertissement montré à l\'utilisateur.','Rien à faire.');
   if(/Aucun administrateur configur/i.test(m)) return R('surveiller','Aucun administrateur défini dans l\'établissement','Certaines actions (annulation, remise…) demandent un code administrateur.','Vérifier l\'équipe de l\'établissement concerné.');
@@ -3045,12 +3045,12 @@ async function deleteSalonCascade(id){
 
 // 2026-10-12 : FERMETURE DÉFINITIVE (remplace la suppression dès qu'il y a un historique de caisse).
 // Serveur : admin_fermer_salon -> retire la page publique + la recherche, annule les RDV en ligne à venir,
-// anonymise les clientes, désactive l'équipe ; GARDE tickets/clôtures/signatures/JET/archives 6 ans.
+// anonymise les clients, désactive l'équipe ; GARDE tickets/clôtures/signatures/JET/archives 6 ans.
 // Le gérant garde le Mode archives (lecture seule + exports). Trace : audit « ARRET_CAISSE » (JET 40).
 async function lxFermerSalon(id){
   var s=gSalon(id); if(!s||!_online) return;
   if(s.fermeLe){ alert("Déjà fermé le "+new Date(s.fermeLe).toLocaleDateString("fr-FR")); return; }
-  if(!confirm("🔒 FERMER DÉFINITIVEMENT « "+s.nom+" » ?\n\n• Page publique et présence dans la recherche retirées\n• Réservations en ligne à venir annulées (sans message aux clientes)\n• Fiches clientes anonymisées\n• Accès de l'équipe coupés ; le gérant garde l'accès en lecture seule (Mode archives)\n\nCONSERVÉ 6 ANS : tickets, clôtures, signatures, journal, archives, factures.\n\nAction irréversible. Continuer ?")) return;
+  if(!confirm("🔒 FERMER DÉFINITIVEMENT « "+s.nom+" » ?\n\n• Page publique et présence dans la recherche retirées\n• Réservations en ligne à venir annulées (sans message aux clients)\n• Fiches clients anonymisées\n• Accès de l'équipe coupés ; le gérant garde l'accès en lecture seule (Mode archives)\n\nCONSERVÉ 6 ANS : tickets, clôtures, signatures, journal, archives, factures.\n\nAction irréversible. Continuer ?")) return;
   var motif=prompt("Motif de la fermeture (obligatoire) :\nex. « cessation d'activité », « compte de démonstration »");
   if(!motif||motif.trim().length<3){ alert("Motif obligatoire : fermeture annulée."); return; }
   var word=prompt("Pour confirmer, tapez exactement le nom de l'établissement :\n\n"+s.nom);
@@ -3059,7 +3059,7 @@ async function lxFermerSalon(id){
   if(r.error){ alert("❌ "+r.error.message+"\n\nRien n'a été modifié."); return; }
   var d=r.data||{};
   if(!d.ok){ alert("❌ "+(d.err||"Fermeture refusée")+"\n\nRien n'a été modifié."); return; }
-  alert("🔒 « "+s.nom+" » est fermé définitivement.\n\n"+(d.clientes_anonymisees||0)+" fiche(s) cliente(s) anonymisée(s)\n"+(d.rdv_annules||0)+" réservation(s) à venir annulée(s)\n"+(d.operateurs_desactives||0)+" accès équipe coupé(s)\n\nDonnées de caisse conservées 6 ans.");
+  alert("🔒 « "+s.nom+" » est fermé définitivement.\n\n"+(d.clientes_anonymisees||0)+" fiche(s) client(s) anonymisée(s)\n"+(d.rdv_annules||0)+" réservation(s) à venir annulée(s)\n"+(d.operateurs_desactives||0)+" accès équipe coupé(s)\n\nDonnées de caisse conservées 6 ans.");
   await loadData(); render(); openD(id);
 }
 
@@ -4558,7 +4558,7 @@ function lxRechercheOuvrir(){
   if(document.getElementById("lxRech")) return;
   var d=document.createElement("div"); d.id="lxRech";
   d.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:10vh 12px 12px";
-  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher un salon, une cliente (nom, téléphone, email), un ticket (n°)…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border);outline:none"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
+  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher un salon, un client (nom, téléphone, email), un ticket (n°)…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border);outline:none"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
   d.addEventListener("click",function(e){ if(e.target===d) d.remove(); });
   document.body.appendChild(d);
   var i=document.getElementById("lxRechQ"); i.focus();
@@ -4571,11 +4571,11 @@ async function lxRechercher(q){
   var sal=SALONS.filter(function(s){ return (s.nom+" "+s.ville+" "+s.email+" "+s.siret+" "+s.tel+" "+s.gerantNom+" "+s.gerantPrenom).toLowerCase().indexOf(ql)>=0; }).slice(0,8);
   var h='';
   if(sal.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Salons</div>'+sal.map(function(s){ return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+s.id+'\')},120)">🏠 <b>'+saEsc(s.nom)+'</b> <span style="color:var(--text3)">'+saEsc(s.ville)+' · '+saEsc(s.email)+'</span></div>'; }).join("");
-  el.innerHTML=h+'<div style="padding:10px 16px;color:var(--text3)">Recherche des clientes et tickets…</div>';
+  el.innerHTML=h+'<div style="padding:10px 16px;color:var(--text3)">Recherche des clients et tickets…</div>';
   var r=await _sb.rpc("admin_recherche",{p_q:q});
   if(r.error){ el.innerHTML=h+'<div style="padding:10px 16px;color:var(--red)">'+saEsc(r.error.message)+'</div>'; return; }
   var d=r.data||{}, cl=d.clients||[], tk=d.tickets||[];
-  if(cl.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Clientes</div>'+cl.map(function(c){ var s=gSalon(c.salon_id); return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+c.salon_id+'\')},120)">👤 <b>'+saEsc((c.prenom||"")+" "+(c.nom||""))+'</b> <span style="color:var(--text3)">'+saEsc(c.telephone||"")+' '+saEsc(c.email||"")+' · chez '+saEsc(s?s.nom:"?")+'</span></div>'; }).join("");
+  if(cl.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Clients</div>'+cl.map(function(c){ var s=gSalon(c.salon_id); return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+c.salon_id+'\')},120)">👤 <b>'+saEsc((c.prenom||"")+" "+(c.nom||""))+'</b> <span style="color:var(--text3)">'+saEsc(c.telephone||"")+' '+saEsc(c.email||"")+' · chez '+saEsc(s?s.nom:"?")+'</span></div>'; }).join("");
   if(tk.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Tickets</div>'+tk.map(function(t){ var s=gSalon(t.salon_id); return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+t.salon_id+'\')},120)">🧾 Ticket n°<b>'+saEsc(t.num)+'</b> <span style="color:var(--text3)">'+saEsc(t.date_ticket)+' · '+(Number(t.total_ttc)||0).toFixed(2)+' € · '+saEsc(t.client_nom||"")+' · '+saEsc(s?s.nom:"?")+(t.status==="cancelled"?' · annulé':'')+'</span></div>'; }).join("");
   el.innerHTML=h||'<div style="padding:10px 16px">Aucun résultat</div>';
 }
@@ -4649,9 +4649,9 @@ async function saChargerOverview(){
   h+=saCarte("Impayés",a.impayes||0,(a.fin_de_periode||0)+" résiliation(s) programmée(s)",(a.impayes?"var(--red)":null));
   h+=saCarte("Solde Stripe",saE(d.solde&&d.solde.disponible),"+ "+saE(d.solde&&d.solde.en_attente)+" en attente");
   h+='</div>';
-  // Paiements des clientes : sur le compte du salon (charges directes)
+  // Paiements des clients : sur le compte du salon (charges directes)
   var pc=d.paiements_clientes||{};
-  h+='<div class="card" style="margin-bottom:14px;border-left:4px solid '+(pc.charges_directes?'var(--green)':'var(--orange)')+'"><div style="font-weight:800;margin-bottom:6px">💳 Paiements des clientes</div>';
+  h+='<div class="card" style="margin-bottom:14px;border-left:4px solid '+(pc.charges_directes?'var(--green)':'var(--orange)')+'"><div style="font-weight:800;margin-bottom:6px">💳 Paiements des clients</div>';
   h+='<div style="font-size:13px">'+(pc.charges_directes?'✅ Encaissés <b>directement sur le compte Stripe de chaque salon</b> (frais et litiges chez le salon, rien sur ton compte).':'⏳ Encore en <b>ancien mode</b> : ils transitent par ton compte Luxyra (frais Stripe à ta charge). Bascule prévue.')+'</div>';
   h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">Webhook « comptes connectés » vers luxyra.fr/api/stripe/webhook-connect : '+(pc.webhook_connect?'<b style="color:var(--green)">configuré ✓</b>':'<b style="color:var(--orange)">non trouvé dans la liste Stripe</b>')+(pc.dernier_evenement?' · dernier évènement reçu : <b>'+saEsc(pc.dernier_evenement)+'</b>':' · aucun évènement reçu pour l\'instant')+'</div>';
   if((pc.webhooks||[]).length){ h+='<div style="font-size:11px;color:var(--text2);margin-top:6px">Webhooks vus par Stripe :'; pc.webhooks.forEach(function(w){ h+='<div>• '+saEsc(w.url)+' — '+saEsc(w.statut)+' — '+w.evenements+' évènement(s) : '+saEsc((w.liste||[]).join(", "))+'</div>'; }); h+='</div>'; }
@@ -4729,11 +4729,11 @@ async function saChargerSalon(id){
     if((c.a_fournir||[]).length) h+='<div style="font-size:12px;color:var(--orange)">À fournir : '+saEsc(c.a_fournir.join(", "))+'</div>';
     if(!c.encaissements||!c.virements||(c.a_fournir||[]).length) h+='<button class="dp-btn" style="font-size:11px;margin-top:6px" onclick="saLienInscription(\''+id+'\')">🔗 Lien pour terminer son inscription Stripe</button>';
     var P=d.paiements_clientes||[];
-    h+='<div style="font-weight:700;font-size:12px;margin:12px 0 4px">Paiements des clientes (90 jours) : '+P.length+'</div>';
+    h+='<div style="font-weight:700;font-size:12px;margin:12px 0 4px">Paiements des clients (90 jours) : '+P.length+'</div>';
     P.forEach(function(p){
       var stl={succeeded:"payé",requires_capture:"empreinte en attente",canceled:"annulé",processing:"en cours"}[p.statut]||p.statut;
       h+='<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px;padding:4px 0;border-top:1px solid var(--border)"><span>'+saD(p.date)+' · '+saE(p.montant)+' · '+saEsc(p.type||"")+' · '+stl+(p.rembourse?' · <b>remboursé '+saE(p.rembourse)+'</b>':'')+'<br><span style="color:var(--text2)">'+saEsc(p.description).slice(0,90)+'</span></span>';
-      if(p.statut==="succeeded"&&p.rembourse<p.montant) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRembourser(\''+id+'\',\''+p.id+'\','+(p.montant-p.rembourse)+',\'paiement d\\\'une cliente (repris sur le compte du salon)\')">Rembourser</button>';
+      if(p.statut==="succeeded"&&p.rembourse<p.montant) h+='<button class="dp-btn" style="font-size:10px;padding:3px 7px" onclick="saRembourser(\''+id+'\',\''+p.id+'\','+(p.montant-p.rembourse)+',\'paiement d\\\'un client (repris sur le compte du salon)\')">Rembourser</button>';
       h+='</div>';
     });
   }

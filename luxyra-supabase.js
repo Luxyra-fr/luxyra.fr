@@ -981,7 +981,7 @@ if (typeof window !== "undefined") window.lxMapClientRow = lxMapClientRow;
 // collabNom, salonId, confirmedAt, acompteRembourse, refundedAt, stripePaymentId et
 // tout le bloc empreinte. Consequence concrete : un acompte REMBOURSE redevenait
 // "net recu" dans le bordereau Stripe (regression silencieuse du fix bc032d1) et le
-// RDV ne se rattachait plus a la fiche cliente (_lxResolveClientId lit email/luxyraId).
+// RDV ne se rattachait plus a la fiche client (_lxResolveClientId lit email/luxyraId).
 // Ce mapper est l'UNION STRICTE des trois anciennes versions (aucun champ perdu).
 // ============================================================
 function lxMapRdvOnlineRow(r) {
@@ -1015,7 +1015,7 @@ function lxMapRdvOnlineRow(r) {
     modification_message: r.modification_message,
     modification_status: r.modification_status,
     cancelled_by: r.cancelled_by, cancel_reason: r.cancel_reason, cancelled_at: r.cancelled_at,
-    // 2026-10-10 : RDV à domicile (lieu, adresse de la cliente, frais de déplacement) + remise carte
+    // 2026-10-10 : RDV à domicile (lieu, adresse du client, frais de déplacement) + remise carte
     lieu: r.lieu || null,
     adresse: [r.client_adresse, [r.client_adresse_cp, r.client_adresse_ville].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null,
     adresseComplement: r.adresse_complement || null,
@@ -1991,7 +1991,7 @@ var _FICHE_TECH_KEYS = [
   "zonesSensibles","contrIndBE","detBE",
   // Photos avant/après
   "photos",
-  // 2026-10-11 : historique des relances « clientes inactives » (anti-harcèlement)
+  // 2026-10-11 : historique des relances « clients inactifs » (anti-harcèlement)
   "relances",
   // Historique structuré par métier (barbier/esthétique/ongles/bien-être).
   // Coiffure utilise toujours `formules` ci-dessus pour les formules couleur.
@@ -2127,7 +2127,7 @@ async function _saveClientUneFois(client) {
         var _mem = Object.assign({}, data); delete _mem.id; delete _mem.salon_id;
         var _confC = [];
         var _fus = _lxFusionFiche(client._lxBase, _mem, _dbData, { compteurs:["points_fidelite"], listes:["fiches","famille_ids"], objets:["fiche_tech"], conflits:_confC });
-        _lxSignalerConflits("Fiche cliente", ((client.pre||"")+" "+(client.nom||"")).trim(), _confC);
+        _lxSignalerConflits("Fiche client", ((client.pre||"")+" "+(client.nom||"")).trim(), _confC);
         if (_fus.points_fidelite !== undefined && _fus.points_fidelite < 0) _fus.points_fidelite = 0;
         data = Object.assign({ id: client.id, salon_id: _salonId }, _fus);
       }
@@ -2280,7 +2280,7 @@ async function saveAppointment(appt) {
       service_prix: appt.pr
       // 2026-10-11 : NI message NI items ici. En mémoire, appt.comment est un libellé construit
       // (« RDV EN LIGNE - nom - tel - message ») et appt.items a la forme de l'app : les réécrire
-      // empilait le préfixe dans le message vu par la cliente et vidait les prestations du RDV.
+      // empilait le préfixe dans le message vu par le client et vidait les prestations du RDV.
     };
     // Calculer la nouvelle durée à partir des phases si disponible
     if (appt.aPhases && Array.isArray(appt.aPhases) && appt.aPhases.length) {
@@ -2295,7 +2295,7 @@ async function saveAppointment(appt) {
     // Recalculer service_nom si la prestation principale a changé
     if (appt.sId && typeof gS === "function") { var sv0 = gS(appt.sId); if (sv0 && sv0.n) onlineData.service_nom = sv0.n; }
     // 2026-10-11 : contenu modifié par l'établissement conservé (phases + prestations ajoutées/remplacées),
-    // sinon tout revenait au catalogue au rechargement. Le nom vu par la cliente liste les ajouts.
+    // sinon tout revenait au catalogue au rechargement. Le nom vu par le client liste les ajouts.
     try {
       var _seItems = (Array.isArray(appt.items) ? appt.items : []).filter(function (x) { return x && !x.isAcompteData; });
       if ((Array.isArray(appt.aPhases) && appt.aPhases.length) || _seItems.length) {
@@ -2331,13 +2331,13 @@ async function saveAppointment(appt) {
         diffField("service_nom", old.service_nom, onlineData.service_nom);
         diffField("service_prix", old.service_prix == null ? null : Number(old.service_prix).toFixed(2), onlineData.service_prix == null ? undefined : Number(onlineData.service_prix).toFixed(2));
         if (Object.keys(diff).length > 0) {
-          // Le salon a réellement modifié le RDV : la demande de modification de la cliente est traitée.
+          // Le salon a réellement modifié le RDV : la demande de modification du client est traitée.
           onlineData.modification_demandee = false;
           onlineData.modification_status = null;
           onlineData.salon_modified_at = new Date().toISOString();
-          // 2026-10-11 : modifications successives pas encore vues par la cliente -> on les CUMULE
+          // 2026-10-11 : modifications successives pas encore vues par le client -> on les CUMULE
           // (avant : la dernière écrasait la précédente, ex. prestation changée puis durée ajustée
-          // -> la cliente ne voyait plus que « Durée »). Ancien = valeur d'origine, nouveau = actuelle.
+          // -> le client ne voyait plus que « Durée »). Ancien = valeur d'origine, nouveau = actuelle.
           try {
             var _prev = (old.salon_modified_at && !old.salon_modified_acknowledged_by_client && old.salon_modified_fields && typeof old.salon_modified_fields === "object") ? old.salon_modified_fields : null;
             if (_prev) {
@@ -3218,7 +3218,7 @@ async function saveSalonConfig() {
       nom:SALON_CONFIG.nom,tel:SALON_CONFIG.tel,adresse:SALON_CONFIG.adresse,cp:SALON_CONFIG.cp,ville:SALON_CONFIG.ville,email:SALON_CONFIG.email,logo:SALON_CONFIG.logo,
       // Fix 2026-05-11 : on stocke le VRAI slogan (depuis site_config) et non
       // plus le sousTitre. Avant : slogan=sousTitre||slogan → "by Amandine J"
-      // écrasait silencieusement "Chaque cliente, une création unique" dans
+      // écrasait silencieusement "Chaque client, une création unique" dans
       // salons.config_json.slogan. Maintenant : slogan = SITE_CONFIG.slogan
       // (fallback sousTitre seulement si rien).
       slogan:_sc.slogan||SALON_CONFIG.sousTitre||"",

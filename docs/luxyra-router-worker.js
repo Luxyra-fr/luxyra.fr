@@ -689,12 +689,12 @@ async function handleWebhook(request, env) {
         }
         break;
       }
-      // 2026-10-08 : Click & Collect payé en ligne (filet si la cliente ferme l'onglet avant le retour)
+      // 2026-10-08 : Click & Collect payé en ligne (filet si le client ferme l'onglet avant le retour)
       if (data.metadata?.type === "click_collect") {
         try { await ccFinaliserPaiement(env, data.metadata.commande_id, data); } catch (e) { console.error("cc finalize webhook:", e); }
         break;
       }
-      // FAILLE CORRIGÉE 2026-10-08 : TOUT paiement Checkout portant un salon_id (acompte d'une cliente,
+      // FAILLE CORRIGÉE 2026-10-08 : TOUT paiement Checkout portant un salon_id (acompte d'un client,
       // bon cadeau, carte...) passait ici comme un ABONNEMENT : le salon passait Pro/actif, et son
       // véritable abonnement Luxyra était ANNULÉ chez Stripe (anti-double-facturation de updateSalonPlan).
       // Seules les sessions d'abonnement modifient le forfait.
@@ -1550,7 +1550,7 @@ async function handleCcAction(request, env) {
       // FIX 2026-10-09 : si la commande n'était pas payée à la lecture, on n'annule que si elle ne l'est toujours pas
       // (un paiement finalisé entre-temps ne doit jamais finir « annulée sans remboursement »).
       const maj = await ccMaj(env, cmd.id, { status: "annulee", cancelled_at: now, cancelled_by: op, cancel_reason: b.motif ? String(b.motif).slice(0, 300) : null, refund_id: refundId }, ["pending_payment", "a_preparer", "prete"], cmd.paye ? "" : "&paye=eq.false");
-      if (!maj && !cmd.paye) { const re = await ccLire(env, cmd.id); if (re && re.paye && re.status !== "annulee") return jsonResponse({ error: "La cliente vient de payer cette commande : relancez l'annulation pour la rembourser.", commande: re }, 409); }
+      if (!maj && !cmd.paye) { const re = await ccLire(env, cmd.id); if (re && re.paye && re.status !== "annulee") return jsonResponse({ error: "Le client vient de payer cette commande : relancez l'annulation pour la rembourser.", commande: re }, 409); }
       try {
         if (maj && maj.client_email) await brevoSendEmail(env, {
           to: maj.client_email, toName: maj.client_nom, senderName: salon.nom || "Luxyra", replyTo: salon.email || undefined,
@@ -1564,7 +1564,7 @@ async function handleCcAction(request, env) {
   } catch (e) { console.error("cc action:", e); return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 
-// POST /api/client/commandes {session_token} — commandes de la cliente connectée
+// POST /api/client/commandes {session_token} — commandes du client connecté
 async function handleClientCommandes(request, env) {
   try {
     const { session_token } = await readJsonBody(request);
@@ -1638,7 +1638,7 @@ function saMontantMensuel(sub) {
 
 // ============================================================
 // WEBHOOK « COMPTES CONNECTÉS » (2026-10-09) — /api/stripe/webhook-connect
-// Reçoit les évènements des comptes Stripe des salons (paiements directs des clientes).
+// Reçoit les évènements des comptes Stripe des salons (paiements directs des clients).
 // Authenticité : l'évènement est RELU chez Stripe au nom du compte (aucun secret à configurer).
 // ============================================================
 async function handleWebhookConnect(request, env) {
@@ -1664,7 +1664,7 @@ async function handleWebhookConnect(request, env) {
           body: JSON.stringify(Object.assign({}, event, { account: compte }))
         });
       } else {
-        // 2026-10-09 : filet si la cliente ferme la page avant le retour du paiement. On rejoue EXACTEMENT la
+        // 2026-10-09 : filet si le client ferme la page avant le retour du paiement. On rejoue EXACTEMENT la
         // finalisation de la page (mêmes contrôles, idempotente : « déjà enregistré » si la page l'a déjà fait).
         const md = data.metadata || {};
         const appel = (corps) => new Request("https://luxyra.fr/interne", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corps) });
@@ -1942,7 +1942,7 @@ async function handleAdminStripe(request, env) {
       if (estClient && !piCompte) params.reverse_transfer = "true";
       const rf = await stripeAPI(env, "refunds", params, "POST", piCompte);
       if (!rf?.id) return jsonResponse({ error: "Stripe : " + (rf?.error?.message || "remboursement refusé") }, 502);
-      await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${piCompte ? "paiement cliente sur le compte du salon" : estClient ? "paiement cliente (ancien mode), repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
+      await saLog(env, "STRIPE_REMBOURSEMENT", salon.id, `${saEur(montant)} € sur ${pi.id} (${piCompte ? "paiement client sur le compte du salon" : estClient ? "paiement client (ancien mode), repris au salon" : "abonnement Luxyra"}) par ${admin} — ${motif}`);
       return jsonResponse({ ok: true, refund_id: rf.id, montant: saEur(montant) });
     }
     if (op === "lien_inscription") {
@@ -2124,7 +2124,7 @@ const ETAPES_LIB = {
   prestations: ["Créer vos prestations", "Paramètres → Services et forfaits"],
   horaires: ["Renseigner vos horaires", "Paramètres → Horaires"],
   equipe: ["Ajouter votre équipe", "Paramètres → Équipe"],
-  clients: ["Importer ou créer vos clientes", "tuile Clients (ou Paramètres → Migration depuis votre ancien logiciel)"],
+  clients: ["Importer ou créer vos clients", "tuile Clients (ou Paramètres → Migration depuis votre ancien logiciel)"],
   rdv: ["Placer un premier rendez-vous", "tuile Planning"],
   tickets: ["Faire un premier encaissement", "tuile Encaissement"],
   site: ["Mettre votre site en ligne (réservation 24/7)", "Paramètres → Site en ligne"],
@@ -2168,7 +2168,7 @@ async function runRelancesEssaiJob(env) {
       sujet = `${s.nom} : comment se passent vos débuts sur Luxyra ?`;
       corps = bonjour + `<p>Cela fait quelques jours que vous testez Luxyra pour <b>${ccEsc(s.nom)}</b>. Je voulais simplement savoir si tout se passe bien.</p>
         <p>Si quelque chose vous bloque (prestations, planning, caisse, site), répondez à cet email ou écrivez-moi dans le chat de l'application (bouton support) : je vous aide personnellement, et rapidement.</p>
-        <p>Astuce : vous pouvez importer vos clientes et vos prestations depuis votre ancien logiciel (Paramètres → Migration).</p>`;
+        <p>Astuce : vous pouvez importer vos clients et vos prestations depuis votre ancien logiciel (Paramètres → Migration).</p>`;
     } else if (type === "essai_j7") {
       let manque = [];
       try {
@@ -2184,7 +2184,7 @@ async function runRelancesEssaiJob(env) {
     } else {
       const fin = new Date(s.trial_end).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
       sujet = `${s.nom} : votre essai Luxyra se termine ${fin}`;
-      corps = bonjour + `<p>Votre essai gratuit de Luxyra se termine <b>${fin}</b>. Pour continuer sans interruption et garder toutes vos données (clientes, rendez-vous, caisse), choisissez votre forfait dans <b>Paramètres → S'abonner</b>.</p>
+      corps = bonjour + `<p>Votre essai gratuit de Luxyra se termine <b>${fin}</b>. Pour continuer sans interruption et garder toutes vos données (clients, rendez-vous, caisse), choisissez votre forfait dans <b>Paramètres → S'abonner</b>.</p>
         <p>Les 100 premiers salons au forfait Pro bénéficient du tarif Fondateur (14,99 €/mois au lieu de 24,99 €), garanti tant que l'abonnement reste actif.</p>
         <p>Un doute, une question sur le choix du forfait ? Répondez à cet email, je vous conseille volontiers.</p>`;
     }
@@ -2673,7 +2673,7 @@ async function readJsonBody(request) {
 
 // ============================================================
 // CHARGES DIRECTES (2026-10-09, décision Alexandre)
-// Les paiements des clientes sont créés SUR le compte Stripe du salon : frais Stripe, litiges et
+// Les paiements des clients sont créés SUR le compte Stripe du salon : frais Stripe, litiges et
 // remboursements chez le salon ; le compte Luxyra ne porte que les abonnements et les packs SMS.
 // Interrupteur app_config.stripe_charges_directes (false tant que le webhook « comptes connectés »
 // n'est pas branché). Les anciens paiements (stripe_account NULL) restent gérés sur la plateforme.
@@ -2699,7 +2699,7 @@ async function lxSessionOu(env, sessionId, comptes) {
   }
   return { session: null, compte: null };
 }
-// Paramètres Checkout d'un paiement de cliente : direct (sur le compte du salon) ou ancien mode destination.
+// Paramètres Checkout d'un paiement de client : direct (sur le compte du salon) ou ancien mode destination.
 function lxParamsPaiementSalon(params, direct, connectId) {
   if (!direct) params["payment_intent_data[transfer_data][destination]"] = connectId;
   return params;
@@ -2964,7 +2964,7 @@ async function handleEmailTicket(request, env) {
   if (!checkRateLimit("email_ticket:" + ip, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   const body = await request.json();
   let { clientEmail, clientName, salonName, salonEmail, ticketNum, ticketHtml, clientId } = body;
-  // SECURITE 2026-10-08 : salon connecte / appel serveur, OU cliente connectee (uniquement vers SA propre adresse)
+  // SECURITE 2026-10-08 : salon connecte / appel serveur, OU client connecte (uniquement vers SA propre adresse)
   const _acces = await lxGuardConnecte(request, env);
   if (!_acces.ok) {
     const _cl = body.session_token ? await verifyClientSession(body.session_token, env) : null;
@@ -3422,7 +3422,7 @@ async function handleSmsCustom(request, env) {
 async function handleClientTickets(request, env) {
   try {
     const _body = await request.json().catch(() => ({}));
-    // SECURITE 2026-10-08 : l'email vient de la SESSION de la cliente, jamais du corps de la requete.
+    // SECURITE 2026-10-08 : l'email vient de la SESSION du client, jamais du corps de la requete.
     const _sess = await verifyClientSession(_body.session_token, env);
     if (!_sess || !_sess.email) return jsonResponse({ error: "session_token invalide ou expiré", tickets: [] }, 401);
     const email = _sess.email;
@@ -3801,11 +3801,11 @@ async function attemptAcompteRefund(env, rdv) {
     if (montant <= 0) return { refunded: false, skipped: "montant nul" };
     if (rdv.status !== "cancelled") return { refunded: false, skipped: "non annulé" };
 
-    // 2026-10-10 : cliente absente (choix du salon dans le planning) -> acompte conservé.
+    // 2026-10-10 : client absent (choix du salon dans le planning) -> acompte conservé.
     if (rdv.retenue_at) return { refunded: false, skipped: "acompte déjà conservé (enregistré en caisse)" };
-    if (rdv.cancelled_by === "no_show") return { refunded: false, skipped: "cliente absente : acompte conservé", conserve: true };
+    if (rdv.cancelled_by === "no_show") return { refunded: false, skipped: "client absent : acompte conservé", conserve: true };
     // 2026-10-10 : annulation PAR LE SALON (à partir de cette version) -> acompte TOUJOURS remboursé ; la politique
-    // d'annulation et son délai ne s'appliquent qu'aux annulations de la cliente (et aux annulations antérieures).
+    // d'annulation et son délai ne s'appliquent qu'aux annulations du client (et aux annulations antérieures).
     const _parSalon = rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00";
     if (!_parSalon) {
       // 1) Politique d'annulation du salon (site_config — SINGULIER)
@@ -3901,7 +3901,7 @@ async function findAcompteChargePI(env, rdv, montant) {
 }
 
 // Tente le remboursement et enregistre le résultat dans rdv_online (idempotent).
-// 2026-10-08 : annulation par la cliente d'un RDV garanti par empreinte.
+// 2026-10-08 : annulation par le client d'un RDV garanti par empreinte.
 // Dans le délai de la politique d'annulation -> empreinte libérée tout de suite (sinon les fonds
 // restaient bloqués jusqu'à 7 jours). Hors délai -> on la laisse : le salon décide (bouton
 // « Capturer » ou « Libérer » dans le planning), sinon Stripe la libère seul après 7 jours.
@@ -4009,7 +4009,7 @@ async function handleClientRdvUpdate(request, env) {
     ];
     const patch = {};
     for (const k of ALLOWED) if (k in body) patch[k] = body[k];
-    // SECURITE 2026-10-08 : la cliente ne peut que ANNULER (statut), avec une date d'annulation serveur.
+    // SECURITE 2026-10-08 : le client ne peut que ANNULER (statut), avec une date d'annulation serveur.
     if ("status" in patch && patch.status !== "cancelled") delete patch.status;
     delete patch.cancelled_at; delete patch.cancelled_by;
     if (patch.status === "cancelled") { patch.cancelled_at = new Date().toISOString(); patch.cancelled_by = "client"; }
@@ -4130,7 +4130,7 @@ async function handleRdvCancel(request, env) {
     if (!rdv_id || !/^[0-9a-f-]{36}$/i.test(String(rdv_id))) return jsonResponse({ error: "rdv_id requis" }, 400);
     const sbKey = env.SUPABASE_SERVICE_KEY;
     if (!sbKey) return jsonResponse({ error: "config_error" }, 500);
-    // SECURITE 2026-10-08 : seule la cliente proprietaire du RDV (session) peut l'annuler ici.
+    // SECURITE 2026-10-08 : seule le client proprietaire du RDV (session) peut l'annuler ici.
     const session = await verifyClientSession(session_token, env);
     if (!session) return jsonResponse({ error: "Connectez-vous pour annuler ce rendez-vous" }, 401);
     const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
@@ -5210,7 +5210,7 @@ async function runPendingCartesAboPurgeJob(env) {
 
 // ============================================================
 // RGPD J+60 (2026-10-10) — 60 jours après la fin du service (résiliation, essai non transformé, impayé non
-// régularisé) : suppression des données personnelles non fiscales (fiches clientes, photos, réservations et
+// régularisé) : suppression des données personnelles non fiscales (fiches clients, photos, réservations et
 // commandes en ligne anonymisées). Préavis par email à J-7. Tickets, clôtures, journal NF525 : conservés 6 ans.
 // ============================================================
 // ============================================================
@@ -5259,8 +5259,8 @@ async function runRgpdPurgeJ60(env) {
       if (s.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)) {
         await brevoSendEmail(env, { to: s.email, toName: s.nom || "", senderEmail: "contact@luxyra.fr", senderName: "Luxyra",
           subject: `Vos données Luxyra seront supprimées le ${le}`,
-          htmlContent: lxMailLayout(`<p>Bonjour,</p><p>Votre service Luxyra pour <b>${String(s.nom || "votre établissement").replace(/</g, "&lt;")}</b> n'est plus actif. Conformément à nos conditions et au RGPD, <b>les données personnelles de vos clientes</b> (fiches, notes, photos, rendez-vous, réservations en ligne) <b>seront supprimées le ${le}</b>.</p><p>D'ici là, vous pouvez vous reconnecter pour <b>exporter vos données</b> ou <b>réactiver votre abonnement</b> : tout sera conservé à l'identique.</p><p>Vos documents de caisse (tickets, clôtures, journal) restent conservés 6 ans, comme l'exige la loi, et consultables en mode archives.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Me connecter</a></p>`, { titre: `Suppression prochaine de vos données` }),
-          textContent: `Les données personnelles de vos clientes (fiches, notes, photos, rendez-vous) seront supprimées le ${le}. Reconnectez-vous d'ici là pour exporter vos données ou réactiver votre abonnement : https://luxyra.fr/app . Vos documents de caisse restent conservés 6 ans.`, replyTo: null, attachment: null });
+          htmlContent: lxMailLayout(`<p>Bonjour,</p><p>Votre service Luxyra pour <b>${String(s.nom || "votre établissement").replace(/</g, "&lt;")}</b> n'est plus actif. Conformément à nos conditions et au RGPD, <b>les données personnelles de vos clients</b> (fiches, notes, photos, rendez-vous, réservations en ligne) <b>seront supprimées le ${le}</b>.</p><p>D'ici là, vous pouvez vous reconnecter pour <b>exporter vos données</b> ou <b>réactiver votre abonnement</b> : tout sera conservé à l'identique.</p><p>Vos documents de caisse (tickets, clôtures, journal) restent conservés 6 ans, comme l'exige la loi, et consultables en mode archives.</p><p style="text-align:center;margin:22px 0"><a href="https://luxyra.fr/app" style="background:#c8a84e;color:#000;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:700">Me connecter</a></p>`, { titre: `Suppression prochaine de vos données` }),
+          textContent: `Les données personnelles de vos clients (fiches, notes, photos, rendez-vous) seront supprimées le ${le}. Reconnectez-vous d'ici là pour exporter vos données ou réactiver votre abonnement : https://luxyra.fr/app . Vos documents de caisse restent conservés 6 ans.`, replyTo: null, attachment: null });
       }
       await supabaseUpdate(env, s.id, { rgpd_preavis_le: new Date().toISOString() });
       out.prevenus++;
@@ -5271,7 +5271,7 @@ async function runRgpdPurgeJ60(env) {
       const rp = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/rgpd_purge_salon`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: s.id }) });
       const r = rp.ok ? await rp.json() : null;
       if (!r || !r.ok) { out.erreurs++; continue; }
-      // photos des clientes (stockage) : dossier client-photos/<salon_id>/
+      // photos des clients (stockage) : dossier client-photos/<salon_id>/
       try {
         const lst = await fetch(`${CONFIG.SUPABASE_URL}/storage/v1/object/list/client-photos`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ prefix: s.id, limit: 1000 }) });
         const items = lst.ok ? await lst.json() : [];
@@ -5287,7 +5287,7 @@ async function runRgpdPurgeJ60(env) {
         r.photos = chemins.length;
       } catch (_) {}
       out.purges++;
-      try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "🧹 RGPD J+60", p_body: `${s.nom} : ${r.clients} fiche(s) cliente(s) supprimée(s)${r.photos ? ", " + r.photos + " photo(s)" : ""}. Données de caisse conservées.`, p_url: "/admin.html", p_payload: {} }) }); } catch (_) {}
+      try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "🧹 RGPD J+60", p_body: `${s.nom} : ${r.clients} fiche(s) client(s) supprimée(s)${r.photos ? ", " + r.photos + " photo(s)" : ""}. Données de caisse conservées.`, p_url: "/admin.html", p_payload: {} }) }); } catch (_) {}
     } catch (e) { out.erreurs++; console.error("rgpd purge", s.id, e?.message || e); }
   }
   return out;

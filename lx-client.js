@@ -2,7 +2,7 @@
 // lx-client.js — Client helper pour les edge functions Luxyra
 // ============================================================================
 // Wrapper autour des edge functions lx-signup / lx-login / lx-profile pour
-// l'authentification cliente Luxyra (compte cliente unique cross-salons).
+// l'authentification client Luxyra (compte client unique cross-salons).
 //
 // Stockage session :
 //   - localStorage["lx_token"]   : session_token JWT HS256 (30 jours)
