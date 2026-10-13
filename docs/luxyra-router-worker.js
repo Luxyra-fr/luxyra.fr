@@ -176,6 +176,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/client/favoris" && request.method === "POST") return await handleClientFavoris(request, env);
       if (url.pathname.startsWith("/api/salon-logo/") && request.method === "GET") return await handleSalonLogo(url.pathname.slice(16).replace(/\.png$/, ""), env);
       if (url.pathname === "/api/client/alertes" && request.method === "POST") return await handleClientAlertes(request, env);
+      if (url.pathname === "/api/client/notifs" && request.method === "POST") return await handleClientNotifs(request, env);
       if (url.pathname === "/api/alertes/creneau-libere" && request.method === "POST") return await handleCreneauLibere(request, env);
       if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
       if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
@@ -3678,6 +3679,8 @@ async function handleCreneauLibere(request, env) {
 <p style="font-size:14px;color:#666;line-height:1.6">Les autres personnes en attente ont reçu le même message : la place revient à la première qui réserve.</p>
 ${lxMailBouton("Réserver cette place", lien)}
 <p style="font-size:12px;color:#999;line-height:1.5">Vous recevez ce message car vous avez demandé à être prévenu(e). Gérer ou arrêter vos alertes : <a href="https://luxyra.fr/compte.html?tab=rdv" style="color:#a88a3e">Mes RDV</a>.</p>`;
+      // 2026-10-13 : aussi dans l'appli (cloche + notification sur le téléphone si activée)
+      await fetch(`${base}/rpc/lx_notifier_client`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_client: a.client_luxyra_id, p_type: "place_liberee", p_titre: `🔔 Une place s'est libérée chez ${salon.nom}`, p_texte: `Le ${jour} à ${heure}${a.service_nom ? " pour « " + a.service_nom + " »" : ""}. La place revient à la première personne qui réserve.`, p_url: lien }) }).catch(() => {});
       try {
         await brevoSendEmail(env, { to: c.email, subject: `Une place s'est libérée chez ${salon.nom}`, htmlContent: lxMailLayout(corps, { titre: "Une place s'est libérée" }), textContent: `Une place s'est libérée chez ${salon.nom} le ${jour} à ${heure}. Réserver : ${lien}` });
         n++;
@@ -3688,6 +3691,46 @@ ${lxMailBouton("Réserver cette place", lien)}
     await fetch(`${base}/creneau_liberes?id=eq.${qid}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ envoyes: n }) }).catch(() => {});
     return jsonResponse({ ok: true, envoyes: n });
   } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
+}
+// 2026-10-13 : notifications d'un compte client (cloche de l'appli + notifications du téléphone)
+async function handleClientNotifs(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "Connectez-vous" }, 401);
+    const lx = encodeURIComponent(session.lx_id), H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
+    const op = String(body.op || "list");
+    const J = { ...H, "Content-Type": "application/json" };
+    if (op === "subscribe" || op === "unsubscribe") {
+      const sub = body.subscription || {};
+      const ep = String(sub.endpoint || "");
+      if (!/^https:\/\/[^\s]{10,900}$/.test(ep)) return jsonResponse({ error: "abonnement invalide" }, 400);
+      if (op === "unsubscribe") {
+        await fetch(`${base}/client_push_subscriptions?client_luxyra_id=eq.${lx}&endpoint=eq.${encodeURIComponent(ep)}`, { method: "DELETE", headers: H });
+        return jsonResponse({ ok: true });
+      }
+      const k = sub.keys || {};
+      if (!k.p256dh || !k.auth || String(k.p256dh).length > 200 || String(k.auth).length > 100) return jsonResponse({ error: "clés invalides" }, 400);
+      const r = await fetch(`${base}/client_push_subscriptions?on_conflict=endpoint,client_luxyra_id`, { method: "POST", headers: { ...J, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ client_luxyra_id: session.lx_id, endpoint: ep, p256dh: String(k.p256dh), auth: String(k.auth), last_used_at: new Date().toISOString() }) });
+      if (!r.ok) return jsonResponse({ error: "Activation impossible" }, 400);
+      return jsonResponse({ ok: true });
+    }
+    if (op === "read_all") {
+      await fetch(`${base}/client_notifications?client_luxyra_id=eq.${lx}&lu=eq.false`, { method: "PATCH", headers: J, body: JSON.stringify({ lu: true }) });
+    } else if (op === "read") {
+      const id = parseInt(body.id, 10);
+      if (id) await fetch(`${base}/client_notifications?client_luxyra_id=eq.${lx}&id=eq.${id}`, { method: "PATCH", headers: J, body: JSON.stringify({ lu: true }) });
+    }
+    if (op === "count") {
+      const c = await fetch(`${base}/client_notifications?client_luxyra_id=eq.${lx}&lu=eq.false&select=id`, { headers: { ...H, Prefer: "count=exact", Range: "0-0" } });
+      const cr = c.headers.get("content-range") || "";
+      return jsonResponse({ ok: true, non_lues: parseInt(cr.split("/")[1], 10) || 0 });
+    }
+    const rows = await (await fetch(`${base}/client_notifications?client_luxyra_id=eq.${lx}&select=id,type,titre,texte,url,lu,created_at&order=created_at.desc&limit=50`, { headers: H })).json();
+    const list = Array.isArray(rows) ? rows : [];
+    return jsonResponse({ ok: true, notifications: list, non_lues: list.filter((x) => !x.lu).length });
+  } catch (e) { return jsonResponse({ error: "Erreur notifications" }, 500); }
 }
 // 2026-10-13 : salons favoris d'un compte client (liste / ajout-retrait)
 async function handleClientFavoris(request, env) {
