@@ -1816,3 +1816,11 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 
 ## Centre d'aide (13/10/2026)
 - Réservé à l'appli pro : AUCUN lien /aide sur le site public, les pages pro/logiciel, l'appli clients ni l'annuaire. Pages /aide en noindex, absentes du sitemap (v17). Ne pas remettre de lien public.
+
+## Acomptes, article libre, prix sur devis (14/10/2026, accord d'Alexandre)
+- Règles appliquées (sources BOFiP/CGI dans le registre) : TVA des prestations à l'encaissement des acomptes ; sommes conservées soumises à TVA (prudence) ; corrections = opérations en plus/en moins.
+- Helpers app.html : `_lxPayBuckets` (référence des règlements, comme la Z), `_lxModeDetail(a)` (règlement détaillé pour exports), `_lxLibAcompte(items, acompteEnLigne)` (libellés compta), `_lxAjustEnLigneMois(mois)` (ajustement paiements en ligne : URSSAF micro, récap TVA), `_lxStripeLigne(r)` (relevés Stripe), `_lxHistRemb(r, ac)` (historique des remboursements `rdv_online.remboursements`), `expAcomptesNonSoldes(silencieux)` (4191, fin du mois), capture CSV `window._lxCsvCapture` (pack comptable).
+- FEC : paiements en ligne au compte 580100 (comme le journal des ventes), jamais 512.
+- Article libre : `tkAddLibre`/`doAddLibre`, item `isLibre` (+ `isProd` selon le type) ; audit ARTICLE_LIBRE.
+- Prix sur devis : `services.prix_sur_devis` ↔ `sv.devis` ; `_lxPrixDevis` demande le prix à l'ajout (posAddService, doAddTkSvc) et garde-fou au début de `finalizePay`. Site : « Sur devis », bookOnline forcé à false (demande).
+- Centre d'aide : les pages `aide/*.html` ont été retouchées à la main depuis le 11/10 (client, multi-métiers, liste d'attente, notifications, remboursement partiel, article libre, sur devis…) : `aide_guides.py` est EN RETARD → NE PAS relancer `aide_build.py` sans y reporter ces textes (sinon perte). Nouvelles captures : caisse_ajout, caisse_libre, acompte_absent, services_devis (+ services_new, compta_docs refaites), voir shots.json.
