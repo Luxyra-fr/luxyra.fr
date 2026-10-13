@@ -4093,7 +4093,9 @@ async function attemptAcompteRefund(env, rdv) {
       if (!remboursementOn) return await _partiel("remboursement désactivé par le salon");
 
       // 2026-10-14 : annulation en ligne interdite par l'établissement -> acompte non remboursé automatiquement
-      if (policyHours === -1) return await _partiel("annulation en ligne désactivée par l'établissement");
+      // (règle -1 réservée aux annulations par le CLIENT ; anciens cas salon/système : ancienne lecture 48 h)
+      if (policyHours === -1 && rdv.cancelled_by === "client") return await _partiel("annulation en ligne désactivée par l'établissement");
+      if (policyHours === -1) policyHours = 48;
       // 2) Délai : annulation au moins policyHours avant le RDV
       try {
         if (rdv.date_rdv && rdv.heure_rdv) {

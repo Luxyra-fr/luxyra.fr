@@ -289,7 +289,7 @@ async function _walCheck(){
 
     try { if (typeof saveAuditEntry === "function") {
       saveAuditEntry("CENTRALISATION_DEGRADE", ok + " opération(s) transmise(s) au serveur après le mode dégradé" + (fail ? ", " + fail + " en attente" : ""));
-      if (!fail) saveAuditEntry("MODE_DEGRADE_FIN", "Toutes les opérations conservées sur l'appareil sont centralisées");
+      if (!fail && !differe) saveAuditEntry("MODE_DEGRADE_FIN", "Toutes les opérations conservées sur l'appareil sont centralisées");
     } } catch(_eC){}
     // Si trop d'échecs (>50%), on bascule sur la modale pour que l'utilisateur sache
     if (fail > 0 && fail >= (unsynced.length - differe) / 2) {
@@ -394,7 +394,17 @@ async function _walResync(walId, force){
       return { ok: true, doublon: true };
     }
     var _msg = (r && r.error && (r.error.message || r.error.code)) || (r && r.reason) || "échec non confirmé par le serveur";
+    // 2026-10-14 (NF525) : refus DÉFINITIFS (journée déjà clôturée, ticket scellé inaltérable) ou trop d'essais :
+    // l'entrée sort de la file (sinon rejouée et signalée à chaque démarrage), avec une trace d'audit explicite.
+    var _ticketOuRdv = (entry.type === "ticket" || entry.type === "appointment");
+    var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable/i.test(String(_msg));
     var _e2 = _walNoterEssai(walId, _msg);
+    if (_definitif || (_ticketOuRdv && _e2 && (Number(_e2.tries) || 0) >= 20)) { // une clôture Z n'est JAMAIS abandonnée
+      try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: walId, type: entry.type, raison: _definitif ? "refus définitif du serveur" : "20 essais", msg: String(_msg).slice(0, 300), tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null }).slice(0, 2000)); } catch (_eA) {}
+      try { if (typeof toast === "function") toast("Un enregistrement (" + entry.type + ") a été refusé définitivement par le serveur : " + String(_msg).slice(0, 120) + ". Il est tracé dans le journal ; contactez le support si besoin.", "error"); } catch (_eT) {}
+      _walMarkSynced(walId);
+      return { ok: false, reason: _msg, abandon: true };
+    }
     _walAlerterSiRepete(_e2, _msg);
     return { ok: false, reason: _msg };
   } catch(e){
@@ -2427,7 +2437,7 @@ async function saveAppointment(appt) {
         var _rDone;
         try { _rDone = await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
         // 2026-10-14 (NF525) : échec de l'écriture du RDV encaissé -> on le signale à la file de secours (pas de « synchronisé » à tort)
-        if (_rDone && typeof _rDone === "object" && (_rDone.error || _rDone.ok === false)) { return _rDone; }
+        if (_rDone && typeof _rDone === "object" && (_rDone.error || _rDone.ok === false) && !_walResultatDoublonPermanent(_rDone)) { return _rDone; } // 2026-10-14 : RDV déjà en base -> on continue (rdv_online marqué encaissé)
       } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); return { ok: false, error: { message: String((eDone && eDone.message) || eDone) } }; }
       // Marque la rdv_online encaissee (compte client : RDV passe + facture ; dedup planning)
       try { _sb.from("rdv_online").update({ status: "done", ticket_num: (appt.tkNum || null) }).eq("id", onlineUuid).eq("salon_id", _salonId).then(function(){}, function(){}); } catch (e3) {}
@@ -2644,7 +2654,7 @@ async function saveAppointment(appt) {
       if (appt.adresse) _mut.adresse_domicile = String(appt.adresse);
       if (data.meta) _mut.meta = data.meta; // 2026-10-14 (NF525) : colonne non protégée (nouvelle), mise à jour autorisée sur un ticket scellé
       var _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id");
-      if (_rm.error && _mut.meta && _lxErreurColonneMeta(_rm.error)) { window._lxApptMetaAbsent = true; delete _mut.meta; _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id"); }
+      if (_rm.error && _mut.meta) { if (_lxErreurColonneMeta(_rm.error)) window._lxApptMetaAbsent = true; delete _mut.meta; _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id"); }
       if (!_rm.error && _rm.data && _rm.data.length) { _walMarkSynced(_walId); return _rm; }
       r = _rm.error ? _rm : r;
     }
