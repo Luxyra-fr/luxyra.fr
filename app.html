@@ -22944,8 +22944,9 @@ async function expRecapTVA(){
   // 2026-10-13 : TVA à l'encaissement des acomptes payés en ligne (CGI art. 269-2-c) : ajustement à reporter
   try{
     var _aj=await _lxAjustEnLigneMois(accM), _ajT=Math.round((_aj.svc+_aj.prod)*100)/100;
-    if(Math.abs(_ajT)>0.004 && !isMicroEntrepreneur()){
-      var _tx=lxTauxTVA(), _ajH=Math.round(_ajT/(1+_tx/100)*100)/100, _ajV=Math.round((_ajT-_ajH)*100)/100;
+    if(Math.abs(_ajT)>0.004 && lxTauxTVA()>0){
+      var _tx=lxTauxTVA(), _txQ=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):_tx;
+      var _ajH=Math.round((_aj.svc/(1+_tx/100)+_aj.prod/(1+_txQ/100))*100)/100, _ajV=Math.round((_ajT-_ajH)*100)/100;
       footer.push(["",""]);
       footer.push(["AJUSTEMENT PAIEMENTS EN LIGNE (acomptes)", csvNum(_ajH)+" \u20ac HT", csvNum(_ajV)+" \u20ac TVA", csvNum(_ajT)+" \u20ac TTC", "d\u00e9tail : export \u00ab TVA des paiements en ligne \u00bb"]);
       footer.push(["\u00c0 D\u00c9CLARER (caisse + ajustement)", csvNum(Math.round((totalHT+_ajH)*100)/100)+" \u20ac HT", csvNum(Math.round((totalTVA+_ajV)*100)/100)+" \u20ac TVA", csvNum(Math.round((totalTTC+_ajT)*100)/100)+" \u20ac TTC", "TVA des prestations exigible \u00e0 l\u2019encaissement des acomptes (CGI art. 269-2-c)"]);
@@ -23147,6 +23148,15 @@ function expBordereauStripe(){
 // =====================================================================
 function _lxMoisBornes(m){ var y=Number(m.slice(0,4)), mo=Number(m.slice(5,7)); var fin=new Date(Date.UTC(mo===12?y+1:y, mo===12?0:mo, 1)); return {debut:m+"-01", finExcl:fin.toISOString().slice(0,10)}; }
 function _lxDateParis(iso){ if(!iso) return ""; try{ var d=new Date(iso); var p=new Intl.DateTimeFormat("fr-CA",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit"}).format(d); return p; }catch(e){ return String(iso).slice(0,10); } }
+// 2026-10-13 : remboursements d'un acompte (historique + reprise des remboursements antérieurs non historisés)
+function _lxHistRemb(r, ac){
+  var h=Array.isArray(r.remboursements)?r.remboursements.filter(function(x){ return x&&Number(x.montant)>0; }).slice():[];
+  var attendu=r.acompte_rembourse?ac:Math.min(ac, Number(r.acompte_rembourse_montant)||0), somme=0;
+  h.forEach(function(x){ somme+=Number(x.montant)||0; });
+  var diff=Math.round((attendu-somme)*100)/100;
+  if(diff>0.004) h.unshift({at:r.refunded_at||null, montant:diff, reprise:true});
+  return h;
+}
 async function _lxPaiementsEnLigne(mois){
   // Retourne la liste des paiements en ligne utiles au mois : {type, ref, client, libelle, montant, paye, rembourse, reconnu}
   var b=_lxMoisBornes(mois), L=[], nums={};
@@ -23169,7 +23179,7 @@ async function _lxPaiementsEnLigne(mois){
   (r1.data||[]).forEach(function(r){
     // 2026-10-13 : remboursement partiel -> une ligne pour la partie remboursée, une ligne pour la partie conservée
     var _rp=Math.round((Number(r.acompte_rembourse_montant)||0)*100)/100, _ac=Math.round(Number(r.acompte_montant)*100)/100;
-    var _hist=Array.isArray(r.remboursements)?r.remboursements.filter(function(x){ return x&&Number(x.montant)>0; }):[];
+    var _hist=_lxHistRemb(r,_ac);
     var _payeA=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at)||"";
     // 2026-10-13 : un ou plusieurs remboursements (total ou partiel) -> une ligne par remboursement, à SA date, + la part conservée
     if(_hist.length || (!r.acompte_rembourse && _rp>0 && _rp<_ac)){
@@ -23234,7 +23244,7 @@ async function expAcomptesNonSoldes(silencieux){
   }
   var b=_lxMoisBornes(accM), fin=b.finExcl, D=(function(){ var d=new Date(fin+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); })();
   var le=function(d){ return d && String(d).slice(0,10)<=D; };
-  var tx=lxTauxTVA(), micro=isMicroEntrepreneur(), rows=[], tot=0, totHT=0, totTVA=0;
+  var tx=lxTauxTVA(), micro=!(tx>0), rows=[], tot=0, totHT=0, totTVA=0; // sans TVA (franchise) : HT = TTC
   function ligne(type,client,presta,rdv,paye,montant,remb,reste,ref,etat){
     reste=Math.round(reste*100)/100; if(reste<0.005) return;
     var ht=micro?reste:Math.round(reste/(1+tx/100)*100)/100, tv=Math.round((reste-ht)*100)/100;
@@ -23242,29 +23252,35 @@ async function expAcomptesNonSoldes(silencieux){
     rows.push([type,client,presta,rdv,paye,csvNum(montant),csvNum(remb),csvNum(reste),csvNum(ht),csvNum(tv)+(micro?"":" ("+tx+"%)"),ref,etat]);
   }
   // 1) acomptes payés EN LIGNE (Stripe)
-  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye_at,created_at,acompte_rembourse,acompte_rembourse_montant,remboursements,refunded_at,status,ticket_num,retenue_tk_num,payment_intent_id").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).lte("acompte_paye_at",fin+"T00:00:00Z").limit(5000);
-  if(r1.error){ toast("Lecture impossible : "+r1.error.message,"error"); return; }
+  var r1={data:[]};
+  for(var _pg=0;_pg<50;_pg++){ // lecture par pages de 1000 (aucune ligne perdue)
+    var _q=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye_at,created_at,acompte_rembourse,acompte_rembourse_montant,remboursements,refunded_at,status,ticket_num,retenue_tk_num,payment_intent_id").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).lte("acompte_paye_at",fin+"T00:00:00Z").order("id",{ascending:true}).range(_pg*1000,_pg*1000+999);
+    if(_q.error){ toast("Lecture impossible : "+_q.error.message,"error"); return; }
+    r1.data=r1.data.concat(_q.data||[]); if(!_q.data||_q.data.length<1000) break;
+  }
   var nums={}; (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1; });
   var dTk={}, lst=Object.keys(nums).map(Number).filter(function(n){return n>0;});
   for(var i=0;i<lst.length;i+=200){ var tr=await _sb.from("tickets").select("num,date_ticket").eq("salon_id",_salonId).in("num",lst.slice(i,i+200)); ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=String(t.date_ticket||"").slice(0,10); }); }
   (r1.data||[]).forEach(function(r){
     var paye=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at); if(!le(paye)) return;
     var ac=Math.round(Number(r.acompte_montant)*100)/100;
-    var hist=Array.isArray(r.remboursements)?r.remboursements:[];
-    if(!hist.length && (r.acompte_rembourse||Number(r.acompte_rembourse_montant)>0)) hist=[{at:r.refunded_at, montant:r.acompte_rembourse?ac:Number(r.acompte_rembourse_montant)}];
-    var remb=0; hist.forEach(function(x){ if(le(_lxDateParis(x.at))) remb+=Number(x.montant)||0; }); remb=Math.min(ac,Math.round(remb*100)/100);
+    var hist=_lxHistRemb(r,ac);
+    var remb=0; hist.forEach(function(x){ if(!x.at || le(_lxDateParis(x.at))) remb+=Number(x.montant)||0; }); remb=Math.min(ac,Math.round(remb*100)/100); // date inconnue : considéré remboursé
     var reconnu=(r.retenue_tk_num&&dTk[r.retenue_tk_num])||(r.ticket_num&&dTk[r.ticket_num])||(r.status==="done"?r.date_rdv:"");
     if(le(reconnu)) return; // déjà dans un ticket (prestation réalisée ou acompte conservé) à cette date
     ligne("Acompte en ligne", [(r.client_prenom||""),(r.client_nom||"")].join(" ").trim(), r.service_nom||"", _lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), paye, ac, remb, ac-remb, r.payment_intent_id||"", r.status==="cancelled"?"RDV annul\u00e9 (remboursement / conservation en cours)":"Prestation \u00e0 r\u00e9aliser");
   });
   // 2) acomptes encaissés EN CAISSE (ticket « Acompte » scellé) pas encore déduits ni annulés à la date
+  //    (détection par les lignes du ticket : les drapeaux du ticket lui-même ne sont pas conservés après rechargement)
+  var _estAc=function(t){ return t&&(t.isAcompte||(t.items||[]).some(function(it){ return it&&it.isAcompte; })); };
+  var _rdvDe=function(n){ for(var k=0;k<AP.length;k++){ var x=AP[k]; if(!x) continue; if(Number(x.acompteTkNum)===n) return x; if((x.items||[]).some(function(it){ return it&&it.isAcompteData&&Number(it.acompteTkNum)===n; })) return x; } return null; };
   AP.forEach(function(t){
-    if(!t||!t.isAcompte||t.st!=="done"||!le(t.date)) return;
+    if(!_estAc(t)||t.st!=="done"||!le(t.date)) return;
+    if(t.cancelled && (!t.cancelDate || le(t.cancelDate))) return;
     var n=Number(t.tkNum); if(!n) return;
-    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(x.date)&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&Number(it.acompteTkNum)===n)); }); })
-      || AP.some(function(x){ return x&&x.isAcompteCancel&&le(x.date)&&Number(x.origTkNum)===n; });
-    var appt=null; for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].id===t.apptId){ appt=AP[k]; break; } }
-    if(!solde && appt && appt.st==="done" && appt.tkNum && le(appt.date)) solde=true; // acomptes complémentaires : RDV encaissé
+    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(x.date)&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&Number(it.acompteTkNum)===n)||(it.isAcompteCancel&&(Number(it.origTkNum)===n||Number(x.origTkNum)===n))); }); });
+    var appt=_rdvDe(n);
+    if(!solde && appt && appt.st==="done" && appt.tkNum && le(appt.date)) solde=true;
     if(solde) return;
     var cl=gC(t.cId)||(appt?gC(appt.cId):null), m=Math.round((Number(t.pr)||0)*100)/100;
     ligne("Acompte en caisse (ticket #"+n+")", cl?cName(cl):"", (t.items&&t.items[0]&&t.items[0].name)||"", appt?(_lxDateFrCourte(appt.date)+" "+(appt.time||"")):"", t.date, m, 0, m, "Ticket #"+n, "D\u00e9j\u00e0 dans le CA de caisse du "+_lxDateFrCourte(t.date));
@@ -23429,7 +23445,7 @@ async function expPackComptable(){
     var cotisSvcM = Math.round(totalSvcM * _lxTxUrssaf("svc") * 100) / 100;
     var cotisProdM = Math.round(totalProdM * _lxTxUrssaf("prod") * 100) / 100;
     var urssafFooter = [
-      ["\u2713","Recettes encaiss\u00e9es : acomptes pay\u00e9s en ligne compt\u00e9s le jour du paiement, remboursements d\u00e9duits (identique au livre des recettes)",""],
+      ["\u2713","Acomptes pay\u00e9s en ligne compt\u00e9s le jour de leur paiement, remboursements d\u00e9duits le jour du remboursement (r\u00e8gle des recettes encaiss\u00e9es)",""],
       ["Notes","",""],
       ["\u26A0\uFE0F","Cotisations estim\u00e9es \u00E0 titre indicatif uniquement",""],
       ["\u2713","Calcul officiel + d\u00e9claration : autoentrepreneur.urssaf.fr",""],
@@ -23485,7 +23501,7 @@ async function expPackComptable(){
     if(isMicro){ try{ await expLivreRecettes(); }catch(_e7){} }
     if(typeof expAcomptesNonSoldes==="function"){ try{ await expAcomptesNonSoldes(true); }catch(_e8){} }
     var _cap=window._lxCsvCapture||[];
-    _cap.forEach(function(f,i){ folder.file((["06_","07_","08_"][i]||("0"+(6+i)+"_"))+f.name, f.content); });
+    _cap.forEach(function(f){ var pf=/^tva_paiements/.test(f.name)?"06_":(/^livre_recettes/.test(f.name)?"07_":(/^acomptes_non_soldes/.test(f.name)?"08_":"09_")); folder.file(pf+f.name, f.content); });
   }finally{ window._lxCsvCapture=null; }
 
   // 0. Rapport HTML imprimable inclus dans le ZIP (\u00e0 ouvrir dans le navigateur, bouton \ud83d\udda8 \u2192 PDF)
@@ -23504,7 +23520,7 @@ async function expPackComptable(){
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function(){URL.revokeObjectURL(url);}, 5000);
   if(typeof toast==="function") toast("\uD83D\uDCE6 Pack comptable t\u00e9l\u00e9charg\u00e9 !","success");
-  if(typeof auditLog==="function") auditLog("EXPORT_PACK_COMPTABLE","P\u00e9riode "+accM+" - 6 fichiers");
+  if(typeof auditLog==="function") auditLog("EXPORT_PACK_COMPTABLE","P\u00e9riode "+accM+" - "+Object.keys(zip.files||{}).filter(function(k){return !/\/$/.test(k);}).length+" fichiers");
 }
 
 // =====================================================================
@@ -26682,7 +26698,7 @@ function annulerAcompte(apptId){
         id:U(),date:TD,time:frM(Math.floor(new Date().getHours()*60+new Date().getMinutes())),
         stId:a.stId,cId:a.cId,
         pr:-oldAmount,st:"done",met:(_payA?_payA.map(function(p){return p.method;}).join(" + "):oldMode),payments:(_payA||undefined),
-        items:[{name:"ANNULATION Acompte - "+(sv?sv.n:"Prestation"),price:-oldAmount,qty:1,remise:0,isAcompteCancel:true}],
+        items:[{name:"ANNULATION Acompte - "+(sv?sv.n:"Prestation"),price:-oldAmount,qty:1,remise:0,isAcompteCancel:true,origTkNum:(origTkNum||null)}],
         comment:"Annulation acompte du "+fmt(oldDate)+" (ticket #"+(origTkNum||"?")+")",
         tkNum:tkNum,isAcompteCancel:true,apptId:apptId,origTkNum:origTkNum,
         fromCaisse:true
@@ -27936,8 +27952,8 @@ function showConfirm(msg,onYes,onNo){
 // 2026-10-13 : PRESTATION SUR DEVIS — le prix convenu avec le client est saisi au moment de l'ajouter au ticket.
 function _lxPrixDevis(sv, suite){
   if(!sv||!sv.devis){ suite(Number(sv&&sv.p)||0); return; }
-  showPrompt({title:"\ud83d\udcdd Prix sur devis", label:"Prix convenu (TTC) pour \u00ab "+(sv.n||"Prestation")+" \u00bb", type:"number", defaultValue:(Number(sv.p)>0?sv.p:""), placeholder:"Ex : 180", okLabel:"Ajouter au ticket",
-    onOk:function(v){ var x=Math.round((parseFloat(String(v||"").replace(",","."))||0)*100)/100; if(!(x>0)||x>100000){ toast("Indiquez le prix convenu","warning"); return; } suite(x); }});
+  showPrompt({title:"\ud83d\udcdd Prix sur devis", label:"Prix convenu (TTC) pour \u00ab "+(sv.n||"Prestation")+" \u00bb", type:"text", inputMode:"decimal", defaultValue:(Number(sv.p)>0?sv.p:""), placeholder:"Ex : 180", okLabel:"Valider le prix",
+    onOk:function(v){ var x=Math.round((parseFloat(String(v||"").replace(",","."))||0)*100)/100; if(!(x>0)||x>100000){ toast("Indiquez le prix convenu","warning"); try{ showCaisse(); }catch(_e){} return; } suite(x); }});
 }
 // 2026-10-13 : ARTICLE LIBRE — intitulé + montant saisis, rattaché aux prestations ou aux produits (taux de TVA de
 // l'établissement pour cette catégorie). Ligne normale du ticket : scellée, chaînée, comptée partout comme les autres.
@@ -27956,7 +27972,7 @@ function tkAddLibre(){
   setTimeout(function(){ var n=document.getElementById("lbNom"); if(n) n.focus(); },80);
 }
 function doAddLibre(){
-  var nom=String((document.getElementById("lbNom")||{}).value||"").replace(/\s+/g," ").trim();
+  var nom=String((document.getElementById("lbNom")||{}).value||"").replace(/[<>&"]/g,"").replace(/\s+/g," ").trim();
   var x=Math.round((parseFloat(String((document.getElementById("lbPrix")||{}).value||"").replace(",","."))||0)*100)/100;
   var t=(document.querySelector('input[name="lbType"]:checked')||{}).value||"prest";
   if(nom.length<2){ toast("Indiquez l\u2019intitul\u00e9 (obligatoire sur le ticket)","warning"); return; }
@@ -28770,7 +28786,7 @@ function tkAddServiceCat(cat){
 
 function doAddTkSvc(svcId, _prixDevis){
   var sv=gS(svcId);if(!sv)return;
-  if(sv.devis && _prixDevis===undefined){ var _fc=window._tkAddForClient; _lxPrixDevis(sv, function(x){ window._tkAddForClient=_fc; doAddTkSvc(svcId, x); }); return; }
+  if(sv.devis && _prixDevis===undefined){ var _fc=window._tkAddForClient; window._tkAddForClient=null; _lxPrixDevis(sv, function(x){ window._tkAddForClient=_fc; doAddTkSvc(svcId, x); }); return; }
   var ni={sId:svcId,name:sv.n,price:(sv.devis?_prixDevis:sv.p),qty:1,remise:0,devis:!!sv.devis};
   if(window._tkAddForClient){var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}else{_tk.items.push(ni);}window._tkAddForClient=null;}else{_tk.items.push(ni);}
   showCaisse();
@@ -29454,6 +29470,9 @@ function applyPayAmount(method){
 }
 
 function finalizePay(method){
+  // 2026-10-13 : une prestation « sur devis » arrivée par le RDV sans prix -> on demande le prix convenu avant tout encaissement
+  try{ for(var _di=0;_di<(_tk.items||[]).length;_di++){ var _it=_tk.items[_di], _sv=(_it&&_it.sId&&!_it.isSep)?gS(_it.sId):null;
+    if(_sv&&_sv.devis&&!(Number(_it.price)>0)){ (function(it,sv){ _lxPrixDevis(sv,function(x){ it.price=x; it.devis=true; showCaisse(); }); })(_it,_sv); return; } } }catch(_eDv){}
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
   var resteDu=total-(_tk.paid||0);
   
@@ -35253,13 +35272,15 @@ function genererBandeMensuelle(){
   h+="<h2>4. R\u00c9CAPITULATIF MENSUEL</h2>";
   h+="<table>";
   h+="<tr><td class='b'>CA BRUT TTC</td><td class='r b'>"+totalTTC.toFixed(2)+" \u20ac</td></tr>";
-  h+="<tr><td>Annulations</td><td class='r'>-"+totalAnnul.toFixed(2)+" \u20ac</td></tr>";
-  h+="<tr class='tot'><td>CA NET TTC</td><td class='r'>"+(totalTTC-totalAnnul).toFixed(2)+" \u20ac</td></tr>";
+  h+="<tr><td>Dont annulations (pour information)</td><td class='r'>"+totalAnnul.toFixed(2)+" \u20ac</td></tr>";
+  h+="<tr class='tot'><td>CA NET TTC (annulations d\u00e9j\u00e0 d\u00e9duites par les contre-tickets, comme la Z)</td><td class='r'>"+totalTTC.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>CA NET HT</td><td class='r'>"+totalHT.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>TVA collect\u00e9e ("+txTVA+"%)</td><td class='r'>"+totalTVA2.toFixed(2)+" \u20ac</td></tr>";
-  h+="<tr><td>Nombre de tickets</td><td class='r'>"+tickets.length+"</td></tr>";
+  var _tkVentes=tickets.filter(function(t){ return !t.isCancel; });
+  h+="<tr><td>Nombre de tickets</td><td class='r'>"+tickets.length+(tickets.length!==_tkVentes.length?" (dont "+(tickets.length-_tkVentes.length)+" contre-ticket(s))":"")+"</td></tr>";
   h+="<tr><td>Nombre d\u0027annulations</td><td class='r'>"+annuls.length+"</td></tr>";
-  h+="<tr><td>Panier moyen TTC</td><td class='r'>"+(tickets.length?(totalTTC/tickets.length).toFixed(2):0)+" \u20ac</td></tr>";
+  var _caV=0; _tkVentes.forEach(function(t){ _caV+=Number(t.pr)||0; });
+  h+="<tr><td>Panier moyen TTC</td><td class='r'>"+(_tkVentes.length?(_caV/_tkVentes.length).toFixed(2):0)+" \u20ac</td></tr>";
   h+="</table>";
   
   h+="<div class='sep'></div>";

@@ -327,3 +327,4 @@ d'altération des données fiscales.*
 - Article libre en caisse (intitulé obligatoire + montant + type prestation/produit = taux de TVA de l'établissement) : ligne normale du ticket scellé (flag isLibre), journal ARTICLE_LIBRE.
 - Prestation « sur devis » (services.prix_sur_devis) : prix saisi à l'ajout au ticket ; « Sur devis » sur le site, réservation par demande.
 - Chaînage, numérotation, clôtures, JET : inchangés.
+- Relecture indépendante (14/10) : acomptes en caisse détectés par les lignes du ticket (après rechargement), bande de contrôle : plus de double déduction des annulations, panier moyen hors contre-tickets ; lecture paginée ; TVA de l'ajustement par taux (prestations/produits) et pour toute entreprise redevable de la TVA ; prestation sur devis : prix exigé avant tout encaissement quel que soit le chemin ; libellé d'article libre sans caractères HTML ; historique des remboursements antérieurs repris ; fichiers du pack nommés par type.
