@@ -57,7 +57,7 @@
         // 2026-10-11 : code postal inexistant (ex. 75000) -> on le signale, sans bloquer
         if (!_msg && cp.parentNode) { _msg = document.createElement("div"); _msg.className = "lx-cp-msg"; _msg.style.cssText = "font-size:11px;color:#ef9a9a;margin-top:4px"; cp.parentNode.appendChild(_msg); }
         if (_msg) _msg.textContent = "Code postal introuvable : vérifiez-le.";
-        if (liste) v.readOnly = false; // code absent de la base officielle (Monaco, outre-mer…) : on prévient sans bloquer
+        if (liste) { v.readOnly = false; v.value = ""; } // code absent de la base officielle (Monaco, outre-mer…) : on prévient sans bloquer
         return;
       }
       if (_msg) _msg.remove();
@@ -82,7 +82,7 @@
     var t = e.target; if (!t || !t.matches || !t.matches("select[data-lx-pays]")) return;
     var box = t, i, cp = null;
     for (i = 0; i < 5 && box && !cp; i++) { box = box.parentElement; if (box) cp = box.querySelector('input[autocomplete="postal-code"]'); }
-    if (cp) maj(cp);
+    if (cp) { var vv = villeDe(cp); if (vv && vv.getAttribute("data-lx-ville-liste") === "1") vv.value = ""; maj(cp); } // pays changé : la ville d'avant ne vaut plus
   }, true);
   // Formulaires pré-remplis (fiche, profil) : à l'affichage
   var t = null;
