@@ -4453,7 +4453,7 @@ const LX_ANN_METIERS = {
   "institut-de-beaute": { titre: "Institut de beauté", pluriel: "Instituts de beauté", luxyra: ["esthetique", "ongles", "regard", "maquillage"], logiciel: "/logiciel-institut-beaute", schema: "BeautySalon", phrase: "instituts de beauté, onglerie, cils et sourcils" },
   "spa-massage": { titre: "Spa & massage", pluriel: "Spas & massages", luxyra: ["spa", "bien_etre"], logiciel: "/logiciel-spa-massage", schema: "DaySpa", phrase: "spas, massages et bien-être" },
 };
-function lxAnnSlug(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "-").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
+function lxAnnSlug(s) { return String(s || "").replace(/œ/gi, "oe").replace(/æ/gi, "ae").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "-").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
 async function lxAnnRpc(fn, args) {
   try {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
