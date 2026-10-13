@@ -525,7 +525,7 @@ async function loadData(){
       }
     }
     var bs=document.getElementById("badgeSalons");
-    if(bs)bs.textContent=SALONS.length||"";
+    if(bs)bs.textContent=SALONS.filter(function(x){return !x.fermeLe;}).length||""; // 2026-10-13 : établissements fermés exclus du compteur
     // Load cartes abo global stats
     try{
       var cac=await _sb.from("cartes_abo_clients").select("id,tarif,economies_totales,status",{count:"exact"}).eq("status","active");
@@ -2268,7 +2268,7 @@ function _esc(s){
 function rAnalytics(sub){
   var totalC=0,totalCollabs=0;SALONS.forEach(function(s){totalC+=s.clients||0;totalCollabs+=s.collabs||0;});
   var byPlan={essential:0,pro:0};SALONS.forEach(function(s){if(s.status==='active')byPlan[s.plan]=(byPlan[s.plan]||0)+1;});
-  var byMetier={};SALONS.forEach(function(s){byMetier[s.metier]=(byMetier[s.metier]||0)+1;});
+  var byMetier={};SALONS.forEach(function(s){if(s.fermeLe)return;byMetier[s.metier]=(byMetier[s.metier]||0)+1;});
   var h='<div class="topbar"><h1>Analytics <span>'+(sub||'kpis')+'</span></h1></div>';
   if(sub==='cohorts'){return rAnalyticsCohorts(h);}
   if(sub==='funnel'){return rAnalyticsFunnel(h);}
@@ -2280,7 +2280,7 @@ function rAnalytics(sub){
   h+='</div>';
   h+='<div class="card"><h3>📊 Répartition par métier</h3>';
   Object.keys(byMetier).forEach(function(k){
-    var pct=Math.round((byMetier[k]/SALONS.length)*100);
+    var pct=Math.round((byMetier[k]/Math.max(1,SALONS.filter(function(x){return !x.fermeLe;}).length))*100);
     h+='<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>'+k+'</span><span style="color:var(--gold);font-family:var(--mono)">'+byMetier[k]+' ('+pct+'%)</span></div><div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--gold)"></div></div></div>';
   });
   h+='</div>';
@@ -2585,11 +2585,11 @@ function asSelTout(v){ asFiltrer().forEach(function(s){ if(v) window._ASEL[s.id]
 function asSelection(){ return SALONS.filter(function(s){return window._ASEL[s.id];}); }
 function asMajBarre(){ var n=asSelection().length, b=document.getElementById("asBarre"); if(!b) return; b.style.display=n?"flex":"none"; var c=document.getElementById("asNb"); if(c) c.textContent=n; }
 function asSet(k,v){ window._AF[k]=v; asRafraichir(); }
-function asRafraichir(){ var tb=document.getElementById("sTbody"); var L=asFiltrer(); if(tb) tb.innerHTML=asLignes(L); var c=document.getElementById("asCompte"); if(c) c.textContent=L.length+" / "+SALONS.length; asMajBarre(); }
+function asRafraichir(){ var tb=document.getElementById("sTbody"); var L=asFiltrer(); if(tb) tb.innerHTML=asLignes(L); var c=document.getElementById("asCompte"); if(c) c.textContent=L.length+" / "+SALONS.filter(function(x){return !x.fermeLe;}).length; asMajBarre(); }
 function asSelect(k,opts){ var v=window._AF[k]; return '<select onchange="asSet(\''+k+'\',this.value)" style="padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px">'+opts.map(function(o){return '<option value="'+o[0]+'"'+(String(v)===String(o[0])?' selected':'')+'>'+o[1]+'</option>';}).join("")+'</select>'; }
 function rSalons(){
   setTimeout(function(){ asChargerSuivi().then(asRafraichir); lxLoadSalonHealth(); asChargerDemarrage().then(asRafraichir); },30);
-  var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
+  var h='<div class="topbar"><h1>Établissements <span id="asCompte">'+SALONS.filter(function(x){return !x.fermeLe;}).length+'</span></h1><div style="display:flex;gap:6px"><button class="tb-btn" onclick="asExport(false)">⬇️ Export CSV</button><button class="tb-btn primary" onclick="addModal()">+ Nouvel établissement</button></div></div>';
   h+='<div class="search-box"><span>🔍</span><input id="sSearch" value="'+saEsc(window._AF.q)+'" placeholder="Nom, ville, email, SIRET, gérant, téléphone…" oninput="window._AF.q=this.value;asRafraichir()"></div>';
   h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:10px 0">';
   h+=asSelect("statut",[["all","Tous statuts"],["active","Actifs"],["trial","Essai"],["past_due","Impayés"],["suspended","Suspendus"],["cancelled","Résiliés"],["ferme","🔒 Fermés"],["pending","⏳ Non vérifiés"],["risk","⚠️ Inactifs ≥ 7 j"]]);
