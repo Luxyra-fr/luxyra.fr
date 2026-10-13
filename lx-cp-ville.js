@@ -21,7 +21,14 @@
     }
     return null;
   }
+  // 2026-10-13 : sélecteur de pays des comptes clients (select[data-lx-pays]) cherché autour du champ code postal
+  function paysDe(cp) {
+    var box = cp, i;
+    for (i = 0; i < 5 && box; i++) { box = box.parentElement; if (!box) break; var s = box.querySelector("select[data-lx-pays]"); if (s) return s; }
+    return null;
+  }
   function paysEtranger(cp) {
+    try { var sp = paysDe(cp); if (sp) return !!(sp.value && sp.value !== "France"); } catch (e) {}
     try { var p = document.getElementById("fPays"); if (p && p.value && p.value !== "France") return true; } catch (e) {}
     return false;
   }
@@ -39,7 +46,7 @@
     // 2026-10-13 : champ « ville à choisir » (comptes clients) : verrouillé tant que le code postal n'a pas donné la liste ;
     // saisie libre seulement pour un code étranger (4 chiffres, pays autre que la France) ou si le service ne répond pas.
     var liste = v.getAttribute("data-lx-ville-liste") === "1";
-    if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } if (liste) v.readOnly = !(code.length === 4 || paysEtranger(cp)); return; }
+    if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } if (liste) v.readOnly = !paysEtranger(cp); return; }
     charger(code).then(function (noms) {
       if (String(cp.value || "").replace(/\D/g, "") !== code) return;
       if (noms === null) { if (liste) v.readOnly = false; return; }
@@ -70,6 +77,12 @@
     });
   }
   document.addEventListener("input", function (e) { if (estCp(e.target)) maj(e.target); }, true);
+  document.addEventListener("change", function (e) {
+    var t = e.target; if (!t || !t.matches || !t.matches("select[data-lx-pays]")) return;
+    var box = t, i, cp = null;
+    for (i = 0; i < 5 && box && !cp; i++) { box = box.parentElement; if (box) cp = box.querySelector('input[autocomplete="postal-code"]'); }
+    if (cp) maj(cp);
+  }, true);
   // Formulaires pré-remplis (fiche, profil) : à l'affichage
   var t = null;
   new MutationObserver(function () { clearTimeout(t); t = setTimeout(function () {

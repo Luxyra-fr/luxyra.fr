@@ -300,6 +300,7 @@ function renderRegister(){
   h+='<div class="fg"><label>Date de naissance</label><input id="rDdn" type="date"></div></div>';
   h+='<div class="fg"><label>Genre *</label><select id="rGenre"><option value="" selected disabled>S\u00e9lectionnez\u2026</option><option value="F">Femme</option><option value="H">Homme</option><option value="E">Enfant</option></select></div>';
   h+='<div class="fg"><label>Adresse *</label><input id="rAdr" placeholder="Num\u00e9ro et rue (pour les RDV \u00e0 domicile)" autocomplete="street-address"></div>';
+  h+='<div class="fg"><label>Pays *</label><select id="rPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse'].map(function(p){return '<option'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville *</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr"></div>';
@@ -1397,8 +1398,9 @@ function renderProfileTab(){
   h+='<div class="fg"><label>Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="H"'+((CLIENT.genre==="H"||CLIENT.genre==="M")?" selected":"")+'>Homme</option><option value="E"'+(CLIENT.genre==="E"?" selected":"")+'>Enfant</option><option value=""'+(!CLIENT.genre||CLIENT.genre===""?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
   h+='<div class="fg"><label>Date de naissance</label><input id="pDdn" type="date" value="'+(CLIENT.date_naissance||"")+'"></div>';
   h+='<div class="fg"><label>Adresse *</label><input id="pAdr" value="'+escAttr(CLIENT.adresse||"")+'" placeholder="Num\u00e9ro et rue"></div>';
+  h+='<div class="fg"><label>Pays *</label><select id="pPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse'].map(function(p){return '<option'+(p===(CLIENT.pays||"France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="pCp" inputmode="numeric" value="'+escAttr(CLIENT.cp||"")+'" placeholder="Code postal" autocomplete="postal-code"></div>';
-  h+='<div class="fg"><label>Ville *</label><input id="pVille" readonly data-lx-ville-liste="1" style="cursor:default" value="'+escAttr(CLIENT.ville||"")+'" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
+  h+='<div class="fg"><label>Ville *</label><input id="pVille"'+((CLIENT.pays||"France")==="France"?' readonly':'')+' data-lx-ville-liste="1" style="cursor:default" value="'+escAttr(CLIENT.ville||"")+'" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>Email</label><input id="pEmail" value="'+CLIENT.email+'" disabled style="opacity:.5"></div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-bottom:12px">Pour changer d\u0027email, contactez le support.</div>';
   h+='<button class="btn btn-gold" onclick="saveProfile()">Enregistrer les modifications</button>';
@@ -1458,9 +1460,10 @@ async function doLogin(){
 }
 
 // 2026-10-13 : adresse obligatoire (renseignements pour les prestations \u00e0 domicile)
-function lxAdresseErreur(adr,cp,ville){
+function lxAdresseErreur(adr,cp,ville,pays){
   if(!adr||adr.length<5) return "Indiquez votre adresse (num\u00e9ro et rue) : elle sert aux prestations \u00e0 domicile.";
-  if(!/^\d{4,5}$/.test(String(cp||"").replace(/\s/g,""))) return "Code postal invalide";
+  var _c=String(cp||"").replace(/\s/g,""), _p=pays||"France";
+  if(!((_p==="France"||_p==="Allemagne")?/^\d{5}$/:/^\d{4}$/).test(_c)) return "Code postal invalide pour ce pays";
   if(!ville) return "Indiquez votre ville";
   return "";
 }
@@ -1484,8 +1487,9 @@ async function doRegister(){
   var adr=document.getElementById("rAdr")?document.getElementById("rAdr").value.trim():"";
   var cp=document.getElementById("rCp")?document.getElementById("rCp").value.trim():"";
   var ville=document.getElementById("rVille")?document.getElementById("rVille").value.trim():"";
-  var _ea=lxAdresseErreur(adr,cp,ville); if(_ea){showErr("regErr",_ea);return;}
-  var res=await LX.signup({email:email,password:pass,nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk,adresse:adr,cp:cp,ville:ville});
+  var pays=(document.getElementById("rPays")||{}).value||"France";
+  var _ea=lxAdresseErreur(adr,cp,ville,pays); if(_ea){showErr("regErr",_ea);return;}
+  var res=await LX.signup({email:email,password:pass,nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk,adresse:adr,cp:cp,ville:ville,pays:pays});
   if(!res.ok){
     // INSTRUMENTATION : \u00e9chec d'inscription client \u2192 logg\u00e9 dans le Monitoring (fin de l'angle mort).
     try{ console.error("[COMPTE] Echec inscription client ("+email+"): "+(res.data&&res.data.error?res.data.error:("HTTP "+(res.status||"?")))); }catch(_){}
@@ -1507,9 +1511,10 @@ async function saveProfile(){
   var adr=document.getElementById("pAdr")?document.getElementById("pAdr").value.trim():"";
   var cp=document.getElementById("pCp")?document.getElementById("pCp").value.trim():"";
   var ville=document.getElementById("pVille")?document.getElementById("pVille").value.trim():"";
-  var _ea=lxAdresseErreur(adr,cp,ville); if(_ea){var elA=document.getElementById("profileMsg");if(elA){elA.style.display="block";elA.style.color="var(--red)";elA.textContent=_ea;}return;}
+  var pays=(document.getElementById("pPays")||{}).value||"France";
+  var _ea=lxAdresseErreur(adr,cp,ville,pays); if(_ea){var elA=document.getElementById("profileMsg");if(elA){elA.style.display="block";elA.style.color="var(--red)";elA.textContent=_ea;}return;}
   // 1. Save to clients_luxyra via edge function
-  var res=await LX.update({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville});
+  var res=await LX.update({nom:nom.toUpperCase(),prenom:pre,telephone:tel,date_naissance:ddn||null,genre:genre||null,adresse:adr,cp:cp,ville:ville,pays:pays});
   if(!res.ok){var el0=document.getElementById("profileMsg");if(el0){el0.style.display="block";el0.style.color="var(--red)";el0.textContent=res.data&&res.data.error?res.data.error:"Erreur";}return;}
   CLIENT=res.data.user;saveSession();
   // 2. Sync to ALL salon client records with same email (only non-empty fields)
@@ -2067,7 +2072,7 @@ if(window.location.hash==="#register"&&!CLIENT)PAGE="register";
 render();
 if(CLIENT){loadMyRdvs();loadFidelite();}
 </script>
-<script src="/lx-cp-ville.js?v=20261013-01" defer></script>
+<script src="/lx-cp-ville.js?v=20261013-02" defer></script>
 <script src="/lx-client-app.js?v=4" defer></script>
 </body>
 </html>
