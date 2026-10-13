@@ -206,7 +206,7 @@ function renderStep1(){
   // 2026-10-09 : SIRET en premier (France) -> fiche officielle, champs remplis automatiquement
   if((DATA.pays||"France")==="France"){
     if(!DATA.enCoursImmat){
-      h+='<div class="fg"><label>SIRET * <span style="font-weight:400;font-size:11px;opacity:.7">\u2014 on remplit le reste pour vous</span></label><input id="fSiret" inputmode="numeric" maxlength="17" value="'+esc(DATA.siret)+'" placeholder="14 chiffres" oninput="lxSiretSaisie(this.value)"></div>';
+      h+='<div class="fg"><label>SIRET * <span style="font-weight:400;font-size:11px;opacity:.7">\u2014 on remplit le reste pour vous</span></label><div style="display:flex;gap:8px"><input id="fSiret" inputmode="numeric" maxlength="17" value="'+esc(DATA.siret)+'" placeholder="14 chiffres" oninput="lxSiretSaisie(this.value)" onchange="lxSiretSaisie(this.value,true)" style="flex:1"><button type="button" onclick="lxSiretSaisie((document.getElementById(\'fSiret\')||{}).value,true)" style="flex:0 0 auto;padding:0 16px;border-radius:12px;border:1px solid var(--gold);background:rgba(212,168,67,.12);color:var(--gold);font-weight:700;cursor:pointer">Rechercher</button></div></div>';
       h+='<div id="siretInfo" style="margin:-6px 0 12px;font-size:12px;line-height:1.5">'+(DATA._siretMsg||"")+'</div>';
     }
     // 2026-10-10 : entreprise qui ouvre / en cours d'immatriculation -> essai sans SIRET (obligatoire pour s'abonner)
@@ -257,12 +257,14 @@ function renderStep1(){
 
 // === SIRET -> fiche officielle (2026-10-09) ===
 var _lxSiretT=null;
-function lxSiretSaisie(v){
-  var s=String(v||"").replace(/\s+/g,"");
+function lxSiretSaisie(v,force){
+  var s=String(v||"").replace(/\D+/g,"");
   DATA.siret=s;
   var el=document.getElementById("siretInfo");
   clearTimeout(_lxSiretT);
-  if(s.length<14){ DATA._siretOk=null; if(el) el.innerHTML=""; DATA._siretMsg=""; return; }
+  if(s.length<14){ DATA._siretOk=null; DATA._siretMsg=(force&&s.length)?'<span style="color:#ef5350">\u26a0 Le SIRET doit faire 14 chiffres (vous en avez saisi '+s.length+').</span>':""; if(el) el.innerHTML=DATA._siretMsg; return; }
+  if(!force && DATA._siretInfo && DATA._siretInfo.siret===s) return; // déjà trouvé
+  if(s.length>14){ DATA._siretMsg='<span style="color:#ef5350">\u26a0 Le SIRET fait 14 chiffres : vérifiez la saisie.</span>'; if(el) el.innerHTML=DATA._siretMsg; return; }
   if(el) el.innerHTML='<span style="opacity:.7">\u23f3 Recherche dans le r\u00e9pertoire officiel des entreprises\u2026</span>';
   _lxSiretT=setTimeout(function(){ lxSiretChercher(s); },350);
 }
@@ -270,6 +272,7 @@ async function lxSiretChercher(s){
   var el=document.getElementById("siretInfo");
   try{
     var r=await fetch("/api/siret?siret="+encodeURIComponent(s)); var d=await r.json();
+    if(d && d.indisponible){ DATA._siretMsg='<span style="opacity:.8">\u26a0 '+esc(d.error)+'</span>'; if(el) el.innerHTML=DATA._siretMsg; return; }
     if(!d.ok){ DATA._siretOk=false; DATA._siretMsg='<span style="color:#ef5350">\u26a0 '+esc(d.error||"SIRET introuvable")+'</span>'; if(el) el.innerHTML=DATA._siretMsg; return; }
     if(!d.actif){ DATA._siretOk=false; DATA._siretMsg='<span style="color:#ef5350">\u26d4 Cet \u00e9tablissement est indiqu\u00e9 comme <b>ferm\u00e9</b>'+(d.date_fermeture?' depuis le '+new Date(d.date_fermeture).toLocaleDateString("fr-FR"):'')+' au r\u00e9pertoire officiel. V\u00e9rifiez votre SIRET (celui de votre \u00e9tablissement actuel).</span>'; if(el) el.innerHTML=DATA._siretMsg; return; }
     saveFields1(); DATA.siret=s;
@@ -305,8 +308,9 @@ function saveFields1(){
   DATA.cp=(document.getElementById("fCp")||{}).value||"";
   DATA.ville=(document.getElementById("fVille")||{}).value||"";
   DATA.tel=(document.getElementById("fTel")||{}).value||"";
-  DATA.siret=DATA.enCoursImmat?"":((document.getElementById("fSiret")||{}).value||"");
   DATA.pays=(document.getElementById("fPays")||{}).value||DATA.pays||"France";
+  DATA.siret=DATA.enCoursImmat?"":((document.getElementById("fSiret")||{}).value||"");
+  if(DATA.pays==="France") DATA.siret=DATA.siret.replace(/\D+/g,""); // espaces, points, tirets tolérés
   DATA.formeJur=(document.getElementById("fForme")||{}).value||"";
 }
 
@@ -861,6 +865,8 @@ function showErr(msg){var el=document.getElementById("stepErr");if(el){el.style.
 function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
 render();
+// 2026-10-13 : SIRET pré-rempli (lien « C'est votre établissement ? ») -> on lance la recherche tout de suite
+if(DATA.siret && DATA.siret.length===14 && !DATA.enCoursImmat){ setTimeout(function(){ lxSiretSaisie(DATA.siret,true); },150); }
 
 // === Charge la config globale Luxyra et update les éléments [data-lxconfig] ===
 // (frais Stripe, bonus SMS, prix abos) — modif depuis panel admin propagée ici.
