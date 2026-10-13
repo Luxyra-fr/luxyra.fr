@@ -27,7 +27,8 @@
     var ios=/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints>1);
     var integre=/FBAN|FBAV|Instagram|Line\/|Snapchat|TikTok/i.test(ua);
     var installe=window.navigator.standalone===true || (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
-    if(ios && !integre && !installe && !localStorage.getItem("lx_ios_bandeau")){
+    var pageOk=/^\/(index\.html|client(\.html)?|recherche(\.html)?|compte(\.html)?)?$/.test(location.pathname);
+    if(ios && pageOk && !integre && !installe && !localStorage.getItem("lx_ios_bandeau")){
       setTimeout(function(){
         if(document.getElementById("lxIosBandeau")) return;
         var d=document.createElement("div"); d.id="lxIosBandeau";

@@ -169,7 +169,7 @@ function loadSession(){
   // Fallback legacy localStorage
   try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";}}catch(e){}
 }
-function _lxPushOubli(){ try{ var t=(window.LX&&LX.getToken)?LX.getToken():""; if(!t||!navigator.serviceWorker) return; navigator.serviceWorker.getRegistration("/compte.html").then(function(reg){ return reg?reg.pushManager.getSubscription():null; }).then(function(sub){ if(!sub) return; fetch("/api/client/notifs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:t,op:"unsubscribe",subscription:sub.toJSON()})}).catch(function(){}); sub.unsubscribe().catch(function(){}); }).catch(function(){}); }catch(e){} }
+function _lxPushOubli(){ try{ var t=(window.LX&&LX.getToken)?LX.getToken():""; if(!t||!navigator.serviceWorker) return; navigator.serviceWorker.getRegistration("/compte.html").then(function(reg){ return (reg&&reg.scope===location.origin+"/compte.html")?reg.pushManager.getSubscription():null; }).then(function(sub){ if(!sub) return; fetch("/api/client/notifs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:t,op:"unsubscribe",subscription:sub.toJSON()})}).catch(function(){}); sub.unsubscribe().catch(function(){}); }).catch(function(){}); }catch(e){} }
 function logout(){_lxPushOubli();window.MY_NOTIFS=null;window.MY_NOTIFS_NL=0;window._lxNotifLance=0;try{localStorage.removeItem("lx_push_ok");}catch(_e0){}window.MY_ALERTES=undefined;window.MY_FAVORIS=null;window._lxFavLance=0;CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
 
 // === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
@@ -300,7 +300,7 @@ function renderRegister(){
   h+='<div class="fg"><label>Date de naissance</label><input id="rDdn" type="date"></div></div>';
   h+='<div class="fg"><label>Genre *</label><select id="rGenre"><option value="" selected disabled>S\u00e9lectionnez\u2026</option><option value="F">Femme</option><option value="H">Homme</option><option value="E">Enfant</option></select></div>';
   h+='<div class="fg"><label>Adresse *</label><input id="rAdr" placeholder="Num\u00e9ro et rue (pour les RDV \u00e0 domicile)" autocomplete="street-address"></div>';
-  h+='<div class="fg"><label>Pays *</label><select id="rPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse'].map(function(p){return '<option'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label>Pays *</label><select id="rPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===("France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville *</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr"></div>';
@@ -628,6 +628,7 @@ async function lxPushActiver(){
 async function lxPushDesactiver(){
   try{
     var reg=await navigator.serviceWorker.getRegistration("/compte.html");
+    if(reg&&reg.scope!==location.origin+"/compte.html") reg=null; // jamais l'enregistrement de l'espace pro
     var sub=reg?await reg.pushManager.getSubscription():null;
     if(sub){ try{ await _lxNotifApi("unsubscribe",{subscription:sub.toJSON()}); }catch(_e){} await sub.unsubscribe(); }
   }catch(e){}
@@ -1398,7 +1399,7 @@ function renderProfileTab(){
   h+='<div class="fg"><label>Genre</label><select id="pGenre"><option value="F"'+(CLIENT.genre==="F"?" selected":"")+'>Femme</option><option value="H"'+((CLIENT.genre==="H"||CLIENT.genre==="M")?" selected":"")+'>Homme</option><option value="E"'+(CLIENT.genre==="E"?" selected":"")+'>Enfant</option><option value=""'+(!CLIENT.genre||CLIENT.genre===""?" selected":"")+'>Non pr\u00e9cis\u00e9</option></select></div></div>';
   h+='<div class="fg"><label>Date de naissance</label><input id="pDdn" type="date" value="'+(CLIENT.date_naissance||"")+'"></div>';
   h+='<div class="fg"><label>Adresse *</label><input id="pAdr" value="'+escAttr(CLIENT.adresse||"")+'" placeholder="Num\u00e9ro et rue"></div>';
-  h+='<div class="fg"><label>Pays *</label><select id="pPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse'].map(function(p){return '<option'+(p===(CLIENT.pays||"France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label>Pays *</label><select id="pPays" data-lx-pays="1">'+['France','Allemagne','Luxembourg','Belgique','Suisse','Autre pays'].map(function(p){return '<option'+(p===(CLIENT.pays||"France")?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="pCp" inputmode="numeric" value="'+escAttr(CLIENT.cp||"")+'" placeholder="Code postal" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville *</label><input id="pVille"'+((CLIENT.pays||"France")==="France"?' readonly':'')+' data-lx-ville-liste="1" style="cursor:default" value="'+escAttr(CLIENT.ville||"")+'" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>Email</label><input id="pEmail" value="'+CLIENT.email+'" disabled style="opacity:.5"></div>';
@@ -1462,8 +1463,9 @@ async function doLogin(){
 // 2026-10-13 : adresse obligatoire (renseignements pour les prestations \u00e0 domicile)
 function lxAdresseErreur(adr,cp,ville,pays){
   if(!adr||adr.length<5) return "Indiquez votre adresse (num\u00e9ro et rue) : elle sert aux prestations \u00e0 domicile.";
-  var _c=String(cp||"").replace(/\s/g,""), _p=pays||"France";
-  if(!((_p==="France"||_p==="Allemagne")?/^\d{5}$/:/^\d{4}$/).test(_c)) return "Code postal invalide pour ce pays";
+  var _c=String(cp||"").replace(/^[A-Z]{1,2}-/i,"").replace(/\s/g,""), _p=pays||"France";
+  var _re=(_p==="France"||_p==="Allemagne")?/^\d{5}$/:(_p==="Autre pays"?/^[A-Za-z0-9-]{3,10}$/:/^\d{4}$/);
+  if(!_re.test(_c)) return "Code postal invalide pour ce pays";
   if(!ville) return "Indiquez votre ville";
   return "";
 }
@@ -2072,7 +2074,7 @@ if(window.location.hash==="#register"&&!CLIENT)PAGE="register";
 render();
 if(CLIENT){loadMyRdvs();loadFidelite();}
 </script>
-<script src="/lx-cp-ville.js?v=20261013-02" defer></script>
-<script src="/lx-client-app.js?v=4" defer></script>
+<script src="/lx-cp-ville.js?v=20261013-03" defer></script>
+<script src="/lx-client-app.js?v=5" defer></script>
 </body>
 </html>

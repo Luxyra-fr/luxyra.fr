@@ -49,14 +49,15 @@
     if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } if (liste) v.readOnly = !paysEtranger(cp); return; }
     charger(code).then(function (noms) {
       if (String(cp.value || "").replace(/\D/g, "") !== code) return;
-      if (noms === null) { if (liste) v.readOnly = false; return; }
+      if (paysEtranger(cp)) return;
+      if (noms === null) { if (v.__lxSel) { v.__lxSel.remove(); v.__lxSel = null; } v.style.display = ""; if (liste) v.readOnly = false; return; }
       var _msg = cp.parentNode && cp.parentNode.querySelector(".lx-cp-msg");
       if (!noms.length) {
         if (v.__lxSel) { v.__lxSel.remove(); v.__lxSel = null; } v.style.display = "";
         // 2026-10-11 : code postal inexistant (ex. 75000) -> on le signale, sans bloquer
         if (!_msg && cp.parentNode) { _msg = document.createElement("div"); _msg.className = "lx-cp-msg"; _msg.style.cssText = "font-size:11px;color:#ef9a9a;margin-top:4px"; cp.parentNode.appendChild(_msg); }
         if (_msg) _msg.textContent = "Code postal introuvable : vérifiez-le.";
-        if (liste) { v.readOnly = true; v.value = ""; }
+        if (liste) v.readOnly = false; // code absent de la base officielle (Monaco, outre-mer…) : on prévient sans bloquer
         return;
       }
       if (_msg) _msg.remove();
