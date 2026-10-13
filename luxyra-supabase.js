@@ -282,7 +282,7 @@ async function _walCheck(){
       try {
         var r = await _walResync(unsynced[i].id);
         // 2026-10-14 (NF525) : une entrée en attente (délai entre deux essais) n'est ni un succès ni un échec
-        if (r && r.ok) ok++; else if (r && r.differe) differe++; else fail++;
+        if (r && r.ok) ok++; else if (r && r.differe) differe++; else if (r && r.abandon) {} /* tracé WAL_ABANDON */ else fail++;
       } catch(_) { fail++; }
     }
     if (differe) console.warn("[WAL] " + differe + " action(s) en attente d'un nouvel essai (délai entre deux essais)");
@@ -399,7 +399,7 @@ async function _walResync(walId, force){
     var _ticketOuRdv = (entry.type === "ticket" || entry.type === "appointment");
     var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable/i.test(String(_msg));
     var _e2 = _walNoterEssai(walId, _msg);
-    if (_definitif || (_ticketOuRdv && _e2 && (Number(_e2.tries) || 0) >= 20)) { // une clôture Z n'est JAMAIS abandonnée
+    if (_definitif || (entry.type === "appointment" && _e2 && (Number(_e2.tries) || 0) >= 20)) { // un ticket ou une clôture Z n'est JAMAIS abandonné pour des erreurs passagères
       try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: walId, type: entry.type, raison: _definitif ? "refus définitif du serveur" : "20 essais", msg: String(_msg).slice(0, 300), tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null }).slice(0, 2000)); } catch (_eA) {}
       try { if (typeof toast === "function") toast("Un enregistrement (" + entry.type + ") a été refusé définitivement par le serveur : " + String(_msg).slice(0, 120) + ". Il est tracé dans le journal ; contactez le support si besoin.", "error"); } catch (_eT) {}
       _walMarkSynced(walId);
