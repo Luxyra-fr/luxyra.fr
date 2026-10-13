@@ -166,7 +166,7 @@ function loadSession(){
   // Fallback legacy localStorage
   try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";}}catch(e){}
 }
-function logout(){window.MY_FAVORIS=null;window._lxFavLance=0;CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
+function logout(){window.MY_ALERTES=undefined;window.MY_FAVORIS=null;window._lxFavLance=0;CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
 
 // === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
 // Si l'URL contient ?invite=XXX, on bypasse loadSession et on affiche le form invite.
@@ -573,6 +573,16 @@ function renderPhotosTab(){
   return h;
 }
 
+// --- ALERTES PLACE LIBÉRÉE (2026-10-13) ---
+async function loadMyAlertes(op,id){
+  try{
+    var r=await fetch("/api/client/alertes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:(window.LX&&LX.getToken)?LX.getToken():"",op:op||"list",id:id||null})});
+    var d=await r.json(); window.MY_ALERTES=r.ok?(d.alertes||[]):[];
+  }catch(e){ window.MY_ALERTES=[]; }
+  if(TAB==="rdv") render();
+}
+function lxAlerteSuppr(id){ if(confirm("Arr\u00eater cette alerte ?")) loadMyAlertes("delete",id); }
+
 // --- FAVORIS (2026-10-13) ---
 window.MY_FAVORIS=null;
 async function loadMyFavoris(){
@@ -646,6 +656,18 @@ function renderRdvTab(){
       }
     });
   }catch(_eRap){}
+
+  // 2026-10-13 : alertes « place libérée » actives
+  if(window.MY_ALERTES===undefined){ window.MY_ALERTES=null; setTimeout(loadMyAlertes,0); }
+  if(Array.isArray(window.MY_ALERTES) && window.MY_ALERTES.length){
+    var _plg={tous:"",matin:" \u00b7 le matin",apres_midi:" \u00b7 l\u2019apr\u00e8s-midi",soir:" \u00b7 en fin de journ\u00e9e"};
+    h+='<div class="section"><div class="section-title">\ud83d\udd14 Mes alertes de place lib\u00e9r\u00e9e ('+window.MY_ALERTES.length+')</div>';
+    window.MY_ALERTES.forEach(function(a){
+      h+='<div class="card" style="margin-bottom:8px;display:flex;align-items:center;gap:10px"><div style="flex:1"><div style="font-weight:700">'+escAttr(a.salon_nom||"")+'</div><div style="font-size:12px;color:var(--text3)">'+escAttr(a.service_nom||"")+' \u00b7 '+(a.date_debut===a.date_fin?fmtDate(a.date_debut):'du '+fmtDate(a.date_debut)+' au '+fmtDate(a.date_fin))+(_plg[a.plage]||"")+'</div></div>';
+      h+='<button onclick="lxAlerteSuppr(\''+a.id+'\')" style="padding:6px 10px;border-radius:8px;border:1px solid rgba(248,113,113,.3);background:transparent;color:var(--red);font-size:12px;cursor:pointer">Arr\u00eater</button></div>';
+    });
+    h+='</div>';
+  }
 
   // --- UPCOMING ---
   h+='<div class="section"><div class="section-title">\ud83d\udcc5 \u00c0 venir ('+upcoming.length+')</div>';
