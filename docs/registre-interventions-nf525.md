@@ -280,3 +280,7 @@ d'altération des données fiscales.*
 - Correction (`merge_client_duplicates`) : RDV et tickets rattachés ligne par ligne seulement quand la caisse le permet ; un ticket clôturé n'est JAMAIS modifié. S'il reste des tickets/RDV clôturés sur la fiche en double, elle n'est plus supprimée mais marquée `fusionne_dans` (cachée, sans e-mail ni compte en ligne, points remis à 0 car additionnés sur la fiche gardée). L'application affiche ces tickets dans l'historique de la fiche gardée (correspondance en mémoire, lecture seule). Détecteur de doublons : ignore les fiches fusionnées.
 - Essai à blanc (annulé) sur le cas réel : 2 RDV déplacés, 1 ticket clôturé laissé intact, points 1 + 2 = 3, ancien numéro en téléphone 2. Aucune fusion réelle faite par Claude : Amandine la refait elle-même dans l'application.
 - Prévention : une réservation en ligne est rattachée à la fiche existante si une seule fiche a le même nom + prénom et pas d'autre e-mail.
+
+## 2026-10-13 — Plusieurs métiers par établissement
+- Ajout `salons.metiers_autres` (activités secondaires), réglage « Autres activités », inscription, recherche, annuaire, fiche client/technique, admin.
+- Aucun impact caisse : ni tickets, ni clôtures, ni JET, ni chaînage modifiés. Changement de réglage tracé (audit CONFIG_METIERS).

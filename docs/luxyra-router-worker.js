@@ -4546,7 +4546,7 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
   const etabs = (await lxAnnRpc("annuaire_ville2", { p_source: M.source || metierSlug, p_ville_slug: villeSlug, p_motif: M.motif || null })) || [];
   const lx = [];
   try {
-    const rows = await lxSeoFetch(`salons_public?metier=in.(${M.luxyra.join(",")})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite,sous_titre&limit=500`);
+    const rows = await lxSeoFetch(`salons_public?or=(metier.in.(${M.luxyra.join(",")}),metiers_autres.ov.{${M.luxyra.join(",")}})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite,sous_titre&limit=500`); // 2026-10-13 : métiers secondaires inclus
     for (const s of (rows || [])) if (s.slug && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
   } catch (_) {}
   const lxIds = new Set(lx.map((s) => s.id));

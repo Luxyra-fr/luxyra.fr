@@ -177,6 +177,7 @@ var sb=supabase.createClient(SB_URL,SB_KEY);
 var STEP=1;
 // 2026-10-10 : parrainage (lien luxyra.fr/inscription.html?parrain=CODE)
 var _lxParrainUrl=(function(){ try{ return (new URLSearchParams(location.search).get("parrain")||"").toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12); }catch(e){ return ""; } })();
+function lxInsMetierAutre(m){ try{ if(typeof saveFields1==="function") saveFields1(); }catch(_e){} var L=DATA.metiersAutres||[]; var i=L.indexOf(m); if(i>=0) L.splice(i,1); else L.push(m); DATA.metiersAutres=L; render(); }
 var DATA={parrainCode:_lxParrainUrl,nom:"",metier:"coiffure",modeActivite:"salon",adresse:"",cp:"",ville:"",tel:"",siret:"",pays:"France",formeJur:"",franchiseTva:null,_tvaChoisie:false,gerantNom:"",gerantPrenom:"",email:"",pass:"",cgvAccepted:false,confAccepted:false};
 // 2026-10-13 : venue de l'annuaire (« C'est votre salon ? ») -> SIRET et nom pré-remplis
 try{ (function(){ var q=new URLSearchParams(location.search); var si=(q.get("siret")||"").replace(/\D/g,"").slice(0,14); if(si.length===14) DATA.siret=si; var no=(q.get("nom")||"").trim().slice(0,80); if(no) DATA.nom=no; var me=(q.get("metier")||"").trim(); if(/^(coiffure|barbier|esthetique|ongles|regard|maquillage|tatouage|spa|bien_etre)$/.test(me)) DATA.metier=me; })(); }catch(_e){}
@@ -216,9 +217,17 @@ function renderStep1(){
   var metiers=[["coiffure","Coiffure","\u2702\ufe0f"],["barbier","Barbier","\ud83d\udc88"],["esthetique","Esth\u00e9tique","\ud83d\udc86"],["ongles","Ongles","\ud83d\udc85"],["regard","Cils & sourcils","\ud83d\udc41\ufe0f"],["maquillage","Maquillage","\ud83d\udc84"],["tatouage","Tatouage & piercing","\ud83d\udd8b\ufe0f"],["spa","Spa & massages","\ud83c\udf3f"],["bien_etre","Bien-\u00eatre","\ud83e\uddd8"]];
   for(var i=0;i<metiers.length;i++){
     var m=metiers[i];
-    h+='<div class="metier-btn'+(DATA.metier===m[0]?' active':'')+'" onclick="DATA.metier=\''+m[0]+'\';DATA._metierChoisi=true;render()"><div class="ico">'+m[2]+'</div><div class="lbl">'+m[1]+'</div></div>';
+    h+='<div class="metier-btn'+(DATA.metier===m[0]?' active':'')+'" onclick="DATA.metier=\''+m[0]+'\';DATA._metierChoisi=true;DATA.metiersAutres=(DATA.metiersAutres||[]).filter(function(x){return x!==\''+m[0]+'\';});render()"><div class="ico">'+m[2]+'</div><div class="lbl">'+m[1]+'</div></div>';
   }
   h+='</div></div>';
+  // 2026-10-13 : un établissement peut exercer plusieurs métiers (ex. coiffure + esthétique)
+  h+='<div class="fg"><label>Vous proposez aussi <span style="font-weight:400;opacity:.7">(facultatif)</span></label><div style="display:flex;flex-wrap:wrap;gap:8px">';
+  for(var i2=0;i2<metiers.length;i2++){
+    var m2=metiers[i2]; if(m2[0]===DATA.metier) continue;
+    var on2=(DATA.metiersAutres||[]).indexOf(m2[0])>=0;
+    h+='<span onclick="lxInsMetierAutre(\''+m2[0]+'\')" style="cursor:pointer;padding:7px 12px;border-radius:20px;font-size:12.5px;border:1px solid '+(on2?'var(--gold)':'var(--line)')+';background:'+(on2?'rgba(212,168,67,.12)':'rgba(255,255,255,.03)')+';color:'+(on2?'var(--gold)':'var(--text)')+'">'+(on2?'✓ ':'+ ')+m2[2]+' '+m2[1]+'</span>';
+  }
+  h+='</div><div style="font-size:11.5px;color:var(--text3);margin-top:6px">Votre établissement apparaîtra aussi dans ces métiers (recherche, pages par ville) et l\u2019application s\u2019adapte à toutes vos activités.</div></div>';
   h+='<div class="fg"><label>Mode d\u2019activit\u00e9</label><select id="fMode" onchange="saveFields1();DATA.modeActivite=this.value;render()"><option value="salon"'+(DATA.modeActivite==="salon"?" selected":"")+'>En \u00e9tablissement</option><option value="domicile"'+(DATA.modeActivite==="domicile"?" selected":"")+'>\u00c0 domicile</option><option value="mixte"'+(DATA.modeActivite==="mixte"?" selected":"")+'>Mixte</option></select></div>';
   h+='<div class="fg"><label>'+(DATA.modeActivite==="domicile"?'Adresse professionnelle':'Adresse')+'</label><input id="fAdresse" value="'+esc(DATA.adresse)+'" placeholder="'+(DATA.modeActivite==="domicile"?'Adresse de votre entreprise (non affich\u00e9e publiquement)':'Adresse de l\u2019\u00e9tablissement')+'"></div>';
   h+='<div class="fg-row"><div class="fg"><label>Code postal</label><input id="fCp" value="'+esc(DATA.cp)+'" placeholder="Code postal" maxlength="5" autocomplete="postal-code"></div>';
@@ -609,6 +618,7 @@ async function doSubmit(){
       siret:DATA.enCoursImmat?null:DATA.siret.trim(),
       parrain_code:DATA.parrainCode||null,
       metier:DATA.metier,
+      metiers_autres:(DATA.metiersAutres||[]).filter(function(x){ return x && x!==DATA.metier; }),
       forme_juridique:DATA.formeJur,
       // 2026-10-07 : franchise -> 0 % ; sinon taux du pays (France : 20 % explicite).
       taux_tva: (DATA.franchiseTva===true) ? 0 : (DATA.pays==="Belgique"?21:(DATA.pays==="Luxembourg"?((DATA.metier==="coiffure"||DATA.metier==="barbier")?8:17):20)),
