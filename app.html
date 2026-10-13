@@ -12903,7 +12903,7 @@ async function lxAcompteRembourserPartie(id, ac){
     if(!r.ok){ toast(d.error||"Remboursement impossible","error"); if(b){ b.disabled=false; b.textContent="Rembourser et annuler le rendez-vous"; } return; }
     if(typeof auditLog==="function") auditLog("ACOMPTE_REMBOURSE_PARTIEL",((a.clientName||"")+" RDV du "+(a.date||"")+" "+(a.time||"")+" - rembours\u00e9 "+Number(d.rembourse).toFixed(2)+"E, conserv\u00e9 "+Number(d.conserve).toFixed(2)+"E").trim());
     toast("\u2705 "+Number(d.rembourse).toFixed(2).replace(".",",")+" \u20ac rembours\u00e9s au client"+(d.conserve>0?" \u2014 "+Number(d.conserve).toFixed(2).replace(".",",")+" \u20ac conserv\u00e9s":""),"success");
-    window._lxCancelBy="no_show"; _cancelApptDo(id);
+    window._lxCancelBy="no_show"; _doCancelApptUnpaid(id); window._lxCancelBy=null; cM(); go("planning");
   }catch(e){ toast("Remboursement impossible : "+(e.message||e),"error"); if(b){ b.disabled=false; b.textContent="Rembourser et annuler le rendez-vous"; } }
 }
 // FIX 2026-07-04 (BUG A) : annulation salon d'un RDV EN LIGNE (ghost "online_<uuid>").
@@ -13003,8 +13003,17 @@ async function _lxRetenueTicket(t){
     return;
   }
   var pc={}; pc[colClaim]=new Date().toISOString();
-  var cl=await _sb.from("rdv_online").update(pc).eq("id",r.id).eq("salon_id",_salonId).is(colNum,null).is(colClaim,null).select("id");
+  var _qc=_sb.from("rdv_online").update(pc).eq("id",r.id).eq("salon_id",_salonId).is(colNum,null).is(colClaim,null);
+  if(acompte) _qc=_qc.or("refund_attempted_at.is.null,refund_attempted_at.lt."+new Date(Date.now()-120000).toISOString()); // 2026-10-13 : pas pendant un remboursement en cours
+  var cl=await _qc.select("id");
   if(!cl||cl.error||!cl.data||!cl.data.length) return;
+  if(acompte){ // 2026-10-13 : montant conservé relu APRÈS le verrou (un remboursement partiel a pu avoir lieu entre-temps)
+    var _rr=await _sb.from("rdv_online").select("acompte_montant,acompte_rembourse,acompte_rembourse_montant").eq("id",r.id).eq("salon_id",_salonId).single();
+    if(!_rr||_rr.error||!_rr.data){ var _u0={}; _u0[colClaim]=null; await _sb.from("rdv_online").update(_u0).eq("id",r.id).eq("salon_id",_salonId); return; }
+    var _kp=Math.round((Number(_rr.data.acompte_montant)-(Number(_rr.data.acompte_rembourse_montant)||0))*100)/100;
+    if(_rr.data.acompte_rembourse||!(_kp>0)){ var _u1={}; _u1[colClaim]=null; await _sb.from("rdv_online").update(_u1).eq("id",r.id).eq("salon_id",_salonId); return; }
+    t.montant=_kp; r.acompte_rembourse_montant=_rr.data.acompte_rembourse_montant;
+  }
   // 4) ticket scellé
   var quand=_lxDateFrCourte(r.date_rdv)+(r.heure_rdv?" "+String(r.heure_rdv).slice(0,5):"");
   var motif=acompte?(r.cancelled_by==="no_show"?"client absent":(r.cancelled_by==="client"?"annulation hors délai":"conditions d\u2019annulation")):"client absent";
