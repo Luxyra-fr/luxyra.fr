@@ -3620,7 +3620,7 @@ async function handleClientAlertes(request, env) {
     if (!session) return jsonResponse({ error: "Connectez-vous pour créer une alerte" }, 401);
     const lx = session.lx_id, H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
     const op = String(body.op || "list");
-    const today = new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
+    const today = lxParisAujourdhui(); // 2026-10-14 : date de Paris (avant : UTC+2 fixe, faux en hiver)
     if (op === "create") {
       const sid = String(body.salon_id || "");
       if (!/^[0-9a-f-]{36}$/i.test(sid)) return jsonResponse({ error: "établissement invalide" }, 400);
@@ -3713,6 +3713,9 @@ async function handleClientNotifs(request, env) {
       }
       const k = sub.keys || {};
       if (!k.p256dh || !k.auth || String(k.p256dh).length > 200 || String(k.auth).length > 100) return jsonResponse({ error: "clés invalides" }, 400);
+      // 2026-10-14 : un navigateur = un seul compte. On retire cet abonnement des AUTRES comptes (appareil partagé :
+      // sinon le compte précédent continuait à recevoir ses notifications sur ce navigateur).
+      await fetch(`${base}/client_push_subscriptions?endpoint=eq.${encodeURIComponent(ep)}&client_luxyra_id=neq.${lx}`, { method: "DELETE", headers: H }).catch(() => {});
       const r = await fetch(`${base}/client_push_subscriptions?on_conflict=endpoint,client_luxyra_id`, { method: "POST", headers: { ...J, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ client_luxyra_id: session.lx_id, endpoint: ep, p256dh: String(k.p256dh), auth: String(k.auth), last_used_at: new Date().toISOString() }) });
       if (!r.ok) return jsonResponse({ error: "Activation impossible" }, 400);
       return jsonResponse({ ok: true });
@@ -3814,7 +3817,7 @@ async function handleClientRdvs(request, env) {
         if (Array.isArray(_cls)) _clientIds = _cls.map((c) => c.id).filter(Boolean);
       }
       if (_clientIds.length) {
-        const _today = new Date().toISOString().slice(0, 10);
+        const _today = lxParisAujourdhui(); // 2026-10-14 : date de Paris
         const _inList = _clientIds.map((id) => encodeURIComponent(id)).join(",");
         let _au = `${CONFIG.SUPABASE_URL}/rest/v1/appointments?select=id,salon_id,client_id,date_rdv,heure,prix,status,items,collab_name,cancelled&client_id=in.(${_inList})&date_rdv=gte.${_today}&cancelled=eq.false&status=neq.done&order=date_rdv.desc&limit=50`;
         if (salonId) _au += `&salon_id=eq.${encodeURIComponent(salonId)}`;
@@ -3866,11 +3869,7 @@ async function handleClientRdvs(request, env) {
         if (Array.isArray(cd)) {
           for (const c of cd) {
             // Convertit "24h"/"48h"/"72h"/"jamais" en nombre d'heures (-1 = jamais annulable, 0 = aucun délai)
-            let h = 48;
-            const raw = String(c.politique_annulation || "48h").trim().toLowerCase();
-            if (raw === "jamais" || raw === "non" || raw === "no") h = -1;
-            else if (raw === "0" || raw === "0h" || raw === "aucun") h = 0;
-            else { const m = raw.match(/(\d+)/); if (m) h = parseInt(m[1], 10); }
+            const h = lxPolitiqueHeures(c.politique_annulation); // 2026-10-14 : même règle que le contrôle serveur
             policyMap[c.salon_id] = {
               hours: h,
               remboursement: c.remboursement_annulation !== false
@@ -3998,6 +3997,59 @@ async function handleAcompteFinalize(request, env) {
 // remboursé au client. Idempotent (ne rembourse jamais 2x).
 // Politique : site_config.politique_annulation (délai) + remboursement_annulation.
 // ============================================================
+// 2026-10-14 : lecture UNIQUE de la politique d'annulation (même règle que compte.html / site.html).
+// -1 = « jamais » (annulation en ligne désactivée), 0 = aucun délai, sinon heures (« N h » ou « N j » -> N*24).
+function lxPolitiqueHeures(raw) {
+  const s = String(raw == null || raw === "" ? "48h" : raw).trim().toLowerCase();
+  if (s === "jamais" || s === "non" || s === "no" || s === "never") return -1;
+  if (s === "0" || s === "0h" || s === "aucun" || s === "aucun délai" || s === "aucun delai") return 0;
+  const m = s.match(/(\d+)/);
+  if (!m) return 48;
+  const n = parseInt(m[1], 10);
+  if (/\d\s*(j|jour|jours|d|day|days)\b/.test(s)) return n * 24;
+  return n;
+}
+// 2026-10-14 : heure « murale » de Paris (date YYYY-MM-DD + HH:MM[:SS]) -> vrai instant UTC (gère l'heure d'été).
+// Avant : new Date(`${date}T${heure}`) dans le worker = heure UTC -> 1 à 2 h d'écart sur les délais.
+function lxParisVersDate(dateStr, heureStr) {
+  const dm = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dateStr || ""));
+  if (!dm) return new Date(NaN);
+  const hm = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(String(heureStr || "00:00"));
+  const y = +dm[1], mo = +dm[2], d = +dm[3], h = hm ? +hm[1] : 0, mi = hm ? +hm[2] : 0, se = hm && hm[3] ? +hm[3] : 0;
+  const mur = Date.UTC(y, mo - 1, d, h, mi, se);
+  const decalage = (t) => {
+    try {
+      const p = {};
+      for (const x of new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(t))) p[x.type] = x.value;
+      return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - t;
+    } catch (_) { return 3600000; }
+  };
+  let t = mur - decalage(mur);
+  t = mur - decalage(t); // 2e passe : changement d'heure entre les deux estimations
+  return new Date(t);
+}
+// 2026-10-14 : date du jour à Paris (YYYY-MM-DD).
+function lxParisAujourdhui(d) {
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit" }).format(d || new Date()); }
+  catch (_) { return (d || new Date()).toISOString().slice(0, 10); }
+}
+// 2026-10-14 : contrôle serveur du délai d'annulation par le client (miroir de compte.html canCancel).
+// Retourne null si l'annulation est permise, sinon le message d'erreur (409).
+async function lxControleAnnulationClient(env, rdv) {
+  let policyHours = 48;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+    const rows = r.ok ? await r.json() : [];
+    policyHours = lxPolitiqueHeures(Array.isArray(rows) && rows[0] ? rows[0].politique_annulation : null);
+  } catch (_) {}
+  if (policyHours === -1) return "Ce rendez-vous ne peut pas être annulé en ligne : contactez l'établissement.";
+  if (policyHours === 0) return null;
+  if (!rdv.date_rdv) return null;
+  const debut = lxParisVersDate(rdv.date_rdv, rdv.heure_rdv || "09:00");
+  const hoursBefore = (debut.getTime() - Date.now()) / 3600000;
+  if (isFinite(hoursBefore) && hoursBefore < policyHours) return `Ce rendez-vous ne peut plus être annulé en ligne (moins de ${policyHours}h avant) : contactez l'établissement.`;
+  return null;
+}
 async function attemptAcompteRefund(env, rdv) {
   try {
     if (!rdv) return { refunded: false, error: "rdv manquant" };
@@ -4023,12 +4075,8 @@ async function attemptAcompteRefund(env, rdv) {
           if (Array.isArray(rows) && rows[0]) {
             remboursementOn = rows[0].remboursement_annulation !== false;
             pctPartiel = Math.max(0, Math.min(100, parseInt(rows[0].remboursement_partiel_pct, 10) || 0));
-            const raw = String(rows[0].politique_annulation || "48h").trim().toLowerCase();
-            const m = raw.match(/(\d+)/);
-            if (m) {
-              policyHours = parseInt(m[1]);
-              if (raw.includes("j") || raw.includes("jour") || raw.includes("day")) policyHours = parseInt(m[1]) * 24;
-            }
+            // 2026-10-14 : « jamais » = -1 (avant : lu comme 48h)
+            policyHours = lxPolitiqueHeures(rows[0].politique_annulation);
           }
         }
       } catch (_) {}
@@ -4044,10 +4092,12 @@ async function attemptAcompteRefund(env, rdv) {
       };
       if (!remboursementOn) return await _partiel("remboursement désactivé par le salon");
 
+      // 2026-10-14 : annulation en ligne interdite par l'établissement -> acompte non remboursé automatiquement
+      if (policyHours === -1) return await _partiel("annulation en ligne désactivée par l'établissement");
       // 2) Délai : annulation au moins policyHours avant le RDV
       try {
         if (rdv.date_rdv && rdv.heure_rdv) {
-          const rdvStart = new Date(`${rdv.date_rdv}T${rdv.heure_rdv}`);
+          const rdvStart = lxParisVersDate(rdv.date_rdv, rdv.heure_rdv); // 2026-10-14 : heure de Paris
           const cancelTime = rdv.cancelled_at ? new Date(rdv.cancelled_at) : new Date();
           const hoursBefore = (rdvStart.getTime() - cancelTime.getTime()) / 3600000;
           if (isFinite(hoursBefore) && hoursBefore < policyHours) {
@@ -4178,7 +4228,9 @@ async function findAcompteChargePI(env, rdv, montant) {
     const base = rdv.created_at ? Math.floor(new Date(rdv.created_at).getTime() / 1000) : Math.floor(Date.now() / 1000);
     const gte = base - 1800;       // 30 min avant la création du RDV
     const lte = base + 6 * 3600;   // 6 h après
-    const email = (rdv.client_email || "").toLowerCase();
+    const email = String(rdv.client_email || "").trim().toLowerCase();
+    // 2026-10-14 : sans email client, aucune correspondance sûre -> on ne rembourse jamais « au hasard »
+    if (!email) return null;
     const list = await stripeAPI(env, `charges?limit=100&created[gte]=${gte}&created[lte]=${lte}`, null, "GET");
     if (!list || !Array.isArray(list.data)) return null;
     const matches = list.data.filter(c =>
@@ -4186,9 +4238,8 @@ async function findAcompteChargePI(env, rdv, montant) {
       c.currency === "eur" && c.amount === amountCents &&
       ((c.transfer_data && c.transfer_data.destination === dest) || c.destination === dest) &&
       (
-        (c.billing_details && c.billing_details.email && c.billing_details.email.toLowerCase() === email) ||
-        (c.receipt_email && c.receipt_email.toLowerCase() === email) ||
-        !email
+        (c.billing_details && c.billing_details.email && c.billing_details.email.trim().toLowerCase() === email) ||
+        (c.receipt_email && c.receipt_email.trim().toLowerCase() === email)
       )
     );
     if (matches.length === 1 && matches[0].payment_intent) return matches[0].payment_intent;
@@ -4207,11 +4258,11 @@ async function releaseEmpreinteOnCancel(env, rdv) {
   try {
     const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
     const rows = cfgRes.ok ? await cfgRes.json() : [];
-    const raw = String((rows && rows[0] && rows[0].politique_annulation) || "48h").trim().toLowerCase();
-    const m = raw.match(/(\d+)/);
-    if (m) { policyHours = parseInt(m[1]); if (raw.includes("j") || raw.includes("jour") || raw.includes("day")) policyHours = parseInt(m[1]) * 24; }
+    policyHours = lxPolitiqueHeures(rows && rows[0] ? rows[0].politique_annulation : null); // 2026-10-14 : helper unique
   } catch (_) {}
-  const rdvStart = new Date(`${rdv.date_rdv}T${rdv.heure_rdv}`);
+  // 2026-10-14 : « jamais » -> pas de libération automatique, l'établissement décide
+  if (policyHours === -1) return { skipped: "annulation en ligne désactivée : décision du salon" };
+  const rdvStart = lxParisVersDate(rdv.date_rdv, rdv.heure_rdv); // 2026-10-14 : heure de Paris
   const hoursBefore = (rdvStart.getTime() - Date.now()) / 3600000;
   if (isFinite(hoursBefore) && hoursBefore < policyHours) return { skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h) : décision du salon` };
   const _hE = { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "Content-Type": "application/x-www-form-urlencoded" };
@@ -4324,9 +4375,31 @@ async function handleClientRdvUpdate(request, env) {
     delete patch.cancelled_at; delete patch.cancelled_by;
     if (patch.status === "cancelled") { patch.cancelled_at = new Date().toISOString(); patch.cancelled_by = "client"; }
     if (Object.keys(patch).length === 0) return jsonResponse({ error: "rien à patcher" }, 400);
+    // 2026-10-14 SECURITE : demande de modification contrôlée (le client ne peut pas « accepter » sa propre demande).
+    const _modif = ["modification_demandee", "modification_date", "modification_heure", "modification_message", "modification_status"].some((k) => k in patch);
+    if (_modif) {
+      if ("modification_status" in patch && patch.modification_status !== "pending") return jsonResponse({ error: "Statut de modification invalide" }, 400);
+      if ("modification_demandee" in patch) patch.modification_demandee = patch.modification_demandee === true;
+      if ("modification_date" in patch) {
+        const _d = String(patch.modification_date || "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(_d) || isNaN(Date.parse(_d + "T12:00:00Z")) || new Date(_d + "T12:00:00Z").toISOString().slice(0, 10) !== _d) return jsonResponse({ error: "Date invalide" }, 400);
+        if (_d < lxParisAujourdhui()) return jsonResponse({ error: "La date choisie est déjà passée" }, 400);
+      }
+      if ("modification_heure" in patch) {
+        const _h = String(patch.modification_heure || "");
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(_h)) return jsonResponse({ error: "Heure invalide (format HH:MM)" }, 400);
+      }
+      if ("modification_message" in patch && patch.modification_message != null) patch.modification_message = String(patch.modification_message).slice(0, 500);
+    }
+    // 2026-10-14 SECURITE : annulation par le client = même règle que l'espace client (délai de la politique d'annulation)
+    if (patch.status === "cancelled" && ["pending", "confirmed"].includes(String(own[0].status || ""))) {
+      const _refus = await lxControleAnnulationClient(env, own[0]);
+      if (_refus) return jsonResponse({ error: _refus }, 409);
+    }
     // 2026-10-13 SECURITE : une annulation ne vaut que pour un rendez-vous encore actif (sinon un RDV déjà annulé
     // -- client absent, acompte conservé et enregistré en caisse -- pouvait être « ré-annulé » et l'acompte remboursé).
-    const _filtreActif = patch.status === "cancelled" ? "&status=in.(pending,confirmed)" : "";
+    // 2026-10-14 : idem pour une demande de modification.
+    const _filtreActif = (patch.status === "cancelled" || _modif) ? "&status=in.(pending,confirmed)" : "";
     const upd = await fetch(
       `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdvId)}${_filtreActif}`,
       { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=representation" }), body: JSON.stringify(patch) }
@@ -4337,6 +4410,7 @@ async function handleClientRdvUpdate(request, env) {
     }
     const _updRows = await upd.json().catch(() => []);
     if (patch.status === "cancelled" && (!Array.isArray(_updRows) || !_updRows.length)) return jsonResponse({ error: "Ce rendez-vous n'est plus annulable (déjà annulé ou terminé)." }, 409);
+    if (_modif && (!Array.isArray(_updRows) || !_updRows.length)) return jsonResponse({ error: "Ce rendez-vous ne peut plus être modifié (annulé, terminé ou paiement en attente)." }, 409); // 2026-10-14
     // FIX 2026-05-23 : remboursement automatique de l'acompte à l'annulation client
     let refundResult = null;
     if (patch.status === "cancelled") {
@@ -4454,6 +4528,11 @@ async function handleRdvCancel(request, env) {
     const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
                  (own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
     if (!owns) return jsonResponse({ error: "RDV non rattaché à votre compte" }, 403);
+    // 2026-10-14 SECURITE : délai de la politique d'annulation vérifié côté serveur (avant : seulement dans l'interface)
+    if (["pending", "confirmed"].includes(String(own[0].status || ""))) {
+      const _refus = await lxControleAnnulationClient(env, own[0]);
+      if (_refus) return jsonResponse({ error: _refus }, 409);
+    }
     const patch = { status: "cancelled", cancel_reason: String(reason || "").slice(0, 500), cancelled_at: new Date().toISOString(), cancelled_by: "client" };
     // 2026-10-13 SECURITE : seulement un rendez-vous encore actif (voir handleClientRdvUpdate)
     const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}&status=in.(pending,confirmed)`, {
@@ -4611,7 +4690,17 @@ async function handleClientInviteVerify(request, env) {
       body: JSON.stringify({ used_at: new Date().toISOString() })
     });
 
-    return jsonResponse({ ok: true, email: invite.email });
+    // 2026-10-14 : le compte créé ici est un compte Supabase Auth, PAS un compte client Luxyra (clients_luxyra,
+    // créé uniquement par l'edge function lx-signup). On renvoie le prénom / nom / téléphone de la fiche pour que
+    // compte.html pré-remplisse l'inscription client si la connexion directe échoue.
+    // TODO : créer le compte client Luxyra ici (appel serveur à lx-signup ou RPC dédiée) quand ce sera possible.
+    let fiche = null;
+    try {
+      const fr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&select=nom,prenom,telephone&limit=1`, { headers: _sbHeaders(env) });
+      const fj = fr.ok ? await fr.json() : [];
+      if (Array.isArray(fj) && fj[0]) fiche = { nom: fj[0].nom || "", prenom: fj[0].prenom || "", telephone: fj[0].telephone || "" };
+    } catch (_) {}
+    return jsonResponse({ ok: true, email: invite.email, fiche });
   } catch (e) {
     console.error("handleClientInviteVerify error:", e);
     return jsonResponse({ error: e.message || "Erreur serveur" }, 500);
@@ -4630,7 +4719,7 @@ async function handleSalonAvailability(request, env) {
     const sbKey = env.SUPABASE_SERVICE_KEY;
     if (!sbKey) return jsonResponse({ error: "config_error" }, 500);
     const headers = { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" };
-    const from = date_from || new Date().toISOString().slice(0, 10);
+    const from = date_from || lxParisAujourdhui(); // 2026-10-14 : date de Paris
     const to = date_to || new Date(Date.now() + 31 * 86400000).toISOString().slice(0, 10);
     // 1. App appointments (RLS-protected table - needs service key)
     const apRes = await fetch(
@@ -4647,12 +4736,18 @@ async function handleSalonAvailability(request, env) {
       : appointmentsBrut;
     // 2. Online RDV (may also be RLS-protected)
     // FIX 2026-05-12 : on récupère aussi created_at pour permettre au client de
-    // filtrer les pending_payment stales (paiement abandonné depuis > 15 min).
+    // filtrer les pending_payment stales (paiement abandonné depuis > 35 min — 2026-10-14, avant 15 min).
     const roRes = await fetch(
       `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=date_rdv,heure_rdv,collaborateur_id,duree_minutes,status,created_at&salon_id=eq.${salon_id}&date_rdv=gte.${from}&status=neq.cancelled`,
       { headers }
     );
-    const rdvOnline = await roRes.json();
+    const rdvOnlineBrut = await roRes.json();
+    // 2026-10-14 : un paiement en cours (pending_payment) bloque le créneau 35 min (session Stripe = 31 min,
+    // même délai que le déclencheur de la base). Au-delà : paiement abandonné, créneau libre.
+    const _limPP = Date.now() - 35 * 60 * 1000;
+    const rdvOnline = Array.isArray(rdvOnlineBrut)
+      ? rdvOnlineBrut.filter((r) => !(r && r.status === "pending_payment" && r.created_at && new Date(r.created_at).getTime() < _limPP))
+      : rdvOnlineBrut;
     return jsonResponse({
       appointments: Array.isArray(appointments) ? appointments : [],
       rdv_online: Array.isArray(rdvOnline) ? rdvOnline : []

@@ -1239,7 +1239,8 @@ async function loadSalon(){
       if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
       if(avData.rdv_online){
         // FIX 2026-05-12 : ignore les pending_payment > 15 min (paiement abandonné = slot libre)
-        var _nowMs2=Date.now();var _staleMs2=15*60*1000;
+        // 2026-10-14 : 35 min (session Stripe = 31 min, même délai que la base et le worker)
+        var _nowMs2=Date.now();var _staleMs2=35*60*1000;
         avData.rdv_online.filter(function(r){
           if(r.status==="cancelled") return false;
           if(r.status==="pending_payment"){
@@ -1445,6 +1446,21 @@ async function ensureClientSalon(clientId){
 
 function doClientLogout(){
   window._lxFavOn=false; try{ lxFavMaj(); }catch(_eFv){}
+  // 2026-10-14 : retire aussi l'abonnement aux notifications de l'espace client (/compte.html) de ce navigateur,
+  // AVANT d'effacer le jeton (sinon l'appareil partagé continuait à recevoir les notifications du compte précédent).
+  try{
+    var _tkP=(window.LX&&LX.getToken)?LX.getToken():"";
+    localStorage.removeItem("lx_push_ok");
+    if(navigator.serviceWorker&&navigator.serviceWorker.getRegistration){
+      navigator.serviceWorker.getRegistration("/compte.html").then(function(reg){
+        return (reg&&reg.scope===location.origin+"/compte.html"&&reg.pushManager)?reg.pushManager.getSubscription():null;
+      }).then(function(sub){
+        if(!sub) return;
+        if(_tkP) fetch("/api/client/notifs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:_tkP,op:"unsubscribe",subscription:sub.toJSON()})}).catch(function(){});
+        sub.unsubscribe().catch(function(){});
+      }).catch(function(){});
+    }
+  }catch(_ePu){}
   CLIENT=null;CLIENT_RDVS=[];
   try{ if(window.LX&&LX.logout) LX.logout(); }catch(_e){}
   try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); localStorage.removeItem("lx_favoris"); }catch(_e){}
@@ -1488,27 +1504,45 @@ function renderSite(){
     // payment_intent dans rdv_online → remboursement automatique possible à l'annulation.
     var _sidPay=params.get("session_id");
     var _finStatus=SITE_CFG.autoConfirm?"confirmed":"pending";
+    // 2026-10-14 : « Paiement accepté » n'est affiché QU'APRÈS la réponse ok du serveur (avant : affiché tout de suite,
+    // même si la vérification Stripe échouait). Sinon : « Paiement en cours de vérification » + référence.
+    var el=document.getElementById("app"); if(!el) return; // garde-fou : conteneur absent
+    var _payRef=_sidPay||_rdvId;
+    var _payOk=function(){
+      el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement accept\u00e9 !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre acompte a \u00e9t\u00e9 encaiss\u00e9 et votre rendez-vous est '+(SITE_CFG.autoConfirm?'confirm\u00e9':'en attente de confirmation')+'.</p><p style="font-size:13px;color:var(--text3);margin-bottom:24px">Un email de confirmation vous sera envoy\u00e9.</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
+    };
+    var _payVerif=function(msgServeur){
+      el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:56px;margin-bottom:16px">\u23f3</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement en cours de v\u00e9rification</h2><p style="color:var(--text2);margin-bottom:12px;line-height:1.6">Nous n\u2019avons pas encore pu confirmer votre paiement. Si vous avez \u00e9t\u00e9 d\u00e9bit\u00e9, ne refaites pas la r\u00e9servation : contactez l\u2019\u00e9tablissement en donnant cette r\u00e9f\u00e9rence.</p>'+(msgServeur?'<p style="font-size:13px;color:var(--text3);margin-bottom:8px">'+escapeHtmlSimple(msgServeur)+'</p>':'')+'<p style="font-size:12px;color:var(--text3);margin-bottom:24px;word-break:break-all">R\u00e9f\u00e9rence : '+escapeHtmlSimple(_payRef)+'</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
+    };
+    el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center"><div style="font-size:56px;margin-bottom:16px">\u23f3</div><h2 style="color:var(--gold)">V\u00e9rification du paiement\u2026</h2></div></div>';
     if(_sidPay){
-      fetch("/api/stripe/acompte-finalize",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({session_id:_sidPay,rdv_id:_rdvId,status:_finStatus})
-      }).then(function(r){return r.json();}).then(function(){
+      var _finaliser=function(){
+        return fetch("/api/stripe/acompte-finalize",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({session_id:_sidPay,rdv_id:_rdvId,status:_finStatus})
+        }).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d||{}};},function(){return {ok:false,d:{}};});});
+      };
+      _finaliser().then(function(x){
         window.history.replaceState({},"",buildSalonUrl());
+        if(x.ok&&x.d.ok) _payOk(); else _payVerif(x.d.error||"");
       }).catch(function(){
         // 2026-10-08 : plus de validation directe depuis le navigateur (contournable). Nouvel essai,
         // puis signalement : le salon voit le paiement Stripe et peut valider le RDV.
         setTimeout(function(){
-          fetch("/api/stripe/acompte-finalize",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:_sidPay,rdv_id:_rdvId,status:_finStatus})})
-            .catch(function(){ try{ if(typeof _lxReportPublic==="function") _lxReportPublic("acompte-finalize indisponible rdv "+_rdvId); }catch(_e){} });
-          window.history.replaceState({},"",buildSalonUrl());
+          _finaliser().then(function(x){
+            window.history.replaceState({},"",buildSalonUrl());
+            if(x.ok&&x.d.ok) _payOk(); else _payVerif(x.d.error||"");
+          }).catch(function(){
+            try{ if(typeof _lxReportPublic==="function") _lxReportPublic("acompte-finalize indisponible rdv "+_rdvId); }catch(_e){}
+            window.history.replaceState({},"",buildSalonUrl());
+            _payVerif("");
+          });
         },2000);
       });
     }else{
       window.history.replaceState({},"",buildSalonUrl());
+      _payVerif("");
     }
-    // Show success page
-    var el=document.getElementById("app"); if(!el) return; // garde-fou : conteneur absent
-    el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement accept\u00e9 !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre acompte a \u00e9t\u00e9 encaiss\u00e9 et votre rendez-vous est '+(SITE_CFG.autoConfirm?'confirm\u00e9':'en attente de confirmation')+'.</p><p style="font-size:13px;color:var(--text3);margin-bottom:24px">Un email de confirmation vous sera envoy\u00e9.</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
     window.returnToSalon=function(){window.history.replaceState({},"",buildSalonUrl());renderSite();};
     return;
   }
@@ -1534,13 +1568,14 @@ function renderSite(){
       method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({session_id:_sid, rdv_id:_rdvId})
     }).then(function(r){return r.json();}).then(function(d){
-      if(d.ok){
+      // 2026-10-14 : non-ok -> « en cours de vérification » + référence échappée (avant : « Erreur » + texte brut)
+      if(d&&d.ok){
         elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\ud83d\udd12</div><h2 style="color:var(--gold);margin-bottom:8px">Empreinte enregistrée !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Aucun débit effectué. Votre carte est pré-autorisée — la somme sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée en cas d\u0027absence non excusée</strong>.</p><button class="btn btn-gold" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
       } else {
-        elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u26a0\ufe0f</div><h2 style="color:var(--red);margin-bottom:8px">Erreur de confirmation</h2><p style="color:var(--text2)">'+(d.error||"Contactez le salon avec la référence: "+_sid)+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
+        elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u23f3</div><h2 style="color:var(--gold);margin-bottom:8px">Empreinte en cours de v\u00e9rification</h2><p style="color:var(--text2);line-height:1.6">Nous n\u2019avons pas encore pu confirmer la pr\u00e9-autorisation de votre carte. Ne refaites pas la r\u00e9servation : contactez l\u2019\u00e9tablissement en donnant cette r\u00e9f\u00e9rence.</p>'+(d&&d.error?'<p style="font-size:13px;color:var(--text3)">'+escapeHtmlSimple(d.error)+'</p>':'')+'<p style="font-size:12px;color:var(--text3);word-break:break-all">R\u00e9f\u00e9rence : '+escapeHtmlSimple(_sid)+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
       }
     }).catch(function(e){
-      elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u26a0\ufe0f</div><h2 style="color:var(--red)">Erreur réseau</h2><p style="color:var(--text2)">Votre carte a peut-être été autorisée. Référence: '+_sid+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
+      elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u26a0\ufe0f</div><h2 style="color:var(--gold)">Empreinte en cours de v\u00e9rification</h2><p style="color:var(--text2);line-height:1.6">Votre carte a peut-\u00eatre \u00e9t\u00e9 autoris\u00e9e. Ne refaites pas la r\u00e9servation : contactez l\u2019\u00e9tablissement en donnant cette r\u00e9f\u00e9rence.</p><p style="font-size:12px;color:var(--text3);word-break:break-all">R\u00e9f\u00e9rence : '+escapeHtmlSimple(_sid)+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
     });
     return;
   }
@@ -3513,7 +3548,7 @@ async function refreshRDV(){
     if(avData.rdv_online){
       // FIX 2026-05-12 : ignore les pending_payment > 15 min (paiement abandonné, slot doit redevenir libre)
       var _nowMs=Date.now();
-      var _staleMs=15*60*1000;
+      var _staleMs=35*60*1000; // 2026-10-14 : 35 min (session Stripe = 31 min, même délai que la base et le worker)
       avData.rdv_online.filter(function(r){
         if(r.status==="cancelled") return false;
         if(r.status==="pending_payment"){
