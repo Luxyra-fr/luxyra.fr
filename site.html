@@ -1455,13 +1455,14 @@ async function ensureClientSalon(clientId){
   }
 }
 
-function doClientLogout(){
-  window._lxFavOn=false; try{ lxFavMaj(); }catch(_eFv){}
-  // 2026-10-14 : retire aussi l'abonnement aux notifications de l'espace client (/compte.html) de ce navigateur,
-  // AVANT d'effacer le jeton (sinon l'appareil partagé continuait à recevoir les notifications du compte précédent).
+// 2026-10-14 : oubli de l'abonnement aux notifications de l'espace client sur ce navigateur (déconnexion ou session expirée).
+// Appelé aussi par lx-client.js (window.lxAvantDeconnexion) juste avant d'effacer le jeton.
+function _lxPushOubliSite(){
   try{
+    if(window._lxPushOubliAt && Date.now()-window._lxPushOubliAt<3000) return;
+    window._lxPushOubliAt=Date.now();
     var _tkP=(window.LX&&LX.getToken)?LX.getToken():"";
-    localStorage.removeItem("lx_push_ok");
+    try{ localStorage.removeItem("lx_push_ok"); }catch(_eL){}
     if(navigator.serviceWorker&&navigator.serviceWorker.getRegistration){
       navigator.serviceWorker.getRegistration("/compte.html").then(function(reg){
         return (reg&&reg.scope===location.origin+"/compte.html"&&reg.pushManager)?reg.pushManager.getSubscription():null;
@@ -1472,6 +1473,13 @@ function doClientLogout(){
       }).catch(function(){});
     }
   }catch(_ePu){}
+}
+if(typeof window.lxAvantDeconnexion!=="function") window.lxAvantDeconnexion=_lxPushOubliSite;
+function doClientLogout(){
+  window._lxFavOn=false; try{ lxFavMaj(); }catch(_eFv){}
+  // 2026-10-14 : retire aussi l'abonnement aux notifications de l'espace client (/compte.html) de ce navigateur,
+  // AVANT d'effacer le jeton (sinon l'appareil partagé continuait à recevoir les notifications du compte précédent).
+  _lxPushOubliSite();
   CLIENT=null;CLIENT_RDVS=[];
   try{ if(window.LX&&LX.logout) LX.logout(); }catch(_e){}
   try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); localStorage.removeItem("lx_favoris"); }catch(_e){}
