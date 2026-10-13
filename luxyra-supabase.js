@@ -1057,13 +1057,20 @@ function lxSaveSalonColumns(patch) {
     for (var k in patch) {
       if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
       var v = patch[k];
+      if (k === "__silencieux") continue;
+      if (k === "siret" && !String(v || "").trim()) continue; // 2026-10-13 : jamais de SIRET vide
       if (v === undefined || v === null) continue;      // jamais de NULL par omission
       if (typeof v === "number" && !isFinite(v)) continue; // jamais de NaN
       data[k] = v;
     }
     if (Object.keys(data).length === 0) return Promise.resolve();
     return _sb.from("salons").update(data).eq("id", _salonId).then(function(res){
-      if (res && res.error) console.warn("lxSaveSalonColumns:", res.error.message);
+      if (res && res.error) {
+        console.warn("lxSaveSalonColumns:", res.error.message);
+        // 2026-10-13 : plus jamais d'échec silencieux d'un réglage (l'utilisateur croyait avoir enregistré)
+        try { if (!patch.__silencieux && typeof showAlert === "function") showAlert("\u26a0\ufe0f R\u00e9glage non enregistr\u00e9 : " + String(res.error.message || "erreur").replace(/^.*?:\s*/, "") + ". R\u00e9essayez ou \u00e9crivez au support.", "warning");
+              if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "lxSaveSalonColumns", champs: Object.keys(data), msg: String(res.error.message || "").slice(0, 200) })); } catch (_eA) {}
+      }
       return res;
     }, function(e){ console.warn("lxSaveSalonColumns exception:", e); });
   } catch (e) { console.warn("lxSaveSalonColumns threw:", e); return Promise.resolve(); }

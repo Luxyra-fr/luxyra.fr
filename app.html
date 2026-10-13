@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261013-3"></script>
+<script src="luxyra-supabase.js?v=20261013-4"></script>
 <script>
 console.log("LUXYRA v6.6");
 
@@ -13139,7 +13139,7 @@ function lxToggleMetierAutre(m){
   if(i>=0) L.splice(i,1); else L.push(m);
   SALON_CONFIG.metiers=L.filter(function(x){ return x && x!==(SALON_CONFIG.metier||"coiffure"); });
   // colonne salons.metiers_autres écrite directement (saveSalonConfig n'écrit que config_json)
-  if(typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({metiers_autres:SALON_CONFIG.metiers.slice()}).then(function(r){ if(r&&r.error&&typeof showAlert==="function") showAlert("Activit\u00e9s non enregistr\u00e9es : "+r.error.message,"warning"); });
+  if(typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({metiers_autres:SALON_CONFIG.metiers.slice()});
   try{ if(typeof auditLog==="function") auditLog("CONFIG_METIERS","Autres activités : "+(SALON_CONFIG.metiers.join(", ")||"aucune")); }catch(_e){}
   if(typeof toast==="function") toast(i>=0?"Activité retirée":"Activité ajoutée","success");
   go(window._currentPage||"settings");
@@ -13250,11 +13250,6 @@ function saveSalonInfo(){
       // échouait en silence (note des tickets, logo, téléphone… perdus au rechargement).
       siret:(String(SALON_CONFIG.siret||"").trim()||undefined), tva:SALON_CONFIG.tva,
       note_ticket:SALON_CONFIG.noteTicket  // "" = effacer la note (chaîne vide, jamais null par omission)
-    }).then(function(res){
-      if(res && res.error){
-        var _m=String(res.error.message||"");
-        if(typeof showAlert==="function") showAlert("\u26a0\ufe0f Les infos n\u2019ont pas pu \u00eatre enregistr\u00e9es : "+_m.replace(/^.*?:\s*/,"")+" \u2014 r\u00e9essayez ou \u00e9crivez au support.","warning");
-      }
     });
   }
   // Confirmation
@@ -34685,7 +34680,8 @@ function clearDoc(type){
     // If clearing a required doc, reset verification
     if(type==="kbis"||type==="id"){update.verification_status="pending";}
     try{
-      await _sb.from("salons").update(update).eq("id",window._salonId);
+      var _ud=await _sb.from("salons").update(update).eq("id",window._salonId);
+      if(_ud&&_ud.error){showAlert("Suppression non enregistr\u00e9e : "+_ud.error.message,"error");return;}
       if(type==="kbis")SALON_CONFIG.docKbis="";
       else if(type==="id")SALON_CONFIG.docId="";
       else if(type==="id_verso")SALON_CONFIG.docIdVerso="";
@@ -34731,7 +34727,8 @@ async function uploadDoc(type,input){
     var newDocKbis=type==="kbis"?url.data.publicUrl:SALON_CONFIG.docKbis;
     var newDocId=type==="id"?url.data.publicUrl:SALON_CONFIG.docId;
     if(newDocKbis&&newDocId){update.verification_status="pending_review";update.documents_uploaded_at=new Date().toISOString();}
-    await _sb.from("salons").update(update).eq("id",window._salonId);
+    var _ud=await _sb.from("salons").update(update).eq("id",window._salonId);
+    if(_ud&&_ud.error){showAlert("Document re\u00e7u mais non rattach\u00e9 \u00e0 votre compte : "+_ud.error.message+". R\u00e9essayez ou \u00e9crivez au support.","error");return;}
     if(type==="kbis")SALON_CONFIG.docKbis=url.data.publicUrl;
     else if(type==="id")SALON_CONFIG.docId=url.data.publicUrl;
     else if(type==="id_verso")SALON_CONFIG.docIdVerso=url.data.publicUrl;
