@@ -1792,3 +1792,10 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Adresse de salon inconnue / fermée / site désactivé → statut 404 + noindex (avant : 200, ex. luxyra.fr/100 indexée). Ancienne adresse (alias) → redirection 301 vers la nouvelle.
 - Pieds de page (accueil, pro, tarifs, blog, aide) : liens vers les 9 pages « logiciel par métier » et tous les articles du blog (maillage interne).
 - Bouton Réserver Google : la carte de Paramètres › Site en ligne donne maintenant le lien /<slug>/reserver (+ conseils Site Web, avis, fiche complète) ; aide et bot (google_reserver) à jour. 9 demandes d'indexation faites le 12/10 (logiciel-coiffure, institut, onglerie, barbier, cils, aide, 2 articles blog, delphinecoiff) ; sitemap renvoyé.
+
+## Annuaire public « Métier à Ville » (13/10/2026, demande d'Alexandre « faire comme Planity »)
+- Pages worker : /coiffeur, /institut-de-beaute, /spa-massage (+ /<ville>) ; /annuaire-retrait (retrait par SIRET, RPC annuaire_retirer, anon). Salons Luxyra en tête (bouton Réserver), autres « Réservation en ligne non disponible ». 404 + noindex si ville vide.
+- Données : table annuaire_etablissements (Sirene via API Recherche d'entreprises, uniquement établissements actifs, diffusion publique, avec ENSEIGNE/nom commercial — jamais de nom de personne, dirigeants, téléphone, note). annuaire_retraits = oppositions (jamais réaffichées).
+- Import : edge function annuaire-import (par morceaux ≤ 95 s, file annuaire_jobs), cron « annuaire-import » toutes les 2 min tant qu'il reste du travail ; « annuaire-relance-mensuelle » le 1er du mois (mise à jour + suppression des disparus > 62 j). Départements de départ : 57, 63, 67, 54, 03, 15, 43 (ajouter une ligne dans annuaire_jobs pour en couvrir d'autres).
+- Sitemap v14 : pages métier + villes. Mots réservés (is_reserved_slug, worker, app) : coiffeur, institut-de-beaute, spa-massage, annuaire-retrait.
+- Textes : politique de confidentialité §10 ter, mentions légales (source Sirene, Licence Ouverte), bot annuaire_public, liens en pied de page d'accueil.
