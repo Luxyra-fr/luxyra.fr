@@ -1971,10 +1971,11 @@ function renderSite(){
     catNames.forEach(function(cat){
       h+='<div class="tarif-cat" data-cat="'+escapeAttrSimple(cat)+'">';
       h+='<div class="tarif-cat-title">'+escapeHtmlSimple(cat)+'</div>';
-      cats[cat].forEach(function(s){
+      var _lxLong=lxCatRepliee(cat,cats[cat].length);
+      cats[cat].forEach(function(s,_ix){
         var isForf=!!s.isForfait;
         var isOnDemand=(!isForf && s.bookOnline===false);
-        h+='<div class="tarif-row">';
+        h+='<div class="tarif-row"'+((_lxLong&&_ix>=LX_CAT_VISIBLES)?' data-lx-plus="1" style="display:none"':'')+'>';
         h+='<div class="tarif-row-left">';
         h+='<div class="tarif-row-name">'+(isForf?'\ud83d\udce6 ':'')+escapeHtmlSimple(s.n)+'</div>';
         h+='<div class="tarif-row-meta">\u23f1 '+(s._dur||30)+' min'+(isForf?' \u00b7 Forfait':'')+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
@@ -1991,6 +1992,7 @@ function renderSite(){
         h+='</div>';
         h+='</div>';
       });
+      if(_lxLong) h+=lxBoutonVoirPlus(cat,cats[cat].length-LX_CAT_VISIBLES);
       h+='</div>';
     });
     h+='</div>';
@@ -2182,6 +2184,19 @@ function showPage(id){
 }
 
 // === Helpers fiche salon ===
+// 2026-10-13 : catégories longues repliées comme Planity (à partir de 8 prestations : 5 visibles + « Voir les N autres »)
+var LX_CAT_SEUIL=8, LX_CAT_VISIBLES=5, _lxCatOuvertes={};
+function lxCatRepliee(cat,n){ return n>=LX_CAT_SEUIL && !_lxCatOuvertes[cat]; }
+function lxBoutonVoirPlus(cat,n){
+  var safe=escapeAttrSimple(cat).replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+  return '<button type="button" class="lx-voir-plus" onclick="lxVoirPlus(this,\''+safe+'\')" style="display:block;width:100%;margin:6px 0 2px;padding:10px;background:transparent;border:1px dashed rgba(200,168,78,.35);border-radius:10px;color:var(--gold);font-size:13px;cursor:pointer">Voir '+(n>1?'les '+n+' autres prestations':'1 autre prestation')+'</button>';
+}
+function lxVoirPlus(btn,cat){
+  _lxCatOuvertes[cat]=true;
+  var box=btn.parentNode; if(box) box.querySelectorAll('[data-lx-plus="1"]').forEach(function(r){ r.style.display=""; r.removeAttribute("data-lx-plus"); });
+  btn.remove();
+}
+
 function escapeHtmlSimple(s){return String(s||'').replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function escapeAttrSimple(s){return String(s||'').replace(/["'<>&]/g,function(c){return {'"':'&quot;',"'":'&#39;','<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}
 
@@ -2341,11 +2356,13 @@ function renderBookingStep1(){
   catNames.forEach(function(cat){
     h+='<div class="tarif-cat" data-cat="'+escapeAttrSimple(cat)+'">';
     h+='<div class="tarif-cat-title">'+escapeHtmlSimple(cat)+'</div>';
-    cats[cat].forEach(function(s){
+    var _lxLong=lxCatRepliee(cat,cats[cat].length);
+    cats[cat].forEach(function(s,_ix){
       var isSel=isServiceInBooking(s.id);
       var isOnDemand=(s.bookOnline===false);
       var dur=s._dur||30;
-      h+='<div class="tarif-row'+(isSel?' tarif-row-selected':'')+'"'+(isOnDemand?'':' onclick="toggleService('+s.id+')" style="cursor:pointer"')+'>';
+      var _lxCache=(_lxLong&&_ix>=LX_CAT_VISIBLES&&!isSel);
+      h+='<div class="tarif-row'+(isSel?' tarif-row-selected':'')+'"'+(_lxCache?' data-lx-plus="1"':'')+(isOnDemand?(_lxCache?' style="display:none"':''):' onclick="toggleService('+s.id+')" style="cursor:pointer'+(_lxCache?';display:none':'')+'"')+'>';
       h+='<div class="tarif-row-left">';
       h+='<div class="tarif-row-name">'+(isSel?'<span style="color:var(--gold)">\u2713 </span>':'')+escapeHtmlSimple(s.n)+'</div>';
       h+='<div class="tarif-row-meta">\u23f1 '+dur+' min'+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
@@ -2363,6 +2380,7 @@ function renderBookingStep1(){
       }
       h+='</div></div>';
     });
+    if(_lxLong) h+=lxBoutonVoirPlus(cat,cats[cat].length-LX_CAT_VISIBLES);
     h+='</div>';
   });
   h+='</div>';
