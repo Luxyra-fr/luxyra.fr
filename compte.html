@@ -169,8 +169,28 @@ function loadSession(){
   // Fallback legacy localStorage
   try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";}}catch(e){}
 }
-function _lxPushOubli(){ try{ var t=(window.LX&&LX.getToken)?LX.getToken():""; if(!t||!navigator.serviceWorker) return; navigator.serviceWorker.getRegistration("/compte.html").then(function(reg){ return (reg&&reg.scope===location.origin+"/compte.html")?reg.pushManager.getSubscription():null; }).then(function(sub){ if(!sub) return; fetch("/api/client/notifs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:t,op:"unsubscribe",subscription:sub.toJSON()})}).catch(function(){}); sub.unsubscribe().catch(function(){}); }).catch(function(){}); }catch(e){} }
-function logout(){_lxPushOubli();window.MY_NOTIFS=null;window.MY_NOTIFS_NL=0;window._lxNotifLance=0;try{localStorage.removeItem("lx_push_ok");}catch(_e0){}window.MY_ALERTES=undefined;window.MY_FAVORIS=null;window._lxFavLance=0;CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
+// 2026-10-14 : le jeton est lu AVANT la déconnexion ; l'abonnement du navigateur est TOUJOURS retiré,
+// même sans jeton (seul l'appel au serveur est alors sauté).
+function _lxPushOubli(){ try{ if(window._lxPushOubliAt && Date.now()-window._lxPushOubliAt<3000) return; window._lxPushOubliAt=Date.now(); var t=(window.LX&&LX.getToken)?LX.getToken():""; try{localStorage.removeItem("lx_push_ok");}catch(_e1){} if(!navigator.serviceWorker) return; navigator.serviceWorker.getRegistration("/compte.html").then(function(reg){ return (reg&&reg.scope===location.origin+"/compte.html")?reg.pushManager.getSubscription():null; }).then(function(sub){ if(!sub) return; if(t) fetch("/api/client/notifs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:t,op:"unsubscribe",subscription:sub.toJSON()})}).catch(function(){}); sub.unsubscribe().catch(function(){}); }).catch(function(){}); }catch(e){} }
+// 2026-10-14 : lx-client.js appelle ce crochet juste avant d'effacer le jeton (déconnexion, session expirée, suppression du compte)
+window.lxAvantDeconnexion=function(){ _lxPushOubli(); };
+// 2026-10-14 : efface TOUTES les données du compte précédent (déconnexion ET nouvelle connexion sur le même appareil)
+function lxResetDonneesClient(){
+  CLIENT_RDVS=[]; CLIENT_AVIS=[];
+  FIDELITE_DATA=[]; _fideliteLoaded=false;
+  CARTES_ABO_DATA=[]; _cartesLoaded=false;
+  _bonsCadeauxData=null; _bonsCadeauxLoaded=false;
+  window.MY_PHOTOS=null; window._myPhotosLoading=false;
+  window.MY_COMMANDES=null;
+  window.MY_NOTIFS=null; window.MY_NOTIFS_NL=0; window._lxNotifLance=0;
+  window.MY_ALERTES=undefined;
+  window.MY_FAVORIS=null; window._lxFavLance=0;
+  window._myTicketsFilter="all"; window._myPhotosFilter="all"; window._myCartesFilter="all"; window._myFideliteFilter="all";
+  try{ for(var _k in window){ if(_k.indexOf("_picker_search_")===0) window[_k]=""; } }catch(_eK){}
+  try{ AVIS_DRAFT={rdvId:null, ticketId:null, salonId:null, note:0, texte:"", editing:null}; }catch(_eA){}
+  try{ localStorage.removeItem("lx_favoris"); }catch(_eL){}
+}
+function logout(){_lxPushOubli();lxResetDonneesClient();CLIENT=null;PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
 
 // === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
 // Si l'URL contient ?invite=XXX, on bypasse loadSession et on affiche le form invite.
@@ -359,13 +379,27 @@ async function doActivateInvite(){
     }
     // Compte cr\u00e9\u00e9 + li\u00e9 \u2192 on connecte automatiquement avec email + password
     if(btn){btn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Compte activ\u00e9 \u2713';}
-    var loginRes = await LX.signin({email:data.email, password:p1});
+    // 2026-10-14 : LX.signin n'existe pas (plantage) -> LX.login(email, motDePasse).
+    var loginRes = await LX.login(data.email, p1);
     if(!loginRes.ok){
-      showErr("invErr","Compte activ\u00e9, mais connexion \u00e9chou\u00e9e. Allez sur /compte et connectez-vous avec votre email et mot de passe.");
-      if(btn){btn.disabled=false;btn.textContent="R\u00e9essayer";}
+      // 2026-10-14 : l'invitation ne cr\u00e9e pas encore le compte client Luxyra -> on termine par l'inscription
+      // normale, avec l'email (et la fiche) pr\u00e9-remplis.
+      showErr("invErr","Votre fiche est bien reli\u00e9e. Derni\u00e8re \u00e9tape : cr\u00e9ez votre compte client avec cette adresse email (redirection\u2026).");
+      if(btn){btn.disabled=true;btn.textContent="Redirection\u2026";}
+      var _fi=data.fiche||{}, _em=data.email||"";
+      setTimeout(function(){
+        window.INVITE_TOKEN=null;
+        if(window.history && window.history.replaceState){ window.history.replaceState({}, "", "/compte"); }
+        PAGE="register"; render();
+        try{
+          var _set=function(id,v){var el=document.getElementById(id); if(el&&v&&!el.value) el.value=v;};
+          _set("rEmail",_em); _set("rNom",String(_fi.nom||"").toUpperCase()); _set("rPre",_fi.prenom); _set("rTel",_fi.telephone);
+        }catch(_eF){}
+      },2500);
       return;
     }
     // Connect\u00e9 \u2192 bascule sur dashboard, nettoie l'URL
+    lxResetDonneesClient(); // 2026-10-14
     if(loginRes.data && loginRes.data.user){ CLIENT=loginRes.data.user; saveSession(); }
     PAGE="dashboard";
     window.INVITE_TOKEN=null;
@@ -1456,6 +1490,7 @@ async function doLogin(){
     try{ console.error("[COMPTE] Echec connexion client ("+email+"): "+(res.data&&res.data.error?res.data.error:("HTTP "+(res.status||"?")))); }catch(_){}
     showErr("loginErr",res.data&&res.data.error?res.data.error:"Email ou mot de passe incorrect");return;
   }
+  lxResetDonneesClient(); // 2026-10-14 : rien du compte précédent ne doit rester affiché
   CLIENT=res.data.user;PAGE="dashboard";TAB="rdv";
   saveSession();loadMyRdvs();render();
 }
@@ -1497,6 +1532,7 @@ async function doRegister(){
     try{ console.error("[COMPTE] Echec inscription client ("+email+"): "+(res.data&&res.data.error?res.data.error:("HTTP "+(res.status||"?")))); }catch(_){}
     showErr("regErr",res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation");return;
   }
+  lxResetDonneesClient(); // 2026-10-14
   CLIENT=res.data.user;saveSession();
   // FIX 2026-05-23 : enregistre l'adresse (utile pour les RDV \u00e0 domicile) juste apr\u00e8s la cr\u00e9ation du compte
   if(adr||cp||ville){ try{ var _ru=await LX.update({adresse:adr,cp:cp,ville:ville}); if(_ru&&_ru.ok&&_ru.data&&_ru.data.user) CLIENT=_ru.data.user; saveSession(); }catch(_e){} }

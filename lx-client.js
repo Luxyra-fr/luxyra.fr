@@ -33,6 +33,11 @@
   function setUser(u){
     try { if(u) localStorage.setItem("lx_account", JSON.stringify(u)); else localStorage.removeItem("lx_account"); } catch(e){}
   }
+  // 2026-10-14 : crochet appelé JUSTE AVANT d'effacer le jeton (la page peut retirer l'abonnement aux
+  // notifications du navigateur tant que le jeton existe encore). window.lxAvantDeconnexion est défini par compte.html.
+  function avantDeconnexion(){
+    try { if (typeof window.lxAvantDeconnexion === "function") window.lxAvantDeconnexion(); } catch(e){}
+  }
   function getUser(){
     try { var d = localStorage.getItem("lx_account"); return d ? JSON.parse(d) : null; } catch(e){ return null; }
   }
@@ -81,7 +86,7 @@
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
     var res = await call("lx-profile", { session_token: token, action: "get" });
     if (res.ok && res.data && res.data.user) setUser(res.data.user);
-    else if (res.status === 401) { setToken(""); setUser(null); }
+    else if (res.status === 401) { avantDeconnexion(); setToken(""); setUser(null); } // 2026-10-14 : session expirée
     return res;
   }
 
@@ -110,7 +115,7 @@
       session_token: token, action: "delete",
       password: password || ""
     });
-    if (res.ok) { setToken(""); setUser(null); }
+    if (res.ok) { avantDeconnexion(); setToken(""); setUser(null); } // 2026-10-14
     return res;
   }
 
@@ -140,6 +145,7 @@
   }
 
   function lxLogout(){
+    avantDeconnexion(); // 2026-10-14
     setToken("");
     setUser(null);
   }
