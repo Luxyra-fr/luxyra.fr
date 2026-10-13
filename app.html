@@ -1391,10 +1391,10 @@ function lxSaveCompetences(collabId){
     }
     col.competences={all:false, services:ids};
   }
-  if(typeof saveCollaborateurs==="function")saveCollaborateurs();
   cM();
   var nbWord=allFlag?"toutes prestations":((col.competences.services||[]).length+" prestation(s)");
-  if(typeof toast==="function")toast("✓ Compétences enregistrées : "+nbWord+" pour "+col.n,"success");
+  // 2026-10-14 : enregistrement cible de CE collaborateur, message seulement si la base confirme
+  lxCollabSave(T.indexOf(col),{competences:col.competences},"✓ Compétences enregistrées : "+nbWord+" pour "+col.n);
   go("settings");
 }
 window.lxSaveCompetences=lxSaveCompetences;
@@ -6838,8 +6838,16 @@ function addCollab(){
       var newC={id:0,n:n,i:ini,c:cols[T.length%cols.length],img:"",hrs:defHrs};
       if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
         _sb.from("collaborateurs").insert({salon_id:_salonId,nom:n,initiales:ini,couleur:newC.c,img:"",horaires:defHrs}).select().then(function(r){
-          if(r.data&&r.data[0]){newC.id=r.data[0].id;}
+          // 2026-10-14 : creation refusee -> alerte, la fiche n'est pas ajoutee a l'ecran
+          if(!r||r.error||!r.data||!r.data[0]){
+            if(typeof showAlert==="function") showAlert("⚠️ Le collaborateur « "+n+" » n'a PAS été créé : "+((r&&r.error&&r.error.message)||"erreur inconnue")+".\n\nRéessayez.","warning");
+            return;
+          }
+          newC.id=r.data[0].id;
           T.push(newC);go("settings");
+          if(typeof toast==="function") toast("✓ "+n+" ajouté(e) à l'équipe","success");
+        },function(e){
+          if(typeof showAlert==="function") showAlert("⚠️ Le collaborateur « "+n+" » n'a PAS été créé (réseau). Réessayez.","warning");
         });
       }else{
         newC.id=Date.now();T.push(newC);go("settings");
@@ -6852,7 +6860,11 @@ function clearStyImg(idx){
   var cid=T[idx]&&T[idx].id;
   T[idx].img="";
   // Effacement EXPLICITE : bypass la protection anti-écrasement de saveCollaborateurs.
-  if(cid && typeof clearCollabPhoto==="function") clearCollabPhoto(cid);
+  // 2026-10-14 : resultat verifie
+  if(cid && typeof clearCollabPhoto==="function") clearCollabPhoto(cid).then(function(r){
+    if(r&&r.ok){ if(typeof toast==="function")toast("Photo supprimée","success"); }
+    else if(typeof showAlert==="function") showAlert("⚠️ La photo n'a pas pu être supprimée : "+((r&&r.error)||"erreur")+". Réessayez.","warning");
+  });
   go("settings");
 }
 // Toggle mode caisse simplifiée (auto-entrepreneur)
@@ -6867,8 +6879,8 @@ function lxToggleCaisseSimple(enabled){
 function lxToggleCollabPhotoVisible(idx, visible){
   if(!T[idx]) return;
   T[idx].photoVisible = visible === true;
-  if(typeof saveCollaborateurs==="function") saveCollaborateurs();
-  if(typeof toast==="function") toast(visible ? "🌐 Photo visible sur le site" : "🔒 Photo masquée du site (initiales seulement)", "info");
+  // 2026-10-14 : enregistrement cible + confirmation
+  lxCollabSave(idx,{photo_visible:T[idx].photoVisible},visible ? "🌐 Photo visible sur le site" : "🔒 Photo masquée du site (initiales seulement)");
   go("settings");
 }
 function loadStylistImg(idx,input){
@@ -6884,22 +6896,45 @@ function loadStylistImg(idx,input){
       c.getContext("2d").drawImage(img,0,0,w,h);
       T[idx].img=c.toDataURL("image/jpeg",0.7);
       // FIX 2026-05-11 : la photo n'était jamais persistée en DB → revenait à vide au reload
-      if(typeof saveCollaborateurs==="function") saveCollaborateurs();
-      if(typeof toast==="function") toast("📷 Photo enregistrée","success");
+      // 2026-10-14 : enregistrement cible + message seulement si la base confirme
+      lxCollabSave(idx,{img:T[idx].img},"📷 Photo enregistrée");
       go("settings");
     };
     img.src=e.target.result;
   };
   reader.readAsDataURL(input.files[0]);
 }
+// 2026-10-14 : enregistrement cible d'UN collaborateur avec verification.
+// Message de succes seulement si la base confirme ; sinon alerte avec la raison.
+function lxCollabSave(ti,fields,okMsg,opts){
+  if(typeof saveCollabPartial!=="function") return Promise.resolve({ok:false,error:"indisponible"});
+  if(typeof _sb==="undefined"||!_sb) return Promise.resolve({ok:false,error:"hors ligne"}); // demo : rien a ecrire
+  var _nom=(T[ti]&&T[ti].n)||"";
+  return saveCollabPartial(ti,fields,opts).then(function(r){
+    if(r&&r.ok){ if(okMsg&&typeof toast==="function") toast(okMsg,"success"); }
+    else if(typeof showAlert==="function") showAlert("⚠️ Modification NON enregistrée"+(_nom?" pour "+_nom:"")+" : "+((r&&r.error)||"erreur inconnue")+".\n\nVérifiez la connexion et réessayez.","warning");
+    return r||{ok:false};
+  },function(e){
+    if(typeof showAlert==="function") showAlert("⚠️ Modification NON enregistrée : "+((e&&e.message)||"erreur réseau"),"warning");
+    return {ok:false,error:String(e)};
+  });
+}
+window.lxCollabSave=lxCollabSave;
+// 2026-10-14 : statut RH (entree / inactif) avec verification du resultat
+function lxCollabRHVerif(cid,fields){
+  if(typeof saveCollabRH!=="function"||typeof _sb==="undefined"||!_sb) return;
+  saveCollabRH(cid,fields).then(function(r){
+    if(!r||!r.ok){ if(typeof showAlert==="function") showAlert("⚠️ Information RH NON enregistrée : "+((r&&r.error)||"erreur inconnue")+".\n\nRéessayez.","warning"); }
+  });
+}
+window.lxCollabRHVerif=lxCollabRHVerif;
 function setStyHrs(ti,dow,key,val){
   if(!T[ti].hrs)T[ti].hrs={};
   if(!T[ti].hrs[dow])T[ti].hrs[dow]={o:"09:00",c:"18:00"};
   var k=key===0?"o":"c";
   T[ti].hrs[dow][k]=val;
   // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
-  if(typeof toast==="function") toast("✓ Horaire enregistré","success");
+  lxCollabSave(ti, {horaires: T[ti].hrs}, "✓ Horaire enregistré"); // 2026-10-14 : verifie
 }
 // NEW 2026-05-12 : helpers mode Personnalisés (overrides date par date)
 function _lxDateStr(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
@@ -6932,46 +6967,42 @@ function setStyOverrideHrs(ti,dateStr,key,val){
   else if(key==='pause_o')base.pause_o=val;
   else if(key==='pause_c')base.pause_c=val;
   T[ti].hrsOver[dateStr]=base;
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
-  if(typeof toast==="function") toast("✓ Personnalisé enregistré","success");
+  // 2026-10-14 : fusion avec la base, seule cette date est modifiee
+  lxCollabSave(ti,{horaires_overrides:T[ti].hrsOver},"✓ Personnalisé enregistré",{dates:[dateStr]});
 }
 function setStyOverrideDayOff(ti,dateStr){
   if(!T[ti])return;
   if(!T[ti].hrsOver)T[ti].hrsOver={};
   T[ti].hrsOver[dateStr]=null;
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
-  if(typeof toast==="function") toast("✓ Absence ce jour","success");
+  lxCollabSave(ti,{horaires_overrides:T[ti].hrsOver},"✓ Absence ce jour",{dates:[dateStr]}); // 2026-10-14
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function setStyOverrideDayOn(ti,dateStr){
   if(!T[ti])return;
   if(!T[ti].hrsOver)T[ti].hrsOver={};
   T[ti].hrsOver[dateStr]={o:"09:00",c:"18:00"};
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
-  if(typeof toast==="function") toast("✓ Jour activé en personnalisé","success");
+  lxCollabSave(ti,{horaires_overrides:T[ti].hrsOver},"✓ Jour activé en personnalisé",{dates:[dateStr]}); // 2026-10-14
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function setStyOverrideClear(ti,dateStr){
   if(!T[ti]||!T[ti].hrsOver)return;
   delete T[ti].hrsOver[dateStr];
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti,{horaires_overrides:T[ti].hrsOver});
-  if(typeof toast==="function") toast("↩ Retour aux horaires Fixes","info");
+  // 2026-10-14 : suppression EXPLICITE de cette date en base (elle ne revient plus)
+  lxCollabSave(ti,{horaires_overrides:T[ti].hrsOver},"↩ Retour aux horaires Fixes",{dates:[dateStr]});
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function setStyDayOff(ti,dow){
   if(!T[ti].hrs)T[ti].hrs={};
   T[ti].hrs[dow]=null;
   // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
-  if(typeof toast==="function") toast("✓ Jour de repos enregistré","success");
+  lxCollabSave(ti, {horaires: T[ti].hrs}, "✓ Jour de repos enregistré"); // 2026-10-14 : verifie
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function setStyDayOn(ti,dow){
   if(!T[ti].hrs)T[ti].hrs={};
   T[ti].hrs[dow]={o:"09:00",c:"18:00"};
   // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
-  if(typeof saveCollabPartial==="function") saveCollabPartial(ti, {horaires: T[ti].hrs});
-  if(typeof toast==="function") toast("✓ Jour activé","success");
+  lxCollabSave(ti, {horaires: T[ti].hrs}, "✓ Jour activé"); // 2026-10-14 : verifie
   var sy=window.scrollY;go("settings");window.scrollTo(0,sy);requestAnimationFrame(function(){window.scrollTo(0,sy);});
 }
 function addExceptFermeture(){
@@ -8944,7 +8975,8 @@ function go(pg,arg){
     } catch(_e) { console.warn("[go] auto-save panier skipped",_e); }
   }
   window._currentPage=pg;
-  if(typeof saveCollaborateurs==="function"&&typeof _salonId!=="undefined"&&_salonId)saveCollaborateurs();
+  // 2026-10-14 : plus d'enregistrement en masse de l'equipe a chaque navigation (il reecrivait
+  // tous les collaborateurs depuis une memoire parfois perimee). Chaque modification enregistre.
   // Update notif badge
   var _nb=document.getElementById('notifBadge');if(_nb){try{var _nu=window.NOTIFS?window.NOTIFS.filter(function(n){return!n.confirmed}).length:0;if(_nu>0){_nb.style.display='flex';_nb.textContent=_nu;}else{_nb.style.display='none';}}catch(e){}}
   var app=document.getElementById("app");
@@ -13163,6 +13195,16 @@ function handleLogoUpload(input){
     if(preview)preview.src=dataUrl;
     var urlInput=document.getElementById("salonLogoUrl");
     if(urlInput)urlInput.value="(image charg\u00e9e)";
+    // 2026-10-14 : logo enregistre TOUT DE SUITE (avant : perdu si on quittait sans « Enregistrer »)
+    if(typeof window.lxSaveSalonColumns==="function"){
+      window.lxSaveSalonColumns({logo:dataUrl}).then(function(r){
+        if(r&&r.ok){
+          SALON_CONFIG.logo=dataUrl;
+          var hl=document.getElementById("hlogo"); if(hl) hl.src=dataUrl;
+          if(typeof toast==="function") toast("✓ Logo enregistré","success");
+        } // en cas d'echec, lxSaveSalonColumns affiche deja une alerte
+      });
+    }
    },true);
   };
   reader.readAsDataURL(input.files[0]);
@@ -13263,9 +13305,10 @@ function _normalizeSocialUrl(input, platform){
 function saveSalonInfo(){
   var S=window.SALON;
   if(!S)return;
+  var _idAv=null; // 2026-10-14 : valeurs avant modification (remises en memoire si l'identite est refusee)
   // 2026-10-11 (NF525, JET 410) : trace du changement des données d'identification de l'assujetti
   try{
-    var _idAv={nom:SALON_CONFIG.nom||"",adresse:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||""};
+    _idAv={nom:SALON_CONFIG.nom||"",adresse:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||""};
     var _idAp={nom:S.nom||SALON_CONFIG.nom||"",adresse:S.adr||"",cp:S.cp||"",ville:S.ville||"",siret:S.siret||"",tva:S.tva||""};
     var _idCh=Object.keys(_idAv).filter(function(k){ return String(_idAv[k]).trim()!==String(_idAp[k]).trim(); });
     if(_idCh.length&&typeof auditLog==="function") auditLog("CONFIG_IDENTITE", _idCh.map(function(k){ return k+" : « "+_idAv[k]+" » → « "+_idAp[k]+" »"; }).join(" ; ").slice(0,900));
@@ -13300,19 +13343,42 @@ function saveSalonInfo(){
   // faire, dans luxyra-supabase.js, est ecrasee par celle d'app.html chargee apres) -> le
   // toast "Infos enregistrees" mentait : nom, adresse, tel, email, SIRET, n TVA et logo
   // revenaient a l'ancien au rechargement. Ecriture explicite, sans toucher taux_tva.
+  // 2026-10-14 : DEUX ecritures separees. Identite (nom, adresse, SIRET, TVA) d'un cote, le reste
+  // (logo, note du ticket, telephone, e-mail, sous-titre) de l'autre : un refus sur l'identite ne
+  // fait plus perdre la note ou le logo. « Infos enregistrees » seulement si les deux reussissent.
   if(typeof window.lxSaveSalonColumns==="function"){
-    window.lxSaveSalonColumns({
-      nom:SALON_CONFIG.nom, sous_titre:SALON_CONFIG.sousTitre, logo:SALON_CONFIG.logo,
+    var _pId=window.lxSaveSalonColumns({
+      __silencieux:true,
+      nom:SALON_CONFIG.nom,
       adresse:SALON_CONFIG.adresse, cp:SALON_CONFIG.cp, ville:SALON_CONFIG.ville,
-      tel:SALON_CONFIG.tel, email:SALON_CONFIG.email,
       // 2026-10-13 : SIRET envoyé seulement s'il est rempli. Un salon « en cours d'immatriculation »
       // (SIRET vide en base) envoyait siret:"" -> refusé par le contrôle SIRET -> TOUTE la mise à jour
       // échouait en silence (note des tickets, logo, téléphone… perdus au rechargement).
-      siret:(String(SALON_CONFIG.siret||"").trim()||undefined), tva:SALON_CONFIG.tva,
+      siret:(String(SALON_CONFIG.siret||"").trim()||undefined), tva:SALON_CONFIG.tva
+    });
+    var _pCo=window.lxSaveSalonColumns({
+      __silencieux:true,
+      sous_titre:SALON_CONFIG.sousTitre, logo:SALON_CONFIG.logo,
+      tel:SALON_CONFIG.tel, email:SALON_CONFIG.email,
       note_ticket:SALON_CONFIG.noteTicket  // "" = effacer la note (chaîne vide, jamais null par omission)
     });
-  }
-  // Confirmation
+    var _msgErr=function(r){ return String((r&&r.error&&r.error.message)||"erreur inconnue").replace(/^.*?:\s*/,""); };
+    Promise.all([_pId,_pCo]).then(function(rs){
+      var rId=rs[0]||{}, rCo=rs[1]||{};
+      if(rId.ok && rCo.ok){ _lxNotifInfosOk(); return; }
+      var m=[];
+      if(!rId.ok){
+        m.push("• Identité (nom, adresse, SIRET, TVA) : NON enregistrée — "+_msgErr(rId));
+        // la memoire reprend les valeurs encore en base (tickets coherents) ; le formulaire garde la saisie
+        try{ if(_idAv){ SALON_CONFIG.nom=_idAv.nom||SALON_CONFIG.nom; SALON_CONFIG.adresse=_idAv.adresse; SALON_CONFIG.cp=_idAv.cp; SALON_CONFIG.ville=_idAv.ville; SALON_CONFIG.siret=_idAv.siret; SALON_CONFIG.tva=_idAv.tva; SALON_CONFIG.adr=SALON_CONFIG.adresseComplete(); } }catch(_eR){}
+      } else m.push("• Identité : enregistrée");
+      if(!rCo.ok) m.push("• Logo, note du ticket, téléphone, e-mail : NON enregistrés — "+_msgErr(rCo));
+      else m.push("• Logo, note du ticket, téléphone, e-mail : enregistrés");
+      if(typeof showAlert==="function") showAlert("⚠️ Enregistrement incomplet :\n"+m.join("\n")+"\n\nRéessayez. Si le problème continue, écrivez au support.","warning");
+    });
+  } else _lxNotifInfosOk();
+}
+function _lxNotifInfosOk(){
   var notif=document.createElement("div");
   notif.style.cssText="position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#2d9a5e;color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:14px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,.3)";
   notif.textContent="\u2705 Infos enregistr\u00e9es";
@@ -13493,7 +13559,9 @@ function saveSiteConfig(){
     Promise.resolve(typeof loadSiteConfig==="function" ? loadSiteConfig({garderH:true}) : false).then(function(ok){
       window._lxSiteSaveReprise = false;
       if(ok && window.SITE_CONFIG && window.SITE_CONFIG._lxCharge){
-        if(_partiel){ for(var k in _partiel){ if(k!=="_lxCharge" && Object.prototype.hasOwnProperty.call(_partiel,k)) window.SITE_CONFIG[k]=_partiel[k]; } }
+        // 2026-10-14 : on reapplique l'etat memoire LE PLUS RECENT (modifs faites pendant le rechargement incluses)
+        var _src=(window._lxSiteAvantChargement && window._lxSiteAvantChargement!==window.SITE_CONFIG) ? window._lxSiteAvantChargement : _partiel;
+        if(_src){ for(var k in _src){ if(k!=="_lxCharge" && Object.prototype.hasOwnProperty.call(_src,k)) window.SITE_CONFIG[k]=_src[k]; } }
         if(!_hAvant){
           try{ if(typeof toast==="function") toast("\u26a0 Horaires du salon recharges depuis la base : verifiez-les avant de les modifier","warning"); }catch(_e){}
           try{ if(typeof go==="function" && window._currentPage==="settings") go("settings"); }catch(_e){}
@@ -13517,7 +13585,9 @@ function saveSiteConfig(){
     Promise.resolve(loadSiteConfig({garderH:true})).then(function(ok){
       window._lxSiteSaveReprise = false;
       if(ok && window._lxHCharge){
-        for(var k in _scAvant){ if(k!=="_lxCharge" && Object.prototype.hasOwnProperty.call(_scAvant,k)) window.SITE_CONFIG[k]=_scAvant[k]; }
+        // 2026-10-14 : etat memoire le plus recent, pas la copie prise avant le rechargement
+        var _src2=(window._lxSiteAvantChargement && window._lxSiteAvantChargement!==window.SITE_CONFIG) ? window._lxSiteAvantChargement : _scAvant;
+        for(var k in _src2){ if(k!=="_lxCharge" && Object.prototype.hasOwnProperty.call(_src2,k)) window.SITE_CONFIG[k]=_src2[k]; }
         saveSiteConfig();
       } else {
         try{
@@ -13649,10 +13719,13 @@ function loadSiteConfig(opts){
   opts=opts||{};
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return Promise.resolve(false);
   if(window._lxSiteConfigEnCours) return window._lxSiteConfigEnCours;
-  var p=_sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1).then(function(r){
+  var _lxTraiterSite=function(r, dejaCree){
       if(r.error){ console.warn("[SITE CONFIG] chargement echoue:", r.error.message); return false; }
       if(r.data&&r.data[0]){
         var d=r.data[0];
+        // 2026-10-14 : objet en memoire AVANT remplacement (contient les modifications faites pendant
+        // le rechargement) : saveSiteConfig le reapplique au lieu d'une copie perimee.
+        window._lxSiteAvantChargement = window.SITE_CONFIG || null;
         window.SITE_CONFIG={
           siteActif:d.site_actif,reservationActive:d.reservation_active,boutiqueActive:d.boutique_active,
           acompteObligatoire:d.acompte_obligatoire,acompteMontant:Number(d.acompte_montant),acompteType:d.acompte_type,
@@ -13690,8 +13763,18 @@ function loadSiteConfig(opts){
         return true;
       }
       console.warn("[SITE CONFIG] aucune ligne site_config pour ce salon");
-      return false;
-    }, function(e){ console.warn("[SITE CONFIG] chargement echoue:", e); return false; });
+      if(dejaCree) return false;
+      // 2026-10-14 : aucune ligne (inscription incomplete) -> on cree la ligne par defaut (site et
+      // reservation desactives, comme a l'inscription), sans jamais ecraser une ligne creee entre-temps.
+      var _def={ salon_id:_salonId, site_actif:false, reservation_active:false, boutique_active:false,
+        gestion_caisse_simple:(typeof lxEstMicro==="function" ? !!lxEstMicro() : false),
+        horaires_salon:{"0":null,"1":null,"2":null,"3":null,"4":null,"5":null,"6":null} };
+      return _sb.from("site_config").upsert(_def,{onConflict:"salon_id",ignoreDuplicates:true}).then(function(u){
+        if(u && u.error){ console.warn("[SITE CONFIG] creation ligne par defaut echouee:", u.error.message); return false; }
+        return _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1).then(function(r2){ return _lxTraiterSite(r2, true); });
+      });
+  };
+  var p=_sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1).then(function(r){ return _lxTraiterSite(r, false); }, function(e){ console.warn("[SITE CONFIG] chargement echoue:", e); return false; });
   window._lxSiteConfigEnCours=p.then(function(ok){ window._lxSiteConfigEnCours=null; return ok; },function(){ window._lxSiteConfigEnCours=null; return false; });
   return window._lxSiteConfigEnCours;
 }
@@ -14290,9 +14373,9 @@ function rSettings(){
       if(st2.img)h+='<img src="'+st2.img+'" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:3px solid '+st2.c+'">';
       else h+='<div style="width:56px;height:56px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">'+st2.i+'</div>';
       // FIX 2026-05-12 : updates ciblés (nom/couleur) au lieu de bulk save pour éviter écrasement multi-device
-      h+='<div style="flex:1"><input value="'+st2.n+'" style="font-size:16px;font-weight:800;width:100%" onchange="T['+ti+'].n=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{nom:T['+ti+'].n})">';
+      h+='<div style="flex:1"><input value="'+st2.n+'" style="font-size:16px;font-weight:800;width:100%" onchange="T['+ti+'].n=this.value;lxCollabSave('+ti+',{nom:T['+ti+'].n},\'✓ Nom enregistré\')">';
       h+='<div style="display:flex;gap:8px;margin-top:4px;align-items:center">';
-      h+='<input type="color" value="'+st2.c+'" style="width:32px;height:24px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="T['+ti+'].c=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{couleur:T['+ti+'].c})">';
+      h+='<input type="color" value="'+st2.c+'" style="width:32px;height:24px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="T['+ti+'].c=this.value;lxCollabSave('+ti+',{couleur:T['+ti+'].c},\'✓ Couleur enregistrée\')">';
       h+='<label class="btn bs" style="font-size:11px;cursor:pointer">\ud83d\udcf7 Photo<input type="file" accept="image/*" style="display:none" onchange="loadStylistImg('+ti+',this)"></label>';
       if(st2.img)h+='<button class="btn bs" style="font-size:11px;color:var(--red)" onclick="clearStyImg('+ti+')">Suppr.</button>';
       h+='</div>';
@@ -14405,13 +14488,13 @@ function rSettings(){
       h+='<div style="display:flex;align-items:center;gap:8px;font-size:12px">';
       // FIX 2026-05-12 : updates cibl\u00e9s (pause) au lieu de bulk save
       if(stPause){
-        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.o=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:T['+ti+'].pause})">';
+        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.o=this.value;lxCollabSave('+ti+',{pause:T['+ti+'].pause},\'✓ Pause enregistrée\')">';
         h+='<span style="color:var(--text3)">\u00e0</span>';
-        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.c=this.value;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:T['+ti+'].pause})">';
-        h+='<button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="delete T['+ti+'].pause;if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:null});go(\'settings\')">Supprimer</button>';
+        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.c=this.value;lxCollabSave('+ti+',{pause:T['+ti+'].pause},\'✓ Pause enregistrée\')">';
+        h+='<button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="delete T['+ti+'].pause;lxCollabSave('+ti+',{pause:null},\'✓ Pause supprimée\');go(\'settings\')">Supprimer</button>';
       }else{
         h+='<span style="color:var(--text3);font-style:italic;flex:1">Aucune pause d\u00e9finie</span>';
-        h+='<button class="btn bs" style="font-size:10px" onclick="T['+ti+'].pause={o:\'12:00\',c:\'13:00\'};if(typeof saveCollabPartial===\'function\')saveCollabPartial('+ti+',{pause:T['+ti+'].pause});go(\'settings\')">+ Ajouter</button>';
+        h+='<button class="btn bs" style="font-size:10px" onclick="T['+ti+'].pause={o:\'12:00\',c:\'13:00\'};lxCollabSave('+ti+',{pause:T['+ti+'].pause},\'✓ Pause enregistrée\');go(\'settings\')">+ Ajouter</button>';
       }
       h+='</div>';
       // Absences for this stylist - filtre les ouvertures/fermetures exceptionnelles passées
@@ -14451,14 +14534,14 @@ function rSettings(){
       h+='<div style="font-size:13px;font-weight:800;color:var(--gold);margin-bottom:10px">\ud83d\udccb Informations RH</div>';
       h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date d\'entr\u00e9e</label>';
-      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;if(typeof saveCollabRH===\'function\')saveCollabRH('+st2.id+',{dateEntree:this.value})"></div>';
+      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;lxCollabRHVerif('+st2.id+',{dateEntree:this.value})"></div>';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date de d\u00e9part</label>';
       h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="setCollabDepart('+ti+',this.value)"><div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:4px;line-height:1.35">Premier jour d\u2019absence d\u00e9finitive. \u00c0 partir de cette date : plus de rendez-vous (planning et en ligne).</div></div>';
       h+='</div>';
       h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:'+(_isInactif?'rgba(244,67,54,.08)':'rgba(255,255,255,.03)')+';border:1px solid '+(_isInactif?'rgba(244,67,54,.3)':'rgba(255,255,255,.06)')+';border-radius:8px;cursor:pointer">';
       h+='<div><div style="font-size:13px;font-weight:700;color:'+(_isInactif?'#ef5350':'#fff')+'">\u23f8 Inactif (cong\u00e9s, arr\u00eat, d\u00e9part...)</div>';
       h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px">Masqu\u00e9 du planning et de la r\u00e9servation en ligne. Reste dans les statistiques.</div></div>';
-      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;if(typeof saveCollabRH===\'function\')saveCollabRH('+st2.id+',{inactif:this.checked});if(typeof toast===\'function\')toast((T['+ti+'].n||\'\')+(this.checked?\' marqu\u00e9 inactif\':\' r\u00e9activ\u00e9\'),\'info\');lxRefreshSettings('+st2.id+')"></label>';
+      h+='<input type="checkbox" '+(_isInactif?"checked":"")+' style="width:20px;height:20px;cursor:pointer;accent-color:#ef5350" onchange="T['+ti+'].inactif=this.checked;lxCollabRHVerif('+st2.id+',{inactif:this.checked});if(typeof toast===\'function\')toast((T['+ti+'].n||\'\')+(this.checked?\' marqu\u00e9 inactif\':\' r\u00e9activ\u00e9\'),\'info\');lxRefreshSettings('+st2.id+')"></label>';
       h+='</div>';
       // ===== FIN INFORMATIONS RH =====
       // ===== COMP\u00c9TENCES =====
@@ -17508,7 +17591,7 @@ function doAddForfait(){
   var svcs=[];document.querySelectorAll(".nfSvcCb:checked").forEach(function(cb){svcs.push(+cb.value);});
   var id=FORFAITS.length?Math.max.apply(null,FORFAITS.map(function(f){return f.id||0;}))+1:1;
   var cat=(document.getElementById("nfCat")||{}).value||CATS[0]||"";
-  FORFAITS.push({id:id,n:name,p:price,cat:cat,services:svcs,dur:dur,phases:[{t:"w",d:dur,l:name}]});
+  FORFAITS.push({id:id,n:name,p:price,cat:cat,services:svcs,dur:dur,phases:[{t:"w",d:dur,l:name}],_new:true}); // 2026-10-14 : _new = inserer
   saveForfaitsToSupabase();
   cM();go("services");
 }
@@ -17790,10 +17873,12 @@ function _forfaitSave(){
       cat: d.cat || CATS[0] || "Forfaits",
       phases: phases,
       showSite: !!d.showSite,
-      bookOnline: !!d.bookOnline
+      bookOnline: !!d.bookOnline,
+      _new: true // 2026-10-14 : toujours inserer
     });
   }
 
+  // 2026-10-14 : saveServices verifie chaque ligne et affiche une alerte en cas d'echec
   if(typeof saveServices === "function") saveServices();
   if(typeof saveSalonConfig === "function") saveSalonConfig();
   if(typeof saveSiteConfig === "function") saveSiteConfig();
@@ -18024,12 +18109,18 @@ async function _moveService(svcId, delta){
     arr[i].ordre = i;
   }
   // Persistance Supabase (UPDATE en batch)
+  // 2026-10-14 : chaque resultat est verifie ; alerte si l'ordre n'est pas enregistre
   if(typeof _sb!=="undefined" && _sb){
+    var _mvErr=null;
     try{
       for(var j=0;j<arr.length;j++){
-        await _sb.from("services").update({ordre:j}).eq("id", arr[j].id);
+        if(arr[j]._new===true) continue; // pas encore en base
+        var _rMv=await _sb.from("services").update({ordre:j}).eq("id", arr[j].id).eq("salon_id", _salonId).select("id");
+        if(_rMv.error){_mvErr=_rMv.error.message;break;}
+        if(!_rMv.data||!_rMv.data.length){_mvErr="prestation introuvable en base";break;}
       }
-    }catch(e){console.warn("moveService UPDATE", e);}
+    }catch(e){console.warn("moveService UPDATE", e);_mvErr=(e&&e.message)||"erreur r\u00e9seau";}
+    if(_mvErr&&typeof showAlert==="function") showAlert("\u26a0\ufe0f Le nouvel ordre n'a pas \u00e9t\u00e9 enregistr\u00e9 : "+_mvErr+". R\u00e9essayez.","warning");
   }
   go("services");
 }
@@ -18277,12 +18368,15 @@ function doAddService(){
   var catGenre=catGenreEl?(catGenreEl.value||null):null;
   if(catGenre!=='H'&&catGenre!=='F'&&catGenre!=='E') catGenre=null;
   var devis=!!(document.getElementById("nsDevis")&&document.getElementById("nsDevis").checked); // 2026-10-13
-  SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline,catGenre:catGenre,devis:devis});
+  // 2026-10-14 : _new = toujours INSERER (l'id local ne doit jamais ecraser une ligne existante)
+  SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline,catGenre:catGenre,devis:devis,_new:true});
   aCat=cat;
   window._newSvcName=null;window._newSvcPrice=null;window._newSvcDur=null;window._newSvcPhases=null;
-  if(typeof saveServices==="function")saveServices();
   cM();go("services");
-  if(typeof toast==="function")toast("Prestation créée","success");
+  // 2026-10-14 : « Prestation créée » seulement apres confirmation de la base (sinon alerte)
+  if(typeof saveServices==="function"){
+    saveServices().then(function(r){ if(r&&r.ok){ if(typeof toast==="function")toast("Prestation créée","success"); try{if(window._currentPage==="services")go("services");}catch(_e){} } });
+  } else if(typeof toast==="function")toast("Prestation créée","success");
 }
 
 // editService \u2014 \u00e9dition d'une PRESTATION SIMPLE.
@@ -18496,15 +18590,21 @@ function deleteService(id){
   var sv=gS(id);if(!sv)return;
   var wasForfait=sv.phases&&sv.phases.length>1;
   showConfirmDelete("Supprimer "+sv.n+" ?",sv.p+"\u20ac",function(){
-    // 1. Supprime en DB (sinon revient au refresh)
-    if(typeof deleteServiceDb==="function") deleteServiceDb(id);
-    // 2. Filtre local
-    SVC=SVC.filter(function(s){return s.id!==id});
-    if(wasForfait) window._svcTab="forfaits";
-    // 3. Persiste config (cat\u00e9gories) au cas o\u00f9 la presta \u00e9tait la derni\u00e8re
-    if(typeof saveSalonConfig==="function") saveSalonConfig();
-    cM(); go("services");
-    if(typeof toast==="function") toast("Prestation supprim\u00e9e","success");
+    // 2026-10-14 : on retire de l'ecran SEULEMENT apres suppression confirmee en base
+    var _apresSuppr=function(){
+      SVC=SVC.filter(function(s){return s.id!==id});
+      if(wasForfait) window._svcTab="forfaits";
+      // Persiste config (cat\u00e9gories) au cas o\u00f9 la presta \u00e9tait la derni\u00e8re
+      if(typeof saveSalonConfig==="function") saveSalonConfig();
+      cM(); go("services");
+      if(typeof toast==="function") toast("Prestation supprim\u00e9e","success");
+    };
+    if(sv._new===true || typeof deleteServiceDb!=="function" || typeof _sb==="undefined" || !_sb){ _apresSuppr(); return; }
+    deleteServiceDb(id).then(function(ok){
+      if(ok){ _apresSuppr(); return; }
+      cM();
+      if(typeof showAlert==="function") showAlert("\u26a0\ufe0f La prestation \u00ab "+(sv.n||"")+" \u00bb n'a pas pu \u00eatre supprim\u00e9e. V\u00e9rifiez la connexion et r\u00e9essayez.","warning");
+    });
   });
 }
 
@@ -20251,15 +20351,23 @@ function applyBulkDelete(){
   if(!ids.length)return;
   showConfirm("Supprimer d\u00e9finitivement "+ids.length+" produit"+(ids.length>1?"s":"")+" ? Cette action est IRR\u00c9VERSIBLE.",function(){
     var count=0;
-    ids.forEach(function(idStr){
+    // 2026-10-14 : chaque produit n'est retire de l'ecran qu'apres suppression CONFIRMEE en base
+    var _echecs=[];
+    var _proms=ids.map(function(idStr){
       var id=parseInt(idStr);
-      PRODS=PRODS.filter(function(p){return p.id!==id;});
-      if(typeof deleteProduct==="function")deleteProduct(id);
-      count++;
+      if(typeof deleteProduct!=="function"){ PRODS=PRODS.filter(function(p){return p.id!==id;}); count++; return Promise.resolve(); }
+      return deleteProduct(id).then(function(r){
+        if(r&&r.ok){ PRODS=PRODS.filter(function(p){return p.id!==id;}); count++; }
+        else { var _pp=PRODS.filter(function(p){return p.id===id;})[0]; _echecs.push(((_pp&&_pp.n)||("#"+id))+" : "+((r&&r.error)||"erreur")); }
+      });
     });
-    if(typeof auditLog==="function")auditLog("BULK_DELETE","Suppression de "+count+" produits");
     window._bulkDelSelected={};
-    cM();go("products");
+    cM();
+    Promise.all(_proms).then(function(){
+      if(typeof auditLog==="function")auditLog("BULK_DELETE","Suppression de "+count+" produits");
+      go("products");
+      if(_echecs.length&&typeof showAlert==="function") showAlert("\u26a0\ufe0f "+_echecs.length+" produit(s) NON supprim\u00e9(s) :\n"+_echecs.slice(0,6).join("\n")+"\n\nR\u00e9essayez (ou rechargez l'application).","warning");
+    });
     toast(count+" produit"+(count>1?"s":"")+" supprim\u00e9"+(count>1?"s":""),"success");
   });
 }
@@ -20397,13 +20505,15 @@ function doEditProd(id){
   var dou=document.getElementById("epDateOuv");if(dou)p.dateOuverture=dou.value||null;
   var ds=document.getElementById("epDescription");if(ds)p.description=ds.value.trim()||null;
   // Prix tab fields
-  var pp=document.getElementById("epPrice");if(pp)p.p=parseFloat(pp.value)||p.p;
-  var pa=document.getElementById("epPA");if(pa)p.pa=parseFloat(pa.value)||p.pa;
-  var cf=document.getElementById("epCoef");if(cf)p.coefMulti=parseFloat(cf.value)||null;
-  var tv=document.getElementById("epTva");if(tv)p.tvaTaux=parseFloat(tv.value)||null;
+  // 2026-10-14 : 0 est une valeur valide (prix 0, TVA 0 %, coef 0) ; seul un champ vide / invalide est ignore
+  var _epN=function(el){ if(!el) return NaN; var t=String(el.value==null?"":el.value).trim().replace(",","."); return t===""?NaN:parseFloat(t); };
+  var pp=document.getElementById("epPrice");if(pp){var _vP=_epN(pp);if(!isNaN(_vP))p.p=_vP;}
+  var pa=document.getElementById("epPA");if(pa){var _vA=_epN(pa);if(!isNaN(_vA))p.pa=_vA;}
+  var cf=document.getElementById("epCoef");if(cf){var _vC=_epN(cf);p.coefMulti=isNaN(_vC)?null:_vC;}
+  var tv=document.getElementById("epTva");if(tv){var _vT=_epN(tv);p.tvaTaux=isNaN(_vT)?null:_vT;}
   // Promo tab fields
   var pra=document.getElementById("epPromoActif");if(pra)p.promoActif=pra.checked;
-  var prp=document.getElementById("epPromoPrix");if(prp)p.promoPrix=parseFloat(prp.value)||null;
+  var prp=document.getElementById("epPromoPrix");if(prp){var _vPr=_epN(prp);p.promoPrix=isNaN(_vPr)?null:_vPr;}
   var prd=document.getElementById("epPromoDebut");if(prd)p.promoDebut=prd.value||null;
   var prf=document.getElementById("epPromoFin");if(prf)p.promoFin=prf.value||null;
   var prl=document.getElementById("epPromoLabel");if(prl)p.promoLabel=prl.value.trim()||null;
@@ -20504,11 +20614,19 @@ function deleteProd(id){
 }
 function _deleteProdDo(id){
   showConfirm("Supprimer ce produit ?",function(){
-    PRODS=PRODS.filter(function(p){return p.id!==id;});
-    if(typeof deleteProduct==="function")deleteProduct(id);
-    if(typeof auditLog==="function")auditLog("PRODUIT_SUPPR","Produit "+id+" supprim\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
-    cM();go("products");
-    toast("Produit supprim\u00e9","success");
+    // 2026-10-14 : retire de l'ecran SEULEMENT apres suppression confirmee en base
+    var _fin=function(){
+      PRODS=PRODS.filter(function(p){return p.id!==id;});
+      if(typeof auditLog==="function")auditLog("PRODUIT_SUPPR","Produit "+id+" supprim\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
+      cM();go("products");
+      toast("Produit supprim\u00e9","success");
+    };
+    if(typeof deleteProduct!=="function"){ _fin(); return; }
+    deleteProduct(id).then(function(r){
+      if(r&&r.ok){ _fin(); return; }
+      cM();
+      if(typeof showAlert==="function") showAlert("\u26a0\ufe0f Produit NON supprim\u00e9 : "+((r&&r.error)||"erreur")+".\n\nR\u00e9essayez (ou rechargez l'application).","warning");
+    });
   });
 }
 
@@ -28244,6 +28362,8 @@ var LX_CFG_SECTIONS = [
   {k:"cartes_abo", mem:function(){return window.CARTES_ABO;}, set:function(v){window.CARTES_ABO=v;}},
   {k:"cartes_abo_config", mem:function(){return window.CARTES_ABO_CONFIG;}, set:function(v){window.CARTES_ABO_CONFIG=v;}},
   {k:"sms_config", mem:function(){return (window.SMS_CONFIG && typeof window.SMS_CONFIG==="object")?window.SMS_CONFIG:undefined;}, set:function(v){window.SMS_CONFIG=v;}},
+  // 2026-10-14 : historique des campagnes SMS / e-mail (avant : seulement sur l'appareil)
+  {k:"sms_campaigns", mem:function(){return Array.isArray(window.SMS_CAMPAIGNS)?window.SMS_CAMPAIGNS:undefined;}, set:function(v){window.SMS_CAMPAIGNS=_lxSmsHistTrier(v); try{localStorage.setItem("_cp_sms_campaigns",JSON.stringify(window.SMS_CAMPAIGNS));}catch(_e){}}},
   {k:"app_bg", mem:function(){return (typeof APP_BG!=="undefined")?(APP_BG||""):undefined;}, set:function(v){APP_BG=v||"";}},
   {k:"pay_active", mem:function(){return (window.PAY_ACTIVE && typeof window.PAY_ACTIVE==="object")?window.PAY_ACTIVE:undefined;}, set:function(v){window.PAY_ACTIVE=v;}},
   {k:"svccolors", mem:function(){return (typeof SVCCOLORS!=="undefined"&&SVCCOLORS)?SVCCOLORS:undefined;}, set:function(v){SVCCOLORS=v;}},
@@ -28268,6 +28388,9 @@ function lxCfgFixerBase(cfg){
     try{ bMem[sec.k] = lxJsonCanon(sec.mem()); }catch(_e){ bMem[sec.k]=undefined; }
   });
   window._lxCfgBaseDb = bDb; window._lxCfgBaseMem = bMem; window._lxCfgChargee = true;
+  // 2026-10-14 : reference « au chargement » de TOUTES les cles (caisse_data, comptaAccounts...)
+  // pour la fusion a 3 voies de lxCfgEcrireSections.
+  try{ var bBrut={}; Object.keys(cfg).forEach(function(k){ bBrut[k]=lxJsonCanon(cfg[k]); }); window._lxCfgBaseBrut=bBrut; }catch(_eB){ window._lxCfgBaseBrut={}; }
   window._SALON_CONFIG_JSON = cfg;
   try{ if(typeof window._lxCfgPretResolve==="function") window._lxCfgPretResolve(true); }catch(_e){}
 }
@@ -28302,9 +28425,14 @@ function lxSyncDomicileColonnes(){
       patch.frais_deplacement = (type==="gratuit") ? 0 : (type==="km" ? (Number(d.prixKm)||0) : (Number(d.forfait)||0));
     }
     var sig=JSON.stringify(patch);
-    if(window._lxDomSig===sig) return;
-    window._lxDomSig=sig;
-    window.lxSaveSalonColumns(patch);
+    if(window._lxDomSig===sig || window._lxDomSigEnCours===sig) return;
+    // 2026-10-14 : la signature n'est retenue qu'apres une ecriture REUSSIE (sinon on reessaie)
+    window._lxDomSigEnCours=sig;
+    if(window._lxDomAlerteFaite) patch.__silencieux=true; // une seule alerte si l'echec se repete
+    Promise.resolve(window.lxSaveSalonColumns(patch)).then(function(r){
+      if(window._lxDomSigEnCours===sig) window._lxDomSigEnCours=null;
+      if(r && r.ok) window._lxDomSig=sig; else window._lxDomAlerteFaite=true;
+    },function(){ if(window._lxDomSigEnCours===sig) window._lxDomSigEnCours=null; });
   }catch(e){}
 }
 function saveSalonConfig(){
@@ -28419,14 +28547,48 @@ async function _lxCfgEcrireSectionsUneFois(valeurs){
   if(r.data&&r.data[0]&&r.data[0].config_json){
     try{ cfg = typeof r.data[0].config_json==="string" ? JSON.parse(r.data[0].config_json) : r.data[0].config_json; }catch(_p){ _lxCfgErreur("Configuration illisible - modification non enregistree","parse"); return false; }
   }
+  // 2026-10-14 : FUSION A 3 VOIES, comme saveSalonConfig (_lxCfgFusionValeur(base, memoire, base_de_donnees)).
+  // Si la section a ete modifiee sur un autre appareil depuis le chargement, on fusionne au lieu
+  // d'ecraser (absences, caisse, SMS...). Sans reference connue (config pas encore chargee) : comme avant.
+  if(typeof cfg!=="object"||cfg===null||Array.isArray(cfg)){ _lxCfgErreur("Configuration illisible - modification non enregistree","type"); return false; }
+  var bDb=window._lxCfgBaseDb||{}, bMem=window._lxCfgBaseMem||{}, bBrut=window._lxCfgBaseBrut||{};
+  var _own=function(o,k){ return Object.prototype.hasOwnProperty.call(o,k); };
+  var aEcrire={}, nouvBase={}, aRafraichir=[], conflitsCfg=[];
   Object.keys(valeurs).forEach(function(k){
     var sec=LX_CFG_SECTIONS.filter(function(s){return s.k===k;})[0];
-    if(sec&&sec.ecrire) sec.ecrire(cfg, valeurs[k]); else cfg[k]=valeurs[k];
+    var memV=valeurs[k], memS=lxJsonCanon(memV);
+    var dbV=sec?_lxCfgValeurBase(sec,cfg):cfg[k], dbS=lxJsonCanon(dbV);
+    var connu=!!window._lxCfgChargee, refDb, refMem;
+    if(_own(bDb,k)){ refDb=bDb[k]; refMem=_own(bMem,k)?bMem[k]:bDb[k]; }
+    else if(connu){ refDb=bBrut[k]; refMem=bBrut[k]; }
+    var aMettre=memV;
+    if(connu && dbV!==undefined && dbV!==null && dbS!==refDb && dbS!==memS){
+      var baseV; try{ baseV = refMem!==undefined ? JSON.parse(refMem) : undefined; }catch(_b){ baseV=undefined; }
+      aMettre=_lxCfgFusionValeur(baseV, memV, dbV, k, conflitsCfg);
+    }
+    var aMettreS=lxJsonCanon(aMettre);
+    aEcrire[k]=aMettre;
+    if(aMettreS!==memS && sec && typeof sec.set==="function"){
+      // section connue : la memoire prend la valeur fusionnee
+      aRafraichir.push({sec:sec, v:aMettre}); nouvBase[k]={db:aMettreS, mem:aMettreS};
+    } else if(aMettreS!==memS){
+      // pas de moyen de mettre la memoire a jour : reference = version locale, la base garde
+      // les ajouts de l'autre appareil (ils seront de nouveau conserves a la prochaine fusion)
+      nouvBase[k]={db:memS, mem:memS};
+    } else nouvBase[k]={db:aMettreS, mem:aMettreS};
+    if(sec&&sec.ecrire) sec.ecrire(cfg, aMettre); else cfg[k]=aMettre;
   });
   var u = await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
   if(u && u.error){ _lxCfgErreur("Enregistrement echoue : "+(u.error.message||"erreur"), u.error.code||null); return false; }
-  Object.keys(valeurs).forEach(function(k){ lxCfgMajBase(k, valeurs[k]); });
+  // Ecriture confirmee : references mises a jour seulement maintenant
+  Object.keys(aEcrire).forEach(function(k){
+    lxCfgMajBase(k, aEcrire[k]);
+    if(window._lxCfgBaseDb && window._lxCfgBaseMem && nouvBase[k]){ window._lxCfgBaseDb[k]=nouvBase[k].db; window._lxCfgBaseMem[k]=nouvBase[k].mem; }
+  });
   window._SALON_CONFIG_JSON = cfg;
+  aRafraichir.forEach(function(x){ try{ x.sec.set(JSON.parse(JSON.stringify(x.v))); }catch(_e){} });
+  if(conflitsCfg.length){ try{ if(typeof _lxSignalerConflits==="function") _lxSignalerConflits("Configuration", (SALON_CONFIG&&SALON_CONFIG.nom)||"salon", conflitsCfg); }catch(_e){} }
+  if(aRafraichir.length){ try{ if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} }
   return true;
 }
 
@@ -28491,8 +28653,13 @@ async function saveCarteAboClient(cc){
     var payload=_carteAboToDb(cc);
     payload.id = cc.id;
     var u=await _sb.from("cartes_abo_clients").upsert(payload).select().single();
-    if(u.error){console.warn("saveCarteAboClient upsert:",u.error.message);return;}
-  }catch(e){console.warn("saveCarteAboClient exception:",e);}
+    // 2026-10-14 : echec affiche a l'utilisateur (plus seulement dans la console)
+    if(u.error){console.warn("saveCarteAboClient upsert:",u.error.message);_lxCarteAboAlerte(cc,u.error.message);return {ok:false,error:u.error.message};}
+    return {ok:true};
+  }catch(e){console.warn("saveCarteAboClient exception:",e);_lxCarteAboAlerte(cc,(e&&e.message)||"erreur r\u00e9seau");return {ok:false,error:String(e)};}
+}
+function _lxCarteAboAlerte(cc,msg){
+  try{ if(typeof showAlert==="function") showAlert("\u26a0\ufe0f Carte d'abonnement \u00ab "+((cc&&(cc.carteNom||cc.nom))||"")+" \u00bb NON enregistr\u00e9e : "+(msg||"erreur")+".\n\nV\u00e9rifiez la fiche du client avant de fermer l'application.","warning"); }catch(_e){}
 }
 // Incrémente les économies de la carte (appelé à chaque ticket payé qui utilise la remise)
 async function updateCarteAboEconomies(carteId,delta){
@@ -32190,6 +32357,27 @@ async function lxLoadSmsHistory(){
 }
 
 // === SMS & EMAIL FUNCTIONS ===
+// 2026-10-14 : historique des campagnes enregistre dans la configuration du salon (50 dernieres),
+// partage entre appareils. L'ancienne copie locale sert une seule fois de reprise.
+var LX_SMS_HIST_MAX=50;
+function _lxSmsHistTrier(v){
+  var l=Array.isArray(v)?v.slice():[];
+  l.sort(function(a,b){ var ka=String((a&&(a.ts||a.date))||""), kb=String((b&&(b.ts||b.date))||""); return ka<kb?1:(ka>kb?-1:0); });
+  return l.slice(0,LX_SMS_HIST_MAX);
+}
+function lxSmsHistAjouter(entree){
+  if(!window.SMS_CAMPAIGNS||!Array.isArray(window.SMS_CAMPAIGNS)) window.SMS_CAMPAIGNS=[];
+  entree=entree||{};
+  if(!entree.id) entree.id=(typeof U==="function"?U():("c"+Date.now()));
+  if(!entree.ts) entree.ts=new Date().toISOString();
+  window.SMS_CAMPAIGNS.unshift(entree);
+  window.SMS_CAMPAIGNS=window.SMS_CAMPAIGNS.slice(0,LX_SMS_HIST_MAX);
+  try{localStorage.setItem("_cp_sms_campaigns",JSON.stringify(window.SMS_CAMPAIGNS));}catch(e){}
+  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId&&typeof lxCfgEcrireSections==="function"){
+    lxCfgEcrireSections({sms_campaigns: JSON.parse(JSON.stringify(window.SMS_CAMPAIGNS))});
+  }
+}
+window.lxSmsHistAjouter=lxSmsHistAjouter;
 function saveSmsConfig(){
   try{localStorage.setItem("_cp_sms_config",JSON.stringify(window.SMS_CONFIG));}catch(e){}
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
@@ -33579,9 +33767,8 @@ function sendCampaignV2(){
     });
   });
   chain.then(function(){
-    if(!window.SMS_CAMPAIGNS)window.SMS_CAMPAIGNS=[];
-    window.SMS_CAMPAIGNS.unshift({type:window._campTitle||"",title:window._campTitle||"",date:TD,nbSent:smsSent+emailSent,nbSms:smsSent,nbEmail:emailSent,nbErrors:errors,channel:(doSms?"SMS":"")+(doSms&&doEmail?" + ":"")+(doEmail?"Email":"")});
-    try{localStorage.setItem("_cp_sms_campaigns",JSON.stringify(window.SMS_CAMPAIGNS));}catch(e){}
+    // 2026-10-14 : historique enregistre aussi en base (configuration du salon)
+    lxSmsHistAjouter({type:window._campTitle||"",title:window._campTitle||"",date:TD,nbSent:smsSent+emailSent,nbSms:smsSent,nbEmail:emailSent,nbErrors:errors,channel:(doSms?"SMS":"")+(doSms&&doEmail?" + ":"")+(doEmail?"Email":"")});
     auditLog("CAMPAGNE_MARKETING",window._campTitle+" - "+smsSent+" SMS + "+emailSent+" Emails ("+errors+" erreurs)");
     cM();
     var htm2='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
@@ -33711,9 +33898,8 @@ function sendCampaign(type){
     });
   });
   chain.then(function(){
-    if(!window.SMS_CAMPAIGNS)window.SMS_CAMPAIGNS=[];
-    window.SMS_CAMPAIGNS.unshift({type:type,title:window._campTitle||type,date:TD,nbSent:sent,nbErrors:errors});
-    try{localStorage.setItem("_cp_sms_campaigns",JSON.stringify(window.SMS_CAMPAIGNS));}catch(e){}
+    // 2026-10-14 : historique enregistre aussi en base (configuration du salon)
+    lxSmsHistAjouter({type:type,title:window._campTitle||type,date:TD,nbSent:sent,nbErrors:errors});
     auditLog("CAMPAGNE_SMS",window._campTitle+" - "+sent+" SMS envoy\u00e9s, "+errors+" erreurs");
     cM();
     var htm2='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
@@ -34920,8 +35106,8 @@ function clearDoc(type){
     // If clearing a required doc, reset verification
     if(type==="kbis"||type==="id"){update.verification_status="pending";}
     try{
-      var _ud=await _sb.from("salons").update(update).eq("id",window._salonId);
-      if(_ud&&_ud.error){showAlert("Suppression non enregistr\u00e9e : "+_ud.error.message,"error");return;}
+      var _ud=await _sb.from("salons").update(update).eq("id",window._salonId).select("id"); // 2026-10-14 : 0 ligne = echec
+      if(_ud&&(_ud.error||!_ud.data||!_ud.data.length)){showAlert("Suppression non enregistr\u00e9e : "+((_ud.error&&_ud.error.message)||"refus\u00e9e par le serveur"),"error");return;}
       if(type==="kbis")SALON_CONFIG.docKbis="";
       else if(type==="id")SALON_CONFIG.docId="";
       else if(type==="id_verso")SALON_CONFIG.docIdVerso="";
@@ -34967,8 +35153,8 @@ async function uploadDoc(type,input){
     var newDocKbis=type==="kbis"?url.data.publicUrl:SALON_CONFIG.docKbis;
     var newDocId=type==="id"?url.data.publicUrl:SALON_CONFIG.docId;
     if(newDocKbis&&newDocId){update.verification_status="pending_review";update.documents_uploaded_at=new Date().toISOString();}
-    var _ud=await _sb.from("salons").update(update).eq("id",window._salonId);
-    if(_ud&&_ud.error){showAlert("Document re\u00e7u mais non rattach\u00e9 \u00e0 votre compte : "+_ud.error.message+". R\u00e9essayez ou \u00e9crivez au support.","error");return;}
+    var _ud=await _sb.from("salons").update(update).eq("id",window._salonId).select("id"); // 2026-10-14 : 0 ligne = echec
+    if(_ud&&(_ud.error||!_ud.data||!_ud.data.length)){showAlert("Document re\u00e7u mais non rattach\u00e9 \u00e0 votre compte : "+((_ud.error&&_ud.error.message)||"refus\u00e9 par le serveur")+". R\u00e9essayez ou \u00e9crivez au support.","error");return;}
     if(type==="kbis")SALON_CONFIG.docKbis=url.data.publicUrl;
     else if(type==="id")SALON_CONFIG.docId=url.data.publicUrl;
     else if(type==="id_verso")SALON_CONFIG.docIdVerso=url.data.publicUrl;
@@ -36033,12 +36219,14 @@ function applyTheme(k,c,c2,auDemarrage){
     lp.style.color=c;
   });
   SALON_CONFIG.couleurPrimaire=c;
+  if(c2 && /^#[0-9a-f]{6}$/i.test(String(c2))) SALON_CONFIG.couleurSecondaire=c2; // 2026-10-14
   window._currentTheme=k;
   // 2026-10-07 : au demarrage, on applique les couleurs sans enregistrer ni naviguer
   // (cet enregistrement non sollicite reecrivait la configuration a chaque ouverture).
   if(auDemarrage) return;
   // 2026-10-11 : la couleur est relue depuis salons.couleur_primaire -> on l'y écrit (sinon retour à l'or).
-  try{ if(/^#[0-9a-f]{6}$/i.test(String(c)) && typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({couleur_primaire:c}); }catch(_eTh){}
+  // 2026-10-14 : la 2e couleur du theme (salons.couleur_secondaire) est enregistree aussi
+  try{ if(/^#[0-9a-f]{6}$/i.test(String(c)) && typeof window.lxSaveSalonColumns==="function"){ var _thP={couleur_primaire:c}; if(c2 && /^#[0-9a-f]{6}$/i.test(String(c2))) _thP.couleur_secondaire=c2; window.lxSaveSalonColumns(_thP); } }catch(_eTh){}
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   go("settings");
 }
@@ -36104,7 +36292,8 @@ function initApp(){
   }catch(e){}
   // Load forfaits from localStorage -- 2026-10-07 : seulement si la base n'en a fourni aucun
   // (avant : la copie locale, eventuellement perimee, remplacait la liste chargee de la base).
-  try{var ff=localStorage.getItem("_cp_forfaits");if(ff&&(!FORFAITS||!FORFAITS.length))FORFAITS=JSON.parse(ff);}catch(e){}
+  // 2026-10-14 : jamais si la base a repondu (meme liste vide = dernier forfait supprime)
+  try{var ff=localStorage.getItem("_cp_forfaits");if(ff&&(!FORFAITS||!FORFAITS.length)&&!(window._lxTableOk&&window._lxTableOk.forfaits))FORFAITS=JSON.parse(ff);}catch(e){}
   // Load absences from localStorage
   try{var _abs=localStorage.getItem("_cp_absences");if(_abs)window.ABSENCES=JSON.parse(_abs);}catch(e){}
   // FIX 2026-05-15 : restore d'un placement 2ème RDV en attente (survit aux refresh)
@@ -36151,6 +36340,14 @@ function initApp(){
           // Charge les modèles de cartes d'abonnement (templates) + le toggle activation
           if(Array.isArray(cfg.cartes_abo))window.CARTES_ABO=cfg.cartes_abo;
           if(cfg.cartes_abo_config && typeof cfg.cartes_abo_config==="object") window.CARTES_ABO_CONFIG=cfg.cartes_abo_config;
+          // 2026-10-14 : historique des campagnes : la base fait foi ; sinon reprise UNE fois de la copie locale
+          if(Array.isArray(cfg.sms_campaigns)){
+            window.SMS_CAMPAIGNS=_lxSmsHistTrier(cfg.sms_campaigns);
+            try{localStorage.setItem("_cp_sms_campaigns",JSON.stringify(window.SMS_CAMPAIGNS));}catch(e){}
+          } else if(Array.isArray(window.SMS_CAMPAIGNS) && window.SMS_CAMPAIGNS.length){
+            window.SMS_CAMPAIGNS=_lxSmsHistTrier(window.SMS_CAMPAIGNS.map(function(x,i){ x=x||{}; if(!x.id) x.id="h"+i+"-"+String(x.date||"")+"-"+String(x.title||x.type||"").slice(0,20); return x; }));
+            window._lxSmsHistAMigrer=true;
+          }
           // Restaurer aussi sms_config si présent dans Supabase (au cas où localStorage est vide)
           if(cfg.sms_config&&typeof cfg.sms_config==="object"&&Object.keys(cfg.sms_config).length){
             window.SMS_CONFIG=cfg.sms_config;
@@ -36176,6 +36373,8 @@ function initApp(){
           if(typeof cfg.migrationSourceSoftware !== "undefined") SALON_CONFIG.migrationSourceSoftware = cfg.migrationSourceSoftware || "";
           if(typeof cfg.migrationRgpdSentAt !== "undefined") SALON_CONFIG.migrationRgpdSentAt = cfg.migrationRgpdSentAt || null;
           lxCfgFixerBase(cfg);
+          // 2026-10-14 : reprise unique de l'historique local des campagnes vers la base
+          if(window._lxSmsHistAMigrer){ window._lxSmsHistAMigrer=false; try{ lxCfgEcrireSections({sms_campaigns: JSON.parse(JSON.stringify(window.SMS_CAMPAIGNS||[]))}); }catch(_eMh){} }
         }catch(e){ try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"initApp", msg:"config_json illisible: "+String(e&&e.message||e)}).slice(0,2000)); }catch(_e){} }
       }else{
         // Pas encore de config_json en base, on initialise vide
@@ -36187,7 +36386,9 @@ function initApp(){
   }
   // Apply salon theme color
   if(SALON_CONFIG.couleurPrimaire&&SALON_CONFIG.couleurPrimaire!=="var(--gold)"){
-    applyTheme(null,SALON_CONFIG.couleurPrimaire,null,true); // 2026-10-07 : au demarrage, appliquer SANS enregistrer
+    // 2026-10-14 : les DEUX couleurs enregistrees sont appliquees (la 2e seulement si elle a ete choisie)
+    var _c2b=SALON_CONFIG.couleurSecondaire; if(!_c2b || !/^#[0-9a-f]{6}$/i.test(String(_c2b)) || String(_c2b).toLowerCase()==="#1a1a1a") _c2b=null;
+    applyTheme(null,SALON_CONFIG.couleurPrimaire,_c2b,true); // 2026-10-07 : au demarrage, appliquer SANS enregistrer
   }
   // Restore acompte data from items (persisted in Supabase)
   AP.forEach(function(ap){
