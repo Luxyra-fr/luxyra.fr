@@ -1051,9 +1051,15 @@ if (typeof window !== "undefined") window.lxMapRdvOnlineRow = lxMapRdvOnlineRow;
 // effet de bord (le loader fait `salon.taux_tva || 20` : un salon en franchise de TVA
 // a 0 % serait repasse a 20 % => corruption fiscale).
 // ============================================================
+// 2026-10-14 : retourne TOUJOURS une promesse de {ok, error} (error = null si ok, compatible
+// avec les appelants qui testent res.error). Hors ligne ou erreur reseau : alerte (sauf
+// __silencieux), plus jamais de retour muet. 0 ligne modifiee (droits) = echec.
 function lxSaveSalonColumns(patch) {
+  var _silence = !!(patch && patch.__silencieux);
+  var _alerte = function(msg){ try { if (!_silence && typeof showAlert === "function") showAlert(msg, "warning"); } catch(_e) {} };
   try {
-    if (!_isOnline || !_salonId || !patch) return Promise.resolve();
+    if (!patch) return Promise.resolve({ ok:false, error:{ message:"rien a enregistrer" } });
+    if (!_salonId) return Promise.resolve({ ok:false, error:{ message:"non connecte" } });
     var data = {};
     for (var k in patch) {
       if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
@@ -1064,17 +1070,30 @@ function lxSaveSalonColumns(patch) {
       if (typeof v === "number" && !isFinite(v)) continue; // jamais de NaN
       data[k] = v;
     }
-    if (Object.keys(data).length === 0) return Promise.resolve();
-    return _sb.from("salons").update(data).eq("id", _salonId).then(function(res){
+    if (Object.keys(data).length === 0) return Promise.resolve({ ok:true, error:null, vide:true });
+    if (!_isOnline || !_sb) {
+      _alerte("\u26a0\ufe0f Pas de connexion au serveur : r\u00e9glage NON enregistr\u00e9. V\u00e9rifiez Internet puis recommencez.");
+      return Promise.resolve({ ok:false, offline:true, error:{ message:"hors ligne" } });
+    }
+    return _sb.from("salons").update(data).eq("id", _salonId).select("id").then(function(res){
       if (res && res.error) {
         console.warn("lxSaveSalonColumns:", res.error.message);
         // 2026-10-13 : plus jamais d'échec silencieux d'un réglage (l'utilisateur croyait avoir enregistré)
-        try { if (!patch.__silencieux && typeof showAlert === "function") showAlert("\u26a0\ufe0f R\u00e9glage non enregistr\u00e9 : " + String(res.error.message || "erreur").replace(/^.*?:\s*/, "") + ". R\u00e9essayez ou \u00e9crivez au support.", "warning");
+        try { _alerte("\u26a0\ufe0f R\u00e9glage non enregistr\u00e9 : " + String(res.error.message || "erreur").replace(/^.*?:\s*/, "") + ". R\u00e9essayez ou \u00e9crivez au support.");
               if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "lxSaveSalonColumns", champs: Object.keys(data), msg: String(res.error.message || "").slice(0, 200) })); } catch (_eA) {}
+        return { ok:false, error:res.error };
       }
-      return res;
-    }, function(e){ console.warn("lxSaveSalonColumns exception:", e); });
-  } catch (e) { console.warn("lxSaveSalonColumns threw:", e); return Promise.resolve(); }
+      if (!res || !res.data || !res.data.length) {
+        _alerte("\u26a0\ufe0f R\u00e9glage non enregistr\u00e9 (aucune modification accept\u00e9e par le serveur). R\u00e9essayez ou \u00e9crivez au support.");
+        return { ok:false, error:{ message:"aucune ligne modifiee" } };
+      }
+      return { ok:true, error:null, data:res.data };
+    }, function(e){
+      console.warn("lxSaveSalonColumns exception:", e);
+      _alerte("\u26a0\ufe0f R\u00e9glage non enregistr\u00e9 : probl\u00e8me de connexion. R\u00e9essayez.");
+      return { ok:false, error:{ message:(e && e.message) || "erreur reseau" } };
+    });
+  } catch (e) { console.warn("lxSaveSalonColumns threw:", e); return Promise.resolve({ ok:false, error:{ message:String(e && e.message || e) } }); }
 }
 if (typeof window !== "undefined") window.lxSaveSalonColumns = lxSaveSalonColumns;
 
@@ -1310,6 +1329,7 @@ async function loadSalonData() {
   // Documents check (15 days after paid plan)
   SALON_CONFIG.docKbis = salon.documents_kbis || "";
   SALON_CONFIG.docId = salon.documents_id || "";
+  SALON_CONFIG.docIdVerso = salon.documents_id_verso || ""; // 2026-10-14 : verso de la piece d'identite (ecrit mais jamais recharge)
   SALON_CONFIG.verif = salon.verification_status || "pending";
 
   // Stripe Connect status : nécessaire pour gater la feature acompte en ligne
@@ -1418,6 +1438,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       SVC = svcRes.data.map(function(s) {
         return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null, devis: s.prix_sur_devis === true };
       });
+      try { _lxCatSigReset("services", SVC); } catch(_eSig) {} // 2026-10-14 : etat « en base » pour n'ecrire que les lignes modifiees
       // Recalculer CATS — si aucun service encore, applique les defaultCats
       // du métier configuré au lieu de garder les catégories coiffure
       // hardcodées (sinon un nouveau salon "esthétique" verrait des
@@ -1772,10 +1793,14 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
   try {
     var fRes = await _sb.from("forfaits").select("*").eq("salon_id", _salonId).order("id");
     if (fRes.data && !fRes.error) { window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.forfaits = true; }
-    if (fRes.data && fRes.data.length > 0) {
+    // 2026-10-14 : on prend la liste de la base des qu'il n'y a pas d'erreur, MEME vide
+    // (sinon le dernier forfait supprime revenait depuis le cache).
+    if (fRes.data && !fRes.error) {
       FORFAITS = fRes.data.map(function(f) {
         return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false, catGenre: f.cat_genre || null };
       });
+      try { _lxCatSigReset("forfaits", FORFAITS); } catch(_eSig) {}
+      try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(_eLs) {}
     }
   } catch(e) { console.warn("[loadSalonData] forfaits skipped", e); }
 
@@ -2580,6 +2605,7 @@ function lxMapProduitRow(p) {
   return o;
 }
 if (typeof window !== "undefined") window.lxMapProduitRow = lxMapProduitRow;
+function _lxNumOuNull(v) { if (v === null || v === undefined || v === "") return null; var n = Number(v); return isFinite(n) ? n : null; }
 // 2026-10-07 : colonnes ecrites pour un produit (sans salon_id), depuis l'objet memoire.
 function _lxProduitData(prod) {
   var data = {
@@ -2596,10 +2622,11 @@ function _lxProduitData(prod) {
     date_ouverture: prod.dateOuverture || null,
     contenance: prod.contenance || null,
     code_barre_supp: prod.cbSupp || null,
-    coef_multi: prod.coefMulti || null,
-    tva_taux: prod.tvaTaux || null,
+    // 2026-10-14 : 0 conserve (TVA 0 %, promo a 0, coef 0) ; seul vide / invalide -> null
+    coef_multi: _lxNumOuNull(prod.coefMulti),
+    tva_taux: _lxNumOuNull(prod.tvaTaux),
     promo_actif: prod.promoActif || false,
-    promo_prix: prod.promoPrix || null,
+    promo_prix: _lxNumOuNull(prod.promoPrix),
     promo_debut: prod.promoDebut || null,
     promo_fin: prod.promoFin || null,
     promo_label: prod.promoLabel || null,
@@ -2634,15 +2661,34 @@ async function _saveProductUneFois(prod, opts) {
       var _up = await _sb.from("produits").update(data).eq("id", prod.id).select();
       if (!_up.error && _up.data && _up.data[0]) {
         try { var _apres = lxMapProduitRow(_up.data[0]); Object.keys(_apres).forEach(function(k){ prod[k] = _apres[k]; }); _lxPoserBase(prod, _apres._lxBase); } catch(_eM) {}
+        return { ok:true };
       } else if (_up.error) { try { _lxReportDbError("saveProduct", _up.error, { produit_id: prod.id }); } catch(_e) {} }
+      // 2026-10-14 : echec affiche (le produit reste a l'ecran, l'utilisateur peut reessayer)
+      _lxProduitAlerte(prod, _up.error ? _up.error.message : "aucune ligne modifi\u00e9e");
+      return { ok:false, error:(_up.error && _up.error.message) || "aucune ligne modifiee" };
+    } else if (check.error) {
+      // 2026-10-14 : verification impossible -> on n'insere PAS (sinon doublon)
+      _lxProduitAlerte(prod, check.error.message);
+      return { ok:false, error:check.error.message };
     } else {
       var res = await _sb.from("produits").insert(data).select();
-      if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} }
+      if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} return { ok:true }; }
+      _lxProduitAlerte(prod, res.error ? res.error.message : "aucune ligne cr\u00e9\u00e9e");
+      return { ok:false, error:(res.error && res.error.message) || "aucune ligne creee" };
     }
   } else {
     var res = await _sb.from("produits").insert(data).select();
-    if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} }
+    if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} return { ok:true }; }
+    _lxProduitAlerte(prod, res.error ? res.error.message : "aucune ligne cr\u00e9\u00e9e");
+    return { ok:false, error:(res.error && res.error.message) || "aucune ligne creee" };
   }
+}
+function _lxProduitAlerte(prod, msg) {
+  console.error("[saveProduct]", (prod && prod.n) || "", msg);
+  try {
+    var m = "\u26a0\ufe0f Produit \u00ab " + ((prod && prod.n) || "") + " \u00bb NON enregistr\u00e9 : " + (msg || "erreur") + ".\n\nIl reste affich\u00e9 sur cet appareil : r\u00e9essayez avant de fermer l'application.";
+    if (typeof showAlert === "function") showAlert(m, "warning"); else if (typeof toast === "function") toast(m, "error");
+  } catch(_e) {}
 }
 
 // Sauvegarder une carte cadeau
@@ -2655,7 +2701,8 @@ async function _saveProductUneFois(prod, opts) {
 // {soldeIntentionnel:true} — la consommation passant elle-meme par une deduction
 // atomique en base (consommer_bon_cadeau).
 async function saveGiftCard(gc, opts) {
-  if (!_isOnline || !_salonId) return;
+  // 2026-10-14 : echec signale a l'utilisateur ici (aucun appelant ne testait le resultat)
+  if (!_isOnline || !_salonId) { if (_salonId) _lxBonAlerte(gc, "pas de connexion au serveur"); return { ok:false, error:"hors ligne" }; }
   var soldeIntentionnel = !!(opts && opts.soldeIntentionnel);
   var data = {
     salon_id: _salonId,
@@ -2686,9 +2733,12 @@ async function saveGiftCard(gc, opts) {
   }
 
   var res = await _sb.from("cartes_cadeaux").upsert(data).select();
-  if (res.error) { console.error("saveGiftCard upsert error:", res.error); return { ok:false, error:res.error.message }; }
+  if (res.error) { console.error("saveGiftCard upsert error:", res.error); _lxBonAlerte(gc, res.error.message); return { ok:false, error:res.error.message }; }
   gc._dejaEnBase = true;
   return { ok:true };
+}
+function _lxBonAlerte(gc, msg) {
+  try { if (typeof showAlert === "function") showAlert("\u26a0\ufe0f Bon cadeau " + ((gc && gc.code) || "") + " NON enregistr\u00e9 : " + (msg || "erreur") + ".\n\nNotez le code et v\u00e9rifiez la liste des bons avant de fermer l'application.", "warning"); } catch(_e) {}
 }
 
 // Consommation ATOMIQUE d'un bon cadeau : la deduction est faite en base, jamais en
@@ -3360,64 +3410,123 @@ function _lxListeChargee(table, silencieux){
   }catch(_e){}
   return false;
 }
-async function saveServices() {
-  if (!_sb || !_salonId) return;
-  if (!_lxListeChargee("services")) return;
-  for (var i = 0; i < SVC.length; i++) {
-    var s = SVC[i];
-    var data = {
-      salon_id: _salonId, nom: s.n, prix: s.p,
-      categorie: s.cat, phases: s.phases || [],
-      // FIX 2026-05-13 : cat_genre = tag H/F/E pour les stats genre précises au niveau item
-      cat_genre: (s.catGenre === 'H' || s.catGenre === 'F' || s.catGenre === 'E') ? s.catGenre : null,
-      show_site: s.showSite !== false, book_online: s.bookOnline !== false,
-      prix_sur_devis: s.devis === true // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
-    };
-    if (typeof s.id === "number" && s.id > 0) {
-      var check = await _sb.from("services").select("id").eq("id", s.id).eq("salon_id", _salonId);
-      if (check.data && check.data.length > 0) {
-        await _sb.from("services").update(data).eq("id", s.id);
-      } else {
-        var res = await _sb.from("services").insert(data).select();
-        if (res.data && res.data[0]) s.id = res.data[0].id;
-      }
-    } else {
-      var res = await _sb.from("services").insert(data).select();
-      if (res.data && res.data[0]) s.id = res.data[0].id;
+// 2026-10-14 : catalogue enregistre LIGNE PAR LIGNE. On n'ecrit que les lignes qui ont
+// change depuis le chargement / le dernier enregistrement reussi (signature), ou marquees
+// _dirty / _new. Un appareil reste ouvert longtemps ne reecrit donc plus tout le catalogue
+// par-dessus les modifications faites ailleurs. Chaque resultat est verifie.
+window._lxSvcSig = window._lxSvcSig || {};
+window._lxForfSig = window._lxForfSig || {};
+function _lxSvcPayload(s) {
+  return {
+    salon_id: _salonId, nom: s.n, prix: s.p,
+    categorie: s.cat, phases: s.phases || [],
+    // FIX 2026-05-13 : cat_genre = tag H/F/E pour les stats genre précises au niveau item
+    cat_genre: (s.catGenre === 'H' || s.catGenre === 'F' || s.catGenre === 'E') ? s.catGenre : null,
+    show_site: s.showSite !== false, book_online: s.bookOnline !== false,
+    prix_sur_devis: s.devis === true // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
+  };
+}
+function _lxForfPayload(f) {
+  return {
+    salon_id: _salonId, nom: f.n, prix: f.p,
+    categorie: f.cat, services: f.services || [],
+    phases: f.phases || [],
+    // FIX 2026-05-13 : cat_genre pour stats (H/F/E) — utile aux forfaits enfant (ado, junior)
+    cat_genre: (f.catGenre === 'H' || f.catGenre === 'F' || f.catGenre === 'E') ? f.catGenre : null,
+    show_site: f.showSite !== false, book_online: f.bookOnline !== false
+  };
+}
+function _lxSig(o) { try { return JSON.stringify(o); } catch(_e) { return ""; } }
+// Appele par le chargement : memorise l'etat « en base » de chaque ligne
+function _lxCatSigReset(kind, list) {
+  var m = {};
+  (list || []).forEach(function(r){ if (r && r.id != null) m[r.id] = _lxSig(kind === "forfaits" ? _lxForfPayload(r) : _lxSvcPayload(r)); });
+  if (kind === "forfaits") window._lxForfSig = m; else window._lxSvcSig = m;
+}
+window._lxCatSigReset = _lxCatSigReset;
+var _lxCatQueue = Promise.resolve();
+function _lxCatEnFile(fn) {
+  var p = _lxCatQueue.then(fn, fn);
+  _lxCatQueue = p.then(function(){}, function(){});
+  return p;
+}
+// Ecrit UNE ligne : update par id (resultat verifie) ; insert seulement pour une ligne
+// nouvelle, ou si l'update a reussi sans trouver la ligne. Jamais d'insert apres une erreur.
+async function _lxSaveCatRow(table, row, payload, sigMap) {
+  try {
+    var hasId = (typeof row.id === "number" && row.id > 0);
+    if (hasId && row._new !== true) {
+      var u = await _sb.from(table).update(payload).eq("id", row.id).eq("salon_id", _salonId).select("id");
+      if (u.error) return { ok:false, error:u.error.message };
+      if (u.data && u.data.length) { sigMap[row.id] = _lxSig(payload); delete row._dirty; return { ok:true }; }
     }
+    var ins = await _sb.from(table).insert(payload).select("id");
+    if (ins.error) return { ok:false, error:ins.error.message };
+    if (!ins.data || !ins.data[0]) return { ok:false, error:"aucune ligne cr\u00e9\u00e9e" };
+    row.id = ins.data[0].id;
+    delete row._new; delete row._dirty;
+    sigMap[row.id] = _lxSig(payload);
+    return { ok:true, created:true };
+  } catch (e) { return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
+}
+function _lxCatAlerte(quoi, errs) {
+  console.error("[save " + quoi + "]", errs);
+  try {
+    var m = "\u26a0\ufe0f " + errs.length + " " + quoi + " non enregistr\u00e9e(s) :\n" + errs.slice(0, 5).join("\n") + (errs.length > 5 ? "\n\u2026" : "") + "\n\nR\u00e9essayez. Si le probl\u00e8me continue, rechargez l'application.";
+    if (typeof showAlert === "function") showAlert(m, "warning"); else if (typeof toast === "function") toast(m, "error");
+  } catch(_e) {}
+}
+async function _lxSaveCatList(table, list, payloadFn, sigMap, quoi) {
+  if (!_sb || !_salonId) return { ok:false, error:"hors ligne" };
+  if (!_lxListeChargee(table)) return { ok:false, error:"liste non charg\u00e9e" };
+  var errs = [], nb = 0;
+  var rows = (list || []).slice();
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i]; if (!r) continue;
+    var payload = payloadFn(r);
+    if (r._new !== true && r._dirty !== true && r.id != null && sigMap[r.id] === _lxSig(payload)) continue; // inchangee
+    nb++;
+    var res = await _lxSaveCatRow(table, r, payload, sigMap);
+    if (!res.ok) errs.push((r.n || "?") + " : " + res.error);
   }
+  if (errs.length) { _lxCatAlerte(quoi, errs); return { ok:false, error:errs.join(" ; "), count:nb }; }
+  return { ok:true, count:nb };
+}
+// Enregistre les prestations modifiees (wrapper historique : appele apres chaque edition)
+function saveServices() {
+  return _lxCatEnFile(function(){ return _lxSaveCatList("services", (typeof SVC !== "undefined") ? SVC : [], _lxSvcPayload, window._lxSvcSig, "prestation(s)"); });
+}
+// Enregistre UNE prestation
+function saveService(s) {
+  return _lxCatEnFile(async function(){
+    if (!_sb || !_salonId || !s) return { ok:false, error:"hors ligne" };
+    if (!_lxListeChargee("services")) return { ok:false, error:"liste non charg\u00e9e" };
+    var r = await _lxSaveCatRow("services", s, _lxSvcPayload(s), window._lxSvcSig);
+    if (!r.ok) _lxCatAlerte("prestation(s)", [(s.n || "?") + " : " + r.error]);
+    return r;
+  });
 }
 
 // Sauvegarder les forfaits
-async function saveForfaits() {
-  if (!_sb || !_salonId) return;
-  if (!_lxListeChargee("forfaits")) return;
-  for (var i = 0; i < FORFAITS.length; i++) {
-    var f = FORFAITS[i];
-    var data = {
-      salon_id: _salonId, nom: f.n, prix: f.p,
-      categorie: f.cat, services: f.services || [],
-      phases: f.phases || [],
-      // FIX 2026-05-13 : cat_genre pour stats (H/F/E) — utile aux forfaits enfant (ado, junior)
-      cat_genre: (f.catGenre === 'H' || f.catGenre === 'F' || f.catGenre === 'E') ? f.catGenre : null,
-      show_site: f.showSite !== false, book_online: f.bookOnline !== false
-    };
-    if (typeof f.id === "number" && f.id > 0) {
-      var check = await _sb.from("forfaits").select("id").eq("id", f.id).eq("salon_id", _salonId);
-      if (check.data && check.data.length > 0) {
-        await _sb.from("forfaits").update(data).eq("id", f.id);
-      } else {
-        var res = await _sb.from("forfaits").insert(data).select();
-        if (res.data && res.data[0]) f.id = res.data[0].id;
-      }
-    } else {
-      var res = await _sb.from("forfaits").insert(data).select();
-      if (res.data && res.data[0]) f.id = res.data[0].id;
-    }
-  }
-  // Also save to localStorage as backup
-  try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(e) {}
+function saveForfaits() {
+  return _lxCatEnFile(async function(){
+    var r = await _lxSaveCatList("forfaits", (typeof FORFAITS !== "undefined") ? FORFAITS : [], _lxForfPayload, window._lxForfSig, "forfait(s)");
+    // Also save to localStorage as backup
+    try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(e) {}
+    return r;
+  });
 }
+function saveForfait(f) {
+  return _lxCatEnFile(async function(){
+    if (!_sb || !_salonId || !f) return { ok:false, error:"hors ligne" };
+    if (!_lxListeChargee("forfaits")) return { ok:false, error:"liste non charg\u00e9e" };
+    var r = await _lxSaveCatRow("forfaits", f, _lxForfPayload(f), window._lxForfSig);
+    if (!r.ok) _lxCatAlerte("forfait(s)", [(f.n || "?") + " : " + r.error]);
+    try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(e) {}
+    return r;
+  });
+}
+if (typeof window !== "undefined") { window.saveService = saveService; window.saveForfait = saveForfait; }
 
 // Sauvegarder un pack client (achat ou validation séance)
 async function savePack(pack) {
@@ -3441,7 +3550,13 @@ async function savePack(pack) {
   _ensureUuidId(pack);
   data.id = pack.id;
   var res = await _sb.from("packs_clients").upsert(data).select();
-  if (res.error) console.error("savePack upsert error:", res.error);
+  // 2026-10-14 : erreur affichee a l'utilisateur
+  if (res.error) {
+    console.error("savePack upsert error:", res.error);
+    try { if (typeof showAlert === "function") showAlert("\u26a0\ufe0f Forfait client \u00ab " + (pack.nom || "") + " \u00bb non enregistr\u00e9 : " + (res.error.message || "erreur") + ". V\u00e9rifiez avant de fermer l'application.", "warning"); } catch(_e) {}
+    return { ok:false, error:res.error.message };
+  }
+  return { ok:true };
 }
 
 // Valider une séance d'un pack
@@ -3449,9 +3564,19 @@ async function usePackSeance(packId) {
   if (!_sb) return;
   var pk = (window.PACKS_CLIENTS || []).find(function(p) { return p.id === packId; });
   if (!pk) return;
+  var _prevUsed = pk.used || 0, _prevStatus = pk.status;
   pk.used = (pk.used || 0) + 1;
   if (pk.used >= pk.total) pk.status = "completed";
-  await _sb.from("packs_clients").update({ seances_utilisees: pk.used, status: pk.status }).eq("id", packId);
+  // 2026-10-14 : resultat verifie ; en cas d'echec la memoire est remise comme avant + alerte
+  var _r = null;
+  try { _r = await _sb.from("packs_clients").update({ seances_utilisees: pk.used, status: pk.status }).eq("id", packId).eq("salon_id", _salonId).select("id"); } catch(e) { _r = { error: e }; }
+  if (!_r || _r.error || !_r.data || !_r.data.length) {
+    pk.used = _prevUsed; pk.status = _prevStatus;
+    var _em = (_r && _r.error && _r.error.message) || "aucune ligne modifi\u00e9e";
+    console.error("[usePackSeance]", _em);
+    try { if (typeof showAlert === "function") showAlert("\u26a0\ufe0f La s\u00e9ance n'a pas pu \u00eatre d\u00e9compt\u00e9e du forfait : " + _em + ". R\u00e9essayez.", "warning"); } catch(_e) {}
+    return null;
+  }
   return pk;
 }
 
@@ -3461,10 +3586,24 @@ async function deleteForfaitFromDb(forfaitId) {
   await _sb.from("forfaits").delete().eq("id", forfaitId).eq("salon_id", _salonId);
 }
 
-async function saveCollaborateurs() {
-  if (!_isOnline || !_salonId) return;
+// 2026-10-14 : file d'attente commune a TOUTES les ecritures collaborateurs (bulk + ciblees) :
+// deux enregistrements ne se chevauchent plus (lecture puis ecriture faites l'une apres l'autre).
+var _lxCollabQueue = Promise.resolve();
+function _lxCollabEnFile(fn) {
+  var p = _lxCollabQueue.then(fn, fn);
+  _lxCollabQueue = p.then(function(){}, function(){});
+  return p;
+}
+function _lxCollabAlerte(msg) {
+  try { if (typeof showAlert === "function") showAlert(msg, "warning"); else if (typeof toast === "function") toast(msg, "error"); } catch(_e) {}
+}
+// 2026-10-14 : enregistrement en masse, serialise, chaque resultat verifie. Utilise
+// uniquement pour une creation (plus appele a chaque changement de page).
+function saveCollaborateurs() { return _lxCollabEnFile(_saveCollaborateursUneFois); }
+async function _saveCollaborateursUneFois() {
+  if (!_isOnline || !_salonId) return { ok:false, error:"hors ligne" };
   // appelee a chaque changement de page : blocage silencieux (une seule alerte monitoring)
-  if (!_lxListeChargee("collaborateurs", true)) return;
+  if (!_lxListeChargee("collaborateurs", true)) return { ok:false, error:"liste non chargee" };
   // FIX 2026-05-11 (Manue photo perdue) : récupère img+id pour pouvoir
   // PRÉSERVER une photo DB existante si la mémoire locale a img="" (race
   // condition entre 2 sessions / reload partiel). La suppression explicite
@@ -3481,6 +3620,14 @@ async function saveCollaborateurs() {
   // pas (état transitoire au démarrage : T hydraté depuis le cache avant le load DB,
   // puis save déclenché par une navigation). Évite la duplication des collaborateurs.
   var dbBySig = {};
+  // 2026-10-14 : lecture en echec -> on n'ecrit RIEN (sinon chaque fiche serait inseree en double)
+  if (!existing || existing.error || !existing.data) {
+    var _eMsg = (existing && existing.error && existing.error.message) || "lecture impossible";
+    console.error("[saveCollaborateurs] lecture", _eMsg);
+    _lxCollabAlerte("\u26a0\ufe0f L'\u00e9quipe n'a pas pu \u00eatre enregistr\u00e9e (" + _eMsg + "). V\u00e9rifiez la connexion et r\u00e9essayez.");
+    return { ok:false, error:_eMsg };
+  }
+  var _errs = [];
   if (existing.data) {
     for (var e = 0; e < existing.data.length; e++) {
       var ex = existing.data[e];
@@ -3537,7 +3684,8 @@ async function saveCollaborateurs() {
         if (k === "inactif" || k === "date_depart" || k === "date_entree") return;
         dataUpd[k] = data[k];
       });
-      await _sb.from("collaborateurs").update(dataUpd).eq("id", c.id);
+      var _ru = await _sb.from("collaborateurs").update(dataUpd).eq("id", c.id).eq("salon_id", _salonId).select("id");
+      if (_ru.error || !_ru.data || !_ru.data.length) _errs.push((c.n||"?") + " : " + ((_ru.error && _ru.error.message) || "non modifi\u00e9"));
     } else {
       // FIX 2026-06-19 : avant d'insérer, on cherche un collaborateur identique déjà
       // en base (même nom + initiales + couleur). S'il existe, on l'ADOPTE (UPDATE +
@@ -3545,13 +3693,21 @@ async function saveCollaborateurs() {
       var _sig = (c.n||"")+"|"+(c.i||"")+"|"+(c.c||"");
       if (dbBySig[_sig] !== undefined) {
         c.id = dbBySig[_sig];
-        await _sb.from("collaborateurs").update(data).eq("id", c.id);
+        var _ra = await _sb.from("collaborateurs").update(data).eq("id", c.id).eq("salon_id", _salonId).select("id");
+        if (_ra.error || !_ra.data || !_ra.data.length) _errs.push((c.n||"?") + " : " + ((_ra.error && _ra.error.message) || "non modifi\u00e9"));
       } else {
         var res = await _sb.from("collaborateurs").insert(data).select();
-        if (res.data && res.data[0]) { c.id = res.data[0].id; dbIds[c.id] = true; dbBySig[_sig] = c.id; }
+        if (res.error || !res.data || !res.data[0]) _errs.push((c.n||"?") + " : " + ((res.error && res.error.message) || "non cr\u00e9\u00e9"));
+        else { c.id = res.data[0].id; dbIds[c.id] = true; dbBySig[_sig] = c.id; }
       }
     }
   }
+  if (_errs.length) {
+    console.error("[saveCollaborateurs]", _errs);
+    _lxCollabAlerte("\u26a0\ufe0f Certaines fiches de l'\u00e9quipe n'ont pas \u00e9t\u00e9 enregistr\u00e9es :\n" + _errs.slice(0, 5).join("\n") + "\n\nR\u00e9essayez.");
+    return { ok:false, error:_errs.join(" ; ") };
+  }
+  return { ok:true };
 }
 
 // Modification VOLONTAIRE du statut RH d'un collaborateur (depart / inactif).
@@ -3569,6 +3725,8 @@ async function saveCollabRH(collabId, fields) {
   try {
     var r = await _sb.from("collaborateurs").update(payload).eq("id", collabId).eq("salon_id", _salonId).select("id,inactif,date_depart");
     if (r && r.error) { console.error("[saveCollabRH]", r.error); return { ok:false, error:r.error.message }; }
+    // 2026-10-14 : 0 ligne modifiee (droits) = echec
+    if (!r || !r.data || !r.data.length) return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
     return { ok:true, data:(r && r.data && r.data[0]) || null };
   } catch (e) {
     console.error("[saveCollabRH]", e);
@@ -3580,50 +3738,108 @@ window.saveCollabRH = saveCollabRH;
 // Effacement explicite de la photo d'un collaborateur (utilisé par clearStyImg)
 // Bypass la protection anti-écrasement de saveCollaborateurs().
 async function clearCollabPhoto(collabId) {
-  if (!_isOnline || !_salonId || !collabId) return;
-  await _sb.from("collaborateurs").update({ img: "" }).eq("id", collabId);
+  // 2026-10-14 : resultat verifie ({ok,error}) ; 0 ligne modifiee = echec
+  if (!_isOnline || !_salonId || !collabId) return { ok:false, error:"hors ligne" };
+  return _lxCollabEnFile(async function(){
+    try {
+      var r = await _sb.from("collaborateurs").update({ img: "" }).eq("id", collabId).eq("salon_id", _salonId).select("id");
+      if (r.error) return { ok:false, error:r.error.message };
+      if (!r.data || !r.data.length) return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
+      return { ok:true };
+    } catch (e) { return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
+  });
 }
 
 // FIX 2026-05-12 : update CIBLÉ d'un seul collab pour éviter le pattern
 // "le bulk save de saveCollaborateurs écrase les autres collabs avec
 // la mémoire locale stale". Quand l'utilisateur modifie un horaire/pause
 // d'un seul collab, on ne touche QUE ce collab en DB.
-async function saveCollabPartial(collabIdx, fields) {
-  if (!_isOnline || !_salonId) return;
-  if (typeof collabIdx !== "number" || !T[collabIdx]) return;
+// 2026-10-14 : retourne {ok,error}. Resultat verifie (.select("id") + nb de lignes).
+// horaires_overrides : FUSION avec la base (base d'abord, puis les dates modifiees).
+// opts.dates = liste des dates modifiees ; une date absente de la memoire = suppression
+// explicite (ne ressuscite pas un personnalise efface). Sans opts.dates : base + memoire.
+async function saveCollabPartial(collabIdx, fields, opts) {
+  if (!_isOnline || !_salonId) return { ok:false, error:"pas de connexion au serveur" };
+  if (typeof collabIdx !== "number" || !T[collabIdx]) return { ok:false, error:"collaborateur introuvable" };
   var c = T[collabIdx];
-  if (!c.id || typeof fields !== "object") return;
-  try {
-    await _sb.from("collaborateurs").update(fields).eq("id", c.id);
-  } catch (e) { console.warn("saveCollabPartial:", e); }
+  if (!c.id || typeof fields !== "object" || !fields) return { ok:false, error:"fiche non encore enregistr\u00e9e" };
+  var cid = c.id;
+  return _lxCollabEnFile(async function(){
+    try {
+      var payload = {};
+      Object.keys(fields).forEach(function(k){ payload[k] = fields[k]; });
+      if (Object.prototype.hasOwnProperty.call(payload, "horaires_overrides")) {
+        var cur = await _sb.from("collaborateurs").select("horaires_overrides").eq("id", cid).eq("salon_id", _salonId);
+        if (cur.error) return { ok:false, error:cur.error.message };
+        if (!cur.data || !cur.data.length) return { ok:false, error:"fiche introuvable en base" };
+        var dbOv = cur.data[0].horaires_overrides || {};
+        var memOv = payload.horaires_overrides || {};
+        var merged = {};
+        Object.keys(dbOv).forEach(function(k){ merged[k] = dbOv[k]; });
+        var dates = (opts && Array.isArray(opts.dates)) ? opts.dates : Object.keys(memOv);
+        dates.forEach(function(k){
+          if (Object.prototype.hasOwnProperty.call(memOv, k)) merged[k] = memOv[k];
+          else delete merged[k];
+        });
+        payload.horaires_overrides = merged;
+      }
+      var r = await _sb.from("collaborateurs").update(payload).eq("id", cid).eq("salon_id", _salonId).select("id");
+      if (r.error) { console.error("[saveCollabPartial]", r.error); return { ok:false, error:r.error.message }; }
+      if (!r.data || !r.data.length) return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
+      // memoire alignee sur ce qui est en base (dates des autres appareils incluses)
+      if (payload.horaires_overrides && T[collabIdx] && String(T[collabIdx].id) === String(cid)) {
+        if (!T[collabIdx].hrsOver) T[collabIdx].hrsOver = {};
+        var _mo = T[collabIdx].hrsOver;
+        Object.keys(payload.horaires_overrides).forEach(function(k){ if (!Object.prototype.hasOwnProperty.call(_mo, k)) _mo[k] = payload.horaires_overrides[k]; });
+      }
+      return { ok:true };
+    } catch (e) { console.warn("saveCollabPartial:", e); return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
+  });
 }
 window.saveCollabPartial = saveCollabPartial;
 
 // Supprimer un client
+// 2026-10-14 : retourne {ok,error} ; 0 ligne supprimee (droits refuses) = echec
+async function _lxDeleteVerifie(table, col, val) {
+  if (!_isOnline || !_salonId) return { ok:false, error:"pas de connexion au serveur" };
+  try {
+    var q = _sb.from(table).delete().eq(col, val);
+    if (col !== "salon_id") q = q.eq("salon_id", _salonId);
+    var r = await q.select("id");
+    if (r.error) { console.error("[delete " + table + "]", r.error); return { ok:false, error:r.error.message }; }
+    if (!r.data || !r.data.length) return { ok:false, error:"rien n'a \u00e9t\u00e9 supprim\u00e9 (droits ou d\u00e9j\u00e0 supprim\u00e9)", count:0 };
+    return { ok:true, count:r.data.length };
+  } catch (e) { return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
+}
 async function deleteClient(clientId) {
-  if (!_isOnline || !_salonId) return;
-  await _sb.from("clients").delete().eq("id", clientId);
+  return _lxDeleteVerifie("clients", "id", clientId);
 }
 
 // Supprimer un produit
 async function deleteProduct(productId) {
-  if (!_isOnline || !_salonId) return;
-  await _sb.from("produits").delete().eq("id", productId);
+  return _lxDeleteVerifie("produits", "id", productId);
 }
 
 // Supprimer un bon cadeau
 async function deleteGiftCard(gcId) {
-  if (!_isOnline || !_salonId) return;
-  await _sb.from("cartes_cadeaux").delete().eq("id", gcId);
-  // Also remove from local array
-  for (var i = 0; i < GC.length; i++) { if (GC[i].id === gcId) { GC.splice(i, 1); break; } }
+  // 2026-10-14 : retire de la memoire SEULEMENT apres suppression confirmee
+  var r = await _lxDeleteVerifie("cartes_cadeaux", "id", gcId);
+  if (r.ok) { for (var i = 0; i < GC.length; i++) { if (GC[i].id === gcId) { GC.splice(i, 1); break; } } }
+  return r;
 }
 
 // Purger TOUS les bons cadeaux du salon
 async function purgeAllGiftCards() {
-  if (!_isOnline || !_salonId) return;
-  await _sb.from("cartes_cadeaux").delete().eq("salon_id", _salonId);
-  GC.length = 0;
+  // 2026-10-14 : on ne vide la memoire qu'apres confirmation (0 bon en base = deja vide, ok)
+  if (!_isOnline || !_salonId) return { ok:false, error:"pas de connexion au serveur" };
+  try {
+    var r = await _sb.from("cartes_cadeaux").delete().eq("salon_id", _salonId).select("id");
+    if (r.error) { console.error("[purgeAllGiftCards]", r.error); return { ok:false, error:r.error.message }; }
+    var n = (r.data || []).length;
+    if (n === 0 && GC.length > 0) return { ok:false, error:"rien n'a \u00e9t\u00e9 supprim\u00e9 (droits ?)", count:0 };
+    GC.length = 0;
+    return { ok:true, count:n };
+  } catch (e) { return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
 }
 
 
@@ -3638,7 +3854,13 @@ async function saveFournisseur(f) {
   _ensureUuidId(f);
   data.id = f.id;
   var res = await _sb.from("fournisseurs").upsert(data).select();
-  if (res.error) console.error("saveFournisseur upsert error:", res.error);
+  // 2026-10-14 : erreur affichee a l'utilisateur (plus seulement dans la console)
+  if (res.error) {
+    console.error("saveFournisseur upsert error:", res.error);
+    try { if (typeof showAlert === "function") showAlert("\u26a0\ufe0f Fournisseur \u00ab " + (f.nom || "") + " \u00bb non enregistr\u00e9 : " + (res.error.message || "erreur") + ". R\u00e9essayez.", "warning"); } catch(_e) {}
+    return { ok:false, error:res.error.message };
+  }
+  return { ok:true };
 }
 async function deleteFournisseur(fId) {
   if (!_isOnline || !_salonId) return;
@@ -3658,7 +3880,8 @@ async function logMouvementStock(prodId, prodNom, type, qty, stkAvant, stkApres,
       _opId = window.CURRENT_OPERATOR.id;
       _opName = window.CURRENT_OPERATOR.prenom + (window.CURRENT_OPERATOR.nom ? " " + window.CURRENT_OPERATOR.nom : "");
     }
-    await _sb.from("mouvements_stock").insert({
+    // 2026-10-14 : resultat verifie (Supabase ne leve pas d'exception)
+    var _rM = await _sb.from("mouvements_stock").insert({
       salon_id: _salonId, produit_id: prodId, produit_nom: prodNom,
       type: type, quantite: qty, stock_avant: stkAvant, stock_apres: stkApres,
       reference: ref || null, note: note || null,
@@ -3666,7 +3889,18 @@ async function logMouvementStock(prodId, prodNom, type, qty, stkAvant, stkApres,
       commentaire: note || null,
       operator_id: _opId, operator_name: _opName
     });
-  } catch(e) { console.error("[MVT STOCK]", e.message); }
+    if (_rM && _rM.error) throw _rM.error;
+    return { ok:true };
+  } catch(e) {
+    console.error("[MVT STOCK]", e && e.message);
+    // 2026-10-14 : l'utilisateur est prevenu (alerte une fois, puis message court)
+    try {
+      var _m = "\u26a0\ufe0f Mouvement de stock non enregistr\u00e9 dans l'historique (" + (prodNom || "") + ") : " + ((e && e.message) || "erreur");
+      if (!window._lxMvtAlerte && typeof showAlert === "function") { window._lxMvtAlerte = true; showAlert(_m, "warning"); }
+      else if (typeof toast === "function") toast(_m, "error");
+    } catch(_e) {}
+    return { ok:false, error:(e && e.message) || "erreur" };
+  }
 }
 async function getMouvementsStock(prodId, limit) {
   if (!_isOnline || !_salonId) return [];
@@ -3750,7 +3984,9 @@ async function updateOperateur(id, data) {
       var ini = ((data.prenom||"")[0]||"") + ((data.nom||"")[0]||"");
       update.avatar_initials = ini.toUpperCase();
     }
-    var r = await _sb.from("salon_operateurs").update(update).eq("id", id);
+    var r = await _sb.from("salon_operateurs").update(update).eq("id", id).select("id");
+    // 2026-10-14 : 0 ligne modifiee (droits refuses) = echec, pas un succes silencieux
+    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP UPDATE] 0 ligne modifiee", id); return false; }
     // 2026-10-11 (NF525, JET 130) : trace des changements d'habilitations
     try { if (!r.error && (update.role != null || update.permissions != null || update.actif != null) && typeof saveAuditEntry === "function")
       saveAuditEntry(update.permissions != null ? "OPERATEUR_PERMISSIONS" : "OPERATEUR_ROLE", "Opérateur " + id + " : " + JSON.stringify({ role: update.role, actif: update.actif, permissions: update.permissions }).slice(0, 700)); } catch(_eA){}
@@ -3777,7 +4013,9 @@ async function changeOperateurPIN(id, newPin) {
 async function deleteOperateur(id) {
   if (!_isOnline || !_salonId) return false;
   try {
-    var r = await _sb.from("salon_operateurs").delete().eq("id", id);
+    var r = await _sb.from("salon_operateurs").delete().eq("id", id).select("id");
+    // 2026-10-14 : 0 ligne supprimee (droits refuses) = echec
+    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP DEL] 0 ligne supprimee", id); return false; }
     try { if (!r.error && typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_SUPPRIME", "Opérateur " + id + " supprimé"); } catch(_eA){}
     return !r.error;
   } catch(e) { console.error("[OP DEL]", e.message); return false; }
