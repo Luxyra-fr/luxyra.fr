@@ -284,3 +284,8 @@ d'altération des données fiscales.*
 ## 2026-10-13 — Plusieurs métiers par établissement
 - Ajout `salons.metiers_autres` (activités secondaires), réglage « Autres activités », inscription, recherche, annuaire, fiche client/technique, admin.
 - Aucun impact caisse : ni tickets, ni clôtures, ni JET, ni chaînage modifiés. Changement de réglage tracé (audit CONFIG_METIERS).
+
+## 2026-10-13 — Infos établissement non enregistrées (salon sans SIRET)
+- Cause : un salon « en cours d'immatriculation » (SIRET vide) envoyait `siret:""` ; le contrôle SIRET le refusait et TOUTE la mise à jour des infos (note des tickets, logo, téléphone…) échouait en silence. Signalé par O'R STUDIO (note des tickets qui disparaît).
+- Correctif app : SIRET envoyé seulement s'il est rempli ; message d'erreur visible si l'enregistrement échoue. Contrôle SIRET en base inchangé (verrou intact).
+- O'R STUDIO : coordonnées GPS renseignées (adresse officielle BAN) pour la carte du site. Aucune donnée de caisse touchée.
