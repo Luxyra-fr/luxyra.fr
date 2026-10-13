@@ -1257,7 +1257,7 @@ async function loadSalonData() {
   try { if (String(SALON_CONFIG.logo).length > 300000 && /^data:image\//.test(SALON_CONFIG.logo)) { setTimeout(function () {
     if (typeof window.lxImgReduire !== "function") return;
     var _orig = SALON_CONFIG.logo;
-    window.lxImgReduire(_orig, 512, 0.85, function (v) { if (!v || v.length >= _orig.length) return;
+    window.lxImgReduire(_orig, 512, 0.85, function (v) { if (!v || v.length >= _orig.length || SALON_CONFIG.logo !== _orig) return;
       SALON_CONFIG.logo = v; if (window.SALON) window.SALON.logo = v;
       if (typeof lxSaveSalonColumns === "function") lxSaveSalonColumns({ logo: v });
     }, true);
