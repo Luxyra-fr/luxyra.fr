@@ -1801,3 +1801,4 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Sitemap v14 : pages métier + villes. Mots réservés (is_reserved_slug, worker, app) : coiffeur, institut-de-beaute, spa-massage, annuaire-retrait.
 - Textes : politique de confidentialité §10 ter, mentions légales (source Sirene, Licence Ouverte), bot annuaire_public, liens en pied de page d'accueil.
 - 13/10 : tâche auto (demande n°3) a corrigé nf525_take_inventory_snapshot (archives de test comptées) — noté au registre en session PC. Monitoring : tuiles de carte OSM ignorées.
+- 13/10 : fusion clients sans toucher aux tickets clôturés (clients.fusionne_dans, lxCid/lxMajFusions dans luxyra-supabase.js) ; résa en ligne rattachée par nom+prénom unique sans autre e-mail.

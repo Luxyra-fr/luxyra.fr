@@ -273,3 +273,10 @@ d'altération des données fiscales.*
 
 - Constat : alerte critique « TICKETS DIMINUE 774→772 » à 04:00 — fausse alerte due au passage en caisse réelle du Salon Démo (tickets de test placés dans l'archive scellée nf525_archives_purge, cf. 12/10).
 - Correction (faite par la tâche automatique « Luxyra file Claude » à 09:57 avec l'accord d'Alexandre) : `nf525_take_inventory_snapshot` compte désormais tickets et clôtures en base + ceux de l'archive scellée des tests ; alerte seulement si ce total baisse. Aucun ticket, clôture ni signature modifié. Essai à blanc fait avant (cas normal sans alerte, ticket manquant simulé avec alerte). Vérifié en session PC le 13/10.
+
+## 2026-10-13 — Fusion de fiches clients sans toucher à la caisse (accord d'Alexandre)
+
+- Constat : 12/10 23 h 40, Excellence Coiffure, fusion de 2 fiches (cliente du salon + compte en ligne avec un autre téléphone) refusée : « Ticket #7 verrouillé (clôture Z effectuée) ». La fusion supprimait la fiche en double ; la suppression tentait de modifier un ticket clôturé, refusé à juste titre par les protections de la caisse.
+- Correction (`merge_client_duplicates`) : RDV et tickets rattachés ligne par ligne seulement quand la caisse le permet ; un ticket clôturé n'est JAMAIS modifié. S'il reste des tickets/RDV clôturés sur la fiche en double, elle n'est plus supprimée mais marquée `fusionne_dans` (cachée, sans e-mail ni compte en ligne, points remis à 0 car additionnés sur la fiche gardée). L'application affiche ces tickets dans l'historique de la fiche gardée (correspondance en mémoire, lecture seule). Détecteur de doublons : ignore les fiches fusionnées.
+- Essai à blanc (annulé) sur le cas réel : 2 RDV déplacés, 1 ticket clôturé laissé intact, points 1 + 2 = 3, ancien numéro en téléphone 2. Aucune fusion réelle faite par Claude : Amandine la refait elle-même dans l'application.
+- Prévention : une réservation en ligne est rattachée à la fiche existante si une seule fiche a le même nom + prénom et pas d'autre e-mail.
