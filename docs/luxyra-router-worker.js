@@ -4454,6 +4454,10 @@ const LX_ANN_METIERS = {
   "coiffeur": { titre: "Coiffeur", pluriel: "Coiffeurs", luxyra: ["coiffure", "barbier"], metierLx: "coiffure", logiciel: "/logiciel-coiffure", schema: "HairSalon", phrase: "salons de coiffure et barbiers", icone: "✂️", presta: "une coupe, une couleur ou un brushing" },
   "institut-de-beaute": { titre: "Institut de beauté", pluriel: "Instituts de beauté", luxyra: ["esthetique", "ongles", "regard", "maquillage"], metierLx: "esthetique", logiciel: "/logiciel-institut-beaute", schema: "BeautySalon", phrase: "instituts de beauté, onglerie, cils et sourcils", icone: "💆", presta: "un soin du visage, une épilation ou une pose d'ongles" },
   "spa-massage": { titre: "Spa & massage", pluriel: "Spas & massages", luxyra: ["spa", "bien_etre"], metierLx: "spa", logiciel: "/logiciel-spa-massage", schema: "DaySpa", phrase: "spas, massages et bien-être", icone: "🌿", presta: "un massage ou un soin bien-être" },
+  // Sous-métiers (même source Sirene, filtrée par l'enseigne) — 2026-10-13
+  "onglerie": { source: "institut-de-beaute", motif: "ongl|nail|manucur|vernis", titre: "Onglerie", pluriel: "Ongleries", luxyra: ["ongles"], metierLx: "ongles", logiciel: "/logiciel-onglerie", schema: "NailSalon", phrase: "ongleries, prothésistes ongulaires et manucures", icone: "💅", presta: "une pose de gel, un semi-permanent ou une manucure" },
+  "extension-de-cils": { source: "institut-de-beaute", motif: "cil|lash|regard|sourcil|brow", titre: "Extension de cils", pluriel: "Extensions de cils & sourcils", luxyra: ["regard"], metierLx: "regard", logiciel: "/logiciel-cils-sourcils", schema: "BeautySalon", phrase: "studios d'extensions de cils, rehaussement et sourcils", icone: "👁️", presta: "une pose de cils, un rehaussement ou des sourcils" },
+  "barbier": { source: "coiffeur", motif: "barb", titre: "Barbier", pluriel: "Barbiers", luxyra: ["barbier"], metierLx: "barbier", logiciel: "/logiciel-barbier", schema: "BarberShop", phrase: "barbiers et barbershops", icone: "💈", presta: "une coupe homme ou une taille de barbe" },
 };
 function lxAnnSlug(s) { return String(s || "").replace(/œ/gi, "oe").replace(/æ/gi, "ae").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "-").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
 function lxAnnInit(n) { const m = String(n || "?").trim().match(/[A-Za-zÀ-ÿ0-9]/); return (m ? m[0] : "?").toUpperCase(); }
@@ -4510,7 +4514,7 @@ h2{font-family:var(--f2);font-weight:700;font-size:28px;color:#fff;margin:38px 0
 footer{border-top:1px solid var(--border);margin-top:40px;padding:26px 20px;text-align:center;font-size:12.5px;color:var(--text3)}footer a{color:var(--text2);margin:0 6px}
 @media(max-width:720px){.nav .lk a:not(.pro){display:none}.carte{flex-wrap:wrap}.act{width:100%;flex-direction:row;justify-content:space-between;align-items:center}.atouts{grid-template-columns:1fr}.villes{columns:2}}
 </style></head><body>
-<div class="nav"><a class="logo" href="/"><img src="${LX_ANN_LOGO}" width="34" height="34" alt="Luxyra"> Luxyra</a><div class="lk"><a href="/recherche">Trouver un pro</a><a href="/coiffeur">Coiffeurs</a><a href="/institut-de-beaute">Instituts</a><a class="pro" href="/pro">Je suis un pro</a></div></div>
+<div class="nav"><a class="logo" href="/"><img src="${LX_ANN_LOGO}" width="34" height="34" alt="Luxyra"> Luxyra</a><div class="lk"><a href="/recherche">Trouver un pro</a><a href="/coiffeur">Coiffeurs</a><a href="/institut-de-beaute">Instituts</a><a href="/onglerie">Ongles</a><a href="/extension-de-cils">Cils</a><a class="pro" href="/pro">Je suis un pro</a></div></div>
 ${body}
 <footer><a class="logo" href="/" style="justify-content:center;font-size:20px;margin-bottom:10px"><img src="${LX_ANN_LOGO}" width="28" height="28" alt="Luxyra"> Luxyra</a>
 <div><a href="/recherche">Trouver un pro</a>·<a href="/pro">Espace pro</a>·<a href="/tarifs">Tarifs</a>·<a href="/aide">Aide</a>·<a href="/mentions-legales">Mentions légales</a>·<a href="/politique-confidentialite">Confidentialité</a></div>
@@ -4527,7 +4531,7 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
   if (!M) return null;
   // ---- Liste des villes ----
   if (!villeSlug) {
-    const villes = (await lxAnnRpc("annuaire_villes", { p_metier: metierSlug })) || [];
+    const villes = (await lxAnnRpc("annuaire_villes2", { p_source: M.source || metierSlug, p_motif: M.motif || null, p_lx: M.luxyra })) || [];
     const parDep = {};
     for (const v of villes) { (parDep[v.departement] = parDep[v.departement] || []).push(v); }
     let body = `<section class="hero"><div class="wrap"><div class="fil"><a href="/">Accueil</a> › ${lxEsc(M.pluriel)}</div><h1>${lxEsc(M.pluriel)} <em>près de chez vous</em></h1><p class="sous">Trouvez des ${lxEsc(M.phrase)} dans votre ville et réservez en ligne, 24 h/24, chez les établissements Luxyra.</p></div></section><div class="wrap">`;
@@ -4539,7 +4543,7 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     return lxAnnReponse(lxAnnPage({ title: `${M.pluriel} : trouvez un professionnel et réservez en ligne | Luxyra`, desc: `${M.pluriel} par ville : adresses, avis et réservation en ligne 24 h/24 chez les établissements Luxyra.`, canonical: `https://luxyra.fr/${metierSlug}`, robots: villes.length ? null : "noindex,follow", body }), villes.length ? 200 : 404);
   }
   // ---- Page d'une ville ----
-  const etabs = (await lxAnnRpc("annuaire_ville", { p_metier: metierSlug, p_ville_slug: villeSlug })) || [];
+  const etabs = (await lxAnnRpc("annuaire_ville2", { p_source: M.source || metierSlug, p_ville_slug: villeSlug, p_motif: M.motif || null })) || [];
   const lx = [];
   try {
     const rows = await lxSeoFetch(`salons_public?metier=in.(${M.luxyra.join(",")})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite,sous_titre&limit=500`);
@@ -4582,7 +4586,7 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
   body += `<h2>Questions fréquentes</h2><div class="faq">` + faq.map(([q, r]) => `<details><summary>${lxEsc(q)}</summary><p>${lxEsc(r)}</p></details>`).join("") + `</div>`;
   body += `<div class="bande"><div><b>Vous êtes ${M.titre === "Coiffeur" ? "coiffeur" : "professionnel"} à ${lxEsc(villeNom)} ?</b><span>Apparaissez en tête de cette page avec un bouton « Réserver ». Réservation en ligne sans commission, rappels SMS, caisse conforme. Essai gratuit 14 jours.</span></div><a class="btn" href="${M.logiciel}">Découvrir Luxyra</a></div>`;
   try {
-    const villes = ((await lxAnnRpc("annuaire_villes", { p_metier: metierSlug })) || []).filter((v) => v.departement === dep && v.ville_slug !== villeSlug).slice(0, 30);
+    const villes = ((await lxAnnRpc("annuaire_villes2", { p_source: M.source || metierSlug, p_motif: M.motif || null, p_lx: M.luxyra })) || []).filter((v) => v.departement === dep && v.ville_slug !== villeSlug).slice(0, 30);
     if (villes.length) body += `<h2>${lxEsc(M.pluriel)} dans les villes proches</h2><div class="villes">` + villes.map((v) => `<a href="/${metierSlug}/${lxEsc(v.ville_slug)}">${lxEsc(M.titre)} à ${lxEsc(v.ville)} <span>(${v.n})</span></a>`).join("") + `</div>`;
   } catch (_) {}
   body += `<script>async function lxFerme(el,siret){if(!confirm("Cet établissement est fermé ? Il sera retiré de la liste.")) return false;try{var r=await fetch('${CONFIG.SUPABASE_URL}/rest/v1/rpc/annuaire_signaler_ferme',{method:'POST',headers:{'Content-Type':'application/json',apikey:'${CONFIG.SUPABASE_ANON_KEY}',Authorization:'Bearer ${CONFIG.SUPABASE_ANON_KEY}'},body:JSON.stringify({p_siret:siret})});var d=await r.json();var c=el.closest('.carte');if(d&&d.ok&&c){c.style.opacity='.35';el.textContent='Merci, c\'est noté : retiré de la liste.';}}catch(e){}return false;}</script>`;
@@ -5012,7 +5016,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
 
   // 2026-10-13 : annuaire public « Métier à Ville » (comme Planity) + page de retrait
   {
-    const _ann = url.pathname.match(/^\/(coiffeur|institut-de-beaute|spa-massage)(?:\/([a-z0-9-]{2,80}))?\/?$/);
+    const _ann = url.pathname.match(/^\/(coiffeur|institut-de-beaute|spa-massage|onglerie|extension-de-cils|barbier)(?:\/([a-z0-9-]{2,80}))?\/?$/);
     if (_ann) { const _r = await lxAnnuairePage(_ann[1], _ann[2] || null); if (_r) return _r; }
     if (url.pathname === "/annuaire-retrait") return lxAnnuaireRetraitPage(url);
     if (url.pathname === "/annuaire-gerant") return await lxAnnuaireGerantPage(url);
@@ -5040,7 +5044,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
       "lx-client.js", "luxyra-supabase.js", "supabase.min.js",
-      "robots.txt", "sitemap.xml", "coiffeur", "institut-de-beaute", "spa-massage", "annuaire-retrait", "annuaire-gerant"
+      "robots.txt", "sitemap.xml", "coiffeur", "institut-de-beaute", "spa-massage", "onglerie", "extension-de-cils", "barbier", "annuaire-retrait", "annuaire-gerant"
     ]);
     const isOneSegment = segmentForSlug && !segmentForSlug.includes("/");
     const hasExtension = /\.[a-z0-9]+$/i.test(segmentForSlug);
