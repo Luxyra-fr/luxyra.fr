@@ -3608,11 +3608,16 @@ async function handleClientAlertes(request, env) {
 // Appelé par la base (déclencheur) quand un rendez-vous est annulé ou déplacé
 async function handleCreneauLibere(request, env) {
   try {
-    if (!env.AVIS_CRON_SECRET || request.headers.get("x-cron-secret") !== env.AVIS_CRON_SECRET) return jsonResponse({ error: "forbidden" }, 403);
+    // Authentification : identifiant à usage unique d'une ligne de la file creneau_liberes (créée par la base)
     const b = await request.json().catch(() => ({}));
-    const sid = String(b.salon_id || ""), date = String(b.date || ""), heure = String(b.heure || "").slice(0, 5), duree = Math.max(30, parseInt(b.duree, 10) || 30);
-    if (!/^[0-9a-f-]{36}$/i.test(sid) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(heure)) return jsonResponse({ error: "params" }, 400);
+    const qid = String(b.id || "");
+    if (!/^[0-9a-f-]{36}$/i.test(qid)) return jsonResponse({ error: "forbidden" }, 403);
     const H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
+    const qr = await (await fetch(`${base}/creneau_liberes?id=eq.${qid}&traite_at=is.null&select=salon_id,date_rdv,heure,duree,created_at`, { headers: H })).json();
+    if (!Array.isArray(qr) || !qr[0] || (Date.now() - new Date(qr[0].created_at).getTime()) > 3600e3) return jsonResponse({ error: "forbidden" }, 403);
+    await fetch(`${base}/creneau_liberes?id=eq.${qid}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ traite_at: new Date().toISOString() }) });
+    const sid = qr[0].salon_id, date = String(qr[0].date_rdv), heure = String(qr[0].heure || "").slice(0, 5), duree = Math.max(30, parseInt(qr[0].duree, 10) || 30);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(heure)) return jsonResponse({ error: "params" }, 400);
     const plage = lxPlageDe(heure);
     const cutoff = new Date(Date.now() - 30 * 60e3).toISOString();
     const al = await (await fetch(`${base}/creneau_alertes?salon_id=eq.${sid}&actif=eq.true&date_debut=lte.${date}&date_fin=gte.${date}&duree_minutes=lte.${duree}&plage=in.(tous,${plage})&or=(derniere_alerte_at.is.null,derniere_alerte_at.lt.${encodeURIComponent(cutoff)})&select=id,client_luxyra_id,service_id,service_nom&limit=50`, { headers: H })).json();
@@ -3640,6 +3645,7 @@ ${lxMailBouton("Réserver cette place", lien)}
         await fetch(`${base}/rpc/lx_alerte_incrementer`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_id: a.id }) }).catch(() => {});
       } catch (_) {}
     }
+    await fetch(`${base}/creneau_liberes?id=eq.${qid}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ envoyes: n }) }).catch(() => {});
     return jsonResponse({ ok: true, envoyes: n });
   } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
 }
