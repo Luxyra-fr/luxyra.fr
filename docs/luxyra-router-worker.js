@@ -4563,7 +4563,7 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     for (const s of lx) {
       const note = Number(s.note_moyenne) > 0 && Number(s.nb_avis) > 0 ? `<span class="stars">${lxAnnEtoiles(s.note_moyenne)}</span> <span style="font-size:12.5px;color:var(--text2)">${Number(s.note_moyenne).toFixed(1).replace(".", ",")} · ${s.nb_avis} avis</span>` : "";
       const adr = String(s.mode_activite || "") === "domicile" ? `À domicile · ${lxEsc(s.ville || villeNom)}` : lxEsc(lxAnnAdr([s.adresse, s.cp, s.ville].filter(Boolean).join(" ")));
-      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span><span class="tag">Confirmation immédiate</span><span class="tag">Confirmation par e-mail</span></div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
+      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span><span class="tag">Confirmation immédiate</span><span class="tag">Modification ou annulation en ligne</span></div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
     }
   }
   if (autres.length) {
