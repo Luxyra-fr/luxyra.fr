@@ -2798,21 +2798,7 @@ function findNextAvailableSlot(){
   for(var dayOffset=0;dayOffset<=maxDays;dayOffset++){
     var dt=new Date(now); dt.setDate(dt.getDate()+dayOffset);
     var dateStr=_ymdLocal(dt);  // LOCAL \u2014 pas UTC \u2014 pour aligner avec dt.getDay()
-    var dow=dt.getDay();
-    var hrs=HORAIRES[dow];
-    if(booking.collab && booking.collab.hrs) hrs=booking.collab.hrs[dow];
-    // NEW 2026-05-12 : applique override horaires_overrides[dateStr] si défini
-    hrs = applyHrsOverride(hrs, booking.collab, dateStr);
-    var absences=SITE_CFG.absences||[];
-    var skipDay=false;
-    for(var ai=0;ai<absences.length;ai++){
-      var ab=absences[ai];
-      if(ab.type==="fermeture_except" && ab.date===dateStr){
-        if(!ab.stId||!booking.collabId||ab.stId===booking.collabId){skipDay=true;break;}
-      }
-    }
-    if(skipDay) continue;
-    hrs=_lxOuvExcept(hrs, dateStr, booking.collabId);
+    var hrs=lxPlageDuJour(dateStr).hrs; // 2026-10-13 : même règle que le calendrier et les créneaux
     if(!hrs) continue;
     // Skip si tout le monde est absent ce jour
     if(booking.collabId && isCollabDayOff(dateStr,booking.collabId)) continue;
@@ -2958,37 +2944,10 @@ function renderCalendar(){
   for(var d=1;d<=daysInMonth;d++){
     var dt=new Date(calYear,calMonth,d);
     var dow=dt.getDay();
-    var hrs=HORAIRES[dow];
-    // Check if collab works this day
-    if(booking.collab&&booking.collab.hrs){hrs=booking.collab.hrs[dow];}
     var dateKey=formatDate(dt);
-    // NEW 2026-05-12 : applique override horaires_overrides[dateKey] si défini
-    hrs = applyHrsOverride(hrs, booking.collab, dateKey);
     var isPast=dt<today;
     var isTooFar=dt>maxDate;
-    var isClosed=!hrs;
-    // Check exceptional closing (overrides open day)
-    var absences=SITE_CFG.absences||[];
-    var isExceptClosed=false;
-    var isExceptOpen=false;
-    for(var ai=0;ai<absences.length;ai++){
-      var ab=absences[ai];
-      if(ab.type==="fermeture_except"&&ab.date===dateKey){
-        if(!ab.stId||!booking.collabId||ab.stId===booking.collabId){isExceptClosed=true;break;}
-      }
-    }
-    // Check exceptional opening (overrides closed day)
-    if(isClosed){
-      for(var ai=0;ai<absences.length;ai++){
-        var ab=absences[ai];
-        if(ab.type==="ouverture_except"&&ab.date===dateKey&&ab.horaire_o&&ab.horaire_c){
-          // FIX 2026-05-14 : !ab.stId (salon-wide) doit ouvrir le jour pour tous
-          if(!booking.collabId||!ab.stId||ab.stId===booking.collabId){isExceptOpen=true;break;}
-        }
-      }
-    }
-    if(isExceptClosed)isClosed=true;
-    if(isExceptOpen)isClosed=false;
+    var isClosed=!lxPlageDuJour(dateKey).hrs; // 2026-10-13 : même règle que les créneaux (horaires personnalisés, « Pas de préférence »)
     // Check if collaborator has full-day absence on this date
     // - Avec collab choisi : check ce collab uniquement
     // - Sans préférence : grise si TOUS les collabs actifs sont absents
@@ -3088,6 +3047,33 @@ function _lxOuvExcept(hrs, dateStr, collabId){
     }
   }catch(_e){}
   return hrs;
+}
+// 2026-10-13 : plage horaire RÉELLE d'un jour pour la réservation, identique partout (calendrier, créneaux, « prochain créneau »).
+// - Fermeture exceptionnelle de tout l'établissement : jour fermé (motif affiché).
+// - Collaborateur choisi : SES horaires (habituels ou personnalisés du jour, ouverture exceptionnelle comprise).
+// - « Pas de préférence » : réunion des horaires effectifs des collaborateurs présents ce jour-là
+//   (avant : horaires de l'établissement seulement -> les horaires personnalisés étaient ignorés,
+//    et la fermeture exceptionnelle d'UN collaborateur fermait le jour pour tout le monde).
+function lxPlageDuJour(dateStr){
+  var abs=(SITE_CFG&&SITE_CFG.absences)||[], i, ab;
+  for(i=0;i<abs.length;i++){ ab=abs[i]; if(ab&&ab.type==="fermeture_except"&&ab.date===dateStr&&!ab.stId) return {hrs:null, motif:ab.motif||""}; }
+  var dow=_lxLocalDate(dateStr).getDay();
+  if(booking.collabId){
+    for(i=0;i<abs.length;i++){ ab=abs[i]; if(ab&&ab.type==="fermeture_except"&&ab.date===dateStr&&ab.stId===booking.collabId) return {hrs:null, motif:ab.motif||""}; }
+    var col=booking.collab||(COLLABS||[]).filter(function(c){return c.id===booking.collabId;})[0];
+    if(!col) return {hrs:_lxOuvExcept(HORAIRES[dow], dateStr, booking.collabId)};
+    return {hrs:_lxSiteEffHrs(col, booking.collabId, dateStr)};
+  }
+  var actifs=(COLLABS||[]).filter(function(c){ return !(c.actif===false||c.active===false); });
+  if(!actifs.length) return {hrs:_lxOuvExcept(HORAIRES[dow], dateStr, null)};
+  var o=null, c=null;
+  actifs.forEach(function(col){
+    if(isCollabDayOff(dateStr,col.id)) return;
+    var h=_lxSiteEffHrs(col, col.id, dateStr); if(!h||!h.o||!h.c) return;
+    if(o===null||toMin(h.o)<toMin(o)) o=h.o;
+    if(c===null||toMin(h.c)>toMin(c)) c=h.c;
+  });
+  return {hrs:(o&&c)?{o:o,c:c}:null};
 }
 // 2026-10-13 : pas des créneaux proposés = « Intervalles » de l'application (Paramètres › Site en ligne), 15 min par défaut
 function lxPasCreneaux(){ var v=parseInt(SITE_CFG&&SITE_CFG.interval,10); return (v>=5&&v<=240)?v:15; }
@@ -3284,24 +3270,9 @@ function isSlotTaken(date,time,duration,collabId){
 function renderTimeSlots(dateStr){
   var el=document.getElementById("timeSlotsArea");
   if(!el) return; // garde-fou : zone créneaux non montée (course async / navigation) — évite le crash null
-  var dt=_lxLocalDate(dateStr); // FIX iOS : plus de parsing de chaine
-  var dow=dt.getDay();
-  var hrs=HORAIRES[dow];
-  if(booking.collab&&booking.collab.hrs)hrs=booking.collab.hrs[dow];
-  // NEW 2026-05-12 : applique override horaires_overrides[dateStr] si défini
-  hrs = applyHrsOverride(hrs, booking.collab, dateStr);
-  // Check exceptional closing
-  var absences=SITE_CFG.absences||[];
-  for(var ai=0;ai<absences.length;ai++){
-    var ab=absences[ai];
-    if(ab.type==="fermeture_except"&&ab.date===dateStr){
-      if(!ab.stId||!booking.collabId||ab.stId===booking.collabId){
-        el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">'+(ab.motif||'Ferm\u00e9 exceptionnellement ce jour')+'</div>';return;
-      }
-    }
-  }
-  hrs=_lxOuvExcept(hrs, dateStr, booking.collabId); // ouverture exceptionnelle (elargit meme si le jour est deja ouvert)
-  if(!hrs){document.getElementById("timeSlotsArea").innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Ferm\u00e9 ce jour</div>';return;}
+  var _pj=lxPlageDuJour(dateStr); // 2026-10-13 : horaires réels du jour (personnalisés compris, « Pas de préférence » compris)
+  var hrs=_pj.hrs;
+  if(!hrs){el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">'+(_pj.motif?escapeHtmlSimple(_pj.motif):'Ferm\u00e9 ce jour')+'</div>';return;}
   // Check if collaborator is on full-day absence
   if(booking.collabId&&isCollabDayOff(dateStr,booking.collabId)){
     el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Collaborateur indisponible ce jour</div>';return;
