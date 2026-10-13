@@ -1007,6 +1007,7 @@ function lxMapRdvOnlineRow(r) {
     duree: r.duree_minutes,
     acompte: Number(r.acompte_montant), acomptePaye: r.acompte_paye, acomptePayeAt: r.acompte_paye_at || null,
     acompteRembourse: r.acompte_rembourse || false,
+    acompteRembourseMontant: Number(r.acompte_rembourse_montant) || 0, // 2026-10-13 : remboursement partiel
     refundedAt: r.refunded_at || null,
     stripePaymentId: r.payment_intent_id || null,
     status: r.status, message: r.message,
@@ -1415,7 +1416,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     if (svcRes.data && !svcRes.error) {
       window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.services = true;
       SVC = svcRes.data.map(function(s) {
-        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null };
+        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null, devis: s.prix_sur_devis === true };
       });
       // Recalculer CATS — si aucun service encore, applique les defaultCats
       // du métier configuré au lieu de garder les catégories coiffure
@@ -3369,7 +3370,8 @@ async function saveServices() {
       categorie: s.cat, phases: s.phases || [],
       // FIX 2026-05-13 : cat_genre = tag H/F/E pour les stats genre précises au niveau item
       cat_genre: (s.catGenre === 'H' || s.catGenre === 'F' || s.catGenre === 'E') ? s.catGenre : null,
-      show_site: s.showSite !== false, book_online: s.bookOnline !== false
+      show_site: s.showSite !== false, book_online: s.bookOnline !== false,
+      prix_sur_devis: s.devis === true // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
     };
     if (typeof s.id === "number" && s.id > 0) {
       var check = await _sb.from("services").select("id").eq("id", s.id).eq("salon_id", _salonId);
