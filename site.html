@@ -1525,7 +1525,8 @@ function renderSite(){
     var _finStatus=SITE_CFG.autoConfirm?"confirmed":"pending";
     // 2026-10-14 : « Paiement accepté » n'est affiché QU'APRÈS la réponse ok du serveur (avant : affiché tout de suite,
     // même si la vérification Stripe échouait). Sinon : « Paiement en cours de vérification » + référence.
-    var el=document.getElementById("app"); if(!el) return; // garde-fou : conteneur absent
+    var el=document.getElementById("root")||document.getElementById("app"); if(!el) return; // 2026-10-14 : le conteneur de la page est #root (#app n'existe pas ici)
+    try{ params.delete("payment"); params.delete("session_id"); params.delete("rdv"); }catch(_eP){} // pas de retour en boucle sur cet écran
     var _payRef=_sidPay||_rdvId;
     var _payOk=function(){
       el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement accept\u00e9 !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre acompte a \u00e9t\u00e9 encaiss\u00e9 et votre rendez-vous est '+(SITE_CFG.autoConfirm?'confirm\u00e9':'en attente de confirmation')+'.</p><p style="font-size:13px;color:var(--text3);margin-bottom:24px">Un email de confirmation vous sera envoy\u00e9.</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
@@ -1581,7 +1582,8 @@ function renderSite(){
   var _ep=params.get("empreinte");
   var _sid=params.get("session_id");
   if(_ep==="success"&&_rdvId&&_sid){
-    var elE=document.getElementById("app"); if(!elE) return; // garde-fou : conteneur absent
+    var elE=document.getElementById("root")||document.getElementById("app"); if(!elE) return; // 2026-10-14 : conteneur #root
+    try{ params.delete("empreinte"); params.delete("session_id"); params.delete("rdv"); }catch(_eP2){}
     elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center"><div style="font-size:64px;margin-bottom:16px">\ud83d\udd12</div><h2 style="color:var(--gold)">Pré-autorisation en cours de confirmation…</h2></div></div>';
     fetch("/api/stripe/empreinte-finalize",{
       method:"POST",headers:{"Content-Type":"application/json"},
@@ -2281,6 +2283,7 @@ function escapeHtmlSimple(s){return String(s||'').replace(/[&<>"]/g,function(c){
 function escapeAttrSimple(s){return String(s||'').replace(/["'<>&]/g,function(c){return {'"':'&quot;',"'":'&#39;','<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}
 
 function goToBooking(){
+  window._afterLoginPreSvc=null; // 2026-10-14 : « Réserver » général : pas de reprise d'une prestation cliquée avant
   // Navigate vers booking sans pré-sélection
   if(!CLIENT){showAuthModal('login');window._afterLoginAction='booking';return;}
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
@@ -4176,7 +4179,7 @@ async function askModifyRdv(rdvId){
   h+='<h2 style="font-family:var(--f1);color:var(--gold);margin-bottom:4px">Demander une modification</h2>';
   h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'+escapeHtmlSimple(rdv.service_nom)+' \u2022 '+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'')+' le '+rdv.date_rdv+'</div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Nouvelle date</label>';
-  h+='<input type="date" id="modifDate" value="'+rdv.date_rdv+'" min="'+new Date().toISOString().slice(0,10)+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
+  h+='<input type="date" id="modifDate" value="'+rdv.date_rdv+'" min="'+_ymdLocal(new Date())+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Nouvel horaire</label>';
   h+='<input type="time" id="modifTime" value="'+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):'09:00')+'" style="width:100%;padding:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:14px"></div>';
   h+='<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:700;color:rgba(255,255,255,.6);display:block;margin-bottom:4px">Message (optionnel)</label>';
