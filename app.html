@@ -5985,7 +5985,7 @@ async function openRdvFromNotif(rdvId, notifId){
   var rdv = null;
   try{
     if(typeof _sb !== "undefined" && _sb){
-      var res = await _sb.from("rdv_online").select("id,date_rdv,heure_rdv,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,status,service_nom,service_prix,collaborateur_nom,cancel_reason,cancelled_by,cancelled_at,acompte_montant,acompte_paye,acompte_rembourse,refunded_at,retenue_at,retenue_tk_num,empreinte_status,empreinte_amount,lieu,message").eq("id", rdvId).single();
+      var res = await _sb.from("rdv_online").select("id,date_rdv,heure_rdv,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,status,service_nom,service_prix,collaborateur_nom,cancel_reason,cancelled_by,cancelled_at,acompte_montant,acompte_paye,acompte_rembourse,acompte_rembourse_montant,refunded_at,retenue_at,retenue_tk_num,empreinte_status,empreinte_amount,lieu,message").eq("id", rdvId).single();
       rdv = res.data;
     }
   }catch(_){}
@@ -6023,7 +6023,9 @@ function lxFicheRdvAnnule(r){
   var le=r.cancelled_at?new Date(r.cancelled_at).toLocaleString("fr-FR",{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"}):"";
   var ac=Number(r.acompte_montant)||0, acTxt="";
   if(ac>0&&r.acompte_paye){
-    if(r.acompte_rembourse||r.refunded_at) acTxt="\u2705 Acompte de "+ac.toFixed(2)+" \u20ac rembours\u00e9 au client.";
+    var _rp=Number(r.acompte_rembourse_montant)||0;
+    if(!r.acompte_rembourse && _rp>0 && _rp<ac) acTxt="\u2705 "+_rp.toFixed(2)+" \u20ac rembours\u00e9s au client, "+(ac-_rp).toFixed(2)+" \u20ac conserv\u00e9s"+(r.retenue_tk_num?" (ticket n\u00b0"+r.retenue_tk_num+")":"")+".";
+    else if(r.acompte_rembourse||r.refunded_at) acTxt="\u2705 Acompte de "+ac.toFixed(2)+" \u20ac rembours\u00e9 au client.";
     else if(r.retenue_at) acTxt="\ud83d\udcb6 Acompte de "+ac.toFixed(2)+" \u20ac conserv\u00e9"+(r.retenue_tk_num?" (ticket n\u00b0"+r.retenue_tk_num+")":"")+".";
     else acTxt="\u23f3 Acompte de "+ac.toFixed(2)+" \u20ac pay\u00e9 : remboursement en cours de traitement.";
   } else if(ac>0) acTxt="Acompte pr\u00e9vu ("+ac.toFixed(2)+" \u20ac) non pay\u00e9 : rien \u00e0 rembourser.";
@@ -12855,7 +12857,7 @@ function _cancelApptDo(id){
     var _m='<div class="mbox" style="max-width:440px"><h2 style="text-align:center">Annuler ce rendez-vous</h2>';
     _m+='<div style="font-size:13px;color:var(--text2);text-align:center;margin-bottom:14px">Le client a payé un acompte en ligne de <b>'+Number(a.acompte).toFixed(2).replace(".",",")+' \u20ac</b>.</div>';
     _m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:8px;background:var(--red);color:#fff;font-weight:700" onclick="window._lxCancelBy=\'salon\';_cancelApptDo(\''+id+'\')">L\u2019\u00e9tablissement annule<br><span style="font-size:11px;font-weight:400">L\u2019acompte est rembours\u00e9 au client</span></button>';
-    _m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:8px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="window._lxCancelBy=\'no_show\';_cancelApptDo(\''+id+'\')">Le client ne s\u2019est pas pr\u00e9sent\u00e9<br><span style="font-size:11px;font-weight:400">L\u2019acompte est conserv\u00e9</span></button>';
+    _m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:8px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="lxAcompteChoixAbsent(\''+id+'\')">Le client ne s\u2019est pas pr\u00e9sent\u00e9 (ou pr\u00e9vient trop tard)<br><span style="font-size:11px;font-weight:400">L\u2019acompte est conserv\u00e9</span></button>';
     _m+='<button class="btn" style="width:100%;padding:10px;background:var(--bg2);font-size:12px" onclick="cM()">Retour</button></div>';
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+_m+'</div></div>';
     return;
@@ -12863,6 +12865,46 @@ function _cancelApptDo(id){
   _doCancelApptUnpaid(id);
   window._lxCancelBy=null;
   cM();go("planning");
+}
+// 2026-10-13 : client absent / annulation tardive : l'établissement choisit ce qu'il fait de l'acompte payé en ligne
+// (tout conserver, ou rembourser une partie en % ou en €). La partie conservée est enregistrée en caisse (ticket scellé).
+function lxAcompteChoixAbsent(id){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a) return;
+  var ac=Math.round((Number(a.acompte)||0)*100)/100, f=function(n){ return Number(n).toFixed(2).replace(".",","); };
+  var m='<div class="mbox" style="max-width:440px"><h2 style="text-align:center">Acompte de '+f(ac)+' \u20ac</h2>';
+  m+='<div style="font-size:13px;color:var(--text2);text-align:center;margin-bottom:14px">Le client ne vient pas. Que faites-vous de l\u2019acompte pay\u00e9 en ligne ?</div>';
+  m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:10px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="window._lxCancelBy=\'no_show\';_cancelApptDo(\''+id+'\')">Conserver tout l\u2019acompte ('+f(ac)+' \u20ac)</button>';
+  m+='<div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px"><div style="font-weight:700;font-size:13px;margin-bottom:8px">Rembourser une partie</div>';
+  m+='<div style="display:flex;gap:8px"><input id="lxRpVal" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Ex : 50" style="flex:1;padding:11px;border-radius:10px" oninput="lxAcompteApercu('+ac+')">';
+  m+='<select id="lxRpUnit" style="width:90px;padding:11px;border-radius:10px" onchange="lxAcompteApercu('+ac+')"><option value="pct">%</option><option value="eur">\u20ac</option></select></div>';
+  m+='<div id="lxRpApercu" style="font-size:12px;color:var(--text3);margin-top:6px">Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.</div>';
+  m+='<button class="btn bg" id="lxRpBtn" style="width:100%;padding:12px;margin-top:8px;font-weight:700" onclick="lxAcompteRembourserPartie(\''+id+'\','+ac+')">Rembourser et annuler le rendez-vous</button></div>';
+  m+='<button class="btn" style="width:100%;padding:10px;background:var(--bg2);font-size:12px" onclick="cM()">Retour</button></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+m+'</div></div>';
+}
+function _lxAcompteMontantSaisi(ac){
+  var v=parseFloat(String((document.getElementById("lxRpVal")||{}).value||"").replace(",",".")), u=(document.getElementById("lxRpUnit")||{}).value;
+  if(!(v>0)) return 0;
+  var x=(u==="eur")?v:(ac*Math.min(v,100)/100);
+  return Math.min(ac, Math.round(x*100)/100);
+}
+function lxAcompteApercu(ac){
+  var x=_lxAcompteMontantSaisi(ac), el=document.getElementById("lxRpApercu"); if(!el) return;
+  var f=function(n){ return Number(n).toFixed(2).replace(".",","); };
+  el.textContent=x>0?("Rembours\u00e9 au client : "+f(x)+" \u20ac \u2014 conserv\u00e9 (ticket en caisse) : "+f(Math.round((ac-x)*100)/100)+" \u20ac"):"Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.";
+}
+async function lxAcompteRembourserPartie(id, ac){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a||!a.onlineId) return;
+  var x=_lxAcompteMontantSaisi(ac); if(!(x>0)){ toast("Indiquez le montant ou le pourcentage \u00e0 rembourser","warning"); return; }
+  var b=document.getElementById("lxRpBtn"); if(b){ b.disabled=true; b.textContent="Remboursement\u2026"; }
+  try{
+    var r=await fetch("/api/rdv/acompte-rembourser",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:_salonId,rdv_id:a.onlineId,montant:x,no_show:true})});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok){ toast(d.error||"Remboursement impossible","error"); if(b){ b.disabled=false; b.textContent="Rembourser et annuler le rendez-vous"; } return; }
+    if(typeof auditLog==="function") auditLog("ACOMPTE_REMBOURSE_PARTIEL",((a.clientName||"")+" RDV du "+(a.date||"")+" "+(a.time||"")+" - rembours\u00e9 "+Number(d.rembourse).toFixed(2)+"E, conserv\u00e9 "+Number(d.conserve).toFixed(2)+"E").trim());
+    toast("\u2705 "+Number(d.rembourse).toFixed(2).replace(".",",")+" \u20ac rembours\u00e9s au client"+(d.conserve>0?" \u2014 "+Number(d.conserve).toFixed(2).replace(".",",")+" \u20ac conserv\u00e9s":""),"success");
+    window._lxCancelBy="no_show"; _cancelApptDo(id);
+  }catch(e){ toast("Remboursement impossible : "+(e.message||e),"error"); if(b){ b.disabled=false; b.textContent="Rembourser et annuler le rendez-vous"; } }
 }
 // FIX 2026-07-04 (BUG A) : annulation salon d'un RDV EN LIGNE (ghost "online_<uuid>").
 // Avant, _doCancelApptUnpaid retirait le fantome de AP puis appelait
@@ -12927,11 +12969,12 @@ async function lxRetenuesSync(force){
   try{
     TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
     if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]) return;
-    var sel="id,salon_id,status,cancelled_by,client_nom,client_prenom,client_luxyra_id,client_email,client_tel,service_id,service_nom,collaborateur_id,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_rembourse,retenue_at,retenue_tk_num,retenue_claim_at,empreinte_status,empreinte_amount,empreinte_captured_at,empreinte_tk_num,empreinte_claim_at";
+    var sel="id,salon_id,status,cancelled_by,client_nom,client_prenom,client_luxyra_id,client_email,client_tel,service_id,service_nom,collaborateur_id,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_rembourse,retenue_at,retenue_tk_num,retenue_claim_at,empreinte_status,empreinte_amount,empreinte_captured_at,empreinte_tk_num,empreinte_claim_at,acompte_rembourse_montant";
     var a1=await _sb.from("rdv_online").select(sel).eq("salon_id",_salonId).eq("status","cancelled").eq("acompte_paye",true).eq("acompte_rembourse",false).not("retenue_at","is",null).is("retenue_tk_num",null).gt("acompte_montant",0).limit(20);
     var a2=await _sb.from("rdv_online").select(sel).eq("salon_id",_salonId).eq("empreinte_status","captured").is("empreinte_tk_num",null).gt("empreinte_amount",0).limit(20);
     var travaux=[];
-    ((a1&&a1.data)||[]).forEach(function(r){ travaux.push({r:r,type:"acompte",montant:Math.round(Number(r.acompte_montant)*100)/100}); });
+    // 2026-10-13 : remboursement partiel -> seule la partie CONSERVÉE est une recette (ticket scellé)
+    ((a1&&a1.data)||[]).forEach(function(r){ var _k=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(_k>0) travaux.push({r:r,type:"acompte",montant:_k}); });
     ((a2&&a2.data)||[]).forEach(function(r){ travaux.push({r:r,type:"empreinte",montant:Math.round(Number(r.empreinte_amount)*100)/100}); });
     if(!travaux.length) return;
     // Journée déjà clôturée en base ? (clôture automatique ou autre appareil)
@@ -12965,7 +13008,8 @@ async function _lxRetenueTicket(t){
   // 4) ticket scellé
   var quand=_lxDateFrCourte(r.date_rdv)+(r.heure_rdv?" "+String(r.heure_rdv).slice(0,5):"");
   var motif=acompte?(r.cancelled_by==="no_show"?"client absent":(r.cancelled_by==="client"?"annulation hors délai":"conditions d\u2019annulation")):"client absent";
-  var lib=acompte?("Acompte conservé - "+(r.service_nom||"Prestation")+" (RDV du "+quand+", "+motif+")")
+  var _remb=acompte?(Math.round((Number(r.acompte_rembourse_montant)||0)*100)/100):0;
+  var lib=acompte?("Acompte conservé - "+(r.service_nom||"Prestation")+" (RDV du "+quand+", "+motif+(_remb>0?", "+_remb.toFixed(2).replace(".",",")+" \u20ac rembours\u00e9s sur "+(Math.round(Number(r.acompte_montant)*100)/100).toFixed(2).replace(".",",")+" \u20ac":"")+")")
                  :("Empreinte encaissée - "+(r.service_nom||"Prestation")+" (RDV du "+quand+", "+motif+")");
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   nextTicketNum();
@@ -23080,7 +23124,7 @@ async function _lxPaiementsEnLigne(mois){
   // Fenêtre : 18 mois avant la fin du mois (un acompte est payé au plus quelques mois avant le RDV)
   var d0=new Date(b.finExcl+"T00:00:00Z"); d0.setUTCMonth(d0.getUTCMonth()-18); var depuis=d0.toISOString();
   var fin=b.finExcl+"T23:59:59Z"; // filtrage exact au jour de Paris ensuite
-  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_paye_at,acompte_rembourse,refunded_at,status,ticket_num,retenue_tk_num").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).gte("acompte_paye_at",depuis).lt("acompte_paye_at",fin).order("acompte_paye_at",{ascending:false}).limit(5000);
+  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_paye_at,acompte_rembourse,acompte_rembourse_montant,refunded_at,status,ticket_num,retenue_tk_num").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).gte("acompte_paye_at",depuis).lt("acompte_paye_at",fin).order("acompte_paye_at",{ascending:false}).limit(5000);
   if(r1.error) throw new Error(r1.error.message);
   var r2=await _sb.from("commandes_online").select("id,numero,client_nom,total,paye,paye_at,status,collected_at,ticket_num,refund_id,cancelled_at").eq("salon_id",_salonId).eq("paye",true).gte("paye_at",depuis).lt("paye_at",fin).order("paye_at",{ascending:false}).limit(5000);
   if(r2.error) throw new Error(r2.error.message);
@@ -23094,6 +23138,16 @@ async function _lxPaiementsEnLigne(mois){
     ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=t.date_ticket; });
   }
   (r1.data||[]).forEach(function(r){
+    // 2026-10-13 : remboursement partiel -> une ligne pour la partie remboursée, une ligne pour la partie conservée
+    var _rp=Math.round((Number(r.acompte_rembourse_montant)||0)*100)/100, _ac=Math.round(Number(r.acompte_montant)*100)/100;
+    if(!r.acompte_rembourse && _rp>0 && _rp<_ac){
+      var _ref="RDV du "+_lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), _cl=[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim();
+      L.push({type:"Acompte RDV", ref:_ref, client:_cl, libelle:(r.service_nom||"")+" (part rembours\u00e9e)", montant:_rp, paye:_lxDateParis(r.acompte_paye_at), taux:lxTauxTVA(),
+        rembourse:_lxDateParis(r.refunded_at)||"", rembInconnu:!r.refunded_at, reconnu:"", etat:"Rembours\u00e9 (partiel)"});
+      L.push({type:"Acompte RDV", ref:_ref, client:_cl, libelle:(r.service_nom||"")+" (part conserv\u00e9e)", montant:Math.round((_ac-_rp)*100)/100, paye:_lxDateParis(r.acompte_paye_at), taux:lxTauxTVA(),
+        rembourse:"", rembInconnu:false, reconnu:(r.retenue_tk_num&&dTk[r.retenue_tk_num])||"", etat:r.retenue_tk_num?"Conserv\u00e9 (ticket #"+r.retenue_tk_num+")":"Conserv\u00e9 (en attente d\u2019enregistrement en caisse)"});
+      return;
+    }
     var reconnu="";
     if(r.acompte_rembourse) reconnu="";
     else if(r.retenue_tk_num) reconnu=dTk[r.retenue_tk_num]||"";

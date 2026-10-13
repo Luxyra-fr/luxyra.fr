@@ -177,6 +177,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname.startsWith("/api/salon-logo/") && request.method === "GET") return await handleSalonLogo(url.pathname.slice(16).replace(/\.png$/, ""), env);
       if (url.pathname === "/api/client/alertes" && request.method === "POST") return await handleClientAlertes(request, env);
       if (url.pathname === "/api/client/notifs" && request.method === "POST") return await handleClientNotifs(request, env);
+      if (url.pathname === "/api/rdv/acompte-rembourser" && request.method === "POST") return await handleAcompteRembourser(request, env);
       if (url.pathname === "/api/alertes/creneau-libere" && request.method === "POST") return await handleCreneauLibere(request, env);
       if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
       if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
@@ -513,7 +514,7 @@ const LX_ROUTES_SALON = new Set([
   "/api/stripe/create-checkout", "/api/stripe/portal", "/api/stripe/switch-plan",
   "/api/stripe/connect-onboard", "/api/stripe/connect-status", "/api/stripe/connect-dashboard",
   "/api/admin/export-nf525", "/api/sms/rappel", "/api/sms/custom", "/api/sms/generate-link-token",
-  "/api/client/invite", "/api/cc/action", "/api/sms/recharge-auto"
+  "/api/client/invite", "/api/cc/action", "/api/sms/recharge-auto", "/api/rdv/acompte-rembourser"
 ]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
@@ -4014,13 +4015,14 @@ async function attemptAcompteRefund(env, rdv) {
     const _parSalon = rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00";
     if (!_parSalon) {
       // 1) Politique d'annulation du salon (site_config — SINGULIER)
-      let policyHours = 48, remboursementOn = true;
+      let policyHours = 48, remboursementOn = true, pctPartiel = 0;
       try {
-        const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation,remboursement_annulation&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
+        const cfgRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?select=politique_annulation,remboursement_annulation,remboursement_partiel_pct&salon_id=eq.${encodeURIComponent(rdv.salon_id)}&limit=1`, { headers: _sbHeaders(env) });
         if (cfgRes.ok) {
           const rows = await cfgRes.json();
           if (Array.isArray(rows) && rows[0]) {
             remboursementOn = rows[0].remboursement_annulation !== false;
+            pctPartiel = Math.max(0, Math.min(100, parseInt(rows[0].remboursement_partiel_pct, 10) || 0));
             const raw = String(rows[0].politique_annulation || "48h").trim().toLowerCase();
             const m = raw.match(/(\d+)/);
             if (m) {
@@ -4030,7 +4032,16 @@ async function attemptAcompteRefund(env, rdv) {
           }
         }
       } catch (_) {}
-      if (!remboursementOn) return { refunded: false, skipped: "remboursement désactivé par le salon", conserve: true };
+      // 2026-10-13 : remboursement partiel automatique (pourcentage choisi par l'établissement) quand l'acompte serait conservé
+      const _partiel = async (raison) => {
+        const deja = Number(rdv.acompte_rembourse_montant) || 0;
+        const cents = Math.floor(Math.round(montant * 100) * pctPartiel / 100) - Math.round(deja * 100);
+        if (!(pctPartiel > 0) || !(cents > 0)) return { refunded: false, skipped: raison, conserve: true };
+        const rf = await lxRembourserAcompteStripe(env, rdv, cents);
+        if (!rf.ok) return { refunded: false, error: rf.error, payment_intent: rf.payment_intent };
+        return { refunded: true, partial: true, montant_rembourse: Math.round(deja * 100 + cents) / 100, refund_id: rf.refund_id, payment_intent: rf.payment_intent, status: rf.status, conserve: true };
+      };
+      if (!remboursementOn) return await _partiel("remboursement désactivé par le salon");
 
       // 2) Délai : annulation au moins policyHours avant le RDV
       try {
@@ -4039,13 +4050,19 @@ async function attemptAcompteRefund(env, rdv) {
           const cancelTime = rdv.cancelled_at ? new Date(rdv.cancelled_at) : new Date();
           const hoursBefore = (rdvStart.getTime() - cancelTime.getTime()) / 3600000;
           if (isFinite(hoursBefore) && hoursBefore < policyHours) {
-            return { refunded: false, skipped: `hors délai (${Math.round(hoursBefore)}h < ${policyHours}h)`, conserve: true };
+            return await _partiel(`hors délai (${Math.round(hoursBefore)}h < ${policyHours}h)`);
           }
         }
       } catch (_) {}
     }
 
-    // 3) Résolution du PaymentIntent
+    // 3) Remboursement du reste (déduction faite d'un éventuel remboursement partiel déjà fait)
+    const _deja = Math.round((Number(rdv.acompte_rembourse_montant) || 0) * 100);
+    if (_deja > 0) {
+      const rf = await lxRembourserAcompteStripe(env, rdv, Math.round(montant * 100) - _deja);
+      if (!rf.ok) return { refunded: false, error: rf.error, payment_intent: rf.payment_intent };
+      return { refunded: true, refund_id: rf.refund_id, payment_intent: rf.payment_intent, status: rf.status };
+    }
     // 2026-10-09 : paiement direct sur le compte du salon -> remboursement sur ce compte, sans reverse_transfer
     if (rdv.stripe_account && rdv.payment_intent_id) {
       const rfd = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, "metadata[rdv_id]": String(rdv.id || ""), "metadata[salon_id]": String(rdv.salon_id || "") }, "POST", rdv.stripe_account);
@@ -4073,6 +4090,72 @@ async function attemptAcompteRefund(env, rdv) {
   } catch (e) {
     return { refunded: false, error: e.message || "exception refund" };
   }
+}
+
+// 2026-10-13 : l'établissement rembourse TOUT ou PARTIE d'un acompte payé en ligne (au cas par cas : % ou montant).
+// Route salon (propriétaire vérifié par LX_ROUTES_SALON). La partie conservée est enregistrée en caisse par l'application
+// (ticket scellé « Acompte conservé », montant = acompte - remboursé). Interdit si ce ticket existe déjà (passer par un avoir).
+async function handleAcompteRembourser(request, env) {
+  try {
+    const b = await request.json().catch(() => ({}));
+    const sid = String(b.salon_id || ""), rid = String(b.rdv_id || "");
+    if (!/^[0-9a-f-]{36}$/i.test(sid) || !/^[0-9a-f-]{36}$/i.test(rid)) return jsonResponse({ error: "paramètres invalides" }, 400);
+    const H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
+    const sel = "id,salon_id,status,cancelled_by,acompte_paye,acompte_montant,acompte_rembourse,acompte_rembourse_montant,retenue_at,retenue_tk_num,retenue_claim_at,payment_intent_id,stripe_payment_id,stripe_account,created_at,client_email,client_luxyra_id,date_rdv,heure_rdv,refund_attempted_at";
+    const rows = await (await fetch(`${base}/rdv_online?id=eq.${rid}&salon_id=eq.${sid}&select=${sel}`, { headers: H })).json();
+    const rdv = Array.isArray(rows) && rows[0];
+    if (!rdv) return jsonResponse({ error: "Rendez-vous introuvable" }, 404);
+    const acompte = Math.round((Number(rdv.acompte_montant) || 0) * 100);
+    const deja = Math.round((Number(rdv.acompte_rembourse_montant) || 0) * 100);
+    if (rdv.acompte_paye !== true || !(acompte > 0)) return jsonResponse({ error: "Aucun acompte payé en ligne sur ce rendez-vous" }, 400);
+    if (rdv.acompte_rembourse === true || deja >= acompte) return jsonResponse({ error: "L'acompte est déjà entièrement remboursé" }, 400);
+    if (rdv.retenue_tk_num || rdv.retenue_claim_at) return jsonResponse({ error: "La partie conservée est déjà enregistrée en caisse : un remboursement passe maintenant par un avoir en caisse." }, 409);
+    const noShow = b.no_show === true;
+    if (!(rdv.status === "cancelled" || (noShow && ["confirmed", "pending"].includes(rdv.status)))) return jsonResponse({ error: "Rendez-vous non annulé" }, 400);
+    const cents = Math.round(Number(b.montant) * 100);
+    if (!(cents > 0) || cents > acompte - deja) return jsonResponse({ error: `Montant invalide (maximum ${((acompte - deja) / 100).toFixed(2).replace(".", ",")} €)` }, 400);
+    // verrou anti double-clic : une seule demande à la fois pour ce rendez-vous
+    const lock = await fetch(`${base}/rdv_online?id=eq.${rid}&acompte_rembourse_montant=eq.${deja / 100}&or=(refund_attempted_at.is.null,refund_attempted_at.lt.${encodeURIComponent(new Date(Date.now() - 60e3).toISOString())})`, {
+      method: "PATCH", headers: { ...H, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ refund_attempted_at: new Date().toISOString() }) });
+    const lk = await lock.json().catch(() => []);
+    if (!Array.isArray(lk) || !lk.length) return jsonResponse({ error: "Un remboursement est déjà en cours pour ce rendez-vous" }, 409);
+    const rf = await lxRembourserAcompteStripe(env, rdv, cents);
+    if (!rf.ok) {
+      await fetch(`${base}/rdv_online?id=eq.${rid}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ refund_error: String(rf.error || "").slice(0, 500) }) });
+      return jsonResponse({ error: "Stripe : " + (rf.error || "remboursement refusé") }, 502);
+    }
+    const nowIso = new Date().toISOString(), total = deja + cents, complet = total >= acompte;
+    const patch = { acompte_rembourse_montant: total / 100, refund_id: rf.refund_id, refunded_at: nowIso, refund_error: null };
+    if (rf.payment_intent && !rdv.payment_intent_id) patch.payment_intent_id = rf.payment_intent;
+    if (complet) patch.acompte_rembourse = true; else if (!rdv.retenue_at) patch.retenue_at = nowIso;
+    if (noShow && rdv.status !== "cancelled") Object.assign(patch, { status: "cancelled", cancelled_by: "no_show", cancel_reason: "Client absent (no-show)", cancelled_at: nowIso });
+    await fetch(`${base}/rdv_online?id=eq.${rid}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+    if (rdv.client_luxyra_id) {
+      const eur = (cents / 100).toFixed(2).replace(".", ",");
+      await fetch(`${base}/rpc/lx_notifier_client`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_client: rdv.client_luxyra_id, p_type: "remboursement", p_titre: "💶 Remboursement de " + eur + " €", p_texte: "L'établissement vous rembourse " + eur + " € sur l'acompte de votre rendez-vous du " + String(rdv.date_rdv).split("-").reverse().join("/") + ". Délai bancaire de quelques jours.", p_url: "https://luxyra.fr/compte.html?tab=rdv" }) }).catch(() => {});
+    }
+    return jsonResponse({ ok: true, rembourse: total / 100, conserve: (acompte - total) / 100, complet });
+  } catch (e) { return jsonResponse({ error: "Erreur remboursement" }, 500); }
+}
+// 2026-10-13 : remboursement Stripe d'une partie (ou du reste) d'un acompte de RDV. cents = montant en centimes.
+async function lxRembourserAcompteStripe(env, rdv, cents) {
+  try {
+    cents = Math.round(Number(cents) || 0);
+    if (!(cents > 0)) return { ok: false, error: "montant nul" };
+    const meta = { "metadata[rdv_id]": String(rdv.id || ""), "metadata[salon_id]": String(rdv.salon_id || "") };
+    if (rdv.stripe_account && rdv.payment_intent_id) {
+      const rf = await stripeAPI(env, "refunds", { payment_intent: rdv.payment_intent_id, amount: String(cents), ...meta }, "POST", rdv.stripe_account);
+      if (!rf || rf.error || !rf.id) return { ok: false, error: (rf && rf.error && rf.error.message) || "échec refund Stripe", payment_intent: rdv.payment_intent_id };
+      return { ok: true, refund_id: rf.id, payment_intent: rdv.payment_intent_id, status: rf.status };
+    }
+    let piId = rdv.payment_intent_id || null;
+    if (!piId && rdv.stripe_payment_id && String(rdv.stripe_payment_id).startsWith("pi_")) piId = rdv.stripe_payment_id;
+    if (!piId) piId = await findAcompteChargePI(env, rdv, Number(rdv.acompte_montant) || 0);
+    if (!piId) return { ok: false, error: "payment_intent introuvable" };
+    const rf = await stripeAPI(env, "refunds", { payment_intent: piId, amount: String(cents), reverse_transfer: "true", ...meta });
+    if (!rf || rf.error || !rf.id) return { ok: false, error: (rf && rf.error && (rf.error.message || rf.error)) || "échec refund Stripe", payment_intent: piId };
+    return { ok: true, refund_id: rf.id, payment_intent: piId, status: rf.status };
+  } catch (e) { return { ok: false, error: e.message || "exception refund" }; }
 }
 
 // Recherche un charge Stripe correspondant à l'acompte (cas legacy : PI non
@@ -4144,8 +4227,17 @@ async function refundAndRecord(env, rdv) {
   const r = await attemptAcompteRefund(env, rdv);
   const nowIso = new Date().toISOString();
   const patch = { refund_attempted_at: nowIso };
-  if (r.refunded) {
+  if (r.refunded && r.partial) {
+    // 2026-10-13 : remboursement PARTIEL -> le reste est conservé (ticket scellé pour la partie conservée)
+    patch.acompte_rembourse_montant = r.montant_rembourse;
+    patch.refund_id = r.refund_id;
+    patch.refunded_at = nowIso;
+    patch.refund_error = null;
+    if (!rdv.retenue_at) patch.retenue_at = nowIso;
+    if (r.payment_intent && !rdv.payment_intent_id) patch.payment_intent_id = r.payment_intent;
+  } else if (r.refunded) {
     patch.acompte_rembourse = true;
+    patch.acompte_rembourse_montant = Number(rdv.acompte_montant) || 0;
     patch.refund_id = r.refund_id;
     patch.refunded_at = nowIso;
     patch.refund_error = null;
@@ -4173,7 +4265,7 @@ async function refundAndRecord(env, rdv) {
 // sécurité + rattrapage des annulations passées). Idempotent.
 async function runRefundReconcileJob(env) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,cancelled_by,client_email,refund_error,retenue_at";
+  const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,cancelled_by,client_email,refund_error,retenue_at,acompte_rembourse_montant";
   const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&status=eq.cancelled&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&retenue_at=is.null&cancelled_at=gte.${encodeURIComponent(since)}&limit=50`;
   const res = await fetch(q, { headers: _sbHeaders(env) });
   if (!res.ok) return { ok: false, error: await res.text() };
