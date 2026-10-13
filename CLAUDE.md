@@ -1813,3 +1813,6 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Worker `/api/client/notifs` (op list|count|read|read_all|subscribe|unsubscribe) ; `handleCreneauLibere` appelle aussi `lx_notifier_client` (type place_liberee).
 - UI : onglet « Notifs » 🔔 + pastille dans lx-client-app.js (v=3) ; onglet `?tab=notifs` dans compte.html ; abonnement push via `/sw.js` scope `/compte.html` (NE PAS toucher sw.js ni la portée /app de la caisse). Déconnexion = désabonnement.
 - Noms : appli pro `manifest-app.json` short_name « Luxyra Pro ». Appli clients (APK) : libellé « Luxyra » → « Luxyra Beauté » dans l'APK v1.0.1, APRÈS validation Google (fiche Play : « Luxyra – Beauté & bien-être »).
+
+## Centre d'aide (13/10/2026)
+- Réservé à l'appli pro : AUCUN lien /aide sur le site public, les pages pro/logiciel, l'appli clients ni l'annuaire. Pages /aide en noindex, absentes du sitemap (v17). Ne pas remettre de lien public.

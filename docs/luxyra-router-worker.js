@@ -4722,7 +4722,7 @@ footer{border-top:1px solid var(--border);margin-top:40px;padding:26px 20px;text
 <div class="nav"><a class="logo" href="/"><img src="${LX_ANN_LOGO}" width="34" height="34" alt="Luxyra"> Luxyra</a><div class="lk"><a href="/recherche">Trouver un pro</a><a href="/coiffeur">Coiffeurs</a><a href="/institut-de-beaute">Instituts</a><a href="/onglerie">Ongles</a><a href="/extension-de-cils">Cils</a><a class="pro" href="/pro">Je suis un pro</a></div></div>
 ${body}
 <footer><a class="logo" href="/" style="justify-content:center;font-size:20px;margin-bottom:10px"><img src="${LX_ANN_LOGO}" width="28" height="28" alt="Luxyra"> Luxyra</a>
-<div><a href="/recherche">Trouver un pro</a>·<a href="/pro">Espace pro</a>·<a href="/tarifs">Tarifs</a>·<a href="/aide">Aide</a>·<a href="/mentions-legales">Mentions légales</a>·<a href="/politique-confidentialite">Confidentialité</a></div>
+<div><a href="/recherche">Trouver un pro</a>·<a href="/pro">Espace pro</a>·<a href="/tarifs">Tarifs</a>·<a href="/mentions-legales">Mentions légales</a>·<a href="/politique-confidentialite">Confidentialité</a></div>
 <div style="margin-top:8px">© Luxyra — réservation en ligne et caisse pour les professionnels de la beauté et du bien-être</div></footer>
 </body></html>`;
 }
