@@ -174,6 +174,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/client/fidelite" && request.method === "POST") return await handleClientFidelite(request, env);
       if (url.pathname === "/api/client/rdvs" && request.method === "POST") return await handleClientRdvs(request, env);
       if (url.pathname === "/api/client/favoris" && request.method === "POST") return await handleClientFavoris(request, env);
+      if (url.pathname.startsWith("/api/salon-logo/") && request.method === "GET") return await handleSalonLogo(url.pathname.slice(16).replace(/\.png$/, ""), env);
       if (url.pathname === "/api/client/alertes" && request.method === "POST") return await handleClientAlertes(request, env);
       if (url.pathname === "/api/alertes/creneau-libere" && request.method === "POST") return await handleCreneauLibere(request, env);
       if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
@@ -1290,6 +1291,7 @@ async function handleConnectPayment(request, env) {
       sessionParams["payment_intent_data[capture_method]"] = "manual";
       sessionParams["metadata[subtype]"] = "empreinte";
     }
+    lxBrandingSalon(sessionParams, salon);
     const session = await stripeAPI(env, "checkout/sessions", sessionParams, "POST", _direct ? salon.stripe_connect_id : null);
 
     if (session?.error?.type === "upstream_non_json") { console.error("connect session non-JSON:", session.error.http_status, session.error.raw); return jsonResponse({ error: "Service de paiement momentanément indisponible, merci de réessayer." }, 502); }
@@ -1462,6 +1464,7 @@ async function handleCcCommande(request, env) {
     });
     const _directCc = await lxChargesDirectes(env);
     lxParamsPaiementSalon(params, _directCc, salon.stripe_connect_id);
+    lxBrandingSalon(params, salon);
     const s = await stripeAPI(env, "checkout/sessions", params, "POST", _directCc ? salon.stripe_connect_id : null);
     if (_directCc && s?.url) await ccMaj(env, cmd.id, { stripe_account: salon.stripe_connect_id });
     if (!s?.url) {
@@ -2531,7 +2534,7 @@ async function handleRdvDemandeConnectPay(request, env) {
     const cancelUrl = `https://luxyra.fr/proposal.html?t=${encodeURIComponent(token)}&paid=cancel`;
 
     // Checkout Session avec transfer_data → 100% au salon, 0% à Luxyra
-    const session = await stripeAPI(env, "checkout/sessions", {
+    const session = await stripeAPI(env, "checkout/sessions", lxBrandingSalon({
       mode: "payment",
       "line_items[0][price_data][currency]": "eur",
       "line_items[0][price_data][product_data][name]": description.slice(0, 80),
@@ -2547,7 +2550,7 @@ async function handleRdvDemandeConnectPay(request, env) {
       "metadata[customer_name]": customerName,
       "payment_intent_data[description]": description,
       ...(await lxChargesDirectes(env) ? {} : { "payment_intent_data[transfer_data][destination]": salon.stripe_connect_id })
-    }, "POST", (await lxChargesDirectes(env)) ? salon.stripe_connect_id : null);
+    }, salon), "POST", (await lxChargesDirectes(env)) ? salon.stripe_connect_id : null);
 
     if (!session?.url) return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(session) }, 500);
     return jsonResponse({ url: session.url, session_id: session.id });
@@ -2710,6 +2713,35 @@ function lxParamsPaiementSalon(params, direct, connectId) {
   return params;
 }
 
+// 2026-10-13 : page de paiement d'un salon aux couleurs Luxyra, avec le nom et le logo du salon (logo Luxyra sinon)
+function lxBrandingSalon(params, salon) {
+  if (!params || !salon) return params;
+  const logoOk = typeof salon.logo === "string" && (/^data:image\/(png|jpe?g|webp);base64,/.test(salon.logo) || /^https:\/\//.test(salon.logo));
+  params["branding_settings[display_name]"] = String(salon.nom || "Luxyra").slice(0, 100);
+  params["branding_settings[logo][type]"] = "url";
+  params["branding_settings[logo][url]"] = logoOk ? `https://luxyra.fr/api/salon-logo/${salon.id}.png?v=${String(salon.logo).length}` : "https://luxyra.fr/luxyra-logo.png";
+  params["branding_settings[button_color]"] = "#c8a84e";
+  params["branding_settings[background_color]"] = "#0b0b0b";
+  params["branding_settings[border_style]"] = "rounded";
+  params["branding_settings[font_family]"] = "inter";
+  return params;
+}
+async function handleSalonLogo(id, env) {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return Response.redirect("https://luxyra.fr/luxyra-logo.png", 302);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons_public?id=eq.${id}&select=logo`, { headers: _sbHeaders(env) });
+    const d = r.ok ? await r.json() : [];
+    const logo = d && d[0] ? String(d[0].logo || "") : "";
+    const m = logo.match(/^data:(image\/(?:png|jpe?g|webp));base64,(.+)$/);
+    if (m) {
+      const bin = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
+      return new Response(bin, { headers: { "Content-Type": m[1], "Cache-Control": "public, max-age=86400" } });
+    }
+    if (/^https:\/\//.test(logo)) return Response.redirect(logo, 302);
+  } catch (_) {}
+  return Response.redirect("https://luxyra.fr/luxyra-logo.png", 302);
+}
+
 async function stripeAPI(env, endpoint, params, method = "POST", compte = null) {
   const options = { method, headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } };
   // 2026-10-09 : appel « au nom » du compte Stripe d'un salon (charges directes)
@@ -2721,8 +2753,16 @@ async function stripeAPI(env, endpoint, params, method = "POST", compte = null) 
   const _resp = await fetch(`https://api.stripe.com/v1/${endpoint}`, options);
   const _txt = await _resp.text();
   if (!_txt) return { error: { type: "upstream_non_json", message: "Réponse Stripe vide (HTTP " + _resp.status + ")", http_status: _resp.status, raw: "" } };
-  try { return JSON.parse(_txt); }
+  let _res;
+  try { _res = JSON.parse(_txt); }
   catch (_e) { return { error: { type: "upstream_non_json", message: "Réponse Stripe non-JSON (HTTP " + _resp.status + ")", http_status: _resp.status, raw: String(_txt).slice(0, 200) } }; }
+  // 2026-10-13 : si Stripe refuse l'habillage (logo illisible…), on réessaie SANS habillage : un paiement ne doit jamais échouer pour une question de design
+  if (_res && _res.error && params && method === "POST" && Object.keys(params).some((k) => k.startsWith("branding_settings["))) {
+    const p2 = {}; Object.keys(params).forEach((k) => { if (!k.startsWith("branding_settings[")) p2[k] = params[k]; });
+    console.warn("branding refusé, nouvel essai sans habillage:", _res.error.message);
+    return await stripeAPI(env, endpoint, p2, method, compte);
+  }
+  return _res;
 }
 
 async function getOrCreateStripeCustomer(env, email, salonId) {
