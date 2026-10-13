@@ -1006,8 +1006,19 @@ function injectSeoMeta(SALON, SITE_CFG){
 async function loadSalon(){
   try{
     // 1. Salon info — via salons_public view (anon-safe, exclut user_id/billing/stripe_customer_id/sms_credits/documents/etc)
+    // 2026-10-13 : toutes les lectures partent EN MÊME TEMPS (avant : 7 allers-retours l'un après l'autre
+    // -> écran « Chargement… » de plusieurs secondes sur téléphone). Ordre d'utilisation inchangé.
+    var _P={
+      sc: sb.from("site_config").select("*").eq("salon_id",salonId).limit(1),
+      tc: sb.from("collaborateurs").select("*").eq("salon_id",salonId).eq("actif",true),
+      sv: sb.from("services").select("*").eq("salon_id",salonId).eq("actif",true).eq("show_site",true).order("ordre",{ascending:true,nullsFirst:false}).order("nom",{ascending:true}),
+      pr: sb.from("produits").select("*").eq("salon_id",salonId).order("nom"),
+      avis: sb.from("avis_salon").select("id, nom, note, texte, date, created_at, salon_reply, salon_reply_at").eq("salon_id",salonId).eq("approved",true).eq("reported",false).eq("hidden_by_luxyra",false).order("created_at",{ascending:false}).limit(20)
+    };
+    Object.keys(_P).forEach(function(k){ _P[k]=Promise.resolve(_P[k]).catch(function(e){ return {data:null,error:e}; }); });
     var r=await sb.from("salons_public").select("*").eq("id",salonId).limit(1);
     if(r.error){showError("Erreur: "+r.error.message);return;}
+    window._lxCfgJsonPublic = r.data && r.data[0] ? r.data[0].config_json : null; // réutilisé plus bas (plus de 2 relectures)
     if(!r.data||!r.data[0]){showError("Établissement introuvable ou fermé : il n'accepte plus de réservations en ligne.");return;}
     var s=r.data[0];
     SALON={id:s.id,slug:s.slug||"",nom:s.nom||"Salon",sousTitre:s.sous_titre||"",adresse:s.adresse||"",cp:s.cp||"",ville:s.ville||"",tel:s.tel||s.telephone||"",email:s.email||"",siret:s.siret||"",logo:s.logo||"",config:s.config||{},connectId:s.stripe_connect_id||"",connectStatus:s.stripe_connect_status||"",metier:s.metier||"coiffure",latitude:s.latitude!==null&&s.latitude!==undefined?Number(s.latitude):null,longitude:s.longitude!==null&&s.longitude!==undefined?Number(s.longitude):null,note_moyenne:Number(s.note_moyenne)||0,nb_avis:Number(s.nb_avis)||0,mode_activite:s.mode_activite||"salon",zone_deplacement_km:s.zone_deplacement_km!=null?Number(s.zone_deplacement_km):0,frais_deplacement:s.frais_deplacement!=null?Number(s.frais_deplacement):0,frais_deplacement_type:s.frais_deplacement_type||"forfait",bons_cadeaux_online_actif:s.bons_cadeaux_online_actif===true};
@@ -1040,7 +1051,7 @@ async function loadSalon(){
     }
     
     // 2. Site config
-    var sc=await sb.from("site_config").select("*").eq("salon_id",salonId).limit(1);
+    var sc=await _P.sc;
     if(sc.data&&sc.data[0]){
       var d=sc.data[0];
       SITE_CFG={actif:d.site_actif,resa:d.reservation_active,boutique:d.boutique_active,
@@ -1069,7 +1080,7 @@ async function loadSalon(){
     // FIX M7: Fallback absences from salon config_json if site_config empty
     if((!SITE_CFG.absences||!SITE_CFG.absences.length)){
       try{
-        var cfgRes=await sb.from("salons_public").select("config_json").eq("id",salonId).limit(1);
+        var cfgRes={data:[{config_json:window._lxCfgJsonPublic}]};
         if(cfgRes.data&&cfgRes.data[0]&&cfgRes.data[0].config_json){
           var cfg2=typeof cfgRes.data[0].config_json==="string"?JSON.parse(cfgRes.data[0].config_json):cfgRes.data[0].config_json;
           if(cfg2.absences&&cfg2.absences.length)SITE_CFG.absences=cfg2.absences;
@@ -1082,7 +1093,7 @@ async function loadSalon(){
     window.SITE_FORFAITS=[];
     window.SITE_CATS_ORDER=[]; // ordre fusionné (cats_svc + cats_forf)
     try{
-      var cfgCA=await sb.from("salons_public").select("config_json").eq("id",salonId).limit(1);
+      var cfgCA={data:[{config_json:window._lxCfgJsonPublic}]};
       if(cfgCA.data&&cfgCA.data[0]&&cfgCA.data[0].config_json){
         var cfgParsed=typeof cfgCA.data[0].config_json==="string"?JSON.parse(cfgCA.data[0].config_json):cfgCA.data[0].config_json;
         // 2026-10-10 : réglages de déplacement de l'app (km gratuits, type de tarif) — source la plus à jour
@@ -1189,7 +1200,7 @@ async function loadSalon(){
     // désynchronisé avec la table → mauvais horaires affichés côté site
     // (ex: Manue travaillait mardi/vendredi en DB mais "tous les jours" via site_config).
     // On retire l'override pour respecter la source de vérité.
-    var tc=await sb.from("collaborateurs").select("*").eq("salon_id",salonId).eq("actif",true);
+    var tc=await _P.tc;
     // Filtre supplémentaire côté client : exclure les collabs marqués "inactif"
     // (congés, arrêt, départ). Champ ajouté en mai 2026.
     if(tc.data)COLLABS=tc.data.filter(function(c){ /* 2026-10-07 : aussi date de depart passee */ var _aj=new Date().toISOString().slice(0,10); return c.inactif!==true && !(c.date_depart && String(c.date_depart).slice(0,10)<=_aj);}).map(function(c){return{id:c.id,dep:(c.date_depart?String(c.date_depart).slice(0,10):null),n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{},pause:c.pause||null,hrsOver:c.horaires_overrides||{},actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
@@ -1198,12 +1209,7 @@ async function loadSalon(){
     // Les non-réservables (book_online=false) s'affichent avec un bouton "Demander ce RDV"
     // qui passe par le flow RDV sur mesure (rdv_demandes → proposal.html).
     // Tri : ordre personnalisé du salon (NULL en dernier) puis alphabétique
-    var sv=await sb.from("services").select("*")
-      .eq("salon_id",salonId)
-      .eq("actif",true)
-      .eq("show_site",true)
-      .order("ordre",{ascending:true,nullsFirst:false})
-      .order("nom",{ascending:true});
+    var sv=await _P.sv;
     if(sv.data){
       SERVICES=sv.data.map(function(s){return{
         id:s.id,n:s.nom,p:Number(s.prix),cat:s.categorie,ordre:s.ordre,
@@ -1213,15 +1219,13 @@ async function loadSalon(){
     }
     
     // 5. Products
-    var pr=await sb.from("produits").select("*").eq("salon_id",salonId).order("nom");
+    var pr=await _P.pr;
     if(pr.data)PRODUCTS=pr.data.map(function(p){return{id:p.id,n:p.nom,p:Number(p.prix),cat:p.categorie,img:p.img||p.image||"",stk:(p.stock==null?null:Number(p.stock)),actif:p.actif,forSale:p.for_sale,cc:p.click_collect,contenance:p.contenance||null,description:p.description||null,promoActif:p.promo_actif||false,promoPrix:p.promo_prix!=null?Number(p.promo_prix):null,promoDebut:p.promo_debut||null,promoFin:p.promo_fin||null,promoLabel:p.promo_label||null};});
     
     // 5b. Avis clients (note moyenne déjà dans SALON.note_moyenne, mais on charge la liste pour affichage)
     window.SALON_AVIS=[];
     try{
-      var avis=await sb.from("avis_salon").select("id, nom, note, texte, date, created_at, salon_reply, salon_reply_at")
-        .eq("salon_id",salonId).eq("approved",true).eq("reported",false).eq("hidden_by_luxyra",false)
-        .order("created_at",{ascending:false}).limit(20);
+      var avis=await _P.avis;
       if(avis.data) window.SALON_AVIS=avis.data;
     }catch(e){console.log("Avis load error:",e);}
 
