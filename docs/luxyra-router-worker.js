@@ -4547,7 +4547,10 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
   const lx = [];
   try {
     const rows = await lxSeoFetch(`salons_public?or=(metier.in.(${M.luxyra.join(",")}),metiers_autres.ov.{${M.luxyra.join(",")}})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite,sous_titre&limit=500`); // 2026-10-13 : métiers secondaires inclus
-    for (const s of (rows || [])) if (s.slug && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
+    // 2026-10-13 : site désactivé par l'établissement -> absent de l'annuaire
+    let off = new Set();
+    try { off = new Set(((await lxSeoFetch(`site_config?site_actif=eq.false&select=salon_id&limit=1000`)) || []).map((x) => x.salon_id)); } catch (_) {}
+    for (const s of (rows || [])) if (s.slug && !off.has(s.id) && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
   } catch (_) {}
   const lxIds = new Set(lx.map((s) => s.id));
   const autres = etabs.filter((e) => !e.salon_id || !lxIds.has(e.salon_id));

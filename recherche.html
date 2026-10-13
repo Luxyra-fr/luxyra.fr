@@ -264,8 +264,10 @@ function normalize(s){
 // ---- Fetch ----
 async function loadSalons(){
   try {
-    var r = await sb.from('salons_public, metiers_autres').select('id, slug, nom, ville, cp, adresse, metier, logo, latitude, longitude, note_moyenne, nb_avis, mode_activite, zone_deplacement_km, frais_deplacement, frais_deplacement_type');
+    var r = await sb.from('salons_public').select('id, slug, nom, ville, cp, adresse, metier, metiers_autres, logo, latitude, longitude, note_moyenne, nb_avis, mode_activite, zone_deplacement_km, frais_deplacement, frais_deplacement_type');
     if(r.error) throw r.error;
+    // 2026-10-13 : sites désactivés par l'établissement exclus de la recherche
+    try{ var _off=await sb.from('site_config').select('salon_id').eq('site_actif',false); var _o={}; ((_off&&_off.data)||[]).forEach(function(x){_o[x.salon_id]=1;}); r.data=(r.data||[]).filter(function(s){ return !_o[s.id]; }); }catch(_eO){}
     STATE.salons = (r.data || []).map(function(s){
       return {
         id: s.id, slug: s.slug || '', nom: s.nom || 'Salon', ville: s.ville || '', cp: s.cp || '',
