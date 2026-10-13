@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261013-2"></script>
+<script src="luxyra-supabase.js?v=20261013-3"></script>
 <script>
 console.log("LUXYRA v6.6");
 
@@ -6795,7 +6795,31 @@ function printClotureZ(){
 
 
 
-function loadWP(input){if(!input.files||!input.files[0])return;var r=new FileReader();r.onload=function(e){APP_BG=e.target.result;var bg=document.getElementById('appBg');if(bg)bg.style.backgroundImage='url('+APP_BG+')';saveAppBg();};r.readAsDataURL(input.files[0]);}
+// 2026-10-13 : images réduites avant enregistrement (une photo de téléphone brute = 2 à 3 Mo
+// dans la configuration, renvoyés à chaque sauvegarde : lenteurs et enregistrements qui échouent).
+function lxImgReduire(dataUrl,maxDim,qualite,cb,garderTransparence){
+  try{
+    if(!/^data:image\//.test(String(dataUrl||""))){ cb(dataUrl); return; }
+    var img=new Image();
+    img.onload=function(){
+      try{
+        var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height, k=Math.min(1,maxDim/Math.max(w,h||1));
+        var c=document.createElement("canvas"); c.width=Math.max(1,Math.round(w*k)); c.height=Math.max(1,Math.round(h*k));
+        var ctx=c.getContext("2d");
+        var png=garderTransparence && /^data:image\/(png|webp|gif|svg)/.test(dataUrl);
+        if(!png){ ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,c.width,c.height); }
+        ctx.drawImage(img,0,0,c.width,c.height);
+        var out=png?c.toDataURL("image/png"):c.toDataURL("image/jpeg",qualite);
+        if(png && out.length>400000) out=c.toDataURL("image/webp",qualite);
+        cb(out.length<dataUrl.length?out:dataUrl);
+      }catch(_e){ cb(dataUrl); }
+    };
+    img.onerror=function(){ cb(dataUrl); };
+    img.src=dataUrl;
+  }catch(_e){ cb(dataUrl); }
+}
+window.lxImgReduire=lxImgReduire;
+function loadWP(input){if(!input.files||!input.files[0])return;var r=new FileReader();r.onload=function(e){lxImgReduire(e.target.result,1600,0.78,function(_v){APP_BG=_v;var bg=document.getElementById('appBg');if(bg)bg.style.backgroundImage='url('+APP_BG+')';saveAppBg();});};r.readAsDataURL(input.files[0]);}
 function addCollab(){
   showPrompt({
     title: "Nouveau collaborateur",
@@ -13073,12 +13097,13 @@ function handleLogoUpload(input){
   if(!input.files||!input.files[0])return;
   var reader=new FileReader();
   reader.onload=function(e){
-    var dataUrl=e.target.result;
+   lxImgReduire(e.target.result,512,0.85,function(dataUrl){ // 2026-10-13 : logo réduit (512 px max)
     window.SALON.logo=dataUrl;
     var preview=document.getElementById("salonLogoPreview");
     if(preview)preview.src=dataUrl;
     var urlInput=document.getElementById("salonLogoUrl");
     if(urlInput)urlInput.value="(image charg\u00e9e)";
+   },true);
   };
   reader.readAsDataURL(input.files[0]);
 }
@@ -13113,7 +13138,8 @@ function lxToggleMetierAutre(m){
   var L=(SALON_CONFIG.metiers||[]).slice(); var i=L.indexOf(m);
   if(i>=0) L.splice(i,1); else L.push(m);
   SALON_CONFIG.metiers=L.filter(function(x){ return x && x!==(SALON_CONFIG.metier||"coiffure"); });
-  if(typeof saveSalonConfig==="function") saveSalonConfig();
+  // colonne salons.metiers_autres écrite directement (saveSalonConfig n'écrit que config_json)
+  if(typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({metiers_autres:SALON_CONFIG.metiers.slice()}).then(function(r){ if(r&&r.error&&typeof showAlert==="function") showAlert("Activit\u00e9s non enregistr\u00e9es : "+r.error.message,"warning"); });
   try{ if(typeof auditLog==="function") auditLog("CONFIG_METIERS","Autres activités : "+(SALON_CONFIG.metiers.join(", ")||"aucune")); }catch(_e){}
   if(typeof toast==="function") toast(i>=0?"Activité retirée":"Activité ajoutée","success");
   go(window._currentPage||"settings");
@@ -35862,6 +35888,10 @@ function initApp(){
           // Restaurer le fond d'écran
           if(typeof cfg.app_bg!=="undefined"){
             APP_BG=cfg.app_bg||"";
+            // 2026-10-13 : fond d'écran trop lourd (photo brute) -> réduit une fois et réenregistré
+            if(String(APP_BG).length>700000 && /^data:image\//.test(APP_BG)){
+              setTimeout(function(){ lxImgReduire(APP_BG,1600,0.78,function(v){ if(v && v.length<APP_BG.length){ APP_BG=v; try{ saveAppBg(); }catch(_e){} } }); },8000);
+            }
             try{localStorage.setItem("_cp_app_bg",APP_BG);}catch(e){}
             var _bgEl=document.getElementById("appBg");
             if(_bgEl)_bgEl.style.backgroundImage=APP_BG?"url("+APP_BG+")":"none";

@@ -1246,6 +1246,15 @@ async function loadSalonData() {
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
   SALON_CONFIG.sousTitre = salon.sous_titre || "";
   SALON_CONFIG.logo = salon.logo || "";
+  // 2026-10-13 : logo trop lourd (photo brute de plusieurs Mo) -> réduit à 512 px une fois et réenregistré
+  try { if (String(SALON_CONFIG.logo).length > 300000 && /^data:image\//.test(SALON_CONFIG.logo)) { setTimeout(function () {
+    if (typeof window.lxImgReduire !== "function") return;
+    var _orig = SALON_CONFIG.logo;
+    window.lxImgReduire(_orig, 512, 0.85, function (v) { if (!v || v.length >= _orig.length) return;
+      SALON_CONFIG.logo = v; if (window.SALON) window.SALON.logo = v;
+      if (typeof lxSaveSalonColumns === "function") lxSaveSalonColumns({ logo: v });
+    }, true);
+  }, 6000); } } catch (_eL) {}
   SALON_CONFIG.adresse = salon.adresse || "";
   SALON_CONFIG.cp = salon.cp || "";
   SALON_CONFIG.ville = salon.ville || "";
@@ -3283,6 +3292,7 @@ async function saveSalonConfig() {
     // ré-écrasent pas avec une version stale.
     window._SALON_CONFIG_JSON = newCfg;
   }catch(e){}
+  if(!String(data.siret||"").trim()) delete data.siret; // 2026-10-13 : jamais de SIRET vide (refusé -> tout l'enregistrement échouait)
   var r=await _sb.from("salons").update(data).eq("id", _salonId);
   if(r&&r.error){delete data.config_json;await _sb.from("salons").update(data).eq("id", _salonId);}
 }
