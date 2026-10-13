@@ -1381,7 +1381,7 @@ async function doClientRegister(){
   if(!window.LX){ showAuthError("Service de connexion momentan\u00e9ment indisponible. Rechargez la page, ou appelez le salon pour r\u00e9server."); return; }
   var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk});
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation du compte");return;}
-  CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){}
+  CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){} try{ setTimeout(lxFavCharger,300); }catch(_eFv){}
   // FIX 2026-05-23 : enregistre l'adresse sur le compte AVANT de créer le lien salon,
   // pour qu'elle soit copiée dans la fiche par sync_client_to_salon.
   var adr=document.getElementById("aRegAdr")?document.getElementById("aRegAdr").value.trim():"";
@@ -1408,7 +1408,7 @@ async function doClientLogin(){
   if(!window.LX){ showAuthError("Service de connexion momentan\u00e9ment indisponible. Rechargez la page, ou appelez le salon pour r\u00e9server."); return; }
   var res=await LX.login(email,pass);
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Email ou mot de passe incorrect");return;}
-  CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){}
+  CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){} try{ setTimeout(lxFavCharger,300); }catch(_eFv){}
   await ensureClientSalon(CLIENT.id);
   saveClientSession();
   closeAuth();
@@ -1435,6 +1435,7 @@ async function ensureClientSalon(clientId){
 }
 
 function doClientLogout(){
+  window._lxFavOn=false; try{ lxFavMaj(); }catch(_eFv){}
   CLIENT=null;CLIENT_RDVS=[];
   try{ if(window.LX&&LX.logout) LX.logout(); }catch(_e){}
   try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); localStorage.removeItem("lx_favoris"); }catch(_e){}
@@ -2842,12 +2843,13 @@ function lxAppliquerPref(){
   var dt=new Date(p.d+"T12:00:00"); if(isNaN(dt)) return;
   calYear=dt.getFullYear(); calMonth=dt.getMonth();
   selectDate(p.d);
-  setTimeout(function(){
+  window._bkSelHour=parseInt(p.h,10); renderTimeSlots(p.d); // ouvre l'heure choisie (les minutes ne s'affichent qu'une fois l'heure sélectionnée)
+  (function(){
     var area=document.getElementById("timeSlotsArea"); if(!area) return;
     var ok=area.querySelector('[onclick="selectTime(\''+p.h+'\')"]');
     if(ok){ selectTime(p.h); }
     else area.insertAdjacentHTML("afterbegin",'<div style="margin:8px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.35);font-size:13px">Le cr\u00e9neau de '+p.h+' n\u2019est pas disponible pour cette prestation : choisissez un autre horaire ci-dessous.</div>');
-  },60);
+  })();
 }
 async function lxFavCharger(){
   try{ if(!(window.LX&&LX.hasSession&&LX.hasSession())) return;
@@ -3623,7 +3625,7 @@ async function saveClientProfile(){
   if(!window.LX){ showAlert("Service momentan\u00e9ment indisponible. Rechargez la page.","error"); return; }
   var res=await LX.update({nom:CLIENT.nom,prenom:CLIENT.prenom,telephone:CLIENT.telephone});
   if(!res.ok){showAlert("Erreur: "+(res.data&&res.data.error?res.data.error:"mise \u00e0 jour impossible"),"error");return;}
-  CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){}
+  CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){} try{ setTimeout(lxFavCharger,300); }catch(_eFv){}
   saveClientSession();
   showAlert("Informations mises \u00e0 jour !","info");
 }

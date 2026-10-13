@@ -296,3 +296,11 @@ d'altération des données fiscales.*
 - Delphinecoiff (ancien compte de Delphine, remplacé par O'R STUDIO) : site, réservation et boutique désactivés à sa demande (via Alexandre). Un site désactivé est désormais exclu partout : page salon (404), recherche, accueil, annuaire (pages ville + comptes), sitemap v16. Aucune donnée de caisse touchée.
 - Relecture indépendante de toutes les modifications du jour : 4 points corrigés — bouton « Voir les autres prestations » inopérant si la catégorie contient une apostrophe ; réduction automatique du logo / fond d'écran qui pouvait écraser une image changée dans les secondes suivant l'ouverture ; « Ajouter une séance » ouvre désormais le métier de l'onglet affiché.
 - Téléphone : (1) « Prochaine dispo » en soirée affichait un créneau déjà passé (« Aujourd'hui à 14:00 » à 23h42) : le délai minimum qui bascule après minuit était appliqué au mauvais jour -> corrigé (fn_salon_next_available_slot) ; (2) menu mobile du site (37 pages : accueil, pro, tarifs, aide…) transparent et superposé au contenu -> plein écran opaque ; (3) annuaire : boutons « C'est votre établissement ? » / « Établissement fermé ? » qui débordaient de l'écran -> empilés.
+
+## 2026-10-13 (soir) — Application et site clients : améliorations validées par Alexandre
+- Onglet « Mon compte » dans la barre de l'application ; ouverture directe d'un onglet du compte (?tab=).
+- Recherche : 3 prochains créneaux cliquables par établissement (RPC fn_salon_next_slots) ; réservation pré-positionnée sur le jour/heure (?d=&h=), heure retenue seulement si elle convient à la prestation.
+- Fiche établissement : lectures en parallèle (affichage plus rapide).
+- Compte client : rappel « reprendre le même RDV » (écart habituel, 6 semaines par défaut), ajout à l'agenda (.ics), itinéraire ; idem sur l'écran de confirmation.
+- Avis : notes par critère + 3 photos max (bucket avis-photos public, avis-create v9) ; favoris (table client_favoris, /api/client/favoris).
+- Relecture indépendante : 5 points corrigés avant mise en ligne. Aucune donnée de caisse touchée.
