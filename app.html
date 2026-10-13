@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261013-5"></script>
+<script src="luxyra-supabase.js?v=20261014-1"></script>
 <script>
 console.log("LUXYRA v6.6");
 
@@ -9444,7 +9444,7 @@ function _lxApOnlineEnrichir(ap, m){
     }
     if(m.acomptePaye && Number(m.acompte)>0 && !m.acompteRembourse && !(Number(ap.acompte)>0)){
       ap.acompte=Number(m.acompte); ap.acompteMode="En ligne (Stripe)";
-      ap.acompteDate=m.createdAt?String(m.createdAt).slice(0,10):TD;
+      ap.acompteDate=m.acomptePayeAt?_lxDateParis(m.acomptePayeAt):(m.createdAt?String(m.createdAt).slice(0,10):TD); // 2026-10-13 : date réelle du paiement
     }
   }catch(_e){}
 }
@@ -13022,7 +13022,8 @@ async function _lxRetenueTicket(t){
                  :("Empreinte encaissée - "+(r.service_nom||"Prestation")+" (RDV du "+quand+", "+motif+")");
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   nextTicketNum();
-  var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:(r.collaborateur_id!=null?r.collaborateur_id:_defaultCollabId()),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),
+  var _cIdRet="passage"; try{ if(typeof _lxResolveClientId==="function"){ var _rc=_lxResolveClientId(r); if(_rc) _cIdRet=_rc; } }catch(_eRc){} // 2026-10-13 : visible dans la fiche du client
+  var tk={id:U(),cId:_cIdRet,fromCaisse:true,sId:null,stId:(r.collaborateur_id!=null?r.collaborateur_id:_defaultCollabId()),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),
     pr:t.montant,brutTotal:t.montant,remise:0,items:[{name:lib,price:t.montant,qty:1,remise:0,ci:0,isRetenue:true}],st:"done",met:"En ligne (Stripe)",tkNum:tkN,
     clientNom:r.client_nom||null,clientPrenom:r.client_prenom||null,isRetenue:true,retenueKey:key,retenueRdv:r.id,
     comment:(acompte?"Acompte payé en ligne et conservé":"Empreinte bancaire capturée")+" - RDV du "+quand+" - "+[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim()};
@@ -18246,6 +18247,7 @@ function addService(){
   body += '<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid rgba(96,165,250,.3);border-radius:6px;cursor:pointer;font-size:12px;background:rgba(96,165,250,.06);color:#93c5fd;font-family:var(--f1,Georgia,serif);letter-spacing:.5px"><input type="checkbox" id="nsShowSite" checked style="width:16px;height:16px;cursor:pointer;accent-color:#60a5fa"> \u25cf Visible sur le site</label>';
   body += '<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid rgba(74,222,128,.3);border-radius:6px;cursor:pointer;font-size:12px;background:rgba(74,222,128,.06);color:#7fc97f;font-family:var(--f1,Georgia,serif);letter-spacing:.5px"><input type="checkbox" id="nsBookOnline" checked style="width:16px;height:16px;cursor:pointer;accent-color:#4ade80"> \u25cf R\u00e9servable en ligne</label>';
   body += '</div>';
+  body += '<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin-top:10px;border:1px solid rgba(255,255,255,.08);border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="nsDevis" style="margin-top:2px"><span>\ud83d\udcdd Prix sur devis \u2014 pas de prix fixe : le prix est convenu avec le client et saisi \u00e0 l\u2019encaissement (affich\u00e9 \u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
   // Boutons custom (Annuler reset les vars + Cr\u00e9er)
   var footer = '<div style="display:flex;gap:10px">';
   footer += '<button onclick="window._newSvcName=null;window._newSvcPrice=null;window._newSvcDur=null;cM()" style="flex:1;padding:14px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.7);font-family:var(--f1,Georgia,serif);font-weight:500;font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer">Annuler</button>';
@@ -18274,7 +18276,8 @@ function doAddService(){
   var catGenreEl=document.getElementById("nsCatGenre");
   var catGenre=catGenreEl?(catGenreEl.value||null):null;
   if(catGenre!=='H'&&catGenre!=='F'&&catGenre!=='E') catGenre=null;
-  SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline,catGenre:catGenre});
+  var devis=!!(document.getElementById("nsDevis")&&document.getElementById("nsDevis").checked); // 2026-10-13
+  SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline,catGenre:catGenre,devis:devis});
   aCat=cat;
   window._newSvcName=null;window._newSvcPrice=null;window._newSvcDur=null;window._newSvcPhases=null;
   if(typeof saveServices==="function")saveServices();
@@ -18333,6 +18336,7 @@ function editService(id){
   htm+='<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid '+(sv.showSite!==false?"rgba(96,165,250,.3)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;background:'+(sv.showSite!==false?"rgba(96,165,250,.06)":"rgba(255,255,255,.02)")+';color:'+(sv.showSite!==false?"#93c5fd":"rgba(255,255,255,.5)")+';font-family:var(--f1,Georgia,serif);letter-spacing:.5px;transition:all .15s"><input type="checkbox" id="esShowSite" '+(sv.showSite!==false?"checked":"")+' style="width:16px;height:16px;cursor:pointer;accent-color:#60a5fa"> \u25cf Visible sur le site</label>';
   htm+='<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid '+(sv.bookOnline!==false?"rgba(74,222,128,.3)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;background:'+(sv.bookOnline!==false?"rgba(74,222,128,.06)":"rgba(255,255,255,.02)")+';color:'+(sv.bookOnline!==false?"#7fc97f":"rgba(255,255,255,.5)")+';font-family:var(--f1,Georgia,serif);letter-spacing:.5px;transition:all .15s"><input type="checkbox" id="esBookOnline" '+(sv.bookOnline!==false?"checked":"")+' style="width:16px;height:16px;cursor:pointer;accent-color:#4ade80"> \u25cf R\u00e9servable en ligne</label>';
   htm+='</div>';
+  htm+='<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin:-12px 0 20px;border:1px solid '+(sv.devis?"rgba(200,168,78,.45)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="esDevis" '+(sv.devis?'checked':'')+' style="margin-top:2px"><span>\ud83d\udcdd Prix sur devis \u2014 pas de prix fixe : le prix est convenu avec le client et saisi \u00e0 l\u2019encaissement (affich\u00e9 \u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
   // Boutons : Annuler (sobre) + Enregistrer (gradient or signature)
   htm+='<div style="display:flex;gap:10px">';
   htm+='<button onclick="cM()" style="flex:1;padding:14px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.7);font-family:var(--f1,Georgia,serif);font-weight:500;font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(255,255,255,.06)\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\'">Annuler</button>';
@@ -18351,7 +18355,7 @@ function doEditService(id){
   var oldPrice = Number(sv.p) || 0;
   var newName=document.getElementById("esName").value.trim()||sv.n;
   sv.n=newName;
-  sv.p=parseFloat(document.getElementById("esPrice").value)||sv.p;
+  var _esP=parseFloat(document.getElementById("esPrice").value); sv.p=(document.getElementById("esDevis")&&document.getElementById("esDevis").checked)?(isNaN(_esP)?0:_esP):(_esP||sv.p);
   var newPrice = Number(sv.p) || 0;
   // Permet 0 minute pour les suppl\u00e9ments (ex: Suppl\u00e9ment couleur) \u2014 pas d'impact planning
   var durRaw=document.getElementById("esDur").value;
@@ -18368,6 +18372,7 @@ function doEditService(id){
   sv.catGenre=newCatGenre;
   sv.showSite=document.getElementById("esShowSite")?document.getElementById("esShowSite").checked:true;
   sv.bookOnline=document.getElementById("esBookOnline")?document.getElementById("esBookOnline").checked:true;
+  sv.devis=!!(document.getElementById("esDevis")&&document.getElementById("esDevis").checked); // 2026-10-13 : prix sur devis
   aCat=newCat;
   if(typeof saveServices==="function")saveServices();
   // === Si prix OU nom a chang\u00e9 : proposer de mettre \u00e0 jour les RDV \u00e0 venir ===
@@ -22152,17 +22157,17 @@ function _buildRapportHTML(periodM){
   var isMicro = isMicroEntrepreneur();
   var p = periodM.split("-");var mLabel = MO[parseInt(p[1])-1]+" "+p[0];
 
-  var totalTTC = 0, totalCB = 0, totalEsp = 0, totalCheq = 0, totalVir = 0, totalAutre = 0, totalRemises = 0;
+  var totalTTC = 0, totalCB = 0, totalEsp = 0, totalCheq = 0, totalVir = 0, totalAutre = 0, totalRemises = 0, totalEnL = 0;
   dn.forEach(function(a){
     totalTTC += Number(a.pr)||0;
     totalRemises += Number(a.remise)||0;
     var _bk=_lxPayBuckets(a);
-    totalCB += _bk.cb; totalEsp += _bk.esp; totalCheq += _bk.chq; totalVir += _bk.vir; totalAutre += _bk.bon + _bk.aut;
+    totalCB += _bk.cb; totalEsp += _bk.esp; totalCheq += _bk.chq; totalVir += _bk.vir; totalAutre += _bk.bon + _bk.aut; totalEnL += (_bk.enligne||0);
   });
   ps2.forEach(function(pp){
     totalTTC += Number(pp.pr)||0;
     var _bk=_lxPayBuckets(pp);
-    totalCB += _bk.cb; totalEsp += _bk.esp; totalCheq += _bk.chq; totalVir += _bk.vir; totalAutre += _bk.bon + _bk.aut;
+    totalCB += _bk.cb; totalEsp += _bk.esp; totalCheq += _bk.chq; totalVir += _bk.vir; totalAutre += _bk.bon + _bk.aut; totalEnL += (_bk.enligne||0);
   });
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
   var totalHT, totalTVA;
@@ -22274,7 +22279,8 @@ function _buildRapportHTML(periodM){
   html += pctRow('\ud83d\udcb5 Esp\u00e8ces', totalEsp);
   html += pctRow('\ud83d\udcdd Ch\u00e8que', totalCheq);
   html += pctRow('\ud83c\udfe6 Virement', totalVir);
-  html += pctRow('Autre', totalAutre);
+  html += pctRow('Autre (bons cadeaux, avoirs\u2026)', totalAutre);
+  html += pctRow('\ud83c\udf10 Pay\u00e9 en ligne (acomptes en ligne d\u00e9duits, acomptes conserv\u00e9s, empreintes, Click & Collect)', totalEnL);
   html += '<tr class="tot"><td>Total</td><td class="num">'+fmtMoney(totalTTC)+'</td><td class="num">100,0 %</td></tr>';
   html += '</table>';
 
@@ -22469,7 +22475,7 @@ function getMicroSeuilsStatus(){
 // =====================================================================
 // R\u00e9cap simple du CA pour reporter dans la d\u00e9claration mensuelle/trimestrielle URSSAF.
 // Les auto-entrepreneurs d\u00e9clarent leur CA brut \u2192 URSSAF calcule les cotisations (~22% pour services).
-function expDeclarationURSSAF(){
+async function expDeclarationURSSAF(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter la d\u00e9claration URSSAF",expDeclarationURSSAF);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
@@ -22483,6 +22489,9 @@ function expDeclarationURSSAF(){
     var sp=_splitPrestProd(a); totalSvc += Number(sp.prest)||0; totalProd += Number(sp.prod)||0;
   });
   ps2.forEach(function(p){ totalProd += Number(p.pr)||0; });
+  // 2026-10-13 : recettes ENCAISSÉES (art. 50-0 CGI) -> acomptes en ligne au jour du paiement, remboursements déduits
+  var _ajU={svc:0,prod:0}; try{ _ajU=await _lxAjustEnLigneMois(accM); }catch(_eA){ toast("Paiements en ligne non lus : "+_eA.message,"warning"); }
+  totalSvc=Math.round((totalSvc+_ajU.svc)*100)/100; totalProd=Math.round((totalProd+_ajU.prod)*100)/100;
   var totalCA = totalSvc + totalProd;
   // Cotisations URSSAF approximatives (taux 2024-2026)
   // Services BIC : 21,2 % + formation 0,3 % ; ventes BIC : 12,3 % + formation 0,1 % (2026)
@@ -22657,10 +22666,11 @@ function showExportsComptables(){
   exports.push({id:"stripe", svg:SVG_STRIPE, color:"#818cf8", title:"Bordereau acomptes en ligne (CSV)", desc:"R\u00e9conciliation Stripe Connect : montant brut, frais Stripe, net re\u00e7u en banque.", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")});
   // 2026-10-11 : encaissements en ligne datés du jour du PAIEMENT (TVA exigible à l'encaissement / recettes des micro)
   if(isMicro || (typeof lxEstMicro==="function" && lxEstMicro())) exports.push({id:"recettes", svg:SVG_URSSAF, color:"#a78bfa", title:"Livre des recettes encaiss\u00e9es (CSV)", desc:"Registre obligatoire en micro-entreprise : chaque recette \u00e0 la date o\u00f9 elle est encaiss\u00e9e (acomptes en ligne le jour du paiement, solde le jour de la prestation, remboursements).", fn:"expLivreRecettes", count:""});
+  exports.push({id:"acomptes", svg:SVG_COMPTA, color:"#38bdf8", title:"Acomptes re\u00e7us non sold\u00e9s \u2014 fin du mois (CSV)", desc:"Pour la cl\u00f4ture / le bilan : acomptes encaiss\u00e9s (en ligne ou en caisse) dont la prestation n\u2019est pas encore r\u00e9alis\u00e9e \u00e0 la fin du mois choisi (compte 4191).", fn:"expAcomptesNonSoldes", count:""});
   if(!isMicro || lxTauxTVA()>0) exports.push({id:"enligne", svg:SVG_TVA, color:"#fbbf24", title:"Paiements en ligne \u2014 TVA \u00e0 l\u2019encaissement (CSV)", desc:"Acomptes et commandes pay\u00e9s en ligne : TVA due le mois du paiement (art. 269-2-c CGI). Donne l\u2019ajustement \u00e0 reporter sur la d\u00e9claration de TVA du mois.", fn:"expTvaPaiementsEnLigne", count:""});
 
   exports.forEach(function(e){
-    var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne");
+    var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne" && e.id!=="acomptes");
     h += '<div style="display:flex;align-items:center;gap:14px;padding:14px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:12px;margin-bottom:8px;'+(disabled?'opacity:.4;':'cursor:pointer;')+'transition:all .2s"'+(disabled?'':' onmouseover="this.style.background=\'rgba(212,168,67,.06)\';this.style.borderColor=\'rgba(212,168,67,.25)\'" onmouseout="this.style.background=\'rgba(255,255,255,.025)\';this.style.borderColor=\'rgba(255,255,255,.05)\'" onclick="cM();'+e.fn+'()"')+'>';
     h += '<div style="width:42px;height:42px;flex-shrink:0;border-radius:11px;background:'+e.color+'22;border:1px solid '+e.color+'44;display:flex;align-items:center;justify-content:center;color:'+e.color+'">'+e.svg+'</div>';
     h += '<div style="flex:1;min-width:0">';
@@ -22758,6 +22768,8 @@ function csvBuildPro(typeDoc, periodeM, headerRow, dataRows, footerRows){
   return "\uFEFF" + sections.join("\r\n\r\n");
 }
 function csvDownload(filename, csvContent){
+  // 2026-10-13 : mode « capture » (pack comptable) : le fichier est ajouté au ZIP au lieu d'être téléchargé
+  if(window._lxCsvCapture){ window._lxCsvCapture.push({name:filename, content:csvContent}); return; }
   try{
     var blob = new Blob([csvContent], {type:"text/csv;charset=utf-8;"});
     var url = URL.createObjectURL(blob);
@@ -22813,7 +22825,7 @@ function expCSV(){
     rows.push([
       a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
       csvNum(ht), csvNum(tva), csvNum(ttc), csvNum(a.remise||0),
-      a.met||"", a.cancelled?"ANNUL\u00C9":(a.isCancel?"Contre-ticket d\u2019annulation":"Encaiss\u00e9"), src, (a.hash||"").slice(0,16)
+      _lxModeDetail(a), a.cancelled?"ANNUL\u00C9":(a.isCancel?"Contre-ticket d\u2019annulation":"Encaiss\u00e9"), src, (a.hash||"").slice(0,16)
     ]);
   });
 
@@ -22861,7 +22873,7 @@ function expCSV(){
 // EXPORT 2 : R\u00C9CAP TVA mensuel (CA3/CA12)
 // =====================================================================
 // Pour la d\u00e9claration de TVA. D\u00e9tail par taux + r\u00e9cap.
-function expRecapTVA(){
+async function expRecapTVA(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le r\u00e9cap TVA",expRecapTVA);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
@@ -22929,6 +22941,16 @@ function expRecapTVA(){
     footer.push([d, csvNum(h)+" \u20ac", csvNum(tv)+" \u20ac", csvNum(t)+" \u20ac", byDay[d].n]);
   });
   footer.push(["TOTAL", csvNum(totalHT)+" \u20ac", csvNum(totalTVA)+" \u20ac", csvNum(totalTTC)+" \u20ac", nbTickets]);
+  // 2026-10-13 : TVA à l'encaissement des acomptes payés en ligne (CGI art. 269-2-c) : ajustement à reporter
+  try{
+    var _aj=await _lxAjustEnLigneMois(accM), _ajT=Math.round((_aj.svc+_aj.prod)*100)/100;
+    if(Math.abs(_ajT)>0.004 && !isMicroEntrepreneur()){
+      var _tx=lxTauxTVA(), _ajH=Math.round(_ajT/(1+_tx/100)*100)/100, _ajV=Math.round((_ajT-_ajH)*100)/100;
+      footer.push(["",""]);
+      footer.push(["AJUSTEMENT PAIEMENTS EN LIGNE (acomptes)", csvNum(_ajH)+" \u20ac HT", csvNum(_ajV)+" \u20ac TVA", csvNum(_ajT)+" \u20ac TTC", "d\u00e9tail : export \u00ab TVA des paiements en ligne \u00bb"]);
+      footer.push(["\u00c0 D\u00c9CLARER (caisse + ajustement)", csvNum(Math.round((totalHT+_ajH)*100)/100)+" \u20ac HT", csvNum(Math.round((totalTVA+_ajV)*100)/100)+" \u20ac TVA", csvNum(Math.round((totalTTC+_ajT)*100)/100)+" \u20ac TTC", "TVA des prestations exigible \u00e0 l\u2019encaissement des acomptes (CGI art. 269-2-c)"]);
+    }
+  }catch(_eAj){}
 
   csvDownload("recap_tva_"+accM+".csv", csvBuildPro("R\u00e9cap TVA mensuel (d\u00e9claration CA3/CA12)", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_RECAP_TVA","P\u00e9riode "+accM+" - HT "+csvNum(totalHT)+" TVA "+csvNum(totalTVA));
@@ -22997,7 +23019,7 @@ function _lxJournalVentes(mois){
   }
   dn.forEach(function(a){
     var sv = gS(a.sId), cl = gC(a.cId);
-    var libelle = (cl ? cName(cl) : "Passage") + (sv?" - "+sv.n:"");
+    var libelle = (cl ? cName(cl) : ((a.clientNom||a.clientPrenom)?[(a.clientPrenom||""),(a.clientNom||"")].join(" ").trim():"Passage")) + (sv?" - "+sv.n:"") + _lxLibAcompte(a.items, (typeof _lxIsAcompteOnline==="function"&&_lxIsAcompteOnline(a.acompteMode))?a.acompte:0);
     if(a.isCancel) libelle = "ANNULATION " + (a.cancelRef?("#"+a.cancelRef+" "):"") + libelle;
     var sp = _splitPrestProd(a);
     if(Math.abs(sp.prest) >= 0.005){
@@ -23087,15 +23109,13 @@ function expBordereauStripe(){
   var headers = ["Date RDV (pay\u00e9 le)","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte (\u20AC)","Frais Stripe estim\u00e9s (1,5% + 0,25\u20AC)","Net re\u00E7u (\u20AC)","Statut RDV","ID Stripe"];
   var totalBrut = 0, totalFrais = 0, totalNet = 0, nbRembourse = 0;
   var rows = rdvOnline.map(function(r){
-    var rembourse = !!r.acompteRembourse;
-    var brut = Number(r.acompte)||0;
-    var frais = lxStripeFee(brut);
-    var net = rembourse ? 0 : Math.round((brut - frais)*100)/100;
-    if(rembourse){ nbRembourse++; } else { totalBrut += brut; totalFrais += frais; totalNet += net; }
+    var L=_lxStripeLigne(r);
+    if(L.remb>0) nbRembourse++;
+    totalBrut += L.garde; totalFrais += L.frais; totalNet += L.net;
     return [
       r.date+(r.acomptePayeAt?" (pay\u00e9 le "+_lxDateParis(r.acomptePayeAt)+")":""), r.heure||"", (r.nom||"")+" "+(r.prenom||""), r.tel||"",
-      r.svcNom||"", csvNum(brut), csvNum(frais), csvNum(net),
-      rembourse ? "Rembours\u00e9" : (r.status||""), r.stripePaymentId||""
+      r.svcNom||"", csvNum(L.brut)+(L.remb>0?" (gard\u00e9 "+csvNum(L.garde)+")":""), csvNum(L.frais), csvNum(L.net),
+      L.statut, r.stripePaymentId||""
     ];
   });
   // Ligne total
@@ -23133,7 +23153,7 @@ async function _lxPaiementsEnLigne(mois){
   // Fenêtre : 18 mois avant la fin du mois (un acompte est payé au plus quelques mois avant le RDV)
   var d0=new Date(b.finExcl+"T00:00:00Z"); d0.setUTCMonth(d0.getUTCMonth()-18); var depuis=d0.toISOString();
   var fin=b.finExcl+"T23:59:59Z"; // filtrage exact au jour de Paris ensuite
-  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_paye_at,acompte_rembourse,acompte_rembourse_montant,refunded_at,status,ticket_num,retenue_tk_num").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).gte("acompte_paye_at",depuis).lt("acompte_paye_at",fin).order("acompte_paye_at",{ascending:false}).limit(5000);
+  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_paye_at,acompte_rembourse,acompte_rembourse_montant,remboursements,created_at,refunded_at,status,ticket_num,retenue_tk_num").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).gte("acompte_paye_at",depuis).lt("acompte_paye_at",fin).order("acompte_paye_at",{ascending:false}).limit(5000);
   if(r1.error) throw new Error(r1.error.message);
   var r2=await _sb.from("commandes_online").select("id,numero,client_nom,total,paye,paye_at,status,collected_at,ticket_num,refund_id,cancelled_at").eq("salon_id",_salonId).eq("paye",true).gte("paye_at",depuis).lt("paye_at",fin).order("paye_at",{ascending:false}).limit(5000);
   if(r2.error) throw new Error(r2.error.message);
@@ -23149,12 +23169,19 @@ async function _lxPaiementsEnLigne(mois){
   (r1.data||[]).forEach(function(r){
     // 2026-10-13 : remboursement partiel -> une ligne pour la partie remboursée, une ligne pour la partie conservée
     var _rp=Math.round((Number(r.acompte_rembourse_montant)||0)*100)/100, _ac=Math.round(Number(r.acompte_montant)*100)/100;
-    if(!r.acompte_rembourse && _rp>0 && _rp<_ac){
+    var _hist=Array.isArray(r.remboursements)?r.remboursements.filter(function(x){ return x&&Number(x.montant)>0; }):[];
+    var _payeA=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at)||"";
+    // 2026-10-13 : un ou plusieurs remboursements (total ou partiel) -> une ligne par remboursement, à SA date, + la part conservée
+    if(_hist.length || (!r.acompte_rembourse && _rp>0 && _rp<_ac)){
       var _ref="RDV du "+_lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), _cl=[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim();
-      L.push({type:"Acompte RDV", ref:_ref, client:_cl, libelle:(r.service_nom||"")+" (part rembours\u00e9e)", montant:_rp, paye:_lxDateParis(r.acompte_paye_at), taux:lxTauxTVA(),
-        rembourse:_lxDateParis(r.refunded_at)||"", rembInconnu:!r.refunded_at, reconnu:"", etat:"Rembours\u00e9 (partiel)"});
-      L.push({type:"Acompte RDV", ref:_ref, client:_cl, libelle:(r.service_nom||"")+" (part conserv\u00e9e)", montant:Math.round((_ac-_rp)*100)/100, paye:_lxDateParis(r.acompte_paye_at), taux:lxTauxTVA(),
-        rembourse:"", rembInconnu:false, reconnu:(r.retenue_tk_num&&dTk[r.retenue_tk_num])||"", etat:r.retenue_tk_num?"Conserv\u00e9 (ticket #"+r.retenue_tk_num+")":"Conserv\u00e9 (en attente d\u2019enregistrement en caisse)"});
+      if(!_hist.length) _hist=[{at:r.refunded_at, montant:_rp}];
+      var _tot=0;
+      _hist.forEach(function(x){ var m=Math.round(Number(x.montant)*100)/100; _tot+=m;
+        L.push({type:"Acompte RDV", ref:_ref, client:_cl, libelle:(r.service_nom||"")+" (part rembours\u00e9e)", montant:m, paye:_payeA, taux:lxTauxTVA(),
+          rembourse:_lxDateParis(x.at)||"", rembInconnu:!x.at, reconnu:"", etat:"Rembours\u00e9"+(m<_ac?" (partiel)":"")}); });
+      var _garde=Math.round((_ac-_tot)*100)/100;
+      if(_garde>0.004) L.push({type:"Acompte RDV", ref:_ref, client:_cl, libelle:(r.service_nom||"")+" (part conserv\u00e9e)", montant:_garde, paye:_payeA, taux:lxTauxTVA(),
+        rembourse:"", rembInconnu:false, reconnu:(r.retenue_tk_num&&dTk[r.retenue_tk_num])||((r.status==="done")?((r.ticket_num&&dTk[r.ticket_num])||r.date_rdv||""):""), etat:r.retenue_tk_num?"Conserv\u00e9 (ticket #"+r.retenue_tk_num+")":(r.status==="done"?"Prestation r\u00e9alis\u00e9e":"Conserv\u00e9 (en attente d\u2019enregistrement en caisse)")});
       return;
     }
     var reconnu="";
@@ -23179,6 +23206,80 @@ async function _lxPaiementsEnLigne(mois){
       rembourse:"", rembInconnu:false, reconnu:(r.empreinte_tk_num&&dTk[r.empreinte_tk_num])||"", etat:r.empreinte_tk_num?"Enregistr\u00e9e en caisse (ticket #"+r.empreinte_tk_num+")":"En attente d\u2019enregistrement en caisse"});
   });
   return L;
+}
+// 2026-10-13 : ajustement « paiements en ligne » d'un mois (règle de l'encaissement : un acompte en ligne compte le jour
+// où il est payé, un remboursement le jour où il est fait). Même règle que l'export TVA des paiements en ligne et le
+// livre des recettes. Retour TTC ventilé prestations (acomptes, empreintes) / produits (Click & Collect).
+async function _lxAjustEnLigneMois(mois){
+  var L=await _lxPaiementsEnLigne(mois), r={svc:0,prod:0};
+  var inM=function(d){ return d && String(d).indexOf(mois)===0; }, avant=function(d){ return d && String(d).slice(0,7)<mois; };
+  L.forEach(function(p){
+    if(p.rembInconnu) return;
+    var aj=0;
+    if(inM(p.paye) && !inM(p.reconnu) && !inM(p.rembourse)) aj=p.montant;
+    else if(avant(p.paye) && inM(p.reconnu)) aj=-p.montant;
+    else if(avant(p.paye) && inM(p.rembourse)) aj=-p.montant;
+    if(!aj) return;
+    if(p.type==="Commande en ligne") r.prod+=aj; else r.svc+=aj;
+  });
+  r.svc=Math.round(r.svc*100)/100; r.prod=Math.round(r.prod*100)/100; return r;
+}
+// 2026-10-13 : ÉTAT DES ACOMPTES REÇUS NON SOLDÉS à la fin du mois sélectionné (clôture / bilan).
+// Acompte reçu pour une prestation pas encore réalisée = avance du client (PCG : compte 4191 « Clients - avances et
+// acomptes reçus »), pas encore du chiffre d'affaires. TVA des prestations exigible à l'encaissement (CGI art. 269-2-c).
+async function expAcomptesNonSoldes(silencieux){
+  if(!silencieux && typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter les acomptes non sold\u00e9s",function(){expAcomptesNonSoldes();});return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var b=_lxMoisBornes(accM), fin=b.finExcl, D=(function(){ var d=new Date(fin+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); })();
+  var le=function(d){ return d && String(d).slice(0,10)<=D; };
+  var tx=lxTauxTVA(), micro=isMicroEntrepreneur(), rows=[], tot=0, totHT=0, totTVA=0;
+  function ligne(type,client,presta,rdv,paye,montant,remb,reste,ref,etat){
+    reste=Math.round(reste*100)/100; if(reste<0.005) return;
+    var ht=micro?reste:Math.round(reste/(1+tx/100)*100)/100, tv=Math.round((reste-ht)*100)/100;
+    tot+=reste; totHT+=ht; totTVA+=tv;
+    rows.push([type,client,presta,rdv,paye,csvNum(montant),csvNum(remb),csvNum(reste),csvNum(ht),csvNum(tv)+(micro?"":" ("+tx+"%)"),ref,etat]);
+  }
+  // 1) acomptes payés EN LIGNE (Stripe)
+  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye_at,created_at,acompte_rembourse,acompte_rembourse_montant,remboursements,refunded_at,status,ticket_num,retenue_tk_num,payment_intent_id").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).lte("acompte_paye_at",fin+"T00:00:00Z").limit(5000);
+  if(r1.error){ toast("Lecture impossible : "+r1.error.message,"error"); return; }
+  var nums={}; (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1; });
+  var dTk={}, lst=Object.keys(nums).map(Number).filter(function(n){return n>0;});
+  for(var i=0;i<lst.length;i+=200){ var tr=await _sb.from("tickets").select("num,date_ticket").eq("salon_id",_salonId).in("num",lst.slice(i,i+200)); ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=String(t.date_ticket||"").slice(0,10); }); }
+  (r1.data||[]).forEach(function(r){
+    var paye=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at); if(!le(paye)) return;
+    var ac=Math.round(Number(r.acompte_montant)*100)/100;
+    var hist=Array.isArray(r.remboursements)?r.remboursements:[];
+    if(!hist.length && (r.acompte_rembourse||Number(r.acompte_rembourse_montant)>0)) hist=[{at:r.refunded_at, montant:r.acompte_rembourse?ac:Number(r.acompte_rembourse_montant)}];
+    var remb=0; hist.forEach(function(x){ if(le(_lxDateParis(x.at))) remb+=Number(x.montant)||0; }); remb=Math.min(ac,Math.round(remb*100)/100);
+    var reconnu=(r.retenue_tk_num&&dTk[r.retenue_tk_num])||(r.ticket_num&&dTk[r.ticket_num])||(r.status==="done"?r.date_rdv:"");
+    if(le(reconnu)) return; // déjà dans un ticket (prestation réalisée ou acompte conservé) à cette date
+    ligne("Acompte en ligne", [(r.client_prenom||""),(r.client_nom||"")].join(" ").trim(), r.service_nom||"", _lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), paye, ac, remb, ac-remb, r.payment_intent_id||"", r.status==="cancelled"?"RDV annul\u00e9 (remboursement / conservation en cours)":"Prestation \u00e0 r\u00e9aliser");
+  });
+  // 2) acomptes encaissés EN CAISSE (ticket « Acompte » scellé) pas encore déduits ni annulés à la date
+  AP.forEach(function(t){
+    if(!t||!t.isAcompte||t.st!=="done"||!le(t.date)) return;
+    var n=Number(t.tkNum); if(!n) return;
+    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(x.date)&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&Number(it.acompteTkNum)===n)); }); })
+      || AP.some(function(x){ return x&&x.isAcompteCancel&&le(x.date)&&Number(x.origTkNum)===n; });
+    var appt=null; for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].id===t.apptId){ appt=AP[k]; break; } }
+    if(!solde && appt && appt.st==="done" && appt.tkNum && le(appt.date)) solde=true; // acomptes complémentaires : RDV encaissé
+    if(solde) return;
+    var cl=gC(t.cId)||(appt?gC(appt.cId):null), m=Math.round((Number(t.pr)||0)*100)/100;
+    ligne("Acompte en caisse (ticket #"+n+")", cl?cName(cl):"", (t.items&&t.items[0]&&t.items[0].name)||"", appt?(_lxDateFrCourte(appt.date)+" "+(appt.time||"")):"", t.date, m, 0, m, "Ticket #"+n, "D\u00e9j\u00e0 dans le CA de caisse du "+_lxDateFrCourte(t.date));
+  });
+  rows.sort(function(x,y){ return String(x[4]).localeCompare(String(y[4])); });
+  var headers=["Type","Client","Prestation","Rendez-vous","Pay\u00e9 le","Acompte TTC (\u20ac)","Rembours\u00e9 au "+_lxDateFrCourte(D)+" (\u20ac)","Reste non sold\u00e9 TTC (\u20ac)",micro?"Montant (\u20ac)":"HT (\u20ac)",micro?"TVA":"TVA (\u20ac)","R\u00e9f\u00e9rence","\u00c9tat"];
+  var footer=[
+    ["Situation au", _lxDateFrCourte(D)],
+    ["TOTAL ACOMPTES NON SOLD\u00c9S", csvNum(Math.round(tot*100)/100)+" \u20ac TTC"+(micro?"":" = "+csvNum(Math.round(totHT*100)/100)+" \u20ac HT + "+csvNum(Math.round(totTVA*100)/100)+" \u20ac TVA")],
+    ["Comptabilit\u00e9", micro?"Micro-entreprise : ces acomptes ont d\u00e9j\u00e0 \u00e9t\u00e9 compt\u00e9s en recettes le jour de leur paiement (livre des recettes). Aucune \u00e9criture de cl\u00f4ture.":"Avances re\u00e7ues des clients pour des prestations non encore r\u00e9alis\u00e9es : compte 4191 \u00ab Clients \u2013 avances et acomptes re\u00e7us \u00bb au passif (montant HT), la TVA ayant d\u00e9j\u00e0 \u00e9t\u00e9 d\u00e9clar\u00e9e \u00e0 l\u2019encaissement (CGI art. 269-2-c)."],
+    ["Acomptes en caisse", "Un acompte encaiss\u00e9 en caisse a son propre ticket scell\u00e9 (compt\u00e9 dans le CA du jour du versement) : votre expert-comptable peut le reclasser en 4191 \u00e0 la cl\u00f4ture."],
+    ["\u00c0 faire valider", "Traitement comptable \u00e0 confirmer par votre expert-comptable."]
+  ];
+  csvDownload("acomptes_non_soldes_au_"+D+".csv", csvBuildPro("\u00c9tat des acomptes re\u00e7us non sold\u00e9s (cl\u00f4ture / bilan)", accM, headers, rows, footer));
+  if(typeof auditLog==="function") auditLog("EXPORT_ACOMPTES_NON_SOLDES","Situation au "+D+" - "+rows.length+" acompte(s) - "+csvNum(Math.round(tot*100)/100)+" EUR");
 }
 async function expTvaPaiementsEnLigne(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
@@ -23294,7 +23395,7 @@ async function expPackComptable(){
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"\u00D7 "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var ttc=Number(a.pr)||0; var _v=_lxHtTva(a); var ht=_v.ht, tva=_v.tva;
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),a.met||"","Encaiss\u00e9",src,(a.hash||"").slice(0,16)]);
+    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),_lxModeDetail(a),"Encaiss\u00e9",src,(a.hash||"").slice(0,16)]);
   });
   ps2.forEach(function(p){
     var ttc=Number(p.pr)||0; var _v=_lxHtTvaProd(ttc); var ht=_v.ht, tva=_v.tva;
@@ -23324,9 +23425,11 @@ async function expPackComptable(){
     var totalSvcM = 0, totalProdM = 0;
     dn.forEach(function(a){ var sp=_splitPrestProd(a); totalSvcM += Number(sp.prest)||0; totalProdM += Number(sp.prod)||0; }); // 2026-10-11 : montant encaissé
     ps2.forEach(function(p){ totalProdM += Number(p.pr)||0; });
+    try{ var _ajP=await _lxAjustEnLigneMois(accM); totalSvcM=Math.round((totalSvcM+_ajP.svc)*100)/100; totalProdM=Math.round((totalProdM+_ajP.prod)*100)/100; }catch(_eAP){}
     var cotisSvcM = Math.round(totalSvcM * _lxTxUrssaf("svc") * 100) / 100;
     var cotisProdM = Math.round(totalProdM * _lxTxUrssaf("prod") * 100) / 100;
     var urssafFooter = [
+      ["\u2713","Recettes encaiss\u00e9es : acomptes pay\u00e9s en ligne compt\u00e9s le jour du paiement, remboursements d\u00e9duits (identique au livre des recettes)",""],
       ["Notes","",""],
       ["\u26A0\uFE0F","Cotisations estim\u00e9es \u00E0 titre indicatif uniquement",""],
       ["\u2713","Calcul officiel + d\u00e9claration : autoentrepreneur.urssaf.fr",""],
@@ -23337,7 +23440,7 @@ async function expPackComptable(){
       [
         ["Prestations services (BIC)", csvNum(totalSvcM)+" \u20AC", _lxTxUrssafLib("svc"), csvNum(cotisSvcM)+" \u20AC", csvNum(totalSvcM-cotisSvcM)+" \u20AC"],
         ["Ventes marchandises (BIC)", csvNum(totalProdM)+" \u20AC", _lxTxUrssafLib("prod"), csvNum(cotisProdM)+" \u20AC", csvNum(totalProdM-cotisProdM)+" \u20AC"],
-        ["TOTAL", csvNum(totalTTC)+" \u20AC", "", csvNum(cotisSvcM+cotisProdM)+" \u20AC", csvNum(totalTTC-cotisSvcM-cotisProdM)+" \u20AC"]
+        ["TOTAL", csvNum(totalSvcM+totalProdM)+" \u20AC", "", csvNum(cotisSvcM+cotisProdM)+" \u20AC", csvNum(totalSvcM+totalProdM-cotisSvcM-cotisProdM)+" \u20AC"]
       ],
       urssafFooter
     ));
@@ -23357,16 +23460,14 @@ async function expPackComptable(){
   _lxJournalVentes(accM).lignes.forEach(function(l){ rCompta.push(["VE","Ventes",l.ecr,l.date,l.compte,l.compteLib,l.piece,l.date,l.lib,l.debit?csvNum(l.debit):"",l.credit?csvNum(l.credit):"","",l.mode]); });
   folder.file("03_journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (écritures comptables)", accM, hCompta, rCompta));
 
-  // 4. Annulations
-  if(annul.length){
-    var rAnnul = annul.map(function(a){var sv=gS(a.sId),cl=gC(a.cId);var clNom=cl?cName(cl):"Passage";return [a.date,a.time||"",a.tkNum||"",a.cancelDate||"",clNom,sv?sv.n:"",csvNum(a.pr||0),a.cancelReason||"(non pr\u00e9cis\u00e9)",(a.hash||"").slice(0,16)];});
-    folder.file("04_annulations_"+accM+".csv", csvBuildPro("Annulations & remboursements", accM, ["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC","Motif d'annulation","Hash"], rAnnul));
-  }
+  // 4. Annulations — 2026-10-13 : même fichier que l'export « Annulations » (annulations d'acompte comprises)
+  try{ window._lxCsvCapture=[]; expAnnulations(); var _ca4=window._lxCsvCapture||[]; if(_ca4[0]) folder.file("04_"+_ca4[0].name, _ca4[0].content); }catch(_e4){} finally{ window._lxCsvCapture=null; }
+
 
   // 5. Bordereau Stripe (si acomptes en ligne)
   if(rdvOnline.length){
     var totalBrut2=0,totalFrais2=0,totalNet2=0;
-    var rStripe = rdvOnline.map(function(r){var remb=!!r.acompteRembourse;var brut=Number(r.acompte)||0;var frais=lxStripeFee(brut);var net=remb?0:Math.round((brut-frais)*100)/100;if(!remb){totalBrut2+=brut;totalFrais2+=frais;totalNet2+=net;}return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(brut),csvNum(frais),csvNum(net),remb?"Rembours\u00e9":(r.status||""),r.stripePaymentId||""];});
+    var rStripe = rdvOnline.map(function(r){var L=_lxStripeLigne(r);totalBrut2+=L.garde;totalFrais2+=L.frais;totalNet2+=L.net;return [r.date,r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",csvNum(L.brut)+(L.remb>0?" (gard\u00e9 "+csvNum(L.garde)+")":""),csvNum(L.frais),csvNum(L.net),L.statut,r.stripePaymentId||""];});
     rStripe.push(["","","","","TOTAL",csvNum(totalBrut2),csvNum(totalFrais2),csvNum(totalNet2),rdvOnline.length+" RDV",""]);
     var stripeFooter = [
       ["Note", "Frais estim\u00e9s selon tarif standard Stripe France 2024-2026 (CB EU 1,5% + 0,25\u20ac)"],
@@ -23375,6 +23476,17 @@ async function expPackComptable(){
     ];
     folder.file("05_bordereau_stripe_"+accM+".csv", csvBuildPro("Bordereau acomptes en ligne (Stripe Connect)", accM, ["Date RDV","Heure","Client","T\u00e9l\u00e9phone","Prestation","Montant acompte (\u20ac)","Frais Stripe estim\u00e9s (1,5% + 0,25\u20ac)","Net re\u00E7u (\u20ac)","Statut","ID Stripe"], rStripe, stripeFooter));
   }
+
+  // 06 / 07 / 08 : paiements en ligne (TVA à l'encaissement), livre des recettes (micro), acomptes non soldés
+  // 2026-10-13 : mêmes fichiers que les boutons d'export, capturés dans le ZIP.
+  try{
+    window._lxCsvCapture=[];
+    try{ await expTvaPaiementsEnLigne(); }catch(_e6){}
+    if(isMicro){ try{ await expLivreRecettes(); }catch(_e7){} }
+    if(typeof expAcomptesNonSoldes==="function"){ try{ await expAcomptesNonSoldes(true); }catch(_e8){} }
+    var _cap=window._lxCsvCapture||[];
+    _cap.forEach(function(f,i){ folder.file((["06_","07_","08_"][i]||("0"+(6+i)+"_"))+f.name, f.content); });
+  }finally{ window._lxCsvCapture=null; }
 
   // 0. Rapport HTML imprimable inclus dans le ZIP (\u00e0 ouvrir dans le navigateur, bouton \ud83d\udda8 \u2192 PDF)
   // Remplace l'ancien LISEZ-MOI.txt (jug\u00e9 inutile par l'utilisateur).
@@ -23563,13 +23675,9 @@ async function expExcelComptable(){
     var sp=_splitPrestProd(a);
     tPrest+=sp.prest; tProd+=sp.prod;
     tRem+=(Number(a.remise)||0); tBrut+=(Number(a.brutTotal||a.pr)||0);
-    var mc=_modeCanonique(a.met);
-    if(mc==="cb")tCB+=sp.total;
-    else if(mc==="esp")tEsp+=sp.total;
-    else if(mc==="chq")tChq+=sp.total;
-    else if(mc==="bon")tBon+=sp.total;
-    else if(mc==="vir")tVir+=sp.total;
-    else { tAut+=sp.total; if(_lxEstEnLigne(a.met)) tEnLX+=sp.total; }
+    // 2026-10-13 : vraie répartition des règlements (paiements mixtes, acompte en ligne déduit) comme la clôture Z
+    var _bx=_lxPayBuckets(a);
+    tCB+=_bx.cb; tEsp+=_bx.esp; tChq+=_bx.chq; tBon+=_bx.bon; tVir+=_bx.vir; tAut+=(_bx.aut||0)+(_bx.enligne||0); tEnLX+=(_bx.enligne||0);
   });
   ps2.forEach(function(pp){
     tProd+=(Number(pp.pr)||0);
@@ -23624,7 +23732,7 @@ async function expExcelComptable(){
     ["Chèques", tChq],
     ["Bons cadeaux / avoirs", tBon],
     ["Virements", tVir],
-    [tEnLX>0.004?("Autres (dont payés en ligne : "+(Math.round(tEnLX*100)/100).toFixed(2).replace(".",",")+" €)"):"Autres", tAut],
+    [tEnLX>0.004?("Autres (dont payés en ligne — acomptes en ligne déduits, acomptes conservés, empreintes : "+(Math.round(tEnLX*100)/100).toFixed(2).replace(".",",")+" €)"):"Autres", tAut],
     ["TOTAL RÈGLEMENTS", totRegl],                                      // 29 total
     ["Écart CA / Règlements", ecart],                                   // 30 eur
     [],                                                                 // 31 vide
@@ -23697,7 +23805,7 @@ async function expExcelComptable(){
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"× "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, a.met||"", "Encaissé", src, a.hash, a);
+    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, _lxModeDetail(a), "Encaissé", src, a.hash, a);
   });
   ps2.forEach(function(p){
     pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "Luxyra", "", {pr:Number(p.pr)||0,items:[{price:Number(p.pr)||0,qty:1,remise:0,isProd:true}]});
@@ -23723,6 +23831,7 @@ async function expExcelComptable(){
     var totalSvcM=0, totalProdM=0;
     dn.forEach(function(a){ var sp=_splitPrestProd(a); totalSvcM += Number(sp.prest)||0; totalProdM += Number(sp.prod)||0; }); // 2026-10-11 : montant encaissé
     ps2.forEach(function(pp){ totalProdM += Number(pp.pr)||0; });
+    try{ var _ajX=await _lxAjustEnLigneMois(accM); totalSvcM=Math.round((totalSvcM+_ajX.svc)*100)/100; totalProdM=Math.round((totalProdM+_ajX.prod)*100)/100; }catch(_eAX){}
     var cotisSvcM = Math.round(totalSvcM * _lxTxUrssaf("svc") * 100) / 100;
     var cotisProdM = Math.round(totalProdM * _lxTxUrssaf("prod") * 100) / 100;
     var urssafD = [
@@ -23828,12 +23937,9 @@ async function expExcelComptable(){
     ];
     var totBrut=0, totFrais=0, totNet=0;
     rdvOnline.forEach(function(r){
-      var remb=!!r.acompteRembourse;
-      var brut=Number(r.acompte)||0;
-      var frais = (typeof lxStripeFee==="function") ? lxStripeFee(brut) : Math.round((brut*0.015+0.25)*100)/100;
-      var net=remb?0:Math.round((brut-frais)*100)/100;
-      if(!remb){ totBrut+=brut; totFrais+=frais; totNet+=net; }
-      stripeD.push([toDate(r.date),r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",brut,frais,net,remb?"Rembours\u00e9":(r.status||""),r.stripePaymentId||""]);
+      var L=_lxStripeLigne(r);
+      totBrut+=L.garde; totFrais+=L.frais; totNet+=L.net;
+      stripeD.push([toDate(r.date),r.heure||"",(r.nom||"")+" "+(r.prenom||""),r.tel||"",r.svcNom||"",L.garde,L.frais,L.net,L.statut,r.stripePaymentId||""]);
     });
     stripeD.push(["","","","","TOTAL", totBrut, totFrais, totNet, rdvOnline.length+" RDV", ""]);
     XLSX.utils.book_append_sheet(wb, makeSheet(stripeD, {
@@ -24168,7 +24274,7 @@ function printBandeZ(){
   h+="<tr><td>Ch\u00e8ques</td><td class=\"r\">"+tChq.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Bons cadeaux / avoirs</td><td class=\"r\">"+tBon.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Virements</td><td class=\"r\">"+tVir.toFixed(2)+" \u20ac</td></tr>";
-  if(tEnL>0)h+="<tr><td>Pay\u00e9s en ligne (Click &amp; Collect)</td><td class=\"r\">"+tEnL.toFixed(2)+" \u20ac</td></tr>";
+  if(tEnL>0)h+="<tr><td>Pay\u00e9s en ligne (acomptes en ligne d\u00e9duits, acomptes conserv\u00e9s, empreintes, Click &amp; Collect)</td><td class=\"r\">"+tEnL.toFixed(2)+" \u20ac</td></tr>";
   if(tAut>0)h+="<tr><td>Autre</td><td class=\"r\">"+tAut.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr class=\"total\"><td>TOTAL R\u00c8GLEMENTS</td><td class=\"r\">"+totRegl.toFixed(2)+" \u20ac</td></tr></table>";
   var ecart=Math.round((tTotal-totRegl)*100)/100;
@@ -24358,7 +24464,7 @@ function rStats(){
     if(a.items && a.items.length){
       a.items.forEach(function(it){
         if(it.isSep) return;
-        if(a.isCancel || it.isAcompteDeduct || it.isAcompteData) return; // 2026-10-11 : pas une vente
+        if(a.isCancel || it.isAcompteDeduct || it.isAcompteData || it.isAcompte || it.isRetenue || it.isAcompteCancel) return; // 2026-10-13 : un acompte n'est pas une prestation de plus
         var qty=(Number(it.qty)||1);
         if(it.isProd){hasProd=true;qtyPd+=qty;}
         else{hasServ=true;qtyPr+=qty;}
@@ -25039,6 +25145,8 @@ function rStats(){
   var svcCA={};
   dn.forEach(function(a){
     if(a.items){a.items.forEach(function(it){
+      // 2026-10-13 : acomptes regroupés sur des lignes à part (la prestation n'est comptée qu'une fois, le total reste juste)
+      if(!it.isProd&&!it.isSep&&!a.isCancel&&(it.isAcompte||it.isRetenue||it.isAcompteCancel||it.isAcompteDeduct)){var kA=it.isRetenue?"Acomptes conserv\u00e9s / empreintes":(it.isAcompteDeduct?"Acomptes d\u00e9j\u00e0 encaiss\u00e9s (d\u00e9duits des prestations)":"Acomptes encaiss\u00e9s (prestations \u00e0 r\u00e9aliser)");if(!svcCA[kA])svcCA[kA]={name:kA,qty:0,ca:0};svcCA[kA].ca+=it.price*it.qty-(it.remise||0);return;}
       if(!it.isProd&&!it.isSep&&!a.isCancel&&!it.isAcompteDeduct&&!it.isAcompteData){var key=it.name||"Prestation";if(!svcCA[key])svcCA[key]={name:key,qty:0,ca:0};svcCA[key].qty++;svcCA[key].ca+=it.price*it.qty-(it.remise||0);}
     });}else{var sv2=gS(a.sId);var sn=sv2?sv2.n:"Prestation";if(!svcCA[sn])svcCA[sn]={name:sn,qty:0,ca:0};svcCA[sn].qty++;svcCA[sn].ca+=a.pr*taxR;}
   });
@@ -25162,7 +25270,7 @@ function rStats(){
         a.items.forEach(function(it){
           if(it.isSep) return;
           if(it.isProd) return; // produits = pas d'occupation chaise
-          if(it.isBon||it.isCarteAbo||it.isAcompteDeduct||(it.isPack&&!it.sId)||(Number(it.price)||0)<0) return; // 2026-10-08 : pas une prestation
+          if(it.isBon||it.isCarteAbo||it.isAcompteDeduct||it.isAcompte||it.isRetenue||(it.isPack&&!it.sId)||(Number(it.price)||0)<0) return; // 2026-10-08 / 10-13 : pas une prestation
           if(it.isForfait){ _iDur += _lxItemDuree(it); return; }
           var itQty = (Number(it.qty)||1);
           if(it.sId){
@@ -26695,7 +26803,7 @@ function doSaveAcompte(apptId){
     fromCaisse:true
   };
   if(typeof chainTicket==="function") chainTicket(acompteTicket); // 2026-10-11 : chaînage comme tous les tickets
-  AP.push(acompteTicket);
+  AP.push(acompteTicket); window._lastSealedApptId=acompteTicket.id; // 2026-10-13 : 1re impression = original (pas un duplicata)
   if(typeof saveAppointment==="function")saveAppointment(acompteTicket);
   if(typeof saveTicketToDb==="function")saveTicketToDb(acompteTicket); // NF525
   // FIX 2026-07-11 : memorise le NUMERO du ticket d acompte sur le RDV (et dans l item
@@ -26742,6 +26850,8 @@ function nextTicketNum(){
   return max+1;
 }
 function printAcompteReceipt(tkNum,amount,apptId){
+  // 2026-10-13 : impression du ticket d'acompte SCELLÉ (mentions légales, HT/TVA, empreinte, n° de caisse) au lieu d'un reçu simplifié
+  try{ for(var _k=AP.length-1;_k>=0;_k--){ var _t=AP[_k]; if(_t&&_t.isAcompte&&Number(_t.tkNum)===Number(tkNum)&&typeof reprintTicket==="function"){ reprintTicket(_t.id); return; } } }catch(_eR){}
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId||AP[i].apptId===apptId){a=AP[i];break;}}
   var sv=a?gS(a.sId):null;var cl=a?gC(a.cId):null;var sty=a?gT(a.stId):null;
   var w=window.open("","_blank","width=320,height=500");if(!w)return;
@@ -27699,6 +27809,8 @@ function showCaisse(){
       var _hasMulti = _tk.payments && _tk.payments.length > 0;
       var _btnLabel = _hasMulti ? "\u2705 Encaisser et imprimer le ticket" : "\u2705 Valider le ticket \u00e0 0,00 \u20ac";
       var _btnAction = _hasMulti ? "finalizePay('done')" : "finalizePay('S\u00e9ance abonnement')";
+      // 2026-10-13 : reste à payer nul parce que l'ACOMPTE PAYÉ EN LIGNE couvre tout -> le ticket indique le vrai règlement
+      try{ if(!_hasMulti && Number(_tk.acompte)>0 && typeof _lxIsAcompteOnline==="function" && _lxIsAcompteOnline(_tk.acompteMode)){ _btnAction="finalizePay('En ligne (Stripe)')"; _btnLabel="\u2705 Valider le ticket (r\u00e9gl\u00e9 par l\u2019acompte pay\u00e9 en ligne)"; } }catch(_eAcZ){}
       h+='<div style="padding:14px">';
       h+='<button onclick="'+_btnAction+'" style="width:100%;padding:18px;font-size:16px;font-weight:800;border:none;border-radius:12px;background:linear-gradient(135deg,#2d9a5e,#1b7a3e);color:#fff;cursor:pointer;box-shadow:0 4px 12px rgba(45,154,94,.3)">'+_btnLabel+'</button>';
       if(_hasMulti){
@@ -27757,7 +27869,7 @@ function tkAddServiceFor(forCId){
   tkAddService();
 }
 
-function showAddMenu(){var cId=_tk.cId;var activePacks=(window.PACKS_CLIENTS||[]).filter(function(p){return p.clientId===cId&&p.status==="active"&&p.used<p.total;});var h='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;color:#fff;padding:20px;max-width:400px;width:100%;text-align:center">';h+='<div style="font-family:var(--f1);font-size:16px;font-weight:800;color:var(--gold);margin-bottom:16px">Que souhaitez-vous ajouter ?</div>';h+='<div style="display:flex;flex-direction:column;gap:8px">';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">'+getMetierConfig().icon+'</span><span style="flex:1;text-align:left">Prestation</span></button>';h+='<button onclick="tkAddProduct()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83e\uddf4</span><span style="flex:1;text-align:left">Produit</span></button>';h+='<button onclick="tkAddPack()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(200,168,78,.3);border-radius:12px;background:rgba(200,168,78,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83c\udf9f\ufe0f</span><span style="flex:1;text-align:left">Vendre un pack promo</span></button>';if(cartesAboEnabled()){h+='<button onclick="venteCarteAboFromCaisse()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb3</span><span style="flex:1;text-align:left">Vendre une carte d\u2019abonnement</span></button>';}if(activePacks.length>0){h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:var(--gold);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Utiliser un pack existant</div>';activePacks.forEach(function(pk){h+='<button onclick="usePackInTicket(\''+pk.id+'\')" style="padding:14px 16px;font-size:13px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:18px">\u2705</span><span style="flex:1;text-align:left">'+pk.nom+' <span style="color:rgba(255,255,255,.5);font-weight:400">('+pk.used+'/'+pk.total+' utilis\u00e9es)</span></span></button>';});}h+='</div>';h+='<button style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button>';h+='</div>';document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()" style="display:flex;justify-content:center">'+h+'</div></div>';}
+function showAddMenu(){var cId=_tk.cId;var activePacks=(window.PACKS_CLIENTS||[]).filter(function(p){return p.clientId===cId&&p.status==="active"&&p.used<p.total;});var h='<div style="background:rgba(16,16,20,.96);border:1px solid rgba(255,255,255,.1);border-radius:20px 20px 0 0;color:#fff;padding:20px;max-width:400px;width:100%;text-align:center">';h+='<div style="font-family:var(--f1);font-size:16px;font-weight:800;color:var(--gold);margin-bottom:16px">Que souhaitez-vous ajouter ?</div>';h+='<div style="display:flex;flex-direction:column;gap:8px">';h+='<button onclick="tkAddService()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">'+getMetierConfig().icon+'</span><span style="flex:1;text-align:left">Prestation</span></button>';h+='<button onclick="tkAddProduct()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83e\uddf4</span><span style="flex:1;text-align:left">Produit</span></button>';h+='<button onclick="tkAddLibre()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.04);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\u270d\ufe0f</span><span style="flex:1;text-align:left">Article libre</span></button>';h+='<button onclick="tkAddPack()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(200,168,78,.3);border-radius:12px;background:rgba(200,168,78,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83c\udf9f\ufe0f</span><span style="flex:1;text-align:left">Vendre un pack promo</span></button>';if(cartesAboEnabled()){h+='<button onclick="venteCarteAboFromCaisse()" style="padding:16px;font-size:14px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:20px">\ud83d\udcb3</span><span style="flex:1;text-align:left">Vendre une carte d\u2019abonnement</span></button>';}if(activePacks.length>0){h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:var(--gold);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">Utiliser un pack existant</div>';activePacks.forEach(function(pk){h+='<button onclick="usePackInTicket(\''+pk.id+'\')" style="padding:14px 16px;font-size:13px;font-weight:700;border:1px solid rgba(76,175,80,.3);border-radius:12px;background:rgba(76,175,80,.08);cursor:pointer;color:#fff;display:flex;align-items:center;gap:12px;width:100%"><span style="font-size:18px">\u2705</span><span style="flex:1;text-align:left">'+pk.nom+' <span style="color:rgba(255,255,255,.5);font-weight:400">('+pk.used+'/'+pk.total+' utilis\u00e9es)</span></span></button>';});}h+='</div>';h+='<button style="width:100%;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);font-weight:700;cursor:pointer" onclick="showCaisse()">Retour</button>';h+='</div>';document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()" style="display:flex;justify-content:center">'+h+'</div></div>';}
 
 function usePackInTicket(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
@@ -27821,11 +27933,45 @@ function showConfirm(msg,onYes,onNo){
 })();
 
 // POS grid helpers
-function posAddService(sId){
+// 2026-10-13 : PRESTATION SUR DEVIS — le prix convenu avec le client est saisi au moment de l'ajouter au ticket.
+function _lxPrixDevis(sv, suite){
+  if(!sv||!sv.devis){ suite(Number(sv&&sv.p)||0); return; }
+  showPrompt({title:"\ud83d\udcdd Prix sur devis", label:"Prix convenu (TTC) pour \u00ab "+(sv.n||"Prestation")+" \u00bb", type:"number", defaultValue:(Number(sv.p)>0?sv.p:""), placeholder:"Ex : 180", okLabel:"Ajouter au ticket",
+    onOk:function(v){ var x=Math.round((parseFloat(String(v||"").replace(",","."))||0)*100)/100; if(!(x>0)||x>100000){ toast("Indiquez le prix convenu","warning"); return; } suite(x); }});
+}
+// 2026-10-13 : ARTICLE LIBRE — intitulé + montant saisis, rattaché aux prestations ou aux produits (taux de TVA de
+// l'établissement pour cette catégorie). Ligne normale du ticket : scellée, chaînée, comptée partout comme les autres.
+function tkAddLibre(){
+  var txP=lxTauxTVA(), txQ=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):txP, micro=(typeof isMicroEntrepreneur==="function"&&isMicroEntrepreneur());
+  var h='<div class="mbox" style="max-width:420px"><h2 style="color:var(--gold)">\u270d\ufe0f Article libre</h2>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Pour une prestation ou une vente sans fiche (tatouage sur devis, retouche, suppl\u00e9ment\u2026). L\u2019intitul\u00e9 appara\u00eet tel quel sur le ticket.</div>';
+  h+='<div class="fg"><label>Intitul\u00e9 *</label><input id="lbNom" maxlength="80" placeholder="Ex : Tatouage avant-bras (devis du 12/10)"></div>';
+  h+='<div class="fg"><label>Montant TTC (\u20ac) *</label><input id="lbPrix" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Ex : 180"></div>';
+  h+='<div class="fg"><label>Type</label><div style="display:flex;gap:8px">';
+  h+='<label style="flex:1;display:flex;gap:6px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:10px;font-size:13px"><input type="radio" name="lbType" value="prest" checked> Prestation'+(micro?'':' ('+txP+' %)')+'</label>';
+  h+='<label style="flex:1;display:flex;gap:6px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:10px;font-size:13px"><input type="radio" name="lbType" value="prod"> Produit / vente'+(micro?'':' ('+txQ+' %)')+'</label>';
+  h+='</div></div>';
+  h+='<div style="display:flex;gap:8px;margin-top:6px"><button class="btn" style="flex:1;background:var(--bg)" onclick="showCaisse()">Retour</button><button class="btn bg" style="flex:1" onclick="doAddLibre()">Ajouter</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+  setTimeout(function(){ var n=document.getElementById("lbNom"); if(n) n.focus(); },80);
+}
+function doAddLibre(){
+  var nom=String((document.getElementById("lbNom")||{}).value||"").replace(/\s+/g," ").trim();
+  var x=Math.round((parseFloat(String((document.getElementById("lbPrix")||{}).value||"").replace(",","."))||0)*100)/100;
+  var t=(document.querySelector('input[name="lbType"]:checked')||{}).value||"prest";
+  if(nom.length<2){ toast("Indiquez l\u2019intitul\u00e9 (obligatoire sur le ticket)","warning"); return; }
+  if(!(x>0)||x>100000){ toast("Indiquez un montant valide","warning"); return; }
+  var ni={sId:null,name:nom,price:x,qty:1,remise:0,isLibre:true,isProd:(t==="prod")};
+  if(window._tkAddForClient){var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}else{_tk.items.push(ni);}window._tkAddForClient=null;}else{_tk.items.push(ni);}
+  if(typeof auditLog==="function") auditLog("ARTICLE_LIBRE","Ajout au ticket : "+nom+" - "+x.toFixed(2)+"E ("+(t==="prod"?"produit":"prestation")+")");
+  showCaisse();
+}
+function posAddService(sId, _prixDevis){
   var sv=gS(sId);if(!sv)return;
+  if(sv.devis && _prixDevis===undefined){ _lxPrixDevis(sv, function(x){ posAddService(sId, x); }); return; }
   // Check if already in ticket
   for(var i=0;i<_tk.items.length;i++){
-    if(_tk.items[i].sId===sId&&!_tk.items[i].isSep&&!_tk.items[i].isProd&&!_tk.items[i].isPack){
+    if(!sv.devis&&_tk.items[i].sId===sId&&!_tk.items[i].isSep&&!_tk.items[i].isProd&&!_tk.items[i].isPack){
       _tk.items[i].qty++;showCaisse();return;
     }
   }
@@ -27836,7 +27982,8 @@ function posAddService(sId){
     var pctRemise=isForfait?carteA.remiseForfaits:carteA.remiseServices;
     if(pctRemise>0){remAuto=Math.round(sv.p*pctRemise/100*100)/100;remPct=pctRemise;}
   }
-  _tk.items.push({sId:sId,name:sv.n,price:sv.p,qty:1,remise:remAuto,carteAboRemise:remAuto>0,carteAboPct:remPct});
+  var _px=sv.devis?_prixDevis:sv.p; if(sv.devis&&carteA&&remPct>0) remAuto=Math.round(_px*remPct/100*100)/100;
+  _tk.items.push({sId:sId,name:sv.n,price:_px,qty:1,remise:remAuto,carteAboRemise:remAuto>0,carteAboPct:remPct,devis:!!sv.devis});
   showCaisse();
 }
 function posAddForfait(idx){
@@ -28621,9 +28768,10 @@ function tkAddServiceCat(cat){
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="showCaisse()"><div onclick="event.stopPropagation()">'+h2+'</div></div>';
 }
 
-function doAddTkSvc(svcId){
+function doAddTkSvc(svcId, _prixDevis){
   var sv=gS(svcId);if(!sv)return;
-  var ni={sId:svcId,name:sv.n,price:sv.p,qty:1,remise:0};
+  if(sv.devis && _prixDevis===undefined){ var _fc=window._tkAddForClient; _lxPrixDevis(sv, function(x){ window._tkAddForClient=_fc; doAddTkSvc(svcId, x); }); return; }
+  var ni={sId:svcId,name:sv.n,price:(sv.devis?_prixDevis:sv.p),qty:1,remise:0,devis:!!sv.devis};
   if(window._tkAddForClient){var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}else{_tk.items.push(ni);}window._tkAddForClient=null;}else{_tk.items.push(ni);}
   showCaisse();
 }
@@ -29956,6 +30104,8 @@ function doFinalPayExecute(method){
     // FIX 2026-07-11 : ligne de deduction de l acompte SALON (deja scelle) — flag persiste
     // pour la tracabilite (aucun impact calcul : c est un item normal a prix negatif).
     if(it.isAcompteDeduct){o.isAcompteDeduct=true;o.acompteTkNum=it.acompteTkNum||null;}
+    if(it.isLibre)o.isLibre=true; // 2026-10-13 : article libre (intitulé + montant saisis)
+    if(it.devis)o.devis=true;     // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
     if(it.sId)o.sId=it.sId;
     if(it.fidApplied)o.fidApplied=true;
     return o;
@@ -35033,7 +35183,7 @@ function genererBandeMensuelle(){
   var txTVA=lxTauxTVA();
   
   // Tickets du mois
-  var tickets=AP.filter(function(a){return a.st==="done"&&a.date&&a.date.indexOf(mois)===0&&!a.cancelled;}).sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
+  var tickets=AP.filter(function(a){return a.st==="done"&&a.date&&a.date.indexOf(mois)===0&&(typeof _lxCaOk==="function"?_lxCaOk(a):!a.cancelled);}).sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
   var annuls=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(mois)===0;});
   var contreTickets=AP.filter(function(a){return a.isCancel&&a.date&&a.date.indexOf(mois)===0;}).sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
   var clotures=window.CLOTURES?window.CLOTURES.filter(function(c){return c.date&&c.date.indexOf(mois)===0;}):[];
@@ -35071,9 +35221,10 @@ function genererBandeMensuelle(){
     var htT=Math.round(t.pr*100/(100+txTVA)*100)/100;
     h+="<tr><td>"+(t.tkNum||"--")+"</td><td>"+t.date.slice(5)+"</td><td>"+(t.time||"")+"</td>";
     h+="<td>"+(cl?cName(cl):passageName(t.cId,t.sId))+"</td>";
-    h+="<td>"+(sv?sv.n:"")+"</td>";
+    var _det=(t.items&&t.items.length)?t.items.filter(function(it){return it&&!it.isSep;}).map(function(it){return it.name||"";}).join(" + "):(sv?sv.n:""); // 2026-10-13 : libellés réels (acompte, acompte conservé…)
+    h+="<td>"+_lxEsc(_det)+"</td>";
     h+="<td class='r'>"+t.pr.toFixed(2)+"</td><td class='r'>"+htT.toFixed(2)+"</td>";
-    h+="<td>"+(t.met||"")+"</td></tr>";
+    h+="<td>"+_lxEsc(_lxModeDetail(t))+"</td></tr>";
   });
   h+="<tr class='tot'><td colspan='5'>TOTAL TICKETS</td><td class='r'>"+totalTTC.toFixed(2)+" \u20ac</td><td class='r'>"+totalHT.toFixed(2)+" \u20ac</td><td></td></tr></table>";
   
@@ -35319,6 +35470,7 @@ async function exportFEC(){
     var m=String(mode||"").toLowerCase();
     if(m.indexOf("esp")>=0||m.indexOf("cash")>=0) return ACC_CAISSE;
     if(m.indexOf("cadeau")>=0||m.indexOf("avoir")>=0) return ACC_CARTE_CADEAU;
+    if(m.indexOf("en ligne")>=0||m.indexOf("stripe")>=0) return "580100"; // 2026-10-13 : acompte conservé / empreinte (« En ligne (Stripe) »)
     return ACC_BANQUE;
   }
   // FIX 2026-05-23 : ventile le reglement par detail_paiement (especes->caisse 530,
@@ -35327,6 +35479,7 @@ async function exportFEC(){
   function _accForBucket(b){
     if(b==="esp") return {acc:ACC_CAISSE, lib:"Caisse"};
     if(b==="bon") return {acc:ACC_CARTE_CADEAU, lib:"Bon cadeau / avoir"};
+    if(b==="enligne") return {acc:"580100", lib:"Paiements en ligne (Stripe) \u2014 acomptes"}; // 2026-10-13 : compte d'attente Stripe (comme le journal des ventes), pas la banque
     return {acc:ACC_BANQUE, lib:"Banque / CB"};
   }
   function _fecLegs(t, ttc){
@@ -35355,7 +35508,7 @@ async function exportFEC(){
     ecrNum++;
     var dateE=fmtDate(t.date_ticket);
     var pieceRef="TK"+String(t.num||0).padStart(6,"0");
-    var libBase=((t.client_prenom||"")+" "+(t.client_nom||"")).trim()||"Vente comptoir";
+    var libBase=(((t.client_prenom||"")+" "+(t.client_nom||"")).trim()||"Vente comptoir")+_lxLibAcompte(t.items||(t.raw_data&&t.raw_data.items)||[], (t.raw_data&&_lxIsAcompteOnline&&_lxIsAcompteOnline(t.raw_data.acompteMode))?t.raw_data.acompte:0);
     var totalTTC=Number(t.total_ttc)||0;
     var totalHT=Number(t.total_ht)||(totalTTC/(1+tva/100));
     var totalTVA=Number(t.total_tva)||(totalTTC-totalHT);
@@ -35412,6 +35565,35 @@ async function exportFEC(){
 // (espèces/CB/en ligne/chèque/autres) sur comptes de transit (classe 58).
 // Comptes 100% configurables. ADDITIF : ne touche à aucun flux existant.
 // ============================================================
+// 2026-10-13 : précision « acompte » dans les libellés comptables (journal des ventes, FEC) : acompte encaissé en caisse,
+// acompte déduit, annulation d'acompte, acompte conservé, empreinte encaissée, acompte payé en ligne déduit.
+// 2026-10-13 : « Mode de paiement » détaillé pour les exports (paiements mixtes + acompte payé en ligne déduit)
+// 2026-10-13 : ligne de relevé Stripe d'un acompte en ligne : payé, remboursé (total ou partiel), gardé, frais, net.
+// Stripe ne rend pas ses frais en cas de remboursement : un acompte remboursé coûte les frais (net négatif).
+function _lxStripeLigne(r){
+  var brut=Math.round((Number(r.acompte)||0)*100)/100;
+  var remb=r.acompteRembourse?brut:Math.min(brut, Math.round((Number(r.acompteRembourseMontant)||0)*100)/100);
+  var frais=(typeof lxStripeFee==="function")?lxStripeFee(brut):Math.round((brut*0.015+0.25)*100)/100;
+  var garde=Math.round((brut-remb)*100)/100, net=Math.round((garde-frais)*100)/100;
+  var st=remb>=brut&&brut>0?"Rembours\u00e9":(remb>0?("Rembours\u00e9 en partie ("+remb.toFixed(2).replace(".",",")+" \u20ac)"):(r.status||""));
+  return {brut:brut, remb:remb, garde:garde, frais:frais, net:net, statut:st};
+}
+function _lxModeDetail(a){
+  try{
+    var b=_lxPayBuckets(a), L={cb:"CB",esp:"Esp\u00e8ces",chq:"Ch\u00e8que",vir:"Virement",enligne:"Pay\u00e9 en ligne (acompte)",bon:"Bon cadeau/avoir",aut:"Autre"}, out=[];
+    ["cb","esp","chq","vir","enligne","bon","aut"].forEach(function(k){ var v=Number(b[k])||0; if(Math.abs(v)>0.004) out.push(L[k]+" "+v.toFixed(2).replace(".",",")); });
+    if(out.length>1||(out.length===1&&Math.abs((Number(b.enligne)||0))>0.004)) return out.join(" + ");
+    return a.met||"";
+  }catch(e){ return a.met||""; }
+}
+function _lxLibAcompte(items, acompteEnLigne){
+  try{
+    var n=(items||[]).filter(function(it){ return it&&(it.isAcompte||it.isRetenue||it.isAcompteDeduct||it.isAcompteCancel); }).map(function(it){ return String(it.name||"").slice(0,80); });
+    var ac=Number(acompteEnLigne)||0;
+    if(ac>0.004) n.push("dont acompte pay\u00e9 en ligne "+ac.toFixed(2).replace(".",",")+" \u20ac");
+    return n.length?(" \u2014 "+n.join(" ; ")):"";
+  }catch(e){ return ""; }
+}
 function _comptaAccounts(){
   var d = { services:"70612000", produits:"70712000", bonsCadeaux:"70730000",
     tva:"44571000", caisse:"53000000", especes:"58300000", cb:"58000000",
