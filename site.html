@@ -2872,18 +2872,29 @@ async function lxFavToggle(){
 // 2026-10-13 : alerte « une place s'est libérée » (prestation précise : la durée compte)
 function lxAlerteOuvrir(){
   if(!(window.LX&&LX.hasSession&&LX.hasSession())){ if(typeof showAuthModal==="function") showAuthModal("login"); return; }
-  var L=(SERVICES||[]).filter(function(x){ return x.bookOnline!==false; });
+  var L=(SERVICES||[]).filter(function(x){ return x.bookOnline===true; }); // réservables en ligne uniquement (pas « sur demande »)
   if(!L.length){ alert("Aucune prestation r\u00e9servable en ligne."); return; }
   var pre=(booking&&booking.items&&booking.items[0]&&booking.items[0].svcId)||(booking&&booking.svcId)||"";
   var d0=(booking&&booking.date)||"";
   var h='<div id="lxAlerteM" onclick="if(event.target===this)this.remove()" style="position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px"><div style="background:#14120f;border:1px solid rgba(212,168,67,.35);border-radius:16px;max-width:420px;width:100%;padding:22px">';
   h+='<div style="font-size:19px;font-weight:700;color:var(--gold);margin-bottom:6px">\ud83d\udd14 M\u2019alerter si une place se lib\u00e8re</div>';
   h+='<div style="font-size:12.5px;color:var(--text3);margin-bottom:14px">Nous vous pr\u00e9venons par e-mail d\u00e8s qu\u2019un cr\u00e9neau assez long pour votre prestation se lib\u00e8re. La place revient \u00e0 la premi\u00e8re personne qui r\u00e9serve.</div>';
-  h+='<label style="font-size:12px;color:var(--text2)">Prestation</label><select id="lxAlSvc" style="width:100%;margin:4px 0 12px;padding:10px;border-radius:10px;background:#0b0b0b;color:#fff;border:1px solid rgba(255,255,255,.15)">';
-  L.forEach(function(x){ h+='<option value="'+x.id+'"'+(String(x.id)===String(pre)?' selected':'')+'>'+escapeHtmlSimple(x.n)+' ('+(((x.phases||[]).reduce(function(t,p){return t+(Number(p&&p.d)||0);},0))||30)+' min)</option>'; });
-  h+='</select><label style="font-size:12px;color:var(--text2)">Quand ?</label><select id="lxAlPer" style="width:100%;margin:4px 0 12px;padding:10px;border-radius:10px;background:#0b0b0b;color:#fff;border:1px solid rgba(255,255,255,.15)">';
+  // 2026-10-13 : prestations groupées par catégorie (ordre du salon), uniquement celles réservables en ligne
+  var _cats={}, _ord=(window.SITE_CATS_ORDER||[]);
+  L.forEach(function(x){ var c=x.cat||"Autres"; (_cats[c]=_cats[c]||[]).push(x); });
+  var _cn=Object.keys(_cats).sort(function(a,b){ var ia=_ord.indexOf(a), ib=_ord.indexOf(b); if(ia<0&&ib<0) return a.localeCompare(b); if(ia<0) return 1; if(ib<0) return -1; return ia-ib; });
+  h+='<label style="font-size:12px;color:var(--text2)">Prestation</label><div id="lxAlSvcList" style="max-height:38vh;overflow-y:auto;margin:4px 0 12px;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:4px 10px">';
+  _cn.forEach(function(c){
+    h+='<div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gold);font-weight:700;margin:10px 0 4px">'+escapeHtmlSimple(c)+'</div>';
+    _cats[c].forEach(function(x){
+      var du=((x.phases||[]).reduce(function(t,p){return t+(Number(p&&p.d)||0);},0))||30;
+      h+='<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer"><input type="radio" name="lxAlSvc" value="'+x.id+'"'+(String(x.id)===String(pre)?' checked':'')+' style="accent-color:#c8a84e"><span style="flex:1;font-size:14px;color:#fff">'+escapeHtmlSimple(x.n)+'</span><span style="font-size:12px;color:var(--text3)">'+du+' min \u00b7 '+(Number(x.p)||0).toFixed(2)+' \u20ac</span></label>';
+    });
+  });
+  h+='</div>';
+  h+='<label style="font-size:12px;color:var(--text2)">Quand ?</label><select id="lxAlPer" style="width:100%;margin:4px 0 12px;padding:10px;border-radius:10px;background:#0b0b0b;color:#fff;border:1px solid rgba(255,255,255,.15)">';
   if(d0) h+='<option value="jour">Le '+formatDateFR(d0)+' uniquement</option>';
-  h+='<option value="7">Dans les 7 prochains jours</option><option value="14">Dans les 14 prochains jours</option><option value="30">Dans les 30 prochains jours</option></select>';
+  h+='<option value="3">Dans les 3 prochains jours</option><option value="7">Dans les 7 prochains jours</option><option value="14">Dans les 14 prochains jours</option><option value="30">Dans les 30 prochains jours</option></select>';
   h+='<label style="font-size:12px;color:var(--text2)">Moment</label><select id="lxAlPlage" style="width:100%;margin:4px 0 16px;padding:10px;border-radius:10px;background:#0b0b0b;color:#fff;border:1px solid rgba(255,255,255,.15)"><option value="tous">Peu importe</option><option value="matin">Le matin</option><option value="apres_midi">L\u2019apr\u00e8s-midi</option><option value="soir">En fin de journ\u00e9e (apr\u00e8s 17 h)</option></select>';
   h+='<div id="lxAlErr" style="color:#f87171;font-size:12px;margin-bottom:8px"></div><div style="display:flex;gap:8px"><button class="btn btn-outline" style="flex:1" onclick="document.getElementById(\'lxAlerteM\').remove()">Annuler</button><button class="btn btn-gold" style="flex:2" id="lxAlGo" onclick="lxAlerteCreer()">Cr\u00e9er l\u2019alerte</button></div></div></div>';
   document.body.insertAdjacentHTML("beforeend",h);
@@ -2894,7 +2905,7 @@ async function lxAlerteCreer(){
   if(per==="jour"){ d1=d2=booking.date; } else { d1=f(t); var e=new Date(t.getTime()+Number(per)*864e5); d2=f(e); }
   var btn=document.getElementById("lxAlGo"); btn.disabled=true; btn.textContent="Envoi\u2026";
   try{
-    var r=await fetch("/api/client/alertes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:LX.getToken(),op:"create",salon_id:SALON.id,service_id:document.getElementById("lxAlSvc").value,date_debut:d1,date_fin:d2,plage:document.getElementById("lxAlPlage").value})});
+    var r=await fetch("/api/client/alertes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:LX.getToken(),op:"create",salon_id:SALON.id,service_id:((document.querySelector('input[name="lxAlSvc"]:checked')||{}).value||""),date_debut:d1,date_fin:d2,plage:document.getElementById("lxAlPlage").value})});
     var d=await r.json();
     if(!r.ok){ document.getElementById("lxAlErr").textContent=d.error||"Erreur"; btn.disabled=false; btn.textContent="Cr\u00e9er l\u2019alerte"; return; }
     document.getElementById("lxAlerteM").remove();
