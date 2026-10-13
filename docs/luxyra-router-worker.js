@@ -173,6 +173,7 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/client/cartes" && request.method === "POST") return await handleClientCartes(request, env);
       if (url.pathname === "/api/client/fidelite" && request.method === "POST") return await handleClientFidelite(request, env);
       if (url.pathname === "/api/client/rdvs" && request.method === "POST") return await handleClientRdvs(request, env);
+      if (url.pathname === "/api/client/favoris" && request.method === "POST") return await handleClientFavoris(request, env);
       if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
       if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
       // Invitations clients (magic link "créer mot de passe")
@@ -3563,6 +3564,40 @@ async function handleClientFidelite(request, env) {
 }
 
 // GET RDV en ligne du client (cross-salons par défaut, filtrable par salon_id)
+// 2026-10-13 : salons favoris d'un compte client (liste / ajout-retrait)
+async function handleClientFavoris(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "Connectez-vous pour gérer vos favoris" }, 401);
+    const lx = encodeURIComponent(session.lx_id);
+    const H = _sbHeaders(env);
+    const op = String(body.op || "list");
+    if (op === "toggle") {
+      const sid = String(body.salon_id || "");
+      if (!/^[0-9a-f-]{36}$/i.test(sid)) return jsonResponse({ error: "salon invalide" }, 400);
+      const ex = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_favoris?client_luxyra_id=eq.${lx}&salon_id=eq.${sid}&select=salon_id`, { headers: H })).json();
+      if (Array.isArray(ex) && ex.length) {
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_favoris?client_luxyra_id=eq.${lx}&salon_id=eq.${sid}`, { method: "DELETE", headers: H });
+      } else {
+        const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_favoris`, { method: "POST", headers: { ...H, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ client_luxyra_id: session.lx_id, salon_id: sid }) });
+        if (!r.ok) return jsonResponse({ error: "Ajout impossible" }, 400);
+      }
+    }
+    const rows = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_favoris?client_luxyra_id=eq.${lx}&select=salon_id,created_at&order=created_at.desc&limit=100`, { headers: H })).json();
+    const ids = (Array.isArray(rows) ? rows : []).map((x) => x.salon_id);
+    let salons = [];
+    if (ids.length) {
+      const sp = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons_public?id=in.(${ids.join(",")})&select=id,nom,slug,ville,metier,note_moyenne,nb_avis`, { headers: H })).json();
+      const byId = {}; (Array.isArray(sp) ? sp : []).forEach((x) => { byId[x.id] = x; });
+      salons = ids.map((id) => byId[id]).filter(Boolean);
+    }
+    return jsonResponse({ ok: true, favoris: salons });
+  } catch (e) {
+    return jsonResponse({ error: "Erreur favoris" }, 500);
+  }
+}
 async function handleClientRdvs(request, env) {
   try {
     const body = await request.json().catch(() => null);

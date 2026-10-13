@@ -1013,7 +1013,7 @@ async function loadSalon(){
       tc: sb.from("collaborateurs").select("*").eq("salon_id",salonId).eq("actif",true),
       sv: sb.from("services").select("*").eq("salon_id",salonId).eq("actif",true).eq("show_site",true).order("ordre",{ascending:true,nullsFirst:false}).order("nom",{ascending:true}),
       pr: sb.from("produits").select("*").eq("salon_id",salonId).order("nom"),
-      avis: sb.from("avis_salon").select("id, nom, note, texte, date, created_at, salon_reply, salon_reply_at").eq("salon_id",salonId).eq("approved",true).eq("reported",false).eq("hidden_by_luxyra",false).order("created_at",{ascending:false}).limit(20)
+      avis: sb.from("avis_salon").select("id, nom, note, texte, date, created_at, salon_reply, salon_reply_at, note_accueil, note_proprete, note_cadre, note_qualite, photos").eq("salon_id",salonId).eq("approved",true).eq("reported",false).eq("hidden_by_luxyra",false).order("created_at",{ascending:false}).limit(20)
     };
     Object.keys(_P).forEach(function(k){ _P[k]=Promise.resolve(_P[k]).catch(function(e){ return {data:null,error:e}; }); });
     var r=await sb.from("salons_public").select("*").eq("id",salonId).limit(1);
@@ -1261,6 +1261,7 @@ async function loadSalon(){
     else HORAIRES={0:null,1:null,2:null,3:null,4:null,5:null,6:null};
 
     renderSite();
+    try{ lxFavCharger(); }catch(_eF){}
 
     // ?book=<svcId> dans l'URL → auto-redirige vers le booking avec ce service
     // (utilisé par "Reprendre ce RDV" depuis Mon compte)
@@ -1436,7 +1437,7 @@ async function ensureClientSalon(clientId){
 function doClientLogout(){
   CLIENT=null;CLIENT_RDVS=[];
   try{ if(window.LX&&LX.logout) LX.logout(); }catch(_e){}
-  try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); }catch(_e){}
+  try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); localStorage.removeItem("lx_favoris"); }catch(_e){}
   try{sessionStorage.removeItem("cp_client");}catch(e){}
   renderSite();
 }
@@ -1603,6 +1604,8 @@ function renderSite(){
   }
   h+='<div class="salon-hero-meta">'+getMetierLabel()+(SALON.ville?' \u00b7 '+SALON.ville:'')+'</div>';
   h+='<h1 class="salon-hero-name">'+SALON.nom+'</h1>';
+  // 2026-10-13 : salon favori (compte client)
+  h+='<button type="button" id="lxFavBtn" onclick="lxFavToggle()" style="margin:0 auto 10px;display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:30px;border:1px solid rgba(212,168,67,.45);background:rgba(0,0,0,.35);color:#fff;font-size:13px;font-weight:600;cursor:pointer">'+(window._lxFavOn?'\u2764\ufe0f Dans mes favoris':'\u2661 Ajouter aux favoris')+'</button>';
   if(SALON.sousTitre)h+='<div class="salon-hero-sub">'+SALON.sousTitre+'</div>';
   if(SITE_CFG.slogan)h+='<div class="salon-hero-slogan">"'+SITE_CFG.slogan+'"</div>';
   h+='<div class="salon-hero-info"><span>\ud83d\udccd '+adr+'</span>';
@@ -1865,6 +1868,13 @@ function renderSite(){
       h+='<div style="font-size:13px;color:var(--text3);margin-top:4px">Sur '+nbAvis+' avis v\u00e9rifi\u00e9s</div></div>';
       h+='</div>';
     }
+    // 2026-10-13 : moyennes par critère (comme Planity) quand au moins un avis les renseigne
+    try{
+      var _C=[["note_accueil","Accueil"],["note_proprete","Propret\u00e9"],["note_cadre","Cadre & ambiance"],["note_qualite","Qualit\u00e9 de la prestation"]], _cr='';
+      _C.forEach(function(c){ var v=avisList.map(function(a){return Number(a[c[0]]||0);}).filter(function(x){return x>0;}); if(!v.length) return; var m=v.reduce(function(t,x){return t+x;},0)/v.length;
+        _cr+='<div style="display:flex;align-items:center;gap:10px;margin:4px 0"><span style="flex:0 0 150px;font-size:13px;color:var(--text2)">'+c[1]+'</span><div style="flex:1;height:6px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden"><div style="width:'+Math.round(m/5*100)+'%;height:100%;background:var(--gold)"></div></div><span style="flex:0 0 28px;font-size:13px;color:var(--gold);font-weight:700;text-align:right">'+m.toFixed(1)+'</span></div>'; });
+      if(_cr) h+='<div style="margin:-6px 0 18px">'+_cr+'</div>';
+    }catch(_eC){}
     if(avisList.length){
       avisList.slice(0,5).forEach(function(a){
         var aStars='';for(var ai2=1;ai2<=5;ai2++)aStars+=(ai2<=Number(a.note||0)?'\u2605':'\u2606');
@@ -1873,6 +1883,7 @@ function renderSite(){
         h+='<strong style="color:var(--text)">'+escapeHtmlSimple(a.nom||'Client')+'</strong>';
         h+='<span style="color:var(--gold);letter-spacing:2px;font-size:14px">'+aStars+'</span></div>';
         if(a.texte)h+='<p style="font-size:13px;color:var(--text2);line-height:1.5;margin:6px 0 0">'+escapeHtmlSimple(a.texte)+'</p>';
+        if(Array.isArray(a.photos)&&a.photos.length){ h+='<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'; a.photos.slice(0,3).forEach(function(u){ if(/^https:\/\/[a-z0-9]+\.supabase\.co\/storage\/v1\/object\/public\/avis-photos\//.test(String(u))) h+='<a href="'+escapeAttrSimple(u)+'" target="_blank" rel="noopener"><img src="'+escapeAttrSimple(u)+'" alt="Photo de la r\u00e9alisation" loading="lazy" style="width:86px;height:86px;object-fit:cover;border-radius:10px;border:1px solid rgba(200,168,78,.2)"></a>'; }); h+='</div>'; }
         if(a.date||a.created_at)h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">'+formatDateFR((a.date||a.created_at).split("T")[0])+'</div>';
         // Réponse publique du salon (style Planity)
         if(a.salon_reply){
@@ -2837,6 +2848,23 @@ function lxAppliquerPref(){
     if(ok){ selectTime(p.h); }
     else area.insertAdjacentHTML("afterbegin",'<div style="margin:8px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.35);font-size:13px">Le cr\u00e9neau de '+p.h+' n\u2019est pas disponible pour cette prestation : choisissez un autre horaire ci-dessous.</div>');
   },60);
+}
+async function lxFavCharger(){
+  try{ if(!(window.LX&&LX.hasSession&&LX.hasSession())) return;
+    var r=await fetch("/api/client/favoris",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:LX.getToken(),op:"list"})}); var d=await r.json();
+    if(d&&d.favoris){ try{ localStorage.setItem("lx_favoris",JSON.stringify(d.favoris.map(function(x){return {slug:x.slug,nom:x.nom,ville:x.ville};}))); }catch(_e){}
+      window._lxFavOn=d.favoris.some(function(x){ return SALON&&x.id===SALON.id; }); lxFavMaj(); }
+  }catch(e){}
+}
+function lxFavMaj(){ var b=document.getElementById("lxFavBtn"); if(b) b.innerHTML=window._lxFavOn?'\u2764\ufe0f Dans mes favoris':'\u2661 Ajouter aux favoris'; }
+async function lxFavToggle(){
+  if(!(window.LX&&LX.hasSession&&LX.hasSession())){ if(typeof showAuthModal==="function") showAuthModal("login"); return; }
+  try{
+    var r=await fetch("/api/client/favoris",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:LX.getToken(),op:"toggle",salon_id:SALON.id})}); var d=await r.json();
+    if(!r.ok){ alert(d.error||"Action impossible"); return; }
+    window._lxFavOn=(d.favoris||[]).some(function(x){ return x.id===SALON.id; }); lxFavMaj();
+    try{ localStorage.setItem("lx_favoris",JSON.stringify((d.favoris||[]).map(function(x){return {slug:x.slug,nom:x.nom,ville:x.ville};}))); }catch(_e){}
+  }catch(e){ alert("Action impossible, r\u00e9essayez."); }
 }
 function lxAgendaSite(){
   var r=window._lxDernierRdv; if(!r) return;

@@ -166,7 +166,7 @@ function loadSession(){
   // Fallback legacy localStorage
   try{var d=localStorage.getItem("lx_account");if(d){CLIENT=JSON.parse(d);if(CLIENT.password_hash)delete CLIENT.password_hash;PAGE="dashboard";}}catch(e){}
 }
-function logout(){CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");}catch(e){}render();}
+function logout(){CLIENT=null;CLIENT_RDVS=[];PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
 
 // === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
 // Si l'URL contient ?invite=XXX, on bypasse loadSession et on affiche le form invite.
@@ -392,6 +392,7 @@ function renderDashboard(){
   h+='<div class="tab'+(TAB==="cartes"?" active":"")+'" onclick="TAB=\'cartes\';render()">\ud83d\udcb3 Cartes</div>';
   h+='<div class="tab'+(TAB==="bons_cadeaux"?" active":"")+'" onclick="TAB=\'bons_cadeaux\';loadMyBonsCadeaux()">\ud83c\udf81 Bons cadeaux</div>';
   h+='<div class="tab'+(TAB==="commandes"?" active":"")+'" onclick="TAB=\'commandes\';loadMyCommandes()">\ud83d\udecd Commandes</div>';
+  h+='<div class="tab'+(TAB==="favoris"?" active":"")+'" onclick="TAB=\'favoris\';loadMyFavoris()">\u2764\ufe0f Favoris</div>';
   h+='<div class="tab'+(TAB==="profile"?" active":"")+'" onclick="TAB=\'profile\';render()">\ud83d\udc64 Profil</div>';
   h+='<div class="tab'+(TAB==="settings"?" active":"")+'" onclick="TAB=\'settings\';render()">\u2699\ufe0f R\u00e9glages</div>';
   h+='</div>';
@@ -403,6 +404,7 @@ function renderDashboard(){
   else if(TAB==="cartes")h+=renderCartesTab();
   else if(TAB==="bons_cadeaux")h+=renderBonsCadeauxTab();
   else if(TAB==="commandes")h+=renderCommandesTab();
+  else if(TAB==="favoris")h+=renderFavorisTab();
   else if(TAB==="profile")h+=renderProfileTab();
   else if(TAB==="settings")h+=renderSettingsTab();
   
@@ -569,6 +571,36 @@ function renderPhotosTab(){
     h += '</div>';
   });
   return h;
+}
+
+// --- FAVORIS (2026-10-13) ---
+window.MY_FAVORIS=null;
+async function loadMyFavoris(){
+  window.MY_FAVORIS=null; render();
+  try{
+    var r=await fetch("/api/client/favoris",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:(window.LX&&LX.getToken)?LX.getToken():"",op:"list"})});
+    var d=await r.json(); window.MY_FAVORIS=r.ok?(d.favoris||[]):{error:d.error||"Erreur"};
+    if(r.ok){ try{ localStorage.setItem("lx_favoris",JSON.stringify(window.MY_FAVORIS.map(function(x){return {slug:x.slug,nom:x.nom,ville:x.ville};}))); }catch(_e){} }
+  }catch(e){ window.MY_FAVORIS={error:e.message}; }
+  render();
+}
+async function lxFavRetirer(id){
+  try{ var r=await fetch("/api/client/favoris",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:LX.getToken(),op:"toggle",salon_id:id})}); var d=await r.json(); if(r.ok){ window.MY_FAVORIS=d.favoris||[]; try{ localStorage.setItem("lx_favoris",JSON.stringify(window.MY_FAVORIS.map(function(x){return {slug:x.slug,nom:x.nom,ville:x.ville};}))); }catch(_e){} render(); } }catch(e){}
+}
+function renderFavorisTab(){
+  var F=window.MY_FAVORIS;
+  if(F===null){ if(!window._lxFavLance){ window._lxFavLance=1; setTimeout(loadMyFavoris,0); } return '<div class="section"><div class="empty">Chargement\u2026</div></div>'; }
+  if(F&&F.error) return '<div class="section"><div class="empty">'+escAttr(F.error)+'</div></div>';
+  var h='<div class="section"><div class="section-title">\u2764\ufe0f Mes \u00e9tablissements favoris ('+F.length+')</div>';
+  if(!F.length) h+='<div class="empty"><div class="ico">\u2661</div>Ajoutez un \u00e9tablissement \u00e0 vos favoris depuis sa page (bouton \u00ab Ajouter aux favoris \u00bb).<br><a href="/recherche.html" style="font-size:13px">Trouver un pro</a></div>';
+  F.forEach(function(x){
+    h+='<div class="card" style="margin-bottom:8px;display:flex;align-items:center;gap:10px">';
+    h+='<a href="/'+encodeURIComponent(x.slug||"")+'" style="flex:1;text-decoration:none;color:var(--text)"><div style="font-weight:700">'+escAttr(x.nom||"")+'</div><div style="font-size:12px;color:var(--text3)">'+escAttr(x.ville||"")+(x.nb_avis>0?' \u00b7 \u2605 '+Number(x.note_moyenne||0).toFixed(1):'')+'</div></a>';
+    h+='<a href="/'+encodeURIComponent(x.slug||"")+'/reserver" style="padding:8px 12px;border-radius:8px;background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;font-weight:800;font-size:12px;text-decoration:none">R\u00e9server</a>';
+    h+='<button onclick="lxFavRetirer(\''+x.id+'\')" title="Retirer" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer">\u00d7</button>';
+    h+='</div>';
+  });
+  return h+'</div>';
 }
 
 // --- RDV TAB ---
@@ -1455,7 +1487,7 @@ async function loadMyRdvs(){
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
     // Charger les avis déjà laissés par ce client (1 avis par salon)
     try{
-      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at&client_luxyra_id=eq."+CLIENT.id);
+      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at,note_accueil,note_proprete,note_cadre,note_qualite,photos&client_luxyra_id=eq."+CLIENT.id);
       var dA=await rA.json();
       if(Array.isArray(dA)) CLIENT_AVIS=dA;
     }catch(_){}
@@ -1513,7 +1545,7 @@ function confirmDeleteAccount(){
 async function doDeleteAccount(){
   var confirm=document.getElementById("delConfirm");
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="var(--red)";confirm.focus();return;}
-  function _finalizeDeleted(){ try{LX.logout();localStorage.removeItem("lx_account");}catch(e){} window.location.href="/compte"; }
+  function _finalizeDeleted(){ try{LX.logout();localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){} window.location.href="/compte"; }
   try{
     // Anonymize rdv_online + clients + delete fidelite_client + client_salon
     var anonRes = await _clientApi("anonymize", {});
@@ -1759,7 +1791,10 @@ function showLeaveAvisModal(rdvId, ticketId, salonId){
     salonId:salonId,
     note: existing ? Number(existing.note||0) : 0,
     texte: existing ? String(existing.texte||"") : "",
-    editing: existing ? existing.id : null
+    editing: existing ? existing.id : null,
+    // 2026-10-13 : notes par critère (facultatives) + photos (3 max)
+    crit: {accueil:existing&&existing.note_accueil||0, proprete:existing&&existing.note_proprete||0, cadre:existing&&existing.note_cadre||0, qualite:existing&&existing.note_qualite||0},
+    photos: existing&&Array.isArray(existing.photos) ? existing.photos.slice() : []
   };
   renderAvisModal(src);
 }
@@ -1790,6 +1825,7 @@ function renderAvisModal(src){
     +(hint?'<div style="background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.15);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#c8c4be;line-height:1.5">'+hint+'</div>':'')
     +'<div style="text-align:center;margin:18px 0 8px">'+stars+'</div>'
     +'<div id="avisNoteLabel" style="text-align:center;font-size:13px;color:'+(AVIS_DRAFT.note?"#d4a843":"#666")+';font-weight:'+(AVIS_DRAFT.note?"600":"400")+';margin-bottom:18px;height:18px">'+noteLabel+'</div>'
+    +lxAvisCriteresHtml()
     +'<label style="display:block;font-size:12px;color:#c8c4be;margin-bottom:6px">Votre commentaire <span style="color:#666">(optionnel)</span></label>'
     +'<textarea id="avisTexte" maxlength="2000" placeholder="Comment s\'est pass\u00e9 votre rendez-vous ?" style="width:100%;min-height:120px;padding:12px;border-radius:10px;border:1px solid rgba(200,168,78,.15);background:#0f0e0c;color:#fff;font-family:inherit;font-size:13px;line-height:1.5;resize:vertical;box-sizing:border-box">'+escAttr(AVIS_DRAFT.texte)+'</textarea>'
     +'<div style="font-size:11px;color:#666;margin-top:6px;line-height:1.5">Votre avis sera publi\u00e9 sous votre pr\u00e9nom et l\'initiale de votre nom (ex : \u00ab '+escAttr((CLIENT&&CLIENT.prenom)||"Client")+' '+escAttr(((CLIENT&&CLIENT.nom)||"X").charAt(0).toUpperCase())+'. \u00bb).<br>Soyez juste et constructif \u2014 votre avis aidera d\'autres clients.</div>'
@@ -1803,6 +1839,46 @@ function renderAvisModal(src){
 
 function escAttr(s){return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
+// 2026-10-13 : critères (accueil, propreté, cadre, qualité) et photos de la prestation
+function lxAvisCriteresHtml(){
+  var C=[["accueil","Accueil"],["proprete","Propret\u00e9"],["cadre","Cadre & ambiance"],["qualite","Qualit\u00e9 de la prestation"]];
+  var h='<div style="margin:0 0 14px;padding:12px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid rgba(200,168,78,.12)"><div style="font-size:12px;color:#c8c4be;margin-bottom:8px">D\u00e9tail <span style="color:#666">(facultatif)</span></div>';
+  C.forEach(function(c){
+    var v=(AVIS_DRAFT.crit&&AVIS_DRAFT.crit[c[0]])||0;
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0"><span style="font-size:13px;color:#e8e4dc">'+c[1]+'</span><span>';
+    for(var i=1;i<=5;i++) h+='<span onclick="lxAvisCrit(\''+c[0]+'\','+i+')" style="font-size:22px;cursor:pointer;padding:0 2px;color:'+(i<=v?"#d4a843":"#3a3a3a")+'">\u2605</span>';
+    h+='</span></div>';
+  });
+  h+='</div>';
+  var P=AVIS_DRAFT.photos||[];
+  h+='<div style="margin:0 0 14px"><div style="font-size:12px;color:#c8c4be;margin-bottom:6px">Photos de votre r\u00e9sultat <span style="color:#666">(facultatif, 3 max)</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">';
+  P.forEach(function(u,i){ h+='<div style="position:relative;width:72px;height:72px;border-radius:10px;overflow:hidden;border:1px solid rgba(200,168,78,.25)"><img src="'+escAttr(u)+'" style="width:100%;height:100%;object-fit:cover"><span onclick="lxAvisPhotoDel('+i+')" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.75);color:#fff;font-size:13px;line-height:20px;text-align:center;cursor:pointer">\u00d7</span></div>'; });
+  if(P.length<3) h+='<label style="width:72px;height:72px;border-radius:10px;border:1px dashed rgba(200,168,78,.45);display:flex;align-items:center;justify-content:center;color:#d4a843;font-size:26px;cursor:pointer">+<input type="file" accept="image/*" style="display:none" onchange="lxAvisPhotoAdd(this)"></label>';
+  h+='</div><div style="font-size:11px;color:#666;margin-top:6px">Uniquement des photos de la prestation r\u00e9alis\u00e9e, sans autre personne reconnaissable.</div></div>';
+  return h;
+}
+function lxAvisGarderTexte(){ var ta=document.getElementById("avisTexte"); if(ta) AVIS_DRAFT.texte=ta.value; }
+function lxAvisRerender(){ var src=CLIENT_RDVS.find(function(r){return r.id===(AVIS_DRAFT.rdvId||AVIS_DRAFT.ticketId);}); if(src) renderAvisModal(src); }
+function lxAvisCrit(k,n){ lxAvisGarderTexte(); AVIS_DRAFT.crit=AVIS_DRAFT.crit||{}; AVIS_DRAFT.crit[k]=(AVIS_DRAFT.crit[k]===n?0:n); lxAvisRerender(); }
+function lxAvisPhotoDel(i){ lxAvisGarderTexte(); (AVIS_DRAFT.photos||[]).splice(i,1); lxAvisRerender(); }
+function lxAvisPhotoAdd(input){
+  var f=input&&input.files&&input.files[0]; if(!f) return;
+  lxAvisGarderTexte();
+  var rd=new FileReader();
+  rd.onload=function(e){
+    var img=new Image();
+    img.onload=function(){
+      var k=Math.min(1,1280/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height||1));
+      var c=document.createElement("canvas"); c.width=Math.round((img.naturalWidth||img.width)*k); c.height=Math.round((img.naturalHeight||img.height)*k);
+      var ctx=c.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(img,0,0,c.width,c.height);
+      var q=0.82, out=c.toDataURL("image/jpeg",q); while(out.length>1300000 && q>0.4){ q-=0.12; out=c.toDataURL("image/jpeg",q); }
+      AVIS_DRAFT.photos=(AVIS_DRAFT.photos||[]).concat([out]).slice(0,3); lxAvisRerender();
+    };
+    img.onerror=function(){ showToast("Image illisible"); };
+    img.src=e.target.result;
+  };
+  rd.readAsDataURL(f);
+}
 function setAvisNote(n){
   AVIS_DRAFT.note=n;
   var ta=document.getElementById("avisTexte");
@@ -1838,7 +1914,12 @@ async function submitAvis(){
     var payload={
       session_token: LX.getToken(),
       note: AVIS_DRAFT.note,
-      texte: texte
+      texte: texte,
+      note_accueil: (AVIS_DRAFT.crit&&AVIS_DRAFT.crit.accueil)||null,
+      note_proprete: (AVIS_DRAFT.crit&&AVIS_DRAFT.crit.proprete)||null,
+      note_cadre: (AVIS_DRAFT.crit&&AVIS_DRAFT.crit.cadre)||null,
+      note_qualite: (AVIS_DRAFT.crit&&AVIS_DRAFT.crit.qualite)||null,
+      photos: AVIS_DRAFT.photos||[]
     };
     if(AVIS_DRAFT.rdvId) payload.rdv_online_id=AVIS_DRAFT.rdvId;
     if(AVIS_DRAFT.ticketId) payload.ticket_id=AVIS_DRAFT.ticketId;
@@ -1857,7 +1938,7 @@ async function submitAvis(){
     // Succ\u00e8s \u2014 UPSERT en local (remplace si d\u00e9j\u00e0 existant pour ce salon)
     if(data.avis){
       var idx=CLIENT_AVIS.findIndex(function(a){return a.salon_id===AVIS_DRAFT.salonId;});
-      var entry={id:data.avis.id, salon_id:AVIS_DRAFT.salonId, rdv_online_id:AVIS_DRAFT.rdvId||null, ticket_id:AVIS_DRAFT.ticketId||null, note:AVIS_DRAFT.note, texte:texte, created_at:data.avis.created_at, updated_at:data.avis.updated_at||null};
+      var entry={id:data.avis.id, salon_id:AVIS_DRAFT.salonId, rdv_online_id:AVIS_DRAFT.rdvId||null, ticket_id:AVIS_DRAFT.ticketId||null, note:AVIS_DRAFT.note, texte:texte, created_at:data.avis.created_at, updated_at:data.avis.updated_at||null, note_accueil:data.avis.note_accueil||null, note_proprete:data.avis.note_proprete||null, note_cadre:data.avis.note_cadre||null, note_qualite:data.avis.note_qualite||null, photos:data.avis.photos||[]};
       if(idx>=0) CLIENT_AVIS[idx]=entry; else CLIENT_AVIS.push(entry);
     }
     closeAvisModal();
