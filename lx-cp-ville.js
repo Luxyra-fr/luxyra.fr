@@ -46,7 +46,10 @@
     // 2026-10-13 : champ « ville à choisir » (comptes clients) : verrouillé tant que le code postal n'a pas donné la liste ;
     // saisie libre seulement pour un code étranger (4 chiffres, pays autre que la France) ou si le service ne répond pas.
     var liste = v.getAttribute("data-lx-ville-liste") === "1";
-    if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } if (liste) v.readOnly = !paysEtranger(cp); return; }
+    if (code.length !== 5 || paysEtranger(cp)) {
+      // 2026-10-14 : pays étranger ou code modifié -> le message « Code postal introuvable » ne vaut plus
+      try { var _m0 = cp.parentNode && cp.parentNode.querySelector(".lx-cp-msg"); if (_m0) _m0.remove(); } catch (e) {}
+      if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } if (liste) v.readOnly = !paysEtranger(cp); return; }
     charger(code).then(function (noms) {
       if (String(cp.value || "").replace(/\D/g, "") !== code) return;
       if (paysEtranger(cp)) return;
