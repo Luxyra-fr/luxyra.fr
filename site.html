@@ -1327,6 +1327,8 @@ function showAuthModal(mode){
     h+='<div style="padding:2px 0;border-top:1px solid rgba(255,255,255,.1);margin-top:2px">';
     h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegSms" checked> \ud83d\udcf1 J\u0027accepte de recevoir des SMS</label>';
     h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegEm" checked> \u2709\ufe0f J\u0027accepte de recevoir des emails</label>';
+    // 2026-10-14 : consentement obligatoire, comme sur compte.html
+    h+='<label style="font-size:12px;display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer"><input type="checkbox" id="aRegCgu" required> <span>J\u0027accepte les <a href="/cgv.html" target="_blank" rel="noopener" style="color:var(--gold)">CGU</a> et la <a href="/politique-confidentialite.html" target="_blank" rel="noopener" style="color:var(--gold)">politique de confidentialit\u00e9</a> *</span></label>';
     h+='</div>';
   }
   h+='<button class="btn btn-gold" style="width:100%;padding:10px;font-size:15px;margin-top:6px" onclick="'+(isLogin?'doClientLogin()':'doClientRegister()')+'">'+(isLogin?"Se connecter":"Cr\u00e9er mon compte")+'</button>';
@@ -1371,6 +1373,7 @@ async function doClientRegister(){
   if(!nom||!tel||!email||!pass){showAuthError("Remplissez tous les champs obligatoires");return;}
   var genre=(document.getElementById("aRegGenre")&&document.getElementById("aRegGenre").value)||"";
   if(!genre){showAuthError("Veuillez sélectionner un genre");return;}
+  if(!(document.getElementById("aRegCgu")&&document.getElementById("aRegCgu").checked)){showAuthError("Vous devez accepter les CGU");return;} // 2026-10-14
   if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
   // 2026-10-13 : adresse obligatoire (renseignements pour les prestations à domicile)
@@ -1404,10 +1407,8 @@ async function doClientRegister(){
   closeAuth();
   renderSite();
   // Hook : rouvrir le modal sur-mesure si on était en train de le demander
-  if(window._afterLoginAction==="surMesure"){
-    window._afterLoginAction=null;
-    setTimeout(openSurMesureModal,200);
-  }
+  // 2026-10-14 : idem pour une réservation commencée avant la connexion (avant : demande perdue)
+  _lxApresConnexion();
 }
 
 async function doClientLogin(){
@@ -1424,12 +1425,22 @@ async function doClientLogin(){
   closeAuth();
   renderSite();
   // Hook : rouvrir le modal sur-mesure si on était en train de le demander
-  if(window._afterLoginAction==="surMesure"){
-    window._afterLoginAction=null;
-    setTimeout(openSurMesureModal,200);
-  }
+  // 2026-10-14 : idem pour une réservation commencée avant la connexion (avant : demande perdue)
+  _lxApresConnexion();
 }
 
+// 2026-10-14 : reprend l'action demandée avant la connexion / l'inscription
+function _lxApresConnexion(){
+  var act=window._afterLoginAction;
+  window._afterLoginAction=null;
+  if(act==="surMesure"){ setTimeout(openSurMesureModal,200); return; }
+  if(act==="booking"){
+    var _svc=window._afterLoginPreSvc; window._afterLoginPreSvc=null;
+    setTimeout(function(){
+      try{ if(_svc!=null&&_svc!=="") goToBookingWithService(_svc); else goToBooking(); }catch(_eB){}
+    },200);
+  }
+}
 async function ensureClientSalon(clientId){
   // Create client_salon relationship if it doesn't exist for this salon
   if(!salonId)return;
@@ -3090,6 +3101,23 @@ function _lxOuvExcept(hrs, dateStr, collabId){
 // - « Pas de préférence » : réunion des horaires effectifs des collaborateurs présents ce jour-là
 //   (avant : horaires de l'établissement seulement -> les horaires personnalisés étaient ignorés,
 //    et la fermeture exceptionnelle d'UN collaborateur fermait le jour pour tout le monde).
+// 2026-10-14 : « Pas de préférence » = seulement les collaborateurs actifs HABILITÉS pour la prestation choisie
+// (même règle que l'étape 2 : competences absentes ou all=true -> habilité ; sinon services doit contenir la prestation).
+// Si aucun n'est habilité (ou aucune prestation choisie), on garde tous les actifs (comportement d'avant).
+function _lxCollabsActifsEligibles(){
+  var actifs=(COLLABS||[]).filter(function(c){ return !(c.actif===false||c.active===false); });
+  try{
+    var svcId=booking&&(booking.svcId||(booking.items&&booking.items.length?booking.items[0].svcId:null));
+    if(!svcId) return actifs;
+    var elig=actifs.filter(function(c){
+      var cp=c.competences||{all:true};
+      if(cp.all===true) return true;
+      if(!cp.services||!Array.isArray(cp.services)) return false;
+      return cp.services.indexOf(Number(svcId))>=0||cp.services.indexOf(String(svcId))>=0;
+    });
+    return elig.length?elig:actifs;
+  }catch(_e){ return actifs; }
+}
 function lxPlageDuJour(dateStr){
   var abs=(SITE_CFG&&SITE_CFG.absences)||[], i, ab;
   for(i=0;i<abs.length;i++){ ab=abs[i]; if(ab&&ab.type==="fermeture_except"&&ab.date===dateStr&&!ab.stId) return {hrs:null, motif:ab.motif||""}; }
@@ -3100,7 +3128,7 @@ function lxPlageDuJour(dateStr){
     if(!col) return {hrs:_lxOuvExcept(HORAIRES[dow], dateStr, booking.collabId)};
     return {hrs:_lxSiteEffHrs(col, booking.collabId, dateStr)};
   }
-  var actifs=(COLLABS||[]).filter(function(c){ return !(c.actif===false||c.active===false); });
+  var actifs=_lxCollabsActifsEligibles(); // 2026-10-14 : habilités pour la prestation
   if(!actifs.length) return {hrs:_lxOuvExcept(HORAIRES[dow], dateStr, null)};
   var o=null, c=null;
   actifs.forEach(function(col){
@@ -3173,10 +3201,7 @@ function isAllCollabsOff(date){
     }
   }
   // Aucun collab actif → check global déjà fait → dispo
-  var activeCollabs=(COLLABS||[]).filter(function(c){
-    if(c.actif===false||c.active===false) return false;
-    return true;
-  });
+  var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : habilités pour la prestation
   if(!activeCollabs.length) return false;
   // Tous les collabs doivent être off
   for(var i=0;i<activeCollabs.length;i++){
@@ -3248,10 +3273,7 @@ function isSlotTaken(date,time,duration,collabId){
   // Mode collab spécifique : check ce collab uniquement
   if(collabId) return isSpecificCollabBusy(date,time,duration,collabId);
   // Mode "sans préférence" : si AU MOINS UN collab actif est dispo → slot dispo
-  var activeCollabs=(COLLABS||[]).filter(function(c){
-    if(c.actif===false || c.active===false) return false;
-    return true;
-  });
+  var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : seulement les collaborateurs habilités pour la prestation
   if(!activeCollabs.length){
     // Pas de collabs définis (mono-praticien) → check absences globales + RDV non-attribués
     var slotStart=toMin(time),slotEnd=slotStart+duration;
