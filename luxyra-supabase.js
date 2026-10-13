@@ -1276,6 +1276,7 @@ async function loadSalonData() {
   } catch (_eDom) {}
   SALON_CONFIG.plan = salon.plan || "essential";
   SALON_CONFIG.metier = salon.metier || "coiffure";
+  SALON_CONFIG.metiers = (Array.isArray(salon.metiers_autres) ? salon.metiers_autres : []).filter(function (m) { return m && m !== SALON_CONFIG.metier; }); // 2026-10-13 : autres métiers
   SALON_CONFIG.modeActivite = salon.mode_activite || "salon";
   SALON_CONFIG.zoneDeplacementKm = salon.zone_deplacement_km || 0;
   SALON_CONFIG.fraisDeplacement = salon.frais_deplacement || 0;
@@ -3219,6 +3220,7 @@ async function saveSalonConfig() {
     couleur_secondaire: SALON_CONFIG.couleurSecondaire,
     taux_tva: SALON_CONFIG.tauxTVA,
     metier: SALON_CONFIG.metier || "coiffure",
+    metiers_autres: (Array.isArray(SALON_CONFIG.metiers) ? SALON_CONFIG.metiers : []).filter(function (m) { return m && m !== (SALON_CONFIG.metier || "coiffure"); }),
     mode_activite: SALON_CONFIG.modeActivite || "salon",
     zone_deplacement_km: SALON_CONFIG.zoneDeplacementKm || 0,
     frais_deplacement: SALON_CONFIG.fraisDeplacement || 0,

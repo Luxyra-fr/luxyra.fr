@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261013-1"></script>
+<script src="luxyra-supabase.js?v=20261013-2"></script>
 <script>
 console.log("LUXYRA v6.6");
 
@@ -7257,8 +7257,18 @@ function doAddFormule(cId){
 // === Historique structuré par métier (barbier / esthétique / ongles / bien-être) ===
 // Le coiffeur a déjà son historique de formules couleur (addFormuleCouleur).
 // Les autres métiers utilisent un schéma générique adapté.
-function _histoMetierSchema(){
-  var m=SALON_CONFIG.metier||"coiffure";
+// 2026-10-13 : multi-métiers — liste des métiers de l'établissement (principal + autres activités)
+function lxMetiersSalon(){
+  var p=SALON_CONFIG.metier||"coiffure", L=[p];
+  (SALON_CONFIG.metiers||[]).forEach(function(m){ if(m&&L.indexOf(m)<0) L.push(m); });
+  return L;
+}
+function lxHistoMetiersDispo(){ return lxMetiersSalon().filter(function(m){ return !!_histoMetierSchemaFor(m); }); }
+function _histoMetierSchema(mArg){
+  var m=mArg; if(!m){ var d=lxHistoMetiersDispo(); m=d.length?d[0]:(SALON_CONFIG.metier||"coiffure"); }
+  var sch=_histoMetierSchemaFor(m); if(sch) sch.metier=m; return sch;
+}
+function _histoMetierSchemaFor(m){
   if(m==="barbier")return{
     title:"💈 Nouvelle prestation barbier",
     typeOptions:["Coupe","Barbe","Rasage à l'ancienne","Coupe + Barbe","Dégradé","Contour","Coloration barbe"],
@@ -7305,9 +7315,17 @@ function _histoMetierSchema(){
     fields:[{k:"zones",l:"Zones traitées",ph:"Dos, jambes..."},{k:"pression",l:"Pression / huile",ph:"Modérée, amande douce"},{k:"ressenti",l:"Ressenti client",ph:"Détendu, soulagé..."}]};
   return null; // coiffure → utilise addFormuleCouleur
 }
-function addHistoMetier(cId){
-  var sch=_histoMetierSchema();if(!sch)return;
+function addHistoMetier(cId,mSel){
+  var sch=_histoMetierSchema(mSel);if(!sch)return;
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>'+sch.title+'</h2>';
+  var _dispo=lxHistoMetiersDispo();
+  htm+='<input type="hidden" id="hmMetier" value="'+sch.metier+'">';
+  if(_dispo.length>1){
+    var _lib={barbier:"Barbier",esthetique:"Institut de beauté",ongles:"Ongles",regard:"Regard",maquillage:"Maquillage",tatouage:"Tatouage & piercing",spa:"Spa & massages",bien_etre:"Bien-être"};
+    htm+='<div class="fg"><label>Activité</label><select onchange="addHistoMetier(\''+cId+'\',this.value)">';
+    _dispo.forEach(function(m){ htm+='<option value="'+m+'"'+(m===sch.metier?' selected':'')+'>'+(_lib[m]||m)+'</option>'; });
+    htm+='</select></div>';
+  }
   htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   htm+='<div class="fg"><label>Date *</label><input type="date" id="hmDate" value="'+TD+'"></div>';
   htm+='<div class="fg"><label>Type *</label><select id="hmType">';
@@ -7327,11 +7345,11 @@ function addHistoMetier(cId){
 }
 function doAddHistoMetier(cId){
   var cl=gC(cId);if(!cl)return;
-  var sch=_histoMetierSchema();if(!sch)return;
+  var sch=_histoMetierSchema((document.getElementById("hmMetier")||{}).value);if(!sch)return;
   var date=document.getElementById("hmDate").value;
   var type=document.getElementById("hmType").value;
   if(!date||!type){showAlert("Date et type obligatoires","warning");return;}
-  var entry={date:date,type:type,duree:+(document.getElementById("hmDuree").value||60),notes:(document.getElementById("hmNotes").value||"").trim()};
+  var entry={date:date,type:type,metier:sch.metier,duree:+(document.getElementById("hmDuree").value||60),notes:(document.getElementById("hmNotes").value||"").trim()};
   sch.fields.forEach(function(f){
     var v=(document.getElementById("hm_"+f.k)||{}).value||"";
     entry[f.k]=v.trim?v.trim():v;
@@ -7353,7 +7371,7 @@ function _renderHistoMetierList(c){
       h+='<span style="font-size:12px;font-weight:700;color:var(--gold)">'+(typeof fmt==="function"?fmt(e.date):e.date)+' • '+(e.type||"")+'</span>';
       h+='<button class="btn bs" style="font-size:9px;color:var(--red);padding:2px 6px" onclick="gC(\''+c.id+'\').histoMetier.splice('+hi+',1);if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'));go(\'detail\')">X</button>';
       h+='</div>';
-      sch.fields.forEach(function(f){
+      (_histoMetierSchema(e.metier)||sch).fields.forEach(function(f){
         if(e[f.k])h+='<div style="font-size:11px;color:var(--text3)"><strong>'+f.l+':</strong> '+e[f.k]+'</div>';
       });
       if(e.duree)h+='<div style="font-size:11px;color:var(--text3)">⏱ '+e.duree+' min</div>';
@@ -7408,7 +7426,7 @@ function _renderDernierePrestationCard(cl){
     if(entry.notes)h+='<div style="font-size:12px;color:var(--text3);font-style:italic;margin-top:4px">«&nbsp;'+entry.notes+'&nbsp;»</div>';
   } else {
     if(entry.type)h+='<div style="font-size:13px;font-weight:700">'+entry.type+'</div>';
-    var sch=(typeof _histoMetierSchema==="function")?_histoMetierSchema():null;
+    var sch=(typeof _histoMetierSchema==="function")?(_histoMetierSchema(entry.metier)||_histoMetierSchema()):null;
     if(sch && sch.fields){
       sch.fields.forEach(function(f){
         if(entry[f.k])h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">'+f.l+' : '+entry[f.k]+'</div>';
@@ -13066,6 +13084,17 @@ async function saveSubdomain(){
   }catch(e){console.error("saveSubdomain ERROR:",e);statusEl.innerHTML='\u274c Erreur: '+e.message;statusEl.style.color="#f87171";}
 }
 
+// 2026-10-13 : cocher / décocher une activité secondaire (enregistrée dans salons.metiers_autres)
+function lxToggleMetierAutre(m){
+  var L=(SALON_CONFIG.metiers||[]).slice(); var i=L.indexOf(m);
+  if(i>=0) L.splice(i,1); else L.push(m);
+  SALON_CONFIG.metiers=L.filter(function(x){ return x && x!==(SALON_CONFIG.metier||"coiffure"); });
+  if(typeof saveSalonConfig==="function") saveSalonConfig();
+  try{ if(typeof auditLog==="function") auditLog("CONFIG_METIERS","Autres activités : "+(SALON_CONFIG.metiers.join(", ")||"aucune")); }catch(_e){}
+  if(typeof toast==="function") toast(i>=0?"Activité retirée":"Activité ajoutée","success");
+  go(window._currentPage||"settings");
+}
+window.lxToggleMetierAutre=lxToggleMetierAutre;
 // Mots r\u00e9serv\u00e9s (routes syst\u00e8me Luxyra) \u2014 synchronis\u00e9 avec la fonction Postgres is_reserved_slug
 var LX_RESERVED_SLUGS=["coiffeur","institut-de-beaute","spa-massage","onglerie","extension-de-cils","barbier","annuaire-retrait","annuaire-gerant","pro","app","compte","recherche","inscription","site","proposal","admin","api","pages","panel","login","signup","signin","logout","contact","terms","cgv","mentions","legal","about","help","support","blog","press","sitemap","robots","favicon","assets","static","public","www","mail","email","cdn","static-cdn","dashboard","settings","onboarding","index","home","root","test","dev","staging","prod","connexion","deconnexion","parametres","tarifs","prix","offres","professionnels","metiers","partenaires","salon","salons","rdv","reservation","booking","services","prestations","avis","reviews","search","recherche-pro"];
 
@@ -13877,6 +13906,11 @@ function rSettings(){
     h+='<div style="flex:1"><div style="font-weight:700;font-size:15px;color:var(--gold)">'+currentMetier[2]+'</div>';
     h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">D\u00e9fini \u00e0 l\u0027inscription. Pour modifier, \u00e9crivez \u00e0 <a href=\"mailto:support@luxyra.fr?subject=Changement%20m%C3%A9tier\" style=\"color:var(--gold);text-decoration:underline\">support@luxyra.fr</a></div></div></div>';
     h+='</div>';
+    // 2026-10-13 : autres activités (un établissement peut exercer plusieurs métiers)
+    h+='<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:4px">Autres activités</div><div style="font-size:12px;color:var(--text3);margin-bottom:10px">Vous proposez aussi d\u0027autres prestations ? Cochez-les : votre établissement apparaît aussi dans ces métiers (recherche, pages par ville) et la fiche technique et le questionnaire santé s\u0027adaptent.</div><div style="display:flex;flex-wrap:wrap;gap:8px">';
+    metiers.forEach(function(m){ if(m[0]===(SALON_CONFIG.metier||"coiffure")) return; var on=(SALON_CONFIG.metiers||[]).indexOf(m[0])>=0;
+      h+='<span onclick="lxToggleMetierAutre(\''+m[0]+'\')" style="cursor:pointer;padding:7px 12px;border-radius:20px;font-size:12.5px;border:1px solid '+(on?'var(--gold)':'var(--border)')+';background:'+(on?'rgba(200,168,78,.12)':'var(--bg)')+';color:'+(on?'var(--gold)':'var(--text2)')+'">'+(on?'\u2713 ':'+ ')+m[1]+' '+m[2]+'</span>'; });
+    h+='</div></div>';
     // Mode activite - compact grid
     h+='<div class="card"><div style="font-weight:700;font-size:14px;margin-bottom:10px">Mode d\u0027activit\u00e9</div>';
     var modes=[["salon","\ud83c\udfe0","En \u00e9tablissement"],["domicile","\ud83d\ude97","\u00c0 domicile"],["mixte","\ud83d\udd00","Mixte"]];
@@ -16734,13 +16768,16 @@ function rDetail(){
   try{ var _sAl2=lxSanteAlerte(c.id); if(_sAl2) h+='<div onclick="clTab=\'sante\';go(\'detail\')" style="cursor:pointer;margin:8px 0;padding:9px 11px;border-radius:9px;background:rgba(239,83,80,.12);border:1px solid rgba(239,83,80,.4);color:#ffb4b0;font-size:12.5px;line-height:1.45">'+_sAl2+'</div>'; }catch(_eSa2){}
   // Tabs
   // Dynamic tabs per métier
-  var met=SALON_CONFIG.metier||"coiffure";
-  var tabs=[{k:"infos",l:"Infos",i:"\ud83d\udc64"}];
-  if(met==="coiffure"||met==="barbier")tabs.push({k:"cheveu",l:"Cheveux",i:"\ud83d\udc87"});
-  else if(met==="esthetique")tabs.push({k:"peau",l:"Peau",i:"\ud83e\uddf4"});
-  else if(met==="ongles")tabs.push({k:"ongles",l:"Ongles",i:"\ud83d\udc85"});
-  else if(met==="bien_etre"||met==="spa")tabs.push({k:"bienetre",l:"Bien-\u00eatre",i:"\ud83e\uddd8"});
-  else if(met==="regard"||met==="maquillage"||met==="tatouage")tabs.push({k:"peau",l:"Peau",i:"\ud83e\uddf4"});
+  // 2026-10-13 : un onglet par métier exercé (principal + autres activités), sans doublon
+  var tabs=[{k:"infos",l:"Infos",i:"\ud83d\udc64"}], _tk={};
+  lxMetiersSalon().forEach(function(met){
+    var t=null;
+    if(met==="coiffure"||met==="barbier")t={k:"cheveu",l:"Cheveux",i:"\ud83d\udc87"};
+    else if(met==="esthetique"||met==="regard"||met==="maquillage"||met==="tatouage")t={k:"peau",l:"Peau",i:"\ud83e\uddf4"};
+    else if(met==="ongles")t={k:"ongles",l:"Ongles",i:"\ud83d\udc85"};
+    else if(met==="bien_etre"||met==="spa")t={k:"bienetre",l:"Bien-\u00eatre",i:"\ud83e\uddd8"};
+    if(t&&!_tk[t.k]){ _tk[t.k]=1; tabs.push(t); }
+  });
   tabs.push({k:"sante",l:"Sant\u00e9",i:"\ud83e\ude7a"}); // 2026-10-11 : questionnaire santé (consentement explicite)
   tabs.push({k:"photos",l:"Photos",i:"\ud83d\udcf7"},{k:"histo",l:"Historique",i:"\ud83d\udcde"},{k:"fiche",l:"Fiche T",i:"\u270f\ufe0f"},{k:"carte",l:"Carte",i:"\ud83d\udcb3"},{k:"packs",l:"Packs",i:"\ud83c\udf9f\ufe0f"},{k:"fidel",l:"Fid\u00e9lit\u00e9",i:"\ud83c\udfc5"},{k:"rgpd",l:"RGPD",i:"\u2709\ufe0f"},{k:"ca",l:"C.A.",i:"\ud83d\udcca"});
   h+='<button onclick="oM(\'appt\',{cId:\''+c.id+'\'});setTimeout(function(){if(typeof pickRdvClient===\'function\')pickRdvClient(\''+c.id+'\');},250)" style="width:100%;margin:2px 0 12px;padding:14px;border:none;border-radius:12px;background:linear-gradient(135deg,#c8a84e,#d4a843);color:#1a1a1a;font-weight:800;font-size:15px;cursor:pointer;box-shadow:0 3px 10px rgba(200,168,78,.3)">📅 Créer un rendez-vous</button>';
@@ -16872,7 +16909,7 @@ function rDetail(){
     h+='<button class="btn bs" style="width:100%;margin-top:8px;font-size:12px;padding:10px" onclick="addFormuleCouleur(\''+c.id+'\')">\u2795 Ajouter une formule</button>';
     h+='</div>';
     // Barbier : ajoute aussi l'historique structur\u00e9 (coupes/barbes)
-    if((SALON_CONFIG.metier||"")==="barbier") h += _renderHistoMetierList(c);
+    if(lxMetiersSalon().indexOf("barbier")>=0) h += _renderHistoMetierList(c);
   }
   else if(clTab==="peau"){
     var _s=function(f,v){return"gC('"+c.id+"')."+f+"="+v+";if(typeof saveClient==='function')saveClient(gC('"+c.id+"'))";};
