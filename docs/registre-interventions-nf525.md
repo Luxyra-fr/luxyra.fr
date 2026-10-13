@@ -268,3 +268,8 @@ d'altération des données fiscales.*
 - **RGPD J+60** (`rgpd_purge_salon`) : ne supprime plus les fiches/réservations liées à un compte client Luxyra.
 - Aucune donnée fiscale d'un établissement en conservation n'a été modifiée.
 - Vérification finale : tests de protection NF525 11/11 refusés ; purge 6 ans retestée à blanc (OK, annulée) ; `salon_a_historique_fiscal` restreinte à l'admin / au gérant de l'établissement.
+
+## 2026-10-13 — Contrôle de nuit « conservation 6 ans » (tâche automatique, accord d'Alexandre, demande n°3)
+
+- Constat : alerte critique « TICKETS DIMINUE 774→772 » à 04:00 — fausse alerte due au passage en caisse réelle du Salon Démo (tickets de test placés dans l'archive scellée nf525_archives_purge, cf. 12/10).
+- Correction (faite par la tâche automatique « Luxyra file Claude » à 09:57 avec l'accord d'Alexandre) : `nf525_take_inventory_snapshot` compte désormais tickets et clôtures en base + ceux de l'archive scellée des tests ; alerte seulement si ce total baisse. Aucun ticket, clôture ni signature modifié. Essai à blanc fait avant (cas normal sans alerte, ticket manquant simulé avec alerte). Vérifié en session PC le 13/10.
