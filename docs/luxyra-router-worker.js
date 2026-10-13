@@ -4512,7 +4512,7 @@ h2{font-family:var(--f2);font-weight:700;font-size:28px;color:#fff;margin:38px 0
 .villes{columns:3;column-gap:22px;font-size:14px}.villes a{display:block;color:var(--text);padding:4px 0}.villes span{color:var(--text3);font-size:12px}
 .src{font-size:11.5px;color:var(--text3);margin:30px 0 0;line-height:1.6}
 footer{border-top:1px solid var(--border);margin-top:40px;padding:26px 20px;text-align:center;font-size:12.5px;color:var(--text3)}footer a{color:var(--text2);margin:0 6px}
-@media(max-width:720px){.nav .lk a:not(.pro){display:none}.carte{flex-wrap:wrap}.act{width:100%;flex-direction:row;justify-content:space-between;align-items:center}.atouts{grid-template-columns:1fr}.villes{columns:2}}
+@media(max-width:720px){.nav .lk a:not(.pro){display:none}.carte{flex-wrap:wrap}.act{width:100%;flex-direction:column;align-items:stretch;gap:10px}.act .claim{white-space:normal;display:block;text-align:center;padding:10px 12px;border:1px solid rgba(212,168,67,.4);border-radius:12px}.act .btn{text-align:center}.act .btn2{text-align:center;white-space:normal}.atouts{grid-template-columns:1fr}.villes{columns:2}}
 </style></head><body>
 <div class="nav"><a class="logo" href="/"><img src="${LX_ANN_LOGO}" width="34" height="34" alt="Luxyra"> Luxyra</a><div class="lk"><a href="/recherche">Trouver un pro</a><a href="/coiffeur">Coiffeurs</a><a href="/institut-de-beaute">Instituts</a><a href="/onglerie">Ongles</a><a href="/extension-de-cils">Cils</a><a class="pro" href="/pro">Je suis un pro</a></div></div>
 ${body}
