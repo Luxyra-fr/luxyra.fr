@@ -28,7 +28,8 @@
     var onglets=[
       {u:"/client.html", l:"Accueil", i:"🏠", on:path.indexOf("/client")===0},
       {u:"/recherche.html", l:"Trouver un pro", i:"🔍", on:path.indexOf("/recherche")===0},
-      {u:"/compte.html", l:"Mes RDV", i:"📅", on:path.indexOf("/compte")===0}
+      {u:"/compte.html?tab=rdv", l:"Mes RDV", i:"📅", on:path.indexOf("/compte")===0 && !/tab=(profile|settings|fidelite|favoris|cartes|bons_cadeaux|tickets|photos|commandes)/.test(location.search)},
+      {u:"/compte.html?tab=profile", l:"Mon compte", i:"👤", on:path.indexOf("/compte")===0 && /tab=(profile|settings|fidelite|favoris|cartes|bons_cadeaux|tickets|photos|commandes)/.test(location.search)}
     ];
     var nav=document.createElement("nav"); nav.id="lxAppNav";
     nav.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:150;display:flex;background:#0b0b0b;border-top:1px solid rgba(200,168,78,.35);padding:6px 4px calc(6px + env(safe-area-inset-bottom));font-family:-apple-system,'Segoe UI',Arial,sans-serif";
