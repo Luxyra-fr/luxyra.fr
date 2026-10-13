@@ -247,6 +247,13 @@ function syncUrl(){
 // ---- Helpers ----
 // Bascule à true une fois le Worker Cloudflare patché pour servir /:slug
 var LX_CLEAN_URLS=true;
+// 2026-10-13 : clic sur un créneau d'une carte -> page de réservation du salon, jour et heure pré-choisis
+function lxReserverCreneau(slug, d, h){
+  if(!slug) return;
+  var q = 'd=' + encodeURIComponent(d) + '&h=' + encodeURIComponent(h);
+  window.location.href = LX_CLEAN_URLS ? ('/' + encodeURIComponent(slug) + '/reserver?' + q) : ('/site.html?slug=' + encodeURIComponent(slug) + '&' + q + '#reserver');
+}
+window.lxReserverCreneau = lxReserverCreneau;
 function salonHref(s){
   if(s && s.slug){
     return LX_CLEAN_URLS ? '/'+encodeURIComponent(s.slug) : '/site.html?slug='+encodeURIComponent(s.slug);
@@ -301,16 +308,12 @@ async function loadSalons(){
         // Appelle la RPC en parallèle pour chaque salon résa active (limite à 50 pour perf)
         var activeSalons = STATE.salons.filter(function(s){return s.resaActive;}).slice(0, 50);
         await Promise.all(activeSalons.map(function(s){
-          return sb.rpc('fn_salon_next_available_slot', {p_salon_id: s.id})
+          // 2026-10-13 : 3 prochains créneaux (cliquables sur la carte, comme Planity)
+          return sb.rpc('fn_salon_next_slots', {p_salon_id: s.id, p_n: 3})
             .then(function(r){
-              if(r && r.data){
-                // RPC retourne {date, time, day_label}
-                s.nextSlot = {
-                  dayLabel: r.data.day_label || '',
-                  time: r.data.time || '',
-                  date: r.data.date || ''
-                };
-              }
+              var L = (r && Array.isArray(r.data)) ? r.data : [];
+              s.slots = L.map(function(x){ return {dayLabel: x.day_label || '', time: x.time || '', date: x.date || ''}; });
+              if(s.slots.length) s.nextSlot = s.slots[0];
             }).catch(function(e){ console.warn('nextSlot RPC failed for', s.id, e); });
         }));
       }
@@ -510,7 +513,20 @@ function renderResults(){
     }
     // Prochaine dispo
     var slotHtml = '';
-    if(s.resaActive && s.nextSlot){
+    if(s.resaActive && s.slots && s.slots.length){
+      // 2026-10-13 : créneaux cliquables -> réservation ouverte sur ce jour et cette heure
+      var _byDay = {}, _ordre = [];
+      s.slots.forEach(function(x){ if(!_byDay[x.dayLabel]){ _byDay[x.dayLabel]=[]; _ordre.push(x.dayLabel); } _byDay[x.dayLabel].push(x); });
+      slotHtml = '<div class="slots-mini" style="margin-top:8px">';
+      _ordre.forEach(function(lbl){
+        slotHtml += '<div style="font-size:11px;color:#8fd19e;font-weight:700;margin:2px 0 5px">⚡ '+escapeHtml(lbl)+'</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px">';
+        _byDay[lbl].forEach(function(x){
+          slotHtml += '<span role="button" tabindex="0" onclick="event.preventDefault();event.stopPropagation();lxReserverCreneau(\''+escapeHtml(s.slug||'')+'\',\''+escapeHtml(x.date)+'\',\''+escapeHtml(x.time)+'\')" style="padding:7px 12px;border-radius:10px;background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.4);color:#fff;font-weight:700;font-size:13px;cursor:pointer">'+escapeHtml(x.time)+'</span>';
+        });
+        slotHtml += '</div>';
+      });
+      slotHtml += '</div>';
+    } else if(s.resaActive && s.nextSlot){
       slotHtml = '<div style="margin-top:6px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(76,175,80,.10);border:1px solid rgba(76,175,80,.25);border-radius:50px;font-size:11px;color:#4caf50;font-weight:700">'
         + '<span>⚡ Prochaine dispo</span>'
         + '<span style="color:#fff">'+escapeHtml(s.nextSlot.dayLabel)+' à '+escapeHtml(s.nextSlot.time)+'</span>'
