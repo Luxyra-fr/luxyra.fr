@@ -2337,6 +2337,7 @@ function renderBookingStep1(){
   });
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">1</div><div class="step-title">Choisissez votre prestation</div></div>';
+  if(window._lxPref) h+='<div style="margin:0 0 14px;padding:10px 12px;border-radius:10px;background:rgba(76,175,80,.10);border:1px solid rgba(76,175,80,.35);font-size:13px;text-align:center">\u26a1 Cr\u00e9neau choisi : <b>'+lxPrefLibelle()+'</b><br><span style="color:var(--text3)">Choisissez votre prestation, l\u2019horaire sera retenu s\u2019il convient \u00e0 sa dur\u00e9e.</span></div>';
   h+='<p style="font-size:12px;color:var(--text3);margin-bottom:14px;text-align:center">S\u00e9lectionnez la prestation souhait\u00e9e. Pour combiner plusieurs services, choisissez un forfait d\u00e9di\u00e9.</p>';
   if(!catNames.length){
     h+='<div style="text-align:center;padding:40px;color:var(--text3)">Aucune prestation disponible.</div>';
@@ -2818,7 +2819,23 @@ function selectCollab(collabId){
   renderBookingStep3();
 }
 
+// 2026-10-13 : créneau choisi depuis la recherche (?d=AAAA-MM-JJ&h=HH:MM) -> jour ouvert et heure retenue si libre
+window._lxPref=(function(){ try{ var q=new URLSearchParams(location.search), d=q.get("d"), t=q.get("h"); if(/^\d{4}-\d{2}-\d{2}$/.test(d||"") && /^\d{2}:\d{2}$/.test(t||"")) return {d:d,h:t}; }catch(e){} return null; })();
+function lxPrefLibelle(){ var p=window._lxPref; if(!p) return ""; try{ var dt=new Date(p.d+"T12:00:00"); return dt.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})+" \u00e0 "+p.h; }catch(e){ return p.d+" "+p.h; } }
+function lxAppliquerPref(){
+  var p=window._lxPref; if(!p) return; window._lxPref=null;
+  var dt=new Date(p.d+"T12:00:00"); if(isNaN(dt)) return;
+  calYear=dt.getFullYear(); calMonth=dt.getMonth();
+  selectDate(p.d);
+  setTimeout(function(){
+    var area=document.getElementById("timeSlotsArea"); if(!area) return;
+    var ok=area.querySelector('[onclick="selectTime(\''+p.h+'\')"]');
+    if(ok){ selectTime(p.h); }
+    else area.insertAdjacentHTML("afterbegin",'<div style="margin:8px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.35);font-size:13px">Le cr\u00e9neau de '+p.h+' n\u2019est pas disponible pour cette prestation : choisissez un autre horaire ci-dessous.</div>');
+  },60);
+}
 function renderBookingStep3(){
+  if(window._lxPref && !booking.date){ lxAppliquerPref(); return; }
   var h='<div class="step active">';
   h+='<div class="step-header"><div class="step-num">3</div><div class="step-title">Choisissez une date</div></div>';
   h+=renderCalendar();
