@@ -21,6 +21,28 @@
     }catch(e){}
   };
   if(window.LX_SALON_PAGE) window.lxClientRecent(window.LX_SALON_PAGE);
+  // 2026-10-13 : iPhone / iPad — Safari ne propose jamais l'installation : bandeau explicatif affiché UNE seule fois
+  try{
+    var ua=navigator.userAgent||"";
+    var ios=/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints>1);
+    var integre=/FBAN|FBAV|Instagram|Line\/|Snapchat|TikTok/i.test(ua);
+    var installe=window.navigator.standalone===true || (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+    if(ios && !integre && !installe && !localStorage.getItem("lx_ios_bandeau")){
+      setTimeout(function(){
+        if(document.getElementById("lxIosBandeau")) return;
+        var d=document.createElement("div"); d.id="lxIosBandeau";
+        d.style.cssText="position:fixed;left:10px;right:10px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:9999;background:#141210;border:1px solid rgba(200,168,78,.6);border-radius:16px;padding:14px 40px 14px 14px;color:#e8e4dc;font:14px/1.45 -apple-system,'Segoe UI',Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.6)";
+        var partager='<svg width="16" height="18" viewBox="0 0 16 20" style="vertical-align:-3px;margin:0 2px" fill="none" stroke="#d4a843" stroke-width="1.8"><path d="M8 13V1M4 5l4-4 4 4"/><path d="M5 8H2v11h12V8h-3"/></svg>';
+        d.innerHTML='<button aria-label="Fermer" style="position:absolute;top:6px;right:8px;background:none;border:none;color:#a8a29a;font-size:22px;line-height:1;padding:4px;cursor:pointer">\u00d7</button>'
+          +'<div style="display:flex;gap:12px;align-items:center"><img src="/icon-192.png" alt="" style="width:44px;height:44px;border-radius:11px;flex:none">'
+          +'<div><b style="color:#d4a843">Installez Luxyra sur votre iPhone</b><br>Touchez '+partager+' <b>Partager</b>, puis <b>\u00ab Sur l\u2019\u00e9cran d\u2019accueil \u00bb</b>.</div></div>';
+        function fermer(){ try{ localStorage.setItem("lx_ios_bandeau", String(Date.now())); }catch(e){} d.remove(); }
+        d.querySelector("button").onclick=fermer;
+        document.body.appendChild(d);
+        try{ localStorage.setItem("lx_ios_bandeau", String(Date.now())); }catch(e){}
+      }, 2500);
+    }
+  }catch(e){}
   if(!window.LX_APP_CLIENT) return;
   function barre(){
     if(document.getElementById("lxAppNav")) return;

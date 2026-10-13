@@ -28,23 +28,28 @@
   function charger(code) {
     if (cache[code]) return Promise.resolve(cache[code]);
     return fetch("https://geo.api.gouv.fr/communes?codePostal=" + code + "&fields=nom&format=json")
-      .then(function (r) { return r.ok ? r.json() : []; })
-      .then(function (l) { var n = (l || []).map(function (c) { return c.nom; }).filter(Boolean).sort(function (a, b) { return a.localeCompare(b, "fr"); }); cache[code] = n; return n; })
-      .catch(function () { return []; });
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (l) { if (l === null) return null; var n = (l || []).map(function (c) { return c.nom; }).filter(Boolean).sort(function (a, b) { return a.localeCompare(b, "fr"); }); cache[code] = n; return n; })
+      .catch(function () { return null; });
   }
   function maj(cp) {
     var v = villeDe(cp); if (!v) return;
     var code = String(cp.value || "").replace(/\D/g, "");
     var sel = v.__lxSel;
-    if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } return; }
+    // 2026-10-13 : champ « ville à choisir » (comptes clients) : verrouillé tant que le code postal n'a pas donné la liste ;
+    // saisie libre seulement pour un code étranger (4 chiffres, pays autre que la France) ou si le service ne répond pas.
+    var liste = v.getAttribute("data-lx-ville-liste") === "1";
+    if (code.length !== 5 || paysEtranger(cp)) { if (sel) { sel.remove(); v.__lxSel = null; v.style.display = ""; } if (liste) v.readOnly = !(code.length === 4 || paysEtranger(cp)); return; }
     charger(code).then(function (noms) {
       if (String(cp.value || "").replace(/\D/g, "") !== code) return;
+      if (noms === null) { if (liste) v.readOnly = false; return; }
       var _msg = cp.parentNode && cp.parentNode.querySelector(".lx-cp-msg");
       if (!noms.length) {
         if (v.__lxSel) { v.__lxSel.remove(); v.__lxSel = null; } v.style.display = "";
         // 2026-10-11 : code postal inexistant (ex. 75000) -> on le signale, sans bloquer
         if (!_msg && cp.parentNode) { _msg = document.createElement("div"); _msg.className = "lx-cp-msg"; _msg.style.cssText = "font-size:11px;color:#ef9a9a;margin-top:4px"; cp.parentNode.appendChild(_msg); }
         if (_msg) _msg.textContent = "Code postal introuvable : vérifiez-le.";
+        if (liste) { v.readOnly = true; v.value = ""; }
         return;
       }
       if (_msg) _msg.remove();
