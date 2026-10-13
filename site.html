@@ -2838,6 +2838,14 @@ function lxAppliquerPref(){
     else area.insertAdjacentHTML("afterbegin",'<div style="margin:8px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.35);font-size:13px">Le cr\u00e9neau de '+p.h+' n\u2019est pas disponible pour cette prestation : choisissez un autre horaire ci-dessous.</div>');
   },60);
 }
+function lxAgendaSite(){
+  var r=window._lxDernierRdv; if(!r) return;
+  var d0=new Date(r.date+"T"+String(r.heure).slice(0,5)+":00"), d1=new Date(d0.getTime()+(Number(r.duree)||60)*60000);
+  function f(d){ return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"T"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0")+"00"; }
+  function e(t){ return String(t||"").replace(/[\\;,]/g,function(c){return "\\"+c;}).replace(/\n/g," "); }
+  var ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Luxyra//RDV//FR","BEGIN:VEVENT","UID:"+f(d0)+"-"+Math.random().toString(36).slice(2)+"@luxyra.fr","DTSTAMP:"+f(new Date()),"DTSTART:"+f(d0),"DTEND:"+f(d1),"SUMMARY:"+e(r.titre),"LOCATION:"+e(r.lieu),"DESCRIPTION:"+e("R\u00e9serv\u00e9 sur Luxyra. G\u00e9rer : https://luxyra.fr/compte.html"),"BEGIN:VALARM","TRIGGER:-PT2H","ACTION:DISPLAY","DESCRIPTION:Rappel","END:VALARM","END:VEVENT","END:VCALENDAR"].join("\r\n");
+  var a=document.createElement("a"); a.href="data:text/calendar;charset=utf-8,"+encodeURIComponent(ics); a.download="rdv-luxyra.ics"; document.body.appendChild(a); a.click(); a.remove();
+}
 function renderBookingStep3(){
   if(window._lxPref && !booking.date){ lxAppliquerPref(); return; }
   var h='<div class="step active">';
@@ -3563,6 +3571,14 @@ async function submitBooking(){
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+booking.collab.n+'</span></div>';
     h+='</div>';
+    // 2026-10-13 : agenda du téléphone + itinéraire (adresse masquée pour le domicile)
+    try{
+      window._lxDernierRdv={titre:primaryNom+" \u2014 "+(SALON.nom||""), date:booking.date, heure:booking.time, duree:dur, lieu:(_domDem||SALON.mode_activite==="domicile")?"":[SALON.adresse,SALON.cp,SALON.ville].filter(Boolean).join(" ")};
+      h+='<div style="display:flex;gap:8px;max-width:400px;margin:0 auto 14px">';
+      h+='<button class="btn btn-outline" style="flex:1;font-size:13px" onclick="lxAgendaSite()">\ud83d\udcc5 Ajouter \u00e0 mon agenda</button>';
+      if(window._lxDernierRdv.lieu) h+='<a class="btn btn-outline" style="flex:1;font-size:13px;text-align:center" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(window._lxDernierRdv.lieu)+'">\ud83e\udded Itin\u00e9raire</a>';
+      h+='</div>';
+    }catch(_eAg){}
     h+='<button class="btn btn-gold" onclick="renderBookingStep1()" style="margin-top:16px">Nouveau rendez-vous</button>';
     h+='<div style="margin-top:10px"><a href="/compte" style="display:inline-block;padding:12px 24px;border-radius:10px;border:1px solid rgba(212,168,67,.4);color:#d4a843;text-decoration:none;font-weight:700;font-size:14px">\ud83d\udcc5 Voir mon compte</a></div>';
     h+='</div>';
