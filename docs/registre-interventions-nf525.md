@@ -304,3 +304,6 @@ d'altération des données fiscales.*
 - Compte client : rappel « reprendre le même RDV » (écart habituel, 6 semaines par défaut), ajout à l'agenda (.ics), itinéraire ; idem sur l'écran de confirmation.
 - Avis : notes par critère + 3 photos max (bucket avis-photos public, avis-create v9) ; favoris (table client_favoris, /api/client/favoris).
 - Relecture indépendante : 5 points corrigés avant mise en ligne. Aucune donnée de caisse touchée.
+- Alerte « une place s'est libérée » : table creneau_alertes ; déclencheurs (après mise à jour seulement si annulation / statut / date / heure changent) sur rdv_online et appointments, qui n'écrivent RIEN dans ces tables (simple appel au worker, erreurs ignorées) ; e-mail aux clients dont la prestation tient dans la durée libérée ; la place revient au premier qui réserve. Tests de protection NF525 : 0 échec après ajout.
+- Double réservation : verrou par salon + jour dans rdv_online_block_double_booking (deux réservations simultanées traitées l'une après l'autre, la seconde refusée si chevauchement) ; une réservation en attente de paiement d'acompte bloque le créneau 35 min ; page de paiement Stripe des acomptes valable 31 min.
+- Recherche (téléphone) : la carte se recadre sur tous les résultats à l'ouverture.

@@ -174,6 +174,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/client/fidelite" && request.method === "POST") return await handleClientFidelite(request, env);
       if (url.pathname === "/api/client/rdvs" && request.method === "POST") return await handleClientRdvs(request, env);
       if (url.pathname === "/api/client/favoris" && request.method === "POST") return await handleClientFavoris(request, env);
+      if (url.pathname === "/api/client/alertes" && request.method === "POST") return await handleClientAlertes(request, env);
+      if (url.pathname === "/api/alertes/creneau-libere" && request.method === "POST") return await handleCreneauLibere(request, env);
       if (url.pathname === "/api/client/rdv-update" && request.method === "POST") return await handleClientRdvUpdate(request, env);
       if (url.pathname === "/api/client/anonymize" && request.method === "POST") return await handleClientAnonymize(request, env);
       // Invitations clients (magic link "créer mot de passe")
@@ -1277,6 +1279,8 @@ async function handleConnectPayment(request, env) {
       "metadata[rdv_id]": metadata?.rdv_id || "",
       "metadata[customer_name]": customer_name || "",
       "payment_intent_data[description]": description || "Paiement en ligne",
+      // 2026-10-13 : page de paiement valable 31 min (le créneau en attente de paiement est bloqué 35 min)
+      expires_at: String(Math.floor(Date.now() / 1000) + 31 * 60),
     };
     // 2026-10-09 : charge directe sur le compte du salon (ou ancien mode destination si interrupteur OFF)
     const _direct = await lxChargesDirectes(env);
@@ -3564,6 +3568,81 @@ async function handleClientFidelite(request, env) {
 }
 
 // GET RDV en ligne du client (cross-salons par défaut, filtrable par salon_id)
+// 2026-10-13 : alertes « une place s'est libérée » (liste d'attente par prestation)
+function lxPlageDe(heure) { const h = parseInt(String(heure || "0").slice(0, 2), 10); return h < 12 ? "matin" : h < 17 ? "apres_midi" : "soir"; }
+async function handleClientAlertes(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "Connectez-vous pour créer une alerte" }, 401);
+    const lx = session.lx_id, H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
+    const op = String(body.op || "list");
+    const today = new Date(Date.now() + 2 * 3600e3).toISOString().slice(0, 10);
+    if (op === "create") {
+      const sid = String(body.salon_id || "");
+      if (!/^[0-9a-f-]{36}$/i.test(sid)) return jsonResponse({ error: "établissement invalide" }, 400);
+      const svcId = parseInt(body.service_id, 10);
+      if (!svcId) return jsonResponse({ error: "Choisissez la prestation" }, 400);
+      const sv = await (await fetch(`${base}/services?id=eq.${svcId}&salon_id=eq.${sid}&actif=eq.true&select=id,nom,phases`, { headers: H })).json();
+      if (!Array.isArray(sv) || !sv[0]) return jsonResponse({ error: "Prestation introuvable" }, 400);
+      const duree = Math.max(5, (Array.isArray(sv[0].phases) ? sv[0].phases : []).reduce((t, p) => t + (Number(p && p.d) || 0), 0) || 30);
+      const d1 = /^\d{4}-\d{2}-\d{2}$/.test(body.date_debut || "") ? body.date_debut : today;
+      let d2 = /^\d{4}-\d{2}-\d{2}$/.test(body.date_fin || "") ? body.date_fin : d1;
+      if (d1 < today) return jsonResponse({ error: "Date passée" }, 400);
+      const maxFin = new Date(new Date(d1 + "T12:00:00Z").getTime() + 31 * 864e5).toISOString().slice(0, 10);
+      if (d2 < d1) d2 = d1; if (d2 > maxFin) d2 = maxFin;
+      const plage = ["tous", "matin", "apres_midi", "soir"].includes(body.plage) ? body.plage : "tous";
+      const act = await (await fetch(`${base}/creneau_alertes?client_luxyra_id=eq.${lx}&actif=eq.true&date_fin=gte.${today}&select=id`, { headers: H })).json();
+      if (Array.isArray(act) && act.length >= 3) return jsonResponse({ error: "Vous avez déjà 3 alertes actives : supprimez-en une dans Mes RDV." }, 400);
+      const r = await fetch(`${base}/creneau_alertes`, { method: "POST", headers: { ...H, "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ salon_id: sid, client_luxyra_id: lx, service_id: svcId, service_nom: sv[0].nom || "", duree_minutes: duree, date_debut: d1, date_fin: d2, plage }) });
+      if (!r.ok) return jsonResponse({ error: "Création impossible" }, 400);
+    } else if (op === "delete") {
+      const id = String(body.id || "");
+      if (/^[0-9a-f-]{36}$/i.test(id)) await fetch(`${base}/creneau_alertes?id=eq.${id}&client_luxyra_id=eq.${lx}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ actif: false }) });
+    }
+    const rows = await (await fetch(`${base}/creneau_alertes?client_luxyra_id=eq.${lx}&actif=eq.true&date_fin=gte.${today}&select=id,salon_id,service_nom,date_debut,date_fin,plage,salons(nom,slug)&order=created_at.desc`, { headers: H })).json();
+    return jsonResponse({ ok: true, alertes: (Array.isArray(rows) ? rows : []).map((x) => ({ id: x.id, salon_id: x.salon_id, salon_nom: x.salons ? x.salons.nom : "", salon_slug: x.salons ? x.salons.slug : "", service_nom: x.service_nom, date_debut: x.date_debut, date_fin: x.date_fin, plage: x.plage })) });
+  } catch (e) { return jsonResponse({ error: "Erreur alertes" }, 500); }
+}
+// Appelé par la base (déclencheur) quand un rendez-vous est annulé ou déplacé
+async function handleCreneauLibere(request, env) {
+  try {
+    if (!env.AVIS_CRON_SECRET || request.headers.get("x-cron-secret") !== env.AVIS_CRON_SECRET) return jsonResponse({ error: "forbidden" }, 403);
+    const b = await request.json().catch(() => ({}));
+    const sid = String(b.salon_id || ""), date = String(b.date || ""), heure = String(b.heure || "").slice(0, 5), duree = Math.max(30, parseInt(b.duree, 10) || 30);
+    if (!/^[0-9a-f-]{36}$/i.test(sid) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(heure)) return jsonResponse({ error: "params" }, 400);
+    const H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
+    const plage = lxPlageDe(heure);
+    const cutoff = new Date(Date.now() - 30 * 60e3).toISOString();
+    const al = await (await fetch(`${base}/creneau_alertes?salon_id=eq.${sid}&actif=eq.true&date_debut=lte.${date}&date_fin=gte.${date}&duree_minutes=lte.${duree}&plage=in.(tous,${plage})&or=(derniere_alerte_at.is.null,derniere_alerte_at.lt.${encodeURIComponent(cutoff)})&select=id,client_luxyra_id,service_id,service_nom&limit=50`, { headers: H })).json();
+    if (!Array.isArray(al) || !al.length) return jsonResponse({ ok: true, envoyes: 0 });
+    const sal = await (await fetch(`${base}/salons_public?id=eq.${sid}&select=nom,slug`, { headers: H })).json();
+    const salon = Array.isArray(sal) && sal[0] ? sal[0] : null;
+    if (!salon || !salon.slug) return jsonResponse({ ok: true, envoyes: 0 });
+    const jour = new Date(date + "T12:00:00Z").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Paris" });
+    let n = 0;
+    for (const a of al) {
+      const cl = await (await fetch(`${base}/clients_luxyra?id=eq.${a.client_luxyra_id}&select=email,prenom`, { headers: H })).json();
+      const c = Array.isArray(cl) && cl[0] ? cl[0] : null;
+      if (!c || !c.email) continue;
+      const lien = `https://luxyra.fr/${encodeURIComponent(salon.slug)}/reserver?d=${date}&h=${encodeURIComponent(heure)}${a.service_id ? "&book=" + a.service_id : ""}`;
+      const esc = (t) => String(t || "").replace(/[&<>"]/g, (x) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[x]));
+      const corps = `<p style="font-size:15px;color:#333;line-height:1.6">Bonjour ${esc(c.prenom || "")},</p>
+<p style="font-size:15px;color:#333;line-height:1.6">Bonne nouvelle : une place vient de se libérer chez <b>${esc(salon.nom)}</b> le <b>${esc(jour)} à ${esc(heure)}</b>${a.service_nom ? ` pour « ${esc(a.service_nom)} »` : ""}.</p>
+<p style="font-size:14px;color:#666;line-height:1.6">Les autres personnes en attente ont reçu le même message : la place revient à la première qui réserve.</p>
+${lxMailBouton("Réserver cette place", lien)}
+<p style="font-size:12px;color:#999;line-height:1.5">Vous recevez ce message car vous avez demandé à être prévenu(e). Gérer ou arrêter vos alertes : <a href="https://luxyra.fr/compte.html?tab=rdv" style="color:#a88a3e">Mes RDV</a>.</p>`;
+      try {
+        await brevoSendEmail(env, { to: c.email, subject: `Une place s'est libérée chez ${salon.nom}`, htmlContent: lxMailLayout(corps, { titre: "Une place s'est libérée" }), textContent: `Une place s'est libérée chez ${salon.nom} le ${jour} à ${heure}. Réserver : ${lien}` });
+        n++;
+        await fetch(`${base}/creneau_alertes?id=eq.${a.id}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ derniere_alerte_at: new Date().toISOString() }) });
+        await fetch(`${base}/rpc/lx_alerte_incrementer`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_id: a.id }) }).catch(() => {});
+      } catch (_) {}
+    }
+    return jsonResponse({ ok: true, envoyes: n });
+  } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
+}
 // 2026-10-13 : salons favoris d'un compte client (liste / ajout-retrait)
 async function handleClientFavoris(request, env) {
   try {
