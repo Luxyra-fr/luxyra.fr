@@ -1313,9 +1313,9 @@ function showAuthModal(mode){
     h+='<div class="fg-row"><div class="fg"><label>T\u00e9l\u00e9phone *</label><input id="aRegTel" type="tel" required></div>';
     h+='<div class="fg"><label>Date de naissance</label><input id="aRegDdn" type="date"></div></div>';
     h+='<div class="fg-row"><div class="fg"><label>Genre *</label><select id="aRegGenre" style="width:100%;padding:12px 14px;border-radius:10px;background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.15);font-size:14px"><option value="" selected disabled style="background:#1a1a2e;color:#fff">Sélectionnez…</option><option value="F" style="background:#1a1a2e;color:#fff">Femme</option><option value="H" style="background:#1a1a2e;color:#fff">Homme</option><option value="E" style="background:#1a1a2e;color:#fff">Enfant</option></select></div>';
-    h+='<div class="fg"><label>Adresse</label><input id="aRegAdr" placeholder="N° et rue (RDV à domicile)" autocomplete="street-address"></div></div>';
-    h+='<div class="fg-row"><div class="fg"><label>Code postal</label><input id="aRegCp" placeholder="Code postal" autocomplete="postal-code"></div>';
-    h+='<div class="fg"><label>Ville</label><input id="aRegVille" placeholder="Ville" autocomplete="address-level2"></div></div>';
+    h+='<div class="fg"><label>Adresse *</label><input id="aRegAdr" placeholder="N° et rue (RDV à domicile)" autocomplete="street-address"></div></div>';
+    h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="aRegCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
+    h+='<div class="fg"><label>Ville *</label><input id="aRegVille" placeholder="Ville" autocomplete="address-level2"></div></div>';
   }
   h+='<div class="fg"><label>Email *</label><input id="aEmail" type="email" required></div>';
   if(isLogin){h+='<div class="fg"><label>Mot de passe *</label><input id="aPass" type="password" required></div>';}
@@ -1370,6 +1370,11 @@ async function doClientRegister(){
   if(!genre){showAuthError("Veuillez sélectionner un genre");return;}
   if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
+  // 2026-10-13 : adresse obligatoire (renseignements pour les prestations à domicile)
+  var _adr0=((document.getElementById("aRegAdr")||{}).value||"").trim(), _cp0=((document.getElementById("aRegCp")||{}).value||"").trim(), _vil0=((document.getElementById("aRegVille")||{}).value||"").trim();
+  if(_adr0.length<5){showAuthError("Indiquez votre adresse (numéro et rue) : elle sert aux prestations à domicile.");return;}
+  if(!/^\d{4,5}$/.test(_cp0.replace(/\s/g,""))){showAuthError("Code postal invalide");return;}
+  if(!_vil0){showAuthError("Indiquez votre ville");return;}
   // Anti-spam : le salon a-t-il bloqu\u00e9 la cr\u00e9ation de nouveaux comptes ?
   if(SITE_CFG&&SITE_CFG.bloquerNouveauxComptes===true){
     showAuthError("La cr\u00e9ation de nouveaux comptes est temporairement d\u00e9sactiv\u00e9e. Si vous \u00eates d\u00e9j\u00e0 client(e), connectez-vous. Sinon, contactez le salon par t\u00e9l\u00e9phone pour r\u00e9server.");
@@ -1379,7 +1384,7 @@ async function doClientRegister(){
   var emOk=document.getElementById("aRegEm")?document.getElementById("aRegEm").checked:false;
   if(!window.LX){ try{ await window._lxEnsure(); }catch(_e){} }
   if(!window.LX){ showAuthError("Service de connexion momentan\u00e9ment indisponible. Rechargez la page, ou appelez le salon pour r\u00e9server."); return; }
-  var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk});
+  var res=await LX.signup({email:email,password:pass,nom:nom,prenom:pre.trim(),telephone:tel,date_naissance:ddn||null,genre:genre,sms_ok:smsOk,email_ok:emOk,adresse:_adr0,cp:_cp0,ville:_vil0});
   if(!res.ok){showAuthError(res.data&&res.data.error?res.data.error:"Erreur lors de la cr\u00e9ation du compte");return;}
   CLIENT=res.data.user;try{_lxFetchAcompteMode(CLIENT&&CLIENT.email,"");}catch(e){} try{ setTimeout(lxFavCharger,300); }catch(_eFv){}
   // FIX 2026-05-23 : enregistre l'adresse sur le compte AVANT de créer le lien salon,
