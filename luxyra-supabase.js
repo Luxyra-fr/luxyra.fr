@@ -277,20 +277,22 @@ async function _walCheck(){
     }
 
     // Récupération auto en arrière-plan
-    var ok = 0, fail = 0;
+    var ok = 0, fail = 0, differe = 0;
     for (var i = 0; i < unsynced.length; i++) {
       try {
         var r = await _walResync(unsynced[i].id);
-        if (r && r.ok) ok++; else fail++;
+        // 2026-10-14 (NF525) : une entrée en attente (délai entre deux essais) n'est ni un succès ni un échec
+        if (r && r.ok) ok++; else if (r && r.differe) differe++; else fail++;
       } catch(_) { fail++; }
     }
+    if (differe) console.warn("[WAL] " + differe + " action(s) en attente d'un nouvel essai (délai entre deux essais)");
 
     try { if (typeof saveAuditEntry === "function") {
       saveAuditEntry("CENTRALISATION_DEGRADE", ok + " opération(s) transmise(s) au serveur après le mode dégradé" + (fail ? ", " + fail + " en attente" : ""));
       if (!fail) saveAuditEntry("MODE_DEGRADE_FIN", "Toutes les opérations conservées sur l'appareil sont centralisées");
     } } catch(_eC){}
     // Si trop d'échecs (>50%), on bascule sur la modale pour que l'utilisateur sache
-    if (fail > 0 && fail >= unsynced.length / 2) {
+    if (fail > 0 && fail >= (unsynced.length - differe) / 2) {
       console.warn("[WAL] " + fail + "/" + unsynced.length + " échecs → fallback modale");
       // Re-check les vraies non-sync restantes pour la modale
       var stillUnsynced = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]")
@@ -314,12 +316,66 @@ async function _walCheck(){
   } catch(e){ console.warn("[WAL] check failed:", e); }
 }
 
-async function _walResync(walId){
+// 2026-10-14 (NF525) : un rejeu ÉCHOUÉ n'est plus marqué « synchronisé ».
+// Avant : fn(entry.data) était appelé puis _walMarkSynced(walId) sans regarder le résultat
+// (saveTicketToDb renvoie null sur erreur d'insertion, saveAppointment/saveCloture ne renvoyaient
+// rien) -> un ticket refusé par le serveur sortait définitivement de la file de secours et
+// n'était JAMAIS retransmis (perte d'un enregistrement de caisse). Désormais :
+//   - succès confirmé (résultat sans .error et .ok !== false)      -> marqué synchronisé ;
+//   - doublon permanent (code 23505, « existe déjà », déjà en base) -> marqué synchronisé (la donnée
+//     est déjà en base ; sémantique inchangée, cf. FIX 2026-08-25 dans saveAppointment) ;
+//   - autre échec -> l'entrée reste en file, compteur d'essais + attente croissante entre deux essais,
+//     et après _WAL_ALERTE_ESSAIS échecs : alerte à l'opérateur (toast) + audit DB_ERROR, sans bloquer.
+var _WAL_ALERTE_ESSAIS = 3;
+function _walNoterEssai(walId, okOuErreur){
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    for (var i=0; i<wal.length; i++) {
+      if (wal[i].id === walId) {
+        wal[i].tries = (Number(wal[i].tries)||0) + 1;
+        wal[i].lastTryAt = new Date().toISOString();
+        wal[i].lastError = okOuErreur ? String(okOuErreur).slice(0, 300) : null;
+        localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+        return wal[i];
+      }
+    }
+  } catch(e){}
+  return null;
+}
+function _walAttenteAvantEssai(entry){
+  // attente = 1 min × 2^(essais-1), plafonnée à 60 min (1, 2, 4, 8, 16, 32, 60 min)
+  var n = Number(entry && entry.tries) || 0;
+  if (!n || !entry.lastTryAt) return 0;
+  var att = Math.min(60, Math.pow(2, n - 1)) * 60 * 1000;
+  var depuis = Date.now() - new Date(entry.lastTryAt).getTime();
+  return Math.max(0, att - depuis);
+}
+function _walResultatOk(r){
+  if (r === null || r === undefined || r === false) return false;
+  if (typeof r !== "object") return !!r;
+  if (r.error) return false;
+  if (r.ok === false) return false;
+  return true;
+}
+function _walResultatDoublonPermanent(r){
+  try {
+    if (!r || typeof r !== "object") return false;
+    if (r.permanent === true) return true;
+    var e = r.error;
+    if (!e) return false;
+    return (e.code === "23505") || (String(e.message || "").indexOf("existe deja") >= 0) || (String(e.message || "").indexOf("existe déjà") >= 0);
+  } catch(_) { return false; }
+}
+async function _walResync(walId, force){
   try {
     var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
     var entry = null;
     for (var i=0; i<wal.length; i++) { if (wal[i].id===walId) { entry=wal[i]; break; } }
     if (!entry || entry.synced) return { ok: false, reason: "introuvable ou déjà sync" };
+    if (!force) {
+      var _att = _walAttenteAvantEssai(entry);
+      if (_att > 0) return { ok: false, reason: "attente avant nouvel essai", differe: true };
+    }
     var fn = ({
       client: saveClient,
       appointment: saveAppointment,
@@ -328,13 +384,43 @@ async function _walResync(walId){
     })[entry.type];
     if (!fn) return { ok: false, reason: "type non géré: " + entry.type };
     // Bypass WAL pour éviter récursion (la 2ème save ne re-persiste pas)
+    var r;
     window._walBypass = true;
-    try { await fn(entry.data); } finally { window._walBypass = false; }
-    _walMarkSynced(walId);
-    return { ok: true };
+    try { r = await fn(entry.data); } finally { window._walBypass = false; }
+    if (_walResultatOk(r)) { _walMarkSynced(walId); return { ok: true }; }
+    if (_walResultatDoublonPermanent(r)) {
+      // déjà en base : équivalent synchronisé (aucune perte, évite un rejeu à chaque démarrage)
+      _walMarkSynced(walId);
+      return { ok: true, doublon: true };
+    }
+    var _msg = (r && r.error && (r.error.message || r.error.code)) || (r && r.reason) || "échec non confirmé par le serveur";
+    var _e2 = _walNoterEssai(walId, _msg);
+    _walAlerterSiRepete(_e2, _msg);
+    return { ok: false, reason: _msg };
   } catch(e){
-    return { ok: false, reason: e.message || String(e) };
+    var _m3 = e && (e.message || String(e));
+    var _e3 = _walNoterEssai(walId, _m3);
+    _walAlerterSiRepete(_e3, _m3);
+    return { ok: false, reason: _m3 };
   }
+}
+// Alerte opérateur + audit après plusieurs échecs sur la MÊME entrée (une seule fois par entrée).
+function _walAlerterSiRepete(entry, msg){
+  try {
+    if (!entry || (Number(entry.tries)||0) < _WAL_ALERTE_ESSAIS || entry.alerted) return;
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
+    for (var i=0; i<wal.length; i++) { if (wal[i].id === entry.id) { wal[i].alerted = true; break; } }
+    localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+    var lib = ({client:"fiche client", appointment:"rendez-vous", ticket:"ticket de caisse", cloture:"clôture Z"})[entry.type] || entry.type;
+    if (typeof toast === "function") toast("Un enregistrement (" + lib + ") n'a pas pu être transmis au serveur après " + entry.tries + " essais. Il reste conservé sur cet appareil et sera retransmis automatiquement : vérifiez la connexion.", "error");
+    if (typeof saveAuditEntry === "function") {
+      saveAuditEntry("DB_ERROR", JSON.stringify({
+        fn: "_walResync", msg: "Rejeu échoué " + entry.tries + " fois : " + String(msg || "").slice(0, 300),
+        wal_id: entry.id, type: entry.type, ts: entry.ts || null,
+        tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null
+      }).slice(0, 2000));
+    }
+  } catch(_) {}
 }
 
 window._walResync = _walResync;
@@ -835,6 +921,21 @@ function lxMapApptRow(a) {
   // Cle posee UNIQUEMENT si true -> forme d'un RDV normal inchangee (absence de cle == false
   // pour tous les lecteurs : `!!a.printed`, `a.printed||false`).
   if (a.printed === true) _ap.printed = true;
+  // 2026-10-14 (NF525) : restitue les champs de ticket conservés dans appointments.meta (opérateur, poste,
+  // horodatage, clients supplémentaires, nom client figé, drapeaux acompte / retenue / annulation d'acompte,
+  // ticket d'origine, bons cadeaux utilisés, n° serveur). Clés posées UNIQUEMENT si présentes -> un RDV sans
+  // meta garde exactement la même forme qu'avant.
+  try {
+    if (a.meta && typeof a.meta === "object" && !Array.isArray(a.meta)) {
+      for (var _mk in a.meta) {
+        if (!Object.prototype.hasOwnProperty.call(a.meta, _mk)) continue;
+        if (_LX_APPT_META_KEYS.indexOf(_mk) < 0) continue;
+        var _mv = a.meta[_mk];
+        if (_mv === undefined || _mv === null) continue;
+        _ap[_mk] = _mv;
+      }
+    }
+  } catch (_eMeta) {}
   return _ap;
 }
 if (typeof window !== "undefined") window.lxMapApptRow = lxMapApptRow;
@@ -2287,6 +2388,9 @@ async function lxChargerRdvOnline() {
   return err && !out.length ? { data: null, error: err } : { data: out, error: null };
 }
 if (typeof window !== "undefined") window.lxChargerRdvOnline = lxChargerRdvOnline;
+// 2026-10-14 (NF525) : saveAppointment renvoie désormais un résultat exploitable par la file de secours
+// (_walResync) : objet sans .error en cas de succès, { ok:false, error, permanent } en cas d'échec,
+// undefined hors ligne. Les appelants existants ignorent la valeur de retour (aucun changement pour eux).
 async function saveAppointment(appt) {
   if (!_isOnline || !_salonId) return;
   // WAL : persiste l'action AVANT tout traitement (filet 15/05/2026)
@@ -2320,12 +2424,15 @@ async function saveAppointment(appt) {
           }
         } catch (_eAc) {}
         var _prevBypass = window._walBypass; window._walBypass = true;
-        try { await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
-      } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); }
+        var _rDone;
+        try { _rDone = await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
+        // 2026-10-14 (NF525) : échec de l'écriture du RDV encaissé -> on le signale à la file de secours (pas de « synchronisé » à tort)
+        if (_rDone && typeof _rDone === "object" && (_rDone.error || _rDone.ok === false)) { return _rDone; }
+      } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); return { ok: false, error: { message: String((eDone && eDone.message) || eDone) } }; }
       // Marque la rdv_online encaissee (compte client : RDV passe + facture ; dedup planning)
       try { _sb.from("rdv_online").update({ status: "done", ticket_num: (appt.tkNum || null) }).eq("id", onlineUuid).eq("salon_id", _salonId).then(function(){}, function(){}); } catch (e3) {}
       _walMarkSynced(_walId);
-      return;
+      return { ok: true };
     }
     var onlineData = {
       collaborateur_id: appt.stId,
@@ -2417,9 +2524,10 @@ async function saveAppointment(appt) {
       } else {
         console.log("[saveAppointment online] rdv_online updated:", onlineUuid, onlineData.salon_modified_fields ? "(modif tracked)" : "(no diff)");
         _walMarkSynced(_walId); // 2026-10-11 : sinon rejoué à chaque démarrage (écrasait les changements d'un autre appareil)
+        return { ok: true }; // 2026-10-14 (NF525) : succès confirmé pour la file de secours
       }
-    } catch (e) { console.error("[saveAppointment online] exception:", e); }
-    return;
+      return { ok: false, error: r && r.error }; // 2026-10-14 (NF525) : échec signalé à la file de secours (reste en file)
+    } catch (e) { console.error("[saveAppointment online] exception:", e); return { ok: false, error: { message: String((e && e.message) || e) } }; }
   }
 
   // === RDV CLASSIQUE / TICKET : appointments table ===
@@ -2500,9 +2608,24 @@ async function saveAppointment(appt) {
     data.cancel_date = String(appt.cancelDate).slice(0, 10) + "T12:00:00Z";
   }
 
+  // 2026-10-14 (NF525) : champs du TICKET perdus au rechargement (mémoire seule jusqu'ici) : opérateur, poste
+  // de caisse, horodatage, clients supplémentaires, nom client figé, drapeaux acompte / retenue / annulation
+  // d'acompte, référence du ticket d'origine, bons cadeaux utilisés. Ils sont regroupés dans la colonne
+  // jsonb `meta` (cf. docs/sql_a_appliquer_nf525.sql). La clé n'est envoyée QUE si elle a un contenu, et
+  // jamais si la colonne est absente (détection à la 1re erreur -> _lxApptMetaAbsent) : payload d'un RDV
+  // ordinaire inchangé, application fonctionnelle même avant l'ajout de la colonne.
+  var _meta = _lxApptMetaDepuis(appt);
+  if (_meta && !window._lxApptMetaAbsent) data.meta = _meta;
+
   _ensureUuidId(appt);
   data.id = appt.id;
   var r = await _sb.from("appointments").upsert(data).select();
+  if (r.error && data.meta && _lxErreurColonneMeta(r.error)) {
+    // 2026-10-14 (NF525) : colonne meta pas encore créée en base -> on continue sans elle (mémorisé pour la session)
+    window._lxApptMetaAbsent = true; delete data.meta;
+    console.warn("[saveAppointment] colonne appointments.meta absente : champs de ticket non persistés (appliquer docs/sql_a_appliquer_nf525.sql)");
+    r = await _sb.from("appointments").upsert(data).select();
+  }
   if (r.error) {
     console.warn("saveAppointment upsert error, retry stripped:", r.error?.message);
     delete data.clients; delete data.from_caisse; delete data.client_email; delete data.collab_name;
@@ -2519,7 +2642,9 @@ async function saveAppointment(appt) {
       if (typeof appt.comment === "string") _mut.comment = appt.comment;
       if (appt.lieu) _mut.lieu = String(appt.lieu);
       if (appt.adresse) _mut.adresse_domicile = String(appt.adresse);
+      if (data.meta) _mut.meta = data.meta; // 2026-10-14 (NF525) : colonne non protégée (nouvelle), mise à jour autorisée sur un ticket scellé
       var _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id");
+      if (_rm.error && _mut.meta && _lxErreurColonneMeta(_rm.error)) { window._lxApptMetaAbsent = true; delete _mut.meta; _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id"); }
       if (!_rm.error && _rm.data && _rm.data.length) { _walMarkSynced(_walId); return _rm; }
       r = _rm.error ? _rm : r;
     }
@@ -2559,11 +2684,58 @@ async function saveAppointment(appt) {
       // Doublon = echec DEFINITIF -> on marque l'entree WAL traitee pour stopper les rejeux.
       // Les autres erreurs (reseau, RLS...) restent rejouables : comportement inchange.
       if (_isDupPerm) { try { _walMarkSynced(_walId); } catch(_eW){} }
-      return;
+      // 2026-10-14 (NF525) : résultat explicite pour la file de secours (permanent = doublon, ne plus rejouer)
+      return { ok: false, error: r.error, permanent: _isDupPerm };
     }
   }
   _walMarkSynced(_walId);
+  return r; // 2026-10-14 (NF525) : succès confirmé (objet PostgREST sans .error)
 }
+
+// 2026-10-14 (NF525) : champs de ticket à conserver dans appointments.meta (jsonb), uniquement s'ils ont une valeur.
+var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClients","clientNom","clientPrenom",
+  "isAcompte","isAcompteCancel","apptId","isRetenue","retenueKey","retenueRdv","origTkNum","origTkNums",
+  "bonVenduRemise","offertRemise","dbNum"];
+function _lxApptMetaDepuis(appt) {
+  try {
+    if (!appt || typeof appt !== "object") return null;
+    var m = {}, n = 0;
+    for (var i = 0; i < _LX_APPT_META_KEYS.length; i++) {
+      var k = _LX_APPT_META_KEYS[i], v = appt[k];
+      if (v === undefined || v === null || v === "" || v === false) continue;
+      if (Array.isArray(v) && !v.length) continue;
+      if (typeof v === "function") continue;
+      m[k] = v; n++;
+    }
+    // poste de caisse : posé par saveTicketToDb (appelé APRÈS saveAppointment) -> on le reprend ici pour tout ticket scellé
+    try { if (!m.poste && window.LX_POSTE && (appt.st === "done" || appt.tkNum)) { m.poste = window.LX_POSTE; n++; } } catch (_eP) {}
+    return n ? m : null;
+  } catch (_e) { return null; }
+}
+function _lxErreurColonneMeta(err) {
+  try {
+    var msg = String((err && (err.message || err.details)) || "");
+    return /meta/i.test(msg) && (err.code === "PGRST204" || err.code === "42703" || /column|schema cache|colonne/i.test(msg));
+  } catch (_e) { return false; }
+}
+// Mise à jour partielle de appointments.meta (fusion avec l'existant) : utilisée pour mémoriser dbNum
+// après un NUM_MISMATCH sans réécrire le rendez-vous (une réécriture complète pourrait écraser un
+// changement fait sur un autre appareil). Silencieuse si la colonne n'existe pas encore.
+async function _lxApptMetaPatch(apptId, patch) {
+  try {
+    if (!_isOnline || !_salonId || !apptId || !patch || window._lxApptMetaAbsent) return false;
+    if (!(typeof apptId === "string" && apptId.indexOf("-") > 0 && apptId.length > 30)) return false;
+    var cur = await _sb.from("appointments").select("meta").eq("id", apptId).eq("salon_id", _salonId).maybeSingle();
+    if (cur.error) { if (_lxErreurColonneMeta(cur.error)) window._lxApptMetaAbsent = true; return false; }
+    if (!cur.data) return false;
+    var m = (cur.data.meta && typeof cur.data.meta === "object") ? cur.data.meta : {};
+    for (var k in patch) { if (Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined) m[k] = patch[k]; }
+    var up = await _sb.from("appointments").update({ meta: m }).eq("id", apptId).eq("salon_id", _salonId);
+    if (up.error) { if (_lxErreurColonneMeta(up.error)) window._lxApptMetaAbsent = true; return false; }
+    return true;
+  } catch (_e) { return false; }
+}
+if (typeof window !== "undefined") window._lxApptMetaPatch = _lxApptMetaPatch;
 
 // Supprimer un RDV non-encaissé de la base
 async function deleteAppointmentFromDb(apptId) {
@@ -2903,30 +3075,64 @@ async function saveTicketToDb(tk) {
     // Le hash est calculé côté app à partir de toutes les données critiques
     // du ticket (num, date, heure, prix, méthode, hash_prev, siret) → c'est
     // une clé unique fiable pour détecter un retry.
-    if (tk.hash && typeof tk.hash === "string" && tk.hash.length >= 16) {
+    // 2026-10-14 (NF525) : la clé d'idempotence PRINCIPALE est l'identifiant du ticket (raw_data->>id = tk.id,
+    // même motif que raw_data->>retenueKey pour les retenues). Le hash ne suffisait pas : après l'insertion,
+    // tk.hash est remplacé par le hash recalculé par le serveur (voir plus bas) alors que la copie conservée
+    // dans la file de secours porte encore le hash calculé par l'application -> un rejeu ne retrouvait pas
+    // le ticket et le réinsérait (doublon). Le contrôle par hash reste en second niveau.
+    var _dejaEnBase = null;
+    if (tk.id && typeof tk.id === "string" && tk.id.length >= 8) {
+      try {
+        var _exId = await _sb.from("tickets")
+          .select("id, num, hash, hash_prev")
+          .eq("salon_id", _salonId)
+          .eq("raw_data->>id", tk.id)
+          .limit(1).maybeSingle();
+        if (_exId && _exId.data && _exId.data.id) _dejaEnBase = _exId.data;
+      } catch (eIdId) { console.warn("[saveTicketToDb] contrôle d'idempotence (id) impossible :", eIdId && eIdId.message); }
+    }
+    if (!_dejaEnBase && tk.hash && typeof tk.hash === "string" && tk.hash.length >= 16) {
       try {
         var existingCheck = await _sb.from("tickets")
           .select("id, num, hash, hash_prev")
           .eq("salon_id", _salonId)
           .eq("hash", tk.hash)
           .limit(1).maybeSingle();
-        if (existingCheck.data && existingCheck.data.id) {
-          console.log("[saveTicketToDb] Idempotence : ticket déjà en DB (hash match), skip insert. num=" + existingCheck.data.num);
-          tk.dbId = existingCheck.data.id;
-          if (!tk.tkNum) tk.tkNum = existingCheck.data.num;
-          tk.hashPrev = existingCheck.data.hash_prev;
-          _walMarkSynced(_walId);
-          return existingCheck.data;
-        }
+        if (existingCheck.data && existingCheck.data.id) _dejaEnBase = existingCheck.data;
       } catch (eIdem) {
         // Si le check plante, on continue normalement (best-effort)
         console.warn("[saveTicketToDb] idempotence check failed, fallback to INSERT:", eIdem?.message);
       }
     }
+    if (_dejaEnBase) {
+      console.log("[saveTicketToDb] Idempotence : ticket déjà en DB, skip insert. num=" + _dejaEnBase.num);
+      tk.dbId = _dejaEnBase.id;
+      if (!tk.tkNum) tk.tkNum = _dejaEnBase.num;
+      tk.hashPrev = _dejaEnBase.hash_prev;
+      delete tk._dbError;
+      _walMarkSynced(_walId);
+      return _dejaEnBase;
+    }
 
     var res = await _sb.from("tickets").insert(data).select().single();
+    if (res.error && res.error.code === "23505" && tk.retenueKey) {
+      // 2026-10-14 (NF525) : retenue déjà enregistrée par un autre appareil (index unique raw_data->>retenueKey)
+      // -> même événement économique déjà en base : on reprend la ligne existante (pas de doublon, pas de rejeu).
+      try {
+        var _exRk = await _sb.from("tickets").select("id, num, hash, hash_prev").eq("salon_id", _salonId).eq("raw_data->>retenueKey", tk.retenueKey).limit(1).maybeSingle();
+        if (_exRk && _exRk.data && _exRk.data.id) {
+          tk.dbId = _exRk.data.id; if (!tk.tkNum) tk.tkNum = _exRk.data.num; tk.hashPrev = _exRk.data.hash_prev;
+          delete tk._dbError; _walMarkSynced(_walId);
+          return _exRk.data;
+        }
+      } catch(_eRk){}
+    }
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
+      // 2026-10-14 (NF525) : l'opérateur est prévenu (avant : simple console.warn, invisible en caisse)
+      // et le ticket porte la trace de l'échec (tk._dbError) ; la file de secours le retransmettra.
+      try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || res.error), code: res.error.code || null }; } catch(_eF){}
+      try { if (typeof toast === "function") toast("Ticket #" + (tk.tkNum || "?") + " non transmis au serveur : " + String(res.error.message || "erreur") + ". Il est conservé sur cet appareil et sera retransmis.", "error"); } catch(_eT){}
       // FIX 2026-05-15 : log DB_ERROR pour monitoring admin (trigger envoie mail temps réel)
       try {
         if (typeof saveAuditEntry === "function") {
@@ -2941,16 +3147,31 @@ async function saveTicketToDb(tk) {
           }).slice(0,2000));
         }
       } catch(_){}
-      // WAL non marqué synced → récupération au prochain boot via popup
+      // WAL non marqué synced → récupération au prochain boot via popup (puis alerte après plusieurs échecs).
+      // NB 2026-10-14 : un 23505 sur un ticket ordinaire n'est PAS traité comme « déjà en base » (le contrôle
+      // par raw_data->>id ci-dessus l'aurait trouvé) : l'entrée reste en file et l'opérateur est alerté.
       return null;
     }
     // Mettre à jour l'objet local avec le num généré par le trigger + l'id + le hash
     if (res.data) {
       tk.dbId = res.data.id;
+      // 2026-10-14 (NF525) : le n° attribué par le serveur peut différer du n° imprimé (tkNum) si deux postes
+      // ont numéroté en même temps. Le ticket imprimé n'est JAMAIS renuméroté : on conserve le n° serveur
+      // (tk.dbNum, persisté dans appointments.meta) et on trace l'écart (audit NUM_MISMATCH).
+      if (tk.tkNum && res.data.num != null && Number(res.data.num) !== Number(tk.tkNum)) {
+        tk.dbNum = res.data.num;
+        try {
+          if (typeof saveAuditEntry === "function") {
+            saveAuditEntry("NUM_MISMATCH", JSON.stringify({ fn:"saveTicketToDb", tk_num_imprime: tk.tkNum, num_serveur: res.data.num, tk_id: tk.id || null, date: dateStr, total: ttc }).slice(0,2000));
+          }
+        } catch(_eN){}
+        try { _lxApptMetaPatch(tk.id, { dbNum: res.data.num }); } catch(_eP){}
+      }
       if (!tk.tkNum) tk.tkNum = res.data.num;
       tk.hash = res.data.hash;
       tk.hashPrev = res.data.hash_prev;
     }
+    delete tk._dbError;
     _walMarkSynced(_walId);
     return res.data;
   } catch (e) {
@@ -3206,7 +3427,7 @@ async function saveCloture(clot) {
       } catch (_e) {}
       if (typeof toast === "function") toast("⚠️ Clôture déjà enregistrée — pas de doublon créé.", "info");
       _walMarkSynced(_walId);  // déjà existante = équivalent synchronisé
-      return;
+      return { ok: true, deja: true }; // 2026-10-14 (NF525) : résultat explicite pour la file de secours
     }
     // FIX 2026-05-15 (soir) : code 42501 = RLS UPDATE block, normal pour clotures.
     // La table clotures est immuable par design NF525 (BOI-CF-COM-10-80-30-10) :
@@ -3216,7 +3437,7 @@ async function saveCloture(clot) {
     if (res.error.code === "42501" || (res.error.message || "").indexOf("row-level security") >= 0) {
       console.warn("[saveCloture] Clôture immutable (RLS UPDATE block) — déjà enregistrée. Num=" + clot.num);
       _walMarkSynced(_walId);
-      return;
+      return { ok: true, deja: true }; // 2026-10-14 (NF525)
     }
     console.error("[saveCloture] Erreur upsert:", res.error);
     if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
@@ -3233,9 +3454,10 @@ async function saveCloture(clot) {
         }).slice(0,2000));
       }
     } catch(_){}
-    return;
+    return { ok: false, error: res.error }; // 2026-10-14 (NF525) : échec signalé à la file de secours (reste en file)
   }
   _walMarkSynced(_walId);
+  return { ok: true }; // 2026-10-14 (NF525) : succès confirmé
 }
 
 // Sauvegarder une entrée d'audit
