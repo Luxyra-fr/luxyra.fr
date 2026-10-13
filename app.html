@@ -7930,22 +7930,46 @@ if (typeof window !== "undefined" && typeof window.lxTauxTVA !== "function") {
 // 2026-10-10 : ajout du SIRET par un salon inscrit « en cours d'immatriculation » (une seule fois, vérifié)
 async function lxSiretAjouter(){
   var el=document.getElementById("lxSiretAjout"), msg=document.getElementById("lxSiretAjoutMsg");
-  var s=String((el&&el.value)||"").replace(/\s+/g,"");
-  if(!/^\d{14}$/.test(s)){ if(msg) msg.innerHTML='<span style="color:#ef5350">Le SIRET doit faire 14 chiffres.</span>'; return; }
+  var s=String((el&&el.value)||"").replace(/\D+/g,""); // 2026-10-13 : espaces, points, tirets tolérés
+  if(!/^\d{14}$/.test(s)){ if(msg) msg.innerHTML='<span style="color:#ef5350">Le SIRET doit faire 14 chiffres'+(s.length?' (vous en avez saisi '+s.length+')':'')+'.</span>'; return; }
   if(msg) msg.textContent="V\u00e9rification au r\u00e9pertoire officiel\u2026";
   var d=null; try{ d=await (await fetch("/api/siret?siret="+s)).json(); }catch(e){}
-  if(!d||!d.ok){ if(msg) msg.innerHTML='<span style="color:#ef5350">'+((d&&d.error)||"V\u00e9rification impossible, r\u00e9essayez dans un instant.")+'</span>'; return; }
+  if(!d||!d.ok){ if(msg) msg.innerHTML='<span style="color:#ef5350">'+escapeHtml((d&&d.error)||"V\u00e9rification impossible, r\u00e9essayez dans un instant.")+'</span>'; return; }
   if(d.actif===false){ if(msg) msg.innerHTML='<span style="color:#ef5350">Cet \u00e9tablissement est indiqu\u00e9 comme ferm\u00e9 au r\u00e9pertoire officiel : v\u00e9rifiez le num\u00e9ro.</span>'; return; }
+  // 2026-10-13 : complète les infos VIDES avec la fiche officielle (jamais d'écrasement de ce que le salon a saisi)
+  var cur={}; try{ var rc=await _sb.from("salons").select("siren,tva,forme_juridique,adresse,cp,ville,gerant_nom,gerant_prenom").eq("id",_salonId).single(); cur=(rc&&rc.data)||{}; }catch(_e){}
+  var vide=function(k){ return !String(cur[k]==null?"":cur[k]).trim(); };
+  var cap=function(x){ x=String(x||""); return x?x.charAt(0)+x.slice(1).toLowerCase():""; };
+  var patch={siret:s}, complete=[];
+  if(d.siren && vide("siren")){ patch.siren=d.siren; }
+  if(d.tva_intra && vide("tva")){ patch.tva=d.tva_intra; complete.push("n\u00b0 de TVA intracommunautaire"); }
+  if(d.forme && d.forme!=="autre" && vide("forme_juridique")){ patch.forme_juridique=d.forme; complete.push("forme juridique"+(d.forme_libelle?" ("+d.forme_libelle+")":"")); }
+  if(d.adresse && vide("adresse")){ patch.adresse=d.adresse; complete.push("adresse"); }
+  if(d.cp && vide("cp")){ patch.cp=d.cp; complete.push("code postal"); }
+  if(d.ville && vide("ville")){ patch.ville=cap(d.ville); complete.push("ville"); }
+  if(d.dirigeant_nom && vide("gerant_nom")){ patch.gerant_nom=cap(d.dirigeant_nom); complete.push("nom du g\u00e9rant"); }
+  if(d.dirigeant_prenom && vide("gerant_prenom")){ patch.gerant_prenom=cap(d.dirigeant_prenom); }
+  // Le SIRET d'un établissement correspond à son adresse : on signale (sans bloquer) un code postal différent.
+  var alerteAdr=(d.cp && String(cur.cp||"").trim() && String(cur.cp).trim()!==String(d.cp))
+    ? "\n\n\u26a0\ufe0f Attention : au r\u00e9pertoire officiel, ce SIRET est \u00e0 l\u2019adresse « "+[d.adresse,d.cp,d.ville].filter(Boolean).join(" ")+" », diff\u00e9rente de la v\u00f4tre ("+String(cur.cp)+"). V\u00e9rifiez qu\u2019il s\u2019agit bien du SIRET de cet \u00e9tablissement." : "";
   var nom=d.raison_sociale||d.nom||"";
-  showConfirm("Enregistrer le SIRET "+s+(nom?" ("+nom+")":"")+" ?\n\nIl appara\u00eetra sur vos tickets et ne pourra plus \u00eatre modifi\u00e9 ensuite.", async function(){
-    var patch={siret:s};
-    if(d.siren && !String((window.SALON||{}).siren||"").trim()) patch.siren=d.siren;
-    if(d.tva_intra && !String((window.SALON||{}).tva||"").trim()) patch.tva=d.tva_intra;
+  showConfirm("Enregistrer le SIRET "+s+(nom?" ("+nom+")":"")+" ?"+(complete.length?"\n\nNous compl\u00e9tons aussi depuis la fiche officielle : "+complete.join(", ")+".":"")+alerteAdr+"\n\nIl appara\u00eetra sur vos tickets et ne pourra plus \u00eatre modifi\u00e9 ensuite.", async function(){
     var r=await _sb.from("salons").update(patch).eq("id",_salonId);
     if(r.error){ showAlert("Enregistrement impossible : "+r.error.message,"error"); return; }
-    SALON_CONFIG.siret=s; if(window.SALON){ window.SALON.siret=s; if(patch.siren) window.SALON.siren=patch.siren; if(patch.tva) window.SALON.tva=patch.tva; }
-    if(typeof auditLog==="function") auditLog("SIRET_AJOUTE","SIRET "+s+" ajout\u00e9 (entreprise immatricul\u00e9e)");
-    toast("\u2705 SIRET enregistr\u00e9","success"); go("settings");
+    SALON_CONFIG.siret=s;
+    if(patch.tva) SALON_CONFIG.tva=patch.tva;
+    if(patch.forme_juridique) SALON_CONFIG.formeJuridiqueCode=patch.forme_juridique;
+    if(patch.adresse) SALON_CONFIG.adresse=patch.adresse;
+    if(patch.cp) SALON_CONFIG.cp=patch.cp;
+    if(patch.ville) SALON_CONFIG.ville=patch.ville;
+    if(window.SALON){ window.SALON.siret=s; if(patch.siren) window.SALON.siren=patch.siren; if(patch.tva) window.SALON.tva=patch.tva; if(patch.adresse) window.SALON.adr=patch.adresse; if(patch.cp) window.SALON.cp=patch.cp; if(patch.ville) window.SALON.ville=patch.ville; }
+    // Traçabilité (identification de l'assujetti) : ajout du SIRET + champs complétés
+    if(typeof auditLog==="function"){
+      auditLog("SIRET_AJOUTE","SIRET "+s+" ajout\u00e9 (entreprise immatricul\u00e9e)");
+      var det=Object.keys(patch).filter(function(k){ return k!=="siret"; }).map(function(k){ return k+" : « » \u2192 « "+patch[k]+" »"; });
+      if(det.length) auditLog("CONFIG_IDENTITE",("Compl\u00e9t\u00e9 depuis le r\u00e9pertoire officiel : "+det.join(" ; ")).slice(0,900));
+    }
+    toast("\u2705 SIRET enregistr\u00e9"+(complete.length?" et infos compl\u00e9t\u00e9es":""),"success"); go("settings");
   });
 }
 // === Recharge SMS automatique (2026-10-10) ===
