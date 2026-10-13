@@ -595,6 +595,26 @@ function renderRdvTab(){
     return stClasses[r.status]||"";
   }
   
+  // 2026-10-13 : rappel « il est peut-être temps de reprendre rendez-vous » (par établissement, sans RDV à venir)
+  try{
+    var _parSalon={};
+    past.forEach(function(r){ if(!r.salon_id) return; (_parSalon[r.salon_id]=_parSalon[r.salon_id]||[]).push(r); });
+    Object.keys(_parSalon).forEach(function(sid){
+      if(upcoming.some(function(u){ return u.salon_id===sid; })) return;
+      var L=_parSalon[sid].slice().sort(function(a,b){ return a.date_rdv<b.date_rdv?1:-1; });
+      var dern=L[0], jours=Math.floor((new Date(today)-new Date(dern.date_rdv))/86400000);
+      var ecart=42; // 6 semaines par défaut, sinon l'écart habituel du client
+      if(L.length>=2){ var tot=0,n=0; for(var i=0;i<Math.min(L.length-1,5);i++){ tot+=(new Date(L[i].date_rdv)-new Date(L[i+1].date_rdv))/86400000; n++; } if(n) ecart=Math.max(14,Math.min(120,Math.round(tot/n))); }
+      if(jours>=ecart && jours<=365){
+        h+='<div class="card" style="margin-bottom:12px;border:1px solid rgba(200,168,78,.45);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.03))">';
+        h+='<div style="font-size:14px;color:#fff;font-weight:700">\u23f0 Il est peut-\u00eatre temps de revenir chez '+escAttr(dern.salon_nom||"votre \u00e9tablissement")+'</div>';
+        h+='<div style="font-size:12px;color:var(--text2);margin:4px 0 10px">Dernier passage il y a '+Math.round(jours/7)+' semaine'+(Math.round(jours/7)>1?'s':'')+' ('+escAttr(dern.service_nom||"")+').</div>';
+        h+='<button onclick="rebookRdv(\''+sid+'\','+(dern.service_id||'null')+',\''+encodeURIComponent(dern.salon_nom||"").replace(/'/g,"%27")+'\',\''+escAttr(dern.salon_slug||"")+'\')" style="width:100%;padding:10px;border-radius:10px;border:none;background:linear-gradient(135deg,#c8a84e,#a88a3e);color:#000;font-weight:800;font-size:13px;cursor:pointer">\ud83d\udd01 Reprendre le m\u00eame rendez-vous</button>';
+        h+='</div>';
+      }
+    });
+  }catch(_eRap){}
+
   // --- UPCOMING ---
   h+='<div class="section"><div class="section-title">\ud83d\udcc5 \u00c0 venir ('+upcoming.length+')</div>';
   if(upcoming.length){
@@ -607,6 +627,11 @@ function renderRdvTab(){
       h+='<div class="rdv-det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+' \u2022 '+(r.collaborateur_nom||"")+' \u2022 '+r.service_prix+'\u20ac</div>';
       h+='<div class="rdv-salon">\ud83c\udfe0 '+(r.salon_nom||"Salon")+'</div></div>';
       h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
+      h+='</div>';
+      // 2026-10-13 : ajout à l'agenda du téléphone + itinéraire
+      h+='<div style="display:flex;gap:8px;margin-top:8px">';
+      h+='<button onclick="lxAgenda(\''+r.id+'\')" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text);font-size:12px;cursor:pointer">\ud83d\udcc5 Ajouter \u00e0 mon agenda</button>';
+      if(r.salon_adresse) h+='<a href="https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(r.salon_adresse)+'" target="_blank" rel="noopener" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text);font-size:12px;text-align:center;text-decoration:none">\ud83e\udded Itin\u00e9raire</a>';
       h+='</div>';
       // === Modification SALON (le salon a modifi\u00e9 le RDV) \u2014 bandeau prioritaire ===
       if(r.salon_modified_at && !r.salon_modified_acknowledged_by_client){
@@ -678,7 +703,7 @@ function renderRdvTab(){
             h+='<button onclick="showLeaveAvisModal('+aRdvArg+','+aTkArg+',\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis</button>';
           }
         }
-        if(r.salon_id)h+='<button onclick="rebookRdv(\''+r.salon_id+'\','+(r.service_id||'null')+',\''+encodeURIComponent(r.salon_nom||"")+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udd01 Reprendre ce RDV</button>';
+        if(r.salon_id)h+='<button onclick="rebookRdv(\''+r.salon_id+'\','+(r.service_id||'null')+',\''+encodeURIComponent(r.salon_nom||"").replace(/'/g,"%27")+'\',\''+escAttr(r.salon_slug||"")+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udd01 Reprendre ce RDV</button>';
         h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udcc4 Re\u00e7u</button>';
         h+='</div>';
       }
@@ -1686,14 +1711,27 @@ async function downloadReceipt(rdvId){
   setTimeout(function(){w.print();},500);
 }
 
-function rebookRdv(salonId,serviceId,salonNom){
+// 2026-10-13 : fichier agenda (.ics) — fonctionne avec Google Agenda, Apple Calendrier, Outlook
+function lxAgenda(id){
+  var r=(CLIENT_RDVS||[]).find(function(x){ return String(x.id)===String(id); }); if(!r) return;
+  var hh=String(r.heure_rdv||"09:00").slice(0,5), dur=Number(r.duree_minutes||r.duree||60)||60;
+  var d0=new Date(r.date_rdv+"T"+hh+":00"), d1=new Date(d0.getTime()+dur*60000);
+  function f(d){ return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"T"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0")+"00"; }
+  function e(t){ return String(t||"").replace(/[\\;,]/g,function(c){return "\\"+c;}).replace(/\n/g," "); }
+  var ics=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Luxyra//RDV//FR","BEGIN:VEVENT","UID:"+r.id+"@luxyra.fr","DTSTAMP:"+f(new Date()),"DTSTART:"+f(d0),"DTEND:"+f(d1),
+    "SUMMARY:"+e((r.service_nom||"Rendez-vous")+" \u2014 "+(r.salon_nom||"")),"LOCATION:"+e(r.salon_adresse||r.salon_nom||""),"DESCRIPTION:"+e("R\u00e9serv\u00e9 sur Luxyra. G\u00e9rer : https://luxyra.fr/compte.html"),
+    "BEGIN:VALARM","TRIGGER:-PT2H","ACTION:DISPLAY","DESCRIPTION:Rappel","END:VALARM","END:VEVENT","END:VCALENDAR"].join("\r\n");
+  var a=document.createElement("a"); a.href="data:text/calendar;charset=utf-8,"+encodeURIComponent(ics); a.download="rdv-luxyra.ics"; document.body.appendChild(a); a.click(); a.remove();
+  showToast("\ud83d\udcc5 Ouvrez le fichier pour l\u2019ajouter \u00e0 votre agenda");
+}
+function rebookRdv(salonId,serviceId,salonNom,slug){
   // Ouvre la page booking du salon, prestation pr\u00e9-s\u00e9lectionn\u00e9e si possible
   var sName=decodeURIComponent(salonNom||"");
   // Pass service_id en query string : site.html lit ?book=<id> au boot
   // pour aller direct \u00e0 l'\u00e9tape 1 booking avec ce service s\u00e9lectionn\u00e9.
-  var url="/site.html?s="+salonId;
-  if(serviceId && serviceId!=='null') url+="&book="+encodeURIComponent(serviceId);
-  window.open(url,"_blank");
+  var url=slug?("/"+encodeURIComponent(slug)+"?"):("/site.html?s="+salonId+"&");
+  if(serviceId && serviceId!=='null') url+="book="+encodeURIComponent(serviceId);
+  window.location.href=url; // 2026-10-13 : même fenêtre (dans l'application, un nouvel onglet sortait de l'appli)
   showToast("\ud83d\udd01 Redirection vers "+(sName||"le salon")+" pour r\u00e9server...");
 }
 

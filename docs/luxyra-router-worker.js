@@ -3581,7 +3581,7 @@ async function handleClientRdvs(request, env) {
     const rdvs = [];
     async function _fetch(filter) {
       try {
-        let u = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=*,salons(nom)&${filter}`;
+        let u = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=*,salons(nom,slug,adresse,cp,ville,mode_activite)&${filter}`;
         if (salonId) u += `&salon_id=eq.${encodeURIComponent(salonId)}`;
         u += `&order=date_rdv.desc&limit=50`;
         const r = await fetch(u, { headers: _sbHeaders(env) });
@@ -3591,6 +3591,8 @@ async function handleClientRdvs(request, env) {
           if (seen.has(d.id)) continue;
           seen.add(d.id);
           d.salon_nom = d.salons ? d.salons.nom : "";
+          // 2026-10-13 : pour « Reprendre ce RDV », l'agenda et l'itinéraire (adresse masquée pour le domicile)
+          if (d.salons) { d.salon_slug = d.salons.slug || ""; if (String(d.salons.mode_activite || "") !== "domicile") d.salon_adresse = [d.salons.adresse, d.salons.cp, d.salons.ville].filter(Boolean).join(" "); }
           delete d.salons;
           seenSlot.add(_slotKey(d.salon_id, d.date_rdv, d.heure_rdv));
           rdvs.push(d);
@@ -3619,9 +3621,9 @@ async function handleClientRdvs(request, env) {
           const _snames = {};
           for (const _sid of _sids) {
             try {
-              const _sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&id=eq.${_sid}&limit=1`, { headers: _sbHeaders(env) });
+              const _sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom,slug,adresse,cp,ville,mode_activite&id=eq.${_sid}&limit=1`, { headers: _sbHeaders(env) });
               const _sd = await _sr.json();
-              if (Array.isArray(_sd) && _sd[0]) _snames[_sid] = _sd[0].nom;
+              if (Array.isArray(_sd) && _sd[0]) { _snames[_sid] = _sd[0].nom; _snames["slug:" + _sid] = _sd[0].slug || ""; if (String(_sd[0].mode_activite || "") !== "domicile") _snames["adr:" + _sid] = [_sd[0].adresse, _sd[0].cp, _sd[0].ville].filter(Boolean).join(" "); }
             } catch (e) {}
           }
           for (const a of _appts) {
@@ -3635,7 +3637,7 @@ async function handleClientRdvs(request, env) {
               if (_ns.length) _itemName = _ns.join(", ");
             }
             rdvs.push({
-              id: a.id, salon_id: a.salon_id, salon_nom: _snames[a.salon_id] || "",
+              id: a.id, salon_id: a.salon_id, salon_nom: _snames[a.salon_id] || "", salon_slug: _snames["slug:" + a.salon_id] || "", salon_adresse: _snames["adr:" + a.salon_id] || "",
               date_rdv: a.date_rdv, heure_rdv: a.heure, service_nom: _itemName,
               service_prix: a.prix || 0, status: "confirmed", items: a.items || [],
               collaborateur_nom: a.collab_name || null, _salon_rdv: true
