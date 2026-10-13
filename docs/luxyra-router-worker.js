@@ -4442,24 +4442,28 @@ async function lxSeoFetch(path) {
 }
 
 // ============================================================================
-// ANNUAIRE PUBLIC « Métier à Ville » (2026-10-13, comme Planity)
-// /coiffeur/<ville>, /institut-de-beaute/<ville>, /spa-massage/<ville> (+ /coiffeur = liste des villes)
+// ANNUAIRE PUBLIC « Métier à Ville » (2026-10-13, comme Planity) — v2 : design Luxyra, logo,
+// et lien gérant orienté « activer la réservation » (le retrait reste possible, discrètement).
+// /coiffeur/<ville>, /institut-de-beaute/<ville>, /spa-massage/<ville> (+ /coiffeur = villes)
+// /annuaire-gerant?siret=… (page gérant), /annuaire-retrait (opposition, RPC annuaire_retirer)
 // Établissements Luxyra en tête avec « Réserver » ; les autres viennent de la base publique Sirene
-// (enseignes seulement, aucun nom de personne) avec « Réservation en ligne non disponible » et un lien
-// de retrait pour le gérant (annuaire_retirer). Aucun faux bouton de réservation, aucune note inventée.
+// (enseignes seulement, aucun nom de personne, aucune note inventée, aucun faux bouton de réservation).
 // ============================================================================
+const LX_ANN_LOGO = "data:image/webp;base64,UklGRigDAABXRUJQVlA4IBwDAACQDwCdASowADAAPlEij0WjoaETnASQOAUEsYBXJ605F9ePOejDbec73pwG84/6hxHu6q1dzC/+R9wHs1+hv+V/efgG/Vr/Z9eT9t/Yt/XlTKjrpPnVbcfCR8tAOR6dRsfqF3udzZAdGylkMu2pczclBrwDhuRUDlbkjXhfxbiQjs9IdEwgAP78pX/Fh/xQon4sa1CAyc1/ohBG4jmXYWWfjbcyo11jsoAEsbKeULzwh4FPpVJacD7br1LCiiTDp6xN56OfIpUJgCP+FWVUJOptF9MFJb8tE/3ifo4Ng0+lY/VlDL4D/TB2T4CbrArX9vFDoA8SUi/m517TEcmWSSbht5H+dTrB2o0es+G2o659GdTCDQNyr9Hh8vrb3Y6Cc6zsBIJZMqmmOLAm9+SJtf95P9+xYORz7ZuF8tvS94dtKJwJGMeX8OQXzRL0KFHATmXJUqnLKsq/v1Zf1kmomC9u7aTBJ/4O7vOnFN6wS2rvppGtBvfLZ/FtS03eYzgPGzOItPGsadUwy7fTb/FZEnSeVSH1zzIXIEq/8+S7Ccq2dHZ69n6L9OXHDU5ajWGModmSmmOJLh/aBVTZvjrBUfHG4B0cxIHE16Jy/o5+f+wQRxjDHFxSihTQKV4cl4Vb322dDJx61utw0XwrKdyfqVuW7nGFAECCSOFIpzrlhBKChYG2Vd9wgu58MRtO2nPzXO1PkMGAe+QaaBL1S71cD0zDIE3yhpFNwL+TMswCh6JWdmOur6ca76M1MH1a76WXsgpuEc7lPJi3+mziL0Dv52LSajdG/5teMdG2pP/5GsX1GyLUZK9NnA2iIGNVArxMbvXQ15D/UVozmLf0GPQ5ICgwSw5Iv76FLCxKVsgS8ARQG8E3hqqMSb7XYCoHuYkTlowqF0qTthXyq89GJ++pf7hud/OAcFnN3z5dNSSvK8XkfJdwyJKp9Pcsug48wzT+NiKadVrEIS2eKfhxhdS8bzoWPR96Ff4lh9zxrh2Q8iLrcjwyaE+NrgC+wprpy9eV3uy1L7nH2heVxDPHLS4Qou4afIINoUvdBbv7wAAA";
 const LX_ANN_METIERS = {
-  "coiffeur": { titre: "Coiffeur", pluriel: "Coiffeurs", luxyra: ["coiffure", "barbier"], logiciel: "/logiciel-coiffure", schema: "HairSalon", phrase: "salons de coiffure et barbiers" },
-  "institut-de-beaute": { titre: "Institut de beauté", pluriel: "Instituts de beauté", luxyra: ["esthetique", "ongles", "regard", "maquillage"], logiciel: "/logiciel-institut-beaute", schema: "BeautySalon", phrase: "instituts de beauté, onglerie, cils et sourcils" },
-  "spa-massage": { titre: "Spa & massage", pluriel: "Spas & massages", luxyra: ["spa", "bien_etre"], logiciel: "/logiciel-spa-massage", schema: "DaySpa", phrase: "spas, massages et bien-être" },
+  "coiffeur": { titre: "Coiffeur", pluriel: "Coiffeurs", luxyra: ["coiffure", "barbier"], metierLx: "coiffure", logiciel: "/logiciel-coiffure", schema: "HairSalon", phrase: "salons de coiffure et barbiers", icone: "✂️", presta: "une coupe, une couleur ou un brushing" },
+  "institut-de-beaute": { titre: "Institut de beauté", pluriel: "Instituts de beauté", luxyra: ["esthetique", "ongles", "regard", "maquillage"], metierLx: "esthetique", logiciel: "/logiciel-institut-beaute", schema: "BeautySalon", phrase: "instituts de beauté, onglerie, cils et sourcils", icone: "💆", presta: "un soin du visage, une épilation ou une pose d'ongles" },
+  "spa-massage": { titre: "Spa & massage", pluriel: "Spas & massages", luxyra: ["spa", "bien_etre"], metierLx: "spa", logiciel: "/logiciel-spa-massage", schema: "DaySpa", phrase: "spas, massages et bien-être", icone: "🌿", presta: "un massage ou un soin bien-être" },
 };
 function lxAnnSlug(s) { return String(s || "").replace(/œ/gi, "oe").replace(/æ/gi, "ae").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "-").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
+function lxAnnInit(n) { const m = String(n || "?").trim().match(/[A-Za-zÀ-ÿ0-9]/); return (m ? m[0] : "?").toUpperCase(); }
+function lxAnnAdr(a) { return String(a || "").toLowerCase().replace(/(^|[\s\-'’])([a-zà-ÿ])/g, (_m, p, c) => p + c.toUpperCase()); }
 async function lxAnnRpc(fn, args) {
   try {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${fn}`, {
       method: "POST",
       headers: { apikey: CONFIG.SUPABASE_ANON_KEY, Authorization: `Bearer ${CONFIG.SUPABASE_ANON_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify(args), cf: { cacheTtl: 600, cacheEverything: true },
+      body: JSON.stringify(args),
     });
     return r.ok ? await r.json() : null;
   } catch (_) { return null; }
@@ -4467,37 +4471,56 @@ async function lxAnnRpc(fn, args) {
 function lxAnnPage({ title, desc, canonical, robots, ld, body }) {
   return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${lxEsc(title)}</title><meta name="description" content="${lxEsc(desc)}">
-${canonical ? `<link rel="canonical" href="${lxEsc(canonical)}">` : ""}<meta name="robots" content="${robots || "index,follow,max-snippet:-1"}">
-<meta property="og:title" content="${lxEsc(title)}"><meta property="og:description" content="${lxEsc(desc)}"><meta property="og:site_name" content="Luxyra"><meta property="og:locale" content="fr_FR"><meta property="og:image" content="https://luxyra.fr/luxyra-logo.png">
-<meta name="theme-color" content="#0a0a0a"><link rel="icon" href="/icon-192.png">
+${canonical ? `<link rel="canonical" href="${lxEsc(canonical)}">` : ""}<meta name="robots" content="${robots || "index,follow,max-snippet:-1,max-image-preview:large"}">
+<meta property="og:type" content="website"><meta property="og:title" content="${lxEsc(title)}"><meta property="og:description" content="${lxEsc(desc)}"><meta property="og:site_name" content="Luxyra"><meta property="og:locale" content="fr_FR"><meta property="og:image" content="https://luxyra.fr/luxyra-logo.png">
+${canonical ? `<meta property="og:url" content="${lxEsc(canonical)}">` : ""}<meta name="theme-color" content="#060609"><link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
 ${ld ? `<script type="application/ld+json">${lxJsonLd(ld)}</script>` : ""}
 <style>
-*{box-sizing:border-box}body{margin:0;background:#0a0a0a;color:#e8e6e1;font-family:-apple-system,'Segoe UI',Arial,sans-serif;line-height:1.55}
-a{color:#d4a843}.wrap{max-width:920px;margin:0 auto;padding:18px 16px 60px}
-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(200,168,78,.25)}
-header .logo{color:#d4a843;font-family:Georgia,serif;letter-spacing:5px;font-size:18px;text-decoration:none}
-header nav a{color:#a8a29a;text-decoration:none;font-size:13px;margin-left:14px}
-.fil{font-size:12px;color:#8a857d;margin:6px 0 14px}.fil a{color:#8a857d}
-h1{font-family:Georgia,serif;font-weight:500;color:#fff;font-size:28px;margin:4px 0 8px}h2{font-family:Georgia,serif;font-weight:500;color:#d4a843;font-size:20px;margin:30px 0 10px}
-.intro{color:#bdb8ae;font-size:15px}
-.carte{background:#141414;border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:14px 16px;margin:10px 0;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-.carte.lx{border-color:rgba(212,168,67,.55);background:linear-gradient(135deg,rgba(212,168,67,.10),rgba(212,168,67,.02))}
-.carte .n{font-weight:700;color:#fff;font-size:16px}.carte .a{font-size:13px;color:#a8a29a}.carte .t{font-size:12px;color:#7d786f;margin-top:3px}
-.btn{display:inline-block;background:#d4a843;color:#0a0a0a;font-weight:800;text-decoration:none;padding:10px 18px;border-radius:30px;font-size:14px;white-space:nowrap}
-.badge{display:inline-block;font-size:11px;color:#0a0a0a;background:#d4a843;border-radius:20px;padding:1px 8px;margin-left:6px;font-weight:700;vertical-align:2px}
-.pro{margin-top:30px;padding:18px;border-radius:14px;background:#111;border:1px dashed rgba(212,168,67,.4);font-size:14px;color:#c9c4ba}
-.villes{columns:2;column-gap:24px;font-size:14px}.villes a{color:#d8d3c8;text-decoration:none;display:block;padding:3px 0}.villes span{color:#7d786f;font-size:12px}
-.src{font-size:11.5px;color:#76716a;margin-top:26px;line-height:1.6}footer{font-size:12px;color:#76716a;text-align:center;padding:20px}
-@media(max-width:600px){h1{font-size:23px}.villes{columns:1}}
+:root{--bg:#060609;--bg2:#0c0c12;--bg3:#14141e;--gold:#d4a843;--gold2:#b8960f;--gold-l:#e6c266;--text:#e8e4dc;--text2:#9a9590;--text3:#5c5854;--border:rgba(212,168,67,.14);--f1:'DM Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--f2:'Cormorant Garamond',Georgia,serif}
+*{margin:0;padding:0;box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:var(--f1);line-height:1.6}
+a{color:var(--gold);text-decoration:none}a:hover{text-decoration:underline}
+.nav{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:rgba(6,6,9,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.logo{display:flex;align-items:center;gap:10px;font-family:var(--f2);font-size:24px;font-weight:700;color:var(--gold);letter-spacing:1px;text-decoration:none!important}.logo img{width:34px;height:34px;border-radius:9px}
+.nav .lk{display:flex;gap:18px;align-items:center;font-size:14px}.nav .lk a{color:var(--text2)}.nav .lk a.pro{color:#0a0a0a;background:linear-gradient(135deg,var(--gold),var(--gold2));padding:8px 16px;border-radius:30px;font-weight:700}
+.hero{background:radial-gradient(1000px 380px at 50% -120px,rgba(212,168,67,.16),transparent 70%),linear-gradient(180deg,#0b0b12,var(--bg));border-bottom:1px solid var(--border)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}.hero .wrap{padding-top:26px;padding-bottom:30px}
+.fil{font-size:12.5px;color:var(--text3);margin-bottom:14px}.fil a{color:var(--text2)}
+h1{font-family:var(--f2);font-weight:700;font-size:clamp(34px,5.4vw,54px);line-height:1.05;color:#fff;letter-spacing:-.5px}h1 em{font-style:normal;color:var(--gold)}
+.sous{color:var(--text2);font-size:16px;margin-top:10px;max-width:640px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.chip{font-size:12.5px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text);padding:6px 12px;border-radius:30px}.chip b{color:var(--gold)}
+h2{font-family:var(--f2);font-weight:700;font-size:28px;color:#fff;margin:38px 0 14px}h2 small{font-family:var(--f1);font-size:13px;color:var(--text3);font-weight:400;margin-left:8px}
+.carte{display:flex;gap:16px;align-items:center;background:linear-gradient(180deg,rgba(20,20,30,.9),rgba(14,14,20,.9));border:1px solid rgba(255,255,255,.06);border-radius:18px;padding:18px;margin:12px 0}
+.carte.lx{border:1px solid rgba(212,168,67,.45);box-shadow:0 10px 40px -18px rgba(212,168,67,.35)}
+.av{flex:0 0 54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-family:var(--f2);font-size:26px;font-weight:700;background:rgba(255,255,255,.05);color:var(--text2)}
+.lx .av{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a0a0a}
+.ct{flex:1;min-width:0}.nm{font-size:17px;font-weight:700;color:#fff}.nm a{color:#fff}.ad{font-size:13.5px;color:var(--text2)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}.tag{font-size:11.5px;padding:3px 9px;border-radius:20px;background:rgba(212,168,67,.1);color:var(--gold-l)}.tag.g{background:rgba(255,255,255,.05);color:var(--text3)}
+.stars{color:var(--gold);font-size:13px;margin-left:4px}
+.act{display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.btn{display:inline-block;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#0a0a0a!important;font-weight:800;padding:11px 22px;border-radius:30px;font-size:14px;white-space:nowrap;text-decoration:none!important}
+.btn2{font-size:12.5px;color:var(--text2)}
+.claim{font-size:12.5px;color:var(--gold-l);white-space:nowrap}
+.atouts{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.at{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:18px}.at b{display:block;color:#fff;margin:6px 0 4px}.at span{font-size:13.5px;color:var(--text2)}.at i{font-style:normal;font-size:22px}
+.faq details{background:var(--bg2);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px 16px;margin:8px 0}.faq summary{cursor:pointer;color:#fff;font-weight:600}.faq p{color:var(--text2);font-size:14.5px;margin-top:8px}
+.bande{margin:40px 0 10px;padding:26px;border-radius:20px;background:linear-gradient(135deg,rgba(212,168,67,.16),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.35);display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.bande b{font-family:var(--f2);font-size:24px;color:#fff;display:block}.bande span{color:var(--text2);font-size:14px}
+.villes{columns:3;column-gap:22px;font-size:14px}.villes a{display:block;color:var(--text);padding:4px 0}.villes span{color:var(--text3);font-size:12px}
+.src{font-size:11.5px;color:var(--text3);margin:30px 0 0;line-height:1.6}
+footer{border-top:1px solid var(--border);margin-top:40px;padding:26px 20px;text-align:center;font-size:12.5px;color:var(--text3)}footer a{color:var(--text2);margin:0 6px}
+@media(max-width:720px){.nav .lk a:not(.pro){display:none}.carte{flex-wrap:wrap}.act{width:100%;flex-direction:row;justify-content:space-between;align-items:center}.atouts{grid-template-columns:1fr}.villes{columns:2}}
 </style></head><body>
-<header><a class="logo" href="/">LUXYRA</a><nav><a href="/recherche">Trouver un pro</a><a href="/pro">Vous êtes pro ?</a></nav></header>
-<div class="wrap">${body}</div>
-<footer>© Luxyra — <a href="/mentions-legales" style="color:#76716a">Mentions légales</a> · <a href="/politique-confidentialite" style="color:#76716a">Confidentialité</a> · <a href="/annuaire-retrait" style="color:#76716a">Retirer un établissement</a></footer>
+<div class="nav"><a class="logo" href="/"><img src="${LX_ANN_LOGO}" width="34" height="34" alt="Luxyra"> Luxyra</a><div class="lk"><a href="/recherche">Trouver un pro</a><a href="/coiffeur">Coiffeurs</a><a href="/institut-de-beaute">Instituts</a><a class="pro" href="/pro">Je suis un pro</a></div></div>
+${body}
+<footer><a class="logo" href="/" style="justify-content:center;font-size:20px;margin-bottom:10px"><img src="${LX_ANN_LOGO}" width="28" height="28" alt="Luxyra"> Luxyra</a>
+<div><a href="/recherche">Trouver un pro</a>·<a href="/pro">Espace pro</a>·<a href="/tarifs">Tarifs</a>·<a href="/aide">Aide</a>·<a href="/mentions-legales">Mentions légales</a>·<a href="/politique-confidentialite">Confidentialité</a></div>
+<div style="margin-top:8px">© Luxyra — réservation en ligne et caisse pour les professionnels de la beauté et du bien-être</div></footer>
 </body></html>`;
 }
 function lxAnnReponse(html, status) {
   return new Response(html, { status: status || 200, headers: { "Content-Type": "text/html;charset=UTF-8", "Cache-Control": "public, max-age=600" } });
 }
+function lxAnnEtoiles(n) { const v = Math.round(Number(n) || 0); return "★★★★★".slice(0, v) + "☆☆☆☆☆".slice(0, 5 - v); }
 
 async function lxAnnuairePage(metierSlug, villeSlug) {
   const M = LX_ANN_METIERS[metierSlug];
@@ -4507,73 +4530,105 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     const villes = (await lxAnnRpc("annuaire_villes", { p_metier: metierSlug })) || [];
     const parDep = {};
     for (const v of villes) { (parDep[v.departement] = parDep[v.departement] || []).push(v); }
-    let body = `<div class="fil"><a href="/">Accueil</a> › ${lxEsc(M.pluriel)}</div><h1>${lxEsc(M.pluriel)} près de chez vous</h1>`;
-    body += `<p class="intro">Trouvez des ${lxEsc(M.phrase)} dans votre ville. Les établissements Luxyra se réservent en ligne, 24 h/24, sans frais.</p>`;
+    let body = `<section class="hero"><div class="wrap"><div class="fil"><a href="/">Accueil</a> › ${lxEsc(M.pluriel)}</div><h1>${lxEsc(M.pluriel)} <em>près de chez vous</em></h1><p class="sous">Trouvez des ${lxEsc(M.phrase)} dans votre ville et réservez en ligne, 24 h/24, chez les établissements Luxyra.</p></div></section><div class="wrap">`;
     for (const dep of Object.keys(parDep).sort()) {
       body += `<h2>Département ${lxEsc(dep)}</h2><div class="villes">` + parDep[dep].map((v) => `<a href="/${metierSlug}/${lxEsc(v.ville_slug)}">${lxEsc(M.titre)} à ${lxEsc(v.ville)} <span>(${v.n})</span></a>`).join("") + `</div>`;
     }
-    if (!villes.length) body += `<p class="intro">La liste est en cours de préparation.</p>`;
-    return lxAnnReponse(lxAnnPage({ title: `${M.pluriel} : trouvez et réservez en ligne | Luxyra`, desc: `${M.pluriel} par ville : adresses et réservation en ligne des établissements Luxyra.`, canonical: `https://luxyra.fr/${metierSlug}`, robots: villes.length ? null : "noindex,follow", body }), villes.length ? 200 : 404);
+    if (!villes.length) body += `<p class="sous" style="margin-top:30px">La liste est en cours de préparation.</p>`;
+    body += `</div>`;
+    return lxAnnReponse(lxAnnPage({ title: `${M.pluriel} : trouvez un professionnel et réservez en ligne | Luxyra`, desc: `${M.pluriel} par ville : adresses, avis et réservation en ligne 24 h/24 chez les établissements Luxyra.`, canonical: `https://luxyra.fr/${metierSlug}`, robots: villes.length ? null : "noindex,follow", body }), villes.length ? 200 : 404);
   }
   // ---- Page d'une ville ----
   const etabs = (await lxAnnRpc("annuaire_ville", { p_metier: metierSlug, p_ville_slug: villeSlug })) || [];
-  // établissements Luxyra de la ville (vitrine publique)
   const lx = [];
   try {
-    const rows = await lxSeoFetch(`salons_public?metier=in.(${M.luxyra.join(",")})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite&limit=500`);
+    const rows = await lxSeoFetch(`salons_public?metier=in.(${M.luxyra.join(",")})&select=id,nom,slug,adresse,cp,ville,note_moyenne,nb_avis,mode_activite,sous_titre&limit=500`);
     for (const s of (rows || [])) if (s.slug && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
   } catch (_) {}
   const lxIds = new Set(lx.map((s) => s.id));
   const autres = etabs.filter((e) => !e.salon_id || !lxIds.has(e.salon_id));
   const total = lx.length + autres.length;
   const villeNom = (etabs[0] && etabs[0].ville) || (lx[0] && lx[0].ville) || villeSlug.replace(/-/g, " ");
-  const dep = (etabs[0] && etabs[0].departement) || "";
+  const dep = (etabs[0] && etabs[0].departement) || (lx[0] && String(lx[0].cp || "").slice(0, 2)) || "";
   if (!total) {
-    return lxAnnReponse(lxAnnPage({ title: `${M.titre} à ${villeNom} | Luxyra`, desc: "", robots: "noindex,follow", body: `<h1>${lxEsc(M.titre)} à ${lxEsc(villeNom)}</h1><p class="intro">Aucun établissement trouvé pour cette ville. <a href="/${metierSlug}">Voir toutes les villes</a>.</p>` }), 404);
+    return lxAnnReponse(lxAnnPage({ title: `${M.titre} à ${villeNom} | Luxyra`, desc: "", robots: "noindex,follow", body: `<section class="hero"><div class="wrap"><h1>${lxEsc(M.titre)} à <em>${lxEsc(villeNom)}</em></h1><p class="sous">Aucun établissement trouvé pour cette ville. <a href="/${metierSlug}">Voir toutes les villes</a>.</p></div></section>` }), 404);
   }
   const canonical = `https://luxyra.fr/${metierSlug}/${villeSlug}`;
-  let body = `<div class="fil"><a href="/">Accueil</a> › <a href="/${metierSlug}">${lxEsc(M.pluriel)}</a> › ${lxEsc(villeNom)}</div>`;
-  body += `<h1>${lxEsc(M.titre)} à ${lxEsc(villeNom)}</h1>`;
-  body += `<p class="intro">${total} établissement${total > 1 ? "s" : ""} à ${lxEsc(villeNom)}${lx.length ? ` · <strong style="color:#d4a843">${lx.length} réservable${lx.length > 1 ? "s" : ""} en ligne</strong> sur Luxyra, 24 h/24, confirmation immédiate` : ""}.</p>`;
+  let body = `<section class="hero"><div class="wrap"><div class="fil"><a href="/">Accueil</a> › <a href="/${metierSlug}">${lxEsc(M.pluriel)}</a> › ${lxEsc(villeNom)}</div>`;
+  body += `<h1>${lxEsc(M.titre)} à <em>${lxEsc(villeNom)}</em></h1>`;
+  body += `<p class="sous">Comparez les ${lxEsc(M.phrase)} de ${lxEsc(villeNom)}${lx.length ? " et prenez rendez-vous en ligne en quelques secondes" : ""}.</p>`;
+  body += `<div class="chips"><span class="chip"><b>${total}</b> établissement${total > 1 ? "s" : ""}</span>${lx.length ? `<span class="chip"><b>${lx.length}</b> réservable${lx.length > 1 ? "s" : ""} en ligne</span><span class="chip">Confirmation immédiate</span><span class="chip">Sans frais pour vous</span>` : ""}</div></div></section><div class="wrap">`;
   if (lx.length) {
-    body += `<h2>Réserver en ligne à ${lxEsc(villeNom)}</h2>`;
+    body += `<h2>Réserver en ligne <small>disponibles 24 h/24</small></h2>`;
     for (const s of lx) {
-      const note = Number(s.note_moyenne) > 0 && Number(s.nb_avis) > 0 ? ` · ★ ${Number(s.note_moyenne).toFixed(1).replace(".", ",")} (${s.nb_avis} avis)` : "";
-      const adr = String(s.mode_activite || "") === "domicile" ? "À domicile" : [s.adresse, s.cp, s.ville].filter(Boolean).join(" ");
-      body += `<div class="carte lx"><div><div class="n"><a href="/${lxEsc(s.slug)}" style="color:#fff;text-decoration:none">${lxEsc(s.nom)}</a><span class="badge">Luxyra</span></div><div class="a">${lxEsc(adr)}${note}</div></div><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a></div>`;
+      const note = Number(s.note_moyenne) > 0 && Number(s.nb_avis) > 0 ? `<span class="stars">${lxAnnEtoiles(s.note_moyenne)}</span> <span style="font-size:12.5px;color:var(--text2)">${Number(s.note_moyenne).toFixed(1).replace(".", ",")} · ${s.nb_avis} avis</span>` : "";
+      const adr = String(s.mode_activite || "") === "domicile" ? `À domicile · ${lxEsc(s.ville || villeNom)}` : lxEsc(lxAnnAdr([s.adresse, s.cp, s.ville].filter(Boolean).join(" ")));
+      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span><span class="tag">Confirmation immédiate</span><span class="tag">Confirmation par e-mail</span></div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
     }
   }
   if (autres.length) {
     body += `<h2>${lxEsc(lx.length ? "Autres établissements" : M.pluriel)} à ${lxEsc(villeNom)}</h2>`;
     for (const e of autres) {
-      body += `<div class="carte"><div><div class="n">${lxEsc(e.nom)}</div><div class="a">${lxEsc([e.adresse, e.cp, e.ville].filter(Boolean).join(" "))}</div><div class="t">Réservation en ligne non disponible · <a href="/annuaire-retrait?siret=${lxEsc(e.siret)}" rel="nofollow">Vous êtes le gérant ?</a></div></div></div>`;
+      const q = `siret=${encodeURIComponent(e.siret)}`;
+      body += `<div class="carte"><div class="av">${lxEsc(lxAnnInit(e.nom))}</div><div class="ct"><div class="nm">${lxEsc(e.nom)}</div><div class="ad">${lxEsc(lxAnnAdr([e.adresse, e.cp, e.ville].filter(Boolean).join(" ")))}</div><div class="tags"><span class="tag g">Réservation en ligne pas encore disponible</span></div></div><div class="act"><a class="claim" href="/annuaire-gerant?${q}" rel="nofollow">C'est votre établissement ? Activez la réservation →</a></div></div>`;
     }
   }
-  body += `<div class="pro"><strong style="color:#fff">Vous êtes le gérant d'un de ces établissements ?</strong><br>Proposez la réservation en ligne à vos clients, sans commission : votre établissement apparaîtra en tête de cette page avec un bouton « Réserver ». <a href="${M.logiciel}">Découvrir Luxyra</a> · <a href="/inscription">Essai gratuit 14 jours</a></div>`;
-  // villes proches (même département)
+  body += `<h2>Pourquoi réserver avec Luxyra</h2><div class="atouts"><div class="at"><i>⏱</i><b>En quelques secondes</b><span>Choisissez la prestation et l'horaire, 24 h/24, même quand le salon est fermé.</span></div><div class="at"><i>🔔</i><b>Confirmation immédiate</b><span>Vous recevez la confirmation par e-mail tout de suite, et un rappel avant le rendez-vous si l'établissement l'a activé.</span></div><div class="at"><i>📱</i><b>Tout au même endroit</b><span>Retrouvez, modifiez ou annulez vos rendez-vous depuis votre espace ou l'application.</span></div></div>`;
+  const faq = [
+    [`Comment prendre rendez-vous chez un ${M.titre.toLowerCase()} à ${villeNom} ?`, lx.length ? `Choisissez un établissement marqué « Luxyra » ci-dessus et cliquez sur « Réserver » : vous voyez les disponibilités en temps réel et recevez la confirmation immédiatement.` : `Les établissements listés ci-dessus ne proposent pas encore la réservation en ligne sur Luxyra : contactez-les directement. Dès qu'un établissement l'active, un bouton « Réserver » apparaît sur cette page.`],
+    [`Combien d'établissements à ${villeNom} ?`, `${total} établissement${total > 1 ? "s" : ""} ${total > 1 ? "sont référencés" : "est référencé"} à ${villeNom}, dont ${lx.length} réservable${lx.length > 1 ? "s" : ""} en ligne.`],
+    [`La réservation en ligne est-elle payante ?`, `Non, réserver sur Luxyra est gratuit pour vous. Certains établissements demandent un acompte, indiqué clairement avant la confirmation.`],
+  ];
+  body += `<h2>Questions fréquentes</h2><div class="faq">` + faq.map(([q, r]) => `<details><summary>${lxEsc(q)}</summary><p>${lxEsc(r)}</p></details>`).join("") + `</div>`;
+  body += `<div class="bande"><div><b>Vous êtes ${M.titre === "Coiffeur" ? "coiffeur" : "professionnel"} à ${lxEsc(villeNom)} ?</b><span>Apparaissez en tête de cette page avec un bouton « Réserver ». Réservation en ligne sans commission, rappels SMS, caisse conforme. Essai gratuit 14 jours.</span></div><a class="btn" href="${M.logiciel}">Découvrir Luxyra</a></div>`;
   try {
-    const villes = ((await lxAnnRpc("annuaire_villes", { p_metier: metierSlug })) || []).filter((v) => v.departement === dep && v.ville_slug !== villeSlug).slice(0, 24);
+    const villes = ((await lxAnnRpc("annuaire_villes", { p_metier: metierSlug })) || []).filter((v) => v.departement === dep && v.ville_slug !== villeSlug).slice(0, 30);
     if (villes.length) body += `<h2>${lxEsc(M.pluriel)} dans les villes proches</h2><div class="villes">` + villes.map((v) => `<a href="/${metierSlug}/${lxEsc(v.ville_slug)}">${lxEsc(M.titre)} à ${lxEsc(v.ville)} <span>(${v.n})</span></a>`).join("") + `</div>`;
   } catch (_) {}
-  body += `<p class="src">Liste établie à partir de la base publique des entreprises (Sirene, INSEE — données ouvertes), mise à jour chaque mois, et des établissements inscrits sur Luxyra. Seuls les établissements en activité, à diffusion publique et disposant d'une enseigne sont affichés. Un gérant peut demander le retrait de son établissement à tout moment : <a href="/annuaire-retrait">retirer un établissement</a>.</p>`;
+  body += `<p class="src">Liste établie à partir des établissements inscrits sur Luxyra et de la base publique des entreprises (Sirene, INSEE — données ouvertes), mise à jour chaque mois. Seuls les établissements en activité, à diffusion publique et disposant d'une enseigne sont affichés.</p></div>`;
   const items = [...lx.map((s) => ({ "@type": M.schema, name: s.nom, url: `https://luxyra.fr/${s.slug}`, address: { "@type": "PostalAddress", streetAddress: String(s.mode_activite || "") === "domicile" ? "" : (s.adresse || ""), postalCode: s.cp || "", addressLocality: s.ville || villeNom, addressCountry: "FR" } })),
     ...autres.map((e) => ({ "@type": M.schema, name: e.nom, address: { "@type": "PostalAddress", streetAddress: e.adresse || "", postalCode: e.cp || "", addressLocality: e.ville, addressCountry: "FR" } }))];
   const ld = { "@context": "https://schema.org", "@graph": [
     { "@type": "BreadcrumbList", itemListElement: [ { "@type": "ListItem", position: 1, name: "Accueil", item: "https://luxyra.fr/" }, { "@type": "ListItem", position: 2, name: M.pluriel, item: `https://luxyra.fr/${metierSlug}` }, { "@type": "ListItem", position: 3, name: villeNom, item: canonical } ] },
-    { "@type": "ItemList", name: `${M.titre} à ${villeNom}`, numberOfItems: items.length, itemListElement: items.slice(0, 100).map((it, i) => ({ "@type": "ListItem", position: i + 1, item: it })) } ] };
+    { "@type": "ItemList", name: `${M.titre} à ${villeNom}`, numberOfItems: items.length, itemListElement: items.slice(0, 100).map((it, i) => ({ "@type": "ListItem", position: i + 1, item: it })) },
+    { "@type": "FAQPage", mainEntity: faq.map(([q, r]) => ({ "@type": "Question", name: q, acceptedAnswer: { "@type": "Answer", text: r } })) } ] };
   const title = `${M.titre} à ${villeNom}${lx.length ? " : réserver en ligne" : ""} (${total} adresse${total > 1 ? "s" : ""}) | Luxyra`;
-  const desc = `${M.titre} à ${villeNom}${dep ? " (" + dep + ")" : ""} : ${total} établissement${total > 1 ? "s" : ""}${lx.length ? `, dont ${lx.length} réservable${lx.length > 1 ? "s" : ""} en ligne 24 h/24 sur Luxyra` : ""}. Adresses et prise de rendez-vous.`;
+  const desc = `${M.titre} à ${villeNom}${dep ? " (" + dep + ")" : ""} : ${total} établissement${total > 1 ? "s" : ""}${lx.length ? `, dont ${lx.length} réservable${lx.length > 1 ? "s" : ""} en ligne 24 h/24 avec confirmation immédiate` : ""}. Adresses et prise de rendez-vous sur Luxyra.`;
   return lxAnnReponse(lxAnnPage({ title, desc, canonical, ld, body }));
+}
+
+// Page « C'est votre établissement ? » : d'abord activer la réservation ; le retrait reste possible en bas.
+async function lxAnnuaireGerantPage(url) {
+  const siret = String(url.searchParams.get("siret") || "").replace(/\D/g, "").slice(0, 14);
+  const f = siret.length === 14 ? (((await lxAnnRpc("annuaire_fiche", { p_siret: siret })) || [])[0] || null) : null;
+  const M = (f && LX_ANN_METIERS[f.metier]) || LX_ANN_METIERS["coiffeur"];
+  const nom = f ? f.nom : "votre établissement";
+  const insc = `/inscription?siret=${encodeURIComponent(siret)}${f ? `&nom=${encodeURIComponent(f.nom)}&metier=${M.metierLx}` : ""}`;
+  let body = `<section class="hero"><div class="wrap">${f ? `<div class="fil"><a href="/${f.metier}/${lxEsc(f.ville_slug)}">← ${lxEsc(M.titre)} à ${lxEsc(f.ville)}</a></div>` : ""}`;
+  body += `<h1>Activez la réservation en ligne pour <em>${lxEsc(nom)}</em></h1>`;
+  body += `<p class="sous">Vos clients vous cherchent sur Google et sur Luxyra. Avec Luxyra, ils réservent en ligne 24 h/24 et votre établissement passe en tête de la page${f ? ` « ${lxEsc(M.titre)} à ${lxEsc(f.ville)} »` : ""}, avec un bouton « Réserver ».</p>`;
+  body += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:22px"><a class="btn" href="${insc}">Essayer gratuitement 14 jours</a><a class="btn" style="background:transparent;color:var(--gold)!important;border:1px solid rgba(212,168,67,.5)" href="/demo">Voir la démo</a></div>`;
+  body += `<div class="chips"><span class="chip">Sans carte bancaire</span><span class="chip">Sans commission sur vos réservations</span><span class="chip">Dès <b>14,99 €</b>/mois</span><span class="chip">Sans engagement</span></div></div></section><div class="wrap">`;
+  body += `<h2>Tout ce qu'il faut à votre établissement</h2><div class="atouts">
+<div class="at"><i>📅</i><b>Réservation en ligne</b><span>Vos clients réservent 24 h/24 sur votre page, sur Google et dans l'application Luxyra. Acompte ou empreinte bancaire possibles.</span></div>
+<div class="at"><i>🔔</i><b>Moins de rendez-vous oubliés</b><span>Confirmation immédiate et rappels automatiques par SMS et e-mail.</span></div>
+<div class="at"><i>🧾</i><b>Caisse conforme</b><span>Caisse conforme à la loi anti-fraude TVA, clôtures, fidélité, bons cadeaux, statistiques.</span></div>
+<div class="at"><i>⭐</i><b>Avis clients</b><span>Une invitation à laisser un avis après chaque rendez-vous, affichée sur votre page.</span></div>
+<div class="at"><i>🌐</i><b>Votre site inclus</b><span>Une page à votre nom, prête pour Google, avec vos prestations, horaires et photos.</span></div>
+<div class="at"><i>🤝</i><b>On vous aide</b><span>Migration gratuite de vos données et assistance en français. Écrivez-nous : <a href="mailto:contact@luxyra.fr">contact@luxyra.fr</a>.</span></div></div>`;
+  body += `<div class="bande"><div><b>Prêt en quelques minutes</b><span>Créez votre espace, ajoutez vos prestations et vos horaires : la réservation est en ligne immédiatement.</span></div><a class="btn" href="${insc}">Commencer gratuitement</a></div>`;
+  body += `<p class="src" style="margin-top:40px">Votre établissement apparaît dans l'annuaire Luxyra à partir de la base publique des entreprises (Sirene). Vous ne souhaitez pas y figurer ? <a href="/annuaire-retrait${siret ? "?siret=" + siret : ""}" rel="nofollow" style="color:var(--text2);text-decoration:underline">Retirer cet établissement de l'annuaire</a>.</p></div>`;
+  return lxAnnReponse(lxAnnPage({ title: `Activer la réservation en ligne pour ${nom} | Luxyra`, desc: `Activez la réservation en ligne pour ${nom} : réservation 24 h/24, rappels SMS, caisse conforme, sans commission. Essai gratuit 14 jours.`, robots: "noindex,follow", body }));
 }
 
 function lxAnnuaireRetraitPage(url) {
   const siret = String(url.searchParams.get("siret") || "").replace(/\D/g, "").slice(0, 14);
-  const body = `<h1>Retirer un établissement de l'annuaire</h1>
-<p class="intro">Les pages « Coiffeur à … », « Institut de beauté à … » listent les établissements en activité d'après la base publique des entreprises (Sirene). Vous êtes le gérant et ne souhaitez pas apparaître ? Indiquez le SIRET de l'établissement (14 chiffres) : il est retiré immédiatement et ne sera plus affiché.</p>
-<p class="intro">Vous préférez être réservable en ligne ? <a href="/pro">Découvrez Luxyra</a> (essai gratuit 14 jours, sans commission).</p>
-<div class="carte" style="display:block"><label style="font-size:13px;color:#a8a29a">SIRET de l'établissement</label><br><input id="s" inputmode="numeric" maxlength="14" value="${lxEsc(siret)}" style="width:100%;max-width:320px;padding:10px;border-radius:8px;border:1px solid #333;background:#0d0d0d;color:#fff;font-size:16px;margin:6px 0 10px"><br>
-<label style="font-size:13px;color:#a8a29a">E-mail (facultatif, pour confirmation)</label><br><input id="e" type="email" maxlength="120" style="width:100%;max-width:320px;padding:10px;border-radius:8px;border:1px solid #333;background:#0d0d0d;color:#fff;font-size:15px;margin:6px 0 12px"><br>
-<button class="btn" style="border:none;cursor:pointer" onclick="lxRet()">Retirer cet établissement</button><div id="m" style="margin-top:10px;font-size:14px"></div></div>
+  const body = `<section class="hero"><div class="wrap"><h1>Retirer un établissement <em>de l'annuaire</em></h1>
+<p class="sous">Les pages « Coiffeur à … », « Institut de beauté à … » présentent les établissements en activité d'après la base publique des entreprises (Sirene). Vous êtes le gérant et ne souhaitez pas apparaître ? Indiquez le SIRET de l'établissement (14 chiffres) : il est retiré immédiatement et ne sera plus affiché.</p></div></section>
+<div class="wrap"><div class="carte" style="display:block;margin-top:26px"><label style="font-size:13px;color:var(--text2)">SIRET de l'établissement</label><br><input id="s" inputmode="numeric" maxlength="14" value="${lxEsc(siret)}" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:16px;margin:6px 0 12px"><br>
+<label style="font-size:13px;color:var(--text2)">E-mail (facultatif, pour confirmation)</label><br><input id="e" type="email" maxlength="120" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:15px;margin:6px 0 14px"><br>
+<button class="btn" style="border:none;cursor:pointer" onclick="lxRet()">Retirer cet établissement</button><div id="m" style="margin-top:12px;font-size:14px"></div></div>
+<p class="sous" style="margin-top:18px">Vous préférez que vos clients puissent réserver en ligne ? <a href="/annuaire-gerant${siret ? "?siret=" + siret : ""}">Activez la réservation gratuitement</a>.</p></div>
 <script>async function lxRet(){var s=document.getElementById('s').value.replace(/\\D/g,''),m=document.getElementById('m');if(s.length!==14){m.textContent='Le SIRET doit contenir 14 chiffres.';m.style.color='#f87171';return;}
 try{var r=await fetch('${CONFIG.SUPABASE_URL}/rest/v1/rpc/annuaire_retirer',{method:'POST',headers:{'Content-Type':'application/json',apikey:'${CONFIG.SUPABASE_ANON_KEY}',Authorization:'Bearer ${CONFIG.SUPABASE_ANON_KEY}'},body:JSON.stringify({p_siret:s,p_email:document.getElementById('e').value||null})});var d=await r.json();
 if(d&&d.ok){m.textContent='✅ C\\'est fait : cet établissement n\\'apparaît plus dans l\\'annuaire (mise à jour des pages sous quelques minutes).';m.style.color='#7fc97f';}else{m.textContent=(d&&d.err)||'Erreur, réessayez.';m.style.color='#f87171';}}catch(e){m.textContent='Erreur réseau, réessayez.';m.style.color='#f87171';}}</script>`;
@@ -4959,6 +5014,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     const _ann = url.pathname.match(/^\/(coiffeur|institut-de-beaute|spa-massage)(?:\/([a-z0-9-]{2,80}))?\/?$/);
     if (_ann) { const _r = await lxAnnuairePage(_ann[1], _ann[2] || null); if (_r) return _r; }
     if (url.pathname === "/annuaire-retrait") return lxAnnuaireRetraitPage(url);
+    if (url.pathname === "/annuaire-gerant") return await lxAnnuaireGerantPage(url);
   }
   let path = url.pathname;
   if (cleanRoutes[path]) path = cleanRoutes[path];
@@ -4983,7 +5039,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
       "lx-client.js", "luxyra-supabase.js", "supabase.min.js",
-      "robots.txt", "sitemap.xml", "coiffeur", "institut-de-beaute", "spa-massage", "annuaire-retrait"
+      "robots.txt", "sitemap.xml", "coiffeur", "institut-de-beaute", "spa-massage", "annuaire-retrait", "annuaire-gerant"
     ]);
     const isOneSegment = segmentForSlug && !segmentForSlug.includes("/");
     const hasExtension = /\.[a-z0-9]+$/i.test(segmentForSlug);
