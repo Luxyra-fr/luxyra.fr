@@ -583,7 +583,7 @@ async function loadPendingAndDevis() {
           id: raw.id || p.local_id || p.id,
           date: p.date_creation,
           time: (p.heure_creation || "").toString().slice(0,5),
-          cId: p.client_id || raw.cId || "",
+          cId: lxCid(p.client_id) || raw.cId || "",
           clientName: p.client_nom || raw.clientName || "",
           stId: p.collaborateur_id || raw.stId,
           styName: p.collaborateur_nom || raw.styName || "",
@@ -614,7 +614,7 @@ async function loadPendingAndDevis() {
         var raw = (d.raw_data && typeof d.raw_data === "object") ? d.raw_data : {};
         return Object.assign({}, raw, {
           dbId: d.id, num: d.num, date: d.date_devis, dateValidite: d.date_validite,
-          cId: d.client_id, clientName: d.client_nom || "",
+          cId: lxCid(d.client_id), clientName: d.client_nom || "",
           clientPrenom: d.client_prenom, clientTel: d.client_tel, clientEmail: d.client_email,
           items: d.items || [],
           total: Number(d.total_ttc), totalHT: Number(d.total_ht), totalTVA: Number(d.total_tva),
@@ -758,7 +758,7 @@ if (typeof window !== "undefined") window.loadOlderClotures = loadOlderClotures;
 function lxMapApptRow(a) {
   // FIX 2026-05-13 : reconstruit cId="passage-X" depuis la colonne pass_type
   // (preserve le genre choisi au RDV meme apres un reload / un merge).
-  var _cId = a.client_id;
+  var _cId = lxCid(a.client_id);
   if (!_cId && a.pass_type && ["H","F","E"].indexOf(a.pass_type) >= 0) {
     _cId = "passage-" + a.pass_type;
   }
@@ -940,6 +940,15 @@ function _lxSignalerConflits(type, nom, conflits){
   }catch(_e){}
 }
 
+// 2026-10-13 : fusion de fiches clients — id fiche fusionnée -> id fiche gardée (affichage uniquement)
+window._lxFusion = window._lxFusion || {};
+function lxMajFusions(rows) {
+  var m = {};
+  (rows || []).forEach(function (c) { if (c && c.fusionne_dans) m[c.id] = c.fusionne_dans; });
+  window._lxFusion = m;
+}
+function lxCid(id) { var m = window._lxFusion || {}; var n = 0; while (id && m[id] && n < 5) { id = m[id]; n++; } return id; }
+window.lxMajFusions = lxMajFusions; window.lxCid = lxCid;
 function lxMapClientRow(c) {
   var obj = {
     id: c.id, nom: c.nom, pre: c.prenom, sex: c.sexe,
@@ -1481,7 +1490,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     var clRes = await _sb.from("clients").select("*").eq("salon_id", _salonId).order("nom").limit(100000);
     if (clRes.data) {
       // MAPPER UNIQUE partage avec reloadFromSupabase("clients") (voir lxMapClientRow).
-      CL = clRes.data.map(lxMapClientRow);
+      // 2026-10-13 : fiches « fusionnées » (doublon dont des tickets clôturés ne peuvent pas bouger) :
+      // cachées, et leurs tickets / RDV affichés sur la fiche gardée (correspondance en mémoire, lecture seule).
+      lxMajFusions(clRes.data);
+      CL = clRes.data.filter(function(c){ return !c.fusionne_dans; }).map(lxMapClientRow);
     }
   } catch(e) { console.warn("[loadSalonData] clients skipped", e); }
 
@@ -1681,7 +1693,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
           dbId: t.id, num: t.num, date: t.date_ticket,
           time: (t.heure_ticket || "").toString().slice(0,5),
           ts: t.ts_created,
-          cId: t.client_id || raw.cId || "passage",
+          cId: lxCid(t.client_id) || raw.cId || "passage",
           clientNom: t.client_nom, clientPrenom: t.client_prenom,
           stId: t.collaborateur_id, stNom: t.collaborateur_nom,
           items: t.items || [],
@@ -3852,6 +3864,23 @@ async function syncClientFromOnlineRdv(rdvData) {
       var rn = await _sb.from("clients").select("*").eq("salon_id", _salonId).ilike("prenom", String(rdvData.client_prenom).trim()).ilike("nom", String(rdvData.client_nom || "").trim()).limit(1);
       if (rn.data && rn.data.length) return rn.data[0].id;
     } catch (_eN) {}
+  }
+  // 4) 2026-10-13 : même nom + même prénom, UNE seule fiche, sans e-mail (ou le même) -> c'est la même personne
+  //    (cas réel : fiche salon avec un téléphone mal saisi, puis compte en ligne -> 2 fiches et fidélité séparée).
+  if (!existing && rdvData.client_nom && rdvData.client_prenom) {
+    try {
+      var r4 = await _sb.from("clients").select("*").eq("salon_id", _salonId).is("fusionne_dans", null)
+        .ilike("nom", String(rdvData.client_nom).trim()).ilike("prenom", String(rdvData.client_prenom).trim()).limit(2);
+      if (r4.data && r4.data.length === 1) {
+        var c4 = r4.data[0], e4 = String(c4.email || "").trim().toLowerCase();
+        if (!e4 || !email || e4 === email) {
+          existing = c4;
+          var maj4 = {};
+          if (!e4 && email) maj4.email = email;
+          if (Object.keys(maj4).length) { try { await _sb.from("clients").update(maj4).eq("id", c4.id); } catch (_e4) {} }
+        }
+      }
+    } catch (_eN4) {}
   }
   if (existing) {
     // Link beautypro_id if not set
