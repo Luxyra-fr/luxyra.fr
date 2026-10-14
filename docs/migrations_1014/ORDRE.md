@@ -58,3 +58,6 @@ Fonctions définies dans deux fichiers avant l'intégration, désormais fusionn�
 - `public.fn_salon_next_slots` : `planning.sql` -> `reglages.sql`
 - `public.envoyer_rappels_24h` : `planning.sql` -> `reglages.sql`
 - Retraits de droits de `secu.sql` -> `secu_restrictif.sql`
+
+## Bot support (15/10/2026)
+`bot_aide_1015.sql` : base du bot (`support_bot_kb`) alignée sur les changements des 13-14/10 et l'activation des rappels / SMS serveur. Indépendant des autres fichiers, sans effet sur la caisse ; à appliquer après la mise en production des pages, puis banc `lx-bot-eval`.
