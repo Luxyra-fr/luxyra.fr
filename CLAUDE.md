@@ -1841,3 +1841,30 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Rapports : lignes `caisse:true` dans `_lxPaiementsEnLigne` (ajustement `_lxAjustLigneCaisse`, 0 sauf ticket daté d'un autre mois) ;
   expAcomptesNonSoldes traite ces acomptes depuis le ticket d'acompte. Tickets d'acompte/retenue/annulation ne rapprochent plus un RDV en ligne
   (`_lxFindOnlineRdvForTicketBrut`). Reste à faire après mise en service : bot support, centre d'aide, registre NF525, test réel.
+
+## 2026-10-14 — Audit sécurité (branche fix1014-secu) — À DÉPLOYER DANS L'ORDRE
+SQL `docs/migrations_1014/secu.sql` (idempotent) -> edge functions `docs/edge_1014/*` -> worker -> pages.
+- **Comptes clients** : email vérifié par lien (`?verif=` dans compte.html, 48 h, renvoi limité 2 min / 5 par jour).
+  Tant que `email_verified` est faux, le worker ne rattache RIEN par email (`lxEmailVerifie(session)`) : seulement par
+  `client_luxyra_id`. Rattachement automatique des fiches (`fn_autolink_clients_luxyra`) : seulement quand l'email devient
+  vérifié, et seulement par email (plus jamais par téléphone). Lien fiche existante <- compte depuis l'app pro
+  (`syncClientFromOnlineRdv`) : ignoré par la base sauf email vérifié identique (`trg_clients_lien_compte_verifie`).
+- **Version de session** : `clients_luxyra.session_version` dans le jeton (`sv`) ; incrémentée par `lx_client_session_bump`
+  (changement / réinitialisation du mot de passe, « Déconnecter mes autres appareils »). Vérifiée par lx-profile (donc le
+  worker), avis-create, client-mes-photos, rdv-demande-create. Suppression du compte : mot de passe obligatoire (lx-profile
+  `delete` et worker `/api/client/anonymize`).
+- **client_salon** : plus aucun accès anonyme ; worker `/api/client/salons` (list / lier).
+- **rdv_online** : plus de DELETE anonyme ; `/api/rdv/abandon` (secret du navigateur, empreinte `abandon_hash`, pending_payment
+  non payé < 35 min).
+- **PIN opérateurs** : RPC `operateur_verifier_pin` / `operateur_connexion_bio` / `operateur_debloquer` (3/h) ; `pin_hash` non
+  lisible (droits par colonne : toute nouvelle colonne de salon_operateurs doit être ajoutée aux GRANT). Hors ligne :
+  empreinte PBKDF2 locale du dernier PIN validé (`lx_opc_<salon>`, 30 j, 5 erreurs -> 30 min), liste `lx_ops_liste_<salon>`.
+- **Annuaire** : `annuaire_signalements` + RPC service (`annuaire_signaler`, `annuaire_retrait_demander/confirmer`) via le
+  worker (`/api/annuaire/*`, empreinte IP) ; modération Admin > Salons > Annuaire. Anciennes RPC non exécutables par anon.
+- **Fonctions publiques** : report_server_error plafonné (anon -> warning, authenticated -> error max, 30 / 10 min / IP) ;
+  lx_email_deja_inscrit via `/api/inscription/email-check` ; get_monitoring_status -> service (admin : `admin_monitoring_status`) ;
+  devis_expire_overdue -> cron `devis_expire_overdue_nuit`.
+- **Support** : l'établissement ne peut plus modifier une conversation que pour « lu » / « résolu » ; messages non réécrivables.
+- **Admin** : `is_admin()` et worker `lxIsAdminUser` exigent aal2 ; `admin_users` non inscriptible ; CSP stricte ; écritures
+  vérifiées (`saMaj`) ; onglets « Annuaire » et « Base du bot ».
+- **sw.js** : le contenu des push n'est plus journalisé.
