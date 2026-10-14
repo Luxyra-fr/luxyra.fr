@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
-<script src="/lx-client.js?v=20261014-1"></script>
+<script src="/lx-client.js?v=20261014-2"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -199,6 +199,16 @@ window.INVITE_TOKEN = (function(){
 })();
 window.RESET_TOKEN = (function(){ try { var p = new URLSearchParams(window.location.search); return p.get("reset") || null; } catch(e){ return null; } })();
 window.RESET_RETOUR = (function(){ try { var p = new URLSearchParams(window.location.search); var r = p.get("retour") || ""; var u = new URL(r); return (u.protocol==="https:" && (u.hostname==="luxyra.fr" || /\.luxyra\.fr$/.test(u.hostname))) ? u.toString() : ""; } catch(e){ return ""; } })();
+// 2026-10-14 : lien de confirmation de l'adresse email (?verif=...) — validé sans session (le jeton suffit)
+window.VERIF_TOKEN = (function(){ try { var p = new URLSearchParams(window.location.search); var t = p.get("verif") || ""; return /^[0-9a-f]{64}$/.test(t) ? t : null; } catch(e){ return null; } })();
+if(window.VERIF_TOKEN){
+  try { history.replaceState({}, "", location.pathname); } catch(_eH) {}
+  LX.verifyEmail(window.VERIF_TOKEN).then(function(res){
+    window._lxVerifMsg = res.ok ? {ok:true, t:"\u2705 Adresse email confirm\u00e9e : vos rendez-vous, tickets et points enregistr\u00e9s par vos \u00e9tablissements avec cette adresse sont maintenant visibles."} : {ok:false, t:(res.data&&res.data.error)||"Lien invalide ou expir\u00e9."};
+    if(CLIENT && res.ok){ CLIENT.email_verified=true; saveSession(); try{ loadMyRdvs(); }catch(_e){} }
+    render();
+  });
+}
 if(window.RESET_TOKEN){
   PAGE = "reset";
 } else if(window.INVITE_TOKEN){
@@ -244,12 +254,31 @@ function render(){
   document.getElementById("root").innerHTML=h;
 }
 
+// ========== VERIFICATION EMAIL (2026-10-14) ==========
+function renderVerifBanner(){
+  var h='<div id="verifBanner" style="margin:0 0 14px;padding:14px;border-radius:12px;border:1px solid rgba(200,168,78,.6);background:rgba(200,168,78,.08);font-size:13px;line-height:1.55;color:var(--text2)">';
+  h+='<div style="font-weight:800;color:var(--gold);margin-bottom:4px">\u2709\ufe0f Confirmez votre adresse email</div>';
+  h+='Pour votre s\u00e9curit\u00e9, les rendez-vous, tickets, points de fid\u00e9lit\u00e9 et cartes enregistr\u00e9s par vos \u00e9tablissements avec l\u2019adresse <b>'+escAttr(CLIENT.email)+'</b> n\u2019apparaissent qu\u2019apr\u00e8s confirmation. Ouvrez le lien re\u00e7u par email (pensez aux courriers ind\u00e9sirables).';
+  h+='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button id="btnVerifRenvoi" onclick="doSendVerification()" style="padding:9px 16px;border-radius:10px;border:none;background:var(--gold);color:#000;font-weight:800;cursor:pointer;font-size:13px">Renvoyer l\u2019email</button><span id="verifMsg" style="font-size:12px"></span></div>';
+  h+='</div>';
+  return h;
+}
+async function doSendVerification(){
+  var b=document.getElementById("btnVerifRenvoi"), m=document.getElementById("verifMsg");
+  if(b){b.disabled=true;b.textContent="Envoi\u2026";}
+  var res=await LX.sendVerification();
+  if(b){b.disabled=false;b.textContent="Renvoyer l\u2019email";}
+  if(res.ok&&res.data&&res.data.deja){ CLIENT.email_verified=true; saveSession(); render(); return; }
+  if(m){ m.textContent=res.ok?"Email envoy\u00e9 \u2014 v\u00e9rifiez votre bo\u00eete de r\u00e9ception.":((res.data&&res.data.error)||"Envoi impossible, r\u00e9essayez."); m.style.color=res.ok?"#81c784":"#f87171"; }
+}
+
 // ========== LOGIN ==========
 function renderLogin(){
   var h='<div class="auth-page"><div class="auth-card">';
   h+='<h1>Connexion</h1>';
   h+='<div class="sub">Connectez-vous \u00e0 votre compte Luxyra</div>';
   h+='<div class="err" id="loginErr"></div>';
+  if(window._lxVerifMsg) h+='<div style="margin:0 0 12px;font-size:13px;line-height:1.5;color:'+(window._lxVerifMsg.ok?'#81c784':'#f87171')+'">'+escAttr(window._lxVerifMsg.t)+'</div>';
   h+='<div class="fg"><label>Email</label><input id="lEmail" type="email" placeholder="votre@email.fr"></div>';
   h+='<div class="fg"><label>Mot de passe</label><input id="lPass" type="password" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" onkeydown="if(event.key===\'Enter\')doLogin()"></div>';
   h+='<button class="btn btn-gold" onclick="doLogin()">Se connecter</button>';
@@ -421,6 +450,9 @@ function renderDashboard(){
   h+='<div class="avatar-area"><div class="avatar">'+escAttr(initials.toUpperCase())+'</div>';
   h+='<div class="user-name">'+escAttr(CLIENT.prenom||"")+' '+escAttr(CLIENT.nom||"")+'</div>'; // 2026-10-14 : échappé
   h+='<div class="user-email">'+escAttr(CLIENT.email)+'</div></div>';
+  // 2026-10-14 : bandeau de vérification de l'adresse email
+  if(window._lxVerifMsg) h+='<div style="margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid '+(window._lxVerifMsg.ok?'rgba(129,199,132,.5)':'rgba(248,113,113,.5)')+';font-size:13px;line-height:1.5;color:var(--text2)">'+escAttr(window._lxVerifMsg.t)+'</div>';
+  if(CLIENT.email_verified!==true) h+=renderVerifBanner();
   if(!CLIENT.adresse||!CLIENT.cp||!CLIENT.ville) h+='<div onclick="TAB=\'profile\';render()" style="cursor:pointer;margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(200,168,78,.5);background:rgba(200,168,78,.1);font-size:13px;line-height:1.45">\ud83c\udfe0 <b>Compl\u00e9tez votre adresse</b> : elle est n\u00e9cessaire pour les prestations \u00e0 domicile. <span style="color:#c8a84e;font-weight:700">Compl\u00e9ter \u203a</span></div>';
   
   // Tabs
@@ -1470,6 +1502,12 @@ function renderProfileTab(){
   h+='<button class="btn btn-outline" onclick="changePassword()">Modifier le mot de passe</button>';
   h+='<div id="passMsg" style="display:none;text-align:center;margin-top:8px;font-size:13px"></div>';
   h+='</div></div>';
+  // 2026-10-14 : déconnexion des autres appareils (version de session)
+  h+='<div class="section"><div class="section-title">\ud83d\udcf1 Appareils connect\u00e9s</div><div class="card">';
+  h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:10px">Un doute sur un t\u00e9l\u00e9phone ou un ordinateur o\u00f9 votre compte est rest\u00e9 ouvert ? D\u00e9connectez tous les autres appareils (celui-ci reste connect\u00e9).</div>';
+  h+='<button class="btn btn-outline" onclick="doLogoutAll()">D\u00e9connecter mes autres appareils</button>';
+  h+='<div id="logoutAllMsg" style="display:none;text-align:center;margin-top:8px;font-size:13px"></div>';
+  h+='</div></div>';
   
   return h;
 }
@@ -1593,8 +1631,13 @@ async function changePassword(){
   if(nw!==nw2){showMsg("passMsg","Les mots de passe ne correspondent pas","var(--red)");return;}
   var res=await LX.changePassword(old,nw);
   if(!res.ok){showMsg("passMsg",res.data&&res.data.error?res.data.error:"Erreur","var(--red)");return;}
-  showMsg("passMsg","\u2705 Mot de passe modifi\u00e9","var(--green)");
+  showMsg("passMsg","\u2705 Mot de passe modifi\u00e9 \u2014 vos autres appareils ont \u00e9t\u00e9 d\u00e9connect\u00e9s","var(--green)");
   document.getElementById("pOldPass").value="";document.getElementById("pNewPass").value="";document.getElementById("pNewPass2").value="";
+}
+
+async function doLogoutAll(){
+  var res=await LX.logoutAll();
+  showMsg("logoutAllMsg",res.ok?"\u2705 Vos autres appareils ont \u00e9t\u00e9 d\u00e9connect\u00e9s":((res.data&&res.data.error)||"Erreur, r\u00e9essayez"),res.ok?"var(--green)":"var(--red)");
 }
 
 function toggleNotif(el,field){
@@ -1647,8 +1690,9 @@ async function loadMyRdvs(){
 async function loadMySalons(){
   if(!CLIENT)return;
   try{
-    var r=await api("client_salon?select=salon_id,fidelite_points,salons(nom,ville,config_json)&client_id=eq."+CLIENT.id);
-    var data=await r.json();
+    // 2026-10-14 SECURITE : lecture via le worker (session du client) — plus de lecture anonyme de client_salon
+    var rS=await _clientApi("salons", {op:"list"});
+    var data=(rS.ok&&rS.data&&Array.isArray(rS.data.salons))?rS.data.salons:[];
     var el=document.getElementById("mySalons");if(!el)return;
     if(!Array.isArray(data)||!data.length){el.innerHTML='<div class="card"><div class="empty" style="padding:12px">Aucun salon visit\u00e9</div></div>';return;}
     var h='';
@@ -1683,7 +1727,11 @@ function confirmDeleteAccount(){
   h+='\u274c Vos r\u00e9servations en ligne seront anonymis\u00e9es<br>';
   h+='\u2139\ufe0f Les tickets de caisse seront conserv\u00e9s (obligation l\u00e9gale)</div></div>';
   h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;text-align:center">Pour confirmer, tapez <strong style="color:var(--red)">SUPPRIMER</strong> ci-dessous :</div>';
-  h+='<div style="margin-bottom:16px"><input id="delConfirm" placeholder="SUPPRIMER" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:15px;font-weight:700;text-align:center;letter-spacing:2px"></div>';
+  h+='<div style="margin-bottom:12px"><input id="delConfirm" placeholder="SUPPRIMER" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:15px;font-weight:700;text-align:center;letter-spacing:2px"></div>';
+  // 2026-10-14 SECURITE : mot de passe obligatoire (vérifié par le serveur)
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:6px;text-align:center">Votre mot de passe :</div>';
+  h+='<div style="margin-bottom:8px"><input id="delPass" type="password" autocomplete="current-password" placeholder="Mot de passe" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:15px;text-align:center"></div>';
+  h+='<div id="delErr" style="color:#f87171;font-size:13px;text-align:center;min-height:18px;margin-bottom:8px"></div>';
   h+='<div style="display:flex;gap:10px">';
   h+='<button onclick="document.getElementById(\'delModal\').remove()" style="flex:1;padding:14px;border-radius:12px;border:1px solid var(--border);background:none;color:var(--text);font-weight:700;cursor:pointer;font-size:14px">Annuler</button>';
   h+='<button onclick="doDeleteAccount()" style="flex:1;padding:14px;border-radius:12px;border:none;background:#ef5350;color:#fff;font-weight:700;cursor:pointer;font-size:14px">\ud83d\uddd1 Supprimer</button></div>';
@@ -1694,21 +1742,26 @@ function confirmDeleteAccount(){
 async function doDeleteAccount(){
   var confirm=document.getElementById("delConfirm");
   if(!confirm||confirm.value!=="SUPPRIMER"){confirm.style.borderColor="var(--red)";confirm.focus();return;}
+  var _pEl=document.getElementById("delPass"), _pass=_pEl?_pEl.value:"", _dErr=document.getElementById("delErr");
+  if(!_pass){ if(_pEl){_pEl.style.borderColor="var(--red)";_pEl.focus();} if(_dErr)_dErr.textContent="Indiquez votre mot de passe"; return; }
   function _finalizeDeleted(){ try{LX.logout();localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){} window.location.href="/compte"; }
   try{
     // Anonymize rdv_online + clients + delete fidelite_client + client_salon
-    var anonRes = await _clientApi("anonymize", {});
+    var anonRes = await _clientApi("anonymize", {password:_pass});
     if(!anonRes.ok){
       var _em=(anonRes.data&&anonRes.data.error)||"";
+      // 2026-10-14 : mot de passe refusé / trop de tentatives -> message dans la fenêtre, rien n'est supprimé
+      if(anonRes.status===429 || /mot de passe/i.test(_em)){ if(_dErr)_dErr.textContent=_em||"Mot de passe incorrect"; return; }
       // Session deja invalide => compte probablement deja supprime => on finalise proprement
       if(anonRes.status===401 || /session/i.test(_em)){ _finalizeDeleted(); return; }
       alert("Erreur anonymisation: "+(_em||"inconnue"));
       return;
     }
     // Delete the LX account via edge function
-    var res=await LX.delete();
+    var res=await LX.delete(_pass);
     if(!res.ok){
       var _em2=(res.data&&res.data.error)||"";
+      if(res.status===429 || /mot de passe/i.test(_em2)){ if(_dErr)_dErr.textContent=_em2||"Mot de passe incorrect"; return; }
       if(res.status===401 || /session/i.test(_em2)){ _finalizeDeleted(); return; }
       alert("Erreur suppression compte: "+_em2);return;
     }
