@@ -380,14 +380,22 @@ async function doActivateInvite(){
     });
     var data=await resp.json();
     if(!resp.ok || !data.ok){
+      if(data && data.compte_existant){ // 2026-10-14 audit : fiche reliée au compte existant -> connexion
+        showErr("invErr", data.error);
+        setTimeout(function(){ window.INVITE_TOKEN=null; try{ history.replaceState({}, "", "/compte"); }catch(_e){} PAGE="login"; render(); try{ var el=document.getElementById("lEmail"); if(el) el.value=data.email||""; }catch(_e2){} }, 3000);
+        return;
+      }
       showErr("invErr", data.error || "Activation impossible. Contactez votre salon.");
       if(btn){btn.disabled=false;btn.style.opacity="1";btn.innerHTML=btnHTMLOriginal;}
       return;
     }
     // Compte cr\u00e9\u00e9 + li\u00e9 \u2192 on connecte automatiquement avec email + password
     if(btn){btn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Compte activ\u00e9 \u2713';}
-    // 2026-10-14 : LX.signin n'existe pas (plantage) -> LX.login(email, motDePasse).
-    var loginRes = await LX.login(data.email, p1);
+    // 2026-10-14 audit : le worker crée le compte client et renvoie directement la session
+    // (LX.ouvrirSession efface d'abord les données d'un autre compte connecté sur l'appareil).
+    var loginRes;
+    if(data.session_token && data.user && LX.ouvrirSession){ LX.ouvrirSession(data.session_token, data.user); loginRes={ok:true,data:{user:data.user}}; }
+    else loginRes = await LX.login(data.email, p1);
     if(!loginRes.ok){
       // 2026-10-14 : l'invitation ne cr\u00e9e pas encore le compte client Luxyra -> on termine par l'inscription
       // normale, avec l'email (et la fiche) pr\u00e9-remplis.
@@ -1650,6 +1658,7 @@ function confirmDeleteAccount(){
   h+='\u274c Vos fiches clients dans tous les salons seront anonymis\u00e9es<br>';
   h+='\u274c Vos points de fid\u00e9lit\u00e9 seront perdus dans tous les salons<br>';
   h+='\u274c Vos r\u00e9servations en ligne seront anonymis\u00e9es<br>';
+  h+='\u274c Vos rendez-vous \u00e0 venir seront annul\u00e9s (acompte rembours\u00e9 selon la politique d\u2019annulation de chaque \u00e9tablissement)<br>'; // 2026-10-14 audit
   h+='\u2139\ufe0f Les tickets de caisse seront conserv\u00e9s (obligation l\u00e9gale)</div></div>';
   h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;text-align:center">Pour confirmer, tapez <strong style="color:var(--red)">SUPPRIMER</strong> ci-dessous :</div>';
   h+='<div style="margin-bottom:16px"><input id="delConfirm" placeholder="SUPPRIMER" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:15px;font-weight:700;text-align:center;letter-spacing:2px"></div>';
