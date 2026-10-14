@@ -240,9 +240,14 @@ async function doRefuse(){
   }
 }
 
+// 2026-10-14 audit : un seul envoi à la fois (double tap = deux RDV avant le verrou serveur)
+var _lxEnvoi=false;
+function _lxBoutons(off){ try{ document.querySelectorAll("#root button.btn").forEach(function(b){ b.disabled=!!off; }); }catch(_){} }
 async function confirmFree(){
   // Pas d'acompte → confirmation directe (sans paiement)
+  if(_lxEnvoi) return;
   if(!confirm("Confirmer ce rendez-vous ?")) return;
+  _lxEnvoi=true; _lxBoutons(true);
   try{
     var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{
       method:"POST",
@@ -250,16 +255,19 @@ async function confirmFree(){
       body:JSON.stringify({token:STATE.token,action:"confirm"})
     });
     var data=await r.json();
-    if(!r.ok){ document.getElementById("errBox").style.display="block"; document.getElementById("errBox").textContent=data.error||"Confirmation impossible"; return; }
+    if(!r.ok){ _lxEnvoi=false; _lxBoutons(false); document.getElementById("errBox").style.display="block"; document.getElementById("errBox").textContent=data.error||"Confirmation impossible"; return; }
     STATE.demande.status="confirmed";
     renderConfirmed();
   }catch(e){
+    _lxEnvoi=false; _lxBoutons(false);
     document.getElementById("errBox").style.display="block"; document.getElementById("errBox").textContent="Erreur de connexion: "+e.message;
   }
 }
 
 // FIX 2026-05-12 : Path A — redirige vers Stripe Checkout pour Connect direct au salon
 async function payViaCheckout(){
+  if(_lxEnvoi) return;
+  _lxEnvoi=true; _lxBoutons(true);
   var errEl=document.getElementById("errBox");
   errEl.style.display="none"; errEl.textContent="";
   try{
@@ -270,6 +278,7 @@ async function payViaCheckout(){
     });
     var data=await r.json();
     if(!r.ok || !data.url){
+      _lxEnvoi=false; _lxBoutons(false);
       errEl.style.display="block";
       errEl.textContent=data.error||"Impossible de créer la session de paiement";
       return;
@@ -277,6 +286,7 @@ async function payViaCheckout(){
     // Redirige vers Stripe Checkout — au retour, success_url ramène ici avec ?paid=success&session_id=xxx
     window.location.href=data.url;
   }catch(e){
+    _lxEnvoi=false; _lxBoutons(false);
     errEl.style.display="block";
     errEl.textContent="Erreur de connexion: "+e.message;
   }
@@ -292,6 +302,13 @@ async function finalizeCheckoutReturn(token, sessionId){
       body:JSON.stringify({token:token, session_id:sessionId})
     });
     var data=await r.json();
+    // 2026-10-14 audit : 202 = confirmation déjà en cours (webhook Stripe) -> on attend puis on relit
+    if(r.status===202 && data && data.en_cours && !(finalizeCheckoutReturn._n>=5)){
+      finalizeCheckoutReturn._n=(finalizeCheckoutReturn._n||0)+1;
+      await new Promise(function(res){ setTimeout(res,2000); });
+      return finalizeCheckoutReturn(token, sessionId);
+    }
+    if(r.status===202){ window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token)); await fetchProposal(); return; }
     if(!r.ok){
       renderError("Erreur lors de la confirmation", data.error||"Le paiement a réussi mais la confirmation a échoué. Contactez le salon avec la référence: "+sessionId);
       return;

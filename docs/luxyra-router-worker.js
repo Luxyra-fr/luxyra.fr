@@ -1238,7 +1238,9 @@ async function handleConnectDashboard(request, env) {
 // (pré-autorisation sans débit, capture/cancel ultérieur via Worker)
 async function handleConnectPayment(request, env) {
   try {
-    const { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await readJsonBody(request);
+    // 2026-10-14 audit : « amount » envoyé par le navigateur n'est plus qu'indicatif pour un acompte / une empreinte :
+    // le montant facturé est relu dans la ligne rdv_online (calculé par le trigger de la base à l'insertion).
+    let { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await readJsonBody(request);
     if (!salon_id || !amount) return jsonResponse({ error: "salon_id et amount requis" }, 400);
     // SECURITE 2026-10-08 : montants et redirections bornes ; un acompte/une empreinte doit viser un RDV de CE salon.
     if (!(Number(amount) > 0 && Number(amount) <= 5000)) return jsonResponse({ error: "Montant invalide" }, 400);
@@ -1250,12 +1252,18 @@ async function handleConnectPayment(request, env) {
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
-        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,empreinte_amount,empreinte_status&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
         const _a = _r.ok ? await _r.json() : [];
         if (!Array.isArray(_a) || !_a[0] || String(_a[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Rendez-vous introuvable pour ce salon" }, 400);
         // 2026-10-11 : jamais de paiement pour un RDV annulé / refusé / terminé, ni d'acompte déjà payé
         if (!["pending", "pending_payment", "confirmed"].includes(String(_a[0].status || ""))) return jsonResponse({ error: "Ce rendez-vous n'est plus actif" }, 409);
         if (_type === "acompte" && _a[0].acompte_paye === true) return jsonResponse({ error: "L'acompte de ce rendez-vous est déjà réglé" }, 409);
+        // 2026-10-14 audit : montant = celui ENREGISTRÉ sur le rendez-vous (jamais celui du navigateur)
+        const _empreinte = _type === "empreinte" || capture_method === "manual";
+        const _stocke = Math.round(Number(_empreinte ? _a[0].empreinte_amount : _a[0].acompte_montant) * 100) / 100;
+        if (!(_stocke > 0)) return jsonResponse({ error: _empreinte ? "Aucune empreinte n'est prévue pour ce rendez-vous" : "Aucun acompte n'est dû pour ce rendez-vous" }, 409);
+        if (_empreinte && !["none", "pending", null, undefined, ""].includes(_a[0].empreinte_status)) return jsonResponse({ error: "L'empreinte de ce rendez-vous est déjà enregistrée" }, 409);
+        amount = _stocke;
       }
     }
 
@@ -1689,6 +1697,8 @@ async function handleWebhookConnect(request, env) {
           const st = rep.status, txt = await rep.text().catch(() => "");
           // 5xx -> Stripe réessaiera ; 4xx « déjà traité / déjà enregistré » = normal (la page l'a fait)
           if (st >= 500) throw new Error(`finalisation ${t || md.subtype || "?"} ${st} ${txt.slice(0, 200)}`);
+          // 2026-10-14 audit : 202 = confirmation en cours ailleurs -> Stripe rejouera (filet si l'autre appel échoue)
+          if (st === 202) return jsonResponse({ error: "en cours" }, 409);
           if (st >= 400 && !/d[ée]j[àa]|already/i.test(txt)) await reportWorkerError(env, "worker:stripe-webhook-connect", new Error(`finalisation refusée ${t || md.subtype} ${st}`), { session: data.id, compte, reponse: txt.slice(0, 300) }, "warning");
         }
       }
@@ -2593,8 +2603,37 @@ async function handleRdvDemandeFinalize(request, env) {
 
     // Idempotence : si déjà finalisé, renvoie success
     if (demande.status === "confirmed" && demande.rdv_online_id) {
+      // 2026-10-14 audit : une AUTRE session payée pour une proposition déjà confirmée = double paiement
+      if (demande.stripe_session_id && demande.stripe_session_id !== session.id) {
+        try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Double paiement d'une proposition sur mesure (a rembourser)"), { demande_id: demande.id, session_confirmee: demande.stripe_session_id, session_en_trop: session.id, payment_intent: session.payment_intent || null }, "critical"); } catch (_) {}
+      }
       return jsonResponse({ ok: true, already_confirmed: true, rdv_online_id: demande.rdv_online_id });
     }
+
+    // 2026-10-14 audit : prise ATOMIQUE de la demande avant toute insertion (le retour navigateur et le
+    // webhook Stripe arrivent souvent en même temps -> avant : deux rdv_online pour une proposition).
+    const _staleIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const _claimRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&status=eq.proposed&or=(confirm_claim_at.is.null,confirm_claim_at.lt.${encodeURIComponent(_staleIso)})`, {
+      method: "PATCH",
+      headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
+      body: JSON.stringify({ confirm_claim_at: new Date().toISOString(), stripe_session_id: session.id })
+    });
+    const _claim = _claimRes.ok ? await _claimRes.json().catch(() => []) : [];
+    if (!Array.isArray(_claim) || !_claim[0]) {
+      const _re = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&select=status,rdv_online_id,stripe_session_id&limit=1`, { headers: _sbHeaders(env) });
+      const _ra = _re.ok ? await _re.json() : [];
+      const _d = (Array.isArray(_ra) && _ra[0]) || {};
+      if (_d.status === "confirmed" && _d.rdv_online_id) {
+        if (_d.stripe_session_id && _d.stripe_session_id !== session.id) {
+          try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Double paiement d'une proposition sur mesure (a rembourser)"), { demande_id: demande.id, session_confirmee: _d.stripe_session_id, session_en_trop: session.id }, "critical"); } catch (_) {}
+        }
+        return jsonResponse({ ok: true, already_confirmed: true, rdv_online_id: _d.rdv_online_id });
+      }
+      if (_d.status === "proposed") return jsonResponse({ ok: true, en_cours: true }, 202);
+      try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Acompte paye pour une proposition qui n'est plus active (a rembourser)"), { demande_id: demande.id, status: _d.status, session: session.id }, "critical"); } catch (_) {}
+      return jsonResponse({ error: "Cette proposition n'est plus active. Votre paiement sera remboursé par l'établissement." }, 409);
+    }
+    const _libererClaim = async () => { try { await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&status=eq.proposed`, { method: "PATCH", headers: { ..._sbHeaders(env), "Prefer": "return=minimal" }, body: JSON.stringify({ confirm_claim_at: null }) }); } catch (_) {} };
 
     const pd = demande.proposed_data || {};
     const items = Array.isArray(pd.items) ? pd.items : [];
@@ -2637,6 +2676,7 @@ async function handleRdvDemandeFinalize(request, env) {
     const insertBody = await insertRes.json();
     if (!insertRes.ok || !Array.isArray(insertBody) || !insertBody[0]) {
       console.error("rdv_online INSERT failed:", insertRes.status, JSON.stringify(insertBody));
+      await _libererClaim(); // 2026-10-14 audit : le webhook pourra réessayer
       return jsonResponse({ error: "Insert rdv_online échoué: " + JSON.stringify(insertBody) }, 500);
     }
     const rdvOnlineId = insertBody[0].id;
