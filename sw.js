@@ -322,6 +322,19 @@ self.addEventListener('notificationclick', function(e) {
   e.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
       var base = url.split('#')[0];
+      // 2026-10-14 audit : notification de l'ESPACE CLIENT -> la fenêtre déjà ouverte de /compte est
+      // NAVIGUÉE vers l'URL cible (onglet + données rechargées) ; avant : simple focus, page périmée.
+      // La caisse (/app.html) garde le simple focus (jamais de rechargement pendant un encaissement).
+      var cible = null; try { cible = new URL(url, self.location.origin); } catch (_e) {}
+      var estCompte = function(u) { try { return /^\/compte(\.html)?$/.test(new URL(u, self.location.origin).pathname); } catch (_e) { return false; } };
+      if (cible && estCompte(cible.href)) {
+        for (var k = 0; k < list.length; k++) {
+          var cc = list[k];
+          if (estCompte(cc.url) && 'navigate' in cc) {
+            return cc.navigate(cible.href).then(function(x) { return (x || cc).focus(); }).catch(function() { return cc.focus(); });
+          }
+        }
+      }
       for (var i = 0; i < list.length; i++) {
         var c = list[i];
         if (c.url.indexOf(base) !== -1 && 'focus' in c) {

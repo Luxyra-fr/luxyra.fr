@@ -308,17 +308,9 @@ async function loadSalons(){
           var cfg = byId[s.id];
           s.resaActive = cfg && !!cfg.reservation_active;
         });
-        // Appelle la RPC en parallèle pour chaque salon résa active (limite à 50 pour perf)
-        var activeSalons = STATE.salons.filter(function(s){return s.resaActive;}).slice(0, 50);
-        await Promise.all(activeSalons.map(function(s){
-          // 2026-10-13 : 3 prochains créneaux (cliquables sur la carte, comme Planity)
-          return sb.rpc('fn_salon_next_slots', {p_salon_id: s.id, p_n: 3})
-            .then(function(r){
-              var L = (r && Array.isArray(r.data)) ? r.data : [];
-              s.slots = L.map(function(x){ return {dayLabel: x.day_label || '', time: x.time || '', date: x.date || ''}; });
-              if(s.slots.length) s.nextSlot = s.slots[0];
-            }).catch(function(e){ console.warn('nextSlot RPC failed for', s.id, e); });
-        }));
+        // 2026-10-14 audit : les créneaux sont chargés APRÈS les filtres (lxChargerCreneaux, appelée par
+        // applyFilters) pour les 50 premiers résultats affichés — avant : les 50 premiers salons de la liste
+        // brute, donc souvent aucun créneau sur les résultats filtrés.
       }
     } catch(e){ console.warn('loadSiteConfigs', e); }
   } catch(e){
@@ -443,6 +435,28 @@ function applyFilters(){
   renderMarkers();
   updateCount();
   syncUrl();
+  lxChargerCreneaux();
+}
+// 2026-10-14 audit : 3 prochains créneaux (cliquables) pour les résultats FILTRÉS, une seule fois par salon
+var _lxCrRendu = null;
+function lxChargerCreneaux(){
+  var cibles = STATE.filtered.filter(function(s){ return s.resaActive && s.slots === undefined && !s._slotsEnCours; }).slice(0, 50);
+  if(!cibles.length) return;
+  cibles.forEach(function(s){
+    s._slotsEnCours = true;
+    sb.rpc('fn_salon_next_slots', {p_salon_id: s.id, p_n: 3})
+      .then(function(r){
+        var L = (r && Array.isArray(r.data)) ? r.data : [];
+        s.slots = L.map(function(x){ return {dayLabel: x.day_label || '', time: x.time || '', date: x.date || ''}; });
+        if(s.slots.length) s.nextSlot = s.slots[0];
+      })
+      .catch(function(e){ s.slots = []; console.warn('nextSlot RPC failed for', s.id, e); })
+      .then(function(){
+        s._slotsEnCours = false;
+        if(_lxCrRendu) clearTimeout(_lxCrRendu);
+        _lxCrRendu = setTimeout(function(){ _lxCrRendu = null; renderResults(); }, 150);
+      });
+  });
 }
 function setFilter(metier){
   STATE.filter.metier = metier;
@@ -526,7 +540,8 @@ function renderResults(){
       _ordre.forEach(function(lbl){
         slotHtml += '<div style="font-size:11px;color:#8fd19e;font-weight:700;margin:2px 0 5px">⚡ '+escapeHtml(lbl)+'</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px">';
         _byDay[lbl].forEach(function(x){
-          slotHtml += '<span role="button" tabindex="0" onclick="event.preventDefault();event.stopPropagation();lxReserverCreneau(\''+escapeHtml(s.slug||'')+'\',\''+escapeHtml(x.date)+'\',\''+escapeHtml(x.time)+'\')" style="padding:7px 12px;border-radius:10px;background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.4);color:#fff;font-weight:700;font-size:13px;cursor:pointer">'+escapeHtml(x.time)+'</span>';
+          // 2026-10-14 audit : valeurs en attributs data-* (avant : échappement HTML dans une chaîne JS de onclick)
+          slotHtml += '<span role="button" tabindex="0" data-slug="'+escapeHtml(s.slug||'')+'" data-date="'+escapeHtml(x.date)+'" data-time="'+escapeHtml(x.time)+'" onclick="event.preventDefault();event.stopPropagation();lxReserverCreneau(this.dataset.slug,this.dataset.date,this.dataset.time)" style="padding:7px 12px;border-radius:10px;background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.4);color:#fff;font-weight:700;font-size:13px;cursor:pointer">'+escapeHtml(x.time)+'</span>';
         });
         slotHtml += '</div>';
       });
