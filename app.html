@@ -5739,62 +5739,113 @@ function _extractModifData(n){
   return null;
 }
 
-async function acceptModification(notifId){
+// 2026-10-14 audit : contrôle « créneau libre » (lecture seule) avant d'accepter une modification ou de proposer
+// un horaire : fermeture / congé / jour non travaillé, horaires, et RDV qui chevauchent. "" = rien à signaler.
+function _lxCreneauProbleme(stId, date, time, dur, excludeId){
+  try{
+    if(!date||!time) return "";
+    var s0=toM(String(time).slice(0,5)), e0=s0+(Number(dur)>0?Number(dur):30);
+    var chk=function(id){
+      var h=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,id):null;
+      if(!h||!h.o||!h.c) return "ne travaille pas ce jour-là (fermeture, congé ou repos)";
+      if(s0<toM(h.o)||e0>toM(h.c)) return "est hors de ses horaires ("+h.o+" – "+h.c+")";
+      if(typeof _lxCollabFreeAt==="function" && !_lxCollabFreeAt(id,date,s0,e0,excludeId)) return "est déjà occupé(e) ou absent(e) sur ce créneau";
+      return "";
+    };
+    if(stId){ var m=chk(stId); if(!m) return ""; var t=(typeof gT==="function")?gT(stId):null; return (t&&t.n?t.n:"Le collaborateur")+" "+m; }
+    var L=(typeof getActiveTeam==="function")?getActiveTeam():[];
+    if(!L.length){
+      var hs=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,null):null;
+      if(!hs) return "L’établissement est fermé ce jour-là";
+      if(s0<toM(hs.o)||e0>toM(hs.c)) return "Hors des horaires d’ouverture ("+hs.o+" – "+hs.c+")";
+      return "";
+    }
+    for(var i=0;i<L.length;i++){ if(!chk(L[i].id)) return ""; }
+    return "Aucun collaborateur n’est libre sur ce créneau";
+  }catch(_e){ return ""; }
+}
+// Durée (min) d'un RDV du planning : phases si présentes, sinon prestation, sinon durée en ligne
+function _lxDureeAppt(a, ro){
+  try{
+    var ph=(a&&Array.isArray(a.aPhases)&&a.aPhases.length)?a.aPhases:null, d=0;
+    if(!ph&&a){ var sv=(typeof gS==="function")?gS(a.sId):null; if(sv&&Array.isArray(sv.phases)&&sv.phases.length) ph=sv.phases; }
+    if(ph) ph.forEach(function(p){ d+=Number(p&&p.d)||0; });
+    if(!d&&ro) d=Number(ro.duree)||Number(ro.duree_minutes)||0;
+    return d>0?d:30;
+  }catch(_e){ return 30; }
+}
+// Avertissement avec bouton « … quand même » (le choix reste au professionnel)
+function _lxConfirmQuandMeme(titre, msg, okLabel, onOk){
+  window._lxQmOk=onOk||null;
+  var h='<div class="mbox" style="max-width:420px;text-align:center"><div style="font-size:34px;margin-bottom:6px">⚠️</div>';
+  h+='<h2 style="color:var(--orange);margin-bottom:8px">'+_lxEsc(titre)+'</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:14px">'+_lxEsc(msg)+'</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg2)" onclick="window._lxQmOk=null;cM()">Retour</button>';
+  h+='<button class="btn" style="flex:1;background:var(--orange);color:#fff;font-weight:700" onclick="var f=window._lxQmOk;window._lxQmOk=null;cM();if(f)f();">'+_lxEsc(okLabel||"Continuer quand même")+'</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="window._lxQmOk=null;cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+
+async function acceptModification(notifId, force){
   var n=null;for(var i=0;i<window.NOTIFS.length;i++){if(window.NOTIFS[i].id===notifId){n=window.NOTIFS[i];break;}}
   if(!n){toast&&toast("Notification introuvable","error");return;}
-  var modif = _extractModifData(n);
   // rdvId : essaie plusieurs sources (rdvOnlineId, data.rdv_id)
   var rdvId = n.rdvOnlineId || (n.data && (n.data.rdv_id || n.data.rdvId)) || null;
-  if(!modif || !rdvId){
-    console.error("[acceptModif] modif or rdvId missing", {n:n, modif:modif, rdvId:rdvId});
-    toast && toast("Donn\u00e9es manquantes pour accepter la modif","error");
+  if(!rdvId || typeof _sb==="undefined" || !_sb){
+    toast && toast("Données manquantes pour accepter la modif","error");
     return;
   }
-  // Normalize heure : si format "HH:MM:SS" \u2192 garde tel quel, si "HH:MM" \u2192 ajoute ":00"
+  // 2026-10-14 audit : la date/heure demandées sont RELUES en base (la notification peut dater d'une demande
+  // précédente) ; la demande doit être toujours en attente.
+  var cur = await _sb.from("rdv_online").select("id,status,modification_date,modification_heure,modification_status,modification_demandee,collaborateur_id,duree_minutes").eq("id",rdvId).eq("salon_id",_salonId).maybeSingle();
+  if(cur && cur.error){ toast && toast("Erreur Supabase : "+cur.error.message,"error"); return; }
+  var row = cur && cur.data;
+  if(!row){ toast && toast("Rendez-vous introuvable","error"); return; }
+  if(row.modification_status!=="pending"){
+    toast && toast("Cette demande a déjà été traitée","warning");
+    if(n.dbId){ try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",n.dbId); }catch(_eR){} }
+    showNotifs();updateNotifBadge(); return;
+  }
+  if(row.status==="cancelled"||row.status==="done"||row.status==="no_show"){ toast && toast("Ce rendez-vous est annulé ou terminé","warning"); return; }
+  var modif = {date: row.modification_date || null, heure: row.modification_heure || null};
+  if(!modif.date && !modif.heure){ toast && toast("La demande ne contient ni date ni heure","error"); return; }
   var newHeure = String(modif.heure||"");
   if(newHeure.length === 5) newHeure += ":00";
-  // UPDATE rdv_online directement (pas via saveAppointment qui marquerait salon_modified)
-  if(typeof _sb!=="undefined"&&_sb){
-    var upd = {
-      modification_status:"accepted",
-      modification_demandee:false,
-      // Accepter une modification = accepter implicitement le RDV avec sa
-      // nouvelle date/heure. Sinon le client voit "modification acceptée"
-      // mais badge "En attente" → confus. On confirme automatiquement
-      // (sans écraser un statut déjà cancelled/done).
-      status:"confirmed",
-      confirmed_at: new Date().toISOString()
-    };
-    if(modif.date) upd.date_rdv = modif.date;
-    if(modif.heure) upd.heure_rdv = newHeure;
-    // Garde-fou : ne re-confirme pas un RDV annulé/terminé
-    var current = await _sb.from("rdv_online").select("status").eq("id",rdvId).single();
-    if(current && current.data && (current.data.status==="cancelled" || current.data.status==="canceled" || current.data.status==="done" || current.data.status==="completed")){
-      delete upd.status;
-      delete upd.confirmed_at;
-    }
-    var r = await _sb.from("rdv_online").update(upd).eq("id",rdvId);
-    if(r && r.error){
-      toast && toast("Erreur Supabase : "+r.error.message,"error");
-      console.error("[acceptModif] update failed:",r.error);
-      return;
-    }
+  // AP local (pour le contrôle du créneau)
+  var apL=null; for(var k=0;k<AP.length;k++){ if(AP[k].onlineId===rdvId || AP[k].id==="online_"+rdvId){ apL=AP[k]; break; } }
+  var _dC = modif.date || (apL&&apL.date), _hC = modif.heure ? String(modif.heure).slice(0,5) : (apL&&apL.time);
+  if(!force){
+    var _pb=_lxCreneauProbleme(row.collaborateur_id!=null?row.collaborateur_id:(apL?apL.stId:null), _dC, _hC, _lxDureeAppt(apL,{duree:row.duree_minutes}), apL?apL.id:null);
+    if(_pb){ _lxConfirmQuandMeme("Créneau demandé indisponible", _pb+" le "+fmt(_dC)+" à "+_hC+".", "Accepter quand même", function(){ acceptModification(notifId, true); }); return; }
   }
-  // Update local AP entry (sans d\u00e9clencher saveAppointment qui marquerait salon_modified)
-  for(var ai=0;ai<AP.length;ai++){
-    if(AP[ai].onlineId===rdvId || AP[ai].id==="online_"+rdvId){
-      if(modif.date) AP[ai].date=modif.date;
-      if(modif.heure) AP[ai].time=String(modif.heure).slice(0,5);
-      break;
-    }
+  // Demande encore EN ATTENTE DE VALIDATION : on déplace (date/heure) puis on passe par lxRdvAccepter
+  // (lien d'acompte, message au client) au lieu de confirmer en direct.
+  var _viaAccepter = (row.status==="pending");
+  var upd = { modification_status:"accepted", modification_demandee:false };
+  if(!_viaAccepter){ upd.status="confirmed"; upd.confirmed_at=new Date().toISOString(); }
+  if(row.status==="confirmed") delete upd.confirmed_at; // déjà confirmé : on ne réécrit pas la date de confirmation
+  if(modif.date) upd.date_rdv = modif.date;
+  if(modif.heure) upd.heure_rdv = newHeure;
+  var r = await _sb.from("rdv_online").update(upd).eq("id",rdvId).eq("salon_id",_salonId).eq("modification_status","pending").select("id");
+  if(r && r.error){
+    toast && toast("Erreur Supabase : "+r.error.message,"error");
+    console.error("[acceptModif] update failed:",r.error);
+    return;
   }
+  if(!r || !r.data || !r.data.length){ toast && toast("Cette demande a déjà été traitée (autre appareil)","warning"); showNotifs(); updateNotifBadge(); return; }
+  // Update local AP entry (sans déclencher saveAppointment qui marquerait salon_modified)
+  if(apL){ if(modif.date) apL.date=modif.date; if(modif.heure) apL.time=String(modif.heure).slice(0,5); }
+  try{ if(window.RDV_ONLINE){ for(var q=0;q<RDV_ONLINE.length;q++){ if(RDV_ONLINE[q].id===rdvId){ if(modif.date) RDV_ONLINE[q].date=modif.date; if(modif.heure) RDV_ONLINE[q].heure=String(modif.heure).slice(0,5); RDV_ONLINE[q].modification_status="accepted"; RDV_ONLINE[q].modification_demandee=false; break; } } } }catch(_eRo){}
   // Marquer notif comme lue en DB (si dbId existe)
-  if(n.dbId && typeof _sb!=="undefined" && _sb){
+  if(n.dbId){
     try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",n.dbId); }catch(e){}
   }
   n.confirmed=true;n.seen=true;
-  n.title="\u2705 Modification accept\u00e9e";
-  toast && toast("Modification accept\u00e9e \u2014 le client est inform\u00e9","success");
+  n.title="✅ Modification acceptée";
+  if(_viaAccepter && apL && typeof lxRdvAccepter==="function"){
+    await lxRdvAccepter(apL.id, "Votre demande de changement d’horaire est acceptée.");
+    updateNotifBadge(); return;
+  }
+  toast && toast("Modification acceptée — le client est informé"+(_viaAccepter?" (demande à valider depuis le planning)":""),"success");
   showNotifs();updateNotifBadge();
 }
 
@@ -9070,7 +9121,9 @@ function go(pg,arg){
   // 2026-10-14 : plus d'enregistrement en masse de l'equipe a chaque navigation (il reecrivait
   // tous les collaborateurs depuis une memoire parfois perimee). Chaque modification enregistre.
   // Update notif badge
-  var _nb=document.getElementById('notifBadge');if(_nb){try{var _nu=window.NOTIFS?window.NOTIFS.filter(function(n){return!n.confirmed}).length:0;if(_nu>0){_nb.style.display='flex';_nb.textContent=_nu;}else{_nb.style.display='none';}}catch(e){}}
+  // 2026-10-14 audit : la pastille est calculée par updateNotifBadge (état réel en base, cache court) ; le recomptage
+  // local des NOTIFS en mémoire donnait un chiffre différent à chaque changement de page.
+  try{ if(typeof updateNotifBadge==="function") updateNotifBadge(); }catch(e){}
   var app=document.getElementById("app");
   var hdr=document.getElementById("hdr");
   var logoSrc=SALON_CONFIG.logo||SALON_CONFIG._defaultLogo||"";
@@ -9172,7 +9225,7 @@ window.getApptsForClient = getApptsForClient;
 // === STATS CALC ===
 function cStats(){
   var dn=AP.filter(function(a){return a.st==="done"});
-  var tA=AP.filter(function(a){return a.date===TD&&a.st!=="canc"});
+  var tA=AP.filter(function(a){return a.date===TD&&a.st!=="canc"&&a.st!=="cancelled"&&!a.cancelled}); // 2026-10-14 audit : annulés exclus
   var cm=0;dn.forEach(function(a){if(a.date.indexOf(TD.slice(0,7))===0)cm+=a.pr;});
   PS.forEach(function(p){if(p.date.indexOf(TD.slice(0,7))===0)cm+=p.pr;});
   var ct=0;dn.forEach(function(a){ct+=a.pr;});
@@ -9188,7 +9241,7 @@ function cStats(){
     } else {
       // Aucun RDV terminé : peut être un nouveau client ou un RDV planifié
       // → vérifie s'il a un RDV futur planifié (non annulé) : alors actif
-      var hasFuture = AP.some(function(a){return a.cId===c.id && a.date>=TD && a.st!=="canc";});
+      var hasFuture = AP.some(function(a){return a.cId===c.id && a.date>=TD && a.st!=="canc" && a.st!=="cancelled" && !a.cancelled;}); // 2026-10-14 audit
       // FIX liaison : compter aussi les RDV pris EN LIGNE (rdv_online) du client (match tel/email)
       if(!hasFuture){
         try{
@@ -9624,6 +9677,18 @@ function _lxOnlineToAP(rdv){
       if(AP[i]&&(AP[i].onlineId===rdv.id||String(AP[i].id||"")===_apId)){
         if(!AP[i].onlineId) AP[i].onlineId=rdv.id;
         if(!AP[i].cId){ var _rc=_lxResolveClientId(rdv); if(_rc) AP[i].cId=_rc; }
+        // 2026-10-14 audit : une réservation déjà affichée ne reprenait jamais la date / l'heure / le collaborateur de la
+        // base (modification acceptée sur un autre appareil, réassignation, nouvel horaire proposé) -> planning faux
+        // jusqu'au rechargement. On recopie, sauf si le RDV est encaissé (ticket) ou en cours de déplacement ici.
+        try{
+          var _ex=AP[i];
+          if(!(_ex.st==="done"||_ex.tkNum) && !(window._pendingDrag&&window._pendingDrag.id===_ex.id)){
+            var _nt=rdv.heure_rdv?String(rdv.heure_rdv).slice(0,5):null;
+            if(rdv.date_rdv && _ex.date!==rdv.date_rdv){ _ex.date=rdv.date_rdv; window._apDirty=true; }
+            if(_nt && _ex.time!==_nt){ _ex.time=_nt; window._apDirty=true; }
+            if(rdv.collaborateur_id!=null && String(_ex.stId)!==String(rdv.collaborateur_id)){ _lxRemapPhasesCollab(_ex,_ex.stId,rdv.collaborateur_id); _ex.stId=rdv.collaborateur_id; window._apDirty=true; }
+          }
+        }catch(_eSync){}
         try{ _lxApOnlineEnrichir(AP[i], (typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow(rdv):null); }catch(_e2){}
         return;
       }
@@ -9732,6 +9797,7 @@ window._rdvPollInterval=setInterval(function(){
             upd.modification_date=rdv.modification_date;upd.modification_heure=rdv.modification_heure;
             upd.modification_message=rdv.modification_message;upd.modification_status=rdv.modification_status;
             upd.cancelled_by=rdv.cancelled_by;upd.cancel_reason=rdv.cancel_reason;
+            if(rdv.date_rdv) upd.date=rdv.date_rdv; if(rdv.heure_rdv) upd.heure=String(rdv.heure_rdv).slice(0,5); if(rdv.collaborateur_id!=null) upd.collabId=rdv.collaborateur_id; // 2026-10-14 audit : date/heure/collaborateur à jour
             upd.salonModifAt=rdv.salon_modified_at||null; upd.salonModifVue=rdv.salon_modified_acknowledged_by_client===true; upd.salonModifVueAt=rdv.salon_modified_acknowledged_at||null; // 2026-10-11
             // Empreinte states (toujours sync)
             upd.empreinteStatus=rdv.empreinte_status||"none";
@@ -9769,29 +9835,14 @@ window._rdvPollInterval=setInterval(function(){
               _lxRemoveOnlineFromAP(rdv.id);
             }
           }
-          // Check for modification requests from polling
+          // 2026-10-14 audit : plus d'entrée locale injectée dans NOTIFS (demande de modification, annulation client) :
+          // la base crée déjà ces notifications (trg_notif_rdv_online) et showNotifs les relit ; les copies locales
+          // revenaient à chaque passage et faussaient la pastille. On garde seulement l'annonce flash, une fois.
           if(rdv.modification_demandee&&rdv.modification_status==="pending"){
-            var modEx=false;for(var mi2=0;mi2<window.NOTIFS.length;mi2++){if(window.NOTIFS[mi2].id==="mod_"+rdv.id){modEx=true;break;}}
-            if(!modEx&&!(window._dismissedNotifs&&window._dismissedNotifs["mod_"+rdv.id])){
-              window.NOTIFS.unshift({id:"mod_"+rdv.id,rdvOnlineId:rdv.id,type:"modification",
-                title:"\u270f\ufe0f Demande de modification",
-                detail:(rdv.client_nom||"")+" souhaite d\u00e9placer au "+rdv.modification_date+" \u00e0 "+rdv.modification_heure+(rdv.modification_message?" - "+rdv.modification_message:""),
-                ts:new Date().toISOString(),seen:false,confirmed:false,
-                onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null},
-                modifData:{date:rdv.modification_date,heure:rdv.modification_heure,msg:rdv.modification_message}
-              });newCount++;newEvents.push("\u270f\ufe0f Demande de modification \u2014 "+(rdv.client_nom||""));
-            }
+            if(_lxFlashOnce("mod_"+rdv.id+":"+(rdv.modification_date||"")+" "+(rdv.modification_heure||""))){ newCount++; newEvents.push("\u270f\ufe0f Demande de modification \u2014 "+(rdv.client_nom||"")); }
           }
-          // Check for client cancellations from polling
           if(rdv.status==="cancelled"&&rdv.cancelled_by==="client"){
-            var canEx=false;for(var ci4=0;ci4<window.NOTIFS.length;ci4++){if(window.NOTIFS[ci4].id==="can_"+rdv.id){canEx=true;break;}}
-            if(!canEx&&_lxFlashOnce("can_"+rdv.id)){
-              window.NOTIFS.unshift({id:"can_"+rdv.id,rdvOnlineId:rdv.id,type:"cancel_client",
-                title:"\u274c RDV annul\u00e9 par le client",
-                detail:(rdv.client_nom||"")+" a annul\u00e9 son RDV du "+rdv.date_rdv+" "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+(rdv.cancel_reason?" - "+rdv.cancel_reason:""),
-                ts:rdv.cancelled_at||new Date().toISOString(),seen:false,confirmed:false
-              });newCount++;newEvents.push("\u274c RDV annul\u00e9 \u2014 "+(rdv.client_nom||""));
-            }
+            if(_lxFlashOnce("can_"+rdv.id)){ newCount++; newEvents.push("\u274c RDV annul\u00e9 \u2014 "+(rdv.client_nom||"")); }
           }
         });
         if(typeof _lxFixOnlineStId==="function"){ try{ _lxFixOnlineStId(); }catch(_e){} }
@@ -10151,8 +10202,16 @@ async function _lxDemandeReproposerGo(demandeId){
 function cancelDemandeProposal(demandeId){
   showConfirm("Annuler cette proposition ? Le client ne pourra plus la payer.", async function(){
     try{
-      var r = await _sb.from("rdv_demandes").update({ status: "cancelled_by_salon" }).eq("id", demandeId);
+      // 2026-10-14 audit : seulement si la proposition est TOUJOURS en attente (sinon on pouvait « annuler » une
+      // proposition déjà acceptée et payée par le client, et la marquer annulée sans rien d'autre).
+      var r = await _sb.from("rdv_demandes").update({ status: "cancelled_by_salon" }).eq("id", demandeId).eq("salon_id", _salonId).eq("status", "proposed").select("id");
       if(r.error){ showAlert("Erreur : "+r.error.message,"error"); return; }
+      if(!r.data || !r.data.length){
+        showAlert("Cette proposition n’est plus en attente : le client l’a peut-être déjà acceptée, refusée, ou elle a expiré. La liste est actualisée.","warning");
+        cM(); try{ await loadRdvDemandes(); }catch(_eL){}
+        if(window._currentPage==="home") document.getElementById("app").innerHTML = rHome();
+        return;
+      }
       if(typeof toast==="function") toast("Proposition annulée", "info");
       cM();
       await loadRdvDemandes();
@@ -10552,8 +10611,15 @@ function _lxPhasesTicketDirect(a){
 }
 // Get work-only phases with absolute time offsets for an appointment
 function getWorkBlocks(a){
-  var sv=gS(a.sId);var phases=a.aPhases||(sv?sv.phases:null);
-  if(!phases||!phases.length)return[{start:toM(a.time),end:toM(a.time)+30,a:a}];
+  // 2026-10-14 audit : un tableau aPhases VIDE était pris pour « phases présentes » -> 30 min par défaut.
+  // Ordre : phases du RDV si non vides, sinon phases de la prestation, sinon durée totale des prestations.
+  var sv=gS(a.sId);
+  var phases=(Array.isArray(a.aPhases)&&a.aPhases.length)?a.aPhases:((sv&&Array.isArray(sv.phases)&&sv.phases.length)?sv.phases:null);
+  if(!phases){
+    var _tot=0;
+    try{ (Array.isArray(a.items)?a.items:[]).forEach(function(it){ if(!it||it.isSep||it.isProd||it.isAcompteData) return; var s2=it.sId?gS(it.sId):null; if(s2) _tot+=svcTotalDur(s2)*(Number(it.qty)||1); }); }catch(_eW){}
+    return[{start:toM(a.time),end:toM(a.time)+(_tot>0?_tot:30),a:a}];
+  }
   var startM=toM(a.time),cur=startM,blocks=[];
   phases.forEach(function(ph){
     if(ph.t==="w"){blocks.push({start:cur,end:cur+ph.d,a:a,label:ph.l});}
@@ -10673,7 +10739,7 @@ function getAbsColor(type){
 }
 
 // Check if a new RDV conflicts with existing ones OR blocked slots (pauses, absences)
-function checkConflict(stId, date, time, svcId, excludeId){
+function checkConflict(stId, date, time, svcId, excludeId, phasesRdv, svcIds){
   // 2026-10-11 : RDV exceptionnel hors horaires déjà confirmé (jour travaillé) -> pas de blocage « hors horaire »
   var _horsOk=(window._lxHorsHorairesOk||window._lxHorsHorairesOkTime===time) && (typeof getEffectiveHrs!=="function" || !!getEffectiveHrs(date,stId));
   if(!_horsOk && !isStylistAvailable(stId, date, time)){
@@ -10681,8 +10747,24 @@ function checkConflict(stId, date, time, svcId, excludeId){
   }
   var sv=gS(svcId);
   var fakeAppt={sId:svcId,time:time,stId:stId};
+  // 2026-10-14 audit : avant, seule la 1re prestation comptait. Phases du RDV (multi-prestations) si fournies,
+  // sinon enchaînement des phases de toutes les prestations choisies.
+  if(Array.isArray(phasesRdv)&&phasesRdv.length){ fakeAppt.aPhases=phasesRdv; }
+  else if(Array.isArray(svcIds)&&svcIds.length>1){
+    var _phs=[]; svcIds.forEach(function(sid){ var _s=gS(sid); if(_s&&Array.isArray(_s.phases)&&_s.phases.length) _phs=_phs.concat(_s.phases); else if(_s) _phs.push({t:"w",d:Number(_s.d)||30,l:_s.n}); });
+    if(_phs.length) fakeAppt.aPhases=_phs;
+  }
   var newBlocks=getWorkBlocks(fakeAppt);
   var conflicts=[];
+  // 2026-10-14 audit : le contrôle d'horaires ne regardait que l'heure de DÉBUT -> un RDV pouvait finir après la
+  // fermeture sans avertissement. Avertissement « forçable » (type apres_fermeture).
+  try{
+    var _hrsF=(typeof getEffectiveHrs==="function")?getEffectiveHrs(date,stId):null;
+    if(_hrsF&&_hrsF.c&&newBlocks.length&&!_horsOk){
+      var _finM=newBlocks[newBlocks.length-1].end;
+      if(_finM>toM(_hrsF.c)) conflicts.push({appt:null,clientName:"INDISPONIBLE",svcName:"Se termine apr\u00e8s la fermeture ("+_hrsF.c+")",time:time,overlapStart:toM(_hrsF.c),overlapEnd:_finM,blockedType:"apres_fermeture"});
+    }
+  }catch(_eF){}
   // Check full duration against blocked slots (pauses, absences)
   for(var ni=0;ni<newBlocks.length;ni++){
     var blocked=isStylistBlockedDuring(stId, date, newBlocks[ni].start, newBlocks[ni].end);
@@ -10693,7 +10775,7 @@ function checkConflict(stId, date, time, svcId, excludeId){
   }
   // Check against existing appointments
   var existing=AP.filter(function(a){
-    return a.date===date && a.stId===stId && a.st!=="canc" && (!a.cancelled) && !a.fromCaisse && a.id!==excludeId;
+    return a.date===date && a.stId===stId && a.st!=="canc" && a.st!=="cancelled" && (!a.cancelled) && !a.fromCaisse && a.id!==excludeId;
   });
   for(var ei=0;ei<existing.length;ei++){
     var exBlocks=getWorkBlocks(existing[ei]);
@@ -10718,7 +10800,7 @@ function showConflictAlert(conflicts, onConfirm){
   // garde le blocage dur pour les vraies absences (congé, maladie, formation,
   // jour de repos, fermeture exceptionnelle, absent journée).
   // → pause/absent_heures = forçable, tout le reste reste bloquant.
-  var _forceableBlockedTypes = { pause: true, absent_heures: true };
+  var _forceableBlockedTypes = { pause: true, absent_heures: true, apres_fermeture: true }; // 2026-10-14 audit : fin après la fermeture = forçable
   var hasHardBlock = conflicts.some(function(cf){
     if(!(!cf.appt && cf.clientName === "INDISPONIBLE")) return false;
     var t = cf.blockedType || "absent";
@@ -10726,8 +10808,9 @@ function showConflictAlert(conflicts, onConfirm){
   });
   // Détecte le cas spécifique "pause uniquement" pour adapter le message
   var hasSoftPause = conflicts.some(function(cf){
-    return !cf.appt && cf.clientName === "INDISPONIBLE" && _forceableBlockedTypes[cf.blockedType||""];
+    return !cf.appt && cf.clientName === "INDISPONIBLE" && _forceableBlockedTypes[cf.blockedType||""] && cf.blockedType!=="apres_fermeture";
   });
+  var hasSoftFin = conflicts.some(function(cf){ return !cf.appt && cf.blockedType==="apres_fermeture"; }); // 2026-10-14 audit
   var h='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
   h+='<div style="text-align:center;font-size:36px;margin-bottom:8px">'+(hasHardBlock?'\ud83d\udeab':'\u26a0\ufe0f')+'</div>';
   h+='<h2 style="text-align:center;color:'+(hasHardBlock?'var(--red)':'var(--orange)')+'">'+(hasHardBlock?'Cr\u00e9neau bloqu\u00e9':'Conflit de RDV')+'</h2>';
@@ -10735,6 +10818,8 @@ function showConflictAlert(conflicts, onConfirm){
     h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau est bloqu\u00e9 par une absence (cong\u00e9, maladie, formation, jour ferm\u00e9). Impossible de placer un RDV ici.</div>';
   } else if(hasSoftPause){
     h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau chevauche une <strong>pause</strong>. Vous pouvez forcer si vous \u00eates s\u00fbr.</div>';
+  } else if(hasSoftFin && conflicts.length===1){
+    h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce rendez-vous <strong>se termine apr\u00e8s la fermeture</strong>. Vous pouvez le cr\u00e9er quand m\u00eame si vous \u00eates s\u00fbr.</div>';
   } else {
     h+='<div style="font-size:14px;margin-bottom:14px;text-align:center">Ce cr\u00e9neau chevauche '+(conflicts.length===1?'un RDV existant':conflicts.length+' RDV existants')+' :</div>';
   }
@@ -10910,7 +10995,7 @@ function rPlanning(){
       var exceptLabel=getExceptLabel(ddk);
       var isToday=ddk===TD;
       var dayLbl=DF[ddow].slice(0,3)+". "+dd.getDate()+"/"+(dd.getMonth()+1);
-      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&a.st!=="pause"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1});
+      var dayApts=AP.filter(function(a){return a.date===ddk&&a.st!=="canc"&&a.st!=="cancelled"&&!a.cancelled&&a.st!=="pause"&&!a.fromCaisse}).sort(function(a,b){return a.time<b.time?-1:1}); // 2026-10-14 audit
 
       // Day group - each stylist sub-col is flex:1, so use _visT.length sub-cols for open days
       // For closed days, use _visT.length sub-cols too (merged visually) to keep same width
@@ -11366,7 +11451,7 @@ function printPlanning(){
     var dd=days[di];
     var dk=dS(dd),dow=dd.getDay();
     var dayLabel=DF[dow]+" "+dd.getDate()+" "+MO[dd.getMonth()]+" "+dd.getFullYear();
-    var dayApts=AP.filter(function(a){return a.date===dk&&a.st!=="canc"&&a.st!=="pause"&&!a.fromCaisse;}).sort(function(a,b){return a.time<b.time?-1:1;});
+    var dayApts=AP.filter(function(a){return a.date===dk&&a.st!=="canc"&&a.st!=="cancelled"&&!a.cancelled&&a.st!=="pause"&&!a.fromCaisse;}).sort(function(a,b){return a.time<b.time?-1:1;}); // 2026-10-14 audit
     var dayPauses=ABSENCES.filter(function(ab){return ab.date===dk&&(ab.type==="pause"||ab.type==="absent_heures")&&ab.from&&ab.to;});
     
     h+='<div class="day">';
@@ -11943,7 +12028,10 @@ function dragEnd(e){
     var slotIdx=Math.round(relY/SLOT_H);
     if(slotIdx<0)slotIdx=0;
     var targetDow=targetDate?new Date(targetDate+'T12:00:00').getDay():calD.getDay();
-    var hrs=H[targetDow];
+    // 2026-10-14 audit : horaires EFFECTIFS du collaborateur ce jour-là (personnalisés, exceptions) et non ceux
+    // de la semaine type de l'établissement ; la grille réelle (data-gs) reste prioritaire pour l'heure lâchée.
+    var _dragDate0=targetDate||(function(){ for(var _d0=0;_d0<AP.length;_d0++){ if(AP[_d0].id===_drag.aid) return AP[_d0].date; } return dS(calD); })();
+    var hrs=((typeof getEffectiveHrs==="function")?getEffectiveHrs(_dragDate0,targetStId):null)||H[targetDow]||(targetSlots.getAttribute('data-gs')?{o:"00:00",c:"23:59"}:null);
     if(hrs){
       var gs=Math.floor(toM(hrs.o)/60)*60;
       // 2026-10-11 : début réel de la grille affichée (marge avant ouverture, RDV hors horaires)
@@ -11958,7 +12046,7 @@ function dragEnd(e){
         var sty=gT(targetStId);
         var oldSty=gT(dragAppt.stId);
         // Show confirmation modal
-        var htm='<div class="mbg" onclick="cM();go(\'planning\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+        var htm='<div class="mbg" onclick="window._pendingDrag=null;cM();go(\'planning\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">'; // 2026-10-14 audit : fermer = abandonner le déplacement
         htm+='<h2 style="color:var(--gold)">D\u00e9placer ce RDV ?</h2>';
         htm+='<div style="font-size:14px;margin-bottom:6px;font-weight:700">'+apptClientLabel(dragAppt)+'</div>';
         htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:14px">'+(sv?sv.n:'RDV')+'</div>';
@@ -11977,8 +12065,14 @@ function dragEnd(e){
         htm+='<div style="font-size:10px;color:rgba(255,255,255,.3)">'+fmt(dropDate)+'</div>';
         htm+='</div></div>';
         // Check conflicts
-        var dragConflicts=checkConflict(targetStId,dropDate,newTime,dragAppt.sId,_drag.aid);
-        if(dragConflicts.length>0){
+        var dragConflicts=checkConflict(targetStId,dropDate,newTime,dragAppt.sId,_drag.aid,(Array.isArray(dragAppt.aPhases)&&dragAppt.aPhases.length)?dragAppt.aPhases:null);
+        // 2026-10-14 audit : fermeture, congé, absence, jour non travaillé = blocage dur -> pas de bouton « Confirmer »
+        var _dragSoft={pause:1,absent_heures:1,apres_fermeture:1};
+        var _dragWorks=(typeof getEffectiveHrs==="function")?!!getEffectiveHrs(dropDate,targetStId):true;
+        var _dragHard=dragConflicts.some(function(cf){ if(cf.appt||cf.clientName!=="INDISPONIBLE") return false; if(cf.blockedType==="hors_horaire") return !_dragWorks; return !_dragSoft[cf.blockedType||"absent"]; });
+        if(_dragHard){
+          htm+='<div style="background:rgba(244,67,54,.12);border:1px solid rgba(244,67,54,.35);border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px;color:#ef5350">\u26d4 Impossible : '+_lxEsc((dragConflicts.filter(function(cf){return !cf.appt;})[0]||{}).svcName||"cr\u00e9neau bloqu\u00e9 (fermeture ou absence)")+'</div>';
+        }else if(dragConflicts.length>0){
           htm+='<div style="background:rgba(244,67,54,.1);border:1px solid rgba(244,67,54,.2);border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px;color:#ef5350">';
           htm+='\u26a0\ufe0f Attention : chevauchement avec ';
           for(var ci=0;ci<dragConflicts.length;ci++){
@@ -11990,7 +12084,7 @@ function dragEnd(e){
         window._pendingDrag={id:_drag.aid,time:newTime,stId:targetStId,date:dropDate};
         htm+='<div style="display:flex;gap:8px">';
         htm+='<button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="window._pendingDrag=null;cM();go(\'planning\')">Annuler</button>';
-        htm+='<button class="btn bg" style="flex:1" onclick="confirmPendingDrag()">Confirmer</button>';
+        if(!_dragHard) htm+='<button class="btn bg" style="flex:1" onclick="confirmPendingDrag()">Confirmer</button>'; // 2026-10-14 audit
         htm+='</div></div></div>';
         document.getElementById("modal").innerHTML=htm;
       }
@@ -12058,20 +12152,39 @@ function _lxCollabFreeAt(stId,date,startMin,endMin,excludeId){
     return true;
   }catch(_e){ return true; }
 }
+// 2026-10-14 audit : changement de collaborateur d'un RDV -> les phases qui lui étaient attribuées (ou sans
+// attribution) passent au nouveau collaborateur (même règle que lxChangerCollabRdv). Sinon les phases restaient
+// sur l'ancien : planning, conflits et disponibilités en ligne faux.
+function _lxRemapPhasesCollab(a, oldId, newId){
+  try{
+    if(!a||newId==null||String(oldId)===String(newId)) return;
+    if(Array.isArray(a.aPhases)){ a.aPhases.forEach(function(p){ if(p && (String(p.stId)===String(oldId) || p.stId==null)) p.stId=newId; }); }
+  }catch(_e){}
+}
 // Reassigne un RDV en ligne a un collaborateur (persiste dans rdv_online = source de verite).
-function lxAssignOnlineRdv(apptId,newId){
+async function lxAssignOnlineRdv(apptId,newId){
   newId=parseInt(newId,10); if(!newId) return;
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ a=AP[i]; break; } }
   if(!a||!a.onlineId) return;
-  if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("rdv_online").update({collaborateur_id:newId}).eq("id",a.onlineId).eq("salon_id",_salonId).then(function(){},function(_e){});
+  // 2026-10-14 audit : l'enregistrement est ATTENDU et vérifié avant d'annoncer « RDV assigné » (avant : toast de
+  // succès même si la base refusait, puis le RDV revenait « sans préférence » au rafraîchissement).
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId){ if(typeof toast==="function") toast("Hors ligne : assignation impossible","error"); return; }
+  var _res=null;
+  try{ _res=await _sb.from("rdv_online").update({collaborateur_id:newId}).eq("id",a.onlineId).eq("salon_id",_salonId).select("id"); }
+  catch(_e){ _res={error:{message:String((_e&&_e.message)||_e)}}; }
+  if(!_res||_res.error||!_res.data||!_res.data.length){
+    var _msg=(_res&&_res.error&&_res.error.message)?_res.error.message:"rendez-vous introuvable";
+    if(typeof toast==="function") toast("Assignation non enregistr\u00e9e : "+_msg,"error");
+    return;
   }
+  _lxRemapPhasesCollab(a, a.stId, newId);
   a.stId=newId;
+  try{ if(window.RDV_ONLINE){ for(var k=0;k<RDV_ONLINE.length;k++){ if(RDV_ONLINE[k].id===a.onlineId){ RDV_ONLINE[k].collabId=newId; break; } } } }catch(_eR){}
   if(a.comment){ var _i=a.comment.indexOf("SANS PR"); if(_i>0){ a.comment=a.comment.substring(0,_i).replace(/[^\w)]+$/,""); } }
   window._apDirty=true;
   hideRdvPopup();
   if(typeof refreshCurrentView==="function") refreshCurrentView(); else if(typeof go==="function") go("planning");
-  if(typeof toast==="function"){ var _n=(typeof gT==="function"&&gT(newId))?gT(newId).n:""; toast("RDV assigné à "+_n,"success"); }
+  if(typeof toast==="function"){ var _n=(typeof gT==="function"&&gT(newId))?gT(newId).n:""; toast("RDV assign\u00e9 \u00e0 "+_n,"success"); }
 }
 function showRdvPopup(id,evt){
   if(window._dragInProgress||window._pendingDrag)return;
@@ -12940,12 +13053,40 @@ function delAppt(id){
       _showFamilialCancelConfirm(id, _lkApt2.id);
       return;
     }
-    // Unpaid RDV (sans lien): delete from DB and remove locally
-    if(ai>=0)AP.splice(ai,1);
-    if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
-    else if(typeof saveAppointment==="function"){a.st="canc";saveAppointment(a);}
-    cM();go("planning");
+    // 2026-10-14 audit : la corbeille ne supprime plus sans confirmation. Choix : ANNULER (le RDV reste dans
+    // l'historique, créneau libéré signalé) ou SUPPRIMER DÉFINITIVEMENT (RDV créé par erreur, aucun message au client).
+    var _h='<div class="mbox" style="max-width:440px;text-align:center"><div style="font-size:36px;margin-bottom:6px">\ud83d\uddd1\ufe0f</div>';
+    _h+='<h2 style="color:#ef5350;margin-bottom:6px">Supprimer d\u00e9finitivement ?</h2>';
+    _h+='<div style="font-size:13px;color:var(--text2);margin-bottom:6px">'+_lxEsc(apptClientLabel(a))+' \u2014 '+_lxEsc(fmt(a.date))+' \u00e0 '+_lxEsc(a.time||"")+'</div>';
+    _h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:14px;text-align:left">\u00c0 r\u00e9server aux rendez-vous <b>cr\u00e9\u00e9s par erreur</b> : il est effac\u00e9 sans laisser de trace et le client n\u2019est pas pr\u00e9venu.<br>Pour un rendez-vous qui n\u2019aura pas lieu, choisissez plut\u00f4t <b>Annuler le RDV</b> : il reste dans l\u2019historique.</div>';
+    _h+='<div style="display:flex;flex-direction:column;gap:8px">';
+    _h+='<button class="btn" style="width:100%;padding:13px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="confirmCancelAppt(\''+id+'\')">Annuler le RDV (garder l\u2019historique)</button>';
+    _h+='<button class="btn" style="width:100%;padding:13px;background:var(--red);color:#fff;font-weight:700" onclick="lxSupprimerApptDefinitif(\''+id+'\')">Supprimer d\u00e9finitivement</button>';
+    _h+='<button class="btn" style="width:100%;padding:10px;background:var(--bg2);font-size:12px" onclick="cM()">Retour</button>';
+    _h+='</div></div>';
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+_h+'</div></div>';
   }
+}
+// 2026-10-14 audit : vraie suppression (RDV créé par erreur, non encaissé). Le RDV est retiré tout de suite ;
+// si la base refuse ou si le réseau échoue, il est remis sur le planning et l'utilisateur est prévenu.
+function lxSupprimerApptDefinitif(id){
+  var a=null,ai=-1; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; ai=i; break; } }
+  if(!a) { cM(); return; }
+  if(a.st==="done"||a.tkNum||a.isOnline){ cM(); toast("Ce rendez-vous ne peut pas \u00eatre supprim\u00e9","warning"); return; }
+  AP.splice(ai,1);
+  cM(); go("planning");
+  var _remettre=function(msg){ var _deja=false; for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].id===id){ _deja=true; break; } } if(!_deja){ if(ai<=AP.length) AP.splice(ai,0,a); else AP.push(a); } toast(msg,"error"); if(window._currentPage==="planning") go("planning"); };
+  var _estUuid=(typeof id==="string" && id.indexOf("-")>0 && id.length>30);
+  if(!_estUuid){ try{ if(typeof window.lxRdvMarquerSupprime==="function") window.lxRdvMarquerSupprime(id); }catch(_eM){} if(typeof auditLog==="function") auditLog("RDV_SUPPRIME","RDV local "+id+" supprim\u00e9 (cr\u00e9\u00e9 par erreur)"); return; }
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||(typeof _isOnline!=="undefined"&&!_isOnline)){ _remettre("Hors ligne : suppression impossible, le rendez-vous est conserv\u00e9."); return; }
+  try{
+    _sb.from("appointments").delete().eq("id",id).eq("salon_id",_salonId).then(function(res){
+      if(res&&res.error){ _remettre("Suppression refus\u00e9e : "+res.error.message); return; }
+      try{ if(typeof window.lxRdvMarquerSupprime==="function") window.lxRdvMarquerSupprime(id); }catch(_eM){} // audit données : jamais recréé par une sauvegarde / la file de secours
+      if(typeof auditLog==="function") auditLog("RDV_SUPPRIME","RDV "+id+" du "+(a.date||"")+" "+(a.time||"")+" supprim\u00e9 d\u00e9finitivement (cr\u00e9\u00e9 par erreur) par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
+      toast("Rendez-vous supprim\u00e9","success");
+    },function(){ _remettre("Suppression non enregistr\u00e9e (r\u00e9seau) : le rendez-vous est conserv\u00e9."); });
+  }catch(_e){ _remettre("Suppression impossible : le rendez-vous est conserv\u00e9."); }
 }
 function doDelAppt(id){
   var motif=document.getElementById("daMotif").value.trim();
@@ -13613,9 +13754,40 @@ function _doCancelApptUnpaid(id){
     // RDV en ligne : ne PAS toucher a appointments (aucune ligne pour un ghost) ;
     // persiste l'annulation sur rdv_online (notifie le client + empeche le re-ajout au refresh).
     _lxCancelOnlineRdv(_onlineId,"Annul\u00e9 par le salon");
-  }else if(typeof deleteAppointmentFromDb==="function")deleteAppointmentFromDb(id);
-  else if(typeof saveAppointment==="function"){a.st="canc";saveAppointment(a);}
+  }else{
+    // 2026-10-14 audit : annulation = MISE À JOUR (le RDV reste en base, avec sa date et son motif) au lieu d'une
+    // suppression : historique conservé, déclencheur « créneau libéré » (trg_creneau_libere) appelé.
+    _lxAnnulerApptEnBase(a, ai, (window._lxCancelBy==="no_show")?"Client absent (no-show)":(String(window._lxCancelMotif||"").trim().slice(0,300)||"Annul\u00e9 par l\u2019\u00e9tablissement"));
+    window._lxCancelMotif="";
+  }
   if(typeof auditLog==="function")auditLog("RDV_ANNULE","RDV "+id+" annul\u00e9 par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
+}
+// 2026-10-14 audit : persiste l'annulation d'un RDV non encaissé (status 'cancelled' + cancelled + cancel_date).
+// En cas d'échec (réseau, droits), le RDV est remis sur le planning et l'utilisateur est prévenu.
+function _lxAnnulerApptEnBase(a, ai, motif){
+  var id=a&&a.id; if(!id) return;
+  var _estUuid=(typeof id==="string" && id.indexOf("-")>0 && id.length>30);
+  if(!_estUuid){ try{ if(typeof window.lxRdvMarquerSupprime==="function") window.lxRdvMarquerSupprime(id); }catch(_eM){} return; } // RDV jamais enregistré en base (identifiant local) : rien à mettre à jour ; jamais recréé par la file de secours (audit données)
+  var _restaurer=function(msg){
+    try{
+      var _deja=false; for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].id===id){ _deja=true; break; } }
+      if(!_deja){ if(ai>=0&&ai<=AP.length) AP.splice(ai,0,a); else AP.push(a); }
+      toast(msg,"error");
+      if(window._currentPage==="planning") go("planning");
+    }catch(_eR){}
+  };
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||(typeof _isOnline!=="undefined"&&!_isOnline)){
+    setTimeout(function(){ _restaurer("Hors ligne : l\u2019annulation n\u2019a pas pu \u00eatre enregistr\u00e9e, le rendez-vous est conserv\u00e9."); },0);
+    return;
+  }
+  var _now=new Date().toISOString();
+  var _upd={status:"cancelled",cancelled:true,cancel_reason:motif||"Annul\u00e9 par l\u2019\u00e9tablissement",cancel_date:(typeof TD!=="undefined"?TD:_now.slice(0,10))+"T12:00:00Z"};
+  try{
+    _sb.from("appointments").update(_upd).eq("id",id).eq("salon_id",_salonId).select("id").then(function(res){
+      if(res&&res.error){ _restaurer("L\u2019annulation n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message); return; }
+      // 0 ligne : RDV absent de la base (jamais synchronisé) -> rien à conserver, le retrait local suffit
+    },function(_e){ _restaurer("Annulation non enregistr\u00e9e (r\u00e9seau) : le rendez-vous est conserv\u00e9."); });
+  }catch(_e){ _restaurer("Annulation non enregistr\u00e9e : le rendez-vous est conserv\u00e9."); }
 }
 function _showFamilialCancelConfirm(id1, id2){
   var h='<div class="mbox">';
@@ -13675,6 +13847,7 @@ function saveApptTime(id){
     showConflictAlert(conflicts,"confirmPendingMove()");
     return;
   }
+  _lxRemapPhasesCollab(a, a.stId, newSt); // 2026-10-14 audit
   a.date=newDate;a.time=newTime;a.stId=newSt;
   if(typeof saveAppointment==="function")saveAppointment(a);
   clickAppt(id);
@@ -13685,6 +13858,7 @@ function confirmPendingDrag(){
   var found=false;
   for(var i=0;i<AP.length;i++){
     if(AP[i].id===m.id){
+      _lxRemapPhasesCollab(AP[i], AP[i].stId, m.stId); // 2026-10-14 audit : phases suivent le nouveau collaborateur
       AP[i].time=m.time;
       AP[i].stId=m.stId;
       if(m.date)AP[i].date=m.date;
@@ -13708,7 +13882,7 @@ function confirmPendingDrag(){
 function confirmPendingMove(){
   var m=window._pendingMove;if(!m)return;
   for(var i=0;i<AP.length;i++){
-    if(AP[i].id===m.id){AP[i].date=m.date;AP[i].time=m.time;AP[i].stId=m.stId;if(typeof saveAppointment==="function")saveAppointment(AP[i]);break;}
+    if(AP[i].id===m.id){_lxRemapPhasesCollab(AP[i], AP[i].stId, m.stId);AP[i].date=m.date;AP[i].time=m.time;AP[i].stId=m.stId;if(typeof saveAppointment==="function")saveAppointment(AP[i]);break;} // 2026-10-14 audit : remap phases
   }
   
   window._pendingMove=null;
@@ -26172,6 +26346,7 @@ function oM(type,pf){
     window._rdvSvcIds=[];
     window._rdvSvcId=null;
     window._rdvPhases=null;
+    window._rdv2nd=null; // 2026-10-14 audit : nouveau formulaire = pas de 2e client hérité d'un formulaire précédent
     var dk=dS(calD);
     var dow=calD.getDay();
     var dayLabel=DF[dow]+" "+calD.getDate()+" "+MO[calD.getMonth()];
@@ -26390,7 +26565,7 @@ function oM(type,pf){
   h+='</div></div>';
   mc.innerHTML=h;
 }
-function cM(){document.getElementById("modal").innerHTML="";window._epTab=null;window._currentEditProdId=null;}
+function cM(){document.getElementById("modal").innerHTML="";window._epTab=null;window._currentEditProdId=null;window._rdv2nd=null;} // 2026-10-14 audit : 2e client d'un RDV groupé oublié à la fermeture (il se greffait au RDV suivant)
 
 // mO = "modal open" — helper universel pour ouvrir un modal.
 // Accepte le HTML d'un élément .mbox (ou n'importe quoi), l'enrobe dans un
@@ -26489,7 +26664,8 @@ function _resolveFamilialRdv(newStId, newTime){
 }
 
 function aAp(){
-  if(guardDoubleClick("rdv")) return;
+  // 2026-10-14 audit : le verrou anti double appui est posé seulement une fois TOUS les contrôles passés (plus bas).
+  // Posé ici, il bloquait 3 s « Forcer » / « Créer quand même » (même verrou « rdv ») après une alerte.
   var c=document.getElementById("mc").value;
   var sEl=document.getElementById("ms");
   var s=sEl?parseInt(sEl.value):0;
@@ -26554,7 +26730,7 @@ function aAp(){
     return;
   }
   // Check for conflicts
-  var conflicts=checkConflict(st,d,t,s,null);
+  var conflicts=checkConflict(st,d,t,s,null,window._rdvPhases||null,(window._rdvSvcIds&&window._rdvSvcIds.length>1)?window._rdvSvcIds:null); // 2026-10-14 audit : toutes les prestations
   if(conflicts.length>0){
     // Store pending RDV data
     window._pendingRdv={cId:c,sId:s,stId:st,date:d,time:t,pr:_rdvTotalPrice,phases:window._rdvPhases,items:_rdvItemsMulti};
@@ -26630,6 +26806,7 @@ function aAp(){
       return;
     }
   }
+  if(guardDoubleClick("rdv")) return; // 2026-10-14 audit : verrou anti double appui, après les contrôles
   var rdvObj={id:U(),cId:c,sId:s,stId:st,date:d,time:t,pr:_rdvTotalPrice,st:"conf",met:""};
   if(window._rdvPhases)rdvObj.aPhases=window._rdvPhases;
   if(_rdvItemsMulti)rdvObj.items=_rdvItemsMulti;
@@ -33498,6 +33675,7 @@ async function doSendConfirm(mode,rdvId){
   if(mode==="sms"||mode==="both"){
     if(cl.ph&&cl.smsOk!==false){
       var smsTxt=buildSmsText(cfg.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",vars);
+      window._lxSmsRdvDate=rdvObj.date||null; // 2026-10-14 audit : la confirmation est rattachée à la date de CE RDV
       var r=await sendSms(cl.ph,smsTxt,"confirmation_rdv",(cl.pre||"")+" "+(cl.nom||""));
       if(r&&r.ok){sent.push("SMS");auditLog("CONFIRM_SMS","RDV "+fmt(rdvObj.date)+" "+rdvObj.time+" - SMS OK");}
       else{errors.push("SMS: "+(r&&r.error?r.error:"erreur"));}
@@ -33527,6 +33705,9 @@ async function doSendConfirm(mode,rdvId){
   else showAlert("\u274c Erreur : "+errors.join("\n"),"error");
 }
 async function sendSms(phone,message,context,clientNom){
+  // 2026-10-14 audit : date du RDV concerné (posée juste avant l'appel par la confirmation) -> messaging_log.rdv_date,
+  // pour que le rappel de la veille ne soit annulé que par la confirmation de CE rendez-vous. Lue tout de suite.
+  var _rdvDateSms=(typeof window._lxSmsRdvDate==="string" && /^\d{4}-\d{2}-\d{2}$/.test(window._lxSmsRdvDate))?window._lxSmsRdvDate:null; window._lxSmsRdvDate=null;
   if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); return{ok:false,error:"pro_required"};}
   if((window.SMS_MODE||"brevo")==="native"){
     return await sendSmsNative(phone,message,context,clientNom);
@@ -33586,7 +33767,10 @@ async function sendSms(phone,message,context,clientNom){
   var _claimId=null, _claimed=false;
   if(context && _autoCtx.indexOf(context)>=0 && typeof _sb!=="undefined" && _sb && _salonId){
     try{
-      var _ins=await _sb.from("messaging_log").insert({salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:String(message||"").slice(0,320),via:"brevo",context:context,client_nom:clientNom||null}).select("id").single();
+      var _mlRow={salon_id:_salonId,type:"sms",recipient:cleanPhone.slice(-4),content:String(message||"").slice(0,320),via:"brevo",context:context,client_nom:clientNom||null};
+      if(_rdvDateSms && window._lxMlRdvDateAbsent!==true) _mlRow.rdv_date=_rdvDateSms; // 2026-10-14 audit
+      var _ins=await _sb.from("messaging_log").insert(_mlRow).select("id").single();
+      if(_ins&&_ins.error&&_mlRow.rdv_date&&/rdv_date/i.test(String(_ins.error.message||""))){ window._lxMlRdvDateAbsent=true; delete _mlRow.rdv_date; _ins=await _sb.from("messaging_log").insert(_mlRow).select("id").single(); }
       if(_ins&&_ins.error){
         if(String(_ins.error.code||"")==="23505"){
           console.log("[sms] doublon evite ("+context+") — un envoi identique a deja eu lieu aujourd'hui");
@@ -34054,28 +34238,46 @@ async function hasAlreadySent(context,phone,rdvId){
 // glissante mais par rapport a l'heure du rendez-vous : une confirmation envoyee la
 // semaine derniere pour un autre rendez-vous ne supprime donc pas ce rappel-ci.
 async function _lxConfirmationTientLieuDeRappel(phone, dateRdv, heureRdv){
-  // dateRdv / heureRdv conserves pour la journalisation et d'eventuelles evolutions
   try{
     if(typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return false;
     var propre=String(phone||"").replace(/[\s\.\-]/g,"");
     if(propre.charAt(0)==="0") propre="+33"+propre.slice(1);
     var tail=propre.slice(-4);
     if(tail.length<4) return false;
-    // FIX 2026-09-07 (2e passe) : la fenetre etait « 24 h avant le rendez-vous ».
-    // Trop etroite : un client qui reserve LUNDI 9h pour MARDI 14h est a 29 h du
-    // rendez-vous, donc hors fenetre — elle recevait la confirmation le lundi matin
-    // ET le rappel le lundi apres-midi. Deux SMS le meme jour.
-    // La bonne regle est donc : une confirmation envoyee AUJOURD'HUI rend le rappel
-    // du jour inutile, puisque le rappel part la veille du rendez-vous.
+    // FIX 2026-09-07 (2e passe) : une confirmation envoyee AUJOURD'HUI rend le rappel du jour inutile.
+    // 2026-10-14 audit : ... SEULEMENT si elle concerne CE rendez-vous. Avant, une confirmation envoyée aujourd'hui
+    // pour un RDV de la semaine prochaine supprimait le rappel du RDV de demain (même numéro).
     var _minuit=new Date(); _minuit.setHours(0,0,0,0);
     var depuis=_minuit.toISOString();
-    var r=await _sb.from("messaging_log").select("id")
+    var q=function(cols){ return _sb.from("messaging_log").select(cols)
             .eq("salon_id",_salonId).eq("type","sms")
             .in("context",["confirmation_rdv","confirmation_rdv_groupe"])
-            .eq("recipient",tail).gte("created_at",depuis).limit(1);
+            .eq("recipient",tail).gte("created_at",depuis).limit(20); };
+    var r=await q("id,content,rdv_date");
+    if(r && r.error){ r=await q("id,content"); } // colonne rdv_date pas encore créée (docs/migrations_1014/planning.sql)
     if(r && r.error){ console.warn("[rappel] verification confirmation impossible:",r.error); return false; }
-    return !!(r && r.data && r.data.length);
+    var L=(r && r.data)||[];
+    for(var i=0;i<L.length;i++){ if(_lxConfirmationConcerneRdv(L[i], dateRdv)) return true; }
+    return false;
   }catch(e){ console.warn("[rappel] verification confirmation:",e); return false; }
+}
+// 2026-10-14 audit : une confirmation (messaging_log) concerne-t-elle le RDV du jour dateRdv (YYYY-MM-DD) ?
+// rdv_date renseignée -> comparaison exacte. Sinon (confirmation groupée, anciennes lignes) : la date du RDV figure
+// dans le texte (formats de l'application et du serveur) ; un texte contenant une AUTRE date ne compte pas ;
+// un texte sans aucune date (modèle personnalisé) garde l'ancienne règle (tient lieu de rappel).
+function _lxConfirmationConcerneRdv(row, dateRdv){
+  try{
+    if(!row) return false;
+    if(row.rdv_date) return String(row.rdv_date).slice(0,10)===String(dateRdv);
+    var c=String(row.content||"");
+    if(!dateRdv||!/^\d{4}-\d{2}-\d{2}$/.test(dateRdv)) return true;
+    var p=dateRdv.split("-");
+    var f1=p[2]+"/"+p[1]+"/"+p[0], f2=p[2]+"/"+p[1], f3="";
+    try{ f3=(typeof fmt==="function")?fmt(dateRdv):""; }catch(_e){}
+    if(c.indexOf(f1)>=0 || c.indexOf(f2)>=0 || (f3 && c.indexOf(f3)>=0)) return true;
+    if(/\b\d{1,2}\/\d{1,2}\b/.test(c) || /\b\d{1,2}\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec)/i.test(c)) return false;
+    return true;
+  }catch(_e){ return true; }
 }
 async function checkSmsReminders(){
   var cfg=window.SMS_CONFIG;if(!cfg||!cfg.rappelActif)return;
@@ -35313,11 +35515,23 @@ function lxRdvProposer(apId){
   h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="lxOuvrirRdv(\''+apId+'\')">Retour</button><button class="btn bg" style="flex:1" onclick="lxRdvProposerValider(\''+apId+'\')">Envoyer</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
-async function lxRdvProposerValider(apId){
-  var d=(document.getElementById("lxPrD")||{}).value, hh=(document.getElementById("lxPrH")||{}).value, m=((document.getElementById("lxPrM")||{}).value||"").trim();
+async function lxRdvProposerValider(apId, force){
+  // 2026-10-14 audit : valeurs gardées si on revient de l'avertissement « Envoyer quand même » (formulaire fermé)
+  var _pv=(force&&window._lxPropVals&&window._lxPropVals.apId===apId)?window._lxPropVals:null;
+  var d=_pv?_pv.d:(document.getElementById("lxPrD")||{}).value, hh=_pv?_pv.hh:(document.getElementById("lxPrH")||{}).value, m=_pv?_pv.m:((document.getElementById("lxPrM")||{}).value||"").trim();
+  window._lxPropVals=null;
   if(!d||!hh){ toast("Choisissez la date et l’heure","warning"); return; }
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } } if(!a) return;
   var ro=_lxRdvOnlineDe(a); if(!ro){ toast("Rendez-vous introuvable","error"); return; }
+  // 2026-10-14 audit : contrôle du créneau proposé (fermeture, congé, horaires, RDV qui chevauche) avant l'envoi
+  if(!force){
+    var _pb=_lxCreneauProbleme(a.stId!=null?a.stId:null, d, hh.slice(0,5), _lxDureeAppt(a,ro), a.id);
+    if(_pb){
+      window._lxPropVals={apId:apId,d:d,hh:hh,m:m};
+      _lxConfirmQuandMeme("Cr\u00e9neau propos\u00e9 indisponible", _pb+" le "+fmt(d)+" \u00e0 "+hh.slice(0,5)+".", "Envoyer quand m\u00eame", function(){ lxRdvProposerValider(apId, true); });
+      return;
+    }
+  }
   var r=await _sb.from("rdv_online").update({date_rdv:d,heure_rdv:hh.slice(0,5)+":00"}).eq("id",ro.id).eq("salon_id",_salonId).eq("status","pending").select("id");
   if(r&&r.error){ toast("Ce créneau n’a pas pu être enregistré : "+r.error.message,"error"); return; }
   if(!r||!r.data||!r.data.length){ toast("Cette demande n’est plus en attente","warning"); cM(); go(window._currentPage||"planning"); return; }
@@ -35330,7 +35544,7 @@ function lxRdvRefuser(apId){
     var ro=_lxRdvOnlineDe(a); if(!a||!ro) return;
     // Statut « cancelled » par le salon (« refused » n'existe pas en base) : acompte éventuel remboursé automatiquement, empreinte libérée.
     var _st="cancelled";
-    var r=await _sb.from("rdv_online").update({status:_st,cancelled_by:"salon",cancel_reason:(motif||"Demande non retenue"),cancelled_at:new Date().toISOString()}).eq("id",ro.id).eq("salon_id",_salonId).eq("status","pending").select("id");
+    var r=await _sb.from("rdv_online").update({status:_st,cancelled_by:"salon",cancel_reason:("Demande non retenue"+(motif?" : "+String(motif).trim().slice(0,280):"")), /* 2026-10-14 audit : libellé stable -> le client voit « Demande non retenue », pas « annulé » */cancelled_at:new Date().toISOString()}).eq("id",ro.id).eq("salon_id",_salonId).eq("status","pending").select("id");
     if(r&&r.error){ toast("Erreur : "+r.error.message,"error"); return; }
     if(!r||!r.data||!r.data.length){ toast("Cette demande n’est plus en attente (annulée ou déjà traitée)","warning"); cM(); go(window._currentPage||"planning"); return; }
     try{ if(typeof lxEmpreinteReleaseAuto==="function") lxEmpreinteReleaseAuto(ro.id,"refus_demande"); }catch(_eE){}
@@ -37489,6 +37703,8 @@ async function reloadFromSupabase(table){
             // Only update if not currently being dragged
             if(window._pendingDrag&&window._pendingDrag.id===AP[i].id) continue;
             if(AP[i]._lxNonEnregistre) continue; // 2026-10-14 audit : modification locale pas encore transmise (file de secours) -> gardee
+            // 2026-10-14 audit : RDV non encaissé annulé (sur cet appareil ou un autre) -> retiré du planning
+            if(typeof window.lxApptAnnuleSansTicket==="function" && window.lxApptAnnuleSansTicket(a)){ delete dbMap[a.id]; AP.splice(i,1); i--; continue; }
             // Mapping DB->AP : MAPPER UNIQUE, identique au chargement initial (loadSalonData).
             var mapped=_mapRow(a);
             Object.assign(AP[i],mapped);
@@ -37499,6 +37715,7 @@ async function reloadFromSupabase(table){
         // Add new DB entries not yet in local AP
         for(var dbId in dbMap){
           var a=dbMap[dbId];
+          if(typeof window.lxApptAnnuleSansTicket==="function" && window.lxApptAnnuleSansTicket(a)) continue; // 2026-10-14 audit
           var alreadyLocal=false;
           for(var j=0;j<AP.length;j++){
             // Match by UUID
@@ -37528,58 +37745,10 @@ async function reloadFromSupabase(table){
       // ligne les plus anciens disparaissaient de la memoire et tronquaient les exports.
       var r=(typeof window.lxChargerRdvOnline==="function")?await window.lxChargerRdvOnline():await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).order("created_at",{ascending:false}).limit(1000);
       if(r.data){
-        // Check for new notifications BEFORE updating RDV_ONLINE
-        var oldIds={};(window.RDV_ONLINE||[]).forEach(function(o){oldIds[o.id]=o;});
-        
-        r.data.forEach(function(rdv){
-          var old=oldIds[rdv.id];
-          // New online RDV
-          if(!old&&rdv.status!=="cancelled"){
-            var nId="rdv_"+rdv.id;
-            var nEx=false;for(var ni=0;ni<window.NOTIFS.length;ni++){if(window.NOTIFS[ni].id===nId){nEx=true;break;}}
-            if(!nEx&&!(window._dismissedNotifs&&window._dismissedNotifs[nId])){
-              window.NOTIFS.unshift({id:nId,rdvOnlineId:rdv.id,type:"new_rdv_online",
-                title:"\ud83c\udf10 Nouveau RDV en ligne",
-                detail:(rdv.client_prenom||"")+" "+(rdv.client_nom||"")+" \u2014 "+(rdv.service_nom||"")+" le "+rdv.date_rdv+" \u00e0 "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):""),
-                ts:new Date().toISOString(),seen:false,confirmed:false,
-                onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,
-                  tel:rdv.client_tel,email:rdv.client_email,
-                  genre:rdv.client_genre||"",ddn:rdv.client_ddn||"",
-                  adresse:rdv.client_adresse||"",cp:rdv.client_adresse_cp||rdv.client_cp||"",ville:rdv.client_adresse_ville||rdv.client_ville||"",
-                  svcNom:rdv.service_nom,svcPrix:rdv.service_prix,
-                  collabNom:rdv.collaborateur_nom,
-                  date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null,
-                  acompte:Number(rdv.acompte_montant),acomptePaye:rdv.acompte_paye,
-                  createdAt:rdv.created_at}
-              });
-            }
-          }
-          // Modification request
-          if(rdv.modification_demandee&&rdv.modification_status==="pending"){
-            var mId="mod_"+rdv.id;
-            var mEx=false;for(var mi=0;mi<window.NOTIFS.length;mi++){if(window.NOTIFS[mi].id===mId){mEx=true;break;}}
-            if(!mEx&&!(window._dismissedNotifs&&window._dismissedNotifs[mId])){
-              window.NOTIFS.unshift({id:mId,rdvOnlineId:rdv.id,type:"modification",
-                title:"\u270f\ufe0f Demande de modification",
-                detail:(rdv.client_nom||"")+" souhaite d\u00e9placer au "+rdv.modification_date+" \u00e0 "+rdv.modification_heure,
-                ts:new Date().toISOString(),seen:false,confirmed:false,
-                onlineRdv:{id:rdv.id,nom:rdv.client_nom,prenom:rdv.client_prenom,date:rdv.date_rdv,heure:rdv.heure_rdv?rdv.heure_rdv.slice(0,5):null},
-                modifData:{date:rdv.modification_date,heure:rdv.modification_heure,msg:rdv.modification_message}});
-            }
-          }
-          // Client cancellation
-          if(rdv.status==="cancelled"&&rdv.cancelled_by==="client"){
-            var cId2="can_"+rdv.id;
-            var cEx=false;for(var ci=0;ci<window.NOTIFS.length;ci++){if(window.NOTIFS[ci].id===cId2){cEx=true;break;}}
-            if(!cEx&&!(window._dismissedNotifs&&window._dismissedNotifs[cId2])){
-              window.NOTIFS.unshift({id:cId2,rdvOnlineId:rdv.id,type:"cancel_client",
-                title:"\u274c RDV annul\u00e9 par le client",
-                detail:(rdv.client_nom||"")+" a annul\u00e9 son RDV du "+rdv.date_rdv+(rdv.cancel_reason?" \u2014 "+rdv.cancel_reason:""),
-                ts:new Date().toISOString(),seen:false,confirmed:false});
-            }
-          }
-        });
-        
+        // 2026-10-14 audit : les entrées locales (nouveau RDV, demande de modification, annulation client) ne sont
+        // plus injectées dans NOTIFS : la base crée ces notifications (trg_notif_rdv_online), la pastille et la liste
+        // les lisent en base (updateNotifBadge / showNotifs). Les copies locales revenaient à chaque événement
+        // temps réel et faussaient le compteur.
         // FIX 2026-08-04 : MAPPER UNIQUE `lxMapRdvOnlineRow` (union stricte des 3 anciennes
         // copies). Avant, ce remplacement integral effacait email/luxyraId/collabNom/salonId/
         // confirmedAt/acompteRembourse/refundedAt/stripePaymentId + tout le bloc empreinte

@@ -1874,3 +1874,8 @@ SQL `docs/migrations_1014/secu.sql` (idempotent) -> edge functions `docs/edge_10
 - **Admin** : `is_admin()` et worker `lxIsAdminUser` exigent aal2 ; `admin_users` non inscriptible ; CSP stricte ; écritures
   vérifiées (`saMaj`) ; onglets « Annuaire » et « Base du bot ».
 - **sw.js** : le contenu des push n'est plus journalisé.
+
+## Planning — audit du 14/10/2026 (branche fix1014-planning)
+- SQL : `docs/migrations_1014/planning.sql` (idempotent, à appliquer AVANT l'app) : `lx_horaires_effectifs(salon, collab|null, date)` = source unique des horaires (overrides du jour, semaine type, ouverture except. qui élargit, fermetures/congés, pauses) utilisée par `rdv_online_validate`, `rdv_online_block_double_booking` (réservation sans préférence = 1 collaborateur consommé, erreur inattendue = refus) et `fn_salon_next_slots` ; `messaging_log.rdv_date` + `lx_prive.confirmation_concerne_rdv` (rappel 24 h supprimé seulement par la confirmation de CE RDV) ; pas d'alerte créneau libéré pour un créneau commencé / no-show ; refus de demande = « Demande non retenue » (cancel_reason préfixé).
+- App : annulation d'un RDV non encaissé = UPDATE (status cancelled, cancelled, cancel_date) au lieu d'un DELETE ; exclu de AP au chargement / merge (`lxApptAnnuleSansTicket`, luxyra-supabase.js) ; corbeille = choix « Annuler » / « Supprimer définitivement » (`lxSupprimerApptDefinitif`). acceptModification relit la base, contrôle le créneau (« Accepter quand même »), passe par lxRdvAccepter si la demande est en attente. Pastille notifications = `updateNotifBadge` (plus d'entrées locales injectées).
+- Reste (règle permanente) : bot support, centre d'aide, test réel Salon Démo.

@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261014-6";
+window.LX_DATA_VERSION = "20261014-6"; // 2026-10-14 audit planning : lxApptAnnuleSansTicket
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -1279,6 +1279,20 @@ if (typeof window !== "undefined") window.loadOlderClotures = loadOlderClotures;
 // merges de reloadFromSupabase -> impossible de re-diverger.
 // LECTURE SEULE : aucune ecriture ajoutee, aucun champ scelle modifie.
 // ============================================================================
+// 2026-10-14 audit : un rendez-vous NON encaissé annulé par l'établissement est désormais CONSERVÉ en base
+// (status 'cancelled', cancelled=true, cancel_date) au lieu d'être supprimé : historique + alerte « créneau
+// libéré ». Il ne doit jamais revenir dans AP (planning, conflits, stats, et surtout les écrans fiscaux qui
+// lisent `cancelled && cancelDate` = tickets annulés). Un ticket (ticket_num / hash / contre-ticket) est gardé.
+function lxApptAnnuleSansTicket(a) {
+  if (!a) return false;
+  var st = (a.status !== undefined) ? a.status : a.st;
+  if (st !== "cancelled") return false;
+  var tk = (a.ticket_num !== undefined) ? a.ticket_num : a.tkNum;
+  var h = a.hash;
+  var ic = (a.is_cancel !== undefined) ? a.is_cancel : a.isCancel;
+  return !tk && !(h && String(h) !== "") && ic !== true;
+}
+if (typeof window !== "undefined") window.lxApptAnnuleSansTicket = lxApptAnnuleSansTicket;
 function lxMapApptRow(a) {
   // FIX 2026-05-13 : reconstruit cId="passage-X" depuis la colonne pass_type
   // (preserve le genre choisi au RDV meme apres un reload / un merge).
@@ -2178,7 +2192,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     var apRes = await _sb.from("appointments").select("*").eq("salon_id", _salonId).order("date_rdv", { ascending: false }).limit(100000);
     if (apRes.data) {
       // Mapping DB->AP : MAPPER UNIQUE partage avec reloadFromSupabase (voir lxMapApptRow).
-      AP = apRes.data.map(lxMapApptRow);
+      AP = apRes.data.filter(function (r) { return !lxApptAnnuleSansTicket(r); }).map(lxMapApptRow); // 2026-10-14 audit : RDV annulés non encaissés exclus
       try { apRes.data.forEach(function(a){ _lxApVu(a.id); }); } catch(_eVu) {} // 2026-10-14 audit : vus en base (détection des suppressions)
       // FIX 2026-05-12 : tri explicite par tkNum DESC pour récupérer le hash du
       // DERNIER ticket de la chaîne. Sans tri, doneH[0] dépendait de l'ordre DB
