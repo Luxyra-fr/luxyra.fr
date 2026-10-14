@@ -301,16 +301,16 @@ async function finalizeCheckoutReturn(token, sessionId){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({token:token, session_id:sessionId})
     });
-    var data=await r.json();
-    // 2026-10-14 audit : 202 = confirmation déjà en cours (webhook Stripe) -> on attend puis on relit
-    if(r.status===202 && data && data.en_cours && !(finalizeCheckoutReturn._n>=5)){
-      finalizeCheckoutReturn._n=(finalizeCheckoutReturn._n||0)+1;
-      await new Promise(function(res){ setTimeout(res,2000); });
-      return finalizeCheckoutReturn(token, sessionId);
+    var data=await r.json().catch(function(){ return {}; });
+    // 2026-10-14 audit : 202 = paiement reçu, confirmation en cours (webhook Stripe) ; 5xx avec
+    // paiement_recu = paiement reçu mais enregistrement à reprendre -> on attend la confirmation.
+    if(r.status===202 || (r.status>=500 && data && data.paiement_recu)){
+      window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token));
+      lxAttendreConfirmation(token, sessionId);
+      return;
     }
-    if(r.status===202){ window.history.replaceState({},"","/proposal.html?t="+encodeURIComponent(token)); await fetchProposal(); return; }
     if(!r.ok){
-      renderError("Erreur lors de la confirmation", data.error||"Le paiement a réussi mais la confirmation a échoué. Contactez le salon avec la référence: "+sessionId);
+      renderError("Erreur lors de la confirmation", data.error||"Le paiement a réussi mais la confirmation a échoué. Contactez l\u0027établissement avec la référence : "+sessionId);
       return;
     }
     // Nettoie l'URL et affiche confirmation
@@ -318,9 +318,78 @@ async function finalizeCheckoutReturn(token, sessionId){
     // Recharge la proposition (qui est maintenant confirmed) puis affiche
     await fetchProposal();
   }catch(e){
-    renderError("Erreur de connexion", e.message+" — votre paiement a peut-être réussi, vérifiez avec le salon.");
+    renderError("Erreur de connexion", e.message+" — votre paiement a peut-être réussi, vérifiez auprès de l\u0027établissement.");
   }
 }
+
+// 2026-10-14 audit : paiement reçu, confirmation en attente -> relit le statut toutes les 5 s
+// pendant 3 min (aucun bouton de paiement affiché), puis message rassurant.
+var _lxAttente=null;
+function renderPaiementEnCours(){
+  document.getElementById("root").innerHTML =
+    '<div class="success-page">'+
+    '<div class="spin"></div>'+
+    '<h2 style="color:var(--gold)">Paiement reçu, confirmation en cours…</h2>'+
+    '<p>Votre acompte a bien été reçu. Nous finalisons la confirmation de votre rendez-vous, merci de patienter quelques instants.</p>'+
+    '</div>';
+}
+function renderAttenteExpiree(){
+  var tel=(STATE.salon&&STATE.salon.telephone)||"";
+  document.getElementById("root").innerHTML =
+    '<div class="success-page">'+
+    '<div class="ico">🕒</div>'+
+    '<h2 style="color:var(--gold)">Paiement reçu</h2>'+
+    '<p>Votre paiement a bien été reçu. La confirmation de votre rendez-vous prend un peu plus de temps que prévu : elle vous parviendra par e-mail ou SMS.</p>'+
+    '<p style="margin-top:10px">Inutile de payer à nouveau. En cas de doute, contactez l\u0027établissement.</p>'+
+    (tel ? '<p style="margin-top:10px"><strong>📞 '+escapeHtml(tel)+'</strong></p>' : '')+
+    '</div>';
+}
+function lxAttendreConfirmation(token, sessionId){
+  if(_lxAttente) return;
+  STATE.token=token;
+  var debut=Date.now(), DUREE=3*60*1000, PAS=5000, relanceFaite=false;
+  _lxAttente=true;
+  renderPaiementEnCours();
+  async function tour(){
+    var st=null;
+    try{
+      var r=await fetch(SB_URL+"/functions/v1/rdv-demande-proposal-action",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY},
+        body:JSON.stringify({token:token,action:"get"})
+      });
+      var d=await r.json().catch(function(){ return {}; });
+      if(r.ok && d && d.demande){
+        STATE.demande=d.demande; STATE.salon=d.salon||STATE.salon||{};
+        st=d.demande.status;
+      }
+    }catch(_){}
+    if(st==="confirmed"){ _lxAttente=null; renderConfirmed(); return; }
+    if(Date.now()-debut>=DUREE){
+      // Dernière tentative de finalisation (le verrou d'une confirmation interrompue a expiré)
+      if(!relanceFaite && sessionId){
+        relanceFaite=true;
+        try{
+          var f=await fetch("/api/rdv-demande/finalize",{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({token:token, session_id:sessionId}) });
+          var fd=await f.json().catch(function(){ return {}; });
+          if(f.status===200 && fd && fd.ok){ _lxAttente=null; await fetchProposal(); return; }
+        }catch(_){}
+      }
+      _lxAttente=null; renderAttenteExpiree(); return;
+    }
+    setTimeout(tour, PAS);
+  }
+  setTimeout(tour, PAS);
+}
+
+// 2026-10-14 audit : retour arrière depuis Stripe (page restaurée du cache bfcache) -> boutons réactivés
+window.addEventListener("pageshow", function(e){
+  if(e && e.persisted){
+    _lxEnvoi=false; _lxBoutons(false);
+    var rb=document.getElementById("refuseBtn"); if(rb){ rb.disabled=false; rb.textContent="Confirmer le refus"; }
+    var pb=document.getElementById("payBtn"); if(pb){ pb.disabled=false; }
+  }
+});
 
 function openPaymentModal(){
   if(!stripe){ alert("Le module de paiement n\u0027a pas pu etre charge. Reessayez ou contactez le salon."); return; }

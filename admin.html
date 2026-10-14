@@ -342,28 +342,43 @@ async function saVerifAdmin(){
     showErr("Droits administrateur inactifs : validez la double authentification puis reconnectez-vous.");
     try{ await _sb.auth.signOut(); }catch(_e){}
     return false;
-  }catch(e){ return true; }
+  }catch(e){
+    // 2026-10-14 audit : échec de vérification = accès refusé (plus d'ouverture de l'admin « par défaut »)
+    showLogin(); showErr("Vérification des droits administrateur impossible ("+((e&&e.message)||"erreur")+"). Réessayez.");
+    return false;
+  }
+}
+// 2026-10-14 audit : la double authentification échoue FERMÉE. Toute erreur (lecture du niveau, liste des
+// facteurs, exception, réseau) = accès refusé + message ; l'admin n'est jamais affiché par défaut.
+function _lxMfaEchec(msg){
+  try{ lxMfaFermer(); }catch(_e){}
+  try{ showLogin(); showErr("Double authentification : "+msg+". Accès refusé, réessayez."); }catch(_e){}
+  return false;
 }
 async function lxMfaGate(){
   try{
     var a=await _sb.auth.mfa.getAuthenticatorAssuranceLevel();
-    if(a.error||!a.data) return true;
+    if(a.error||!a.data) return _lxMfaEchec("vérification impossible"+(a.error&&a.error.message?" ("+a.error.message+")":""));
     if(a.data.currentLevel==="aal2"){ window._lxMfaActive=true; return true; }
     if(a.data.nextLevel!=="aal2"){ window._lxMfaActive=false; return true; } // pas encore activée : bandeau d'invitation
-    var f=await _sb.auth.mfa.listFactors(); var tot=(f.data&&f.data.totp||[]).filter(function(x){return x.status==="verified";})[0];
-    if(!tot) return true;
+    var f=await _sb.auth.mfa.listFactors();
+    if(!f || f.error) return _lxMfaEchec("lecture des facteurs impossible"+(f&&f.error&&f.error.message?" ("+f.error.message+")":""));
+    var tot=(f.data&&f.data.totp||[]).filter(function(x){return x.status==="verified";})[0];
+    if(!tot) return _lxMfaEchec("aucun facteur vérifié trouvé alors qu’il est exigé");
     return await new Promise(function(ok){
       lxMfaModale('<div style="font-size:30px">🔐</div><h2 style="color:var(--gold);margin:6px 0">Double authentification</h2><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Saisissez le code à 6 chiffres de votre application d’authentification.</div><input id="lxMfaCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="width:100%;font-size:24px;letter-spacing:6px;text-align:center;padding:10px;border-radius:10px;background:var(--bg3);color:var(--text);border:1px solid var(--border)"><div id="lxMfaErr" style="color:var(--red);font-size:12px;min-height:18px;margin-top:6px"></div><button id="lxMfaOk" class="tb-btn primary" style="width:100%;margin-top:6px">Valider</button><button id="lxMfaOut" class="tb-btn" style="width:100%;margin-top:6px">Se déconnecter</button>');
       var inp=document.getElementById("lxMfaCode"); inp.focus();
       async function valider(){ var code=inp.value.replace(/\D/g,""); if(code.length!==6){ document.getElementById("lxMfaErr").textContent="6 chiffres attendus"; return; }
-        var r=await _sb.auth.mfa.challengeAndVerify({factorId:tot.id, code:code});
-        if(r.error){ document.getElementById("lxMfaErr").textContent="Code incorrect"; inp.value=""; inp.focus(); return; }
+        var r;
+        try{ r=await _sb.auth.mfa.challengeAndVerify({factorId:tot.id, code:code}); }
+        catch(eV){ document.getElementById("lxMfaErr").textContent="Vérification impossible (connexion ?), réessayez"; return; }
+        if(!r || r.error){ document.getElementById("lxMfaErr").textContent="Code incorrect"; inp.value=""; inp.focus(); return; }
         window._lxMfaActive=true; lxMfaFermer(); ok(true); }
       document.getElementById("lxMfaOk").onclick=valider;
       inp.onkeydown=function(e){ if(e.key==="Enter") valider(); };
-      document.getElementById("lxMfaOut").onclick=async function(){ await _sb.auth.signOut(); lxMfaFermer(); ok(false); showLogin(); };
+      document.getElementById("lxMfaOut").onclick=async function(){ try{ await _sb.auth.signOut(); }catch(_e){} lxMfaFermer(); ok(false); showLogin(); };
     });
-  }catch(e){ return true; }
+  }catch(e){ return _lxMfaEchec("erreur inattendue ("+((e&&e.message)||e)+")"); }
 }
 async function lxMfaActiver(){
   var en=await _sb.auth.mfa.enroll({factorType:"totp", friendlyName:"Luxyra admin "+new Date().toISOString().slice(0,10)});

@@ -5,6 +5,8 @@
 -- Aucune donnée existante n'est modifiée.
 -- =====================================================================
 
+BEGIN;  -- 2026-10-14 intégration : tout ou rien
+
 -- ---------------------------------------------------------------------
 -- 1. Acompte / empreinte calculés PAR LA BASE à l'insertion publique
 -- ---------------------------------------------------------------------
@@ -87,8 +89,11 @@ BEGIN
     IF NOT FOUND THEN
       v_pct := 0; NEW.carte_abo_id := NULL; NEW.remise_carte_montant := 0;
     END IF;
+  ELSE
+    NEW.remise_carte_montant := 0;  -- pas de carte : pas de remise déclarée par le navigateur
   END IF;
   v_remise := round(v_base * coalesce(v_pct,0) / 100, 2);
+  IF NEW.carte_abo_id IS NOT NULL THEN NEW.remise_carte_montant := v_remise; END IF;  -- remise = celle du serveur
   IF coalesce(NEW.lieu,'salon') = 'domicile' THEN
     v_frais := greatest(coalesce(NEW.frais_deplacement_montant,0), 0);
   END IF;
@@ -126,7 +131,9 @@ BEGIN
     ELSIF coalesce(v_cfg.acompte_seuil,0) > 0 AND v_prix < v_cfg.acompte_seuil AND v_client_mode <> 'toujours' THEN v_req := 0;
     END IF;
   END IF;
-  v_req := greatest(coalesce(v_req,0), 0);
+  -- 2026-10-14 intégration : comme lxCalcAcompte (site.html) : jamais plus que le prix, arrondi au centime
+  IF v_prix > 0 AND v_req > v_prix THEN v_req := v_prix; END IF;
+  v_req := round(greatest(coalesce(v_req,0), 0), 2);
 
   IF v_online AND v_mode = 'acompte' THEN
     IF v_req > 0 AND NEW.status IS DISTINCT FROM 'pending_payment' THEN
@@ -181,3 +188,5 @@ VALUES ('reservation_client_1014', 'Réservation en ligne et espace client (octo
 - Mot de passe client : 8 caractères minimum.',
  true, now())
 ON CONFLICT (cle) DO UPDATE SET titre = EXCLUDED.titre, contenu = EXCLUDED.contenu, actif = true, maj_le = now();
+
+COMMIT;

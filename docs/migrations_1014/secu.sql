@@ -6,13 +6,11 @@
 -- AUCUNE donnée n'est supprimée ; aucune ligne de l'établissement e0cf27c7-d402-4d76-8e91-9ef5231b3582
 -- n'est modifiée. Aucune logique de scellement NF525 (tickets, clôtures, signatures, JET) n'est touchée.
 --
--- ORDRE DE DÉPLOIEMENT : 1) ce fichier  2) edge functions (docs/edge_1014/*)  3) worker  4) pages (git push).
--- Le fichier est compatible avec l'ANCIEN code pendant la transition, SAUF :
---   * §4 client_salon : compte.html / site.html doivent passer par /api/client/salons (worker) ;
---   * §5 rdv_online   : la suppression anonyme disparaît (elle échouait déjà silencieusement) ;
---   * §6 opérateurs   : l'ancien luxyra-supabase.js lisait pin_hash -> à publier dans la foulée ;
---   * §8 lx_email_deja_inscrit : inscription.html doit passer par /api/inscription/email-check.
--- => appliquer ce fichier, puis publier IMMÉDIATEMENT edge functions + worker + pages.
+-- ORDRE DE DÉPLOIEMENT : voir ORDRE.md. 2026-10-14 intégration : ce fichier ne contient plus que des ajouts
+-- COMPATIBLES avec le code actuellement en ligne (main). Les retraits de droits qui casseraient l'ancien code
+-- (client_salon anonyme, suppression anonyme de rdv_online, lecture de pin_hash, RPC annuaire / email / monitoring /
+-- devis appelées par les anciennes pages) sont dans secu_restrictif.sql, appliqué EN DERNIER (après edge functions,
+-- worker et pages en ligne).
 -- ============================================================================
 
 begin;
@@ -45,7 +43,9 @@ returns trigger language plpgsql set search_path = public as $$
 declare role_name text;
 begin
   role_name := coalesce((select auth.role()), 'anon');
-  if role_name is distinct from 'service_role' then
+  -- 2026-10-14 intégration : les scripts de migration (SQL editor, rôle postgres) ne passent pas par l'API ;
+  -- les appels API sont exécutés sous anon / authenticated / service_role, jamais sous postgres.
+  if role_name is distinct from 'service_role' and current_user not in ('postgres', 'supabase_admin') then
     if new.password_hash is distinct from old.password_hash then
       raise exception 'password_hash modifiable uniquement via edge function (service_role)';
     end if;
@@ -78,60 +78,87 @@ $$;
 -- (appliqué après secu.sql) : définition unique qui reprend les règles ci-dessus (e-mail vérifié, e-mail seulement,
 -- jamais le téléphone, une seule fois au passage à « vérifié ») et ajoute celles du lot données (même nom et prénom,
 -- fiches fusionnées exclues). Le déclencheur ci-dessous utilise cette définition.
+-- 2026-10-14 intégration : le déclencheur aussi n'est défini QU'UNE fois, dans donnees.sql
+-- (trg_autolink_clients_luxyra : après création du compte ET au passage à « vérifié »). Ici, le déclencheur
+-- actuellement en base (après création) est laissé tel quel jusqu'à donnees.sql.
 
-drop trigger if exists trg_autolink_clients_luxyra on public.clients_luxyra;
-create trigger trg_autolink_clients_luxyra
-  after insert or update of email_verified on public.clients_luxyra
-  for each row execute function public.fn_autolink_clients_luxyra();
+-- ----------------------------------------------------------------------------
+-- §1 bis. Transition de la vérification d'e-mail : comptes EXISTANTS considérés vérifiés (2026-10-14 intégration)
+-- ----------------------------------------------------------------------------
+-- Constat : au 14/10, 0 des 52 comptes clients a email_verified = true (la vérification n'existait pas encore).
+-- Sans reprise, ces clients perdraient l'historique retrouvé par e-mail (RDV, tickets, bons cadeaux, avis) dès la
+-- mise en ligne du worker, qui n'utilise plus l'e-mail que s'il est vérifié.
+-- Choix (le moins invasif) : email_verified = true pour les comptes créés AVANT le 15/10/2026 00:00 (heure de Paris),
+-- marqués email_verified_legacy = true pour la traçabilité (on sait qu'ils n'ont pas cliqué de lien).
+--   * aucune modification du worker / des edge functions (elles lisent toutes email_verified) ;
+--   * RISQUE ACCEPTÉ pour ces comptes existants : leur e-mail n'a jamais été prouvé (même situation qu'avant l'audit) ;
+--   * les NOUVEAUX comptes (lx-signup v10) restent non vérifiés jusqu'au clic : ils sont protégés ;
+--   * le rattachement automatique des fiches (fn_autolink_clients_luxyra) n'est PAS rejoué pour ces comptes : leurs
+--     fiches ont déjà été rattachées à la création du compte avec les anciennes règles ; la reprise ne crée aucun
+--     nouveau lien (voir la condition email_verified_legacy dans donnees.sql, et ce bloc s'exécute avant donnees.sql).
+-- Rejouable : ne touche que les comptes encore non vérifiés créés avant la date.
+alter table public.clients_luxyra add column if not exists email_verified_legacy boolean not null default false;
+comment on column public.clients_luxyra.email_verified_legacy is
+  '2026-10-14 : compte antérieur à la vérification d''e-mail, considéré vérifié par reprise (pas de lien cliqué)';
+update public.clients_luxyra
+   set email_verified = true, email_verified_legacy = true
+ where coalesce(email_verified, false) = false
+   and created_at < timestamptz '2026-10-15 00:00:00 Europe/Paris';
 
 -- Rattachement d'une fiche EXISTANTE à un compte client depuis l'application de l'établissement
 -- (syncClientFromOnlineRdv : fiche retrouvée par email / téléphone) : accepté seulement si le compte a un email
 -- vérifié identique à celui de la fiche, ou si l'établissement a déjà une fiche liée à ce compte (fusion de doublons).
 -- Sinon le lien est ignoré (pas d'erreur : la synchronisation de l'application continue).
+-- 2026-10-14 intégration : même règle à la CRÉATION d'une fiche déjà liée (luxyra-supabase.js, création de la fiche
+-- depuis une réservation en ligne : client_luxyra_id vient de rdv_online, renseigné par le navigateur).
 create or replace function lx_prive.clients_lien_compte_verifie()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_role text := coalesce((select auth.role()), '');
+declare
+  v_role text := coalesce((select auth.role()), '');
+  v_email text;
 begin
   if v_role not in ('authenticated', 'anon') then return new; end if;
   if public.is_admin() then return new; end if;
-  if new.client_luxyra_id is null or new.client_luxyra_id is not distinct from old.client_luxyra_id then return new; end if;
-  if old.client_luxyra_id is not null then
-    -- changement d'un lien existant vers un autre compte : jamais depuis l'application
-    new.client_luxyra_id := old.client_luxyra_id; return new;
+  if new.client_luxyra_id is null then return new; end if;
+  if tg_op = 'UPDATE' then
+    if new.client_luxyra_id is not distinct from old.client_luxyra_id then return new; end if;
+    if old.client_luxyra_id is not null then
+      -- changement d'un lien existant vers un autre compte : jamais depuis l'application
+      new.client_luxyra_id := old.client_luxyra_id; return new;
+    end if;
+    v_email := coalesce(old.email, new.email, '');
+  else
+    v_email := coalesce(new.email, '');
   end if;
   if exists (select 1 from public.clients_luxyra l
               where l.id = new.client_luxyra_id and l.email_verified = true
-                and lower(trim(coalesce(l.email, ''))) = lower(trim(coalesce(old.email, new.email, ''))) and coalesce(old.email, new.email, '') <> '')
+                and lower(trim(coalesce(l.email, ''))) = lower(trim(v_email)) and trim(v_email) <> '')
      or exists (select 1 from public.clients c2
                  where c2.salon_id = new.salon_id and c2.client_luxyra_id = new.client_luxyra_id and c2.id <> new.id) then
     return new;
   end if;
-  new.client_luxyra_id := null;
+  new.client_luxyra_id := null;   -- lien ignoré, sans erreur (la fiche est créée / la synchronisation continue)
   return new;
 end;
 $$;
 revoke all on function lx_prive.clients_lien_compte_verifie() from public, anon, authenticated;
+-- Nom en « a_ » : s'exécute AVANT trg_clients_consentement_depuis_compte (donnees.sql, ordre alphabétique),
+-- qui recopie le consentement du compte lié : un lien refusé ne recopie donc rien.
 drop trigger if exists trg_clients_lien_compte_verifie on public.clients;
-create trigger trg_clients_lien_compte_verifie
-  before update of client_luxyra_id on public.clients
+drop trigger if exists trg_clients_a_lien_compte_verifie on public.clients;
+create trigger trg_clients_a_lien_compte_verifie
+  before insert or update of client_luxyra_id on public.clients
   for each row execute function lx_prive.clients_lien_compte_verifie();
 
 -- ============================================================================
--- §4. client_salon : plus de lecture anonyme des fiches des autres, plus d'insertion anonyme
---     (points de fidélité / consentements falsifiables). Lecture et lien : worker /api/client/salons.
+-- §4. client_salon : retrait de l'accès anonyme -> secu_restrictif.sql (compte.html / site.html de main l'utilisent)
 -- ============================================================================
-drop policy if exists cs_public_select on public.client_salon;
-drop policy if exists anon_insert_client_salon on public.client_salon;
-revoke all on public.client_salon from anon;
-grant select, insert, update, delete on public.client_salon to authenticated; -- policies cs_tenant_* (établissement propriétaire / admin)
-grant select, insert, update, delete on public.client_salon to service_role;
 
 -- ============================================================================
 -- §5. rdv_online : fin de la suppression anonyme ; abandon de paiement via le worker /api/rdv/abandon
 -- ============================================================================
 alter table public.rdv_online add column if not exists abandon_hash text; -- SHA-256 du secret gardé par le navigateur
-drop policy if exists anon_delete_rdv_online on public.rdv_online;
-revoke delete on public.rdv_online from anon;
+-- retrait de la suppression anonyme -> secu_restrictif.sql
 
 -- ============================================================================
 -- §6. OPÉRATEURS (code PIN) : vérification côté serveur, verrouillage côté serveur, pin_hash jamais lisible
@@ -238,17 +265,8 @@ drop trigger if exists trg_salon_operateurs_pin_change on public.salon_operateur
 create trigger trg_salon_operateurs_pin_change before update of pin_hash on public.salon_operateurs
   for each row execute function lx_prive.salon_operateurs_pin_change();
 
--- Droits par colonne : pin_hash n'est plus lisible ; le verrouillage n'est plus modifiable directement.
--- (ATTENTION : toute NOUVELLE colonne de salon_operateurs devra être ajoutée à ces GRANT.)
-revoke all on public.salon_operateurs from anon;
-revoke select, update on public.salon_operateurs from authenticated;
-grant select (id, salon_id, prenom, nom, email, avatar_color, avatar_initials, role, pin_length, permissions,
-              collab_id, actif, failed_attempts, locked_until, last_login_at, created_at, created_by)
-  on public.salon_operateurs to authenticated;
-grant update (prenom, nom, email, avatar_color, avatar_initials, role, pin_hash, pin_length, permissions, collab_id, actif)
-  on public.salon_operateurs to authenticated;
-grant insert, delete on public.salon_operateurs to authenticated;
-grant select, insert, update, delete on public.salon_operateurs to service_role;
+-- Droits par colonne (pin_hash illisible, verrouillage non modifiable) -> secu_restrictif.sql
+-- (l'ancien luxyra-supabase.js lit pin_hash et écrit failed_attempts / locked_until).
 
 -- ============================================================================
 -- §7. ANNUAIRE : signalements EN ATTENTE (plus de masquage immédiat par un anonyme)
@@ -281,13 +299,8 @@ grant select on public.annuaire_signalements to authenticated;
 grant select, insert, update, delete on public.annuaire_signalements to service_role;
 grant usage, select on sequence public.annuaire_signalements_id_seq to service_role;
 
--- Les anciennes fonctions (masquage immédiat par n'importe qui) ne sont plus exécutables depuis l'API.
-revoke execute on function public.annuaire_signaler_ferme(text) from public, anon, authenticated;
-revoke execute on function public.annuaire_retirer(text, text, text) from public, anon, authenticated;
-grant execute on function public.annuaire_signaler_ferme(text) to service_role;
-grant execute on function public.annuaire_retirer(text, text, text) to service_role;
--- annuaire_retraits : lecture admin seulement (droits d'écriture anon / authenticated retirés)
-revoke insert, update, delete, truncate on public.annuaire_retraits from anon, authenticated;
+-- Retrait de l'exécution publique des anciennes fonctions (annuaire_signaler_ferme / annuaire_retirer) et des
+-- écritures sur annuaire_retraits -> secu_restrictif.sql
 
 -- « Établissement fermé » (worker, empreinte IP) : masqué après 3 signalements d'adresses différentes en 90 jours,
 -- jamais pour un établissement lié à Luxyra ; sinon en attente de l'admin.
@@ -493,9 +506,8 @@ end;
 $$;
 grant execute on function public.report_server_error(text, text, text, text, jsonb, uuid, text, text, integer, text) to anon, authenticated, service_role;
 
--- Utilisé par inscription.html via le worker (/api/inscription/email-check, limité par IP)
-revoke execute on function public.lx_email_deja_inscrit(text) from public, anon, authenticated;
-grant execute on function public.lx_email_deja_inscrit(text) to service_role;
+-- lx_email_deja_inscrit : utilisé par inscription.html via le worker (/api/inscription/email-check) ;
+-- retrait de l'appel anonyme -> secu_restrictif.sql
 
 -- Monitoring : plus d'exécution anonyme ; le panneau admin passe par admin_monitoring_status() (admin 2FA)
 create or replace function public.admin_monitoring_status()
@@ -505,15 +517,13 @@ begin
   return to_jsonb(public.get_monitoring_status());
 end;
 $$;
-revoke execute on function public.get_monitoring_status() from public, anon, authenticated;
-grant execute on function public.get_monitoring_status() to service_role;
+-- retrait de get_monitoring_status de l'API publique -> secu_restrictif.sql
 revoke all on function public.admin_monitoring_status() from public, anon;
 grant execute on function public.admin_monitoring_status() to authenticated;
 
 -- Expiration des devis (tous les établissements) : réservée au cron / rôle service (l'application l'appelait
 -- au chargement, pour tout le monde).
-revoke execute on function public.devis_expire_overdue() from public, anon, authenticated;
-grant execute on function public.devis_expire_overdue() to service_role;
+-- (retrait de l'exécution par l'API -> secu_restrictif.sql ; le cron ci-dessous est ajouté dès maintenant)
 do $$
 begin
   if exists (select 1 from cron.job where jobname = 'devis_expire_overdue_nuit') then
@@ -683,10 +693,8 @@ commit;
 -- ============================================================================
 -- CONTRÔLES APRÈS APPLICATION (lecture seule)
 -- ============================================================================
--- select policyname, cmd, roles from pg_policies where tablename in ('client_salon','rdv_online','support_conversations','support_messages','admin_users','support_bot_kb');
--- select has_column_privilege('authenticated','public.salon_operateurs','pin_hash','select');   -- attendu : false
--- select has_function_privilege('anon','public.annuaire_retirer(text,text,text)','execute');     -- attendu : false
--- select has_function_privilege('anon','public.lx_email_deja_inscrit(text)','execute');         -- attendu : false
--- select has_function_privilege('anon','public.get_monitoring_status()','execute');            -- attendu : false
--- select has_function_privilege('authenticated','public.devis_expire_overdue()','execute');    -- attendu : false
+-- select policyname, cmd, roles from pg_policies where tablename in ('support_conversations','support_messages','admin_users','support_bot_kb');
+-- select count(*) filter (where email_verified) , count(*) filter (where email_verified_legacy), count(*) from public.clients_luxyra;
+-- select tgname from pg_trigger where tgname = 'trg_clients_a_lien_compte_verifie';
+-- (contrôles des retraits de droits : voir secu_restrictif.sql)
 -- select jobname, schedule from cron.job where jobname = 'devis_expire_overdue_nuit';

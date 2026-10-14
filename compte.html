@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
-<script src="/lx-client.js?v=20261014-2"></script>
+<script src="/lx-client.js?v=20261014-3"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -209,9 +209,23 @@ window.RESET_RETOUR = (function(){ try { var p = new URLSearchParams(window.loca
 window.VERIF_TOKEN = (function(){ try { var p = new URLSearchParams(window.location.search); var t = p.get("verif") || ""; return /^[0-9a-f]{64}$/.test(t) ? t : null; } catch(e){ return null; } })();
 if(window.VERIF_TOKEN){
   try { history.replaceState({}, "", location.pathname); } catch(_eH) {}
+  // 2026-10-14 audit : le compte local (lx_account) n'est marqu\u00e9 \u00ab v\u00e9rifi\u00e9 \u00bb QUE si l'adresse confirm\u00e9e par le
+  // lien est celle du compte connect\u00e9 sur cet appareil (lien ouvert sur l'appareil d'un autre compte = on n'y touche pas).
+  var _lxNormMail=function(m){ return String(m||"").trim().toLowerCase(); };
+  var _lxCompteAvant=null; try{ _lxCompteAvant=localStorage.getItem("lx_account"); }catch(_eS){}
   LX.verifyEmail(window.VERIF_TOKEN).then(function(res){
-    window._lxVerifMsg = res.ok ? {ok:true, t:"\u2705 Adresse email confirm\u00e9e : vos rendez-vous, tickets et points enregistr\u00e9s par vos \u00e9tablissements avec cette adresse sont maintenant visibles."} : {ok:false, t:(res.data&&res.data.error)||"Lien invalide ou expir\u00e9."};
-    if(CLIENT && res.ok){ CLIENT.email_verified=true; saveSession(); try{ loadMyRdvs(); }catch(_e){} }
+    var mailVerifie=_lxNormMail(res&&res.data&&res.data.email);
+    var compteLocal=null; try{ compteLocal=_lxCompteAvant?JSON.parse(_lxCompteAvant):null; }catch(_eP){}
+    var mailLocal=_lxNormMail((CLIENT&&CLIENT.email)||(compteLocal&&compteLocal.email));
+    var memeCompte=!!(res&&res.ok&&mailVerifie&&mailLocal&&mailVerifie===mailLocal);
+    if(res&&res.ok&&!memeCompte){
+      // lx-client.js marque le compte local v\u00e9rifi\u00e9 sans comparer l'adresse : on r\u00e9tablit l'\u00e9tat d'avant.
+      try{ if(_lxCompteAvant!==null) localStorage.setItem("lx_account",_lxCompteAvant); else localStorage.removeItem("lx_account"); }catch(_eR){}
+    }
+    if(!res||!res.ok) window._lxVerifMsg={ok:false, t:(res&&res.data&&res.data.error)||"Lien invalide ou expir\u00e9."};
+    else if(memeCompte) window._lxVerifMsg={ok:true, t:"\u2705 Adresse email confirm\u00e9e : vos rendez-vous, tickets et points enregistr\u00e9s par vos \u00e9tablissements avec cette adresse sont maintenant visibles."};
+    else window._lxVerifMsg={ok:true, t:"Adresse email confirm\u00e9e. Connectez-vous avec le compte correspondant \u00e0 cette adresse pour retrouver vos rendez-vous."};
+    if(CLIENT && memeCompte){ CLIENT.email_verified=true; saveSession(); try{ loadMyRdvs(); }catch(_e){} }
     render();
   });
 }

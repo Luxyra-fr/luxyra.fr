@@ -71,7 +71,7 @@
 // Bumper cette chaine a CHAQUE deploiement qui doit invalider l'ancien cache
 // (la strategie network-first sert deja du frais ; le bump nettoie surtout les
 // vieux caches et marque le SW comme "mis a jour").
-var LX_CACHE = 'luxyra-sw-shell-v22-2026-10-12';
+var LX_CACHE = 'luxyra-sw-shell-v23-2026-10-14';
 
 // v22 (2026-10-12) — deux correctifs de robustesse :
 //  1. CLE DE CACHE SANS PARAMETRES : avant, chaque variante d'URL (?v=, ?x=, ?demo=...)

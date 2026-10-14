@@ -1291,7 +1291,9 @@ async function handleConnectPayment(request, env) {
         const _mtBase = Math.round((Number(_estEmpreinte ? _a[0].empreinte_amount : _a[0].acompte_montant) || 0) * 100);
         if (!(_mtBase > 0)) return jsonResponse({ error: _estEmpreinte ? "Aucune empreinte n'est prévue pour ce rendez-vous" : "Aucun acompte n'est dû pour ce rendez-vous" }, 409);
         if (_estEmpreinte && !["none", "pending", null, undefined, ""].includes(_a[0].empreinte_status)) return jsonResponse({ error: "L'empreinte de ce rendez-vous est déjà enregistrée" }, 409);
-        if (Math.round(Number(amount) * 100) !== _mtBase) {
+        // Tolérance d'arrondi : 1 centime (le navigateur et la base peuvent arrondir différemment) ; le montant
+        // facturé reste TOUJOURS celui de la base (_mtBase).
+        if (!(Math.abs(Math.round(Number(amount) * 100) - _mtBase) <= 1)) {
           await reportWorkerError(env, "worker:connect-payment", new Error("Montant demandé différent du montant enregistré"), { rdv_id: _rid, demande: Math.round(Number(amount) * 100), enregistre: _mtBase, type: _type }, "warning");
           return jsonResponse({ error: "Montant incohérent avec le rendez-vous : rechargez la page." }, 409);
         }
@@ -2713,10 +2715,11 @@ async function handleRdvDemandeFinalize(request, env) {
     // 2026-10-14 audit : prise ATOMIQUE de la demande avant toute insertion (le retour navigateur et le
     // webhook Stripe arrivent souvent en même temps -> avant : deux rdv_online pour une proposition).
     const _staleIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const _claimAt = new Date().toISOString();
     const _claimRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&status=eq.proposed&or=(confirm_claim_at.is.null,confirm_claim_at.lt.${encodeURIComponent(_staleIso)})`, {
       method: "PATCH",
       headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
-      body: JSON.stringify({ confirm_claim_at: new Date().toISOString(), stripe_session_id: session.id })
+      body: JSON.stringify({ confirm_claim_at: _claimAt, stripe_session_id: session.id })
     });
     const _claim = _claimRes.ok ? await _claimRes.json().catch(() => []) : [];
     if (!Array.isArray(_claim) || !_claim[0]) {
@@ -2768,18 +2771,46 @@ async function handleRdvDemandeFinalize(request, env) {
       stripe_account: _compteD || null
     };
 
-    const insertRes = await fetch(`${sbUrl}/rest/v1/rdv_online`, {
-      method: "POST",
-      headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
-      body: JSON.stringify(rdvData)
-    });
-    const insertBody = await insertRes.json();
-    if (!insertRes.ok || !Array.isArray(insertBody) || !insertBody[0]) {
-      console.error("rdv_online INSERT failed:", insertRes.status, JSON.stringify(insertBody));
-      await _libererClaim(); // 2026-10-14 audit : le webhook pourra réessayer
-      return jsonResponse({ error: "Insert rdv_online échoué: " + JSON.stringify(insertBody) }, 500);
+    // 2026-10-14 audit : RDV déjà créé pour CE paiement (essai précédent interrompu avant la mise à jour
+    // de la demande) -> on le réutilise au lieu d'en insérer un second. Lien = payment_intent_id
+    // (index unique rdv_online_payment_intent_unique ; rdv_online n'a pas de colonne demande_id).
+    const _rdvDuPaiement = async () => {
+      if (!session.payment_intent) return null;
+      const _ex = await fetch(`${sbUrl}/rest/v1/rdv_online?payment_intent_id=eq.${encodeURIComponent(session.payment_intent)}&salon_id=eq.${demande.salon_id}&select=id,status,acompte_paye&limit=1`, { headers: _sbHeaders(env) });
+      if (!_ex.ok) throw new Error("Lecture rdv_online existant impossible (HTTP " + _ex.status + ")");
+      const _exa = await _ex.json();
+      return (Array.isArray(_exa) && _exa[0]) || null;
+    };
+    let rdvOnlineId = null;
+    let _existant = null;
+    try { _existant = await _rdvDuPaiement(); }
+    catch (eEx) {
+      await _libererClaim();
+      return jsonResponse({ error: "Confirmation momentanément impossible, réessai automatique.", paiement_recu: true }, 503);
     }
-    const rdvOnlineId = insertBody[0].id;
+    if (_existant) {
+      rdvOnlineId = _existant.id;
+    } else {
+      const insertRes = await fetch(`${sbUrl}/rest/v1/rdv_online`, {
+        method: "POST",
+        headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
+        body: JSON.stringify(rdvData)
+      });
+      const insertBody = await insertRes.json().catch(() => null);
+      if (!insertRes.ok || !Array.isArray(insertBody) || !insertBody[0]) {
+        // Conflit sur l'index unique du paiement = un autre chemin vient de créer le RDV -> on le reprend
+        let _apres = null;
+        try { _apres = await _rdvDuPaiement(); } catch (_) {}
+        if (_apres) rdvOnlineId = _apres.id;
+        else {
+          console.error("rdv_online INSERT failed:", insertRes.status, JSON.stringify(insertBody));
+          await _libererClaim(); // aucun RDV créé : le webhook / la page pourront réessayer
+          return jsonResponse({ error: "Insert rdv_online échoué: " + JSON.stringify(insertBody), paiement_recu: true }, 500);
+        }
+      } else {
+        rdvOnlineId = insertBody[0].id;
+      }
+    }
 
     // 4) UPDATE pour passer en confirmed + acompte_paye=true (mirror flow regular)
     const updRes = await fetch(`${sbUrl}/rest/v1/rdv_online?id=eq.${rdvOnlineId}`, {
@@ -2793,17 +2824,32 @@ async function handleRdvDemandeFinalize(request, env) {
     }
 
     // 5) UPDATE rdv_demandes → confirmed + lien vers rdv_online
-    const demUpdRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}`, {
+    // 2026-10-14 audit : conditionnel (toujours « proposed » ET toujours NOTRE verrou) et résultat vérifié.
+    // Échec -> verrou CONSERVÉ (aucun autre chemin ne peut insérer pendant 3 min) + 5xx : Stripe réessaie le
+    // webhook ; une fois le verrou expiré, le réessai reprend le RDV ci-dessus (même payment_intent).
+    const demUpdRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&status=eq.proposed&confirm_claim_at=eq.${encodeURIComponent(_claimAt)}`, {
       method: "PATCH",
-      headers: { ..._sbHeaders(env), "Prefer": "return=minimal" },
+      headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
       body: JSON.stringify({
         status: "confirmed",
         confirmed_at: new Date().toISOString(),
         rdv_online_id: rdvOnlineId
       })
     });
-    if (!demUpdRes.ok) {
-      console.error("rdv_demandes UPDATE failed:", await demUpdRes.text());
+    const demUpdRows = demUpdRes.ok ? await demUpdRes.json().catch(() => null) : null;
+    if (!Array.isArray(demUpdRows) || !demUpdRows[0]) {
+      const _errTxt = demUpdRes.ok ? "0 ligne mise à jour" : await demUpdRes.text().catch(() => "HTTP " + demUpdRes.status);
+      // Un autre chemin a pu confirmer entre-temps avec CE même RDV -> succès
+      try {
+        const _re2 = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&select=status,rdv_online_id&limit=1`, { headers: _sbHeaders(env) });
+        const _r2 = _re2.ok ? await _re2.json() : [];
+        if (Array.isArray(_r2) && _r2[0] && _r2[0].status === "confirmed" && _r2[0].rdv_online_id === rdvOnlineId) {
+          return jsonResponse({ ok: true, already_confirmed: true, rdv_online_id: rdvOnlineId });
+        }
+      } catch (_) {}
+      console.error("rdv_demandes UPDATE confirmed failed:", _errTxt);
+      try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Demande sur mesure non passée en confirmée après création du RDV (réessai Stripe)"), { demande_id: demande.id, rdv_online_id: rdvOnlineId, session: session.id, detail: String(_errTxt).slice(0, 300) }, "error"); } catch (_) {}
+      return jsonResponse({ error: "Paiement reçu, confirmation en cours de finalisation.", paiement_recu: true, en_cours: true }, 503);
     }
 
     return jsonResponse({ ok: true, rdv_online_id: rdvOnlineId });
@@ -2885,10 +2931,12 @@ async function handleSalonLogo(id, env) {
   return Response.redirect("https://luxyra.fr/luxyra-logo.png", 302);
 }
 
-async function stripeAPI(env, endpoint, params, method = "POST", compte = null) {
+async function stripeAPI(env, endpoint, params, method = "POST", compte = null, idemKey = null) {
   const options = { method, headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } };
   // 2026-10-09 : appel « au nom » du compte Stripe d'un salon (charges directes)
   if (compte) options.headers["Stripe-Account"] = String(compte);
+  // 2026-10-14 audit : clé d'idempotence Stripe (un même remboursement rejoué = le même objet, jamais deux)
+  if (idemKey && method === "POST") options.headers["Idempotency-Key"] = String(idemKey).slice(0, 255);
   if (params && method === "POST") {
     options.headers["Content-Type"] = "application/x-www-form-urlencoded";
     options.body = new URLSearchParams(params).toString();
@@ -4145,7 +4193,7 @@ async function handleAcompteFinalize(request, env) {
     if (session.payment_status !== "paid") return jsonResponse({ error: "Paiement non confirmé: " + session.payment_status }, 402);
     const piId = session.payment_intent || null;
     {
-      const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,payment_intent_id&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,payment_intent_id,refund_id,refund_error&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
       const _a = _r.ok ? await _r.json() : [];
       const _rdv = Array.isArray(_a) ? _a[0] : null;
       if (!_rdv) return jsonResponse({ error: "RDV introuvable" }, 404);
@@ -4158,18 +4206,37 @@ async function handleAcompteFinalize(request, env) {
       // refusé, un trop-perçu était accepté et encaissé). Écart -> paiement remboursé en totalité, alerte critique, acompte non enregistré.
       const _attendu = Math.round((Number(_rdv.acompte_montant) || 0) * 100);
       if (!(_attendu > 0) || typeof session.amount_total !== "number" || session.amount_total !== _attendu) {
-        let _rbt = null;
+        // 2026-10-14 audit : page de retour + webhook Connect arrivent tous deux ici -> UN seul remboursement et
+        // UNE seule alerte. Déjà fait si : marqueur posé sur le RDV pour CE paiement, ou remboursement existant
+        // chez Stripe pour ce payment_intent. Le remboursement porte en plus une clé d'idempotence Stripe.
+        const _cpt = _compteA || null;
+        const _marq = "montant_incoherent " + String(piId || "");
+        if (piId && _rdv.refund_id && String(_rdv.refund_error || "").indexOf(_marq) >= 0) {
+          return jsonResponse({ error: "Montant payé incohérent avec l'acompte : le paiement est remboursé.", rembourse: true, deja: true }, 409);
+        }
+        let _rbt = null, _dejaRbt = false;
         try {
           if (piId) {
-            const _cpt = _compteA || null;
-            const _rf = _cpt
-              ? await stripeAPI(env, "refunds", { payment_intent: piId, "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "montant_incoherent" }, "POST", _cpt)
-              : await stripeAPI(env, "refunds", { payment_intent: piId, reverse_transfer: "true", "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "montant_incoherent" });
-            _rbt = (_rf && _rf.id) ? _rf.id : ((_rf && _rf.error && (_rf.error.message || _rf.error.code)) || "échec");
+            const _ex = await stripeAPI(env, `refunds?payment_intent=${encodeURIComponent(piId)}&limit=10`, null, "GET", _cpt);
+            const _ok = (_ex && Array.isArray(_ex.data)) ? _ex.data.find((x) => x && x.id && !["failed", "canceled"].includes(String(x.status || ""))) : null;
+            if (_ok) { _rbt = _ok.id; _dejaRbt = true; }
+            else {
+              const _idem = "lx_acompte_incoherent_" + piId;
+              const _rf = _cpt
+                ? await stripeAPI(env, "refunds", { payment_intent: piId, "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "montant_incoherent" }, "POST", _cpt, _idem)
+                : await stripeAPI(env, "refunds", { payment_intent: piId, reverse_transfer: "true", "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "montant_incoherent" }, "POST", null, _idem);
+              _rbt = (_rf && _rf.id) ? _rf.id : ((_rf && _rf.error && (_rf.error.message || _rf.error.code)) || "échec");
+            }
           }
         } catch (_eRf) { _rbt = "exception " + (_eRf && _eRf.message); }
-        await reportWorkerError(env, "worker:acompte-finalize", new Error("Montant paye different de l'acompte : paiement rembourse"), { rdv_id, paye: session.amount_total, attendu: _attendu, payment_intent: piId, remboursement: _rbt }, "critical");
-        return jsonResponse({ error: "Montant payé incohérent avec l'acompte : le paiement est remboursé.", rembourse: !!(_rbt && String(_rbt).startsWith("re_")) }, 409);
+        const _rembOk = !!(_rbt && String(_rbt).startsWith("re_"));
+        if (_rembOk) {
+          // Trace sur le RDV (refund_id + marqueur du paiement). PAS de refunded_at / acompte_rembourse : l'acompte
+          // n'a jamais été enregistré, l'application ne doit pas afficher « acompte remboursé ».
+          try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}&acompte_paye=not.is.true`, { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify({ refund_id: _rbt, refund_error: (_marq + " : paiement remboursé en totalité (" + _rbt + ")").slice(0, 500) }) }); } catch (_) {}
+        }
+        if (!_dejaRbt) await reportWorkerError(env, "worker:acompte-finalize", new Error("Montant paye different de l'acompte : paiement rembourse"), { rdv_id, paye: session.amount_total, attendu: _attendu, payment_intent: piId, remboursement: _rbt }, "critical");
+        return jsonResponse({ error: "Montant payé incohérent avec l'acompte : le paiement est remboursé.", rembourse: _rembOk }, 409);
       }
       // Statut decide par le salon (confirmation automatique ou non), pas par la page.
       try {

@@ -176,6 +176,7 @@ CREATE TRIGGER tr_appointments_updated_at
 -- NB : à ce jour lx-signup crée les comptes avec email_verified=false : le
 -- rattachement automatique est donc suspendu tant que la vérification n'est pas
 -- enregistrée ; le rattachement lors d'une réservation (application) continue.
+ALTER TABLE public.clients_luxyra ADD COLUMN IF NOT EXISTS email_verified_legacy boolean NOT NULL DEFAULT false; -- (créée par secu.sql)
 -- 2026-10-14 intégration : définition UNIQUE (secu.sql renvoie ici) — contient les règles du lot sécurité
 -- (e-mail vérifié, e-mail seulement, une seule fois au passage à « vérifié ») et celles du lot données.
 CREATE OR REPLACE FUNCTION public.fn_autolink_clients_luxyra()
@@ -191,6 +192,11 @@ DECLARE
 BEGIN
   -- 2026-10-14 audit : e-mail vérifié + même e-mail + même nom et prénom, jamais le téléphone
   IF coalesce(NEW.email_verified, false) IS NOT TRUE THEN
+    RETURN NEW;
+  END IF;
+  -- 2026-10-14 intégration : compte antérieur repris comme « vérifié » (secu.sql §1 bis) : fiches déjà rattachées
+  -- à sa création avec les anciennes règles, la reprise ne crée aucun nouveau lien.
+  IF TG_OP = 'UPDATE' AND coalesce(NEW.email_verified_legacy, false) THEN
     RETURN NEW;
   END IF;
   IF TG_OP = 'UPDATE' AND coalesce(OLD.email_verified, false) = true THEN
@@ -245,11 +251,14 @@ BEGIN
 END;
 $function$;
 
+-- 2026-10-14 intégration : UN SEUL déclencheur (avant : trg_autolink_clients_luxyra ici ET dans secu.sql sous un
+-- autre nom -> double exécution au passage à « vérifié »). La fonction filtre elle-même : création d'un compte déjà
+-- vérifié, ou passage de non vérifié à vérifié (une seule fois).
 DROP TRIGGER IF EXISTS trg_autolink_clients_luxyra_verifie ON public.clients_luxyra;
-CREATE TRIGGER trg_autolink_clients_luxyra_verifie
-  AFTER UPDATE OF email_verified ON public.clients_luxyra
+DROP TRIGGER IF EXISTS trg_autolink_clients_luxyra ON public.clients_luxyra;
+CREATE TRIGGER trg_autolink_clients_luxyra
+  AFTER INSERT OR UPDATE OF email_verified ON public.clients_luxyra
   FOR EACH ROW
-  WHEN (NEW.email_verified IS TRUE AND OLD.email_verified IS DISTINCT FROM TRUE)
   EXECUTE FUNCTION public.fn_autolink_clients_luxyra();
 
 -- ----------------------------------------------------------------------------
@@ -295,5 +304,5 @@ COMMIT;
 -- select position('pg_advisory_xact_lock' in pg_get_functiondef('public.ticket_nf525_insert()'::regprocedure)) > 0;
 -- select position('payments IS DISTINCT' in pg_get_functiondef('public.appointments_nf525_protect()'::regprocedure)) > 0;
 -- select column_name from information_schema.columns where table_name='appointments' and column_name='updated_at';
--- select tgname from pg_trigger where tgname in ('tr_appointments_updated_at','trg_autolink_clients_luxyra_verifie','trg_clients_consentement_depuis_compte');
+-- select tgname from pg_trigger where tgname in ('tr_appointments_updated_at','trg_autolink_clients_luxyra','trg_clients_consentement_depuis_compte'); -- trg_autolink_clients_luxyra_verifie : absent
 -- Puis relancer les tests de protection NF525 : select * from public.nf525_tests_protections();

@@ -13,6 +13,8 @@
 -- ============================================================================
 
 
+BEGIN;  -- 2026-10-14 intégration : tout ou rien
+
 -- ============================================================================
 -- 1. EFFACEMENT RGPD = ANONYMISATION SUR PLACE
 -- Constat : DELETE FROM clients -> la clé étrangère tickets.client_id (ON DELETE SET NULL) modifie les tickets,
@@ -804,6 +806,12 @@ DECLARE
   v_md text; v_bissex boolean; v_jours int; v_fin_jour timestamptz;
   v_anniv int := 0; v_rel int := 0; v_n int;
 BEGIN
+  -- 2026-10-14 intégration : INACTIF tant que app_config.config->>'sms_auto_serveur' n'est pas true.
+  -- Le même drapeau coupe l'envoi par l'application (app.html _lxSmsServeurConfirme) : un seul expéditeur à la fois.
+  -- À activer seulement après publication des pages (ORDRE.md, bloc ACTIVATION en fin de fichier).
+  IF coalesce((SELECT (config->>'sms_auto_serveur')::boolean FROM app_config WHERE id = 1), false) IS NOT TRUE THEN
+    RETURN jsonb_build_object('ok', true, 'inactif', true);
+  END IF;
   v_md := to_char(v_jour, 'MM-DD');
   v_bissex := (extract(year FROM v_jour)::int % 4 = 0 AND (extract(year FROM v_jour)::int % 100 <> 0 OR extract(year FROM v_jour)::int % 400 = 0));
   v_fin_jour := ((v_jour + 1)::timestamp AT TIME ZONE 'Europe/Paris');
@@ -896,10 +904,21 @@ GRANT EXECUTE ON FUNCTION public.envoyer_sms_anniv_relance() TO service_role;
 SELECT cron.schedule('sms-differes-file', '*/2 * * * *', $cron$SELECT public.traiter_sms_differes_tous();$cron$);
 SELECT cron.schedule('sms-anniv-relance-serveur', '30 8 * * *', $cron$SELECT public.envoyer_sms_anniv_relance();$cron$);
 
+COMMIT;
+
 -- ============================================================================
 -- Vérifications après application (lecture seule) :
 --   SELECT column_name FROM information_schema.columns WHERE table_name='clients' AND column_name='rgpd_anonymise_le';
 --   SELECT jobname, schedule FROM cron.job WHERE jobname IN ('sms-differes-file','sms-anniv-relance-serveur');
 --   SELECT indexname FROM pg_indexes WHERE indexname='cartes_cadeaux_salon_code_unique';
 -- Essai à blanc des SMS (règle du 07/09) : salon de test avec crédits à 0 -> les SMS restent « en_attente », aucun envoi.
+-- ============================================================================
+
+-- ============================================================================
+-- ACTIVATION des anniversaires / relances SMS par le serveur (2026-10-14 intégration)
+-- Seulement APRÈS publication des pages (app.html) de cette version, de préférence le soir (après 21 h) :
+--   UPDATE public.app_config SET config = config || '{"sms_auto_serveur": true}'::jsonb WHERE id = 1;
+-- Avant : la fonction serveur ne fait rien et l'application envoie (aucune période sans expéditeur).
+-- Après : le serveur envoie, l'application (qui lit le même drapeau) n'envoie plus (sauf mode SMS natif).
+-- RETOUR ARRIÈRE : UPDATE public.app_config SET config = config - 'sms_auto_serveur' WHERE id = 1;
 -- ============================================================================

@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261014-7"; // 2026-10-14 intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261014-8"; // 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -220,7 +220,7 @@ function _walProtege(e){
 function _walEvincer(wal, max){
   if (!Array.isArray(wal) || wal.length <= max) return wal;
   var trop = wal.length - max, out = [], i;
-  for (i = 0; i < wal.length; i++) { if (trop > 0 && wal[i] && wal[i].synced) { trop--; continue; } out.push(wal[i]); }
+  for (i = 0; i < wal.length; i++) { if (trop > 0 && wal[i] && wal[i].synced && !wal[i].abandonne) { trop--; continue; } out.push(wal[i]); }
   if (trop <= 0) return out;
   var out2 = [], perdus = [];
   for (i = 0; i < out.length; i++) {
@@ -254,11 +254,22 @@ function _walPersist(type, data, extra){
     try { localStorage.setItem(_WAL_KEY, _json); }
     catch (eQ) {
       // 2026-10-14 audit : stockage plein -> on retire toutes les entrées déjà transmises et on réessaie une fois
-      wal = wal.filter(function(e){ return !e.synced; });
-      localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+      wal = wal.filter(function(e){ return !e.synced || e.abandonne; });
+      try { localStorage.setItem(_WAL_KEY, JSON.stringify(wal)); }
+      catch (eQ2) {
+        // 2026-10-14 : JAMAIS silencieux — la copie de secours de cette opération n'a pas pu être écrite.
+        console.error("[WAL] stockage plein, copie de secours impossible :", eQ2);
+        try { if (typeof toast === "function") toast("Stockage de l’appareil plein : la copie de secours de cet enregistrement (" + type + ") n’a pas pu être conservée. Gardez la connexion active et libérez de l’espace (navigateur) ; contactez le support si le message se répète.", "error"); } catch(_t) {}
+        try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "_walPersist", gravite: "critical", msg: "Stockage local plein : entrée de la file de secours non écrite", type: type, id: data && data.id, tk_num: data && data.tkNum }).slice(0, 2000)); } catch(_a) {}
+        return null;
+      }
     }
     return entry.id;
-  } catch(e){ console.warn("[WAL] persist failed:", e); return null; }
+  } catch(e){
+    console.warn("[WAL] persist failed:", e);
+    try { if (typeof toast === "function") toast("La copie de secours de cet enregistrement n’a pas pu être conservée sur l’appareil : gardez la connexion active.", "error"); } catch(_t2) {}
+    return null;
+  }
 }
 
 function _walMarkSynced(walId){
@@ -282,6 +293,7 @@ function _walCleanup(){
     var weekAgo = Date.now() - 7*24*3600*1000;
     var kept = wal.filter(function(e){
       if (!e.synced) return true;
+      if (e.abandonne) return true; // 2026-10-14 (NF525) : ticket non transmis abandonné explicitement : conservé sur l'appareil
       var syncedTs = e.syncedAt ? new Date(e.syncedAt).getTime() : 0;
       return syncedTs > weekAgo;
     });
@@ -328,7 +340,7 @@ async function _walCheckUneFois(){
       try {
         var r = await _walResync(unsynced[i].id);
         // 2026-10-14 (NF525) : une entrée en attente (délai entre deux essais) n'est ni un succès ni un échec
-        if (r && r.ok) ok++; else if (r && r.differe) differe++; else if (r && r.abandon) {} /* tracé WAL_ABANDON */ else fail++;
+        if (r && r.ok) { if (_walTransmiseVraiment(r)) ok++; } else if (r && r.differe) differe++; else if (r && r.abandon) {} /* tracé WAL_ABANDON */ else fail++;
       } catch(_) { fail++; }
     }
     if (differe) console.warn("[WAL] " + differe + " action(s) en attente d'un nouvel essai (délai entre deux essais)");
@@ -373,12 +385,20 @@ async function _walCheckUneFois(){
 //   - autre échec -> l'entrée reste en file, compteur d'essais + attente croissante entre deux essais,
 //     et après _WAL_ALERTE_ESSAIS échecs : alerte à l'opérateur (toast) + audit DB_ERROR, sans bloquer.
 var _WAL_ALERTE_ESSAIS = 3;
-function _walNoterEssai(walId, okOuErreur){
+// 2026-10-14 : échecs NON réseau comptés à part (echecsServeur) ; à _WAL_BLOQUE_ESSAIS l'entrée est marquée « bloque »
+// (le serveur la refuse durablement) -> listée dans la fenêtre de refus de la Z avec « Signaler au support » et
+// « Forcer la clôture » (lxWalForcerCloture). Elle reste rejouée tant qu'elle n'est pas abandonnée explicitement.
+var _WAL_BLOQUE_ESSAIS = 10;
+function _walNoterEssai(walId, okOuErreur, reseau){
   try {
     var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
     for (var i=0; i<wal.length; i++) {
       if (wal[i].id === walId) {
         wal[i].tries = (Number(wal[i].tries)||0) + 1;
+        if (!reseau) {
+          wal[i].echecsServeur = (Number(wal[i].echecsServeur)||0) + 1;
+          if (wal[i].echecsServeur >= _WAL_BLOQUE_ESSAIS && !wal[i].bloque) { wal[i].bloque = true; wal[i].bloqueAt = new Date().toISOString(); }
+        }
         wal[i].lastTryAt = new Date().toISOString();
         wal[i].lastError = okOuErreur ? String(okOuErreur).slice(0, 300) : null;
         localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
@@ -507,7 +527,7 @@ async function _walResync(walId, force){
         var _lst = entry.type === "appointment" ? (typeof AP !== "undefined" ? AP : null) : (entry.type === "client" ? (typeof CL !== "undefined" ? CL : null) : null);
         if (_lst && entry.data && entry.data.id) for (var _q = 0; _q < _lst.length; _q++) { if (_lst[_q] && _lst[_q].id === entry.data.id) _lxMarquerEnregistre(_lst[_q]); }
       } catch (_eMk) {}
-      return { ok: true };
+      return { ok: true, deja: !!(r && typeof r === "object" && r.deja) }; // deja : transmise entre-temps par une sauvegarde normale
     }
     if (_walResultatDoublonPermanent(r)) {
       // déjà en base : équivalent synchronisé (aucune perte, évite un rejeu à chaque démarrage)
@@ -519,7 +539,7 @@ async function _walResync(walId, force){
     // l'entrée sort de la file (sinon rejouée et signalée à chaque démarrage), avec une trace d'audit explicite.
     var _ticketOuRdv = (entry.type === "ticket" || entry.type === "appointment");
     var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable/i.test(String(_msg));
-    var _e2 = _walNoterEssai(walId, _msg);
+    var _e2 = _walNoterEssai(walId, _msg, _lxEstHorsLigne(_msg));
     var _rdvScelle = entry.type === "appointment" && entry.data && (entry.data.st === "done" || entry.data.tkNum); // 2026-10-14 : ticket encaissé = jamais abandonné pour erreur passagère
     if (_definitif || (entry.type === "appointment" && !_rdvScelle && _e2 && (Number(_e2.tries) || 0) >= 20)) { // un ticket ou une clôture Z n'est JAMAIS abandonné pour des erreurs passagères
       try { if (_definitif && typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "_walResync", gravite: "critical", msg: "Ticket refusé définitivement par le serveur (journée clôturée / inaltérable) : régularisation support nécessaire", type: entry.type, tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null, data: entry.data }).slice(0, 4000)); } catch (_eC2) {}
@@ -532,11 +552,13 @@ async function _walResync(walId, force){
     return { ok: false, reason: _msg };
   } catch(e){
     var _m3 = e && (e.message || String(e));
-    var _e3 = _walNoterEssai(walId, _m3);
+    var _e3 = _walNoterEssai(walId, _m3, _lxEstHorsLigne(e));
     _walAlerterSiRepete(_e3, _m3);
     return { ok: false, reason: _m3 };
   }
 }
+// 2026-10-14 : résultat de _walResync qui correspond à une VRAIE transmission (pour les compteurs affichés).
+function _walTransmiseVraiment(r){ return !!(r && r.ok && !r.ignore && !r.doublon && !r.deja); }
 // Alerte opérateur + audit après plusieurs échecs sur la MÊME entrée (une seule fois par entrée).
 function _walAlerterSiRepete(entry, msg){
   try {
@@ -588,9 +610,13 @@ function lxWalRejouer(raison, force){
       for (var i = 0; i < ids.length; i++) {
         var r = null;
         try { r = await _walResync(ids[i], !!force); } catch(_e) { r = null; }
-        if (r && r.ok) ok++; else if (r && r.differe) differe++; else if (!(r && r.abandon)) ko++;
+        // 2026-10-14 : « transmis » = réellement envoyé au serveur par CE rejeu (pas les entrées ignorées : RDV supprimé,
+        // version plus récente en base, déjà en base / doublon, déjà transmise entre-temps).
+        if (r && r.ok) { if (_walTransmiseVraiment(r)) ok++; } else if (r && r.differe) differe++; else if (!(r && r.abandon)) ko++;
         if (window._lxSessionPerdueActive) break;
       }
+      // 2026-10-14 : séances de forfait décomptées hors ligne / en échec réseau (file propre, app.html) — même déclencheur.
+      try { if (typeof window._lxPacksRejouer === "function" && !window._lxSessionPerdueActive) await window._lxPacksRejouer(); } catch(_eP) { console.warn("[packs] rejeu", _eP); }
       if (ok) {
         console.log("[WAL] rejeu (" + (raison || "auto") + ") : " + ok + " enregistrement(s) transmis");
         try { if (typeof toast === "function") toast("✓ " + ok + " enregistrement" + (ok > 1 ? "s" : "") + " en attente transmis au serveur", "success"); } catch(_t) {}
@@ -620,20 +646,95 @@ function lxWalTicketsNonTransmis(jour){
 window.lxWalTicketsNonTransmis = lxWalTicketsNonTransmis;
 // [NF525] La clôture Z est refusée tant que des tickets de la journée (ou antérieurs) ne sont pas transmis :
 // la Z serait scellée sans eux. Message clair + bouton pour relancer la transmission. Renvoie true si bloquée.
+function _lxWalEsc(v){ return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]; }); }
+function _lxWalLibTicket(e){
+  var d = e.data || {}, pr = Number(d.pr);
+  return "Ticket #" + (d.tkNum || "?") + (d.date ? " du " + String(d.date).slice(0, 10).split("-").reverse().join("/") : "") +
+    (isFinite(pr) ? " — " + pr.toFixed(2).replace(".", ",") + " €" : "") + (d.clientNom ? " — " + [d.clientPrenom, d.clientNom].filter(Boolean).join(" ") : "");
+}
 window.lxClotureBloqueeParWal = function(jour){
   try {
     var l = lxWalTicketsNonTransmis(jour);
     if (!l.length) return false;
+    window._lxZWalJour = jour || null;
+    var bloques = l.filter(function(e){ return e.bloque; });
     var m = document.getElementById("modal");
     var h = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">' +
       '<div style="font-size:42px;margin-bottom:8px">⏳</div><h2>Clôture impossible pour le moment</h2>' +
-      '<div style="font-size:14px;margin:10px 0 14px;line-height:1.5"><strong>' + l.length + ' ticket' + (l.length > 1 ? 's' : '') + '</strong> enregistré' + (l.length > 1 ? 's' : '') + ' sur cet appareil ' + (l.length > 1 ? "n'ont" : "n'a") + ' pas encore été transmis au serveur.<br>La clôture Z doit les inclure : transmettez-les d\'abord (vérifiez la connexion internet).</div>' +
-      '<div id="lxZWalMsg" style="font-size:12px;color:var(--text3);margin-bottom:10px"></div>' +
+      '<div style="font-size:14px;margin:10px 0 14px;line-height:1.5"><strong>' + l.length + ' ticket' + (l.length > 1 ? 's' : '') + '</strong> enregistré' + (l.length > 1 ? 's' : '') + ' sur cet appareil ' + (l.length > 1 ? "n'ont" : "n'a") + ' pas encore été transmis au serveur.<br>La clôture Z doit les inclure : transmettez-les d\'abord (vérifiez la connexion internet).</div>';
+    if (bloques.length) {
+      // 2026-10-14 : tickets refusés durablement par le serveur (≥ 10 échecs hors réseau) -> la Z ne doit pas rester
+      // bloquée indéfiniment : liste claire, signalement au support, et clôture forcée consignée (jamais silencieuse).
+      h += '<div style="text-align:left;background:var(--red-bg,rgba(220,53,69,.08));border:1px solid var(--red,#dc3545);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;line-height:1.45">' +
+        '<div style="font-weight:700;margin-bottom:6px">' + bloques.length + ' ticket' + (bloques.length > 1 ? 's' : '') + ' refusé' + (bloques.length > 1 ? 's' : '') + ' par le serveur à chaque essai :</div><ul style="margin:0 0 0 18px;padding:0">';
+      bloques.forEach(function(e){
+        h += '<li style="margin-bottom:4px">' + _lxWalEsc(_lxWalLibTicket(e)) + '<br><span style="font-size:11px;color:var(--text3)">' + _lxWalEsc((e.echecsServeur || e.tries || 0) + " essais — " + String(e.lastError || "erreur inconnue").slice(0, 160)) + '</span></li>';
+      });
+      h += '</ul></div>' +
+        '<button class="btn bk" id="lxZWalSupport" style="margin-bottom:8px" onclick="lxWalSignalerSupport()">Signaler au support</button>' +
+        '<button class="btn bk" style="margin-bottom:8px;background:var(--red,#dc3545);color:#fff" onclick="lxWalForcerCloture()">Forcer la clôture (ticket non transmis consigné)</button>';
+    }
+    h += '<div id="lxZWalMsg" style="font-size:12px;color:var(--text3);margin-bottom:10px"></div>' +
       '<button class="btn bg bk" id="lxZWalBtn" onclick="lxWalRelancerPourCloture()">Réessayer la transmission</button>' +
       '<button class="btn bk" style="margin-top:8px" onclick="cM()">Fermer</button></div></div>';
     if (m) m.innerHTML = h; else if (typeof showAlert === "function") showAlert(l.length + " ticket(s) non transmis : clôture impossible pour le moment", "warning");
     return true;
   } catch(_e) { return false; }
+};
+// Signalement au support des tickets bloqués : journal (DB_ERROR critique -> alerte support) + server_errors.
+window.lxWalSignalerSupport = async function(){
+  var b = document.getElementById("lxZWalSupport"), msg = document.getElementById("lxZWalMsg");
+  var bloques = lxWalTicketsNonTransmis(window._lxZWalJour || null).filter(function(e){ return e.bloque; });
+  if (!bloques.length) return;
+  if (b) { b.disabled = true; b.textContent = "Envoi au support…"; }
+  var resume = bloques.map(function(e){ var d = e.data || {}; return { wal_id: e.id, type: e.type, ts: e.ts, tk_num: d.tkNum || null, tk_id: d.id || null, date: d.date || null, montant: d.pr, essais: e.echecsServeur || e.tries || 0, erreur: e.lastError || null }; });
+  var ok1 = false, ok2 = false;
+  try { if (typeof saveAuditEntry === "function") ok1 = await saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "lxWalSignalerSupport", gravite: "critical", msg: "Tickets refusés durablement par le serveur : clôture Z bloquée, intervention support demandée", tickets: resume }).slice(0, 4000)); } catch(_a) {}
+  try {
+    if (_sb) { var r = await _sb.rpc("report_server_error", { p_source: "app_wal_bloque", p_message: bloques.length + " ticket(s) non transmis refusé(s) par le serveur — Z bloquée", p_severity: "error", p_context: { tickets: resume }, p_salon_id: _salonId || null }); ok2 = !!(r && !r.error); }
+  } catch(_r) {}
+  if (b) { b.disabled = false; b.textContent = (ok1 || ok2) ? "Signalé au support ✓" : "Signaler au support"; }
+  if (ok1 || ok2) { try { if (typeof toast === "function") toast("Signalement envoyé au support Luxyra", "success"); } catch(_t) {} }
+  else if (msg) msg.textContent = "Le signalement n'a pas pu être envoyé (connexion ?). Écrivez-nous depuis l'onglet Support.";
+};
+// Clôture forcée : chaque ticket bloqué est consigné INTÉGRALEMENT dans le journal (WAL_ABANDON, trace NF525) AVANT
+// d'être marqué « abandonné » dans la file (conservé sur l'appareil, jamais effacé). Sans trace écrite en base,
+// rien n'est abandonné.
+window.lxWalForcerCloture = function(){
+  var bloques = lxWalTicketsNonTransmis(window._lxZWalJour || null).filter(function(e){ return e.bloque; });
+  if (!bloques.length) return;
+  var txt = "Forcer la clôture sans " + (bloques.length > 1 ? "ces " + bloques.length + " tickets" : "ce ticket") + " ?\n\n" +
+    bloques.map(_lxWalLibTicket).join("\n") +
+    "\n\n" + (bloques.length > 1 ? "Ils ne seront pas inclus" : "Il ne sera pas inclus") + " dans la clôture Z. Le contenu complet est consigné dans le journal des événements (trace NF525) et conservé sur cet appareil ; le support pourra le régulariser. Cette action est tracée à votre nom.";
+  var go = async function(){
+    var msg = document.getElementById("lxZWalMsg"), nOk = 0, nKo = 0;
+    for (var i = 0; i < bloques.length; i++) {
+      var e = bloques[i], d = Object.assign({}, e.data || {}); delete d.ticketHtml;
+      var trace = { wal_id: e.id, type: e.type, raison: "clôture Z forcée : ticket refusé durablement par le serveur", essais: e.echecsServeur || e.tries || 0, derniere_erreur: e.lastError || null, ts: e.ts, mode_caisse: e.mode_caisse || null, tk_num: d.tkNum || null, tk_id: d.id || null, data: d };
+      var ok = false;
+      try { if (typeof saveAuditEntry === "function") ok = await saveAuditEntry("WAL_ABANDON", JSON.stringify(trace)); } catch(_a) { ok = false; }
+      if (!ok) { nKo++; continue; } // jamais abandonné sans trace en base
+      try {
+        var wal = JSON.parse(localStorage.getItem(_WAL_KEY) || "[]"), now = new Date().toISOString();
+        for (var k = 0; k < wal.length; k++) { if (wal[k] && wal[k].id === e.id) { wal[k].synced = true; wal[k].syncedAt = now; wal[k].abandonne = true; wal[k].abandonneAt = now; break; } }
+        localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+        nOk++;
+      } catch(_s) { nKo++; }
+    }
+    if (nKo) {
+      try { window.lxClotureBloqueeParWal(window._lxZWalJour || null); } catch(_r0) {}
+      msg = document.getElementById("lxZWalMsg");
+      if (msg) msg.textContent = nKo + " ticket(s) n'ont pas pu être consignés dans le journal (connexion ?) : ils bloquent toujours la clôture.";
+      try { if (typeof toast === "function") toast("Consignation impossible pour " + nKo + " ticket(s) : clôture toujours bloquée", "error"); } catch(_t) {}
+      return;
+    }
+    try { if (typeof toast === "function") toast(nOk + " ticket(s) non transmis consigné(s) dans le journal", "warning"); } catch(_t2) {}
+    try { if (typeof cM === "function") cM(); } catch(_c) {}
+    if (!lxWalTicketsNonTransmis(window._lxZWalJour || null).length) { try { if (typeof doCloture === "function") doCloture(); } catch(_d) {} }
+    else { try { window.lxClotureBloqueeParWal(window._lxZWalJour || null); } catch(_r) {} }
+  };
+  if (typeof showConfirm === "function") showConfirm(_lxWalEsc(txt), go); // texte échappé (noms de clients)
+  else if (window.confirm(txt)) go();
 };
 window.lxWalRelancerPourCloture = async function(){
   var b = document.getElementById("lxZWalBtn"), msg = document.getElementById("lxZWalMsg");
@@ -646,7 +747,9 @@ window.lxWalRelancerPourCloture = async function(){
     try { if (typeof doCloture === "function") doCloture(); } catch(_d) {}
     return;
   }
-  if (b) { b.disabled = false; b.textContent = "Réessayer la transmission"; }
+  // 2026-10-14 : des tickets sont désormais marqués bloqués -> fenêtre réaffichée avec leur liste et les actions
+  if (lxWalTicketsNonTransmis(window._lxZWalJour || null).some(function(e){ return e.bloque; })) { try { window.lxClotureBloqueeParWal(window._lxZWalJour || null); } catch(_r) {} msg = document.getElementById("lxZWalMsg"); }
+  else if (b) { b.disabled = false; b.textContent = "Réessayer la transmission"; }
   if (msg) msg.textContent = reste + " ticket(s) toujours en attente. Vérifiez la connexion puis réessayez ; si le problème persiste, contactez le support.";
 };
 
@@ -4199,7 +4302,7 @@ async function saveCloture(clot) {
 async function saveAuditEntry(action, detail) {
   if (!_isOnline || !_salonId) {
     console.warn("[AUDIT] saveAuditEntry skipped: _isOnline="+_isOnline+" _salonId="+_salonId);
-    return;
+    return false;
   }
   var payload = {
     salon_id: _salonId, action: action, details: detail || ""
@@ -4219,15 +4322,20 @@ async function saveAuditEntry(action, detail) {
         var res2 = await _sb.from("audit_log").insert(fallback);
         if (res2 && res2.error) {
           console.error("[AUDIT] Erreur fallback insert:", res2.error.message || res2.error);
+          return false;
         } else {
           console.warn("[AUDIT] Insert réussi sans operator_id (colonnes peut-être manquantes)");
+          return true;
         }
       }
+      return false;
     } else {
       console.log("[AUDIT] Insert OK:", action);
+      return true; // 2026-10-14 : résultat renvoyé (les appelants qui l'ignorent sont inchangés)
     }
   } catch(e) {
     console.error("[AUDIT] Exception saveAuditEntry:", e.message || e);
+    return false;
   }
 }
 
@@ -5046,12 +5154,65 @@ async function _lxOperatorLoginHorsLigne(operatorId, pin) {
   return { ok: true, offline: true, op: Object.assign({}, e.op) };
 }
 
+// 2026-10-14 (fenêtre de déploiement) : tant que secu.sql n'est pas appliqué, les RPC operateur_* n'existent pas encore.
+// Fonction absente (PGRST202 / 42883 / « Could not find the function ») -> ANCIEN chemin (lecture de pin_hash + hashPIN),
+// pour que la caisse ne se bloque jamais pendant le déploiement. Toute AUTRE erreur reste bloquante (fail-closed).
+function _lxRpcAbsente(err) {
+  if (!err) return false;
+  var c = String(err.code || ""), m = String(err.message || "") + " " + String(err.details || "") + " " + String(err.hint || "");
+  return c === "PGRST202" || c === "42883" || /Could not find the function/i.test(m);
+}
+function _lxOpSansPin(op) { var o = Object.assign({}, op || {}); delete o.pin_hash; return o; }
+async function _lxOperatorLoginAncien(operatorId, pin) {
+  var r = await _sb.from("salon_operateurs").select("*").eq("id", operatorId).limit(1);
+  if (r.error) return {ok:false, error:r.error.message || "Erreur"};
+  if (!r.data || !r.data.length) return {ok:false, error:"Op\u00e9rateur introuvable"};
+  var op = r.data[0];
+  if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
+  if (op.locked_until && new Date(op.locked_until) > new Date()) {
+    return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true, remaining:0, max:5, lockedUntil:op.locked_until};
+  }
+  if (!op.pin_hash) return {ok:false, error:"V\u00e9rification du PIN impossible"}; // colonne non lisible : jamais de connexion sans contrôle
+  var pinHash = await hashPIN(String(pin || ""), _salonId);
+  if (pinHash !== op.pin_hash) {
+    var fails = (op.failed_attempts || 0) + 1;
+    var update = {failed_attempts: fails};
+    if (fails >= 5) update.locked_until = new Date(Date.now() + 30*60*1000).toISOString();
+    await _sb.from("salon_operateurs").update(update).eq("id", operatorId);
+    return {ok:false, error:"PIN incorrect ("+fails+"/5)", locked:fails>=5, fails:fails, remaining:Math.max(0,5-fails), max:5, lockedUntil:update.locked_until||null};
+  }
+  await _sb.from("salon_operateurs").update({ failed_attempts: 0, locked_until: null, last_login_at: new Date().toISOString() }).eq("id", operatorId);
+  return {ok:true, op:_lxOpSansPin(op)};
+}
+async function _lxOperatorBioAncien(operatorId) {
+  var r = await _sb.from("salon_operateurs").select(LX_OP_COLONNES).eq("id", operatorId).limit(1);
+  if (r.error) return {ok:false, error:r.error.message || "Erreur"};
+  if (!r.data || !r.data.length) return {ok:false, error:"Op\u00e9rateur introuvable"};
+  var op = r.data[0];
+  if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
+  if (op.locked_until && new Date(op.locked_until) > new Date()) return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true};
+  await _sb.from("salon_operateurs").update({ failed_attempts: 0, last_login_at: new Date().toISOString() }).eq("id", operatorId);
+  return {ok:true, op:_lxOpSansPin(op)};
+}
+async function _lxUnlockAncien(id) {
+  var r = await _sb.from("salon_operateurs").update({ failed_attempts: 0, locked_until: null }).eq("id", id).select("id");
+  if (r.error) { console.error("[OP UNLOCK ancien]", r.error.message); return {ok:false, error:r.error.message}; }
+  if (!r.data || !r.data.length) return {ok:false, error:"Déblocage impossible (droits refusés)"};
+  return {ok:true};
+}
+
 // Tenter login avec PIN — retourne {ok:true, op:...} ou {ok:false, error:..., locked:bool}
 async function operatorLogin(operatorId, pin) {
   if (!_salonId) return {ok:false, error:"Hors ligne"};
   if (!_isOnline || (typeof navigator !== "undefined" && navigator.onLine === false)) return await _lxOperatorLoginHorsLigne(operatorId, pin);
   try {
     var r = await _sb.rpc("operateur_verifier_pin", { p_operateur_id: operatorId, p_pin: String(pin || "") });
+    if (r.error && _lxRpcAbsente(r.error)) {
+      // RPC pas encore déployée : ancien contrôle (empreinte relue en base)
+      var ra = await _lxOperatorLoginAncien(operatorId, pin);
+      if (ra.ok) { window._lxOpConnexionHorsLigne = false; await _lxOpCacheMemoriser(ra.op, pin); }
+      return ra;
+    }
     if (r.error) {
       if (_lxEstHorsLigne(r.error)) return await _lxOperatorLoginHorsLigne(operatorId, pin);
       return {ok:false, error:r.error.message || "Erreur"};
@@ -5081,6 +5242,11 @@ async function operatorLoginBio(operatorId) {
   if (!_isOnline || (typeof navigator !== "undefined" && navigator.onLine === false)) return _lxOperatorBioHorsLigne(operatorId);
   try {
     var r = await _sb.rpc("operateur_connexion_bio", { p_operateur_id: operatorId });
+    if (r.error && _lxRpcAbsente(r.error)) {
+      var rb = await _lxOperatorBioAncien(operatorId); // RPC pas encore déployée
+      if (rb.ok) { window._lxOpConnexionHorsLigne = false; await _lxOpCacheMemoriser(rb.op, null); }
+      return rb;
+    }
     if (r.error) { if (_lxEstHorsLigne(r.error)) return _lxOperatorBioHorsLigne(operatorId); return {ok:false, error:r.error.message || "Erreur"}; }
     var d = r.data || {};
     if (d.ok && d.op) { window._lxOpConnexionHorsLigne = false; await _lxOpCacheMemoriser(d.op, null); return {ok:true, op:d.op}; }
@@ -5093,6 +5259,7 @@ async function unlockOperateur(id) {
   if (!_isOnline || !_salonId) return false;
   try {
     var r = await _sb.rpc("operateur_debloquer", { p_operateur_id: id });
+    if (r.error && _lxRpcAbsente(r.error)) r = { data: await _lxUnlockAncien(id), error: null }; // RPC pas encore déployée
     if (r.error) { console.error("[OP UNLOCK]", r.error.message); return false; }
     if (!r.data || !r.data.ok) { try { if (typeof toast === "function") toast((r.data && r.data.error) || "Déblocage impossible", "warning"); } catch(_t){} return false; }
     try { var c = _lxOpCacheLire(); if (c[id]) { c[id].f = 0; c[id].lu = null; _lxOpCacheEcrire(c); } } catch(_c){}

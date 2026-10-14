@@ -458,6 +458,19 @@ $function$;
 --    - établissement sans collaborateur : capacité 1 (avant : aucun contrôle)
 --    - erreur inattendue -> REFUS (avant : laissait passer)
 -- -------------------------------------------------------------------------------------
+-- 2026-10-14 intégration : conversion sûre texte -> entier (NULL si illisible), pour les contrôles de
+-- disponibilité (phases « d », horaires effectifs) : une donnée mal formée ne fait plus échouer la réservation.
+CREATE OR REPLACE FUNCTION public.lx_int_sur(t text)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'pg_catalog'
+AS $function$
+  select case when t ~ '^\s*-?[0-9]{1,9}\s*$' then trim(t)::integer
+              when t ~ '^\s*-?[0-9]{1,9}\.[0-9]*\s*$' then round(trim(t)::numeric)::integer
+              else null end
+$function$;
+
 CREATE OR REPLACE FUNCTION public.rdv_online_block_double_booking()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -489,9 +502,9 @@ begin
       where a.salon_id=new.salon_id and a.collab_id=new.collaborateur_id and a.date_rdv::text=new.date_rdv::text
         and coalesce(a.cancelled,false)=false and coalesce(a.status,'') not in ('canc','cancelled','annule')
         and a.heure ~ '^[0-9]{1,2}:[0-9]{2}' and not public.lx_appt_sans_duree(a.from_caisse, a.a_phases, a.service_id, a.items)
-        and (split_part(a.heure,':',1)::int*60+split_part(a.heure,':',2)::int) < v_ne
-        and (split_part(a.heure,':',1)::int*60+split_part(a.heure,':',2)::int
-             + greatest((select coalesce(sum((p->>'d')::int),0) from jsonb_array_elements(coalesce(a.a_phases,'[]'::jsonb)) p),30)) > v_ns
+        and coalesce(public.lx_hm(substring(a.heure from '^[0-9]{1,2}:[0-9]{2}')),-100000) < v_ne
+        and (coalesce(public.lx_hm(substring(a.heure from '^[0-9]{1,2}:[0-9]{2}')),-100000)
+             + greatest((select coalesce(sum(coalesce(public.lx_int_sur(p->>'d'),0)),0) from jsonb_array_elements(coalesce(a.a_phases,'[]'::jsonb)) p),30)) > v_ns
     ) then raise exception 'Ce créneau vient d''être réservé, merci d''en choisir un autre' using errcode='23P01'; end if;
   end if;
 
@@ -511,8 +524,10 @@ begin
     v_collab_count := v_collab_count + 1;
     v_eh := public.lx_horaires_effectifs(new.salon_id, v_col.id, new.date_rdv);
     if v_eh is null then continue; end if;
-    if v_ns < (v_eh->>'o')::int or v_ne > (v_eh->>'c')::int then continue; end if;
-    if exists (select 1 from jsonb_array_elements(coalesce(v_eh->'b','[]'::jsonb)) b where v_ns < (b->>1)::int and v_ne > (b->>0)::int) then continue; end if;
+    -- horaires illisibles -> collaborateur considéré indisponible (prudence)
+    if public.lx_int_sur(v_eh->>'o') is null or public.lx_int_sur(v_eh->>'c') is null then continue; end if;
+    if v_ns < public.lx_int_sur(v_eh->>'o') or v_ne > public.lx_int_sur(v_eh->>'c') then continue; end if;
+    if exists (select 1 from jsonb_array_elements(coalesce(v_eh->'b','[]'::jsonb)) b where coalesce(v_ns < public.lx_int_sur(b->>1) and v_ne > public.lx_int_sur(b->>0), true)) then continue; end if;
     v_busy := exists(
         select 1 from rdv_online r
         where r.salon_id=new.salon_id and r.collaborateur_id=v_col.id and r.date_rdv=new.date_rdv
@@ -524,9 +539,9 @@ begin
         where a.salon_id=new.salon_id and a.collab_id=v_col.id and a.date_rdv::text=new.date_rdv::text
           and coalesce(a.cancelled,false)=false and coalesce(a.status,'') not in ('canc','cancelled','annule')
           and a.heure ~ '^[0-9]{1,2}:[0-9]{2}' and not public.lx_appt_sans_duree(a.from_caisse, a.a_phases, a.service_id, a.items)
-          and (split_part(a.heure,':',1)::int*60+split_part(a.heure,':',2)::int) < v_ne
-          and (split_part(a.heure,':',1)::int*60+split_part(a.heure,':',2)::int
-               + greatest((select coalesce(sum((p->>'d')::int),0) from jsonb_array_elements(coalesce(a.a_phases,'[]'::jsonb)) p),30)) > v_ns
+          and coalesce(public.lx_hm(substring(a.heure from '^[0-9]{1,2}:[0-9]{2}')),-100000) < v_ne
+          and (coalesce(public.lx_hm(substring(a.heure from '^[0-9]{1,2}:[0-9]{2}')),-100000)
+               + greatest((select coalesce(sum(coalesce(public.lx_int_sur(p->>'d'),0)),0) from jsonb_array_elements(coalesce(a.a_phases,'[]'::jsonb)) p),30)) > v_ns
       );
     if not v_busy then
       v_free := v_free + 1;
@@ -556,9 +571,9 @@ begin
                    where a.salon_id=new.salon_id and a.date_rdv::text=new.date_rdv::text
                      and coalesce(a.cancelled,false)=false and coalesce(a.status,'') not in ('canc','cancelled','annule')
                      and a.heure ~ '^[0-9]{1,2}:[0-9]{2}' and not public.lx_appt_sans_duree(a.from_caisse, a.a_phases, a.service_id, a.items)
-                     and (split_part(a.heure,':',1)::int*60+split_part(a.heure,':',2)::int) < v_ne
-                     and (split_part(a.heure,':',1)::int*60+split_part(a.heure,':',2)::int
-                          + greatest((select coalesce(sum((p->>'d')::int),0) from jsonb_array_elements(coalesce(a.a_phases,'[]'::jsonb)) p),30)) > v_ns) then
+                     and coalesce(public.lx_hm(substring(a.heure from '^[0-9]{1,2}:[0-9]{2}')),-100000) < v_ne
+                     and (coalesce(public.lx_hm(substring(a.heure from '^[0-9]{1,2}:[0-9]{2}')),-100000)
+                          + greatest((select coalesce(sum(coalesce(public.lx_int_sur(p->>'d'),0)),0) from jsonb_array_elements(coalesce(a.a_phases,'[]'::jsonb)) p),30)) > v_ns) then
       raise exception 'Ce créneau vient d''être réservé, merci d''en choisir un autre' using errcode='23P01';
     end if;
     return new;
@@ -571,8 +586,24 @@ begin
 exception
   when sqlstate '23P01' then raise;   -- conflit délibéré -> bloque
   -- 2026-10-14 audit : toute autre erreur -> REFUS (fail closed). Avant : la réservation passait sans contrôle.
+  -- 2026-10-14 intégration : l'erreur est tracée avant le refus.
+  --   * RAISE WARNING -> journal Postgres (Supabase > Logs), seule trace qui survit au refus ;
+  --   * report_server_error est aussi appelé, mais sa ligne server_errors est annulée avec l'insertion refusée
+  --     (pas de dblink sur le projet) : la trace durable dans server_errors vient de site.html (_resaFail ->
+  --     lx-error-report), qui transmet désormais le « detail » ci-dessous.
   when others then
-    raise exception 'Vérification de disponibilité impossible, merci de réessayer dans un instant' using errcode = 'P0001', detail = SQLERRM;
+    declare v_err text := SQLSTATE || ' ' || SQLERRM;
+    begin
+      raise warning 'rdv_online_block_double_booking salon=% date=% heure=% : %', new.salon_id, new.date_rdv, new.heure_rdv, v_err;
+      begin
+        perform public.report_server_error('sql:rdv_online_block_double_booking', left(v_err, 800), 'error', null,
+          jsonb_build_object('date_rdv', new.date_rdv, 'heure_rdv', new.heure_rdv, 'collaborateur_id', new.collaborateur_id),
+          new.salon_id, null, 'rdv_online', null, null);
+      exception when others then null;
+      end;
+      raise exception 'Vérification de disponibilité impossible, merci de réessayer dans un instant'
+        using errcode = 'P0001', detail = left(v_err, 500), hint = 'lx_dispo_erreur';
+    end;
 end;
 $function$;
 

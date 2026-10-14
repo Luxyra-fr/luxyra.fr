@@ -6,6 +6,8 @@
 -- Registre : docs/registre-interventions-nf525.md, entrée du 2026-10-14 (audit caisse).
 -- =====================================================================================================
 
+BEGIN;  -- 2026-10-14 intégration : tout ou rien
+
 -- -----------------------------------------------------------------------------------------------------
 -- 1) corriger_reglement_rdv — correction du mode de règlement LE JOUR MÊME (avant clôture Z)
 --    Définition actuelle reprise À L'IDENTIQUE, deux modifications seulement :
@@ -151,6 +153,20 @@ begin
 end $function$;
 REVOKE ALL ON FUNCTION public.nf525_duplicata_z(uuid, integer, date, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.nf525_duplicata_z(uuid, integer, date, text) TO authenticated, service_role;
+
+-- -----------------------------------------------------------------------------------------------------
+-- Bot de support (règle permanente) : comportements ajoutés lors de l'intégration du 14/10/2026
+-- -----------------------------------------------------------------------------------------------------
+INSERT INTO public.support_bot_kb (cle, titre, ordre, contenu, actif, maj_le)
+VALUES ('integration_1014', 'Clôture Z bloquée, séances de forfait hors ligne (octobre 2026)', 96,
+$kb$Clôture Z refusée « tickets non transmis » : la Z attend que les tickets enregistrés sur l'appareil soient envoyés au serveur. Vérifier la connexion puis « Réessayer la transmission ».
+Si un ticket est refusé par le serveur à chaque essai (10 échecs hors coupure réseau), la fenêtre le liste avec deux boutons : « Signaler au support » (l'équipe Luxyra est prévenue avec le détail) et « Forcer la clôture (ticket non transmis consigné) ». Forcer la clôture enregistre le contenu complet du ticket dans le journal des événements (trace NF525) et le garde sur l'appareil ; la Z est alors faite sans lui et le support le régularise. Ne forcer qu'en dernier recours.
+Séance de forfait (pack) encaissée sans connexion : elle est mise en attente sur l'appareil et décomptée automatiquement au retour de la connexion (jamais deux fois). Si le doute existe (connexion coupée pendant l'envoi), un message « séance à vérifier » s'affiche : contrôler le nombre de séances du forfait dans la fiche client.
+Ticket d'un client annulé avec un forfait : seules les séances réellement décomptées sont rendues.
+Problème persistant ou ticket bloqué : <ESCALATE/>$kb$, true, now())
+ON CONFLICT (cle) DO UPDATE SET titre = EXCLUDED.titre, ordre = EXCLUDED.ordre, contenu = EXCLUDED.contenu, actif = true, maj_le = now();
+
+COMMIT;
 
 -- -----------------------------------------------------------------------------------------------------
 -- Contrôles après application (lecture seule)
