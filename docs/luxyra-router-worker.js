@@ -2495,6 +2495,7 @@ async function handleRdvDemandeConnectPay(request, env) {
     const demande = dRows[0];
 
     if (demande.status === "confirmed") return jsonResponse({ error: "Cette proposition est déjà confirmée." }, 409);
+    if (demande.status === "pending") return jsonResponse({ error: "L'établissement prépare une nouvelle proposition : vous allez la recevoir. Aucun paiement n'a été effectué." }, 409); // 2026-10-14
     if (["refused", "cancelled_by_salon", "expired"].includes(demande.status)) {
       return jsonResponse({ error: "Cette proposition n'est plus active." }, 409);
     }
