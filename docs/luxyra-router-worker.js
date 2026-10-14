@@ -4584,13 +4584,43 @@ async function handleClientAnonymize(request, env) {
     const lxId = session.lx_id;
     const email = session.email;
     const errors = [];
+    // 0) 2026-10-14 audit : les rendez-vous À VENIR sont annulés (avant : ils restaient au planning de
+    // l'établissement, anonymes, sans moyen de joindre le client). Acompte remboursé selon la politique
+    // d'annulation de l'établissement (même traitement qu'une annulation par le client), empreinte libérée.
+    let annules = 0;
+    try {
+      const _or = [lxId ? `client_luxyra_id.eq.${encodeURIComponent(lxId)}` : null, email ? `client_email.eq.${encodeURIComponent(email)}` : null].filter(Boolean).join(",");
+      const _jour = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+      if (_or) {
+        const lr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=*&or=(${_or})&status=in.(pending,pending_payment,confirmed)&date_rdv=gte.${_jour}&limit=200`, { headers: _sbHeaders(env) });
+        const aVenir = lr.ok ? await lr.json() : [];
+        for (const r0 of (Array.isArray(aVenir) ? aVenir : [])) {
+          try {
+            const debut = lxParisVersDate(r0.date_rdv, r0.heure_rdv || "23:59");
+            if (isFinite(debut.getTime()) && debut.getTime() < Date.now()) continue; // déjà passé aujourd'hui
+            const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(r0.id)}&status=in.(pending,pending_payment,confirmed)`, {
+              method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }),
+              body: JSON.stringify({ status: "cancelled", cancelled_at: new Date().toISOString(), cancelled_by: "client", cancel_reason: "Annulé suite à suppression du compte" })
+            });
+            const pa = pr.ok ? await pr.json() : [];
+            const row = Array.isArray(pa) ? pa[0] : null;
+            if (!row) continue;
+            annules++;
+            try { await refundAndRecord(env, row); } catch (e) { errors.push("remboursement " + r0.id + ": " + (e.message || e)); }
+            try { await releaseEmpreinteOnCancel(env, row); } catch (e) { errors.push("empreinte " + r0.id + ": " + (e.message || e)); }
+          } catch (e) { errors.push("annulation " + r0.id + ": " + (e.message || e)); }
+        }
+      }
+    } catch (e) { errors.push("rdv a venir: " + (e.message || e)); }
+    // Adresse du domicile et coordonnées effacées avec l'identité (comme purge_compte_client_inactif)
+    const _anonRdv = { client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "", client_adresse: null, client_adresse_cp: null, client_adresse_ville: null, adresse_complement: null, client_lat: null, client_lng: null };
     // 1) Anonymise rdv_online par lx_id
     if (lxId) {
       try {
         const r = await fetch(
           `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?client_luxyra_id=eq.${encodeURIComponent(lxId)}`,
           { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
-            body: JSON.stringify({ client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "" }) }
+            body: JSON.stringify(_anonRdv) }
         );
         if (!r.ok) errors.push("rdv_online by id: " + await r.text());
       } catch (e) { errors.push("rdv_online by id: " + e.message); }
@@ -4601,7 +4631,7 @@ async function handleClientAnonymize(request, env) {
         const r = await fetch(
           `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?client_email=eq.${encodeURIComponent(email)}`,
           { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
-            body: JSON.stringify({ client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "" }) }
+            body: JSON.stringify(_anonRdv) }
         );
         if (!r.ok) errors.push("rdv_online by email: " + await r.text());
       } catch (e) { errors.push("rdv_online by email: " + e.message); }
@@ -4647,7 +4677,7 @@ async function handleClientAnonymize(request, env) {
         if (!r.ok) errors.push("client_salon: " + await r.text());
       } catch (e) { errors.push("client_salon: " + e.message); }
     }
-    return jsonResponse({ success: true, partial_errors: errors.length ? errors : null });
+    return jsonResponse({ success: true, rdv_annules: annules, partial_errors: errors.length ? errors : null });
   } catch (e) {
     console.error("handleClientAnonymize:", e);
     return jsonResponse({ error: e.message || "erreur" }, 500);
@@ -4780,71 +4810,74 @@ async function handleClientInvite(request, env) {
   }
 }
 
+// 2026-10-14 audit : l'invitation crée désormais le COMPTE CLIENT Luxyra (clients_luxyra, par lx-signup — même
+// chemin que l'inscription) et relie la fiche du salon (clients.client_luxyra_id). Avant : un utilisateur
+// Supabase Auth (comptes des PROS) était créé, le client ne pouvait pas se connecter à son espace.
 async function handleClientInviteVerify(request, env) {
   try {
-    const { token, password } = await request.json();
+    const { token, password } = await readJsonBody(request);
     if (!token) return jsonResponse({ error: "token requis" }, 400);
-    if (!password || String(password).length < 6) return jsonResponse({ error: "Mot de passe minimum 6 caractères" }, 400);
+    if (!password || String(password).length < 8) return jsonResponse({ error: "Mot de passe : 8 caractères minimum" }, 400);
 
     // Charge l'invitation
-    const inviteRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&select=*`, {
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
-    });
-    const invites = await inviteRes.json();
-    if (!invites || !invites.length) return jsonResponse({ error: "Invitation introuvable ou expirée" }, 404);
+    const inviteRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&select=*`, { headers: _sbHeaders(env) });
+    const invites = inviteRes.ok ? await inviteRes.json() : [];
+    if (!Array.isArray(invites) || !invites.length) return jsonResponse({ error: "Invitation introuvable ou expirée" }, 404);
     const invite = invites[0];
     if (invite.used_at) return jsonResponse({ error: "Cette invitation a déjà été utilisée. Connectez-vous avec votre mot de passe." }, 410);
     if (new Date(invite.expires_at) < new Date()) return jsonResponse({ error: "Cette invitation a expiré. Demandez-en une nouvelle au salon." }, 410);
+    const email = String(invite.email || "").toLowerCase().trim();
 
-    // Crée le compte auth Supabase via Admin API (avec service_role key)
-    const signupRes = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users`, {
-      method: "POST",
-      headers: {
-        "apikey": env.SUPABASE_SERVICE_KEY,
-        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ email: invite.email, password, email_confirm: true })
-    });
-    let authUserId = null;
-    if (signupRes.ok) {
-      const signupData = await signupRes.json();
-      authUserId = signupData.id || signupData.user?.id;
-    } else if (signupRes.status === 422) {
-      // SECURITE 2026-10-08 : un compte existe deja -> on ne change JAMAIS son mot de passe ici.
-      return jsonResponse({ error: "Un compte existe déjà avec cet email. Connectez-vous, ou utilisez « Mot de passe oublié »." }, 409);
-    } else {
-      const t = await signupRes.text();
-      console.error("auth signup failed:", signupRes.status, t);
-      return jsonResponse({ error: "Erreur création compte" }, 500);
-    }
-    if (!authUserId) return jsonResponse({ error: "ID utilisateur non récupéré" }, 500);
-
-    // Lie la fiche client à l'auth user (clients.user_id = authUserId)
-    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}`, {
-      method: "PATCH",
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: authUserId })
-    });
-
-    // Marque l'invitation comme utilisée
-    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}`, {
-      method: "PATCH",
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ used_at: new Date().toISOString() })
-    });
-
-    // 2026-10-14 : le compte créé ici est un compte Supabase Auth, PAS un compte client Luxyra (clients_luxyra,
-    // créé uniquement par l'edge function lx-signup). On renvoie le prénom / nom / téléphone de la fiche pour que
-    // compte.html pré-remplisse l'inscription client si la connexion directe échoue.
-    // TODO : créer le compte client Luxyra ici (appel serveur à lx-signup ou RPC dédiée) quand ce sera possible.
-    let fiche = null;
+    // Fiche du salon (pour le nom / prénom / téléphone / adresse du compte)
+    let fiche = {};
     try {
-      const fr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&select=nom,prenom,telephone&limit=1`, { headers: _sbHeaders(env) });
+      const fr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&salon_id=eq.${encodeURIComponent(invite.salon_id)}&select=id,nom,prenom,telephone,adresse,cp,ville,client_luxyra_id&limit=1`, { headers: _sbHeaders(env) });
       const fj = fr.ok ? await fr.json() : [];
-      if (Array.isArray(fj) && fj[0]) fiche = { nom: fj[0].nom || "", prenom: fj[0].prenom || "", telephone: fj[0].telephone || "" };
+      if (Array.isArray(fj) && fj[0]) fiche = fj[0];
     } catch (_) {}
-    return jsonResponse({ ok: true, email: invite.email, fiche });
+    const lier = async (lxId) => {
+      // Lien fiche salon <-> compte client (seulement si la fiche n'est pas déjà liée à un AUTRE compte)
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&salon_id=eq.${encodeURIComponent(invite.salon_id)}&or=(client_luxyra_id.is.null,client_luxyra_id.eq.${encodeURIComponent(lxId)})`, {
+        method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ client_luxyra_id: lxId })
+      });
+      try {
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_salon?on_conflict=client_id,salon_id`, {
+          method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=ignore-duplicates,return=minimal" }),
+          body: JSON.stringify({ client_id: lxId, salon_id: invite.salon_id, premiere_visite: new Date().toISOString().slice(0, 10) })
+        });
+      } catch (_) {}
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&used_at=is.null`, {
+        method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ used_at: new Date().toISOString() })
+      });
+    };
+
+    // Compte client déjà existant -> jamais de changement de mot de passe ici ; la fiche est reliée
+    // (le lien reçu par e-mail prouve que la personne contrôle cette adresse).
+    const ex = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=id&email=eq.${encodeURIComponent(email)}&limit=1`, { headers: _sbHeaders(env) });
+    const exa = ex.ok ? await ex.json() : [];
+    if (Array.isArray(exa) && exa[0]) {
+      await lier(exa[0].id);
+      return jsonResponse({ error: "Un compte client existe déjà avec cet e-mail : votre fiche y est maintenant reliée. Connectez-vous, ou utilisez « Mot de passe oublié ».", compte_existant: true, email }, 409);
+    }
+
+    // Création du compte client par lx-signup (mêmes contrôles : 8 caractères, mot de passe divulgué, PBKDF2)
+    const su = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/lx-signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.SUPABASE_SERVICE_KEY, Authorization: "Bearer " + env.SUPABASE_SERVICE_KEY },
+      body: JSON.stringify({ email, password: String(password), nom: String(fiche.nom || "").trim() || "Client", prenom: String(fiche.prenom || "").trim() || "-", telephone: fiche.telephone || null, adresse: fiche.adresse || null, cp: fiche.cp || null, ville: fiche.ville || null })
+    });
+    const sd = await su.json().catch(() => ({}));
+    if (!su.ok || !sd || !sd.user || !sd.session_token) {
+      if (su.status >= 500) console.error("invite lx-signup:", su.status, JSON.stringify(sd).slice(0, 300));
+      return jsonResponse({ error: (sd && sd.error) || "Création du compte impossible" }, su.status >= 400 && su.status < 500 ? su.status : 500);
+    }
+    // L'invitation reçue par e-mail vaut vérification de l'adresse (comme le lien « mot de passe oublié »)
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?id=eq.${encodeURIComponent(sd.user.id)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ email_verified: true }) });
+      sd.user.email_verified = true;
+    } catch (_) {}
+    await lier(sd.user.id);
+    return jsonResponse({ ok: true, email, user: sd.user, session_token: sd.session_token });
   } catch (e) {
     console.error("handleClientInviteVerify error:", e);
     return jsonResponse({ error: e.message || "Erreur serveur" }, 500);
