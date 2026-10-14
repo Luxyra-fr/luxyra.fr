@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261014-6"; // 2026-10-14 audit planning : lxApptAnnuleSansTicket
+window.LX_DATA_VERSION = "20261014-7"; // 2026-10-14 intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -2974,6 +2974,10 @@ async function saveAppointment(appt) {
   var _t0 = new Date().toISOString();
   if (!appt) return { ok: false, reason: "rendez-vous absent" };
   if (_lxEcrituresBloquees()) return { ok: false, skipped: true, reason: "lecture seule" };
+  // 2026-10-14 audit caisse : ticket d'acompte local écarté comme DOUBLON (_lxAcompteDoublonEcarter) -> toute réécriture ultérieure
+  // (file de secours rejouée, autre chemin) le garde neutralisé (jamais recompté dans la caisse). Placé AVANT la mise en file
+  // pour que l'entrée de la file de secours soit elle aussi neutralisée.
+  try { if (appt && appt.id && appt.acompteKey) { var _dbl = JSON.parse(localStorage.getItem("lx_ac_doublons") || "{}"); if (_dbl[appt.id]) { appt.cancelled = true; delete appt.cancelDate; appt.cancelReason = appt.cancelReason || _dbl[appt.id]; } } } catch (_eDbl) {}
   if (appt.id && !(appt.st === "done" || appt.tkNum) && _lxRdvSupprime(appt.id)) {
     console.warn("[saveAppointment] rendez-vous supprimé : sauvegarde ignorée", appt.id);
     return { ok: false, permanent: true, supprime: true };
@@ -3305,7 +3309,8 @@ async function _saveAppointmentUneFois(appt) {
 var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClients","clientNom","clientPrenom",
   "isAcompte","isAcompteCancel","apptId","isRetenue","retenueKey","retenueRdv","origTkNum","origTkNums",
   "bonVenduRemise","offertRemise","dbNum",
-  "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId"]; // 2026-10-14 (NF525 acompte en ligne)
+  "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId", // 2026-10-14 (NF525 acompte en ligne)
+  "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe"]; // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
 function _lxApptMetaDepuis(appt) {
   try {
     if (!appt || typeof appt !== "object") return null;
@@ -3648,7 +3653,32 @@ async function saveTicketToDb(tk) {
     // si taux produits == taux services (France, Belgique, défaut) -> calcul mono-taux
     // STRICTEMENT inchangé (byte-identique). Sinon -> ventilation prestations/produits.
     var _txProd = (SALON_CONFIG.tvaProduits != null && Number(SALON_CONFIG.tvaProduits) !== taux) ? Number(SALON_CONFIG.tvaProduits) : taux;
-    if (_txProd === taux) {
+    // 2026-10-14 audit : une ligne porte un taux PROPRE (produit à taux particulier, items[].tvaTaux, posé uniquement dans ce
+    // cas à l'encaissement) -> HT / TVA calculés ligne à ligne (TTC du ticket réparti au prorata des lignes, comme la
+    // ventilation prestations / produits ci-dessous). Format de l'empreinte serveur inchangé ; tickets existants non concernés.
+    var _itsT = tk.items || [], _ligneTaux = false;
+    for (var _j = 0; _j < _itsT.length; _j++) { if (_itsT[_j] && !_itsT[_j].isSep && _itsT[_j].tvaTaux != null && !isNaN(Number(_itsT[_j].tvaTaux))) { _ligneTaux = true; break; } }
+    if (_ligneTaux && taux > 0) {
+      var _parTaux = {}, _somme = 0;
+      for (var _k = 0; _k < _itsT.length; _k++) {
+        var _l = _itsT[_k]; if (!_l || _l.isSep) continue;
+        var _sl = (Number(_l.price)||0) * (Number(_l.qty)||1) - (Number(_l.remise)||0);
+        var _rl = (_l.tvaTaux != null && !isNaN(Number(_l.tvaTaux))) ? Number(_l.tvaTaux) : (_l.isProd ? _txProd : taux);
+        _parTaux[_rl] = (_parTaux[_rl] || 0) + _sl; _somme += _sl;
+      }
+      if (Math.abs(_somme) > 0.004) {
+        var _htT = 0, _reste = ttc, _cles = Object.keys(_parTaux);
+        for (var _c = 0; _c < _cles.length; _c++) {
+          var _ttcR = (_c === _cles.length - 1) ? _reste : Math.round(_parTaux[_cles[_c]] / _somme * ttc * 100) / 100;
+          _reste = Math.round((_reste - _ttcR) * 100) / 100;
+          _htT += Math.round(_ttcR / (1 + Number(_cles[_c]) / 100) * 100) / 100;
+        }
+        ht = Math.round(_htT * 100) / 100;
+        tva = Math.round((ttc - ht) * 100) / 100;
+      } else { _ligneTaux = false; }
+    } else { _ligneTaux = false; }
+    if (_ligneTaux) { /* HT / TVA déjà calculés ligne à ligne */ }
+    else if (_txProd === taux) {
       ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
       tva = Math.round((ttc - ht) * 100) / 100;
     } else {
@@ -3779,8 +3809,17 @@ async function saveTicketToDb(tk) {
       // 2026-10-14 (NF525 acompte en ligne) : ticket d'acompte en ligne / de remboursement déjà enregistré par un autre
       // appareil (index unique raw_data->>acompteKey) -> même événement économique déjà en base : on reprend la ligne.
       try {
-        var _exAk = await _sb.from("tickets").select("id, num, hash, hash_prev").eq("salon_id", _salonId).eq("raw_data->>acompteKey", tk.acompteKey).limit(1).maybeSingle();
+        var _exAk = await _sb.from("tickets").select("id, num, hash, hash_prev, rid:raw_data->>id, tkNumSrv:raw_data->tkNum").eq("salon_id", _salonId).eq("raw_data->>acompteKey", tk.acompteKey).limit(1).maybeSingle();
         if (_exAk && _exAk.data && _exAk.data.id) {
+          // 2026-10-14 audit : le ticket en base est celui d'un AUTRE appareil (verrou repris après 15 min, file de secours
+          // rejouée) -> le ticket local est un DOUBLON jamais entré au journal : il est écarté de la caisse (mémoire + rendez-vous
+          // local neutralisé, hors CA) et le ticket du serveur est rechargé. Le ticket local ne reçoit JAMAIS le n° du serveur.
+          if (_exAk.data.rid && _exAk.data.rid !== tk.id) {
+            delete tk._dbError; _walMarkSynced(_walId);
+            try { if (typeof window._lxAcompteDoublonEcarter === "function") window._lxAcompteDoublonEcarter(tk, _exAk.data); } catch (_eDb) {}
+            var _rowSrv = { id: _exAk.data.id, num: _exAk.data.num, hash: _exAk.data.hash, hash_prev: _exAk.data.hash_prev, doublon: true, raw_data: { id: _exAk.data.rid, tkNum: _exAk.data.tkNumSrv } };
+            return _rowSrv;
+          }
           tk.dbId = _exAk.data.id; if (!tk.tkNum) tk.tkNum = _exAk.data.num; tk.hashPrev = _exAk.data.hash_prev;
           delete tk._dbError; _walMarkSynced(_walId);
           return _exAk.data;
