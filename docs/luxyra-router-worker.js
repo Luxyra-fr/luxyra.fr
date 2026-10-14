@@ -3450,7 +3450,11 @@ async function handleSmsRappel(request, env) {
 
 async function handleSmsCustom(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
+  // 2026-10-14 audit : les envois du SERVEUR (file sms_differes, rappels 24h, anniversaires/relances : pg_net,
+  // toujours la même adresse IP) ne sont plus limités à 15/minute — la file les envoie déjà par lots de 25 et
+  // chaque envoi reste soumis au contrôle Pro + crédits. La limite par IP reste pour les appels depuis un appareil.
+  const _interne = await lxIsInternal(request, env);
+  if (!_interne && !checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
   const { telephone, message, salonName, salon_id } = await request.json();
   if (!telephone || !message) return jsonResponse({ error: "telephone et message requis" }, 400);
   const contenu = lxSmsGsm(message);
@@ -3509,6 +3513,31 @@ async function handleClientTickets(request, env) {
 // Permet ensuite de DROP les policies anon USING(true) qui leakaient toutes
 // les données client à n'importe quel détenteur de l'anon key (publique).
 
+// 2026-10-14 audit : identifiants d'un client connecté pour lire cartes / fidélité.
+// - lxId : id du compte Luxyra (toujours) ;
+// - clientIds : fiches de salon liées au compte (clients.client_luxyra_id) ;
+// - emailVerifie : l'email ne sert de repli QUE s'il a été vérifié (clients_luxyra.email_verified).
+function _lxPgrstVal(v) { return '"' + String(v || "").replace(/["\\]/g, "") + '"'; }
+async function _lxIdsClientSession(env, session) {
+  const out = { lxId: session && session.lx_id ? String(session.lx_id) : "", email: String((session && session.email) || "").toLowerCase().trim(), emailVerifie: false, clientIds: [] };
+  if (!/^[0-9a-f-]{36}$/i.test(out.lxId)) { out.lxId = ""; return out; }
+  try {
+    if (session && typeof session.email_verified === "boolean") out.emailVerifie = session.email_verified;
+    else {
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=email_verified&id=eq.${out.lxId}&limit=1`, { headers: _sbHeaders(env) });
+      const d = await r.json();
+      out.emailVerifie = !!(Array.isArray(d) && d[0] && d[0].email_verified === true);
+    }
+  } catch (_) { out.emailVerifie = false; }
+  if (!out.email) out.emailVerifie = false;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id&client_luxyra_id=eq.${out.lxId}&limit=50`, { headers: _sbHeaders(env) });
+    const d = await r.json();
+    if (Array.isArray(d)) out.clientIds = d.map(x => x.id).filter(x => /^[0-9a-f-]{36}$/i.test(String(x)));
+  } catch (_) {}
+  return out;
+}
+
 // GET cartes d'abonnement du client (cross-salons par défaut, filtrable par salon_id)
 async function handleClientCartes(request, env) {
   try {
@@ -3516,12 +3545,18 @@ async function handleClientCartes(request, env) {
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
     const session = await verifyClientSession(body.session_token, env);
     if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
-    const email = session.email;
-    if (!email) return jsonResponse({ error: "email manquant dans la session" }, 401);
+    // 2026-10-14 audit : l'app enregistre les cartes avec client_luxyra_id = id du compte Luxyra
+    // (repli : email) et client_id = fiche du salon. On cherche donc par compte + fiches liées,
+    // l'email n'est plus qu'un repli quand il est vérifié.
+    const _ids = await _lxIdsClientSession(env, session);
+    if (!_ids.lxId) return jsonResponse({ error: "session invalide" }, 401);
     // Filtre optionnel salon_id (utilisé par site.html quand on est sur la page d'un seul salon)
     const salonId = body.salon_id ? String(body.salon_id) : null;
     const onlyActive = body.only_active === true;
-    let url = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients?select=*&client_luxyra_id=eq.${encodeURIComponent(email)}`;
+    const _or = [`client_luxyra_id.eq.${_ids.lxId}`];
+    if (_ids.clientIds.length) _or.push(`client_id.in.(${_ids.clientIds.join(",")})`);
+    if (_ids.emailVerifie) _or.push(`client_luxyra_id.eq.${_lxPgrstVal(_ids.email)}`);
+    let url = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients?select=*&or=(${encodeURIComponent(_or.join(","))})`;
     if (salonId) url += `&salon_id=eq.${encodeURIComponent(salonId)}`;
     if (onlyActive) url += `&status=eq.active`;
     url += `&order=created_at.desc`;
@@ -3557,10 +3592,12 @@ async function handleClientFidelite(request, env) {
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
     const session = await verifyClientSession(body.session_token, env);
     if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
-    const email = session.email;
-    const lxId = session.lx_id;
+    // 2026-10-14 audit : l'app écrit fidelite_client.client_luxyra_id = id du compte Luxyra
+    // (repli : email). On lit d'abord par id de compte, l'email seulement s'il est vérifié.
+    const _ids = await _lxIdsClientSession(env, session);
+    const email = _ids.emailVerifie ? _ids.email : "";
+    const lxId = _ids.lxId;
     const salonId = body.salon_id ? String(body.salon_id) : null;
-    // fidelite_client.client_luxyra_id est text — on essaie email d'abord, fallback id
     function _buildUrl(idVal) {
       let u = `${CONFIG.SUPABASE_URL}/rest/v1/fidelite_client?select=*&client_luxyra_id=eq.${encodeURIComponent(idVal)}`;
       if (salonId) u += `&salon_id=eq.${encodeURIComponent(salonId)}`;
@@ -3568,16 +3605,22 @@ async function handleClientFidelite(request, env) {
       return u;
     }
     let fidelite = [];
-    try {
-      const r1 = await fetch(_buildUrl(email), { headers: _sbHeaders(env) });
-      const d1 = await r1.json();
-      if (Array.isArray(d1)) fidelite = d1;
-    } catch (e) {}
-    if (!fidelite.length && lxId) {
+    if (lxId) {
       try {
-        const r2 = await fetch(_buildUrl(lxId), { headers: _sbHeaders(env) });
+        const r1 = await fetch(_buildUrl(lxId), { headers: _sbHeaders(env) });
+        const d1 = await r1.json();
+        if (Array.isArray(d1)) fidelite = d1;
+      } catch (e) {}
+    }
+    // repli email (vérifié) : seulement pour les établissements pas déjà trouvés par l'id
+    if (email) {
+      try {
+        const r2 = await fetch(_buildUrl(email), { headers: _sbHeaders(env) });
         const d2 = await r2.json();
-        if (Array.isArray(d2) && d2.length) fidelite = d2;
+        if (Array.isArray(d2)) {
+          const _vus = new Set(fidelite.map(f => f.salon_id));
+          d2.forEach(f => { if (!_vus.has(f.salon_id)) fidelite.push(f); });
+        }
       } catch (e) {}
     }
     // Enrich avec fidconf à jour de chaque salon

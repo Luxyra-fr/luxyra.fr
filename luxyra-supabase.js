@@ -1658,7 +1658,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
       // 2026-10-13 : fiches « fusionnées » (doublon dont des tickets clôturés ne peuvent pas bouger) :
       // cachées, et leurs tickets / RDV affichés sur la fiche gardée (correspondance en mémoire, lecture seule).
       lxMajFusions(clRes.data);
-      CL = clRes.data.filter(function(c){ return !c.fusionne_dans; }).map(lxMapClientRow);
+      // 2026-10-14 audit : fiches anonymisées (effacement RGPD, rgpd_anonymise_le) écartées comme les fiches fusionnées
+      CL = clRes.data.filter(function(c){ return !c.fusionne_dans && !c.rgpd_anonymise_le; }).map(lxMapClientRow);
     }
   } catch(e) { console.warn("[loadSalonData] clients skipped", e); }
 
@@ -1835,6 +1836,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         source: g.source || null,      // "web" = vente en ligne, sinon caisse
         buyerEmail: g.buyer_email || null,
         buyerPhone: g.buyer_phone || null,
+        paymentStatus: g.payment_status || null, // 2026-10-14 audit : bon en ligne non payé (« pending ») jamais utilisable
         // Marque le bon comme deja present en base : saveGiftCard n'ecrira alors plus
         // son solde depuis la memoire (voir le correctif du 31/08).
         _dejaEnBase: true
