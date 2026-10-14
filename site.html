@@ -124,7 +124,7 @@
 })();
 </script>
 <script src="https://luxyra.fr/supabase.min.js"></script>
-<script src="/lx-client.js?v=20261014-1"></script>
+<script src="/lx-client.js?v=20261014-2"></script>
 <script>
 /* ============================================================================
    FIX 2026-07-13 — RESERVATION IMPOSSIBLE sur /<slug>/reserver ("Can't find variable: LX")
@@ -1374,7 +1374,7 @@ async function doClientRegister(){
   var genre=(document.getElementById("aRegGenre")&&document.getElementById("aRegGenre").value)||"";
   if(!genre){showAuthError("Veuillez sélectionner un genre");return;}
   if(!(document.getElementById("aRegCgu")&&document.getElementById("aRegCgu").checked)){showAuthError("Vous devez accepter les CGU");return;} // 2026-10-14
-  if(pass.length<6){showAuthError("Mot de passe : 6 caract\u00e8res minimum");return;}
+  if(pass.length<8){showAuthError("Mot de passe : 8 caract\u00e8res minimum");return;} // 2026-10-14 audit
   if(pass!==pass2){showAuthError("Les mots de passe ne correspondent pas");return;}
   // 2026-10-13 : adresse obligatoire (renseignements pour les prestations à domicile)
   var _adr0=((document.getElementById("aRegAdr")||{}).value||"").trim(), _cp0=((document.getElementById("aRegCp")||{}).value||"").trim(), _vil0=((document.getElementById("aRegVille")||{}).value||"").trim();
@@ -1483,9 +1483,17 @@ function doClientLogout(){
   CLIENT=null;CLIENT_RDVS=[];
   try{ if(window.LX&&LX.logout) LX.logout(); }catch(_e){}
   try{ localStorage.removeItem("lx_token"); localStorage.removeItem("lx_account"); localStorage.removeItem("lx_favoris"); }catch(_e){}
+  try{ ["lx_recents","lx_app_ville","lx_app_metier"].forEach(function(k){ localStorage.removeItem(k); }); }catch(_eR){} // 2026-10-14 audit
+  try{ if(window.lxClientAppReset) window.lxClientAppReset(); }catch(_eB){}
   try{sessionStorage.removeItem("cp_client");}catch(e){}
   renderSite();
 }
+// 2026-10-14 audit : connexion d'un AUTRE compte sur cet appareil -> plus rien du compte précédent en mémoire
+if(typeof window.lxChangementCompte!=="function") window.lxChangementCompte=function(){
+  CLIENT_RDVS=[]; try{ CLIENT_CARTE_ABO=null; }catch(_e1){} _lxAcompteMode="defaut";
+  try{ localStorage.removeItem("lx_favoris"); ["lx_recents","lx_app_ville","lx_app_metier"].forEach(function(k){ localStorage.removeItem(k); }); }catch(_e2){}
+  try{ if(window.lxClientAppReset) window.lxClientAppReset(); }catch(_e3){}
+};
 
 function saveClientSession(){
   // lx-client.js écrit déjà lx_token + lx_account lors de signup/login/update.
@@ -3596,7 +3604,19 @@ async function refreshRDV(){
   }catch(e){console.log("refreshRDV:",e);}
 }
 
-async function submitBooking(){
+// 2026-10-14 audit : double tap sur « Confirmer » / « Payer » = deux RDV (ou deux sessions de paiement).
+// Un seul envoi à la fois ; boutons du tunnel désactivés pendant l'envoi.
+var _lxEnvoiResa=false;
+function _lxBoutonsResa(off){ try{ document.querySelectorAll("#bookingFlow button").forEach(function(b){ b.disabled=!!off; }); }catch(_){} }
+async function _lxEnvoiUnique(fn){
+  if(_lxEnvoiResa) return;
+  _lxEnvoiResa=true; window._lxRedirectionPaiement=false; _lxBoutonsResa(true);
+  try{ return await fn(); }
+  finally{ if(!window._lxRedirectionPaiement){ _lxEnvoiResa=false; _lxBoutonsResa(false); } }
+}
+function submitBooking(){ return _lxEnvoiUnique(_lxSubmitBookingImpl); }
+function submitWithStripe(){ return _lxEnvoiUnique(_lxSubmitWithStripeImpl); }
+async function _lxSubmitBookingImpl(){
   // FIX 2026-08-31 : dernier filet avant enregistrement — si un seul professionnel
   // est eligible, il est affecte, quel que soit le chemin emprunte dans le tunnel.
   try{ _lxResoudreCollab(); }catch(_e){}
@@ -3806,7 +3826,7 @@ async function loadDashboardRdvs(){
 }
 
 
-async function submitWithStripe(){
+async function _lxSubmitWithStripeImpl(){
   // FIX 2026-08-31 : dernier filet avant enregistrement — si un seul professionnel
   // est eligible, il est affecte, quel que soit le chemin emprunte dans le tunnel.
   try{ _lxResoudreCollab(); }catch(_e){}
@@ -3841,7 +3861,7 @@ async function submitWithStripe(){
     if(SITE_CFG.acompteMin && acompte < SITE_CFG.acompteMin) acompte = SITE_CFG.acompteMin;
     if(_lxAcompteMode==="jamais") acompte = 0; else if(SITE_CFG.acompteSeuil && totalPrix < SITE_CFG.acompteSeuil && _lxAcompteMode!=="toujours") acompte = 0;/*seuil+client*/
   }
-  if(modeC === "aucun" || acompte <= 0 || booking.lieu==='domicile'){ submitBooking(); return; }
+  if(modeC === "aucun" || acompte <= 0 || booking.lieu==='domicile'){ return _lxSubmitBookingImpl(); }
 
   // Check slot availability before payment
   await refreshRDV();
@@ -3921,6 +3941,7 @@ async function submitWithStripe(){
       });
       var data=await res.json();
       if(data.url){
+        window._lxRedirectionPaiement=true; // 2026-10-14 audit : boutons gardés désactivés pendant la redirection
         window.location.href=data.url;
       }else{
         // INSTRUMENTATION : \u00e9chec de cr\u00e9ation du paiement (worker refuse, ex. Connect charges_enabled=false).
@@ -3951,7 +3972,7 @@ async function submitWithStripe(){
   // (L'ancien « chemin B » encaissait sur le compte Luxyra : désactivé.)
   if(true){
     showAlert("Le paiement en ligne n'est pas disponible pour ce salon. Le salon vous demandera le règlement sur place.","warning");
-    if(typeof submitBooking==="function"){ submitBooking(); }
+    return _lxSubmitBookingImpl();
     return;
   }
   // Fallback: no Connect → use card token simulation (test mode)
@@ -4598,6 +4619,6 @@ async function submitSouscrireCarte(idx){
 window.__LX_SITE_JS_OK = 1;
 </script>
 <script src="/lx-cp-ville.js?v=20261014-1" defer></script>
-<script src="/lx-client-app.js?v=5" defer></script>
+<script src="/lx-client-app.js?v=6" defer></script>
 </body>
 </html>

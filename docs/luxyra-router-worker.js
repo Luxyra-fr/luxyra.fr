@@ -142,6 +142,10 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/cc/finalize" && request.method === "POST") return await handleCcFinalize(request, env);
       if (url.pathname === "/api/cc/action" && request.method === "POST") return await handleCcAction(request, env);
       if (url.pathname === "/api/client/commandes" && request.method === "POST") return await handleClientCommandes(request, env);
+      // 2026-10-14 audit : bons cadeaux (succès + espace client) et avis du client
+      if (url.pathname === "/api/bons-cadeaux/statut" && request.method === "POST") return await handleBonCadeauStatut(request, env);
+      if (url.pathname === "/api/client/bons-cadeaux" && request.method === "POST") return await handleClientBonsCadeaux(request, env);
+      if (url.pathname === "/api/client/avis" && request.method === "POST") return await handleClientAvis(request, env);
       // FIX 2026-05-13 : Export NF525 (conservation 6 ans / audit fiscal)
       if (url.pathname === "/api/admin/export-nf525" && request.method === "POST") return await handleExportNF525(request, env);
       // FIX 2026-05-12 : Path A empreinte (post-Checkout, stocke le PI ID dans rdv_online)
@@ -1598,6 +1602,75 @@ async function handleClientCommandes(request, env) {
       (s.ok ? await s.json() : []).forEach((x) => { noms[x.id] = x.nom; });
     }
     return jsonResponse({ commandes: (rows || []).map((x) => Object.assign({}, x, { salon_nom: noms[x.salon_id] || "", code_retrait: x.status === "retiree" || x.status === "annulee" ? null : x.code_retrait })) });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// ============================================================
+// 2026-10-14 audit — BONS CADEAUX (page de succès + espace client) ET AVIS DU CLIENT
+// ============================================================
+// cartes_cadeaux n'est lisible que par le salon (RLS) : la page de succès et l'onglet « Bons cadeaux »
+// de compte.html lisaient la table en anon -> toujours vide. Lecture désormais par le worker.
+function lxMasquerEmail(e) {
+  const m = String(e || "").match(/^([^@]{0,2})[^@]*(@.*)$/);
+  return m ? m[1] + "•••" + m[2] : "";
+}
+// POST /api/bons-cadeaux/statut {session_id, session_token?}
+// La session Stripe (cs_…) n'est connue que de l'acheteur (URL de retour) : elle suffit à afficher le code.
+// Si l'acheteur est connecté, le bon est rattaché à son compte (acheteur_luxyra_id).
+async function handleBonCadeauStatut(request, env) {
+  try {
+    const b = await readJsonBody(request);
+    const sid = String(b.session_id || "");
+    if (!/^cs_(test|live)_[A-Za-z0-9]{10,}$/.test(sid)) return jsonResponse({ error: "Session invalide" }, 400);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,code,valeur,payment_status,buyer_email,acheteur_luxyra_id,date_expiration&stripe_session_id=eq.${encodeURIComponent(sid)}&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    const bc = Array.isArray(a) ? a[0] : null;
+    if (!bc) return jsonResponse({ ok: true, paye: false });
+    if (bc.payment_status !== "paid") return jsonResponse({ ok: true, paye: false });
+    if (b.session_token && !bc.acheteur_luxyra_id) {
+      try {
+        const sess = await verifyClientSession(b.session_token, env);
+        if (sess && sess.lx_id) await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?id=eq.${encodeURIComponent(bc.id)}&acheteur_luxyra_id=is.null`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ acheteur_luxyra_id: sess.lx_id }) });
+      } catch (_) {}
+    }
+    return jsonResponse({ ok: true, paye: true, code: bc.code, valeur: Number(bc.valeur) || 0, date_expiration: bc.date_expiration || null, email: lxMasquerEmail(bc.buyer_email) });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+// POST /api/client/bons-cadeaux {session_token}
+// Bons rattachés au compte (acheteur_luxyra_id), plus ceux achetés avec l'e-mail du compte SEULEMENT
+// si cet e-mail est vérifié (clients_luxyra.email_verified) : sans vérification, n'importe qui pourrait
+// créer un compte avec l'e-mail d'un autre et voir ses codes.
+async function handleClientBonsCadeaux(request, env) {
+  try {
+    const { session_token } = await readJsonBody(request);
+    const session = await verifyClientSession(session_token, env);
+    if (!session) return jsonResponse({ error: "Session invalide" }, 401);
+    let verifie = false;
+    try {
+      const v = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=email_verified&id=eq.${encodeURIComponent(session.lx_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const va = v.ok ? await v.json() : [];
+      verifie = !!(Array.isArray(va) && va[0] && va[0].email_verified === true);
+    } catch (_) {}
+    const filtre = verifie && session.email
+      ? `or=(acheteur_luxyra_id.eq.${encodeURIComponent(session.lx_id)},buyer_email.ilike.${encodeURIComponent(session.email.replace(/[*,()]/g, "").replace(/([\\%_])/g, "\\$1"))})`
+      : `acheteur_luxyra_id=eq.${encodeURIComponent(session.lx_id)}`;
+    const q = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,salon_id,code,valeur,restant,utilise,de,pour,message,date_expiration,created_at,visuel_url,status,salons(nom,adresse,cp,ville,tel,logo,slug)&${filtre}&payment_status=eq.paid&order=created_at.desc&limit=100`;
+    const r = await fetch(q, { headers: _sbHeaders(env) });
+    const rows = r.ok ? await r.json() : [];
+    return jsonResponse({ bons: Array.isArray(rows) ? rows : [], email_verifie: verifie });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+// POST /api/client/avis {session_token}
+// Tous les avis du client, y compris signalés / masqués / non approuvés (l'anon ne voit que les publiés :
+// un avis masqué réapparaissait en « Laisser un avis »).
+async function handleClientAvis(request, env) {
+  try {
+    const { session_token } = await readJsonBody(request);
+    const session = await verifyClientSession(session_token, env);
+    if (!session) return jsonResponse({ error: "Session invalide" }, 401);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at,note_accueil,note_proprete,note_cadre,note_qualite,photos,approved,reported,hidden_by_luxyra&client_luxyra_id=eq.${encodeURIComponent(session.lx_id)}&limit=500`, { headers: _sbHeaders(env) });
+    const rows = r.ok ? await r.json() : [];
+    return jsonResponse({ avis: (Array.isArray(rows) ? rows : []).map((x) => Object.assign({}, x, { en_moderation: x.approved !== true || x.reported === true || x.hidden_by_luxyra === true })) });
   } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
 }
 

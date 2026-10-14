@@ -41,6 +41,21 @@
   function getUser(){
     try { var d = localStorage.getItem("lx_account"); return d ? JSON.parse(d) : null; } catch(e){ return null; }
   }
+  // 2026-10-14 audit : ouverture d'une session (connexion, inscription, lien de réinitialisation ou
+  // d'invitation). Si un AUTRE compte était connecté sur cet appareil, on exécute d'abord le crochet de
+  // déconnexion (désabonnement des notifications de l'ancien compte) puis window.lxChangementCompte
+  // (la page efface les données de l'ancien compte : RDV, favoris, récents…).
+  function ouvrirSession(token, user){
+    if (!token) return;
+    var avant = getUser(), avantTok = getToken();
+    var autre = !!(avantTok && (!avant || !user || String(avant.id || avant.email || "") !== String(user.id || user.email || "")));
+    if (autre) {
+      avantDeconnexion();
+      try { if (typeof window.lxChangementCompte === "function") window.lxChangementCompte(avant, user); } catch(e){}
+    }
+    setToken(token);
+    setUser(user || null);
+  }
 
   async function call(endpoint, body){
     try {
@@ -65,19 +80,13 @@
 
   async function lxSignup(fields){
     var res = await call("lx-signup", fields);
-    if (res.ok && res.data && res.data.session_token) {
-      setToken(res.data.session_token);
-      setUser(res.data.user);
-    }
+    if (res.ok && res.data && res.data.session_token) ouvrirSession(res.data.session_token, res.data.user); // 2026-10-14 audit
     return res;
   }
 
   async function lxLogin(email, password){
     var res = await call("lx-login", { email: email, password: password });
-    if (res.ok && res.data && res.data.session_token) {
-      setToken(res.data.session_token);
-      setUser(res.data.user);
-    }
+    if (res.ok && res.data && res.data.session_token) ouvrirSession(res.data.session_token, res.data.user); // 2026-10-14 audit
     return res;
   }
 
@@ -199,6 +208,7 @@
     toggleNotif: lxToggleNotif,
     removePayment: lxRemovePayment,
     logout: lxLogout,
+    ouvrirSession: ouvrirSession,
     hasSession: lxHasSession,
     getUser: getUser,
     getToken: getToken,
