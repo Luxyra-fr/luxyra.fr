@@ -1,0 +1,7 @@
+-- 2026-10-15 (accord d'Alexandre : « si un salon bloque la réservation en ligne personne ne peut réserver en ligne »)
+-- APPLIQUÉ en production (migration audit1015_resa_en_ligne_desactivee_bloque).
+-- lx_prive.salon_resa_en_ligne_refus : ajoute site_actif = false / reservation_active non vraie -> refus
+--   (utilisé par rdv_online_validate et fn_salon_next_slots) ; service_role toujours accepté (proposition déjà payée).
+-- Nouveau déclencheur trg_rdv_demandes_resa_active : refuse les nouvelles demandes sur mesure.
+-- Worker /api/rdv-demande/connect-pay et edge rdv-demande-proposal-action v13 (confirm) : refus avant tout paiement.
+-- Contenu : voir la migration (identique à la définition ci-dessous de salon_resa_en_ligne_refus + trigger).

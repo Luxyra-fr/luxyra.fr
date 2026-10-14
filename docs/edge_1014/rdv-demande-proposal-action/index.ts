@@ -49,6 +49,9 @@ Deno.serve(async (req) => {
     }
     if (action === "confirm") {
       if (dem.status !== "proposed") return json(409, { error: "Cette proposition n'est plus active" });
+      // 2026-10-15 : réservation en ligne désactivée par l'établissement -> refus (rien n'est créé ni débité)
+      { const { data: _sc } = await sb.from("site_config").select("site_actif,reservation_active").eq("salon_id", dem.salon_id).maybeSingle();
+        if (_sc && (_sc.site_actif === false || _sc.reservation_active !== true)) return json(409, { error: "Cet établissement n'accepte pas de réservation en ligne pour le moment." }); }
       const pd = dem.proposed_data || {};
       if (!pd.date || !pd.heure || !pd.items || !Array.isArray(pd.items) || !pd.items.length) return json(500, { error: "Données de proposition invalides" });
       const acompteRequired = Number(pd.acompte_montant) || 0;
