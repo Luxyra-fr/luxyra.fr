@@ -4164,8 +4164,10 @@ async function handleAcompteRembourser(request, env) {
     const sid = String(b.salon_id || ""), rid = String(b.rdv_id || "");
     if (!/^[0-9a-f-]{36}$/i.test(sid) || !/^[0-9a-f-]{36}$/i.test(rid)) return jsonResponse({ error: "paramètres invalides" }, 400);
     const H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`;
-    const sel = "id,salon_id,status,cancelled_by,acompte_paye,acompte_montant,acompte_rembourse,acompte_rembourse_montant,retenue_at,retenue_tk_num,retenue_claim_at,payment_intent_id,stripe_payment_id,stripe_account,created_at,client_email,client_luxyra_id,date_rdv,heure_rdv,refund_attempted_at,remboursements";
-    const rows = await (await fetch(`${base}/rdv_online?id=eq.${rid}&salon_id=eq.${sid}&select=${sel}`, { headers: H })).json();
+    const sel0 = "id,salon_id,status,cancelled_by,acompte_paye,acompte_montant,acompte_rembourse,acompte_rembourse_montant,retenue_at,retenue_tk_num,retenue_claim_at,payment_intent_id,stripe_payment_id,stripe_account,created_at,client_email,client_luxyra_id,date_rdv,heure_rdv,refund_attempted_at,remboursements";
+    // 2026-10-14 (2e revue) : acompte_modele lu si la colonne existe (script SQL appliqué) ; sinon relecture sans (ancien modèle partout)
+    let rows = await (await fetch(`${base}/rdv_online?id=eq.${rid}&salon_id=eq.${sid}&select=${sel0},acompte_modele`, { headers: H })).json();
+    if (!Array.isArray(rows)) rows = await (await fetch(`${base}/rdv_online?id=eq.${rid}&salon_id=eq.${sid}&select=${sel0}`, { headers: H })).json();
     const rdv = Array.isArray(rows) && rows[0];
     if (!rdv) return jsonResponse({ error: "Rendez-vous introuvable" }, 404);
     const acompte = Math.round((Number(rdv.acompte_montant) || 0) * 100);
@@ -4174,9 +4176,18 @@ async function handleAcompteRembourser(request, env) {
     if (rdv.acompte_rembourse === true || deja >= acompte) return jsonResponse({ error: "L'acompte est déjà entièrement remboursé" }, 400);
     if (rdv.retenue_tk_num || rdv.retenue_claim_at) return jsonResponse({ error: "La partie conservée est déjà enregistrée en caisse : un remboursement passe maintenant par un avoir en caisse." }, 409);
     const noShow = b.no_show === true;
-    if (!(rdv.status === "cancelled" || (noShow && ["confirmed", "pending"].includes(rdv.status)))) return jsonResponse({ error: "Rendez-vous non annulé" }, 400);
-    // annulé par l'établissement (ou dans les délais) : l'acompte est remboursé EN ENTIER automatiquement, pas de partiel
-    if (rdv.status === "cancelled" && (rdv.cancelled_by === "salon" || !rdv.retenue_at)) return jsonResponse({ error: "Cet acompte est remboursé en entier automatiquement (annulation par l'établissement ou dans les délais)." }, 400);
+    // 2026-10-14 (2e revue) : TROP-PERÇU (nouveau modèle uniquement) — l'acompte scellé dépasse le total du ticket final : la caisse
+    // rembourse la différence AVANT d'encaisser. RDV encore à venir / en cours (pending / confirmed : ni annulé, ni encaissé) ;
+    // statut et retenue_at inchangés ; l'entrée remboursements porte par:"trop_percu" (ticket négatif créé par l'application).
+    const tropPercu = b.trop_percu === true;
+    if (tropPercu) {
+      if (rdv.acompte_modele !== "ticket") return jsonResponse({ error: "Trop-perçu : réservé aux acomptes enregistrés en caisse dès le paiement (nouveau modèle)." }, 400);
+      if (!["confirmed", "pending"].includes(rdv.status)) return jsonResponse({ error: "Trop-perçu : le rendez-vous doit être à venir (ni annulé, ni encaissé)." }, 400);
+    } else {
+      if (!(rdv.status === "cancelled" || (noShow && ["confirmed", "pending"].includes(rdv.status)))) return jsonResponse({ error: "Rendez-vous non annulé" }, 400);
+      // annulé par l'établissement (ou dans les délais) : l'acompte est remboursé EN ENTIER automatiquement, pas de partiel
+      if (rdv.status === "cancelled" && (rdv.cancelled_by === "salon" || !rdv.retenue_at)) return jsonResponse({ error: "Cet acompte est remboursé en entier automatiquement (annulation par l'établissement ou dans les délais)." }, 400);
+    }
     const cents = Math.round(Number(b.montant) * 100);
     if (!(cents > 0) || cents > acompte - deja) return jsonResponse({ error: `Montant invalide (maximum ${((acompte - deja) / 100).toFixed(2).replace(".", ",")} €)` }, 400);
     // verrou anti double-clic : une seule demande à la fois pour ce rendez-vous
@@ -4191,10 +4202,15 @@ async function handleAcompteRembourser(request, env) {
     }
     const nowIso = new Date().toISOString(), total = deja + cents, complet = total >= acompte;
     const patch = { acompte_rembourse_montant: total / 100, refund_id: rf.refund_id, refunded_at: nowIso, refund_error: null,
-      remboursements: (Array.isArray(rdv.remboursements) ? rdv.remboursements : []).concat([{ at: nowIso, montant: cents / 100, refund_id: rf.refund_id, par: "etablissement" }]) };
+      remboursements: (Array.isArray(rdv.remboursements) ? rdv.remboursements : []).concat([{ at: nowIso, montant: cents / 100, refund_id: rf.refund_id, par: tropPercu ? "trop_percu" : "etablissement" }]) };
     if (rf.payment_intent && !rdv.payment_intent_id) patch.payment_intent_id = rf.payment_intent;
-    if (complet) patch.acompte_rembourse = true; else if (!rdv.retenue_at) patch.retenue_at = nowIso;
-    if (noShow && rdv.status !== "cancelled") Object.assign(patch, { status: "cancelled", cancelled_by: "no_show", cancel_reason: "Client absent (no-show)", cancelled_at: nowIso });
+    if (tropPercu) {
+      // trop-perçu : ni statut, ni retenue_at (le RDV reste à encaisser ; la part conservée = total du ticket est déduite au ticket final)
+      if (complet) patch.acompte_rembourse = true;
+    } else {
+      if (complet) patch.acompte_rembourse = true; else if (!rdv.retenue_at) patch.retenue_at = nowIso;
+      if (noShow && rdv.status !== "cancelled") Object.assign(patch, { status: "cancelled", cancelled_by: "no_show", cancel_reason: "Client absent (no-show)", cancelled_at: nowIso });
+    }
     const _fin = await fetch(`${base}/rdv_online?id=eq.${rid}`, { method: "PATCH", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify(patch) });
     if (!_fin.ok) {
       try { await reportWorkerError(env, "acompte:remboursement_partiel", new Error("Remboursement Stripe fait mais base non mise à jour : " + (await _fin.text()).slice(0, 300)), { rdv_id: rid, refund_id: rf.refund_id, cents }, "critical"); } catch (_) {}
