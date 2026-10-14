@@ -86,24 +86,28 @@ async function loadBon(){
     document.getElementById("emailTxt").textContent = "Session de paiement introuvable. Si vous avez payé, vérifiez votre email — le bon vous a été envoyé.";
     return;
   }
-  // Polling : le webhook peut prendre 1-2s après le retour user
+  // 2026-10-14 audit : la table cartes_cadeaux n'est pas lisible en anon (RLS) -> le polling direct
+  // ne trouvait jamais le bon. Lecture via le worker, par l'identifiant de session Stripe.
+  var tok = "";
+  try { tok = localStorage.getItem("lx_token") || ""; } catch(_e) {}
   var tries = 0;
-  while (tries < 8) {
+  while (tries < 15) {
     try {
-      var r = await _sb.from("cartes_cadeaux")
-        .select("code, valeur, payment_status, buyer_email")
-        .eq("stripe_session_id", sessionId)
-        .limit(1).maybeSingle();
-      if (r.data && r.data.payment_status === "paid") {
-        document.getElementById("bcCode").textContent = r.data.code;
-        document.getElementById("bcVal").textContent = r.data.valeur + " €";
+      var resp = await fetch("/api/bons-cadeaux/statut", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId, session_token: tok || undefined }) });
+      var d = await resp.json().catch(function(){ return {}; });
+      if (d && d.paye) {
+        document.getElementById("bcCode").textContent = d.code || "";
+        document.getElementById("bcVal").textContent = (Number(d.valeur) || 0) + " €";
         document.getElementById("codeBox").classList.add("show");
-        document.getElementById("emailTxt").innerHTML = "✓ Bon envoyé à <strong>" + r.data.buyer_email + "</strong>";
+        var et = document.getElementById("emailTxt");
+        et.textContent = "";
+        et.appendChild(document.createTextNode("✓ Bon envoyé à "));
+        var st = document.createElement("strong"); st.textContent = d.email || "votre adresse e-mail"; et.appendChild(st);
         return;
       }
     } catch(e){ console.warn(e); }
     tries++;
-    await new Promise(function(r){ setTimeout(r, 800); });
+    await new Promise(function(r){ setTimeout(r, 1000); });
   }
   document.getElementById("emailTxt").textContent = "Paiement confirmé. Le bon vous arrivera par email d'ici quelques minutes.";
 }

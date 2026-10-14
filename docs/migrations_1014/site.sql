@@ -154,3 +154,13 @@ ALTER TABLE public.rdv_demandes ADD COLUMN IF NOT EXISTS confirm_claim_at timest
 ALTER TABLE public.rdv_demandes ADD COLUMN IF NOT EXISTS stripe_session_id text;
 COMMENT ON COLUMN public.rdv_demandes.confirm_claim_at IS '2026-10-14 audit : verrou de confirmation (worker finalize / proposal-action confirm)';
 COMMENT ON COLUMN public.rdv_demandes.stripe_session_id IS '2026-10-14 audit : session Stripe Checkout qui a confirmé la proposition (détection double paiement)';
+
+-- ---------------------------------------------------------------------
+-- 4 / 10. Bons cadeaux : rattachement au compte client de l'acheteur
+-- ---------------------------------------------------------------------
+-- Renseigné par le worker (/api/bons-cadeaux/statut) quand l'acheteur connecté revient de Stripe
+-- (preuve : il détient l'identifiant de session Stripe). L'onglet « Bons cadeaux » (worker
+-- /api/client/bons-cadeaux) lit par ce lien, et par e-mail uniquement si l'e-mail du compte est vérifié.
+ALTER TABLE public.cartes_cadeaux ADD COLUMN IF NOT EXISTS acheteur_luxyra_id uuid REFERENCES public.clients_luxyra(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS cartes_cadeaux_acheteur_luxyra_idx ON public.cartes_cadeaux(acheteur_luxyra_id) WHERE acheteur_luxyra_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS cartes_cadeaux_stripe_session_idx ON public.cartes_cadeaux(stripe_session_id) WHERE stripe_session_id IS NOT NULL;

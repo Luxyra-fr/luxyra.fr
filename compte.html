@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Mon compte – Luxyra</title>
 <link rel="stylesheet" href="https://luxyra.fr/fonts/luxyra-fonts.css">
-<script src="/lx-client.js?v=20261014-1"></script>
+<script src="/lx-client.js?v=20261014-2"></script>
 <style>
 :root{--bg:#050508;--bg2:#0d0d14;--card:#12121c;--border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.12);--text:#f5f5f7;--text2:#a0a0b0;--text3:#606070;--gold:#c8a84e;--gold-bg:rgba(200,168,78,.08);--gold2:rgba(200,168,78,.15);--green:#4ade80;--red:#f87171;--blue:#60a5fa;--orange:#fb923c;--r:14px;--f1:'DM Sans',sans-serif;--f2:'Playfair Display',serif}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -181,7 +181,7 @@ function lxResetDonneesClient(){
   CARTES_ABO_DATA=[]; _cartesLoaded=false;
   _bonsCadeauxData=null; _bonsCadeauxLoaded=false;
   window.MY_PHOTOS=null; window._myPhotosLoading=false;
-  window.MY_COMMANDES=null;
+  window.MY_COMMANDES=null; window._lxCmdLance=0; window._lxBcLance=0;
   window.MY_NOTIFS=null; window.MY_NOTIFS_NL=0; window._lxNotifLance=0;
   window.MY_ALERTES=undefined;
   window.MY_FAVORIS=null; window._lxFavLance=0;
@@ -189,7 +189,13 @@ function lxResetDonneesClient(){
   try{ for(var _k in window){ if(_k.indexOf("_picker_search_")===0) window[_k]=""; } }catch(_eK){}
   try{ AVIS_DRAFT={rdvId:null, ticketId:null, salonId:null, note:0, texte:"", editing:null}; }catch(_eA){}
   try{ localStorage.removeItem("lx_favoris"); }catch(_eL){}
+  // 2026-10-14 audit : historique de recherche et dernière ville / métier du compte précédent
+  try{ ["lx_recents","lx_app_ville","lx_app_metier"].forEach(function(k){ localStorage.removeItem(k); }); }catch(_eR){}
+  try{ if(window.lxClientAppReset) window.lxClientAppReset(); }catch(_eB){}
 }
+// 2026-10-14 audit : lx-client.js (LX.login / LX.signup / LX.ouvrirSession) appelle ce crochet quand un
+// AUTRE compte était connecté sur l'appareil (lien de réinitialisation ou d'invitation ouvert par quelqu'un d'autre).
+window.lxChangementCompte=function(){ lxResetDonneesClient(); };
 function logout(){_lxPushOubli();lxResetDonneesClient();CLIENT=null;PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
 
 // === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
@@ -302,6 +308,7 @@ async function doReset(){
   var lg=await LX.login(res.data.email, p1);
   try{ history.replaceState({},"","/compte.html"); }catch(_e){}
   if(lg.ok){
+    lxResetDonneesClient(); // 2026-10-14 audit : jamais les données d'un compte précédent
     CLIENT=lg.data.user; saveSession();
     if(window.RESET_RETOUR){ window.location.href=window.RESET_RETOUR; return; }
     PAGE="dashboard";TAB="rdv";loadMyRdvs();render();
@@ -324,7 +331,7 @@ function renderRegister(){
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville *</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr"></div>';
-  h+='<div class="fg"><label>Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 6 caract\u00e8res"></div>';
+  h+='<div class="fg"><label>Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="rPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doRegister()"></div>';
   h+='<div class="consent">';
   h+='<label><input type="checkbox" id="rSms" checked> \ud83d\udcf1 J\u0027accepte de recevoir des SMS (rappels RDV, offres)</label>';
@@ -346,7 +353,7 @@ function renderInvite(){
   h+='<h1 style="text-align:center">Activez votre compte</h1>';
   h+='<p style="text-align:center;font-size:13px;color:var(--text2);margin:8px 0 22px;line-height:1.5">Un salon a cr\u00e9\u00e9 votre fiche. D\u00e9finissez votre mot de passe ci-dessous pour acc\u00e9der \u00e0 votre historique de RDV, vos factures et votre fid\u00e9lit\u00e9.</p>';
   h+='<div id="invErr" class="err"></div>';
-  h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 6 caract\u00e8res"></div>';
+  h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="iPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doActivateInvite()"></div>';
   h+='<button id="btnActivateInvite" style="width:100%;margin-top:10px;padding:16px 20px;background:linear-gradient(135deg,#d4a843 0%,#b8960f 100%);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'" onclick="doActivateInvite()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Activer mon compte</button>';
   h+='<div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text3);line-height:1.5">Lien valide 14 jours \u00b7 usage unique<br>En activant votre compte, vous acceptez nos <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> et notre <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a>.</div>';
@@ -356,7 +363,7 @@ function renderInvite(){
 async function doActivateInvite(){
   var p1=(document.getElementById("iPass")||{}).value||"";
   var p2=(document.getElementById("iPass2")||{}).value||"";
-  if(p1.length<6){showErr("invErr","Mot de passe minimum 6 caract\u00e8res");return;}
+  if(p1.length<8){showErr("invErr","Mot de passe minimum 8 caract\u00e8res");return;} // 2026-10-14 audit : 8 partout
   if(p1!==p2){showErr("invErr","Les mots de passe ne correspondent pas");return;}
   var token=window.INVITE_TOKEN;
   if(!token){showErr("invErr","Token d\u2019invitation manquant");return;}
@@ -490,6 +497,7 @@ function lxRenderSalonPicker(opts){
 // --- COMMANDES CLICK & COLLECT (2026-10-08) ---
 window.MY_COMMANDES=null;
 async function loadMyCommandes(){
+  window._lxCmdLance=1; // 2026-10-14 audit : chargement lancé (lien direct ?tab=commandes)
   window.MY_COMMANDES=null; render();
   try{
     var token=(window.LX&&LX.getToken)?LX.getToken():"";
@@ -500,6 +508,8 @@ async function loadMyCommandes(){
 }
 function renderCommandesTab(){
   var L=window.MY_COMMANDES;
+  // 2026-10-14 audit : ouverture directe par ?tab=commandes -> rien ne lançait le chargement (« Chargement… » sans fin)
+  if(L===null && !window._lxCmdLance){ window._lxCmdLance=1; setTimeout(loadMyCommandes,0); }
   if(L===null) return '<div style="text-align:center;padding:30px;color:#888">Chargement\u2026</div>';
   if(L&&L.error) return '<div style="text-align:center;padding:30px;color:#e57373">'+escAttr(L.error)+'</div>';
   if(!L.length) return '<div style="text-align:center;padding:30px;color:#888">Aucune commande Click &amp; Collect</div>';
@@ -877,7 +887,9 @@ function renderRdvTab(){
           var avisExist=CLIENT_AVIS.find(function(a){return a.salon_id===r.salon_id;});
           var aRdvArg = r._fromPOS ? "null" : "'"+r.id+"'";
           var aTkArg  = r._fromPOS ? "'"+r.id+"'" : "null";
-          if(avisExist){
+          if(avisExist && avisExist.en_moderation){ // 2026-10-14 audit : avis signalé / masqué / en attente
+            h+='<span style="display:inline-block;padding:6px 12px;border-radius:6px;border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:600">\u23f3 Avis en cours de v\u00e9rification</span>';
+          } else if(avisExist){
             h+='<button onclick="showLeaveAvisModal('+aRdvArg+','+aTkArg+',\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\u270f Modifier mon avis</button>';
           } else {
             h+='<button onclick="showLeaveAvisModal('+aRdvArg+','+aTkArg+',\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis</button>';
@@ -1198,7 +1210,9 @@ function renderTicketsTab(){
     if(r.salon_id){
       var existAvis=CLIENT_AVIS.find(function(a){return a.salon_id===r.salon_id;});
       h+='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">';
-      if(existAvis){
+      if(existAvis && existAvis.en_moderation){ // 2026-10-14 audit
+        h+='<span style="display:inline-block;padding:6px 12px;border-radius:6px;border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:600">\u23f3 Avis en cours de v\u00e9rification</span>';
+      } else if(existAvis){
         h+='<button onclick="showLeaveAvisModal(null,\''+r.id+'\',\''+r.salon_id+'\')" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\u270f Modifier mon avis sur ce salon</button>';
       } else {
         h+='<button onclick="showLeaveAvisModal(null,\''+r.id+'\',\''+r.salon_id+'\')" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis sur ce salon</button>';
@@ -1325,12 +1339,16 @@ function buildCompteTicketHTML(rdv,salon){
 var _bonsCadeauxData = null;
 var _bonsCadeauxLoaded = false;
 async function loadMyBonsCadeaux(){
-  if(!CLIENT || !CLIENT.email) return;
+  if(!CLIENT) return;
+  window._lxBcLance = 1;
   _bonsCadeauxLoaded = false;
   render();
   try {
-    var r = await api("cartes_cadeaux?select=*,salons(nom,adresse,cp,ville,tel,logo,slug)&buyer_email=eq."+encodeURIComponent(CLIENT.email.toLowerCase())+"&payment_status=eq.paid&order=created_at.desc");
-    _bonsCadeauxData = r || [];
+    // 2026-10-14 audit : la table n'est pas lisible en anon (RLS) et la réponse fetch brute était stockée
+    // telle quelle -> onglet toujours vide. Lecture par le worker (bons rattachés au compte, ou à l'e-mail
+    // du compte s'il est vérifié).
+    var res = await _clientApi("bons-cadeaux", {});
+    _bonsCadeauxData = (res.ok && res.data && Array.isArray(res.data.bons)) ? res.data.bons : [];
   } catch(e) {
     console.warn("loadMyBonsCadeaux", e);
     _bonsCadeauxData = [];
@@ -1342,6 +1360,7 @@ function renderBonsCadeauxTab(){
   var h='';
   h+='<div class="section"><div class="section-title">🎁 Mes bons cadeaux</div>';
   if(!_bonsCadeauxLoaded){
+    if(!window._lxBcLance){ window._lxBcLance=1; setTimeout(loadMyBonsCadeaux,0); } // 2026-10-14 audit : lien direct ?tab=bons_cadeaux
     h+='<div class="card" style="text-align:center;padding:30px;color:var(--text3)">Chargement…</div></div>';
     return h;
   }
@@ -1537,7 +1556,7 @@ async function doRegister(){
   if(!nom||!pre||!tel||!email||!pass){showErr("regErr","Remplissez tous les champs obligatoires");return;}
   if(!genre){showErr("regErr","Veuillez s\u00e9lectionner un genre");return;}
   if(!cgu){showErr("regErr","Vous devez accepter les CGU");return;}
-  if(pass.length<6){showErr("regErr","Mot de passe : 6 caract\u00e8res minimum");return;}
+  if(pass.length<8){showErr("regErr","Mot de passe : 8 caract\u00e8res minimum");return;} // 2026-10-14 audit
   if(pass!==pass2){showErr("regErr","Les mots de passe ne correspondent pas");return;}
   var smsOk=document.getElementById("rSms").checked;
   var emOk=document.getElementById("rEm").checked;
@@ -1589,7 +1608,7 @@ async function changePassword(){
   var nw=document.getElementById("pNewPass").value;
   var nw2=document.getElementById("pNewPass2").value;
   if(!old||!nw){showMsg("passMsg","Remplissez tous les champs","var(--red)");return;}
-  if(nw.length<6){showMsg("passMsg","6 caract\u00e8res minimum","var(--red)");return;}
+  if(nw.length<8){showMsg("passMsg","8 caract\u00e8res minimum","var(--red)");return;} // 2026-10-14 audit
   if(nw!==nw2){showMsg("passMsg","Les mots de passe ne correspondent pas","var(--red)");return;}
   var res=await LX.changePassword(old,nw);
   if(!res.ok){showMsg("passMsg",res.data&&res.data.error?res.data.error:"Erreur","var(--red)");return;}
@@ -1636,9 +1655,10 @@ async function loadMyRdvs(){
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
     // Charger les avis déjà laissés par ce client (1 avis par salon)
     try{
-      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at,note_accueil,note_proprete,note_cadre,note_qualite,photos&client_luxyra_id=eq."+CLIENT.id);
-      var dA=await rA.json();
-      if(Array.isArray(dA)) CLIENT_AVIS=dA;
+      // 2026-10-14 audit : par le worker (l'anon ne voit que les avis publiés : un avis signalé ou masqué
+      // réapparaissait en « Laisser un avis »)
+      var rA=await _clientApi("avis", {});
+      if(rA.ok && rA.data && Array.isArray(rA.data.avis)) CLIENT_AVIS=rA.data.avis;
     }catch(_){}
     render();
   }catch(e){}
@@ -2119,6 +2139,6 @@ render();
 if(CLIENT){loadMyRdvs();loadFidelite();}
 </script>
 <script src="/lx-cp-ville.js?v=20261014-1" defer></script>
-<script src="/lx-client-app.js?v=5" defer></script>
+<script src="/lx-client-app.js?v=6" defer></script>
 </body>
 </html>
