@@ -399,7 +399,9 @@ async function _walResync(walId, force){
     var _ticketOuRdv = (entry.type === "ticket" || entry.type === "appointment");
     var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable/i.test(String(_msg));
     var _e2 = _walNoterEssai(walId, _msg);
-    if (_definitif || (entry.type === "appointment" && _e2 && (Number(_e2.tries) || 0) >= 20)) { // un ticket ou une clôture Z n'est JAMAIS abandonné pour des erreurs passagères
+    var _rdvScelle = entry.type === "appointment" && entry.data && (entry.data.st === "done" || entry.data.tkNum); // 2026-10-14 : ticket encaissé = jamais abandonné pour erreur passagère
+    if (_definitif || (entry.type === "appointment" && !_rdvScelle && _e2 && (Number(_e2.tries) || 0) >= 20)) { // un ticket ou une clôture Z n'est JAMAIS abandonné pour des erreurs passagères
+      try { if (_definitif && typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "_walResync", gravite: "critical", msg: "Ticket refusé définitivement par le serveur (journée clôturée / inaltérable) : régularisation support nécessaire", type: entry.type, tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null, data: entry.data }).slice(0, 4000)); } catch (_eC2) {}
       try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: walId, type: entry.type, raison: _definitif ? "refus définitif du serveur" : "20 essais", msg: String(_msg).slice(0, 300), tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null }).slice(0, 2000)); } catch (_eA) {}
       try { if (typeof toast === "function") toast("Un enregistrement (" + entry.type + ") a été refusé définitivement par le serveur : " + String(_msg).slice(0, 120) + ". Il est tracé dans le journal ; contactez le support si besoin.", "error"); } catch (_eT) {}
       _walMarkSynced(walId);
