@@ -4624,6 +4624,38 @@ async function submitSouscrireCarte(idx){
   }
 })();
 
+// 2026-10-14 audit : bouton Retour du téléphone (Android) dans le tunnel de réservation.
+// Avant : « Retour » quittait la page (et la saisie). Chaque étape 2-4 ajoute une entrée d'historique ;
+// popstate ré-affiche l'étape précédente. Revenir en arrière par le bouton de la page remplace l'entrée
+// (pas d'empilement). Après l'envoi (page de succès), l'étape 4 n'est plus rejouée.
+(function(){
+  var _nav=false;
+  function etat(){ try{ return history.state||null; }catch(_e){ return null; } }
+  [1,2,3,4].forEach(function(n){
+    var nm="renderBookingStep"+n, orig=window[nm];
+    if(typeof orig!=="function") return;
+    window[nm]=function(){
+      var r=orig.apply(this,arguments);
+      if(!_nav){
+        try{
+          var st=etat(), cur=(st&&st.lxStep)||0;
+          if(n===1 || cur===0 || n<=cur) history.replaceState(Object.assign({},st||{},{lxStep:n}),"",location.href);
+          else history.pushState({lxStep:n},"",location.href);
+        }catch(_e){}
+      }
+      return r;
+    };
+  });
+  window.addEventListener("popstate",function(ev){
+    var st=ev.state;
+    if(!st||!st.lxStep||!document.getElementById("bookingFlow")) return;
+    if(document.querySelector("#bookingFlow .success-page")){ try{ history.replaceState({},"",location.href); }catch(_e){} return; }
+    _nav=true;
+    try{ var f=window["renderBookingStep"+st.lxStep]; if(typeof f==="function") f(); }catch(_e2){}
+    finally{ _nav=false; }
+  });
+})();
+
 // ============================================================================
 // FIX 2026-07-13 (iOS) — DERNIERE LIGNE DU SCRIPT PRINCIPAL, NE RIEN METTRE APRES.
 // Si ce drapeau n'est pas pose, c'est que le script n'a pas fini de s'evaluer
