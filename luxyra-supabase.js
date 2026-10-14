@@ -3,6 +3,8 @@
 // ============================================================
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
+// 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
+window.LX_DATA_VERSION = "20261014-5";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -588,7 +590,8 @@ async function doLogout() {
   if (_salonId) {
     try { await clearCacheForSalon(_salonId); } catch(e){}
   }
-  if (_sb) await _sb.auth.signOut();
+  // 2026-10-14 : scope local -> ne deconnecte QUE cet appareil (le defaut "global" coupait la session sur tous les appareils du salon)
+  if (_sb) { try { await _sb.auth.signOut({ scope: "local" }); } catch(_){} }
   _salonId = null;
   _userId = null;
   _isOnline = false;
@@ -632,7 +635,7 @@ async function checkSession() {
       // Session salon expirée → signOut Supabase + cleanup + login screen.
       // On vide aussi lx_current_op pour forcer le re-PIN après re-login
       // (sinon Amandine resterait active après que le salon se reconnecte).
-      try { await _sb.auth.signOut(); } catch(_){}
+      try { await _sb.auth.signOut({ scope: "local" }); } catch(_){} // 2026-10-14 : cet appareil seulement
       try { localStorage.removeItem("lx_current_op"); } catch(_){}
       try { localStorage.removeItem("lx_salon_last_activity"); } catch(_){}
       showLoginScreen();
@@ -1268,12 +1271,13 @@ async function loadSalonData() {
     // Session existe mais aucun salon lié au user → on déconnecte proprement
     // (évite le "zombie state" où l'UI se charge sans données)
     console.warn("[loadSalonData] Aucun salon trouvé pour user_id="+_userId+", déconnexion");
-    try{ await _sb.auth.signOut(); }catch(_){}
+    try{ await _sb.auth.signOut({ scope: "local" }); }catch(_){} // 2026-10-14 : cet appareil seulement
     _userId = null;
     _salonId = null;
     window._salonId = null;
     showLoginScreen();
-    setTimeout(function(){ showLoginError && showLoginError("Aucun salon lié à ce compte. Reconnectez-vous avec le bon email."); }, 150);
+    var _msgNoSalon = (sRes && sRes.error) ? "Connexion au serveur impossible pour le moment. Vérifiez internet puis reconnectez-vous." : "Aucun salon lié à ce compte. Reconnectez-vous avec le bon email."; // 2026-10-14
+    setTimeout(function(){ showLoginError && showLoginError(_msgNoSalon); }, 150);
     return;
   }
 
