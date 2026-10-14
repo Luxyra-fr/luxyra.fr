@@ -590,6 +590,29 @@ async function doLogout() {
   if (_salonId) {
     try { await clearCacheForSalon(_salonId); } catch(e){}
   }
+  // 2026-10-14 audit : cet appareil ne doit plus recevoir les notifications du salon apres deconnexion.
+  // AVANT signOut (la suppression passe par la RLS du proprietaire). Seuls les abonnements « salon »
+  // de CE salon sont touches (l'abonnement de l'espace client compte.html n'est pas concerne).
+  // Borne a 3 s : la deconnexion ne doit jamais rester bloquee.
+  if (_sb && _salonId) {
+    try {
+      await Promise.race([
+        (async function () {
+          if (!("serviceWorker" in navigator) || !navigator.serviceWorker.getRegistrations) return;
+          var regs = await navigator.serviceWorker.getRegistrations();
+          for (var i = 0; i < regs.length; i++) {
+            var sub = null;
+            try { sub = regs[i].pushManager ? await regs[i].pushManager.getSubscription() : null; } catch (_eS) { sub = null; }
+            if (!sub || !sub.endpoint) continue;
+            var del = await _sb.from("push_subscriptions").delete()
+              .eq("endpoint", sub.endpoint).eq("target_type", "salon").eq("salon_id", _salonId).select("id");
+            if (del && !del.error && Array.isArray(del.data) && del.data.length) { try { await sub.unsubscribe(); } catch (_eU) {} }
+          }
+        })(),
+        new Promise(function (r) { setTimeout(r, 3000); })
+      ]);
+    } catch (_eP) {}
+  }
   // 2026-10-14 : scope local -> ne deconnecte QUE cet appareil (le defaut "global" coupait la session sur tous les appareils du salon)
   if (_sb) { try { await _sb.auth.signOut({ scope: "local" }); } catch(_){} }
   _salonId = null;

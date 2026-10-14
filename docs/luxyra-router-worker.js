@@ -967,7 +967,9 @@ async function handleWebhook(request, env) {
         });
         const salons = await salonRes.json();
         if (Array.isArray(salons) && salons[0]) {
-          const status = (data.charges_enabled && data.payouts_enabled) ? "active" : data.details_submitted ? "pending_verification" : "incomplete";
+          // 2026-10-14 audit : même codification partout (avant : « payouts_pending » jamais écrit ici -> salon
+          // qui encaissait affiché « vérification en cours » et acompte coupé sur le site)
+          const status = lxConnectStatut(data);
           await supabaseUpdate(env, salons[0].id, { stripe_connect_status: status });
           console.log("Connect account.updated:", connectId, "status:", status);
         }
@@ -1161,6 +1163,14 @@ async function handleConnectOnboard(request, env) {
 }
 
 // Check Connect account status
+// 2026-10-14 audit : statut Stripe Connect d'un compte — UNE seule codification pour les deux webhooks
+// (plateforme + Connect), handleConnectStatus et le contrôle quotidien. « payouts_pending » = le salon
+// encaisse déjà (charges_enabled), seuls les virements attendent la validation du RIB.
+function lxConnectStatut(acc) {
+  const ch = !!(acc && acc.charges_enabled), po = !!(acc && acc.payouts_enabled), de = !!(acc && acc.details_submitted);
+  return ch && po ? "active" : (ch ? "payouts_pending" : (de ? "pending_verification" : "incomplete"));
+}
+
 async function handleConnectStatus(request, env) {
   try {
     const { salon_id } = await request.json();
@@ -1177,11 +1187,8 @@ async function handleConnectStatus(request, env) {
     const payouts = account.payouts_enabled || false;
     const details = account.details_submitted || false;
 
-    let status = "pending";
-    if (charges && payouts) status = "active";
-    else if (charges && !payouts) status = "payouts_pending";  // FIX 2026-05-12 : encaissements OK mais virements en cours de vérif RIB
-    else if (details && !charges) status = "pending_verification";
-    else if (!details) status = "incomplete";
+    // 2026-10-14 audit : codification unique (lxConnectStatut), identique aux webhooks et au contrôle quotidien
+    const status = lxConnectStatut(account);
 
     // Update status in Supabase
     await supabaseUpdate(env, salon_id, { stripe_connect_status: status });
@@ -1698,8 +1705,7 @@ async function handleWebhookConnect(request, env) {
       const ech = data.evidence_details?.due_by ? new Date(data.evidence_details.due_by * 1000).toLocaleDateString("fr-FR") : "?";
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "⚠️ Litige chez un salon", p_body: `${(sa[0] && sa[0].nom) || compte} : ${(data.amount || 0) / 100} € — motif ${data.reason} — réponse avant le ${ech} (dans son Stripe)`, p_url: "/admin.html?tab=finance&sub=stripe", p_payload: {} }) });
     } else if (event.type === "account.updated") {
-      const ch = !!data.charges_enabled, po = !!data.payouts_enabled, de = !!data.details_submitted;
-      const statut = ch && po ? "active" : (ch ? "payouts_pending" : (de ? "pending_verification" : "incomplete"));
+      const statut = lxConnectStatut(data); // 2026-10-14 audit : helper commun
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?stripe_connect_id=eq.${encodeURIComponent(compte)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ stripe_connect_status: statut }) });
     }
   } catch (e) {
@@ -1988,8 +1994,8 @@ async function runStripeSurveillanceJob(env) {
     const a = await stripeAPI(env, `accounts/${s.stripe_connect_id}`, null, "GET");
     if (!a?.id) continue;
     // même codification que handleConnectStatus (utilisée par l'app et le site)
-    const ch = !!a.charges_enabled, po = !!a.payouts_enabled, de = !!a.details_submitted;
-    const statut = ch && po ? "active" : (ch ? "payouts_pending" : (de ? "pending_verification" : "incomplete"));
+    const ch = !!a.charges_enabled;
+    const statut = lxConnectStatut(a); // 2026-10-14 audit : helper commun
     if (statut !== s.stripe_connect_status) { try { await supabaseUpdate(env, s.id, { stripe_connect_status: statut }); } catch (_) {} }
     // Litiges sur les paiements directs (compte du salon)
     try {
@@ -3054,7 +3060,10 @@ async function handleEmailWelcome(request, env) {
 
 async function handleEmailCustom(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit("email_custom:" + ip, 20)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
+  // 2026-10-14 audit : les envois serveur (rappels e-mail en cron, x-lx-internal) partent tous de la meme IP :
+  // la limite par IP ne s'applique qu'aux appels navigateur (sinon un lot de rappels serait coupe a 20/min).
+  const _interneEm = await lxIsInternal(request, env);
+  if (!_interneEm && !checkRateLimit("email_custom:" + ip, 20)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
   // SECURITE 2026-10-08 : plus d'envoi anonyme depuis contact@luxyra.fr (appel serveur ou utilisateur connecte).
   const _acces = await lxGuardConnecte(request, env);
   if (!_acces.ok) {
@@ -3450,7 +3459,9 @@ async function handleSmsRappel(request, env) {
 
 async function handleSmsCustom(request, env) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  if (!checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
+  // 2026-10-14 audit : idem pour les rappels SMS serveur (envoyer_rappels_24h / _2h, meme IP pg_net)
+  const _interneSms = await lxIsInternal(request, env);
+  if (!_interneSms && !checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
   const { telephone, message, salonName, salon_id } = await request.json();
   if (!telephone || !message) return jsonResponse({ error: "telephone et message requis" }, 400);
   const contenu = lxSmsGsm(message);
