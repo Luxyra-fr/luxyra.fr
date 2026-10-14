@@ -1059,7 +1059,11 @@ async function loadSalon(){
         acompte:d.acompte_obligatoire,acompteMt:Number(d.acompte_montant),acompteType:d.acompte_type,
         acompteMin:Number(d.acompte_min)||0,acompteSeuil:Number(d.acompte_seuil)||0,acompteDesc:d.acompte_description||"",
         politiqueAnnul:d.politique_annulation||"48h",remboursementAnnul:d.remboursement_annulation,remboursementPartielPct:Math.max(0,Math.min(100,parseInt(d.remboursement_partiel_pct,10)||0)),
-        delaiMin:d.delai_min_heures||2,delaiMax:d.delai_max_jours||30,interval:d.creneau_intervalle||15,
+        rembPartielPct:Math.max(0,Math.min(100,parseInt(d.remboursement_partiel_pct,10)||0)), // 2026-10-14 audit réglages (même valeur que remboursementPartielPct, audit site)
+        // 2026-10-14 audit : 0 h est un vrai réglage (avant : 0 devenait 2 h) ; max borné à 365 j comme l'app
+        delaiMin:(d.delai_min_heures!==null&&d.delai_min_heures!==undefined&&isFinite(Number(d.delai_min_heures)))?Math.max(0,Number(d.delai_min_heures)):2,
+        delaiMax:Number(d.delai_max_jours)>0?Math.min(365,Math.round(Number(d.delai_max_jours))):30,
+        interval:d.creneau_intervalle||15,
         bloquerNouveauxComptes:d.bloquer_nouveaux_comptes===true,
         modeCaution:d.mode_caution||"aucun",
         empreinteMontant:Number(d.empreinte_montant)||30,
@@ -1139,11 +1143,17 @@ async function loadSalon(){
     // FIX 2026-05-12 : payouts_pending = charges_enabled=true donc on PEUT encaisser
     // (les virements vers banque sont juste en attente de validation RIB Stripe).
     var _stripeChargesOk = (SALON.connectStatus === "active" || SALON.connectStatus === "enabled" || SALON.connectStatus === "payouts_pending");
-    if(SITE_CFG.acompte && !_stripeChargesOk){
+    if((SITE_CFG.acompte || (SITE_CFG.modeCaution && SITE_CFG.modeCaution!=="aucun")) && !_stripeChargesOk){
       console.log("[luxyra] Stripe Connect non actif pour ce salon ("+(SALON.connectStatus||"non configuré")+") — acompte en ligne désactivé");
       SITE_CFG.acompte = false;
       SITE_CFG._acompteDisabledNoConnect = true; // flag pour afficher éventuellement un petit message
     }
+    // 2026-10-14 audit : UN seul réglage fait foi = mode_caution (Aucun / Acompte / Empreinte), ramené à
+    // « aucun » quand Stripe ne peut pas encaisser (avant : l'empreinte restait proposée et le récapitulatif
+    // suivait l'ancienne case « Acompte obligatoire », d'où un récapitulatif et un bouton contradictoires).
+    if(!_stripeChargesOk || !SALON.connectId) SITE_CFG.modeCaution = "aucun";
+    if(["aucun","acompte","empreinte"].indexOf(SITE_CFG.modeCaution)<0) SITE_CFG.modeCaution = "aucun";
+    SITE_CFG.acompte = (SITE_CFG.modeCaution === "acompte");
     // Apply theme colors
     var root=document.documentElement;
     var th=SITE_CFG.theme||"dark_gold";
@@ -1233,7 +1243,7 @@ async function loadSalon(){
 
     // 6. Existing appointments (via Worker - bypasses RLS)
     var today=new Date().toISOString().slice(0,10);
-    var maxDate=new Date();maxDate.setDate(maxDate.getDate()+(SITE_CFG.delaiMax||30));
+    var maxDate=new Date();maxDate.setDate(maxDate.getDate()+lxDelaiMaxJ());
     try{
       var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:maxDate.toISOString().slice(0,10)})});
       var avData=await avRes.json();
@@ -2873,11 +2883,25 @@ function _ymdLocal(d){
          String(d.getMonth()+1).padStart(2,'0') + '-' +
          String(d.getDate()).padStart(2,'0');
 }
+// 2026-10-14 audit : réglages de réservation lus au même endroit (0 h de délai minimum = vrai réglage)
+function lxDelaiMinH(){ var v=Number(SITE_CFG.delaiMin); return (SITE_CFG.delaiMin!==null&&SITE_CFG.delaiMin!==undefined&&isFinite(v))?Math.max(0,v):2; }
+function lxDelaiMaxJ(){ var v=Number(SITE_CFG.delaiMax); return v>0?Math.min(365,Math.round(v)):30; }
+// 2026-10-14 audit : montant d'acompte unique (récapitulatif, bouton, enregistrement) ; jamais plus que le prix
+// (un minimum ou un pourcentage mal réglé dans l'app pouvait dépasser le prix de la prestation).
+function lxCalcAcompte(prix){
+  prix=Number(prix)||0;
+  var a=SITE_CFG.acompteType==="pourcentage"?Math.round(prix*(Number(SITE_CFG.acompteMt)||0)/100):(Number(SITE_CFG.acompteMt)||0);
+  if(SITE_CFG.acompteMin&&a<SITE_CFG.acompteMin)a=Number(SITE_CFG.acompteMin)||0;
+  if(_lxAcompteMode==="jamais")a=0;else if(SITE_CFG.acompteSeuil&&prix<SITE_CFG.acompteSeuil&&_lxAcompteMode!=="toujours")a=0;/*seuil+client*/
+  if(prix>0&&a>prix)a=prix;
+  if(!(a>0))a=0;
+  return Math.round(a*100)/100;
+}
 function findNextAvailableSlot(){
   if(!booking.duration && !booking.svc) return null;
   var dur=booking.duration||30;
-  var minDelay=(SITE_CFG.delaiMin||2)*60;
-  var maxDays=Math.min(SITE_CFG.delaiMax||30,30);
+  var minDelay=lxDelaiMinH()*60; // 2026-10-14 audit : 0 h respecté
+  var maxDays=lxDelaiMaxJ();      // 2026-10-14 audit : même fenêtre que le calendrier (avant : 30 j max)
   var now=new Date();
   for(var dayOffset=0;dayOffset<=maxDays;dayOffset++){
     var dt=new Date(now); dt.setDate(dt.getDate()+dayOffset);
@@ -3023,7 +3047,7 @@ function renderCalendar(){
   var startDow=(first.getDay()+6)%7;// Monday=0
   var daysInMonth=new Date(calYear,calMonth+1,0).getDate();
   var today=new Date();today.setHours(0,0,0,0);
-  var maxDate=new Date();maxDate.setDate(maxDate.getDate()+(SITE_CFG.delaiMax||30));
+  var maxDate=new Date();maxDate.setDate(maxDate.getDate()+lxDelaiMaxJ());
   for(var i=0;i<startDow;i++)h+='<div></div>';
   for(var d=1;d<=daysInMonth;d++){
     var dt=new Date(calYear,calMonth,d);
@@ -3405,7 +3429,7 @@ function renderTimeSlots(dateStr){
   var startM=toMin(hrs.o),endM=toMin(hrs.c);
   var dur=booking.duration||30;
   var now=new Date();
-  var minDelay=(SITE_CFG.delaiMin||2)*60;
+  var minDelay=lxDelaiMinH()*60; // 2026-10-14 audit : 0 h respecté
   
   // Build available hours
   var hours={};
@@ -3503,12 +3527,15 @@ function renderBookingStep4(){
   h+='<div class="summary-row"><span>Heure</span><span class="v">'+booking.time+'</span></div>';
   if(SITE_CFG.acompte){
     // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte)
-    var acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(prixFinal*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
-    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;if(_lxAcompteMode==="jamais")acompte=0;else if(SITE_CFG.acompteSeuil&&prixFinal<SITE_CFG.acompteSeuil&&_lxAcompteMode!=="toujours")acompte=0;/*seuil+client*/
+    var acompte=lxCalcAcompte(prixFinal); // 2026-10-14 audit : calcul unique, plafonné au prix
     if(acompte>0)h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
     if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+SITE_CFG.acompteDesc+'</div>';
     // 2026-10-14 audit : texte construit avec les MÊMES champs et la MÊME lecture que le worker (lxPolitiqueHeures)
-    if(acompte>0){ var _pa=lxPolitiqueAnnulation(); h+='<div style="font-size:11px;color:'+((_pa.heures===-1||(!_pa.rembourse&&!_pa.pct))?'var(--red)':'var(--text3)')+';text-align:center">'+escapeHtmlSimple(lxTexteAnnulation(true))+'</div>'; }
+    if(acompte>0){ var _pa=lxPolitiqueAnnulation(); h+='<div style="font-size:11px;color:'+((_pa.heures===-1||(!_pa.rembourse&&!_pa.pct))?'var(--red)':'var(--text3)')+';text-align:center">'+escapeHtmlSimple(lxTexteAnnulation(true))+'</div>';
+      // 2026-10-14 audit réglages : part rendue automatiquement en cas d'annulation tardive (remboursement_partiel_pct) ;
+      // les cas « jamais » / remboursement désactivé sont déjà décrits par lxTexteAnnulation
+      if(_pa.pct>0 && _pa.heures!==-1 && _pa.rembourse) h+='<div style="font-size:11px;color:var(--text3);text-align:center">En cas d\u0027annulation plus tardive : '+_pa.pct+' % de l\u0027acompte rembours\u00e9</div>';
+    }
   }
   h+='</div>';
   
@@ -3594,7 +3621,7 @@ function renderBookingStep4(){
   h+='<div style="display:flex;gap:10px;margin-top:16px">';
   h+='<button class="btn btn-outline" onclick="renderBookingStep3()">\u25c0 Retour</button>';
   // FIX 2026-05-12 : router via submitWithStripe() qui detecte modeCaution=empreinte/acompte/aucun
-  var _modeC = SITE_CFG.modeCaution || (SITE_CFG.acompte?"acompte":"aucun");
+  var _modeC = SITE_CFG.modeCaution || "aucun"; // 2026-10-14 audit : déjà ramené à « aucun » sans Stripe
   // 2026-10-10 : RDV à domicile -> demande à valider par le professionnel ; l'acompte éventuel se règle
   // ensuite via un lien envoyé après acceptation (pas de paiement pour un déplacement non confirmé).
   if(booking.lieu==='domicile'){
@@ -3604,11 +3631,7 @@ function renderBookingStep4(){
   } else if(_modeC==="acompte"){
     // FIX 2026-05-12 (acompte) : check explicite sur _modeC pour ne pas dependre du legacy
     var _prixForAc = (typeof bookingTotals==="function") ? (bookingTotals().prixFinal || bookingTotals().prix || 0) : 0;
-    var _acomCalc = (SITE_CFG.acompteType === "pourcentage")
-      ? Math.round((_prixForAc * (Number(SITE_CFG.acompteMt)||0)) / 100)
-      : (Number(SITE_CFG.acompteMt) || 0);
-    if(SITE_CFG.acompteMin && _acomCalc < SITE_CFG.acompteMin) _acomCalc = SITE_CFG.acompteMin;
-    if(_lxAcompteMode==="jamais") _acomCalc = 0; else if(SITE_CFG.acompteSeuil && _prixForAc < SITE_CFG.acompteSeuil && _lxAcompteMode!=="toujours") _acomCalc = 0;/*seuil+client*/
+    var _acomCalc = lxCalcAcompte(_prixForAc); // 2026-10-14 audit : calcul unique, plafonné au prix
     if(_acomCalc > 0){
       h+='<button class="btn btn-gold" style="flex:1" onclick="submitWithStripe()">💳 Payer acompte '+_acomCalc.toFixed(2)+' € et confirmer</button>';
     } else {
@@ -3627,7 +3650,7 @@ function renderBookingStep4(){
 async function refreshRDV(){
   try{
     var today=new Date().toISOString().slice(0,10);
-    var maxD=new Date();maxD.setDate(maxD.getDate()+(SITE_CFG.delaiMax||30));
+    var maxD=new Date();maxD.setDate(maxD.getDate()+lxDelaiMaxJ());
     var avRes=await fetch("/api/salon/availability",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({salon_id:salonId,date_from:today,date_to:maxD.toISOString().slice(0,10)})});
     var avData=await avRes.json();
     if(avData.appointments){RDV_EXISTING=avData.appointments.filter(function(a){return a.status!=="canc"&&!a.cancelled;});}
@@ -3702,8 +3725,7 @@ async function _lxSubmitBookingImpl(){
   var acompte=0;
   if(SITE_CFG.acompte){
     // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte d'abonnement si applicable)
-    acompte=SITE_CFG.acompteType==="pourcentage"?Math.round(prixFinal*SITE_CFG.acompteMt/100):SITE_CFG.acompteMt;
-    if(SITE_CFG.acompteMin&&acompte<SITE_CFG.acompteMin)acompte=SITE_CFG.acompteMin;if(_lxAcompteMode==="jamais")acompte=0;else if(SITE_CFG.acompteSeuil&&prixFinal<SITE_CFG.acompteSeuil&&_lxAcompteMode!=="toujours")acompte=0;/*seuil+client*/
+    acompte=lxCalcAcompte(prixFinal); // 2026-10-14 audit : calcul unique, plafonné au prix
   }
 
   var data={
@@ -3896,16 +3918,12 @@ async function _lxSubmitWithStripeImpl(){
   var primaryNom=bookingPrimaryNom();
   var itemsPayload=bookingItemsPayload();
   // ===== ROUTE EARLY SELON MODE DE CAUTION =====
-  var modeC = SITE_CFG.modeCaution || (SITE_CFG.acompte?"acompte":"aucun");
+  var modeC = SITE_CFG.modeCaution || "aucun"; // 2026-10-14 audit : déjà ramené à « aucun » sans Stripe
   var acompte = 0;
   if(modeC === "empreinte"){
     acompte = Number(SITE_CFG.empreinteMontant) || 30;
-  } else if(modeC === "acompte" || SITE_CFG.acompte){
-    acompte = SITE_CFG.acompteType==="pourcentage"
-      ? Math.round(totalPrix * SITE_CFG.acompteMt / 100)
-      : SITE_CFG.acompteMt;
-    if(SITE_CFG.acompteMin && acompte < SITE_CFG.acompteMin) acompte = SITE_CFG.acompteMin;
-    if(_lxAcompteMode==="jamais") acompte = 0; else if(SITE_CFG.acompteSeuil && totalPrix < SITE_CFG.acompteSeuil && _lxAcompteMode!=="toujours") acompte = 0;/*seuil+client*/
+  } else if(modeC === "acompte"){
+    acompte = lxCalcAcompte(totalPrix); // 2026-10-14 audit : calcul unique, plafonné au prix
   }
   if(modeC === "aucun" || acompte <= 0 || booking.lieu==='domicile'){ return _lxSubmitBookingImpl(); }
 
