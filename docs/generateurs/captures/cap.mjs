@@ -1,4 +1,6 @@
 // node cap.mjs shots.json [prefix]
+// Champs facultatifs d'un shot (15/10/2026) : page (défaut app.html), ls (localStorage posé avant chargement),
+// mock (sous-chaîne d'URL -> corps JSON renvoyé pour les appels /api/ et Supabase ; tout le reste est bloqué), ready (expression JS attendue).
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
@@ -14,11 +16,14 @@ for (const s of shots) {
   const W=s.w||820, H=s.h||1000;
   await pg.setViewport(s.vp==='mobile'?{width:390,height:s.h||844,deviceScaleFactor:2,isMobile:true,hasTouch:true}:{width:W,height:H,deviceScaleFactor:2});
   await pg.setRequestInterception(true);
-  pg.on('request', r => { const u=r.url(); if (u.includes('images.unsplash.com')) return r.respond({status:200,contentType:'image/jpeg',body:BG}); if (u.startsWith('http://localhost')||u.startsWith('data:')||u.startsWith('blob:')) return r.continue(); return r.abort(); });
+  if (s.ls) await pg.evaluateOnNewDocument((ls)=>{ try{ if(location.origin.indexOf('localhost')>=0) for(const k in ls) localStorage.setItem(k, typeof ls[k]==='string'?ls[k]:JSON.stringify(ls[k])); }catch(e){} }, s.ls);
+  pg.on('request', r => { const u=r.url(); if (u.includes('images.unsplash.com')) return r.respond({status:200,contentType:'image/jpeg',body:BG});
+    if (s.mock && (u.includes('/api/')||u.includes('supabase.co'))) { const k=Object.keys(s.mock).find(k=>u.includes(k)); if (r.method()==='OPTIONS') return r.respond({status:204,headers:{'access-control-allow-origin':'*','access-control-allow-headers':'*'}}); return r.respond({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(k?s.mock[k]:{})}); }
+    if (u.startsWith('http://localhost')||u.startsWith('data:')||u.startsWith('blob:')) return r.continue(); return r.abort(); });
   pg.on('pageerror', e => console.log(s.id,'ERR', e.message.slice(0,140)));
   pg.on('dialog', d => d.dismiss());
-  await pg.goto('http://localhost:8765/app.html?'+(s.q||'demo=coiffure'), {waitUntil:'domcontentloaded', timeout:60000});
-  await pg.waitForFunction(()=>window.CURRENT_OPERATOR && document.querySelector('#app'), {timeout:30000});
+  await pg.goto('http://localhost:8765/'+(s.page||'app.html')+'?'+(s.q==null?'demo=coiffure':s.q), {waitUntil:'domcontentloaded', timeout:60000});
+  await pg.waitForFunction(s.ready||'window.CURRENT_OPERATOR && document.querySelector("#app")', {timeout:30000});
   await new Promise(r=>setTimeout(r,2500));
   await pg.evaluate(FIND+`[...document.body.children].forEach(function(e){if(/DÉMO Luxyra/.test(e.innerText||'')&&getComputedStyle(e).position==='fixed')e.style.display='none';});`);
   for (const st of (s.steps||[])) {
