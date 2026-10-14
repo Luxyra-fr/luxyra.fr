@@ -1252,7 +1252,11 @@ async function handleConnectDashboard(request, env) {
 // (pré-autorisation sans débit, capture/cancel ultérieur via Worker)
 async function handleConnectPayment(request, env) {
   try {
-    const { salon_id, amount, description, customer_email, customer_name, metadata, capture_method } = await readJsonBody(request);
+    const _body = await readJsonBody(request);
+    const { salon_id, description, customer_email, customer_name, metadata, capture_method } = _body;
+    // 2026-10-14 audit : le montant d'un acompte / d'une empreinte n'est plus celui envoyé par le navigateur : il est relu en
+    // base (rdv_online.acompte_montant / empreinte_amount) ; un écart avec le montant demandé est refusé.
+    let amount = _body.amount;
     if (!salon_id || !amount) return jsonResponse({ error: "salon_id et amount requis" }, 400);
     // SECURITE 2026-10-08 : montants et redirections bornes ; un acompte/une empreinte doit viser un RDV de CE salon.
     if (!(Number(amount) > 0 && Number(amount) <= 5000)) return jsonResponse({ error: "Montant invalide" }, 400);
@@ -1264,12 +1268,21 @@ async function handleConnectPayment(request, env) {
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
-        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,empreinte_amount&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
         const _a = _r.ok ? await _r.json() : [];
         if (!Array.isArray(_a) || !_a[0] || String(_a[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Rendez-vous introuvable pour ce salon" }, 400);
         // 2026-10-11 : jamais de paiement pour un RDV annulé / refusé / terminé, ni d'acompte déjà payé
         if (!["pending", "pending_payment", "confirmed"].includes(String(_a[0].status || ""))) return jsonResponse({ error: "Ce rendez-vous n'est plus actif" }, 409);
         if (_type === "acompte" && _a[0].acompte_paye === true) return jsonResponse({ error: "L'acompte de ce rendez-vous est déjà réglé" }, 409);
+        // 2026-10-14 audit : montant = valeur enregistrée sur le rendez-vous (jamais celle du navigateur)
+        const _estEmpreinte = _type === "empreinte" || capture_method === "manual";
+        const _mtBase = Math.round((Number(_estEmpreinte ? _a[0].empreinte_amount : _a[0].acompte_montant) || 0) * 100);
+        if (!(_mtBase > 0)) return jsonResponse({ error: _estEmpreinte ? "Aucune empreinte prévue pour ce rendez-vous" : "Aucun acompte prévu pour ce rendez-vous" }, 409);
+        if (Math.round(Number(amount) * 100) !== _mtBase) {
+          await reportWorkerError(env, "worker:connect-payment", new Error("Montant demandé différent du montant enregistré"), { rdv_id: _rid, demande: Math.round(Number(amount) * 100), enregistre: _mtBase, type: _type }, "warning");
+          return jsonResponse({ error: "Montant incohérent avec le rendez-vous : rechargez la page." }, 409);
+        }
+        amount = _mtBase / 100;
       }
     }
 
@@ -4025,10 +4038,22 @@ async function handleAcompteFinalize(request, env) {
         if (piId && String(_rdv.payment_intent_id || "") === String(piId)) return jsonResponse({ ok: true, payment_intent_id: piId, deja: true });
         return jsonResponse({ error: "Acompte déjà enregistré pour ce rendez-vous" }, 409);
       }
+      // 2026-10-14 audit : le montant payé doit être EXACTEMENT l'acompte enregistré (avant : seul un montant inférieur était
+      // refusé, un trop-perçu était accepté et encaissé). Écart -> paiement remboursé en totalité, alerte critique, acompte non enregistré.
       const _attendu = Math.round((Number(_rdv.acompte_montant) || 0) * 100);
-      if (_attendu > 0 && typeof session.amount_total === "number" && session.amount_total < _attendu) {
-        await reportWorkerError(env, "worker:acompte-finalize", new Error("Montant paye different de l'acompte"), { rdv_id, paye: session.amount_total, attendu: _attendu }, "critical");
-        return jsonResponse({ error: "Montant payé incohérent" }, 409);
+      if (!(_attendu > 0) || typeof session.amount_total !== "number" || session.amount_total !== _attendu) {
+        let _rbt = null;
+        try {
+          if (piId) {
+            const _cpt = _compteA || null;
+            const _rf = _cpt
+              ? await stripeAPI(env, "refunds", { payment_intent: piId, "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "montant_incoherent" }, "POST", _cpt)
+              : await stripeAPI(env, "refunds", { payment_intent: piId, reverse_transfer: "true", "metadata[rdv_id]": String(rdv_id), "metadata[motif]": "montant_incoherent" });
+            _rbt = (_rf && _rf.id) ? _rf.id : ((_rf && _rf.error && (_rf.error.message || _rf.error.code)) || "échec");
+          }
+        } catch (_eRf) { _rbt = "exception " + (_eRf && _eRf.message); }
+        await reportWorkerError(env, "worker:acompte-finalize", new Error("Montant paye different de l'acompte : paiement rembourse"), { rdv_id, paye: session.amount_total, attendu: _attendu, payment_intent: piId, remboursement: _rbt }, "critical");
+        return jsonResponse({ error: "Montant payé incohérent avec l'acompte : le paiement est remboursé.", rembourse: !!(_rbt && String(_rbt).startsWith("re_")) }, 409);
       }
       // Statut decide par le salon (confirmation automatique ou non), pas par la page.
       try {
@@ -4126,14 +4151,17 @@ async function attemptAcompteRefund(env, rdv) {
     if (rdv.acompte_paye !== true) return { refunded: false, skipped: "acompte non payé" };
     const montant = Number(rdv.acompte_montant) || 0;
     if (montant <= 0) return { refunded: false, skipped: "montant nul" };
-    if (rdv.status !== "cancelled") return { refunded: false, skipped: "non annulé" };
+    // 2026-10-14 audit : un RDV REFUSÉ par l'établissement (ou refusé pendant le paiement) dont l'acompte a été payé est
+    // remboursé comme une annulation par l'établissement (toujours en totalité, sans politique d'annulation).
+    const _refuse = rdv.status === "refused";
+    if (rdv.status !== "cancelled" && !_refuse) return { refunded: false, skipped: "non annulé" };
 
     // 2026-10-10 : client absent (choix du salon dans le planning) -> acompte conservé.
     if (rdv.retenue_at || rdv.retenue_tk_num) return { refunded: false, skipped: "acompte déjà conservé (enregistré en caisse)" };
     if (rdv.cancelled_by === "no_show") return { refunded: false, skipped: "client absent : acompte conservé", conserve: true };
     // 2026-10-10 : annulation PAR LE SALON (à partir de cette version) -> acompte TOUJOURS remboursé ; la politique
     // d'annulation et son délai ne s'appliquent qu'aux annulations du client (et aux annulations antérieures).
-    const _parSalon = rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00";
+    const _parSalon = _refuse || (rdv.cancelled_by === "salon" && rdv.cancelled_at && String(rdv.cancelled_at) >= "2026-10-10T21:30:00");
     if (!_parSalon) {
       // 1) Politique d'annulation du salon (site_config — SINGULIER)
       let policyHours = 48, remboursementOn = true, pctPartiel = 0;
@@ -4424,7 +4452,11 @@ async function refundAndRecord(env, rdv) {
 async function runRefundReconcileJob(env) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
   const sel = "id,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,cancelled_at,cancelled_by,client_email,refund_error,retenue_at,acompte_rembourse_montant,remboursements";
-  const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&status=eq.cancelled&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&retenue_at=is.null&cancelled_at=gte.${encodeURIComponent(since)}&limit=50`;
+  // 2026-10-14 audit : + RDV REFUSÉS (par l'établissement, ou pendant le paiement) dont l'acompte a été payé : avant, seuls les
+  // RDV « cancelled » étaient remboursés -> un acompte payé sur un RDV refusé recevait son ticket scellé mais jamais de
+  // remboursement. Un refusé n'a pas de cancelled_at : fenêtre sur la date de paiement (ou de création).
+  const _or = `(and(status.eq.cancelled,cancelled_at.gte.${since}),and(status.eq.refused,or(acompte_paye_at.gte.${since},created_at.gte.${since})))`;
+  const q = `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=${sel}&or=${encodeURIComponent(_or)}&acompte_paye=eq.true&acompte_rembourse=eq.false&acompte_montant=gt.0&retenue_at=is.null&limit=50`;
   const res = await fetch(q, { headers: _sbHeaders(env) });
   if (!res.ok) return { ok: false, error: await res.text() };
   const rows = await res.json();
