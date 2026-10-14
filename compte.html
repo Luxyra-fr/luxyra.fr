@@ -181,7 +181,7 @@ function lxResetDonneesClient(){
   CARTES_ABO_DATA=[]; _cartesLoaded=false;
   _bonsCadeauxData=null; _bonsCadeauxLoaded=false;
   window.MY_PHOTOS=null; window._myPhotosLoading=false;
-  window.MY_COMMANDES=null;
+  window.MY_COMMANDES=null; window._lxCmdLance=0; window._lxBcLance=0;
   window.MY_NOTIFS=null; window.MY_NOTIFS_NL=0; window._lxNotifLance=0;
   window.MY_ALERTES=undefined;
   window.MY_FAVORIS=null; window._lxFavLance=0;
@@ -189,7 +189,13 @@ function lxResetDonneesClient(){
   try{ for(var _k in window){ if(_k.indexOf("_picker_search_")===0) window[_k]=""; } }catch(_eK){}
   try{ AVIS_DRAFT={rdvId:null, ticketId:null, salonId:null, note:0, texte:"", editing:null}; }catch(_eA){}
   try{ localStorage.removeItem("lx_favoris"); }catch(_eL){}
+  // 2026-10-14 audit : historique de recherche et dernière ville / métier du compte précédent
+  try{ ["lx_recents","lx_app_ville","lx_app_metier"].forEach(function(k){ localStorage.removeItem(k); }); }catch(_eR){}
+  try{ if(window.lxClientAppReset) window.lxClientAppReset(); }catch(_eB){}
 }
+// 2026-10-14 audit : lx-client.js (LX.login / LX.signup / LX.ouvrirSession) appelle ce crochet quand un
+// AUTRE compte était connecté sur l'appareil (lien de réinitialisation ou d'invitation ouvert par quelqu'un d'autre).
+window.lxChangementCompte=function(){ lxResetDonneesClient(); };
 function logout(){_lxPushOubli();lxResetDonneesClient();CLIENT=null;PAGE="login";LX.logout();try{localStorage.removeItem("lx_account");localStorage.removeItem("lx_favoris");}catch(e){}render();}
 
 // === DETECT INVITE TOKEN ?invite=XXX → AFFICHE FORM "DÉFINISSEZ VOTRE MOT DE PASSE" ===
@@ -331,6 +337,7 @@ async function doReset(){
   var lg=await LX.login(res.data.email, p1);
   try{ history.replaceState({},"","/compte.html"); }catch(_e){}
   if(lg.ok){
+    lxResetDonneesClient(); // 2026-10-14 audit : jamais les données d'un compte précédent
     CLIENT=lg.data.user; saveSession();
     if(window.RESET_RETOUR){ window.location.href=window.RESET_RETOUR; return; }
     PAGE="dashboard";TAB="rdv";loadMyRdvs();render();
@@ -353,7 +360,7 @@ function renderRegister(){
   h+='<div class="fg-row"><div class="fg"><label>Code postal *</label><input id="rCp" inputmode="numeric" placeholder="Code postal" autocomplete="postal-code"></div>';
   h+='<div class="fg"><label>Ville *</label><input id="rVille" readonly data-lx-ville-liste="1" style="cursor:default" placeholder="Choisie d\u2019apr\u00e8s le code postal" autocomplete="address-level2"></div></div>';
   h+='<div class="fg"><label>Email *</label><input id="rEmail" type="email" placeholder="votre@email.fr"></div>';
-  h+='<div class="fg"><label>Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 6 caract\u00e8res"></div>';
+  h+='<div class="fg"><label>Mot de passe *</label><input id="rPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="rPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doRegister()"></div>';
   h+='<div class="consent">';
   h+='<label><input type="checkbox" id="rSms" checked> \ud83d\udcf1 J\u0027accepte de recevoir des SMS (rappels RDV, offres)</label>';
@@ -375,7 +382,7 @@ function renderInvite(){
   h+='<h1 style="text-align:center">Activez votre compte</h1>';
   h+='<p style="text-align:center;font-size:13px;color:var(--text2);margin:8px 0 22px;line-height:1.5">Un salon a cr\u00e9\u00e9 votre fiche. D\u00e9finissez votre mot de passe ci-dessous pour acc\u00e9der \u00e0 votre historique de RDV, vos factures et votre fid\u00e9lit\u00e9.</p>';
   h+='<div id="invErr" class="err"></div>';
-  h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 6 caract\u00e8res"></div>';
+  h+='<div class="fg"><label>Nouveau mot de passe *</label><input id="iPass" type="password" placeholder="Minimum 8 caract\u00e8res"></div>';
   h+='<div class="fg"><label>Confirmer le mot de passe *</label><input id="iPass2" type="password" placeholder="Confirmez" onkeydown="if(event.key===\'Enter\')doActivateInvite()"></div>';
   h+='<button id="btnActivateInvite" style="width:100%;margin-top:10px;padding:16px 20px;background:linear-gradient(135deg,#d4a843 0%,#b8960f 100%);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:10px;letter-spacing:.5px;text-transform:uppercase;box-shadow:0 4px 16px rgba(212,168,67,.35);transition:all .2s" onmouseover="this.style.transform=\'translateY(-1px)\';this.style.boxShadow=\'0 6px 20px rgba(212,168,67,.45)\'" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 4px 16px rgba(212,168,67,.35)\'" onclick="doActivateInvite()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Activer mon compte</button>';
   h+='<div style="text-align:center;margin-top:14px;font-size:11px;color:var(--text3);line-height:1.5">Lien valide 14 jours \u00b7 usage unique<br>En activant votre compte, vous acceptez nos <a href="/cgv" target="_blank" style="color:var(--gold)">CGV</a> et notre <a href="/confidentialite" target="_blank" style="color:var(--gold)">Politique de confidentialit\u00e9</a>.</div>';
@@ -385,7 +392,7 @@ function renderInvite(){
 async function doActivateInvite(){
   var p1=(document.getElementById("iPass")||{}).value||"";
   var p2=(document.getElementById("iPass2")||{}).value||"";
-  if(p1.length<6){showErr("invErr","Mot de passe minimum 6 caract\u00e8res");return;}
+  if(p1.length<8){showErr("invErr","Mot de passe minimum 8 caract\u00e8res");return;} // 2026-10-14 audit : 8 partout
   if(p1!==p2){showErr("invErr","Les mots de passe ne correspondent pas");return;}
   var token=window.INVITE_TOKEN;
   if(!token){showErr("invErr","Token d\u2019invitation manquant");return;}
@@ -402,14 +409,22 @@ async function doActivateInvite(){
     });
     var data=await resp.json();
     if(!resp.ok || !data.ok){
+      if(data && data.compte_existant){ // 2026-10-14 audit : fiche reliée au compte existant -> connexion
+        showErr("invErr", data.error);
+        setTimeout(function(){ window.INVITE_TOKEN=null; try{ history.replaceState({}, "", "/compte"); }catch(_e){} PAGE="login"; render(); try{ var el=document.getElementById("lEmail"); if(el) el.value=data.email||""; }catch(_e2){} }, 3000);
+        return;
+      }
       showErr("invErr", data.error || "Activation impossible. Contactez votre salon.");
       if(btn){btn.disabled=false;btn.style.opacity="1";btn.innerHTML=btnHTMLOriginal;}
       return;
     }
     // Compte cr\u00e9\u00e9 + li\u00e9 \u2192 on connecte automatiquement avec email + password
     if(btn){btn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>Compte activ\u00e9 \u2713';}
-    // 2026-10-14 : LX.signin n'existe pas (plantage) -> LX.login(email, motDePasse).
-    var loginRes = await LX.login(data.email, p1);
+    // 2026-10-14 audit : le worker crée le compte client et renvoie directement la session
+    // (LX.ouvrirSession efface d'abord les données d'un autre compte connecté sur l'appareil).
+    var loginRes;
+    if(data.session_token && data.user && LX.ouvrirSession){ LX.ouvrirSession(data.session_token, data.user); loginRes={ok:true,data:{user:data.user}}; }
+    else loginRes = await LX.login(data.email, p1);
     if(!loginRes.ok){
       // 2026-10-14 : l'invitation ne cr\u00e9e pas encore le compte client Luxyra -> on termine par l'inscription
       // normale, avec l'email (et la fiche) pr\u00e9-remplis.
@@ -522,6 +537,7 @@ function lxRenderSalonPicker(opts){
 // --- COMMANDES CLICK & COLLECT (2026-10-08) ---
 window.MY_COMMANDES=null;
 async function loadMyCommandes(){
+  window._lxCmdLance=1; // 2026-10-14 audit : chargement lancé (lien direct ?tab=commandes)
   window.MY_COMMANDES=null; render();
   try{
     var token=(window.LX&&LX.getToken)?LX.getToken():"";
@@ -532,6 +548,8 @@ async function loadMyCommandes(){
 }
 function renderCommandesTab(){
   var L=window.MY_COMMANDES;
+  // 2026-10-14 audit : ouverture directe par ?tab=commandes -> rien ne lançait le chargement (« Chargement… » sans fin)
+  if(L===null && !window._lxCmdLance){ window._lxCmdLance=1; setTimeout(loadMyCommandes,0); }
   if(L===null) return '<div style="text-align:center;padding:30px;color:#888">Chargement\u2026</div>';
   if(L&&L.error) return '<div style="text-align:center;padding:30px;color:#e57373">'+escAttr(L.error)+'</div>';
   if(!L.length) return '<div style="text-align:center;padding:30px;color:#888">Aucune commande Click &amp; Collect</div>';
@@ -765,6 +783,8 @@ function _lxRecuAcompteHtml(r){
     return '<div class="rdv-det" style="margin-top:2px;color:var(--text3)">🧾 '+s+'</div>';
   }catch(_e){ return ""; }
 }
+// 2026-10-14 audit : demande refusée par l'établissement (statut refused, ou annulation salon motivée par un refus)
+function _lxRefusEtab(r){ return !!r && (r.status==="refused" || (r.status==="cancelled" && r.cancelled_by==="salon" && /refus|non retenu/i.test(String(r.cancel_reason||"")))); }
 // --- RDV TAB ---
 function renderRdvTab(){
   var h='';
@@ -779,14 +799,19 @@ function renderRdvTab(){
   var past=CLIENT_RDVS.filter(function(r){return (r.date_rdv<today&&r.status!=="cancelled"&&r.status!=="refused"&&r.status!=="pending_payment")||r.status==="done";}); // 2026-10-14 : paiement abandonné ≠ « Terminé »
   var cancelled=CLIENT_RDVS.filter(function(r){return r.status==="cancelled"||r.status==="refused";});
   // Override status label for past confirmed → Terminé
+  // 2026-10-14 audit : « Terminé » seulement pour un RDV encaissé (done) ou confirmé et passé ;
+  // une demande jamais confirmée et passée = « Non confirmé » ; refus de l'établissement = « Non retenu ».
   function getStatusLabel(r){
     if(r.status==="pending_payment")return "Paiement en attente"; // 2026-10-14
     if(r.status==="done")return "Termin\u00e9";
-    if(r.date_rdv<today&&r.status!=="cancelled")return "Termin\u00e9";
+    if(r.date_rdv<today&&r.status==="confirmed")return "Termin\u00e9";
+    if(r.date_rdv<today&&r.status==="pending")return "Non confirm\u00e9";
+    if(_lxRefusEtab(r))return "Non retenu";
     return stLabels[r.status]||r.status;
   }
   function getStatusClass(r){
-    if(r.status==="done"||(r.date_rdv<today&&r.status!=="cancelled"))return "st-done";
+    if(r.status==="done"||(r.date_rdv<today&&r.status==="confirmed"))return "st-done";
+    if(_lxRefusEtab(r))return "st-cancelled";
     return stClasses[r.status]||"";
   }
   
@@ -909,14 +934,16 @@ function renderRdvTab(){
           var avisExist=CLIENT_AVIS.find(function(a){return a.salon_id===r.salon_id;});
           var aRdvArg = r._fromPOS ? "null" : "'"+r.id+"'";
           var aTkArg  = r._fromPOS ? "'"+r.id+"'" : "null";
-          if(avisExist){
+          if(avisExist && avisExist.en_moderation){ // 2026-10-14 audit : avis signalé / masqué / en attente
+            h+='<span style="display:inline-block;padding:6px 12px;border-radius:6px;border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:600">\u23f3 Avis en cours de v\u00e9rification</span>';
+          } else if(avisExist){
             h+='<button onclick="showLeaveAvisModal('+aRdvArg+','+aTkArg+',\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\u270f Modifier mon avis</button>';
           } else {
             h+='<button onclick="showLeaveAvisModal('+aRdvArg+','+aTkArg+',\''+r.salon_id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis</button>';
           }
         }
         if(r.salon_id)h+='<button onclick="rebookRdv(\''+r.salon_id+'\','+(r.service_id||'null')+',\''+encodeURIComponent(r.salon_nom||"").replace(/'/g,"%27")+'\',\''+escAttr(r.salon_slug||"")+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udd01 Reprendre ce RDV</button>';
-        h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udcc4 Re\u00e7u</button>';
+        if(r._fromPOS&&r.ticket_html) h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">\ud83d\udcc4 Re\u00e7u</button>';
         h+='</div>';
       }
       h+='</div>';
@@ -935,7 +962,7 @@ function renderRdvTab(){
       h+='<div class="rdv-info"><div class="rdv-svc" style="text-decoration:line-through">'+escAttr(r.service_nom)+'</div>';
       h+='<div class="rdv-det">'+(r.heure_rdv?escAttr(r.heure_rdv.slice(0,5)):"")+' \u2022 '+escAttr(r.salon_nom||"")+'</div>';
       // 2026-10-11 : qui a annulé + motif (avant : rien, le client ne savait pas pourquoi)
-      var _par=r.cancelled_by==="client"?"par vous":(r.cancelled_by==="salon"||r.cancelled_by==="no_show")?"par l\u2019\u00e9tablissement":"";
+      var _par=_lxRefusEtab(r)?"":r.cancelled_by==="client"?"par vous":(r.cancelled_by==="salon"||r.cancelled_by==="no_show")?"par l\u2019\u00e9tablissement":"";
       var _mot=(r.cancelled_by==="salon"&&r.cancel_reason&&r.cancel_reason!=="Annul\u00e9 par le salon")?r.cancel_reason:"";
       // 2026-10-14 audit : demande refusée par l'établissement (jamais confirmée) -> « Demande non retenue », pas « Annulé »
       var _refus=(r.cancelled_by==="salon"&&/^Demande non retenue/.test(String(r.cancel_reason||"")));
@@ -944,7 +971,7 @@ function renderRdvTab(){
       else if(_par||_mot) h+='<div class="rdv-det" style="margin-top:2px">'+(_par?'Annul\u00e9 '+_par:'')+(_mot?' \u2014 \u00ab '+escAttr(_mot)+' \u00bb':'')+'</div>';
       h+=_lxRecuAcompteHtml(r); // 2026-10-14 (NF525 acompte en ligne, 2e revue) : re\u00e7u d'acompte sur les RDV annul\u00e9s / absence
       h+='</div>';
-      h+='<div class="rdv-status st-cancelled">'+(_refus?'Non retenue':'Annul\u00e9')+'</div>'; // 2026-10-14 audit
+      h+='<div class="rdv-status st-cancelled">'+((_refus||_lxRefusEtab(r))?"Non retenu":"Annulé")+'</div>'; // 2026-10-14 audit (planning + site)
       h+='</div></div>';
     });
     h+='</div>';
@@ -1157,11 +1184,11 @@ function renderTicketsTab(){
   var h='';
   var mois=["Jan","F\u00e9v","Mar","Avr","Mai","Jun","Jul","Ao\u00fb","Sep","Oct","Nov","D\u00e9c"];
   var today=new Date().toISOString().slice(0,10);
+  // 2026-10-14 audit : uniquement de VRAIS tickets — ticket de caisse (_fromPOS) ou reçu d'acompte réellement
+  // émis (acompte_tk_num). Avant : un RDV en ligne passé affichait un « ticket » TVA fabriqué dans le navigateur.
   var doneAll=CLIENT_RDVS.filter(function(r){
-    if(r.status==="done")return true;
-    // Past confirmed = effectué (salon n'a pas mis à jour le statut online)
-    if((r.status==="confirmed"||r.status==="pending")&&r.date_rdv<today)return true;
-    return false;
+    if(r._fromPOS) return r.status==="done";
+    return !!(r.acompte_tk_num && Number(r.acompte_montant)>0);
   }).sort(function(a,b){
     if(a.date_rdv!==b.date_rdv)return a.date_rdv>b.date_rdv?-1:1;
     if(a.heure_rdv&&b.heure_rdv&&a.heure_rdv!==b.heure_rdv)return a.heure_rdv>b.heure_rdv?-1:1;
@@ -1192,21 +1219,23 @@ function renderTicketsTab(){
 
   done.forEach(function(r){
     var dp=r.date_rdv.split("-");
-    var ttc=Number(r.service_prix)||0;
+    var _estPOS=!!r._fromPOS; // 2026-10-14 audit : ticket de caisse réel, sinon reçu d'acompte seul
+    var ttc=_estPOS?(Number(r.service_prix)||0):(Number(r.acompte_montant)||0);
     var dateFR=parseInt(dp[2])+" "+mois[parseInt(dp[1])-1]+" "+dp[0];
     h+='<div class="card" style="margin-bottom:10px;border-left:4px solid var(--gold);padding:14px">';
     // Header: ticket num + date + salon + total
     h+='<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">';
     h+='<div>';
-    h+='<div style="font-weight:800;font-size:15px;color:var(--gold)">Ticket N\u00b0'+(r.ticket_num||"--")+'</div>';
-    if(r.acompte_tk_num&&Number(r.acompte_montant)>0) h+='<div style="font-size:11px;color:var(--text3)">Re\u00e7u d\u2019acompte n\u00b0 '+escAttr(String(r.acompte_tk_num))+' ('+Number(r.acompte_montant).toFixed(2).replace(".",",")+' \u20ac pay\u00e9s en ligne)</div>'; // 2026-10-14 (NF525 acompte en ligne)
+    h+='<div style="font-weight:800;font-size:15px;color:var(--gold)">'+(_estPOS?'Ticket N\u00b0'+escAttr(String(r.ticket_num||"--")):'Re\u00e7u d\u2019acompte n\u00b0 '+escAttr(String(r.acompte_tk_num)))+'</div>';
+    if(!_estPOS) h+='<div style="font-size:11px;color:var(--text3)">Acompte pay\u00e9 en ligne \u2014 le ticket de la prestation vous est remis par l\u2019\u00e9tablissement</div>';
+    else if(r.acompte_tk_num&&Number(r.acompte_montant)>0) h+='<div style="font-size:11px;color:var(--text3)">Re\u00e7u d\u2019acompte n\u00b0 '+escAttr(String(r.acompte_tk_num))+' ('+Number(r.acompte_montant).toFixed(2).replace(".",",")+' \u20ac pay\u00e9s en ligne)</div>'; // 2026-10-14 (NF525 acompte en ligne)
     h+='<div style="font-size:12px;color:var(--text3)">'+dateFR+(r.heure_rdv?" \u00e0 "+r.heure_rdv.slice(0,5):"")+'</div>';
     h+='<div style="font-size:12px;color:var(--text2);margin-top:2px">\ud83c\udfe0 '+escAttr(r.salon_nom||"Salon")+'</div>';
     h+='</div>';
     h+='<div style="text-align:right"><div style="font-size:20px;font-weight:900;color:#fff">'+ttc.toFixed(2)+' \u20ac</div><div style="font-size:10px;color:var(--text3)">TTC</div></div>';
     h+='</div>';
     // Items detail - always show all
-    if(r.items&&r.items.length){
+    if(_estPOS&&r.items&&r.items.length){
       h+='<div style="background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:10px">';
       var ic=0;
       r.items.forEach(function(it){
@@ -1225,16 +1254,22 @@ function renderTicketsTab(){
       if(r.collaborateur_nom)h+=' \u2022 par '+escAttr(r.collaborateur_nom);
       h+='</div>';
     }
-    // Actions
+    // Actions — 2026-10-14 audit : seulement le ticket ENREGISTRÉ en caisse (jamais de ticket reconstitué)
+    if(_estPOS&&r.ticket_html){
     h+='<div style="display:flex;gap:8px;flex-wrap:wrap">';
     h+='<button onclick="downloadReceipt(\''+r.id+'\')" style="flex:1;min-width:140px;padding:10px;border-radius:8px;border:1px solid var(--border2);background:rgba(255,255,255,.04);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">\ud83d\udda8 Voir le ticket</button>';
     h+='<button onclick="emailReceipt(\''+r.id+'\')" style="flex:1;min-width:140px;padding:10px;border-radius:8px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.06);color:var(--gold);font-size:12px;font-weight:700;cursor:pointer">\u2709 Recevoir par email</button>';
     h+='</div>';
+    } else if(_estPOS){
+      h+='<div style="font-size:11px;color:var(--text3)">Duplicata du ticket disponible aupr\u00e8s de l\u2019\u00e9tablissement.</div>';
+    }
     // Bouton avis : pour les tickets aussi (1 avis par salon, peut \u00eatre modifi\u00e9)
-    if(r.salon_id){
+    if(_estPOS&&r.salon_id){ // 2026-10-14 audit : un reçu d'acompte n'est pas une preuve de visite
       var existAvis=CLIENT_AVIS.find(function(a){return a.salon_id===r.salon_id;});
       h+='<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">';
-      if(existAvis){
+      if(existAvis && existAvis.en_moderation){ // 2026-10-14 audit
+        h+='<span style="display:inline-block;padding:6px 12px;border-radius:6px;border:1px solid var(--border);color:var(--text3);font-size:11px;font-weight:600">\u23f3 Avis en cours de v\u00e9rification</span>';
+      } else if(existAvis){
         h+='<button onclick="showLeaveAvisModal(null,\''+r.id+'\',\''+r.salon_id+'\')" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.08);color:var(--gold);font-size:11px;font-weight:600;cursor:pointer">\u270f Modifier mon avis sur ce salon</button>';
       } else {
         h+='<button onclick="showLeaveAvisModal(null,\''+r.id+'\',\''+r.salon_id+'\')" style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid rgba(200,168,78,.4);background:linear-gradient(135deg,rgba(200,168,78,.12),rgba(200,168,78,.04));color:var(--gold);font-size:11px;font-weight:700;cursor:pointer">\u2605 Laisser un avis sur ce salon</button>';
@@ -1251,26 +1286,11 @@ function renderTicketsTab(){
 async function emailReceipt(rdvId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
   if(!CLIENT||!CLIENT.email){alert("Aucun email enregistr\u00e9 sur votre compte.");return;}
+  // 2026-10-14 audit : jamais de ticket TVA fabriqué dans le navigateur — seul le ticket enregistré en caisse est envoyé
+  if(!rdv.ticket_html){ showToast("Duplicata disponible aupr\u00e8s de l\u2019\u00e9tablissement"); return; }
   var btn=event.target;if(btn){btn.textContent="\u23f3 Envoi...";btn.disabled=true;}
 
-  // Use stored ticket HTML if available, otherwise generate
-  var ticketHtml;
-  if(rdv.ticket_html){
-    ticketHtml=rdv.ticket_html;
-  }else{
-    var salon={nom:rdv.salon_nom||"Salon",adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",tauxTVA:20};
-    try{
-      var sr=await api("salons_public?select=nom,config_json&id=eq."+rdv.salon_id);
-      var sd=await sr.json();
-      if(Array.isArray(sd)&&sd[0]){
-        var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
-        salon.nom=cfg.nom||sd[0].nom||"Salon";
-        salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
-        salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";salon.tauxTVA=cfg.tauxTVA||20;
-      }
-    }catch(e){}
-    ticketHtml=buildCompteTicketHTML(rdv,salon);
-  }
+  var ticketHtml=rdv.ticket_html;
   var salonNomEmail=rdv.salon_nom||"Salon";
 
   try{
@@ -1293,67 +1313,7 @@ async function emailReceipt(rdvId){
   if(btn){btn.textContent="\u2709 Recevoir par email";btn.disabled=false;}
 }
 
-// Build ticket HTML for compte client (shared between downloadReceipt and emailReceipt)
-function buildCompteTicketHTML(rdv,salon){
-  var txTVA=salon.tauxTVA||20;
-  var ttc=Number(rdv.service_prix)||0;
-  var ht=Math.round(ttc*100/(100+txTVA)*100)/100;
-  var tva=Math.round((ttc-ht)*100)/100;
-  var dp=rdv.date_rdv?rdv.date_rdv.split("-"):["2026","01","01"];
-  var dateFR=dp[2]+"/"+dp[1]+"/"+dp[0];
-  var acompte=Number(rdv.acompte_montant)||0;
-
-  var h="";
-  // DUPLICATA
-  h+="<div style='text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px'>DUPLICATA</div>";
-  // En-t\u00eate salon
-  h+="<div style='text-align:center;border-bottom:1px solid #000;padding-bottom:8px;margin-bottom:8px'>";
-  h+="<div style='font-weight:900;font-size:14px;letter-spacing:1px'>"+escAttr(String(salon.nom||"").toUpperCase())+"</div>";
-  h+="<div style='font-size:11px'>"+escAttr(salon.adresse)+"</div>";
-  h+="<div style='font-size:11px'>"+escAttr(salon.cp||"")+" "+escAttr(salon.ville||"")+"</div>";
-  if(salon.tel)h+="<div style='font-size:11px'>T\u00e9l: "+escAttr(salon.tel)+"</div>";
-  h+="</div>";
-  // Ticket info
-  h+="<div style='text-align:center;margin-bottom:8px'>";
-  h+="<div style='font-weight:900;font-size:13px'>Ticket de vente N\u00b0"+(rdv.ticket_num||"--")+"</div>";
-  h+="<div style='font-size:12px'>"+dateFR+" \u00e0 "+(rdv.heure_rdv?rdv.heure_rdv.slice(0,5):"")+"</div>";
-  if(rdv.collaborateur_nom)h+="<div style='font-size:12px'>Collaborateur: "+escAttr(rdv.collaborateur_nom)+"</div>";
-  h+="<div style='font-size:12px'>Client: "+escAttr(CLIENT.prenom||"")+" "+escAttr(CLIENT.nom||"")+"</div>";
-  h+="</div>";
-  // Articles
-  h+="<table style='width:100%;border-collapse:collapse'><tr style='border-top:1px solid #000;border-bottom:1px solid #000'><th style='text-align:left;padding:4px 0;font-size:11px'>Quantit\u00e9</th><th style='text-align:left;font-size:11px'>D\u00e9signation</th><th style='text-align:right;font-size:11px'>TTC</th></tr>";
-  if(rdv.items&&rdv.items.length){
-    rdv.items.forEach(function(it){
-      if(it.isSep){h+="<tr><td colspan='3' style='padding:6px 0 2px;font-weight:900;border-top:1px dashed #999;font-size:11px'>\u25b6 "+escAttr((it.name||"").replace(/---/g,"").trim())+"</td></tr>";return;}
-      var lt=(it.price||0)*(it.qty||1)-(it.remise||0);
-      h+="<tr style='border-bottom:1px solid #ccc'><td style='padding:3px 0'>"+(it.qty||1)+"</td><td style='padding:3px 4px;font-weight:700'>"+escAttr((it.name||"").toUpperCase())+"</td><td style='text-align:right;padding:3px 0'>"+lt.toFixed(2)+"</td></tr>";
-    });
-  }else{
-    h+="<tr><td>1</td><td style='font-weight:700'>"+escAttr((rdv.service_nom||"").toUpperCase())+"</td><td style='text-align:right'>"+ttc.toFixed(2)+"</td></tr>";
-  }
-  h+="</table>";
-  // HT
-  h+="<div style='display:flex;justify-content:space-between;font-weight:900;font-size:13px;border-top:2px solid #000;padding-top:6px'><span>Total HT :</span><span>"+ht.toFixed(2)+"</span></div>";
-  // TVA
-  h+="<table style='font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000;width:100%;border-collapse:collapse'><tr style='font-weight:700'><td></td><td style='text-align:center'>TVA</td><td style='text-align:center'>HT</td><td style='text-align:right'>TTC</td></tr>";
-  h+="<tr><td>TVA "+txTVA+"%</td><td style='text-align:center'>"+tva.toFixed(2)+" \u20ac</td><td style='text-align:center'>"+ht.toFixed(2)+" \u20ac</td><td style='text-align:right'>"+ttc.toFixed(2)+" \u20ac</td></tr></table>";
-  // TTC
-  h+="<div style='display:flex;justify-content:space-between;font-weight:900;font-size:16px;padding:8px 0;border-bottom:1px solid #000'><span>Total TTC :</span><span>"+ttc.toFixed(2)+" \u20ac</span></div>";
-  // Acompte
-  if(acompte>0){
-    h+="<div style='display:flex;justify-content:space-between;font-size:11px;padding:3px 0'><span>Acompte d\u00e9duit</span><span>-"+acompte.toFixed(2)+" \u20ac</span></div>";
-    h+="<div style='display:flex;justify-content:space-between;font-weight:900;font-size:14px;padding:3px 0'><span>RESTE PAY\u00c9</span><span>"+(ttc-acompte).toFixed(2)+" \u20ac</span></div>";
-  }
-  // NF525
-  h+="<div style='border-top:1px dashed #999;margin:8px 0'></div>";
-  h+="<div style='text-align:center;font-size:10px;color:#666'>";
-  if(salon.siret)h+="<div>SIRET: "+escAttr(salon.siret)+"</div>";
-  if(salon.tva)h+="<div>N\u00b0 TVA: "+escAttr(salon.tva)+"</div>";
-  h+="<div>Logiciel securise - attestation de conformite de l'editeur</div><div>Luxyra - contact@luxyra.fr</div>";
-  h+="<div style='font-size:9px;color:#999'>Art. 286-I-3\u00b0 bis du CGI - Conserver 6 ans</div>";
-  h+="<div style='font-weight:700;margin-top:4px'>COPIE ELECTRONIQUE - DUPLICATA</div></div>";
-  return h;
-}
+// 2026-10-14 audit : buildCompteTicketHTML supprimé (fabriquait un « duplicata » TVA côté navigateur, sans valeur fiscale)
 
 // ========== BONS CADEAUX ==========
 // FIX 2026-05-15 : nouvel onglet 🎁 Bons cadeaux. Liste les bons achetés par le client
@@ -1361,12 +1321,16 @@ function buildCompteTicketHTML(rdv,salon){
 var _bonsCadeauxData = null;
 var _bonsCadeauxLoaded = false;
 async function loadMyBonsCadeaux(){
-  if(!CLIENT || !CLIENT.email) return;
+  if(!CLIENT) return;
+  window._lxBcLance = 1;
   _bonsCadeauxLoaded = false;
   render();
   try {
-    var r = await api("cartes_cadeaux?select=*,salons(nom,adresse,cp,ville,tel,logo,slug)&buyer_email=eq."+encodeURIComponent(CLIENT.email.toLowerCase())+"&payment_status=eq.paid&order=created_at.desc");
-    _bonsCadeauxData = r || [];
+    // 2026-10-14 audit : la table n'est pas lisible en anon (RLS) et la réponse fetch brute était stockée
+    // telle quelle -> onglet toujours vide. Lecture par le worker (bons rattachés au compte, ou à l'e-mail
+    // du compte s'il est vérifié).
+    var res = await _clientApi("bons-cadeaux", {});
+    _bonsCadeauxData = (res.ok && res.data && Array.isArray(res.data.bons)) ? res.data.bons : [];
   } catch(e) {
     console.warn("loadMyBonsCadeaux", e);
     _bonsCadeauxData = [];
@@ -1378,6 +1342,7 @@ function renderBonsCadeauxTab(){
   var h='';
   h+='<div class="section"><div class="section-title">🎁 Mes bons cadeaux</div>';
   if(!_bonsCadeauxLoaded){
+    if(!window._lxBcLance){ window._lxBcLance=1; setTimeout(loadMyBonsCadeaux,0); } // 2026-10-14 audit : lien direct ?tab=bons_cadeaux
     h+='<div class="card" style="text-align:center;padding:30px;color:var(--text3)">Chargement…</div></div>';
     return h;
   }
@@ -1579,7 +1544,7 @@ async function doRegister(){
   if(!nom||!pre||!tel||!email||!pass){showErr("regErr","Remplissez tous les champs obligatoires");return;}
   if(!genre){showErr("regErr","Veuillez s\u00e9lectionner un genre");return;}
   if(!cgu){showErr("regErr","Vous devez accepter les CGU");return;}
-  if(pass.length<6){showErr("regErr","Mot de passe : 6 caract\u00e8res minimum");return;}
+  if(pass.length<8){showErr("regErr","Mot de passe : 8 caract\u00e8res minimum");return;} // 2026-10-14 audit
   if(pass!==pass2){showErr("regErr","Les mots de passe ne correspondent pas");return;}
   var smsOk=document.getElementById("rSms").checked;
   var emOk=document.getElementById("rEm").checked;
@@ -1631,7 +1596,7 @@ async function changePassword(){
   var nw=document.getElementById("pNewPass").value;
   var nw2=document.getElementById("pNewPass2").value;
   if(!old||!nw){showMsg("passMsg","Remplissez tous les champs","var(--red)");return;}
-  if(nw.length<6){showMsg("passMsg","6 caract\u00e8res minimum","var(--red)");return;}
+  if(nw.length<8){showMsg("passMsg","8 caract\u00e8res minimum","var(--red)");return;} // 2026-10-14 audit
   if(nw!==nw2){showMsg("passMsg","Les mots de passe ne correspondent pas","var(--red)");return;}
   var res=await LX.changePassword(old,nw);
   if(!res.ok){showMsg("passMsg",res.data&&res.data.error?res.data.error:"Erreur","var(--red)");return;}
@@ -1676,6 +1641,17 @@ async function loadMyRdvs(){
           var ex=false;CLIENT_RDVS.forEach(function(x){if(x.id===t.id)ex=true;});
           if(!ex)CLIENT_RDVS.push(t);
         });
+        // 2026-10-14 audit : une même visite = RDV en ligne passé « done » + ticket de caisse -> une seule ligne.
+        // Lien : rdv_online.ticket_num (posé à l'encaissement) = appointments.ticket_num, même établissement.
+        var _tkPOS={};
+        CLIENT_RDVS.forEach(function(x){ if(x._fromPOS&&x.ticket_num!=null&&x.salon_id) _tkPOS[x.salon_id+"|"+x.ticket_num]=x; });
+        CLIENT_RDVS=CLIENT_RDVS.filter(function(x){
+          if(x._fromPOS||x.ticket_num==null||!x.salon_id) return true;
+          var t=_tkPOS[x.salon_id+"|"+x.ticket_num]; if(!t) return true;
+          if(x.acompte_tk_num&&!t.acompte_tk_num){ t.acompte_tk_num=x.acompte_tk_num; t.acompte_montant=x.acompte_montant; }
+          t._rdvOnlineId=x.id; if(!t.salon_slug&&x.salon_slug) t.salon_slug=x.salon_slug;
+          return false;
+        });
       }
     }catch(e3){}
     
@@ -1683,9 +1659,10 @@ async function loadMyRdvs(){
     CLIENT_RDVS.sort(function(a,b){return (a.date_rdv||"")>(b.date_rdv||"")?-1:1;});
     // Charger les avis déjà laissés par ce client (1 avis par salon)
     try{
-      var rA=await api("avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at,note_accueil,note_proprete,note_cadre,note_qualite,photos&client_luxyra_id=eq."+CLIENT.id);
-      var dA=await rA.json();
-      if(Array.isArray(dA)) CLIENT_AVIS=dA;
+      // 2026-10-14 audit : par le worker (l'anon ne voit que les avis publiés : un avis signalé ou masqué
+      // réapparaissait en « Laisser un avis »)
+      var rA=await _clientApi("avis", {});
+      if(rA.ok && rA.data && Array.isArray(rA.data.avis)) CLIENT_AVIS=rA.data.avis;
     }catch(_){}
     render();
   }catch(e){}
@@ -1729,6 +1706,7 @@ function confirmDeleteAccount(){
   h+='\u274c Vos fiches clients dans tous les salons seront anonymis\u00e9es<br>';
   h+='\u274c Vos points de fid\u00e9lit\u00e9 seront perdus dans tous les salons<br>';
   h+='\u274c Vos r\u00e9servations en ligne seront anonymis\u00e9es<br>';
+  h+='\u274c Vos rendez-vous \u00e0 venir seront annul\u00e9s (acompte rembours\u00e9 selon la politique d\u2019annulation de chaque \u00e9tablissement)<br>'; // 2026-10-14 audit
   h+='\u2139\ufe0f Les tickets de caisse seront conserv\u00e9s (obligation l\u00e9gale)</div></div>';
   h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;text-align:center">Pour confirmer, tapez <strong style="color:var(--red)">SUPPRIMER</strong> ci-dessous :</div>';
   h+='<div style="margin-bottom:12px"><input id="delConfirm" placeholder="SUPPRIMER" style="width:100%;padding:14px;border-radius:10px;border:2px solid rgba(248,113,113,.3);background:rgba(255,255,255,.04);color:var(--text);font-size:15px;font-weight:700;text-align:center;letter-spacing:2px"></div>';
@@ -1915,6 +1893,7 @@ async function submitCancelRdv(rdvId){
 // ========== RECEIPT / FACTURE ==========
 async function downloadReceipt(rdvId){
   var rdv=CLIENT_RDVS.find(function(r){return r.id===rdvId;});if(!rdv)return;
+  if(!rdv.ticket_html){ showToast("Duplicata disponible aupr\u00e8s de l\u2019\u00e9tablissement"); return; } // 2026-10-14 audit
   
   var salonNom=rdv.salon_nom||"Salon";
   var ticketNum=rdv.ticket_num||"";
@@ -1925,24 +1904,7 @@ async function downloadReceipt(rdvId){
   h+="table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>";
   
   // Use stored ticket HTML (exact same as printed at checkout) if available
-  if(rdv.ticket_html){
-    h+=rdv.ticket_html;
-  }else{
-    // Fallback to generated ticket
-    var salon={nom:salonNom,adresse:"",cp:"",ville:"",tel:"",siret:"",tva:"",sousTitre:"",tauxTVA:20};
-    try{
-      var sr=await api("salons_public?select=nom,config_json&id=eq."+rdv.salon_id);
-      var sd=await sr.json();
-      if(Array.isArray(sd)&&sd[0]){
-        var cfg={};try{cfg=typeof sd[0].config_json==="string"?JSON.parse(sd[0].config_json):sd[0].config_json||{};}catch(e){}
-        salon.nom=cfg.nom||sd[0].nom||"Salon";
-        salon.adresse=cfg.adresse||"";salon.cp=cfg.cp||"";salon.ville=cfg.ville||"";
-        salon.tel=cfg.tel||"";salon.siret=cfg.siret||"";salon.tva=cfg.tva||"";
-        salon.sousTitre=cfg.sousTitre||"";salon.tauxTVA=cfg.tauxTVA||20;
-      }
-    }catch(e){}
-    h+=buildCompteTicketHTML(rdv,salon);
-  }
+  h+=rdv.ticket_html;
   h+="</body></html>";
   
   w.document.write(h);w.document.close();
@@ -2176,6 +2138,6 @@ render();
 if(CLIENT){loadMyRdvs();loadFidelite();}
 </script>
 <script src="/lx-cp-ville.js?v=20261014-1" defer></script>
-<script src="/lx-client-app.js?v=5" defer></script>
+<script src="/lx-client-app.js?v=6" defer></script>
 </body>
 </html>

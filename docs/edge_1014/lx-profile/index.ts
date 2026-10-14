@@ -1,4 +1,6 @@
-// lx-profile v9 — 2026-10-14 SECURITE (audit) :
+// lx-profile v9 — 2026-10-14 : version FUSIONNÉE des lots « secu » et « site » (intégration integ1014).
+//   site : nouveau mot de passe 8 caractères minimum (change_password).
+// 2026-10-14 SECURITE (audit) :
 //   - version de session : le jeton porte sv ; il est refusé si clients_luxyra.session_version a changé
 //     (changement / réinitialisation du mot de passe => les AUTRES appareils sont déconnectés ;
 //     l'appareil qui change son mot de passe reçoit un nouveau jeton) ;
@@ -134,7 +136,7 @@ Deno.serve(async (req) => {
     if (action === "update") { const allowed = ["nom","prenom","telephone","date_naissance","genre","sms_ok","email_ok","adresse","cp","ville","pays","avatar_url"]; const patch: Record<string, unknown> = {}; for (const k of allowed) if (k in body) patch[k] = body[k]; if ("pays" in patch && !PAYS.includes(String(patch.pays))) delete patch.pays; if (Object.keys(patch).length === 0) return json(400, { error: "Aucun champ à mettre à jour" }); patch.updated_at = new Date().toISOString(); const { data: user, error } = await sb.from("clients_luxyra").update(patch).eq("id", lx_id).select(SAFE_COLUMNS).single(); if (error) return json(500, { error: error.message }); return json(200, { user }); }
     if (action === "change_password") {
       const oldPass = String(body.old_password || ""); const newPass = String(body.new_password || "");
-      if (newPass.length < 6) return json(400, { error: "Nouveau mot de passe trop court (6 min)" });
+      if (newPass.length < 8) return json(400, { error: "Nouveau mot de passe trop court (8 caractères minimum)" }); // 2026-10-14 audit site
       const refus = await controleMotDePasse(lx_id, oldPass, ip, "Ancien mot de passe incorrect");
       if (refus) return refus;
       if (await isPasswordPwned(newPass)) return json(400, { error: "Ce mot de passe a été exposé dans une fuite de données connue. Choisissez-en un autre plus unique." });

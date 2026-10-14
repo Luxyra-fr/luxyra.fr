@@ -44,6 +44,11 @@
       }, 2500);
     }
   }catch(e){}
+  // 2026-10-14 audit : appelé par compte.html / site.html à la déconnexion ou au changement de compte :
+  // la pastille de la cloche (non lues de l'ancien compte) disparaît tout de suite.
+  window.lxClientAppReset=function(){
+    try{ var b=document.getElementById("lxClocheN"); if(b) b.remove(); }catch(e){}
+  };
   if(!window.LX_APP_CLIENT) return;
   function barre(){
     if(document.getElementById("lxAppNav")) return;

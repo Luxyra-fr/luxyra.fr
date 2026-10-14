@@ -1,4 +1,7 @@
-// avis-create v10 — 2026-10-14 SECURITE : jeton client refusé si la version de session a changé (mot de passe
+// avis-create v10 — 2026-10-14 : version FUSIONNÉE des lots « secu » et « site » (intégration integ1014).
+//   site : un avis signalé (reported) ou masqué par Luxyra (hidden_by_luxyra) ne peut plus être modifié par le client
+//   (avant : la modification effaçait le signalement et republiait l'avis).
+// 2026-10-14 SECURITE : jeton client refusé si la version de session a changé (mot de passe
 //   changé / réinitialisé) ; rattachement d'un ticket PAR EMAIL seulement si l'email du compte est vérifié
 //   (sinon uniquement par client_luxyra_id).
 // avis-create v9 — v8 + notes par critère (accueil, propreté, cadre, qualité) + jusqu'à 3 photos (2026-10-13)
@@ -127,7 +130,11 @@ Deno.serve(async (req) => {
     const prenom = lxUser.prenom ? String(lxUser.prenom).trim() : "Client";
     const lastInit = lxUser.nom ? String(lxUser.nom).trim().charAt(0).toUpperCase() : "";
     const displayName = lastInit ? `${prenom} ${lastInit}.` : prenom;
-    const { data: existing } = await sb.from("avis_salon").select("id, salon_reply, flag_reason, photos").eq("salon_id", salon_id).eq("client_luxyra_id", lx_id).maybeSingle();
+    const { data: existing } = await sb.from("avis_salon").select("id, salon_reply, flag_reason, photos, reported, hidden_by_luxyra").eq("salon_id", salon_id).eq("client_luxyra_id", lx_id).maybeSingle();
+    // 2026-10-14 audit site : avis en modération -> pas de modification (ni de nouvel avis pour ce salon)
+    if (existing && (existing.reported === true || existing.hidden_by_luxyra === true)) {
+      return json(409, { error: "Votre avis sur cet établissement est en cours de vérification : il ne peut pas être modifié pour le moment." });
+    }
     const photos = await traiterPhotos(body.photos, (existing?.photos as string[]) || [], String(salon_id), lx_id);
     if (existing) {
       const patch: Record<string, unknown> = { note, texte, nom: displayName, salon_reply: null, salon_reply_at: null, flag_reason: null, flagged_at: null, ...crit };

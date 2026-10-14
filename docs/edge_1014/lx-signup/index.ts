@@ -1,4 +1,6 @@
-// lx-signup v10 — 2026-10-14 SECURITE : vérification de l'adresse email (lien envoyé à l'inscription, valable 48 h)
+// lx-signup v10 — 2026-10-14 : version FUSIONNÉE des lots « secu » et « site » (intégration integ1014).
+//   site : mot de passe 8 caractères minimum (comme partout ailleurs).
+// 2026-10-14 SECURITE : vérification de l'adresse email (lien envoyé à l'inscription, valable 48 h)
 //   + version de session (sv) dans le jeton (déconnexion des autres appareils après changement de mot de passe).
 //   Tant que l'email n'est pas vérifié, le worker ne rattache AUCUNE donnée par email (seulement par client_luxyra_id).
 // lx-signup v9 — v8 + « Autre pays » (2026-10-13)
@@ -63,7 +65,7 @@ Deno.serve(async (req) => {
     const prenom = String(body.prenom || "").trim();
     const telephone = body.telephone ? String(body.telephone).trim() : null;
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) return json(400, { error: "Email invalide" });
-    if (password.length < 6) return json(400, { error: "Mot de passe trop court (6 caractères minimum)" });
+    if (password.length < 8) return json(400, { error: "Mot de passe trop court (8 caractères minimum)" }); // 2026-10-14 audit site
     if (!nom || !prenom) return json(400, { error: "Nom et prénom requis" });
     if (await isPasswordPwned(password)) return json(400, { error: "Ce mot de passe a été exposé dans une fuite de données connue. Choisissez-en un autre plus unique." });
     const { data: existing } = await sb.from("clients_luxyra").select("id").eq("email", email).limit(1);

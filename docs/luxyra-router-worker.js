@@ -143,6 +143,10 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/cc/finalize" && request.method === "POST") return await handleCcFinalize(request, env);
       if (url.pathname === "/api/cc/action" && request.method === "POST") return await handleCcAction(request, env);
       if (url.pathname === "/api/client/commandes" && request.method === "POST") return await handleClientCommandes(request, env);
+      // 2026-10-14 audit : bons cadeaux (succès + espace client) et avis du client
+      if (url.pathname === "/api/bons-cadeaux/statut" && request.method === "POST") return await handleBonCadeauStatut(request, env);
+      if (url.pathname === "/api/client/bons-cadeaux" && request.method === "POST") return await handleClientBonsCadeaux(request, env);
+      if (url.pathname === "/api/client/avis" && request.method === "POST") return await handleClientAvis(request, env);
       // FIX 2026-05-13 : Export NF525 (conservation 6 ans / audit fiscal)
       if (url.pathname === "/api/admin/export-nf525" && request.method === "POST") return await handleExportNF525(request, env);
       // FIX 2026-05-12 : Path A empreinte (post-Checkout, stocke le PI ID dans rdv_online)
@@ -1268,16 +1272,18 @@ async function handleConnectPayment(request, env) {
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
-        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,empreinte_amount&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,salon_id,status,acompte_paye,acompte_montant,empreinte_amount,empreinte_status&id=eq.${encodeURIComponent(_rid)}&limit=1`, { headers: _sbHeaders(env) });
         const _a = _r.ok ? await _r.json() : [];
         if (!Array.isArray(_a) || !_a[0] || String(_a[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Rendez-vous introuvable pour ce salon" }, 400);
         // 2026-10-11 : jamais de paiement pour un RDV annulé / refusé / terminé, ni d'acompte déjà payé
         if (!["pending", "pending_payment", "confirmed"].includes(String(_a[0].status || ""))) return jsonResponse({ error: "Ce rendez-vous n'est plus actif" }, 409);
         if (_type === "acompte" && _a[0].acompte_paye === true) return jsonResponse({ error: "L'acompte de ce rendez-vous est déjà réglé" }, 409);
-        // 2026-10-14 audit : montant = valeur enregistrée sur le rendez-vous (jamais celle du navigateur)
+        // 2026-10-14 audit (caisse + site) : montant = valeur ENREGISTRÉE sur le rendez-vous (calculée par la base à
+        // l'insertion, jamais celle du navigateur) ; un écart avec le montant demandé est refusé et journalisé.
         const _estEmpreinte = _type === "empreinte" || capture_method === "manual";
         const _mtBase = Math.round((Number(_estEmpreinte ? _a[0].empreinte_amount : _a[0].acompte_montant) || 0) * 100);
-        if (!(_mtBase > 0)) return jsonResponse({ error: _estEmpreinte ? "Aucune empreinte prévue pour ce rendez-vous" : "Aucun acompte prévu pour ce rendez-vous" }, 409);
+        if (!(_mtBase > 0)) return jsonResponse({ error: _estEmpreinte ? "Aucune empreinte n'est prévue pour ce rendez-vous" : "Aucun acompte n'est dû pour ce rendez-vous" }, 409);
+        if (_estEmpreinte && !["none", "pending", null, undefined, ""].includes(_a[0].empreinte_status)) return jsonResponse({ error: "L'empreinte de ce rendez-vous est déjà enregistrée" }, 409);
         if (Math.round(Number(amount) * 100) !== _mtBase) {
           await reportWorkerError(env, "worker:connect-payment", new Error("Montant demandé différent du montant enregistré"), { rdv_id: _rid, demande: Math.round(Number(amount) * 100), enregistre: _mtBase, type: _type }, "warning");
           return jsonResponse({ error: "Montant incohérent avec le rendez-vous : rechargez la page." }, 409);
@@ -1621,6 +1627,75 @@ async function handleClientCommandes(request, env) {
 }
 
 // ============================================================
+// 2026-10-14 audit — BONS CADEAUX (page de succès + espace client) ET AVIS DU CLIENT
+// ============================================================
+// cartes_cadeaux n'est lisible que par le salon (RLS) : la page de succès et l'onglet « Bons cadeaux »
+// de compte.html lisaient la table en anon -> toujours vide. Lecture désormais par le worker.
+function lxMasquerEmail(e) {
+  const m = String(e || "").match(/^([^@]{0,2})[^@]*(@.*)$/);
+  return m ? m[1] + "•••" + m[2] : "";
+}
+// POST /api/bons-cadeaux/statut {session_id, session_token?}
+// La session Stripe (cs_…) n'est connue que de l'acheteur (URL de retour) : elle suffit à afficher le code.
+// Si l'acheteur est connecté, le bon est rattaché à son compte (acheteur_luxyra_id).
+async function handleBonCadeauStatut(request, env) {
+  try {
+    const b = await readJsonBody(request);
+    const sid = String(b.session_id || "");
+    if (!/^cs_(test|live)_[A-Za-z0-9]{10,}$/.test(sid)) return jsonResponse({ error: "Session invalide" }, 400);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,code,valeur,payment_status,buyer_email,acheteur_luxyra_id,date_expiration&stripe_session_id=eq.${encodeURIComponent(sid)}&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    const bc = Array.isArray(a) ? a[0] : null;
+    if (!bc) return jsonResponse({ ok: true, paye: false });
+    if (bc.payment_status !== "paid") return jsonResponse({ ok: true, paye: false });
+    if (b.session_token && !bc.acheteur_luxyra_id) {
+      try {
+        const sess = await verifyClientSession(b.session_token, env);
+        if (sess && sess.lx_id) await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?id=eq.${encodeURIComponent(bc.id)}&acheteur_luxyra_id=is.null`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ acheteur_luxyra_id: sess.lx_id }) });
+      } catch (_) {}
+    }
+    return jsonResponse({ ok: true, paye: true, code: bc.code, valeur: Number(bc.valeur) || 0, date_expiration: bc.date_expiration || null, email: lxMasquerEmail(bc.buyer_email) });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+// POST /api/client/bons-cadeaux {session_token}
+// Bons rattachés au compte (acheteur_luxyra_id), plus ceux achetés avec l'e-mail du compte SEULEMENT
+// si cet e-mail est vérifié (clients_luxyra.email_verified) : sans vérification, n'importe qui pourrait
+// créer un compte avec l'e-mail d'un autre et voir ses codes.
+async function handleClientBonsCadeaux(request, env) {
+  try {
+    const { session_token } = await readJsonBody(request);
+    const session = await verifyClientSession(session_token, env);
+    if (!session) return jsonResponse({ error: "Session invalide" }, 401);
+    let verifie = false;
+    try {
+      const v = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=email_verified&id=eq.${encodeURIComponent(session.lx_id)}&limit=1`, { headers: _sbHeaders(env) });
+      const va = v.ok ? await v.json() : [];
+      verifie = !!(Array.isArray(va) && va[0] && va[0].email_verified === true);
+    } catch (_) {}
+    const filtre = verifie && session.email
+      ? `or=(acheteur_luxyra_id.eq.${encodeURIComponent(session.lx_id)},buyer_email.ilike.${encodeURIComponent(session.email.replace(/[*,()]/g, "").replace(/([\\%_])/g, "\\$1"))})`
+      : `acheteur_luxyra_id=eq.${encodeURIComponent(session.lx_id)}`;
+    const q = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_cadeaux?select=id,salon_id,code,valeur,restant,utilise,de,pour,message,date_expiration,created_at,visuel_url,status,salons(nom,adresse,cp,ville,tel,logo,slug)&${filtre}&payment_status=eq.paid&order=created_at.desc&limit=100`;
+    const r = await fetch(q, { headers: _sbHeaders(env) });
+    const rows = r.ok ? await r.json() : [];
+    return jsonResponse({ bons: Array.isArray(rows) ? rows : [], email_verifie: verifie });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+// POST /api/client/avis {session_token}
+// Tous les avis du client, y compris signalés / masqués / non approuvés (l'anon ne voit que les publiés :
+// un avis masqué réapparaissait en « Laisser un avis »).
+async function handleClientAvis(request, env) {
+  try {
+    const { session_token } = await readJsonBody(request);
+    const session = await verifyClientSession(session_token, env);
+    if (!session) return jsonResponse({ error: "Session invalide" }, 401);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/avis_salon?select=id,salon_id,rdv_online_id,ticket_id,note,texte,created_at,updated_at,note_accueil,note_proprete,note_cadre,note_qualite,photos,approved,reported,hidden_by_luxyra&client_luxyra_id=eq.${encodeURIComponent(session.lx_id)}&limit=500`, { headers: _sbHeaders(env) });
+    const rows = r.ok ? await r.json() : [];
+    return jsonResponse({ avis: (Array.isArray(rows) ? rows : []).map((x) => Object.assign({}, x, { en_moderation: x.approved !== true || x.reported === true || x.hidden_by_luxyra === true })) });
+  } catch (e) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// ============================================================
 // STRIPE — GESTION DEPUIS LE PANNEAU ADMIN (2026-10-09)
 // ============================================================
 // POST /api/admin/stripe {op, ...}  — réservé au compte admin (support@luxyra.fr, JWT vérifié).
@@ -1716,6 +1791,8 @@ async function handleWebhookConnect(request, env) {
           const st = rep.status, txt = await rep.text().catch(() => "");
           // 5xx -> Stripe réessaiera ; 4xx « déjà traité / déjà enregistré » = normal (la page l'a fait)
           if (st >= 500) throw new Error(`finalisation ${t || md.subtype || "?"} ${st} ${txt.slice(0, 200)}`);
+          // 2026-10-14 audit : 202 = confirmation en cours ailleurs -> Stripe rejouera (filet si l'autre appel échoue)
+          if (st === 202) return jsonResponse({ error: "en cours" }, 409);
           if (st >= 400 && !/d[ée]j[àa]|already/i.test(txt)) await reportWorkerError(env, "worker:stripe-webhook-connect", new Error(`finalisation refusée ${t || md.subtype} ${st}`), { session: data.id, compte, reponse: txt.slice(0, 300) }, "warning");
         }
       }
@@ -2620,8 +2697,37 @@ async function handleRdvDemandeFinalize(request, env) {
 
     // Idempotence : si déjà finalisé, renvoie success
     if (demande.status === "confirmed" && demande.rdv_online_id) {
+      // 2026-10-14 audit : une AUTRE session payée pour une proposition déjà confirmée = double paiement
+      if (demande.stripe_session_id && demande.stripe_session_id !== session.id) {
+        try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Double paiement d'une proposition sur mesure (a rembourser)"), { demande_id: demande.id, session_confirmee: demande.stripe_session_id, session_en_trop: session.id, payment_intent: session.payment_intent || null }, "critical"); } catch (_) {}
+      }
       return jsonResponse({ ok: true, already_confirmed: true, rdv_online_id: demande.rdv_online_id });
     }
+
+    // 2026-10-14 audit : prise ATOMIQUE de la demande avant toute insertion (le retour navigateur et le
+    // webhook Stripe arrivent souvent en même temps -> avant : deux rdv_online pour une proposition).
+    const _staleIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const _claimRes = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&status=eq.proposed&or=(confirm_claim_at.is.null,confirm_claim_at.lt.${encodeURIComponent(_staleIso)})`, {
+      method: "PATCH",
+      headers: { ..._sbHeaders(env), "Prefer": "return=representation" },
+      body: JSON.stringify({ confirm_claim_at: new Date().toISOString(), stripe_session_id: session.id })
+    });
+    const _claim = _claimRes.ok ? await _claimRes.json().catch(() => []) : [];
+    if (!Array.isArray(_claim) || !_claim[0]) {
+      const _re = await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&select=status,rdv_online_id,stripe_session_id&limit=1`, { headers: _sbHeaders(env) });
+      const _ra = _re.ok ? await _re.json() : [];
+      const _d = (Array.isArray(_ra) && _ra[0]) || {};
+      if (_d.status === "confirmed" && _d.rdv_online_id) {
+        if (_d.stripe_session_id && _d.stripe_session_id !== session.id) {
+          try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Double paiement d'une proposition sur mesure (a rembourser)"), { demande_id: demande.id, session_confirmee: _d.stripe_session_id, session_en_trop: session.id }, "critical"); } catch (_) {}
+        }
+        return jsonResponse({ ok: true, already_confirmed: true, rdv_online_id: _d.rdv_online_id });
+      }
+      if (_d.status === "proposed") return jsonResponse({ ok: true, en_cours: true }, 202);
+      try { await reportWorkerError(env, "worker:rdv-demande-finalize", new Error("Acompte paye pour une proposition qui n'est plus active (a rembourser)"), { demande_id: demande.id, status: _d.status, session: session.id }, "critical"); } catch (_) {}
+      return jsonResponse({ error: "Cette proposition n'est plus active. Votre paiement sera remboursé par l'établissement." }, 409);
+    }
+    const _libererClaim = async () => { try { await fetch(`${sbUrl}/rest/v1/rdv_demandes?id=eq.${demande.id}&status=eq.proposed`, { method: "PATCH", headers: { ..._sbHeaders(env), "Prefer": "return=minimal" }, body: JSON.stringify({ confirm_claim_at: null }) }); } catch (_) {} };
 
     const pd = demande.proposed_data || {};
     const items = Array.isArray(pd.items) ? pd.items : [];
@@ -2664,6 +2770,7 @@ async function handleRdvDemandeFinalize(request, env) {
     const insertBody = await insertRes.json();
     if (!insertRes.ok || !Array.isArray(insertBody) || !insertBody[0]) {
       console.error("rdv_online INSERT failed:", insertRes.status, JSON.stringify(insertBody));
+      await _libererClaim(); // 2026-10-14 audit : le webhook pourra réessayer
       return jsonResponse({ error: "Insert rdv_online échoué: " + JSON.stringify(insertBody) }, 500);
     }
     const rdvOnlineId = insertBody[0].id;
@@ -4574,13 +4681,43 @@ async function handleClientAnonymize(request, env) {
     // l'adresse d'une autre personne pouvait anonymiser SES fiches chez les établissements).
     const email = lxEmailVerifie(session);
     const errors = [];
+    // 0) 2026-10-14 audit : les rendez-vous À VENIR sont annulés (avant : ils restaient au planning de
+    // l'établissement, anonymes, sans moyen de joindre le client). Acompte remboursé selon la politique
+    // d'annulation de l'établissement (même traitement qu'une annulation par le client), empreinte libérée.
+    let annules = 0;
+    try {
+      const _or = [lxId ? `client_luxyra_id.eq.${encodeURIComponent(lxId)}` : null, email ? `client_email.eq.${encodeURIComponent(email)}` : null].filter(Boolean).join(",");
+      const _jour = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+      if (_or) {
+        const lr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=*&or=(${_or})&status=in.(pending,pending_payment,confirmed)&date_rdv=gte.${_jour}&limit=200`, { headers: _sbHeaders(env) });
+        const aVenir = lr.ok ? await lr.json() : [];
+        for (const r0 of (Array.isArray(aVenir) ? aVenir : [])) {
+          try {
+            const debut = lxParisVersDate(r0.date_rdv, r0.heure_rdv || "23:59");
+            if (isFinite(debut.getTime()) && debut.getTime() < Date.now()) continue; // déjà passé aujourd'hui
+            const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(r0.id)}&status=in.(pending,pending_payment,confirmed)`, {
+              method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=representation" }),
+              body: JSON.stringify({ status: "cancelled", cancelled_at: new Date().toISOString(), cancelled_by: "client", cancel_reason: "Annulé suite à suppression du compte" })
+            });
+            const pa = pr.ok ? await pr.json() : [];
+            const row = Array.isArray(pa) ? pa[0] : null;
+            if (!row) continue;
+            annules++;
+            try { await refundAndRecord(env, row); } catch (e) { errors.push("remboursement " + r0.id + ": " + (e.message || e)); }
+            try { await releaseEmpreinteOnCancel(env, row); } catch (e) { errors.push("empreinte " + r0.id + ": " + (e.message || e)); }
+          } catch (e) { errors.push("annulation " + r0.id + ": " + (e.message || e)); }
+        }
+      }
+    } catch (e) { errors.push("rdv a venir: " + (e.message || e)); }
+    // Adresse du domicile et coordonnées effacées avec l'identité (comme purge_compte_client_inactif)
+    const _anonRdv = { client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "", client_adresse: null, client_adresse_cp: null, client_adresse_ville: null, adresse_complement: null, client_lat: null, client_lng: null };
     // 1) Anonymise rdv_online par lx_id
     if (lxId) {
       try {
         const r = await fetch(
           `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?client_luxyra_id=eq.${encodeURIComponent(lxId)}`,
           { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
-            body: JSON.stringify({ client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "" }) }
+            body: JSON.stringify(_anonRdv) }
         );
         if (!r.ok) errors.push("rdv_online by id: " + await r.text());
       } catch (e) { errors.push("rdv_online by id: " + e.message); }
@@ -4591,7 +4728,7 @@ async function handleClientAnonymize(request, env) {
         const r = await fetch(
           `${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?client_email=eq.${encodeURIComponent(email)}`,
           { method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }),
-            body: JSON.stringify({ client_luxyra_id: null, client_nom: "Anonyme", client_prenom: "", client_tel: "", client_email: "" }) }
+            body: JSON.stringify(_anonRdv) }
         );
         if (!r.ok) errors.push("rdv_online by email: " + await r.text());
       } catch (e) { errors.push("rdv_online by email: " + e.message); }
@@ -4637,7 +4774,7 @@ async function handleClientAnonymize(request, env) {
         if (!r.ok) errors.push("client_salon: " + await r.text());
       } catch (e) { errors.push("client_salon: " + e.message); }
     }
-    return jsonResponse({ success: true, partial_errors: errors.length ? errors : null });
+    return jsonResponse({ success: true, rdv_annules: annules, partial_errors: errors.length ? errors : null });
   } catch (e) {
     console.error("handleClientAnonymize:", e);
     return jsonResponse({ error: e.message || "erreur" }, 500);
@@ -4900,71 +5037,74 @@ async function handleClientInvite(request, env) {
   }
 }
 
+// 2026-10-14 audit : l'invitation crée désormais le COMPTE CLIENT Luxyra (clients_luxyra, par lx-signup — même
+// chemin que l'inscription) et relie la fiche du salon (clients.client_luxyra_id). Avant : un utilisateur
+// Supabase Auth (comptes des PROS) était créé, le client ne pouvait pas se connecter à son espace.
 async function handleClientInviteVerify(request, env) {
   try {
-    const { token, password } = await request.json();
+    const { token, password } = await readJsonBody(request);
     if (!token) return jsonResponse({ error: "token requis" }, 400);
-    if (!password || String(password).length < 6) return jsonResponse({ error: "Mot de passe minimum 6 caractères" }, 400);
+    if (!password || String(password).length < 8) return jsonResponse({ error: "Mot de passe : 8 caractères minimum" }, 400);
 
     // Charge l'invitation
-    const inviteRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&select=*`, {
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
-    });
-    const invites = await inviteRes.json();
-    if (!invites || !invites.length) return jsonResponse({ error: "Invitation introuvable ou expirée" }, 404);
+    const inviteRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&select=*`, { headers: _sbHeaders(env) });
+    const invites = inviteRes.ok ? await inviteRes.json() : [];
+    if (!Array.isArray(invites) || !invites.length) return jsonResponse({ error: "Invitation introuvable ou expirée" }, 404);
     const invite = invites[0];
     if (invite.used_at) return jsonResponse({ error: "Cette invitation a déjà été utilisée. Connectez-vous avec votre mot de passe." }, 410);
     if (new Date(invite.expires_at) < new Date()) return jsonResponse({ error: "Cette invitation a expiré. Demandez-en une nouvelle au salon." }, 410);
+    const email = String(invite.email || "").toLowerCase().trim();
 
-    // Crée le compte auth Supabase via Admin API (avec service_role key)
-    const signupRes = await fetch(`${CONFIG.SUPABASE_URL}/auth/v1/admin/users`, {
-      method: "POST",
-      headers: {
-        "apikey": env.SUPABASE_SERVICE_KEY,
-        "Authorization": `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ email: invite.email, password, email_confirm: true })
-    });
-    let authUserId = null;
-    if (signupRes.ok) {
-      const signupData = await signupRes.json();
-      authUserId = signupData.id || signupData.user?.id;
-    } else if (signupRes.status === 422) {
-      // SECURITE 2026-10-08 : un compte existe deja -> on ne change JAMAIS son mot de passe ici.
-      return jsonResponse({ error: "Un compte existe déjà avec cet email. Connectez-vous, ou utilisez « Mot de passe oublié »." }, 409);
-    } else {
-      const t = await signupRes.text();
-      console.error("auth signup failed:", signupRes.status, t);
-      return jsonResponse({ error: "Erreur création compte" }, 500);
-    }
-    if (!authUserId) return jsonResponse({ error: "ID utilisateur non récupéré" }, 500);
-
-    // Lie la fiche client à l'auth user (clients.user_id = authUserId)
-    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}`, {
-      method: "PATCH",
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: authUserId })
-    });
-
-    // Marque l'invitation comme utilisée
-    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}`, {
-      method: "PATCH",
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ used_at: new Date().toISOString() })
-    });
-
-    // 2026-10-14 : le compte créé ici est un compte Supabase Auth, PAS un compte client Luxyra (clients_luxyra,
-    // créé uniquement par l'edge function lx-signup). On renvoie le prénom / nom / téléphone de la fiche pour que
-    // compte.html pré-remplisse l'inscription client si la connexion directe échoue.
-    // TODO : créer le compte client Luxyra ici (appel serveur à lx-signup ou RPC dédiée) quand ce sera possible.
-    let fiche = null;
+    // Fiche du salon (pour le nom / prénom / téléphone / adresse du compte)
+    let fiche = {};
     try {
-      const fr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&select=nom,prenom,telephone&limit=1`, { headers: _sbHeaders(env) });
+      const fr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&salon_id=eq.${encodeURIComponent(invite.salon_id)}&select=id,nom,prenom,telephone,adresse,cp,ville,client_luxyra_id&limit=1`, { headers: _sbHeaders(env) });
       const fj = fr.ok ? await fr.json() : [];
-      if (Array.isArray(fj) && fj[0]) fiche = { nom: fj[0].nom || "", prenom: fj[0].prenom || "", telephone: fj[0].telephone || "" };
+      if (Array.isArray(fj) && fj[0]) fiche = fj[0];
     } catch (_) {}
-    return jsonResponse({ ok: true, email: invite.email, fiche });
+    const lier = async (lxId) => {
+      // Lien fiche salon <-> compte client (seulement si la fiche n'est pas déjà liée à un AUTRE compte)
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?id=eq.${encodeURIComponent(invite.client_id)}&salon_id=eq.${encodeURIComponent(invite.salon_id)}&or=(client_luxyra_id.is.null,client_luxyra_id.eq.${encodeURIComponent(lxId)})`, {
+        method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ client_luxyra_id: lxId })
+      });
+      try {
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_salon?on_conflict=client_id,salon_id`, {
+          method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=ignore-duplicates,return=minimal" }),
+          body: JSON.stringify({ client_id: lxId, salon_id: invite.salon_id, premiere_visite: new Date().toISOString().slice(0, 10) })
+        });
+      } catch (_) {}
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/client_invites?token=eq.${encodeURIComponent(token)}&used_at=is.null`, {
+        method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ used_at: new Date().toISOString() })
+      });
+    };
+
+    // Compte client déjà existant -> jamais de changement de mot de passe ici ; la fiche est reliée
+    // (le lien reçu par e-mail prouve que la personne contrôle cette adresse).
+    const ex = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?select=id&email=eq.${encodeURIComponent(email)}&limit=1`, { headers: _sbHeaders(env) });
+    const exa = ex.ok ? await ex.json() : [];
+    if (Array.isArray(exa) && exa[0]) {
+      await lier(exa[0].id);
+      return jsonResponse({ error: "Un compte client existe déjà avec cet e-mail : votre fiche y est maintenant reliée. Connectez-vous, ou utilisez « Mot de passe oublié ».", compte_existant: true, email }, 409);
+    }
+
+    // Création du compte client par lx-signup (mêmes contrôles : 8 caractères, mot de passe divulgué, PBKDF2)
+    const su = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/lx-signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: env.SUPABASE_SERVICE_KEY, Authorization: "Bearer " + env.SUPABASE_SERVICE_KEY },
+      body: JSON.stringify({ email, password: String(password), nom: String(fiche.nom || "").trim() || "Client", prenom: String(fiche.prenom || "").trim() || "-", telephone: fiche.telephone || null, adresse: fiche.adresse || null, cp: fiche.cp || null, ville: fiche.ville || null })
+    });
+    const sd = await su.json().catch(() => ({}));
+    if (!su.ok || !sd || !sd.user || !sd.session_token) {
+      if (su.status >= 500) console.error("invite lx-signup:", su.status, JSON.stringify(sd).slice(0, 300));
+      return jsonResponse({ error: (sd && sd.error) || "Création du compte impossible" }, su.status >= 400 && su.status < 500 ? su.status : 500);
+    }
+    // L'invitation reçue par e-mail vaut vérification de l'adresse (comme le lien « mot de passe oublié »)
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients_luxyra?id=eq.${encodeURIComponent(sd.user.id)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ email_verified: true }) });
+      sd.user.email_verified = true;
+    } catch (_) {}
+    await lier(sd.user.id);
+    return jsonResponse({ ok: true, email, user: sd.user, session_token: sd.session_token });
   } catch (e) {
     console.error("handleClientInviteVerify error:", e);
     return jsonResponse({ error: e.message || "Erreur serveur" }, 500);
@@ -5203,6 +5343,19 @@ function lxAnnReponse(html, status) {
 }
 function lxAnnEtoiles(n) { const v = Math.round(Number(n) || 0); return "★★★★★".slice(0, v) + "☆☆☆☆☆".slice(0, 5 - v); }
 
+// 2026-10-14 audit : engagements affichés pour UN établissement, d'après ses réglages réels
+// (site_config.confirmation_auto, politique_annulation lue par lxPolitiqueHeures ; domicile = toujours validé par le pro).
+function lxAnnEngagements(cfg, salon) {
+  cfg = cfg || {};
+  const domicile = String((salon && salon.mode_activite) || "") === "domicile";
+  const immediate = cfg.confirmation_auto === true && !domicile;
+  const h = lxPolitiqueHeures(cfg.politique_annulation);
+  const tags = [immediate ? "Confirmation immédiate" : "Confirmation par l'établissement"];
+  if (h === 0) tags.push("Annulation en ligne");
+  else if (h > 0) tags.push(`Annulation en ligne jusqu'à ${h >= 24 && h % 24 === 0 ? (h / 24) + (h / 24 > 1 ? " jours" : " jour") : h + " h"} avant`);
+  const phrase = immediate ? "Confirmation immédiate par e-mail." : "Votre demande est confirmée par l'établissement ; vous êtes prévenu par e-mail.";
+  return { immediate, tags, phrase };
+}
 async function lxAnnuairePage(metierSlug, villeSlug) {
   const M = LX_ANN_METIERS[metierSlug];
   if (!M) return null;
@@ -5228,6 +5381,14 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     let off = new Set();
     try { off = new Set(((await lxSeoFetch(`site_config?site_actif=eq.false&select=salon_id&limit=1000`)) || []).map((x) => x.salon_id)); } catch (_) {}
     for (const s of (rows || [])) if (s.slug && !off.has(s.id) && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
+    // 2026-10-14 audit : réglages réels de chaque établissement (confirmation automatique, annulation en ligne)
+    if (lx.length) {
+      try {
+        const cf = (await lxSeoFetch(`site_config?salon_id=in.(${lx.map((x) => x.id).join(",")})&select=salon_id,confirmation_auto,politique_annulation&limit=500`)) || [];
+        const parId = {}; for (const c of cf) parId[c.salon_id] = c;
+        for (const x of lx) x._cfg = parId[x.id] || {};
+      } catch (_) {}
+    }
   } catch (_) {}
   const lxIds = new Set(lx.map((s) => s.id));
   const autres = etabs.filter((e) => !e.salon_id || !lxIds.has(e.salon_id));
@@ -5241,13 +5402,13 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
   let body = `<section class="hero"><div class="wrap"><div class="fil"><a href="/">Accueil</a> › <a href="/${metierSlug}">${lxEsc(M.pluriel)}</a> › ${lxEsc(villeNom)}</div>`;
   body += `<h1>${lxEsc(M.titre)} à <em>${lxEsc(villeNom)}</em></h1>`;
   body += `<p class="sous">Comparez les ${lxEsc(M.phrase)} de ${lxEsc(villeNom)}${lx.length ? " et prenez rendez-vous en ligne en quelques secondes" : ""}.</p>`;
-  body += `<div class="chips"><span class="chip"><b>${total}</b> établissement${total > 1 ? "s" : ""}</span>${lx.length ? `<span class="chip"><b>${lx.length}</b> réservable${lx.length > 1 ? "s" : ""} en ligne</span><span class="chip">Confirmation immédiate</span><span class="chip">Sans frais pour vous</span>` : ""}</div></div></section><div class="wrap">`;
+  body += `<div class="chips"><span class="chip"><b>${total}</b> établissement${total > 1 ? "s" : ""}</span>${lx.length ? `<span class="chip"><b>${lx.length}</b> réservable${lx.length > 1 ? "s" : ""} en ligne</span>${lx.every((x) => lxAnnEngagements(x._cfg, x).immediate) ? `<span class="chip">Confirmation immédiate</span>` : ""}<span class="chip">Sans frais pour vous</span>` : ""}</div></div></section><div class="wrap">`;
   if (lx.length) {
     body += `<h2>Réserver en ligne <small>disponibles 24 h/24</small></h2>`;
     for (const s of lx) {
       const note = Number(s.note_moyenne) > 0 && Number(s.nb_avis) > 0 ? `<span class="stars">${lxAnnEtoiles(s.note_moyenne)}</span> <span style="font-size:12.5px;color:var(--text2)">${Number(s.note_moyenne).toFixed(1).replace(".", ",")} · ${s.nb_avis} avis</span>` : "";
       const adr = String(s.mode_activite || "") === "domicile" ? `À domicile · ${lxEsc(s.ville || villeNom)}` : lxEsc(lxAnnAdr([s.adresse, s.cp, s.ville].filter(Boolean).join(" ")));
-      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span><span class="tag">Confirmation immédiate</span><span class="tag">Modification ou annulation en ligne</span></div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
+      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span>${lxAnnEngagements(s._cfg, s).tags.map((t) => `<span class="tag">${lxEsc(t)}</span>`).join("")}</div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
     }
   }
   if (autres.length) {
@@ -5257,9 +5418,9 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
       body += `<div class="carte"><div class="av">${lxEsc(lxAnnInit(e.nom))}</div><div class="ct"><div class="nm">${lxEsc(e.nom)}</div><div class="ad">${lxEsc(lxAnnAdr([e.adresse, e.cp, e.ville].filter(Boolean).join(" ")))}</div><div class="tags"><span class="tag g">Réservation en ligne pas encore disponible</span></div></div><div class="act"><a class="claim" href="/annuaire-gerant?${q}" rel="nofollow">C'est votre établissement ? Activez la réservation →</a><a href="#" class="btn2" style="font-size:11.5px;color:var(--text3)" onclick="lxFerme(this,'${lxEsc(e.siret)}');return false;" rel="nofollow">Établissement fermé ? Le signaler</a></div></div>`;
     }
   }
-  body += `<h2>Pourquoi réserver avec Luxyra</h2><div class="atouts"><div class="at"><i>⏱</i><b>En quelques secondes</b><span>Choisissez la prestation et l'horaire, 24 h/24, même quand le salon est fermé.</span></div><div class="at"><i>🔔</i><b>Confirmation immédiate</b><span>Vous recevez la confirmation par e-mail tout de suite, et un rappel avant le rendez-vous si l'établissement l'a activé.</span></div><div class="at"><i>📱</i><b>Tout au même endroit</b><span>Retrouvez, modifiez ou annulez vos rendez-vous depuis votre espace ou l'application.</span></div></div>`;
+  body += `<h2>Pourquoi réserver avec Luxyra</h2><div class="atouts"><div class="at"><i>⏱</i><b>En quelques secondes</b><span>Choisissez la prestation et l'horaire, 24 h/24, même quand le salon est fermé.</span></div><div class="at"><i>🔔</i><b>Confirmation par e-mail</b><span>Vous êtes prévenu dès que le rendez-vous est confirmé (tout de suite ou après validation par l'établissement, selon ses réglages), et un rappel arrive avant le rendez-vous si l'établissement l'a activé.</span></div><div class="at"><i>📱</i><b>Tout au même endroit</b><span>Retrouvez vos rendez-vous depuis votre espace ou l'application, et annulez-les en ligne quand l'établissement le permet.</span></div></div>`;
   const faq = [
-    [`Comment prendre rendez-vous chez un ${M.titre.toLowerCase()} à ${villeNom} ?`, lx.length ? `Choisissez un établissement marqué « Luxyra » ci-dessus et cliquez sur « Réserver » : vous voyez les disponibilités en temps réel et recevez la confirmation immédiatement.` : `Les établissements listés ci-dessus ne proposent pas encore la réservation en ligne sur Luxyra : contactez-les directement. Dès qu'un établissement l'active, un bouton « Réserver » apparaît sur cette page.`],
+    [`Comment prendre rendez-vous chez un ${M.titre.toLowerCase()} à ${villeNom} ?`, lx.length ? `Choisissez un établissement marqué « Luxyra » ci-dessus et cliquez sur « Réserver » : vous voyez les disponibilités en temps réel et recevez la confirmation par e-mail (immédiate ou après validation par l'établissement, selon ses réglages).` : `Les établissements listés ci-dessus ne proposent pas encore la réservation en ligne sur Luxyra : contactez-les directement. Dès qu'un établissement l'active, un bouton « Réserver » apparaît sur cette page.`],
     [`Combien d'établissements à ${villeNom} ?`, `${total} établissement${total > 1 ? "s" : ""} ${total > 1 ? "sont référencés" : "est référencé"} à ${villeNom}, dont ${lx.length} réservable${lx.length > 1 ? "s" : ""} en ligne.`],
     [`La réservation en ligne est-elle payante ?`, `Non, réserver sur Luxyra est gratuit pour vous. Certains établissements demandent un acompte, indiqué clairement avant la confirmation.`],
   ];
@@ -5357,7 +5518,7 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
     const [cfgRows, svcRows] = await Promise.all([
       lxSeoFetch(
         `site_config?salon_id=eq.${encodeURIComponent(s.id)}` +
-        `&select=horaires_salon,description_salon,slogan,site_actif,reservation_active,photo_hero&limit=1`
+        `&select=horaires_salon,description_salon,slogan,site_actif,reservation_active,photo_hero,confirmation_auto,politique_annulation&limit=1`
       ),
       lxSeoFetch(
         `services?salon_id=eq.${encodeURIComponent(s.id)}&actif=eq.true&show_site=eq.true` +
@@ -5562,7 +5723,8 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
       body += `<ul style="padding-left:20px;margin:0">${svcRowsHtml.join("")}</ul>`;
     }
     body += `<h2 style="font-size:20px;color:#c8a84e;margin:26px 0 8px">Réservation en ligne</h2>`;
-    body += `<p>Prenez rendez-vous chez <strong>${lxEsc(nom)}</strong>${ville ? " à " + lxEsc(ville) : ""} en ligne, 24h/24 et 7j/7. Confirmation immédiate par e-mail et SMS.</p>`;
+    // 2026-10-14 audit : promesses tirées des réglages de l'établissement (avant : « Confirmation immédiate » pour tous)
+    body += `<p>Prenez rendez-vous chez <strong>${lxEsc(nom)}</strong>${ville ? " à " + lxEsc(ville) : ""} en ligne, 24h/24 et 7j/7. ${lxAnnEngagements(cfg, s).phrase}</p>`;
     body += `<p><a href="${lxEsc(canonical)}/reserver" style="display:inline-block;padding:14px 28px;background:#c8a84e;color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:8px">Prendre rendez-vous</a></p>`;
     body += `<p style="font-size:12px;color:#7a7a84;margin-top:32px">Propulsé par <a href="https://luxyra.fr" style="color:#7a7a84">Luxyra</a> — caisse et réservation en ligne pour salons.</p>`;
     body += `</section>`;
