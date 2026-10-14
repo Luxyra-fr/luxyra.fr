@@ -164,3 +164,20 @@ COMMENT ON COLUMN public.rdv_demandes.stripe_session_id IS '2026-10-14 audit : s
 ALTER TABLE public.cartes_cadeaux ADD COLUMN IF NOT EXISTS acheteur_luxyra_id uuid REFERENCES public.clients_luxyra(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS cartes_cadeaux_acheteur_luxyra_idx ON public.cartes_cadeaux(acheteur_luxyra_id) WHERE acheteur_luxyra_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS cartes_cadeaux_stripe_session_idx ON public.cartes_cadeaux(stripe_session_id) WHERE stripe_session_id IS NOT NULL;
+
+-- ---------------------------------------------------------------------
+-- Bot de support (règle permanente) : comportements modifiés par ce lot
+-- ---------------------------------------------------------------------
+INSERT INTO public.support_bot_kb (cle, titre, ordre, contenu, actif, maj_le)
+VALUES ('reservation_client_1014', 'Réservation en ligne et espace client (octobre 2026)', 900,
+'- Acompte / empreinte : le montant est calculé par le serveur à partir des tarifs et des réglages du site (type fixe ou pourcentage, minimum, seuil, réglage « acompte » de la fiche client). Une prestation « sur devis » ne se réserve pas en ligne : le client envoie une demande.
+- Si l''établissement encaisse en ligne (compte Stripe actif), un RDV soumis à acompte n''est enregistré qu''après paiement.
+- Texte d''annulation affiché au client = délai, remboursement et pourcentage réglés dans Paramètres › Site en ligne ; « jamais » = annulation en ligne impossible.
+- Pages « métier à ville » : « Confirmation immédiate » seulement si la confirmation automatique est activée (sinon « Confirmation par l''établissement ») ; l''annulation en ligne est affichée selon le délai réglé.
+- Espace client : l''onglet Tickets ne montre que les tickets de caisse réels (duplicata) et les reçus d''acompte ; un rendez-vous en ligne non encaissé n''a pas de ticket. Une visite n''apparaît qu''une fois.
+- Statuts côté client : « Terminé » (encaissé ou confirmé et passé), « Non confirmé » (demande jamais confirmée, date passée), « Non retenu » (refus de l''établissement).
+- Suppression du compte client : les rendez-vous à venir sont annulés (« Annulé suite à suppression du compte »), acompte remboursé selon la politique d''annulation ; l''établissement le voit dans son planning.
+- Invitation envoyée par l''établissement : le lien crée le compte client Luxyra et le relie à la fiche ; si un compte existe déjà avec cet e-mail, la fiche y est reliée et le client se connecte.
+- Mot de passe client : 8 caractères minimum.',
+ true, now())
+ON CONFLICT (cle) DO UPDATE SET titre = EXCLUDED.titre, contenu = EXCLUDED.contenu, actif = true, maj_le = now();

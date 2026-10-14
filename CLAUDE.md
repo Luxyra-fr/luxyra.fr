@@ -1841,3 +1841,14 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Rapports : lignes `caisse:true` dans `_lxPaiementsEnLigne` (ajustement `_lxAjustLigneCaisse`, 0 sauf ticket daté d'un autre mois) ;
   expAcomptesNonSoldes traite ces acomptes depuis le ticket d'acompte. Tickets d'acompte/retenue/annulation ne rapprochent plus un RDV en ligne
   (`_lxFindOnlineRdvForTicketBrut`). Reste à faire après mise en service : bot support, centre d'aide, registre NF525, test réel.
+
+## Audit 14/10/2026 — lot « site public / compte client » (branche fix1014-site, NON déployé)
+- SQL : `docs/migrations_1014/site.sql` (idempotent). Edge : `docs/edge_1014/{rdv-demande-proposal-action v12, avis-create v10, lx-signup v10, lx-profile v9}`.
+- Acompte/empreinte calculés par `lx_prive.rdv_online_insert_public_propre` (insertions anon/client) ; « sur devis » refusé ; avec Stripe actif (hors domicile) un RDV à acompte doit être `pending_payment`. `/api/stripe/connect-payment` facture le montant STOCKÉ (acompte_montant / empreinte_amount).
+- RDV sur mesure : verrou `rdv_demandes.confirm_claim_at` + `stripe_session_id` (worker finalize, webhook -> 202 = rejoué par Stripe, proposal-action confirm). Double paiement détecté -> server_errors critical.
+- Nouvelles routes worker : `/api/bons-cadeaux/statut` (succès, par session Stripe, rattache `cartes_cadeaux.acheteur_luxyra_id`), `/api/client/bons-cadeaux` (lien compte, e-mail seulement si `email_verified`), `/api/client/avis` (avis en modération inclus).
+- `LX.ouvrirSession(token,user)` (lx-client.js) : si un autre compte était connecté -> `lxAvantDeconnexion` puis `window.lxChangementCompte` (compte.html / site.html effacent les données). lx-client.js v=20261014-2, lx-client-app.js v=6 (`lxClientAppReset`).
+- compte.html : plus aucun ticket fabriqué (buildCompteTicketHTML supprimé) ; visite RDV en ligne + ticket fusionnée par (salon_id, ticket_num) ; statuts Terminé / Non confirmé / Non retenu.
+- Suppression de compte (`/api/client/anonymize`) : RDV à venir annulés (cancelled_by client, « Annulé suite à suppression du compte », remboursement selon politique) + adresse/lat/lng effacées. Invitation : compte client via lx-signup, fiche reliée (client_luxyra_id), email_verified=true.
+- Texte d'annulation du site = `lxPolitiqueAnnulation()` (miroir de `lxPolitiqueHeures`). Pages métier-à-ville : `lxAnnEngagements(cfg, salon)`.
+- sw.js : notification de /compte -> `client.navigate(url)` ; la caisse garde le simple focus.
