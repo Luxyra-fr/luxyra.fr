@@ -1,6 +1,7 @@
 # Acompte payé en ligne = ticket scellé dès le paiement — note de conception (NF525)
 
-Version : 2026-10-14 — branche `acompte-en-ligne`. Pièce du dossier technique (loi anti-fraude TVA, art. 286-I-3° bis CGI).
+Version : 2026-10-14 (révision 2 après deux relectures indépendantes, voir § 9) — branche `acompte-en-ligne`. Pièce du dossier technique
+(loi anti-fraude TVA, art. 286-I-3° bis CGI).
 
 ## 1. Pourquoi
 
@@ -43,8 +44,13 @@ Analyse du code et de la base :
   2. l'application crée le ticket scellé à son prochain passage : `lxAcomptesEnLigneSync` (démarrage +4 s, retour au premier
      plan, sondage 30 s limité à 1 passage / 2 min, ouverture de la fiche du RDV, après un remboursement partiel depuis l'app) ;
   3. **avant tout ticket final** d'un RDV en ligne, `_lxAcompteEnLigneAvantEncaissement` (dans `doFinalPayExecute`) relit le RDV en
-     base, crée le ticket d'acompte s'il manque (synchronisation forcée) et refuse l'encaissement s'il n'existe toujours pas
-     (journée clôturée, autre appareil, réseau) : la ligne de déduction référence **toujours** un ticket réel.
+     base, crée le ticket d'acompte s'il manque (synchronisation forcée, avec récupération d'un ticket local non transmis ou d'un
+     verrou bloqué) et refuse l'encaissement s'il n'existe toujours pas (journée fermée : message explicite ; autre appareil ;
+     réseau) : la ligne de déduction référence **toujours** un ticket réel. Lecture en base impossible alors que le ticket porte un
+     acompte en ligne (nouveau modèle connu, ou modèle non vérifiable) → refus « Vérification du ticket d'acompte impossible,
+     réessayez » (jamais l'ancien modèle « par défaut » ; hors ligne explicite : ancien modèle inchangé, nouveau modèle sans n° refusé).
+  4. Les lectures de synchronisation sont des RPC filtrées côté serveur (`lx_acompte_a_ticketer`, `lx_acompte_remb_a_ticketer`,
+     `lx_acompte_deja_traite_ancien`, SECURITY INVOKER / RLS) : aucune ligne déjà encaissée ou déjà « conservée » n'arrive à la caisse.
 
 ## 3. Garanties
 
@@ -54,12 +60,35 @@ Analyse du code et de la base :
   reprise dans le libellé de la ligne. Les exports « à l'encaissement » utilisent la date de règlement (voir § 5).
 - **Numérotation / chaînage / signature** : identiques à tout ticket : `nextTicketNum` + `chainTicket` + `saveAppointment`
   (appointments, meta) + `saveTicketToDb` (tickets : num / hash serveur, scellement, signature ES256 au prochain passage de
-  `nf525-sign`). Le n° serveur (`res.num`) est celui mémorisé sur le RDV (`acompte_tk_num`) et sur l'entrée de remboursement (`tk`).
-- **Anti-doublon** (3 niveaux, comme les retenues) : verrou définitif `acompte_tk_claim_at` / `acompte_remb_claim_at` (un seul
-  appareil ; jamais repris automatiquement, alerte `DB_ERROR` après 24 h) ; contrôle mémoire (`AP[].acompteKey`) ; contrôle base par
-  clé `raw_data->>acompteKey` + **index unique** `tickets_acompte_key_unique` (un 23505 est traité comme « déjà en base » dans
-  `saveTicketToDb`). Les entrées de `remboursements` reçoivent leur n° via la RPC `lx_acompte_remb_ticketer` (ligne verrouillée
-  `FOR UPDATE` : aucune perte de mise à jour face au worker qui ajoute une entrée au même instant).
+  `nf525-sign`). Le n° mémorisé sur le RDV (`acompte_tk_num`), sur l'entrée de remboursement (`tk`), sur la ligne de déduction
+  (`acompteTkNum`) et sur les tickets négatifs (`origTkNum`) est le **n° IMPRIMÉ** (`tk.tkNum` = `raw_data.tkNum`) ; si le serveur a
+  attribué un autre `num` (deux postes simultanés, `NUM_MISMATCH`), il reste `dbNum` dans `appointments.meta` et toutes les
+  correspondances par numéro (`_lxAcompteTicketNums`, `expAcomptesNonSoldes`, relibération d'un RDV à l'annulation d'un ticket,
+  rattachement des remboursements) acceptent `tkNum` **ou** `dbNum` (`_lxAcEnLigneNumImprime` lit `raw_data->tkNum`, à défaut `num`).
+- **Anti-doublon** (3 niveaux, comme les retenues) : verrou `acompte_tk_claim_at` / `acompte_remb_claim_at` (un seul appareil) ;
+  contrôle mémoire (`AP[].acompteKey`) ; contrôle base par clé `raw_data->>acompteKey` + **index unique** `tickets_acompte_key_unique`
+  (un 23505 est traité comme « déjà en base » dans `saveTicketToDb`). Les entrées de `remboursements` reçoivent leur n° via la RPC
+  `lx_acompte_remb_ticketer` (ligne verrouillée `FOR UPDATE` : aucune perte de mise à jour face au worker qui ajoute une entrée au
+  même instant).
+- **Verrou bloqué / ticket local non transmis** (`_lxAcEnLigneLocalRetenter`, `_lxAcEnLigneVerrouReprendre`) : 1) un ticket portant
+  la clé existe en mémoire (créé ici, `saveTicketToDb` en échec) → renvoi immédiat (idempotent par `raw_data->>id` / clé), succès →
+  n° reporté, **aucun nouveau ticket** ; 2) verrou posé depuis **plus de 15 min** sans aucune trace (ni `tickets.raw_data->>acompteKey`,
+  ni `appointments.meta->>acompteKey`) → repris par UPDATE conditionnel `.eq(col, ancienne valeur)` (un seul gagnant), audit
+  `ACOMPTE_EN_LIGNE_VERROU_REPRIS` ; sinon attente, alerte `DB_ERROR` après 24 h.
+- **Version périmée de l'application** (appareil au cache ancien) : une ligne du nouveau modèle déjà traitée à l'ancienne (acompte pris
+  comme mode de règlement du ticket final → `status='done'` / `ticket_num` ; ticket « Acompte conservé » → `retenue_tk_num` /
+  `retenue_claim_at`) **ne reçoit jamais de ticket d'acompte** (recette déjà en caisse) : exclue des RPC de lecture, refusée par
+  `_lxAcompteEnLigneTicket`, signalée une fois par appareil (`DB_ERROR` « acompte en ligne déjà traité par l'ancien modèle »,
+  `lx_acompte_deja_traite_ancien`). Inversement l'application à jour ne traite jamais une ligne `acompte_modele='ticket'` à l'ancienne :
+  `lxRetenuesSync` la filtre côté serveur (`.or("acompte_modele.is.null,acompte_modele.neq.ticket")`, repli sans filtre si la colonne
+  manque), `_lxApOnlineEnrichir` n'emprunte la branche historique que si le modèle relu en base est NULL et si le RDV n'a jamais été
+  reconnu « nouveau modèle ».
+- **Base** : à l'insertion publique (client anonyme / non propriétaire), `lx_prive.rdv_online_insert_public_propre` force à NULL
+  `acompte_modele`, `acompte_tk_num`, `acompte_tk_claim_at`, `acompte_remb_claim_at`, `retenue_at`, `retenue_tk_num`,
+  `retenue_claim_at`, `ticket_num`, et `remboursements='[]'`, `acompte_rembourse_montant=0`. Sur UPDATE, le trigger
+  `trg_rdv_online_acompte_modele` garde **toujours** `OLD.acompte_modele` (seule exception : passage `acompte_paye` false→true d'une
+  ligne NULL → 'ticket', posé par le trigger seul ; personne ne peut basculer un ancien acompte) et garde `OLD.acompte_tk_num` une fois
+  posé pour tout rôle autre que `service_role`.
 - **Mode test / réel** : `tickets.mode_caisse` est posé par trigger (`a_nf525_marquer_mode`) comme pour tout ticket ; le checkout en
   ligne est bloqué en mode test. **Démo** (`window._lxDemo`) et **vue admin** : aucune écriture. **Hors ligne** : aucune synchro ; un
   encaissement d'un RDV dont le ticket d'acompte manque est refusé (message explicite).
@@ -75,6 +104,12 @@ Analyse du code et de la base :
   versé » (mode « Acompte déjà versé », 0 €).
 - Si la part conservée a changé entre l'ouverture de la caisse et la validation (remboursement entre-temps), le règlement saisi
   est remis à zéro et l'opérateur le ressaisit.
+- **Trop-perçu** (part conservée > total du ticket, panier réduit) : aucun scellement ; modale « L'acompte versé (X €) dépasse le
+  total (Y €). Remboursez la différence (Z €) au client avant d'encaisser. » avec bouton → worker `/api/rdv/acompte-rembourser`
+  `{salon_id, rdv_id, montant: Z, trop_percu: true}` (accepté uniquement pour `acompte_modele='ticket'`, statut pending / confirmed,
+  montant ≤ acompte − déjà remboursé ; statut et `retenue_at` inchangés ; entrée `remboursements` `par:"trop_percu"`). Puis
+  synchronisation (ticket négatif « Remboursement acompte en ligne … trop-perçu rendu avant l'encaissement ») et retour à l'écran de
+  règlement : la déduction vaut alors exactement le total. Un panier vide garde le message « Aucune prestation ».
 - Vente directe (hors planning) rapprochée d'un RDV en ligne dont l'acompte est déjà en caisse : rapprochement **refusé** + avertissement
   (`VENTE_DIRECTE_ACOMPTE_EN_LIGNE`) — il faut encaisser le RDV depuis le planning pour que l'acompte soit déduit. Les tickets
   d'acompte / remboursement / retenue / contre-tickets ne rapprochent jamais un RDV (`_lxFindOnlineRdvForTicketBrut`).
@@ -103,10 +138,13 @@ Analyse du code et de la base :
 - `acompte_modele` NULL = **ancien modèle**, conservé intégralement (mode de règlement au ticket final, ticket « Acompte conservé »,
   exports avec ajustement). Aucun ticket d'acompte n'est jamais créé rétroactivement (le trigger ne marque que le passage
   `acompte_paye false → true` postérieur à son installation, et ne réécrit jamais une valeur).
-- Ordre de mise en service : 1) déployer `app.html` / `luxyra-supabase.js` / `compte.html` (le code gère `acompte_modele` absent :
-  requêtes `select("*")`, synchro sans effet tant que la colonne n'existe pas) ; 2) appliquer `docs/sql_acompte_en_ligne.sql` ;
-  3) vérifier (requêtes de contrôle en fin de script). Le worker n'a pas besoin d'être redéployé (commentaires seulement).
-- Au 14/10/2026, la base ne contient qu'un acompte en ligne payé (ancien modèle, RDV terminé) et aucun RDV actif avec acompte payé.
+- Ordre de mise en service : 1) déployer `app.html` (`luxyra-supabase.js?v=20261014-4`) / `compte.html` et le **worker**
+  (`docs/luxyra-router-worker.js` : `trop_percu`, lecture `acompte_modele` avec repli) — le code gère `acompte_modele` absent
+  (RPC absentes → synchro sans effet, `lxRetenuesSync` en repli) ; 2) appliquer `docs/sql_acompte_en_ligne.sql` ; 3) vérifier
+  (requêtes de contrôle en fin de script). Les appareils encore sur l'ancienne version doivent recharger l'application (voir § 3,
+  « version périmée » : aucun double comptage, mais le ticket d'acompte n'est pas créé pour une ligne déjà traitée à l'ancienne).
+- Au 14/10/2026, la base ne contient qu'un acompte en ligne payé (ancien modèle, RDV terminé) et aucun RDV actif avec acompte payé ;
+  le script SQL n'est pas encore appliqué (vérifié : aucun trigger `trg_rdv_online_acompte_modele`, colonnes absentes).
 
 ## 7. Cas limites tracés
 
@@ -117,14 +155,35 @@ Analyse du code et de la base :
 | Absence (no-show) | `_lxCancelOnlineRdv` pose `retenue_at` ; cron de remboursement l'ignore ; `lxRetenuesSync` ignore `acompte_modele='ticket'` → **aucun** ticket supplémentaire. |
 | Remboursement partiel (app ou %) | worker ajoute une entrée `remboursements` → synchro (forcée depuis l'app) → ticket négatif du montant remboursé ; part conservée mise à jour sur le RDV ; aucun ticket « Acompte conservé ». |
 | Remboursement total (salon / client dans les délais) | cron → entrée « automatique » → ticket négatif du total ; RDV annulé retiré du planning. |
-| Journée clôturée | aucune création (LOCKED_DAYS / `clotures`) ; reprise le jour ouvert suivant, date de règlement imprimée. |
+| Journée clôturée / après 23 h | aucune création (LOCKED_DAYS / `clotures` / heure ≥ 23) ; encaissement d'un RDV sans ticket d'acompte refusé avec le message « Le ticket d'acompte sera créé à l'ouverture de la prochaine journée de caisse ; encaissez après sa création (ou demain) » ; reprise le jour ouvert suivant, date de règlement imprimée. |
+| Trop-perçu | part conservée > total → refus + remboursement de la différence depuis la caisse (`trop_percu:true`), ticket négatif, puis encaissement (déduction = total). |
+| Verrou bloqué | ticket local non transmis → renvoi immédiat ; verrou > 15 min sans trace → repris (UPDATE conditionnel) ; sinon alerte à 24 h. |
+| Appareil à l'ancienne version | RDV encaissé avec l'acompte en mode de règlement, ou « Acompte conservé » : la ligne (`done` / `ticket_num` / `retenue_*`) est exclue des RPC, jamais ticketée, `DB_ERROR` une fois ; la déduction au ticket final n'est jamais faite sans relecture du modèle en base. |
 | Application fermée 3 jours | paiement J, ticket J+3 (daté J+3, « réglé le J ») ; exports à l'encaissement → ajustement 0 si même mois, ± si changement de mois. |
-| Deux appareils | verrou `acompte_tk_claim_at` (UPDATE conditionnel) ; perdant : « déjà en base » → report du n° ; index unique en dernier rempart ; après 24 h sans ticket : alerte `DB_ERROR`. |
+| Deux appareils | verrou `acompte_tk_claim_at` (UPDATE conditionnel) ; perdant : « déjà en base » → report du n° imprimé (`raw_data->tkNum`) ; index unique en dernier rempart ; verrou bloqué repris après 15 min sans trace ; après 24 h sans ticket : alerte `DB_ERROR`. |
 | Hors ligne | aucune synchro ; encaissement d'un RDV sans ticket d'acompte refusé avec message. |
 | Ancien modèle | `acompte_modele` NULL → `_lxApOnlineEnrichir` branche historique, `_lxAcompteSalonAmount` = 0, bucket `enligne` au ticket final, retenue par `lxRetenuesSync`, exports historiques. |
 
 ## 8. Journal des événements
 
 `ACOMPTE_EN_LIGNE` (ticket d'acompte), `ACOMPTE_EN_LIGNE_REMBOURSE` (ticket négatif), `ENCAISSEMENT_REFUSE_ACOMPTE_EN_LIGNE`,
-`VENTE_DIRECTE_ACOMPTE_EN_LIGNE`, `DB_ERROR` (verrou > 24 h). Comme `ACOMPTE` / `ACOMPTE_CONSERVE`, ces codes sont dans
-`audit_log` (pas de code JET dédié dans `nf525_jet_code`, inchangé).
+`VENTE_DIRECTE_ACOMPTE_EN_LIGNE`, `ACOMPTE_TROP_PERCU_REMBOURSE`, `ACOMPTE_EN_LIGNE_VERROU_REPRIS`, `DB_ERROR` (verrou > 24 h ;
+« acompte en ligne déjà traité par l'ancien modèle »). Comme `ACOMPTE` / `ACOMPTE_CONSERVE`, ces codes sont dans `audit_log`
+(pas de code JET dédié dans `nf525_jet_code`, inchangé).
+
+## 9. Révision 2 (deux relectures indépendantes) — ce qui a changé
+
+1. Version périmée : lignes `done` / `ticket_num` / `retenue_*` exclues (RPC + garde `_lxAcEnLigneDejaAncien`), `DB_ERROR` une fois ;
+   `_lxApOnlineEnrichir` et `lxRetenuesSync` ne traitent jamais une ligne `ticket` à l'ancienne.
+2. Verrou bloqué : renvoi d'un ticket local (`_lxAcEnLigneLocalRetenter`), reprise après 15 min sans trace (`_lxAcEnLigneVerrouReprendre`),
+   aussi pour les remboursements ; utilisé avant tout refus d'encaissement.
+3. SQL : `rdv_online_insert_public_propre` étendu ; trigger `acompte_modele` (OLD toujours gardé, marquage par le trigger seul) et
+   `acompte_tk_num` (seul `service_role` peut le changer une fois posé).
+4. Trop-perçu : modale + worker `trop_percu:true`.
+5. Numéros : n° imprimé partout, correspondance `tkNum` ou `dbNum`.
+6. Après 23 h / journée clôturée : message explicite.
+7. `doFinalPayExecute` : exception pendant les contrôles → refus si le ticket d'acompte n'est pas connu.
+8. Lectures par RPC `lx_acompte_a_ticketer` / `lx_acompte_remb_a_ticketer` (filtre serveur, `refunded_at desc`).
+9. `lxRetenuesSync` : filtre serveur du nouveau modèle, repli si colonne absente.
+10. `compte.html` : « Reçu d'acompte n° X » aussi sur les RDV à venir et annulés / absence (échappé, `_lxRecuAcompteHtml`).
+11. `luxyra-supabase.js?v=20261014-4`.

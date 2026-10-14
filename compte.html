@@ -721,6 +721,18 @@ function renderFavorisTab(){
   return h+'</div>';
 }
 
+// 2026-10-14 (NF525 acompte en ligne, 2e revue) : n° du reçu de caisse de l'acompte payé en ligne (nouveau modèle : ticket scellé
+// dès le paiement), affiché sur les RDV à venir, annulés / absence et encaissés. Tout est échappé.
+function _lxRecuAcompteHtml(r){
+  try{
+    if(!r||!r.acompte_tk_num||!(Number(r.acompte_montant)>0)||r.acompte_paye!==true) return "";
+    var m=Number(r.acompte_montant).toFixed(2).replace(".",","), rb=Number(r.acompte_rembourse_montant)||0;
+    var s='Reçu d’acompte n° '+escAttr(String(r.acompte_tk_num))+' ('+escAttr(m)+' € payés en ligne)';
+    if(r.acompte_rembourse===true) s+=' — remboursé';
+    else if(rb>0) s+=' — '+escAttr(rb.toFixed(2).replace(".",","))+' € remboursés';
+    return '<div class="rdv-det" style="margin-top:2px;color:var(--text3)">🧾 '+s+'</div>';
+  }catch(_e){ return ""; }
+}
 // --- RDV TAB ---
 function renderRdvTab(){
   var h='';
@@ -788,7 +800,9 @@ function renderRdvTab(){
       h+='<div class="rdv-date"><div class="d">'+parseInt(dp[2])+'</div><div class="m">'+mois[parseInt(dp[1])-1]+'</div></div>';
       h+='<div class="rdv-info"><div class="rdv-svc">'+escAttr(r.service_nom)+'</div>';
       h+='<div class="rdv-det">'+(r.heure_rdv?escAttr(r.heure_rdv.slice(0,5)):"")+' \u2022 '+escAttr(r.collaborateur_nom||"")+' \u2022 '+escAttr(r.service_prix==null?"":String(r.service_prix))+'\u20ac</div>';
-      h+='<div class="rdv-salon">\ud83c\udfe0 '+escAttr(r.salon_nom||"Salon")+'</div></div>';
+      h+='<div class="rdv-salon">\ud83c\udfe0 '+escAttr(r.salon_nom||"Salon")+'</div>';
+      h+=_lxRecuAcompteHtml(r); // 2026-10-14 (NF525 acompte en ligne, 2e revue) : re\u00e7u d'acompte aussi sur les RDV \u00e0 venir
+      h+='</div>';
       h+='<div class="rdv-status '+getStatusClass(r)+'">'+getStatusLabel(r)+'</div>';
       h+='</div>';
       // 2026-10-13 : ajout à l'agenda du téléphone + itinéraire
@@ -892,6 +906,7 @@ function renderRdvTab(){
       var _par=r.cancelled_by==="client"?"par vous":(r.cancelled_by==="salon"||r.cancelled_by==="no_show")?"par l\u2019\u00e9tablissement":"";
       var _mot=(r.cancelled_by==="salon"&&r.cancel_reason&&r.cancel_reason!=="Annul\u00e9 par le salon")?r.cancel_reason:"";
       if(_par||_mot) h+='<div class="rdv-det" style="margin-top:2px">'+(_par?'Annul\u00e9 '+_par:'')+(_mot?' \u2014 \u00ab '+escAttr(_mot)+' \u00bb':'')+'</div>';
+      h+=_lxRecuAcompteHtml(r); // 2026-10-14 (NF525 acompte en ligne, 2e revue) : re\u00e7u d'acompte sur les RDV annul\u00e9s / absence
       h+='</div>';
       h+='<div class="rdv-status st-cancelled">Annul\u00e9</div>';
       h+='</div></div>';

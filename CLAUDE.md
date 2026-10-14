@@ -1828,7 +1828,11 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 ## Acompte en ligne = ticket scellé au paiement (14/10/2026, accord d'Alexandre — branche acompte-en-ligne)
 - Conception complète : `docs/acompte_en_ligne_conception.md` ; SQL à appliquer APRÈS déploiement de l'app : `docs/sql_acompte_en_ligne.sql`
   (colonnes rdv_online.acompte_modele / acompte_tk_num / acompte_tk_claim_at / acompte_remb_claim_at, trigger `trg_rdv_online_acompte_modele`,
-  index unique `tickets_acompte_key_unique` sur raw_data->>acompteKey, RPC `lx_acompte_remb_ticketer` / `lx_acompte_remb_liberer`).
+  index unique `tickets_acompte_key_unique` sur raw_data->>acompteKey, RPC `lx_acompte_remb_ticketer` / `lx_acompte_remb_liberer`,
+  RPC de lecture `lx_acompte_a_ticketer` / `lx_acompte_remb_a_ticketer` / `lx_acompte_deja_traite_ancien`, `rdv_online_insert_public_propre` étendu).
+  Le worker DOIT être redéployé (route /api/rdv/acompte-rembourser : `trop_percu:true`). Numéros mémorisés (acompte_tk_num, origTkNum,
+  acompteTkNum) = n° IMPRIMÉ tk.tkNum (dbNum = n° serveur en meta) ; correspondances sur (tkNum OU dbNum). Verrou bloqué > 15 min sans
+  trace -> repris (UPDATE conditionnel) ; ligne déjà traitée par une ancienne app (done / ticket_num / retenue_*) -> jamais de ticket, DB_ERROR.
 - Nouveau modèle (`acompte_modele='ticket'`, posé par trigger au passage acompte_paye false→true) : l'app crée le ticket « Acompte en ligne »
   (`lxAcomptesEnLigneSync`, même motif que lxRetenuesSync : verrou, clé, jamais jour clôturé, date de règlement dans raw_data.datePaiement) ;
   au RDV : ligne « Acompte déjà versé (ticket #X) » (`acompteEnLigneTicket` sur le fantôme, `_lxAcompteSalonAmount`), contrôle
