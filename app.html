@@ -1147,6 +1147,41 @@ function lxApplyModeCaution(newMode){
 }
 window.lxApplyModeCaution=lxApplyModeCaution;
 
+// 2026-10-14 audit : l'acompte (montant fixe, pourcentage ou minimum) ne peut pas dépasser le prix d'une
+// prestation réservable en ligne. Pourcentage borné à 100. Le site plafonne aussi au prix (lxCalcAcompte).
+function lxSetAcompteReglage(champ, el){
+  var SC=window.SITE_CONFIG||{}; var v=Number(el.value);
+  if(!(v>=0)) v=0;
+  if(champ==="acompteMontant" && SC.acompteType==="pourcentage" && v>100){ v=100; if(typeof toast==="function") toast("Un pourcentage ne peut pas dépasser 100 %","warning"); }
+  v=Math.round(v*100)/100; el.value=v; SC[champ]=v;
+  saveSiteConfig();
+  lxVerifAcompteVsPrix(true);
+}
+window.lxSetAcompteReglage=lxSetAcompteReglage;
+function lxVerifAcompteVsPrix(rafraichir){
+  var html="";
+  try{
+    var SC=window.SITE_CONFIG||{};
+    var liste=(typeof SVC!=="undefined"&&Array.isArray(SVC))?SVC:[];
+    var prixMin=null, nomMin="";
+    liste.forEach(function(sv){
+      if(!sv || sv.actif===false || sv.devis || sv.bookOnline===false) return;
+      var p=Number(sv.p); if(!(p>0)) return;
+      if(prixMin===null || p<prixMin){ prixMin=p; nomMin=sv.n||""; }
+    });
+    var fixe = SC.acompteType==="pourcentage" ? 0 : (Number(SC.acompteMontant)||0);
+    var mini = Number(SC.acompteMin)||0;
+    var demande = Math.max(fixe, mini);
+    var seuil = Number(SC.acompteSeuil)||0;
+    if(prixMin!==null && demande>prixMin && !(seuil>prixMin)){
+      html='<div style="margin-top:10px;padding:10px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.25);border-radius:8px;font-size:12px;color:#ffb74d;line-height:1.5">⚠️ L\'acompte demandé ('+demande.toFixed(2)+' €) dépasse le prix de certaines prestations (ex. « '+escapeHtml(nomMin)+' » à '+prixMin.toFixed(2)+' €). Pour celles-ci, le site demandera au plus le prix de la prestation. Baissez le montant ou utilisez « Acompte demandé seulement au-delà de ».</div>';
+    }
+  }catch(_e){ html=""; }
+  if(rafraichir){ var z=document.getElementById("lxAcompteAlerte"); if(z) z.innerHTML=html; }
+  return html;
+}
+window.lxVerifAcompteVsPrix=lxVerifAcompteVsPrix;
+
 function lxOpenGarantieGuide(){
   var h='<div class="mbox" style="max-width:680px;max-height:90vh;overflow-y:auto">';
   h+='<h2 style="text-align:center;color:var(--gold);margin-bottom:6px">🛡️ Guide : choisir votre garantie</h2>';
@@ -2944,6 +2979,11 @@ function checkCgvAndPay(plan){
 async function startCheckout(plan){
   // 2026-10-11 (NF525) : en essai, le choix « tests / vraies ventes » doit être fait avant tout abonnement (tous les chemins)
   try{ if(window.LX_MODE_CAISSE==="test"){ var _ov=document.querySelector(".upgrade-overlay"); if(_ov) _ov.remove(); lxPasserEnReel("plan:"+plan); return; } }catch(_eG){}
+  // 2026-10-14 audit : anti double appui (deux sessions de paiement Stripe ouvertes pour un seul abonnement)
+  if(window._lxCheckoutEnCours){ if(typeof toast==="function") toast("Paiement en cours de pr\u00e9paration\u2026","info"); return; }
+  window._lxCheckoutEnCours=true;
+  var _libere=function(){ window._lxCheckoutEnCours=false; };
+  setTimeout(_libere,30000); // filet : si la redirection n'a pas lieu, le bouton redevient utilisable
   var btn=document.getElementById("upgradeBtn");
   if(btn){btn.textContent="Chargement...";btn.disabled=true;}
 
@@ -2960,6 +3000,7 @@ async function startCheckout(plan){
     showAlert("Impossible de continuer : " + missing.join(", ") + " manquant. Rechargez la page et réessayez.","error");
     console.error("[startCheckout] données manquantes", {salon_id:sid, plan:plan, email:em});
     if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+    _libere();
     return;
   }
 
@@ -2976,11 +3017,13 @@ async function startCheckout(plan){
       console.error("[startCheckout] Worker error", data);
       showAlert("Erreur : " + (data.error || "Impossible de créer la session de paiement"),"error");
       if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+      _libere();
     }
   }catch(e){
     console.error("[startCheckout] network error", e);
     showAlert("Erreur de connexion. Vérifiez votre internet.","error");
     if(btn){btn.textContent="Passer en Pro →";btn.disabled=false;}
+    _libere();
   }
 }
 
@@ -3320,6 +3363,12 @@ async function doSwitchPlan(plan){
     var cgv=document.getElementById("cgvCheckSwitch");
     if(!cgv||!cgv.checked){showAlert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.","warning");return;}
   }
+  // 2026-10-14 audit : anti double appui (deux changements de forfait / deux prorata Stripe)
+  if(window._lxSwitchPlanEnCours){ if(typeof toast==="function") toast("Changement de forfait en cours\u2026","info"); return; }
+  window._lxSwitchPlanEnCours=true;
+  var _btnsSw=[].slice.call(document.querySelectorAll('button[onclick*="doSwitchPlan"],button[onclick*="confirmDowngrade"]'));
+  _btnsSw.forEach(function(b){ b.disabled=true; b.style.opacity=".6"; });
+  var _finSw=function(){ window._lxSwitchPlanEnCours=false; _btnsSw.forEach(function(b){ b.disabled=false; b.style.opacity=""; }); };
   try{
     var res=await fetch(window.location.origin+STRIPE_API+"/switch-plan",{
       method:"POST",
@@ -3335,11 +3384,13 @@ async function doSwitchPlan(plan){
       });
     }else if(data.error&&data.error.indexOf("abonnement")>=0){
       // No active subscription - redirect to checkout
+      _finSw();
       cM();startCheckout(plan);
     }else{
+      _finSw();
       showAlert("Erreur : "+(data.error||"Impossible de changer de forfait"),"error");
     }
-  }catch(e){showAlert("Erreur de connexion","error");}
+  }catch(e){_finSw();showAlert("Erreur de connexion","error");}
 }
 SALON_CONFIG._defaultLogo="data:image/webp;base64,UklGRsoCAABXRUJQVlA4IL4CAADQDACdASoqACoAPlEmkEYjoiGhI4kAcAoJZQC98JXJPtuueASPl+TzOsgRMGvGz9Nf9L3Av1J/5XXN/ZJJJ9N5h5XLY9LqGFboTA6YQGYRIY4cxDR0vRaWNRypCQ9zUcCkClx4gGJbuyDZEMJ/3gAA/vVj/Fh/SqNagRWSN2U5c7xkAYTmvJjJ9+qw81H/eAPE8cL7wHIcTiAlCABUIEWSRggNSFbml//Ts6ApP312IohCpMcxxvoLZgMqX8VgaV+iLwGliUrfojoaTFSaFDdQJtlzKzoY8E7e/x17RTnHrIdh8qEZReQ9uYll7OfD1kUM0zBkSg7gdI/GIBGb44QCNddZUkw4sQ+Umsq0IHJWMa0h+uOoMAeqmb2aaBFRL2Uj+XW+1+3/+jQv3/V/vIYs8a6KASy6H12zJ6dsBo5pjDcmKvFgcTN1e2ztM0tv9VIY9mRo5VemJTG73r0HXxpTUf8RYIeqvG8Cxci4iqOAOTjqaXUa+hGpwUz/0d63ZMCMfqwmzgyy5MIFoNkY+VY+v3/Lfdfv/Ex/mvkcAjtKnebadhURwE0+JBF71NegSMCnTiEagoPlF3wzdrsgoQIhlUek3YpTbRTLIv+4kVB42i1hEWoZYYVKYv1LOG+NO1+g4QqpZFOIvBtUukt6t+v8EFD5btAGps/ReQaGR7phgtvzkGxWi1X8QuQ3RJ00jaCM3S43Lu+DWsGmrCv/elTAQfMTLIX6LscIKG+03SqH+zp8wHhw+XMJ3qsjiQGYKT96461jOcjzTjNaRnjaC+tgxBPNf5WTT8KL/DU0Cq/V6KuP29QfWsBlOiDPv5j9tKugwtV+zlp1ueoxBn4HcOcdmomE6ekCU6mU8Q/EJrU9EPExkUEfS27z3WNfM5QWQyDCqG4HSYsuoItzZnBz9w8uThAiVuK/mslU02gAAAA=";
 // Multi-métiers: adapt l'app selon le domaine du salon
@@ -3372,6 +3423,8 @@ function getMetierTxt(){ return METIER_TEXTES[(typeof SALON_CONFIG!=="undefined"
 function lxRelanceTexte(t){ if(!t || ((SALON_CONFIG.metier||"coiffure")!=="coiffure" && String(t).trim()===LX_RELANCE_COIFFURE_ANCIENNE)) return getMetierTxt().relance; return t; }
 function _lxAttr(x){ return String(x==null?"":x).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/\n/g,"&#10;"); }
 function getMetierConfig(){return METIER_CONFIG[SALON_CONFIG.metier||"coiffure"]||METIER_CONFIG.coiffure;}
+// 2026-10-14 audit : 0 est un vrai reglage (forfait de deplacement 0 EUR, 0 EUR/km) ; seul un champ VIDE prend la valeur par defaut
+function _lxNumDef(v,def){ if(v===null||v===undefined||v==="") return def; var n=Number(v); return isFinite(n)?n:def; }
 function calcFraisDeplacement(distKm){
   var mode=SALON_CONFIG.modeActivite;
   if(mode!=="domicile"&&mode!=="mixte")return 0;
@@ -3379,7 +3432,7 @@ function calcFraisDeplacement(distKm){
   if(dom.type==="gratuit")return 0;
   if(dom.type==="commune")return dom.forfait||0; // forfait par commune : montant exact choisi selon la commune côté réservation
   if(distKm<=(Number(dom.gratuitKm)||0))return 0; // 2026-10-10 : « gratuit jusqu'à X km » vaut aussi pour le forfait (comme le mini-site)
-  if(dom.type==="km"){var kmFacturable=Math.max(0,distKm-(dom.gratuitKm||0));return Math.round(kmFacturable*(dom.prixKm||0.5)*100)/100;}
+  if(dom.type==="km"){var kmFacturable=Math.max(0,distKm-(dom.gratuitKm||0));return Math.round(kmFacturable*_lxNumDef(dom.prixKm,0.5)*100)/100;}
   return dom.forfait||0; // forfait
 }
 function getCollabLabel(){var mc=getMetierConfig();return mc.collabLabel;}
@@ -7111,10 +7164,28 @@ function lxCollabRHVerif(cid,fields){
   });
 }
 window.lxCollabRHVerif=lxCollabRHVerif;
+// 2026-10-14 audit : une plage horaire n'est acceptee que si la fermeture est APRES l'ouverture
+// (avant : 18:00 -> 09:00 etait enregistre, le jour devenait sans creneau sur le site sans explication).
+function lxPlageHoraireOk(o,c){ return !!(o && c && /^\d{2}:\d{2}$/.test(o) && /^\d{2}:\d{2}$/.test(c) && c>o); }
+function lxPlageRefusee(o,c){
+  showAlert("\u26a0\ufe0f Horaire non enregistr\u00e9 : la fermeture ("+(c||"?")+") doit \u00eatre apr\u00e8s l'ouverture ("+(o||"?")+").","warning");
+  var sy=window.scrollY; go("settings"); window.scrollTo(0,sy);
+}
+function lxSetHoraireSalon(d,k,el){
+  if(!H[d]) return;
+  var cand=Object.assign({},H[d]); cand[k]=el.value;
+  if(!lxPlageHoraireOk(cand.o,cand.c)){ el.value=H[d][k]||""; lxPlageRefusee(cand.o,cand.c); return; }
+  H[d][k]=el.value;
+  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  if(typeof saveSiteConfig==="function")saveSiteConfig();
+}
+window.lxSetHoraireSalon=lxSetHoraireSalon;
 function setStyHrs(ti,dow,key,val){
   if(!T[ti].hrs)T[ti].hrs={};
   if(!T[ti].hrs[dow])T[ti].hrs[dow]={o:"09:00",c:"18:00"};
   var k=key===0?"o":"c";
+  var _cand=Object.assign({},T[ti].hrs[dow]); _cand[k]=val; // 2026-10-14 audit
+  if(!lxPlageHoraireOk(_cand.o,_cand.c)){ lxPlageRefusee(_cand.o,_cand.c); return; }
   T[ti].hrs[dow][k]=val;
   // FIX 2026-05-12 : update ciblé pour éviter d'écraser les autres collabs avec mémoire stale
   lxCollabSave(ti, {horaires: T[ti].hrs}, "✓ Horaire enregistré"); // 2026-10-14 : verifie
@@ -7149,6 +7220,9 @@ function setStyOverrideHrs(ti,dateStr,key,val){
   else if(key==='c')base.c=val;
   else if(key==='pause_o')base.pause_o=val;
   else if(key==='pause_c')base.pause_c=val;
+  // 2026-10-14 audit : fermeture apres ouverture, fin de pause apres debut de pause
+  if(!lxPlageHoraireOk(base.o,base.c)){ lxPlageRefusee(base.o,base.c); return; }
+  if(base.pause_o && base.pause_c && !lxPlageHoraireOk(base.pause_o,base.pause_c)){ showAlert("\u26a0\ufe0f Pause non enregistr\u00e9e : la fin doit \u00eatre apr\u00e8s le d\u00e9but.","warning"); var _sy=window.scrollY; go("settings"); window.scrollTo(0,_sy); return; }
   T[ti].hrsOver[dateStr]=base;
   // 2026-10-14 : fusion avec la base, seule cette date est modifiee
   lxCollabSave(ti,{horaires_overrides:T[ti].hrsOver},"✓ Personnalisé enregistré",{dates:[dateStr]});
@@ -7211,6 +7285,10 @@ function doExceptFermeture(){
     return;
   }
   var motif=(document.getElementById("exFermMotif").value||"").trim()||"Fermeture exceptionnelle";
+  // 2026-10-14 audit : RDV deja pris sur la periode -> liste + confirmation explicite (comme les absences)
+  var _impact=lxRdvSurPeriode(dFrom,dTo);
+  if(_impact.length && !window._lxFermConfirmee){ lxConfirmerFermetureImpact(dFrom,dTo,motif,_impact); return; }
+  window._lxFermConfirmee=false;
   if(!window.ABSENCES)window.ABSENCES=[];
   // Cr\u00e9e une absence par jour de la plage (inclus)
   var cur = new Date(dFrom+"T12:00:00");
@@ -7230,6 +7308,58 @@ function doExceptFermeture(){
   cM();
   if(typeof toast==="function") toast("\u2713 "+nbCrees+" jour"+(nbCrees>1?"s":"")+" de fermeture ajout\u00e9"+(nbCrees>1?"s":""),"success");
   go("settings");
+  // 2026-10-14 audit : proposer (jamais envoyer automatiquement) de prevenir les clients concernes
+  if(_impact.length) setTimeout(function(){ lxProposerPrevenirClients(_impact,motif); },300);
+}
+// 2026-10-14 audit : rendez-vous actifs (non annules, non termines) sur une periode, tous collaborateurs
+function lxRdvSurPeriode(dFrom,dTo){
+  try{
+    return (typeof AP!=="undefined"?AP:[]).filter(function(a){
+      return a && a.date && a.date>=dFrom && a.date<=dTo && a.st!=="canc" && a.st!=="done" && !a.cancelled;
+    }).sort(function(x,y){ return (x.date+(x.time||"")).localeCompare(y.date+(y.time||"")); });
+  }catch(_e){ return []; }
+}
+function _lxLigneRdvImpact(a){
+  var cl=(typeof gC==="function")?gC(a.cId):null, sv=(typeof gS==="function")?gS(a.sId):null, st=(typeof gT==="function")?gT(a.stId):null;
+  var nom=cl?((typeof cName==="function")?cName(cl):((cl.pre||"")+" "+(cl.nom||""))):"Client";
+  var d=String(a.date||""); var dFr=d.length===10?(d.slice(8,10)+"/"+d.slice(5,7)):d;
+  return {cl:cl, txt:dFr+" "+(a.time||"")+" \u2014 "+nom+(sv?" \u2014 "+sv.n:"")+(st?" ("+st.n+")":"")};
+}
+function lxConfirmerFermetureImpact(dFrom,dTo,motif,impact){
+  var h='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\u26a0\ufe0f Rendez-vous d\u00e9j\u00e0 pris</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">'+impact.length+' rendez-vous '+(impact.length>1?'sont pr\u00e9vus':'est pr\u00e9vu')+' pendant cette fermeture. Ils <strong>ne seront ni annul\u00e9s ni d\u00e9plac\u00e9s</strong> automatiquement, et aucun message ne part sans votre action.</div>';
+  h+='<div style="max-height:40vh;overflow-y:auto;border:1px solid var(--border2);border-radius:10px;padding:8px 10px;margin-bottom:12px;font-size:13px">';
+  impact.forEach(function(a){ h+='<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">'+escapeHtml(_lxLigneRdvImpact(a).txt)+'</div>'; });
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
+  h+='<button class="btn" style="flex:1;background:#f44336;color:#fff;font-weight:700" onclick="window._lxFermConfirmee=true;lxRefaireFermeture()">Fermer quand m\u00eame</button></div></div>';
+  window._lxFermEnAttente={dFrom:dFrom,dTo:dTo,motif:motif};
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+function lxRefaireFermeture(){
+  var p=window._lxFermEnAttente; if(!p){ window._lxFermConfirmee=false; return; }
+  // la modale de saisie a ete remplacee : on recree les champs lus par doExceptFermeture
+  var z=document.createElement("div"); z.style.display="none";
+  z.innerHTML='<input id="exFermDate"><input id="exFermDateTo"><input id="exFermMotif">';
+  document.body.appendChild(z);
+  document.getElementById("exFermDate").value=p.dFrom; document.getElementById("exFermDateTo").value=p.dTo; document.getElementById("exFermMotif").value=p.motif;
+  try{ doExceptFermeture(); } finally { try{ z.remove(); }catch(_e){} window._lxFermEnAttente=null; window._lxFermConfirmee=false; }
+}
+function lxProposerPrevenirClients(impact,motif){
+  var h='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>\ud83d\udcde Pr\u00e9venir les clients ?</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">Rien n\u0027a \u00e9t\u00e9 envoy\u00e9. Pour chaque client, vous pouvez ouvrir un SMS ou un e-mail <strong>pr\u00e9-rempli</strong> depuis votre t\u00e9l\u00e9phone (vous le relisez et l\u0027envoyez vous-m\u00eame), ou appeler. Pensez ensuite \u00e0 d\u00e9placer ou annuler le rendez-vous dans le planning.</div>';
+  impact.forEach(function(a){
+    var L=_lxLigneRdvImpact(a), cl=L.cl;
+    var msg="Bonjour"+(cl&&cl.pre?" "+cl.pre:"")+", "+(SALON_CONFIG.nom||"le salon")+" sera exceptionnellement ferm\u00e9 le "+(String(a.date).slice(8,10)+"/"+String(a.date).slice(5,7))+" ("+motif+"). Votre rendez-vous de "+(a.time||"")+" doit \u00eatre d\u00e9plac\u00e9 : merci de nous recontacter."+(SALON_CONFIG.tel?" "+SALON_CONFIG.tel:"");
+    var tel=cl&&cl.ph?String(cl.ph).replace(/[^0-9+]/g,""):"", em=cl&&cl.em?String(cl.em):"";
+    h+='<div style="padding:8px 0;border-bottom:1px solid var(--border2)"><div style="font-size:13px;margin-bottom:6px">'+escapeHtml(L.txt)+'</div><div style="display:flex;gap:6px;flex-wrap:wrap">';
+    if(tel) h+='<a class="btn bs" style="font-size:12px;padding:6px 10px;text-decoration:none" href="sms:'+escapeHtml(tel)+'?&body='+encodeURIComponent(msg)+'">\ud83d\udcac SMS</a><a class="btn bs" style="font-size:12px;padding:6px 10px;text-decoration:none" href="tel:'+escapeHtml(tel)+'">\ud83d\udcde Appeler</a>';
+    if(em) h+='<a class="btn bs" style="font-size:12px;padding:6px 10px;text-decoration:none" href="mailto:'+escapeHtml(em)+'?subject='+encodeURIComponent("Fermeture exceptionnelle - "+(SALON_CONFIG.nom||""))+'&body='+encodeURIComponent(msg)+'">\u2709\ufe0f E-mail</a>';
+    if(!tel&&!em) h+='<span style="font-size:12px;color:var(--text3)">Aucun t\u00e9l\u00e9phone ni e-mail</span>';
+    h+='</div></div>';
+  });
+  h+='<button class="btn bg" style="width:100%;margin-top:12px" onclick="cM()">Terminer</button></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
 
 // FIX 2026-05-14 : ouverture exceptionnelle \u2014 jour unique, salon ouvert alors qu'il
@@ -14187,8 +14317,13 @@ function saveSalonInfo(){
       note_ticket:SALON_CONFIG.noteTicket  // "" = effacer la note (chaîne vide, jamais null par omission)
     });
     var _msgErr=function(r){ return String((r&&r.error&&r.error.message)||"erreur inconnue").replace(/^.*?:\s*/,""); };
+    // 2026-10-14 audit : adresse modifiee -> nouvelle position sur la carte (avant : geocodage seulement
+    // si aucune position, donc le salon restait a l'ancienne adresse dans la recherche et l'annuaire)
+    var _adrChange=false;
+    try{ _adrChange=!!_idAv && ["adresse","cp","ville"].some(function(k){ return String(_idAv[k]||"").trim().toLowerCase()!==String(SALON_CONFIG[k]||"").trim().toLowerCase(); }); }catch(_eA){}
     Promise.all([_pId,_pCo]).then(function(rs){
       var rId=rs[0]||{}, rCo=rs[1]||{};
+      if(rId.ok && _adrChange && typeof lxGeocoderApresAdresse==="function") lxGeocoderApresAdresse();
       if(rId.ok && rCo.ok){ _lxNotifInfosOk(); return; }
       var m=[];
       if(!rId.ok){
@@ -14201,6 +14336,22 @@ function saveSalonInfo(){
       if(typeof showAlert==="function") showAlert("⚠️ Enregistrement incomplet :\n"+m.join("\n")+"\n\nRéessayez. Si le problème continue, écrivez au support.","warning");
     });
   } else _lxNotifInfosOk();
+}
+// 2026-10-14 audit : re-geocodage apres changement d'adresse (meme service BAN que la carte de Site en ligne)
+async function lxGeocoderApresAdresse(){
+  try{
+    if(typeof _sb==="undefined"||!_sb||!_salonId) return;
+    var geo=await geocodeBANSafe(SALON_CONFIG.adresse||"", SALON_CONFIG.cp||"", SALON_CONFIG.ville||"");
+    if(geo && isFinite(geo.lat) && isFinite(geo.lng) && geo.score>=0.4){
+      var u=await _sb.from("salons").update({latitude:geo.lat, longitude:geo.lng, geocoded_at:new Date().toISOString()}).eq("id",_salonId);
+      if(u && u.error) throw new Error(u.error.message);
+      if(typeof toast==="function") toast("📍 Position sur la carte mise à jour avec la nouvelle adresse","success");
+    } else {
+      if(typeof showAlert==="function") showAlert("📍 La nouvelle adresse n'a pas été trouvée automatiquement sur la carte.\n\nPlacez votre repère dans Paramètres › Site en ligne › « Votre emplacement sur la carte », sinon vos clients vous verront à l'ancienne position.","warning");
+    }
+  }catch(e){
+    try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"lxGeocoderApresAdresse", msg:String(e&&e.message||e)}).slice(0,2000)); }catch(_e){}
+  }
 }
 function _lxNotifInfosOk(){
   var notif=document.createElement("div");
@@ -14324,11 +14475,16 @@ function deleteCollabFromDB(collabId, cb){
 
 function uploadSiteImg(input,field){
   if(!input.files||!input.files[0])return;
+  if(!/^image\//.test(input.files[0].type||"image/")){ showAlert("Choisissez une image (JPG, PNG, WebP).","info"); return; }
   var reader=new FileReader();
   reader.onload=function(e){
-    window.SITE_CONFIG[field]=e.target.result;
-    saveSiteConfig();
-    go("settings");
+    // 2026-10-14 audit : photo reduite (1600 px max, JPEG 0,8) avant d'entrer dans site_config.
+    // Avant : photo brute du telephone (2-5 Mo) en base64, renvoyee a chaque sauvegarde et chargee par le site.
+    lxImgReduire(e.target.result,1600,0.8,function(img){
+      window.SITE_CONFIG[field]=img;
+      saveSiteConfig();
+      go("settings");
+    });
   };
   reader.readAsDataURL(input.files[0]);
 }
@@ -14340,10 +14496,14 @@ function uploadSiteGallery(input){
     (function(file){
       var reader=new FileReader();
       reader.onload=function(e){
-        window.SITE_CONFIG.photosSalon.push(e.target.result);
-        loaded++;
-        if(loaded===total){saveSiteConfig();go("settings");}
+        // 2026-10-14 audit : chaque photo reduite (1600 px max, JPEG 0,8) avant enregistrement
+        lxImgReduire(e.target.result,1600,0.8,function(img){
+          window.SITE_CONFIG.photosSalon.push(img);
+          loaded++;
+          if(loaded===total){saveSiteConfig();go("settings");}
+        });
       };
+      reader.onerror=function(){ loaded++; if(loaded===total){saveSiteConfig();go("settings");} };
       reader.readAsDataURL(file);
     })(input.files[i]);
   }
@@ -14449,6 +14609,8 @@ function _lxSiteData(SC){
       acompte_description:SC.acompteDesc||"",
       politique_annulation:SC.politiqueAnnul||"48h",
       remboursement_annulation:SC.remboursementAnnul!==false,
+      // 2026-10-14 audit : pourcentage de l'acompte rendu quand il serait conserve (lu par le worker)
+      remboursement_partiel_pct:Math.max(0,Math.min(100,parseInt(SC.rembPartielPct,10)||0)),
       delai_min_heures:SC.delaiMinH,
       delai_max_jours:SC.delaiMaxJ,
       creneau_intervalle:SC.creneauMin,
@@ -14555,6 +14717,7 @@ function loadSiteConfig(opts){
           acompteObligatoire:d.acompte_obligatoire,acompteMontant:Number(d.acompte_montant),acompteType:d.acompte_type,
           acompteMin:Number(d.acompte_min)||0,acompteSeuil:Number(d.acompte_seuil)||0,acompteDesc:d.acompte_description||"",
           politiqueAnnul:d.politique_annulation||"48h",remboursementAnnul:d.remboursement_annulation!==false,
+          rembPartielPct:Math.max(0,Math.min(100,parseInt(d.remboursement_partiel_pct,10)||0)), // 2026-10-14 audit
           delaiMinH:d.delai_min_heures,delaiMaxJ:d.delai_max_jours,creneauMin:d.creneau_intervalle,
           bloquerNouveauxComptes:d.bloquer_nouveaux_comptes===true,
           modeCaution:d.mode_caution||"aucun",
@@ -14966,14 +15129,14 @@ function rSettings(){
       h+='</div>';
       // Price fields based on type
       if(dom.type==="forfait"){
-        h+='<div class="fg" style="margin-bottom:0"><label>Montant forfait (\u20ac)</label><input type="number" value="'+(dom.forfait||15)+'" min="0" step="0.5" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.forfait=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+        h+='<div class="fg" style="margin-bottom:0"><label>Montant forfait (\u20ac)</label><input type="number" value="'+_lxNumDef(dom.forfait,15)+'" min="0" step="0.5" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.forfait=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
       }else if(dom.type==="km"){
-        h+='<div class="fg" style="margin-bottom:0"><label>Prix par km (\u20ac/km)</label><input type="number" value="'+(dom.prixKm||0.5)+'" min="0" step="0.1" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.prixKm=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+        h+='<div class="fg" style="margin-bottom:0"><label>Prix par km (\u20ac/km)</label><input type="number" value="'+_lxNumDef(dom.prixKm,0.5)+'" min="0" step="0.1" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.prixKm=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
         var exKm=10;var exPrix=Math.max(0,(exKm-(dom.gratuitKm||0)))*dom.prixKm;
         h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">Ex: '+exKm+' km = '+exPrix.toFixed(2)+' \u20ac'+(dom.gratuitKm>0?' ('+dom.gratuitKm+' km gratuits)':'')+'</div>';
       }else if(dom.type==="commune"){
         h+='<div style="font-size:12px;color:var(--text2);padding:4px 0 8px">Un forfait par commune desservie (r\u00e9glable dans la liste ci-dessous). Montant par d\u00e9faut :</div>';
-        h+='<div class="fg" style="margin-bottom:0"><input type="number" value="'+(dom.forfait||15)+'" min="0" step="0.5" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.forfait=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
+        h+='<div class="fg" style="margin-bottom:0"><input type="number" value="'+_lxNumDef(dom.forfait,15)+'" min="0" step="0.5" style="text-align:center;font-size:16px;font-weight:800;padding:10px" onchange="SALON_CONFIG.domicile.forfait=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"></div>';
       }else{
         h+='<div style="font-size:12px;color:var(--green);padding:8px;text-align:center">\u2705 D\u00e9placement gratuit dans la zone couverte</div>';
       }
@@ -14997,9 +15160,9 @@ function rSettings(){
       h+='<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border2)">';
       h+='<div style="width:85px;font-weight:700;font-size:13px">'+jours[d]+'</div>';
       if(hr){
-        h+='<input type="time" value="'+hr.o+'" style="width:90px;padding:8px;font-size:14px" onchange="H['+d+'].o=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();if(typeof saveSiteConfig===\'function\')saveSiteConfig()">';
+        h+='<input type="time" value="'+hr.o+'" style="width:90px;padding:8px;font-size:14px" onchange="lxSetHoraireSalon('+d+',\'o\',this)">';
         h+='<span style="font-size:12px;color:var(--text3)">\u00e0</span>';
-        h+='<input type="time" value="'+hr.c+'" style="width:90px;padding:8px;font-size:14px" onchange="H['+d+'].c=this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig();if(typeof saveSiteConfig===\'function\')saveSiteConfig()">';
+        h+='<input type="time" value="'+hr.c+'" style="width:90px;padding:8px;font-size:14px" onchange="lxSetHoraireSalon('+d+',\'c\',this)">';
         h+='<button class="btn bs" style="color:var(--red);font-size:11px" onclick="H['+d+']=null;if(typeof saveSiteConfig===\'function\')saveSiteConfig();go(\'settings\')">Ferm\u00e9</button>';
       }else{
         h+='<span style="font-size:13px;color:var(--text3);font-style:italic;flex:1">Ferm\u00e9</span>';
@@ -15480,7 +15643,7 @@ function rSettings(){
     h+='<div style="text-align:center;margin-bottom:16px">';
     h+='<img id="salonLogoPreview" src="'+logoPreview+'" style="width:80px;height:80px;border-radius:16px;object-fit:cover;border:2px solid var(--gold-bg2);margin-bottom:8px"><br>';
     h+='<div class="fg"><label>Logo établissement (URL ou cliquez pour charger)</label>';
-    h+='<input id="salonLogoUrl" value="'+(S.logo||"")+'" placeholder="https://... ou collez une image base64" onchange="window.SALON.logo=this.value;document.getElementById(\'salonLogoPreview\').src=this.value||document.getElementById(\'hlogo\').src">';
+    h+='<input id="salonLogoUrl" value="'+_lxAttr(S.logo||"")+'" placeholder="https://... ou collez une image base64" onchange="window.SALON.logo=this.value;document.getElementById(\'salonLogoPreview\').src=this.value||document.getElementById(\'hlogo\').src">';
     h+='</div>';
     h+='<div style="display:flex;gap:8px;justify-content:center;margin-top:6px">';
     h+='<label class="btn bs" style="font-size:12px;cursor:pointer;padding:8px 14px">\ud83d\udcf7 Charger une image<input type="file" accept="image/*" style="display:none" onchange="handleLogoUpload(this)"></label>';
@@ -15490,13 +15653,14 @@ function rSettings(){
     h+='<div class="fg"><label>Nom \u00e9tablissement <span style="font-size:10px;color:var(--text3)">\ud83d\udd12 verrouill\u00e9</span></label>';
     h+='<input value="'+(S.nom||"").replace(/"/g,"&quot;")+'" disabled style="opacity:.65;cursor:not-allowed;background:rgba(255,255,255,.02)">';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">Pour modifier, \u00e9crivez \u00e0 <a href="mailto:support@luxyra.fr?subject=Changement%20nom%20salon" style="color:var(--gold);text-decoration:underline">support@luxyra.fr</a></div></div>';
-    h+='<div class="fg"><label>Sous-titre</label><input value="'+(S.sousTitre||"")+'" placeholder="Sous-titre du salon (optionnel)" onchange="window.SALON.sousTitre=this.value"></div>';
-    h+='<div class="fg"><label>Adresse</label><input value="'+S.adr+'" onchange="window.SALON.adr=this.value"></div>';
+    // 2026-10-14 audit : valeurs echappees (_lxAttr) - un guillemet dans l'adresse ou le sous-titre cassait le formulaire
+    h+='<div class="fg"><label>Sous-titre</label><input value="'+_lxAttr(S.sousTitre||"")+'" placeholder="Sous-titre du salon (optionnel)" onchange="window.SALON.sousTitre=this.value"></div>';
+    h+='<div class="fg"><label>Adresse</label><input value="'+_lxAttr(S.adr||"")+'" onchange="window.SALON.adr=this.value"></div>';
     h+='<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
-    h+='<div class="fg"><label>CP</label><input value="'+S.cp+'" onchange="window.SALON.cp=this.value"></div>';
-    h+='<div class="fg"><label>Ville</label><input value="'+S.ville+'" onchange="window.SALON.ville=this.value"></div></div>';
-    h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input value="'+S.tel+'" onchange="window.SALON.tel=this.value"></div>';
-    h+='<div class="fg"><label>Email</label><input value="'+S.email+'" onchange="window.SALON.email=this.value"></div>';
+    h+='<div class="fg"><label>CP</label><input value="'+_lxAttr(S.cp||"")+'" onchange="window.SALON.cp=this.value"></div>';
+    h+='<div class="fg"><label>Ville</label><input value="'+_lxAttr(S.ville||"")+'" onchange="window.SALON.ville=this.value"></div></div>';
+    h+='<div class="fg"><label>T\u00e9l\u00e9phone</label><input value="'+_lxAttr(S.tel||"")+'" onchange="window.SALON.tel=this.value"></div>';
+    h+='<div class="fg"><label>Email</label><input value="'+_lxAttr(S.email||"")+'" onchange="window.SALON.email=this.value"></div>';
     // === R\u00e9seaux sociaux (visibles sur site public + emails confirmation) ===
     h+='<div style="margin:14px 0 6px;font-size:12px;font-weight:700;color:var(--gold);letter-spacing:1px;text-transform:uppercase">\ud83d\udcf1 R\u00e9seaux sociaux</div>';
     h+='<div class="fg"><label>Facebook <span style="font-size:10px;color:var(--text3)">(URL compl\u00e8te)</span></label><input value="'+(S.facebookUrl||"").replace(/"/g,"&quot;")+'" placeholder="https://facebook.com/votre-page" onchange="window.SALON.facebookUrl=this.value.trim()"></div>';
@@ -15753,9 +15917,9 @@ function rSettings(){
     // === MESSAGES ===
     h+='<div class="card"><div class="ct">\u270d\ufe0f Messages</div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Message d\'accueil</label>';
-    h+='<textarea rows="3" style="width:100%;padding:14px;font-size:14px;border-radius:10px;resize:vertical" onchange="window.SITE_CONFIG.msgAccueil=this.value;saveSiteConfig()" placeholder="Bienvenue dans notre salon...">'+(SC.msgAccueil||"")+'</textarea></div>';
+    h+='<textarea rows="3" style="width:100%;padding:14px;font-size:14px;border-radius:10px;resize:vertical" onchange="window.SITE_CONFIG.msgAccueil=this.value;saveSiteConfig()" placeholder="Bienvenue dans notre salon...">'+escapeHtml(SC.msgAccueil||"")+'</textarea></div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Message apr\u00e8s r\u00e9servation</label>';
-    h+='<textarea rows="3" style="width:100%;padding:14px;font-size:14px;border-radius:10px;resize:vertical" onchange="window.SITE_CONFIG.msgConfirmation=this.value;saveSiteConfig()" placeholder="Votre demande a bien \u00e9t\u00e9 envoy\u00e9e...">'+(SC.msgConfirmation||"")+'</textarea></div>';
+    h+='<textarea rows="3" style="width:100%;padding:14px;font-size:14px;border-radius:10px;resize:vertical" onchange="window.SITE_CONFIG.msgConfirmation=this.value;saveSiteConfig()" placeholder="Votre demande a bien \u00e9t\u00e9 envoy\u00e9e...">'+escapeHtml(SC.msgConfirmation||"")+'</textarea></div>';
     h+='</div>';
     
     // === ACOMPTE ===
@@ -15814,18 +15978,21 @@ function rSettings(){
       h+='<div style="margin-top:10px;padding:10px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.25);border-radius:8px;font-size:11px;color:#64b5f6;line-height:1.5"><strong>🔒 Empreinte active</strong> — Pré-autorisation Stripe sans débit immédiat. Libérée auto si RDV honoré, capturée auto en cas de no-show après le délai configuré. Hold valable 7 jours max.</div>';
     }
     h+='</div>';
-    // Acompte obligatoire (legacy : visible uniquement en mode acompte)
-    if(_modeC==="acompte"){
-    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border2);cursor:'+(_connectActive?"pointer":"not-allowed")+';opacity:'+(_connectActive?"1":".5")+'"><span style="font-size:15px"><strong>Acompte obligatoire</strong></span><input type="checkbox" '+(SC.acompteObligatoire&&_connectActive?"checked":"")+' '+(_connectActive?"":"disabled")+' style="width:22px;height:22px;cursor:'+(_connectActive?"pointer":"not-allowed")+'" onchange="window.SITE_CONFIG.acompteObligatoire=this.checked;saveSiteConfig()"></label>';
+    // 2026-10-14 audit : case « Acompte obligatoire » retirée. Elle doublait le choix du mode ci-dessus
+    // (lxApplyModeCaution la pose déjà) et, décochée, le récapitulatif du site n'affichait pas l'acompte
+    // alors que le bouton le demandait. Le site suit désormais uniquement le mode choisi.
+    if(_modeC!=="aucun" && !_connectActive){
+      h+='<div style="margin-top:4px;margin-bottom:10px;padding:10px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.25);border-radius:8px;font-size:12px;color:#ffb74d;line-height:1.5">⚠️ Le mode « '+(_modeC==="acompte"?"Acompte":"Empreinte")+' » est enregistré mais <strong>suspendu</strong> : tant que Stripe ne peut pas encaisser, votre site prend les réservations <strong>sans paiement</strong> (comme « Aucun »). Il reprendra automatiquement dès que Stripe sera actif.</div>';
     }
     if(_modeC==="acompte"){
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant</label><input type="number" value="'+SC.acompteMontant+'" min="0" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.acompteMontant=+this.value;saveSiteConfig()"></div>';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteType=this.value;saveSiteConfig()"><option value="fixe"'+(SC.acompteType==="fixe"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="pourcentage"'+(SC.acompteType==="pourcentage"?" selected":"")+'>Pourcentage (%)</option></select></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant</label><input type="number" value="'+SC.acompteMontant+'" min="0" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="lxSetAcompteReglage(\'acompteMontant\',this)"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteType=this.value;saveSiteConfig();lxVerifAcompteVsPrix(true)"><option value="fixe"'+(SC.acompteType==="fixe"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="pourcentage"'+(SC.acompteType==="pourcentage"?" selected":"")+'>Pourcentage (%)</option></select></div>';
     h+='</div>';
-    h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant minimum (\u20ac)</label><input type="number" value="'+(SC.acompteMin||0)+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.acompteMin=+this.value;saveSiteConfig()"></div>';
+    h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant minimum (\u20ac)</label><input type="number" value="'+(SC.acompteMin||0)+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="lxSetAcompteReglage(\'acompteMin\',this)"></div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Acompte demandé seulement au-delà de (€) <span style="font-weight:400">— 0 = toujours</span></label><input type="number" value="'+(SC.acompteSeuil||0)+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.acompteSeuil=+this.value;saveSiteConfig()"></div>';
-    h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Description visible par le client</label><input value="'+(SC.acompteDesc||"")+'" placeholder="Un acompte est demand\u00e9 pour confirmer votre r\u00e9servation." style="width:100%;padding:12px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteDesc=this.value;saveSiteConfig()"></div>';
+    h+='<div id="lxAcompteAlerte">'+lxVerifAcompteVsPrix(false)+'</div>'; // 2026-10-14 audit
+    h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Description visible par le client</label><input value="'+_lxAttr(SC.acompteDesc||"")+'" placeholder="Un acompte est demand\u00e9 pour confirmer votre r\u00e9servation." style="width:100%;padding:12px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteDesc=this.value;saveSiteConfig()"></div>';
     }else if(_modeC==="empreinte"){
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant empreinte (\u20ac) '+lxHelpIcon("Le client est pr\u00e9-autoris\u00e9 pour ce montant. Aucun d\u00e9bit imm\u00e9diat. Vous le capturez seulement en cas de no-show.")+'</label><input type="number" value="'+(SC.empreinteMontant||30)+'" min="5" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteMontant=+this.value;saveSiteConfig()"></div>';
@@ -15836,14 +16003,17 @@ function rSettings(){
     h+='<div style="display:flex;gap:12px;margin-top:10px">';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Politique d\'annulation '+lxHelpIcon("Délai minimum avant le RDV en deçà duquel le client ne peut plus annuler depuis l\'espace en ligne. Par exemple « 48h avant » : un client qui veut annuler la veille devra appeler le salon. « Aucun délai » : annulation libre jusqu\'au dernier moment. « Jamais » : annulation en ligne désactivée.")+'</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.politiqueAnnul=this.value;saveSiteConfig()"><option value="0h"'+(SC.politiqueAnnul==="0h"?" selected":"")+'>Aucun délai (libre)</option><option value="6h"'+(SC.politiqueAnnul==="6h"?" selected":"")+'>6h avant</option><option value="12h"'+(SC.politiqueAnnul==="12h"?" selected":"")+'>12h avant</option><option value="24h"'+(SC.politiqueAnnul==="24h"?" selected":"")+'>24h avant</option><option value="48h"'+(SC.politiqueAnnul==="48h"?" selected":"")+'>48h avant (recommandé)</option><option value="72h"'+(SC.politiqueAnnul==="72h"?" selected":"")+'>72h avant</option><option value="jamais"'+(SC.politiqueAnnul==="jamais"?" selected":"")+'>Jamais (annulation en ligne désactivée)</option></select></div>';
     h+='<label style="flex:1;display:flex;align-items:end;gap:8px;cursor:pointer;padding-bottom:6px"><input type="checkbox" '+(SC.remboursementAnnul?"checked":"")+' style="width:20px;height:20px" onchange="window.SITE_CONFIG.remboursementAnnul=this.checked;saveSiteConfig()"><span style="font-size:13px">Remboursement auto</span></label>';
-    h+='</div></div>';
+    h+='</div>';
+    // 2026-10-14 audit : remboursement partiel automatique (site_config.remboursement_partiel_pct, lu par le worker)
+    h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Part de l\'acompte rendue en cas d\'annulation tardive (%) '+lxHelpIcon("Quand le client annule trop tard (après le délai ci-dessus) ou si le remboursement auto est décoché, l\'acompte est normalement conservé. Indiquez ici le pourcentage rendu automatiquement sur sa carte (ex. 50 = moitié rendue, moitié conservée). 0 = acompte entièrement conservé. Ne concerne pas l\'absence (client non venu) ni l\'annulation par l\'établissement, toujours remboursée.")+'</label><input type="number" id="lxRembPartielPct" value="'+(Number(SC.rembPartielPct)||0)+'" min="0" max="100" step="5" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="var v=Math.round(+this.value);if(!(v>=0))v=0;if(v>100)v=100;this.value=v;window.SITE_CONFIG.rembPartielPct=v;saveSiteConfig()"></div>';
+    h+='</div>';
     
     // === RÉSERVATION ===
     h+='<div class="card"><div class="ct">\ud83d\udcc5 R\u00e9servation</div>';
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px"><strong>Confirmation automatique</strong></span><input type="checkbox" '+(SC.confirmAuto?"checked":"")+' style="width:22px;height:22px;cursor:pointer" onchange="window.SITE_CONFIG.confirmAuto=this.checked;saveSiteConfig()"></label>';
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">D\u00e9lai min (heures)</label><input type="number" value="'+SC.delaiMinH+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.delaiMinH=+this.value;saveSiteConfig()"></div>';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">R\u00e9sa max (jours)</label><input type="number" value="'+SC.delaiMaxJ+'" min="1" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.delaiMaxJ=+this.value;saveSiteConfig()"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">D\u00e9lai min (heures)</label><input type="number" value="'+((SC.delaiMinH!==null&&SC.delaiMinH!==undefined)?SC.delaiMinH:2)+'" min="0" max="720" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="var v=Math.round(+this.value);if(!(v>=0))v=0;if(v>720)v=720;this.value=v;window.SITE_CONFIG.delaiMinH=v;saveSiteConfig()"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">R\u00e9sa max (jours)</label><input type="number" value="'+(Number(SC.delaiMaxJ)>0?SC.delaiMaxJ:30)+'" min="1" max="365" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="var v=Math.round(+this.value);if(!(v>=1))v=1;if(v>365){v=365;if(typeof toast===\'function\')toast(\'Maximum 365 jours\',\'info\');}this.value=v;window.SITE_CONFIG.delaiMaxJ=v;saveSiteConfig()"></div>';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Intervalles</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option></select></div>';
     h+='</div>';
     // Bloquer la création de nouveaux comptes (anti-spam ou période de surcharge)
@@ -16271,7 +16441,7 @@ function rSettings(){
         h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\ud83d\udd12</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docKbis+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" disabled style="padding:4px 10px;font-size:11px;opacity:.4;cursor:not-allowed">Verrouill\u00e9</button></div>';
         h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">\u2705 Valid\u00e9 par l\'administration. Pour mettre \u00e0 jour, contactez le support.</div>';
       }else{
-        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docKbis+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="clearDoc(\'kbis\')">Remplacer</button></div>';
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docKbis+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="lxRemplacerDoc(\'kbis\')">Remplacer</button></div>';
       }
     }else{
       h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Document de moins de 3 mois (PDF, JPG ou PNG, max 5 Mo)</div>';
@@ -16288,7 +16458,7 @@ function rSettings(){
       if(SALON_CONFIG.documents_locked){
         h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\ud83d\udd12</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docId+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" disabled style="padding:4px 10px;font-size:11px;opacity:.4;cursor:not-allowed">Verrouill\u00e9</button></div>';
       }else{
-        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docId+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="SALON_CONFIG.docId=\'\';go(\'settings\')">Remplacer</button></div>';
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docId+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="lxRemplacerDoc(\'id\')">Remplacer</button></div>';
       }
     }else{
       h+='<input type="file" id="uploadId" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id\',this)">';
@@ -16301,7 +16471,7 @@ function rSettings(){
       if(SALON_CONFIG.documents_locked){
         h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\ud83d\udd12</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docIdVerso+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" disabled style="padding:4px 10px;font-size:11px;opacity:.4;cursor:not-allowed">Verrouill\u00e9</button></div>';
       }else{
-        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docIdVerso+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="SALON_CONFIG.docIdVerso=\'\';go(\'settings\')">Remplacer</button></div>';
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(45,154,94,.08);border-radius:8px"><span>\u2705</span><a href="#" onclick="lxOuvrirDoc(\''+SALON_CONFIG.docIdVerso+'\');return false" style="font-size:12px;color:var(--gold);flex:1">Voir le document \u2197</a><button class="btn" style="padding:4px 10px;font-size:11px" onclick="lxRemplacerDoc(\'id_verso\')">Remplacer</button></div>';
       }
     }else{
       h+='<input type="file" id="uploadIdVerso" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadDoc(\'id_verso\',this)">';
@@ -22513,7 +22683,7 @@ function rAccounting(){
   // 2026-10-10 : mode archives — tous les exports promis par les CGV (art. 9), en lecture seule
   if(window._archiveMode){
     h='<div class="card" style="border:1px solid rgba(212,168,67,.4);margin-bottom:14px"><div style="font-weight:800;color:var(--gold);margin-bottom:6px">\ud83d\udce6 R\u00e9cup\u00e9rer mes donn\u00e9es</div><div style="font-size:12px;color:var(--text2);margin-bottom:10px">Votre compte est en mode archives (lecture seule). T\u00e9l\u00e9chargez vos donn\u00e9es : fichier clients, tickets, cl\u00f4tures, FEC, factures.</div><div style="display:flex;gap:8px;flex-wrap:wrap">'
-     +'<button class="btn bg" style="font-size:12px" onclick="exportAllData()">\ud83d\udcc1 Toutes mes donn\u00e9es (clients, tickets, cl\u00f4tures, journal)</button>'
+     +'<button class="btn bg" style="font-size:12px" onclick="exportAllData()">\ud83d\udcc1 Toutes mes donn\u00e9es (\u00e9tablissement, clients, prestations, produits, \u00e9quipe, bons cadeaux, tickets, cl\u00f4tures, journal)</button>'
      +'<button class="btn bs" style="font-size:12px" onclick="exportTicketsCSV()">\ud83e\uddfe Tickets (CSV)</button>'
      +'<button class="btn bs" style="font-size:12px" onclick="exportFEC()">\ud83d\udcca FEC (expert-comptable)</button>'
      +'<button class="btn bs" style="font-size:12px" onclick="lxArchiveFactures()">\ud83d\udcc4 Mes factures Luxyra</button>'
@@ -30141,7 +30311,7 @@ function addFraisDeplacement(){
     showCaisse();return;
   }
   if(dom.type==="forfait"||dom.type==="commune"){
-    var prix=dom.forfait||15;
+    var prix=_lxNumDef(dom.forfait,15);
     var htm='<div class="mbox" style="text-align:center"><h2>\ud83d\ude97 Frais de d\u00e9placement</h2>';
     htm+='<div style="font-size:24px;font-weight:900;color:var(--gold);margin:14px 0">'+prix.toFixed(2)+' \u20ac</div>';
     htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Forfait fixe</div>';
@@ -30151,12 +30321,12 @@ function addFraisDeplacement(){
   }else{
     // Prix au km
     var htm='<div class="mbox"><h2>\ud83d\ude97 Frais de d\u00e9placement</h2>';
-    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Prix: '+(dom.prixKm||0.5)+' \u20ac/km'+(dom.gratuitKm>0?' ('+dom.gratuitKm+' km gratuits)':'')+'</div>';
-    htm+='<div class="fg"><label>Distance (km)</label><input type="number" id="deplKm" value="10" min="0" step="1" style="text-align:center;font-size:20px;font-weight:900;padding:14px" oninput="var km=+this.value;var prix=Math.max(0,(km-'+(dom.gratuitKm||0)+'))*'+(dom.prixKm||0.5)+';document.getElementById(\'deplPrix\').textContent=prix.toFixed(2)+\' \\u20ac\'"></div>';
-    var defPrix=Math.max(0,(10-(dom.gratuitKm||0)))*(dom.prixKm||0.5);
+    htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Prix: '+_lxNumDef(dom.prixKm,0.5)+' \u20ac/km'+(dom.gratuitKm>0?' ('+dom.gratuitKm+' km gratuits)':'')+'</div>';
+    htm+='<div class="fg"><label>Distance (km)</label><input type="number" id="deplKm" value="10" min="0" step="1" style="text-align:center;font-size:20px;font-weight:900;padding:14px" oninput="var km=+this.value;var prix=Math.max(0,(km-'+(dom.gratuitKm||0)+'))*'+_lxNumDef(dom.prixKm,0.5)+';document.getElementById(\'deplPrix\').textContent=prix.toFixed(2)+\' \\u20ac\'"></div>';
+    var defPrix=Math.max(0,(10-(dom.gratuitKm||0)))*_lxNumDef(dom.prixKm,0.5);
     htm+='<div style="text-align:center;font-size:24px;font-weight:900;color:var(--gold);margin:10px 0" id="deplPrix">'+defPrix.toFixed(2)+' \u20ac</div>';
     htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button>';
-    htm+='<button class="btn bg" style="flex:1" onclick="var km=+(document.getElementById(\'deplKm\').value||0);var prix=Math.max(0,(km-'+(dom.gratuitKm||0)+'))*'+(dom.prixKm||0.5)+';_tk.items.push({name:\'\\ud83d\\ude97 D\\u00e9placement \'+km+\' km\',price:Math.round(prix*100)/100,qty:1,remise:0,ci:0});cM();showCaisse()">Ajouter</button></div></div>';
+    htm+='<button class="btn bg" style="flex:1" onclick="var km=+(document.getElementById(\'deplKm\').value||0);var prix=Math.max(0,(km-'+(dom.gratuitKm||0)+'))*'+_lxNumDef(dom.prixKm,0.5)+';_tk.items.push({name:\'\\ud83d\\ude97 D\\u00e9placement \'+km+\' km\',price:Math.round(prix*100)/100,qty:1,remise:0,ci:0});cM();showCaisse()">Ajouter</button></div></div>';
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
   }
 }
@@ -34656,15 +34826,21 @@ async function checkSmsReminders(){
     for(var k in window._smsSent){if(k.indexOf("_")<0)continue;var parts=k.split("_");if(parts.length<2)continue;}
   }
   
-  for(var apIdx=0;cfg.rappelActif&&apIdx<AP.length;apIdx++){ // 2026-10-14 audit : rappels RDV seulement si « Rappels SMS actifs »
+  // 2026-10-14 audit : rappels 2 h (SMS) et e-mail de la veille envoyes PAR LE SERVEUR (envoyer_rappels_2h /
+  // envoyer_rappels_email_24h, cron) une fois le drapeau app_config « rappels_serveur_2h_email » active : l'application
+  // ne les envoie plus (sinon doublons). Drapeau absent / config non chargee -> ancien comportement (envoi ici).
+  var _rappelsServeur = !!(window.LX_CONFIG && window.LX_CONFIG._loaded && window.LX_CONFIG.rappels_serveur_2h_email===true);
+  for(var apIdx=0;cfg.rappelActif&&apIdx<AP.length;apIdx++){ // 2026-10-14 audit clients : rappels RDV seulement si « Rappels SMS actifs »
     var a=AP[apIdx];
     if(a.st==="canc"||a.st==="done"||a.cancelled)continue;
-    var cl=gC(a.cId);if(!cl||!cl.ph||!cl.smsOk)continue;
+    var cl=gC(a.cId);if(!cl)continue;
+    // 2026-10-14 audit : un client sans SMS (ou sans consentement SMS) peut quand meme recevoir le rappel e-mail
+    var _smsPossible=!!(cl.ph&&cl.smsOk);
     var sv=gS(a.sId);var sty=gT(a.stId);
     var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:"",lieu:a.lieu||"",adresse:a.adresse||""};
     
     // Rappel 24h: send today for tomorrow's appointments
-    if(cfg.rappel24h&&a.date===tomorrowStr){
+    if(_smsPossible&&cfg.rappel24h&&a.date===tomorrowStr){
       // FIX 2026-08-30 : cle indexee sur la date du RDV + les 4 derniers chiffres du
       // telephone, et non plus sur l'identifiant du rendez-vous. Un identifiant qui
       // change (resynchronisation, doublon corrige) relançait sinon un envoi deja fait.
@@ -34691,7 +34867,7 @@ async function checkSmsReminders(){
       }
     }
     // Rappel 2h: send 2h before appointment today
-    if(cfg.rappel2h&&a.date===todayStr){
+    if(_smsPossible&&!_rappelsServeur&&cfg.rappel2h&&a.date===todayStr){
       var apptMin=toM(a.time);
       var nowMin=now.getHours()*60+now.getMinutes();
       var diff=apptMin-nowMin;
@@ -34712,7 +34888,7 @@ async function checkSmsReminders(){
       }
     }
     // Email reminders (24h before) - available for all plans
-    if(cfg.rappelEmail&&a.date===tomorrowStr&&cl.emOk&&cl.em){
+    if(!_rappelsServeur&&cfg.rappelEmail&&a.date===tomorrowStr&&cl.emOk&&cl.em){
       var keyEm="em24_"+a.id;
       if(!window._smsSent[keyEm]){
         // Anti-doublon email 24h : vérif Supabase
@@ -36718,6 +36894,19 @@ async function lxOuvrirDoc(u){
     if(w) w.location.href=r.data.signedUrl; else window.location.href=r.data.signedUrl;
   }catch(e){ alert("Document inaccessible : "+(e&&e.message||e)); }
 }
+// 2026-10-14 audit : « Remplacer » ouvre directement le choix du nouveau fichier. Avant, pour la piece
+// d'identite, le bouton ne vidait que la memoire : rien en base, l'ancien document restait rattache et
+// reapparaissait au rechargement. Desormais le nouveau fichier est envoye puis REMPLACE la colonne en base
+// (l'ancien reste tant que le nouveau n'est pas enregistre : jamais de document perdu en route).
+function lxRemplacerDoc(type){
+  if(SALON_CONFIG.documents_locked){ showAlert("Documents valid\u00e9s et verrouill\u00e9s : contactez le support pour les mettre \u00e0 jour.","info"); return; }
+  var inp=document.createElement("input");
+  inp.type="file"; inp.accept=".pdf,.jpg,.jpeg,.png"; inp.style.display="none";
+  inp.onchange=function(){ uploadDoc(type,inp).finally(function(){ try{ inp.remove(); }catch(_e){} }); };
+  document.body.appendChild(inp);
+  inp.click();
+}
+window.lxRemplacerDoc=lxRemplacerDoc;
 async function uploadDoc(type,input){
   if(!input.files||!input.files[0])return;
   var file=input.files[0];
@@ -36736,6 +36925,7 @@ async function uploadDoc(type,input){
     var newDocKbis=type==="kbis"?url.data.publicUrl:SALON_CONFIG.docKbis;
     var newDocId=type==="id"?url.data.publicUrl:SALON_CONFIG.docId;
     if(newDocKbis&&newDocId){update.verification_status="pending_review";update.documents_uploaded_at=new Date().toISOString();}
+    else if(type==="kbis"||type==="id"){update.verification_status="pending";} // 2026-10-14 audit : remplacement = nouvelle verification
     var _ud=await _sb.from("salons").update(update).eq("id",window._salonId).select("id"); // 2026-10-14 : 0 ligne = echec
     if(_ud&&(_ud.error||!_ud.data||!_ud.data.length)){showAlert("Document re\u00e7u mais non rattach\u00e9 \u00e0 votre compte : "+((_ud.error&&_ud.error.message)||"refus\u00e9 par le serveur")+". R\u00e9essayez ou \u00e9crivez au support.","error");return;}
     if(type==="kbis")SALON_CONFIG.docKbis=url.data.publicUrl;
@@ -36957,7 +37147,32 @@ function exportAllData(){
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var d={salon:window.SALON||{},tickets:AP.filter(function(a){return a.tkNum}),annul:AP.filter(function(a){return a.cancelled}),clotures:window.CLOTURES,audit:window.AUDIT_LOG,clients:CL,date:new Date().toISOString()};
-  var b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="data_"+TD+".json";a.click();
+  // 2026-10-14 audit : export COMPLET. Avant : seulement clients, tickets, clotures et journal en memoire.
+  // On ajoute, lus EN BASE (pas la memoire) : fiche etablissement, prestations, forfaits, produits, fournisseurs,
+  // mouvements de stock, equipe, cartes cadeaux, packs, cartes d'abonnement, configuration du site + reglages.
+  // Les codes PIN (salon_operateurs) ne sont jamais exportes. Une table illisible est signalee dans _erreurs.
+  if(typeof toast==="function") toast("Pr\u00e9paration de l'export\u2026","info");
+  var _tel=function(){ var b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="data_"+TD+".json";a.click(); };
+  if(typeof _sb==="undefined"||!_sb||!_salonId){ d._erreurs=["hors ligne : seules les donn\u00e9es en m\u00e9moire sont export\u00e9es"]; _tel(); return; }
+  var _lire=async function(table,filtre){
+    var tout=[], pas=1000;
+    for(var page=0; page<50; page++){
+      var r=await _sb.from(table).select("*").eq(filtre||"salon_id",_salonId).range(page*pas, page*pas+pas-1);
+      if(r.error) throw new Error(table+" : "+r.error.message);
+      tout=tout.concat(r.data||[]);
+      if(!r.data || r.data.length<pas) break;
+    }
+    return tout;
+  };
+  var _tables={etablissement:["salons","id"],prestations:["services"],forfaits:["forfaits"],produits:["produits"],fournisseurs:["fournisseurs"],mouvements_stock:["mouvements_stock"],equipe:["collaborateurs"],cartes_cadeaux:["cartes_cadeaux"],packs_clients:["packs_clients"],cartes_abonnement_clients:["cartes_abo_clients"],site_config:["site_config"]};
+  d._erreurs=[];
+  Promise.all(Object.keys(_tables).map(function(k){
+    return _lire(_tables[k][0],_tables[k][1]).then(function(rows){ d[k]=(k==="etablissement"||k==="site_config")?(rows[0]||null):rows; },function(e){ d._erreurs.push(String(e&&e.message||e)); });
+  })).then(function(){
+    if(!d._erreurs.length) delete d._erreurs;
+    else if(typeof showAlert==="function") showAlert("\u26a0\ufe0f Export r\u00e9alis\u00e9 mais incomplet :\n"+d._erreurs.join("\n"),"warning");
+    _tel();
+  });
 }
 
 function genererBandeMensuelle(){
