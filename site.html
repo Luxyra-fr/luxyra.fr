@@ -3237,7 +3237,7 @@ function _lxSiteEffHrs(col, collabId, date){
     return hrs;
   }catch(_e){ return null; }
 }
-function isSpecificCollabBusy(date,time,duration,collabId){
+function isSpecificCollabBusy(date,time,duration,collabId,sansNonAttribues){
   if(!collabId)return false; // garde-fou (sans collab on passe par isSlotTaken)
   var slotStart=toMin(time),slotEnd=slotStart+duration;
   // 0) Le collab TRAVAILLE-t-il ce jour, et le créneau tient-il dans ses horaires ?
@@ -3254,6 +3254,7 @@ function isSpecificCollabBusy(date,time,duration,collabId){
     var r=RDV_EXISTING[i];
     if(r.date_rdv!==date)continue;
     if(!r.heure)continue;
+    if(sansNonAttribues && _lxRdvSansCollab(r)) continue; // 2026-10-14 audit : compté à part (capacité), voir isSlotTaken
     var rStart=toMin(r.heure);
     if(r.a_phases&&r.a_phases.length){
       var cur=rStart;
@@ -3280,11 +3281,38 @@ function isSpecificCollabBusy(date,time,duration,collabId){
   return false;
 }
 
+// 2026-10-14 audit : une réservation « Pas de préférence » (sans collaborateur) occupe UN collaborateur, pas tous
+// (même règle que la base : rdv_online_block_double_booking et fn_salon_next_slots).
+function _lxRdvSansCollab(r){
+  if(!r||r.collab_id) return false;
+  var ph=r.a_phases||[]; for(var k=0;k<ph.length;k++){ if(ph[k]&&ph[k].stId) return false; }
+  return true;
+}
+function _lxNbSansCollab(date,time,duration){
+  var s0=toMin(time), e0=s0+duration, n=0;
+  for(var i=0;i<RDV_EXISTING.length;i++){
+    var r=RDV_EXISTING[i]; if(r.date_rdv!==date||!r.heure||!_lxRdvSansCollab(r)) continue;
+    var st=toMin(r.heure), d=0; (r.a_phases||[]).forEach(function(p){ d+=(p&&p.d)||0; }); if(!d) d=30;
+    if(s0<st+d && e0>st) n++;
+  }
+  return n;
+}
 function isSlotTaken(date,time,duration,collabId){
+  var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : seulement les collaborateurs habilités pour la prestation
+  // 2026-10-14 audit : capacité — chaque réservation sans collaborateur qui chevauche consomme un collaborateur libre
+  if(activeCollabs.length){
+    var nU=_lxNbSansCollab(date,time,duration), libres=0;
+    if(collabId){
+      if(isSpecificCollabBusy(date,time,duration,collabId,true)) return true;
+      if(!nU) return false;
+      activeCollabs.forEach(function(c){ if(c.id!==collabId && !isSpecificCollabBusy(date,time,duration,c.id,true)) libres++; });
+      return libres<nU;
+    }
+    activeCollabs.forEach(function(c){ if(!isSpecificCollabBusy(date,time,duration,c.id,true)) libres++; });
+    return libres<=nU;
+  }
   // Mode collab spécifique : check ce collab uniquement
   if(collabId) return isSpecificCollabBusy(date,time,duration,collabId);
-  // Mode "sans préférence" : si AU MOINS UN collab actif est dispo → slot dispo
-  var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : seulement les collaborateurs habilités pour la prestation
   if(!activeCollabs.length){
     // Pas de collabs définis (mono-praticien) → check absences globales + RDV non-attribués
     var slotStart=toMin(time),slotEnd=slotStart+duration;
