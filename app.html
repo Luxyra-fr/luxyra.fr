@@ -5877,6 +5877,13 @@ async function showNotifs(filter){
       };
     });
 
+    // 2026-10-14 : une notification qui attend une REPONSE du pro reste « à traiter » (non lue) tant que
+    // la demande n'est pas traitee, quoi qu'il arrive (Tout marquer lu, Voir le RDV, Effacer les lues).
+    try{ await _lxNotifsATraiter(window.NOTIFS); }catch(_eAT){
+      console.warn("[notifs] a traiter", _eAT);
+      // Verification impossible (reseau...) : prudence, une demande de modification non lue garde ses boutons
+      (window.NOTIFS||[]).forEach(function(x){ x.aTraiter = (x.type==="rdv_online_modif" && !x.seen); });
+    }
     var notifs = window.NOTIFS;
     var unreadCount = notifs.filter(function(x){return !x.seen;}).length;
     var showList = window._notifFilter === "unread"
@@ -5933,19 +5940,20 @@ async function showNotifs(filter){
 
         // Actions
         var actions = [];
-        if(n.type === "rdv_online_modif" && !seen){
+        if(n.aTraiter) h += '<div style="display:inline-block;font-size:11px;font-weight:800;color:#fb923c;background:rgba(251,146,60,.12);padding:2px 8px;border-radius:8px;margin-bottom:6px">⏳ En attente de votre réponse</div>';
+        if(n.type === "rdv_online_modif" && n.aTraiter){
           actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="acceptModification(\''+n.id+'\')">✓ Accepter</button>');
           actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="refuseModification(\''+n.id+'\')">✗ Refuser</button>');
           // 2026-10-14 : regarder le planning du jour demande SANS perdre la demande (elle reste en attente de reponse)
           var _mdD=(n.modifData&&n.modifData.date)||"";
           if(/^\d{4}-\d{2}-\d{2}$/.test(_mdD)) actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="lxVoirJourModif(\''+_mdD+'\')">📅 Voir ce jour</button>');
-        } else if(n.type === "rdv_demande_new" || n.type === "rdv_demande_refused"){
+        } else if(n.type === "rdv_demande_new" || n.type === "rdv_demande_refused" || n.type === "demande_creneau_pris"){
           var demId = (n.data && n.data.demande_id) || null;
           if(demId) actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="cM();setTimeout(function(){openDemande(\''+demId+'\')},150)">Voir la demande →</button>');
         } else if(rdvId){
           actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="openRdvFromNotif(\''+rdvId+'\',\''+n.id+'\')">Voir le RDV →</button>');
         }
-        if(!seen && n.type !== "rdv_online_modif"){
+        if(!seen && !n.aTraiter){
           actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px;opacity:.7" onclick="confirmNotif(\''+n.id+'\')">Marquer lu</button>');
         }
         if(actions.length) h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'+actions.join("")+'</div>';
@@ -5958,7 +5966,7 @@ async function showNotifs(filter){
     // Footer actions
     if(notifs.length > 0){
       h += '<div style="padding:12px 20px;border-top:1px solid var(--border,rgba(255,255,255,.08));display:flex;gap:8px">';
-      if(unreadCount > 0) h += '<button class="btn bs" style="flex:1;font-size:13px;padding:10px" onclick="markAllNotifsRead()">Tout marquer lu</button>';
+      if(notifs.some(function(x){return !x.seen && !x.aTraiter;})) h += '<button class="btn bs" style="flex:1;font-size:13px;padding:10px" onclick="markAllNotifsRead()">Tout marquer lu</button>'; // 2026-10-14 : rien a marquer si tout attend une reponse
       if(notifs.some(function(x){return x.seen;})) h += '<button class="btn bs" style="flex:1;font-size:13px;padding:10px;opacity:.8" onclick="clearReadNotifs()">🗑 Effacer les lues</button>';
       h += '</div>';
     }
@@ -5988,7 +5996,7 @@ function lxVoirJourModif(d){
 // Navigation : clic sur "Voir le RDV" depuis une notif
 async function openRdvFromNotif(rdvId, notifId){
   // Marquer la notif comme lue
-  if(notifId){ try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",notifId); }catch(_){} }
+  if(notifId && !_lxNotifATraiter(notifId)){ try{ await _sb.from("notifications").update({read_at:new Date().toISOString()}).eq("id",notifId); }catch(_){} } // 2026-10-14 : une demande sans reponse reste non lue
   window._notifBadgeCache.t = 0; updateNotifBadge();
   cM();
   // Charger le RDV pour positionner l'agenda sur la bonne date
@@ -6057,17 +6065,59 @@ function lxFicheRdvAnnule(r){
   h+='<button class="btn bg" style="flex:1" onclick="cM()">Fermer</button></div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
+// 2026-10-14 : calcule, d'apres l'etat REEL en base, les notifications qui attendent une reponse du pro.
+//  - nouveau RDV en ligne encore « en attente de validation »
+//  - demande de modification du client non traitee
+//  - demande sur mesure pas encore proposee / proposition a refaire (creneau pris entre-temps)
+// Ces notifications restent non lues ; si l'une avait ete marquee lue, elle est remise en non lue.
+async function _lxNotifsATraiter(list){
+  if(!list||!list.length||typeof _sb==="undefined"||!_sb) return;
+  var rdvIds={}, demIds={};
+  list.forEach(function(n){
+    n.aTraiter=false;
+    var t=n.type, d=n.data||{};
+    if((t==="rdv_online_new"||t==="rdv_online"||t==="google_reserve"||t==="rdv_online_modif") && n.rdvOnlineId) rdvIds[n.rdvOnlineId]=1;
+    if((t==="rdv_demande_new"||t==="demande_creneau_pris") && d.demande_id) demIds[d.demande_id]=1;
+  });
+  var _uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var rk=Object.keys(rdvIds).filter(function(x){return _uuid.test(x);}), dk=Object.keys(demIds).filter(function(x){return _uuid.test(x);}), rdvSt={}, demSt={};
+  if(rk.length){ var r1=await _sb.from("rdv_online").select("id,status,date_rdv,modification_demandee,modification_status,modification_date").eq("salon_id",_salonId).in("id",rk); if(r1&&r1.error) throw r1.error; (r1&&r1.data||[]).forEach(function(x){ rdvSt[x.id]=x; }); }
+  if(dk.length){ var r2=await _sb.from("rdv_demandes").select("id,status,refuse_reason").eq("salon_id",_salonId).in("id",dk); if(r2&&r2.error) throw r2.error; (r2&&r2.data||[]).forEach(function(x){ demSt[x.id]=x; }); }
+  // Une seule notification « à traiter » par RDV / demande : la plus recente (liste triee du plus recent au plus ancien).
+  var dejaRdv={}, dejaDem={}, aRemettre=[];
+  var _auj=(typeof _ymdLocal==="function")?_ymdLocal(new Date()):(function(x){return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0");})(new Date());
+  var _aVenir=function(dt){ return !dt || String(dt).slice(0,10)>=_auj; }; // une demande pour une date passee n'est plus « à traiter »
+  list.forEach(function(n){
+    var t=n.type, d=n.data||{}, ro=n.rdvOnlineId?rdvSt[n.rdvOnlineId]:null, de=d.demande_id?demSt[d.demande_id]:null, at=false;
+    if(t==="rdv_online_modif") at=!!(ro && ro.modification_demandee===true && ro.modification_status==="pending" && ["cancelled","canceled","done","completed","no_show"].indexOf(ro.status)<0 && _aVenir(ro.modification_date||ro.date_rdv));
+    else if(t==="rdv_online_new"||t==="rdv_online"||t==="google_reserve") at=!!(ro && ro.status==="pending" && _aVenir(ro.date_rdv));
+    else if(t==="rdv_demande_new") at=!!(de && de.status==="pending");
+    else if(t==="demande_creneau_pris") at=!!(de && (de.status==="pending" || (de.status==="proposed" && /^Cr\u00e9neau pris/.test(String(de.refuse_reason||"")))));
+    if(at){
+      var cle=(t==="rdv_online_modif"?"m:":"")+(n.rdvOnlineId||d.demande_id);
+      var deja=(n.rdvOnlineId&&!d.demande_id)?dejaRdv:dejaDem;
+      if(deja[cle]) at=false; else deja[cle]=1;
+    }
+    n.aTraiter=at;
+    if(at && n.seen){ n.seen=false; n.confirmed=false; if(n.dbId) aRemettre.push(n.dbId); }
+  });
+  if(aRemettre.length){ try{ var _rR=await _sb.from("notifications").update({read_at:null}).eq("salon_id",_salonId).in("id",aRemettre); if(_rR&&_rR.error) console.warn("[notifs] remise non lue", _rR.error); window._notifBadgeCache.t=0; try{ updateNotifBadge(); }catch(_eB){} }catch(_eR){ console.warn("[notifs] remise non lue", _eR); } }
+}
+function _lxIdsATraiter(){ return (window.NOTIFS||[]).filter(function(x){return x.aTraiter&&x.dbId;}).map(function(x){return x.dbId;}); }
+function _lxNotifATraiter(id){ return (window.NOTIFS||[]).some(function(x){return x.aTraiter&&(x.dbId===id||x.id===id);}); }
 async function confirmNotif(id){
+  if(_lxNotifATraiter(id)){ if(typeof toast==="function") toast("Cette demande attend votre réponse : elle reste dans les notifications","info"); return; }
   try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id);}catch(e){}
   window._notifBadgeCache.t=0;showNotifs();updateNotifBadge();
 }
 async function clearReadNotifs(){
-  try{await _sb.from('notifications').delete().eq('salon_id',_salonId).not('read_at','is',null);}catch(e){}
+  try{ var _qD=_sb.from('notifications').delete().eq('salon_id',_salonId).not('read_at','is',null); var _gD=_lxIdsATraiter(); if(_gD.length) _qD=_qD.not('id','in','('+_gD.join(',')+')'); await _qD; }catch(e){}
   window._notifBadgeCache.t=0;showNotifs();updateNotifBadge();
 }
 async function markAllNotifsRead(){
   // 2026-10-14 : les demandes de modification restent a traiter (boutons Accepter / Refuser conserves)
-  try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('salon_id',_salonId).is('read_at',null).neq('type','rdv_online_modif');}catch(e){}
+  // Les demandes encore sans reponse (« à traiter ») restent non lues (et sont remises en non lues au prochain affichage si besoin).
+  try{ var _qM=_sb.from('notifications').update({read_at:new Date().toISOString()}).eq('salon_id',_salonId).is('read_at',null); var _gM=_lxIdsATraiter(); if(_gM.length) _qM=_qM.not('id','in','('+_gM.join(',')+')'); await _qM; }catch(e){}
   window._notifBadgeCache.t=0;updateNotifBadge();showNotifs();
 }
 function simulateOnlineRdv(cn,sv,d,t){addNotif("rdv_online","Nouveau RDV en ligne",cn+" - "+sv+" le "+d+" a "+t,{});}
@@ -9860,6 +9910,11 @@ async function openDemande(id){
     h += '<div style="font-size:11px;color:var(--text3);background:rgba(255,255,255,.03);padding:8px;border-radius:6px;margin-bottom:10px;line-height:1.5">Lien envoyé au client. Vous serez notifié d\u00e8s qu\u0027elle accepte (en payant) ou refuse.</div>';
     h += '<div style="display:flex;gap:8px"><button class="btn bs" style="flex:1" onclick="cM()">Fermer</button>';
     h += '<button class="btn bs" style="flex:1;background:rgba(248,113,113,.08);color:#f87171;border-color:rgba(248,113,113,.2)" onclick="cancelDemandeProposal(\''+d.id+'\')">Annuler la proposition</button></div>';
+    // 2026-10-14 : le client a voulu accepter mais le creneau a ete pris entre-temps -> refaire une proposition
+    if(/^Cr\u00e9neau pris/.test(String(d.refuse_reason||""))){
+      h += '<div style="background:rgba(251,146,60,.1);border-left:3px solid #fb923c;padding:10px;border-radius:6px;font-size:13px;margin:12px 0 8px">⚠️ Le client a voulu accepter, mais ce créneau a été pris entre-temps. Aucun paiement n\u2019a été fait.</div>';
+      h += '<button class="btn bg" style="width:100%" onclick="lxDemandeReproposer(\''+d.id+'\')">🕒 Proposer un autre horaire</button>';
+    }
   } else {
     // pending → composer
     h += renderDemandeComposer(d);
@@ -10047,6 +10102,19 @@ async function sendDemandeProposal(demandeId){
   }
 }
 
+// 2026-10-14 : remet la demande « à proposer » (l'ancienne proposition n'est plus payable) puis ouvre le formulaire
+function lxDemandeReproposer(demandeId){
+  showConfirm("Préparer une nouvelle proposition ? L’ancienne ne pourra plus être payée par le client.", function(){ _lxDemandeReproposerGo(demandeId); });
+}
+async function _lxDemandeReproposerGo(demandeId){
+  try{
+    var r=await _sb.from("rdv_demandes").update({status:"pending",refuse_reason:null}).eq("id",demandeId).eq("salon_id",_salonId).eq("status","proposed").select("id");
+    if(r.error){ showAlert("Erreur : "+r.error.message,"error"); return; }
+    if(!r.data||!r.data.length){ if(typeof toast==="function") toast("Cette demande a changé entre-temps","warning"); }
+    await loadRdvDemandes();
+    openDemande(demandeId);
+  }catch(e){ showAlert("Erreur : "+e.message,"error"); }
+}
 function cancelDemandeProposal(demandeId){
   showConfirm("Annuler cette proposition ? Le client ne pourra plus la payer.", async function(){
     try{
