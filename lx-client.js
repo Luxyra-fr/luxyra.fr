@@ -201,7 +201,12 @@
   // 2026-10-14 : vérification de l'adresse email du compte (lien reçu par email ; renvoi limité côté serveur)
   async function lxVerifyEmail(verifToken){
     var res = await call("lx-profile", { action: "verify_email", token: verifToken });
-    if (res.ok) { var u = getUser(); if (u) { u.email_verified = true; setUser(u); } }
+    // 2026-10-14 intégration : le compte local n'est marqué vérifié que si l'adresse confirmée est la sienne
+    if (res.ok) {
+      var u = getUser();
+      var mv = String((res.data && res.data.email) || "").trim().toLowerCase();
+      if (u && mv && String(u.email || "").trim().toLowerCase() === mv) { u.email_verified = true; setUser(u); }
+    }
     return res;
   }
   async function lxSendVerification(){

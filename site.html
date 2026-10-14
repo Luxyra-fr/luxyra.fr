@@ -124,7 +124,7 @@
 })();
 </script>
 <script src="https://luxyra.fr/supabase.min.js"></script>
-<script src="/lx-client.js?v=20261014-2"></script>
+<script src="/lx-client.js?v=20261014-3"></script>
 <script>
 /* ============================================================================
    FIX 2026-07-13 — RESERVATION IMPOSSIBLE sur /<slug>/reserver ("Can't find variable: LX")
@@ -577,6 +577,7 @@ function _resaFail(err, where, ctx){
   try{
     var c=ctx||{};
     var msg=(err&&(err.message||err.error||err.code))||(typeof err==='string'?err:'')||'inconnu';
+    if(err&&err.details) msg+=' ('+String(err.details).slice(0,300)+')'; // 2026-10-14 : cause côté base (contrôle de disponibilité)
     var detail='['+(where||'resa')+'] '+msg+' | salon:'+(typeof salonId!=='undefined'?salonId:'?')+' | svc:'+(c.service_nom||'?')+' | collab:'+(c.collaborateur_id||'?')+' | '+(c.date_rdv||'?')+' '+(c.heure_rdv||'')+' | client:'+(c.client_email||c.client_tel||'?');
     if(typeof sb!=='undefined' && sb.functions && sb.functions.invoke){
       sb.functions.invoke('lx-error-report',{body:{kind:'server',source:'site:resa_echec',severity:'warning',message:detail.slice(0,800),salon_id:(typeof salonId!=='undefined'?salonId:null),http_path:'rdv_online'}}).catch(function(){});
@@ -3948,7 +3949,11 @@ async function _lxSubmitWithStripeImpl(){
       collaborateur_id:booking.collabId,collaborateur_nom:booking.collab?booking.collab.n:null,
       date_rdv:booking.date,heure_rdv:booking.time,duree_minutes:dur,
       status:"pending_payment",message:msg,
-      lieu: booking.lieu||'salon'
+      lieu: booking.lieu||'salon',
+      // 2026-10-14 intégration : la base recalcule l'acompte avec la remise carte -> lui transmettre la carte
+      // (sinon montant serveur sans remise != montant affiché, paiement refusé par le worker)
+      carte_abo_id:(booking.remiseCarte>0&&CLIENT_CARTE_ABO)?CLIENT_CARTE_ABO.id:null,
+      remise_carte_montant:booking.remiseCarte||0
     };
     // Branche selon mode : acompte (débit immédiat) ou empreinte (pré-autorisation)
     if(isEmpreinteMode){

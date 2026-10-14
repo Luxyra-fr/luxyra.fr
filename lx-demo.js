@@ -252,9 +252,39 @@
   var client = {
     from: function (t) { return new Q(t); },
     // 2026-10-14 : PIN / biométrie vérifiés par le serveur en production -> en démo, toujours acceptés (aucun code réel)
-    rpc: function (fn) {
-      if (fn === "operateur_verifier_pin" || fn === "operateur_connexion_bio") { var o = JSON.parse(JSON.stringify(T.salon_operateurs[0] || {})); delete o.pin_hash; return ok({ ok: true, op: o }); }
+    // 2026-10-14 : réponses de même forme que les fonctions serveur (champs lus par l'application), sur les tables de démo.
+    rpc: function (fn, args) {
+      var a = args || {};
+      if (fn === "operateur_verifier_pin" || fn === "operateur_connexion_bio") {
+        var op = null; for (var i = 0; i < T.salon_operateurs.length; i++) { if (T.salon_operateurs[i].id === a.p_operateur_id) { op = T.salon_operateurs[i]; break; } }
+        var o = JSON.parse(JSON.stringify(op || T.salon_operateurs[0] || {})); delete o.pin_hash;
+        return ok({ ok: true, op: o }); // operatorLogin / operatorLoginBio lisent d.ok et d.op
+      }
       if (fn === "operateur_debloquer") return ok({ ok: true });
+      if (fn === "lx_pack_consommer") { // _lxPackConsommer lit ok, utilisees, status (erreur si refus)
+        var pk = null; (T.packs_clients || []).forEach(function (p) { if (p.id === a.p_pack_id) pk = p; });
+        if (!pk) return ok({ ok: false, erreur: "Pack introuvable" });
+        var tot = Number(pk.total_seances) || 0, u = Number(pk.seances_utilisees) || 0;
+        if (tot && u >= tot) return ok({ ok: false, erreur: "Toutes les séances ont déjà été utilisées" });
+        pk.seances_utilisees = u + 1; if (tot && pk.seances_utilisees >= tot) pk.status = "completed";
+        return ok({ ok: true, utilisees: pk.seances_utilisees, total: tot, status: pk.status || "active" });
+      }
+      if (fn === "recrediter_bon_cadeau") { // _lxEffetsExecuter lit ok, restant, utilise, status
+        var g = null; (T.cartes_cadeaux || []).forEach(function (c) { if (c.id === a.p_bon_id) g = c; });
+        var m = Math.round((Number(a.p_montant) || 0) * 100) / 100;
+        if (!g) return ok({ ok: false, erreur: "Bon cadeau introuvable" });
+        g.utilise = Math.max(0, Math.round(((Number(g.utilise) || 0) - m) * 100) / 100);
+        g.restant = Math.round(((Number(g.restant) || 0) + m) * 100) / 100;
+        if (g.restant > 0 && g.status === "used") g.status = "active";
+        return ok({ ok: true, restant: g.restant, utilise: g.utilise, status: g.status });
+      }
+      if (fn === "nf525_duplicata_z") { // reprintClotureZ lit copie
+        T._dupZ = T._dupZ || {}; var k = String(a.p_cloture_num || a.p_date || "?"); T._dupZ[k] = (T._dupZ[k] || 0) + 1;
+        return ok({ copie: T._dupZ[k], cloture_num: a.p_cloture_num || null, horodatage: new Date().toISOString() });
+      }
+      if (fn === "lx_sms_campagne_enfiler") { // _lxCampSmsEnvoyer lit ok, enfiles, ignores (aucun SMS réel en démo)
+        return ok({ ok: true, enfiles: Array.isArray(a.p_envois) ? a.p_envois.length : 0, ignores: 0, demo: true });
+      }
       return ok(null);
     },
     auth: auth,

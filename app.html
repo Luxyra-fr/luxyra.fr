@@ -386,7 +386,7 @@ body{max-width:100%;margin:0 auto;}
 })();
 </script>
 <script src="supabase.min.js"></script>
-<script>if(window._lxDemo){document.write('<script src="lx-demo.js?v=20261014-01"><\/script>');}</script>
+<script>if(window._lxDemo){document.write('<script src="lx-demo.js?v=20261014-02"><\/script>');}</script>
 <script>
 // 2026-10-14 audit : mode démo et lx-demo.js non chargé (réseau, blocage) -> échec FERMÉ : aucun vrai client
 // Supabase n'est créé (luxyra-supabase.js garde _sb=null) et la page affiche un message au lieu de l'application.
@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261014-7"></script>
+<script src="luxyra-supabase.js?v=20261014-8"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261014-7";
+  var attendu="20261014-8";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -595,6 +595,10 @@ window.showWalRecovery = function(unsynced){
   document.body.appendChild(div.firstChild);
 };
 window._walDoRecover = async function(){
+  // 2026-10-14 : un seul rejeu à la fois (drapeau partagé avec _walCheck / lxWalRejouer) — sinon double envoi possible
+  if(window._lxWalCheckEnCours){ if(typeof toast==="function") toast("Transmission d\u00e9j\u00e0 en cours : r\u00e9essayez dans quelques secondes.","info"); return; }
+  window._lxWalCheckEnCours = true;
+  try{
   var bg = document.getElementById("walRecBg");
   if(bg) bg.innerHTML = '<div class="mbox" style="text-align:center"><div style="font-size:32px">⏳</div><h2 style="color:var(--gold)">Récupération en cours…</h2><p id="walRecProgress" style="color:var(--text2)">0 / ?</p></div>';
   try{
@@ -619,6 +623,7 @@ window._walDoRecover = async function(){
   }catch(e){
     if(typeof toast==="function") toast("Erreur récupération : "+(e.message||e), "error");
   }
+  }finally{ window._lxWalCheckEnCours = false; }
 };
 window._walDoIgnore = function(){
   var bg = document.getElementById("walRecBg");
@@ -2943,8 +2948,11 @@ async function lxConfirmerPassage(){
   var ch=document.querySelector('input[name="lxPasseChoix"]:checked'); var conserver=!!(ch&&ch.value==="conserver");
   var b=document.getElementById("lxPasseBtn"); if(b){ b.disabled=true; b.textContent="Passage en cours\u2026"; }
   var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
-  var r=await _sb.rpc("nf525_passer_en_reel",{p_salon:_salonId,p_conserver:conserver,p_operateur:op||null});
-  if(r.error){ showAlert("Erreur : "+r.error.message,"error"); if(b){ b.disabled=false; b.textContent="Passer en caisse r\u00e9elle"; } return; }
+  // 2026-10-14 : le passage est fait SUR CET APPAREIL -> lxRafraichirModeCaisse (luxyra-supabase.js) n'affiche pas la
+  // fenêtre « changement fait sur un autre appareil » (posé avant l'appel : un rafraîchissement peut tomber pendant).
+  window._lxPassageReelIci=true;
+  var r=null; try{ r=await _sb.rpc("nf525_passer_en_reel",{p_salon:_salonId,p_conserver:conserver,p_operateur:op||null}); }catch(_eR){ r={error:{message:(_eR&&_eR.message)||"r\u00e9seau"}}; }
+  if(r.error){ window._lxPassageReelIci=false; showAlert("Erreur : "+r.error.message,"error"); if(b){ b.disabled=false; b.textContent="Passer en caisse r\u00e9elle"; } return; }
   try{ ["_cp_caisse","_cp_clotures","_cp_locked","caisseOpenDate"].forEach(function(k){ localStorage.removeItem(k); }); }catch(_e){}
   try{ if(window._lxPasseSuite) sessionStorage.setItem("lx_apres_passage", window._lxPasseSuite); }catch(_e){}
   cM(); showAlert("\u2705 Votre caisse est maintenant r\u00e9elle. Rechargement\u2026","success",function(){ location.reload(); });
@@ -14032,7 +14040,12 @@ function _lxAnnulerApptEnBase(a, ai, motif){
   try{
     _sb.from("appointments").update(_upd).eq("id",id).eq("salon_id",_salonId).select("id").then(function(res){
       if(res&&res.error){ _restaurer("L\u2019annulation n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message); return; }
-      // 0 ligne : RDV absent de la base (jamais synchronisé) -> rien à conserver, le retrait local suffit
+      // 2026-10-14 : les sauvegardes de ce RDV encore en file de secours (plus anciennes que l'annulation) ne doivent
+      // pas le « ressusciter » au rejeu (status scheduled par-dessus cancelled).
+      try{ if(typeof _walRendreCaduques==="function") _walRendreCaduques("appointment", id, new Date().toISOString()); }catch(_eW){}
+      // 0 ligne : RDV absent de la base (jamais synchronisé) -> rien à conserver, le retrait local suffit ; marqué
+      // supprimé pour qu'aucun rejeu de la file ne le recrée.
+      if(!res||!Array.isArray(res.data)||!res.data.length){ try{ if(typeof window.lxRdvMarquerSupprime==="function") window.lxRdvMarquerSupprime(id); }catch(_eM2){} }
     },function(_e){ _restaurer("Annulation non enregistr\u00e9e (r\u00e9seau) : le rendez-vous est conserv\u00e9."); });
   }catch(_e){ _restaurer("Annulation non enregistr\u00e9e : le rendez-vous est conserv\u00e9."); }
 }
@@ -23815,7 +23828,8 @@ function csvEscape(v){
   var s = String(v);
   // 2026-10-14 audit : injection de formule (CSV ouvert dans Excel / LibreOffice) -> une cellule TEXTE commen\u00e7ant par
   // = + - @ (ou tabulation / retour chariot) est pr\u00e9fix\u00e9e d'une apostrophe. Les nombres (ex. \u00ab -12,50 \u00bb) restent intacts.
-  if(/^[=+\-@\t\r]/.test(s) && !/^[-+]?\d+([.,]\d+)?$/.test(s)) s = "'" + s;
+  // 2026-10-14 : montants au format français (« -1 234,50 », espaces insécables U+00A0 / U+202F) reconnus comme nombres.
+  if(/^[=+\-@\t\r]/.test(s) && !/^[-+]?\d[\d\s\u00a0\u202f.,]*$/.test(s)) s = "'" + s;
   // Si contient ";" ou guillemet ou retour ligne \u2192 entourer de guillemets et doubler les guillemets internes
   if(s.indexOf(";")>=0 || s.indexOf('"')>=0 || s.indexOf("\n")>=0 || s.indexOf("\r")>=0){
     return '"' + s.replace(/"/g, '""') + '"';
@@ -29164,35 +29178,128 @@ async function usePackInTicket(packId){
   showCaisse();
 }
 // Décompte atomique d'une séance (serveur : jamais au-delà du total ni après expiration) ; repli : ancien chemin.
+// Résultat : {ok:true,pk} | {ok:false,error,definitif:true} (refus du serveur : expiré, terminé...) |
+// {ok:false,error,transitoire:true,sur:bool} (réseau / erreur technique : à rejouer ; sur=false si la requête a pu
+// être exécutée par le serveur sans que la réponse arrive).
 async function _lxPackConsommer(packId){
   var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
+  var _horsLigne=(typeof _isOnline!=="undefined"&&!_isOnline)||(typeof navigator!=="undefined"&&navigator.onLine===false);
+  if(_horsLigne) return {ok:false,error:"hors ligne",transitoire:true,sur:true}; // requête jamais partie
   if(typeof _sb!=="undefined"&&_sb){
-    var r=null;
-    try{ r=await _sb.rpc("lx_pack_consommer",{p_pack_id:packId}); }catch(_e){ r={error:_e}; }
+    var r=null, _jete=false;
+    try{ r=await _sb.rpc("lx_pack_consommer",{p_pack_id:packId}); }catch(_e){ r={error:_e}; _jete=true; }
     if(r&&!r.error&&r.data){
       if(r.data.ok){ if(pk){ pk.used=Number(r.data.utilisees)||((pk.used||0)+1); pk.status=r.data.status||pk.status; } return {ok:true,pk:pk}; }
-      return {ok:false,error:r.data.erreur||"refus\u00e9"};
+      return {ok:false,error:r.data.erreur||"refusé",definitif:true};
     }
     var _c=String((r&&r.error&&r.error.code)||""), _m=String((r&&r.error&&(r.error.message||r.error))||"");
-    if(!(_c==="PGRST202"||_c==="42883"||/could not find the function|does not exist/i.test(_m))) return {ok:false,error:_m||"erreur r\u00e9seau"};
-  }
-  if(typeof usePackSeance==="function"){ var _rp=await usePackSeance(packId); return _rp?{ok:true,pk:_rp}:{ok:false,error:"non d\u00e9compt\u00e9e",dejaAlerte:true}; }
-  return {ok:false,error:"indisponible"};
-}
-// Appelé par doFinalPayExecute APRÈS le scellement : ne modifie jamais le ticket.
-async function _lxPacksConsommerTicket(items, tkNum){
-  var lignes=(items||[]).filter(function(it){ return it&&it.packSeance&&it.packId; });
-  for(var i=0;i<lignes.length;i++){
-    var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===lignes[i].packId;});
-    var r=await _lxPackConsommer(lignes[i].packId);
-    if(r.ok){ var p2=r.pk||pk; auditLog("PACK_SEANCE","S\u00e9ance "+(p2?p2.used+"/"+p2.total+" - "+p2.nom+" ("+p2.clientNom+")":"")+" - ticket #"+(tkNum||"?")); }
-    else {
-      auditLog("PACK_SEANCE_ECHEC","Ticket #"+(tkNum||"?")+" : s\u00e9ance du pack "+(pk?pk.nom:lignes[i].packId)+" non d\u00e9compt\u00e9e ("+r.error+")");
-      try{ if(typeof _lxReportDbError==="function") _lxReportDbError("lx_pack_consommer",{message:r.error},{pack_id:lignes[i].packId,ticket:tkNum||null}); }catch(_e){}
-      if(!r.dejaAlerte && typeof showAlert==="function") showAlert("Ticket #"+(tkNum||"?")+" enregistr\u00e9, mais la s\u00e9ance du pack \u00ab "+(pk?pk.nom:"")+" \u00bb n\u2019a pas pu \u00eatre d\u00e9compt\u00e9e ("+r.error+"). V\u00e9rifiez la fiche du client (onglet Packs).","warning");
+    if(!(_c==="PGRST202"||_c==="42883"||/could not find the function|does not exist/i.test(_m))){
+      // Erreur réseau (pas de réponse) : la séance a PU être décomptée par le serveur -> sur:false (vérifiée au rejeu).
+      var _reseau=_jete||(typeof _lxEstHorsLigne==="function"?_lxEstHorsLigne(r&&r.error):/fetch|network|timeout/i.test(_m));
+      return {ok:false,error:_m||"erreur réseau",transitoire:true,sur:!_reseau};
     }
   }
+  if(typeof usePackSeance==="function"){ var _rp=await usePackSeance(packId); return _rp?{ok:true,pk:_rp}:{ok:false,error:"non décomptée",dejaAlerte:true}; }
+  return {ok:false,error:"indisponible"};
 }
+// 2026-10-14 : séances de pack HORS LIGNE / échec réseau -> file d'attente locale (même convention que la file de
+// secours : clé propre à l'établissement, entrée datée, jamais effacée sans trace), rejouée par lxWalRejouer
+// (luxyra-supabase.js : reconnexion, premier plan, toutes les 2 min).
+//  - _lx_pack_attente_<salon> : [{cle, packId, tkId, tkNum, ts, tries, sur, avant, lastError}]
+//  - _lx_pack_faits_<salon>   : {cle: {at, ok}} séances déjà décomptées (idempotence : une clé n'est jamais décomptée deux fois)
+// cle = <id du ticket>:<packId>:<rang de la ligne> (lx_pack_consommer ne reçoit que p_pack_id, l'idempotence est donc
+// tenue ici). Requête partie sans réponse (sur=false) : au rejeu, le compteur en base est relu ; s'il a bougé depuis
+// l'échec, on ne décompte pas une 2e fois -> « à vérifier » (alerte + audit), jamais un double décompte silencieux.
+function _lxPackCleA(){ return "_lx_pack_attente_"+((typeof _salonId!=="undefined"&&_salonId)||""); }
+function _lxPackCleF(){ return "_lx_pack_faits_"+((typeof _salonId!=="undefined"&&_salonId)||""); }
+function _lxPackLire(k,def){ try{ var v=JSON.parse(localStorage.getItem(k)||"null"); return v==null?def:v; }catch(_e){ return def; } }
+function _lxPackEcrire(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(_e){ try{ toast("Stockage de l’appareil plein : une séance de forfait en attente n’a pas pu être mémorisée. Vérifiez la fiche du client.","error"); }catch(_t){} return false; } }
+function _lxPackFait(cle){ var f=_lxPackLire(_lxPackCleF(),{}); return !!(f&&f[cle]&&f[cle].ok); }
+function _lxPackMarquerFait(cle){
+  var f=_lxPackLire(_lxPackCleF(),{})||{}; f[cle]={at:new Date().toISOString(),ok:true};
+  var ks=Object.keys(f); if(ks.length>1000){ ks.sort(function(a,b){ return String(f[a].at).localeCompare(String(f[b].at)); }).slice(0,ks.length-1000).forEach(function(k){ delete f[k]; }); }
+  _lxPackEcrire(_lxPackCleF(),f);
+}
+function _lxPackEnAttente(cle){ return (_lxPackLire(_lxPackCleA(),[])||[]).some(function(e){ return e&&e.cle===cle; }); }
+function _lxPackRetirerAttente(cle){ var l=_lxPackLire(_lxPackCleA(),[])||[], n=l.filter(function(e){ return !(e&&e.cle===cle); }); if(n.length!==l.length) _lxPackEcrire(_lxPackCleA(),n); return n.length!==l.length; }
+// Séance réellement décomptée : relevé des effets mis à jour (inversion à l'annulation) en mémoire + meta du RDV.
+function _lxPackEffetConsomme(tkId, cle){
+  try{
+    var o=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===tkId){ o=AP[i]; break; } }
+    var E=o&&o.lxEffets; if(!E||!Array.isArray(E.seances)) return;
+    var ch=false; E.seances.forEach(function(s){ if(s&&s.ligne&&(tkId+":"+s.packId+":"+s.rang)===cle&&s.consomme!==true){ s.consomme=true; ch=true; } });
+    if(ch&&typeof _lxApptMetaPatch==="function") Promise.resolve(_lxApptMetaPatch(tkId,{lxEffets:E})).catch(function(){});
+  }catch(_e){}
+}
+function _lxPackSucces(cle, tkId, tkNum, pk){
+  _lxPackMarquerFait(cle); _lxPackEffetConsomme(tkId, cle);
+  auditLog("PACK_SEANCE","Séance "+(pk?pk.used+"/"+pk.total+" - "+pk.nom+" ("+(pk.clientNom||"")+")":"")+" - ticket #"+(tkNum||"?"));
+}
+// Appelé par doFinalPayExecute APRÈS le scellement : ne modifie jamais le ticket scellé.
+async function _lxPacksConsommerTicket(items, tkNum, tkId){
+  var lignes=(items||[]).filter(function(it){ return it&&it.packSeance&&it.packId; });
+  for(var i=0;i<lignes.length;i++){
+    var packId=lignes[i].packId, cle=(tkId||("tk"+(tkNum||"?")))+":"+packId+":"+i;
+    if(_lxPackFait(cle)||_lxPackEnAttente(cle)) continue; // idempotence
+    var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===packId;});
+    var _avant=pk?(Number(pk.used)||0):null;
+    var r=await _lxPackConsommer(packId);
+    if(r.ok){ _lxPackSucces(cle, tkId, tkNum, r.pk||pk); continue; }
+    if(r.transitoire){
+      var l=_lxPackLire(_lxPackCleA(),[])||[];
+      l.push({cle:cle,packId:packId,tkId:tkId||null,tkNum:tkNum||null,ts:new Date().toISOString(),tries:1,sur:!!r.sur,avant:_avant,lastError:String(r.error||"").slice(0,200)});
+      _lxPackEcrire(_lxPackCleA(),l);
+      auditLog("PACK_SEANCE_ATTENTE","Ticket #"+(tkNum||"?")+" : séance du pack "+(pk?pk.nom:packId)+" en attente de transmission ("+r.error+")");
+      try{ toast("Séance du forfait « "+(pk?pk.nom:"")+" » mémorisée : elle sera décomptée automatiquement dès le retour de la connexion.","warning"); }catch(_t){}
+      continue;
+    }
+    auditLog("PACK_SEANCE_ECHEC","Ticket #"+(tkNum||"?")+" : séance du pack "+(pk?pk.nom:packId)+" non décomptée ("+r.error+")");
+    try{ if(typeof _lxReportDbError==="function") _lxReportDbError("lx_pack_consommer",{message:r.error},{pack_id:packId,ticket:tkNum||null}); }catch(_e){}
+    if(!r.dejaAlerte && typeof showAlert==="function") showAlert("Ticket #"+(tkNum||"?")+" enregistré, mais la séance du pack « "+(pk?pk.nom:"")+" » n’a pas pu être décomptée ("+r.error+"). Vérifiez la fiche du client (onglet Packs).","warning");
+  }
+}
+// Rejeu de la file des séances (appelé par lxWalRejouer, un seul rejeu à la fois). Renvoie le nombre décompté.
+var _lxPacksRejeuEnCours=false;
+window._lxPacksRejouer=async function(){
+  if(_lxPacksRejeuEnCours||window._lxDemo) return 0;
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return 0;
+  var l0=_lxPackLire(_lxPackCleA(),[])||[]; if(!l0.length) return 0;
+  _lxPacksRejeuEnCours=true; var n=0;
+  try{
+    for(var i=0;i<l0.length;i++){
+      var e=l0[i]; if(!e||!e.cle) continue;
+      if(_lxPackFait(e.cle)){ _lxPackRetirerAttente(e.cle); continue; }
+      var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===e.packId;});
+      if(!e.sur){
+        // La 1re requête a pu être exécutée : compteur en base relu avant tout nouveau décompte.
+        var q=null; try{ q=await _sb.from("packs_clients").select("seances_utilisees").eq("id",e.packId).eq("salon_id",_salonId).maybeSingle(); }catch(_eQ){ q={error:_eQ}; }
+        if(!q||q.error) continue; // toujours pas joignable : prochain rejeu
+        var cur=q.data?Number(q.data.seances_utilisees)||0:null;
+        if(cur==null||e.avant==null||cur!==Number(e.avant)){
+          _lxPackRetirerAttente(e.cle);
+          auditLog("PACK_SEANCE_A_VERIFIER","Ticket #"+(e.tkNum||"?")+" : séance du pack "+(pk?pk.nom:e.packId)+" peut-être déjà décomptée (compteur "+e.avant+" -> "+cur+") : non redécomptée, à vérifier");
+          try{ showAlert("Ticket #"+(e.tkNum||"?")+" : la séance du forfait « "+(pk?pk.nom:"")+" » a peut-être déjà été décomptée (connexion coupée pendant l’envoi). Elle n’a pas été décomptée une 2e fois : vérifiez la fiche du client (onglet Packs).","warning"); }catch(_eS){}
+          continue;
+        }
+      }
+      var r=await _lxPackConsommer(e.packId);
+      if(r.ok){ _lxPackRetirerAttente(e.cle); _lxPackSucces(e.cle, e.tkId, e.tkNum, r.pk||pk); n++; continue; }
+      if(r.transitoire){
+        var l=_lxPackLire(_lxPackCleA(),[])||[];
+        l.forEach(function(x){ if(x&&x.cle===e.cle){ x.tries=(Number(x.tries)||0)+1; x.lastError=String(r.error||"").slice(0,200); x.lastTryAt=new Date().toISOString();
+          if(!r.sur&&x.sur){ x.sur=false; x.avant=pk?(Number(pk.used)||0):x.avant; } } });
+        _lxPackEcrire(_lxPackCleA(),l);
+        continue;
+      }
+      _lxPackRetirerAttente(e.cle);
+      auditLog("PACK_SEANCE_ECHEC","Ticket #"+(e.tkNum||"?")+" : séance du pack "+(pk?pk.nom:e.packId)+" non décomptée au rejeu ("+r.error+")");
+      try{ if(typeof _lxReportDbError==="function") _lxReportDbError("lx_pack_consommer",{message:r.error},{pack_id:e.packId,ticket:e.tkNum||null,rejeu:true}); }catch(_eR){}
+      if(!r.dejaAlerte) try{ showAlert("Ticket #"+(e.tkNum||"?")+" : la séance du forfait « "+(pk?pk.nom:"")+" » n’a pas pu être décomptée ("+r.error+"). Vérifiez la fiche du client (onglet Packs).","warning"); }catch(_eS2){}
+    }
+  }finally{ _lxPacksRejeuEnCours=false; }
+  if(n){ try{ toast("✓ "+n+" séance"+(n>1?"s":"")+" de forfait décomptée"+(n>1?"s":"")+" après le retour de la connexion","success"); }catch(_t){} }
+  return n;
+};
 
 // ===== CUSTOM CONFIRM MODAL =====
 window._confirmCb=null;
@@ -31812,7 +31919,7 @@ function _doFinalPayExecuteSync(method){
   
   // 2026-10-14 audit (ajout minimal dans doFinalPayExecute) : séances de pack décomptées ICI, après le scellement,
   // et plus à l'ajout de la ligne. Lecture seule de _tk.items (packId) : le ticket scellé n'est pas modifié.
-  try{ if(typeof _lxPacksConsommerTicket==="function"){ var _pkItems=(_tk.items||[]).slice(); Promise.resolve(_lxPacksConsommerTicket(_pkItems,tkN)).catch(function(_ePk2){ console.error("[pack]",_ePk2); }); } }catch(_ePk){}
+  try{ if(typeof _lxPacksConsommerTicket==="function"){ var _pkItems=(_tk.items||[]).slice(); Promise.resolve(_lxPacksConsommerTicket(_pkItems,tkN,window._lastSealedApptId||null)).catch(function(_ePk2){ console.error("[pack]",_ePk2); }); } }catch(_ePk){}
   // NF525: audit log
   auditLog("TICKET_CREATE","Ticket #"+tkN+" - "+total.toFixed(2)+"E"+(totalRemise>0?" (remise "+totalRemise.toFixed(2)+"E)":"")+(_acApplied>0?" (solde apres acompte de "+_acApplied.toFixed(2)+"E deja encaisse - ticket #"+(_acTkNum||"?")+")":"")+" - "+metStr);
   
@@ -34792,12 +34899,32 @@ function _lxConfirmationConcerneRdv(row, dateRdv){
     return true;
   }catch(_e){ return true; }
 }
-// 2026-10-14 audit : anniversaires et relances SMS sont envoyés par le SERVEUR (envoyer_sms_anniv_relance, tous
-// les jours, même appareil fermé), pour les établissements en mode Brevo. L'appareil ne les envoie plus que en mode
-// SMS natif (téléphone). Garde-fous anti-doublon : ce partage + l'index unique de messaging_log (anniversaire /
-// relance : un par destinataire et par jour). Mettre window.LX_SMS_AUTO_SERVEUR=false pour revenir à l'envoi local.
-// Le SQL docs/migrations_1014/clients.sql doit être appliqué AVANT la mise en ligne de cette version.
-if(typeof window.LX_SMS_AUTO_SERVEUR==="undefined") window.LX_SMS_AUTO_SERVEUR=true;
+// 2026-10-14 audit : anniversaires et relances SMS envoyés par le SERVEUR (envoyer_sms_anniv_relance, cron
+// « sms-anniv-relance-serveur », même appareil fermé) pour les établissements en mode Brevo.
+// Règle (jamais zéro expéditeur, jamais deux) — 2026-10-14 intégration : UN SEUL interrupteur, lu des deux côtés :
+//   app_config.config.sms_auto_serveur === true
+//     -> le serveur envoie (la fonction SQL ne fait rien tant que ce drapeau n'est pas true),
+//        l'application n'envoie plus (sauf mode SMS natif : toujours l'appareil) ;
+//   drapeau absent / false -> le serveur ne fait rien, l'application envoie (ancien comportement).
+// Le drapeau ne se met à true qu'APRÈS application de clients.sql ET publication des pages (voir ORDRE.md) : avant,
+// la fonction serveur n'existe pas ou ne fait rien, donc l'application reste l'unique expéditeur.
+// Config non chargée (hors ligne, démarrage) : dernière valeur lue (localStorage lx_sms_auto_serveur_v1), sinon false.
+// Doublon résiduel au moment de la bascule (appareil qui n'a pas encore relu la config) : bloqué par l'index unique
+// uniq_messaging_log_dedup (anniversaire / relance : un par destinataire et par jour), le serveur réservant la ligne
+// avant d'envoyer.
+var _LX_SMS_SRV_CLE="lx_sms_auto_serveur_v1";
+async function _lxSmsServeurConfirme(){
+  if(window.LX_SMS_AUTO_SERVEUR===true||window.LX_SMS_AUTO_SERVEUR===false) return window.LX_SMS_AUTO_SERVEUR;
+  try{
+    if(window.LX_CONFIG&&window.LX_CONFIG._loaded){
+      var v=window.LX_CONFIG.sms_auto_serveur===true;
+      try{ localStorage.setItem(_LX_SMS_SRV_CLE,JSON.stringify({ok:v,t:Date.now()})); }catch(_eS){}
+      return v;
+    }
+  }catch(_eC){}
+  var c=null; try{ c=JSON.parse(localStorage.getItem(_LX_SMS_SRV_CLE)||"null"); }catch(_eL){ c=null; }
+  return !!(c&&c.ok===true);
+}
 async function checkSmsReminders(){
   // 2026-10-14 audit : chaque automatisme a son propre interrupteur (avant : tout dépendait de « Rappels SMS actifs »,
   // désactiver les rappels coupait aussi anniversaires et relances).
@@ -34911,7 +35038,8 @@ async function checkSmsReminders(){
   }
   
   // 2026-10-14 audit : SMS anniversaire / relance faits par le serveur (sauf mode natif) -> jamais les deux
-  var _smsAutoLocal=((window.SMS_MODE||"brevo")==="native") || window.LX_SMS_AUTO_SERVEUR===false;
+  var _smsSrvOk=false; try{ _smsSrvOk=await _lxSmsServeurConfirme(); }catch(_eSrv){ _smsSrvOk=false; }
+  var _smsAutoLocal=((window.SMS_MODE||"brevo")==="native") || !_smsSrvOk; // serveur non confirmé -> l'appareil envoie
   // === AUTO: Anniversaires ===
   if(cfg.anniActif){
     var todayMD=todayStr.slice(5); // "MM-DD"
@@ -36354,7 +36482,17 @@ function cancelSecureTicket(id,motif){
   }
   _cancelSecureTicketDo(id,motif);
 }
+// 2026-10-14 : verrou PAR TICKET d'origine, tenu de l'entrée jusqu'au scellement du contre-ticket (et à l'inversion
+// des effets), libéré dans finally. Avant : seul _lxContraEnCours (global, relâché 1,5 s après le contrôle du jour)
+// -> deux appuis espacés pouvaient produire DEUX contre-tickets pour le même ticket.
 async function _cancelSecureTicketDo(id,motif){
+  var _kV=String(id==null?"":id); window._lxContraVol=window._lxContraVol||{};
+  if(_kV&&window._lxContraVol[_kV]){ try{ toast("Annulation de ce ticket d\u00e9j\u00e0 en cours\u2026","info"); }catch(_t){} return; }
+  if(_kV) window._lxContraVol[_kV]=true;
+  try{ return await _cancelSecureTicketDoUneFois(id,motif); }
+  finally{ if(_kV) delete window._lxContraVol[_kV]; }
+}
+async function _cancelSecureTicketDoUneFois(id,motif){
   if(guardDoubleClick("annulation ticket")) return;
   var orig=null;
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){orig=AP[i];break;}}
@@ -36573,9 +36711,17 @@ function _lxEffetsReleve(tkSrc, tkNum){
   }catch(_eF){}
   try{ (tkSrc._bonsConsommes||[]).forEach(function(b){ if(b&&b.id&&Number(b.use)>0) E.bons.push({id:b.id,code:b.code||"",use:Math.round(Number(b.use)*100)/100}); }); }catch(_eB){}
   try{
+    var _pkRang=0; // rang de la ligne de séance (même calcul que _lxPacksConsommerTicket -> même clé)
     (tkSrc.items||[]).forEach(function(it){
       if(!it||it.isSep) return;
       if(it.prodId&&Number(it.qty)>0) E.stock.push({prodId:it.prodId,qty:Number(it.qty),name:it.name||""});
+      // 2026-10-14 : séance décomptée APRÈS le scellement (_lxPacksConsommerTicket, éventuellement plus tard hors ligne) :
+      // relevée « consomme:false » ; passée à true quand le serveur l'a réellement décomptée. L'inversion ne rend
+      // jamais une séance qui n'a pas été décomptée.
+      if(it.packSeance&&it.packId){
+        E.seances.push({packId:it.packId,name:String(it.name||""),consomme:false,rang:_pkRang++,ligne:true});
+        return;
+      }
       if(it.isPack){
         var nm=String(it.name||"");
         if(!(Number(it.price)>0)){ // s\u00e9ance d'un forfait existant (ligne \u00e0 0 \u20ac)
@@ -36645,6 +36791,15 @@ async function _lxEffetsExecuter(plan, orig, contra){
       else echecs.push("bon "+b.code+" ("+b.use.toFixed(2)+" \u20ac) : "+((rr&&rr.error&&rr.error.message)||(rr&&rr.data&&rr.data.erreur)||"refus")); }catch(_eB){ echecs.push("bon "+b.code); } }
   // s\u00e9ances de forfait d\u00e9compt\u00e9es : rendues
   (E.seances||[]).forEach(function(s){ try{ var pk=s.packId?(window.PACKS_CLIENTS||[]).find(function(p){ return p.id===s.packId; }):null;
+    // 2026-10-14 : séance décomptée après le scellement -> rendue SEULEMENT si elle a réellement été décomptée.
+    if(s&&s.consomme===false){
+      var _cleS=orig.id+":"+s.packId+":"+s.rang;
+      if(typeof _lxPackFait==="function"&&_lxPackFait(_cleS)){ /* décomptée depuis (rejeu sur cet appareil) : rendue ci-dessous */ }
+      else if(typeof _lxPackRetirerAttente==="function"&&_lxPackRetirerAttente(_cleS)){
+        try{ auditLog("PACK_SEANCE_ANNULEE","Ticket #"+(orig.tkNum||"?")+" annul\u00e9 : s\u00e9ance en attente du forfait \u00ab "+(pk?pk.nom:s.packId)+" \u00bb retir\u00e9e de la file (jamais d\u00e9compt\u00e9e)"); }catch(_eAu){}
+        faits.push("s\u00e9ance en attente retir\u00e9e (\u00ab "+(pk?pk.nom:s.name)+" \u00bb, jamais d\u00e9compt\u00e9e)"); return;
+      } else { echecs.push("s\u00e9ance \u00ab "+s.name+" \u00bb : d\u00e9compte non confirm\u00e9 sur cet appareil, v\u00e9rifiez le forfait"); return; }
+    }
     if(!pk){ echecs.push("s\u00e9ance \u00ab "+s.name+" \u00bb (forfait introuvable)"); return; }
     pk.used=Math.max(0,(Number(pk.used)||0)-1); if(pk.used<pk.total&&pk.status==="completed") pk.status="active";
     if(typeof savePack==="function") savePack(pk); faits.push("s\u00e9ance rendue sur \u00ab "+pk.nom+" \u00bb"); }catch(_eS){ echecs.push("s\u00e9ance"); } });
@@ -38393,11 +38548,11 @@ function setupRealtime(){
       try{ if(payload&&payload.eventType==="DELETE"&&payload.old&&payload.old.id&&typeof window.lxRdvSupprimeAilleurs==="function") window.lxRdvSupprimeAilleurs(payload.old.id); }catch(_eD){}
       reloadFromSupabase("appointments");
     })
-    // 2026-10-14 audit : les suppressions ne passent pas toujours le filtre salon_id (seule la cle primaire est
-    // transmise) -> abonnement DELETE sans filtre ; seuls les identifiants presents dans AP sont concernes.
-    .on("postgres_changes",{event:"DELETE",schema:"public",table:"appointments"},function(payload){
-      try{ if(payload&&payload.old&&payload.old.id&&typeof window.lxRdvSupprimeAilleurs==="function"&&window.lxRdvSupprimeAilleurs(payload.old.id)){ if(typeof refreshCurrentView==="function") refreshCurrentView(); } }catch(_eD2){}
-    })
+    // 2026-10-14 : PLUS d'abonnement DELETE sans filtre sur appointments (il recevait les identifiants des RDV
+    // supprimés de TOUS les établissements). Sans « replica identity full », un DELETE ne transporte que la clé
+    // primaire et ne peut pas être filtré par salon_id : les suppressions faites sur un autre appareil sont
+    // retirées au rafraîchissement suivant (reloadFromSupabase("appointments") -> lxApRetirerSupprimes : poll,
+    // premier plan, et tout autre changement temps réel de l'établissement).
     .on("postgres_changes",{event:"*",schema:"public",table:"rdv_online",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: rdv_online change",payload.eventType);
       reloadFromSupabase("rdv_online");
