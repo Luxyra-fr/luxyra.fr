@@ -5926,16 +5926,19 @@ async function showNotifs(filter){
         // Contenu
         h += '<div style="flex:1;min-width:0">';
         h += '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:2px">';
-        h += '<div style="font-weight:700;font-size:14px;color:'+(seen?"var(--text2)":"var(--text)")+'">'+(n.title||meta.label)+'</div>';
+        h += '<div style="font-weight:700;font-size:14px;color:'+(seen?"var(--text2)":"var(--text)")+'">'+escapeHtml(n.title||meta.label)+'</div>';
         h += '<div style="font-size:11px;color:var(--text3,#6b7280);white-space:nowrap;flex-shrink:0">'+notifRelTime(n.ts)+'</div>';
         h += '</div>';
-        if(n.detail) h += '<div style="font-size:13px;color:var(--text2);line-height:1.4;margin-bottom:8px">'+n.detail+'</div>';
+        if(n.detail) h += '<div style="font-size:13px;color:var(--text2);line-height:1.4;margin-bottom:8px">'+escapeHtml(n.detail)+'</div>'; // 2026-10-14 : texte saisi par le client -> echappe
 
         // Actions
         var actions = [];
         if(n.type === "rdv_online_modif" && !seen){
           actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="acceptModification(\''+n.id+'\')">✓ Accepter</button>');
           actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="refuseModification(\''+n.id+'\')">✗ Refuser</button>');
+          // 2026-10-14 : regarder le planning du jour demande SANS perdre la demande (elle reste en attente de reponse)
+          var _mdD=(n.modifData&&n.modifData.date)||"";
+          if(/^\d{4}-\d{2}-\d{2}$/.test(_mdD)) actions.push('<button class="btn bs" style="font-size:12px;padding:7px 12px" onclick="lxVoirJourModif(\''+_mdD+'\')">📅 Voir ce jour</button>');
         } else if(n.type === "rdv_demande_new" || n.type === "rdv_demande_refused"){
           var demId = (n.data && n.data.demande_id) || null;
           if(demId) actions.push('<button class="btn bg bs" style="font-size:12px;padding:7px 12px;font-weight:700" onclick="cM();setTimeout(function(){openDemande(\''+demId+'\')},150)">Voir la demande →</button>');
@@ -5975,6 +5978,13 @@ async function showNotifs(filter){
   }
 }
 
+// 2026-10-14 : ouvre le planning sur le jour demande par le client, la notification reste non lue
+function lxVoirJourModif(d){
+  cM();
+  try{ window.calD=new Date(d+"T12:00:00"); window._planDays=1; }catch(_){}
+  if(typeof go==="function") go("planning");
+  if(typeof toast==="function") toast("La demande reste dans les notifications 🔔 : revenez-y pour accepter ou refuser","info");
+}
 // Navigation : clic sur "Voir le RDV" depuis une notif
 async function openRdvFromNotif(rdvId, notifId){
   // Marquer la notif comme lue
@@ -6056,7 +6066,8 @@ async function clearReadNotifs(){
   window._notifBadgeCache.t=0;showNotifs();updateNotifBadge();
 }
 async function markAllNotifsRead(){
-  try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('salon_id',_salonId).is('read_at',null);}catch(e){}
+  // 2026-10-14 : les demandes de modification restent a traiter (boutons Accepter / Refuser conserves)
+  try{await _sb.from('notifications').update({read_at:new Date().toISOString()}).eq('salon_id',_salonId).is('read_at',null).neq('type','rdv_online_modif');}catch(e){}
   window._notifBadgeCache.t=0;updateNotifBadge();showNotifs();
 }
 function simulateOnlineRdv(cn,sv,d,t){addNotif("rdv_online","Nouveau RDV en ligne",cn+" - "+sv+" le "+d+" a "+t,{});}
