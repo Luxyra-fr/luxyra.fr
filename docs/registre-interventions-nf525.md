@@ -336,3 +336,9 @@ d'altération des données fiscales.*
 - Client / site / serveur : politique d'annulation contrôlée par le serveur, heure de Paris, demandes de modification validées, créneau bloqué 35 min pendant le paiement, retour de paiement vérifié (et page qui restait bloquée sur « Chargement »), aucune correspondance de paiement sans e-mail, désabonnement des notifications à la déconnexion, données du compte précédent effacées, textes échappés (XSS), CGU à l'inscription depuis la page salon, « Pas de préférence » limité aux collaborateurs habilités.
 - Notifications app pro : avertissement quand Android confie la demande d'autorisation à l'appli clients installée.
 - Tests de protection NF525 relancés après déploiement.
+
+## 2026-10-14 — Acompte en ligne = ticket scellé dès le paiement (accord d'Alexandre)
+- Fondement : BOI-TVA-DECLA-30-10-30 §30/§35/§37/§50/§90, référentiel LNE (ex. 3/7/9), TVA à l'encaissement des acomptes (BOI-TVA-BASE-20-20 §30/§70). Conception : docs/acompte_en_ligne_conception.md.
+- Paiement Stripe confirmé -> rdv_online.acompte_modele='ticket' (trigger) -> la caisse crée le ticket scellé « Acompte en ligne » (numéroté, chaîné, signé), date de règlement conservée et imprimée ; jamais sur une journée clôturée (journée suivante) ; un seul appareil (verrou + index unique tickets(salon_id, raw_data->>'acompteKey')).
+- Ticket du RDV : ligne « Acompte déjà versé (ticket #X) » ; trop-perçu remboursé avant encaissement ; remboursements = tickets négatifs ; absence = rien de plus.
+- Transition : acomptes payés avant la mise en service = ancien modèle inchangé (acompte_modele NULL). Insertion publique : champs de caisse forcés à vide. Deux revues indépendantes + corrections, tests NF525 : 0 échec.
