@@ -102,10 +102,13 @@
   async function lxChangePassword(oldPass, newPass){
     var token = getToken();
     if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
-    return await call("lx-profile", {
+    var res = await call("lx-profile", {
       session_token: token, action: "change_password",
       old_password: oldPass, new_password: newPass
     });
+    // 2026-10-14 : les autres appareils sont déconnectés ; cet appareil reçoit un nouveau jeton
+    if (res.ok && res.data && res.data.session_token) setToken(res.data.session_token);
+    return res;
   }
 
   async function lxDelete(password){
@@ -186,8 +189,31 @@
   async function lxRequestReset(email, retour){ return await call("lx-password-reset", { action: "request", email: email, retour: retour || "" }); }
   async function lxConfirmReset(token, password){ return await call("lx-password-reset", { action: "confirm", token: token, password: password }); }
 
+  // 2026-10-14 : vérification de l'adresse email du compte (lien reçu par email ; renvoi limité côté serveur)
+  async function lxVerifyEmail(verifToken){
+    var res = await call("lx-profile", { action: "verify_email", token: verifToken });
+    if (res.ok) { var u = getUser(); if (u) { u.email_verified = true; setUser(u); } }
+    return res;
+  }
+  async function lxSendVerification(){
+    var token = getToken();
+    if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
+    return await call("lx-profile", { session_token: token, action: "send_verification" });
+  }
+  // 2026-10-14 : déconnecter tous les AUTRES appareils (cet appareil reçoit un nouveau jeton)
+  async function lxLogoutAll(){
+    var token = getToken();
+    if (!token) return { ok: false, status: 401, data: { error: "Pas de session" } };
+    var res = await call("lx-profile", { session_token: token, action: "logout_all" });
+    if (res.ok && res.data && res.data.session_token) setToken(res.data.session_token);
+    return res;
+  }
+
   // Expose globalement
   window.LX = {
+    verifyEmail: lxVerifyEmail,
+    sendVerification: lxSendVerification,
+    logoutAll: lxLogoutAll,
     requestReset: lxRequestReset,
     confirmReset: lxConfirmReset,
     signup: lxSignup,

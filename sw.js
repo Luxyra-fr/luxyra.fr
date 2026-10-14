@@ -42,7 +42,7 @@
 // maintenant dans server_errors source=service_worker.
 (function(){
   var SB_URL = 'https://kxdgjtvrkwugbifgppai.supabase.co';
-  var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1MDc2NTksImV4cCI6MjA1NzA4MzY1OX0.qIaCntFlYqp_TQrkmgUrtTNzaIddtfWG7tIBNqcwdcw';
+  var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI';
   function reportSW(msg, stack) {
     try {
       fetch(SB_URL+'/rest/v1/rpc/report_server_error', {
@@ -270,20 +270,22 @@ self.addEventListener('push', function(e) {
   // FIX 2026-08-30 : temoin de reception. Sans lui, impossible de savoir a distance
   // si un push arrive jusqu'a l'appareil : le serveur voit « accepte par FCM », mais
   // rien ne dit si le service worker a ete reveille. On trace donc CHAQUE reception
-  // dans server_errors (source sw_push_recu), avant tout traitement.
+  // dans server_errors (source sw_push_recu), avant tout traitement — SANS le contenu (2026-10-14).
   // Le temoin ne doit jamais retarder ni empecher l'affichage : Chrome exige qu'un
   // push aboutisse RAPIDEMENT a une notification visible. On trace donc SANS
   // e.waitUntil, en pur « au mieux ».
   try {
     var _sbu='https://kxdgjtvrkwugbifgppai.supabase.co';
-    var _ak='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1MDc2NTksImV4cCI6MjA1NzA4MzY1OX0.qIaCntFlYqp_TQrkmgUrtTNzaIddtfWG7tIBNqcwdcw';
-    var _raw=''; try { _raw = e.data ? e.data.text() : '(vide)'; } catch(_x){ _raw='(illisible: '+_x+')'; }
+    var _ak='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4ZGdqdHZya3d1Z2JpZmdwcGFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNDE2NTgsImV4cCI6MjA4ODYxNzY1OH0.J3jVuoHSWA0wXyaWxiRzILEWVNr8hbbgVYg73UEDTuI';
+    // 2026-10-14 SECURITE : on ne journalise PLUS le contenu du push (titre / texte = donnees personnelles :
+    // nom du client, prestation, horaire...). Seuls la taille et le type d'evenement sont traces.
+    var _taille=0, _evt=''; try { var _t = e.data ? e.data.text() : ''; _taille = _t.length; try { var _j = JSON.parse(_t); _evt = String((_j && _j.data && _j.data.event_type) || '').replace(/[^a-z0-9_\-]/gi,'').slice(0,40); } catch(_y){} } catch(_x){}
     fetch(_sbu+'/rest/v1/rpc/report_server_error',{
       method:'POST',
       headers:{'Content-Type':'application/json','apikey':_ak,'Authorization':'Bearer '+_ak},
       body:JSON.stringify({
         p_source:'sw_push_recu',
-        p_message:'Push recu par le service worker — '+String(_raw).slice(0,300),
+        p_message:'Push recu par le service worker (contenu non journalise) — '+_taille+' octets'+(_evt?' — '+_evt:''),
         p_severity:'warning', p_stack:'', p_context:null
       })
     }).catch(function(){});

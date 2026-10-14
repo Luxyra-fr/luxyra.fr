@@ -79,7 +79,8 @@ async function reportWorkerError(env, source, error, context, severity) {
 // Couvre : heartbeat PG, Cloudflare worker en vie, DB Supabase accessible.
 async function handleHealth(request, env) {
   const url = "https://kxdgjtvrkwugbifgppai.supabase.co/rest/v1/rpc/get_monitoring_status";
-  const SB_ANON = env.SUPABASE_ANON_KEY || "";
+  // 2026-10-14 SECURITE : get_monitoring_status n'est plus exécutable par anon -> appel avec la clé service
+  const SB_ANON = env.SUPABASE_SERVICE_KEY || env.SUPABASE_ANON_KEY || "";
   try {
     const r = await fetch(url, {
       method: "POST",
@@ -186,6 +187,12 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/client/invite/verify" && request.method === "POST") return await handleClientInviteVerify(request, env);
       if (url.pathname === "/api/salon/availability" && request.method === "POST") return await handleSalonAvailability(request, env);
       if (url.pathname === "/api/rdv/cancel" && request.method === "POST") return await handleRdvCancel(request, env);
+      // 2026-10-14 SECURITE (audit) : remplacent des accès anonymes directs à la base
+      if (url.pathname === "/api/client/salons" && request.method === "POST") return await handleClientSalons(request, env);
+      if (url.pathname === "/api/rdv/abandon" && request.method === "POST") return await handleRdvAbandon(request, env);
+      if (url.pathname === "/api/inscription/email-check" && request.method === "POST") return await handleInscriptionEmailCheck(request, env);
+      if (url.pathname === "/api/annuaire/signaler" && request.method === "POST") return await handleAnnuaireSignaler(request, env);
+      if (url.pathname === "/api/annuaire/retrait" && request.method === "POST") return await handleAnnuaireRetrait(request, env);
       // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
       // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
       if (url.pathname === "/api/admin/retention-purge" && request.method === "POST") {
@@ -422,12 +429,18 @@ async function verifyClientSession(token, env) {
     }
     const u = data.user;
     if (!u.id) return null;
-    return { lx_id: String(u.id), email: String(u.email || "").toLowerCase().trim() };
+    // 2026-10-14 SECURITE : email_verified transmis. Tant que l'email n'est pas vérifié, AUCUNE donnée n'est
+    // rattachée au compte par l'email (rendez-vous, tickets, cartes, fidélité, annulation…) : seulement par lx_id.
+    // (lx-profile vérifie aussi la version de session : jeton refusé après changement de mot de passe.)
+    return { lx_id: String(u.id), email: String(u.email || "").toLowerCase().trim(), email_verified: u.email_verified === true };
   } catch (e) {
     console.error("[verifyClientSession] exception:", e?.message || e);
     return null;
   }
 }
+
+// 2026-10-14 : email utilisable pour rattacher des données au compte = seulement s'il est vérifié (sinon "")
+function lxEmailVerifie(session) { return session && session.email_verified === true && session.email ? session.email : ""; }
 
 // Helper Supabase REST avec service_role pour les endpoints client/*
 function _sbHeaders(env, opts = {}) {
@@ -478,10 +491,11 @@ async function lxAuthUser(request) {
   } catch (e) { return null; }
 }
 // 2026-10-10 : si l'admin a activé la double authentification, la session doit l'avoir validée (aal2)
+// 2026-10-14 SECURITE : aal2 désormais EXIGÉ dans tous les cas (la double authentification est activée sur
+// support@luxyra.fr ; un compte admin sans second facteur n'a plus aucun droit admin) — aligné sur public.is_admin().
 function lxIsAdminUser(u) {
   if (!(u && String(u.email || "").toLowerCase() === "support@luxyra.fr")) return false;
-  const aDeuxFacteurs = Array.isArray(u.factors) && u.factors.some((f) => f && f.status === "verified");
-  return !aDeuxFacteurs || u._aal === "aal2";
+  return u._aal === "aal2";
 }
 async function lxOwnsSalon(env, userId, salonId) {
   if (!userId || !salonId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(salonId))) return false;
@@ -1580,7 +1594,7 @@ async function handleClientCommandes(request, env) {
     const { session_token } = await readJsonBody(request);
     const session = await verifyClientSession(session_token, env);
     if (!session) return jsonResponse({ error: "Session invalide" }, 401);
-    const q = `${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?select=id,salon_id,numero,items,total,status,paye,mode_paiement,code_retrait,created_at,ready_at,collected_at,cancelled_at&or=(client_luxyra_id.eq.${encodeURIComponent(session.lx_id)},client_email.eq.%22${encodeURIComponent(session.email)}%22)&status=neq.pending_payment&order=created_at.desc&limit=50`;
+    const q = `${CONFIG.SUPABASE_URL}/rest/v1/commandes_online?select=id,salon_id,numero,items,total,status,paye,mode_paiement,code_retrait,created_at,ready_at,collected_at,cancelled_at&${lxEmailVerifie(session) ? `or=(client_luxyra_id.eq.${encodeURIComponent(session.lx_id)},client_email.eq.%22${encodeURIComponent(session.email)}%22)` : `client_luxyra_id=eq.${encodeURIComponent(session.lx_id)}`}&status=neq.pending_payment&order=created_at.desc&limit=50`;
     const r = await fetch(q, { headers: _sbHeaders(env) });
     const rows = r.ok ? await r.json() : [];
     const salonIds = [...new Set((rows || []).map((x) => x.salon_id))];
@@ -3017,6 +3031,8 @@ async function handleEmailTicket(request, env) {
   if (!_acces.ok) {
     const _cl = body.session_token ? await verifyClientSession(body.session_token, env) : null;
     if (!_cl || !_cl.email) return jsonResponse({ error: "Authentification requise" }, 401);
+    // 2026-10-14 : envoi seulement vers une adresse VÉRIFIÉE (sinon le formulaire servait à écrire à n'importe qui)
+    if (!lxEmailVerifie(_cl)) return jsonResponse({ error: "Confirmez d'abord votre adresse email (lien envoyé à l'inscription)." }, 403);
     clientEmail = _cl.email; clientId = null; salonEmail = null;
   }
   if (!clientEmail || !ticketNum) return jsonResponse({ error: "clientEmail et ticketNum requis" }, 400);
@@ -3472,12 +3488,16 @@ async function handleClientTickets(request, env) {
     const _body = await request.json().catch(() => ({}));
     // SECURITE 2026-10-08 : l'email vient de la SESSION du client, jamais du corps de la requete.
     const _sess = await verifyClientSession(_body.session_token, env);
-    if (!_sess || !_sess.email) return jsonResponse({ error: "session_token invalide ou expiré", tickets: [] }, 401);
-    const email = _sess.email;
+    if (!_sess || !_sess.lx_id) return jsonResponse({ error: "session_token invalide ou expiré", tickets: [] }, 401);
+    // 2026-10-14 SECURITE : fiches rattachées par client_luxyra_id ; par email seulement si l'email est vérifié
+    const email = lxEmailVerifie(_sess);
     const sbKey = env.SUPABASE_SERVICE_KEY;
     if (!sbKey) return jsonResponse({ error: "configuration_error", tickets: [] });
     const headers = { "apikey": sbKey, "Authorization": "Bearer " + sbKey, "Content-Type": "application/json" };
-    const clients = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id,salon_id,nom,prenom&email=eq.${encodeURIComponent(email)}&limit=20`, { headers })).json();
+    const _filtreFiches = email
+      ? `or=(client_luxyra_id.eq.${encodeURIComponent(_sess.lx_id)},email.eq.%22${encodeURIComponent(email)}%22)`
+      : `client_luxyra_id=eq.${encodeURIComponent(_sess.lx_id)}`;
+    const clients = await (await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id,salon_id,nom,prenom&${_filtreFiches}&limit=20`, { headers })).json();
     if (!Array.isArray(clients) || !clients.length) return jsonResponse({ tickets: [] });
     let allTickets = [];
     for (const cl of clients) {
@@ -3516,12 +3536,13 @@ async function handleClientCartes(request, env) {
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
     const session = await verifyClientSession(body.session_token, env);
     if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
-    const email = session.email;
-    if (!email) return jsonResponse({ error: "email manquant dans la session" }, 401);
+    // 2026-10-14 SECURITE : cartes rattachées par l'id du compte ; par l'email (ancien format) seulement s'il est vérifié
+    const email = lxEmailVerifie(session);
     // Filtre optionnel salon_id (utilisé par site.html quand on est sur la page d'un seul salon)
     const salonId = body.salon_id ? String(body.salon_id) : null;
     const onlyActive = body.only_active === true;
-    let url = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients?select=*&client_luxyra_id=eq.${encodeURIComponent(email)}`;
+    const _ids = [session.lx_id].concat(email ? [email] : []).map((v) => '"' + String(v).replace(/"/g, "") + '"').join(",");
+    let url = `${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients?select=*&client_luxyra_id=in.(${encodeURIComponent(_ids)})`;
     if (salonId) url += `&salon_id=eq.${encodeURIComponent(salonId)}`;
     if (onlyActive) url += `&status=eq.active`;
     url += `&order=created_at.desc`;
@@ -3557,10 +3578,10 @@ async function handleClientFidelite(request, env) {
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
     const session = await verifyClientSession(body.session_token, env);
     if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
-    const email = session.email;
+    const email = lxEmailVerifie(session); // 2026-10-14 : "" tant que l'email n'est pas vérifié
     const lxId = session.lx_id;
     const salonId = body.salon_id ? String(body.salon_id) : null;
-    // fidelite_client.client_luxyra_id est text — on essaie email d'abord, fallback id
+    // fidelite_client.client_luxyra_id est text — on essaie email d'abord (si vérifié), fallback id
     function _buildUrl(idVal) {
       let u = `${CONFIG.SUPABASE_URL}/rest/v1/fidelite_client?select=*&client_luxyra_id=eq.${encodeURIComponent(idVal)}`;
       if (salonId) u += `&salon_id=eq.${encodeURIComponent(salonId)}`;
@@ -3568,7 +3589,7 @@ async function handleClientFidelite(request, env) {
       return u;
     }
     let fidelite = [];
-    try {
+    if (email) try {
       const r1 = await fetch(_buildUrl(email), { headers: _sbHeaders(env) });
       const d1 = await r1.json();
       if (Array.isArray(d1)) fidelite = d1;
@@ -3778,9 +3799,9 @@ async function handleClientRdvs(request, env) {
     const session = await verifyClientSession(body.session_token, env);
     if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
     const lxId = session.lx_id;
-    const email = session.email;
+    const email = lxEmailVerifie(session); // 2026-10-14 : par email seulement si vérifié
     const salonId = body.salon_id ? String(body.salon_id) : null;
-    // 2 fetches : par luxyra_id (uuid) puis par email (text). Dedupe sur id.
+    // 2 fetches : par luxyra_id (uuid) puis par email (text, si vérifié). Dedupe sur id.
     const seen = new Set();
     // Dédup LOGIQUE : un même créneau peut exister dans rdv_online ET appointments
     // (résa en ligne miroitée au planning). id différents → on déduplique sur salon+date+heure.
@@ -4389,8 +4410,9 @@ async function handleClientRdvUpdate(request, env) {
     );
     const own = await ownRes.json();
     if (!Array.isArray(own) || !own[0]) return jsonResponse({ error: "RDV introuvable" }, 404);
+    // 2026-10-14 SECURITE : rattachement par email seulement si l'email du compte est vérifié
     const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
-                 (own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
+                 (!!lxEmailVerifie(session) && own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
     if (!owns) return jsonResponse({ error: "RDV non rattaché à votre compte" }, 403);
     // Whitelist des champs PATCHables côté client
     const ALLOWED = [
@@ -4468,8 +4490,15 @@ async function handleClientAnonymize(request, env) {
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
     const session = await verifyClientSession(body.session_token, env);
     if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    // 2026-10-14 SECURITE : mot de passe obligatoire (vérifié par lx-profile, tentatives limitées)
+    try {
+      const pr = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/lx-profile`, { method: "POST", headers: { "Content-Type": "application/json", apikey: env.SUPABASE_SERVICE_KEY, Authorization: "Bearer " + env.SUPABASE_SERVICE_KEY }, body: JSON.stringify({ session_token: body.session_token, action: "check_password", password: String(body.password || "") }) });
+      if (!pr.ok) { const pj = await pr.json().catch(() => ({})); return jsonResponse({ error: pj.error || "Mot de passe incorrect" }, pr.status === 429 ? 429 : 401); }
+    } catch (_) { return jsonResponse({ error: "Vérification du mot de passe impossible, réessayez." }, 503); }
     const lxId = session.lx_id;
-    const email = session.email;
+    // Fiches et réservations rattachées par email : seulement si l'email est vérifié (sinon un compte créé avec
+    // l'adresse d'une autre personne pouvait anonymiser SES fiches chez les établissements).
+    const email = lxEmailVerifie(session);
     const errors = [];
     // 1) Anonymise rdv_online par lx_id
     if (lxId) {
@@ -4556,8 +4585,9 @@ async function handleRdvCancel(request, env) {
     const ownRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?select=id,client_luxyra_id,client_email,salon_id,status,acompte_paye,acompte_montant,acompte_rembourse,acompte_rembourse_montant,remboursements,retenue_at,retenue_tk_num,cancelled_by,payment_intent_id,stripe_payment_id,stripe_account,date_rdv,heure_rdv,created_at,empreinte_status&id=eq.${encodeURIComponent(rdv_id)}&limit=1`, { headers: _sbHeaders(env) });
     const own = await ownRes.json();
     if (!Array.isArray(own) || !own[0]) return jsonResponse({ error: "RDV introuvable" }, 404);
+    // 2026-10-14 SECURITE : rattachement par email seulement si l'email du compte est vérifié
     const owns = (own[0].client_luxyra_id && String(own[0].client_luxyra_id) === session.lx_id) ||
-                 (own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
+                 (!!lxEmailVerifie(session) && own[0].client_email && String(own[0].client_email).toLowerCase() === session.email);
     if (!owns) return jsonResponse({ error: "RDV non rattaché à votre compte" }, 403);
     // 2026-10-14 SECURITE : délai de la politique d'annulation vérifié côté serveur (avant : seulement dans l'interface)
     if (["pending", "confirmed"].includes(String(own[0].status || ""))) {
@@ -4580,6 +4610,135 @@ async function handleRdvCancel(request, env) {
     try { empreinte = await releaseEmpreinteOnCancel(env, Object.assign({}, own[0], patch)); } catch (e) { console.error("empreinte on cancel:", e); }
     return jsonResponse({ success: true, refund, empreinte });
   } catch (err) { return jsonResponse({ error: "Erreur serveur" }, 500); }
+}
+
+// ============================================================
+// 2026-10-14 SECURITE (audit) — nouveaux points d'entrée
+// ============================================================
+// Empreinte d'adresse IP (jamais l'IP en clair) : HMAC-SHA256 avec la clé service comme sel secret.
+async function lxIpHash(request, env) {
+  const ip = String(request.headers.get("CF-Connecting-IP") || request.headers.get("x-forwarded-for") || "").split(",")[0].trim();
+  if (!ip) return null;
+  try {
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("lx-ip|" + String(env.SUPABASE_SERVICE_KEY || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(ip));
+    return Array.from(new Uint8Array(sig)).slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) { return null; }
+}
+async function lxSha256Hex(s) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s)));
+  return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function lxRpcService(env, fn, args) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { ..._sbHeaders(env), "Content-Type": "application/json" }, body: JSON.stringify(args || {}) });
+  const t = await r.text();
+  let d = null; try { d = t ? JSON.parse(t) : null; } catch (_) { d = t; }
+  return { ok: r.ok, status: r.status, data: d };
+}
+
+// POST /api/client/salons {session_token, op:"list"|"lier", salon_id?}
+// Remplace les accès anonymes à client_salon (points de fidélité affichés dans compte.html, lien créé par site.html).
+async function handleClientSalons(request, env) {
+  try {
+    const body = await request.json().catch(() => null);
+    if (!body) return jsonResponse({ error: "body invalide" }, 400);
+    const session = await verifyClientSession(body.session_token, env);
+    if (!session) return jsonResponse({ error: "session_token invalide ou expiré" }, 401);
+    const H = _sbHeaders(env), base = `${CONFIG.SUPABASE_URL}/rest/v1`, lx = encodeURIComponent(session.lx_id);
+    if (String(body.op || "list") === "lier") {
+      const sid = String(body.salon_id || "");
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sid)) return jsonResponse({ error: "établissement invalide" }, 400);
+      const sp = await (await fetch(`${base}/salons_public?id=eq.${sid}&select=id`, { headers: H })).json();
+      if (!Array.isArray(sp) || !sp[0]) return jsonResponse({ error: "établissement introuvable" }, 404);
+      const cl = await (await fetch(`${base}/clients_luxyra?id=eq.${lx}&select=sms_ok,email_ok`, { headers: H })).json();
+      const c = Array.isArray(cl) && cl[0] ? cl[0] : {};
+      // Colonnes minimales uniquement (jamais de points, notes, visites, CA…) ; rien n'est écrasé si le lien existe.
+      await fetch(`${base}/client_salon?on_conflict=client_id,salon_id`, { method: "POST", headers: { ...H, "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify({ client_id: session.lx_id, salon_id: sid, sms_ok: c.sms_ok === true, email_ok: c.email_ok === true }) });
+      return jsonResponse({ ok: true });
+    }
+    const rows = await (await fetch(`${base}/client_salon?client_id=eq.${lx}&select=salon_id,fidelite_points&limit=200`, { headers: H })).json();
+    const list = Array.isArray(rows) ? rows : [];
+    const ids = [...new Set(list.map((x) => x.salon_id).filter(Boolean))];
+    const byId = {};
+    if (ids.length) {
+      const sp = await (await fetch(`${base}/salons_public?id=in.(${ids.join(",")})&select=id,nom,ville`, { headers: H })).json();
+      (Array.isArray(sp) ? sp : []).forEach((x) => { byId[x.id] = x; });
+    }
+    return jsonResponse({ ok: true, salons: list.map((x) => ({ salon_id: x.salon_id, fidelite_points: x.fidelite_points || 0, salons: { nom: (byId[x.salon_id] || {}).nom || "", ville: (byId[x.salon_id] || {}).ville || "" } })) });
+  } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
+}
+
+// POST /api/rdv/abandon {rdv_id, token}
+// Supprime une réservation en attente de paiement abandonnée par le visiteur (retour « annuler » de Stripe, échec
+// de création du paiement). Le navigateur prouve qu'il a créé la ligne avec le secret dont seule l'empreinte
+// (abandon_hash) a été enregistrée à l'insertion. Jamais une réservation payée, confirmée ou de plus de 35 min.
+async function handleRdvAbandon(request, env) {
+  try {
+    const ipk = (await lxIpHash(request, env)) || "?";
+    if (!checkRateLimit("rdv_abandon:" + ipk, 20)) return jsonResponse({ error: "Trop de requêtes" }, 429);
+    const b = await request.json().catch(() => ({}));
+    const id = String(b.rdv_id || ""), tok = String(b.token || "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) || !/^[0-9a-f]{64}$/.test(tok)) return jsonResponse({ error: "paramètres invalides" }, 400);
+    const h = await lxSha256Hex(tok);
+    const depuis = new Date(Date.now() - 35 * 60 * 1000).toISOString();
+    const q = `id=eq.${id}&abandon_hash=eq.${h}&status=eq.pending_payment&acompte_paye=is.false&payment_intent_id=is.null&stripe_payment_id=is.null&created_at=gte.${encodeURIComponent(depuis)}`;
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?${q}`, { method: "DELETE", headers: { ..._sbHeaders(env), Prefer: "return=representation" } });
+    const rows = r.ok ? await r.json().catch(() => []) : [];
+    return jsonResponse({ ok: true, supprime: Array.isArray(rows) && rows.length > 0 });
+  } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
+}
+
+// POST /api/inscription/email-check {email} — remplace l'appel anonyme à lx_email_deja_inscrit (limité par IP)
+async function handleInscriptionEmailCheck(request, env) {
+  const ipk = (await lxIpHash(request, env)) || "?";
+  if (!checkRateLimit("email_check:" + ipk, 10)) return jsonResponse({ error: "Trop de vérifications, réessayez dans une minute." }, 429);
+  const b = await request.json().catch(() => ({}));
+  const email = String(b.email || "").trim().toLowerCase().slice(0, 200);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonResponse({ error: "Email invalide" }, 400);
+  const r = await lxRpcService(env, "lx_email_deja_inscrit", { p_email: email });
+  if (!r.ok) return jsonResponse({ error: "indisponible" }, 503);
+  return jsonResponse({ existe: r.data === true });
+}
+
+// POST /api/annuaire/signaler {siret} — « établissement fermé » : signalement EN ATTENTE (masqué seulement après
+// 3 signalements d'adresses IP différentes, ou validation par l'admin ; jamais un établissement Luxyra).
+async function handleAnnuaireSignaler(request, env) {
+  const ipk = await lxIpHash(request, env);
+  if (!ipk) return jsonResponse({ ok: false }, 400);
+  if (!checkRateLimit("ann_sig:" + ipk, 5)) return jsonResponse({ ok: false, error: "Trop de signalements" }, 429);
+  const b = await request.json().catch(() => ({}));
+  const siret = String(b.siret || "").replace(/\D/g, "");
+  if (siret.length !== 14) return jsonResponse({ ok: false }, 400);
+  const r = await lxRpcService(env, "annuaire_signaler", { p_siret: siret, p_ip_hash: ipk });
+  return jsonResponse(r.ok && r.data ? r.data : { ok: false }, r.ok ? 200 : 503);
+}
+
+// POST /api/annuaire/retrait {siret, email, motif} — demande de retrait confirmée par email.
+// Établissement lié à Luxyra : le lien part à l'adresse du GÉRANT (jamais à l'adresse saisie).
+async function handleAnnuaireRetrait(request, env) {
+  const ipk = await lxIpHash(request, env);
+  if (!ipk) return jsonResponse({ ok: false, err: "Requête invalide" }, 400);
+  if (!checkRateLimit("ann_ret:" + ipk, 3)) return jsonResponse({ ok: false, err: "Trop de demandes, réessayez plus tard." }, 429);
+  const b = await request.json().catch(() => ({}));
+  const siret = String(b.siret || "").replace(/\D/g, "");
+  const email = String(b.email || "").trim().toLowerCase().slice(0, 120);
+  if (siret.length !== 14) return jsonResponse({ ok: false, err: "Le SIRET doit contenir 14 chiffres." }, 400);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonResponse({ ok: false, err: "Indiquez une adresse email valide : un lien de confirmation y sera envoyé." }, 400);
+  const r = await lxRpcService(env, "annuaire_retrait_demander", { p_siret: siret, p_email: email, p_motif: String(b.motif || "").slice(0, 300) || null, p_ip_hash: ipk });
+  if (!r.ok || !r.data) return jsonResponse({ ok: false, err: "Service indisponible, réessayez." }, 503);
+  const d = r.data;
+  if (!d.ok) return jsonResponse({ ok: false, err: d.err || "Demande impossible." }, 400);
+  if (d.token && d.email_dest) {
+    const lien = `https://luxyra.fr/annuaire-retrait-confirmer?t=${d.token}`;
+    const nom = String(d.nom || "").replace(/[&<>"]/g, (x) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[x]));
+    const corps = `<p style="font-size:15px;color:#333;line-height:1.6">Une demande de retrait de l'annuaire Luxyra a été faite pour <b>${nom}</b> (SIRET ${siret}).</p>
+<p style="font-size:15px;color:#333;line-height:1.6">${d.salon_lie ? "Cet établissement utilise Luxyra : ce message est envoyé à l'adresse du compte gérant. Confirmez seulement si vous êtes à l'origine de la demande." : "Confirmez la demande : elle sera ensuite vérifiée par notre équipe (sous 72 h)."}</p>
+${lxMailBouton("Confirmer le retrait", lien)}
+<p style="font-size:12px;color:#999;line-height:1.5">Lien valable 48 heures. Si vous n'êtes pas à l'origine de cette demande, ignorez cet email : rien ne sera modifié.</p>`;
+    try { await brevoSendEmail(env, { to: d.email_dest, subject: "Confirmez le retrait de l'annuaire Luxyra", htmlContent: lxMailLayout(corps, { titre: "Retrait de l'annuaire" }), textContent: `Confirmer le retrait de ${d.nom || siret} de l'annuaire Luxyra (lien valable 48 h) : ${lien}` }); } catch (_) {}
+  }
+  // Réponse identique que l'établissement soit lié ou non (pas de divulgation de l'adresse du gérant)
+  return jsonResponse({ ok: true, message: d.salon_lie ? "Un email de confirmation a été envoyé à l'adresse du gérant de l'établissement." : "Un email de confirmation vient de vous être envoyé." });
 }
 
 // ============================================================
@@ -5036,7 +5195,7 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     const villes = ((await lxAnnRpc("annuaire_villes2", { p_source: M.source || metierSlug, p_motif: M.motif || null, p_lx: M.luxyra })) || []).filter((v) => v.departement === dep && v.ville_slug !== villeSlug).slice(0, 30);
     if (villes.length) body += `<h2>${lxEsc(M.pluriel)} dans les villes proches</h2><div class="villes">` + villes.map((v) => `<a href="/${metierSlug}/${lxEsc(v.ville_slug)}">${lxEsc(M.titre)} à ${lxEsc(v.ville)} <span>(${v.n})</span></a>`).join("") + `</div>`;
   } catch (_) {}
-  body += `<script>async function lxFerme(el,siret){if(!confirm("Cet établissement est fermé ? Il sera retiré de la liste.")) return false;try{var r=await fetch('${CONFIG.SUPABASE_URL}/rest/v1/rpc/annuaire_signaler_ferme',{method:'POST',headers:{'Content-Type':'application/json',apikey:'${CONFIG.SUPABASE_ANON_KEY}',Authorization:'Bearer ${CONFIG.SUPABASE_ANON_KEY}'},body:JSON.stringify({p_siret:siret})});var d=await r.json();var c=el.closest('.carte');if(d&&d.ok&&c){c.style.opacity='.35';el.textContent="Merci, c’est noté : retiré de la liste.";el.onclick=function(){return false;};}}catch(e){}return false;}</script>`;
+  body += `<script>async function lxFerme(el,siret){if(!confirm("Cet établissement est fermé ? Votre signalement sera vérifié avant tout retrait.")) return false;try{var r=await fetch('/api/annuaire/signaler',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({siret:siret})});var d=await r.json();if(d&&d.ok){el.textContent=d.masque?"Merci, c’est noté : retiré de la liste.":"Merci, c’est noté : nous allons vérifier.";el.onclick=function(){return false;};var c=el.closest('.carte');if(d.masque&&c)c.style.opacity='.35';}}catch(e){}return false;}</script>`;
   body += `<p class="src">Liste établie à partir des établissements inscrits sur Luxyra et de la base publique des entreprises (Sirene, INSEE — données ouvertes), mise à jour chaque mois. Seuls les établissements en activité, à diffusion publique et disposant d'une enseigne sont affichés.</p></div>`;
   const items = [...lx.map((s) => ({ "@type": M.schema, name: s.nom, url: `https://luxyra.fr/${s.slug}`, address: { "@type": "PostalAddress", streetAddress: String(s.mode_activite || "") === "domicile" ? "" : (s.adresse || ""), postalCode: s.cp || "", addressLocality: s.ville || villeNom, addressCountry: "FR" } })),
     ...autres.map((e) => ({ "@type": M.schema, name: e.nom, address: { "@type": "PostalAddress", streetAddress: e.adresse || "", postalCode: e.cp || "", addressLocality: e.ville, addressCountry: "FR" } }))];
@@ -5076,15 +5235,30 @@ async function lxAnnuaireGerantPage(url) {
 function lxAnnuaireRetraitPage(url) {
   const siret = String(url.searchParams.get("siret") || "").replace(/\D/g, "").slice(0, 14);
   const body = `<section class="hero"><div class="wrap"><h1>Retirer un établissement <em>de l'annuaire</em></h1>
-<p class="sous">Les pages « Coiffeur à … », « Institut de beauté à … » présentent les établissements en activité d'après la base publique des entreprises (Sirene). Vous êtes le gérant et ne souhaitez pas apparaître ? Indiquez le SIRET de l'établissement (14 chiffres) : il est retiré immédiatement et ne sera plus affiché.</p></div></section>
+<p class="sous">Les pages « Coiffeur à … », « Institut de beauté à … » présentent les établissements en activité d'après la base publique des entreprises (Sirene). Vous êtes le gérant et ne souhaitez pas apparaître ? Indiquez le SIRET de l'établissement (14 chiffres) et votre email : vous recevrez un lien de confirmation, puis la demande est vérifiée par notre équipe (sous 72 h).</p></div></section>
 <div class="wrap"><div class="carte" style="display:block;margin-top:26px"><label style="font-size:13px;color:var(--text2)">SIRET de l'établissement</label><br><input id="s" inputmode="numeric" maxlength="14" value="${lxEsc(siret)}" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:16px;margin:6px 0 12px"><br>
-<label style="font-size:13px;color:var(--text2)">E-mail (facultatif, pour confirmation)</label><br><input id="e" type="email" maxlength="120" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:15px;margin:6px 0 14px"><br>
+<label style="font-size:13px;color:var(--text2)">E-mail (obligatoire, pour confirmer la demande)</label><br><input id="e" type="email" maxlength="120" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:15px;margin:6px 0 14px"><br>
 <button class="btn" style="border:none;cursor:pointer" onclick="lxRet()">Retirer cet établissement</button><div id="m" style="margin-top:12px;font-size:14px"></div></div>
 <p class="sous" style="margin-top:18px">Vous préférez que vos clients puissent réserver en ligne ? <a href="/annuaire-gerant${siret ? "?siret=" + siret : ""}">Activez la réservation gratuitement</a>.</p></div>
 <script>async function lxRet(){var s=document.getElementById('s').value.replace(/\\D/g,''),m=document.getElementById('m');if(s.length!==14){m.textContent='Le SIRET doit contenir 14 chiffres.';m.style.color='#f87171';return;}
-try{var r=await fetch('${CONFIG.SUPABASE_URL}/rest/v1/rpc/annuaire_retirer',{method:'POST',headers:{'Content-Type':'application/json',apikey:'${CONFIG.SUPABASE_ANON_KEY}',Authorization:'Bearer ${CONFIG.SUPABASE_ANON_KEY}'},body:JSON.stringify({p_siret:s,p_email:document.getElementById('e').value||null})});var d=await r.json();
-if(d&&d.ok){m.textContent='✅ C\\'est fait : cet établissement n\\'apparaît plus dans l\\'annuaire (mise à jour des pages sous quelques minutes).';m.style.color='#7fc97f';}else{m.textContent=(d&&d.err)||'Erreur, réessayez.';m.style.color='#f87171';}}catch(e){m.textContent='Erreur réseau, réessayez.';m.style.color='#f87171';}}</script>`;
+try{var r=await fetch('/api/annuaire/retrait',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({siret:s,email:document.getElementById('e').value||''})});var d=await r.json();
+if(d&&d.ok){m.textContent='✅ '+(d.message||'Un email de confirmation a été envoyé.');m.style.color='#7fc97f';}else{m.textContent=(d&&d.err)||'Erreur, réessayez.';m.style.color='#f87171';}}catch(e){m.textContent='Erreur réseau, réessayez.';m.style.color='#f87171';}}</script>`;
   return lxAnnReponse(lxAnnPage({ title: "Retirer un établissement de l'annuaire | Luxyra", desc: "Demander le retrait d'un établissement des pages annuaire de Luxyra.", robots: "noindex,follow", body }));
+}
+
+// 2026-10-14 : lien reçu par email -> confirmation de la demande de retrait (RPC service annuaire_retrait_confirmer)
+async function lxAnnuaireRetraitConfirmerPage(url, env) {
+  const t = String(url.searchParams.get("t") || "");
+  let msg = "Lien invalide ou expiré.";
+  if (/^[0-9a-f]{64}$/.test(t)) {
+    try {
+      const r = await lxRpcService(env, "annuaire_retrait_confirmer", { p_token: t });
+      if (r.ok && r.data && r.data.ok) msg = r.data.masque ? "✅ C'est confirmé : l'établissement n'apparaît plus dans l'annuaire (mise à jour des pages sous quelques minutes)." : "✅ Demande confirmée : elle sera vérifiée par notre équipe sous 72 h.";
+      else if (r.ok && r.data && r.data.err) msg = r.data.err;
+    } catch (_) { msg = "Service indisponible, réessayez."; }
+  }
+  const body = `<section class="hero"><div class="wrap"><h1>Retrait <em>de l'annuaire</em></h1><p class="sous">${lxEsc(msg)}</p></div></section>`;
+  return lxAnnReponse(lxAnnPage({ title: "Retrait de l'annuaire | Luxyra", desc: "Confirmation de retrait de l'annuaire Luxyra.", robots: "noindex,nofollow", body }));
 }
 
 // Renvoie { head, body } ou null. NE JETTE JAMAIS.
@@ -5466,6 +5640,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
     const _ann = url.pathname.match(/^\/(coiffeur|institut-de-beaute|spa-massage|onglerie|extension-de-cils|barbier)(?:\/([a-z0-9-]{2,80}))?\/?$/);
     if (_ann) { const _r = await lxAnnuairePage(_ann[1], _ann[2] || null); if (_r) return _r; }
     if (url.pathname === "/annuaire-retrait") return lxAnnuaireRetraitPage(url);
+    if (url.pathname === "/annuaire-retrait-confirmer") return await lxAnnuaireRetraitConfirmerPage(url, env);
     if (url.pathname === "/annuaire-gerant") return await lxAnnuaireGerantPage(url);
   }
   let path = url.pathname;
@@ -5491,7 +5666,7 @@ Sitemap: https://luxyra.fr/sitemap.xml
       "sw.js", "manifest.json", "manifest-app.json", "manifest-admin.json",
       "icon-192.png", "icon-512.png", "luxyra-logo.png", "favicon.ico",
       "lx-client.js", "luxyra-supabase.js", "supabase.min.js",
-      "robots.txt", "sitemap.xml", "coiffeur", "institut-de-beaute", "spa-massage", "onglerie", "extension-de-cils", "barbier", "annuaire-retrait", "annuaire-gerant"
+      "robots.txt", "sitemap.xml", "coiffeur", "institut-de-beaute", "spa-massage", "onglerie", "extension-de-cils", "barbier", "annuaire-retrait", "annuaire-gerant", "annuaire-retrait-confirmer"
     ]);
     const isOneSegment = segmentForSlug && !segmentForSlug.includes("/");
     const hasExtension = /\.[a-z0-9]+$/i.test(segmentForSlug);
