@@ -624,6 +624,20 @@ var RDV_EXISTING=[];
 // totalDuration et totalPrix sont (re)calculés via bookingTotals().
 var booking={items:[],svcId:null,svc:null,collabId:null,collab:null,date:null,time:null,duration:0,totalPrix:0,lieu:'salon',clientAdr:null};
 
+// 2026-10-15 : PRIX « À PARTIR DE » — le prix de la fiche est un minimum : affiché « à partir de 45,00 € » ;
+// les totaux de la réservation deviennent « à partir de X € » dès qu'une prestation l'est. Acompte (lxCalcAcompte)
+// calculé sur ce minimum, exactement comme le serveur (lx_prive.rdv_online_insert_public_propre).
+function lxPrixTxt(s){
+  if(!s) return "";
+  if(s.devis) return "Sur devis";
+  return (s.apartir?"\u00e0 partir de ":"")+(Number(s.p)||0).toFixed(2)+" \u20ac";
+}
+function lxItemAPartir(it){ return !!(it&&(it.apartir||(it.svc&&it.svc.apartir))); }
+function lxAPartir(){ return !!(booking.items&&booking.items.some(lxItemAPartir)); }
+function lxApPfx(it){ return (it?lxItemAPartir(it):lxAPartir())?"\u00e0 partir de ":""; }
+function lxApNotice(){
+  return lxAPartir()?'<div class="summary-row" style="font-size:12px;color:var(--text3);line-height:1.45;display:block">\u2139\ufe0f Prix final fix\u00e9 \u00e0 l\u2019\u00e9tablissement selon la prestation r\u00e9alis\u00e9e (longueur, technique, temps pass\u00e9\u2026). Le prix indiqu\u00e9 est un minimum.</div>':'';
+}
 function bookingTotals(){
   var dur=0,prix=0;
   if(booking.items&&booking.items.length){
@@ -785,7 +799,9 @@ function bookingPrimaryNom(){
 function bookingItemsPayload(){
   if(!booking.items||!booking.items.length)return null;
   return booking.items.map(function(it,idx){
-    return {service_id:it.svcId,nom:it.nom,prix:Number(it.prix)||0,duree:Number(it.duree)||0,ordre:idx};
+    var o={service_id:it.svcId,nom:it.nom,prix:Number(it.prix)||0,duree:Number(it.duree)||0,ordre:idx};
+    if(lxItemAPartir(it)) o.a_partir_de=true; // 2026-10-15 : prix minimum (le serveur recopie la valeur du catalogue)
+    return o;
   });
 }
 var calMonth=new Date().getMonth(),calYear=new Date().getFullYear();
@@ -1119,7 +1135,8 @@ async function loadSalon(){
         // Forfaits — visibles côté site avec leur catégorie (peut chevaucher avec services)
         if(Array.isArray(cfgParsed.forfaits)){
           window.SITE_FORFAITS=cfgParsed.forfaits.map(function(f){
-            return {id:'f_'+(f.id||Math.random()), n:f.n||f.nom||'Forfait', p:Number(f.p||f.prix)||0, cat:f.cat||f.categorie||'', dur:Number(f.dur)||0, isForfait:true};
+            return {id:'f_'+(f.id||Math.random()), n:f.n||f.nom||'Forfait', p:Number(f.p||f.prix)||0, cat:f.cat||f.categorie||'', dur:Number(f.dur)||0, isForfait:true,
+              devis:f.devis===true, apartir:(f.apartir===true&&f.devis!==true)}; // 2026-10-15 : mêmes libellés que les prestations
           });
         }
         // Ordre fusionné des familles (services puis forfaits, sans duplicata)
@@ -1227,7 +1244,8 @@ async function loadSalon(){
         id:s.id,n:s.nom,p:Number(s.prix),cat:s.categorie,ordre:s.ordre,
         phases:s.phases||[],
         bookOnline:(s.book_online!==false && s.prix_sur_devis!==true),  // false = non réservable en ligne (sur demande)
-        devis:s.prix_sur_devis===true  // 2026-10-13 : prix sur devis -> « Sur devis », réservation par demande
+        devis:s.prix_sur_devis===true,  // 2026-10-13 : prix sur devis -> « Sur devis », réservation par demande
+        apartir:(s.prix_a_partir_de===true && s.prix_sur_devis!==true)  // 2026-10-15 : prix = minimum (« à partir de »), réservable
       };});
     }
     
@@ -2100,7 +2118,7 @@ function renderSite(){
         h+='<div class="tarif-row-meta">\u23f1 '+(s._dur||30)+' min'+(isForf?' \u00b7 Forfait':'')+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
         h+='</div>';
         h+='<div class="tarif-row-right">';
-        h+='<div class="tarif-row-price">'+(s.devis?'Sur devis':(Number(s.p)||0).toFixed(2)+' \u20ac')+'</div>';
+        h+='<div class="tarif-row-price">'+lxPrixTxt(s)+'</div>';
         if(SITE_CFG.resa && !isForf){
           if(isOnDemand && SITE_CFG.acceptRdvSurMesure){
             h+='<button class="tarif-row-cta" style="background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="openSurMesureModal('+s.id+')">Demander</button>';
@@ -2489,7 +2507,7 @@ function renderBookingStep1(){
       h+='<div class="tarif-row-meta">\u23f1 '+dur+' min'+(isOnDemand?' \u00b7 Sur demande':'')+'</div>';
       h+='</div>';
       h+='<div class="tarif-row-right">';
-      h+='<div class="tarif-row-price">'+(s.devis?'Sur devis':(Number(s.p)||0).toFixed(2)+' \u20ac')+'</div>';
+      h+='<div class="tarif-row-price">'+lxPrixTxt(s)+'</div>';
       if(isOnDemand){
         if(SITE_CFG.acceptRdvSurMesure){
           h+='<button class="tarif-row-cta" style="background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="event.stopPropagation();openSurMesureModal('+s.id+')">Demander</button>';
@@ -2637,7 +2655,7 @@ function openSurMesureModal(svcId){
     h+='<div style="margin-bottom:12px;padding:12px 14px;background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.2);border-radius:10px">';
     h+='<div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Prestation demandée</div>';
     h+='<div style="font-weight:700;font-size:15px;color:var(--gold)">'+escapeHtmlSimple(preService.n)+'</div>';
-    h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">'+(preService.devis?'Sur devis':(Number(preService.p)||0).toFixed(2)+' €')+' · '+escapeHtmlSimple(preService.cat||'')+'</div>';
+    h+='<div style="font-size:12px;color:var(--text3);margin-top:2px">'+lxPrixTxt(preService)+' · '+escapeHtmlSimple(preService.cat||'')+'</div>';
     h+='</div>';
   }else{
     h+='<div class="sub">Décrivez ce que vous souhaitez — le salon vous proposera un créneau adapté.</div>';
@@ -2681,7 +2699,7 @@ async function submitSurMesure(){
   var demandeFinal=demande;
   if(serviceId){
     var svc=null;for(var i=0;i<SERVICES.length;i++){if(SERVICES[i].id===serviceId){svc=SERVICES[i];break;}}
-    var prefix=svc?("Prestation demandée : "+svc.n+" ("+(svc.devis?"sur devis":(Number(svc.p)||0).toFixed(2)+" €")+")"):"";
+    var prefix=svc?("Prestation demandée : "+svc.n+" ("+(svc.devis?"sur devis":lxPrixTxt(svc))+")"):"";
     demandeFinal=prefix+(demande?"\n\n"+demande:"");
   }
   var btn=document.getElementById("smBtn");
@@ -2735,7 +2753,7 @@ function toggleService(svcId){
   }
   var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=p.d;});
   if(!dur)dur=30;
-  booking.items=[{svcId:svcId,nom:svc.n,prix:Number(svc.p)||0,duree:dur,svc:svc}];
+  booking.items=[{svcId:svcId,nom:svc.n,prix:Number(svc.p)||0,duree:dur,svc:svc,apartir:!!svc.apartir}]; // 2026-10-15 : apartir = prix minimum
   booking.svcId=svcId;booking.svc=svc;
   bookingTotals();
   // Auto-avance à l'étape 2 (style Planity)
@@ -2749,7 +2767,7 @@ function renderBookingCartInner(){
   }
   var it=booking.items[0];
   var h='';
-  h+='<div class="bc-line"><span>'+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+  h+='<div class="bc-line"><span>'+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
   h+='<button class="btn btn-gold bc-cta" onclick="renderBookingStep2()">Continuer \u25b6</button>';
   return h;
 }
@@ -2889,6 +2907,7 @@ function lxDelaiMinH(){ var v=Number(SITE_CFG.delaiMin); return (SITE_CFG.delaiM
 function lxDelaiMaxJ(){ var v=Number(SITE_CFG.delaiMax); return v>0?Math.min(365,Math.round(v)):30; }
 // 2026-10-14 audit : montant d'acompte unique (récapitulatif, bouton, enregistrement) ; jamais plus que le prix
 // (un minimum ou un pourcentage mal réglé dans l'app pouvait dépasser le prix de la prestation).
+// 2026-10-15 : prestation « à partir de » -> prix = minimum ; l'acompte est calculé sur ce minimum (même règle côté serveur)
 function lxCalcAcompte(prix){
   prix=Number(prix)||0;
   var a=SITE_CFG.acompteType==="pourcentage"?Math.round(prix*(Number(SITE_CFG.acompteMt)||0)/100):(Number(SITE_CFG.acompteMt)||0);
@@ -3503,15 +3522,16 @@ function renderBookingStep4(){
   if(hasMulti){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-bottom:1px solid rgba(200,168,78,.2)"><span>Prestations</span><span class="v">'+booking.items.length+' \u25be</span></div>';
     booking.items.forEach(function(it){
-      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+' <span style="color:var(--text3);font-size:11px">('+(Number(it.duree)||0)+' min)</span></span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
     });
     h+='<div class="summary-row" style="font-weight:700"><span>Dur\u00e9e totale</span><span class="v">'+totalDur+' min</span></div>';
-    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasCarte?"Sous-total":"Prix total")+'</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(hasCarte?"Sous-total":"Prix total")+'</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2)+' \u20ac</span></div>';
   }else{
     var svc=(booking.items&&booking.items[0])||{nom:booking.svc?booking.svc.n:"",prix:booking.svc?booking.svc.p:0,duree:totalDur};
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(svc.nom)+'</span></div>';
-    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':'')+'><span>'+(hasCarte?"Sous-total":"Prix")+'</span><span class="v">'+(Number(svc.prix)||0).toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row"'+(hasCarte?' style="color:var(--text3)"':'')+'><span>'+(hasCarte?"Sous-total":"Prix")+'</span><span class="v">'+lxApPfx()+(Number(svc.prix)||0).toFixed(2)+' \u20ac</span></div>';
   }
+  h+=lxApNotice(); // 2026-10-15
   // Ligne remise carte d'abonnement
   if(hasCarte){
     h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+CLIENT_CARTE_ABO.carteNom+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
@@ -3772,16 +3792,17 @@ async function _lxSubmitBookingImpl(){
     if(booking.items&&booking.items.length>1){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
       booking.items.forEach(function(it){
-        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
       });
-      h+='<div class="summary-row"'+(remiseCarte>0?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(remiseCarte>0?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row"'+(remiseCarte>0?' style="color:var(--text3)"':' style="font-weight:700"')+'><span>'+(remiseCarte>0?"Sous-total":"Total")+' ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2)+' \u20ac</span></div>';
     }else{
       h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
     }
     if(remiseCarte>0){
       h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO?CLIENT_CARTE_ABO.carteNom:"abonnement")+'</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
-      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Total \u00e0 payer</span><span class="v">'+lxApPfx()+prixFinal.toFixed(2)+' \u20ac</span></div>';
     }
+    h+=lxApNotice(); // 2026-10-15
     h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+' \u00e0 '+booking.time+'</span></div>';
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+escapeHtmlSimple(booking.collab.n)+'</span></div>';
     h+='</div>';
@@ -3868,7 +3889,7 @@ async function loadDashboardRdvs(){
     h+='<div class="rdv-card">';
     h+='<div class="rdv-date"><div class="d">'+parseInt(dp[2])+'</div><div class="m">'+mois[parseInt(dp[1])-1]+'</div></div>';
     h+='<div class="rdv-info"><div class="svc">'+escapeHtmlSimple(r.service_nom)+'</div>';
-    h+='<div class="det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+(r.collaborateur_nom?" \u2022 "+escapeHtmlSimple(r.collaborateur_nom):"")+" \u2022 "+escapeHtmlSimple(String(r.service_prix==null?"":r.service_prix))+"\u20ac"+'</div></div>';
+    h+='<div class="det">'+(r.heure_rdv?r.heure_rdv.slice(0,5):"")+(r.collaborateur_nom?" \u2022 "+escapeHtmlSimple(r.collaborateur_nom):"")+" \u2022 "+((Array.isArray(r.items)&&r.items.some(function(x){return x&&x.a_partir_de===true;}))?"\u00e0 partir de ":"")+escapeHtmlSimple(String(r.service_prix==null?"":r.service_prix))+"\u20ac"+'</div></div>';
     h+='<div class="rdv-status '+stCls+'">'+stTxt+'</div>';
     h+='</div>';
     // Payment status
@@ -4065,7 +4086,7 @@ async function _lxSubmitWithStripeImpl(){
   if(hasMulti){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
     booking.items.forEach(function(it){
-      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
     });
   }else{
     h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
@@ -4223,9 +4244,9 @@ async function processStripePayment(){
     if(hasMulti){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
       booking.items.forEach(function(it){
-        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
+        h+='<div class="summary-row" style="padding-left:8px;font-size:13px"><span>\u2022 '+escapeHtmlSimple(it.nom)+'</span><span class="v">'+lxApPfx(it)+(Number(it.prix)||0).toFixed(2)+' \u20ac</span></div>';
       });
-      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+totalPrix.toFixed(2)+' \u20ac</span></div>';
+      h+='<div class="summary-row" style="font-weight:700"><span>Total ('+dur+' min)</span><span class="v">'+lxApPfx()+totalPrix.toFixed(2)+' \u20ac</span></div>';
     }else{
       h+='<div class="summary-row"><span>Prestation</span><span class="v">'+escapeHtmlSimple(primaryNom)+'</span></div>';
     }
@@ -4233,7 +4254,8 @@ async function processStripePayment(){
     if(booking.collab)h+='<div class="summary-row"><span>Avec</span><span class="v">'+escapeHtmlSimple(booking.collab.n)+'</span></div>';
     h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:10px;margin-top:8px"><span>'+(isEmp?'Empreinte (non débitée)':'Acompte payé')+'</span><span class="v" style="color:#2d9a5e">'+acompte.toFixed(2)+' \u20ac \u2714</span></div>';
     h+='<div class="summary-row"><span>Carte</span><span class="v">'+brand.toUpperCase()+' **** '+last4+'</span></div>';
-    h+='<div class="summary-row"><span>'+(isEmp?(booking.lieu==='domicile'?'À payer sur place':'À payer au salon'):(booking.lieu==='domicile'?'Reste à payer sur place':'Reste à payer au salon'))+'</span><span class="v">'+(isEmp?totalPrix.toFixed(2):(totalPrix-acompte).toFixed(2))+' \u20ac</span></div>';
+    h+='<div class="summary-row"><span>'+(isEmp?(booking.lieu==='domicile'?'À payer sur place':'À payer au salon'):(booking.lieu==='domicile'?'Reste à payer sur place':'Reste à payer au salon'))+'</span><span class="v">'+lxApPfx()+(isEmp?totalPrix.toFixed(2):(totalPrix-acompte).toFixed(2))+' \u20ac</span></div>';
+    h+=lxApNotice(); // 2026-10-15
     h+='</div>';
 
     // Send email receipt if email provided

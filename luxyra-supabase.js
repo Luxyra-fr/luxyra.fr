@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261014-8"; // 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261015-1"; // 2026-10-15 (-1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -2200,8 +2200,11 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     if (svcRes.data && !svcRes.error) {
       window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.services = true;
       SVC = svcRes.data.map(function(s) {
-        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null, devis: s.prix_sur_devis === true };
+        return { id: s.id, n: s.nom, p: Number(s.prix), cat: s.categorie, ordre: s.ordre, phases: s.phases || [], showSite: s.show_site !== false, bookOnline: s.book_online !== false, catGenre: s.cat_genre || null, devis: s.prix_sur_devis === true,
+          apartir: s.prix_a_partir_de === true && s.prix_sur_devis !== true }; // 2026-10-15 : prix = minimum (« à partir de »)
       });
+      // 2026-10-15 : colonne prix_a_partir_de présente en base ? (SQL apartir.sql) — sinon on ne l'écrit pas
+      try { if (svcRes.data.length) window._lxColsCat.svcApd = Object.prototype.hasOwnProperty.call(svcRes.data[0], "prix_a_partir_de"); } catch(_eC) {}
       try { _lxCatSigReset("services", SVC); } catch(_eSig) {} // 2026-10-14 : etat « en base » pour n'ecrire que les lignes modifiees
       // Recalculer CATS — si aucun service encore, applique les defaultCats
       // du métier configuré au lieu de garder les catégories coiffure
@@ -2564,8 +2567,10 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     // (sinon le dernier forfait supprime revenait depuis le cache).
     if (fRes.data && !fRes.error) {
       FORFAITS = fRes.data.map(function(f) {
-        return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false, catGenre: f.cat_genre || null };
+        return { id: f.id, n: f.nom, p: Number(f.prix), cat: f.categorie || "", services: f.services || [], phases: f.phases || [], showSite: f.show_site !== false, bookOnline: f.book_online !== false, catGenre: f.cat_genre || null,
+          devis: f.prix_sur_devis === true, apartir: f.prix_a_partir_de === true && f.prix_sur_devis !== true }; // 2026-10-15
       });
+      try { if (fRes.data.length) { window._lxColsCat.forfDevis = Object.prototype.hasOwnProperty.call(fRes.data[0], "prix_sur_devis"); window._lxColsCat.forfApd = Object.prototype.hasOwnProperty.call(fRes.data[0], "prix_a_partir_de"); } } catch(_eC) {}
       try { _lxCatSigReset("forfaits", FORFAITS); } catch(_eSig) {}
       try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(_eLs) {}
     }
@@ -4481,8 +4486,11 @@ function _lxListeChargee(table, silencieux){
 // par-dessus les modifications faites ailleurs. Chaque resultat est verifie.
 window._lxSvcSig = window._lxSvcSig || {};
 window._lxForfSig = window._lxForfSig || {};
+// 2026-10-15 : colonnes « prix à partir de » / « sur devis » des forfaits : écrites seulement si elles existent en base
+// (vu au chargement) ou si l'option est cochée -> sans le SQL apartir.sql, rien ne change pour les fiches existantes.
+window._lxColsCat = window._lxColsCat || {};
 function _lxSvcPayload(s) {
-  return {
+  var o = {
     salon_id: _salonId, nom: s.n, prix: s.p,
     categorie: s.cat, phases: s.phases || [],
     // FIX 2026-05-13 : cat_genre = tag H/F/E pour les stats genre précises au niveau item
@@ -4490,9 +4498,11 @@ function _lxSvcPayload(s) {
     show_site: s.showSite !== false, book_online: s.bookOnline !== false,
     prix_sur_devis: s.devis === true // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
   };
+  if (window._lxColsCat.svcApd || s.apartir === true) o.prix_a_partir_de = (s.apartir === true && s.devis !== true); // 2026-10-15 : prix minimum
+  return o;
 }
 function _lxForfPayload(f) {
-  return {
+  var o = {
     salon_id: _salonId, nom: f.n, prix: f.p,
     categorie: f.cat, services: f.services || [],
     phases: f.phases || [],
@@ -4500,6 +4510,9 @@ function _lxForfPayload(f) {
     cat_genre: (f.catGenre === 'H' || f.catGenre === 'F' || f.catGenre === 'E') ? f.catGenre : null,
     show_site: f.showSite !== false, book_online: f.bookOnline !== false
   };
+  if (window._lxColsCat.forfDevis || f.devis === true) o.prix_sur_devis = (f.devis === true); // 2026-10-15
+  if (window._lxColsCat.forfApd || f.apartir === true) o.prix_a_partir_de = (f.apartir === true && f.devis !== true);
+  return o;
 }
 function _lxSig(o) { try { return JSON.stringify(o); } catch(_e) { return ""; } }
 // Appele par le chargement : memorise l'etat « en base » de chaque ligne
