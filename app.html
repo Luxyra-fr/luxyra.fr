@@ -9238,9 +9238,29 @@ function _lxOnlineMatchesClient(ro,keys){
 }
 // Retourne l'id de la rdv_online (pending/confirmed) correspondant a un ticket encaisse t, sinon null.
 function _lxFindOnlineRdvForTicket(t){
+  var _r=_lxFindOnlineRdvForTicketBrut(t);
+  // 2026-10-14 (NF525 acompte en ligne) : vente directe rapprochée d'un RDV en ligne dont l'acompte (nouveau modèle) a déjà son
+  // ticket scellé -> on ne rapproche PAS (le ticket venant d'être scellé ne déduit pas l'acompte : il faut encaisser le RDV depuis
+  // le planning). Le RDV reste au planning avec son acompte ; l'opérateur est prévenu.
+  try{
+    if(_r&&t&&!t.onlineId&&window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ var ro=RDV_ONLINE[i]; if(ro&&ro.id===_r){
+      var garde=Math.round((Number(ro.acompte)-(Number(ro.acompteRembourseMontant)||0))*100)/100;
+      if(ro.acompteModele==="ticket"&&ro.acomptePaye&&!ro.acompteRembourse&&garde>0.004){
+        if(window["_lxVdAc_"+(t.id||t.tkNum)]) return null; window["_lxVdAc_"+(t.id||t.tkNum)]=1; // une seule alerte par ticket (le filet de rapprochement repasse régulièrement)
+        if(typeof toast==="function") toast("Ce client a un RDV en ligne avec un acompte d\u00e9j\u00e0 en caisse ("+garde.toFixed(2).replace(".",",")+" \u20ac) : encaissez le rendez-vous depuis le planning pour d\u00e9duire l\u2019acompte.","warning");
+        if(typeof auditLog==="function") auditLog("VENTE_DIRECTE_ACOMPTE_EN_LIGNE","Ticket #"+(t.tkNum||"?")+" non rapproch\u00e9 du RDV en ligne "+_r+" (acompte en ligne "+garde.toFixed(2)+"E d\u00e9j\u00e0 en caisse, non d\u00e9duit)");
+        return null;
+      } break; } } }
+  }catch(_e){}
+  return _r;
+}
+function _lxFindOnlineRdvForTicketBrut(t){
   try{
     if(!t||typeof window.RDV_ONLINE==="undefined"||!window.RDV_ONLINE) return null;
     if(t.onlineId) return t.onlineId;
+    // 2026-10-14 (NF525 acompte en ligne) : un ticket d'acompte / de remboursement / de retenue / contre-ticket n'est PAS un
+    // encaissement de rendez-vous : il ne doit jamais rapprocher (ni fermer) un RDV en ligne.
+    if(t.isAcompte||t.isAcompteCancel||t.isRetenue||t.isCancel||t.acompteKey||t.retenueKey||(t.items||[]).some(function(it){ return it&&(it.isAcompte||it.isAcompteCancel||it.isRetenue); })) return null;
     var keys=_lxClientKeys(t.cId);
     var tPrice=Math.round((Number(t.pr)||0)*100);
     var clientCands=[], priceCands=[];
@@ -9474,6 +9494,21 @@ function _lxApOnlineEnrichir(ap, m){
         ap._fraisDeplAppl=true;
       }
     }
+    // 2026-10-14 (NF525 acompte en ligne) — NOUVEAU MODÈLE (acompte_modele='ticket') : l'acompte a (ou aura) son propre
+    // ticket scellé « Acompte en ligne » ; au RDV il est DÉDUIT du ticket final (ligne « Acompte déjà versé (ticket #X) »)
+    // comme un acompte versé au salon. Montant repris = part CONSERVÉE (acompte - déjà remboursé : chaque remboursement a
+    // son ticket négatif). Le n° de ticket est rafraîchi à chaque passage (il peut être posé après le chargement).
+    if(m.acompteModele==="ticket" && m.acomptePaye && Number(m.acompte)>0){
+      var _garde=Math.round((Number(m.acompte)-(Number(m.acompteRembourseMontant)||0))*100)/100;
+      if(m.acompteRembourse) _garde=0;
+      ap.acompteEnLigneTicket=true;
+      ap.acompteTkNum=m.acompteTkNum||null;
+      if(_garde>0.004){
+        ap.acompte=_garde; ap.acompteMode="En ligne (Stripe)";
+        ap.acompteDate=m.acomptePayeAt?_lxDateParis(m.acomptePayeAt):(m.createdAt?String(m.createdAt).slice(0,10):TD);
+      } else { ap.acompte=0; ap.acompteMode=""; ap.acompteDate=""; }
+      return;
+    }
     if(m.acomptePaye && Number(m.acompte)>0 && !m.acompteRembourse && !(Number(ap.acompte)>0)){
       ap.acompte=Number(m.acompte); ap.acompteMode="En ligne (Stripe)";
       ap.acompteDate=m.acomptePayeAt?_lxDateParis(m.acomptePayeAt):(m.createdAt?String(m.createdAt).slice(0,10):TD); // 2026-10-13 : date réelle du paiement
@@ -9557,12 +9592,14 @@ document.addEventListener("visibilitychange",function(){
     if(typeof reloadFromSupabase!=="function") return;
     if(/^(home|stats|accounting|planning)$/.test(window._currentPage||"")){ reloadFromSupabase("appointments"); }
     else if(/^(clients|detail)$/.test(window._currentPage||"")){ reloadFromSupabase("clients"); }
+    try{ if(typeof lxAcomptesEnLigneSync==="function") setTimeout(function(){ lxAcomptesEnLigneSync(false); },2500); }catch(_eAcF){} // 2026-10-14 (NF525 acompte en ligne) : au retour au premier plan
     // Recharge aussi les horaires collaborateurs (mode Personnalisés) au retour sur le planning
     if(window._currentPage==="planning"){ try{reloadFromSupabase("collaborateurs");}catch(_e){} }
   }catch(_e){}
 });
 window._rdvPollInterval=setInterval(function(){
   try{ if(typeof lxRetenuesSync==="function") lxRetenuesSync(false); }catch(_eRet){} // 2026-10-11 (limité à 1 passage / 5 min)
+  try{ if(typeof lxAcomptesEnLigneSync==="function") lxAcomptesEnLigneSync(false); }catch(_eAcE){} // 2026-10-14 (NF525 acompte en ligne) : tickets d'acompte / de remboursement en attente (≤ 1 passage / 2 min)
   try{ if(!window._lxCorrLoaded && typeof lxCorrReglCharger==="function") lxCorrReglCharger(); }catch(_eCr){} // 2026-10-11 corrections de règlement
   // 2026-10-11 : JET 80 (démarrage) une fois par session + version installée (JET 250/255, une fois par version)
   try{ if(_salonId && !window._lxJetDemarre && !window._lxVueAdmin){ window._lxJetDemarre=true;
@@ -9579,7 +9616,9 @@ window._rdvPollInterval=setInterval(function(){
       else if(/^(clients|detail)$/.test(window._currentPage||"")){ try{reloadFromSupabase("clients");}catch(_e){} }
     }
     var today=new Date().toISOString().slice(0,10);
-    _sb.from("rdv_online").select("id,status,client_nom,client_prenom,client_tel,client_email,client_luxyra_id,service_nom,service_id,service_prix,salon_edit,salon_modified_at,salon_modified_acknowledged_by_client,salon_modified_acknowledged_at,collaborateur_id,date_rdv,heure_rdv,duree_minutes,created_at,modification_demandee,modification_date,modification_heure,modification_message,modification_status,cancelled_by,cancel_reason,cancelled_at,acompte_montant,acompte_paye,items,payment_intent_id,empreinte_status,empreinte_amount,empreinte_held_at,empreinte_captured_at,empreinte_released_at,salon_id,collaborateur_nom,message,confirmed_at,acompte_rembourse,refunded_at,lieu,client_adresse,client_adresse_cp,client_adresse_ville,adresse_complement,client_lat,client_lng,distance_km,frais_deplacement_montant,remise_carte_montant").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
+    // 2026-10-14 (NF525 acompte en ligne) : « * » (toutes les colonnes, dont acompte_modele / acompte_tk_num / remboursements /
+    // acompte_paye_at / acompte_rembourse_montant / retenue_at) : la relecture reste valide avant comme après l'ajout des colonnes.
+    _sb.from("rdv_online").select("*").eq("salon_id",_salonId).gte("date_rdv",today).then(function(r){
       if(r.data&&r.data.length>0){
         var newCount=0;var newRdvCount=0;var newEvents=[];
         r.data.forEach(function(rdv){
@@ -9605,6 +9644,9 @@ window._rdvPollInterval=setInterval(function(){
             // 2026-10-10 : acompte et remboursement toujours à jour ; une réservation qui vient d'être
             // payée (pending_payment -> confirmée) apparaît au planning sans recharger l'app.
             upd.acompte=Number(rdv.acompte_montant)||0; upd.acomptePaye=!!rdv.acompte_paye; upd.acompteRembourse=!!rdv.acompte_rembourse;
+            // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle (ticket d'acompte, remboursements ticketés) toujours à jour
+            upd.acompteRembourseMontant=Number(rdv.acompte_rembourse_montant)||0; upd.acompteModele=rdv.acompte_modele||null; upd.acompteTkNum=rdv.acompte_tk_num||null;
+            upd.remboursements=Array.isArray(rdv.remboursements)?rdv.remboursements:[]; upd.retenueAt=rdv.retenue_at||null; upd.acomptePayeAt=rdv.acompte_paye_at||upd.acomptePayeAt||null;
             if(rdv.status==="cancelled"||rdv.status==="cancelled_by_client"||rdv.status==="done"||rdv.status==="refused"){_lxRemoveOnlineFromAP(rdv.id);}
             else if(!_localFin&&(rdv.status==="pending"||rdv.status==="confirmed")){
               _lxOnlineToAP(rdv);
@@ -12197,7 +12239,10 @@ function clickAppt(id){
   if(a.st==="conf"){
     if(a.acompte>0&&a.acompteMode&&a.acompteMode.indexOf("ligne")>=0){
       // Online payment - read only, no modification
-      htm+='<div style="width:100%;margin-top:8px;padding:10px;background:rgba(108,92,231,.08);border:1px solid rgba(108,92,231,.2);border-radius:10px;text-align:center;font-size:12px;color:#a29bfe">\ud83d\udd12 Acompte en ligne \u2014 non modifiable</div>';
+      // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle -> n° du ticket scellé « Acompte en ligne » (ou création en attente)
+      var _acEL=(a.acompteEnLigneTicket===true)?(a.acompteTkNum?'<br><span style="color:#2d9a5e">Ticket de caisse #'+a.acompteTkNum+' (d\u00e9duit \u00e0 l\u2019encaissement)</span>':'<br><span style="color:#ff9800">Ticket de caisse en cours de cr\u00e9ation\u2026</span>'):'';
+      htm+='<div style="width:100%;margin-top:8px;padding:10px;background:rgba(108,92,231,.08);border:1px solid rgba(108,92,231,.2);border-radius:10px;text-align:center;font-size:12px;color:#a29bfe">\ud83d\udd12 Acompte en ligne \u2014 non modifiable'+_acEL+'</div>';
+      if(a.acompteEnLigneTicket===true&&!a.acompteTkNum){ try{ if(typeof lxAcomptesEnLigneSync==="function") setTimeout(function(){ lxAcomptesEnLigneSync(true); },300); }catch(_eAcO){} }
     }else if(a.acompte>0){
       // Manual acompte - can cancel and redo (NF525)
       htm+='<div style="display:flex;gap:6px;margin-top:8px">';
@@ -12903,13 +12948,14 @@ function _cancelApptDo(id){
 function lxAcompteChoixAbsent(id){
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a) return;
   var ac=Math.round((Number(a.acompte)||0)*100)/100, f=function(n){ return Number(n).toFixed(2).replace(".",","); };
+  window._lxAcChoixEL=(a.acompteEnLigneTicket===true)?(a.acompteTkNum||"?"):null; // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle (déjà en caisse)
   var m='<div class="mbox" style="max-width:440px"><h2 style="text-align:center">Acompte de '+f(ac)+' \u20ac</h2>';
   m+='<div style="font-size:13px;color:var(--text2);text-align:center;margin-bottom:14px">Le client ne vient pas. Que faites-vous de l\u2019acompte pay\u00e9 en ligne ?</div>';
   m+='<button class="btn" style="width:100%;padding:13px;margin-bottom:10px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="window._lxCancelBy=\'no_show\';_cancelApptDo(\''+id+'\')">Conserver tout l\u2019acompte ('+f(ac)+' \u20ac)</button>';
   m+='<div style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px"><div style="font-weight:700;font-size:13px;margin-bottom:8px">Rembourser une partie</div>';
   m+='<div style="display:flex;gap:8px"><input id="lxRpVal" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex : 50" style="flex:1;padding:11px;border-radius:10px" oninput="lxAcompteApercu('+ac+')">';
   m+='<select id="lxRpUnit" style="width:90px;padding:11px;border-radius:10px" onchange="lxAcompteApercu('+ac+')"><option value="pct">%</option><option value="eur">\u20ac</option></select></div>';
-  m+='<div id="lxRpApercu" style="font-size:12px;color:var(--text3);margin-top:6px">Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.</div>';
+  m+='<div id="lxRpApercu" style="font-size:12px;color:var(--text3);margin-top:6px">'+(window._lxAcChoixEL?'Le reste est conserv\u00e9 (d\u00e9j\u00e0 en caisse : ticket d\u2019acompte #'+window._lxAcChoixEL+') ; le remboursement donne un ticket n\u00e9gatif.':'Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.')+'</div>';
   m+='<button class="btn bg" id="lxRpBtn" style="width:100%;padding:12px;margin-top:8px;font-weight:700" onclick="lxAcompteRembourserPartie(\''+id+'\','+ac+')">Rembourser et annuler le rendez-vous</button></div>';
   m+='<button class="btn" style="width:100%;padding:10px;background:var(--bg2);font-size:12px" onclick="cM()">Retour</button></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+m+'</div></div>';
@@ -12923,7 +12969,7 @@ function _lxAcompteMontantSaisi(ac){
 function lxAcompteApercu(ac){
   var x=_lxAcompteMontantSaisi(ac), el=document.getElementById("lxRpApercu"); if(!el) return;
   var f=function(n){ return Number(n).toFixed(2).replace(".",","); };
-  el.textContent=x>0?("Rembours\u00e9 au client : "+f(x)+" \u20ac \u2014 conserv\u00e9 (ticket en caisse) : "+f(Math.round((ac-x)*100)/100)+" \u20ac"):"Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.";
+  el.textContent=x>0?("Rembours\u00e9 au client : "+f(x)+" \u20ac"+(window._lxAcChoixEL?" (ticket n\u00e9gatif en caisse)":"")+" \u2014 conserv\u00e9 "+(window._lxAcChoixEL?"(d\u00e9j\u00e0 en caisse, ticket #"+window._lxAcChoixEL+")":"(ticket en caisse)")+" : "+f(Math.round((ac-x)*100)/100)+" \u20ac"):(window._lxAcChoixEL?"Le reste est conserv\u00e9 (d\u00e9j\u00e0 en caisse : ticket d\u2019acompte #"+window._lxAcChoixEL+") ; le remboursement donne un ticket n\u00e9gatif.":"Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.");
 }
 async function lxAcompteRembourserPartie(id, ac){
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a||!a.onlineId) return;
@@ -12936,6 +12982,7 @@ async function lxAcompteRembourserPartie(id, ac){
     if(typeof auditLog==="function") auditLog("ACOMPTE_REMBOURSE_PARTIEL",((a.clientName||"")+" RDV du "+(a.date||"")+" "+(a.time||"")+" - rembours\u00e9 "+Number(d.rembourse).toFixed(2)+"E, conserv\u00e9 "+Number(d.conserve).toFixed(2)+"E").trim());
     toast("\u2705 "+Number(d.rembourse).toFixed(2).replace(".",",")+" \u20ac rembours\u00e9s au client"+(d.conserve>0?" \u2014 "+Number(d.conserve).toFixed(2).replace(".",",")+" \u20ac conserv\u00e9s":""),"success");
     window._lxCancelBy="no_show"; _doCancelApptUnpaid(id); window._lxCancelBy=null; cM(); go("planning");
+    try{ if(typeof lxAcomptesEnLigneSync==="function") setTimeout(function(){ lxAcomptesEnLigneSync(true); },1500); }catch(_eAcR){} // 2026-10-14 (NF525 acompte en ligne) : ticket négatif de remboursement
   }catch(e){ toast("Remboursement impossible : "+(e.message||e),"error"); if(b){ b.disabled=false; b.textContent="Rembourser et annuler le rendez-vous"; } }
 }
 // FIX 2026-07-04 (BUG A) : annulation salon d'un RDV EN LIGNE (ghost "online_<uuid>").
@@ -12965,6 +13012,8 @@ function _lxCancelOnlineRdv(rdvId, reason){
     _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).then(function(res){
       if(res&&res.error){ try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
       if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200);
+      // 2026-10-14 (NF525 acompte en ligne) : le remboursement automatique (annulation par l'établissement) est fait par le serveur
+      // (cron) ; le ticket négatif est créé au passage suivant de lxAcomptesEnLigneSync (poll / retour au premier plan / démarrage).
       // 2026-10-11 : le client est prévenu quand l'établissement annule (avant : il ne le voyait qu'en ouvrant son espace)
       if(_by==="salon" && _prevenir && _roMsg && typeof _lxMessageCliente==="function"){
         try{
@@ -13056,12 +13105,16 @@ async function lxRetenuesSync(force){
   try{
     TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
     if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]) return;
-    var sel="id,salon_id,status,cancelled_by,client_nom,client_prenom,client_luxyra_id,client_email,client_tel,service_id,service_nom,collaborateur_id,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_rembourse,retenue_at,retenue_tk_num,retenue_claim_at,empreinte_status,empreinte_amount,empreinte_captured_at,empreinte_tk_num,empreinte_claim_at,acompte_rembourse_montant";
+    // 2026-10-14 (NF525 acompte en ligne) : « * » pour lire aussi acompte_modele (colonne ajoutée par docs/sql_acompte_en_ligne.sql)
+    // sans casser la requête tant qu'elle n'existe pas.
+    var sel="*";
     var a1=await _sb.from("rdv_online").select(sel).eq("salon_id",_salonId).eq("status","cancelled").eq("acompte_paye",true).eq("acompte_rembourse",false).not("retenue_at","is",null).is("retenue_tk_num",null).gt("acompte_montant",0).limit(20);
     var a2=await _sb.from("rdv_online").select(sel).eq("salon_id",_salonId).eq("empreinte_status","captured").is("empreinte_tk_num",null).gt("empreinte_amount",0).limit(20);
     var travaux=[];
     // 2026-10-13 : remboursement partiel -> seule la partie CONSERVÉE est une recette (ticket scellé)
-    ((a1&&a1.data)||[]).forEach(function(r){ var _k=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(_k>0) travaux.push({r:r,type:"acompte",montant:_k}); });
+    // 2026-10-14 (NF525 acompte en ligne) : NOUVEAU MODÈLE (acompte_modele='ticket') -> la recette a déjà été scellée le jour
+    // du paiement (ticket « Acompte en ligne ») : un acompte conservé ne crée RIEN de plus (jamais de ticket « Acompte conservé »).
+    ((a1&&a1.data)||[]).forEach(function(r){ if(r.acompte_modele==="ticket") return; var _k=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(_k>0) travaux.push({r:r,type:"acompte",montant:_k}); });
     ((a2&&a2.data)||[]).forEach(function(r){ travaux.push({r:r,type:"empreinte",montant:Math.round(Number(r.empreinte_amount)*100)/100}); });
     if(!travaux.length) return;
     // Journée déjà clôturée en base ? (clôture automatique ou autre appareil)
@@ -13123,6 +13176,198 @@ async function _lxRetenueTicket(t){
   try{ if(typeof toast==="function") toast((acompte?"Acompte conservé":"Empreinte encaissée")+" enregistré en caisse : "+t.montant.toFixed(2).replace(".",",")+" \u20ac (ticket #"+numRef+")","info"); }catch(_e){}
 }
 window.lxRetenuesSync=lxRetenuesSync;
+// =====================================================================
+// 2026-10-14 (NF525 acompte en ligne) — ACOMPTE PAYÉ EN LIGNE = TICKET SCELLÉ DÈS LE PAIEMENT (nouveau modèle)
+// Base légale : TVA des prestations exigible à l'encaissement de l'acompte (CGI 269-2-c ; BOI-TVA-DECLA-30-10-30 § 30/35/37),
+// toute recette enregistrée et scellée (art. 286-I-3° bis CGI). Le serveur (worker Stripe) enregistre le paiement
+// (rdv_online.acompte_paye / acompte_paye_at) ; le trigger base pose acompte_modele='ticket'. L'application PRO crée ensuite
+// le ticket scellé « Acompte en ligne » (mode « En ligne (Stripe) », TVA au taux du salon, 0 % en franchise), même motif
+// que les retenues (lxRetenuesSync) :
+//  - jamais côté serveur : la numérotation (tkN), le chaînage de appointments (chainTicket / _lastTicketHash) et la Z sont
+//    calculés dans l'application ; un ticket inséré par le serveur casserait la chaîne mémoire et le compteur ;
+//  - le ticket est daté du jour de sa création (jamais antidaté, jamais sur une journée clôturée) ; la DATE DE RÈGLEMENT
+//    (paiement Stripe) est conservée (raw_data.datePaiement) et imprimée ; les rapports « à l'encaissement » (TVA, livre
+//    des recettes) utilisent la date de paiement ;
+//  - anti-doublon : verrou définitif rdv_online.acompte_tk_claim_at (un seul appareil), contrôle base par clé
+//    raw_data->>acompteKey (index unique tickets_acompte_key_unique), contrôle mémoire (AP).
+// Remboursement (total ou partiel, par le salon, le client dans les délais, la politique %) : chaque entrée de
+// rdv_online.remboursements sans « tk » donne UN ticket NÉGATIF « Remboursement acompte en ligne (ticket #X) », daté du
+// jour de sa création, remboursement daté dans raw_data.dateRemboursement ; l'entrée reçoit son n° via la RPC
+// lx_acompte_remb_ticketer (atomique). Acompte conservé (absence) : rien de plus (recette déjà scellée).
+// Ancien modèle (acompte_modele NULL : payé avant la mise en service) : strictement inchangé (mode de règlement du ticket
+// final, ticket « Acompte conservé » par lxRetenuesSync).
+// =====================================================================
+var _lxAcEnLigneDernier=0, _lxAcEnLigneEnCours=false;
+function _lxAcEnLigneClePaiement(rid){ return "acompte:"+rid; }
+function _lxAcEnLigneCleRemb(rid, e){ return "rembacompte:"+rid+":"+String((e&&(e.refund_id||e.at))||""); }
+async function lxAcomptesEnLigneSync(force){
+  if(_lxAcEnLigneEnCours) return false;
+  if(!force && Date.now()-_lxAcEnLigneDernier<2*60*1000) return false;
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin||window._lxDemo||window._archiveMode) return false;
+  if(typeof _isOnline!=="undefined" && !_isOnline) return false;
+  if(new Date().getHours()>=23) return false; // jamais pendant la fenêtre de clôture automatique (23:30)
+  _lxAcEnLigneDernier=Date.now(); _lxAcEnLigneEnCours=true;
+  var fait=0;
+  try{
+    TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+    if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]) return false;
+    // 1) acomptes payés (nouveau modèle) sans ticket d'acompte
+    var a1=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).eq("acompte_modele","ticket").eq("acompte_paye",true).is("acompte_tk_num",null).gt("acompte_montant",0).order("acompte_paye_at",{ascending:true,nullsFirst:true}).limit(20);
+    if(a1&&a1.error){ console.warn("[lxAcomptesEnLigneSync] lecture",a1.error.message); return false; } // colonne absente (SQL non appliqué) : rien à faire
+    // 2) remboursements (nouveau modèle, ticket d'acompte existant) dont une entrée n'est pas encore ticketée
+    var depuis=new Date(Date.now()-400*86400000).toISOString();
+    var a2=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).eq("acompte_modele","ticket").not("acompte_tk_num","is",null).gt("acompte_rembourse_montant",0).gte("refunded_at",depuis).limit(500);
+    var travaux=[];
+    ((a1&&a1.data)||[]).forEach(function(r){ travaux.push({type:"acompte",r:r}); });
+    ((a2&&a2.data)||[]).forEach(function(r){ var h=Array.isArray(r.remboursements)?r.remboursements:[]; if(h.some(function(e){ return e&&Number(e.montant)>0&&!(Number(e.tk)>0); })) travaux.push({type:"remb",r:r}); });
+    if(!travaux.length) return false;
+    // Journée déjà clôturée en base ? (clôture automatique ou autre appareil)
+    var cz=await _sb.from("clotures").select("id").eq("salon_id",_salonId).eq("date_cloture",TD).limit(1);
+    if(cz&&cz.data&&cz.data.length){ if(!window.LOCKED_DAYS)window.LOCKED_DAYS={}; window.LOCKED_DAYS[TD]=true; return false; }
+    for(var i=0;i<travaux.length;i++){
+      try{ if(travaux[i].type==="acompte"){ if(await _lxAcompteEnLigneTicket(travaux[i].r)) fait++; } else { fait+=await _lxAcompteEnLigneRembTickets(travaux[i].r); } }
+      catch(_eT){ console.warn("[acompte en ligne]",_eT); }
+    }
+  }catch(e){ console.warn("[lxAcomptesEnLigneSync]",e); }
+  finally{ _lxAcEnLigneEnCours=false; }
+  if(fait){ try{ window._apDirty=true; }catch(_eR){} } // le rafraîchissement périodique du planning / de l'accueil reprend les nouveaux tickets
+  return fait>0;
+}
+// Report du n° de ticket d'acompte sur le rendez-vous en mémoire (planning) : déduction au ticket final.
+function _lxAcEnLigneReporterAP(rid, num){
+  try{ for(var k=0;k<AP.length;k++){ var a=AP[k]; if(a&&a.onlineId===rid&&a.st!=="done"&&!a.tkNum){ a.acompteEnLigneTicket=true; if(num) a.acompteTkNum=num; } } }catch(_e){}
+}
+function _lxAcEnLigneRdvLib(r){
+  var quand=_lxDateFrCourte(r.date_rdv)+(r.heure_rdv?" "+String(r.heure_rdv).slice(0,5):"");
+  var sv=(r.service_id&&typeof gS==="function")?gS(r.service_id):null;
+  return {quand:quand, service:(r.service_nom||(sv?sv.n:"")||"Prestation"), client:[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim()};
+}
+// Ticket scellé « Acompte en ligne » (montant payé, mode « En ligne (Stripe) »). Retourne true si un ticket a été créé/reporté.
+async function _lxAcompteEnLigneTicket(r){
+  var key=_lxAcEnLigneClePaiement(r.id), montant=Math.round(Number(r.acompte_montant)*100)/100;
+  if(!(montant>0)) return false;
+  // 1) déjà en base (autre appareil, ou file de secours rejouée) ? -> on reporte juste le numéro
+  var ex=await _sb.from("tickets").select("id,num").eq("salon_id",_salonId).eq("raw_data->>acompteKey",key).limit(1);
+  if(!ex||ex.error) return false;
+  if(ex.data&&ex.data.length){ await _sb.from("rdv_online").update({acompte_tk_num:ex.data[0].num}).eq("id",r.id).eq("salon_id",_salonId); _lxAcEnLigneReporterAP(r.id, ex.data[0].num); return true; }
+  // 2) déjà créé sur cet appareil (enregistrement en attente de réseau) ?
+  for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].acompteKey===key){ _lxAcEnLigneReporterAP(r.id, AP[k].tkNum); return false; } }
+  // 3) verrou définitif : un seul appareil crée le ticket (jamais repris automatiquement -> aucun doublon possible)
+  if(r.acompte_tk_claim_at){
+    try{ if(Date.now()-new Date(r.acompte_tk_claim_at).getTime()>24*3600*1000 && !window["_lxAcAlerte_"+key]){ window["_lxAcAlerte_"+key]=1;
+      if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"lxAcomptesEnLigneSync",msg:"Acompte en ligne verrouillé sans ticket depuis +24h",key:key,montant:montant}).slice(0,2000)); } }catch(_eA){}
+    return false;
+  }
+  var cl=await _sb.from("rdv_online").update({acompte_tk_claim_at:new Date().toISOString()}).eq("id",r.id).eq("salon_id",_salonId).is("acompte_tk_num",null).is("acompte_tk_claim_at",null).select("id");
+  if(!cl||cl.error||!cl.data||!cl.data.length) return false;
+  // 4) ticket scellé, daté du jour (jamais antidaté) ; date de règlement = paiement Stripe
+  var L=_lxAcEnLigneRdvLib(r), datePaie=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at)||TD;
+  var lib="Acompte en ligne - "+L.service+" (RDV du "+L.quand+", payé le "+_lxDateFrCourte(datePaie)+")";
+  TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+  nextTicketNum();
+  var _cId="passage"; try{ if(typeof _lxResolveClientId==="function"){ var _rc=_lxResolveClientId(r); if(_rc) _cId=_rc; } }catch(_eRc){}
+  var tk={id:U(),cId:_cId,fromCaisse:true,sId:r.service_id||null,stId:(r.collaborateur_id!=null?r.collaborateur_id:_defaultCollabId()),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),
+    pr:montant,brutTotal:montant,remise:0,items:[{name:lib,price:montant,qty:1,remise:0,ci:0,isAcompte:true,isAcompteEnLigne:true}],st:"done",met:"En ligne (Stripe)",tkNum:tkN,
+    clientNom:r.client_nom||null,clientPrenom:r.client_prenom||null,isAcompte:true,isAcompteEnLigne:true,acompteKey:key,acompteRdv:r.id,apptId:"online_"+r.id,datePaiement:datePaie,
+    comment:"Acompte payé en ligne le "+_lxDateFrCourte(datePaie)+" (Stripe) pour le RDV du "+L.quand+" - "+L.client};
+  if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){ tk.operator_id=CURRENT_OPERATOR.id; tk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:""); }
+  chainTicket(tk); AP.push(tk);
+  if(typeof saveAppointment==="function") saveAppointment(tk);
+  var res=(typeof saveTicketToDb==="function")?await saveTicketToDb(tk):null;
+  var numRef=(res&&res.num)?res.num:tk.tkNum;
+  if(res&&res.num){ await _sb.from("rdv_online").update({acompte_tk_num:res.num}).eq("id",r.id).eq("salon_id",_salonId); }
+  _lxAcEnLigneReporterAP(r.id, (res&&res.num)?res.num:null);
+  if(typeof auditLog==="function") auditLog("ACOMPTE_EN_LIGNE",lib+" - "+montant.toFixed(2)+"E - Ticket #"+numRef+(datePaie!==TD?" (réglement du "+datePaie+")":"")+(res?"":" (envoi en attente)"));
+  try{ if(typeof toast==="function") toast("Acompte en ligne enregistré en caisse : "+montant.toFixed(2).replace(".",",")+" € (ticket #"+numRef+")","info"); }catch(_e){}
+  return true;
+}
+// Tickets NÉGATIFS « Remboursement acompte en ligne » pour chaque entrée de remboursements non ticketée. Retourne le nombre créés.
+async function _lxAcompteEnLigneRembTickets(r){
+  var hist=Array.isArray(r.remboursements)?r.remboursements:[], n=0;
+  var attente=hist.filter(function(e){ return e&&Number(e.montant)>0&&!(Number(e.tk)>0); });
+  if(!attente.length||!(Number(r.acompte_tk_num)>0)) return 0;
+  // 1) entrées déjà en base (autre appareil) -> on reporte juste le numéro
+  var reste=[];
+  for(var i=0;i<attente.length;i++){
+    var e=attente[i], key=_lxAcEnLigneCleRemb(r.id,e);
+    var ex=await _sb.from("tickets").select("id,num").eq("salon_id",_salonId).eq("raw_data->>acompteKey",key).limit(1);
+    if(!ex||ex.error) return 0;
+    if(ex.data&&ex.data.length){ await _sb.rpc("lx_acompte_remb_ticketer",{p_rdv:r.id,p_cle:String(e.refund_id||e.at||""),p_tk:ex.data[0].num}); continue; }
+    var local=false; for(var k=0;k<AP.length;k++){ if(AP[k]&&AP[k].acompteKey===key){ local=true; break; } }
+    if(!local) reste.push(e);
+  }
+  if(!reste.length){ try{ await _sb.rpc("lx_acompte_remb_liberer",{p_rdv:r.id}); }catch(_eL){} return 0; }
+  // 2) verrou définitif (un seul appareil) ; libéré par la RPC quand toutes les entrées sont ticketées
+  if(r.acompte_remb_claim_at){
+    try{ if(Date.now()-new Date(r.acompte_remb_claim_at).getTime()>24*3600*1000 && !window["_lxAcRAlerte_"+r.id]){ window["_lxAcRAlerte_"+r.id]=1;
+      if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"lxAcomptesEnLigneSync",msg:"Remboursement d'acompte en ligne verrouillé sans ticket depuis +24h",rdv:r.id}).slice(0,2000)); } }catch(_eA){}
+    return 0;
+  }
+  var cl=await _sb.from("rdv_online").update({acompte_remb_claim_at:new Date().toISOString()}).eq("id",r.id).eq("salon_id",_salonId).is("acompte_remb_claim_at",null).select("id");
+  if(!cl||cl.error||!cl.data||!cl.data.length) return 0;
+  var L=_lxAcEnLigneRdvLib(r), orig=Number(r.acompte_tk_num);
+  for(var j=0;j<reste.length;j++){
+    var e2=reste[j], m=Math.round(Number(e2.montant)*100)/100, key2=_lxAcEnLigneCleRemb(r.id,e2), dRemb=_lxDateParis(e2.at)||TD;
+    var qui=(e2.par==="etablissement")?"par l’établissement":(e2.par==="politique"?"politique d’annulation":"annulation");
+    var lib="Remboursement acompte en ligne (ticket #"+orig+") - "+L.service+" (RDV du "+L.quand+", remboursé le "+_lxDateFrCourte(dRemb)+", "+qui+")";
+    TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
+    nextTicketNum();
+    var _cId="passage"; try{ if(typeof _lxResolveClientId==="function"){ var _rc=_lxResolveClientId(r); if(_rc) _cId=_rc; } }catch(_eRc){}
+    var tk={id:U(),cId:_cId,fromCaisse:true,sId:r.service_id||null,stId:(r.collaborateur_id!=null?r.collaborateur_id:_defaultCollabId()),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),
+      pr:-m,brutTotal:-m,remise:0,items:[{name:lib,price:-m,qty:1,remise:0,ci:0,isAcompteCancel:true,isAcompteEnLigne:true,origTkNum:orig,origTkNums:[orig]}],st:"done",met:"En ligne (Stripe)",tkNum:tkN,
+      clientNom:r.client_nom||null,clientPrenom:r.client_prenom||null,isAcompteCancel:true,isAcompteEnLigne:true,origTkNum:orig,origTkNums:[orig],acompteKey:key2,acompteRdv:r.id,apptId:"online_"+r.id,
+      dateRemboursement:dRemb,refundId:(e2.refund_id||null),
+      comment:"Remboursement Stripe du "+_lxDateFrCourte(dRemb)+" de l’acompte en ligne (ticket #"+orig+") - RDV du "+L.quand+" - "+L.client};
+    if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){ tk.operator_id=CURRENT_OPERATOR.id; tk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:""); }
+    chainTicket(tk); AP.push(tk);
+    if(typeof saveAppointment==="function") saveAppointment(tk);
+    var res=(typeof saveTicketToDb==="function")?await saveTicketToDb(tk):null;
+    var numRef=(res&&res.num)?res.num:tk.tkNum;
+    if(res&&res.num){ try{ await _sb.rpc("lx_acompte_remb_ticketer",{p_rdv:r.id,p_cle:String(e2.refund_id||e2.at||""),p_tk:res.num}); }catch(_eRpc){} }
+    if(typeof auditLog==="function") auditLog("ACOMPTE_EN_LIGNE_REMBOURSE",lib+" - -"+m.toFixed(2)+"E - Ticket #"+numRef+(res?"":" (envoi en attente)"));
+    try{ if(typeof toast==="function") toast("Remboursement d’acompte en ligne enregistré en caisse : -"+m.toFixed(2).replace(".",",")+" € (ticket #"+numRef+")","info"); }catch(_e){}
+    n++;
+  }
+  try{ await _sb.rpc("lx_acompte_remb_liberer",{p_rdv:r.id}); }catch(_eL2){}
+  // part conservée mise à jour sur le rendez-vous en mémoire (déduction au ticket final)
+  try{ var garde=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(r.acompte_rembourse) garde=0;
+    for(var k2=0;k2<AP.length;k2++){ var a=AP[k2]; if(a&&a.onlineId===r.id&&a.st!=="done"&&!a.tkNum){ a.acompteEnLigneTicket=true; a.acompteTkNum=orig; a.acompte=garde>0.004?garde:0; if(!(garde>0.004)){ a.acompteMode=""; a.acompteDate=""; } } } }catch(_eG){}
+  return n;
+}
+// Avant le scellement du ticket final d'un RDV en ligne (nouveau modèle) : le ticket d'acompte doit exister ; sinon on le crée
+// maintenant (synchronisation forcée). Retourne null si l'encaissement peut continuer, sinon le message d'erreur.
+async function _lxAcompteEnLigneAvantEncaissement(){
+  try{
+    if(!_tk||!_tk.apptId) return null;
+    var ap=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===_tk.apptId){ ap=AP[i]; break; } }
+    var onlineId=(ap&&ap.onlineId)||((typeof _tk.apptId==="string"&&_tk.apptId.indexOf("online_")===0)?_tk.apptId.slice(7):null);
+    if(!onlineId) return null;
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxDemo) return null;
+    if(typeof _isOnline!=="undefined"&&!_isOnline){ return (_tk.acompteEnLigneTicket&&!_tk.acompteTkNum)?"Hors ligne : le ticket d’acompte en ligne de ce rendez-vous n’est pas encore enregistré en caisse. Reconnectez-vous puis réessayez.":null; }
+    var q=await _lxAvecDelai(_sb.from("rdv_online").select("*").eq("id",onlineId).eq("salon_id",_salonId).maybeSingle(),5000);
+    if(!q||q.error||q.__delai||!q.data) return (_tk.acompteEnLigneTicket&&!_tk.acompteTkNum)?"Le ticket d’acompte en ligne de ce rendez-vous n’a pas pu être vérifié (réseau). Réessayez dans un instant.":null;
+    var r=q.data;
+    if(r.acompte_modele!=="ticket"||r.acompte_paye!==true||!(Number(r.acompte_montant)>0)){ if(_tk.acompteEnLigneTicket){ delete _tk.acompteEnLigneTicket; } return null; } // ancien modèle / pas d'acompte : inchangé
+    if(!(Number(r.acompte_tk_num)>0)){
+      await lxAcomptesEnLigneSync(true);
+      var q2=await _lxAvecDelai(_sb.from("rdv_online").select("acompte_tk_num").eq("id",onlineId).eq("salon_id",_salonId).maybeSingle(),5000);
+      r.acompte_tk_num=(q2&&q2.data)?q2.data.acompte_tk_num:null;
+      if(!(Number(r.acompte_tk_num)>0)) return "L’acompte payé en ligne ("+Number(r.acompte_montant).toFixed(2).replace(".",",")+" €) n’a pas encore son ticket de caisse (journée clôturée, autre appareil en cours ou réseau). Réessayez dans un instant ; le ticket d’acompte doit exister avant d’être déduit.";
+    }
+    var garde=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(r.acompte_rembourse) garde=0;
+    _tk.acompteEnLigneTicket=true; _tk.acompteTkNum=Number(r.acompte_tk_num);
+    if(ap){ ap.acompteEnLigneTicket=true; ap.acompteTkNum=Number(r.acompte_tk_num); }
+    // montant déduit = part conservée ; si elle a changé depuis l'ouverture de la caisse (remboursement entre-temps), le règlement
+    // saisi est remis à zéro par _lxReglementTotalAJour (ticket jamais scellé avec des règlements supérieurs au total)
+    if(Math.abs((Number(_tk.acompte)||0)-garde)>0.004){
+      _tk.acompte=garde>0.004?garde:0; if(!(garde>0.004)){ _tk.acompteMode=""; } if(ap){ ap.acompte=_tk.acompte; }
+      _tk.payments=[]; _tk.paid=0;
+      return "La part conservée de l’acompte en ligne a changé (remboursement effectué entre-temps) : elle est maintenant de "+_tk.acompte.toFixed(2).replace(".",",")+" €. Le règlement est remis à zéro : saisissez-le de nouveau.";
+    }
+    return null;
+  }catch(e){ console.warn("[_lxAcompteEnLigneAvantEncaissement]",e); return null; }
+}
+window.lxAcomptesEnLigneSync=lxAcomptesEnLigneSync;
 
 function _doCancelApptUnpaid(id){
   // Annulation simple sans check du lien (utilis\u00e9 par _cancelApptDo direct ou via choix "annuler les 2")
@@ -23341,13 +23586,15 @@ async function _lxPaiementsEnLigne(mois){
   var fin=b.finExcl+"T23:59:59Z"; // filtrage exact au jour de Paris ensuite
   // 2026-10-14 (NF525) : les acomptes dont la date de paiement n'est pas renseignée (acompte_paye_at NULL, anciens
   // enregistrements) étaient ignorés par le filtre de date -> ils sont repris sur created_at (déjà la règle d'affichage).
-  var r1=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye,acompte_paye_at,acompte_rembourse,acompte_rembourse_montant,remboursements,created_at,refunded_at,status,ticket_num,retenue_tk_num").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).or("and(acompte_paye_at.gte."+depuis+",acompte_paye_at.lt."+fin+"),and(acompte_paye_at.is.null,created_at.gte."+depuis+",created_at.lt."+fin+")").order("acompte_paye_at",{ascending:false,nullsFirst:false}).limit(5000);
+  // 2026-10-14 (NF525 acompte en ligne) : « * » pour lire aussi acompte_modele / acompte_tk_num (colonnes ajoutées par docs/sql_acompte_en_ligne.sql)
+  var r1=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).or("and(acompte_paye_at.gte."+depuis+",acompte_paye_at.lt."+fin+"),and(acompte_paye_at.is.null,created_at.gte."+depuis+",created_at.lt."+fin+")").order("acompte_paye_at",{ascending:false,nullsFirst:false}).limit(5000);
   if(r1.error) throw new Error(r1.error.message);
   var r2=await _sb.from("commandes_online").select("id,numero,client_nom,total,paye,paye_at,status,collected_at,ticket_num,refund_id,cancelled_at").eq("salon_id",_salonId).eq("paye",true).gte("paye_at",depuis).lt("paye_at",fin).order("paye_at",{ascending:false}).limit(5000);
   if(r2.error) throw new Error(r2.error.message);
   var r3=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,empreinte_amount,empreinte_captured_at,empreinte_tk_num").eq("salon_id",_salonId).eq("empreinte_status","captured").gt("empreinte_amount",0).gte("empreinte_captured_at",depuis).lt("empreinte_captured_at",fin).limit(5000);
   if(r3.error) throw new Error(r3.error.message);
-  (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1; });
+  (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1;
+    if(r.acompte_tk_num) nums[r.acompte_tk_num]=1; (Array.isArray(r.remboursements)?r.remboursements:[]).forEach(function(e){ if(e&&Number(e.tk)>0) nums[e.tk]=1; }); }); // 2026-10-14 (NF525 acompte en ligne)
   (r3.data||[]).forEach(function(r){ if(r.empreinte_tk_num) nums[r.empreinte_tk_num]=1; });
   var dTk={}, lst=Object.keys(nums).map(Number).filter(function(n){return n>0;});
   for(var i=0;i<lst.length;i+=200){
@@ -23357,6 +23604,23 @@ async function _lxPaiementsEnLigne(mois){
   (r1.data||[]).forEach(function(r){
     // 2026-10-13 : remboursement partiel -> une ligne pour la partie remboursée, une ligne pour la partie conservée
     var _rp=Math.round((Number(r.acompte_rembourse_montant)||0)*100)/100, _ac=Math.round(Number(r.acompte_montant)*100)/100;
+    // 2026-10-14 (NF525 acompte en ligne) : NOUVEAU MODÈLE -> déjà dans le chiffre de caisse (ticket d'acompte le jour du paiement,
+    // ticket négatif à chaque remboursement) : lignes marquées caisse:true -> AUCUN ajustement (TVA, URSSAF) ; le livre des
+    // recettes les reprend à la date de paiement / de remboursement (les tickets « en ligne » sont exclus du comptoir).
+    if(r.acompte_modele==="ticket"){
+      var _refN="RDV du "+_lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), _clN=[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim();
+      var _payeN=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at)||"", _tkD=(r.acompte_tk_num&&dTk[r.acompte_tk_num])||"";
+      var _hN=(Array.isArray(r.remboursements)?r.remboursements:[]).filter(function(e){ return e&&Number(e.montant)>0; }), _totN=0;
+      _hN.forEach(function(e){ var m=Math.round(Number(e.montant)*100)/100; _totN+=m;
+        L.push({type:"Acompte RDV", ref:_refN, client:_clN, libelle:(r.service_nom||"")+" (part rembours\u00e9e)", montant:m, paye:_payeN, taux:lxTauxTVA(),
+          rembourse:_lxDateParis(e.at)||"", rembInconnu:!e.at, reconnu:_tkD, caisse:true, caisseDate:_tkD, rembCaisse:((Number(e.tk)>0&&dTk[e.tk])||""), tkNum:r.acompte_tk_num||null, tkRemb:(Number(e.tk)>0?Number(e.tk):null),
+          etat:"Rembours\u00e9"+(m<_ac?" (partiel)":"")+(Number(e.tk)>0?" (ticket #"+e.tk+")":" (ticket de remboursement en attente)")}); });
+      var _gardeN=Math.round((_ac-_totN)*100)/100;
+      if(_gardeN>0.004) L.push({type:"Acompte RDV", ref:_refN, client:_clN, libelle:(r.service_nom||"")+(_totN>0?" (part conserv\u00e9e)":""), montant:_gardeN, paye:_payeN, taux:lxTauxTVA(),
+        rembourse:"", rembInconnu:false, reconnu:_tkD, caisse:true, caisseDate:_tkD, rembCaisse:"", tkNum:r.acompte_tk_num||null,
+        etat:r.acompte_tk_num?("En caisse (ticket #"+r.acompte_tk_num+")"+(r.status==="done"?", prestation r\u00e9alis\u00e9e":(r.status==="cancelled"?", conserv\u00e9":", RDV \u00e0 venir"))):"Ticket d\u2019acompte en attente de cr\u00e9ation"});
+      return;
+    }
     var _hist=_lxHistRemb(r,_ac);
     var _payeA=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at)||"";
     // 2026-10-13 : un ou plusieurs remboursements (total ou partiel) -> une ligne par remboursement, à SA date, + la part conservée
@@ -23395,6 +23659,18 @@ async function _lxPaiementsEnLigne(mois){
   });
   return L;
 }
+// 2026-10-14 (NF525 acompte en ligne) : ajustement d'une ligne du NOUVEAU modèle (déjà en caisse par tickets). Vérité « à
+// l'encaissement » : +m au mois du paiement (P), -m au mois du remboursement (R). Caisse : +m au mois du ticket d'acompte (D),
+// -m au mois du ticket de remboursement (RT). Ajustement du mois = vérité - caisse = m·[P∈M] - m·[D∈M] - m·[R∈M] + m·[RT∈M].
+// Normalement D = P et RT = R (ticket créé le jour même) -> 0 ; l'écart n'apparaît que si l'application est restée fermée
+// à cheval sur deux mois (ticket daté du mois suivant, date de règlement conservée).
+function _lxAjustLigneCaisse(p, mois){
+  var inM=function(d){ return d && String(d).indexOf(mois)===0; }, m=Number(p.montant)||0, aj=0;
+  if(inM(p.paye)) aj+=m;
+  if(inM(p.caisseDate)) aj-=m;
+  if(p.rembourse){ if(inM(p.rembourse)) aj-=m; if(inM(p.rembCaisse)) aj+=m; }
+  return Math.round(aj*100)/100;
+}
 // 2026-10-13 : ajustement « paiements en ligne » d'un mois (règle de l'encaissement : un acompte en ligne compte le jour
 // où il est payé, un remboursement le jour où il est fait). Même règle que l'export TVA des paiements en ligne et le
 // livre des recettes. Retour TTC ventilé prestations (acomptes, empreintes) / produits (Click & Collect).
@@ -23404,6 +23680,7 @@ async function _lxAjustEnLigneMois(mois){
   L.forEach(function(p){
     // 2026-10-14 (NF525) : date de remboursement inconnue -> traité comme remboursé le jour du paiement (net 0 sur le mois),
     // au lieu d'ignorer la ligne (même résultat sur l'ajustement, mais règle explicite et identique à l'export TVA).
+    if(p.caisse){ var ajC=_lxAjustLigneCaisse(p,mois); if(ajC) r.svc+=ajC; return; } // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle (tickets en caisse) -> écart seulement si ticket daté d'un autre mois que le règlement
     var rembourse=p.rembourse;
     if(p.rembInconnu){ if(!p.paye) return; rembourse=p.paye; }
     var aj=0;
@@ -23435,14 +23712,18 @@ async function expAcomptesNonSoldes(silencieux){
   // 1) acomptes payés EN LIGNE (Stripe)
   var r1={data:[]};
   for(var _pg=0;_pg<50;_pg++){ // lecture par pages de 1000 (aucune ligne perdue)
-    var _q=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,acompte_montant,acompte_paye_at,created_at,acompte_rembourse,acompte_rembourse_montant,remboursements,refunded_at,status,ticket_num,retenue_tk_num,payment_intent_id").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).or("acompte_paye_at.lte."+fin+"T00:00:00Z,and(acompte_paye_at.is.null,created_at.lte."+fin+"T00:00:00Z)").order("id",{ascending:true}).range(_pg*1000,_pg*1000+999); // 2026-10-14 (NF525) : date de paiement absente -> created_at
+    var _q=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).or("acompte_paye_at.lte."+fin+"T00:00:00Z,and(acompte_paye_at.is.null,created_at.lte."+fin+"T00:00:00Z)").order("id",{ascending:true}).range(_pg*1000,_pg*1000+999); // 2026-10-14 (NF525) : date de paiement absente -> created_at
     if(_q.error){ toast("Lecture impossible : "+_q.error.message,"error"); return; }
     r1.data=r1.data.concat(_q.data||[]); if(!_q.data||_q.data.length<1000) break;
   }
   var nums={}; (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1; });
   var dTk={}, lst=Object.keys(nums).map(Number).filter(function(n){return n>0;});
   for(var i=0;i<lst.length;i+=200){ var tr=await _sb.from("tickets").select("num,date_ticket").eq("salon_id",_salonId).in("num",lst.slice(i,i+200)); ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=String(t.date_ticket||"").slice(0,10); }); }
+  var _rdvNouveau={}; // 2026-10-14 (NF525 acompte en ligne) : RDV du nouveau modèle, par id (lus en section 2 depuis le ticket d'acompte)
   (r1.data||[]).forEach(function(r){
+    // 2026-10-14 (NF525 acompte en ligne) : NOUVEAU MODÈLE -> l'acompte est un ticket de caisse « Acompte en ligne » : il est traité en
+    // section 2 (comme un acompte encaissé en caisse), jamais ici (sinon compté deux fois).
+    if(r.acompte_modele==="ticket"){ _rdvNouveau[r.id]=r; return; }
     var paye=_lxDateParis(r.acompte_paye_at)||_lxDateParis(r.created_at); if(!le(paye)) return;
     var ac=Math.round(Number(r.acompte_montant)*100)/100;
     var hist=_lxHistRemb(r,ac);
@@ -23462,11 +23743,23 @@ async function expAcomptesNonSoldes(silencieux){
     // 2026-10-14 (NF525) : acompte versé en plusieurs fois -> correspondance sur les tableaux acompteTkNums / origTkNums
     // (ligne et ticket), avec repli sur les anciens champs uniques acompteTkNum / origTkNum.
     var _dans=function(arr,v){ return Array.isArray(arr)&&arr.map(Number).indexOf(v)>=0; };
-    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(x.date)&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&(Number(it.acompteTkNum)===n||_dans(it.acompteTkNums,n)))||(it.isAcompteCancel&&(Number(it.origTkNum)===n||Number(x.origTkNum)===n||_dans(it.origTkNums,n)||_dans(x.origTkNums,n)))); }); });
+    var _el=!!(t.isAcompteEnLigne||(t.items||[]).some(function(it){ return it&&it.isAcompteEnLigne&&it.isAcompte; })); // 2026-10-14 (NF525 acompte en ligne) : remboursement partiel possible -> le ticket négatif ne « solde » pas à lui seul
+    var solde=AP.some(function(x){ return x&&x.st==="done"&&le(x.date)&&(x.items||[]).some(function(it){ return it&&((it.isAcompteDeduct&&(Number(it.acompteTkNum)===n||_dans(it.acompteTkNums,n)))||(!_el&&it.isAcompteCancel&&(Number(it.origTkNum)===n||Number(x.origTkNum)===n||_dans(it.origTkNums,n)||_dans(x.origTkNums,n)))); }); });
     var appt=_rdvDe(n);
     if(!solde && appt && appt.st==="done" && appt.tkNum && le(appt.date)) solde=true;
     if(solde) return;
     var cl=gC(t.cId)||(appt?gC(appt.cId):null), m=Math.round((Number(t.pr)||0)*100)/100;
+    // 2026-10-14 (NF525 acompte en ligne) : ticket d'acompte EN LIGNE (nouveau modèle) : remboursements = tickets négatifs qui le
+    // référencent (à la date) ; acompte conservé (absence, décision définitive retenue_at) ou RDV encaissé en base -> plus une avance.
+    if(_el){
+      var rN=(t.acompteRdv&&_rdvNouveau[t.acompteRdv])||null;
+      if(rN){ if(rN.status==="done"&&rN.ticket_num&&(!dTk[rN.ticket_num]||le(dTk[rN.ticket_num]))) return; if(rN.retenue_at&&le(_lxDateParis(rN.retenue_at))) return; }
+      var rembN=0; AP.forEach(function(x){ if(x&&x.st==="done"&&le(x.date)&&!x.cancelled&&(x.isAcompteCancel||(x.items||[]).some(function(it){ return it&&it.isAcompteCancel; }))&&(Number(x.origTkNum)===n||_dans(x.origTkNums,n)||(x.items||[]).some(function(it){ return it&&it.isAcompteCancel&&(Number(it.origTkNum)===n||_dans(it.origTkNums,n)); }))) rembN+=-(Number(x.pr)||0); });
+      rembN=Math.min(m,Math.round(rembN*100)/100);
+      var rdvTxt=rN?(_lxDateFrCourte(rN.date_rdv)+" "+String(rN.heure_rdv||"").slice(0,5)):(appt?(_lxDateFrCourte(appt.date)+" "+(appt.time||"")):"");
+      ligne("Acompte en ligne (ticket #"+n+")", cl?cName(cl):[(t.clientPrenom||""),(t.clientNom||"")].join(" ").trim(), (rN&&rN.service_nom)||(t.items&&t.items[0]&&t.items[0].name)||"", rdvTxt, t.datePaiement||t.date, m, rembN, m-rembN, "Ticket #"+n+(rN&&rN.payment_intent_id?" / "+rN.payment_intent_id:""), (rN&&rN.status==="cancelled")?"RDV annul\u00e9 (remboursement / conservation en cours)":"D\u00e9j\u00e0 dans le CA de caisse du "+_lxDateFrCourte(t.date)+" - prestation \u00e0 r\u00e9aliser");
+      return;
+    }
     ligne("Acompte en caisse (ticket #"+n+")", cl?cName(cl):"", (t.items&&t.items[0]&&t.items[0].name)||"", appt?(_lxDateFrCourte(appt.date)+" "+(appt.time||"")):"", t.date, m, 0, m, "Ticket #"+n, "D\u00e9j\u00e0 dans le CA de caisse du "+_lxDateFrCourte(t.date));
   });
   rows.sort(function(x,y){ return String(x[4]).localeCompare(String(y[4])); });
@@ -23492,6 +23785,15 @@ async function expTvaPaiementsEnLigne(){
   L.forEach(function(p){
     var ajust=0, note="", tx=(p.taux!=null?p.taux:t);
     if(inM(p.paye)) enc+=p.montant;
+    // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle -> déjà dans le chiffre de caisse, aucun ajustement (ligne informative)
+    if(p.caisse){
+      var ajC=_lxAjustLigneCaisse(p,accM);
+      if(!(inM(p.paye)||inM(p.rembourse)||inM(p.caisseDate)||inM(p.rembCaisse))) return;
+      var noteC=ajC?("Ticket de caisse dat\u00e9 d\u2019un autre mois que le r\u00e8glement (application ferm\u00e9e) : "+(ajC>0?"TVA \u00e0 AJOUTER ce mois (sera dans le chiffre du mois du ticket)":"d\u00e9j\u00e0 d\u00e9clar\u00e9 au mois du r\u00e8glement : \u00e0 RETIRER du chiffre de ce mois"))
+                    :((p.rembourse?"Rembours\u00e9 : ticket n\u00e9gatif en caisse"+(p.tkRemb?" (#"+p.tkRemb+")":"")+" le jour du remboursement":"Ticket d\u2019acompte scell\u00e9 le jour du paiement"+(p.tkNum?" (#"+p.tkNum+")":""))+" : d\u00e9j\u00e0 dans le chiffre de caisse, rien \u00e0 faire");
+      if(ajC>0) plus+=ajC; else if(ajC<0) moins+=-ajC;
+      var htC=Math.round(ajC/(1+tx/100)*100)/100, tvC=Math.round((ajC-htC)*100)/100; tvaNet+=tvC;
+      rows.push([p.paye, p.type, p.ref, p.client, p.libelle, csvNum(p.montant), p.caisseDate||"", p.rembourse||"", p.etat, csvNum(ajC), csvNum(htC), csvNum(tvC)+" ("+tx+"%)", noteC]); return; }
     if(p.rembInconnu){ if(inM(p.paye)) rows.push([p.paye, p.type, p.ref, p.client, p.libelle, csvNum(p.montant), "", "date inconnue", p.etat, "0", "0", "0", "Rembours\u00e9 (date du remboursement non enregistr\u00e9e) : v\u00e9rifier sur Stripe"]); return; }
     if(inM(p.paye) && !inM(p.reconnu) && !inM(p.rembourse)){ ajust=p.montant; plus+=p.montant; note="Encaiss\u00e9 ce mois, pas encore dans le chiffre du mois : TVA \u00e0 AJOUTER"; }
     else if(avant(p.paye) && inM(p.reconnu)){ ajust=-p.montant; moins+=p.montant; note="D\u00e9j\u00e0 d\u00e9clar\u00e9 au mois du paiement et compris dans le chiffre de ce mois : \u00e0 RETIRER"; }
@@ -27293,6 +27595,10 @@ function mD(id, mode){
     }
   }
   _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",acompteTkNum:a.acompteTkNum||null,_linkedApptId:linkedApptId};
+  // 2026-10-14 (NF525 acompte en ligne) : acompte en ligne du nouveau modèle (ticket scellé au paiement) -> déduit comme un
+  // acompte versé au salon (cf. _lxAcompteSalonAmount). Le n° du ticket d'acompte est vérifié/complété avant le scellement
+  // (doFinalPayExecute -> _lxAcompteEnLigneAvantEncaissement).
+  if(a.acompteEnLigneTicket===true) _tk.acompteEnLigneTicket=true;
   // 2026-10-10 : simple avertissement (aucune modification du calcul de caisse) si l'acompte payé en ligne
   // dépasse le total du panier à l'ouverture : le surplus est à rembourser au client.
   try{
@@ -30265,6 +30571,9 @@ function _lxAcompteSalonAmount(tk){
   try{
     var a=Number(tk&&tk.acompte)||0;
     if(!(a>0.004)) return 0;
+    // 2026-10-14 (NF525 acompte en ligne) : acompte en ligne du NOUVEAU modèle = déjà scellé dans son propre ticket
+    // « Acompte en ligne » -> déduit du ticket final exactement comme un acompte versé au salon.
+    if(tk&&tk.acompteEnLigneTicket===true) return Math.round(a*100)/100;
     if(_lxIsAcompteOnline(tk&&tk.acompteMode)) return 0;
     return Math.round(a*100)/100;
   }catch(_e){ return 0; }
@@ -30327,17 +30636,24 @@ async function doFinalPayExecute(method){
   try{
     document.querySelectorAll(".mbox button, .mbg button").forEach(function(b){ if(!b.disabled){ b.disabled=true; b.style.opacity=".5"; _btnsPre.push(b); } });
   }catch(_e0){}
-  var _ok=false, _dejaMsg=null;
+  var _ok=false, _dejaMsg=null, _acMsg=null;
   try{
     _ok=await lxJourOuvertOuAlerte();
     if(_ok&&_tk&&_tk.apptId) _dejaMsg=await _lxRdvDejaEncaisse(_tk.apptId);
     if(_ok&&!_dejaMsg&&_tk&&_tk._linkedApptId) _dejaMsg=await _lxRdvDejaEncaisse(_tk._linkedApptId);
+    // 2026-10-14 (NF525 acompte en ligne) : le ticket d'acompte en ligne doit EXISTER avant le ticket final qui le déduit
+    if(_ok&&!_dejaMsg&&_tk&&_tk.apptId&&typeof _lxAcompteEnLigneAvantEncaissement==="function") _acMsg=await _lxAcompteEnLigneAvantEncaissement();
   }catch(_e1){ _ok=true; _dejaMsg=null; }
   finally{
     window._lxPayPreCheck=false;
     try{ _btnsPre.forEach(function(b){ b.disabled=false; b.style.opacity=""; }); }catch(_e2){}
   }
   if(!_ok) return;
+  if(_acMsg){
+    try{ if(typeof auditLog==="function") auditLog("ENCAISSEMENT_REFUSE_ACOMPTE_EN_LIGNE","RDV "+_tk.apptId+" : "+_acMsg); }catch(_e3b){}
+    document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();_tk.step=5;showCaisse()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">⚠️</div><h2>Acompte en ligne non enregistré en caisse</h2><div style="font-size:14px;margin-bottom:14px">'+_acMsg+'</div><button class="btn bg bk" onclick="cM();_tk.step=5;showCaisse()">Retour</button></div></div>';
+    return;
+  }
   if(_dejaMsg){
     try{ if(typeof auditLog==="function") auditLog("ENCAISSEMENT_REFUSE_DEJA_FAIT","RDV "+_tk.apptId+" : "+_dejaMsg); }catch(_e3){}
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();go(\'planning\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">\u26a0\ufe0f</div><h2>Rendez-vous d\u00e9j\u00e0 encaiss\u00e9</h2><div style="font-size:14px;margin-bottom:14px">'+_dejaMsg+'<br>Aucun nouveau ticket n\u2019a \u00e9t\u00e9 cr\u00e9\u00e9. Rechargez l\u2019application pour voir le ticket existant.</div><button class="btn bg bk" onclick="cM();go(\'planning\')">Retour au planning</button></div></div>';
@@ -30548,7 +30864,7 @@ function _doFinalPayExecuteSync(method){
         // consomme. On le neutralise sur la ligne du ticket pour que _mapPayment (detail
         // paiement scelle) et buildTicketHTML (recu/duplicata) ne le rededuisent pas.
         // Acompte EN LIGNE : _acApplied=0 -> champs conserves (mode de reglement) = inchange.
-        if(_acSalon>0){ AP[i].acompte=0; AP[i].acompteMode=""; AP[i].acompteDate=""; AP[i].acompteTkNum=null; }
+        if(_acSalon>0){ AP[i].acompte=0; AP[i].acompteMode=""; AP[i].acompteDate=""; AP[i].acompteTkNum=null; delete AP[i].acompteEnLigneTicket; } // 2026-10-14 (NF525 acompte en ligne) : idem pour l'acompte en ligne déduit
         AP[i].tkNum=tkN;
         AP[i].ts=tsNow;
         AP[i].heureEncaiss=heureNow; // ticket porte l'heure d'encaissement; a.time reste l'heure du RDV (planning)
@@ -31564,6 +31880,12 @@ function buildTicketHTML(a, isDuplicate){
     h+="<div style=\"display:flex;justify-content:space-between;font-size:12px;padding:3px 0\"><span>R\u00e8glement :</span><span>"+(a.met||"")+"</span></div>";
   }
 
+  // 2026-10-14 (NF525 acompte en ligne) : date de RÈGLEMENT (paiement / remboursement Stripe) quand elle diffère de la date du
+  // ticket (ticket créé à l'ouverture suivante de l'application). Affichage seulement : le hash est calculé avant le rendu.
+  try{
+    if(a.datePaiement&&String(a.datePaiement)!==String(a.date)) h+="<div style=\"font-size:10px;padding:2px 0\">Date de règlement (paiement en ligne) : "+fmt(a.datePaiement)+" — ticket établi le "+fmt(a.date)+"</div>";
+    if(a.dateRemboursement&&String(a.dateRemboursement)!==String(a.date)) h+="<div style=\"font-size:10px;padding:2px 0\">Date du remboursement (Stripe) : "+fmt(a.dateRemboursement)+" — ticket établi le "+fmt(a.date)+"</div>";
+  }catch(_eDp){}
   // 2026-10-11 : règlement corrigé par pièce(s) tracée(s) -> mention (le ticket d'origine n'est jamais modifié)
   try{ var _crTk=(typeof _lxCorrDeTicket==="function")?_lxCorrDeTicket(a.id):[]; if(_crTk.length) h+="<div style=\"font-size:10px;padding:2px 0\">R\u00e8glement corrig\u00e9 par pi\u00e8ce n\u00b0"+_crTk.map(function(c){ return c.num+" du "+fmt(c.date_correction); }).join(", ")+"</div>"; }catch(_eCt){}
   // Fidélité par client
@@ -34964,6 +35286,9 @@ async function _cancelSecureTicketDo(id,motif){
     var _estAnnulAc=orig.isAcompteCancel===true||_its.some(function(it){ return it&&it.isAcompteCancel; });
     var _estRetenue=orig.isRetenue===true||_its.some(function(it){ return it&&it.isRetenue; });
     if(_estRetenue){ showAlert("Ticket d\u2019acompte conserv\u00e9 : contactez le support pour une r\u00e9gularisation","warning"); return; }
+    // 2026-10-14 (NF525 acompte en ligne) : le remboursement d'un acompte pay\u00e9 en ligne se fait depuis le rendez-vous (Stripe) ;
+    // le ticket n\u00e9gatif \u00ab Remboursement acompte en ligne \u00bb est cr\u00e9\u00e9 automatiquement.
+    if((_estAcompte||_estAnnulAc)&&(orig.isAcompteEnLigne===true||_its.some(function(it){ return it&&it.isAcompteEnLigne; }))){ showAlert("Acompte pay\u00e9 en ligne : le remboursement se fait depuis le rendez-vous (annulation / remboursement partiel) ; le ticket de remboursement est cr\u00e9\u00e9 automatiquement.","warning"); return; }
     if(_estAcompte||_estAnnulAc){ showAlert("Pour un acompte, utilisez \u00ab Annuler l\u2019acompte \u00bb depuis le rendez-vous.","warning"); return; }
   }catch(_eTyp){}
   // 2026-10-14 (NF525) : journée clôturée (mémoire ou base) -> aucun contre-ticket ; TD est recalculé par le contrôle
@@ -35084,8 +35409,12 @@ async function _cancelSecureTicketDo(id,motif){
           AP.forEach(function(t){ if(t&&t.isAcompte&&t.apptId===orig.id&&t.st==="done"&&!t.cancelled&&Number(t.pr)>0) _versR.push({m:Math.round(Number(t.pr)*100)/100, mode:t.met||"CB", tk:t.tkNum||null, d:t.date||null}); });
           var _sR=0; _versR.forEach(function(v){_sR+=v.m;}); if(Math.abs(_sR-_acDed)>0.01) _versR=[];
           _rel.acompte=_acDed; _rel.acompteMode=_versR.length?_versR[_versR.length-1].mode:"CB"; _rel.acompteDate=orig.date; _rel.acompteTkNum=_acDedTk;
+          // 2026-10-14 (NF525 acompte en ligne) : l'acompte déduit était un acompte EN LIGNE déjà scellé (nouveau modèle) -> le RDV
+          // relibéré le garde comme tel (mode « En ligne (Stripe) », déduction au prochain ticket final avec le même n° de ticket).
+          try{ var _tkAcEL=null; AP.forEach(function(t){ if(t&&t.isAcompteEnLigne&&t.isAcompte&&Number(t.tkNum)===Number(_acDedTk)) _tkAcEL=t; });
+            if(_tkAcEL){ _rel.acompteMode="En ligne (Stripe)"; _rel.acompteEnLigneTicket=true; _rel.acompteDate=_tkAcEL.datePaiement||_tkAcEL.date||orig.date; _versR=[]; } }catch(_eEL){}
         }
-        if(_rel.acompte>0) _rel.items=[{isAcompteData:true,acompte:_rel.acompte,acompteMode:_rel.acompteMode,acompteDate:_rel.acompteDate,acompteTkNum:(_rel.acompteTkNum||null),versements:_versR}];
+        if(_rel.acompte>0) _rel.items=[{isAcompteData:true,acompte:_rel.acompte,acompteMode:_rel.acompteMode,acompteDate:_rel.acompteDate,acompteTkNum:(_rel.acompteTkNum||null),versements:_versR,acompteEnLigneTicket:(_rel.acompteEnLigneTicket===true?true:undefined)}];
       }catch(_eAcR){}
       AP.push(_rel);
       // Persistance APRES la mise a jour de l original (cancelled=true) : garantit qu un garde
@@ -36588,7 +36917,7 @@ function initApp(){
   if(window.RDV_ONLINE){
     window.RDV_ONLINE.forEach(function(r){
       for(var _ae=0;_ae<AP.length;_ae++){ if(AP[_ae].onlineId===r.id) _lxApOnlineEnrichir(AP[_ae], r); }
-      if(r.acomptePaye&&r.acompte>0&&!r.acompteRembourse){
+      if(r.acomptePaye&&r.acompte>0&&!r.acompteRembourse&&r.acompteModele!=="ticket"){ // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle géré par _lxApOnlineEnrichir
         for(var ai=0;ai<AP.length;ai++){
           if(AP[ai].onlineId===r.id&&!AP[ai].acompte){
             AP[ai].acompte=r.acompte;
@@ -36599,6 +36928,8 @@ function initApp(){
       }
     });
   }
+  // 2026-10-14 (NF525 acompte en ligne) : au démarrage, tickets d'acompte en ligne / de remboursement en attente (app fermée plusieurs jours)
+  try{ if(typeof lxAcomptesEnLigneSync==="function") setTimeout(function(){ lxAcomptesEnLigneSync(true); },4000); }catch(_eAcS){}
   // FIX 2026-07-13 : avant le 1er render, garantir une colonne à tout RDV en ligne "sans préférence"
   // (le chargement initial les poussait avec stId=null => invisibles au planning).
   try{ if(typeof _lxFixOnlineStId==="function") _lxFixOnlineStId(); }catch(_e){}

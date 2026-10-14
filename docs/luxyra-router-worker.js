@@ -3924,6 +3924,11 @@ async function handleRdvAcompteInfo(request, env) {
       email: rdv.client_email || "", prenom: rdv.client_prenom || "", domicile: rdv.lieu === "domicile", paiement_en_ligne: connectOk });
   } catch (e) { return jsonResponse({ error: "Erreur" }, 500); }
 }
+// 2026-10-14 (NF525 acompte en ligne) : l'enregistrement du paiement (acompte_paye=true, PATCH ci-dessous ou rejoué par le webhook
+// Connect) déclenche côté base le trigger trg_rdv_online_acompte_modele -> rdv_online.acompte_modele='ticket' (nouveau modèle) ;
+// acompte_paye_at est posé par trigger (= date de règlement). L'application PRO crée ensuite le ticket scellé « Acompte en ligne »
+// (lxAcomptesEnLigneSync). Le worker n'écrit volontairement AUCUNE de ces nouvelles colonnes : il reste fonctionnel même si le
+// script SQL n'est pas encore appliqué, et un acompte payé avant la mise en service garde acompte_modele NULL (ancien modèle).
 async function handleAcompteFinalize(request, env) {
   try {
     const body = await request.json().catch(() => null);
@@ -4146,8 +4151,13 @@ async function attemptAcompteRefund(env, rdv) {
 }
 
 // 2026-10-13 : l'établissement rembourse TOUT ou PARTIE d'un acompte payé en ligne (au cas par cas : % ou montant).
-// Route salon (propriétaire vérifié par LX_ROUTES_SALON). La partie conservée est enregistrée en caisse par l'application
-// (ticket scellé « Acompte conservé », montant = acompte - remboursé). Interdit si ce ticket existe déjà (passer par un avoir).
+// Route salon (propriétaire vérifié par LX_ROUTES_SALON). ANCIEN MODÈLE (acompte_modele NULL) : la partie conservée est
+// enregistrée en caisse par l'application (ticket scellé « Acompte conservé », montant = acompte - remboursé) ; interdit si ce
+// ticket existe déjà (passer par un avoir). NOUVEAU MODÈLE 2026-10-14 (acompte_modele='ticket') : la recette est déjà scellée
+// (ticket d'acompte au paiement) ; chaque entrée ajoutée à `remboursements` ({at, montant, refund_id, par}) devient UN ticket
+// négatif « Remboursement acompte en ligne » créé par l'application (clé = refund_id, posée une seule fois : champ tk) ;
+// retenue_tk_num / retenue_claim_at ne sont jamais posés pour ces acomptes (la règle 409 ci-dessous ne les concerne pas).
+// INVARIANT : toute entrée de `remboursements` porte at + montant + refund_id (clé de ticketage) — ne pas en ajouter sans refund_id.
 async function handleAcompteRembourser(request, env) {
   try {
     const b = await request.json().catch(() => ({}));
@@ -4284,6 +4294,8 @@ async function releaseEmpreinteOnCancel(env, rdv) {
   return { released: true };
 }
 
+// 2026-10-14 (NF525 acompte en ligne) : chaque entrée ajoutée à `remboursements` (partiel « politique » ou total « automatique ») est
+// ticketée en caisse par l'application pour les acomptes du nouveau modèle (ticket négatif par entrée, clé = refund_id).
 async function refundAndRecord(env, rdv) {
   const r = await attemptAcompteRefund(env, rdv);
   const nowIso = new Date().toISOString();

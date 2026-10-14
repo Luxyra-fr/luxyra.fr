@@ -1824,3 +1824,16 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 - Article libre : `tkAddLibre`/`doAddLibre`, item `isLibre` (+ `isProd` selon le type) ; audit ARTICLE_LIBRE.
 - Prix sur devis : `services.prix_sur_devis` ↔ `sv.devis` ; `_lxPrixDevis` demande le prix à l'ajout (posAddService, doAddTkSvc) et garde-fou au début de `finalizePay`. Site : « Sur devis », bookOnline forcé à false (demande).
 - Centre d'aide : les pages `aide/*.html` ont été retouchées à la main depuis le 11/10 (client, multi-métiers, liste d'attente, notifications, remboursement partiel, article libre, sur devis…) : `aide_guides.py` est EN RETARD → NE PAS relancer `aide_build.py` sans y reporter ces textes (sinon perte). Nouvelles captures : caisse_ajout, caisse_libre, acompte_absent, services_devis (+ services_new, compta_docs refaites), voir shots.json.
+
+## Acompte en ligne = ticket scellé au paiement (14/10/2026, accord d'Alexandre — branche acompte-en-ligne)
+- Conception complète : `docs/acompte_en_ligne_conception.md` ; SQL à appliquer APRÈS déploiement de l'app : `docs/sql_acompte_en_ligne.sql`
+  (colonnes rdv_online.acompte_modele / acompte_tk_num / acompte_tk_claim_at / acompte_remb_claim_at, trigger `trg_rdv_online_acompte_modele`,
+  index unique `tickets_acompte_key_unique` sur raw_data->>acompteKey, RPC `lx_acompte_remb_ticketer` / `lx_acompte_remb_liberer`).
+- Nouveau modèle (`acompte_modele='ticket'`, posé par trigger au passage acompte_paye false→true) : l'app crée le ticket « Acompte en ligne »
+  (`lxAcomptesEnLigneSync`, même motif que lxRetenuesSync : verrou, clé, jamais jour clôturé, date de règlement dans raw_data.datePaiement) ;
+  au RDV : ligne « Acompte déjà versé (ticket #X) » (`acompteEnLigneTicket` sur le fantôme, `_lxAcompteSalonAmount`), contrôle
+  `_lxAcompteEnLigneAvantEncaissement` dans doFinalPayExecute ; remboursements : un ticket négatif par entrée de `remboursements` (champ tk) ;
+  acompte conservé : rien de plus (lxRetenuesSync ignore ces RDV). Ancien modèle (NULL) : strictement inchangé.
+- Rapports : lignes `caisse:true` dans `_lxPaiementsEnLigne` (ajustement `_lxAjustLigneCaisse`, 0 sauf ticket daté d'un autre mois) ;
+  expAcomptesNonSoldes traite ces acomptes depuis le ticket d'acompte. Tickets d'acompte/retenue/annulation ne rapprochent plus un RDV en ligne
+  (`_lxFindOnlineRdvForTicketBrut`). Reste à faire après mise en service : bot support, centre d'aide, registre NF525, test réel.
