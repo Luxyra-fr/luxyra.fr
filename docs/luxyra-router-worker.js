@@ -2616,6 +2616,16 @@ async function handleRdvDemandeConnectPay(request, env) {
     }
     if (demande.status !== "proposed") return jsonResponse({ error: "État inattendu: " + demande.status }, 409);
 
+    // 2026-10-15 : réservation en ligne désactivée par l'établissement -> personne ne peut réserver en ligne
+    try {
+      const scR = await fetch(`${sbUrl}/rest/v1/site_config?salon_id=eq.${demande.salon_id}&select=site_actif,reservation_active&limit=1`, { headers: _sbHeaders(env) });
+      const scRows = scR.ok ? await scR.json() : [];
+      const sc = Array.isArray(scRows) ? scRows[0] : null;
+      if (sc && (sc.site_actif === false || sc.reservation_active !== true)) {
+        return jsonResponse({ error: "Cet établissement n'accepte pas de réservation en ligne pour le moment. Aucun paiement n'a été effectué." }, 409);
+      }
+    } catch (_) { /* vérification indisponible : la base refusera de toute façon les nouvelles demandes */ }
+
     const pd = demande.proposed_data || {};
     const acompte = Number(pd.acompte_montant) || 0;
     if (acompte <= 0) return jsonResponse({ error: "Aucun acompte à régler." }, 400);
