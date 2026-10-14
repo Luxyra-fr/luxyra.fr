@@ -5083,6 +5083,19 @@ function lxAnnReponse(html, status) {
 }
 function lxAnnEtoiles(n) { const v = Math.round(Number(n) || 0); return "★★★★★".slice(0, v) + "☆☆☆☆☆".slice(0, 5 - v); }
 
+// 2026-10-14 audit : engagements affichés pour UN établissement, d'après ses réglages réels
+// (site_config.confirmation_auto, politique_annulation lue par lxPolitiqueHeures ; domicile = toujours validé par le pro).
+function lxAnnEngagements(cfg, salon) {
+  cfg = cfg || {};
+  const domicile = String((salon && salon.mode_activite) || "") === "domicile";
+  const immediate = cfg.confirmation_auto === true && !domicile;
+  const h = lxPolitiqueHeures(cfg.politique_annulation);
+  const tags = [immediate ? "Confirmation immédiate" : "Confirmation par l'établissement"];
+  if (h === 0) tags.push("Annulation en ligne");
+  else if (h > 0) tags.push(`Annulation en ligne jusqu'à ${h >= 24 && h % 24 === 0 ? (h / 24) + (h / 24 > 1 ? " jours" : " jour") : h + " h"} avant`);
+  const phrase = immediate ? "Confirmation immédiate par e-mail." : "Votre demande est confirmée par l'établissement ; vous êtes prévenu par e-mail.";
+  return { immediate, tags, phrase };
+}
 async function lxAnnuairePage(metierSlug, villeSlug) {
   const M = LX_ANN_METIERS[metierSlug];
   if (!M) return null;
@@ -5108,6 +5121,14 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
     let off = new Set();
     try { off = new Set(((await lxSeoFetch(`site_config?site_actif=eq.false&select=salon_id&limit=1000`)) || []).map((x) => x.salon_id)); } catch (_) {}
     for (const s of (rows || [])) if (s.slug && !off.has(s.id) && lxAnnSlug(s.ville) === villeSlug) lx.push(s);
+    // 2026-10-14 audit : réglages réels de chaque établissement (confirmation automatique, annulation en ligne)
+    if (lx.length) {
+      try {
+        const cf = (await lxSeoFetch(`site_config?salon_id=in.(${lx.map((x) => x.id).join(",")})&select=salon_id,confirmation_auto,politique_annulation&limit=500`)) || [];
+        const parId = {}; for (const c of cf) parId[c.salon_id] = c;
+        for (const x of lx) x._cfg = parId[x.id] || {};
+      } catch (_) {}
+    }
   } catch (_) {}
   const lxIds = new Set(lx.map((s) => s.id));
   const autres = etabs.filter((e) => !e.salon_id || !lxIds.has(e.salon_id));
@@ -5121,13 +5142,13 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
   let body = `<section class="hero"><div class="wrap"><div class="fil"><a href="/">Accueil</a> › <a href="/${metierSlug}">${lxEsc(M.pluriel)}</a> › ${lxEsc(villeNom)}</div>`;
   body += `<h1>${lxEsc(M.titre)} à <em>${lxEsc(villeNom)}</em></h1>`;
   body += `<p class="sous">Comparez les ${lxEsc(M.phrase)} de ${lxEsc(villeNom)}${lx.length ? " et prenez rendez-vous en ligne en quelques secondes" : ""}.</p>`;
-  body += `<div class="chips"><span class="chip"><b>${total}</b> établissement${total > 1 ? "s" : ""}</span>${lx.length ? `<span class="chip"><b>${lx.length}</b> réservable${lx.length > 1 ? "s" : ""} en ligne</span><span class="chip">Confirmation immédiate</span><span class="chip">Sans frais pour vous</span>` : ""}</div></div></section><div class="wrap">`;
+  body += `<div class="chips"><span class="chip"><b>${total}</b> établissement${total > 1 ? "s" : ""}</span>${lx.length ? `<span class="chip"><b>${lx.length}</b> réservable${lx.length > 1 ? "s" : ""} en ligne</span>${lx.every((x) => lxAnnEngagements(x._cfg, x).immediate) ? `<span class="chip">Confirmation immédiate</span>` : ""}<span class="chip">Sans frais pour vous</span>` : ""}</div></div></section><div class="wrap">`;
   if (lx.length) {
     body += `<h2>Réserver en ligne <small>disponibles 24 h/24</small></h2>`;
     for (const s of lx) {
       const note = Number(s.note_moyenne) > 0 && Number(s.nb_avis) > 0 ? `<span class="stars">${lxAnnEtoiles(s.note_moyenne)}</span> <span style="font-size:12.5px;color:var(--text2)">${Number(s.note_moyenne).toFixed(1).replace(".", ",")} · ${s.nb_avis} avis</span>` : "";
       const adr = String(s.mode_activite || "") === "domicile" ? `À domicile · ${lxEsc(s.ville || villeNom)}` : lxEsc(lxAnnAdr([s.adresse, s.cp, s.ville].filter(Boolean).join(" ")));
-      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span><span class="tag">Confirmation immédiate</span><span class="tag">Modification ou annulation en ligne</span></div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
+      body += `<div class="carte lx"><div class="av">${lxEsc(lxAnnInit(s.nom))}</div><div class="ct"><div class="nm"><a href="/${lxEsc(s.slug)}">${lxEsc(s.nom)}</a> ${note}</div><div class="ad">${adr}</div><div class="tags"><span class="tag">Réservation 24 h/24</span>${lxAnnEngagements(s._cfg, s).tags.map((t) => `<span class="tag">${lxEsc(t)}</span>`).join("")}</div></div><div class="act"><a class="btn" href="/${lxEsc(s.slug)}/reserver">Réserver</a><a class="btn2" href="/${lxEsc(s.slug)}">Voir le salon</a></div></div>`;
     }
   }
   if (autres.length) {
@@ -5137,9 +5158,9 @@ async function lxAnnuairePage(metierSlug, villeSlug) {
       body += `<div class="carte"><div class="av">${lxEsc(lxAnnInit(e.nom))}</div><div class="ct"><div class="nm">${lxEsc(e.nom)}</div><div class="ad">${lxEsc(lxAnnAdr([e.adresse, e.cp, e.ville].filter(Boolean).join(" ")))}</div><div class="tags"><span class="tag g">Réservation en ligne pas encore disponible</span></div></div><div class="act"><a class="claim" href="/annuaire-gerant?${q}" rel="nofollow">C'est votre établissement ? Activez la réservation →</a><a href="#" class="btn2" style="font-size:11.5px;color:var(--text3)" onclick="lxFerme(this,'${lxEsc(e.siret)}');return false;" rel="nofollow">Établissement fermé ? Le signaler</a></div></div>`;
     }
   }
-  body += `<h2>Pourquoi réserver avec Luxyra</h2><div class="atouts"><div class="at"><i>⏱</i><b>En quelques secondes</b><span>Choisissez la prestation et l'horaire, 24 h/24, même quand le salon est fermé.</span></div><div class="at"><i>🔔</i><b>Confirmation immédiate</b><span>Vous recevez la confirmation par e-mail tout de suite, et un rappel avant le rendez-vous si l'établissement l'a activé.</span></div><div class="at"><i>📱</i><b>Tout au même endroit</b><span>Retrouvez, modifiez ou annulez vos rendez-vous depuis votre espace ou l'application.</span></div></div>`;
+  body += `<h2>Pourquoi réserver avec Luxyra</h2><div class="atouts"><div class="at"><i>⏱</i><b>En quelques secondes</b><span>Choisissez la prestation et l'horaire, 24 h/24, même quand le salon est fermé.</span></div><div class="at"><i>🔔</i><b>Confirmation par e-mail</b><span>Vous êtes prévenu dès que le rendez-vous est confirmé (tout de suite ou après validation par l'établissement, selon ses réglages), et un rappel arrive avant le rendez-vous si l'établissement l'a activé.</span></div><div class="at"><i>📱</i><b>Tout au même endroit</b><span>Retrouvez vos rendez-vous depuis votre espace ou l'application, et annulez-les en ligne quand l'établissement le permet.</span></div></div>`;
   const faq = [
-    [`Comment prendre rendez-vous chez un ${M.titre.toLowerCase()} à ${villeNom} ?`, lx.length ? `Choisissez un établissement marqué « Luxyra » ci-dessus et cliquez sur « Réserver » : vous voyez les disponibilités en temps réel et recevez la confirmation immédiatement.` : `Les établissements listés ci-dessus ne proposent pas encore la réservation en ligne sur Luxyra : contactez-les directement. Dès qu'un établissement l'active, un bouton « Réserver » apparaît sur cette page.`],
+    [`Comment prendre rendez-vous chez un ${M.titre.toLowerCase()} à ${villeNom} ?`, lx.length ? `Choisissez un établissement marqué « Luxyra » ci-dessus et cliquez sur « Réserver » : vous voyez les disponibilités en temps réel et recevez la confirmation par e-mail (immédiate ou après validation par l'établissement, selon ses réglages).` : `Les établissements listés ci-dessus ne proposent pas encore la réservation en ligne sur Luxyra : contactez-les directement. Dès qu'un établissement l'active, un bouton « Réserver » apparaît sur cette page.`],
     [`Combien d'établissements à ${villeNom} ?`, `${total} établissement${total > 1 ? "s" : ""} ${total > 1 ? "sont référencés" : "est référencé"} à ${villeNom}, dont ${lx.length} réservable${lx.length > 1 ? "s" : ""} en ligne.`],
     [`La réservation en ligne est-elle payante ?`, `Non, réserver sur Luxyra est gratuit pour vous. Certains établissements demandent un acompte, indiqué clairement avant la confirmation.`],
   ];
@@ -5222,7 +5243,7 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
     const [cfgRows, svcRows] = await Promise.all([
       lxSeoFetch(
         `site_config?salon_id=eq.${encodeURIComponent(s.id)}` +
-        `&select=horaires_salon,description_salon,slogan,site_actif,reservation_active,photo_hero&limit=1`
+        `&select=horaires_salon,description_salon,slogan,site_actif,reservation_active,photo_hero,confirmation_auto,politique_annulation&limit=1`
       ),
       lxSeoFetch(
         `services?salon_id=eq.${encodeURIComponent(s.id)}&actif=eq.true&show_site=eq.true` +
@@ -5427,7 +5448,8 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
       body += `<ul style="padding-left:20px;margin:0">${svcRowsHtml.join("")}</ul>`;
     }
     body += `<h2 style="font-size:20px;color:#c8a84e;margin:26px 0 8px">Réservation en ligne</h2>`;
-    body += `<p>Prenez rendez-vous chez <strong>${lxEsc(nom)}</strong>${ville ? " à " + lxEsc(ville) : ""} en ligne, 24h/24 et 7j/7. Confirmation immédiate par e-mail et SMS.</p>`;
+    // 2026-10-14 audit : promesses tirées des réglages de l'établissement (avant : « Confirmation immédiate » pour tous)
+    body += `<p>Prenez rendez-vous chez <strong>${lxEsc(nom)}</strong>${ville ? " à " + lxEsc(ville) : ""} en ligne, 24h/24 et 7j/7. ${lxAnnEngagements(cfg, s).phrase}</p>`;
     body += `<p><a href="${lxEsc(canonical)}/reserver" style="display:inline-block;padding:14px 28px;background:#c8a84e;color:#0a0a0a;text-decoration:none;font-weight:700;border-radius:8px">Prendre rendez-vous</a></p>`;
     body += `<p style="font-size:12px;color:#7a7a84;margin-top:32px">Propulsé par <a href="https://luxyra.fr" style="color:#7a7a84">Luxyra</a> — caisse et réservation en ligne pour salons.</p>`;
     body += `</section>`;
