@@ -709,8 +709,8 @@ async function loadPendingAndDevis() {
     if (dvRes.error) {
       console.warn("[loadPendingAndDevis] devis error", dvRes.error);
     } else if (dvRes.data) {
-      // Expirer les devis périmés non marqués (best-effort, fire-and-forget)
-      try { _sb.rpc("devis_expire_overdue").catch(function(){}); } catch(e0) {}
+      // 2026-10-14 SECURITE : l'expiration des devis (tous les établissements) est faite par le cron serveur
+      // (devis_expire_overdue_nuit, 02:10 UTC) ; la fonction n'est plus appelable depuis l'application.
       window.DEVIS = dvRes.data.map(function(d) {
         var raw = (d.raw_data && typeof d.raw_data === "object") ? d.raw_data : {};
         return Object.assign({}, raw, {
@@ -4186,11 +4186,15 @@ async function hashPIN(pin, salonId) {
   return hashArr.map(function(b){return b.toString(16).padStart(2,"0");}).join("");
 }
 
+// 2026-10-14 SECURITE : colonnes lisibles de salon_operateurs (pin_hash retiré : vérification par le serveur)
+var LX_OP_COLONNES = "id,salon_id,prenom,nom,email,avatar_color,avatar_initials,role,pin_length,permissions,collab_id,actif,failed_attempts,locked_until,last_login_at,created_at,created_by";
+
 // Charger tous les opérateurs du salon
 async function loadOperateurs() {
   if (!_isOnline || !_salonId) return [];
   try {
-    var r = await _sb.from("salon_operateurs").select("*").eq("salon_id", _salonId).order("created_at");
+    // 2026-10-14 SECURITE : colonnes explicites (pin_hash n'est plus lisible depuis l'application)
+    var r = await _sb.from("salon_operateurs").select(LX_OP_COLONNES).eq("salon_id", _salonId).order("created_at");
     // FIX 2026-10-10 : une lecture ratée (réseau, base lente) renvoyait une liste VIDE -> bandeau orange
     // « NF525 — Configurez vos opérateurs » et passage sans code PIN. On signale l'échec (null) à la place.
     if (r.error || !Array.isArray(r.data)) { console.warn("[OP LOAD] lecture impossible :", r.error && r.error.message); return null; }
@@ -4220,7 +4224,7 @@ async function createOperateur(data) {
       failed_attempts: 0,
       created_by: (window.SALON_CONFIG && window.SALON_CONFIG.email) || null
     };
-    var r = await _sb.from("salon_operateurs").insert(insert).select();
+    var r = await _sb.from("salon_operateurs").insert(insert).select(LX_OP_COLONNES);
     if (r.error) throw r.error;
     try { if (typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_CREE", "Opérateur " + (data.prenom || "") + " " + (data.nom || "") + " créé — rôle " + insert.role); } catch(_eA){}
     return r.data && r.data[0] ? r.data[0] : null;
@@ -4259,12 +4263,14 @@ async function changeOperateurPIN(id, newPin) {
   if (!_isOnline || !_salonId) return false;
   try {
     var pinHash = await hashPIN(newPin, _salonId);
+    // 2026-10-14 : le compteur d'erreurs est remis à zéro par la base (trigger) — plus écrit par l'application
     var r = await _sb.from("salon_operateurs").update({
       pin_hash: pinHash,
-      pin_length: newPin.length,
-      failed_attempts: 0,
-      locked_until: null
-    }).eq("id", id);
+      pin_length: newPin.length
+    }).eq("id", id).select("id");
+    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP PIN] 0 ligne modifiee", id); return false; }
+    try { if (!r.error && typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_PIN_MODIFIE", "Opérateur " + id + " : code PIN modifié"); } catch(_eA){}
+    try { _lxOpCacheOublier(id); } catch(_eC){}
     return !r.error;
   } catch(e) { console.error("[OP PIN]", e.message); return false; }
 }
@@ -4281,63 +4287,119 @@ async function deleteOperateur(id) {
   } catch(e) { console.error("[OP DEL]", e.message); return false; }
 }
 
+// ------------------------------------------------------------
+// 2026-10-14 SECURITE : le PIN est vérifié PAR LE SERVEUR (RPC operateur_verifier_pin, verrouillage compté en base) ;
+// pin_hash n'est plus jamais lu par l'application.
+// HORS LIGNE : la caisse ne doit jamais rester bloquée. Après chaque connexion réussie EN LIGNE, l'appareil garde
+// une empreinte LOCALE salée et lente (PBKDF2-SHA256, 150 000 itérations, sel aléatoire propre à l'appareil) du
+// dernier PIN validé de cet opérateur. Sans réseau, le PIN est comparé à cette empreinte, avec son propre compteur
+// (5 erreurs -> 30 min). Rien n'est envoyé au serveur ; l'empreinte est effacée au changement de PIN.
+// ------------------------------------------------------------
+var LX_OPC_MAX_JOURS = 30;
+function _lxOpCacheCle() { return "lx_opc_" + (_salonId || ""); }
+function _lxOpCacheLire() { try { return JSON.parse(localStorage.getItem(_lxOpCacheCle()) || "{}") || {}; } catch (e) { return {}; } }
+function _lxOpCacheEcrire(c) { try { localStorage.setItem(_lxOpCacheCle(), JSON.stringify(c)); } catch (e) {} }
+function _lxOpCacheOublier(opId) { var c = _lxOpCacheLire(); if (c[opId]) { delete c[opId]; _lxOpCacheEcrire(c); } }
+function _lxHex(buf) { return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, "0"); }).join(""); }
+function _lxUnhex(h) { var a = new Uint8Array(h.length / 2); for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16); return a; }
+async function _lxPinLocalHash(pin, selHex, iter) {
+  var km = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(pin) + "|" + (_salonId || "")), "PBKDF2", false, ["deriveBits"]);
+  var bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: _lxUnhex(selHex), iterations: iter, hash: "SHA-256" }, km, 256);
+  return _lxHex(bits);
+}
+// Opérateur sans données sensibles (copie locale pour le mode hors ligne)
+function _lxOpCopie(op) {
+  if (!op) return null;
+  return { id: op.id, salon_id: op.salon_id, prenom: op.prenom, nom: op.nom, email: op.email, avatar_color: op.avatar_color,
+    avatar_initials: op.avatar_initials, role: op.role, pin_length: op.pin_length, permissions: op.permissions || {},
+    collab_id: op.collab_id, actif: op.actif };
+}
+async function _lxOpCacheMemoriser(op, pin) {
+  try {
+    if (!op || !op.id || !window.crypto || !crypto.subtle) return;
+    var c = _lxOpCacheLire(), old = c[op.id] || null, e;
+    if (pin != null) { var sel = _lxHex(crypto.getRandomValues(new Uint8Array(16))); e = { s: sel, i: 150000, h: await _lxPinLocalHash(pin, sel, 150000) }; }
+    else if (old && old.h) e = { s: old.s, i: old.i, h: old.h }; // biométrie : on garde l'empreinte du dernier PIN
+    else e = { s: null, i: null, h: null };                       // biométrie seule : profil gardé pour la biométrie hors ligne
+    e.t = Date.now(); e.op = _lxOpCopie(op); e.f = 0; e.lu = null;
+    c[op.id] = e; _lxOpCacheEcrire(c);
+  } catch (e) {}
+}
+function _lxEstHorsLigne(err) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  var m = String((err && (err.message || err.details)) || err || "");
+  return /Failed to fetch|NetworkError|Load failed|network|fetch failed|timeout|ERR_INTERNET/i.test(m);
+}
+async function _lxOperatorLoginHorsLigne(operatorId, pin) {
+  var c = _lxOpCacheLire(), e = c[operatorId];
+  if (!e || !e.h || !e.op || (Date.now() - (e.t || 0)) > LX_OPC_MAX_JOURS * 864e5) {
+    return { ok: false, offline: true, error: "Hors ligne : ce profil ne s'est jamais connecté sur cet appareil (ou depuis plus de " + LX_OPC_MAX_JOURS + " jours). Connectez-vous une fois avec Internet." };
+  }
+  if (e.lu && e.lu > Date.now()) return { ok: false, offline: true, error: "Compte verrouillé (trop d'erreurs)", locked: true, remaining: 0, max: 5, lockedUntil: new Date(e.lu).toISOString() };
+  var h = await _lxPinLocalHash(pin, e.s, e.i || 150000);
+  if (h !== e.h) {
+    e.f = (e.lu && e.lu <= Date.now()) ? 1 : (e.f || 0) + 1;
+    e.lu = e.f >= 5 ? Date.now() + 30 * 60 * 1000 : null;
+    c[operatorId] = e; _lxOpCacheEcrire(c);
+    return { ok: false, offline: true, error: "PIN incorrect (" + e.f + "/5)", locked: e.f >= 5, fails: e.f, remaining: Math.max(0, 5 - e.f), max: 5, lockedUntil: e.lu ? new Date(e.lu).toISOString() : null };
+  }
+  e.f = 0; e.lu = null; c[operatorId] = e; _lxOpCacheEcrire(c);
+  window._lxOpConnexionHorsLigne = true;
+  return { ok: true, offline: true, op: Object.assign({}, e.op) };
+}
+
 // Tenter login avec PIN — retourne {ok:true, op:...} ou {ok:false, error:..., locked:bool}
 async function operatorLogin(operatorId, pin) {
-  if (!_isOnline || !_salonId) return {ok:false, error:"Hors ligne"};
+  if (!_salonId) return {ok:false, error:"Hors ligne"};
+  if (!_isOnline || (typeof navigator !== "undefined" && navigator.onLine === false)) return await _lxOperatorLoginHorsLigne(operatorId, pin);
   try {
-    var r = await _sb.from("salon_operateurs").select("*").eq("id", operatorId).limit(1);
-    if (!r.data || !r.data.length) return {ok:false, error:"Op\u00e9rateur introuvable"};
-    var op = r.data[0];
-    if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
-    if (op.locked_until && new Date(op.locked_until) > new Date()) {
-      return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true, remaining:0, max:5, lockedUntil:op.locked_until};
+    var r = await _sb.rpc("operateur_verifier_pin", { p_operateur_id: operatorId, p_pin: String(pin || "") });
+    if (r.error) {
+      if (_lxEstHorsLigne(r.error)) return await _lxOperatorLoginHorsLigne(operatorId, pin);
+      return {ok:false, error:r.error.message || "Erreur"};
     }
-    var pinHash = await hashPIN(pin, _salonId);
-    if (pinHash !== op.pin_hash) {
-      // Increment failed attempts
-      var fails = (op.failed_attempts || 0) + 1;
-      var update = {failed_attempts: fails};
-      if (fails >= 5) {
-        // Lock for 30 minutes
-        update.locked_until = new Date(Date.now() + 30*60*1000).toISOString();
-      }
-      await _sb.from("salon_operateurs").update(update).eq("id", operatorId);
-      return {ok:false, error:"PIN incorrect ("+fails+"/5)", locked:fails>=5, fails:fails, remaining:Math.max(0,5-fails), max:5, lockedUntil:update.locked_until||null};
-    }
-    // Success
-    await _sb.from("salon_operateurs").update({
-      failed_attempts: 0,
-      locked_until: null,
-      last_login_at: new Date().toISOString()
-    }).eq("id", operatorId);
-    return {ok:true, op:op};
-  } catch(e) { console.error("[OP LOGIN]", e.message); return {ok:false, error:e.message}; }
+    var d = r.data || {};
+    if (d.ok && d.op) { window._lxOpConnexionHorsLigne = false; await _lxOpCacheMemoriser(d.op, pin); return {ok:true, op:d.op}; }
+    if (d.locked || d.error === "Compte désactivé" || d.error === "Opérateur introuvable") _lxOpCacheOublier(operatorId);
+    return {ok:false, error:d.error || "Code incorrect", locked:!!d.locked, fails:d.fails, remaining:d.remaining, max:d.max || 5, lockedUntil:d.lockedUntil || null};
+  } catch(e) {
+    if (_lxEstHorsLigne(e)) return await _lxOperatorLoginHorsLigne(operatorId, pin);
+    console.error("[OP LOGIN]", e.message); return {ok:false, error:e.message};
+  }
 }
 
 // 2026-10-10 : connexion après vérification biométrique PAR L'APPAREIL (WebAuthn) — mêmes contrôles que le PIN
-// (opérateur actif, non verrouillé), sans code.
+// (opérateur actif, non verrouillé), sans code. 2026-10-14 : contrôle côté serveur (RPC) ; hors ligne, profil
+// mémorisé sur cet appareil lors d'une connexion en ligne (même limite de 30 jours) — plus d'impasse sans réseau.
+function _lxOperatorBioHorsLigne(operatorId) {
+  var e = _lxOpCacheLire()[operatorId];
+  if (!e || !e.op || (Date.now() - (e.t || 0)) > LX_OPC_MAX_JOURS * 864e5) return {ok:false, offline:true, error:"Hors ligne : connectez-vous une fois avec Internet sur cet appareil"};
+  if (e.lu && e.lu > Date.now()) return {ok:false, offline:true, error:"Compte verrouillé (trop d'erreurs)", locked:true};
+  window._lxOpConnexionHorsLigne = true;
+  return {ok:true, offline:true, op:Object.assign({}, e.op)};
+}
 async function operatorLoginBio(operatorId) {
-  if (!_isOnline || !_salonId) return {ok:false, error:"Hors ligne"};
+  if (!_salonId) return {ok:false, error:"Hors ligne"};
+  if (!_isOnline || (typeof navigator !== "undefined" && navigator.onLine === false)) return _lxOperatorBioHorsLigne(operatorId);
   try {
-    var r = await _sb.from("salon_operateurs").select("*").eq("id", operatorId).limit(1);
-    if (!r.data || !r.data.length) return {ok:false, error:"Op\u00e9rateur introuvable"};
-    var op = r.data[0];
-    if (!op.actif) return {ok:false, error:"Compte d\u00e9sactiv\u00e9"};
-    if (op.locked_until && new Date(op.locked_until) > new Date()) return {ok:false, error:"Compte verrouill\u00e9 (trop d'erreurs)", locked:true};
-    await _sb.from("salon_operateurs").update({ failed_attempts: 0, last_login_at: new Date().toISOString() }).eq("id", operatorId);
-    return {ok:true, op:op};
-  } catch(e) { return {ok:false, error:e.message}; }
+    var r = await _sb.rpc("operateur_connexion_bio", { p_operateur_id: operatorId });
+    if (r.error) { if (_lxEstHorsLigne(r.error)) return _lxOperatorBioHorsLigne(operatorId); return {ok:false, error:r.error.message || "Erreur"}; }
+    var d = r.data || {};
+    if (d.ok && d.op) { window._lxOpConnexionHorsLigne = false; await _lxOpCacheMemoriser(d.op, null); return {ok:true, op:d.op}; }
+    return {ok:false, error:d.error || "Connexion impossible", locked:!!d.locked};
+  } catch(e) { if (_lxEstHorsLigne(e)) return _lxOperatorBioHorsLigne(operatorId); return {ok:false, error:e.message}; }
 }
 
-// Débloquer manuellement un opérateur (admin only)
+// Débloquer manuellement un opérateur (admin only) — 2026-10-14 : RPC (3 déblocages / heure / opérateur)
 async function unlockOperateur(id) {
   if (!_isOnline || !_salonId) return false;
   try {
-    var r = await _sb.from("salon_operateurs").update({
-      failed_attempts: 0,
-      locked_until: null
-    }).eq("id", id);
-    return !r.error;
+    var r = await _sb.rpc("operateur_debloquer", { p_operateur_id: id });
+    if (r.error) { console.error("[OP UNLOCK]", r.error.message); return false; }
+    if (!r.data || !r.data.ok) { try { if (typeof toast === "function") toast((r.data && r.data.error) || "Déblocage impossible", "warning"); } catch(_t){} return false; }
+    try { var c = _lxOpCacheLire(); if (c[id]) { c[id].f = 0; c[id].lu = null; _lxOpCacheEcrire(c); } } catch(_c){}
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_DEBLOQUE", "Opérateur " + id + " débloqué manuellement"); } catch(_eA){}
+    return true;
   } catch(e) { return false; }
 }
 

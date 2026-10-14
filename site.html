@@ -124,7 +124,7 @@
 })();
 </script>
 <script src="https://luxyra.fr/supabase.min.js"></script>
-<script src="/lx-client.js?v=20261014-1"></script>
+<script src="/lx-client.js?v=20261014-2"></script>
 <script>
 /* ============================================================================
    FIX 2026-07-13 — RESERVATION IMPOSSIBLE sur /<slug>/reserver ("Can't find variable: LX")
@@ -1442,17 +1442,35 @@ function _lxApresConnexion(){
   }
 }
 async function ensureClientSalon(clientId){
-  // Create client_salon relationship if it doesn't exist for this salon
+  // Lien compte client <-> établissement (client_salon).
+  // 2026-10-14 SECURITE : via le worker (session du client) ; plus d'accès anonyme à client_salon
+  // (lecture des fiches des autres / insertion de points ou de consentements falsifiés).
   if(!salonId)return;
-  var check=await sb.from("client_salon").select("id").eq("client_id",clientId).eq("salon_id",salonId);
-  if(!check.data||check.data.length===0){
-    await sb.from("client_salon").insert({
-      client_id:clientId,
-      salon_id:salonId,
-      sms_ok:CLIENT.sms_ok||false,
-      email_ok:CLIENT.email_ok||false
-    });
-  }
+  try{
+    var _tk=(window.LX&&LX.getToken)?LX.getToken():"";
+    if(!_tk) return;
+    await fetch("/api/client/salons",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_token:_tk,op:"lier",salon_id:salonId})});
+  }catch(_eCS){}
+}
+// 2026-10-14 SECURITE : abandon d'une réservation « en attente de paiement ».
+// À la création, le navigateur tire un secret aléatoire dont seule l'empreinte SHA-256 est enregistrée
+// (rdv_online.abandon_hash) ; la suppression passe par le worker (/api/rdv/abandon) qui vérifie ce secret,
+// le statut pending_payment, l'absence de paiement et l'âge (< 35 min). Plus de DELETE anonyme dans la base.
+async function _lxAbandonPreparer(rdvData){
+  try{
+    var a=crypto.getRandomValues(new Uint8Array(32)), t=Array.from(a).map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+    var d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));
+    rdvData.abandon_hash=Array.from(new Uint8Array(d)).map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+    try{ localStorage.setItem("lx_abandon_"+rdvData.id, JSON.stringify({t:t, at:Date.now()})); }catch(_eL){}
+  }catch(_eA){}
+}
+function _lxAbandonner(rdvId){
+  var tok=""; try{ var o=JSON.parse(localStorage.getItem("lx_abandon_"+rdvId)||"null"); if(o&&o.t) tok=o.t; localStorage.removeItem("lx_abandon_"+rdvId); }catch(_eL){}
+  // Ménage des anciens secrets (> 1 h)
+  try{ for(var i=localStorage.length-1;i>=0;i--){ var k=localStorage.key(i); if(k&&k.indexOf("lx_abandon_")===0){ var v=JSON.parse(localStorage.getItem(k)||"{}"); if(!v.at||Date.now()-v.at>3600000) localStorage.removeItem(k); } } }catch(_eM){}
+  if(!tok) return Promise.resolve({ok:false});
+  return fetch("/api/rdv/abandon",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rdv_id:rdvId,token:tok})})
+    .then(function(r){return r.json().catch(function(){return {};});}).catch(function(e){ console.warn("[abandon] échec réseau", e&&e.message); return {ok:false}; });
 }
 
 // 2026-10-14 : oubli de l'abonnement aux notifications de l'espace client sur ce navigateur (déconnexion ou session expirée).
@@ -1569,9 +1587,8 @@ function renderSite(){
   if(_pp==="cancel"&&_rdvId){
     // FIX 2026-05-12 : awaité avec .then pour s'assurer que le DELETE part avant la
     // suite du rendu, et log d'erreur si problème RLS/réseau.
-    sb.from("rdv_online").delete().eq("id",_rdvId).eq("status","pending_payment").then(function(r){
-      if(r.error) console.warn("[cancel cleanup] DELETE failed:", r.error.message);
-      else console.log("[cancel cleanup] RDV", _rdvId, "supprimé");
+    _lxAbandonner(_rdvId).then(function(d){
+      if(!d||!d.ok) console.warn("[cancel cleanup] abandon non confirmé (le ménage serveur s'en chargera)");
       window.history.replaceState({},"",buildSalonUrl());
     });
   }
@@ -1601,7 +1618,7 @@ function renderSite(){
     return;
   }
   if(_ep==="cancel"&&_rdvId){
-    sb.from("rdv_online").delete().eq("id",_rdvId).eq("status","pending_payment").then(function(){
+    _lxAbandonner(_rdvId).then(function(){
       window.history.replaceState({},"",buildSalonUrl());
     });
   }
@@ -3885,6 +3902,7 @@ async function submitWithStripe(){
       rdvData.frais_deplacement_montant = booking.clientAdr.frais_mt || 0;
     }
     rdvData.id=_lxNewId();
+    await _lxAbandonPreparer(rdvData); // 2026-10-14 : secret d'abandon (voir _lxAbandonner)
     var rdvRes=await sb.from("rdv_online").insert(rdvData);
     if(rdvRes.error){_resaFail(rdvRes.error,"insert_stripe",rdvData);showAlert(rdvErrorMessage(rdvRes.error),"info");await refreshRDV();renderTimeSlots(booking.date);return;}
     var rdvId=rdvData.id;
@@ -3928,14 +3946,14 @@ async function submitWithStripe(){
         try{ console.error("[RESA] Echec creation paiement "+paymentTypeLabel+" (rdv "+rdvId+", salon "+salonId+"): "+(data.error||"inconnu")); _resaFail(data.error,"paiement",rdvData); }catch(_){}
         showAlert("Erreur paiement: "+(data.error||"Impossible de cr\u00e9er la session de paiement"),"error");
         if(btn){btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;}
-        // Cleanup: delete the pending RDV
-        sb.from("rdv_online").delete().eq("id",rdvId);
+        // Cleanup: abandon de la réservation en attente (worker, secret du navigateur)
+        _lxAbandonner(rdvId);
       }
     }catch(e){
       try{ console.error("[RESA] Echec reseau paiement "+paymentTypeLabel+" (rdv "+rdvId+"): "+((e&&e.message)||e)); _resaFail(e,"paiement_reseau",rdvData); }catch(_){}
       showAlert("Erreur de connexion","error");
       if(btn){btn.textContent="\ud83d\udcb3 Payer l\u2019acompte et confirmer";btn.disabled=false;}
-      sb.from("rdv_online").delete().eq("id",rdvId);
+      _lxAbandonner(rdvId);
     }
     return;
   }
