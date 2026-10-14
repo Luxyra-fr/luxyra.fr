@@ -5608,7 +5608,8 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
       ),
       lxSeoFetch(
         `services?salon_id=eq.${encodeURIComponent(s.id)}&actif=eq.true&show_site=eq.true` +
-        `&select=nom,prix,categorie,phases,ordre&order=ordre.asc.nullslast,nom.asc&limit=60`
+        // 2026-10-15 : select=* -> prix_sur_devis / prix_a_partir_de lus s'ils existent (aucune erreur avant le SQL apartir.sql)
+        `&select=*&order=ordre.asc.nullslast,nom.asc&limit=60`
       ),
     ]);
     const cfg = (Array.isArray(cfgRows) && cfgRows[0]) ? cfgRows[0] : {};
@@ -5674,8 +5675,13 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
       if (!sv || !sv.nom || sv.prix == null) continue;
       const prix = Number(sv.prix);
       if (!isFinite(prix)) continue;
-      if (prix < minP) minP = prix;
-      if (prix > maxP) maxP = prix;
+      // 2026-10-15 : « sur devis » = aucun prix publié ; « à partir de » = prix minimum (priceSpecification.minPrice)
+      const devis = sv.prix_sur_devis === true;
+      const apartir = !devis && sv.prix_a_partir_de === true;
+      if (!devis) {
+        if (prix < minP) minP = prix;
+        if (prix > maxP) maxP = prix;
+      }
       let dureeMin = 0;
       if (Array.isArray(sv.phases)) {
         for (const p of sv.phases) { if (p && typeof p.d === "number") dureeMin += p.d; }
@@ -5687,16 +5693,26 @@ async function lxBuildSalonSeo(slug, reserverIntent) {
         provider: { "@type": m.schema, name: nom },
       };
       if (dureeMin > 0) item.estimatedDuration = `PT${dureeMin}M`;
-      offers.push({
+      const offer = {
         "@type": "Offer",
         itemOffered: item,
-        price: prix.toFixed(2),
-        priceCurrency: "EUR",
         availability: "https://schema.org/InStock",
         url: `${canonical}#reserver`,
-      });
+      };
+      if (devis) {
+        offer.description = "Prix sur devis";
+      } else if (apartir) {
+        offer.priceCurrency = "EUR";
+        offer.priceSpecification = { "@type": "PriceSpecification", minPrice: prix.toFixed(2), priceCurrency: "EUR" };
+        offer.description = `À partir de ${prix.toFixed(2).replace(".", ",")} €`;
+      } else {
+        offer.price = prix.toFixed(2);
+        offer.priceCurrency = "EUR";
+      }
+      offers.push(offer);
+      const prixTxt = devis ? "Sur devis" : `${apartir ? "à partir de " : ""}${prix.toFixed(2).replace(".", ",")} €`;
       svcRowsHtml.push(
-        `<li>${lxEsc(sv.nom)}${sv.categorie ? ` <em>(${lxEsc(sv.categorie)})</em>` : ""} — <strong>${prix.toFixed(2).replace(".", ",")} €</strong>${dureeMin > 0 ? ` · ${dureeMin} min` : ""}</li>`
+        `<li>${lxEsc(sv.nom)}${sv.categorie ? ` <em>(${lxEsc(sv.categorie)})</em>` : ""} — <strong>${prixTxt}</strong>${dureeMin > 0 ? ` · ${dureeMin} min` : ""}</li>`
       );
     }
     const priceRange = (isFinite(minP) && isFinite(maxP))

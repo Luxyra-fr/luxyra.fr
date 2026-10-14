@@ -16,3 +16,5 @@ Le texte des guides est dans `docs/generateurs/aide_guides.py` : l'ordre des lé
 - `ready` : expression JS attendue avant les étapes (défaut : app pro chargée).
 Exemples : `compte_verif`, `compte_rdv_statuts`… (espace client avec données fictives), `notifs_attente` (notification injectée dans les tables de démo), `z_bloquee` (file de secours simulée dans le localStorage de démo), `session_expiree`.
 Le drapeau `_lxDemo` est remis en place juste après `lxSessionPerdue` ; en démo, `lx-demo.js` remplace le client Supabase et bloque tous les appels réseau sortants.
+
+- 15/10 (prix « à partir de ») : les scripts chargés en absolu depuis https://luxyra.fr/ (site.html) sont servis par le serveur local ; `site_apartir_*` = site.html avec `mock` (établissement fictif, ?s=uuid).

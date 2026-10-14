@@ -386,7 +386,7 @@ body{max-width:100%;margin:0 auto;}
 })();
 </script>
 <script src="supabase.min.js"></script>
-<script>if(window._lxDemo){document.write('<script src="lx-demo.js?v=20261014-02"><\/script>');}</script>
+<script>if(window._lxDemo){document.write('<script src="lx-demo.js?v=20261015-01"><\/script>');}</script>
 <script>
 // 2026-10-14 audit : mode démo et lx-demo.js non chargé (réseau, blocage) -> échec FERMÉ : aucun vrai client
 // Supabase n'est créé (luxyra-supabase.js garde _sb=null) et la page affiche un message au lieu de l'application.
@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261014-8"></script>
+<script src="luxyra-supabase.js?v=20261015-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261014-8";
+  var attendu="20261015-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -9814,6 +9814,9 @@ window._lxFixOnlineStId=_lxFixOnlineStId;
 function _lxApOnlineEnrichir(ap, m){
   try{
     if(!ap||!m||ap.st==="done"||ap.tkNum) return;
+    // 2026-10-15 : prestations réservées « à partir de » (drapeau posé par le serveur dans items) -> caisse
+    try{ var _az=(Array.isArray(m.items)?m.items:[]).filter(function(x){ return x&&x.a_partir_de===true; }).map(function(x){ return Number(x.service_id||x.sId)||null; });
+      if(_az.length) ap.aPartirSids=_az; else if(ap.aPartirSids) delete ap.aPartirSids; }catch(_eAz){}
     if(m.lieu==="domicile"){
       ap.lieu="domicile";
       if(m.adresse) ap.adresse=m.adresse+(m.adresseComplement?" ("+m.adresseComplement+")":"");
@@ -18550,7 +18553,7 @@ function rForfaits(){
     h+='</div>';
     // Prix serif + boutons cercles dor\u00e9s (coh\u00e9rent services)
     h+='<div style="text-align:right;flex-shrink:0;min-width:90px;display:flex;flex-direction:column;align-items:flex-end;gap:10px">';
-    h+='<div style="font-size:24px;font-weight:500;font-family:var(--f1,Georgia,serif);color:#e8c873;letter-spacing:.5px">'+s.p+'<span style="font-size:14px;margin-left:1px;opacity:.7">\u20ac</span></div>';
+    h+=_lxPrixListeHtml(s); // 2026-10-15 : « Sur devis » / « à partir de »
     h+='<div style="display:flex;gap:6px">';
     h+='<button onclick="addForfaitFromServices('+s.id+')" style="width:30px;height:30px;border-radius:50%;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.3);color:#e8c873;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.16)\'" onmouseout="this.style.background=\'rgba(212,168,67,.06)\'" title="Modifier le forfait"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>';
     h+='<button onclick="deleteService('+s.id+')" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.5);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s" onmouseover="this.style.background=\'rgba(248,113,113,.1)\';this.style.borderColor=\'rgba(248,113,113,.4)\';this.style.color=\'#f87171\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\';this.style.borderColor=\'rgba(255,255,255,.1)\';this.style.color=\'rgba(255,255,255,.5)\'" title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>';
@@ -18611,6 +18614,7 @@ function addForfaitFromServices(editSvcId){
         cat: existing.cat || CATS[0] || "",
         showSite: existing.showSite !== false,
         bookOnline: existing.bookOnline !== false,
+        devis: existing.devis === true, apartir: existing.apartir === true, // 2026-10-15
         steps: (existing.phases || []).map(function(ph){
           return ph.t === "p"
             ? { type: "pause", duration: ph.d || 15 }
@@ -18620,7 +18624,7 @@ function addForfaitFromServices(editSvcId){
     }
   }
   if(!window._forfaitDraft){
-    window._forfaitDraft = { editId:null, name:"", price:0, cat:CATS[0]||"", showSite:true, bookOnline:true, steps:[] };
+    window._forfaitDraft = { editId:null, name:"", price:0, cat:CATS[0]||"", showSite:true, bookOnline:true, devis:false, apartir:false, steps:[] };
   }
   _renderForfaitComposer();
 }
@@ -18647,7 +18651,7 @@ function _renderForfaitComposer(){
   h += '<div class="fg"><label>Nom *</label><input id="fcName" value="'+(d.name||'').replace(/"/g,'&quot;')+'" placeholder="Ex: Pack Mariée" oninput="window._forfaitDraft.name=this.value"></div>';
 
   h += '<div style="display:flex;gap:10px">';
-  h += '<div class="fg" style="flex:1"><label>Prix forfait (€) *</label><input type="number" id="fcPrice" min="0" step="1" value="'+(d.price||0)+'" style="font-size:16px;font-weight:700;text-align:center" oninput="window._forfaitDraft.price=parseFloat(this.value)||0;_updateForfaitTotalLabels()"></div>';
+  h += '<div class="fg" style="flex:1"><label>'+(d.apartir?'Prix minimum (€) *':(d.devis?'Prix indicatif (€)':'Prix forfait (€) *'))+'</label><input type="number" id="fcPrice" min="0" step="1" value="'+(d.price||0)+'" style="font-size:16px;font-weight:700;text-align:center" oninput="window._forfaitDraft.price=parseFloat(this.value)||0;_updateForfaitTotalLabels()"></div>';
   h += '<div class="fg" style="flex:1"><label>Catégorie</label><select id="fcCat" onchange="window._forfaitDraft.cat=this.value">';
   for(var ci=0;ci<CATS.length;ci++) h += '<option value="'+CATS[ci]+'"'+(d.cat===CATS[ci]?' selected':'')+'>'+CATS[ci]+'</option>';
   h += '</select></div>';
@@ -18662,6 +18666,9 @@ function _renderForfaitComposer(){
   h += '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border2);border-radius:8px;cursor:pointer;font-size:12px"><input type="checkbox" '+(d.showSite?'checked':'')+' onchange="window._forfaitDraft.showSite=this.checked"> 🌐 Site</label>';
   h += '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border2);border-radius:8px;cursor:pointer;font-size:12px"><input type="checkbox" '+(d.bookOnline?'checked':'')+' onchange="window._forfaitDraft.bookOnline=this.checked"> 📅 Réservation</label>';
   h += '</div>';
+  // 2026-10-15 : prix sur devis / prix « à partir de » (exclusifs) — mêmes règles que les prestations
+  h += '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px;margin-bottom:8px;border:1px solid '+(d.devis?'rgba(200,168,78,.45)':'var(--border2)')+';border-radius:8px;cursor:pointer;line-height:1.45;font-size:12px!important;text-transform:none!important;letter-spacing:normal!important;font-family:inherit!important;color:rgba(255,255,255,.85)!important"><input type="checkbox" id="fcDevis" '+(d.devis?'checked':'')+' onchange="window._forfaitDraft.devis=this.checked;if(this.checked)window._forfaitDraft.apartir=false;_renderForfaitComposer()" style="margin-top:2px;width:16px;height:16px;flex:0 0 16px"><span>\ud83d\udcdd Prix sur devis \u2014 prix convenu avec le client et saisi \u00e0 l\u2019encaissement (\u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
+  h += '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px;margin-bottom:14px;border:1px solid '+(d.apartir?'rgba(200,168,78,.45)':'var(--border2)')+';border-radius:8px;cursor:pointer;line-height:1.45;font-size:12px!important;text-transform:none!important;letter-spacing:normal!important;font-family:inherit!important;color:rgba(255,255,255,.85)!important"><input type="checkbox" id="fcAPartir" '+(d.apartir?'checked':'')+' onchange="window._forfaitDraft.apartir=this.checked;if(this.checked)window._forfaitDraft.devis=false;_renderForfaitComposer()" style="margin-top:2px;width:16px;height:16px;flex:0 0 16px"><span>\u2197\ufe0f Prix \u00ab \u00e0 partir de \u00bb \u2014 le prix indiqu\u00e9 est un minimum ; r\u00e9servable en ligne, prix final ajust\u00e9 \u00e0 l\u2019encaissement</span></label>';
 
   // === COMPOSITION ===
   h += '<div style="margin-bottom:14px">';
@@ -18732,7 +18739,7 @@ function _renderForfaitComposer(){
   // Actions
   h += '<div style="display:flex;gap:8px">';
   h += '<button onclick="window._forfaitDraft=null;cM()" style="flex:1;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.04);color:#fff;font-weight:600;cursor:pointer">Annuler</button>';
-  var saveDisabled = !d.name || !d.price || !d.steps.length;
+  var saveDisabled = !d.name || (!d.price && !d.devis) || !d.steps.length; // 2026-10-15 : sur devis = prix facultatif
   h += '<button onclick="_forfaitSave()" '+(saveDisabled?'disabled':'')+' style="flex:1;padding:12px;border:none;border-radius:10px;background:'+(saveDisabled?'rgba(255,255,255,.06)':'linear-gradient(135deg,#d4a843,#b8960f)')+';color:'+(saveDisabled?'rgba(255,255,255,.3)':'#000')+';font-weight:700;cursor:'+(saveDisabled?'not-allowed':'pointer')+'">'+(d.editId?'Enregistrer':'Créer le forfait')+'</button>';
   h += '</div>';
   h += '</div>';
@@ -18837,7 +18844,7 @@ function _forfaitAddSvc(svcId){
 // service existant via sId pour résoudre le nom à jour à l'affichage.
 function _forfaitSave(){
   var d = window._forfaitDraft;
-  if(!d || !d.name || !d.price || !d.steps.length){
+  if(!d || !d.name || (!d.price && !d.devis) || !d.steps.length){
     if(typeof toast === "function") toast("Nom, prix et au moins une étape requis","warning");
     return;
   }
@@ -18857,6 +18864,7 @@ function _forfaitSave(){
         SVC[i].phases = phases;
         SVC[i].showSite = d.showSite;
         SVC[i].bookOnline = d.bookOnline;
+        SVC[i].devis = d.devis === true; SVC[i].apartir = d.apartir === true && d.devis !== true; // 2026-10-15
         break;
       }
     }
@@ -18871,6 +18879,7 @@ function _forfaitSave(){
       phases: phases,
       showSite: !!d.showSite,
       bookOnline: !!d.bookOnline,
+      devis: d.devis === true, apartir: d.apartir === true && d.devis !== true, // 2026-10-15
       _new: true // 2026-10-14 : toujours inserer
     });
   }
@@ -19040,7 +19049,7 @@ function rServices(){
     h+='</div>';
     // Prix en serif premium + boutons en cercles dor\u00e9s
     h+='<div style="text-align:right;flex-shrink:0;min-width:90px;display:flex;flex-direction:column;align-items:flex-end;gap:10px">';
-    h+='<div style="font-size:24px;font-weight:500;font-family:var(--f1,Georgia,serif);color:#e8c873;letter-spacing:.5px">'+s.p+'<span style="font-size:14px;margin-left:1px;opacity:.7">\u20ac</span></div>';
+    h+=_lxPrixListeHtml(s); // 2026-10-15 : « Sur devis » / « à partir de »
     h+='<div style="display:flex;gap:6px">';
     h+='<button onclick="editService('+s.id+')" style="width:30px;height:30px;border-radius:50%;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.3);color:#e8c873;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.16)\'" onmouseout="this.style.background=\'rgba(212,168,67,.06)\'" title="Modifier"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>';
     h+='<button onclick="deleteService('+s.id+')" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.5);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s" onmouseover="this.style.background=\'rgba(248,113,113,.1)\';this.style.borderColor=\'rgba(248,113,113,.4)\';this.style.color=\'#f87171\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\';this.style.borderColor=\'rgba(255,255,255,.1)\';this.style.color=\'rgba(255,255,255,.5)\'" title="Supprimer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>';
@@ -19335,7 +19344,8 @@ function addService(){
   body += '<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid rgba(96,165,250,.3);border-radius:6px;cursor:pointer;font-size:12px;background:rgba(96,165,250,.06);color:#93c5fd;font-family:var(--f1,Georgia,serif);letter-spacing:.5px"><input type="checkbox" id="nsShowSite" checked style="width:16px;height:16px;cursor:pointer;accent-color:#60a5fa"> \u25cf Visible sur le site</label>';
   body += '<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid rgba(74,222,128,.3);border-radius:6px;cursor:pointer;font-size:12px;background:rgba(74,222,128,.06);color:#7fc97f;font-family:var(--f1,Georgia,serif);letter-spacing:.5px"><input type="checkbox" id="nsBookOnline" checked style="width:16px;height:16px;cursor:pointer;accent-color:#4ade80"> \u25cf R\u00e9servable en ligne</label>';
   body += '</div>';
-  body += '<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin-top:10px;border:1px solid rgba(255,255,255,.08);border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="nsDevis" style="margin-top:2px"><span>\ud83d\udcdd Prix sur devis \u2014 pas de prix fixe : le prix est convenu avec le client et saisi \u00e0 l\u2019encaissement (affich\u00e9 \u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
+  body += '<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin-top:10px;border:1px solid rgba(255,255,255,.08);border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="nsDevis" onchange="_lxPrixOptExcl(this,\'nsAPartir\')" style="margin-top:2px;width:16px;height:16px;flex:0 0 16px"><span>\ud83d\udcdd Prix sur devis \u2014 pas de prix fixe : le prix est convenu avec le client et saisi \u00e0 l\u2019encaissement (affich\u00e9 \u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
+  body += _lxPrixAPartirCase("nsAPartir","nsDevis",false); // 2026-10-15 : prix « à partir de » (prix = minimum)
   // Boutons custom (Annuler reset les vars + Cr\u00e9er)
   var footer = '<div style="display:flex;gap:10px">';
   footer += '<button onclick="window._newSvcName=null;window._newSvcPrice=null;window._newSvcDur=null;cM()" style="flex:1;padding:14px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.7);font-family:var(--f1,Georgia,serif);font-weight:500;font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer">Annuler</button>';
@@ -19365,8 +19375,10 @@ function doAddService(){
   var catGenre=catGenreEl?(catGenreEl.value||null):null;
   if(catGenre!=='H'&&catGenre!=='F'&&catGenre!=='E') catGenre=null;
   var devis=!!(document.getElementById("nsDevis")&&document.getElementById("nsDevis").checked); // 2026-10-13
+  var apartir=!devis&&!!(document.getElementById("nsAPartir")&&document.getElementById("nsAPartir").checked); // 2026-10-15
+  if(apartir&&!(price>0)){ if(typeof toast==="function")toast("Indiquez le prix minimum","warning"); return; }
   // 2026-10-14 : _new = toujours INSERER (l'id local ne doit jamais ecraser une ligne existante)
-  SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline,catGenre:catGenre,devis:devis,_new:true});
+  SVC.push({id:newId,n:name,p:price,cat:cat,phases:phases,showSite:showSite,bookOnline:bookOnline,catGenre:catGenre,devis:devis,apartir:apartir,_new:true});
   aCat=cat;
   window._newSvcName=null;window._newSvcPrice=null;window._newSvcDur=null;window._newSvcPhases=null;
   cM();go("services");
@@ -19427,7 +19439,8 @@ function editService(id){
   htm+='<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid '+(sv.showSite!==false?"rgba(96,165,250,.3)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;background:'+(sv.showSite!==false?"rgba(96,165,250,.06)":"rgba(255,255,255,.02)")+';color:'+(sv.showSite!==false?"#93c5fd":"rgba(255,255,255,.5)")+';font-family:var(--f1,Georgia,serif);letter-spacing:.5px;transition:all .15s"><input type="checkbox" id="esShowSite" '+(sv.showSite!==false?"checked":"")+' style="width:16px;height:16px;cursor:pointer;accent-color:#60a5fa"> \u25cf Visible sur le site</label>';
   htm+='<label style="flex:1;display:flex;align-items:center;gap:10px;padding:12px;border:1px solid '+(sv.bookOnline!==false?"rgba(74,222,128,.3)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;background:'+(sv.bookOnline!==false?"rgba(74,222,128,.06)":"rgba(255,255,255,.02)")+';color:'+(sv.bookOnline!==false?"#7fc97f":"rgba(255,255,255,.5)")+';font-family:var(--f1,Georgia,serif);letter-spacing:.5px;transition:all .15s"><input type="checkbox" id="esBookOnline" '+(sv.bookOnline!==false?"checked":"")+' style="width:16px;height:16px;cursor:pointer;accent-color:#4ade80"> \u25cf R\u00e9servable en ligne</label>';
   htm+='</div>';
-  htm+='<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin:-12px 0 20px;border:1px solid '+(sv.devis?"rgba(200,168,78,.45)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="esDevis" '+(sv.devis?'checked':'')+' style="margin-top:2px"><span>\ud83d\udcdd Prix sur devis \u2014 pas de prix fixe : le prix est convenu avec le client et saisi \u00e0 l\u2019encaissement (affich\u00e9 \u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
+  htm+='<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin:-12px 0 20px;border:1px solid '+(sv.devis?"rgba(200,168,78,.45)":"rgba(255,255,255,.08)")+';border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="esDevis" '+(sv.devis?'checked':'')+' onchange="_lxPrixOptExcl(this,\'esAPartir\')" style="margin-top:2px;width:16px;height:16px;flex:0 0 16px"><span>\ud83d\udcdd Prix sur devis \u2014 pas de prix fixe : le prix est convenu avec le client et saisi \u00e0 l\u2019encaissement (affich\u00e9 \u00ab Sur devis \u00bb sur le site, r\u00e9servation par demande)</span></label>';
+  htm+=_lxPrixAPartirCase("esAPartir","esDevis",!!sv.apartir,"margin:-8px 0 20px"); // 2026-10-15
   // Boutons : Annuler (sobre) + Enregistrer (gradient or signature)
   htm+='<div style="display:flex;gap:10px">';
   htm+='<button onclick="cM()" style="flex:1;padding:14px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:rgba(255,255,255,.02);color:rgba(255,255,255,.7);font-family:var(--f1,Georgia,serif);font-weight:500;font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(255,255,255,.06)\'" onmouseout="this.style.background=\'rgba(255,255,255,.02)\'">Annuler</button>';
@@ -19464,6 +19477,7 @@ function doEditService(id){
   sv.showSite=document.getElementById("esShowSite")?document.getElementById("esShowSite").checked:true;
   sv.bookOnline=document.getElementById("esBookOnline")?document.getElementById("esBookOnline").checked:true;
   sv.devis=!!(document.getElementById("esDevis")&&document.getElementById("esDevis").checked); // 2026-10-13 : prix sur devis
+  sv.apartir=!sv.devis&&!!(document.getElementById("esAPartir")&&document.getElementById("esAPartir").checked); // 2026-10-15 : prix minimum
   aCat=newCat;
   if(typeof saveServices==="function")saveServices();
   // === Si prix OU nom a chang\u00e9 : proposer de mettre \u00e0 jour les RDV \u00e0 venir ===
@@ -28343,6 +28357,7 @@ function mD(id, mode){
     }
   }
   _tk={step:3,stId:a.stId,cId:a.cId,items:cartItems,comment:"",remise:0,apptId:id,acompte:acomp,acompteMode:a.acompteMode||"",acompteTkNum:a.acompteTkNum||null,_linkedApptId:linkedApptId};
+  try{ _lxMarquerAPartir(_tk.items, [a, linkedRdv]); }catch(_eAz){} // 2026-10-15 : lignes « à partir de » pré-remplies au minimum, modifiables
   // 2026-10-14 (NF525 acompte en ligne) : acompte en ligne du nouveau modèle (ticket scellé au paiement) -> déduit comme un
   // acompte versé au salon (cf. _lxAcompteSalonAmount). Le n° du ticket d'acompte est vérifié/complété avant le scellement
   // (doFinalPayExecute -> _lxAcompteEnLigneAvantEncaissement).
@@ -28720,14 +28735,15 @@ function showCaisse(){
       var itTotal=it.price*it.qty-(it.remise||0);
       var col=it.isPack?"rgba(200,168,78,.15)":it.isCarteAbo?"rgba(76,175,80,.12)":"transparent";
       h+='<div style="display:grid;grid-template-columns:2fr 40px 70px 50px 70px;padding:6px 12px;align-items:center;font-size:12px;border-bottom:1px solid rgba(255,255,255,.04);background:'+col+'">';
-      h+='<div style="display:flex;align-items:center;gap:6px;min-width:0"><button onclick="lxRetirerLigne('+idx+')" style="background:none;border:none;color:rgba(255,255,255,.25);cursor:pointer;font-size:10px;padding:2px;flex-shrink:0">\u2716</button><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+it.name+'</span></div>';
+      h+='<div style="display:flex;align-items:center;gap:6px;min-width:0"><button onclick="lxRetirerLigne('+idx+')" style="background:none;border:none;color:rgba(255,255,255,.25);cursor:pointer;font-size:10px;padding:2px;flex-shrink:0">\u2716</button><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+it.name+'</span>'+(it.apartir?'<span onclick="_lxPrixAPartir('+idx+')" title="Prix minimum : cliquez pour fixer le prix final" style="flex-shrink:0;cursor:pointer;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;background:rgba(232,200,115,.15);border:1px solid rgba(232,200,115,.45);color:#e8c873;white-space:nowrap">\u00e0 partir de</span>':'')+'</div>';
       // === Quantit\u00e9 \u00e9ditable avec \u2212/+ ===
       h+='<div style="display:flex;align-items:center;justify-content:center;gap:2px">';
       h+='<button onclick="_posItemQty('+idx+',-1)" style="background:rgba(255,255,255,.08);border:none;color:#fff;width:18px;height:20px;border-radius:3px;cursor:pointer;font-size:11px;line-height:1;padding:0" title="-1">\u2212</button>';
       h+='<span style="min-width:14px;text-align:center;font-weight:700">'+it.qty+'</span>';
       h+='<button onclick="_posItemQty('+idx+',1)" style="background:rgba(255,255,255,.08);border:none;color:#fff;width:18px;height:20px;border-radius:3px;cursor:pointer;font-size:11px;line-height:1;padding:0" title="+1">+</button>';
       h+='</div>';
-      h+='<div style="text-align:right;color:rgba(255,255,255,.6)">'+it.price.toFixed(2)+'</div>';
+      if(it.apartir) h+='<div onclick="_lxPrixAPartir('+idx+')" title="Prix \u00ab \u00e0 partir de \u00bb : cliquez pour fixer le prix final" style="text-align:right;cursor:pointer;color:#e8c873;font-weight:700;text-decoration:underline dotted;text-underline-offset:3px">\u270e '+it.price.toFixed(2)+'</div>'; // 2026-10-15
+      else h+='<div style="text-align:right;color:rgba(255,255,255,.6)">'+it.price.toFixed(2)+'</div>';
       // === Remise cliquable pour modifier ===
       var _remCursor = it.carteAboRemise ? 'default' : 'pointer';
       var _remOnclick = it.carteAboRemise ? '' : 'onclick="addItemRemise('+idx+')" title="Cliquez pour ajouter/modifier une remise"';
@@ -29345,6 +29361,58 @@ function showConfirm(msg,onYes,onNo){
   });
 })();
 
+// 2026-10-15 : PRIX « À PARTIR DE » (comme Planity) — le prix de la fiche est un MINIMUM. Réservable en ligne (acompte
+// calculé sur ce minimum), ligne de ticket pré-remplie au minimum et modifiable avant paiement (badge « à partir de »).
+// Le ticket enregistre seulement le prix final (aucun champ ajouté au ticket scellé).
+function _lxPrixTxt(sv){
+  if(!sv) return "";
+  var p=(Number(sv.p)||0).toFixed(2).replace(".",",")+" \u20ac";
+  if(sv.devis) return "Sur devis";
+  return sv.apartir ? "\u00e0 partir de "+p : p;
+}
+function _lxPrixListeHtml(s){
+  var st='font-size:24px;font-weight:500;font-family:var(--f1,Georgia,serif);color:#e8c873;letter-spacing:.5px';
+  if(s&&s.devis) return '<div style="'+st+';font-size:15px;font-style:italic">Sur devis</div>';
+  var h='<div style="'+st+';text-align:right;white-space:nowrap">';
+  if(s&&s.apartir) h+='<span style="display:block;font-size:10px;letter-spacing:.5px;font-style:italic;opacity:.75;line-height:1.2;white-space:nowrap;text-align:right">\u00e0 partir de</span>';
+  return h+(s?s.p:0)+'<span style="font-size:14px;margin-left:1px;opacity:.7">\u20ac</span></div>';
+}
+function _lxPrixOptExcl(el, autreId){ try{ if(el&&el.checked){ var o=document.getElementById(autreId); if(o) o.checked=false; } }catch(_e){} }
+function _lxPrixAPartirCase(id, autreId, coche, marge){
+  return '<label style="display:flex;align-items:flex-start;gap:10px;padding:12px;margin:'+(marge||'8px 0 0')+';border:1px solid '+(coche?'rgba(200,168,78,.45)':'rgba(255,255,255,.08)')+';border-radius:6px;cursor:pointer;font-size:12px;line-height:1.45"><input type="checkbox" id="'+id+'" '+(coche?'checked':'')+' onchange="_lxPrixOptExcl(this,\''+autreId+'\')" style="margin-top:2px;width:16px;height:16px;flex:0 0 16px"><span>\u2197\ufe0f Prix \u00ab \u00e0 partir de \u00bb \u2014 le prix indiqu\u00e9 est un minimum (affich\u00e9 \u00ab \u00e0 partir de \u2026 \u00bb sur le site, r\u00e9servable en ligne, acompte calcul\u00e9 sur ce minimum) ; le prix final est ajust\u00e9 \u00e0 l\u2019encaissement</span></label>';
+}
+// Lignes issues d'un RDV : prestation « à partir de » au catalogue OU réservée comme telle en ligne (aPartirSids)
+function _lxMarquerAPartir(items, rdvs){
+  var sids=[]; (rdvs||[]).forEach(function(r){ if(r&&Array.isArray(r.aPartirSids)) sids=sids.concat(r.aPartirSids); });
+  (items||[]).forEach(function(it){
+    if(!it||it.isSep||it.isProd||it.isPack||!it.sId||it.devis) return;
+    var sv=gS(it.sId); if(sv&&sv.devis) return;
+    if((sv&&sv.apartir)||sids.indexOf(Number(it.sId))>=0){
+      it.apartir=true; it.prixMin=(Number(it.price)>0)?Number(it.price):(Number(sv&&sv.p)||0);
+      if(!(Number(it.price)>0)) it.price=it.prixMin;
+    }
+  });
+}
+function _lxPrixAPartir(idx){
+  var it=_tk&&_tk.items?_tk.items[idx]:null; if(!it){ showCaisse(); return; }
+  var mini=Number(it.prixMin)||0;
+  showPrompt({title:"\u2197\ufe0f Prix \u00ab \u00e0 partir de \u00bb", label:"Prix final (TTC) pour \u00ab "+String(it.name||"Prestation")+" \u00bb\nPrix minimum affich\u00e9 : "+mini.toFixed(2).replace(".",",")+" \u20ac", type:"text", inputMode:"decimal", defaultValue:String(Number(it.price)||mini), placeholder:"Ex : 65", okLabel:"Valider le prix",
+    onCancel:function(){ showCaisse(); },
+    onOk:function(v){
+      var x=Math.round((parseFloat(String(v||"").replace(",","."))||0)*100)/100;
+      if(!(x>0)||x>100000){ toast("Indiquez le prix final","warning"); showCaisse(); return; }
+      var appliquer=function(){
+        var avant=Number(it.price)||0; it.price=x;
+        if(it.carteAboRemise&&Number(it.carteAboPct)>0) it.remise=Math.round(x*Number(it.carteAboPct)/100*100)/100;
+        try{ if(typeof auditLog==="function"&&Math.abs(avant-x)>0.004) auditLog("PRIX_A_PARTIR_DE","Ticket en cours : "+String(it.name||"")+" "+avant.toFixed(2)+"E -> "+x.toFixed(2)+"E (minimum "+mini.toFixed(2)+"E)"); }catch(_eA){}
+        showCaisse();
+      };
+      if(mini>0&&x<mini-0.004){
+        showConfirm("Le prix saisi ("+x.toFixed(2).replace(".",",")+" \u20ac) est inf\u00e9rieur au prix minimum affich\u00e9 ("+mini.toFixed(2).replace(".",",")+" \u20ac).\nAppliquer quand m\u00eame ce prix ?", appliquer, function(){ showCaisse(); });
+      } else appliquer();
+    }});
+}
+
 // POS grid helpers
 // 2026-10-13 : PRESTATION SUR DEVIS — le prix convenu avec le client est saisi au moment de l'ajouter au ticket.
 function _lxPrixDevis(sv, suite){
@@ -29384,7 +29452,7 @@ function posAddService(sId, _prixDevis){
   if(sv.devis && _prixDevis===undefined){ _lxPrixDevis(sv, function(x){ posAddService(sId, x); }); return; }
   // Check if already in ticket
   for(var i=0;i<_tk.items.length;i++){
-    if(!sv.devis&&_tk.items[i].sId===sId&&!_tk.items[i].isSep&&!_tk.items[i].isProd&&!_tk.items[i].isPack){
+    if(!sv.devis&&!sv.apartir&&_tk.items[i].sId===sId&&!_tk.items[i].isSep&&!_tk.items[i].isProd&&!_tk.items[i].isPack){ // 2026-10-15 : « à partir de » = une ligne par prestation (prix propre)
       _tk.items[i].qty++;showCaisse();return;
     }
   }
@@ -29396,7 +29464,9 @@ function posAddService(sId, _prixDevis){
     if(pctRemise>0){remAuto=Math.round(sv.p*pctRemise/100*100)/100;remPct=pctRemise;}
   }
   var _px=sv.devis?_prixDevis:sv.p; if(sv.devis&&carteA&&remPct>0) remAuto=Math.round(_px*remPct/100*100)/100;
-  _tk.items.push({sId:sId,name:sv.n,price:_px,qty:1,remise:remAuto,carteAboRemise:remAuto>0,carteAboPct:remPct,devis:!!sv.devis});
+  var _ni={sId:sId,name:sv.n,price:_px,qty:1,remise:remAuto,carteAboRemise:remAuto>0,carteAboPct:remPct,devis:!!sv.devis};
+  if(sv.apartir&&!sv.devis){ _ni.apartir=true; _ni.prixMin=Number(sv.p)||0; } // 2026-10-15 : prix minimum, modifiable avant paiement
+  _tk.items.push(_ni);
   showCaisse();
 }
 function posAddForfait(idx){
@@ -30234,6 +30304,7 @@ function doAddTkSvc(svcId, _prixDevis){
   var sv=gS(svcId);if(!sv)return;
   if(sv.devis && _prixDevis===undefined){ var _fc=window._tkAddForClient; window._tkAddForClient=null; _lxPrixDevis(sv, function(x){ window._tkAddForClient=_fc; doAddTkSvc(svcId, x); }); return; }
   var ni={sId:svcId,name:sv.n,price:(sv.devis?_prixDevis:sv.p),qty:1,remise:0,devis:!!sv.devis};
+  if(sv.apartir&&!sv.devis){ ni.apartir=true; ni.prixMin=Number(sv.p)||0; } // 2026-10-15
   if(window._tkAddForClient){var ii=-1;for(var i=0;i<_tk.items.length;i++){if(_tk.items[i].isSep&&_tk.items[i].sepCId===window._tkAddForClient)ii=i;}if(ii>=0){var ei=_tk.items.length;for(var j=ii+1;j<_tk.items.length;j++){if(_tk.items[j].isSep){ei=j;break;}}_tk.items.splice(ei,0,ni);}else{_tk.items.push(ni);}window._tkAddForClient=null;}else{_tk.items.push(ni);}
   showCaisse();
 }
@@ -34205,6 +34276,7 @@ function buildRdvEmailHTML(type,vars){
   h+='<tr><td style="padding:12px 24px">';
   h+='<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:'+gold+';font-weight:700;margin-bottom:6px">'+getMetierConfig().icon+' Prestation</div>';
   h+='<div style="font-size:15px;font-weight:600;color:#fff">'+vars.prestation+'</div>';
+  if(vars.prixAPartir) h+='<div style="font-size:13px;color:rgba(255,255,255,.7);margin-top:4px;line-height:1.5">Prix : '+_lxEsc(vars.prixAPartir)+'<br><span style="font-size:12px;color:rgba(255,255,255,.5)">Prix final fix\u00e9 \u00e0 l\u2019\u00e9tablissement selon la prestation r\u00e9alis\u00e9e.</span></div>'; // 2026-10-15
   h+='</td></tr>';
 
   // Collab (if any)
@@ -34271,7 +34343,8 @@ async function doSendConfirm(mode,rdvId){
     salon:SALON_CONFIG.nom,
     slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",
     collab:sty?sty.n:"",
-    lieu:rdvObj.lieu||"", adresse:rdvObj.adresse||""
+    lieu:rdvObj.lieu||"", adresse:rdvObj.adresse||"",
+    prixAPartir:(sv&&sv.apartir&&!sv.devis)?_lxPrixTxt(sv):"" // 2026-10-15 : e-mail seulement (le SMS ne donne aucun prix)
   };
   var sent=[];
   var errors=[];
@@ -34964,7 +35037,7 @@ async function checkSmsReminders(){
     // 2026-10-14 audit : un client sans SMS (ou sans consentement SMS) peut quand meme recevoir le rappel e-mail
     var _smsPossible=!!(cl.ph&&cl.smsOk);
     var sv=gS(a.sId);var sty=gT(a.stId);
-    var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:"",lieu:a.lieu||"",adresse:a.adresse||""};
+    var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:"",lieu:a.lieu||"",adresse:a.adresse||"",prixAPartir:(sv&&sv.apartir&&!sv.devis)?_lxPrixTxt(sv):""};
     
     // Rappel 24h: send today for tomorrow's appointments
     if(_smsPossible&&cfg.rappel24h&&a.date===tomorrowStr){
@@ -36248,6 +36321,7 @@ async function lxRdvAccepter(apId, msgHoraire){
   ro.status="confirmed"; a.onlineStatus="confirmed";
   var quand=_lxDateCourte(a.date,a.time), nom=(SALON_CONFIG.nom||"").slice(0,22);
   var txtE=(msgHoraire?msgHoraire+"\n\n":"")+"Votre rendez-vous"+(ro.lieu==="domicile"?" à domicile":"")+" du "+quand+" est confirmé."+(lien?"\n\nPour le garantir, merci de régler l’acompte de "+ac.toFixed(2).replace(".",",")+" € (déduit du prix le jour du rendez-vous) :":(ac>0&&!ro.acomptePaye?"\n\nL’acompte de "+ac.toFixed(2).replace(".",",")+" € sera à régler sur place.":""));
+  try{ if(Array.isArray(ro.items)&&ro.items.some(function(x){ return x&&x.a_partir_de===true; })) txtE+="\n\nPrix indiqu\u00e9 \u00ab \u00e0 partir de \u00bb : le prix final est fix\u00e9 \u00e0 l\u2019\u00e9tablissement selon la prestation r\u00e9alis\u00e9e."; }catch(_eAz){} // 2026-10-15
   var txtS=nom+": RDV confirme le "+quand+"."+(lien?" Acompte "+ac.toFixed(2).replace(".",",").replace(",00","")+"EUR: "+lien.replace("https://",""):"");
   var canal=await _lxMessageCliente(ro,"Rendez-vous confirmé","✅",txtE,txtS,lien);
   if(!canal && lien){ setTimeout(function(){ showPrompt({title:"Lien d’acompte à transmettre",label:"Le client n’a pas pu être prévenu automatiquement. Copiez ce lien et envoyez-le-lui :",defaultValue:lien,okLabel:"Fermer",onOk:function(){}}); },400); }

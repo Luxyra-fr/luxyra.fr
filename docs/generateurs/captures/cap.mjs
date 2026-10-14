@@ -19,6 +19,7 @@ for (const s of shots) {
   if (s.ls) await pg.evaluateOnNewDocument((ls)=>{ try{ if(location.origin.indexOf('localhost')>=0) for(const k in ls) localStorage.setItem(k, typeof ls[k]==='string'?ls[k]:JSON.stringify(ls[k])); }catch(e){} }, s.ls);
   pg.on('request', r => { const u=r.url(); if (u.includes('images.unsplash.com')) return r.respond({status:200,contentType:'image/jpeg',body:BG});
     if (s.mock && (u.includes('/api/')||u.includes('supabase.co'))) { const k=Object.keys(s.mock).find(k=>u.includes(k)); if (r.method()==='OPTIONS') return r.respond({status:204,headers:{'access-control-allow-origin':'*','access-control-allow-headers':'*'}}); return r.respond({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(k?s.mock[k]:{})}); }
+    if (u.startsWith('https://luxyra.fr/') && !u.includes('/api/')) return r.continue({url:u.replace('https://luxyra.fr/','http://localhost:8765/')}); // 2026-10-15 : scripts absolus de site.html servis en local
     if (u.startsWith('http://localhost')||u.startsWith('data:')||u.startsWith('blob:')) return r.continue(); return r.abort(); });
   pg.on('pageerror', e => console.log(s.id,'ERR', e.message.slice(0,140)));
   pg.on('dialog', d => d.dismiss());
