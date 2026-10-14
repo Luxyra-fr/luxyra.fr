@@ -13340,8 +13340,12 @@ async function _lxAcompteEnLigneTicket(r){
   var res=(typeof saveTicketToDb==="function")?await saveTicketToDb(tk):null;
   // n° mémorisé = n° IMPRIMÉ (tk.tkNum) ; le n° serveur, s'il diffère, est dbNum (meta) — cf. _lxAcEnLigneNumImprime
   var numRef=tk.tkNum;
-  if(res){ await _sb.from("rdv_online").update({acompte_tk_num:Number(tk.tkNum)}).eq("id",r.id).eq("salon_id",_salonId).is("acompte_tk_num",null); }
-  _lxAcEnLigneReporterAP(r.id, res?Number(tk.tkNum):null);
+  // 2026-10-14 : si la base a renvoyé le ticket d'un AUTRE appareil (même clé d'acompte, course), on mémorise SON numéro imprimé
+  if(res && res.raw_data && res.raw_data.id && res.raw_data.id!==tk.id && res.raw_data.tkNum){ numRef=Number(res.raw_data.tkNum); }
+  else if(res){ try{ var _chk=await _sb.from("tickets").select("id,num,tkNum:raw_data->tkNum,rid:raw_data->>id").eq("salon_id",_salonId).eq("raw_data->>acompteKey",key).limit(1);
+    if(_chk&&_chk.data&&_chk.data[0]&&_chk.data[0].rid&&_chk.data[0].rid!==tk.id) numRef=_lxAcEnLigneNumImprime(_chk.data[0]); }catch(_eChk){} }
+  if(res){ await _sb.from("rdv_online").update({acompte_tk_num:Number(numRef)}).eq("id",r.id).eq("salon_id",_salonId).is("acompte_tk_num",null); }
+  _lxAcEnLigneReporterAP(r.id, res?Number(numRef):null);
   if(typeof auditLog==="function") auditLog("ACOMPTE_EN_LIGNE",lib+" - "+montant.toFixed(2)+"E - Ticket #"+numRef+(res&&res.num&&Number(res.num)!==Number(tk.tkNum)?" (n° serveur "+res.num+")":"")+(datePaie!==TD?" (réglement du "+datePaie+")":"")+(res?"":" (envoi en attente)"));
   try{ if(typeof toast==="function") toast("Acompte en ligne enregistré en caisse : "+montant.toFixed(2).replace(".",",")+" € (ticket #"+numRef+")","info"); }catch(_e){}
   return true;
@@ -13452,6 +13456,9 @@ async function _lxAcompteEnLigneAvantEncaissement(){
     // TROP-PERÇU : la part conservée dépasse le total du ticket -> jamais de ticket négatif « par déduction » ni d'acompte tronqué :
     // la différence est remboursée au client (ticket négatif « Remboursement acompte en ligne », par:"trop_percu") puis on encaisse.
     var total=0; (_tk.items||[]).forEach(function(it){ if(it&&!it.isSep&&!it.isAcompteDeduct) total+=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0); }); total=Math.round((total-(Number(_tk.remise)||0))*100)/100;
+    if(total<=0.004&&garde>0.004&&(_tk.items||[]).some(function(it){ return it&&!it.isSep&&!it.isAcompteDeduct; })){
+      return "Le total du ticket est de 0 € alors que le client a versé un acompte en ligne de "+f(garde)+" € : ajoutez la prestation réalisée, ou remboursez l’acompte (Annuler › rembourser) avant d’encaisser."; // 2026-10-14
+    }
     if(total>0.004&&garde>total+0.004){
       var z=Math.round((garde-total)*100)/100;
       window._lxAcTropPercu={rdv:onlineId, montant:z, acompte:garde, total:total};
@@ -23714,6 +23721,9 @@ async function _lxPaiementsEnLigne(mois){
   for(var i=0;i<lst.length;i+=200){
     var tr=await _sb.from("tickets").select("num,date_ticket").eq("salon_id",_salonId).in("num",lst.slice(i,i+200));
     ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=t.date_ticket; });
+    // 2026-10-14 : numéro IMPRIMÉ (raw_data.tkNum) quand il diffère du numéro serveur (NUM_MISMATCH) — l'imprimé a priorité
+    try{ var tr2=await _sb.from("tickets").select("date_ticket,tkNum:raw_data->>tkNum").eq("salon_id",_salonId).in("raw_data->>tkNum",lst.slice(i,i+200).map(String));
+      ((tr2&&tr2.data)||[]).forEach(function(t){ if(t.tkNum) dTk[Number(t.tkNum)]=t.date_ticket; }); }catch(_eT2){}
   }
   (r1.data||[]).forEach(function(r){
     // 2026-10-13 : remboursement partiel -> une ligne pour la partie remboursée, une ligne pour la partie conservée
@@ -23833,6 +23843,7 @@ async function expAcomptesNonSoldes(silencieux){
   var nums={}; (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1; });
   var dTk={}, lst=Object.keys(nums).map(Number).filter(function(n){return n>0;});
   for(var i=0;i<lst.length;i+=200){ var tr=await _sb.from("tickets").select("num,date_ticket").eq("salon_id",_salonId).in("num",lst.slice(i,i+200)); ((tr&&tr.data)||[]).forEach(function(t){ dTk[t.num]=String(t.date_ticket||"").slice(0,10); }); }
+  for(var i2=0;i2<lst.length;i2+=200){ try{ var tr3=await _sb.from("tickets").select("date_ticket,tkNum:raw_data->>tkNum").eq("salon_id",_salonId).in("raw_data->>tkNum",lst.slice(i2,i2+200).map(String)); ((tr3&&tr3.data)||[]).forEach(function(t){ if(t.tkNum) dTk[Number(t.tkNum)]=String(t.date_ticket||"").slice(0,10); }); }catch(_eT3){} } // 2026-10-14 : numéro imprimé
   var _rdvNouveau={}; // 2026-10-14 (NF525 acompte en ligne) : RDV du nouveau modèle, par id (lus en section 2 depuis le ticket d'acompte)
   (r1.data||[]).forEach(function(r){
     // 2026-10-14 (NF525 acompte en ligne) : NOUVEAU MODÈLE -> l'acompte est un ticket de caisse « Acompte en ligne » : il est traité en
