@@ -251,7 +251,12 @@
   function chan() { var c = { on: function () { return c; }, subscribe: function (cb) { try { cb && cb("SUBSCRIBED"); } catch (e) {} return c; }, unsubscribe: function () { return ok(); }, send: function () { return ok(); }, track: function () { return ok(); } }; return c; }
   var client = {
     from: function (t) { return new Q(t); },
-    rpc: function () { return ok(null); },
+    // 2026-10-14 : PIN / biométrie vérifiés par le serveur en production -> en démo, toujours acceptés (aucun code réel)
+    rpc: function (fn) {
+      if (fn === "operateur_verifier_pin" || fn === "operateur_connexion_bio") { var o = JSON.parse(JSON.stringify(T.salon_operateurs[0] || {})); delete o.pin_hash; return ok({ ok: true, op: o }); }
+      if (fn === "operateur_debloquer") return ok({ ok: true });
+      return ok(null);
+    },
     auth: auth,
     channel: chan, removeChannel: function () { return ok(); }, removeAllChannels: function () { return ok(); }, getChannels: function () { return []; },
     storage: { from: function () { return { upload: function () { return ok({ path: "demo" }); }, remove: function () { return ok(); }, list: function () { return ok([]); }, getPublicUrl: function () { return { data: { publicUrl: "" } }; }, createSignedUrl: function () { return ok({ signedUrl: "" }); }, download: function () { return ok(null); } }; } },
