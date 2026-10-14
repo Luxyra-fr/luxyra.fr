@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261014-5";
+window.LX_DATA_VERSION = "20261014-6";
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -205,7 +205,35 @@ async function clearAllCache(){
 var _WAL_KEY = "_lx_wal_v1";
 var _WAL_MAX = 200;
 
-function _walPersist(type, data){
+// 2026-10-14 audit (NF525) : entrées qui ne sont JAMAIS évincées de la file tant qu'elles ne sont pas
+// transmises : tickets, clôtures Z, et rendez-vous encaissés (ticket scellé).
+function _walProtege(e){
+  if (!e || e.synced) return false;
+  if (e.type === "ticket" || e.type === "cloture") return true;
+  if (e.type === "appointment" && e.data && (e.data.st === "done" || e.data.tkNum)) return true;
+  return false;
+}
+// 2026-10-14 audit : éviction quand la file dépasse _WAL_MAX. Avant : slice(-200) jetait les plus anciennes
+// entrées, transmises OU NON (un ticket non transmis pouvait disparaître). Désormais : d'abord les entrées déjà
+// synchronisées, puis les plus anciennes entrées non protégées ; les entrées protégées ne sont jamais évincées
+// (la file peut alors dépasser _WAL_MAX).
+function _walEvincer(wal, max){
+  if (!Array.isArray(wal) || wal.length <= max) return wal;
+  var trop = wal.length - max, out = [], i;
+  for (i = 0; i < wal.length; i++) { if (trop > 0 && wal[i] && wal[i].synced) { trop--; continue; } out.push(wal[i]); }
+  if (trop <= 0) return out;
+  var out2 = [], perdus = [];
+  for (i = 0; i < out.length; i++) {
+    if (trop > 0 && !_walProtege(out[i])) { trop--; perdus.push(out[i]); continue; }
+    out2.push(out[i]);
+  }
+  if (perdus.length) {
+    try { console.warn("[WAL] éviction de " + perdus.length + " entrée(s) non transmise(s) (file pleine)"); } catch(_) {}
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "_walEvincer", msg: "File de secours pleine : entrées non transmises évincées", entrees: perdus.map(function(p){ return { type: p.type, ts: p.ts, id: p.data && p.data.id }; }).slice(0, 20) }).slice(0, 2000)); } catch(_) {}
+  }
+  return out2;
+}
+function _walPersist(type, data, extra){
   try {
     var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
     var entry = {
@@ -214,11 +242,21 @@ function _walPersist(type, data){
       data: data,
       salon_id: _salonId,
       ts: new Date().toISOString(),
-      synced: false
+      synced: false,
+      mode_caisse: window.LX_MODE_CAISSE || null // 2026-10-14 audit (NF525) : mode de caisse au moment de l'opération
     };
+    // 2026-10-14 audit : base de fusion (_lxBase, non énumérable donc perdue à la sérialisation) conservée dans
+    // l'entrée -> un rejeu n'écrit que ce qui a changé sur cet appareil au lieu d'écraser la fiche entière.
+    if (extra && extra.base) entry.base = extra.base;
     wal.push(entry);
-    if (wal.length > _WAL_MAX) wal = wal.slice(-_WAL_MAX);
-    localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+    wal = _walEvincer(wal, _WAL_MAX);
+    var _json = JSON.stringify(wal);
+    try { localStorage.setItem(_WAL_KEY, _json); }
+    catch (eQ) {
+      // 2026-10-14 audit : stockage plein -> on retire toutes les entrées déjà transmises et on réessaie une fois
+      wal = wal.filter(function(e){ return !e.synced; });
+      localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+    }
     return entry.id;
   } catch(e){ console.warn("[WAL] persist failed:", e); return null; }
 }
@@ -252,6 +290,12 @@ function _walCleanup(){
 }
 
 async function _walCheck(){
+  // 2026-10-14 audit : jamais de rejeu en mode archives / établissement suspendu, ni pendant un autre rejeu
+  if (_lxEcrituresBloquees() || window._lxWalCheckEnCours) return;
+  window._lxWalCheckEnCours = true;
+  try { return await _walCheckUneFois(); } finally { window._lxWalCheckEnCours = false; }
+}
+async function _walCheckUneFois(){
   try {
     var wal = JSON.parse(localStorage.getItem(_WAL_KEY)||"[]");
     var unsynced = wal.filter(function(e){ return !e.synced && e.salon_id === _salonId; });
@@ -374,9 +418,59 @@ async function _walResync(walId, force){
     var entry = null;
     for (var i=0; i<wal.length; i++) { if (wal[i].id===walId) { entry=wal[i]; break; } }
     if (!entry || entry.synced) return { ok: false, reason: "introuvable ou déjà sync" };
+    // 2026-10-14 audit (NF525) : une entrée d'un AUTRE établissement (autre compte ouvert avant sur cet appareil)
+    // n'est jamais rejouée dans l'établissement courant (elle reste en file pour son établissement).
+    if (!_salonId || entry.salon_id !== _salonId) return { ok: false, reason: "autre établissement", differe: true, autreSalon: true };
+    // 2026-10-14 audit : mode archives / établissement suspendu / session perdue -> aucun rejeu
+    if (_lxEcrituresBloquees()) return { ok: false, reason: "écritures bloquées (archives / suspendu)", differe: true };
+    if (window._lxSessionPerdueActive) return { ok: false, reason: "session perdue", differe: true };
     if (!force) {
       var _att = _walAttenteAvantEssai(entry);
       if (_att > 0) return { ok: false, reason: "attente avant nouvel essai", differe: true };
+    }
+    // 2026-10-14 audit (NF525) : opération de caisse saisie en MODE TEST, alors que la caisse est passée en réel
+    // depuis (les données de test ont été purgées par le serveur) -> jamais rejouée comme une opération réelle.
+    var _scelleE = entry.type === "ticket" || entry.type === "cloture" || (entry.type === "appointment" && entry.data && (entry.data.st === "done" || entry.data.tkNum));
+    if (_scelleE && entry.mode_caisse === "test" && window.LX_MODE_CAISSE === "reel") {
+      try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: walId, type: entry.type, raison: "opération saisie en mode test, caisse passée en réel depuis (données de test purgées)", tk_num: (entry.data && entry.data.tkNum) || null, tk_id: (entry.data && entry.data.id) || null, ts: entry.ts }).slice(0, 2000)); } catch (_eMT) {}
+      _walMarkSynced(walId);
+      return { ok: false, reason: "mode test", abandon: true };
+    }
+    // 2026-10-14 audit (NF525) : une clôture Z n'est jamais rejouée AVANT des tickets plus anciens non transmis
+    if (entry.type === "cloture") {
+      var _jourZ = entry.data && entry.data.date ? String(entry.data.date).slice(0, 10) : null;
+      var _avant = wal.filter(function(e){
+        if (!e || e.synced || e.id === entry.id || e.salon_id !== entry.salon_id) return false;
+        var _tk = e.type === "ticket" || (e.type === "appointment" && e.data && (e.data.st === "done" || e.data.tkNum));
+        if (!_tk) return false;
+        var _j = e.data && e.data.date ? String(e.data.date).slice(0, 10) : null;
+        return (e.ts && entry.ts && e.ts <= entry.ts) || (_j && _jourZ && _j <= _jourZ);
+      });
+      if (_avant.length) return { ok: false, reason: _avant.length + " ticket(s) antérieur(s) non transmis : clôture rejouée après eux", differe: true };
+    }
+    // 2026-10-14 audit : rendez-vous supprimé (ici ou sur un autre appareil) -> jamais recréé par un rejeu
+    if (entry.type === "appointment" && entry.data && entry.data.id && !(entry.data.st === "done" || entry.data.tkNum) && _lxRdvSupprime(entry.data.id)) {
+      console.warn("[WAL] rejeu ignoré : rendez-vous supprimé", entry.data.id);
+      _walMarkSynced(walId);
+      return { ok: true, ignore: true };
+    }
+    // 2026-10-14 audit : rendez-vous modifié en base APRÈS cette opération (autre appareil) -> on n'écrase pas la
+    // version plus récente (sauf encaissement pas encore en base, qui n'est jamais perdu). Colonne updated_at :
+    // docs/migrations_1014/donnees.sql ; tant qu'elle n'existe pas, comportement inchangé.
+    if (entry.type === "appointment" && entry.data && typeof entry.data.id === "string" && entry.data.id.length === 36 && !window._lxApptUpdAbsent) {
+      try {
+        var _srv = await _sb.from("appointments").select("id,updated_at,status,ticket_num").eq("id", entry.data.id).eq("salon_id", _salonId).maybeSingle();
+        if (_srv && _srv.error && /updated_at/i.test(String(_srv.error.message || ""))) window._lxApptUpdAbsent = true;
+        else if (_srv && !_srv.error && _srv.data && _srv.data.updated_at && entry.ts && new Date(_srv.data.updated_at).getTime() > new Date(entry.ts).getTime()) {
+          var _encaisseLocal = (entry.data.st === "done" || entry.data.tkNum) && !(_srv.data.status === "done" || _srv.data.ticket_num);
+          if (!_encaisseLocal) {
+            console.warn("[WAL] rejeu ignoré : version en base plus récente", entry.data.id, _srv.data.updated_at, ">", entry.ts);
+            try { if (typeof auditLog === "function") auditLog("CONFLIT_SYNCHRO", ("Rendez-vous " + entry.data.id + " (" + (entry.data.date || "") + " " + (entry.data.time || "") + ") : modification hors ligne du " + entry.ts + " non rejouée, version plus récente en base (" + _srv.data.updated_at + ")").slice(0, 1900)); } catch (_eCf) {}
+            _walMarkSynced(walId);
+            return { ok: true, ignore: true };
+          }
+        }
+      } catch (_eUpd) {}
     }
     var fn = ({
       client: saveClient,
@@ -385,11 +479,36 @@ async function _walResync(walId, force){
       cloture: saveCloture
     })[entry.type];
     if (!fn) return { ok: false, reason: "type non géré: " + entry.type };
+    // 2026-10-14 audit : fiche client -> base de fusion reposée sur la copie, et contrôle « déjà transmise »
+    // fait DANS la file de la fiche (une sauvegarde normale en cours aurait pu la transmettre entre-temps).
+    if (entry.type === "client") {
+      var _dataC = entry.data;
+      if (_dataC && entry.base) _lxPoserBase(_dataC, entry.base);
+      fn = function(d){ return _lxEnFile("c:" + ((d && d.id) || "nouveau"), function(){
+        var _w = window._walGetAll(), _e = null;
+        for (var q = 0; q < _w.length; q++) { if (_w[q].id === walId) { _e = _w[q]; break; } }
+        if (!_e || _e.synced) return { ok: true, deja: true };
+        var _pb = window._walBypass, _pp; window._walBypass = true;
+        try { _pp = _saveClientUneFois(d); } finally { window._walBypass = _pb; } // lu de façon synchrone au début de la sauvegarde
+        return _pp;
+      }); };
+    }
     // Bypass WAL pour éviter récursion (la 2ème save ne re-persiste pas)
-    var r;
+    // 2026-10-14 audit : le drapeau n'est plus maintenu PENDANT l'attente réseau (il est lu de façon synchrone au
+    // début de chaque sauvegarde) : avant, une sauvegarde normale faite pendant un rejeu n'était pas mise en file.
+    var r, _pr;
     window._walBypass = true;
-    try { r = await fn(entry.data); } finally { window._walBypass = false; }
-    if (_walResultatOk(r)) { _walMarkSynced(walId); return { ok: true }; }
+    try { _pr = fn(entry.data); } finally { window._walBypass = false; }
+    r = await _pr;
+    if (_walResultatOk(r)) {
+      _walMarkSynced(walId);
+      // 2026-10-14 audit : l'objet en mémoire (même identifiant) n'est plus marqué « non enregistré »
+      try {
+        var _lst = entry.type === "appointment" ? (typeof AP !== "undefined" ? AP : null) : (entry.type === "client" ? (typeof CL !== "undefined" ? CL : null) : null);
+        if (_lst && entry.data && entry.data.id) for (var _q = 0; _q < _lst.length; _q++) { if (_lst[_q] && _lst[_q].id === entry.data.id) _lxMarquerEnregistre(_lst[_q]); }
+      } catch (_eMk) {}
+      return { ok: true };
+    }
     if (_walResultatDoublonPermanent(r)) {
       // déjà en base : équivalent synchronisé (aucune perte, évite un rejeu à chaque démarrage)
       _walMarkSynced(walId);
@@ -440,6 +559,308 @@ function _walAlerterSiRepete(entry, msg){
 window._walResync = _walResync;
 window._walCheck = _walCheck;
 window._walGetAll = function(){ try { return JSON.parse(localStorage.getItem(_WAL_KEY)||"[]"); } catch(e){ return []; } };
+
+// ============================================================================
+// 2026-10-14 audit — ÉCRITURES BLOQUÉES, REJEU AUTOMATIQUE DE LA FILE, CLÔTURE Z, SUPPRESSIONS, SESSION
+// ============================================================================
+// Mode archives (lecture seule), établissement suspendu/résilié, vue admin : aucune sauvegarde ni aucun rejeu.
+function _lxEcrituresBloquees(){
+  return !!(window._archiveMode || window._lxSalonSuspendu || window._lxVueAdmin);
+}
+window._lxEcrituresBloquees = _lxEcrituresBloquees;
+
+// Rejeu automatique de la file de secours : à la reconnexion réseau (« online »), au retour au premier plan et
+// toutes les 2 minutes. Un seul rejeu à la fois (partagé avec _walCheck). Les entrées de moins de 45 s ne sont
+// pas rejouées automatiquement (leur sauvegarde d'origine est peut-être encore en cours).
+function lxWalRejouer(raison, force){
+  if (window._lxWalCheckEnCours) return Promise.resolve({ ok: 0, enCours: true });
+  if (!_sb || !_salonId || !_isOnline || window._lxDemo || _lxEcrituresBloquees() || window._lxSessionPerdueActive) return Promise.resolve({ ok: 0 });
+  try { if (typeof navigator !== "undefined" && navigator.onLine === false) return Promise.resolve({ ok: 0, horsLigne: true }); } catch(_) {}
+  window._lxWalCheckEnCours = true;
+  return (async function(){
+    var ok = 0, ko = 0, differe = 0;
+    try {
+      var maintenant = Date.now();
+      var ids = window._walGetAll().filter(function(e){
+        if (!e || e.synced || e.salon_id !== _salonId) return false;
+        return force || (maintenant - new Date(e.ts || 0).getTime()) > 45000;
+      }).map(function(e){ return e.id; });
+      for (var i = 0; i < ids.length; i++) {
+        var r = null;
+        try { r = await _walResync(ids[i], !!force); } catch(_e) { r = null; }
+        if (r && r.ok) ok++; else if (r && r.differe) differe++; else if (!(r && r.abandon)) ko++;
+        if (window._lxSessionPerdueActive) break;
+      }
+      if (ok) {
+        console.log("[WAL] rejeu (" + (raison || "auto") + ") : " + ok + " enregistrement(s) transmis");
+        try { if (typeof toast === "function") toast("✓ " + ok + " enregistrement" + (ok > 1 ? "s" : "") + " en attente transmis au serveur", "success"); } catch(_t) {}
+      }
+    } catch(e) { console.warn("[WAL] rejeu", e); }
+    finally { window._lxWalCheckEnCours = false; }
+    return { ok: ok, ko: ko, differe: differe };
+  })();
+}
+window.lxWalRejouer = lxWalRejouer;
+if (typeof window !== "undefined" && window.addEventListener) {
+  window.addEventListener("online", function(){ setTimeout(function(){ lxWalRejouer("online"); }, 1500); });
+  document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") setTimeout(function(){ lxWalRejouer("premier plan"); }, 2000); });
+  setInterval(function(){ lxWalRejouer("periodique"); }, 2 * 60 * 1000);
+}
+
+// [NF525] Tickets (ou RDV encaissés) encore dans la file de secours pour cet établissement, jusqu'au jour donné inclus.
+function lxWalTicketsNonTransmis(jour){
+  return window._walGetAll().filter(function(e){
+    if (!e || e.synced || e.salon_id !== _salonId) return false;
+    var tk = e.type === "ticket" || (e.type === "appointment" && e.data && (e.data.st === "done" || e.data.tkNum));
+    if (!tk) return false;
+    var j = e.data && e.data.date ? String(e.data.date).slice(0, 10) : null;
+    return !jour || !j || j <= jour;
+  });
+}
+window.lxWalTicketsNonTransmis = lxWalTicketsNonTransmis;
+// [NF525] La clôture Z est refusée tant que des tickets de la journée (ou antérieurs) ne sont pas transmis :
+// la Z serait scellée sans eux. Message clair + bouton pour relancer la transmission. Renvoie true si bloquée.
+window.lxClotureBloqueeParWal = function(jour){
+  try {
+    var l = lxWalTicketsNonTransmis(jour);
+    if (!l.length) return false;
+    var m = document.getElementById("modal");
+    var h = '<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">' +
+      '<div style="font-size:42px;margin-bottom:8px">⏳</div><h2>Clôture impossible pour le moment</h2>' +
+      '<div style="font-size:14px;margin:10px 0 14px;line-height:1.5"><strong>' + l.length + ' ticket' + (l.length > 1 ? 's' : '') + '</strong> enregistré' + (l.length > 1 ? 's' : '') + ' sur cet appareil ' + (l.length > 1 ? "n'ont" : "n'a") + ' pas encore été transmis au serveur.<br>La clôture Z doit les inclure : transmettez-les d\'abord (vérifiez la connexion internet).</div>' +
+      '<div id="lxZWalMsg" style="font-size:12px;color:var(--text3);margin-bottom:10px"></div>' +
+      '<button class="btn bg bk" id="lxZWalBtn" onclick="lxWalRelancerPourCloture()">Réessayer la transmission</button>' +
+      '<button class="btn bk" style="margin-top:8px" onclick="cM()">Fermer</button></div></div>';
+    if (m) m.innerHTML = h; else if (typeof showAlert === "function") showAlert(l.length + " ticket(s) non transmis : clôture impossible pour le moment", "warning");
+    return true;
+  } catch(_e) { return false; }
+};
+window.lxWalRelancerPourCloture = async function(){
+  var b = document.getElementById("lxZWalBtn"), msg = document.getElementById("lxZWalMsg");
+  if (b) { b.disabled = true; b.textContent = "Transmission en cours…"; }
+  try { await lxWalRejouer("cloture", true); } catch(_e) {}
+  var reste = lxWalTicketsNonTransmis(null).length;
+  if (!reste) {
+    try { if (typeof toast === "function") toast("✓ Tickets transmis : vous pouvez clôturer", "success"); } catch(_t) {}
+    try { if (typeof cM === "function") cM(); } catch(_c) {}
+    try { if (typeof doCloture === "function") doCloture(); } catch(_d) {}
+    return;
+  }
+  if (b) { b.disabled = false; b.textContent = "Réessayer la transmission"; }
+  if (msg) msg.textContent = reste + " ticket(s) toujours en attente. Vérifiez la connexion puis réessayez ; si le problème persiste, contactez le support.";
+};
+
+// Rendez-vous supprimés (ici ou sur un autre appareil) : jamais recréés par une sauvegarde ou un rejeu.
+function _lxCleSupprimes(){ return "_lx_rdv_supprimes_" + (_salonId || ""); }
+function _lxRdvSupprimes(){ try { return JSON.parse(localStorage.getItem(_lxCleSupprimes()) || "{}") || {}; } catch(_e) { return {}; } }
+function _lxRdvSupprime(id){ if (!id || !_salonId) return false; return !!_lxRdvSupprimes()[id]; }
+function lxRdvMarquerSupprime(id){
+  if (!id || !_salonId) return;
+  try {
+    var s = _lxRdvSupprimes(); s[id] = Date.now();
+    var ks = Object.keys(s);
+    if (ks.length > 500) { ks.sort(function(a, b){ return s[a] - s[b]; }).slice(0, ks.length - 500).forEach(function(k){ delete s[k]; }); }
+    localStorage.setItem(_lxCleSupprimes(), JSON.stringify(s));
+  } catch(_e) {}
+}
+window.lxRdvMarquerSupprime = lxRdvMarquerSupprime;
+window.lxRdvEstSupprime = _lxRdvSupprime;
+// Identifiants de rendez-vous déjà vus en base (pour reconnaître une suppression faite sur un autre appareil)
+window._lxApVusEnBase = window._lxApVusEnBase || {};
+function _lxApVu(id){ if (id) window._lxApVusEnBase[id] = 1; }
+// Suppression reçue en temps réel (autre appareil) : retirée de la mémoire, jamais recréée ici.
+window.lxRdvSupprimeAilleurs = function(id){
+  try {
+    if (!id || typeof AP === "undefined" || !Array.isArray(AP)) return false;
+    var retire = false;
+    for (var i = AP.length - 1; i >= 0; i--) {
+      var a = AP[i];
+      if (!a || a.id !== id) continue;
+      if (a.st === "done" || a.tkNum || a.hash) continue; // jamais un ticket (suppression impossible en base de toute façon)
+      AP.splice(i, 1); retire = true;
+    }
+    if (retire) { lxRdvMarquerSupprime(id); console.log("[sync rdv] rendez-vous supprimé sur un autre appareil :", id); }
+    return retire;
+  } catch(_e) { return false; }
+};
+// Rafraîchissement (poll / temps réel / premier plan) : retire de la mémoire les rendez-vous supprimés en base
+// (vus en base auparavant, absents maintenant, dans la fenêtre relue, jamais un ticket, pas d'envoi en attente).
+// Ne fait rien si le résultat a pu être tronqué (1000 lignes = limite d'une requête).
+window.lxApRetirerSupprimes = function(dbRows, depuis){
+  try {
+    if (!Array.isArray(dbRows) || typeof AP === "undefined" || !Array.isArray(AP)) return 0;
+    var vus = window._lxApVusEnBase || {}, enBase = {}, attente = {}, n = 0;
+    dbRows.forEach(function(a){ if (a && a.id) enBase[a.id] = 1; });
+    window._walGetAll().forEach(function(e){ if (e && !e.synced && e.type === "appointment" && e.data && e.data.id) attente[e.data.id] = 1; });
+    if (dbRows.length < 1000) {
+      for (var i = AP.length - 1; i >= 0; i--) {
+        var a = AP[i];
+        if (!a || !a.id || enBase[a.id]) continue;
+        if (a.st === "done" || a.tkNum || a.hash) continue;
+        if (String(a.id).indexOf("online_") === 0) continue;
+        var sup = _lxRdvSupprime(a.id);
+        var disparu = vus[a.id] && a.date && (!depuis || a.date >= depuis) && !attente[a.id] && !a._lxNonEnregistre;
+        if (sup || disparu) { AP.splice(i, 1); n++; }
+      }
+    }
+    dbRows.forEach(function(a){ if (a && a.id) vus[a.id] = 1; });
+    window._lxApVusEnBase = vus;
+    if (n) console.warn("[sync rdv] " + n + " rendez-vous supprimé(s) en base retiré(s) de la mémoire");
+    return n;
+  } catch(_e) { return 0; }
+};
+
+// Enregistrement non abouti : message (au plus un toutes les 8 s) + marque sur l'objet (non énumérable).
+var _lxDernierToastNonEnr = 0;
+function _lxSignalerNonEnregistre(obj){
+  try { if (obj && typeof obj === "object") Object.defineProperty(obj, "_lxNonEnregistre", { value: true, writable: true, configurable: true, enumerable: false }); } catch(_e) {}
+  if (window._lxSessionPerdueActive) return;
+  var n = Date.now(); if (n - _lxDernierToastNonEnr < 8000) return; _lxDernierToastNonEnr = n;
+  try { if (typeof toast === "function") toast("Non enregistré — nouvelle tentative automatique", "warning"); } catch(_t) {}
+}
+function _lxMarquerEnregistre(obj){ try { if (obj && obj._lxNonEnregistre) obj._lxNonEnregistre = false; } catch(_e) {} }
+// Une sauvegarde réussie de la fiche / du RDV X (état complet de cet appareil) rend caduques les entrées plus
+// ANCIENNES de la file pour X : sans cela leur rejeu remettait une valeur périmée par-dessus la nouvelle.
+function _walRendreCaduques(type, id, avantIso){
+  if (!id || !avantIso || (type !== "client" && type !== "appointment")) return;
+  try {
+    var wal = JSON.parse(localStorage.getItem(_WAL_KEY) || "[]"), n = 0, now = new Date().toISOString();
+    for (var i = 0; i < wal.length; i++) {
+      var e = wal[i];
+      if (!e || e.synced || e.type !== type || e.salon_id !== _salonId || !e.data || e.data.id !== id) continue;
+      if (!(e.ts && e.ts < avantIso)) continue;
+      if (type === "appointment" && _walProtege(e)) continue; // un encaissement n'est jamais rendu caduc
+      e.synced = true; e.syncedAt = now; e.caduque = true; n++;
+    }
+    if (n) localStorage.setItem(_WAL_KEY, JSON.stringify(wal));
+  } catch(_e) {}
+}
+
+// SESSION PERDUE (déconnexion sur un autre onglet, jeton expiré, rafraîchissement refusé) : fenêtre de
+// reconnexion BLOQUANTE, SANS rechargement -> la mémoire et la file de secours sont conservées, puis reprise.
+window._lxSessionPerdueActive = false;
+function _lxErreurSession(err){
+  try {
+    if (!err) return false;
+    var c = String(err.code || ""), m = String(err.message || err.msg || err || ""), st = Number(err.status) || 0;
+    return st === 401 || c === "PGRST301" || c === "PGRST302" || c === "401" || /jwt|token.{0,20}(expired|invalid)|not authenticated|invalid claim|auth session missing|refresh token/i.test(m);
+  } catch(_e) { return false; }
+}
+// Contrôle après un échec d'écriture (erreur d'authentification, refus RLS 42501, écriture « vide » 0 ligne) :
+// session absente / expirée et non renouvelable -> fenêtre de reconnexion. Renvoie true si la session est perdue.
+async function _lxControleSession(err, ecritureVide){
+  try {
+    if (window._lxSessionPerdueActive) return true;
+    if (window._lxVueAdmin || window._lxDemo || !_sb || !_salonId) return false;
+    var authErr = _lxErreurSession(err);
+    if (!authErr && !ecritureVide && !(err && err.code === "42501")) return false;
+    var s = null; try { s = (await _sb.auth.getSession()).data.session; } catch(_e) {}
+    var expire = !!(s && s.expires_at && s.expires_at * 1000 < Date.now());
+    if (s && (expire || authErr)) {
+      try { var rr = await _sb.auth.refreshSession(); if (rr && rr.data && rr.data.session && !rr.error) return false; } catch(_e2) {}
+      lxSessionPerdue("jeton refusé"); return true;
+    }
+    if (!s) { lxSessionPerdue("session absente"); return true; }
+  } catch(_e3) {}
+  return false;
+}
+window._lxControleSession = _lxControleSession;
+function lxSessionPerdue(raison){
+  if (window._lxSessionPerdueActive || window._lxVueAdmin || window._lxDemo || window._lxDeconnexionVolontaire) return;
+  window._lxSessionPerdueActive = true;
+  console.warn("[session] perdue :", raison);
+  var afficher = function(){
+    if (document.getElementById("lxSessionPerdue")) return;
+    var d = document.createElement("div");
+    d.id = "lxSessionPerdue";
+    d.style.cssText = "position:fixed;inset:0;z-index:2147483600;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;font-family:var(--f1,sans-serif)";
+    var inp = "width:100%;box-sizing:border-box;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff;font-size:15px;margin-bottom:10px";
+    d.innerHTML = '<div style="background:#111;border:2px solid #c8a84e;border-radius:16px;padding:26px 22px;max-width:380px;width:90%;color:#fff">' +
+      '<h3 style="margin:0 0 8px;color:#c8a84e;font-size:18px">Session expirée</h3>' +
+      '<p style="font-size:13px;color:#ccc;margin:0 0 14px;line-height:1.5">Reconnectez-vous pour continuer. Rien n’est perdu : l’écran en cours et les enregistrements en attente sont conservés sur cet appareil et seront transmis après la reconnexion.</p>' +
+      '<input id="lxSpEmail" type="email" autocomplete="username" placeholder="Email" style="' + inp + '">' +
+      '<input id="lxSpPass" type="password" autocomplete="current-password" placeholder="Mot de passe" style="' + inp + '">' +
+      '<div id="lxSpErr" style="display:none;color:#f87171;font-size:13px;margin-bottom:10px"></div>' +
+      '<button id="lxSpBtn" style="width:100%;padding:13px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:800;font-size:15px;cursor:pointer">Se reconnecter</button>' +
+      '<div style="text-align:center;margin-top:12px"><a href="#" id="lxSpQuitter" style="font-size:12px;color:#888">Se déconnecter complètement</a></div></div>';
+    document.body.appendChild(d);
+    var em = document.getElementById("lxSpEmail"); if (em) em.value = window._lxSessionEmail || "";
+    var pw = document.getElementById("lxSpPass");
+    if (pw) pw.addEventListener("keydown", function(ev){ if (ev.key === "Enter") _lxSessionReconnecter(); });
+    document.getElementById("lxSpBtn").addEventListener("click", _lxSessionReconnecter);
+    document.getElementById("lxSpQuitter").addEventListener("click", function(ev){ ev.preventDefault(); if (confirm("Se déconnecter ? Les enregistrements non transmis restent sur cet appareil.")) doLogout(); });
+    try { (em && !em.value ? em : pw).focus(); } catch(_f) {}
+  };
+  if (document.body) afficher(); else document.addEventListener("DOMContentLoaded", afficher);
+}
+window.lxSessionPerdue = lxSessionPerdue;
+async function _lxSessionReconnecter(){
+  var err = document.getElementById("lxSpErr"), btn = document.getElementById("lxSpBtn");
+  var em = (document.getElementById("lxSpEmail") || {}).value || "", pw = (document.getElementById("lxSpPass") || {}).value || "";
+  var montrer = function(t){ if (err) { err.style.display = "block"; err.textContent = t; } };
+  if (!em.trim() || !pw) { montrer("Saisissez l’email et le mot de passe."); return; }
+  if (btn) { btn.disabled = true; btn.textContent = "Connexion…"; }
+  try {
+    var r = await _sb.auth.signInWithPassword({ email: em.trim(), password: pw });
+    if (r.error || !r.data || !r.data.user) { montrer((r.error && r.error.message) || "Connexion impossible"); return; }
+    if (_userId && r.data.user.id !== _userId) {
+      // Cloisonnement : la mémoire contient les données d'un AUTRE compte -> pas de reprise, déconnexion propre
+      montrer("Ce n’est pas le compte ouvert sur cet appareil. Déconnexion…");
+      setTimeout(function(){ doLogout(); }, 1500);
+      return;
+    }
+    window._lxSessionPerdueActive = false;
+    window._lxSessionEmail = r.data.user.email || window._lxSessionEmail;
+    try { if (typeof window.lxTouchSalonActivity === "function") window.lxTouchSalonActivity(); } catch(_a) {}
+    var d = document.getElementById("lxSessionPerdue"); if (d) d.remove();
+    try { if (typeof toast === "function") toast("✓ Reconnecté — reprise des enregistrements en attente", "success"); } catch(_t) {}
+    setTimeout(function(){ lxWalRejouer("reconnexion", true); }, 500);
+  } catch(e) { montrer((e && e.message) || "Connexion impossible"); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = "Se reconnecter"; } }
+}
+// Écoute des changements de session (déconnexion depuis un autre onglet, rafraîchissement du jeton refusé).
+if (_sb && _sb.auth && typeof _sb.auth.onAuthStateChange === "function" && !window._lxVueAdmin) {
+  try {
+    _sb.auth.onAuthStateChange(function(event, session){
+      try {
+        if (session && session.user && session.user.email) window._lxSessionEmail = session.user.email;
+        if (window._lxDeconnexionVolontaire || !_salonId) return; // déconnexion demandée / pas encore connecté
+        if (event === "SIGNED_OUT" || (event === "TOKEN_REFRESHED" && !session)) {
+          setTimeout(function(){ lxSessionPerdue(event === "SIGNED_OUT" ? "déconnecté" : "rafraîchissement refusé"); }, 0);
+        }
+      } catch(_e) {}
+    });
+  } catch(_eA) {}
+}
+
+// [NF525] Mode de caisse relu régulièrement (avant : lu seulement à la connexion). Un 2e appareil resté ouvert
+// pendant le passage TEST -> réel fait sur un autre appareil le prend en compte ; comme les données de test ont été
+// purgées par le serveur, l'application doit être rechargée (la file de secours est conservée).
+async function lxRafraichirModeCaisse(){
+  try {
+    if (!_sb || !_salonId || window._lxDemo || window._lxVueAdmin || window._lxSessionPerdueActive) return;
+    var r = await _sb.from("salons").select("mode_caisse").eq("id", _salonId).maybeSingle();
+    if (!r || r.error || !r.data) return;
+    var m = (r.data.mode_caisse === "test") ? "test" : "reel";
+    var avant = window.LX_MODE_CAISSE;
+    window.LX_MODE_CAISSE = m;
+    if (avant === "test" && m === "reel" && !window._lxPassageReelIci && !document.getElementById("lxModeReelInfo")) {
+      var d = document.createElement("div");
+      d.id = "lxModeReelInfo";
+      d.style.cssText = "position:fixed;inset:0;z-index:2147483500;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;font-family:var(--f1,sans-serif)";
+      d.innerHTML = '<div style="background:#111;border:2px solid #c8a84e;border-radius:16px;padding:26px 22px;max-width:400px;width:90%;color:#fff;text-align:center">' +
+        '<h3 style="margin:0 0 10px;color:#c8a84e">Caisse passée en mode réel</h3>' +
+        '<p style="font-size:13px;color:#ccc;line-height:1.5;margin:0 0 16px">La caisse de l’établissement est désormais en mode réel (changement fait sur un autre appareil). Les encaissements de test ont été effacés : rechargez l’application pour continuer.</p>' +
+        '<button onclick="location.reload()" style="padding:12px 22px;border-radius:10px;border:none;background:#c8a84e;color:#000;font-weight:800;cursor:pointer">Recharger</button></div>';
+      document.body.appendChild(d);
+    }
+  } catch(_e) {}
+}
+window.lxRafraichirModeCaisse = lxRafraichirModeCaisse;
+if (typeof window !== "undefined" && window.addEventListener) {
+  setInterval(lxRafraichirModeCaisse, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") lxRafraichirModeCaisse(); });
+}
 
 // Helper : retire les fonctions d'un objet (structuredClone d'IndexedDB ne les
 // supporte pas). Utile pour SALON_CONFIG qui a des méthodes nomComplet/adresseComplete.
@@ -591,6 +1012,7 @@ async function doLogout() {
     try { await clearCacheForSalon(_salonId); } catch(e){}
   }
   // 2026-10-14 : scope local -> ne deconnecte QUE cet appareil (le defaut "global" coupait la session sur tous les appareils du salon)
+  window._lxDeconnexionVolontaire = true; // 2026-10-14 audit : pas de fenêtre « session expirée » pour une déconnexion demandée
   if (_sb) { try { await _sb.auth.signOut({ scope: "local" }); } catch(_){} }
   _salonId = null;
   _userId = null;
@@ -624,6 +1046,7 @@ async function doLogout() {
 // La sécurité opérateur reste assurée par le re-PIN à 5 min d'inactivité.
 var SALON_SESSION_INACTIVITY_MS = 4 * 60 * 60 * 1000;
 async function checkSession() {
+  if (window._lxDemoKO) return; // 2026-10-14 audit : démo sans son module -> échec fermé (rien ne démarre)
   if (!_sb) { startOffline(); return; }
   try{
   var result = await _sb.auth.getSession();
@@ -1097,6 +1520,85 @@ function lxMapClientRow(c) {
 }
 if (typeof window !== "undefined") window.lxMapClientRow = lxMapClientRow;
 
+// 2026-10-14 audit : mapper unique DB -> T (collaborateurs), partagé par loadSalonData et le rafraîchissement.
+function lxMapCollabRow(c) {
+  return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
+           hrs: c.horaires || {}, pause: c.pause || null,
+           // FIX 2026-05-12 : nouveau champ horaires_overrides (mode Personnalisés)
+           // Format : { "YYYY-MM-DD": {o,c,pause_o?,pause_c?} | null }
+           hrsOver: c.horaires_overrides || {},
+           dateEntree: c.date_entree || null, dateDepart: c.date_depart || null,
+           inactif: c.inactif === true,
+           photoVisible: c.photo_visible !== false,
+           competences: c.competences || {all:true} };
+}
+if (typeof window !== "undefined") window.lxMapCollabRow = lxMapCollabRow;
+
+// 2026-10-14 audit : rafraîchissement des CLIENTS par FUSION (avant : CL remplacé en bloc toutes les 30 s).
+//  - résultat vide alors que la liste locale ne l'est pas -> ignoré (journalisé) ;
+//  - fiche avec une modification locale non confirmée (file de secours / échec signalé) -> version locale gardée ;
+//  - fiche jamais confirmée en base (pas de _lxBase : création pas encore transmise) -> gardée ;
+//  - fiche confirmée auparavant et absente maintenant -> supprimée / fusionnée sur un autre appareil : retirée
+//    (sauf si le résultat a pu être tronqué à 1000 lignes) ;
+//  - les objets existants sont mis à jour sur place (les écrans ouverts gardent la même fiche).
+function lxFusionnerClients(rows) {
+  try {
+    if (!Array.isArray(rows)) return false;
+    var cur = (typeof CL !== "undefined" && Array.isArray(CL)) ? CL : [];
+    if (!rows.length && cur.length) { console.warn("[sync clients] résultat vide ignoré (liste locale : " + cur.length + " fiche(s))"); return false; }
+    lxMajFusions(rows);
+    var attente = {};
+    window._walGetAll().forEach(function(e){ if (e && !e.synced && e.type === "client" && e.salon_id === _salonId && e.data && e.data.id) attente[e.data.id] = 1; });
+    var parId = {}; cur.forEach(function(c){ if (c && c.id) parId[c.id] = c; });
+    var vus = {}, out = [];
+    rows.forEach(function(row){
+      if (!row || row.fusionne_dans) return;
+      vus[row.id] = 1;
+      var loc = parId[row.id];
+      if (loc && (attente[row.id] || loc._lxNonEnregistre)) { out.push(loc); return; }
+      var m = lxMapClientRow(row);
+      if (loc) { Object.keys(m).forEach(function(k){ loc[k] = m[k]; }); _lxPoserBase(loc, m._lxBase); out.push(loc); }
+      else out.push(m);
+    });
+    var tronque = rows.length >= 1000;
+    cur.forEach(function(c){
+      if (!c || !c.id || vus[c.id]) return;
+      if (window._lxFusion && window._lxFusion[c.id]) return; // fiche fusionnée dans une autre
+      if (tronque || !c._lxBase || attente[c.id] || c._lxNonEnregistre) out.push(c);
+    });
+    CL = out;
+    return true;
+  } catch(e) { console.warn("[sync clients] fusion", e); return false; }
+}
+if (typeof window !== "undefined") window.lxFusionnerClients = lxFusionnerClients;
+
+// 2026-10-14 audit : rafraîchissement de l'ÉQUIPE par fusion (avant : T remplacé en bloc).
+function lxFusionnerCollabs(rows) {
+  try {
+    if (!Array.isArray(rows)) return false;
+    var cur = (typeof T !== "undefined" && Array.isArray(T)) ? T : [];
+    if (!rows.length && cur.length) { console.warn("[sync équipe] résultat vide ignoré (équipe locale : " + cur.length + ")"); return false; }
+    var connus = window._lxCollabIdsServeur || null;
+    var parId = {}; cur.forEach(function(c){ if (c && c.id != null) parId[c.id] = c; });
+    var vus = {}, out = [];
+    rows.forEach(function(row){
+      if (!row) return;
+      vus[row.id] = 1;
+      var m = lxMapCollabRow(row), loc = parId[row.id];
+      if (loc) { Object.keys(m).forEach(function(k){ loc[k] = m[k]; }); out.push(loc); } else out.push(m);
+    });
+    cur.forEach(function(c){
+      if (!c || vus[c.id]) return;
+      if (connus && c.id != null && connus[c.id]) return; // connu en base puis absent : supprimé ailleurs
+      out.push(c); // pas encore enregistré
+    });
+    window._lxCollabIdsServeur = vus;
+    T = out;
+    return true;
+  } catch(e) { console.warn("[sync équipe] fusion", e); return false; }
+}
+if (typeof window !== "undefined") window.lxFusionnerCollabs = lxFusionnerCollabs;
+
 // ============================================================
 // MAPPER UNIQUE DB -> RDV_ONLINE
 // FIX 2026-08-04 : cette conversion existait en TRIPLE (loadSalonData ici, le merge
@@ -1292,9 +1794,8 @@ async function loadSalonData() {
   // Flush queue d'erreurs JS pré-login (hook window.onerror — voir app.html)
   try { if (typeof window._lxFlushErrorQueue === "function") window._lxFlushErrorQueue(); } catch(_){}
 
-  // WAL : vérifier s'il y a des actions non synchronisées et proposer récupération
-  // (filet 15/05/2026 — voir bloc WAL en haut de ce fichier)
-  setTimeout(function(){ try{ _walCheck(); }catch(_){} }, 2000);
+  // 2026-10-14 audit : la vérification de la file de secours (WAL) est programmée APRÈS le contrôle du statut
+  // de l'abonnement (plus bas) : un établissement suspendu / en mode archives ne rejoue plus rien.
 
   // Minimum config pour les écrans de blocage
   SALON_CONFIG.nom = salon.nom || "Mon Salon";
@@ -1325,6 +1826,7 @@ async function loadSalonData() {
   }
 
   // Vérifier statut abonnement
+  window._lxSalonSuspendu = (salon.status === "suspended" || salon.status === "cancelled"); // 2026-10-14 audit : écritures et rejeux bloqués
   if (salon.status === "suspended" || salon.status === "cancelled") {
     // Mode Archives : si l'utilisateur a explicitement choisi d'accéder à ses
     // documents comptables (lecture seule), on continue le chargement normal mais
@@ -1342,6 +1844,10 @@ async function loadSalonData() {
       return;
     }
   }
+  // WAL : vérifier s'il y a des actions non synchronisées et proposer récupération
+  // (filet 15/05/2026 — voir bloc WAL en haut de ce fichier). 2026-10-14 audit : après le contrôle du statut ;
+  // _walCheck ne fait rien en mode archives / établissement suspendu.
+  setTimeout(function(){ try{ _walCheck(); }catch(_){} }, 2000);
 
   // Vérifier si plan offert (gratuit)
   if(salon.is_free){
@@ -1538,17 +2044,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     var tRes = await _sb.from("collaborateurs").select("*").eq("salon_id", _salonId).order("id");
     if (tRes.data && !tRes.error) {
       window._lxTableOk = window._lxTableOk || {}; window._lxTableOk.collaborateurs = true;
-      T = tRes.data.map(function(c) {
-        return { id: c.id, n: c.nom, i: c.initiales, c: c.couleur, img: c.img || "",
-                 hrs: c.horaires || {}, pause: c.pause || null,
-                 // FIX 2026-05-12 : nouveau champ horaires_overrides (mode Personnalisés)
-                 // Format : { "YYYY-MM-DD": {o,c,pause_o?,pause_c?} | null }
-                 hrsOver: c.horaires_overrides || {},
-                 dateEntree: c.date_entree || null, dateDepart: c.date_depart || null,
-                 inactif: c.inactif === true,
-                 photoVisible: c.photo_visible !== false,
-                 competences: c.competences || {all:true} };
-      });
+      T = tRes.data.map(lxMapCollabRow); // 2026-10-14 audit : mapper unique (partagé avec le rafraîchissement)
+      window._lxCollabIdsServeur = {}; tRes.data.forEach(function(c){ window._lxCollabIdsServeur[c.id] = 1; });
     }
   } catch(e) { console.warn("[loadSalonData] collaborateurs skipped", e); }
 
@@ -1682,6 +2179,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     if (apRes.data) {
       // Mapping DB->AP : MAPPER UNIQUE partage avec reloadFromSupabase (voir lxMapApptRow).
       AP = apRes.data.map(lxMapApptRow);
+      try { apRes.data.forEach(function(a){ _lxApVu(a.id); }); } catch(_eVu) {} // 2026-10-14 audit : vus en base (détection des suppressions)
       // FIX 2026-05-12 : tri explicite par tkNum DESC pour récupérer le hash du
       // DERNIER ticket de la chaîne. Sans tri, doneH[0] dépendait de l'ordre DB
       // (date_rdv DESC + ordre interne aléatoire dans la même date) → chaîne brisée
@@ -2278,9 +2776,26 @@ async function _saveClientUneFois(client) {
   // FIX 2026-08-04 : renvoie desormais un STATUT REEL {ok:...}. Sans lui, aucun appelant ne
   // pouvait savoir si la sauvegarde avait abouti -> les ecrans affichaient "enregistre" en
   // aveugle. Les appelants existants qui ignorent la valeur de retour ne changent pas.
-  if (!_isOnline || !_salonId) return { ok: false, skipped: true };
+  var _rejeu = !!window._walBypass; // 2026-10-14 audit : lu de façon synchrone (rejeu de la file de secours)
+  var _t0 = new Date().toISOString(); // 2026-10-14 audit
+  if (_lxEcrituresBloquees()) return { ok: false, skipped: true, reason: "lecture seule" }; // 2026-10-14 audit : archives / suspendu
+  if (!_isOnline || !_salonId) {
+    // 2026-10-14 audit : hors ligne -> mise en file (avant : rien n'était conservé) + message
+    if (_salonId && !_rejeu && client) { _walPersist("client", client, { base: client._lxBase }); _lxSignalerNonEnregistre(client); }
+    return { ok: false, skipped: true };
+  }
   // WAL : persiste l'action en LS AVANT tout traitement (filet 15/05/2026)
-  var _walId = window._walBypass ? null : _walPersist("client", client);
+  // 2026-10-14 audit : avec la base de fusion (_lxBase) -> le rejeu n'écrase pas les changements d'un autre appareil
+  var _walId = _rejeu ? null : _walPersist("client", client, { base: client && client._lxBase });
+  var _r = await _saveClientCorps(client, _walId);
+  if (_walResultatOk(_r)) { _lxMarquerEnregistre(client); if (!_rejeu && client) _walRendreCaduques("client", client.id, _t0); }
+  else if (!(_r && _r.permanent)) {
+    try { _lxControleSession(_r && _r.error, !!(_r && _r.vide)); } catch(_eS) {}
+    if (!_rejeu) _lxSignalerNonEnregistre(client);
+  }
+  return _r;
+}
+async function _saveClientCorps(client, _walId) {
   // Toast auto-save discret (debounced)
   // Construit le bucket fiche_tech à partir des champs étendus présents
   // sur l'objet client en mémoire. On ne pousse que les valeurs définies
@@ -2302,6 +2817,18 @@ async function _saveClientUneFois(client) {
   if (client._lxBase) {
     try {
       var _cur = await _sb.from("clients").select("*").eq("id", client.id).eq("salon_id", _salonId).maybeSingle();
+      // 2026-10-14 audit : fiche déjà en base (base de fusion présente) mais introuvable ou fusionnée dans une autre
+      // -> supprimée / fusionnée sur un autre appareil : la sauvegarde la RESSUSCITERAIT. On annule, on retire la
+      // fiche de la mémoire et on prévient. (Session vérifiée d'abord : sans session, la lecture est vide aussi.)
+      if (!_cur.error && (!_cur.data || _cur.data.fusionne_dans)) {
+        var _sess = null; try { _sess = (await _sb.auth.getSession()).data.session; } catch(_eSs) {}
+        if (!_sess) { return { ok: false, error: { message: "session absente" }, vide: true }; }
+        try { if (typeof CL !== "undefined" && Array.isArray(CL)) { for (var _ci = CL.length - 1; _ci >= 0; _ci--) { if (CL[_ci] && CL[_ci].id === client.id) CL.splice(_ci, 1); } } } catch(_eCl) {}
+        _walMarkSynced(_walId);
+        console.warn("[saveClient] fiche supprimée ou fusionnée ailleurs, sauvegarde annulée :", client.id);
+        try { if (typeof toast === "function") toast("La fiche de " + (((client.pre || "") + " " + (client.nom || "")).trim() || "ce client") + " a été supprimée ou fusionnée sur un autre appareil : modification non enregistrée.", "warning"); } catch(_eT) {}
+        return { ok: false, permanent: true, supprime: true };
+      }
       if (!_cur.error && _cur.data) {
         _fusionRow = _cur.data;
         var _dbData = _lxClientData(lxMapClientRow(_cur.data));
@@ -2315,6 +2842,12 @@ async function _saveClientUneFois(client) {
     } catch(_eF) { _fusionRow = null; }
   }
   var res = await _sb.from("clients").upsert(data).select();
+  // 2026-10-14 audit : écriture « vide » (0 ligne renvoyée, sans erreur) = refus silencieux (droits / session)
+  if (!res.error && (!res.data || !res.data.length)) {
+    console.error("saveClient : 0 ligne enregistrée", client.id);
+    _lxReportDbError("saveClient", { message: "0 ligne enregistrée (droits ou session)" }, { client_id: client.id || null });
+    return { ok: false, error: { message: "0 ligne enregistrée" }, vide: true };
+  }
   if (!res.error) {
     // memoire de l'appareil = ce qui est maintenant en base ; nouvelle reference
     try {
@@ -2342,9 +2875,9 @@ async function _saveClientUneFois(client) {
     if (client.smsOk !== undefined) { syncClients.sms_ok = client.smsOk; syncBp.sms_ok = client.smsOk; }
     if (client.emOk !== undefined) { syncClients.email_ok = client.emOk; syncBp.email_ok = client.emOk; }
     try {
-      if (Object.keys(syncClients).length) {
-        await _sb.from("clients").update(syncClients).eq("email", client.em).neq("id", client.id);
-      }
+      // 2026-10-14 audit : SUPPRIMÉ — la copie de l'identité et du consentement (SMS / e-mail) vers TOUTES les fiches
+      // portant le même e-mail (y compris celles d'autres personnes partageant une adresse, ou d'autres
+      // établissements) écrasait leurs données. Seule la synchronisation contrôlée avec le compte Luxyra (RPC) reste.
       if (Object.keys(syncBp).length) {
         // FIX 2026-05-19 : passe par la RPC SECURITY DEFINER au lieu de UPDATE direct
         // (la policy UPDATE clients_luxyra ne sera plus qual=true mais filtrée par
@@ -2416,8 +2949,35 @@ if (typeof window !== "undefined") window.lxChargerRdvOnline = lxChargerRdvOnlin
 // 2026-10-14 (NF525) : saveAppointment renvoie désormais un résultat exploitable par la file de secours
 // (_walResync) : objet sans .error en cas de succès, { ok:false, error, permanent } en cas d'échec,
 // undefined hors ligne. Les appelants existants ignorent la valeur de retour (aucun changement pour eux).
+// 2026-10-14 audit : enveloppe de saveAppointment — résultat TOUJOURS explicite ({ok:false,...} en cas d'échec),
+// message « Non enregistré — nouvelle tentative automatique » + marque sur le RDV, contrôle de session après un
+// échec, mise en file même hors ligne, mode archives respecté, RDV supprimé jamais recréé.
 async function saveAppointment(appt) {
-  if (!_isOnline || !_salonId) return;
+  var _rejeu = !!window._walBypass; // lu de façon synchrone (rejeu de la file de secours / appel interne)
+  var _t0 = new Date().toISOString();
+  if (!appt) return { ok: false, reason: "rendez-vous absent" };
+  if (_lxEcrituresBloquees()) return { ok: false, skipped: true, reason: "lecture seule" };
+  if (appt.id && !(appt.st === "done" || appt.tkNum) && _lxRdvSupprime(appt.id)) {
+    console.warn("[saveAppointment] rendez-vous supprimé : sauvegarde ignorée", appt.id);
+    return { ok: false, permanent: true, supprime: true };
+  }
+  if (!_isOnline || !_salonId) {
+    if (_salonId && !_rejeu) { _walPersist("appointment", appt); _lxSignalerNonEnregistre(appt); }
+    return { ok: false, skipped: true };
+  }
+  var _p, r;
+  try { _p = _saveAppointmentUneFois(appt); } catch (eS) { _p = Promise.resolve({ ok: false, error: { message: String((eS && eS.message) || eS) } }); }
+  try { r = await _p; } catch (eA) { r = { ok: false, error: { message: String((eA && eA.message) || eA) } }; }
+  if (r === undefined || r === null) r = { ok: false, error: { message: "échec non confirmé" } };
+  if (_walResultatOk(r)) { _lxMarquerEnregistre(appt); _lxApVu(appt.id); if (!_rejeu) _walRendreCaduques("appointment", appt.id, _t0); }
+  else if (!_walResultatDoublonPermanent(r)) {
+    try { _lxControleSession(r && r.error, !!(r && r.error && r.error.code === "LX_VIDE")); } catch (_eC) {}
+    if (!_rejeu) _lxSignalerNonEnregistre(appt);
+  }
+  return r;
+}
+async function _saveAppointmentUneFois(appt) {
+  if (!_isOnline || !_salonId) return { ok: false, skipped: true };
   // WAL : persiste l'action AVANT tout traitement (filet 15/05/2026)
   var _walId = window._walBypass ? null : _walPersist("appointment", appt);
 
@@ -2449,8 +3009,9 @@ async function saveAppointment(appt) {
           }
         } catch (_eAc) {}
         var _prevBypass = window._walBypass; window._walBypass = true;
-        var _rDone;
-        try { _rDone = await saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; }
+        var _rDone, _pDone;
+        try { _pDone = saveAppointment(_apClone); } finally { window._walBypass = _prevBypass; } // 2026-10-14 audit : drapeau lu de façon synchrone, non maintenu pendant l'attente
+        _rDone = await _pDone;
         // 2026-10-14 (NF525) : échec de l'écriture du RDV encaissé -> on le signale à la file de secours (pas de « synchronisé » à tort)
         if (_rDone && typeof _rDone === "object" && (_rDone.error || _rDone.ok === false) && !_walResultatDoublonPermanent(_rDone)) { return _rDone; } // 2026-10-14 : RDV déjà en base -> on continue (rdv_online marqué encaissé)
       } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); return { ok: false, error: { message: String((eDone && eDone.message) || eDone) } }; }
@@ -2660,7 +3221,10 @@ async function saveAppointment(appt) {
     // de la ligne (copie du hash de la table tickets après scellement) : l'upsert complet était alors
     // refusé et l'annulation du ticket original n'était PAS enregistrée (CA faux après rechargement).
     if (r.error && /inalterable/i.test(String(r.error.message || "")) && (appt.st === "done" || appt.tkNum)) {
-      var _mut = { cancelled: !!appt.cancelled, cancel_reason: appt.cancelReason || "" };
+      // 2026-10-14 audit (NF525) : jamais « cancelled:false » (ni motif vide) par-dessus une annulation déjà en base
+      // (mémoire périmée d'un autre appareil) : l'annulation ne s'écrit que dans le sens false -> true.
+      var _mut = {};
+      if (appt.cancelled === true) { _mut.cancelled = true; _mut.cancel_reason = appt.cancelReason || ""; }
       if (appt.cancelled && appt.cancelDate) _mut.cancel_date = String(appt.cancelDate).slice(0, 10) + "T12:00:00Z";
       if (appt.printed === true) _mut.printed = true;
       if (typeof appt.ticketHtml === "string" && appt.ticketHtml.length > 0) _mut.ticket_html = appt.ticketHtml;
@@ -2670,6 +3234,7 @@ async function saveAppointment(appt) {
       if (data.meta) _mut.meta = data.meta; // 2026-10-14 (NF525) : colonne non protégée (nouvelle), mise à jour autorisée sur un ticket scellé
       var _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id");
       if (_rm.error && _mut.meta) { if (_lxErreurColonneMeta(_rm.error)) window._lxApptMetaAbsent = true; delete _mut.meta; _rm = await _sb.from("appointments").update(_mut).eq("id", appt.id).eq("salon_id", _salonId).select("id"); }
+      if (!_rm.error && (!_rm.data || !_rm.data.length)) _rm = { data: null, error: { message: "0 ligne mise à jour (droits ou session)", code: "LX_VIDE" } }; // 2026-10-14 audit
       if (!_rm.error && _rm.data && _rm.data.length) { _walMarkSynced(_walId); return _rm; }
       r = _rm.error ? _rm : r;
     }
@@ -2713,6 +3278,8 @@ async function saveAppointment(appt) {
       return { ok: false, error: r.error, permanent: _isDupPerm };
     }
   }
+  // 2026-10-14 audit : écriture « vide » (0 ligne renvoyée) = refus silencieux (droits / session) -> échec, reste en file
+  if (!r || !r.data || !r.data.length) return { ok: false, error: { message: "0 ligne enregistrée (droits ou session)", code: "LX_VIDE" } };
   _walMarkSynced(_walId);
   return r; // 2026-10-14 (NF525) : succès confirmé (objet PostgREST sans .error)
 }
@@ -2764,15 +3331,41 @@ async function _lxApptMetaPatch(apptId, patch) {
 if (typeof window !== "undefined") window._lxApptMetaPatch = _lxApptMetaPatch;
 
 // Supprimer un RDV non-encaissé de la base
+// 2026-10-14 audit : résultat explicite {ok:...}, erreur VISIBLE (avant : console seulement -> le RDV revenait
+// au rechargement sans que personne ne le sache), RDV marqué « supprimé » (jamais recréé par une sauvegarde ou
+// un rejeu de la file de secours sur cet appareil).
 async function deleteAppointmentFromDb(apptId) {
-  if (!_isOnline || !_salonId || !apptId) return;
+  if (!apptId) return { ok: false, error: { message: "identifiant absent" } };
+  if (_lxEcrituresBloquees()) return { ok: false, skipped: true, reason: "lecture seule" };
+  if (!_isOnline || !_salonId) {
+    try { if (typeof toast === "function") toast("Hors ligne : la suppression du rendez-vous n’a pas pu être enregistrée.", "error"); } catch(_t) {}
+    return { ok: false, skipped: true };
+  }
+  var _alerte = function(msg){ try { if (typeof toast === "function") toast("La suppression du rendez-vous n’a pas été enregistrée : " + msg + ". Il réapparaîtra au rechargement.", "error"); } catch(_t) {} };
   try {
-    if (apptId.indexOf("-") > 0 && apptId.length > 30) {
-      var r = await _sb.from("appointments").delete().eq("id", apptId).eq("salon_id", _salonId);
-      if (r.error) console.error("[DEL APPT] Erreur:", r.error.message);
-      else console.log("[DEL APPT] OK", apptId);
+    if (typeof apptId === "string" && apptId.indexOf("-") > 0 && apptId.length > 30) {
+      var r = await _sb.from("appointments").delete().eq("id", apptId).eq("salon_id", _salonId).select("id");
+      if (r.error) {
+        console.error("[DEL APPT] Erreur:", r.error.message);
+        _lxReportDbError("deleteAppointmentFromDb", r.error, { appt_id: apptId });
+        try { await _lxControleSession(r.error, false); } catch(_eS) {}
+        _alerte(r.error.message || "erreur serveur");
+        return { ok: false, error: r.error };
+      }
+      if (!r.data || !r.data.length) {
+        // 0 ligne : jamais enregistré, déjà supprimé ailleurs… ou session perdue (vérifiée ici)
+        var _perdue = false; try { _perdue = await _lxControleSession(null, true); } catch(_eS2) {}
+        if (_perdue) { _alerte("session expirée"); return { ok: false, sessionPerdue: true }; }
+      }
+      console.log("[DEL APPT] OK", apptId);
     }
-  } catch(e) { console.error("[DEL APPT] Exception:", e.message); }
+    lxRdvMarquerSupprime(apptId);
+    return { ok: true };
+  } catch(e) {
+    console.error("[DEL APPT] Exception:", e && e.message);
+    _alerte((e && e.message) || "erreur");
+    return { ok: false, error: { message: String((e && e.message) || e) } };
+  }
 }
 
 // Sauvegarder un produit
@@ -3021,6 +3614,7 @@ function _mapPayment(tk) {
 // Safe à appeler plusieurs fois : check si le ticket existe déjà via (salon_id, num).
 async function saveTicketToDb(tk) {
   if (!_isOnline || !_salonId || !tk) return null;
+  if (_lxEcrituresBloquees()) return null; // 2026-10-14 audit : mode archives / établissement suspendu
   // WAL : persiste le ticket en LS AVANT tout traitement (filet 15/05/2026)
   var _walId = window._walBypass ? null : _walPersist("ticket", tk);
   try {
@@ -3141,6 +3735,17 @@ async function saveTicketToDb(tk) {
     }
 
     var res = await _sb.from("tickets").insert(data).select().single();
+    // 2026-10-14 audit (NF525) : course sur la numérotation (deux postes au même instant -> même n° calculé par le
+    // déclencheur) : refus 23505 sur tickets_num_per_salon -> UN nouvel essai immédiat (le déclencheur recalcule le
+    // n° ; il est désormais aussi sérialisé par un verrou, cf. docs/migrations_1014/donnees.sql).
+    if (res.error && res.error.code === "23505" && /tickets_num_per_salon/.test(String(res.error.message || "") + " " + String(res.error.details || ""))) {
+      console.warn("[saveTicketToDb] n° de ticket pris par un autre poste : nouvel essai immédiat");
+      var _dejaRetry = null;
+      if (tk.id) try { var _exR = await _sb.from("tickets").select("id, num, hash, hash_prev").eq("salon_id", _salonId).eq("raw_data->>id", tk.id).limit(1).maybeSingle(); if (_exR && _exR.data && _exR.data.id) _dejaRetry = _exR.data; } catch(_eR) {}
+      if (_dejaRetry) { tk.dbId = _dejaRetry.id; if (!tk.tkNum) tk.tkNum = _dejaRetry.num; tk.hashPrev = _dejaRetry.hash_prev; delete tk._dbError; _walMarkSynced(_walId); return _dejaRetry; }
+      res = await _sb.from("tickets").insert(data).select().single();
+    }
+    if (res.error) { try { _lxControleSession(res.error, false); } catch(_eSs) {} } // 2026-10-14 audit : session perdue -> reconnexion
     if (res.error && res.error.code === "23505" && tk.retenueKey) {
       // 2026-10-14 (NF525) : retenue déjà enregistrée par un autre appareil (index unique raw_data->>retenueKey)
       // -> même événement économique déjà en base : on reprend la ligne existante (pas de doublon, pas de rejeu).
@@ -3415,7 +4020,8 @@ async function _lxRafraichirClotures() {
 if (typeof window !== "undefined") window._lxRafraichirClotures = _lxRafraichirClotures;
 
 async function saveCloture(clot) {
-  if (!_isOnline || !_salonId) return;
+  if (!_isOnline || !_salonId) return { ok: false, skipped: true }; // 2026-10-14 audit : résultat explicite
+  if (_lxEcrituresBloquees()) return { ok: false, skipped: true, reason: "lecture seule" }; // 2026-10-14 audit
   // WAL : persiste la clôture en LS AVANT tout traitement (filet 15/05/2026)
   var _walId = window._walBypass ? null : _walPersist("cloture", clot);
   // Raw data : tous les champs de la clôture sauf ceux qui ne sont pas sérialisables.
@@ -3473,9 +4079,21 @@ async function saveCloture(clot) {
     // tape sur une ligne existante (id déjà présent) déclenche ce code.
     // → On traite comme un succès : la clôture est déjà en DB et NF525-conforme.
     if (res.error.code === "42501" || (res.error.message || "").indexOf("row-level security") >= 0) {
-      console.warn("[saveCloture] Clôture immutable (RLS UPDATE block) — déjà enregistrée. Num=" + clot.num);
-      _walMarkSynced(_walId);
-      return { ok: true, deja: true }; // 2026-10-14 (NF525)
+      // 2026-10-14 audit (NF525) : 42501 est AUSSI renvoyé quand la session est perdue (insertion refusée) : avant,
+      // la clôture était alors marquée « transmise » sans exister en base. On vérifie qu'elle est bien en base.
+      var _zEnBase = false;
+      try {
+        var _zq = await _sb.from("clotures").select("id").eq("salon_id", _salonId).or("id.eq." + clot.id + ",num.eq." + Number(clot.num || 0)).limit(1);
+        _zEnBase = !!(_zq && !_zq.error && _zq.data && _zq.data.length);
+      } catch(_eZ) {}
+      if (_zEnBase) {
+        console.warn("[saveCloture] Clôture immutable (RLS UPDATE block) — déjà enregistrée. Num=" + clot.num);
+        _walMarkSynced(_walId);
+        return { ok: true, deja: true }; // 2026-10-14 (NF525)
+      }
+      try { await _lxControleSession(res.error, false); } catch(_eS) {}
+      console.error("[saveCloture] refus 42501 et clôture absente en base : reste en file", clot.num);
+      return { ok: false, error: res.error };
     }
     console.error("[saveCloture] Erreur upsert:", res.error);
     if (typeof toast === "function") toast("Erreur enregistrement clôture : " + res.error.message, "error");
@@ -4264,8 +4882,10 @@ async function changeOperateurPIN(id, newPin) {
       pin_length: newPin.length,
       failed_attempts: 0,
       locked_until: null
-    }).eq("id", id);
-    return !r.error;
+    }).eq("id", id).select("id"); // 2026-10-14 audit : lignes réellement modifiées
+    if (r.error) { console.error("[OP PIN]", r.error.message); return false; }
+    if (!r.data || !r.data.length) { console.error("[OP PIN] 0 ligne modifiée (droits refusés ou opérateur introuvable)", id); return false; } // 2026-10-14 audit : avant = succès annoncé à tort
+    return true;
   } catch(e) { console.error("[OP PIN]", e.message); return false; }
 }
 
@@ -4336,8 +4956,10 @@ async function unlockOperateur(id) {
     var r = await _sb.from("salon_operateurs").update({
       failed_attempts: 0,
       locked_until: null
-    }).eq("id", id);
-    return !r.error;
+    }).eq("id", id).select("id"); // 2026-10-14 audit : lignes réellement modifiées
+    if (r.error) return false;
+    if (!r.data || !r.data.length) { console.error("[OP UNLOCK] 0 ligne modifiée", id); return false; } // 2026-10-14 audit
+    return true;
   } catch(e) { return false; }
 }
 
@@ -4386,6 +5008,7 @@ async function syncClientFromOnlineRdv(rdvData) {
   }
   // 4) 2026-10-13 : même nom + même prénom, UNE seule fiche, sans e-mail (ou le même) -> c'est la même personne
   //    (cas réel : fiche salon avec un téléphone mal saisi, puis compte en ligne -> 2 fiches et fidélité séparée).
+  var _nomSeul = false; // 2026-10-14 audit : fiche retrouvée par le NOM seulement (homonyme possible)
   if (!existing && rdvData.client_nom && rdvData.client_prenom) {
     try {
       var r4 = await _sb.from("clients").select("*").eq("salon_id", _salonId).is("fusionne_dans", null)
@@ -4393,17 +5016,17 @@ async function syncClientFromOnlineRdv(rdvData) {
       if (r4.data && r4.data.length === 1) {
         var c4 = r4.data[0], e4 = String(c4.email || "").trim().toLowerCase();
         if (!e4 || !email || e4 === email) {
-          existing = c4;
-          var maj4 = {};
-          if (!e4 && email) maj4.email = email;
-          if (Object.keys(maj4).length) { try { await _sb.from("clients").update(maj4).eq("id", c4.id); } catch (_e4) {} }
+          existing = c4; _nomSeul = !(e4 && email && e4 === email);
+          // 2026-10-14 audit : on n'écrit PLUS l'e-mail du compte en ligne sur une fiche retrouvée par le nom seul
+          // (homonyme : la fiche d'une autre personne aurait été rattachée à ce compte, consentement compris).
         }
       }
     } catch (_eN4) {}
   }
   if (existing) {
     // Link beautypro_id if not set
-    if (bpId && !existing.client_luxyra_id) {
+    // 2026-10-14 audit : jamais sur une correspondance par le nom seul (lien vers un inconnu)
+    if (bpId && !existing.client_luxyra_id && !_nomSeul) {
       await _sb.from("clients").update({ client_luxyra_id: bpId }).eq("id", existing.id);
     }
     return existing.id;
@@ -4419,13 +5042,16 @@ async function syncClientFromOnlineRdv(rdvData) {
     sexe: rdvData.client_genre || null,
     date_naissance: rdvData.client_ddn || null,
     actif: true,
-    sms_ok: true,
-    email_ok: true,
+    // 2026-10-14 audit (RGPD) : plus de consentement SMS / e-mail présumé (avant : true). Fiche liée à un compte
+    // Luxyra : le consentement du compte est recopié par la base (clients_consentement_depuis_compte,
+    // docs/migrations_1014/donnees.sql) ; sinon il reste à recueillir.
+    sms_ok: false,
+    email_ok: false,
     acquisition_source: "en_ligne",
     created_at: new Date().toISOString()
   };
   var res = await _sb.from("clients").insert(newClient).select();
-  if (res.data && res.data[0]) return res.data[0].id;
+  if (res.data && res.data[0]) { try { window._lxFichesCreeesEnLigne = window._lxFichesCreeesEnLigne || {}; window._lxFichesCreeesEnLigne[res.data[0].id] = res.data[0]; } catch(_eF) {} return res.data[0].id; }
   return null;
 }
 

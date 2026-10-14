@@ -387,6 +387,15 @@ body{max-width:100%;margin:0 auto;}
 </script>
 <script src="supabase.min.js"></script>
 <script>if(window._lxDemo){document.write('<script src="lx-demo.js?v=20261011-07"><\/script>');}</script>
+<script>
+// 2026-10-14 audit : mode démo et lx-demo.js non chargé (réseau, blocage) -> échec FERMÉ : aucun vrai client
+// Supabase n'est créé (luxyra-supabase.js garde _sb=null) et la page affiche un message au lieu de l'application.
+if(window._lxDemo && !window._lxDemoTables){
+  try{ window.supabase={ createClient:function(){ return null; } }; }catch(_e){}
+  window._lxDemoKO=true;
+  document.addEventListener("DOMContentLoaded",function(){ try{ document.body.innerHTML='<div style="padding:40px;font-family:sans-serif;color:#fff;background:#111;min-height:100vh"><h2>Démonstration indisponible</h2><p>Le module de démonstration n’a pas pu être chargé. Rechargez la page.</p><button onclick="location.reload()" style="padding:10px 18px;border-radius:8px;border:none;background:#c8a84e;font-weight:700">Recharger</button></div>'; }catch(_e){} });
+}
+</script>
 <script src="lx-qrcode.js"></script>
 <script src="lx-nf525-attestation.js?v=20261010-06"></script>
 <!-- luxyra-supabase.js : tag <script src> classique qui bloque nativement le parsing
@@ -394,12 +403,12 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261014-5"></script>
+<script src="luxyra-supabase.js?v=20261014-6"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261014-5";
+  var attendu="20261014-6";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -589,14 +598,15 @@ window._walDoRecover = async function(){
   var bg = document.getElementById("walRecBg");
   if(bg) bg.innerHTML = '<div class="mbox" style="text-align:center"><div style="font-size:32px">⏳</div><h2 style="color:var(--gold)">Récupération en cours…</h2><p id="walRecProgress" style="color:var(--text2)">0 / ?</p></div>';
   try{
-    var entries = (typeof window._walGetAll==="function"?window._walGetAll():[]).filter(function(e){ return !e.synced; });
+    // 2026-10-14 audit (NF525) : uniquement les entrees de l'etablissement ouvert (jamais celles d'un autre compte)
+    var entries = (typeof window._walGetAll==="function"?window._walGetAll():[]).filter(function(e){ return !e.synced && e.salon_id===window._salonId; });
     var ok=0, fail=0;
     for(var i=0;i<entries.length;i++){
       var p = document.getElementById("walRecProgress");
       if(p) p.textContent = (i+1)+" / "+entries.length;
       try{
         var r = await window._walResync(entries[i].id, true); // 2026-10-14 (NF525) : action manuelle -> sans délai d'attente entre deux essais
-        if(r && r.ok) ok++; else fail++;
+        if(r && r.ok) ok++; else if(!(r && (r.differe||r.abandon))) fail++; // 2026-10-14 audit : cloture differee derriere des tickets = pas un echec
       }catch(_){ fail++; }
     }
     var msg = "✅ "+ok+" action(s) récupérée(s)";
@@ -6357,6 +6367,8 @@ function _doClotureDo(){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:48px;margin-bottom:10px">\ud83d\udd12</div><h2>D\u00e9j\u00e0 cl\u00f4tur\u00e9e</h2><div style="font-size:14px;margin-bottom:14px">La cl\u00f4ture quotidienne du '+fmt(TD)+' a d\u00e9j\u00e0 \u00e9t\u00e9 effectu\u00e9e.</div><button class="btn bg bk" onclick="cM()">OK</button></div></div>';
     return;
   }
+  // 2026-10-14 audit (NF525) : Z refusee tant que des tickets du jour (ou anterieurs) sont encore dans la file de secours
+  if(typeof window.lxClotureBloqueeParWal==="function" && window.lxClotureBloqueeParWal(TD)) return;
   var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!_lxExclCA(a);});
   if(!done.length){document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><h2>Aucun ticket</h2><p>Aucun ticket \u00e0 cl\u00f4turer aujourd\u0027hui</p><button class="btn bg bk" onclick="cM()">OK</button></div></div>';return;}
   var t=0;done.forEach(function(a){t+=a.pr});
@@ -9416,7 +9428,9 @@ async function _lxEnsureFichesForOnlineAppts(){
         rid=await syncClientFromOnlineRdv({client_nom:o.nom,client_prenom:o.prenom,client_telephone:o.tel,client_email:o.email,client_luxyra_id:o.luxyraId||null});
         if(rid){
           var inCL=false; for(var k=0;k<CL.length;k++){ if(CL[k].id===rid){ inCL=true; break; } }
-          if(!inCL) CL.push({id:rid,nom:o.nom,pre:o.prenom,ph:o.tel,ph2:"",em:o.email,sex:null,fid:0,actif:true,clientBeautyproId:(o.luxyraId||null),smsOk:true,emOk:true,fiches:[]});
+          // 2026-10-14 audit : fiche telle qu'enregistree en base (consentement reel, base de fusion) ; plus de smsOk/emOk presumes a true
+          var _fcl=(window._lxFichesCreeesEnLigne&&window._lxFichesCreeesEnLigne[rid]&&typeof lxMapClientRow==="function")?lxMapClientRow(window._lxFichesCreeesEnLigne[rid]):null;
+          if(!inCL) CL.push(_fcl||{id:rid,nom:o.nom,pre:o.prenom,ph:o.tel,ph2:"",em:o.email,sex:null,fid:0,actif:true,clientBeautyproId:(o.luxyraId||null),fiches:[]});
         }
       }
       if(rid){ a.cId=rid; changed=true; }
@@ -37316,7 +37330,14 @@ function setupRealtime(){
   var channel=_sb.channel("salon_"+_salonId)
     .on("postgres_changes",{event:"*",schema:"public",table:"appointments",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: appointment change",payload.eventType);
+      // 2026-10-14 audit : suppression faite sur un autre appareil -> retiree de la memoire (jamais recreee ici)
+      try{ if(payload&&payload.eventType==="DELETE"&&payload.old&&payload.old.id&&typeof window.lxRdvSupprimeAilleurs==="function") window.lxRdvSupprimeAilleurs(payload.old.id); }catch(_eD){}
       reloadFromSupabase("appointments");
+    })
+    // 2026-10-14 audit : les suppressions ne passent pas toujours le filtre salon_id (seule la cle primaire est
+    // transmise) -> abonnement DELETE sans filtre ; seuls les identifiants presents dans AP sont concernes.
+    .on("postgres_changes",{event:"DELETE",schema:"public",table:"appointments"},function(payload){
+      try{ if(payload&&payload.old&&payload.old.id&&typeof window.lxRdvSupprimeAilleurs==="function"&&window.lxRdvSupprimeAilleurs(payload.old.id)){ if(typeof refreshCurrentView==="function") refreshCurrentView(); } }catch(_eD2){}
     })
     .on("postgres_changes",{event:"*",schema:"public",table:"rdv_online",filter:"salon_id=eq."+_salonId},function(payload){
       console.log("Realtime: rdv_online change",payload.eventType);
@@ -37460,6 +37481,7 @@ async function reloadFromSupabase(table){
             var a=dbMap[AP[i].id];
             // Only update if not currently being dragged
             if(window._pendingDrag&&window._pendingDrag.id===AP[i].id) continue;
+            if(AP[i]._lxNonEnregistre) continue; // 2026-10-14 audit : modification locale pas encore transmise (file de secours) -> gardee
             // Mapping DB->AP : MAPPER UNIQUE, identique au chargement initial (loadSalonData).
             var mapped=_mapRow(a);
             Object.assign(AP[i],mapped);
@@ -37487,6 +37509,9 @@ async function reloadFromSupabase(table){
         }
         // Only remove cancelled appointments that DB confirms are cancelled
         // NEVER remove an appointment that exists locally but not in DB
+        // 2026-10-14 audit : SAUF un RDV deja vu en base puis supprime (autre appareil) : retire, sinon il etait
+        // re-sauvegarde par cet appareil et revenait. Jamais un ticket, jamais un RDV non encore transmis.
+        try{ if(typeof window.lxApRetirerSupprimes==="function") window.lxApRetirerSupprimes(r.data, past30Str); }catch(_eRs){}
       }
     }
     else if(table==="rdv_online"){
@@ -37572,9 +37597,15 @@ async function reloadFromSupabase(table){
       var _mapCl=(typeof window.lxMapClientRow==="function")?window.lxMapClientRow:null;
       if(!_mapCl){ console.warn("[reloadFromSupabase] lxMapClientRow indisponible - merge clients ignore"); return; }
       var r=await _sb.from("clients").select("*").eq("salon_id",_salonId).order("nom");
-      if(r.data){
-        if(typeof window.lxMajFusions==="function") window.lxMajFusions(r.data); // 2026-10-13 : fiches fusionnées cachées
-        CL=r.data.filter(function(c){ return !c.fusionne_dans; }).map(_mapCl);
+      if(r.error){ console.warn("[reloadFromSupabase] clients : lecture en echec, liste locale conservee",r.error.message); }
+      else if(r.data){
+        // 2026-10-14 audit : FUSION (lxFusionnerClients) au lieu du remplacement integral : fiches locales non
+        // confirmees gardees, resultat vide ignore si la liste locale ne l'est pas (journalise).
+        if(typeof window.lxFusionnerClients==="function"){ window.lxFusionnerClients(r.data); }
+        else{
+          if(typeof window.lxMajFusions==="function") window.lxMajFusions(r.data); // 2026-10-13 : fiches fusionnées cachées
+          if(r.data.length||!CL.length) CL=r.data.filter(function(c){ return !c.fusionne_dans; }).map(_mapCl);
+        }
       }
     }
     else if(table==="collaborateurs"){
@@ -37582,7 +37613,10 @@ async function reloadFromSupabase(table){
       // Manquait : un changement d'horaire perso ne se voyait qu'après un redémarrage complet.
       // Même mapping que loadSalonData (luxyra-supabase.js) pour rester cohérent.
       var r=await _sb.from("collaborateurs").select("*").eq("salon_id",_salonId).order("id");
-      if(r.data){
+      // 2026-10-14 audit : FUSION (lxFusionnerCollabs) au lieu du remplacement integral ; erreur / resultat vide ignores
+      if(r.error){ console.warn("[reloadFromSupabase] collaborateurs : lecture en echec, equipe locale conservee",r.error.message); }
+      else if(r.data && typeof window.lxFusionnerCollabs==="function"){ window.lxFusionnerCollabs(r.data); }
+      else if(r.data && (r.data.length||!T.length)){
         T=r.data.map(function(c){
           return { id:c.id, n:c.nom, i:c.initiales, c:c.couleur, img:c.img||"",
                    hrs:c.horaires||{}, pause:c.pause||null,

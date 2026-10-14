@@ -24,7 +24,10 @@
   var reportsThisSession = 0;
   var MAX_REPORTS_PER_SESSION = 30;
   var THROTTLE_MS = 1500;
-  var skipPat = /ResizeObserver loop|Script error|Non-Error promise|Load failed|AbortError|cancelled|window\.ethereum|ethereum\.selectedAddress|__firefox__|webkit\.messageHandlers/i; // 2026-10-08 : scripts injectes par certains navigateurs (portefeuilles crypto, navigateurs integres Facebook\/Instagram) : pas des erreurs Luxyra
+  // 2026-10-14 audit : "Load failed" (Safari) et "cancelled" ne sont plus ignorés : ce sont souvent des
+  // requêtes réseau perdues (enregistrement non parvenu au serveur). Ils remontent en niveau « warning ».
+  var skipPat = /ResizeObserver loop|Script error|Non-Error promise|AbortError|window\.ethereum|ethereum\.selectedAddress|__firefox__|webkit\.messageHandlers/i; // 2026-10-08 : scripts injectes par certains navigateurs (portefeuilles crypto, navigateurs integres Facebook\/Instagram) : pas des erreurs Luxyra
+  var warnPat = /Load failed|cancelled/i; // 2026-10-14 audit
 
   function report(type, message, stack, extra) {
     try {
@@ -37,10 +40,12 @@
       if (skipPat.test(String(message || ""))) return;
       lastReportTs = now;
       reportsThisSession++;
+      var _niveau = warnPat.test(String(message || "")) ? "warning" : "error"; // 2026-10-14 audit
 
       var payload = {
         type: type,
-        message: String(message || "").slice(0, 800),
+        level: _niveau, // 2026-10-14 audit
+        message: (_niveau === "warning" ? "[warning] " : "") + String(message || "").slice(0, 800),
         stack: stack ? String(stack).slice(0, 3000) : null,
         page: location.pathname,
         url: location.href.slice(0, 500),
