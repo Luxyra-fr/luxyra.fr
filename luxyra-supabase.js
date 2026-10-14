@@ -908,6 +908,7 @@ function lxMapApptRow(a) {
       if (_it && _it.isAcompteData) {
         _ap.acompte = _it.acompte; _ap.acompteMode = _it.acompteMode;
         _ap.acompteDate = _it.acompteDate; _ap.acompteTkNum = _it.acompteTkNum || null;
+        if (_it.acompteEnLigneTicket === true) _ap.acompteEnLigneTicket = true; // 2026-10-14 (NF525 acompte en ligne) : acompte en ligne déjà scellé (RDV relibéré) -> déduit au ticket final
         break;
       }
     }
@@ -1120,6 +1121,14 @@ function lxMapRdvOnlineRow(r) {
     acompteRembourse: r.acompte_rembourse || false,
     acompteRembourseMontant: Number(r.acompte_rembourse_montant) || 0, // 2026-10-13 : remboursement partiel
     refundedAt: r.refunded_at || null,
+    // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle (ticket scellé au paiement) : acompte_modele='ticket',
+    // n° du ticket d'acompte, historique des remboursements (chaque entrée porte tk une fois ticketée), retenue définitive.
+    acompteModele: r.acompte_modele || null,
+    acompteTkNum: r.acompte_tk_num || null,
+    acompteTkClaimAt: r.acompte_tk_claim_at || null,
+    remboursements: Array.isArray(r.remboursements) ? r.remboursements : [],
+    retenueAt: r.retenue_at || null,
+    retenueTkNum: r.retenue_tk_num || null,
     stripePaymentId: r.payment_intent_id || null,
     status: r.status, message: r.message,
     createdAt: r.created_at, confirmedAt: r.confirmed_at,
@@ -2705,7 +2714,8 @@ async function saveAppointment(appt) {
 // 2026-10-14 (NF525) : champs de ticket à conserver dans appointments.meta (jsonb), uniquement s'ils ont une valeur.
 var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClients","clientNom","clientPrenom",
   "isAcompte","isAcompteCancel","apptId","isRetenue","retenueKey","retenueRdv","origTkNum","origTkNums",
-  "bonVenduRemise","offertRemise","dbNum"];
+  "bonVenduRemise","offertRemise","dbNum",
+  "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId"]; // 2026-10-14 (NF525 acompte en ligne)
 function _lxApptMetaDepuis(appt) {
   try {
     if (!appt || typeof appt !== "object") return null;
@@ -3136,6 +3146,18 @@ async function saveTicketToDb(tk) {
           return _exRk.data;
         }
       } catch(_eRk){}
+    }
+    if (res.error && res.error.code === "23505" && tk.acompteKey) {
+      // 2026-10-14 (NF525 acompte en ligne) : ticket d'acompte en ligne / de remboursement déjà enregistré par un autre
+      // appareil (index unique raw_data->>acompteKey) -> même événement économique déjà en base : on reprend la ligne.
+      try {
+        var _exAk = await _sb.from("tickets").select("id, num, hash, hash_prev").eq("salon_id", _salonId).eq("raw_data->>acompteKey", tk.acompteKey).limit(1).maybeSingle();
+        if (_exAk && _exAk.data && _exAk.data.id) {
+          tk.dbId = _exAk.data.id; if (!tk.tkNum) tk.tkNum = _exAk.data.num; tk.hashPrev = _exAk.data.hash_prev;
+          delete tk._dbError; _walMarkSynced(_walId);
+          return _exAk.data;
+        }
+      } catch(_eAk){}
     }
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);
