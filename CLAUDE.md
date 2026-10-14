@@ -1817,6 +1817,12 @@ Ensuite : Alexandre supprime le Salon Démo (admin) → entrée registre.
 ## Centre d'aide (13/10/2026)
 - Réservé à l'appli pro : AUCUN lien /aide sur le site public, les pages pro/logiciel, l'appli clients ni l'annuaire. Pages /aide en noindex, absentes du sitemap (v17). Ne pas remettre de lien public.
 
+## Sitemap v18 (15/10/2026) — index + sitemaps enfants
+- `/sitemap.xml` = index (worker → edge `sitemap?part=index`) ; enfants `/sitemap-pages.xml`, `/sitemap-salons.xml`, `/sitemap-annuaire-<métier>.xml` (coiffeur, institut-de-beaute, spa-massage, onglerie, extension-de-cils, barbier). Source : `docs/edge_1015/sitemap/index.ts` (sans `part` = ancien urlset complet, compatibilité).
+- Salons : salons_public + site_actif ≠ false, `/<slug>` seulement (`/reserver` a canonical → `/<slug>`). Annuaire : RPC annuaire_villes2 (mêmes filtres que les pages SSR), ville listée seulement si la page répond 200. /aide/* jamais listé (noindex).
+- lastmod des pages statiques écrit en dur dans STATIC_PAGES : le mettre à jour quand une page change (et ajouter toute nouvelle page / article de blog). Erreur → 503 + Retry-After (plus de sitemap minimal en 200).
+- Ordre de déploiement : edge `sitemap` d'abord, puis le worker ; renvoyer `https://luxyra.fr/sitemap.xml` dans Search Console.
+
 ## Centre d'aide + bot — mise à jour du 15/10/2026 (changements des 13-14/10)
 - Pages aide/*.html retouchées À LA MAIN (aide_guides.py toujours en retard : NE PAS relancer aide_build.py). Nouvelles sections : rendez-vous-en-ligne #s5-#s7 (cloche « en attente », Accepter quand même, Proposer un autre horaire), planning #s4-#s6 (annuler / supprimer définitivement, alertes, glisser-déposer), configurer #s5 (fermeture exceptionnelle avec RDV), cloture #s3-#s4 (Z bloquée, file de secours), premiers-pas #s5-#s6 (session expirée, mise à jour, déconnexion), equipe #s3 (PIN serveur / hors ligne), tickets #s3-#s4 (effets inversés, duplicata), encaisser #s6, fidelite #s3, fichier-clients #s4 (anonymisation), sms #s3-#s5 (rappels serveur, automatisations, campagnes), site #s4, paiements #s3. Nouveaux guides : aide/espace-client.html (carte dans la grille) et aide/administration-luxyra.html (équipe Luxyra, non lié depuis aide.html). « Nouveautés » d'aide.html : 17 cartes ajoutées.
 - 21 captures nouvelles (shots.json, fin de liste) ; cap.mjs accepte `page` / `ls` / `mock` / `ready` (captures de compte.html avec données fictives, réseau bloqué).
