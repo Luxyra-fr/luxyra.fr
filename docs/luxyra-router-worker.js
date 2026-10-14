@@ -5844,26 +5844,44 @@ async function handleExistingRoutes(request, url, env) {
   // SITEMAP DYNAMIQUE : proxy /sitemap.xml depuis l'edge function Supabase
   // (auto-update à chaque nouveau salon, pas besoin de toucher au repo)
   // ============================================================
-  if (url.pathname === "/sitemap.xml") {
-    try {
-      const r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/sitemap`, {
-        cf: { cacheTtl: 3600, cacheEverything: true }
+  // 2026-10-15 (sitemap v18) : /sitemap.xml = INDEX de sitemaps ; enfants /sitemap-pages.xml,
+  // /sitemap-salons.xml, /sitemap-annuaire-<métier>.xml (edge function « sitemap », ?part=…).
+  // Erreur / délai -> 503 + Retry-After (Google garde la version précédente) : plus jamais de
+  // « sitemap minimal » en 200 qui ferait croire à Google que le site n'a qu'une URL.
+  {
+    const _sm = url.pathname === "/sitemap.xml" ? "index"
+      : (url.pathname.match(/^\/sitemap-(pages|salons|annuaire-[a-z0-9-]{2,40})\.xml$/) || [])[1];
+    if (_sm) {
+      const _indispo = () => new Response("Sitemap temporairement indisponible", {
+        status: 503,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Retry-After": "600", "Cache-Control": "no-store" },
       });
-      const xml = await r.text();
-      return new Response(xml, {
-        status: r.status,
-        headers: {
-          "Content-Type": "application/xml; charset=utf-8",
-          "Cache-Control": "public, max-age=3600, s-maxage=3600",
-        },
-      });
-    } catch (e) {
-      // Fallback : sitemap minimal pour ne pas casser le SEO
-      const fallback = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>https://luxyra.fr/</loc></url>\n</urlset>';
-      return new Response(fallback, {
-        status: 200,
-        headers: { "Content-Type": "application/xml; charset=utf-8" },
-      });
+      try {
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), 25000);
+        let r;
+        try {
+          r = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/sitemap?part=${encodeURIComponent(_sm)}`, {
+            // Cache edge 1 h pour les réponses 200 seulement (une erreur n'est jamais mise en cache)
+            cf: { cacheTtlByStatus: { "200-299": 3600, "404": 600, "500-599": 0 }, cacheEverything: true },
+            signal: ctl.signal,
+          });
+        } finally { clearTimeout(t); }
+        if (r.status === 404) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=600" } });
+        if (!r.ok) return _indispo();
+        const xml = await r.text();
+        if (!/<(urlset|sitemapindex)[\s>]/.test(xml)) return _indispo();
+        return new Response(xml, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/xml; charset=utf-8",
+            "Cache-Control": "public, max-age=3600, s-maxage=3600",
+            "X-Robots-Tag": "noindex",
+          },
+        });
+      } catch (e) {
+        return _indispo();
+      }
     }
   }
 
@@ -5893,6 +5911,7 @@ Disallow: /api/
 Disallow: /rest/
 Disallow: /site.html
 
+# Index de sitemaps (pages, établissements, annuaire par métier)
 Sitemap: https://luxyra.fr/sitemap.xml
 `;
     return new Response(txt, {
