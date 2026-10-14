@@ -17,6 +17,8 @@
 BEGIN;
 
 -- ---------- 1) fn_salon_next_slots ----------
+-- 2026-10-14 intégration : définition FUSIONNÉE (planning.sql : horaires effectifs lx_horaires_effectifs, réservations
+-- sans collaborateur = 1 collaborateur consommé ; reglages.sql : fenêtre 1 à 365 j). planning.sql renvoie ici.
 CREATE OR REPLACE FUNCTION public.fn_salon_next_slots(p_salon_id uuid, p_n integer DEFAULT 3)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -29,6 +31,7 @@ declare
   v_col record; v_cols jsonb := '[]'::jsonb; v_has_cols boolean;
   v_busy jsonb; v_t int; v_open int; v_close int; v_h jsonb; v_o int; v_c int; v_ok boolean;
   v_ce jsonb; v_e jsonb; v_cid text; v_label text;
+  v_eh jsonb; v_unas jsonb := '[]'::jsonb; v_nlib int; v_nu int;   -- 2026-10-14 audit
 begin
   select horaires_salon, coalesce(absences,'[]'::jsonb) absences, delai_min_heures, delai_max_jours, creneau_intervalle
     into v_cfg from site_config where salon_id = p_salon_id limit 1;
@@ -38,7 +41,7 @@ begin
   v_step := case when coalesce(v_cfg.creneau_intervalle,15) between 5 and 240 then v_cfg.creneau_intervalle else 15 end;
   v_now := (now() at time zone 'Europe/Paris')::timestamp;
   v_min := v_now + (coalesce(v_cfg.delai_min_heures,2) || ' hours')::interval;
-  -- 2026-10-14 audit : fenetre reglee par le salon (1 a 365 j, comme l'app) ; avant : plafonnee a 60 j
+  -- 2026-10-14 audit réglages : fenetre reglee par le salon (1 a 365 j, comme l'app) ; avant : plafonnee a 60 j
   v_max := (v_now + (least(greatest(coalesce(v_cfg.delai_max_jours,30),1),365) || ' days')::interval)::date;
   -- durée de référence : la plus courte prestation active (30 min par défaut)
   select min(t) into v_dur from (
@@ -46,7 +49,7 @@ begin
     from services s where s.salon_id = p_salon_id and coalesce(s.actif,true)) x where t >= 5;
   v_dur := coalesce(v_dur, 30);
 
-  for v_off in 0..365 loop -- 2026-10-14 audit : sortie par v_max (avant : 0..60)
+  for v_off in 0..365 loop -- 2026-10-14 audit réglages : sortie par v_max (avant : 0..60)
     v_d := v_now::date + v_off;
     exit when v_d > v_max or jsonb_array_length(v_res) >= v_n;
     continue when v_d < v_min::date;
@@ -60,51 +63,42 @@ begin
     -- horaires effectifs de chaque collaborateur présent ce jour
     v_cols := '[]'::jsonb;
     select count(*)>0 into v_has_cols from collaborateurs c where c.salon_id=p_salon_id and c.actif and not coalesce(c.inactif,false) and (c.date_depart is null or c.date_depart > v_d);
-    for v_col in select c.id, c.horaires, c.horaires_overrides from collaborateurs c
+    for v_col in select c.id from collaborateurs c
                  where c.salon_id=p_salon_id and c.actif and not coalesce(c.inactif,false) and (c.date_depart is null or c.date_depart > v_d) loop
       v_cid := v_col.id::text;
-      if v_col.horaires_overrides is not null and jsonb_typeof(v_col.horaires_overrides)='object' and v_col.horaires_overrides ? v_d::text then
-        v_h := v_col.horaires_overrides -> v_d::text;
-      elsif v_col.horaires is not null and jsonb_typeof(v_col.horaires)='object'
-            and exists (select 1 from jsonb_each(v_col.horaires) k where jsonb_typeof(k.value)='object' and k.value->>'o' is not null) then
-        v_h := v_col.horaires -> v_dow;
-      else
-        v_h := v_cfg.horaires_salon -> v_dow;
-      end if;
-      v_o := case when jsonb_typeof(v_h)='object' then lx_hm(v_h->>'o') end;
-      v_c := case when jsonb_typeof(v_h)='object' then lx_hm(v_h->>'c') end;
-      -- ouverture exceptionnelle (établissement ou ce collaborateur) : élargit
-      select min(lx_hm(e->>'horaire_o')), max(lx_hm(e->>'horaire_c')) into v_open, v_close from jsonb_array_elements(v_abs) e
-        where e->>'type'='ouverture_except' and e->>'date'=v_d::text and e->>'horaire_o' is not null and e->>'horaire_c' is not null
-          and (coalesce(e->>'stId','')='' or e->>'stId'=v_cid);
-      if v_open is not null then v_o := least(coalesce(v_o,v_open), v_open); v_c := greatest(coalesce(v_c,v_close), v_close); end if;
-      continue when v_o is null or v_c is null;
-      -- absent ce jour (fermeture exceptionnelle / congé / absence journée de CE collaborateur)
-      continue when exists (select 1 from jsonb_array_elements(v_abs) e where e->>'stId'=v_cid and (
-          ((e->>'type')='fermeture_except' and e->>'date'=v_d::text)
-       or ((coalesce(e->>'type','absent') in ('conge','absent_jour','absent','maladie','formation')) and (
-            (e->>'dateFrom' is not null and e->>'dateFrom'<=v_d::text and e->>'dateTo'>=v_d::text) or (e->>'date'=v_d::text and e->>'from' is null)))));
-      -- plages occupées : absences en heures, pause du jour personnalisé, rendez-vous (avec durée)
+      -- 2026-10-14 audit : horaires effectifs (personnalisés, semaine type, ouverture/fermeture exceptionnelles,
+      -- absences, pauses) calculés par la fonction commune — mêmes règles que le site et la validation.
+      v_eh := public.lx_horaires_effectifs(p_salon_id, v_col.id, v_d);
+      continue when v_eh is null;
+      v_o := (v_eh->>'o')::int; v_c := (v_eh->>'c')::int;
+      -- plages occupées : pauses / absences en heures (v_eh.b), rendez-vous ATTRIBUÉS à ce collaborateur
       select coalesce(jsonb_agg(jsonb_build_array(s, f)), '[]'::jsonb) into v_busy from (
-        select lx_hm(e->>'from') s, lx_hm(e->>'to') f from jsonb_array_elements(v_abs) e
-          where (e->>'type') in ('pause','absent_heures') and e->>'date'=v_d::text and e->>'from' is not null and e->>'to' is not null
-            and (coalesce(e->>'stId','')='' or e->>'stId'=v_cid)
-        union all
-        select lx_hm(v_h->>'pause_o'), lx_hm(v_h->>'pause_c') where jsonb_typeof(v_h)='object' and v_h->>'pause_o' is not null and v_h->>'pause_c' is not null
+        select (x->>0)::int s, (x->>1)::int f from jsonb_array_elements(coalesce(v_eh->'b','[]'::jsonb)) x
         union all
         select lx_hm(substring(r.heure_rdv::text,1,5)), lx_hm(substring(r.heure_rdv::text,1,5)) + coalesce(nullif(r.duree_minutes,0),30)
           from rdv_online r where r.salon_id=p_salon_id and r.date_rdv=v_d
             and (r.status in ('confirmed','pending') or (r.status='pending_payment' and r.created_at > now() - interval '35 minutes'))
-            and (r.collaborateur_id is null or r.collaborateur_id::text=v_cid)
+            and r.collaborateur_id::text=v_cid
         union all
         select lx_hm(a.heure), lx_hm(a.heure) + coalesce(nullif((select sum(coalesce((ph->>'d')::int,0)) from jsonb_array_elements(
                  case when jsonb_typeof(a.a_phases)='array' and jsonb_array_length(a.a_phases)>0 then a.a_phases
                       else coalesce((select s2.phases from services s2 where s2.id=a.service_id),'[]'::jsonb) end) ph),0),30)
           from appointments a where a.salon_id=p_salon_id and a.date_rdv=v_d and a.status in ('conf','wait','done')
-            and (a.collab_id is null or a.collab_id::text=v_cid)
+            and a.collab_id::text=v_cid
       ) z where s is not null and f is not null;
       v_cols := v_cols || jsonb_build_object('o',v_o,'c',v_c,'b',v_busy);
     end loop;
+    -- 2026-10-14 audit : réservations / RDV SANS collaborateur du jour : chacun occupe UN collaborateur
+    select coalesce(jsonb_agg(jsonb_build_array(s, f)), '[]'::jsonb) into v_unas from (
+      select lx_hm(substring(r.heure_rdv::text,1,5)) s, lx_hm(substring(r.heure_rdv::text,1,5)) + coalesce(nullif(r.duree_minutes,0),30) f
+        from rdv_online r where r.salon_id=p_salon_id and r.date_rdv=v_d and r.collaborateur_id is null
+          and (r.status in ('confirmed','pending') or (r.status='pending_payment' and r.created_at > now() - interval '35 minutes'))
+      union all
+      select lx_hm(a.heure), lx_hm(a.heure) + coalesce(nullif((select sum(coalesce((ph->>'d')::int,0)) from jsonb_array_elements(
+               case when jsonb_typeof(a.a_phases)='array' and jsonb_array_length(a.a_phases)>0 then a.a_phases
+                    else coalesce((select s2.phases from services s2 where s2.id=a.service_id),'[]'::jsonb) end) ph),0),30)
+        from appointments a where a.salon_id=p_salon_id and a.date_rdv=v_d and a.status in ('conf','wait','done') and a.collab_id is null
+    ) z where s is not null and f is not null;
 
     -- établissement sans collaborateur : horaires de l'établissement, tous les rendez-vous bloquent
     if not v_has_cols then
@@ -126,6 +120,7 @@ begin
           select lx_hm(a.heure), lx_hm(a.heure) + 30 from appointments a where a.salon_id=p_salon_id and a.date_rdv=v_d and a.status in ('conf','wait','done')
         ) z where s is not null and f is not null;
         v_cols := jsonb_build_array(jsonb_build_object('o',v_o,'c',v_c,'b',v_busy));
+        v_unas := '[]'::jsonb;  -- déjà comptés dans les plages occupées ci-dessus
       end if;
     end if;
     continue when jsonb_array_length(v_cols) = 0;
@@ -135,13 +130,17 @@ begin
     v_t := v_open;
     while v_t + v_dur <= v_close and jsonb_array_length(v_res) < v_n loop
       if (v_d + make_interval(mins => v_t)) >= v_min then
-        v_ok := false;
+        -- 2026-10-14 audit : créneau libre si le nombre de collaborateurs libres dépasse le nombre de
+        -- réservations sans collaborateur qui chevauchent
+        v_nlib := 0;
         for v_ce in select * from jsonb_array_elements(v_cols) loop
           if v_t >= (v_ce->>'o')::int and v_t + v_dur <= (v_ce->>'c')::int
              and not exists (select 1 from jsonb_array_elements(v_ce->'b') b where v_t < (b->>1)::int and v_t + v_dur > (b->>0)::int) then
-            v_ok := true; exit;
+            v_nlib := v_nlib + 1;
           end if;
         end loop;
+        select count(*) into v_nu from jsonb_array_elements(v_unas) u where v_t < (u->>1)::int and v_t + v_dur > (u->>0)::int;
+        v_ok := v_nlib > v_nu;
         if v_ok then
           v_label := case when v_off = 0 then 'Aujourd''hui' when v_off = 1 then 'Demain' else to_char(v_d, 'TMDay DD/MM') end;
           v_res := v_res || jsonb_build_object('date', v_d::text, 'time', lpad((v_t/60)::text,2,'0')||':'||lpad((v_t%60)::text,2,'0'), 'day_label', v_label);
@@ -154,6 +153,8 @@ begin
 end $function$;
 
 -- ---------- 2) envoyer_rappels_24h ----------
+-- 2026-10-14 intégration : définition FUSIONNÉE (planning.sql : confirmation comptée seulement si elle concerne CE RDV,
+-- lx_prive.confirmation_concerne_rdv ; reglages.sql : variable {collab}). planning.sql renvoie ici.
 CREATE OR REPLACE FUNCTION public.envoyer_rappels_24h()
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -207,11 +208,15 @@ BEGIN
         IF left(v_tel,1) = '0' THEN v_tel := '+33' || substr(v_tel,2); END IF;
         v_tail := right(v_tel,4);
 
+        -- 2026-10-14 audit planning : rappel déjà parti aujourd'hui à ce numéro -> rien ; confirmation du jour -> seulement
+        -- si elle concerne CE rendez-vous (rdv_date, sinon date lue dans le texte)
         IF EXISTS (SELECT 1 FROM messaging_log m
                     WHERE m.salon_id = s.id AND m.type='sms'
-                      AND m.context IN ('rappel_24h','confirmation_rdv','confirmation_rdv_groupe')
                       AND m.recipient = v_tail
-                      AND (m.created_at AT TIME ZONE 'Europe/Paris')::date = (now() AT TIME ZONE 'Europe/Paris')::date)
+                      AND (m.created_at AT TIME ZONE 'Europe/Paris')::date = (now() AT TIME ZONE 'Europe/Paris')::date
+                      AND (m.context = 'rappel_24h'
+                           OR (m.context IN ('confirmation_rdv','confirmation_rdv_groupe')
+                               AND lx_prive.confirmation_concerne_rdv(m.rdv_date, m.content, r.jour))))
         THEN v_ignores := v_ignores + 1; CONTINUE; END IF;
 
         v_msg := v_modele;

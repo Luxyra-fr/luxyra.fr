@@ -176,6 +176,8 @@ CREATE TRIGGER tr_appointments_updated_at
 -- NB : à ce jour lx-signup crée les comptes avec email_verified=false : le
 -- rattachement automatique est donc suspendu tant que la vérification n'est pas
 -- enregistrée ; le rattachement lors d'une réservation (application) continue.
+-- 2026-10-14 intégration : définition UNIQUE (secu.sql renvoie ici) — contient les règles du lot sécurité
+-- (e-mail vérifié, e-mail seulement, une seule fois au passage à « vérifié ») et celles du lot données.
 CREATE OR REPLACE FUNCTION public.fn_autolink_clients_luxyra()
  RETURNS trigger
  LANGUAGE plpgsql

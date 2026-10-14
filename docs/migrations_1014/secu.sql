@@ -74,51 +74,11 @@ $$;
 -- AVANT : dès l'inscription, par email OU téléphone NON vérifiés (un compte créé avec l'adresse ou le numéro
 -- d'une autre personne récupérait ses fiches, RDV, tickets, photos, fidélité).
 -- MAINTENANT : seulement quand l'email est VÉRIFIÉ, et seulement par l'email (le téléphone n'est jamais vérifié).
-create or replace function public.fn_autolink_clients_luxyra()
-returns trigger language plpgsql security definer set search_path = public as $$
-declare
-  v_email text;
-  v_sexe  text;
-  r record;
-begin
-  if coalesce(new.email_verified, false) = false then return new; end if;
-  if tg_op = 'UPDATE' and coalesce(old.email_verified, false) = true then return new; end if;
-  v_email := nullif(lower(trim(coalesce(new.email, ''))), '');
-  if v_email is null then return new; end if;
+-- 2026-10-14 intégration : public.fn_autolink_clients_luxyra est redéfinie dans docs/migrations_1014/donnees.sql
+-- (appliqué après secu.sql) : définition unique qui reprend les règles ci-dessus (e-mail vérifié, e-mail seulement,
+-- jamais le téléphone, une seule fois au passage à « vérifié ») et ajoute celles du lot données (même nom et prénom,
+-- fiches fusionnées exclues). Le déclencheur ci-dessous utilise cette définition.
 
-  for r in
-    update public.clients c
-       set client_luxyra_id = new.id,
-           sexe  = coalesce(nullif(c.sexe, ''), nullif(new.genre, '')),
-           sms_ok = new.sms_ok,
-           email_ok = new.email_ok
-     where c.client_luxyra_id is null
-       and lower(trim(coalesce(c.email, ''))) = v_email
-    returning c.salon_id as salon_id, c.points_fidelite as pts, c.sexe as sexe, c.id as cid
-  loop
-    if v_sexe is null and nullif(r.sexe, '') is not null then v_sexe := r.sexe; end if;
-    if coalesce(r.pts, 0) <> 0 then
-      if exists (select 1 from public.fidelite_client f where f.salon_id = r.salon_id and lower(f.client_luxyra_id) = v_email) then
-        update public.fidelite_client set points = r.pts, updated_at = now()
-         where salon_id = r.salon_id and lower(client_luxyra_id) = v_email;
-      else
-        insert into public.fidelite_client (client_luxyra_id, salon_id, points, visites, derniere_visite, updated_at)
-        values (
-          v_email, r.salon_id, r.pts,
-          coalesce((select count(*) from public.appointments a where a.client_id = r.cid and a.salon_id = r.salon_id and a.status = 'done'), 0),
-          (select max(a.date_rdv) from public.appointments a where a.client_id = r.cid and a.salon_id = r.salon_id and a.status = 'done'),
-          now()
-        );
-      end if;
-    end if;
-  end loop;
-
-  if coalesce(new.genre, '') = '' and v_sexe is not null then
-    update public.clients_luxyra set genre = v_sexe where id = new.id;
-  end if;
-  return new;
-end;
-$$;
 drop trigger if exists trg_autolink_clients_luxyra on public.clients_luxyra;
 create trigger trg_autolink_clients_luxyra
   after insert or update of email_verified on public.clients_luxyra
