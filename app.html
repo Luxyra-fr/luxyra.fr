@@ -394,7 +394,7 @@ body{max-width:100%;margin:0 auto;}
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261014-5"></script>
+<script src="luxyra-supabase.js?v=20261014-6c"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
@@ -2858,9 +2858,14 @@ function checkCgvPlanAndPay(plan){
 // Passage en caisse réelle (irréversible) : archive + retrait des données de test, compteurs à zéro (JET 105 + 260)
 async function lxPasserEnReel(suite){
   if(window.LX_MODE_CAISSE!=="test"){ toast("Votre caisse est d\u00e9j\u00e0 r\u00e9elle","info"); return; }
-  var nT=0,nL=0;
-  try{ var q1=await _sb.from("tickets").select("id",{count:"exact",head:true}).eq("salon_id",_salonId).eq("mode_caisse","test"); nT=q1.count||0;
-       var q2=await _sb.from("tickets").select("id",{count:"exact",head:true}).eq("salon_id",_salonId).is("mode_caisse",null); nL=q2.count||0; }catch(_e){}
+  var nT=0,nL=0,_errC=null;
+  // 2026-10-14 audit (NF525) : un comptage en échec n'est plus lu comme « 0 ticket » (le choix tests / vraies ventes des
+  // encaissements antérieurs au mode test pouvait alors ne pas être proposé) -> passage interrompu avec un message.
+  try{ var q1=await _sb.from("tickets").select("id",{count:"exact",head:true}).eq("salon_id",_salonId).eq("mode_caisse","test");
+       if(!q1||q1.error||typeof q1.count!=="number") _errC=(q1&&q1.error&&q1.error.message)||"comptage des encaissements de test impossible"; else nT=q1.count;
+       if(!_errC){ var q2=await _sb.from("tickets").select("id",{count:"exact",head:true}).eq("salon_id",_salonId).is("mode_caisse",null);
+         if(!q2||q2.error||typeof q2.count!=="number") _errC=(q2&&q2.error&&q2.error.message)||"comptage des encaissements antérieurs impossible"; else nL=q2.count; } }catch(_e){ _errC=(_e&&_e.message)||"réseau"; }
+  if(_errC){ showAlert("Passage en caisse réelle impossible pour le moment : "+_errC+". Vérifiez la connexion et réessayez (rien n’a été modifié).","warning"); return; }
   window._lxPasseSuite=suite||"";
   var pm=document.getElementById("planChoiceModal"); if(pm) pm.remove();
   var h='<div class="mbg" onclick="lxFermerPassage()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:500px;text-align:left">';
@@ -6285,8 +6290,37 @@ function _lxExclCA(a){
 // Avant : l'original était retiré rétroactivement ET le contre-ticket compté -> double déduction.
 function _lxCaOrig(a){ return !a.cancelled || (!!a.cancelDate && String(a.cancelDate)!==String(a.date)); }
 function _lxCaOk(a){ return _lxCaOrig(a) && !_lxExclCA(a); }
+// 2026-10-14 audit : la clôture AUTOMATIQUE de nuit (serveur, sans tiroir) ne faisait pas la « mise au coffre » que fait la
+// clôture manuelle : les espèces / chèques de la journée restaient comptés nulle part et le solde théorique du lendemain était
+// faux (écart positif inexpliqué). Au premier passage de l'application après une Z automatique, la même mise au coffre est
+// enregistrée pour cette journée (donnée de GESTION de la caisse, hors données fiscales : aucun ticket, aucune Z modifiée).
+// Seules les Z automatiques à partir de la mise en service de ce correctif sont reprises (les journées antérieures ont pu être
+// régularisées à la main par l'établissement).
+var LX_COFFRE_AUTOZ_DEPUIS="2026-10-15";
+function _lxCoffreRattrapageAutoZ(){
+  try{
+    var CD=window.CAISSE_DATA; if(!CD||!Array.isArray(window.CLOTURES)||window._lxVueAdmin||window._lxDemo||window._archiveMode) return false;
+    if(!CD.misesAuCoffre)CD.misesAuCoffre=[]; if(CD.coffreEsp===undefined)CD.coffreEsp=0; if(CD.coffreChq===undefined)CD.coffreChq=0;
+    if(!CD.coffreAutoZ||typeof CD.coffreAutoZ!=="object")CD.coffreAutoZ={};
+    var fait=false;
+    window.CLOTURES.forEach(function(c){
+      if(!c||c.auto!==true||!c.date||String(c.date)<LX_COFFRE_AUTOZ_DEPUIS||CD.coffreAutoZ[c.date]) return;
+      if(CD.misesAuCoffre.some(function(m){ return m&&m.date===c.date; })){ CD.coffreAutoZ[c.date]=true; return; }
+      var det=c.details||{}, ret=0;
+      (CD.mouvements||[]).filter(function(m){ return m&&m.date===c.date&&(m.type==="sortie"||m.type==="retrait"||m.type==="depense"); }).forEach(function(m){ ret+=Number(m.montant)||0; });
+      var esp=Math.max(0,Math.round(((Number(det.esp)||0)-ret)*100)/100), chq=Math.round((Number(det.chq)||0)*100)/100;
+      CD.coffreEsp=Math.round(((Number(CD.coffreEsp)||0)+esp)*100)/100; CD.coffreChq=Math.round(((Number(CD.coffreChq)||0)+chq)*100)/100;
+      CD.misesAuCoffre.push({date:c.date,esp:esp,chq:chq,autoZ:true});
+      CD.coffreAutoZ[c.date]=true; fait=true;
+      try{ if(typeof auditLog==="function") auditLog("MISE_AU_COFFRE","Auto (cl\u00f4ture automatique Z n\u00b0"+(c.num||"?")+" du "+c.date+") : Especes "+esp.toFixed(2)+"E + Cheques "+chq.toFixed(2)+"E (retraits "+ret.toFixed(2)+"E deduits)"); }catch(_eA){}
+    });
+    if(fait){ if(typeof _lxCaisseSaveEtAlerte==="function") _lxCaisseSaveEtAlerte("La mise au coffre de la cl\u00f4ture automatique"); else if(typeof saveSalonConfig==="function") saveSalonConfig(); }
+    return fait;
+  }catch(_e){ return false; }
+}
 function _lxClotureCaisseTheo(){
   try{
+    try{ _lxCoffreRattrapageAutoZ(); }catch(_eRz){} // 2026-10-14 audit
     var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
     var _sdcRefs=(typeof _lxSameDayCancelRefs==="function")?_lxSameDayCancelRefs():{};
     var done=AP.filter(function(a){return a&&a.st==="done"&&a.date===TD&&!a.cancelled&&!(typeof _lxIsSameDayContra==="function"&&_lxIsSameDayContra(a,_sdcRefs));});
@@ -6571,7 +6605,7 @@ function printClotureZ(){
   if (sumDet === 0 && c.nbTickets > 0 && Array.isArray(AP)) {
     try {
       var ticketsDuJour = AP.filter(function(a){
-        return a.st === "done" && a.date === c.date && !a.cancelled;
+        return a.st === "done" && a.date === c.date && _lxCaOk(a); // 2026-10-14 audit : même règle que la Z (annulation d'un autre jour = ticket conservé ; paire du même jour exclue)
       });
       ticketsDuJour.forEach(function(tk){
         var mc = _modeCanonique(tk.met);
@@ -6585,7 +6619,7 @@ function printClotureZ(){
     } catch(_e) { /* silent */ }
   }
   var CD=window.CAISSE_DATA||{fond:200,coffreEsp:0,coffreChq:0};
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===c.date&&!a.cancelled&&!_lxExclCA(a);});
+  var done=AP.filter(function(a){return a.st==="done"&&a.date===c.date&&(window._isReprint?_lxCaOk(a):(!a.cancelled&&!_lxExclCA(a)));}); // 2026-10-14 audit : duplicata = tickets de la Z d'origine (un ticket annulé un autre jour y figurait)
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===c.date;});
   var perSty=c.perSty||{};
   // Reconstruction des heures premier/dernier ticket si absentes (vieilles clôtures
@@ -6615,8 +6649,13 @@ function printClotureZ(){
   var macJour=CD.misesAuCoffre?CD.misesAuCoffre.filter(function(m){return m.date===c.date;}):[];
   var macEsp=0,macChq=0;macJour.forEach(function(m){macEsp+=m.esp;macChq+=m.chq;});
   
+  // 2026-10-14 audit : fond de caisse DE LA JOURNÉE (mémorisé à la clôture : c.fondCaisse ; anciennes Z : déduit du solde
+  // théorique enregistré), jamais le fond actuel des réglages (un duplicata doit reproduire la bande d'origine).
+  var _fondZ=(typeof c.fondCaisse==="number"&&!isNaN(c.fondCaisse))?c.fondCaisse:null, _fondNote="";
+  if(_fondZ==null&&typeof c.soldeTheorique==="number"&&!isNaN(c.soldeTheorique)) _fondZ=Math.round((c.soldeTheorique-c.details.esp-totEntrees+totSorties+macEsp)*100)/100;
+  if(_fondZ==null){ _fondZ=Number(CD.fond)||0; if(window._isReprint) _fondNote=" (fond actuel : non m\u00e9moris\u00e9 \u00e0 la cl\u00f4ture)"; }
   // Caisse theorique = fond + especes encaissees + entrees - sorties - mise au coffre
-  var caisseTheo=CD.fond+c.details.esp+totEntrees-totSorties-macEsp;
+  var caisseTheo=_fondZ+c.details.esp+totEntrees-totSorties-macEsp;
   
   var w=window.open("","_blank","width=460,height=900");if(!w)return;
   var h="<html><head><title>Bande Z #"+(c.num||"")+" - "+c.date+"</title>";
@@ -6633,7 +6672,7 @@ function printClotureZ(){
   h+="@media print{html,body{background:#fff!important;color:#000!important;padding:5px;font-size:10px;}*{color:#000!important;background:transparent!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}.warn{background:#fff3cd!important;}}</style></head><body>";
   
   // ===== EN-TETE =====
-  if(window._isReprint){h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA</div>";}
+  if(window._isReprint){h+="<div style=\"text-align:center;border:3px solid #000;padding:6px;margin-bottom:8px;font-weight:900;font-size:16px;letter-spacing:3px\">DUPLICATA"+(window._lxZCopie?" \u2013 copie n\u00b0"+window._lxZCopie:"")+"</div>";} // 2026-10-14 audit : n° de copie
   if(window.LX_MODE_CAISSE==="test") h+="<div style=\"text-align:center;border:2px dashed #000;padding:5px;margin-bottom:8px;font-weight:900;font-size:13px\">MODE TEST - SANS VALEUR FISCALE</div>";
   h+="<h1>BANDE Z</h1>";
   h+="<p style=\"font-size:14px;font-weight:900\">CL\u00d4TURE QUOTIDIENNE N\u00b0"+(c.num||window.CLOTURES.length)+"</p>";
@@ -6777,7 +6816,7 @@ function printClotureZ(){
   // ===== 9. SITUATION DE CAISSE (le plus important pour le comptable) =====
   h+="<h2>9. Situation de caisse</h2>";
   h+="<table>";
-  h+="<tr><td>A. Fond de caisse (d\u00e9but)</td><td class=\"tr tb\">"+CD.fond.toFixed(2)+" \u20ac</td></tr>";
+  h+="<tr><td>A. Fond de caisse (d\u00e9but)"+_fondNote+"</td><td class=\"tr tb\">"+_fondZ.toFixed(2)+" \u20ac</td></tr>"; // 2026-10-14 audit
   h+="<tr><td>B. + Encaissements esp\u00e8ces</td><td class=\"tr\">+"+c.details.esp.toFixed(2)+" \u20ac</td></tr>";
   if(totEntrees>0)h+="<tr><td>C. + Entr\u00e9es caisse</td><td class=\"tr\">+"+totEntrees.toFixed(2)+" \u20ac</td></tr>";
   if(totSorties>0)h+="<tr><td>D. - Sorties caisse</td><td class=\"tr\">-"+totSorties.toFixed(2)+" \u20ac</td></tr>";
@@ -6821,7 +6860,8 @@ function printClotureZ(){
   h+="<p style=\"font-weight:900;font-size:12px\">CAISSE CONFORME LOI ANTI-FRAUDE (art. 286 CGI)</p>";
   h+="<p class=\"small\">Cl\u00f4ture Z n\u00b0"+(c.num||window.CLOTURES.length)+"</p>";
   h+="<p class=\"small\">Hash: "+c.hash+"</p>";
-  if(window.CLOTURES.length>=2){var prev=window.CLOTURES[window.CLOTURES.length-2];h+="<p class=\"small\">Hash pr\u00e9c\u00e9dent: "+prev.hash+"</p>";}
+  // 2026-10-14 audit : hash précédent = celui de la Z n° (num - 1), et non l'avant-dernière Z de la liste (faux sur un duplicata)
+  (function(){ var _pv=null; try{ var _nz=Number(c.num); if(_nz>1) _pv=(window.CLOTURES||[]).find(function(x){ return x&&Number(x.num)===_nz-1; }); }catch(_eP){} if(_pv&&_pv.hash) h+="<p class=\"small\">Hash pr\u00e9c\u00e9dent: "+_pv.hash+"</p>"; })();
   h+="<p class=\"small\">Cha\u00eene inalt\u00e9rable - S\u00e9quence continue v\u00e9rifiable</p>";
   h+="<div class=\"sep\"></div>";
   h+="<p class=\"small\">Signature \u00e9lectronique (ES256) : <span class=\"lxZsig\">en cours</span></p>";
@@ -9571,6 +9611,10 @@ function _lxApOnlineEnrichir(ap, m){
     // ticket scellé « Acompte en ligne » ; au RDV il est DÉDUIT du ticket final (ligne « Acompte déjà versé (ticket #X) »)
     // comme un acompte versé au salon. Montant repris = part CONSERVÉE (acompte - déjà remboursé : chaque remboursement a
     // son ticket négatif). Le n° de ticket est rafraîchi à chaque passage (il peut être posé après le chargement).
+    // 2026-10-14 audit : acompte versé AU SALON sur ce RDV en ligne (tickets « Acompte » scellés, apptId = id du RDV). Il n'est
+    // pas enregistré dans rdv_online (seuls les tickets le portent) : on le reconstitue à chaque passage depuis les tickets,
+    // pour qu'il soit déduit à l'encaissement après un rechargement ou sur un autre appareil.
+    var _acS=_lxAcompteSalonDepuisTickets(ap.id);
     if(m.acompteModele==="ticket" && m.acomptePaye && Number(m.acompte)>0){
       var _garde=Math.round((Number(m.acompte)-(Number(m.acompteRembourseMontant)||0))*100)/100;
       if(m.acompteRembourse) _garde=0;
@@ -9580,16 +9624,45 @@ function _lxApOnlineEnrichir(ap, m){
         ap.acompte=_garde; ap.acompteMode="En ligne (Stripe)";
         ap.acompteDate=m.acomptePayeAt?_lxDateParis(m.acomptePayeAt):(m.createdAt?String(m.createdAt).slice(0,10):TD);
       } else { ap.acompte=0; ap.acompteMode=""; ap.acompteDate=""; }
+      // 2026-10-14 audit : + acompte versé au salon (les deux sont des tickets scellés déduits par la même ligne)
+      if(_acS){ ap.acompte=Math.round(((Number(ap.acompte)||0)+_acS.total)*100)/100; if(!ap.acompteMode) ap.acompteMode="En ligne (Stripe)"; if(!ap.acompteDate) ap.acompteDate=_acS.date; _lxAcompteSalonItem(ap,_acS); }
       return;
     }
     // ANCIEN MODÈLE (acompte_modele NULL, relu en base à chaque passage : m vient toujours d'une ligne rdv_online fraîche). 2026-10-14
     // (2e revue) : jamais pour un RDV déjà reconnu « nouveau modèle » (acompteEnLigneTicket), ni si le modèle n'est pas lisible.
     if(ap.acompteEnLigneTicket===true || m.acompteModele!=null) return;
-    if(m.acomptePaye && Number(m.acompte)>0 && !m.acompteRembourse && !(Number(ap.acompte)>0)){
+    var _onlPaye=(m.acomptePaye && Number(m.acompte)>0 && !m.acompteRembourse);
+    if(_onlPaye && !(Number(ap.acompte)>0)){
       ap.acompte=Number(m.acompte); ap.acompteMode="En ligne (Stripe)";
       ap.acompteDate=m.acomptePayeAt?_lxDateParis(m.acomptePayeAt):(m.createdAt?String(m.createdAt).slice(0,10):TD); // 2026-10-13 : date réelle du paiement
     }
+    // 2026-10-14 audit : sans acompte en ligne, l'acompte versé au salon est reconstitué depuis ses tickets (montant exact,
+    // mode et n° de chaque versement). Avec un acompte en ligne de l'ancien modèle (mode de règlement), un seul acompte peut
+    // être porté par le RDV : le cas n'existe plus (ancien modèle clos) -> on n'y touche pas.
+    if(!_onlPaye && _acS){ ap.acompte=_acS.total; ap.acompteMode=_acS.mode; ap.acompteDate=_acS.date; ap.acompteTkNum=_acS.tk; _lxAcompteSalonItem(ap,_acS); }
   }catch(_e){}
+}
+// 2026-10-14 audit : acompte versé au salon sur un RDV (hors acompte en ligne), reconstitué depuis les tickets scellés
+// « Acompte » (apptId) moins les tickets « Annulation acompte » du même RDV. null si aucun solde.
+function _lxAcompteSalonDepuisTickets(apId){
+  try{
+    if(!apId) return null;
+    var tot=0, ann=0, vers=[];
+    for(var i=0;i<AP.length;i++){ var t=AP[i];
+      if(!t||t.apptId!==apId||t.st!=="done"||t.cancelled||t.isAcompteEnLigne) continue;
+      if(t.isAcompte&&Number(t.pr)>0){ var m=Math.round(Number(t.pr)*100)/100; tot+=m; vers.push({m:m,mode:t.met||"CB",tk:t.tkNum||null,d:t.date||null}); }
+      else if(t.isAcompteCancel) ann+=Math.abs(Number(t.pr)||0);
+    }
+    var net=Math.round((tot-ann)*100)/100;
+    if(!(net>0.004)) return null;
+    if(ann>0.004) vers=[]; // annulation partielle : détail des versements non fiable -> montant net seul
+    var last=vers.length?vers[vers.length-1]:null;
+    return {total:net, vers:vers, mode:(last&&last.mode)||"CB", date:(last&&last.d)||TD, tk:(last&&last.tk)||null};
+  }catch(_e){ return null; }
+}
+function _lxAcompteSalonItem(ap, s){
+  try{ if(!Array.isArray(ap.items)) ap.items=[]; ap.items=ap.items.filter(function(it){ return !(it&&it.isAcompteData); });
+    ap.items.push({isAcompteData:true,acompte:s.total,acompteMode:s.mode,acompteDate:s.date,acompteTkNum:s.tk,versements:s.vers}); }catch(_e){}
 }
 window._lxApOnlineEnrichir=_lxApOnlineEnrichir;
 function _lxOnlineToAP(rdv){
@@ -13318,9 +13391,34 @@ async function _lxAcEnLigneLocalRetenter(key){
   if(!tk) return null;
   if(typeof saveTicketToDb!=="function") return {tk:tk, ok:false};
   var res=await saveTicketToDb(tk);
+  // 2026-10-14 audit : doublon d'un ticket d'un autre appareil -> écarté (voir _lxAcompteDoublonEcarter) ; n° = celui du serveur
+  if(res&&res.doublon){ var nS=_lxAcEnLigneNumImprime({tkNum:res.raw_data&&res.raw_data.tkNum,num:res.num}); return {tk:{tkNum:nS}, ok:!!nS, doublon:true}; }
   if(res){ try{ if(typeof saveAppointment==="function") saveAppointment(tk); }catch(_eS){} }
   return {tk:tk, ok:!!res};
 }
+// 2026-10-14 audit (NF525) : ticket d'acompte en ligne / de remboursement créé ICI alors qu'un autre appareil avait déjà scellé
+// le même événement (index unique raw_data->>acompteKey : 23505). Le ticket local n'est jamais entré au journal scellé
+// (tickets) : il est retiré de la caisse en mémoire, son rendez-vous local est neutralisé (cancelled SANS date d'annulation :
+// hors CA, hors liste des annulations de la Z, aucun champ protégé touché) avec la référence du ticket serveur (meta.lxDoublonDe),
+// puis le ticket du serveur (rendez-vous de l'autre appareil) est rechargé dans la caisse.
+async function _lxAcompteDoublonEcarter(tk, srv){
+  try{
+    var ix=AP.indexOf(tk); if(ix<0){ for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===tk.id){ ix=i; break; } } }
+    if(ix>=0) AP.splice(ix,1);
+    tk.cancelled=true; delete tk.cancelDate; tk.cancelReason="Doublon du ticket d\u2019acompte enregistr\u00e9 par un autre poste (n\u00b0 "+((srv&&(srv.tkNumSrv||srv.num))||"?")+") : jamais transmis au journal scell\u00e9";
+    tk.lxDoublonDe={ticket_id:srv&&srv.id||null,num:srv&&srv.num||null,tkNum:srv&&srv.tkNumSrv||null,at:new Date().toISOString()};
+    try{ var _dbl=JSON.parse(localStorage.getItem("lx_ac_doublons")||"{}"); _dbl[tk.id]=tk.cancelReason; localStorage.setItem("lx_ac_doublons",JSON.stringify(_dbl)); }catch(_eLs){}
+    try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxAcompteDoublonEcarter",msg:"ticket d'acompte local en double ecarte (23505 acompteKey)",acompteKey:tk.acompteKey,tk_local:tk.tkNum,tk_id:tk.id,ticket_serveur:srv&&srv.num}).slice(0,2000)); }catch(_eA){}
+    // l'enregistrement initial du rendez-vous local peut encore être en cours : on neutralise après un court délai
+    await new Promise(function(r){ setTimeout(r,1500); });
+    try{ if(typeof saveAppointment==="function") await saveAppointment(tk); }catch(_eS){}
+    // rechargement du ticket du serveur (rendez-vous de l'autre poste, même clé d'acompte)
+    try{ var q=await _sb.from("appointments").select("*").eq("salon_id",_salonId).eq("meta->>acompteKey",tk.acompteKey).neq("id",tk.id).limit(1);
+      if(q&&q.data&&q.data[0]&&typeof window.lxMapApptRow==="function"){ var m=window.lxMapApptRow(q.data[0]); if(m&&!AP.some(function(a){ return a&&a.id===m.id; })) AP.push(m); } }catch(_eQ){}
+    window._apDirty=true;
+  }catch(_e){ console.warn("[_lxAcompteDoublonEcarter]",_e); }
+}
+window._lxAcompteDoublonEcarter=_lxAcompteDoublonEcarter;
 // Verrou posé depuis plus de 15 min sans AUCUNE trace des tickets attendus (ni tickets.raw_data->>acompteKey, ni
 // appointments.meta->>acompteKey) : l'appareil qui l'avait pris n'a rien produit (fermé, planté) -> on le reprend par UPDATE
 // conditionnel (.eq(col, ancienne valeur) : un seul gagnant). keys = clés d'acompte attendues. Retourne true si repris.
@@ -13489,7 +13587,8 @@ async function _lxAcompteEnLigneRembTickets(r){
     if(typeof saveAppointment==="function") saveAppointment(tk);
     var res=(typeof saveTicketToDb==="function")?await saveTicketToDb(tk):null;
     var numRef=tk.tkNum; // n° IMPRIMÉ (le n° serveur, s'il diffère, est dbNum)
-    if(res){ try{ await _sb.rpc("lx_acompte_remb_ticketer",{p_rdv:r.id,p_cle:String(e2.refund_id||e2.at||""),p_tk:Number(tk.tkNum)}); }catch(_eRpc){} }
+    if(res&&res.doublon){ numRef=_lxAcEnLigneNumImprime({tkNum:res.raw_data&&res.raw_data.tkNum,num:res.num}); } // 2026-10-14 audit : ticket d'un autre poste
+    if(res){ try{ await _sb.rpc("lx_acompte_remb_ticketer",{p_rdv:r.id,p_cle:String(e2.refund_id||e2.at||""),p_tk:Number(numRef)}); }catch(_eRpc){} }
     if(typeof auditLog==="function") auditLog("ACOMPTE_EN_LIGNE_REMBOURSE",lib+" - -"+m.toFixed(2)+"E - Ticket #"+numRef+(res&&res.num&&Number(res.num)!==Number(tk.tkNum)?" (n° serveur "+res.num+")":"")+(res?"":" (envoi en attente)"));
     try{ if(typeof toast==="function") toast("Remboursement d’acompte en ligne enregistré en caisse : -"+m.toFixed(2).replace(".",",")+" € (ticket #"+numRef+")","info"); }catch(_e){}
     n++;
@@ -13497,7 +13596,9 @@ async function _lxAcompteEnLigneRembTickets(r){
   try{ await _sb.rpc("lx_acompte_remb_liberer",{p_rdv:r.id}); }catch(_eL2){}
   // part conservée mise à jour sur le rendez-vous en mémoire (déduction au ticket final)
   try{ var garde=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(r.acompte_rembourse) garde=0;
-    for(var k2=0;k2<AP.length;k2++){ var a=AP[k2]; if(a&&a.onlineId===r.id&&a.st!=="done"&&!a.tkNum){ a.acompteEnLigneTicket=true; a.acompteTkNum=orig; a.acompte=garde>0.004?garde:0; if(!(garde>0.004)){ a.acompteMode=""; a.acompteDate=""; } } } }catch(_eG){}
+    for(var k2=0;k2<AP.length;k2++){ var a=AP[k2]; if(a&&a.onlineId===r.id&&a.st!=="done"&&!a.tkNum){ a.acompteEnLigneTicket=true; a.acompteTkNum=orig;
+      var _sSal=_lxAcompteSalonDepuisTickets(a.id), _gT=Math.round((garde+(_sSal?_sSal.total:0))*100)/100; // 2026-10-14 audit : + acompte versé au salon
+      a.acompte=_gT>0.004?_gT:0; if(!(_gT>0.004)){ a.acompteMode=""; a.acompteDate=""; } } } }catch(_eG){}
   return n;
 }
 // Avant le scellement du ticket final d'un RDV en ligne (nouveau modèle) : le ticket d'acompte doit exister ; sinon on le crée
@@ -13535,14 +13636,17 @@ async function _lxAcompteEnLigneAvantEncaissement(){
       try{ var _h=Array.isArray(r.remboursements)?r.remboursements:[]; if(_h.some(function(e){ return e&&Number(e.montant)>0&&!(Number(e.tk)>0); })) await lxAcomptesEnLigneSync(true); }catch(_eR){}
     }
     var garde=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(r.acompte_rembourse) garde=0;
+    // 2026-10-14 audit : + acompte versé AU SALON sur ce RDV (tickets « Acompte » scellés) : déduit par la même ligne
+    var _acSal=0; try{ var _sS=_lxAcompteSalonDepuisTickets(ap?ap.id:_tk.apptId); _acSal=_sS?_sS.total:0; }catch(_eSal){ _acSal=0; }
+    var _dedTot=Math.round((garde+_acSal)*100)/100;
     _tk.acompteEnLigneTicket=true; _tk.acompteTkNum=Number(r.acompte_tk_num);
     if(ap){ ap.acompteEnLigneTicket=true; ap.acompteTkNum=Number(r.acompte_tk_num); }
     // montant déduit = part conservée ; si elle a changé depuis l'ouverture de la caisse (remboursement entre-temps), le règlement
     // saisi est remis à zéro par _lxReglementTotalAJour (ticket jamais scellé avec des règlements supérieurs au total)
-    if(Math.abs((Number(_tk.acompte)||0)-garde)>0.004){
-      _tk.acompte=garde>0.004?garde:0; if(!(garde>0.004)){ _tk.acompteMode=""; } if(ap){ ap.acompte=_tk.acompte; }
+    if(Math.abs((Number(_tk.acompte)||0)-_dedTot)>0.004){
+      _tk.acompte=_dedTot>0.004?_dedTot:0; if(!(_dedTot>0.004)){ _tk.acompteMode=""; } else if(!_tk.acompteMode){ _tk.acompteMode="En ligne (Stripe)"; } if(ap){ ap.acompte=_tk.acompte; }
       _tk.payments=[]; _tk.paid=0;
-      return "La part conservée de l’acompte en ligne a changé (remboursement effectué entre-temps) : elle est maintenant de "+f(_tk.acompte)+" €. Le règlement est remis à zéro : saisissez-le de nouveau.";
+      return "La part conservée de l’acompte en ligne a changé (remboursement effectué entre-temps) : elle est maintenant de "+f(_tk.acompte)+" €"+(_acSal>0.004?" (dont "+f(_acSal)+" € versés au salon)":"")+". Le règlement est remis à zéro : saisissez-le de nouveau.";
     }
     // TROP-PERÇU : la part conservée dépasse le total du ticket -> jamais de ticket négatif « par déduction » ni d'acompte tronqué :
     // la différence est remboursée au client (ticket négatif « Remboursement acompte en ligne », par:"trop_percu") puis on encaisse.
@@ -13550,10 +13654,13 @@ async function _lxAcompteEnLigneAvantEncaissement(){
     if(total<=0.004&&garde>0.004&&(_tk.items||[]).some(function(it){ return it&&!it.isSep&&!it.isAcompteDeduct; })){
       return "Le total du ticket est de 0 € alors que le client a versé un acompte en ligne de "+f(garde)+" € : ajoutez la prestation réalisée, ou remboursez l’acompte (Annuler › rembourser) avant d’encaisser."; // 2026-10-14
     }
-    if(total>0.004&&garde>total+0.004){
-      var z=Math.round((garde-total)*100)/100;
-      window._lxAcTropPercu={rdv:onlineId, montant:z, acompte:garde, total:total};
-      return "L’acompte versé ("+f(garde)+" €) dépasse le total ("+f(total)+" €). Remboursez la différence ("+f(z)+" €) au client avant d’encaisser.";
+    if(total>0.004&&_acSal>total+0.004){
+      return "L’acompte versé au salon ("+f(_acSal)+" €) dépasse à lui seul le total ("+f(total)+" €) : annulez l’acompte au salon (« Annuler l’acompte ») ou ajoutez la prestation réalisée avant d’encaisser."; // 2026-10-14 audit
+    }
+    if(total>0.004&&_dedTot>total+0.004){
+      var z=Math.min(garde, Math.round((_dedTot-total)*100)/100); // 2026-10-14 audit : seule la part EN LIGNE se rembourse par Stripe
+      window._lxAcTropPercu={rdv:onlineId, montant:z, acompte:garde, total:Math.round((total-_acSal)*100)/100};
+      return "L’acompte versé ("+f(_dedTot)+" €) dépasse le total ("+f(total)+" €). Remboursez la différence ("+f(z)+" €) au client avant d’encaisser.";
     }
     return null;
   }catch(e){ console.warn("[_lxAcompteEnLigneAvantEncaissement]",e); return (_tk&&_tk.acompteEnLigneTicket&&!_tk.acompteTkNum)?"Vérification du ticket d’acompte impossible, réessayez.":null; }
@@ -23028,11 +23135,20 @@ function expRapportComptablePDF(){
 // Un salon est consid\u00e9r\u00e9 micro-entrepreneur si :
 //   - sa forme juridique contient "micro" (ex: "micro-entreprise", "micro-entrepreneur"), OU
 //   - son taux TVA est explicitement \u00e0 0 (franchise en base TVA)
-function isMicroEntrepreneur(){
+// 2026-10-14 audit : la FRANCHISE EN BASE de TVA (art. 293 B du CGI : taux 0, mention « TVA non applicable ») et le RÉGIME
+// micro (formalités URSSAF, seuils de CA) sont deux choses distinctes. Une EI (« ei ») ou une micro-entreprise qui facture la
+// TVA (taux > 0) n'est PAS en franchise : avant, « ei » suffisait pour masquer la TVA des rapports (HT = TTC, mention 293 B)
+// alors que les tickets scellés la facturent. isMicroEntrepreneur() — utilisé partout pour « affichage sans TVA » — ne
+// dépend plus que du taux (même source que les tickets) ; le régime micro se lit avec lxRegimeMicro().
+function lxFranchiseTVA(){ return Number(SALON_CONFIG.tauxTVA) === 0; }
+function lxRegimeMicro(){
   var formeJur = String(SALON_CONFIG.formeJur || "").toLowerCase();
-  if(formeJur.indexOf("micro") >= 0 || formeJur.indexOf("auto-entrepreneur") >= 0 || formeJur === "ae" || formeJur === "ei") return true;
-  if(Number(SALON_CONFIG.tauxTVA) === 0) return true;
-  return false;
+  if(formeJur.indexOf("micro") >= 0 || formeJur.indexOf("auto-entrepreneur") >= 0 || formeJur === "ae") return true;
+  if(typeof lxEstMicro === "function" && lxEstMicro()) return true;
+  return lxFranchiseTVA() && formeJur === "ei"; // EI en franchise : régime micro par défaut
+}
+function isMicroEntrepreneur(){
+  return lxFranchiseTVA();
 }
 
 // 2026-10-11 : cotisations micro 2026 = taux URSSAF (app_config, défaut 21,2 % services BIC / 12,3 % ventes)
@@ -23075,7 +23191,7 @@ function getCAYearToDate(){
 
 // Statut des seuils micro : ok / warning / danger
 function getMicroSeuilsStatus(){
-  if(!isMicroEntrepreneur()) return null;
+  if(!isMicroEntrepreneur() && !lxRegimeMicro()) return null; // 2026-10-14 audit : seuils = régime micro OU franchise
   var ca = getCAYearToDate();
   // M\u00e9tier : on consid\u00e8re que les services sont l'activit\u00e9 principale (cas Luxyra)
   // \u2192 on regarde principalement les seuils services
@@ -23332,6 +23448,9 @@ function showExportsComptables(){
 function csvEscape(v){
   if(v===null||v===undefined) return "";
   var s = String(v);
+  // 2026-10-14 audit : injection de formule (CSV ouvert dans Excel / LibreOffice) -> une cellule TEXTE commen\u00e7ant par
+  // = + - @ (ou tabulation / retour chariot) est pr\u00e9fix\u00e9e d'une apostrophe. Les nombres (ex. \u00ab -12,50 \u00bb) restent intacts.
+  if(/^[=+\-@\t\r]/.test(s) && !/^[-+]?\d+([.,]\d+)?$/.test(s)) s = "'" + s;
   // Si contient ";" ou guillemet ou retour ligne \u2192 entourer de guillemets et doubler les guillemets internes
   if(s.indexOf(";")>=0 || s.indexOf('"')>=0 || s.indexOf("\n")>=0 || s.indexOf("\r")>=0){
     return '"' + s.replace(/"/g, '""') + '"';
@@ -23622,8 +23741,9 @@ function _lxJournalVentes(mois){
   }
   function bucketsPart(a, part){
     var b=_lxPayBuckets(a), ks=["cb","esp","chq","vir","enligne","bon","aut"], tb=0, out={}, sum=0;
-    // 2026-10-11 : pièces de correction de règlement du ticket (mode réellement encaissé)
-    try{ if(typeof _lxCorrDeTicket==="function"){ _lxCorrDeTicket(a.id).forEach(function(c){ if(c.avant_cloture) return; (c.lignes||[]).forEach(function(l){ if(b[l.mode]!=null) b[l.mode]=Math.round((b[l.mode]+Number(l.montant||0))*100)/100; }); }); } }catch(_eCj){}
+    // 2026-10-14 audit : les pièces de correction de règlement APRÈS clôture ne sont plus appliquées à la date du ticket
+    // (cela modifiait rétroactivement un journal déjà arrêté) : elles sont passées à LEUR date (date_correction), en écritures
+    // distinctes, plus bas. Les corrections du jour même (avant_cloture) sont déjà dans le rendez-vous (mode réel).
     ks.forEach(function(k){ tb+=Number(b[k])||0; });
     if(Math.abs(tb)<0.005) return null;
     ks.forEach(function(k){ var v=Math.round((Number(b[k])||0)*(part/tb)*100)/100; out[k]=v; sum+=v; });
@@ -23666,6 +23786,14 @@ function _lxJournalVentes(mois){
     var ttc = Number(p.pr)||0, ht = Math.round(ttc/(1+txTVAprod/100)*100)/100;
     ecriture(p.date, "PR"+(p.tkNum||""), p.prod||"Vente produit", ttc, ht, Math.round((ttc-ht)*100)/100, p.met, "produit", txTVAprod, null);
   });
+  // 2026-10-14 audit (BOI-TVA-DECLA-30-10-30 §90) : pièces de correction de règlement après clôture = écritures de trésorerie
+  // à LEUR date (plus / moins entre modes de règlement, somme nulle : ni CA ni TVA), référence CR<n°> + ticket d'origine.
+  try{ (window.LX_CORR_REGL||[]).forEach(function(c){
+    if(!c||c.avant_cloture||String(c.date_correction||"").indexOf(mois)!==0) return;
+    var libC="CR"+String(c.date_correction).replace(/-/g,"")+" Correction r\u00e8glement ticket n\u00b0"+(c.ticket_num_affiche||c.ticket_num||"?")+" du "+(c.ticket_date||"");
+    (c.lignes||[]).forEach(function(l){ ligne(c.date_correction, CPT[l.mode]||"511000", "Correction "+(LIB[l.mode]||l.mode), "CR"+(c.num||""), libC, Number(l.montant)||0, "D", LIB[l.mode]||l.mode); });
+    ecrNum++;
+  }); }catch(_eCr){}
   return {lignes:E, nbEcritures:ecrNum-1};
 }
 function expJournalComptable(){
@@ -25125,13 +25253,27 @@ function printBandeZ(){
   }, 100);
 }
 
-function reprintClotureZ(idx){
+// 2026-10-14 audit (NF525) : la réimpression d'une Z est un duplicata ENREGISTRÉ avant impression (fonction serveur
+// nf525_duplicata_z : journal d'audit DUPLICATA_CLOTURE_Z -> JET 901, n° de copie). 2 essais ; échec -> impression bloquée.
+// Fonction serveur absente (SQL docs/migrations_1014/caisse.sql pas encore appliqué) -> ancien chemin (journal d'audit).
+async function reprintClotureZ(idx){
   var c=window.CLOTURES[idx];if(!c)return;
+  if(window._lxZDupEnCours) return; window._lxZDupEnCours=true;
+  var copie=null, err=null;
+  try{
+    var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
+    for(var essai=1;essai<=2;essai++){
+      var r=null; try{ r=await _sb.rpc("nf525_duplicata_z",{p_salon:_salonId,p_cloture_num:Number(c.num)||null,p_date:c.date||null,p_operateur:_op||null}); }catch(_eR){ r={error:_eR}; }
+      if(r&&!r.error&&r.data){ copie=r.data.copie||null; err=null; break; }
+      var msg=String((r&&r.error&&(r.error.message||r.error.code))||"erreur");
+      if(r&&r.error&&(r.error.code==="PGRST202"||/could not find the function|does not exist/i.test(msg))){ auditLog("DUPLICATA_CLOTURE_Z","R\u00e9impression cl\u00f4ture Z #"+(c.num||idx)+" du "+c.date); err=null; break; }
+      err=msg; if(essai<2) await new Promise(function(res){ setTimeout(res,1200); });
+    }
+  } finally { window._lxZDupEnCours=false; }
+  if(err){ showAlert("Duplicata de la cl\u00f4ture Z n\u00b0"+(c.num||"?")+" non enregistr\u00e9 ("+err+") : impression bloqu\u00e9e. R\u00e9essayez une fois la connexion r\u00e9tablie.","warning"); return; }
   window._lastCloture=c;
-  window._isReprint=true;
-  auditLog("DUPLICATA_CLOTURE_Z","R\u00e9impression cl\u00f4ture Z #"+(c.num||idx)+" du "+c.date);
-  printClotureZ();
-  window._isReprint=false;
+  window._isReprint=true; window._lxZCopie=copie;
+  try{ printClotureZ(); } finally { window._isReprint=false; window._lxZCopie=null; }
 }
 
 
@@ -27438,7 +27580,9 @@ function annulerAcompte(apptId){
       a.acompte=0;a.acompteMode="";a.acompteDate="";a.acompteTkNum=null;
       if(a.items)a.items=a.items.filter(function(it){return !it.isAcompteData;});
       if(typeof saveAppointment==="function")saveAppointment(a);
-      
+      // 2026-10-14 audit : RDV en ligne -> acompte recalculé depuis les tickets (l'acompte en ligne éventuel reste dû)
+      try{ if(a.onlineId){ var _mOn2=(window.RDV_ONLINE||[]).find(function(x){ return x&&x.id===a.onlineId; }); if(_mOn2) _lxApOnlineEnrichir(a,_mOn2); } }catch(_eOn2){}
+
       // Show confirmation
       cM();
       var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
@@ -27559,6 +27703,9 @@ async function doSaveAcompte(apptId){
   a.acompteTkNum=tkNum;
   for(var _ai=0;_ai<a.items.length;_ai++){ if(a.items[_ai].isAcompteData){ a.items[_ai].acompteTkNum=tkNum; if(Array.isArray(a.items[_ai].versements)) a.items[_ai].versements.push({m:amount, mode:(window._acompteMode||"CB"), tk:tkNum, d:TD}); } }
   if(typeof saveAppointment==="function")saveAppointment(a);
+  // 2026-10-14 audit : RDV EN LIGNE -> l'acompte versé au salon n'est porté que par ses tickets ; on recalcule l'acompte du RDV
+  // (acompte en ligne conservé + acompte(s) salon) comme au rechargement, pour une déduction identique sur tout appareil.
+  try{ if(a.onlineId){ var _mOn=(window.RDV_ONLINE||[]).find(function(x){ return x&&x.id===a.onlineId; }); if(_mOn) _lxApOnlineEnrichir(a,_mOn); } }catch(_eOn){}
   auditLog("ACOMPTE","Acompte "+amount.toFixed(2)+"E ("+window._acompteMode+") pour RDV "+apptId+" - Ticket #"+tkNum);
   var sv2=gS(a.sId);var cl2=gC(a.cId);var sty2=gT(a.stId);
   var htm='<div class="mbox" style="text-align:center">';
@@ -29752,7 +29899,9 @@ function _doApplyRemiseUI(idx,type){
 }
 function doApplyRemise(idx,type){
   var v=parseFloat(document.getElementById("remVal").value)||0;
-  var it=_tk.items[idx];
+  if(!isFinite(v)||v<0) v=0; // 2026-10-14 audit : remise négative refusée (elle augmentait le prix sans trace)
+  var it=_tk.items[idx]; if(!it){ showCaisse(); return; }
+  if(!(Number(it.price)*Number(it.qty)>0)){ it.remise=0; showCaisse(); return; } // pas de remise sur une ligne nulle / négative
   if(type==="eur"){it.remise=Math.min(v,it.price*it.qty);}
   else{var pct=Math.min(v,100);it.remise=Math.round(it.price*it.qty*pct/100*100)/100;}
   _lxReglementTotalAJour();
@@ -30052,6 +30201,7 @@ function _lxReglementTotalAJour(){
 }
 function doApplyTkRemise(type){
   var v=parseFloat(document.getElementById("tkRemVal").value)||0;
+  if(!isFinite(v)||v<0) v=0; // 2026-10-14 audit : remise négative refusée
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});
   // FIX 2026-08-31 : cette fonction ECRASAIT _tk.remise, alors que le paiement par
   // bon cadeau et les remises fidelite y CUMULENT. Une remise saisie apres l'usage
@@ -30327,8 +30477,14 @@ async function doBonPay(){
     return;
   }
   var total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=_tk.remise;
-  var resteDu=total-(_tk.paid||0);
+  // 2026-10-14 audit : l'acompte d\u00e9j\u00e0 vers\u00e9 (salon ou en ligne) est d\u00e9duit du reste d\u00fb, comme au r\u00e8glement final
+  // (avant : le bon pouvait couvrir aussi la part d\u00e9j\u00e0 pay\u00e9e par l'acompte -> bon sur-d\u00e9bit\u00e9).
+  var resteDu=Math.round((total-(_tk.paid||0)-(Number(_tk.acompte)||0))*100)/100;
   if(bon.exp&&bon.exp<TD){showAlert("Ce bon cadeau a expir\u00e9","info");return;}
+  // 2026-10-14 audit : un m\u00eame bon ne s'applique qu'une fois par ticket ; pas de 2e appui pendant le traitement
+  if(window._lxBonPayEnCours) return;
+  if((_tk._bonsAConsommer||[]).some(function(x){ return x&&x.id===bon.id; })){ showAlert("Ce bon cadeau est d\u00e9j\u00e0 appliqu\u00e9 sur ce ticket.","info"); return; }
+  if(!(resteDu>0.004)){ showAlert("Plus rien \u00e0 r\u00e9gler sur ce ticket.","info"); return; }
   // Bon scope-restricted (prestations ou produits) : on ne BLOQUE plus le ticket.
   // On calcule juste le sous-total \u00e9ligible et on plafonne l'utilisation du bon
   // \u00e0 ce sous-total. Le reste du ticket (items non \u00e9ligibles) reste \u00e0 payer
@@ -30348,37 +30504,28 @@ async function doBonPay(){
     }
     useMax = Math.min(useMax, totalEligible);
   }
-  var use=Math.min(useMax,resteDu);
-  // FIX 2026-08-31 : la deduction se fait EN BASE, de facon atomique. Elle etait
-  // calculee ici depuis la memoire : deux postes encaissant en meme temps avec le
-  // meme bon partaient tous deux du solde du matin, et le bon etait depense deux
-  // fois. La base refuse desormais de descendre sous zero.
-  // 2026-10-14 (NF525) : le bon était rattaché à tkN = n° du DERNIER ticket créé (la numérotation n'a lieu qu'à la
-  // finalisation). On mémorise le n° qui sera attribué (max en mémoire + 1, même règle que nextTicketNum, sans consommer).
-  var _tkBon=_lxProchainTkNum();
-  if(typeof consommerBonCadeau==="function"){
-    var _rb=await consommerBonCadeau(bon.id, use, _tkBon||0);
-    if(!_rb || !_rb.ok){
-      if(typeof showAlert==="function") showAlert("Bon cadeau non appliqu\u00e9 : "+((_rb&&_rb.error)||"erreur")+(typeof _rb!=="undefined"&&_rb&&typeof _rb.restant!=="undefined"?"\n\nSolde r\u00e9el du bon : "+Number(_rb.restant).toFixed(2)+" \u20ac":""),"warning");
-      else if(typeof toast==="function") toast("Bon cadeau non appliqu\u00e9","error");
-      return;
+  var use=Math.round(Math.min(useMax,resteDu)*100)/100;
+  // 2026-10-14 audit : le bon n'est PLUS débité à la sélection (un panier abandonné, une ligne retirée ou un encaissement
+  // refusé laissaient le bon débité sans vente). On vérifie ici le solde RÉEL en base (lecture seule), on réserve le
+  // montant sur le panier (_tk._bonsAConsommer) et le débit atomique (consommer_bon_cadeau) est fait AU SCELLEMENT, dans
+  // doFinalPayExecute, juste avant la création du ticket ; s'il échoue, aucun ticket n'est créé.
+  window._lxBonPayEnCours=true;
+  try{
+    if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId&&!window._lxDemo){
+      var _qb=_sb.from("cartes_cadeaux").select("restant,status").eq("id",bon.id).eq("salon_id",_salonId).maybeSingle();
+      var _rbq=(typeof _lxAvecDelai==="function")?await _lxAvecDelai(_qb,4000):await _qb;
+      if(_rbq&&_rbq.data){
+        var _restBase=Number(_rbq.data.restant)||0;
+        if(_rbq.data.status==="voided"||_rbq.data.status==="used"||_restBase<=0.004){ showAlert("Bon cadeau non applicable : "+(_rbq.data.status==="voided"?"bon annulé":"bon soldé")+".","warning"); return; }
+        if(_restBase+0.004<use){ use=Math.round(_restBase*100)/100; }
+        bon.rem=_restBase;
+      } else if(!_rbq||_rbq.error||_rbq.__delai){ showAlert("Bon cadeau : vérification du solde impossible ("+((_rbq&&_rbq.error&&_rbq.error.message)||"réseau")+"). Réessayez.","warning"); return; }
     }
-    // On aligne la memoire sur ce que la base a REELLEMENT enregistre
-    bon.rem  = _rb.restant;
-    bon.used = _rb.utilise;
-    bon.st   = _rb.status || bon.st;
-    if(!bon.history)bon.history=[];
-    bon.history.push({date:TD,amount:use,tkNum:_tkBon||0,time:new Date().toTimeString().slice(0,5)}); // 2026-10-14 (NF525)
-    if(bon.rem<=0){auditLog("BON_CADEAU_SOLDE","Bon "+bon.code+" enti\u00e8rement utilis\u00e9 - Valeur "+bon.val.toFixed(2)+"E"+((bon.isOffert===true||bon.payMethod==="Offert")?" (offert: remise, hors CA)":" (bon vendu : d\u00e9j\u00e0 r\u00e9gl\u00e9 \u00e0 la vente, remise, hors CA)"));}
-  } else {
-    bon.rem-=use;
-    bon.used=(bon.used||0)+use;
-    if(!bon.history)bon.history=[];
-    bon.history.push({date:TD,amount:use,tkNum:_tkBon||0,time:new Date().toTimeString().slice(0,5)}); // 2026-10-14 (NF525)
-    if(bon.rem<=0){bon.st="used";bon.rem=0;}
-    if(typeof saveGiftCard==="function")saveGiftCard(bon,{soldeIntentionnel:true});
-  }
-  auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Utilisé: "+use.toFixed(2)+"E - Reste: "+bon.rem.toFixed(2)+"E");
+  } finally { window._lxBonPayEnCours=false; }
+  if(!(use>0.004)){ showAlert("Bon cadeau : aucun montant applicable.","info"); return; }
+  if(!_tk._bonsAConsommer)_tk._bonsAConsommer=[];
+  _tk._bonsAConsommer.push({id:bon.id,code:bon.code,use:use,offert:(bon.isOffert===true||bon.payMethod==="Offert")});
+  auditLog("UTILISATION_BON_CADEAU","Bon "+bon.code+" - Réservé sur le panier : "+use.toFixed(2)+"E (débit au scellement du ticket)");
   if(!_tk.payments)_tk.payments=[];
   if(bon.isOffert===true||bon.payMethod==="Offert"){
     // Bon OFFERT : appliqué comme REMISE (et non un paiement) -> le montant offert
@@ -30388,7 +30535,7 @@ async function doBonPay(){
     _tk.offertRemise=(_tk.offertRemise||0)+use;
     _tk.payments.push({method:"Offert "+code,amount:0});
     total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
-    resteDu=total-(_tk.paid||0);
+    resteDu=total-(_tk.paid||0)-(Number(_tk.acompte)||0); // 2026-10-14 audit : acompte déjà versé déduit
   } else {
     // Bon VENDU : le montant a DEJA ete facture / compte au CA au moment de la VENTE
     // du bon (ticket de vente dedie). A l'utilisation, on l'applique comme REMISE
@@ -30403,7 +30550,7 @@ async function doBonPay(){
     _tk.bonVenduRemise=(_tk.bonVenduRemise||0)+use;
     _tk.payments.push({method:"Bon cadeau r\u00e9gl\u00e9 "+code,amount:0});
     total=0;_tk.items.forEach(function(it){total+=it.price*it.qty-it.remise;});total-=(_tk.remise||0);
-    resteDu=total-(_tk.paid||0);
+    resteDu=total-(_tk.paid||0)-(Number(_tk.acompte)||0); // 2026-10-14 audit : acompte déjà versé déduit
   }
   if(resteDu>0.01){_tk.step=5;showCaisse();return;}
   doFinalPay("done");
@@ -30622,8 +30769,10 @@ function lxFidUndoReward(cId){
   var fr=_tk._fidResults&&_tk._fidResults[cId];
   if(fr&&fr.action==="discount"){
     _tk.remise=Math.max(0,(_tk.remise||0)-(fr.amount||0));
+    _tk.remiseAuto=Math.max(0,Math.round(((Number(_tk.remiseAuto)||0)-(fr.amount||0))*100)/100); // 2026-10-14 audit : la part « automatique » protégée suit l'annulation (sinon la remise revenait à la saisie suivante)
     _tk._fidDiscountApplied=Math.max(0,(_tk._fidDiscountApplied||0)-(fr.amount||0));
     delete _tk._fidResults[cId];
+    try{ _lxReglementTotalAJour(); }catch(_eRg){}
   }
   _tk.step=5; showCaisse();
 }
@@ -30888,7 +31037,56 @@ async function doFinalPayExecute(method){
     document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM();go(\'planning\')"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><div style="font-size:36px;margin-bottom:10px">\u26a0\ufe0f</div><h2>Rendez-vous d\u00e9j\u00e0 encaiss\u00e9</h2><div style="font-size:14px;margin-bottom:14px">'+_dejaMsg+'<br>Aucun nouveau ticket n\u2019a \u00e9t\u00e9 cr\u00e9\u00e9. Rechargez l\u2019application pour voir le ticket existant.</div><button class="btn bg bk" onclick="cM();go(\'planning\')">Retour au planning</button></div></div>';
     return;
   }
+  // 2026-10-14 audit : bons cadeaux r\u00e9serv\u00e9s sur le panier -> d\u00e9bit atomique MAINTENANT, juste avant le scellement.
+  if(_tk&&Array.isArray(_tk._bonsAConsommer)&&_tk._bonsAConsommer.length){
+    // m\u00eames refus que le scellement, v\u00e9rifi\u00e9s AVANT le d\u00e9bit (sinon bon d\u00e9bit\u00e9 sans ticket)
+    if(_lxReglementTotalAJour()){ _tk.step=5; showCaisse(); return; }
+    var _totB=0; _tk.items.forEach(function(it){ _totB+=it.price*it.qty-(it.remise||0); }); _totB-=(_tk.remise||0);
+    if(_totB<0||!_tk.items.length){ _doFinalPayExecuteSync(method); return; } // message \u00ab Aucune prestation \u00bb (aucun d\u00e9bit)
+    if(window._lxBonsDebitEnCours) return; window._lxBonsDebitEnCours=true;
+    var _errB=null; try{ _errB=await _lxBonsConsommerAuScellement(); } finally { window._lxBonsDebitEnCours=false; }
+    if(_errB){ showAlert(_errB,"warning"); _tk.step=5; showCaisse(); return; }
+  }
   _doFinalPayExecuteSync(method);
+}
+// 2026-10-14 audit : d\u00e9bit des bons cadeaux r\u00e9serv\u00e9s sur le panier (consommer_bon_cadeau, atomique en base). En cas d'\u00e9chec
+// d'un seul bon : les bons d\u00e9j\u00e0 d\u00e9bit\u00e9s sont recr\u00e9dit\u00e9s (recrediter_bon_cadeau), les remises des bons sont retir\u00e9es du panier
+// et l'op\u00e9rateur choisit un autre r\u00e8glement. Retourne null si tout est d\u00e9bit\u00e9, sinon le message d'erreur.
+function _lxBonsRetirerDuPanier(){
+  try{ (_tk._bonsAConsommer||[]).forEach(function(b){
+      _tk.remise=Math.max(0,Math.round(((Number(_tk.remise)||0)-b.use)*100)/100);
+      _tk.remiseAuto=Math.max(0,Math.round(((Number(_tk.remiseAuto)||0)-b.use)*100)/100);
+      if(b.offert) _tk.offertRemise=Math.max(0,Math.round(((Number(_tk.offertRemise)||0)-b.use)*100)/100);
+      else _tk.bonVenduRemise=Math.max(0,Math.round(((Number(_tk.bonVenduRemise)||0)-b.use)*100)/100);
+      if(Array.isArray(_tk.payments)) _tk.payments=_tk.payments.filter(function(p){ return !(p&&!(Number(p.amount)>0)&&String(p.method||"").indexOf(" "+b.code)>=0); });
+    }); }catch(_e){}
+  _tk._bonsAConsommer=[];
+}
+async function _lxBonsConsommerAuScellement(){
+  var L=(_tk._bonsAConsommer||[]).slice(), faits=[], err=null;
+  if(typeof consommerBonCadeau!=="function") return "Bon cadeau : fonction de d\u00e9bit indisponible, rechargez l\u2019application.";
+  var tkPrevu=_lxProchainTkNum();
+  for(var i=0;i<L.length;i++){
+    var b=L[i], r=await consommerBonCadeau(b.id, b.use, tkPrevu||0);
+    if(!r||!r.ok){ err="Bon cadeau "+b.code+" non d\u00e9bit\u00e9 : "+((r&&r.error)||"erreur")+(r&&typeof r.restant!=="undefined"?" (solde r\u00e9el "+Number(r.restant).toFixed(2)+" \u20ac)":"")+". Aucun ticket n\u2019a \u00e9t\u00e9 cr\u00e9\u00e9 ; choisissez un autre r\u00e8glement."; break; }
+    faits.push({b:b,r:r});
+  }
+  if(err){
+    for(var j=0;j<faits.length;j++){ try{ var rc=await _sb.rpc("recrediter_bon_cadeau",{p_bon_id:faits[j].b.id,p_montant:faits[j].b.use,p_ticket:"",p_motif:"Encaissement interrompu (autre bon refus\u00e9)"});
+      if(!rc||rc.error||!(rc.data&&rc.data.ok)){ err+="\n\nATTENTION : le bon "+faits[j].b.code+" a \u00e9t\u00e9 d\u00e9bit\u00e9 de "+faits[j].b.use.toFixed(2)+" \u20ac et n\u2019a pas pu \u00eatre recr\u00e9dit\u00e9 automatiquement : contactez le support.";
+        try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxBonsConsommerAuScellement",msg:"bon debite sans ticket, recredit impossible",bon:faits[j].b.code,montant:faits[j].b.use}).slice(0,2000)); }catch(_eA){} } }catch(_eR){} }
+    _lxBonsRetirerDuPanier();
+    try{ if(typeof auditLog==="function") auditLog("BON_CADEAU_REFUSE",err.slice(0,500)); }catch(_eL){}
+    return err;
+  }
+  _tk._bonsConsommes=[];
+  faits.forEach(function(f){ var g=null; for(var k=0;k<GC.length;k++){ if(GC[k]&&GC[k].id===f.b.id){ g=GC[k]; break; } }
+    if(g){ g.rem=f.r.restant; g.used=f.r.utilise; g.st=f.r.status||g.st; if(!g.history)g.history=[]; g.history.push({date:TD,amount:f.b.use,tkNum:tkPrevu||0,time:new Date().toTimeString().slice(0,5)});
+      if(g.rem<=0) auditLog("BON_CADEAU_SOLDE","Bon "+g.code+" enti\u00e8rement utilis\u00e9 - Valeur "+Number(g.val||0).toFixed(2)+"E"+(f.b.offert?" (offert: remise, hors CA)":" (bon vendu : d\u00e9j\u00e0 r\u00e9gl\u00e9 \u00e0 la vente, remise, hors CA)")); }
+    auditLog("UTILISATION_BON_CADEAU","Bon "+f.b.code+" - Utilis\u00e9: "+f.b.use.toFixed(2)+"E - Reste: "+Number(f.r.restant).toFixed(2)+"E - Ticket #"+(tkPrevu||"?"));
+    _tk._bonsConsommes.push({id:f.b.id,code:f.b.code,use:f.b.use}); });
+  _tk._bonsAConsommer=[];
+  return null;
 }
 function _doFinalPayExecuteSync(method){
   // GARDE-FOU CRITIQUE NF525 : anti-double-clic. Sans \u00e7a, un double-tap rapide
@@ -30994,6 +31192,12 @@ function _doFinalPayExecuteSync(method){
     if(it.devis)o.devis=true;     // 2026-10-13 : prestation sur devis (prix saisi à l'encaissement)
     if(it.sId)o.sId=it.sId;
     if(it.fidApplied)o.fidApplied=true;
+    // 2026-10-14 audit : taux de TVA PROPRE du produit (fiche produit, champ tvaTaux) quand il diffère du taux produits de
+    // l'établissement -> le HT / la TVA du ticket sont calculés ligne à ligne (saveTicketToDb). Clé posée UNIQUEMENT dans ce
+    // cas : les lignes de tous les tickets existants et des tickets sans taux particulier restent identiques.
+    try{ if(it.prodId&&typeof PRODS!=="undefined"){ var _pT=null; for(var _pi=0;_pi<PRODS.length;_pi++){ if(PRODS[_pi].id===it.prodId){ _pT=PRODS[_pi]; break; } }
+      var _txS=Number(lxTauxTVA()), _txPd=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):_txS;
+      if(_pT&&_pT.tvaTaux!=null&&!isNaN(Number(_pT.tvaTaux))&&_txS>0&&Number(_pT.tvaTaux)!==_txPd) o.tvaTaux=Number(_pT.tvaTaux); } }catch(_eTv){}
     return o;
   });
   // #4 Activation cartes d'abo pending : à ce stade le paiement est validé.
@@ -31041,6 +31245,12 @@ function _doFinalPayExecuteSync(method){
   // N affecte QUE le compteur d affichage tkN/AP.tkNum ; la chaine NF525 (chainTicket,
   // saveTicketToDb, tickets.num serveur) est inchangee.
   nextTicketNum();
+  // 2026-10-14 audit : relevé des effets de gestion de CE ticket (fidélité, bons, forfaits, cartes, stock) pour pouvoir
+  // les inverser s'il est annulé. Données de gestion (raw_data / meta), jamais dans les données hachées.
+  var _lxEff=null; try{ _lxEff=_lxEffetsReleve(_tk, tkN); }catch(_eEff){ _lxEff=null; }
+  // 2026-10-14 audit : bons cadeaux utilisés (vendus / offerts) recopiés sur le ticket (raw_data / meta, hors empreinte)
+  // -> la Z (« dont bons cadeaux utilisés ») et le ticket imprimé les retrouvent ; avant ils restaient sur _tk seul.
+  var _lxBonV=Math.round((Number(_tk.bonVenduRemise)||0)*100)/100, _lxBonO=Math.round((Number(_tk.offertRemise)||0)*100)/100;
 
   // === Option B : si RDV lié (groupé), le marquer aussi done + lui lier le ticket ===
   // FIX 2026-05-15 : check défensif AVANT de marquer le 2ème done.
@@ -31101,6 +31311,10 @@ function _doFinalPayExecuteSync(method){
         var _apClPri=AP[i].cId?gC(AP[i].cId):null;
         if(_apClPri){AP[i].clientNom=_apClPri.nom;AP[i].clientPrenom=_apClPri.pre;}
         if(_tk.extraClients&&_tk.extraClients.length)AP[i].extraClients=_tk.extraClients;
+        // 2026-10-14 audit : bons cadeaux utilisés + relevé des effets (hors empreinte)
+        if(_lxBonV>0) AP[i].bonVenduRemise=_lxBonV; else delete AP[i].bonVenduRemise;
+        if(_lxBonO>0) AP[i].offertRemise=_lxBonO; else delete AP[i].offertRemise;
+        if(_lxEff) AP[i].lxEffets=_lxEff;
         // NF525: stocker l'opérateur qui a encaissé
         if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
           AP[i].operator_id=CURRENT_OPERATOR.id;
@@ -31133,6 +31347,10 @@ function _doFinalPayExecuteSync(method){
       clientNom:_tkClPri?_tkClPri.nom:(_tk.passType==="H"?"Passage homme":_tk.passType==="E"?"Passage enfant":"Passage femme"),
       clientPrenom:_tkClPri?_tkClPri.pre:null,
       extraClients:_tk.extraClients||[]};
+    // 2026-10-14 audit : bons cadeaux utilisés + relevé des effets (raw_data / meta, hors empreinte)
+    if(_lxBonV>0) newTk.bonVenduRemise=_lxBonV;
+    if(_lxBonO>0) newTk.offertRemise=_lxBonO;
+    if(_lxEff) newTk.lxEffets=_lxEff;
     // NF525: stocker l'opérateur qui a encaissé
     if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
       newTk.operator_id=CURRENT_OPERATOR.id;
@@ -31730,7 +31948,17 @@ function rTickets(){
       h+='</div>';
     }
     // Actions
-    if(!isCancelled){
+    // 2026-10-14 audit (NF525) : un contre-ticket (annulation) est une op\u00e9ration n\u00e9gative d\u00e9finitive :
+    // il se r\u00e9imprime / s'envoie, mais ne s'annule pas, ne se modifie pas et son r\u00e8glement ne se corrige pas.
+    var _isContraTk=(typeof _lxIsContraTicket==="function")&&_lxIsContraTicket(a);
+    if(!isCancelled&&_isContraTk){
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
+      h+='<span style="font-size:11px;color:var(--text3);align-self:center">Contre-ticket d\u2019annulation (r\u00e9f. #'+(a.cancelRef||"--")+')</span>';
+      h+='</div>';
+    }
+    if(!isCancelled&&!_isContraTk){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
@@ -32281,15 +32509,34 @@ function reprintTicket(id){
   w.document.write(h);w.document.close();
   // 2026-10-11 : duplicata numéroté et enregistré (signé côté serveur) + extrait de signature du ticket
   var _taches=[lxSigRemplir(w.document, a.id, 3500)];
+  // 2026-10-14 audit (NF525) : un duplicata doit être ENREGISTRÉ (numéroté, signé) avant d'être imprimé. Avant, un échec de
+  // nf525_duplicata était ignoré et la copie partait à l'impression sans trace. Désormais : 2 essais, puis impression BLOQUÉE
+  // avec un message clair (la fenêtre affiche la raison, aucune impression automatique).
+  var _dupOk=!isDuplicate;
   if(isDuplicate){
     var _op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():"";
-    _taches.push(_sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
+    var _essai=function(n){ return _sb.rpc("nf525_duplicata",{p_salon:_salonId,p_appt_id:a.id,p_operateur:_op||null}).then(function(r){
+        if(r&&!r.error&&r.data) return r;
+        if(n<2) return new Promise(function(res){ setTimeout(res,1200); }).then(function(){ return _essai(n+1); });
+        throw new Error((r&&r.error&&r.error.message)||"duplicata non enregistr\u00e9");
+      },function(e){ if(n<2) return new Promise(function(res){ setTimeout(res,1200); }).then(function(){ return _essai(n+1); }); throw e; }); };
+    _taches.push(_essai(1).then(function(r){
+      _dupOk=true;
       try{ if(r&&r.data){ var d=new Date(r.data.horodatage||Date.now()); w.document.querySelectorAll(".lxDupNum").forEach(function(e){ e.textContent="Copie n\u00b0"+r.data.copie+" - "+d.toLocaleDateString("fr-FR")+" "+d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }); } }catch(_e){}
       // 2026-10-11 : extrait de la signature propre au duplicata (chaîne DUP), attente bornée
       if(r&&r.data&&r.data.seq) return lxDupSigRemplir(w.document, r.data.seq, 3000);
-    },function(){}));
+    },function(e){ _dupOk=false; window._lxDupErr=(e&&e.message)||String(e||"erreur"); }));
   }
-  Promise.all(_taches).then(function(){ setTimeout(function(){w.print();},200); },function(){ setTimeout(function(){w.print();},200); });
+  var _imprimer=function(){
+    if(!_dupOk){
+      try{ w.document.body.innerHTML='<div style="font-family:Arial,sans-serif;padding:20px;text-align:center"><div style="font-size:32px">\u26a0\ufe0f</div><h2>Duplicata non enregistr\u00e9</h2><p>La copie du ticket n\u00b0'+(a.tkNum||"--")+' n\u2019a pas pu \u00eatre enregistr\u00e9e au registre des duplicatas (loi anti-fraude : chaque duplicata est num\u00e9rot\u00e9 et sign\u00e9).</p><p>Motif : '+String(window._lxDupErr||"r\u00e9seau").replace(/[<>&]/g,"")+'</p><p><strong>Impression bloqu\u00e9e.</strong> V\u00e9rifiez la connexion puis relancez l\u2019impression.</p></div>'; }catch(_eW){}
+      try{ if(typeof auditLog==="function") auditLog("DUPLICATA_REFUSE","Ticket #"+(a.tkNum||"--")+" : duplicata non enregistr\u00e9 ("+String(window._lxDupErr||"")+") - impression bloqu\u00e9e"); }catch(_eL){}
+      try{ showAlert("Duplicata du ticket n\u00b0"+(a.tkNum||"--")+" non enregistr\u00e9 ("+String(window._lxDupErr||"r\u00e9seau")+") : impression bloqu\u00e9e. R\u00e9essayez une fois la connexion r\u00e9tablie.","warning"); }catch(_eS){}
+      return;
+    }
+    setTimeout(function(){w.print();},200);
+  };
+  Promise.all(_taches).then(_imprimer,_imprimer);
 }
 
 function deleteTicket(id){
@@ -32386,6 +32633,8 @@ async function lxCorrReglValider(){
 function modifReglement(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
+  // 2026-10-14 audit (NF525) : le règlement d'un contre-ticket / d'un ticket annulé ne se corrige pas
+  if(typeof _lxAnnulationRefusee==="function"){ var _rfR=_lxAnnulationRefusee(a); if(_rfR){ showAlert(_rfR,"warning"); return; } }
   var cur=(a.met||"");
   var isLocked=!!(window.LOCKED_DAYS&&window.LOCKED_DAYS[a.date]);
   var mixte=(Array.isArray(a.payments)&&a.payments.length>1);
@@ -32420,7 +32669,11 @@ async function doCorrigerReglementRdv(apptId, method){
     var _mEl=document.getElementById("mrMotif"); var _motif=_mEl?(_mEl.value||"").trim():"";
     var r=await _sb.rpc('corriger_reglement_rdv',{p_appt_id:apptId,p_new_method:method,p_operateur:op,p_motif:_motif||null});
     if(r.error){ if(typeof toast==="function")toast("❌ "+r.error.message,"error"); return; }
-    for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ AP[i].met=method; AP[i].payments=[{amount:Number(AP[i].pr)||0, method:method}]; break; } }
+    // 2026-10-14 audit : acompte payé EN LIGNE (ancien modèle : mode de règlement hors a.payments) -> il reste au poste
+    // « en ligne » ; seul le SOLDE change de mode (sinon _lxPayBuckets compte l'acompte deux fois : Z faussée).
+    for(var i=0;i<AP.length;i++){ if(AP[i].id===apptId){ var _acOnR=(Number(AP[i].acompte)>0.004&&typeof _lxIsAcompteOnline==="function"&&_lxIsAcompteOnline(AP[i].acompteMode))?Math.round(Number(AP[i].acompte)*100)/100:0;
+      var _soldeR=Math.round(((Number(AP[i].pr)||0)-_acOnR)*100)/100;
+      AP[i].met=method; AP[i].payments=[{amount:_soldeR, method:method}]; break; } }
     try{ window._lxCorrLoaded=false; if(typeof lxCorrReglCharger==="function") await lxCorrReglCharger(true); }catch(_eRl){}
     cM();
     if(typeof toast==="function")toast("✅ Règlement corrigé → "+method+(r.data&&r.data.piece?" (pièce n°"+r.data.piece+")":""),"success");
@@ -32489,6 +32742,8 @@ async function doModifTicket(id,isPast){
   if(guardDoubleClick("modification ticket")) return;
   var motif=document.getElementById("mtMotif").value.trim();
   if(!motif){document.getElementById("mtMotif").style.borderColor="var(--red)";document.getElementById("mtMotif").focus();return;}
+  // 2026-10-14 audit (NF525) : ni contre-ticket ni ticket déjà annulé ne se « modifient » (double contre-passation)
+  try{ var _oM=null; for(var _im=0;_im<AP.length;_im++){ if(AP[_im].id===id){ _oM=AP[_im]; break; } } var _rfM=_oM?_lxAnnulationRefusee(_oM):"Ticket introuvable"; if(_rfM){ showAlert(_rfM,"warning"); return; } }catch(_eRM){}
   // 2026-10-14 (NF525) : la modification scelle un contre-ticket + un nouveau ticket -> journée ouverte obligatoire
   if(window._lxModifEnCours) return; window._lxModifEnCours=true; var _okJm; try{ _okJm=await lxJourOuvertOuAlerte(); } finally { setTimeout(function(){ window._lxModifEnCours=false; },1500); }
   if(!_okJm) return;
@@ -32594,6 +32849,7 @@ function rCaisseGestion(){
   for(var i=0;i<tabs.length;i++){h+='<div class="tab'+(caisseSubTab===tabs[i].k?" on":"")+'" onclick="caisseSubTab=\''+tabs[i].k+'\';go(\'caisseGestion\')" style="font-size:12px;padding:8px 12px">'+tabs[i].l+'</div>';}
   h+='</div>';
   
+  try{ _lxCoffreRattrapageAutoZ(); }catch(_eRz2){} // 2026-10-14 audit : mise au coffre des Z automatiques
   if(caisseSubTab==="especes"){
     var _sdcRefsE=(typeof _lxSameDayCancelRefs==="function")?_lxSameDayCancelRefs():{};
     var espEnc=0;AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!(typeof _lxIsSameDayContra==="function"&&_lxIsSameDayContra(a,_sdcRefsE));}).forEach(function(a){espEnc+=(typeof _lxPayBuckets==="function"?_lxPayBuckets(a).esp:(String(a.met||"").toLowerCase().indexOf("esp")>=0?Number(a.pr)||0:0));});
@@ -35503,6 +35759,10 @@ async function _cancelSecureTicketDo(id,motif){
   var orig=null;
   for(var i=0;i<AP.length;i++){if(AP[i].id===id){orig=AP[i];break;}}
   if(!orig)return;
+  // 2026-10-14 audit (NF525) : un ticket ne s'annule qu'UNE fois, et un contre-ticket ne s'annule jamais
+  // (BOI-TVA-DECLA-30-10-30 §90 : la correction est une opération en « moins » définitive ; annuler l'annulation
+  // créerait un 3e enregistrement qui reconstituerait la recette sans vente réelle).
+  if(_lxAnnulationRefusee(orig)){ showAlert(_lxAnnulationRefusee(orig),"warning"); return; }
   // 2026-10-14 (NF525) : pas d'« Avoir / Annuler » sur un ticket d'acompte, d'annulation d'acompte ou de retenue.
   //  - ticket d'acompte : l'acompte reste rattaché au rendez-vous ; le seul chemin correct est « Annuler l'acompte »
   //    depuis le rendez-vous (ticket négatif + acompte retiré du RDV), sinon l'acompte serait remboursé ET déduit ;
@@ -35539,6 +35799,12 @@ async function _cancelSecureTicketDo(id,motif){
       && !!orig.cId
       && !(typeof orig.cId==="string" && orig.cId.indexOf("passage-")===0);
   }catch(_eDet){ _sameDay=(orig.date===TD); _isRealRdv=false; }
+  // 2026-10-14 audit : effets de gestion appliqués PAR CE TICKET (fidélité, bons cadeaux utilisés, séances de forfait,
+  // forfaits / bons / cartes vendus, stock) -> plan d'inversion calculé ici, AVANT toute numérotation (lecture en base
+  // bornée si le ticket a été rechargé sans ses effets en mémoire).
+  var _planEffets=null;
+  try{ _planEffets=await _lxEffetsPlanInverse(orig); }catch(_ePl){ console.warn("[annulation] effets",_ePl); }
+  if(_lxAnnulationRefusee(orig)){ showAlert(_lxAnnulationRefusee(orig),"warning"); return; } // relu après l'attente
   // Mark original as cancelled
   // FIX 2026-07-11 : le motif n etait pose QUE sur cancelMotif (memoire seule) -> la colonne DB
   // cancel_reason (ecrite par saveAppointment depuis appt.cancelReason) restait vide, et le motif
@@ -35590,6 +35856,9 @@ async function _cancelSecureTicketDo(id,motif){
     contraSameDay:_sameDay,
     fromCaisse:true
   };
+  // 2026-10-14 audit : plan d'inversion des effets de gestion (calculé AVANT la numérotation, voir plus haut),
+  // mémorisé sur le contre-ticket (raw_data / meta, hors empreinte) avant son scellement.
+  if(_planEffets) cancelTicket.lxEffetsInverses=_planEffets;
   // NF525: opérateur qui annule
   if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){
     cancelTicket.operator_id=CURRENT_OPERATOR.id;
@@ -35655,6 +35924,159 @@ async function _cancelSecureTicketDo(id,motif){
     }catch(_eRel){ console.warn("[annulation] reliberation du RDV impossible:",_eRel); }
   }
   auditLog("TICKET_ANNULATION","Annulation #"+(orig.tkNum||"--")+" \u2192 Contre-ticket #"+tkN+" - Montant: -"+(orig.pr||0).toFixed(2)+"E - Motif: "+motif+(_isRealRdv?" \u2014 RDV relib\u00e9r\u00e9 (\u00e0 r\u00e9encaisser)":""));
+  // 2026-10-14 audit : inversion des effets de gestion (donn\u00e9es de gestion uniquement : aucun ticket, aucune cl\u00f4ture,
+  // aucune empreinte n'est touch\u00e9). Le ticket d'origine est marqu\u00e9 \u00ab effets invers\u00e9s \u00bb (meta, hors empreinte).
+  try{ await _lxEffetsExecuter(_planEffets, orig, cancelTicket); }catch(_eEx){ console.warn("[annulation] inversion des effets",_eEx); }
+}
+// =====================================================================
+// 2026-10-14 audit \u2014 ANNULATION D'UN TICKET : refus des doubles annulations + inversion des effets de gestion
+// Les effets (points / cagnotte / CA cumul\u00e9 de fid\u00e9lit\u00e9, bons cadeaux utilis\u00e9s, s\u00e9ances de forfait d\u00e9compt\u00e9es,
+// forfaits / bons cadeaux / cartes d'abonnement vendus, stock) sont relev\u00e9s AU SCELLEMENT dans tk.lxEffets
+// (raw_data du ticket + appointments.meta, jamais dans les donn\u00e9es hach\u00e9es) puis invers\u00e9s \u00e0 l'annulation.
+// Ticket ancien sans relev\u00e9 : les produits / bons / forfaits port\u00e9s par ses lignes sont signal\u00e9s \u00e0 l'op\u00e9rateur
+// (r\u00e9gularisation manuelle), rien n'est devin\u00e9.
+// =====================================================================
+function _lxAnnulationRefusee(orig){
+  try{
+    if(!orig) return "Ticket introuvable";
+    if(orig.cancelled===true||orig.st==="cancelled") return "Ce ticket est d\u00e9j\u00e0 annul\u00e9 (un contre-ticket existe).";
+    if(orig.isCancel===true||orig.contraSameDay===true) return "Un contre-ticket d\u2019annulation ne peut pas \u00eatre annul\u00e9 ni modifi\u00e9 (op\u00e9ration n\u00e9gative d\u00e9finitive).";
+    var its=orig.items||[];
+    if(its.some(function(it){ return it&&/^ANNULATION\b/.test(String(it.name||"")); })&&Number(orig.pr)<0) return "Un contre-ticket d\u2019annulation ne peut pas \u00eatre annul\u00e9.";
+    // contre-ticket d\u00e9j\u00e0 pr\u00e9sent pour ce ticket (marqueur \u00ab cancelled \u00bb perdu, autre appareil)
+    for(var i=0;i<AP.length;i++){ var t=AP[i];
+      if(t&&t!==orig&&t.isCancel===true&&t.cancelRef!=null&&((orig.tkNum!=null&&String(t.cancelRef)===String(orig.tkNum))||String(t.cancelRef)===String(orig.id))) return "Ce ticket a d\u00e9j\u00e0 un contre-ticket d\u2019annulation (#"+(t.tkNum||"--")+").";
+    }
+  }catch(_e){}
+  return null;
+}
+// Relev\u00e9 des effets d'un encaissement (appel\u00e9 AVANT le scellement : les valeurs \u00ab avant / apr\u00e8s \u00bb de la fid\u00e9lit\u00e9 sont
+// pr\u00e9dites \u00e0 partir des d\u00e9cisions d\u00e9j\u00e0 prises dans _tk, exactement comme le code d'application qui suit).
+function _lxEffetsReleve(tkSrc, tkNum){
+  var E={v:1,at:new Date().toISOString(),tkNum:tkNum||null,fid:[],bons:[],seances:[],packsVendus:[],bonsVendus:[],cartesVendues:[],stock:[]};
+  try{
+    var fr=tkSrc._fidResults||{};
+    Object.keys(fr).forEach(function(cId){
+      var cl=gC(cId), r=fr[cId]; if(!cl||!r) return;
+      var f0=Number(cl.fid)||0, c0=Number(cl.cagnotte)||0, a0=Number(cl.caTotal)||0, f1=f0, c1=c0, a1=a0;
+      if(r.action==="discount") f1=r.resetTo||0;
+      else if(r.action==="add") f1=f0+1;
+      else if(r.action==="cagnotte_credit") c1=Math.round((c0+(r.credit||0))*100)/100;
+      else if(r.action==="cagnotte_use") c1=Math.max(0,Math.round((c0-(r.use||0)+(r.credit||0))*100)/100);
+      else if(r.action==="ca_credit") a1=Math.round((a0+(r.amount||0))*100)/100;
+      else if(r.action==="ca_discount") a1=0;
+      if(f1!==f0||c1!==c0||a1!==a0) E.fid.push({cId:cId,fid:[f0,f1],cag:[c0,c1],ca:[a0,a1]});
+    });
+    if(!Object.keys(fr).length&&tkSrc.cId){ var cl2=gC(tkSrc.cId); if(cl2){ var g0=Number(cl2.fid)||0;
+      if(tkSrc._fidReset&&g0!==0) E.fid.push({cId:tkSrc.cId,fid:[g0,0],cag:[0,0],ca:[0,0]});
+      else if(!tkSrc._fidReset&&tkSrc._fidAdd) E.fid.push({cId:tkSrc.cId,fid:[g0,g0+1],cag:[0,0],ca:[0,0]}); } }
+  }catch(_eF){}
+  try{ (tkSrc._bonsConsommes||[]).forEach(function(b){ if(b&&b.id&&Number(b.use)>0) E.bons.push({id:b.id,code:b.code||"",use:Math.round(Number(b.use)*100)/100}); }); }catch(_eB){}
+  try{
+    (tkSrc.items||[]).forEach(function(it){
+      if(!it||it.isSep) return;
+      if(it.prodId&&Number(it.qty)>0) E.stock.push({prodId:it.prodId,qty:Number(it.qty),name:it.name||""});
+      if(it.isPack){
+        var nm=String(it.name||"");
+        if(!(Number(it.price)>0)){ // s\u00e9ance d'un forfait existant (ligne \u00e0 0 \u20ac)
+          var pid=it.packId||it.packClientId||null;
+          if(!pid){ var mS=nm.split(" \u2014 "); var pn=mS.length>1?mS.slice(1).join(" \u2014 "):null;
+            var cand=(window.PACKS_CLIENTS||[]).filter(function(p){ return p&&p.nom===pn&&(!tkSrc.cId||p.clientId===tkSrc.cId); }); if(cand.length===1) pid=cand[0].id; }
+          if(pid) E.seances.push({packId:pid,name:nm}); else E.seances.push({packId:null,name:nm});
+        } else { // forfait vendu
+          var mP=/Pack: (.*) \(\d+ s/.exec(nm), pn2=mP?mP[1]:null;
+          var cand2=(window.PACKS_CLIENTS||[]).filter(function(p){ return p&&p.nom===pn2&&(!tkSrc.cId||p.clientId===tkSrc.cId)&&!(Number(p.used)>0)&&!p.ticketNum; });
+          E.packsVendus.push({packId:(it.packId||(cand2.length?cand2[cand2.length-1].id:null)),name:nm,prix:Number(it.price)||0});
+        }
+      }
+      if(it.isBon&&Number(it.price)>0){ var mB=/^Bon cadeau (\S+)/.exec(String(it.name||"")); var code=mB?mB[1]:null;
+        var g=null; if(code){ for(var k=0;k<GC.length;k++){ if(GC[k]&&GC[k].code===code){ g=GC[k]; break; } } }
+        E.bonsVendus.push({id:g?g.id:null,code:code,val:Number(it.price)||0}); }
+      if(it.isCarteAbo&&it.pendingCarteId) E.cartesVendues.push({id:it.pendingCarteId,name:it.name||""});
+    });
+  }catch(_eI){}
+  return E;
+}
+// Plan d'inversion : relev\u00e9 m\u00e9moris\u00e9 sur le ticket, sinon relu dans tickets.raw_data (lecture born\u00e9e \u00e0 4 s), sinon
+// signalement des lignes concern\u00e9es (ticket ant\u00e9rieur au relev\u00e9).
+async function _lxEffetsPlanInverse(orig){
+  if(!orig) return null;
+  if(orig.lxEffetsAnnules) return null;
+  var E=orig.lxEffets||null;
+  if(!E&&typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId&&!window._lxDemo){
+    try{ var q=_sb.from("tickets").select("eff:raw_data->lxEffets").eq("salon_id",_salonId).eq("raw_data->>id",orig.id).limit(1);
+      var r=(typeof _lxAvecDelai==="function")?await _lxAvecDelai(q,4000):await q;
+      if(r&&r.data&&r.data[0]&&r.data[0].eff&&typeof r.data[0].eff==="object") E=r.data[0].eff; }catch(_eQ){}
+  }
+  if(E) return {source:"releve",effets:E};
+  var manuel=[];
+  (orig.items||[]).forEach(function(it){ if(!it||it.isSep) return;
+    if(it.isProd||it.prodId) manuel.push("produit \u00ab "+(it.name||"")+" \u00bb (stock)");
+    if(it.isPack) manuel.push("forfait \u00ab "+(it.name||"")+" \u00bb");
+    if(it.isBon) manuel.push("bon cadeau \u00ab "+(it.name||"")+" \u00bb");
+    if(it.isCarteAbo) manuel.push("carte \u00ab "+(it.name||"")+" \u00bb"); });
+  if(Number(orig.bonVenduRemise)>0||Number(orig.offertRemise)>0) manuel.push("bon cadeau utilis\u00e9 en r\u00e8glement ("+((Number(orig.bonVenduRemise)||0)+(Number(orig.offertRemise)||0)).toFixed(2)+" \u20ac)");
+  if(orig.cId&&String(orig.cId).indexOf("passage")!==0) manuel.push("fid\u00e9lit\u00e9 du client (si un point / une remise a \u00e9t\u00e9 appliqu\u00e9)");
+  return manuel.length?{source:"manuel",manuel:manuel}:null;
+}
+async function _lxEffetsExecuter(plan, orig, contra){
+  if(!plan) return;
+  var faits=[], echecs=[];
+  if(plan.source==="manuel"){
+    try{ if(typeof saveAuditEntry==="function") saveAuditEntry("ANNULATION_EFFETS_MANUELS",JSON.stringify({ticket:orig.tkNum||null,contre_ticket:contra&&contra.tkNum,a_verifier:plan.manuel}).slice(0,2000)); }catch(_eA){}
+    try{ showAlert("Ticket annul\u00e9 (contre-ticket #"+(contra&&contra.tkNum||"--")+").\n\nCe ticket est ant\u00e9rieur au relev\u00e9 automatique des effets : v\u00e9rifiez et r\u00e9gularisez \u00e0 la main :\n- "+plan.manuel.join("\n- "),"warning"); }catch(_eS){}
+    return;
+  }
+  var E=plan.effets||{};
+  // fid\u00e9lit\u00e9 : on retire la variation apport\u00e9e par le ticket (jamais en dessous de 0)
+  (E.fid||[]).forEach(function(f){ try{ var cl=gC(f.cId); if(!cl){ echecs.push("fid\u00e9lit\u00e9 (client introuvable)"); return; }
+    var dF=(Number(f.fid&&f.fid[1])||0)-(Number(f.fid&&f.fid[0])||0), dC=(Number(f.cag&&f.cag[1])||0)-(Number(f.cag&&f.cag[0])||0), dA=(Number(f.ca&&f.ca[1])||0)-(Number(f.ca&&f.ca[0])||0);
+    if(dF) cl.fid=Math.max(0,(Number(cl.fid)||0)-dF);
+    if(dC) cl.cagnotte=Math.max(0,Math.round(((Number(cl.cagnotte)||0)-dC)*100)/100);
+    if(dA) cl.caTotal=Math.max(0,Math.round(((Number(cl.caTotal)||0)-dA)*100)/100);
+    if(typeof saveClient==="function") saveClient(cl);
+    faits.push("fid\u00e9lit\u00e9 "+cName(cl)); }catch(_eF){ echecs.push("fid\u00e9lit\u00e9"); } });
+  // bons cadeaux utilis\u00e9s en r\u00e8glement : recr\u00e9dit\u00e9s en base (fonction serveur atomique)
+  for(var i=0;i<(E.bons||[]).length;i++){ var b=E.bons[i];
+    try{ var rr=await _sb.rpc("recrediter_bon_cadeau",{p_bon_id:b.id,p_montant:b.use,p_ticket:String(contra&&contra.tkNum||""),p_motif:"Annulation du ticket #"+(orig.tkNum||"--")});
+      if(rr&&!rr.error&&rr.data&&rr.data.ok){ var g=null; for(var k=0;k<GC.length;k++){ if(GC[k]&&GC[k].id===b.id){ g=GC[k]; break; } }
+        if(g){ g.rem=Number(rr.data.restant); g.used=Number(rr.data.utilise); g.st=rr.data.status||g.st; }
+        faits.push("bon "+b.code+" recr\u00e9dit\u00e9 de "+b.use.toFixed(2)+" \u20ac"); }
+      else echecs.push("bon "+b.code+" ("+b.use.toFixed(2)+" \u20ac) : "+((rr&&rr.error&&rr.error.message)||(rr&&rr.data&&rr.data.erreur)||"refus")); }catch(_eB){ echecs.push("bon "+b.code); } }
+  // s\u00e9ances de forfait d\u00e9compt\u00e9es : rendues
+  (E.seances||[]).forEach(function(s){ try{ var pk=s.packId?(window.PACKS_CLIENTS||[]).find(function(p){ return p.id===s.packId; }):null;
+    if(!pk){ echecs.push("s\u00e9ance \u00ab "+s.name+" \u00bb (forfait introuvable)"); return; }
+    pk.used=Math.max(0,(Number(pk.used)||0)-1); if(pk.used<pk.total&&pk.status==="completed") pk.status="active";
+    if(typeof savePack==="function") savePack(pk); faits.push("s\u00e9ance rendue sur \u00ab "+pk.nom+" \u00bb"); }catch(_eS){ echecs.push("s\u00e9ance"); } });
+  // forfaits vendus : cl\u00f4tur\u00e9s s'ils n'ont servi \u00e0 aucune s\u00e9ance
+  (E.packsVendus||[]).forEach(function(s){ try{ var pk=s.packId?(window.PACKS_CLIENTS||[]).find(function(p){ return p.id===s.packId; }):null;
+    if(!pk){ echecs.push("forfait vendu \u00ab "+s.name+" \u00bb (introuvable)"); return; }
+    if(Number(pk.used)>0){ echecs.push("forfait \u00ab "+pk.nom+" \u00bb d\u00e9j\u00e0 utilis\u00e9 ("+pk.used+" s\u00e9ance(s)) : \u00e0 r\u00e9gulariser"); return; }
+    pk.status="cancelled"; if(typeof savePack==="function") savePack(pk); faits.push("forfait \u00ab "+pk.nom+" \u00bb annul\u00e9"); }catch(_eP){ echecs.push("forfait vendu"); } });
+  // bons cadeaux vendus : annul\u00e9s s'ils n'ont jamais servi
+  for(var j=0;j<(E.bonsVendus||[]).length;j++){ var bv=E.bonsVendus[j];
+    try{ var g2=null; for(var k2=0;k2<GC.length;k2++){ if(GC[k2]&&((bv.id&&GC[k2].id===bv.id)||(!bv.id&&bv.code&&GC[k2].code===bv.code))){ g2=GC[k2]; break; } }
+      if(!g2){ echecs.push("bon vendu "+(bv.code||"")+" (introuvable)"); continue; }
+      if((Number(g2.used)||0)>0.004){ echecs.push("bon "+g2.code+" d\u00e9j\u00e0 utilis\u00e9 ("+Number(g2.used).toFixed(2)+" \u20ac) : \u00e0 r\u00e9gulariser"); continue; }
+      var up=await _sb.from("cartes_cadeaux").update({status:"voided",restant:0}).eq("id",g2.id).eq("salon_id",_salonId).eq("utilise",0).select("id");
+      if(up&&!up.error&&up.data&&up.data.length){ g2.st="voided"; g2.rem=0; faits.push("bon "+g2.code+" annul\u00e9"); }
+      else echecs.push("bon "+g2.code+" (annulation refus\u00e9e"+((up&&up.error)?" : "+up.error.message:" : d\u00e9j\u00e0 utilis\u00e9 ?")+")"); }catch(_eV){ echecs.push("bon vendu"); } }
+  // cartes d'abonnement vendues : d\u00e9sactiv\u00e9es
+  (E.cartesVendues||[]).forEach(function(c){ try{ var ca=(window.CARTES_ABO_CLIENTS||[]).find(function(x){ return x.id===c.id; });
+    if(!ca){ echecs.push("carte \u00ab "+c.name+" \u00bb (introuvable)"); return; }
+    ca.status="cancelled"; if(typeof saveCarteAboClient==="function") saveCarteAboClient(ca); faits.push("carte \u00ab "+(ca.carteNom||c.name)+" \u00bb d\u00e9sactiv\u00e9e"); }catch(_eC){ echecs.push("carte"); } });
+  // stock : produits remis en stock (mouvement \u00ab retour \u00bb trac\u00e9)
+  (E.stock||[]).forEach(function(s){ try{ var p=null; for(var k3=0;k3<PRODS.length;k3++){ if(PRODS[k3].id===s.prodId){ p=PRODS[k3]; break; } }
+    if(!p){ echecs.push("stock \u00ab "+s.name+" \u00bb (produit introuvable)"); return; }
+    var av=Number(p.stk)||0; p.stk=av+Number(s.qty||0);
+    if(typeof saveProduct==="function") saveProduct(p);
+    if(typeof logMouvementStock==="function") logMouvementStock(p.id,s.name||p.n||"","retour",s.qty,av,p.stk,"Annulation ticket #"+(orig.tkNum||"--")+" (contre-ticket #"+(contra&&contra.tkNum||"--")+")");
+    faits.push("stock +"+s.qty+" "+(s.name||"")); }catch(_eSt){ echecs.push("stock"); } });
+  orig.lxEffetsAnnules={at:new Date().toISOString(),contre:contra&&contra.tkNum||null};
+  try{ if(typeof _lxApptMetaPatch==="function") _lxApptMetaPatch(orig.id,{lxEffetsAnnules:orig.lxEffetsAnnules}); }catch(_eM){}
+  try{ if(typeof saveAuditEntry==="function") saveAuditEntry("ANNULATION_EFFETS",JSON.stringify({ticket:orig.tkNum||null,contre_ticket:contra&&contra.tkNum,faits:faits,a_regulariser:echecs}).slice(0,2000)); }catch(_eA2){}
+  if(echecs.length){ try{ showAlert("Ticket annul\u00e9. \u00c0 r\u00e9gulariser \u00e0 la main :\n- "+echecs.join("\n- "),"warning"); }catch(_eS2){} }
+  else if(faits.length){ try{ toast("Effets du ticket annul\u00e9s : "+faits.join(", "),"success"); }catch(_eT){} }
 }
 function cloturerJournee(){
   var _sdcRefs=_lxSameDayCancelRefs();
@@ -35777,6 +36199,8 @@ function cloturerJournee(){
       try{ if(typeof saveAuditEntry==="function") saveAuditEntry("HASH_MISMATCH","Cloture num "+c.num+" sync="+c.hash.slice(0,16)+" async="+h.slice(0,16)); }catch(_){}
     }
   });
+  // 2026-10-14 audit : fond de caisse de la journée mémorisé (raw_data, hors empreinte) -> duplicata fidèle même si le fond change
+  try{ c.fondCaisse=Math.round((Number((window.CAISSE_DATA||{}).fond)||0)*100)/100; }catch(_eFd){}
   // FIX 2026-05-28 : attache la saisie de comptage du tiroir (NON FISCAL, n'impacte pas le hash)
   try{
     var _cp=window._lxClotureComptage;
@@ -36433,7 +36857,9 @@ async function exportFEC(){
     var dp=t.detail_paiement;
     if(typeof dp==="string"){ try{dp=JSON.parse(dp);}catch(_e){dp=null;} }
     // 2026-10-11 : pièces de correction de règlement (mode réellement encaissé)
-    try{ var _crT=(window.LX_CORR_REGL||[]).filter(function(c){ return c.ticket_id===t.id; });
+    // 2026-10-14 audit : seules les corrections du JOUR MÊME (avant clôture) sont fondues dans l'écriture du ticket ; une
+    // correction après clôture est une écriture distincte à sa propre date (voir après la boucle des tickets).
+    try{ var _crT=(window.LX_CORR_REGL||[]).filter(function(c){ return c.ticket_id===t.id && c.avant_cloture===true; });
       if(_crT.length&&dp&&typeof dp==="object"&&!Array.isArray(dp)){ var _d2={}; for(var _k in dp) _d2[_k]=Number(dp[_k])||0;
         _crT.forEach(function(c){ (c.lignes||[]).forEach(function(l){ _d2[l.mode]=Math.round(((_d2[l.mode]||0)+Number(l.montant||0))*100)/100; }); }); dp=_d2; } }catch(_eCf){}
     if(dp && typeof dp==="object" && !Array.isArray(dp)){
@@ -36493,6 +36919,14 @@ async function exportFEC(){
     _fl(ACC_VENTE_PROD,"Ventes de produits",_lib,prodHT,"C");
     _fl(ACC_TVA,"TVA collectée "+tva+"%",_lib,totalTVA,"C");
   });
+  // 2026-10-14 audit (BOI-TVA-DECLA-30-10-30 §90) : corrections de règlement APRÈS clôture -> écriture distincte à la date de la
+  // pièce (date_correction), entre comptes de trésorerie (plus / moins, somme nulle), pièce CR<n°>.
+  try{ (window.LX_CORR_REGL||[]).forEach(function(c){
+    if(!c||c.avant_cloture===true) return; var dc=String(c.date_correction||""); if(!dc||dc<dateFrom||dc>dateTo) return;
+    ecrNum++; var dE=fmtDate(dc), pR="CR"+String(c.num||0).padStart(6,"0"), lb="CORRECTION REGLEMENT TICKET "+(c.ticket_num_affiche||c.ticket_num||"?")+" DU "+fmtDate(c.ticket_date)+" - "+escFEC(String(c.motif||"").slice(0,60));
+    (c.lignes||[]).forEach(function(l){ var v=Math.round((Number(l.montant)||0)*100)/100; if(Math.abs(v)<0.005) return; var ac=_accForBucket(String(l.mode||"").toLowerCase());
+      lines.push(["VTE","Ventes salon",String(ecrNum),dE,ac.acc,ac.lib,"","",pR,dE,lb,fmtAmount(v>0?v:0),fmtAmount(v<0?-v:0),"","",dE,"",""].join("\t")); });
+  }); }catch(_eCrF){}
 
   var content=lines.join("\r\n");
   var fileName=siren+"FEC"+fmtDate(dateTo)+".txt";
