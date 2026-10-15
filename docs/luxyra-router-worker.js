@@ -3203,6 +3203,79 @@ async function handleBrevoSmsEvent(request, env) {
 }
 
 // ============================================================
+// 2026-10-15 MULTI-APPAREILS : ANTI-DOUBLON DES E-MAILS (/api/email/custom, /api/email/ticket)
+// ------------------------------------------------------------
+// Le 13/10, deux appareils du même salon ont envoyé le même rappel à la même cliente à 1 s d'intervalle.
+// Désormais, AVANT d'appeler Brevo, le worker RÉSERVE une ligne messaging_log avec une clé dedup_key
+// (index unique uniq_messaging_log_dedup) : le second envoi reçoit un conflit (409) et ne part pas.
+//  - clé d'ÉVÉNEMENT fournie par l'app (dedupKey, ex. « <salon>|rappel_24h_email|<adresse>|<jour> ») : valable
+//    sans limite de temps, acceptée seulement si elle commence par l'identifiant du salon de l'appelant ;
+//  - sinon clé de CONTENU : empreinte (destinataire + objet + texte) par tranche de 10 min, la tranche
+//    précédente étant aussi vérifiée -> un e-mail identique ne part pas deux fois en moins de 10 minutes.
+// Échec d'envoi Brevo -> la réservation est supprimée (un nouvel essai reste possible).
+// Appels serveur (x-lx-internal, rappels du cron) : déjà réservés par la fonction SQL -> rien ici.
+// Réservation impossible (base injoignable) : l'e-mail part quand même (jamais zéro), sans clé.
+// ============================================================
+const LX_EMAIL_FENETRE_MS = 10 * 60 * 1000;
+const LX_EMAIL_CONTEXTES = new Set(["luxyra_auto", "rappel_24h", "anniversaire", "relance", "carte_rappel_30j", "carte_rappel_7j", "ticket"]);
+async function lxSha256Hex(t) {
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(t)));
+  return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+function lxEmailTexteNormalise(html) {
+  return String(html || "").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ").trim().slice(0, 50000);
+}
+// Salon de l'appelant connecté : celui demandé s'il en est propriétaire, sinon son établissement ouvert.
+async function lxEmailSalonAppelant(env, acces, salonIdDemande) {
+  try {
+    if (!acces || !acces.user || !acces.user.id) return null;
+    if (salonIdDemande && await lxOwnsSalon(env, acces.user.id, salonIdDemande)) return String(salonIdDemande);
+    if (lxIsAdminUser(acces.user)) return null;
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id&user_id=eq.${encodeURIComponent(acces.user.id)}&ferme_le=is.null&order=created_at.desc&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : [];
+    return (Array.isArray(a) && a[0] && a[0].id) ? String(a[0].id) : null;
+  } catch (e) { return null; }
+}
+// -> { doublon:true } | { cle, journalise:true } | { cle:null } (pas de réservation : envoi quand même)
+async function lxEmailReserver(env, o) {
+  try {
+    if (!o || !o.salonId || !o.to) return { cle: null };
+    const to = String(o.to).trim().toLowerCase();
+    let contexte = LX_EMAIL_CONTEXTES.has(String(o.context || "")) ? String(o.context) : "luxyra_auto";
+    let cle = null, precedente = null;
+    const dk = (typeof o.dedupKey === "string") ? o.dedupKey.trim() : "";
+    if (dk && dk.length <= 300 && dk.indexOf(o.salonId + "|") === 0) cle = dk;
+    // « rappel_24h » sert aussi de verrou au rappel serveur : n'est accepté qu'avec la clé exacte du rappel
+    if (contexte === "rappel_24h" && !(cle && new RegExp("^" + o.salonId + "\\|rappel_24h_email\\|" + to.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\|\\d{4}-\\d{2}-\\d{2}$").test(cle))) contexte = "luxyra_auto";
+    if (!cle) {
+      const h = (await lxSha256Hex(to + "\n" + String(o.subject || "") + "\n" + lxEmailTexteNormalise(o.html))).slice(0, 40);
+      const tranche = Math.floor(Date.now() / LX_EMAIL_FENETRE_MS);
+      cle = `${o.salonId}|email|${h}|${tranche}`; precedente = `${o.salonId}|email|${h}|${tranche - 1}`;
+    }
+    if (precedente) {
+      const depuis = new Date(Date.now() - LX_EMAIL_FENETRE_MS).toISOString();
+      const rp = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/messaging_log?select=id&dedup_key=eq.${encodeURIComponent(precedente)}&created_at=gte.${encodeURIComponent(depuis)}&limit=1`, { headers: _sbHeaders(env) });
+      if (rp.ok) { const ap = await rp.json(); if (Array.isArray(ap) && ap.length) return { doublon: true }; }
+    }
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/messaging_log`, {
+      method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
+      body: JSON.stringify({ salon_id: o.salonId, type: "email", recipient: to, content: String(o.subject || "").slice(0, 300), via: "brevo",
+                             context: contexte, client_nom: o.toName ? String(o.toName).slice(0, 120) : null, dedup_key: cle })
+    });
+    if (r.status === 409) return { doublon: true };
+    if (r.ok) return { cle, journalise: true };
+    const t = await r.text().catch(() => "");
+    if (/23505|duplicate key/i.test(t)) return { doublon: true };
+    console.warn("[email anti-doublon] réservation impossible:", r.status, t.slice(0, 200));
+    return { cle: null };
+  } catch (e) { console.warn("[email anti-doublon]", e && e.message); return { cle: null }; }
+}
+async function lxEmailLiberer(env, cle) {
+  if (!cle) return;
+  try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/messaging_log?dedup_key=eq.${encodeURIComponent(cle)}`, { method: "DELETE", headers: _sbHeaders(env, { Prefer: "return=minimal" }) }); } catch (e) {}
+}
+
+// ============================================================
 // EMAIL: TICKET — FIX W4: "conforme NF525" pas "certifié"
 // ============================================================
 async function handleEmailTicket(request, env) {
@@ -3228,17 +3301,30 @@ async function handleEmailTicket(request, env) {
   }
   const unsubBlock = unsubLink ? `<div style="margin-top:10px"><a href="${unsubLink}" style="color:#bbb;font-size:10px;text-decoration:underline">Se désinscrire des emails</a></div>` : "";
   const emailHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px}.wrapper{max-width:500px;margin:0 auto}.header{background:#0b0b0b;padding:24px;text-align:center;color:#fff;border-radius:12px 12px 0 0;border-bottom:3px solid #c8a84e}.header h1{margin:0;font-size:20px;color:#d4a843;letter-spacing:1px}.header p{margin:4px 0 0;font-size:13px;color:rgba(255,255,255,.7)}.ticket-container{background:#fff;padding:24px;border-left:1px solid #e0e0e0;border-right:1px solid #e0e0e0;font-family:'Courier New',monospace;font-size:12px;line-height:1.5;color:#000}.ticket-container table{width:100%;border-collapse:collapse}.footer{text-align:center;padding:16px;font-size:11px;color:#999;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 12px 12px;background:#fff}</style></head><body><div class="wrapper"><div class="header"><h1>${salonName||"Votre salon"}</h1><p>Votre ticket de caisse N°${ticketNum}</p></div><div class="ticket-container">${ticketHtml}</div><div class="footer"><img src="https://luxyra.fr/luxyra-logo.png" width="28" height="28" alt="Luxyra" style="display:block;margin:0 auto 6px;border-radius:6px">Envoyé via <strong>Luxyra</strong> — Caisse conforme à la loi anti-fraude TVA<br>Art. 286-I-3° bis du CGI<br><em style="font-size:10px;color:#bbb">Ce ticket fait office de facture. Conservez-le 6 ans minimum.</em>${unsubBlock}</div></div></body></html>`;
+  // 2026-10-15 : anti-doublon (même ticket au même client en moins de 10 min, deux appareils / double appui)
+  const _salonRes = _acces.ok ? await lxEmailSalonAppelant(env, _acces, body.salon_id) : null;
+  const _res = _salonRes ? await lxEmailReserver(env, { salonId: _salonRes, to: clientEmail, toName: clientName, context: "ticket",
+    subject: `Votre ticket N°${ticketNum} — ${salonName || ""}`, html: ticketHtml }) : { cle: null };
+  if (_res.doublon) return jsonResponse({ success: true, deduplique: true, journalise: true });
   const encoder = new TextEncoder();
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket ${salonName} N°${ticketNum}</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Courier New',monospace;padding:15px;max-width:340px;margin:0 auto;font-size:12px;line-height:1.5;color:#000;background:#fff}table{width:100%;border-collapse:collapse}@media print{body{padding:5px}}</style></head><body>${ticketHtml}</body></html>`;
   const bytes = encoder.encode(fullHtml);
   let b64 = ""; for (let i = 0; i < bytes.length; i++) b64 += String.fromCharCode(bytes[i]); b64 = btoa(b64);
-  const result = await brevoSendEmail(env, {
-    to: clientEmail, toName: clientName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr",
-    replyTo: salonEmail, subject: `Votre ticket N°${ticketNum} — ${salonName || ""}`,
-    htmlContent: emailHtml, textContent: `Bonjour, voici votre ticket N°${ticketNum} de ${salonName || "votre salon"}.`,
-    attachment: [{ name: `Ticket-${ticketNum}-${(salonName||"Luxyra").replace(/[^a-zA-Z0-9]/g,"_")}.html`, content: b64 }]
-  });
-  return jsonResponse({ success: true, messageId: result.messageId, result });
+  let result;
+  try {
+    result = await brevoSendEmail(env, {
+      to: clientEmail, toName: clientName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr",
+      replyTo: salonEmail, subject: `Votre ticket N°${ticketNum} — ${salonName || ""}`,
+      htmlContent: emailHtml, textContent: `Bonjour, voici votre ticket N°${ticketNum} de ${salonName || "votre salon"}.`,
+      attachment: [{ name: `Ticket-${ticketNum}-${(salonName||"Luxyra").replace(/[^a-zA-Z0-9]/g,"_")}.html`, content: b64 }]
+    });
+  } catch (e) { await lxEmailLiberer(env, _res.cle); throw e; }
+  // 2026-10-15 : un refus de Brevo n'est plus annoncé comme un succès ; la réservation est libérée
+  if (!result || (!result.messageId && (result.code || result.message))) {
+    await lxEmailLiberer(env, _res.cle);
+    return jsonResponse({ success: false, error: (result && (result.message || result.code)) || "envoi refusé", result });
+  }
+  return jsonResponse({ success: true, messageId: result.messageId, journalise: !!_res.journalise, result });
 }
 
 async function handleEmailWelcome(request, env) {
@@ -3278,11 +3364,22 @@ async function handleEmailCustom(request, env) {
     if (!_permis) return jsonResponse({ error: "Authentification requise" }, 401);
   }
   if (_acces.user && !checkRateLimit("email_custom_u:" + _acces.user.id, 30)) return jsonResponse({ error: "Trop de requêtes. Réessayez dans 1 minute." }, 429);
-  const { to, toName, salonName, salonEmail, subject, htmlContent, textContent } = await request.json();
+  const _corps = await request.json();
+  const { to, toName, salonName, salonEmail, subject, htmlContent, textContent } = _corps;
   if (!to || !subject) return jsonResponse({ error: "to et subject requis" }, 400);
-  const result = await brevoSendEmail(env, { to, toName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: salonEmail, subject, htmlContent: htmlContent || "", textContent: textContent || "", attachment: null });
-  if (result.code || result.message) return jsonResponse({ success: false, error: result.message || result.code, result });
-  return jsonResponse({ success: true, messageId: result.messageId, result });
+  // 2026-10-15 : anti-doublon multi-appareils (voir lxEmailReserver). Appels serveur : déjà réservés en base.
+  let _res = { cle: null };
+  if (_acces.ok && !_acces.internal) {
+    const _salonRes = await lxEmailSalonAppelant(env, _acces, _corps.salon_id);
+    if (_salonRes) _res = await lxEmailReserver(env, { salonId: _salonRes, to, toName, subject, html: htmlContent || textContent || "", context: _corps.context, dedupKey: _corps.dedupKey });
+    if (_res.doublon) return jsonResponse({ success: true, deduplique: true, journalise: true });
+  }
+  let result;
+  try {
+    result = await brevoSendEmail(env, { to, toName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: salonEmail, subject, htmlContent: htmlContent || "", textContent: textContent || "", attachment: null });
+  } catch (e) { await lxEmailLiberer(env, _res.cle); throw e; }
+  if (result.code || result.message) { await lxEmailLiberer(env, _res.cle); return jsonResponse({ success: false, error: result.message || result.code, result }); }
+  return jsonResponse({ success: true, messageId: result.messageId, journalise: !!_res.journalise, result });
 }
 
 // FIX W6: .trim() on SMS sender to avoid trailing space ("Excellence " → "Excellence")
