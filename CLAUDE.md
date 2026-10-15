@@ -1948,3 +1948,17 @@ SQL `docs/migrations_1014/secu.sql` (idempotent) -> edge functions `docs/edge_10
 - NF525 : tests de nuit (dernier résultat stocké, la fonction n'est PAS relancée : elle écrit), verrous (verify_nf525_status), autocontrôle signatures, clé, ancrage, attestation éditeur (constante `v_majeure`='6' à bumper avec LX_ATT), conservation ; par établissement : mode, numérotation, numéros imprimés, chaînage, scellement recalculé, signatures, JET, Z, ZM/ZA, exercice, grand total, archives, attestation.
 - admin.html : `lxARCharger` / `lxARRendu` / `_lxARHtml` / `_lxNfHtml` / `lxARTraiter` ; en tête du cockpit et du monitoring ; le résumé « en clair » et son « sans gravité » replié restent dessous.
 - État au 15/10 : 0 point à réparer sur 72 h ; NF525 ✅ partout (Excellence : 2 irrégularités de numéros imprimés de juillet, historiques ; ticket #311 corrigé cb→esp avant clôture le 16/07, tracé).
+
+## 2026-10-15 — Boîte de support renforcée (branche admin-chat, NON déployé)
+- SQL `docs/migrations_1015/support_chat.sql` (validé BEGIN…ROLLBACK, à appliquer AVANT les pages) puis `bot-reply` v14 (`docs/edge_1015/bot-reply/index.ts`).
+- Statuts `support_conversations.status` : `open` (ouvert) / `waiting` (en attente du pro, posé par `fn_touch_support_conv` quand l'équipe répond) / `resolved`. Message du pro → `open`.
+- Escalade : `escalade_bot`, `escalade_le`, `escalade_motif` (bot | demande_pro | erreur_bot | piece_jointe). Déclencheur `trg_support_escalade` : message du bot avec `read_by_admin=false` = passage de main. « Réactiver le bot » (admin) remet `bot_active=true` et efface l'escalade.
+- Notes internes : table SÉPARÉE `support_notes` (policy is_admin seulement ; bot-reply ne lit que support_messages).
+- Réponses types : `support_reponses_types` (titre, raccourci, contenu, ordre, actif), admin ; « / » dans la réponse, variables {prenom} {salon}.
+- Pièces jointes : `support_messages.pieces` jsonb [{chemin,nom,type,taille}], bucket privé `support-pieces` (PNG/JPEG/WebP/PDF, 5 Mo ; chemin `<salon>/<conversation>/<uuid>.<ext>`), validées par `lx_prive.support_pieces_valider` (type/taille relus dans storage.objects). Liens signés 10 min. Signature réelle du fichier vérifiée côté navigateur.
+- Avis 👍/👎 sur le bot : `support_messages.bot_avis` via RPC `support_bot_avis`. Gardes `support_msg_garde` / `support_conv_garde` : nouvelles colonnes non modifiables par un pro.
+- Realtime privé `support:<conversation>` (broadcast typing / lu + présence), policies sur `realtime.messages` via `public.support_canal_autorise(topic)`.
+- RPC admin (is_admin) : `admin_support_contexte`, `admin_support_recherche` (ILIKE messages + notes), `admin_support_stats`, `admin_support_bot_revue`.
+- E-mail de secours : `lx_prive.support_relances_email()` (cron `support-relances-email` */5), 15 min sans lecture, dedup `messaging_log.dedup_key = support_relance|pro|admin|<message>`, rien entre 21 h et 8 h (Paris), messages > 3 j ignorés.
+- Admin : Communication › Chat support = onglets internes Boîte / Réponses types / Revue du bot / Statistiques ; raccourcis j k r e / Ctrl+Entrée ; lien direct `?tab=communication&sub=chat&conv=<id>`.
+- App pro : 📎, statut « Ouverte / Réponse reçue / Résolue », « en train d'écrire », « ✓✓ Vu », 👍/👎, pastille = non-lus de toutes les conversations (réponses du bot comprises).
