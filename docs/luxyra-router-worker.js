@@ -135,6 +135,9 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/admin/stripe" && request.method === "POST") return await handleAdminStripe(request, env);
       // 2026-10-15 : crédits restants du compte Brevo Luxyra (admin seulement, lecture seule)
       if (url.pathname === "/api/admin/brevo" && request.method === "GET") return await handleAdminBrevo(request, env, url);
+      // 2026-10-15 : statistiques e-mails Brevo (7 / 30 j) et état des automatismes GitHub (admin seulement, lecture seule)
+      if (url.pathname === "/api/admin/brevo-emails" && request.method === "GET") return await handleAdminBrevoEmails(request, env, url);
+      if (url.pathname === "/api/admin/github-actions" && request.method === "GET") return await handleAdminGithubActions(request, env, url);
       // Stripe Connect
       if (url.pathname === "/api/stripe/connect-onboard" && request.method === "POST") return await handleConnectOnboard(request, env);
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
@@ -201,12 +204,24 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/annuaire/retrait" && request.method === "POST") return await handleAnnuaireRetrait(request, env);
       // Endpoint admin pour déclencher manuellement le job de rétention (debug/test).
       // Sécurisé par un secret bearer token dans env.RETENTION_ADMIN_TOKEN.
+      // 2026-10-15 : aussi déclenchable depuis le panneau admin (session support@luxyra.fr + double authentification),
+      // bouton « Lancer maintenant » de la page RGPD & purges. Le job ne traite que les candidats déjà dus
+      // (préavis envoyés, délais écoulés) : mêmes règles que la tâche de nuit, rien n'est forcé.
       if (url.pathname === "/api/admin/retention-purge" && request.method === "POST") {
         const auth = request.headers.get("Authorization") || "";
-        if (!env.RETENTION_ADMIN_TOKEN || auth !== `Bearer ${env.RETENTION_ADMIN_TOKEN}`) {
-          return jsonResponse({ error: "unauthorized" }, 401);
+        let parAdmin = null;
+        if (!(env.RETENTION_ADMIN_TOKEN && lxEgal(auth, `Bearer ${env.RETENTION_ADMIN_TOKEN}`))) {
+          const u = await lxAuthUser(request);
+          if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "unauthorized" }, 401);
+          parAdmin = String(u.email || "admin");
         }
         const result = await runRetentionPurgeJob(env);
+        if (parAdmin) {
+          try {
+            await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/admin_log`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=minimal" }),
+              body: JSON.stringify({ action: "RETENTION_MANUELLE", admin_email: parAdmin, cible: "conservation", details: JSON.stringify({ warned: result.warned, purged: result.purged, errors: result.errors, devis: result.devisPurged || 0 }).slice(0, 1000) }) });
+          } catch (_) {}
+        }
         return jsonResponse({ success: true, ...result });
       }
       return jsonResponse({ error: "Not found" }, 404);
@@ -1889,6 +1904,117 @@ async function handleAdminBrevo(request, env, url) {
     return sortie(_lxBrevoCache, false);
   } catch (e) {
     try { await reportWorkerError(env, "worker:admin-brevo", e, {}, "warning"); } catch (_) {}
+    return jsonResponse({ error: "Erreur interne : " + String(e && e.message || e).slice(0, 200) }, 500);
+  }
+}
+
+// ============================================================
+// BREVO — STATISTIQUES E-MAILS (2026-10-15) — GET /api/admin/brevo-emails[?refresh=1]
+// Admin seulement (support@luxyra.fr + aal2). Lecture seule, même clé que les crédits (BREVO_API_KEY).
+// Brevo GET /v3/smtp/statistics/aggregatedReport?days=7|30 (envoyés, délivrés, ouvertures, rejets, bloqués…)
+// + 30 derniers incidents (rejets, bloqués, spam, invalides) des 7 derniers jours. Cache 10 min.
+// ============================================================
+const LX_BREVO_STATS_TTL = 600000;
+const LX_BREVO_STATS_KEY = "https://luxyra.fr/__lx_cache/admin-brevo-emails";
+let _lxBrevoStatsCache = null;
+function lxBrevoAgreger(j) {
+  const n = (v) => (v == null || !isFinite(Number(v)) ? 0 : Number(v));
+  return {
+    envoyes: n(j && j.requests), delivres: n(j && j.delivered), ouvertures: n(j && j.opens), ouvertures_uniques: n(j && j.uniqueOpens),
+    clics: n(j && j.clicks), clics_uniques: n(j && j.uniqueClicks), rejets_definitifs: n(j && j.hardBounces), rejets_temporaires: n(j && j.softBounces),
+    bloques: n(j && j.blocked), invalides: n(j && j.invalid), spam: n(j && j.spamReports), desabonnes: n(j && j.unsubscribed),
+    periode: (j && j.range) || null
+  };
+}
+async function handleAdminBrevoEmails(request, env, url) {
+  try {
+    const u = await lxAuthUser(request);
+    if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
+    if (!env.BREVO_API_KEY) return jsonResponse({ error: "Clé API Brevo absente du worker (variable BREVO_API_KEY)" }, 503);
+    const now = Date.now();
+    const forcer = url.searchParams.get("refresh") === "1";
+    if (!_lxBrevoStatsCache) {
+      try { const hit = await caches.default.match(LX_BREVO_STATS_KEY); if (hit) { const j = await hit.json(); if (j && j.at && j.data) _lxBrevoStatsCache = j; } } catch (_) {}
+    }
+    if (_lxBrevoStatsCache && (now - _lxBrevoStatsCache.at) < (forcer ? 30000 : LX_BREVO_STATS_TTL)) {
+      return jsonResponse(Object.assign({ ok: true, cached: true, ageSec: Math.round((now - _lxBrevoStatsCache.at) / 1000) }, _lxBrevoStatsCache.data));
+    }
+    const h = { "api-key": env.BREVO_API_KEY, Accept: "application/json" };
+    const appel = async (chemin) => {
+      const r = await fetch("https://api.brevo.com/v3/" + chemin, { headers: h, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) { const t = await r.text().catch(() => ""); let m = ""; try { m = String(JSON.parse(t).message || ""); } catch (_) { m = t; } throw Object.assign(new Error("Brevo " + r.status + (m ? " : " + m.slice(0, 160) : "")), { status: r.status }); }
+      return r.json();
+    };
+    let s7, s30, ev;
+    try {
+      [s7, s30, ev] = await Promise.all([
+        appel("smtp/statistics/aggregatedReport?days=7"),
+        appel("smtp/statistics/aggregatedReport?days=30"),
+        appel("smtp/statistics/events?limit=100&days=7&sort=desc").catch(() => ({ events: [] }))
+      ]);
+    } catch (e) {
+      if (_lxBrevoStatsCache) return jsonResponse(Object.assign({ ok: true, stale: true, warning: "Brevo injoignable, dernières valeurs connues" }, _lxBrevoStatsCache.data));
+      const st = e && e.status;
+      return jsonResponse({ error: (st === 401 || st === 403) ? "Clé API Brevo refusée (" + st + ")" : (st === 429 ? "Brevo limite le nombre d'appels, réessayer dans une minute" : String(e && e.message || e).slice(0, 200)) }, st === 429 ? 503 : 502);
+    }
+    const TYPES = { hardBounces: "Rejet définitif", softBounces: "Rejet temporaire", blocked: "Bloqué", spam: "Signalé comme spam", invalid: "Adresse invalide", error: "Erreur", deferred: "Différé" };
+    const incidents = (Array.isArray(ev && ev.events) ? ev.events : [])
+      .filter((x) => TYPES[x.event])
+      .slice(0, 30)
+      .map((x) => ({ date: x.date || null, type: TYPES[x.event], email: String(x.email || "").slice(0, 120), sujet: String(x.subject || "").slice(0, 160), raison: String(x.reason || "").slice(0, 200) }));
+    const data = { j7: lxBrevoAgreger(s7), j30: lxBrevoAgreger(s30), incidents, fetchedAt: new Date(now).toISOString() };
+    _lxBrevoStatsCache = { at: now, data };
+    try { await caches.default.put(LX_BREVO_STATS_KEY, new Response(JSON.stringify(_lxBrevoStatsCache), { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=600" } })); } catch (_) {}
+    return jsonResponse(Object.assign({ ok: true, cached: false, ageSec: 0 }, data));
+  } catch (e) {
+    try { await reportWorkerError(env, "worker:admin-brevo-emails", e, {}, "warning"); } catch (_) {}
+    return jsonResponse({ error: "Erreur interne : " + String(e && e.message || e).slice(0, 200) }, 500);
+  }
+}
+
+// ============================================================
+// GITHUB ACTIONS — SAUVEGARDE DE NUIT, TEST DE RESTAURATION, DÉPLOIEMENT DU WORKER (2026-10-15)
+// GET /api/admin/github-actions[?refresh=1] — admin seulement. Jeton GitHub en LECTURE SEULE dans la variable
+// secrète GITHUB_TOKEN_RO (jeton « fine-grained », dépôt Luxyra-fr/luxyra.fr, permission Actions : Read-only).
+// Sans jeton : { connecte: false } (le panneau affiche la marche à suivre). Cache 5 min. Jamais d'écriture.
+// ============================================================
+const LX_GH_REPO = "Luxyra-fr/luxyra.fr";
+const LX_GH_WORKFLOWS = [
+  { fichier: "sauvegarde-nuit.yml", nom: "Sauvegarde de nuit", attendu_h: 26 },
+  { fichier: "test-restauration.yml", nom: "Test de restauration (mensuel)", attendu_h: 24 * 32 },
+  { fichier: "deploy-worker.yml", nom: "Déploiement du worker", attendu_h: null }
+];
+let _lxGhCache = null;
+async function handleAdminGithubActions(request, env, url) {
+  try {
+    const u = await lxAuthUser(request);
+    if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
+    if (!env.GITHUB_TOKEN_RO) return jsonResponse({ ok: true, connecte: false, depot: LX_GH_REPO });
+    const now = Date.now();
+    if (_lxGhCache && (now - _lxGhCache.at) < (url.searchParams.get("refresh") === "1" ? 30000 : 300000)) {
+      return jsonResponse(Object.assign({ ok: true, connecte: true, cached: true, ageSec: Math.round((now - _lxGhCache.at) / 1000) }, _lxGhCache.data));
+    }
+    const h = { Authorization: "Bearer " + env.GITHUB_TOKEN_RO, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "luxyra-admin" };
+    const workflows = await Promise.all(LX_GH_WORKFLOWS.map(async (w) => {
+      try {
+        const r = await fetch(`https://api.github.com/repos/${LX_GH_REPO}/actions/workflows/${w.fichier}/runs?per_page=10`, { headers: h, signal: AbortSignal.timeout(10000) });
+        if (r.status === 401 || r.status === 403) return { fichier: w.fichier, nom: w.nom, erreur: "Jeton refusé par GitHub (" + r.status + ") : vérifier ses droits (Actions : lecture) et sa date d'expiration" };
+        if (r.status === 404) return { fichier: w.fichier, nom: w.nom, erreur: "Automatisme introuvable (fichier renommé ?) ou jeton sans accès au dépôt" };
+        if (!r.ok) return { fichier: w.fichier, nom: w.nom, erreur: "GitHub " + r.status };
+        const j = await r.json();
+        const runs = (j.workflow_runs || []).map((x) => ({ id: x.id, statut: x.status, conclusion: x.conclusion, debut: x.run_started_at || x.created_at, maj: x.updated_at, declencheur: x.event, lien: x.html_url, branche: x.head_branch }));
+        const fini = runs.find((x) => x.statut === "completed") || null;
+        const succes = runs.find((x) => x.statut === "completed" && x.conclusion === "success") || null;
+        const enRetard = !!(w.attendu_h && (!fini || (now - new Date(fini.debut).getTime()) > w.attendu_h * 3600000));
+        return { fichier: w.fichier, nom: w.nom, dernier: runs[0] || null, dernier_termine: fini, dernier_succes: succes,
+          ok: !!(fini && fini.conclusion === "success") && !enRetard, en_retard: enRetard, executions: runs.slice(0, 5) };
+      } catch (e) { return { fichier: w.fichier, nom: w.nom, erreur: "GitHub injoignable : " + String(e && e.message || e).slice(0, 120) }; }
+    }));
+    const data = { depot: LX_GH_REPO, workflows, fetchedAt: new Date(now).toISOString() };
+    _lxGhCache = { at: now, data };
+    return jsonResponse(Object.assign({ ok: true, connecte: true, cached: false, ageSec: 0 }, data));
+  } catch (e) {
+    try { await reportWorkerError(env, "worker:admin-github", e, {}, "warning"); } catch (_) {}
     return jsonResponse({ error: "Erreur interne : " + String(e && e.message || e).slice(0, 200) }, 500);
   }
 }
