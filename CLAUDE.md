@@ -1938,3 +1938,5 @@ SQL `docs/migrations_1014/secu.sql` (idempotent) -> edge functions `docs/edge_10
 - Admin → SMS → Tableau de bord : carte « 💳 Crédits Brevo » (`brevoCharger` / `brevoRendu`) : crédits SMS Brevo, ≈ SMS France = floor(crédits / ratio), crédits vendus aux établissements (somme `salons.sms_credits` > 0), écart, plans email, alerte rouge sous le seuil ou si vendus > disponibles.
 - Réglages `app_config.config.brevo_credits_par_sms_fr` (défaut 4,5 — « à vérifier dans votre compte Brevo », estimation) et `brevo_seuil_sms_fr` (défaut 200), écrits par l'admin (`brevoSauverReglages`, lecture-fusion, policy is_admin, admin_log `BREVO_RATIO_SMS`).
 - ⚠ Le cron `runSmsRapprochementJob` alerte toujours sous 200 CRÉDITS bruts (pas SMS) — non modifié.
+
+- 2026-10-15 : VÉRIFIER LE WORKER EN MODULE avant tout push : `cp docs/luxyra-router-worker.js /tmp/w.mjs && node --check /tmp/w.mjs` (un `node --check` du .js ne voit pas les fonctions déclarées deux fois ; une fusion avait créé un doublon de lxSha256Hex et fait échouer le déploiement Cloudflare).
