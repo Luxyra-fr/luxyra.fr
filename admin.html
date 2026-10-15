@@ -1847,6 +1847,8 @@ function _lxExpliquerErreur(msg, source, t){
   if(/Aucun administrateur configur/i.test(m)) return R('surveiller','Aucun administrateur défini dans l\'établissement','Certaines actions (annulation, remise…) demandent un code administrateur.','Vérifier l\'équipe de l\'établissement concerné.');
   if(/Acc[eè]s refus[eé]/i.test(m)) return R('info','Action refusée faute de droits','Un utilisateur a tenté une action réservée au titulaire du compte.','Rien à faire.');
   if(/Failed to fetch|NetworkError|Load failed|network|ERR_INTERNET|timeout/i.test(m)) return R('info','Coupure de réseau chez l\'utilisateur','Le téléphone ou l\'ordinateur a perdu la connexion un instant.','Rien à faire si cela reste rare.');
+  // 2026-10-15 : messages normaux montrés à l'utilisateur (pas des pannes) -> « sans gravité », masqués du résumé
+  if(/refus[ée]?\s*\(RGPD\)|a refus[ée] (les )?sms|sans (accord|consentement)|n'a pas (donné son accord|consenti)/i.test(m)) return R('info','SMS non envoyé : le client n\'a pas donné son accord','Fonctionnement normal : Luxyra bloque les SMS aux clients qui n\'ont pas accepté d\'en recevoir (RGPD).','Rien à faire.');
   // 2026-10-15 : page publique pas chargée chez un visiteur (le message cite « Stripe=undefined » : ce n'est PAS un paiement)
   if(/SITE JS NON DEMARRE|boot_failed/i.test(m)) return R('surveiller','Page de réservation pas chargée chez un visiteur','Le site ne s\'est pas complètement chargé sur l\'appareil d\'un visiteur (connexion lente, page quittée ou mise à jour en cours). Aucun paiement n\'est concerné.','Rien à faire si c\'est isolé ; prévenir Claude si cela se répète.');
   if(/stripe/i.test(m)) return R('grave','Problème avec les paiements en ligne (Stripe)','Un paiement, un acompte ou un abonnement a pu échouer.','Regarder le détail ou prévenir Claude.');
@@ -1854,6 +1856,7 @@ function _lxExpliquerErreur(msg, source, t){
   if(/does not exist|column|relation|function .* not exist|PGRST/i.test(m)) return R('grave','Élément manquant dans la base','Une fonction de l\'appli appelle un élément qui n\'existe pas : une fonctionnalité peut être en panne.','Prévenir Claude.');
   if(/email|brevo|smtp/i.test(m)) return R('surveiller','Envoi d\'e-mail en échec','Un e-mail (confirmation, rappel…) n\'est peut-être pas parti.','Prévenir Claude si cela se répète.');
   if(/sms/i.test(m)) return R('surveiller','Envoi de SMS en échec','Un SMS n\'est peut-être pas parti.','Prévenir Claude si cela se répète.');
+  if(/^\s*\{?.{0,12}\[ALERT\]/.test(m) && !/TypeError|ReferenceError|is not a function/i.test(m)) return R('info','Message affiché à un utilisateur','Simple avertissement montré dans l\'appli (pas une panne).','Rien à faire.');
   if(/TypeError|ReferenceError|is not a function|undefined|null/i.test(m)) return R('surveiller','Erreur dans une page de l\'appli','Un bouton ou un écran a rencontré un problème technique.','Prévenir Claude si cela se répète ou si quelqu\'un s\'en plaint.');
   return R('surveiller','Erreur technique','Message d\'origine : '+m.slice(0,140),'Prévenir Claude si cela se répète.');
 }
@@ -1872,6 +1875,9 @@ function _lxMonitoringEnClair(serverErrs, publicErrs, recent){
   h+='<div style="font-weight:800;font-size:15px;color:'+etat[0]+';margin-bottom:4px">'+etat[1]+'</div>';
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Résumé en clair des dernières 24 h'+(arr.length?'':' : aucune erreur.')+'</div>';
   var coul={grave:'#ef5350',surveiller:'#ff9800',info:'#9e9e9e'}, lib={grave:'Grave',surveiller:'À surveiller',info:'Sans gravité'};
+  // 2026-10-15 : seuls les points utiles (grave / à surveiller) sont listés ; le « sans gravité » est replié
+  var _info=arr.filter(function(g){return g.x.niveau==='info';}); arr=arr.filter(function(g){return g.x.niveau!=='info';});
+  if(_info.length) h+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px">'+_info.reduce(function(n,g){return n+g.n;},0)+' message(s) sans gravité masqué(s) <a href="#" onclick="var d=this.parentNode.nextElementSibling;d.style.display=d.style.display===\'none\'?\'block\':\'none\';return false" style="color:var(--text2)">afficher</a></div><div style="display:none;font-size:11px;color:var(--text3);margin-bottom:8px">'+_info.map(function(g){return '• '+_esc(g.x.titre)+(g.n>1?' ×'+g.n:'');}).join('<br>')+'</div>';
   arr.forEach(function(g){
     var hh=new Date(g.last).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
     var sal=Object.keys(g.salons);
