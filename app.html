@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261015-2"></script>
+<script src="luxyra-supabase.js?v=20261015-3"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261015-2";
+  var attendu="20261015-3";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -14691,45 +14691,89 @@ function _lxSiteData(SC){
 function _lxSiteFixerBase(){
   try{ var d=_lxSiteData(window.SITE_CONFIG||{}); var b={}; Object.keys(d).forEach(function(k){ b[k]=lxJsonCanon(d[k]); }); window._lxSiteBase=b; }catch(_e){}
 }
-async function _lxSiteEcrire(data){
+// 2026-10-15 MULTI-APPAREILS : n'envoie QUE les champs modifies sur cet appareil depuis le chargement
+// (reference _lxSiteBase), avec controle de version (site_config.config_version, incremente par la base) :
+// si un autre appareil a ecrit entre la relecture et l'ecriture -> 0 ligne -> relecture, nouvelle fusion,
+// nouvel essai (3 fois), sinon message. Colonne absente (SQL non applique) : champs modifies seulement,
+// sans controle de version.
+async function _lxSiteEcrire(data0){
   try{
+    var verConflit=null;
+    for(var essai=0; essai<LX_CFG_ESSAIS; essai++){
+    var data=JSON.parse(JSON.stringify(data0));
     var r=await _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1);
     if(!r || r.error){ throw new Error((r&&r.error&&r.error.message)||"lecture impossible"); }
-    var row=(r.data&&r.data[0])||null, base=window._lxSiteBase||null, ecrits=[], conflitsSite=[], fusionne=false;
+    var row=(r.data&&r.data[0])||null, base=window._lxSiteBase||null, ecrits=[], conflitsSite=[], fusionne=false, repris={};
+    var ver=(row && typeof row.config_version==="number") ? row.config_version : null;
+    if(verConflit!==null && ver===verConflit) throw new Error("aucune modification acceptée par le serveur");
     if(row && base){
       Object.keys(data).forEach(function(k){
         if(k==="salon_id") return;
-        var memS=lxJsonCanon(data[k]);
-        if(memS===base[k] && Object.prototype.hasOwnProperty.call(row,k)){
-          data[k]=row[k];                                   // inchange ici -> on garde la base
-          if(k==="horaires_salon" && row[k] && typeof row[k]==="object" && !Array.isArray(row[k])){ try{ H=row[k]; }catch(_e){} }
-        } else {
-          // Modifie ici ET sur un autre appareil depuis le chargement : fusion (horaires jour par jour,
-          // listes par element...) au lieu d'ecraser. La liste des collaborateurs vient de l'equipe : pas de fusion.
-          if(k!=="collaborateurs" && k!=="updated_at" && Object.prototype.hasOwnProperty.call(row,k)){
-            var dbS=lxJsonCanon(row[k]);
-            if(dbS!==base[k] && dbS!==memS && row[k]!==null && row[k]!==undefined){
-              var bV; try{ bV = base[k]!==undefined ? JSON.parse(base[k]) : undefined; }catch(_b){ bV=undefined; }
-              data[k]=_lxCfgFusionValeur(bV, data[k], row[k], "site."+k, conflitsSite);
-              if(lxJsonCanon(data[k])!==memS) fusionne=true;
-            }
+        var memS=lxJsonCanon(data[k]), aCol=Object.prototype.hasOwnProperty.call(row,k);
+        if(memS===base[k]){
+          if(aCol){
+            data[k]=row[k];                                   // inchange ici -> on garde la base
+            if(k==="horaires_salon" && row[k] && typeof row[k]==="object" && !Array.isArray(row[k])) repris[k]=row[k];
           }
-          ecrits.push(k);
+          return;                                            // jamais envoye
         }
+        // Modifie ici ET sur un autre appareil depuis le chargement : fusion (horaires jour par jour,
+        // listes par element...) au lieu d'ecraser. La liste des collaborateurs vient de l'equipe : pas de fusion.
+        if(k!=="collaborateurs" && k!=="updated_at" && aCol){
+          var dbS=lxJsonCanon(row[k]);
+          if(dbS!==base[k] && dbS!==memS && row[k]!==null && row[k]!==undefined){
+            var bV; try{ bV = base[k]!==undefined ? JSON.parse(base[k]) : undefined; }catch(_b){ bV=undefined; }
+            data[k]=_lxCfgFusionValeur(bV, data[k], row[k], "site."+k, conflitsSite);
+            if(lxJsonCanon(data[k])!==memS) fusionne=true;
+          }
+        }
+        ecrits.push(k);
       });
     }
-    data.updated_at=new Date().toISOString();
-    var u=await _sb.from("site_config").upsert(data,{onConflict:"salon_id"}).select("salon_id");
-    if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
+    var u, casV=(ver!==null);
+    if(row && base){
+      if(!ecrits.length){
+        // rien de modifie ici : seulement la reprise des horaires recus d'un autre appareil
+        if(repris.horaires_salon){ try{ H=repris.horaires_salon; base.horaires_salon=lxJsonCanon(repris.horaires_salon); }catch(_e){} }
+        return true;
+      }
+      var patch={}; ecrits.forEach(function(k){ patch[k]=data[k]; });
+      patch.updated_at=new Date().toISOString();
+      var q=_sb.from("site_config").update(patch).eq("salon_id",_salonId);
+      if(casV) q=q.eq("config_version",ver);
+      u=await q.select(casV?"salon_id,config_version":"salon_id");
+      if(u && !u.error && (!u.data||!u.data.length)){
+        if(casV){ verConflit=ver; continue; }             // ecrit ailleurs entre-temps : on recommence
+        u={error:{message:"aucune modification acceptée par le serveur"}};
+      }
+    } else {
+      // Pas de ligne (creation) ou reference inconnue : ligne complete, comme avant
+      data.updated_at=new Date().toISOString();
+      if(row){
+        var q2=_sb.from("site_config").update(data).eq("salon_id",_salonId);
+        if(casV) q2=q2.eq("config_version",ver);
+        u=await q2.select(casV?"salon_id,config_version":"salon_id");
+        if(u && !u.error && (!u.data||!u.data.length)){ if(casV){ verConflit=ver; continue; } u={error:{message:"aucune modification acceptée par le serveur"}}; }
+      } else {
+        u=await _sb.from("site_config").upsert(data,{onConflict:"salon_id"}).select("salon_id");
+        if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification acceptée par le serveur"}}; // 2026-10-15 : 0 ligne = echec
+      }
+      ecrits=Object.keys(data).filter(function(k){ return k!=="salon_id" && k!=="updated_at"; });
+    }
     console.log("[SITE CONFIG]",u.error?u.error.message:"Saved OK");
     if(u.error) throw new Error(u.error.message||"ecriture refusee");
+    if(repris.horaires_salon){ try{ H=repris.horaires_salon; if(base) base.horaires_salon=lxJsonCanon(repris.horaires_salon); }catch(_e){} }
     if(base){ ecrits.forEach(function(k){ base[k]=lxJsonCanon(data[k]); }); }
+    try{ if(u.data&&u.data[0]&&typeof u.data[0].config_version==="number") window._lxSiteVersion=u.data[0].config_version; }catch(_eV){}
+    try{ window._lxSaisie=null; }catch(_eS){}
     if(conflitsSite.length){ try{ if(typeof _lxSignalerConflits==="function") _lxSignalerConflits("Site / horaires", (SALON_CONFIG&&SALON_CONFIG.nom)||"salon", conflitsSite); }catch(_e){} }
-    if(fusionne){ try{ await loadSiteConfig({}); if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} } // memoire = version fusionnee
+    if(fusionne){ try{ await loadSiteConfig({}); _lxApresRafraichissementMemoire(); }catch(_e){} } // memoire = version fusionnee
     return true;
+    }
+    throw new Error("modifié en même temps sur un autre appareil");
   }catch(e){
     try{
-      if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 site en ligne / horaires : "+(e.message||"erreur")+". R\u00e9essayez.","error");
+      if(typeof toast==="function") toast("⚠️ Non enregistré — site en ligne / horaires : "+(e.message||"erreur")+". Réessayez.","error");
       if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:String(e.message||e)}).slice(0,2000));
     }catch(_e){}
     return false;
@@ -14787,7 +14831,10 @@ function loadSiteConfig(opts){
           // Aucun horaire en base : salon VIERGE (tous jours fermes), jamais les horaires codes en dur.
           try{ H = {0:null,1:null,2:null,3:null,4:null,5:null,6:null}; window._lxHCharge = true; }catch(e){}
         }
-        if(!opts.garderH || !window._lxSiteBase) _lxSiteFixerBase(); // reference pour la synchro entre appareils
+        if(!opts.garderH || !window._lxSiteBase){
+          _lxSiteFixerBase(); // reference pour la synchro entre appareils
+          window._lxSiteVersion = (typeof d.config_version==="number") ? d.config_version : null; // 2026-10-15 : version de cette reference
+        }
         return true;
       }
       console.warn("[SITE CONFIG] aucune ligne site_config pour ce salon");
@@ -29771,6 +29818,8 @@ function lxCfgFixerBase(cfg){
     try{ bMem[sec.k] = lxJsonCanon(sec.mem()); }catch(_e){ bMem[sec.k]=undefined; }
   });
   window._lxCfgBaseDb = bDb; window._lxCfgBaseMem = bMem; window._lxCfgChargee = true;
+  // 2026-10-15 : reference de la colonne show_tva_ticket (ecrite seulement si modifiee ici)
+  try{ if(typeof window.SHOW_TVA_TICKET!=="undefined") window._lxTvaTicketBase = !!window.SHOW_TVA_TICKET; }catch(_eT){}
   // 2026-10-14 : reference « au chargement » de TOUTES les cles (caisse_data, comptaAccounts...)
   // pour la fusion a 3 voies de lxCfgEcrireSections.
   try{ var bBrut={}; Object.keys(cfg).forEach(function(k){ bBrut[k]=lxJsonCanon(cfg[k]); }); window._lxCfgBaseBrut=bBrut; }catch(_eB){ window._lxCfgBaseBrut={}; }
@@ -29819,9 +29868,11 @@ function lxSyncDomicileColonnes(){
   }catch(e){}
 }
 function saveSalonConfig(){
-  lxSyncDomicileColonnes();
   // Enregistrements mis en file : jamais deux lectures-ecritures entremelees.
   _lxCfgFile = (_lxCfgFile||Promise.resolve()).then(_lxSaveSalonConfigUneFois, _lxSaveSalonConfigUneFois);
+  // 2026-10-15 multi-appareils : colonnes « domicile » recopiees APRES l'enregistrement (memoire fusionnee
+  // avec les modifications des autres appareils), plus avant (valeurs eventuellement perimees).
+  _lxCfgFile.then(function(ok){ if(ok) lxSyncDomicileColonnes(); }, function(){});
   return _lxCfgFile;
 }
 // Fusion d'une valeur modifiee ICI et sur un AUTRE appareil depuis le chargement.
@@ -29862,19 +29913,70 @@ function _lxCfgFusionValeur(base, mem, db, chemin, conflits){
   if(conflits) conflits.push({champ:chemin, remplace:db, garde:mem});
   return mem;
 }
+// ============================================================
+// 2026-10-15 MULTI-APPAREILS : CONTROLE DE VERSION (concurrence optimiste)
+// ------------------------------------------------------------
+// salons.config_version est incremente PAR LA BASE (trg_salons_config_version) a chaque
+// changement de config_json. Chaque enregistrement relit la config + sa version, fusionne
+// UNIQUEMENT les sections modifiees sur cet appareil (cles « sales » = memoire differente de la
+// reference _lxCfgBaseMem posee au chargement / au dernier enregistrement / au dernier
+// rafraichissement), puis ecrit avec .eq("config_version", v). Si un autre appareil a ecrit
+// entre la lecture et l'ecriture : 0 ligne -> on relit, on refusionne, on reessaie (3 fois),
+// puis message d'erreur. Jamais d'ecrasement silencieux.
+// SQL non applique (colonne absente, erreur 42703) : _lxCfgVersionOk=false -> comportement
+// precedent (fusion par cle sans controle de version).
+// ============================================================
+window._lxCfgVersion = (typeof window._lxCfgVersion==="number") ? window._lxCfgVersion : null;
+function _lxColonneAbsente(err, col){
+  if(!err) return false;
+  var m=String(err.message||"")+" "+String(err.details||"")+" "+String(err.hint||"");
+  return err.code==="42703" || err.code==="PGRST204" || (m.indexOf(col)>=0 && /exist|column|colonne|schema cache/i.test(m));
+}
+// Lecture brute de la ligne salons (config_json + colonnes demandees + config_version si elle existe)
+function _lxCfgSelectBrut(colsSup){
+  var cols="config_json"+(colsSup?","+colsSup:"");
+  var sans=function(){ return _sb.from("salons").select(cols).eq("id",_salonId).limit(1); };
+  if(window._lxCfgVersionOk===false) return Promise.resolve(sans());
+  return Promise.resolve(_sb.from("salons").select(cols+",config_version").eq("id",_salonId).limit(1)).then(function(r){
+    if(r && r.error && _lxColonneAbsente(r.error,"config_version")){ window._lxCfgVersionOk=false; return sans(); }
+    if(r && !r.error && r.data && r.data[0]) window._lxCfgVersionOk = Object.prototype.hasOwnProperty.call(r.data[0],"config_version");
+    return r;
+  });
+}
+async function _lxCfgLire(colsSup){
+  var r=await _lxCfgSelectBrut(colsSup);
+  if(!r || r.error) return {ok:false, error:(r&&r.error&&r.error.message)||"lecture impossible"};
+  var row=(r.data&&r.data[0])||null, cfg={};
+  if(row && row.config_json){
+    try{ cfg = typeof row.config_json==="string" ? JSON.parse(row.config_json) : row.config_json; }
+    catch(_p){ return {ok:false, illisible:true, error:"parse"}; }
+  }
+  if(typeof cfg!=="object"||cfg===null||Array.isArray(cfg)) return {ok:false, illisible:true, error:"type"};
+  return {ok:true, cfg:cfg, row:row, vide:!(row&&row.config_json), version:(row && typeof row.config_version==="number") ? row.config_version : null};
+}
+// Ecriture conditionnee a la version lue. {ok, version} | {ok:false, conflit:true} | {ok:false, error}
+async function _lxCfgEcrire(payload, version){
+  var cas = (window._lxCfgVersionOk===true && typeof version==="number");
+  var q=_sb.from("salons").update(payload).eq("id",_salonId);
+  if(cas) q=q.eq("config_version",version);
+  var u=await q.select(cas?"id,config_version":"id");
+  if(u && u.error) return {ok:false, error:u.error.message||"erreur", code:u.error.code||null};
+  if(!u || !u.data || !u.data.length) return cas ? {ok:false, conflit:true} : {ok:false, error:"aucune modification acceptée par le serveur"};
+  return {ok:true, version:(cas && typeof u.data[0].config_version==="number") ? u.data[0].config_version : null};
+}
+var LX_CFG_ESSAIS = 4; // 1 ecriture + 3 nouvelles tentatives apres conflit de version
 async function _lxSaveSalonConfigUneFois(){
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return false;
   try{
     var pret = await _lxCfgAttendre(10000);
     if(!pret){ _lxCfgErreur("Configuration du salon non chargee - modification non enregistree, reessayez", "base non chargee"); return false; }
-    var r = await _sb.from("salons").select("config_json").eq("id",_salonId).limit(1);
-    if(!r || r.error){ _lxCfgErreur("Lecture de la configuration impossible - modification non enregistree, reessayez", r&&r.error&&r.error.message); return false; }
-    var cfg={};
-    if(r.data&&r.data[0]&&r.data[0].config_json){
-      try{ cfg = typeof r.data[0].config_json==="string" ? JSON.parse(r.data[0].config_json) : r.data[0].config_json; }
-      catch(_p){ _lxCfgErreur("Configuration illisible - modification non enregistree", "parse"); return false; }
-    }
-    if(typeof cfg!=="object"||cfg===null||Array.isArray(cfg)){ _lxCfgErreur("Configuration illisible - modification non enregistree","type"); return false; }
+    var verConflit=null;
+    for(var essai=0; essai<LX_CFG_ESSAIS; essai++){
+    var lu = await _lxCfgLire("show_tva_ticket");
+    if(!lu.ok){ _lxCfgErreur(lu.illisible ? "Configuration illisible - modification non enregistree" : "Lecture de la configuration impossible - modification non enregistree, reessayez", lu.error); return false; }
+    // 0 ligne alors que la version n'a pas bouge : ce n'est pas un conflit, c'est un refus
+    if(verConflit!==null && lu.version===verConflit){ _lxCfgErreur("Enregistrement de la configuration echoue : aucune modification acceptée par le serveur", "0 ligne"); return false; }
+    var cfg=lu.cfg;
     var bDb=window._lxCfgBaseDb||{}, bMem=window._lxCfgBaseMem||{};
     var aEcrire=[], aRafraichir=[], nouvBase={}, conflitsCfg=[];
     LX_CFG_SECTIONS.forEach(function(sec){
@@ -29899,42 +30001,58 @@ async function _lxSaveSalonConfigUneFois(){
     });
     var updatePayload = {};
     if(aEcrire.length) updatePayload.config_json = JSON.stringify(cfg);
-    if(typeof window.SHOW_TVA_TICKET!=="undefined") updatePayload.show_tva_ticket = !!window.SHOW_TVA_TICKET;
+    // 2026-10-15 : « TVA sur les tickets » ecrite SEULEMENT si modifiee sur cet appareil (avant : recopiee
+    // depuis la memoire a chaque enregistrement -> un appareil ouvert avant annulait le reglage de l'autre).
+    var _tvaMem = (typeof window.SHOW_TVA_TICKET!=="undefined") ? !!window.SHOW_TVA_TICKET : undefined;
+    var _tvaDb = (lu.row && typeof lu.row.show_tva_ticket==="boolean") ? lu.row.show_tva_ticket : undefined;
+    var _tvaBase = window._lxTvaTicketBase, _tvaRafr = false;
+    if(_tvaMem!==undefined && (_tvaBase===undefined || _tvaMem!==_tvaBase)) updatePayload.show_tva_ticket = _tvaMem;
+    else if(_tvaDb!==undefined && _tvaBase!==undefined && _tvaDb!==_tvaBase) _tvaRafr = true;
     if(Object.keys(updatePayload).length){
-      var u = await _sb.from("salons").update(updatePayload).eq("id",_salonId).select("id");
-      if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
-      if(u && u.error){ _lxCfgErreur("Enregistrement de la configuration echoue : "+(u.error.message||"erreur"), u.error.code||null); return false; }
-    }
+      var w = await _lxCfgEcrire(updatePayload, lu.version);
+      if(w.conflit){ verConflit=lu.version; continue; } // ecrit ailleurs entre-temps : relecture + nouvelle fusion
+      if(!w.ok){ _lxCfgErreur("Enregistrement de la configuration echoue : "+(w.error||"erreur"), w.code||null); return false; }
+      if(w.version!==null) window._lxCfgVersion=w.version;
+    } else if(lu.version!==null) window._lxCfgVersion=lu.version;
+    if(Object.prototype.hasOwnProperty.call(updatePayload,"show_tva_ticket")) window._lxTvaTicketBase=updatePayload.show_tva_ticket;
+    else if(_tvaRafr){ window.SHOW_TVA_TICKET=_tvaDb; window._lxTvaTicketBase=_tvaDb; }
     // Ecriture confirmee (ou rien a ecrire) : references et memoire a jour.
     Object.keys(nouvBase).forEach(function(k){ bDb[k]=nouvBase[k].db; bMem[k]=nouvBase[k].mem; });
     window._lxCfgBaseDb=bDb; window._lxCfgBaseMem=bMem;
     aRafraichir.forEach(function(x){ try{ x.sec.set(JSON.parse(JSON.stringify(x.v))); }catch(_e){} });
-    if(aRafraichir.some(function(x){return x.sec.k==="cats_svc"||x.sec.k==="cats_forf";})){
-      try{ var un={}; (window.CATS_SVC||[]).forEach(function(c){un[c]=true;}); (window.CATS_FORF||[]).forEach(function(c){un[c]=true;}); CATS=Object.keys(un); }catch(_e){}
-    }
+    if(aRafraichir.some(function(x){return x.sec.k==="cats_svc"||x.sec.k==="cats_forf";})) _lxCfgRecalcCats();
     window._SALON_CONFIG_JSON = cfg;
+    try{ window._lxSaisie=null; }catch(_eS){}
     if(conflitsCfg.length){ try{ if(typeof _lxSignalerConflits==="function") _lxSignalerConflits("Configuration", (SALON_CONFIG&&SALON_CONFIG.nom)||"salon", conflitsCfg); }catch(_e){} }
-    if(aRafraichir.length){ try{ if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} }
+    if(aRafraichir.length || _tvaRafr) _lxApresRafraichissementMemoire();
     return true;
+    }
+    _lxCfgErreur("Configuration modifiee en meme temps sur un autre appareil - modification non enregistree, reessayez", "conflit de version x"+LX_CFG_ESSAIS);
+    return false;
   }catch(e){ _lxCfgErreur("Enregistrement de la configuration echoue", String(e&&e.message||e)); return false; }
+}
+function _lxCfgRecalcCats(){
+  try{ var un={}; (window.CATS_SVC||[]).forEach(function(c){un[c]=true;}); (window.CATS_FORF||[]).forEach(function(c){un[c]=true;}); CATS=Object.keys(un); }catch(_e){}
 }
 // Ecrit UNIQUEMENT les sections donnees (relecture de la base juste avant).
 function lxCfgEcrireSections(valeurs){
-  _lxCfgFile = (_lxCfgFile||Promise.resolve()).then(function(){ return _lxCfgEcrireSectionsUneFois(valeurs); }, function(){ return _lxCfgEcrireSectionsUneFois(valeurs); });
+  // 2026-10-15 : une exception (reseau) est signalee, jamais avalee
+  var _f=function(){ return _lxCfgEcrireSectionsUneFois(valeurs).catch(function(e){ _lxCfgErreur("Enregistrement echoue", String(e&&e.message||e)); return false; }); };
+  _lxCfgFile = (_lxCfgFile||Promise.resolve()).then(_f, _f);
   return _lxCfgFile;
 }
 async function _lxCfgEcrireSectionsUneFois(valeurs){
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return false;
-  var r = await _sb.from("salons").select("config_json").eq("id",_salonId).limit(1);
-  if(!r || r.error){ _lxCfgErreur("Lecture de la configuration impossible - modification non enregistree, reessayez", r&&r.error&&r.error.message); return false; }
-  var cfg={};
-  if(r.data&&r.data[0]&&r.data[0].config_json){
-    try{ cfg = typeof r.data[0].config_json==="string" ? JSON.parse(r.data[0].config_json) : r.data[0].config_json; }catch(_p){ _lxCfgErreur("Configuration illisible - modification non enregistree","parse"); return false; }
-  }
+  var verConflit=null;
+  // 2026-10-15 multi-appareils : ecriture conditionnee a la version (voir _lxSaveSalonConfigUneFois)
+  for(var essai=0; essai<LX_CFG_ESSAIS; essai++){
+  var lu = await _lxCfgLire();
+  if(!lu.ok){ _lxCfgErreur(lu.illisible ? "Configuration illisible - modification non enregistree" : "Lecture de la configuration impossible - modification non enregistree, reessayez", lu.error); return false; }
+  if(verConflit!==null && lu.version===verConflit){ _lxCfgErreur("Enregistrement echoue : aucune modification acceptée par le serveur", "0 ligne"); return false; }
+  var cfg=lu.cfg;
   // 2026-10-14 : FUSION A 3 VOIES, comme saveSalonConfig (_lxCfgFusionValeur(base, memoire, base_de_donnees)).
   // Si la section a ete modifiee sur un autre appareil depuis le chargement, on fusionne au lieu
   // d'ecraser (absences, caisse, SMS...). Sans reference connue (config pas encore chargee) : comme avant.
-  if(typeof cfg!=="object"||cfg===null||Array.isArray(cfg)){ _lxCfgErreur("Configuration illisible - modification non enregistree","type"); return false; }
   var bDb=window._lxCfgBaseDb||{}, bMem=window._lxCfgBaseMem||{}, bBrut=window._lxCfgBaseBrut||{};
   var _own=function(o,k){ return Object.prototype.hasOwnProperty.call(o,k); };
   var aEcrire={}, nouvBase={}, aRafraichir=[], conflitsCfg=[];
@@ -29962,9 +30080,10 @@ async function _lxCfgEcrireSectionsUneFois(valeurs){
     } else nouvBase[k]={db:aMettreS, mem:aMettreS};
     if(sec&&sec.ecrire) sec.ecrire(cfg, aMettre); else cfg[k]=aMettre;
   });
-  var u = await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId).select("id");
-  if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
-  if(u && u.error){ _lxCfgErreur("Enregistrement echoue : "+(u.error.message||"erreur"), u.error.code||null); return false; }
+  var w = await _lxCfgEcrire({config_json:JSON.stringify(cfg)}, lu.version);
+  if(w.conflit){ verConflit=lu.version; continue; }
+  if(!w.ok){ _lxCfgErreur("Enregistrement echoue : "+(w.error||"erreur"), w.code||null); return false; }
+  if(w.version!==null) window._lxCfgVersion=w.version;
   // Ecriture confirmee : references mises a jour seulement maintenant
   Object.keys(aEcrire).forEach(function(k){
     lxCfgMajBase(k, aEcrire[k]);
@@ -29973,8 +30092,199 @@ async function _lxCfgEcrireSectionsUneFois(valeurs){
   window._SALON_CONFIG_JSON = cfg;
   aRafraichir.forEach(function(x){ try{ x.sec.set(JSON.parse(JSON.stringify(x.v))); }catch(_e){} });
   if(conflitsCfg.length){ try{ if(typeof _lxSignalerConflits==="function") _lxSignalerConflits("Configuration", (SALON_CONFIG&&SALON_CONFIG.nom)||"salon", conflitsCfg); }catch(_e){} }
-  if(aRafraichir.length){ try{ if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} }
+  if(aRafraichir.length) _lxApresRafraichissementMemoire();
   return true;
+  }
+  _lxCfgErreur("Configuration modifiee en meme temps sur un autre appareil - modification non enregistree, reessayez", "conflit de version x"+LX_CFG_ESSAIS);
+  return false;
+}
+
+// ============================================================
+// 2026-10-15 MULTI-APPAREILS : RAFRAICHISSEMENT DES REGLAGES (toutes les minutes + retour au premier plan)
+// ------------------------------------------------------------
+// Avant : les reglages modifies sur un autre appareil n'apparaissaient qu'au rechargement (ou a la
+// prochaine sauvegarde). Desormais l'app compare la version en base (config_version, lecture d'un entier)
+// a celle qu'elle connait ; si elle a change, elle relit et reprend les sections NON modifiees ici.
+// Sans la colonne (SQL non applique) : relecture complete toutes les 5 minutes.
+// JAMAIS pendant une saisie : formulaire de reglages en cours de saisie, fenetre avec des champs ouverte,
+// champ actif -> la memoire et les references ne sont pas touchees (la fusion a l'enregistrement reste
+// exacte puisque le formulaire correspond toujours a la reference), et un bandeau discret
+// « Mis a jour sur un autre appareil » propose d'afficher la nouvelle version.
+// ============================================================
+var LX_PAGES_REGLAGES = {settings:1, marketing:1, services:1, caisseGestion:1, products:1, gifts:1};
+var LX_PAGES_RERENDU  = {settings:1, marketing:1, services:1};
+window._lxSaisie = null;
+(function(){
+  if(typeof document==="undefined") return;
+  var _note=function(ev){
+    try{
+      var t=ev.target; if(!t||!/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+      if(t.type==="search") return;
+      var m=document.getElementById("modal");
+      window._lxSaisie={page:window._currentPage||"", modal:!!(m&&m.contains(t)), t:Date.now()};
+    }catch(_e){}
+  };
+  document.addEventListener("input",_note,true);
+  document.addEventListener("change",_note,true);
+})();
+function _lxModalFormulaireOuvert(){
+  try{
+    var m=document.getElementById("modal");
+    return !!(m && m.innerHTML && m.innerHTML.trim() && m.style.display!=="none" && m.querySelector("input:not([type=hidden]),select,textarea"));
+  }catch(_e){ return false; }
+}
+// "non" = ne rien toucher (saisie en cours) ; "rendu" = appliquer puis redessiner la page ; "vue" = appliquer + refreshCurrentView
+function _lxModeRafraichissement(){
+  if(_lxModalFormulaireOuvert()) return "non";
+  var pg=window._currentPage||"";
+  try{ var ae=document.activeElement; if(ae&&/^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)&&ae.type!=="search") return "non"; }catch(_e){}
+  var s=window._lxSaisie;
+  if(s && s.page===pg && !s.modal && (Date.now()-s.t)<30*60*1000) return "non";
+  if(LX_PAGES_REGLAGES[pg]) return LX_PAGES_RERENDU[pg] ? "rendu" : "non";
+  return "vue";
+}
+function _lxRedessinerPage(){
+  try{
+    var pg=window._currentPage||""; if(!pg || typeof go!=="function") return;
+    var y=window.scrollY||0, app=document.getElementById("app"), ya=app?app.scrollTop:0;
+    window._skipNavPush=true; go(pg);
+    requestAnimationFrame(function(){ try{ window.scrollTo(0,y); var a2=document.getElementById("app"); if(a2) a2.scrollTop=ya; }catch(_e){} });
+  }catch(_e){}
+}
+// Memoire rafraichie par un enregistrement (sections modifiees ailleurs) : l'ecran doit refleter la nouvelle
+// valeur, sinon un formulaire perime renverrait l'ancienne au prochain « Enregistrer ».
+function _lxApresRafraichissementMemoire(){
+  try{
+    var m=_lxModeRafraichissement();
+    if(m==="rendu") _lxRedessinerPage();
+    else if(m==="vue"){ if(typeof refreshCurrentView==="function") refreshCurrentView(); }
+    else _lxBandeauMajDistante(true);
+  }catch(_e){}
+}
+function _lxBandeauMajDistante(afficher){
+  try{
+    var el=document.getElementById("lxMajDistante");
+    if(!afficher){ if(el) el.remove(); return; }
+    if(el) return;
+    el=document.createElement("div"); el.id="lxMajDistante";
+    el.style.cssText="position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9998;background:#141418;border:1px solid rgba(200,168,78,.5);color:#fff;padding:9px 12px;border-radius:12px;font-size:12.5px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 18px rgba(0,0,0,.45);max-width:92vw";
+    el.innerHTML='<span>↻ Mis à jour sur un autre appareil</span><button type="button" style="background:var(--gold,#c8a84e);color:#0a0a0a;border:0;border-radius:8px;padding:5px 10px;font-weight:700;font-size:12px;cursor:pointer" onclick="lxMajDistanteAfficher()">Afficher</button><button type="button" aria-label="Fermer" style="background:none;border:0;color:rgba(255,255,255,.5);font-size:15px;cursor:pointer" onclick="this.parentNode.remove()">×</button>';
+    document.body.appendChild(el);
+  }catch(_e){}
+}
+// « Afficher » : abandonne la saisie non enregistree de CET ecran (apres confirmation) et affiche la version a jour
+function lxMajDistanteAfficher(){
+  var go2=function(){ window._lxSaisie=null; try{ if(_lxModalFormulaireOuvert() && typeof cM==="function") cM(); }catch(_e){} _lxBandeauMajDistante(false);
+    Promise.resolve(lxReglagesSynchro("afficher")).then(function(ch){ if(ch) return; // memoire deja a jour : on redessine quand meme
+      try{ if(LX_PAGES_REGLAGES[window._currentPage||""]) _lxRedessinerPage(); else if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} }); };
+  var s=window._lxSaisie;
+  if((s && (Date.now()-s.t)<30*60*1000) || _lxModalFormulaireOuvert()){
+    if(typeof showConfirm==="function") showConfirm("Afficher la version enregistrée sur l'autre appareil ?\n\nCe que vous avez saisi ici sans l'enregistrer sera perdu (enregistrez d'abord pour garder les deux).", go2);
+    else if(window.confirm("Afficher la version de l'autre appareil ? La saisie non enregistrée sera perdue.")) go2();
+  } else go2();
+}
+// Applique la config lue en base : seulement les sections non modifiees ici. Retourne true si la memoire a change.
+async function _lxCfgAppliquerDistante(mode){
+  var lu=await _lxCfgLire("show_tva_ticket");
+  if(!lu.ok || lu.vide) return false;
+  if(lu.version!==null && lu.version===window._lxCfgVersion) return false;
+  var bDb=window._lxCfgBaseDb||{}, bMem=window._lxCfgBaseMem||{}, aAppliquer=[];
+  LX_CFG_SECTIONS.forEach(function(sec){
+    var memV; try{ memV=sec.mem(); }catch(_e){ memV=undefined; }
+    var memS=lxJsonCanon(memV), dbV=_lxCfgValeurBase(sec,lu.cfg), dbS=lxJsonCanon(dbV);
+    if(dbS===bDb[sec.k] || dbV===undefined || dbV===null) return;     // pas change ailleurs
+    if(memS!==undefined && memS!==bMem[sec.k]) return;                // modifie ici, pas encore enregistre : fusion a l'enregistrement
+    aAppliquer.push({sec:sec, v:dbV, s:dbS});
+  });
+  var tvaDb=(lu.row && typeof lu.row.show_tva_ticket==="boolean") ? lu.row.show_tva_ticket : undefined;
+  var tvaChange = tvaDb!==undefined && window._lxTvaTicketBase!==undefined && tvaDb!==window._lxTvaTicketBase && (!!window.SHOW_TVA_TICKET)===window._lxTvaTicketBase;
+  if(!aAppliquer.length && !tvaChange){ if(lu.version!==null) window._lxCfgVersion=lu.version; return false; }
+  if(mode==="non"){ window._lxMajEnAttente=true; _lxBandeauMajDistante(true); return false; }
+  aAppliquer.forEach(function(x){ try{ x.sec.set(JSON.parse(JSON.stringify(x.v))); bDb[x.sec.k]=x.s; bMem[x.sec.k]=x.s; }catch(_e){} });
+  window._lxCfgBaseDb=bDb; window._lxCfgBaseMem=bMem;
+  if(aAppliquer.some(function(x){ return x.sec.k==="cats_svc"||x.sec.k==="cats_forf"; })) _lxCfgRecalcCats();
+  if(tvaChange){ window.SHOW_TVA_TICKET=tvaDb; window._lxTvaTicketBase=tvaDb; }
+  if(lu.version!==null) window._lxCfgVersion=lu.version;
+  return true;
+}
+// Site en ligne / horaires : reprise de la ligne si rien n'est en cours de modification ici.
+async function _lxSiteAppliquerDistante(mode){
+  if(!(window.SITE_CONFIG && window.SITE_CONFIG._lxCharge) || !window._lxSiteBase) return false;
+  var sel = (window._lxCfgVersionOk===true) ? "config_version" : "*";
+  var r=await _sb.from("site_config").select(sel).eq("salon_id",_salonId).limit(1);
+  if(r && r.error && sel!=="*") r=await _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1);
+  if(!r || r.error || !r.data || !r.data[0]) return false;
+  var row=r.data[0], ver=(typeof row.config_version==="number") ? row.config_version : null;
+  if(ver!==null && ver===window._lxSiteVersion) return false;
+  if(sel!=="*"){ r=await _sb.from("site_config").select("*").eq("salon_id",_salonId).limit(1); if(!r||r.error||!r.data||!r.data[0]) return false; row=r.data[0]; }
+  var base=window._lxSiteBase, data; try{ data=_lxSiteData(window.SITE_CONFIG); }catch(_e){ return false; }
+  var exclu={salon_id:1, updated_at:1, collaborateurs:1, absences:1}, ailleurs=false, ici=false;
+  Object.keys(data).forEach(function(k){
+    if(exclu[k]) return;
+    var memS=lxJsonCanon(data[k]);
+    if(memS!==base[k]) ici=true;
+    if(Object.prototype.hasOwnProperty.call(row,k) && lxJsonCanon(row[k])!==base[k]) ailleurs=true;
+  });
+  if(!ailleurs){ if(ver!==null && !ici) window._lxSiteVersion=ver; return false; }
+  if(ici) return false;                       // modification locale pas encore publiee : fusion a l'enregistrement
+  if(mode==="non"){ window._lxMajEnAttente=true; _lxBandeauMajDistante(true); return false; }
+  var ok=await loadSiteConfig({});            // memoire + reference + version = ligne en base
+  return !!ok;
+}
+var _lxSyncEnCours=false, _lxSyncTour=0, _lxSyncPage=null;
+async function lxReglagesSynchro(origine){
+  if(_lxSyncEnCours) return false;
+  if(typeof document!=="undefined" && document.hidden && origine!=="afficher") return false;
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||!window._lxCfgChargee) return false;
+  _lxSyncEnCours=true;
+  try{
+    // changement de page depuis la derniere saisie : le formulaire a ete redessine, la saisie est caduque
+    if(window._lxSaisie && window._lxSaisie.page!==(window._currentPage||"")) window._lxSaisie=null;
+    var mode=(origine==="afficher") ? (LX_PAGES_REGLAGES[window._currentPage||""] ? "rendu" : "vue") : _lxModeRafraichissement();
+    var lireCfg=true, tour=_lxSyncTour++;
+    if(window._lxCfgVersionOk===true && origine!=="afficher" && !window._lxMajEnAttente){
+      var rv=await _sb.from("salons").select("config_version").eq("id",_salonId).limit(1);
+      var v=(rv && !rv.error && rv.data && rv.data[0]) ? rv.data[0].config_version : null;
+      lireCfg = (typeof v==="number" && v!==window._lxCfgVersion);
+    } else if(window._lxCfgVersionOk!==true && origine!=="afficher" && !window._lxMajEnAttente){
+      lireCfg = (tour%5===0); // sans colonne : relecture complete toutes les 5 min (config_json peut etre lourde)
+    }
+    var change=false;
+    if(lireCfg){
+      // dans la file des enregistrements : jamais entremele avec une lecture-ecriture de la config
+      var pc=(_lxCfgFile||Promise.resolve()).then(function(){ return _lxCfgAppliquerDistante(mode); }, function(){ return _lxCfgAppliquerDistante(mode); });
+      _lxCfgFile=pc.then(function(){}, function(){});
+      change = (await pc) || change;
+    }
+    if(window._lxCfgVersionOk===true || tour%5===0 || origine==="afficher" || window._lxMajEnAttente){
+      try{
+        var ps=((typeof _lxSiteFile!=="undefined"&&_lxSiteFile)||Promise.resolve()).then(function(){ return _lxSiteAppliquerDistante(mode); }, function(){ return _lxSiteAppliquerDistante(mode); });
+        _lxSiteFile=ps.then(function(){ return true; }, function(){ return true; });
+        change = (await ps) || change;
+      }catch(_eSite){ console.warn("[reglages] synchro site", _eSite); }
+    }
+    if(change){
+      window._lxMajEnAttente=false; _lxBandeauMajDistante(false);
+      if(mode==="rendu") _lxRedessinerPage();
+      else { try{ if(typeof refreshCurrentView==="function") refreshCurrentView(); }catch(_e){} }
+    } else if(mode!=="non" && window._lxMajEnAttente){
+      window._lxMajEnAttente=false; _lxBandeauMajDistante(false);
+    }
+    return change;
+  }catch(e){ console.warn("[reglages] synchro", e); return false; }
+  finally{ _lxSyncEnCours=false; }
+}
+window.lxReglagesSynchro=lxReglagesSynchro; window.lxMajDistanteAfficher=lxMajDistanteAfficher;
+if(typeof window!=="undefined" && !window._lxSyncReglagesPose){
+  window._lxSyncReglagesPose=true;
+  setInterval(function(){ lxReglagesSynchro("minute"); }, 60*1000);
+  // mise a jour en attente : reprise des que la saisie est terminee (changement de page, fenetre fermee)
+  setInterval(function(){
+    if(!window._lxMajEnAttente) return;
+    if(window._lxSaisie && window._lxSaisie.page!==(window._currentPage||"")) window._lxSaisie=null;
+    if(_lxModeRafraichissement()!=="non") lxReglagesSynchro("reprise");
+  }, 5000);
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden) setTimeout(function(){ lxReglagesSynchro("premier_plan"); }, 1500); });
 }
 
 // ============================================================
@@ -32710,7 +33020,7 @@ async function sendTicketByEmail(id){
 
   try{
     // FIX 2026-05-14 : passer clientId pour générer le lien désinscription RGPD côté worker
-    var emailPayload={clientEmail:cl.em,clientName:cName(cl),salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",ticketNum:a.tkNum||"--",ticketHtml:fullHtml,clientId:cl.id};
+    var emailPayload={clientEmail:cl.em,clientName:cName(cl),salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",ticketNum:a.tkNum||"--",ticketHtml:fullHtml,clientId:cl.id,salon_id:_salonId}; // 2026-10-15 : salon pour l'anti-doublon du worker
     console.log("[EMAIL] Envoi:",{to:cl.em,salonEmail:emailPayload.salonEmail,tkNum:a.tkNum,htmlLen:fullHtml.length,ticketId:a.id});
     var res=await fetch("/api/email/ticket",{
       method:"POST",
@@ -32727,7 +33037,7 @@ async function sendTicketByEmail(id){
       window._emailFromEnc=false;
       cM();
       if(wasEnc)go("home");
-      showAlert("\u2705 Email envoy\u00e9 avec succ\u00e8s \u00e0 "+cl.em,"success");
+      showAlert(data.deduplique?("\u2139\ufe0f Ce ticket a d\u00e9j\u00e0 \u00e9t\u00e9 envoy\u00e9 \u00e0 "+cl.em+" il y a moins de 10 minutes (envoi en double ignor\u00e9)."):("\u2705 Email envoy\u00e9 avec succ\u00e8s \u00e0 "+cl.em),"success");
     }else{
       console.error("[EMAIL] ECHEC:",JSON.stringify(data));
       showAlert("\u274c Erreur: "+(data.error||data.result?.message||data.message||"Erreur inconnue")+"\n\nD\u00e9tail: "+JSON.stringify(data).slice(0,300),"error");
@@ -34904,22 +35214,57 @@ function unlinkSmsDevice(){
     }
   });
 }
-async function sendEmailViaWorker(to,toName,subject,htmlContent){
+// 2026-10-15 MULTI-APPAREILS : opts.dedupKey (evenement : « <salon>|<type>|<destinataire>|<jour> ») et opts.context
+// sont transmis au worker, qui RESERVE la ligne messaging_log (index unique dedup_key) AVANT d'envoyer : deux
+// appareils qui envoient le meme e-mail en meme temps -> un seul part. Sans cle : le worker deduplique un e-mail
+// identique (destinataire + objet + contenu) sur 10 minutes. Le worker journalise lui-meme (journalise:true) :
+// plus de seconde ligne ecrite ici.
+async function sendEmailViaWorker(to,toName,subject,htmlContent,opts){
+  opts=opts||{};
   try{
+    var corps={to:to,toName:toName,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,htmlContent:htmlContent};
+    if(typeof _salonId!=="undefined"&&_salonId) corps.salon_id=_salonId;
+    if(opts.dedupKey) corps.dedupKey=String(opts.dedupKey);
+    if(opts.context) corps.context=String(opts.context);
     var resp=await fetch("/api/email/custom",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({to:to,toName:toName,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,htmlContent:htmlContent})
+      body:JSON.stringify(corps)
     });
     var data=await resp.json();
     if(data.success){
-      if(typeof _sb!=="undefined"&&_salonId){
-        _sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:to,content:subject}).then(function(){},function(_e){});
+      if(data.deduplique) return{ok:true,deduplique:true};
+      if(!data.journalise && typeof _sb!=="undefined"&&_salonId){
+        var _ml={salon_id:_salonId,type:"email",recipient:to,content:subject};
+        if(opts.context) _ml.context=opts.context;
+        _sb.from("messaging_log").insert(_ml).then(function(){},function(_e){});
       }
-      return{ok:true};
+      return{ok:true,journalise:!!data.journalise};
     }
     return{ok:false,error:data.error||"Erreur"};
   }catch(e){return{ok:false,error:e.message};}
+}
+// 2026-10-15 : rappels automatiques (veille SMS + e-mail, 2 h avant) envoyes par l'application SEULEMENT si le
+// serveur ne les envoie pas : app_config.config.rappels_serveur_2h_email explicitement different de true, lu
+// en base (meme condition que les fonctions serveur, inverse exact : jamais deux expediteurs, jamais zero quand
+// la valeur est connue). Valeur inconnue (hors ligne, pas encore lue) : derniere valeur lue sur cet appareil
+// (moins de 7 jours), sinon l'application s'ABSTIENT (le serveur, lui, tourne toujours).
+var _LX_RAPPELS_SRV_CLE="lx_rappels_serveur_v1";
+async function _lxRappelsParApplication(){
+  try{
+    var age=Date.now()-(window._lxAppCfgLuA||0);
+    if(!(window.LX_CONFIG&&window.LX_CONFIG._loaded) || age>10*60*1000){
+      if(typeof loadAppConfig==="function"){ await loadAppConfig(); if(window.LX_CONFIG&&window.LX_CONFIG._loaded) window._lxAppCfgLuA=Date.now(); }
+    }
+    if(window.LX_CONFIG&&window.LX_CONFIG._loaded&&window._lxAppCfgLuA){
+      var serveur=window.LX_CONFIG.rappels_serveur_2h_email===true;
+      try{ localStorage.setItem(_LX_RAPPELS_SRV_CLE,JSON.stringify({serveur:serveur,t:Date.now()})); }catch(_eS){}
+      return !serveur;
+    }
+  }catch(_e){}
+  var c=null; try{ c=JSON.parse(localStorage.getItem(_LX_RAPPELS_SRV_CLE)||"null"); }catch(_eL){ c=null; }
+  if(c && c.serveur===false && (Date.now()-Number(c.t||0))<7*24*3600*1000) return true;
+  return false;
 }
 function testSms(){
   showPrompt({
@@ -35074,7 +35419,10 @@ async function checkSmsReminders(){
   // 2026-10-14 audit : rappels 2 h (SMS) et e-mail de la veille envoyes PAR LE SERVEUR (envoyer_rappels_2h /
   // envoyer_rappels_email_24h, cron) une fois le drapeau app_config « rappels_serveur_2h_email » active : l'application
   // ne les envoie plus (sinon doublons). Drapeau absent / config non chargee -> ancien comportement (envoi ici).
-  var _rappelsServeur = !!(window.LX_CONFIG && window.LX_CONFIG._loaded && window.LX_CONFIG.rappels_serveur_2h_email===true);
+  // 2026-10-15 multi-appareils : drapeau RELU (10 min max) et valeur inconnue = l'application n'envoie pas.
+  // Le 13/10, deux appareils ont envoye le meme rappel e-mail a la meme seconde. Desormais, drapeau actif ->
+  // AUCUN rappel RDV (veille SMS, veille e-mail, 2 h) ne part de l'application, sur aucun appareil.
+  var _rappelsServeur = true; try{ _rappelsServeur = !(await _lxRappelsParApplication()); }catch(_eRs){ _rappelsServeur = true; }
   for(var apIdx=0;cfg.rappelActif&&apIdx<AP.length;apIdx++){ // 2026-10-14 audit clients : rappels RDV seulement si « Rappels SMS actifs »
     var a=AP[apIdx];
     if(a.st==="canc"||a.st==="done"||a.cancelled)continue;
@@ -35085,7 +35433,7 @@ async function checkSmsReminders(){
     var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:"",lieu:a.lieu||"",adresse:a.adresse||"",prixAPartir:(sv&&sv.apartir&&!sv.devis)?_lxPrixTxt(sv):""};
     
     // Rappel 24h: send today for tomorrow's appointments
-    if(_smsPossible&&cfg.rappel24h&&a.date===tomorrowStr){
+    if(_smsPossible&&!_rappelsServeur&&cfg.rappel24h&&a.date===tomorrowStr){ // 2026-10-15 : serveur actif -> rien ici
       // FIX 2026-08-30 : cle indexee sur la date du RDV + les 4 derniers chiffres du
       // telephone, et non plus sur l'identifiant du rendez-vous. Un identifiant qui
       // change (resynchronisation, doublon corrige) relançait sinon un envoi deja fait.
@@ -35140,14 +35488,17 @@ async function checkSmsReminders(){
         var alreadySentEm=false;
         try{
           var sinceE=new Date(Date.now()-25*3600*1000).toISOString();
-          var resE=await _sb.from("messaging_log").select("id").eq("salon_id",_salonId).eq("type","email").eq("context","rappel_24h").eq("recipient",cl.em).gte("created_at",sinceE).limit(1);
+          var resE=await _sb.from("messaging_log").select("id").eq("salon_id",_salonId).eq("type","email").eq("context","rappel_24h").in("recipient",[cl.em,String(cl.em||"").trim().toLowerCase()]).gte("created_at",sinceE).limit(1);
           alreadySentEm=resE.data&&resE.data.length>0;
         }catch(e){}
         if(!alreadySentEm){
           var rappelHtml=buildRdvEmailHTML("rappel",vars);
-          sendEmailViaWorker(cl.em,cName(cl),"Rappel : votre rendez-vous demain - "+SALON_CONFIG.nom,rappelHtml);
-          // Log dans messaging_log côté client pour tracer
-          try{_sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:cl.em,content:"Rappel 24h",context:"rappel_24h",client_nom:(cl.pre||"")+" "+(cl.nom||"")}).then(function(){},function(_e){});}catch(e){}
+          // 2026-10-15 : MEME cle que le serveur (envoyer_rappels_email_24h) -> reservee par le worker avant l'envoi :
+          // un seul rappel par adresse et par jour de RDV, quel que soit l'expediteur (appareil A, B ou serveur).
+          var _emL=String(cl.em||"").trim().toLowerCase();
+          var _rEm=await sendEmailViaWorker(cl.em,cName(cl),"Rappel : votre rendez-vous demain - "+SALON_CONFIG.nom,rappelHtml,{dedupKey:_salonId+"|rappel_24h_email|"+_emL+"|"+a.date,context:"rappel_24h"});
+          // Journal ecrit ici seulement si le worker (ancienne version) ne l'a pas fait
+          if(_rEm && _rEm.ok && !_rEm.journalise && !_rEm.deduplique){ try{_sb.from("messaging_log").insert({salon_id:_salonId,type:"email",recipient:_emL,content:"Rappel 24h",context:"rappel_24h",client_nom:(cl.pre||"")+" "+(cl.nom||"")}).then(function(){},function(_e){});}catch(e){} }
         }
         window._smsSent[keyEm]=true;
         try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
@@ -35175,7 +35526,7 @@ async function checkSmsReminders(){
       // Email
       if(cl.em&&cl.emOk&&cfg.anniEmail){
         var body=cfg.anniEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon);
-        sendEmailViaWorker(cl.em,cName(cl),"\ud83c\udf82 Joyeux anniversaire ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Joyeux anniversaire !","\ud83c\udf82"));
+        sendEmailViaWorker(cl.em,cName(cl),"\ud83c\udf82 Joyeux anniversaire ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Joyeux anniversaire !","\ud83c\udf82"),{dedupKey:_salonId+"|anniversaire_email|"+String(cl.em).trim().toLowerCase()+"|"+todayStr,context:"anniversaire"}); // 2026-10-15 : un par jour, tous appareils
       }
       window._smsSent[keyAnni]=true;
       try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
@@ -35203,7 +35554,7 @@ async function checkSmsReminders(){
         // Email
         if(cl.em&&cl.emOk&&cfg.relanceEmail){
           var body=cfg.relanceEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon).replace(/\{jours\}/g,vars.jours);
-          sendEmailViaWorker(cl.em,cName(cl),"Vous nous manquez ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Vous nous manquez !","\ud83d\udc9b"));
+          sendEmailViaWorker(cl.em,cName(cl),"Vous nous manquez ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Vous nous manquez !","\ud83d\udc9b"),{dedupKey:_salonId+"|relance_email|"+String(cl.em).trim().toLowerCase()+"|"+todayStr,context:"relance"}); // 2026-10-15
         }
         window._smsSent[keyRel]=true;
       });
@@ -35790,7 +36141,7 @@ function checkCarteReminders(){
       }
       if(!window._carteSent[k30e]&&cl.emOk&&cl.em&&cfg.carteRappel30Email){
         var emailBody=buildCarteNotifText(cfg.carteRappel30Email,vars);
-        sendEmailViaWorker(cl.em,cName(cl),"Votre carte "+cc.carteNom+" expire bient\u00f4t - "+SALON_CONFIG.nom,buildCarteEmailHTML(vars,emailBody));
+        sendEmailViaWorker(cl.em,cName(cl),"Votre carte "+cc.carteNom+" expire bient\u00f4t - "+SALON_CONFIG.nom,buildCarteEmailHTML(vars,emailBody),{dedupKey:_salonId+"|carte_rappel_30j_email|"+cc.id+"|"+cc.dateExp,context:"carte_rappel_30j"}); // 2026-10-15 : une fois, tous appareils
         window._carteSent[k30e]=true;
         auditLog("CARTE_RAPPEL_30","Email 30j envoy\u00e9 \u00e0 "+cName(cl)+" ("+cc.carteNom+")");
       }
@@ -35807,7 +36158,7 @@ function checkCarteReminders(){
       }
       if(!window._carteSent[k7e]&&cl.emOk&&cl.em&&cfg.carteRappel7Email){
         var emailBody7=buildCarteNotifText(cfg.carteRappel7Email,vars);
-        sendEmailViaWorker(cl.em,cName(cl),"\u26a0 Votre carte "+cc.carteNom+" expire dans 7 jours - "+SALON_CONFIG.nom,buildCarteEmailHTML(vars,emailBody7));
+        sendEmailViaWorker(cl.em,cName(cl),"\u26a0 Votre carte "+cc.carteNom+" expire dans 7 jours - "+SALON_CONFIG.nom,buildCarteEmailHTML(vars,emailBody7),{dedupKey:_salonId+"|carte_rappel_7j_email|"+cc.id+"|"+cc.dateExp,context:"carte_rappel_7j"}); // 2026-10-15
         window._carteSent[k7e]=true;
         auditLog("CARTE_RAPPEL_7","Email 7j envoy\u00e9 \u00e0 "+cName(cl)+" ("+cc.carteNom+")");
       }
@@ -38408,7 +38759,7 @@ function initApp(){
     // 2026-10-07 : chargement nomme + nouvel essai en cas d'erreur ; a la fin, references
     // de la configuration (lxCfgFixerBase) -- aucune sauvegarde n'ecrit avant.
     (function _lxChargerConfigInit(tentative){
-    _sb.from("salons").select("config_json").eq("id",_salonId).limit(1).then(function(r){
+    _lxCfgSelectBrut().then(function(r){ // 2026-10-15 : + config_version si la colonne existe
       if(!r || r.error){
         if(tentative<3){ setTimeout(function(){ _lxChargerConfigInit(tentative+1); }, 3000*(tentative+1)); }
         else{ try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"initApp", msg:"config_json non chargee apres 4 essais - sauvegardes de configuration bloquees"})); }catch(_e){} }
@@ -38459,6 +38810,7 @@ function initApp(){
           if(typeof cfg.migrationSourceSoftware !== "undefined") SALON_CONFIG.migrationSourceSoftware = cfg.migrationSourceSoftware || "";
           if(typeof cfg.migrationRgpdSentAt !== "undefined") SALON_CONFIG.migrationRgpdSentAt = cfg.migrationRgpdSentAt || null;
           lxCfgFixerBase(cfg);
+          window._lxCfgVersion = (typeof r.data[0].config_version==="number") ? r.data[0].config_version : null; // 2026-10-15
           // 2026-10-14 : reprise unique de l'historique local des campagnes vers la base
           if(window._lxSmsHistAMigrer){ window._lxSmsHistAMigrer=false; try{ lxCfgEcrireSections({sms_campaigns: JSON.parse(JSON.stringify(window.SMS_CAMPAIGNS||[]))}); }catch(_eMh){} }
         }catch(e){ try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"initApp", msg:"config_json illisible: "+String(e&&e.message||e)}).slice(0,2000)); }catch(_e){} }
@@ -38466,6 +38818,7 @@ function initApp(){
         // Pas encore de config_json en base, on initialise vide
         window._SALON_CONFIG_JSON={};
         lxCfgFixerBase({});
+        window._lxCfgVersion = (r.data&&r.data[0]&&typeof r.data[0].config_version==="number") ? r.data[0].config_version : null; // 2026-10-15
       }
     }, function(){ if(tentative<3) setTimeout(function(){ _lxChargerConfigInit(tentative+1); }, 3000*(tentative+1)); });
     })(0);

@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261015-2"; // 2026-10-15 (-2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261015-3"; // 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -3642,7 +3642,7 @@ async function _saveProductUneFois(prod, opts) {
           }
         } catch(_eF) {}
       }
-      var _up = await _sb.from("produits").update(data).eq("id", prod.id).select();
+      var _up = await _sb.from("produits").update(data).eq("id", prod.id).eq("salon_id", _salonId).select(); // 2026-10-15 : toujours limite au salon
       if (!_up.error && _up.data && _up.data[0]) {
         try { var _apres = lxMapProduitRow(_up.data[0]); Object.keys(_apres).forEach(function(k){ prod[k] = _apres[k]; }); _lxPoserBase(prod, _apres._lxBase); } catch(_eM) {}
         return { ok:true };
@@ -3654,6 +3654,18 @@ async function _saveProductUneFois(prod, opts) {
       // 2026-10-14 : verification impossible -> on n'insere PAS (sinon doublon)
       _lxProduitAlerte(prod, check.error.message);
       return { ok:false, error:check.error.message };
+    } else if (prod._lxBase) {
+      // 2026-10-15 MULTI-APPAREILS : produit lu en base sur cet appareil puis disparu = supprime sur un autre
+      // appareil. On ne le recree PLUS (avant : re-insertion silencieuse sous un nouvel identifiant).
+      try {
+        if (typeof PRODS !== "undefined" && Array.isArray(PRODS)) { for (var _ip = PRODS.length - 1; _ip >= 0; _ip--) { if (PRODS[_ip] && String(PRODS[_ip].id) === String(prod.id)) PRODS.splice(_ip, 1); } }
+        var _mP = "\u26a0\ufe0f Le produit \u00ab " + (prod.n || "") + " \u00bb a \u00e9t\u00e9 supprim\u00e9 sur un autre appareil : la modification n'a pas \u00e9t\u00e9 enregistr\u00e9e (rien n'a \u00e9t\u00e9 recr\u00e9\u00e9). La liste a \u00e9t\u00e9 mise \u00e0 jour.";
+        if (typeof showAlert === "function") showAlert(_mP, "warning"); else if (typeof toast === "function") toast(_mP, "warning");
+        if (typeof saveAuditEntry === "function") saveAuditEntry("CONFLIT_SYNCHRO", JSON.stringify({ quoi: "produit", supprime_ailleurs: { id: prod.id, n: prod.n } }).slice(0, 2000));
+        if (typeof refreshCurrentView === "function") refreshCurrentView();
+        if (window._currentPage === "products" && typeof go === "function") go("products");
+      } catch(_eS) {}
+      return { ok:false, supprime:true, error:"produit supprim\u00e9 sur un autre appareil" };
     } else {
       var res = await _sb.from("produits").insert(data).select();
       if (res.data && res.data[0]) { prod.id = res.data[0].id; try { _lxPoserBase(prod, lxMapProduitRow(res.data[0])._lxBase); } catch(_e) {} return { ok:true }; }
@@ -4573,35 +4585,69 @@ function _lxCatEnFile(fn) {
   return p;
 }
 // Ecrit UNE ligne : update par id (resultat verifie) ; insert seulement pour une ligne
-// nouvelle, ou si l'update a reussi sans trouver la ligne. Jamais d'insert apres une erreur.
+// nouvelle (jamais vue en base sur cet appareil). Jamais d'insert apres une erreur.
+// 2026-10-15 MULTI-APPAREILS :
+//  - seuls les CHAMPS modifies ici depuis la lecture / le dernier enregistrement sont envoyes (la signature
+//    sigMap[id] sert de reference) : un autre appareil qui a change le prix garde son prix si l'on change ici
+//    la categorie ;
+//  - ligne deja vue en base mais introuvable (supprimee sur un autre appareil) : elle n'est PLUS recreee
+//    (avant : re-insertion silencieuse sous un nouvel id) -> {supprime:true}, message + liste mise a jour.
 async function _lxSaveCatRow(table, row, payload, sigMap) {
   try {
     var hasId = (typeof row.id === "number" && row.id > 0);
+    var connu = hasId && row._new !== true && Object.prototype.hasOwnProperty.call(sigMap, row.id);
     if (hasId && row._new !== true) {
-      var u = await _sb.from(table).update(payload).eq("id", row.id).eq("salon_id", _salonId).select("id");
+      var envoi = payload, base = null;
+      if (connu) { try { base = JSON.parse(sigMap[row.id]); } catch(_eB) { base = null; } }
+      if (base && typeof base === "object") {
+        envoi = {};
+        Object.keys(payload).forEach(function(k){ if (k !== "salon_id" && _lxSig(payload[k]) !== _lxSig(base[k])) envoi[k] = payload[k]; });
+        if (!Object.keys(envoi).length) { sigMap[row.id] = _lxSig(payload); delete row._dirty; return { ok:true }; }
+      }
+      var u = await _sb.from(table).update(envoi).eq("id", row.id).eq("salon_id", _salonId).select("id");
       if (u.error) return { ok:false, error:u.error.message };
       if (u.data && u.data.length) { sigMap[row.id] = _lxSig(payload); delete row._dirty; return { ok:true }; }
+      if (connu) {
+        var ex = await _sb.from(table).select("id").eq("id", row.id).eq("salon_id", _salonId).limit(1);
+        if (ex && !ex.error && ex.data && ex.data.length) return { ok:false, error:"aucune modification acceptée par le serveur" };
+        if (ex && ex.error) return { ok:false, error:ex.error.message };
+        return { ok:false, supprime:true, error:"supprimée sur un autre appareil" };
+      }
     }
     var ins = await _sb.from(table).insert(payload).select("id");
     if (ins.error) return { ok:false, error:ins.error.message };
-    if (!ins.data || !ins.data[0]) return { ok:false, error:"aucune ligne cr\u00e9\u00e9e" };
+    if (!ins.data || !ins.data[0]) return { ok:false, error:"aucune ligne créée" };
     row.id = ins.data[0].id;
     delete row._new; delete row._dirty;
     sigMap[row.id] = _lxSig(payload);
     return { ok:true, created:true };
-  } catch (e) { return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
+  } catch (e) { return { ok:false, error:(e && e.message) || "erreur réseau" }; }
+}
+// 2026-10-15 : lignes supprimees sur un autre appareil -> retirees de la memoire de CET appareil + message
+function _lxCatRetirerSupprimes(list, sigMap, supprimes, quoi) {
+  if (!supprimes.length) return;
+  var ids = {}; supprimes.forEach(function(r){ ids[String(r.id)] = 1; delete sigMap[r.id]; });
+  try { if (Array.isArray(list)) { for (var i = list.length - 1; i >= 0; i--) { if (list[i] && ids[String(list[i].id)]) list.splice(i, 1); } } } catch(_e) {}
+  try {
+    var noms = supprimes.map(function(r){ return "« " + (r.n || "?") + " »"; }).slice(0, 5).join(", ");
+    var m = "⚠️ " + noms + (supprimes.length > 1 ? " ont" : " a") + " été supprimé" + (supprimes.length > 1 ? "s" : "") + " sur un autre appareil : " + (supprimes.length > 1 ? "ces " + quoi + " n'ont" : "la modification n'a") + " pas été enregistrée" + (supprimes.length > 1 ? "s" : "") + " (rien n'a été recréé). La liste a été mise à jour.";
+    if (typeof showAlert === "function") showAlert(m, "warning"); else if (typeof toast === "function") toast(m, "warning");
+    if (typeof saveAuditEntry === "function") saveAuditEntry("CONFLIT_SYNCHRO", JSON.stringify({ quoi: quoi, supprimes_ailleurs: supprimes.map(function(r){ return { id: r.id, n: r.n }; }) }).slice(0, 2000));
+    if (typeof refreshCurrentView === "function") refreshCurrentView();
+    if (window._currentPage === "services" && typeof go === "function") go("services");
+  } catch(_e) {}
 }
 function _lxCatAlerte(quoi, errs) {
   console.error("[save " + quoi + "]", errs);
   try {
-    var m = "\u26a0\ufe0f " + errs.length + " " + quoi + " non enregistr\u00e9e(s) :\n" + errs.slice(0, 5).join("\n") + (errs.length > 5 ? "\n\u2026" : "") + "\n\nR\u00e9essayez. Si le probl\u00e8me continue, rechargez l'application.";
+    var m = "⚠️ " + errs.length + " " + quoi + " non enregistrée(s) :\n" + errs.slice(0, 5).join("\n") + (errs.length > 5 ? "\n…" : "") + "\n\nRéessayez. Si le problème continue, rechargez l'application.";
     if (typeof showAlert === "function") showAlert(m, "warning"); else if (typeof toast === "function") toast(m, "error");
   } catch(_e) {}
 }
 async function _lxSaveCatList(table, list, payloadFn, sigMap, quoi) {
   if (!_sb || !_salonId) return { ok:false, error:"hors ligne" };
-  if (!_lxListeChargee(table)) return { ok:false, error:"liste non charg\u00e9e" };
-  var errs = [], nb = 0;
+  if (!_lxListeChargee(table)) return { ok:false, error:"liste non chargée" };
+  var errs = [], nb = 0, supprimes = [];
   var rows = (list || []).slice();
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i]; if (!r) continue;
@@ -4609,9 +4655,12 @@ async function _lxSaveCatList(table, list, payloadFn, sigMap, quoi) {
     if (r._new !== true && r._dirty !== true && r.id != null && sigMap[r.id] === _lxSig(payload)) continue; // inchangee
     nb++;
     var res = await _lxSaveCatRow(table, r, payload, sigMap);
+    if (res.supprime) { supprimes.push(r); continue; }
     if (!res.ok) errs.push((r.n || "?") + " : " + res.error);
   }
+  _lxCatRetirerSupprimes(list, sigMap, supprimes, quoi);
   if (errs.length) { _lxCatAlerte(quoi, errs); return { ok:false, error:errs.join(" ; "), count:nb }; }
+  if (supprimes.length) return { ok:false, supprime:true, error:"supprimée(s) sur un autre appareil", count:nb };
   return { ok:true, count:nb };
 }
 // Enregistre les prestations modifiees (wrapper historique : appele apres chaque edition)
@@ -4624,7 +4673,8 @@ function saveService(s) {
     if (!_sb || !_salonId || !s) return { ok:false, error:"hors ligne" };
     if (!_lxListeChargee("services")) return { ok:false, error:"liste non charg\u00e9e" };
     var r = await _lxSaveCatRow("services", s, _lxSvcPayload(s), window._lxSvcSig);
-    if (!r.ok) _lxCatAlerte("prestation(s)", [(s.n || "?") + " : " + r.error]);
+    if (r.supprime) _lxCatRetirerSupprimes((typeof SVC !== "undefined") ? SVC : null, window._lxSvcSig, [s], "prestations");
+    else if (!r.ok) _lxCatAlerte("prestation(s)", [(s.n || "?") + " : " + r.error]);
     return r;
   });
 }
@@ -4643,7 +4693,8 @@ function saveForfait(f) {
     if (!_sb || !_salonId || !f) return { ok:false, error:"hors ligne" };
     if (!_lxListeChargee("forfaits")) return { ok:false, error:"liste non charg\u00e9e" };
     var r = await _lxSaveCatRow("forfaits", f, _lxForfPayload(f), window._lxForfSig);
-    if (!r.ok) _lxCatAlerte("forfait(s)", [(f.n || "?") + " : " + r.error]);
+    if (r.supprime) _lxCatRetirerSupprimes((typeof FORFAITS !== "undefined") ? FORFAITS : null, window._lxForfSig, [f], "forfaits");
+    else if (!r.ok) _lxCatAlerte("forfait(s)", [(f.n || "?") + " : " + r.error]);
     try { localStorage.setItem("_cp_forfaits", JSON.stringify(FORFAITS)); } catch(e) {}
     return r;
   });
@@ -4750,7 +4801,7 @@ async function _saveCollaborateursUneFois() {
     _lxCollabAlerte("\u26a0\ufe0f L'\u00e9quipe n'a pas pu \u00eatre enregistr\u00e9e (" + _eMsg + "). V\u00e9rifiez la connexion et r\u00e9essayez.");
     return { ok:false, error:_eMsg };
   }
-  var _errs = [];
+  var _errs = [], _suppr = [];
   if (existing.data) {
     for (var e = 0; e < existing.data.length; e++) {
       var ex = existing.data[e];
@@ -4796,6 +4847,13 @@ async function _saveCollaborateursUneFois() {
       photo_visible: c.photoVisible !== false,
       competences: c.competences || {all:true}
     };
+    // 2026-10-15 MULTI-APPAREILS : fiche deja vue en base sur cet appareil mais disparue -> supprimee sur un
+    // autre appareil : on ne la recree PAS (avant : re-insertion silencieuse).
+    if (c.id && !dbIds[c.id] && window._lxCollabIdsServeur && window._lxCollabIdsServeur[c.id]) { _suppr.push(c); continue; }
+    // 2026-10-15 : une fiche existante n'est plus reecrite en entier depuis la memoire par l'enregistrement en
+    // masse (il ecrasait les modifications faites sur un autre appareil) : chaque modification passe par
+    // saveCollabPartial / saveCollabRH (champs modifies seulement). Exception : fiche marquee _dirty.
+    if (c.id && dbIds[c.id] && c._dirty !== true) continue;
     if (c.id && dbIds[c.id]) {
       // FIX 2026-08-31 : la sauvegarde en masse n'ecrit PLUS le statut RH d'une fiche
       // existante. Elle l'ecrivait depuis la memoire de l'appareil : un appareil dont
@@ -4809,6 +4867,7 @@ async function _saveCollaborateursUneFois() {
       });
       var _ru = await _sb.from("collaborateurs").update(dataUpd).eq("id", c.id).eq("salon_id", _salonId).select("id");
       if (_ru.error || !_ru.data || !_ru.data.length) _errs.push((c.n||"?") + " : " + ((_ru.error && _ru.error.message) || "non modifi\u00e9"));
+      else delete c._dirty;
     } else {
       // FIX 2026-06-19 : avant d'insérer, on cherche un collaborateur identique déjà
       // en base (même nom + initiales + couleur). S'il existe, on l'ADOPTE (UPDATE +
@@ -4821,10 +4880,11 @@ async function _saveCollaborateursUneFois() {
       } else {
         var res = await _sb.from("collaborateurs").insert(data).select();
         if (res.error || !res.data || !res.data[0]) _errs.push((c.n||"?") + " : " + ((res.error && res.error.message) || "non cr\u00e9\u00e9"));
-        else { c.id = res.data[0].id; dbIds[c.id] = true; dbBySig[_sig] = c.id; }
+        else { c.id = res.data[0].id; dbIds[c.id] = true; dbBySig[_sig] = c.id; try { if (window._lxCollabIdsServeur) window._lxCollabIdsServeur[c.id] = 1; } catch(_eI) {} }
       }
     }
   }
+  if (_suppr.length) _lxCollabSupprimeAilleurs(_suppr.map(function(c){ return c.n; }));
   if (_errs.length) {
     console.error("[saveCollaborateurs]", _errs);
     _lxCollabAlerte("\u26a0\ufe0f Certaines fiches de l'\u00e9quipe n'ont pas \u00e9t\u00e9 enregistr\u00e9es :\n" + _errs.slice(0, 5).join("\n") + "\n\nR\u00e9essayez.");
@@ -4833,6 +4893,22 @@ async function _saveCollaborateursUneFois() {
   return { ok:true };
 }
 
+// 2026-10-15 MULTI-APPAREILS : 0 ligne modifiee -> la fiche existe-t-elle encore ? Sinon elle a ete supprimee
+// sur un autre appareil : message clair + liste rechargee (jamais recreee).
+async function _lxCollabZeroLigne(cid) {
+  try {
+    var ex = await _sb.from("collaborateurs").select("id").eq("id", cid).eq("salon_id", _salonId).limit(1);
+    if (ex && !ex.error && ex.data && !ex.data.length) { _lxCollabSupprimeAilleurs(null); return { ok:false, supprime:true, error:"fiche supprim\u00e9e sur un autre appareil" }; }
+  } catch(_e) {}
+  return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
+}
+function _lxCollabSupprimeAilleurs(noms) {
+  try {
+    var m = "\u26a0\ufe0f " + (noms && noms.length ? noms.map(function(n){ return "\u00ab " + (n || "?") + " \u00bb"; }).join(", ") : "Cette fiche") + " : supprim\u00e9" + ((noms && noms.length > 1) ? "es" : "e") + " sur un autre appareil. La modification n'a pas \u00e9t\u00e9 enregistr\u00e9e (rien n'a \u00e9t\u00e9 recr\u00e9\u00e9) ; l'\u00e9quipe a \u00e9t\u00e9 recharg\u00e9e.";
+    _lxCollabAlerte(m);
+    if (typeof reloadFromSupabase === "function") reloadFromSupabase("collaborateurs");
+  } catch(_e) {}
+}
 // Modification VOLONTAIRE du statut RH d'un collaborateur (depart / inactif).
 // Renseigne rh_updated_at : c'est ce champ qui signale a la base une intention
 // explicite. Sans lui, la protection en base refuse toute reactivation, ce qui
@@ -4848,8 +4924,8 @@ async function saveCollabRH(collabId, fields) {
   try {
     var r = await _sb.from("collaborateurs").update(payload).eq("id", collabId).eq("salon_id", _salonId).select("id,inactif,date_depart");
     if (r && r.error) { console.error("[saveCollabRH]", r.error); return { ok:false, error:r.error.message }; }
-    // 2026-10-14 : 0 ligne modifiee (droits) = echec
-    if (!r || !r.data || !r.data.length) return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
+    // 2026-10-14 : 0 ligne modifiee (droits) = echec ; 2026-10-15 : ou fiche supprimee ailleurs
+    if (!r || !r.data || !r.data.length) return await _lxCollabZeroLigne(collabId);
     return { ok:true, data:(r && r.data && r.data[0]) || null };
   } catch (e) {
     console.error("[saveCollabRH]", e);
@@ -4867,7 +4943,7 @@ async function clearCollabPhoto(collabId) {
     try {
       var r = await _sb.from("collaborateurs").update({ img: "" }).eq("id", collabId).eq("salon_id", _salonId).select("id");
       if (r.error) return { ok:false, error:r.error.message };
-      if (!r.data || !r.data.length) return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
+      if (!r.data || !r.data.length) return await _lxCollabZeroLigne(collabId);
       return { ok:true };
     } catch (e) { return { ok:false, error:(e && e.message) || "erreur r\u00e9seau" }; }
   });
@@ -4894,7 +4970,7 @@ async function saveCollabPartial(collabIdx, fields, opts) {
       if (Object.prototype.hasOwnProperty.call(payload, "horaires_overrides")) {
         var cur = await _sb.from("collaborateurs").select("horaires_overrides").eq("id", cid).eq("salon_id", _salonId);
         if (cur.error) return { ok:false, error:cur.error.message };
-        if (!cur.data || !cur.data.length) return { ok:false, error:"fiche introuvable en base" };
+        if (!cur.data || !cur.data.length) { _lxCollabSupprimeAilleurs([c.n]); return { ok:false, supprime:true, error:"fiche supprim\u00e9e sur un autre appareil" }; }
         var dbOv = cur.data[0].horaires_overrides || {};
         var memOv = payload.horaires_overrides || {};
         var merged = {};
@@ -4908,7 +4984,7 @@ async function saveCollabPartial(collabIdx, fields, opts) {
       }
       var r = await _sb.from("collaborateurs").update(payload).eq("id", cid).eq("salon_id", _salonId).select("id");
       if (r.error) { console.error("[saveCollabPartial]", r.error); return { ok:false, error:r.error.message }; }
-      if (!r.data || !r.data.length) return { ok:false, error:"aucune fiche modifi\u00e9e (droits ?)" };
+      if (!r.data || !r.data.length) return await _lxCollabZeroLigne(cid);
       // memoire alignee sur ce qui est en base (dates des autres appareils incluses)
       if (payload.horaires_overrides && T[collabIdx] && String(T[collabIdx].id) === String(cid)) {
         if (!T[collabIdx].hrsOver) T[collabIdx].hrsOver = {};
