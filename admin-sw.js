@@ -1,11 +1,10 @@
-/* Service Worker — Luxyra Admin
- * Sert UNIQUEMENT de canal d'affichage local pour les notifs déclenchées
- * par le watcher d'erreurs côté admin.html (reg.showNotification).
+/* Service Worker — Luxyra Admin (portée /admin)
+ * Rôle (mis à jour le 15/10/2026) : canal d'affichage des notifications LOCALES déclenchées par le watcher
+ * d'erreurs d'admin.html (lxStartErrorWatcher -> reg.showNotification), quand l'admin est ouverte.
  *
- * Pas de Web Push externe : FCM/Doze sur Android n'était pas fiable, on a
- * tout repris en local (poll 15s + showNotification + mail Brevo backup).
- * Voir admin.html `lxStartErrorWatcher` et la migration
- * `disable_external_webpush_keep_local_polling`.
+ * Les notifications PUSH (admin fermée comprise) passent par un AUTRE service : /admin/sw-admin.js
+ * (abonnements push_subscriptions target_type='admin', envoi par l'edge function send-push, appelée par
+ * public.notify_admins()). Ce fichier ne reçoit pas de push.
  */
 
 self.addEventListener('install', function(event) {
@@ -19,18 +18,18 @@ self.addEventListener('activate', function(event) {
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   if (event.action === 'dismiss') return;
-  var targetUrl = (event.notification.data && event.notification.data.url) || 'https://luxyra.fr/admin?tab=monitoring';
+  var targetUrl = (event.notification.data && event.notification.data.url) || '/admin?tab=qualite&sub=monitoring';
+  try { targetUrl = new URL(targetUrl, self.location.origin).href; } catch (_) {}
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clients) {
-      // Si un onglet admin existe déjà, le focus
+      // Si un onglet admin existe déjà : même message que /admin/sw-admin.js (la page navigue vers ?tab=&sub=)
       for (var i = 0; i < clients.length; i++) {
         var c = clients[i];
         if (c.url.indexOf('/admin') >= 0 && 'focus' in c) {
-          c.postMessage({ type: 'navigate', url: targetUrl });
+          c.postMessage({ type: 'lx-notif-click', url: targetUrl });
           return c.focus();
         }
       }
-      // Sinon ouvrir nouvel onglet
       if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
     })
   );

@@ -38,6 +38,11 @@ a{color:var(--gold);text-decoration:none}
 .sb-item:hover{background:var(--bg3);color:var(--text)}
 .sb-item.active{background:var(--gold-bg);color:var(--gold);font-weight:700}
 .sb-item .icon{width:20px;text-align:center;font-size:16px}
+.sb-sub{display:flex;align-items:center;gap:8px;padding:6px 12px 6px 42px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text3);margin-bottom:1px}
+.sb-sub:hover{background:var(--bg3);color:var(--text)}
+.sb-sub.active{color:var(--gold);font-weight:700;background:rgba(212,168,67,.05)}
+.sb-sub .sb-badge{font-size:9px;padding:0 6px}
+.sb-badge:empty{display:none}
 .sb-badge{margin-left:auto;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;min-width:18px;text-align:center}
 .sb-footer{padding:16px;border-top:1px solid var(--border);font-size:11px;color:var(--text3)}
 .main{margin-left:250px;padding:24px;min-height:100vh}
@@ -143,17 +148,8 @@ tr:hover{background:rgba(255,255,255,.02)}
       <div class="sb-logo-sub">ADMIN PANEL</div>
     </div>
   </div>
-  <div class="sb-nav">
-    <div class="sb-item active" data-tab="cockpit" onclick="nav('cockpit')"><span class="icon">📊</span>Cockpit<span class="sb-badge" id="badgeAlerts"></span></div>
-    <div class="sb-item" onclick="lxRechercheOuvrir()" title="Ctrl+K"><span class="icon">🔍</span>Rechercher<span style="margin-left:auto;font-size:10px;color:var(--text3)">Ctrl K</span></div>
-    <div class="sb-item" data-tab="salons" onclick="nav('salons','liste')"><span class="icon">🏠</span>Salons<span class="sb-badge" id="badgeSalons"></span></div>
-    <div class="sb-item" data-tab="finance" onclick="nav('finance','revenus')"><span class="icon">💰</span>Finance</div>
-    <div class="sb-item" data-tab="communication" onclick="nav('communication','chat')"><span class="icon">💬</span>Communication<span class="sb-badge" id="badgeChat"></span></div>
-    <div class="sb-item" data-tab="analytics" onclick="nav('analytics','kpis')"><span class="icon">📈</span>Analytics</div>
-    <div class="sb-item" data-tab="claude" onclick="nav('claude')"><span class="icon">🤖</span>Claude<span class="sb-badge" id="badgeClaude"></span></div>
-    <div class="sb-item" data-tab="monitoring" onclick="nav('monitoring')"><span class="icon">🩺</span>Monitoring<span class="sb-badge" id="badgeMonitoring"></span></div>
-    <div class="sb-item" data-tab="parametres" onclick="nav('parametres','admin')"><span class="icon">⚙️</span>Paramètres</div>
-  </div>
+  <!-- 2026-10-15 : menu en 7 rubriques (audit docs/admin-audit-1015.md), construit par lxMenuRendu() -->
+  <div class="sb-nav" id="sbNav"></div>
   <div class="sb-footer">
     <div><strong>Luxyra Admin</strong> v4.0</div>
     <div style="font-family:var(--mono)">Luxyra Admin — 2026</div>
@@ -176,23 +172,32 @@ var SUPABASE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 var _sb=null,_uid=null,_online=false;
 var SALONS=[],ALERTS=[],DEMANDES=[],INSCRIPTIONS=[],MIGRATIONS=[];
 
-// ===== AUDIT LOG SUPER-ADMIN =====
-// Logger toute action sensible (consultation salon, export, modification…)
-// dans la table admin_audit_log via la fonction RPC log_admin_action.
+// ===== JOURNAL ADMIN (2026-10-15) =====
+// UN SEUL helper pour toutes les actions d'écriture de l'admin : lxJournal(action, {salon, cible, details, avant, apres}).
+// Écrit dans admin_log via la RPC admin_journal (is_admin + 2FA côté serveur ; l'auteur — compte et e-mail — est
+// rempli par la base, jamais par le navigateur). En plus, la base trace automatiquement avant / après toute
+// écriture de l'admin sur les tables gérées ici (AUTO_MODIF_… — docs/migrations_1015/admin_structure.sql).
+// Repli si la RPC n'est pas encore installée : insertion directe (policy is_admin) avec les anciennes colonnes.
+async function lxJournal(action, o){
+  o = o || {};
+  if(!_sb || !_online) return null;
+  var det = o.details==null ? "" : (typeof o.details==="string" ? o.details : JSON.stringify(o.details));
+  try{
+    var r = await _sb.rpc("admin_journal", { p_action:String(action||"ACTION"), p_salon:o.salon||null, p_cible:o.cible||null, p_details:det.slice(0,4000), p_avant:o.avant==null?null:o.avant, p_apres:o.apres==null?null:o.apres });
+    if(!r.error) return r.data;
+    if(!/admin_journal|function|schema cache/i.test(String(r.error.message||""))) { console.warn("[journal]", r.error.message); return null; }
+  }catch(e){ console.warn("[journal]", e&&e.message); }
+  try{
+    var r2 = await _sb.from("admin_log").insert({ admin_user_id:_uid, salon_id:o.salon||null, action:String(action||"ACTION").toUpperCase().slice(0,80),
+      details:(o.cible?"["+o.cible+"] ":"")+det+(o.avant!=null||o.apres!=null?" | avant="+JSON.stringify(o.avant)+" | après="+JSON.stringify(o.apres):"") });
+    if(r2 && r2.error) console.warn("[journal]", r2.error.message);
+  }catch(e2){ console.warn("[journal]", e2&&e2.message); }
+  return null;
+}
+window.lxJournal = lxJournal;
+// Ancien point d'entrée (écrivait dans admin_audit_log, illisible depuis le panneau) : redirigé vers le journal unique.
 async function logAdminAction(action, target_type, target_id, details){
-  try {
-    if(!_sb || !_uid) return;
-    var email = (window._adminEmail || _uid || "unknown");
-    await _sb.rpc("log_admin_action", {
-      p_admin_email: email,
-      p_action: String(action||"").toUpperCase(),
-      p_target_type: target_type || null,
-      p_target_id: target_id ? String(target_id) : null,
-      p_details: details || null,
-      p_ip: null,
-      p_ua: navigator.userAgent.slice(0,200)
-    });
-  } catch(e){ console.warn("logAdminAction:", e); }
+  return lxJournal(action, { cible:(target_type||"")+(target_id?":"+target_id:""), details:details||"" });
 }
 window.logAdminAction = logAdminAction;
 // ===== PUSH NOTIFICATIONS (Phase 3) =====
@@ -224,6 +229,7 @@ async function lxPushEnable(){
     var _up=await _sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"});
     if(_up&&_up.error){ alert("Enregistrement de l'appareil impossible : "+_up.error.message); return false; }
     window._lxAdminPushOk=true;
+    try{ await lxJournal("PUSH_APPAREIL_AJOUTE",{cible:"push_subscriptions",details:(navigator.userAgent||"").slice(0,120)}); }catch(_){}
     alert("✅ Notifications activées sur cet appareil.");
     if(typeof render==="function")render();
     return true;
@@ -231,7 +237,12 @@ async function lxPushEnable(){
 }
 async function lxPushDisable(id){
   try{
-    if(id){await _sb.from("push_subscriptions").delete().eq("id",id);}
+    if(id){
+      if(!confirm("Retirer cet appareil ? Il ne recevra plus les notifications de l'admin.")) return;
+      var _rp=await _sb.from("push_subscriptions").delete().eq("id",id).select("id");
+      if(_rp.error||!_rp.data||!_rp.data.length){ alert("❌ Appareil non retiré : "+((_rp.error&&_rp.error.message)||"aucune ligne")); return; }
+      await lxJournal("PUSH_APPAREIL_RETIRE",{cible:"push_subscriptions:"+id});
+    }
     else{
       var reg=await navigator.serviceWorker.getRegistration("/admin/"); // 2026-10-12 : celui des notifications admin (jamais celui de la caisse)
       var sub=reg&&await reg.pushManager.getSubscription();
@@ -270,10 +281,10 @@ async function lxRenderPushDevices(){
     var last=d.last_used_at?new Date(d.last_used_at).toLocaleDateString("fr-FR"):"jamais";
     h+='<div style="padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-      +'<div style="font-weight:700">📱 '+saEsc(d.device_label||"Appareil")+'</div>'
-      +'<button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick="lxPushDisable(\''+d.id+'\')">✖ Retirer</button>'
+      +'<div style="font-weight:700">'+lxPushNomAppareil(d)+'</div>'
+      +'<button class="tb-btn" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="lxPushDisable(\''+saJs(d.id)+'\')">✖ Retirer</button>'
       +'</div>'
-      +'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Dernier envoi : '+last+'</div>'
+      +'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Enregistré le '+(d.created_at?new Date(d.created_at).toLocaleDateString("fr-FR"):"?")+' · dernière activité : '+last+'</div>'
       +'<div style="display:flex;gap:6px;flex-wrap:wrap">';
     EV.forEach(function(ev){
       var on=!!d[ev[0]];
@@ -284,12 +295,18 @@ async function lxRenderPushDevices(){
   });
   box.innerHTML=h;
 }
+// Nom lisible d'un appareil d'après son service de push (aucune donnée de l'appareil n'est stockée en plus)
+function lxPushNomAppareil(d){
+  var e=String(d.endpoint||"");
+  var t=/fcm\.googleapis\.com/.test(e)?"📱 Chrome / Android":(/notify\.windows\.com/.test(e)?"💻 Windows (Edge)":(/push\.apple\.com/.test(e)?"🍎 Apple (Safari / iPhone)":(/mozilla/.test(e)?"🦊 Firefox":"📱 Appareil")));
+  return saEsc(t)+' <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">#'+saEsc(d.id)+'</span>';
+}
 async function lxPushNeedsBanner(){
   if(!await lxPushSupported())return false;
   if(Notification.permission!=="default")return false;
   return true;
 }
-var curPage="dashboard";window._currentTab="cockpit",curFilter="all";
+var curPage="tableau";window._currentTab="tableau",curFilter="all";
 // Tarifs par défaut, écrasés au load par loadPlansFromConfig() qui lit app_config
 var PLANS=[{id:"essential",nom:"Essentiel",prix:14.99,couleur:"var(--blue)"},{id:"pro",nom:"Pro",prix:24.99,couleur:"var(--gold)"}];
 async function loadPlansFromConfig(){
@@ -453,7 +470,7 @@ async function lxAttRelanceBasculer(on){
   var merged=Object.assign({},cur.data.config,{relance_attestation_active:on});
   var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (attestation)"}).eq("id",1);
   if(r.error){ alert("❌ "+r.error.message); return; } window._appConfig=merged;
-  try{ await _sb.from("admin_log").insert({action:on?"RELANCE_ATTESTATION_ON":"RELANCE_ATTESTATION_OFF",details:""}); }catch(e){}
+  try{ await lxJournal(on?"RELANCE_ATTESTATION_ON":"RELANCE_ATTESTATION_OFF",{cible:"app_config:relance_attestation_active",avant:{relance_attestation_active:!on},apres:{relance_attestation_active:on}}); }catch(e){}
   lxAttListeCharger();
 }
 async function lxAttEdVoir(){
@@ -549,20 +566,19 @@ async function loadData(){
           trialEnd:s.trial_end,color:colors[i%colors.length],logo:(/^(data:image\/(png|jpe?g|webp|gif);base64,|https:\/\/)/i.test(String(s.logo||""))?String(s.logo):""),
           smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,welcomeSmsBonusGiven:s.welcome_sms_bonus_given===true,
           isFree:s.is_free||false,freeUntil:s.free_until,customPrice:s.custom_price_amount,
-          created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,fermeLe:s.ferme_le||null,fermeMotif:s.ferme_motif||"",fermePar:s.ferme_par||"",
+          created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,pastDueSince:s.past_due_since||null,fermeLe:s.ferme_le||null,fermeMotif:s.ferme_motif||"",fermePar:s.ferme_par||"",
           contratSignature:s.contrat_signature||"",contratAcceptedAt:s.contrat_accepted_at||""};
       });
-      for(var i=0;i<SALONS.length;i++){
-        try{
-          var cl=await _sb.from("clients").select("id",{count:"exact",head:true}).eq("salon_id",SALONS[i].id);
-          if(cl.count!=null)SALONS[i].clients=cl.count;
-          var co=await _sb.from("collaborateurs").select("id",{count:"exact",head:true}).eq("salon_id",SALONS[i].id);
-          if(co.count!=null)SALONS[i].collabs=co.count;
-        }catch(e){}
-      }
+      // 2026-10-15 : compteurs clients / collaborateurs de TOUS les salons en UNE requête (RPC admin_salons_compteurs)
+      // au lieu de 2 requêtes par salon. Repli : admin_salon_health (une requête aussi).
+      try{
+        var rc=await _sb.rpc("admin_salons_compteurs"), mc={};
+        if(rc.error){ rc=await _sb.rpc("admin_salon_health"); (rc.data||[]).forEach(function(x){ mc[x.salon_id]={c:x.clients,k:x.collaborateurs}; }); }
+        else (rc.data||[]).forEach(function(x){ mc[x.salon_id]={c:x.clients,k:x.collaborateurs}; });
+        SALONS.forEach(function(sx){ var v=mc[sx.id]; if(v){ sx.clients=Number(v.c)||0; sx.collabs=Number(v.k)||0; } });
+      }catch(eC){ console.warn("[compteurs salons]",eC&&eC.message); }
     }
-    var bs=document.getElementById("badgeSalons");
-    if(bs)bs.textContent=SALONS.filter(function(x){return !x.fermeLe;}).length||""; // 2026-10-13 : établissements fermés exclus du compteur
+    if(typeof lxMenuRendu==="function") lxMenuRendu();
     // Load cartes abo global stats
     try{
       var cac=await _sb.from("cartes_abo_clients").select("id,tarif,economies_totales,status",{count:"exact"}).eq("status","active");
@@ -607,120 +623,206 @@ async function loadMigrations(){
   }catch(e){console.log("migration_requests not found:",e);}
 }
 
-// ===== NAV =====
-// Router 6 onglets v2 — nav(tab, sub) avec ?tab=&sub= et back/forward
-// Rétrocompat : anciens nav('dashboard'), nav('inscriptions'), nav('demandes'), nav('sms'), nav('nf525'), nav('settings'), nav('alerts'), nav('revenue'), nav('finances'), nav('systeme')
+// ===== NAV (2026-10-15 : 7 rubriques, audit docs/admin-audit-1015.md) =====
+// Clés internes (URL ?tab=&sub=) : la rubrique « Support » garde la clé historique « communication »
+// (le chat — CHAT_*, rChat… — teste _currentTab==='communication' && _currentSub==='chat' ; il n'est pas modifié ici).
+// La rubrique « Communication » (SMS, e-mails) a la clé « diffusion ».
+var LX_MENU=[
+  {id:'tableau',icon:'📊',label:'Tableau de bord',subs:[]},
+  {id:'salons',icon:'🏠',label:'Établissements',subs:[
+    {id:'liste',label:'Liste & fiches'},{id:'inscriptions',label:'Inscriptions',badge:'inscriptions'},
+    {id:'demandes',label:'Demandes d’essai',badge:'demandes'},{id:'migrations',label:'Migrations',badge:'migrations'},
+    {id:'fermetures',label:'Fermetures & archives'}]},
+  {id:'revenus',icon:'💰',label:'Revenus & abonnements',subs:[
+    {id:'mrr',label:'Revenu mensuel & historique'},{id:'stripe',label:'Stripe'},{id:'impayes',label:'Essais & impayés',badge:'impayes'},
+    {id:'parrainage',label:'Parrainage'},{id:'sms',label:'Revenus SMS'}]},
+  {id:'communication',icon:'💬',label:'Support',subs:[
+    {id:'chat',label:'Boîte de réception',badge:'chat'},{id:'bot',label:'Base du bot'}]},
+  {id:'diffusion',icon:'📣',label:'Communication',subs:[
+    {id:'sms',label:'SMS (Brevo)'},{id:'email',label:'Modèles & relances e-mail'},{id:'emailstats',label:'Statistiques d’envoi'}]},
+  {id:'qualite',icon:'🛡️',label:'Qualité & conformité',subs:[
+    {id:'areparer',label:'À réparer',badge:'areparer'},{id:'monitoring',label:'Monitoring'},{id:'nf525',label:'NF525 & attestations'},
+    {id:'clotures',label:'Clôtures Z'},{id:'sauvegardes',label:'Sauvegardes & tâches de nuit'},{id:'rgpd',label:'RGPD & purges'},
+    {id:'journal',label:'Journal admin'},{id:'claude',label:'Demandes à Claude',badge:'claude'}]},
+  {id:'croissance',icon:'🚀',label:'Croissance & réglages',subs:[
+    {id:'annuaire',label:'Annuaire & SEO'},{id:'analytics',label:'Chiffres clés'},{id:'cohortes',label:'Cohortes'},{id:'funnel',label:'Entonnoir'},
+    {id:'reglages',label:'Réglages & notifications'},{id:'legal',label:'Légal'},{id:'systeme',label:'Système & intégrations'},{id:'liens',label:'Liens externes'}]}
+];
+var DEFAULT_SUB={tableau:null,salons:'liste',revenus:'mrr',communication:'chat',diffusion:'sms',qualite:'areparer',croissance:'reglages'};
+// Anciennes adresses (favoris, raccourcis enregistrés, liens des notifications push) -> nouvelles pages
 var LEGACY_NAV={
-  dashboard:['cockpit',null], alerts:['cockpit',null],
-  inscriptions:['salons','inscriptions'], demandes:['salons','demandes'],
-  finances:['finance','revenus'], revenue:['finance','revenus'], nf525:['finance','nf525'],
-  sms:['communication','sms'],
-  systeme:['parametres','admin'], settings:['parametres','admin']
+  'cockpit':['tableau',null],'dashboard':['tableau',null],'alerts':['tableau',null],
+  'inscriptions':['salons','inscriptions'],'demandes':['salons','demandes'],
+  'finances':['revenus','mrr'],'revenue':['revenus','mrr'],'nf525':['qualite','nf525'],'sms':['diffusion','sms'],
+  'systeme':['croissance','systeme'],'settings':['croissance','reglages'],'monitoring':['qualite','monitoring'],'claude':['qualite','claude'],
+  'stripe':['revenus','stripe'],
+  'salons/annuaire':['croissance','annuaire'],
+  'finance':['revenus','mrr'],'finance/revenus':['revenus','mrr'],'finance/stripe':['revenus','stripe'],'finance/clotures':['qualite','clotures'],'finance/nf525':['qualite','nf525'],
+  'communication/sms':['diffusion','sms'],'communication/email':['diffusion','email'],
+  'analytics':['croissance','analytics'],'analytics/kpis':['croissance','analytics'],'analytics/cohorts':['croissance','cohortes'],'analytics/funnel':['croissance','funnel'],
+  'parametres':['croissance','reglages'],'parametres/admin':['croissance','reglages'],'parametres/legal':['croissance','legal'],'parametres/system':['croissance','systeme']
 };
-var DEFAULT_SUB={cockpit:null,salons:'liste',finance:'revenus',communication:'chat',analytics:'kpis',parametres:'admin'};
+function lxNavResoudre(tab, sub){
+  tab=String(tab||'tableau'); sub=(sub===undefined||sub===null||sub==='')?null:String(sub);
+  var m=LEGACY_NAV[tab+'/'+sub]||(sub===null?LEGACY_NAV[tab]:null)||(!LX_MENU.some(function(x){return x.id===tab;})?LEGACY_NAV[tab]:null);
+  if(m){ tab=m[0]; sub=(m[1]!==null&&m[1]!==undefined)?m[1]:sub; }
+  var sec=LX_MENU.find(function(x){return x.id===tab;});
+  if(!sec){ tab='tableau'; sec=LX_MENU[0]; sub=null; }
+  if(sec.subs.length){ if(!sec.subs.some(function(x){return x.id===sub;})) sub=DEFAULT_SUB[tab]; } else sub=null;
+  return [tab, sub];
+}
 function nav(tab, sub, _fromPop){
-  // Rétrocompat 1-arg : si tab est une clé legacy, on remappe
-  if(arguments.length===1 && LEGACY_NAV[tab]){var m=LEGACY_NAV[tab];tab=m[0];sub=m[1];}
-  if(!tab) tab='cockpit';
-  if(typeof sub==='undefined' || sub===null) sub=DEFAULT_SUB[tab]||null;
+  var r=lxNavResoudre(tab, sub); tab=r[0]; sub=r[1];
+  if(!(tab==='communication'&&sub==='chat')) window._chatNonLusActif=false;
   window._currentTab=tab; window._currentSub=sub; curPage=sub||tab;
-  // URL sync
   if(!_fromPop){
-    try{
-      var qs='?tab='+encodeURIComponent(tab)+(sub?'&sub='+encodeURIComponent(sub):'');
-      history.pushState({tab:tab,sub:sub}, '', qs);
-    }catch(e){}
+    try{ history.pushState({tab:tab,sub:sub}, '', '?tab='+encodeURIComponent(tab)+(sub?'&sub='+encodeURIComponent(sub):'')); }catch(e){}
   }
-  // Active state sidebar
-  document.querySelectorAll('.sb-item').forEach(function(e){
-    e.classList.toggle('active', e.getAttribute('data-tab')===tab);
-  });
   if(window.innerWidth<900){var sb=document.querySelector('.sidebar');if(sb)sb.classList.remove('open');}
   render();
 }
 window.addEventListener('popstate', function(e){
   var s=e.state||{};
   var p=new URLSearchParams(location.search);
-  nav(s.tab||p.get('tab')||'cockpit', s.sub||p.get('sub')||null, true);
+  nav(s.tab||p.get('tab')||'tableau', s.sub||p.get('sub')||null, true);
 });
 function bootRoute(){
   var p=new URLSearchParams(location.search);
-  var t=p.get('tab')||'cockpit';
-  var s=p.get('sub')||null;
-  nav(t, s, true);
-  // Replace state pour que back/forward fonctionne dès le premier changement
-  try{history.replaceState({tab:t,sub:s}, '', '?tab='+encodeURIComponent(t)+(s?'&sub='+encodeURIComponent(s):''));}catch(e){}
+  var t=p.get('tab'), s=p.get('sub')||null;
+  // anciens liens des notifications : /admin.html#stripe, #sms
+  if(!t && location.hash){ var hsh=location.hash.slice(1).toLowerCase(); if(LEGACY_NAV[hsh]){ t=LEGACY_NAV[hsh][0]; s=LEGACY_NAV[hsh][1]; } }
+  var r=lxNavResoudre(t||'tableau', s);
+  nav(r[0], r[1], true);
+  try{history.replaceState({tab:r[0],sub:r[1]}, '', '?tab='+encodeURIComponent(r[0])+(r[1]?'&sub='+encodeURIComponent(r[1]):''));}catch(e){}
+}
+// Pastilles : valeurs CALCULÉES à partir des données chargées (plus d'identifiants absents du menu)
+function lxBadges(){
+  var D=DEMANDES||[], M=MIGRATIONS||[], I=INSCRIPTIONS||[], now=Date.now();
+  var tdb=window._TDB||null;
+  var essais7=(SALONS||[]).filter(function(s){ if(s.status!=='trial'||!s.trialEnd||s.fermeLe) return false; var d=(new Date(s.trialEnd)-now)/864e5; return d>=0&&d<7; }).length;
+  var impayes=(SALONS||[]).filter(function(s){ return s.status==='past_due'&&!s.fermeLe; }).length;
+  var arG=(window._lxAR&&window._lxAR.items)?window._lxAR.items.filter(function(x){return x.niveau==='grave';}).length:(tdb&&tdb.a_reparer?Number(tdb.a_reparer.graves)||0:0);
+  var alertes=tdb&&tdb.alertes?tdb.alertes.filter(function(a){return a.niveau!=='info';}).length:0;
+  return {
+    tableau:alertes,
+    salons:(SALONS||[]).filter(function(x){return !x.fermeLe;}).length,
+    inscriptions:I.filter(function(i){return (now-new Date(i.created_at))<7*864e5;}).length,
+    demandes:D.filter(function(d){return d.status==='new';}).length,
+    migrations:M.filter(function(m){return m.status==='new'||m.status==='contacted'||m.status==='in_progress';}).length,
+    impayes:essais7+impayes,
+    chat:window.ADMIN_UNREAD_CHAT||0,
+    areparer:arG,
+    claude:window._lxCdNb||0
+  };
+}
+// identifiants historiques conservés (les chargeurs existants les mettent à jour directement)
+var LX_BADGE_IDS={tableau:'badgeAlerts',salons:'badgeSalons',inscriptions:'badgeInscrip',demandes:'badgeDemandes',migrations:'badgeMigrations',chat:'badgeChat',claude:'badgeClaude',areparer:'badgeMonitoring',impayes:'badgeImpayes'};
+function lxMenuRendu(){
+  var el=document.getElementById('sbNav'); if(!el) return;
+  var B=lxBadges(), tab=window._currentTab||'tableau', sub=window._currentSub||null;
+  var bdg=function(k,cls){ var v=B[k]||0; return '<span class="sb-badge"'+(LX_BADGE_IDS[k]?' id="'+LX_BADGE_IDS[k]+'"':'')+(cls?' style="'+cls+'"':'')+'>'+(v>0?saEsc(v):'')+'</span>'; };
+  var h='<div class="sb-item" onclick="lxRechercheOuvrir()" title="Ctrl+K"><span class="icon">🔍</span>Rechercher<span style="margin-left:auto;font-size:10px;color:var(--text3)">Ctrl K</span></div>';
+  LX_MENU.forEach(function(sec){
+    var act=(sec.id===tab);
+    var badgeSec='';
+    if(sec.id==='tableau') badgeSec=bdg('tableau');
+    else if(sec.id==='salons') badgeSec='<span class="sb-badge" id="badgeSalons" style="background:var(--bg4);color:var(--text2)">'+(B.salons||'')+'</span>';
+    else if(sec.id==='communication') badgeSec=act?'':bdg('chat');
+    else if(sec.id==='qualite') badgeSec=act?'':((B.areparer?'<span class="sb-badge">'+saEsc(B.areparer)+'</span>':'')+bdg('claude','background:var(--purple);margin-left:4px'));
+    else if(sec.id==='revenus') badgeSec=act?'':(B.impayes?'<span class="sb-badge" style="background:var(--orange)">'+saEsc(B.impayes)+'</span>':'');
+    h+='<div class="sb-item'+(act?' active':'')+'" data-tab="'+sec.id+'" onclick="nav(\''+sec.id+'\')"><span class="icon">'+sec.icon+'</span>'+saEsc(sec.label)+badgeSec+'</div>';
+    if(act && sec.subs.length){
+      sec.subs.forEach(function(x){
+        h+='<div class="sb-sub'+(x.id===sub?' active':'')+'" onclick="nav(\''+sec.id+'\',\''+x.id+'\')">'+saEsc(x.label)+(x.badge?bdg(x.badge):'')+'</div>';
+      });
+    }
+  });
+  el.innerHTML=h;
+}
+// Index de la recherche Ctrl+K : toutes les pages du menu (+ mots-clés)
+var LX_PAGES_MOTS={'tableau':'accueil cockpit chiffres alertes kpi','salons/liste':'salons liste fiche établissement','salons/fermetures':'fermés archives fermeture',
+  'revenus/mrr':'mrr revenu arr arpu churn historique croissance','revenus/stripe':'stripe abonnements factures remises remboursement','revenus/impayes':'impayés essais fin d essai paiement échoué past due',
+  'revenus/parrainage':'parrainage filleul parrain récompense','revenus/sms':'revenus sms packs marge','communication/chat':'chat support messages non lus','communication/bot':'bot base connaissances kb',
+  'diffusion/sms':'sms brevo crédits','diffusion/email':'email modèles relances','diffusion/emailstats':'brevo statistiques e-mails rejets ouvertures',
+  'qualite/areparer':'à réparer erreurs problèmes','qualite/monitoring':'monitoring erreurs cron quotas','qualite/nf525':'nf525 attestation conformité caisse','qualite/clotures':'clôtures z',
+  'qualite/sauvegardes':'sauvegarde backup github restauration tâches de nuit cron','qualite/rgpd':'rgpd purge suppression 6 ans comptes inactifs export','qualite/journal':'journal admin log audit','qualite/claude':'claude demandes',
+  'croissance/annuaire':'annuaire seo signalements','croissance/analytics':'analytics kpis','croissance/cohortes':'cohortes rétention','croissance/funnel':'entonnoir funnel conversion',
+  'croissance/reglages':'réglages paramètres constantes notifications push appareils','croissance/legal':'légal cgv mentions','croissance/systeme':'système intégrations santé','croissance/liens':'liens play console search console cloudflare supabase github'};
+function lxPagesIndex(){
+  var L=[];
+  LX_MENU.forEach(function(sec){
+    if(!sec.subs.length) L.push({tab:sec.id,sub:null,label:sec.label,chemin:sec.label,mots:LX_PAGES_MOTS[sec.id]||''});
+    sec.subs.forEach(function(x){ L.push({tab:sec.id,sub:x.id,label:x.label,chemin:sec.label+' › '+x.label,mots:LX_PAGES_MOTS[sec.id+'/'+x.id]||''}); });
+  });
+  return L;
 }
 
 function render(){
-  var tab=window._currentTab||'cockpit';
-  var sub=window._currentSub||DEFAULT_SUB[tab]||null;
+  var r=lxNavResoudre(window._currentTab||'tableau', window._currentSub||null);
+  var tab=r[0], sub=r[1]; window._currentTab=tab; window._currentSub=sub;
   var h="";
-  // Helper sous-onglets (avec badges optionnels)
-  function subBar(items){
+  var sec=LX_MENU.find(function(x){return x.id===tab;})||LX_MENU[0];
+  // Sous-pages en haut de page (utile sur téléphone, le menu étant replié)
+  function subBar(){
+    if(!sec.subs.length) return '';
+    var B=lxBadges();
     var x='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
-    items.forEach(function(it){
-      var act=(sub===it.id);
-      var badge='';
-      if(it.badge && it.badge>0){
-        badge=' <span style="display:inline-block;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:4px;min-width:18px;text-align:center;box-shadow:0 2px 6px rgba(231,76,60,.4)">'+it.badge+'</span>';
-      }
-      x+='<button class="tb-btn" style="position:relative;'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" onclick="nav(\''+tab+'\',\''+it.id+'\')">'+it.label+badge+'</button>';
+    sec.subs.forEach(function(it){
+      var act=(sub===it.id), n=it.badge?(B[it.badge]||0):0;
+      var badge=n>0?' <span style="display:inline-block;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:4px;min-width:18px;text-align:center">'+saEsc(n)+'</span>':'';
+      x+='<button class="tb-btn" style="position:relative;'+(act?'background:var(--gold-bg);border-color:var(--gold);color:var(--gold)':'')+'" onclick="nav(\''+tab+'\',\''+it.id+'\')">'+saEsc(it.label)+badge+'</button>';
     });
     return x+'</div>';
   }
-  if(tab==='cockpit'){
-    h=rDashboard();
-    // rAlerts() retiré du cockpit — fusionné dans 'À traiter aujourd'hui'
-    // (toutes les actions urgentes sont désormais dans une source unique en haut)
-  }
-  else if(tab==='salons'){
-    var nbDemandesNew = DEMANDES.filter(function(d){return d.status==="new";}).length;
-    var nbMigrationsActives = MIGRATIONS.filter(function(m){return m.status==="new"||m.status==="contacted"||m.status==="in_progress";}).length;
-    h=subBar([
-      {id:'liste',label:'🏠 Liste'},
-      {id:'inscriptions',label:'📝 Inscriptions'},
-      {id:'demandes',label:'📩 Demandes essai',badge:nbDemandesNew},
-      {id:'migrations',label:'📥 Migrations',badge:nbMigrationsActives},
-      {id:'annuaire',label:'🗂 Annuaire'}
-    ]);
-    if(sub==='annuaire') h+=rAnnuaire();
-    else if(sub==='inscriptions') h+=rInscriptions();
-    else if(sub==='demandes') h+=rDemandes();
-    else if(sub==='migrations') h+=rMigrations();
-    else h+=rSalons();
-  }
-  else if(tab==='finance'){
-    h=subBar([{id:'revenus',label:'💰 Revenus'},{id:'stripe',label:'💳 Stripe'},{id:'clotures',label:'📋 Clôtures Z'},{id:'nf525',label:'🛡️ NF525'}]);
-    if(sub==='stripe') h+=rStripe();
-    else if(sub==='nf525') h+=rNF525();
-    else if(sub==='clotures') h+=rClotures();
-    else h+=rRevenue();
-  }
-  else if(tab==='communication'){
-    h=subBar([{id:'chat',label:'💬 Chat support'},{id:'bot',label:'🤖 Base du bot'},{id:'sms',label:'📱 Packs SMS'},{id:'email',label:'✉️ Email'}]);
-    if(sub==='bot') h+=rBotKb();
-    else if(sub==='sms') h+=rSMS();
-    else if(sub==='email') h+=rEmail();
-    else h+=rChat();
-  }
-  else if(tab==='monitoring'){
-    h=rMonitoring();
-  }
-  else if(tab==='claude'){
-    h=rClaude();
-  }
-  else if(tab==='analytics'){
-    h=subBar([{id:'kpis',label:'📊 KPIs'},{id:'cohorts',label:'👥 Cohortes'},{id:'funnel',label:'🔻 Funnel'}]);
-    h+=rAnalytics(sub);
-  }
-  else if(tab==='parametres'){
-    h=subBar([{id:'admin',label:'⚙️ Réglages'},{id:'legal',label:'⚖️ Légal'},{id:'system',label:'🔧 Système'}]);
-    if(sub==='legal') h+=rLegalPage();
-    else if(sub==='system') h+=rSystemPage();
-    else h+=rSettings();
+  if(tab==='tableau'){ h=rTableau(); }
+  else {
+    h=subBar();
+    if(tab==='salons'){
+      if(sub==='inscriptions') h+=rInscriptions();
+      else if(sub==='demandes') h+=rDemandes();
+      else if(sub==='migrations') h+=rMigrations();
+      else if(sub==='fermetures') h+=rFermetures();
+      else h+=rSalons();
+    }
+    else if(tab==='revenus'){
+      if(sub==='stripe') h+=rStripe();
+      else if(sub==='impayes') h+=rEssaisImpayes();
+      else if(sub==='parrainage') h+=rParrainage();
+      else if(sub==='sms') h+=rRevenusSms();
+      else h+=rRevenue();
+    }
+    else if(tab==='communication'){
+      if(sub==='bot') h+=rBotKb();
+      else { h+=lxChatFiltreBandeau(); h+=rChat(); }
+    }
+    else if(tab==='diffusion'){
+      if(sub==='email') h+=rEmail();
+      else if(sub==='emailstats') h+=rEmailStats();
+      else h+=rSMS();
+    }
+    else if(tab==='qualite'){
+      if(sub==='monitoring') h+=rMonitoring();
+      else if(sub==='nf525') h+=rNF525();
+      else if(sub==='clotures') h+=rClotures();
+      else if(sub==='sauvegardes') h+=rSauvegardes();
+      else if(sub==='rgpd') h+=rRgpd();
+      else if(sub==='journal') h+=rJournal();
+      else if(sub==='claude') h+=rClaude();
+      else h+=rAReparer();
+    }
+    else if(tab==='croissance'){
+      if(sub==='annuaire') h+=rAnnuaire();
+      else if(sub==='analytics') h+=rAnalytics('kpis');
+      else if(sub==='cohortes') h+=rAnalytics('cohorts');
+      else if(sub==='funnel') h+=rAnalytics('funnel');
+      else if(sub==='legal') h+=rLegalPage();
+      else if(sub==='systeme') h+=rSystemPage();
+      else if(sub==='liens') h+=rLiens();
+      else h+=rSettings();
+    }
   }
   var mc=document.getElementById("mainContent");if(mc)mc.innerHTML=h;
+  lxMenuRendu();
   var st=document.getElementById("onlineStatus");
   if(st)st.innerHTML=_online?'<span style="color:var(--green)">● Supabase connecté</span>':'<span style="color:var(--orange)">● Hors ligne</span>';
 }
@@ -770,6 +872,7 @@ async function loadMrrHistory(){
   }catch(e){console.warn('mrr history',e);window._mrrHist={};}
   var el=document.getElementById('lxMrrChart');
   if(el)el.innerHTML=svgMRR(mrr12());
+  var g=document.getElementById('lxCroissance'); if(g) g.innerHTML=lxCroissanceReelle();
 }
 // SVG MRR 12 mois — noir/doré, sans Chart.js
 function svgMRR(data){
@@ -840,108 +943,164 @@ function shortcutClick(url){
   if(p.filter==='trial-expiring'){ window._AF=Object.assign(window._AF||{}, {statut:'trial',essai:'3'}); }
   if(p.filter==='pending'){ window._AF=Object.assign(window._AF||{}, {statut:'pending'}); }
   if(p.filter==='unpaid'){ window._AF=Object.assign(window._AF||{}, {statut:'past_due'}); }
-  if(p.filter==='unread'){ window._chatFiltre='unread'; }
+  // 2026-10-15 : « non lus » filtre vraiment la boîte de réception (avant : variable _chatFiltre lue par personne)
+  if(p.filter==='unread'){ window._chatNonLus=true; }
   window._clotDate=(p.date==='today')?new Date().toISOString().slice(0,10):null;
-  nav(p.tab||'cockpit',p.sub||null);
+  nav(p.tab||'tableau',p.sub||null);
 }
 
-function rDashboard(){
-  var now=new Date();
-  var active=SALONS.filter(function(s){return s.status==='active';}).length;
-  var trial=SALONS.filter(function(s){return s.status==='trial';}).length;
-  // 2026-10-09 : « à traiter » = salons inscrits depuis moins de 30 j encore à l'étape « Nouveau » du suivi
-  // (avant : statut d'inscriptions_log que rien ne faisait jamais évoluer -> compteur bloqué)
-  var pendingInscr=SALONS.filter(function(s){ return (typeof asSuivi==='function'?asSuivi(s.id).etape:'nouveau')==='nouveau' && (Date.now()-new Date(s.created).getTime())<30*86400000; }).length;
-  var unreadChat=window.ADMIN_UNREAD_CHAT||0;
-  var mrr=mrrTotal();
-  var caCum=mrr*12; // estimation annuelle
-  // À traiter aujourd'hui
-  var trialExp=SALONS.filter(function(s){
-    if(s.status!=='trial'||!s.trialEnd)return false;
-    var d=(new Date(s.trialEnd)-now)/86400000;
-    return d>=0&&d<3;
-  });
-  var pendingVerif=SALONS.filter(function(s){return s.verif==='pending_review'&&!s.fermeLe;});
-  var migPending=MIGRATIONS.filter(function(m){return m.status==='new'||m.status==='contacted'||m.status==='in_progress';});
-  var migNew=MIGRATIONS.filter(function(m){return m.status==='new';});
-  var demNew=DEMANDES.filter(function(d){return d.status==='new';});
-  // 2026-10-09 : Cockpit complet
-  var impayes=SALONS.filter(function(s){return s.status==='past_due';});
-  var auj=new Date().toISOString().slice(0,10);
-  var rappels=SALONS.filter(function(s){var su=(typeof asSuivi==='function')?asSuivi(s.id):{};return su.rappel_le&&su.rappel_le<=auj;});
-  var sante=window._SALON_HEALTH?SALONS.filter(function(s){var hh=_salonHealthOf(s.id);return hh&&hh.score!=null&&hh.score<40&&(s.status==='active'||s.status==='past_due')&&(Date.now()-new Date(s.created).getTime())>14*86400000;}):[];
-  if(!window._SALON_HEALTH && !window._cockpitSanteDemandee){ window._cockpitSanteDemandee=true; setTimeout(function(){ lxLoadSalonHealth().then(function(){ if(window._currentTab==='cockpit') render(); }); },50); }
-  var alertesMon=window._cockpitAlertes||0;
-  if(!window._cockpitAlertesDemandee){ window._cockpitAlertesDemandee=true; setTimeout(async function(){ try{ var r=await _sb.rpc('admin_monitoring_status'); window._cockpitAlertes=(r.data&&r.data.recent_critical_1h)||0; if(window._cockpitAlertes&&window._currentTab==='cockpit') render(); }catch(e){} },80); }
-  var todoCount=pendingInscr+unreadChat+trialExp.length+pendingVerif.length+migPending.length+demNew.length+impayes.length+rappels.length+sante.length+(alertesMon?1:0);
+// ===== TABLEAU DE BORD (2026-10-15) =====
+// Les 10 chiffres + « Alertes du jour », calculés côté serveur en UN appel (RPC admin_tableau_de_bord).
+// Crédits Brevo et sauvegarde GitHub : routes admin du worker (mises en cache côté serveur).
+window._TDB=null; window._TDBt=0; window._TDBerr=null; window._TDBbrevo=null; window._TDBgh=null;
+function lxAller(page, extra){
+  var p=String(page||'tableau').split('/');
+  if(extra==='nonlus') window._chatNonLus=true;
+  nav(p[0], p[1]||null);
+}
+// Repli si la RPC n'est pas encore installée : mêmes chiffres calculés dans le navigateur (partiels)
+function lxTdbLocal(){
+  var now=Date.now();
+  var e7=SALONS.filter(function(s){ if(s.status!=='trial'||!s.trialEnd||s.fermeLe) return false; var d=(new Date(s.trialEnd)-now)/864e5; return d>=0&&d<7; })
+    .map(function(s){ return {id:s.id,nom:s.nom,fin:s.trialEnd,jours:Math.max(0,Math.ceil((new Date(s.trialEnd)-now)/864e5))}; });
+  var imp=SALONS.filter(function(s){return s.status==='past_due'&&!s.fermeLe;}).map(function(s){return {id:s.id,nom:s.nom,stripe_customer:s.stripeCust};});
+  return {local:true, mrr:{total:mrrTotal(),variation:null}, abonnes:{payants:SALONS.filter(function(s){return mrrOf(s)>0;}).length, essais:SALONS.filter(function(s){return s.status==='trial'&&!s.fermeLe;}).length},
+    essais_7j:e7, impayes:imp, support:{non_lus:window.ADMIN_UNREAD_CHAT||0,plus_ancien:null}, bot:null, a_reparer:null, nf525:null, nuit:null, alertes:[], compteurs:{}};
+}
+async function lxTdbCharger(force){
+  if(!_sb||!_online) return;
+  if(!force && window._TDB && (Date.now()-window._TDBt)<60000){ lxTdbRendu(); return; }
+  if(window._TDBload) return; window._TDBload=true;
+  try{
+    var tok=await lxAdminJeton();
+    var jsonGet=function(u){ return fetch(u,{headers:{"Authorization":"Bearer "+tok}}).then(function(r){ return r.json().catch(function(){return {error:"Réponse illisible ("+r.status+")"};}).then(function(j){ if(!r.ok&&!j.error) j.error="Erreur "+r.status; return j; }); }).catch(function(e){ return {error:"Worker injoignable : "+(e&&e.message||e)}; }); };
+    var res=await Promise.all([ _sb.rpc('admin_tableau_de_bord'), jsonGet("/api/admin/brevo"+(force?"?refresh=1":"")), jsonGet("/api/admin/github-actions"+(force?"?refresh=1":"")) ]);
+    if(res[0].error){ window._TDBerr=res[0].error.message||"erreur"; window._TDB=lxTdbLocal(); }
+    else { window._TDBerr=null; window._TDB=res[0].data||{}; }
+    window._TDBbrevo=res[1]; window._brevoDernier=res[1]; window._TDBgh=res[2]; window._TDBt=Date.now();
+  }catch(e){ window._TDBerr=String(e&&e.message||e); window._TDB=lxTdbLocal(); }
+  window._TDBload=false;
+  lxTdbRendu(); lxMenuRendu();
+}
+function _tdbCarte(o){
+  // o: {label, valeur, sous, couleur, page, extra, icone, liste}
+  var click=o.page?' onclick="lxAller(\''+o.page+'\''+(o.extra?',\''+o.extra+'\'':'')+')" style="cursor:pointer"':'';
+  return '<div class="kpi"'+click+' title="Ouvrir">'+
+    '<div class="kpi-label">'+saEsc(o.label)+'</div>'+
+    '<div class="kpi-value" style="color:'+(o.couleur||'var(--text)')+';font-size:'+(o.petit?'20px':'26px')+'">'+o.valeur+'</div>'+
+    (o.sous?'<div class="kpi-sub">'+o.sous+'</div>':'')+
+    (o.liste&&o.liste.length?'<div style="font-size:11px;color:var(--text2);margin-top:6px;line-height:1.5">'+o.liste.slice(0,4).map(function(x){return '• '+x;}).join('<br>')+(o.liste.length>4?'<br>… +'+(o.liste.length-4):'')+'</div>':'')+
+    '<div class="kpi-icon">'+(o.icone||'')+'</div></div>';
+}
+function lxTdbRendu(){
+  var el=document.getElementById('tdbZone'); if(!el) return;
+  var d=window._TDB;
+  if(!d){ el.innerHTML='<div class="card" style="text-align:center;color:var(--text3)">Chargement du tableau de bord…</div>'; return; }
+  var nom=function(id){ var s=gSalon(id); return s?s.nom:'?'; };
+  var h='';
+  if(window._TDBerr) h+='<div class="card" style="border-left:4px solid var(--orange);font-size:12px;color:var(--text2)">⚠️ Calcul serveur indisponible ('+saEsc(window._TDBerr)+'). Chiffres partiels calculés dans le navigateur. Appliquer <code>docs/migrations_1015/admin_structure.sql</code>.</div>';
+  h+='<div class="kpi-row">';
+  // 1. Revenu mensuel
+  var m=d.mrr||{}, v=m.variation;
+  h+=_tdbCarte({label:'Revenu mensuel (MRR)',valeur:fmtM(m.total||0),couleur:'var(--gold)',icone:'💰',page:'revenus/mrr',
+    sous:(v==null?'variation 30 j : pas encore de relevé':(v>=0?'+':'')+fmtM(v)+' depuis le relevé du '+fmtD(m.ref_mois))});
+  // 2. Payants / essais
+  var ab=d.abonnes||{};
+  h+=_tdbCarte({label:'Payants / en essai',valeur:saEsc(ab.payants||0)+' <span style="color:var(--text3)">/</span> <span style="color:var(--orange)">'+saEsc(ab.essais||0)+'</span>',icone:'🏠',page:'salons/liste',sous:'établissements payants / essais en cours'});
+  // 3. Essais < 7 j
+  var e7=d.essais_7j||[];
+  h+=_tdbCarte({label:'Essais finissant sous 7 j',valeur:saEsc(e7.length),couleur:e7.length?'var(--orange)':'var(--text2)',icone:'⏰',page:'revenus/impayes',
+    liste:e7.map(function(x){return saEsc(x.nom)+' — '+saEsc(x.jours)+' j';})});
+  // 4. Impayés
+  var imp=d.impayes||[];
+  h+=_tdbCarte({label:'Paiements échoués / impayés',valeur:saEsc(imp.length),couleur:imp.length?'var(--red)':'var(--green)',icone:'💳',page:'revenus/impayes',
+    liste:imp.map(function(x){return saEsc(x.nom)+(x.depuis?' depuis le '+fmtD(x.depuis):'');})});
+  // 5. Support
+  var su=d.support||{}, pa=su.plus_ancien;
+  h+=_tdbCarte({label:'Messages support non lus',valeur:saEsc(su.non_lus||0),couleur:su.non_lus?'var(--red)':'var(--text2)',icone:'💬',page:'communication/chat',extra:su.non_lus?'nonlus':null,
+    sous:pa?'plus ancien : il y a '+saEsc(pa.heures)+' h ('+saEsc(nom(pa.salon_id))+')':'aucun message en attente'});
+  // 6. Bot
+  var bo=d.bot;
+  h+=_tdbCarte({label:'Questions transmises par le bot',valeur:bo?saEsc(bo.sans_reponse||0):'?',couleur:bo&&bo.sans_reponse?'var(--orange)':'var(--text2)',icone:'🤖',page:'communication/chat',
+    sous:bo?'sans réponse humaine · '+saEsc(bo.total_30j||0)+' escalade(s) sur 30 j':'données indisponibles'});
+  // 7. À réparer
+  var ar=d.a_reparer;
+  h+=_tdbCarte({label:'« À réparer » graves',valeur:ar&&ar.graves!=null?saEsc(ar.graves):'?',couleur:ar&&ar.graves?'var(--red)':'var(--green)',icone:'🔧',page:'qualite/areparer',
+    sous:ar&&ar.total!=null?saEsc(ar.total)+' point(s) au total sur 72 h':(ar&&ar.erreur?'erreur : '+saEsc(ar.erreur):'—')});
+  // 8. NF525
+  var nf=d.nf525;
+  var nfLib={ok:'Conforme',attention:'À surveiller',ko:'Problème'};
+  h+=_tdbCarte({label:'État NF525',valeur:nf&&nf.verdict?saEsc(nf.icone||'')+' '+saEsc(nfLib[nf.verdict]||nf.verdict):'?',petit:true,couleur:nf&&nf.verdict==='ok'?'var(--green)':(nf&&nf.verdict==='attention'?'var(--orange)':'var(--red)'),icone:'🧾',page:'qualite/nf525',
+    sous:nf&&nf.problemes!=null?saEsc(nf.problemes)+' contrôle(s) non conforme(s)':(nf&&nf.erreur?'erreur : '+saEsc(nf.erreur):'—')});
+  // 9. Sauvegarde de nuit
+  var gh=window._TDBgh||{}, nuit=d.nuit||{};
+  var sv=null; if(gh.connecte && gh.workflows) sv=gh.workflows.find(function(w){return w.fichier==='sauvegarde-nuit.yml';});
+  var svVal, svSous, svCol;
+  if(sv && !sv.erreur){ svVal=sv.ok?'✅ OK':'❌ Échec'; svCol=sv.ok?'var(--green)':'var(--red)'; svSous=sv.dernier_termine?'dernière : '+saEsc(new Date(sv.dernier_termine.debut).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}))+(sv.en_retard?' (en retard)':''):'aucune exécution'; }
+  else if(sv && sv.erreur){ svVal='⚠️ ?'; svCol='var(--orange)'; svSous=saEsc(sv.erreur); }
+  else { svVal='GitHub non connecté'; svCol='var(--text3)'; svSous='tâches de nuit de la base : '+(nuit.ok===true?'<span style="color:var(--green)">OK</span>':(nuit.ok===false?'<span style="color:var(--orange)">à vérifier</span>':'?')); }
+  h+=_tdbCarte({label:'Sauvegarde de nuit',valeur:svVal,petit:true,couleur:svCol,icone:'💾',page:'qualite/sauvegardes',sous:svSous});
+  // 10. Brevo
+  var bv=window._TDBbrevo||{}, C=brevoCfg();
+  var cr=bv.smsCredits, smsFr=cr!=null?Math.floor(cr/C.ratio):null;
+  h+=_tdbCarte({label:'Crédits Brevo',valeur:bv.error?'?':(cr==null?'?':saEsc(Number(cr).toLocaleString('fr-FR'))),couleur:smsFr!=null&&smsFr<C.seuil?'var(--red)':'var(--text)',icone:'📱',page:'diffusion/sms',
+    sous:bv.error?saEsc(bv.error):(smsFr!=null?'≈ '+saEsc(smsFr.toLocaleString('fr-FR'))+' SMS France (estimation)':'—')});
+  h+='</div>';
 
-  var h='<div class="topbar"><h1>Cockpit <span>Vue temps réel</span></h1><div style="font-size:12px;color:var(--text3);font-family:var(--mono)">'+fmtD(now.toISOString())+'</div></div>';
-  // Bannière activation push (si permission === 'default')
-  // 2026-10-12 : le bandeau s'affichait seulement si la permission n'avait jamais été demandée ;
-  // un téléphone ayant déjà « Autorisé » n'était donc jamais abonné aux alertes (aucun appareil admin
-  // enregistré). On vérifie maintenant l'abonnement réel de CET appareil (service /admin/).
+  // ALERTES DU JOUR : serveur + quelques points calculés ici (suivi commercial, santé, Brevo, GitHub)
+  var A=(d.alertes||[]).slice();
+  var auj=new Date().toISOString().slice(0,10);
+  var nouveaux=SALONS.filter(function(s){ return asSuivi(s.id).etape==='nouveau' && !s.fermeLe && (Date.now()-new Date(s.created).getTime())<30*864e5; });
+  if(nouveaux.length) A.push({niveau:'info',texte:nouveaux.length+' nouvel(aux) établissement(s) à accueillir (étape « Nouveau »)',page:'salons/liste',af:{etape:'nouveau'}});
+  if(window._SALON_HEALTH){ var sf=SALONS.filter(function(s){var hh=_salonHealthOf(s.id);return hh&&hh.score!=null&&hh.score<40&&(s.status==='active'||s.status==='past_due')&&(Date.now()-new Date(s.created).getTime())>14*864e5;}); if(sf.length) A.push({niveau:'attention',texte:sf.length+' client(s) avec une santé faible (< 40) : '+sf.map(function(x){return x.nom;}).join(', '),page:'salons/liste',af:{tri:'sante'}}); }
+  if(d.local){ var rp=SALONS.filter(function(s){var su2=asSuivi(s.id);return su2.rappel_le&&su2.rappel_le<=auj;}); if(rp.length) A.push({niveau:'info',texte:rp.length+' rappel(s) prévu(s)',page:'salons/liste',af:{rappel:'1',tri:'rappel'}}); }
+  if(smsFr!=null && smsFr<C.seuil) A.push({niveau:'attention',texte:'Crédits Brevo bas : ≈ '+smsFr+' SMS restants',page:'diffusion/sms'});
+  if(sv && !sv.erreur && !sv.ok) A.push({niveau:'grave',texte:'Sauvegarde de nuit en échec ou en retard',page:'qualite/sauvegardes'});
+  var ord={grave:0,attention:1,info:2}; A.sort(function(a,b){return (ord[a.niveau]||2)-(ord[b.niveau]||2);});
+  var col={grave:'#ef5350',attention:'#ff9800',info:'#64b5f6'}, lib={grave:'GRAVE',attention:'À VOIR',info:'INFO'};
+  window._TDBalertes=A;
+  h+='<div class="card"><h3>🎯 Alertes du jour <span style="color:var(--text3);font-weight:500">('+A.length+')</span></h3>';
+  if(!A.length) h+='<div style="padding:14px;text-align:center;color:#66bb6a;font-weight:700">✨ Rien à signaler aujourd’hui.</div>';
+  A.forEach(function(a,i){
+    h+='<div onclick="lxAlerteOuvrir('+i+')" style="display:flex;gap:10px;align-items:center;padding:9px 4px;border-top:1px solid var(--border);cursor:pointer">'+
+      '<span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:'+col[a.niveau]+'22;color:'+col[a.niveau]+';white-space:nowrap">'+lib[a.niveau]+'</span>'+
+      '<span style="flex:1;font-size:13px">'+saEsc(a.texte)+'</span><span style="color:var(--text3)">→</span></div>';
+  });
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">Calculé le '+(d.genere_le?saEsc(new Date(d.genere_le).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})):'—')+'.</div></div>';
+  el.innerHTML=h;
+}
+function lxAlerteOuvrir(i){
+  var a=(window._TDBalertes||[])[i]; if(!a) return;
+  if(a.af) window._AF=Object.assign(window._AF||{},a.af);
+  lxAller(a.page, /support non lu/i.test(a.texte)?'nonlus':null);
+}
+function rTableau(){
+  var now=new Date();
+  var h='<div class="topbar"><h1>Tableau de bord <span>Chiffres et alertes du jour</span></h1><div style="display:flex;gap:8px;align-items:center"><span style="font-size:12px;color:var(--text3);font-family:var(--mono)">'+fmtD(now.toISOString())+'</span><button class="tb-btn" onclick="lxTdbCharger(true)">⟳ Actualiser</button></div></div>';
+  // Invitation à abonner CET appareil aux notifications push (abonnement réel vérifié, service /admin/)
   if(window._lxAdminPushOk===undefined && !window._lxAdminPushChk && ("serviceWorker" in navigator) && ("PushManager" in window)){
     window._lxAdminPushChk=true;
     navigator.serviceWorker.getRegistration('/admin/').then(function(r){ return r ? r.pushManager.getSubscription() : null; })
-      .then(function(sub){ window._lxAdminPushOk=!!sub; if(!sub && window._currentTab==='cockpit' && typeof render==='function') render(); })
+      .then(function(sub){ window._lxAdminPushOk=!!sub; if(!sub && window._currentTab==='tableau' && typeof render==='function') render(); })
       .catch(function(){ window._lxAdminPushOk=true; });
   }
   if(("Notification" in window) && Notification.permission!=="denied" && (Notification.permission==="default" || window._lxAdminPushOk===false) && !window._lxAdminPushLater){
-    h+='<div id="pushBanner" style="margin:0 0 14px;padding:16px 18px;border-radius:12px;background:#2a2108;border:2px solid var(--gold);box-shadow:0 0 0 3px rgba(212,168,67,.18);display:flex;align-items:center;gap:14px;flex-wrap:wrap;color:#fff">'
-      +'<div style="font-size:22px">🔔</div>'
-      +'<div style="flex:1;min-width:200px"><div style="font-weight:700;color:var(--gold);margin-bottom:2px">Activer les notifications</div>'
-      +'<div style="font-size:13px;color:#f3ead2">Recevez les alertes (erreurs, nouveaux messages support, inscriptions, paiements) sur ce téléphone, même quand l\'admin est fermée.</div></div>'
-      +'<button class="btn gold" onclick="lxPushEnable()">Activer</button>'
-      +'<button class="btn ghost" onclick="window._lxAdminPushLater=true;document.getElementById(\'pushBanner\').style.display=\'none\'">Plus tard</button>'
+    h+='<div id="pushBanner" style="margin:0 0 14px;padding:14px 16px;border-radius:12px;background:#2a2108;border:2px solid var(--gold);display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:#fff">'
+      +'<div style="font-size:20px">🔔</div>'
+      +'<div style="flex:1;min-width:200px"><div style="font-weight:700;color:var(--gold)">Cet appareil ne reçoit pas les notifications de l’admin</div>'
+      +'<div style="font-size:12px;color:#f3ead2">Messages support, inscriptions, paiements, erreurs graves : envoyées même quand l’admin est fermée.</div></div>'
+      +'<button class="tb-btn primary" onclick="lxPushEnable()">Activer</button>'
+      +'<button class="tb-btn" onclick="window._lxAdminPushLater=true;document.getElementById(\'pushBanner\').style.display=\'none\'">Plus tard</button>'
       +'</div>';
   }
-  // 2026-10-15 : « 🔧 À réparer » + « 🧾 NF525 » en tête du cockpit (rempli par lxARCharger)
-  h+='<div id="lxARCockpit"></div><div id="lxNfCockpit"></div>';
-  setTimeout(function(){ if(typeof lxARCharger==='function') lxARCharger(false); }, 60);
-  // KPIs (6)
-  h+='<div class="kpi-row">';
-  h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Salons actifs</div><div class="kpi-value" style="color:var(--green)">'+active+'</div><div class="kpi-sub">Abonnements en cours</div><div class="kpi-icon">✅</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">Essais en cours</div><div class="kpi-value" style="color:var(--orange)">'+trial+'</div><div class="kpi-sub">Période d’essai</div><div class="kpi-icon">⏰</div></div>';
-  h+='<div class="kpi" style="cursor:pointer" onclick="window._AF=Object.assign(window._AF||{},{etape:\'nouveau\'});nav(\'salons\',\'liste\')"><div class="kpi-label">Nouveaux à accueillir</div><div class="kpi-value" style="color:var(--blue)">'+pendingInscr+'</div><div class="kpi-sub">À traiter</div><div class="kpi-icon">📝</div></div>';
-  h+='<div class="kpi" style="cursor:pointer" onclick="nav(\'communication\',\'chat\')"><div class="kpi-label">Support non lu</div><div class="kpi-value" style="color:'+(unreadChat>0?'var(--red)':'var(--text2)')+'">'+unreadChat+'</div><div class="kpi-sub">Messages clients</div><div class="kpi-icon">💬</div></div>';
-  h+='<div class="kpi"><div class="kpi-label">CA annuel projeté</div><div class="kpi-value" style="color:var(--purple)">'+fmtM(caCum)+'</div><div class="kpi-sub">MRR × 12 (projection, pas du réalisé)</div><div class="kpi-icon">📈</div></div>';
-  h+='</div>';
-
-  // À traiter aujourd'hui (source unique : migrations + inscriptions + chat + essais + KBIS + demandes)
-  h+='<div class="card"><h3>🎯 À traiter aujourd’hui <span style="color:var(--text3);font-weight:500">('+todoCount+')</span></h3>';
-  if(todoCount===0){
-    h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">✨ Tout est à jour, rien à traiter.</div>';
-  }else{
-    // Ordre : migrations urgentes (new) en premier, puis demandes, puis chat, puis le reste
-    var _row=function(ico,txt,onclick,urgent){ return '<div class="todo-row" onclick="'+onclick+'" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer'+(urgent?';background:linear-gradient(90deg,rgba(231,76,60,.08),transparent)':'')+'"><span style="font-size:18px">'+ico+'</span><span style="flex:1">'+txt+'</span><span style="color:var(--text3)">→</span></div>'; };
-    if(alertesMon) h+=_row('🚨','<strong>'+alertesMon+'</strong> alerte(s) critique(s) dans la dernière heure',"nav('monitoring')",true);
-    if(impayes.length) h+=_row('💳','<strong>'+impayes.length+'</strong> salon(s) en impayé : '+impayes.map(function(x){return x.nom;}).join(', '),"window._AF=Object.assign(window._AF||{},{statut:'past_due'});nav('salons','liste')",true);
-    if(rappels.length) h+=_row('📞','<strong>'+rappels.length+'</strong> rappel(s) prévu(s) : '+rappels.map(function(x){return x.nom+(asSuivi(x.id).rappel_note?' ('+asSuivi(x.id).rappel_note+')':'');}).join(', '),"window._AF=Object.assign(window._AF||{},{rappel:'1',tri:'rappel'});nav('salons','liste')");
-    if(sante.length) h+=_row('📉','<strong>'+sante.length+'</strong> client(s) avec une santé faible (< 40) : '+sante.map(function(x){return x.nom;}).join(', '),"window._AF=Object.assign(window._AF||{},{tri:'sante'});nav('salons','liste')");
-    if(migNew.length>0){
-      var urgC = '#e74c3c';
-      h+='<div class="todo-row" onclick="nav(\'salons\',\'migrations\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer;background:linear-gradient(90deg,rgba(231,76,60,.08),transparent)"><span style="font-size:18px">📥</span><span style="flex:1"><strong style="color:'+urgC+'">'+migNew.length+'</strong> nouvelle'+(migNew.length>1?'s':'')+' demande'+(migNew.length>1?'s':'')+' de <strong>migration</strong></span><span style="color:'+urgC+';font-weight:700">→</span></div>';
-    }
-    var migInProgress = migPending.length - migNew.length;
-    if(migInProgress>0){
-      h+='<div class="todo-row" onclick="nav(\'salons\',\'migrations\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">🔧</span><span style="flex:1"><strong>'+migInProgress+'</strong> migration'+(migInProgress>1?'s':'')+' en cours / contactée'+(migInProgress>1?'s':'')+'</span><span style="color:var(--gold)">→</span></div>';
-    }
-    if(demNew.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'demandes\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📩</span><span style="flex:1"><strong>'+demNew.length+'</strong> demande'+(demNew.length>1?'s':'')+' d’essai (formulaire site)</span><span style="color:var(--gold)">→</span></div>';
-    if(unreadChat>0)h+='<div class="todo-row" onclick="nav(\'communication\',\'chat\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">💬</span><span style="flex:1"><strong>'+unreadChat+'</strong> message'+(unreadChat>1?'s':'')+' support non lu</span><span style="color:var(--gold)">→</span></div>';
-    if(pendingInscr>0)h+='<div class="todo-row" onclick="window._AF=Object.assign(window._AF||{},{etape:\'nouveau\'});nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">📝</span><span style="flex:1"><strong>'+pendingInscr+'</strong> nouveau'+(pendingInscr>1?'x':'')+' salon'+(pendingInscr>1?'s':'')+' à accueillir (étape « Nouveau » dans le suivi)</span><span style="color:var(--gold)">→</span></div>';
-    if(trialExp.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:18px">⏰</span><span style="flex:1"><strong>'+trialExp.length+'</strong> essai'+(trialExp.length>1?'s':'')+' expire'+(trialExp.length>1?'nt':'')+' dans &lt;3j</span><span style="color:var(--gold)">→</span></div>';
-    if(pendingVerif.length>0)h+='<div class="todo-row" onclick="nav(\'salons\',\'liste\')" style="display:flex;align-items:center;gap:12px;padding:10px;cursor:pointer"><span style="font-size:18px">🛡️</span><span style="flex:1"><strong>'+pendingVerif.length+'</strong> vérification'+(pendingVerif.length>1?'s':'')+' KBIS/ID en attente</span><span style="color:var(--gold)">→</span></div>';
-  }
-  h+='</div>';
-
-  // Raccourcis
+  h+='<div id="tdbZone"></div>';
+  setTimeout(function(){ lxTdbRendu(); lxTdbCharger(false); },20);
+  // Raccourcis personnels (admin_shortcuts) — conservés
   var lxIsTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0;
   h+='<div class="card" style="margin-top:16px"><h3>⚡ Raccourcis <span style="font-size:11px;color:var(--text3);font-weight:400;margin-left:8px">'+(lxIsTouch?'(↑↓ pour réordonner)':'(glisser-déposer pour réordonner)')+'</span></h3><div id="lxScGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-top:8px">';
   (window.ADMIN_SHORTCUTS||[]).forEach(function(sc,idx){
-    var url=(sc.action_url||'').replace(/\x27/g,'\\\x27');
-    h+='<div class="lx-sc-card" data-idx="'+idx+'" data-id="'+sc.id+'" '+(lxIsTouch?'':'draggable="true" ondragstart="lxScDrag(event,'+idx+')" ondragover="event.preventDefault();this.style.borderColor=\'var(--gold)\'" ondragleave="this.style.borderColor=\'\'" ondrop="lxScDrop(event,'+idx+')" ondragend="lxScDragEnd()"')+' style="position:relative;border:2px solid transparent;border-radius:10px;transition:border-color .15s">';
-    h+='<button class="tb-btn" style="width:100%;padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;cursor:'+(lxIsTouch?'pointer':'grab')+'" onclick="shortcutClick(\''+url+'\')"><span style="font-size:20px">'+(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+(sc.label||'')+'</span></button>';
+    h+='<div class="lx-sc-card" data-idx="'+idx+'" '+(lxIsTouch?'':'draggable="true" ondragstart="lxScDrag(event,'+idx+')" ondragover="event.preventDefault();this.style.borderColor=\'var(--gold)\'" ondragleave="this.style.borderColor=\'\'" ondrop="lxScDrop(event,'+idx+')" ondragend="lxScDragEnd()"')+' style="position:relative;border:2px solid transparent;border-radius:10px;transition:border-color .15s">';
+    h+='<button class="tb-btn" style="width:100%;padding:14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;cursor:'+(lxIsTouch?'pointer':'grab')+'" onclick="shortcutClick(window.ADMIN_SHORTCUTS['+idx+'].action_url)"><span style="font-size:20px">'+saEsc(sc.icon||'⭐')+'</span><span style="font-size:12px;font-weight:600">'+saEsc(sc.label||'')+'</span></button>';
     if(lxIsTouch){
       h+='<div style="position:absolute;top:4px;right:4px;display:flex;flex-direction:column;gap:2px">';
       if(idx>0)h+='<button onclick="event.stopPropagation();lxScMove('+idx+',-1)" style="background:var(--bg3);border:1px solid var(--border);color:var(--gold);width:24px;height:20px;border-radius:4px;font-size:11px;cursor:pointer;padding:0;line-height:1">▲</button>';
@@ -951,26 +1110,34 @@ function rDashboard(){
     h+='</div>';
   });
   h+='</div></div>';
-
-  // Graphe MRR 12 mois — données réelles (mrr_snapshots), chargées async
-  h+='<div class="card" style="margin-top:16px"><h3>📊 MRR — 12 derniers mois <span style="font-size:11px;color:var(--text3);font-weight:400">données réelles mesurées</span></h3><div id="lxMrrChart">'+svgMRR(mrr12())+'</div></div>';
-
-  // Activité récente
-  h+='<div class="card" style="margin-top:16px"><h3>🕐 Activité récente</h3>';
-  var events=[];
-  SALONS.slice().sort(function(a,b){return new Date(b.created)-new Date(a.created);}).slice(0,3).forEach(function(s){
-    events.push({icon:'🏠',txt:'Nouveau salon : '+s.nom+' ('+s.ville+')',date:s.created});
-  });
-  INSCRIPTIONS.slice(0,2).forEach(function(i){
-    events.push({icon:'📝',txt:'Inscription : '+(i.nom_etablissement||i.email||'?'),date:i.created_at});
-  });
-  events.sort(function(a,b){return new Date(b.date)-new Date(a.date);}).slice(0,5).forEach(function(e){
-    h+='<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span>'+e.icon+'</span><span style="flex:1">'+saEsc(e.txt)+'</span><span style="color:var(--text3);font-size:11px;font-family:var(--mono)">'+fmtD(e.date)+'</span></div>';
-  });
-  if(events.length===0)h+='<div style="padding:16px;text-align:center;color:var(--text3);font-size:13px">Aucune activité récente</div>';
-  h+='</div>';
-  setTimeout(loadMrrHistory, 60);
   return h;
+}
+
+// ===== FILTRE « NON LUS » DE LA BOÎTE DE RÉCEPTION (2026-10-15) =====
+// Posé par le raccourci « Support non lu » et la carte du tableau de bord. Le chat lui-même (CHAT_*, rChat,
+// loadChatConvs…) n'est pas modifié : on restreint seulement la liste qu'il affiche aux conversations qui avaient
+// des messages non lus au moment du clic (liste figée, pour ne pas perdre la conversation qu'on vient d'ouvrir).
+function lxChatAppliquerNonLus(){
+  var ids=window._chatNonLusIds||{};
+  window.CHAT_CONVS=(window.CHAT_CONVS||[]).filter(function(c){ return ids[c.id] || c.id===window.CHAT_ACTIVE; });
+}
+function lxChatFiltreBandeau(){
+  if(window._chatNonLus){
+    window._chatNonLus=false;
+    window.CHAT_FILTER='open'; window.CHAT_ACTIVE=null;
+    loadChatConvs().then(function(){
+      var ids={}, sal={};
+      (window.CHAT_CONVS||[]).forEach(function(c){ if((c.unread_count_admin||0)>0){ ids[c.id]=1; sal[c.salon_id||'_orphan']=1; } });
+      window._chatNonLusIds=ids; window._chatNonLusActif=true;
+      var ks=Object.keys(sal); window.CHAT_ACTIVE_SALON_FILTER=(ks.length===1)?ks[0]:null;
+      if(window._currentTab==='communication'&&window._currentSub==='chat') render();
+    });
+    return '<div class="card" style="padding:10px 14px;font-size:13px;color:var(--text2)">Filtre « non lus » en cours de chargement…</div>';
+  }
+  if(!window._chatNonLusActif) return '';
+  lxChatAppliquerNonLus();
+  var n=Object.keys(window._chatNonLusIds||{}).length;
+  return '<div class="card" style="padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-left:4px solid var(--gold)"><span style="font-size:13px;flex:1">🔎 Filtre : conversations avec des messages non lus <b>('+saEsc(n)+')</b>'+(n?'':' — aucune')+'</span><button class="tb-btn" onclick="window._chatNonLusActif=false;loadChatConvs().then(render)">Tout afficher</button></div>';
 }
 
 // ===== LIVRAISON 2 — PAGES =====
@@ -1208,7 +1375,7 @@ async function emBasculer(on){
   var merged=Object.assign({},cur.data.config,{relances_essai_actives:on});
   var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (relances)"}).eq("id",1);
   if(r.error){ alert("❌ "+r.error.message); return; } window._appConfig=merged;
-  try{ await _sb.from("admin_log").insert({action:on?"RELANCES_ESSAI_ON":"RELANCES_ESSAI_OFF",details:""}); }catch(e){}
+  try{ await lxJournal(on?"RELANCES_ESSAI_ON":"RELANCES_ESSAI_OFF",{cible:"app_config:relances_essai_actives",avant:{relances_essai_actives:!on},apres:{relances_essai_actives:on}}); }catch(e){}
   emCharger();
 }
 function emVueModeles(){
@@ -1232,9 +1399,10 @@ async function emSauver(id){
   if(!row.nom||!row.sujet||!row.corps.trim()){ alert("Nom, objet et texte sont obligatoires"); return; }
   var r=id?await _sb.from("admin_email_modeles").update(row).eq("id",id):await _sb.from("admin_email_modeles").insert(row);
   if(r.error){ alert("❌ "+r.error.message); return; }
+  await lxJournal(id?"EMAIL_MODELE_MODIFIE":"EMAIL_MODELE_AJOUTE",{cible:"admin_email_modeles:"+(id||"nouveau"),details:row.nom});
   var m=document.querySelector(".mbg"); if(m) m.remove(); emCharger();
 }
-async function emSupprimer(id){ if(!confirm("Supprimer ce modèle ?")) return; var r=await _sb.from("admin_email_modeles").delete().eq("id",id).select("id"); if(r.error||!r.data||!r.data.length){ alert("❌ Modèle non supprimé : "+((r.error&&r.error.message)||"aucune ligne (droits ?)")); return; } emCharger(); }
+async function emSupprimer(id){ if(!confirm("Supprimer ce modèle ?")) return; var r=await _sb.from("admin_email_modeles").delete().eq("id",id).select("id"); if(r.error||!r.data||!r.data.length){ alert("❌ Modèle non supprimé : "+((r.error&&r.error.message)||"aucune ligne (droits ?)")); return; } await lxJournal("EMAIL_MODELE_SUPPRIME",{cible:"admin_email_modeles:"+id}); emCharger(); }
 
 // === Étapes de démarrage (fiche + liste) ===
 var DEMARRAGE = [["prestations","Prestations"],["horaires","Horaires"],["equipe","Équipe"],["clients","Clients"],["rdv","1er RDV"],["tickets","1er encaissement"],["clotures","1re clôture Z"],["site","Site en ligne"],["stripe","Paiements en ligne"],["logo","Logo"]];
@@ -1331,12 +1499,13 @@ async function lxCdCharger(){
   box.innerHTML=h;
 }
 function lxCdVu(){ try{ return localStorage.getItem('lx_cd_vu')||''; }catch(_){ return ''; } }
-function lxCdBadge(L){ try{ var vu=lxCdVu(); var n=(L||[]).filter(function(d){return (d.statut==='attente_ok'&&d.accord===null) || (d.repondu_le && (!vu || new Date(d.repondu_le)>new Date(vu)) && window._currentTab!=='claude');}).length; var b=document.getElementById('badgeClaude'); if(b){ b.textContent=n?String(n):''; b.style.display=n?'':'none'; } }catch(_){} }
+function lxCdBadge(L){ try{ var vu=lxCdVu(); var n=(L||[]).filter(function(d){return (d.statut==='attente_ok'&&d.accord===null) || (d.repondu_le && (!vu || new Date(d.repondu_le)>new Date(vu)) && window._currentSub!=='claude');}).length; window._lxCdNb=n; var b=document.getElementById('badgeClaude'); if(b){ b.textContent=n?String(n):''; b.style.display=n?'':'none'; } }catch(_){} }
 async function lxCdEnvoyer(){
   var t=(document.getElementById('lxCdTexte').value||'').trim(); if(t.length<3){ alert('Écris ta demande.'); return; }
   var u=document.getElementById('lxCdUrg').checked?'urgente':'normale';
   var r=await _sb.from('claude_demandes').insert({texte:t,urgence:u,source:'admin'});
   if(r.error){ alert('Envoi impossible : '+r.error.message); return; }
+  lxJournal('CLAUDE_DEMANDE',{cible:'claude_demandes',details:t.slice(0,300)});
   document.getElementById('lxCdTexte').value=''; document.getElementById('lxCdUrg').checked=false;
   if(typeof toast==='function') toast('Demande envoyée à Claude'); lxCdCharger();
 }
@@ -1345,11 +1514,12 @@ async function lxCdAccord(id,ok){
   if(!ok && !confirm('Refuser cette proposition ?')) return;
   var r=await _sb.from('claude_demandes').update({accord:ok,accord_le:new Date().toISOString(),commentaire_accord:com||null,statut:ok?'en_cours':'refusee'}).eq('id',id).eq('statut','attente_ok');
   if(r.error){ alert('Erreur : '+r.error.message); return; }
+  lxJournal(ok?'CLAUDE_ACCORD':'CLAUDE_REFUS',{cible:'claude_demandes:'+id,details:com||''});
   lxCdCharger();
 }
 async function lxCdAnnuler(id){
   if(!confirm('Annuler cette demande ?')) return;
-  await _sb.from('claude_demandes').update({statut:'annulee'}).eq('id',id).eq('statut','nouvelle'); lxCdCharger();
+  await _sb.from('claude_demandes').update({statut:'annulee'}).eq('id',id).eq('statut','nouvelle'); lxJournal('CLAUDE_ANNULEE',{cible:'claude_demandes:'+id}); lxCdCharger();
 }
 window._lxCdTick=function(){ try{ if(_online && _sb){ _sb.from('claude_demandes').select('id,statut,accord,repondu_le').order('repondu_le',{ascending:false,nullsFirst:false}).limit(30).then(function(r){ if(!r.error) lxCdBadge(r.data); }); } }catch(_){} };
 setInterval(window._lxCdTick, 30000);
@@ -1357,10 +1527,10 @@ document.addEventListener('visibilitychange', function(){ if(!document.hidden) w
 function rMonitoring(){
   var notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
   var hasNotif = (typeof Notification !== 'undefined');
-  var btnLabel = '🔔 Activer les notifications';
+  var btnLabel = '🔔 Notifications locales (admin ouverte)';
   var btnColor = 'var(--gold)';
   if(!hasNotif) { btnLabel = '⚠️ Notifications non compatibles'; btnColor = 'var(--text3)'; }
-  else if(notifPerm === 'granted') { btnLabel = '✅ Notifications activées'; btnColor = '#66bb6a'; }
+  else if(notifPerm === 'granted') { btnLabel = '✅ Notifications locales autorisées'; btnColor = '#66bb6a'; }
   else if(notifPerm === 'denied') { btnLabel = '🚫 Notifications bloquées (Paramètres)'; btnColor = '#ef5350'; }
   var hasSW = (typeof navigator !== 'undefined') && ('serviceWorker' in navigator);
 
@@ -1369,8 +1539,9 @@ function rMonitoring(){
     + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(!hasSW||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
     + '</h1></div>';
   h+='<style>#monitoringContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#monitoringContent td,#monitoringContent th{word-break:break-word}#monitoringContent pre,#monitoringContent code{white-space:pre-wrap;word-break:break-all}@media(max-width:700px){#monitoringContent{padding:8px!important}#monitoringContent>div{padding-left:10px!important;padding-right:10px!important}.topbar h1{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:18px}.topbar h1 button{margin-left:0!important}#monitoringContent [style*="grid-template-columns"]{grid-template-columns:1fr 1fr!important}}</style>';
-  // 2026-10-15 : vrais problèmes à réparer + état NF525 en tête du monitoring
-  h+='<div style="padding:20px 20px 0"><div id="lxARMonitoring"></div><div id="lxNfMonitoring"></div></div>';
+  // 2026-10-15 : « À réparer » et NF525 ont chacun UNE page (Qualité & conformité) ; l'état des intégrations est
+  // dans Croissance & réglages › Système (plus de doublons ici).
+  h+='<div style="padding:12px 20px 0;font-size:12px;color:var(--text3)">Voir aussi : <a href="#" onclick="nav(\'qualite\',\'areparer\');return false">🔧 À réparer</a> · <a href="#" onclick="nav(\'qualite\',\'nf525\');return false">🧾 NF525</a> · <a href="#" onclick="nav(\'croissance\',\'systeme\');return false">🔌 État des intégrations</a></div>';
   h+='<div id="monitoringContent" style="padding:20px"><div style="text-align:center;color:var(--text3);padding:40px">Chargement…</div></div>';
   setTimeout(rMonitoringRefresh, 50);
   // FIX 2026-05-18 : auto-open drilldown si ?open_signature=... dans l'URL
@@ -1390,7 +1561,7 @@ function rMonitoring(){
   // Auto-refresh toutes les 15 secondes (réduit de 30s pour notifs plus rapides)
   if(window._monitoringRefreshTimer) clearInterval(window._monitoringRefreshTimer);
   window._monitoringRefreshTimer = setInterval(function(){
-    if(window._currentTab !== 'monitoring'){
+    if(window._currentSub !== 'monitoring'){
       clearInterval(window._monitoringRefreshTimer);
       window._monitoringRefreshTimer = null;
       return;
@@ -1404,12 +1575,15 @@ function rMonitoring(){
 }
 
 // ====================================================================
-// Notifications locales (système initial qui fonctionne)
+// Notifications : CE QUI MARCHE VRAIMENT (vérifié le 15/10/2026)
 // ====================================================================
-// On a abandonné Web Push externe (FCM/WNS) qui était bloqué par Android Doze.
-// Stratégie actuelle : watcher local 15s → reg.showNotification (cf. lxStartErrorWatcher).
-// Cette fonction ne fait que demander la permission Notification et déclencher
-// une notif de test pour valider que tout fonctionne.
+// 1. Notifications PUSH (principal, admin fermée comprise) : appareils enregistrés dans push_subscriptions
+//    (target_type='admin', service /admin/sw-admin.js), envoyées par l'edge function send-push, appelée par
+//    public.notify_admins() (base et worker : litiges, SMS, parrainage, RGPD…) et par le chat. 2 appareils
+//    enregistrés au 15/10 (Android + Windows). Gestion : Croissance & réglages › Réglages & notifications.
+// 2. Notifications LOCALES (secours, admin ouverte) : le watcher ci-dessous interroge les erreurs toutes les
+//    15 s et les affiche via le service /admin-sw.js. Cette fonction demande seulement la permission.
+// (L'ancienne mention « Web Push abandonné » datait de mai 2026 et n'est plus vraie.)
 window.lxRequestMonitoringNotif = async function(){
   if(typeof Notification === 'undefined'){
     alert('❌ Votre navigateur ne supporte pas les notifications.');
@@ -1458,8 +1632,8 @@ if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
     if (event.data && event.data.type === 'lx-notif-click' && typeof nav === 'function') {
       try { var _u = new URL(event.data.url || '', location.origin); var _t = _u.searchParams.get('tab'); if (_t) { nav(_t, _u.searchParams.get('sub') || null); return; } } catch (_) {}
     }
-    if (event.data && event.data.type === 'navigate' && typeof go === 'function') {
-      go('monitoring');
+    if (event.data && event.data.type === 'navigate' && typeof nav === 'function') {
+      nav('qualite', 'monitoring'); // 2026-10-15 : go() n'existait plus
     }
   });
   // Enregistrement silencieux du Service Worker dès l'ouverture de l'admin —
@@ -1524,7 +1698,7 @@ window.lxStartErrorWatcher = function(){
       var n = new Notification(title, opts);
       n.onclick = function(){
         window.focus();
-        if(typeof go === 'function') go('monitoring');
+        if(typeof nav === 'function') nav('qualite','monitoring');
         n.close();
       };
     } catch(e){ console.warn('[lxNotif] failed:', e); }
@@ -1600,7 +1774,7 @@ async function rMonitoringRefresh(){
       _sb.rpc('check_quotas'),
       _sb.rpc('admin_slow_queries', {p_min_ms: 200, p_limit: 15}),
       _sb.rpc('admin_top_failing_endpoints', {p_hours: 24, p_limit: 5}),
-      _sb.rpc('admin_integrations_health'),
+      Promise.resolve({ data: [] }), // 2026-10-15 : intégrations affichées une seule fois (page Système)
       _sb.from('claude_fix_requests').select('id, signature, sample_message, salon_nom, requested_at, status, claude_notes, classification')
         .in('status', ['pending','in_progress']).order('requested_at', { ascending: false }).limit(20)
     ]);
@@ -1640,6 +1814,7 @@ window.lxSnoozeSignature = async function(signature, days){
   try {
     var r = await _sb.rpc('snooze_error_signature', { p_signature: signature, p_days: days, p_reason: 'Manual via panel' });
     if(r.error) throw new Error(r.error.message);
+    lxJournal('ERREUR_IGNOREE',{cible:'signature:'+signature,details:days+' jours'});
     rMonitoringRefresh();
   } catch(e){ alert('Erreur snooze : '+(e.message||e)); }
 };
@@ -1819,6 +1994,7 @@ window.lxAutoFixPgrst = async function(){
   try {
     var r = await _sb.rpc('admin_autofix_postgrest_reload');
     if(r.error) throw new Error(r.error.message);
+    lxJournal('POSTGREST_RECHARGE',{cible:'postgrest'});
     alert('✓ Cache schéma rechargé. Attends 5-10 sec puis rafraîchis le panel.');
   } catch(e){ alert('Erreur : '+(e.message||e)); }
 };
@@ -1829,6 +2005,7 @@ window.lxMarkResolvedManual = async function(signature){
   try {
     var r = await _sb.rpc('mark_error_resolved', { p_signature_hash: signature, p_commit_sha: null, p_notes: 'Marqué manuel depuis panel' });
     if(r.error) throw new Error(r.error.message);
+    lxJournal('ERREUR_RESOLUE',{cible:'signature:'+signature});
     alert('✓ Signature marquée résolue. La ligne disparaîtra du panel groupé au prochain refresh.');
     lxCloseErrorDetail();
     if(typeof rMonitoringRefresh==='function') rMonitoringRefresh();
@@ -1838,7 +2015,7 @@ window.lxMarkResolvedManual = async function(signature){
 // 2026-10-15 : « 🔧 À réparer » (RPC admin_a_reparer, regroupement côté serveur de TOUTES les sources de vrais
 // problèmes, sans le bruit) + « 🧾 NF525 » (RPC admin_nf525_etat, verdicts global et par établissement).
 // « Marquer comme traité » -> admin_acquitter : le point disparaît jusqu'à ce qu'il se reproduise APRÈS l'acquittement.
-// Affiché en tête du cockpit (#lxARCockpit/#lxNfCockpit) et du monitoring (#lxARMonitoring/#lxNfMonitoring).
+// 2026-10-15 : affiché sur les pages Qualité › À réparer (#lxARPage) et Qualité › NF525 (#lxNfPage).
 window._lxAR = window._lxAR || { t:0, items:null, nf:null, errAR:null, errNF:null, loading:null, ouverts:{} };
 async function lxARCharger(force){
   var c = window._lxAR;
@@ -1860,14 +2037,16 @@ async function lxARCharger(force){
   }
   lxARRendu();
 }
+// 2026-10-15 : UNE page « À réparer » (#lxARPage) et UNE page NF525 (#lxNfPage), source unique admin_nf525_etat
 function lxARRendu(){
-  var pairs = [['lxARCockpit','lxNfCockpit'], ['lxARMonitoring','lxNfMonitoring']];
-  var ar = null, nf = null;
-  pairs.forEach(function(p){
-    var a = document.getElementById(p[0]), n = document.getElementById(p[1]);
-    if(a){ if(ar === null) ar = _lxARHtml(); a.innerHTML = ar; }
-    if(n){ if(nf === null) nf = _lxNfHtml(); n.innerHTML = nf; }
-  });
+  var a = document.getElementById('lxARPage'), n = document.getElementById('lxNfPage');
+  if(a) a.innerHTML = _lxARHtml();
+  if(n) n.innerHTML = _lxNfHtml();
+  if(typeof lxMenuRendu === 'function') lxMenuRendu();
+}
+function rAReparer(){
+  setTimeout(function(){ lxARCharger(false); }, 20);
+  return '<div class="topbar"><h1>À réparer <span>Tous les vrais problèmes, sans le bruit</span></h1></div><div id="lxARPage"></div>';
 }
 function _lxARDate(t){ try{ return t ? new Date(t).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—'; }catch(_){ return '—'; } }
 function _lxARHtml(){
@@ -2626,7 +2805,7 @@ function rLegalPage(){
   // Conformité : ne plus afficher de coches vertes codées en dur. Renvoyer vers la page vérifiée.
   h+='<div class="card" style="margin-top:16px"><h3>⚖️ Conformité</h3>';
   h+='<div style="font-size:13px;color:var(--text2);line-height:1.8">L\'état de conformité <strong>NF525 et RGPD</strong> n\'est pas affiché ici en statique : il est calculé en temps réel (triggers d\'inaltérabilité, archivage, RLS…) sur la page dédiée.</div>';
-  h+='<button class="tb-btn" style="margin-top:12px" onclick="nav(\'finance\',\'nf525\')">🛡️ Ouvrir l\'état NF525 / RGPD vérifié →</button>';
+  h+='<button class="tb-btn" style="margin-top:12px" onclick="nav(\'qualite\',\'nf525\')">🛡️ État NF525 vérifié →</button> <button class="tb-btn" style="margin-top:12px" onclick="nav(\'qualite\',\'rgpd\')">🇪🇺 RGPD & purges →</button>';
   h+='<div style="font-size:11px;color:var(--text3);margin-top:12px;line-height:1.6">Rappel : Luxyra fonctionne sous <strong>attestation individuelle d\'éditeur</strong> (légale depuis 2018, art. 88 loi 2017-1837). La certification organisme (LNE / Infocert) n\'est pas démarrée — non requise pour l\'auto-attestation.</div>';
   h+='</div>';
   return h;
@@ -2825,6 +3004,7 @@ async function asGroupe(action){
       if(i<L.length-1) await new Promise(function(r){setTimeout(r,2100);});
       try{ await _sb.from("admin_notes_salons").insert({salon_id:s.id,type:"email",note:"Email groupé : "+sujet,auteur:"admin"}); }catch(e){}
     }
+    await lxJournal("EMAIL_GROUPE",{cible:"salons:"+L.length,details:{sujet:sujet,envoyes:ok,echecs:ko,salons:L.map(function(x){return x.nom;}).slice(0,50)}});
     alert("✉️ "+ok+" envoyé(s)"+(ko?", "+ko+" échec(s)":"")); return;
   }
   if(action==="sms"){
@@ -2836,7 +3016,8 @@ async function asGroupe(action){
   if(action==="essai"){
     var jours=parseInt(prompt("Prolonger l'essai de combien de jours ? (salons en essai uniquement)","7"),10); if(!(jours>0&&jours<=90)) return;
     var nb=0; for(var m=0;m<L.length;m++){ var x=L[m]; if(x.status!=="trial") continue; var d=new Date(Math.max(Date.now(), new Date(x.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+jours);
-      await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",x.id); nb++;
+      var _rg=await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",x.id).select("id"); if(_rg.error||!_rg.data||!_rg.data.length) continue; nb++;
+      await saJournal(x.id,"TRIAL_EXTEND","+"+jours+" j (action groupée)",{trial_end:x.trialEnd||null},{trial_end:d.toISOString()});
       try{ await _sb.from("admin_notes_salons").insert({salon_id:x.id,type:"autre",note:"Essai prolongé de "+jours+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} }
     alert("⏰ Essai prolongé pour "+nb+" salon(s)"); if(typeof loadData==="function") loadData(); return;
   }
@@ -3047,7 +3228,8 @@ function openD(id){
   if(s.fermeLe) h+='<div class="dp-field"><span class="k">Fermé le</span><span class="v">'+new Date(s.fermeLe).toLocaleDateString("fr-FR")+' — '+saEsc(s.fermeMotif||"")+'<div style="font-size:11px;color:var(--text3)">Caisse, clôtures, signatures et journal conservés 6 ans (jusqu\'au '+(function(){var d=new Date(s.fermeLe);d.setFullYear(d.getFullYear()+6);return d.toLocaleDateString("fr-FR");})()+'). Le gérant garde l\'accès en lecture seule (Mode archives).</div></span></div>';
   h+='<div class="dp-field"><span class="k">Inscrit le</span><span class="v">'+fmtD(s.created)+'</span></div>';
   if(s.trialEnd){var days=dBetween(new Date().toISOString().slice(0,10),s.trialEnd);h+='<div class="dp-field"><span class="k">Fin essai</span><span class="v" style="color:'+(days<=3?"var(--red)":"var(--orange)")+'">'+fmtD(s.trialEnd)+' ('+days+'j)</span></div>';}
-  if(s.stripeCust)h+='<div class="dp-field"><span class="k">Stripe</span><span class="v"><a href="https://dashboard.stripe.com/customers/'+encodeURIComponent(s.stripeCust)+'" target="_blank" rel="noopener" style="color:var(--gold);font-size:11px">Voir dans Stripe ↗</a></span></div>';
+  // 2026-10-15 : liens Stripe (client, abonnement) + portail client (worker /api/stripe/portal, admin 2FA)
+  if(s.stripeCust)h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Stripe</span><span class="v" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">'+lxStripeLiens(s)+'</span></div>';
   h+='<div class="dp-field" style="align-items:flex-start"><span class="k">Geste</span><span class="v">'+(s.stripeSub?('<button class="dp-btn" style="font-size:12px;padding:6px 10px" onclick="lxOfferMonths(&#39;'+s.id+'&#39;)">🎁 Offrir des mois</button>'):'<span style="font-size:11px;color:var(--text3)">Pas d\'abonnement Stripe — geste indisponible</span>')+'</span></div>';
   h+='</div>';
 
@@ -3218,7 +3400,7 @@ async function deleteSalonCascade(id){
 
   // 6. Log final SALON_DELETED_CASCADE   (inchangé — pas de salon_id : la ligne survit)
   try{
-    await _sb.from('admin_log').insert({admin_user_id:_uid,action:'SALON_DELETED_CASCADE',details:JSON.stringify({salon_id:id,nom:s&&s.nom,email:s&&s.email,rows:report.rows_deleted,tables:report.tables_touched,orphans:orphanTotal,failed:failed.length,report:report})});
+    await lxJournal('SALON_DELETED_CASCADE',{cible:'salons:'+id,details:{salon_id:id,nom:s&&s.nom,email:s&&s.email,rows:report.rows_deleted,tables:report.tables_touched,orphans:orphanTotal,failed:failed.length,report:report},avant:{nom:s&&s.nom,email:s&&s.email,statut:s&&s.status}});
   }catch(e){}
 
   return{ok:true,report:report,orphanTotal:orphanTotal,rows:report.rows_deleted||0,tables:report.tables_touched||0,failed:failed,steps:steps};
@@ -3352,7 +3534,7 @@ async function doCreate(){
   var cl={coiffure:["Coiffeur 1","Coiffeur 2"],barbier:["Barbier 1","Barbier 2"],esthetique:["Esth\u00e9ticienne 1","Esth\u00e9ticienne 2"],ongles:["Proth\u00e9siste 1","Proth\u00e9siste 2"],bien_etre:["Praticien 1","Praticien 2"],regard:["Technicienne regard 1","Technicienne regard 2"],maquillage:["Maquilleuse 1","Maquilleuse 2"],tatouage:["Tatoueur 1","Tatoueur 2"],spa:["Praticienne 1","Praticienne 2"]};
   var c=cl[metier]||cl.coiffure;
   await _sb.from("collaborateurs").insert([{salon_id:sid,nom:c[0],initiales:c[0].slice(0,2).toUpperCase(),couleur:"#c9a227"},{salon_id:sid,nom:c[1],initiales:c[1].slice(0,2).toUpperCase(),couleur:"#7d3c98"}]);
-  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:sid,action:"CREATE_SALON",details:nom+" - "+plan+" - "+email});
+  await lxJournal("CREATE_SALON",{salon:sid,cible:"salons:"+sid,details:nom+" - "+plan+" - "+email,apres:{nom:nom,plan:plan,statut:status,email:email}});
   closeMod();
   try{navigator.clipboard.writeText(pass);}catch(e){}
   var trialInfo=status==="trial"?"Vous b\u00e9n\u00e9ficiez d\u2019un essai gratuit de 14 jours. Durant cette p\u00e9riode, vous avez acc\u00e8s \u00e0 toutes les fonctionnalit\u00e9s.\n\n\u00c0 l\u2019issue de l\u2019essai, choisissez la formule qui vous convient :\n\u2022 Essentiel : 14,99\u20ac/mois (planning, encaissement, clients)\n\u2022 Pro : 24,99\u20ac/mois (+ site vitrine, r\u00e9servation en ligne, SMS)\n\n":"";
@@ -3504,7 +3686,10 @@ function rDemandes(){
 }
 
 async function updDem(id,st){
-  await _sb.from("demandes_essai").update({status:st}).eq("id",id);
+  var _dm=DEMANDES.find(function(x){return x.id===id;})||{};
+  var _ru=await _sb.from("demandes_essai").update({status:st}).eq("id",id).select("id");
+  if(_ru.error||!_ru.data||!_ru.data.length){ alert("❌ Statut non modifié : "+((_ru.error&&_ru.error.message)||"aucune ligne (droits ?)")); return; }
+  await lxJournal("DEMANDE_ESSAI_STATUT",{cible:"demandes_essai:"+id,details:_dm.nom_salon||_dm.nom_etablissement||"",avant:{status:_dm.status},apres:{status:st}});
   var labels={contacted:"📞 Marqué comme contacté",done:"✅ Marqué comme traité"};
   alert(labels[st]||"Statut mis à jour");
   await loadDemandes();render();
@@ -3722,6 +3907,7 @@ async function updMig(id,st){
   try {
     var u1=await _sb.from("migration_requests").update({status:st,status_updated_at:new Date().toISOString()}).eq("id",id);
     if(u1.error){await lxAdminAlert("Erreur update demande : "+u1.error.message,{title:"Échec",color:"#e88080"});return;}
+    lxJournal("MIGRATION_STATUT",{salon:m.salon_id||null,cible:"migration_requests:"+id,details:m.salon_name||"",avant:{status:m.status},apres:{status:st}});
 
     // Synchro config_json salon : completed → "completed" ; cancelled → null
     if(m.salon_id && (st==="completed"||st==="cancelled")){
@@ -3800,6 +3986,7 @@ async function delMig(id){
     }
     var d=await _sb.from("migration_requests").delete().eq("id",id);
     if(d.error){await lxAdminAlert("Erreur suppression : "+d.error.message,{title:"Échec",color:"#e88080"});return;}
+    lxJournal("MIGRATION_SUPPRIMEE",{salon:m.salon_id||null,cible:"migration_requests:"+id,avant:{salon_name:m.salon_name,status:m.status}});
     await loadMigrations();render();
     await lxAdminAlert("La demande a été supprimée définitivement.",{title:"🗑️ Suppression effectuée",surtitle:"Confirmation"});
   } catch(e){
@@ -3809,7 +3996,10 @@ async function delMig(id){
 
 async function delDem(id){
   if(!confirm("Supprimer cette demande ?"))return;
-  await _sb.from("demandes_essai").delete().eq("id",id);
+  var _dd=DEMANDES.find(function(x){return x.id===id;})||{};
+  var _rd=await _sb.from("demandes_essai").delete().eq("id",id).select("id");
+  if(_rd.error||!_rd.data||!_rd.data.length){ alert("❌ Demande non supprimée : "+((_rd.error&&_rd.error.message)||"aucune ligne (droits ?)")); return; }
+  await lxJournal("DEMANDE_ESSAI_SUPPRIMEE",{cible:"demandes_essai:"+id,avant:{etablissement:_dd.nom_salon||_dd.nom_etablissement||"",email:_dd.email||"",status:_dd.status}});
   await loadDemandes();render();
 }
 
@@ -3908,20 +4098,38 @@ function rRevenue(){
     h+='<div class="chart-bar-row"><div class="chart-bar-label">'+saEsc(p.nom)+' ('+saEsc(p.prix)+'€)</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+pct+'%;background:'+p.couleur+'">'+fmtM(rev)+'</div></div><div class="chart-bar-val">'+pct+'%</div></div>';
   });
   h+='</div>';
-  // FIX 2026-05-19 : prix Pro dynamique depuis app_config (au lieu de 24,99 en dur)
-  var _proP = Number((window._appConfig||{}).plan_pro_eur || 24.99);
-  var _growthPerMonth = 5;  // HYPOTHÈSE de simulation (pas une donnée réelle) — voir libellé
-  h+='<div class="chart-card"><div class="chart-title">🔮 Simulation croissance <span style="font-size:11px;color:var(--text3);font-weight:400">(projection hypothétique, pas des données réelles)</span></div><div style="font-size:13px;color:var(--text2);margin-bottom:12px">Hypothèse : '+_growthPerMonth+' nouveaux comptes Pro / mois à '+fmtM(_proP)+' :</div>';
-  [{m:"Mois 3",s:_growthPerMonth*3},{m:"Mois 6",s:_growthPerMonth*6},{m:"Mois 12",s:_growthPerMonth*12},{m:"Mois 24",s:_growthPerMonth*24}].forEach(function(p){
-    p.r=Math.round(p.s*_proP);
-    var pct=Math.min(100, Math.round(p.r/(_proP*120)*100));
-    h+='<div class="chart-bar-row"><div class="chart-bar-label">'+p.m+'</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+pct+'%;background:linear-gradient(90deg,var(--gold),var(--green))">'+p.s+' → '+fmtM(p.r)+'/mois</div></div></div>';
-  });
-  h+='</div>';  h+='<div class="chart-card"><div class="chart-title">🔄 Churn & mouvements de MRR <span style="font-size:11px;color:var(--text3);font-weight:400">(mois sur mois, donnees reelles mesurees)</span></div><div id="lxMrrMovements"><div style="color:var(--text3);font-size:13px">Chargement…</div></div></div>';
+  // 2026-10-15 : historique RÉEL du revenu mensuel (déplacé du cockpit : une seule vue MRR)
+  h+='<div class="chart-card"><div class="chart-title">📊 Revenu mensuel — 12 derniers mois <span style="font-size:11px;color:var(--text3);font-weight:400">relevés réels (mrr_snapshots, le 1er de chaque mois)</span></div><div id="lxMrrChart">'+svgMRR(mrr12())+'</div></div>';
+  setTimeout(loadMrrHistory, 60);
+  // 2026-10-15 : la « simulation de croissance » (+5 comptes Pro / mois, chiffre inventé) est remplacée par la
+  // croissance RÉELLE : inscriptions et passages au payant par mois, et tendance mesurée du revenu.
+  h+='<div class="chart-card"><div class="chart-title">📈 Croissance réelle <span style="font-size:11px;color:var(--text3);font-weight:400">6 derniers mois, données mesurées</span></div><div id="lxCroissance">'+lxCroissanceReelle()+'</div></div>';
+  h+='<div class="chart-card"><div class="chart-title">🔄 Churn & mouvements de MRR <span style="font-size:11px;color:var(--text3);font-weight:400">(mois sur mois, donnees reelles mesurees)</span></div><div id="lxMrrMovements"><div style="color:var(--text3);font-size:13px">Chargement…</div></div></div>';
   setTimeout(lxLoadMrrMovements,60);
   return h;
 }
 
+// Croissance réelle (2026-10-15) : inscriptions par mois (date de création), établissements payants aujourd'hui
+// par mois d'inscription, et tendance du revenu mesurée sur les relevés mensuels (aucune hypothèse inventée).
+function lxCroissanceReelle(){
+  var now=new Date(), mois=[];
+  for(var i=5;i>=0;i--){ var d=new Date(now.getFullYear(),now.getMonth()-i,1); mois.push({k:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),l:d.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}),ins:0,pay:0}); }
+  var idx={}; mois.forEach(function(m,i){ idx[m.k]=i; });
+  (SALONS||[]).forEach(function(s){ if(!s.created) return; var k=String(s.created).slice(0,7); if(idx[k]===undefined) return; mois[idx[k]].ins++; if(mrrOf(s)>0) mois[idx[k]].pay++; });
+  var max=Math.max(1,Math.max.apply(null,mois.map(function(m){return m.ins;})));
+  var h='';
+  mois.forEach(function(m){ h+='<div class="chart-bar-row"><div class="chart-bar-label">'+saEsc(m.l)+'</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:'+Math.max(m.ins?6:0,Math.round(m.ins*100/max))+'%;background:linear-gradient(90deg,var(--gold),var(--green))">'+(m.ins?saEsc(m.ins)+' inscrit(s)':'')+'</div></div><div class="chart-bar-val" style="width:110px">'+saEsc(m.pay)+' payant(s)</div></div>'; });
+  var hist=window._mrrHist||{}, ks=Object.keys(hist).sort(), vals=ks.map(function(k){return Number(hist[k])||0;});
+  var nz=vals.filter(function(v){return v>0;}).length;
+  if(ks.length>=3 && nz>=2){
+    var n=Math.min(6,vals.length), pente=(vals[vals.length-1]-vals[vals.length-n])/(n-1);
+    h+='<div style="font-size:12px;color:var(--text2);margin-top:10px">Tendance mesurée du revenu : <b style="color:'+(pente>=0?'var(--green)':'var(--red)')+'">'+(pente>=0?'+':'')+fmtM(Math.round(pente*100)/100)+' / mois</b> en moyenne sur '+n+' relevés. Au même rythme : '+fmtM(Math.max(0,vals[vals.length-1]+pente*6))+' dans 6 mois (projection de la tendance réelle, pas une promesse).</div>';
+  } else {
+    h+='<div style="font-size:12px;color:var(--text3);margin-top:10px">Pas encore de projection : il faut au moins 2 relevés mensuels avec un revenu (aujourd\'hui : '+saEsc(nz)+'). La tendance s\'affichera automatiquement.</div>';
+  }
+  h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">« payant(s) » = établissements inscrits ce mois-là qui paient aujourd\'hui.</div>';
+  return h;
+}
 // ===== CHURN & MOUVEMENTS DE MRR (axe 3) =====
 // Lit les 2 derniers snapshots mensuels (mrr_snapshots.breakdown = MRR par salon)
 // et decompose la variation : nouveau / expansion / contraction / churn + taux de churn.
@@ -4121,7 +4329,7 @@ async function brevoSauverReglages(){
   var merged=Object.assign({},cur.data.config,patch);
   var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (crédits Brevo)"}).eq("id",1);
   if(r.error){ alert("❌ "+r.error.message); return; }
-  window._appConfig=merged; try{ await _sb.from("admin_log").insert({action:"BREVO_RATIO_SMS",details:JSON.stringify(patch)}); }catch(e){}
+  window._appConfig=merged; try{ await lxJournal("BREVO_RATIO_SMS",{cible:"app_config",avant:{brevo_credits_par_sms_fr:cur.data.config.brevo_credits_par_sms_fr,brevo_seuil_sms_fr:cur.data.config.brevo_seuil_sms_fr},apres:patch}); }catch(e){}
   brevoRendu();
 }
 function smsVueSalons(d){
@@ -4178,7 +4386,7 @@ async function smsSauverReglages(){
   var merged=Object.assign({},cur.data.config,patch);
   var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (réglages SMS)"}).eq("id",1);
   if(r.error){ alert("❌ "+r.error.message); return; }
-  window._appConfig=merged; try{ await _sb.from("admin_log").insert({action:"SMS_REGLAGES",details:JSON.stringify(patch)}); }catch(e){}
+  window._appConfig=merged; try{ await lxJournal("SMS_REGLAGES",{cible:"app_config",apres:patch}); }catch(e){}
   alert("✅ Réglages enregistrés"); render();
 }
 
@@ -4279,7 +4487,7 @@ async function lxToggle1000(on){
     var r = await _sb.from('app_config').update({config:merged}).eq('id',1);
     if(r.error){ alert('Erreur : '+r.error.message); return; }
     window._appConfig = merged;
-    try{ await _sb.from('admin_log').insert({admin_user_id:_uid, action:'TOGGLE_PACK_1000', details:JSON.stringify({enabled:!!on})}); }catch(_){}
+    try{ await lxJournal('TOGGLE_PACK_1000',{cible:'app_config:sms_pack_1000_enabled',avant:{enabled:!on},apres:{enabled:!!on}}); }catch(_){}
     if(typeof render==='function') render();
   }catch(e){ alert('Erreur : '+e.message); }
 }
@@ -4302,17 +4510,15 @@ function rSettings(){
   h+='<div class="settings-card"><h3>🏢 Éditeur</h3><div class="sf-row"><div class="sf-label">Éditeur</div><div>Luxyra ('+_forme+')</div></div><div class="sf-row"><div class="sf-label">SIRET</div><div style="font-family:var(--mono);font-size:12px">'+_siret+'</div></div><div class="sf-row"><div class="sf-label">Email support</div><div>support@luxyra.fr</div></div><div class="sf-row"><div class="sf-label">Version app (commit déployé)</div><div id="appVersionLive" style="font-family:var(--mono);font-size:12px;color:var(--text3)">chargement…</div></div></div>';
   // Lit le VRAI dernier commit déployé via l'API GitHub publique (pas une valeur en dur)
   setTimeout(loadAppVersionLive, 100);
-  // FIX 2026-05-18 : widget Push admin retiré. Les alertes critiques arrivent
-  // par mail Brevo (support@luxyra.fr) + push ntfy.sh sur le téléphone d'Alex
-  // (topic configuré dans lx-alert-mail). Le Web Push admin FCM avait été
-  // abandonné car Doze Android le bloquait silencieusement.
-  h+='<div class="settings-card"><h3>🔔 Mes alertes admin</h3>'
-    +'<div style="font-size:13px;color:var(--text3);line-height:1.6">'
-    +'Les erreurs critiques (DB error, NF525, server critical) déclenchent :<br>'
-    +'• 📧 Mail vers <strong style="color:var(--gold)">support@luxyra.fr</strong><br>'
-    +'• 📱 Push <strong style="color:var(--gold)">ntfy.sh</strong> sur ton téléphone<br>'
-    +'<br>Aucun bouton à activer ici. Voir le panel Monitoring pour le détail.'
-    +'</div></div>';
+  // 2026-10-15 : état RÉEL des notifications (la carte précédente affirmait « Web Push abandonné, ntfy.sh » alors que
+  // le push admin fonctionne : send-push / notify_admins vers les appareils de push_subscriptions, 2 enregistrés).
+  h+='<div class="settings-card" style="grid-column:1/-1"><h3>🔔 Notifications de l’admin</h3>'
+    +'<div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:10px">'
+    +'<b>Notifications push</b> (même admin fermée) : envoyées par la fonction serveur <code>send-push</code> — appelée par <code>notify_admins()</code> (litiges Stripe, SMS, parrainage, purges RGPD…) et par le chat support — à chaque appareil enregistré ci-dessous. '
+    +'Choisissez par appareil les types reçus. <b>En secours</b>, tant que l’admin est ouverte, les erreurs s’affichent aussi en notification locale (bouton du Monitoring).</div>'
+    +'<div id="pushDevicesBox" style="font-size:13px;color:var(--text3)">Chargement des appareils…</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="tb-btn primary" onclick="lxPushEnable()">📲 Activer cet appareil</button><button class="tb-btn" onclick="lxPushTest()">🔔 Envoyer une notification de test</button><button class="tb-btn" onclick="lxPushDisable()">✖ Désactiver cet appareil</button></div>'
+    +'</div>';
   // === NEW : Constantes business éditables ===
   h+='<div class="settings-card" style="grid-column:1/-1"><h3>⚙️ Constantes business <span style="font-size:10px;color:var(--text3);font-weight:normal;letter-spacing:0">Modif propagée partout (app, site public, edge functions)</span></h3>';
   h+='<div id="appConfigEditBox" style="font-size:13px;color:var(--text3)">⏳ Chargement…</div>';
@@ -4470,116 +4676,309 @@ async function saveAppConfig(){
     var merged = Object.assign({}, (curCfg.data && curCfg.data.config) || {}, newConfig);
     var r = await _sb.from("app_config").update({config:merged}).eq("id",1);
     if(r.error){ alert("Erreur : "+r.error.message); return; }
-    await _sb.from("admin_log").insert({admin_user_id:_uid, action:"EDIT_APP_CONFIG", details:JSON.stringify(newConfig)});
+    var _avCfg={}; Object.keys(newConfig).forEach(function(k){ var o=(curCfg.data&&curCfg.data.config)||{}; if(String(o[k])!==String(newConfig[k])) _avCfg[k]=o[k]; });
+    await lxJournal("EDIT_APP_CONFIG",{cible:"app_config",avant:_avCfg,apres:newConfig});
     alert("✅ Configuration mise à jour. Les modifs sont actives partout.");
     loadAppConfigEditor();
   }catch(e){ alert("Erreur : "+e.message); }
 }
 
-// ===== NF525 =====
+// ===== NF525 (2026-10-15 : UNE seule page, source de vérité = RPC admin_nf525_etat) =====
+// Remplace les 3 affichages d'avant (cockpit, monitoring, Finance › NF525 basé sur verify_nf525_status — ce dernier
+// est appelé À L'INTÉRIEUR de admin_nf525_etat, ses contrôles RGPD sont repris dans la page RGPD & purges).
 function rNF525(){
-  var h='<div class="topbar"><h1>NF525 / RGPD <span>Conformité</span> <button onclick="loadNF525Status()" style="margin-left:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">⟳ Rafraîchir</button></h1></div>';
-  h+='<div id="nf525StatusBox"><div style="padding:30px;text-align:center;color:var(--text3)">Chargement de l\'état de conformité…</div></div>';
-  h+='<div style="margin:0 0 14px"><button onclick="lxAttEdVoir()" style="padding:8px 14px;border-radius:8px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold);font-weight:700;cursor:pointer;font-size:12px">📄 Attestation éditeur signée (volet 1)</button></div>';
-  h+='<div id="lxAttListe" style="margin-bottom:14px"></div>';
-  setTimeout(lxAttListeCharger, 60);
-  setTimeout(loadNF525Status, 50);
+  var h='<div class="topbar"><h1>NF525 <span>Conformité de la caisse, global et par établissement</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="tb-btn" onclick="lxARCharger(true)">⟳ Vérifier</button><button class="tb-btn" onclick="nav(\'qualite\',\'clotures\')">📋 Clôtures Z</button></div></div>';
+  h+='<div id="lxNfPage"></div>';
+  h+='<div class="card"><h3>📄 Attestations</h3><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><button class="tb-btn" onclick="lxAttEdVoir()">📄 Attestation éditeur signée (volet 1)</button><a class="tb-btn" style="text-decoration:none" href="/nf525-attestation-generale.html" target="_blank" rel="noopener">Attestation publique ↗</a></div><div id="lxAttListe"></div></div>';
+  h+='<div class="card"><h3>📦 Export NF525 par établissement</h3><div style="font-size:12px;color:var(--text2);margin-bottom:8px">Fichier JSON (tickets, clôtures, contrôle du chaînage) produit par le worker <code>/api/admin/export-nf525</code>, pour un contrôle fiscal ou l\'archivage.</div>'+
+    (SALONS||[]).map(function(x){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px"><span>'+saEsc(x.nom)+(x.fermeLe?' <span class="badge badge-red" style="font-size:9px">fermé</span>':'')+'</span><button class="dp-btn" onclick="lxExportNf525(\''+x.id+'\')">⬇️ Exporter</button></div>'; }).join('')+'</div>';
+  setTimeout(function(){ lxARCharger(false); lxAttListeCharger(); }, 30);
+  return h;
+}
+// Export NF525 d'un établissement (worker /api/admin/export-nf525, route réservée au propriétaire ou à l'admin 2FA)
+async function lxExportNf525(id){
+  var s=gSalon(id); if(!s) return;
+  if(!confirm("Exporter les données de caisse NF525 de « "+s.nom+" » (fichier JSON) ?")) return;
+  try{
+    var tok=await lxAdminJeton();
+    var r=await fetch("/api/admin/export-nf525",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({salon_id:id})});
+    if(!r.ok){ var j=await r.json().catch(function(){return {};}); alert("❌ Export impossible : "+(j.error||("erreur "+r.status))); return; }
+    var blob=await r.blob(); var a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download="luxyra-nf525-"+(s.siret||id)+"-"+new Date().toISOString().slice(0,10)+".json"; a.click();
+    await lxJournal("EXPORT_NF525",{salon:id,cible:"salons:"+id,details:s.nom});
+  }catch(e){ alert("❌ Export impossible : "+(e&&e.message||e)); }
+}
+
+// ============================================================
+// NOUVELLES PAGES (2026-10-15, audit docs/admin-audit-1015.md)
+// ============================================================
+function _lxDt(d,h){ if(!d) return '—'; try{ var x=new Date(d); if(isNaN(x)) return saEsc(d); return h?x.toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):x.toLocaleDateString('fr-FR'); }catch(e){ return saEsc(d); } }
+function _lxTable(cols, rows, vide){
+  if(!rows.length) return '<div style="padding:14px;color:var(--text3);font-size:13px">'+(vide||'Rien à afficher.')+'</div>';
+  return '<div style="overflow-x:auto"><table><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join('')+'</tr>'+rows.map(function(r){return '<tr>'+r.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';}).join('')+'</table></div>';
+}
+
+// --- Stripe : portail client et tableau de bord depuis la fiche (worker /api/stripe/portal, admin 2FA autorisé) ---
+async function lxStripePortail(id){
+  var s=gSalon(id); if(!s) return;
+  if(!s.stripeCust){ alert("Pas de client Stripe pour cet établissement."); return; }
+  if(!confirm("Ouvrir le portail client Stripe de « "+s.nom+" » ?\n\nVous y verrez ce que voit l'établissement (moyen de paiement, factures, résiliation). Toute modification faite là-bas s'applique réellement à son abonnement.")) return;
+  var w=window.open("about:blank","_blank");
+  try{
+    var tok=await lxAdminJeton();
+    var r=await fetch("/api/stripe/portal",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:JSON.stringify({salon_id:id})});
+    var j=await r.json().catch(function(){return {};});
+    if(!r.ok||!j.url||!/^https:\/\/billing\.stripe\.com\//.test(j.url)){ if(w) w.close(); alert("❌ Portail indisponible : "+(j.error||("erreur "+r.status))); return; }
+    if(w) w.location.href=j.url; else window.location.href=j.url;
+    await lxJournal("STRIPE_PORTAIL_OUVERT",{salon:id,cible:"stripe:"+s.stripeCust});
+  }catch(e){ if(w) w.close(); alert("❌ Portail indisponible : "+(e&&e.message||e)); }
+}
+function lxStripeLiens(s){
+  if(!s||!s.stripeCust) return '';
+  var cus=encodeURIComponent(s.stripeCust), sub=s.stripeSub?encodeURIComponent(s.stripeSub):'';
+  return '<a class="dp-btn" style="text-decoration:none;font-size:11px" href="https://dashboard.stripe.com/customers/'+cus+'" target="_blank" rel="noopener">Client Stripe ↗</a>'+
+    (sub?' <a class="dp-btn" style="text-decoration:none;font-size:11px" href="https://dashboard.stripe.com/subscriptions/'+sub+'" target="_blank" rel="noopener">Abonnement ↗</a>':'')+
+    ' <button class="dp-btn" style="font-size:11px" onclick="lxStripePortail(\''+s.id+'\')">🧾 Portail client</button>';
+}
+
+// --- Établissements › Fermetures & archives ---
+function rFermetures(){
+  var L=(SALONS||[]).filter(function(s){return !!s.fermeLe;}).sort(function(a,b){return new Date(b.fermeLe)-new Date(a.fermeLe);});
+  var h='<div class="topbar"><h1>Fermetures <span>'+L.length+' établissement(s) fermé(s)</span></h1></div>';
+  h+='<div class="card" style="font-size:12px;color:var(--text2);line-height:1.6">Un établissement fermé garde sa caisse, ses clôtures, ses signatures et son journal <b>6 ans</b> ; le gérant conserve l\'accès en lecture seule (Mode archives). Suppression automatique ensuite (voir <a href="#" onclick="nav(\'qualite\',\'rgpd\');return false">RGPD & purges</a>).</div>';
+  var rows=L.map(function(s){ var fin=new Date(s.fermeLe); fin.setFullYear(fin.getFullYear()+6);
+    return ['<b style="cursor:pointer" onclick="openD(\''+s.id+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville)+'</div>', _lxDt(s.fermeLe), saEsc(s.fermeMotif||'—'), saEsc(s.fermePar||'—'), fin.toLocaleDateString('fr-FR'),
+      '<div class="td-actions" style="flex-wrap:wrap"><button class="dp-btn" style="font-size:11px" onclick="openD(\''+s.id+'\')">Fiche</button><button class="dp-btn" style="font-size:11px" onclick="asVoirApp(\''+s.id+'\')">📚 Archives (lecture seule)</button><button class="dp-btn" style="font-size:11px" onclick="lxExportNf525(\''+s.id+'\')">⬇️ Export NF525</button></div>']; });
+  h+='<div class="table-wrap">'+_lxTable(['Établissement','Fermé le','Motif','Par','Conservé jusqu\'au','Archives'],rows,'Aucun établissement fermé.')+'</div>';
   return h;
 }
 
-async function loadNF525Status(){
-  var box = document.getElementById('nf525StatusBox');
-  if(!box) return;
-  try {
-    var r = await _sb.rpc('verify_nf525_status');
-    if(r.error) throw new Error(r.error.message);
-    var d = r.data || {};
-    function badge(ok, neutralLabel){
-      if(ok === true) return '<span style="color:var(--green);font-weight:800">✓</span>';
-      if(ok === false) return '<span style="color:var(--red);font-weight:800">✕</span>';
-      // ok === null = vérification manuelle (pas de check automatique possible)
-      return '<span style="color:#ffd54f;font-weight:700" title="Vérification manuelle — pas de check automatique">⚠ Manuel</span>';
-    }
-    function pilier(title, data){
-      var ok = data && data.ok;
-      var color = ok === true ? 'var(--green)' : (ok === false ? 'var(--red)' : 'var(--orange)');
-      var icon = ok === true ? '✓' : (ok === false ? '✕' : '?');
-      return '<div class="kpi" style="border-left:3px solid '+color+'">'
-        +'<div class="kpi-value" style="color:'+color+';font-size:20px">'+icon+'</div>'
-        +'<div class="kpi-sub">'+title+'</div></div>';
-    }
+// --- Revenus › Essais & impayés ---
+function rEssaisImpayes(){
+  var now=Date.now();
+  var essais=(SALONS||[]).filter(function(s){return s.status==='trial'&&!s.fermeLe;}).sort(function(a,b){return new Date(a.trialEnd||0)-new Date(b.trialEnd||0);});
+  var imp=(SALONS||[]).filter(function(s){return s.status==='past_due'&&!s.fermeLe;});
+  var h='<div class="topbar"><h1>Essais & impayés</h1><button class="tb-btn" onclick="nav(\'revenus\',\'stripe\')">💳 Factures impayées dans Stripe →</button></div>';
+  h+='<div class="card"><h3>💳 Paiements échoués / impayés ('+imp.length+')</h3>'+_lxTable(['Établissement','Forfait','Depuis','Stripe','Actions'],imp.map(function(s){
+    return ['<b style="cursor:pointer" onclick="openD(\''+s.id+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.email)+'</div>', planB(s.plan), s.pastDueSince?_lxDt(s.pastDueSince):'—', lxStripeLiens(s)||'<span style="color:var(--text3)">pas de client Stripe</span>',
+      '<button class="dp-btn" style="font-size:11px" onclick="openD(\''+s.id+'\')">Fiche</button>'+(s.email?' <a class="dp-btn" style="font-size:11px;text-decoration:none" href="mailto:'+saEsc(s.email)+'">✉️</a>':'')]; }),'Aucun impayé.')+
+    '<div style="font-size:11px;color:var(--text3);margin-top:6px">Relance d\'une facture et détail des échecs : page Stripe (bouton en haut).</div></div>';
+  h+='<div class="card"><h3>⏰ Essais en cours ('+essais.length+')</h3>'+_lxTable(['Établissement','Fin d\'essai','Reste','Démarrage','Actions'],essais.map(function(s){
+    var j=s.trialEnd?Math.ceil((new Date(s.trialEnd)-now)/864e5):null; var d=asDemarrageScore(s.id);
+    return ['<b style="cursor:pointer" onclick="openD(\''+s.id+'\')">'+saEsc(s.nom)+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville)+'</div>', _lxDt(s.trialEnd),
+      j==null?'—':'<b style="color:'+(j<=3?'var(--red)':(j<=7?'var(--orange)':'var(--text2)'))+'">'+(j>0?j+' j':'terminé')+'</b>', d==null?'…':d+'/7',
+      '<div class="td-actions" style="flex-wrap:wrap"><button class="dp-btn" style="font-size:11px" onclick="asAction(\''+s.id+'\',\'essai7\')">+7 j</button><button class="dp-btn" style="font-size:11px" onclick="asAction(\''+s.id+'\',\'essai14\')">+14 j</button><button class="dp-btn" style="font-size:11px" onclick="openD(\''+s.id+'\')">Fiche</button>'+(s.stripeCust?lxStripeLiens(s):'')+'</div>']; }),'Aucun essai en cours.')+'</div>';
+  if(!window._DEMARRAGE) setTimeout(function(){ asChargerDemarrage().then(function(){ if(window._currentSub==='impayes') render(); }); },30);
+  return h;
+}
 
-    var html = '<div class="kpi-row">';
-    html += pilier('Inaltérabilité — SHA-256', d.inalterabilite);
-    html += pilier('Sécurisation — Chaînage', d.securisation);
-    html += pilier('Conservation 6 ans', d.conservation);
-    html += pilier('Archivage — Annuel signé', d.archivage);
-    html += '</div>';
+// --- Revenus › Parrainage ---
+var PARR_STATUTS={inscrit:'🆕 Inscrit',en_cours:'⏳ En cours',en_attente:'⏸ En attente (parrain sans abonnement payant)',recompense:'✅ Récompensé',refuse:'✖ Refusé'};
+function rParrainage(){
+  setTimeout(lxParrCharger,20);
+  return '<div class="topbar"><h1>Parrainage <span>Tous les parrainages entre établissements</span></h1></div><div id="parrZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
+}
+async function lxParrCharger(){
+  var el=document.getElementById('parrZone'); if(!el) return;
+  var r=await _sb.from('parrainages').select('*').order('cree_le',{ascending:false}).limit(500);
+  if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
+  var L=r.data||[], tot=0, nbR=0, nbA=0;
+  L.forEach(function(p){ if(p.statut==='recompense'){ nbR++; tot+=Number(p.montant)||0; } if(p.statut==='en_attente'||p.statut==='en_cours'||p.statut==='inscrit') nbA++; });
+  var codes=(SALONS||[]).filter(function(s){return s.codeParr&&!s.fermeLe;}).length;
+  var h='<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+saCarte('Parrainages',L.length,'au total')+saCarte('Récompensés',nbR,saE(tot)+' offerts (crédit Stripe)','var(--green)')+saCarte('En cours / en attente',nbA,'récompense à venir','var(--orange)')+saCarte('Codes actifs',codes,'établissements ouverts avec un code')+'</div>';
+  var nom=function(id){ var s=gSalon(id); return s?'<a href="#" onclick="openD(\''+s.id+'\');return false" style="color:var(--gold)">'+saEsc(s.nom)+'</a>':'<span style="color:var(--text3)">'+saEsc(String(id||'?').slice(0,8))+'</span>'; };
+  h+='<div class="card">'+_lxTable(['Créé le','Parrain','Filleul','Statut','Récompense','Référence Stripe','Motif'],L.map(function(p){
+    var par=gSalon(p.parrain_id), ref=String(p.stripe_ref||'');
+    var lien=ref?(par&&par.stripeCust?'<a href="https://dashboard.stripe.com/customers/'+encodeURIComponent(par.stripeCust)+'" target="_blank" rel="noopener" style="font-family:var(--mono);font-size:11px;color:var(--gold)">'+saEsc(ref)+' ↗</a>':'<span style="font-family:var(--mono);font-size:11px">'+saEsc(ref)+'</span>'):'—';
+    return [_lxDt(p.cree_le), nom(p.parrain_id), nom(p.filleul_id), saEsc(PARR_STATUTS[p.statut]||p.statut), p.montant!=null?saE(p.montant)+(p.recompense_le?'<div style="font-size:10px;color:var(--text3)">le '+_lxDt(p.recompense_le)+'</div>':''):'—', lien, saEsc(p.motif||'')]; }),'Aucun parrainage pour l\'instant.')+'</div>';
+  el.innerHTML=h;
+}
 
-    // Détails par pilier
-    html += '<div class="card"><h3>🛡️ État réel par pilier</h3><div style="font-size:13px;line-height:1.8">';
+// --- Revenus › Revenus SMS (12 mois : packs vendus face au coût Brevo) ---
+function rRevenusSms(){
+  setTimeout(async function(){ var el=document.getElementById('smsRevenus'); if(!el) return; var r=await _sb.rpc("admin_sms_stats"); if(r.error){ el.innerHTML='<span style="color:var(--red)">❌ '+saEsc(r.error.message)+'</span>'; return; } smsChargerRevenus(r.data||{}); },20);
+  return '<div class="topbar"><h1>Revenus SMS <span>Packs vendus face au coût Brevo</span></h1><button class="tb-btn" onclick="nav(\'diffusion\',\'sms\')">📱 Gestion des SMS →</button></div><div class="card"><div id="smsRevenus" style="font-size:13px;color:var(--text2)">Chargement des ventes Stripe…</div></div>';
+}
 
-    var inalt = d.inalterabilite || {};
-    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
-      + badge(inalt.ok) + ' <strong>Inaltérabilité</strong> — '
-      + (inalt.triggers_actifs||0) + '/' + (inalt.triggers_attendus||9) + ' triggers actifs<br>'
-      + '<span style="color:var(--text3);font-size:11px">' + (inalt.detail||'') + '</span></div>';
+// --- Communication › Statistiques d'envoi (Brevo, worker /api/admin/brevo-emails) ---
+function rEmailStats(){
+  setTimeout(function(){ lxEmailStatsCharger(false); },20);
+  return '<div class="topbar"><h1>Statistiques d’envoi <span>E-mails transactionnels Brevo</span></h1><button class="tb-btn" onclick="lxEmailStatsCharger(true)">⟳ Actualiser</button></div><div id="emStatsZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
+}
+async function lxEmailStatsCharger(forcer){
+  var el=document.getElementById('emStatsZone'); if(!el) return;
+  var d;
+  try{ var tok=await lxAdminJeton(); var r=await fetch("/api/admin/brevo-emails"+(forcer?"?refresh=1":""),{headers:{"Authorization":"Bearer "+tok}}); d=await r.json().catch(function(){return {error:"Réponse illisible ("+r.status+")"};}); if(!r.ok&&!d.error) d.error="Erreur "+r.status; }
+  catch(e){ d={error:"Worker injoignable : "+(e&&e.message||e)}; }
+  if(d.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(d.error)+'<div style="font-size:11px;color:var(--text3);margin-top:6px">Route du worker <code>/api/admin/brevo-emails</code> (à déployer) — clé <code>BREVO_API_KEY</code> déjà présente.</div></div>'; return; }
+  var pct=function(a,b){ return b>0?Math.round(a*1000/b)/10+' %':'—'; };
+  var bloc=function(t,x){ x=x||{}; var rej=(x.rejets_definitifs||0)+(x.rejets_temporaires||0);
+    return '<div class="card"><h3>'+t+'</h3><div style="display:flex;gap:10px;flex-wrap:wrap">'+
+      saCarte('Envoyés',saEsc(x.envoyes||0))+saCarte('Délivrés',saEsc(x.delivres||0),pct(x.delivres||0,x.envoyes||0)+' des envois','var(--green)')+
+      saCarte('Ouvertures uniques',saEsc(x.ouvertures_uniques||0),pct(x.ouvertures_uniques||0,x.delivres||0)+' des délivrés (estimation)')+
+      saCarte('Rejets',saEsc(rej),saEsc(x.rejets_definitifs||0)+' définitif(s) · '+saEsc(x.rejets_temporaires||0)+' temporaire(s)',rej?'var(--orange)':null)+
+      saCarte('Bloqués',saEsc(x.bloques||0),'adresses bloquées par Brevo',x.bloques?'var(--red)':null)+
+      saCarte('Spam / invalides',saEsc((x.spam||0)+' / '+(x.invalides||0)),'signalements / adresses invalides',(x.spam||x.invalides)?'var(--red)':null)+
+      '</div></div>'; };
+  var h=bloc('7 derniers jours',d.j7)+bloc('30 derniers jours',d.j30);
+  var inc=d.incidents||[];
+  h+='<div class="card"><h3>⚠️ Derniers incidents (7 j)</h3>'+_lxTable(['Date','Type','Destinataire','Objet','Raison'],inc.map(function(x){ return [_lxDt(x.date,true),saEsc(x.type),saEsc(x.email),saEsc(x.sujet),saEsc(x.raison)]; }),'Aucun rejet ni blocage sur 7 jours.')+'</div>';
+  h+='<div style="font-size:11px;color:var(--text3)">Source : Brevo (relevé '+_lxDt(d.fetchedAt,true)+(d.cached?', cache '+saEsc(d.ageSec)+' s':'')+(d.stale?' — <b style="color:var(--orange)">'+saEsc(d.warning||'valeurs anciennes')+'</b>':'')+'). Les ouvertures sont sous-estimées (images bloquées par certaines messageries).</div>';
+  el.innerHTML=h;
+}
 
-    var secu = d.securisation || {};
-    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
-      + badge(secu.ok) + ' <strong>Sécurisation chaînage SHA-256</strong> — '
-      + (secu.pct_hashed||0) + '% tickets hashés ('+(secu.tickets_hashed||0)+'/'+(secu.tickets_total||0)+'), '
-      + (secu.chain_seal_count||0) + ' scellements en chaîne'
-      + (secu.chain_breaks_7j > 0 ? ', <span style="color:var(--red)">'+secu.chain_breaks_7j+' rupture(s) chaîne sur 7j</span>' : '')
-      + '<br><span style="color:var(--text3);font-size:11px">' + (secu.detail||'') + '</span></div>';
-
-    var cons = d.conservation || {};
-    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
-      + badge(cons.ok) + ' <strong>Conservation 6 ans</strong> — '
-      + (cons.nb_clotures||0) + ' clôtures Z, dernier Z #' + (cons.last_z_num||'?') + ' du ' + (cons.last_z_date || '—')
-      + '<br><span style="color:var(--text3);font-size:11px">' + (cons.detail||'') + '</span></div>';
-
-    var arch = d.archivage || {};
-    html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
-      + badge(arch.ok) + ' <strong>Archivage annuel</strong> — '
-      + (arch.nb_archives||0) + ' archive(s) générée(s)'
-      + (arch.last_archive_year ? ', dernière : ' + arch.last_archive_year : '')
-      + '<br><span style="color:var(--text3);font-size:11px">' + (arch.detail||'') + ' · ' + (arch.cron_next_run||'') + '</span></div>';
-
-    var trac = d.tracabilite || {};
-    html += '<div style="padding:8px 0">'
-      + badge(trac.ok) + ' <strong>Traçabilité (piste d\'audit)</strong> — '
-      + (trac.audit_actions_24h||0) + ' actions tracées sur 24h'
-      + '<br><span style="color:var(--text3);font-size:11px">' + (trac.detail||'') + '</span></div>';
-    html += '</div></div>';
-
-    // RGPD
-    var rgpd = d.rgpd || {};
-    html += '<div class="card"><h3>🇪🇺 RGPD</h3><div style="font-size:13px;line-height:1.8">';
-    [
-      {k:'rgpd_delete', name:'Droit à l\'effacement (art. 17)'},
-      {k:'portabilite', name:'Droit à la portabilité (art. 20)'},
-      {k:'consentement_marketing', name:'Consentement marketing opt-in (art. 7)'},
-      {k:'hebergement_ue', name:'Hébergement Union Européenne'},
-      {k:'notification_violation', name:'Notification violation 72h CNIL (art. 33)'}
-    ].forEach(function(it){
-      var x = rgpd[it.k] || {};
-      html += '<div style="padding:6px 0;border-bottom:1px solid var(--border)">'
-        + badge(x.ok) + ' <strong>'+it.name+'</strong>'
-        + '<br><span style="color:var(--text3);font-size:11px">' + (x.detail||'') + '</span></div>';
+// --- Qualité › Sauvegardes & tâches de nuit (GitHub via worker + repli cron.job_run_details) ---
+function rSauvegardes(){
+  setTimeout(function(){ lxSauvCharger(false); },20);
+  return '<div class="topbar"><h1>Sauvegardes & tâches de nuit</h1><button class="tb-btn" onclick="lxSauvCharger(true)">⟳ Actualiser</button></div><div id="sauvGh"><div class="card" style="color:var(--text3)">Lecture de GitHub…</div></div><div id="sauvCron"><div class="card" style="color:var(--text3)">Lecture des tâches de nuit…</div></div>';
+}
+var LX_GH_AIDE='<ol style="margin:8px 0 0 18px;line-height:1.7;font-size:13px">'+
+  '<li>Sur GitHub (compte qui gère <b>Luxyra-fr/luxyra.fr</b>) : photo de profil → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.</li>'+
+  '<li>Nom : « Luxyra admin lecture » · Expiration : 1 an · <b>Resource owner</b> : Luxyra-fr · <b>Repository access</b> : <i>Only select repositories</i> → <b>luxyra.fr</b>.</li>'+
+  '<li><b>Permissions</b> → <i>Repository permissions</i> → <b>Actions : Read-only</b> (laisser tout le reste à « No access »). Puis <b>Generate token</b> et copier le jeton (il commence par <code>github_pat_</code>).</li>'+
+  '<li>Cloudflare : <b>Workers & Pages</b> → <b>luxyra-router</b> → <b>Settings</b> → <b>Variables and Secrets</b> → <b>Add</b> → type <b>Secret</b>, nom <code>GITHUB_TOKEN_RO</code>, valeur = le jeton → <b>Deploy</b>.</li>'+
+  '<li>Revenir ici et cliquer « Actualiser ». Penser à renouveler le jeton avant sa date d\'expiration.</li></ol>';
+async function lxSauvCharger(forcer){
+  var g=document.getElementById('sauvGh'), c=document.getElementById('sauvCron'); if(!g||!c) return;
+  var tok=await lxAdminJeton(), d;
+  try{ var r=await fetch("/api/admin/github-actions"+(forcer?"?refresh=1":""),{headers:{"Authorization":"Bearer "+tok}}); d=await r.json().catch(function(){return {error:"Réponse illisible ("+r.status+")"};}); if(!r.ok&&!d.error) d.error="Erreur "+r.status; }
+  catch(e){ d={error:"Worker injoignable : "+(e&&e.message||e)}; }
+  var h='<div class="card"><h3>💾 Automatismes GitHub (sauvegarde chiffrée vers Google Drive, test de restauration, déploiement)</h3>';
+  if(d.error) h+='<div style="color:var(--red)">❌ '+saEsc(d.error)+'</div><div style="font-size:11px;color:var(--text3);margin-top:6px">Route <code>/api/admin/github-actions</code> du worker (à déployer).</div>';
+  else if(!d.connecte) h+='<div style="padding:10px;border-radius:8px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.35)"><b style="color:var(--orange)">Non connecté — créer un jeton</b><div style="font-size:12px;color:var(--text2);margin-top:4px">Le worker n\'a pas de jeton GitHub en lecture seule (<code>GITHUB_TOKEN_RO</code>). En attendant, l\'état des tâches de nuit de la base est affiché plus bas ; les échecs de la sauvegarde arrivent par e-mail GitHub.</div>'+LX_GH_AIDE+'</div>';
+  else {
+    (d.workflows||[]).forEach(function(w){
+      var col=w.erreur?'var(--orange)':(w.ok?'var(--green)':'var(--red)');
+      var t=w.dernier_termine;
+      h+='<div style="padding:10px 0;border-top:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="flex:1">'+saEsc(w.nom)+'</b><span style="color:'+col+';font-weight:800">'+(w.erreur?'⚠️ '+saEsc(w.erreur):(w.ok?'✅ OK':(w.en_retard?'⏱ En retard':'❌ Échec')))+'</span></div>';
+      if(!w.erreur) h+='<div style="font-size:12px;color:var(--text2);margin-top:4px">Dernière exécution terminée : '+(t?_lxDt(t.debut,true)+' — '+saEsc(t.conclusion||t.statut)+(/^https:\/\/github\.com\//.test(String(t.lien||''))?' · <a href="'+saEsc(t.lien)+'" target="_blank" rel="noopener">voir ↗</a>':''):'aucune')+(w.dernier_succes&&t&&w.dernier_succes.id!==t.id?' · dernier succès : '+_lxDt(w.dernier_succes.debut,true):'')+'</div>';
+      h+='</div>';
     });
-    html += '</div></div>';
-
-    html += '<div style="margin-top:14px;padding:10px 14px;background:rgba(212,168,67,.06);border:1px solid rgba(212,168,67,.2);border-radius:8px;font-size:12px;color:var(--text3)">';
-    html += '💡 Cette page lit l\'état RÉEL de la base de données (triggers, hash, clôtures, archives, audit log). ';
-    html += 'Rapport généré : ' + (d.generated_at ? new Date(d.generated_at).toLocaleString('fr-FR') : '?') + '. ';
-    html += 'L\'attestation individuelle d\'éditeur reste publiée sur <a href="/nf525-attestation-generale.html" target="_blank" style="color:var(--gold)">/nf525-attestation-generale.html</a>.';
-    html += '</div>';
-
-    box.innerHTML = html;
-  } catch(e){
-    box.innerHTML = '<div style="padding:20px;background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.25);border-radius:10px;color:var(--red)">❌ Erreur chargement : '+saEsc(e.message||e)+'</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">Lecture seule via un jeton GitHub (relevé '+_lxDt(d.fetchedAt,true)+(d.cached?', cache':'')+').</div>';
   }
+  g.innerHTML=h+'</div>';
+  var rc=await _sb.rpc('admin_taches_nuit');
+  if(rc.error){ c.innerHTML='<div class="card" style="color:var(--red)">❌ Tâches de nuit : '+saEsc(rc.error.message)+'</div>'; return; }
+  var n=rc.data||{}, T=n.taches||[];
+  c.innerHTML='<div class="card"><h3>🌙 Tâches de nuit de la base '+(n.ok?'<span style="color:var(--green);font-size:13px">✅ toutes passées</span>':'<span style="color:var(--orange);font-size:13px">⚠️ à vérifier</span>')+'</h3>'+
+    _lxTable(['Tâche','Horaire (UTC)','Dernière exécution','Statut','Échecs 24 h / 7 j'],T.map(function(t){
+      var ko=(Number(t.echecs_24h)||0)>0||t.manquee;
+      return ['<span style="font-family:var(--mono);font-size:11px">'+saEsc(t.nom)+'</span>', '<span style="font-family:var(--mono);font-size:11px">'+saEsc(t.horaire)+'</span>', _lxDt(t.derniere,true),
+        '<span style="color:'+(ko?'var(--red)':'var(--green)')+';font-weight:700">'+(t.manquee?'n\'a pas tourné (26 h)':saEsc(t.dernier_statut||'—'))+'</span>'+(t.message?'<div style="font-size:10px;color:var(--text3);max-width:320px;word-break:break-word">'+saEsc(t.message)+'</div>':''),
+        saEsc(t.echecs_24h)+' / '+saEsc(t.echecs_7j)]; }),'Aucune tâche quotidienne.')+'<div style="font-size:11px;color:var(--text3);margin-top:6px">Source : cron.job_run_details (historique gardé 7 jours).</div></div>';
+}
+
+// --- Qualité › RGPD & purges ---
+function rRgpd(){
+  setTimeout(lxRgpdCharger,20);
+  return '<div class="topbar"><h1>RGPD & purges <span>Ce qui sera supprimé, et quand</span></h1><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="tb-btn" onclick="lxRgpdCharger()">⟳ Actualiser</button><button class="tb-btn primary" onclick="lxRetentionLancer()">▶ Lancer maintenant le traitement de conservation</button></div></div><div id="rgpdZone"><div class="card" style="color:var(--text3)">Chargement…</div></div><div id="rgpdChecks"></div>';
+}
+async function lxRgpdCharger(){
+  var el=document.getElementById('rgpdZone'); if(!el) return;
+  var r=await _sb.rpc('admin_rgpd_etat');
+  if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'<div style="font-size:11px;color:var(--text3);margin-top:6px">RPC admin_rgpd_etat : appliquer docs/migrations_1015/admin_structure.sql.</div></div>'; }
+  else {
+    var d=r.data||{}, h='';
+    var lienSal=function(x){ var s=gSalon(x.id); return s?'<a href="#" onclick="openD(\''+s.id+'\');return false" style="color:var(--gold)">'+saEsc(x.nom)+'</a>':saEsc(x.nom||'?'); };
+    h+='<div class="card"><h3>🧹 Purges RGPD J+60 à venir <span style="font-size:11px;color:var(--text3);font-weight:400">fiches clients, photos, RDV et réservations en ligne ; la caisse reste 6 ans</span></h3>'+
+      _lxTable(['Établissement','Statut','Fin du service','Préavis (J+53)','Purge prévue'],(d.j60||[]).map(function(x){ return [lienSal(x),statusB(x.statut),_lxDt(x.fin_service),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'prévu le '+_lxDt(x.preavis_prevu),'<b>'+_lxDt(x.purge_prevue)+'</b>']; }),'Aucune purge J+60 prévue.')+
+      ((d.j60_faites||[]).length?'<div style="font-size:12px;color:var(--text2);margin-top:8px">Déjà purgés : '+(d.j60_faites||[]).map(function(x){return saEsc(x.nom)+' ('+_lxDt(x.purge_le)+')';}).join(' · ')+'</div>':'')+'</div>';
+    h+='<div class="card"><h3>🗄 Suppressions définitives à 6 ans <span style="font-size:11px;color:var(--text3);font-weight:400">6 ans après la dernière opération de caisse ou la fin du service ; préavis 30 j avant</span></h3>'+
+      _lxTable(['Établissement','Fermé / résilié','Préavis','Suppression prévue','Avant la suppression'],(d.six_ans||[]).map(function(x){ return [lienSal(x),_lxDt(x.ferme_le||x.resilie_le),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'prévu le '+_lxDt(x.preavis_prevu),'<b>'+_lxDt(x.suppression_prevue)+'</b>','<button class="dp-btn" style="font-size:11px" onclick="lxExportNf525(\''+x.id+'\')">⬇️ Export NF525</button> <button class="dp-btn" style="font-size:11px" onclick="asVoirApp(\''+x.id+'\')">📚 Archives</button>']; }),'Aucun établissement résilié.')+
+      ((d.six_ans_faites||[]).length?'<div style="font-size:12px;font-weight:700;margin-top:10px">Historique des suppressions</div>'+_lxTable(['Établissement','Fin du service','Fin de conservation','Supprimé le','Lignes'],(d.six_ans_faites||[]).map(function(x){return [saEsc(x.nom),_lxDt(x.fin_service),_lxDt(x.fin_conservation),_lxDt(x.supprime_le),saEsc(x.lignes)];})):'')+'</div>';
+    h+='<div class="card"><h3>👤 Comptes clients inactifs <span style="font-size:11px;color:var(--text3);font-weight:400">3 ans sans activité ; préavis 30 j ; une connexion annule tout · '+saEsc(d.nb_comptes_clients||0)+' compte(s) au total</span></h3>'+
+      _lxTable(['Client','E-mail (masqué)','Dernière activité','Préavis','Suppression prévue'],(d.clients||[]).map(function(x){ return [saEsc(x.prenom||'—'),saEsc(x.email||''),_lxDt(x.derniere_activite),x.preavis_le?'envoyé le '+_lxDt(x.preavis_le):'—','<b>'+_lxDt(x.suppression_prevue)+'</b>']; }),'Aucun compte client en fin de conservation dans les 90 jours.')+'</div>';
+    h+='<div class="card" style="font-size:12px;color:var(--text2);line-height:1.6"><b>Traitement automatique</b> : chaque nuit à 03:00 UTC (worker <code>runRetentionPurgeJob</code>) — préavis puis purges dues. Le bouton « Lancer maintenant » exécute exactement le même traitement (rien n\'est forcé : seuls les cas dont le délai et le préavis sont écoulés sont traités). <b>Export des données d\'un client</b> : fiche client dans l\'application de l\'établissement (« Exporter les données », RPC rgpd_export_client_data). <b>Export de la caisse d\'un établissement</b> : bouton « Export NF525 » ci-dessus ou page NF525.</div>';
+    el.innerHTML=h;
+  }
+  // Contrôles RGPD (anciennement en bas de Finance › NF525)
+  var ck=document.getElementById('rgpdChecks'); if(!ck) return;
+  var v=await _sb.rpc('verify_nf525_status');
+  if(v.error){ ck.innerHTML=''; return; }
+  var rg=(v.data||{}).rgpd||{};
+  var bdg=function(ok){ return ok===true?'<span style="color:var(--green);font-weight:800">✓</span>':(ok===false?'<span style="color:var(--red);font-weight:800">✕</span>':'<span style="color:#ffd54f;font-weight:700">⚠ Manuel</span>'); };
+  ck.innerHTML='<div class="card"><h3>🇪🇺 Contrôles RGPD</h3>'+[['rgpd_delete','Droit à l\'effacement (art. 17)'],['portabilite','Droit à la portabilité (art. 20)'],['consentement_marketing','Consentement marketing opt-in (art. 7)'],['hebergement_ue','Hébergement Union européenne'],['notification_violation','Notification de violation 72 h CNIL (art. 33)']].map(function(it){ var x=rg[it[0]]||{}; return '<div style="padding:6px 0;border-top:1px solid var(--border);font-size:13px">'+bdg(x.ok)+' <b>'+it[1]+'</b><div style="font-size:11px;color:var(--text3)">'+saEsc(x.detail||'')+'</div></div>'; }).join('')+'</div>';
+}
+async function lxRetentionLancer(){
+  if(!confirm("Lancer MAINTENANT le traitement de conservation ?\n\nMême traitement que la nuit :\n• préavis e-mail aux établissements et clients concernés\n• purge RGPD J+60 des établissements dont le préavis est écoulé\n• suppression définitive des établissements arrivés à 6 ans (préavis de 30 j écoulé)\n• suppression des comptes clients inactifs depuis 3 ans (préavis écoulé)\n\nSeuls les cas DÉJÀ DUS sont traités. Les suppressions sont irréversibles.")) return;
+  var w=prompt("Pour confirmer, tapez PURGER :"); if(w!=="PURGER"){ alert("Annulé."); return; }
+  try{
+    var tok=await lxAdminJeton();
+    var r=await fetch("/api/admin/retention-purge",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},body:"{}"});
+    var j=await r.json().catch(function(){return {};});
+    if(!r.ok){ alert("❌ "+(j.error||("erreur "+r.status))); return; }
+    alert("✅ Traitement terminé.\n\nPréavis 6 ans envoyés : "+(j.warned||0)+"\nÉtablissements supprimés (6 ans) : "+(j.purged||0)+"\nDevis > 10 ans purgés : "+(j.devisPurged||0)+"\nErreurs : "+(j.errors||0)+"\n\n(Les purges J+60 et comptes clients sont tracées dans le journal et notifiées par push.)");
+    lxRgpdCharger();
+  }catch(e){ alert("❌ "+(e&&e.message||e)); }
+}
+
+// --- Qualité › Journal admin (admin_log : qui, quoi, cible, avant / après) ---
+window._JF=window._JF||{jours:'30',action:'',salon:'',q:'',auto:'1'};
+function rJournal(){
+  setTimeout(lxJournalCharger,20);
+  var F=window._JF, st='padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px';
+  var h='<div class="topbar"><h1>Journal admin <span>Toutes les actions de l’administration</span></h1><button class="tb-btn" onclick="lxJournalCharger()">⟳ Actualiser</button></div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">'+
+    '<select style="'+st+'" onchange="window._JF.jours=this.value;lxJournalCharger()">'+[['1','24 h'],['7','7 jours'],['30','30 jours'],['90','90 jours'],['365','1 an']].map(function(o){return '<option value="'+o[0]+'"'+(F.jours===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>'+
+    '<select style="'+st+'" onchange="window._JF.salon=this.value;lxJournalCharger()"><option value="">Tous les établissements</option>'+(SALONS||[]).map(function(x){return '<option value="'+saEsc(x.id)+'"'+(F.salon===x.id?' selected':'')+'>'+saEsc(x.nom)+'</option>';}).join('')+'</select>'+
+    '<input style="'+st+';min-width:160px" placeholder="Action (ex. STRIPE, TRIAL)" value="'+saEsc(F.action)+'" onchange="window._JF.action=this.value.trim();lxJournalCharger()">'+
+    '<input style="'+st+';flex:1;min-width:160px" placeholder="Texte (détails, cible, auteur)" value="'+saEsc(F.q)+'" onchange="window._JF.q=this.value.trim();lxJournalCharger()">'+
+    '<label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox"'+(F.auto==='1'?' checked':'')+' onchange="window._JF.auto=this.checked?\'1\':\'\';lxJournalCharger()"> traces automatiques (avant / après)</label></div>';
+  return h+'<div id="journalZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
+}
+async function lxJournalCharger(){
+  var el=document.getElementById('journalZone'); if(!el) return;
+  var F=window._JF, depuis=new Date(Date.now()-Number(F.jours||30)*864e5).toISOString();
+  var q=_sb.from('admin_log').select('*').gte('timestamp_action',depuis).order('timestamp_action',{ascending:false}).limit(500);
+  if(F.salon) q=q.eq('salon_id',F.salon);
+  if(F.action) q=q.ilike('action','%'+F.action.replace(/[%_,()]/g,'')+'%');
+  if(F.auto!=='1') q=q.not('action','like','AUTO_%');
+  var r=await q;
+  if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
+  var L=r.data||[], t=(F.q||'').toLowerCase();
+  if(t) L=L.filter(function(x){ return (String(x.details||'')+' '+String(x.cible||'')+' '+String(x.admin_email||'')+' '+JSON.stringify(x.avant||'')+' '+JSON.stringify(x.apres||'')).toLowerCase().indexOf(t)>=0; });
+  window._JL=L;
+  var h='<div class="card" style="padding:0">';
+  if(!L.length) h+='<div style="padding:16px;color:var(--text3)">Aucune action sur la période.</div>';
+  L.forEach(function(x,i){
+    var s=x.salon_id?gSalon(x.salon_id):null, auto=/^AUTO_/.test(String(x.action||''));
+    var diff=(x.avant||x.apres);
+    h+='<div style="padding:9px 14px;border-top:1px solid var(--border);font-size:12px'+(auto?';opacity:.85':'')+'">'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline"><span style="color:var(--text3);font-family:var(--mono);font-size:11px">'+_lxDt(x.timestamp_action,true)+'</span>'+
+      '<b style="color:'+(auto?'var(--text2)':'var(--gold)')+'">'+saEsc(x.action)+'</b>'+
+      (s?'<a href="#" onclick="openD(\''+s.id+'\');return false" style="color:var(--text)">'+saEsc(s.nom)+'</a>':'')+
+      (x.cible?'<span style="color:var(--text3);font-family:var(--mono);font-size:10px">'+saEsc(x.cible)+'</span>':'')+
+      '<span style="margin-left:auto;color:var(--text3);font-size:11px">'+saEsc(x.admin_email||(x.admin_user_id?'admin':'serveur'))+'</span></div>'+
+      (x.details?'<div style="color:var(--text2);margin-top:2px;word-break:break-word">'+saEsc(String(x.details).slice(0,400))+'</div>':'')+
+      (diff?'<details style="margin-top:4px"><summary style="cursor:pointer;color:var(--text3);font-size:11px">Avant / après</summary>'+lxJournalDiff(x.avant,x.apres)+'</details>':'')+
+      '</div>';
+  });
+  el.innerHTML=h+'</div><div style="font-size:11px;color:var(--text3);margin-top:6px">'+L.length+' action(s) (500 au plus). Le journal ne peut être ni modifié ni effacé depuis le panneau.</div>';
+}
+function lxJournalDiff(av,ap){
+  var A=(av&&typeof av==='object')?av:{}, P=(ap&&typeof ap==='object')?ap:{}, keys={};
+  Object.keys(A).forEach(function(k){keys[k]=1;}); Object.keys(P).forEach(function(k){keys[k]=1;});
+  var f=function(v){ if(v===undefined) return '<span style="color:var(--text3)">—</span>'; var t=typeof v==='string'?v:JSON.stringify(v); return saEsc(String(t).slice(0,300)); };
+  var ks=Object.keys(keys); if(!ks.length) return '<div style="color:var(--text3)">—</div>';
+  return '<table style="margin-top:4px;font-size:11px"><tr><th>Champ</th><th>Avant</th><th>Après</th></tr>'+ks.map(function(k){ return '<tr><td style="font-family:var(--mono)">'+saEsc(k)+'</td><td style="color:var(--red)">'+f(A[k])+'</td><td style="color:var(--green)">'+f(P[k])+'</td></tr>'; }).join('')+'</table>';
+}
+
+// --- Croissance & réglages › Liens externes ---
+var LX_LIENS=[
+  ['Google Play Console','https://play.google.com/console','Applications Android (clients, SMS Companion)'],
+  ['Google Search Console','https://search.google.com/search-console?resource_id=sc-domain%3Aluxyra.fr','Référencement de luxyra.fr'],
+  ['Cloudflare','https://dash.cloudflare.com/','Worker luxyra-router, DNS, secrets'],
+  ['Supabase','https://supabase.com/dashboard/project/kxdgjtvrkwugbifgppai','Base de données, fonctions, journaux'],
+  ['Brevo','https://app.brevo.com/','E-mails et SMS transactionnels'],
+  ['Stripe','https://dashboard.stripe.com/','Abonnements, paiements, Connect'],
+  ['GitHub — luxyra.fr','https://github.com/Luxyra-fr/luxyra.fr','Code du site, de l\'app et du worker'],
+  ['GitHub — automatismes','https://github.com/Luxyra-fr/luxyra.fr/actions','Sauvegarde de nuit, test de restauration, déploiement'],
+  ['GitHub — SMS Companion','https://github.com/Luxyra-fr/luxyra-sms-app','Application Android SMS']
+];
+function rLiens(){
+  return '<div class="topbar"><h1>Liens externes</h1></div><div class="settings-grid">'+LX_LIENS.map(function(l){
+    return '<a class="settings-card" style="display:block;text-decoration:none;color:var(--text)" href="'+saEsc(l[1])+'" target="_blank" rel="noopener"><h3 style="margin-bottom:4px">'+saEsc(l[0])+' ↗</h3><div style="font-size:12px;color:var(--text3)">'+saEsc(l[2])+'</div></a>';
+  }).join('')+'</div>';
 }
 
 // ===== EDIT LEGAL INFO (super-admin only — champs lockés côté salon) =====
@@ -4661,7 +5060,7 @@ async function doSaveLegal(id){
   if(siretClean && !data.siren) data.siren=siretClean.slice(0,9);
   var r=await _sb.from("salons").update(data).eq("id",id);
   if(r&&r.error){alert("Erreur sauvegarde : "+r.error.message);return;}
-  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:id,action:"EDIT_LEGAL",details:JSON.stringify(data)});
+  await lxJournal("EDIT_LEGAL",{salon:id,cible:"salons:"+id,apres:data});
   alert("✅ Modifications enregistrées et propagées (app salon, site public, tickets, factures)");
   await loadData();closeMod();render();openD(id);
 }
@@ -4673,7 +5072,7 @@ async function toggleDocLock(salonId,lock){
   if(!confirm(msg))return;
   var r=await _sb.from("salons").update({documents_locked:lock}).eq("id",salonId);
   if(r&&r.error){alert("Erreur : "+r.error.message);return;}
-  await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:salonId,action:lock?"DOCS_LOCKED":"DOCS_UNLOCKED",details:lock?"Documents verrouill\u00e9s":"Documents d\u00e9verrouill\u00e9s"});
+  await lxJournal(lock?"DOCS_LOCKED":"DOCS_UNLOCKED",{salon:salonId,cible:"salons:"+salonId,avant:{documents_locked:!lock},apres:{documents_locked:!!lock}});
   alert(lock?"\u2705 Documents verrouill\u00e9s":"\ud83d\udd13 Documents d\u00e9verrouill\u00e9s");
   await loadData();render();openD(salonId);
 }
@@ -4740,7 +5139,9 @@ async function doEditUserId(id,newUid){
 // ===== SAVE NOTES =====
 async function saveNotes(id){
   var n=document.getElementById("dpNotes");if(!n)return;
+  var _sN=gSalon(id), _avN=_sN?_sN.notesAdmin:null;
   try{ await saMaj("salons",{notes_admin:n.value},id); }catch(eN){ alert("❌ Notes non enregistrées : "+(eN&&eN.message||eN)); return; }
+  if(_sN) _sN.notesAdmin=n.value; await saJournal(id,"NOTES_ADMIN","",{notes_admin:_avN},{notes_admin:n.value});
   alert("Notes enregistrées !");
 }
 
@@ -4768,7 +5169,7 @@ function asMenuActions(s){
 async function asAction(id,v){
   if(!v) return; var s=gSalon(id); if(!s) return;
   if(/^essai\d+$/.test(v)){ var j=parseInt(v.slice(5),10); if(!confirm("Prolonger l'essai de "+s.nom+" de "+j+" jours ?")) return; var d=new Date(Math.max(Date.now(), new Date(s.trialEnd||Date.now()).getTime())); d.setDate(d.getDate()+j);
-    await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id); s.trialEnd=d.toISOString(); try{ await _sb.from("admin_notes_salons").insert({salon_id:id,type:"autre",note:"Essai prolongé de "+j+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} alert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR")); openD(id); return; }
+    var _avT=s.trialEnd||null; var _rt=await _sb.from("salons").update({trial_end:d.toISOString()}).eq("id",id).select("id"); if(_rt.error||!_rt.data||!_rt.data.length){ alert("❌ Essai non prolongé : "+((_rt.error&&_rt.error.message)||"aucune ligne (droits ?)")); return; } s.trialEnd=d.toISOString(); await saJournal(id,"TRIAL_EXTEND","+"+j+" j",{trial_end:_avT},{trial_end:s.trialEnd}); if(window._currentSub==="impayes"){ alert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR")); render(); return; } try{ await _sb.from("admin_notes_salons").insert({salon_id:id,type:"autre",note:"Essai prolongé de "+j+" j (jusqu'au "+d.toLocaleDateString("fr-FR")+")",auteur:"admin"}); }catch(e){} alert("⏰ Essai prolongé jusqu'au "+d.toLocaleDateString("fr-FR")); openD(id); return; }
   if(v==="suspend"&&!confirm("Suspendre le compte de « "+s.nom+" » ? Le salon n'aura plus accès à l'application.")) return;
   if(v==="reactivate"&&!confirm("Réactiver le compte de « "+s.nom+" » ?")) return;
   if(v==="reset"&&!confirm("Envoyer à « "+s.nom+" » ("+s.email+") un lien pour choisir un nouveau mot de passe ?")) return;
@@ -4849,7 +5250,7 @@ function lxRechercheOuvrir(){
   if(document.getElementById("lxRech")) return;
   var d=document.createElement("div"); d.id="lxRech";
   d.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;justify-content:center;align-items:flex-start;padding:10vh 12px 12px";
-  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher un salon, un client (nom, téléphone, email), un ticket (n°)…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border);outline:none"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
+  d.innerHTML='<div style="width:100%;max-width:640px;background:var(--bg2);border:1px solid var(--gold);border-radius:14px;overflow:hidden"><input id="lxRechQ" placeholder="Rechercher une page, un établissement, un client (nom, téléphone, e-mail), un ticket (n°)…" style="width:100%;padding:16px;font-size:16px;background:var(--bg3);color:var(--text);border:none;border-bottom:1px solid var(--border);outline:none"><div id="lxRechR" style="max-height:60vh;overflow-y:auto;padding:6px 0;font-size:13px;color:var(--text2)"><div style="padding:10px 16px">Tape au moins 2 caractères · Échap pour fermer</div></div></div>';
   d.addEventListener("click",function(e){ if(e.target===d) d.remove(); });
   document.body.appendChild(d);
   var i=document.getElementById("lxRechQ"); i.focus();
@@ -4861,6 +5262,10 @@ async function lxRechercher(q){
   var ql=q.toLowerCase();
   var sal=SALONS.filter(function(s){ return (s.nom+" "+s.ville+" "+s.email+" "+s.siret+" "+s.tel+" "+s.gerantNom+" "+s.gerantPrenom).toLowerCase().indexOf(ql)>=0; }).slice(0,8);
   var h='';
+  // 2026-10-15 : pages du nouveau menu (7 rubriques) dans l'index de recherche
+  var sansAcc=function(t){ return String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); };
+  var qa=sansAcc(q), pg=lxPagesIndex().filter(function(x){ return sansAcc(x.chemin+" "+x.mots).indexOf(qa)>=0; }).slice(0,6);
+  if(pg.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Pages</div>'+pg.map(function(x){ return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\''+saJs(x.tab)+'\''+(x.sub?',\''+saJs(x.sub)+'\'':'')+')">📄 <b>'+saEsc(x.chemin)+'</b></div>'; }).join("");
   if(sal.length) h+='<div style="padding:6px 16px;font-size:11px;color:var(--text3);text-transform:uppercase">Salons</div>'+sal.map(function(s){ return '<div style="padding:8px 16px;cursor:pointer" onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'" onclick="document.getElementById(\'lxRech\').remove();nav(\'salons\',\'liste\');setTimeout(function(){openD(\''+s.id+'\')},120)">🏠 <b>'+saEsc(s.nom)+'</b> <span style="color:var(--text3)">'+saEsc(s.ville)+' · '+saEsc(s.email)+'</span></div>'; }).join("");
   el.innerHTML=h+'<div style="padding:10px 16px;color:var(--text3)">Recherche des clients et tickets…</div>';
   var r=await _sb.rpc("admin_recherche",{p_q:q});
@@ -4884,7 +5289,7 @@ async function lxAppliquerSiret(id,mode){
   if(!champs.length){ alert("Rien à compléter : la fiche est déjà à jour."); return; }
   if(!confirm((mode==="vides"?"Compléter les champs vides :\n":"Remplacer par les données officielles :\n")+champs.join(", ")+" ?")) return;
   var r=await _sb.from("salons").update(patch).eq("id",id); if(r.error){ alert("❌ "+r.error.message); return; }
-  try{ await _sb.from("admin_log").insert({salon_id:id,action:"SIRET_APPLIQUE",details:"Champs mis à jour depuis le répertoire officiel : "+champs.join(", ")}); }catch(e){}
+  try{ var _avS={}; map.forEach(function(m){ if(patch[m[0]]!=null) _avS[m[0]]=s[m[1]]; }); await lxJournal("SIRET_APPLIQUE",{salon:id,cible:"salons:"+id,details:"Champs mis à jour depuis le répertoire officiel : "+champs.join(", "),avant:_avS,apres:patch}); }catch(e){}
   map.forEach(function(m){ if(patch[m[0]]!=null) s[m[1]]=patch[m[0]]; });
   alert("✅ Fiche mise à jour ("+champs.length+" champ(s))"); openD(id);
 }
@@ -5036,8 +5441,9 @@ async function saMaj(table, patch, id, aRelire){
   (aRelire||[]).forEach(function(k){ var v=r.data[0][k], att=patch[k]; if(String(v==null?"":v)!==String(att==null?"":att)) throw new Error("la base a refusé la valeur de « "+k+" »"); });
   return r.data[0];
 }
-async function saJournal(salonId, action, details){
-  try{ var r=await _sb.from("admin_log").insert({admin_user_id:_uid,salon_id:salonId,action:action,details:details||""}); if(r&&r.error) console.warn("[admin_log]",r.error.message); }catch(e){ console.warn("[admin_log]",e&&e.message); }
+// 2026-10-15 : passe par le helper unique lxJournal (journal admin)
+async function saJournal(salonId, action, details, avant, apres){
+  return lxJournal(action, { salon:salonId||null, cible:salonId?"salons:"+salonId:null, details:details||"", avant:avant, apres:apres });
 }
 // 2026-10-14 : valeur placée DANS une chaîne JavaScript entre apostrophes d'un attribut onclick="f('…')" :
 // échappement JavaScript d'abord (\ ' " retours ligne <), puis HTML (le navigateur décode l'attribut avant le JS).
@@ -5232,7 +5638,10 @@ async function saveFreePlan(id){
     var dz=await saApi({op:isFree?"pause_facturation":"reprendre_facturation",salon_id:id,jusqu_au:freeUntil||"",motif:"plan offert (admin)"});
     if(dz.error){ alert("❌ Stripe : "+dz.error+"\nRien n'a été modifié."); return; }
   }
-  await _sb.from("salons").update(update).eq("id",id);
+  var _avF=_s0?{is_free:_s0.isFree,free_until:_s0.freeUntil||null,plan:_s0.plan,status:_s0.status}:null;
+  var _rf=await _sb.from("salons").update(update).eq("id",id).select("id");
+  if(_rf.error||!_rf.data||!_rf.data.length){ alert("❌ Plan offert non enregistré : "+((_rf.error&&_rf.error.message)||"aucune ligne (droits ? double authentification ?)")); return; }
+  await saJournal(id,isFree?"PLAN_OFFERT":"PLAN_OFFERT_RETIRE",isFree?(plan+(freeUntil?" jusqu'au "+freeUntil:" illimité")):"",_avF,update);
   var s=gSalon(id);
   if(s){s.isFree=isFree;s.freeUntil=freeUntil;s.plan=isFree?plan:s.plan;s.status=isFree?"active":s.status;}
   alert("\u2705 "+(isFree?"Plan "+plan+" offert"+(freeUntil?" jusqu\u2019au "+fmtD(freeUntil):" (illimit\u00e9)"):"Plan gratuit d\u00e9sactiv\u00e9"));
