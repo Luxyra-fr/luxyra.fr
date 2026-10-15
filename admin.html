@@ -3863,6 +3863,9 @@ function smsVueDash(d){
   h+=saCarte("Marge brute du mois",cout!=null?saE((packs.eur||0)-cout):"?","packs vendus − coût Brevo",cout!=null&&((packs.eur||0)-cout)<0?"var(--red)":"var(--green)");
   h+=saCarte("Salons Pro sous "+C.seuil+" SMS",bas.length,bas.map(function(s){return s.nom+" ("+s.credits+")";}).join(", ")||"aucun",bas.length?"var(--orange)":null);
   h+='</div>';
+  // 2026-10-15 : crédits restants du compte Brevo Luxyra face aux crédits vendus aux établissements
+  h+='<div class="card" style="margin-bottom:14px"><h3>💳 Crédits Brevo</h3><div id="brevoCredits" style="font-size:13px;color:var(--text2)">Chargement…</div></div>';
+  setTimeout(function(){ brevoCharger(false); },10);
   // 2026-10-10 : distribution des SMS (accusés de réception Brevo) + rapprochement quotidien Luxyra/Brevo
   var lv=d.livraison_30j||{}, rap=null; try{ rap=d.rapprochement?JSON.parse(d.rapprochement):null; }catch(e){}
   h+='<div class="card" style="margin-bottom:14px"><h3>📬 Distribution (30 derniers jours)</h3><div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-top:6px">'
@@ -3907,6 +3910,87 @@ async function smsChargerRevenus(d){
   h+='<tr style="font-weight:900"><td>Total</td><td>'+T.nb+'</td><td>'+saE(T.eur)+'</td><td>'+T.sms+'</td><td>'+(C.cout!=null?saE(T.cout):'?')+'</td><td style="color:'+(mT==null?'inherit':mT<0?'var(--red)':'var(--green)')+'">'+(mT!=null?saE(mT):'?')+'</td></tr></table></div>';
   h+='<div style="font-size:11px;color:var(--text3);margin-top:6px">Encaissé = montant payé par les salons pour les packs (Stripe). Coût = SMS facturés × '+(C.cout!=null?C.cout.toLocaleString("fr-FR")+' €':'coût unitaire à renseigner dans Réglages')+'. Les 30 SMS inclus chaque mois dans le forfait Pro sont comptés dans le coût mais payés par l\'abonnement, d\'où une marge des packs parfois négative. ≈ : mois antérieurs au comptage exact.</div>';
   el.innerHTML=h;
+}
+// ===== CRÉDITS BREVO (2026-10-15) =====
+// Lecture via le worker GET /api/admin/brevo (admin + 2FA, cache 5 min). Le ratio crédits Brevo / SMS France
+// est un RÉGLAGE (app_config.config.brevo_credits_par_sms_fr, 4,5 par défaut), pas une valeur garantie.
+function brevoCfg(){
+  var c=window._appConfig||{};
+  var r=Number(c.brevo_credits_par_sms_fr); if(!(isFinite(r)&&r>0)) r=4.5;
+  var s=Number(c.brevo_seuil_sms_fr); if(!(isFinite(s)&&s>=0)) s=200;
+  return {ratio:r, seuil:Math.round(s)};
+}
+async function brevoCharger(forcer){
+  var el=document.getElementById("brevoCredits"); if(!el) return;
+  if(forcer) el.innerHTML='<span style="color:var(--text3)">Actualisation…</span>';
+  var d;
+  try{
+    var tok=await lxAdminJeton();
+    var r=await fetch("/api/admin/brevo"+(forcer?"?refresh=1":""),{method:"GET",headers:{"Authorization":"Bearer "+tok}});
+    d=await r.json().catch(function(){return {error:"Réponse illisible ("+r.status+")"};});
+    if(!r.ok&&!d.error) d.error="Erreur "+r.status;
+  }catch(e){ d={error:"Worker injoignable : "+(e&&e.message||e)}; }
+  window._brevoDernier=d; brevoRendu();
+}
+function brevoRendu(){
+  var el=document.getElementById("brevoCredits"); if(!el) return;
+  var d=window._brevoDernier||{}, C=brevoCfg(), h='';
+  var btn='<button class="dp-btn" style="font-size:11px;padding:4px 9px" onclick="brevoCharger(true)">🔄 Actualiser</button>';
+  if(d.error){
+    el.innerHTML='<div style="color:var(--red)">❌ '+saEsc(d.error)+'</div><div style="margin-top:8px">'+btn+'</div>'+brevoFormRatio(C);
+    return;
+  }
+  var nf=function(n){ return (Number(n)||0).toLocaleString("fr-FR"); };
+  var credits=d.smsCredits, smsFr=credits!=null?Math.floor(credits/C.ratio):null;
+  // Crédits SMS vendus aux établissements = solde total encore dû (salons.sms_credits)
+  var vendus=0, nbSal=0; (SALONS||[]).forEach(function(s){ var v=Number(s.smsCredits)||0; if(v>0){ vendus+=v; nbSal++; } });
+  var bas=smsFr!=null&&smsFr<C.seuil, manque=smsFr!=null&&smsFr<vendus;
+  h+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:6px 0 10px">';
+  h+=saCarte("Crédits SMS Brevo",credits==null?"?":saEsc(nf(credits)),credits==null?"aucun plan « sms » renvoyé par Brevo":"solde du compte Brevo Luxyra");
+  h+=saCarte("≈ SMS France",smsFr==null?"?":"≈ "+saEsc(nf(smsFr)),"crédits ÷ "+saEsc(C.ratio.toLocaleString("fr-FR"))+" (estimation)",smsFr==null?null:bas?"var(--red)":"var(--green)");
+  h+=saCarte("Crédits vendus aux établissements",saEsc(nf(vendus)),nbSal+" établissement(s) avec un solde > 0","var(--gold)");
+  h+=saCarte("Crédits Brevo disponibles − vendus",smsFr==null?"?":saEsc((smsFr-vendus>=0?"+":"")+nf(smsFr-vendus))+" SMS",manque?"recharge Brevo à prévoir":"couverture suffisante",smsFr==null?null:manque?"var(--red)":"var(--green)");
+  h+='</div>';
+  if(bas||manque){
+    h+='<div style="background:rgba(229,57,53,.12);border:1px solid var(--red);color:var(--red);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-weight:700">⚠️ '
+      +(bas?'Moins de '+saEsc(nf(C.seuil))+' SMS France restants chez Brevo. ':'')
+      +(manque?'Les établissements détiennent plus de crédits ('+saEsc(nf(vendus))+') que le compte Brevo ne peut en envoyer (≈ '+saEsc(nf(smsFr))+'). ':'')
+      +'Recharger le compte Brevo.</div>';
+  }
+  var T={free:"Gratuit",payAsYouGo:"Crédits email (pay as you go)",subscription:"Abonnement email",reseller:"Revendeur"};
+  var ep=d.emailPlans||[];
+  h+='<div style="font-size:12px;margin-bottom:6px"><b>Email / plan :</b> '+(ep.length?ep.map(function(p){
+    return saEsc(T[p.type]||p.type)+' : <b>'+(p.credits==null?'?':saEsc(nf(p.credits)))+'</b>'+(p.creditsType?' <span style="color:var(--text3)">('+saEsc(p.creditsType)+')</span>':'')+(p.endDate?' <span style="color:var(--text3)">jusqu\'au '+saEsc(saD(p.endDate))+'</span>':'');
+  }).join(' · '):'<span style="color:var(--text3)">aucun plan email renvoyé</span>')+'</div>';
+  var a=d.account||{};
+  h+='<div style="font-size:11px;color:var(--text3)">Compte Brevo : '+saEsc(a.companyName||"—")+' · '+saEsc(a.email||"—")
+    +' · relevé '+(d.fetchedAt?saEsc(new Date(d.fetchedAt).toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"})):'?')
+    +(d.cached?' (cache, il y a '+saEsc(d.ageSec)+' s)':'')+(d.stale?' <b style="color:var(--orange)">'+saEsc(d.warning||"valeurs anciennes")+'</b>':'')+' &nbsp;'+btn+'</div>';
+  h+=brevoFormRatio(C);
+  el.innerHTML=h;
+}
+function brevoFormRatio(C){
+  var st='width:110px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text)';
+  return '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">'
+    +'<div><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Crédits Brevo par SMS France</label><input id="brevoRatio" type="number" step="0.01" min="0.01" value="'+saEsc(C.ratio)+'" style="'+st+'"></div>'
+    +'<div><label style="font-size:11px;color:var(--text2);display:block;margin-bottom:3px">Alerte sous (SMS France)</label><input id="brevoSeuil" type="number" step="1" min="0" value="'+saEsc(C.seuil)+'" style="'+st+'"></div>'
+    +'<button class="dp-btn" onclick="brevoSauverReglages()">💾 Enregistrer</button>'
+    +'<div style="font-size:11px;color:var(--orange);flex-basis:100%">Ratio à vérifier dans votre compte Brevo (tarif SMS France en crédits). Le nombre de SMS affiché n\'est qu\'une estimation.</div></div>';
+}
+async function brevoSauverReglages(){
+  var r1=Number(String((document.getElementById("brevoRatio")||{}).value||"").trim().replace(",","."));
+  var s1=Number(String((document.getElementById("brevoSeuil")||{}).value||"").trim().replace(",","."));
+  if(!(isFinite(r1)&&r1>0&&r1<=100)){ alert("Ratio invalide (nombre > 0, 100 maximum)."); return; }
+  if(!(isFinite(s1)&&s1>=0)){ alert("Seuil invalide."); return; }
+  var patch={brevo_credits_par_sms_fr:r1, brevo_seuil_sms_fr:Math.round(s1)};
+  if(!confirm("Enregistrer : "+r1.toLocaleString("fr-FR")+" crédits Brevo par SMS France, alerte sous "+patch.brevo_seuil_sms_fr+" SMS ?")) return;
+  var cur=await _sb.from("app_config").select("config").eq("id",1).maybeSingle();
+  if(cur.error||!cur.data||!cur.data.config){ alert("❌ Lecture de la configuration impossible : rien n'a été modifié. Réessaie."); return; }
+  var merged=Object.assign({},cur.data.config,patch);
+  var r=await _sb.from("app_config").update({config:merged,updated_at:new Date().toISOString(),updated_by:"admin (crédits Brevo)"}).eq("id",1);
+  if(r.error){ alert("❌ "+r.error.message); return; }
+  window._appConfig=merged; try{ await _sb.from("admin_log").insert({action:"BREVO_RATIO_SMS",details:JSON.stringify(patch)}); }catch(e){}
+  brevoRendu();
 }
 function smsVueSalons(d){
   var C=smsCfg();

@@ -133,6 +133,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
       if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
       if (url.pathname === "/api/admin/stripe" && request.method === "POST") return await handleAdminStripe(request, env);
+      // 2026-10-15 : crédits restants du compte Brevo Luxyra (admin seulement, lecture seule)
+      if (url.pathname === "/api/admin/brevo" && request.method === "GET") return await handleAdminBrevo(request, env, url);
       // Stripe Connect
       if (url.pathname === "/api/stripe/connect-onboard" && request.method === "POST") return await handleConnectOnboard(request, env);
       if (url.pathname === "/api/stripe/connect-status" && request.method === "POST") return await handleConnectStatus(request, env);
@@ -1819,6 +1821,76 @@ async function handleWebhookConnect(request, env) {
     return jsonResponse({ error: "processing" }, 500);  // Stripe réessaiera
   }
   return jsonResponse({ received: true });
+}
+
+// ============================================================
+// BREVO — CRÉDITS DU COMPTE (2026-10-15) — GET /api/admin/brevo[?refresh=1]
+// Réservé à l'admin (support@luxyra.fr + aal2, comme /api/admin/stripe). Lecture seule de
+// GET https://api.brevo.com/v3/account. On ne renvoie QUE l'identité du compte et les plans/crédits
+// (jamais relay, clé Marketing Automation, ids internes). Cache 5 min (mémoire + caches.default).
+// ============================================================
+const LX_BREVO_CACHE_TTL = 300000;
+const LX_BREVO_CACHE_KEY = "https://luxyra.fr/__lx_cache/admin-brevo-account";
+let _lxBrevoCache = null; // { at: ms, data: {...} }
+function lxBrevoNettoyer(ja) {
+  const num = (v) => (v == null || v === "" || !isFinite(Number(v)) ? null : Number(v));
+  const plans = (Array.isArray(ja && ja.plan) ? ja.plan : []).map((p) => ({
+    type: String(p.type || ""), credits: num(p.credits), creditsType: p.creditsType != null ? String(p.creditsType) : null,
+    startDate: p.startDate || null, endDate: p.endDate || null
+  }));
+  const verticals = (Array.isArray(ja && ja.planVerticals) ? ja.planVerticals : []).map((v) => ({
+    planCategory: v.planCategory || null, planType: v.planType || null, name: v.name || null, status: v.status || null, credits: num(v.credits), endDate: v.endDate || null
+  }));
+  const sms = plans.filter((p) => p.type.toLowerCase() === "sms");
+  return {
+    account: { email: ja && ja.email || null, companyName: ja && ja.companyName || null, firstName: ja && ja.firstName || null, lastName: ja && ja.lastName || null },
+    plans, planVerticals: verticals,
+    smsCredits: sms.length ? sms.reduce((t, p) => t + (p.credits || 0), 0) : null,
+    emailPlans: plans.filter((p) => p.type.toLowerCase() !== "sms")
+  };
+}
+async function handleAdminBrevo(request, env, url) {
+  try {
+    const u = await lxAuthUser(request);
+    if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
+    if (!env.BREVO_API_KEY) return jsonResponse({ error: "Clé API Brevo absente du worker (variable BREVO_API_KEY)" }, 503);
+    const now = Date.now();
+    // « Actualiser » contourne le cache, mais pas plus d'un appel Brevo toutes les 30 s
+    const forcer = url.searchParams.get("refresh") === "1";
+    const sortie = (c, cached) => jsonResponse(Object.assign({ ok: true }, c.data, { fetchedAt: new Date(c.at).toISOString(), cached, ageSec: Math.round((now - c.at) / 1000) }));
+    if (!_lxBrevoCache) {
+      try {
+        const hit = await caches.default.match(LX_BREVO_CACHE_KEY);
+        if (hit) { const j = await hit.json(); if (j && j.at && j.data) _lxBrevoCache = j; }
+      } catch (_) {}
+    }
+    if (_lxBrevoCache && (now - _lxBrevoCache.at) < (forcer ? 30000 : LX_BREVO_CACHE_TTL)) return sortie(_lxBrevoCache, true);
+    let r;
+    try {
+      r = await fetch("https://api.brevo.com/v3/account", { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" }, signal: AbortSignal.timeout(10000) });
+    } catch (e) {
+      if (_lxBrevoCache) return jsonResponse(Object.assign({ ok: true, stale: true, warning: "Brevo injoignable, dernières valeurs connues" }, _lxBrevoCache.data, { fetchedAt: new Date(_lxBrevoCache.at).toISOString(), cached: true, ageSec: Math.round((now - _lxBrevoCache.at) / 1000) }));
+      return jsonResponse({ error: "Brevo injoignable (délai dépassé ou réseau)" }, 504);
+    }
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      let msg = ""; try { msg = String(JSON.parse(txt).message || ""); } catch (_) { msg = txt; }
+      msg = msg.slice(0, 200);
+      if (r.status === 401 || r.status === 403) return jsonResponse({ error: "Clé API Brevo refusée par Brevo (" + r.status + ")" + (msg ? " : " + msg : ""), brevoStatus: r.status }, 502);
+      if (r.status === 429) return jsonResponse({ error: "Brevo limite le nombre d'appels, réessayer dans une minute", brevoStatus: 429 }, 503);
+      return jsonResponse({ error: "Erreur Brevo " + r.status + (msg ? " : " + msg : ""), brevoStatus: r.status }, 502);
+    }
+    const ja = await r.json().catch(() => null);
+    if (!ja || typeof ja !== "object") return jsonResponse({ error: "Réponse Brevo illisible" }, 502);
+    _lxBrevoCache = { at: now, data: lxBrevoNettoyer(ja) };
+    try {
+      await caches.default.put(LX_BREVO_CACHE_KEY, new Response(JSON.stringify(_lxBrevoCache), { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=300" } }));
+    } catch (_) {}
+    return sortie(_lxBrevoCache, false);
+  } catch (e) {
+    try { await reportWorkerError(env, "worker:admin-brevo", e, {}, "warning"); } catch (_) {}
+    return jsonResponse({ error: "Erreur interne : " + String(e && e.message || e).slice(0, 200) }, 500);
+  }
 }
 
 async function handleAdminStripe(request, env) {
