@@ -5091,10 +5091,7 @@ async function lxIpHash(request, env) {
     return Array.from(new Uint8Array(sig)).slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
   } catch (e) { return null; }
 }
-async function lxSha256Hex(s) {
-  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(s)));
-  return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+// 2026-10-15 : lxSha256Hex est défini plus haut (doublon issu de la fusion supprimé : il bloquait le déploiement)
 async function lxRpcService(env, fn, args) {
   const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { ..._sbHeaders(env), "Content-Type": "application/json" }, body: JSON.stringify(args || {}) });
   const t = await r.text();
