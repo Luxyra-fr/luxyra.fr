@@ -113,8 +113,8 @@ declare
 begin
   -- filtre rapide (évite tout coût pour les écritures des établissements), puis contrôle complet
   if coalesce(auth.jwt() ->> 'email', '') <> 'support@luxyra.fr' then return null; end if;
-  if not public.is_admin() then return null; end if;
   begin
+    if not public.is_admin() then return null; end if;  -- 2026-10-15 : dans le bloc protégé (une erreur ne bloque jamais l'écriture)
     if tg_op in ('UPDATE', 'DELETE') then v_old := to_jsonb(old); end if;
     if tg_op in ('UPDATE', 'INSERT') then v_new := to_jsonb(new); end if;
     for k in select jsonb_object_keys(coalesce(v_new, v_old)) loop

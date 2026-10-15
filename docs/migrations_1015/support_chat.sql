@@ -549,7 +549,7 @@ BEGIN
                       AND x.read_by_client = false ORDER BY x.created_at ASC LIMIT 1) m ON true
       JOIN salons s ON s.id = c.salon_id
      WHERE c.status <> 'resolved' AND s.ferme_le IS NULL
-       AND m.created_at < now() - interval '15 minutes' AND m.created_at > now() - interval '3 days'
+       AND m.created_at < now() - interval '15 minutes' AND m.created_at > greatest(now() - interval '3 days', timestamptz '2026-10-15 21:30:00+00') /* 2026-10-15 : jamais de relance pour un message antérieur à la mise en service */
        AND s.email ~ '^\s*[^@\s]+@[^@\s]+\.[^@\s]+\s*$'
     UNION ALL
     -- B. Messages du pro non lus par l'équipe (bot hors jeu)
@@ -560,7 +560,7 @@ BEGIN
                       AND x.read_by_admin = false ORDER BY x.created_at ASC LIMIT 1) m ON true
       JOIN salons s ON s.id = c.salon_id
      WHERE c.status <> 'resolved'
-       AND m.created_at < now() - interval '15 minutes' AND m.created_at > now() - interval '3 days'
+       AND m.created_at < now() - interval '15 minutes' AND m.created_at > greatest(now() - interval '3 days', timestamptz '2026-10-15 21:30:00+00') /* 2026-10-15 : jamais de relance pour un message antérieur à la mise en service */
        AND (c.bot_active = false
             OR NOT EXISTS (SELECT 1 FROM support_messages b WHERE b.conversation_id = c.id AND b.sender = 'bot' AND b.created_at >= m.created_at))
   LOOP
