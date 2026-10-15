@@ -14326,12 +14326,17 @@ function saveSalonInfo(){
       // échouait en silence (note des tickets, logo, téléphone… perdus au rechargement).
       siret:(String(SALON_CONFIG.siret||"").trim()||undefined), tva:SALON_CONFIG.tva
     });
-    var _pCo=window.lxSaveSalonColumns({
-      __silencieux:true,
-      sous_titre:SALON_CONFIG.sousTitre, logo:SALON_CONFIG.logo,
-      tel:SALON_CONFIG.tel, email:SALON_CONFIG.email,
-      note_ticket:SALON_CONFIG.noteTicket  // "" = effacer la note (chaîne vide, jamais null par omission)
-    });
+    // 2026-10-15 : seuls les champs MODIFIES depuis l'ouverture du formulaire sont envoyes (logo / note du ticket
+    // ne sont plus jamais ecrases par une valeur vide venue d'un formulaire incomplet ou d'un autre appareil).
+    var _ini=window._lxSalonFormInit||null, _co={__silencieux:true};
+    var _chg=function(k,v){ return !_ini || String(_ini[k]==null?"":_ini[k])!==String(v==null?"":v); };
+    if(_chg("sousTitre",SALON_CONFIG.sousTitre)) _co.sous_titre=SALON_CONFIG.sousTitre;
+    if(_chg("logo",SALON_CONFIG.logo)) _co.logo=SALON_CONFIG.logo;
+    if(_chg("tel",SALON_CONFIG.tel)) _co.tel=SALON_CONFIG.tel;
+    if(_chg("email",SALON_CONFIG.email)) _co.email=SALON_CONFIG.email;
+    if(_chg("noteTicket",SALON_CONFIG.noteTicket)) _co.note_ticket=SALON_CONFIG.noteTicket; // "" seulement si effacee volontairement
+    var _pCo=(Object.keys(_co).length>1)?window.lxSaveSalonColumns(_co):Promise.resolve({ok:true});
+    _pCo=Promise.resolve(_pCo).then(function(r){ if(r&&r.ok) window._lxSalonFormInit={sousTitre:SALON_CONFIG.sousTitre||"",logo:SALON_CONFIG.logo||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",noteTicket:SALON_CONFIG.noteTicket||""}; return r; });
     var _msgErr=function(r){ return String((r&&r.error&&r.error.message)||"erreur inconnue").replace(/^.*?:\s*/,""); };
     // 2026-10-14 audit : adresse modifiee -> nouvelle position sur la carte (avant : geocodage seulement
     // si aucune position, donc le salon restait a l'ancienne adresse dans la recherche et l'annuaire)
@@ -15652,6 +15657,12 @@ function rSettings(){
     if(!window.SALON) window.SALON={};
     var _salonDefaults = {nom:SALON_CONFIG.nom||"",sousTitre:SALON_CONFIG.sousTitre||"",adr:SALON_CONFIG.adresse||"",cp:SALON_CONFIG.cp||"",ville:SALON_CONFIG.ville||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",siret:SALON_CONFIG.siret||"",tva:SALON_CONFIG.tva||"",logo:SALON_CONFIG.logo||"",subdomain:SALON_CONFIG.subdomain||"",facebookUrl:SALON_CONFIG.facebookUrl||"",instagramUrl:SALON_CONFIG.instagramUrl||"",tiktokUrl:SALON_CONFIG.tiktokUrl||"",noteTicket:SALON_CONFIG.noteTicket||""};
     Object.keys(_salonDefaults).forEach(function(k){ if(window.SALON[k]==null||typeof window.SALON[k]==="undefined") window.SALON[k]=_salonDefaults[k]; });
+    // 2026-10-15 : logo et note du ticket toujours repris des valeurs enregistrees (SALON_CONFIG) si le formulaire
+    // n'a rien de plus recent ; photo des valeurs a l'ouverture -> a l'enregistrement on n'ecrit QUE ce qui a change
+    // (un formulaire ouvert avec des valeurs vides ne peut plus effacer le logo ou la note enregistres).
+    if(!window.SALON.logo && SALON_CONFIG.logo) window.SALON.logo=SALON_CONFIG.logo;
+    if(!window.SALON.noteTicket && SALON_CONFIG.noteTicket) window.SALON.noteTicket=SALON_CONFIG.noteTicket;
+    window._lxSalonFormInit={sousTitre:window.SALON.sousTitre||"",logo:window.SALON.logo||"",tel:window.SALON.tel||"",email:window.SALON.email||"",noteTicket:String(window.SALON.noteTicket||"").slice(0,600)};
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos établissement</div><div class="card">';
     // Logo preview + upload
