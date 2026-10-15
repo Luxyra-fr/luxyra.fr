@@ -120,7 +120,7 @@ tr:hover{background:rgba(255,255,255,.02)}
 .chart-bar-fill{height:100%;border-radius:8px;display:flex;align-items:center;padding-left:8px;font-size:11px;font-weight:700;color:#fff;font-family:var(--mono);transition:width .6s}
 .chart-bar-val{width:50px;font-weight:700;font-family:var(--mono);font-size:12px}
 .td-salon{display:flex;align-items:center;gap:10px}
-.td-avatar{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0}
+.td-avatar{width:36px;height:36px;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;flex-shrink:0}
 .td-name{font-weight:700;font-size:13px}
 .td-city{font-size:11px;color:var(--text3)}
 .td-actions{display:flex;gap:4px}
@@ -309,6 +309,8 @@ var colors=["#c9a227","#7d3c98","#2980b9","#27ae60","#e74c3c","#f39c12","#1abc9c
 
 function fmtM(n){return(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+"€";}
 function fmtD(d){if(!d)return"—";try{return new Date(d).toLocaleDateString("fr-FR");}catch(e){return d;}}
+// 2026-10-15 : avatar = logo de l'établissement s'il existe, sinon les initiales
+function saAvatar(s){ return s&&s.logo ? '<img src="'+saEsc(s.logo)+'" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;background:#fff">' : ini(s&&s.nom); }
 function ini(n){return saEsc((n||"?").split(" ").map(function(w){return w[0];}).join("").slice(0,2).toUpperCase());}
 function gPlan(id){return PLANS.find(function(p){return p.id===id;})||PLANS[0];}
 // 2026-10-10 : justificatifs (Kbis, pièce d'identité) en stockage PRIVÉ : ouverture par lien temporaire (5 min)
@@ -544,7 +546,7 @@ async function loadData(){
           codeParr:s.code_parrainage||"", parrainId:s.parrain_id||null,
           siretAlerte:(cfg.siret_controle&&cfg.siret_controle.coherent===false)?String(cfg.siret_controle.detail||"SIRET à vérifier"):(!s.siret?"SIRET manquant (en cours d'immatriculation)":""),
           created:s.created_at,lastLogin:s.last_login||s.updated_at,
-          trialEnd:s.trial_end,color:colors[i%colors.length],
+          trialEnd:s.trial_end,color:colors[i%colors.length],logo:(/^(data:image\/(png|jpe?g|webp|gif);base64,|https:\/\/)/i.test(String(s.logo||""))?String(s.logo):""),
           smsCredits:s.sms_credits||0,smsLastReset:s.sms_last_reset,smsMonthlyFree:s.sms_monthly_free||30,welcomeSmsBonusGiven:s.welcome_sms_bonus_given===true,
           isFree:s.is_free||false,freeUntil:s.free_until,customPrice:s.custom_price_amount,
           created_at:s.created_at,is_free:s.is_free||false,isFounder:s.is_founder===true,cancelledAt:s.cancelled_at,fermeLe:s.ferme_le||null,fermeMotif:s.ferme_motif||"",fermePar:s.ferme_par||"",
@@ -2660,7 +2662,7 @@ function asLignes(L){
   L.forEach(function(s){
     var su=asSuivi(s.id), j=asJoursEssai(s);
     h+='<tr><td><input type="checkbox" '+(window._ASEL[s.id]?'checked':'')+' onchange="asSel(\''+s.id+'\',this.checked)"></td>';
-    h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
+    h+='<td style="cursor:pointer" onclick="openD(\''+s.id+'\')"><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+saAvatar(s)+'</div><div><div class="td-name">'+saEsc(s.nom)+(s.siretAlerte?' <span title="'+saEsc(s.siretAlerte)+'" style="color:var(--orange);font-size:12px">⚠️ SIRET</span>':'')+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' · '+saModeCourt(s)+((su.etiquettes||[]).length?' · '+su.etiquettes.map(function(e){return '<span class="badge" style="font-size:9px">'+saEsc(e)+'</span>';}).join(" "):'')+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">🎁</span>':'')+'</td>';
     h+='<td>'+statusB(s.fermeLe?"ferme":s.status)+(j!==null?'<div style="font-size:10px;color:'+(j<=3?'var(--red)':'var(--text3)')+'">'+(j>0?j+' j restants':'essai fini')+'</div>':'')+'</td>';
     h+='<td style="font-size:11px">'+(ETAPES[su.etape]||su.etape)+'</td><td>'+asScoreBadge(s.id)+'</td><td>'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</td><td style="font-size:12px">'+(function(){var d=asDemarrageScore(s.id);return d==null?'…':'<span style="color:'+(d>=6?'var(--green)':d>=3?'var(--orange)':'var(--red)')+'">'+d+'/7</span>';})()+'</td><td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>'+_salonActivityCell(s);
@@ -2810,7 +2812,7 @@ function buildRows(list,f){
   list.forEach(function(s){
     if(f==="risk"){ if(!_salonRisk(s).risk) return; }
     else { if(f!=="all"&&f!=="pending"&&s.status!==f)return; if(f==="pending"&&s.verif==="verified")return; }
-    h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div class="td-name">'+saEsc(s.nom)+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
+    h+='<tr><td><div class="td-salon"><div class="td-avatar" style="background:'+s.color+'">'+saAvatar(s)+'</div><div><div class="td-name">'+saEsc(s.nom)+'</div><div class="td-city">'+(mI[s.metier]||"✂️")+' '+saEsc(s.ville)+' '+(s.modeActivite==="domicile"?"\ud83d\ude97":s.modeActivite==="mixte"?"\ud83d\udd00":"")+'</div></div></div></td>';
     h+='<td>'+planB(s.plan)+(s.isFree?' <span class="badge badge-green" style="font-size:9px">\ud83c\udf81 Offert</span>':'')+'</td><td>'+statusB(s.fermeLe?"ferme":s.status)+'</td><td>'+verifB(s.verif)+'</td><td>'+s.clients+'</td>';
     h+='<td style="font-size:12px;color:var(--text3)">'+fmtD(s.created)+'</td>';
     h+=_salonActivityCell(s);
@@ -2831,7 +2833,7 @@ function filterS(){
 function openD(id){
   var s=gSalon(id);if(!s)return;
   window._curSalonId=id;
-  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+ini(s.nom)+'</div><div><div style="font-weight:700;font-size:15px">'+saEsc(s.nom)+'</div><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville||"")+'</div></div></div><div style="display:flex;align-items:center"><span style="margin-right:8px">'+asMenuActions(s)+'</span><button class="dp-expand" onclick="toggleDrawerFull()" title="Plein écran" id="dpExpandBtn">⛶</button><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div></div>';
+  var h='<div class="dp-sticky-header" style="position:sticky;top:0;z-index:10;background:var(--bg2);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;margin:-20px -20px 16px -20px"><div style="display:flex;align-items:center;gap:12px"><div class="td-avatar" style="background:'+s.color+'">'+saAvatar(s)+'</div><div><div style="font-weight:700;font-size:15px">'+saEsc(s.nom)+'</div><div style="font-size:11px;color:var(--text3)">'+saEsc(s.ville||"")+'</div></div></div><div style="display:flex;align-items:center"><span style="margin-right:8px">'+asMenuActions(s)+'</span><button class="dp-expand" onclick="toggleDrawerFull()" title="Plein écran" id="dpExpandBtn">⛶</button><button onclick="closeDetail()" style="background:transparent;border:1px solid var(--border);color:var(--text);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center" title="Fermer">✕</button></div></div>';
   h+='<div class="dp-stats"><div class="dp-stat"><div class="n" style="color:var(--blue)">'+((_salonHealthOf(s.id)||{}).clients!=null?_salonHealthOf(s.id).clients:s.clients)+'</div><div class="l">Clients</div></div><div class="dp-stat"><div class="n" style="color:var(--gold)">'+((_salonHealthOf(s.id)||{}).collaborateurs!=null?_salonHealthOf(s.id).collaborateurs:s.collabs)+'</div><div class="l">Collabs</div></div><div class="dp-stat"><div class="n">'+verifB(s.verif)+'</div><div class="l">Vérification</div></div></div>';
   // 2026-10-09 : fiche à onglets
   var _ot=window._asOngletCourant||"identite";
