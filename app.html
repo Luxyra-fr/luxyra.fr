@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261015-1"></script>
+<script src="luxyra-supabase.js?v=20261015-2"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261015-1";
+  var attendu="20261015-2";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -1145,8 +1145,9 @@ function lxApplyModeCaution(newMode){
   window.SITE_CONFIG.modeCaution = newMode;
   if(newMode==="acompte") window.SITE_CONFIG.acompteObligatoire = true;
   else window.SITE_CONFIG.acompteObligatoire = false;
-  if(typeof saveSiteConfig==="function") saveSiteConfig();
-  if(typeof toast==="function") toast("✓ Mode "+(newMode==="aucun"?"Réservation libre":newMode==="acompte"?"Acompte":"Empreinte")+" activé","success");
+  // 2026-10-15 : « activé » seulement apres confirmation de la base (l'echec est signale par saveSiteConfig)
+  var _pSc=(typeof saveSiteConfig==="function")?saveSiteConfig():null;
+  if(_pSc&&typeof _pSc.then==="function") _pSc.then(function(ok){ if(ok&&typeof toast==="function") toast("✓ Mode "+(newMode==="aucun"?"Réservation libre":newMode==="acompte"?"Acompte":"Empreinte")+" activé","success"); });
   cM();
   if(typeof go==="function") go("settings");
 }
@@ -2774,8 +2775,8 @@ function doEditFournisseur(fId){
       fList[i].representant=document.getElementById("efRep").value.trim();
       fList[i].delai=parseInt(document.getElementById("efDelai").value)||7;
       fList[i].notes=document.getElementById("efNotes").value.trim();
-      if(typeof saveFournisseur==="function")saveFournisseur(fList[i]);
-      toast("Fournisseur mis \u00e0 jour","success");
+      // 2026-10-15 : succes affiche seulement apres confirmation (l'echec est signale par saveFournisseur)
+      if(typeof saveFournisseur==="function") Promise.resolve(saveFournisseur(fList[i])).then(function(r){ if(r&&r.ok) toast("Fournisseur mis \u00e0 jour","success"); });
       break;
     }
   }
@@ -3634,7 +3635,7 @@ function savePendingTicket(){
       p.then(function(row){
         if(!row){
           // Save failed — alerter l'utilisateur, le pending est en mémoire mais pas en DB
-          if(typeof toast==="function")toast("Sauvegarde DB \u00e9chou\u00e9e \u2014 ticket en m\u00e9moire seulement","warning");
+          if(typeof toast==="function")toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 ticket en attente : "+(window._lxDerniereErreurEcriture||"erreur inconnue")+". Il reste sur cet appareil uniquement ; r\u00e9essayez.","error");
         }
       });
     }
@@ -3925,7 +3926,8 @@ async function submitReply(avisId){
   if(!txt){err.textContent="Réponse vide";err.style.display="block";return;}
   var sb=window._sb||window.sb;if(!sb)return;
   var btn=document.getElementById("avisReplyBtn");btn.disabled=true;btn.textContent="Envoi…";
-  var r=await sb.from("avis_salon").update({salon_reply:txt, salon_reply_at:new Date().toISOString()}).eq("id", avisId);
+  var r=await sb.from("avis_salon").update({salon_reply:txt, salon_reply_at:new Date().toISOString()}).eq("id", avisId).select("id");
+  if(r && !r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
   if(r.error){err.textContent=r.error.message;err.style.display="block";btn.disabled=false;btn.textContent="Publier ma réponse";return;}
   var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
   if(local){local.salon_reply=txt;local.salon_reply_at=new Date().toISOString();}
@@ -3935,7 +3937,8 @@ async function submitReply(avisId){
 function deleteReply(avisId){
   showConfirm("Supprimer votre réponse publique ?", async function(){
     var sb=window._sb||window.sb;if(!sb)return;
-    var r=await sb.from("avis_salon").update({salon_reply:null, salon_reply_at:null}).eq("id", avisId);
+    var r=await sb.from("avis_salon").update({salon_reply:null, salon_reply_at:null}).eq("id", avisId).select("id");
+    if(r && !r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
     if(r.error){showAlert(r.error.message,"error");return;}
     var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
     if(local){local.salon_reply=null;local.salon_reply_at=null;}
@@ -3986,7 +3989,8 @@ async function submitFlag(avisId){
   var fullReason=details ? (reason+" — "+details) : reason;
   var sb=window._sb||window.sb;if(!sb)return;
   var btn=document.getElementById("avisFlagBtn");btn.disabled=true;btn.textContent="Envoi…";
-  var r=await sb.from("avis_salon").update({flag_reason:fullReason, flagged_at:new Date().toISOString()}).eq("id", avisId);
+  var r=await sb.from("avis_salon").update({flag_reason:fullReason, flagged_at:new Date().toISOString()}).eq("id", avisId).select("id");
+  if(r && !r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
   if(r.error){err.textContent=r.error.message;err.style.display="block";btn.disabled=false;btn.textContent="Envoyer le signalement";return;}
   var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
   if(local){local.flag_reason=fullReason;local.flagged_at=new Date().toISOString();}
@@ -3997,7 +4001,8 @@ async function submitFlag(avisId){
 function cancelFlag(avisId){
   showConfirm("Annuler le signalement de cet avis ?", async function(){
     var sb=window._sb||window.sb;if(!sb)return;
-    var r=await sb.from("avis_salon").update({flag_reason:null, flagged_at:null}).eq("id", avisId);
+    var r=await sb.from("avis_salon").update({flag_reason:null, flagged_at:null}).eq("id", avisId).select("id");
+    if(r && !r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
     if(r.error){showAlert(r.error.message,"error");return;}
     var local=(window.AVIS_LIST||[]).find(function(a){return a.id===avisId;});
     if(local){local.flag_reason=null;local.flagged_at=null;}
@@ -4478,7 +4483,7 @@ function saveDevis(){
     if(p && typeof p.then==="function"){
       p.then(function(dbRow){
         if(!dbRow){
-          if(typeof toast==="function") toast("Erreur sauvegarde DB \u2014 devis non persist\u00e9","error");
+          if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 devis : "+(window._lxDerniereErreurEcriture||"erreur inconnue")+". R\u00e9essayez.","error");
         } else {
           if(typeof toast==="function") toast("Devis enregistr\u00e9 \u00b7 N\u00b0 "+(newDv.num||""),"success");
         }
@@ -5273,7 +5278,7 @@ function saveAsDevis(){
   if(typeof saveDevisToDb==="function"){
     saveDevisToDb(newDv).then(function(dbRow){
       if(!dbRow){
-        if(typeof toast==="function")toast("Erreur sauvegarde DB","error");
+        if(typeof toast==="function")toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 devis : "+(window._lxDerniereErreurEcriture||"erreur inconnue")+". R\u00e9essayez.","error");
         go("devis");
         return;
       }
@@ -5927,7 +5932,8 @@ async function refuseModification(notifId){
     var r = await _sb.from("rdv_online").update({
       modification_status:"refused",
       modification_demandee:false
-    }).eq("id",rdvId);
+    }).eq("id",rdvId).select("id");
+    if(r && !r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
     if(r && r.error){
       toast && toast("Erreur Supabase : "+r.error.message,"error");
       return;
@@ -7403,9 +7409,8 @@ function doExceptOuverture(){
   } else {
     window.ABSENCES.push(entry);
   }
-  saveAbsences();
+  saveAbsences(function(ok){ if(ok&&typeof toast==="function") toast("\u2713 Ouverture exceptionnelle le "+d.split("-").reverse().join("/")+" enregistr\u00e9e","success"); }); // 2026-10-15 : apres confirmation
   cM();
-  if(typeof toast==="function") toast("\u2713 Ouverture exceptionnelle le "+d.split("-").reverse().join("/")+" enregistr\u00e9e","success");
   go("settings");
 }
 function addAbsence(stId,preType){
@@ -8347,8 +8352,10 @@ async function lxSiretAjouter(){
     ? "\n\n\u26a0\ufe0f Attention : au r\u00e9pertoire officiel, ce SIRET est \u00e0 l\u2019adresse « "+[d.adresse,d.cp,d.ville].filter(Boolean).join(" ")+" », diff\u00e9rente de la v\u00f4tre ("+String(cur.cp)+"). V\u00e9rifiez qu\u2019il s\u2019agit bien du SIRET de cet \u00e9tablissement." : "";
   var nom=d.raison_sociale||d.nom||"";
   showConfirm("Enregistrer le SIRET "+s+(nom?" ("+nom+")":"")+" ?"+(complete.length?"\n\nNous compl\u00e9tons aussi depuis la fiche officielle : "+complete.join(", ")+".":"")+alerteAdr+"\n\nIl appara\u00eetra sur vos tickets et ne pourra plus \u00eatre modifi\u00e9 ensuite.", async function(){
-    var r=await _sb.from("salons").update(patch).eq("id",_salonId);
-    if(r.error){ showAlert("Enregistrement impossible : "+r.error.message,"error"); return; }
+    var r=await _sb.from("salons").update(patch).eq("id",_salonId).select("id");
+    // 2026-10-15 : 0 ligne modifiee = refus silencieux -> signale
+    if(!r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}};
+    if(r.error){ showAlert("\u26a0\ufe0f Non enregistr\u00e9 \u2014 SIRET : "+r.error.message+". R\u00e9essayez.","error"); return; }
     SALON_CONFIG.siret=s;
     if(patch.tva) SALON_CONFIG.tva=patch.tva;
     if(patch.forme_juridique) SALON_CONFIG.formeJuridiqueCode=patch.forme_juridique;
@@ -9299,7 +9306,7 @@ function go(pg,arg){
         };
         if(!window.PENDING_TK)window.PENDING_TK=[];
         window.PENDING_TK.push(_autoPk);
-        if(typeof savePendingTkDb==="function")savePendingTkDb(_autoPk);
+        if(typeof savePendingTkDb==="function") Promise.resolve(savePendingTkDb(_autoPk)).then(function(row){ if(!row&&typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 panier mis en attente : "+(window._lxDerniereErreurEcriture||"erreur inconnue")+". Il reste sur cet appareil uniquement.","error"); }); // 2026-10-15
         _tk._autoSaved=true;
         if(typeof toast==="function")toast("Panier mis en attente automatiquement","info");
       }
@@ -9629,15 +9636,15 @@ async function lxEmpreinteReleaseAuto(roId, reason){
     if(r.ok){
       for(var i=0;i<RDV_ONLINE.length;i++) if(RDV_ONLINE[i].id===roId){ RDV_ONLINE[i].empreinteStatus="released"; RDV_ONLINE[i].empreinteReleasedAt=new Date().toISOString(); break; }
       if(typeof toast==="function") toast("\u2713 Empreinte bancaire lib\u00e9r\u00e9e (RDV honor\u00e9)","success");
-    } else { console.error("[EMPREINTE] liberation auto echouee pour "+roId); }
-  }catch(e){ console.error("[EMPREINTE] liberation auto : "+(e&&e.message||e)); }
+    } else { console.error("[EMPREINTE] liberation auto echouee pour "+roId); try{ if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 lib\u00e9ration de l\u2019empreinte bancaire du client. Lib\u00e9rez-la depuis le rendez-vous.","error"); }catch(_eT){} } // 2026-10-15
+  }catch(e){ console.error("[EMPREINTE] liberation auto : "+(e&&e.message||e)); try{ if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 lib\u00e9ration de l\u2019empreinte bancaire (r\u00e9seau). Lib\u00e9rez-la depuis le rendez-vous.","error"); }catch(_eT){} }
 }
 function _lxMarkOnlineRdvDone(roId, tkNum){
   try{
     if(!roId||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return;
     lxEmpreinteReleaseAuto(roId,"rdv_honore");
     var _upd={status:"done"}; if(tkNum) _upd.ticket_num=tkNum;
-    _sb.from("rdv_online").update(_upd).eq("id",roId).eq("salon_id",_salonId).then(function(res){ if(res&&res.error){ console.warn("[rdv_online done]",res.error.message); try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxMarkOnlineRdvDone",msg:res.error.message,rdv:roId})); }catch(_e2){} } },function(_e){});
+    _sb.from("rdv_online").update(_upd).eq("id",roId).eq("salon_id",_salonId).select("id").then(function(res){ if(res&&!res.error&&(!res.data||!res.data.length)) res={error:{message:"aucune modification accept\u00e9e par le serveur"}}; if(res&&res.error){ console.warn("[rdv_online done]",res.error.message); try{ if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 statut \u00ab encaiss\u00e9 \u00bb du rendez-vous en ligne : "+res.error.message+". Le ticket est bien enregistr\u00e9 ; r\u00e9essayez depuis le planning.","error"); }catch(_eT){} try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxMarkOnlineRdvDone",msg:res.error.message,rdv:roId})); }catch(_e2){} } },function(_e){});
     if(window.RDV_ONLINE){ for(var _z=0;_z<RDV_ONLINE.length;_z++){ if(RDV_ONLINE[_z].id===roId){ if(tkNum)RDV_ONLINE[_z].ticket_num=tkNum; break; } } }
     if(window.RDV_ONLINE){ for(var i=0;i<RDV_ONLINE.length;i++){ if(RDV_ONLINE[i].id===roId){ RDV_ONLINE[i].status="done"; break; } } }
     // retire l'entree fantome (online_ encore "conf") du planning ; ne touche jamais un ticket deja "done"
@@ -12090,9 +12097,8 @@ function doAddAbsencePlanning(){
     if(!ds || !tFrom || !tTo){ if(typeof toast==="function") toast("Date et heures requises","warning"); return; }
     var lbl="Absent "+tFrom+"→"+tTo+(motif?" — "+motif:"");
     window.ABSENCES.push({id:(typeof U==="function"?U():"abs-"+Date.now()),stId:stId,date:ds,type:"absent_heures",from:tFrom,to:tTo,label:lbl,motif:motif});
-    saveAbsences();
+    saveAbsences(function(ok){ if(ok&&typeof toast==="function") toast("✓ Absence horaire ajoutée","success"); }); // 2026-10-15 : apres confirmation
     cM();go("planning");
-    if(typeof toast==="function") toast("✓ Absence horaire ajoutée","success");
     return;
   }
   // Types jours (range de dates)
@@ -13304,8 +13310,10 @@ function lxSupprimerApptDefinitif(id){
   if(!_estUuid){ try{ if(typeof window.lxRdvMarquerSupprime==="function") window.lxRdvMarquerSupprime(id); }catch(_eM){} if(typeof auditLog==="function") auditLog("RDV_SUPPRIME","RDV local "+id+" supprim\u00e9 (cr\u00e9\u00e9 par erreur)"); return; }
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||(typeof _isOnline!=="undefined"&&!_isOnline)){ _remettre("Hors ligne : suppression impossible, le rendez-vous est conserv\u00e9."); return; }
   try{
-    _sb.from("appointments").delete().eq("id",id).eq("salon_id",_salonId).then(function(res){
+    _sb.from("appointments").delete().eq("id",id).eq("salon_id",_salonId).select("id").then(async function(res){
       if(res&&res.error){ _remettre("Suppression refus\u00e9e : "+res.error.message); return; }
+      // 2026-10-15 : 0 ligne supprimee alors que le RDV existe encore = refus silencieux (droits) -> conserve + alerte
+      if(!res||!Array.isArray(res.data)||!res.data.length){ try{ var _enc=await _sb.from("appointments").select("id").eq("id",id).eq("salon_id",_salonId).limit(1); if(_enc&&!_enc.error&&_enc.data&&_enc.data.length){ _remettre("\u26a0\ufe0f Non enregistr\u00e9 \u2014 suppression refus\u00e9e par le serveur : le rendez-vous est conserv\u00e9. R\u00e9essayez."); return; } }catch(_eV){} }
       try{ if(typeof window.lxRdvMarquerSupprime==="function") window.lxRdvMarquerSupprime(id); }catch(_eM){} // audit données : jamais recréé par une sauvegarde / la file de secours
       if(typeof auditLog==="function") auditLog("RDV_SUPPRIME","RDV "+id+" du "+(a.date||"")+" "+(a.time||"")+" supprim\u00e9 d\u00e9finitivement (cr\u00e9\u00e9 par erreur) par "+(CURRENT_OPERATOR?CURRENT_OPERATOR.prenom:"?"));
       toast("Rendez-vous supprim\u00e9","success");
@@ -13489,7 +13497,8 @@ function _lxCancelOnlineRdv(rdvId, reason){
     // 2026-10-11 : client absent -> l'acompte en ligne est définitivement conservé : il est enregistré en caisse
     // (ticket scellé « Acompte conservé ») par lxRetenuesSync.
     if(_by==="no_show") _upd.retenue_at=new Date().toISOString();
-    _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).then(function(res){
+    _sb.from("rdv_online").update(_upd).eq("id",rdvId).eq("salon_id",_salonId).select("id").then(function(res){
+      if(res&&!res.error&&(!res.data||!res.data.length)) res={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
       if(res&&res.error){ try{ toast("L\u2019annulation du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : "+res.error.message,"error"); }catch(_eT){} return; }
       if(_by==="no_show") setTimeout(function(){ try{ lxRetenuesSync(true); }catch(_eR){} },1200);
       // 2026-10-14 (NF525 acompte en ligne) : le remboursement automatique (annulation par l'établissement) est fait par le serveur
@@ -14195,7 +14204,8 @@ async function saveSubdomain(){
       statusEl.innerHTML='\u274c "'+sub+'.luxyra.fr" est d\u00e9j\u00e0 pris.';statusEl.style.color="#f87171";return;
     }
     // Save
-    var upd=await _sb.from("salons").update({subdomain:sub}).eq("id",_salonId).select();
+    var upd=await _sb.from("salons").update({subdomain:sub}).eq("id",_salonId).select("id");
+    if(!upd.error && (!upd.data||!upd.data.length)) upd={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
     if(upd.error){statusEl.innerHTML='\u274c Erreur save: '+upd.error.message;statusEl.style.color="#f87171";return;}
     if(!window.SALON)window.SALON={};
     window.SALON.subdomain=sub;
@@ -14211,9 +14221,9 @@ function lxToggleMetierAutre(m){
   if(i>=0) L.splice(i,1); else L.push(m);
   SALON_CONFIG.metiers=L.filter(function(x){ return x && x!==(SALON_CONFIG.metier||"coiffure"); });
   // colonne salons.metiers_autres écrite directement (saveSalonConfig n'écrit que config_json)
-  if(typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({metiers_autres:SALON_CONFIG.metiers.slice()});
+  // 2026-10-15 : succes affiche seulement apres confirmation de la base (l'echec est signale par lxSaveSalonColumns)
+  Promise.resolve(typeof window.lxSaveSalonColumns==="function"?window.lxSaveSalonColumns({metiers_autres:SALON_CONFIG.metiers.slice()}):{ok:false}).then(function(_rM){ if(_rM&&_rM.ok&&typeof toast==="function") toast(i>=0?"Activité retirée":"Activité ajoutée","success"); });
   try{ if(typeof auditLog==="function") auditLog("CONFIG_METIERS","Autres activités : "+(SALON_CONFIG.metiers.join(", ")||"aucune")); }catch(_e){}
-  if(typeof toast==="function") toast(i>=0?"Activité retirée":"Activité ajoutée","success");
   go(window._currentPage||"settings");
 }
 window.lxToggleMetierAutre=lxToggleMetierAutre;
@@ -14243,6 +14253,7 @@ async function saveSlug(){
     }
     // Sauvegarder (le trigger DB archive automatiquement l'ancien slug dans salon_slug_aliases)
     var upd=await _sb.from("salons").update({slug:slug}).eq("id",_salonId).select("slug");
+    if(!upd.error && (!upd.data||!upd.data.length)) upd={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
     if(upd.error){statusEl.innerHTML='\u274c Erreur save : '+upd.error.message;statusEl.style.color="#f87171";return;}
     var newSlug=(upd.data&&upd.data[0]&&upd.data[0].slug)||slug;
     if(!window.SALON)window.SALON={};
@@ -14364,7 +14375,8 @@ async function lxGeocoderApresAdresse(){
     if(typeof _sb==="undefined"||!_sb||!_salonId) return;
     var geo=await geocodeBANSafe(SALON_CONFIG.adresse||"", SALON_CONFIG.cp||"", SALON_CONFIG.ville||"");
     if(geo && isFinite(geo.lat) && isFinite(geo.lng) && geo.score>=0.4){
-      var u=await _sb.from("salons").update({latitude:geo.lat, longitude:geo.lng, geocoded_at:new Date().toISOString()}).eq("id",_salonId);
+      var u=await _sb.from("salons").update({latitude:geo.lat, longitude:geo.lng, geocoded_at:new Date().toISOString()}).eq("id",_salonId).select("id");
+      if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
       if(u && u.error) throw new Error(u.error.message);
       if(typeof toast==="function") toast("📍 Position sur la carte mise à jour avec la nouvelle adresse","success");
     } else {
@@ -14372,6 +14384,7 @@ async function lxGeocoderApresAdresse(){
     }
   }catch(e){
     try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"lxGeocoderApresAdresse", msg:String(e&&e.message||e)}).slice(0,2000)); }catch(_e){}
+    try{ if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 position sur la carte : "+String(e&&e.message||e)+". Placez votre rep\u00e8re dans Param\u00e8tres \u203a Site en ligne.","error"); }catch(_e2){} // 2026-10-15
   }
 }
 function _lxNotifInfosOk(){
@@ -14468,6 +14481,10 @@ function confirmDeleteCollab(ti){
   if(typeof showConfirm==="function") showConfirm("Supprimer "+nom+" ? (aucun rendez-vous rattache)", function(){
     var delId = T[ti].id;
     deleteCollabFromDB(delId, function(ok, errMsg){
+      if(!ok && !/^23503|foreign key|nf525|ticket/i.test(String(errMsg||""))){ // 2026-10-15 : la vraie raison (reseau, droits...)
+        if(typeof showAlert==="function") showAlert("⚠️ Non enregistré — suppression de "+nom+" : "+(String(errMsg||"").trim()||"erreur inconnue")+". Réessayez.","warning");
+        return;
+      }
       if(!ok){
         if(typeof showAlert==="function") showAlert("Suppression refusee : "+nom+" possede de l'historique encaisse (tickets). La reglementation NF525 impose de conserver le lien entre chaque ticket et son operateur, la fiche est donc conservee. Pour acter un depart, renseignez la DATE DE DEPART dans Informations RH : la personne sort du planning et du site, et tout son historique reste intact.","warning");
         try{ if(typeof auditLog==="function") auditLog("COLLAB_DELETE_REFUSED","Suppression refusee pour "+nom+" (id="+delId+") : historique encaisse present. "+(errMsg||"")); }catch(_e){}
@@ -14482,8 +14499,9 @@ function confirmDeleteCollab(ti){
 }
 function deleteCollabFromDB(collabId, cb){
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
-    _sb.from("collaborateurs").delete().eq("id",collabId).eq("salon_id",_salonId).then(function(r){
+    _sb.from("collaborateurs").delete().eq("id",collabId).eq("salon_id",_salonId).select("id").then(function(r){
       var _err = r && r.error ? r.error : null;
+      if(!_err && (!r || !r.data || !r.data.length)) _err={code:"0",message:"aucune suppression accept\u00e9e par le serveur"}; // 2026-10-15
       console.log("[COLLAB DELETE] id="+collabId,r.status,_err?_err.message:"OK");
       if(typeof cb==="function") cb(!_err, _err?(_err.code||"")+" "+(_err.message||""):"");
     }, function(e){
@@ -14613,6 +14631,7 @@ function saveSiteConfig(){
     _lxSiteFile=(_lxSiteFile||Promise.resolve()).then(function(){ return _lxSiteEcrire(data); },function(){ return _lxSiteEcrire(data); });
     // Also sync siteActif/reservation to salons.config_json for annuaire
     if(typeof saveSalonConfig==="function")saveSalonConfig();
+    return _lxSiteFile; // 2026-10-15 : resultat (true / false) disponible pour l'appelant
   }
 }
 var _lxSiteFile=null;
@@ -14700,7 +14719,8 @@ async function _lxSiteEcrire(data){
       });
     }
     data.updated_at=new Date().toISOString();
-    var u=await _sb.from("site_config").upsert(data,{onConflict:"salon_id"});
+    var u=await _sb.from("site_config").upsert(data,{onConflict:"salon_id"}).select("salon_id");
+    if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
     console.log("[SITE CONFIG]",u.error?u.error.message:"Saved OK");
     if(u.error) throw new Error(u.error.message||"ecriture refusee");
     if(base){ ecrits.forEach(function(k){ base[k]=lxJsonCanon(data[k]); }); }
@@ -14709,7 +14729,7 @@ async function _lxSiteEcrire(data){
     return true;
   }catch(e){
     try{
-      if(typeof toast==="function") toast("\u26a0 Publication vers le site echouee : "+(e.message||"erreur"),"error");
+      if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 site en ligne / horaires : "+(e.message||"erreur")+". R\u00e9essayez.","error");
       if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSiteConfig", msg:String(e.message||e)}).slice(0,2000));
     }catch(_e){}
     return false;
@@ -14863,7 +14883,7 @@ function initSalonLocationMap(){
         current.lat = geo.lat; current.lng = geo.lng;
         if(status) status.innerHTML = '✅ Position détectée automatiquement. Vous pouvez l\u0027affiner ci-dessous.';
         // Save direct
-        await _sb.from('salons').update({ latitude: geo.lat, longitude: geo.lng, geocoded_at: new Date().toISOString() }).eq('id', _salonId);
+        if(typeof lxEcritureVerifiee==="function") await lxEcritureVerifiee(_sb.from('salons').update({ latitude: geo.lat, longitude: geo.lng, geocoded_at: new Date().toISOString() }).eq('id', _salonId).select('id'), "position sur la carte", {toast:true}); // 2026-10-15
       } else {
         if(status) status.innerHTML = '⚠️ Adresse non géolocalisée. Cliquez sur la carte pour placer votre salon.';
         // Vue France par défaut
@@ -14919,9 +14939,10 @@ async function saveLocation(lat, lng){
       latitude: Number(lat),
       longitude: Number(lng),
       geocoded_at: new Date().toISOString()
-    }).eq('id', _salonId);
+    }).eq('id', _salonId).select('id');
+    if(!r.error && (!r.data||!r.data.length)) r={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
     if(r.error){
-      if(typeof toast === 'function') toast('Erreur: ' + r.error.message, 'error');
+      if(typeof toast === 'function') toast('\u26a0\ufe0f Non enregistr\u00e9 \u2014 position : ' + r.error.message + '. R\u00e9essayez.', 'error');
       return;
     }
     updateLocCoordsDisplay(lat, lng);
@@ -16619,7 +16640,7 @@ function saveFondCaisse(){
   var val=parseFloat(document.getElementById("fondCaisseInput").value)||0;
   if(!window.CAISSE_DATA)window.CAISSE_DATA={};
   window.CAISSE_DATA.fond=val;
-  _lxCaisseSaveEtAlerte("Le fond de caisse"); // FIX 2026-08-31 : ecriture dediee de la caisse
+  Promise.resolve(_lxCaisseSaveEtAlerte("Le fond de caisse")).then(function(ok){ if(!ok) return; // FIX 2026-08-31 : ecriture dediee de la caisse ; 2026-10-15 : confirmation seulement apres la base
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
   h2+='<h2>Fond de caisse modifi\u00e9</h2>';
@@ -16627,11 +16648,13 @@ function saveFondCaisse(){
   h2+='<button class="btn bg bk" style="padding:12px;width:100%" onclick="cM()">OK</button>';
   h2+='</div></div>';
   document.getElementById("modal").innerHTML=h2;
+  });
 }
 
 function saveTVA(){
   var val=parseFloat(document.getElementById("tvaInput").value);
   if(isNaN(val)||val<0||val>30){showAlert("Taux invalide","warning");return;}
+  var _tvaAvant=SALON_CONFIG.tauxTVA; // 2026-10-15 : remis si la base refuse (tickets toujours au taux enregistre)
   SALON_CONFIG.tauxTVA=val;
   if(window.SALON)window.SALON.tauxTVA=val;
   if(typeof saveSalonConfig==="function")saveSalonConfig();
@@ -16639,7 +16662,8 @@ function saveTVA(){
   // annoncait "Taux de TVA modifie" mais l'ancien taux revenait au rechargement (impact
   // fiscal direct sur les tickets et bandes Z suivants). `val` est deja validee (0-30) :
   // on ecrit la valeur SAISIE, jamais une valeur reconstruite depuis la memoire.
-  if(typeof window.lxSaveSalonColumns==="function") window.lxSaveSalonColumns({taux_tva:val});
+  // 2026-10-15 : « Taux de TVA modifie » seulement apres confirmation de la base (l'echec est signale par lxSaveSalonColumns)
+  Promise.resolve(typeof window.lxSaveSalonColumns==="function"?window.lxSaveSalonColumns({taux_tva:val}):{ok:false}).then(function(_rT){ if(!(_rT&&_rT.ok)){ SALON_CONFIG.tauxTVA=_tvaAvant; if(window.SALON) window.SALON.tauxTVA=_tvaAvant; return; }
   auditLog("CONFIG_TVA","Taux TVA modifie: "+val+"%");
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
@@ -16649,6 +16673,7 @@ function saveTVA(){
   h2+='<button class="btn bg bk" style="padding:12px;width:100%" onclick="cM()">OK</button>';
   h2+='</div></div>';
   document.getElementById("modal").innerHTML=h2;
+  });
 }
 
 // Validité des devis (jours). Sauvegardé dans SALON_CONFIG + config_json.
@@ -17634,8 +17659,7 @@ function lxUpdatePhotoNote(cId, photoIdx, note){
   var c = (typeof gC==="function") ? gC(cId) : null;
   if(!c||!c.photos||!c.photos[photoIdx])return;
   c.photos[photoIdx].note = (note||"").trim() || null;
-  if(typeof saveClient==="function") saveClient(c);
-  if(typeof toast==="function") toast("Note enregistrée","success");
+  if(typeof saveClient==="function") Promise.resolve(saveClient(c)).then(function(r){ if(r&&r.ok&&typeof toast==="function") toast("Note enregistrée","success"); }); // 2026-10-15 : apres confirmation
 }
 window.lxUpdatePhotoNote=lxUpdatePhotoNote;
 
@@ -20263,7 +20287,7 @@ function lxResetPamp(mode){
   cM();
   var label=mode==="zero"?"à zéro (0 €)":"au prix d\'achat HT défini par produit";
   showConfirmDanger("Réinitialiser le PAMP de tous les produits "+label+" ?\n\nLes PAMP existants seront perdus définitivement.", function(){
-    var nb=0;
+    var nb=0, _pP=[];
     for(var i=0;i<PRODS.length;i++){
       var p=PRODS[i];
       if(mode==="zero"){
@@ -20274,10 +20298,11 @@ function lxResetPamp(mode){
         p.pampQty=Number(p.stk)||0;
       }
       nb++;
-      if(typeof saveProduct==="function")saveProduct(p);
+      if(typeof saveProduct==="function")_pP.push(Promise.resolve(saveProduct(p)));
     }
     if(typeof auditLog==="function")auditLog("PAMP_RESET","Réinitialisation PAMP "+label+" - "+nb+" produits");
-    if(typeof toast==="function")toast("✓ PAMP réinitialisé "+label+" pour "+nb+" produit(s)","success");
+    // 2026-10-15 : succes seulement si TOUS les produits sont enregistres (chaque echec est deja signale)
+    Promise.all(_pP).then(function(rs){ if(!rs.some(function(r){ return !(r&&r.ok); })&&typeof toast==="function") toast("✓ PAMP réinitialisé "+label+" pour "+nb+" produit(s)","success"); });
     go("products");
   });
 }
@@ -29765,7 +29790,7 @@ function _lxCfgAttendre(ms){
   return Promise.race([ window._lxCfgPret, new Promise(function(res){ setTimeout(function(){ res(!!window._lxCfgChargee); }, ms); }) ]);
 }
 function _lxCfgErreur(msg, detail){
-  try{ if(typeof toast==="function") toast("⚠ "+msg,"error"); }catch(_e){}
+  try{ if(typeof toast==="function") toast("⚠️ Non enregistré — "+msg+(/essayez/i.test(msg)?"":". Réessayez."),"error"); }catch(_e){}
   try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"saveSalonConfig", msg:msg, detail:detail||null}).slice(0,2000)); }catch(_e){}
 }
 var _lxCfgFile = Promise.resolve();
@@ -29876,7 +29901,8 @@ async function _lxSaveSalonConfigUneFois(){
     if(aEcrire.length) updatePayload.config_json = JSON.stringify(cfg);
     if(typeof window.SHOW_TVA_TICKET!=="undefined") updatePayload.show_tva_ticket = !!window.SHOW_TVA_TICKET;
     if(Object.keys(updatePayload).length){
-      var u = await _sb.from("salons").update(updatePayload).eq("id",_salonId);
+      var u = await _sb.from("salons").update(updatePayload).eq("id",_salonId).select("id");
+      if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
       if(u && u.error){ _lxCfgErreur("Enregistrement de la configuration echoue : "+(u.error.message||"erreur"), u.error.code||null); return false; }
     }
     // Ecriture confirmee (ou rien a ecrire) : references et memoire a jour.
@@ -29936,7 +29962,8 @@ async function _lxCfgEcrireSectionsUneFois(valeurs){
     } else nouvBase[k]={db:aMettreS, mem:aMettreS};
     if(sec&&sec.ecrire) sec.ecrire(cfg, aMettre); else cfg[k]=aMettre;
   });
-  var u = await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId);
+  var u = await _sb.from("salons").update({config_json:JSON.stringify(cfg)}).eq("id",_salonId).select("id");
+  if(u && !u.error && (!u.data||!u.data.length)) u={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15 : 0 ligne = echec
   if(u && u.error){ _lxCfgErreur("Enregistrement echoue : "+(u.error.message||"erreur"), u.error.code||null); return false; }
   // Ecriture confirmee : references mises a jour seulement maintenant
   Object.keys(aEcrire).forEach(function(k){
@@ -30026,7 +30053,7 @@ async function updateCarteAboEconomies(carteId,delta){
   cc.economiesTotales=(cc.economiesTotales||0)+Number(delta||0);
   if(typeof _sb!=="undefined"&&_sb&&cc.id){
     try{
-      await _sb.from("cartes_abo_clients").update({economies_totales:cc.economiesTotales}).eq("id",cc.id);
+      if(typeof lxEcritureVerifiee==="function") await lxEcritureVerifiee(_sb.from("cartes_abo_clients").update({economies_totales:cc.economiesTotales}).eq("id",cc.id).select("id"),"\u00e9conomies de la carte d'abonnement",{toast:true}); // 2026-10-15
     }catch(e){console.warn("updateCarteAboEconomies:",e);}
   }
 }
@@ -33578,12 +33605,15 @@ async function saveCaisseData(){
   }catch(e){ return {ok:false,error:(e&&e.message)||"erreur"}; }
 }
 function _lxCaisseSaveEtAlerte(libelle){
-  if(typeof saveCaisseData!=="function"){ if(typeof saveSalonConfig==="function")saveSalonConfig(); return; }
-  saveCaisseData().then(function(r){
+  if(typeof saveCaisseData!=="function"){ return Promise.resolve(typeof saveSalonConfig==="function"?saveSalonConfig():false); }
+  // 2026-10-15 : renvoie true / false (l'appelant n'affiche « modifie » qu'apres confirmation)
+  return saveCaisseData().then(function(r){
     if(!r || !r.ok){
-      if(typeof showAlert==="function") showAlert(libelle+" n'a PAS pu etre enregistre : "+((r&&r.error)||"erreur inconnue")+"\n\nRefaites l'operation avant de fermer la caisse.","warning");
+      if(typeof showAlert==="function") showAlert("\u26a0\ufe0f Non enregistr\u00e9 \u2014 "+libelle+" : "+((r&&r.error)||"erreur inconnue")+".\n\nR\u00e9essayez avant de fermer la caisse.","warning");
       else if(typeof toast==="function") toast("Enregistrement caisse echoue","error");
+      return false;
     }
+    return true;
   });
 }
 function doNewMouvement(type){
@@ -34435,9 +34465,11 @@ async function sendSms(phone,message,context,clientNom){
         _sb.from("sms_differes").insert({
           salon_id:_salonId, telephone:phone, message:message,
           contexte:context||null, client_nom:clientNom||null, pertinent_jusqu_a:_lim
-        }).then(function(){
+        }).then(function(_rD){
+          // 2026-10-15 : « mis en attente » seulement si la base l'a accepte
+          if(_rD&&_rD.error){ if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 SMS non mis en attente : "+_rD.error.message+". Rechargez vos cr\u00e9dits puis renvoyez-le.","error"); return; }
           if(typeof toast==="function") toast("SMS mis en attente \u2014 il partira au rechargement des cr\u00e9dits","warning");
-        },function(_e){ console.warn("[sms] mise en attente impossible:",_e); });
+        },function(_e){ console.warn("[sms] mise en attente impossible:",_e); if(typeof toast==="function") toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 SMS non mis en attente (r\u00e9seau). Renvoyez-le plus tard.","error"); });
       }
     }catch(_e){ console.warn("[sms] mise en attente:",_e); }
     return{ok:false,error:"no_credits"};
@@ -34574,9 +34606,10 @@ async function setSmsMode(mode){
     return;
   }
   try{
-    var res=await _sb.from("salons").update({sms_mode:mode}).eq("id",_salonId);
+    var res=await _sb.from("salons").update({sms_mode:mode}).eq("id",_salonId).select("id");
+    if(!res.error && (!res.data||!res.data.length)) res={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
     if(res.error){
-      showAlert("Erreur : "+res.error.message,"error");
+      showAlert("\u26a0\ufe0f Non enregistr\u00e9 \u2014 mode d'envoi des SMS : "+res.error.message+". R\u00e9essayez.","error");
       return;
     }
     window.SMS_MODE=mode;
@@ -34858,8 +34891,9 @@ function unlinkSmsDevice(){
         sms_native_device_id:null,
         sms_native_linked_at:null,
         sms_mode:"brevo"
-      }).eq("id",_salonId);
-      if(res.error){showAlert("Erreur : "+res.error.message,"error");return;}
+      }).eq("id",_salonId).select("id");
+      if(!res.error && (!res.data||!res.data.length)) res={error:{message:"aucune modification accept\u00e9e par le serveur"}}; // 2026-10-15
+      if(res.error){showAlert("\u26a0\ufe0f Non enregistr\u00e9 \u2014 t\u00e9l\u00e9phone Android : "+res.error.message+". R\u00e9essayez.","error");return;}
       window.SMS_NATIVE_DEVICE_ID=null;
       window.SMS_MODE="brevo";
       auditLog("SMS_DEVICE_UNLINKED","Mode revenu \u00e0 Brevo");
@@ -36004,7 +36038,8 @@ async function lxSanteEnregistrer(cId){
 }
 async function lxSanteEffacer(cId){
   if(!confirm("Effacer définitivement le questionnaire santé de ce client (retrait du consentement) ?")) return;
-  var r=await _sb.from("clients_sante").delete().eq("client_id",cId);
+  var r=await _sb.from("clients_sante").delete().eq("client_id",cId).eq("salon_id",_salonId).select("client_id");
+  if(!r.error && (!r.data||!r.data.length) && (window.LX_SANTE||{})[cId]) r={error:{message:"aucune suppression accept\u00e9e par le serveur"}}; // 2026-10-15
   if(r.error){ showAlert("Effacement impossible : "+r.error.message,"error"); return; }
   delete window.LX_SANTE[cId];
   try{ auditLog("SANTE_EFFACEE","Questionnaire santé effacé pour la fiche "+cId+" (retrait du consentement)"); }catch(_e){}
@@ -36273,8 +36308,8 @@ function lxCommunesEnregistrer(){
   var L=(window._lxComL||[]).filter(function(c){return c.on;}).map(function(c){ var o={code:c.code,nom:c.nom,cp:c.cp}; if(c.forfait!=null&&!isNaN(c.forfait)) o.forfait=Number(c.forfait); return o; });
   if(!SALON_CONFIG.domicile) SALON_CONFIG.domicile={type:"forfait",forfait:15,prixKm:0.5,zone:20,gratuitKm:0};
   SALON_CONFIG.domicile.communes=L;
-  if(typeof saveSalonConfig==="function") saveSalonConfig();
-  toast("✅ "+L.length+" commune"+(L.length>1?"s":"")+" enregistrée"+(L.length>1?"s":""),"success"); cM(); go("settings");
+  Promise.resolve(typeof saveSalonConfig==="function"?saveSalonConfig():false).then(function(ok){ if(ok) toast("✅ "+L.length+" commune"+(L.length>1?"s":"")+" enregistrée"+(L.length>1?"s":""),"success"); }); // 2026-10-15 : apres confirmation
+  cM(); go("settings");
 }
 // ===== VALIDATION DES DEMANDES DE RDV EN LIGNE (2026-10-10) =====
 // RDV à domicile (toujours) et RDV en mode « confirmation manuelle » : le professionnel accepte, propose un autre

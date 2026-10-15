@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261015-1"; // 2026-10-15 (-1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261015-2"; // 2026-10-15 (-2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -1865,6 +1865,43 @@ function lxSaveSalonColumns(patch) {
 }
 if (typeof window !== "undefined") window.lxSaveSalonColumns = lxSaveSalonColumns;
 
+// 2026-10-15 : CONTROLE COMMUN DE TOUTE ECRITURE (meme regle que lxSaveSalonColumns).
+// `requete` = requete Supabase (avec .select(...) si une ligne est attendue) ou promesse.
+// Echec = erreur renvoyee, erreur reseau, ou 0 ligne touchee alors qu'une ligne etait attendue
+// (refus silencieux : droits, trigger, ligne absente). L'utilisateur est TOUJOURS prevenu
+// (« Non enregistre — ... Reessayez »), sauf opts.silencieux. Retourne {ok, error, data}.
+// opts.lignes === false : pas de controle du nombre de lignes (insert sans .select, RPC...).
+function _lxEcritureAlerte(libelle, err, opts) {
+  var m = String((err && err.message) || "erreur inconnue");
+  console.warn("[ecriture] " + libelle + " :", m);
+  try { if (typeof saveAuditEntry === "function" && !(opts && opts.sansJournal)) saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "lxEcritureVerifiee", quoi: String(libelle).slice(0, 120), msg: m.slice(0, 200) })); } catch (_eA) {}
+  if (opts && opts.silencieux) return;
+  var txt = "⚠️ Non enregistré — " + libelle + " : " + m + ". Réessayez" + (opts && opts.suite ? " " + opts.suite : "") + ".";
+  try {
+    if (opts && opts.toast && typeof toast === "function") toast(txt, "error");
+    else if (typeof showAlert === "function") showAlert(txt, "warning");
+    else if (typeof toast === "function") toast(txt, "error");
+  } catch (_e) {}
+}
+function lxEcritureVerifiee(requete, libelle, opts) {
+  opts = opts || {};
+  try {
+    if (!_sb || !_salonId) { var e0 = { message: "pas de connexion au serveur" }; _lxEcritureAlerte(libelle, e0, opts); return Promise.resolve({ ok:false, error:e0 }); }
+    return Promise.resolve(requete).then(function (res) {
+      var err = res && res.error;
+      if (!err && opts.lignes !== false && (!res || !Array.isArray(res.data) || !res.data.length)) err = { message: "aucune modification acceptée par le serveur" };
+      if (!err) return { ok:true, error:null, data:(res ? res.data : null) };
+      _lxEcritureAlerte(libelle, err, opts);
+      return { ok:false, error:err };
+    }, function (e) {
+      var err = { message: "problème de connexion" + (e && e.message ? " (" + e.message + ")" : "") };
+      _lxEcritureAlerte(libelle, err, opts);
+      return { ok:false, error:err };
+    });
+  } catch (e) { var e1 = { message: String((e && e.message) || e) }; _lxEcritureAlerte(libelle, e1, opts); return Promise.resolve({ ok:false, error:e1 }); }
+}
+if (typeof window !== "undefined") window.lxEcritureVerifiee = lxEcritureVerifiee;
+
 // FIX 2026-10-07 : taux de TVA. Le chargement faisait `salon.taux_tva || 20`, et une
 // trentaine d'endroits faisaient `lxTauxTVA()`. En JavaScript, 0 || 20
 // vaut 20 : un salon en FRANCHISE DE TVA (taux 0, art. 293 B du CGI) se retrouvait
@@ -3052,7 +3089,7 @@ async function _saveClientCorps(client, _walId) {
     try {
       var fr = await _sb.from("fidelite_client").select("id").eq("client_luxyra_id", client.em).eq("salon_id", _salonId).limit(1);
       if (fr.data && fr.data[0]) {
-        await _sb.from("fidelite_client").update({ points: client.fid }).eq("id", fr.data[0].id);
+        await lxEcritureVerifiee(_sb.from("fidelite_client").update({ points: client.fid }).eq("id", fr.data[0].id).select("id"), "points de fidélité du compte client", { toast:true }); // 2026-10-15
       }
     } catch(e) { console.log("[FIDELITE SYNC]", e.message); }
   }
@@ -3168,7 +3205,8 @@ async function _saveAppointmentUneFois(appt) {
         if (_rDone && typeof _rDone === "object" && (_rDone.error || _rDone.ok === false) && !_walResultatDoublonPermanent(_rDone)) { return _rDone; } // 2026-10-14 : RDV déjà en base -> on continue (rdv_online marqué encaissé)
       } catch (eDone) { console.warn("[saveAppointment online->done] persist appointment skipped:", eDone && eDone.message); return { ok: false, error: { message: String((eDone && eDone.message) || eDone) } }; }
       // Marque la rdv_online encaissee (compte client : RDV passe + facture ; dedup planning)
-      try { _sb.from("rdv_online").update({ status: "done", ticket_num: (appt.tkNum || null) }).eq("id", onlineUuid).eq("salon_id", _salonId).then(function(){}, function(){}); } catch (e3) {}
+      // 2026-10-15 : resultat verifie (avant : echec muet -> RDV en ligne jamais marque encaisse cote client)
+      try { lxEcritureVerifiee(_sb.from("rdv_online").update({ status: "done", ticket_num: (appt.tkNum || null) }).eq("id", onlineUuid).eq("salon_id", _salonId).select("id"), "statut « encaissé » du rendez-vous en ligne", { toast:true }); } catch (e3) {}
       _walMarkSynced(_walId);
       return { ok: true };
     }
@@ -3255,7 +3293,9 @@ async function _saveAppointmentUneFois(appt) {
       }
     } catch (eDiff) { console.warn("[saveAppointment online] diff calc skipped:", eDiff && eDiff.message); }
     try {
-      var r = await _sb.from("rdv_online").update(onlineData).eq("id", onlineUuid).eq("salon_id", _salonId);
+      var r = await _sb.from("rdv_online").update(onlineData).eq("id", onlineUuid).eq("salon_id", _salonId).select("id");
+      // 2026-10-15 : 0 ligne modifiee (droits / RDV absent) = echec, comme une erreur
+      if (r && !r.error && (!r.data || !r.data.length)) r = { error: { message: "aucune modification acceptée par le serveur" } };
       if (r && r.error) {
         console.warn("[saveAppointment online] update rdv_online failed:", r.error.message);
         try { if (typeof toast === "function") toast("La modification du rendez-vous en ligne n\u2019a pas pu \u00eatre enregistr\u00e9e : " + r.error.message, "error"); } catch (_t) {}
@@ -3677,6 +3717,7 @@ async function saveGiftCard(gc, opts) {
   }
 
   var res = await _sb.from("cartes_cadeaux").upsert(data).select();
+  if (!res.error && (!res.data || !res.data.length)) res = { error: { message: "aucune modification accept\u00e9e par le serveur" } }; // 2026-10-15 : 0 ligne = echec
   if (res.error) { console.error("saveGiftCard upsert error:", res.error); _lxBonAlerte(gc, res.error.message); return { ok:false, error:res.error.message }; }
   gc._dejaEnBase = true;
   return { ok:true };
@@ -4089,11 +4130,11 @@ async function saveDevisToDb(dv) {
     if (dv.dbId) {
       // Update existant
       var upd = await _sb.from("devis").update(data).eq("id", dv.dbId).select().single();
-      if (upd.error) { _lxReportDbError("saveDevisToDb.update", upd.error); console.warn("[saveDevisToDb] update error", upd.error); return null; }
+      if (upd.error) { window._lxDerniereErreurEcriture = upd.error.message; _lxReportDbError("saveDevisToDb.update", upd.error); console.warn("[saveDevisToDb] update error", upd.error); return null; }
       return upd.data;
     } else {
       var ins = await _sb.from("devis").insert(data).select().single();
-      if (ins.error) { _lxReportDbError("saveDevisToDb.insert", ins.error); console.warn("[saveDevisToDb] insert error", ins.error); return null; }
+      if (ins.error) { window._lxDerniereErreurEcriture = ins.error.message; _lxReportDbError("saveDevisToDb.insert", ins.error); console.warn("[saveDevisToDb] insert error", ins.error); return null; }
       if (ins.data) {
         dv.dbId = ins.data.id;
         if (!dv.num) dv.num = ins.data.num;
@@ -4103,6 +4144,7 @@ async function saveDevisToDb(dv) {
     }
   } catch (e) {
     console.error("[saveDevisToDb] unexpected", e);
+    window._lxDerniereErreurEcriture = (e && e.message) || "probl\u00e8me de connexion";
     return null;
   }
 }
@@ -4112,14 +4154,15 @@ async function updateDevisStatus(devisDbId, newStatus, ticketDbId) {
   try {
     var patch = { status: newStatus };
     if (ticketDbId) patch.ticket_id = ticketDbId;
-    await _sb.from("devis").update(patch).eq("id", devisDbId);
+    // 2026-10-15 : resultat verifie + alerte (avant : echec muet)
+    return await lxEcritureVerifiee(_sb.from("devis").update(patch).eq("id", devisDbId).select("id"), "statut du devis", { toast:true });
   } catch (e) { console.warn("[updateDevisStatus]", e); }
 }
 
 async function deleteDevisDb(devisDbId) {
   if (!_isOnline || !devisDbId) return;
   try {
-    await _sb.from("devis").delete().eq("id", devisDbId);
+    return await lxEcritureVerifiee(_sb.from("devis").delete().eq("id", devisDbId).select("id"), "suppression du devis", { suite:"(il réapparaîtra au rechargement)" });
   } catch (e) { console.warn("[deleteDevisDb]", e); }
 }
 
@@ -4145,16 +4188,16 @@ async function savePendingTkDb(pk) {
       raw_data: pk
     };
     var res = await _sb.from("tickets_attente").insert(data).select().single();
-    if (res.error) { console.warn("[savePendingTkDb]", res.error); return null; }
+    if (res.error) { console.warn("[savePendingTkDb]", res.error); window._lxDerniereErreurEcriture = res.error.message; return null; }
     if (res.data) pk.dbId = res.data.id;
     return res.data;
-  } catch (e) { console.error("[savePendingTkDb]", e); return null; }
+  } catch (e) { console.error("[savePendingTkDb]", e); window._lxDerniereErreurEcriture = (e && e.message) || "probl\u00e8me de connexion"; return null; }
 }
 
 async function deletePendingTkDb(pkDbId) {
   if (!_isOnline || !pkDbId) return;
   try {
-    await _sb.from("tickets_attente").delete().eq("id", pkDbId);
+    return await lxEcritureVerifiee(_sb.from("tickets_attente").delete().eq("id", pkDbId).select("id"), "suppression du ticket en attente", { toast:true, suite:"(il réapparaîtra au rechargement)" });
   } catch (e) { console.warn("[deletePendingTkDb]", e); }
 }
 
@@ -4179,7 +4222,8 @@ async function updateRdvOnline(rdvId, status, reason) {
   var data = { status: status };
   if (status === "confirmed") data.confirmed_at = new Date().toISOString();
   if (status === "cancelled") { data.cancelled_at = new Date().toISOString(); data.cancel_reason = reason || ""; }
-  await _sb.from("rdv_online").update(data).eq("id", rdvId);
+  // 2026-10-15 : resultat verifie + alerte
+  return await lxEcritureVerifiee(_sb.from("rdv_online").update(data).eq("id", rdvId).eq("salon_id", _salonId).select("id"), "statut du rendez-vous en ligne");
 }
 
 // Sauvegarder une clôture Z (persistance NF525 + raw_data pour réimpression fidèle)
@@ -4661,7 +4705,8 @@ async function usePackSeance(packId) {
 // Supprimer un forfait
 async function deleteForfaitFromDb(forfaitId) {
   if (!_sb || !_salonId) return;
-  await _sb.from("forfaits").delete().eq("id", forfaitId).eq("salon_id", _salonId);
+  // 2026-10-15 : resultat verifie (avant : refus muet -> le forfait revenait au rechargement)
+  return await lxEcritureVerifiee(_sb.from("forfaits").delete().eq("id", forfaitId).eq("salon_id", _salonId).select("id"), "suppression du forfait", { suite:"(il réapparaîtra au rechargement)" });
 }
 
 // 2026-10-14 : file d'attente commune a TOUTES les ecritures collaborateurs (bulk + ciblees) :
@@ -4943,8 +4988,10 @@ async function saveFournisseur(f) {
 async function deleteFournisseur(fId) {
   if (!_isOnline || !_salonId) return;
   // Unlink products first
-  await _sb.from("produits").update({ fournisseur_id: null }).eq("fournisseur_id", fId).eq("salon_id", _salonId);
-  await _sb.from("fournisseurs").delete().eq("id", fId).eq("salon_id", _salonId);
+  // 2026-10-15 : resultats verifies + alerte (avant : echec muet)
+  var _rU = await lxEcritureVerifiee(_sb.from("produits").update({ fournisseur_id: null }).eq("fournisseur_id", fId).eq("salon_id", _salonId), "détachement des produits du fournisseur", { lignes:false });
+  if (!_rU.ok) return _rU;
+  return await lxEcritureVerifiee(_sb.from("fournisseurs").delete().eq("id", fId).eq("salon_id", _salonId).select("id"), "suppression du fournisseur", { suite:"(il réapparaîtra au rechargement)" });
 }
 
 // ============================================================
@@ -5046,7 +5093,7 @@ async function createOperateur(data) {
     if (r.error) throw r.error;
     try { if (typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_CREE", "Opérateur " + (data.prenom || "") + " " + (data.nom || "") + " créé — rôle " + insert.role); } catch(_eA){}
     return r.data && r.data[0] ? r.data[0] : null;
-  } catch(e) { console.error("[OP CREATE]", e.message); return null; }
+  } catch(e) { console.error("[OP CREATE]", e.message); _lxEcritureAlerte("cr\u00e9ation de l'op\u00e9rateur", e, {}); return null; } // 2026-10-15 : raison affichee
 }
 
 // Mettre à jour un opérateur (sans toucher au PIN)
@@ -5068,12 +5115,13 @@ async function updateOperateur(id, data) {
     }
     var r = await _sb.from("salon_operateurs").update(update).eq("id", id).select("id");
     // 2026-10-14 : 0 ligne modifiee (droits refuses) = echec, pas un succes silencieux
-    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP UPDATE] 0 ligne modifiee", id); return false; }
+    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP UPDATE] 0 ligne modifiee", id); _lxEcritureAlerte("modification de l'op\u00e9rateur", { message: "aucune modification accept\u00e9e par le serveur" }, {}); return false; }
+    if (r.error) _lxEcritureAlerte("modification de l'op\u00e9rateur", r.error, {}); // 2026-10-15
     // 2026-10-11 (NF525, JET 130) : trace des changements d'habilitations
     try { if (!r.error && (update.role != null || update.permissions != null || update.actif != null) && typeof saveAuditEntry === "function")
       saveAuditEntry(update.permissions != null ? "OPERATEUR_PERMISSIONS" : "OPERATEUR_ROLE", "Opérateur " + id + " : " + JSON.stringify({ role: update.role, actif: update.actif, permissions: update.permissions }).slice(0, 700)); } catch(_eA){}
     return !r.error;
-  } catch(e) { console.error("[OP UPDATE]", e.message); return false; }
+  } catch(e) { console.error("[OP UPDATE]", e.message); _lxEcritureAlerte("modification de l'op\u00e9rateur", e, {}); return false; }
 }
 
 // Changer le PIN d'un opérateur
@@ -5086,12 +5134,12 @@ async function changeOperateurPIN(id, newPin) {
       pin_hash: pinHash,
       pin_length: newPin.length
     }).eq("id", id).select("id"); // 2026-10-14 audit : lignes réellement modifiées
-    if (r.error) { console.error("[OP PIN]", r.error.message); return false; }
-    if (!r.data || !r.data.length) { console.error("[OP PIN] 0 ligne modifiée (droits refusés ou opérateur introuvable)", id); return false; } // 2026-10-14 audit : avant = succès annoncé à tort
+    if (r.error) { console.error("[OP PIN]", r.error.message); _lxEcritureAlerte("nouveau code PIN", r.error, {}); return false; }
+    if (!r.data || !r.data.length) { console.error("[OP PIN] 0 ligne modifiée (droits refusés ou opérateur introuvable)", id); _lxEcritureAlerte("nouveau code PIN", { message: "aucune modification accept\u00e9e par le serveur" }, {}); return false; } // 2026-10-14 audit : avant = succès annoncé à tort
     try { if (typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_PIN_MODIFIE", "Opérateur " + id + " : code PIN modifié"); } catch(_eA){}
     try { _lxOpCacheOublier(id); } catch(_eC){}
     return true;
-  } catch(e) { console.error("[OP PIN]", e.message); return false; }
+  } catch(e) { console.error("[OP PIN]", e.message); _lxEcritureAlerte("nouveau code PIN", e, {}); return false; }
 }
 
 // Supprimer un opérateur
@@ -5100,10 +5148,11 @@ async function deleteOperateur(id) {
   try {
     var r = await _sb.from("salon_operateurs").delete().eq("id", id).select("id");
     // 2026-10-14 : 0 ligne supprimee (droits refuses) = echec
-    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP DEL] 0 ligne supprimee", id); return false; }
+    if (!r.error && (!r.data || !r.data.length)) { console.error("[OP DEL] 0 ligne supprimee", id); _lxEcritureAlerte("suppression de l'op\u00e9rateur", { message: "aucune modification accept\u00e9e par le serveur" }, {}); return false; }
+    if (r.error) _lxEcritureAlerte("suppression de l'op\u00e9rateur", r.error, {}); // 2026-10-15
     try { if (!r.error && typeof saveAuditEntry === "function") saveAuditEntry("OPERATEUR_SUPPRIME", "Opérateur " + id + " supprimé"); } catch(_eA){}
     return !r.error;
-  } catch(e) { console.error("[OP DEL]", e.message); return false; }
+  } catch(e) { console.error("[OP DEL]", e.message); _lxEcritureAlerte("suppression de l'op\u00e9rateur", e, {}); return false; }
 }
 
 // ------------------------------------------------------------
@@ -5393,9 +5442,9 @@ async function updateFideliteClient(bpId, salonId, salonNom, currentFid, hasPres
         updated_at: new Date().toISOString()
       };
       if (countVisit) updateData.visites = (f.visites || 0) + 1;
-      await _sb.from("fidelite_client").update(updateData).eq("id", f.id);
+      await lxEcritureVerifiee(_sb.from("fidelite_client").update(updateData).eq("id", f.id).select("id"), "points de fidélité du compte client", { toast:true }); // 2026-10-15
     } else {
-      await _sb.from("fidelite_client").insert({
+      await lxEcritureVerifiee(_sb.from("fidelite_client").insert({
         client_luxyra_id: bpId,
         salon_id: salonId,
         salon_nom: salonNom || SALON_CONFIG.nom,
@@ -5405,7 +5454,7 @@ async function updateFideliteClient(bpId, salonId, salonNom, currentFid, hasPres
         seuil_fidelite: fidconf.seuil || 10,
         remise_fidelite: fidconf.remise || 10,
         remise_type: fidconf.type || "amount"
-      });
+      }).select("id"), "carte de fidélité du compte client", { toast:true });
     }
   } catch(e) { console.log("[FIDELITE]", e.message); }
 }
