@@ -895,6 +895,9 @@ function rDashboard(){
       +'<button class="btn ghost" onclick="window._lxAdminPushLater=true;document.getElementById(\'pushBanner\').style.display=\'none\'">Plus tard</button>'
       +'</div>';
   }
+  // 2026-10-15 : « 🔧 À réparer » + « 🧾 NF525 » en tête du cockpit (rempli par lxARCharger)
+  h+='<div id="lxARCockpit"></div><div id="lxNfCockpit"></div>';
+  setTimeout(function(){ if(typeof lxARCharger==='function') lxARCharger(false); }, 60);
   // KPIs (6)
   h+='<div class="kpi-row">';
   h+='<div class="kpi"><div class="kpi-label">MRR</div><div class="kpi-value" style="color:var(--gold)">'+fmtM(mrr)+'</div><div class="kpi-sub">Revenu mensuel récurrent</div><div class="kpi-icon">💰</div></div>';
@@ -1366,6 +1369,8 @@ function rMonitoring(){
     + '<button onclick="lxRequestMonitoringNotif()" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:1px solid '+btnColor+';background:transparent;color:'+btnColor+';font-weight:700;cursor:pointer;font-size:12px" id="lxNotifBtn"'+(!hasSW||notifPerm==='denied'?' disabled':'')+'>'+btnLabel+'</button>'
     + '</h1></div>';
   h+='<style>#monitoringContent table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}#monitoringContent td,#monitoringContent th{word-break:break-word}#monitoringContent pre,#monitoringContent code{white-space:pre-wrap;word-break:break-all}@media(max-width:700px){#monitoringContent{padding:8px!important}#monitoringContent>div{padding-left:10px!important;padding-right:10px!important}.topbar h1{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:18px}.topbar h1 button{margin-left:0!important}#monitoringContent [style*="grid-template-columns"]{grid-template-columns:1fr 1fr!important}}</style>';
+  // 2026-10-15 : vrais problèmes à réparer + état NF525 en tête du monitoring
+  h+='<div style="padding:20px 20px 0"><div id="lxARMonitoring"></div><div id="lxNfMonitoring"></div></div>';
   h+='<div id="monitoringContent" style="padding:20px"><div style="text-align:center;color:var(--text3);padding:40px">Chargement…</div></div>';
   setTimeout(rMonitoringRefresh, 50);
   // FIX 2026-05-18 : auto-open drilldown si ?open_signature=... dans l'URL
@@ -1580,6 +1585,7 @@ window.lxStartErrorWatcher = function(){
 async function rMonitoringRefresh(){
   var container = document.getElementById('monitoringContent');
   if(!container) return;
+  try{ lxARCharger(true); }catch(_e){}
   try {
     var [summary, recent, publicErrs, serverErrs, cronHealth, grouped, anomalies, quotas, slowQueries, topEndpoints, integrations, fixQueue] = await Promise.all([
       _sb.rpc('admin_js_errors_summary'),
@@ -1828,6 +1834,122 @@ window.lxMarkResolvedManual = async function(signature){
     if(typeof rMonitoringRefresh==='function') rMonitoringRefresh();
   } catch(e){ alert('Erreur : '+(e.message||e)); }
 };
+
+// 2026-10-15 : « 🔧 À réparer » (RPC admin_a_reparer, regroupement côté serveur de TOUTES les sources de vrais
+// problèmes, sans le bruit) + « 🧾 NF525 » (RPC admin_nf525_etat, verdicts global et par établissement).
+// « Marquer comme traité » -> admin_acquitter : le point disparaît jusqu'à ce qu'il se reproduise APRÈS l'acquittement.
+// Affiché en tête du cockpit (#lxARCockpit/#lxNfCockpit) et du monitoring (#lxARMonitoring/#lxNfMonitoring).
+window._lxAR = window._lxAR || { t:0, items:null, nf:null, errAR:null, errNF:null, loading:null, ouverts:{} };
+async function lxARCharger(force){
+  var c = window._lxAR;
+  if(!_sb) return;
+  if(force || !c.items || (Date.now() - c.t) > 60000){
+    if(!c.loading){
+      c.loading = (async function(){
+        try{
+          var r = await Promise.all([ _sb.rpc('admin_a_reparer', { p_heures: 72 }), _sb.rpc('admin_nf525_etat') ]);
+          c.errAR = r[0].error ? (r[0].error.message || 'Erreur') : null; if(!r[0].error) c.items = r[0].data || [];
+          c.errNF = r[1].error ? (r[1].error.message || 'Erreur') : null; if(!r[1].error) c.nf = r[1].data || null;
+          c.t = Date.now();
+        }catch(e){ c.errAR = c.errNF = String((e && e.message) || e); }
+        c.loading = null;
+      })();
+    }
+    lxARRendu();
+    await c.loading;
+  }
+  lxARRendu();
+}
+function lxARRendu(){
+  var pairs = [['lxARCockpit','lxNfCockpit'], ['lxARMonitoring','lxNfMonitoring']];
+  var ar = null, nf = null;
+  pairs.forEach(function(p){
+    var a = document.getElementById(p[0]), n = document.getElementById(p[1]);
+    if(a){ if(ar === null) ar = _lxARHtml(); a.innerHTML = ar; }
+    if(n){ if(nf === null) nf = _lxNfHtml(); n.innerHTML = nf; }
+  });
+}
+function _lxARDate(t){ try{ return t ? new Date(t).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—'; }catch(_){ return '—'; } }
+function _lxARHtml(){
+  var c = window._lxAR, items = c.items;
+  var nbG = items ? items.filter(function(x){ return x.niveau === 'grave'; }).length : 0;
+  var bord = !items ? 'var(--border)' : (nbG ? '#ef5350' : (items.length ? '#ff9800' : '#66bb6a'));
+  var h = '<div class="card" style="border-left:4px solid ' + bord + '">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+  h += '<h3 style="margin:0">🔧 À réparer' + (items && items.length ? ' <span style="color:var(--text3);font-weight:500">(' + items.length + (nbG ? ' dont ' + nbG + ' grave' + (nbG > 1 ? 's' : '') : '') + ')</span>' : '') + '</h3>';
+  h += '<button class="tb-btn" style="padding:5px 10px;font-size:12px" onclick="lxARCharger(true)">⟳ Vérifier</button></div>';
+  if(c.errAR){
+    h += '<div style="color:var(--red);font-size:13px">❌ Vérification impossible : ' + saEsc(c.errAR) + '</div>';
+  }else if(!items){
+    h += '<div style="color:var(--text3);font-size:13px">Vérification en cours…</div>';
+  }else if(!items.length){
+    h += '<div style="padding:12px;text-align:center;color:#66bb6a;font-weight:700;font-size:14px">✅ Rien à réparer (vérifié sur 72 h)</div>';
+  }else{
+    items.forEach(function(it, i){
+      var grave = it.niveau === 'grave', col = grave ? '#ef5350' : '#ff9800';
+      var sig = /^[0-9a-f]{32}$/.test(String(it.signature || '')) ? it.signature : '';
+      var sal = (it.salons || []).filter(Boolean);
+      var ouvert = !!c.ouverts[String(it.signature || 'i' + i)];
+      h += '<div style="padding:10px 0;border-top:1px solid var(--border)">';
+      h += '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">';
+      h += '<span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:' + col + '22;color:' + col + ';white-space:nowrap">' + (grave ? 'GRAVE' : 'À RÉPARER') + '</span>';
+      h += '<span style="font-weight:700;font-size:13px;flex:1;min-width:180px;word-break:break-word">' + saEsc(it.titre) + (it.nombre > 1 ? ' <span style="color:var(--text3);font-weight:400">×' + saEsc(it.nombre) + '</span>' : '') + '</span>';
+      h += '<span style="font-size:11px;color:var(--text3)">' + saEsc(it.categorie) + '</span></div>';
+      h += '<div style="font-size:12px;color:var(--text2);margin-top:4px;line-height:1.45;word-break:break-word">' + saEsc(it.explication) + '</div>';
+      h += '<div style="font-size:12px;margin-top:4px;word-break:break-word"><b>À faire :</b> ' + saEsc(it.action) + '</div>';
+      h += '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + (it.nombre > 1 ? 'Première fois : ' + _lxARDate(it.premiere) + ' · ' : '') + 'Dernière fois : ' + _lxARDate(it.derniere) + (sal.length ? ' · ' + saEsc(sal.join(', ')) : '') + '</div>';
+      h += '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">';
+      h += '<button class="tb-btn" style="padding:4px 10px;font-size:12px" onclick="lxARDetail(' + i + ')">' + (ouvert ? 'Masquer le détail' : 'Voir le détail') + '</button>';
+      if(sig) h += '<button class="tb-btn" style="padding:4px 10px;font-size:12px" onclick="lxARTraiter(' + i + ')">✓ Marquer comme traité</button>';
+      h += '</div>';
+      if(ouvert) h += '<pre style="margin-top:6px;padding:8px;background:var(--bg3);border-radius:6px;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto">' + saEsc(it.exemple || '(pas de détail technique)') + '</pre>';
+      h += '</div>';
+    });
+  }
+  h += '<div style="font-size:11px;color:var(--text3);margin-top:8px">Les messages normaux (refus SMS RGPD, avertissements affichés, coupures réseau, requêtes lentes…) ne sont pas listés ici.</div>';
+  return h + '</div>';
+}
+window.lxARDetail = function(i){
+  var c = window._lxAR, it = c.items && c.items[i]; if(!it) return;
+  var sig = String(it.signature || 'i' + i); c.ouverts[sig] = !c.ouverts[sig]; lxARRendu();
+};
+window.lxARTraiter = async function(i){
+  var c = window._lxAR, it = c.items && c.items[i]; if(!it) return;
+  if(!/^[0-9a-f]{32}$/.test(String(it.signature || ''))) return;
+  if(!confirm('Marquer comme traité ?\n\n« ' + it.titre + ' »\n\nIl disparaîtra de la liste, et reviendra seulement si le problème se reproduit.')) return;
+  try{
+    var r = await _sb.rpc('admin_acquitter', { p_signature: it.signature, p_titre: String(it.titre || '').slice(0, 200) });
+    if(r.error) throw new Error(r.error.message);
+    try{ logAdminAction('A_REPARER_TRAITE', 'monitoring', it.signature, { titre: it.titre, categorie: it.categorie, nombre: it.nombre }); }catch(_){}
+    c.items = c.items.filter(function(x){ return x.signature !== it.signature; });
+    lxARRendu();
+  }catch(e){ alert('❌ Non enregistré : ' + ((e && e.message) || e)); }
+};
+function _lxNfHtml(){
+  var c = window._lxAR, nf = c.nf;
+  var col = function(v){ return v === 'ok' ? '#66bb6a' : (v === 'attention' ? '#ff9800' : '#ef5350'); };
+  var lib = function(v){ return v === 'ok' ? 'Conforme' : (v === 'attention' ? 'À surveiller' : 'Problème'); };
+  var ligne = function(l){
+    return '<div style="display:flex;gap:8px;padding:5px 0;font-size:12px;line-height:1.45"><span style="flex:0 0 auto">' + saEsc(l.icone) + '</span>'
+      + '<span style="word-break:break-word"><b>' + saEsc(l.libelle) + '</b> — ' + saEsc(l.explication) + '</span></div>';
+  };
+  var h = '<div class="card" style="border-left:4px solid ' + (nf ? col(nf.verdict) : 'var(--border)') + '">';
+  h += '<h3 style="margin:0 0 10px">🧾 NF525' + (nf ? ' <span style="font-size:13px;color:' + col(nf.verdict) + '">' + saEsc(nf.icone) + ' ' + lib(nf.verdict) + '</span>' : '') + '</h3>';
+  if(c.errNF){ return h + '<div style="color:var(--red);font-size:13px">❌ État NF525 indisponible : ' + saEsc(c.errNF) + '</div></div>'; }
+  if(!nf){ return h + '<div style="color:var(--text3);font-size:13px">Vérification en cours…</div></div>'; }
+  h += '<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:2px">Contrôles généraux</div>';
+  (nf.global || []).forEach(function(l){ h += ligne(l); });
+  (nf.salons || []).forEach(function(s){
+    var lignes = s.lignes || [], ko = lignes.filter(function(l){ return l.verdict !== 'ok'; }), ok = lignes.filter(function(l){ return l.verdict === 'ok'; });
+    h += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">';
+    h += '<div style="font-weight:700;font-size:13px">' + saEsc(s.icone) + ' ' + saEsc(s.nom) + ' <span style="font-weight:400;font-size:11px;color:var(--text3)">· caisse ' + (s.mode_caisse === 'reel' ? 'réelle' : 'en mode test') + (s.ferme ? ' · fermé' : '') + '</span></div>';
+    ko.forEach(function(l){ h += ligne(l); });
+    if(ok.length) h += '<details style="margin-top:2px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">' + (ko.length ? ok.length + ' autre(s) contrôle(s) conforme(s)' : 'Les ' + ok.length + ' contrôles sont conformes') + '</summary>' + ok.map(ligne).join('') + '</details>';
+    h += '</div>';
+  });
+  h += '<div style="font-size:11px;color:var(--text3);margin-top:8px">Vérifié le ' + _lxARDate(nf.genere_le) + ' (lecture seule : les tests de nuit ne sont pas relancés ici, leur dernier résultat est affiché).</div>';
+  return h + '</div>';
+}
 
 // 2026-10-12 : résumé « en clair » des erreurs des dernières 24 h (lisible sur téléphone).
 // Chaque message technique est traduit : gravité, explication simple, action à faire.
