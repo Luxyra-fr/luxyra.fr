@@ -175,7 +175,7 @@ async function __wrappedApiHandler(request, url, env) {
       // du compte Stripe Connect du salon. Read-only, authentifié par JWT Supabase.
       if (url.pathname === "/api/stripe/fees" && request.method === "POST") return await handleStripeFees(request, env);
       // FIX 2026-05-14 : désabonnement RGPD 1-clic depuis lien email
-      if (url.pathname === "/api/unsubscribe" && request.method === "GET") return await handleUnsubscribe(request, env);
+      if (url.pathname === "/api/unsubscribe" && (request.method === "GET" || request.method === "POST")) return await handleUnsubscribe(request, env); // 2026-10-17 : GET = confirmation, POST = désinscription
       // Endpoints espace client compte.html — bypass RLS via service_role
       // après vérification du session_token JWT (issu de lx-login/lx-signup).
       // Permet de DROP les policies anon USING(true) qui leakaient toutes les
@@ -242,6 +242,9 @@ export default {
       if (url.pathname === "/health" || url.pathname === "/api/health") {
         return await handleHealth(request, env);
       }
+      // 2026-10-17 audit réglages (#4) : lien court de désinscription (SMS « STOP SMS : luxyra.fr/stop/<code> », pied des e-mails)
+      { const _stop = url.pathname.match(/^\/stop\/([0-9a-f]{10})\/?$/);
+        if (_stop && (request.method === "GET" || request.method === "POST")) return await lxPageStop(request, env, _stop[1]); }
       // Route les pages non-/api/ vers handleExistingRoutes
       if (!url.pathname.startsWith("/api/")) {
         try {
@@ -741,7 +744,11 @@ async function handleWebhook(request, env) {
       // Seules les sessions d'abonnement modifient le forfait.
       if (data.mode !== "subscription" || !data.subscription) break;
       if (salonId) {
+        // 2026-10-17 audit réglages (#1) : forfait AVANT l'abonnement (réouverture du site seulement si on passe en Pro)
+        let _ancienPlan = "pro";
+        try { const _av = await supabaseGet(env, salonId); _ancienPlan = (_av && _av.status !== "cancelled") ? (_av.plan || "essential") : "essential"; } catch (_) {}
         await updateSalonPlan(env, salonId, plan, data.subscription, data.customer);
+        if (plan === "pro") { try { await lxSiteApresPassagePro(env, salonId, _ancienPlan); } catch (e) { console.warn("[site après Pro]", e?.message); } }
         // === Programme "100 Fondateurs" : claim atomique du slot ===
         // Appelé uniquement si la session checkout est taguée is_founder=true.
         // claim_founder_slot() est atomique côté DB (SELECT FOR UPDATE + counter)
@@ -961,7 +968,7 @@ async function handleWebhook(request, env) {
         // 2026-10-10 : fin de la garantie Fondateur à la résiliation (CGV art. 5 bis) — la place redevient disponible
         const updates = { plan: "essential", status: "cancelled", past_due_since: null, cancelled_at: new Date().toISOString(), is_founder: false, founder_num: null };
         await supabaseUpdate(env, salonId, updates);
-        await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
+        await lxSiteCouperForfait(env, salonId);  // 2026-10-17 audit réglages (#1) : état mémorisé pour le retour en Pro
       }
       break;
     }
@@ -986,8 +993,11 @@ async function handleWebhook(request, env) {
         // L'utilisateur conserve son accès jusqu'à la fin de la période payée.
         // 2026-10-10 : passage en Essentiel = fin de la garantie Fondateur (CGV art. 5 bis)
         await supabaseUpdate(env, salonId, newPlan === "pro" ? { plan: newPlan } : { plan: newPlan, is_founder: false, founder_num: null });
-        if (newPlan !== "pro") await patchSiteConfig(env, salonId, { site_actif: false, reservation_active: false });
-        else await patchSiteConfig(env, salonId, { site_actif: true, reservation_active: true });
+        // 2026-10-17 audit réglages (#1) : cet évènement arrive aussi à CHAQUE renouvellement mensuel. Avant, il remettait
+        // site_actif / reservation_active à true pour tout salon Pro (un salon fermé pour congés était rouvert).
+        // Désormais : coupure seulement en passant en Essentiel ; réouverture seulement lors d'un vrai passage Essentiel -> Pro.
+        if (newPlan !== "pro") { if (!salon || salon.plan === "pro") await lxSiteCouperForfait(env, salonId); }
+        else await lxSiteApresPassagePro(env, salonId, salon ? salon.plan : "pro");
       }
       break;
     }
@@ -1112,8 +1122,9 @@ async function handleSwitchPlan(request, env) {
     const updated = await stripeAPI(env, `subscriptions/${salon.stripe_subscription_id}`, subParams);
     if (updated?.id) {
       await supabaseUpdate(env, salon_id, plan === "pro" ? { plan: "pro" } : { plan: "essential", is_founder: false, founder_num: null });
-      if (plan !== "pro") await patchSiteConfig(env, salon_id, { site_actif: false, reservation_active: false });
-      else await patchSiteConfig(env, salon_id, { site_actif: true, reservation_active: true });
+      // 2026-10-17 audit réglages (#1) : jamais de réactivation de ce que le pro a coupé (voir lxSiteApresPassagePro)
+      if (plan !== "pro") { if (salon.plan === "pro") await lxSiteCouperForfait(env, salon_id); }
+      else await lxSiteApresPassagePro(env, salon_id, salon.plan);
       return jsonResponse({ success: true, plan });
     }
     return jsonResponse({ error: "Erreur Stripe: " + JSON.stringify(updated) }, 500);
@@ -1476,11 +1487,12 @@ async function handleCcCommande(request, env) {
     const ids = [...new Set(demandes.map((i) => i.id))];
     const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/produits?select=id,nom,prix,promo_actif,promo_prix,promo_debut,promo_fin,stock,actif,for_sale,coup_coeur&salon_id=eq.${encodeURIComponent(b.salon_id)}&id=in.(${ids.join(",")})`, { headers: _sbHeaders(env) });
     const prods = pr.ok ? await pr.json() : [];
-    const enLigne = Array.isArray(sc.cfg.produits_en_ligne) ? sc.cfg.produits_en_ligne.map(Number) : [];
     const items = []; let total = 0;
     for (const d of demandes) {
       const p = (prods || []).find((x) => Number(x.id) === d.id);
-      if (!p || p.actif === false || p.for_sale === false || p.coup_coeur !== true || (enLigne.length && enLigne.indexOf(d.id) < 0)) return jsonResponse({ error: "Un produit n'est plus disponible à la vente" }, 409);
+      // 2026-10-17 audit réglages (#23) : l'ancienne liste site_config.produits_en_ligne (plus modifiable depuis l'app)
+      // ne filtre plus : seul « Disponible en Click & Collect » (coup_coeur) + vente + actif comptent.
+      if (!p || p.actif === false || p.for_sale === false || p.coup_coeur !== true) return jsonResponse({ error: "Un produit n'est plus disponible à la vente" }, 409);
       const qtyTot = demandes.filter((x) => x.id === d.id).reduce((a, x) => a + x.qty, 0);
       if (p.stock != null && Number(p.stock) < qtyTot) return jsonResponse({ error: `« ${p.nom} » : stock insuffisant (${Math.max(0, Number(p.stock) || 0)} disponible)` }, 409);
       const prix = ccPrix(p);
@@ -3233,6 +3245,39 @@ async function patchSiteConfig(env, salonId, fields) {
   });
 }
 
+// 2026-10-17 audit réglages (#1) : site vitrine / réservation en ligne et changement de forfait.
+// Coupure (passage en Essentiel, résiliation) : l'état choisi par le pro est mémorisé dans site_config.coupe_par_forfait
+// (une seule fois : une 2e coupure n'écrase pas la mémoire), puis site et réservation sont coupés.
+async function lxSiteCouperForfait(env, salonId) {
+  let sc = null;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?salon_id=eq.${encodeURIComponent(salonId)}&select=site_actif,reservation_active,coupe_par_forfait&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : []; sc = Array.isArray(a) ? a[0] || null : null;
+  } catch (_) { sc = null; }
+  const champs = { site_actif: false, reservation_active: false };
+  if (sc && !(sc.coupe_par_forfait && typeof sc.coupe_par_forfait === "object") && (sc.site_actif === true || sc.reservation_active === true)) {
+    champs.coupe_par_forfait = { site_actif: sc.site_actif === true, reservation_active: sc.reservation_active === true, le: new Date().toISOString() };
+  }
+  await patchSiteConfig(env, salonId, champs);
+}
+// Passage en Pro : rien si le salon était déjà Pro (renouvellement, prix Fondateur...). Sinon : état d'avant la coupure
+// s'il est connu (et que le pro n'a rien changé depuis), sinon première activation seulement si tout est coupé.
+async function lxSiteApresPassagePro(env, salonId, ancienPlan) {
+  if (ancienPlan === "pro") return;
+  let sc = null;
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/site_config?salon_id=eq.${encodeURIComponent(salonId)}&select=site_actif,reservation_active,coupe_par_forfait&limit=1`, { headers: _sbHeaders(env) });
+    const a = r.ok ? await r.json() : []; sc = Array.isArray(a) ? a[0] || null : null;
+  } catch (_) { sc = null; }
+  if (!sc) return;
+  const m = sc.coupe_par_forfait;
+  if (m && typeof m === "object") {
+    await patchSiteConfig(env, salonId, { site_actif: m.site_actif === true, reservation_active: m.reservation_active === true, coupe_par_forfait: null });
+  } else if (sc.site_actif !== true && sc.reservation_active !== true) {
+    await patchSiteConfig(env, salonId, { site_actif: true, reservation_active: true });
+  }
+}
+
 // Helper: trigger billing email via edge function
 async function callBillingEmail(env, salonId, kind, force = false) {
   const fnUrl = `${CONFIG.SUPABASE_URL}/functions/v1/salon-billing-email`;
@@ -3253,7 +3298,7 @@ function jsonResponse(data, status = 200) {
 // ============================================================
 // BREVO API — EMAIL & SMS
 // ============================================================
-async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subject, htmlContent, textContent, replyTo, attachment }) {
+async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subject, htmlContent, textContent, replyTo, attachment, headers }) {
   const payload = {
     sender: { name: senderName || "Luxyra", email: senderEmail || "contact@luxyra.fr" },
     to: [{ email: to, name: toName || "" }], subject,
@@ -3262,6 +3307,7 @@ async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subjec
   };
   if (replyTo) payload.replyTo = { email: replyTo };
   if (attachment) payload.attachment = attachment;
+  if (headers && typeof headers === "object") payload.headers = headers;  // 2026-10-17 audit réglages (#4) : List-Unsubscribe
   return await (await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST", headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(payload),
@@ -3415,7 +3461,24 @@ async function handleBrevoSmsEvent(request, env) {
 // Réservation impossible (base injoignable) : l'e-mail part quand même (jamais zéro), sans clé.
 // ============================================================
 const LX_EMAIL_FENETRE_MS = 10 * 60 * 1000;
-const LX_EMAIL_CONTEXTES = new Set(["luxyra_auto", "rappel_24h", "anniversaire", "relance", "carte_rappel_30j", "carte_rappel_7j", "ticket"]);
+const LX_EMAIL_CONTEXTES = new Set(["luxyra_auto", "rappel_24h", "anniversaire", "relance", "carte_rappel_30j", "carte_rappel_7j", "ticket", "marketing"]); // 2026-10-17 : + marketing (campagnes)
+// 2026-10-17 audit réglages (#4) : e-mails de prospection -> lien de désinscription obligatoire (fiche du salon)
+const LX_EMAIL_CONTEXTES_MARKETING = new Set(["marketing", "anniversaire", "relance"]);
+async function lxLienDesinscription(env, salonId, email, canal) {
+  try {
+    if (!salonId || !email) return "";
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_lien_desinscription`, { method: "POST", headers: _sbHeaders(env),
+      body: JSON.stringify({ p_salon: salonId, p_email: String(email).trim(), p_canal: canal || "email" }) });
+    if (!r.ok) return "";
+    const code = await r.json();
+    return (typeof code === "string" && /^[0-9a-f]{10}$/.test(code)) ? `https://luxyra.fr/stop/${code}` : "";
+  } catch (_) { return ""; }
+}
+function lxAjouterPiedDesinscription(html, lien) {
+  const pied = `<div style="text-align:center;font-size:11px;color:#999;padding:14px 10px;font-family:Arial,sans-serif">Vous ne souhaitez plus recevoir ces e-mails ? <a href="${lien}" style="color:#999;text-decoration:underline">Se désinscrire</a></div>`;
+  const h = String(html || "");
+  return /<\/body>/i.test(h) ? h.replace(/<\/body>/i, pied + "</body>") : h + pied;
+}
 async function lxSha256Hex(t) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(t)));
   return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -3572,9 +3635,24 @@ async function handleEmailCustom(request, env) {
     if (_salonRes) _res = await lxEmailReserver(env, { salonId: _salonRes, to, toName, subject, html: htmlContent || textContent || "", context: _corps.context, dedupKey: _corps.dedupKey });
     if (_res.doublon) return jsonResponse({ success: true, deduplique: true, journalise: true });
   }
+  // 2026-10-17 audit réglages (#4) : campagnes / anniversaires / relances -> lien « Se désinscrire » + en-tête List-Unsubscribe.
+  // Lien fourni par le serveur (appel interne, déjà présent dans le HTML) ou calculé ici pour la fiche du salon de l'appelant.
+  let _html = htmlContent || "", _texte = textContent || "", _entetes = null;
+  if (LX_EMAIL_CONTEXTES_MARKETING.has(String(_corps.context || ""))) {
+    let _lien = (_acces.internal && typeof _corps.unsubscribeUrl === "string" && /^https:\/\/luxyra\.fr\/stop\/[0-9a-f]{10}$/.test(_corps.unsubscribeUrl)) ? _corps.unsubscribeUrl : "";
+    if (!_lien) {
+      const _sl = _acces.internal ? (/^[0-9a-f-]{36}$/i.test(String(_corps.salon_id || "")) ? String(_corps.salon_id) : null) : await lxEmailSalonAppelant(env, _acces, _corps.salon_id);
+      if (_sl) _lien = await lxLienDesinscription(env, _sl, to, "email");
+    }
+    if (_lien) {
+      if (!/luxyra\.fr\/stop\/[0-9a-f]{10}|\/api\/unsubscribe\?/.test(_html)) _html = lxAjouterPiedDesinscription(_html, _lien);
+      if (_texte && _texte.indexOf(_lien) < 0) _texte += "\n\nSe désinscrire : " + _lien;
+      _entetes = { "List-Unsubscribe": `<${_lien}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" };
+    }
+  }
   let result;
   try {
-    result = await brevoSendEmail(env, { to, toName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: salonEmail, subject, htmlContent: htmlContent || "", textContent: textContent || "", attachment: null });
+    result = await brevoSendEmail(env, { to, toName, senderName: salonName || "Luxyra", senderEmail: "contact@luxyra.fr", replyTo: salonEmail, subject, htmlContent: _html, textContent: _texte, attachment: null, headers: _entetes });
   } catch (e) { await lxEmailLiberer(env, _res.cle); throw e; }
   if (result.code || result.message) { await lxEmailLiberer(env, _res.cle); return jsonResponse({ success: false, error: result.message || result.code, result }); }
   return jsonResponse({ success: true, messageId: result.messageId, journalise: !!_res.journalise, result });
@@ -7175,6 +7253,9 @@ async function handleUnsubscribe(request, env) {
 
   const [clientId, channel, ts] = payload.split("|");
   if (!clientId || !channel) return htmlResponse(unsubscribePage("error", "Données manquantes."), 400);
+  // 2026-10-17 audit réglages (#4) : un simple affichage (GET : antivirus / aperçu des messageries qui ouvrent les liens)
+  // ne désinscrit plus personne : page de confirmation, la désinscription se fait au clic (POST, ou « un clic » RFC 8058).
+  if (request.method === "GET") return htmlResponse(lxPageConfirmerDesinscription(url.pathname + url.search, channel === "sms" ? "des SMS" : channel === "all" ? "de toutes les communications" : "des e-mails", ""));
 
   // Update DB : passer sms_ok/email_ok à false selon le canal
   const sbKey = env.SUPABASE_SERVICE_KEY;
@@ -7225,6 +7306,44 @@ async function handleUnsubscribe(request, env) {
   } catch (e) { console.warn("[unsubscribe] audit log fail:", e?.message); }
 
   return htmlResponse(unsubscribePage("ok", channel === "email" ? "Vous êtes désabonné des emails." : channel === "sms" ? "Vous êtes désabonné des SMS." : "Vous êtes désabonné de toutes les communications."));
+}
+
+// 2026-10-17 audit réglages (#4) : page de confirmation (formulaire POST) — rien n'est modifié à l'affichage
+function lxPageConfirmerDesinscription(action, quoi, salon) {
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Désinscription — Luxyra</title>
+<style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#0a0a0a;color:#f5f0e8;margin:0;padding:40px 20px;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#fff;color:#1a1a1a;max-width:480px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.3)}
+.head{background:#0a0a0a;color:#c8a84e;padding:20px;text-align:center;letter-spacing:3px;font-weight:800;font-family:Georgia,serif;font-size:22px}
+.body{padding:32px 28px;text-align:center}.msg{color:#444;font-size:15px;line-height:1.6;margin-bottom:22px}
+button{background:#c8a84e;color:#111;border:0;border-radius:30px;padding:13px 26px;font-weight:700;font-size:15px;cursor:pointer}
+.note{font-size:12px;color:#888;padding-top:18px;border-top:1px solid #eee;line-height:1.6;margin-top:22px}.note a{color:#c8a84e;text-decoration:none}</style></head><body>
+<div class="card"><div class="head">LUXYRA</div><div class="body">
+<div class="msg">Ne plus recevoir ${escapeHtml(quoi)}${salon ? " de <b>" + escapeHtml(salon) + "</b>" : ""} ?</div>
+<form method="POST" action="${escapeHtml(action)}"><input type="hidden" name="confirmer" value="1"><button type="submit">Confirmer la désinscription</button></form>
+<div class="note">Les messages liés à vos rendez-vous (confirmations, rappels) peuvent continuer d'être envoyés.<br>Vous pourrez changer d'avis à tout moment auprès de l'établissement ou dans votre espace client <a href="https://luxyra.fr/compte">luxyra.fr/compte</a>.</div>
+</div></div></body></html>`;
+}
+// GET /stop/<code> : confirmation ; POST /stop/<code> : désinscription (formulaire, ou « un clic » des messageries)
+async function lxPageStop(request, env, code) {
+  try {
+    if (request.method === "GET") {
+      const ri = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_desinscription_info`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_code: code }) });
+      const info = ri.ok ? await ri.json() : null;
+      if (!info || info.ok !== true) return htmlResponse(unsubscribePage("error", "Lien invalide ou expiré."), 404);
+      if (info.deja === true) return htmlResponse(unsubscribePage("ok", "Votre désinscription est déjà enregistrée."));
+      return htmlResponse(lxPageConfirmerDesinscription(`/stop/${code}`, info.canal === "sms" ? "les SMS d'information et d'offres" : info.canal === "all" ? "aucune communication" : "les e-mails d'information et d'offres", info.salon || ""));
+    }
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    if (!checkRateLimit("stop:" + ip, 20)) return htmlResponse(unsubscribePage("error", "Trop de demandes. Réessayez dans une minute."), 429);
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_desinscrire_code`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_code: code }) });
+    const res = r.ok ? await r.json() : null;
+    if (!res || res.ok !== true) return htmlResponse(unsubscribePage("error", (res && res.erreur) || "Lien invalide ou expiré."), 404);
+    const quoi = res.canal === "sms" ? "des SMS" : res.canal === "all" ? "de toutes les communications" : "des e-mails";
+    return htmlResponse(unsubscribePage("ok", `Vous êtes désabonné ${quoi}${res.salon ? " de " + res.salon : ""}.`));
+  } catch (e) {
+    console.error("[stop]", e?.message || e);
+    return htmlResponse(unsubscribePage("error", "Erreur serveur. Réessayez ou écrivez à support@luxyra.fr"), 500);
+  }
 }
 
 function unsubscribePage(status, message) {

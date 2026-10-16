@@ -1043,7 +1043,10 @@ async function loadSalon(){
     // -> écran « Chargement… » de plusieurs secondes sur téléphone). Ordre d'utilisation inchangé.
     var _P={
       sc: sb.from("site_config").select("*").eq("salon_id",salonId).limit(1),
-      tc: sb.from("collaborateurs").select("*").eq("salon_id",salonId).eq("actif",true),
+      // 2026-10-17 audit réglages (#15) : colonnes explicites, SANS la photo ; la photo est lue à part et
+      // seulement pour les collaborateurs dont « Photo publique sur le site » est cochée (photo_visible non false).
+      tc: sb.from("collaborateurs").select("id,nom,initiales,couleur,horaires,horaires_overrides,pause,competences,inactif,date_depart,actif,photo_visible").eq("salon_id",salonId).eq("actif",true),
+      tcImg: sb.from("collaborateurs").select("id,img").eq("salon_id",salonId).eq("actif",true).or("photo_visible.is.null,photo_visible.eq.true"),
       sv: sb.from("services").select("*").eq("salon_id",salonId).eq("actif",true).eq("show_site",true).order("ordre",{ascending:true,nullsFirst:false}).order("nom",{ascending:true}),
       pr: sb.from("produits").select("*").eq("salon_id",salonId).order("nom"),
       avis: sb.from("avis_salon").select("id, nom, note, texte, date, created_at, salon_reply, salon_reply_at, note_accueil, note_proprete, note_cadre, note_qualite, photos").eq("salon_id",salonId).eq("approved",true).eq("reported",false).eq("hidden_by_luxyra",false).order("created_at",{ascending:false}).limit(20)
@@ -1102,7 +1105,8 @@ async function loadSalon(){
         empreinteCaptureDelaiH:Number(d.empreinte_capture_delai_h)||24,
         autoConfirm:d.confirmation_auto,svcOnline:d.services_en_ligne||[],prodOnline:d.produits_en_ligne||[],
         msgAccueil:d.message_accueil||"",msgConfirm:d.message_confirmation||"",
-        couleur:d.couleur_primaire||"#c8a84e",couleur2:d.couleur_secondaire||"#0a0a0a",
+        // 2026-10-17 audit réglages (#9) : valeurs brutes (vides si non choisies) ; le thème choisi fait foi (voir « Apply theme colors »)
+        couleur:d.couleur_primaire||"",couleur2:d.couleur_secondaire||"",
         theme:d.style_theme||"dark_gold",
         photoHero:d.photo_hero||"",photoSalon:d.photo_salon||"",photosSalon:d.photos_salon||[],descSalon:d.description_salon||"",slogan:d.slogan||"",
         fidActive:d.fidelite_active!==false,fidSeuil:d.fidelite_seuil||10,
@@ -1199,9 +1203,21 @@ async function loadSalon(){
       "light_green":{gold:"#2e7d32",goldL:"#1b5e20",bg:"#f1f8e9",bg2:"#e8f5e9",bg3:"#fff",text:"#1a1a2e",text2:"rgba(26,26,46,.6)",text3:"rgba(26,26,46,.4)",green:"#2e7d32",red:"#b83030"}
     };
     var t=themeMap[th]||themeMap["dark_gold"];
-    // Override with custom colors if set
-    if(SITE_CFG.couleur&&SITE_CFG.couleur!==t.gold)t.gold=SITE_CFG.couleur;
-    if(SITE_CFG.couleur2&&SITE_CFG.couleur2!==t.bg)t.bg=SITE_CFG.couleur2;
+    // 2026-10-17 audit réglages (#9) : le THÈME choisi dans l'app (Site en ligne › Personnalisation visuelle) fait foi.
+    // Les couleurs « principale » / « de fond » ne le modifient que si le pro en a vraiment choisi une :
+    // - couleur hexadécimale valide seulement (l'app enregistrait « var(--gold) » par défaut) ;
+    // - les anciennes valeurs par défaut (#c8a84e et #0a0a0a) ne comptent pas comme un choix
+    //   (avant : un thème rosé / bleu / vert gardait l'accent or, et un thème clair recevait un fond noir illisible) ;
+    // - le fond personnalisé n'est appliqué que s'il reste lisible avec le texte du thème
+    //   (fond clair pour un thème clair, fond sombre pour un thème sombre).
+    (function(){
+      var _hex=/^#[0-9a-f]{6}$/i;
+      var _lum=function(x){ var n=parseInt(x.slice(1),16); return (0.299*((n>>16)&255)+0.587*((n>>8)&255)+0.114*(n&255))/255; };
+      var _clair=/^light_/.test(th);
+      var c1=String(SITE_CFG.couleur||""), c2=String(SITE_CFG.couleur2||"");
+      if(_hex.test(c1) && c1.toLowerCase()!=="#c8a84e") t.gold=c1;
+      if(_hex.test(c2) && c2.toLowerCase()!=="#0a0a0a" && (_clair ? _lum(c2)>=0.6 : _lum(c2)<=0.35)) t.bg=c2;
+    })();
     root.style.setProperty('--gold',t.gold);
     root.style.setProperty('--gold-l',t.goldL);
     root.style.setProperty('--bg',t.bg);
@@ -1247,7 +1263,9 @@ async function loadSalon(){
     var tc=await _P.tc;
     // Filtre supplémentaire côté client : exclure les collabs marqués "inactif"
     // (congés, arrêt, départ). Champ ajouté en mai 2026.
-    if(tc.data)COLLABS=tc.data.filter(function(c){ /* 2026-10-07 : aussi date de depart passee */ var _aj=new Date().toISOString().slice(0,10); return c.inactif!==true && !(c.date_depart && String(c.date_depart).slice(0,10)<=_aj);}).map(function(c){return{id:c.id,dep:(c.date_depart?String(c.date_depart).slice(0,10):null),n:c.nom,i:c.initiales,c:c.couleur,img:c.img||"",hrs:c.horaires||{},pause:c.pause||null,hrsOver:c.horaires_overrides||{},actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
+    // 2026-10-17 audit réglages (#15) : photos publiques seulement (lecture séparée), jamais celle d'un collaborateur masqué
+    var _tcImg={}; try{ var _ti=await _P.tcImg; (_ti&&_ti.data||[]).forEach(function(x){ if(x&&x.img) _tcImg[x.id]=x.img; }); }catch(_eTi){}
+    if(tc.data)COLLABS=tc.data.filter(function(c){ /* 2026-10-07 : aussi date de depart passee */ var _aj=new Date().toISOString().slice(0,10); return c.inactif!==true && !(c.date_depart && String(c.date_depart).slice(0,10)<=_aj);}).map(function(c){return{id:c.id,dep:(c.date_depart?String(c.date_depart).slice(0,10):null),n:c.nom,i:c.initiales,c:c.couleur,img:(c.photo_visible!==false?(_tcImg[c.id]||""):""),hrs:c.horaires||{},pause:c.pause||null,hrsOver:c.horaires_overrides||{},actif:c.actif!==false,photoVisible:c.photo_visible!==false,competences:c.competences||{all:true}};});
     
     // 4. Services — on charge tous ceux actifs ET visibles site, peu importe book_online.
     // Les non-réservables (book_online=false) s'affichent avec un bouton "Demander ce RDV"
@@ -1262,6 +1280,9 @@ async function loadSalon(){
         devis:s.prix_sur_devis===true,  // 2026-10-13 : prix sur devis -> « Sur devis », réservation par demande
         apartir:(s.prix_a_partir_de===true && s.prix_sur_devis!==true)  // 2026-10-15 : prix = minimum (« à partir de »), réservable
       };});
+      // 2026-10-17 audit réglages (#6) : prestation qu'aucun collaborateur actif n'est habilité à réaliser (Compétences)
+      // -> non réservable en ligne, affichée « Sur demande » (avant : toute l'équipe était proposée).
+      SERVICES.forEach(function(s){ if(s.bookOnline && _lxSvcSansHabilite(s.id)){ s.bookOnline=false; s.sansHabilite=true; } });
     }
     
     // 5. Products
@@ -1300,8 +1321,10 @@ async function loadSalon(){
     }catch(e){console.log("Availability load error:",e);}
     
     // Horaires from site_config, salon config, or first collab
-    if(SITE_CFG.horaires_salon)HORAIRES=SITE_CFG.horaires_salon;
-    else if(SALON.config&&SALON.config.horaires)HORAIRES=SALON.config.horaires;
+    // 2026-10-17 audit réglages (#5) : _lxHorairesSalonSource = vrais horaires de l'établissement (pas ceux d'un collaborateur)
+    window._lxHorairesSalonSource=false;
+    if(SITE_CFG.horaires_salon){HORAIRES=SITE_CFG.horaires_salon;window._lxHorairesSalonSource=true;}
+    else if(SALON.config&&SALON.config.horaires){HORAIRES=SALON.config.horaires;window._lxHorairesSalonSource=true;}
     else if(COLLABS.length>0&&COLLABS[0].hrs)HORAIRES=COLLABS[0].hrs;
     // 2026-10-07 : sans horaires configures, le salon est affiche FERME (avant : horaires d'Excellence
     // Coiffure, donc des creneaux reservables qui n'existaient pas).
@@ -1600,7 +1623,7 @@ function renderSite(){
     try{ params.delete("payment"); params.delete("session_id"); params.delete("rdv"); }catch(_eP){} // pas de retour en boucle sur cet écran
     var _payRef=_sidPay||_rdvId;
     var _payOk=function(){
-      el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement accept\u00e9 !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre acompte a \u00e9t\u00e9 encaiss\u00e9 et votre rendez-vous est '+(SITE_CFG.autoConfirm?'confirm\u00e9':'en attente de confirmation')+'.</p><p style="font-size:13px;color:var(--text3);margin-bottom:24px">Un email de confirmation vous sera envoy\u00e9.</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
+      el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\u2705</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement accept\u00e9 !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Votre acompte a \u00e9t\u00e9 encaiss\u00e9 et votre rendez-vous est '+(SITE_CFG.autoConfirm?'confirm\u00e9':'en attente de confirmation')+'.</p>'+lxMsgConfirmHtml()/* 2026-10-17 audit réglages (#26) */+'<p style="font-size:13px;color:var(--text3);margin-bottom:24px">Un email de confirmation vous sera envoy\u00e9.</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
     };
     var _payVerif=function(msgServeur){
       el.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:56px;margin-bottom:16px">\u23f3</div><h2 style="color:var(--gold);margin-bottom:8px">Paiement en cours de v\u00e9rification</h2><p style="color:var(--text2);margin-bottom:12px;line-height:1.6">Nous n\u2019avons pas encore pu confirmer votre paiement. Si vous avez \u00e9t\u00e9 d\u00e9bit\u00e9, ne refaites pas la r\u00e9servation : contactez l\u2019\u00e9tablissement en donnant cette r\u00e9f\u00e9rence.</p>'+(msgServeur?'<p style="font-size:13px;color:var(--text3);margin-bottom:8px">'+escapeHtmlSimple(msgServeur)+'</p>':'')+'<p style="font-size:12px;color:var(--text3);margin-bottom:24px;word-break:break-all">R\u00e9f\u00e9rence : '+escapeHtmlSimple(_payRef)+'</p><button class="btn btn-gold" onclick="returnToSalon()">Retour au salon</button></div></div>';
@@ -1661,7 +1684,7 @@ function renderSite(){
     }).then(function(r){return r.json();}).then(function(d){
       // 2026-10-14 : non-ok -> « en cours de vérification » + référence échappée (avant : « Erreur » + texte brut)
       if(d&&d.ok){
-        elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\ud83d\udd12</div><h2 style="color:var(--gold);margin-bottom:8px">Empreinte enregistrée !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Aucun débit effectué. Votre carte est pré-autorisée — la somme sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée en cas d\u0027absence non excusée</strong>.</p><button class="btn btn-gold" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
+        elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:64px;margin-bottom:16px">\ud83d\udd12</div><h2 style="color:var(--gold);margin-bottom:8px">Empreinte enregistrée !</h2><p style="color:var(--text2);margin-bottom:20px;line-height:1.6">Aucun débit effectué. Votre carte est pré-autorisée — la somme sera <strong>libérée automatiquement</strong> après votre rendez-vous, ou <strong>encaissée en cas d\u0027absence non excusée</strong>.</p>'+lxMsgConfirmHtml()/* 2026-10-17 audit réglages (#26) */+'<button class="btn btn-gold" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
       } else {
         elE.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px"><div style="text-align:center;max-width:440px"><div style="font-size:48px">\u23f3</div><h2 style="color:var(--gold);margin-bottom:8px">Empreinte en cours de v\u00e9rification</h2><p style="color:var(--text2);line-height:1.6">Nous n\u2019avons pas encore pu confirmer la pr\u00e9-autorisation de votre carte. Ne refaites pas la r\u00e9servation : contactez l\u2019\u00e9tablissement en donnant cette r\u00e9f\u00e9rence.</p>'+(d&&d.error?'<p style="font-size:13px;color:var(--text3)">'+escapeHtmlSimple(d.error)+'</p>':'')+'<p style="font-size:12px;color:var(--text3);word-break:break-all">R\u00e9f\u00e9rence : '+escapeHtmlSimple(_sid)+'</p><button class="btn btn-gold" style="margin-top:14px" onclick="window.history.replaceState({},\u0027\u0027,buildSalonUrl());renderSite()">Retour au salon</button></div></div>';
       }
@@ -1721,7 +1744,7 @@ function renderSite(){
     if(SITE_CFG.resa)h+='<a href="#" onclick="showPage(\'booking\')" style="background:var(--gold);color:#0a0a0a;font-weight:800">R\u00e9server</a>';
   }else{
     h+='<a href="#" onclick="showAuthModal(\'login\')">\ud83d\udd12 Connexion</a>';
-    if(SITE_CFG.resa)h+='<a href="#" onclick="showAuthModal(\'register\')" style="background:var(--gold);color:#0a0a0a;font-weight:800">S\'inscrire</a>';
+    if(SITE_CFG.resa && !SITE_CFG.bloquerNouveauxComptes)h+='<a href="#" onclick="showAuthModal(\'register\')" style="background:var(--gold);color:#0a0a0a;font-weight:800">S\'inscrire</a>'; // 2026-10-17 audit réglages (#25) : pas d'inscription proposée si le salon bloque les nouveaux comptes
   }
   h+='</div></div>';
   
@@ -1731,9 +1754,10 @@ function renderSite(){
   // Hero \u2014 version "banner photo" si photoHero, sinon version minimaliste
   var noteMoy = Number(SALON.note_moyenne||0);
   var nbAvis  = Number(SALON.nb_avis||0);
-  var _hasHero = SITE_CFG.photoHero && SITE_CFG.photoHero.length > 8;
+  var _heroUrl = lxUrlImageSure(SITE_CFG.photoHero); /* 2026-10-17 audit réglages (#65) : échappé */
+  var _hasHero = _heroUrl && _heroUrl.length > 8;
   if(_hasHero){
-    h+='<div class="salon-hero-banner" style="background-image:url(\''+SITE_CFG.photoHero.replace(/'/g,"\\'")+'\')">';
+    h+='<div class="salon-hero-banner" style="background-image:url(&quot;'+escapeAttrSimple(_heroUrl.replace(/["\\]/g,function(c){return '\\'+c;}))+'&quot;)">'; /* 2026-10-17 audit réglages (#65) : échappé */
     h+='<div class="salon-hero-content">';
   } else {
     h+='<div class="salon-hero">';
@@ -1743,14 +1767,14 @@ function renderSite(){
   // 2026-10-13 : salon favori (compte client)
   h+='<button type="button" id="lxFavBtn" onclick="lxFavToggle()" style="margin:0 auto 10px;display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:30px;border:1px solid rgba(212,168,67,.45);background:rgba(0,0,0,.35);color:#fff;font-size:13px;font-weight:600;cursor:pointer">'+(window._lxFavOn?'\u2764\ufe0f Dans mes favoris':'\u2661 Ajouter aux favoris')+'</button>';
   if(SALON.sousTitre)h+='<div class="salon-hero-sub">'+escapeHtmlSimple(SALON.sousTitre)+'</div>';
-  if(SITE_CFG.slogan)h+='<div class="salon-hero-slogan">"'+SITE_CFG.slogan+'"</div>';
+  if(SITE_CFG.slogan)h+='<div class="salon-hero-slogan">"'+escapeHtmlSimple(SITE_CFG.slogan)+'"</div>'; /* 2026-10-17 audit réglages (#65) : échappé */
   h+='<div class="salon-hero-info"><span>\ud83d\udccd '+escapeHtmlSimple(adr)+'</span>';
   if(noteMoy>0&&nbAvis>0){
     var stars='';for(var ssi=1;ssi<=5;ssi++)stars+=(ssi<=Math.round(noteMoy)?'\u2605':'\u2606');
     h+='<span class="salon-hero-stars" title="Voir les '+nbAvis+' avis" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(200,168,78,.3);text-underline-offset:3px" onclick="document.getElementById(\'avis-section\').scrollIntoView({behavior:\'smooth\',block:\'start\'})"><span style="color:var(--gold)">'+stars+'</span> '+noteMoy.toFixed(1)+' <span style="color:var(--text3);font-size:12px">('+nbAvis+' avis)</span></span>';
   }
   h+='</div>';
-  if(SITE_CFG.msgAccueil)h+='<p class="salon-hero-msg">'+SITE_CFG.msgAccueil+'</p>';
+  if(SITE_CFG.msgAccueil)h+='<p class="salon-hero-msg">'+lxTexteProHtml(SITE_CFG.msgAccueil)+'</p>'; /* 2026-10-17 audit réglages (#65) : échappé */
   // ⚡ Prochain RDV disponible (style Planity) — affiché si réservation active
   if(SITE_CFG.resa){
     var nextSlotPreview=null;
@@ -1814,8 +1838,8 @@ function renderSite(){
     COLLABS.forEach(function(c){
       h+='<div class="equipe-card">';
       // Affiche la photo seulement si elle existe ET que le collab autorise sa diffusion publique
-      if(c.img && c.photoVisible!==false)h+='<img class="equipe-photo" src="'+c.img+'" alt="'+escapeHtmlSimple(c.n)+'">';
-      else h+='<div class="equipe-avatar" style="background:'+(c.c||'var(--gold)')+'">'+c.i+'</div>';
+      if(c.img && c.photoVisible!==false && lxUrlImageSure(c.img))h+='<img class="equipe-photo" src="'+escapeAttrSimple(lxUrlImageSure(c.img))+'" alt="'+escapeHtmlSimple(c.n)+'">';
+      else h+='<div class="equipe-avatar" style="background:'+escapeAttrSimple(c.c||'var(--gold)')+'">'+escapeHtmlSimple(c.i)+'</div>'; /* 2026-10-17 audit réglages (#65) : échappé */
       h+='<div class="equipe-name">'+escapeHtmlSimple(c.n)+'</div>';
       h+='</div>';
     });
@@ -1828,7 +1852,7 @@ function renderSite(){
     h+='<div class="salon-block"><div class="salon-block-title">Le salon en images</div>';
     h+='<div class="photos-grid'+(photos.length===1?' photos-1':photos.length===2?' photos-2':'')+'">';
     photos.forEach(function(p,idx){
-      h+='<div class="photos-item" onclick="openLightbox('+idx+')"><img src="'+p+'" loading="lazy" alt="Photo du salon"></div>';
+      h+='<div class="photos-item" onclick="openLightbox('+idx+')"><img src="'+escapeAttrSimple(lxUrlImageSure(p))+'" loading="lazy" alt="Photo du salon"></div>'; /* 2026-10-17 audit réglages (#65) : échappé */
     });
     h+='</div></div>';
   }
@@ -1947,7 +1971,7 @@ function renderSite(){
          +'<span style="display:block;font-size:11px;color:#4dd0e1;font-weight:600">'+_libelle+' '+_quand+' \u00b7 habituellement '+_habit+'</span>'
          +_motifLine(_ouv.motif,'#4dd0e1');
     } else {
-      _hT=hr?hr.o+' \u2014 '+hr.c:'Ferm\u00e9';
+      _hT=hr?escapeHtmlSimple(hr.o)+' \u2014 '+escapeHtmlSimple(hr.c):'Ferm\u00e9'; /* 2026-10-17 audit réglages (#65) : échappé */
     }
     h+='<div class="pratique-jour'+(_isT?' aujourdhui':'')+'"><span>'+jours[d]+(_isT?' \u00b7 aujourd\u0027hui':'')+'</span><span style="text-align:right">'+_hT+'</span></div>';
   }
@@ -2059,7 +2083,7 @@ function renderSite(){
   var allItems=[];
   var svcKeys=new Set();
   SERVICES.forEach(function(s){
-    var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
+    var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=(Number(p&&p.d)||0);}); /* 2026-10-17 audit réglages (#33) : durée réelle = somme numérique des étapes */
     s._dur=dur||30;
     allItems.push(s);
     // Cl\u00e9 pour d\u00e9dupliquer (cat\u00e9gorie + nom normalis\u00e9)
@@ -2161,7 +2185,8 @@ function renderSite(){
       if(p.actif===false||p.forSale===false) return false;
       // 2026-10-16 : seuls les produits cochés « Disponible en Click & Collect » dans l'application
       if(p.cc!==true) return false;
-      if(SITE_CFG.prodOnline&&SITE_CFG.prodOnline.length>0)return SITE_CFG.prodOnline.indexOf(p.id)>=0;
+      // 2026-10-17 audit réglages (#23) : l'ancienne liste site_config.produits_en_ligne (plus modifiable dans l'app)
+      // ne filtre plus la boutique : la case « Disponible en Click & Collect » est la seule règle.
       return true;
     });
     if(!shopProds.length){
@@ -2187,7 +2212,7 @@ function renderSite(){
         prodCats[cat].forEach(function(p){
           var _isPromo=p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=new Date().toISOString().slice(0,10))&&(!p.promoFin||p.promoFin>=new Date().toISOString().slice(0,10));
           h+='<div class="prod-card" style="position:relative" data-promo="'+(_isPromo?1:0)+'" data-q="'+escapeAttrSimple(((p.n||'')+' '+(p.cat||'')+' '+(p.description||'')+' '+(p.contenance||'')).toLowerCase())+'">';
-          if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 -'+Math.round((1-p.promoPrix/p.p)*100)+'%</div>';
+          if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 '+(p.promoLabel?escapeHtmlSimple(String(p.promoLabel).slice(0,40))+' \u00b7 ':'')+'-'+Math.round((1-p.promoPrix/p.p)*100)+'%</div>'; // 2026-10-17 audit r\u00e9glages (#51) : libell\u00e9 promo affich\u00e9
           if(p.img)h+='<div class="prod-img"><img src="'+escapeAttrSimple(p.img)+'" loading="lazy"></div>';
           else h+='<div class="prod-img">\ud83e\uddf4</div>';
           h+='<div class="prod-body">';
@@ -2307,7 +2332,7 @@ function renderSite(){
     socials.forEach(function(s){
       // Remplace width/height des SVG pour les rendre plus grands
       var bigSvg = s.svg.replace(/width="40" height="40"/, 'width="58" height="58"');
-      h+='<a href="'+s.url+'" target="_blank" rel="noopener noreferrer" title="Suivez-nous sur '+s.label+'" style="opacity:.95;transition:all .25s;display:inline-flex;line-height:0;box-shadow:0 6px 20px rgba(0,0,0,.35);border-radius:50%" onmouseover="this.style.opacity=1;this.style.transform=\'scale(1.15) translateY(-2px)\';this.style.boxShadow=\'0 12px 28px rgba(0,0,0,.5)\'" onmouseout="this.style.opacity=.95;this.style.transform=\'\';this.style.boxShadow=\'0 6px 20px rgba(0,0,0,.35)\'">'+bigSvg+'</a>';
+      h+='<a href="'+escapeAttrSimple(/^https?:\/\//i.test(String(s.url||'').trim())?String(s.url).trim():'#')/* 2026-10-17 audit réglages (#65) : lien http(s) seulement */+'" target="_blank" rel="noopener noreferrer" title="Suivez-nous sur '+s.label+'" style="opacity:.95;transition:all .25s;display:inline-flex;line-height:0;box-shadow:0 6px 20px rgba(0,0,0,.35);border-radius:50%" onmouseover="this.style.opacity=1;this.style.transform=\'scale(1.15) translateY(-2px)\';this.style.boxShadow=\'0 12px 28px rgba(0,0,0,.5)\'" onmouseout="this.style.opacity=.95;this.style.transform=\'\';this.style.boxShadow=\'0 6px 20px rgba(0,0,0,.35)\'">'+bigSvg+'</a>';
     });
     h+='</div></div>';
   }
@@ -2372,6 +2397,13 @@ function lxVoirPlus(btn,cat){
 
 function escapeHtmlSimple(s){return String(s||'').replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function escapeAttrSimple(s){return String(s||'').replace(/["'<>&]/g,function(c){return {'"':'&quot;',"'":'&#39;','<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}
+// 2026-10-17 audit réglages (#65) : texte libre du pro (message d'accueil, message après réservation, description d'acompte)
+// affiché en HTML -> échappé, retours à la ligne conservés.
+function lxTexteProHtml(s){ return escapeHtmlSimple(s).replace(/\r?\n/g,'<br>'); }
+// 2026-10-17 audit réglages (#26) : « Message après réservation » affiché aussi après un acompte payé ou une empreinte
+function lxMsgConfirmHtml(style){ return SITE_CFG&&SITE_CFG.msgConfirm ? '<p style="'+(style||'color:var(--text2);margin-bottom:16px;line-height:1.6')+'">'+lxTexteProHtml(SITE_CFG.msgConfirm)+'</p>' : ''; }
+// 2026-10-17 audit réglages (#65) : URL d'image du pro dans src="" ou url('') : seulement http(s):, data:image/ ou chemin du site
+function lxUrlImageSure(u){ u=String(u||'').trim(); return (/^(https?:\/\/|data:image\/|\/(?!\/))/i.test(u))?u:''; }
 
 function goToBooking(){
   window._afterLoginPreSvc=null; // 2026-10-14 : « Réserver » général : pas de reprise d'une prestation cliquée avant
@@ -2496,7 +2528,7 @@ function renderBookingStep1(){
   booking.collabId=null;booking.collab=null;booking.date=null;booking.time=null;
   var cats={};
   SERVICES.forEach(function(s){
-    var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=p.d;});
+    var dur=0;if(s.phases)s.phases.forEach(function(p){dur+=(Number(p&&p.d)||0);}); /* 2026-10-17 audit réglages (#33) : durée réelle = somme numérique des étapes */
     s._dur=dur||30;
     if(!cats[s.cat])cats[s.cat]=[];
     cats[s.cat].push(s);
@@ -2777,6 +2809,9 @@ function toggleService(svcId){
   var svc=null;for(var i=0;i<SERVICES.length;i++){if(SERVICES[i].id===svcId){svc=SERVICES[i];break;}}
   if(!svc)return;
   if(!booking.items)booking.items=[];
+  // 2026-10-17 audit réglages (#6) : une prestation « sur demande » (non réservable en ligne, ou personne d'habilité)
+  // ne peut pas être sélectionnée par un lien direct (?book=…) : retour à la liste où le bouton « Demander » est proposé.
+  if(svc.bookOnline===false){ booking.items=[]; booking.svcId=null; booking.svc=null; renderBookingStep1(); return; }
   // MONO-SÉLECTION (Planity-like) : 1 prestation à la fois.
   // Si on click sur la même → désélectionne. Sinon → remplace.
   var alreadySel=(booking.items.length===1 && booking.items[0].svcId===svcId);
@@ -2787,7 +2822,7 @@ function toggleService(svcId){
     renderBookingStep1();
     return;
   }
-  var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=p.d;});
+  var dur=0;if(svc.phases)svc.phases.forEach(function(p){dur+=(Number(p&&p.d)||0);}); /* 2026-10-17 audit réglages (#33) : durée réelle = somme numérique des étapes */
   if(!dur)dur=30;
   booking.items=[{svcId:svcId,nom:svc.n,prix:Number(svc.p)||0,duree:dur,svc:svc,apartir:!!svc.apartir}]; // 2026-10-15 : apartir = prix minimum
   booking.svcId=svcId;booking.svc=svc;
@@ -2828,13 +2863,7 @@ function renderBookingStep2(){
   try{
     if(!booking._skipCollabDone){
       var _svcId0 = booking.svcId || (booking.items && booking.items.length ? booking.items[0].svcId : null);
-      var _elig0 = (COLLABS||[]).filter(function(c){
-        if(!_svcId0) return true;
-        var cp = c.competences || {all:true};
-        if(cp.all === true) return true;
-        if(!cp.services || !Array.isArray(cp.services)) return false;
-        return cp.services.indexOf(Number(_svcId0)) >= 0 || cp.services.indexOf(String(_svcId0)) >= 0;
-      });
+      var _elig0 = _lxCollabsPourService(_svcId0); // 2026-10-17 audit réglages (#6/#37) : même règle partout
       if(_elig0.length === 1){
         booking._skipCollabDone = true;
         selectCollab(_elig0[0].id);
@@ -2861,14 +2890,16 @@ function renderBookingStep2(){
 
   // Filtre les collabs selon leurs comp\u00e9tences si une prestation est d\u00e9j\u00e0 choisie
   var _filterSvcId = booking.svcId || (booking.items && booking.items.length ? booking.items[0].svcId : null);
-  var _eligibleCollabs = COLLABS.filter(function(c){
-    if(!_filterSvcId) return true;
-    var comp = c.competences || {all:true};
-    if(comp.all === true) return true;
-    if(!comp.services || !Array.isArray(comp.services)) return false;
-    return comp.services.indexOf(Number(_filterSvcId)) >= 0 || comp.services.indexOf(String(_filterSvcId)) >= 0;
-  });
-  var _hasFilter = _filterSvcId && _eligibleCollabs.length < COLLABS.length;
+  var _eligibleCollabs = _lxCollabsPourService(_filterSvcId); // 2026-10-17 audit réglages (#6/#37) : habilités et pas en repos 7 j/7
+  var _hasFilter = _filterSvcId && _eligibleCollabs.length < _lxCollabsActifs().length;
+  // 2026-10-17 audit réglages (#6) : personne d'habilité -> prestation « sur demande », pas de choix de collaborateur
+  if(_filterSvcId && !_eligibleCollabs.length && (COLLABS||[]).length){
+    var hS='<div class="step active"><div class="step-header"><div class="step-num">2</div><div class="step-title">Prestation sur demande</div></div>';
+    hS+='<div style="padding:14px;border-radius:10px;background:rgba(200,168,78,.06);border:1px solid rgba(200,168,78,.2);font-size:13px;color:var(--text2);line-height:1.6;text-align:center">Cette prestation ne peut pas être réservée en ligne pour le moment.'+(SITE_CFG.acceptRdvSurMesure?'<br><button class="btn btn-gold" style="margin-top:12px" onclick="openSurMesureModal('+Number(_filterSvcId)+')">Demander ce rendez-vous</button>':'<br>Contactez l’établissement pour prendre rendez-vous.')+'</div>';
+    hS+='<div style="margin-top:16px"><button class="btn btn-outline" onclick="renderBookingStep1()">◀ Retour</button></div></div>';
+    document.getElementById("bookingFlow").innerHTML=hS;
+    return;
+  }
   if(_hasFilter){
     h+='<div style="margin-bottom:10px;padding:8px 12px;background:rgba(33,150,243,.08);border:1px solid rgba(33,150,243,.2);border-radius:8px;font-size:12px;color:#64b5f6"><strong>\u2139\ufe0f</strong> Seuls les '+getCollabLabel().toLowerCase()+'s habilit\u00e9s \u00e0 effectuer cette prestation sont affich\u00e9s.</div>';
   }
@@ -2878,8 +2909,8 @@ function renderBookingStep2(){
   for(var i=0;i<_eligibleCollabs.length;i++){
     var c=_eligibleCollabs[i];
     h+='<div class="collab-card" onclick="selectCollab('+c.id+')">';
-    if(c.img && c.photoVisible!==false)h+='<img class="av" src="'+escapeAttrSimple(c.img)+'">';
-    else h+='<div class="collab-av" style="border-color:'+c.c+';color:'+c.c+'">'+escapeHtmlSimple(c.i)+'</div>';
+    if(c.img && c.photoVisible!==false && lxUrlImageSure(c.img))h+='<img class="av" src="'+escapeAttrSimple(lxUrlImageSure(c.img))+'">'; /* 2026-10-17 audit réglages (#65) : échappé */
+    else h+='<div class="collab-av" style="border-color:'+escapeAttrSimple(c.c)+';color:'+escapeAttrSimple(c.c)+'">'+escapeHtmlSimple(c.i)+'</div>'; /* 2026-10-17 audit réglages (#65) : échappé */
     h+='<div class="collab-name">'+escapeHtmlSimple(c.n)+'</div></div>';
   }
   h+='</div>';
@@ -2897,13 +2928,7 @@ function renderBookingStep2(){
 // le chemin emprunte.
 function _lxCollabParDefaut(svcId){
   try{
-    var elig = (COLLABS||[]).filter(function(c){
-      if(!svcId) return true;
-      var cp = c.competences || {all:true};
-      if(cp.all === true) return true;
-      if(!cp.services || !Array.isArray(cp.services)) return false;
-      return cp.services.indexOf(Number(svcId)) >= 0 || cp.services.indexOf(String(svcId)) >= 0;
-    });
+    var elig = _lxCollabsPourService(svcId); // 2026-10-17 audit réglages (#6/#37) : même règle partout
     return (elig.length === 1) ? elig[0] : null;
   }catch(_e){ return null; }
 }
@@ -3221,19 +3246,51 @@ function _lxOuvExcept(hrs, dateStr, collabId){
 // 2026-10-14 : « Pas de préférence » = seulement les collaborateurs actifs HABILITÉS pour la prestation choisie
 // (même règle que l'étape 2 : competences absentes ou all=true -> habilité ; sinon services doit contenir la prestation).
 // Si aucun n'est habilité (ou aucune prestation choisie), on garde tous les actifs (comportement d'avant).
+// 2026-10-17 audit réglages (#6) : UNE seule règle d'habilitation pour tout le site (étape 2, « Pas de préférence »,
+// affectation automatique, créneaux). Compétences absentes ou all=true -> habilité ; sinon la prestation doit être cochée.
+function _lxCollabHabilite(c, svcId){
+  if(!svcId) return true;
+  var cp=(c&&c.competences)||{all:true};
+  if(cp.all===true) return true;
+  if(!cp.services||!Array.isArray(cp.services)) return false;
+  return cp.services.indexOf(Number(svcId))>=0||cp.services.indexOf(String(svcId))>=0;
+}
+// 2026-10-17 audit réglages (#37) : collaborateur en « Repos » tous les jours, sans horaire personnalisé ni ouverture
+// exceptionnelle à son nom -> jamais réservable (on ne le propose pas).
+function _lxCollabJamaisDispo(c){
+  try{
+    if(!_lxCollabAHorairesPerso(c)) return false;
+    var k;
+    for(k in c.hrs){ var v=c.hrs[k]; if(v&&v.o&&v.c) return false; }
+    var ov=c.hrsOver||{};
+    for(k in ov){ if(ov[k]&&ov[k].o&&ov[k].c) return false; }
+    var abs=(SITE_CFG&&SITE_CFG.absences)||[];
+    for(var i=0;i<abs.length;i++){ var ab=abs[i]; if(ab&&ab.type==="ouverture_except"&&ab.stId&&ab.stId===c.id) return false; }
+    return true;
+  }catch(_e){ return false; }
+}
+function _lxCollabsActifs(){
+  return (COLLABS||[]).filter(function(c){ return !(c.actif===false||c.active===false) && !_lxCollabJamaisDispo(c); });
+}
+// Collaborateurs qui peuvent réaliser la prestation (svcId) : actifs + habilités
+function _lxCollabsPourService(svcId){
+  return _lxCollabsActifs().filter(function(c){ return _lxCollabHabilite(c, svcId); });
+}
+// Prestation que PERSONNE ne peut réaliser en ligne (l'établissement a une équipe, mais aucun membre actif habilité)
+// -> affichée « Sur demande » (comme une prestation non réservable en ligne), jamais réservable avec toute l'équipe.
+function _lxSvcSansHabilite(svcId){
+  return !!(svcId && (COLLABS||[]).length && !_lxCollabsPourService(svcId).length);
+}
 function _lxCollabsActifsEligibles(){
-  var actifs=(COLLABS||[]).filter(function(c){ return !(c.actif===false||c.active===false); });
   try{
     var svcId=booking&&(booking.svcId||(booking.items&&booking.items.length?booking.items[0].svcId:null));
-    if(!svcId) return actifs;
-    var elig=actifs.filter(function(c){
-      var cp=c.competences||{all:true};
-      if(cp.all===true) return true;
-      if(!cp.services||!Array.isArray(cp.services)) return false;
-      return cp.services.indexOf(Number(svcId))>=0||cp.services.indexOf(String(svcId))>=0;
-    });
-    return elig.length?elig:actifs;
-  }catch(_e){ return actifs; }
+    // 2026-10-17 audit réglages (#6) : plus de repli sur toute l'équipe quand personne n'est habilité (avant : return elig.length?elig:actifs)
+    return _lxCollabsPourService(svcId);
+  }catch(_e){ return _lxCollabsActifs(); }
+}
+// 2026-10-17 audit réglages (#6) : vrai quand l'établissement a une équipe mais que personne ne peut faire la prestation choisie
+function _lxAucunHabilite(){
+  return !!((COLLABS||[]).length && !_lxCollabsActifsEligibles().length);
 }
 function lxPlageDuJour(dateStr){
   var abs=(SITE_CFG&&SITE_CFG.absences)||[], i, ab;
@@ -3246,6 +3303,7 @@ function lxPlageDuJour(dateStr){
     return {hrs:_lxSiteEffHrs(col, booking.collabId, dateStr)};
   }
   var actifs=_lxCollabsActifsEligibles(); // 2026-10-14 : habilités pour la prestation
+  if(!actifs.length && _lxAucunHabilite()) return {hrs:null, motif:"Prestation sur demande : contactez l’établissement"}; // 2026-10-17 audit réglages (#6)
   if(!actifs.length) return {hrs:_lxOuvExcept(HORAIRES[dow], dateStr, null)};
   var o=null, c=null;
   actifs.forEach(function(col){
@@ -3319,7 +3377,7 @@ function isAllCollabsOff(date){
   }
   // Aucun collab actif → check global déjà fait → dispo
   var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : habilités pour la prestation
-  if(!activeCollabs.length) return false;
+  if(!activeCollabs.length) return _lxAucunHabilite(); // 2026-10-17 audit réglages (#6) : personne d'habilité = indisponible
   // Tous les collabs doivent être off
   for(var i=0;i<activeCollabs.length;i++){
     if(!isCollabDayOff(date,activeCollabs[i].id)) return false;
@@ -3333,11 +3391,39 @@ function isAllCollabsOff(date){
 // FIX 2026-07-04 : horaires EFFECTIFS d'un collab pour une date (hebdo base + override + ouverture except.).
 // Sans ça, un collab qui ne TRAVAILLE pas ce jour (ex. Manue le samedi) était compté "dispo"
 // -> en "sans préférence" le site laissait réserver un créneau déjà pris (double booking).
+// 2026-10-17 audit réglages (#5) : les horaires de l'ÉTABLISSEMENT sont une limite, même quand le collaborateur a
+// ses propres horaires (jour « Fermé » de l'établissement = aucun créneau ; plage = intersection des deux).
+// Exceptions : un horaire personnalisé posé pour CE jour (horaires_overrides) et les ouvertures exceptionnelles priment.
+// Appliqué seulement si l'établissement a réellement des horaires (au moins un jour ouvert), pour ne pas fermer
+// d'un coup un établissement qui n'a jamais rempli l'onglet Horaires.
+// 2026-10-17 audit réglages (#37) : un collaborateur dont les horaires sont remplis mais tous en « Repos »
+// ne travaille jamais (avant : il héritait des horaires de l'établissement et devenait réservable 7 j/7).
+// Seul un objet horaires VIDE ({}) signifie « suit les horaires de l'établissement ».
+function _lxHorairesSalonDefinis(){
+  try{
+    if(!window._lxHorairesSalonSource) return false;
+    for(var k=0;k<7;k++){ var v=HORAIRES&&HORAIRES[k]; if(v&&v.o&&v.c) return true; }
+  }catch(_e){}
+  return false;
+}
+function _lxCollabAHorairesPerso(col){
+  return !!(col && col.hrs && typeof col.hrs==="object" && Object.keys(col.hrs).length>0);
+}
 function _lxSiteEffHrs(col, collabId, date){
   try{
     var d=new Date(date+"T12:00:00"), dow=d.getDay();
-    var hasPerso=col && col.hrs && typeof col.hrs==="object" && Object.keys(col.hrs).some(function(k){var v=col.hrs[k];return v&&v.o&&v.c;});
-    var hrs=hasPerso ? (col.hrs[dow]||null) : ((typeof HORAIRES!=="undefined"&&HORAIRES)?HORAIRES[dow]:null);
+    var hasPerso=_lxCollabAHorairesPerso(col); // 2026-10-17 audit réglages (#37)
+    var _sal=(typeof HORAIRES!=="undefined"&&HORAIRES)?(HORAIRES[dow]||null):null;
+    var hrs=hasPerso ? (col.hrs[dow]||null) : _sal;
+    if(hrs && !(hrs.o&&hrs.c)) hrs=null;
+    // 2026-10-17 audit réglages (#5) : limite des horaires de l'établissement (sauf horaire personnalisé du jour)
+    if(hasPerso && hrs && _lxHorairesSalonDefinis() && !(col.hrsOver && col.hrsOver[date]!==undefined)){
+      if(!_sal || !_sal.o || !_sal.c) hrs=null;
+      else{
+        var _o=(toMin(hrs.o)>toMin(_sal.o))?hrs.o:_sal.o, _c=(toMin(hrs.c)<toMin(_sal.c))?hrs.c:_sal.c;
+        hrs=(toMin(_o)<toMin(_c))?{o:_o,c:_c}:null;
+      }
+    }
     if(typeof applyHrsOverride==="function") hrs=applyHrsOverride(hrs, col, date);
     hrs=_lxOuvExcept(hrs, date, collabId);
     return hrs;
@@ -3405,6 +3491,7 @@ function _lxNbSansCollab(date,time,duration){
 }
 function isSlotTaken(date,time,duration,collabId){
   var activeCollabs=_lxCollabsActifsEligibles(); // 2026-10-14 : seulement les collaborateurs habilités pour la prestation
+  if(!activeCollabs.length && _lxAucunHabilite()) return true; // 2026-10-17 audit réglages (#6) : personne d'habilité -> aucun créneau
   // 2026-10-14 audit : capacité — chaque réservation sans collaborateur qui chevauche consomme un collaborateur libre
   if(activeCollabs.length){
     var nU=_lxNbSansCollab(date,time,duration), libres=0;
@@ -3570,7 +3657,7 @@ function renderBookingStep4(){
   h+=lxApNotice(); // 2026-10-15
   // Ligne remise carte d'abonnement
   if(hasCarte){
-    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+CLIENT_CARTE_ABO.carteNom+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
+    h+='<div class="summary-row" style="color:#4caf50;font-weight:700"><span>\ud83d\udcb3 Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO.carteNom)/* 2026-10-17 audit réglages (#65) */+' (-'+CLIENT_CARTE_ABO.remiseServices+'%)</span><span class="v">-'+remiseCarte.toFixed(2)+' \u20ac</span></div>';
   }
   // Ligne frais d\u00e9placement
   if(booking.lieu==='domicile' && t.fraisDepl>0){
@@ -3579,14 +3666,14 @@ function renderBookingStep4(){
   if(hasCarte || (booking.lieu==='domicile' && t.fraisDepl>0)){
     h+='<div class="summary-row" style="font-weight:800;color:var(--gold);border-top:1px solid rgba(200,168,78,.2);padding-top:8px"><span>Total \u00e0 payer</span><span class="v">'+prixFinal.toFixed(2)+' \u20ac</span></div>';
   }
-  h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?collab.n:"Pas de pr\u00e9f\u00e9rence")+'</span></div>';
+  h+='<div class="summary-row"><span>'+getCollabLabel()+'</span><span class="v">'+(collab?escapeHtmlSimple(collab.n):"Pas de pr\u00e9f\u00e9rence")/* 2026-10-17 audit réglages (#65) */+'</span></div>';
   h+='<div class="summary-row"><span>Date</span><span class="v">'+formatDateFR(booking.date)+'</span></div>';
   h+='<div class="summary-row"><span>Heure</span><span class="v">'+booking.time+'</span></div>';
   if(SITE_CFG.acompte){
     // Acompte calcul\u00e9 sur le prix R\u00c9DUIT (apr\u00e8s remise carte)
     var acompte=lxCalcAcompte(prixFinal); // 2026-10-14 audit : calcul unique, plafonné au prix
     if(acompte>0)h+='<div class="summary-row" style="border-top:2px solid var(--gold);padding-top:12px;margin-top:8px"><span style="font-weight:800">Acompte \u00e0 r\u00e9gler</span><span class="v" style="font-size:18px">'+acompte.toFixed(2)+' \u20ac</span></div>';
-    if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+SITE_CFG.acompteDesc+'</div>';
+    if(SITE_CFG.acompteDesc)h+='<div style="font-size:12px;color:var(--text3);margin-top:4px;text-align:center">'+lxTexteProHtml(SITE_CFG.acompteDesc)+'</div>'; /* 2026-10-17 audit réglages (#65) : échappé */
     // 2026-10-14 audit : texte construit avec les MÊMES champs et la MÊME lecture que le worker (lxPolitiqueHeures)
     if(acompte>0){ var _pa=lxPolitiqueAnnulation(); h+='<div style="font-size:11px;color:'+((_pa.heures===-1||(!_pa.rembourse&&!_pa.pct))?'var(--red)':'var(--text3)')+';text-align:center">'+escapeHtmlSimple(lxTexteAnnulation(true))+'</div>';
       // 2026-10-14 audit réglages : part rendue automatiquement en cas d'annulation tardive (remboursement_partiel_pct) ;
@@ -3630,7 +3717,7 @@ function renderBookingStep4(){
   if(CLIENT_CARTE_ABO){
     h+='<div style="margin:12px 0;padding:12px;background:rgba(76,175,80,.08);border:1px solid rgba(76,175,80,.2);border-radius:10px;display:flex;align-items:center;gap:10px">';
     h+='<div style="font-size:20px">\ud83d\udcb3</div>';
-    h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#4caf50">Carte '+CLIENT_CARTE_ABO.carteNom+' active</div>';
+    h+='<div style="flex:1"><div style="font-weight:700;font-size:13px;color:#4caf50">Carte '+escapeHtmlSimple(CLIENT_CARTE_ABO.carteNom)/* 2026-10-17 audit réglages (#65) */+' active</div>';
     h+='<div style="font-size:11px;color:var(--text3)">-'+CLIENT_CARTE_ABO.remiseServices+'% sur le prix TTC services \u2022 \u00c9conomies totales : '+(CLIENT_CARTE_ABO.eco||0).toFixed(2)+' \u20ac</div></div></div>';
   }
 
@@ -3818,7 +3905,7 @@ async function _lxSubmitBookingImpl(){
     // Immediately block this slot from being rebooked
     RDV_EXISTING.push({date_rdv:booking.date,heure:booking.time,collab_id:booking.collabId,status:"conf",a_phases:[{t:"w",d:dur,l:primaryNom}]});
     // Success
-    var confirmMsg=SITE_CFG.msgConfirm||"Votre demande a bien \u00e9t\u00e9 envoy\u00e9e.";
+    var confirmMsg=SITE_CFG.msgConfirm?lxTexteProHtml(SITE_CFG.msgConfirm):"Votre demande a bien \u00e9t\u00e9 envoy\u00e9e."; // 2026-10-17 audit réglages (#65) : échappé
     var h='<div class="success-page">';
     h+='<div class="ico">\u2705</div>';
     var _domDem=(booking.lieu==='domicile');
@@ -3887,23 +3974,49 @@ async function loadDashboardFidelite(){
       if(fid.remise_fidelite) remise = fid.remise_fidelite;
       if(fid.remise_type) remType = fid.remise_type;
     }
-    // Get CURRENT fidconf from salon config_json
+    // 2026-10-17 audit réglages (#20) : réglages de fidélité ACTUELS de l'établissement (config_json.fidconf) :
+    // « Fidélité active », mécanique (passages / cagnotte / CA cumulé) et type de remise, avec la même règle que la caisse
+    // (type absent -> ancien réglage site_config.fidelite_type, « pourcentage » par défaut ; avant : « € » par défaut).
+    var fc={};
     try{
-      var sr=await sb.from("salons_public").select("config_json").eq("id",salonId).limit(1);
-      if(sr.data&&sr.data[0]){
-        var cfg=typeof sr.data[0].config_json==="string"?JSON.parse(sr.data[0].config_json):sr.data[0].config_json||{};
-        if(cfg.fidconf){
-          seuil=cfg.fidconf.seuil||10;
-          remise=cfg.fidconf.remise||10;
-          remType=cfg.fidconf.type||"amount";
-        }
-      }
+      var cfg=window._lxCfgJsonPublic;
+      if(typeof cfg==="string"){ try{ cfg=JSON.parse(cfg); }catch(_eJ){ cfg=null; } }
+      if(!cfg){ var sr=await sb.from("salons_public").select("config_json").eq("id",salonId).limit(1); if(sr.data&&sr.data[0]) cfg=typeof sr.data[0].config_json==="string"?JSON.parse(sr.data[0].config_json):sr.data[0].config_json; }
+      if(cfg&&cfg.fidconf&&typeof cfg.fidconf==="object") fc=cfg.fidconf;
     }catch(e2){}
+    var _fidOn=(fc.active!==false) && (SITE_CFG.fidActive!==false || fc.active===true);
+    var _mode=(fc.mode==="cagnotte"||fc.mode==="ca_cumule")?fc.mode:"passages";
+    var _typeDe=function(t){ return t==="percent"?"percent":(t==="amount"?"amount":(SITE_CFG.fidType==="montant"?"amount":"percent")); };
+    if(fc.seuil) seuil=Number(fc.seuil)||10;
+    if(fc.remise) remise=Number(fc.remise)||10;
+    remType=_typeDe(fc.type);
+    var el, _lbl=function(id,t){ var e=document.getElementById(id); var l=e&&e.parentNode&&e.parentNode.querySelector(".lbl"); if(l) l.textContent=t; };
+    el=document.getElementById("dashVisites");if(el)el.textContent=vis;
+    if(!_fidOn){
+      el=document.getElementById("dashPoints");if(el)el.textContent="\u2014"; _lbl("dashPoints","Fid\u00e9lit\u00e9");
+      el=document.getElementById("dashPct");if(el)el.textContent="\u2014";
+      el=document.getElementById("dashPctLabel");if(el)el.textContent="Pas de programme de fid\u00e9lit\u00e9";
+      el=document.getElementById("dashFidBar");if(el&&el.parentNode)el.parentNode.style.display="none";
+      return;
+    }
+    if(_mode==="cagnotte"){
+      var _cp=(fc.cagnottePct!=null&&!isNaN(+fc.cagnottePct))?+fc.cagnottePct:5;
+      el=document.getElementById("dashPoints");if(el)el.textContent=_cp+" %"; _lbl("dashPoints","Vers\u00e9 en cagnotte");
+      el=document.getElementById("dashPct");if(el)el.textContent="\ud83d\udcb0";
+      el=document.getElementById("dashPctLabel");if(el)el.textContent="Solde de la cagnotte : en \u00e9tablissement";
+      el=document.getElementById("dashFidBar");if(el&&el.parentNode)el.parentNode.style.display="none";
+      return;
+    }
+    if(_mode==="ca_cumule"){
+      var _cs=Number(fc.caSeuil)||500, _cr=Number(fc.caRemise)||25, _ct=(fc.caType==="percent")?"%":"\u20ac";
+      el=document.getElementById("dashPoints");if(el)el.textContent=_cs+" \u20ac"; _lbl("dashPoints","Seuil de d\u00e9penses");
+      el=document.getElementById("dashPct");if(el)el.textContent="-"+_cr+_ct;
+      el=document.getElementById("dashPctLabel");if(el)el.textContent="R\u00e9compense";
+      el=document.getElementById("dashFidBar");if(el&&el.parentNode)el.parentNode.style.display="none";
+      return;
+    }
     var pct=Math.min(100,Math.round(pts/seuil*100));
     var remUnit=remType==="percent"?"%":"\u20ac";
-    var remaining=Math.max(0,seuil-pts);
-    var el;
-    el=document.getElementById("dashVisites");if(el)el.textContent=vis;
     el=document.getElementById("dashPoints");if(el)el.textContent=pts+"/"+seuil;
     el=document.getElementById("dashPct");if(el)el.textContent="-"+remise+remUnit;
     el=document.getElementById("dashPctLabel");if(el)el.textContent="R\u00e9compense";
@@ -4276,6 +4389,7 @@ async function processStripePayment(){
     h+='<div class="ico">\u2705</div>';
     h+='<h2>'+(isEmp?'Pré-autorisation acceptée !':'Paiement accepté !')+'</h2>';
     h+='<p>'+(isEmp?'Une empreinte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a été réalisée sur votre carte. Aucun débit immédiat — sera libérée après votre RDV.':'Votre acompte de <strong>'+acompte.toFixed(2)+' \u20ac</strong> a été encaissé.')+'</p>';
+    h+=lxMsgConfirmHtml(''); // 2026-10-17 audit réglages (#26)
     h+='<div class="summary" style="max-width:400px;margin:20px auto">';
     if(hasMulti){
       h+='<div class="summary-row" style="font-weight:800;color:var(--gold)"><span>Prestations</span><span class="v">'+booking.items.length+'</span></div>';
@@ -4596,7 +4710,7 @@ function openLightbox(idx){
 }
 function renderLightbox(){
   var h='<div style="position:fixed;top:0;right:0;bottom:0;left:0;inset:0;background:rgba(0,0,0,.95);z-index:300;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="closeLightbox()">';
-  h+='<img src="'+_lbPhotos[_lbIdx]+'" style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px" onclick="event.stopPropagation()">';
+  h+='<img src="'+escapeAttrSimple(lxUrlImageSure(_lbPhotos[_lbIdx]))/* 2026-10-17 audit réglages (#65) */+'" style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px" onclick="event.stopPropagation()">';
   // Nav arrows
   if(_lbPhotos.length>1){
     h+='<button onclick="event.stopPropagation();_lbIdx=(_lbIdx-1+_lbPhotos.length)%_lbPhotos.length;renderLightbox()" style="position:fixed;left:16px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,.6);border:2px solid var(--gold);color:var(--gold);width:44px;height:44px;border-radius:50%;font-size:20px;cursor:pointer">\u25c0</button>';
