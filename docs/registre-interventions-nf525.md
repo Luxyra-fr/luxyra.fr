@@ -385,3 +385,49 @@ Script base unique et idempotent : `docs/migrations_1014/caisse.sql` (**non appl
 Contrôles : vérification syntaxique de tous les scripts modifiés ; lectures seules en base (définitions de fonctions, colonnes) ;
 aucune écriture en base, aucun déploiement. À faire avant mise en service : appliquer `caisse.sql`, déployer le worker, essais
 sur le Salon Démo (voir rapport de la branche).
+
+## 2026-10-16 — Incident : clôture Z n°128 d'Excellence Coiffure supérieure au journal des tickets (accord de l'éditeur, Alexandre Jensen : « oui »)
+
+**Constat.** Z n°128 du 16/10/2026 (créée à 17 h 44, empreinte `4D3D9CDD86CFD7A22E1434DD039A5DC528DA934129543B46EB1655297DA14215`) :
+4 tickets / 95,40 € TTC (CB 52,00 €, espèces 43,40 €). Journal des tickets scellés du jour : **3 tickets / 69,40 € TTC
+(CB 26,00 €, espèces 43,40 €)** — n° serveur 778 à 780, imprimés 2156 à 2158. Écart : +26,00 € CB et +1 ticket.
+Détecté par le contrôle fiscal automatique (`check_fiscal_integrity` §2) et par le contrôle de verrouillage (3 tickets verrouillés pour 4 attendus).
+Les tickets scellés sont exacts et n'ont jamais été modifiés.
+
+**Cause.** Le rendez-vous réservé en ligne 501b42c5… encaissé à 16 h 14 (ticket n°2158, n° serveur 780, 26,00 € CB) figurait
+**deux fois** dans la liste de l'appareil : l'entrée d'affichage de la réservation (`online_…`) et la ligne du rendez-vous
+encaissé (relue en base). Depuis la version du 14/10/2026 (commit e57efc8, « un ticket encaissé n'est jamais retiré de la
+liste »), l'entrée d'affichage n'était plus retirée. La clôture, calculée sur cette liste, a compté le ticket deux fois.
+Même cause pour le symptôme signalé par l'établissement : le rendez-vous en ligne encaissé apparaissait deux fois au planning.
+
+**Traitement (aucune donnée scellée modifiée ni supprimée : tickets, clôtures, signatures, JET inchangés).**
+1. **Z n°128 conservée telle quelle.** Fondement : CGI art. 286-I-3° bis et BOI-TVA-DECLA-30-10-30 (inaltérabilité, §90 :
+   toute correction prend la forme d'une opération nouvelle, l'enregistrement d'origine étant conservé).
+2. **Événement JET n°515, code 90** (« Défaut d'intégrité détecté ») : n° et empreinte de la Z, montants faux et exacts, cause, version corrective.
+3. **Annotation corrective n°1** (nouvelle table `clotures_annotations`, inaltérable — même déclencheur que les clôtures —,
+   chaînée SHA-256, empreinte `1AA6945AE24361A0BBFF54909B8429B4AAB8E279DB2B5D4028B82C7BA4C33455`), créée par la fonction
+   serveur `nf525_annoter_cloture` qui **relit elle-même les montants exacts dans le journal des tickets** (refus si les montants
+   ne correspondent pas au journal ou si la Z est conforme) ; inscrite au **JET n°516, code 900** (« Intervention éditeur tracée »),
+   signé ES256 avec le JET. L'annotation est imprimée sur tout duplicata de la Z n°128, affichée dans l'historique des Z de
+   l'application et sur la page NF525 de l'administration.
+4. **Cumuls** : la Z annotée compte pour son montant exact (69,40 €) dans le cumul mensuel / annuel de la Z suivante, le grand
+   total perpétuel (écart −26,00 € / −1 ticket repris par la première Z qui suit l'annotation), la clôture mensuelle d'octobre
+   (`cloturer_mois`) et la clôture d'exercice (`cloturer_exercice`). Contrôles `check_fiscal_integrity` §2 et
+   `check_cumul_clotures_periodiques` alignés. Essai en transaction annulée : Z suivante 0 € -> cumul du mois 2 801,30 € (au lieu
+   de 2 827,30 €), grand total 28 241,40 € ; clôture mensuelle d'octobre 2 801,30 € / 93 tickets, aucun écart signalé.
+5. **Correctif applicatif (version 6.6.1, couche données 20261016-1)** : une réservation en ligne = une seule entrée (la ligne
+   du rendez-vous encaissé remplace l'entrée d'affichage, sans jamais retirer le seul porteur du n° de ticket) ; un même ticket
+   n'est compté qu'une fois dans la Z ; **avant de sceller, la Z est comparée au journal des tickets en base** (nombre, total TTC,
+   modes de règlement, corrections de règlement « avant clôture » comprises) : en cas d'écart la Z est **bloquée**, avec
+   « Recalculer depuis les tickets enregistrés » (le journal fait foi). Hors connexion, la Z reste possible seulement si aucun
+   ticket n'attend dans la file de secours ; le contrôle impossible est tracé.
+6. **Garde-fou serveur** (déclencheur `b_nf525_z_controle_journal`, avant insertion d'une Z) : refus de toute Z dont le total
+   TTC diffère de la somme des tickets du jour (même règle que `check_fiscal_integrity` §2), ou qui déclare plus de tickets que
+   le journal (Z manuelles). Validation préalable sur les 132 Z existantes de tous les établissements : seule la Z n°128 est en
+   écart de montant ; avec la règle de comptage en vigueur depuis le 14/10 (tickets numérotés), aucune Z n'aurait été refusée sur
+   le nombre. Essais en transaction annulée : Z fausse refusée, Z exacte acceptée, annotation non modifiable ni supprimable,
+   seconde annotation et annotation d'une Z conforme refusées.
+7. Le signalement « À réparer » lié à la Z n°128 (3 tickets verrouillés pour 4 attendus) est marqué traité ; le contrôle fiscal ne la signale plus (annotée).
+
+À faire : publier l'application (luxyra-supabase.js v=20261016-1) ; signature ES256 directe des annotations prête dans
+`docs/edge/nf525-sign.ts` (type ZC, v6) — à déployer avec l'accord de l'éditeur (l'annotation est déjà chaînée et tracée au JET).

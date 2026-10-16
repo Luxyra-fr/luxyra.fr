@@ -2471,7 +2471,9 @@ async function lxARCharger(force){
     if(!c.loading){
       c.loading = (async function(){
         try{
-          var r = await Promise.all([ _sb.rpc('admin_a_reparer', { p_heures: 72 }), _sb.rpc('admin_nf525_etat') ]);
+          var r = await Promise.all([ _sb.rpc('admin_a_reparer', { p_heures: 72 }), _sb.rpc('admin_nf525_etat'),
+            _sb.from('clotures_annotations').select('num,salon_id,cloture_num,cloture_date,motif,wrong_total_ca,wrong_nb_tickets,correct_total_ca,correct_nb_tickets,correct_detail_paiements,created_at,hash,jet_id,salons(nom)').order('created_at', { ascending: false }).limit(50) ]);
+          c.annot = (r[2] && !r[2].error) ? (r[2].data || []) : null; // 2026-10-16 : annotations correctives des Z
           c.errAR = r[0].error ? (r[0].error.message || 'Erreur') : null; if(!r[0].error) c.items = r[0].data || [];
           c.errNF = r[1].error ? (r[1].error.message || 'Erreur') : null; if(!r[1].error) c.nf = r[1].data || null;
           c.t = Date.now();
@@ -2573,6 +2575,14 @@ function _lxNfHtml(){
     if(ok.length) h += '<details style="margin-top:2px"><summary style="cursor:pointer;font-size:12px;color:var(--text3)">' + (ko.length ? ok.length + ' autre(s) contrôle(s) conforme(s)' : 'Les ' + ok.length + ' contrôles sont conformes') + '</summary>' + ok.map(ligne).join('') + '</details>';
     h += '</div>';
   });
+  // 2026-10-16 (incident Z n°128) : annotations correctives signées (Z jamais modifiée, montants exacts = journal des tickets)
+  if(c.annot && c.annot.length){
+    h += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)"><div style="font-weight:700;font-size:13px">📝 Annotations correctives de clôtures Z</div>';
+    c.annot.forEach(function(a){
+      h += '<div style="font-size:12px;line-height:1.45;padding:5px 0">' + saEsc((a.salons && a.salons.nom) || '') + ' — annotation n°' + saEsc(a.num) + ' du ' + _lxARDate(a.created_at) + ' : <b>Z n°' + saEsc(a.cloture_num) + ' du ' + saEsc(a.cloture_date) + '</b> clôturée ' + saEsc(a.wrong_nb_tickets) + ' ticket(s) / ' + Number(a.wrong_total_ca).toFixed(2) + ' € → exact ' + saEsc(a.correct_nb_tickets) + ' ticket(s) / ' + Number(a.correct_total_ca).toFixed(2) + ' € (journal des tickets). ' + saEsc(a.motif) + '<br><span style="font-family:monospace;font-size:10px;color:var(--text3);word-break:break-all">Empreinte ' + saEsc(a.hash) + ' · JET 900</span></div>';
+    });
+    h += '</div>';
+  }
   h += '<div style="font-size:11px;color:var(--text3);margin-top:8px">Vérifié le ' + _lxARDate(nf.genere_le) + ' (lecture seule : les tests de nuit ne sont pas relancés ici, leur dernier résultat est affiché).</div>';
   return h + '</div>';
 }

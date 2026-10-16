@@ -1,4 +1,4 @@
-// nf525-sign v5 — 2026-10-11 (v2 : archives AR + autocontrôle ; v3 : réinitialisations d'essai ; v4 : GT sans ventes de test ; v5 : factures FA, alerte éditeur sur anomalie, ancrage externe quotidien) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
+// nf525-sign v6 (prêt, non déployé) — 2026-10-16 : type ZC (annotations correctives des Z). v5 — 2026-10-11 (v2 : archives AR + autocontrôle ; v3 : réinitialisations d'essai ; v4 : GT sans ventes de test ; v5 : factures FA, alerte éditeur sur anomalie, ancrage externe quotidien) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
 // fiscales, chaînée par établissement et par type (référentiel NF525 v2.3) :
 //   TK (tickets), Z (clôtures journalières), ZM / ZA (mensuelles / annuelles), ZE (exercice),
 //   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques), AR (archives).
@@ -91,6 +91,9 @@ const SOURCES: Src[] = [
     build: (r, _s, first, prev) => [r.num, d8(r.date_facture), `${m2(r.taux_tva)}:${m2(r.total_ttc)}`, m2(r.total_ttc), m2(r.total_ht), m2(r.total_tva), ts(r.ts_created || r.created_at), CAISSE, String(r.client_siret || "").replace(/,/g, " "), first ? "O" : "N", prev].join(",") },
   { type: "AR", table: "nf525_archives_signees", order: ["seq"], num: (r) => r.seq,
     build: (r, _s, first, prev) => [r.seq, String(r.empreinte || "").toUpperCase(), d8(r.du), d8(r.au), r.motif || "periodique", ts(r.horodatage), CAISSE, first ? "O" : "N", prev].join(",") },
+  // v6 (2026-10-16, NON DÉPLOYÉ — à déployer avec accord) : annotations correctives des Z (clotures_annotations)
+  { type: "ZC", table: "clotures_annotations", order: ["num"], num: (r) => r.num,
+    build: (r, _s, first, prev) => [r.num, r.cloture_num, d8(r.cloture_date), m2(r.wrong_total_ca), r.wrong_nb_tickets, m2(r.correct_total_ca), m2(r.correct_total_ht), r.correct_nb_tickets, String(r.hash || "").toUpperCase(), ts(r.created_at), CAISSE, first ? "O" : "N", prev].join(",") },
 ];
 
 // ---- Autocontrôle d'intégrité (quotidien) : recalcul des données signées + vérification des signatures et du chaînage.

@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261015-3"; // 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261016-1"; // 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -2584,6 +2584,7 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     window.CLOTURES.forEach(function(c){ if (c && c.date) window.LOCKED_DAYS[c.date] = true; });
     try { localStorage.setItem("_cp_locked", JSON.stringify(window.LOCKED_DAYS)); } catch(_){}
   }
+  try { await lxChargerAnnotationsZ(); } catch(_eAn) {} // 2026-10-16 : annotations correctives des Z
   } catch(e) { console.warn("[loadSalonData] clotures skipped", e); }
 
   // 10. Charger audit log → window.AUDIT_LOG[]
@@ -4257,10 +4258,24 @@ async function _lxRafraichirClotures() {
     window.CLOTURES = older.concat(fresh).sort(function(a,b){ return (a.num||0) - (b.num||0); });
     if (!window.LOCKED_DAYS) window.LOCKED_DAYS = {};
     window.CLOTURES.forEach(function(c){ if (c && c.date) window.LOCKED_DAYS[c.date] = true; });
+    try { await lxChargerAnnotationsZ(); } catch(_eAn) {} // 2026-10-16 : cumuls de la prochaine Z corrigés des annotations
     return true;
   } catch (e) { return false; }
 }
 if (typeof window !== "undefined") window._lxRafraichirClotures = _lxRafraichirClotures;
+// 2026-10-16 (incident Z n°128) : annotations correctives SIGNÉES des clôtures Z (table clotures_annotations, inaltérable).
+// Une Z n'est jamais modifiée : l'annotation porte les montants exacts (journal des tickets), est affichée sur la Z
+// (historique, duplicata) et ses montants remplacent ceux de la Z dans les cumuls. window._lxZAnnotLues = lecture réussie
+// (sinon les cumuls de la prochaine Z sont ajustés par le serveur).
+async function lxChargerAnnotationsZ() {
+  if (!_sb || !_salonId) return false;
+  try {
+    var r = await _sb.from("clotures_annotations").select("*").eq("salon_id", _salonId).order("num", { ascending: true }).limit(1000);
+    if (r.error || !Array.isArray(r.data)) { window._lxZAnnotLues = false; return false; }
+    window.Z_ANNOTATIONS = r.data; window._lxZAnnotLues = true; return true;
+  } catch (e) { window._lxZAnnotLues = false; return false; }
+}
+if (typeof window !== "undefined") window.lxChargerAnnotationsZ = lxChargerAnnotationsZ;
 
 async function saveCloture(clot) {
   if (!_isOnline || !_salonId) return { ok: false, skipped: true }; // 2026-10-14 audit : résultat explicite
@@ -4305,6 +4320,15 @@ async function saveCloture(clot) {
   _ensureUuidId(clot);
   data.id = clot.id;
   var res = await _sb.from("clotures").upsert(data).select();
+  // 2026-10-16 (incident Z n°128) : la base refuse une Z différente du journal des tickets (déclencheur
+  // b_nf525_z_controle_journal). Refus définitif : jamais rejouée par la file de secours ; la journée est rouverte.
+  if (res.error && /LX_Z_ECART_JOURNAL/.test(String(res.error.message || ""))) {
+    console.error("[saveCloture] Z refusée : différente du journal des tickets", res.error.message);
+    _walMarkSynced(_walId);
+    try { if (typeof saveAuditEntry === "function") saveAuditEntry("Z_REFUSEE_ECART_JOURNAL", JSON.stringify({ cloture_num: clot.num || null, cloture_date: clot.date || null, total: clot.totalCA, nb: clot.nbTickets, msg: String(res.error.message || "").slice(0, 400) }).slice(0, 2000)); } catch (_eA) {}
+    try { if (typeof window._lxZRefuseeParServeur === "function") window._lxZRefuseeParServeur(clot, res.error.message); } catch (_eR) {}
+    return { ok: false, permanent: true, refuseeJournal: true, error: res.error };
+  }
   if (res.error) {
     if (res.error.code === "23505" || (res.error.message || "").indexOf("clotures_unique_num_per_salon") >= 0) {
       console.warn("[saveCloture] Doublon détecté (UNIQUE constraint), clôture déjà enregistrée. Num=" + clot.num);
