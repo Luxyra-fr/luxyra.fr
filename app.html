@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Luxyra v6.6.0</title>
+<title>Luxyra v6.6.1</title>
 <link rel="manifest" href="/manifest-app.json">
 <meta name="theme-color" content="#c8a84e">
 <meta name="mobile-web-app-capable" content="yes">
@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261015-3"></script>
+<script src="luxyra-supabase.js?v=20261016-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261015-3";
+  var attendu="20261016-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -2828,7 +2828,7 @@ function getInvTournantProducts(){
   return sorted.slice(0,5);
 }
 
-var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.6.0",subdomain:"",slug:"",plan:"essential"};
+var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.6.1",subdomain:"",slug:"",plan:"essential"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
 
@@ -6457,8 +6457,7 @@ function _lxClotureCaisseTheo(){
   try{
     try{ _lxCoffreRattrapageAutoZ(); }catch(_eRz){} // 2026-10-14 audit
     var CD=window.CAISSE_DATA||{}; var fond=Number(CD.fond)||0;
-    var _sdcRefs=(typeof _lxSameDayCancelRefs==="function")?_lxSameDayCancelRefs():{};
-    var done=AP.filter(function(a){return a&&a.st==="done"&&a.date===TD&&!a.cancelled&&!(typeof _lxIsSameDayContra==="function"&&_lxIsSameDayContra(a,_sdcRefs));});
+    var done=_lxZDoneAP(TD); // 2026-10-16 : même liste que la Z (sans doublon)
     var esp=0; done.forEach(function(a){ esp += _lxPayBuckets(a).esp; });
     var totEntrees=0,totSorties=0;
     if(Array.isArray(CD.mouvements)){ CD.mouvements.filter(function(m){return m.date===TD;}).forEach(function(m){ var amt=Number(m.montant)||0; if(m.type==="sortie"||m.type==="retrait"||m.type==="depense") totSorties+=amt; else totEntrees+=amt; }); }
@@ -6528,7 +6527,7 @@ function _doClotureDo(){
   }
   // 2026-10-14 audit (NF525) : Z refusee tant que des tickets du jour (ou anterieurs) sont encore dans la file de secours
   if(typeof window.lxClotureBloqueeParWal==="function" && window.lxClotureBloqueeParWal(TD)) return;
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!_lxExclCA(a);});
+  var done=_lxZDoneAP(TD); // 2026-10-16 : même liste que la Z (sans doublon)
   if(!done.length){document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center"><h2>Aucun ticket</h2><p>Aucun ticket \u00e0 cl\u00f4turer aujourd\u0027hui</p><button class="btn bg bk" onclick="cM()">OK</button></div></div>';return;}
   var t=0;done.forEach(function(a){t+=a.pr});
   var psSold=PS.filter(function(p){return p.date===TD;});var tProd=0;psSold.forEach(function(p){tProd+=p.pr;});
@@ -6596,11 +6595,20 @@ function doConfirmCloture(){
   try{
     var btns=document.querySelectorAll("button");
     btns.forEach(function(b){
-      if((b.textContent||"").trim()==="Confirmer"){ b.disabled=true; b.style.opacity=".5"; b.style.cursor="not-allowed"; b.textContent="Clôture en cours…"; }
+      if((b.textContent||"").trim()==="Confirmer"||b.id==="clot_valider_btn"){ b.disabled=true; b.style.opacity=".5"; b.style.cursor="not-allowed"; b.textContent="Clôture en cours…"; }
     });
   }catch(_e){}
+  // 2026-10-16 (incident Z n°128) : AVANT de sceller, la Z calculée sur l'appareil est comparée au journal des tickets
+  // enregistrés en base (nombre, total TTC, modes de règlement). Écart -> clôture BLOQUÉE (jamais de Z différente du
+  // journal), avec « Recalculer depuis les tickets enregistrés ».
+  Promise.resolve(_lxZControleJournal(TD)).then(function(ctl){
+    if(ctl && ctl.bloque){ window._cloturingInProgress=false; _lxZAfficherEcart(ctl); return; }
+    _lxZFinaliser(null);
+  },function(e){ console.warn("[Z] contrôle journal en erreur",e); window._cloturingInProgress=false; _lxZAfficherEcart({bloque:true,erreur:String((e&&e.message)||e)}); });
+}
+function _lxZFinaliser(opts){
   var c;
-  try { c = cloturerJournee(); }
+  try { c = cloturerJournee(opts); }
   finally {
     // Libère le flag après 3s (le temps que l'INSERT DB ait fini). Au-delà, un
     // 2e clic est OK (= sécurité, pas un retry intentionnel).
@@ -6824,7 +6832,8 @@ function printClotureZ(){
   h+="<p><strong>Date: "+fmt(c.date)+"</strong></p>";
   h+="<p>Heure d'\u00e9dition: "+new Date().toLocaleString("fr-FR")+"</p>";
   h+="<p class=\"small\">Op\u00e9rateur: "+(T[0]?T[0].n:"-")+"</p>";
-  
+  try{ var _zanP=_lxZAnnotation(c); if(_zanP) h+=_lxZAnnotationHtml(_zanP,true); }catch(_eZaP){} // 2026-10-16 : annotation corrective (duplicata / r\u00e9impression)
+
   // ===== 1. SYNTHESE GENERALE =====
   h+="<h2>1. Synth\u00e8se g\u00e9n\u00e9rale</h2>";
   h+="<table>";
@@ -9245,6 +9254,8 @@ function goBack(){
   go("home");
 }
 function go(pg,arg){
+  // 2026-10-16 (incident Z n°128) : 1 réservation en ligne = 1 entrée, avant tout affichage (planning, accueil, stats, compta, caisse)
+  if(/^(planning|home|stats|accounting|caisse|caisseGestion|tickets)$/.test(String(pg||""))){ try{ if(typeof _lxDedupOnlineAP==="function") _lxDedupOnlineAP(); }catch(_eDg){} }
   if(pg==="accounting"||pg==="tickets"){ try{ if(typeof lxCorrReglCharger==="function") lxCorrReglCharger(); }catch(_eCg){} } // 2026-10-11
   // === Nav history : push la page courante avant de changer (pour goBack) ===
   // Skip si on est en train de revenir via goBack (sinon boucle infinie).
@@ -9783,11 +9794,54 @@ function _lxDedupOnlineAP(){
       if(_seenId[_id0]){ AP.splice(_d0,1); _d0--; _rm++; continue; }
       _seenId[_id0]=true;
     }
+    // 2026-10-16 (incident Z n°128) : un RDV en ligne ENCAISSÉ existe aussi sous son id nu « X » (ligne appointments créée
+    // par saveAppointment à l'encaissement, relue par reloadFromSupabase) alors que l'entrée d'affichage « online_X » reste
+    // dans la liste (un ticket encaissé n'en est plus retiré depuis le 14/10). Deux entrées « encaissées » = deux RDV au
+    // planning et le ticket compté DEUX fois (CA, stats, compta, clôture Z). Règle : UNE seule entrée par réservation.
+    // La ligne de la base (« X ») fait foi et prend la place de « online_X » (champs absents de la base conservés :
+    // n° de ticket, métadonnées en ligne). Exception : seule « online_X » porte le n° de ticket -> c'est elle qui reste
+    // (un ticket encaissé ne disparaît jamais de la liste).
+    var _guard=0;
+    while(_guard++<500){
+      var _plain={}, _fait=false;
+      for(var _p0=0;_p0<AP.length;_p0++){ var _ep=AP[_p0]; if(!_ep||_ep.id==null) continue; var _sp=String(_ep.id); if(_sp.indexOf("online_")!==0) _plain[_sp]=_p0; }
+      for(var _o0=0;_o0<AP.length;_o0++){
+        var _eo=AP[_o0]; if(!_eo) continue; var _so=String(_eo.id||""); if(_so.indexOf("online_")!==0) continue;
+        var _pi=_plain[_so.slice(7)]; if(_pi==null) continue;
+        var _ex=AP[_pi];
+        var _oTk=!!(_eo.tkNum), _xTk=!!(_ex.tkNum);
+        if(_oTk && !_xTk){ AP.splice(_pi,1); }
+        else {
+          Object.keys(_eo).forEach(function(k){ if(k!=="id" && _ex[k]===undefined) _ex[k]=_eo[k]; });
+          if(!_ex.onlineId) _ex.onlineId=_so.slice(7);
+          AP[_o0]=_ex; AP.splice(_pi,1);
+        }
+        _rm++; _fait=true; break;
+      }
+      if(!_fait) break;
+    }
     if(_rm) window._apDirty=true;
     return _rm;
   }catch(_e){ return 0; }
 }
 window._lxDedupOnlineAP=_lxDedupOnlineAP;
+// 2026-10-16 (incident Z n°128) : dernier filet des calculs de caisse — un même n° de ticket n'est compté qu'UNE fois
+// (première occurrence, ligne de la base préférée à une entrée d'affichage « online_ »). Ne modifie pas AP.
+function _lxDedupTkNum(list){
+  try{
+    if(!Array.isArray(list)) return list;
+    var vu={}, out=[], dbl=[];
+    list.forEach(function(a){ if(!a) return; if(a.tkNum==null||a.tkNum===""){ out.push(a); return; }
+      var k=String(a.tkNum)+"|"+String(a.date||"")+"|"+(Math.round((Number(a.pr)||0)*100)); // même n° imprimé, même jour, même montant
+      if(vu[k]==null){ vu[k]=out.length; out.push(a); return; }
+      var prev=out[vu[k]];
+      if(String(prev.id||"").indexOf("online_")===0 && String(a.id||"").indexOf("online_")!==0){ out[vu[k]]=a; }
+      dbl.push(k); });
+    if(dbl.length){ try{ var _kd="lx_tkdbl_"+dbl.join(","); if(!window[_kd]){ window[_kd]=1; console.warn("[caisse] n° de ticket en double ignoré(s) :",dbl.join(", ")); if(typeof saveAuditEntry==="function") saveAuditEntry("CAISSE_DOUBLON_IGNORE",JSON.stringify({fn:"_lxDedupTkNum",msg:"ticket(s) en double dans la liste (comptés une fois)",tk:dbl}).slice(0,2000)); } }catch(_eL){} }
+    return out;
+  }catch(_e){ return list; }
+}
+window._lxDedupTkNum=_lxDedupTkNum;
 function _lxFixOnlineStId(){
   try{
     if(typeof AP==="undefined"||!AP||!AP.length) return false;
@@ -22962,7 +23016,9 @@ function rAccounting(){
       var zc=window.CLOTURES[zi];
       h+='<div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
       h+='<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:13px">Z #'+(zc.num||zi+1)+' \u2014 '+fmt(zc.date)+'</div>';
-      h+='<div style="font-size:11px;color:var(--text3)">'+zc.nbTickets+' tk | HT:'+(zc.totalHT||0).toFixed(2)+'\u20ac TVA:'+(zc.totalTVA||0).toFixed(2)+'\u20ac'+(zc.totalRemises>0?' Rem:'+zc.totalRemises.toFixed(2)+'\u20ac':'')+'</div></div>';
+      h+='<div style="font-size:11px;color:var(--text3)">'+zc.nbTickets+' tk | HT:'+(zc.totalHT||0).toFixed(2)+'\u20ac TVA:'+(zc.totalTVA||0).toFixed(2)+'\u20ac'+(zc.totalRemises>0?' Rem:'+zc.totalRemises.toFixed(2)+'\u20ac':'')+'</div>';
+      try{ var _zan=_lxZAnnotation(zc); if(_zan) h+=_lxZAnnotationHtml(_zan,false); }catch(_eZa){} // 2026-10-16 : annotation corrective sign\u00e9e
+      h+='</div>';
       h+='<div style="text-align:right;flex-shrink:0"><div style="font-weight:800;font-family:var(--f1);color:var(--gold);font-size:16px">'+zc.totalCA.toFixed(2)+' \u20ac</div>';
       h+='<button class="btn bs" style="font-size:10px;padding:3px 8px;margin-top:2px" onclick="reprintClotureZ('+zi+')">\ud83d\udda8 Reimprimer</button></div></div>';
     }
@@ -23557,7 +23613,7 @@ function _buildRapportHTML(periodM){
   }
 
   html += '<div class="footer">';
-  html += '<strong>Document \u00e9dit\u00e9 par Luxyra '+(SALON_CONFIG.version||"v6.6.0")+'</strong> \u2014 Caisse conforme art. 286-I-3 bis du CGI (cha\u00eenage SHA-256)<br>';
+  html += '<strong>Document \u00e9dit\u00e9 par Luxyra '+(SALON_CONFIG.version||"v6.6.1")+'</strong> \u2014 Caisse conforme art. 286-I-3 bis du CGI (cha\u00eenage SHA-256)<br>';
   if(isMicro) html += 'R\u00e9gime micro-entrepreneur \u2014 TVA non applicable, art. 293B du CGI<br>';
   else html += 'Taux TVA appliqu\u00e9 : '+txTVA+'%<br>';
   html += 'Pour le contr\u00f4le fiscal : utilisez l\'export FEC (Param\u00e8tres &gt; Caisse) \u2014 format l\u00e9gal arr\u00eat\u00e9 du 29/07/2013<br>';
@@ -33120,7 +33176,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.6.0", LX_CAISSE="C01";
+var LX_VERSION="6.6.1", LX_CAISSE="C01";
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -37304,9 +37360,199 @@ async function _lxEffetsExecuter(plan, orig, contra){
   if(echecs.length){ try{ showAlert("Ticket annul\u00e9. \u00c0 r\u00e9gulariser \u00e0 la main :\n- "+echecs.join("\n- "),"warning"); }catch(_eS2){} }
   else if(faits.length){ try{ toast("Effets du ticket annul\u00e9s : "+faits.join(", "),"success"); }catch(_eT){} }
 }
-function cloturerJournee(){
+// ============================================================================
+// 2026-10-16 (incident Z n°128, accord d'Alexandre) — CONTRÔLE DE LA Z CONTRE LE JOURNAL DES TICKETS AVANT SCELLEMENT
+// La Z est calculée sur la liste de l'appareil (AP). Le 16/10 un RDV en ligne encaissé y figurait deux fois : Z scellée
+// avec 4 tickets / 95,40 € au lieu de 3 / 69,40 €. Désormais, juste avant de sceller : relecture des tickets du jour en
+// base (source de vérité : même règle que check_fiscal_integrity §2 = tickets status <> 'cancelled', mode de caisse
+// courant ; paires annulées le même jour exclues du nombre ; corrections de règlement « avant clôture » appliquées aux
+// modes). Écart -> Z BLOQUÉE + « Recalculer depuis les tickets enregistrés ». Hors connexion : contrôle impossible ->
+// Z autorisée seulement si aucun ticket n'attend dans la file de secours (déjà bloquant), et c'est tracé.
+// La base refuse de toute façon une Z différente du journal (déclencheur b_nf525_z_controle_journal).
+// ============================================================================
+function _lxZBucketsVides(){ return {cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0}; }
+function _lxZArr(b){ Object.keys(b).forEach(function(k){ b[k]=Math.round((Number(b[k])||0)*100)/100; }); return b; }
+async function _lxZLireJournal(jour){
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return null;
+    if(typeof _isOnline!=="undefined"&&_isOnline===false) return null;
+    var q=_sb.from("tickets").select("id,num,date_ticket,heure_ticket,total_ttc,total_ht,total_remise,total_brut,mode_paiement,detail_paiement,status,mode_caisse,items,collaborateur_id,rid:raw_data->>id,tk:raw_data->>tkNum,isCancel:raw_data->>isCancel,cancelRef:raw_data->>cancelRef,contraSameDay:raw_data->>contraSameDay").eq("salon_id",_salonId).eq("date_ticket",jour).order("num",{ascending:true}).limit(2000);
+    var r=await _lxAvecDelai(q,6000);
+    if(!r||r.__delai||r.error||!Array.isArray(r.data)) return null;
+    var corr=[];
+    try{ var qc=_sb.from("corrections_reglement").select("ticket_id,lignes,avant_cloture").eq("salon_id",_salonId).eq("ticket_date",jour).eq("avant_cloture",true);
+      var rc=await _lxAvecDelai(qc,4000); if(rc&&!rc.__delai&&!rc.error&&Array.isArray(rc.data)) corr=rc.data; else corr=null; }catch(_eC){ corr=null; }
+    return {rows:r.data, corr:corr};
+  }catch(_e){ return null; }
+}
+// Totaux de la Z selon le journal : {nb, total, det, fiable, rows (retenues), exclues}
+function _lxZJournalCalc(j){
+  var mode=window.LX_MODE_CAISSE||null;
+  var rows=(j.rows||[]).filter(function(r){ return r && r.status!=="cancelled" && (!r.mode_caisse||!mode||r.mode_caisse===mode); });
+  var total=0; rows.forEach(function(r){ total+=Number(r.total_ttc)||0; });
+  var tks={}; rows.forEach(function(r){ if(r.tk!=null&&r.tk!=="") tks[String(r.tk)]=1; });
+  var refs={};
+  rows.forEach(function(r){ var ic=String(r.isCancel)==="true", sd=String(r.contraSameDay)==="true";
+    if(sd||(ic&&r.cancelRef!=null&&tks[String(r.cancelRef)])){ r._lxContraSD=true; if(r.cancelRef!=null) refs[String(r.cancelRef)]=1; } });
+  var retenues=rows.filter(function(r){ return !r._lxContraSD && !(r.tk!=null&&refs[String(r.tk)]); });
+  var det=_lxZBucketsVides(), fiable=true;
+  var add=function(m,amt){ var b=_lxPayBuckets({payments:[{method:m,amount:amt}]}); Object.keys(det).forEach(function(k){ det[k]+=b[k]||0; }); };
+  rows.forEach(function(r){
+    var dp=(r.detail_paiement&&typeof r.detail_paiement==="object"&&!Array.isArray(r.detail_paiement))?r.detail_paiement:null, s=0;
+    if(dp&&Object.keys(dp).length){ Object.keys(dp).forEach(function(k){ var v=Number(dp[k])||0; s+=v; add(k,v); }); }
+    else { s=Number(r.total_ttc)||0; add(r.mode_paiement,s); }
+    if(Math.abs(s-(Number(r.total_ttc)||0))>0.01) fiable=false;
+  });
+  if(j.corr===null) fiable=false;
+  (j.corr||[]).forEach(function(cr){ (Array.isArray(cr.lignes)?cr.lignes:[]).forEach(function(l){ if(l) add(l.mode,Number(l.montant)||0); }); });
+  return {nb:retenues.length, total:Math.round(total*100)/100, det:_lxZArr(det), fiable:fiable, rows:retenues};
+}
+function _lxZApCalc(done){
+  var total=0, det=_lxZBucketsVides();
+  done.forEach(function(a){ total+=Number(a.pr)||0; var b=_lxPayBuckets(a); Object.keys(det).forEach(function(k){ det[k]+=b[k]||0; }); });
+  return {nb:done.filter(function(a){ return !!a.tkNum; }).length, total:Math.round(total*100)/100, det:_lxZArr(det)};
+}
+async function _lxZControleJournal(jour){
+  if(window._lxDemo||window._lxVueAdmin) return {ok:true, nonVerifie:true};
+  var ap=_lxZApCalc(_lxZDoneAP(jour));
+  var j=await _lxZLireJournal(jour);
+  if(!j){
+    // Hors ligne / base injoignable : la file de secours a déjà été contrôlée (lxClotureBloqueeParWal) -> Z autorisée, tracée.
+    var enAttente=(typeof window.lxWalTicketsNonTransmis==="function")?window.lxWalTicketsNonTransmis(jour):[];
+    if(enAttente&&enAttente.length) return {bloque:true, attente:enAttente.length, ap:ap};
+    try{ if(typeof saveAuditEntry==="function") saveAuditEntry("Z_CONTROLE_JOURNAL_IMPOSSIBLE",JSON.stringify({date:jour,nb:ap.nb,total:ap.total,motif:"tickets non relus (hors connexion ou délai)"}).slice(0,2000)); }catch(_eA){}
+    return {ok:true, nonVerifie:true, ap:ap};
+  }
+  var db=_lxZJournalCalc(j), ecarts=[];
+  if(Math.abs(ap.total-db.total)>0.005) ecarts.push("total");
+  if(ap.nb!==db.nb) ecarts.push("nombre");
+  if(db.fiable && !(ap.det.enligne>0.004) && !(db.det.enligne>0.004)){
+    ["cb","esp","chq","bon","vir","aut"].forEach(function(k){ if(Math.abs((ap.det[k]||0)-(db.det[k]||0))>0.01) ecarts.push(k); });
+  }
+  if(!ecarts.length) return {ok:true, ap:ap, db:db};
+  // tickets de l'appareil absents du journal / tickets du journal absents de l'appareil (par n° imprimé)
+  var apTk={}, dbTk={}; _lxZDoneAP(jour).forEach(function(a){ if(a.tkNum) apTk[String(a.tkNum)]=(apTk[String(a.tkNum)]||0)+1; });
+  db.rows.forEach(function(r){ if(r.tk!=null) dbTk[String(r.tk)]=(dbTk[String(r.tk)]||0)+1; });
+  var horsJournal=Object.keys(apTk).filter(function(k){ return !dbTk[k]; }), absents=Object.keys(dbTk).filter(function(k){ return !apTk[k]; });
+  try{ if(typeof saveAuditEntry==="function") saveAuditEntry("Z_BLOQUEE_ECART_JOURNAL",JSON.stringify({date:jour,ecarts:ecarts,appareil:ap,journal:{nb:db.nb,total:db.total,det:db.det},hors_journal:horsJournal,absents:absents}).slice(0,2000)); }catch(_eA2){}
+  return {bloque:true, ecarts:ecarts, ap:ap, db:db, horsJournal:horsJournal, absents:absents};
+}
+function _lxZAfficherEcart(ctl){
+  var m=document.getElementById("modal"); if(!m) return;
+  var e2=function(v){ return (Number(v)||0).toFixed(2).replace(".",",")+" €"; };
+  var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-height:90vh;overflow-y:auto">';
+  h+='<div style="font-size:42px;margin-bottom:6px">⛔</div><h2>Clôture bloquée</h2>';
+  if(ctl.attente){
+    h+='<div style="font-size:14px;margin:10px 0 14px;line-height:1.5">'+ctl.attente+' ticket(s) de cet appareil ne sont pas encore transmis et le journal des tickets ne peut pas être relu. Rétablissez la connexion puis réessayez.</div>';
+  } else if(ctl.erreur || !ctl.db){
+    h+='<div style="font-size:14px;margin:10px 0 14px;line-height:1.5">Le contrôle de la clôture avec les tickets enregistrés n’a pas pu se faire. Aucune clôture n’a été enregistrée. Réessayez dans un instant.</div>';
+  } else {
+    h+='<div style="font-size:14px;margin:10px 0 12px;line-height:1.5;text-align:left">La clôture calculée sur cet appareil <strong>ne correspond pas aux tickets enregistrés</strong>. Pour garantir une clôture exacte, elle n’a <strong>pas</strong> été enregistrée.</div>';
+    h+='<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:10px"><tr style="color:var(--text3)"><td></td><td style="text-align:right">Cet appareil</td><td style="text-align:right">Tickets enregistrés</td></tr>';
+    var lig=function(lib,a,b,isNb){ var diff=isNb?(a!==b):(Math.abs(a-b)>0.005); return '<tr style="'+(diff?'color:#ef5350;font-weight:700':'')+'"><td style="text-align:left;padding:3px 0">'+lib+'</td><td style="text-align:right">'+(isNb?a:e2(a))+'</td><td style="text-align:right">'+(isNb?b:e2(b))+'</td></tr>'; };
+    h+=lig("Nombre de tickets",ctl.ap.nb,ctl.db.nb,true)+lig("Total TTC",ctl.ap.total,ctl.db.total);
+    [["cb","CB"],["esp","Espèces"],["chq","Chèques"],["bon","Bons cadeaux"],["vir","Virements"],["aut","Autre"],["enligne","Payés en ligne"]].forEach(function(x){ var a=ctl.ap.det[x[0]]||0, b=ctl.db.det[x[0]]||0; if(a||b) h+=lig(x[1],a,b); });
+    h+='</table>';
+    if(ctl.horsJournal&&ctl.horsJournal.length) h+='<div style="font-size:12px;text-align:left;margin-bottom:6px">Ticket(s) compté(s) sur l’appareil mais absent(s) des tickets enregistrés : n°'+ctl.horsJournal.join(", n°")+'</div>';
+    if(ctl.absents&&ctl.absents.length) h+='<div style="font-size:12px;text-align:left;margin-bottom:6px">Ticket(s) enregistré(s) absent(s) de l’appareil : n°'+ctl.absents.join(", n°")+'</div>';
+    h+='<div style="font-size:12px;color:var(--text2);text-align:left;margin-bottom:12px;line-height:1.45">Les tickets enregistrés (scellés) font foi. « Recalculer depuis les tickets enregistrés » prépare la clôture à partir d’eux ; vous la vérifiez avant de la valider.</div>';
+    h+='<button class="btn bg bk" style="margin-bottom:8px" onclick="_lxZRecalculerDepuisTickets()">Recalculer depuis les tickets enregistrés</button>';
+  }
+  h+='<button class="btn bk" style="margin-bottom:8px" onclick="cM();setTimeout(function(){ if(typeof _doClotureDo===\'function\') _doClotureDo(); },50)">Réessayer</button>';
+  h+='<button class="btn bk" onclick="cM()">Fermer</button></div></div>';
+  m.innerHTML=h;
+}
+// Liste « encaissements du jour » reconstruite depuis les tickets enregistrés (une entrée par ticket du journal ; les
+// données de gestion — collaborateur, prestations — reprises de l'entrée de l'appareil quand elle existe).
+function _lxZDoneDepuisTickets(jour, db){
+  var dispo=AP.filter(function(a){ return a&&a.st==="done"&&a.date===jour; }), pris={};
+  var corrParTk={}; (db.corr||[]).forEach(function(cr){ if(cr&&cr.ticket_id) (corrParTk[cr.ticket_id]=corrParTk[cr.ticket_id]||[]).push(cr); });
+  return db.rows.map(function(r){
+    var rid=String(r.rid||""), nu=rid.replace(/^online_/,""), base=null;
+    for(var i=0;i<dispo.length;i++){ var a=dispo[i]; if(pris[i]) continue;
+      var aid=String(a.id||""), anu=aid.replace(/^online_/,"");
+      if((rid&&(aid===rid||anu===nu))||(r.tk!=null&&String(a.tkNum)===String(r.tk)&&Math.abs((Number(a.pr)||0)-(Number(r.total_ttc)||0))<0.005)){ base=a; pris[i]=1; break; } }
+    var o=base?Object.assign({},base):{id:rid||r.id, st:"done", date:jour, stId:r.collaborateur_id, items:Array.isArray(r.items)?r.items:[], heureEncaiss:r.heure_ticket?String(r.heure_ticket).slice(0,5):null};
+    o.pr=Math.round((Number(r.total_ttc)||0)*100)/100; o.tkNum=(r.tk!=null&&r.tk!=="")?(Number(r.tk)||r.tk):(o.tkNum||null);
+    o.cancelled=false; o.remise=Number(r.total_remise)||0; if(r.total_brut!=null) o.brutTotal=Number(r.total_brut);
+    var dp=(r.detail_paiement&&typeof r.detail_paiement==="object"&&!Array.isArray(r.detail_paiement))?r.detail_paiement:null, pays=[];
+    if(dp&&Object.keys(dp).length) Object.keys(dp).forEach(function(k){ pays.push({method:k,amount:Number(dp[k])||0}); });
+    else pays.push({method:r.mode_paiement||"aut",amount:o.pr});
+    (corrParTk[r.id]||[]).forEach(function(cr){ (cr.lignes||[]).forEach(function(l){ if(l) pays.push({method:l.mode,amount:Number(l.montant)||0}); }); });
+    o.payments=pays; o.acompte=0; o.met=r.mode_paiement||o.met; o._lxDepuisJournal=true;
+    return o;
+  });
+}
+async function _lxZRecalculerDepuisTickets(){
+  var m=document.getElementById("modal");
+  var j=await _lxZLireJournal(TD);
+  if(!j){ showAlert("Les tickets enregistrés ne peuvent pas être relus (connexion). Réessayez.","warning"); return; }
+  var db=_lxZJournalCalc(j);
+  db.corr=j.corr;
+  var liste=_lxZDoneDepuisTickets(TD, db);
+  var chk=_lxZApCalc(liste);
+  if(Math.abs(chk.total-db.total)>0.005||chk.nb!==db.nb){ showAlert("Recalcul impossible : résultat incohérent ("+chk.nb+" / "+db.nb+" tickets). Contactez le support (rien n’a été enregistré).","error"); return; }
+  window._lxZListeJournal=liste;
+  var e2=function(v){ return (Number(v)||0).toFixed(2).replace(".",",")+" €"; };
+  var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
+  h+='<h2>Clôture recalculée</h2><div style="font-size:13px;color:var(--text3)">'+fmt(TD)+' — depuis les tickets enregistrés</div>';
+  h+='<div style="font-size:30px;font-weight:800;font-family:var(--f1);color:var(--gold);margin:12px 0">'+e2(chk.total)+'</div>';
+  h+='<div style="font-size:13px;margin-bottom:8px">'+chk.nb+' ticket(s)</div><div style="font-size:12px;color:var(--text2);margin-bottom:12px">';
+  [["cb","CB"],["esp","Espèces"],["chq","Chèques"],["bon","Bons cadeaux"],["vir","Virements"],["aut","Autre"],["enligne","Payés en ligne"]].forEach(function(x){ if(chk.det[x[0]]) h+=x[1]+' : '+e2(chk.det[x[0]])+'<br>'; });
+  h+='</div><div style="background:rgba(212,168,67,.1);border:1px solid rgba(212,168,67,.3);padding:10px;border-radius:8px;font-size:12px;margin-bottom:12px;text-align:left;color:#fff">⚠️ La clôture est définitive et irréversible.</div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn bg" id="clot_valider_btn" style="flex:1" onclick="_lxZValiderDepuisTickets()">Valider la clôture</button></div></div></div>';
+  if(m) m.innerHTML=h;
+}
+function _lxZValiderDepuisTickets(){
+  var liste=window._lxZListeJournal; if(!Array.isArray(liste)) return;
+  if(window._cloturingInProgress) return;
+  window._cloturingInProgress=true;
+  try{ var b=document.getElementById("clot_valider_btn"); if(b){ b.disabled=true; b.textContent="Clôture en cours…"; } }catch(_e){}
+  window._lxZListeJournal=null;
+  try{ if(typeof saveAuditEntry==="function") saveAuditEntry("Z_RECALCULEE_DEPUIS_TICKETS",JSON.stringify({date:TD,nb:liste.filter(function(a){return a.tkNum;}).length,total:Math.round(liste.reduce(function(s,a){return s+(Number(a.pr)||0);},0)*100)/100}).slice(0,2000)); }catch(_eA){}
+  _lxZFinaliser({done:liste, source:"tickets"});
+}
+// Z refusée par la base (déclencheur b_nf525_z_controle_journal : différente du journal des tickets) : la journée est
+// rouverte sur cet appareil (rien n'a été enregistré ni verrouillé) et l'opérateur est prévenu.
+window._lxZRefuseeParServeur=function(clot, msg){
+  try{
+    if(Array.isArray(window.CLOTURES)) window.CLOTURES=window.CLOTURES.filter(function(x){ return !(x&&clot&&x.id===clot.id); });
+    if(window.LOCKED_DAYS&&clot&&clot.date&&!(window.CLOTURES||[]).some(function(x){ return x&&x.date===clot.date; })){ delete window.LOCKED_DAYS[clot.date]; try{ localStorage.setItem("_cp_locked",JSON.stringify(window.LOCKED_DAYS)); }catch(_eL){} }
+    if(window._lastCloture===clot) window._lastCloture=null;
+    showAlert("Clôture Z NON enregistrée : elle ne correspond pas aux tickets enregistrés.\n\nLa journée reste ouverte. Relancez la clôture : l’application vous proposera de la recalculer depuis les tickets enregistrés.\n\n("+String(msg||"").replace(/^.*LX_Z_ECART_JOURNAL\s*:?\s*/,"").slice(0,240)+")","error");
+  }catch(_e){}
+};
+// Annotations correctives signées des Z (clotures_annotations) : lues avec les clôtures (luxyra-supabase.js)
+function _lxZAnnotation(z){
+  try{ if(!z||!Array.isArray(window.Z_ANNOTATIONS)) return null;
+    for(var i=0;i<window.Z_ANNOTATIONS.length;i++){ var an=window.Z_ANNOTATIONS[i]; if(an&&(an.cloture_id===z.id||(an.cloture_num===z.num&&an.cloture_date===z.date))) return an; } }catch(_e){}
+  return null;
+}
+window._lxZAnnotation=_lxZAnnotation;
+function _lxZAnnotationHtml(an, imprime){
+  if(!an) return "";
+  var e2=function(v){ return (Number(v)||0).toFixed(2).replace(".",",")+" €"; };
+  var dp=an.correct_detail_paiements||{}, modes=[];
+  [["cb","CB"],["esp","Espèces"],["chq","Chèques"],["bon","Bons"],["vir","Virements"],["aut","Autre"],["enligne","En ligne"]].forEach(function(x){ if(Number(dp[x[0]])) modes.push(x[1]+" "+e2(dp[x[0]])); });
+  var esc=function(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); };
+  var st=imprime?'border:2px solid #000;padding:6px;margin:8px 0;font-size:10px;line-height:1.45':'border:1px solid #ef5350;background:rgba(244,67,54,.08);border-radius:8px;padding:8px;margin-top:6px;font-size:11px;line-height:1.45;text-align:left';
+  return '<div style="'+st+'"><b>ANNOTATION CORRECTIVE n°'+esc(an.num)+' du '+esc(String(an.created_at||"").slice(0,10).split("-").reverse().join("/"))+'</b> (clôture scellée, non modifiée)<br>'+
+    'Montants exacts (journal des tickets) : <b>'+esc(an.correct_nb_tickets)+' ticket(s), '+e2(an.correct_total_ca)+' TTC</b> ('+e2(an.correct_total_ht)+' HT)'+(modes.length?' — '+modes.join(", "):'')+'<br>'+
+    'Montants de la clôture : '+esc(an.wrong_nb_tickets)+' ticket(s), '+e2(an.wrong_total_ca)+' TTC. Les cumuls suivants utilisent les montants exacts.<br>'+
+    'Motif : '+esc(an.motif)+'<br><span style="font-family:monospace;font-size:9px;word-break:break-all">Empreinte : '+esc(an.hash)+'</span></div>';
+}
+// 2026-10-16 (incident Z n°128) : liste des encaissements de la journée retenus par la Z — une seule entrée par
+// réservation (_lxDedupOnlineAP) puis un seul passage par n° de ticket (_lxDedupTkNum, dernier filet).
+function _lxZDoneAP(jour){
+  try{ if(typeof _lxDedupOnlineAP==="function") _lxDedupOnlineAP(); }catch(_eD){}
   var _sdcRefs=_lxSameDayCancelRefs();
-  var done=AP.filter(function(a){return a.st==="done"&&a.date===TD&&!a.cancelled&&!_lxIsSameDayContra(a,_sdcRefs);});
+  var l=AP.filter(function(a){return a&&a.st==="done"&&a.date===jour&&!a.cancelled&&!_lxIsSameDayContra(a,_sdcRefs);});
+  return _lxDedupTkNum(l);
+}
+function cloturerJournee(opts){
+  var _sdcRefs=_lxSameDayCancelRefs();
+  // opts.done : liste reconstruite DEPUIS LES TICKETS ENREGISTRÉS (« Recalculer depuis les tickets enregistrés »)
+  var done=(opts&&Array.isArray(opts.done))?opts.done:_lxZDoneAP(TD);
   var annul=AP.filter(function(a){return a.cancelled&&a.cancelDate===TD;});
   // FIX 2026-05-14 : split Prest/Prod via _splitPrestProd centralisé.
   // CA global = sum(a.pr) inchangé (NF525 fiscal intact), juste ventilation correcte
@@ -37398,16 +37644,21 @@ function cloturerJournee(){
   // Cumul mensuel
   var moisKey=TD.slice(0,7);
   var clotMois=window.CLOTURES.filter(function(x){return x.date.indexOf(moisKey)===0;});
-  var cumulMois=totalCA;clotMois.forEach(function(x){cumulMois+=x.totalCA;});
-  c.cumulMois=cumulMois;
+  // 2026-10-16 : une Z porteuse d'une ANNOTATION CORRECTIVE signée (clotures_annotations, Z jamais modifiée) compte
+  // pour son montant CORRIGÉ dans les cumuls (sinon l'erreur se propage). Annotations non lues -> le serveur ajuste.
+  var _zDelta=function(x){ var an=(typeof _lxZAnnotation==="function")?_lxZAnnotation(x):null; return an?Math.round((Number(an.correct_total_ca)-Number(an.wrong_total_ca))*100)/100:0; };
+  var cumulMois=totalCA;clotMois.forEach(function(x){cumulMois+=x.totalCA+_zDelta(x);});
+  c.cumulMois=Math.round(cumulMois*100)/100;
   // Cumul annuel
   var anKey=TD.slice(0,4);
   var clotAn=window.CLOTURES.filter(function(x){return x.date.indexOf(anKey)===0;});
-  var cumulAn=totalCA;clotAn.forEach(function(x){cumulAn+=x.totalCA;});
-  c.cumulAnnuel=cumulAn;
+  var cumulAn=totalCA;clotAn.forEach(function(x){cumulAn+=x.totalCA+_zDelta(x);});
+  c.cumulAnnuel=Math.round(cumulAn*100)/100;
+  if(window._lxZAnnotLues===true) c.lxAnnotOk=true; // cumuls déjà corrigés ici : le serveur ne les ajuste pas une 2e fois
   // Grand total perpetuel (NF525): valeur affichee best-effort; autorite = trigger serveur clotures_set_cumul_perpetuel.
-  var _maxPerp=0; window.CLOTURES.forEach(function(x){ if(typeof x.cumulPerpetuelCA==="number"&&x.cumulPerpetuelCA>_maxPerp)_maxPerp=x.cumulPerpetuelCA; });
-  c.cumulPerpetuelCA=Math.round((_maxPerp+totalCA)*100)/100;
+  var _maxPerp=0, _maxPerpTs=""; window.CLOTURES.forEach(function(x){ if(typeof x.cumulPerpetuelCA==="number"&&x.cumulPerpetuelCA>_maxPerp){_maxPerp=x.cumulPerpetuelCA;_maxPerpTs=String(x.ts||"");} });
+  var _dPerp=0; try{ (window.Z_ANNOTATIONS||[]).forEach(function(an){ if(an&&String(an.created_at||"")>_maxPerpTs) _dPerp+=Number(an.correct_total_ca)-Number(an.wrong_total_ca); }); }catch(_eP){}
+  c.cumulPerpetuelCA=Math.round((_maxPerp+_dPerp+totalCA)*100)/100;
   c.hash=sha256Sync("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret);
   c.hashAlgo="SHA-256";
   // NF525: opérateur qui a effectué la clôture Z
@@ -37449,7 +37700,11 @@ function cloturerJournee(){
   // - Vérifie que le nb de tickets verrouillés correspond à c.nbTickets (alerte sinon)
   (async function _persistAndLock(){
     try {
-      if(typeof saveCloture==="function") await saveCloture(c);
+      var _sv=null;
+      if(typeof saveCloture==="function") _sv=await saveCloture(c);
+      // 2026-10-16 : Z refusée par le contrôle serveur (différente du journal des tickets) -> rien n'est verrouillé ;
+      // la journée est rouverte sur cet appareil (saveCloture -> _lxZRefuseeParServeur).
+      if(_sv && _sv.refuseeJournal) return;
       if(typeof lockTicketsForCloture==="function"){
         var lockRes = await lockTicketsForCloture(c);
         // Vérification cohérence : on devrait avoir verrouillé exactement c.nbTickets tickets
@@ -39186,6 +39441,16 @@ async function reloadFromSupabase(table){
           for(var j=0;j<AP.length;j++){
             // Match by UUID
             if(AP[j].id===a.id){alreadyLocal=true;break;}
+            // 2026-10-16 (incident Z n°128) : ligne appointments d'un RDV EN LIGNE encaissé (id = uuid de la réservation)
+            // -> elle REMPLACE l'entrée d'affichage « online_<uuid> » au lieu d'être ajoutée (sinon 2 RDV au planning et
+            // ticket compté deux fois). Seule « online_ » porte le ticket et pas la ligne -> on garde « online_ ».
+            if(AP[j] && String(AP[j].id||"")==="online_"+a.id){
+              var _mOn=_mapRow(a), _old=AP[j];
+              if(!(_mOn.st==="done"||_mOn.tkNum) && (_old.st==="done"||_old.tkNum)){ alreadyLocal=true; break; }
+              Object.keys(_old).forEach(function(k){ if(k!=="id" && _mOn[k]===undefined) _mOn[k]=_old[k]; });
+              if(!_mOn.onlineId) _mOn.onlineId=a.id;
+              AP[j]=_mOn; alreadyLocal=true; break;
+            }
             // Also match by date+time+collab to catch local entries not yet saved (race condition with realtime)
             if(AP[j].id && AP[j].id.indexOf("-")<0 && AP[j].date===a.date_rdv && AP[j].time===a.heure && AP[j].stId===a.collab_id && AP[j].st!=="canc"){
               // This is the same RDV created locally, update its ID to UUID
@@ -39203,6 +39468,7 @@ async function reloadFromSupabase(table){
         // re-sauvegarde par cet appareil et revenait. Jamais un ticket, jamais un RDV non encore transmis.
         try{ if(typeof window.lxApRetirerSupprimes==="function") window.lxApRetirerSupprimes(r.data, past30Str); }catch(_eRs){}
       }
+      try{ if(typeof _lxDedupOnlineAP==="function") _lxDedupOnlineAP(); }catch(_eDd){} // 2026-10-16 : 1 réservation = 1 entrée, après chaque relecture
     }
     else if(table==="rdv_online"){
       var _mapRo=(typeof window.lxMapRdvOnlineRow==="function")?window.lxMapRdvOnlineRow:null;
@@ -39273,6 +39539,7 @@ async function reloadFromSupabase(table){
     }
     if(typeof _lxRelinkOnlineAppts==="function")_lxRelinkOnlineAppts();
     if(typeof _lxReconcileGhostOnlineRdv==="function")_lxReconcileGhostOnlineRdv();
+    try{ if(typeof _lxDedupOnlineAP==="function") _lxDedupOnlineAP(); }catch(_eDd2){} // 2026-10-16
     // Refresh current view
     refreshCurrentView();
   }catch(e){console.warn("Realtime reload error:",e);}
