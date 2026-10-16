@@ -442,3 +442,4 @@ autres types (TK, Z, ZM, ZA, ZE, CR, DUP, JET, FA, AR), gestion de clé, contrô
 au JET n°516, **pas encore signée ES256**. À refaire : déployer v6 (verify_jwt false) ; le cron `nf525-sign-2min` la
 signera alors automatiquement (ZC n°1). Constat annexe : `'FA'` n'est pas dans la contrainte -> la première facture
 (`factures_clients`, vide à ce jour) ne pourrait pas être signée (FA_conflit) ; non modifié, à traiter avec accord.
+- **2026-10-16, 21:56 (Paris)** — nf525-sign v6 déployé (seul ajout : type ZC). Annotation corrective n°1 de la Z n°128 signée ES256 (signature ZC n°1, clé LX-ES256-20261011-O3tPa_YK, 21:58:07). Autocontrôle complet lancé aussitôt : 1 434 signatures vérifiées pour Excellence Coiffure, 0 anomalie (et 0 pour les autres établissements).

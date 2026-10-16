@@ -1,4 +1,4 @@
-// nf525-sign v6 (prêt, non déployé) — 2026-10-16 : type ZC (annotations correctives des Z). v5 — 2026-10-11 (v2 : archives AR + autocontrôle ; v3 : réinitialisations d'essai ; v4 : GT sans ventes de test ; v5 : factures FA, alerte éditeur sur anomalie, ancrage externe quotidien) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
+// nf525-sign v6 (déployé le 16/10/2026) — 2026-10-16 : type ZC (annotations correctives des Z). v5 — 2026-10-11 (v2 : archives AR + autocontrôle ; v3 : réinitialisations d'essai ; v4 : GT sans ventes de test ; v5 : factures FA, alerte éditeur sur anomalie, ancrage externe quotidien) — Signature électronique asymétrique (ECDSA P-256 / SHA-256, « ES256 ») des données
 // fiscales, chaînée par établissement et par type (référentiel NF525 v2.3) :
 //   TK (tickets), Z (clôtures journalières), ZM / ZA (mensuelles / annuelles), ZE (exercice),
 //   CR (corrections de règlement), DUP (duplicatas), JET (journal des événements techniques), AR (archives).
