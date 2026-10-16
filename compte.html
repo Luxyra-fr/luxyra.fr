@@ -1017,10 +1017,44 @@ async function loadFidelite(){
     if(res.ok && res.data && Array.isArray(res.data.fidelite)){
       FIDELITE_DATA = res.data.fidelite;
     }
+    // 2026-10-17 audit réglages (#20) : réglages ACTUELS de chaque établissement (config_json.fidconf + ancien
+    // site_config.fidelite_type) pour respecter « Fidélité active », la mécanique et le type de remise.
+    try{
+      var _ids=FIDELITE_DATA.map(function(f){return f.salon_id;}).filter(function(x){return /^[0-9a-f-]{36}$/i.test(String(x||""));});
+      if(_ids.length){
+        var _in="in.("+_ids.join(",")+")";
+        var _r1=await api("salons_public?select=id,config_json&id="+encodeURIComponent(_in));
+        var _d1=_r1.ok?await _r1.json():[];
+        var _r2=await api("site_config?select=salon_id,fidelite_type,fidelite_active&salon_id="+encodeURIComponent(_in));
+        var _d2=_r2.ok?await _r2.json():[];
+        var _cfgs={}, _scs={};
+        (Array.isArray(_d1)?_d1:[]).forEach(function(x){ var c=x.config_json; if(typeof c==="string"){ try{c=JSON.parse(c);}catch(_e){c=null;} } _cfgs[x.id]=(c&&c.fidconf&&typeof c.fidconf==="object")?c.fidconf:null; });
+        (Array.isArray(_d2)?_d2:[]).forEach(function(x){ _scs[x.salon_id]=x; });
+        FIDELITE_DATA.forEach(function(f){ f._fc=_cfgs[f.salon_id]||null; f._sc=_scs[f.salon_id]||null; });
+      }
+    }catch(_eFc){ console.log("Fidelite config:",_eFc); }
     _fideliteLoaded=true;
   }catch(e){console.log("Fidelite load error:",e);}
 }
 
+// 2026-10-17 audit réglages (#20) : réglages de fidélité effectifs d'un établissement (même règle que la caisse de l'app) :
+// « Fidélité active » décochée -> établissement non affiché ; mécanique passages / cagnotte / CA cumulé ;
+// type de remise : fidconf.type, sinon ancien site_config.fidelite_type (« pourcentage » par défaut).
+function _lxFidConf(f){
+  var fc=f._fc||null, sc=f._sc||null;
+  var on=!(fc&&fc.active===false) && !(!fc && sc && sc.fidelite_active===false);
+  var mode=(fc&&(fc.mode==="cagnotte"||fc.mode==="ca_cumule"))?fc.mode:"passages";
+  var type=fc&&fc.type==="percent"?"percent":(fc&&fc.type==="amount"?"amount":(fc?((sc&&sc.fidelite_type==="montant")?"amount":"percent"):(f.remise_type==="percent"?"percent":"amount")));
+  return {
+    on:on, mode:mode,
+    seuil:Math.max(1, Number(fc&&fc.seuil)||f.seuil_fidelite||10),
+    remise:Number(fc&&fc.remise)||f.remise_fidelite||10,
+    unit:type==="percent"?"%":"\u20ac",
+    cagnottePct:(fc&&fc.cagnottePct!=null&&!isNaN(+fc.cagnottePct))?+fc.cagnottePct:5,
+    caSeuil:Number(fc&&fc.caSeuil)||500, caRemise:Number(fc&&fc.caRemise)||25,
+    caUnit:(fc&&fc.caType==="percent")?"%":"\u20ac"
+  };
+}
 function renderFideliteTab(){
   var h='';
   h+='<div class="section"><div class="section-title">\ud83c\udf1f Mes points fid\u00e9lit\u00e9</div>';
@@ -1032,7 +1066,9 @@ function renderFideliteTab(){
     return h;
   }
   
-  if(!FIDELITE_DATA.length){
+  // 2026-10-17 audit réglages (#20) : établissements dont le programme est désactivé non affichés
+  var FID_ACTIFS=FIDELITE_DATA.filter(function(f){ return _lxFidConf(f).on; });
+  if(!FID_ACTIFS.length){
     h+='<div class="empty"><div class="ico">\ud83c\udf1f</div>Aucun point fid\u00e9lit\u00e9<br><span style="font-size:12px;color:var(--text3)">Vos points appara\u00eetront ici apr\u00e8s chaque visite</span></div>';
     h+='</div>';
     return h;
@@ -1040,7 +1076,7 @@ function renderFideliteTab(){
   
   // Total points
   var totalPoints=0;var totalVisites=0;
-  FIDELITE_DATA.forEach(function(f){totalPoints+=(f.points||0);totalVisites+=(f.visites||0);});
+  FID_ACTIFS.forEach(function(f){ if(_lxFidConf(f).mode==="passages") totalPoints+=(f.points||0); totalVisites+=(f.visites||0);}); // 2026-10-17 audit réglages (#20) : points = carte tampon seulement
   
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">';
   h+='<div class="card" style="text-align:center"><div style="font-size:28px;font-weight:900;color:var(--gold)">'+totalPoints+'</div><div style="font-size:12px;color:var(--text3)">Points totaux</div></div>';
@@ -1049,19 +1085,31 @@ function renderFideliteTab(){
   
   // Per salon \u2014 s\u00e9lecteur d'\u00e9tablissement
   var fidFilter = window._myFideliteFilter || "all";
-  if(fidFilter !== "all" && !FIDELITE_DATA.some(function(f){return f.salon_id===fidFilter;})) fidFilter = "all";
+  if(fidFilter !== "all" && !FID_ACTIFS.some(function(f){return f.salon_id===fidFilter;})) fidFilter = "all";
   h += lxRenderSalonPicker({
-    salons: FIDELITE_DATA.map(function(f){return {id:f.salon_id, nom:f.salon_nom||"Salon", count:(f.points||0)+" pts"};}),
+    salons: FID_ACTIFS.map(function(f){var _k=_lxFidConf(f);return {id:f.salon_id, nom:f.salon_nom||"Salon", count:(_k.mode==="passages"?(f.points||0)+" pts":(f.visites||0)+" visite(s)")};}),
     filterId: fidFilter, onSelectFn: "setMyFideliteFilter",
     totalCount: totalPoints+" pts", searchKey: "fidelite"
   });
-  var fidToShow = (fidFilter==="all") ? FIDELITE_DATA : FIDELITE_DATA.filter(function(f){return f.salon_id===fidFilter;});
+  var fidToShow = (fidFilter==="all") ? FID_ACTIFS : FID_ACTIFS.filter(function(f){return f.salon_id===fidFilter;});
   h+='<div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px">Par \u00e9tablissement</div>';
   fidToShow.forEach(function(f){
-    var seuil=Math.max(1, f.seuil_fidelite||10);
+    var _k=_lxFidConf(f); // 2026-10-17 audit réglages (#20)
+    if(_k.mode!=="passages"){
+      h+='<div class="card" style="margin-bottom:8px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+      h+='<div><div style="font-weight:700;font-size:14px">'+escAttr(f.salon_nom||"Salon")+'</div>';
+      h+='<div style="font-size:11px;color:var(--text3)">'+(f.visites||0)+' visite(s) \u2022 Derni\u00e8re: '+fmtDate(f.derniere_visite)+'</div></div>';
+      h+='<div style="font-size:22px">'+(_k.mode==="cagnotte"?"\ud83d\udcb0":"\ud83d\udcc8")+'</div></div>';
+      if(_k.mode==="cagnotte") h+='<div style="font-size:12px;color:var(--text2);line-height:1.5">Cagnotte : <strong style="color:var(--gold)">'+_k.cagnottePct+' %</strong> de vos achats vous est rendu en cagnotte, \u00e0 utiliser dans l\u2019\u00e9tablissement. Le solde est consultable sur place.</div>';
+      else h+='<div style="font-size:12px;color:var(--text2);line-height:1.5">Remise de <strong style="color:var(--gold)">-'+_k.caRemise+_k.caUnit+'</strong> d\u00e8s <strong>'+_k.caSeuil+' \u20ac</strong> de d\u00e9penses cumul\u00e9es dans l\u2019\u00e9tablissement.</div>';
+      h+='</div>';
+      return;
+    }
+    var seuil=_k.seuil;
     var pts=f.points||0;
-    var remise=f.remise_fidelite||10;
-    var remUnit=f.remise_type==="percent"?"%":"\u20ac";
+    var remise=_k.remise;
+    var remUnit=_k.unit;
     // Remise non cumulable : 1 seule remise dispo \u00e0 la fois (le salon doit reset apr\u00e8s utilisation)
     var remisePrete = pts >= seuil;
     var ptsAffiche = Math.min(pts, seuil); // cap \u00e0 seuil pour l'affichage

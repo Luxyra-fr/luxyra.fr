@@ -301,9 +301,26 @@ async function loadSalons(){
         fraisDepl: s.frais_deplacement != null ? Number(s.frais_deplacement) : 0,
         fraisType: s.frais_deplacement_type || 'forfait',
         resaActive: false,
-        nextSlot: null
+        nextSlot: null,
+        communes: null // 2026-10-17 audit réglages (#55) : communes cochées par le pro (domicile), chargées ci-dessous
       };
     });
+    // 2026-10-17 audit réglages (#55) : communes desservies cochées dans l'app (config_json.domicile.communes) pour les
+    // pros à domicile / mixtes. Seule la partie « domicile » du réglage est lue. Si la lecture échoue, on garde le rayon.
+    try{
+      var _domIds = STATE.salons.filter(function(s){ var m=String(s.mode||'').toLowerCase(); return m==='domicile'||m==='mixte'; }).map(function(s){ return s.id; });
+      if(_domIds.length){
+        var rd = await sb.from('salons_public').select('id, domicile:config_json->domicile').in('id', _domIds);
+        var _dById = {}; ((rd && rd.data) || []).forEach(function(x){ _dById[x.id] = x.domicile; });
+        STATE.salons.forEach(function(s){
+          var d = _dById[s.id]; if(typeof d === 'string'){ try{ d = JSON.parse(d); }catch(_eD){ d = null; } }
+          if(d && typeof d === 'object'){
+            if(Array.isArray(d.communes) && d.communes.length) s.communes = d.communes.filter(function(c){ return c && c.code; }).map(function(c){ return {code:String(c.code), nom:String(c.nom||''), cp:String(c.cp||'')}; });
+            if(Number(d.zone) > 0) s.zoneKm = Number(d.zone); // même zone que la page de l'établissement
+          }
+        });
+      }
+    }catch(_eCom){ console.warn('communes', _eCom); }
     // Charge les configs site (juste pour savoir si résa active) puis appelle la RPC
     // fn_salon_next_available_slot(salon_id) qui calcule le PROCHAIN créneau réel
     // (respecte horaires + delai_min_heures + RDV déjà pris). Cohérent avec site.html.
@@ -356,6 +373,7 @@ function toggleGeoSort(){
     STATE.geoActive = false;
     STATE.userLat = null;
     STATE.userLng = null;
+    STATE.userCitycode = null; // 2026-10-17 audit réglages (#55)
     btn.classList.remove('active');
     btn.innerHTML = '<span class="filter-emoji">📍</span> Près de moi';
     applyFilters();
@@ -377,6 +395,19 @@ function toggleGeoSort(){
     // Recentre la carte sur la position user
     if(STATE.map) STATE.map.setView([STATE.userLat, STATE.userLng], 12);
     applyFilters();
+    // 2026-10-17 audit réglages (#55) : commune de la position (code INSEE, API Adresse) pour les communes cochées par les pros
+    try{
+      fetch('https://api-adresse.data.gouv.fr/reverse/?lon='+encodeURIComponent(STATE.userLng)+'&lat='+encodeURIComponent(STATE.userLat)+'&type=municipality&limit=1')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          var cc = d && d.features && d.features[0] && d.features[0].properties && String(d.features[0].properties.citycode || '');
+          if(!cc || !STATE.geoActive) return;
+          // Arrondissements -> commune (même règle que la page de réservation) : Paris, Lyon, Marseille
+          if(/^751\d\d$/.test(cc)) cc = '75056'; else if(/^6938\d$/.test(cc)) cc = '69123'; else if(/^132\d\d$/.test(cc)) cc = '13055';
+          STATE.userCitycode = cc;
+          applyFilters();
+        }).catch(function(){});
+    }catch(_eRv){}
   }, function(err){
     btn.disabled = false;
     btn.innerHTML = '<span class="filter-emoji">📍</span> Près de moi';
@@ -405,7 +436,9 @@ function applyFilters(){
     }
     if(villeN){
       var hayV = normalize(s.ville + ' ' + s.cp + ' ' + s.adresse);
-      if(hayV.indexOf(villeN) < 0) return false;
+      // 2026-10-17 audit réglages (#55) : un pro qui se déplace dans la commune cherchée (commune cochée) est aussi trouvé
+      var _comOk = s.mode !== 'salon' && Array.isArray(s.communes) && s.communes.some(function(c){ return normalize(c.nom + ' ' + c.cp).indexOf(villeN) >= 0; });
+      if(hayV.indexOf(villeN) < 0 && !_comOk) return false;
     }
     return true;
   });
@@ -415,7 +448,10 @@ function applyFilters(){
       s._dist = distanceKm(STATE.userLat, STATE.userLng, s.lat, s.lng);
       s._coversMyArea = false;
       // Pour les pros à domicile : couvrent-ils ma zone ?
-      if((s.mode === 'domicile' || s.mode === 'mixte') && s._dist != null && s.zoneKm > 0){
+      if((s.mode === 'domicile' || s.mode === 'mixte') && Array.isArray(s.communes) && s.communes.length && STATE.userCitycode){
+        // 2026-10-17 audit réglages (#55) : communes cochées = seule référence (comme la réservation), à la place du rayon
+        s._coversMyArea = s.communes.some(function(c){ return c.code === STATE.userCitycode; });
+      } else if((s.mode === 'domicile' || s.mode === 'mixte') && s._dist != null && s.zoneKm > 0){
         s._coversMyArea = (s._dist <= s.zoneKm);
       }
     });
@@ -423,6 +459,7 @@ function applyFilters(){
     STATE.filtered = STATE.filtered.filter(function(s){
       if(s.mode === 'domicile'){
         // Pro uniquement domicile → doit couvrir ma zone
+        if(Array.isArray(s.communes) && s.communes.length && STATE.userCitycode) return s._coversMyArea; // 2026-10-17 audit réglages (#55)
         if(s._dist == null) return true; // si pas de coordonnées, on garde pour pas pénaliser
         return s._coversMyArea;
       }

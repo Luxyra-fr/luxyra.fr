@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261017-1"></script>
+<script src="luxyra-supabase.js?v=20261017-2"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261017-1";
+  var attendu="20261017-2";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -1060,6 +1060,10 @@ function lxCollabPartiAu(c, dateIso){
   if(c.inactif===true) return true;
   return !!(c.dateDepart && dateIso && String(dateIso) >= String(c.dateDepart).slice(0,10));
 }
+// 2026-10-17 audit réglages (#41) : « Date d'entrée » de la fiche collaborateur (avant : lue sous un mauvais nom, sans effet)
+function lxCollabAvantEntree(c, dateIso){
+  return !!(c && c.dateEntree && dateIso && String(dateIso) < String(c.dateEntree).slice(0,10));
+}
 function lxCollabDepartAu(c, dateIso){ // uniquement la date de depart (pas la case Inactif)
   return !!(c && c.dateDepart && dateIso && String(dateIso) >= String(c.dateDepart).slice(0,10));
 }
@@ -1362,6 +1366,49 @@ function canCollabDoService(collab, svcId){
 }
 window.canCollabDoService=canCollabDoService;
 
+// 2026-10-17 audit réglages (#6) : contrôle des compétences avant d'affecter des prestations à un collaborateur
+// (prise de RDV, changement de collaborateur, caisse). true = OK (ou forçage administrateur déjà accordé pour ce
+// collaborateur et ces prestations) ; false = refus affiché, avec « Forcer (administrateur) » qui demande le PIN
+// administrateur puis relance l'action (reprendre).
+function lxCompetenceOk(stId, svcIds, reprendre){
+  try{
+    var col=(typeof gT==="function")?gT(stId):null; if(!col) return true;
+    var ko=(svcIds||[]).filter(function(sid){ return sid && !canCollabDoService(col, sid); });
+    if(!ko.length) return true;
+    var cle=String(stId)+"|"+ko.map(String).sort().join(",");
+    if(window._lxCompForce===cle){ window._lxCompForce=null; return true; }
+    var noms=ko.map(function(sid){ var sv=gS(sid); return sv?sv.n:String(sid); });
+    window._lxCompReprendre=function(){
+      var _go=function(){
+        window._lxCompForce=cle;
+        try{ if(typeof auditLog==="function") auditLog("COMPETENCE_FORCEE", (col.n||stId)+" : "+noms.join(", ")); }catch(_eA){}
+        if(typeof reprendre==="function") reprendre();
+      };
+      // sans comptes opérateurs (mode historique), la personne connectée est le titulaire du compte = administrateur
+      if(typeof CURRENT_OPERATOR==="undefined" || !CURRENT_OPERATOR){ _go(); return; }
+      requireAdmin("Forcer : prestation hors comp\u00e9tences", _go);
+    };
+    var msg="\u26a0\ufe0f "+escapeHtml(col.n||"Ce collaborateur")+" n\u2019est pas habilit\u00e9(e) pour : "+noms.map(escapeHtml).join(", ")+" (fiche collaborateur \u203a Comp\u00e9tences).";
+    var dp=document.getElementById("depi");
+    if(dp){ dp.innerHTML='<div style="background:rgba(255,152,0,.12);border:1px solid rgba(255,152,0,.45);color:#ffb74d;padding:10px;border-radius:8px;font-size:13px;margin-top:6px">'+msg+'<br>Choisissez un autre collaborateur, ou <button class="btn bs" style="margin-top:6px;font-size:12px" onclick="window._lxCompReprendre&&window._lxCompReprendre()">Forcer (administrateur)</button></div>'; }
+    else {
+      // fenêtre séparée (pas #modal) : le formulaire en cours reste intact pour la reprise
+      var ov=document.getElementById("lxCompOverlay"); if(ov) ov.remove();
+      ov=document.createElement("div"); ov.id="lxCompOverlay";
+      ov.style.cssText="position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px";
+      ov.innerHTML='<div style="background:#12141e;border:1.5px solid rgba(255,255,255,.1);border-radius:16px;padding:22px;max-width:400px;width:100%;text-align:center"><div style="font-size:14px;color:#fff;line-height:1.5;margin-bottom:16px">'+msg+'</div><div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="document.getElementById(\'lxCompOverlay\').remove()">Annuler</button><button class="btn bg" style="flex:1" onclick="document.getElementById(\'lxCompOverlay\').remove();window._lxCompReprendre&&window._lxCompReprendre()">Forcer (administrateur)</button></div></div>';
+      document.body.appendChild(ov);
+    }
+    return false;
+  }catch(e){ console.warn("[competences]",e); return true; }
+}
+// Prestations (ids) d'un RDV : prestation principale + lignes de prestation (multi-prestations)
+function lxApptServices(a){
+  var out=[]; if(!a) return out;
+  if(a.sId) out.push(a.sId);
+  (a.items||[]).forEach(function(it){ if(it && it.sId && !it.isProd && !it.isPack && out.indexOf(it.sId)<0) out.push(it.sId); });
+  return out;
+}
 // Liste les collabs capables de faire une prestation (filtre actifs + compétents)
 function getCollabsForService(svcId){
   return getActiveTeam().filter(function(t){return canCollabDoService(t, svcId);});
@@ -1387,7 +1434,7 @@ function lxOpenCompetencesModal(collabId){
   }
   var cats=Object.keys(byCat).sort();
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>🎯 Compétences — '+col.n+'</h2>';
-  htm+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Choisissez les prestations que <strong>'+col.n+'</strong> peut effectuer. Les autres ne lui seront ni assignées dans la modal RDV, ni proposées sur la réservation en ligne.</div>';
+  htm+='<div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Choisissez les prestations que <strong>'+col.n+'</strong> peut effectuer. Les autres ne lui sont pas propos\u00e9es sur la r\u00e9servation en ligne, et dans l\u2019application la prise de RDV, le changement de collaborateur et l\u2019encaissement sont bloqu\u00e9s (sauf for\u00e7age par l\u2019administrateur avec son code PIN).</div>' /* 2026-10-17 audit réglages (#6) */;
   // Toggle "Toutes" en haut
   htm+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:'+(allFlag?'rgba(76,175,80,.1)':'rgba(255,255,255,.04)')+';border:1px solid '+(allFlag?'rgba(76,175,80,.3)':'rgba(255,255,255,.1)')+';border-radius:10px;margin-bottom:14px;cursor:pointer">';
   htm+='<div><div style="font-weight:800;color:'+(allFlag?'#4caf50':'#fff')+'">✅ Toutes les prestations</div>';
@@ -1912,7 +1959,10 @@ function lxDelaiVerrouMin(){
   return (isNaN(v) || LX_VERROU_CHOIX.indexOf(v) < 0) ? 5 : v;
 }
 function lxDelaiVerrouMs(){ return lxDelaiVerrouMin() * 60 * 1000; }
-function lxLibelleVerrou(min){ return min === 0 ? "jamais en journ\u00e9e (PIN redemand\u00e9 apr\u00e8s 4 h sans activit\u00e9)" : (min + " min"); }
+// 2026-10-17 audit réglages (#39) : libellé exact. « Jamais » = aucune minuterie tant que l'application reste ouverte
+// (startInactivityTimer). Le seul « 4 h » réel est la session de l'établissement (luxyra-supabase.js,
+// SALON_SESSION_INACTIVITY_MS) : application ROUVERTE après plus de 4 h sans activité -> reconnexion + PIN.
+function lxLibelleVerrou(min){ return min === 0 ? "jamais tant que l\u2019application reste ouverte" : (min + " min"); }
 // Inactivité (délai réglable) → re-demander PIN
 function startInactivityTimer() {
   if (_operatorInactivityTimer) clearTimeout(_operatorInactivityTimer);
@@ -2416,7 +2466,8 @@ function changeOpRoleUI(opId, collabIndex) {
   if (!op) return;
   var newRole = op.role === "admin" ? "collaborateur" : "admin";
   var newPinLen = newRole === "admin" ? 6 : 4;
-  showConfirm("Changer le r\u00f4le en \""+(newRole==="admin"?"Administrateur":"Collaborateur")+"\" ?\n\nIl faudra red\u00e9finir un PIN \u00e0 "+newPinLen+" chiffres.", function(){
+  // 2026-10-17 audit réglages (#59) : le changement de rôle remet les permissions à celles du rôle (dit dans la confirmation)
+  showConfirm("Changer le r\u00f4le en \""+(newRole==="admin"?"Administrateur":"Collaborateur")+"\" ?\n\nIl faudra red\u00e9finir un PIN \u00e0 "+newPinLen+" chiffres.\n\nLes permissions personnalis\u00e9es de "+(op.prenom||"cet op\u00e9rateur")+" seront remplac\u00e9es par celles du r\u00f4le choisi (\u00e0 r\u00e9ajuster ensuite si besoin).", function(){
     showPrompt({
       title: "Nouveau PIN",
       label: "Choisir un PIN \u00e0 "+newPinLen+" chiffres pour "+op.prenom+(op.nom?" "+op.nom:"")+" (nouveau r\u00f4le : "+(newRole==="admin"?"Admin":"Collaborateur")+")",
@@ -2504,6 +2555,12 @@ function editOpPermsUI(opId) {
 }
 
 async function savePermsUI(opId) {
+  // 2026-10-17 audit réglages (#60) : même contrôle que l'ouverture de l'écran (editOpPermsUI)
+  if (typeof hasPermission==="function" && !hasPermission("operateurs")) {
+    if (typeof requireAdmin==="function") { requireAdmin("Modifier les permissions d'un opérateur", function(){ savePermsUI(opId); }); return; }
+    if (typeof toast==="function") toast("Accès non autorisé","warning");
+    return;
+  }
   var checkboxes = document.querySelectorAll('input[data-perm]');
   var perms = {};
   checkboxes.forEach(function(cb){
@@ -2516,7 +2573,7 @@ async function savePermsUI(opId) {
     cM();
     go("settings");
   } else {
-    toast("Erreur", "error");
+    toast("\u26a0\ufe0f Non enregistr\u00e9 \u2014 permissions refus\u00e9es par le serveur, r\u00e9essayez", "error"); // 2026-10-17 audit réglages : message explicite
   }
 }
 
@@ -4981,15 +5038,18 @@ function printDevis(idx,printFmt){
   if(totalRemise>0){
     h+="<tr><td class='l' style='color:#c43838!important'>Remise totale</td><td class='r' style='color:#c43838!important'>-"+totalRemise.toFixed(2)+" €</td></tr>";
   }
-  h+="<tr class='ttc'><td class='l'>TOTAL "+(showTVA?"TTC":"")+"</td><td class='r'>"+totalTTC.toFixed(2)+" €</td></tr>";
+  h+="<tr class='ttc'><td class='l'>TOTAL "+((showTVA||!isAutoEntr)?"TTC":"")+"</td><td class='r'>"+totalTTC.toFixed(2)+" €</td></tr>";
   h+="</table>";
 
   // ============ Notes ============
   if(dv.notes)h+="<div class='notes'><strong>Notes :</strong> "+dv.notes+"</div>";
 
   // ============ Mention TVA si auto-entrepreneur ============
-  if(!showTVA||isAutoEntr){
+  // 2026-10-17 audit réglages (#10) : « art. 293 B » UNIQUEMENT en franchise (taux 0) ; assujetti avec détail masqué -> « Prix TTC, TVA x % incluse »
+  if(isAutoEntr){
     h+="<div class='mention-tva'>TVA non applicable, art. 293 B du CGI</div>";
+  } else if(!showTVA){
+    h+="<div class='mention-tva'>Prix TTC, TVA "+String(txTVA).replace(".",",")+" % incluse</div>";
   }
 
   // ============ Conditions ============
@@ -5149,10 +5209,13 @@ function printDevisThermal(idx){
   if(totalRemise>0){
     h+="<div class='item-line'>"+lineLR("Remise totale","-"+totalRemise.toFixed(2)+" EUR")+"</div>";
   }
-  h+="<div class='total-line'>"+lineLR("TOTAL "+(showTVA?"TTC":""),totalTTC.toFixed(2)+" EUR")+"</div>";
+  h+="<div class='total-line'>"+lineLR("TOTAL "+((showTVA||!isAutoEntr)?"TTC":""),totalTTC.toFixed(2)+" EUR")+"</div>";
 
-  if(!showTVA||isAutoEntr){
+  // 2026-10-17 audit réglages (#10) : « art. 293 B » UNIQUEMENT en franchise (taux 0) ; assujetti avec détail masqué -> « Prix TTC, TVA x % incluse »
+  if(isAutoEntr){
     h+="<div class='c' style='font-size:9px;font-style:italic;margin-top:4px'>TVA non applicable, art. 293 B du CGI</div>";
+  } else if(!showTVA){
+    h+="<div class='c' style='font-size:9px;font-style:italic;margin-top:4px'>Prix TTC, TVA "+String(txTVA).replace(".",",")+" % incluse</div>";
   }
 
   // ===== Notes =====
@@ -5418,7 +5481,7 @@ function _buildDevisEmailHtml(dv){
   if(totalRemise>0){
     h += '<tr><td style="padding:6px 8px;color:#c43838;font-size:13px">Remise totale</td><td style="padding:6px 8px;text-align:right;font-weight:600;color:#c43838">-'+totalRemise.toFixed(2)+' €</td></tr>';
   }
-  h += '<tr><td style="padding:12px 8px;border-top:3px solid #1a1a1a;font-size:16px;font-weight:900">TOTAL '+(showTVA?'TTC':'')+'</td><td style="padding:12px 8px;border-top:3px solid #1a1a1a;text-align:right;font-size:18px;font-weight:900;color:#c8a84e">'+totalTTC.toFixed(2)+' €</td></tr>';
+  h += '<tr><td style="padding:12px 8px;border-top:3px solid #1a1a1a;font-size:16px;font-weight:900">TOTAL '+((showTVA||!isAutoEntr)?'TTC':'')+'</td><td style="padding:12px 8px;border-top:3px solid #1a1a1a;text-align:right;font-size:18px;font-weight:900;color:#c8a84e">'+totalTTC.toFixed(2)+' €</td></tr>';
   h += '</table></td></tr></table>';
 
   // Notes
@@ -5427,8 +5490,11 @@ function _buildDevisEmailHtml(dv){
   }
 
   // Mention TVA
-  if(!showTVA || isAutoEntr){
+  // 2026-10-17 audit réglages (#10) : « art. 293 B » UNIQUEMENT en franchise (taux 0) ; assujetti avec détail masqué -> « Prix TTC, TVA x % incluse »
+  if(isAutoEntr){
     h += '<div style="padding:10px 12px;background:#f0f0f0;border-radius:4px;font-size:11px;color:#444;font-style:italic;margin-bottom:18px">TVA non applicable, art. 293 B du CGI</div>';
+  } else if(!showTVA){
+    h += '<div style="padding:10px 12px;background:#f0f0f0;border-radius:4px;font-size:11px;color:#444;font-style:italic;margin-bottom:18px">Prix TTC, TVA '+String(txTVA).replace(".",",")+' % incluse</div>';
   }
 
   // Conditions
@@ -7248,6 +7314,14 @@ function lxCollabRHVerif(cid,fields){
 window.lxCollabRHVerif=lxCollabRHVerif;
 // 2026-10-14 audit : une plage horaire n'est acceptee que si la fermeture est APRES l'ouverture
 // (avant : 18:00 -> 09:00 etait enregistre, le jour devenait sans creneau sur le site sans explication).
+// 2026-10-17 audit réglages (#71) : pause quotidienne enregistrée seulement si début < fin (sinon refus visible, valeur remise)
+function lxPauseMaj(ti, cote, el){
+  if(!T[ti]||!T[ti].pause) return;
+  var p={o:T[ti].pause.o, c:T[ti].pause.c}; p[cote]=el.value;
+  if(!lxPlageHoraireOk(p.o,p.c)){ if(typeof showAlert==="function") showAlert("Pause non enregistr\u00e9e : l\u2019heure de d\u00e9but ("+(p.o||"?")+") doit \u00eatre avant l\u2019heure de fin ("+(p.c||"?")+").","warning"); el.value=T[ti].pause[cote]||""; return; }
+  T[ti].pause[cote]=el.value;
+  lxCollabSave(ti,{pause:T[ti].pause},'\u2713 Pause enregistr\u00e9e');
+}
 function lxPlageHoraireOk(o,c){ return !!(o && c && /^\d{2}:\d{2}$/.test(o) && /^\d{2}:\d{2}$/.test(c) && c>o); }
 function lxPlageRefusee(o,c){
   showAlert("\u26a0\ufe0f Horaire non enregistr\u00e9 : la fermeture ("+(c||"?")+") doit \u00eatre apr\u00e8s l'ouverture ("+(o||"?")+").","warning");
@@ -8201,6 +8275,7 @@ function getEffectiveHrs(date,stId){
   if(stId){
     var collab = gT(stId);
     if(lxCollabDepartAu(collab, date)) return null; // 2026-10-07 : parti a cette date -> plus de creneaux
+    if(lxCollabAvantEntree(collab, date)) return null; // 2026-10-17 audit réglages (#41) : pas encore arrivé (date d'entrée)
     var collabHrs = collab && collab.hrs;
     var hasPersonalHrs = collabHrs && typeof collabHrs === 'object' && Object.keys(collabHrs).some(function(k){
       var v = collabHrs[k]; return v && v.o && v.c;
@@ -10912,6 +10987,10 @@ function _syncConfigCacheBeforeWrite(){
   if(Array.isArray(window.CATS_FORF) && window.CATS_FORF.length){ c.categories_forfaits = window.CATS_FORF.slice(); c.cats_forf = window.CATS_FORF.slice(); }
 }
 var SLOT=15,SLOT_H=28;
+// 2026-10-17 audit réglages (#53) : les boutons −/+ du planning enregistrent la hauteur (avant : perdue au rechargement).
+// Enregistrement regroupé (1,5 s après le dernier clic) ; une erreur est signalée par lxCfgEcrireSections.
+var _lxSlotHT=null;
+function lxSlotHEnregistrer(){ if(_lxSlotHT) clearTimeout(_lxSlotHT); _lxSlotHT=setTimeout(function(){ _lxSlotHT=null; if(typeof lxCfgEcrireSections==="function") lxCfgEcrireSections({slot_h:Number(SLOT_H)}); },1500); }
 
 // Get total duration of a service (sum of all phases)
 function svcTotalDur(sv){if(!sv||!sv.phases)return 30;var t=0;sv.phases.forEach(function(p){t+=p.d;});return t;}
@@ -11271,9 +11350,9 @@ function rPlanning(){
   // Zoom controls + Print
   h+='<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;justify-content:center">';
   h+='<span style="font-size:12px;color:rgba(255,255,255,.5)">Zoom</span>';
-  h+='<button onclick="if(SLOT_H>16){SLOT_H-=4;go(\'planning\')}" style="width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2212</button>';
+  h+='<button onclick="if(SLOT_H>16){SLOT_H-=4;go(\'planning\');lxSlotHEnregistrer()}" style="width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center">\u2212</button>';
   h+='<div style="font-size:13px;font-weight:700;color:var(--gold);min-width:40px;text-align:center">'+SLOT_H+'px</div>';
-  h+='<button onclick="if(SLOT_H<60){SLOT_H+=4;go(\'planning\')}" style="width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>';
+  h+='<button onclick="if(SLOT_H<60){SLOT_H+=4;go(\'planning\');lxSlotHEnregistrer()}" style="width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:18px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>';
   h+='<div style="width:1px;height:24px;background:rgba(255,255,255,.15);margin:0 4px"></div>';
   h+='<button onclick="printPlanning()" style="height:34px;padding:0 14px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(30,30,35,.9);color:#fff;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px">\ud83d\udda8 Imprimer</button>';
   h+='</div>';
@@ -13378,9 +13457,19 @@ async function addPrestaToAppt(apptId, svcId){
   toast("✓ "+svcN+(isDuring?" ajoutée pendant la phase "+(duringIdx+1):" ajoutée au RDV"),"success");
   requestAnimationFrame(function(){go("planning"); setTimeout(function(){clickAppt(apptId);},150);});
 }
+// 2026-10-17 audit réglages (#16) : permission vérifiée sur TOUS les chemins (avant : seulement cancelAppt / cancelSecureTicket).
+// Sans la permission : demande du PIN administrateur existante (requireAdmin), puis l'action reprend.
+function _lxPermOuAdmin(perm, libelle, reprendre){
+  if(typeof hasPermission!=="function" || hasPermission(perm)) return true;
+  if(typeof requireAdmin==="function") requireAdmin(libelle, reprendre);
+  else if(typeof toast==="function") toast("Action r\u00e9serv\u00e9e \u00e0 l\u2019administrateur","error");
+  return false;
+}
 function delAppt(id){
   var a=null;var ai=-1;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];ai=i;break;}}
   if(!a)return;
+  // ticket encaissé : cancelSecureTicket contrôle déjà « Rembourser » ; RDV non encaissé : « Annuler un RDV »
+  if(a.st!=="done" && !_lxPermOuAdmin("cancel_rdv","Annuler / supprimer un RDV",function(){ delAppt(id); })) return; // 2026-10-17 audit réglages (#16)
   if(a.st==="done"){
     // NF525: paid ticket, motif required
     var h='<div class="mbox"><h2>Annulation du ticket</h2>';
@@ -13414,6 +13503,7 @@ function delAppt(id){
 // 2026-10-14 audit : vraie suppression (RDV créé par erreur, non encaissé). Le RDV est retiré tout de suite ;
 // si la base refuse ou si le réseau échoue, il est remis sur le planning et l'utilisateur est prévenu.
 function lxSupprimerApptDefinitif(id){
+  if(!_lxPermOuAdmin("cancel_rdv","Supprimer un RDV",function(){ lxSupprimerApptDefinitif(id); })) return; // 2026-10-17 audit réglages (#16)
   var a=null,ai=-1; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; ai=i; break; } }
   if(!a) { cM(); return; }
   if(a.st==="done"||a.tkNum||a.isOnline){ cM(); toast("Ce rendez-vous ne peut pas \u00eatre supprim\u00e9","warning"); return; }
@@ -13574,6 +13664,7 @@ function lxAcompteApercu(ac){
   el.textContent=x>0?("Rembours\u00e9 au client : "+f(x)+" \u20ac"+(window._lxAcChoixEL?" (ticket n\u00e9gatif en caisse)":"")+" \u2014 conserv\u00e9 "+(window._lxAcChoixEL?"(d\u00e9j\u00e0 en caisse, ticket #"+window._lxAcChoixEL+")":"(ticket en caisse)")+" : "+f(Math.round((ac-x)*100)/100)+" \u20ac"):(window._lxAcChoixEL?"Le reste est conserv\u00e9 (d\u00e9j\u00e0 en caisse : ticket d\u2019acompte #"+window._lxAcChoixEL+") ; le remboursement donne un ticket n\u00e9gatif.":"Le reste est conserv\u00e9 et enregistr\u00e9 en caisse.");
 }
 async function lxAcompteRembourserPartie(id, ac){
+  if(!_lxPermOuAdmin("refund","Rembourser un acompte",function(){ lxAcompteRembourserPartie(id, ac); })) return; // 2026-10-17 audit réglages (#16)
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===id){ a=AP[i]; break; } } if(!a||!a.onlineId) return;
   var x=_lxAcompteMontantSaisi(ac); if(!(x>0)){ toast("Indiquez le montant ou le pourcentage \u00e0 rembourser","warning"); return; }
   var b=document.getElementById("lxRpBtn"); if(b){ b.disabled=true; b.textContent="Remboursement\u2026"; }
@@ -14104,6 +14195,7 @@ async function _lxAcompteEnLigneAvantEncaissement(){
 // Remboursement du trop-perçu depuis la caisse (worker /api/rdv/acompte-rembourser, trop_percu:true : RDV ni annulé ni encaissé,
 // aucune retenue). Puis synchronisation (ticket négatif) et retour à l'écran de règlement : l'opérateur valide de nouveau.
 async function lxAcompteTropPercuRembourser(){
+  if(!_lxPermOuAdmin("refund","Rembourser un acompte",function(){ lxAcompteTropPercuRembourser(); })) return; // 2026-10-17 audit réglages (#16)
   var p=window._lxAcTropPercu; if(!p||!_tk) return;
   var f=function(n){ return Number(n).toFixed(2).replace(".",","); };
   var b=document.getElementById("lxTpBtn"); if(b){ b.disabled=true; b.textContent="Remboursement…"; }
@@ -14188,11 +14280,13 @@ function _showFamilialCancelConfirm(id1, id2){
   document.getElementById("modal").innerHTML='<div class="mbg"><div onclick="event.stopPropagation()">'+h+'</div></div>';
 }
 function _doCancelBothFamilial(id1, id2){
+  if(!_lxPermOuAdmin("cancel_rdv","Annuler un RDV",function(){ _doCancelBothFamilial(id1, id2); })) return; // 2026-10-17 audit réglages (#16)
   _doCancelApptUnpaid(id1);
   _doCancelApptUnpaid(id2);
   cM(); go("planning");
 }
 function _doCancelOneFamilial(id1, id2){
+  if(!_lxPermOuAdmin("cancel_rdv","Annuler un RDV",function(){ _doCancelOneFamilial(id1, id2); })) return; // 2026-10-17 audit réglages (#16)
   // Casser le lien sur le RDV qui reste
   for(var i=0;i<AP.length;i++){
     if(AP[i].id===id2){
@@ -14226,6 +14320,8 @@ function saveApptTime(id){
   var newDate=document.getElementById("eaDate").value;
   var newTime=document.getElementById("eaTime").value;
   var newSt=+document.getElementById("eaSt").value;
+  // 2026-10-17 audit réglages (#6) : autre collaborateur -> compétences vérifiées (forçage administrateur possible)
+  if(String(newSt)!==String(a.stId) && !lxCompetenceOk(newSt, lxApptServices(a), function(){ saveApptTime(id); })) return;
   // Check conflicts (exclude self)
   var conflicts=checkConflict(newSt,newDate,newTime,a.sId,id);
   if(conflicts.length>0){
@@ -14240,6 +14336,9 @@ function saveApptTime(id){
 }
 function confirmPendingDrag(){
   var m=window._pendingDrag;if(!m)return;
+  // 2026-10-17 audit réglages (#6) : déplacement vers un AUTRE collaborateur -> compétences vérifiées (forçage administrateur possible)
+  try{ var _aD=null; for(var _iD=0;_iD<AP.length;_iD++){ if(AP[_iD].id===m.id){ _aD=AP[_iD]; break; } }
+    if(_aD && String(_aD.stId)!==String(m.stId) && !lxCompetenceOk(m.stId, lxApptServices(_aD), function(){ confirmPendingDrag(); })) return; }catch(_eCD){}
   var countBefore=AP.length;
   var found=false;
   for(var i=0;i<AP.length;i++){
@@ -14293,6 +14392,7 @@ function handleLogoUpload(input){
       window.lxSaveSalonColumns({logo:dataUrl}).then(function(r){
         if(r&&r.ok){
           SALON_CONFIG.logo=dataUrl;
+          if(window._lxSalonFormInit) window._lxSalonFormInit.logo=dataUrl; // 2026-10-17 audit réglages (#14)
           var hl=document.getElementById("hlogo"); if(hl) hl.src=dataUrl;
           if(typeof toast==="function") toast("✓ Logo enregistré","success");
         } // en cas d'echec, lxSaveSalonColumns affiche deja une alerte
@@ -14432,7 +14532,8 @@ function saveSalonInfo(){
   // Update header logo if custom logo set
   if(S.logo){var hl=document.getElementById("hlogo");if(hl)hl.src=S.logo;}
   // Save to Supabase
-  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  // 2026-10-17 audit réglages (#14) : résultat gardé (réseaux sociaux = config_json) -> pas de « Infos enregistrées » s'il échoue
+  var _pCfg=(typeof saveSalonConfig==="function")?saveSalonConfig():Promise.resolve(true);
   // FIX 2026-08-04 : saveSalonConfig n'ecrit QUE config_json (+show_tva_ticket). Les colonnes
   // top-level de `salons` n'avaient plus AUCUN ecrivain cote app (la fonction qui savait le
   // faire, dans luxyra-supabase.js, est ecrasee par celle d'app.html chargee apres) -> le
@@ -14467,10 +14568,10 @@ function saveSalonInfo(){
     // si aucune position, donc le salon restait a l'ancienne adresse dans la recherche et l'annuaire)
     var _adrChange=false;
     try{ _adrChange=!!_idAv && ["adresse","cp","ville"].some(function(k){ return String(_idAv[k]||"").trim().toLowerCase()!==String(SALON_CONFIG[k]||"").trim().toLowerCase(); }); }catch(_eA){}
-    Promise.all([_pId,_pCo]).then(function(rs){
-      var rId=rs[0]||{}, rCo=rs[1]||{};
+    Promise.all([_pId,_pCo,Promise.resolve(_pCfg).then(function(v){return v!==false;},function(){return false;})]).then(function(rs){
+      var rId=rs[0]||{}, rCo=rs[1]||{}, rCfg=rs[2]!==false;
       if(rId.ok && _adrChange && typeof lxGeocoderApresAdresse==="function") lxGeocoderApresAdresse();
-      if(rId.ok && rCo.ok){ _lxNotifInfosOk(); return; }
+      if(rId.ok && rCo.ok && rCfg){ _lxNotifInfosOk(); return; }
       var m=[];
       if(!rId.ok){
         m.push("• Identité (nom, adresse, SIRET, TVA) : NON enregistrée — "+_msgErr(rId));
@@ -14479,6 +14580,7 @@ function saveSalonInfo(){
       } else m.push("• Identité : enregistrée");
       if(!rCo.ok) m.push("• Logo, note du ticket, téléphone, e-mail : NON enregistrés — "+_msgErr(rCo));
       else m.push("• Logo, note du ticket, téléphone, e-mail : enregistrés");
+      if(!rCfg) m.push("• Réseaux sociaux (Facebook, Instagram, TikTok) : NON enregistrés"); // 2026-10-17 audit réglages (#14)
       if(typeof showAlert==="function") showAlert("⚠️ Enregistrement incomplet :\n"+m.join("\n")+"\n\nRéessayez. Si le problème continue, écrivez au support.","warning");
     });
   } else _lxNotifInfosOk();
@@ -14560,6 +14662,16 @@ function setCollabDepart(ti, val){
   }
   if(!val && typeof toast==="function"){
     toast("Date de depart effacee pour "+nom,"info");
+  }
+  // 2026-10-17 audit réglages (#58) : effacer la date de départ ne réactivait pas la personne (case « Inactif » restée
+  // cochée, sans le dire). On le propose explicitement.
+  if(!val && T[ti] && T[ti].inactif===true && typeof showConfirm==="function"){
+    var _tiR=ti;
+    setTimeout(function(){ showConfirm(nom+" est toujours marqu\u00e9(e) \u00ab Inactif \u00bb (masqu\u00e9 du planning et du site).\n\nR\u00e9activer aussi ?", function(){
+      if(!T[_tiR]) return; T[_tiR].inactif=false;
+      if(typeof lxCollabRHVerif==="function") lxCollabRHVerif(T[_tiR].id,{inactif:false});
+      try{ lxRefreshSettings(T[_tiR].id); }catch(_eRf){}
+    }); }, 400);
   }
   // FIX 2026-08-31 : passe par le chemin RH dedie (intention explicite). La
   // sauvegarde en masse n'ecrit plus ce statut : un appareil dont l'application
@@ -14662,6 +14774,7 @@ function uploadSiteGallery(input){
   }
 }
 
+// 2026-10-17 audit réglages (#72) : CODE MORT — aucun appelant dans l'application (conservé, ne pas réutiliser sans revue).
 function toggleSvcOnline(svcId,on){
   var SC=window.SITE_CONFIG;if(!SC)return;
   if(!SC.servicesEnLigne)SC.servicesEnLigne=[];
@@ -14669,6 +14782,7 @@ function toggleSvcOnline(svcId,on){
   else{SC.servicesEnLigne=SC.servicesEnLigne.filter(function(id){return id!==svcId;});}
   saveSiteConfig();
 }
+// 2026-10-17 audit réglages (#72) : CODE MORT — aucun appelant dans l'application (conservé, ne pas réutiliser sans revue).
 function toggleProdOnline(prodId,on){
   var SC=window.SITE_CONFIG;if(!SC)return;
   if(!SC.produitsEnLigne)SC.produitsEnLigne=[];
@@ -14771,7 +14885,8 @@ function _lxSiteData(SC){
       bloquer_nouveaux_comptes:SC.bloquerNouveauxComptes===true,
       mode_caution:SC.modeCaution||"aucun",
       empreinte_montant:Number(SC.empreinteMontant)||30,
-      empreinte_capture_delai_h:Number(SC.empreinteCaptureDelaiH)||24,
+      // 2026-10-17 audit réglages (#8) : 0 = pas de capture auto (avant : `||24` transformait 0 en 24)
+      empreinte_capture_delai_h:(SC.empreinteCaptureDelaiH!==""&&SC.empreinteCaptureDelaiH!=null&&isFinite(+SC.empreinteCaptureDelaiH)&&+SC.empreinteCaptureDelaiH>=0)?Math.round(+SC.empreinteCaptureDelaiH):24,
       photos_visible_client:SC.photosVisibleClient===true,
       gestion_caisse_simple:SC.gestionCaisseSimple===true,
       confirmation_auto:SC.confirmAuto,
@@ -14921,7 +15036,7 @@ function loadSiteConfig(opts){
           bloquerNouveauxComptes:d.bloquer_nouveaux_comptes===true,
           modeCaution:d.mode_caution||"aucun",
           empreinteMontant:Number(d.empreinte_montant)||30,
-          empreinteCaptureDelaiH:Number(d.empreinte_capture_delai_h)||24,
+          empreinteCaptureDelaiH:(d.empreinte_capture_delai_h!=null&&isFinite(+d.empreinte_capture_delai_h))?+d.empreinte_capture_delai_h:24, // 2026-10-17 audit réglages (#8)
           photosVisibleClient:d.photos_visible_client===true,
           gestionCaisseSimple:d.gestion_caisse_simple===true,
           confirmAuto:d.confirmation_auto,servicesEnLigne:d.services_en_ligne||[],produitsEnLigne:d.produits_en_ligne||[],
@@ -15459,7 +15574,7 @@ function rSettings(){
         h+='<button class="btn bs" style="flex:1;min-width:64px;padding:10px 6px;font-size:12px;font-weight:700;'+(_on?'background:rgba(200,168,78,.18);color:var(--gold);border:1.5px solid var(--gold)':'')+'" onclick="lxChoisirVerrouillage('+o[0]+')">'+o[1]+'</button>';
       });
       h+='</div>';
-      if (_vm === 0) h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">\u00ab Jamais \u00bb : pas de verrouillage en journ\u00e9e ; le PIN est redemand\u00e9 apr\u00e8s 4 h sans activit\u00e9. Vous pouvez verrouiller \u00e0 tout moment depuis votre avatar \u2192 \u00ab Verrouiller maintenant \u00bb.</div>';
+      if (_vm === 0) h+='<div style="font-size:11px;color:var(--text3);margin-top:8px">\u00ab Jamais \u00bb : aucun verrouillage tant que l\u2019application reste ouverte, m\u00eame apr\u00e8s plusieurs heures. Si elle est rouverte (ou la page recharg\u00e9e) apr\u00e8s plus de 4 h sans activit\u00e9, la connexion de l\u2019\u00e9tablissement puis le PIN sont redemand\u00e9s. Vous pouvez verrouiller \u00e0 tout moment depuis votre avatar \u2192 \u00ab Verrouiller maintenant \u00bb.</div>'; // 2026-10-17 audit réglages (#39)
       h+='</div>';
     }
     // Bouton pour créer un opérateur sans être un coiffeur (patron, gérant, comptable...)
@@ -15563,7 +15678,7 @@ function rSettings(){
       if(st2.img)h+='<img src="'+st2.img+'" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:3px solid '+st2.c+'">';
       else h+='<div style="width:56px;height:56px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">'+st2.i+'</div>';
       // FIX 2026-05-12 : updates ciblés (nom/couleur) au lieu de bulk save pour éviter écrasement multi-device
-      h+='<div style="flex:1"><input value="'+st2.n+'" style="font-size:16px;font-weight:800;width:100%" onchange="T['+ti+'].n=this.value;lxCollabSave('+ti+',{nom:T['+ti+'].n},\'✓ Nom enregistré\')">';
+      h+='<div style="flex:1"><input value="'+st2.n+'" style="font-size:16px;font-weight:800;width:100%" onchange="T['+ti+'].n=this.value;T['+ti+'].i=String(this.value||\'\').trim().split(/\\s+/).map(function(w){return w.charAt(0).toUpperCase();}).join(\'\').slice(0,2);lxCollabSave('+ti+',{nom:T['+ti+'].n,initiales:T['+ti+'].i},\'✓ Nom enregistré\')">'; // 2026-10-17 audit réglages (#57) : initiales recalculées et enregistrées
       h+='<div style="display:flex;gap:8px;margin-top:4px;align-items:center">';
       h+='<input type="color" value="'+st2.c+'" style="width:32px;height:24px;border:none;padding:0;cursor:pointer;border-radius:6px" onchange="T['+ti+'].c=this.value;lxCollabSave('+ti+',{couleur:T['+ti+'].c},\'✓ Couleur enregistrée\')">';
       h+='<label class="btn bs" style="font-size:11px;cursor:pointer">\ud83d\udcf7 Photo<input type="file" accept="image/*" style="display:none" onchange="loadStylistImg('+ti+',this)"></label>';
@@ -15678,9 +15793,9 @@ function rSettings(){
       h+='<div style="display:flex;align-items:center;gap:8px;font-size:12px">';
       // FIX 2026-05-12 : updates cibl\u00e9s (pause) au lieu de bulk save
       if(stPause){
-        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.o=this.value;lxCollabSave('+ti+',{pause:T['+ti+'].pause},\'✓ Pause enregistrée\')">';
+        h+='<input type="time" value="'+stPause.o+'" style="padding:4px;font-size:12px;width:90px" onchange="lxPauseMaj('+ti+',\'o\',this)">'; // 2026-10-17 audit réglages (#71) : début < fin contrôlé
         h+='<span style="color:var(--text3)">\u00e0</span>';
-        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="T['+ti+'].pause.c=this.value;lxCollabSave('+ti+',{pause:T['+ti+'].pause},\'✓ Pause enregistrée\')">';
+        h+='<input type="time" value="'+stPause.c+'" style="padding:4px;font-size:12px;width:90px" onchange="lxPauseMaj('+ti+',\'c\',this)">';
         h+='<button class="btn bs" style="font-size:10px;padding:2px 6px;color:var(--red)" onclick="delete T['+ti+'].pause;lxCollabSave('+ti+',{pause:null},\'✓ Pause supprimée\');go(\'settings\')">Supprimer</button>';
       }else{
         h+='<span style="color:var(--text3);font-style:italic;flex:1">Aucune pause d\u00e9finie</span>';
@@ -15724,7 +15839,7 @@ function rSettings(){
       h+='<div style="font-size:13px;font-weight:800;color:var(--gold);margin-bottom:10px">\ud83d\udccb Informations RH</div>';
       h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">';
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date d\'entr\u00e9e</label>';
-      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;lxCollabRHVerif('+st2.id+',{dateEntree:this.value})"></div>';
+      h+='<input type="date" value="'+(st2.dateEntree||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="T['+ti+'].dateEntree=this.value;lxCollabRHVerif('+st2.id+',{dateEntree:this.value})"><div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:4px;line-height:1.35">Avant cette date : aucun rendez-vous possible dans l\u2019application, et jours exclus du taux de remplissage.</div></div>'; // 2026-10-17 audit réglages (#41)
       h+='<div><label style="font-size:11px;color:rgba(255,255,255,.5);font-weight:700;display:block;margin-bottom:4px">Date de d\u00e9part</label>';
       h+='<input type="date" value="'+(st2.dateDepart||"")+'" style="width:100%;padding:8px;border-radius:8px;font-size:13px" onchange="setCollabDepart('+ti+',this.value)"><div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:4px;line-height:1.35">Premier jour d\u2019absence d\u00e9finitive. \u00c0 partir de cette date : plus de rendez-vous (planning et en ligne).</div></div>';
       h+='</div>';
@@ -15788,14 +15903,18 @@ function rSettings(){
   else if(settTab==="planning"){
     h+='<div class="sec">\ud83d\udcc5 Affichage planning</div><div class="card">';
     h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border2)">';
-    h+='<label style="font-size:14px;font-weight:700;flex:1">Intervalle des cr\u00e9neaux</label>';
+    // 2026-10-17 audit réglages (#54) : libellé exact (planning de l'application seulement) ; #64 : valeur hors liste affichée
+    h+='<label style="font-size:14px;font-weight:700;flex:1">Intervalle des cr\u00e9neaux<div style="font-size:11px;font-weight:400;color:var(--text3);margin-top:2px">Grille du planning de l\u2019application uniquement. Cr\u00e9neaux propos\u00e9s en ligne : Param\u00e8tres \u203a Site en ligne \u203a Intervalles des cr\u00e9neaux.</div></label>';
     h+='<select style="width:110px;padding:10px;font-size:14px" onchange="SLOT=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()">';
-    [10,15,20,30].forEach(function(v){h+='<option value="'+v+'"'+(SLOT===v?' selected':'')+'>'+v+' min</option>';});
+    (function(){ var _sl=[10,15,20,30]; if(_sl.indexOf(Number(SLOT))<0) _sl.push(Number(SLOT)); _sl.sort(function(a,b){return a-b;}); return _sl; })().forEach(function(v){h+='<option value="'+v+'"'+(SLOT===v?' selected':'')+'>'+v+' min</option>';});
     h+='</select></div>';
     h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 0">';
     h+='<label style="font-size:14px;font-weight:700;flex:1">Hauteur cr\u00e9neau</label>';
     h+='<select style="width:140px;padding:10px;font-size:14px" onchange="SLOT_H=+this.value;if(typeof saveSalonConfig===\'function\')saveSalonConfig()">';
-    [{v:16,l:"Compact"},{v:20,l:"Normal"},{v:26,l:"Large"},{v:32,l:"Tr\u00e8s large"}].forEach(function(o){h+='<option value="'+o.v+'"'+(SLOT_H===o.v?' selected':'')+'>'+o.v+'px '+o.l+'</option>';});
+    // 2026-10-17 audit réglages (#53) : valeur actuelle (28 px par défaut, ou réglée avec −/+) toujours affichée
+    var _shO=[{v:16,l:"Compact"},{v:20,l:"Normal"},{v:26,l:"Large"},{v:32,l:"Tr\u00e8s large"}];
+    if(!_shO.some(function(o){return o.v===Number(SLOT_H);})){ _shO.push({v:Number(SLOT_H),l:"(actuel)"}); _shO.sort(function(a,b){return a.v-b.v;}); }
+    _shO.forEach(function(o){h+='<option value="'+o.v+'"'+(Number(SLOT_H)===o.v?' selected':'')+'>'+o.v+'px '+o.l+'</option>';});
     h+='</select></div></div>';
   }
   
@@ -15813,7 +15932,8 @@ function rSettings(){
     ];
     for(var ti=0;ti<themes.length;ti++){
       var th=themes[ti];
-      var isCur=window._currentTheme===th.k;
+      // 2026-10-17 audit réglages (#56) : après rechargement, thème retrouvé d'après la couleur enregistrée
+      var isCur=window._currentTheme ? window._currentTheme===th.k : (String(SALON_CONFIG.couleurPrimaire||"").toLowerCase()===th.c.toLowerCase());
       h+='<div style="cursor:pointer;border:3px solid '+(isCur?th.c:'transparent')+';border-radius:12px;overflow:hidden;text-align:center" onclick="applyTheme(\''+th.k+'\',\''+th.c+'\',\''+th.c2+'\')">';
       h+='<div style="height:40px;background:linear-gradient(135deg,'+th.c+' 0%,'+th.c2+' 40%,'+th.c+' 60%,'+th.c2+' 100%);background-size:200% 100%;animation:shimmer 3s ease infinite"></div>';
       h+='<div style="padding:5px;font-size:10px;font-weight:700;color:#fff">'+th.l+(isCur?' \u2713':'')+'</div></div>';
@@ -15824,7 +15944,7 @@ function rSettings(){
     h+='<div class="fg"><label style="color:#fff;font-weight:700">Charger depuis l\u0027appareil</label><label style="display:block;padding:16px;border:2px dashed rgba(255,255,255,.4);border-radius:12px;text-align:center;cursor:pointer;color:#fff;font-size:14px;font-weight:700;background:rgba(255,255,255,.08)"><span style="font-size:28px;display:block;margin-bottom:4px">\ud83d\udcf7</span>Choisir une photo<input type="file" accept="image/*" style="display:none" onchange="loadWP(this)"></label></div>';
     h+='<div class="fg"><label style="color:#fff">Ou URL</label>';
     h+='<input value="'+(APP_BG||"")+'" placeholder="https://..." onchange="APP_BG=this.value;var bg=document.getElementById(\'appBg\');if(bg)bg.style.backgroundImage=\'url(\'+this.value+\')\';saveAppBg()"></div>';
-    h+='<div style="margin-top:10px"><label style="color:#fff;font-weight:700">Opacit\u00e9 : <span id="opV">'+(window._bgOp||100)+'</span>%</label><input type="range" min="30" max="100" value="'+(window._bgOp||100)+'" style="width:100%;margin-top:6px" oninput="window._bgOp=+this.value;document.getElementById(\'opV\').textContent=this.value;document.getElementById(\'appBg\').style.opacity=this.value/100"></div>';
+    h+='<div style="margin-top:10px"><label style="color:#fff;font-weight:700">Opacit\u00e9 : <span id="opV">'+(window._bgOp||100)+'</span>%</label><input type="range" min="30" max="100" value="'+(window._bgOp||100)+'" style="width:100%;margin-top:6px" oninput="window._bgOp=+this.value;document.getElementById(\'opV\').textContent=this.value;document.getElementById(\'appBg\').style.opacity=this.value/100" onchange="if(typeof lxCfgEcrireSections===\'function\')lxCfgEcrireSections({app_bg_op:+this.value})"></div>'; // 2026-10-17 audit réglages (#30) : opacité enregistrée
     h+='<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">';
     var bgs=["https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80","https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=800&q=80","https://images.unsplash.com/photo-1521590832167-7bcbfaa6381f?w=800&q=80",""];
     var bgL=["Salon 1","Salon 2","Salon 3","Aucun"];
@@ -15844,7 +15964,11 @@ function rSettings(){
     // (un formulaire ouvert avec des valeurs vides ne peut plus effacer le logo ou la note enregistres).
     if(!window.SALON.logo && SALON_CONFIG.logo) window.SALON.logo=SALON_CONFIG.logo;
     if(!window.SALON.noteTicket && SALON_CONFIG.noteTicket) window.SALON.noteTicket=SALON_CONFIG.noteTicket;
-    window._lxSalonFormInit={sousTitre:window.SALON.sousTitre||"",logo:window.SALON.logo||"",tel:window.SALON.tel||"",email:window.SALON.email||"",noteTicket:String(window.SALON.noteTicket||"").slice(0,600)};
+    // 2026-10-17 audit réglages (#14) : photo de référence = valeurs ENREGISTRÉES (SALON_CONFIG), prise une seule fois.
+    // Avant : reprise à chaque affichage depuis window.SALON, qui contient déjà la saisie -> une modification faite
+    // avant un nouvel affichage (ex. après un chargement de logo) n'était plus envoyée, et « Infos enregistrées »
+    // s'affichait quand même. Mise à jour seulement après une écriture confirmée (saveSalonInfo, handleLogoUpload).
+    if(!window._lxSalonFormInit) window._lxSalonFormInit={sousTitre:SALON_CONFIG.sousTitre||"",logo:SALON_CONFIG.logo||"",tel:SALON_CONFIG.tel||"",email:SALON_CONFIG.email||"",noteTicket:String(SALON_CONFIG.noteTicket||"").slice(0,600)};
     var S=window.SALON;
     h+='<div class="sec">\ud83c\udfe0 Infos établissement</div><div class="card">';
     // Logo preview + upload
@@ -15952,7 +16076,7 @@ function rSettings(){
     // 4\u00e8me toggle : Bons cadeaux en ligne (persiste dans salons.bons_cadeaux_online_actif, pas dans site_config)
     var _bcOn = !!(window.SALON_CONFIG && SALON_CONFIG.bonsCadeauxOnlineActif);
     var _cnxStatus = (window.SALON_CONFIG && SALON_CONFIG.stripeConnectStatus) || "";
-    var _cnxOk = (_cnxStatus === "active");
+    var _cnxOk = (["active","enabled","payouts_pending"].indexOf(_cnxStatus)>=0); // 2026-10-17 audit réglages (#61) : même règle que l'acompte en ligne
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;cursor:'+(_cnxOk?"pointer":"not-allowed")+';opacity:'+(_cnxOk?"1":".55")+'" title="'+(_cnxOk?"":"Stripe Connect doit \u00eatre actif")+'">';
     h+='<span style="font-size:15px">\ud83c\udf81 <strong>Bons cadeaux en ligne</strong>'+(_cnxOk?"":' <span style="font-size:11px;color:#ef9a9a;font-weight:600">(Stripe Connect requis)</span>')+'</span>';
     h+='<div style="position:relative;width:48px;height:26px"><input type="checkbox" '+(_bcOn?"checked":"")+' '+(_cnxOk?"":"disabled")+' onchange="toggleBonsCadeauxOnline(this.checked)" style="width:48px;height:26px;cursor:'+(_cnxOk?"pointer":"not-allowed")+'"></div>';
@@ -16092,18 +16216,18 @@ function rSettings(){
 
     // Slogan
     h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Slogan</label>';
-    h+='<input value="'+(SC.slogan||"")+'" placeholder="Ex: Votre beaut\u00e9, notre passion" style="width:100%;padding:14px;font-size:15px;border-radius:10px" onchange="window.SITE_CONFIG.slogan=this.value;saveSiteConfig()"></div>';
+    h+='<input value="'+_lxAttr(SC.slogan||"")+'" placeholder="Ex: Votre beaut\u00e9, notre passion" style="width:100%;padding:14px;font-size:15px;border-radius:10px" onchange="window.SITE_CONFIG.slogan=this.value;saveSiteConfig()"></div>';
     
     // Description
     h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Description</label>';
-    h+='<textarea rows="4" style="width:100%;padding:14px;font-size:14px;border-radius:10px;resize:vertical;min-height:80px" onchange="window.SITE_CONFIG.descSalon=this.value;saveSiteConfig()" placeholder="Pr\u00e9sentez votre salon...">'+(SC.descSalon||"")+'</textarea></div>';
+    h+='<textarea rows="4" style="width:100%;padding:14px;font-size:14px;border-radius:10px;resize:vertical;min-height:80px" onchange="window.SITE_CONFIG.descSalon=this.value;saveSiteConfig()" placeholder="Pr\u00e9sentez votre salon...">'+escapeHtml(SC.descSalon||"")+'</textarea></div>'; // 2026-10-17 audit réglages (#65) : texte échappé dans le champ
     
     // Photos
     h+='<div style="margin-top:14px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Photo hero (banni\u00e8re)</label>';
     h+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px">Image de fond du site. Taille recommand\u00e9e : 1400x600px. S\u0027ajuste automatiquement.</div>';
     if(SC.photoHero)h+='<img src="'+SC.photoHero+'" style="width:100%;height:120px;object-fit:cover;border-radius:10px;margin-bottom:8px;border:1px solid rgba(200,168,78,.15)">';
     h+='<div style="display:flex;gap:8px">';
-    h+='<input value="'+(SC.photoHero||"")+'" placeholder="Collez une URL ou chargez un fichier" style="flex:1;padding:12px;font-size:13px;border-radius:10px" onchange="window.SITE_CONFIG.photoHero=this.value;saveSiteConfig();go(\'settings\')">';
+    h+='<input value="'+_lxAttr(SC.photoHero||"")+'" placeholder="Collez une URL ou chargez un fichier" style="flex:1;padding:12px;font-size:13px;border-radius:10px" onchange="window.SITE_CONFIG.photoHero=this.value;saveSiteConfig();go(\'settings\')">';
     h+='<label class="btn bs" style="font-size:12px;cursor:pointer;padding:10px 14px;white-space:nowrap">\ud83d\udcf7 Charger<input type="file" accept="image/*" style="display:none" onchange="uploadSiteImg(this,\'photoHero\')"></label>';
     h+='</div></div>';
     // Gallery photos
@@ -16196,7 +16320,7 @@ function rSettings(){
     if(_modeC==="acompte"){
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant</label><input type="number" value="'+SC.acompteMontant+'" min="0" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="lxSetAcompteReglage(\'acompteMontant\',this)"></div>';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteType=this.value;saveSiteConfig();lxVerifAcompteVsPrix(true)"><option value="fixe"'+(SC.acompteType==="fixe"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="pourcentage"'+(SC.acompteType==="pourcentage"?" selected":"")+'>Pourcentage (%)</option></select></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Type</label><select style="width:100%;padding:14px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteType=this.value;if(this.value===\'pourcentage\'&&Number(window.SITE_CONFIG.acompteMontant)>100){window.SITE_CONFIG.acompteMontant=100;if(typeof toast===\'function\')toast(\'Pourcentage ramen\u00e9 \u00e0 100 %\',\'warning\');}saveSiteConfig();lxVerifAcompteVsPrix(true);go(\'settings\')"><option value="fixe"'+(SC.acompteType==="fixe"?" selected":"")+'>Montant fixe (\u20ac)</option><option value="pourcentage"'+(SC.acompteType==="pourcentage"?" selected":"")+'>Pourcentage (%)</option></select></div>';
     h+='</div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant minimum (\u20ac)</label><input type="number" value="'+(SC.acompteMin||0)+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="lxSetAcompteReglage(\'acompteMin\',this)"></div>';
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Acompte demandé seulement au-delà de (€) <span style="font-weight:400">— 0 = toujours</span></label><input type="number" value="'+(SC.acompteSeuil||0)+'" min="0" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.acompteSeuil=+this.value;saveSiteConfig()"></div>';
@@ -16204,13 +16328,13 @@ function rSettings(){
     h+='<div style="margin-top:10px"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Description visible par le client</label><input value="'+_lxAttr(SC.acompteDesc||"")+'" placeholder="Un acompte est demand\u00e9 pour confirmer votre r\u00e9servation." style="width:100%;padding:12px;font-size:14px;border-radius:10px" onchange="window.SITE_CONFIG.acompteDesc=this.value;saveSiteConfig()"></div>';
     }else if(_modeC==="empreinte"){
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant empreinte (\u20ac) '+lxHelpIcon("Le client est pr\u00e9-autoris\u00e9 pour ce montant. Aucun d\u00e9bit imm\u00e9diat. Vous le capturez seulement en cas de no-show.")+'</label><input type="number" value="'+(SC.empreinteMontant||30)+'" min="5" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteMontant=+this.value;saveSiteConfig()"></div>';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Capture auto apr\u00e8s (h)</label><input type="number" value="'+(SC.empreinteCaptureDelaiH||24)+'" min="0" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteCaptureDelaiH=+this.value;saveSiteConfig()"></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Montant empreinte (\u20ac) '+lxHelpIcon("Le client est pr\u00e9-autoris\u00e9 pour ce montant. Aucun d\u00e9bit imm\u00e9diat. Vous le capturez seulement en cas de no-show.")+'</label><input type="number" value="'+(SC.empreinteMontant||30)+'" min="5" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteMontant=Math.max(5,+this.value||30);if(+this.value<5&&typeof toast===\'function\')toast(\'Montant minimum : 5 \u20ac\',\'warning\');this.value=window.SITE_CONFIG.empreinteMontant;saveSiteConfig()"></div>'; // 2026-10-17 audit réglages (#63) : min 5 € réellement appliqué
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Capture auto apr\u00e8s (h)</label><input type="number" value="'+((SC.empreinteCaptureDelaiH!=null&&isFinite(+SC.empreinteCaptureDelaiH))?+SC.empreinteCaptureDelaiH:24)+'" min="0" step="1" style="width:100%;text-align:center;padding:14px;font-size:18px;font-weight:800;border-radius:10px" onchange="window.SITE_CONFIG.empreinteCaptureDelaiH=(this.value===\'\'||+this.value<0||!isFinite(+this.value))?24:Math.round(+this.value);saveSiteConfig()"></div>';
     h+='</div>';
     h+='<div style="margin-top:10px;padding:10px;background:rgba(33,150,243,.06);border-radius:8px;font-size:11px;color:rgba(255,255,255,.6);line-height:1.5">\ud83d\udca1 Si le client ne se pr\u00e9sente pas et n\'annule pas dans les d\u00e9lais, l\'empreinte sera captur\u00e9e automatiquement '+(SC.empreinteCaptureDelaiH||24)+'h apr\u00e8s l\'heure pr\u00e9vue du RDV. Mettez 0 pour d\u00e9sactiver l\'auto et capturer manuellement.</div>';
     }
     h+='<div style="display:flex;gap:12px;margin-top:10px">';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Politique d\'annulation '+lxHelpIcon("Délai minimum avant le RDV en deçà duquel le client ne peut plus annuler depuis l\'espace en ligne. Par exemple « 48h avant » : un client qui veut annuler la veille devra appeler le salon. « Aucun délai » : annulation libre jusqu\'au dernier moment. « Jamais » : annulation en ligne désactivée.")+'</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.politiqueAnnul=this.value;saveSiteConfig()"><option value="0h"'+(SC.politiqueAnnul==="0h"?" selected":"")+'>Aucun délai (libre)</option><option value="6h"'+(SC.politiqueAnnul==="6h"?" selected":"")+'>6h avant</option><option value="12h"'+(SC.politiqueAnnul==="12h"?" selected":"")+'>12h avant</option><option value="24h"'+(SC.politiqueAnnul==="24h"?" selected":"")+'>24h avant</option><option value="48h"'+(SC.politiqueAnnul==="48h"?" selected":"")+'>48h avant (recommandé)</option><option value="72h"'+(SC.politiqueAnnul==="72h"?" selected":"")+'>72h avant</option><option value="jamais"'+(SC.politiqueAnnul==="jamais"?" selected":"")+'>Jamais (annulation en ligne désactivée)</option></select></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Politique d\'annulation '+lxHelpIcon("Délai minimum avant le RDV en deçà duquel le client ne peut plus annuler depuis l\'espace en ligne. Par exemple « 48h avant » : un client qui veut annuler la veille devra appeler le salon. « Aucun délai » : annulation libre jusqu\'au dernier moment. « Jamais » : annulation en ligne désactivée.")+'</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.politiqueAnnul=this.value;saveSiteConfig()"><option value="0h"'+(SC.politiqueAnnul==="0h"?" selected":"")+'>Aucun délai (libre)</option><option value="6h"'+(SC.politiqueAnnul==="6h"?" selected":"")+'>6h avant</option><option value="12h"'+(SC.politiqueAnnul==="12h"?" selected":"")+'>12h avant</option><option value="24h"'+(SC.politiqueAnnul==="24h"?" selected":"")+'>24h avant</option><option value="48h"'+(SC.politiqueAnnul==="48h"?" selected":"")+'>48h avant (recommandé)</option><option value="72h"'+(SC.politiqueAnnul==="72h"?" selected":"")+'>72h avant</option><option value="jamais"'+(SC.politiqueAnnul==="jamais"?" selected":"")+'>Jamais (annulation en ligne désactivée)</option>'+((SC.politiqueAnnul&&["0h","6h","12h","24h","48h","72h","jamais"].indexOf(SC.politiqueAnnul)<0)?'<option value="'+_lxAttr(SC.politiqueAnnul)+'" selected>'+_lxAttr(SC.politiqueAnnul)+' (valeur actuelle)</option>':'')+'</select></div>'; // 2026-10-17 audit réglages (#64) : valeur hors liste affichée telle quelle
     h+='<label style="flex:1;display:flex;align-items:end;gap:8px;cursor:pointer;padding-bottom:6px"><input type="checkbox" '+(SC.remboursementAnnul?"checked":"")+' style="width:20px;height:20px" onchange="window.SITE_CONFIG.remboursementAnnul=this.checked;saveSiteConfig()"><span style="font-size:13px">Remboursement auto</span></label>';
     h+='</div>';
     // 2026-10-14 audit : remboursement partiel automatique (site_config.remboursement_partiel_pct, lu par le worker)
@@ -16223,7 +16347,7 @@ function rSettings(){
     h+='<div style="display:flex;gap:12px;margin-top:14px">';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">D\u00e9lai min (heures)</label><input type="number" value="'+((SC.delaiMinH!==null&&SC.delaiMinH!==undefined)?SC.delaiMinH:2)+'" min="0" max="720" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="var v=Math.round(+this.value);if(!(v>=0))v=0;if(v>720)v=720;this.value=v;window.SITE_CONFIG.delaiMinH=v;saveSiteConfig()"></div>';
     h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">R\u00e9sa max (jours)</label><input type="number" value="'+(Number(SC.delaiMaxJ)>0?SC.delaiMaxJ:30)+'" min="1" max="365" style="width:100%;text-align:center;padding:12px;border-radius:10px" onchange="var v=Math.round(+this.value);if(!(v>=1))v=1;if(v>365){v=365;if(typeof toast===\'function\')toast(\'Maximum 365 jours\',\'info\');}this.value=v;window.SITE_CONFIG.delaiMaxJ=v;saveSiteConfig()"></div>';
-    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Intervalles</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option></select></div>';
+    h+='<div style="flex:1"><label style="font-size:12px;font-weight:700;color:var(--text3);display:block;margin-bottom:6px">Intervalles</label><select style="width:100%;padding:12px;border-radius:10px" onchange="window.SITE_CONFIG.creneauMin=+this.value;saveSiteConfig()"><option value="15"'+(SC.creneauMin===15?" selected":"")+'>15 min</option><option value="30"'+(SC.creneauMin===30?" selected":"")+'>30 min</option><option value="60"'+(SC.creneauMin===60?" selected":"")+'>1 heure</option>'+((SC.creneauMin!=null&&SC.creneauMin!==""&&isFinite(+SC.creneauMin)&&[15,30,60].indexOf(+SC.creneauMin)<0)?'<option value="'+(+SC.creneauMin)+'" selected>'+(+SC.creneauMin)+' min (valeur actuelle)</option>':'')+'</select></div>'; // 2026-10-17 audit réglages (#64)
     h+='</div>';
     // Bloquer la création de nouveaux comptes (anti-spam ou période de surcharge)
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid var(--border2);cursor:pointer;margin-top:8px">';
@@ -16279,7 +16403,7 @@ function rSettings(){
     var fidSeuil=window.FIDCONF.seuil||10;
     var fidRemise=window.FIDCONF.remise||10;
     var fidType=window.FIDCONF.type||(_lxFidType()==="pourcentage"?"percent":"amount"); // 2026-10-14 audit : affiche ce que la caisse applique
-    var fidCagnottePct=window.FIDCONF.cagnottePct||5;
+    var fidCagnottePct=(window.FIDCONF.cagnottePct!=null&&!isNaN(+window.FIDCONF.cagnottePct))?+window.FIDCONF.cagnottePct:5; // 2026-10-17 audit réglages (#46) : 0 % possible
     var fidCaSeuil=window.FIDCONF.caSeuil||500;
     var fidCaRemise=window.FIDCONF.caRemise||25;
     var fidCaType=window.FIDCONF.caType||"amount";
@@ -16387,7 +16511,7 @@ function rSettings(){
 
   else if(settTab==="sms"){
     if(!isPro()){showUpgradeModal("SMS et Marketing");window._settTab=null;go("settings");return h;}
-    if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\n\u00c0 bient\u00f4t !",confirmSms:true,confirmEmail:true,confirmSmsTexte:"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",confirmEmailTexte:"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}"};
+    if(!window.SMS_CONFIG)window.SMS_CONFIG=lxSmsConfigDefaut(); // 2026-10-17 audit réglages : défauts uniques (enregistrés au 1er chargement)
     var smsC=window.SMS_CONFIG;
 
     // Solde SMS
@@ -16445,7 +16569,7 @@ function rSettings(){
     h+='<div class="sec">\ud83d\udcf2 Rappels SMS automatiques</div>';
     h+='<div class="card">';
     h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:12px">Envoi automatique. Les clients doivent avoir un num\u00e9ro de t\u00e9l\u00e9phone renseign\u00e9.</div>';
-    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83d\udd14 Rappels SMS actifs</span><input type="checkbox" '+(smsC.rappelActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelActif=this.checked;saveSmsConfig()"></label>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83d\udd14 Rappels SMS actifs</span><input type="checkbox" '+(smsC.rappelActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelActif=this.checked;saveSmsConfig()"></label>'; // 2026-10-17 audit réglages (#40) : SMS seulement (les rappels e-mail ne dépendent que de « Rappels Email actifs », comme le serveur)
     // 24h
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\u23f0 Rappel <strong>24h avant</strong></span><input type="checkbox" '+(smsC.rappel24h?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappel24h=this.checked;saveSmsConfig()"></label>';
     h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message 24h</label>';
@@ -16462,9 +16586,11 @@ function rSettings(){
     h+='<div class="card">';
     h+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:12px">Envoi automatique. Les clients doivent avoir un email renseign\u00e9. Illimit\u00e9.</div>';
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\u2709\ufe0f Rappels Email actifs</span><input type="checkbox" '+(smsC.rappelEmail?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelEmail=this.checked;saveSmsConfig()"></label>';
-    h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message email rappel</label>';
-    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.rappelEmailTexte=this.value;saveSmsConfig()">'+(smsC.rappelEmailTexte||"")+'</textarea>';
-    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
+    // 2026-10-17 audit réglages (#17) : « Message email de rappel » désormais utilisé, par le serveur (envoyer_rappels_email_24h)
+    // comme par l'application : il remplace le texte d'accueil de l'e-mail ; l'encadré (date, heure, prestation...) reste.
+    h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message email de rappel</label>';
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" placeholder="Vide = texte standard : \u00ab Bonjour {prenom}, n\u2019oubliez pas votre rendez-vous demain. \u00bb" onchange="window.SMS_CONFIG.rappelEmailTexte=this.value;saveSmsConfig()">'+escapeHtml(String(smsC.rappelEmailTexte||"").replace(/\\n/g,"\n"))+'</textarea>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab} \u2014 remplace le texte d\u2019accueil ; la date, l\u2019heure, la prestation, le collaborateur et l\u2019adresse restent dans l\u2019encadr\u00e9.</div></div>';
     h+='</div>';
 
     // Confirmation RDV
@@ -16489,16 +16615,18 @@ function rSettings(){
       h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {date} {heure} {prestation} {salon}</div></div>';
     }
     h+='</div>';
-    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;font-weight:700">Envoi manuel depuis la fiche du RDV</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;font-weight:700">Fen\u00eatre \u00ab Confirmation de RDV \u00bb propos\u00e9e apr\u00e8s une prise de RDV dans l\u2019application</div>'; // 2026-10-17 audit réglages (#17)
     // Confirmation SMS
-    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\ud83d\udcf2 Confirmation par <strong>SMS</strong></span><input type="checkbox" '+(smsC.confirmSms?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.confirmSms=this.checked;saveSmsConfig()"></label>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\ud83d\udcf2 Proposer la confirmation par <strong>SMS</strong></span><input type="checkbox" '+(smsC.confirmSms?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.confirmSms=this.checked;saveSmsConfig()"></label>';
     h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message SMS de confirmation</label>';
     h+='<textarea style="width:100%;height:60px;font-size:12px;resize:vertical" oninput="lxRenderSmsCost(\'cost_confirm\',this.value)" onchange="window.SMS_CONFIG.confirmSmsTexte=this.value;saveSmsConfig()">'+(smsC.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !")+'</textarea>'+lxSmsCostBlock('cost_confirm',smsC.confirmSmsTexte||"Bonjour {prenom}, votre RDV du {date} a {heure} chez {salon} pour {prestation} est confirme. A bientot !");
     h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
     // Confirmation Email
-    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\u2709\ufe0f Confirmation par <strong>Email</strong></span><input type="checkbox" '+(smsC.confirmEmail?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.confirmEmail=this.checked;saveSmsConfig()"></label>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\u2709\ufe0f Proposer la confirmation par <strong>Email</strong></span><input type="checkbox" '+(smsC.confirmEmail?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.confirmEmail=this.checked;saveSmsConfig()"></label>';
     h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message email de confirmation</label>';
-    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.confirmEmailTexte=this.value;saveSmsConfig()">'+(smsC.confirmEmailTexte||"Bonjour {prenom},\\n\\nVotre rendez-vous est confirm\u00e9 :\\n\u2022 Date : {date} \u00e0 {heure}\\n\u2022 Prestation : {prestation}\\n\u2022 Avec : {collab}\\n\\n\u00c0 bient\u00f4t !\\n{salon}")+'</textarea>';
+    // 2026-10-17 audit réglages (#17) : texte réellement utilisé (accueil de l'e-mail de confirmation) ; vide = texte standard
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" placeholder="Vide = texte standard : \u00ab Bonjour {prenom}, nous avons le plaisir de confirmer votre rendez-vous. \u00bb" onchange="window.SMS_CONFIG.confirmEmailTexte=this.value;saveSmsConfig()">'+escapeHtml(_lxConfirmEmailTextePerso())+'</textarea>';
+    h+='<div style="font-size:10px;color:var(--text3)">Remplace le texte d\u2019accueil de l\u2019e-mail. La date, l\u2019heure, la prestation, le collaborateur et vos coordonn\u00e9es restent affich\u00e9s dans l\u2019encadr\u00e9 de l\u2019e-mail.</div>';
     h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
     h+='</div>';
 
@@ -16584,10 +16712,11 @@ function rSettings(){
       h+='<div class="card" style="margin-top:14px;border-left:4px solid var(--text3)"><div class="ct">\ud83d\udcc4 Attestation de conformit\u00e9</div><div style="font-size:13px;color:var(--text2)">Votre \u00e9tablissement est en franchise de TVA (art. 293 B du CGI) : l\u2019obligation de caisse s\u00e9curis\u00e9e et d\u2019attestation ne s\u2019applique pas \u00e0 vous. Si vous passez un jour au r\u00e9gime de TVA, l\u2019attestation vous sera propos\u00e9e automatiquement.</div></div>';
     }
     // === Comptes comptables pour l'export (configurable, pre-rempli LS) ===
-    var _CA=(typeof _comptaAccounts==="function")?_comptaAccounts():{services:"70612000",produits:"70712000",bonsCadeaux:"70730000",tva:"44571000",caisse:"53000000",especes:"58300000",cb:"58000000",enligne:"58010000",cheque:"58200000",autres:"58040000",journal:"CS"};
+    var _CA=(typeof _comptaAccounts==="function")?_comptaAccounts():{services:"70612000",produits:"70712000",bonsCadeaux:"46700000",tva:"44571000",caisse:"53000000",especes:"58300000",cb:"58000000",enligne:"58010000",cheque:"58200000",autres:"58040000",journal:"CS"};
     function _caRow(id,label,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">'+label+'</label><input type="text" id="ca_'+id+'" value="'+(val||"")+'" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px;font-family:monospace"></div>'; }
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #ff9800"><div class="ct">\ud83e\uddfe Comptes comptables pour l\u0027export</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Numéros de comptes utilisés dans les exports comptables (FEC, EBP). Pré-remplis avec des valeurs standard ; votre cabinet peut les adapter à votre plan comptable. Modifiables sans risque, ils n\u0027affectent pas les tickets déjà enregistrés.</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Utilis\u00e9s apr\u00e8s avoir cliqu\u00e9 sur \u00ab Enregistrer les comptes \u00bb (FEC, EBP, Quadratus). \u00ab Bons cadeaux \u00bb = compte des r\u00e8glements par bon cadeau ou avoir (par d\u00e9faut 467, \u00e0 valider avec votre comptable).</div>'; // 2026-10-17 audit réglages (#19)
     h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("services","CA Services (prestations)",_CA.services)+_caRow("produits","CA Ventes (produits)",_CA.produits)+_caRow("bonsCadeaux","Bons cadeaux",_CA.bonsCadeaux)+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("tva","TVA collectée",_CA.tva)+_caRow("caisse","Caisse",_CA.caisse)+_caRow("especes","Espèces",_CA.especes)+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("cb","Cartes bancaires",_CA.cb)+_caRow("enligne","Paiements en ligne",_CA.enligne)+_caRow("cheque","Chèques",_CA.cheque)+'</div>';
@@ -16758,6 +16887,7 @@ function rSettings(){
     h+='<div class="card" style="margin-top:10px">';
     h+='<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer"><input type="checkbox" '+(window.SHOW_TVA_TICKET?'checked':'')+' onchange="window.SHOW_TVA_TICKET=this.checked;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"> Afficher le d\u00e9tail HT / TVA / TTC sur les devis</label>';
     h+='<div style="font-size:11px;color:var(--text3);margin:4px 0 0 28px">Sur les tickets de caisse, le d\u00e9tail de la TVA est toujours imprim\u00e9 (mention obligatoire) ; en franchise de TVA, la mention \u00ab TVA non applicable \u00bb est imprim\u00e9e \u00e0 la place.</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin:4px 0 0 28px">D\u00e9coch\u00e9 : le devis affiche seulement les prix TTC, avec la mention \u00ab Prix TTC, TVA x % incluse \u00bb (\u00ab TVA non applicable, art. 293 B du CGI \u00bb uniquement si votre taux est 0 %).</div>'; // 2026-10-17 audit réglages (#10)
     h+='</div>';
 
     // Validité des devis
@@ -16826,6 +16956,16 @@ function saveTVA(){
   // on ecrit la valeur SAISIE, jamais une valeur reconstruite depuis la memoire.
   // 2026-10-15 : « Taux de TVA modifie » seulement apres confirmation de la base (l'echec est signale par lxSaveSalonColumns)
   Promise.resolve(typeof window.lxSaveSalonColumns==="function"?window.lxSaveSalonColumns({taux_tva:val}):{ok:false}).then(function(_rT){ if(!(_rT&&_rT.ok)){ SALON_CONFIG.tauxTVA=_tvaAvant; if(window.SALON) window.SALON.tauxTVA=_tvaAvant; return; }
+  // 2026-10-17 audit réglages (#11) : taux PRODUITS mis à jour tout de suite, avec la même règle que le chargement
+  // (luxyra-supabase.js : colonne taux_tva_produits sinon taux des prestations ; franchise 0 % -> 0). Avant : l'ancien
+  // taux restait affiché / utilisé jusqu'au rechargement de la page.
+  try{
+    var _colP=SALON_CONFIG.tvaProduitsColonne;
+    if(Number(val)===0) SALON_CONFIG.tvaProduits=0;
+    else if(_colP!==undefined) SALON_CONFIG.tvaProduits=(_colP!=null)?Number(_colP):val;
+    else if(SALON_CONFIG.tvaProduits==null || Number(SALON_CONFIG.tvaProduits)===Number(_tvaAvant) || Number(_tvaAvant)===0) SALON_CONFIG.tvaProduits=val;
+    if(window.SALON) window.SALON.tvaProduits=SALON_CONFIG.tvaProduits;
+  }catch(_eTp){}
   auditLog("CONFIG_TVA","Taux TVA modifie: "+val+"%");
   var h2='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h2+='<div style="font-size:36px;margin-bottom:10px">\u2705</div>';
@@ -16852,6 +16992,7 @@ function saveValiditeDevis(val){
 }
 
 // Phase editor modal
+// 2026-10-17 audit réglages (#72) : CODE MORT — aucun appelant dans l'application (conservé, ne pas réutiliser sans revue).
 function editPhases(svcId){
   var sv=gS(svcId);if(!sv)return;
   var htm='<div class="mbox"><h2>\u270f\ufe0f '+sv.n+'</h2>';
@@ -18257,14 +18398,16 @@ function rDetail(){
     h+='<div class="fg"><label>Prénom</label><input value="'+(c.pre||'')+'" autocomplete="off" data-lpignore="true" onchange="gC(\''+c.id+'\').pre=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'));if(typeof go===\'function\')go(\'detail\');"></div>';
     h+='<div class="fg"><label>Date de naissance</label><input type="date" value="'+(c.ddn||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ddn=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div class="fg"><label>Type de client</label><select onchange="gC(\''+c.id+'\').sex=this.value;gC(\''+c.id+'\').genre=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"><option value="F"'+(c.sex==="F"?" selected":"")+'>Femme</option><option value="H"'+(c.sex==="H"?" selected":"")+'>Homme</option><option value="E"'+((c.sex==="E"||c.genre==="E")?" selected":"")+'>Enfant</option></select></div>';
-    h+='<div class="fg"><label>Collaborateur habituel</label><select onchange="gC(\''+c.id+'\').collab=+this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">';
-    var _eqC=lxEquipeSelection(c.collab); for(var ti=0;ti<_eqC.length;ti++)h+='<option value="'+_eqC[ti].id+'"'+(c.collab===_eqC[ti].id?" selected":"")+'>'+_eqC[ti].n+'</option>';
+    h+='<div class="fg"><label>Collaborateur habituel</label><select onchange="gC(\''+c.id+'\').collab=(this.value===\'\'?null:+this.value);if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))">';
+    // 2026-10-17 audit réglages (#45) : « Aucun » possible ; présélectionné dans la prise de RDV
+    h+='<option value=""'+((c.collab==null||c.collab==="")?" selected":"")+'>Aucun</option>';
+    var _eqC=lxEquipeSelection(c.collab); for(var ti=0;ti<_eqC.length;ti++)h+='<option value="'+_eqC[ti].id+'"'+(String(c.collab)===String(_eqC[ti].id)?" selected":"")+'>'+_eqC[ti].n+'</option>';
     h+='</select></div>';
     h+='<div class="ct" style="margin-top:16px">Contact</div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone portable</label><input value="'+c.ph+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ph=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div class="fg"><label>T\u00e9l\u00e9phone fixe</label><input value="'+(c.ph2||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').ph2=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div class="fg"><label>E-mail</label><input value="'+(c.em||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').em=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
-    h+='<div class="fg"><label>Acompte en ligne</label><select onchange="gC(\''+c.id+'\').acompteOnline=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"><option value="defaut"'+((!c.acompteOnline||c.acompteOnline==="defaut")?" selected":"")+'>Par défaut (règle du salon)</option><option value="jamais"'+(c.acompteOnline==="jamais"?" selected":"")+'>Sans acompte (exempté)</option><option value="toujours"'+(c.acompteOnline==="toujours"?" selected":"")+'>Toujours un acompte</option></select></div>';
+    h+='<div class="fg"><label>Acompte en ligne</label><select onchange="gC(\''+c.id+'\').acompteOnline=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"><option value="defaut"'+((!c.acompteOnline||c.acompteOnline==="defaut")?" selected":"")+'>Par défaut (règle du salon)</option><option value="jamais"'+(c.acompteOnline==="jamais"?" selected":"")+'>Exempt\u00e9 d\u2019acompte (l\u2019empreinte bancaire reste demand\u00e9e si activ\u00e9e)</option><option value="toujours"'+(c.acompteOnline==="toujours"?" selected":"")+'>Toujours un acompte (m\u00eame sous le seuil, si l\u2019\u00e9tablissement est en mode acompte)</option></select></div>'; // 2026-10-17 audit réglages (#34) : libellés exacts
     h+='<div class="fg"><label>Adresse</label><input value="'+(c.adr||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').adr=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
     h+='<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px">';
     h+='<div class="fg"><label>Code postal</label><input value="'+(c.cp||"")+'" autocomplete="off" data-lpignore="true" data-1p-ignore="true" onchange="gC(\''+c.id+'\').cp=this.value;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"></div>';
@@ -18298,7 +18441,7 @@ function rDetail(){
 
     // ===== SECTION FAMILLE (lier parents/enfants/conjoints) =====
     h+='<div class="ct" style="margin-top:16px">👨‍👩‍👧 Famille</div>';
-    h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:10px;line-height:1.5">Liez les membres d\'une même famille (mère + enfants, conjoints…). Pratique pour les RDV coordonnés et le marketing famille.</div>';
+    h+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:10px;line-height:1.5">Liez les membres d\'une même famille (mère + enfants, conjoints…). Permet de passer d\u2019une fiche \u00e0 l\u2019autre en un clic (aucun envoi ni RDV automatique).</div>';
     var _famIds=Array.isArray(c.famille_ids)?c.famille_ids:[];
     if(_famIds.length>0){
       h+='<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">';
@@ -18326,7 +18469,7 @@ function rDetail(){
     }
     h+='<button class="btn bs" style="width:100%;font-size:12px;padding:10px;background:rgba(200,168,78,.08);border:1px dashed rgba(200,168,78,.3);color:var(--gold);font-weight:700" onclick="lxFamilleShowPicker(\''+c.id+'\')">+ Ajouter un membre de la famille</button>';
 
-    h+='<div style="margin-top:16px;max-width:200px"><label style="font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(c.actif?"checked":"")+' onchange="gC(\''+c.id+'\').actif=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Client actif</label></div>';
+    h+='<div style="margin-top:16px;max-width:200px"><label style="font-size:13px;display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(c.actif!==false?"checked":"")+' onchange="gC(\''+c.id+'\').actif=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Client actif</label><div style="font-size:11px;color:var(--text3);margin-top:4px">D\u00e9coch\u00e9 : plus aucun message marketing (campagnes, anniversaire, relance). Les rappels et confirmations de RDV restent envoy\u00e9s.</div></div>'; // 2026-10-17 audit réglages (#35) : case cochée par défaut (actif non renseigné = actif)
     h+='</div>';
   }
   else if(clTab==="cheveu"){
@@ -18598,11 +18741,29 @@ function rDetail(){
       h+='<div style="font-size:12px;color:var(--text3);line-height:1.5">Aucun point fid\u00e9lit\u00e9 ne sera ajout\u00e9 tant que la carte d\'abonnement est active. Les '+c.fid+' point'+(c.fid>1?'s':'')+' acquis sont conserv\u00e9s et reprendront automatiquement \u00e0 l\'expiration.</div>';
       h+='</div>';
     }
-    h+='<div style="font-size:13px;color:var(--text2);margin-bottom:8px">Defaut : Programme initial</div>';
-    h+='<div style="font-size:14px;margin-bottom:4px">Points fid\u00e9lit\u00e9</div>';
+    // 2026-10-17 audit réglages (#21) : l'onglet suit la mécanique choisie (passages / cagnotte / CA cumulé) et le type de
+    // remise (montant ou %). Avant : toujours des « passages » et des « % », quels que soient les réglages.
+    var _fMode=window.FIDCONF.mode||"passages";
+    var _fU=(typeof _lxFidType==="function"&&_lxFidType()==="montant")?" \u20ac":" %";
+    if(window.FIDCONF.active===false) h+='<div style="font-size:12px;color:#ff9800;margin-bottom:8px">Programme de fid\u00e9lit\u00e9 d\u00e9sactiv\u00e9 (Param\u00e8tres \u203a Options commerciales).</div>';
+    if(_fMode==="cagnotte"){
+      var _cagPct=(window.FIDCONF.cagnottePct!=null&&!isNaN(+window.FIDCONF.cagnottePct))?+window.FIDCONF.cagnottePct:5;
+      h+='<div style="font-size:14px;margin-bottom:4px">\ud83d\udcb0 Cagnotte</div>';
+      h+='<div style="font-size:28px;font-family:var(--f1);font-weight:800;margin-bottom:12px">'+(Number(c.cagnotte)||0).toFixed(2)+' \u20ac</div>';
+      h+='<div style="font-size:13px;color:var(--text2);margin-bottom:6px">'+String(_cagPct).replace(".",",")+' % de chaque ticket est cr\u00e9dit\u00e9 ; la cagnotte est utilisable comme remise en caisse.</div>';
+    } else if(_fMode==="ca_cumule"){
+      var _caS=Number(window.FIDCONF.caSeuil)||500, _caR=Number(window.FIDCONF.caRemise)||25, _caU=(window.FIDCONF.caType==="percent")?" %":" \u20ac";
+      var _caT=Number(c.caTotal)||0;
+      h+='<div style="font-size:14px;margin-bottom:4px">\ud83d\udcc8 Chiffre d\u2019affaires cumul\u00e9</div>';
+      h+='<div style="font-size:28px;font-family:var(--f1);font-weight:800;margin-bottom:12px">'+_caT.toFixed(2)+' \u20ac <span style="font-size:14px;color:var(--text3)">/ '+_caS+' \u20ac</span></div>';
+      if(_caT<_caS) h+='<div style="font-size:15px;margin-bottom:16px">Il reste <strong>'+(_caS-_caT).toFixed(2)+' \u20ac</strong> avant d\u0027obtenir <strong>'+_caR+_caU+' de remise</strong></div>';
+      else h+='<div style="font-size:15px;margin-bottom:16px;color:var(--green);font-weight:700">\ud83c\udf89 Remise de '+_caR+_caU+' acquise !</div>';
+      h+='<div style="margin-top:8px;height:8px;background:var(--bg3);border-radius:4px;overflow:hidden"><div style="height:100%;width:'+Math.min(100,_caS>0?_caT/_caS*100:0)+'%;background:linear-gradient(90deg,var(--gold),var(--green))"></div></div>';
+    } else {
+    h+='<div style="font-size:14px;margin-bottom:4px">Passages</div>';
     h+='<div style="font-size:28px;font-family:var(--f1);font-weight:800;margin-bottom:12px">'+c.fid+'</div>';
-    if(reste>0)h+='<div style="font-size:15px;margin-bottom:16px">Il reste encore <strong>'+reste+' passages</strong> avant d\u0027obtenir <strong>'+remisePct+'% de remise</strong></div>';
-    else h+='<div style="font-size:15px;margin-bottom:16px;color:var(--green);font-weight:700">\ud83c\udf89 Remise de '+remisePct+'% acquise !</div>';
+    if(reste>0)h+='<div style="font-size:15px;margin-bottom:16px">Il reste encore <strong>'+reste+' passages</strong> avant d\u0027obtenir <strong>'+remisePct+_fU+' de remise</strong></div>';
+    else h+='<div style="font-size:15px;margin-bottom:16px;color:var(--green);font-weight:700">\ud83c\udf89 Remise de '+remisePct+_fU+' acquise !</div>';
     // Visual card grid
     h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;max-width:250px;margin:0 auto">';
     for(var i=0;i<maxFid;i++){
@@ -18610,13 +18771,14 @@ function rDetail(){
       h+=(i<c.fid?"\u2714":"")+'</div>';
     }
     h+='</div>';
+    }
     h+='<div style="text-align:center;margin-top:14px"><button class="btn" style="padding:10px 20px;font-size:13px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.2)" onclick="lxEditFidManually(\''+c.id+'\')">Modifier manuellement</button></div>';
     h+='</div>';
   }
   else if(clTab==="rgpd"){
     h+='<div class="card"><div class="ct">Consentements RGPD</div>';
     h+='<div style="margin:16px 0"><div style="font-weight:700;font-size:16px;margin-bottom:8px">SMS</div>';
-    h+='<label style="font-size:14px;display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" '+(c.smsOk?"checked":"")+' onchange="gC(\''+c.id+'\').smsOk=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Ce client accepte la r\u00e9ception de SMS</label></div>';
+    h+='<label style="font-size:14px;display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" '+(c.smsOk?"checked":"")+' onchange="gC(\''+c.id+'\').smsOk=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Ce client accepte la r\u00e9ception de SMS <span style="font-size:11px;color:var(--text3)">(rappels de RDV et offres)</span></label></div>'; // 2026-10-17 audit réglages (#67) : décoché = aucun SMS, rappels compris
     h+='<div style="margin:16px 0"><div style="font-weight:700;font-size:16px;margin-bottom:8px">E-mails</div>';
     h+='<label style="font-size:14px;display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" '+(c.emOk?"checked":"")+' onchange="gC(\''+c.id+'\').emOk=this.checked;if(typeof saveClient===\'function\')saveClient(gC(\''+c.id+'\'))"> Ce client accepte la r\u00e9ception d\u0027e-mails</label></div>';
     h+='</div>';
@@ -18689,15 +18851,15 @@ function doAddPack(cId){
     id:null,clientId:cId,clientNom:cName(c),nom:name,
     prestId:prestId,prestNom:prestNom,
     total:total,used:0,prix:prix,
-    dateAchat:TD,dateExp:exp,ticketNum:"",status:"active"
+    dateAchat:TD,dateExp:exp,ticketNum:"",status:"pending",id:U()
   };
+  // 2026-10-17 audit réglages (#12) : pack « en attente » (mémoire seulement), activé et enregistré au PAIEMENT du ticket
+  // (doFinalPayExecute). Avant : enregistré « actif » ici, donc utilisable même si le ticket était abandonné.
   if(!window.PACKS_CLIENTS)window.PACKS_CLIENTS=[];
   window.PACKS_CLIENTS.push(pack);
-  if(typeof savePack==="function")savePack(pack);
-  auditLog("PACK_VENDU",name+" x"+total+" \u00e0 "+cName(c)+" pour "+prix+"\u20ac");
   cM();
   // Aller directement à l'encaissement avec le pack comme article
-  _tk={step:1,stId:null,cId:cId,items:[{sId:null,name:"\ud83c\udf9f Pack: "+name+" ("+total+" s\u00e9ances)",price:prix,qty:1,remise:0,isPack:true}],comment:"",remise:0};
+  _tk={step:1,stId:null,cId:cId,items:[{sId:null,name:"\ud83c\udf9f Pack: "+name+" ("+total+" s\u00e9ances)",price:prix,qty:1,remise:0,isPack:true,packVenteId:pack.id}],comment:"",remise:0};
   go("caisse");
 }
 
@@ -18921,7 +19083,7 @@ function _renderForfaitComposer(){
   h += '<div class="fg"><label>Nom *</label><input id="fcName" value="'+(d.name||'').replace(/"/g,'&quot;')+'" placeholder="Ex: Pack Mariée" oninput="window._forfaitDraft.name=this.value"></div>';
 
   h += '<div style="display:flex;gap:10px">';
-  h += '<div class="fg" style="flex:1"><label>'+(d.apartir?'Prix minimum (€) *':(d.devis?'Prix indicatif (€)':'Prix forfait (€) *'))+'</label><input type="number" id="fcPrice" min="0" step="1" value="'+(d.price||0)+'" style="font-size:16px;font-weight:700;text-align:center" oninput="window._forfaitDraft.price=parseFloat(this.value)||0;_updateForfaitTotalLabels()"></div>';
+  h += '<div class="fg" style="flex:1"><label>'+(d.apartir?'Prix minimum (€) *':(d.devis?'Prix indicatif (€)':'Prix forfait (€) *'))+'</label><input type="number" id="fcPrice" min="0" step="1" value="'+(d.price||0)+'" style="font-size:16px;font-weight:700;text-align:center" oninput="window._forfaitDraft.price=parseFloat(this.value)||0"></div>'; // 2026-10-17 audit réglages (#32) : la saisie met seulement le brouillon à jour (avant : fenêtre redessinée à chaque chiffre, curseur perdu)
   h += '<div class="fg" style="flex:1"><label>Catégorie</label><select id="fcCat" onchange="window._forfaitDraft.cat=this.value">';
   for(var ci=0;ci<CATS.length;ci++) h += '<option value="'+CATS[ci]+'"'+(d.cat===CATS[ci]?' selected':'')+'>'+CATS[ci]+'</option>';
   h += '</select></div>';
@@ -19166,6 +19328,7 @@ function _forfaitSave(){
   if(typeof toast === "function") toast(d.editId ? "Forfait mis à jour" : "Forfait créé","success");
 }
 
+// 2026-10-17 audit réglages (#72) : CODE MORT — aucun appelant dans l'application (conservé, ne pas réutiliser sans revue).
 function editForfait(idx){
   var f=FORFAITS[idx];if(!f)return;
   var htm='<div class="mbox"><h2>\u270f\ufe0f Modifier forfait</h2>';
@@ -19729,7 +19892,7 @@ function doEditService(id){
   var oldPrice = Number(sv.p) || 0;
   var newName=document.getElementById("esName").value.trim()||sv.n;
   sv.n=newName;
-  var _esP=parseFloat(document.getElementById("esPrice").value); sv.p=(document.getElementById("esDevis")&&document.getElementById("esDevis").checked)?(isNaN(_esP)?0:_esP):(_esP||sv.p);
+  var _esP=parseFloat(document.getElementById("esPrice").value); sv.p=(document.getElementById("esDevis")&&document.getElementById("esDevis").checked)?(isNaN(_esP)?0:_esP):(isNaN(_esP)||_esP<0?sv.p:_esP); // 2026-10-17 audit réglages (#50) : 0 € accepté (champ vide ou invalide = prix inchangé)
   var newPrice = Number(sv.p) || 0;
   // Permet 0 minute pour les suppl\u00e9ments (ex: Suppl\u00e9ment couleur) \u2014 pas d'impact planning
   var durRaw=document.getElementById("esDur").value;
@@ -20286,7 +20449,7 @@ function renderConsumption(){
     var inList=_consumptionList.find(function(c){return c.id===p.id;});
     var bg=inList?"rgba(33,150,243,.2)":"rgba(255,255,255,.04)";
     var bdr=inList?"rgba(33,150,243,.5)":"rgba(255,255,255,.08)";
-    h+='<div class="conso-item" data-cat="'+p.cat+'" data-name="'+(p.n+" "+p.cat+" "+(p.cb||"")).toLowerCase()+'" onclick="toggleConsoItem('+p.id+')" style="padding:12px 8px;border-radius:10px;background:'+bg+';border:1px solid '+bdr+';cursor:pointer;text-align:center;transition:all .15s">';
+    h+='<div class="conso-item" data-cat="'+p.cat+'" data-name="'+(p.n+" "+p.cat+" "+(p.cb||"")+" "+(p.cbSupp||"")).toLowerCase()+'" onclick="toggleConsoItem('+p.id+')" style="padding:12px 8px;border-radius:10px;background:'+bg+';border:1px solid '+bdr+';cursor:pointer;text-align:center;transition:all .15s">';
     h+='<div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:3px">'+p.n+'</div>';
     h+='<div style="font-size:9px;color:rgba(255,255,255,.35)">Stock: '+p.stk+'</div>';
     if(inList)h+='<div style="font-size:10px;color:#64b5f6;font-weight:800;margin-top:2px">'+inList.qty+' utilis\u00e9(s)</div>';
@@ -20325,7 +20488,7 @@ function toggleConsoItem(id){
 }
 function addConsoByCode(code){
   code=code.trim();if(!code)return;
-  var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].cb===code){p=PRODS[i];break;}}
+  var p=null;for(var i=0;i<PRODS.length;i++){if(lxCbCorrespond(PRODS[i],code)){p=PRODS[i];break;}} // 2026-10-17 audit réglages (#31)
   if(!p){for(var i=0;i<PRODS.length;i++){if(PRODS[i].n.toLowerCase().indexOf(code.toLowerCase())>=0){p=PRODS[i];break;}}}
   if(p){toggleConsoItem(p.id);}else{toast("Produit non trouv\u00e9 : "+code,"warning");}
 }
@@ -20417,7 +20580,7 @@ function renderStockEntry(){
     var inList=_stockEntryList.find(function(c){return c.id===p.id;});
     var bg=inList?"rgba(76,175,80,.2)":"rgba(255,255,255,.04)";
     var bdr=inList?"rgba(76,175,80,.5)":"rgba(255,255,255,.08)";
-    h+='<div class="entry-item" data-cat="'+p.cat+'" data-name="'+(p.n+" "+p.cat+" "+(p.cb||"")).toLowerCase()+'" onclick="toggleEntryItem('+p.id+')" style="padding:12px 8px;border-radius:10px;background:'+bg+';border:1px solid '+bdr+';cursor:pointer;text-align:center;transition:all .15s">';
+    h+='<div class="entry-item" data-cat="'+p.cat+'" data-name="'+(p.n+" "+p.cat+" "+(p.cb||"")+" "+(p.cbSupp||"")).toLowerCase()+'" onclick="toggleEntryItem('+p.id+')" style="padding:12px 8px;border-radius:10px;background:'+bg+';border:1px solid '+bdr+';cursor:pointer;text-align:center;transition:all .15s">';
     h+='<div style="font-size:13px;font-weight:700;color:#fff;line-height:1.3;margin-bottom:3px">'+p.n+'</div>';
     h+='<div style="font-size:10px;color:rgba(255,255,255,.35)">Stock: '+p.stk+'</div>';
     if(inList)h+='<div style="font-size:11px;color:#66bb6a;font-weight:800;margin-top:2px">+'+inList.qty+' re\u00e7u(s)</div>';
@@ -20469,7 +20632,7 @@ function toggleEntryItem(id){
 }
 function addEntryByCode(code){
   code=code.trim();if(!code)return;
-  var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].cb===code){p=PRODS[i];break;}}
+  var p=null;for(var i=0;i<PRODS.length;i++){if(lxCbCorrespond(PRODS[i],code)){p=PRODS[i];break;}} // 2026-10-17 audit réglages (#31)
   if(!p){for(var i=0;i<PRODS.length;i++){if(PRODS[i].n.toLowerCase().indexOf(code.toLowerCase())>=0){p=PRODS[i];break;}}}
   if(p){toggleEntryItem(p.id);}else{toast("Produit non trouv\u00e9 : "+code,"warning");}
 }
@@ -20586,7 +20749,7 @@ function validateStockEntry(){
 var _inventoryData=[];
 var _inventoryCat="all";
 function showInventory(){
-  _inventoryData=PRODS.map(function(p){return{id:p.id,name:p.n,cat:p.cat,theoretical:p.stk,real:p.stk,cb:p.cb||""};});
+  _inventoryData=PRODS.map(function(p){return{id:p.id,name:p.n,cat:p.cat,theoretical:p.stk,real:p.stk,cb:p.cb||"",cbSupp:p.cbSupp||""};}); // 2026-10-17 audit réglages (#31)
   _inventoryCat="all";
   renderInventory();
 }
@@ -20622,7 +20785,7 @@ function renderInventory(){
     var ecartColor=ecart===null?"":ecart===0?"var(--green)":ecart>0?"#64b5f6":"var(--red)";
     var ecartTxt=ecart===null?"":ecart===0?"\u2713 OK":(ecart>0?"+"+ecart:ecart);
     var rowBg=hasVal?(ecart===0?"rgba(76,175,80,.05)":ecart>0?"rgba(33,150,243,.05)":"rgba(244,67,54,.05)"):"transparent";
-    h+='<div class="inv-item" data-name="'+(d.name+" "+d.cat+" "+d.cb).toLowerCase()+'" style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border2);background:'+rowBg+'">';
+    h+='<div class="inv-item" data-name="'+(d.name+" "+d.cat+" "+d.cb+" "+(d.cbSupp||"")).toLowerCase()+'" style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border2);background:'+rowBg+'">';
     h+='<div style="flex:1;min-width:0">';
     h+='<div style="font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</div>';
     h+='<div style="font-size:12px;color:var(--text3)">'+d.cat+' \u2022 Th\u00e9orique: <strong style="color:#fff">'+d.theoretical+'</strong></div>';
@@ -20668,7 +20831,7 @@ function filterInvList(q){
 function focusInvByCode(code){
   code=code.trim();if(!code)return;
   var found=null;
-  for(var i=0;i<_inventoryData.length;i++){if(_inventoryData[i].cb===code){found=_inventoryData[i];break;}}
+  for(var i=0;i<_inventoryData.length;i++){if(_inventoryData[i].cb===code||(_inventoryData[i].cbSupp&&_inventoryData[i].cbSupp===code)){found=_inventoryData[i];break;}} // 2026-10-17 audit réglages (#31)
   if(!found){for(var i=0;i<_inventoryData.length;i++){if(_inventoryData[i].name.toLowerCase().indexOf(code.toLowerCase())>=0){found=_inventoryData[i];break;}}}
   if(found){
     // Set real to theoretical+0 as starting point, user will correct
@@ -20867,10 +21030,18 @@ function exportInventoryPDF(idx){
   w.document.write(html);w.document.close();
 }
 
+// 2026-10-17 audit réglages (#31) : le « Code-barre supplémentaire » de la fiche produit est reconnu par tous les scans
+// (caisse, entrée de stock, sortie, inventaire). Avant : seul le code-barre fournisseur était lu.
+function lxCbCorrespond(p, code){
+  if(!p||code==null) return false; var c=String(code).trim(); if(!c) return false;
+  return String(p.cb||"").trim()===c || (!!p.cbSupp && String(p.cbSupp).trim()===c);
+}
 function scanProd(code){
   code=code.trim();
   var p=null;
-  for(var i=0;i<PRODS.length;i++){if(PRODS[i].cb===code){p=PRODS[i];break;}}
+  for(var i=0;i<PRODS.length;i++){if(lxCbCorrespond(PRODS[i],code)){p=PRODS[i];break;}}
+  // 2026-10-17 audit réglages (#48) : « Disponible à la vente » décoché -> pas ajouté au ticket (comme la grille de caisse)
+  if(p && p.forSale===false){ showAlert("\u00ab "+p.n+" \u00bb n\u2019est pas disponible \u00e0 la vente (fiche produit \u203a Type de produit).","warning"); return; }
   if(p){
     // If POS is open (step 3), add to current ticket
     if(_tk.step===3||_tk.step===2){
@@ -20895,17 +21066,53 @@ function scanProd(code){
 function addProdToCaisse(id){
   var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){p=PRODS[i];break;}}
   if(!p)return;
+  if(p.forSale===false){ showAlert("\u00ab "+p.n+" \u00bb n\u2019est pas disponible \u00e0 la vente (fiche produit \u203a Type de produit).","warning"); return; } // 2026-10-17 audit réglages (#48)
   _tk={step:1,stId:null,cId:null,items:[{sId:null,name:p.n,price:getProdPrice(p),qty:1,remise:0,isProd:true,prodId:p.id}],comment:"",remise:0};
   showCaisse();
 }
 
+// 2026-10-17 audit réglages (#13) : brouillon de la fiche produit. Changer d'onglet (Infos / Prix / Promo) ou de photo
+// redessine la fenêtre : les saisies de l'onglet quitté sont gardées ici, remises dans les champs, et lues par doEditProd.
+// Vidé à la fermeture (cM) et après l'enregistrement.
+function _epGarder(){
+  try{
+    var id=window._currentEditProdId; if(id==null) return;
+    if(window._epBrouillonId!==id){ window._epBrouillon={}; window._epBrouillonId=id; }
+    var d=window._epBrouillon=window._epBrouillon||{};
+    document.querySelectorAll('#modal input[id^="ep"],#modal select[id^="ep"],#modal textarea[id^="ep"]').forEach(function(el){
+      if(el.type==="file") return;
+      d[el.id]=(el.type==="checkbox")?{c:!!el.checked}:{v:el.value};
+    });
+  }catch(e){ console.warn("[editProd] brouillon",e); }
+}
+function _epEl(id){
+  var el=document.getElementById(id); if(el) return el;
+  var d=(window._epBrouillonId===window._currentEditProdId)?window._epBrouillon:null;
+  if(d && d[id]) return {value:(d[id].v!=null?d[id].v:""), checked:!!d[id].c, _brouillon:true};
+  return null;
+}
+function _epRestaurer(){
+  try{
+    var d=(window._epBrouillonId===window._currentEditProdId)?window._epBrouillon:null; if(!d) return;
+    var prix=false;
+    Object.keys(d).forEach(function(k){
+      var el=document.getElementById(k); if(!el||el.type==="file") return;
+      if(d[k].c!=null && el.type==="checkbox") el.checked=d[k].c; else if(d[k].v!=null) el.value=d[k].v;
+      if(k==="epPrice"||k==="epPA"||k==="epTva") prix=true;
+    });
+    if(prix && document.getElementById("epPrice") && document.getElementById("epPrixHT") && typeof recalcCoef==="function") recalcCoef();
+  }catch(e){ console.warn("[editProd] restauration brouillon",e); }
+}
 function editProd(id){
   var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){p=PRODS[i];break;}}
   if(!p)return;
+  if(window._epBrouillonId!==id){ window._epBrouillon=null; window._epBrouillonId=null; } // 2026-10-17 audit réglages (#13) : autre produit -> brouillon oublié
   window._currentEditProdId=id;
   if(!window._epTab)window._epTab="infos";
   var tab=window._epTab;
-  var tvaR=(p.tvaTaux!=null?p.tvaTaux:(SALON_CONFIG.tauxTVA!=null?SALON_CONFIG.tauxTVA:20));
+  // 2026-10-17 audit réglages (#49) : sans taux propre, le taux affiché est celui des PRODUITS de l'établissement
+  // (taux_tva_produits, sinon taux des prestations) — c'est celui appliqué en caisse.
+  var tvaR=(p.tvaTaux!=null?Number(p.tvaTaux):(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits))?Number(SALON_CONFIG.tvaProduits):(SALON_CONFIG.tauxTVA!=null?Number(SALON_CONFIG.tauxTVA):20)));
   var coef=(p.coefMulti!=null?p.coefMulti:(p.pa>0?(p.p/(1+tvaR/100))/p.pa:2));
   var prixHT=p.p/(1+tvaR/100);
   var tvaMt=p.p-prixHT;
@@ -20932,16 +21139,16 @@ function editProd(id){
   htm+='<div style="display:flex;border-bottom:2px solid var(--border2);margin-bottom:14px">';
   for(var ti=0;ti<tabs.length;ti++){
     var tt=tabs[ti],sel=tab===tt.k;
-    htm+='<button onclick="window._epTab=\''+tt.k+'\';editProd('+id+')" style="flex:1;padding:10px;background:transparent;border:none;border-bottom:3px solid '+(sel?"var(--gold)":"transparent")+';color:'+(sel?"var(--gold)":"rgba(255,255,255,.5)")+';font-weight:'+(sel?"800":"600")+';cursor:pointer;font-size:12px">'+tt.l+'</button>';
+    htm+='<button onclick="_epGarder();window._epTab=\''+tt.k+'\';editProd('+id+')" style="flex:1;padding:10px;background:transparent;border:none;border-bottom:3px solid '+(sel?"var(--gold)":"transparent")+';color:'+(sel?"var(--gold)":"rgba(255,255,255,.5)")+';font-weight:'+(sel?"800":"600")+';cursor:pointer;font-size:12px">'+tt.l+'</button>';
   }
   htm+='</div>';
   
   if(tab==="infos"){
     htm+='<label class="btn bs" style="display:inline-block;cursor:pointer;font-size:12px;margin-bottom:12px">\ud83d\udcf7 Changer photo<input type="file" accept="image/*" style="display:none" onchange="loadProdImg('+p.id+',this)"></label>';
     if(p.img)htm+=' <button class="btn bs" style="font-size:12px;color:var(--red)" onclick="clearProdImg('+p.id+')">Supprimer photo</button>';
-    htm+='<div class="fg"><label>Nom du produit</label><input id="epName" value="'+p.n+'"></div>';
+    htm+='<div class="fg"><label>Nom du produit</label><input id="epName" value="'+_lxAttr(p.n)+'"></div>';
     htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
-    htm+='<div class="fg"><label>Contenance</label><input id="epContenance" value="'+(p.contenance||"")+'" placeholder="Ex: 250ml"></div>';
+    htm+='<div class="fg"><label>Contenance</label><input id="epContenance" value="'+_lxAttr(p.contenance||"")+'" placeholder="Ex: 250ml"></div>';
     htm+='<div class="fg"><label>Cat\u00e9gorie</label><select id="epCat">';
     for(var i=0;i<PCATS.length;i++)htm+='<option value="'+PCATS[i]+'"'+(p.cat===PCATS[i]?' selected':'')+'>'+PCATS[i]+'</option>';
     htm+='</select></div></div>';
@@ -20949,8 +21156,8 @@ function editProd(id){
     var _fL=window.FOURNISSEURS||[];
     for(var fi=0;fi<_fL.length;fi++)htm+='<option value="'+_fL[fi].id+'"'+(p.fournisseurId==_fL[fi].id?' selected':'')+'>'+_fL[fi].nom+'</option>';
     htm+='</select></div>';
-    htm+='<div class="fg"><label>Code-barre fournisseur</label><input id="epCB" value="'+(p.cb||"")+'" placeholder="Scanner ou saisir"></div>';
-    htm+='<div class="fg"><label>Code-barre suppl\u00e9mentaire</label><input id="epCBSupp" value="'+(p.cbSupp||"")+'" placeholder="Code interne / EAN secondaire"></div>';
+    htm+='<div class="fg"><label>Code-barre fournisseur</label><input id="epCB" value="'+_lxAttr(p.cb||"")+'" placeholder="Scanner ou saisir"></div>';
+    htm+='<div class="fg"><label>Code-barre suppl\u00e9mentaire</label><input id="epCBSupp" value="'+_lxAttr(p.cbSupp||"")+'" placeholder="Code interne / EAN secondaire"></div>';
     
     htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">';
     htm+='<div class="fg"><label>Stock actuel</label><input type="number" id="epStk" value="'+p.stk+'" min="0" style="text-align:center;font-size:18px;padding:12px"></div>';
@@ -20974,7 +21181,7 @@ function editProd(id){
     htm+='<div style="margin-top:14px;padding:14px;background:linear-gradient(135deg,rgba(33,150,243,.06),rgba(33,150,243,.02));border:1px solid rgba(33,150,243,.2);border-radius:12px">';
     htm+='<div style="font-size:12px;color:#64b5f6;font-weight:800;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">\ud83c\udf10 Boutique en ligne</div>';
     htm+='<div class="fg" style="margin:0"><label style="font-size:11px;color:rgba(255,255,255,.6)">Description affich\u00e9e sur le site de r\u00e9servation</label>';
-    htm+='<textarea id="epDescription" placeholder="Ex: '+_lxAttr(getMetierTxt().produitDesc)+'" style="width:100%;min-height:90px;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:#fff;font-family:inherit;font-size:13px;resize:vertical">'+(p.description||"")+'</textarea>';
+    htm+='<textarea id="epDescription" placeholder="Ex: '+_lxAttr(getMetierTxt().produitDesc)+'" style="width:100%;min-height:90px;padding:10px;background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:8px;color:#fff;font-family:inherit;font-size:13px;resize:vertical">'+escapeHtml(p.description||"")+'</textarea>'; // 2026-10-17 audit réglages (#65) : champs de la fiche produit échappés
     htm+='<div style="font-size:10px;color:var(--text3);margin-top:4px">Visible par les clients sur la page Click & Collect du site</div></div></div>';
   }
   else if(tab==="prix"){
@@ -20994,7 +21201,8 @@ function editProd(id){
     htm+='<div style="background:rgba(255,255,255,.04);border:1px solid var(--border2);border-radius:12px;padding:14px">';
     htm+='<div style="text-align:center"><div style="font-size:11px;color:var(--text3);font-weight:700">Dont taux de TVA</div>';
     htm+='<select id="epTva" style="text-align:center;font-size:16px;padding:10px;background:transparent;border:none;border-bottom:1px solid var(--border);width:100%;color:#fff;font-weight:700" onchange="recalcPrix()">';
-    var tvaOpts=[0,5.5,10,20];
+    var tvaOpts=[0,2.1,5.5,8.5,10,20]; // 2026-10-17 audit réglages (#49) : + taux DOM (2,1 % et 8,5 %)
+    if(tvaOpts.indexOf(tvaR)<0){ tvaOpts.push(tvaR); tvaOpts.sort(function(a,b){return a-b;}); } // taux actuel toujours affiché tel quel
     for(var ti2=0;ti2<tvaOpts.length;ti2++){htm+='<option value="'+tvaOpts[ti2]+'"'+(tvaR===tvaOpts[ti2]?' selected':'')+'>'+tvaOpts[ti2]+' %</option>';}
     htm+='</select></div>';
     htm+='<div style="text-align:center;margin:14px 0"><div style="font-size:11px;color:var(--text3);font-weight:700">TVA</div>';
@@ -21046,9 +21254,9 @@ function editProd(id){
     htm+='</div>';
     
     // Label
-    htm+='<div class="fg"><label>Libell\u00e9 promo (facultatif)</label><input id="epPromoLabel" value="'+promoLabel+'" placeholder="Ex: Soldes d\u2019\u00e9t\u00e9, Promo rentr\u00e9e..." style="padding:10px"></div>';
+    htm+='<div class="fg"><label>Libell\u00e9 promo (facultatif)</label><input id="epPromoLabel" value="'+_lxAttr(promoLabel)+'" placeholder="Ex: Soldes d\u2019\u00e9t\u00e9, Promo rentr\u00e9e..." style="padding:10px"></div>';
     
-    htm+='<div style="font-size:11px;color:var(--text3);margin-top:10px;padding:10px;background:rgba(33,150,243,.06);border-left:3px solid #2196f3;border-radius:6px">\ud83d\udca1 La promotion sera visible automatiquement sur le site et l\u2019annuaire pendant la p\u00e9riode active. Les dates sont incluses (d\u00e9but \u00e0 00h00, fin \u00e0 23h59).</div>';
+    htm+='<div style="font-size:11px;color:var(--text3);margin-top:10px;padding:10px;background:rgba(33,150,243,.06);border-left:3px solid #2196f3;border-radius:6px">\ud83d\udca1 La promotion est appliqu\u00e9e automatiquement en caisse et sur votre boutique en ligne (Click &amp; Collect) pendant la p\u00e9riode active ; elle n\u2019appara\u00eet pas dans l\u2019annuaire Luxyra. Les dates sont incluses (d\u00e9but \u00e0 00h00, fin \u00e0 23h59).</div>'; // 2026-10-17 audit réglages (#51) : libellé exact (pas d'affichage dans l'annuaire)
     htm+='</div>';
     
     if(isCurrentlyActive){
@@ -21069,6 +21277,7 @@ function editProd(id){
   if(tab==="infos"||tab==="prix"||tab==="promo")htm+='<button class="btn btn-gold" style="flex:1" onclick="doEditProd('+p.id+')">\u2705 Enregistrer</button>';
   htm+='</div></div>';
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
+  _epRestaurer(); // 2026-10-17 audit réglages (#13)
 }
 
 // Show all active and scheduled promos
@@ -21288,6 +21497,7 @@ function updateBulkPreview(){
   renderBulkPriceUpdate();
 }
 function applyBulkPriceUpdate(){
+  if(!_lxPermOuAdmin("manage_products","Modifier produits / prix",function(){ applyBulkPriceUpdate(); })) return; // 2026-10-17 audit réglages (#38)
   var ids=Object.keys(window._bulkSelected).filter(function(k){return window._bulkSelected[k];});
   if(!ids.length)return;
   var op=window._bulkOp,type=window._bulkType,value=window._bulkValue;
@@ -21767,38 +21977,45 @@ async function loadProdHistorique(prodId){
 }
 
 function doEditProd(id){
+  if(!_lxPermOuAdmin("manage_products","Modifier produits / prix",function(){ doEditProd(id); })) return; // 2026-10-17 audit réglages (#38)
   var p=null;for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){p=PRODS[i];break;}}
   if(!p)return;
+  _epGarder(); // 2026-10-17 audit réglages (#13) : champs de l'onglet affiché + ceux des onglets quittés (brouillon)
   var _stkBefore=p.stk;
   // Infos tab fields
-  var nm=document.getElementById("epName");if(nm)p.n=nm.value.trim()||p.n;
-  var ct=document.getElementById("epCat");if(ct)p.cat=ct.value;
-  var cb=document.getElementById("epCB");if(cb)p.cb=cb.value.trim();
-  var cbs=document.getElementById("epCBSupp");if(cbs)p.cbSupp=cbs.value.trim();
-  var cn=document.getElementById("epContenance");if(cn)p.contenance=cn.value.trim();
-  var stk=document.getElementById("epStk");if(stk)p.stk=parseInt(stk.value)||0;
-  var stkM=document.getElementById("epStkMin");if(stkM)p.stkMin=parseInt(stkM.value)||0;
-  var cc=document.getElementById("epCC");if(cc)p.cc=cc.checked;
-  var fs=document.getElementById("epForSale");if(fs)p.forSale=fs.checked;
-  var fu=document.getElementById("epForUse");if(fu)p.forUse=fu.checked;
-  var fr=document.getElementById("epFourn");if(fr)p.fournisseurId=fr.value||null;
-  var pe=document.getElementById("epPeremption");if(pe)p.datePeremption=pe.value||null;
-  var po=document.getElementById("epPAO");if(po)p.paoMois=parseInt(po.value)||null;
-  var dou=document.getElementById("epDateOuv");if(dou)p.dateOuverture=dou.value||null;
-  var ds=document.getElementById("epDescription");if(ds)p.description=ds.value.trim()||null;
+  var nm=_epEl("epName");if(nm)p.n=nm.value.trim()||p.n;
+  var ct=_epEl("epCat");if(ct)p.cat=ct.value;
+  var cb=_epEl("epCB");if(cb)p.cb=cb.value.trim();
+  var cbs=_epEl("epCBSupp");if(cbs)p.cbSupp=cbs.value.trim();
+  var cn=_epEl("epContenance");if(cn)p.contenance=cn.value.trim();
+  var stk=_epEl("epStk");if(stk)p.stk=parseInt(stk.value)||0;
+  var stkM=_epEl("epStkMin");if(stkM)p.stkMin=parseInt(stkM.value)||0;
+  var cc=_epEl("epCC");if(cc)p.cc=cc.checked;
+  var fs=_epEl("epForSale");if(fs)p.forSale=fs.checked;
+  var fu=_epEl("epForUse");if(fu)p.forUse=fu.checked;
+  var fr=_epEl("epFourn");if(fr)p.fournisseurId=fr.value||null;
+  var pe=_epEl("epPeremption");if(pe)p.datePeremption=pe.value||null;
+  var po=_epEl("epPAO");if(po)p.paoMois=parseInt(po.value)||null;
+  var dou=_epEl("epDateOuv");if(dou)p.dateOuverture=dou.value||null;
+  var ds=_epEl("epDescription");if(ds)p.description=ds.value.trim()||null;
   // Prix tab fields
   // 2026-10-14 : 0 est une valeur valide (prix 0, TVA 0 %, coef 0) ; seul un champ vide / invalide est ignore
   var _epN=function(el){ if(!el) return NaN; var t=String(el.value==null?"":el.value).trim().replace(",","."); return t===""?NaN:parseFloat(t); };
-  var pp=document.getElementById("epPrice");if(pp){var _vP=_epN(pp);if(!isNaN(_vP))p.p=_vP;}
-  var pa=document.getElementById("epPA");if(pa){var _vA=_epN(pa);if(!isNaN(_vA))p.pa=_vA;}
-  var cf=document.getElementById("epCoef");if(cf){var _vC=_epN(cf);p.coefMulti=isNaN(_vC)?null:_vC;}
-  var tv=document.getElementById("epTva");if(tv){var _vT=_epN(tv);p.tvaTaux=isNaN(_vT)?null:_vT;}
+  var pp=_epEl("epPrice");if(pp){var _vP=_epN(pp);if(!isNaN(_vP))p.p=_vP;}
+  var pa=_epEl("epPA");if(pa){var _vA=_epN(pa);if(!isNaN(_vA))p.pa=_vA;}
+  var cf=_epEl("epCoef");if(cf){var _vC=_epN(cf);p.coefMulti=isNaN(_vC)?null:_vC;}
+  var tv=_epEl("epTva");if(tv){var _vT=_epN(tv);
+    // 2026-10-17 audit réglages (#49) : sans taux propre jusque-là et taux choisi = taux produits de l'établissement -> reste « sans taux propre »
+    var _txPdef=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):Number(SALON_CONFIG.tauxTVA);
+    if(p.tvaTaux==null && !isNaN(_vT) && _vT===_txPdef){ /* inchangé : suit le taux de l'établissement */ }
+    else p.tvaTaux=isNaN(_vT)?null:_vT;}
   // Promo tab fields
-  var pra=document.getElementById("epPromoActif");if(pra)p.promoActif=pra.checked;
-  var prp=document.getElementById("epPromoPrix");if(prp){var _vPr=_epN(prp);p.promoPrix=isNaN(_vPr)?null:_vPr;}
-  var prd=document.getElementById("epPromoDebut");if(prd)p.promoDebut=prd.value||null;
-  var prf=document.getElementById("epPromoFin");if(prf)p.promoFin=prf.value||null;
-  var prl=document.getElementById("epPromoLabel");if(prl)p.promoLabel=prl.value.trim()||null;
+  var pra=_epEl("epPromoActif");if(pra)p.promoActif=pra.checked;
+  var prp=_epEl("epPromoPrix");if(prp){var _vPr=_epN(prp);p.promoPrix=isNaN(_vPr)?null:_vPr;}
+  var prd=_epEl("epPromoDebut");if(prd)p.promoDebut=prd.value||null;
+  var prf=_epEl("epPromoFin");if(prf)p.promoFin=prf.value||null;
+  var prl=_epEl("epPromoLabel");if(prl)p.promoLabel=prl.value.trim()||null;
+  window._epBrouillon=null; window._epBrouillonId=null; // 2026-10-17 audit réglages (#13) : brouillon consommé
   // If stock changed → ask for motif before saving
   if(p.stk!==_stkBefore){
     var diff=p.stk-_stkBefore;
@@ -21913,6 +22130,7 @@ function _deleteProdDo(id){
 }
 
 function addProd(){
+  if(!_lxPermOuAdmin("manage_products","Modifier produits / prix",function(){ addProd(); })) return; // 2026-10-17 audit réglages (#38)
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto"><h2>Nouveau produit</h2>';
   // Photo upload
   htm+='<div style="text-align:center;margin-bottom:14px">';
@@ -22036,6 +22254,9 @@ function doAddProdCat(){
   var name=document.getElementById("npcName").value.trim();
   if(!name)return;
   if(PCATS.indexOf(name)<0)PCATS.push(name);
+  // 2026-10-17 audit réglages (#69) : famille enregistrée même sans produit (avant : perdue au rechargement)
+  if(!Array.isArray(window.PCATS_EXTRA)) window.PCATS_EXTRA=[];
+  if(window.PCATS_EXTRA.indexOf(name)<0){ window.PCATS_EXTRA.push(name); if(typeof lxCfgEcrireSections==="function") lxCfgEcrireSections({pcats: window.PCATS_EXTRA.slice()}); }
   aPCat=name;cM();go("products");
 }
 
@@ -22151,7 +22372,7 @@ async function toggleBonsCadeauxOnline(newVal){
     }
     // Gate Stripe Connect : refuser l'activation si pas KYC actif
     var _cnxStatus = (window.SALON_CONFIG && SALON_CONFIG.stripeConnectStatus) || "";
-    if(newVal && _cnxStatus !== "active"){
+    if(newVal && ["active","enabled","payouts_pending"].indexOf(_cnxStatus)<0){ // 2026-10-17 audit réglages (#61)
       showAlert("Stripe Connect doit être actif pour vendre des bons cadeaux en ligne.","error");
       // Rerender to restore checkbox state
       if(typeof go==="function")go(window._currentPage||"settings");
@@ -26774,8 +26995,9 @@ function rStats(){
   }
   _allFillDays.forEach(function(dk2){
     activeCollabs.forEach(function(collab){
-      if(collab.date_entree && dk2 < collab.date_entree) return;
-      if(collab.date_depart && dk2 > collab.date_depart) return;
+      // 2026-10-17 audit réglages (#41) : noms de l'application (dateEntree / dateDepart) ; avant : date_entree jamais renseigné
+      if(lxCollabAvantEntree(collab, dk2)) return;
+      if(lxCollabDepartAu(collab, dk2)) return;
       var hrs2 = (typeof getEffectiveHrs==="function") ? getEffectiveHrs(dk2, collab.id) : null;
       if(!hrs2 || !hrs2.o || !hrs2.c) return; // jour de repos pour ce collab
       var _oM=toM(hrs2.o), _cM=toM(hrs2.c);
@@ -26990,6 +27212,7 @@ function oM(type,pf){
     var dow=calD.getDay();
     var dayLabel=DF[dow]+" "+calD.getDate()+" "+MO[calD.getMonth()];
     var preStId=pf.stId||(T[0]?T[0].id:null);
+    window._rdvStImpose=!!pf.stId; // 2026-10-17 audit réglages (#45) : collaborateur imposé (colonne du planning) -> pas remplacé par le collaborateur habituel
     var preTime=pf.time||"09:00";
     
     // Info bar: collab + time (pre-filled from clicked slot)
@@ -27062,7 +27285,7 @@ function oM(type,pf){
     var _eqR=lxEquipeSelection(preStId);
     for(var i=0;i<_eqR.length;i++){
       var st2=_eqR[i];var isSel=st2.id===preStId;
-      h+='<button onclick="document.getElementById(\'mst\').value='+st2.id+';document.querySelectorAll(\'.rdv-sty\').forEach(function(b){b.style.borderColor=\'rgba(255,255,255,.1)\';b.style.background=\'rgba(255,255,255,.04)\'});this.style.borderColor=\''+st2.c+'\';this.style.background=\''+st2.c+'22\'" class="rdv-sty" style="flex:1;min-width:70px;padding:10px 6px;border-radius:10px;border:2px solid '+(isSel?st2.c:'rgba(255,255,255,.1)')+';background:'+(isSel?st2.c+'22':'rgba(255,255,255,.04)')+';cursor:pointer;text-align:center">';
+      h+='<button data-st="'+st2.id+'" onclick="window._rdvStImpose=true;document.getElementById(\'mst\').value='+st2.id+';document.querySelectorAll(\'.rdv-sty\').forEach(function(b){b.style.borderColor=\'rgba(255,255,255,.1)\';b.style.background=\'rgba(255,255,255,.04)\'});this.style.borderColor=\''+st2.c+'\';this.style.background=\''+st2.c+'22\'" class="rdv-sty" style="flex:1;min-width:70px;padding:10px 6px;border-radius:10px;border:2px solid '+(isSel?st2.c:'rgba(255,255,255,.1)')+';background:'+(isSel?st2.c+'22':'rgba(255,255,255,.04)')+';cursor:pointer;text-align:center">';
       if(st2.img)h+='<img src="'+st2.img+'" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid '+st2.c+';display:block;margin:0 auto 4px">';
       else h+='<div style="width:32px;height:32px;border-radius:50%;background:'+st2.c+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;margin:0 auto 4px">'+st2.i+'</div>';
       h+='<div style="font-size:11px;font-weight:700;color:#fff">'+st2.n+'</div></button>';
@@ -27151,7 +27374,7 @@ function oM(type,pf){
     h+='<div id="mAcqParrainBox" class="fg" style="display:none"><label>Nom du parrain (qui l\u2019a recommand\u00e9 ?)</label><input id="mAcqParrain" placeholder="Marie DUPONT"></div>';
     h+='<div style="padding:10px 0;border-top:1px solid var(--border2);margin-top:8px">';
     h+='<div style="font-size:12px;font-weight:700;color:var(--text3);margin-bottom:6px">Consentements RGPD</div>';
-    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0"><input type="checkbox" id="mSmsOk"> \ud83d\udcf1 Accepte les SMS</label>';
+    h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0"><input type="checkbox" id="mSmsOk"> \ud83d\udcf1 Accepte les SMS <span style="font-size:11px;color:var(--text3)">(rappels de RDV et offres)</span></label>'; // 2026-10-17 audit réglages (#67)
     h+='<label style="font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 0"><input type="checkbox" id="mEmOk"> \u2709\ufe0f Accepte les emails</label>';
     h+='</div>';
     h+='<button class="btn bg bk" style="margin-top:12px" onclick="aCl()">Ajouter le client</button>';
@@ -27175,7 +27398,7 @@ function oM(type,pf){
     h+='<div style="display:flex;gap:10px">';
     h+='<div class="fg" style="flex:1"><label>Dur\u00e9e de validit\u00e9</label><select id="gexp"><option value="12">12 mois (standard)</option><option value="6">6 mois</option><option value="18">18 mois</option><option value="24">24 mois</option></select></div>';
     h+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="gscope"><option value="tout">Tout (prestations + produits)</option><option value="prestations">Prestations uniquement</option><option value="produits">Produits uniquement</option></select></div></div>';
-    h+='<div class="fg"><label>Mode de paiement</label><select id="gpay"><option value="CB">Carte bancaire</option><option value="Especes">Esp\u00e8ces</option><option value="Cheque">Ch\u00e8que</option><option value="Virement">Virement bancaire</option></select></div>';
+    h+='<div class="fg"><label>Mode de paiement</label><select id="gpay">'+[["CB","Carte bancaire"],["Especes","Esp\u00e8ces"],["Cheque","Ch\u00e8que"],["Virement","Virement bancaire"]].filter(function(o){ return lxModeActif(o[0]); }).map(function(o){ return '<option value="'+o[0]+'">'+o[1]+'</option>'; }).join("")+'</select></div>'; // 2026-10-17 audit réglages (#22)
     h+='<div class="fg"><label>Code du bon (unique)</label><div style="display:flex;gap:8px"><input id="gcode" placeholder="Ex: NOEL2026-001" style="flex:1;font-size:16px;font-weight:700;letter-spacing:2px;text-transform:uppercase"><button class="btn bs" style="padding:10px 14px;white-space:nowrap" onclick="document.getElementById(\'gcode\').value=\'BC-\'+String(Date.now()).slice(-6).toUpperCase()">Auto</button></div></div>';
     h+='<button class="btn bg bk" style="margin-top:14px;padding:16px;font-size:16px;border-radius:14px" onclick="aGi()">\u2705 Encaisser et cr\u00e9er le bon</button>';
   }
@@ -27204,7 +27427,7 @@ function oM(type,pf){
   h+='</div></div>';
   mc.innerHTML=h;
 }
-function cM(){document.getElementById("modal").innerHTML="";window._epTab=null;window._currentEditProdId=null;window._rdv2nd=null;} // 2026-10-14 audit : 2e client d'un RDV groupé oublié à la fermeture (il se greffait au RDV suivant)
+function cM(){document.getElementById("modal").innerHTML="";window._epTab=null;window._currentEditProdId=null;window._epBrouillon=null;window._epBrouillonId=null;/* 2026-10-17 audit réglages (#13) */window._rdv2nd=null;} // 2026-10-14 audit : 2e client d'un RDV groupé oublié à la fermeture (il se greffait au RDV suivant)
 
 // mO = "modal open" — helper universel pour ouvrir un modal.
 // Accepte le HTML d'un élément .mbox (ou n'importe quoi), l'enrobe dans un
@@ -27344,10 +27567,17 @@ function aAp(){
   }
   // 2026-10-07 : collaborateur parti a la date du RDV (date de depart atteinte)
   var _stDep=gT(st);
+  if(lxCollabAvantEntree(_stDep, d)){ // 2026-10-17 audit réglages (#41)
+    showAlert("\u26d4 Impossible : "+(_stDep.n||"ce collaborateur")+" ne fait partie de l\u2019\u00e9quipe qu\u2019\u00e0 partir du "+fmt(String(_stDep.dateEntree).slice(0,10))+" (date d\u2019entr\u00e9e).","error");
+    return;
+  }
   if(lxCollabDepartAu(_stDep, d)){
     showAlert("\u26d4 Impossible : "+(_stDep.n||"ce collaborateur")+" ne fait plus partie de l\u2019\u00e9quipe \u00e0 partir du "+fmt(String(_stDep.dateDepart).slice(0,10))+".","error");
     return;
   }
+  // 2026-10-17 audit réglages (#6) : compétences du collaborateur (fiche › Compétences) appliquées à la prise de RDV.
+  // Prestation non habilitée -> bloqué, sauf forçage par l'administrateur (PIN), tracé au journal.
+  if(!lxCompetenceOk(st, (window._rdvSvcIds&&window._rdvSvcIds.length)?window._rdvSvcIds:[s], function(){ aAp(); })) return;
   // Block if establishment closed or collab absent
   var _effHrs=getEffectiveHrs(d,st);
   if(!_effHrs){
@@ -27607,6 +27837,17 @@ function filterRdvClients(q){
 function pickRdvClient(cId){
   var cl=gC(cId);if(!cl)return;
   document.getElementById("mc").value=cId;
+  // 2026-10-17 audit réglages (#45) : « Collaborateur habituel » de la fiche client présélectionné (avant : jamais lu),
+  // sauf si un collaborateur a déjà été choisi ou imposé, et seulement s'il fait encore partie de l'équipe.
+  try{
+    if(cl.collab!=null && cl.collab!=="" && !window._rdvStImpose){
+      var _btH=document.querySelector('.rdv-sty[data-st="'+String(cl.collab).replace(/"/g,"")+'"]');
+      var _mstH=document.getElementById("mst");
+      if(_btH && _mstH){ _mstH.value=String(cl.collab); var _tH=gT(cl.collab);
+        document.querySelectorAll('.rdv-sty').forEach(function(b){ b.style.borderColor='rgba(255,255,255,.1)'; b.style.background='rgba(255,255,255,.04)'; });
+        if(_tH){ _btH.style.borderColor=_tH.c; _btH.style.background=_tH.c+'22'; } }
+    }
+  }catch(_eCh){}
   document.getElementById("rdvSearch").value=cName(cl);
   document.getElementById("rdvClientList").style.display="none";
   // Update info card
@@ -28089,7 +28330,7 @@ async function aCl(){
   // Acquisition source (Quick Win 2026-05-06) — optionnel
   var acqSrc=document.getElementById("mAcqSrc")?document.getElementById("mAcqSrc").value:"";
   var acqParrain=(acqSrc==="recommandation" && document.getElementById("mAcqParrain"))?document.getElementById("mAcqParrain").value.trim():"";
-  var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:adr,cp:cp,ville:ville,ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:T[0]?T[0].id:1,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[],acqSrc:acqSrc||null,acqParrain:acqParrain||null};
+  var newCl={id:U(),nom:nom.toUpperCase(),pre:pre,sex:sex,ph:ph,ph2:"",em:em,adr:adr,cp:cp,ville:ville,ddn:ddn,cr:TD,no:no,natChev:"",typeChev:"",detChev:"",collab:null/* 2026-10-17 audit réglages (#45) : plus de T[0] imposé */,actif:true,fid:0,smsOk:document.getElementById("mSmsOk")?document.getElementById("mSmsOk").checked:false,emOk:document.getElementById("mEmOk")?document.getElementById("mEmOk").checked:false,fiches:[],acqSrc:acqSrc||null,acqParrain:acqParrain||null};
   CL.push(newCl);
   // FIX 2026-05-12 : await pour que newCl.id soit l'UUID DB final avant la suite
   if(typeof saveClient==="function"){
@@ -28217,6 +28458,7 @@ var PAY_METHODS=["CB","Especes","Cheque","Bon cadeau"];
 var _tk={step:0,stId:null,cId:null,items:[],comment:"",remise:0};
 
 function annulerAcompte(apptId){
+  if(!_lxPermOuAdmin("refund","Rembourser / annuler un acompte",function(){ annulerAcompte(apptId); })) return; // 2026-10-17 audit réglages (#16)
   if(guardDoubleClick("annulation acompte")) return;
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===apptId){a=AP[i];break;}}
   if(!a||!a.acompte)return;
@@ -28301,6 +28543,8 @@ function showAcompteForm(apptId){
   window._acompteApptId=apptId;
   window._acompteTotal=total;
   if(!window._acompteMode)window._acompteMode="CB";
+  // 2026-10-17 audit réglages (#22) : mode par défaut désactivé -> premier mode actif
+  if(!lxModeActif(window._acompteMode)){ var _amA=["CB","Especes","Cheque","Virement"].filter(function(x){return lxModeActif(x);}); if(_amA.length) window._acompteMode=_amA[0]; }
   
   var htm='<div class="mbox" style="max-height:90vh;overflow-y:auto">';
   htm+='<h2>\ud83d\udcb3 Acompte</h2>';
@@ -28328,6 +28572,7 @@ function showAcompteForm(apptId){
   htm+='<div class="fg"><label>Mode de paiement</label>';
   htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   var modes=[["CB","\ud83d\udcb3 CB"],["Especes","\ud83d\udcb5 Esp\u00e8ces"],["Cheque","\ud83d\udcdd Ch\u00e8que"],["Virement","\ud83c\udfe6 Virement"]];
+  modes=modes.filter(function(x){ return lxModeActif(x[0]) || window._acompteMode===x[0]; }); // 2026-10-17 audit réglages (#22)
   for(var mi=0;mi<modes.length;mi++){
     var isSel=window._acompteMode===modes[mi][0];
     htm+='<button style="padding:12px;font-size:13px;font-weight:700;border-radius:10px;cursor:pointer;border:1.5px solid '+(isSel?"var(--gold)":"rgba(255,255,255,.1)")+';background:'+(isSel?"rgba(200,168,78,.1)":"rgba(255,255,255,.04)")+';color:#fff" onclick="window._acompteMode=\''+modes[mi][0]+'\';showAcompteForm(\''+apptId+'\')">'+modes[mi][1]+'</button>';
@@ -28865,7 +29110,7 @@ function showCaisse(){
     for(var i=0;i<_eqK.length;i++){
       var t=_eqK[i];
       var sel=_tk.stId===t.id;
-      h+='<div onclick="_tk.stId='+t.id+';showCaisse()" style="cursor:pointer;text-align:center">';
+      h+='<div onclick="lxCaisseChoisirCollab('+t.id+')" style="cursor:pointer;text-align:center">'; // 2026-10-17 audit réglages (#6)
       if(t.img){
         h+='<img src="'+t.img+'" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:3px solid '+(sel?'var(--gold)':'rgba(255,255,255,.2)')+';display:block;margin:0 auto 6px;'+(sel?'box-shadow:0 0 12px rgba(200,168,78,.4)':'')+'">';
       }else{
@@ -29746,8 +29991,17 @@ function doAddLibre(){
   if(typeof auditLog==="function") auditLog("ARTICLE_LIBRE","Ajout au ticket : "+nom+" - "+x.toFixed(2)+"E ("+(t==="prod"?"produit":"prestation")+")");
   showCaisse();
 }
+// 2026-10-17 audit réglages (#6) : choix du collaborateur de la prestation en caisse, compétences vérifiées sur les
+// prestations déjà au ticket (forçage administrateur possible). L'encaissement lui-même n'est pas modifié.
+function lxCaisseChoisirCollab(stId){
+  var svcs=[]; (_tk&&_tk.items||[]).forEach(function(it){ if(it&&it.sId&&!it.isProd&&!it.isPack&&!it.isSep&&svcs.indexOf(it.sId)<0) svcs.push(it.sId); });
+  if(!lxCompetenceOk(stId, svcs, function(){ _tk.stId=stId; showCaisse(); })) return;
+  _tk.stId=stId; showCaisse();
+}
 function posAddService(sId, _prixDevis){
   var sv=gS(sId);if(!sv)return;
+  // 2026-10-17 audit réglages (#6) : prestation hors compétences du collaborateur du ticket -> forçage administrateur
+  if(_tk && _tk.stId && !lxCompetenceOk(_tk.stId, [sId], function(){ posAddService(sId, _prixDevis); })) return;
   if(sv.devis && _prixDevis===undefined){ _lxPrixDevis(sv, function(x){ posAddService(sId, x); }); return; }
   // Check if already in ticket
   for(var i=0;i<_tk.items.length;i++){
@@ -29835,14 +30089,14 @@ function doAddPackFromCaisse(){
     id:null,clientId:cId,clientNom:cName(c),nom:name,
     prestId:prestId,prestNom:prestNom,
     total:total,used:0,prix:prix,
-    dateAchat:TD,dateExp:exp,ticketNum:"",status:"active"
+    dateAchat:TD,dateExp:exp,ticketNum:"",status:"pending",id:U()
   };
+  // 2026-10-17 audit réglages (#12) : pack « en attente » (mémoire seulement), activé et enregistré au PAIEMENT du ticket
+  // (doFinalPayExecute). Avant : enregistré « actif » ici, donc utilisable même si le ticket était abandonné.
   if(!window.PACKS_CLIENTS)window.PACKS_CLIENTS=[];
   window.PACKS_CLIENTS.push(pack);
-  if(typeof savePack==="function")savePack(pack);
-  auditLog("PACK_VENDU",name+" x"+total+" \u00e0 "+cName(c)+" pour "+prix+"\u20ac");
   // Ajouter au ticket
-  _tk.items.push({sId:null,name:"\ud83c\udf9f Pack: "+name+" ("+total+" s\u00e9ances)",price:prix,qty:1,remise:0,isPack:true});
+  _tk.items.push({sId:null,name:"\ud83c\udf9f Pack: "+name+" ("+total+" s\u00e9ances)",price:prix,qty:1,remise:0,isPack:true,packVenteId:pack.id});
   showCaisse();
 }
 
@@ -30018,7 +30272,12 @@ var LX_CFG_SECTIONS = [
   {k:"verrouillage_min", mem:function(){return (window.LX_VERROU_MIN===undefined||window.LX_VERROU_MIN===null)?undefined:Number(window.LX_VERROU_MIN);}, set:function(v){window.LX_VERROU_MIN=Number(v); try{ if(typeof startInactivityTimer==="function") startInactivityTimer(); }catch(_e){}}},
   {k:"slot", mem:function(){return (typeof SLOT!=="undefined"&&Number(SLOT)>0)?Number(SLOT):undefined;}, set:function(v){if(Number(v)>0)SLOT=Number(v);}},
   {k:"slot_h", mem:function(){return (typeof SLOT_H!=="undefined"&&Number(SLOT_H)>0)?Number(SLOT_H):undefined;}, set:function(v){if(Number(v)>0)SLOT_H=Number(v);}},
-  {k:"validite_devis", mem:function(){return (SALON_CONFIG&&SALON_CONFIG.validiteDevis)?Number(SALON_CONFIG.validiteDevis):undefined;}, set:function(v){SALON_CONFIG.validiteDevis=Number(v);}}
+  {k:"validite_devis", mem:function(){return (SALON_CONFIG&&SALON_CONFIG.validiteDevis)?Number(SALON_CONFIG.validiteDevis):undefined;}, set:function(v){SALON_CONFIG.validiteDevis=Number(v);}},
+  // 2026-10-17 audit réglages (#29, #30, #69) : icônes des familles produit, opacité du fond d'écran et familles produit
+  // créées sans produit -> enregistrées (avant : en mémoire seulement, perdues au rechargement)
+  {k:"prodicons", mem:function(){return (window.PRODICONS && typeof window.PRODICONS==="object")?window.PRODICONS:undefined;}, set:function(v){window.PRODICONS=(v&&typeof v==="object")?v:{};}},
+  {k:"app_bg_op", mem:function(){return (window._bgOp!=null && isFinite(+window._bgOp))?Number(window._bgOp):undefined;}, set:function(v){ window._bgOp=Number(v); try{ var b=document.getElementById("appBg"); if(b&&isFinite(+v)) b.style.opacity=(+v)/100; }catch(_e){} }},
+  {k:"pcats", mem:function(){return Array.isArray(window.PCATS_EXTRA)?window.PCATS_EXTRA:undefined;}, set:function(v){ window.PCATS_EXTRA=Array.isArray(v)?v.slice():[]; _lxPcatsFusion(); }}
 ].concat(["metier","modeActivite","domicile","migrationStatus","migrationRequestedAt","migrationRequestId","migrationDataScope","migrationSourceSoftware","migrationRgpdSentAt","facebookUrl","instagramUrl","tiktokUrl"].map(function(n){
   var _vide=/Url$/.test(n); // 2026-10-11 : un lien de réseau social effacé ("") doit rester effacé
   return {k:n, mem:function(){ return (SALON_CONFIG && SALON_CONFIG[n]!==undefined && SALON_CONFIG[n]!==null && (_vide || SALON_CONFIG[n]!=="")) ? SALON_CONFIG[n] : undefined; },
@@ -30880,7 +31139,12 @@ function getProdCatIcon(cat){return window.PRODICONS[cat]||null;}
 function setProdCatIcon(cat,emoji){
   window.PRODICONS[cat]=emoji||null;
   if(!emoji)delete window.PRODICONS[cat];
-  if(typeof saveSalonConfig==="function")saveSalonConfig();
+  // 2026-10-17 audit réglages (#29) : section « prodicons » enregistrée (erreur signalée par lxCfgEcrireSections)
+  if(typeof lxCfgEcrireSections==="function") lxCfgEcrireSections({prodicons: JSON.parse(JSON.stringify(window.PRODICONS||{}))});
+}
+// 2026-10-17 audit réglages (#69) : familles produit créées sans produit (config_json.pcats) ajoutées à la liste déduite des produits
+function _lxPcatsFusion(){
+  try{ if(typeof PCATS==="undefined"||!Array.isArray(window.PCATS_EXTRA)) return; window.PCATS_EXTRA.forEach(function(n){ if(n && PCATS.indexOf(n)<0) PCATS.push(n); }); }catch(_e){}
 }
 function getProdCatGradient(cat){
   var pc=getProdColor(cat);
@@ -31812,7 +32076,8 @@ function doFinalPay(method){
 
   // Case 1: Client has reached the threshold -> propose discount
   if(currentPoints>=fidSeuil){
-    var remiseAmt=fidType==="pourcentage"?Math.round(lxFidEligibleTotal()*fidVal/100*100)/100:fidVal;
+    // 2026-10-17 audit réglages (#47) : montant fixe plafonné à la base éligible (« s'applique sur » respecté), comme lxFidRewardAmount
+    var remiseAmt=fidType==="pourcentage"?Math.round(lxFidEligibleTotal()*fidVal/100*100)/100:Math.min(Number(fidVal)||0, lxFidEligibleTotal());
     var htm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
     // Bandeau info clients skipp\u00e9s pour cause de carte abo (multi-client)
     if(_tk._fidSkippedAbo && _tk._fidSkippedAbo.length){
@@ -31971,9 +32236,11 @@ function applyFidDiscount(amount,method){
 // =====================================================================
 function lxFidShowCagnotte(cId, cl, total, method){
   var FC=window.FIDCONF||{};
-  var pct=Number(FC.cagnottePct)||5;
+  var pct=(FC.cagnottePct!=null&&FC.cagnottePct!==""&&!isNaN(+FC.cagnottePct))?Math.max(0,+FC.cagnottePct):5; // 2026-10-17 audit réglages (#46) : 0 % respecté (avant : `||5`)
   var newCredit=Math.round(total*pct/100*100)/100;
   var current=Number(cl.cagnotte)||0;
+  // 0 % et pas de solde : rien à créditer ni à proposer -> paiement direct
+  if(pct<=0 && current<=0.01){ if(!_tk._fidResults)_tk._fidResults={}; _tk._fidResults[cId]={action:"cagnotte_credit", credit:0}; doFinalPay(method); return; }
 
   // === Cas 1 : pas de cagnotte existante → mini-modal info crédit auto ===
   if(current<=0.01){
@@ -32411,6 +32678,19 @@ function _doFinalPayExecuteSync(method){
       }
     });
   } catch(e){ console.warn("[carte abo] activation pending failed:", e); }
+  // 2026-10-17 audit réglages (#12) : packs promo vendus dans ce ticket -> « actifs » et enregistrés seulement maintenant
+  // (paiement validé). savePack signale toute erreur d'enregistrement. Le ticket lui-même n'est pas modifié.
+  try {
+    _tk.items.forEach(function(it){
+      if(!it || !it.isPack || !it.packVenteId) return;
+      var pk=(window.PACKS_CLIENTS||[]).find(function(p){return p.id===it.packVenteId;});
+      if(pk && pk.status==="pending"){
+        pk.status="active";
+        if(typeof savePack==="function") savePack(pk);
+        if(typeof auditLog==="function") auditLog("PACK_VENDU", pk.nom+" x"+pk.total+" \u00e0 "+(pk.clientNom||"")+" pour "+pk.prix+"\u20ac (paiement effectif)");
+      }
+    });
+  } catch(ePk){ console.error("[pack] activation au paiement:", ePk); if(typeof showAlert==="function") showAlert("\u26a0\ufe0f Pack promo non activ\u00e9 : "+(ePk&&ePk.message||ePk)+". V\u00e9rifiez la fiche du client.","warning"); }
   var tsNow=new Date().toISOString();
   var heureNow=new Date().toTimeString().slice(0,5); // NF525 : heure d'emission du ticket = encaissement
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
@@ -33035,8 +33315,10 @@ function lxProdPhotoEnvoyer(file,cb){
 }
 function loadProdImg(id,input){
   if(!input.files||!input.files[0])return;
+  _epGarder(); // 2026-10-17 audit réglages (#13) : la fenêtre est redessinée après l'envoi -> saisies gardées
   lxProdPhotoEnvoyer(input.files[0],function(url){
     if(!url)return;
+    if(window._currentEditProdId===id) _epGarder();
     for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){PRODS[i].img=url;break;}}
     window.toast("✅ Photo prête — pensez à enregistrer le produit");
     editProd(id); // refresh modal
@@ -33044,6 +33326,7 @@ function loadProdImg(id,input){
 }
 
 function clearProdImg(id){
+  _epGarder(); // 2026-10-17 audit réglages (#13)
   for(var i=0;i<PRODS.length;i++){if(PRODS[i].id===id){PRODS[i].img="";break;}}
   editProd(id);
 }
@@ -33434,6 +33717,18 @@ function buildTicketHTML(a, isDuplicate){
     ht=Math.round(total/(1+txTVA/100)*100)/100;
     tva=Math.round((total-ht)*100)/100;
   }
+  // 2026-10-17 audit réglages (#11) : un DUPLICATA reprend le taux, le HT et la TVA ENREGISTRÉS dans le ticket scellé
+  // (avant : recalculés au taux actuel du salon, faux après un changement de taux). AFFICHAGE seulement : rien n'est
+  // réécrit. Sans valeurs enregistrées cohérentes (ancien ticket, objet RDV) -> calcul ci-dessus, comme avant.
+  if(isDuplicate){
+    try{
+      var _sHT=Number(a.totalHT), _sTVA=Number(a.totalTVA), _sTx=Number(a.tauxTVA);
+      if(a.totalHT!=null && a.totalTVA!=null && isFinite(_sHT) && isFinite(_sTVA) && Math.abs(_sHT+_sTVA-Number(total))<=0.02){
+        ht=_sHT; tva=_sTVA;
+        if(a.tauxTVA!=null && isFinite(_sTx) && _sTx>=0 && !(_sTx===0 && _sTVA>0.004)) txTVA=_sTx;
+      }
+    }catch(_eDupTva){}
+  }
   // 2026-10-17 retour partiel : ticket de RETOUR / REMBOURSEMENT -> TVA ventilée par taux, exactement comme l'enregistrement
   // scellé (saveTicketToDb : taux de chaque ligne, tvaTaux posé à la création du retour quand il diffère du taux unique).
   var _ri=(typeof _lxRetourInfo==="function")?_lxRetourInfo(a):null, _riTaux=null;
@@ -33812,6 +34107,20 @@ function _lxCorrDeTicket(apId){ return (window.LX_CORR_REGL||[]).filter(function
 function _lxCorrDuJour(d){ return (window.LX_CORR_REGL||[]).filter(function(c){ return c.date_correction===d; }); }
 function _lxCorrDuMois(m){ return (window.LX_CORR_REGL||[]).filter(function(c){ return String(c.date_correction||"").indexOf(m)===0; }); }
 function _lxCorrTotaux(L){ var t={}; (L||[]).forEach(function(c){ (c.lignes||[]).forEach(function(l){ t[l.mode]=Math.round(((t[l.mode]||0)+Number(l.montant||0))*100)/100; }); }); return t; }
+// 2026-10-17 audit réglages (#22) : un mode de paiement décoché dans Paramètres › Caisse n'est plus PROPOSÉ hors des tuiles de
+// caisse (vente de bon cadeau, acompte en salon, correction / modification de règlement). AFFICHAGE seulement : un mode déjà
+// enregistré sur un ticket reste affiché et sélectionné ; rien de ce qui est enregistré ne change.
+function lxModeActif(mode){
+  var P=window.PAY_ACTIVE; if(!P||typeof P!=="object") return true;
+  var m=String(mode||"").toLowerCase();
+  var k=null;
+  if(m==="cb"||m.indexOf("carte")===0) k="Carte Bancaire";
+  else if(m==="esp"||m.indexOf("esp")===0) k="Esp\u00e8ces";
+  else if(m==="chq"||m.indexOf("ch\u00e8que")===0||m.indexOf("cheque")===0) k="Ch\u00e8que";
+  else if(m==="vir"||m.indexOf("virement")===0) k="Virement Bancaire";
+  if(!k) return true;
+  return P[k]!==false;
+}
 var LX_CORR_MODES=[{k:"cb",l:"Carte bancaire"},{k:"esp",l:"Espèces"},{k:"chq",l:"Chèque"},{k:"vir",l:"Virement"},{k:"aut",l:"Autre"},{k:"enligne",l:"Payé en ligne"},{k:"bon",l:"Bon cadeau"}];
 function lxCorrReglOuvrir(apId){
   var go2=function(){ _lxCorrReglModale(apId); };
@@ -33834,6 +34143,7 @@ async function _lxCorrReglModale(apId){
   h+='<div style="display:grid;grid-template-columns:1fr 110px 110px;gap:6px;align-items:center;font-size:13px;margin-bottom:6px"><span style="color:var(--text3);font-size:11px">Mode</span><span style="color:var(--text3);font-size:11px;text-align:right">Enregistré</span><span style="color:var(--text3);font-size:11px;text-align:right">Réel</span>';
   LX_CORR_MODES.forEach(function(m){
     var v=Number(cur[m.k]||0); if(!v && (m.k==="enligne"||m.k==="bon")) return;
+    if(!v && !lxModeActif(m.k)) return; // 2026-10-17 audit réglages (#22) : mode désactivé non proposé, sauf s'il figure déjà sur le ticket
     h+='<span>'+m.l+'</span><span style="text-align:right;color:var(--text2)">'+v.toFixed(2)+' €</span><input type="number" step="0.01" min="0" class="lxCorrIn" data-k="'+m.k+'" value="'+(v?v.toFixed(2):"")+'" oninput="_lxCorrMaj()" style="text-align:right;padding:8px">';
   });
   h+='</div><div id="lxCorrSum" style="font-size:12px;margin:6px 0 10px"></div>';
@@ -33893,6 +34203,7 @@ function modifReglement(id){
     htm+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
     [{k:"Espèces",l:"💵 Espèces"},{k:"CB",l:"💳 Carte bancaire"},{k:"Chèque",l:"📝 Chèque"},{k:"Virement",l:"🏦 Virement"}].forEach(function(m){
       if(m.k===cur)return;
+      if(!lxModeActif(m.k))return; // 2026-10-17 audit réglages (#22) : mode désactivé non proposé (le mode d'origine reste affiché)
       htm+='<button class="btn" style="padding:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#fff;font-weight:700" onclick="doCorrigerReglementRdv(\''+a.id+'\',\''+m.k+'\')">'+m.l+'</button>';
     });
     htm+='</div><button class="btn" style="width:100%;margin-top:12px;background:var(--bg)" onclick="cM()">Annuler</button>';
@@ -33963,7 +34274,7 @@ function modifTicket(id){
   var _eqA=lxEquipeSelection(a.stId); for(var i=0;i<_eqA.length;i++)htm+='<option value="'+_eqA[i].id+'"'+(a.stId===_eqA[i].id?' selected':'')+'>'+_eqA[i].n+'</option>';
   htm+='</select></div>';
   htm+='<div class="fg"><label>Paiement</label><select id="mtMet">';
-  ["CB","Esp\u00e8ces","Ch\u00e8que","Bon cadeau","Virement","Acompte"].forEach(function(m){htm+='<option value="'+m+'"'+(a.met===m?' selected':'')+'>'+m+'</option>';});
+  ["CB","Esp\u00e8ces","Ch\u00e8que","Bon cadeau","Virement","Acompte"].forEach(function(m){ if(a.met!==m && !lxModeActif(m)) return; /* 2026-10-17 audit réglages (#22) */ htm+='<option value="'+m+'"'+(a.met===m?' selected':'')+'>'+m+'</option>';});
   htm+='</select></div></div>';
   
   htm+='<div style="display:flex;gap:8px;margin-top:16px">';
@@ -34268,7 +34579,7 @@ async function lxSmsHistorique(){
 }
 window.lxSmsHistorique=lxSmsHistorique;
 function rMarketing(){
-  if(!window.SMS_CONFIG)window.SMS_CONFIG={rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\\n\u00c0 bient\u00f4t !",confirmSms:true,confirmEmail:true};
+  if(!window.SMS_CONFIG)window.SMS_CONFIG=lxSmsConfigDefaut(); // 2026-10-17 audit réglages
   if(!window.MKT_TAB)window.MKT_TAB="campagnes";
   var tab=window.MKT_TAB;
   var smsC=window.SMS_CONFIG;
@@ -34469,7 +34780,7 @@ function rMarketing(){
   else if(tab==="rappels"){
     h+='<div class="sec">\ud83d\udd14 Rappels automatiques</div>';
     h+='<div class="card">';
-    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83d\udcf2 Rappels SMS actifs</span><input type="checkbox" '+(smsC.rappelActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelActif=this.checked;saveSmsConfig()"></label>';
+    h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\ud83d\udcf2 Rappels SMS actifs</span><input type="checkbox" '+(smsC.rappelActif?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelActif=this.checked;saveSmsConfig()"></label>'; // 2026-10-17 audit réglages (#40) : SMS seulement (les rappels e-mail ne dépendent que de « Rappels Email actifs », comme le serveur)
     // 24h SMS
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:14px">\u23f0 SMS <strong>24h avant</strong></span><input type="checkbox" '+(smsC.rappel24h?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappel24h=this.checked;saveSmsConfig()"></label>';
     h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message SMS 24h</label>';
@@ -34483,9 +34794,11 @@ function rMarketing(){
     // Email reminders
     h+='<div class="card" style="margin-top:14px">';
     h+='<label style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border2);cursor:pointer"><span style="font-size:15px;font-weight:700">\u2709\ufe0f Rappels Email actifs</span><input type="checkbox" '+(smsC.rappelEmail?"checked":"")+' style="width:22px;height:22px" onchange="window.SMS_CONFIG.rappelEmail=this.checked;saveSmsConfig()"></label>';
-    h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message Email de rappel</label>';
-    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.rappelEmailTexte=this.value;saveSmsConfig()">'+(smsC.rappelEmailTexte||"")+'</textarea>';
-    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab}</div></div>';
+    // 2026-10-17 audit réglages (#17) : « Message email de rappel » désormais utilisé, par le serveur (envoyer_rappels_email_24h)
+    // comme par l'application : il remplace le texte d'accueil de l'e-mail ; l'encadré (date, heure, prestation...) reste.
+    h+='<div style="margin:8px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">Message email de rappel</label>';
+    h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" placeholder="Vide = texte standard : \u00ab Bonjour {prenom}, n\u2019oubliez pas votre rendez-vous demain. \u00bb" onchange="window.SMS_CONFIG.rappelEmailTexte=this.value;saveSmsConfig()">'+escapeHtml(String(smsC.rappelEmailTexte||"").replace(/\\n/g,"\n"))+'</textarea>';
+    h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {heure} {date} {prestation} {salon} {collab} \u2014 remplace le texte d\u2019accueil ; la date, l\u2019heure, la prestation, le collaborateur et l\u2019adresse restent dans l\u2019encadr\u00e9.</div></div>';
     h+='</div>';
   }
   
@@ -34583,6 +34896,20 @@ function lxSmsHistAjouter(entree){
   }
 }
 window.lxSmsHistAjouter=lxSmsHistAjouter;
+// 2026-10-17 audit réglages (#2) : valeurs par défaut des rappels définies UNE fois. Au premier chargement d'un
+// salon dont config_json.sms_config n'existe pas, elles sont ENREGISTRÉES (voir _lxSmsConfigInitBase) : avant, l'écran
+// montrait les rappels cochés alors que le serveur sautait ce salon (CONTINUE WHEN v_cfg IS NULL).
+function lxSmsConfigDefaut(){ return {rappelActif:true,rappel24h:true,rappel2h:true,rappelTexte24h:"Bonjour {prenom}, nous vous rappelons votre RDV demain \u00e0 {heure} chez {salon}. \u00c0 bient\u00f4t !",rappelTexte2h:"Rappel : votre RDV est dans 2h \u00e0 {heure} chez {salon}. \u00c0 tout de suite !",rappelEmail:true,rappelEmailTexte:"Bonjour {prenom},\nNous vous rappelons votre rendez-vous le {date} \u00e0 {heure} pour {prestation} chez {salon}.\n\u00c0 bient\u00f4t !",confirmSms:true,confirmEmail:true,confirmSmsTexte:"Bonjour {prenom}, votre RDV du {date} \u00e0 {heure} chez {salon} pour {prestation} est confirm\u00e9. \u00c0 bient\u00f4t !",confirmEmailTexte:"Bonjour {prenom},\n\nVotre rendez-vous est confirm\u00e9 :\n\u2022 Date : {date} \u00e0 {heure}\n\u2022 Prestation : {prestation}\n\u2022 Avec : {collab}\n\n\u00c0 bient\u00f4t !\n{salon}"}; }
+function _lxSmsConfigInitBase(cfg){
+  try{
+    var sc=cfg&&cfg.sms_config;
+    if(sc && typeof sc==='object' && Object.keys(sc).length) return; // déjà enregistrée : rien à faire
+    window.SMS_CONFIG=lxSmsConfigDefaut();
+    try{localStorage.setItem('_cp_sms_config',JSON.stringify(window.SMS_CONFIG));}catch(e){}
+    // lxCfgEcrireSections signale toute erreur (_lxCfgErreur) : jamais silencieux
+    if(typeof lxCfgEcrireSections==='function') lxCfgEcrireSections({sms_config: window.SMS_CONFIG});
+  }catch(e){ console.error('[sms_config] init',e); }
+}
 function saveSmsConfig(){
   try{localStorage.setItem("_cp_sms_config",JSON.stringify(window.SMS_CONFIG));}catch(e){}
   if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId){
@@ -34679,8 +35006,8 @@ function sendRdvConfirmationFamilial(rdvObj1, rdvObj2){
   // Client principal = celui du 1er RDV (reçoit le SMS groupé)
   var cl1 = gC(rdvObj1.cId);
   if(!cl1) return;
-  var hasPh = cl1.ph && cl1.ph.length>5;
-  var hasEm = cl1.em && cl1.em.indexOf("@")>0;
+  var hasPh = cl1.ph && cl1.ph.length>5 && _lxConfirmCanalActif("sms"); // 2026-10-17 audit réglages (#17)
+  var hasEm = cl1.em && cl1.em.indexOf("@")>0 && _lxConfirmCanalActif("email");
   if(!hasPh && !hasEm) return; // pas de moyen de contact
 
   var cl2 = gC(rdvObj2.cId);
@@ -34798,11 +35125,14 @@ async function doSendConfirmFamilial(mode){
 }
 
 // === CONFIRMATION RDV (SMS + Email) ===
+// 2026-10-17 audit réglages (#17) : cases « Confirmation par SMS / par e-mail » (Paramètres › SMS) : un canal décoché
+// n'est plus proposé dans la fenêtre de confirmation (avant : cases lues nulle part).
+function _lxConfirmCanalActif(canal){ var c=window.SMS_CONFIG||{}; return canal==="sms" ? c.confirmSms!==false : c.confirmEmail!==false; }
 function sendRdvConfirmation(rdvObj){
   var cl=gC(rdvObj.cId);if(!cl)return;
-  var hasPh=cl.ph&&cl.ph.length>5;
-  var hasEm=cl.em&&cl.em.indexOf("@")>0;
-  if(!hasPh&&!hasEm)return; // no way to contact
+  var hasPh=cl.ph&&cl.ph.length>5&&_lxConfirmCanalActif("sms");
+  var hasEm=cl.em&&cl.em.indexOf("@")>0&&_lxConfirmCanalActif("email");
+  if(!hasPh&&!hasEm)return; // no way to contact (ou les deux canaux désactivés dans Paramètres › SMS)
 
   var sv=gS(rdvObj.sId);
   var sty=gT(rdvObj.stId);
@@ -34835,11 +35165,25 @@ function sendRdvConfirmation(rdvObj){
   window._confirmRdv=rdvObj;
 }
 
+// 2026-10-17 audit réglages (#17) : texte personnalisé de l'e-mail de confirmation ("" = texte standard)
+function _lxConfirmEmailTextePerso(){
+  var t=String(((window.SMS_CONFIG||{}).confirmEmailTexte)||"").trim();
+  if(!t) return "";
+  var def=String(lxSmsConfigDefaut().confirmEmailTexte||"").trim();
+  var defEchappe=def.replace(/\n/g,"\\n"); // ancien défaut enregistré avec des « \n » littéraux
+  if(t===def || t===defEchappe) return "";
+  return t.replace(/\\n/g,"\n");
+}
+// 2026-10-17 audit réglages (#17) : texte personnalisé du rappel e-mail (même règle que le serveur : tout texte non vide)
+function _lxRappelEmailTextePerso(){
+  var t=String(((window.SMS_CONFIG||{}).rappelEmailTexte)||"").trim();
+  return t ? t.replace(/\\n/g,"\n") : "";
+}
 // Build professional HTML email for RDV confirmation & reminders
 function buildRdvEmailHTML(type,vars){
   var isRappel=type==="rappel";
   var gold="#c8a84e";var darkBg="#0a0a0a";var cardBg="#141418";var borderC="#2a2a30";
-  var logo=SALON_CONFIG.logo||"";
+  var logo=lxLogoPourEmail(SALON_CONFIG.logo||""); // 2026-10-17 audit réglages (#28)
   var salonNom=SALON_CONFIG.nom||"";
   var salonAdr=(SALON_CONFIG.adresse||"")+(SALON_CONFIG.cp?" "+SALON_CONFIG.cp:"")+(SALON_CONFIG.ville?" "+SALON_CONFIG.ville:"");
   var salonTel=SALON_CONFIG.tel||"";
@@ -34876,7 +35220,18 @@ function buildRdvEmailHTML(type,vars){
 
   // Greeting
   h+='<tr><td style="padding:8px 24px 20px;text-align:center;font-size:15px;color:rgba(255,255,255,.65);line-height:1.6">';
+  // 2026-10-17 audit réglages (#17) : « Message email de confirmation » (Paramètres › SMS) remplace le texte d'accueil
+  // de l'e-mail de confirmation envoyé par l'application (avant : texte lu nulle part). Ancien texte par défaut
+  // (qui répétait date / prestation / collaborateur déjà présents dans la carte) = texte standard.
+  var _txtPerso=(!isRappel)?_lxConfirmEmailTextePerso():_lxRappelEmailTextePerso();
+  if(_txtPerso){
+    // date au format JJ/MM/AAAA (comme le serveur) ; « pour {prestation} » retiré si la prestation est inconnue
+    var _vT=Object.assign({},vars); if(/^\d{4}-\d{2}-\d{2}$/.test(String(_vT.date||""))) _vT.date=String(_vT.date).split("-").reverse().join("/");
+    if(!_vT.prestation) _txtPerso=_txtPerso.replace(/ pour \{prestation\}/g,"");
+    h+=_lxEsc(buildSmsText(_txtPerso,_vT)).replace(/\n/g,'<br>')+'</td></tr>';
+  }else{
   h+='Bonjour'+(vars.prenom?' <strong style="color:#fff">'+vars.prenom+'</strong>':'')+',<br>'+subtitle+'.</td></tr>';
+  }
 
   // RDV details card
   h+='<tr><td style="padding:0 20px">';
@@ -35665,7 +36020,7 @@ async function checkSmsReminders(){
   // 2026-10-14 audit : chaque automatisme a son propre interrupteur (avant : tout dépendait de « Rappels SMS actifs »,
   // désactiver les rappels coupait aussi anniversaires et relances).
   var cfg=window.SMS_CONFIG;if(!cfg)return;
-  if(!cfg.rappelActif&&!cfg.anniActif&&!cfg.relanceActif)return;
+  if(!cfg.rappelActif&&!cfg.rappelEmail&&!cfg.anniActif&&!cfg.relanceActif)return; // 2026-10-17 audit réglages (#40) : + rappels e-mail
   // FIX 2026-08-30 : heures de silence. Un rappel est parti a 23h41 chez un client
   // ce soir — a cette heure-la on reveille les gens, et l'image du salon en patit.
   // Les rappels ne partent plus qu'entre 8h et 21h. Rien n'est perdu : la verification
@@ -35696,12 +36051,14 @@ async function checkSmsReminders(){
   // Le 13/10, deux appareils ont envoye le meme rappel e-mail a la meme seconde. Desormais, drapeau actif ->
   // AUCUN rappel RDV (veille SMS, veille e-mail, 2 h) ne part de l'application, sur aucun appareil.
   var _rappelsServeur = true; try{ _rappelsServeur = !(await _lxRappelsParApplication()); }catch(_eRs){ _rappelsServeur = true; }
-  for(var apIdx=0;cfg.rappelActif&&apIdx<AP.length;apIdx++){ // 2026-10-14 audit clients : rappels RDV seulement si « Rappels SMS actifs »
+  // 2026-10-17 audit réglages (#40) : « Rappels SMS actifs » ne pilote plus que les SMS ; le rappel e-mail dépend de
+  // « Rappels Email actifs » seul (même règle que le serveur, envoyer_rappels_email_24h).
+  for(var apIdx=0;(cfg.rappelActif||cfg.rappelEmail)&&apIdx<AP.length;apIdx++){ // 2026-10-14 audit clients : rappels RDV seulement si « Rappels SMS actifs »
     var a=AP[apIdx];
     if(a.st==="canc"||a.st==="done"||a.cancelled)continue;
     var cl=gC(a.cId);if(!cl)continue;
     // 2026-10-14 audit : un client sans SMS (ou sans consentement SMS) peut quand meme recevoir le rappel e-mail
-    var _smsPossible=!!(cl.ph&&cl.smsOk);
+    var _smsPossible=!!(cl.ph&&cl.smsOk&&cfg.rappelActif); // 2026-10-17 audit réglages (#40)
     var sv=gS(a.sId);var sty=gT(a.stId);
     var vars={prenom:cl.pre||"",nom:cl.nom||"",heure:a.time,date:a.date,prestation:sv?sv.n:"",salon:SALON_CONFIG.nom,slug:SALON_CONFIG.slug||(window.SALON&&window.SALON.slug)||"",collab:sty?sty.n:"",lieu:a.lieu||"",adresse:a.adresse||"",prixAPartir:(sv&&sv.apartir&&!sv.devis)?_lxPrixTxt(sv):""};
     
@@ -35787,6 +36144,7 @@ async function checkSmsReminders(){
     var todayMD=todayStr.slice(5); // "MM-DD"
     CL.forEach(function(cl){
       if(!cl.ddn)return;
+      if(cl.actif===false)return; // 2026-10-17 audit réglages (#35) : fiche « Client actif » décochée -> aucun envoi automatique
       var clMD=cl.ddn.slice(5); // "MM-DD"
       if(clMD!==todayMD)return;
       var keyAnni="anni_"+cl.id+"_"+todayStr;
@@ -35797,7 +36155,8 @@ async function checkSmsReminders(){
         sendSms(cl.ph,buildSmsText(cfg.anniSms,vars),"anniversaire",(cl.pre||"")+" "+(cl.nom||""));
       }
       // Email
-      if(cl.em&&cl.emOk&&cfg.anniEmail){
+      // 2026-10-17 : e-mails d'anniversaire / relance envoyés par le serveur dès que le drapeau desinscription_courte est actif
+      if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cfg.anniEmail){
         var body=cfg.anniEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon);
         sendEmailViaWorker(cl.em,cName(cl),"\ud83c\udf82 Joyeux anniversaire ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Joyeux anniversaire !","\ud83c\udf82"),{dedupKey:_salonId+"|anniversaire_email|"+String(cl.em).trim().toLowerCase()+"|"+todayStr,context:"anniversaire"}); // 2026-10-15 : un par jour, tous appareils
       }
@@ -35811,6 +36170,7 @@ async function checkSmsReminders(){
     var relanceKey="relance_run_"+todayStr;
     if(!window._smsSent[relanceKey]){
       CL.forEach(function(cl){
+        if(cl.actif===false)return; // 2026-10-17 audit réglages (#35)
         var keyRel="relance_"+cl.id;
         if(window._smsSent[keyRel])return; // already sent once
         // Inclus aussi les passages multi-client (séparateurs sepCId)
@@ -35825,7 +36185,7 @@ async function checkSmsReminders(){
           sendSms(cl.ph,buildSmsText(lxRelanceTexte(cfg.relanceSms),vars),"relance",(cl.pre||"")+" "+(cl.nom||""));
         }
         // Email
-        if(cl.em&&cl.emOk&&cfg.relanceEmail){
+        if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cfg.relanceEmail){
           var body=cfg.relanceEmail.replace(/\{prenom\}/g,vars.prenom).replace(/\{nom\}/g,vars.nom).replace(/\{salon\}/g,vars.salon).replace(/\{jours\}/g,vars.jours);
           sendEmailViaWorker(cl.em,cName(cl),"Vous nous manquez ! - "+SALON_CONFIG.nom,lxEmailSalonTexte(body,"Vous nous manquez !","\ud83d\udc9b"),{dedupKey:_salonId+"|relance_email|"+String(cl.em).trim().toLowerCase()+"|"+todayStr,context:"relance"}); // 2026-10-15
         }
@@ -35837,12 +36197,12 @@ async function checkSmsReminders(){
   }
 }
 
-async function sendEmail(to,subject,body,toName){
+async function sendEmail(to,subject,body,toName,context){ // 2026-10-17 : context « marketing » -> lien de désinscription ajouté par le worker
   try{
     var resp=await fetch("/api/email/custom",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({to:to,toName:toName||to,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,htmlContent:lxEmailSalonTexte(body,String(subject||"").replace(/ - [^-]*$/,"")),textContent:body})
+      body:JSON.stringify({to:to,toName:toName||to,salonName:SALON_CONFIG.nom,salonEmail:SALON_CONFIG.email||"contact@luxyra.fr",subject:subject,context:context||undefined,salon_id:(typeof _salonId!=="undefined"?_salonId:undefined),htmlContent:lxEmailSalonTexte(body,String(subject||"").replace(/ - [^-]*$/,"")),textContent:body})
     });
     var data=await resp.json();
     console.log("[EMAIL] sendEmail to:",to,"status:",resp.status,"result:",JSON.stringify(data).slice(0,200));
@@ -35964,6 +36324,8 @@ function openCampaignV2(type){
     clients=CL.filter(function(c){return c.ph||c.em;});
     defaultMsg="Bonjour {prenom}, {salon} vous informe...";
   }
+  // 2026-10-17 audit réglages (#35) : « Client actif » décoché -> exclu de TOUTES les campagnes (avant : « inactifs » seulement)
+  clients=(clients||[]).filter(function(c){ return c && c.actif!==false; });
   
   var smsEligible=clients.filter(function(c){return c.smsOk&&c.ph;}).length;
   var emailEligible=clients.filter(function(c){return c.emOk&&c.em;}).length;
@@ -36149,7 +36511,7 @@ function sendCampaignV2(p){
       if(!(cl.emOk&&cl.em)) return;
       chain=chain.then(function(){
         var txt=msg.replace(/\{prenom\}/g,cl.pre||"").replace(/\{nom\}/g,cl.nom||"").replace(/\{salon\}/g,SALON_CONFIG.nom);
-        return sendEmail(cl.em,subject,txt,cName(cl)).then(function(r){if(r.ok)emailSent++;else emailErr++;},function(){emailErr++;});
+        return sendEmail(cl.em,subject,txt,cName(cl),"marketing").then(function(r){if(r.ok)emailSent++;else emailErr++;},function(){emailErr++;});
       });
     });
   }
@@ -36345,12 +36707,22 @@ function lxSalonCoordonneesHtml(){
 }
 // Gabarit commun des emails envoyés au nom de l'établissement à ses clients (marque du salon en vedette)
 // o = {icone, titre, salutation, intro, carte (html), note, boutons:[{t,u,principal}]}
+// 2026-10-17 audit réglages (#28) : un logo chargé depuis l'appareil est enregistré en base64 (data:), bloqué par Gmail /
+// Outlook. Dans les e-mails, on passe par l'adresse publique servie par le serveur (/api/salon-logo/<id>.png, qui lit le
+// logo enregistré) ; une adresse https est gardée telle quelle.
+function lxLogoPourEmail(logo){
+  var l=String(logo||"");
+  if(/^data:image\/(png|jpe?g|webp);base64,/i.test(l) && typeof _salonId!=="undefined" && _salonId) return "https://luxyra.fr/api/salon-logo/"+_salonId+".png?v="+l.length;
+  if(/^data:/i.test(l)) return "";
+  return l;
+}
 function lxEmailSalon(o){
   o=o||{}; var C=SALON_CONFIG||{}, gold="#c8a84e", e=_lxEsc;
+  var _lgE=lxLogoPourEmail(C.logo); // 2026-10-17 audit réglages (#28)
   var h='<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#0a0a0a">';
   h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a"><tr><td align="center" style="padding:24px 14px">';
   h+='<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:500px;font-family:Helvetica,Arial,sans-serif">';
-  h+='<tr><td style="text-align:center;padding:10px 0 18px">'+(C.logo?'<img src="'+e(C.logo)+'" alt="" style="height:64px;border-radius:14px;margin-bottom:10px;display:inline-block"><br>':'')+'<div style="font-family:Georgia,serif;font-size:24px;font-weight:700;color:'+gold+';letter-spacing:2px">'+e(String(C.nom||"").toUpperCase())+'</div></td></tr>';
+  h+='<tr><td style="text-align:center;padding:10px 0 18px">'+(_lgE?'<img src="'+e(_lgE)+'" alt="" style="height:64px;border-radius:14px;margin-bottom:10px;display:inline-block"><br>':'')+'<div style="font-family:Georgia,serif;font-size:24px;font-weight:700;color:'+gold+';letter-spacing:2px">'+e(String(C.nom||"").toUpperCase())+'</div></td></tr>';
   h+='<tr><td style="padding:0 40px"><div style="height:2px;background:linear-gradient(90deg,transparent,'+gold+',transparent)"></div></td></tr>';
   if(o.titre) h+='<tr><td style="text-align:center;padding:24px 0 6px"><div style="display:inline-block;background:#1c1a14;border:1px solid rgba(200,168,78,.4);border-radius:50px;padding:8px 22px;font-size:14px;font-weight:700;color:#fff">'+(o.icone?o.icone+' ':'')+e(o.titre)+'</div></td></tr>';
   if(o.salutation||o.intro) h+='<tr><td style="padding:14px 22px 18px;text-align:center;font-size:15px;color:rgba(255,255,255,.75);line-height:1.6">'+(o.salutation?'Bonjour <strong style="color:#fff">'+e(o.salutation)+'</strong>,<br>':'')+(o.intro||'')+'</td></tr>';
@@ -36584,8 +36956,13 @@ function lxSanteListe(cle){ var out=[]; lxSanteMetiers().forEach(function(k){ (L
 // anciennes listes conservées (compatibilité)
 var LX_SANTE_ALLERGIES=lxSanteListe("allergies"); var LX_SANTE_COND=lxSanteListe("cond");
 function lxSanteAlerte(cId){
-  var x=(window.LX_SANTE||{})[cId]; if(!x||!x.donnees) return "";
+  // 2026-10-17 audit réglages (#36) : les allergies / contre-indications saisies dans les FICHES TECHNIQUES (cheveux, peau,
+  // ongles, bien-être) déclenchent aussi l'alerte (avant : seul le questionnaire santé). Lecture seule, rien n'est enregistré.
+  var _ftA=[]; try{ var _cF=(typeof gC==="function")?gC(cId):null; if(_cF) _ftA=[_cF.allergiesChev,_cF.allergiesPeau,_cF.allergiesOngles,_cF.contrIndBE].map(function(v){ return String(v||"").trim(); }).filter(Boolean); }catch(_eFt){}
+  var x=(window.LX_SANTE||{})[cId];
+  if(!x||!x.donnees) return _ftA.length ? "⚠️ <b>Santé / précautions</b> — Fiche technique : "+_ftA.map(escapeHtml).join(", ") : "";
   var d=x.donnees, parts=[];
+  if(_ftA.length) parts.push("Fiche technique : "+_ftA.map(escapeHtml).join(", "));
   var al=(d.allergies||[]).slice(); if(d.allergieAutre) al.push(d.allergieAutre);
   if(al.length) parts.push("Allergies : "+al.map(escapeHtml).join(", "));
   if(d.grossesse&&d.grossesse!=="non") parts.push(d.grossesse==="enceinte"?"Enceinte":"Allaitement");
@@ -38988,12 +39365,19 @@ async function exportFEC(){
   if(!tickets.length){showAlert("Aucun ticket encaissé sur la période sélectionnée.","info");return;}
 
   // Plan comptable simplifié
-  var ACC_VENTE_PREST="706000", ACC_VENTE_PROD="707000", ACC_TVA="445710", ACC_CAISSE="530000", ACC_BANQUE="512000", ACC_CARTE_CADEAU="467000";
+  // 2026-10-17 audit réglages (#19) : les comptes ENREGISTRÉS dans Conformité caisse › « Comptes comptables pour l'export »
+  // sont utilisés (avant : comptes codés en dur, l'écran disait pourtant « FEC, EBP »). Compte non enregistré -> valeur
+  // historique ci-dessous (export identique pour un salon qui n'a rien saisi). Export seulement : aucun ticket modifié.
+  var _AS=(typeof _lxComptaSaisis==="function")?_lxComptaSaisis():{};
+  var ACC_VENTE_PREST=_AS.services||"706000", ACC_VENTE_PROD=_AS.produits||"707000", ACC_TVA=_AS.tva||"445710", ACC_CAISSE=_AS.caisse||"530000", ACC_BANQUE="512000", ACC_CARTE_CADEAU=_AS.bonsCadeaux||"467000";
+  var ACC_CB=_AS.cb||ACC_BANQUE, ACC_CHQ=_AS.cheque||ACC_BANQUE, ACC_AUTRES=_AS.autres||ACC_BANQUE, ACC_ENLIGNE=_AS.enligne||"580100";
   function payAccount(mode){
     var m=String(mode||"").toLowerCase();
     if(m.indexOf("esp")>=0||m.indexOf("cash")>=0) return ACC_CAISSE;
     if(m.indexOf("cadeau")>=0||m.indexOf("avoir")>=0) return ACC_CARTE_CADEAU;
-    if(m.indexOf("en ligne")>=0||m.indexOf("stripe")>=0) return "580100"; // 2026-10-13 : acompte conservé / empreinte (« En ligne (Stripe) »)
+    if(m.indexOf("en ligne")>=0||m.indexOf("stripe")>=0) return ACC_ENLIGNE; // 2026-10-13 : acompte conservé / empreinte (« En ligne (Stripe) »)
+    if(m.indexOf("ch")===0&&m.indexOf("que")>0) return ACC_CHQ;
+    if(m.indexOf("cb")>=0||m.indexOf("carte")>=0) return ACC_CB;
     return ACC_BANQUE;
   }
   // FIX 2026-05-23 : ventile le reglement par detail_paiement (especes->caisse 530,
@@ -39002,7 +39386,10 @@ async function exportFEC(){
   function _accForBucket(b){
     if(b==="esp") return {acc:ACC_CAISSE, lib:"Caisse"};
     if(b==="bon") return {acc:ACC_CARTE_CADEAU, lib:"Bon cadeau / avoir"};
-    if(b==="enligne") return {acc:"580100", lib:"Paiements en ligne (Stripe) \u2014 acomptes"}; // 2026-10-13 : compte d'attente Stripe (comme le journal des ventes), pas la banque
+    if(b==="enligne") return {acc:ACC_ENLIGNE, lib:"Paiements en ligne (Stripe) \u2014 acomptes"}; // 2026-10-13 : compte d'attente Stripe (comme le journal des ventes), pas la banque
+    if(b==="cb") return {acc:ACC_CB, lib:"Banque / CB"}; // 2026-10-17 audit réglages (#19)
+    if(b==="chq") return {acc:ACC_CHQ, lib:"Ch\u00e8ques"};
+    if(b==="vir"||b==="aut") return {acc:ACC_AUTRES, lib:"Autres r\u00e8glements"};
     return {acc:ACC_BANQUE, lib:"Banque / CB"};
   }
   function _fecLegs(t, ttc){
@@ -39129,8 +39516,20 @@ function _lxLibAcompte(items, acompteEnLigne){
     return n.length?(" \u2014 "+n.join(" ; ")):"";
   }catch(e){ return ""; }
 }
+// 2026-10-17 audit réglages (#19) : comptes réellement ENREGISTRÉS par le salon (sans les valeurs par défaut).
+// « 70730000 » était le défaut pré-rempli du compte Bons cadeaux : un compte de produits, inadapté au règlement par bon
+// cadeau (déjà encaissé à la vente) -> considéré comme non choisi.
+function _lxComptaSaisis(){
+  var o={};
+  try{
+    var cfg=(window._SALON_CONFIG_JSON && window._SALON_CONFIG_JSON.comptaAccounts) || null;
+    if(cfg && typeof cfg==="object"){ for(var k in cfg){ var v=String(cfg[k]==null?"":cfg[k]).trim(); if(v) o[k]=v; } }
+  }catch(_e){}
+  if(o.bonsCadeaux==="70730000") delete o.bonsCadeaux;
+  return o;
+}
 function _comptaAccounts(){
-  var d = { services:"70612000", produits:"70712000", bonsCadeaux:"70730000",
+  var d = { services:"70612000", produits:"70712000", bonsCadeaux:"46700000", // 2026-10-17 audit réglages (#19) : ancien défaut 70730000 (compte de produits)
     tva:"44571000", caisse:"53000000", especes:"58300000", cb:"58000000",
     enligne:"58010000", cheque:"58200000", autres:"58040000", journal:"CS" };
   try{
@@ -39174,6 +39573,7 @@ async function exportEBP(){
   if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
   if(dateFrom>dateTo){showAlert("La date de début est après la date de fin","info");return;}
   var A=_comptaAccounts();
+  var _ABC=((typeof _lxComptaSaisis==="function")?_lxComptaSaisis():{}).bonsCadeaux||null; // 2026-10-17 audit réglages (#19)
   var tva=Number(lxTauxTVA());
   if(typeof toast==="function") toast("Preparation de l'export EBP...","info");
   var ticketsAll=[];
@@ -39208,7 +39608,9 @@ async function exportEBP(){
     if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
       g.esp=R(g.esp+(Number(dp.esp)||0)); g.cb=R(g.cb+(Number(dp.cb)||0));
       g.enligne=R(g.enligne+(Number(dp.enligne)||0)); g.chq=R(g.chq+(Number(dp.chq)||0));
-      g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.bon)||0)+(Number(dp.aut)||0));
+      // 2026-10-17 audit réglages (#19) : bons cadeaux sur leur propre compte s'il a été enregistré (sinon dans « autres », comme avant)
+      if(_ABC){ g.bon=R((g.bon||0)+(Number(dp.bon)||0)); g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.aut)||0)); }
+      else g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.bon)||0)+(Number(dp.aut)||0));
     } else {
       var b=(typeof _mapPaymentBucket==="function")?_mapPaymentBucket(t.mode_paiement):"cb";
       if(b==="esp")g.esp=R(g.esp+ttc); else if(b==="enligne")g.enligne=R(g.enligne+ttc);
@@ -39234,6 +39636,7 @@ async function exportEBP(){
     if(Math.abs(g.enligne)>=0.005) L(d, A.enligne, "ACOMPTES CB EN LIGNE", g.enligne, "D");
     if(Math.abs(g.chq)>=0.005) L(d, A.cheque, "REMISE CHEQUE", g.chq, "D");
     if(Math.abs(g.autres)>=0.005) L(d, A.autres, "AUTRES REGLEMENTS", g.autres, "D");
+    if(_ABC && Math.abs(g.bon||0)>=0.005) L(d, _ABC, "BONS CADEAUX", g.bon, "D"); // 2026-10-17 audit réglages (#19)
     L(d, A.caisse, "DEPENSES DU JOUR", g.ttc, "C");
   });
   var content=lines.join("\r\n");
@@ -39422,6 +39825,7 @@ async function exportQuadratus(){
   if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
   if(dateFrom>dateTo){showAlert("La date de début est après la date de fin","info");return;}
   var A=_comptaAccounts();
+  var _ABC=((typeof _lxComptaSaisis==="function")?_lxComptaSaisis():{}).bonsCadeaux||null; // 2026-10-17 audit réglages (#19)
   var tva=Number(lxTauxTVA());
   if(typeof toast==="function") toast("Preparation de l'export Quadratus...","info");
   var ticketsAll=[];
@@ -39456,7 +39860,9 @@ async function exportQuadratus(){
     if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
       g.esp=R(g.esp+(Number(dp.esp)||0)); g.cb=R(g.cb+(Number(dp.cb)||0));
       g.enligne=R(g.enligne+(Number(dp.enligne)||0)); g.chq=R(g.chq+(Number(dp.chq)||0));
-      g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.bon)||0)+(Number(dp.aut)||0));
+      // 2026-10-17 audit réglages (#19) : bons cadeaux sur leur propre compte s'il a été enregistré (sinon dans « autres », comme avant)
+      if(_ABC){ g.bon=R((g.bon||0)+(Number(dp.bon)||0)); g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.aut)||0)); }
+      else g.autres=R(g.autres+(Number(dp.vir)||0)+(Number(dp.bon)||0)+(Number(dp.aut)||0));
     } else {
       var b=(typeof _mapPaymentBucket==="function")?_mapPaymentBucket(t.mode_paiement):"cb";
       if(b==="esp")g.esp=R(g.esp+ttc); else if(b==="enligne")g.enligne=R(g.enligne+ttc);
@@ -39486,6 +39892,7 @@ async function exportQuadratus(){
     if(Math.abs(g.enligne)>=0.005){ L(A.caisse,P,"C",g.enligne,"ACOMPTES CB EN LIGNE"); L(A.enligne,P,"D",g.enligne,"ACOMPTES CB EN LIGNE"); }
     if(Math.abs(g.chq)>=0.005){ L(A.caisse,P,"C",g.chq,"REMISE CHEQUE"); L(A.cheque,P,"D",g.chq,"REMISE CHEQUE"); }
     if(Math.abs(g.autres)>=0.005){ L(A.caisse,P,"C",g.autres,"AUTRES REGLEMENTS"); L(A.autres,P,"D",g.autres,"AUTRES REGLEMENTS"); }
+    if(_ABC && Math.abs(g.bon||0)>=0.005){ L(A.caisse,P,"C",g.bon,"BONS CADEAUX"); L(_ABC,P,"D",g.bon,"BONS CADEAUX"); } // 2026-10-17 audit réglages (#19)
   });
   var content=lines.join("\r\n")+"\r\n";
   var fileName="Export_Quadratus_"+dateFrom.replace(/-/g,"")+"_"+dateTo.replace(/-/g,"")+".txt";
@@ -39698,8 +40105,13 @@ function initApp(){
           if(typeof cfg.migrationDataScope !== "undefined") SALON_CONFIG.migrationDataScope = cfg.migrationDataScope || null;
           if(typeof cfg.migrationSourceSoftware !== "undefined") SALON_CONFIG.migrationSourceSoftware = cfg.migrationSourceSoftware || "";
           if(typeof cfg.migrationRgpdSentAt !== "undefined") SALON_CONFIG.migrationRgpdSentAt = cfg.migrationRgpdSentAt || null;
+          // 2026-10-17 audit réglages (#29, #30, #69) : relus AVANT lxCfgFixerBase (références de fusion)
+          if(cfg.prodicons && typeof cfg.prodicons==="object") window.PRODICONS=cfg.prodicons;
+          if(cfg.app_bg_op!=null && isFinite(+cfg.app_bg_op)){ window._bgOp=Number(cfg.app_bg_op); try{ var _bgO=document.getElementById("appBg"); if(_bgO) _bgO.style.opacity=window._bgOp/100; }catch(_eBo){} }
+          if(Array.isArray(cfg.pcats)){ window.PCATS_EXTRA=cfg.pcats.slice(); _lxPcatsFusion(); }
           lxCfgFixerBase(cfg);
           window._lxCfgVersion = (typeof r.data[0].config_version==="number") ? r.data[0].config_version : null; // 2026-10-15
+          _lxSmsConfigInitBase(cfg); // 2026-10-17 audit réglages (#2)
           // 2026-10-14 : reprise unique de l'historique local des campagnes vers la base
           if(window._lxSmsHistAMigrer){ window._lxSmsHistAMigrer=false; try{ lxCfgEcrireSections({sms_campaigns: JSON.parse(JSON.stringify(window.SMS_CAMPAIGNS||[]))}); }catch(_eMh){} }
         }catch(e){ try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR", JSON.stringify({fn:"initApp", msg:"config_json illisible: "+String(e&&e.message||e)}).slice(0,2000)); }catch(_e){} }
@@ -39708,6 +40120,7 @@ function initApp(){
         window._SALON_CONFIG_JSON={};
         lxCfgFixerBase({});
         window._lxCfgVersion = (r.data&&r.data[0]&&typeof r.data[0].config_version==="number") ? r.data[0].config_version : null; // 2026-10-15
+        _lxSmsConfigInitBase({}); // 2026-10-17 audit réglages (#2)
       }
     }, function(){ if(tentative<3) setTimeout(function(){ _lxChargerConfigInit(tentative+1); }, 3000*(tentative+1)); });
     })(0);
@@ -39986,7 +40399,9 @@ function setupRealtime(){
         var exists=false;
         for(var ci3=0;ci3<CL.length;ci3++){if(CL[ci3].em===nc.email){exists=true;break;}}
         if(!exists){
-          var newClient={id:U(),nom:nc.nom,pre:nc.prenom||"",ph:nc.telephone||"",em:nc.email,genre:"F",fid:0,notes:"Client inscrit en ligne"};
+          // 2026-10-17 audit réglages (#68) : noms de champs lus par la sauvegarde (no = notes ; genre inconnu -> non imposé
+          // (avant : « genre:"F" » et « notes » n'étaient jamais enregistrés) ; fiche active, date de création renseignée.
+          var newClient={id:U(),nom:nc.nom,pre:nc.prenom||"",ph:nc.telephone||"",em:nc.email,fid:0,no:"Client inscrit en ligne",actif:true,cr:(typeof TD!=="undefined"?TD:new Date().toISOString().slice(0,10))};
           CL.push(newClient);
           if(typeof saveClient==="function")saveClient(newClient);
         }
@@ -40466,19 +40881,28 @@ function refreshCurrentView(){
 
   // Helper exposé en global : édition manuelle du compteur de fidélité
   // (appelé depuis le bouton "Modifier manuellement" dans la fiche client)
+  // 2026-10-17 audit réglages (#21) : modifie le compteur de la mécanique choisie (passages, cagnotte en €, CA cumulé en €)
+  // et trace la modification (avant : toujours les passages, sans trace).
   window.lxEditFidManually = function(cid){
     var cc = (typeof gC === "function") ? gC(cid) : null;
     if(!cc) return;
+    var mode=(window.FIDCONF&&window.FIDCONF.mode)||"passages";
+    var champ=(mode==="cagnotte")?"cagnotte":(mode==="ca_cumule"?"caTotal":"fid");
+    var avant=Number(cc[champ])||0;
     showPrompt({
-      title: "Modifier les passages",
-      label: "Nombre de passages cumulés pour ce client",
+      title: mode==="cagnotte"?"Modifier la cagnotte":(mode==="ca_cumule"?"Modifier le CA cumulé":"Modifier les passages"),
+      label: mode==="cagnotte"?"Montant de la cagnotte (€)":(mode==="ca_cumule"?"Chiffre d'affaires cumulé (€)":"Nombre de passages cumulés pour ce client"),
       type: "number",
-      defaultValue: String(cc.fid || 0),
+      defaultValue: String(avant),
       placeholder: "0",
       okLabel: "Enregistrer",
       onOk: function(nv){
         if(nv == null) return;
-        cc.fid = Math.max(0, parseInt(nv) || 0);
+        var v=parseFloat(String(nv).replace(",","."));
+        if(isNaN(v)) v=0;
+        v=(champ==="fid")?Math.max(0,Math.round(v)):Math.max(0,Math.round(v*100)/100);
+        cc[champ]=v;
+        if(typeof auditLog==="function") auditLog("FIDELITE_MANUELLE", "Client "+(typeof cName==="function"?cName(cc):cid)+" - "+champ+" : "+avant+" -> "+v);
         if(typeof saveClient === "function") saveClient(cc);
         if(typeof go === "function") go("detail");
       }
@@ -40684,6 +41108,7 @@ async function lxSalonPushEnable(){
     var j=sub.toJSON();
     var up=await _sb.from('push_subscriptions').upsert({endpoint:sub.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth,target_type:'salon',salon_id:_salonId,admin_user_id:null,last_used_at:new Date().toISOString()},{onConflict:'endpoint'}).select();
     if(up.error){console.error('[push] DB error:',up.error);throw up.error;}
+    try{localStorage.removeItem('lx_push_off_'+_salonId);}catch(e){} // 2026-10-17 audit réglages (#7)
     try{localStorage.setItem('lx_push_banner_dismissed','1');}catch(e){}
     toast('🔔 Notifications activées','success');
     var b=document.getElementById('lxPushBanner');if(b)b.style.display='none';
@@ -40700,13 +41125,17 @@ async function lxSalonPushEnable(){
 }
 async function lxSalonPushDisable(){
   try{
+    // 2026-10-17 audit réglages (#7) : choix mémorisé sur cet appareil -> lxEnsurePushSubscription ne réabonne plus
+    // au chargement suivant (avant : « Désactiver » était annulé 5 s après chaque rechargement).
+    try{localStorage.setItem('lx_push_off_'+_salonId,'1');}catch(e){}
     var reg=await navigator.serviceWorker.ready;
     var sub=await reg.pushManager.getSubscription();
     if(sub){
-      await _sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint).eq('target_type','salon').eq('salon_id',_salonId);
+      var _del=await _sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint).eq('target_type','salon').eq('salon_id',_salonId);
+      if(_del&&_del.error){ console.error('[push] suppression KO',_del.error); toast('\u26a0\ufe0f Non enregistr\u00e9 \u2014 d\u00e9sactivation refus\u00e9e par le serveur : '+(_del.error.message||'erreur'),'error'); return; }
       await sub.unsubscribe();
     }
-    toast('Notifications désactivées','info');
+    toast('Notifications désactivées sur cet appareil','info');
     if(typeof renderPushSettings==='function')renderPushSettings();
   }catch(e){console.error('push disable',e);toast('Erreur','error');}
 }
@@ -40773,7 +41202,8 @@ async function renderPushSettings(){
   var z=document.getElementById('pushSettingsZone');if(!z)return;
   var st=await lxSalonPushStatus();
   var labels={unsupported:'❌ Non supporté',denied:'🚫 Bloqué (paramètres navigateur)',default:'⚪ Non configuré',granted_no_sub:'⚠️ Permission OK, pas abonné',active:'✅ Actif',error:'⚠️ Erreur'};
-  var h='<div style="margin-bottom:10px;font-size:13px">État : <strong>'+(labels[st]||st)+'</strong></div>';
+  var _off=false; try{ _off=(st==='granted_no_sub' && localStorage.getItem('lx_push_off_'+_salonId)==='1'); }catch(_eO){} // 2026-10-17 audit réglages (#7)
+  var h='<div style="margin-bottom:10px;font-size:13px">État : <strong>'+(_off?'⚪ Désactivé sur cet appareil':(labels[st]||st))+'</strong></div>';
   if(st==='default'||st==='granted_no_sub')h+='<button class="btn bg bs" onclick="lxSalonPushEnable()">Activer</button>';
   if(st==='active')h+='<button class="btn bs" onclick="lxSalonPushTest()" style="margin-right:6px">Tester l\'envoi</button><button class="btn bs" onclick="lxSalonPushDisable()">Désactiver</button>';
   // Disponible des que la permission est accordee : c'est le test qui distingue
@@ -40800,6 +41230,8 @@ async function lxEnsurePushSubscription(){
     if(typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     if(typeof _salonId === 'undefined' || !_salonId) return;
     if(typeof _sb === 'undefined' || !_sb || !window.VAPID_PUBLIC_KEY) return;
+    // 2026-10-17 audit réglages (#7) : désactivé volontairement sur cet appareil -> on respecte ce choix
+    try{ if(localStorage.getItem('lx_push_off_'+_salonId)==='1') return; }catch(_eOff){}
 
     var reg = await navigator.serviceWorker.ready;
     var sub = await reg.pushManager.getSubscription();
@@ -40828,6 +41260,7 @@ setTimeout(function(){ lxEnsurePushSubscription(); }, 5000);
 async function maybeShowPushBanner(){
   try{
     if(typeof _salonId==='undefined'||!_salonId)return;
+    try{ if(localStorage.getItem('lx_push_off_'+_salonId)==='1') return; }catch(_eOff){} // 2026-10-17 audit réglages (#7)
     var _masquee=(localStorage.getItem('lx_push_banner_dismissed')==='1');
     // FIX 2026-08-30 : la banniere etait masquee DEFINITIVEMENT au premier refus ou
     // a la premiere activation. Consequence : un salon dont plus aucun appareil n'est

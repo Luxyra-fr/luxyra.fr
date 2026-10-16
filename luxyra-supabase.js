@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261017-1"; // 2026-10-17 (-1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261017-2"; // 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -2107,6 +2107,9 @@ async function loadSalonData() {
   // FIX 2026-10-07 : `|| 20` ecrasait un taux a 0 (franchise de TVA). Voir lxTauxTVA().
   SALON_CONFIG.tauxTVA = (salon.taux_tva !== null && salon.taux_tva !== undefined && salon.taux_tva !== "") ? Number(salon.taux_tva) : 20;
   SALON_CONFIG.tvaProduits = (salon.taux_tva_produits != null) ? Number(salon.taux_tva_produits) : SALON_CONFIG.tauxTVA;
+  // 2026-10-17 audit réglages (#11) : valeur brute de la colonne (null = « suit le taux des prestations »), pour que
+  // saveTVA mette à jour le taux produits en mémoire EXACTEMENT comme le ferait ce chargement.
+  SALON_CONFIG.tvaProduitsColonne = (salon.taux_tva_produits != null && isFinite(Number(salon.taux_tva_produits))) ? Number(salon.taux_tva_produits) : null;
   // 2026-10-11 : franchise en base (TVA 0 %) -> jamais de TVA sur les produits non plus
   if (Number(SALON_CONFIG.tauxTVA) === 0) SALON_CONFIG.tvaProduits = 0;
   // 2026-10-11 : forme juridique (choisie à l'inscription) et mois de clôture de l'exercice comptable.
@@ -2478,6 +2481,8 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
     var pcatSet = {};
     PRODS.forEach(function(p) { if (p.cat) pcatSet[p.cat] = true; });
     PCATS = Object.keys(pcatSet);
+    // 2026-10-17 audit réglages (#69) : familles créées sans produit (config_json.pcats)
+    try { if (typeof _lxPcatsFusion === "function") _lxPcatsFusion(); } catch(_ePc) {}
   }
   } catch(e) { console.warn("[loadSalonData] produits skipped", e); }
 
@@ -4441,8 +4446,9 @@ async function saveAuditEntry(action, detail) {
   }
 }
 
-// Sauvegarder la config du salon
-async function saveSalonConfig() {
+// 2026-10-17 audit réglages (#72) : CODE MORT renommé. La fonction réellement exécutée est saveSalonConfig d'app.html
+// (chargée après ce fichier, elle remplaçait celle-ci) ; ce nom distinct évite toute confusion. Aucun appelant.
+async function _lxSaveSalonConfigAncienInutilise() {
   if (!_isOnline || !_salonId) return;
   var data = {
     nom: SALON_CONFIG.nom, sous_titre: SALON_CONFIG.sousTitre,
