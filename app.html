@@ -403,12 +403,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261016-1"></script>
+<script src="luxyra-supabase.js?v=20261017-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261016-1";
+  var attendu="20261017-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -5675,11 +5675,14 @@ function sendDocEmail(encodedSubject, encodedBody, encodedTo){
 // Build plain text for a ticket
 function buildTicketText(appt){
   var sv=gS(appt.sId),cl=gC(appt.cId),sty=gT(appt.stId);
-  var t="TICKET DE CAISSE\n";
+  // 2026-10-17 retour partiel : titre et référence du ticket d'origine pour un ticket de retour
+  var _riT=(typeof _lxRetourInfo==="function")?_lxRetourInfo(appt):null;
+  var t=_riT?"RETOUR / REMBOURSEMENT N°"+(appt.tkNum||"--")+"\n":"TICKET DE CAISSE\n";
   t+=""+SALON_CONFIG.nomComplet()+"\n";
   t+=""+SALON_CONFIG.adresseComplete()+"\n\n";
+  if(_riT) t+="Ticket d'origine n°"+(_riT.refTk||"--")+" du "+(_riT.refDate?_lxJJMMAAAA(_riT.refDate):"--")+"\nMotif : "+(_riT.motif||"")+"\n";
   t+="Date: "+fmt(appt.date)+" a "+appt.time+"\n";
-  t+="Client: "+apptClientLabel(a)+"\n";
+  t+="Client: "+apptClientLabel(appt)+"\n"; // 2026-10-17 : variable corrigée (« a » n'existait pas ici)
   t+="Collaborateur: "+(sty?sty.n:"")+"\n\n";
   t+="Prestation: "+(sv?sv.n:"")+" ... "+appt.pr.toFixed(2)+" EUR\n";
   t+="TOTAL: "+appt.pr.toFixed(2)+" EUR\n";
@@ -5738,6 +5741,7 @@ function buildClotureText(c){
   t+="Dernier ticket:     "+(c.hDernier||"--:--")+"\n";
   t+="Annulations:        "+c.nbAnnul+"\n";
   if(c.totalAnnul>0)t+="Montant annule:     "+c.totalAnnul.toFixed(2)+" EUR\n";
+  if(Number(c.nbRetours)>0)t+="Retours partiels:   "+c.nbRetours+" ("+Number(c.totalRetours||0).toFixed(2)+" EUR, inclus dans le CA)\n"; // 2026-10-17 retour partiel
   t+="Panier moyen:       "+(c.panierMoyen||0).toFixed(2)+" EUR\n";
   t+="\n--- CHIFFRE D AFFAIRES ---\n";
   if(c.brutTotalGlobal>0&&c.totalRemises>0){
@@ -6412,7 +6416,44 @@ function _lxIsSameDayContraAny(a){
 // Un contre-ticket d annulation est un ENREGISTREMENT FISCAL, pas un rendez-vous :
 // jamais de bloc au planning, jamais compte comme un RDV, jamais vu comme "prestation ajoutee".
 function _lxIsContraTicket(a){
-  try{ return !!(a && (a.isCancel===true || a.contraSameDay===true)); }catch(_e){ return false; }
+  // 2026-10-17 retour partiel : un ticket de RETOUR / REMBOURSEMENT PARTIEL est lui aussi un enregistrement fiscal négatif,
+  // jamais un rendez-vous (pas de bloc au planning, pas compté comme RDV). Il n'est PAS un contre-ticket pour les totaux :
+  // _lxExclCA / _lxIsSameDayContra ne le regardent pas -> il est compté (une fois) dans le CA du jour du retour.
+  try{ return !!(a && (a.isCancel===true || a.contraSameDay===true || _lxEstRetour(a))); }catch(_e){ return false; }
+}
+// 2026-10-17 retour partiel : ticket de retour = drapeau isRetour sur le ticket OU sur ses lignes (les lignes sont toujours
+// relues depuis la base — appointments.items / tickets.items — même si la colonne meta est absente).
+function _lxEstRetour(a){
+  try{ if(!a) return false; if(a.isRetour===true) return true;
+    var its=a.items||[]; for(var i=0;i<its.length;i++){ if(its[i]&&its[i].isRetour===true) return true; } }catch(_e){}
+  return false;
+}
+// Référence du ticket d'origine portée par un ticket de retour : {refId, refTk, refDate, motif}
+function _lxRetourInfo(a){
+  try{
+    if(!_lxEstRetour(a)) return null;
+    var it0=null; (a.items||[]).forEach(function(it){ if(!it0&&it&&it.isRetour) it0=it; });
+    return { refId:(a.retourRefId||(it0&&it0.retourRefId)||null),
+      refTk:(a.retourRefTk!=null?a.retourRefTk:(it0&&it0.retourRefTk!=null?it0.retourRefTk:null)),
+      refDate:(a.retourRefDate||(it0&&it0.retourRefDate)||null),
+      motif:(a.retourMotif||(it0&&it0.retourMotif)||"") };
+  }catch(_e){ return null; }
+}
+// Libellé d'export d'un ticket de retour
+function _lxRetourLibelle(a){
+  var ri=_lxRetourInfo(a)||{}; var d=String(ri.refDate||"").slice(0,10);
+  return "Retour partiel (ticket #"+(ri.refTk!=null?ri.refTk:"--")+(d?" du "+d.split("-").reverse().join("/"):"")+")";
+}
+// Tickets de retour (en mémoire) qui référencent un ticket d'origine
+// 2026-10-17 retour partiel (audit) : identifiant d'un ticket sous ses deux formes. Un ticket de réservation en ligne est au journal
+// sous raw_data.id = « online_<uuid> » mais rechargé dans l'application sous « <uuid> » (54 tickets en base le 17/10/2026).
+function _lxRetourIdNu(id){ return String(id==null?"":id).replace(/^online_/,""); }
+function _lxRetourIdsVariantes(id){ var nu=_lxRetourIdNu(id); return nu?[nu,"online_"+nu]:[]; }
+function _lxRetoursDe(orig){
+  try{ if(!orig||!orig.id) return []; var _nuO=_lxRetourIdNu(orig.id);
+    return AP.filter(function(t){ if(!t||t===orig||!_lxEstRetour(t)) return false; var inf=_lxRetourInfo(t); return !!(inf&&inf.refId!=null&&_lxRetourIdNu(inf.refId)===_nuO); })
+      .sort(function(x,y){ return (Number(x.tkNum)||0)-(Number(y.tkNum)||0); });
+  }catch(_e){ return []; }
 }
 // Predicat commun aux filtres d affichage. Garde typeof -> un helper manquant ne casse jamais
 // le rendu (retourne false = comportement d avant le fix).
@@ -6655,7 +6696,9 @@ function _lxZFinaliser(opts){
   h+='<div style="font-size:12px;margin-top:6px;font-weight:700">'+fmt(c.date)+'</div></div>';
   h+='<div style="padding:10px 0;border-bottom:1px dashed var(--border);font-size:13px">';
   h+='<div style="display:flex;justify-content:space-between"><span>Nombre de tickets</span><strong>'+c.nbTickets+'</strong></div>';
-  h+='<div style="display:flex;justify-content:space-between"><span>Annulations</span><strong>'+c.nbAnnul+'</strong></div></div>';
+  h+='<div style="display:flex;justify-content:space-between"><span>Annulations</span><strong>'+c.nbAnnul+'</strong></div>';
+  if(Number(c.nbRetours)>0) h+='<div style="display:flex;justify-content:space-between"><span>Retours partiels (inclus)</span><strong>'+c.nbRetours+' / '+Number(c.totalRetours||0).toFixed(2)+' €</strong></div>'; // 2026-10-17 retour partiel
+  h+='</div>';
   h+='<div style="padding:10px 0;border-bottom:1px dashed var(--border);font-size:13px">';
   h+='<div style="display:flex;justify-content:space-between"><span>CB</span><strong>'+c.details.cb.toFixed(2)+' \u20ac</strong></div>';
   h+='<div style="display:flex;justify-content:space-between"><span>Esp\u00e8ces</span><strong>'+c.details.esp.toFixed(2)+' \u20ac</strong></div>';
@@ -6845,6 +6888,9 @@ function printClotureZ(){
   h+="<tr><td>Panier moyen TTC</td><td class=\"tr\">"+(c.panierMoyen||0).toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>Annulations</td><td class=\"tr\">"+c.nbAnnul+"</td></tr>";
   if(c.totalAnnul>0)h+="<tr><td>Montant annul\u00e9</td><td class=\"tr\">"+c.totalAnnul.toFixed(2)+" \u20ac</td></tr>";
+  // 2026-10-17 retour partiel : tickets de retour de la journ\u00e9e (d\u00e9j\u00e0 inclus, en n\u00e9gatif, dans le CA et les r\u00e8glements)
+  var _zRet=done.filter(function(a){ return _lxEstRetour(a); }), _zRetTot=0; _zRet.forEach(function(a){ _zRetTot+=Number(a.pr)||0; }); _zRetTot=Math.round(_zRetTot*100)/100;
+  if(_zRet.length){ h+="<tr><td>Retours / remboursements partiels</td><td class=\"tr\">"+_zRet.length+"</td></tr>"; h+="<tr><td>&nbsp;&nbsp;montant rembours\u00e9 (inclus dans le CA)</td><td class=\"tr\">"+_zRetTot.toFixed(2)+" \u20ac</td></tr>"; }
   if(c.totalRemises>0)h+="<tr><td>Remises accord\u00e9es</td><td class=\"tr\">-"+c.totalRemises.toFixed(2)+" \u20ac</td></tr>";
   if(c.totalBonsUtilises>0)h+="<tr><td>&nbsp;&nbsp;dont bons cadeaux utilis\u00e9s (d\u00e9j\u00e0 encaiss\u00e9s)</td><td class=\"tr\">"+c.totalBonsUtilises.toFixed(2)+" \u20ac</td></tr>";
   h+="</table>";
@@ -6931,10 +6977,22 @@ function printClotureZ(){
   done.forEach(function(a){
     var cl=gC(a.cId);var hr=_extractHr(a)||"--:--";
     var remInfo=a.remise>0?" <span style=\"color:#c00;font-size:9px\">(-"+a.remise.toFixed(0)+")</span>":"";
-    h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+apptClientLabel(a)+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
+    var _riZ=_lxRetourInfo(a); // 2026-10-17 retour partiel
+    h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>"+hr+"</td><td>"+apptClientLabel(a)+(_riZ?" <span style=\"font-size:9px\">(RETOUR tk #"+(_riZ.refTk||"--")+")</span>":"")+"</td><td class=\"tr\">"+a.pr.toFixed(2)+remInfo+"</td><td>"+a.met+"</td></tr>";
   });
   h+="</table>";
-  
+
+  // ===== 6 bis. RETOURS / REMBOURSEMENTS PARTIELS (2026-10-17) =====
+  // Tickets négatifs du jour, numérotés et scellés comme les autres : déjà inclus dans le CA, la TVA et les règlements ci-dessus.
+  if(_zRet.length){
+    h+="<h2>6 bis. Retours / remboursements partiels</h2>";
+    h+="<table style=\"font-size:10px\"><tr><th>N°</th><th>Ticket d'origine</th><th class=\"tr\">Montant</th><th>Mode</th><th>Motif</th></tr>";
+    _zRet.forEach(function(a){ var ri=_lxRetourInfo(a)||{};
+      h+="<tr><td>#"+(a.tkNum||"--")+"</td><td>#"+(ri.refTk||"--")+" du "+(ri.refDate?_lxJJMMAAAA(ri.refDate):"--")+"</td><td class=\"tr\">"+(Number(a.pr)||0).toFixed(2)+" €</td><td>"+_lxEsc(a.met||"")+"</td><td>"+_lxEsc(ri.motif||"")+"</td></tr>"; });
+    h+="<tr class=\"tline\"><td colspan=\"2\" class=\"tb\">TOTAL REMBOURSÉ</td><td class=\"tr tb\">"+_zRetTot.toFixed(2)+" €</td><td colspan=\"2\"></td></tr>";
+    h+="</table>";
+  }
+
   // ===== 7. ANNULATIONS =====
   if(annul.length){
     h+="<h2>7. Annulations</h2>";
@@ -8049,7 +8107,7 @@ function showCAInstantane(){
   // Done today
   var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled&&!_lxExclCA(a);});
   var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
-  var doneCount=done.length;
+  var doneCount=done.filter(function(a){ return !_lxEstRetour(a); }).length; // 2026-10-17 retour partiel : un retour diminue le CA, ce n'est pas une prestation réalisée
   
   // Remaining (confirmed but not done)
   var remaining=AP.filter(function(a){return a.st==="conf"&&a.date===today;});
@@ -9432,14 +9490,14 @@ window.getApptsForClient = getApptsForClient;
 // === STATS CALC ===
 function cStats(){
   var dn=AP.filter(function(a){return a.st==="done"});
-  var tA=AP.filter(function(a){return a.date===TD&&a.st!=="canc"&&a.st!=="cancelled"&&!a.cancelled}); // 2026-10-14 audit : annulés exclus
+  var tA=AP.filter(function(a){return a.date===TD&&a.st!=="canc"&&a.st!=="cancelled"&&!a.cancelled&&!_lxEstRetour(a)}); // 2026-10-14 audit : annulés exclus ; 2026-10-17 retour partiel : un ticket de retour n'est pas un RDV
   var cm=0;dn.forEach(function(a){if(a.date.indexOf(TD.slice(0,7))===0)cm+=a.pr;});
   PS.forEach(function(p){if(p.date.indexOf(TD.slice(0,7))===0)cm+=p.pr;});
   var ct=0;dn.forEach(function(a){ct+=a.pr;});
   var fi=0,pe=0,ri=0;
   var cs=CL.map(function(c){
     // Inclus aussi les passages multi-client (séparateurs sepCId)
-    var v=getApptsForClient(c.id, "done").sort(function(a,b){return new Date(b.date)-new Date(a.date)});
+    var v=getApptsForClient(c.id, "done").filter(function(a){ return !_lxEstRetour(a); }).sort(function(a,b){return new Date(b.date)-new Date(a.date)}); // 2026-10-17 retour partiel : un retour n'est pas une visite
     var l=v.length>0?v[0].date:null;
     var d;
     if(l){
@@ -9613,6 +9671,7 @@ function _lxFindOnlineRdvForTicketBrut(t){
     // 2026-10-14 (NF525 acompte en ligne) : un ticket d'acompte / de remboursement / de retenue / contre-ticket n'est PAS un
     // encaissement de rendez-vous : il ne doit jamais rapprocher (ni fermer) un RDV en ligne.
     if(t.isAcompte||t.isAcompteCancel||t.isRetenue||t.isCancel||t.acompteKey||t.retenueKey||(t.items||[]).some(function(it){ return it&&(it.isAcompte||it.isAcompteCancel||it.isRetenue); })) return null;
+    if(typeof _lxEstRetour==="function"&&_lxEstRetour(t)) return null; // 2026-10-17 retour partiel : un ticket de retour ne rapproche jamais un RDV en ligne
     var keys=_lxClientKeys(t.cId);
     var tPrice=Math.round((Number(t.pr)||0)*100);
     var clientCands=[], priceCands=[];
@@ -10572,7 +10631,7 @@ function rHome(){
   // comme la cloture Z) -> le CA/nb de l accueil ne perd plus le montant en double.
   var done=AP.filter(function(a){return a.st==="done"&&a.date===today&&!a.cancelled&&!_lxExclCA(a);});
   var doneCA=0;done.forEach(function(a){doneCA+=a.pr;});
-  var doneCount=done.length;
+  var doneCount=done.filter(function(a){ return !_lxEstRetour(a); }).length; // 2026-10-17 retour partiel : un retour diminue le CA, ce n'est pas une prestation réalisée
   var remaining=AP.filter(function(a){return a.st==="conf"&&a.date===today;});
   var remainCA=0;remaining.forEach(function(a){var p=Number(a.pr);if(!p){var sv=gS(a.sId);if(sv)p=Number(sv.p)||0;}remainCA+=p;});
   var remainCount=remaining.length;
@@ -17842,25 +17901,27 @@ function _renderClientCaCockpit(c, ap, caTotal, cs){
   var _curYr=TD.slice(0,4); var _prevYr=String(parseInt(_curYr)-1);
   var _now=new Date(TD);
   var _ms12=_now.getTime()-365*24*3600*1000;
-  var nbVisitsTotal=ap.length;
+  // 2026-10-17 retour partiel : un ticket de retour diminue le CA du client (montant négatif) mais n'est pas une visite
+  var nbVisitsTotal=ap.filter(function(a){ return !_lxEstRetour(a); }).length;
   var caCurYr=0,vcCurYr=0,caPrevYr=0,vcPrevYr=0,ca12m=0,vc12m=0,caServices=0,caProduits=0;
   var byMonth={}, prestCount={}, dates=[];
   ap.forEach(function(a){
     var dParts=(a.date||"").split("-");
     if(dParts.length<3)return;
+    var _estRet=_lxEstRetour(a);
     var dObj=new Date(a.date);
-    dates.push(dObj.getTime());
+    if(!_estRet) dates.push(dObj.getTime());
     var ym=dParts[0]+"-"+dParts[1];
     byMonth[ym]=(byMonth[ym]||0)+(Number(a.pr)||0);
-    if(dParts[0]===_curYr){caCurYr+=Number(a.pr)||0;vcCurYr++;}
-    if(dParts[0]===_prevYr){caPrevYr+=Number(a.pr)||0;vcPrevYr++;}
-    if(dObj.getTime()>=_ms12){ca12m+=Number(a.pr)||0;vc12m++;}
+    if(dParts[0]===_curYr){caCurYr+=Number(a.pr)||0;if(!_estRet)vcCurYr++;}
+    if(dParts[0]===_prevYr){caPrevYr+=Number(a.pr)||0;if(!_estRet)vcPrevYr++;}
+    if(dObj.getTime()>=_ms12){ca12m+=Number(a.pr)||0;if(!_estRet)vc12m++;}
     if(a.items&&Array.isArray(a.items)){
       a.items.forEach(function(it){
         if(it.isSep)return;
         var sub=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
         if(it.isProd)caProduits+=sub;else caServices+=sub;
-        if(!it.isProd&&it.name)prestCount[it.name]=(prestCount[it.name]||0)+1;
+        if(!it.isProd&&it.name&&!it.isRetour)prestCount[it.name]=(prestCount[it.name]||0)+1;
       });
     }
   });
@@ -18408,6 +18469,9 @@ function rDetail(){
         } else {
           libelle = sv ? sv.n : ((a.items&&a.items.length&&a.items[0].name) ? a.items[0].name : "\u2014");
         }
+        // 2026-10-17 retour partiel : libell\u00e9 explicite (ticket de retour / ticket d'origine ayant un retour)
+        try{ if(_lxEstRetour(a)){ var _ri=_lxRetourInfo(a); libelle="\u21a9\ufe0f Retour du ticket #"+((_ri&&_ri.refTk)||"--")+" ("+libelle+")"; }
+          else { var _rl=_lxRetoursDe(a); if(_rl.length) libelle+=" \u2014 retour partiel #"+_rl.map(function(t){return t.tkNum||"--";}).join(", #"); } }catch(_eRl){}
         var displayMontant = a._isMulti ? (a._myShare||0) : (Number(a.pr)||0);
         h+='<tr style="border-bottom:1px solid var(--border2);cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(212,168,67,.06)\'" onmouseout="this.style.background=\''+(i%2===0?"var(--bg)":"transparent")+'\'" onclick="viewClientTicket(\''+a.id+'\')">';
         h+='<td style="padding:10px 8px;font-weight:600">'+fmt(a.date)+'</td>';
@@ -23681,6 +23745,15 @@ function _buildRapportHTML(periodM){
     });
     html += '</table>';
   }
+  // 2026-10-17 retour partiel : remboursements partiels du mois (tickets négatifs, déjà inclus dans le chiffre d'affaires ci-dessus)
+  try{ var _retR=dn.filter(function(x){ return _lxEstRetour(x); });
+    if(_retR.length){
+      html += '<h2>5 bis. Retours / remboursements partiels</h2>';
+      html += '<table><tr><th>Date</th><th>N\u00b0 Tk</th><th>Ticket d\u2019origine</th><th>Motif</th><th class="num">Montant</th></tr>';
+      _retR.forEach(function(x){ var ri=_lxRetourInfo(x)||{};
+        html += '<tr><td>'+fmtDate(x.date)+'</td><td>'+(x.tkNum||'\u2014')+'</td><td>#'+_lxEsc(ri.refTk!=null?ri.refTk:'--')+' du '+_lxJJMMAAAA(ri.refDate)+'</td><td style="font-size:9px">'+_lxEsc(String(ri.motif||'').slice(0,60))+'</td><td class="num">'+fmtMoney(x.pr||0)+'</td></tr>'; });
+      html += '</table>';
+    } }catch(_eRR){}
 
   html += '<div class="footer">';
   html += '<strong>Document \u00e9dit\u00e9 par Luxyra '+(SALON_CONFIG.version||"v6.6.1")+'</strong> \u2014 Caisse conforme art. 286-I-3 bis du CGI (cha\u00eenage SHA-256)<br>';
@@ -24017,7 +24090,7 @@ function showExportsComptables(){
   if(!isMicro || lxTauxTVA()>0) exports.push({id:"enligne", svg:SVG_TVA, color:"#fbbf24", title:"Paiements en ligne \u2014 TVA \u00e0 l\u2019encaissement (CSV)", desc:"Acomptes et commandes pay\u00e9s en ligne : TVA due le mois du paiement (art. 269-2-c CGI). Donne l\u2019ajustement \u00e0 reporter sur la d\u00e9claration de TVA du mois.", fn:"expTvaPaiementsEnLigne", count:""});
 
   exports.forEach(function(e){
-    var disabled = (e.id==="annul"&&!annul.length) || (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne" && e.id!=="acomptes");
+    var disabled = (e.id==="annul"&&!annul.length&&!AP.some(function(x){ return x&&x.st==="done"&&String(x.date||"").indexOf(accM)===0&&(_lxEstRetour(x)||x.isAcompteCancel); })) || /* 2026-10-17 retour partiel : export actif s'il y a des remboursements */ (e.id==="stripe"&&!rdvOnline.length) || (isEmpty && e.id!=="bandez" && e.id!=="recettes" && e.id!=="enligne" && e.id!=="acomptes");
     h += '<div style="display:flex;align-items:center;gap:14px;padding:14px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05);border-radius:12px;margin-bottom:8px;'+(disabled?'opacity:.4;':'cursor:pointer;')+'transition:all .2s"'+(disabled?'':' onmouseover="this.style.background=\'rgba(212,168,67,.06)\';this.style.borderColor=\'rgba(212,168,67,.25)\'" onmouseout="this.style.background=\'rgba(255,255,255,.025)\';this.style.borderColor=\'rgba(255,255,255,.05)\'" onclick="cM();'+e.fn+'()"')+'>';
     h += '<div style="width:42px;height:42px;flex-shrink:0;border-radius:11px;background:'+e.color+'22;border:1px solid '+e.color+'44;display:flex;align-items:center;justify-content:center;color:'+e.color+'">'+e.svg+'</div>';
     h += '<div style="flex:1;min-width:0">';
@@ -24176,7 +24249,7 @@ function expCSV(){
     rows.push([
       a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail,
       csvNum(ht), csvNum(tva), csvNum(ttc), csvNum(a.remise||0),
-      _lxModeDetail(a), a.cancelled?"ANNUL\u00C9":(a.isCancel?"Contre-ticket d\u2019annulation":"Encaiss\u00e9"), src, (a.hash||"").slice(0,16)
+      _lxModeDetail(a), a.cancelled?"ANNUL\u00C9":(a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaiss\u00e9")), src, (a.hash||"").slice(0,16) // 2026-10-17 retour partiel
     ]);
   });
 
@@ -24374,6 +24447,7 @@ function _lxJournalVentes(mois){
     var sv = gS(a.sId), cl = gC(a.cId);
     var libelle = (cl ? cName(cl) : ((a.clientNom||a.clientPrenom)?[(a.clientPrenom||""),(a.clientNom||"")].join(" ").trim():"Passage")) + (sv?" - "+sv.n:"") + _lxLibAcompte(a.items, (typeof _lxIsAcompteOnline==="function"&&_lxIsAcompteOnline(a.acompteMode))?a.acompte:0);
     if(a.isCancel) libelle = "ANNULATION " + (a.cancelRef?("#"+a.cancelRef+" "):"") + libelle;
+    else if(_lxEstRetour(a)){ var _riJ=_lxRetourInfo(a)||{}; libelle = "RETOUR #" + (_riJ.refTk!=null?_riJ.refTk:"--") + " du " + _lxJJMMAAAA(_riJ.refDate) + " " + libelle; } // 2026-10-17 retour partiel
     var sp = _splitPrestProd(a);
     if(Math.abs(sp.prest) >= 0.005){
       var ht = Math.round(sp.prest/(1+txTVA/100)*100)/100;
@@ -24429,12 +24503,18 @@ function expAnnulations(){
   }
   var annul = AP.filter(function(a){
     return (a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0)
-      || ((a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})) && a.st==="done" && String(a.date||"").indexOf(accM)===0); // 2026-10-11 : annulations d'acompte
+      || ((a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})) && a.st==="done" && String(a.date||"").indexOf(accM)===0) // 2026-10-11 : annulations d'acompte
+      || (_lxEstRetour(a) && a.st==="done" && String(a.date||"").indexOf(accM)===0); // 2026-10-17 retour partiel : remboursements partiels du mois
   });
   var headers = ["Date originale","Heure","N\u00B0 Ticket","Date annulation","Client","Prestation","Montant TTC (\u20AC)","Motif d'annulation","Hash original"];
   var rows = annul.map(function(a){
     var sv = gS(a.sId), cl = gC(a.cId);
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
+    if(_lxEstRetour(a)){ // 2026-10-17 retour partiel : ticket d'origine -> ticket de retour, date du retour, montant remboursé, motif
+      var _riX=_lxRetourInfo(a)||{};
+      return [ _riX.refDate||"", "", "#"+(_riX.refTk!=null?_riX.refTk:"--")+" \u2192 #"+(a.tkNum||""), a.date, clNom, "Retour / remboursement partiel : "+(a.items||[]).filter(function(it){return it&&it.isRetour;}).map(function(it){return (it.name||"")+(Number(it.retourQty)>0?" x"+it.retourQty:"");}).join(" + "),
+        csvNum(Math.abs(Number(a.pr)||0)), _riX.motif||"(non pr\u00e9cis\u00e9)", (a.hash||"").slice(0,16) ];
+    }
     if(a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})){
       // 2026-10-14 (NF525) : après un rechargement, le n° d'origine est lu sur la ligne du ticket (origTkNums / origTkNum)
       var _oTk=a.origTkNum||null;
@@ -24450,8 +24530,8 @@ function expAnnulations(){
   var sumAnnul = 0;
   rows.forEach(function(r){ sumAnnul += parseFloat(String(r[6]).replace(",","."))||0; });
   var footer = [
-    ["Nombre d'annulations", rows.length],
-    ["Montant total annul\u00e9", csvNum(sumAnnul)+" \u20ac"],
+    ["Nombre d'annulations et de remboursements", rows.length],
+    ["Montant total annul\u00e9 / rembours\u00e9", csvNum(sumAnnul)+" \u20ac"],
     ["Conformit\u00e9", "Empreinte (hash) conserv\u00e9 pour chaque ticket annul\u00e9"]
   ];
   csvDownload("annulations_"+accM+".csv", csvBuildPro("Annulations & remboursements", accM, headers, rows, footer));
@@ -24785,6 +24865,7 @@ async function expLivreRecettes(){
     var cl=(typeof gC==="function")?gC(a.cId):null;
     var nom=cl?cName(cl):((typeof apptClientLabel==="function")?apptClientLabel(a):"");
     var nat=(a.items&&a.items.length)?a.items.filter(function(it){return !it.isSep && !it.isAcompteData;}).map(function(it){return it.name||"";}).join(" + "):"Prestation";
+    if(_lxEstRetour(a)){ var _riL=_lxRetourInfo(a)||{}; nat="Remboursement (retour partiel du ticket #"+(_riL.refTk!=null?_riL.refTk:"--")+" du "+_lxJJMMAAAA(_riL.refDate)+") : "+nat; } // 2026-10-17 retour partiel
     ligne(a.date,a.time,"Ticket #"+a.tkNum,nom,nat,modes.join(" + "),comptoir);
   });
   (typeof PS!=="undefined"?PS:[]).filter(function(p){ return String(p.date||"").indexOf(accM)===0; }).forEach(function(p){ ligne(p.date,p.time,"Vente #"+(p.tkNum||""),"","Vente produit : "+(p.prod||""),p.met||"",Number(p.pr)||0); });
@@ -24846,7 +24927,7 @@ async function expPackComptable(){
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"\u00D7 "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var ttc=Number(a.pr)||0; var _v=_lxHtTva(a); var ht=_v.ht, tva=_v.tva;
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),_lxModeDetail(a),"Encaiss\u00e9",src,(a.hash||"").slice(0,16)]);
+    rJournal.push([a.date,a.time||"",a.tkNum||"",clNom,sty?sty.n:"",detail,csvNum(ht),csvNum(tva),csvNum(ttc),csvNum(a.remise||0),_lxModeDetail(a),(a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaiss\u00e9")),src,(a.hash||"").slice(0,16)]); // 2026-10-17 retour partiel : statut explicite
   });
   ps2.forEach(function(p){
     var ttc=Number(p.pr)||0; var _v=_lxHtTvaProd(ttc); var ht=_v.ht, tva=_v.tva;
@@ -25256,7 +25337,7 @@ async function expExcelComptable(){
     var clNom = cl ? cName(cl) : (typeof apptClientLabel==="function" ? apptClientLabel(a) : "Passage");
     var detail = (a.items&&a.items.length) ? a.items.filter(function(it){return !it.isSep;}).map(function(it){return (it.qty>1?(it.qty+"× "):"")+(it.name||"");}).join(" + ") : (sv?sv.n:"");
     var src=(a.comment && a.comment.indexOf("Import LS")>=0) ? "LS Coiffure" : "Luxyra";
-    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, _lxModeDetail(a), "Encaissé", src, a.hash, a);
+    pushVente(a.date, a.time||"", a.tkNum||"", clNom, sty?sty.n:"", detail, Number(a.pr)||0, Number(a.remise)||0, _lxModeDetail(a), (a.isCancel?"Contre-ticket d\u2019annulation":(_lxEstRetour(a)?_lxRetourLibelle(a):"Encaissé")), src, a.hash, a); // 2026-10-17 retour partiel : statut explicite
   });
   ps2.forEach(function(p){
     pushVente(p.date, p.time||"", p.tkNum||"", "", "", "🛍 "+p.prod, Number(p.pr)||0, 0, p.met||"", "Vente produit", "Luxyra", "", {pr:Number(p.pr)||0,items:[{price:Number(p.pr)||0,qty:1,remise:0,isProd:true}]});
@@ -25339,7 +25420,9 @@ async function expExcelComptable(){
   }), "4 — Compta");
 
   // === ONGLET 5 : ANNULATIONS ===
-  if(annul.length){
+  // 2026-10-17 retour partiel : les remboursements partiels du mois figurent aussi dans cet onglet (montant remboursé, motif)
+  var _retXl=AP.filter(function(a){ return _lxEstRetour(a)&&a.st==="done"&&String(a.date||"").indexOf(accM)===0; });
+  if(annul.length||_retXl.length){
     var annulD = [
       ["ANNULATIONS & REMBOURSEMENTS — "+mL],
       [SALON_CONFIG.nomComplet()+" · Caisse conforme art. 286-I-3° bis CGI"],
@@ -25353,7 +25436,9 @@ async function expExcelComptable(){
       var pr = Number(a.pr)||0; totAnnul += pr;
       annulD.push([toDate(a.date), a.time||"", a.tkNum||"", toDate(a.cancelDate)||"", clNom, sv?sv.n:"", pr, a.cancelReason||"(non précisé)", String(a.hash||"").slice(0,16)]);
     });
-    annulD.push(["","","","","","TOTAL ANNULÉ", totAnnul, "", ""]);
+    _retXl.forEach(function(a){ var ri=_lxRetourInfo(a)||{}, cl=gC(a.cId), m=Math.abs(Number(a.pr)||0); totAnnul+=m;
+      annulD.push([toDate(ri.refDate)||"", "", "#"+(ri.refTk!=null?ri.refTk:"--")+" \u2192 #"+(a.tkNum||""), toDate(a.date)||"", cl?cName(cl):"Passage", "Retour partiel : "+(a.items||[]).filter(function(it){return it&&it.isRetour;}).map(function(it){return (it.name||"")+(Number(it.retourQty)>0?" x"+it.retourQty:"");}).join(" + "), m, ri.motif||"(non précisé)", String(a.hash||"").slice(0,16)]); });
+    annulD.push(["","","","","",(_retXl.length?"TOTAL ANNULÉ / REMBOURSÉ":"TOTAL ANNULÉ"), totAnnul, "", ""]);
     XLSX.utils.book_append_sheet(wb, makeSheet(annulD, {
       titleRows:[0], subRows:[1], headerRows:[3], totalRows:[annulD.length-1],
       numCols:[6], dateCols:[0,3], titleSpan:9,
@@ -25587,7 +25672,10 @@ function printBandeZ(){
   var sortedDays=Object.keys(perDay).sort();
   
   // Panier moyen
-  var panierMoyen=dn.length>0?Math.round(tTotal/dn.length*100)/100:0;
+  // 2026-10-17 retour partiel : tickets de retour comptés dans le CA (négatifs) mais pas comme des ventes pour le panier moyen
+  var _retBZ=dn.filter(function(a){ return _lxEstRetour(a); }), _retBZTot=0; _retBZ.forEach(function(a){ _retBZTot+=Number(a.pr)||0; }); _retBZTot=Math.round(_retBZTot*100)/100;
+  var _nbVBZ=dn.length-_retBZ.length;
+  var panierMoyen=_retBZ.length?(_nbVBZ>0?Math.round(tTotal/_nbVBZ*100)/100:0):(dn.length>0?Math.round(tTotal/dn.length*100)/100:0);
   
   // Annulations
   var totalAnnul=0;annul.forEach(function(a){totalAnnul+=a.pr||0;});
@@ -25701,6 +25789,7 @@ function printBandeZ(){
   h+="<table><tr><td>Nombre de tickets</td><td class=\"r b\">"+dn.length+"</td></tr>";
   h+="<tr><td>Annulations</td><td class=\"r\">"+annul.length+"</td></tr>";
   if(totalAnnul>0)h+="<tr><td>Montant annul\u00e9</td><td class=\"r\">"+totalAnnul.toFixed(2)+" \u20ac</td></tr>";
+  if(_retBZ.length) h+="<tr><td>Retours / remboursements partiels (inclus dans le CA)</td><td class=\"r\">"+_retBZ.length+" \u00b7 "+_retBZTot.toFixed(2)+" \u20ac</td></tr>"; // 2026-10-17 retour partiel
   h+="<tr><td>Jours travaill\u00e9s</td><td class=\"r\">"+sortedDays.length+"</td></tr>";
   h+="<tr><td>Cl\u00f4tures Z effectu\u00e9es</td><td class=\"r\">"+clotMois.length+"</td></tr>";
   h+="<tr><td>Panier moyen TTC</td><td class=\"r\">"+panierMoyen.toFixed(2)+" \u20ac</td></tr>";
@@ -25932,6 +26021,7 @@ function rStats(){
       a.items.forEach(function(it){
         if(it.isSep) return;
         if(a.isCancel || it.isAcompteDeduct || it.isAcompteData || it.isAcompte || it.isRetenue || it.isAcompteCancel) return; // 2026-10-13 : un acompte n'est pas une prestation de plus
+        if(it.isRetour){ if(it.isProd) qtyPd-=(Number(it.retourQty)||0); return; } // 2026-10-17 retour partiel : produits rendus déduits des quantités vendues ; le montant est déduit via _splitPrestProd
         var qty=(Number(it.qty)||1);
         if(it.isProd){hasProd=true;qtyPd+=qty;}
         else{hasServ=true;qtyPr+=qty;}
@@ -26506,7 +26596,7 @@ function rStats(){
         totalProdCA+=rev;
         var key=it.name||"Produit";
         if(!prodSales[key])prodSales[key]={name:key,qty:0,ca:0,prodId:it.prodId};
-        prodSales[key].qty+=it.qty;
+        prodSales[key].qty+=(it.isRetour?-(Number(it.retourQty)||0):it.qty); // 2026-10-17 retour partiel : quantité rendue déduite
         prodSales[key].ca+=rev;
       }else if(!it.isSep){
         totalServCA+=it.price*it.qty-(it.remise||0);
@@ -26614,7 +26704,7 @@ function rStats(){
     if(a.items){a.items.forEach(function(it){
       // 2026-10-13 : acomptes regroupés sur des lignes à part (la prestation n'est comptée qu'une fois, le total reste juste)
       if(!it.isProd&&!it.isSep&&!a.isCancel&&(it.isAcompte||it.isRetenue||it.isAcompteCancel||it.isAcompteDeduct)){var kA=it.isRetenue?"Acomptes conserv\u00e9s / empreintes":(it.isAcompteDeduct?"Acomptes d\u00e9j\u00e0 encaiss\u00e9s (d\u00e9duits des prestations)":"Acomptes encaiss\u00e9s (prestations \u00e0 r\u00e9aliser)");if(!svcCA[kA])svcCA[kA]={name:kA,qty:0,ca:0};svcCA[kA].ca+=it.price*it.qty-(it.remise||0);return;}
-      if(!it.isProd&&!it.isSep&&!a.isCancel&&!it.isAcompteDeduct&&!it.isAcompteData){var key=it.name||"Prestation";if(!svcCA[key])svcCA[key]={name:key,qty:0,ca:0};svcCA[key].qty++;svcCA[key].ca+=it.price*it.qty-(it.remise||0);}
+      if(!it.isProd&&!it.isSep&&!a.isCancel&&!it.isAcompteDeduct&&!it.isAcompteData){var key=it.name||"Prestation";if(!svcCA[key])svcCA[key]={name:key,qty:0,ca:0};if(!it.isRetour)svcCA[key].qty++;svcCA[key].ca+=it.price*it.qty-(it.remise||0);} // 2026-10-17 retour partiel : montant remboursé déduit de la prestation, sans compter une prestation de plus
     });}else{var sv2=gS(a.sId);var sn=sv2?sv2.n:"Prestation";if(!svcCA[sn])svcCA[sn]={name:sn,qty:0,ca:0};svcCA[sn].qty++;svcCA[sn].ca+=a.pr*taxR;}
   });
   var svcList=Object.values(svcCA).sort(function(a,b){return b.ca-a.ca;});
@@ -33031,7 +33121,7 @@ function rTickets(){
     var clN=apptClientLabel(a);
     var styN=sty?sty.n:"--";
     var isCancelled=a.cancelled||a.st==="cancelled";
-    var isAvoir=a.isAvoir;
+    var isAvoir=a.isAvoir||_lxEstRetour(a); // 2026-10-17 retour partiel : bordure orange pour un ticket de retour
     
     h+='<div class="card" style="padding:14px;margin-bottom:8px;border-left:4px solid '+(isCancelled?"var(--red)":isAvoir?"var(--orange)":"var(--green)")+'">';
     // Header line
@@ -33043,6 +33133,7 @@ function rTickets(){
     h+='<div style="text-align:right">';
     h+='<div style="font-size:20px;font-weight:900;color:'+(isCancelled?"var(--red)":"#fff")+'">'+(isCancelled?"\u274c ":"")+a.pr.toFixed(2)+' \u20ac</div>';
     if(isCancelled)h+='<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:rgba(244,67,54,.15);color:var(--red);font-weight:700">Annul\u00e9</span>';
+    else if(_lxEstRetour(a)) h+='<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:rgba(255,152,0,.15);color:var(--orange);font-weight:700">Retour</span>'; // 2026-10-17 retour partiel
     else h+='<span style="font-size:10px;padding:2px 8px;border-radius:6px;background:rgba(76,175,80,.15);color:var(--green);font-weight:700">Encaiss\u00e9</span>';
     h+='</div></div>';
     // Info line
@@ -33062,7 +33153,18 @@ function rTickets(){
     // 2026-10-14 audit (NF525) : un contre-ticket (annulation) est une op\u00e9ration n\u00e9gative d\u00e9finitive :
     // il se r\u00e9imprime / s'envoie, mais ne s'annule pas, ne se modifie pas et son r\u00e8glement ne se corrige pas.
     var _isContraTk=(typeof _lxIsContraTicket==="function")&&_lxIsContraTicket(a);
-    if(!isCancelled&&_isContraTk){
+    // 2026-10-17 retour partiel : ticket de retour (lecture seule : réimpression / envoi) ; ticket d'origine : retours listés
+    var _riCard=_lxRetourInfo(a);
+    if(!isCancelled&&_riCard){
+      h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">🖨 Imprimer</button>';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">✉ Email</button>';
+      h+='<span style="font-size:11px;color:var(--orange);align-self:center">↩️ Retour / remboursement partiel du ticket #'+_lxEsc(_riCard.refTk!=null?_riCard.refTk:"--")+(_riCard.refDate?' du '+_lxJJMMAAAA(_riCard.refDate):'')+'</span>';
+      h+='</div>';
+    }
+    if(!_riCard){ var _rtCard=_lxRetoursDe(a); if(_rtCard.length){
+      h+='<div style="font-size:11px;color:var(--orange);margin-bottom:6px">↩️ '+_rtCard.map(function(t){ return 'Retour partiel n°'+(t.tkNum||"--")+' le '+fmt(t.date)+' ('+(Number(t.pr)||0).toFixed(2)+' €)'; }).join(' • ')+'</div>'; } }
+    if(!isCancelled&&_isContraTk&&!_riCard){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
@@ -33076,6 +33178,7 @@ function rTickets(){
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#a29bfe;border-color:rgba(108,92,231,.3)" onclick="corrigerCollabVente(\''+a.id+'\')">✏️ Modifier collaborateur</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#e8c873;border-color:rgba(200,168,78,.3)" onclick="modifReglement(\''+a.id+'\')">💳 Modifier règlement</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:rgba(244,67,54,.2)" onclick="deleteTicket(\''+a.id+'\')">\u274c Avoir / Annuler</button>';
+      if(_lxRetourPossibleAffichage(a)) h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:var(--orange);border-color:rgba(255,152,0,.3)" onclick="lxRetourOuvrir(\''+a.id+'\')">\u21a9\ufe0f Retour / remboursement partiel</button>'; // 2026-10-17 retour partiel
       h+='</div>';
     }
     h+='</div>';
@@ -33331,6 +33434,10 @@ function buildTicketHTML(a, isDuplicate){
     ht=Math.round(total/(1+txTVA/100)*100)/100;
     tva=Math.round((total-ht)*100)/100;
   }
+  // 2026-10-17 retour partiel : ticket de RETOUR / REMBOURSEMENT -> TVA ventilée par taux, exactement comme l'enregistrement
+  // scellé (saveTicketToDb : taux de chaque ligne, tvaTaux posé à la création du retour quand il diffère du taux unique).
+  var _ri=(typeof _lxRetourInfo==="function")?_lxRetourInfo(a):null, _riTaux=null;
+  if(_ri){ try{ _riTaux=_lxRetourTvaParTaux(a.items||[], total); ht=0; _riTaux.forEach(function(x){ ht+=x.ht; }); ht=Math.round(ht*100)/100; tva=Math.round((total-ht)*100)/100; }catch(_eRt){ _riTaux=null; } }
 
   var h="";
   // 2026-10-11 : caisse en MODE TEST (mode école NF525) -> mention sur chaque ticket
@@ -33351,8 +33458,16 @@ function buildTicketHTML(a, isDuplicate){
 
   // Numéro ticket + date
   h+="<div style=\"text-align:center;margin-bottom:8px\">";
+  if(_ri){ // 2026-10-17 retour partiel : titre et r\u00e9f\u00e9rence obligatoire du ticket d'origine
+    h+="<div style=\"font-weight:900;font-size:14px;border:2px solid #000;padding:4px;margin-bottom:4px;letter-spacing:1px\">RETOUR / REMBOURSEMENT</div>";
+    h+="<div style=\"font-weight:900;font-size:13px\">Ticket N\u00b0"+(a.tkNum||"--")+"</div>";
+  } else
   h+="<div style=\"font-weight:900;font-size:13px\">Ticket de vente N\u00b0"+(a.tkNum||"--")+"</div>";
   h+="<div style=\"font-size:12px\">"+fmt(a.date)+" \u00e0 "+(a.heureEncaiss||a.time)+"</div>";
+  if(_ri){
+    h+="<div style=\"font-size:12px;font-weight:700\">Ticket d'origine n\u00b0"+escapeHtml(String(_ri.refTk!=null?_ri.refTk:"--"))+" du "+(_ri.refDate?_lxJJMMAAAA(_ri.refDate):"--")+"</div>";
+    if(_ri.motif) h+="<div style=\"font-size:11px\">Motif : "+escapeHtml(String(_ri.motif))+"</div>";
+  }
   h+="<div style=\"font-size:12px\">Collaborateur: "+(sty?sty.n:"")+"</div>";
   h+="<div style=\"font-size:12px\">Client: "+clN+"</div>";
   // 2026-10-11 (NF525 v2.3) : opérateur qui encaisse, type de document / d'opération, nature de la vente
@@ -33380,11 +33495,13 @@ function buildTicketHTML(a, isDuplicate){
         continue;
       }
       var lt=it.price*it.qty-(it.remise||0);
-      h+="<tr style=\"border-bottom:1px solid #ccc\"><td style=\"padding:3px 0;vertical-align:top\">"+it.qty+"</td>";
-      h+="<td style=\"padding:3px 4px;font-weight:700\">"+it.name.toUpperCase()+"</td>";
+      // 2026-10-17 retour partiel : quantité retournée (produit) et libellé « RETOUR » ; montant de la ligne en négatif
+      var _qAff=it.isRetour?(Number(it.retourQty)>0?"-"+it.retourQty:"-"):it.qty;
+      h+="<tr style=\"border-bottom:1px solid #ccc\"><td style=\"padding:3px 0;vertical-align:top\">"+_qAff+"</td>";
+      h+="<td style=\"padding:3px 4px;font-weight:700\">"+(it.isRetour?"RETOUR "+(it.isProd?"PRODUIT":"PRESTATION")+" - ":"")+it.name.toUpperCase()+"</td>";
       h+="<td style=\"text-align:right;padding:3px 0\">"+lt.toFixed(2)+"</td></tr>";
       // Forfait: show phases detail
-      var sv2=it.sId?gS(it.sId):null;
+      var sv2=(it.sId&&!it.isRetour)?gS(it.sId):null; // 2026-10-17 retour partiel : pas de détail des phases sur une ligne de retour
       if(sv2&&sv2.phases&&sv2.phases.length>1){
         var phNames=[];
         for(var pi3=0;pi3<sv2.phases.length;pi3++){
@@ -33419,7 +33536,9 @@ function buildTicketHTML(a, isDuplicate){
 
   // Ventilation TVA
   h+="<table style=\"width:100%;font-size:11px;margin:6px 0;border-top:1px solid #000;border-bottom:1px solid #000\"><tr style=\"font-weight:700\"><td></td><td style=\"text-align:center\">TVA</td><td style=\"text-align:center\">HT</td><td style=\"text-align:right\">TTC</td></tr>";
-  h+="<tr><td>TVA "+txTVA+"%</td><td style=\"text-align:center\">"+tva.toFixed(2)+" \u20ac</td><td style=\"text-align:center\">"+ht.toFixed(2)+" \u20ac</td><td style=\"text-align:right\">"+total.toFixed(2)+" \u20ac</td></tr></table>";
+  if(_riTaux&&_riTaux.length) _riTaux.forEach(function(x){ h+="<tr><td>TVA "+x.taux+"%</td><td style=\"text-align:center\">"+x.tva.toFixed(2)+" \u20ac</td><td style=\"text-align:center\">"+x.ht.toFixed(2)+" \u20ac</td><td style=\"text-align:right\">"+x.ttc.toFixed(2)+" \u20ac</td></tr>"; }); // 2026-10-17 retour partiel
+  else h+="<tr><td>TVA "+txTVA+"%</td><td style=\"text-align:center\">"+tva.toFixed(2)+" \u20ac</td><td style=\"text-align:center\">"+ht.toFixed(2)+" \u20ac</td><td style=\"text-align:right\">"+total.toFixed(2)+" \u20ac</td></tr>";
+  h+="</table>";
   if(txTVA===0)h+="<p style=\"font-size:9px;text-align:center\">TVA non applicable - Art. 293B du CGI</p>";
 
   // Total TTC
@@ -33436,7 +33555,7 @@ function buildTicketHTML(a, isDuplicate){
   if(a.payments&&a.payments.length>0){
     for(var pi2=0;pi2<a.payments.length;pi2++){
       var pay=a.payments[pi2];
-      h+="<div style=\"display:flex;justify-content:space-between;font-size:12px;padding:2px 0\"><span>Pay\u00e9 en "+pay.method+" :</span><span>"+(Number(pay.amount)||0).toFixed(2)+" \u20ac</span></div>";
+      h+="<div style=\"display:flex;justify-content:space-between;font-size:12px;padding:2px 0\"><span>"+(_ri?"Rembours\u00e9 en ":"Pay\u00e9 en ")+pay.method+" :</span><span>"+(Number(pay.amount)||0).toFixed(2)+" \u20ac</span></div>";
       // FIX 2026-05-13 : ticket imprim\u00e9 = action consomm\u00e9e \u2192 "Rendu" (pas "\u00c0 rendre")
       // "\u00c0 rendre" reste affich\u00e9 en live dans l'\u00e9cran d'encaissement (prospectif).
       if(pay.given && pay.rendu && pay.rendu > 0.001){
@@ -33457,8 +33576,11 @@ function buildTicketHTML(a, isDuplicate){
   // 2026-10-11 : règlement corrigé par pièce(s) tracée(s) -> mention (le ticket d'origine n'est jamais modifié)
   try{ var _crTk=(typeof _lxCorrDeTicket==="function")?_lxCorrDeTicket(a.id):[]; if(_crTk.length) h+="<div style=\"font-size:10px;padding:2px 0\">R\u00e8glement corrig\u00e9 par pi\u00e8ce n\u00b0"+_crTk.map(function(c){ return c.num+" du "+fmt(c.date_correction); }).join(", ")+"</div>"; }catch(_eCt){}
   // Fidélité par client
+  // 2026-10-17 retour partiel : le ticket d'origine n'est jamais modifié ; ses duplicatas mentionnent les retours (affichage seul,
+  // hors données scellées — comme la mention des pièces de correction ci-dessus).
+  try{ if(!_ri&&typeof _lxRetoursDe==="function"){ var _rtD=_lxRetoursDe(a); if(_rtD.length) h+="<div style=\"font-size:10px;padding:2px 0\">Retour partiel : "+_rtD.map(function(t){ return "ticket n\u00b0"+(t.tkNum||"--")+" du "+fmt(t.date)+" ("+(Number(t.pr)||0).toFixed(2)+" \u20ac)"; }).join(", ")+"</div>"; } }catch(_eRtD){}
   var SC=window.SITE_CONFIG||{};
-  var fidActive=SC.fideliteActive!==false;
+  var fidActive=SC.fideliteActive!==false&&!_ri; // 2026-10-17 retour partiel : pas de bloc fidélité sur un ticket de retour
   var fSeuil=SC.fideliteSeuil||10;
   var fType=_lxFidType(); // 2026-10-14 audit : même règle qu'en caisse (FIDCONF.type d'abord)
   var fVal=SC.fideliteValeur||10;
@@ -33499,7 +33621,7 @@ function buildTicketHTML(a, isDuplicate){
   }
 
   // Carte d'abonnement info on ticket
-  if(a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0&&typeof getActiveCarteAbo==="function"){
+  if(!_ri&&a.cId&&a.cId.indexOf&&a.cId.indexOf("passage")<0&&typeof getActiveCarteAbo==="function"){ // 2026-10-17 retour partiel : pas de bloc carte sur un retour
     var _tkCA=getActiveCarteAbo(a.cId);
     if(_tkCA){
       var _ecoTk=0;
@@ -33562,6 +33684,9 @@ function viewClientTicket(apptId){
   html += '<div style="flex:1;min-width:0">';
   html += '<div style="font-weight:700;font-size:14px;color:#fff">Ticket #'+(a.tkNum||"--")+'</div>';
   html += '<div style="font-size:11px;color:var(--text3)">'+fmt(a.date)+(a.time?' \u00e0 '+a.time:'')+' \u00b7 '+clNom+'</div>';
+  // 2026-10-17 retour partiel : information en lecture seule (le ticket d'origine n'est jamais modifi\u00e9)
+  try{ var _riV=_lxRetourInfo(a); if(_riV) html += '<div style="font-size:11px;color:var(--orange);margin-top:2px">\u21a9\ufe0f Retour du ticket #'+_lxEsc(_riV.refTk!=null?_riV.refTk:"--")+(_riV.refDate?' du '+_lxJJMMAAAA(_riV.refDate):'')+'</div>';
+    else { var _rtV=_lxRetoursDe(a); if(_rtV.length) html += '<div style="font-size:11px;color:var(--orange);margin-top:2px">\u21a9\ufe0f '+_rtV.map(function(t){ return 'Retour partiel n\u00b0'+(t.tkNum||"--")+' le '+fmt(t.date)+' ('+(Number(t.pr)||0).toFixed(2)+' \u20ac)'; }).join(' \u2022 ')+'</div>'; } }catch(_eRV){}
   html += '</div>';
   html += '</div>';
   // Aper\u00e7u ticket (fond blanc, contenu Helvetica). Font augment\u00e9 de 11px \u00e0 14px
@@ -33697,7 +33822,7 @@ function lxCorrReglOuvrir(apId){
 }
 async function _lxCorrReglModale(apId){
   var a=null; for(var i=0;i<AP.length;i++){ if(AP[i].id===apId){ a=AP[i]; break; } } if(!a) return;
-  var tk=await _sb.from("tickets").select("id,num,total_ttc,detail_paiement,date_ticket,status,raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>id",apId).maybeSingle();
+  var tk=await _sb.from("tickets").select("id,num,total_ttc,detail_paiement,date_ticket,status,raw_data->>tkNum").eq("salon_id",_salonId).in("raw_data->>id",_lxRetourIdsVariantes(apId)).limit(1).maybeSingle(); // 2026-10-17 retour partiel (audit) : ticket de réservation en ligne (« online_<uuid> » au journal) retrouvé
   if(!tk||tk.error||!tk.data){ toast("Ticket scellé introuvable en base","error"); return; }
   var T0=tk.data; await lxCorrReglCharger();
   var cur={}; Object.keys(T0.detail_paiement||{}).forEach(function(k){ var v=Number(T0.detail_paiement[k]); if(!isNaN(v)&&v) cur[k]=Math.round(((cur[k]||0)+v)*100)/100; });
@@ -33745,7 +33870,7 @@ function modifReglement(id){
   var a=null;for(var i=0;i<AP.length;i++){if(AP[i].id===id){a=AP[i];break;}}
   if(!a)return;
   // 2026-10-14 audit (NF525) : le règlement d'un contre-ticket / d'un ticket annulé ne se corrige pas
-  if(typeof _lxAnnulationRefusee==="function"){ var _rfR=_lxAnnulationRefusee(a); if(_rfR){ showAlert(_rfR,"warning"); return; } }
+  if(typeof _lxAnnulationRefusee==="function"){ var _rfR=_lxAnnulationRefusee(a,{reglement:true}); if(_rfR){ showAlert(_rfR,"warning"); return; } } // 2026-10-17 retour partiel (audit) : ticket ayant un retour -> règlement corrigeable
   var cur=(a.met||"");
   var isLocked=!!(window.LOCKED_DAYS&&window.LOCKED_DAYS[a.date]);
   var mixte=(Array.isArray(a.payments)&&a.payments.length>1);
@@ -33760,6 +33885,7 @@ function modifReglement(id){
     htm+='<button class="btn bg" style="width:100%;padding:13px;margin-bottom:8px;font-weight:800" onclick="cM();lxCorrReglOuvrir(\''+a.id+'\')">🧾 Corriger le moyen de paiement (pièce tracée)</button>';
     htm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Fermer</button>';
     htm+='<button class="btn" style="flex:1;background:var(--red);color:#fff" onclick="cM();deleteTicket(\''+a.id+'\')">❌ Avoir / Annuler</button></div>';
+    if(_lxRetourPossibleAffichage(a)) htm+='<button class="btn" style="width:100%;margin-top:8px;background:var(--orange-bg);color:var(--orange);font-weight:700" onclick="cM();lxRetourOuvrir(\''+a.id+'\')">↩️ Retour / remboursement partiel</button>'; // 2026-10-17 retour partiel
   } else {
     htm+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Choisissez le nouveau mode. Le montant ne change pas. Le ticket enregistré n\u2019est jamais modifi\u00e9 : le changement est trac\u00e9 par une pi\u00e8ce de correction num\u00e9rot\u00e9e et sign\u00e9e.</div>';
     htm+='<label style="font-size:12px;color:var(--text3);display:block;margin-bottom:4px">Motif (optionnel)</label>';
@@ -33858,6 +33984,8 @@ async function doModifTicket(id,isPast){
   // 2026-10-14 (NF525) : la modification scelle un contre-ticket + un nouveau ticket -> journée ouverte obligatoire
   if(window._lxModifEnCours) return; window._lxModifEnCours=true; var _okJm; try{ _okJm=await lxJourOuvertOuAlerte(); } finally { setTimeout(function(){ window._lxModifEnCours=false; },1500); }
   if(!_okJm) return;
+  // 2026-10-17 retour partiel : retour enregistré sur un autre appareil -> pas de modification (contre-ticket total)
+  try{ var _oMr=null; for(var _imr=0;_imr<AP.length;_imr++){ if(AP[_imr].id===id){ _oMr=AP[_imr]; break; } } if(_oMr&&typeof _lxRetoursEnBase==="function"){ var _rtM=await _lxRetoursEnBase(_oMr); if(_rtM===null){ showAlert(LX_RETOUR_CTRL_IMPOSSIBLE,"warning"); return; } /* 2026-10-17 retour partiel (audit) : contrôle impossible en ligne -> pas de contre-ticket */ if(_rtM&&_rtM.length){ showAlert("Ce ticket a déjà fait l’objet d’un retour partiel (ticket n°"+_rtM.map(function(r){ return r.tk||r.num||"--"; }).join(", n°")+") : il ne peut plus être modifié.","warning"); return; } } }catch(_eRtM){}
   var newPr=parseFloat(document.getElementById("mtVal").value);
   var newSId=parseInt(document.getElementById("mtSvc").value);
   var newStId=parseInt(document.getElementById("mtSt").value);
@@ -37138,6 +37266,10 @@ async function _cancelSecureTicketDoUneFois(id,motif){
   // (une annulation faite après minuit n'est plus datée de la veille).
   if(window._lxContraEnCours) return; window._lxContraEnCours=true; var _okJr; try{ _okJr=await lxJourOuvertOuAlerte(); } finally { setTimeout(function(){ window._lxContraEnCours=false; },1500); } // 2026-10-14 : pas de double appui pendant le contrôle
   if(!_okJr) return;
+  // 2026-10-17 retour partiel : un retour partiel a pu être enregistré sur un AUTRE appareil -> relecture bornée du journal des
+  // tickets (hors ligne : on s'en remet à la mémoire ; en ligne, contrôle impossible = avoir bloqué ; la base refuse de toute façon le
+  // contre-ticket, cf. migrations_1017).
+  try{ if(typeof _lxRetoursEnBase==="function"){ var _rtB=await _lxRetoursEnBase(orig); if(_rtB===null){ showAlert(LX_RETOUR_CTRL_IMPOSSIBLE,"warning"); return; } /* 2026-10-17 retour partiel (audit) : contrôle impossible en ligne -> pas d'avoir (l'original serait marqué annulé avant le refus du serveur) */ if(_rtB&&_rtB.length){ showAlert("Ce ticket a déjà fait l’objet d’un retour partiel (ticket n°"+_rtB.map(function(r){ return r.tk||r.num||"--"; }).join(", n°")+", enregistré sur un autre appareil) : l’avoir total n’est plus possible. Utilisez « Retour / remboursement partiel » pour le reste.","warning"); return; } } }catch(_eRtB){}
   // === FIX 2026-07-11 : annulation MEME JOUR d un VRAI RDV -> le RDV doit redevenir "a encaisser" ===
   // Incident du 11/07 : un ticket encaisse PAR ERREUR sur le RDV d un autre client a ete annule
   // (bon reflexe) ; le RDV restait "verrouille / encaisse" et sa vraie prestation ne pouvait PLUS
@@ -37290,11 +37422,18 @@ async function _cancelSecureTicketDoUneFois(id,motif){
 // Ticket ancien sans relev\u00e9 : les produits / bons / forfaits port\u00e9s par ses lignes sont signal\u00e9s \u00e0 l'op\u00e9rateur
 // (r\u00e9gularisation manuelle), rien n'est devin\u00e9.
 // =====================================================================
-function _lxAnnulationRefusee(orig){
+function _lxAnnulationRefusee(orig, opts){ // 2026-10-17 retour partiel (audit) : opts.reglement = contrôle pour « Modifier règlement » (correction du moyen de paiement)
   try{
     if(!orig) return "Ticket introuvable";
     if(orig.cancelled===true||orig.st==="cancelled") return "Ce ticket est d\u00e9j\u00e0 annul\u00e9 (un contre-ticket existe).";
     if(orig.isCancel===true||orig.contraSameDay===true) return "Un contre-ticket d\u2019annulation ne peut pas \u00eatre annul\u00e9 ni modifi\u00e9 (op\u00e9ration n\u00e9gative d\u00e9finitive).";
+    // 2026-10-17 retour partiel : un ticket de retour est une op\u00e9ration en \u00ab moins \u00bb d\u00e9finitive ; un ticket qui a d\u00e9j\u00e0 un retour
+    // partiel ne peut plus \u00eatre annul\u00e9 en totalit\u00e9 (le remboursement d\u00e9passerait le pay\u00e9) ni modifi\u00e9.
+    if(typeof _lxEstRetour==="function"&&_lxEstRetour(orig)) return "Un ticket de retour / remboursement partiel est une op\u00e9ration n\u00e9gative d\u00e9finitive : il ne peut pas \u00eatre annul\u00e9, modifi\u00e9 ni voir son r\u00e8glement corrig\u00e9.";
+    // 2026-10-17 retour partiel (audit) : la correction du MOYEN DE PAIEMENT du ticket d'origine (pièce tracée, montant inchangé) reste
+    // possible après un retour partiel, et la fenêtre « Modifier règlement » propose aussi un nouveau retour : seuls l'avoir total et la
+    // modification (contre-ticket + nouveau ticket) sont refusés.
+    if(typeof _lxRetoursDe==="function"&&!(opts&&opts.reglement)){ var _rtA=_lxRetoursDe(orig); if(_rtA.length) return "Ce ticket a d\u00e9j\u00e0 fait l\u2019objet d\u2019un retour partiel (ticket n\u00b0"+_rtA.map(function(t){ return t.tkNum||"--"; }).join(", n\u00b0")+") : il ne peut plus \u00eatre annul\u00e9 en totalit\u00e9 ni modifi\u00e9. Pour rembourser le reste, utilisez \u00ab Retour / remboursement partiel \u00bb."; }
     var its=orig.items||[];
     if(its.some(function(it){ return it&&/^ANNULATION\b/.test(String(it.name||"")); })&&Number(orig.pr)<0) return "Un contre-ticket d\u2019annulation ne peut pas \u00eatre annul\u00e9.";
     // contre-ticket d\u00e9j\u00e0 pr\u00e9sent pour ce ticket (marqueur \u00ab cancelled \u00bb perdu, autre appareil)
@@ -37448,6 +37587,393 @@ async function _lxEffetsExecuter(plan, orig, contra){
   try{ if(typeof saveAuditEntry==="function") saveAuditEntry("ANNULATION_EFFETS",JSON.stringify({ticket:orig.tkNum||null,contre_ticket:contra&&contra.tkNum,faits:faits,a_regulariser:echecs}).slice(0,2000)); }catch(_eA2){}
   if(echecs.length){ try{ showAlert("Ticket annul\u00e9. \u00c0 r\u00e9gulariser \u00e0 la main :\n- "+echecs.join("\n- "),"warning"); }catch(_eS2){} }
   else if(faits.length){ try{ toast("Effets du ticket annul\u00e9s : "+faits.join(", "),"success"); }catch(_eT){} }
+}
+// =====================================================================
+// 2026-10-17 retour partiel — RETOUR / REMBOURSEMENT PARTIEL D'UN TICKET VALIDÉ (accord de l'éditeur, NF525)
+// BOI-TVA-DECLA-30-10-30 §90 : une opération enregistrée ne se modifie pas ; sa correction est une opération NOUVELLE en « moins ».
+// Le retour est donc un NOUVEAU ticket NÉGATIF : numéroté dans la séquence normale (nextTicketNum), chaîné (chainTicket : hash +
+// précédent), enregistré par saveTicketToDb — même chemin que tous les tickets et contre-tickets : numéro, chaînage et empreinte
+// serveur (ticket_nf525_insert), scellement nf525_hash_seal, signature ES256 « TK » par nf525-sign (type R = retour) — daté du
+// jour du retour, avec la référence du ticket d'origine (identifiant, n°, date) portée par le ticket ET par chacune de ses lignes.
+// Le ticket d'origine n'est JAMAIS modifié (ni annulé, ni marqué) : les écrans retrouvent ses retours par cette référence.
+// Garde-fous : connexion obligatoire (relecture du journal : ticket d'origine scellé, retours déjà enregistrés sur tout appareil,
+// contre-ticket éventuel), cumul des retours <= payé, quantités <= achetées, pas de retour sur un ticket annulé / contre-ticket /
+// ticket de retour / acompte / annulation d'acompte / retenue, même mode de caisse (test / réel), journée ouverte ; 100 % du ticket
+// sans retour antérieur -> « Avoir / Annuler » (annulation totale, qui inverse aussi tous les effets de gestion).
+// Base (docs/migrations_1017/retour_partiel.sql) : le serveur refuse tout retour incohérent (LX_RETOUR_REFUSE) ; tant que la
+// migration n'est pas appliquée, les contrôles ci-dessous sont faits par l'application seule.
+// =====================================================================
+var LX_RETOUR_MODES=[{k:"Espèces",l:"💵 Espèces"},{k:"CB",l:"💳 Carte bancaire"},{k:"Chèque",l:"📝 Chèque"},{k:"Virement",l:"🏦 Virement"}];
+function _lxR2(x){ return Math.round((Number(x)||0)*100)/100; }
+function _lxJJMMAAAA(d){ var s=String(d||"").slice(0,10); return /^\d{4}-\d{2}-\d{2}$/.test(s)?s.split("-").reverse().join("/"):(s||"--"); }
+// Refus « statiques » (mémoire) : mêmes exclusions que l'avoir (cf. _cancelSecureTicketDoUneFois, 2026-10-14)
+function _lxRetourRefus(orig){
+  try{
+    if(!orig) return "Ticket introuvable";
+    if(orig.st!=="done"||!orig.tkNum) return "Seul un ticket encaissé et numéroté peut faire l’objet d’un retour.";
+    if(orig.cancelled===true||orig.st==="cancelled") return "Ce ticket est annulé (avoir total déjà fait) : aucun retour possible.";
+    if(orig.isCancel===true||orig.contraSameDay===true) return "Un contre-ticket d’annulation ne peut pas faire l’objet d’un retour.";
+    if(_lxEstRetour(orig)) return "Un ticket de retour ne peut pas faire l’objet d’un nouveau retour.";
+    var its=orig.items||[];
+    if(its.some(function(it){ return it&&/^ANNULATION\b/.test(String(it.name||"")); })&&Number(orig.pr)<0) return "Un contre-ticket d’annulation ne peut pas faire l’objet d’un retour.";
+    if(orig.isRetenue===true||its.some(function(it){ return it&&it.isRetenue; })) return "Ticket d’acompte conservé : contactez le support pour une régularisation.";
+    var _ac=orig.isAcompte===true||its.some(function(it){ return it&&it.isAcompte; });
+    var _acA=orig.isAcompteCancel===true||its.some(function(it){ return it&&it.isAcompteCancel; });
+    if((_ac||_acA)&&(orig.isAcompteEnLigne===true||its.some(function(it){ return it&&it.isAcompteEnLigne; }))) return "Acompte payé en ligne : le remboursement se fait depuis le rendez-vous (annulation / remboursement partiel) ; le ticket de remboursement est créé automatiquement.";
+    if(_ac||_acA||orig.acompteKey||orig.retenueKey) return "Pour un acompte, utilisez « Annuler l’acompte » depuis le rendez-vous.";
+    if(!(Number(orig.pr)>0.004)) return "Ticket sans montant encaissé : aucun remboursement possible.";
+    for(var i=0;i<AP.length;i++){ var t=AP[i];
+      if(t&&t!==orig&&t.isCancel===true&&t.cancelRef!=null&&((orig.tkNum!=null&&String(t.cancelRef)===String(orig.tkNum))||String(t.cancelRef)===String(orig.id))) return "Ce ticket a déjà un contre-ticket d’annulation (#"+(t.tkNum||"--")+") : aucun retour possible.";
+    }
+  }catch(_e){ return "Contrôle du ticket impossible"; }
+  return null;
+}
+function _lxRetourPossibleAffichage(a){
+  try{ if(window._lxDemo||window._lxVueAdmin) return false; if(_lxRetourRefus(a)) return false;
+    var dej=0; _lxRetoursDe(a).forEach(function(t){ dej+=-(Number(t.pr)||0); }); return _lxR2(Number(a.pr)-dej)>0.004; }catch(_e){ return false; }
+}
+// Lignes remboursables du ticket d'origine : part réellement payée (remise globale / bon cadeau / acompte déduit répartis au prorata,
+// même principe que _splitPrestProd), déjà remboursé par les retours antérieurs, reste.
+function _lxRetourLignes(orig, retours){
+  var its=orig.items||[], L=[], sumPos=0, pr=_lxR2(orig.pr);
+  var taux=Number(lxTauxTVA()), dual=(SALON_CONFIG.tvaProduits!=null&&Number(SALON_CONFIG.tvaProduits)!==taux), txP=dual?Number(SALON_CONFIG.tvaProduits):taux;
+  its.forEach(function(it,idx){
+    if(!it||it.isSep||it.isAcompteData||it.isAcompteDeduct||it.isAcompte||it.isAcompteCancel||it.isRetenue||it.isRetour) return;
+    var qty=Number(it.qty)||1, net=_lxR2((Number(it.price)||0)*qty-(Number(it.remise)||0));
+    if(!(net>0.004)) return;
+    var bloq=null;
+    if(it.isBon) bloq="bon cadeau vendu";
+    else if(it.isCarteAbo) bloq="carte d’abonnement vendue";
+    else if(it.isPack||it.packSeance) bloq="forfait / séance de forfait";
+    var _tx=(it.tvaTaux!=null&&!isNaN(Number(it.tvaTaux)))?Number(it.tvaTaux):null;
+    L.push({idx:idx, name:String(it.name||(it.isProd?"Produit":"Prestation")), isProd:!!it.isProd, prodId:it.prodId||null, sId:it.sId||null,
+      qty:qty, net:net, bloq:bloq, taux:(_tx!=null?_tx:(it.isProd?txP:taux)), tauxPropre:(_tx!=null)});
+    sumPos+=net;
+  });
+  if(!L.length&&pr>0.004){ // ticket ancien sans lignes : une ligne unique
+    var sv=(orig.sId&&typeof gS==="function")?gS(orig.sId):null;
+    L.push({idx:-1, name:sv?sv.n:"Prestation", isProd:false, prodId:null, sId:orig.sId||null, qty:1, net:pr, bloq:null, taux:taux, tauxPropre:false}); sumPos=pr;
+  }
+  var ratio=sumPos>0.004?pr/sumPos:0, cumul=0;
+  L.forEach(function(l,i){ l.paye=(i===L.length-1)?_lxR2(pr-cumul):_lxR2(l.net*ratio); cumul=_lxR2(cumul+l.paye); l.deja=0; l.dejaQty=0; });
+  (retours||[]).forEach(function(r){ (r.items||[]).forEach(function(ri){
+    if(!ri||ri.isRetour!==true) return; var k=Number(ri.retourIdx); var l=null; for(var j=0;j<L.length;j++){ if(L[j].idx===k){ l=L[j]; break; } } if(!l) return;
+    l.deja=_lxR2(l.deja-((Number(ri.price)||0)*(Number(ri.qty)||1)-(Number(ri.remise)||0))); l.dejaQty+=Number(ri.retourQty)||0; }); });
+  L.forEach(function(l){ l.reste=l.bloq?0:Math.max(0,_lxR2(l.paye-l.deja)); l.resteQty=l.isProd?Math.max(0,l.qty-l.dejaQty):0; });
+  return L;
+}
+// TVA d'un ticket de retour, par taux (même calcul que saveTicketToDb : taux de chaque ligne)
+function _lxRetourTvaParTaux(items, ttcTotal){
+  var tx=Number(lxTauxTVA()), dual=(SALON_CONFIG.tvaProduits!=null&&Number(SALON_CONFIG.tvaProduits)!==tx), txP=dual?Number(SALON_CONFIG.tvaProduits):tx;
+  var parT={}, ordre=[];
+  (items||[]).forEach(function(it){ if(!it||it.isSep) return; var s=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0);
+    var r=(it.tvaTaux!=null&&!isNaN(Number(it.tvaTaux)))?Number(it.tvaTaux):(it.isProd?txP:tx); var k=String(r); if(!(k in parT)){ parT[k]=0; ordre.push(k); } parT[k]+=s; });
+  if(!ordre.length){ parT[String(tx)]=Number(ttcTotal)||0; }
+  ordre=Object.keys(parT); // même ordre que saveTicketToDb (Object.keys) -> même répartition des centimes
+  var out=[], reste=_lxR2(ttcTotal);
+  ordre.forEach(function(k,i){ var ttc=(i===ordre.length-1)?reste:_lxR2(parT[k]); reste=_lxR2(reste-ttc); var r=Number(k);
+    var ht=(r>0)?_lxR2(ttc/(1+r/100)):ttc; out.push({taux:r, ttc:ttc, ht:ht, tva:_lxR2(ttc-ht)}); });
+  return out;
+}
+// Relecture du journal des tickets (source de vérité) : ticket d'origine scellé, retours déjà enregistrés, contre-ticket éventuel
+async function _lxRetourEtatServeur(orig){
+  if(window._lxDemo) return {ok:false, erreur:"démonstration (aucun enregistrement)"};
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId) return {ok:false, erreur:"base injoignable"};
+  if(typeof _isOnline!=="undefined"&&_isOnline===false) return {ok:false, erreur:"hors connexion"};
+  try{
+    // 2026-10-17 retour partiel (audit) : identifiant sous ses deux formes (« <uuid> » / « online_<uuid> ») ; collaborateur du
+    // ticket d'origine relu (contrainte tickets_operator_required : le ticket de retour reprend le même collaborateur).
+    var ids=_lxRetourIdsVariantes(orig.id), refs=ids.slice(); if(orig.tkNum!=null&&String(orig.tkNum)!=="") refs.push(String(orig.tkNum));
+    var q1=_sb.from("tickets").select("id,num,date_ticket,total_ttc,status,mode_caisse,collaborateur_id,collaborateur_nom,rid:raw_data->>id,tk:raw_data->>tkNum,isCancel:raw_data->>isCancel,isRetour:raw_data->>isRetour,eff:raw_data->lxEffets").eq("salon_id",_salonId).in("raw_data->>id",ids).order("num",{ascending:true}).limit(1);
+    var q2=_sb.from("tickets").select("id,num,date_ticket,total_ttc,status,items,rid:raw_data->>id,tk:raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>isRetour","true").in("raw_data->>retourRefId",ids).order("num",{ascending:true}).limit(500);
+    var q3=_sb.from("tickets").select("id,num,tk:raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>isCancel","true").in("raw_data->>cancelRef",refs).limit(5);
+    var R=await Promise.all([_lxAvecDelai(q1,6000),_lxAvecDelai(q2,6000),_lxAvecDelai(q3,6000)]);
+    for(var i=0;i<R.length;i++){ if(!R[i]||R[i].__delai) return {ok:false, erreur:"délai de réponse dépassé"}; if(R[i].error) return {ok:false, erreur:R[i].error.message||"erreur serveur"}; }
+    return {ok:true, row:(R[0].data||[])[0]||null, retours:R[1].data||[], contra:R[2].data||[]};
+  }catch(e){ return {ok:false, erreur:(e&&e.message)||"erreur"}; }
+}
+// Pour l'avoir total et la modification : retours déjà enregistrés en base (autre appareil). [] si aucun ou hors connexion.
+// 2026-10-17 retour partiel (audit) : EN LIGNE, un contrôle impossible (délai, erreur) renvoie null et l'appelant BLOQUE l'avoir :
+// l'avoir marque le ticket d'origine « annulé » AVANT l'envoi du contre-ticket (marque irréversible côté base) ; si le serveur
+// refusait ensuite ce contre-ticket (retour fait sur un autre appareil), le rendez-vous resterait annulé sans contre-ticket au
+// journal (Z bloquée, clôture de nuit refusée). Hors connexion : mémoire de l'appareil (comportement antérieur de l'avoir).
+async function _lxRetoursEnBase(orig){
+  try{
+    if(!orig||!orig.id||window._lxDemo||typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||(typeof _isOnline!=="undefined"&&_isOnline===false)) return [];
+    try{ if(typeof navigator!=="undefined"&&navigator.onLine===false) return []; }catch(_eN){}
+    var r=await _lxAvecDelai(_sb.from("tickets").select("id,num,tk:raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>isRetour","true").in("raw_data->>retourRefId",_lxRetourIdsVariantes(orig.id)).limit(20),5000);
+    if(!r||r.__delai||r.error||!Array.isArray(r.data)) return null;
+    return r.data;
+  }catch(_e){ return null; }
+}
+var LX_RETOUR_CTRL_IMPOSSIBLE="Vérification impossible auprès du serveur (retours partiels déjà faits sur un autre appareil). Rien n’a été enregistré. Réessayez dans un instant.";
+function _lxRetourControleServeur(orig, st){
+  if(!st||!st.ok) return {refus:"Le retour partiel nécessite une connexion au serveur : le journal des tickets doit être relu (ticket d’origine scellé, retours déjà enregistrés sur tous les appareils). Motif : "+((st&&st.erreur)||"inconnu")+". Réessayez une fois la connexion rétablie."};
+  var row=st.row;
+  if(!row) return {refus:"Le ticket n°"+(orig.tkNum||"--")+" n’est pas encore enregistré sur le serveur (file de secours de l’appareil). Attendez sa transmission puis réessayez."};
+  if(row.status==="cancelled") return {refus:"Ce ticket est enregistré comme annulé : aucun retour possible."};
+  if(String(row.isCancel)==="true"||String(row.isRetour)==="true") return {refus:"Ce ticket est une opération négative (contre-ticket ou retour) : aucun retour possible."};
+  if(!(Number(row.total_ttc)>0.004)) return {refus:"Ticket enregistré sans montant encaissé : aucun remboursement possible."};
+  if(Math.abs(Number(row.total_ttc)-Number(orig.pr))>0.005) return {refus:"Montant différent entre l’appareil ("+_lxR2(orig.pr).toFixed(2)+" €) et le ticket enregistré ("+_lxR2(row.total_ttc).toFixed(2)+" €). Rechargez l’application puis réessayez."};
+  var mode=window.LX_MODE_CAISSE||null;
+  if(row.mode_caisse&&mode&&row.mode_caisse!==mode) return {refus:"Ticket enregistré en caisse « "+row.mode_caisse+" » alors que la caisse est en « "+mode+" » : retour impossible (les opérations de test et les opérations réelles ne se mélangent pas)."};
+  if(st.contra&&st.contra.length) return {refus:"Ce ticket a déjà un contre-ticket d’annulation (n°"+st.contra.map(function(c){ return c.tk||c.num; }).join(", n°")+") : aucun retour possible."};
+  return {ok:true};
+}
+// Retours connus : journal (fait foi) + retours de cet appareil pas encore transmis
+function _lxRetourFusion(orig, srv){
+  var vus={}, out=[];
+  (srv||[]).forEach(function(r){ vus[String(r.rid||"")]=1; out.push({id:r.rid, tk:(r.tk||r.num), total:Number(r.total_ttc)||0, items:Array.isArray(r.items)?r.items:[], date:r.date_ticket}); });
+  _lxRetoursDe(orig).forEach(function(t){ if(vus[String(t.id)]) return; out.push({id:t.id, tk:t.tkNum, total:Number(t.pr)||0, items:t.items||[], date:t.date, local:true}); });
+  return out;
+}
+function lxRetourOuvrir(id){
+  var go2=function(){ _lxRetourModale(id); };
+  // même mécanisme que l'avoir : permission « refund », sinon code PIN d'un administrateur
+  if(typeof hasPermission==="function"&&!hasPermission("refund")){
+    if(typeof requireAdmin==="function"){ requireAdmin("Retour / remboursement partiel", go2); return; }
+  }
+  go2();
+}
+window.lxRetourOuvrir=lxRetourOuvrir;
+async function _lxRetourModale(id){
+  var orig=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===id){ orig=AP[i]; break; } }
+  var rf=_lxRetourRefus(orig); if(rf){ showAlert(rf,"warning"); return; }
+  if(window._lxVueAdmin||(typeof _lxEcrituresBloquees==="function"&&_lxEcrituresBloquees())){ showAlert("Lecture seule : aucun retour ne peut être enregistré.","info"); return; }
+  if(window._lxRetourOuverture) return; window._lxRetourOuverture=true;
+  var st=null; try{ if(typeof toast==="function") toast("Vérification du ticket auprès du serveur…","info"); st=await _lxRetourEtatServeur(orig); } finally { window._lxRetourOuverture=false; }
+  var ctl=_lxRetourControleServeur(orig, st); if(ctl.refus){ showAlert(ctl.refus,"warning"); return; }
+  var retours=_lxRetourFusion(orig, st.retours), L=_lxRetourLignes(orig, retours);
+  var dejaTot=0; retours.forEach(function(r){ dejaTot+=-(Number(r.total)||0); }); dejaTot=_lxR2(dejaTot);
+  var payeRestant=Math.max(0,_lxR2(Number(orig.pr)-dejaTot));
+  if(payeRestant<0.005){ showAlert("Ce ticket a déjà été entièrement remboursé par des retours partiels.","info"); return; }
+  window._lxRetourCtx={origId:orig.id, L:L, dejaTot:dejaTot, payeRestant:payeRestant, nbRetours:retours.length};
+  // mode de remboursement proposé : mode principal de l'original (si espèces / CB / chèque / virement)
+  var b=_lxPayBuckets(orig), modeDef="Espèces", mx=0;
+  [["cb","CB"],["esp","Espèces"],["chq","Chèque"],["vir","Virement"]].forEach(function(x){ if((Number(b[x[0]])||0)>mx+0.004){ mx=Number(b[x[0]]); modeDef=x[1]; } });
+  var e2=function(v){ return _lxR2(v).toFixed(2)+" €"; };
+  var h='<div class="mbox" style="max-width:560px;max-height:92vh;overflow-y:auto">';
+  h+='<h2 style="margin-bottom:4px">↩️ Retour / remboursement partiel</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);margin-bottom:8px">Ticket <strong>n°'+_lxEsc(orig.tkNum)+'</strong> du '+_lxJJMMAAAA(orig.date)+' — '+_lxEsc(apptClientLabel(orig))+'<br>Payé : <strong>'+e2(orig.pr)+'</strong>'+(dejaTot>0.004?' · déjà remboursé : <strong>'+e2(dejaTot)+'</strong>':'')+' · remboursable : <strong style="color:var(--gold)">'+e2(payeRestant)+'</strong></div>';
+  h+='<div style="background:var(--orange-bg);padding:10px;border-radius:8px;font-size:12px;line-height:1.5;margin-bottom:10px">Un <strong>ticket de retour</strong> numéroté et scellé (montant négatif) est créé aujourd’hui avec la référence du ticket d’origine. Le ticket d’origine n’est pas modifié. Opération définitive (loi anti-fraude).</div>';
+  L.forEach(function(l,i){
+    h+='<div style="border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px;margin-bottom:8px">';
+    h+='<div style="display:flex;justify-content:space-between;gap:8px"><strong style="font-size:13px">'+_lxEsc(l.name)+'</strong><span style="font-size:11px;color:var(--text3)">'+(l.isProd?"Produit":"Prestation")+(l.taux!=null?' · TVA '+l.taux+'%':'')+'</span></div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin:3px 0 6px">Acheté : '+l.qty+' — payé '+e2(l.paye)+(l.deja>0.004||l.dejaQty?' · déjà remboursé : '+e2(l.deja)+(l.isProd&&l.dejaQty?' ('+l.dejaQty+' rendu'+(l.dejaQty>1?'s':'')+')':''):'')+' · reste '+e2(l.reste)+'</div>';
+    if(l.bloq){ h+='<div style="font-size:11px;color:var(--orange)">Non remboursable ici ('+_lxEsc(l.bloq)+') : utilisez « Avoir / Annuler » (annulation totale du ticket).</div>'; }
+    else if(l.reste<0.005){ h+='<div style="font-size:11px;color:var(--text3)">Ligne déjà entièrement remboursée.</div>'; }
+    else {
+      h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">';
+      if(l.isProd) h+='<div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--text2)">Quantité rendue (max '+l.resteQty+')</label><input type="number" min="0" max="'+l.resteQty+'" step="1" value="0" class="lxRetQ" data-i="'+i+'" oninput="_lxRetourQte('+i+')" style="width:100%;padding:8px;text-align:right"></div>';
+      h+='<div style="flex:1;min-width:130px"><label style="font-size:11px;color:var(--text2)">Montant remboursé (max '+e2(l.reste)+')</label><input type="number" min="0" max="'+l.reste.toFixed(2)+'" step="0.01" value="" placeholder="0,00" class="lxRetM" data-i="'+i+'" oninput="_lxRetourMaj()" style="width:100%;padding:8px;text-align:right"></div>';
+      h+='</div>';
+      if(l.isProd) h+='<label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-top:6px"><input type="checkbox" class="lxRetS" data-i="'+i+'" checked'+(l.prodId?'':' disabled')+'> Remettre en stock'+(l.prodId?'':' (produit non rattaché au stock)')+'</label>';
+    }
+    h+='</div>';
+  });
+  h+='<label style="font-size:12px;color:var(--text2)">Moyen de remboursement</label><select id="lxRetMode" onchange="_lxRetourMaj()" style="width:100%;padding:10px;margin:4px 0 10px">';
+  LX_RETOUR_MODES.forEach(function(m){ h+='<option value="'+m.k+'"'+(m.k===modeDef?' selected':'')+'>'+m.l+'</option>'; });
+  h+='</select>';
+  h+='<label style="font-size:12px;color:var(--text2)">Motif (obligatoire, conservé au journal et imprimé sur le ticket de retour)</label><textarea id="lxRetMotif" rows="2" maxlength="200" oninput="_lxRetourMaj()" style="width:100%;margin-top:4px" placeholder="Ex : produit défectueux rendu, geste commercial sur la prestation"></textarea>';
+  h+='<div id="lxRetRecap" style="font-size:12px;margin:10px 0"></div>';
+  h+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn bg" id="lxRetBtn" style="flex:1" onclick="lxRetourValider()">Valider le remboursement</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+  _lxRetourMaj();
+}
+function _lxRetourQte(i){
+  var ctx=window._lxRetourCtx; if(!ctx||!ctx.L[i]) return; var l=ctx.L[i];
+  var qi=document.querySelector('.lxRetQ[data-i="'+i+'"]'), mi=document.querySelector('.lxRetM[data-i="'+i+'"]'); if(!qi||!mi) return;
+  var q=Math.max(0,Math.min(l.resteQty,Math.floor(Number(qi.value)||0)));
+  // montant proposé : part payée unitaire × quantité (toute la quantité restante -> tout le reste de la ligne, sans résidu d'arrondi)
+  var m=(q>=l.resteQty&&l.resteQty>0)?l.reste:Math.min(l.reste,_lxR2(l.paye/l.qty*q));
+  mi.value=q>0?m.toFixed(2):"";
+  _lxRetourMaj();
+}
+function _lxRetourLire(){
+  var ctx=window._lxRetourCtx, out={lignes:[], total:0, erreurs:[]}; if(!ctx) return out;
+  ctx.L.forEach(function(l,i){
+    if(l.bloq||l.reste<0.005) return;
+    var qi=document.querySelector('.lxRetQ[data-i="'+i+'"]'), mi=document.querySelector('.lxRetM[data-i="'+i+'"]'), si=document.querySelector('.lxRetS[data-i="'+i+'"]');
+    var rawQ=qi?String(qi.value||"0"):"0", q=qi?Number(rawQ):0, m=mi?_lxR2(String(mi.value||"").replace(",",".")):0;
+    if(qi&&(!isFinite(q)||q<0||Math.floor(q)!==q)) { out.erreurs.push("« "+l.name+" » : quantité invalide."); return; }
+    if(!isFinite(m)||m<0){ out.erreurs.push("« "+l.name+" » : montant invalide."); return; }
+    if(q>l.resteQty) out.erreurs.push("« "+l.name+" » : quantité rendue supérieure à la quantité restante ("+l.resteQty+").");
+    if(m>l.reste+0.005) out.erreurs.push("« "+l.name+" » : montant supérieur au reste remboursable ("+l.reste.toFixed(2)+" €).");
+    if(q>0&&!(m>0.004)) out.erreurs.push("« "+l.name+" » : indiquez le montant remboursé pour la quantité rendue.");
+    if(m>0.004||q>0) out.lignes.push({l:l, q:q, m:m, stock:!!(si&&si.checked&&!si.disabled&&q>0)});
+    out.total=_lxR2(out.total+m);
+  });
+  if(out.total>ctx.payeRestant+0.005) out.erreurs.push("Le total ("+out.total.toFixed(2)+" €) dépasse le montant encore remboursable ("+ctx.payeRestant.toFixed(2)+" €).");
+  return out;
+}
+function _lxRetourMaj(){
+  var ctx=window._lxRetourCtx; if(!ctx) return;
+  var sel=_lxRetourLire(), el=document.getElementById("lxRetRecap"), btn=document.getElementById("lxRetBtn");
+  var motif=((document.getElementById("lxRetMotif")||{}).value||"").trim();
+  var orig=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===ctx.origId){ orig=AP[i]; break; } }
+  var items=sel.lignes.map(function(s){ var it={price:-s.m, qty:1, isProd:s.l.isProd}; if(s.l.tauxPropre) it.tvaTaux=s.l.taux; else if(SALON_CONFIG.tvaProduits!=null&&Number(SALON_CONFIG.tvaProduits)!==Number(lxTauxTVA())) it.tvaTaux=s.l.taux; return it; });
+  var h='';
+  if(sel.total>0.004){
+    var tv=_lxRetourTvaParTaux(items, -sel.total);
+    h+='<table style="width:100%;font-size:12px;border-collapse:collapse"><tr style="color:var(--text3)"><td>TVA</td><td style="text-align:right">HT</td><td style="text-align:right">TVA</td><td style="text-align:right">TTC</td></tr>';
+    tv.forEach(function(x){ h+='<tr><td>'+x.taux+' %</td><td style="text-align:right">'+x.ht.toFixed(2)+'</td><td style="text-align:right">'+x.tva.toFixed(2)+'</td><td style="text-align:right">'+x.ttc.toFixed(2)+'</td></tr>'; });
+    h+='</table>';
+    h+='<div style="font-size:15px;font-weight:800;margin-top:6px">Total remboursé : <span style="color:var(--gold)">-'+sel.total.toFixed(2)+' € TTC</span></div>';
+    h+='<div style="font-size:11px;color:var(--text3)">Reste remboursable après ce retour : '+Math.max(0,_lxR2(ctx.payeRestant-sel.total)).toFixed(2)+' €</div>';
+  } else h+='<div style="color:var(--text3)">Indiquez la quantité rendue et / ou le montant à rembourser sur une ou plusieurs lignes.</div>';
+  var total100=(orig&&!ctx.nbRetours&&sel.total>=_lxR2(orig.pr)-0.005&&sel.total>0.004);
+  if(total100) h+='<div style="color:#ef9a9a;margin-top:6px">Vous remboursez la totalité du ticket : utilisez plutôt « ❌ Avoir / Annuler » (annulation totale, qui remet aussi la fidélité, les bons et le stock).</div>';
+  if(sel.erreurs.length) h+='<div style="color:#ef9a9a;margin-top:6px">'+sel.erreurs.map(_lxEsc).join("<br>")+'</div>';
+  if(sel.total>0.004&&motif.length<5) h+='<div style="color:var(--text3);margin-top:4px">Motif obligatoire (5 caractères minimum).</div>';
+  if(el) el.innerHTML=h;
+  var ok=sel.total>0.004&&!sel.erreurs.length&&motif.length>=5&&!total100;
+  if(btn){ btn.disabled=!ok; btn.style.opacity=ok?"1":".5"; }
+}
+async function lxRetourValider(){
+  var ctx=window._lxRetourCtx; if(!ctx) return;
+  var k=String(ctx.origId); window._lxRetourVol=window._lxRetourVol||{};
+  if(window._lxRetourVol[k]){ try{ toast("Retour de ce ticket déjà en cours…","info"); }catch(_t){} return; }
+  window._lxRetourVol[k]=true;
+  var btn=document.getElementById("lxRetBtn"); if(btn){ btn.disabled=true; btn.textContent="Enregistrement…"; }
+  try{ await _lxRetourValiderUneFois(ctx); }
+  catch(e){ console.error("[retour partiel]",e); showAlert("Retour non enregistré : "+((e&&e.message)||e),"error"); }
+  finally{ delete window._lxRetourVol[k]; var b2=document.getElementById("lxRetBtn"); if(b2){ b2.textContent="Valider le remboursement"; try{ _lxRetourMaj(); }catch(_e){} } }
+}
+async function _lxRetourValiderUneFois(ctx){
+  var orig=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===ctx.origId){ orig=AP[i]; break; } }
+  var rf=_lxRetourRefus(orig); if(rf){ showAlert(rf,"warning"); return; }
+  var sel=_lxRetourLire(); if(sel.erreurs.length){ showAlert(sel.erreurs.join("\n"),"warning"); return; }
+  if(!(sel.total>0.004)||!sel.lignes.length){ showAlert("Aucun montant à rembourser.","warning"); return; }
+  var motif=((document.getElementById("lxRetMotif")||{}).value||"").trim().replace(/[<>]/g,"").slice(0,200);
+  if(motif.length<5){ showAlert("Indiquez le motif du retour (5 caractères minimum).","warning"); return; }
+  var modeEl=document.getElementById("lxRetMode"), mode=modeEl?modeEl.value:"";
+  if(!LX_RETOUR_MODES.some(function(m){ return m.k===mode; })){ showAlert("Moyen de remboursement invalide.","warning"); return; }
+  // journée ouverte (mémoire + base ; TD recalculé : un retour fait après minuit est daté du nouveau jour)
+  var okJ=await lxJourOuvertOuAlerte(); if(!okJ) return;
+  // relecture FRAÎCHE du journal : un retour a pu être enregistré entre-temps sur un autre appareil
+  var st=await _lxRetourEtatServeur(orig); var ctl=_lxRetourControleServeur(orig, st); if(ctl.refus){ showAlert(ctl.refus,"warning"); return; }
+  var retours=_lxRetourFusion(orig, st.retours), L=_lxRetourLignes(orig, retours);
+  var dejaTot=0; retours.forEach(function(r){ dejaTot+=-(Number(r.total)||0); }); dejaTot=_lxR2(dejaTot);
+  var payeRestant=Math.max(0,_lxR2(Number(orig.pr)-dejaTot)), err=[];
+  sel.lignes.forEach(function(s){ var l=null; for(var j=0;j<L.length;j++){ if(L[j].idx===s.l.idx){ l=L[j]; break; } }
+    if(!l||l.bloq){ err.push("« "+s.l.name+" » : ligne non remboursable."); return; }
+    if(s.m>l.reste+0.005) err.push("« "+l.name+" » : reste remboursable "+l.reste.toFixed(2)+" € (un retour a peut-être été fait sur un autre appareil).");
+    if(l.isProd&&s.q>l.resteQty) err.push("« "+l.name+" » : "+l.resteQty+" pièce(s) encore retournable(s).");
+    s.l=l; });
+  if(sel.total>payeRestant+0.005) err.push("Montant encore remboursable : "+payeRestant.toFixed(2)+" €.");
+  if(err.length){ showAlert("Retour non enregistré :\n- "+err.join("\n- "),"warning"); return; }
+  if(!retours.length&&sel.total>=_lxR2(orig.pr)-0.005){
+    showAlert("Vous remboursez la totalité du ticket : utilisez « ❌ Avoir / Annuler » (annulation totale, qui inverse aussi la fidélité, les bons cadeaux et le stock).","info"); return;
+  }
+  var ratio=Number(orig.pr)>0?sel.total/Number(orig.pr):0;
+  // plan des effets de gestion (hors données fiscales), calculé AVANT la numérotation et mémorisé sur le ticket de retour
+  var E=orig.lxEffets||((st.row&&st.row.eff&&typeof st.row.eff==="object")?st.row.eff:null), plan={v:1, ratio:_lxR2(ratio*10000)/10000, fid:[], stock:[], manuel:[]};
+  if(E&&Array.isArray(E.fid)){ E.fid.forEach(function(f){ if(!f||!f.cId) return;
+      var dC=(Number(f.cag&&f.cag[1])||0)-(Number(f.cag&&f.cag[0])||0), dA=(Number(f.ca&&f.ca[1])||0)-(Number(f.ca&&f.ca[0])||0);
+      var rc=dC>0.004?_lxR2(dC*ratio):0, ra=dA>0.004?_lxR2(dA*ratio):0;
+      if(rc>0||ra>0) plan.fid.push({cId:f.cId, cag:rc, ca:ra});
+      else if(dC<-0.004) plan.manuel.push("cagnotte fidélité du client (utilisée sur ce ticket) : à vérifier"); }); }
+  else if(!E&&orig.cId&&String(orig.cId).indexOf("passage")!==0) plan.manuel.push("fidélité du client (cagnotte / chiffre cumulé) : ticket antérieur au relevé automatique, à vérifier");
+  sel.lignes.forEach(function(s){ if(s.l.isProd&&s.q>0&&s.stock){ if(s.l.prodId) plan.stock.push({prodId:s.l.prodId, qty:s.q, name:s.l.name}); else plan.manuel.push("stock « "+s.l.name+" » : produit non rattaché, à remettre à la main"); } });
+  // ---- ticket de retour (NOUVEAU ticket négatif, séquence normale) ----
+  var dual=(SALON_CONFIG.tvaProduits!=null&&Number(SALON_CONFIG.tvaProduits)!==Number(lxTauxTVA()));
+  // 2026-10-17 retour partiel (audit) : la référence est celle du JOURNAL (identifiant exact raw_data.id — « online_<uuid> » pour une
+  // réservation en ligne —, n° imprimé et date du ticket scellé), contrôlée par le déclencheur serveur.
+  var _row=st.row||{}, refId=(_row.rid!=null&&_row.rid!=="")?String(_row.rid):orig.id;
+  var refTk=(_row.tk!=null&&_row.tk!=="")?(isNaN(Number(_row.tk))?_row.tk:Number(_row.tk)):orig.tkNum, refDate=_row.date_ticket?String(_row.date_ticket).slice(0,10):orig.date;
+  var tkNumR=nextTicketNum();
+  var lignes=sel.lignes.map(function(s,ix){
+    var it={name:s.l.name, price:-s.m, qty:1, remise:0, isRetour:true, retourRefId:refId, retourRefTk:refTk, retourRefDate:refDate, retourIdx:s.l.idx};
+    if(s.l.isProd){ it.isProd=true; it.retourQty=s.q; if(s.l.prodId) it.prodId=s.l.prodId; it.restock=!!(s.stock&&s.l.prodId); }
+    if(s.l.sId) it.sId=s.l.sId;
+    if(s.l.tauxPropre||dual) it.tvaTaux=s.l.taux; // HT / TVA ligne à ligne (même taux que la ligne d'origine)
+    if(ix===0) it.retourMotif=motif;
+    return it; });
+  var now=new Date();
+  var tk={ id:U(), cId:orig.cId, sId:orig.sId, stId:(orig.stId!=null&&orig.stId!==""?orig.stId:(_row.collaborateur_id||null)),
+    date:TD, time:now.toTimeString().slice(0,5), ts:now.toISOString(),
+    pr:-sel.total, brutTotal:-sel.total, remise:0, items:lignes,
+    payments:[{method:mode, amount:-sel.total}], st:"done", met:mode, tkNum:tkNumR,
+    isRetour:true, retourRefId:refId, retourRefTk:refTk, retourRefDate:refDate, retourMotif:motif,
+    lxEffetsRetour:plan, aPhases:[], fromCaisse:true,
+    comment:"Retour / remboursement partiel du ticket n°"+refTk+" du "+_lxJJMMAAAA(refDate)+" — "+motif };
+  if(orig.clientNom) tk.clientNom=orig.clientNom; if(orig.clientPrenom) tk.clientPrenom=orig.clientPrenom;
+  if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){ tk.operator_id=CURRENT_OPERATOR.id; tk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:""); }
+  // 2026-10-17 retour partiel (audit) : contrainte tickets_operator_required (collaborateur_id OU collaborateur_nom) -> même
+  // collaborateur que le ticket d'origine au journal ; sans lui, l'insertion échouerait et resterait indéfiniment en file de secours.
+  if(_row.collaborateur_nom&&!tk.stNom) tk.stNom=String(_row.collaborateur_nom);
+  if(!tk.stId&&!tk.stNom&&tk.operator_name) tk.stNom=tk.operator_name;
+  chainTicket(tk);
+  // Enregistrement au journal des tickets AVANT tout affichage : un refus définitif du serveur ne laisse aucune trace locale.
+  var res=null; try{ res=await saveTicketToDb(tk); }catch(_eS){ res=null; }
+  var _enFile=false; try{ _enFile=(window._walGetAll?window._walGetAll():[]).some(function(e){ return e&&!e.synced&&e.type==="ticket"&&e.data&&e.data.id===tk.id; }); }catch(_eW){}
+  if((res&&res.refusDefinitif)||(!res&&!tk.dbId&&!_enFile)){
+    // rien n'est entré au journal : numéro et chaînage locaux rendus, aucun ticket créé
+    try{ if(typeof tkN!=="undefined"&&tkN===tkNumR) tkN=tkNumR-1; }catch(_eN){}
+    try{ if(_lastTicketHash===tk.hash) _lastTicketHash=tk.prevHash; }catch(_eH){}
+    var _msgR=(res&&res.error&&res.error.message)?String(res.error.message).replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,""):"connexion perdue pendant l’enregistrement";
+    try{ auditLog("RETOUR_PARTIEL_REFUSE","Retour du ticket #"+refTk+" ("+sel.total.toFixed(2)+"E) non enregistré : "+_msgR); }catch(_eA){}
+    showAlert("Retour NON enregistré : "+_msgR+"\n\nAucun ticket n’a été créé. Rechargez la liste des tickets puis réessayez.","error");
+    return;
+  }
+  AP.push(tk); window._lastSealedApptId=tk.id; // 1re impression = original
+  if(typeof saveAppointment==="function") saveAppointment(tk);
+  var _det=sel.lignes.map(function(s){ return s.l.name+(s.l.isProd&&s.q?" x"+s.q:"")+" -"+s.m.toFixed(2); }).join(" ; ");
+  auditLog("TICKET_RETOUR_PARTIEL","Retour partiel du ticket #"+refTk+" du "+refDate+" → ticket de retour #"+tkNumR+" - Montant: -"+sel.total.toFixed(2)+"E ("+mode+") - Lignes: "+_det+" - Motif: "+motif+(dejaTot>0?" - déjà remboursé avant: "+dejaTot.toFixed(2)+"E":""));
+  var _eff={faits:[],echecs:[]}; try{ _eff=await _lxRetourEffetsExecuter(plan, orig, tk)||_eff; }catch(_eEx){ console.warn("[retour partiel] effets",_eEx); _eff.echecs.push("effets de gestion : erreur ("+((_eEx&&_eEx.message)||_eEx)+")"); }
+  window._lxRetourCtx=null;
+  var hm='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center;max-width:420px">';
+  hm+='<div style="font-size:44px;margin-bottom:6px">✅</div><h2>Retour enregistré</h2>';
+  hm+='<div style="font-size:14px;margin:8px 0">Ticket de retour <strong>n°'+tkNumR+'</strong> : <strong>-'+sel.total.toFixed(2)+' €</strong> ('+_lxEsc(mode)+')</div>';
+  hm+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Référence : ticket n°'+_lxEsc(refTk)+' du '+_lxJJMMAAAA(refDate)+(tk._dbError?'<br><span style="color:var(--orange)">Transmission au serveur en attente (file de secours de l’appareil).</span>':'')+'</div>';
+  if(_eff.faits.length) hm+='<div style="font-size:12px;color:#81c784;margin-bottom:8px;text-align:left">'+_eff.faits.map(_lxEsc).join("<br>")+'</div>';
+  if(_eff.echecs.length) hm+='<div style="font-size:12px;color:var(--orange);margin-bottom:10px;text-align:left;background:var(--orange-bg);padding:8px;border-radius:8px"><strong>À vérifier / régulariser à la main :</strong><br>- '+_eff.echecs.map(_lxEsc).join("<br>- ")+'</div>';
+  hm+='<div style="display:flex;gap:8px"><button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="reprintTicket(\''+tk.id+'\')">🖨 Imprimer</button><button class="btn" style="flex:1;background:rgba(255,255,255,.06)" onclick="emailTicket(\''+tk.id+'\')">✉ Email</button></div>';
+  hm+='<button class="btn bg" style="width:100%;margin-top:8px" onclick="cM();go(\'tickets\')">Fermer</button></div></div>';
+  document.getElementById("modal").innerHTML=hm;
+}
+// 2026-10-17 retour partiel (audit) : ticket de retour accepté sur l'appareil (file de secours, erreur passagère) puis REFUSÉ
+// définitivement par le serveur au rejeu (LX_RETOUR_REFUSE : retour fait entre-temps sur un autre appareil, etc.). Il n'est jamais
+// entré au journal scellé : il est écarté de la caisse (mémoire + rendez-vous local marqué annulé, hors CA, comme un doublon
+// d'acompte) pour que la Z de l'appareil et la clôture de nuit restent égales au journal ; les effets de gestion déjà appliqués
+// (fidélité, stock) sont signalés « à régulariser ». Appelée par saveTicketToDb (luxyra-supabase.js) ; sans effet au 1er envoi
+// (le ticket n'est ajouté à la caisse qu'après la réponse du serveur, cf. _lxRetourValiderUneFois).
+async function _lxRetourRefuseEcarter(tk, msg){
+  try{
+    if(!tk||!tk.id||!_lxEstRetour(tk)) return false;
+    var ix=-1; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===tk.id){ ix=i; break; } }
+    if(ix<0) return false;
+    var loc=AP[ix]; AP.splice(ix,1);
+    var _m=String(msg||"").replace(/^.*LX_RETOUR_REFUSE\s*:?\s*/,"").slice(0,200);
+    loc.cancelled=true; delete loc.cancelDate;
+    loc.cancelReason="Ticket de retour refusé par le serveur ("+_m+") : jamais entré au journal scellé, écarté de la caisse";
+    try{ if(typeof saveAuditEntry==="function") saveAuditEntry("DB_ERROR",JSON.stringify({fn:"_lxRetourRefuseEcarter",gravite:"critical",msg:"ticket de retour refusé au rejeu, écarté de la caisse : "+_m,tk_local:loc.tkNum||null,tk_id:loc.id,ticket_origine:loc.retourRefTk||null,montant:loc.pr,effets_a_regulariser:loc.lxEffetsRetour||null}).slice(0,2000)); }catch(_eA){}
+    try{ showAlert("Le ticket de retour n°"+(loc.tkNum||"--")+" ("+(Number(loc.pr)||0).toFixed(2)+" €) a été REFUSÉ par le serveur : "+_m+".\n\nIl n’a jamais été enregistré au journal : il est retiré de la caisse. Si de l’argent a été rendu au client, refaites le retour (le serveur indique ce qui reste remboursable). Fidélité et stock éventuellement modifiés par ce retour : à vérifier.","error"); }catch(_eS){}
+    await new Promise(function(r){ setTimeout(r,1500); }); // l'enregistrement initial du rendez-vous local peut encore être en cours
+    try{ if(typeof saveAppointment==="function") await saveAppointment(loc); }catch(_eSv){}
+    window._apDirty=true;
+    return true;
+  }catch(_e){ console.warn("[_lxRetourRefuseEcarter]",_e); return false; }
+}
+window._lxRetourRefuseEcarter=_lxRetourRefuseEcarter;
+// Effets de gestion d'un retour (aucune donnée fiscale touchée) : fidélité retirée au prorata (cagnotte créditée et chiffre cumulé ;
+// les points « par visite » restent acquis : la visite a eu lieu), produits remis en stock avec mouvement « retour » tracé.
+async function _lxRetourEffetsExecuter(plan, orig, tk){
+  if(!plan) return {faits:[],echecs:[]};
+  var faits=[], echecs=(plan.manuel||[]).slice();
+  (plan.fid||[]).forEach(function(f){ try{ var cl=gC(f.cId); if(!cl){ echecs.push("fidélité (client introuvable)"); return; }
+    if(f.cag>0) cl.cagnotte=Math.max(0,_lxR2((Number(cl.cagnotte)||0)-f.cag));
+    if(f.ca>0) cl.caTotal=Math.max(0,_lxR2((Number(cl.caTotal)||0)-f.ca));
+    if(typeof saveClient==="function") saveClient(cl);
+    faits.push("fidélité "+cName(cl)+(f.cag>0?" (cagnotte -"+f.cag.toFixed(2)+" €)":"")+(f.ca>0?" (cumul -"+f.ca.toFixed(2)+" €)":"")); }catch(_eF){ echecs.push("fidélité"); } });
+  (plan.stock||[]).forEach(function(s){ try{ var p=null; for(var k=0;k<PRODS.length;k++){ if(PRODS[k].id===s.prodId){ p=PRODS[k]; break; } }
+    if(!p){ echecs.push("stock « "+s.name+" » (produit introuvable)"); return; }
+    var av=Number(p.stk)||0; p.stk=av+Number(s.qty||0);
+    if(typeof saveProduct==="function") saveProduct(p);
+    if(typeof logMouvementStock==="function") logMouvementStock(p.id,s.name||p.n||"","retour",s.qty,av,p.stk,"Retour partiel ticket #"+(orig.tkNum||"--")+" (ticket de retour #"+(tk.tkNum||"--")+")",tk.retourMotif||"");
+    faits.push("stock +"+s.qty+" "+(s.name||"")); }catch(_eS){ echecs.push("stock « "+(s.name||"")+" »"); } });
+  try{ if(typeof saveAuditEntry==="function") saveAuditEntry("RETOUR_PARTIEL_EFFETS",JSON.stringify({ticket:orig.tkNum||null,ticket_retour:tk.tkNum,ratio:plan.ratio,faits:faits,a_regulariser:echecs}).slice(0,2000)); }catch(_eA){}
+  return {faits:faits, echecs:echecs}; // affichés dans la fenêtre de confirmation du retour
 }
 // ============================================================================
 // 2026-10-16 (incident Z n°128, accord d'Alexandre) — CONTRÔLE DE LA Z CONTRE LE JOURNAL DES TICKETS AVANT SCELLEMENT
@@ -37699,6 +38225,11 @@ function cloturerJournee(opts){
   // 2026-10-14 (NF525) : nombre de tickets = tickets NUMÉROTÉS (un RDV groupé lié est marqué encaissé avec
   // tkNum null et montant 0 : il n'est pas un ticket). Les MONTANTS restent calculés sur `done` (inchangés).
   var nbTicketsNum=done.filter(function(a){ return !!a.tkNum; }).length;
+  // 2026-10-17 retour partiel : les tickets de retour sont des tickets numérotés comme les autres (comptés dans nbTickets, comme
+  // dans le journal des tickets et le contrôle serveur) et leur montant négatif est DANS totalCA / TVA / règlements. On les
+  // détaille à part (données de restitution, hors empreinte) et le panier moyen est calculé sur les seuls tickets de vente.
+  var _retZ=done.filter(function(a){ return _lxEstRetour(a); }), _retZTot=0; _retZ.forEach(function(a){ _retZTot+=Number(a.pr)||0; });
+  var _nbVentesZ=nbTicketsNum-_retZ.filter(function(a){ return !!a.tkNum; }).length;
   // Remises / rabais
   var totalRemises=0;var brutTotalGlobal=0;
   done.forEach(function(a){totalRemises+=(a.remise||0);brutTotalGlobal+=(a.brutTotal||a.pr);});
@@ -37721,7 +38252,8 @@ function cloturerJournee(opts){
     totalHT:totalHT,totalTVA:totalTVA,txTVA:txTVA,
     prestHT:prestHT,prestTVA:prestTVA,prodHT:prodHT,prodTVA:prodTVA,
     totalRemises:totalRemises,brutTotalGlobal:brutTotalGlobal,totalBonsUtilises:Math.round(totalBonsUtilises*100)/100,
-    panierMoyen:nbTicketsNum>0?Math.round(totalCA/nbTicketsNum*100)/100:0,
+    panierMoyen:(_retZ.length?(_nbVentesZ>0?Math.round(totalCA/_nbVentesZ*100)/100:0):(nbTicketsNum>0?Math.round(totalCA/nbTicketsNum*100)/100:0)), // 2026-10-17 retour partiel : sans retour, calcul inchangé
+    nbRetours:_retZ.length, totalRetours:Math.round(_retZTot*100)/100, // 2026-10-17 retour partiel (raw_data, hors empreinte)
     details:{cb:0,esp:0,chq:0,bon:0,vir:0,aut:0,enligne:0},
     perSty:perSty,hash:""};
   // FIX 2026-07-11 : « enligne » = acomptes payes en ligne (Stripe) consommes par les tickets du
@@ -38161,6 +38693,7 @@ function genererBandeMensuelle(){
   var tickets=AP.filter(function(a){return a.st==="done"&&a.date&&a.date.indexOf(mois)===0&&(typeof _lxCaOk==="function"?_lxCaOk(a):!a.cancelled);}).sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
   var annuls=AP.filter(function(a){return a.cancelled&&a.cancelDate&&a.cancelDate.indexOf(mois)===0;});
   var contreTickets=AP.filter(function(a){return a.isCancel&&a.date&&a.date.indexOf(mois)===0;}).sort(function(a,b){return(a.tkNum||0)-(b.tkNum||0);});
+  var retoursM=tickets.filter(function(a){ return _lxEstRetour(a); }); // 2026-10-17 retour partiel (déjà dans « tickets » : comptés une seule fois)
   var clotures=window.CLOTURES?window.CLOTURES.filter(function(c){return c.date&&c.date.indexOf(mois)===0;}):[];
   
   var totalTTC=0,totalHT=0,totalTVA2=0;
@@ -38213,6 +38746,14 @@ function genererBandeMensuelle(){
     h+="<tr class='tot'><td colspan='3'>TOTAL ANNULATIONS</td><td class='r'>-"+totalAnnul.toFixed(2)+" \u20ac</td></tr></table>";
   }
   
+  // Section 2 bis : retours / remboursements partiels (2026-10-17) — tickets négatifs déjà inclus dans la section 1
+  if(retoursM.length){
+    var _totRM=0; retoursM.forEach(function(t){ _totRM+=Number(t.pr)||0; });
+    h+="<h2>2 bis. RETOURS / REMBOURSEMENTS PARTIELS ("+retoursM.length+")</h2>";
+    h+="<table><tr><th>N\u00b0</th><th>Date</th><th>Ticket d'origine</th><th>Motif</th><th class='r'>Montant</th></tr>";
+    retoursM.forEach(function(t){ var ri=_lxRetourInfo(t)||{}; h+="<tr><td>"+(t.tkNum||"--")+"</td><td>"+t.date.slice(5)+"</td><td>#"+_lxEsc(ri.refTk!=null?ri.refTk:"--")+" du "+_lxJJMMAAAA(ri.refDate)+"</td><td>"+_lxEsc(ri.motif||"")+"</td><td class='r'>"+(Number(t.pr)||0).toFixed(2)+" \u20ac</td></tr>"; });
+    h+="<tr class='tot'><td colspan='4'>TOTAL REMBOURS\u00c9 (inclus dans le total des tickets)</td><td class='r'>"+_totRM.toFixed(2)+" \u20ac</td></tr></table>";
+  }
   // Section 3: Clôtures Z
   h+="<h2>3. CL\u00d4TURES Z ("+clotures.length+")</h2>";
   if(clotures.length){
@@ -38232,8 +38773,9 @@ function genererBandeMensuelle(){
   h+="<tr class='tot'><td>CA NET TTC (annulations d\u00e9j\u00e0 d\u00e9duites par les contre-tickets, comme la Z)</td><td class='r'>"+totalTTC.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>CA NET HT</td><td class='r'>"+totalHT.toFixed(2)+" \u20ac</td></tr>";
   h+="<tr><td>TVA collect\u00e9e ("+txTVA+"%)</td><td class='r'>"+totalTVA2.toFixed(2)+" \u20ac</td></tr>";
-  var _tkVentes=tickets.filter(function(t){ return !t.isCancel; });
-  h+="<tr><td>Nombre de tickets</td><td class='r'>"+tickets.length+(tickets.length!==_tkVentes.length?" (dont "+(tickets.length-_tkVentes.length)+" contre-ticket(s))":"")+"</td></tr>";
+  var _tkVentes=tickets.filter(function(t){ return !t.isCancel&&!_lxEstRetour(t); }); // 2026-10-17 retour partiel : hors tickets de retour
+  var _nbCtM=tickets.filter(function(t){ return t.isCancel; }).length;
+  h+="<tr><td>Nombre de tickets</td><td class='r'>"+tickets.length+(_nbCtM?" (dont "+_nbCtM+" contre-ticket(s))":"")+(retoursM.length?" (dont "+retoursM.length+" ticket(s) de retour)":"")+"</td></tr>";
   h+="<tr><td>Nombre d\u0027annulations</td><td class='r'>"+annuls.length+"</td></tr>";
   var _caV=0; _tkVentes.forEach(function(t){ _caV+=Number(t.pr)||0; });
   h+="<tr><td>Panier moyen TTC</td><td class='r'>"+(_tkVentes.length?(_caV/_tkVentes.length).toFixed(2):0)+" \u20ac</td></tr>";
@@ -38333,7 +38875,8 @@ function _doArchivageAnnuel(year){
       client:a.clientName||"",collaborateur:a.styName||"",
       montant_TTC:a.pr,brut_TTC:a.brutTotal||a.pr,
       remise:a.remise||0,mode:a.met,
-      hash:a.hash,prevHash:a.prevHash,hashAlgo:a.hashAlgo||""
+      hash:a.hash,prevHash:a.prevHash,hashAlgo:a.hashAlgo||"",
+      retourDe:(function(){ var ri=_lxRetourInfo(a); return ri?{ticket:ri.refTk,date:ri.refDate,motif:ri.motif}:undefined; })() // 2026-10-17 retour partiel
     };}),
     annulations:annul.map(function(a){return{
       tkNum:a.tkNum||"",date:a.cancelDate||a.date,
@@ -38428,7 +38971,7 @@ async function exportFEC(){
       var r=await _sb.from("tickets")
         // 2026-10-14 (NF525) : raw_data n'était pas sélectionné -> le libellé « dont acompte payé en ligne » (_lxLibAcompte)
         // était toujours vide. On lit uniquement les 2 champs utiles (raw_data entier contient le HTML du ticket).
-        .select("id,num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status,raw_acompte:raw_data->>acompte,raw_acompte_mode:raw_data->>acompteMode")
+        .select("id,num,date_ticket,heure_ticket,ts_created,client_id,client_nom,client_prenom,collaborateur_nom,items,total_brut,total_remise,total_ttc,total_ht,total_tva,taux_tva,mode_paiement,detail_paiement,status,raw_acompte:raw_data->>acompte,raw_acompte_mode:raw_data->>acompteMode,raw_retour:raw_data->>isRetour,raw_retour_tk:raw_data->>retourRefTk,raw_retour_date:raw_data->>retourRefDate") // 2026-10-17 retour partiel
         .eq("salon_id",_salonId)
         .gte("date_ticket",dateFrom)
         .lte("date_ticket",dateTo)
@@ -38521,6 +39064,8 @@ async function exportFEC(){
 
     // 2026-10-11 : montants négatifs (contre-ticket d'annulation) -> sens inversé, montant positif, écriture équilibrée
     var _lib=(totalTTC<0?"ANNULATION ":"VENTE ")+escFEC(libBase);
+    // 2026-10-17 retour partiel : libellé « RETOUR » avec la référence du ticket d'origine (écriture en sens inverse, équilibrée)
+    if(String(t.raw_retour)==="true") _lib="RETOUR TK "+escFEC(String(t.raw_retour_tk||"?"))+" DU "+fmtDate(t.raw_retour_date)+" "+escFEC(libBase);
     function _fl(acc,accLib,lib,amt,sens){ var v=Math.round((Number(amt)||0)*100)/100; if(Math.abs(v)<0.005) return; if(v<0){ v=-v; sens=(sens==="D")?"C":"D"; }
       lines.push(["VTE","Ventes salon",String(ecrNum),dateE,acc,accLib,"","",pieceRef,dateE,lib,fmtAmount(sens==="D"?v:0),fmtAmount(sens==="C"?v:0),"","",dateE,"",""].join("\t")); }
     _fecLegs(t,totalTTC).forEach(function(lg){ _fl(lg.acc,lg.lib,_lib,lg.amt,"D"); });
