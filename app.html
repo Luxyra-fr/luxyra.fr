@@ -2474,7 +2474,8 @@ function editOpPermsUI(opId) {
     {title:"\ud83d\udcdc Sections principales", keys:["planning","caisse","clients","products","stats","compta","marketing","settings","operateurs"]},
     {title:"\ud83d\udcc5 Planning", keys:["see_other_planning","see_ca","see_previsionnel_mois","cancel_rdv"]},
     {title:"\ud83d\udcb3 Caisse et paiements", keys:["refund","discount","cloture_journee"]},
-    {title:"\ud83d\udcca Donn\u00e9es sensibles", keys:["see_prices_achat","export_data","manage_products","manage_services"]}
+    {title:"\ud83d\udcca Donn\u00e9es sensibles", keys:["see_prices_achat","export_data","manage_products","manage_services"]},
+    {title:"\u2b50 Avis clients", keys:["manage_reviews"]}
   ];
   
   for (var g=0; g<sectionGroups.length; g++) {
@@ -10726,7 +10727,7 @@ function rHome(){
     h+='</div>';
   }
   if(hasPermission("caisse"))h+='<div class="tile gt-gold" onclick="go(\'gifts\')"><div class="ti" style="color:#fff">'+ICO.gifts+'</div><div class="tl">Bons cadeaux</div></div>';
-  if(hasPermission("planning"))h+='<div class="tile gt-blue" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="color:#fff">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
+  if(hasPermission("caisse"))h+='<div class="tile gt-blue" style="position:relative" onclick="showAttenteDD(event)"><div class="ti" style="color:#fff">'+ICO.attente+'</div><div class="tl">Attente</div></div>';
   if(hasPermission("caisse"))h+='<div class="tile gt-pink" style="position:relative" onclick="showCaisseDD(event)"><div class="ti" style="color:#fff">'+ICO.caisse+'</div><div class="tl">Caisse</div></div>';
   if(hasPermission("stats"))h+='<div class="tile gt-purple" onclick="go(\'stats\')"><div class="ti" style="color:#fff">'+ICO.stats+'</div><div class="tl">Statistiques</div></div>';
   // Avis clients (visible seulement si permission manage_reviews)
@@ -16696,7 +16697,8 @@ function rSettings(){
     h+='</div></div>';
     // TVA sur tickets
     h+='<div class="card" style="margin-top:10px">';
-    h+='<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer"><input type="checkbox" '+(window.SHOW_TVA_TICKET?'checked':'')+' onchange="window.SHOW_TVA_TICKET=this.checked;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"> Afficher TVA (HT/TVA/TTC) sur les tickets clients</label>';
+    h+='<label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer"><input type="checkbox" '+(window.SHOW_TVA_TICKET?'checked':'')+' onchange="window.SHOW_TVA_TICKET=this.checked;if(typeof saveSalonConfig===\'function\')saveSalonConfig()"> Afficher le d\u00e9tail HT / TVA / TTC sur les devis</label>';
+    h+='<div style="font-size:11px;color:var(--text3);margin:4px 0 0 28px">Sur les tickets de caisse, le d\u00e9tail de la TVA est toujours imprim\u00e9 (mention obligatoire) ; en franchise de TVA, la mention \u00ab TVA non applicable \u00bb est imprim\u00e9e \u00e0 la place.</div>';
     h+='</div>';
 
     // Validité des devis
@@ -16955,8 +16957,11 @@ async function rDoublonsClients(){
     if (r.error) throw new Error(r.error.message);
     var pairs = r.data || [];
     var box = document.getElementById('dupBody'); if(!box) return;
+    // 2026-10-16 : fusion manuelle (deux fiches au choix) + doublons écartés par « Pas un doublon » réaffichables
+    var _manuel = lxFusionManuelleHtml();
     if (!pairs.length) {
-      box.innerHTML = '<div style="padding:30px;text-align:center;color:#66bb6a;font-size:14px">✅ Aucun doublon détecté. Votre fichier client est propre.</div>';
+      box.innerHTML = _manuel + '<div style="padding:22px;text-align:center;color:#66bb6a;font-size:14px">✅ Aucun doublon détecté automatiquement.</div><div id="dupIgnores"></div>';
+      lxDoublonsIgnoresCharger();
       return;
     }
     var html = '<div style="font-size:12px;color:var(--text3);margin-bottom:8px">'+pairs.length+' correspondance'+(pairs.length>1?'s':'')+' détectée'+(pairs.length>1?'s':'')+'. Vérifiez chaque cas avant fusion : un téléphone partagé peut aussi correspondre à 2 personnes du même foyer.</div>';
@@ -17005,7 +17010,8 @@ async function rDoublonsClients(){
       html += '<button class="btn" style="background:var(--bg2);border:1px solid var(--border);color:var(--text3)" onclick="lxIgnoreDup(\''+p.client_a_id+'\',\''+p.client_b_id+'\')">✗ Pas un doublon</button>';
       html += '</div></div>';
     });
-    box.innerHTML = html;
+    box.innerHTML = _manuel + html + '<div id="dupIgnores"></div>';
+    lxDoublonsIgnoresCharger();
   } catch(e) {
     document.getElementById('dupBody').innerHTML='<div style="padding:30px;color:#ef5350">Erreur : '+esc(e.message||e)+'</div>';
   }
@@ -17056,6 +17062,70 @@ window.lxMergeDupDo = async function(keepId, removeId){
     if(typeof toast==='function') toast('Erreur fusion : '+(e.message||e),'error');
     else alert('Erreur fusion : '+(e.message||e));
   }
+};
+// 2026-10-16 : fusion MANUELLE de deux fiches choisies (même si la détection ne les propose pas)
+function lxFusionManuelleHtml(){
+  window._lxFm={a:null,b:null};
+  var h='<div style="border:1px solid rgba(200,168,78,.35);background:rgba(200,168,78,.05);border-radius:10px;padding:14px;margin-bottom:16px">';
+  h+='<div style="font-weight:800;color:var(--gold);margin-bottom:4px">🔀 Fusionner deux fiches manuellement</div>';
+  h+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Cherchez les deux fiches d\'un même client. La fiche « à garder » reçoit tout l\'historique de l\'autre.</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  ['a','b'].forEach(function(k){
+    h+='<div><div style="font-size:11px;font-weight:700;margin-bottom:4px;color:'+(k==='a'?'#66bb6a':'#ef5350')+'">'+(k==='a'?'✓ Fiche à garder':'🗑 Fiche à fusionner (disparaît)')+'</div>';
+    h+='<input id="lxFm_'+k+'" placeholder="Nom, prénom ou téléphone…" autocomplete="off" oninput="lxFmChercher(\''+k+'\')" style="width:100%;padding:9px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:#fff;font-size:13px">';
+    h+='<div id="lxFmRes_'+k+'" style="max-height:180px;overflow-y:auto"></div><div id="lxFmSel_'+k+'"></div></div>';
+  });
+  h+='</div>';
+  h+='<button class="btn" id="lxFmBtn" disabled style="margin-top:10px;width:100%;opacity:.5;background:#66bb6a;color:#fff;font-weight:700" onclick="lxFmValider()">🔀 Fusionner ces deux fiches</button>';
+  h+='</div>';
+  return h;
+}
+function _lxFmNorm(t){ return String(t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim(); }
+window.lxFmChercher=function(k){
+  var inp=document.getElementById('lxFm_'+k), res=document.getElementById('lxFmRes_'+k); if(!inp||!res) return;
+  var q=_lxFmNorm(inp.value), qd=q.replace(/\D/g,'');
+  if(q.length<2){ res.innerHTML=''; return; }
+  var autre=window._lxFm[k==='a'?'b':'a'];
+  var mots=q.split(' ');
+  var l=(CL||[]).filter(function(c){
+    if(autre&&c.id===autre) return false;
+    var t=_lxFmNorm((c.nom||'')+' '+(c.pre||'')+' '+(c.pre||'')+' '+(c.nom||'')+' '+(c.em||''));
+    var tel=String(c.ph||'').replace(/\D/g,'');
+    return mots.every(function(m){return t.indexOf(m)>=0;}) || (qd.length>=4 && tel.indexOf(qd)>=0);
+  }).slice(0,8);
+  res.innerHTML=l.length?l.map(function(c){
+    return '<div onclick="lxFmChoisir(\''+k+'\',\''+c.id+'\')" style="padding:8px 10px;margin-top:4px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px"><b>'+esc(cName(c))+'</b>'
+      +'<div style="color:var(--text3);font-size:11px">'+esc(String(c.ph||'—'))+(c.em?' · '+esc(String(c.em)):'')+(c.cr?' · créée le '+esc(String(c.cr)):'')+'</div></div>';
+  }).join(''):'<div style="font-size:11px;color:var(--text3);padding:6px">Aucune fiche trouvée</div>';
+};
+window.lxFmChoisir=function(k,id){
+  window._lxFm[k]=id; var c=gC(id);
+  var res=document.getElementById('lxFmRes_'+k); if(res) res.innerHTML='';
+  var inp=document.getElementById('lxFm_'+k); if(inp) inp.value=c?cName(c):'';
+  var sel=document.getElementById('lxFmSel_'+k);
+  if(sel&&c) sel.innerHTML='<div style="margin-top:6px;padding:8px 10px;border:2px solid '+(k==='a'?'#66bb6a':'#ef5350')+';border-radius:8px;font-size:12px"><b>'+esc(cName(c))+'</b><div style="color:var(--text3);font-size:11px">'+esc(String(c.ph||'—'))+(c.em?' · '+esc(String(c.em)):'')+(c.cr?' · créée le '+esc(String(c.cr)):'')+'</div></div>';
+  var b=document.getElementById('lxFmBtn'), ok=window._lxFm.a&&window._lxFm.b&&window._lxFm.a!==window._lxFm.b;
+  if(b){ b.disabled=!ok; b.style.opacity=ok?'1':'.5'; }
+};
+window.lxFmValider=function(){ var f=window._lxFm||{}; if(f.a&&f.b&&f.a!==f.b) lxMergeDup(f.a,f.b); };
+async function lxDoublonsIgnoresCharger(){
+  var box=document.getElementById('dupIgnores'); if(!box) return;
+  try{
+    var r=await _sb.rpc('lx_doublons_ignores',{p_salon_id:_salonId});
+    if(r.error) throw r.error;
+    var l=r.data||[]; if(!l.length){ box.innerHTML=''; return; }
+    var h='<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🙈 Marqués « Pas un doublon » ('+l.length+')</div>';
+    h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">Ces paires ne sont plus proposées. « Réafficher » les remet dans la liste ci-dessus pour pouvoir les fusionner.</div>';
+    l.forEach(function(x){
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border-radius:8px;margin-bottom:6px;font-size:12px"><div style="flex:1">'+esc(String(x.client_a_nom||''))+' ↔ '+esc(String(x.client_b_nom||''))+'</div>'
+        +'<button class="btn" style="font-size:11px;padding:6px 10px;background:transparent;border:1px solid var(--gold);color:var(--gold)" onclick="lxDoublonReafficher(\''+x.client_a_id+'\',\''+x.client_b_id+'\')">↩ Réafficher</button></div>';
+    });
+    box.innerHTML=h+'</div>';
+  }catch(e){ box.innerHTML=''; console.warn('[doublons ignorés]',e); }
+}
+window.lxDoublonReafficher=async function(a,b){
+  try{ var r=await _sb.rpc('lx_doublon_reafficher',{p_client_a:a,p_client_b:b}); if(r.error) throw r.error; toast('Paire réaffichée','success'); rDoublonsClients(); }
+  catch(e){ toast('⚠️ Non enregistré — '+(e.message||e),'error'); }
 };
 window.lxIgnoreDup = async function(aId, bId){
   try {
@@ -25829,15 +25899,15 @@ function rStats(){
   var h="";
   // Period selector
   h+='<div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-end;background:rgba(10,10,14,.7);backdrop-filter:blur(8px);border-radius:12px;padding:12px;border:1px solid rgba(255,255,255,.1)">';
-  h+='<div style="flex:1"><div style="font-size:11px;color:rgba(255,255,255,.6);font-weight:700">Date de debut</div><input type="date" value="'+df+'" onchange="window._stUserSetDates=true;window._stFrom=this.value;go(\'stats\')" style="padding:8px;width:100%"></div>';
+  h+='<div style="flex:1"><div style="font-size:11px;color:rgba(255,255,255,.6);font-weight:700">Date de début</div><input type="date" value="'+df+'" onchange="window._stUserSetDates=true;window._stFrom=this.value;go(\'stats\')" style="padding:8px;width:100%"></div>';
   h+='<div style="flex:1"><div style="font-size:11px;color:rgba(255,255,255,.6);font-weight:700">Date de fin</div><input type="date" value="'+dt+'" onchange="window._stUserSetDates=true;window._stTo=this.value;go(\'stats\')" style="padding:8px;width:100%"></div>';
   h+='</div>';
   
   // Quick period + HT/TTC
-  h+='<div style="margin-bottom:14px;background:rgba(10,10,14,.7);backdrop-filter:blur(8px);border-radius:12px;padding:12px;border:1px solid rgba(255,255,255,.1)"><div style="font-size:11px;color:var(--text3);margin-bottom:4px">Periode</div>';
+  h+='<div style="margin-bottom:14px;background:rgba(10,10,14,.7);backdrop-filter:blur(8px);border-radius:12px;padding:12px;border:1px solid rgba(255,255,255,.1)"><div style="font-size:11px;color:var(--text3);margin-bottom:4px">Période</div>';
   h+='<div style="display:flex;gap:8px;align-items:center">';
   h+='<select style="padding:8px;font-size:13px;flex:1;background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:8px" onchange="applyStatPeriod(this.value)">';
-  var periods=[["custom","Periode personnalisee"],["curMonth","Mois en cours"],["prevMonth","Mois precedent"],["curYear","Annee en cours"],["prevYear","Annee precedente"],["lastWeek","Derniere semaine"]];
+  var periods=[["custom","Période personnalisée"],["curMonth","Mois en cours"],["prevMonth","Mois précédent"],["curYear","Année en cours"],["prevYear","Année précédente"],["lastWeek","Dernière semaine"]];
   for(var pi=0;pi<periods.length;pi++){h+='<option value="'+periods[pi][0]+'"'+(window._stPeriod===periods[pi][0]?" selected":"")+'>'+periods[pi][1]+'</option>';}
   h+='</select>';
 
@@ -26141,7 +26211,7 @@ function rStats(){
     c+="<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:10px\">";
     c+="<div style=\"font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px\">"+title+"</div>";
     c+="<div style=\"display:flex\">";
-    var tabs2=["eval","comp","det"];var tabL=["evaluer","comparer","details"];
+    var tabs2=["eval","comp","det"];var tabL=["évaluer","comparer","détails"];
     for(var ti2=0;ti2<3;ti2++){c+="<button style=\"font-size:10px;padding:4px 8px;border:1px solid var(--border);background:"+(mode===tabs2[ti2]?"var(--gold)":"rgba(255,255,255,.15)")+";color:"+(mode===tabs2[ti2]?"#fff":"rgba(255,255,255,.8)")+";cursor:pointer;border-radius:"+(ti2===0?"4px 0 0 4px":ti2===2?"0 4px 4px 0":"0")+"\" onclick=\"window._sc_"+chartKey+"=\'"+tabs2[ti2]+"\';go(\'stats\')\">"+tabL[ti2]+"</button>";}
     c+="</div></div>";
     var cols2=["#f0d060","#7ab8e0","#d4a0d0","#5b9bd5","#2ea043"];
@@ -35259,7 +35329,7 @@ async function lxCcApresEncaissement(cmdId, code, sansCode, tkNum){
 }
 function lxCcAnnuler(id){
   var c=_ccCmd(id); if(!c) return;
-  var motif=prompt("Motif de l’annulation (envoyé au client) :"+(c.paye?"\n\nLa client sera remboursé de "+Number(c.total).toFixed(2)+" €.":""),"");
+  var motif=prompt("Motif de l’annulation (envoyé au client) :"+(c.paye?"\n\nLe client sera remboursé de "+Number(c.total).toFixed(2)+" €.":""),"");
   if(motif===null) return;
   _ccAction(c,"annulee",{motif:motif}).then(function(r){
     if(r.ok) toast("Commande annulée"+(r.d.rembourse?" et remboursée":""),"success"); else showAlert(r.d.error||"Erreur","error");
@@ -38346,7 +38416,7 @@ async function exportFEC(){
   var siret=(SALON_CONFIG.siret||"").replace(/\s/g,"");
   var siren=siret.slice(0,9);
   if(!siren||siren.length!==9){
-    showAlert("SIRET non renseigné. Renseignez-le dans Paramètres > Mon salon avant d'exporter le FEC.","info");
+    showAlert("SIRET non renseigné. Renseignez-le dans Paramètres › Infos établissement avant d'exporter le FEC.","info");
     return;
   }
   var tva=Number(lxTauxTVA());
@@ -38556,8 +38626,8 @@ async function exportEBP(){
   if(typeof hasPermission==="function" && !hasPermission("export_data")){ if(typeof toast==="function") toast("Acces non autorise : permission Exporter des donnees requise","warning"); return; }
   var dateFrom=document.getElementById("fecDateFrom")?document.getElementById("fecDateFrom").value:"";
   var dateTo=document.getElementById("fecDateTo")?document.getElementById("fecDateTo").value:"";
-  if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
-  if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
+  if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
+  if(dateFrom>dateTo){showAlert("La date de début est après la date de fin","info");return;}
   var A=_comptaAccounts();
   var tva=Number(lxTauxTVA());
   if(typeof toast==="function") toast("Preparation de l'export EBP...","info");
@@ -38634,8 +38704,8 @@ async function rapportComptablePeriode(){
   if(typeof hasPermission==="function" && !hasPermission("compta")){ if(typeof toast==="function") toast("Acces non autorise : permission Comptabilite requise","warning"); return; }
   var dateFrom=document.getElementById("fecDateFrom")?document.getElementById("fecDateFrom").value:"";
   var dateTo=document.getElementById("fecDateTo")?document.getElementById("fecDateTo").value:"";
-  if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
-  if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
+  if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
+  if(dateFrom>dateTo){showAlert("La date de début est après la date de fin","info");return;}
   if(!(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId)){ showAlert("Connexion base indisponible","error"); return; }
   var tva=Number(lxTauxTVA());
   var R=function(n){return Math.round((Number(n)||0)*100)/100;};
@@ -38804,8 +38874,8 @@ async function exportQuadratus(){
   if(typeof hasPermission==="function" && !hasPermission("export_data")){ if(typeof toast==="function") toast("Acces non autorise : permission Exporter des donnees requise","warning"); return; }
   var dateFrom=document.getElementById("fecDateFrom")?document.getElementById("fecDateFrom").value:"";
   var dateTo=document.getElementById("fecDateTo")?document.getElementById("fecDateTo").value:"";
-  if(!dateFrom||!dateTo){showAlert("Periode obligatoire","warning");return;}
-  if(dateFrom>dateTo){showAlert("Date de debut > date de fin","info");return;}
+  if(!dateFrom||!dateTo){showAlert("Période obligatoire","warning");return;}
+  if(dateFrom>dateTo){showAlert("La date de début est après la date de fin","info");return;}
   var A=_comptaAccounts();
   var tva=Number(lxTauxTVA());
   if(typeof toast==="function") toast("Preparation de l'export Quadratus...","info");
