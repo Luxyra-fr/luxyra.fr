@@ -440,5 +440,5 @@ autres types (TK, Z, ZM, ZA, ZE, CR, DUP, JET, FA, AR), gestion de clé, contrô
 `{verif:true}` avant intervention : Excellence 1 433 signatures contrôlées, 0 anomalie. **Déploiement de v6 non abouti**
 (3 tentatives expirées côté outil de déploiement ; v5 reste active) : annotation n°1 toujours chaînée SHA-256 et tracée
 au JET n°516, **pas encore signée ES256**. À refaire : déployer v6 (verify_jwt false) ; le cron `nf525-sign-2min` la
-signera alors automatiquement (ZC n°1). Constat annexe : `'FA'` n'est pas dans la contrainte -> aucune facture n'est
-signée depuis v5 (FA_conflit silencieux) ; non modifié, à traiter avec accord.
+signera alors automatiquement (ZC n°1). Constat annexe : `'FA'` n'est pas dans la contrainte -> la première facture
+(`factures_clients`, vide à ce jour) ne pourrait pas être signée (FA_conflit) ; non modifié, à traiter avec accord.
