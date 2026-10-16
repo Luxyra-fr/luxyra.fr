@@ -431,3 +431,14 @@ Même cause pour le symptôme signalé par l'établissement : le rendez-vous en 
 
 À faire : publier l'application (luxyra-supabase.js v=20261016-1) ; signature ES256 directe des annotations prête dans
 `docs/edge/nf525-sign.ts` (type ZC, v6) — à déployer avec l'accord de l'éditeur (l'annotation est déjà chaînée et tracée au JET).
+
+**16/10/2026, ~21 h 50 (Paris) — préparation de la signature ES256 de l'annotation n°1 (accord de l'éditeur).**
+v6 comparée à la version déployée (nf525-sign v5) : seul ajout = source `ZC` (`clotures_annotations`) ; code de tous les
+autres types (TK, Z, ZM, ZA, ZE, CR, DUP, JET, FA, AR), gestion de clé, contrôles d'accès et tables écrites identiques
+(diff après compilation esbuild : uniquement l'entrée ZC + commentaires). Contrainte `nf525_signatures_type_check`
+élargie à `'ZC'` (`docs/migrations_1016/nf525_signatures_type_zc.sql` ; types existants inchangés). Autocontrôle
+`{verif:true}` avant intervention : Excellence 1 433 signatures contrôlées, 0 anomalie. **Déploiement de v6 non abouti**
+(3 tentatives expirées côté outil de déploiement ; v5 reste active) : annotation n°1 toujours chaînée SHA-256 et tracée
+au JET n°516, **pas encore signée ES256**. À refaire : déployer v6 (verify_jwt false) ; le cron `nf525-sign-2min` la
+signera alors automatiquement (ZC n°1). Constat annexe : `'FA'` n'est pas dans la contrainte -> aucune facture n'est
+signée depuis v5 (FA_conflit silencieux) ; non modifié, à traiter avec accord.
