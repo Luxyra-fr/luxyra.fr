@@ -1474,13 +1474,13 @@ async function handleCcCommande(request, env) {
     if (!demandes.length || demandes.length > 30) return jsonResponse({ error: "Panier vide ou invalide" }, 400);
     if (demandes.some((i) => i.qty > 20)) return jsonResponse({ error: "Quantité maximale : 20 par produit" }, 400);
     const ids = [...new Set(demandes.map((i) => i.id))];
-    const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/produits?select=id,nom,prix,promo_actif,promo_prix,promo_debut,promo_fin,stock,actif,for_sale&salon_id=eq.${encodeURIComponent(b.salon_id)}&id=in.(${ids.join(",")})`, { headers: _sbHeaders(env) });
+    const pr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/produits?select=id,nom,prix,promo_actif,promo_prix,promo_debut,promo_fin,stock,actif,for_sale,coup_coeur&salon_id=eq.${encodeURIComponent(b.salon_id)}&id=in.(${ids.join(",")})`, { headers: _sbHeaders(env) });
     const prods = pr.ok ? await pr.json() : [];
     const enLigne = Array.isArray(sc.cfg.produits_en_ligne) ? sc.cfg.produits_en_ligne.map(Number) : [];
     const items = []; let total = 0;
     for (const d of demandes) {
       const p = (prods || []).find((x) => Number(x.id) === d.id);
-      if (!p || p.actif === false || p.for_sale === false || (enLigne.length && enLigne.indexOf(d.id) < 0)) return jsonResponse({ error: "Un produit n'est plus disponible à la vente" }, 409);
+      if (!p || p.actif === false || p.for_sale === false || p.coup_coeur !== true || (enLigne.length && enLigne.indexOf(d.id) < 0)) return jsonResponse({ error: "Un produit n'est plus disponible à la vente" }, 409);
       const qtyTot = demandes.filter((x) => x.id === d.id).reduce((a, x) => a + x.qty, 0);
       if (p.stock != null && Number(p.stock) < qtyTot) return jsonResponse({ error: `« ${p.nom} » : stock insuffisant (${Math.max(0, Number(p.stock) || 0)} disponible)` }, 409);
       const prix = ccPrix(p);
