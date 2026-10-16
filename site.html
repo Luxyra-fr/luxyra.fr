@@ -442,6 +442,18 @@ html{overflow-x:hidden}
 .prod-card:hover{border-color:rgba(200,168,78,.25);transform:translateY(-2px)}
 .prod-img{width:100%;aspect-ratio:1;background:rgba(200,168,78,.04);display:flex;align-items:center;justify-content:center;font-size:48px;color:var(--text3)}
 .prod-img img{width:100%;height:100%;object-fit:cover}
+.shop-bar{position:sticky;top:0;z-index:20;background:var(--bg);padding:10px 0 8px;margin:6px 0 4px;border-bottom:1px solid rgba(200,168,78,.1)}
+.shop-search{display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid rgba(200,168,78,.15);border-radius:12px;padding:0 12px;margin-bottom:10px}
+.shop-search input{flex:1;background:transparent;border:none;outline:none;color:inherit;font:inherit;font-size:14px;padding:11px 0}
+.shop-chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+.shop-chips::-webkit-scrollbar{display:none}
+.shop-chip{flex:0 0 auto;padding:8px 14px;border-radius:999px;border:1px solid rgba(200,168,78,.2);background:rgba(200,168,78,.05);color:var(--text2,#ccc);font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;transition:all .2s}
+.shop-chip small{opacity:.6;font-weight:700;margin-left:4px}
+.shop-chip:hover{border-color:var(--gold);color:var(--gold)}
+.shop-chip.on{background:var(--gold);border-color:var(--gold);color:#0a0a0a}
+.shop-chip.promo:not(.on){border-color:rgba(233,30,99,.4);color:#f06292}
+.shop-fam-t{font-family:var(--f1);font-size:18px;font-weight:700;color:var(--gold);margin:22px 0 10px}
+.shop-fam-t small{font-family:inherit;font-size:12px;color:var(--text3);font-weight:500;margin-left:6px}
 .prod-body{padding:14px}
 .prod-name{font-weight:700;font-size:14px;margin-bottom:2px}
 .prod-cat{font-size:11px;color:var(--text3)}
@@ -450,6 +462,7 @@ html{overflow-x:hidden}
 .prod-btn:hover{background:var(--gold);color:#0a0a0a}
 .cart-float{position:fixed;bottom:20px;right:20px;background:var(--gold);color:#0a0a0a;padding:14px 24px;border-radius:14px;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 4px 20px rgba(200,168,78,.4);z-index:50;display:flex;align-items:center;gap:8px}
 .cart-count{background:#0a0a0a;color:var(--gold);width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px}
+@media(max-width:600px){.prod-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.prod-body{padding:10px}.prod-name{font-size:13px}.prod-price{font-size:17px}.prod-btn{font-size:12px;padding:9px 6px}}
 
 /* Responsive */
 @media(max-width:600px){.fg-row{grid-template-columns:1fr}.h-links{gap:6px}.h-links a{font-size:10px;padding:6px 10px}.collab-grid{grid-template-columns:repeat(2,1fr)}}
@@ -2150,14 +2163,26 @@ function renderSite(){
     if(!shopProds.length){
       h+='<div style="text-align:center;padding:40px;color:var(--text3)">Aucun produit disponible pour le moment</div>';
     }else{
-      // Group by category
-      var prodCats={};shopProds.forEach(function(p){if(!prodCats[p.cat])prodCats[p.cat]=[];prodCats[p.cat].push(p);});
-      for(var cat in prodCats){
-        h+='<div style="font-family:var(--f1);font-size:18px;font-weight:700;color:var(--gold);margin:20px 0 10px">'+cat+'</div>';
+      // 2026-10-16 : sélection par famille (barre de familles + recherche + promos)
+      var _today=new Date().toISOString().slice(0,10);
+      var _promoOk=function(p){return p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=_today)&&(!p.promoFin||p.promoFin>=_today);};
+      var prodCats={};shopProds.forEach(function(p){var c=(p.cat&&String(p.cat).trim())||'Autres';if(!prodCats[c])prodCats[c]=[];prodCats[c].push(p);});
+      var _catKeys=Object.keys(prodCats).sort(function(a,b){if(a==='Autres')return 1;if(b==='Autres')return -1;return a.localeCompare(b,'fr',{sensitivity:'base'});});
+      var _nbPromo=shopProds.filter(_promoOk).length;
+      h+='<div class="shop-bar"><div class="shop-search"><span>\ud83d\udd0d</span><input id="shopQ" type="search" placeholder="Rechercher un produit, une marque\u2026" oninput="shopFiltrer()" aria-label="Rechercher un produit"></div>';
+      h+='<div class="shop-chips" role="tablist">';
+      h+='<button class="shop-chip on" data-fam="" onclick="shopFamille(this)">Tout <small>'+shopProds.length+'</small></button>';
+      if(_nbPromo)h+='<button class="shop-chip promo" data-fam="__promo" onclick="shopFamille(this)">\ud83c\udf89 Promos <small>'+_nbPromo+'</small></button>';
+      _catKeys.forEach(function(c){h+='<button class="shop-chip" data-fam="'+escapeAttrSimple(c)+'" onclick="shopFamille(this)">'+escapeHtmlSimple(c)+' <small>'+prodCats[c].length+'</small></button>';});
+      h+='</div></div>';
+      h+='<div id="shopVide" style="display:none;text-align:center;padding:40px;color:var(--text3)">Aucun produit ne correspond \u00e0 votre recherche.</div>';
+      _catKeys.forEach(function(cat){
+        h+='<div class="shop-fam" data-fam="'+escapeAttrSimple(cat)+'">';
+        h+='<div class="shop-fam-t">'+escapeHtmlSimple(cat)+' <small>'+prodCats[cat].length+' produit'+(prodCats[cat].length>1?'s':'')+'</small></div>';
         h+='<div class="prod-grid">';
         prodCats[cat].forEach(function(p){
           var _isPromo=p.promoActif&&p.promoPrix&&(!p.promoDebut||p.promoDebut<=new Date().toISOString().slice(0,10))&&(!p.promoFin||p.promoFin>=new Date().toISOString().slice(0,10));
-          h+='<div class="prod-card" style="position:relative">';
+          h+='<div class="prod-card" style="position:relative" data-promo="'+(_isPromo?1:0)+'" data-q="'+escapeAttrSimple(((p.n||'')+' '+(p.cat||'')+' '+(p.description||'')+' '+(p.contenance||'')).toLowerCase())+'">';
           if(_isPromo)h+='<div style="position:absolute;top:8px;right:8px;background:#e91e63;color:#fff;font-size:11px;font-weight:800;padding:4px 8px;border-radius:8px;z-index:2;box-shadow:0 2px 8px rgba(0,0,0,.3)">\ud83c\udf89 -'+Math.round((1-p.promoPrix/p.p)*100)+'%</div>';
           if(p.img)h+='<div class="prod-img"><img src="'+escapeAttrSimple(p.img)+'" loading="lazy"></div>';
           else h+='<div class="prod-img">\ud83e\uddf4</div>';
@@ -2174,8 +2199,8 @@ function renderSite(){
           else h+='<button class="prod-btn" onclick="addToCart('+p.id+')">Ajouter au panier</button>';
           h+='</div></div>';
         });
-        h+='</div>';
-      }
+        h+='</div></div>';
+      });
     }
     h+='</div>';
   }
@@ -4432,6 +4457,34 @@ function printAcompteReceipt(svcName,amount,date,time,brand,last4){
 // ============================================================
 var CART=[];
 
+// 2026-10-16 : boutique — filtre par famille, promos et recherche
+function shopFamille(btn){
+  document.querySelectorAll('.shop-chip').forEach(function(b){b.classList.toggle('on',b===btn);});
+  window._shopFam=btn.getAttribute('data-fam')||'';
+  shopFiltrer();
+  var pg=document.getElementById('page-boutique');
+  var bar=pg&&pg.querySelector('.shop-bar');
+  if(bar){var y=bar.getBoundingClientRect().top+window.scrollY-70;if(window.scrollY>y)window.scrollTo({top:y,behavior:'smooth'});}
+  try{btn.scrollIntoView({block:'nearest',inline:'center',behavior:'smooth'});}catch(e){}
+}
+function shopFiltrer(){
+  var fam=window._shopFam||'';
+  var qEl=document.getElementById('shopQ');
+  var q=(qEl&&qEl.value||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  var mots=q?q.split(/\s+/):[];
+  var total=0;
+  document.querySelectorAll('#page-boutique .shop-fam').forEach(function(sec){
+    var famOk=!fam||fam==='__promo'||sec.getAttribute('data-fam')===fam;
+    var n=0;
+    sec.querySelectorAll('.prod-card').forEach(function(c){
+      var txt=(c.getAttribute('data-q')||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      var ok=famOk&&(fam!=='__promo'||c.getAttribute('data-promo')==='1')&&mots.every(function(m){return txt.indexOf(m)>=0;});
+      c.style.display=ok?'':'none';if(ok)n++;
+    });
+    sec.style.display=n?'':'none';total+=n;
+  });
+  var v=document.getElementById('shopVide');if(v)v.style.display=total?'none':'';
+}
 function addToCart(prodId){
   var prod=null;for(var i=0;i<PRODUCTS.length;i++){if(PRODUCTS[i].id===prodId){prod=PRODUCTS[i];break;}}
   if(!prod)return;
