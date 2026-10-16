@@ -1,0 +1,9 @@
+-- 16/10/2026 (appliqué) — Réservation en ligne : les temps de pose sont libres côté serveur aussi.
+-- Avant : lx_prive.rdv_occupations bloquait TOUTE la durée d'un RDV interne à phases (ex. mèches 10:00-12:50),
+-- alors que le planning et le site (isSpecificCollabBusy) ne bloquent que les phases de travail (t='w').
+-- Effet : la fiche salon annonçait « Prochain RDV demain 11:00 » mais la recherche proposait 13:00, et une
+-- réservation à 11:00 depuis la fiche aurait été refusée par rdv_online_block_double_booking.
+-- Maintenant : RDV interne avec phases -> une occupation par phase 'w' (collaborateur = stId sinon celui du RDV).
+-- RDV sans phases et rdv_online : inchangés. Utilisé par fn_salon_next_slots, rdv_online_block_double_booking,
+-- rdv_dispo_conflit. + fn_salon_next_slots : libellé du jour en français (était « Monday 19/10 »).
+-- Définition complète : voir pg_get_functiondef('lx_prive.rdv_occupations').
