@@ -418,3 +418,6 @@ begin
   if n = d then raise exception 'check_fiscal_integrity : motif §2 introuvable (définition modifiée ?)'; end if;
   execute n;
 end $$;
+
+-- 2026-10-16 (revue) APPLIQUÉ : check_data_integrity(uuid) section 5 utilise le total corrigé par annotation
+-- (COALESCE((SELECT an.correct_total_ca FROM clotures_annotations an WHERE an.cloture_id = c.id), c.total_ca)).
