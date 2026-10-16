@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261016-1"; // 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261017-1"; // 2026-10-17 (-1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -538,7 +538,7 @@ async function _walResync(walId, force){
     // 2026-10-14 (NF525) : refus DÉFINITIFS (journée déjà clôturée, ticket scellé inaltérable) ou trop d'essais :
     // l'entrée sort de la file (sinon rejouée et signalée à chaque démarrage), avec une trace d'audit explicite.
     var _ticketOuRdv = (entry.type === "ticket" || entry.type === "appointment");
-    var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable/i.test(String(_msg));
+    var _definitif = _ticketOuRdv && /d[eé]j[aà] cl[oô]tur[eé]e|inalt[eé]rable|LX_RETOUR_REFUSE/i.test(String(_msg)); // 2026-10-17 retour partiel : refus du garde-fou des retours = définitif
     var _e2 = _walNoterEssai(walId, _msg, _lxEstHorsLigne(_msg));
     var _rdvScelle = entry.type === "appointment" && entry.data && (entry.data.st === "done" || entry.data.tkNum); // 2026-10-14 : ticket encaissé = jamais abandonné pour erreur passagère
     if (_definitif || (entry.type === "appointment" && !_rdvScelle && _e2 && (Number(_e2.tries) || 0) >= 20)) { // un ticket ou une clôture Z n'est JAMAIS abandonné pour des erreurs passagères
@@ -3482,7 +3482,8 @@ var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClien
   "isAcompte","isAcompteCancel","apptId","isRetenue","retenueKey","retenueRdv","origTkNum","origTkNums",
   "bonVenduRemise","offertRemise","dbNum",
   "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId", // 2026-10-14 (NF525 acompte en ligne)
-  "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe"]; // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
+  "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe", // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
+  "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour"]; // 2026-10-17 retour partiel : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
 function _lxApptMetaDepuis(appt) {
   try {
     if (!appt || typeof appt !== "object") return null;
@@ -4010,6 +4011,22 @@ async function saveTicketToDb(tk) {
           return _exAk.data;
         }
       } catch(_eAk){}
+    }
+    // 2026-10-17 retour partiel : refus DÉFINITIF du garde-fou serveur des retours (docs/migrations_1017/retour_partiel.sql) :
+    // retour dépassant le payé, ticket d'origine annulé / introuvable, avoir sur un ticket déjà remboursé en partie… Ce refus ne
+    // change pas avec le temps : l'entrée sort de la file de secours (trace WAL_ABANDON + DB_ERROR critique), jamais rejouée.
+    // L'appelant reçoit {refusDefinitif:true} (le retour partiel n'affiche alors aucun ticket ; voir lxRetourValider).
+    if (res.error && /LX_RETOUR_REFUSE/.test(String(res.error.message || ""))) {
+      try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || ""), code: "LX_RETOUR_REFUSE", permanent: true }; } catch(_eF0){}
+      if (_walId) {
+        _walMarkSynced(_walId);
+        try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: _walId, type: "ticket", raison: "refus définitif du serveur (retour / avoir)", msg: String(res.error.message || "").slice(0, 300), tk_num: tk.tkNum || null, tk_id: tk.id || null }).slice(0, 2000)); } catch(_eA0){}
+      }
+      try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "saveTicketToDb", gravite: "critical", msg: String(res.error.message || "").slice(0, 400), code: "LX_RETOUR_REFUSE", tk_num: tk.tkNum || null, tk_id: tk.id || null, tk_total: tk.pr || null }).slice(0, 2000)); } catch(_eA1){}
+      // 2026-10-17 retour partiel (audit) : rejeu (file de secours) d'un ticket de retour déjà ajouté à la caisse -> écarté de la caisse
+      // (sinon la Z de l'appareil et la clôture de nuit, calculées sur les rendez-vous, différeraient du journal). Sans effet au 1er envoi.
+      try { if (typeof window._lxRetourRefuseEcarter === "function") window._lxRetourRefuseEcarter(tk, String(res.error.message || "")); } catch(_eRe){}
+      return { ok: false, refusDefinitif: true, error: { message: String(res.error.message || ""), code: res.error.code || "P0001" } };
     }
     if (res.error) {
       console.warn("[saveTicketToDb] insert error", res.error);

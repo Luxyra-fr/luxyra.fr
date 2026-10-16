@@ -443,3 +443,110 @@ au JET n°516, **pas encore signée ES256**. À refaire : déployer v6 (verify_j
 signera alors automatiquement (ZC n°1). Constat annexe : `'FA'` n'est pas dans la contrainte -> la première facture
 (`factures_clients`, vide à ce jour) ne pourrait pas être signée (FA_conflit) ; non modifié, à traiter avec accord.
 - **2026-10-16, 21:56 (Paris)** — nf525-sign v6 déployé (seul ajout : type ZC). Annotation corrective n°1 de la Z n°128 signée ES256 (signature ZC n°1, clé LX-ES256-20261011-O3tPa_YK, 21:58:07). Autocontrôle complet lancé aussitôt : 1 434 signatures vérifiées pour Excellence Coiffure, 0 anomalie (et 0 pour les autres établissements).
+
+## 2026-10-17 — Retour / remboursement partiel d'un ticket validé (accord de l'éditeur, Alexandre : « dans les règles de l'art, sans erreur ni oubli »)
+
+**Objet.** Jusqu'ici, seule l'annulation totale d'un ticket (contre-ticket négatif du même montant, ticket d'origine marqué annulé)
+existait ; un produit rendu imposait l'avoir total puis un nouvel encaissement. Nouvelle fonction « ↩️ Retour / remboursement
+partiel » (Caisse › « 🎫 Gestion des tickets », et fenêtre « 💳 Modifier règlement » d'un ticket de journée clôturée ou au règlement
+mixte), version
+6.6.1, couche données `luxyra-supabase.js` 20261017-1. Fondement : BOI-TVA-DECLA-30-10-30 §90 (correction par opération nouvelle
+en « moins », l'enregistrement d'origine étant conservé).
+
+**Enregistrement.** Le retour est un **nouveau ticket négatif** : numéro suivant de la séquence normale (`nextTicketNum`), chaînage
+applicatif (`chainTicket`), puis insertion par `saveTicketToDb` — même chemin que tous les tickets et contre-tickets : numéro,
+`hash_prev` et empreinte serveur (`ticket_nf525_insert`, format `num|date|heure|ttc|ht|items|prev|salon` **inchangé**), scellement
+`nf525_hash_seal` et signature ES256 « TK » par `nf525-sign` (inchangée ; type « R » pour un total négatif). Statut `paid`, daté du
+jour du retour (journée ouverte contrôlée en mémoire et en base). Le ticket et chacune de ses lignes portent la référence du ticket
+d'origine (`raw_data.isRetour`, `retourRefId` = identifiant, `retourRefTk` = n° imprimé, `retourRefDate`, `retourMotif` ; lignes
+`isRetour`, `retourIdx`, `retourQty`), imprimée : « RETOUR / REMBOURSEMENT », « Ticket d'origine n° X du JJ/MM/AAAA », motif,
+lignes en négatif, TVA par taux, « Remboursé en … », mentions légales identiques aux autres tickets. Le **ticket d'origine n'est
+jamais modifié** (ni annulé ni marqué ; aucune écriture sur sa ligne `tickets` ni sur son rendez-vous) : les écrans et duplicatas
+affichent « Retour partiel n°… le … » à partir de la référence portée par le ticket de retour. Journal d'audit :
+`TICKET_RETOUR_PARTIEL` (et `RETOUR_PARTIEL_EFFETS`, `RETOUR_PARTIEL_REFUSE`) ; `TICKET_RETOUR_PARTIEL` est reporté au JET (code 190)
+par l'adaptation de `nf525_jet_code` ajoutée au script lors de l'audit (voir ci-dessous).
+
+**Garde-fous application.** Permission « Rembourser » ou code PIN administrateur (même mécanisme que l'avoir). Connexion obligatoire :
+relecture du journal des tickets (ticket d'origine scellé et de même montant, retours déjà enregistrés sur tout appareil, contre-ticket
+éventuel), refaite au moment de valider. Refus : cumul des retours supérieur au payé, quantité supérieure à la quantité achetée,
+montant d'une ligne supérieur à sa part payée restante, ticket annulé / contre-ticket / ticket de retour / acompte / annulation
+d'acompte / retenue, mode de caisse (test / réel) différent, lignes de bon cadeau / carte / forfait vendus, motif absent ; 100 % du
+ticket sans retour antérieur -> « Avoir / Annuler ». Après un retour, l'avoir total et la modification du ticket d'origine sont
+refusés (mémoire et relecture en base). Un refus définitif du serveur ne laisse aucun ticket local (numéro et chaînage locaux rendus).
+
+**Base (`docs/migrations_1017/retour_partiel.sql`, NON APPLIQUÉ à la date de rédaction).** Déclencheur de contrôle
+`a_lx_tickets_retour_controle` (fonction `lx_prive.tickets_retour_controle`, lecture seule) avant insertion dans `tickets` : refus
+`LX_RETOUR_REFUSE` d'un retour incohérent (mêmes règles que ci-dessus, cumul et quantités recalculés sous le verrou transactionnel
+par établissement de `ticket_nf525_insert`) et d'un contre-ticket visant un ticket de retour ou un ticket déjà remboursé en partie ;
+index partiel de lecture. Aucune ligne existante modifiée ; aucun ticket existant ne porte le marqueur (requête 0 du fichier). La
+couche données traite `LX_RETOUR_REFUSE` comme un refus définitif (jamais rejoué par la file de secours, tracé `WAL_ABANDON` +
+`DB_ERROR`).
+
+**Restitutions.** Clôture Z (le retour est un ticket numéroté compté une fois dans le nombre, le CA, la TVA et les règlements —
+espèces remboursées déduites du tiroir — ; détail « Retours / remboursements partiels » ; panier moyen sur les seules ventes),
+contrôle pré-Z `_lxZControleJournal` et garde-fou serveur `b_nf525_z_controle_journal` (même règle : tickets `status <> 'cancelled'`,
+le retour n'étant pas un contre-ticket), bande Z mensuelle, bande de contrôle mensuelle, rapport mensuel, journal de caisse CSV / pack
+/ Excel (statut « Retour partiel (ticket #… du …) »), journal des ventes et FEC (libellé « RETOUR », sens inversé, écriture
+équilibrée), livre des recettes, export « Annulations & remboursements », archive annuelle, statistiques (montants nets, quantités
+rendues déduites), fiche client (CA net, le retour n'est pas une visite), planning (jamais de bloc). Effets de gestion : cagnotte
+créditée et chiffre cumulé de fidélité retirés au prorata du montant remboursé (points par visite conservés), produits remis en stock
+si demandé (mouvement « retour »).
+
+**Vérifications faites.** Contrôle syntaxique des scripts de `app.html` et de `luxyra-supabase.js` (node --check). **Aucun essai
+fonctionnel ni aucune écriture en base n'a été fait** dans cette intervention ; à faire avant mise en service : application du SQL,
+publication, essais en caisse TEST (liste des cas dans le compte rendu), puis `nf525_tests_protections()` et contrôles
+`check_fiscal_integrity` / `check_data_integrity` / `admin_nf525_etat`. Aucune donnée fiscale existante modifiée.
+
+**Audit indépendant du 2026-10-17 (avant toute mise en service) — défauts trouvés et corrigés** (marqués « 2026-10-17 retour partiel
+(audit) » dans le code). Définitions relues EN BASE (lecture seule) : déclencheurs de `tickets` et `clotures`, `ticket_nf525_insert`,
+`tickets_block_post_cloture`, `nf525_marquer_mode`, `lx_prive.clotures_controle_journal`, `lx_prive.z_journal_tickets`,
+`clotures_set_cumul_perpetuel`, `check_fiscal_integrity`, `check_data_integrity` (2 versions), `admin_nf525_etat`, `nf525_infos_z`,
+`nf525_tests_protections`, `nf525_jet_code`, `trg_audit_vers_jet`, `appointments_nf525_protect`, contraintes de `tickets`, fonctions
+`lx-cloture-auto` et `nf525-sign`.
+1. *Tickets de réservation en ligne* : 54 tickets du journal ont `raw_data.id` = « online_<uuid> » alors que l'application les recharge
+   sous « <uuid> » : le retour était refusé (« pas encore enregistré ») et le déclencheur ne trouvait pas l'origine. Corrigé : les deux
+   formes sont acceptées (application et déclencheur) et la référence portée par le ticket de retour est l'identifiant EXACT du journal
+   (n° imprimé et date relus au journal ; le déclencheur refuse désormais un n° d'origine différent du journal).
+2. *Contrainte `tickets_operator_required`* (collaborateur_id ou collaborateur_nom obligatoire, non vue par la première version) : le
+   ticket de retour reprend le collaborateur du ticket d'origine relu au journal (à défaut l'opérateur) ; sans cela une insertion
+   refusée serait restée indéfiniment en file de secours.
+3. *Avoir après un retour fait sur un autre appareil* : l'avoir marque le ticket d'origine « annulé » AVANT l'envoi du contre-ticket
+   (marque irréversible en base) ; si la base refusait ensuite le contre-ticket, le rendez-vous restait annulé sans contre-ticket au
+   journal. Corrigé : en ligne, si la relecture des retours échoue (délai, erreur), l'avoir et la modification sont bloqués
+   (« Vérification impossible… réessayez ») ; hors connexion, comportement antérieur (mémoire de l'appareil).
+4. *Rejeu de la file de secours refusé* (`LX_RETOUR_REFUSE` au rejeu d'un retour déjà ajouté à la caisse) : le ticket de retour local
+   restait dans la caisse et les rendez-vous, alors qu'il n'est pas au journal (Z de l'appareil et clôture de nuit différentes du
+   journal, clôture de nuit refusée). Corrigé : écarté de la caisse (rendez-vous local marqué annulé, hors CA, alerte et trace
+   `DB_ERROR` critique avec les effets de fidélité / stock à régulariser).
+5. *« 💳 Modifier règlement » bloqué après un retour* (la règle « déjà un retour » s'appliquait aussi à la correction du moyen de
+   paiement, et rendait inaccessible le bouton de retour de cette fenêtre). Corrigé : seuls l'avoir total et la modification sont
+   refusés. Au passage, la correction du moyen de paiement retrouve aussi les tickets « online_<uuid> ».
+6. *Déclencheur serveur renforcé* : motif obligatoire, somme des lignes = total, aucune ligne ni règlement positif, ligne « retour »
+   sans drapeau du ticket refusée, origine « retour » au niveau des lignes refusée ; recherches indexées (index `tickets_tknum_idx`,
+   `tickets_cancel_ref_idx` ajoutés ; plus de balayage de la table, dont `raw_data` pèse ~4,4 Ko par ligne).
+7. *JET* : `TICKET_RETOUR_PARTIEL` n'avait pas de code (non reporté au JET) -> code 190 ajouté à `nf525_jet_code` (remplacement gardé
+   de la définition réelle).
+8. *`check_fiscal_integrity`, règle 5* : un ticket de retour de même montant pouvait masquer une annulation sans contre-ticket, et un
+   retour écarté localement (point 4) aurait été signalé à tort -> retour exclu du rapprochement, montants négatifs non signalés
+   (remplacement gardé de la définition réelle).
+9. Textes : aide (motif 5 caractères, bons / cartes / forfaits à annuler avant tout retour, correction du moyen de paiement toujours
+   possible, vérification serveur de l'avoir) et bot (mêmes points, renvoi vers la section #s10 du guide).
+**Rien à changer, vérifié sur les définitions réelles** : contrôle de la Z par la base (`b_nf525_z_controle_journal`), clôture de
+nuit `lx-cloture-auto` (le retour, rendez-vous « done » non annulé de prix négatif, entre dans total et nombre = journal), cumuls,
+`check_data_integrity`, `admin_nf525_etat`, `nf525_infos_z`, signature TK (type R), tests de nuit. Écart ANTÉRIEUR relevé (non
+corrigé, sans effet sur total_ca / nombre / HT en taux unique) : la copie de `_splitPrestProd` de `lx-cloture-auto` date d'avant le
+11/10 et range tout montant négatif (contre-tickets, retours) en « prestations » : ventilation prestations / produits de la Z de nuit
+à réaligner pour les établissements à double taux.
+**Essais réalisés lors de l'audit** : (a) `node --check` des 6 scripts de `app.html` et de `luxyra-supabase.js` ; (b) fonctions de
+calcul du retour (lignes payées / déjà remboursées / reste, TVA par taux, identifiant « online_ ») exécutées sous Node avec des
+données fictives ; (c) script SQL complet exécuté en base dans une transaction ANNULÉE (aucune donnée conservée, vérifié ensuite :
+0 ticket, 0 clôture, ni déclencheur ni index ni modification de fonction restants) sur le « Salon Démo » (fermé, sans ticket) :
+retour accepté (n°, chaînage et sceau posés comme tout ticket), dépassement du payé refusé (y compris référence sans « online_ » et
+0,01 € de trop), quantité supérieure refusée, n° d'origine faux refusé, ligne positive / règlement positif / motif absent / ligne
+sans drapeau refusés, avoir sur un ticket ayant un retour refusé, avoir sur un ticket de retour refusé, retour sur un ticket annulé
+ou sur un ticket de retour refusé, rejeu du même ticket écarté par l'index d'unicité, solde exact accepté, vente et avoir ordinaires
+acceptés (non-régression), Z égale au journal (retours inclus) acceptée par la base et Z différente refusée, `nf525_jet_code` = 190,
+`check_fiscal_integrity` recompilée. **Non fait** : aucun essai dans l'application elle-même (écran, impression, exports, file de
+secours, deux appareils), aucune application du SQL, aucune publication.
+
+- 2026-10-17, 00:45 — docs/migrations_1017/retour_partiel.sql APPLIQUÉ en base (déclencheur a_lx_tickets_retour_controle, 3 index, nf525_jet_code TICKET_RETOUR_PARTIEL=190, check_fiscal_integrity règle 5). Contrôles après application : check_fiscal_integrity 0 anomalie, check_data_integrity 0 anomalie, nf525_tests_protections ok=true. Application publiée ensuite (v=20261017-1). Essais en caisse TEST dans l application : restent à faire.
