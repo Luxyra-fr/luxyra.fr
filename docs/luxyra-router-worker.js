@@ -137,6 +137,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname === "/api/admin/stripe" && request.method === "POST") return await handleAdminStripe(request, env);
       // 2026-10-15 : crédits restants du compte Brevo Luxyra (admin seulement, lecture seule)
       if (url.pathname === "/api/admin/brevo" && request.method === "GET") return await handleAdminBrevo(request, env, url);
+      // 2026-10-17 soir : STOP SMS — réinscription d'un numéro, déblocage Brevo des rappels (admin ou x-lx-internal)
+      if (url.pathname === "/api/admin/sms-stop" && request.method === "POST") return await handleAdminSmsStop(request, env);
       // 2026-10-15 : statistiques e-mails Brevo (7 / 30 j) et état des automatismes GitHub (admin seulement, lecture seule)
       if (url.pathname === "/api/admin/brevo-emails" && request.method === "GET") return await handleAdminBrevoEmails(request, env, url);
       if (url.pathname === "/api/admin/github-actions" && request.method === "GET") return await handleAdminGithubActions(request, env, url);
@@ -3386,19 +3388,116 @@ function lxSmsPubCreneauOk(date) {
 async function lxSmsPubBloque(env, tel) {
   try {
     const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_pub_bloque`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_tel: String(tel || "") }) });
-    if (!r.ok) return false; // base injoignable : on n'empêche pas l'envoi (Brevo bloque de toute façon les numéros en blocklist)
+    // 2026-10-17 soir : le blocage Brevo étant levé après un STOP (pour garder les rappels), lx_sms_stop est
+    // désormais NOTRE SEULE protection : base injoignable -> SMS publicitaire REFUSÉ (jamais d'envoi « à l'aveugle »).
+    if (!r.ok) return true;
     return (await r.json()) === true;
-  } catch (_) { return false; }
+  } catch (_) { return true; }
 }
-// Enregistre un STOP / START reçu de Brevo (webhook ou rattrapage). salonId : information seulement.
-async function lxSmsStopEnregistrer(env, tel, action, source, salonId, details) {
+// ============================================================
+// 2026-10-17 soir — STOP : l'opposition reste chez NOUS, les rappels de RDV continuent
+// Constat réel : après un STOP, Brevo met le numéro dans la blocklist « SMS transactionnels » du compte UNIQUE
+// Luxyra (help.brevo.com 209458705 : un contact qui se désinscrit en répondant à vos SMS transactionnels ne reçoit
+// plus AUCUN SMS transactionnel) -> le rappel suivant (message 6058006860145686) a reçu l'accusé « bl »
+// (Blacklisted) et n'est jamais parti. Un STOP sur une promo d'un salon couperait les rappels de tous les salons.
+// Règle Luxyra :
+//  - le STOP vise la prospection : le numéro reste dans lx_sms_stop, tout SMS publicitaire (campagne, anniversaire,
+//    relance) vers lui est refusé, de tous les salons (lxSmsPubBloque, refus si la base ne répond pas) ;
+//  - les SMS transactionnels (rappel, confirmation, modification, annulation) ne sont pas de la prospection : on lève
+//    le blocage Brevo (PUT /v3/contacts/{SMS}?identifierType=phone_id {"smsBlacklisted":false}, seul déblocage SMS
+//    documenté par Brevo) ; si Brevo bloque malgré tout un rappel (« bl »), remboursement + alerte admin avec la
+//    marche à suivre (Brevo > Paramètres > SMS transactionnels > Contacts bloqués : aucune API documentée) ;
+//  - solution de fond : BREVO_API_KEY_MARKETING (compte / sous-compte Brevo dédié aux SMS publicitaires) -> les STOP
+//    ne touchent plus le compte des rappels (brevoSendSms choisit la clé selon le type).
+// Le STOP Brevo reste donc respecté pour ce qu'il vise : aucun SMS publicitaire n'est plus jamais envoyé à ce numéro
+// tant qu'il ne répond pas START (ou ne demande pas sa réinscription au support).
+// ============================================================
+function lxBrevoClesSms(env) {
+  const l = [];
+  if (env.BREVO_API_KEY) l.push({ cle: env.BREVO_API_KEY, compte: "principal" });
+  if (env.BREVO_API_KEY_MARKETING && env.BREVO_API_KEY_MARKETING !== env.BREVO_API_KEY) l.push({ cle: env.BREVO_API_KEY_MARKETING, compte: "marketing" });
+  return l;
+}
+// Numéro au format international attendu par Brevo (+33XXXXXXXXX pour la France)
+function lxTelInternational(tel) {
+  const d = String(tel || "").replace(/\D/g, "");
+  if (/^0[1-9]\d{8}$/.test(d)) return "+33" + d.slice(1);
+  if (/^0033\d{9}$/.test(d)) return "+" + d.slice(2);
+  if (/^00\d{8,}$/.test(d)) return "+" + d.slice(2);
+  return d.length >= 8 ? "+" + d : null;
+}
+// Même règle que public.normalize_phone (clé de lx_sms_stop)
+function lxTelNorm(tel) {
+  let v = String(tel || "").replace(/\D/g, "");
+  if (v.length === 11 && /^33/.test(v)) v = "0" + v.slice(2);
+  if (v.length === 13 && /^0033/.test(v)) v = "0" + v.slice(4);
+  return v.length < 8 ? "" : v;
+}
+// Lève le blocage SMS du numéro sur le compte Brevo des rappels (clé principale). Ne touche PAS à lx_sms_stop.
+// Résultat : { ok, etat: 'debloque' | 'deja_libre' | 'aucun_contact' | 'erreur', detail }
+async function lxBrevoSmsDebloquer(env, tel) {
+  const intl = lxTelInternational(tel);
+  if (!intl) return { ok: false, etat: "erreur", detail: "numéro invalide" };
+  if (!env.BREVO_API_KEY) return { ok: false, etat: "erreur", detail: "BREVO_API_KEY absente" };
+  const h = { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" };
+  const url = `https://api.brevo.com/v3/contacts/${encodeURIComponent(intl)}?identifierType=phone_id`;
   try {
-    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_stop_enregistrer`, { method: "POST", headers: _sbHeaders(env),
-      body: JSON.stringify({ p_tel: String(tel || ""), p_action: action, p_source: source || null, p_salon: (/^[0-9a-f-]{36}$/i.test(String(salonId || "")) ? salonId : null), p_details: details ? String(details).slice(0, 300) : null }) });
-    return r.ok ? await r.json() : null;
-  } catch (_) { return null; }
+    const rg = await fetch(url, { headers: h, signal: AbortSignal.timeout(10000) });
+    if (rg.status === 404) {
+      // Pas de fiche contact : le blocage ne peut être que dans « SMS transactionnels > Contacts bloqués » (sans API)
+      return { ok: false, etat: "aucun_contact", detail: "aucune fiche contact Brevo pour ce numéro : vérifier Brevo > Paramètres > SMS transactionnels > Contacts bloqués" };
+    }
+    const jg = rg.ok ? await rg.json().catch(() => ({})) : null;
+    if (!rg.ok) return { ok: false, etat: "erreur", detail: "lecture contact Brevo HTTP " + rg.status };
+    if (jg && jg.smsBlacklisted === false) return { ok: true, etat: "deja_libre", detail: "contact Brevo non blocklisté (smsBlacklisted=false)" };
+    const rp = await fetch(url, { method: "PUT", headers: h, body: JSON.stringify({ smsBlacklisted: false }), signal: AbortSignal.timeout(10000) });
+    if (rp.ok || rp.status === 204) return { ok: true, etat: "debloque", detail: "smsBlacklisted true -> false (contact " + (jg && jg.id) + ")" };
+    const t = await rp.text().catch(() => "");
+    return { ok: false, etat: "erreur", detail: "déblocage Brevo HTTP " + rp.status + (t ? " : " + t.slice(0, 120) : "") };
+  } catch (e) {
+    return { ok: false, etat: "erreur", detail: "Brevo injoignable : " + String(e && e.message || e).slice(0, 100) };
+  }
 }
-// Événement Brevo -> 'stop' | 'start' | null. Brevo traite lui-même STOP/START (blocklist du compte) ; on recopie.
+// Débloque chez Brevo + trace (lx_sms_stop.brevo_*, audit_log des salons concernés, admin_log) + alerte si échec
+async function lxBrevoSmsDebloquerTrace(env, tel, alerter) {
+  const res = await lxBrevoSmsDebloquer(env, tel);
+  try {
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_stop_brevo_resultat`, { method: "POST", headers: _sbHeaders(env),
+      body: JSON.stringify({ p_tel: String(tel || ""), p_ok: !!res.ok, p_resultat: res.etat + " : " + res.detail }) });
+  } catch (_) {}
+  if (!res.ok && alerter !== false) {
+    try {
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({
+        p_event_type: "payment_failed", p_title: "📱 SMS — rappels à débloquer chez Brevo",
+        p_body: "Le numéro ..." + String(tel || "").replace(/\D/g, "").slice(-4) + " a répondu STOP à un SMS publicitaire. Blocage Brevo non levé automatiquement (" + res.etat + "). "
+          + "Ses rappels de RDV risquent de ne pas partir : Brevo > Paramètres > SMS transactionnels > Contacts bloqués > débloquer ce numéro. L'opposition aux SMS publicitaires reste active chez Luxyra.",
+        p_url: "/admin.html#sms", p_payload: { etat: res.etat } }) });
+    } catch (_) {}
+  }
+  return res;
+}
+// Enregistre un STOP / START reçu de Brevo (accusé, webhook ou rattrapage). salonId : information seulement.
+// evenementLe : date de l'événement Brevo (un STOP antérieur à une réinscription est ignoré par la base).
+// STOP -> opposition gardée chez nous + levée du blocage Brevo (une fois par numéro) pour garder les rappels.
+async function lxSmsStopEnregistrer(env, tel, action, source, salonId, details, evenementLe) {
+  let res = null;
+  try {
+    const corps = { p_tel: String(tel || ""), p_action: action, p_source: source || null, p_salon: (/^[0-9a-f-]{36}$/i.test(String(salonId || "")) ? salonId : null), p_details: details ? String(details).slice(0, 300) : null };
+    // ts_event des webhooks = secondes Unix ; API d'événements = ISO UTC
+    const d = !evenementLe ? null : (typeof evenementLe === "number" || /^\d{9,11}$/.test(String(evenementLe)))
+      ? new Date(Number(evenementLe) * 1000)
+      : new Date(String(evenementLe).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(evenementLe)) ? "" : "Z"));
+    if (d && !isNaN(d.getTime())) corps.p_evenement_le = d.toISOString();
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_stop_enregistrer`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(corps) });
+    res = r.ok ? await r.json() : null;
+  } catch (_) { res = null; }
+  if (action === "stop" && res && res.ok && res.brevo_a_debloquer) {
+    try { res.brevo = await lxBrevoSmsDebloquerTrace(env, tel); } catch (_) {}
+  }
+  return res;
+}
+// Événement Brevo -> 'stop' | 'start' | null. Brevo traite lui-même STOP/START (blocklist du compte) ; on recopie
+// l'opposition dans lx_sms_stop (notre filtre des SMS publicitaires) puis on lève le blocage Brevo (rappels).
 function lxSmsStopAction(ev, reponse) {
   const e = String(ev || "").toLowerCase().replace(/[\s_-]/g, "");
   if (e === "unsubscribe" || e === "unsubscribed" || e === "unsubscription") return "stop";
@@ -3426,7 +3525,7 @@ async function handleBrevoSmsStopWebhook(request, env) {
     let n = 0;
     for (const x of evs.slice(0, 50)) {
       const action = lxSmsStopAction(x && (x.msg_status || x.event || x.description), x && x.reply);
-      if (action && x.to) { await lxSmsStopEnregistrer(env, x.to, action, "brevo_webhook", lxSalonDuTag(x.tag), x.reply ? "Réponse : " + String(x.reply).slice(0, 60) : (x.msg_status || "")); n++; }
+      if (action && x.to) { await lxSmsStopEnregistrer(env, x.to, action, "brevo_webhook", lxSalonDuTag(x.tag), x.reply ? "Réponse : " + String(x.reply).slice(0, 60) : (x.msg_status || ""), x.ts_event || null); n++; }
     }
     return jsonResponse({ ok: true, traites: n });
   } catch (e) {
@@ -3435,25 +3534,108 @@ async function handleBrevoSmsStopWebhook(request, env) {
 }
 // Rattrapage quotidien (cron 08:00 UTC) : désinscriptions et réponses STOP/START des 2 derniers jours lues dans
 // l'API d'événements SMS de Brevo — fonctionne même si aucun webhook n'est configuré chez Brevo.
+// 2026-10-17 soir : lit aussi le compte Brevo « marketing » (BREVO_API_KEY_MARKETING) s'il est configuré ; date de
+// l'événement transmise (un STOP antérieur à une réinscription n'est pas recréé).
 async function lxSmsStopRattrapage(env) {
-  if (!env.BREVO_API_KEY) return { ok: false, erreur: "BREVO_API_KEY absente" };
+  const cles = lxBrevoClesSms(env);
+  if (!cles.length) return { ok: false, erreur: "BREVO_API_KEY absente" };
   const res = { stop: 0, start: 0, lus: 0 };
-  for (const evt of ["unsubscription", "replies"]) {
-    for (let page = 0; page < 10; page++) {
-      const r = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/events?days=2&event=${evt}&limit=100&offset=${page * 100}&sort=asc`,
-        { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" } });
-      if (!r.ok) break;
-      const j = await r.json().catch(() => ({}));
-      const L = Array.isArray(j.events) ? j.events : [];
-      for (const x of L) {
-        res.lus++;
-        const action = lxSmsStopAction(x.event, x.reply);
-        if (action && x.phoneNumber) { await lxSmsStopEnregistrer(env, x.phoneNumber, action, "brevo_rattrapage", lxSalonDuTag(x.tag), x.reply ? "Réponse : " + String(x.reply).slice(0, 60) : x.event); res[action]++; }
+  for (const k of cles) {
+    for (const evt of ["unsubscription", "replies"]) {
+      for (let page = 0; page < 10; page++) {
+        const r = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/events?days=2&event=${evt}&limit=100&offset=${page * 100}&sort=asc`,
+          { headers: { "api-key": k.cle, Accept: "application/json" } });
+        if (!r.ok) break;
+        const j = await r.json().catch(() => ({}));
+        const L = Array.isArray(j.events) ? j.events : [];
+        for (const x of L) {
+          res.lus++;
+          const action = lxSmsStopAction(x.event, x.reply);
+          if (action && x.phoneNumber) { await lxSmsStopEnregistrer(env, x.phoneNumber, action, "brevo_rattrapage", lxSalonDuTag(x.tag), x.reply ? "Réponse : " + String(x.reply).slice(0, 60) : x.event, x.date || null); res[action]++; }
+        }
+        if (L.length < 100) break;
       }
-      if (L.length < 100) break;
     }
   }
   return res;
+}
+
+// POST /api/admin/sms-stop — admin (support@luxyra.fr + aal2) ou appel serveur (x-lx-internal = clé service).
+//  {op:"etat", telephone}                : diagnostic lecture seule (lx_sms_stop, contact Brevo, événements 7 j)
+//  {op:"reinscrire", telephone, motif}   : demande du client -> retrait de lx_sms_stop (SMS publicitaires de nouveau
+//                                          possibles) + levée du blocage Brevo ; traces audit_log / admin_log
+//  {op:"debloquer_brevo", telephone}     : numéro en lx_sms_stop : lève le blocage Brevo (rappels), opposition gardée
+//  {op:"debloquer_brevo_tous", forcer}   : idem pour tous les numéros de lx_sms_stop pas encore débloqués (200 max)
+async function handleAdminSmsStop(request, env) {
+  try {
+    let qui = "x-lx-internal";
+    if (!(await lxIsInternal(request, env))) {
+      const u = await lxAuthUser(request);
+      if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
+      qui = u.email;
+    }
+    let b = {}; try { b = await request.json(); } catch (_) {}
+    const op = String(b.op || "");
+    const tel = String(b.telephone || "").trim();
+    const fin4 = tel.replace(/\D/g, "").slice(-4);
+    if (op === "etat") {
+      const intl = lxTelInternational(tel);
+      if (!intl) return jsonResponse({ ok: false, error: "telephone invalide" }, 400);
+      const out = { ok: true, telephone: "..." + fin4, comptes: [] };
+      try {
+        const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/lx_sms_stop?select=stop_le,source,details,brevo_debloque_le,brevo_resultat&telephone_norm=eq.${encodeURIComponent(lxTelNorm(tel))}`, { headers: _sbHeaders(env) });
+        out.lx_sms_stop = r.ok ? ((await r.json())[0] || null) : "?";
+      } catch (_) { out.lx_sms_stop = "?"; }
+      for (const k of lxBrevoClesSms(env)) {
+        const c = { compte: k.compte };
+        try {
+          const rc = await fetch(`https://api.brevo.com/v3/contacts/${encodeURIComponent(intl)}?identifierType=phone_id`, { headers: { "api-key": k.cle, Accept: "application/json" }, signal: AbortSignal.timeout(10000) });
+          const jc = rc.ok ? await rc.json().catch(() => ({})) : null;
+          c.contact = rc.status === 404 ? "aucun" : (jc ? { id: jc.id, smsBlacklisted: jc.smsBlacklisted } : "HTTP " + rc.status);
+        } catch (e) { c.contact = "erreur"; }
+        try {
+          const re = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/events?days=7&limit=50&sort=desc&phoneNumber=${encodeURIComponent(intl.slice(1))}`, { headers: { "api-key": k.cle, Accept: "application/json" }, signal: AbortSignal.timeout(10000) });
+          const je = re.ok ? await re.json().catch(() => ({})) : null;
+          c.evenements = je && Array.isArray(je.events) ? je.events.map((x) => ({ date: x.date, messageId: x.messageId, event: x.event, reason: x.reason, reply: x.reply })) : "HTTP " + re.status;
+        } catch (e) { c.evenements = "erreur"; }
+        out.comptes.push(c);
+      }
+      return jsonResponse(out);
+    }
+    if (op === "reinscrire") {
+      if (!lxTelInternational(tel)) return jsonResponse({ ok: false, error: "telephone invalide" }, 400);
+      const brevo = await lxBrevoSmsDebloquer(env, tel);
+      const motif = String(b.motif || "Demande du client").slice(0, 160);
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_stop_enregistrer`, { method: "POST", headers: _sbHeaders(env),
+        body: JSON.stringify({ p_tel: tel, p_action: "start", p_source: "admin_reinscription", p_salon: null,
+          p_details: `Réinscription par ${qui} — ${motif} — Brevo : ${brevo.etat} (${brevo.detail})`.slice(0, 300) }) });
+      const base = r.ok ? await r.json() : { ok: false, http: r.status };
+      return jsonResponse({ ok: !!(base && base.ok), telephone: "..." + fin4, base, brevo,
+        note: brevo.ok ? "Numéro réinscrit : SMS publicitaires et rappels possibles." : "Réinscrit chez Luxyra. Blocage Brevo à vérifier à la main : Brevo > Paramètres > SMS transactionnels > Contacts bloqués." });
+    }
+    if (op === "debloquer_brevo") {
+      if (!lxTelInternational(tel)) return jsonResponse({ ok: false, error: "telephone invalide" }, 400);
+      const brevo = await lxBrevoSmsDebloquerTrace(env, tel, false);
+      return jsonResponse({ ok: brevo.ok, telephone: "..." + fin4, brevo, note: "Opposition aux SMS publicitaires conservée (lx_sms_stop)." });
+    }
+    if (op === "debloquer_brevo_tous") {
+      const filtre = b.forcer ? "" : "&brevo_debloque_le=is.null";
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/lx_sms_stop?select=telephone_norm${filtre}&order=stop_le.asc&limit=200`, { headers: _sbHeaders(env) });
+      const L = r.ok ? await r.json() : [];
+      const res = { ok: true, traites: 0, debloques: 0, deja_libres: 0, sans_contact: 0, erreurs: 0, details: [] };
+      for (const x of L) {
+        const d = await lxBrevoSmsDebloquerTrace(env, x.telephone_norm, false);
+        res.traites++;
+        if (d.etat === "debloque") res.debloques++; else if (d.etat === "deja_libre") res.deja_libres++; else if (d.etat === "aucun_contact") res.sans_contact++; else res.erreurs++;
+        res.details.push({ telephone: "..." + String(x.telephone_norm).slice(-4), etat: d.etat });
+      }
+      if (res.sans_contact || res.erreurs) res.note = "Numéros non débloqués automatiquement : Brevo > Paramètres > SMS transactionnels > Contacts bloqués (déblocage manuel, numéro par numéro).";
+      return jsonResponse(res);
+    }
+    return jsonResponse({ ok: false, error: "op inconnue (etat, reinscrire, debloquer_brevo, debloquer_brevo_tous)" }, 400);
+  } catch (e) {
+    return jsonResponse({ ok: false, error: String(e && e.message || e).slice(0, 200) }, 500);
+  }
 }
 
 // 2026-10-10 : nouvel endpoint Brevo `/v3/transactionalSMS/send` (l'ancien `/sms` est déprécié) avec accusés de
@@ -3464,7 +3646,9 @@ async function brevoSendSms(env, { to, content, sender, tag, webUrl, marketing }
   // 2026-10-17 : SMS publicitaire -> mention officielle « STOP au [STOP_CODE] » (ajoutée APRÈS la conversion) + type marketing
   if (marketing && !/STOP au \[STOP_CODE\]/i.test(content)) content = content + LX_SMS_MENTION_STOP;
   const typeSms = marketing ? "marketing" : "transactional";
-  const headers = { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" };
+  // 2026-10-17 soir : compte Brevo dédié aux SMS publicitaires si configuré -> un STOP n'atteint jamais le compte des rappels
+  const cleApi = (marketing && env.BREVO_API_KEY_MARKETING) ? env.BREVO_API_KEY_MARKETING : env.BREVO_API_KEY;
+  const headers = { "api-key": cleApi, "Content-Type": "application/json", Accept: "application/json" };
   const destinataire = String(to || "").replace(/^\+/, "").replace(/\D/g, "");
   const corps = { type: typeSms, sender: sender || "Luxyra", recipient: destinataire, content };
   if (tag) corps.tag = tag;
@@ -3496,10 +3680,17 @@ async function runSmsRapprochementJob(env) {
   const L = rr.ok ? await rr.json() : [];
   const acceptes = L.filter((x) => x.message_id).length;
   const echecs = L.filter((x) => x.statut === "echec").length, rembourses = L.filter((x) => x.rembourse).length;
-  const rb = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/reports?startDate=${jour}&endDate=${jour}`, { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" } });
-  const jb = rb.ok ? await rb.json() : null;
-  const repB = jb && Array.isArray(jb.reports) ? (jb.reports.find((x) => x.date === jour) || jb.reports[0] || null) : null;
-  const brevo = repB ? Number(repB.requests || 0) : null;
+  // 2026-10-17 soir : somme des comptes Brevo SMS (principal + marketing éventuel)
+  let brevo = null;
+  for (const k of lxBrevoClesSms(env)) {
+    try {
+      const rb = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/reports?startDate=${jour}&endDate=${jour}`, { headers: { "api-key": k.cle, Accept: "application/json" } });
+      const jb = rb.ok ? await rb.json() : null;
+      const repB = jb && Array.isArray(jb.reports) ? (jb.reports.find((x) => x.date === jour) || jb.reports[0] || null) : null;
+      if (repB) brevo = (brevo || 0) + Number(repB.requests || 0);
+      else if (k.compte === "principal") { brevo = null; break; } // pas de comparaison sans le compte principal
+    } catch (_) { if (k.compte === "principal") { brevo = null; break; } }
+  }
   const alertes = [];
   // Pas de comparaison pour une journée antérieure au début du suivi (sinon fausse alerte le 1er jour)
   let suiviComplet = false;
@@ -3521,6 +3712,15 @@ async function runSmsRapprochementJob(env) {
     try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?on_conflict=key`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=minimal" }), body: JSON.stringify({ key: "brevo_sms_alerte_solde", value: String(soldeBrevo), description: "Alerte solde SMS Brevo envoyée (une fois, effacée quand le solde remonte)" }) }); } catch (_) {}
   } else if (soldeBrevo !== null && soldeBrevo >= seuil && dejaSolde) {
     try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/app_secrets?key=eq.brevo_sms_alerte_solde`, { method: "DELETE", headers: _sbHeaders(env, { Prefer: "return=minimal" }) }); } catch (_) {}
+  }
+  // Compte Brevo marketing (s'il existe) : alerte une fois par jour si son solde est bas (sinon plus de campagnes)
+  if (env.BREVO_API_KEY_MARKETING && env.BREVO_API_KEY_MARKETING !== env.BREVO_API_KEY) {
+    try {
+      const rm = await fetch("https://api.brevo.com/v3/account", { headers: { "api-key": env.BREVO_API_KEY_MARKETING, Accept: "application/json" } });
+      const jm = rm.ok ? await rm.json() : null;
+      const pm = jm && Array.isArray(jm.plan) ? jm.plan.find((x) => String(x.type || "").toLowerCase() === "sms") : null;
+      if (pm && pm.credits != null && Number(pm.credits) < seuil) alertes.push(`Solde SMS du compte Brevo MARKETING bas : ${Number(pm.credits)} crédit(s). Les rappels ne sont pas concernés ; les campagnes SMS échoueront sans recharge.`);
+    } catch (_) {}
   }
   for (const a of alertes) {
     try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/notify_admins`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_event_type: "payment_failed", p_title: "📱 SMS — à vérifier", p_body: a, p_url: "/admin.html#sms", p_payload: {} }) }); } catch (_) {}
@@ -3546,7 +3746,9 @@ async function handleBrevoSmsEvent(request, env) {
     let b = {}; try { b = await request.json(); } catch (_) {}
     const ev = String(b.event || b.msg_status || b.status || b.type || "").toLowerCase().replace(/[\s_-]/g, "");
     const raison = String(b.reason || b.description || b.error || "").slice(0, 200);
-    const echec = ["hardbounce", "rejected", "blocked", "skipped", "error", "invalid", "undelivered", "failed", "expired"].includes(ev);
+    // 2026-10-17 soir : « bl » = événement Blacklisted des webhooks SMS Brevo (numéro en blocklist : SMS jamais parti),
+    // « skip » = SMS ignoré par Brevo -> échec définitif, crédit rendu au salon.
+    const echec = ["hardbounce", "rejected", "blocked", "skipped", "skip", "bl", "blacklisted", "error", "invalid", "undelivered", "failed", "expired"].includes(ev);
     const statut = ev === "delivered" ? "livre" : (echec ? "echec" : (ev === "softbounce" ? "en_attente" : null));
     const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?select=evenements,statut,salon_id&id=eq.${encodeURIComponent(ref)}&limit=1`, { headers: _sbHeaders(env) });
     const ra = rq.ok ? await rq.json() : [];
@@ -3564,6 +3766,14 @@ async function handleBrevoSmsEvent(request, env) {
     await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?id=eq.${encodeURIComponent(ref)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(patch) });
     if (echec && ra[0].statut !== "livre") {
       await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/sms_envoi_rembourser`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_id: ref, p_motif: "SMS non distribué (" + ev + (raison ? " : " + raison : "") + ") — crédit rendu" }) });
+    }
+    // 2026-10-17 soir : rappel / confirmation bloqué par la blocklist Brevo alors que le numéro a seulement refusé la
+    // publicité (lx_sms_stop) -> nouvelle tentative de déblocage + alerte admin si elle échoue
+    if ((ev === "bl" || ev === "blacklisted") && b.to && String(b.type || "transactional").toLowerCase() !== "marketing") {
+      try {
+        const rs = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_pub_bloque`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_tel: String(b.to) }) });
+        if (rs.ok && (await rs.json()) === true) await lxBrevoSmsDebloquerTrace(env, b.to);
+      } catch (_) {}
     }
     return jsonResponse({ ok: true });
   } catch (e) {
