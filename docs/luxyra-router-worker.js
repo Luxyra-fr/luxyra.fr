@@ -3360,6 +3360,18 @@ function lxSmsSegments(txt) {
 // Même règle en SQL : lx_prive.sms_pub_creneau_ok / lx_prive.est_jour_ferie_fr (docs/migrations_1017/sms_stop_creneaux.sql).
 // ============================================================
 const LX_SMS_PUB_CONTEXTES = new Set(["marketing", "anniversaire", "relance"]);
+// 2026-10-17 (sms_libre_et_purge.sql) : contextes TRANSACTIONNELS réels (rappels, confirmations…) : jamais requalifiés.
+// Même liste en SQL (lx_prive.sms_contexte_transactionnel) et dans app.html (LX_SMS_CTX_TRANSAC).
+const LX_SMS_CTX_TRANSAC = new Set(["rappel_24h", "rappel_2h", "rappel", "confirmation_rdv", "confirmation_rdv_groupe",
+  "validation_rdv", "carte_welcome", "carte_rappel_30j", "carte_rappel_7j", "test"]);
+// Marqueurs publicitaires évidents (casse / accents ignorés) — même liste que lx_prive.sms_texte_publicitaire et
+// lxSmsMarqueursPub (app.html). Un SMS libre (sans contexte, « libre_info », « luxyra_auto »…) envoyé par l'app qui
+// en contient un est traité comme 'marketing' (mention Stop SMS, créneau, opposition, consentement).
+const LX_SMS_PUB_MOTS = /[^a-z0-9](promos?|promotions?|promotionnel(le)?s?|offres?|reductions?|remises?|soldes?|code promo|gratuite?s?|cadeaux? offerts?|black friday|jeux?[ -]concours|parrainages?|profitez|nouveautes?|reservez vite|ventes? privees?|bons? plans?|prix casses?|happy hour)[^a-z0-9]/;
+function lxSmsTextePub(txt) {
+  const s = " " + String(txt || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/['’]/g, " ") + " ";
+  return LX_SMS_PUB_MOTS.test(s) || /-\s?\d+\s?%/.test(s) || /\d+\s?%\s*(de\s+)?(reduction|remise|rabais)/.test(s);
+}
 // 2026-10-17 lien court : mention de désinscription des SMS publicitaires (le code fait toujours 6 caractères)
 const LX_SMS_MENTION_PREFIXE = "\nStop SMS: luxyra.fr/s/";
 const LX_SMS_MENTION_LONGUEUR = LX_SMS_MENTION_PREFIXE.length + 6; // = 29 (saut de ligne compris)
@@ -4381,10 +4393,29 @@ async function handleSmsCustom(request, env) {
   // -> créneau légal, numéro ayant répondu STOP refusé (sans débit), lien « Stop SMS: luxyra.fr/s/<code> » ajouté
   //    (29 caractères, compté dans le coût). Sans lien possible (client absent du fichier) : refusé, sans débit.
   // Sans contexte (anciennes versions, rappels, confirmations) : comportement inchangé (transactionnel).
-  const _pub = LX_SMS_PUB_CONTEXTES.has(String(context || ""));
+  // 2026-10-17 (sms_libre_et_purge.sql) : SMS LIBRE venant de l'app (pas un appel interne : les rappels / confirmations
+  //   du serveur et la file sms_differes arrivent sans contexte avec x-lx-internal et ne sont JAMAIS requalifiés ;
+  //   contextes transactionnels LX_SMS_CTX_TRANSAC exclus) : texte publicitaire repéré -> traité comme 'marketing'.
+  let _ctx = String(context || "");
+  let _requalifie = false;
+  if (!_interne && !LX_SMS_PUB_CONTEXTES.has(_ctx) && !LX_SMS_CTX_TRANSAC.has(_ctx) && lxSmsTextePub(contenu)) {
+    _ctx = "marketing"; _requalifie = true;
+  }
+  const _pub = LX_SMS_PUB_CONTEXTES.has(_ctx);
   if (_pub) {
-    if (!lxSmsPubCreneauOk(new Date())) return jsonResponse({ success: false, code: "hors_creneau", error: "SMS publicitaires autorisés du lundi au samedi de 8 h à 21 h 30, hors dimanche et jours fériés" }, 409);
-    if (await lxSmsPubBloque(env, telephone)) return jsonResponse({ success: false, code: "stop", error: "Ce client a répondu STOP aux SMS publicitaires" }, 409);
+    if (!lxSmsPubCreneauOk(new Date())) return jsonResponse({ success: false, code: "hors_creneau", requalifie: _requalifie, error: "SMS publicitaires autorisés du lundi au samedi de 8 h à 21 h 30, hors dimanche et jours fériés" }, 409);
+    if (await lxSmsPubBloque(env, telephone)) return jsonResponse({ success: false, code: "stop", requalifie: _requalifie, error: "Ce client a répondu STOP aux SMS publicitaires" }, 409);
+    // 2026-10-17 : publicité envoyée depuis l'app -> consentement SMS de la fiche exigé (comme la file et le mode téléphone)
+    if (!_interne && _ctx === "marketing" && /^[0-9a-f-]{36}$/i.test(String(salon_id || ""))) {
+      const _n = lxTelNorm(telephone);
+      if (_n) {
+        try {
+          const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/clients?select=id&salon_id=eq.${salon_id}&telephone_norm=eq.${_n}&sms_ok=is.false&fusionne_dans=is.null&rgpd_anonymise_le=is.null&limit=1`, { headers: _sbHeaders(env) });
+          const jq = rq.ok ? await rq.json() : [];
+          if (Array.isArray(jq) && jq.length) return jsonResponse({ success: false, code: "sans_consentement", requalifie: _requalifie, error: "Ce client n'a pas accepté les SMS (fiche client › RGPD)" }, 409);
+        } catch (_) {}
+      }
+    }
   }
   if (_pub && !/luxyra\.fr\/(s|stop)\//i.test(contenu)) {
     let _code = null;
@@ -4406,7 +4437,7 @@ async function handleSmsCustom(request, env) {
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
   const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra").slice(0,11).trim(), { marketing: _pub });
   if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);
-  return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites });
+  return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites, publicitaire: _pub, requalifie: _requalifie });
 }
 
 async function handleClientTickets(request, env) {

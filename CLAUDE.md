@@ -1996,3 +1996,11 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 - App : `lxSmsMentionStopActive()` = true (compteur compte la mention dans les deux modes ; libellés « SMS sur le forfait » en natif) ; `sendSmsNative` traduit les refus (hors_creneau / stop / sans_lien), journal = texte réel ; campagne : stop -> ignorés.
 - Légal : politique-confidentialite (17/10 : §2, tableau §3, §3.2, §10) + securite-rgpd. Aide s11 + bot (sms_stop_creneaux_1017, desinscription_motifs_1017) à jour.
 - Connu : en natif, aucune conversion GSM (accents envoyés tels quels par le téléphone -> peut basculer en UCS-2 / 70 car.) alors que le compteur suppose la conversion ; l'appli Android n'est pas dans le dépôt (lit status 'pending').
+
+## 2026-10-17 — SMS libres (information / publicité) + liste d'opposition 3 ans (SQL APPLIQUÉ, app + worker à pousser)
+- Constat : AUCUN envoi SMS individuel libre dans app.html (pas de bouton SMS fiche client / fiche RDV ; liens `sms:` = SMS du téléphone du pro, hors Luxyra). Seule fenêtre de texte libre : Marketing › Campagnes › « Message libre » (type `custom`), auparavant toujours 'marketing'.
+- « Message libre » + SMS : nature OBLIGATOIRE (`lxCampNature`) ; « Information » + marqueurs pub (`lxSmsMarqueursPub`) -> avertissement inline « Envoyer comme publicité » / « Modifier le texte » ; info -> `lx_sms_campagne_enfiler(..., p_contexte:'libre_info')` (48 h, 8 h-21 h) ; audit `SMS_LIBRE_NATURE`.
+- `sendSms` : contexte hors LX_SMS_CTX_PUB / LX_SMS_CTX_TRANSAC -> 'marketing' si marqueurs, sinon 'libre_info'.
+- Serveur : worker `handleSmsCustom` (appels NON internes seulement, contextes transactionnels exclus) requalifie en marketing + consentement (`sans_consentement`) ; déclencheurs `trg_sms_queue_pub` (+ LX_SANS_CONSENTEMENT) et `trg_sms_differes_requalifie` ; fonctions `lx_prive.sms_texte_publicitaire / sms_contexte_transactionnel / sms_contexte_requalifie` ; audit `SMS_LIBRE_REQUALIFIE`.
+- `lx_sms_stop` supprimée 3 ans après greatest(stop_le, maj_le) par `desinscriptions_purge` (cron existant 3 h 55) ; `lx_sms_stop_levee` > 3 ans aussi ; trace `admin_log` RGPD_SMS_STOP_PURGE (sans numéro).
+- Fichiers : docs/migrations_1017/sms_libre_et_purge.sql, politique-confidentialite, securite-rgpd, aide/sms-et-rappels.html, bot (3 fiches).
