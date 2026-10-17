@@ -3980,13 +3980,13 @@ async function handleEmailCustom(request, env) {
   // Lien fourni par le serveur (appel interne, déjà présent dans le HTML) ou calculé ici pour la fiche du salon de l'appelant.
   let _html = htmlContent || "", _texte = textContent || "", _entetes = null;
   if (LX_EMAIL_CONTEXTES_MARKETING.has(String(_corps.context || ""))) {
-    let _lien = (_acces.internal && typeof _corps.unsubscribeUrl === "string" && /^https:\/\/luxyra\.fr\/stop\/[0-9a-f]{10}$/.test(_corps.unsubscribeUrl)) ? _corps.unsubscribeUrl : "";
+    let _lien = (_acces.internal && typeof _corps.unsubscribeUrl === "string" && /^https:\/\/luxyra\.fr\/(stop\/[0-9a-f]{10}|s\/[a-z0-9]{6})$/.test(_corps.unsubscribeUrl)) ? _corps.unsubscribeUrl : "";
     if (!_lien) {
       const _sl = _acces.internal ? (/^[0-9a-f-]{36}$/i.test(String(_corps.salon_id || "")) ? String(_corps.salon_id) : null) : await lxEmailSalonAppelant(env, _acces, _corps.salon_id);
       if (_sl) _lien = await lxLienDesinscription(env, _sl, to, "email");
     }
     if (_lien) {
-      if (!/luxyra\.fr\/stop\/[0-9a-f]{10}|\/api\/unsubscribe\?/.test(_html)) _html = lxAjouterPiedDesinscription(_html, _lien);
+      if (!/luxyra\.fr\/stop\/[0-9a-f]{10}|luxyra\.fr\/s\/[a-z0-9]{6}|\/api\/unsubscribe\?/.test(_html)) _html = lxAjouterPiedDesinscription(_html, _lien);  // 2026-10-17 : liens courts /s/ reconnus (pas de 2e pied)
       if (_texte && _texte.indexOf(_lien) < 0) _texte += "\n\nSe désinscrire : " + _lien;
       _entetes = { "List-Unsubscribe": `<${_lien}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" };
     }
@@ -7670,62 +7670,292 @@ async function handleUnsubscribe(request, env) {
   return htmlResponse(unsubscribePage("ok", channel === "email" ? "Vous êtes désabonné des emails." : channel === "sms" ? "Vous êtes désabonné des SMS." : "Vous êtes désabonné de toutes les communications."));
 }
 
-// 2026-10-17 audit réglages (#4) : page de confirmation (formulaire POST) — rien n'est modifié à l'affichage
-function lxPageConfirmerDesinscription(action, quoi, salon) {
-  return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Désinscription — Luxyra</title>
-<style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#0a0a0a;color:#f5f0e8;margin:0;padding:40px 20px;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.card{background:#fff;color:#1a1a1a;max-width:480px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.3)}
-.head{background:#0a0a0a;color:#c8a84e;padding:20px;text-align:center;letter-spacing:3px;font-weight:800;font-family:Georgia,serif;font-size:22px}
-.body{padding:32px 28px;text-align:center}.msg{color:#444;font-size:15px;line-height:1.6;margin-bottom:22px}
-button{background:#c8a84e;color:#111;border:0;border-radius:30px;padding:13px 26px;font-weight:700;font-size:15px;cursor:pointer}
-.note{font-size:12px;color:#888;padding-top:18px;border-top:1px solid #eee;line-height:1.6;margin-top:22px}.note a{color:#c8a84e;text-decoration:none}</style></head><body>
-<div class="card"><div class="head">LUXYRA</div><div class="body">
-<div class="msg">Ne plus recevoir ${escapeHtml(quoi)}${salon ? " de <b>" + escapeHtml(salon) + "</b>" : ""} ?</div>
-<form method="POST" action="${escapeHtml(action)}"><input type="hidden" name="confirmer" value="1"><button type="submit">Confirmer la désinscription</button></form>
-<div class="note">Les messages liés à vos rendez-vous (confirmations, rappels) peuvent continuer d'être envoyés.<br>Vous pourrez changer d'avis à tout moment auprès de l'établissement ou dans votre espace client <a href="https://luxyra.fr/compte">luxyra.fr/compte</a>.</div>
-</div></div></body></html>`;
+// ============================================================
+// 2026-10-17 — PAGE DE DÉSINSCRIPTION LUXYRA (luxyra.fr/s/<code>, luxyra.fr/stop/<code>, /api/unsubscribe)
+// Même identité que le site (fond noir, or #c8a84e, Playfair Display + DM Sans auto-hébergées, logo).
+// États : confirmer (motif obligatoire ; « Autre » -> précision 5 à 300 caractères), succes, deja, reinscrit,
+//         invalide, erreur, impossible (réinscription refusée), trop (limite de requêtes).
+// Ce que fait réellement la base (docs/migrations_1017/desinscription_motifs.sql) :
+//   SMS    -> opposition GLOBALE du numéro aux SMS publicitaires (tous les établissements Luxyra), rappels gardés ;
+//   e-mail -> e-mails d'offres de CET établissement seulement (fiche client du salon), e-mails de RDV gardés.
+// ============================================================
+const LX_DESINSCR_MOTIFS = [
+  ["trop_de_messages", "Trop de messages"],
+  ["offres_sans_interet", "Les offres ne m’intéressent pas"],
+  ["ne_vient_plus", "Je ne viens plus dans cet établissement"],
+  ["jamais_inscrit", "Je ne me suis jamais inscrit(e)"],
+  ["autre_moyen", "Je préfère être contacté(e) autrement (e-mail, téléphone…)"],
+  ["autre", "Autre"],
+];
+const LX_DESINSCR_MOTIFS_OK = new Set(LX_DESINSCR_MOTIFS.map((m) => m[0]));
+
+// Texte « ce qui s'arrête » selon le canal (HTML ; le nom du salon est échappé ici)
+function lxDesinscrPortee(canal, salon) {
+  const s = salon ? `<strong>${escapeHtml(salon)}</strong>` : "cet établissement";
+  if (canal === "sms") return `Vous ne recevrez plus de SMS publicitaires (offres, anniversaire, relances) de ${s}, ni des autres établissements qui utilisent Luxyra : l’arrêt s’applique à votre numéro de téléphone.`;
+  if (canal === "all") return `Vous ne recevrez plus d’e-mails d’offres de ${s}, ni de SMS publicitaires d’aucun établissement utilisant Luxyra (l’arrêt des SMS s’applique à votre numéro).`;
+  return `Vous ne recevrez plus les e-mails d’offres et d’actualités de ${s}. Les autres établissements ne sont pas concernés.`;
 }
-// GET /stop/<code> ou /s/<code> : confirmation ; POST : désinscription (formulaire, ou « un clic » des messageries)
-async function lxPageStop(request, env, code, base) {
-  try {
-    if (request.method === "GET") {
-      // 2026-10-17 lien court : 6 caractères -> limite de consultation par adresse IP (pas d'essais en masse)
-      const ipG = request.headers.get("CF-Connecting-IP") || "unknown";
-      if (!checkRateLimit("stopget:" + ipG, 30)) return htmlResponse(unsubscribePage("error", "Trop de demandes. Réessayez dans une minute."), 429);
-      const ri = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_desinscription_info`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_code: code }) });
-      const info = ri.ok ? await ri.json() : null;
-      if (!info || info.ok !== true) return htmlResponse(unsubscribePage("error", "Lien invalide ou expiré."), 404);
-      if (info.deja === true) return htmlResponse(unsubscribePage("ok", "Votre désinscription est déjà enregistrée."));
-      return htmlResponse(lxPageConfirmerDesinscription(`${base || "/stop/"}${code}`, info.canal === "sms" ? "les SMS publicitaires (offres, anniversaire, relances)" : info.canal === "all" ? "aucune communication" : "les e-mails d'information et d'offres", info.salon || ""));
-    }
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    if (!checkRateLimit("stop:" + ip, 20)) return htmlResponse(unsubscribePage("error", "Trop de demandes. Réessayez dans une minute."), 429);
-    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_desinscrire_code`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_code: code }) });
-    const res = r.ok ? await r.json() : null;
-    if (!res || res.ok !== true) return htmlResponse(unsubscribePage("error", (res && res.erreur) || "Lien invalide ou expiré."), 404);
-    const quoi = res.canal === "sms" ? "des SMS" : res.canal === "all" ? "de toutes les communications" : "des e-mails";
-    return htmlResponse(unsubscribePage("ok", `Vous êtes désabonné ${quoi}${res.salon ? " de " + res.salon : ""}.`));
-  } catch (e) {
-    console.error("[stop]", e?.message || e);
-    return htmlResponse(unsubscribePage("error", "Erreur serveur. Réessayez ou écrivez à support@luxyra.fr"), 500);
-  }
+function lxDesinscrRdv(canal) {
+  return canal === "sms"
+    ? "Les SMS de confirmation et de rappel de vos rendez-vous continuent."
+    : canal === "all" ? "Les confirmations et rappels de vos rendez-vous (SMS et e-mail) continuent."
+    : "Les e-mails de confirmation et de rappel de vos rendez-vous continuent.";
 }
 
+// o : { etat, action, canal, salon, annulable, motif, texte, erreur, champ, message, nonce }
+function lxPageDesinscription(o) {
+  o = o || {};
+  const etat = o.etat || "erreur", canal = o.canal || "email", nonce = o.nonce || "";
+  const icones = {
+    confirmer: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+    succes: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m8 12.5 2.7 2.7L16.2 9.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    info: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5M12 7.6v.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    alerte: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 21 19H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 10v4.2M12 16.6v.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  };
+  const formReinscrire = (o.annulable && o.action)
+    ? `<form method="POST" action="${escapeHtml(o.action)}" class="reins"><input type="hidden" name="action" value="reinscrire">
+<button type="submit" class="btn btn-ghost">Je me suis trompé(e) : me réinscrire</button>
+<p class="petit">Possible pendant 48 h après la désinscription.</p></form>` : "";
+  const changerAvis = `<p class="petit">Pour recevoir à nouveau les offres plus tard, adressez-vous à l’établissement ou écrivez à <a href="mailto:support@luxyra.fr">support@luxyra.fr</a>${canal === "sms" || canal === "all" ? " (ou répondez START à un SMS publicitaire reçu)" : ""}.</p>`;
+  let ton = "or", icone = icones.info, titre = "", corps = "";
+
+  if (etat === "confirmer") {
+    icone = icones.confirmer;
+    titre = canal === "sms" ? "Ne plus recevoir de SMS publicitaires ?" : canal === "all" ? "Ne plus recevoir d’offres ?" : "Ne plus recevoir d’e-mails d’offres ?";
+    const err = o.erreur ? `<div class="err" role="alert" id="lxErr">${escapeHtml(o.erreur)}</div>` : `<div class="err" role="alert" id="lxErr" hidden></div>`;
+    const radios = LX_DESINSCR_MOTIFS.map(([v, l], i) =>
+      `<label class="opt"><input type="radio" name="motif" value="${v}" required${o.motif === v ? " checked" : ""}${i === 0 && o.champ === "motif" ? ' aria-invalid="true"' : ""}><span>${escapeHtml(l)}</span></label>`).join("");
+    const autre = o.motif === "autre";
+    corps = `<p class="lead">${lxDesinscrPortee(canal, o.salon)}</p>
+<p class="ok-rdv">${icones.succes}<span>${lxDesinscrRdv(canal)}</span></p>
+<form method="POST" action="${escapeHtml(o.action || "")}" id="lxForm" novalidate>
+<input type="hidden" name="action" value="desinscrire">
+<fieldset><legend>Pourquoi vous désinscrivez-vous ? <span class="req">(obligatoire)</span></legend>
+<p class="petit" id="lxAide">Votre réponse est anonyme : elle sert seulement à améliorer les envois.</p>
+<div class="opts" role="radiogroup" aria-describedby="lxAide">${radios}</div>
+<div class="autre" id="lxAutre"${autre ? "" : " data-cache"}>
+<label for="lxTexte">Précisez votre motif <span class="req">(obligatoire pour « Autre », 5 à 300 caractères)</span></label>
+<textarea id="lxTexte" name="texte" rows="3" minlength="5" maxlength="300" aria-describedby="lxCpt"${o.champ === "texte" ? ' aria-invalid="true"' : ""}>${escapeHtml(o.texte || "")}</textarea>
+<div class="cpt" id="lxCpt" aria-live="polite">${(o.texte || "").length} / 300</div></div>
+</fieldset>
+${err}
+<button type="submit" class="btn btn-or">Confirmer la désinscription</button>
+</form>
+<p class="petit centre">Rien n’est modifié tant que vous n’avez pas confirmé.</p>`;
+  } else if (etat === "confirmer_simple") {
+    // ancienne route /api/unsubscribe (jeton signé) : confirmation sans motif
+    icone = icones.confirmer;
+    titre = canal === "sms" ? "Ne plus recevoir de SMS ?" : canal === "all" ? "Ne plus recevoir de messages ?" : "Ne plus recevoir d’e-mails ?";
+    corps = `<p class="lead">Confirmez votre désinscription${o.salon ? " de <strong>" + escapeHtml(o.salon) + "</strong>" : ""}.</p>
+<form method="POST" action="${escapeHtml(o.action || "")}"><input type="hidden" name="confirmer" value="1">
+<button type="submit" class="btn btn-or">Confirmer la désinscription</button></form>
+<p class="petit centre">Rien n’est modifié tant que vous n’avez pas confirmé.</p>`;
+  } else if (etat === "succes_simple") {
+    ton = "vert"; icone = icones.succes;
+    titre = "Vous êtes désinscrit(e)";
+    corps = `<p class="lead">${escapeHtml(o.message || "Votre désinscription est enregistrée.")}</p>${changerAvis}`;
+  } else if (etat === "succes" || etat === "deja") {
+    ton = "vert"; icone = icones.succes;
+    titre = etat === "succes" ? "Vous êtes désinscrit(e)" : "Vous êtes déjà désinscrit(e)";
+    corps = `<p class="lead">${lxDesinscrPortee(canal, o.salon)}</p>
+<p class="ok-rdv">${icones.succes}<span>${lxDesinscrRdv(canal)}</span></p>
+${etat === "succes" && o.merci ? '<p class="petit centre">Merci pour votre réponse.</p>' : ""}
+${formReinscrire || changerAvis}`;
+  } else if (etat === "reinscrit") {
+    ton = "vert"; icone = icones.succes;
+    titre = "C’est noté : vous êtes réinscrit(e)";
+    corps = `<p class="lead">${canal === "sms"
+      ? `Vous pourrez de nouveau recevoir les SMS d’offres${o.salon ? " de <strong>" + escapeHtml(o.salon) + "</strong>" : ""} et des établissements Luxyra dont vous êtes client(e).`
+      : `Vous pourrez de nouveau recevoir les e-mails d’offres${o.salon ? " de <strong>" + escapeHtml(o.salon) + "</strong>" : ""}.`}</p>
+<p class="petit centre">Chaque message publicitaire contient un lien pour vous désinscrire à nouveau.</p>`;
+  } else if (etat === "invalide") {
+    ton = "rouge"; icone = icones.alerte;
+    titre = "Ce lien n’est pas valide";
+    corps = `<p class="lead">${escapeHtml(o.message || "Le lien est incomplet, mal recopié ou n’existe plus.")}</p>
+<p class="petit">Vérifiez qu’il est identique à celui du message reçu (luxyra.fr/s/ suivi de 6 caractères). Pour vous désinscrire autrement : répondez STOP à un SMS publicitaire, contactez l’établissement ou écrivez à <a href="mailto:support@luxyra.fr">support@luxyra.fr</a>.</p>`;
+  } else if (etat === "impossible") {
+    ton = "rouge"; icone = icones.alerte;
+    titre = "Réinscription impossible ici";
+    corps = `<p class="lead">${escapeHtml(o.message || "La réinscription par ce lien n’est plus possible.")}</p>
+<p class="petit">Votre désinscription reste enregistrée. ${lxDesinscrRdv(canal)}</p>`;
+  } else if (etat === "trop") {
+    ton = "rouge"; icone = icones.alerte;
+    titre = "Trop de demandes";
+    corps = `<p class="lead">Merci de patienter une minute, puis de recharger la page.</p>`;
+  } else {
+    ton = "rouge"; icone = icones.alerte;
+    titre = "Un souci technique est survenu";
+    corps = `<p class="lead">${escapeHtml(o.message || "Votre demande n’a pas pu être enregistrée.")}</p>
+<p class="petit">Réessayez dans quelques instants. Si le problème continue, écrivez à <a href="mailto:support@luxyra.fr">support@luxyra.fr</a> : nous ferons la désinscription pour vous.</p>`;
+  }
+
+  const script = etat === "confirmer" ? `<script nonce="${nonce}">(function(){
+var f=document.getElementById("lxForm"),bloc=document.getElementById("lxAutre"),t=document.getElementById("lxTexte"),c=document.getElementById("lxCpt"),e=document.getElementById("lxErr");
+function choix(){var r=f.querySelector('input[name="motif"]:checked');return r?r.value:"";}
+function maj(){var a=choix()==="autre";if(a){bloc.removeAttribute("data-cache");t.required=true;}else{bloc.setAttribute("data-cache","");t.required=false;}}
+function erreur(m,el){e.textContent=m;e.hidden=false;if(el){el.setAttribute("aria-invalid","true");el.focus();}}
+f.addEventListener("change",function(ev){if(ev.target.name==="motif"){maj();e.hidden=true;if(choix()==="autre")t.focus();}});
+t.addEventListener("input",function(){c.textContent=t.value.length+" / 300";t.removeAttribute("aria-invalid");});
+f.addEventListener("submit",function(ev){var m=choix(),v=t.value.replace(/\\s+/g," ").trim();
+if(!m){ev.preventDefault();erreur("Choisissez un motif pour confirmer.",f.querySelector('input[name="motif"]'));return;}
+if(m==="autre"&&(v.length<5||v.length>300)){ev.preventDefault();erreur("Précisez votre motif : 5 à 300 caractères.",t);return;}
+var b=f.querySelector("button[type=submit]");b.disabled=true;b.textContent="Enregistrement…";});
+maj();})();</script>` : "";
+
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#050508">
+<title>${escapeHtml(titre)} — Luxyra</title>
+<link rel="icon" href="/icon-192.png"><link rel="stylesheet" href="/fonts/luxyra-fonts.css">
+<style>
+:root{--bg:#050508;--card:#0f0f17;--bd:rgba(200,168,78,.22);--bd2:rgba(255,255,255,.1);--or:#c8a84e;--or2:#e6c266;--txt:#f5f2ea;--txt2:#b4afa6;--txt3:#8a857d;--vert:#4ade80;--rouge:#f87171;--f1:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;--f2:'Playfair Display',Georgia,serif}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;min-height:100dvh;background:var(--bg) radial-gradient(ellipse 80% 50% at 50% -10%,rgba(200,168,78,.13),transparent 70%) no-repeat;color:var(--txt);font-family:var(--f1);line-height:1.6;display:flex;flex-direction:column;align-items:center;padding:28px 16px calc(28px + env(safe-area-inset-bottom));-webkit-font-smoothing:antialiased}
+.marque{display:flex;flex-direction:column;align-items:center;gap:8px;margin:4px 0 22px;text-decoration:none}
+.marque img{width:68px;height:68px;border-radius:16px;box-shadow:0 8px 30px rgba(200,168,78,.18)}
+main{width:100%;max-width:520px;background:linear-gradient(180deg,rgba(200,168,78,.06),rgba(255,255,255,.01) 140px),var(--card);border:1px solid var(--bd);border-radius:20px;padding:28px 22px 24px;box-shadow:0 20px 60px rgba(0,0,0,.55)}
+.ico{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid currentColor;background:rgba(255,255,255,.02)}
+.ico svg{width:26px;height:26px}.t-or .ico{color:var(--or)}.t-vert .ico{color:var(--vert)}.t-rouge .ico{color:var(--rouge)}
+h1{font-family:var(--f2);font-weight:700;font-size:clamp(22px,5.6vw,27px);line-height:1.25;text-align:center;margin:0 0 12px;color:var(--txt)}
+.t-or h1{color:var(--or2)}
+.lead{font-size:15.5px;color:var(--txt);text-align:center;margin:0 0 14px}.lead strong{color:var(--or2)}
+.ok-rdv{display:flex;gap:10px;align-items:flex-start;background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.25);border-radius:12px;padding:11px 13px;font-size:14px;color:#d9f7e3;margin:0 0 18px}
+.ok-rdv svg{width:20px;height:20px;flex:none;color:var(--vert);margin-top:1px}
+fieldset{border:0;padding:0;margin:0 0 6px}legend{font-weight:700;font-size:15px;margin-bottom:2px;padding:0}
+.req{font-weight:400;color:var(--txt3);font-size:13px}
+.opts{display:grid;gap:8px;margin-top:10px}
+.opt{display:flex;align-items:center;gap:12px;min-height:48px;padding:11px 14px;border:1px solid var(--bd2);border-radius:12px;cursor:pointer;background:rgba(255,255,255,.02);transition:border-color .15s,background .15s;font-size:14.5px}
+.opt:hover{border-color:rgba(200,168,78,.45)}
+.opt input{width:20px;height:20px;margin:0;flex:none;accent-color:var(--or);cursor:pointer}
+.opt:has(input:checked){border-color:var(--or);background:rgba(200,168,78,.09)}
+.opt input:focus-visible{outline:2px solid var(--or2);outline-offset:3px}
+.autre{margin-top:12px}.autre[data-cache]{display:none}
+.autre label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
+textarea{width:100%;min-height:92px;resize:vertical;background:rgba(255,255,255,.04);border:1px solid var(--bd2);border-radius:12px;color:var(--txt);font:inherit;font-size:15px;padding:11px 13px}
+textarea:focus{outline:none;border-color:var(--or);box-shadow:0 0 0 3px rgba(200,168,78,.2)}
+[aria-invalid="true"]{border-color:var(--rouge)!important}
+.cpt{text-align:right;font-size:12px;color:var(--txt3);margin-top:4px}
+.err{margin:12px 0 0;padding:10px 13px;border-radius:12px;background:rgba(248,113,113,.09);border:1px solid rgba(248,113,113,.35);color:#fecaca;font-size:14px}
+.btn{display:block;width:100%;min-height:50px;margin-top:16px;border-radius:14px;font:inherit;font-weight:700;font-size:15.5px;cursor:pointer;transition:transform .1s,background .15s,border-color .15s}
+.btn:active{transform:scale(.99)}.btn:focus-visible{outline:2px solid var(--or2);outline-offset:3px}
+.btn-or{background:var(--or);color:#0a0a0a;border:0}.btn-or:hover{background:#d4b45e}.btn-or:disabled{opacity:.65;cursor:wait}
+.btn-ghost{background:transparent;color:var(--or2);border:1px solid var(--bd)}.btn-ghost:hover{border-color:var(--or)}
+.reins{margin-top:6px}
+.petit{font-size:13px;color:var(--txt2);margin:10px 0 0}.centre{text-align:center}
+a{color:var(--or2)}a:hover{color:var(--or)}
+footer{max-width:520px;width:100%;margin-top:20px;text-align:center;font-size:12.5px;color:var(--txt3);line-height:1.7}
+footer a{color:var(--txt2);text-decoration:none;border-bottom:1px solid rgba(200,168,78,.3)}
+footer .compte{display:inline-block;margin-bottom:8px;padding:10px 16px;border:1px solid var(--bd);border-radius:999px;color:var(--or2);border-bottom:1px solid var(--bd)}
+@media (min-width:560px){body{padding-top:56px}main{padding:36px 36px 30px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head>
+<body>
+<a class="marque" href="https://luxyra.fr/" aria-label="Luxyra — accueil"><img src="/luxyra-logo.png" alt="Luxyra" width="68" height="68"></a>
+<main class="t-${ton}" aria-labelledby="lxTitre">
+<div class="ico">${icone}</div>
+<h1 id="lxTitre">${escapeHtml(titre)}</h1>
+${corps}
+</main>
+<footer>
+<a class="compte" href="https://luxyra.fr/compte">Mon espace client Luxyra</a><br>
+Vos rendez-vous, vos établissements et les préférences de votre compte : <a href="https://luxyra.fr/compte">luxyra.fr/compte</a><br>
+Une question ? <a href="mailto:support@luxyra.fr">support@luxyra.fr</a> · <a href="https://luxyra.fr/politique-confidentialite">Confidentialité</a>
+</footer>
+${script}
+</body></html>`;
+}
+
+function lxReponseDesinscription(o, status) {
+  const nonce = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "");
+  return new Response(lxPageDesinscription(Object.assign({}, o, { nonce })), {
+    status: status || 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": `default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'nonce-${nonce}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+    },
+  });
+}
+
+// Compatibilité : ancienne route /api/unsubscribe (jeton signé) — même apparence, sans motif
+function lxPageConfirmerDesinscription(action, quoi, salon) {
+  const canal = /SMS/.test(quoi) ? "sms" : /toutes/.test(quoi) ? "all" : "email";
+  return lxPageDesinscription({ etat: "confirmer_simple", action, canal, salon });
+}
 function unsubscribePage(status, message) {
-  const color = status === "ok" ? "#2d9a5e" : "#c43838";
-  const icon = status === "ok" ? "✅" : "❌";
-  return `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Désinscription — Luxyra</title>
-<style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#0a0a0a;color:#f5f0e8;margin:0;padding:40px 20px;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.card{background:#fff;color:#1a1a1a;max-width:480px;width:100%;border-radius:14px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.3)}
-.head{background:#0a0a0a;color:#c8a84e;padding:20px;text-align:center;letter-spacing:3px;font-weight:800;font-family:Georgia,serif;font-size:22px}
-.body{padding:32px 28px;text-align:center}.icon{font-size:48px;margin-bottom:12px}.title{font-size:20px;font-weight:800;color:${color};margin-bottom:8px}
-.msg{color:#555;font-size:14px;line-height:1.6;margin-bottom:24px}.note{font-size:12px;color:#888;padding-top:18px;border-top:1px solid #eee;line-height:1.6}
-.note a{color:#c8a84e;text-decoration:none}</style></head><body>
-<div class="card"><div class="head">LUXYRA</div><div class="body">
-<div class="icon">${icon}</div><div class="title">${status === "ok" ? "Désinscription confirmée" : "Erreur"}</div>
-<div class="msg">${escapeHtml(message)}</div>
-<div class="note">Vous pouvez à tout moment reprendre vos notifications en vous connectant à votre espace client <a href="https://luxyra.fr/compte">luxyra.fr/compte</a>.<br><br>Pour toute question : <a href="mailto:support@luxyra.fr">support@luxyra.fr</a></div>
-</div></div></body></html>`;
+  if (status === "ok") return lxPageDesinscription({ etat: "succes_simple", message });
+  if (/serveur|configuration|réessayer|Réessayez/i.test(message || "")) return lxPageDesinscription({ etat: "erreur", message });
+  if (/Trop de demandes/i.test(message || "")) return lxPageDesinscription({ etat: "trop" });
+  return lxPageDesinscription({ etat: "invalide", message });
+}
+
+// GET /stop/<code> ou /s/<code> : confirmation ; POST : désinscription (formulaire avec motif, ou « un clic » des
+// messageries RFC 8058), ou réinscription (action=reinscrire, 48 h, même code).
+async function lxPageStop(request, env, code, base) {
+  const action = `${base || "/stop/"}${code}`;
+  const rpc = async (fn, args) => {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify(args) });
+    return r.ok ? await r.json() : null;
+  };
+  try {
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    if (request.method === "GET") {
+      // 2026-10-17 lien court : 6 caractères -> limite de consultation par adresse IP (pas d'essais en masse)
+      if (!checkRateLimit("stopget:" + ip, 30)) return lxReponseDesinscription({ etat: "trop" }, 429);
+      const info = await rpc("lx_desinscription_info", { p_code: code });
+      if (!info || info.ok !== true) return lxReponseDesinscription({ etat: "invalide" }, 404);
+      if (info.deja === true) return lxReponseDesinscription({ etat: "deja", action, canal: info.canal, salon: info.salon || "", annulable: info.annulable === true });
+      return lxReponseDesinscription({ etat: "confirmer", action, canal: info.canal, salon: info.salon || "" });
+    }
+    if (!checkRateLimit("stop:" + ip, 20)) return lxReponseDesinscription({ etat: "trop" }, 429);
+    let form = null;
+    try { form = await request.formData(); } catch (_) { form = null; }
+    const champ = (k) => (form && typeof form.get(k) === "string") ? form.get(k) : "";
+    // « Se désabonner » en un clic des messageries (List-Unsubscribe-Post) : pas de page, pas de motif
+    if (champ("List-Unsubscribe") === "One-Click") {
+      const res = await rpc("lx_desinscrire_code", { p_code: code, p_source: "un_clic" });
+      if (!res || res.ok !== true) return lxReponseDesinscription({ etat: "invalide" }, 404);
+      return lxReponseDesinscription({ etat: res.deja ? "deja" : "succes", action, canal: res.canal, salon: res.salon || "", annulable: res.annulable === true });
+    }
+    if (champ("action") === "reinscrire") {
+      const res = await rpc("lx_annuler_desinscription", { p_code: code });
+      if (!res) return lxReponseDesinscription({ etat: "erreur" }, 500);
+      if (res.ok !== true) {
+        if (/invalide/i.test(res.erreur || "")) return lxReponseDesinscription({ etat: "invalide" }, 404);
+        const info = await rpc("lx_desinscription_info", { p_code: code });
+        return lxReponseDesinscription({ etat: "impossible", message: res.erreur, canal: (info && info.canal) || "email" }, 409);
+      }
+      if (res.deja) return lxReponseDesinscription({ etat: "confirmer", action, canal: res.canal, salon: res.salon || "" });
+      return lxReponseDesinscription({ etat: "reinscrit", canal: res.canal, salon: res.salon || "" });
+    }
+    // Formulaire de la page : motif obligatoire, précision obligatoire pour « Autre » (contrôle navigateur ET ici ET base)
+    const motif = champ("motif");
+    const texte = champ("texte").replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim();
+    let erreur = "", errChamp = "";
+    if (!LX_DESINSCR_MOTIFS_OK.has(motif)) { erreur = "Choisissez un motif pour confirmer votre désinscription."; errChamp = "motif"; }
+    else if (motif === "autre" && (texte.length < 5 || texte.length > 300)) { erreur = "Précisez votre motif : 5 à 300 caractères."; errChamp = "texte"; }
+    if (!erreur) {
+      const res = await rpc("lx_desinscrire_code", { p_code: code, p_motif: motif, p_texte: motif === "autre" ? texte : null, p_source: "page" });
+      if (!res) return lxReponseDesinscription({ etat: "erreur" }, 500);
+      if (res.ok === true && !res.deja) return lxReponseDesinscription({ etat: "succes", action, canal: res.canal, salon: res.salon || "", annulable: res.annulable === true, merci: true });
+      if (res.ok === true) {
+        const i2 = await rpc("lx_desinscription_info", { p_code: code });
+        return lxReponseDesinscription({ etat: "deja", action, canal: res.canal, salon: res.salon || "", annulable: !!(i2 && i2.annulable === true) });
+      }
+      if (!res.champ) return lxReponseDesinscription({ etat: "invalide" }, 404);
+      erreur = res.erreur || "Vérifiez votre réponse."; errChamp = res.champ;
+    }
+    const info = await rpc("lx_desinscription_info", { p_code: code });
+    if (!info || info.ok !== true) return lxReponseDesinscription({ etat: "invalide" }, 404);
+    return lxReponseDesinscription({ etat: "confirmer", action, canal: info.canal, salon: info.salon || "", motif, texte: champ("texte").slice(0, 300), erreur, champ: errChamp }, 400);
+  } catch (e) {
+    console.error("[stop]", e?.message || e);
+    return lxReponseDesinscription({ etat: "erreur" }, 500);
+  }
 }
 
 function htmlResponse(html, status) {

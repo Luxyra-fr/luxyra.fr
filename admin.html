@@ -639,7 +639,7 @@ var LX_MENU=[
   {id:'communication',icon:'💬',label:'Support',subs:[
     {id:'chat',label:'Boîte de réception',badge:'chat'},{id:'bot',label:'Base du bot'}]},
   {id:'diffusion',icon:'📣',label:'Communication',subs:[
-    {id:'sms',label:'SMS (Brevo)'},{id:'email',label:'Modèles & relances e-mail'},{id:'emailstats',label:'Statistiques d’envoi'}]},
+    {id:'sms',label:'SMS (Brevo)'},{id:'email',label:'Modèles & relances e-mail'},{id:'emailstats',label:'Statistiques d’envoi'},{id:'desinscriptions',label:'Désinscriptions'}]},
   {id:'qualite',icon:'🛡️',label:'Qualité & conformité',subs:[
     {id:'areparer',label:'À réparer',badge:'areparer'},{id:'monitoring',label:'Monitoring'},{id:'nf525',label:'NF525 & attestations'},
     {id:'clotures',label:'Clôtures Z'},{id:'sauvegardes',label:'Sauvegardes & tâches de nuit'},{id:'rgpd',label:'RGPD & purges'},
@@ -742,7 +742,7 @@ function lxMenuRendu(){
 var LX_PAGES_MOTS={'tableau':'accueil cockpit chiffres alertes kpi','salons/liste':'salons liste fiche établissement','salons/fermetures':'fermés archives fermeture',
   'revenus/mrr':'mrr revenu arr arpu churn historique croissance','revenus/stripe':'stripe abonnements factures remises remboursement','revenus/impayes':'impayés essais fin d essai paiement échoué past due',
   'revenus/parrainage':'parrainage filleul parrain récompense','revenus/sms':'revenus sms packs marge','communication/chat':'chat support messages non lus','communication/bot':'bot base connaissances kb',
-  'diffusion/sms':'sms brevo crédits','diffusion/email':'email modèles relances','diffusion/emailstats':'brevo statistiques e-mails rejets ouvertures',
+  'diffusion/sms':'sms brevo crédits','diffusion/email':'email modèles relances','diffusion/emailstats':'brevo statistiques e-mails rejets ouvertures','diffusion/desinscriptions':'désinscriptions désabonnement stop sms motifs opt-out',
   'qualite/areparer':'à réparer erreurs problèmes','qualite/monitoring':'monitoring erreurs cron quotas','qualite/nf525':'nf525 attestation conformité caisse','qualite/clotures':'clôtures z',
   'qualite/sauvegardes':'sauvegarde backup github restauration tâches de nuit cron','qualite/rgpd':'rgpd purge suppression 6 ans comptes inactifs export','qualite/journal':'journal admin log audit','qualite/claude':'claude demandes',
   'croissance/annuaire':'annuaire seo signalements','croissance/analytics':'analytics kpis','croissance/cohortes':'cohortes rétention','croissance/funnel':'entonnoir funnel conversion',
@@ -797,6 +797,7 @@ function render(){
     else if(tab==='diffusion'){
       if(sub==='email') h+=rEmail();
       else if(sub==='emailstats') h+=rEmailStats();
+      else if(sub==='desinscriptions') h+=rDesinscriptions();
       else h+=rSMS();
     }
     else if(tab==='qualite'){
@@ -5281,6 +5282,45 @@ async function lxEmailStatsCharger(forcer){
   var inc=d.incidents||[];
   h+='<div class="card"><h3>⚠️ Derniers incidents (7 j)</h3>'+_lxTable(['Date','Type','Destinataire','Objet','Raison'],inc.map(function(x){ return [_lxDt(x.date,true),saEsc(x.type),saEsc(x.email),saEsc(x.sujet),saEsc(x.raison)]; }),'Aucun rejet ni blocage sur 7 jours.')+'</div>';
   h+='<div style="font-size:11px;color:var(--text3)">Source : Brevo (relevé '+_lxDt(d.fetchedAt,true)+(d.cached?', cache '+saEsc(d.ageSec)+' s':'')+(d.stale?' — <b style="color:var(--orange)">'+saEsc(d.warning||'valeurs anciennes')+'</b>':'')+'). Les ouvertures sont sous-estimées (images bloquées par certaines messageries).</div>';
+  el.innerHTML=h;
+}
+
+// --- Communication › Désinscriptions (2026-10-17 : page luxyra.fr/s/<code>, motifs ; RPC admin_desinscriptions_stats, is_admin) ---
+// Aucune donnée personnelle : salon, canal, motif, texte libre « Autre » (affiché ÉCHAPPÉ via saEsc), date.
+function rDesinscriptions(){
+  setTimeout(function(){ lxDesinsCharger(window._lxDesinsJours===undefined?30:window._lxDesinsJours); },20);
+  return '<div class="topbar"><h1>Désinscriptions <span>Liens « Stop SMS » et « Se désinscrire » : motifs déclarés</span></h1>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+[[30,'30 jours'],[90,'90 jours'],[0,'Tout']].map(function(x){ return '<button class="tb-btn" data-desj="'+x[0]+'" onclick="lxDesinsCharger('+x[0]+')">'+x[1]+'</button>'; }).join('')+'</div></div>'+
+    '<div id="desZone"><div class="card" style="color:var(--text3)">Chargement…</div></div>';
+}
+function _lxDesBarres(liste, cle, lib){
+  var max=Math.max.apply(null,[1].concat(liste.map(function(x){return Number(x.n)||0;})));
+  var tot=liste.reduce(function(a,x){return a+(Number(x.n)||0);},0);
+  if(!liste.length) return '<div style="padding:10px 0;color:var(--text3);font-size:13px">Aucune désinscription sur la période.</div>';
+  return liste.map(function(x){ var n=Number(x.n)||0, pc=tot?Math.round(n*100/tot):0;
+    return '<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;gap:10px;font-size:13px"><span>'+saEsc(lib(x))+'</span><span style="color:var(--text2);white-space:nowrap">'+n+' · '+pc+' %</span></div>'+
+      '<div style="height:8px;border-radius:6px;background:rgba(255,255,255,.06);margin-top:4px;overflow:hidden"><div style="height:100%;width:'+Math.max(2,Math.round(n*100/max))+'%;background:var(--gold);border-radius:6px"></div></div></div>'; }).join('');
+}
+async function lxDesinsCharger(jours){
+  window._lxDesinsJours=jours;
+  document.querySelectorAll('[data-desj]').forEach(function(b){ var on=Number(b.getAttribute('data-desj'))===Number(jours); b.style.borderColor=on?'var(--gold)':''; b.style.color=on?'var(--gold)':''; });
+  var el=document.getElementById('desZone'); if(!el) return;
+  var r; try{ r=await _sb.rpc('admin_desinscriptions_stats',{p_jours:jours||null}); }catch(e){ r={error:{message:String(e&&e.message||e)}}; }
+  if(r.error){ el.innerHTML='<div class="card" style="color:var(--red)">❌ '+saEsc(r.error.message)+'</div>'; return; }
+  var d=r.data||{}, t=d.totaux||{}, per=jours?(jours+' derniers jours'):'depuis le début';
+  var canalLib={sms:'SMS publicitaires (opposition du numéro, tous établissements)',email:'E-mails d’offres (fiche de l’établissement)',all:'SMS + e-mails (anciens liens)'};
+  var h='<div class="card"><div style="display:flex;gap:10px;flex-wrap:wrap">'+
+    saCarte('30 jours',saEsc(t.j30||0))+saCarte('90 jours',saEsc(t.j90||0))+saCarte('Depuis le début',saEsc(t.tout||0))+
+    saCarte('Réinscriptions',saEsc(t.annulees||0),'« me réinscrire » ('+per+')',t.annulees?'var(--green)':null)+'</div></div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">';
+  h+='<div class="card"><h3>Par motif <span style="font-weight:400;color:var(--text3);font-size:12px">('+per+')</span></h3>'+_lxDesBarres(d.par_motif||[],'motif',function(x){return x.libelle||x.motif;})+'</div>';
+  h+='<div class="card"><h3>Par canal</h3>'+_lxDesBarres(d.par_canal||[],'canal',function(x){return canalLib[x.canal]||x.canal;})+'</div>';
+  h+='</div>';
+  h+='<div class="card"><h3>Par établissement <span style="font-weight:400;color:var(--text3);font-size:12px">(30 premiers)</span></h3>'+
+    _lxTable(['Établissement','Total','SMS','E-mail'],(d.par_salon||[]).map(function(x){ return [saEsc(x.nom),saEsc(x.n),saEsc(x.sms),saEsc(x.email)]; }),'Aucune désinscription sur la période.')+'</div>';
+  h+='<div class="card"><h3>Derniers motifs « Autre » <span style="font-weight:400;color:var(--text3);font-size:12px">(50 au plus, texte libre du client)</span></h3>'+
+    _lxTable(['Date','Établissement','Canal','Texte'],(d.autres||[]).map(function(x){ return [_lxDt(x.cree_le,true),saEsc(x.salon),saEsc(x.canal==='sms'?'SMS':x.canal==='email'?'E-mail':'SMS + e-mail'),'<span style="white-space:pre-wrap;word-break:break-word">'+saEsc(x.texte)+'</span>']; }),'Aucun motif « Autre » sur la période.')+'</div>';
+  h+='<div style="font-size:11px;color:var(--text3)">Comptées : désinscriptions par le lien (page avec motif obligatoire, ou « un clic » des messageries, ou ancien lien sans motif = « Non précisé »), hors réinscriptions. Les réponses STOP aux SMS ne passent pas par la page et ne sont pas comptées ici. Aucune donnée personnelle n’est conservée avec le motif.</div>';
   el.innerHTML=h;
 }
 
