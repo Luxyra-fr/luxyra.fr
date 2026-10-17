@@ -30,6 +30,8 @@
   var warnPat = /Load failed|cancelled/i; // 2026-10-14 audit
 
   function report(type, message, stack, extra) {
+    // 2026-10-17 : robots ignorés (Googlebot, Ahrefs, Applebot…) : leurs chargements partiels ne sont pas des pannes
+    try { if (/bot|crawl|spider|slurp|lighthouse|headless|googleother|google-inspectiontool|facebookexternalhit|bingpreview/i.test(String(navigator.userAgent || ""))) return; } catch (_eB) {}
     try {
       // Throttle : pas plus d'un rapport toutes les 1.5s
       var now = Date.now();
