@@ -35044,6 +35044,25 @@ function lxJoursAnnivCouverts(todayStr){
   return l;
 }
 var LX_SMS_PUB_REGLE="SMS publicitaires autorisés du lundi au samedi de 8 h à 21 h 30, jamais le dimanche ni les jours fériés";
+// 2026-10-17 (sms_libre_et_purge.sql) — SMS LIBRES (art. L34-5 CPCE) :
+// - contextes TRANSACTIONNELS réels (jamais requalifiés) ; même liste : worker LX_SMS_CTX_TRANSAC, SQL lx_prive.sms_contexte_transactionnel ;
+// - publicitaires : marketing, anniversaire, relance ;
+// - tout autre contexte (vide, « libre_info », « luxyra_auto »…) = SMS libre : publicité si le pro l'a déclaré ou si le texte
+//   contient un marqueur publicitaire évident (même liste que le worker lxSmsTextePub et lx_prive.sms_texte_publicitaire).
+var LX_SMS_CTX_TRANSAC=["rappel_24h","rappel_2h","rappel","confirmation_rdv","confirmation_rdv_groupe","validation_rdv","carte_welcome","carte_rappel_30j","carte_rappel_7j","test"];
+var LX_SMS_CTX_PUB=["marketing","anniversaire","relance"];
+var LX_SMS_PUB_MOTS=/[^a-z0-9](promos?|promotions?|promotionnel(le)?s?|offres?|reductions?|remises?|soldes?|code promo|gratuite?s?|cadeaux? offerts?|black friday|jeux?[ -]concours|parrainages?|profitez|nouveautes?|reservez vite|ventes? privees?|bons? plans?|prix casses?|happy hour)(?=[^a-z0-9])/g;
+// -> liste des marqueurs trouvés (vide = rien de publicitaire repéré)
+function lxSmsMarqueursPub(txt){
+  var s=" "+String(txt||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/['’]/g," ")+" ";
+  var out=[], m; LX_SMS_PUB_MOTS.lastIndex=0;
+  while((m=LX_SMS_PUB_MOTS.exec(s))){ if(out.indexOf(m[1])<0) out.push(m[1]); }
+  var p=s.match(/-\s?\d+\s?%/); if(p) out.push(p[0].replace(/\s/g,""));
+  var q=s.match(/\d+\s?%\s*(de\s+)?(reduction|remise|rabais)/); if(q) out.push(q[0]);
+  return out;
+}
+function lxSmsTextePub(txt){ return lxSmsMarqueursPub(txt).length>0; }
+var LX_SMS_PUB_AVERT="Ce message ressemble à une publicité : il doit être envoyé comme publicité (mention Stop SMS, horaires autorisés).";
 function lxSmsCostHtml(txt, pub){
   var aVar = /\{(prenom|nom|heure|date|prestation|salon|collab|jours)\}/.test(String(txt||""));
   var _stop = (pub && lxSmsMentionStopActive()) ? LX_SMS_MENTION_STOP : "";
@@ -35440,6 +35459,17 @@ async function sendSms(phone,message,context,clientNom){
   // pour que le rappel de la veille ne soit annulé que par la confirmation de CE rendez-vous. Lue tout de suite.
   var _rdvDateSms=(typeof window._lxSmsRdvDate==="string" && /^\d{4}-\d{2}-\d{2}$/.test(window._lxSmsRdvDate))?window._lxSmsRdvDate:null; window._lxSmsRdvDate=null;
   if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); return{ok:false,error:"pro_required"};}
+  // 2026-10-17 (sms_libre_et_purge.sql) : SMS LIBRE (contexte vide ou non automatique) -> jamais envoyé « brut » :
+  // texte publicitaire repéré => 'marketing' (mention Stop SMS, créneau, opposition, consentement), sinon 'libre_info'.
+  // Le serveur (worker / déclencheurs sms_queue et sms_differes) applique la même règle.
+  var _ctxIn=String(context||"");
+  if(LX_SMS_CTX_PUB.indexOf(_ctxIn)<0 && LX_SMS_CTX_TRANSAC.indexOf(_ctxIn)<0){
+    var _mq=lxSmsMarqueursPub(message);
+    if(_mq.length){
+      context="marketing";
+      try{ auditLog("SMS_LIBRE_NATURE","SMS libre vers ..."+String(phone||"").replace(/\D/g,"").slice(-4)+" : envoyé comme PUBLICITÉ (texte publicitaire repéré : "+_mq.slice(0,5).join(", ")+")"); }catch(_eA){}
+    } else context="libre_info";
+  }
   if((window.SMS_MODE||"brevo")==="native"){
     return await sendSmsNative(phone,message,context,clientNom);
   }
@@ -35592,7 +35622,8 @@ async function sendSmsNative(phone,message,context,clientNom){
       var _mE=String(insertRes.error.message||"");
       var _mR=/LX_HORS_CRENEAU/.test(_mE)?{error:"hors_creneau",message:LX_SMS_PUB_REGLE}
             :/LX_STOP/.test(_mE)?{error:"stop",message:"Ce client a demand\u00e9 l'arr\u00eat des SMS publicitaires (Stop SMS)"}
-            :/LX_SANS_LIEN/.test(_mE)?{error:"sans_lien",message:"SMS publicitaire non envoy\u00e9 : num\u00e9ro absent du fichier clients (lien de d\u00e9sinscription impossible)"}:null;
+            :/LX_SANS_LIEN/.test(_mE)?{error:"sans_lien",message:"SMS publicitaire non envoy\u00e9 : num\u00e9ro absent du fichier clients (lien de d\u00e9sinscription impossible)"}
+            :/LX_SANS_CONSENTEMENT/.test(_mE)?{error:"sans_consentement",message:"SMS publicitaire non envoy\u00e9 : ce client n'a pas accept\u00e9 les SMS"}:null; // 2026-10-17 (sms_libre)
       if(_mR){ auditLog("SMS_REFUS_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+_mR.error); return{ok:false,error:_mR.error,message:_mR.message}; }
       console.error("[SMS Native] Queue insert error:",insertRes.error);
       auditLog("SMS_ERREUR_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+insertRes.error.message);
@@ -36462,12 +36493,23 @@ function openCampaignV2(type){
     }
     htm+='</div>';
     
+    // 2026-10-17 (sms_libre_et_purge.sql) : « Message libre » -> nature OBLIGATOIRE avant envoi (art. L34-5 CPCE)
+    if(type==="custom"){
+      window._campNature=null;
+      htm+='<div style="font-size:13px;font-weight:700;color:var(--gold);margin-bottom:6px">Nature du message <span style="color:#ef5350">*</span></div>';
+      htm+='<div id="campNatBox" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">';
+      htm+='<label style="padding:9px 10px;border-radius:10px;border:1px solid var(--border2);background:rgba(255,255,255,.03);cursor:pointer;font-size:12.5px;line-height:1.4;display:flex;gap:8px;align-items:flex-start"><input type="radio" name="campNature" value="info" onchange="lxCampNature(this.value)" style="margin-top:2px;flex-shrink:0;width:auto"><span><strong>Information liée à un rendez-vous ou à un service</strong><br><span style="color:var(--text3)">(retard, objet oublié, commande prête…) — SMS normal, sans lien Stop SMS.</span></span></label>';
+      htm+='<label style="padding:9px 10px;border-radius:10px;border:1px solid var(--border2);background:rgba(255,255,255,.03);cursor:pointer;font-size:12.5px;line-height:1.4;display:flex;gap:8px;align-items:flex-start"><input type="radio" name="campNature" value="pub" onchange="lxCampNature(this.value)" style="margin-top:2px;flex-shrink:0;width:auto"><span><strong>Offre, promotion, invitation, nouveauté (publicité)</strong><br><span style="color:var(--text3)">Lien « Stop SMS » ajouté, horaires autorisés, seulement les clients ayant accepté les SMS et sans opposition.</span></span></label>';
+      htm+='</div>';
+    }
     // Message
+    var _pubInit=(type!=="custom");
     htm+='<div class="fg"><label>Message</label>';
-    htm+='<textarea id="campMsg" style="width:100%;height:80px;font-size:13px;resize:vertical" oninput="lxRenderSmsCost(\'cost_camp\',this.value,true)">'+defaultMsg+'</textarea>';
-    htm+=lxSmsCostBlock('cost_camp',defaultMsg,true); // 2026-10-17 : compteur (lien « Stop SMS » compris)
+    htm+='<textarea id="campMsg" style="width:100%;height:80px;font-size:13px;resize:vertical" oninput="lxRenderSmsCost(\'cost_camp\',this.value,window._campType!==\'custom\'||window._campNature!==\'info\');lxCampMasquerAvert()">'+defaultMsg+'</textarea>';
+    htm+=lxSmsCostBlock('cost_camp',defaultMsg,_pubInit); // 2026-10-17 : compteur (lien « Stop SMS » compris)
     htm+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div>';
-    htm+='<div style="font-size:10.5px;color:'+(lxSmsPubCreneauOk()?'var(--text3)':'#f0a030')+';line-height:1.4;margin-top:3px">\u23f0 '+LX_SMS_PUB_REGLE+(lxSmsPubCreneauOk()?'.':' : les SMS partiront '+lxSmsPubProchainTexte()+'.')+'</div></div>';
+    htm+='<div id="campCreneau" style="font-size:10.5px;color:'+(lxSmsPubCreneauOk()?'var(--text3)':'#f0a030')+';line-height:1.4;margin-top:3px'+(_pubInit?'':';display:none')+'">⏰ '+LX_SMS_PUB_REGLE+(lxSmsPubCreneauOk()?'.':' : les SMS partiront '+lxSmsPubProchainTexte()+'.')+'</div>';
+    htm+='<div id="campNatWarn" style="display:none"></div></div>';
     
     // Email subject (for email)
     htm+='<div class="fg" id="campSubjectRow"><label>Objet email</label>';
@@ -36489,6 +36531,33 @@ function toggleAllCampClients(checked){
   var cbs=document.querySelectorAll(".campCl");
   cbs.forEach(function(cb){cb.checked=checked;});
 }
+// 2026-10-17 (sms_libre_et_purge.sql) : « Message libre » — nature choisie (info / pub)
+function lxCampNature(v){
+  window._campNature=(v==="pub"||v==="info")?v:null;
+  var pub=window._campNature!=="info";
+  var t=document.getElementById("campMsg"); if(t) lxRenderSmsCost("cost_camp",t.value,pub);
+  var c=document.getElementById("campCreneau"); if(c) c.style.display=pub?"":"none";
+  lxCampMasquerAvert();
+}
+function lxCampMasquerAvert(){ var w=document.getElementById("campNatWarn"); if(w){ w.style.display="none"; w.innerHTML=""; } }
+// Avertissement dans la fenêtre (le formulaire reste affiché) : « Envoyer comme publicité » / « Modifier le texte »
+function lxCampAvertPub(marqueurs){
+  var w=document.getElementById("campNatWarn"); if(!w) return;
+  w.innerHTML='<div style="margin-top:8px;padding:10px;border-radius:10px;border:1px solid rgba(245,158,11,.45);background:rgba(245,158,11,.1);font-size:12.5px;line-height:1.5">'
+    +'<strong style="color:#f59e0b">⚠️ '+LX_SMS_PUB_AVERT+'</strong>'
+    +'<div style="color:var(--text3);margin-top:3px">Mots repérés : '+marqueurs.slice(0,6).map(function(m){return '« '+escapeHtml(m)+' »';}).join(", ")+'. Pour l’envoyer comme information, reformulez sans ces mots.</div>'
+    +'<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
+    +'<button class="btn bg" style="flex:1;font-size:12px" onclick="lxCampForcerPub()">Envoyer comme publicité</button>'
+    +'<button class="btn" style="flex:1;font-size:12px;background:rgba(255,255,255,.06)" onclick="lxCampModifierTexte()">Modifier le texte</button></div></div>';
+  w.style.display="";
+}
+function lxCampForcerPub(){
+  var r=document.querySelector('input[name="campNature"][value="pub"]'); if(r) r.checked=true;
+  lxCampNature("pub");
+  try{ auditLog("SMS_LIBRE_NATURE","Message libre : « Information » choisi mais texte publicitaire repéré -> envoyé comme PUBLICITÉ (choix du pro)"); }catch(_e){}
+  sendCampaignV2();
+}
+function lxCampModifierTexte(){ lxCampMasquerAvert(); var t=document.getElementById("campMsg"); if(t){ t.focus(); try{ t.setSelectionRange(t.value.length,t.value.length); }catch(_e){} } }
 
 // 2026-10-14 audit — campagnes :
 // - « Envoyer quand même » n'envoyait RIEN : l'avertissement de crédits remplaçait le formulaire, puis la fonction
@@ -36504,15 +36573,17 @@ function _lxCampBoutonOccupe(on){
   try{ var b=document.getElementById("campSendBtn"); if(b){ b.disabled=!!on; b.style.opacity=on?"0.6":"1"; if(on) b.innerHTML="\u23f3 Envoi en cours\u2026"; } }catch(_e){}
 }
 // liste = [{cl, txt}] ; renvoie {envoyes, enFile, ignores, erreurs}
-async function _lxCampSmsEnvoyer(liste, titre){
-  var out={envoyes:0,enFile:0,ignores:0,erreurs:0};
+async function _lxCampSmsEnvoyer(liste, titre, ctx){
+  // 2026-10-17 (sms_libre_et_purge.sql) : ctx = 'marketing' (défaut) ou 'libre_info' (« Message libre » déclaré Information)
+  ctx=(ctx==="libre_info")?"libre_info":"marketing";
+  var out={envoyes:0,enFile:0,ignores:0,erreurs:0,info:ctx==="libre_info"};
   if(!liste.length) return out;
   if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); out.erreurs=liste.length; return out; }
   var natif=(window.SMS_MODE||"brevo")==="native";
   if(!natif && typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
     var r=null;
     try{
-      r=await _sb.rpc("lx_sms_campagne_enfiler",{ p_salon_id:_salonId, p_titre:String(titre||"").slice(0,80),
+      r=await _sb.rpc("lx_sms_campagne_enfiler",{ p_salon_id:_salonId, p_titre:String(titre||"").slice(0,80), p_contexte:ctx,
         p_envois: liste.map(function(x){ return {telephone:x.cl.ph, message:x.txt, client_id:x.cl.id, client_nom:((x.cl.pre||"")+" "+(x.cl.nom||"")).trim()}; }) });
     }catch(_eR){ r={error:_eR}; }
     if(r && !r.error && r.data && r.data.ok){ out.enFile=Number(r.data.enfiles||0); out.ignores=Number(r.data.ignores||0); out.creneauOk=(r.data.creneau_ok!==false && lxSmsPubCreneauOk()); return out; }
@@ -36526,12 +36597,12 @@ async function _lxCampSmsEnvoyer(liste, titre){
   }
   // 2026-10-17 : envoi direct (mode « Depuis mon téléphone », ou file serveur absente) -> pas de file d'attente :
   // hors créneau légal, rien ne part (à relancer pendant le créneau). La file serveur, elle, reporte toute seule.
-  if(!lxSmsPubCreneauOk()){
+  if(ctx==="marketing" && !lxSmsPubCreneauOk()){
     out.erreurs=liste.length; out.message=LX_SMS_PUB_REGLE+". Relancez la campagne "+lxSmsPubProchainTexte()+".";
     return out;
   }
   for(var i=0;i<liste.length;i++){
-    try{ var res=await sendSms(liste[i].cl.ph,liste[i].txt,"marketing",((liste[i].cl.pre||"")+" "+(liste[i].cl.nom||"")).trim()); if(res&&res.ok) out.envoyes++; else if(res&&(res.error==="doublon_evite"||res.error==="stop")) out.ignores++; else { out.erreurs++; if(res&&res.error==="hors_creneau") out.message=LX_SMS_PUB_REGLE+". Relancez la campagne "+lxSmsPubProchainTexte()+"."; } }
+    try{ var res=await sendSms(liste[i].cl.ph,liste[i].txt,ctx,((liste[i].cl.pre||"")+" "+(liste[i].cl.nom||"")).trim()); if(res&&res.ok) out.envoyes++; else if(res&&(res.error==="doublon_evite"||res.error==="stop")) out.ignores++; else { out.erreurs++; if(res&&res.error==="hors_creneau") out.message=LX_SMS_PUB_REGLE+". Relancez la campagne "+lxSmsPubProchainTexte()+"."; } }
     catch(_eS){ out.erreurs++; }
   }
   return out;
@@ -36541,7 +36612,7 @@ function _lxCampResultatHtml(titre, sms, emailSent, emailErr){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:36px;margin-bottom:8px">'+(errs===0?"\u2705":"\u26a0\ufe0f")+'</div>';
   h+='<h2>'+(sms.enFile?'Campagne lanc\u00e9e':'Campagne envoy\u00e9e')+'</h2>';
-  if(sms.enFile>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.enFile+'</strong> SMS programm\u00e9'+(sms.enFile>1?'s':'')+' \u2014 '+(sms.creneauOk!==false&&lxSmsPubCreneauOk()?'envoi progressif dans les minutes qui suivent':'envoi '+lxSmsPubProchainTexte()+' (SMS publicitaires : lundi au samedi 8 h - 21 h 30, hors jours f\u00e9ri\u00e9s)')+'</div>';
+  if(sms.enFile>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.enFile+'</strong> SMS programm\u00e9'+(sms.enFile>1?'s':'')+' \u2014 '+(sms.info?(function(){ var _h=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",hour:"2-digit",hourCycle:"h23"}).format(new Date())); return (_h>=8&&_h<21)?'envoi progressif dans les minutes qui suivent':'envoi d\u00e8s 8 h (aucun SMS la nuit)'; })():sms.creneauOk!==false&&lxSmsPubCreneauOk()?'envoi progressif dans les minutes qui suivent':'envoi '+lxSmsPubProchainTexte()+' (SMS publicitaires : lundi au samedi 8 h - 21 h 30, hors jours f\u00e9ri\u00e9s)')+'</div>';
   if(sms.envoyes>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.envoyes+'</strong> SMS</div>';
   if(sms.ignores>0)h+='<div style="font-size:12px;color:var(--text3)">'+sms.ignores+' d\u00e9j\u00e0 envoy\u00e9'+(sms.ignores>1?'s':'')+' ou sans consentement (ignor\u00e9'+(sms.ignores>1?'s':'')+')</div>';
   if(emailSent>0)h+='<div style="font-size:14px">\u2709\ufe0f <strong>'+emailSent+'</strong> Emails</div>';
@@ -36567,10 +36638,24 @@ function sendCampaignV2(p){
         subject:document.getElementById("campSubject")?document.getElementById("campSubject").value:"",
         doSms:document.getElementById("campSms")?document.getElementById("campSms").checked:true,
         doEmail:document.getElementById("campEmail")?document.getElementById("campEmail").checked:true,
-        title:window._campTitle||"", type:window._campType||"" };
+        title:window._campTitle||"", type:window._campType||"", nature:window._campNature||null };
   }
   var clients=p.clients, msg=p.msg, subject=p.subject, doSms=p.doSms, doEmail=p.doEmail;
   if(!clients.length||!msg){cM();return;}
+  // 2026-10-17 (sms_libre_et_purge.sql) : « Message libre » par SMS -> nature obligatoire ; « Information » refusée
+  // tant que le texte contient un marqueur publicitaire (avertissement + « Envoyer comme publicité » / « Modifier le texte »)
+  if(p.type==="custom" && doSms){
+    if(p.nature!=="pub" && p.nature!=="info"){
+      var _nb=document.getElementById("campNatBox"); if(_nb){ _nb.style.outline="2px solid #ef5350"; _nb.style.borderRadius="10px"; try{ _nb.scrollIntoView({block:"center"}); }catch(_e){} }
+      if(typeof toast==="function") toast("Choisissez la nature du message : Information ou Publicit\u00e9","warning");
+      return;
+    }
+    if(p.nature==="info"){ var _mqC=lxSmsMarqueursPub(msg); if(_mqC.length){ lxCampAvertPub(_mqC); return; } }
+    if(!p._natLog){
+      p._natLog=true;
+      try{ auditLog("SMS_LIBRE_NATURE","Message libre ("+clients.filter(function(c){return c.smsOk&&c.ph;}).length+" destinataire(s) SMS) : nature choisie \u00ab "+(p.nature==="pub"?"Offre, promotion, invitation, nouveaut\u00e9 (publicit\u00e9)":"Information li\u00e9e \u00e0 un rendez-vous ou \u00e0 un service")+" \u00bb"); }catch(_eN){}
+    }
+  }
 
   // === PREFLIGHT CRÉDITS SMS — prévient avant d'envoyer plus que ce qu'on a ===
   if(doSms && !p.force){
@@ -36621,7 +36706,7 @@ function sendCampaignV2(p){
     });
   }
   var smsRes={envoyes:0,enFile:0,ignores:0,erreurs:0};
-  chain.then(function(){ return _lxCampSmsEnvoyer(smsListe, p.title).then(function(r){ smsRes=r; }); }).then(function(){
+  chain.then(function(){ return _lxCampSmsEnvoyer(smsListe, p.title, (p.type==="custom"&&p.nature==="info")?"libre_info":"marketing").then(function(r){ smsRes=r; }); }).then(function(){
     // 2026-10-11 : mémorise la relance sur la fiche (anti-harcèlement)
     if(p.type==="inactive"){
       clients.forEach(function(cl){
