@@ -34750,7 +34750,8 @@ function rMarketing(){
     var nbWithBday=CL.filter(function(c){return c.ddn;}).length;
     h+='<div style="font-size:11px;color:var(--text3);margin-bottom:8px">'+nbWithBday+' client'+(nbWithBday>1?'s':'')+' avec date de naissance renseign\u00e9e sur '+CL.length+'</div>';
     h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\ud83d\udcf2 Message SMS</label>';
-    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.anniSms=this.value;saveSmsConfig()">'+smsC.anniSms+'</textarea></div>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" oninput="lxRenderSmsCost(\'cost_anni\',this.value,true)" onchange="window.SMS_CONFIG.anniSms=this.value;saveSmsConfig()">'+smsC.anniSms+'</textarea>'+lxSmsCostBlock('cost_anni',smsC.anniSms,true)+'</div>';
+    h+='<div style="font-size:10.5px;color:var(--text3);line-height:1.4;margin:2px 0 6px">\u23f0 '+LX_SMS_PUB_REGLE+' : un anniversaire qui tombe un dimanche ou un jour f\u00e9ri\u00e9 part le jour autoris\u00e9 suivant (dans la matin\u00e9e).</div>';
     h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\u2709\ufe0f Message Email</label>';
     h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.anniEmail=this.value;saveSmsConfig()">'+smsC.anniEmail+'</textarea></div>';
     h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div>';
@@ -34770,7 +34771,8 @@ function rMarketing(){
     });
     h+='<div style="font-size:11px;color:var(--orange);margin-bottom:8px">'+nbInactifs+' client'+(nbInactifs>1?'s':'')+' inactif'+(nbInactifs>1?'s':'')+' depuis '+smsC.relanceJours+' jours</div>';
     h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\ud83d\udcf2 Message SMS</label>';
-    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.relanceSms=this.value;saveSmsConfig()">'+smsC.relanceSms+'</textarea></div>';
+    h+='<textarea style="width:100%;height:55px;font-size:12px;resize:vertical" oninput="lxRenderSmsCost(\'cost_relance\',this.value,true)" onchange="window.SMS_CONFIG.relanceSms=this.value;saveSmsConfig()">'+smsC.relanceSms+'</textarea>'+lxSmsCostBlock('cost_relance',smsC.relanceSms,true)+'</div>';
+    h+='<div style="font-size:10.5px;color:var(--text3);line-height:1.4;margin:2px 0 6px">\u23f0 '+LX_SMS_PUB_REGLE+' : pas de relance SMS le dimanche ni un jour f\u00e9ri\u00e9 (elle part le jour autoris\u00e9 suivant).</div>';
     h+='<div style="margin:6px 0"><label style="font-size:12px;font-weight:700;color:var(--text3)">\u2709\ufe0f Message Email</label>';
     h+='<textarea style="width:100%;height:80px;font-size:12px;resize:vertical" onchange="window.SMS_CONFIG.relanceEmail=this.value;saveSmsConfig()">'+smsC.relanceEmail+'</textarea></div>';
     h+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon} {jours}</div>';
@@ -34961,9 +34963,9 @@ function lxSmsInfoBrut(txt){
   if (n === 0) segments = 0;
   return { taille:n, segments:segments, ucs2:ucs2, fautifs:Object.keys(horsAlphabet) };
 }
-function lxRenderSmsCost(id, txt){
+function lxRenderSmsCost(id, txt, pub){
   var el = document.getElementById(id); if(!el) return;
-  el.innerHTML = lxSmsCostHtml(txt);
+  el.innerHTML = lxSmsCostHtml(txt, pub);
 }
 // 2026-10-09 : le compteur estime la taille RÉELLE à l'envoi ({prenom}, {salon}… remplacés),
 // avec le vrai nom du salon et des valeurs longues pour le reste → alerte AVANT que ça coûte 2 crédits.
@@ -34971,16 +34973,65 @@ function lxSmsRempli(txt, long){
   var salon = (window.SALON_CONFIG && SALON_CONFIG.nom) || "Mon salon";
   var v = long ? {prenom:"Marie-Christine",nom:"Dupont-Martin",heure:"14:30",date:"25/12/2026",prestation:getMetierTxt().prestaLong,collab:"Christophe"}
                : {prenom:"Marie",nom:"Martin",heure:"14:30",date:"25/12/2026",prestation:getMetierTxt().presta,collab:"Julie"};
-  return String(txt==null?"":txt).replace(/\{prenom\}/g,v.prenom).replace(/\{nom\}/g,v.nom).replace(/\{heure\}/g,v.heure).replace(/\{date\}/g,v.date).replace(/\{prestation\}/g,v.prestation).replace(/\{salon\}/g,salon).replace(/\{collab\}/g,v.collab);
+  return String(txt==null?"":txt).replace(/\{prenom\}/g,v.prenom).replace(/\{nom\}/g,v.nom).replace(/\{heure\}/g,v.heure).replace(/\{date\}/g,v.date).replace(/\{prestation\}/g,v.prestation).replace(/\{salon\}/g,salon).replace(/\{collab\}/g,v.collab).replace(/\{jours\}/g,long?"365":"90");
 }
-function lxSmsCostHtml(txt){
-  var aVar = /\{(prenom|nom|heure|date|prestation|salon|collab)\}/.test(String(txt||""));
-  var info = lxSmsInfo(aVar ? lxSmsRempli(txt,false) : txt);
-  var pire = aVar ? lxSmsInfo(lxSmsRempli(txt,true)) : info;
+// 2026-10-17 : SMS publicitaires (campagnes, anniversaire, relance) envoyés par Luxyra (Brevo) : Brevo ajoute à la fin
+// « STOP au 36xxx » (désinscription officielle, 14 caractères avec le retour à la ligne) -> comptée dans le coût.
+// En mode « Depuis mon téléphone » aucune mention n'est ajoutée (SMS du forfait du téléphone, pas de crédit Luxyra).
+var LX_SMS_MENTION_STOP = "\nSTOP au 36XXX";
+function lxSmsMentionStopActive(){ return (window.SMS_MODE||"brevo")!=="native"; }
+// --- Créneau légal des SMS publicitaires (même règle que le serveur lx_prive.sms_pub_creneau_ok) :
+// lundi au samedi, 8 h 00 - 21 h 30 heure de Paris, jamais le dimanche ni un jour férié français.
+function lxPaquesUTC(an){
+  var a=an%19,b=Math.floor(an/100),c=an%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451);
+  return Date.UTC(an,Math.floor((h+l-7*m+114)/31)-1,((h+l-7*m+114)%31)+1);
+}
+function lxJourFerieFr(an,mois,jour){
+  var md=("0"+mois).slice(-2)+"-"+("0"+jour).slice(-2);
+  if(["01-01","05-01","05-08","07-14","08-15","11-01","11-11","12-25"].indexOf(md)>=0) return true;
+  var ecart=Math.round((Date.UTC(an,mois-1,jour)-lxPaquesUTC(an))/864e5);
+  return ecart===1||ecart===39||ecart===50; // lundi de Pâques, Ascension, lundi de Pentecôte
+}
+// "AAAA-MM-JJ" -> jour où un SMS publicitaire peut partir (lundi-samedi hors férié)
+function lxJourPubOk(ds){
+  var p=String(ds||"").split("-"); if(p.length<3) return false;
+  var an=+p[0],mo=+p[1],jo=+p[2];
+  return new Date(Date.UTC(an,mo-1,jo)).getUTCDay()!==0 && !lxJourFerieFr(an,mo,jo);
+}
+function _lxParis(date){
+  var o={}; try{ new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(date||new Date()).forEach(function(x){o[x.type]=x.value;}); }catch(e){ var d=date||new Date(); o={year:String(d.getFullYear()),month:("0"+(d.getMonth()+1)).slice(-2),day:("0"+d.getDate()).slice(-2),hour:String(d.getHours()),minute:String(d.getMinutes())}; }
+  return {ds:o.year+"-"+o.month+"-"+o.day, mn:(+o.hour)*60+(+o.minute)};
+}
+function lxSmsPubCreneauOk(date){ var p=_lxParis(date); return lxJourPubOk(p.ds) && p.mn>=480 && p.mn<1290; }
+function _lxDsPlus(ds,n){ var p=ds.split("-"); var d=new Date(Date.UTC(+p[0],+p[1]-1,+p[2]+n)); return d.toISOString().slice(0,10); }
+// Texte du prochain créneau : « maintenant », « aujourd'hui à 8 h », « lundi 19/10 à 8 h »
+function lxSmsPubProchainTexte(date){
+  if(lxSmsPubCreneauOk(date)) return "maintenant";
+  var p=_lxParis(date), ds=p.ds;
+  if(lxJourPubOk(ds) && p.mn<480) return "aujourd’hui à 8 h";
+  for(var i=1;i<=10;i++){ ds=_lxDsPlus(p.ds,i); if(lxJourPubOk(ds)) break; }
+  var jours=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"], q=ds.split("-");
+  return jours[new Date(Date.UTC(+q[0],+q[1]-1,+q[2])).getUTCDay()]+" "+q[2]+"/"+q[1]+" à 8 h";
+}
+// Jours dont les anniversaires partent aujourd'hui : aujourd'hui + les jours interdits (dimanche, férié) qui précèdent.
+// Jour interdit -> [] (rien ne part).
+function lxJoursAnnivCouverts(todayStr){
+  if(!lxJourPubOk(todayStr)) return [];
+  var l=[todayStr];
+  for(var i=1;i<=10;i++){ var d=_lxDsPlus(todayStr,-i); if(lxJourPubOk(d)) break; l.push(d); }
+  return l;
+}
+var LX_SMS_PUB_REGLE="SMS publicitaires autorisés du lundi au samedi de 8 h à 21 h 30, jamais le dimanche ni les jours fériés";
+function lxSmsCostHtml(txt, pub){
+  var aVar = /\{(prenom|nom|heure|date|prestation|salon|collab|jours)\}/.test(String(txt||""));
+  var _stop = (pub && lxSmsMentionStopActive()) ? LX_SMS_MENTION_STOP : "";
+  var info = lxSmsInfo((aVar ? lxSmsRempli(txt,false) : String(txt||"")) + _stop);
+  var pire = aVar ? lxSmsInfo(lxSmsRempli(txt,true) + _stop) : info;
   var coul = info.segments > 1 ? "#ef5350" : (pire.segments > 1 ? "#f0a030" : "var(--text3)");
-  var h = '<span style="color:'+coul+'">'+(aVar?'≈ ':'')+info.taille+'/160 caractères'+(aVar?' une fois rempli':'')+' · <strong>'
-        + (info.segments<=1 ? '1 crédit' : info.segments+' crédits') + ' par SMS</strong></span>';
-  if (info.segments > 1) h += '<div style="color:#ef5350;margin-top:2px">⚠ Message trop long : chaque envoi coûtera '+info.segments+' crédits. Raccourcissez-le sous 160 caractères pour rester à 1 crédit.</div>';
+  var lim1 = info.ucs2 ? 70 : 160;
+  var h = '<span style="color:'+coul+'">'+(aVar?'≈ ':'')+info.taille+' caractères'+(aVar?' une fois rempli':'')+' — <strong>'
+        + (info.segments<=1 ? '1 SMS' : info.segments+' SMS') + ' par client</strong>'+(_stop?' (mention STOP comprise)':'')+'</span>';
+  if (info.segments > 1) h += '<div style="color:#ef5350;margin-top:2px">⚠ Message trop long : chaque envoi coûtera '+info.segments+' crédits. Raccourcissez-le à '+(lim1-(_stop?_stop.length:0))+' caractères au plus'+(_stop?' (la mention STOP en ajoute 14)':'')+' pour rester à 1 crédit.</div>';
   else if (pire.segments > 1) h += '<div style="color:#f0a030;margin-top:2px">⚠ Proche de la limite : avec un prénom ou une prestation longs, le SMS peut dépasser 160 caractères et coûter '+pire.segments+' crédits. Raccourcissez un peu le texte pour être tranquille.</div>';
   if ((info.convertis||[]).length){
     var liste = info.convertis.slice(0,6).map(function(c){return '« '+c+' »';}).join(' ');
@@ -34990,9 +35041,9 @@ function lxSmsCostHtml(txt){
 }
 // Bloc pret a inserer : contenu initial calcule tout de suite (un <script> injecte
 // via innerHTML ne s'executerait pas), puis mis a jour par l'attribut oninput.
-function lxSmsCostBlock(id, txt){
+function lxSmsCostBlock(id, txt, pub){
   return '<div id="'+id+'" style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4">'
-       + lxSmsCostHtml(txt) + '</div>';
+       + lxSmsCostHtml(txt, pub) + '</div>';
 }
 function buildSmsText(template,vars){
   return template.replace(/\{prenom\}/g,vars.prenom||"").replace(/\{nom\}/g,vars.nom||"").replace(/\{heure\}/g,vars.heure||"").replace(/\{date\}/g,vars.date||"").replace(/\{prestation\}/g,vars.prestation||"").replace(/\{salon\}/g,vars.salon||SALON_CONFIG.nom).replace(/\{collab\}/g,vars.collab||"");
@@ -35448,7 +35499,8 @@ async function sendSms(phone,message,context,clientNom){
     var resp=await fetch("/api/sms/custom",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({telephone:cleanPhone,message:message,salonName:window.SMS_CONFIG&&window.SMS_CONFIG.smsSender?window.SMS_CONFIG.smsSender:SALON_CONFIG.nom,salon_id:_salonId})
+      // 2026-10-17 : contexte transmis -> le worker ajoute « STOP au 36xxx » aux SMS publicitaires et applique le créneau légal
+      body:JSON.stringify({telephone:cleanPhone,message:message,salonName:window.SMS_CONFIG&&window.SMS_CONFIG.smsSender?window.SMS_CONFIG.smsSender:SALON_CONFIG.nom,salon_id:_salonId,context:context||undefined})
     });
     var data=await resp.json();
     if(data.success){
@@ -36150,10 +36202,7 @@ async function checkSmsReminders(){
       var keyAnni="anni_"+cl.id+"_"+todayStr;
       if(window._smsSent[keyAnni])return;
       var vars={prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom};
-      // SMS
-      if(_smsAutoLocal&&cl.ph&&cl.smsOk&&canSms&&cfg.anniSms){
-        sendSms(cl.ph,buildSmsText(cfg.anniSms,vars),"anniversaire",(cl.pre||"")+" "+(cl.nom||""));
-      }
+      // SMS : 2026-10-17 envoyé plus bas (créneau légal des SMS publicitaires, anniversaires du dimanche / férié reportés)
       // Email
       // 2026-10-17 : e-mails d'anniversaire / relance envoyés par le serveur dès que le drapeau desinscription_courte est actif
       if(!(window.LX_CONFIG&&window.LX_CONFIG.desinscription_courte===true)&&cl.em&&cl.emOk&&cfg.anniEmail){
@@ -36163,12 +36212,30 @@ async function checkSmsReminders(){
       window._smsSent[keyAnni]=true;
       try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
     });
+    // 2026-10-17 : SMS d'anniversaire envoyés par l'appareil (mode téléphone, ou serveur non confirmé) — seulement dans
+    // le créneau légal (lun-sam 8 h - 21 h 30, hors fériés). Un jour autorisé envoie aussi les anniversaires des jours
+    // interdits qui le précèdent (dimanche, férié). Un seul SMS par client et par an.
+    if(_smsAutoLocal&&canSms&&cfg.anniSms&&lxSmsPubCreneauOk()){
+      var _jA=lxJoursAnnivCouverts(todayStr).map(function(d){return d.slice(5);});
+      var _anB=+todayStr.slice(0,4); if(!((_anB%4===0&&_anB%100!==0)||_anB%400===0) && _jA.indexOf("02-28")>=0) _jA.push("02-29");
+      CL.forEach(function(cl){
+        if(!cl.ddn||cl.actif===false||!cl.ph||!cl.smsOk) return;
+        if(_jA.indexOf(String(cl.ddn).slice(5,10))<0) return;
+        var keyAS="anniSms_"+cl.id+"_"+todayStr.slice(0,4);
+        if(window._smsSent[keyAS]) return;
+        sendSms(cl.ph,buildSmsText(cfg.anniSms,{prenom:cl.pre||"",nom:cl.nom||"",salon:SALON_CONFIG.nom}),"anniversaire",(cl.pre||"")+" "+(cl.nom||""));
+        window._smsSent[keyAS]=true;
+      });
+      try{localStorage.setItem("_cp_sms_sent",JSON.stringify(window._smsSent));}catch(e){}
+    }
   }
   
   // === AUTO: Relance clients inactifs ===
   if(cfg.relanceActif&&cfg.relanceJours){
     var relanceKey="relance_run_"+todayStr;
-    if(!window._smsSent[relanceKey]){
+    // 2026-10-17 : hors créneau légal des SMS publicitaires, la relance faite par l'appareil attend le prochain créneau
+    var _relAttente=_smsAutoLocal&&canSms&&cfg.relanceSms&&!lxSmsPubCreneauOk();
+    if(!_relAttente&&!window._smsSent[relanceKey]){
       CL.forEach(function(cl){
         if(cl.actif===false)return; // 2026-10-17 audit réglages (#35)
         var keyRel="relance_"+cl.id;
@@ -36367,8 +36434,10 @@ function openCampaignV2(type){
     
     // Message
     htm+='<div class="fg"><label>Message</label>';
-    htm+='<textarea id="campMsg" style="width:100%;height:80px;font-size:13px;resize:vertical">'+defaultMsg+'</textarea>';
-    htm+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div></div>';
+    htm+='<textarea id="campMsg" style="width:100%;height:80px;font-size:13px;resize:vertical" oninput="lxRenderSmsCost(\'cost_camp\',this.value,true)">'+defaultMsg+'</textarea>';
+    htm+=lxSmsCostBlock('cost_camp',defaultMsg,true); // 2026-10-17 : compteur (mention STOP comprise)
+    htm+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div>';
+    htm+='<div style="font-size:10.5px;color:'+(lxSmsPubCreneauOk()?'var(--text3)':'#f0a030')+';line-height:1.4;margin-top:3px">\u23f0 '+LX_SMS_PUB_REGLE+(lxSmsPubCreneauOk()?'.':' : les SMS partiront '+lxSmsPubProchainTexte()+'.')+'</div></div>';
     
     // Email subject (for email)
     htm+='<div class="fg" id="campSubjectRow"><label>Objet email</label>';
@@ -36416,7 +36485,7 @@ async function _lxCampSmsEnvoyer(liste, titre){
       r=await _sb.rpc("lx_sms_campagne_enfiler",{ p_salon_id:_salonId, p_titre:String(titre||"").slice(0,80),
         p_envois: liste.map(function(x){ return {telephone:x.cl.ph, message:x.txt, client_id:x.cl.id, client_nom:((x.cl.pre||"")+" "+(x.cl.nom||"")).trim()}; }) });
     }catch(_eR){ r={error:_eR}; }
-    if(r && !r.error && r.data && r.data.ok){ out.enFile=Number(r.data.enfiles||0); out.ignores=Number(r.data.ignores||0); return out; }
+    if(r && !r.error && r.data && r.data.ok){ out.enFile=Number(r.data.enfiles||0); out.ignores=Number(r.data.ignores||0); out.creneauOk=(r.data.creneau_ok!==false && lxSmsPubCreneauOk()); return out; }
     var _code=String((r&&r.error&&(r.error.code||""))||""), _msg=String((r&&r.error&&(r.error.message||r.error))||"");
     var _absente=(_code==="PGRST202"||_code==="42883"||/could not find the function|does not exist/i.test(_msg));
     if(!_absente){
@@ -36424,6 +36493,12 @@ async function _lxCampSmsEnvoyer(liste, titre){
       console.error("[campagne] mise en file impossible:", r&&r.error);
       out.erreurs=liste.length; out.message=_msg||"mise en file impossible"; return out;
     }
+  }
+  // 2026-10-17 : envoi direct (mode « Depuis mon téléphone », ou file serveur absente) -> pas de file d'attente :
+  // hors créneau légal, rien ne part (à relancer pendant le créneau). La file serveur, elle, reporte toute seule.
+  if(!lxSmsPubCreneauOk()){
+    out.erreurs=liste.length; out.message=LX_SMS_PUB_REGLE+". Relancez la campagne "+lxSmsPubProchainTexte()+".";
+    return out;
   }
   for(var i=0;i<liste.length;i++){
     try{ var res=await sendSms(liste[i].cl.ph,liste[i].txt,"marketing",((liste[i].cl.pre||"")+" "+(liste[i].cl.nom||"")).trim()); if(res&&res.ok) out.envoyes++; else if(res&&res.error==="doublon_evite") out.ignores++; else out.erreurs++; }
@@ -36436,7 +36511,7 @@ function _lxCampResultatHtml(titre, sms, emailSent, emailErr){
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="text-align:center">';
   h+='<div style="font-size:36px;margin-bottom:8px">'+(errs===0?"\u2705":"\u26a0\ufe0f")+'</div>';
   h+='<h2>'+(sms.enFile?'Campagne lanc\u00e9e':'Campagne envoy\u00e9e')+'</h2>';
-  if(sms.enFile>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.enFile+'</strong> SMS programm\u00e9'+(sms.enFile>1?'s':'')+' \u2014 '+((new Date().getHours()<8||new Date().getHours()>=21)?'envoi \u00e0 partir de 8h (pas de SMS la nuit)':'envoi progressif dans les minutes qui suivent')+'</div>';
+  if(sms.enFile>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.enFile+'</strong> SMS programm\u00e9'+(sms.enFile>1?'s':'')+' \u2014 '+(sms.creneauOk!==false&&lxSmsPubCreneauOk()?'envoi progressif dans les minutes qui suivent':'envoi '+lxSmsPubProchainTexte()+' (SMS publicitaires : lundi au samedi 8 h - 21 h 30, hors jours f\u00e9ri\u00e9s)')+'</div>';
   if(sms.envoyes>0)h+='<div style="font-size:14px">\ud83d\udcf1 <strong>'+sms.envoyes+'</strong> SMS</div>';
   if(sms.ignores>0)h+='<div style="font-size:12px;color:var(--text3)">'+sms.ignores+' d\u00e9j\u00e0 envoy\u00e9'+(sms.ignores>1?'s':'')+' ou sans consentement (ignor\u00e9'+(sms.ignores>1?'s':'')+')</div>';
   if(emailSent>0)h+='<div style="font-size:14px">\u2709\ufe0f <strong>'+emailSent+'</strong> Emails</div>';
@@ -36587,8 +36662,10 @@ function openCampaign(type){
     
     // Message
     htm+='<div class="fg"><label>Message SMS</label>';
-    htm+='<textarea id="campMsg" style="width:100%;height:80px;font-size:13px;resize:vertical">'+defaultMsg+'</textarea>';
-    htm+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div></div>';
+    htm+='<textarea id="campMsg" style="width:100%;height:80px;font-size:13px;resize:vertical" oninput="lxRenderSmsCost(\'cost_camp\',this.value,true)">'+defaultMsg+'</textarea>';
+    htm+=lxSmsCostBlock('cost_camp',defaultMsg,true); // 2026-10-17 : compteur (mention STOP comprise)
+    htm+='<div style="font-size:10px;color:var(--text3)">Variables : {prenom} {nom} {salon}</div>';
+    htm+='<div style="font-size:10.5px;color:'+(lxSmsPubCreneauOk()?'var(--text3)':'#f0a030')+';line-height:1.4;margin-top:3px">\u23f0 '+LX_SMS_PUB_REGLE+(lxSmsPubCreneauOk()?'.':' : les SMS partiront '+lxSmsPubProchainTexte()+'.')+'</div></div>';
     
     // Cost estimate
     htm+='<div style="padding:10px;background:rgba(255,255,255,.04);border-radius:8px;margin-bottom:10px;font-size:12px">';
