@@ -1,0 +1,10 @@
+-- 2026-10-17 (APPLIQUÉ) — Fiche client du salon créée seulement à la RÉSERVATION (comme Planity).
+-- Avant : une simple inscription / connexion sur la page de l'établissement (client_salon « lier ») créait une fiche
+-- dans le fichier du salon via sync_client_to_salon (ex. Excellence : 9 fiches sans aucun RDV, et des doublons).
+-- Maintenant :
+--   lx_prive.fiche_client_depuis_compte(compte, salon, creer) : relie une fiche existante (même compte ou même e-mail),
+--     n'en crée une que si creer = true.
+--   sync_client_to_salon (client_salon) : creer = le client a déjà une réservation en ligne non annulée dans ce salon.
+--   auto_link_client_salon (rdv_online AFTER INSERT) : creer = true (réservation) même si le lien existait déjà.
+-- Test en transaction annulée (Salon Démo) : après lien 0 fiche, après réservation 1 fiche.
+-- Fiches déjà créées sans RDV : NON supprimées (décision de l'établissement).
