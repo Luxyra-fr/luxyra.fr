@@ -34998,9 +34998,10 @@ function lxSmsRempli(txt, long){
 // 2026-10-17 : SMS publicitaires (campagnes, anniversaire, relance) envoyés par Luxyra (Brevo) : le serveur ajoute à la fin
 // notre lien de désinscription « Stop SMS: luxyra.fr/s/<code> » (code de 6 caractères) = 29 caractères avec le retour
 // à la ligne -> compté dans le coût. Pas de mention Brevo « STOP au 36xxx » (décision du 17/10).
-// En mode « Depuis mon téléphone » aucune mention n'est ajoutée (SMS du forfait du téléphone, pas de crédit Luxyra).
+// 2026-10-17 (restes) : mode « Depuis mon téléphone » aussi : la base (déclencheur sur sms_queue, sms_restes.sql) ajoute
+// la même mention, refuse hors créneau légal et les numéros opposés (lx_sms_stop) -> compteur identique dans les deux modes.
 var LX_SMS_MENTION_STOP = "\nStop SMS: luxyra.fr/s/xxxxxx"; // longueur exacte de la mention réelle : 29
-function lxSmsMentionStopActive(){ return (window.SMS_MODE||"brevo")!=="native"; }
+function lxSmsMentionStopActive(){ return true; }
 // --- Créneau légal des SMS publicitaires (même règle que le serveur lx_prive.sms_pub_creneau_ok) :
 // lundi au samedi, 8 h 00 - 21 h 30 heure de Paris, jamais le dimanche ni un jour férié français.
 function lxPaquesUTC(an){
@@ -35052,8 +35053,9 @@ function lxSmsCostHtml(txt, pub){
   var lim1 = info.ucs2 ? 70 : 160;
   var h = '<span style="color:'+coul+'">'+(aVar?'≈ ':'')+info.taille+' caractères'+(aVar?' une fois rempli':'')+' — <strong>'
         + (info.segments<=1 ? '1 SMS' : info.segments+' SMS') + ' par client</strong>'+(_stop?' (lien « Stop SMS » compris)':'')+(info.segments>1?' — raccourcissez le texte':'')+'</span>';
-  if (info.segments > 1) h += '<div style="color:#f0a030;margin-top:2px">⚠ Message trop long : chaque envoi coûtera '+info.segments+' crédits. Raccourcissez-le à '+(lim1-(_stop?_stop.length:0))+' caractères au plus'+(_stop?' (le lien « Stop SMS: luxyra.fr/s/… » ajouté à la fin en compte '+_stop.length+')':'')+' pour rester à 1 crédit.</div>';
-  else if (pire.segments > 1) h += '<div style="color:#f0a030;margin-top:2px">⚠ Proche de la limite : avec un prénom ou une prestation longs, le SMS peut dépasser 160 caractères et coûter '+pire.segments+' crédits. Raccourcissez un peu le texte pour être tranquille.</div>';
+  var _natifCpt = (window.SMS_MODE||"brevo")==="native"; // 2026-10-17 : mode téléphone = SMS du forfait, pas de crédit Luxyra
+  if (info.segments > 1) h += '<div style="color:#f0a030;margin-top:2px">⚠ Message trop long : chaque envoi '+(_natifCpt?'comptera '+info.segments+' SMS sur le forfait du téléphone':'coûtera '+info.segments+' crédits')+'. Raccourcissez-le à '+(lim1-(_stop?_stop.length:0))+' caractères au plus'+(_stop?' (le lien « Stop SMS: luxyra.fr/s/… » ajouté à la fin en compte '+_stop.length+')':'')+' pour rester à 1 '+(_natifCpt?'SMS':'crédit')+'.</div>';
+  else if (pire.segments > 1) h += '<div style="color:#f0a030;margin-top:2px">⚠ Proche de la limite : avec un prénom ou une prestation longs, le SMS peut dépasser 160 caractères et compter '+pire.segments+' '+(_natifCpt?'SMS':'crédits')+'. Raccourcissez un peu le texte pour être tranquille.</div>';
   if ((info.convertis||[]).length){
     var liste = info.convertis.slice(0,6).map(function(c){return '« '+c+' »';}).join(' ');
     h += '<div style="color:var(--text3);margin-top:2px">ℹ️ '+liste+' : converti(s) automatiquement à l\'envoi (ex. « ô » → « o », émojis retirés) pour rester au tarif normal.</div>';
@@ -35586,6 +35588,12 @@ async function sendSmsNative(phone,message,context,clientNom){
       device_id:window.SMS_NATIVE_DEVICE_ID||null
     }).select().single();
     if(insertRes.error){
+      // 2026-10-17 (restes) : SMS publicitaire refusé par la base (déclencheur trg_sms_queue_pub) -> message clair
+      var _mE=String(insertRes.error.message||"");
+      var _mR=/LX_HORS_CRENEAU/.test(_mE)?{error:"hors_creneau",message:LX_SMS_PUB_REGLE}
+            :/LX_STOP/.test(_mE)?{error:"stop",message:"Ce client a demand\u00e9 l'arr\u00eat des SMS publicitaires (Stop SMS)"}
+            :/LX_SANS_LIEN/.test(_mE)?{error:"sans_lien",message:"SMS publicitaire non envoy\u00e9 : num\u00e9ro absent du fichier clients (lien de d\u00e9sinscription impossible)"}:null;
+      if(_mR){ auditLog("SMS_REFUS_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+_mR.error); return{ok:false,error:_mR.error,message:_mR.message}; }
       console.error("[SMS Native] Queue insert error:",insertRes.error);
       auditLog("SMS_ERREUR_NATIVE","T\u00e9l: ..."+cleanPhone.slice(-4)+" - "+insertRes.error.message);
       return{ok:false,error:"Queue: "+insertRes.error.message};
@@ -35596,7 +35604,7 @@ async function sendSmsNative(phone,message,context,clientNom){
         salon_id:_salonId,
         type:"sms",
         recipient:cleanPhone.slice(-4),
-        content:String(message||"").slice(0,320),
+        content:String((insertRes.data&&insertRes.data.message)||message||"").slice(0,320), // texte réel (mention Stop SMS comprise)
         via:"native",
         context:context||"luxyra_auto",
         client_nom:clientNom||null
@@ -36523,7 +36531,7 @@ async function _lxCampSmsEnvoyer(liste, titre){
     return out;
   }
   for(var i=0;i<liste.length;i++){
-    try{ var res=await sendSms(liste[i].cl.ph,liste[i].txt,"marketing",((liste[i].cl.pre||"")+" "+(liste[i].cl.nom||"")).trim()); if(res&&res.ok) out.envoyes++; else if(res&&res.error==="doublon_evite") out.ignores++; else out.erreurs++; }
+    try{ var res=await sendSms(liste[i].cl.ph,liste[i].txt,"marketing",((liste[i].cl.pre||"")+" "+(liste[i].cl.nom||"")).trim()); if(res&&res.ok) out.envoyes++; else if(res&&(res.error==="doublon_evite"||res.error==="stop")) out.ignores++; else { out.erreurs++; if(res&&res.error==="hors_creneau") out.message=LX_SMS_PUB_REGLE+". Relancez la campagne "+lxSmsPubProchainTexte()+"."; } }
     catch(_eS){ out.erreurs++; }
   }
   return out;
