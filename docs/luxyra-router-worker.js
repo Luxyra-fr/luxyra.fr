@@ -246,9 +246,11 @@ export default {
       if (url.pathname === "/health" || url.pathname === "/api/health") {
         return await handleHealth(request, env);
       }
-      // 2026-10-17 audit réglages (#4) : lien court de désinscription (SMS « STOP SMS : luxyra.fr/stop/<code> », pied des e-mails)
-      { const _stop = url.pathname.match(/^\/stop\/([0-9a-f]{10})\/?$/);
-        if (_stop && (request.method === "GET" || request.method === "POST")) return await lxPageStop(request, env, _stop[1]); }
+      // 2026-10-17 audit réglages (#4) : lien de désinscription (pied des e-mails, SMS publicitaires)
+      // 2026-10-17 lien court : SMS « Stop SMS: luxyra.fr/s/<code 6 [a-z0-9]> » ; anciens liens /stop/<10 hex> toujours valides.
+      // GET = page de confirmation (rien n'est fait à la simple ouverture), POST = désinscription.
+      { const _stop = url.pathname.match(/^\/stop\/([0-9a-f]{10}|[a-z0-9]{6})\/?$/) || url.pathname.match(/^\/s\/([a-z0-9]{6})\/?$/);
+        if (_stop && (request.method === "GET" || request.method === "POST")) return await lxPageStop(request, env, _stop[1], url.pathname.startsWith("/s/") ? "/s/" : "/stop/"); }
       // Route les pages non-/api/ vers handleExistingRoutes
       if (!url.pathname.startsWith("/api/")) {
         try {
@@ -3349,16 +3351,18 @@ function lxSmsSegments(txt) {
 
 // ============================================================
 // 2026-10-17 SMS PUBLICITAIRES (campagnes, anniversaire, relance) — jamais les rappels / confirmations de RDV
-//  - mention officielle Brevo « STOP au [STOP_CODE] » : Brevo remplace [STOP_CODE] par son numéro court (36xxx)
-//    et un contenu avec code STOP passe automatiquement en type « marketing » (on l'envoie aussi en marketing) ;
+//  - 2026-10-17 (décision du propriétaire) : PAS de mention Brevo « STOP au 36xxx ». Notre lien de désinscription
+//    « \nStop SMS: luxyra.fr/s/<code> » (29 caractères, LX_SMS_MENTION_LONGUEUR) est ajouté à chaque SMS publicitaire :
+//    par la file SQL (traiter_sms_differes) ou, pour un envoi depuis l'appareil avec contexte, par handleSmsCustom ;
 //  - créneau : lundi au samedi, 8 h - 21 h 30 (Paris), jamais le dimanche ni un jour férié français
 //    (21 h 30 = limite Brevo pour la France : au-delà, Brevo retient le SMS jusqu'au lendemain 8 h, même un dimanche) ;
 //  - numéro ayant répondu STOP (table lx_sms_stop) : refusé, sans débit.
 // Même règle en SQL : lx_prive.sms_pub_creneau_ok / lx_prive.est_jour_ferie_fr (docs/migrations_1017/sms_stop_creneaux.sql).
 // ============================================================
 const LX_SMS_PUB_CONTEXTES = new Set(["marketing", "anniversaire", "relance"]);
-const LX_SMS_MENTION_STOP = "\nSTOP au [STOP_CODE]";
-const LX_SMS_MENTION_STOP_REELLE = "\nSTOP au 36XXX"; // texte reçu (numéro court à 5 chiffres) -> sert au calcul du coût
+// 2026-10-17 lien court : mention de désinscription des SMS publicitaires (le code fait toujours 6 caractères)
+const LX_SMS_MENTION_PREFIXE = "\nStop SMS: luxyra.fr/s/";
+const LX_SMS_MENTION_LONGUEUR = LX_SMS_MENTION_PREFIXE.length + 6; // = 29 (saut de ligne compris)
 function lxPaques(an) {
   const a = an % 19, b = Math.floor(an / 100), c = an % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
   const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
@@ -3643,8 +3647,8 @@ async function handleAdminSmsStop(request, env) {
 // (5xx / 404) : un rappel ne doit jamais être perdu à cause du changement.
 async function brevoSendSms(env, { to, content, sender, tag, webUrl, marketing }) {
   content = lxSmsGsm(content);
-  // 2026-10-17 : SMS publicitaire -> mention officielle « STOP au [STOP_CODE] » (ajoutée APRÈS la conversion) + type marketing
-  if (marketing && !/STOP au \[STOP_CODE\]/i.test(content)) content = content + LX_SMS_MENTION_STOP;
+  // 2026-10-17 : SMS publicitaire -> type marketing. Plus de mention Brevo « STOP au [STOP_CODE] » (décision du 17/10) :
+  // le lien « Stop SMS: luxyra.fr/s/<code> » est déjà dans le contenu (file SQL ou handleSmsCustom).
   const typeSms = marketing ? "marketing" : "transactional";
   // 2026-10-17 soir : compte Brevo dédié aux SMS publicitaires si configuré -> un STOP n'atteint jamais le compte des rappels
   const cleApi = (marketing && env.BREVO_API_KEY_MARKETING) ? env.BREVO_API_KEY_MARKETING : env.BREVO_API_KEY;
@@ -3806,6 +3810,8 @@ async function lxLienDesinscription(env, salonId, email, canal) {
       body: JSON.stringify({ p_salon: salonId, p_email: String(email).trim(), p_canal: canal || "email" }) });
     if (!r.ok) return "";
     const code = await r.json();
+    // 2026-10-17 lien court : code de 6 caractères -> luxyra.fr/s/<code> ; ancien code de 10 -> luxyra.fr/stop/<code>
+    if (typeof code === "string" && /^[a-z0-9]{6}$/.test(code)) return `https://luxyra.fr/s/${code}`;
     return (typeof code === "string" && /^[0-9a-f]{10}$/.test(code)) ? `https://luxyra.fr/stop/${code}` : "";
   } catch (_) { return ""; }
 }
@@ -4149,7 +4155,7 @@ async function lxCrediterSms(env, salonId, nb, type, montant, motif, auteur) {
 // Envoi Brevo + contrôle du résultat : si Brevo refuse, les crédits débités sont rendus automatiquement.
 // Si Brevo facture plus de SMS que prévu (cas rare), la différence est débitée si le solde le permet.
 async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender, opts) {
-  const _marketing = !!(opts && opts.marketing); // 2026-10-17 : SMS publicitaire (mention STOP Brevo + type marketing)
+  const _marketing = !!(opts && opts.marketing); // 2026-10-17 : SMS publicitaire (type marketing ; lien Stop SMS déjà dans le texte)
   let result = null;
   let remaining = gate.remainingCredits, debites = gate.nbSms || 1;
   // 2026-10-10 : chaque envoi est suivi (sms_envois) -> accusés de réception, remboursement, rapprochement Brevo
@@ -4369,17 +4375,28 @@ async function handleSmsCustom(request, env) {
   if (!_interne && !checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
   const { telephone, message, salonName, salon_id, context } = await request.json();
   if (!telephone || !message) return jsonResponse({ error: "telephone et message requis" }, 400);
-  const contenu = lxSmsGsm(message);
+  let contenu = lxSmsGsm(message);
   if (!contenu) return jsonResponse({ error: "Message vide" }, 400);
-  // 2026-10-17 : SMS publicitaire (contexte marketing / anniversaire / relance envoyé par l'app ou la file serveur)
-  // -> créneau légal, numéro ayant répondu STOP refusé (sans débit), mention « STOP au 36xxx » comptée dans le coût.
+  // 2026-10-17 : SMS publicitaire (contexte marketing / anniversaire / relance envoyé par l'app)
+  // -> créneau légal, numéro ayant répondu STOP refusé (sans débit), lien « Stop SMS: luxyra.fr/s/<code> » ajouté
+  //    (29 caractères, compté dans le coût). Sans lien possible (client absent du fichier) : refusé, sans débit.
   // Sans contexte (anciennes versions, rappels, confirmations) : comportement inchangé (transactionnel).
   const _pub = LX_SMS_PUB_CONTEXTES.has(String(context || ""));
   if (_pub) {
     if (!lxSmsPubCreneauOk(new Date())) return jsonResponse({ success: false, code: "hors_creneau", error: "SMS publicitaires autorisés du lundi au samedi de 8 h à 21 h 30, hors dimanche et jours fériés" }, 409);
     if (await lxSmsPubBloque(env, telephone)) return jsonResponse({ success: false, code: "stop", error: "Ce client a répondu STOP aux SMS publicitaires" }, 409);
   }
-  const _nbFactures = lxSmsSegments(_pub && !/STOP au \[STOP_CODE\]/i.test(contenu) ? contenu + LX_SMS_MENTION_STOP_REELLE : contenu);
+  if (_pub && !/luxyra\.fr\/(s|stop)\//i.test(contenu)) {
+    let _code = null;
+    try {
+      const rc = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_code_desinscription_sms`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_salon: salon_id || null, p_tel: String(telephone) }) });
+      const jc = rc.ok ? await rc.json() : null;
+      if (typeof jc === "string" && /^[a-z0-9]{6}$/.test(jc)) _code = jc;
+    } catch (_) {}
+    if (!_code) return jsonResponse({ success: false, code: "sans_lien", error: "SMS publicitaire non envoyé : lien de désinscription impossible (client absent du fichier du salon)" }, 409);
+    contenu = contenu + LX_SMS_MENTION_PREFIXE + _code;
+  }
+  const _nbFactures = lxSmsSegments(contenu);
   // === Gate Pro + crédits + décrément (nombre réel de SMS facturés par Brevo) ===
   const gate = await gateSmsAndDecrementCredit(env, salon_id, _nbFactures);
   if (!gate.ok) {
@@ -7668,15 +7685,18 @@ button{background:#c8a84e;color:#111;border:0;border-radius:30px;padding:13px 26
 <div class="note">Les messages liés à vos rendez-vous (confirmations, rappels) peuvent continuer d'être envoyés.<br>Vous pourrez changer d'avis à tout moment auprès de l'établissement ou dans votre espace client <a href="https://luxyra.fr/compte">luxyra.fr/compte</a>.</div>
 </div></div></body></html>`;
 }
-// GET /stop/<code> : confirmation ; POST /stop/<code> : désinscription (formulaire, ou « un clic » des messageries)
-async function lxPageStop(request, env, code) {
+// GET /stop/<code> ou /s/<code> : confirmation ; POST : désinscription (formulaire, ou « un clic » des messageries)
+async function lxPageStop(request, env, code, base) {
   try {
     if (request.method === "GET") {
+      // 2026-10-17 lien court : 6 caractères -> limite de consultation par adresse IP (pas d'essais en masse)
+      const ipG = request.headers.get("CF-Connecting-IP") || "unknown";
+      if (!checkRateLimit("stopget:" + ipG, 30)) return htmlResponse(unsubscribePage("error", "Trop de demandes. Réessayez dans une minute."), 429);
       const ri = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_desinscription_info`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_code: code }) });
       const info = ri.ok ? await ri.json() : null;
       if (!info || info.ok !== true) return htmlResponse(unsubscribePage("error", "Lien invalide ou expiré."), 404);
       if (info.deja === true) return htmlResponse(unsubscribePage("ok", "Votre désinscription est déjà enregistrée."));
-      return htmlResponse(lxPageConfirmerDesinscription(`/stop/${code}`, info.canal === "sms" ? "les SMS d'information et d'offres" : info.canal === "all" ? "aucune communication" : "les e-mails d'information et d'offres", info.salon || ""));
+      return htmlResponse(lxPageConfirmerDesinscription(`${base || "/stop/"}${code}`, info.canal === "sms" ? "les SMS publicitaires (offres, anniversaire, relances)" : info.canal === "all" ? "aucune communication" : "les e-mails d'information et d'offres", info.salon || ""));
     }
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     if (!checkRateLimit("stop:" + ip, 20)) return htmlResponse(unsubscribePage("error", "Trop de demandes. Réessayez dans une minute."), 429);
