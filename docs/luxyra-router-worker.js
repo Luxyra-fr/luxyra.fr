@@ -128,6 +128,8 @@ async function __wrappedApiHandler(request, url, env) {
       if (url.pathname.startsWith("/api/e/o/") && request.method === "GET") return await handlePixelOuverture(request, env, url);
       if (url.pathname === "/api/stripe/webhook-connect" && request.method === "POST") return await handleWebhookConnect(request, env);
       if (url.pathname === "/api/brevo/sms-event" && request.method === "POST") return await handleBrevoSmsEvent(request, env);
+      // 2026-10-17 : webhook global Brevo (réponses STOP / START aux SMS publicitaires)
+      if (url.pathname === "/api/brevo/sms-stop" && request.method === "POST") return await handleBrevoSmsStopWebhook(request, env);
       if (url.pathname === "/api/sms/recharge-auto" && request.method === "POST") return await handleSmsRechargeAuto(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
@@ -293,6 +295,9 @@ export default {
       catch (err) { await reportWorkerError(env, "cron:rappel-attestation", err, null, "warning"); }
       try { console.log("[cron] rapprochement SMS:", await runSmsRapprochementJob(env)); }
       catch (err) { await reportWorkerError(env, "cron:sms-rapprochement", err, null, "warning"); }
+      // 2026-10-17 : réponses STOP / START des 2 derniers jours (API d'événements SMS Brevo) -> lx_sms_stop
+      try { console.log("[cron] STOP SMS:", await lxSmsStopRattrapage(env)); }
+      catch (err) { await reportWorkerError(env, "cron:sms-stop", err, null, "warning"); }
       return;
     }
     try {
@@ -3340,14 +3345,128 @@ function lxSmsSegments(txt) {
   return n <= 160 ? 1 : Math.ceil(n / 153);
 }
 
+// ============================================================
+// 2026-10-17 SMS PUBLICITAIRES (campagnes, anniversaire, relance) — jamais les rappels / confirmations de RDV
+//  - mention officielle Brevo « STOP au [STOP_CODE] » : Brevo remplace [STOP_CODE] par son numéro court (36xxx)
+//    et un contenu avec code STOP passe automatiquement en type « marketing » (on l'envoie aussi en marketing) ;
+//  - créneau : lundi au samedi, 8 h - 21 h 30 (Paris), jamais le dimanche ni un jour férié français
+//    (21 h 30 = limite Brevo pour la France : au-delà, Brevo retient le SMS jusqu'au lendemain 8 h, même un dimanche) ;
+//  - numéro ayant répondu STOP (table lx_sms_stop) : refusé, sans débit.
+// Même règle en SQL : lx_prive.sms_pub_creneau_ok / lx_prive.est_jour_ferie_fr (docs/migrations_1017/sms_stop_creneaux.sql).
+// ============================================================
+const LX_SMS_PUB_CONTEXTES = new Set(["marketing", "anniversaire", "relance"]);
+const LX_SMS_MENTION_STOP = "\nSTOP au [STOP_CODE]";
+const LX_SMS_MENTION_STOP_REELLE = "\nSTOP au 36XXX"; // texte reçu (numéro court à 5 chiffres) -> sert au calcul du coût
+function lxPaques(an) {
+  const a = an % 19, b = Math.floor(an / 100), c = an % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mois = Math.floor((h + l - 7 * m + 114) / 31), jour = ((h + l - 7 * m + 114) % 31) + 1;
+  return Date.UTC(an, mois - 1, jour);
+}
+// an, mois (1-12), jour -> jour férié légal (1er janv, lundi de Pâques, 1er mai, 8 mai, Ascension, lundi de Pentecôte,
+// 14 juillet, 15 août, 1er nov, 11 nov, 25 déc)
+function lxJourFerieFr(an, mois, jour) {
+  const md = String(mois).padStart(2, "0") + "-" + String(jour).padStart(2, "0");
+  if (["01-01", "05-01", "05-08", "07-14", "08-15", "11-01", "11-11", "12-25"].indexOf(md) >= 0) return true;
+  const ecart = Math.round((Date.UTC(an, mois - 1, jour) - lxPaques(an)) / 86400000);
+  return ecart === 1 || ecart === 39 || ecart === 50;
+}
+function lxSmsPubCreneauOk(date) {
+  try {
+    const p = {};
+    new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+      .formatToParts(date || new Date()).forEach((x) => { p[x.type] = x.value; });
+    const an = Number(p.year), mois = Number(p.month), jour = Number(p.day), mn = Number(p.hour) * 60 + Number(p.minute);
+    const dow = new Date(Date.UTC(an, mois - 1, jour)).getUTCDay(); // 0 = dimanche
+    if (dow === 0 || lxJourFerieFr(an, mois, jour)) return false;
+    return mn >= 8 * 60 && mn < 21 * 60 + 30;
+  } catch (_) { return false; }
+}
+async function lxSmsPubBloque(env, tel) {
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_pub_bloque`, { method: "POST", headers: _sbHeaders(env), body: JSON.stringify({ p_tel: String(tel || "") }) });
+    if (!r.ok) return false; // base injoignable : on n'empêche pas l'envoi (Brevo bloque de toute façon les numéros en blocklist)
+    return (await r.json()) === true;
+  } catch (_) { return false; }
+}
+// Enregistre un STOP / START reçu de Brevo (webhook ou rattrapage). salonId : information seulement.
+async function lxSmsStopEnregistrer(env, tel, action, source, salonId, details) {
+  try {
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_sms_stop_enregistrer`, { method: "POST", headers: _sbHeaders(env),
+      body: JSON.stringify({ p_tel: String(tel || ""), p_action: action, p_source: source || null, p_salon: (/^[0-9a-f-]{36}$/i.test(String(salonId || "")) ? salonId : null), p_details: details ? String(details).slice(0, 300) : null }) });
+    return r.ok ? await r.json() : null;
+  } catch (_) { return null; }
+}
+// Événement Brevo -> 'stop' | 'start' | null. Brevo traite lui-même STOP/START (blocklist du compte) ; on recopie.
+function lxSmsStopAction(ev, reponse) {
+  const e = String(ev || "").toLowerCase().replace(/[\s_-]/g, "");
+  if (e === "unsubscribe" || e === "unsubscribed" || e === "unsubscription") return "stop";
+  if (e === "subscribe" || e === "subscribed") return "start";
+  if (e === "replied" || e === "reply" || e === "replies") {
+    const t = String(reponse || "").trim().toUpperCase();
+    if (/^(STOP|STOPALL|ARRET|ARRÊT|UNSUBSCRIBE|UNSUB|END|QUIT|CANCEL)\b/.test(t)) return "stop";
+    if (/^(START|YES)\b/.test(t)) return "start";
+  }
+  return null;
+}
+function lxSalonDuTag(tag) {
+  const l = Array.isArray(tag) ? tag : [tag];
+  for (const t of l) { const m = /^salon_([0-9a-f-]{36})$/i.exec(String(t || "")); if (m) return m[1]; }
+  return null;
+}
+// POST /api/brevo/sms-stop?k=<BREVO_SMS_WEBHOOK_KEY> — webhook GLOBAL Brevo (Transactionnel > Webhooks SMS :
+// Replied, Unsubscribe, Subscribe). Complète les accusés par message (/api/brevo/sms-event) et le rattrapage quotidien.
+async function handleBrevoSmsStopWebhook(request, env) {
+  try {
+    const u = new URL(request.url);
+    if (!env.BREVO_SMS_WEBHOOK_KEY || u.searchParams.get("k") !== env.BREVO_SMS_WEBHOOK_KEY) return jsonResponse({ error: "refusé" }, 403);
+    let b = {}; try { b = await request.json(); } catch (_) {}
+    const evs = Array.isArray(b) ? b : [b];
+    let n = 0;
+    for (const x of evs.slice(0, 50)) {
+      const action = lxSmsStopAction(x && (x.msg_status || x.event || x.description), x && x.reply);
+      if (action && x.to) { await lxSmsStopEnregistrer(env, x.to, action, "brevo_webhook", lxSalonDuTag(x.tag), x.reply ? "Réponse : " + String(x.reply).slice(0, 60) : (x.msg_status || "")); n++; }
+    }
+    return jsonResponse({ ok: true, traites: n });
+  } catch (e) {
+    return jsonResponse({ ok: false }, 200); // jamais de nouvel essai en boucle côté Brevo
+  }
+}
+// Rattrapage quotidien (cron 08:00 UTC) : désinscriptions et réponses STOP/START des 2 derniers jours lues dans
+// l'API d'événements SMS de Brevo — fonctionne même si aucun webhook n'est configuré chez Brevo.
+async function lxSmsStopRattrapage(env) {
+  if (!env.BREVO_API_KEY) return { ok: false, erreur: "BREVO_API_KEY absente" };
+  const res = { stop: 0, start: 0, lus: 0 };
+  for (const evt of ["unsubscription", "replies"]) {
+    for (let page = 0; page < 10; page++) {
+      const r = await fetch(`https://api.brevo.com/v3/transactionalSMS/statistics/events?days=2&event=${evt}&limit=100&offset=${page * 100}&sort=asc`,
+        { headers: { "api-key": env.BREVO_API_KEY, Accept: "application/json" } });
+      if (!r.ok) break;
+      const j = await r.json().catch(() => ({}));
+      const L = Array.isArray(j.events) ? j.events : [];
+      for (const x of L) {
+        res.lus++;
+        const action = lxSmsStopAction(x.event, x.reply);
+        if (action && x.phoneNumber) { await lxSmsStopEnregistrer(env, x.phoneNumber, action, "brevo_rattrapage", lxSalonDuTag(x.tag), x.reply ? "Réponse : " + String(x.reply).slice(0, 60) : x.event); res[action]++; }
+      }
+      if (L.length < 100) break;
+    }
+  }
+  return res;
+}
+
 // 2026-10-10 : nouvel endpoint Brevo `/v3/transactionalSMS/send` (l'ancien `/sms` est déprécié) avec accusés de
 // réception (webUrl) et un tag par salon. Repli automatique sur l'ancien endpoint si le nouveau est indisponible
 // (5xx / 404) : un rappel ne doit jamais être perdu à cause du changement.
-async function brevoSendSms(env, { to, content, sender, tag, webUrl }) {
+async function brevoSendSms(env, { to, content, sender, tag, webUrl, marketing }) {
   content = lxSmsGsm(content);
+  // 2026-10-17 : SMS publicitaire -> mention officielle « STOP au [STOP_CODE] » (ajoutée APRÈS la conversion) + type marketing
+  if (marketing && !/STOP au \[STOP_CODE\]/i.test(content)) content = content + LX_SMS_MENTION_STOP;
+  const typeSms = marketing ? "marketing" : "transactional";
   const headers = { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" };
   const destinataire = String(to || "").replace(/^\+/, "").replace(/\D/g, "");
-  const corps = { type: "transactional", sender: sender || "Luxyra", recipient: destinataire, content };
+  const corps = { type: typeSms, sender: sender || "Luxyra", recipient: destinataire, content };
   if (tag) corps.tag = tag;
   if (webUrl) corps.webUrl = webUrl;
   let r = null, j = null;
@@ -3358,7 +3477,7 @@ async function brevoSendSms(env, { to, content, sender, tag, webUrl }) {
     if (r.status >= 400 && r.status < 500 && r.status !== 404) return Object.assign({ endpoint: "send", httpStatus: r.status }, j || {});
   } catch (_) {}
   // Repli : ancien endpoint (format de numéro d'origine)
-  const corpsAncien = { type: "transactional", sender: sender || "Luxyra", recipient: to, content };
+  const corpsAncien = { type: typeSms, sender: sender || "Luxyra", recipient: to, content };
   if (tag) corpsAncien.tag = tag;
   if (webUrl) corpsAncien.webUrl = webUrl;
   const r2 = await fetch("https://api.brevo.com/v3/transactionalSMS/sms", { method: "POST", headers, body: JSON.stringify(corpsAncien) });
@@ -3429,9 +3548,15 @@ async function handleBrevoSmsEvent(request, env) {
     const raison = String(b.reason || b.description || b.error || "").slice(0, 200);
     const echec = ["hardbounce", "rejected", "blocked", "skipped", "error", "invalid", "undelivered", "failed", "expired"].includes(ev);
     const statut = ev === "delivered" ? "livre" : (echec ? "echec" : (ev === "softbounce" ? "en_attente" : null));
-    const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?select=evenements,statut&id=eq.${encodeURIComponent(ref)}&limit=1`, { headers: _sbHeaders(env) });
+    const rq = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?select=evenements,statut,salon_id&id=eq.${encodeURIComponent(ref)}&limit=1`, { headers: _sbHeaders(env) });
     const ra = rq.ok ? await rq.json() : [];
     if (!ra[0]) return jsonResponse({ ok: true, inconnu: true });
+    // 2026-10-17 : réponse STOP / START (ou désinscription) à ce SMS -> opposition aux SMS publicitaires (table lx_sms_stop)
+    const _stopAct = lxSmsStopAction(ev, b.reply);
+    if (_stopAct && b.to) {
+      await lxSmsStopEnregistrer(env, b.to, _stopAct, "brevo_accuse", ra[0].salon_id, b.reply ? "Réponse : " + String(b.reply).slice(0, 60) : ev);
+      return jsonResponse({ ok: true, stop: _stopAct }); // ne change pas le statut de livraison du SMS
+    }
     const evts = Array.isArray(ra[0].evenements) ? ra[0].evenements.slice(-19) : [];
     evts.push({ e: ev || "?", r: raison || undefined, t: new Date().toISOString() });
     const patch = { evenements: evts, dernier_evenement: ev || null, maj_le: new Date().toISOString() };
@@ -3813,7 +3938,8 @@ async function lxCrediterSms(env, salonId, nb, type, montant, motif, auteur) {
 }
 // Envoi Brevo + contrôle du résultat : si Brevo refuse, les crédits débités sont rendus automatiquement.
 // Si Brevo facture plus de SMS que prévu (cas rare), la différence est débitée si le solde le permet.
-async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender) {
+async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender, opts) {
+  const _marketing = !!(opts && opts.marketing); // 2026-10-17 : SMS publicitaire (mention STOP Brevo + type marketing)
   let result = null;
   let remaining = gate.remainingCredits, debites = gate.nbSms || 1;
   // 2026-10-10 : chaque envoi est suivi (sms_envois) -> accusés de réception, remboursement, rapprochement Brevo
@@ -3823,7 +3949,7 @@ async function lxEnvoyerSmsFacture(env, salonId, gate, phone, contenu, sender) {
     const ra = ri.ok ? await ri.json() : []; ref = ra[0] ? ra[0].id : null;
   } catch (_) {}
   const webUrl = ref ? `https://luxyra.fr/api/brevo/sms-event?r=${ref}&s=${await lxSigneRef(env, ref)}` : null;
-  try { result = await brevoSendSms(env, { to: phone, content: contenu, sender, tag: "salon_" + salonId, webUrl }); } catch (e) { result = { code: "exception", message: String(e?.message || e) }; }
+  try { result = await brevoSendSms(env, { to: phone, content: contenu, sender, tag: "salon_" + salonId, webUrl, marketing: _marketing }); } catch (e) { result = { code: "exception", message: String(e?.message || e) }; }
   const ok = !!(result && (result.messageId || result.reference));
   if (ref) { try { await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/sms_envois?id=eq.${ref}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ message_id: result && result.messageId ? String(result.messageId) : null, statut: ok ? "envoye" : "echec", endpoint: result && result.endpoint || null, dernier_evenement: ok ? "accepted" : String(result?.code || "erreur").slice(0, 60), maj_le: new Date().toISOString() }) }); } catch (_) {} }
   if (!ok) {
@@ -4031,18 +4157,27 @@ async function handleSmsCustom(request, env) {
   // chaque envoi reste soumis au contrôle Pro + crédits. La limite par IP reste pour les appels depuis un appareil.
   const _interne = await lxIsInternal(request, env);
   if (!_interne && !checkRateLimit("sms:" + ip, 15)) return jsonResponse({ error: "Trop de requêtes SMS. Réessayez dans 1 minute." }, 429);
-  const { telephone, message, salonName, salon_id } = await request.json();
+  const { telephone, message, salonName, salon_id, context } = await request.json();
   if (!telephone || !message) return jsonResponse({ error: "telephone et message requis" }, 400);
   const contenu = lxSmsGsm(message);
   if (!contenu) return jsonResponse({ error: "Message vide" }, 400);
+  // 2026-10-17 : SMS publicitaire (contexte marketing / anniversaire / relance envoyé par l'app ou la file serveur)
+  // -> créneau légal, numéro ayant répondu STOP refusé (sans débit), mention « STOP au 36xxx » comptée dans le coût.
+  // Sans contexte (anciennes versions, rappels, confirmations) : comportement inchangé (transactionnel).
+  const _pub = LX_SMS_PUB_CONTEXTES.has(String(context || ""));
+  if (_pub) {
+    if (!lxSmsPubCreneauOk(new Date())) return jsonResponse({ success: false, code: "hors_creneau", error: "SMS publicitaires autorisés du lundi au samedi de 8 h à 21 h 30, hors dimanche et jours fériés" }, 409);
+    if (await lxSmsPubBloque(env, telephone)) return jsonResponse({ success: false, code: "stop", error: "Ce client a répondu STOP aux SMS publicitaires" }, 409);
+  }
+  const _nbFactures = lxSmsSegments(_pub && !/STOP au \[STOP_CODE\]/i.test(contenu) ? contenu + LX_SMS_MENTION_STOP_REELLE : contenu);
   // === Gate Pro + crédits + décrément (nombre réel de SMS facturés par Brevo) ===
-  const gate = await gateSmsAndDecrementCredit(env, salon_id, lxSmsSegments(contenu));
+  const gate = await gateSmsAndDecrementCredit(env, salon_id, _nbFactures);
   if (!gate.ok) {
     if (gate.status === 402 && salon_id) { try { await lxRechargeAutoSiBesoin(env, salon_id, 0); } catch (_) {} }
     return jsonResponse({ error: gate.error }, gate.status);
   }
   let phone = telephone.replace(/[\s.\-]/g, ""); if (phone.startsWith("0")) phone = "+33" + phone.slice(1);
-  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra").slice(0,11).trim());
+  const env1 = await lxEnvoyerSmsFacture(env, salon_id, gate, phone, contenu, (salonName||"Luxyra").slice(0,11).trim(), { marketing: _pub });
   if (!env1.ok) return jsonResponse({ success: false, error: env1.error, result: env1.result, remainingCredits: env1.remaining, smsDebites: 0 }, 502);
   return jsonResponse({ success: true, result: env1.result, remainingCredits: env1.remaining, smsDebites: env1.debites });
 }
