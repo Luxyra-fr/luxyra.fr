@@ -2006,16 +2006,16 @@ async function handleAdminGithubActions(request, env, url) {
   try {
     const u = await lxAuthUser(request);
     if (!u || !lxIsAdminUser(u)) return jsonResponse({ error: "Accès réservé à l'administrateur" }, 403);
-    if (!env.GITHUB_TOKEN_RO) return jsonResponse({ ok: true, connecte: false, depot: LX_GH_REPO });
+    // 2026-10-17 : dépôt PUBLIC -> lecture des exécutions sans jeton (API publique GitHub) ; jeton facultatif (quota plus élevé).
     const now = Date.now();
-    if (_lxGhCache && (now - _lxGhCache.at) < (url.searchParams.get("refresh") === "1" ? 30000 : 300000)) {
+    if (_lxGhCache && (now - _lxGhCache.at) < (url.searchParams.get("refresh") === "1" ? 30000 : (env.GITHUB_TOKEN_RO ? 300000 : 900000))) {
       return jsonResponse(Object.assign({ ok: true, connecte: true, cached: true, ageSec: Math.round((now - _lxGhCache.at) / 1000) }, _lxGhCache.data));
     }
-    const h = { Authorization: "Bearer " + env.GITHUB_TOKEN_RO, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "luxyra-admin" };
+    const h = { ...(env.GITHUB_TOKEN_RO ? { Authorization: "Bearer " + env.GITHUB_TOKEN_RO } : {}), Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "luxyra-admin" };
     const workflows = await Promise.all(LX_GH_WORKFLOWS.map(async (w) => {
       try {
         const r = await fetch(`https://api.github.com/repos/${LX_GH_REPO}/actions/workflows/${w.fichier}/runs?per_page=10`, { headers: h, signal: AbortSignal.timeout(10000) });
-        if (r.status === 401 || r.status === 403) return { fichier: w.fichier, nom: w.nom, erreur: "Jeton refusé par GitHub (" + r.status + ") : vérifier ses droits (Actions : lecture) et sa date d'expiration" };
+        if (r.status === 401 || r.status === 403) return { fichier: w.fichier, nom: w.nom, erreur: env.GITHUB_TOKEN_RO ? "Jeton refusé par GitHub (" + r.status + ") : vérifier ses droits (Actions : lecture) et sa date d'expiration" : "Quota de lecture GitHub atteint (" + r.status + ") : réessayez dans quelques minutes" };
         if (r.status === 404) return { fichier: w.fichier, nom: w.nom, erreur: "Automatisme introuvable (fichier renommé ?) ou jeton sans accès au dépôt" };
         if (!r.ok) return { fichier: w.fichier, nom: w.nom, erreur: "GitHub " + r.status };
         const j = await r.json();
