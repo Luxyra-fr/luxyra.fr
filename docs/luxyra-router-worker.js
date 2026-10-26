@@ -241,6 +241,12 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS_HEADERS });
     // ============ TRY/CATCH GLOBAL : toute exception non gérée arrive ici ============
     try {
+      // 2026-10-26 SEO : une seule adresse pour Google -> https://luxyra.fr (www et http redirigés en 301, GET/HEAD seulement).
+      // Avant : www.luxyra.fr servait les mêmes pages (liens internes en www) => doublons « canonique » et exploration gaspillée.
+      if ((request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")
+          && (url.hostname === "www.luxyra.fr" || (url.protocol === "http:" && url.hostname === "luxyra.fr"))) {
+        return Response.redirect("https://luxyra.fr" + url.pathname + url.search, 301);
+      }
       // /health (et /api/health) — monitoring externe (UptimeRobot, Better Stack, etc.)
       // Capté AVANT le routing normal pour répondre vite (pas de DOM/HTML).
       if (url.pathname === "/health" || url.pathname === "/api/health") {
@@ -6302,7 +6308,7 @@ async function lxAnnuaireGerantPage(url) {
   let body = `<section class="hero"><div class="wrap">${f ? `<div class="fil"><a href="/${f.metier}/${lxEsc(f.ville_slug)}">← ${lxEsc(M.titre)} à ${lxEsc(f.ville)}</a></div>` : ""}`;
   body += `<h1>Activez la réservation en ligne pour <em>${lxEsc(nom)}</em></h1>`;
   body += `<p class="sous">Vos clients vous cherchent sur Google et sur Luxyra. Avec Luxyra, ils réservent en ligne 24 h/24 et votre établissement passe en tête de la page${f ? ` « ${lxEsc(M.titre)} à ${lxEsc(f.ville)} »` : ""}, avec un bouton « Réserver ».</p>`;
-  body += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:22px"><a class="btn" href="${insc}">Essayer gratuitement 14 jours</a><a class="btn" style="background:transparent;color:var(--gold)!important;border:1px solid rgba(212,168,67,.5)" href="/demo">Voir la démo</a></div>`;
+  body += `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:22px"><a class="btn" rel="nofollow" href="${insc}">Essayer gratuitement 14 jours</a><a class="btn" style="background:transparent;color:var(--gold)!important;border:1px solid rgba(212,168,67,.5)" href="/demo">Voir la démo</a></div>`;
   body += `<div class="chips"><span class="chip">Sans carte bancaire</span><span class="chip">Sans commission sur vos réservations</span><span class="chip">Dès <b>14,99 €</b>/mois</span><span class="chip">Sans engagement</span></div></div></section><div class="wrap">`;
   body += `<h2>Tout ce qu'il faut à votre établissement</h2><div class="atouts">
 <div class="at"><i>📅</i><b>Réservation en ligne</b><span>Vos clients réservent 24 h/24 sur votre page, sur Google et dans l'application Luxyra. Acompte ou empreinte bancaire possibles.</span></div>
@@ -6311,8 +6317,8 @@ async function lxAnnuaireGerantPage(url) {
 <div class="at"><i>⭐</i><b>Avis clients</b><span>Une invitation à laisser un avis après chaque rendez-vous, affichée sur votre page.</span></div>
 <div class="at"><i>🌐</i><b>Votre site inclus</b><span>Une page à votre nom, prête pour Google, avec vos prestations, horaires et photos.</span></div>
 <div class="at"><i>🤝</i><b>On vous aide</b><span>Migration gratuite de vos données et assistance en français. Écrivez-nous : <a href="mailto:contact@luxyra.fr">contact@luxyra.fr</a>.</span></div></div>`;
-  body += `<div class="bande"><div><b>Prêt en quelques minutes</b><span>Créez votre espace, ajoutez vos prestations et vos horaires : la réservation est en ligne immédiatement.</span></div><a class="btn" href="${insc}">Commencer gratuitement</a></div>`;
-  body += `<p class="src" style="margin-top:40px">Votre établissement apparaît dans l'annuaire Luxyra à partir de la base publique des entreprises (Sirene). Vous ne souhaitez pas y figurer ? <a href="/annuaire-retrait${siret ? "?siret=" + siret : ""}" rel="nofollow" style="color:var(--text2);text-decoration:underline">Retirer cet établissement de l'annuaire</a>.</p></div>`;
+  body += `<div class="bande"><div><b>Prêt en quelques minutes</b><span>Créez votre espace, ajoutez vos prestations et vos horaires : la réservation est en ligne immédiatement.</span></div><a class="btn" rel="nofollow" href="${insc}">Commencer gratuitement</a></div>`;
+  body += `<p class="src" style="margin-top:40px">Votre établissement apparaît dans l'annuaire Luxyra à partir de la base publique des entreprises (Sirene). Vous ne souhaitez pas y figurer ? <a rel="nofollow" href="/annuaire-retrait${siret ? "?siret=" + siret : ""}" rel="nofollow" style="color:var(--text2);text-decoration:underline">Retirer cet établissement de l'annuaire</a>.</p></div>`;
   return lxAnnReponse(lxAnnPage({ title: `Activer la réservation en ligne pour ${nom} | Luxyra`, desc: `Activez la réservation en ligne pour ${nom} : réservation 24 h/24, rappels SMS, caisse conforme, sans commission. Essai gratuit 14 jours.`, robots: "noindex,follow", body }));
 }
 
@@ -6323,7 +6329,7 @@ function lxAnnuaireRetraitPage(url) {
 <div class="wrap"><div class="carte" style="display:block;margin-top:26px"><label style="font-size:13px;color:var(--text2)">SIRET de l'établissement</label><br><input id="s" inputmode="numeric" maxlength="14" value="${lxEsc(siret)}" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:16px;margin:6px 0 12px"><br>
 <label style="font-size:13px;color:var(--text2)">E-mail (obligatoire, pour confirmer la demande)</label><br><input id="e" type="email" maxlength="120" style="width:100%;max-width:340px;padding:11px;border-radius:10px;border:1px solid #2a2a35;background:#0b0b10;color:#fff;font-size:15px;margin:6px 0 14px"><br>
 <button class="btn" style="border:none;cursor:pointer" onclick="lxRet()">Retirer cet établissement</button><div id="m" style="margin-top:12px;font-size:14px"></div></div>
-<p class="sous" style="margin-top:18px">Vous préférez que vos clients puissent réserver en ligne ? <a href="/annuaire-gerant${siret ? "?siret=" + siret : ""}">Activez la réservation gratuitement</a>.</p></div>
+<p class="sous" style="margin-top:18px">Vous préférez que vos clients puissent réserver en ligne ? <a rel="nofollow" href="/annuaire-gerant${siret ? "?siret=" + siret : ""}">Activez la réservation gratuitement</a>.</p></div>
 <script>async function lxRet(){var s=document.getElementById('s').value.replace(/\\D/g,''),m=document.getElementById('m');if(s.length!==14){m.textContent='Le SIRET doit contenir 14 chiffres.';m.style.color='#f87171';return;}
 try{var r=await fetch('/api/annuaire/retrait',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({siret:s,email:document.getElementById('e').value||''})});var d=await r.json();
 if(d&&d.ok){m.textContent='✅ '+(d.message||'Un email de confirmation a été envoyé.');m.style.color='#7fc97f';}else{m.textContent=(d&&d.err)||'Erreur, réessayez.';m.style.color='#f87171';}}catch(e){m.textContent='Erreur réseau, réessayez.';m.style.color='#f87171';}}</script>`;
@@ -6673,6 +6679,12 @@ Disallow: /clear.html
 Disallow: /api/
 Disallow: /rest/
 Disallow: /site.html
+# 2026-10-26 : pages utilitaires de l'annuaire et liens de désinscription (sans intérêt dans Google, exploration économisée)
+Disallow: /annuaire-gerant
+Disallow: /annuaire-retrait
+Disallow: /inscription?
+Disallow: /s/
+Disallow: /stop/
 
 # Index de sitemaps (pages, établissements, annuaire par métier)
 Sitemap: https://luxyra.fr/sitemap.xml
