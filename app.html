@@ -16138,6 +16138,14 @@ function rSettings(){
       h+='</div></details>';
       h+='</div>';
 
+      // 2026-10-26 : affichette QR a poser au comptoir / en vitrine (lxAffichetteQR)
+      if(curSlug){
+        h+='<div class="card" style="margin-top:14px"><div class="ct">\ud83d\udda8\ufe0f Affichette QR pour le comptoir</div>';
+        h+='<div style="font-size:12px;color:var(--text3);line-height:1.7;margin-bottom:12px">Une affichette \u00e0 poser au comptoir ou en vitrine : vos clients scannent le QR code et r\u00e9servent leur prochain rendez-vous sur <strong style="color:var(--gold)">luxyra.fr/'+_eSlug+'</strong>. Style sombre ou clair, format A4 ou A5, \u00e0 choisir avant d\u2019imprimer.</div>';
+        h+='<button class="btn bg" style="width:100%;padding:12px;font-size:13px" onclick="lxAffichetteQR()">\ud83d\udda8\ufe0f Affichette QR pour le comptoir</button>';
+        h+='</div>';
+      }
+
       // === Google My Business \u2014 bouton "R\u00e9server" sur fiche GMB ===
       // Le salon configure son lien Luxyra dans Google Business Profile pour que
       // les utilisateurs puissent r\u00e9server directement depuis la fiche Google
@@ -38956,6 +38964,130 @@ function lxQrDataUrl(texte, px){
     return q.createDataURL(cell, cell*marge);
   }catch(e){ return ""; }
 }
+// 2026-10-26 : affichette QR pour le comptoir (Paramètres › Site en ligne). Document d'impression autonome :
+// styles « Sombre » / « Clair » et formats A4 / A5 choisis dans la fenêtre, avant impression.
+// QR généré localement (lxQrDataUrl) vers https://luxyra.fr/<slug>?src=affiche. Aucune ressource externe
+// hormis les polices auto-hébergées de luxyra.fr (repli Georgia / Arial si indisponibles).
+function _lxAffScript(){
+  var B=document.body, sheet=document.querySelector(".aff-sheet"), inner=document.querySelector(".aff-in"), pg=document.getElementById("aff-page");
+  function fit(){
+    var base=B.getAttribute("data-format")==="A5"?8.46:12, f=base;
+    sheet.style.fontSize=f+"pt";
+    // Garde-fou « rien de coupé » : réduit légèrement l'ensemble si le contenu déborde (titre jamais < 28 pt en A4)
+    while(inner.scrollHeight>inner.clientHeight+1 && f>base*0.86){ f-=base*0.01; sheet.style.fontSize=f.toFixed(2)+"pt"; }
+  }
+  function set(k,v){
+    B.setAttribute("data-"+k,v);
+    var bs=document.querySelectorAll("[data-k='"+k+"']");
+    for(var i=0;i<bs.length;i++) bs[i].classList.toggle("on",bs[i].getAttribute("data-v")===v);
+    if(k==="format") pg.textContent="@page{size:"+v+" portrait;margin:0}";
+    fit();
+  }
+  var bs=document.querySelectorAll(".aff-bar [data-k]");
+  for(var i=0;i<bs.length;i++) bs[i].addEventListener("click",function(){ set(this.getAttribute("data-k"),this.getAttribute("data-v")); });
+  window.addEventListener("beforeprint",fit);
+  set("style",B.getAttribute("data-style")); set("format",B.getAttribute("data-format"));
+  if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fit);
+  window.addEventListener("load",fit);
+}
+function lxAffichetteDoc(o){
+  o=o||{};
+  var e=function(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");};
+  var nom=String(o.nom||"").trim(), slug=String(o.slug||"").trim(), style=o.style==="clair"?"clair":"sombre", format=o.format==="A5"?"A5":"A4";
+  var urlTxt="luxyra.fr/"+slug;
+  var nomFs=nom.length>26?"2.05em":nom.length>16?"2.6em":"3.1em";
+  var ico={
+    cal:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.2"/><path d="M3.5 9.8h17M8 3v4M16 3v4M9 15l2.2 2.2L15.5 13"/></svg>',
+    bell:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.8 1.8H4.2z"/><path d="M10 21h4"/></svg>',
+    tel:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="2.4"/><path d="M10.5 18.2h3M9.5 7.5h5M9.5 10.5h5M9.5 13.5h3"/></svg>',
+    share:'<svg viewBox="0 0 24 24" aria-hidden="true" class="aff-share"><path d="M12 3.5v11M8.2 7.2 12 3.5l3.8 3.7"/><path d="M8 10.5H6.2v10h11.6v-10H16"/></svg>'
+  };
+  var gp='<span class="aff-gp" aria-label="Disponible sur Google Play"><svg viewBox="0 0 30 33" aria-hidden="true"><path d="M1.5 1.6 14.2 16.5 1.5 31.4Z" fill="#00a0ff"/><path d="M1.5 1.6 20.3 11.7 14.2 16.5Z" fill="#00e676"/><path d="M20.3 11.7 28.6 16.5 20.3 21.3 14.2 16.5Z" fill="#ffc400"/><path d="M14.2 16.5 20.3 21.3 1.5 31.4Z" fill="#ff3d47"/></svg><span class="aff-gpt"><small>DISPONIBLE SUR</small><b>Google Play</b></span></span>';
+  var star='<svg viewBox="0 0 10 10" aria-hidden="true" style="width:.8em;height:.8em;display:block"><path d="M5 0 6.1 3.9 10 5 6.1 6.1 5 10 3.9 6.1 0 5 3.9 3.9Z" fill="currentColor"/></svg>';
+  var css=''
+    +'*{box-sizing:border-box;margin:0;padding:0}'
+    +'html,body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}'
+    +'body{background:#3a3833;font-family:"DM Sans",Arial,Helvetica,sans-serif;padding:84px 0 40px}'
+    +'.aff-bar{position:fixed;top:0;left:0;right:0;z-index:5;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center;padding:12px 16px;background:#0e0d0b;border-bottom:1px solid rgba(200,168,78,.35);color:#e8e1cf;font-size:13px}'
+    +'.aff-bar .grp{display:flex;align-items:center;gap:6px}.aff-bar .lbl{color:#a39c8b;margin-right:2px}'
+    +'.aff-bar button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.4);background:transparent;color:#e8e1cf;cursor:pointer}'
+    +'.aff-bar button.on{background:#c8a84e;border-color:#c8a84e;color:#111;font-weight:700}'
+    +'.aff-bar .imp{background:linear-gradient(135deg,#d4b45c,#b8960f);border:none;color:#111;font-weight:800;padding:10px 22px}'
+    +'.aff-bar .hint{width:100%;text-align:center;font-size:11px;color:#8f8878}'
+    // Feuille
+    +'.aff-sheet{position:relative;margin:0 auto;overflow:hidden;font-size:12pt;box-shadow:0 20px 60px rgba(0,0,0,.45)}'
+    +'body[data-format=A4] .aff-sheet{width:210mm;height:296.5mm}'
+    +'body[data-format=A5] .aff-sheet{width:148mm;height:209.5mm}'
+    +'.aff-frame{position:absolute;inset:2.1em;border:.14em solid var(--or);border-radius:.35em;pointer-events:none}'
+    +'.aff-frame:after{content:"";position:absolute;inset:.45em;border:.05em solid var(--or2);border-radius:.2em}'
+    +'.aff-orn{position:absolute;width:1.4em;height:1.1em;background:var(--bg);color:var(--or);display:flex;align-items:center;justify-content:center}'
+    +'.aff-orn.a{top:1.62em;left:50%;margin-left:-.7em}.aff-orn.b{bottom:1.62em;left:50%;margin-left:-.7em}'
+    +'.aff-in{position:absolute;inset:3.5em 3.6em 2.9em;display:flex;flex-direction:column;align-items:center;justify-content:space-between;text-align:center;overflow:hidden}'
+    +'.aff-head{display:flex;flex-direction:column;align-items:center;gap:.35em}'
+    +'.aff-logo{height:5.4em;max-width:22em;width:auto;object-fit:contain;display:block}'
+    +'.aff-nom{font-family:"Cormorant Garamond",Georgia,"Times New Roman",serif;font-weight:600;text-transform:uppercase;letter-spacing:.09em;line-height:1.05;color:var(--or);max-width:100%;overflow-wrap:anywhere}'
+    +'.aff-sep{display:flex;align-items:center;gap:.6em;color:var(--or);font-size:.85em}.aff-sep i{display:block;width:5em;height:.06em;background:var(--or2)}'
+    +'.aff-h1{font-family:"Cormorant Garamond",Georgia,"Times New Roman",serif;font-weight:600;font-size:2.75em;line-height:1.06;color:var(--txt);max-width:13.2em;letter-spacing:.005em}'
+    +'.aff-sub{margin-top:.55em;font-size:1.08em;letter-spacing:.24em;text-transform:uppercase;color:var(--or);font-weight:600}'
+    +'.aff-qrbox{display:flex;flex-direction:column;align-items:center}'
+    +'.aff-qr{background:#fff;padding:.9em;border-radius:.9em;border:.12em solid var(--or);box-shadow:0 0 0 .45em var(--halo)}'
+    +'.aff-qr img{display:block;width:19.5em;height:19.5em;image-rendering:pixelated;image-rendering:crisp-edges}'
+    +'.aff-url{margin-top:.75em;font-size:1.55em;font-weight:700;letter-spacing:.02em;color:var(--txt)}'
+    +'.aff-scan{margin-top:.15em;font-size:.88em;color:var(--txt2)}'
+    +'.aff-app{width:100%;display:flex;align-items:stretch;border:.07em solid var(--or2);border-radius:.8em;background:var(--box)}'
+    +'.aff-app>div{flex:1;padding:.85em 1em;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.5em;font-size:.95em;line-height:1.35;color:var(--txt)}'
+    +'.aff-app>div+div{border-left:.07em solid var(--or2)}'
+    +'.aff-app strong{color:var(--or);font-weight:700}'
+    +'.aff-gp{display:inline-flex;align-items:center;gap:.55em;background:#000;border:.08em solid #a6a6a6;border-radius:.5em;padding:.4em .95em .4em .7em;color:#fff;line-height:1}'
+    +'.aff-gp svg{width:1.45em;height:1.6em;display:block;flex:none}'
+    +'.aff-gpt{display:flex;flex-direction:column;text-align:left}.aff-gpt small{font-size:.52em;letter-spacing:.06em;font-weight:500}.aff-gpt b{font-size:1.15em;font-weight:600;margin-top:.12em;white-space:nowrap}'
+    +'.aff-share{display:inline-block;width:1.15em;height:1.15em;vertical-align:-.2em;fill:none;stroke:var(--or);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}'
+    +'.aff-av{width:100%;display:flex;justify-content:space-between;gap:1em}'
+    +'.aff-av>div{flex:1;display:flex;flex-direction:column;align-items:center;gap:.4em;font-size:.98em;font-weight:600;line-height:1.25;color:var(--txt)}'
+    +'.aff-av span{width:2.5em;height:2.5em;border-radius:50%;border:.08em solid var(--or);display:flex;align-items:center;justify-content:center;background:var(--box)}'
+    +'.aff-av svg{width:1.35em;height:1.35em;fill:none;stroke:var(--or);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}'
+    +'.aff-pied{font-size:.72em;letter-spacing:.2em;text-transform:uppercase;color:var(--txt2)}.aff-pied b{color:var(--or);font-weight:700}'
+    // Styles
+    +'body[data-style=sombre] .aff-sheet{--bg:#0b0a08;--txt:#f4eddc;--txt2:#a89f8b;--or:#d4b45c;--or2:rgba(212,180,92,.55);--halo:rgba(212,180,92,.12);--box:rgba(212,180,92,.07);background:#0b0a08;background-image:radial-gradient(ellipse at 50% 38%,#1c1810 0%,#0b0a08 62%)}'
+    +'body[data-style=clair] .aff-sheet{--bg:#f4ecda;--txt:#1d1a15;--txt2:#6f6656;--or:#a8862f;--or2:rgba(168,134,47,.5);--halo:rgba(168,134,47,.1);--box:rgba(168,134,47,.07);background:#f8f2e4;background-image:radial-gradient(ellipse at 50% 38%,#fffaf0 0%,#f4ecda 70%)}'
+    +'@media print{body{background:none!important;padding:0!important}.aff-bar{display:none!important}.aff-sheet{box-shadow:none!important;margin:0!important;page-break-after:avoid;break-inside:avoid}}';
+  var head;
+  if(o.logo) head='<img class="aff-logo" src="'+e(o.logo)+'" alt="'+e(nom)+'">';
+  else head='<div class="aff-nom" style="font-size:'+nomFs+'">'+e(nom||"Votre établissement")+'</div>';
+  var h='<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    +'<title>Affichette QR — '+e(nom||urlTxt)+'</title>'+(o.fontCss||"")
+    +'<style id="aff-page">@page{size:'+format+' portrait;margin:0}</style><style>'+css+'</style></head>'
+    +'<body data-style="'+style+'" data-format="'+format+'">'
+    +'<div class="aff-bar"><div class="grp"><span class="lbl">Style</span><button data-k="style" data-v="sombre">Sombre</button><button data-k="style" data-v="clair">Clair</button></div>'
+    +'<div class="grp"><span class="lbl">Format</span><button data-k="format" data-v="A4">A4</button><button data-k="format" data-v="A5">A5</button></div>'
+    +'<button class="imp" onclick="window.print()">🖨️ Imprimer</button>'
+    +'<div class="hint">Si le fond ou les couleurs ne s’impriment pas, cochez « Graphiques d’arrière-plan » dans la fenêtre d’impression (marges : aucune ou par défaut).</div></div>'
+    +'<div class="aff-sheet"><div class="aff-frame"></div><div class="aff-orn a">'+star+'</div><div class="aff-orn b">'+star+'</div><div class="aff-in">'
+    +'<div class="aff-head">'+head+'<div class="aff-sep"><i></i>'+star+'<i></i></div></div>'
+    +'<div><div class="aff-h1">Réservez votre prochain rendez-vous en ligne</div><div class="aff-sub">24 h/24 — en quelques secondes</div></div>'
+    +'<div class="aff-qrbox"><div class="aff-qr"><img src="'+o.qr+'" alt="QR code vers '+e(urlTxt)+'"></div>'
+    +'<div class="aff-url">'+e(urlTxt)+'</div><div class="aff-scan">Scannez avec l’appareil photo de votre téléphone</div></div>'
+    +'<div class="aff-app"><div><div><strong>Sur Android :</strong> l’application Luxyra est sur Google Play</div>'+gp+'</div>'
+    +'<div><div><strong>Sur iPhone :</strong> scannez le code, puis</div><div>Partager '+ico.share+' › <strong>Sur l’écran d’accueil</strong></div></div></div>'
+    +'<div class="aff-av"><div><span>'+ico.cal+'</span>Choisissez votre créneau</div><div><span>'+ico.bell+'</span>Rappel avant votre RDV</div><div><span>'+ico.tel+'</span>Vos rendez-vous au même endroit</div></div>'
+    +'<div class="aff-pied">Propulsé par <b>Luxyra</b></div>'
+    +'</div></div>'
+    +'<scr'+'ipt>('+_lxAffScript.toString()+')();<\/scr'+'ipt></body></html>';
+  return h;
+}
+function lxAffichetteQR(){
+  var slug=String((window.SALON_CONFIG&&SALON_CONFIG.slug)||(window.SALON&&window.SALON.slug)||"").trim();
+  if(!slug){ showAlert("Votre page en ligne n’a pas encore d’adresse : enregistrez-la dans « Adresse de votre site ».","info"); return; }
+  var qr=lxQrDataUrl("https://luxyra.fr/"+encodeURIComponent(slug)+"?src=affiche", 900);
+  if(!qr){ showAlert("Le QR code n’a pas pu être généré.","error"); return; }
+  var w=window.open("","_blank","width=900,height=1100");
+  if(!w){ showAlert("Pop-up bloquée : autorisez les fenêtres pour imprimer.","warning"); return; }
+  w.document.open();
+  w.document.write(lxAffichetteDoc({nom:SALON_CONFIG.nom||"", logo:SALON_CONFIG.logo||"", slug:slug, qr:qr, style:"sombre", format:"A4",
+    fontCss:'<link rel="stylesheet" href="'+location.origin+'/fonts/luxyra-fonts.css">'}));
+  w.document.close();
+}
+window.lxAffichetteQR=lxAffichetteQR;
 async function lxOuvrirDoc(u){
   try{
     var s=String(u||""), i=s.indexOf("/salon-documents/"), path=i>=0?decodeURIComponent(s.slice(i+17).split("?")[0]):s;
