@@ -2004,3 +2004,12 @@ Audit approuvé : `docs/admin-audit-1015.md` (P1 + P2, sauf le chat support fait
 - Serveur : worker `handleSmsCustom` (appels NON internes seulement, contextes transactionnels exclus) requalifie en marketing + consentement (`sans_consentement`) ; déclencheurs `trg_sms_queue_pub` (+ LX_SANS_CONSENTEMENT) et `trg_sms_differes_requalifie` ; fonctions `lx_prive.sms_texte_publicitaire / sms_contexte_transactionnel / sms_contexte_requalifie` ; audit `SMS_LIBRE_REQUALIFIE`.
 - `lx_sms_stop` supprimée 3 ans après greatest(stop_le, maj_le) par `desinscriptions_purge` (cron existant 3 h 55) ; `lx_sms_stop_levee` > 3 ans aussi ; trace `admin_log` RGPD_SMS_STOP_PURGE (sans numéro).
 - Fichiers : docs/migrations_1017/sms_libre_et_purge.sql, politique-confidentialite, securite-rgpd, aide/sms-et-rappels.html, bot (3 fiches).
+
+## Appli Android « Luxyra Pro » (fr.luxyra.pro) — préparation Play 26/10/2026
+- TWA de app.html, construite par Alexandre sur PWABuilder (comme fr.luxyra.client), URL de démarrage `/app.html?source=play`. Même clé d'importation que l'appli clients possible (keystore chez Alexandre).
+- `window.LX_PLAY` (head de app.html) : vrai si `?source=play` ou referrer `android-app://fr.luxyra.pro`, mémorisé en sessionStorage `lx_play` (jamais localStorage : Chrome partage le stockage avec la TWA). En mode Play : AUCUN achat (règle paiements Google Play) — garde `lxPlay()` dans showPlanChoiceModal, showUpgradeModal, checkCgv*AndPay, startCheckout, openCustomerPortal, showSwitchPlanModal, confirmDowngrade, doSwitchPlan, buySMSPack, lxRechargeAutoRegler ; blocs prix/boutons masqués (accueil, Paramètres forfait, bandeau essai, marketing, SMS épuisés, abonnement résilié). Message neutre `lxPlayInfo()` sans prix ni lien. Toute nouvelle offre payante dans app.html = ajouter la garde.
+- Acomptes clients (Stripe Connect) non concernés (services physiques).
+- manifest-app.json : related_applications → fr.luxyra.pro.
+- Visuels : outputs play-store-pro (8 captures mode démo 1080x1920, image 1024x500, icône, textes). Captures refaites avec shot/play.mjs + compose.mjs (serveur local, ?demo=coiffure).
+- Compte d'examen Google : NE PAS rouvrir le Salon Démo (fermé, caisse réelle, retour test impossible : les encaissements des examinateurs seraient des tickets fiscaux réels). Nouvel établissement de test créé par Alexandre (caisse en mode test), passé en gratuit dans l'admin.
+- À faire à la mise en ligne : assetlinks (empreinte Google de fr.luxyra.pro), docs/migrations_1026/bot_appli_play_pro.sql, aide, badge Play sur les pages pro.

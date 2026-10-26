@@ -12,6 +12,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script>
+// 2026-10-26 APPLI ANDROID « Luxyra Pro » (Google Play, TWA fr.luxyra.pro, démarre sur /app.html?source=play).
+// Règle Google Play (paiements) : aucun achat d'abonnement ni de SMS dans l'appli Play -> boutons d'achat masqués,
+// message neutre sans lien ni prix. Mémorisé pour l'onglet de l'appli seulement (sessionStorage), jamais pour Chrome.
+(function(){ try{
+  var on=new URLSearchParams(location.search).get("source")==="play" || String(document.referrer||"").indexOf("android-app://fr.luxyra.pro")===0;
+  if(on) sessionStorage.setItem("lx_play","1");
+  window.LX_PLAY = on || sessionStorage.getItem("lx_play")==="1";
+}catch(e){ window.LX_PLAY=false; } })();
+</script>
+<script>
 // VUE ADMIN (2026-10-09) : isolation totale du navigateur. La session et les données locales du salon
 // connecté habituellement sur ce navigateur (ex. Amandine) ne sont ni lues ni modifiées.
 (function(){ try{
@@ -2913,7 +2923,28 @@ var STRIPE_PK="pk_live_51TCS0KPk42Psx94TFs6cev5MA67bJtH7kOd5eBU1QQV8Qs9XQDz1SAni
 var STRIPE_API="/api/stripe";
 
 // ========== MODAL CHOIX DE PLAN (bloquante ou non) ==========
+// 2026-10-26 Appli Google Play « Luxyra Pro » : aucun achat dans l'appli (règle Google Play sur les paiements).
+// Message neutre : ni prix, ni lien, ni bouton vers un paiement externe.
+function lxPlay(){ return window.LX_PLAY===true; }
+function lxPlayInfo(kind, feature){
+  var titre, txt, ico="ℹ️";
+  if(kind==="bloquant"){ ico="⏰"; titre=(window._subscriptionCancelled?"Abonnement résilié":"Votre essai gratuit est terminé"); txt="La souscription d’un abonnement n’est pas disponible dans l’application Android.<br>Vos données sont conservées."; }
+  else if(kind==="sms"){ ico="📱"; titre="Crédits SMS"; txt="L’achat de SMS n’est pas disponible dans l’application Android."; }
+  else if(kind==="pro"){ ico="💎"; titre="Fonction du forfait Pro"; txt=(feature?escapeHtml(String(feature))+" : c":"C")+"ette fonction fait partie du forfait Pro. La souscription n’est pas disponible dans l’application Android."; }
+  else { titre="Abonnement"; txt="La souscription et la gestion de l’abonnement ne sont pas disponibles dans l’application Android."; }
+  var old=document.getElementById("planChoiceModal"); if(old) old.remove();
+  var ov=document.querySelector(".upgrade-overlay"); if(ov) ov.remove();
+  var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px">';
+  h+='<div style="background:#12141e;border:2px solid rgba(212,168,67,.3);border-radius:24px;padding:28px 22px;max-width:420px;width:100%;text-align:center">';
+  h+='<div style="font-size:44px;margin-bottom:10px">'+ico+'</div><h2 style="color:var(--gold);font-size:20px;margin-bottom:10px">'+titre+'</h2>';
+  h+='<div style="font-size:14px;color:rgba(255,255,255,.6);line-height:1.7;margin-bottom:20px">'+txt+'</div>';
+  if(kind==="bloquant") h+='<button onclick="doLogout()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:transparent;color:rgba(255,255,255,.6);cursor:pointer;font-size:14px">Se déconnecter</button>';
+  else h+='<button onclick="document.getElementById(\'planChoiceModal\').remove()" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;cursor:pointer;font-size:14px">OK</button>';
+  h+='</div></div>';
+  var el=document.createElement("div"); el.id="planChoiceModal"; el.innerHTML=h; document.body.appendChild(el);
+}
 function showPlanChoiceModal(blocking){
+  if(lxPlay()){ lxPlayInfo(blocking?"bloquant":"abo"); return; }
   var h='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px">';
   h+='<div style="background:#12141e;border:2px solid rgba(212,168,67,.3);border-radius:24px;padding:28px 22px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;-webkit-overflow-scrolling:touch;text-align:center">';
   if(blocking){
@@ -2966,6 +2997,7 @@ function _lxEssaiEncadre(){
   return h;
 }
 function checkCgvPlanAndPay(plan){
+  if(lxPlay()){ lxPlayInfo("abo"); return; }
   var cb=document.getElementById("cgvPlanCheck");
   if(!cb||!cb.checked){showAlert("Veuillez accepter les Conditions G\u00e9n\u00e9rales de Vente pour continuer.","warning");return;}
   if(window.LX_MODE_CAISSE==="test"){ lxPasserEnReel("plan:"+plan); return; }
@@ -3018,6 +3050,7 @@ async function lxConfirmerPassage(){
 }
 
 function showUpgradeModal(feature){
+  if(lxPlay()){ lxPlayInfo((window._trialDaysLeft!==null&&window._trialDaysLeft<=0&&!hasActiveSubscription())?"bloquant":"pro", feature); return; }
   var f=feature||"cette fonctionnalit\u00e9";
   // If trial expired, show blocking plan choice
   if(isTrialExpired()){showPlanChoiceModal(true);return;}
@@ -3038,12 +3071,14 @@ function showUpgradeModal(feature){
 }
 
 function checkCgvAndPay(plan){
+  if(lxPlay()){ lxPlayInfo("abo"); return; }
   var cb=document.getElementById("cgvCheck");
   if(!cb||!cb.checked){showAlert("Veuillez accepter les Conditions Générales de Vente pour continuer.","warning");return;}
   startCheckout(plan);
 }
 
 async function startCheckout(plan){
+  if(lxPlay()){ lxPlayInfo("abo"); return; } // 2026-10-26 appli Google Play : aucun achat
   // 2026-10-11 (NF525) : en essai, le choix « tests / vraies ventes » doit être fait avant tout abonnement (tous les chemins)
   try{ if(window.LX_MODE_CAISSE==="test"){ var _ov=document.querySelector(".upgrade-overlay"); if(_ov) _ov.remove(); lxPasserEnReel("plan:"+plan); return; } }catch(_eG){}
   // 2026-10-14 audit : anti double appui (deux sessions de paiement Stripe ouvertes pour un seul abonnement)
@@ -3259,6 +3294,7 @@ async function executePurge(){
 
 // Customer Portal (gérer son abonnement)
 async function openCustomerPortal(){
+  if(lxPlay()){ lxPlayInfo("abo"); return; }
   try{
     var res=await fetch(window.location.origin+STRIPE_API+"/portal",{
       method:"POST",
@@ -3380,6 +3416,7 @@ async function openConnectDashboard(){
 function proGate(feature){if(isPro())return true;showUpgradeModal(feature);return false;}
 
 function showSwitchPlanModal(){
+  if(lxPlay()){ lxPlayInfo("abo"); return; }
   var curPro=isProPaid();
   var h='<div class="mbg" onclick="cM()"><div class="mbox" onclick="event.stopPropagation()" style="max-width:500px">';
   h+='<div style="text-align:center;margin-bottom:20px"><h2 style="color:var(--gold)">Changer de forfait</h2>';
@@ -3405,6 +3442,7 @@ function showSwitchPlanModal(){
 }
 
 function confirmDowngrade(){
+  if(lxPlay()){ lxPlayInfo("abo"); return; }
   var h='<div class="mbg"><div class="mbox" onclick="event.stopPropagation()" style="max-width:440px">';
   h+='<div style="text-align:center;margin-bottom:16px"><div style="font-size:48px;margin-bottom:8px">\u26a0\ufe0f</div>';
   h+='<h2 style="color:#ef5350">Passer en Essentiel ?</h2></div>';
@@ -3424,6 +3462,7 @@ function confirmDowngrade(){
 }
 
 async function doSwitchPlan(plan){
+  if(lxPlay()){ lxPlayInfo("abo"); return; }
   // For upgrade: require CGV checkbox. For downgrade: confirmed via confirmDowngrade() modal
   var isDowngrade=plan==="essential";
   if(!isDowngrade){
@@ -8549,6 +8588,7 @@ async function lxRechargeAutoCharger(){
   el.innerHTML=h;
 }
 async function lxRechargeAutoRegler(){
+  if(lxPlay()){ lxPlayInfo("sms"); return; }
   var actif=!!(document.getElementById("raActif")||{}).checked, seuil=Number((document.getElementById("raSeuil")||{}).value||20), pack=Number((document.getElementById("raPack")||{}).value||100);
   var d0=window._lxRA||{};
   if(actif && !d0.actif){
@@ -10901,7 +10941,7 @@ function rHome(){
     }
   }
   h+='</div>'; // close .tiles
-  if(!isPro()){
+  if(!isPro()&&!lxPlay()){ // 2026-10-26 appli Google Play : pas de promotion d'abonnement
     h+='<div onclick="showUpgradeModal(\'toutes les fonctionnalités Pro\')" style="margin-top:12px;cursor:pointer;background:linear-gradient(135deg,rgba(212,168,67,.12),rgba(212,168,67,.04));border:1px solid rgba(212,168,67,.2);border-radius:14px;padding:16px;display:flex;align-items:center;gap:14px">';
     h+='<div style="font-size:28px">💎</div>';
     h+='<div style="flex:1"><div style="font-weight:800;font-size:14px;color:var(--gold)">Passez en Pro — '+lxPlanPriceLabel("pro")+'€/mois</div>';
@@ -15316,13 +15356,16 @@ function rSettings(){
       h+='<div style="font-size:28px">'+(dLeft<=0?'\u23f0':'\u2728')+'</div>';
       h+='<div style="flex:1"><div style="font-weight:700;font-size:15px">'+(dLeft<=0?'<span style="color:#ef5350">Essai termin\u00e9</span>':'<span style="color:var(--gold)">Essai gratuit</span>')+'</div>';
       h+='<div style="font-size:12px;color:var(--text3)">'+(dLeft>0?dLeft+' jour'+(dLeft>1?'s':'')+' restant'+(dLeft>1?'s':''):'Choisissez un forfait pour continuer')+'</div>'+(dLeft>0?'<div style="font-size:11px;color:var(--text3);margin-top:3px">Toutes les fonctions Pro sont ouvertes pour l\u2019essai (site, r\u00e9servation en ligne, paiements en ligne\u2026). Les SMS s\u2019activent \u00e0 l\u2019abonnement Pro.</div>':'')+'</div>';
-      h+='<button onclick="showPlanChoiceModal(false)" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">S\u2019abonner</button>';
+      if(!lxPlay()) h+='<button onclick="showPlanChoiceModal(false)" style="padding:8px 16px;border-radius:10px;background:linear-gradient(135deg,#d4a843,#b8960f);color:#000;font-weight:700;font-size:12px;border:none;cursor:pointer;white-space:nowrap">S\u2019abonner</button>';
       h+='</div>';
     }else{
     h+='<div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;border:1px solid '+(isPro()?'rgba(212,168,67,.3)':'rgba(96,165,250,.3)')+';margin-bottom:16px">';
     h+='<div style="font-size:28px">'+(isPro()?'\ud83d\udc8e':'\ud83d\udccb')+'</div>';
     h+='<div style="flex:1"><div style="font-weight:700;font-size:15px">Forfait '+(isPro()?'<span style="color:var(--gold)">Pro</span>':'<span style="color:var(--blue)">Essentiel</span>')+'</div>';
-    if(isPro()){
+    if(lxPlay()){
+      // 2026-10-26 appli Google Play : forfait affiché, sans prix ni bouton de paiement
+      h+='<div style="font-size:12px;color:var(--text3)">'+(isPro()?'Toutes les fonctionnalit\u00e9s':'Fonctions essentielles')+'</div></div>';
+    }else if(isPro()){
       h+='<div style="font-size:12px;color:var(--text3)">'+lxPlanPriceLabel("pro")+'\u20ac/mois \u2014 Toutes les fonctionnalit\u00e9s</div></div>';
       h+='<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">';
       h+='<button onclick="openCustomerPortal()" class="btn bs" style="font-size:12px;padding:8px 14px;white-space:nowrap">G\u00e9rer mon abonnement</button>';
@@ -16550,7 +16593,7 @@ function rSettings(){
     h+='<button class="btn" style="background:rgba(200,168,78,.15);color:var(--gold);border:1px solid rgba(200,168,78,.3);font-weight:700;padding:10px 16px" onclick="go(\'marketing\')">Acheter des SMS</button>';
     h+='</div></div>';
     // 2026-10-10 : recharge automatique (option) — chargée à l'ouverture
-    if(isProPaid()){ h+='<div class="card" id="lxRechargeAuto" style="margin-bottom:16px"><div style="font-size:12px;color:var(--text3)">Recharge automatique : chargement\u2026</div></div>'; setTimeout(lxRechargeAutoCharger,30); }
+    if(isProPaid()&&!lxPlay()){ h+='<div class="card" id="lxRechargeAuto" style="margin-bottom:16px"><div style="font-size:12px;color:var(--text3)">Recharge automatique : chargement\u2026</div></div>'; setTimeout(lxRechargeAutoCharger,30); }
     // 2026-10-17 : désinscriptions de vos clients (30 jours) — RPC lx_salon_desinscriptions (propriétaire seulement)
     h+='<div class="card" id="lxDesinsSalon" style="margin-bottom:16px"><div style="font-size:12px;color:var(--text3)">D\u00e9sinscriptions : chargement\u2026</div></div>'; setTimeout(lxDesinsSalonCharger,40);
 
@@ -34634,7 +34677,8 @@ function rMarketing(){
   h+='</div>';
   
   h+='<button onclick="lxSmsHistorique()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#fff;font-weight:700;font-size:13px;cursor:pointer;margin-bottom:16px">📜 Historique des SMS envoyés — qui / quand / pourquoi</button>';
-  // === BUY SMS PACKS ===
+  // === BUY SMS PACKS === (masqué dans l'appli Google Play, 2026-10-26)
+  if(!lxPlay()){
   h+='<div style="padding:14px;border-radius:12px;background:rgba(200,168,78,.08);border:1px solid rgba(200,168,78,.2);margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">';
   h+='<div style="flex:1;min-width:160px"><div style="font-size:13px;font-weight:700;color:var(--gold)">Besoin de plus de SMS ?</div>';
   h+='<div style="font-size:11px;color:rgba(255,255,255,.4)">'+((window.LX_CONFIG&&LX_CONFIG.sms_bonus_first_pay)||150)+' SMS offerts au 1er paiement Pro (une seule fois)</div></div>';
@@ -34644,6 +34688,7 @@ function rMarketing(){
   h+='<button onclick="buySMSPack(500)" style="padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px">500 SMS \u2014 '+lxSmsPackPriceLabel(500)+'\u20ac</button>';
   h+=lxBtn1000('padding:8px 14px;border-radius:8px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:12px');
   h+='</div></div>';
+  }
   
   // Tabs
   h+='<div style="display:flex;gap:0;margin-bottom:16px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.1)">';
@@ -34860,7 +34905,8 @@ function rMarketing(){
     h+='<button class="btn" style="width:100%;margin-top:10px;background:rgba(33,150,243,.1);color:#2196f3;border:1px solid rgba(33,150,243,.2);font-weight:700" onclick="testEmail()">\u2709\ufe0f Envoyer un email test</button>';
     h+='</div>';
 
-    // Packs SMS
+    // Packs SMS (masqués dans l'appli Google Play, 2026-10-26)
+    if(!lxPlay()){
     h+='<div class="sec" style="margin-top:20px">\ud83d\udcf1 Recharger des SMS</div>';
     h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">';
     h+='<div onclick="buySMSPack(100)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">100</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(100)+' \u20ac</div></div>';
@@ -34868,6 +34914,7 @@ function rMarketing(){
     h+='<div onclick="buySMSPack(500)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">500</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(500)+' \u20ac</div></div>';
     if(lxPack1000On()) h+='<div onclick="buySMSPack(1000)" style="padding:16px;border-radius:12px;border:1px solid rgba(200,168,78,.25);background:rgba(200,168,78,.06);cursor:pointer;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gold)">1000</div><div style="font-size:11px;color:var(--text3)">SMS</div><div style="font-size:14px;font-weight:800;color:var(--gold);margin-top:4px">'+lxSmsPackPriceLabel(1000)+' \u20ac</div></div>';
     h+='</div>';
+    }
   }
   
   else if(tab==="histo"){
@@ -35491,6 +35538,8 @@ async function sendSms(phone,message,context,clientNom){
     htm+='<div style="font-size:48px;margin-bottom:8px">\ud83d\udcf1</div>';
     htm+='<h2 style="color:#ef5350">'+(creds>0?'Cr\u00e9dits SMS insuffisants':'Plus de cr\u00e9dits SMS')+'</h2>';
     htm+='<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:16px">'+(creds>0?'Ce message compte '+_nbSmsMsg+' SMS (plus de 160 caract\u00e8res) et il ne reste que '+creds+' cr\u00e9dit(s). Il est mis en attente : rechargez, ou raccourcissez vos messages.':'Votre solde SMS est \u00e0 0. Rechargez pour continuer \u00e0 envoyer des SMS \u00e0 vos clients.')+'</div>';
+    if(lxPlay()) htm+='<div style="font-size:12px;color:rgba(255,255,255,.45);margin-bottom:16px">L\u2019achat de SMS n\u2019est pas disponible dans l\u2019application Android.</div>';
+    else{
     htm+='<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">';
     htm+='<button onclick="cM();buySMSPack(100)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">100 SMS \u2014 '+lxSmsPackPriceLabel(100)+'\u20ac</button>';
     htm+='<button onclick="cM();buySMSPack(250)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">250 SMS \u2014 '+lxSmsPackPriceLabel(250)+'\u20ac</button>';
@@ -35498,6 +35547,7 @@ async function sendSms(phone,message,context,clientNom){
     if(lxPack1000On()) htm+='<button onclick="cM();buySMSPack(1000)" style="padding:14px;border-radius:10px;border:1px solid rgba(200,168,78,.3);background:rgba(200,168,78,.1);cursor:pointer;color:var(--gold);font-weight:700;font-size:14px">1000 SMS \u2014 '+lxSmsPackPriceLabel(1000)+'\u20ac</button>';
     htm+='</div>';
     if(isProPaid())htm+='<div style="font-size:11px;color:rgba(255,255,255,.3);margin-bottom:8px">150 SMS bonus offerts une seule fois au 1er paiement Pro effectif</div>';
+    }
     htm+='<button onclick="cM()" style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);color:var(--text3);font-weight:700;cursor:pointer">Fermer</button>';
     htm+='</div></div>';
     document.getElementById("modal").innerHTML=htm;
@@ -36364,6 +36414,7 @@ function testEmail(){
 }
 
 async function buySMSPack(qty){
+  if(lxPlay()){ lxPlayInfo("sms"); return; } // 2026-10-26 appli Google Play : aucun achat
   if(!isProPaid()){ if(lxEssaiProActif()) lxSmsEssaiInfo(); else showUpgradeModal("SMS"); return; }
   // Prix lus dynamiquement depuis app_config via lxSmsPackPrice (centralisation)
   var priceDisplay = lxSmsPackPriceLabel(qty) || "?";
@@ -40505,7 +40556,8 @@ function initApp(){
     },500);
   }
   // Cancelled subscription: show re-subscribe modal
-  if(window._subscriptionCancelled){
+  if(window._subscriptionCancelled&&lxPlay()){ lxPlayInfo("bloquant"); } // 2026-10-26 appli Google Play
+  else if(window._subscriptionCancelled){
     var _cm='<div style="position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.9);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px">';
     _cm+='<div style="background:#12141e;border:2px solid rgba(212,168,67,.3);border-radius:24px;padding:28px 22px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;-webkit-overflow-scrolling:touch;text-align:center">';
     _cm+='<div style="font-size:48px;margin-bottom:12px">\ud83d\udcb3</div>';
@@ -40542,10 +40594,10 @@ function initApp(){
     _tb.innerHTML=(_modeTest
       ? "\ud83e\uddea <strong>MODE TEST</strong><span class=\"lx-hide-mobile\"> \u00b7 vos encaissements sont des essais (tickets \u00ab TEST \u00bb, sans valeur fiscale) \u00b7 essai gratuit : <strong>"+_dLeft+" j</strong></span>"+
         "<button onclick=\"lxPasserEnReel()\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:800;font-size:12px;background:#fff;color:#6d28d9\">Passer en caisse r\u00e9elle</button>"+
-        "<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:6px;padding:4px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;cursor:pointer;font-weight:700;font-size:12px\">S\u2019abonner</button>"
+        (lxPlay()?"":"<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:6px;padding:4px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.6);background:transparent;color:#fff;cursor:pointer;font-weight:700;font-size:12px\">S\u2019abonner</button>")
       : (_urgent?"\u26a0\ufe0f ":"\u23f0 ")+"<strong>Caisse r\u00e9elle</strong> \u00b7 essai gratuit : <strong>"+_dLeft+" jour"+(_dLeft>1?"s":"")+"</strong> restant"+(_dLeft>1?"s":"")+
         "<span class=\"lx-hide-mobile\"> \u2014 tout est ouvert, Pro inclus (sauf SMS)</span>"+
-        "<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:12px;"+(_urgent?"background:#fff;color:#dc2626":"background:#000;color:#d4a843")+"\">S\u2019abonner</button>");
+        (lxPlay()?"":"<button onclick=\"showPlanChoiceModal(false)\" style=\"margin-left:8px;padding:5px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:12px;"+(_urgent?"background:#fff;color:#dc2626":"background:#000;color:#d4a843")+"\">S\u2019abonner</button>"));
     document.body.appendChild(_tb);
     var _hdr=document.getElementById("hdr");if(_hdr)_hdr.style.marginTop="36px";
     document.getElementById("app").style.paddingTop="36px";
