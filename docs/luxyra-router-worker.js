@@ -4395,14 +4395,31 @@ function lxEcEur(n) {
 }
 function lxEcTaux(t) { return String(Math.round(Number(t) * 100) / 100).replace(".", ",") + " %"; }
 // Noms imposés : ceux que produisent les exports de l'app pour CE mois (tout autre nom est refusé)
-function lxEcNomAutorise(nom, mois, siret) {
+function lxEcNomAutorise(nom, mois, siret, finMois) {
   const n = String(nom || "");
   if (!/^[A-Za-z0-9._-]{5,80}$/.test(n)) return false;
   if (n === `Luxyra_compta_${mois}.zip`) return "application/zip";
   if (n === `Excel_comptable_${mois}.xlsx`) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  if (n === `Rapport_comptable_${mois}.html`) return "text/html";
+  if (n === `Rapport_comptable_${mois}.pdf`) return "application/pdf"; // 2026-10-27 (-3) : vrai PDF (l'ancienne page .html n'est plus acceptée)
   const siren = String(siret || "").replace(/\s/g, "").slice(0, 9);
-  if (/^\d{9}$/.test(siren) && n === `${siren}FEC${lxEcFinMois(mois).replace(/-/g, "")}.txt`) return "text/plain";
+  // 2026-10-27 (-3, audit FEC) : nom de l'art. A. 47 A-1 du LPF = SIREN + « FEC » + date de CLÔTURE DE L'EXERCICE ; extrait
+  // mensuel = suffixe de période (BOI-CF-IOR-60-40-20 § 370 : « 123456789FEC20131231_01 »). Avant : fin du mois.
+  if (/^\d{9}$/.test(siren) && n === `${siren}FEC${lxEcFinExercice(mois, finMois).replace(/-/g, "")}_${mois.replace("-", "")}.txt`) return "text/plain";
+  return false;
+}
+// Date de clôture de l'exercice qui contient le mois (salons.exercice_fin_mois, 12 par défaut ; micro forcé à 12 en base)
+function lxEcFinExercice(mois, finMois) {
+  const f = Number(finMois) >= 1 && Number(finMois) <= 12 ? Number(finMois) : 12;
+  const y = Number(mois.slice(0, 4)), mo = Number(mois.slice(5, 7));
+  const an = mo <= f ? y : y + 1;
+  return new Date(Date.UTC(an, f, 0)).toISOString().slice(0, 10);
+}
+// Signature des premiers octets : PDF « %PDF- », xlsx / zip « PK\x03\x04 » ; FEC = texte (aucun octet nul).
+function lxEcSignatureOk(nom, oct) {
+  const deb = (k) => Array.from(oct.subarray(0, k.length)).every((x, i) => x === k.charCodeAt(i));
+  if (/\.pdf$/.test(nom)) return oct.length > 8 && deb("%PDF-");
+  if (/\.(xlsx|zip)$/.test(nom)) return oct.length > 4 && deb("PK\x03\x04");
+  if (/\.txt$/.test(nom)) return oct.indexOf(0) < 0;
   return false;
 }
 function lxEcB64Octets(b64) {
@@ -4443,10 +4460,10 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
     h += `<p style="margin:0 0 14px">Cet e-mail confirme que l'envoi automatique des documents comptables de <b>${nom}</b> vers cette adresse est bien configuré.</p>`;
   }
   if (fichiers.length) {
-    // 2026-10-27 (-2) : libellés honnêtes — le rapport est une page HTML (pas un PDF)
+    // 2026-10-27 (-3) : le rapport du mois est un vrai fichier PDF
     const ico = (n) => (/\.zip$/.test(n) ? "📦" : /\.xlsx$/.test(n) ? "📊" : "📄");
-    const quoi = (n) => (/\.zip$/.test(n) ? " — pack ZIP (fichiers CSV séparés)" : /\.xlsx$/.test(n) ? " — pack Excel du mois (synthèse, journal, TVA ou URSSAF, écritures, annulations…)" : /FEC/.test(n) ? " — FEC (fichier des écritures comptables)" : " — rapport du mois (page à ouvrir dans le navigateur, imprimable en PDF)");
-    const ordre = (n) => (/FEC/.test(n) ? 0 : /\.xlsx$/.test(n) ? 1 : /\.html$/.test(n) ? 2 : 3);
+    const quoi = (n) => (/\.zip$/.test(n) ? " — pack ZIP (fichiers CSV séparés)" : /\.xlsx$/.test(n) ? " — pack Excel du mois (synthèse, journal, TVA ou URSSAF, écritures, annulations…)" : /FEC/.test(n) ? " — FEC (fichier des écritures comptables)" : " — rapport du mois (PDF)");
+    const ordre = (n) => (/FEC/.test(n) ? 0 : /\.xlsx$/.test(n) ? 1 : /\.pdf$/.test(n) ? 2 : 3);
     fichiers = fichiers.slice().sort((a, b) => ordre(a.nom) - ordre(b.nom));
     h += `<div style="background:#faf6ec;border:1px solid #e6dcc3;border-radius:12px;padding:14px 16px;font-size:13.5px"><b style="color:#9a7b2c">Pièces jointes</b><br>${fichiers.map((f) => `${ico(f.nom)} ${ccEsc(f.nom)}${quoi(f.nom)}`).join("<br>")}</div>`;
   }
@@ -4456,7 +4473,6 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
   if ((notes || []).includes("test_sans_documents_ecart")) N.push("Documents non joints à ce test : les données de l'appareil ne correspondaient pas à la clôture du mois.");
   if (N.length) h += `<p style="margin:12px 0 0;font-size:12.5px;color:#666">${N.map(ccEsc).join("<br>")}</p>`;
   if (fichiers.some((f) => /FEC/.test(f.nom))) h += `<p style="margin:16px 0 6px;font-size:13.5px">Le FEC s'importe directement dans votre logiciel (Pennylane, Cegid, EBP, ACD…).</p>`;
-  if (fichiers.some((f) => /\.html$/.test(f.nom))) h += `<p style="margin:8px 0 6px;font-size:13.5px">Le rapport du mois est une page web, pas un PDF : ouvrez-le dans votre navigateur ; pour l'enregistrer en PDF, utilisez « Imprimer » puis « Enregistrer au format PDF ».</p>`;
   h += `<p style="margin:12px 0 0;font-size:13.5px">Pour toute question sur ces chiffres, répondez à cet e-mail : la réponse arrive à l'établissement.</p>`;
   h += `<p style="margin:12px 0 0;font-size:11.5px;color:#888">Ces documents contiennent des données personnelles (noms des clients dans le journal de caisse) transmises par l'établissement à son expert-comptable pour la tenue de sa comptabilité : merci de les conserver de façon sécurisée.</p>`;
   return h;
@@ -4513,7 +4529,7 @@ async function handleComptaEnvoi(request, env) {
       const depuis = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
       const tests = (await lxEcGet(env, `compta_envois?salon_id=eq.${encodeURIComponent(salonId)}&type=eq.test&cree_le=gte.${encodeURIComponent(depuis)}&select=id`)).length;
       return jsonResponse({ ok: true, mois, config: lxEcConfigPublic(cfg), salon_email: salon.email || "", mode_caisse: modeCaisse,
-        cloture: zm ? { total_ca: Number(zm.total_ca), total_ht: Number(zm.total_ht), total_tva: Number(zm.total_tva), nb_tickets: zm.nb_tickets, nb_annulations: zm.nb_annulations } : null,
+        cloture: zm ? { total_ca: Number(zm.total_ca), total_ht: Number(zm.total_ht), total_tva: Number(zm.total_tva), nb_tickets: zm.nb_tickets, nb_annulations: zm.nb_annulations, hash: zm.hash || null } : null,
         activite, deja, raison, afaire: raison === "a_faire",
         dernier_mois_cloture: dernier ? `${dernier.annee}-${String(dernier.mois).padStart(2, "0")}` : null, dernier_cloture_ca: dernier ? Number(dernier.total_ca) : null,
         tests_restants: Math.max(0, LX_EC_TESTS_JOUR - tests), journal });
@@ -4551,12 +4567,14 @@ async function handleComptaEnvoi(request, env) {
     const pj = [], fichiers = [], vus = new Set(); let total = 0;
     for (const f of entrants) {
       const nom = String((f && f.nom) || "");
-      if (!lxEcNomAutorise(nom, mois, salon.siret) || vus.has(nom)) return jsonResponse({ ok: false, error: "Nom de fichier refusé : " + nom.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) }, 400);
+      if (!lxEcNomAutorise(nom, mois, salon.siret, salon.exercice_fin_mois) || vus.has(nom)) return jsonResponse({ ok: false, error: "Nom de fichier refusé : " + nom.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) }, 400);
       vus.add(nom);
       const oct = lxEcB64Octets(f.b64);
       if (!oct || !oct.length) return jsonResponse({ ok: false, error: "Fichier illisible : " + nom }, 400);
       total += oct.length;
       if (total > LX_EC_MAX_OCTETS) return jsonResponse({ ok: false, error: "Pièces jointes trop volumineuses (8 Mo au maximum)" }, 413);
+      // 2026-10-27 (-3) : contenu conforme au type annoncé par le nom (signature des premiers octets)
+      if (!lxEcSignatureOk(nom, oct)) return jsonResponse({ ok: false, error: "Contenu du fichier non conforme : " + nom }, 400);
       fichiers.push({ nom, taille: oct.length, sha256: await lxEcSha256(oct) });
       pj.push({ name: nom, content: String(f.b64) });
     }
