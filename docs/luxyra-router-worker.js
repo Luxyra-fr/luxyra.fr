@@ -131,6 +131,8 @@ async function __wrappedApiHandler(request, url, env) {
       // 2026-10-17 : webhook global Brevo (réponses STOP / START aux SMS publicitaires)
       if (url.pathname === "/api/brevo/sms-stop" && request.method === "POST") return await handleBrevoSmsStopWebhook(request, env);
       if (url.pathname === "/api/sms/recharge-auto" && request.method === "POST") return await handleSmsRechargeAuto(request, env);
+      // 2026-10-27 : envoi automatique des documents comptables au comptable de l'établissement (route salon)
+      if (url.pathname === "/api/compta/envoi" && request.method === "POST") return await handleComptaEnvoi(request, env);
       if (url.pathname === "/api/stripe/portal" && request.method === "POST") return await handlePortal(request, env);
       if (url.pathname === "/api/stripe/switch-plan" && request.method === "POST") return await handleSwitchPlan(request, env);
       if (url.pathname === "/api/admin/offer-month" && request.method === "POST") return await handleOfferMonth(request, env);
@@ -567,7 +569,8 @@ const LX_ROUTES_SALON = new Set([
   "/api/stripe/create-checkout", "/api/stripe/portal", "/api/stripe/switch-plan",
   "/api/stripe/connect-onboard", "/api/stripe/connect-status", "/api/stripe/connect-dashboard",
   "/api/admin/export-nf525", "/api/sms/rappel", "/api/sms/custom", "/api/sms/generate-link-token",
-  "/api/client/invite", "/api/cc/action", "/api/sms/recharge-auto", "/api/rdv/acompte-rembourser"
+  "/api/client/invite", "/api/cc/action", "/api/sms/recharge-auto", "/api/rdv/acompte-rembourser",
+  "/api/compta/envoi" // 2026-10-27 : envoi au comptable (propriétaire du salon)
 ]);
 function lxUrlLuxyra(u) {
   try { const x = new URL(String(u)); return x.protocol === "https:" && (x.hostname === "luxyra.fr" || x.hostname.endsWith(".luxyra.fr")); } catch (e) { return false; }
@@ -1423,13 +1426,16 @@ function lxMailLayout(corpsHtml, opts) {
   opts = opts || {};
   const titre = opts.titre ? `<h1 style="margin:0 0 16px;font-family:Georgia,'Times New Roman',serif;font-size:22px;font-weight:400;color:#1a1a1a;line-height:1.3">${opts.titre}</h1>` : "";
   const pixel = opts.idSuivi ? `<img src="https://luxyra.fr/api/e/o/${opts.idSuivi}.gif" width="1" height="1" alt="" style="display:block;border:0">` : "";
-  const pied = opts.pied ? `<div style="margin-bottom:6px">${opts.pied}</div>` : "";
+  // 2026-10-27 : opts.salon = nom de l'établissement pour lequel Luxyra envoie (envoi au comptable) : en-tête + pied
+  // « envoyé pour le compte de … via Luxyra ». Sans opts.salon : rendu strictement inchangé.
+  const _salonNom = opts.salon ? ccEsc(String(opts.salon).slice(0, 120)) : "";
+  const pied = (opts.pied ? `<div style="margin-bottom:6px">${opts.pied}</div>` : "") + (_salonNom ? `<div style="margin-bottom:6px">Envoi pour le compte de <b>${_salonNom}</b> via <span style="color:#b8922e">Luxyra</span>, logiciel de caisse et de gestion.</div>` : "");
   return `<div style="background:#f4f1ea;padding:24px 10px;margin:0">
   <div style="max-width:580px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6dcc3;font-family:-apple-system,'Segoe UI',Arial,sans-serif;color:#1a1a1a;font-size:15px;line-height:1.6">
     <div style="background:#0b0b0b;padding:26px 20px 20px;text-align:center;border-bottom:3px solid #c8a84e">
       <img src="https://luxyra.fr/luxyra-logo.png" width="64" height="64" alt="Luxyra" style="display:block;margin:0 auto 10px;border-radius:12px">
       <div style="color:#d4a843;font-family:Georgia,'Times New Roman',serif;font-size:22px;letter-spacing:6px">LUXYRA</div>
-      <div style="color:#8c8270;font-size:11px;letter-spacing:1px;margin-top:4px">GESTION &amp; CAISSE POUR LES PROFESSIONNELS DE LA BEAUTÉ ET DU BIEN-ÊTRE</div>
+      <div style="color:#8c8270;font-size:11px;letter-spacing:1px;margin-top:4px">${_salonNom ? ccEsc(String(opts.salon).slice(0, 120).toUpperCase()) : "GESTION &amp; CAISSE POUR LES PROFESSIONNELS DE LA BEAUTÉ ET DU BIEN-ÊTRE"}</div>
     </div>
     <div style="padding:28px 26px 8px">${titre}${corpsHtml}</div>
     <div style="padding:16px 26px 22px;font-size:11px;color:#8a8a8a;border-top:1px solid #eee;margin-top:18px;line-height:1.5">${pied}Luxyra — Alexandre JENSEN, entrepreneur individuel — SIRET 910 928 464 00023<br>29 rue de l'Abbé Alexandre Pax, 57200 Sarreguemines — <a href="mailto:contact@luxyra.fr" style="color:#b8922e">contact@luxyra.fr</a> — <a href="https://luxyra.fr" style="color:#b8922e">luxyra.fr</a></div>
@@ -3313,7 +3319,7 @@ function jsonResponse(data, status = 200) {
 // ============================================================
 // BREVO API — EMAIL & SMS
 // ============================================================
-async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subject, htmlContent, textContent, replyTo, attachment, headers }) {
+async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subject, htmlContent, textContent, replyTo, attachment, headers, cc }) {
   const payload = {
     sender: { name: senderName || "Luxyra", email: senderEmail || "contact@luxyra.fr" },
     to: [{ email: to, name: toName || "" }], subject,
@@ -3322,6 +3328,7 @@ async function brevoSendEmail(env, { to, toName, senderEmail, senderName, subjec
   };
   if (replyTo) payload.replyTo = { email: replyTo };
   if (attachment) payload.attachment = attachment;
+  if (Array.isArray(cc) && cc.length) payload.cc = cc; // 2026-10-27 : copie (envoi au comptable) — absent = comportement inchangé
   if (headers && typeof headers === "object") payload.headers = headers;  // 2026-10-17 audit réglages (#4) : List-Unsubscribe
   return await (await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST", headers: { "api-key": env.BREVO_API_KEY, "Content-Type": "application/json", Accept: "application/json" },
@@ -4313,6 +4320,273 @@ async function handleSmsRechargeAuto(request, env) {
     return jsonResponse({ ok: true, actif: salon.sms_recharge_auto === true, seuil: salon.sms_recharge_seuil || 20, pack: salon.sms_recharge_pack || 100, echec: salon.sms_recharge_echec || null, carte: carte ? { marque: carte.marque, fin: carte.fin, exp: carte.exp } : null, prix });
   } catch (e) {
     return jsonResponse({ error: "Erreur recharge automatique : " + (e?.message || e) }, 500);
+  }
+}
+
+// ============================================================
+// 2026-10-27 — ENVOI AUTOMATIQUE AU COMPTABLE (option A) — POST /api/compta/envoi  (route salon : LX_ROUTES_SALON)
+// LECTURE SEULE côté caisse : lit clotures_mensuelles / clotures / salons, n'écrit que dans compta_envoi_config et
+// compta_envois (docs/migrations_1027/envoi_comptable.sql). Aucune table, fonction ou déclencheur fiscal n'est touché.
+// Ops : statut {mois} | regler {actif,cabinet,email,docs,copie} | ecart {mois,ca_app,ca_cloture} |
+//       envoyer {mois, type:"auto"|"test", fichiers:[{nom,b64}], notes:[], controle:{ca_ttc}}
+// Sécurité :
+//  - propriétaire du salon (JWT) vérifié en amont par lxGuardSalon (ou appel serveur x-lx-internal / admin) ; la
+//    permission « Exporter des données » d'un profil PIN est contrôlée dans l'app (les profils PIN partagent le compte) ;
+//  - DESTINATAIRE lu ici dans la configuration enregistrée, jamais pris dans le corps de la requête (pas de relais ouvert) ;
+//  - 1 envoi réel par salon et par mois (index unique compta_envois_un_par_mois, ligne « reserve » posée AVANT Brevo) ;
+//    3 envois de test par 24 h ; pièces jointes : 3 au plus, noms imposés (motifs ci-dessous), 8 Mo au total ;
+//  - envoi réel seulement si la caisse est en mode réel ET le mois clôturé (ligne clotures_mensuelles) ; chiffres de
+//    l'e-mail = ceux de la clôture mensuelle scellée (jamais ceux envoyés par l'app) ; contrôle CA app = CA clôture.
+// ============================================================
+const LX_EC_MAX_OCTETS = 8 * 1024 * 1024;
+const LX_EC_TESTS_JOUR = 3;
+const LX_EC_RE_EMAIL = /^[^@\s<>"',;:()\[\]\\]+@[^@\s<>"',;:()\[\]\\]+\.[A-Za-z]{2,}$/;
+const LX_EC_MOIS_NOMS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+function lxEcMoisParis(decal) {
+  const o = {}; new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit" }).formatToParts(new Date()).forEach((p) => { o[p.type] = p.value; });
+  const d = new Date(Date.UTC(Number(o.year), Number(o.month) - 1 + (decal || 0), 1));
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+function lxEcMoisOk(m) { return typeof m === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(m); }
+function lxEcMoisLib(m, maj) { const p = String(m).split("-"); const n = LX_EC_MOIS_NOMS[Number(p[1]) - 1] || p[1]; return (maj ? n.charAt(0).toUpperCase() + n.slice(1) : n) + " " + p[0]; }
+function lxEcFinMois(m) { const y = Number(m.slice(0, 4)), mo = Number(m.slice(5, 7)); const d = new Date(Date.UTC(y, mo, 0)); return d.toISOString().slice(0, 10); }
+async function lxEcGet(env, path) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/${path}`, { headers: _sbHeaders(env) });
+  if (!r.ok) throw new Error("lecture " + path.split("?")[0] + " : " + r.status);
+  return await r.json();
+}
+async function lxEcConfig(env, salonId) {
+  const a = await lxEcGet(env, `compta_envoi_config?salon_id=eq.${encodeURIComponent(salonId)}&select=*&limit=1`);
+  return Array.isArray(a) && a[0] ? a[0] : null;
+}
+function lxEcConfigPublic(c) {
+  if (!c) return null;
+  return { actif: c.actif === true, cabinet: c.cabinet || "", email: c.email || "", copie: c.copie !== false,
+    docs: { pack: c.doc_pack !== false, fec: c.doc_fec !== false, rapport: c.doc_rapport !== false }, maj_le: c.maj_le || null };
+}
+async function lxEcCloture(env, salonId, mois) {
+  const a = await lxEcGet(env, `clotures_mensuelles?salon_id=eq.${encodeURIComponent(salonId)}&annee=eq.${Number(mois.slice(0, 4))}&mois=eq.${Number(mois.slice(5, 7))}&select=*&limit=1`);
+  return Array.isArray(a) && a[0] ? a[0] : null;
+}
+// Activité du mois : au moins une clôture journalière (une clôture mensuelle n'existe que s'il y en a)
+async function lxEcActivite(env, salonId, mois) {
+  const a = await lxEcGet(env, `clotures?salon_id=eq.${encodeURIComponent(salonId)}&date_cloture=gte.${mois}-01&date_cloture=lte.${lxEcFinMois(mois)}&select=id&limit=1`);
+  return Array.isArray(a) && a.length > 0;
+}
+async function lxEcJournal(env, salonId, limite) {
+  const a = await lxEcGet(env, `compta_envois?salon_id=eq.${encodeURIComponent(salonId)}&select=id,mois,type,statut,destinataire,copie_a,cree_le,envoye_le,erreur,taille_totale,fichiers&order=cree_le.desc&limit=${limite || 12}`);
+  return Array.isArray(a) ? a : [];
+}
+async function lxEcJournalAjouter(env, ligne) {
+  const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/compta_envois`, { method: "POST", headers: _sbHeaders(env, { Prefer: "return=representation" }), body: JSON.stringify(ligne) });
+  if (r.status === 409) return { conflit: true };
+  if (!r.ok) throw new Error("journal : " + r.status + " " + (await r.text()).slice(0, 200));
+  const a = await r.json(); return { ligne: Array.isArray(a) ? a[0] : a };
+}
+async function lxEcJournalMaj(env, id, patch) {
+  await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/compta_envois?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify(patch) });
+}
+function lxEcEur(n) {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  const s = Math.abs(v).toFixed(2).split("."); s[0] = s[0].replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return (v < 0 ? "-" : "") + s[0] + "," + s[1] + " €";
+}
+function lxEcTaux(t) { return String(Math.round(Number(t) * 100) / 100).replace(".", ",") + " %"; }
+// Noms imposés : ceux que produisent les exports de l'app pour CE mois (tout autre nom est refusé)
+function lxEcNomAutorise(nom, mois, siret) {
+  const n = String(nom || "");
+  if (!/^[A-Za-z0-9._-]{5,80}$/.test(n)) return false;
+  if (n === `Luxyra_compta_${mois}.zip`) return "application/zip";
+  if (n === `Rapport_comptable_${mois}.html`) return "text/html";
+  const siren = String(siret || "").replace(/\s/g, "").slice(0, 9);
+  if (/^\d{9}$/.test(siren) && n === `${siren}FEC${lxEcFinMois(mois).replace(/-/g, "")}.txt`) return "text/plain";
+  return false;
+}
+function lxEcB64Octets(b64) {
+  const s = String(b64 || "");
+  if (!s || s.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) return null;
+  try { const bin = atob(s); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; } catch (e) { return null; }
+}
+async function lxEcSha256(u8) {
+  const b = await crypto.subtle.digest("SHA-256", u8);
+  return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
+  const nom = ccEsc(salon.nom || "votre établissement");
+  const lib = lxEcMoisLib(mois, false);
+  const franchise = Number(salon.taux_tva) === 0;
+  const tx = Number(salon.taux_tva), txP = salon.taux_tva_produits != null && salon.taux_tva_produits !== "" ? Number(salon.taux_tva_produits) : tx;
+  let h = "";
+  if (opts.test) h += `<div style="background:#fff7e6;border:1px solid #f0c36d;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px"><b>Envoi de test</b> demandé par l'établissement pour vérifier l'adresse${zm ? "" : " (aucun document : aucun mois n'est encore clôturé)"}.${opts.modeTest ? " <b>Caisse en mode test : données de test, sans valeur fiscale.</b>" : ""}</div>`;
+  h += `<p style="margin:0 0 12px">Bonjour${cfg.cabinet ? " " + ccEsc(cfg.cabinet) : ""},</p>`;
+  if (zm) {
+    h += `<p style="margin:0 0 14px">Voici les documents comptables de <b>${nom}</b>${salon.siret ? ` (SIRET ${ccEsc(String(salon.siret).replace(/\s/g, ""))})` : ""} pour <b>${lib}</b>. Le mois est clôturé dans la caisse : les montants sont définitifs.</p>`;
+    const L = [];
+    L.push([franchise ? "Chiffre d'affaires (TVA non applicable)" : "Chiffre d'affaires TTC", `<b>${lxEcEur(zm.total_ca)}</b>`]);
+    if (franchise) L.push(["TVA", "Non applicable, art. 293 B du CGI"]);
+    else {
+      L.push(["dont HT", lxEcEur(zm.total_ht)]);
+      L.push([txP !== tx ? `TVA collectée (prestations ${lxEcTaux(tx)} · produits ${lxEcTaux(txP)})` : `TVA collectée (${lxEcTaux(tx)})`, lxEcEur(zm.total_tva)]);
+    }
+    const LIB = { cb: "Carte bancaire", esp: "Espèces", chq: "Chèque", vir: "Virement", enligne: "Payé en ligne", bon: "Bons cadeaux / avoirs", aut: "Autres" };
+    let det = zm.detail_paiements; if (typeof det === "string") { try { det = JSON.parse(det); } catch (e) { det = null; } }
+    if (det && typeof det === "object") {
+      Object.keys(LIB).concat(Object.keys(det).filter((k) => !LIB[k])).forEach((k) => { const v = Number(det[k]) || 0; if (Math.abs(v) >= 0.005) L.push([ccEsc(LIB[k] || k), lxEcEur(v)]); });
+    }
+    L.push(["Tickets · annulations", `${Number(zm.nb_tickets) || 0} · ${Number(zm.nb_annulations) || 0}`]);
+    h += `<table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 16px">${L.map((r, i) => `<tr><td style="padding:7px 0;${i < L.length - 1 ? "border-bottom:1px solid #eee" : ""}">${r[0]}</td><td style="text-align:right;${i < L.length - 1 ? "border-bottom:1px solid #eee" : ""}">${r[1]}</td></tr>`).join("")}</table>`;
+    h += `<div style="font-size:11px;color:#8a8a8a;margin:-8px 0 14px">Chiffres de la clôture mensuelle de la caisse${zm.hash ? ` (empreinte ${ccEsc(String(zm.hash).slice(0, 16))}…)` : ""}.</div>`;
+  } else {
+    h += `<p style="margin:0 0 14px">Cet e-mail confirme que l'envoi automatique des documents comptables de <b>${nom}</b> vers cette adresse est bien configuré.</p>`;
+  }
+  if (fichiers.length) {
+    const ico = (n) => (/\.zip$/.test(n) ? "📦" : "📄");
+    const quoi = (n) => (/\.zip$/.test(n) ? " (pack comptable)" : /FEC/.test(n) ? " (FEC)" : " (rapport, à ouvrir dans un navigateur)");
+    h += `<div style="background:#faf6ec;border:1px solid #e6dcc3;border-radius:12px;padding:14px 16px;font-size:13.5px"><b style="color:#9a7b2c">Pièces jointes</b><br>${fichiers.map((f) => `${ico(f.nom)} ${ccEsc(f.nom)}${quoi(f.nom)}`).join("<br>")}</div>`;
+  }
+  const N = [];
+  if ((notes || []).includes("fec_siret")) N.push("FEC non joint : le SIRET de l'établissement n'est pas renseigné dans Luxyra.");
+  if ((notes || []).includes("fec_vide")) N.push("FEC non joint : aucun ticket sur la période.");
+  if ((notes || []).includes("test_sans_documents_ecart")) N.push("Documents non joints à ce test : les données de l'appareil ne correspondaient pas à la clôture du mois.");
+  if (N.length) h += `<p style="margin:12px 0 0;font-size:12.5px;color:#666">${N.map(ccEsc).join("<br>")}</p>`;
+  if (fichiers.some((f) => /FEC/.test(f.nom))) h += `<p style="margin:16px 0 6px;font-size:13.5px">Le FEC s'importe directement dans votre logiciel (Pennylane, Cegid, EBP, ACD…).</p>`;
+  h += `<p style="margin:12px 0 0;font-size:13.5px">Pour toute question sur ces chiffres, répondez à cet e-mail : la réponse arrive à l'établissement.</p>`;
+  h += `<p style="margin:12px 0 0;font-size:11.5px;color:#888">Ces documents contiennent des données personnelles (noms des clients dans le journal de caisse) transmises par l'établissement à son expert-comptable pour la tenue de sa comptabilité : merci de les conserver de façon sécurisée.</p>`;
+  return h;
+}
+async function handleComptaEnvoi(request, env) {
+  try {
+    const len = Number(request.headers.get("content-length") || 0);
+    if (len > 12 * 1024 * 1024) return jsonResponse({ ok: false, error: "Pièces jointes trop volumineuses" }, 413);
+    const b = await readJsonBody(request);
+    const salonId = String(b.salon_id || "");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(salonId)) return jsonResponse({ ok: false, error: "Établissement invalide" }, 400);
+    const salon = await supabaseGet(env, salonId);
+    if (!salon) return jsonResponse({ ok: false, error: "Établissement introuvable" }, 404);
+    const u = await lxAuthUser(request); // déjà vérifié par lxGuardSalon ; ici seulement pour tracer l'auteur
+    const auteur = u && u.email ? String(u.email).slice(0, 200) : "serveur";
+    const op = String(b.op || "statut");
+    const moisCourant = lxEcMoisParis(0);
+
+    if (op === "regler") {
+      const actif = b.actif === true;
+      const email = String(b.email || "").trim().toLowerCase();
+      const cabinet = String(b.cabinet || "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 120);
+      const docs = b.docs || {};
+      if (email && (email.length > 254 || !LX_EC_RE_EMAIL.test(email))) return jsonResponse({ ok: false, error: "Adresse e-mail du comptable invalide" }, 400);
+      if (actif && !email) return jsonResponse({ ok: false, error: "E-mail du comptable obligatoire pour activer l'envoi" }, 400);
+      const ligne = { salon_id: salonId, actif, cabinet: cabinet || null, email: email || null, doc_pack: docs.pack !== false, doc_fec: docs.fec !== false, doc_rapport: docs.rapport !== false, copie: b.copie !== false, maj_le: new Date().toISOString(), maj_par: auteur };
+      if (actif && !ligne.doc_pack && !ligne.doc_fec && !ligne.doc_rapport) return jsonResponse({ ok: false, error: "Cochez au moins un document" }, 400);
+      const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/compta_envoi_config?on_conflict=salon_id`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=representation" }), body: JSON.stringify(ligne) });
+      if (!r.ok) return jsonResponse({ ok: false, error: "Enregistrement impossible (" + r.status + ")" }, 500);
+      const a = await r.json();
+      return jsonResponse({ ok: true, config: lxEcConfigPublic(Array.isArray(a) ? a[0] : a) });
+    }
+
+    const mois = lxEcMoisOk(b.mois) ? b.mois : lxEcMoisParis(-1);
+    if (mois >= moisCourant) return jsonResponse({ ok: false, error: "Mois non terminé" }, 400);
+    const cfg = await lxEcConfig(env, salonId);
+    const modeCaisse = salon.mode_caisse === "reel" ? "reel" : "test";
+
+    if (op === "statut") {
+      const [zm, journal] = await Promise.all([lxEcCloture(env, salonId, mois), lxEcJournal(env, salonId, 12)]);
+      const activite = zm ? true : await lxEcActivite(env, salonId, mois);
+      const auto = journal.filter((j) => j.type === "auto" && j.mois === mois);
+      const deja = auto.some((j) => j.statut === "envoye" || (j.statut === "reserve" && Date.now() - Date.parse(j.cree_le) < 15 * 60 * 1000));
+      const ecartRecent = auto.some((j) => j.statut === "ecart" && Date.now() - Date.parse(j.cree_le) < 24 * 3600 * 1000);
+      let raison = "a_faire";
+      if (!cfg || cfg.actif !== true || !cfg.email) raison = "inactif";
+      else if (modeCaisse !== "reel") raison = "mode_test";
+      else if (deja) raison = "deja";
+      else if (!zm) raison = activite ? "non_cloture" : "sans_activite";
+      else if (ecartRecent) raison = "ecart";
+      // dernier mois clôturé (pour l'envoi de test)
+      let dernier = null;
+      try { const d = await lxEcGet(env, `clotures_mensuelles?salon_id=eq.${encodeURIComponent(salonId)}&select=annee,mois,total_ca&order=annee.desc,mois.desc&limit=1`); if (d && d[0]) dernier = d[0]; } catch (_) {}
+      const depuis = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const tests = (await lxEcGet(env, `compta_envois?salon_id=eq.${encodeURIComponent(salonId)}&type=eq.test&cree_le=gte.${encodeURIComponent(depuis)}&select=id`)).length;
+      return jsonResponse({ ok: true, mois, config: lxEcConfigPublic(cfg), salon_email: salon.email || "", mode_caisse: modeCaisse,
+        cloture: zm ? { total_ca: Number(zm.total_ca), total_ht: Number(zm.total_ht), total_tva: Number(zm.total_tva), nb_tickets: zm.nb_tickets, nb_annulations: zm.nb_annulations } : null,
+        activite, deja, raison, afaire: raison === "a_faire",
+        dernier_mois_cloture: dernier ? `${dernier.annee}-${String(dernier.mois).padStart(2, "0")}` : null, dernier_cloture_ca: dernier ? Number(dernier.total_ca) : null,
+        tests_restants: Math.max(0, LX_EC_TESTS_JOUR - tests), journal });
+    }
+
+    if (op === "ecart") {
+      // trace (une par 24 h) : le mois chargé dans l'app ne correspond pas à la clôture mensuelle -> rien n'est envoyé
+      if (!cfg || !cfg.actif) return jsonResponse({ ok: true });
+      const journal = await lxEcJournal(env, salonId, 30);
+      if (journal.some((j) => j.type === "auto" && j.mois === mois && j.statut === "ecart" && Date.now() - Date.parse(j.cree_le) < 24 * 3600 * 1000)) return jsonResponse({ ok: true, deja: true });
+      await lxEcJournalAjouter(env, { salon_id: salonId, mois, type: "auto", statut: "ecart", destinataire: cfg.email, cabinet: cfg.cabinet, mode_caisse: modeCaisse, declenche_par: auteur,
+        erreur: `CA chargé dans l'app ${Number(b.ca_app) || 0} € / clôture ${Number(b.ca_cloture) || 0} €`.slice(0, 300) });
+      try { await reportWorkerError(env, "worker:compta_envoi", `Écart envoi comptable ${salonId} ${mois} : app ${b.ca_app} / clôture ${b.ca_cloture}`, { salon_id: salonId, mois }, "warning"); } catch (_) {}
+      return jsonResponse({ ok: true });
+    }
+
+    if (op !== "envoyer") return jsonResponse({ ok: false, error: "Opération inconnue" }, 400);
+    const type = b.type === "test" ? "test" : "auto";
+    if (!cfg || !cfg.email || !LX_EC_RE_EMAIL.test(cfg.email)) return jsonResponse({ ok: false, error: "Aucun e-mail de comptable enregistré" }, 400);
+    if (type === "auto") {
+      if (cfg.actif !== true) return jsonResponse({ ok: false, error: "Envoi automatique désactivé" }, 409);
+      if (modeCaisse !== "reel") return jsonResponse({ ok: false, code: "mode_test", error: "Caisse en mode test : pas d'envoi automatique" }, 409);
+    }
+    const zm = await lxEcCloture(env, salonId, mois);
+    const entrants = Array.isArray(b.fichiers) ? b.fichiers : [];
+    if (type === "auto" && !zm) return jsonResponse({ ok: false, code: "non_cloture", error: "Mois non clôturé : rien n'est envoyé" }, 409);
+    if (entrants.length && !zm) return jsonResponse({ ok: false, code: "non_cloture", error: "Documents refusés : mois non clôturé" }, 409);
+    if (type === "auto" && !entrants.length) return jsonResponse({ ok: false, error: "Aucun document" }, 400);
+    // Contrôle : CA du mois chargé dans l'app = CA de la clôture mensuelle (sinon : données incomplètes, rien ne part)
+    if (zm && entrants.length) {
+      const caApp = Number(b.controle && b.controle.ca_ttc);
+      if (!isFinite(caApp) || Math.abs(caApp - Number(zm.total_ca)) > 0.05) return jsonResponse({ ok: false, code: "ecart", error: "Les données ne correspondent pas à la clôture du mois" }, 409);
+    }
+    if (entrants.length > 3) return jsonResponse({ ok: false, error: "Trop de pièces jointes" }, 400);
+    const pj = [], fichiers = [], vus = new Set(); let total = 0;
+    for (const f of entrants) {
+      const nom = String((f && f.nom) || "");
+      if (!lxEcNomAutorise(nom, mois, salon.siret) || vus.has(nom)) return jsonResponse({ ok: false, error: "Nom de fichier refusé : " + nom.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) }, 400);
+      vus.add(nom);
+      const oct = lxEcB64Octets(f.b64);
+      if (!oct || !oct.length) return jsonResponse({ ok: false, error: "Fichier illisible : " + nom }, 400);
+      total += oct.length;
+      if (total > LX_EC_MAX_OCTETS) return jsonResponse({ ok: false, error: "Pièces jointes trop volumineuses (8 Mo au maximum)" }, 413);
+      fichiers.push({ nom, taille: oct.length, sha256: await lxEcSha256(oct) });
+      pj.push({ name: nom, content: String(f.b64) });
+    }
+    if (type === "test") {
+      const depuis = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const n = (await lxEcGet(env, `compta_envois?salon_id=eq.${encodeURIComponent(salonId)}&type=eq.test&cree_le=gte.${encodeURIComponent(depuis)}&select=id`)).length;
+      if (n >= LX_EC_TESTS_JOUR) return jsonResponse({ ok: false, error: `${LX_EC_TESTS_JOUR} envois de test par jour au maximum` }, 429);
+    } else {
+      // réservation interrompue (> 15 min sans résultat) : libérée
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/compta_envois?salon_id=eq.${encodeURIComponent(salonId)}&mois=eq.${mois}&type=eq.auto&statut=eq.reserve&cree_le=lt.${encodeURIComponent(new Date(Date.now() - 15 * 60 * 1000).toISOString())}`, { method: "PATCH", headers: _sbHeaders(env, { Prefer: "return=minimal" }), body: JSON.stringify({ statut: "echec", erreur: "envoi interrompu" }) });
+    }
+    const copieA = cfg.copie !== false && salon.email && String(salon.email).toLowerCase() !== String(cfg.email).toLowerCase() && LX_EC_RE_EMAIL.test(String(salon.email)) ? String(salon.email) : null;
+    const chiffres = zm ? { total_ca: zm.total_ca, total_ht: zm.total_ht, total_tva: zm.total_tva, nb_tickets: zm.nb_tickets, nb_annulations: zm.nb_annulations, detail_paiements: zm.detail_paiements, hash: zm.hash || null } : null;
+    // Réservation AVANT l'envoi : un 2e appareil (ou un 2e onglet) prend le conflit de l'index unique -> déjà envoyé
+    const res = await lxEcJournalAjouter(env, { salon_id: salonId, mois, type, statut: "reserve", destinataire: cfg.email, copie_a: copieA, cabinet: cfg.cabinet || null,
+      fichiers, taille_totale: total, chiffres, mode_caisse: modeCaisse, declenche_par: auteur });
+    if (res.conflit) return jsonResponse({ ok: true, deja: true, envoye: false });
+    const ligne = res.ligne;
+    const modeTest = modeCaisse !== "reel";
+    const sujet = `${type === "test" ? "[Test] " : ""}${modeTest ? "[Données de test] " : ""}Documents comptables — ${String(salon.nom || "Établissement").replace(/[\r\n]/g, " ").slice(0, 80)} — ${lxEcMoisLib(mois, true)}`;
+    const corps = lxEcCorpsMail(salon, cfg, mois, zm, fichiers, b.notes, { test: type === "test", modeTest });
+    const html = lxMailLayout(corps, { titre: zm ? `Documents comptables de ${lxEcMoisLib(mois, false)}` : "Envoi au comptable configuré", salon: salon.nom || "" });
+    let out = null, erreur = null;
+    try {
+      out = await brevoSendEmail(env, { to: cfg.email, toName: cfg.cabinet || "", senderName: String(salon.nom || "Luxyra").slice(0, 70), replyTo: LX_EC_RE_EMAIL.test(String(salon.email || "")) ? salon.email : undefined,
+        subject: sujet, htmlContent: html, textContent: lxEmailTexteNormalise(corps).slice(0, 5000), attachment: pj.length ? pj : undefined, cc: copieA ? [{ email: copieA, name: salon.nom || "" }] : undefined });
+      if (!out || !out.messageId) erreur = String((out && (out.message || out.code)) || "refus du service d'envoi").slice(0, 300);
+    } catch (e) { erreur = String((e && e.message) || e).slice(0, 300); }
+    if (erreur) {
+      await lxEcJournalMaj(env, ligne.id, { statut: "echec", erreur });
+      try { await reportWorkerError(env, "worker:compta_envoi", `Envoi comptable non abouti ${salonId} ${mois} : ${erreur}`, { salon_id: salonId, mois, type }, "warning"); } catch (_) {}
+      return jsonResponse({ ok: false, error: "Envoi non abouti : " + erreur }, 502);
+    }
+    await lxEcJournalMaj(env, ligne.id, { statut: "envoye", envoye_le: new Date().toISOString(), message_id: String(out.messageId).slice(0, 200) });
+    return jsonResponse({ ok: true, envoye: true, destinataire: cfg.email, copie_a: copieA, fichiers });
+  } catch (e) {
+    return jsonResponse({ ok: false, error: "Erreur envoi comptable : " + String((e && e.message) || e).slice(0, 200) }, 500);
   }
 }
 
