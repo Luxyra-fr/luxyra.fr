@@ -1,5 +1,5 @@
 -- Luxyra — 2026-10-27 — Envoi automatique des documents comptables au comptable de l'établissement (option A)
--- NON APPLIQUÉ (préparé dans la branche envoi-comptable). À appliquer AVANT de déployer le worker et app.html.
+-- APPLIQUÉ le 27/10/2026 (dashboard SQL, vérifié : anon sans accès, authenticated lecture seule, index unique présent).
 -- Idempotent (peut être rejoué). Rollback commenté en fin de fichier.
 -- 2026-10-27 (-2, décision d'Alexandre) : documents par défaut = FEC + pack Excel (doc_excel, nouveau) + rapport ;
 -- pack ZIP (doc_pack) en option, décoché par défaut. Rejouable sur une version antérieure de ce script (ADD COLUMN IF
