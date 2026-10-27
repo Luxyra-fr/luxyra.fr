@@ -271,6 +271,17 @@
         pk.seances_utilisees = u + 1; if (tot && pk.seances_utilisees >= tot) pk.status = "completed";
         return ok({ ok: true, utilisees: pk.seances_utilisees, total: tot, status: pk.status || "active" });
       }
+      if (fn === "consommer_bon_cadeau") { // 2026-10-28 : débit atomique d'un bon (même réponse que la fonction serveur : ok, restant, utilise, status)
+        var gc = null; (T.cartes_cadeaux || []).forEach(function (c) { if (c.id === a.p_bon_id) gc = c; });
+        var mc = Math.round((Number(a.p_montant) || 0) * 100) / 100;
+        if (!gc) return ok({ ok: false, erreur: "Bon cadeau introuvable" });
+        if (gc.status === "voided") return ok({ ok: false, erreur: "Bon annulé", restant: Number(gc.restant) || 0 });
+        var rc = Math.round((Number(gc.restant) || 0) * 100) / 100;
+        if (rc + 0.004 < mc) return ok({ ok: false, erreur: "Solde insuffisant", restant: rc });
+        gc.restant = Math.round((rc - mc) * 100) / 100; gc.utilise = Math.round(((Number(gc.utilise) || 0) + mc) * 100) / 100;
+        if (gc.restant <= 0.004) gc.status = "used";
+        return ok({ ok: true, restant: gc.restant, utilise: gc.utilise, status: gc.status || "active" });
+      }
       if (fn === "recrediter_bon_cadeau") { // _lxEffetsExecuter lit ok, restant, utilise, status
         var g = null; (T.cartes_cadeaux || []).forEach(function (c) { if (c.id === a.p_bon_id) g = c; });
         var m = Math.round((Number(a.p_montant) || 0) * 100) / 100;

@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261027-3"; // 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -2513,7 +2513,9 @@ if(typeof cfg.fond_caisse !== "undefined" && typeof window.CAISSE_DATA.fond === 
         isOffert: g.is_offert || false,
         ht: Number(g.ht) || 0,
         tva: Number(g.tva) || 0,
-        tvaRate: Number(g.tva_rate) || 0.20,
+        tvaRate: (_lxBonUsageLigne(g) === "BUM") ? 0 : (Number(g.tva_rate) || 0.20), // 2026-10-28 : bon à usage multiple = sans TVA à la vente
+        usageTva: _lxBonUsageLigne(g),          // 2026-10-28 (v6.7.0) : BUU / BUM figé à la création (null = bon antérieur)
+        qualifTva: _lxBonQualifLigne(g),
         history: g.history || [],
         tkNum: g.tk_num || null,
         themeId: g.theme_id || null,   // Style choisi par l'acheteur (bons en ligne)
@@ -3485,7 +3487,7 @@ async function _saveAppointmentUneFois(appt) {
 // 2026-10-14 (NF525) : champs de ticket à conserver dans appointments.meta (jsonb), uniquement s'ils ont une valeur.
 var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClients","clientNom","clientPrenom",
   "isAcompte","isAcompteCancel","apptId","isRetenue","retenueKey","retenueRdv","origTkNum","origTkNums",
-  "bonVenduRemise","offertRemise","dbNum",
+  "bonVenduRemise","offertRemise","dbNum","bonsUtil", // 2026-10-28 (v6.7.0) : bons utilisés au modèle v2 (imputation, bon à usage multiple)
   "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId", // 2026-10-14 (NF525 acompte en ligne)
   "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe", // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
   "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour"]; // 2026-10-17 retour partiel : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
@@ -3694,6 +3696,21 @@ function _lxProduitAlerte(prod, msg) {
   } catch(_e) {}
 }
 
+// 2026-10-28 (v6.7.0) : qualification TVA d'un bon (CGI art. 256 ter) relue de la colonne usage_tva / qualif_tva, ou, si la
+// migration bons_cadeaux_tva.sql n'est pas encore appliquée, de l'entrée « qualification_tva » de l'historique du bon.
+function _lxBonQualifLigne(g) {
+  if (!g) return null;
+  if (g.qualif_tva && typeof g.qualif_tva === "object") return g.qualif_tva;
+  var h = Array.isArray(g.history) ? g.history : [];
+  for (var i = 0; i < h.length; i++) { if (h[i] && h[i].type === "qualification_tva" && h[i].qualif) return h[i].qualif; }
+  return null;
+}
+function _lxBonUsageLigne(g) {
+  var u = g && (g.usage_tva || ((_lxBonQualifLigne(g) || {}).usage));
+  return (u === "BUU" || u === "BUM") ? u : null;
+}
+window._lxBonQualifLigne = _lxBonQualifLigne; window._lxBonUsageLigne = _lxBonUsageLigne;
+
 // Sauvegarder une carte cadeau
 // FIX 2026-08-31 : le SOLDE d'un bon cadeau n'est plus ecrit depuis la memoire.
 // Il l'etait, et la liste des bons n'est jamais rechargee apres l'ouverture de
@@ -3717,9 +3734,12 @@ async function saveGiftCard(gc, opts) {
     is_offert: gc.isOffert || false,
     ht: gc.ht || 0,
     tva: gc.tva || 0,
-    tva_rate: gc.tvaRate || 0.20,
+    tva_rate: (gc.usageTva === "BUM") ? 0 : (gc.tvaRate || 0.20),
     tk_num: gc.tkNum || null
   };
+  // 2026-10-28 (v6.7.0) : qualification TVA écrite UNIQUEMENT pour un bon qualifié (bons antérieurs : colonnes non envoyées)
+  var _qualif = (gc.usageTva === "BUU" || gc.usageTva === "BUM") ? (gc.qualifTva || { usage: gc.usageTva }) : null;
+  if (_qualif) { data.usage_tva = gc.usageTva; data.qualif_tva = _qualif; }
   // FIX 2026-05-12 : upsert avec id explicite (U() génère UUID stable)
   _ensureUuidId(gc);
   data.id = gc.id;
@@ -3736,6 +3756,13 @@ async function saveGiftCard(gc, opts) {
   }
 
   var res = await _sb.from("cartes_cadeaux").upsert(data).select();
+  // 2026-10-28 (v6.7.0) : colonnes usage_tva / qualif_tva absentes (migration non appliquée) -> qualification conservée dans
+  // l'historique du bon (nouveau bon seulement : l'historique n'est écrit qu'à la création), puis nouvel essai.
+  if (res.error && _qualif && /usage_tva|qualif_tva/.test(String(res.error.message || "") + " " + String(res.error.details || ""))) {
+    delete data.usage_tva; delete data.qualif_tva;
+    if (estNouveau) { var _h = (data.history || []).slice(); _h.unshift({ type: "qualification_tva", qualif: _qualif, date: gc.cr || null }); data.history = _h; gc.history = _h; }
+    res = await _sb.from("cartes_cadeaux").upsert(data).select();
+  }
   if (!res.error && (!res.data || !res.data.length)) res = { error: { message: "aucune modification accept\u00e9e par le serveur" } }; // 2026-10-15 : 0 ligne = echec
   if (res.error) { console.error("saveGiftCard upsert error:", res.error); _lxBonAlerte(gc, res.error.message); return { ok:false, error:res.error.message }; }
   gc._dejaEnBase = true;
@@ -3868,7 +3895,17 @@ async function saveTicketToDb(tk) {
         tva = Math.round((ttc - ht) * 100) / 100;
       } else { _ligneTaux = false; }
     } else { _ligneTaux = false; }
-    if (_ligneTaux) { /* HT / TVA déjà calculés ligne à ligne */ }
+    // 2026-10-28 (v6.7.0) : ticket au modèle bons v2 (vente de bon à usage multiple, hors champ de la TVA ; bon à usage unique
+    // déduit des seules lignes couvertes) -> HT / TVA par la ventilation de l'application (_lxVentilV2), identique à la Z et aux
+    // exports : la vente de BUM est HT = TTC, TVA 0. Ticket uniquement composé de ventes de BUM -> taux_tva 0 (« non soumis »).
+    // Format de l'empreinte serveur inchangé. Tickets sans ligne BUM ni bonsUtil : calculs ci-dessous strictement inchangés.
+    var _tauxCol = taux;
+    if (typeof window._lxTicketV2 === "function" && typeof window._lxVentilV2 === "function" && window._lxTicketV2(tk)) {
+      var _v2 = window._lxVentilV2(tk);
+      ht = _v2.ht; tva = _v2.tva;
+      if (Math.abs(_v2.horsCa) > 0.004 && Math.abs(_v2.ca) < 0.005) _tauxCol = 0;
+    }
+    else if (_ligneTaux) { /* HT / TVA déjà calculés ligne à ligne */ }
     else if (_txProd === taux) {
       ht = Math.round(ttc / (1 + taux/100) * 100) / 100;
       tva = Math.round((ttc - ht) * 100) / 100;
@@ -3918,7 +3955,7 @@ async function saveTicketToDb(tk) {
       total_ttc: ttc,
       total_ht: ht,
       total_tva: tva,
-      taux_tva: taux,
+      taux_tva: _tauxCol,
       mode_paiement: pay.mode,
       detail_paiement: pay.detail,
       status: tk.cancelled ? "cancelled" : "paid",

@@ -4442,10 +4442,19 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
   if (zm) {
     h += `<p style="margin:0 0 14px">Voici les documents comptables de <b>${nom}</b>${salon.siret ? ` (SIRET ${ccEsc(String(salon.siret).replace(/\s/g, ""))})` : ""} pour <b>${lib}</b>. Le mois est clôturé dans la caisse : les montants sont définitifs.</p>`;
     const L = [];
+    // 2026-10-28 (Luxyra 6.7.0) : total_ca de la clôture mensuelle = total des tickets ; les ventes de bons cadeaux à usage multiple
+    // (hors chiffre d'affaires, sans TVA — CGI art. 256 ter) sont détaillées dans raw_data.hors_ca_bum (docs/migrations_1027/bons_cadeaux_tva.sql).
+    let _zr = zm.raw_data; if (typeof _zr === "string") { try { _zr = JSON.parse(_zr); } catch (e) { _zr = null; } }
+    const _hcBum = _zr && Number(_zr.hors_ca_bum) ? Math.round(Number(_zr.hors_ca_bum) * 100) / 100 : 0;
+    if (_hcBum) {
+      L.push([franchise ? "Chiffre d'affaires (TVA non applicable)" : "Chiffre d'affaires TTC", `<b>${lxEcEur(Math.round((Number(zm.total_ca) - _hcBum) * 100) / 100)}</b>`]);
+      L.push(["Bons cadeaux à usage multiple vendus (hors chiffre d'affaires, sans TVA)", lxEcEur(_hcBum)]);
+      L.push(["Total des tickets du mois", lxEcEur(zm.total_ca)]);
+    } else
     L.push([franchise ? "Chiffre d'affaires (TVA non applicable)" : "Chiffre d'affaires TTC", `<b>${lxEcEur(zm.total_ca)}</b>`]);
     if (franchise) L.push(["TVA", "Non applicable, art. 293 B du CGI"]);
     else {
-      L.push(["dont HT", lxEcEur(zm.total_ht)]);
+      L.push([_hcBum ? "Chiffre d'affaires HT" : "dont HT", lxEcEur(Math.round((Number(zm.total_ht) - _hcBum) * 100) / 100)]); // 2026-10-28 : hors bons à usage multiple (HT = TTC, sans TVA)
       L.push([txP !== tx ? `TVA collectée (prestations ${lxEcTaux(tx)} · produits ${lxEcTaux(txP)})` : `TVA collectée (${lxEcTaux(tx)})`, lxEcEur(zm.total_tva)]);
     }
     const LIB = { cb: "Carte bancaire", esp: "Espèces", chq: "Chèque", vir: "Virement", enligne: "Payé en ligne", bon: "Bons cadeaux / avoirs", aut: "Autres" };
