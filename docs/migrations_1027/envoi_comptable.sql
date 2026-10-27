@@ -1,6 +1,9 @@
 -- Luxyra — 2026-10-27 — Envoi automatique des documents comptables au comptable de l'établissement (option A)
 -- NON APPLIQUÉ (préparé dans la branche envoi-comptable). À appliquer AVANT de déployer le worker et app.html.
 -- Idempotent (peut être rejoué). Rollback commenté en fin de fichier.
+-- 2026-10-27 (-2, décision d'Alexandre) : documents par défaut = FEC + pack Excel (doc_excel, nouveau) + rapport ;
+-- pack ZIP (doc_pack) en option, décoché par défaut. Rejouable sur une version antérieure de ce script (ADD COLUMN IF
+-- NOT EXISTS, SET DEFAULT, contrainte actif recréée) ; les lignes déjà enregistrées gardent leurs choix.
 --
 -- NF525 : AUCUNE table, fonction ni déclencheur fiscal n'est créé ou modifié (tickets, clotures*, nf525_*, jet,
 -- audit_log, corrections_reglement… intacts). Ces deux tables ne contiennent ni ticket ni montant de caisse saisi :
@@ -22,13 +25,17 @@ CREATE TABLE IF NOT EXISTS public.compta_envoi_config (
   actif       boolean NOT NULL DEFAULT false,
   cabinet     text,
   email       text,
-  doc_pack    boolean NOT NULL DEFAULT true,
+  doc_pack    boolean NOT NULL DEFAULT false,  -- pack ZIP (CSV séparés) : option
   doc_fec     boolean NOT NULL DEFAULT true,
-  doc_rapport boolean NOT NULL DEFAULT true,
+  doc_excel   boolean NOT NULL DEFAULT true,   -- pack Excel (bouton « Documents comptables »)
+  doc_rapport boolean NOT NULL DEFAULT true,   -- rapport du mois (page HTML, imprimable en PDF)
   copie       boolean NOT NULL DEFAULT true,
   maj_le      timestamptz NOT NULL DEFAULT now(),
   maj_par     text
 );
+-- version antérieure du script déjà appliquée : mise à niveau
+ALTER TABLE public.compta_envoi_config ADD COLUMN IF NOT EXISTS doc_excel boolean NOT NULL DEFAULT true;
+ALTER TABLE public.compta_envoi_config ALTER COLUMN doc_pack SET DEFAULT false;
 DO $$ BEGIN
   ALTER TABLE public.compta_envoi_config ADD CONSTRAINT compta_envoi_config_cabinet_ck CHECK (cabinet IS NULL OR char_length(cabinet) <= 120);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -36,10 +43,10 @@ DO $$ BEGIN
   ALTER TABLE public.compta_envoi_config ADD CONSTRAINT compta_envoi_config_email_ck -- contrôle de forme minimal ; le worker applique un contrôle plus strict
     CHECK (email IS NULL OR (char_length(email) <= 254 AND email ~ '^[^@[:space:]]+@[^@[:space:]]+[.][A-Za-z]{2,}$'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE public.compta_envoi_config ADD CONSTRAINT compta_envoi_config_actif_ck
-    CHECK (NOT actif OR (email IS NOT NULL AND (doc_pack OR doc_fec OR doc_rapport)));
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- contrainte recréée à chaque passage (elle inclut doc_excel depuis -2)
+ALTER TABLE public.compta_envoi_config DROP CONSTRAINT IF EXISTS compta_envoi_config_actif_ck;
+ALTER TABLE public.compta_envoi_config ADD CONSTRAINT compta_envoi_config_actif_ck
+  CHECK (NOT actif OR (email IS NOT NULL AND (doc_pack OR doc_fec OR doc_excel OR doc_rapport)));
 
 ALTER TABLE public.compta_envoi_config ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS compta_envoi_config_lecture ON public.compta_envoi_config;
@@ -103,6 +110,8 @@ COMMIT;
 --   select has_table_privilege('anon','public.compta_envois','SELECT');            -- attendu : false
 --   select has_table_privilege('authenticated','public.compta_envois','INSERT');   -- attendu : false
 --   select indexdef from pg_indexes where indexname = 'compta_envois_un_par_mois';
+--   select column_name, column_default from information_schema.columns where table_name='compta_envoi_config' and column_name like 'doc_%';
+--     attendu : doc_pack false, doc_fec true, doc_excel true, doc_rapport true
 --   Test du verrou (transaction annulée) :
 --   begin; insert into compta_envois(salon_id,mois,type,statut) values ('<salon>','2026-09','auto','reserve');
 --          insert into compta_envois(salon_id,mois,type,statut) values ('<salon>','2026-09','auto','reserve'); -- doit échouer (23505)

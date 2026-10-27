@@ -4334,7 +4334,8 @@ async function handleSmsRechargeAuto(request, env) {
 //    permission « Exporter des données » d'un profil PIN est contrôlée dans l'app (les profils PIN partagent le compte) ;
 //  - DESTINATAIRE lu ici dans la configuration enregistrée, jamais pris dans le corps de la requête (pas de relais ouvert) ;
 //  - 1 envoi réel par salon et par mois (index unique compta_envois_un_par_mois, ligne « reserve » posée AVANT Brevo) ;
-//    3 envois de test par 24 h ; pièces jointes : 3 au plus, noms imposés (motifs ci-dessous), 8 Mo au total ;
+//    3 envois de test par 24 h ; pièces jointes : 4 au plus (FEC, pack Excel, rapport, + pack ZIP en option ; 2026-10-27 -2),
+//    noms imposés (motifs ci-dessous), 8 Mo au total ;
 //  - envoi réel seulement si la caisse est en mode réel ET le mois clôturé (ligne clotures_mensuelles) ; chiffres de
 //    l'e-mail = ceux de la clôture mensuelle scellée (jamais ceux envoyés par l'app) ; contrôle CA app = CA clôture.
 // ============================================================
@@ -4362,7 +4363,8 @@ async function lxEcConfig(env, salonId) {
 function lxEcConfigPublic(c) {
   if (!c) return null;
   return { actif: c.actif === true, cabinet: c.cabinet || "", email: c.email || "", copie: c.copie !== false,
-    docs: { pack: c.doc_pack !== false, fec: c.doc_fec !== false, rapport: c.doc_rapport !== false }, maj_le: c.maj_le || null };
+    // 2026-10-27 (-2) : FEC + pack Excel + rapport par défaut ; pack ZIP en option (décoché par défaut)
+    docs: { fec: c.doc_fec !== false, excel: c.doc_excel !== false, rapport: c.doc_rapport !== false, pack: c.doc_pack === true }, maj_le: c.maj_le || null };
 }
 async function lxEcCloture(env, salonId, mois) {
   const a = await lxEcGet(env, `clotures_mensuelles?salon_id=eq.${encodeURIComponent(salonId)}&annee=eq.${Number(mois.slice(0, 4))}&mois=eq.${Number(mois.slice(5, 7))}&select=*&limit=1`);
@@ -4397,6 +4399,7 @@ function lxEcNomAutorise(nom, mois, siret) {
   const n = String(nom || "");
   if (!/^[A-Za-z0-9._-]{5,80}$/.test(n)) return false;
   if (n === `Luxyra_compta_${mois}.zip`) return "application/zip";
+  if (n === `Excel_comptable_${mois}.xlsx`) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (n === `Rapport_comptable_${mois}.html`) return "text/html";
   const siren = String(siret || "").replace(/\s/g, "").slice(0, 9);
   if (/^\d{9}$/.test(siren) && n === `${siren}FEC${lxEcFinMois(mois).replace(/-/g, "")}.txt`) return "text/plain";
@@ -4440,8 +4443,11 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
     h += `<p style="margin:0 0 14px">Cet e-mail confirme que l'envoi automatique des documents comptables de <b>${nom}</b> vers cette adresse est bien configuré.</p>`;
   }
   if (fichiers.length) {
-    const ico = (n) => (/\.zip$/.test(n) ? "📦" : "📄");
-    const quoi = (n) => (/\.zip$/.test(n) ? " (pack comptable)" : /FEC/.test(n) ? " (FEC)" : " (rapport, à ouvrir dans un navigateur)");
+    // 2026-10-27 (-2) : libellés honnêtes — le rapport est une page HTML (pas un PDF)
+    const ico = (n) => (/\.zip$/.test(n) ? "📦" : /\.xlsx$/.test(n) ? "📊" : "📄");
+    const quoi = (n) => (/\.zip$/.test(n) ? " — pack ZIP (fichiers CSV séparés)" : /\.xlsx$/.test(n) ? " — pack Excel du mois (synthèse, journal, TVA ou URSSAF, écritures, annulations…)" : /FEC/.test(n) ? " — FEC (fichier des écritures comptables)" : " — rapport du mois (page à ouvrir dans le navigateur, imprimable en PDF)");
+    const ordre = (n) => (/FEC/.test(n) ? 0 : /\.xlsx$/.test(n) ? 1 : /\.html$/.test(n) ? 2 : 3);
+    fichiers = fichiers.slice().sort((a, b) => ordre(a.nom) - ordre(b.nom));
     h += `<div style="background:#faf6ec;border:1px solid #e6dcc3;border-radius:12px;padding:14px 16px;font-size:13.5px"><b style="color:#9a7b2c">Pièces jointes</b><br>${fichiers.map((f) => `${ico(f.nom)} ${ccEsc(f.nom)}${quoi(f.nom)}`).join("<br>")}</div>`;
   }
   const N = [];
@@ -4450,6 +4456,7 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
   if ((notes || []).includes("test_sans_documents_ecart")) N.push("Documents non joints à ce test : les données de l'appareil ne correspondaient pas à la clôture du mois.");
   if (N.length) h += `<p style="margin:12px 0 0;font-size:12.5px;color:#666">${N.map(ccEsc).join("<br>")}</p>`;
   if (fichiers.some((f) => /FEC/.test(f.nom))) h += `<p style="margin:16px 0 6px;font-size:13.5px">Le FEC s'importe directement dans votre logiciel (Pennylane, Cegid, EBP, ACD…).</p>`;
+  if (fichiers.some((f) => /\.html$/.test(f.nom))) h += `<p style="margin:8px 0 6px;font-size:13.5px">Le rapport du mois est une page web, pas un PDF : ouvrez-le dans votre navigateur ; pour l'enregistrer en PDF, utilisez « Imprimer » puis « Enregistrer au format PDF ».</p>`;
   h += `<p style="margin:12px 0 0;font-size:13.5px">Pour toute question sur ces chiffres, répondez à cet e-mail : la réponse arrive à l'établissement.</p>`;
   h += `<p style="margin:12px 0 0;font-size:11.5px;color:#888">Ces documents contiennent des données personnelles (noms des clients dans le journal de caisse) transmises par l'établissement à son expert-comptable pour la tenue de sa comptabilité : merci de les conserver de façon sécurisée.</p>`;
   return h;
@@ -4475,8 +4482,8 @@ async function handleComptaEnvoi(request, env) {
       const docs = b.docs || {};
       if (email && (email.length > 254 || !LX_EC_RE_EMAIL.test(email))) return jsonResponse({ ok: false, error: "Adresse e-mail du comptable invalide" }, 400);
       if (actif && !email) return jsonResponse({ ok: false, error: "E-mail du comptable obligatoire pour activer l'envoi" }, 400);
-      const ligne = { salon_id: salonId, actif, cabinet: cabinet || null, email: email || null, doc_pack: docs.pack !== false, doc_fec: docs.fec !== false, doc_rapport: docs.rapport !== false, copie: b.copie !== false, maj_le: new Date().toISOString(), maj_par: auteur };
-      if (actif && !ligne.doc_pack && !ligne.doc_fec && !ligne.doc_rapport) return jsonResponse({ ok: false, error: "Cochez au moins un document" }, 400);
+      const ligne = { salon_id: salonId, actif, cabinet: cabinet || null, email: email || null, doc_pack: docs.pack === true, doc_fec: docs.fec !== false, doc_excel: docs.excel !== false, doc_rapport: docs.rapport !== false, copie: b.copie !== false, maj_le: new Date().toISOString(), maj_par: auteur };
+      if (actif && !ligne.doc_pack && !ligne.doc_fec && !ligne.doc_excel && !ligne.doc_rapport) return jsonResponse({ ok: false, error: "Cochez au moins un document" }, 400);
       const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/compta_envoi_config?on_conflict=salon_id`, { method: "POST", headers: _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=representation" }), body: JSON.stringify(ligne) });
       if (!r.ok) return jsonResponse({ ok: false, error: "Enregistrement impossible (" + r.status + ")" }, 500);
       const a = await r.json();
@@ -4540,7 +4547,7 @@ async function handleComptaEnvoi(request, env) {
       const caApp = Number(b.controle && b.controle.ca_ttc);
       if (!isFinite(caApp) || Math.abs(caApp - Number(zm.total_ca)) > 0.05) return jsonResponse({ ok: false, code: "ecart", error: "Les données ne correspondent pas à la clôture du mois" }, 409);
     }
-    if (entrants.length > 3) return jsonResponse({ ok: false, error: "Trop de pièces jointes" }, 400);
+    if (entrants.length > 4) return jsonResponse({ ok: false, error: "Trop de pièces jointes" }, 400);
     const pj = [], fichiers = [], vus = new Set(); let total = 0;
     for (const f of entrants) {
       const nom = String((f && f.nom) || "");
