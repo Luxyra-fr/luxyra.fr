@@ -1630,6 +1630,12 @@ async function handleCcAction(request, env) {
       const codeOk = String(b.code || "").trim().toUpperCase() === String(cmd.code_retrait || "").toUpperCase();
       if (!codeOk && b.sans_code !== true) return jsonResponse({ error: "Code de retrait incorrect" }, 403);
       // 2026-10-09 (NF525) : toute remise est rattachée à un ticket de caisse scellé (payée en ligne ou au salon)
+      // 2026-10-28 (-2, recettes en ligne) : commande payée en ligne DÉJÀ en caisse (ticket créé par le serveur au paiement,
+      // recette_tk_num) -> la remise reprend ce ticket, aucun nouveau ticket ; un autre n° de ticket est refusé (double CA).
+      if (cmd.paye && cmd.recette_tk_num) {
+        if (String(b.ticket_num || "").trim() && String(b.ticket_num).trim() !== String(cmd.recette_tk_num)) return jsonResponse({ error: `Cette commande est déjà en caisse (ticket n°${cmd.recette_tk_num}, créé au paiement en ligne) : la remise ne crée pas de nouveau ticket. Rechargez l'application.` }, 409);
+        b.ticket_num = String(cmd.recette_tk_num);
+      }
       if (!String(b.ticket_num || "").trim()) return jsonResponse({ error: cmd.paye ? "Remise sans ticket impossible : passez par la caisse (mode « Payé en ligne »). Mettez l'application à jour (rechargez la page)." : "Commande non payée : encaissez-la d'abord en caisse" }, 409);
       const maj = await ccMaj(env, cmd.id, {
         status: "retiree", collected_at: now,
@@ -1855,6 +1861,11 @@ async function handleWebhookConnect(request, env) {
           if (st >= 400 && !/d[ée]j[àa]|already/i.test(txt)) await reportWorkerError(env, "worker:stripe-webhook-connect", new Error(`finalisation refusée ${t || md.subtype} ${st}`), { session: data.id, compte, reponse: txt.slice(0, 300) }, "warning");
         }
       }
+    } else if (event.type === "charge.refunded") {
+      // 2026-10-28 (-2, recettes en ligne) : remboursement fait HORS Luxyra (tableau de bord Stripe du salon, litige…) -> ticket
+      // négatif scellé côté serveur (RPC lx_recette_remboursement_externe, idempotente par refund_id ; les remboursements faits
+      // par Luxyra sont reconnus et ignorés). Les remboursements sont relus chez Stripe au nom du compte (jamais crus sur parole).
+      await lxRemboursementsExternes(env, compte, data);
     } else if (event.type === "charge.dispute.created") {
       const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&stripe_connect_id=eq.${encodeURIComponent(compte)}&limit=1`, { headers: _sbHeaders(env) });
       const sa = sr.ok ? await sr.json() : [];
@@ -1869,6 +1880,25 @@ async function handleWebhookConnect(request, env) {
     return jsonResponse({ error: "processing" }, 500);  // Stripe réessaiera
   }
   return jsonResponse({ received: true });
+}
+
+// 2026-10-28 (-2, recettes en ligne) : remboursements d'un paiement client (compte connecté) -> tickets négatifs côté serveur.
+// charge = objet « charge » de l'évènement charge.refunded (relu chez Stripe). Chaque remboursement réussi ou en cours est
+// transmis une fois à lx_recette_remboursement_externe (idempotente : refund_id) ; échec -> exception (Stripe réessaie).
+async function lxRemboursementsExternes(env, compte, charge) {
+  const pi = charge && charge.payment_intent ? String(charge.payment_intent) : "";
+  if (!/^pi_[A-Za-z0-9_]+$/.test(pi)) return { ok: false, ignore: "sans payment_intent" };
+  const liste = await stripeAPI(env, `refunds?payment_intent=${encodeURIComponent(pi)}&limit=100`, null, "GET", compte);
+  const refunds = (liste && Array.isArray(liste.data)) ? liste.data : [];
+  const out = [];
+  for (const rf of refunds) {
+    if (!rf || !rf.id || ["failed", "canceled"].includes(String(rf.status || ""))) continue;
+    const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_recette_remboursement_externe`, { method: "POST", headers: _sbHeaders(env),
+      body: JSON.stringify({ p_pi: pi, p_refund_id: rf.id, p_cents: Number(rf.amount) || 0, p_at: new Date((Number(rf.created) || Math.floor(Date.now() / 1000)) * 1000).toISOString() }) });
+    if (!r.ok) throw new Error("lx_recette_remboursement_externe " + r.status + " " + (await r.text().catch(() => "")).slice(0, 200));
+    out.push(await r.json().catch(() => null));
+  }
+  return { ok: true, resultats: out };
 }
 
 // ============================================================
