@@ -23940,6 +23940,8 @@ function _lxRapportDonnees(periodM){
     totalTTC:totalTTC, totalHT:totalHT, totalTVA:totalTVA, totalRemises:totalRemises, nbTickets:nbTickets,
     nbAnnul:annul.length, totalAnnul:totalAnnul,
     pay:{cb:totalCB, esp:totalEsp, chq:totalCheq, vir:totalVir, autre:totalAutre, enligne:totalEnL},
+    // 2026-10-27 (-3, audit) : règlements saisis ≠ CA (ex. remise appliquée après le règlement) : écart affiché, comme l'Excel
+    ecartReglements:Math.round((totalCB+totalEsp+totalCheq+totalVir+totalAutre+totalEnL-totalTTC)*100)/100,
     collabs:collabs, aCollabs:!!(T && T.length), jours:jours, annulations:annulations, retours:retours,
     salon:{nom:SALON_CONFIG.nom||"", adresse:SALON_CONFIG.adresse||"", cp:SALON_CONFIG.cp||"", ville:SALON_CONFIG.ville||"", siret:SALON_CONFIG.siret||"", forme:lxFormeJurLabel()||"", tva:SALON_CONFIG.tva||""},
     version:(SALON_CONFIG.version||"v6.6.1") };
@@ -24023,6 +24025,7 @@ function _buildRapportHTML(periodM){
   html += pctRow('🌐 Payé en ligne (acomptes en ligne déduits, acomptes conservés, empreintes, Click & Collect)', D.pay.enligne);
   html += '<tr class="tot"><td>Total</td><td class="num">'+fmtMoney(totalTTC)+'</td><td class="num">100,0 %</td></tr>';
   html += '</table>';
+  if(Math.abs(D.ecartReglements)>=0.01) html += '<div class="warning">\u00c9cart entre les r\u00e8glements saisis et le chiffre d\u2019affaires : '+fmtMoney(D.ecartReglements)+' (ticket dont le r\u00e8glement d\u00e9passe le montant ; expliqu\u00e9 sur la cl\u00f4ture Z du jour).</div>';
 
   if(D.aCollabs){
     var _cHT=!isMicro && !D.dualTVA;
@@ -24094,7 +24097,7 @@ function _buildRapportHTML(periodM){
   if(isMicro) html += 'Régime micro-entrepreneur — TVA non applicable, art. 293B du CGI<br>';
   else html += 'Taux TVA appliqué : '+txTVA+'%<br>';
   html += 'Pour le contrôle fiscal : utilisez l\'export FEC (Paramètres &gt; Caisse) — format légal arrêté du 29/07/2013<br>';
-  html += '<em>Conservation obligatoire 6 ans (CGI art. L102B)</em>';
+  html += '<em>Conservation obligatoire 6 ans (LPF art. L102 B)</em>'; // 2026-10-27 (-3, audit) : L102 B est un article du LPF, pas du CGI
   html += '</div></body></html>';
   return html;
 }
@@ -24247,6 +24250,7 @@ async function _lxRapportPDF(mois, opts){
   pRow("Carte bancaire",D.pay.cb); pRow("Espèces",D.pay.esp); pRow("Chèque",D.pay.chq); pRow("Virement",D.pay.vir); pRow("Autre (bons cadeaux, avoirs…)",D.pay.autre);
   pRow("Payé en ligne (acomptes en ligne déduits, acomptes conservés, empreintes, Click & Collect)",D.pay.enligne);
   table(["Mode","Montant","Part"], pr, ["Total", E(D.totalTTC), "100,0 %"], ["l","r","r"]);
+  if(Math.abs(D.ecartReglements)>=0.01){ doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(180,90,20); var _le=doc.splitTextToSize(TX("Écart entre les règlements saisis et le chiffre d'affaires : "+E(D.ecartReglements)+" (ticket dont le règlement dépasse le montant ; expliqué sur la clôture Z du jour)."), W-2*M); _le.forEach(function(l,i){ doc.text(l, M, y-3+i*3.6); }); y+=_le.length*3.6+2; }
   if(D.aCollabs){
     titre("3. Répartition par collaborateur");
     var cHT=!D.isMicro && !D.dualTVA;
@@ -24551,7 +24555,7 @@ function showExportsComptables(){
   h += '</div>';
   h += '<div style="flex:1;min-width:0">';
   h += '<div style="font-weight:800;color:var(--gold);font-size:15px;margin-bottom:2px;letter-spacing:.3px">Pack Excel comptable \u2014 pour votre cabinet</div>';
-  h += '<div style="font-size:12px;color:var(--text2);line-height:1.5">1 fichier .xlsx avec 9 onglets : <strong>Synth\u00e8se \u00b7 Journal \u00b7 '+(isMicro?'URSSAF':'TVA')+' \u00b7 Compta \u00b7 Annulations \u00b7 Stripe \u00b7 Cartes cadeaux \u00b7 Caisse \u00b7 Guide</strong>. C\'est <strong style="color:var(--gold)">tout ce que votre comptable a besoin</strong> en 1 envoi.</div>';
+  h += '<div style="font-size:12px;color:var(--text2);line-height:1.5">1 fichier .xlsx : <strong>Synth\u00e8se \u00b7 Journal \u00b7 '+(isMicro?'URSSAF':'TVA')+' \u00b7 Compta \u00b7 Guide</strong>, et selon le mois Annulations \u00b7 Corrections de r\u00e8glement \u00b7 Stripe \u00b7 Caisse. C\'est <strong style="color:var(--gold)">tout ce que votre comptable a besoin</strong> en 1 envoi.</div>';
   h += '</div>';
   h += '</div>';
   h += '<button class="btn"'+(isEmpty?' disabled':'')+' style="width:100%;margin-top:14px;padding:13px;background:linear-gradient(135deg,var(--gold),#b8960f);color:#0a0a0a;font-weight:800;font-size:14px;border:none;border-radius:10px;cursor:'+(isEmpty?'not-allowed':'pointer')+';letter-spacing:.5px;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;gap:8px" onclick="'+(isEmpty?'':'cM();expExcelComptable()')+'">';
@@ -25499,9 +25503,16 @@ async function _lxPackComptableZip(mois, opts){
     ));
   } else {
     // R\u00e9gime r\u00e9el TVA : r\u00e9cap classique
+    // 2026-10-27 (-3, audit) : deux taux (tvaProduits ≠ taux des prestations) -> une ligne par taux puis le total, comme l'export
+    // « Récap TVA » (avant : une seule ligne au taux des prestations portant le HT des deux taux). Un seul taux : inchangé.
+    var _rTva=[[txTVA+" %",csvNum(totalHT)+" \u20AC",csvNum(totalTVA)+" \u20AC",csvNum(totalTTC)+" \u20AC",(dn.length+ps2.length)]];
+    if(_dualTVA){ var _tP2=Math.round(_tPrest*100)/100, _tQ2=Math.round(_tProd*100)/100;
+      _rTva=[[txTVA+" % (prestations)",csvNum(_hPP)+" \u20AC",csvNum(Math.round((_tP2-_hPP)*100)/100)+" \u20AC",csvNum(_tP2)+" \u20AC",""],
+        [_txpP+" % (produits)",csvNum(_hQP)+" \u20AC",csvNum(Math.round((_tQ2-_hQP)*100)/100)+" \u20AC",csvNum(_tQ2)+" \u20AC",""],
+        ["TOTAL",csvNum(totalHT)+" \u20AC",csvNum(totalTVA)+" \u20AC",csvNum(totalTTC)+" \u20AC",(dn.length+ps2.length)]]; }
     folder.file("02_recap_tva_"+accM+".csv", csvBuildPro("R\u00e9cap TVA mensuel (d\u00e9claration CA3/CA12)", accM,
       ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"],
-      [[txTVA+" %",csvNum(totalHT)+" \u20AC",csvNum(totalTVA)+" \u20AC",csvNum(totalTTC)+" \u20AC",(dn.length+ps2.length)]]
+      _rTva
     ));
   }
 
@@ -25934,10 +25945,15 @@ async function _lxExcelComptableClasseur(mois, opts){
       ["Taux TVA","Base HT (€)","TVA collectée (€)","Total TTC (€)","Nb opérations"],
       [txTVA+" %", totalHT, totalTVAMt, totalTTC, dn.length+ps2.length]
     ];
+    var _ovTva={ "5,0":"pct", "5,4":"int" };
+    // 2026-10-27 (-3, audit) : deux taux -> une ligne par taux + total (avant : une seule ligne « taux des prestations »)
+    if(_dualTVA){ var _tvP=Math.round((tPrest-_hPX)*100)/100, _tvQ=Math.round((tProd-_hQX)*100)/100;
+      tvaD.splice(5,1,[txTVA+" % (prestations)", _hPX, _tvP, tPrest, ""],[_txpX+" % (produits)", _hQX, _tvQ, tProd, ""],["TOTAL", totalHT, totalTVAMt, totalTTC, dn.length+ps2.length]);
+      _ovTva={ "5,0":"pct", "6,0":"pct", "7,4":"int" }; }
     XLSX.utils.book_append_sheet(wb, makeSheet(tvaD, {
       titleRows:[0], subRows:[1,2], headerRows:[4],
       numCols:[1,2,3],
-      cellOverrides: { "5,0":"pct", "5,4":"int" },
+      cellOverrides: _ovTva,
       titleSpan:5, colWidths:[12, 16, 18, 16, 14]
     }), "3 — TVA");
   }
@@ -26032,7 +26048,7 @@ async function _lxExcelComptableClasseur(mois, opts){
       var ccD = [
         ["CARTES CADEAUX — "+mL],
         [SALON_CONFIG.nomComplet()],
-        ["Comptablement : émission = produit constaté d'avance (487). Utilisation = bascule en CA."],
+        ["Vente du bon = ticket de caisse (CA et TVA à la vente). Utilisation = déduite du ticket, sans nouveau CA."], // 2026-10-27 (-3, audit) : aligné sur le journal
         [],
         ["Type","Date","N°","Client","Montant (€)"]
       ];
@@ -26112,7 +26128,7 @@ async function _lxExcelComptableClasseur(mois, opts){
     ["4 — Compta", "Écritures débit/crédit format PCG FR (706/707/4457/512)", "Importable Sage/EBP/Cegid"],
     ["5 — Annulations", "Tickets annulés avec motifs et hash", "Obligation art. 286 CGI"],
     ["6 — Stripe", "Acomptes en ligne via Stripe Connect (brut, frais, net)", "Si Stripe Connect actif"],
-    ["7 — Cartes cadeaux", "Émissions et utilisations du mois", "Compte 487 produits constatés d'avance"],
+    ["Bons cadeaux", "Vente = ticket de caisse (CA et TVA à la vente) ; utilisation = déduite du ticket, sans nouveau CA", "Registre des bons : Bons cadeaux › Exporter"], // 2026-10-27 (-3, audit) : l'onglet « 7 — Cartes cadeaux » (compte 487) n'est jamais produit et contredisait le journal (706)
     ["8 — Caisse", "Mouvements caisse, mises au coffre, remises en banque", "Justificatifs cash"],
     [],
     ["BANDE Z PDF VS EXCEL : à quoi sert chaque document ?"],
@@ -40126,7 +40142,11 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     _fecLegs(t,totalTTC).forEach(function(lg){ _fl(lg.acc,lg.lib,_lib,lg.amt,"D"); });
     _fl(ACC_VENTE_PREST,"Prestations de services",_lib,prestHT,"C");
     _fl(ACC_VENTE_PROD,"Ventes de produits",_lib,prodHT,"C");
-    _fl(ACC_TVA,"TVA collectée "+tva+"%",_lib,totalTVA,"C");
+    // 2026-10-27 (-3, audit) : deux taux -> TVA en deux lignes, chacune avec son taux (avant : une seule ligne « TVA collectée
+    // 20% » portant aussi la TVA des produits). Même compte de TVA (paramétrable) ; un seul taux : ligne inchangée.
+    if(_dualTVA){ var _tvaQ=Math.round(((Number(_sp.prod)||0)-prodHT)*100)/100, _tvaP=Math.round((totalTVA-_tvaQ)*100)/100;
+      _fl(ACC_TVA,"TVA collectée "+tva+"%",_lib,_tvaP,"C"); _fl(ACC_TVA,"TVA collectée "+Number(SALON_CONFIG.tvaProduits)+"%",_lib,_tvaQ,"C"); }
+    else _fl(ACC_TVA,"TVA collectée "+tva+"%",_lib,totalTVA,"C");
   });
   // 2026-10-14 audit (BOI-TVA-DECLA-30-10-30 §90) : corrections de règlement APRÈS clôture -> écriture distincte à la date de la
   // pièce (date_correction), entre comptes de trésorerie (plus / moins, somme nulle), pièce CR<n°>.
@@ -40332,7 +40352,7 @@ function _lxEcRendreCarte(){
   h+='<div style="font-size:12px;color:var(--text2);margin:10px 0 4px">E-mail du comptable *</div><input id="ecEmail" type="email" maxlength="254" autocomplete="off" value="'+_lxEsc(c.email||"")+'" placeholder="compta@cabinet.fr" style="width:100%;box-sizing:border-box">';
   h+='<div style="font-size:12px;color:var(--text2);margin:12px 0 2px">Documents envoyés</div>';
   h+=chk("ecFec", dc.fec, "FEC du mois", "(fichier des écritures comptables, format officiel, importable dans Pennylane, Cegid, EBP… ; SIRET obligatoire)");
-  h+=chk("ecExcel", dc.excel, "Pack Excel du mois", "(le fichier du bouton « Télécharger l’Excel comptable » de Caisse › Documents comptables : synthèse, journal, TVA ou URSSAF, écritures, annulations, cartes cadeaux, caisse)");
+  h+=chk("ecExcel", dc.excel, "Pack Excel du mois", "(le fichier du bouton « Télécharger l’Excel comptable » de Caisse › Documents comptables : synthèse, journal, TVA ou URSSAF, écritures, annulations, caisse)");
   h+=chk("ecRapport", dc.rapport, "Rapport du mois", "(fichier PDF : CA, TVA, moyens de paiement, collaborateurs, détail par jour ; le même que le bouton « Rapport du mois (PDF) » de Documents comptables)");
   h+=chk("ecPack", dc.pack, "Pack ZIP (facultatif)", "(fichiers CSV séparés : journal de caisse, journal comptable, annulations, paiements en ligne, acomptes… ; utile si votre comptable les demande)");
   h+=chk("ecCopie", c.copie!==false, "M’envoyer une copie", st.salon_email?"(à "+_lxEsc(st.salon_email)+")":"(aucune adresse e-mail dans Infos établissement)");
@@ -40523,6 +40543,9 @@ async function exportEBP(){
     }
     g.ttc=R(g.ttc+ttc); g.prestHT=R(g.prestHT+prestHT); g.prodHT=R(g.prodHT+prodHT); g.tva=R(g.tva+tvaT);
     var dp=t.detail_paiement; if(typeof dp==="string"){try{dp=JSON.parse(dp);}catch(_e){dp=null;}}
+    // 2026-10-27 (-3, audit) : détail de paiement dont la somme ≠ total du ticket (ex. remise appliquée après le règlement) ->
+    // même repli que le FEC (_fecLegs) : tout le ticket sur le mode du ticket ; avant, la journée était déséquilibrée de l'écart.
+    if(dp&&typeof dp==="object"&&!Array.isArray(dp)){ var _sDp=0; for(var _kD in dp) _sDp+=Number(dp[_kD])||0; if(Math.abs(R(_sDp)-ttc)>=0.02) dp=null; }
     if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
       g.esp=R(g.esp+(Number(dp.esp)||0)); g.cb=R(g.cb+(Number(dp.cb)||0));
       g.enligne=R(g.enligne+(Number(dp.enligne)||0)); g.chq=R(g.chq+(Number(dp.chq)||0));
@@ -40542,7 +40565,8 @@ async function exportEBP(){
   lines.push("### Salon : "+(SALON_CONFIG.nom||"")+(SALON_CONFIG.adresse?" - "+SALON_CONFIG.adresse+" "+(SALON_CONFIG.cp||"")+" "+(SALON_CONFIG.ville||""):""));
   lines.push("### Periode : "+dateFrom.split("-").reverse().join("/")+" - "+dateTo.split("-").reverse().join("/"));
   var num=0;
-  function L(date,compte,lib,montant,sens){ num++; lines.push(num+";"+jjmmaa(date)+";"+A.journal+";"+compte+";;"+lib+";"+jjmmaa(date)+";"+mt(montant)+";"+sens+";"+jjmmaa(date)+";EUR"); }
+  // 2026-10-27 (-3, audit) : montant négatif (journée où les annulations / retours dépassent les ventes) -> montant positif, sens inversé
+  function L(date,compte,lib,montant,sens){ if(R(montant)<0){ montant=-R(montant); sens=(sens==="D")?"C":"D"; } num++; lines.push(num+";"+jjmmaa(date)+";"+A.journal+";"+compte+";;"+lib+";"+jjmmaa(date)+";"+mt(montant)+";"+sens+";"+jjmmaa(date)+";EUR"); }
   Object.keys(days).sort().forEach(function(d){
     var g=days[d];
     L(d, A.caisse, "RECETTES DU JOUR", g.ttc, "D");
@@ -40775,6 +40799,9 @@ async function exportQuadratus(){
     }
     g.ttc=R(g.ttc+ttc); g.prestHT=R(g.prestHT+prestHT); g.prodHT=R(g.prodHT+prodHT); g.tva=R(g.tva+tvaT);
     var dp=t.detail_paiement; if(typeof dp==="string"){try{dp=JSON.parse(dp);}catch(_e){dp=null;}}
+    // 2026-10-27 (-3, audit) : détail de paiement dont la somme ≠ total du ticket (ex. remise appliquée après le règlement) ->
+    // même repli que le FEC (_fecLegs) : tout le ticket sur le mode du ticket ; avant, la journée était déséquilibrée de l'écart.
+    if(dp&&typeof dp==="object"&&!Array.isArray(dp)){ var _sDp=0; for(var _kD in dp) _sDp+=Number(dp[_kD])||0; if(Math.abs(R(_sDp)-ttc)>=0.02) dp=null; }
     if(dp&&typeof dp==="object"&&!Array.isArray(dp)){
       g.esp=R(g.esp+(Number(dp.esp)||0)); g.cb=R(g.cb+(Number(dp.cb)||0));
       g.enligne=R(g.enligne+(Number(dp.enligne)||0)); g.chq=R(g.chq+(Number(dp.chq)||0));
@@ -40795,6 +40822,9 @@ async function exportQuadratus(){
   var lines=[];
   var pieceNum=0;
   function L(compte,P,sens,montant,lib){
+    // 2026-10-27 (-3, audit) : cents() prend la valeur absolue -> un montant négatif était écrit dans le sens normal (une journée
+    // d'annulation de 2 000 € devenait une VENTE de 2 000 €). Montant négatif = sens inversé.
+    if(R(montant)<0){ montant=-R(montant); sens=(sens==="D")?"C":"D"; }
     var piece=J+lpad(pieceNum,6);
     var s="M"+rpad(compte,8)+rpad(J,2)+"000"+P.jjmmaa+"   "+rpad("Caisse",7)+piece+"-"+lpad(P.dd,2)+sens+"+"+cents(montant)+"                                            "+piece+"   "+rpad(J,2)+"    "+rpad(lib,32);
     lines.push(s);
