@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261027-2"></script>
+<script src="luxyra-supabase.js?v=20261027-3"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261027-2";
+  var attendu="20261027-3";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -23846,8 +23846,14 @@ function _nextMonth(ym){
 // - D\u00e9tail par mode de paiement
 // - Liste annulations
 // - Mentions l\u00e9gales NF525 + 293B si micro
-// Helper : g\u00e9n\u00e8re le HTML du rapport (utilis\u00e9 par expRapportComptablePDF + expPackComptable)
-function _buildRapportHTML(periodM){
+// 2026-10-27 (-3, rapport PDF) : les chiffres du rapport sont calculés UNE fois par _lxRapportDonnees (calculs repris tels
+// quels de l'ancien _buildRapportHTML, aucun nouveau calcul fiscal) ; deux rendus lisent ces mêmes données :
+//  - _buildRapportHTML(mois) : page HTML imprimable (aperçu, pack ZIP) — octet pour octet identique à avant en mono-taux ;
+//  - _lxRapportPDF(mois, opts) : vrai fichier PDF (jsPDF, /vendor/jspdf), bouton « Rapport » et envoi au comptable.
+// Correctif d'export (audit du 27/10) : établissement à DEUX taux (tvaProduits ≠ taux des prestations) — le détail jour par
+// jour calculait le HT au seul taux des prestations (somme des jours ≠ total) ; il ventile désormais prestations / produits
+// comme la synthèse et le récap TVA ; la répartition par collaborateur n'affiche plus de HT/TVA à un taux unique (TTC seul).
+function _lxRapportDonnees(periodM){
   var dn = AP.filter(function(a){return a.st==="done" && a.date.indexOf(periodM)===0 && _lxCaOk(a);});
   var ps2 = PS.filter(function(p){return p.date.indexOf(periodM)===0;});
   var annul = AP.filter(function(a){return a.cancelled && a.cancelDate && a.cancelDate.indexOf(periodM)===0;});
@@ -23868,13 +23874,13 @@ function _buildRapportHTML(periodM){
     totalCB += _bk.cb; totalEsp += _bk.esp; totalCheq += _bk.chq; totalVir += _bk.vir; totalAutre += _bk.bon + _bk.aut; totalEnL += (_bk.enligne||0);
   });
   var _dualTVA=(SALON_CONFIG.tvaProduits!=null && Number(SALON_CONFIG.tvaProduits)!==Number(txTVA));
+  var _txpR=_dualTVA?Number(SALON_CONFIG.tvaProduits):Number(txTVA);
   var totalHT, totalTVA;
   if(isMicro){ totalHT=totalTTC; totalTVA=0; }
   else if(_dualTVA){
     var _tPR=0,_tQR=0;
     dn.forEach(function(a){var _s=_splitPrestProd(a);_tPR+=_s.prest;_tQR+=_s.prod;});
     ps2.forEach(function(pp){_tQR+=(Number(pp.pr)||0);});
-    var _txpR=Number(SALON_CONFIG.tvaProduits);
     var _hPR=Math.round(_tPR/(1+txTVA/100)*100)/100;
     var _hQR=Math.round(_tQR/(1+_txpR/100)*100)/100;
     totalHT=Math.round((_hPR+_hQR)*100)/100;
@@ -23898,19 +23904,55 @@ function _buildRapportHTML(periodM){
       if(perStyAcc[a.stId]){ perStyAcc[a.stId].nb++; perStyAcc[a.stId].rem += (a.remise||0); }
     } else if(perStyAcc[a.stId]){ perStyAcc[a.stId].ca += a.pr; perStyAcc[a.stId].nb++; perStyAcc[a.stId].rem += (a.remise||0); }
   });
+  var collabs=[];
+  if(T && T.length){
+    T.forEach(function(t){
+      var s = perStyAcc[t.id]; if(!s) return;
+      var sht = isMicro ? s.ca : Math.round(s.ca/(1+txTVA/100)*100)/100;
+      var stva = isMicro ? 0 : Math.round((s.ca-sht)*100)/100;
+      collabs.push({n:s.n, ca:s.ca, ht:(_dualTVA&&!isMicro)?null:sht, tva:(_dualTVA&&!isMicro)?null:stva, nb:s.nb, rem:s.rem});
+    });
+  }
 
   var byDay = {};
   dn.concat(ps2).forEach(function(x){
     var d = x.date;
-    if(!byDay[d]) byDay[d] = {ttc:0, n:0};
+    if(!byDay[d]) byDay[d] = {ttc:0, n:0, prest:0, prod:0};
     byDay[d].ttc += Number(x.pr)||0;
     byDay[d].n++;
+    if(_dualTVA && !isMicro){ if(dn.indexOf(x)>=0){ var _sd=_splitPrestProd(x); byDay[d].prest+=_sd.prest; byDay[d].prod+=_sd.prod; } else byDay[d].prod+=(Number(x.pr)||0); }
+  });
+  var jours=Object.keys(byDay).sort().map(function(d){
+    var t = byDay[d].ttc, ht, tv;
+    if(isMicro){ ht=t; tv=0; }
+    else if(_dualTVA){ var _hp=Math.round(byDay[d].prest/(1+txTVA/100)*100)/100, _hq=Math.round(byDay[d].prod/(1+_txpR/100)*100)/100; ht=Math.round((_hp+_hq)*100)/100; tv=Math.round((t-ht)*100)/100; }
+    else { ht = Math.round(t/(1+txTVA/100)*100)/100; tv = Math.round((t-ht)*100)/100; }
+    return {date:d, n:byDay[d].n, ttc:t, ht:ht, tva:tv};
   });
 
-  function fmtMoney(n){return Number(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" \u20ac";}
+  var annulations=annul.map(function(a){ return {date:a.date, tkNum:a.tkNum||null, cancelDate:a.cancelDate, motif:(a.cancelReason||'(non précisé)').slice(0,60), pr:Number(a.pr||0)}; });
+  // 2026-10-17 retour partiel : remboursements partiels du mois (tickets négatifs, déjà inclus dans le chiffre d'affaires)
+  var retours=[];
+  try{ dn.filter(function(x){ return _lxEstRetour(x); }).forEach(function(x){ var ri=_lxRetourInfo(x)||{};
+    retours.push({date:x.date, tkNum:x.tkNum||null, refTk:(ri.refTk!=null?ri.refTk:'--'), refDate:ri.refDate||null, motif:String(ri.motif||'').slice(0,60), pr:Number(x.pr||0)}); }); }catch(_eRR){ retours=null; }
+
+  return { mois:periodM, mLabel:mLabel, isMicro:isMicro, txTVA:txTVA, dualTVA:_dualTVA, txTVAProduits:_txpR,
+    totalTTC:totalTTC, totalHT:totalHT, totalTVA:totalTVA, totalRemises:totalRemises, nbTickets:nbTickets,
+    nbAnnul:annul.length, totalAnnul:totalAnnul,
+    pay:{cb:totalCB, esp:totalEsp, chq:totalCheq, vir:totalVir, autre:totalAutre, enligne:totalEnL},
+    collabs:collabs, aCollabs:!!(T && T.length), jours:jours, annulations:annulations, retours:retours,
+    salon:{nom:SALON_CONFIG.nom||"", adresse:SALON_CONFIG.adresse||"", cp:SALON_CONFIG.cp||"", ville:SALON_CONFIG.ville||"", siret:SALON_CONFIG.siret||"", forme:lxFormeJurLabel()||"", tva:SALON_CONFIG.tva||""},
+    version:(SALON_CONFIG.version||"v6.6.1") };
+}
+// Helper : génère le HTML du rapport (aperçu imprimable du bouton « Rapport » + pack ZIP)
+function _buildRapportHTML(periodM){
+  var D=_lxRapportDonnees(periodM);
+  var isMicro=D.isMicro, txTVA=D.txTVA, mLabel=D.mLabel, nbTickets=D.nbTickets, totalTTC=D.totalTTC, totalHT=D.totalHT, totalTVA=D.totalTVA;
+
+  function fmtMoney(n){return Number(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";}
   function fmtDate(d){var dp=d.split("-");return dp[2]+"/"+dp[1]+"/"+dp[0];}
 
-  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport comptable '+mLabel+' \u2014 '+(SALON_CONFIG.nom||"")+'</title>';
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Rapport comptable '+mLabel+' — '+(SALON_CONFIG.nom||"")+'</title>';
   html += '<style>';
   html += '@page{size:A4;margin:14mm}';
   html += 'body{font-family:Arial,sans-serif;color:#000;font-size:11px;line-height:1.4;margin:0;background:#fff}';
@@ -23932,9 +23974,9 @@ function _buildRapportHTML(periodM){
   html += '.print-btn{position:fixed;top:10px;right:10px;padding:10px 16px;background:#c8a84e;color:#000;font-weight:700;border:none;border-radius:6px;cursor:pointer;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.2)}';
   html += '@media print{.print-btn{display:none}}';
   html += '</style></head><body>';
-  html += '<button class="print-btn" onclick="window.print()">\ud83d\udda8 Imprimer / Sauvegarder en PDF</button>';
+  html += '<button class="print-btn" onclick="window.print()">🖨 Imprimer / Sauvegarder en PDF</button>';
 
-  html += '<h1>\ud83d\udcca RAPPORT COMPTABLE \u2014 '+mLabel.toUpperCase()+'</h1>';
+  html += '<h1>📊 RAPPORT COMPTABLE — '+mLabel.toUpperCase()+'</h1>';
   html += '<div class="header-info">';
   html += '<div class="salon-meta"><strong>'+(SALON_CONFIG.nom||"")+'</strong>';
   if(SALON_CONFIG.adresse) html += '<br>'+SALON_CONFIG.adresse+(SALON_CONFIG.cp?', '+SALON_CONFIG.cp:'')+(SALON_CONFIG.ville?' '+SALON_CONFIG.ville:'');
@@ -23942,27 +23984,27 @@ function _buildRapportHTML(periodM){
   if(lxFormeJurLabel()) html += '<br>'+lxFormeJurLabel();
   html += '</div>';
   html += '<div style="text-align:right;font-size:10px;color:#666">';
-  html += '\u00c9dit\u00e9 le '+new Date().toLocaleDateString("fr-FR")+'<br>';
-  html += 'P\u00e9riode : '+mLabel+'<br>';
+  html += 'Édité le '+new Date().toLocaleDateString("fr-FR")+'<br>';
+  html += 'Période : '+mLabel+'<br>';
   html += 'Caisse conforme art. 286-I-3 bis du CGI';
   html += '</div></div>';
 
-  if(isMicro) html += '<div class="warning">\ud83d\udccb <strong>R\u00e9gime micro-entrepreneur</strong> \u2014 TVA non applicable, art. 293B du CGI</div>';
+  if(isMicro) html += '<div class="warning">📋 <strong>Régime micro-entrepreneur</strong> — TVA non applicable, art. 293B du CGI</div>';
   if(nbTickets===0){
-    html += '<div class="warning" style="background:#fee;border-color:#f87171;color:#c33">\u26a0\ufe0f Aucun ticket encaiss\u00e9 sur cette p\u00e9riode. Le rapport ne contient aucune donn\u00e9e \u00e0 analyser.</div>';
+    html += '<div class="warning" style="background:#fee;border-color:#f87171;color:#c33">⚠️ Aucun ticket encaissé sur cette période. Le rapport ne contient aucune donnée à analyser.</div>';
   }
 
-  html += '<h2>1. Synth\u00e8se de la p\u00e9riode</h2>';
+  html += '<h2>1. Synthèse de la période</h2>';
   html += '<div class="kpi-row">';
   html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalTTC)+'</span><span class="kpi-l">CA '+(isMicro?'brut':'TTC')+'</span></div>';
   if(!isMicro){
     html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalHT)+'</span><span class="kpi-l">CA HT</span></div>';
-    html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalTVA)+'</span><span class="kpi-l">TVA collect\u00e9e</span></div>';
+    html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalTVA)+'</span><span class="kpi-l">TVA collectée</span></div>';
   }
   html += '<div class="kpi"><span class="kpi-v">'+nbTickets+'</span><span class="kpi-l">Tickets</span></div>';
   html += '</div>';
-  if(annul.length){
-    html += '<div style="font-size:10px;color:#999;margin-top:4px">\u21b3 Hors '+annul.length+' annulation'+(annul.length>1?'s':'')+' ('+fmtMoney(totalAnnul)+')</div>';
+  if(D.nbAnnul){
+    html += '<div style="font-size:10px;color:#999;margin-top:4px">↳ Hors '+D.nbAnnul+' annulation'+(D.nbAnnul>1?'s':'')+' ('+fmtMoney(D.totalAnnul)+')</div>';
   }
 
   html += '<h2>2. Ventilation par mode de paiement</h2>';
@@ -23973,52 +24015,48 @@ function _buildRapportHTML(periodM){
     var pct = totalTTC>0 ? (val/totalTTC*100).toFixed(1) : '0.0';
     return '<tr><td>'+label+'</td><td class="num">'+fmtMoney(val)+'</td><td class="num">'+pct+' %</td></tr>';
   }
-  html += pctRow('\ud83d\udcb3 Carte bancaire', totalCB);
-  html += pctRow('\ud83d\udcb5 Esp\u00e8ces', totalEsp);
-  html += pctRow('\ud83d\udcdd Ch\u00e8que', totalCheq);
-  html += pctRow('\ud83c\udfe6 Virement', totalVir);
-  html += pctRow('Autre (bons cadeaux, avoirs\u2026)', totalAutre);
-  html += pctRow('\ud83c\udf10 Pay\u00e9 en ligne (acomptes en ligne d\u00e9duits, acomptes conserv\u00e9s, empreintes, Click & Collect)', totalEnL);
+  html += pctRow('💳 Carte bancaire', D.pay.cb);
+  html += pctRow('💵 Espèces', D.pay.esp);
+  html += pctRow('📝 Chèque', D.pay.chq);
+  html += pctRow('🏦 Virement', D.pay.vir);
+  html += pctRow('Autre (bons cadeaux, avoirs…)', D.pay.autre);
+  html += pctRow('🌐 Payé en ligne (acomptes en ligne déduits, acomptes conservés, empreintes, Click & Collect)', D.pay.enligne);
   html += '<tr class="tot"><td>Total</td><td class="num">'+fmtMoney(totalTTC)+'</td><td class="num">100,0 %</td></tr>';
   html += '</table>';
 
-  if(T && T.length){
-    html += '<h2>3. R\u00e9partition par collaborateur</h2>';
-    html += '<table><tr><th>Collaborateur</th><th class="num">CA '+(isMicro?'brut':'TTC')+'</th>'+(!isMicro?'<th class="num">HT</th><th class="num">TVA</th>':'')+'<th class="num">Tickets</th><th class="num">Remises</th></tr>';
-    T.forEach(function(t){
-      var s = perStyAcc[t.id]; if(!s) return;
-      var sht = isMicro ? s.ca : Math.round(s.ca/(1+txTVA/100)*100)/100;
-      var stva = isMicro ? 0 : Math.round((s.ca-sht)*100)/100;
+  if(D.aCollabs){
+    var _cHT=!isMicro && !D.dualTVA;
+    html += '<h2>3. Répartition par collaborateur</h2>';
+    html += '<table><tr><th>Collaborateur</th><th class="num">CA '+(isMicro?'brut':'TTC')+'</th>'+(_cHT?'<th class="num">HT</th><th class="num">TVA</th>':'')+'<th class="num">Tickets</th><th class="num">Remises</th></tr>';
+    D.collabs.forEach(function(s){
       html += '<tr>';
       html += '<td>'+s.n+'</td>';
       html += '<td class="num">'+fmtMoney(s.ca)+'</td>';
-      if(!isMicro){
-        html += '<td class="num">'+fmtMoney(sht)+'</td>';
-        html += '<td class="num">'+fmtMoney(stva)+'</td>';
+      if(_cHT){
+        html += '<td class="num">'+fmtMoney(s.ht)+'</td>';
+        html += '<td class="num">'+fmtMoney(s.tva)+'</td>';
       }
       html += '<td class="num">'+s.nb+'</td>';
-      html += '<td class="num">'+(s.rem>0?fmtMoney(s.rem):'\u2014')+'</td>';
+      html += '<td class="num">'+(s.rem>0?fmtMoney(s.rem):'—')+'</td>';
       html += '</tr>';
     });
     html += '</table>';
+    if(!isMicro && D.dualTVA) html += '<div style="font-size:9px;color:#666">Deux taux de TVA : HT et TVA par taux dans la synthèse (prestations '+txTVA+' % / produits '+D.txTVAProduits+' %).</div>';
   }
 
-  html += '<h2>4. D\u00e9tail jour par jour</h2>';
-  if(Object.keys(byDay).length===0){
-    html += '<p style="color:#999;font-style:italic">Aucune transaction sur la p\u00e9riode.</p>';
+  html += '<h2>4. Détail jour par jour</h2>';
+  if(D.jours.length===0){
+    html += '<p style="color:#999;font-style:italic">Aucune transaction sur la période.</p>';
   } else {
     html += '<table><tr><th>Date</th><th class="num">Tickets</th><th class="num">CA '+(isMicro?'brut':'TTC')+'</th>'+(!isMicro?'<th class="num">HT</th><th class="num">TVA</th>':'')+'</tr>';
-    Object.keys(byDay).sort().forEach(function(d){
-      var t = byDay[d].ttc;
-      var ht = isMicro ? t : Math.round(t/(1+txTVA/100)*100)/100;
-      var tv = isMicro ? 0 : Math.round((t-ht)*100)/100;
+    D.jours.forEach(function(j){
       html += '<tr>';
-      html += '<td>'+fmtDate(d)+'</td>';
-      html += '<td class="num">'+byDay[d].n+'</td>';
-      html += '<td class="num">'+fmtMoney(t)+'</td>';
+      html += '<td>'+fmtDate(j.date)+'</td>';
+      html += '<td class="num">'+j.n+'</td>';
+      html += '<td class="num">'+fmtMoney(j.ttc)+'</td>';
       if(!isMicro){
-        html += '<td class="num">'+fmtMoney(ht)+'</td>';
-        html += '<td class="num">'+fmtMoney(tv)+'</td>';
+        html += '<td class="num">'+fmtMoney(j.ht)+'</td>';
+        html += '<td class="num">'+fmtMoney(j.tva)+'</td>';
       }
       html += '</tr>';
     });
@@ -24027,43 +24065,45 @@ function _buildRapportHTML(periodM){
     html += '</tr></table>';
   }
 
-  if(annul.length){
+  if(D.annulations.length){
     html += '<h2>5. Annulations (NF525)</h2>';
-    html += '<table><tr><th>Date orig.</th><th>N\u00b0 Tk</th><th>Date annul.</th><th>Motif</th><th class="num">Montant</th></tr>';
-    annul.forEach(function(a){
+    html += '<table><tr><th>Date orig.</th><th>N° Tk</th><th>Date annul.</th><th>Motif</th><th class="num">Montant</th></tr>';
+    D.annulations.forEach(function(a){
       html += '<tr>';
       html += '<td>'+fmtDate(a.date)+'</td>';
-      html += '<td>'+(a.tkNum||'\u2014')+'</td>';
+      html += '<td>'+(a.tkNum||'—')+'</td>';
       html += '<td>'+fmtDate(a.cancelDate)+'</td>';
-      html += '<td style="font-size:9px">'+(a.cancelReason||'(non pr\u00e9cis\u00e9)').slice(0,60)+'</td>';
-      html += '<td class="num">'+fmtMoney(a.pr||0)+'</td>';
+      html += '<td style="font-size:9px">'+a.motif+'</td>';
+      html += '<td class="num">'+fmtMoney(a.pr)+'</td>';
       html += '</tr>';
     });
     html += '</table>';
   }
   // 2026-10-17 retour partiel : remboursements partiels du mois (tickets négatifs, déjà inclus dans le chiffre d'affaires ci-dessus)
-  try{ var _retR=dn.filter(function(x){ return _lxEstRetour(x); });
-    if(_retR.length){
+  try{ var _retR=D.retours;
+    if(_retR && _retR.length){
       html += '<h2>5 bis. Retours / remboursements partiels</h2>';
-      html += '<table><tr><th>Date</th><th>N\u00b0 Tk</th><th>Ticket d\u2019origine</th><th>Motif</th><th class="num">Montant</th></tr>';
-      _retR.forEach(function(x){ var ri=_lxRetourInfo(x)||{};
-        html += '<tr><td>'+fmtDate(x.date)+'</td><td>'+(x.tkNum||'\u2014')+'</td><td>#'+_lxEsc(ri.refTk!=null?ri.refTk:'--')+' du '+_lxJJMMAAAA(ri.refDate)+'</td><td style="font-size:9px">'+_lxEsc(String(ri.motif||'').slice(0,60))+'</td><td class="num">'+fmtMoney(x.pr||0)+'</td></tr>'; });
+      html += '<table><tr><th>Date</th><th>N° Tk</th><th>Ticket d’origine</th><th>Motif</th><th class="num">Montant</th></tr>';
+      _retR.forEach(function(x){
+        html += '<tr><td>'+fmtDate(x.date)+'</td><td>'+(x.tkNum||'—')+'</td><td>#'+_lxEsc(x.refTk)+' du '+_lxJJMMAAAA(x.refDate)+'</td><td style="font-size:9px">'+_lxEsc(x.motif)+'</td><td class="num">'+fmtMoney(x.pr||0)+'</td></tr>'; });
       html += '</table>';
     } }catch(_eRR){}
 
   html += '<div class="footer">';
-  html += '<strong>Document \u00e9dit\u00e9 par Luxyra '+(SALON_CONFIG.version||"v6.6.1")+'</strong> \u2014 Caisse conforme art. 286-I-3 bis du CGI (cha\u00eenage SHA-256)<br>';
-  if(isMicro) html += 'R\u00e9gime micro-entrepreneur \u2014 TVA non applicable, art. 293B du CGI<br>';
-  else html += 'Taux TVA appliqu\u00e9 : '+txTVA+'%<br>';
-  html += 'Pour le contr\u00f4le fiscal : utilisez l\'export FEC (Param\u00e8tres &gt; Caisse) \u2014 format l\u00e9gal arr\u00eat\u00e9 du 29/07/2013<br>';
+  html += '<strong>Document édité par Luxyra '+D.version+'</strong> — Caisse conforme art. 286-I-3 bis du CGI (chaînage SHA-256)<br>';
+  if(isMicro) html += 'Régime micro-entrepreneur — TVA non applicable, art. 293B du CGI<br>';
+  else html += 'Taux TVA appliqué : '+txTVA+'%<br>';
+  html += 'Pour le contrôle fiscal : utilisez l\'export FEC (Paramètres &gt; Caisse) — format légal arrêté du 29/07/2013<br>';
   html += '<em>Conservation obligatoire 6 ans (CGI art. L102B)</em>';
   html += '</div></body></html>';
   return html;
 }
 
-function expRapportComptablePDF(){
+// 2026-10-27 (-3) : aperçu HTML imprimable (ancien comportement du bouton, conservé : lecture à l'écran, téléphone sans
+// lecteur PDF). Le fichier à archiver / envoyer est le PDF (expRapportComptablePDF).
+function expRapportComptableApercu(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
-    if(typeof requireAdmin==="function"){requireAdmin("Imprimer le rapport comptable",expRapportComptablePDF);return;}
+    if(typeof requireAdmin==="function"){requireAdmin("Imprimer le rapport comptable",expRapportComptableApercu);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
   var html = _buildRapportHTML(accM);
@@ -24097,6 +24137,173 @@ function expRapportComptablePDF(){
   }, 100);
   if(typeof auditLog==="function") auditLog("EXPORT_RAPPORT_PDF","P\u00e9riode "+accM);
   if(typeof toast==="function") toast("\ud83d\udcc4 Rapport ouvert. Boutons Imprimer / Enregistrer PDF en haut.","success");
+}
+// =====================================================================
+// 2026-10-27 (-3) — RAPPORT DU MOIS EN VRAI PDF (jsPDF 4.2.1 + jspdf-autotable 5.0.9, licence MIT, hébergés dans /vendor/jspdf,
+// chargés à la demande : aucun CDN tiers). Même source de chiffres que l'aperçu HTML (_lxRapportDonnees) : aucun nouveau calcul.
+// Le PDF n'est NI signé NI certifié : il reproduit des données de caisse scellées. Il porte l'empreinte SHA-256 des données du
+// rapport (JSON des chiffres affichés) et, si elle est lisible, l'empreinte de la clôture mensuelle scellée du mois.
+// =====================================================================
+var LX_PDF_LIB={charge:null};
+function _lxChargerJsPdf(){
+  var ok=function(){ return !!(window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && typeof window.jspdf.jsPDF.API.autoTable==="function"); };
+  if(ok()) return Promise.resolve();
+  if(LX_PDF_LIB.charge) return LX_PDF_LIB.charge;
+  function un(src){ return new Promise(function(res, rej){ var s=document.createElement("script"); s.src=src; s.onload=res; s.onerror=function(){ rej(new Error("Chargement de l'outil PDF impossible")); }; document.head.appendChild(s); }); }
+  LX_PDF_LIB.charge=un("https://luxyra.fr/vendor/jspdf/jspdf.umd.min.js").then(function(){ return un("https://luxyra.fr/vendor/jspdf/jspdf.plugin.autotable.min.js"); })
+    .then(function(){ if(!ok()) throw new Error("Outil PDF incomplet"); })
+    .catch(function(e){ LX_PDF_LIB.charge=null; throw e; });
+  return LX_PDF_LIB.charge;
+}
+// Polices standard du PDF (Helvetica, jeu WinAnsi) : accents, €, œ, « », — OK ; espaces insécables (séparateur de milliers
+// fr-FR) remplacées par des espaces ; émojis et caractères hors jeu retirés.
+var LX_PDF_WINANSI="€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ";
+function _lxPdfTxt(x){
+  var s=String(x==null?"":x).replace(/[      ]/g," "), o="";
+  for(var i=0;i<s.length;i++){ var c=s.charCodeAt(i); if(c===10||(c>=32&&c<=126)||(c>=160&&c<=255)||LX_PDF_WINANSI.indexOf(s[i])>=0) o+=s[i]; }
+  return o.replace(/ {2,}/g," ").trim();
+}
+function _lxPdfEur(n){ return _lxPdfTxt(Number(n||0).toLocaleString("fr-FR",{minimumFractionDigits:2,maximumFractionDigits:2})+" €"); }
+function _lxPdfDate(d){ var s=String(d||"").slice(0,10); return /^\d{4}-\d{2}-\d{2}$/.test(s)?s.split("-").reverse().join("/"):(s||"—"); }
+async function _lxSha256Hex(txt){
+  var b=await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(txt)));
+  return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2,"0"); }).join("");
+}
+// Clôture mensuelle scellée du mois (lecture seule). Retour : {lue:true, ligne|null} ou {lue:false} (lecture impossible).
+async function _lxRapportClotureMois(mois){
+  try{
+    if(window._lxDemo || typeof _sb==="undefined" || !_sb || typeof _salonId==="undefined" || !_salonId) return {lue:false};
+    var q=_sb.from("clotures_mensuelles").select("*").eq("salon_id",_salonId).eq("annee",Number(mois.slice(0,4))).eq("mois",Number(mois.slice(5,7))).limit(1);
+    var r=(typeof _lxAvecDelai==="function")?await _lxAvecDelai(q,6000):await q;
+    if(!r || r.error || r.__delai) return {lue:false};
+    return {lue:true, ligne:(r.data&&r.data[0])||null};
+  }catch(_e){ return {lue:false}; }
+}
+// Construit le PDF du mois. opts.cloture : ligne de clôture mensuelle déjà connue ({total_ca, hash, …}) ; sinon lue en base.
+// Retour : {octets:Uint8Array, nom, empreinte, D}
+async function _lxRapportPDF(mois, opts){
+  opts=opts||{};
+  mois=_lxMoisExport(mois);
+  await _lxChargerJsPdf();
+  var D=_lxRapportDonnees(mois);
+  var empreinte=await _lxSha256Hex(JSON.stringify(D));
+  var zm=opts.cloture!==undefined?{lue:!!opts.cloture, ligne:opts.cloture||null}:await _lxRapportClotureMois(mois);
+  var jsPDF=window.jspdf.jsPDF;
+  var doc=new jsPDF({unit:"mm", format:"a4", orientation:"portrait", compress:true});
+  var TX=_lxPdfTxt, E=_lxPdfEur, W=210, M=14, y=M;
+  var OR=[200,168,78], NOIR=[26,26,26], GRIS=[102,102,102];
+  var nowP=new Date(), quand=TX(nowP.toLocaleDateString("fr-FR",{timeZone:"Europe/Paris"})+" à "+nowP.toLocaleTimeString("fr-FR",{timeZone:"Europe/Paris",hour:"2-digit",minute:"2-digit"}));
+  var fin=_lxEcFinMois(mois), S=D.salon;
+  var regime=D.isMicro?"TVA non applicable, art. 293 B du CGI (franchise en base)":(D.dualTVA?("TVA : prestations "+D.txTVA+" % / produits "+D.txTVAProduits+" %"):("TVA : taux "+D.txTVA+" %"));
+  doc.setProperties({ title:TX("Rapport comptable "+D.mLabel+" - "+S.nom), subject:TX("Rapport du mois "+mois+" (données de caisse)"),
+    author:TX(S.nom||"Établissement"), keywords:TX("rapport comptable; "+mois+"; sha256-donnees:"+empreinte+(zm.ligne&&zm.ligne.hash?"; cloture-mensuelle:"+zm.ligne.hash:"")),
+    creator:TX("Luxyra "+D.version) });
+  // En-tête
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.setTextColor(OR[0],OR[1],OR[2]);
+  doc.text(TX("Rapport comptable — "+D.mLabel), M, y+5); y+=8;
+  doc.setDrawColor(OR[0],OR[1],OR[2]); doc.setLineWidth(0.6); doc.line(M, y, W-M, y); y+=5;
+  doc.setTextColor(NOIR[0],NOIR[1],NOIR[2]); doc.setFontSize(10); doc.setFont("helvetica","bold"); doc.text(TX(S.nom||"Établissement"), M, y);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+  var g=[], d=[];
+  if(S.adresse) g.push(S.adresse+(S.cp?", "+S.cp:"")+(S.ville?" "+S.ville:""));
+  g.push("SIRET : "+(S.siret||"non renseigné")); if(S.forme) g.push(S.forme); if(S.tva&&!D.isMicro) g.push("N° TVA intracommunautaire : "+S.tva); g.push(regime);
+  d.push("Période : du "+_lxPdfDate(mois+"-01")+" au "+_lxPdfDate(fin)); d.push("Généré le "+quand); d.push("Logiciel : Luxyra "+D.version);
+  var yg=y+4.5, yd=y;
+  g.forEach(function(l){ doc.text(TX(l), M, yg, {maxWidth:112}); yg+=4.2; });
+  d.forEach(function(l){ doc.text(TX(l), W-M, yd, {align:"right"}); yd+=4.2; });
+  y=Math.max(yg, yd)+2;
+  // Origine des chiffres
+  var orig=["Origine : tickets de caisse encaissés du mois (journal scellé, chaînage SHA-256), mêmes calculs que l'aperçu imprimable, le pack Excel et le pack ZIP."];
+  if(zm.ligne){
+    var caZ=Math.round(Number(zm.ligne.total_ca)*100)/100, ec=Math.round((D.totalTTC-caZ)*100)/100;
+    orig.push("Clôture mensuelle scellée du mois : CA "+E(caZ)+(Math.abs(ec)<=0.05?" — concordante avec ce rapport.":" — ÉCART de "+E(ec)+" avec ce rapport (données de l'appareil à recharger)."));
+    if(zm.ligne.hash) orig.push("Empreinte de la clôture mensuelle : "+String(zm.ligne.hash));
+  } else orig.push(zm.lue?"Clôture mensuelle : pas encore faite pour ce mois (chiffres provisoires tant que le mois n'est pas clôturé).":"Clôture mensuelle : non consultée (hors connexion ou démonstration).");
+  doc.setFillColor(250,246,236); doc.setDrawColor(230,220,195); doc.setLineWidth(0.2);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8);
+  var lo=[]; orig.forEach(function(l){ lo=lo.concat(doc.splitTextToSize(TX(l), W-2*M-6)); });
+  doc.rect(M, y, W-2*M, lo.length*3.9+4, "FD"); doc.setTextColor(60,60,60);
+  lo.forEach(function(l,i){ doc.text(l, M+3, y+5+i*3.9); }); y+=lo.length*3.9+8;
+  if(D.nbTickets===0){ doc.setTextColor(200,50,50); doc.setFontSize(9); doc.text(TX("Aucun ticket encaissé sur cette période."), M, y); y+=6; }
+  var theme={ font:"helvetica", fontSize:8.5, cellPadding:1.6, textColor:NOIR, lineColor:[221,221,221], lineWidth:0.1 };
+  var head={ fillColor:[240,232,208], textColor:NOIR, fontStyle:"bold" };
+  function titre(t){ if(y>265){ doc.addPage(); y=M; } doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(NOIR[0],NOIR[1],NOIR[2]); doc.setFillColor(OR[0],OR[1],OR[2]); doc.rect(M, y-3.6, 1.2, 5, "F"); doc.text(TX(t), M+3, y); y+=3; }
+  function table(cols, rows, foot, aligns){
+    doc.autoTable({ startY:y, margin:{left:M, right:M, bottom:18}, head:[cols.map(TX)], body:rows.map(function(r){ return r.map(TX); }), foot:foot?[foot.map(TX)]:undefined, showFoot:"lastPage",
+      styles:theme, headStyles:head, footStyles:{fillColor:[250,250,242], textColor:NOIR, fontStyle:"bold"}, theme:"grid",
+      columnStyles:(function(){ var o={}; (aligns||[]).forEach(function(a,i){ if(a==="r") o[i]={halign:"right"}; }); return o; })(),
+      didParseCell:function(h){ if(h.section!=="body" && (aligns||[])[h.column.index]==="r") h.cell.styles.halign="right"; } });
+    y=doc.lastAutoTable.finalY+7;
+  }
+  var ttcL=D.isMicro?"CA brut":"CA TTC";
+  titre("1. Synthèse de la période");
+  var sy=[[ttcL, E(D.totalTTC)]];
+  if(!D.isMicro){ sy.push(["CA HT", E(D.totalHT)]); sy.push(["TVA collectée", E(D.totalTVA)]); }
+  sy.push(["Tickets", String(D.nbTickets)]);
+  if(D.nbAnnul) sy.push(["Annulations du mois (hors chiffre)", D.nbAnnul+" ("+E(D.totalAnnul)+")"]);
+  table(["Indicateur","Valeur"], sy, null, ["l","r"]);
+  titre("2. Ventilation par mode de paiement");
+  var pr=[]; function pRow(l,v){ if(v<=0) return; pr.push([l, E(v), (D.totalTTC>0?(v/D.totalTTC*100).toFixed(1):"0.0")+" %"]); }
+  pRow("Carte bancaire",D.pay.cb); pRow("Espèces",D.pay.esp); pRow("Chèque",D.pay.chq); pRow("Virement",D.pay.vir); pRow("Autre (bons cadeaux, avoirs…)",D.pay.autre);
+  pRow("Payé en ligne (acomptes en ligne déduits, acomptes conservés, empreintes, Click & Collect)",D.pay.enligne);
+  table(["Mode","Montant","Part"], pr, ["Total", E(D.totalTTC), "100,0 %"], ["l","r","r"]);
+  if(D.aCollabs){
+    titre("3. Répartition par collaborateur");
+    var cHT=!D.isMicro && !D.dualTVA;
+    table(["Collaborateur", ttcL].concat(cHT?["HT","TVA"]:[]).concat(["Tickets","Remises"]),
+      D.collabs.map(function(s){ return [s.n, E(s.ca)].concat(cHT?[E(s.ht),E(s.tva)]:[]).concat([String(s.nb), s.rem>0?E(s.rem):"—"]); }), null, ["l","r"].concat(cHT?["r","r"]:[]).concat(["r","r"]));
+  }
+  titre("4. Détail jour par jour");
+  if(!D.jours.length){ doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.setTextColor(GRIS[0],GRIS[1],GRIS[2]); doc.text(TX("Aucune transaction sur la période."), M, y+2); y+=8; }
+  else table(["Date","Tickets",ttcL].concat(D.isMicro?[]:["HT","TVA"]),
+    D.jours.map(function(j){ return [_lxPdfDate(j.date), String(j.n), E(j.ttc)].concat(D.isMicro?[]:[E(j.ht),E(j.tva)]); }),
+    ["Total", String(D.nbTickets), E(D.totalTTC)].concat(D.isMicro?[]:[E(D.totalHT),E(D.totalTVA)]), ["l","r","r","r","r"]);
+  if(D.annulations.length){
+    titre("5. Annulations");
+    table(["Date orig.","N° ticket","Date annul.","Motif","Montant"], D.annulations.map(function(a){ return [_lxPdfDate(a.date), a.tkNum?String(a.tkNum):"—", _lxPdfDate(a.cancelDate), a.motif, E(a.pr)]; }), null, ["l","l","l","l","r"]);
+  }
+  if(D.retours && D.retours.length){
+    titre("5 bis. Retours / remboursements partiels");
+    table(["Date","N° ticket","Ticket d'origine","Motif","Montant"], D.retours.map(function(x){ return [_lxPdfDate(x.date), x.tkNum?String(x.tkNum):"—", "#"+x.refTk+" du "+_lxJJMMAAAA(x.refDate), x.motif, E(x.pr)]; }), null, ["l","l","l","l","r"]);
+  }
+  // Mentions
+  var men=["Document édité par Luxyra "+D.version+" — caisse conforme à la loi anti-fraude à la TVA (art. 286, I, 3° bis du CGI), attestation éditeur au modèle officiel.",
+    D.isMicro?"Régime micro-entrepreneur — TVA non applicable, art. 293 B du CGI.":("Taux de TVA appliqué : "+D.txTVA+" %"+(D.dualTVA?" (prestations) / "+D.txTVAProduits+" % (produits)":"")+"."),
+    "Pour le contrôle fiscal : export FEC (Paramètres › Conformité caisse) — format de l'article A. 47 A-1 du LPF.",
+    "Conservation : 6 ans (art. L. 102 B du LPF).",
+    "Ce PDF n'est ni signé électroniquement ni certifié : il reproduit les données de caisse scellées du mois. Empreinte SHA-256 des données du rapport : "+empreinte+" (calculée sur les chiffres ci-dessus ; un rapport régénéré depuis les mêmes tickets donne la même empreinte)."];
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5);
+  var ml=[]; men.forEach(function(l){ ml=ml.concat(doc.splitTextToSize(TX(l), W-2*M)); });
+  if(y+ml.length*3.6+4>279){ doc.addPage(); y=M; }
+  doc.setDrawColor(204,204,204); doc.setLineWidth(0.2); doc.line(M, y-2, W-M, y-2);
+  doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(GRIS[0],GRIS[1],GRIS[2]);
+  ml.forEach(function(l,i){ doc.text(l, M, y+2+i*3.6); });
+  // Pied de page : pagination « page x / y » + empreinte courte
+  var n=doc.getNumberOfPages();
+  for(var i=1;i<=n;i++){
+    doc.setPage(i); doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(GRIS[0],GRIS[1],GRIS[2]);
+    doc.text(TX("Rapport comptable "+D.mLabel+" — "+(S.nom||"")+" — données SHA-256 "+empreinte.slice(0,16)+"…"), M, 290);
+    doc.text(TX("page "+i+" / "+n), W-M, 290, {align:"right"});
+  }
+  var octets=new Uint8Array(doc.output("arraybuffer"));
+  return {octets:octets, nom:"Rapport_comptable_"+mois+".pdf", empreinte:empreinte, D:D};
+}
+// Bouton « Rapport du mois (PDF) » : téléchargement du PDF du mois affiché.
+async function expRapportComptablePDF(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Télécharger le rapport comptable",expRapportComptablePDF);return;}
+    if(typeof toast==="function")toast("Accès non autorisé","warning");return;
+  }
+  var mois=accM;
+  if(typeof toast==="function") toast("Préparation du rapport PDF…","info");
+  var R;
+  try{ R=await _lxRapportPDF(mois); }
+  catch(e){ console.warn("[rapport PDF]", e); showAlert("Rapport PDF impossible : "+((e&&e.message)||e)+". L'aperçu imprimable reste disponible.","error"); return; }
+  var blob=new Blob([R.octets],{type:"application/pdf"}), url=URL.createObjectURL(blob), a=document.createElement("a");
+  a.href=url; a.download=R.nom; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+  if(typeof auditLog==="function") auditLog("EXPORT_RAPPORT_PDF","Période "+mois+" - fichier PDF - données SHA-256 "+R.empreinte.slice(0,16));
+  if(typeof toast==="function") toast("📄 "+R.nom+" téléchargé","success");
 }
 
 // =====================================================================
@@ -24370,6 +24577,9 @@ function showExportsComptables(){
   var exports = [];
   // Bande Z = document fiscal obligatoire NF525 (\u00e0 imprimer, signer, conserver 6 ans)
   exports.push({id:"bandez", svg:SVG_BANDEZ, color:"#d4a843", title:"Bande Z mensuelle (PDF)"+((typeof lxAttConcerne!=="function"||lxAttConcerne())?" \u2014 obligatoire":""), desc:((typeof lxAttConcerne!=="function"||lxAttConcerne())?"Document fiscal de la caisse anti-fraude (obligatoire).":"Récapitulatif mensuel de caisse (franchise de TVA : non obligatoire, conseillé).")+" \u00c0 imprimer, signer et conserver 6 ans. R\u00e9capitulatif caisse complet : modes paiement, collab, jour, mouvements, coffre, banque, cl\u00f4tures Z.", fn:"printBandeZ", count:""});
+  // 2026-10-27 (-3) : rapport du mois en vrai PDF (fichier à archiver / transmettre) + aperçu imprimable à l'écran
+  exports.push({id:"rapportpdf", svg:SVG_RAPPORT, color:"#c8a84e", title:"Rapport du mois (PDF)", desc:"Synth\u00e8se CA"+(isMicro?"":" HT / TVA")+", modes de paiement, collaborateurs, d\u00e9tail par jour, annulations. Fichier PDF pagin\u00e9 (\u00e9tablissement, p\u00e9riode, date de g\u00e9n\u00e9ration, empreinte des donn\u00e9es) \u2014 le m\u00eame que celui envoy\u00e9 au comptable.", fn:"expRapportComptablePDF", count:""});
+  exports.push({id:"rapportapercu", svg:SVG_RAPPORT, color:"#9a9a9a", title:"Rapport du mois \u2014 aper\u00e7u \u00e0 l\u2019\u00e9cran", desc:"M\u00eames chiffres, page \u00e0 lire dans le navigateur (imprimable).", fn:"expRapportComptableApercu", count:""});
   if(isMicro){
     exports.push({id:"urssaf", svg:SVG_URSSAF, color:"#a78bfa", title:"D\u00e9claration URSSAF mensuelle (CSV)", desc:"CA brut + cotisations estim\u00e9es (services "+_lxTxUrssafLib("svc")+" / ventes "+_lxTxUrssafLib("prod")+", formation professionnelle incluse) \u00e0 reporter sur autoentrepreneur.urssaf.fr", fn:"expDeclarationURSSAF", count:""});
   }
@@ -39768,6 +39978,21 @@ async function exportFEC(){
   if(typeof auditLog==="function") auditLog("EXPORT_FEC", "Période "+dateFrom+" → "+dateTo+" · "+R.nbTickets+" tickets · "+R.nbLignes+" écritures");
   if(typeof toast==="function") toast("✓ FEC téléchargé : "+fileName+" ("+R.nbTickets+" tickets, "+R.nbLignes+" écritures)","success");
 }
+// 2026-10-27 (-3, audit FEC) : nom du fichier selon l'art. A. 47 A-1 du LPF (X) et le BOI-CF-IOR-60-40-20 § 370 :
+// <SIREN>FEC<date de clôture de l'exercice AAAAMMJJ>.txt pour l'exercice entier ; extrait d'une partie de l'exercice =
+// même nom + suffixe de période (_AAAAMM pour un mois civil entier, sinon _AAAAMMJJ-AAAAMMJJ). Avant : date de fin de la
+// période choisie (ex. 123456789FEC20260930.txt pour septembre, alors que l'exercice se clôt au 31/12).
+function _lxFecNomFichier(siren, dateFrom, dateTo){
+  var ex=(typeof lxExercicePeriode==="function")?lxExercicePeriode(dateTo):{debut:dateFrom, fin:dateTo};
+  var c=function(d){ return String(d||"").slice(0,10).replace(/-/g,""); };
+  var nom=siren+"FEC"+c(ex.fin);
+  if(!(dateFrom===ex.debut && dateTo===ex.fin)){
+    var m=String(dateFrom).slice(0,7);
+    if(String(dateFrom).slice(8,10)==="01" && String(dateTo).slice(0,7)===m && dateTo===_lxEcFinMois(m)) nom+="_"+m.replace("-","");
+    else nom+="_"+c(dateFrom)+"-"+c(dateTo);
+  }
+  return nom+".txt";
+}
 // 2026-10-27 (envoi au comptable) : contenu du FEC pour une période, SANS téléchargement ni lecture de l'écran.
 // Corps strictement repris de exportFEC (mêmes lectures, mêmes comptes, mêmes lignes). Retour :
 // {ok:true, fileName, content (sans BOM : le fichier = BOM UTF-8 + content), nbTickets, nbLignes} ou {ok:false, msg, type}.
@@ -39855,10 +40080,13 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
   var headers=["JournalCode","JournalLib","EcritureNum","EcritureDate","CompteNum","CompteLib","CompAuxNum","CompAuxLib","PieceRef","PieceDate","EcritureLib","Debit","Credit","EcritureLet","DateLet","ValidDate","Montantdevise","Idevise"];
   var lines=[headers.join("\t")];
 
-  var ecrNum=0;
+  // 2026-10-27 (-3, audit FEC) : écritures rangées par DATE puis numérotées (BOI-CF-IOR-60-40-20 § 40 : numérotation
+  // chronologique croissante, sans rupture ni inversion). Avant, les corrections de règlement après clôture étaient ajoutées
+  // en fin de fichier avec un numéro supérieur à des écritures de date postérieure. Tickets seuls : ordre et numéros inchangés.
+  var ecrNum=0, blocs=[], _bc=null;
   tickets.forEach(function(t){
-    ecrNum++;
     var dateE=fmtDate(t.date_ticket);
+    _bc={d:dateE, r:[]}; blocs.push(_bc);
     var pieceRef="TK"+String(t.num||0).padStart(6,"0");
     var libBase=(((t.client_prenom||"")+" "+(t.client_nom||"")).trim()||"Vente comptoir")+_lxLibAcompte(t.items||(t.raw_data&&t.raw_data.items)||[], (t.raw_data&&_lxIsAcompteOnline&&_lxIsAcompteOnline(t.raw_data.acompteMode))?t.raw_data.acompte:0);
     var totalTTC=Number(t.total_ttc)||0;
@@ -39882,10 +40110,10 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     }
 
     if(t.status==="cancelled"){
-      _fecLegs(t,totalTTC).forEach(function(lg){ lines.push(["VTE","Ventes salon",String(ecrNum),dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""].join("\t")); });
-      if(prestHT!==0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
-      if(prodHT>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""].join("\t"));
-      if(totalTVA>0) lines.push(["VTE","Ventes salon",String(ecrNum),dateE,ACC_TVA,"TVA collectée","","",pieceRef,dateE,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""].join("\t"));
+      _fecLegs(t,totalTTC).forEach(function(lg){ _bc.r.push(["VTE","Ventes salon",0,dateE,lg.acc,lg.lib,"","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""]); });
+      if(prestHT!==0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""]);
+      if(prodHT>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,dateE,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""]);
+      if(totalTVA>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_TVA,"TVA collectée","","",pieceRef,dateE,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""]);
       return;
     }
 
@@ -39894,7 +40122,7 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     // 2026-10-17 retour partiel : libellé « RETOUR » avec la référence du ticket d'origine (écriture en sens inverse, équilibrée)
     if(String(t.raw_retour)==="true") _lib="RETOUR TK "+escFEC(String(t.raw_retour_tk||"?"))+" DU "+fmtDate(t.raw_retour_date)+" "+escFEC(libBase);
     function _fl(acc,accLib,lib,amt,sens){ var v=Math.round((Number(amt)||0)*100)/100; if(Math.abs(v)<0.005) return; if(v<0){ v=-v; sens=(sens==="D")?"C":"D"; }
-      lines.push(["VTE","Ventes salon",String(ecrNum),dateE,acc,accLib,"","",pieceRef,dateE,lib,fmtAmount(sens==="D"?v:0),fmtAmount(sens==="C"?v:0),"","",dateE,"",""].join("\t")); }
+      _bc.r.push(["VTE","Ventes salon",0,dateE,acc,accLib,"","",pieceRef,dateE,lib,fmtAmount(sens==="D"?v:0),fmtAmount(sens==="C"?v:0),"","",dateE,"",""]); }
     _fecLegs(t,totalTTC).forEach(function(lg){ _fl(lg.acc,lg.lib,_lib,lg.amt,"D"); });
     _fl(ACC_VENTE_PREST,"Prestations de services",_lib,prestHT,"C");
     _fl(ACC_VENTE_PROD,"Ventes de produits",_lib,prodHT,"C");
@@ -39904,20 +40132,22 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
   // pièce (date_correction), entre comptes de trésorerie (plus / moins, somme nulle), pièce CR<n°>.
   try{ (window.LX_CORR_REGL||[]).forEach(function(c){
     if(!c||c.avant_cloture===true) return; var dc=String(c.date_correction||""); if(!dc||dc<dateFrom||dc>dateTo) return;
-    ecrNum++; var dE=fmtDate(dc), pR="CR"+String(c.num||0).padStart(6,"0"), lb="CORRECTION REGLEMENT TICKET "+(c.ticket_num_affiche||c.ticket_num||"?")+" DU "+fmtDate(c.ticket_date)+" - "+escFEC(String(c.motif||"").slice(0,60));
+    var dE=fmtDate(dc); _bc={d:dE, r:[]}; blocs.push(_bc); var pR="CR"+String(c.num||0).padStart(6,"0"), lb="CORRECTION REGLEMENT TICKET "+(c.ticket_num_affiche||c.ticket_num||"?")+" DU "+fmtDate(c.ticket_date)+" - "+escFEC(String(c.motif||"").slice(0,60));
     (c.lignes||[]).forEach(function(l){ var v=Math.round((Number(l.montant)||0)*100)/100; if(Math.abs(v)<0.005) return; var ac=_accForBucket(String(l.mode||"").toLowerCase());
-      lines.push(["VTE","Ventes salon",String(ecrNum),dE,ac.acc,ac.lib,"","",pR,dE,lb,fmtAmount(v>0?v:0),fmtAmount(v<0?-v:0),"","",dE,"",""].join("\t")); });
+      _bc.r.push(["VTE","Ventes salon",0,dE,ac.acc,ac.lib,"","",pR,dE,lb,fmtAmount(v>0?v:0),fmtAmount(v<0?-v:0),"","",dE,"",""]); });
   }); }catch(_eCrF){}
+  blocs.map(function(x,i){ return {x:x,i:i}; }).sort(function(p,q){ return p.x.d<q.x.d?-1:(p.x.d>q.x.d?1:p.i-q.i); }).forEach(function(o){
+    if(!o.x.r.length) return; ecrNum++; o.x.r.forEach(function(row){ row[2]=String(ecrNum); lines.push(row.join("\t")); }); });
 
   var content=lines.join("\r\n");
-  var fileName=siren+"FEC"+fmtDate(dateTo)+".txt";
+  var fileName=_lxFecNomFichier(siren, dateFrom, dateTo);
   return {ok:true, fileName:fileName, content:content, nbTickets:tickets.length, nbLignes:lines.length-1};
 }
 
 // =====================================================================
 // 2026-10-27 — ENVOI AUTOMATIQUE AU COMPTABLE (option A, décision d'Alexandre)
 // LECTURE SEULE : aucune donnée de caisse n'est écrite, aucun nouveau calcul fiscal. Les pièces jointes sont produites par
-// le code des boutons existants (pack comptable _lxPackComptableZip, FEC _lxFecConstruire, rapport _buildRapportHTML)
+// le code des boutons existants (pack comptable _lxPackComptableZip, FEC _lxFecConstruire, rapport PDF _lxRapportPDF)
 // pour le MOIS PRÉCÉDENT, passé en paramètre (le mois affiché accM n'est jamais modifié).
 // Déclenchement : à l'ouverture de l'app, profil ayant « Exporter des données » ET « Comptabilité », envoi activé, caisse
 // en mode réel, mois précédent CLÔTURÉ (ligne clotures_mensuelles : clôture mensuelle automatique du 1er à 3 h 15) et pas
@@ -39960,10 +40190,10 @@ async function _lxEcApi(op, extra){
 }
 // Fichiers du mois (mêmes fonctions que les boutons). Lève une erreur si une lecture échoue (jamais de document incomplet).
 // 2026-10-27 (-2, décision d'Alexandre) : le comptable reçoit ce que l'établissement voit dans l'app — FEC + pack Excel
-// (bouton « Documents comptables ») + rapport du mois (page HTML à ouvrir dans le navigateur, imprimable en PDF) ;
+// (bouton « Documents comptables ») + rapport du mois (2026-10-27 -3 : vrai fichier PDF, Rapport_comptable_AAAA-MM.pdf) ;
 // le pack ZIP est une option (décochée par défaut). Réglage absent : FEC + Excel + rapport (comme les valeurs par défaut SQL).
 function _lxEcDocs(d){ d=d||{}; return {fec:d.fec!==false, excel:d.excel!==false, rapport:d.rapport!==false, pack:d.pack===true}; }
-async function _lxEcFichiers(mois, docs){
+async function _lxEcFichiers(mois, docs, cloture){
   var F=[], notes=[];
   docs=_lxEcDocs(docs);
   var corrOk=false;
@@ -39982,7 +40212,10 @@ async function _lxEcFichiers(mois, docs){
     else throw new Error(R.msg||"FEC impossible");
   }
   if(docs.rapport){
-    F.push({nom:"Rapport_comptable_"+mois+".html", octets:_lxEcUtf8(_buildRapportHTML(mois), false)});
+    // 2026-10-27 (-3) : vrai PDF (même fichier que le bouton « Rapport du mois (PDF) ») ; cloture = ligne de clôture mensuelle
+    // renvoyée par le serveur (empreinte affichée dans le PDF), sinon lue en base.
+    var RP=await _lxRapportPDF(mois, cloture!==undefined?{cloture:cloture}:{});
+    F.push({nom:RP.nom, octets:RP.octets});
   }
   if(docs.pack){
     var z=await _lxPackComptableZip(mois, {silencieux:true, strict:true});
@@ -40023,7 +40256,7 @@ async function lxEnvoiComptaVerifier(force){
       await _lxEcApi("ecart",{mois:mois, ca_app:c.ca, ca_cloture:caZ, nb_app:c.nb});
       LX_EC.etat=await _lxEcApi("statut",{mois:mois}); LX_EC.stopMois=mois; _lxEcRafraichirVues(); return;
     }
-    var P=await _lxEcFichiers(mois, st.config.docs||{});
+    var P=await _lxEcFichiers(mois, st.config.docs||{}, st.cloture||null);
     if(!P.fichiers.length){ LX_EC.stopMois=mois; return; }
     var r=await _lxEcApi("envoyer",{mois:mois, type:"auto", fichiers:P.fichiers, notes:P.notes, controle:{ca_ttc:c.ca, nb:c.nb}});
     if(r.ok && r.envoye){
@@ -40100,7 +40333,7 @@ function _lxEcRendreCarte(){
   h+='<div style="font-size:12px;color:var(--text2);margin:12px 0 2px">Documents envoyés</div>';
   h+=chk("ecFec", dc.fec, "FEC du mois", "(fichier des écritures comptables, format officiel, importable dans Pennylane, Cegid, EBP… ; SIRET obligatoire)");
   h+=chk("ecExcel", dc.excel, "Pack Excel du mois", "(le fichier du bouton « Télécharger l’Excel comptable » de Caisse › Documents comptables : synthèse, journal, TVA ou URSSAF, écritures, annulations, cartes cadeaux, caisse)");
-  h+=chk("ecRapport", dc.rapport, "Rapport du mois", "(page à ouvrir dans le navigateur, imprimable en PDF : CA, TVA, moyens de paiement)");
+  h+=chk("ecRapport", dc.rapport, "Rapport du mois", "(fichier PDF : CA, TVA, moyens de paiement, collaborateurs, détail par jour ; le même que le bouton « Rapport du mois (PDF) » de Documents comptables)");
   h+=chk("ecPack", dc.pack, "Pack ZIP (facultatif)", "(fichiers CSV séparés : journal de caisse, journal comptable, annulations, paiements en ligne, acomptes… ; utile si votre comptable les demande)");
   h+=chk("ecCopie", c.copie!==false, "M’envoyer une copie", st.salon_email?"(à "+_lxEsc(st.salon_email)+")":"(aucune adresse e-mail dans Infos établissement)");
   h+='<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:8px;border-left:2px solid rgba(212,168,67,.4);padding-left:8px">Le pack Excel (et le pack ZIP) contient votre journal de caisse, avec le nom de vos clients. En activant l’envoi, vous transmettez ces données à l’expert-comptable que vous avez choisi, pour la tenue de votre comptabilité. Vérifiez bien l’adresse : un e-mail envoyé ne peut pas être repris. Les réponses du comptable arrivent sur l’e-mail de votre établissement.</div>';
