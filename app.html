@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261017-2"></script>
+<script src="luxyra-supabase.js?v=20261027-1"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261017-2";
+  var attendu="20261027-1";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -10726,6 +10726,8 @@ function rHome(){
     _lxNbBandeaux++;
     h+='<div onclick="window._settTab=\'salon\';go(\'settings\')" style="cursor:pointer;background:#1d1408;border:1.5px solid rgba(255,152,0,.6);box-shadow:0 4px 18px rgba(0,0,0,.5);border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:center"><div style="font-size:26px">\ud83d\udcc4</div><div style="flex:1"><div style="font-weight:800;color:#ffb74d">Entreprise en cours d\u2019immatriculation</div><div style="font-size:12px;color:rgba(255,255,255,.85)">Ajoutez votre SIRET d\u00e8s r\u00e9ception : Param\u00e8tres \u2192 Infos \u00e9tablissement. Il est obligatoire pour activer votre abonnement.</div></div><div style="color:#ffb74d;font-size:18px">\u203a</div></div>';
   }
+  // 2026-10-27 : envoi au comptable en attente / bloqué (mois précédent non clôturé, écart, échec) — rien si tout va bien
+  try{ if(!_lxNbBandeaux && typeof _lxEcCarteAccueil==="function"){ var _ecH=_lxEcCarteAccueil(); if(_ecH){ _lxNbBandeaux++; h+=_ecH; } } }catch(_eEc){}
   // 2026-10-10 : attestation de conformité de la caisse à signer (volet 2) — rappel sur l'accueil, masquable 7 jours
   try{ if(!_lxNbBandeaux && window._lxAttStatut==="a_signer" && !window._lxVueAdmin && (typeof hasPermission!=="function"||hasPermission("settings")) && !(Number(localStorage.getItem("lx_att_masque_jusqu")||0)>Date.now())){
     _lxNbBandeaux++;
@@ -16980,6 +16982,8 @@ function rSettings(){
 
     // === 2026-10-11 : exercice comptable (clôture annuelle par exercice, BOI-TVA-DECLA-30-10-30 §170) ===
     h+=lxExerciceCarte();
+    // === 2026-10-27 : envoi automatique au comptable (lecture seule, documents des exports existants) ===
+    h+=lxEnvoiComptaCarte();
     // === FIX 2026-05-13 : Carte NF525 (archivage l\u00e9gal 6 ans) ===
     h+='<div class="card" style="margin-top:10px;background:linear-gradient(135deg,rgba(76,175,80,.06),rgba(255,255,255,.02));border:1px solid rgba(76,175,80,.25)">';
     h+='<div class="ct">\ud83d\udd12 Conformit\u00e9 de la caisse (loi anti-fraude)</div>';
@@ -24499,6 +24503,14 @@ function csvDownload(filename, csvContent){
     if(w){ w.document.write("<pre style='font-family:monospace;font-size:11px'>"+csvContent.replace(/</g,"&lt;")+"</pre>"); w.document.title = filename; }
   }
 }
+// 2026-10-27 (envoi au comptable) : les exports peuvent être produits pour un mois EXPLICITE (AAAA-MM) sans toucher au mois
+// affiché (accM), et leur fichier remis à un « collecteur » (tableau) au lieu d'être téléchargé. Sans argument (boutons) :
+// mois affiché + téléchargement, exactement comme avant. Contenu des fichiers inchangé.
+function _lxMoisExport(m){ return (typeof m==="string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(m)) ? m : accM; }
+function _lxCsvSortie(collecteur, nom, contenu){
+  if(Array.isArray(collecteur)){ collecteur.push({name:nom, content:contenu}); return; }
+  csvDownload(nom, contenu);
+}
 
 // =====================================================================
 // EXPORT 1 : JOURNAL DE CAISSE d\u00e9taill\u00e9 (par ticket / par ligne)
@@ -24788,11 +24800,12 @@ function expJournalComptable(){
 // EXPORT 4 : LISTE ANNULATIONS & REMBOURSEMENTS
 // =====================================================================
 // NF525 : trace tous les tickets annul\u00e9s avec motifs
-function expAnnulations(){
+function expAnnulations(mois, collecteur){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter les annulations",expAnnulations);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
+  var accM=_lxMoisExport(mois); // 2026-10-27 : mois explicite (envoi au comptable) sinon mois affich\u00e9
   var annul = AP.filter(function(a){
     return (a.cancelled && a.cancelDate && a.cancelDate.indexOf(accM)===0)
       || ((a.isAcompteCancel || (a.items||[]).some(function(it){return it&&it.isAcompteCancel;})) && a.st==="done" && String(a.date||"").indexOf(accM)===0) // 2026-10-11 : annulations d'acompte
@@ -24826,7 +24839,7 @@ function expAnnulations(){
     ["Montant total annul\u00e9 / rembours\u00e9", csvNum(sumAnnul)+" \u20ac"],
     ["Conformit\u00e9", "Empreinte (hash) conserv\u00e9 pour chaque ticket annul\u00e9"]
   ];
-  csvDownload("annulations_"+accM+".csv", csvBuildPro("Annulations & remboursements", accM, headers, rows, footer));
+  _lxCsvSortie(collecteur, "annulations_"+accM+".csv", csvBuildPro("Annulations & remboursements", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_ANNULATIONS","P\u00e9riode "+accM+" - "+rows.length+" annulations");
 }
 
@@ -25012,11 +25025,12 @@ async function _lxAjustEnLigneMois(mois){
 // 2026-10-13 : ÉTAT DES ACOMPTES REÇUS NON SOLDÉS à la fin du mois sélectionné (clôture / bilan).
 // Acompte reçu pour une prestation pas encore réalisée = avance du client (PCG : compte 4191 « Clients - avances et
 // acomptes reçus »), pas encore du chiffre d'affaires. TVA des prestations exigible à l'encaissement (CGI art. 269-2-c).
-async function expAcomptesNonSoldes(silencieux){
+async function expAcomptesNonSoldes(silencieux, mois, collecteur){
   if(!silencieux && typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter les acomptes non sold\u00e9s",function(){expAcomptesNonSoldes();});return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
+  var accM=_lxMoisExport(mois); // 2026-10-27 : mois explicite (envoi au comptable) sinon mois affich\u00e9
   var b=_lxMoisBornes(accM), fin=b.finExcl, D=(function(){ var d=new Date(fin+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); })();
   var le=function(d){ return d && String(d).slice(0,10)<=D; };
   var tx=lxTauxTVA(), micro=!(tx>0), rows=[], tot=0, totHT=0, totTVA=0; // sans TVA (franchise) : HT = TTC
@@ -25092,14 +25106,15 @@ async function expAcomptesNonSoldes(silencieux){
     ["Acomptes en caisse", "Un acompte encaiss\u00e9 en caisse a son propre ticket scell\u00e9 (compt\u00e9 dans le CA du jour du versement) : votre expert-comptable peut le reclasser en 4191 \u00e0 la cl\u00f4ture."],
     ["\u00c0 faire valider", "Traitement comptable \u00e0 confirmer par votre expert-comptable."]
   ];
-  csvDownload("acomptes_non_soldes_au_"+D+".csv", csvBuildPro("\u00c9tat des acomptes re\u00e7us non sold\u00e9s (cl\u00f4ture / bilan)", accM, headers, rows, footer));
+  _lxCsvSortie(collecteur, "acomptes_non_soldes_au_"+D+".csv", csvBuildPro("\u00c9tat des acomptes re\u00e7us non sold\u00e9s (cl\u00f4ture / bilan)", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_ACOMPTES_NON_SOLDES","Situation au "+D+" - "+rows.length+" acompte(s) - "+csvNum(Math.round(tot*100)/100)+" EUR");
 }
-async function expTvaPaiementsEnLigne(){
+async function expTvaPaiementsEnLigne(mois, collecteur){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter les paiements en ligne",expTvaPaiementsEnLigne);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
+  var accM=_lxMoisExport(mois); // 2026-10-27 : mois explicite (envoi au comptable) sinon mois affich\u00e9
   var L; try{ L=await _lxPaiementsEnLigne(accM); }catch(e){ toast("Export impossible : "+e.message,"error"); return; }
   var t=lxTauxTVA(), inM=function(d){ return d && String(d).indexOf(accM)===0; }, avant=function(d){ return d && String(d).slice(0,7)<accM; };
   var plus=0, moins=0, regul=0, enc=0, rows=[], tvaNet=0;
@@ -25138,14 +25153,15 @@ async function expTvaPaiementsEnLigne(){
     ["Base l\u00e9gale", "TVA des prestations de services exigible \u00e0 l'encaissement, acomptes compris (CGI art. 269-2-c ; CE 24/02/2021 n\u00b0429647). Sommes conserv\u00e9es (absence, annulation tardive) soumises \u00e0 TVA par prudence (BOI-TVA-BASE-10-10-50)."],
     ["Note", "Si votre entreprise a opt\u00e9 pour la TVA sur les d\u00e9bits, cet ajustement ne s'applique pas."]
   ];
-  csvDownload("tva_paiements_en_ligne_"+accM+".csv", csvBuildPro("Paiements en ligne \u2014 TVA \u00e0 l'encaissement", accM, headers, rows, footer));
+  _lxCsvSortie(collecteur, "tva_paiements_en_ligne_"+accM+".csv", csvBuildPro("Paiements en ligne \u2014 TVA \u00e0 l'encaissement", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_TVA_EN_LIGNE","P\u00e9riode "+accM+" - ajustement net "+csvNum(net));
 }
-async function expLivreRecettes(){
+async function expLivreRecettes(mois, collecteur){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le livre des recettes",expLivreRecettes);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
   }
+  var accM=_lxMoisExport(mois); // 2026-10-27 : mois explicite (envoi au comptable) sinon mois affich\u00e9
   var L; try{ L=await _lxPaiementsEnLigne(accM); }catch(e){ toast("Export impossible : "+e.message,"error"); return; }
   var rows=[], tot=0;
   function ligne(date,heure,ref,client,nature,mode,montant){ montant=Math.round(montant*100)/100; if(Math.abs(montant)<0.005) return; tot+=montant; rows.push([date,heure||"",ref,client,nature,mode,csvNum(montant)]); }
@@ -25174,7 +25190,7 @@ async function expLivreRecettes(){
     ["Rappel", "Les acomptes pay\u00e9s en ligne comptent le jour du paiement ; le jour du rendez-vous, seul le solde pay\u00e9 sur place est compt\u00e9. Un acompte conserv\u00e9 (client absent) a d\u00e9j\u00e0 \u00e9t\u00e9 compt\u00e9 le jour du paiement."],
     ["Base l\u00e9gale", "Micro-entreprise : recettes encaiss\u00e9es (CGI art. 50-0 et 102 ter) ; livre-journal des recettes obligatoire."]
   ];
-  csvDownload("livre_recettes_"+accM+".csv", csvBuildPro("Livre des recettes encaiss\u00e9es", accM, headers, rows, footer));
+  _lxCsvSortie(collecteur, "livre_recettes_"+accM+".csv", csvBuildPro("Livre des recettes encaiss\u00e9es", accM, headers, rows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_LIVRE_RECETTES","P\u00e9riode "+accM+" - total "+csvNum(tot));
 }
 
@@ -25183,14 +25199,17 @@ async function expLivreRecettes(){
 // =====================================================================
 // G\u00e9n\u00e8re et t\u00e9l\u00e9charge un ZIP contenant tous les exports utiles pour la
 // transmission mensuelle au cabinet comptable.
-async function expPackComptable(){
-  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
-    if(typeof requireAdmin==="function"){requireAdmin("Exporter le pack comptable",expPackComptable);return;}
-    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
-  }
+// 2026-10-27 (envoi au comptable) : construction du ZIP s\u00e9par\u00e9e du t\u00e9l\u00e9chargement, pour un mois EXPLICITE.
+//  - expPackComptable() (export manuel ; aucun bouton ne l'appelle dans l'app au 27/10) -> _lxPackComptableZip(accM) puis t\u00e9l\u00e9chargement (fichiers identiques) ;
+//  - envoi automatique : _lxPackComptableZip(mois pr\u00e9c\u00e9dent, {silencieux:true, strict:true}) -> ZIP joint \u00E0 l'e-mail.
+// strict : toute lecture en \u00e9chec (paiements en ligne, ajustement micro, annulations, rapport) fait \u00c9CHOUER la
+// construction au lieu de produire un pack incomplet (le bouton manuel garde son comportement historique).
+async function _lxPackComptableZip(mois, opts){
+  opts=opts||{};
+  var accM=_lxMoisExport(mois);
   // Charger JSZip via CDN si pas d\u00e9j\u00E0 l\u00E0
   if(typeof JSZip==="undefined"){
-    if(typeof toast==="function") toast("Chargement de l'outil ZIP\u2026","info");
+    if(!opts.silencieux && typeof toast==="function") toast("Chargement de l'outil ZIP\u2026","info");
     await new Promise(function(resolve, reject){
       var s = document.createElement("script");
       s.src = "https://luxyra.fr/vendor/jszip.min.js";
@@ -25249,7 +25268,7 @@ async function expPackComptable(){
     var totalSvcM = 0, totalProdM = 0;
     dn.forEach(function(a){ var sp=_splitPrestProd(a); totalSvcM += Number(sp.prest)||0; totalProdM += Number(sp.prod)||0; }); // 2026-10-11 : montant encaissé
     ps2.forEach(function(p){ totalProdM += Number(p.pr)||0; });
-    try{ var _ajP=await _lxAjustEnLigneMois(accM); totalSvcM=Math.round((totalSvcM+_ajP.svc)*100)/100; totalProdM=Math.round((totalProdM+_ajP.prod)*100)/100; }catch(_eAP){}
+    try{ var _ajP=await _lxAjustEnLigneMois(accM); totalSvcM=Math.round((totalSvcM+_ajP.svc)*100)/100; totalProdM=Math.round((totalProdM+_ajP.prod)*100)/100; }catch(_eAP){ if(opts.strict) throw _eAP; }
     var cotisSvcM = Math.round(totalSvcM * _lxTxUrssaf("svc") * 100) / 100;
     var cotisProdM = Math.round(totalProdM * _lxTxUrssaf("prod") * 100) / 100;
     var urssafFooter = [
@@ -25285,7 +25304,9 @@ async function expPackComptable(){
   folder.file("03_journal_comptable_"+accM+".csv", csvBuildPro("Journal des ventes (écritures comptables)", accM, hCompta, rCompta));
 
   // 4. Annulations — 2026-10-13 : même fichier que l'export « Annulations » (annulations d'acompte comprises)
-  try{ window._lxCsvCapture=[]; expAnnulations(); var _ca4=window._lxCsvCapture||[]; if(_ca4[0]) folder.file("04_"+_ca4[0].name, _ca4[0].content); }catch(_e4){} finally{ window._lxCsvCapture=null; }
+  // 2026-10-27 : collecteur local (avant : capture globale window._lxCsvCapture, qui pouvait avaler un export lancé
+  // pendant la construction du pack) ; même fichier.
+  try{ var _ca4=[]; expAnnulations(accM, _ca4); if(_ca4[0]) folder.file("04_"+_ca4[0].name, _ca4[0].content); else if(opts.strict) throw new Error("annulations non produites"); }catch(_e4){ if(opts.strict) throw _e4; }
 
 
   // 5. Bordereau Stripe (si acomptes en ligne)
@@ -25303,21 +25324,33 @@ async function expPackComptable(){
 
   // 06 / 07 / 08 : paiements en ligne (TVA à l'encaissement), livre des recettes (micro), acomptes non soldés
   // 2026-10-13 : mêmes fichiers que les boutons d'export, capturés dans le ZIP.
-  try{
-    window._lxCsvCapture=[];
-    try{ await expTvaPaiementsEnLigne(); }catch(_e6){}
-    if(isMicro){ try{ await expLivreRecettes(); }catch(_e7){} }
-    if(typeof expAcomptesNonSoldes==="function"){ try{ await expAcomptesNonSoldes(true); }catch(_e8){} }
-    var _cap=window._lxCsvCapture||[];
+  {
+    var _cap=[];
+    try{ await expTvaPaiementsEnLigne(accM, _cap); }catch(_e6){ if(opts.strict) throw _e6; }
+    if(isMicro){ try{ await expLivreRecettes(accM, _cap); }catch(_e7){ if(opts.strict) throw _e7; } }
+    if(typeof expAcomptesNonSoldes==="function"){ try{ await expAcomptesNonSoldes(true, accM, _cap); }catch(_e8){ if(opts.strict) throw _e8; } }
+    // strict : chacun de ces exports produit toujours son fichier quand sa lecture r\u00e9ussit -> un fichier manquant = lecture en \u00e9chec
+    if(opts.strict){
+      var _attendus=["tva_paiements"].concat(isMicro?["livre_recettes"]:[]).concat(typeof expAcomptesNonSoldes==="function"?["acomptes_non_soldes"]:[]);
+      _attendus.forEach(function(p){ if(!_cap.some(function(f){ return f.name.indexOf(p)===0; })) throw new Error("export "+p+" non produit (lecture impossible)"); });
+    }
     _cap.forEach(function(f){ var pf=/^tva_paiements/.test(f.name)?"06_":(/^livre_recettes/.test(f.name)?"07_":(/^acomptes_non_soldes/.test(f.name)?"08_":"09_")); folder.file(pf+f.name, f.content); });
-  }finally{ window._lxCsvCapture=null; }
+  }
 
   // 0. Rapport HTML imprimable inclus dans le ZIP (\u00e0 ouvrir dans le navigateur, bouton \ud83d\udda8 \u2192 PDF)
   // Remplace l'ancien LISEZ-MOI.txt (jug\u00e9 inutile par l'utilisateur).
   try {
     var rapportHtml = _buildRapportHTML(accM);
     folder.file("00_rapport_complet_"+accM+".html", rapportHtml);
-  } catch(e) { console.warn("Rapport HTML skip:", e); }
+  } catch(e) { console.warn("Rapport HTML skip:", e); if(opts.strict) throw e; }
+  return zip;
+}
+async function expPackComptable(){
+  if(typeof hasPermission==="function"&&!hasPermission("export_data")){
+    if(typeof requireAdmin==="function"){requireAdmin("Exporter le pack comptable",expPackComptable);return;}
+    if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
+  }
+  var zip = await _lxPackComptableZip(accM);
 
   // G\u00e9n\u00e9ration + download du ZIP
   if(typeof toast==="function") toast("Cr\u00e9ation du pack ZIP\u2026","info");
@@ -39708,15 +39741,31 @@ async function exportFEC(){
   try{ if(typeof lxCorrReglCharger==="function") await lxCorrReglCharger(); }catch(_eCl){}
   if(dateFrom>dateTo){showAlert("Date de début > date de fin","info");return;}
 
+  var R=await _lxFecConstruire(dateFrom, dateTo, {toast:true});
+  if(!R.ok){ showAlert(R.msg, R.type); return; }
+  var fileName=R.fileName;
+  var blob=new Blob([new Uint8Array([0xEF,0xBB,0xBF]), R.content], {type:"text/plain;charset=utf-8"});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click();
+  setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);}, 100);
+
+  if(typeof auditLog==="function") auditLog("EXPORT_FEC", "Période "+dateFrom+" → "+dateTo+" · "+R.nbTickets+" tickets · "+R.nbLignes+" écritures");
+  if(typeof toast==="function") toast("✓ FEC téléchargé : "+fileName+" ("+R.nbTickets+" tickets, "+R.nbLignes+" écritures)","success");
+}
+// 2026-10-27 (envoi au comptable) : contenu du FEC pour une période, SANS téléchargement ni lecture de l'écran.
+// Corps strictement repris de exportFEC (mêmes lectures, mêmes comptes, mêmes lignes). Retour :
+// {ok:true, fileName, content (sans BOM : le fichier = BOM UTF-8 + content), nbTickets, nbLignes} ou {ok:false, msg, type}.
+// Les corrections de règlement (window.LX_CORR_REGL) doivent être chargées par l'appelant (lxCorrReglCharger).
+async function _lxFecConstruire(dateFrom, dateTo, opts){
+  opts=opts||{};
   var siret=(SALON_CONFIG.siret||"").replace(/\s/g,"");
   var siren=siret.slice(0,9);
   if(!siren||siren.length!==9){
-    showAlert("SIRET non renseigné. Renseignez-le dans Paramètres › Infos établissement avant d'exporter le FEC.","info");
-    return;
+    return {ok:false, code:"siret", type:"info", msg:"SIRET non renseigné. Renseignez-le dans Paramètres › Infos établissement avant d'exporter le FEC."};
   }
   var tva=Number(lxTauxTVA());
 
-  if(typeof toast==="function") toast("Préparation de l'export FEC…","info");
+  if(opts.toast && typeof toast==="function") toast("Préparation de l'export FEC…","info");
   var ticketsAll=[];
   try{
     if(typeof _sb!=="undefined" && _sb && typeof _salonId!=="undefined" && _salonId){
@@ -39729,15 +39778,15 @@ async function exportFEC(){
         .lte("date_ticket",dateTo)
         .order("date_ticket")
         .order("num");
-      if(r.error){ console.error("FEC fetch:",r.error); showAlert("Erreur de chargement des tickets : "+r.error.message,"error"); return; }
+      if(r.error){ console.error("FEC fetch:",r.error); return {ok:false, code:"lecture", type:"error", msg:"Erreur de chargement des tickets : "+r.error.message}; }
       if(r.data) ticketsAll=r.data.map(function(t){ if(t&&!t.raw_data&&(t.raw_acompte!=null||t.raw_acompte_mode!=null)) t.raw_data={acompte:Number(t.raw_acompte)||0,acompteMode:t.raw_acompte_mode||""}; return t; });
-    }
-  }catch(e){console.error("FEC fetch:",e); showAlert("Erreur de chargement des tickets : "+e.message,"error"); return;}
+    } else if(opts.strict){ return {ok:false, code:"lecture", type:"error", msg:"Base de données indisponible"}; }
+  }catch(e){console.error("FEC fetch:",e); return {ok:false, code:"lecture", type:"error", msg:"Erreur de chargement des tickets : "+e.message};}
 
   // FIX 2026-05-23 : les tickets ont le statut "paid" (encaisse), pas "done" (qui est le statut des RDV).
   // Sans "paid", l'export FEC ne trouvait jamais aucun ticket.
   var tickets=ticketsAll.filter(function(t){return t.status==="paid"||t.status==="done"||t.status==="cancelled";});
-  if(!tickets.length){showAlert("Aucun ticket encaissé sur la période sélectionnée.","info");return;}
+  if(!tickets.length){ return {ok:false, code:"vide", type:"info", msg:"Aucun ticket encaissé sur la période sélectionnée."}; }
 
   // Plan comptable simplifié
   // 2026-10-17 audit réglages (#19) : les comptes ENREGISTRÉS dans Conformité caisse › « Comptes comptables pour l'export »
@@ -39846,13 +39895,241 @@ async function exportFEC(){
 
   var content=lines.join("\r\n");
   var fileName=siren+"FEC"+fmtDate(dateTo)+".txt";
-  var blob=new Blob([new Uint8Array([0xEF,0xBB,0xBF]), content], {type:"text/plain;charset=utf-8"});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click();
-  setTimeout(function(){document.body.removeChild(a); URL.revokeObjectURL(url);}, 100);
+  return {ok:true, fileName:fileName, content:content, nbTickets:tickets.length, nbLignes:lines.length-1};
+}
 
-  if(typeof auditLog==="function") auditLog("EXPORT_FEC", "Période "+dateFrom+" → "+dateTo+" · "+tickets.length+" tickets · "+(lines.length-1)+" écritures");
-  if(typeof toast==="function") toast("✓ FEC téléchargé : "+fileName+" ("+tickets.length+" tickets, "+(lines.length-1)+" écritures)","success");
+// =====================================================================
+// 2026-10-27 — ENVOI AUTOMATIQUE AU COMPTABLE (option A, décision d'Alexandre)
+// LECTURE SEULE : aucune donnée de caisse n'est écrite, aucun nouveau calcul fiscal. Les pièces jointes sont produites par
+// le code des boutons existants (pack comptable _lxPackComptableZip, FEC _lxFecConstruire, rapport _buildRapportHTML)
+// pour le MOIS PRÉCÉDENT, passé en paramètre (le mois affiché accM n'est jamais modifié).
+// Déclenchement : à l'ouverture de l'app, profil ayant « Exporter des données » ET « Comptabilité », envoi activé, caisse
+// en mode réel, mois précédent CLÔTURÉ (ligne clotures_mensuelles : clôture mensuelle automatique du 1er à 3 h 15) et pas
+// encore envoyé (journal serveur compta_envois, index unique : 1 envoi réel par établissement et par mois, tous appareils).
+// Mois non clôturé : rien ne part, carte « Envoi au comptable en attente ». Jamais de chiffres provisoires.
+// Contrôle avant envoi : CA du mois chargé dans l'app = CA de la clôture mensuelle (sinon rien ne part, écart signalé).
+// Le destinataire est lu par le serveur dans la configuration enregistrée : l'app ne l'envoie jamais avec les fichiers.
+// Serveur : POST /api/compta/envoi (worker), tables compta_envoi_config / compta_envois (docs/migrations_1027/envoi_comptable.sql).
+// =====================================================================
+var LX_EC = { etat:null, enCours:false, dernierEssai:0, stopMois:null, attente:0, erreurLocale:null };
+var LX_EC_RE_EMAIL = /^[^@\s<>"',;:()\[\]\\]+@[^@\s<>"',;:()\[\]\\]+\.[A-Za-z]{2,}$/;
+function _lxEcParis(){
+  var o={}; try{ new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Paris",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false}).formatToParts(new Date()).forEach(function(p){ o[p.type]=p.value; }); }catch(e){ var d=new Date(); o={year:d.getFullYear(),month:d.getMonth()+1,day:d.getDate(),hour:d.getHours()}; }
+  return {y:Number(o.year), m:Number(o.month), d:Number(o.day), h:Number(o.hour)%24};
+}
+function _lxEcMoisPrec(){ var p=_lxEcParis(); var d=new Date(Date.UTC(p.y, p.m-2, 1)); return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0"); }
+function _lxEcMoisLib(m){ var p=String(m||"").split("-"); return ((typeof MO!=="undefined"&&MO[parseInt(p[1],10)-1])||p[1]||"")+" "+(p[0]||""); }
+function _lxEcFinMois(m){ var b=_lxMoisBornes(m); var d=new Date(b.finExcl+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); }
+function _lxEcAutorise(){
+  // opérateurs configurés : un profil doit être connecté (pas d'envoi pendant l'écran de code PIN)
+  try{ if(typeof OPERATEURS!=="undefined" && Array.isArray(OPERATEURS) && OPERATEURS.some(function(o){ return o && o.actif; }) && (typeof CURRENT_OPERATOR==="undefined" || !CURRENT_OPERATOR)) return false; }catch(_e){}
+  return !(typeof hasPermission==="function" && !(hasPermission("export_data") && hasPermission("compta")));
+}
+// Total TTC des tickets du mois chargés dans l'app (même filtre que les exports : _lxCaOk) — sert UNIQUEMENT de contrôle
+// de cohérence avec la clôture mensuelle scellée, jamais de chiffre envoyé.
+function _lxEcControleApp(mois){
+  var t=0, n=0;
+  (Array.isArray(AP)?AP:[]).forEach(function(a){ if(a && a.st==="done" && String(a.date||"").indexOf(mois)===0 && _lxCaOk(a)){ t+=Number(a.pr)||0; n++; } });
+  return {ca:Math.round(t*100)/100, nb:n};
+}
+function _lxEcB64(u8){ var s="", CH=0x8000; for(var i=0;i<u8.length;i+=CH) s+=String.fromCharCode.apply(null, u8.subarray(i, i+CH)); return btoa(s); }
+function _lxEcUtf8(str, bom){ var e=new TextEncoder().encode(String(str)); if(!bom) return e; var o=new Uint8Array(e.length+3); o.set([0xEF,0xBB,0xBF],0); o.set(e,3); return o; }
+async function _lxEcApi(op, extra){
+  var body=Object.assign({salon_id:_salonId, op:op}, extra||{});
+  var j=null, st=0;
+  try{ var r=await fetch("/api/compta/envoi",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); st=r.status; try{ j=await r.json(); }catch(_e){} }
+  catch(e){ j={ok:false, error:"Connexion impossible"}; }
+  if(!j||typeof j!=="object") j={ok:false, error:"Réponse illisible ("+st+")"};
+  j._http=st; return j;
+}
+// Fichiers du mois (mêmes fonctions que les boutons). Lève une erreur si une lecture échoue (jamais de pack incomplet).
+async function _lxEcFichiers(mois, docs){
+  var F=[], notes=[];
+  if(docs.pack){
+    var z=await _lxPackComptableZip(mois, {silencieux:true, strict:true});
+    var u=await z.generateAsync({type:"uint8array", compression:"DEFLATE"});
+    F.push({nom:"Luxyra_compta_"+mois+".zip", octets:u});
+  }
+  if(docs.fec){
+    window._lxCorrLoaded=false; try{ await lxCorrReglCharger(); }catch(_eC){}
+    if(!window._lxCorrLoaded) throw new Error("corrections de règlement non chargées");
+    var R=await _lxFecConstruire(mois+"-01", _lxEcFinMois(mois), {strict:true});
+    if(R.ok) F.push({nom:R.fileName, octets:_lxEcUtf8(R.content, true)});
+    else if(R.code==="siret") notes.push("fec_siret");
+    else if(R.code==="vide") notes.push("fec_vide");
+    else throw new Error(R.msg||"FEC impossible");
+  }
+  if(docs.rapport){
+    F.push({nom:"Rapport_comptable_"+mois+".html", octets:_lxEcUtf8(_buildRapportHTML(mois), false)});
+  }
+  return {fichiers:F.map(function(f){ return {nom:f.nom, b64:_lxEcB64(f.octets)}; }), notes:notes, noms:F.map(function(f){ return f.nom; })};
+}
+function _lxEcRafraichirVues(){
+  try{ if(document.getElementById("lxEnvoiCompta")) _lxEcRendreCarte(); }catch(_e){}
+  // accueil redessiné seulement si la carte d'alerte apparaît, change ou disparaît
+  try{ var c=_lxEcCarteAccueil(); if(c!==LX_EC._carte){ LX_EC._carte=c; if((window._currentPage||"home")==="home" && typeof go==="function" && !document.querySelector("#modal .mbox")) go("home"); } }catch(_e2){}
+}
+// Vérification à l'ouverture (puis toutes les minutes, avec des délais) : envoie le mois précédent s'il le faut.
+async function lxEnvoiComptaVerifier(force){
+  if(LX_EC.enCours) return;
+  if(typeof _salonId==="undefined"||!_salonId||typeof _sb==="undefined"||!_sb||window._lxVueAdmin||window._lxDemo||window._archiveMode) return;
+  if(navigator.onLine===false || !_lxEcAutorise()) return;
+  var mois=_lxEcMoisPrec();
+  if(!force){
+    if(LX_EC.stopMois===mois) return;
+    if(Date.now()<LX_EC.attente) return;
+  }
+  // données et réglages pas encore chargés (démarrage) : on attend
+  if(!Array.isArray(AP) || !window._SALON_CONFIG_JSON || typeof window.LX_MODE_CAISSE==="undefined") return;
+  LX_EC.enCours=true; LX_EC.dernierEssai=Date.now(); LX_EC.attente=Date.now()+10*60*1000;
+  try{
+    var st=await _lxEcApi("statut",{mois:mois});
+    if(!st.ok) return;
+    LX_EC.etat=st; LX_EC.erreurLocale=null;
+    if(st.raison==="non_cloture") LX_EC.attente=Date.now()+60*60*1000; // la clôture mensuelle se fait la nuit du 1er
+    else if(st.raison!=="a_faire") LX_EC.stopMois=mois;                // déjà envoyé, inactif, mode test, sans activité, écart
+    if(!st.afaire){ _lxEcRafraichirVues(); return; }
+    // Contrôle : le mois chargé dans l'app = la clôture mensuelle scellée (sinon : données incomplètes -> on n'envoie rien)
+    var c=_lxEcControleApp(mois), caZ=Math.round(Number(st.cloture&&st.cloture.total_ca)*100)/100;
+    if(Math.abs(c.ca-caZ)>0.05){
+      if(!c.nb){ LX_EC.attente=Date.now()+15*60*1000; return; } // rien de chargé pour ce mois : nouvel essai plus tard
+      await _lxEcApi("ecart",{mois:mois, ca_app:c.ca, ca_cloture:caZ, nb_app:c.nb});
+      LX_EC.etat=await _lxEcApi("statut",{mois:mois}); LX_EC.stopMois=mois; _lxEcRafraichirVues(); return;
+    }
+    var P=await _lxEcFichiers(mois, st.config.docs||{});
+    if(!P.fichiers.length){ LX_EC.stopMois=mois; return; }
+    var r=await _lxEcApi("envoyer",{mois:mois, type:"auto", fichiers:P.fichiers, notes:P.notes, controle:{ca_ttc:c.ca, nb:c.nb}});
+    if(r.ok && r.envoye){
+      LX_EC.stopMois=mois;
+      if(typeof auditLog==="function") auditLog("EXPORT_PACK_COMPTABLE","Envoi automatique au comptable - Période "+mois+" - "+P.noms.join(", "));
+    } else if(r.deja){ LX_EC.stopMois=mois; }
+    var st2=await _lxEcApi("statut",{mois:mois}); if(st2.ok) LX_EC.etat=st2;
+    _lxEcRafraichirVues();
+  }catch(e){
+    console.warn("[envoi comptable]", e);
+    LX_EC.erreurLocale=String((e&&e.message)||e).slice(0,200);
+    LX_EC.attente=Date.now()+15*60*1000;
+  }finally{ LX_EC.enCours=false; }
+}
+setInterval(function(){ try{ lxEnvoiComptaVerifier(false); }catch(e){} }, 60000);
+
+// Carte d'alerte de l'accueil (rien si tout va bien)
+function _lxEcCarteAccueil(){
+  var st=LX_EC.etat; if(!st||!st.ok||!st.config||!st.config.actif||st.mode_caisse!=="reel"||window._lxVueAdmin||!_lxEcAutorise()) return "";
+  var lib=_lxEcMoisLib(st.mois), titre="", txt="", coul="#fbbf24";
+  var p=_lxEcParis();
+  var dernier=(st.journal||[]).filter(function(j){ return j.type==="auto" && j.mois===st.mois; })[0]||null;
+  if(st.raison==="non_cloture"){
+    if(p.d===1 && p.h<6) return ""; // la clôture du mois se fait dans la nuit du 1er
+    titre="Envoi au comptable en attente";
+    txt="Le mois de "+lib+" n’est pas encore clôturé : les documents ne sont pas partis. La clôture du mois se fait automatiquement dans la nuit du 1er ; si ce message reste affiché, contactez le support. Aucun chiffre provisoire n’est jamais envoyé.";
+  } else if(st.raison==="ecart"){
+    titre="Envoi au comptable bloqué"; coul="#fb923c";
+    txt="Les ventes de "+lib+" chargées sur cet appareil ne correspondent pas à la clôture du mois : rien n’est parti. Rechargez l’application ; si le message reste affiché, contactez le support.";
+  } else if(st.raison==="a_faire" && dernier && dernier.statut==="echec"){
+    titre="Envoi au comptable non abouti"; coul="#fb923c";
+    txt="L’envoi des documents de "+lib+" a échoué ("+_lxEsc(String(dernier.erreur||"erreur").slice(0,80))+"). Nouvel essai automatique à la prochaine ouverture de l’application.";
+  } else return "";
+  return '<div style="background:linear-gradient(rgba(251,191,36,.10),rgba(251,191,36,.10)),rgba(16,14,12,.92);border:1.5px solid '+coul+';border-radius:14px;padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-start"><div style="font-size:24px">📤</div><div style="flex:1"><div style="font-weight:800;color:'+coul+'">⚠ '+titre+'</div><div style="font-size:12px;color:rgba(255,255,255,.85);line-height:1.5;margin-top:2px">'+txt+'</div><button class="btn bs" style="margin-top:8px;padding:7px 12px;font-size:12px" onclick="window._settTab=\'caisse\';go(\'settings\')">Voir le réglage</button></div></div>';
+}
+
+// Carte de réglage : Paramètres › Caisse et paiements
+function lxEnvoiComptaCarte(){
+  setTimeout(function(){ lxEnvoiComptaCharger(); }, 30);
+  return '<div class="card" id="lxEnvoiCompta" style="margin-top:10px;border:1px solid rgba(212,168,67,.25)"><div class="ct">📤 Envoi automatique au comptable</div><div style="font-size:12px;color:var(--text3)">Chargement…</div></div>';
+}
+async function lxEnvoiComptaCharger(){
+  var el=document.getElementById("lxEnvoiCompta"); if(!el) return;
+  if(window._lxDemo){ LX_EC.etat={ok:false, error:"Non disponible en démonstration"}; _lxEcRendreCarte(); return; }
+  var st=await _lxEcApi("statut",{mois:_lxEcMoisPrec()});
+  LX_EC.etat=st; _lxEcRendreCarte();
+}
+function _lxEcStatutLib(j){
+  var d=function(iso){ try{ var x=new Date(iso); return x.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",timeZone:"Europe/Paris"})+" à "+x.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/Paris"}); }catch(e){ return ""; } };
+  if(j.statut==="envoye") return '<span style="color:#4ade80;font-weight:700">'+(j.type==="test"?"Test envoyé":"Envoyé")+' le '+d(j.envoye_le||j.cree_le)+'</span>';
+  if(j.statut==="reserve") return '<span style="color:#fbbf24;font-weight:700">Envoi en cours…</span>';
+  if(j.statut==="ecart") return '<span style="color:#fb923c;font-weight:700">Bloqué : écart avec la clôture</span>';
+  return '<span style="color:#f87171;font-weight:700">'+(j.type==="test"?"Test non abouti":"Échec")+' le '+d(j.cree_le)+'</span>';
+}
+function _lxEcRendreCarte(){
+  var el=document.getElementById("lxEnvoiCompta"); if(!el) return;
+  var st=LX_EC.etat||{};
+  var h='<div class="ct">📤 Envoi automatique au comptable</div>';
+  h+='<div style="font-size:12px;color:var(--text3);line-height:1.5;margin-bottom:10px">Chaque mois, dès que le mois est clôturé, Luxyra envoie vos documents comptables à votre comptable, fabriqués par les exports de l’application (aucun nouveau calcul). Rien ne part tant que le mois n’est pas clôturé.</div>';
+  if(!_lxEcAutorise()){ el.innerHTML=h+'<div style="font-size:12px;color:var(--text3)">Réservé aux profils autorisés à exporter les données (Comptabilité + Exporter des données).</div>'; return; }
+  if(!st.ok){ el.innerHTML=h+'<div style="font-size:12px;color:var(--text3)">'+_lxEsc(st.error||"Réglage indisponible pour le moment.")+'</div>'; return; }
+  var c=st.config||{actif:false, cabinet:"", email:"", docs:{pack:true,fec:true,rapport:true}, copie:true};
+  var dc=c.docs||{};
+  var chk=function(id,on,label,sous){ return '<label style="display:flex;gap:9px;align-items:flex-start;font-size:13px;margin:8px 0;cursor:pointer"><input type="checkbox" id="'+id+'" '+(on?'checked':'')+' style="width:17px;height:17px;flex-shrink:0;margin-top:1px;accent-color:#c8a84e"><span><b>'+label+'</b>'+(sous?' <span style="color:var(--text3)">'+sous+'</span>':'')+'</span></label>'; };
+  if(st.mode_caisse==="test") h+='<div style="background:rgba(168,85,247,.10);border:1px solid rgba(168,85,247,.35);border-radius:10px;padding:9px 11px;font-size:12px;line-height:1.5;margin-bottom:10px">Votre caisse est en <b>mode test</b> : aucun envoi automatique tant que vous n’êtes pas passé en caisse réelle. L’envoi de test reste possible ; il est marqué « données de test ».</div>';
+  h+='<label style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:6px 0 10px;cursor:pointer"><span style="font-weight:700">Activer l’envoi automatique</span><input type="checkbox" id="ecActif" '+(c.actif?'checked':'')+' style="width:22px;height:22px;accent-color:#c8a84e"></label>';
+  h+='<div style="font-size:12px;color:var(--text2);margin:10px 0 4px">Nom du cabinet (facultatif)</div><input id="ecCabinet" maxlength="120" value="'+_lxEsc(c.cabinet||"")+'" placeholder="Cabinet Martin & Associés" style="width:100%;box-sizing:border-box">';
+  h+='<div style="font-size:12px;color:var(--text2);margin:10px 0 4px">E-mail du comptable *</div><input id="ecEmail" type="email" maxlength="254" autocomplete="off" value="'+_lxEsc(c.email||"")+'" placeholder="compta@cabinet.fr" style="width:100%;box-sizing:border-box">';
+  h+='<div style="font-size:12px;color:var(--text2);margin:12px 0 2px">Documents envoyés</div>';
+  h+=chk("ecPack", dc.pack!==false, "Pack comptable du mois", "(ZIP : journal de caisse, récap TVA ou URSSAF, journal comptable, annulations, paiements en ligne, acomptes)");
+  h+=chk("ecFec", dc.fec!==false, "FEC du mois", "(format officiel, importable dans Pennylane, Cegid, EBP… ; SIRET obligatoire)");
+  h+=chk("ecRapport", dc.rapport!==false, "Rapport comptable lisible", "(page HTML : CA, TVA, moyens de paiement ; s’ouvre dans le navigateur et s’imprime en PDF)");
+  h+=chk("ecCopie", c.copie!==false, "M’envoyer une copie", st.salon_email?"(à "+_lxEsc(st.salon_email)+")":"(aucune adresse e-mail dans Infos établissement)");
+  h+='<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-top:8px;border-left:2px solid rgba(212,168,67,.4);padding-left:8px">Le pack comptable contient votre journal de caisse, avec le nom de vos clients. En activant l’envoi, vous transmettez ces données à l’expert-comptable que vous avez choisi, pour la tenue de votre comptabilité. Vérifiez bien l’adresse : un e-mail envoyé ne peut pas être repris. Les réponses du comptable arrivent sur l’e-mail de votre établissement.</div>';
+  h+='<div style="display:flex;gap:10px;margin-top:14px"><button class="btn bs" style="flex:1;padding:11px;font-weight:700" onclick="lxEnvoiComptaTest()">Envoyer un test</button><button class="btn bg" style="flex:1;padding:11px;font-weight:700" onclick="lxEnvoiComptaEnregistrer()">Enregistrer</button></div>';
+  if(st.tests_restants!=null) h+='<div style="font-size:11px;color:var(--text3);margin-top:6px;text-align:center">Envois de test restants aujourd’hui : '+Number(st.tests_restants)+'</div>';
+  // Derniers envois
+  h+='<div style="margin-top:14px;font-weight:700;color:var(--gold);font-size:13px">Derniers envois</div><div style="font-size:12.5px">';
+  var lignes=[];
+  if(c.actif && st.mode_caisse==="reel" && (st.raison==="non_cloture"||st.raison==="a_faire") && !(st.journal||[]).some(function(j){ return j.type==="auto"&&j.mois===st.mois&&j.statut==="envoye"; })){
+    lignes.push('<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)"><span>'+_lxEcMoisLib(st.mois)+'</span><span style="color:#fbbf24;font-weight:700">'+(st.raison==="non_cloture"?"Prévu après la clôture du mois":"Envoi à la prochaine ouverture")+'</span></div>');
+  }
+  (st.journal||[]).slice(0,12).forEach(function(j){
+    lignes.push('<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)"><span>'+_lxEcMoisLib(j.mois)+(j.type==="test"?' <span style="color:var(--text3)">(test)</span>':'')+'<br><span style="font-size:11px;color:var(--text3)">'+_lxEsc(j.destinataire||"")+'</span></span><span style="text-align:right">'+_lxEcStatutLib(j)+'</span></div>');
+  });
+  h+=lignes.length?lignes.join(""):'<div style="padding:8px 0;color:var(--text3);border-top:1px solid rgba(255,255,255,.06)">Aucun envoi pour l’instant.</div>';
+  h+='</div>';
+  if(LX_EC.erreurLocale) h+='<div style="font-size:11px;color:#f87171;margin-top:6px">Dernière préparation sur cet appareil : '+_lxEsc(LX_EC.erreurLocale)+'</div>';
+  el.innerHTML=h;
+}
+function _lxEcLireFormulaire(){
+  var v=function(id){ var e=document.getElementById(id); return e?e:{}; };
+  return { actif:!!v("ecActif").checked, cabinet:String(v("ecCabinet").value||"").trim().slice(0,120), email:String(v("ecEmail").value||"").trim().toLowerCase(),
+    docs:{pack:!!v("ecPack").checked, fec:!!v("ecFec").checked, rapport:!!v("ecRapport").checked}, copie:!!v("ecCopie").checked };
+}
+async function lxEnvoiComptaEnregistrer(silencieux){
+  if(!_lxEcAutorise()){ toast("Accès non autorisé","warning"); return false; }
+  var f=_lxEcLireFormulaire();
+  if(f.email && !LX_EC_RE_EMAIL.test(f.email)){ showAlert("L’adresse e-mail du comptable n’est pas valide.","warning"); return false; }
+  if(f.actif && !f.email){ showAlert("Indiquez l’e-mail du comptable pour activer l’envoi automatique.","warning"); return false; }
+  if(f.actif && !f.docs.pack && !f.docs.fec && !f.docs.rapport){ showAlert("Cochez au moins un document à envoyer.","warning"); return false; }
+  var r=await _lxEcApi("regler", f);
+  if(!r.ok){ showAlert("Non enregistré : "+(r.error||"erreur"),"error"); return false; }
+  if(!silencieux) toast(f.actif?"✅ Envoi automatique au comptable activé":"Réglage enregistré","success");
+  LX_EC.stopMois=null; LX_EC.attente=0;
+  await lxEnvoiComptaCharger();
+  if(f.actif) setTimeout(function(){ lxEnvoiComptaVerifier(true); }, 1500);
+  return true;
+}
+async function lxEnvoiComptaTest(){
+  if(!_lxEcAutorise()){ toast("Accès non autorisé","warning"); return; }
+  var f=_lxEcLireFormulaire();
+  if(!f.email || !LX_EC_RE_EMAIL.test(f.email)){ showAlert("Indiquez d’abord une adresse e-mail valide pour le comptable.","warning"); return; }
+  var c0=(LX_EC.etat&&LX_EC.etat.config)||{};
+  if(JSON.stringify(f)!==JSON.stringify({actif:!!c0.actif,cabinet:c0.cabinet||"",email:c0.email||"",docs:{pack:(c0.docs||{}).pack!==false,fec:(c0.docs||{}).fec!==false,rapport:(c0.docs||{}).rapport!==false},copie:c0.copie!==false})){
+    if(!(await lxEnvoiComptaEnregistrer(true))) return;
+  }
+  var st=LX_EC.etat||{}, mois=st.dernier_mois_cloture||null;
+  var msg="Un e-mail de test va être envoyé à "+f.email+(f.copie&&st.salon_email?" (copie à "+st.salon_email+")":"")+".\n\n"+(mois?"Il contiendra les documents de "+_lxEcMoisLib(mois)+" (dernier mois clôturé), marqués TEST.":"Aucun mois n’est encore clôturé : l’e-mail de test ne contiendra pas de documents.")+(st.mode_caisse==="test"?"\n\nCaisse en mode test : données de test, sans valeur fiscale.":"");
+  if(!confirm(msg)) return;
+  toast("Préparation de l’envoi de test…","info");
+  var P={fichiers:[], notes:[]}, ctl=null;
+  try{
+    if(mois){
+      var c=_lxEcControleApp(mois), caZ=Math.round(Number(st.dernier_cloture_ca)*100)/100;
+      if(Math.abs(c.ca-caZ)>0.05){ P.notes.push("test_sans_documents_ecart"); }
+      else { P=await _lxEcFichiers(mois, f.docs); ctl={ca_ttc:c.ca, nb:c.nb}; }
+    }
+  }catch(e){ showAlert("Préparation des documents impossible : "+((e&&e.message)||e),"error"); return; }
+  var r=await _lxEcApi("envoyer",{mois:mois||_lxEcMoisPrec(), type:"test", fichiers:P.fichiers, notes:P.notes, controle:ctl});
+  if(r.ok && r.envoye){ toast("✅ E-mail de test envoyé à "+f.email,"success"); if(P.fichiers.length && typeof auditLog==="function") auditLog("EXPORT_PACK_COMPTABLE","Envoi de test au comptable - Période "+mois); }
+  else showAlert("Test non envoyé : "+(r.error||"erreur"),"error");
+  await lxEnvoiComptaCharger();
 }
 
 // ============================================================
