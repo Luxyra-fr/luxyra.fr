@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>Luxyra v6.7.0</title>
+<title>Luxyra v6.8.0</title>
 <link rel="manifest" href="/manifest-app.json">
 <meta name="theme-color" content="#c8a84e">
 <meta name="mobile-web-app-capable" content="yes">
@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261028-1"></script>
+<script src="luxyra-supabase.js?v=20261028-2"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261028-1";
+  var attendu="20261028-2";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -1325,7 +1325,7 @@ function lxEmpreinteCapture(rdvId){
       });
       var data=await r.json();
       if(!r.ok){toast(data.error||"Échec capture","error");return;}
-      toast("💸 Empreinte capturée — "+(data.amount_captured?data.amount_captured.toFixed(2)+" €":""),"success");
+      toast("💸 Empreinte capturée — "+(data.amount_captured?data.amount_captured.toFixed(2)+" €":"")+(data.tk_num?" (ticket #"+data.tk_num+")":""),"success");
       setTimeout(function(){ try{ if(typeof lxRetenuesSync==="function") lxRetenuesSync(true); }catch(_eR){} },1500); // 2026-10-11 : enregistrée en caisse
       // Sync local
       if(window.RDV_ONLINE){
@@ -2896,7 +2896,7 @@ function getInvTournantProducts(){
   return sorted.slice(0,5);
 }
 
-var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.7.0",subdomain:"",slug:"",plan:"essential"};
+var SALON_CONFIG={nom:"Luxyra",sousTitre:"Gestion Beauté",logo:"",adresse:"",cp:"",ville:"",tel:"",email:"",siteWeb:"",siret:"",tva:"",couleurPrimaire:"var(--gold)",couleurSecondaire:"#1a1a1a",devise:"€",tauxTVA:20,version:"v6.8.0",subdomain:"",slug:"",plan:"essential"};
 SALON_CONFIG.nomComplet=function(){return this.nom+(this.sousTitre?" - "+this.sousTitre:"Gestion Salon");};
 SALON_CONFIG.adresseComplete=function(){return this.adresse+(this.cp?", "+this.cp:"")+(this.ville?" "+this.ville:"");};
 
@@ -6666,7 +6666,10 @@ function _doClotureDo(){
     window._lxClotRelue=true;
     Promise.resolve(_lxRafraichirClotures()).then(function(ok){
       if(!ok){ window._lxClotRelue=false; if(typeof toast==="function") toast("\u26a0 V\u00e9rification des cl\u00f4tures impossible (connexion) \u2014 r\u00e9essayez","error"); return; }
-      try{ _doClotureDo(); }finally{ window._lxClotRelue=false; }
+      // 2026-10-28 (-2, v6.8.0) : tickets créés par le serveur aujourd'hui (paiements en ligne) repris AVANT de calculer la Z
+      var _pRec=(typeof lxRecettesServeur==="function"&&lxRecettesServeur()&&typeof lxRecettesServeurImport==="function")?lxRecettesServeurImport(true):null;
+      Promise.resolve(_pRec).catch(function(){}).then(function(){ try{ _doClotureDo(); }finally{ window._lxClotRelue=false; } });
+      return;
     },function(){ window._lxClotRelue=false; });
     return;
   }
@@ -13997,6 +14000,8 @@ function _lxAvecDelai(promesse, ms){ return Promise.race([promesse, new Promise(
 async function lxJourOuvertOuAlerte(){
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   if(window.LOCKED_DAYS&&window.LOCKED_DAYS[TD]){ _lxJourClotureAlerte(); return false; }
+  // 2026-10-28 (-2) : avant de sceller, relève du plancher de numérotation (tickets créés par le serveur pour les paiements en ligne)
+  try{ if(lxRecettesServeur()) await lxTkNumPlancherMaj(); }catch(_ePl){}
   try{
     if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId&&!(typeof _isOnline!=="undefined"&&!_isOnline)&&!window._lxVueAdmin){
       var cz=await _lxAvecDelai(_sb.from("clotures").select("id").eq("salon_id",_salonId).eq("date_cloture",TD).limit(1),4000);
@@ -14034,6 +14039,9 @@ async function _lxRdvDejaEncaisse(apptId){
 var _lxRetenuesDernier=0, _lxRetenuesEnCours=false;
 function _lxDateFrCourte(d){ try{ var p=String(d||"").split("-"); return p[2]+"/"+p[1]+"/"+p[0]; }catch(e){ return d; } }
 async function lxRetenuesSync(force){
+  // 2026-10-28 (-2, v6.8.0) : recettes en ligne enregistrées en caisse PAR LE SERVEUR au paiement / à la capture
+  // (docs/migrations_1028/recettes_en_ligne.sql) -> l'application ne crée plus ces tickets, elle les reprend seulement.
+  if(lxRecettesServeur()){ try{ await lxRecettesServeurImport(!!force); }catch(_eI){} return; }
   if(_lxRetenuesEnCours) return;
   if(!force && Date.now()-_lxRetenuesDernier<5*60*1000) return;
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin) return;
@@ -14056,7 +14064,7 @@ async function lxRetenuesSync(force){
     // 2026-10-14 (NF525 acompte en ligne) : NOUVEAU MODÈLE (acompte_modele='ticket') -> la recette a déjà été scellée le jour
     // du paiement (ticket « Acompte en ligne ») : un acompte conservé ne crée RIEN de plus (jamais de ticket « Acompte conservé »).
     ((a1&&a1.data)||[]).forEach(function(r){ if(r.acompte_modele==="ticket") return; var _k=Math.round((Number(r.acompte_montant)-(Number(r.acompte_rembourse_montant)||0))*100)/100; if(_k>0) travaux.push({r:r,type:"acompte",montant:_k}); });
-    ((a2&&a2.data)||[]).forEach(function(r){ travaux.push({r:r,type:"empreinte",montant:Math.round(Number(r.empreinte_amount)*100)/100}); });
+    ((a2&&a2.data)||[]).forEach(function(r){ travaux.push({r:r,type:"empreinte",montant:Math.round(Number(r.empreinte_captured_amount!=null?r.empreinte_captured_amount:r.empreinte_amount)*100)/100}); }); // 2026-10-28 (-2) : montant réellement prélevé (capture partielle)
     if(!travaux.length) return;
     // Journée déjà clôturée en base ? (clôture automatique ou autre appareil)
     var cz=await _sb.from("clotures").select("id").eq("salon_id",_salonId).eq("date_cloture",TD).limit(1);
@@ -14117,6 +14125,57 @@ async function _lxRetenueTicket(t){
   try{ if(typeof toast==="function") toast((acompte?"Acompte conservé":"Empreinte encaissée")+" enregistré en caisse : "+t.montant.toFixed(2).replace(".",",")+" \u20ac (ticket #"+numRef+")","info"); }catch(_e){}
 }
 window.lxRetenuesSync=lxRetenuesSync;
+// =====================================================================
+// 2026-10-28 (-2, v6.8.0) — RECETTES ENCAISSÉES EN LIGNE : TICKET SCELLÉ CRÉÉ PAR LE SERVEUR AU PAIEMENT CONFIRMÉ
+// (acompte en ligne, remboursement d'acompte, acompte conservé, empreinte capturée — montant prélevé —, bon cadeau vendu en
+// ligne, carte d'abonnement payée en ligne, Click & Collect payé en ligne et son annulation, remboursement fait sur Stripe).
+// Le serveur insère le ticket (numéro, chaînage, empreinte, sceau, signature : chaîne existante) ET sa copie dans
+// appointments (meta.serveur = true). L'application : (1) ne crée plus ces tickets ; (2) reprend les copies dans AP (planning,
+// Z, exports) ; (3) relève son compteur de n° imprimés au-dessus des n° pris par le serveur (lx_tk_num_imprime_max).
+// Interrupteur : app_config.config.recettes_en_ligne_serveur (LX_CONFIG) ; éteint = ancien comportement strict.
+// =====================================================================
+function lxRecettesServeur(){ try{ return !!(window.LX_CONFIG && window.LX_CONFIG.recettes_en_ligne_serveur===true); }catch(_e){ return false; } }
+window.lxRecettesServeur=lxRecettesServeur;
+var _lxRecImportDernier=0, _lxRecImportEnCours=false;
+function _lxJourIso(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+// Relève le plancher de la numérotation imprimée (n° pris par le serveur). Retourne le plancher ou null.
+async function lxTkNumPlancherMaj(){
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxDemo||window._lxVueAdmin) return null;
+    if(typeof _isOnline!=="undefined"&&!_isOnline) return null;
+    var p=await _lxAvecDelai(_sb.rpc("lx_tk_num_imprime_max",{p_salon:_salonId}),3000);
+    if(p&&!p.__delai&&!p.error&&Number(p.data)>0){ var v=Number(p.data); if(!(window._lxTkNumPlancher>=v)) window._lxTkNumPlancher=v; return v; }
+  }catch(_e){}
+  return null;
+}
+window.lxTkNumPlancherMaj=lxTkNumPlancherMaj;
+// Reprend dans AP les tickets créés par le serveur (copies appointments meta.serveur = true des 3 derniers jours) absents de
+// la mémoire. Retourne le nombre ajouté. Aucune écriture.
+async function lxRecettesServeurImport(force){
+  if(_lxRecImportEnCours) return 0;
+  if(!force && Date.now()-_lxRecImportDernier<60*1000) return 0;
+  if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin||window._lxDemo||window._archiveMode) return 0;
+  if(typeof _isOnline!=="undefined"&&!_isOnline) return 0;
+  _lxRecImportDernier=Date.now(); _lxRecImportEnCours=true; var n=0;
+  try{
+    var depuis=_lxJourIso(new Date(Date.now()-3*86400000));
+    var q=await _lxAvecDelai(_sb.from("appointments").select("*").eq("salon_id",_salonId).eq("meta->>serveur","true").gte("date_rdv",depuis).limit(500),5000);
+    if(q&&!q.__delai&&!q.error&&Array.isArray(q.data)){
+      q.data.forEach(function(row){
+        if(!row||AP.some(function(a){ return a&&a.id===row.id; })) return;
+        var m=(typeof window.lxMapApptRow==="function")?window.lxMapApptRow(row):null; if(!m) return;
+        AP.push(m); n++;
+        // acompte en ligne : le rendez-vous du planning porte le n° du ticket d'acompte (déduction au ticket final)
+        try{ if(m.isAcompteEnLigne&&m.isAcompte&&m.acompteRdv&&typeof _lxAcEnLigneReporterAP==="function") _lxAcEnLigneReporterAP(m.acompteRdv, Number(m.tkNum)); }catch(_eR){}
+      });
+    }
+    await lxTkNumPlancherMaj();
+  }catch(e){ console.warn("[lxRecettesServeurImport]",e); }
+  finally{ _lxRecImportEnCours=false; }
+  if(n){ try{ window._apDirty=true; if(typeof toast==="function") toast(n+" paiement(s) en ligne enregistré(s) en caisse par le serveur","info"); }catch(_eT){} }
+  return n;
+}
+window.lxRecettesServeurImport=lxRecettesServeurImport;
 // =====================================================================
 // 2026-10-14 (NF525 acompte en ligne) — ACOMPTE PAYÉ EN LIGNE = TICKET SCELLÉ DÈS LE PAIEMENT (nouveau modèle)
 // Base légale : TVA des prestations exigible à l'encaissement de l'acompte (CGI 269-2-c ; BOI-TVA-DECLA-30-10-30 § 30/35/37),
@@ -14212,6 +14271,9 @@ async function _lxAcEnLigneVerrouReprendre(r, col, keys, extra){
   return true;
 }
 async function lxAcomptesEnLigneSync(force){
+  // 2026-10-28 (-2, v6.8.0) : tickets d'acompte en ligne / de remboursement créés PAR LE SERVEUR (même transaction que le
+  // paiement Stripe ou le remboursement) -> reprise dans la caisse seulement, jamais de création ici (aucun doublon).
+  if(lxRecettesServeur()){ var _nI=0; try{ _nI=await lxRecettesServeurImport(!!force); }catch(_eI){} return _nI>0; }
   if(_lxAcEnLigneEnCours) return false;
   if(!force && Date.now()-_lxAcEnLigneDernier<2*60*1000) return false;
   if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxVueAdmin||window._lxDemo||window._archiveMode) return false;
@@ -14401,7 +14463,9 @@ async function _lxAcompteEnLigneAvantEncaissement(){
       await lxAcomptesEnLigneSync(true); // crée le ticket, ou récupère un ticket local non transmis / un verrou bloqué
       var q2=await _lxAvecDelai(_sb.from("rdv_online").select("acompte_tk_num,acompte_rembourse,acompte_rembourse_montant,remboursements").eq("id",onlineId).eq("salon_id",_salonId).maybeSingle(),5000);
       if(q2&&q2.data){ r.acompte_tk_num=q2.data.acompte_tk_num; r.acompte_rembourse=q2.data.acompte_rembourse; r.acompte_rembourse_montant=q2.data.acompte_rembourse_montant; r.remboursements=q2.data.remboursements; } else r.acompte_tk_num=null;
-      if(!(Number(r.acompte_tk_num)>0)) return "L’acompte payé en ligne ("+f(r.acompte_montant)+" €) n’a pas encore son ticket de caisse (autre appareil en cours ou réseau). Réessayez dans un instant ; le ticket d’acompte doit exister avant d’être déduit.";
+      if(!(Number(r.acompte_tk_num)>0)) return lxRecettesServeur()
+        ? "L’acompte payé en ligne ("+f(r.acompte_montant)+" €) n’a pas encore son ticket de caisse : le serveur l’enregistre automatiquement (en attente si la journée de caisse du paiement était déjà clôturée). Réessayez dans quelques minutes ; s’il manque encore demain, contactez le support."
+        : "L’acompte payé en ligne ("+f(r.acompte_montant)+" €) n’a pas encore son ticket de caisse (autre appareil en cours ou réseau). Réessayez dans un instant ; le ticket d’acompte doit exister avant d’être déduit.";
     } else {
       // remboursement(s) pas encore en caisse -> ticket(s) négatif(s) créé(s) maintenant (sans bloquer si impossible : indépendant de la déduction)
       try{ var _h=Array.isArray(r.remboursements)?r.remboursements:[]; if(_h.some(function(e){ return e&&Number(e.montant)>0&&!(Number(e.tk)>0); })) await lxAcomptesEnLigneSync(true); }catch(_eR){}
@@ -24136,7 +24200,7 @@ function _lxRapportDonnees(periodM){
     ecartReglements:Math.round((totalCB+totalEsp+totalCheq+totalVir+totalAutre+totalEnL-totalTTC-_bumV)*100)/100,
     collabs:collabs, aCollabs:!!(T && T.length), jours:jours, annulations:annulations, retours:retours,
     salon:{nom:SALON_CONFIG.nom||"", adresse:SALON_CONFIG.adresse||"", cp:SALON_CONFIG.cp||"", ville:SALON_CONFIG.ville||"", siret:SALON_CONFIG.siret||"", forme:lxFormeJurLabel()||"", tva:SALON_CONFIG.tva||""},
-    version:(SALON_CONFIG.version||"v6.7.0") };
+    version:(SALON_CONFIG.version||"v6.8.0") };
   if(_bum.actif) R.bum={ventes:_bum.totVentes, utilises:_lxR2(_bum.totUtil), expires:_bum.totExp, nbVentes:_bum.ventes.length, nbUtil:_bum.utilisations.length,
     detailExpires:_bum.expires.map(function(x){ return {code:x.code, effet:x.effet, restant:x.restant}; }), encours:lxBumEncours(_lxMoisBornesSimple(periodM).au)};
   return R;
@@ -25370,10 +25434,13 @@ async function _lxPaiementsEnLigne(mois){
   // 2026-10-14 (NF525 acompte en ligne) : « * » pour lire aussi acompte_modele / acompte_tk_num (colonnes ajoutées par docs/sql_acompte_en_ligne.sql)
   var r1=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).eq("acompte_paye",true).gt("acompte_montant",0).or("and(acompte_paye_at.gte."+depuis+",acompte_paye_at.lt."+fin+"),and(acompte_paye_at.is.null,created_at.gte."+depuis+",created_at.lt."+fin+")").order("acompte_paye_at",{ascending:false,nullsFirst:false}).limit(5000);
   if(r1.error) throw new Error(r1.error.message);
-  var r2=await _sb.from("commandes_online").select("id,numero,client_nom,total,paye,paye_at,status,collected_at,ticket_num,refund_id,cancelled_at").eq("salon_id",_salonId).eq("paye",true).gte("paye_at",depuis).lt("paye_at",fin).order("paye_at",{ascending:false}).limit(5000);
+  var r2=await _sb.from("commandes_online").select("*").eq("salon_id",_salonId).eq("paye",true).gte("paye_at",depuis).lt("paye_at",fin).order("paye_at",{ascending:false}).limit(5000); // 2026-10-28 (-2) : « * » pour recette_tk_num / recette_remb_tk_num (ticket serveur)
   if(r2.error) throw new Error(r2.error.message);
-  var r3=await _sb.from("rdv_online").select("id,client_nom,client_prenom,service_nom,date_rdv,heure_rdv,empreinte_amount,empreinte_captured_at,empreinte_tk_num").eq("salon_id",_salonId).eq("empreinte_status","captured").gt("empreinte_amount",0).gte("empreinte_captured_at",depuis).lt("empreinte_captured_at",fin).limit(5000);
+  var r3=await _sb.from("rdv_online").select("*").eq("salon_id",_salonId).eq("empreinte_status","captured").gt("empreinte_amount",0).gte("empreinte_captured_at",depuis).lt("empreinte_captured_at",fin).limit(5000); // 2026-10-28 (-2) : « * » pour empreinte_captured_amount
   if(r3.error) throw new Error(r3.error.message);
+  // 2026-10-28 (-2, v6.8.0) : bons cadeaux et cartes d'abonnement payés en ligne, tickets créés par le serveur au paiement (file
+  // recettes_en_ligne, lecture seule ; table absente = SQL non appliqué -> rien). Remboursements faits sur Stripe (remb_externe).
+  var r4={data:[]}; try{ var _r4=await _sb.from("recettes_en_ligne").select("*").eq("salon_id",_salonId).eq("statut","tickete").in("source",["bon_cadeau","carte_abo","click_collect","remb_externe"]).gte("created_at",depuis).lt("created_at",fin).limit(5000); if(_r4&&!_r4.error&&Array.isArray(_r4.data)) r4=_r4; }catch(_e4){}
   (r1.data||[]).forEach(function(r){ if(r.ticket_num) nums[r.ticket_num]=1; if(r.retenue_tk_num) nums[r.retenue_tk_num]=1;
     if(r.acompte_tk_num) nums[r.acompte_tk_num]=1; (Array.isArray(r.remboursements)?r.remboursements:[]).forEach(function(e){ if(e&&Number(e.tk)>0) nums[e.tk]=1; }); }); // 2026-10-14 (NF525 acompte en ligne)
   (r3.data||[]).forEach(function(r){ if(r.empreinte_tk_num) nums[r.empreinte_tk_num]=1; });
@@ -25429,16 +25496,41 @@ async function _lxPaiementsEnLigne(mois){
       rembourse:(r.acompte_rembourse?_lxDateParis(r.refunded_at)||"":""), rembInconnu:!!(r.acompte_rembourse&&!r.refunded_at), reconnu:reconnu,
       etat:r.acompte_rembourse?"Rembours\u00e9":(r.retenue_tk_num?"Conserv\u00e9 (ticket #"+r.retenue_tk_num+")":(r.status==="done"?"Prestation r\u00e9alis\u00e9e":(r.status==="cancelled"?"Annul\u00e9 (remboursement en cours)":"RDV \u00e0 venir")))});
   });
+  var _rembExt={}; (r4.data||[]).forEach(function(q){ if(q.source==="remb_externe") (_rembExt[q.objet_id]=_rembExt[q.objet_id]||[]).push(q); });
+  // Recette en ligne déjà en caisse (ticket serveur) : une ligne par remboursement (à sa date) + la part conservée (caisse:true)
+  var _ligneServeur=function(base, montant, paye, caisseDate, objet){
+    var tot=0; (_rembExt[objet]||[]).forEach(function(q){ var m=Math.round(Number(q.montant)*100)/100; tot+=m;
+      L.push(Object.assign({}, base, {montant:m, paye:paye, rembourse:_lxDateParis(q.paye_at)||String(q.date_ticket||""), rembInconnu:false, reconnu:caisseDate, caisse:true, caisseDate:caisseDate, rembCaisse:String(q.date_ticket||""), tkRemb:q.tk_num||null, etat:"Remboursé sur Stripe (ticket #"+(q.tk_num||"?")+")"})); });
+    var garde=Math.round((montant-tot)*100)/100;
+    if(garde>0.004) L.push(Object.assign({}, base, {montant:garde, paye:paye, rembourse:"", rembInconnu:false, reconnu:caisseDate, caisse:true, caisseDate:caisseDate, rembCaisse:""}));
+  };
+  (r4.data||[]).forEach(function(q){
+    if(q.source!=="bon_cadeau"&&q.source!=="carte_abo") return;
+    var payeQ=_lxDateParis(q.paye_at)||String(q.date_ticket||""), dQ=String(q.date_ticket||"");
+    var bonBum=false; try{ var _g=(typeof GC!=="undefined"&&Array.isArray(GC))?GC.find(function(g){ return g&&g.id===q.objet_id; }):null; bonBum=!!(_g&&typeof lxBonUsage==="function"&&lxBonUsage(_g)==="BUM"); }catch(_eB){}
+    _ligneServeur({type:q.source==="bon_cadeau"?"Bon cadeau":"Carte d’abonnement", ref:"Ticket #"+(q.tk_num||""), client:"", libelle:q.source==="bon_cadeau"?("vendu en ligne"+(bonBum?" (usage multiple : hors CA, TVA à l’utilisation)":"")):"payée en ligne",
+      taux:bonBum?0:lxTauxTVA(), tkNum:q.tk_num||null, etat:"En caisse (ticket #"+(q.tk_num||"?")+" du "+_lxDateFrCourte(dQ)+")"}, Math.round(Number(q.montant)*100)/100, payeQ, dQ, q.objet_id);
+  });
   (r2.data||[]).forEach(function(c){
     var annule=!!(c.refund_id||c.status==="annulee"||c.status==="cancelled");
     var tp=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):lxTauxTVA();
+    // 2026-10-28 (-2, v6.8.0) : commande déjà en caisse au paiement (ticket serveur) -> lignes « caisse » (aucun ajustement sauf
+    // ticket daté d'un autre mois) ; annulation remboursée = ticket négatif (recette_remb_tk_num) à la date de l'annulation.
+    if(c.recette_tk_num){
+      var _qC=(r4.data||[]).find(function(q){ return q.source==="click_collect"&&q.objet_id===c.id; }), _dC=(_qC&&String(_qC.date_ticket||""))||"";
+      var _baseC={type:"Commande en ligne", ref:"Commande n\u00b0"+(c.numero||""), client:c.client_nom||"", libelle:"Click & Collect", taux:tp, nature:"prod", tkNum:c.recette_tk_num,
+        etat:annule?"Annul\u00e9e et rembours\u00e9e"+(c.recette_remb_tk_num?" (ticket #"+c.recette_remb_tk_num+")":""):("En caisse (ticket #"+c.recette_tk_num+")"+(c.status==="retiree"?", remise":", \u00e0 retirer"))};
+      if(annule){ L.push(Object.assign({}, _baseC, {montant:Math.round(Number(c.total)*100)/100, paye:_lxDateParis(c.paye_at), rembourse:_lxDateParis(c.cancelled_at)||"", rembInconnu:!c.cancelled_at, reconnu:_dC, caisse:true, caisseDate:_dC, rembCaisse:_lxDateParis(c.cancelled_at)||"", tkRemb:c.recette_remb_tk_num||null})); return; }
+      _ligneServeur(_baseC, Math.round(Number(c.total)*100)/100, _lxDateParis(c.paye_at), _dC, c.id);
+      return;
+    }
     L.push({type:"Commande en ligne", ref:"Commande n\u00b0"+(c.numero||""), client:c.client_nom||"", libelle:"Click & Collect", montant:Math.round(Number(c.total)*100)/100, taux:tp,
       paye:_lxDateParis(c.paye_at), rembourse:annule?_lxDateParis(c.cancelled_at):"", rembInconnu:!!(annule&&!c.cancelled_at), reconnu:(!annule&&c.status==="retiree")?_lxDateParis(c.collected_at):"",
       etat:annule?"Rembours\u00e9e":(c.status==="retiree"?"Remise":"\u00c0 retirer")});
   });
   (r3.data||[]).forEach(function(r){
     L.push({type:"Empreinte encaiss\u00e9e", ref:"RDV du "+_lxDateFrCourte(r.date_rdv)+" "+String(r.heure_rdv||"").slice(0,5), client:[(r.client_prenom||""),(r.client_nom||"")].join(" ").trim(),
-      libelle:(r.service_nom||"")+" (absence)", montant:Math.round(Number(r.empreinte_amount)*100)/100, taux:lxTauxTVA(), paye:_lxDateParis(r.empreinte_captured_at),
+      libelle:(r.service_nom||"")+" (absence)", montant:Math.round(Number(r.empreinte_captured_amount!=null?r.empreinte_captured_amount:r.empreinte_amount)*100)/100, taux:lxTauxTVA(), paye:_lxDateParis(r.empreinte_captured_at), // 2026-10-28 (-2) : montant réellement prélevé
       rembourse:"", rembInconnu:false, reconnu:(r.empreinte_tk_num&&dTk[r.empreinte_tk_num])||"", etat:r.empreinte_tk_num?"Enregistr\u00e9e en caisse (ticket #"+r.empreinte_tk_num+")":"En attente d\u2019enregistrement en caisse"});
   });
   return L;
@@ -25464,7 +25556,7 @@ async function _lxAjustEnLigneMois(mois){
   L.forEach(function(p){
     // 2026-10-14 (NF525) : date de remboursement inconnue -> traité comme remboursé le jour du paiement (net 0 sur le mois),
     // au lieu d'ignorer la ligne (même résultat sur l'ajustement, mais règle explicite et identique à l'export TVA).
-    if(p.caisse){ var ajC=_lxAjustLigneCaisse(p,mois); if(ajC) r.svc+=ajC; return; } // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle (tickets en caisse) -> écart seulement si ticket daté d'un autre mois que le règlement
+    if(p.caisse){ var ajC=_lxAjustLigneCaisse(p,mois); if(ajC){ if(p.nature==="prod"||p.type==="Commande en ligne") r.prod+=ajC; else r.svc+=ajC; } return; } // 2026-10-28 (-2) : Click & Collect = ventes // 2026-10-14 (NF525 acompte en ligne) : nouveau modèle (tickets en caisse) -> écart seulement si ticket daté d'un autre mois que le règlement
     var rembourse=p.rembourse;
     if(p.rembInconnu){ if(!p.paye) return; rembourse=p.paye; }
     var aj=0;
@@ -25551,6 +25643,20 @@ async function expAcomptesNonSoldes(silencieux, mois, collecteur){
     }
     ligne("Acompte en caisse (ticket #"+n+")", cl?cName(cl):"", (t.items&&t.items[0]&&t.items[0].name)||"", appt?(_lxDateFrCourte(appt.date)+" "+(appt.time||"")):"", t.date, m, 0, m, "Ticket #"+n, "D\u00e9j\u00e0 dans le CA de caisse du "+_lxDateFrCourte(t.date));
   });
+  // 3) 2026-10-28 (-2, v6.8.0) : commandes Click & Collect payées en ligne (ticket serveur au paiement : TVA déjà déclarée,
+  //    CGI art. 269-2-a) et pas encore remises au client à la date : avance reçue sur une livraison de biens (4191).
+  try{
+    var _qcc=await _sb.from("commandes_online").select("*").eq("salon_id",_salonId).eq("paye",true).not("recette_tk_num","is",null).lte("paye_at",fin+"T00:00:00Z").limit(5000);
+    ((_qcc&&!_qcc.error&&_qcc.data)||[]).forEach(function(c){
+      var payeC=_lxDateParis(c.paye_at); if(!le(payeC)) return;
+      if(c.status==="retiree"&&le(_lxDateParis(c.collected_at))) return;
+      if((c.status==="annulee"||c.refund_id)&&le(_lxDateParis(c.cancelled_at))) return;
+      var tpC=(SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):tx, mC=Math.round(Number(c.total)*100)/100;
+      var htC=micro?mC:Math.round(mC/(1+tpC/100)*100)/100, tvC=Math.round((mC-htC)*100)/100;
+      tot+=mC; totHT+=htC; totTVA+=tvC;
+      rows.push(["Commande en ligne (ticket #"+c.recette_tk_num+")", c.client_nom||"", (c.items||[]).map(function(it){ return (it.qty>1?it.qty+"\u00d7 ":"")+(it.nom||""); }).join(" + "), "Click & Collect n\u00b0"+(c.numero||""), payeC, csvNum(mC), csvNum(0), csvNum(mC), csvNum(htC), csvNum(tvC)+(micro?"":" ("+tpC+"%)"), "Ticket #"+c.recette_tk_num, "D\u00e9j\u00e0 dans le CA de caisse du jour du paiement - commande pas encore remise"]);
+    });
+  }catch(_eCc){}
   rows.sort(function(x,y){ return String(x[4]).localeCompare(String(y[4])); });
   var headers=["Type","Client","Prestation","Rendez-vous","Pay\u00e9 le","Acompte TTC (\u20ac)","Rembours\u00e9 au "+_lxDateFrCourte(D)+" (\u20ac)","Reste non sold\u00e9 TTC (\u20ac)",micro?"Montant (\u20ac)":"HT (\u20ac)",micro?"TVA":"TVA (\u20ac)","R\u00e9f\u00e9rence","\u00c9tat"];
   var footer=[
@@ -29326,11 +29432,13 @@ function doRemoveAcompte(apptId){
 // 2026-10-14 (NF525) : n° du prochain ticket SANS le consommer (même règle que nextTicketNum).
 function _lxProchainTkNum(){
   var max=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>max)max=a.tkNum;});
+  if(Number(window._lxTkNumPlancher)>max) max=Number(window._lxTkNumPlancher); // 2026-10-28 (-2) : n° pris par le serveur (paiements en ligne)
   if(typeof tkN!=="undefined"&&tkN>max)max=tkN;
   return max+1;
 }
 function nextTicketNum(){
   var max=0;AP.forEach(function(a){if(a.tkNum&&a.tkNum>max)max=a.tkNum;});
+  if(Number(window._lxTkNumPlancher)>max) max=Number(window._lxTkNumPlancher); // 2026-10-28 (-2) : n° imprimés pris par le serveur (paiements en ligne)
   // FIX 2026-06-17 : numerotation a source UNIQUE. On avance aussi le compteur global tkN
   // (sinon un tkN++ ulterieur reutilisait ce numero -> collision rejetee par UNIQUE(num,salon)
   // -> saveTicketToDb echouait en silence). Plancher sur le max reel des tkNum en memoire.
@@ -34405,7 +34513,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.7.0", LX_CAISSE="C01"; // 2026-10-28 : 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="6.8.0", LX_CAISSE="C01"; // 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -36601,7 +36709,7 @@ function lxCcRemettre(id){
   h+='<label style="font-size:12px;color:var(--text3)">Code de retrait présenté par le client</label>';
   h+='<input id="ccCode" autocomplete="off" style="width:100%;font-size:22px;letter-spacing:4px;text-transform:uppercase;text-align:center;margin:6px 0 10px" maxlength="6" placeholder="XXXXXX">';
   h+='<label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text2);margin-bottom:14px"><input type="checkbox" id="ccSansCode"> Pas de code : identité du client vérifiée</label>';
-  h+='<button class="btn bg" style="width:100%" onclick="lxCcRemettreValider(\''+c.id+'\')">'+(c.paye?'Remettre (ticket de caisse « payé en ligne »)':'Encaisser puis remettre')+'</button>';
+  h+='<button class="btn bg" style="width:100%" onclick="lxCcRemettreValider(\''+c.id+'\')">'+(c.paye?(c.recette_tk_num?'Remettre (déjà en caisse : ticket n°'+escapeHtml(String(c.recette_tk_num))+')':'Remettre (ticket de caisse « payé en ligne »)'):'Encaisser puis remettre')+'</button>';
   h+='<button class="btn bs" style="width:100%;margin-top:8px" onclick="cM()">Annuler</button></div></div>';
   document.getElementById("modal").innerHTML=h;
   setTimeout(function(){ var e=document.getElementById("ccCode"); if(e) e.focus(); },100);
@@ -36622,6 +36730,11 @@ async function lxCcRemettreValider(id){
       if(c.status!=="a_preparer"&&c.status!=="prete"){ cM(); showAlert(c.status==="retiree"?("Déjà remise le "+_ccDate(c.collected_at)+" par "+(c.collected_by||"?")+(c.ticket_num?" (ticket n°"+c.ticket_num+")":"")):"Cette commande n'est plus à remettre ("+((_CC_STATUTS[c.status]||[c.status])[0])+").","warning"); go("commandes"); return; }
     } else { showAlert("Vérification de la commande impossible (connexion). Réessayez.","warning"); return; }
   }catch(_eRc){ showAlert("Vérification de la commande impossible (connexion). Réessayez.","warning"); return; }
+  // 2026-10-28 (-2, v6.8.0) : commande payée en ligne DÉJÀ en caisse (ticket scellé créé par le serveur au paiement, TVA
+  // exigible à l'encaissement de l'acompte sur livraison de biens : CGI art. 269-2-a) -> la remise ne crée AUCUN ticket :
+  // sortie de stock + commande marquée remise avec le n° du ticket du paiement.
+  if(c.paye && c.recette_tk_num){ cM(); await lxCcRemettreSansTicket(c, sansCode?null:code, sansCode); go("commandes"); return; }
+  if(c.paye && lxRecettesServeur()){ cM(); showAlert("Le paiement en ligne de cette commande n’a pas encore son ticket de caisse : le serveur l’enregistre automatiquement (en attente si la journée de caisse du paiement était déjà clôturée). Réessayez dans quelques minutes, sans encaisser la commande en caisse.","warning"); go("commandes"); return; }
   // 2026-10-14 audit : déjà encaissée sur cet appareil (marque locale) -> on finalise la remise, sans nouveau ticket
   var _ccDeja=_lxCcMemo()[c.id];
   if(_ccDeja && _ccDeja.tk){ cM(); toast("Commande déjà encaissée (ticket n°"+_ccDeja.tk+") — finalisation de la remise…","info"); await lxCcApresEncaissement(c.id,_ccDeja.code,_ccDeja.sansCode,_ccDeja.tk); go("commandes"); return; }
@@ -36635,6 +36748,22 @@ async function lxCcRemettreValider(id){
   _tk._ccCommandeId=c.id; _tk._ccCode=sansCode?null:code; _tk._ccSansCode=sansCode; window._lxCcEnCaisse=c.id;
   if(c.paye){ _tk._ccPayeEnLigne=true; _tk._ccMontantEnLigne=Math.round((Number(c.total)||0)*100)/100; _tk._ccNumero=c.numero; }
   showCaisse();
+}
+// 2026-10-28 (-2, v6.8.0) : remise d'une commande déjà en caisse (ticket serveur) : stock sorti UNE fois (marque locale), puis
+// commande marquée remise (worker /api/cc/action : ticket_num = n° du ticket du paiement, aucun autre accepté).
+async function lxCcRemettreSansTicket(c, code, sansCode){
+  var tk=String(c.recette_tk_num), memo=_lxCcMemo()[c.id];
+  if(!(memo && memo.stock)){
+    try{ (c.items||[]).forEach(function(it){ var pid=it&&it.produit_id; if(pid==null) return;
+      for(var i=0;i<PRODS.length;i++){ if(String(PRODS[i].id)===String(pid)){ var av=PRODS[i].stk; PRODS[i].stk=Math.max(0,(Number(PRODS[i].stk)||0)-(Number(it.qty)||1));
+        if(typeof saveProduct==="function") saveProduct(PRODS[i]);
+        if(typeof logMouvementStock==="function") logMouvementStock(PRODS[i].id,it.nom||PRODS[i].n||"",'vente',Number(it.qty)||1,av,PRODS[i].stk,"Click & Collect n°"+c.numero+" - ticket #"+tk);
+        break; } } }); }catch(_eS){ console.warn("[C&C] sortie de stock",_eS); }
+    _lxCcMemoSet(c.id,{tk:tk,code:code||"",sansCode:!!sansCode,le:Date.now(),stock:true});
+  }
+  var r; try{ r=await _ccAction(c,"retiree",{code:code||"",sans_code:!!sansCode||!code,ticket_num:tk}); }catch(e){ r={ok:false,d:{error:(e&&e.message)||"connexion"}}; }
+  if(r&&r.ok){ _lxCcMemoSet(c.id,null); toast("✅ Commande n°"+c.numero+" remise (déjà en caisse : ticket n°"+tk+")","success"); }
+  else showAlert("La commande n’a pas pu être marquée remise : "+((r&&r.d&&r.d.error)||"erreur")+". Réessayez « Remettre » : le stock ne sera pas retiré une 2e fois et aucun ticket ne sera créé.","warning");
 }
 var LX_CC_MODE_EN_LIGNE="Payé en ligne (Click & Collect)";
 function _lxCcEnLigneDeja(){ var s=0; (_tk&&_tk.payments||[]).forEach(function(p){ if(p&&p.method===LX_CC_MODE_EN_LIGNE) s+=Number(p.amount)||0; }); return Math.round(s*100)/100; }
@@ -39611,11 +39740,16 @@ function cloturerJournee(opts){
   var _zDelta=function(x){ var an=(typeof _lxZAnnotation==="function")?_lxZAnnotation(x):null; return an?Math.round((Number(an.correct_total_ca)-Number(an.wrong_total_ca))*100)/100:0; };
   var cumulMois=totalCA;clotMois.forEach(function(x){cumulMois+=x.totalCA+_zDelta(x);});
   c.cumulMois=Math.round(cumulMois*100)/100;
+  // 2026-10-28 (-2, v6.8.0) : cumul des tickets du mois / de l'année (cumul_mois_tickets / cumul_annee_tickets : 0 écrit jusqu'ici)
+  // = tickets de cette Z + tickets des Z précédentes de la période (même règle que lx-cloture-auto v3). Hors empreinte.
+  var _cumTk=function(L){ var n=nbTicketsNum; L.forEach(function(x){ n+=(Number(x.nbTickets)||0); }); return n; };
+  c.cumulMoisTk=_cumTk(clotMois);
   // Cumul annuel
   var anKey=TD.slice(0,4);
   var clotAn=window.CLOTURES.filter(function(x){return x.date.indexOf(anKey)===0;});
   var cumulAn=totalCA;clotAn.forEach(function(x){cumulAn+=x.totalCA+_zDelta(x);});
   c.cumulAnnuel=Math.round(cumulAn*100)/100;
+  c.cumulAnTk=_cumTk(clotAn);
   if(window._lxZAnnotLues===true) c.lxAnnotOk=true; // cumuls déjà corrigés ici : le serveur ne les ajuste pas une 2e fois
   // Grand total perpetuel (NF525): valeur affichee best-effort; autorite = trigger serveur clotures_set_cumul_perpetuel.
   var _maxPerp=0, _maxPerpTs=""; window.CLOTURES.forEach(function(x){ if(typeof x.cumulPerpetuelCA==="number"&&x.cumulPerpetuelCA>_maxPerp){_maxPerp=x.cumulPerpetuelCA;_maxPerpTs=String(x.ts||"");} });

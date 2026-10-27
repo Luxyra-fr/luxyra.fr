@@ -4,7 +4,8 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
+window.LX_DATA_VERSION = "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
+// (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
 // Ce fichier remplace le stockage en mémoire par Supabase.
 // À inclure dans le HTML AVANT le code existant de l'app.
 //
@@ -3490,7 +3491,8 @@ var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClien
   "bonVenduRemise","offertRemise","dbNum","bonsUtil", // 2026-10-28 (v6.7.0) : bons utilisés au modèle v2 (imputation, bon à usage multiple)
   "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId", // 2026-10-14 (NF525 acompte en ligne)
   "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe", // 2026-10-14 audit : effets de gestion d'un ticket (inversés à l'annulation), doublon d'acompte écarté
-  "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour"]; // 2026-10-17 retour partiel : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
+  "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour", // 2026-10-17 retour partiel
+  "serveur","recetteKey","recetteType","ccCommandeId","ccNumero","bonCode","bonId","carteAboId","recetteRef","isRembEnLigne"]; // 2026-10-28 (-2, v6.8.0) : tickets créés par le serveur (paiements en ligne) — ticket de retour partiel ci-dessus : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
 function _lxApptMetaDepuis(appt) {
   try {
     if (!appt || typeof appt !== "object") return null;
@@ -4058,6 +4060,15 @@ async function saveTicketToDb(tk) {
     // retour dépassant le payé, ticket d'origine annulé / introuvable, avoir sur un ticket déjà remboursé en partie… Ce refus ne
     // change pas avec le temps : l'entrée sort de la file de secours (trace WAL_ABANDON + DB_ERROR critique), jamais rejouée.
     // L'appelant reçoit {refusDefinitif:true} (le retour partiel n'affiche alors aucun ticket ; voir lxRetourValider).
+    // 2026-10-28 (-2, v6.8.0) : commande Click & Collect payée en ligne DÉJÀ en caisse (ticket créé par le serveur au paiement) :
+    // le ticket de remise d'une ancienne version de l'application est refusé définitivement (jamais rejoué, pas de double CA).
+    if (res.error && /LX_CC_DEJA_EN_CAISSE/.test(String(res.error.message || ""))) {
+      try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || ""), code: "LX_CC_DEJA_EN_CAISSE", permanent: true }; } catch(_eC0){}
+      if (_walId) { _walMarkSynced(_walId); try { if (typeof saveAuditEntry === "function") saveAuditEntry("WAL_ABANDON", JSON.stringify({ wal_id: _walId, type: "ticket", raison: "commande déjà en caisse (ticket serveur)", msg: String(res.error.message || "").slice(0, 300), tk_num: tk.tkNum || null }).slice(0, 2000)); } catch(_eC1){} }
+      try { if (typeof saveAuditEntry === "function") saveAuditEntry("DB_ERROR", JSON.stringify({ fn: "saveTicketToDb", gravite: "critical", msg: String(res.error.message || "").slice(0, 400), code: "LX_CC_DEJA_EN_CAISSE", tk_num: tk.tkNum || null, tk_id: tk.id || null }).slice(0, 2000)); } catch(_eC2){}
+      try { if (typeof toast === "function") toast(String(res.error.message || "").replace(/^.*LX_CC_DEJA_EN_CAISSE\s*:?\s*/, ""), "error"); } catch(_eC3){}
+      return { ok: false, refusDefinitif: true, error: { message: String(res.error.message || ""), code: res.error.code || "P0001" } };
+    }
     if (res.error && /LX_RETOUR_REFUSE/.test(String(res.error.message || ""))) {
       try { tk._dbError = { at: new Date().toISOString(), msg: String(res.error.message || ""), code: "LX_RETOUR_REFUSE", permanent: true }; } catch(_eF0){}
       if (_walId) {
