@@ -1912,6 +1912,12 @@ async function handleWebhookConnect(request, env) {
       // négatif scellé côté serveur (RPC lx_recette_remboursement_externe, idempotente par refund_id ; les remboursements faits
       // par Luxyra sont reconnus et ignorés). Les remboursements sont relus chez Stripe au nom du compte (jamais crus sur parole).
       await lxRemboursementsExternes(env, compte, data);
+    } else if (event.type === "payout.paid") {
+      // 2026-10-28 (-8, Luxyra 6.8.6, mineur de l'audit « frais Stripe absents des exports, compte 580100 jamais soldé ») : versement
+      // arrivé sur le compte bancaire du salon -> versement et détail des opérations (brut, frais Stripe, net) RELUS chez Stripe au
+      // nom du compte, enregistrés (stripe_versements / _lignes, idempotent) ; les exports soldent le 580100 par la banque + 627.
+      // À cocher dans Stripe : webhook « comptes connectés », évènement payout.paid (registre NF525, intervention -8).
+      await lxStripeVersementEnregistrer(env, compte, data);
     } else if (event.type === "charge.dispute.created") {
       const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=nom&stripe_connect_id=eq.${encodeURIComponent(compte)}&limit=1`, { headers: _sbHeaders(env) });
       const sa = sr.ok ? await sr.json() : [];
@@ -1926,6 +1932,52 @@ async function handleWebhookConnect(request, env) {
     return jsonResponse({ error: "processing" }, 500);  // Stripe réessaiera
   }
   return jsonResponse({ received: true });
+}
+
+// 2026-10-28 (-8, Luxyra 6.8.6) : versement Stripe (payout) d'un compte connecté -> public.stripe_versements (+ lignes). Montants en
+// euros (Stripe : centimes). brut = paiements − remboursements compris ; frais = commissions Stripe (fee des opérations + frais
+// facturés à part, type stripe_fee) ; autres = le reste (litiges, ajustements) ; montant = net viré (= brut − frais + autres).
+// Rien n'est cru sur parole : le versement et ses opérations sont relus chez Stripe ; rejouable (on_conflict payout_id / bt_id).
+async function lxStripeVersementEnregistrer(env, compte, po) {
+  const pid = String((po && po.id) || "");
+  if (!/^po_[A-Za-z0-9]+$/.test(pid) || !/^acct_[A-Za-z0-9]+$/.test(String(compte || ""))) return { ok: false, raison: "identifiants" };
+  const sr = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/salons?select=id&stripe_connect_id=eq.${encodeURIComponent(compte)}&limit=1`, { headers: _sbHeaders(env) });
+  const sa = sr.ok ? await sr.json() : [];
+  if (!sa || !sa[0]) { await reportWorkerError(env, "worker:stripe-versement", new Error("compte Stripe sans établissement"), { compte, payout: pid }, "warning"); return { ok: false, raison: "salon" }; }
+  const salon = sa[0].id;
+  const p = await stripeAPI(env, `payouts/${encodeURIComponent(pid)}`, null, "GET", compte);
+  if (!p || p.id !== pid) throw new Error("versement Stripe illisible " + pid);
+  if (p.status !== "paid") return { ok: false, raison: "statut " + p.status };
+  let ops = [], apres = null;
+  for (let i = 0; i < 50; i++) {
+    const r = await stripeAPI(env, `balance_transactions?payout=${encodeURIComponent(pid)}&limit=100` + (apres ? `&starting_after=${encodeURIComponent(apres)}` : ""), null, "GET", compte);
+    if (!r || r.error || !Array.isArray(r.data)) throw new Error("opérations du versement illisibles " + pid);
+    ops = ops.concat(r.data); if (!r.has_more || !r.data.length) break; apres = r.data[r.data.length - 1].id;
+  }
+  ops = ops.filter((t) => t && t.type !== "payout");
+  const c2 = (n) => Math.round(Number(n) || 0) / 100;
+  const ENC = ["charge", "payment", "refund", "payment_refund"];
+  let brut = 0, frais = 0, net = 0;
+  const lignes = ops.map((t) => {
+    const fee = (t.type === "stripe_fee") ? -Number(t.amount || 0) : Number(t.fee || 0);
+    if (ENC.includes(t.type)) brut += Number(t.amount || 0);
+    frais += fee; net += Number(t.net || 0);
+    const src = typeof t.source === "string" ? t.source : (t.source && t.source.id) || null;
+    const pi = (t.source && typeof t.source === "object" && t.source.payment_intent) ? String(t.source.payment_intent) : null;
+    return { salon_id: salon, payout_id: pid, bt_id: String(t.id), type: String(t.type || ""), source: src, payment_intent: pi,
+      date_operation: new Date((Number(t.created) || 0) * 1000).toLocaleDateString("en-CA", { timeZone: "Europe/Paris" }),
+      brut: ENC.includes(t.type) ? c2(t.amount) : 0, frais: c2(fee), net: c2(t.net), description: t.description ? String(t.description).slice(0, 200) : null };
+  });
+  const montant = c2(p.amount), autres = Math.round((montant - c2(brut) + c2(frais)) * 100) / 100;
+  if (Math.abs(c2(net) - montant) > 0.005) await reportWorkerError(env, "worker:stripe-versement", new Error("somme des opérations différente du versement"), { payout: pid, montant, net: c2(net) }, "warning");
+  const v = { salon_id: salon, compte, payout_id: pid, montant, brut: c2(brut), frais: c2(frais), autres, devise: String(p.currency || "eur"), statut: "paid", nb_operations: lignes.length,
+    date_versement: new Date((Number(p.arrival_date) || Number(p.created) || 0) * 1000).toLocaleDateString("en-CA", { timeZone: "Europe/Paris" }),
+    details: { automatic: p.automatic === true, method: p.method || null, statement_descriptor: p.statement_descriptor || null } };
+  const h = _sbHeaders(env, { Prefer: "resolution=merge-duplicates,return=minimal" });
+  const w1 = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/stripe_versements?on_conflict=payout_id`, { method: "POST", headers: h, body: JSON.stringify(v) });
+  if (!w1.ok) throw new Error("enregistrement du versement refusé " + w1.status);
+  if (lignes.length) { const w2 = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/stripe_versements_lignes?on_conflict=bt_id`, { method: "POST", headers: h, body: JSON.stringify(lignes) }); if (!w2.ok) throw new Error("enregistrement des opérations refusé " + w2.status); }
+  return { ok: true, payout: pid, montant, brut: v.brut, frais: v.frais, autres, nb: lignes.length };
 }
 
 // 2026-10-28 (-2, recettes en ligne) : remboursements d'un paiement client (compte connecté) -> tickets négatifs côté serveur.

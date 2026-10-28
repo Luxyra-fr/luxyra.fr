@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261028-7"></script>
+<script src="luxyra-supabase.js?v=20261028-8"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261028-7";
+  var attendu="20261028-8";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -4896,6 +4896,32 @@ function chooseDevisPrintFmt(idx){
 //  - utilise le dernier choix mémorisé en localStorage si présent
 //  - sinon, ouvre le sélecteur (1ère fois sur le device)
 // Pour changer le format après le 1er choix : clic droit sur le bouton imprimer.
+// 2026-10-28 (-8, Luxyra 6.8.6, constat M9 de l'audit) — CONDITIONS DU DEVIS tirées des RÉGLAGES de l'établissement (Mon site ›
+// Réservation en ligne : somme demandée à la réservation, délai d'annulation, remboursement automatique, part rendue en cas
+// d'annulation tardive). Avant : texte figé « Acompte de 30 %… toute annulation à moins de 48 h entraîne la perte de l'acompte »,
+// différent des réglages et juridiquement inexact : une somme versée d'avance par un consommateur est, sauf stipulation contraire,
+// des ARRHES (C. consom. art. L214-1) — le client peut se dédire en les perdant, l'établissement qui se dédit les rend au double
+// (C. civ. art. 1590) ; un « acompte » engage ferme les deux parties (le client resterait redevable de tout le prix) et ne se
+// « perd » pas. Retour : lignes de texte (sans HTML).
+function lxDevisConditions(validiteJours, totalTTC){
+  var SC=window.SITE_CONFIG||{}, L=[], eur=function(x){ return (Math.round((Number(x)||0)*100)/100).toFixed(2).replace(".",",")+" \u20ac"; };
+  L.push("Devis valable "+validiteJours+" jours \u00e0 compter de la date d\u2019\u00e9mission.");
+  var m=Number(SC.acompteMontant)||0, pct=(SC.acompteType==="pourcentage"), tot=Math.max(0,Number(totalTTC)||0);
+  if((SC.modeCaution||"aucun")==="acompte" && m>0 && tot>0 && !(Number(SC.acompteSeuil)>0 && tot<Number(SC.acompteSeuil))){
+    var mt=pct?Math.round(tot*Math.min(m,100))/100:m; if(Number(SC.acompteMin)>0 && mt<Number(SC.acompteMin)) mt=Number(SC.acompteMin); mt=Math.min(mt,tot);
+    L.push("Arrhes \u00e0 verser \u00e0 la r\u00e9servation : "+(pct?(String(m).replace(".",",")+" % du montant, soit "):"")+eur(mt)+" ; solde le jour de la prestation.");
+    var d=String(SC.politiqueAnnul||"48h"), h=parseInt(d,10), rb=(SC.remboursementAnnul!==false), pp=Math.max(0,Math.min(100,parseInt(SC.rembPartielPct,10)||0));
+    var garde=pp>0?(pp+" % des arrhes rembours\u00e9s, le reste conserv\u00e9 par l\u2019\u00e9tablissement"):"arrhes conserv\u00e9es par l\u2019\u00e9tablissement";
+    if(rb && h>0) L.push("Annulation par le client plus de "+h+" h avant la prestation : arrhes rembours\u00e9es ; moins de "+h+" h avant : "+garde+".");
+    else if(rb && h===0) L.push("Annulation par le client avant la prestation : arrhes rembours\u00e9es.");
+    else L.push("Annulation par le client : "+garde+".");
+    L.push("Annulation par l\u2019\u00e9tablissement : arrhes rembours\u00e9es au double (code de la consommation, art. L214-1 ; code civil, art. 1590).");
+  } else {
+    L.push("Aucune somme n\u2019est demand\u00e9e \u00e0 l\u2019avance : r\u00e8glement le jour de la prestation.");
+  }
+  return L;
+}
+window.lxDevisConditions=lxDevisConditions;
 function printDevis(idx,printFmt){
   var dv=window.DEVIS[idx];if(!dv)return;
   window._currentDevis=dv;window._currentDevisIdx=idx;
@@ -5096,9 +5122,7 @@ function printDevis(idx,printFmt){
   // ============ Conditions ============
   h+="<div class='conditions'>";
   h+="<strong>Conditions :</strong><br>";
-  h+="• Devis valable "+validiteJours+" jours à compter de la date d'émission<br>";
-  h+="• Acompte de 30% à la réservation, solde le jour de la prestation<br>";
-  h+="• Toute annulation à moins de 48h entraîne la perte de l'acompte";
+  h+=lxDevisConditions(validiteJours, totalTTC).map(function(x){ return "• "+escapeHtml(x); }).join("<br>"); // 2026-10-28 (-8, 6.8.6) : réglages de l'établissement
   h+="</div>";
 
   // ============ Signature ============
@@ -5270,10 +5294,7 @@ function printDevisThermal(idx){
   h+="<hr>";
   h+="<div class='cond b' style='text-transform:uppercase'>Conditions</div>";
   h+="<div class='cond'>";
-  h+="- Devis valable "+validiteJours+" jours<br>";
-  h+="- Acompte 30% a la reservation<br>";
-  h+="- Solde le jour de la prestation<br>";
-  h+="- Annulation -48h: perte acompte";
+  h+=lxDevisConditions(validiteJours, totalTTC).map(function(x){ return "- "+escapeHtml(x); }).join("<br>"); // 2026-10-28 (-8, 6.8.6) : réglages de l'établissement
   h+="</div>";
 
   // ===== Signature =====
@@ -5541,9 +5562,7 @@ function _buildDevisEmailHtml(dv){
   // Conditions
   h += '<div style="padding-top:14px;border-top:1px solid #ddd;font-size:12px;color:#555;line-height:1.6">';
   h += '<strong>Conditions :</strong><br>';
-  h += '• Devis valable '+validiteJours+' jours à compter de la date d\'émission<br>';
-  h += '• Acompte de 30% à la réservation, solde le jour de la prestation<br>';
-  h += '• Toute annulation à moins de 48h entraîne la perte de l\'acompte';
+  h += lxDevisConditions(validiteJours, totalTTC).map(function(x){ return '• '+escapeHtml(x); }).join('<br>'); // 2026-10-28 (-8, 6.8.6) : réglages de l'établissement
   h += '</div>';
 
   // Footer signature
@@ -6577,6 +6596,12 @@ function _lxExclCA(a){
 // Avant : l'original était retiré rétroactivement ET le contre-ticket compté -> double déduction.
 function _lxCaOrig(a){ return !a.cancelled || (!!a.cancelDate && String(a.cancelDate)!==String(a.date)); }
 function _lxCaOk(a){ return _lxCaOrig(a) && !_lxExclCA(a); }
+// 2026-10-28 (-8, Luxyra 6.8.6, mineur de l'audit « 311 tickets au rapport, 313 au FEC ») : nombre de TICKETS = lignes NUMÉROTÉES
+// seulement (un rendez-vous groupé lié, marqué encaissé à 0 € sans n°, n'est pas un ticket — même règle que la Z depuis le
+// 14/10/2026). Le rapport compte les VENTES (ni ticket annulé, ni contre-ticket) ; le FEC / le journal comptent TOUS les tickets
+// enregistrés (paires d'annulation, retours, acomptes compris) : _lxNbTkJournal, affiché à côté quand il diffère.
+function _lxNbTk(L){ var n=0; (L||[]).forEach(function(a){ if(a&&(a.tkNum||Number(a.dbNum)>0)) n++; }); return n; }
+function _lxNbTkJournal(du, au){ var n=0; (Array.isArray(AP)?AP:[]).forEach(function(a){ if(!a||a.st!=="done"||!(a.tkNum||Number(a.dbNum)>0)) return; var d=_lxDJ(a); if(d>=du&&d<=au) n++; }); return n; }
 // 2026-10-28 (-5, v6.8.3, contre-audit final constat 4) — VENTES REPORTÉES : tous les exports suivent le JOURNAL DES TICKETS.
 // Une vente d'une journée déjà clôturée lors de sa transmission est enregistrée au journal sur la journée OUVERTE (report :
 // a.dateJournal, date réelle de vente a.dateVente scellée dans le ticket, items[0].lxRep) ; un paiement en ligne reçu après la
@@ -8784,10 +8809,11 @@ async function lxTvaJournalCharger(du, au, force){
 }
 window.lxTvaJournalCharger=lxTvaJournalCharger;
 // Mois "AAAA-MM" -> bornes, puis chargement (exports d'un mois)
-async function lxTvaJournalMois(mois){ var b=_lxMoisBornesSimple(mois); var hier=(function(){ var d=new Date(TD+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); })(); return lxTvaJournalCharger(b.du, b.au, b.au>=hier); }
+async function lxTvaJournalMois(mois){ try{ await lxBonsEtatCharger(); }catch(_eBe){} /* 2026-10-28 (-8, 6.8.6) : état des bons dérivé des tickets */ var b=_lxMoisBornesSimple(mois); var hier=(function(){ var d=new Date(TD+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); })(); return lxTvaJournalCharger(b.du, b.au, b.au>=hier); }
 // Au démarrage : journal des 13 derniers mois lu en arrière-plan (affichages et statistiques synchrones)
 (function(){ var n=0, t=setInterval(function(){ n++; if(n>320){ clearInterval(t); return; }
   try{ if(typeof _sb!=="undefined"&&_sb&&typeof _salonId!=="undefined"&&_salonId&&Array.isArray(AP)&&AP.length){ clearInterval(t);
+    try{ lxBonsEtatCharger(); }catch(_eBe2){} // 2026-10-28 (-8, 6.8.6)
     var d=new Date(); d.setDate(d.getDate()-400); lxTvaJournalCharger(d.toISOString().slice(0,10), TD).then(function(ok){ try{ if(ok && typeof go==="function" && window._currentPage && /^(accounting|stats)$/.test(window._currentPage)) go(window._currentPage); }catch(_eG){} }); } }catch(_e){} }, 1500); })();
 function _lxTvaJLigne(a){
   if(!a) return null;
@@ -9046,8 +9072,34 @@ function _lxHorsCa(a){ return _lxTicketV2(a)?_lxVentilV2(a).horsCa:0; }
 function _lxCaTtc(a){ var p=Number(a&&a.pr)||0; var h=_lxHorsCa(a); return h?_lxR2(p-h):p; }
 // Bons à usage multiple utilisés en règlement sur un ticket (moyen de paiement)
 function _lxBumPaye(a){ var s=0; ((a&&a.payments)||[]).forEach(function(p){ if(p&&p.bonUsage==="BUM") s+=Number(p.amount)||0; }); return _lxR2(s); }
+// 2026-10-28 (-8, Luxyra 6.8.6, constat M10 de l'audit) : ÉTAT FISCAL DES BONS À USAGE MULTIPLE DÉRIVÉ DES TICKETS SCELLÉS
+// (public.lx_bons_etat : vente = ligne du ticket de vente, utilisations = règlements des tickets, date d'expiration scellée avec la
+// vente et prolongée seulement — jamais le solde de cartes_cadeaux, modifiable). Chargé avant les exports (lxTvaJournalMois) et au
+// démarrage ; tant qu'il n'est pas chargé (hors connexion, SQL du lot 4 non appliqué), repli sur la liste des bons (comme avant).
+async function lxBonsEtatCharger(){
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxDemo) return false;
+    var r=await _sb.rpc("lx_bons_etat",{p_salon:_salonId, p_date:null});
+    if(r&&!r.error&&r.data&&Array.isArray(r.data.bons)){ var M={}; r.data.bons.forEach(function(b){ if(b&&b.id) M[b.id]=b; }); window.LX_BONS_ETAT={date:r.data.date, bons:r.data.bons, parId:M, ts:Date.now()}; return true; }
+  }catch(_e){}
+  return false;
+}
+window.lxBonsEtatCharger=lxBonsEtatCharger;
+function _lxBonsEtat(){ var E=window.LX_BONS_ETAT; return (E&&Array.isArray(E.bons))?E:null; }
+// Solde fiscal d'un bon à usage multiple à une date (vente − utilisations des tickets jusqu'à cette date) ; null sans état chargé
+function _lxBumSoldeAu(b, dateFin){
+  if(!b) return null; var u=0; (b.utilisations||[]).forEach(function(x){ if(x&&String(x.date||"").slice(0,10)<=dateFin) u+=Number(x.montant)||0; });
+  return _lxR2((Number(b.vente)||0)-u);
+}
 // Bons à usage multiple expirés avec un solde non utilisé entre deux dates (date d'effet = lendemain de la date d'expiration)
 function lxBumExpires(du, au){
+  // 2026-10-28 (-8, 6.8.6) : état dérivé des tickets (vente nette > 0 : un bon dont la vente a été annulée n'a pas de solde ; bon
+  // annulé sans annulation de sa vente : son solde passe en produit à la date de l'annulation — avant, il disparaissait)
+  var E=_lxBonsEtat();
+  if(E){ var LE=[]; try{ E.bons.forEach(function(b){ if(!b||!(Number(b.vente)>0.004)||!b.effet) return; var eff=String(b.effet).slice(0,10); if(eff<du||eff>au) return;
+      var rest=_lxBumSoldeAu(b, eff); if(!(rest>0.004)) return;
+      LE.push({id:b.id, code:b.code, gcNum:b.gc_num||null, val:_lxR2(b.vente), restant:rest, exp:String(b.date_expiration||eff).slice(0,10), effet:eff, cr:b.date_vente||null, annule:(b.status==="voided"), source:"tickets", ecartBon:Number(b.ecart_bon)||0}); }); }catch(_eE){}
+    return LE.sort(function(x,y){ return x.effet<y.effet?-1:(x.effet>y.effet?1:0); }); }
   var L=[]; try{ (typeof GC!=="undefined"&&Array.isArray(GC)?GC:[]).forEach(function(g){
     if(!g||lxBonUsage(g)!=="BUM"||g.st==="voided"||!g.exp) return; var rest=_lxR2(g.rem!=null?g.rem:g.val); if(!(rest>0.004)) return;
     var d=new Date(String(g.exp).slice(0,10)+"T12:00:00Z"); if(isNaN(d)) return; d.setUTCDate(d.getUTCDate()+1); var eff=d.toISOString().slice(0,10);
@@ -9071,6 +9123,9 @@ function lxBumMois(mois){
 // Bons à usage multiple en circulation à une date (dette envers les porteurs) : valeur - utilisations jusqu'à la date,
 // hors bons annulés et bons expirés avant la date (solde passé en produit).
 function lxBumEncours(dateFin){
+  var E=_lxBonsEtat(); // 2026-10-28 (-8, 6.8.6) : dette envers les porteurs = ventes − utilisations des TICKETS, hors bons échus / annulés à la date
+  if(E){ var tE=0; try{ E.bons.forEach(function(b){ if(!b||!b.date_vente||String(b.date_vente).slice(0,10)>dateFin) return; if(b.effet&&String(b.effet).slice(0,10)<=dateFin) return;
+      var r=_lxBumSoldeAu(b, dateFin); if(r>0.004) tE+=r; }); }catch(_eE2){} return _lxR2(tE); }
   var t=0; try{ (typeof GC!=="undefined"&&Array.isArray(GC)?GC:[]).forEach(function(g){
     if(!g||lxBonUsage(g)!=="BUM"||g.st==="voided") return; var cr=String(g.cr||"").slice(0,10); if(!cr||cr>dateFin) return;
     if(g.exp&&String(g.exp).slice(0,10)<dateFin) return;
@@ -16843,7 +16898,7 @@ function rSettings(){
     if(_isTestMode){
       h+='<div style="margin-top:24px;padding:16px;border:1.5px solid rgba(244,67,54,.35);background:linear-gradient(135deg,rgba(244,67,54,.06),rgba(0,0,0,.3));border-radius:14px">';
       h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span style="font-size:22px">\ud83e\uddea</span><div style="font-family:var(--f1);font-size:15px;font-weight:800;color:#ef5350;letter-spacing:.5px">P\u00e9riode d\'essai \u2014 Zone de r\u00e9initialisation</div></div>';
-      h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:12px">Disponible uniquement pendant vos <strong>14 jours d\'essai</strong>, permet d\'effacer <strong>toutes les donn\u00e9es op\u00e9rationnelles</strong> (RDV, tickets, clients, services, produits, bons cadeaux, cl\u00f4tures, audit) pour repartir comme un salon neuf avant de souscrire votre abonnement.<br><br>\u2705 Conserv\u00e9 : config salon (nom, SIRET, KBIS), \u00e9quipe, op\u00e9rateurs et PINs.<br>\ud83d\udd12 <strong>Indisponible d\u00e8s que l\'essai prend fin</strong> (passage en abonnement payant ou plan offert) \u2014 protection l\u00e9gale NF525.</div>';
+      h+='<div style="font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:12px">Disponible uniquement pendant vos <strong>14 jours d\'essai</strong>, permet d\'effacer <strong>toutes les donn\u00e9es op\u00e9rationnelles</strong> (RDV, tickets, clients, services, produits, bons cadeaux, cl\u00f4tures, audit) pour repartir comme un salon neuf avant de souscrire votre abonnement.<br><br>\u2705 Conserv\u00e9 : config salon (nom, SIRET, KBIS), \u00e9quipe, op\u00e9rateurs et PINs.<br>\ud83d\udd12 <strong>Indisponible d\u00e8s que l\'essai prend fin</strong> (passage en abonnement payant ou plan offert) \u2014 protection pr\u00e9vue par la loi anti-fraude (CGI art. 286, I-3\u00b0 bis).</div>';
       h+='<button onclick="lxOpenFactoryReset()" style="width:100%;padding:13px;background:linear-gradient(135deg,#f44336,#c62828);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:14px;cursor:pointer;letter-spacing:.5px">\ud83d\udd04 R\u00e9initialiser le salon</button>';
       h+='</div>';
     }
@@ -17473,7 +17528,7 @@ function rSettings(){
     var importedTk=Math.max(0, totalTk - luxTk);
     h+='<div class="card"><div class="ct">Stats</div>';
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center;margin-bottom:8px">';
-    h+='<div style="padding:12px;background:rgba(45,154,94,.12);border:1px solid rgba(45,154,94,.3);border-radius:8px"><div style="font-size:24px;font-weight:800;color:#66bb6a">'+luxTk+'</div><div style="font-size:11px;color:#66bb6a;font-weight:700">Tickets Luxyra</div><div style="font-size:10px;color:var(--text3)">Sous NF525</div></div>';
+    h+='<div style="padding:12px;background:rgba(45,154,94,.12);border:1px solid rgba(45,154,94,.3);border-radius:8px"><div style="font-size:24px;font-weight:800;color:#66bb6a">'+luxTk+'</div><div style="font-size:11px;color:#66bb6a;font-weight:700">Tickets Luxyra</div><div style="font-size:10px;color:var(--text3)">Caisse conforme \u00e0 la loi anti-fraude</div></div>';
     h+='<div style="padding:12px;background:var(--bg);border-radius:8px;border:1px solid var(--border2)"><div style="font-size:24px;font-weight:800;color:var(--text2)">'+importedTk+'</div><div style="font-size:11px;color:var(--text2);font-weight:700">Tickets importés</div><div style="font-size:10px;color:var(--text3)">Historique LS — hors périmètre NF525 Luxyra</div></div>';
     h+='</div>';
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center">';
@@ -17532,7 +17587,7 @@ function rSettings(){
       h+='<div class="card" style="margin-top:14px;border-left:4px solid var(--text3)"><div class="ct">\ud83d\udcc4 Attestation de conformit\u00e9</div><div style="font-size:13px;color:var(--text2)">Votre \u00e9tablissement est en franchise de TVA (art. 293 B du CGI) : l\u2019obligation de caisse s\u00e9curis\u00e9e et d\u2019attestation ne s\u2019applique pas \u00e0 vous. Si vous passez un jour au r\u00e9gime de TVA, l\u2019attestation vous sera propos\u00e9e automatiquement.</div></div>';
     }
     // === Comptes comptables pour l'export (configurable, pre-rempli LS) ===
-    var _CA=(typeof _comptaAccounts==="function")?_comptaAccounts():{services:"70612000",produits:"70712000",bonsCadeaux:"46700000",bonsMultiples:"41910000",bonsExpires:"75800000",tva:"44571000",caisse:"53000000",especes:"58300000",cb:"58000000",enligne:"58010000",cheque:"58200000",autres:"58040000",journal:"CS"};
+    var _CA=(typeof _comptaAccounts==="function")?_comptaAccounts():{services:"70612000",produits:"70712000",bonsCadeaux:"46700000",bonsMultiples:"41910000",bonsExpires:"75800000",tva:"44571000",caisse:"53000000",especes:"58300000",cb:"58000000",enligne:"58010000",cheque:"58200000",autres:"58040000",journal:"CS",banque:"51200000",fraisStripe:"62780000"};
     function _caRow(id,label,val){ return '<div style="flex:1;min-width:150px"><label style="font-size:11px;color:var(--text3);display:block;margin-bottom:4px">'+label+'</label><input type="text" id="ca_'+id+'" value="'+(val||"")+'" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.05);color:#fff;font-size:13px;font-family:monospace"></div>'; }
     h+='<div class="card" style="margin-top:14px;border-left:4px solid #ff9800"><div class="ct">\ud83e\uddfe Comptes comptables pour l\u0027export</div>';
     h+='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Numéros de comptes utilisés dans les exports comptables (FEC, EBP). Pré-remplis avec des valeurs standard ; votre cabinet peut les adapter à votre plan comptable. Modifiables sans risque, ils n\u0027affectent pas les tickets déjà enregistrés.</div>';
@@ -17542,6 +17597,7 @@ function rSettings(){
     h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("tva","TVA collectée",_CA.tva)+_caRow("caisse","Caisse",_CA.caisse)+_caRow("especes","Espèces",_CA.especes)+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'+_caRow("cb","Cartes bancaires",_CA.cb)+_caRow("enligne","Paiements en ligne",_CA.enligne)+_caRow("cheque","Chèques",_CA.cheque)+'</div>';
     h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'+_caRow("autres","Autres règlements",_CA.autres)+_caRow("journal","Code journal",_CA.journal)+'<div style="flex:1;min-width:150px"></div></div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'+_caRow("banque","Banque (versements Stripe)",_CA.banque)+_caRow("fraisStripe","Frais Stripe (commissions)",_CA.fraisStripe)+'<div style="flex:1;min-width:150px"></div></div>'; // 2026-10-28 (-8, 6.8.6) : rapprochement des paiements en ligne
     h+='<button class="btn" style="width:100%;padding:12px;background:rgba(255,152,0,.1);color:#ffb74d;border:1px solid rgba(255,152,0,.3);font-weight:700;font-size:14px" onclick="saveComptaAccounts()">\ud83d\udcbe Enregistrer les comptes</button>';
     h+='</div>';
     // === Export FEC (Fichier des Écritures Comptables) ===
@@ -17683,7 +17739,7 @@ function rSettings(){
     h+='<label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:4px 0">';
     h+='<input type="checkbox" '+(_gcs?'checked':'')+' style="width:20px;height:20px;cursor:pointer;accent-color:#e8c873;flex-shrink:0;margin-top:2px" onchange="lxToggleCaisseSimple(this.checked)">';
     h+='<div style="flex:1"><div style="font-weight:700;font-size:14px;color:'+(_gcs?'#e8c873':'#fff')+';margin-bottom:2px">'+(_gcs?'\u26a1 Mode caisse simplifi\u00e9e activ\u00e9':'Mode caisse simplifi\u00e9e (auto-entrepreneur, entreprise individuelle)')+'</div>';
-    h+='<div style="font-size:11px;color:var(--text3);line-height:1.5">Pas de fond de caisse, pas d\'\u00e9cran d\'ouverture quotidienne, pas de gestion des entr\u00e9es/sorties d\'esp\u00e8ces. Id\u00e9al pour une entreprise individuelle ou un auto-entrepreneur qui encaisse sans manipuler de coffre.<br><strong style="color:var(--text2)">Les tickets restent NF525 (conformit\u00e9 fiscale pr\u00e9serv\u00e9e).</strong></div>';
+    h+='<div style="font-size:11px;color:var(--text3);line-height:1.5">Pas de fond de caisse, pas d\'\u00e9cran d\'ouverture quotidienne, pas de gestion des entr\u00e9es/sorties d\'esp\u00e8ces. Id\u00e9al pour une entreprise individuelle ou un auto-entrepreneur qui encaisse sans manipuler de coffre.<br><strong style="color:var(--text2)">Les tickets restent ceux d\u2019une caisse conforme \u00e0 la loi anti-fraude (inalt\u00e9rables, s\u00e9curis\u00e9s, conserv\u00e9s et archiv\u00e9s).</strong></div>';
     h+='</div></label></div>';
     // Fond de caisse + TVA \u2014 fond cach\u00e9 en mode caisse simplifi\u00e9e (TVA reste seule)
     h+='<div style="display:grid;grid-template-columns:'+(_gcs?'1fr':'1fr 1fr')+';gap:10px;margin-top:10px">';
@@ -20766,7 +20822,7 @@ function _proposeUpdatePrixRdv(svcId, oldPrice, newPrice, nbAffected, svcName){
   h+='<div style="font-size:13px;text-align:center;margin-bottom:14px;line-height:1.5">';
   h+='<strong>'+nbAffected+' RDV non encaiss\u00e9'+(nbAffected>1?'s':'')+'</strong> utilise'+(nbAffected>1?'nt':'')+' "<strong>'+svcName+'</strong>" \u00e0 <strong>'+oldPrice.toFixed(2)+' \u20ac</strong>.<br>';
   h+='Appliquer le nouveau tarif <strong>'+newPrice.toFixed(2)+' \u20ac</strong> (<span style="color:'+(diff>0?'var(--red)':'var(--green)')+'">'+sign+diff.toFixed(2)+' \u20ac</span>) ?</div>';
-  h+='<div style="font-size:11px;color:var(--text2);text-align:center;margin-bottom:14px;background:rgba(255,255,255,.04);padding:8px;border-radius:8px">\u26a0\ufe0f Seuls les RDV <strong>\u00e0 venir</strong> sont concern\u00e9s. Les RDV d\u00e9j\u00e0 <strong>encaiss\u00e9s</strong> restent inchang\u00e9s (obligation NF525).</div>';
+  h+='<div style="font-size:11px;color:var(--text2);text-align:center;margin-bottom:14px;background:rgba(255,255,255,.04);padding:8px;border-radius:8px">\u26a0\ufe0f Seuls les RDV <strong>\u00e0 venir</strong> sont concern\u00e9s. Les RDV d\u00e9j\u00e0 <strong>encaiss\u00e9s</strong> restent inchang\u00e9s (obligation de la loi anti-fraude : un encaissement enregistr\u00e9 ne se modifie pas).</div>';
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
   h+='<button class="btn" style="width:100%;padding:14px;background:var(--gold);color:#000;font-weight:800" onclick="_applyPrixUpdateRdv('+svcId+','+oldPrice+','+newPrice+')">Oui, mettre \u00e0 jour les '+nbAffected+' RDV</button>';
   h+='<button class="btn" style="width:100%;padding:10px;background:rgba(255,255,255,.06);color:var(--text);font-size:12px" onclick="cM();go(\'services\');if(typeof toast===\'function\')toast(\'Prestation modifi\u00e9e (anciens RDV inchang\u00e9s)\',\'success\')">Non, garder l\'ancien prix sur les RDV existants</button>';
@@ -20793,7 +20849,7 @@ function _proposeUpdateRdvService(svcId, oldName, newName, oldPrice, newPrice, n
   h+='<h2 style="text-align:center;font-size:18px">'+title+'</h2>';
   h+='<div style="font-size:13px;text-align:center;margin-bottom:12px;line-height:1.5"><strong>'+nbAffected+' RDV non encaiss\u00e9'+(nbAffected>1?'s':'')+'</strong> utilise'+(nbAffected>1?'nt':'')+' cette prestation.</div>';
   h+='<div style="font-size:13px;background:rgba(255,255,255,.04);padding:10px 14px;border-radius:8px;margin-bottom:14px;line-height:1.8">'+changes.join('<br>')+'</div>';
-  h+='<div style="font-size:11px;color:var(--text2);text-align:center;margin-bottom:14px;background:rgba(255,255,255,.04);padding:8px;border-radius:8px">\u26a0\ufe0f Seuls les RDV <strong>\u00e0 venir</strong> sont concern\u00e9s. Les RDV d\u00e9j\u00e0 <strong>encaiss\u00e9s</strong> restent inchang\u00e9s (obligation NF525).</div>';
+  h+='<div style="font-size:11px;color:var(--text2);text-align:center;margin-bottom:14px;background:rgba(255,255,255,.04);padding:8px;border-radius:8px">\u26a0\ufe0f Seuls les RDV <strong>\u00e0 venir</strong> sont concern\u00e9s. Les RDV d\u00e9j\u00e0 <strong>encaiss\u00e9s</strong> restent inchang\u00e9s (obligation de la loi anti-fraude : un encaissement enregistr\u00e9 ne se modifie pas).</div>';
   h+='<div style="display:flex;flex-direction:column;gap:8px">';
   // Encode newName via base64 pour g\u00e9rer les caract\u00e8res sp\u00e9ciaux/quotes dans l'attribut HTML
   var nNameEnc = window.btoa(unescape(encodeURIComponent(newName||"")));
@@ -23359,8 +23415,9 @@ function editGift(gcId){
   h+='<div class="fg" style="flex:1"><label>B\u00e9n\u00e9ficiaire</label><input id="egTo" value="'+(g.to||"")+'"></div></div>';
   h+='<div class="fg"><label>Message</label><input id="egMsg" value="'+(g.msg||"")+'"></div>';
   h+='<div style="display:flex;gap:8px">';
-  h+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="egScope"><option value="tout"'+(g.scope==="tout"||!g.scope?" selected":"")+'>Tout</option><option value="prestations"'+(g.scope==="prestations"?" selected":"")+'>Prestations</option><option value="produits"'+(g.scope==="produits"?" selected":"")+'>Produits</option></select></div>';
-  h+='<div class="fg" style="flex:1"><label>Expiration</label><input type="date" id="egExp" value="'+(g.exp||"")+'"></div></div>';
+  // 2026-10-28 (-8, 6.8.6) : périmètre figé après la création (il fixe la TVA du bon) ; expiration : prolongation seulement
+  h+='<div class="fg" style="flex:1"><label>Utilisable sur</label><select id="egScope" disabled title="Fixé à la création du bon (il détermine sa TVA)"><option value="tout"'+(g.scope==="tout"||!g.scope?" selected":"")+'>Tout</option><option value="prestations"'+(g.scope==="prestations"?" selected":"")+'>Prestations</option><option value="produits"'+(g.scope==="produits"?" selected":"")+'>Produits</option></select></div>';
+  h+='<div class="fg" style="flex:1"><label>Expiration (prolongation seulement)</label><input type="date" id="egExp" value="'+(g.exp||"")+'"'+(g.exp?' min="'+g.exp+'"':'')+'></div></div>';
   h+='<div style="display:flex;gap:8px;margin-top:14px">';
   h+='<button class="btn" style="flex:1" onclick="cM()">Annuler</button>';
   h+='<button class="btn bg" style="flex:1" onclick="saveEditGift(\u0027'+gcId+'\u0027)">Enregistrer</button>';
@@ -23373,10 +23430,12 @@ function saveEditGift(gcId){
   g.from=(document.getElementById("egFrom")||{}).value||g.from;
   g.to=(document.getElementById("egTo")||{}).value||"";
   g.msg=(document.getElementById("egMsg")||{}).value||"";
-  g.scope=(document.getElementById("egScope")||{}).value||"tout";
-  g.exp=(document.getElementById("egExp")||{}).value||g.exp;
+  // 2026-10-28 (-8, 6.8.6) : le périmètre ne change plus ; la date d'expiration ne peut être que prolongée (la base l'impose aussi)
+  var _nx=(document.getElementById("egExp")||{}).value||g.exp;
+  if(g.exp&&_nx&&String(_nx)<String(g.exp)){ showAlert("La date d\u2019expiration d\u2019un bon peut seulement \u00eatre prolong\u00e9e (elle ne peut pas \u00eatre avanc\u00e9e).","warning"); return; }
+  var _exp0=g.exp; g.exp=_nx;
   if(typeof saveGiftCard==="function")saveGiftCard(g);
-  auditLog("MODIFICATION_BON_CADEAU","Bon "+g.code+" modifi\u00e9");
+  auditLog("MODIFICATION_BON_CADEAU","Bon "+g.code+" modifi\u00e9"+(_exp0!==g.exp?" (expiration "+(_exp0||"-")+" -> "+g.exp+")":""));
   cM();go("gifts");
 }
 
@@ -24074,7 +24133,7 @@ function rAccounting(){
   h+='<div class="sb"><div class="sv" style="color:var(--gold)">'+tTotal.toFixed(2)+'\u20ac</div><div class="sl">CA TTC</div></div>';
   h+='<div class="sb"><div class="sv">'+totHT.toFixed(2)+'\u20ac</div><div class="sl">CA HT</div></div>';
   h+='<div class="sb"><div class="sv" style="font-size:16px">'+totTVA.toFixed(2)+'\u20ac</div><div class="sl">TVA</div></div>';
-  h+='<div class="sb"><div class="sv" style="font-size:16px">'+dn.length+'</div><div class="sl">Tickets</div></div>';
+  h+='<div class="sb"><div class="sv" style="font-size:16px">'+_lxNbTk(dn)+'</div><div class="sl">Tickets</div></div>';
   h+='</div>';
 
   // Sub-row (centimes pour compta exacte)
@@ -24640,7 +24699,8 @@ function _lxRapportDonnees(periodM){
   if(_sansTvaM){ totalHT=totalTTC; totalTVA=0; }
   else { totalHT=_tvM.htCa; totalTVA=_tvM.tva; }
   var totalAnnul = 0; annul.forEach(function(a){ totalAnnul += Number(a.pr)||0; });
-  var nbTickets = dn.length + ps2.length;
+  var nbTickets = _lxNbTk(dn) + ps2.length; // 2026-10-28 (-8, 6.8.6) : tickets numérotés seulement
+  var _bpM=_lxMoisBornesSimple(periodM), nbTicketsJournal=_lxNbTkJournal(_bpM.du, _bpM.au); // tickets enregistrés (= FEC)
 
   var perStyAcc = {};
   T.forEach(function(t){perStyAcc[t.id]={n:t.n,ca:0,nb:0,rem:0};});
@@ -24691,7 +24751,7 @@ function _lxRapportDonnees(periodM){
   // 2026-10-28 (v6.7.0) : bons à usage multiple du mois (ventes hors CA, utilisations, soldes expirés) — clé absente sans activité
   var _bum=lxBumMois(periodM), _bumV=_bum.actif?_bum.totVentes:0;
   var R = { mois:periodM, mLabel:mLabel, isMicro:isMicro, txTVA:txTVA, dualTVA:_dualTVA, txTVAProduits:_txpR,
-    totalTTC:totalTTC, totalHT:totalHT, totalTVA:totalTVA, totalRemises:totalRemises, nbTickets:nbTickets,
+    totalTTC:totalTTC, totalHT:totalHT, totalTVA:totalTVA, totalRemises:totalRemises, nbTickets:nbTickets, nbTicketsJournal:nbTicketsJournal,
     nbAnnul:annul.length, totalAnnul:totalAnnul,
     pay:{cb:totalCB, esp:totalEsp, chq:totalCheq, vir:totalVir, autre:totalAutre, enligne:totalEnL},
     // 2026-10-27 (-3, audit) : règlements saisis ≠ CA (ex. remise appliquée après le règlement) : écart affiché, comme l'Excel
@@ -24764,8 +24824,9 @@ function _buildRapportHTML(periodM){
     html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalHT)+'</span><span class="kpi-l">CA HT</span></div>';
     html += '<div class="kpi"><span class="kpi-v">'+fmtMoney(totalTVA)+'</span><span class="kpi-l">TVA collectée</span></div>';
   }
-  html += '<div class="kpi"><span class="kpi-v">'+nbTickets+'</span><span class="kpi-l">Tickets</span></div>';
+  html += '<div class="kpi"><span class="kpi-v">'+nbTickets+'</span><span class="kpi-l">Tickets de vente</span></div>';
   html += '</div>';
+  if(D.nbTicketsJournal!=null && D.nbTicketsJournal!==nbTickets) html += '<div class="note" style="font-size:11px;color:#555;margin:-4px 0 10px">Tickets enregistrés au journal (FEC) : '+D.nbTicketsJournal+' — les '+(D.nbTicketsJournal-nbTickets)+' autres sont des tickets d’annulation, de retour, d’acompte ou des ventes annulées (comptés une fois chacun dans le FEC, hors « tickets de vente »).</div>'; // 2026-10-28 (-8, 6.8.6)
   // 2026-10-28 (6.8.5, règle TVA unique) : TVA par taux = somme des montants enregistrés sur les tickets ; rapprochement avec les Z
   if(!isMicro && Array.isArray(D.parTaux) && D.parTaux.length){
     html += '<table style="margin-top:8px"><tr><th>TVA par taux (somme des tickets)</th><th class="num">Base HT</th><th class="num">TVA</th><th class="num">TTC</th></tr>';
@@ -25041,7 +25102,8 @@ async function _lxRapportPDF(mois, opts){
   titre("1. Synthèse de la période");
   var sy=[[ttcL, E(D.totalTTC)]];
   if(!D.isMicro){ sy.push(["CA HT", E(D.totalHT)]); sy.push(["TVA collectée", E(D.totalTVA)]); }
-  sy.push(["Tickets", String(D.nbTickets)]);
+  sy.push(["Tickets de vente", String(D.nbTickets)]);
+  if(D.nbTicketsJournal!=null && D.nbTicketsJournal!==D.nbTickets) sy.push(["Tickets enregistrés au journal (FEC) : ventes + annulations, retours, acomptes", String(D.nbTicketsJournal)]); // 2026-10-28 (-8, 6.8.6)
   if(D.nbAnnul) sy.push(["Annulations enregistrées ce mois (détail section 5)", D.nbAnnul+" ("+E(D.totalAnnul)+")"]);
   table(["Indicateur","Valeur"], sy, null, ["l","r"]);
   // 2026-10-28 (6.8.5, règle TVA unique) : TVA par taux (somme des tickets) + rapprochement avec les Z scellées s'il y a un écart
@@ -25315,7 +25377,7 @@ function showExportsComptables(){
   var isMicro = isMicroEntrepreneur();
   var seuils = getMicroSeuilsStatus();
 
-  var nbTickets = dn.length + ps2.length;
+  var nbTickets = _lxNbTk(dn) + ps2.length; // 2026-10-28 (-8, 6.8.6) : tickets numérotés seulement
   var isEmpty = nbTickets === 0;
 
   var h = '<div class="mbox" style="max-width:680px;max-height:92vh;overflow-y:auto;padding:24px">';
@@ -25420,6 +25482,7 @@ function showExportsComptables(){
   }
   exports.push({id:"compta", svg:SVG_COMPTA, color:"#f472b6", title:"Journal des ventes \u2014 \u00e9critures comptables (CSV)", desc:"\u00c9critures d\u00e9bit/cr\u00e9dit FR ("+(isMicro?'706/707/512 sans TVA':'706/707/4457/512')+"). Importable Sage / EBP / Cegid.", fn:"expJournalComptable", count:dn.length+ps2.length+" \u00e9critures"});
   exports.push({id:"annul", svg:SVG_ANNUL, color:"#f87171", title:"Annulations & remboursements (CSV)", desc:"Tickets annul\u00e9s avec motifs et hash original"+((typeof lxAttConcerne!=="function"||lxAttConcerne())?" (tra\u00e7abilit\u00e9 exig\u00e9e, art. 286 CGI).":"."), fn:"expAnnulations", count:annul.length+" annulation"+(annul.length>1?"s":"")});
+  exports.push({id:"factures", svg:SVG_COMPTA, color:"#94a3b8", title:"Registre des factures clients (CSV)", desc:"Factures et factures d\u2019avoir \u00e9mises \u00e0 partir des tickets ce mois (num\u00e9ro, client, HT / TVA / TTC, empreinte). Elles reprennent des tickets d\u00e9j\u00e0 encaiss\u00e9s : aucune nouvelle recette.", fn:"expFacturesClients", count:""}); // 2026-10-28 (-8, 6.8.6)
   exports.push({id:"stripe", svg:SVG_STRIPE, color:"#818cf8", title:"Bordereau acomptes en ligne (CSV)", desc:"R\u00e9conciliation Stripe Connect : montant brut, frais Stripe, net re\u00e7u en banque.", fn:"expBordereauStripe", count:rdvOnline.length+" acompte"+(rdvOnline.length>1?"s":"")});
   // 2026-10-11 : encaissements en ligne datés du jour du PAIEMENT (TVA exigible à l'encaissement / recettes des micro)
   if(isMicro || (typeof lxEstMicro==="function" && lxEstMicro())) exports.push({id:"recettes", svg:SVG_URSSAF, color:"#a78bfa", title:"Livre des recettes encaiss\u00e9es (CSV)", desc:"Registre obligatoire en micro-entreprise : chaque recette \u00e0 la date o\u00f9 elle est encaiss\u00e9e (acomptes en ligne le jour du paiement, solde le jour de la prestation, remboursements).", fn:"expLivreRecettes", count:""});
@@ -25662,7 +25725,7 @@ async function expRecapTVA(){
   // (avant : recalcul sur le total du mois au taux actuel — constats M1, M2, M3 de l'audit indépendant).
   var _tvR=lxTvaSomme(dn, ps2);
   var totalHT=_tvR.htCa, totalTVA=_tvR.tva;
-  var nbTickets = dn.length + ps2.length;
+  var nbTickets = _lxNbTk(dn) + ps2.length; // 2026-10-28 (-8, 6.8.6) : tickets numérotés seulement
 
   // Section 1 : R\u00e9cap par taux
   var headers = ["Taux TVA","Base HT (\u20AC)","TVA collect\u00e9e (\u20AC)","Total TTC (\u20AC)","Nb op\u00e9rations"];
@@ -25893,7 +25956,7 @@ function expAnnulations(mois, collecteur){
 // EXPORT 5 : BORDEREAU PAIEMENTS EN LIGNE (Stripe Connect)
 // =====================================================================
 // R\u00e9conciliation des acomptes pay\u00e9s en ligne sur les RDV
-function expBordereauStripe(){
+async function expBordereauStripe(){
   if(typeof hasPermission==="function"&&!hasPermission("export_data")){
     if(typeof requireAdmin==="function"){requireAdmin("Exporter le bordereau Stripe",expBordereauStripe);return;}
     if(typeof toast==="function")toast("Acc\u00e8s non autoris\u00e9","warning");return;
@@ -25927,6 +25990,14 @@ function expBordereauStripe(){
     ["Net re\u00e7u en banque", csvNum(totalNet)+" \u20ac"],
     ["Note", "Stripe Connect : versement direct sur le compte du salon"]
   ];
+  // 2026-10-28 (-8, Luxyra 6.8.6) : VERSEMENTS R\u00c9ELS re\u00e7us de Stripe ce mois (frais r\u00e9els, relus chez Stripe par le serveur) —
+  // c'est ce rapprochement qui solde le compte des paiements en ligne (580100) dans le FEC / EBP / Quadratus.
+  try{ var _bM=_lxMoisBornesSimple(accM), _vs=await lxStripeVersementsCharger(_bM.du,_bM.au);
+    if(_vs&&_vs.length){ var _tb=0,_tf=0,_tn=0; footer.push(["",""]); footer.push(["VERSEMENTS STRIPE RE\u00c7US (frais r\u00e9els)",""]);
+      _vs.forEach(function(v){ _tb+=Number(v.brut)||0; _tf+=Number(v.frais)||0; _tn+=Number(v.montant)||0; footer.push([_lxDateFrCourte?_lxDateFrCourte(v.date_versement):v.date_versement, v.payout_id+" : encaissements "+csvNum(v.brut)+" \u20ac \u2212 frais "+csvNum(v.frais)+" \u20ac"+(Math.abs(Number(v.autres)||0)>0.004?" + autres "+csvNum(v.autres)+" \u20ac":"")+" = vir\u00e9 "+csvNum(v.montant)+" \u20ac ("+(v.nb_operations||0)+" op\u00e9rations)"]); });
+      footer.push(["Total des versements du mois", "encaissements "+csvNum(_tb)+" \u20ac \u2212 frais Stripe "+csvNum(_tf)+" \u20ac = vir\u00e9 en banque "+csvNum(_tn)+" \u20ac"]);
+    } else footer.push(["Versements Stripe", "Aucun versement re\u00e7u enregistr\u00e9 ce mois (les versements sont relev\u00e9s automatiquement \u00e0 leur arriv\u00e9e en banque)."]);
+  }catch(_eVsB){}
   csvDownload("bordereau_stripe_"+accM+".csv", csvBuildPro("Bordereau acomptes en ligne (Stripe Connect)", accM, headers, dataRows, footer));
   if(typeof auditLog==="function") auditLog("EXPORT_BORDEREAU_STRIPE","P\u00e9riode "+accM+" - "+rdvOnline.length+" acomptes - Brut "+csvNum(totalBrut));
 }
@@ -29700,22 +29771,24 @@ async function aGi(){
   // BUM -> pas de TVA à la vente (hors champ), TVA à l'utilisation. Modèle inactif : calcul historique inchangé.
   var _q=lxBonsV2Actif()?lxBonQualifier(scope):null;
   if(_q){ tvaRate=(_q.usage==="BUM")?0:(Number(_q.tauxBon)||0)/100; }
-  var ht=v/(1+tvaRate);
-  var tva=v-ht;
+  var ht=Math.round(v/(1+tvaRate)*100)/100; // 2026-10-28 (-8, 6.8.6) : arrondi au centime à l'écriture (avant : 41.666666…)
+  var tva=Math.round((v-ht)*100)/100;
   var ng={id:U(),val:v,ht:ht,tva:tva,tvaRate:tvaRate,from:f,to:t,msg:m,cr:TD,exp:dS(e),used:0,st:"active",code:code,rem:v,scope:scope,payMethod:pay,gcNum:gcNum,history:[]};
   if(_q){ ng.usageTva=_q.usage; ng.qualifTva=_q; }
   GC.push(ng);
-  if(typeof saveGiftCard==="function")saveGiftCard(ng);
+  var _pGi=(typeof saveGiftCard==="function")?saveGiftCard(ng):null;
   TD=(function(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");})();
   nextTicketNum(); // FIX 2026-07-09 : self-healing (cf. doFinalPayExecute) - plus de reutilisation de numero display sur la vente d un bon cadeau. Cas normal identique a tkN++.
   var tk={id:U(),cId:"passage",fromCaisse:true,sId:null,stId:_defaultCollabId(),date:TD,time:new Date().toTimeString().slice(0,5),ts:new Date().toISOString(),pr:v,brutTotal:v,remise:0,items:[{name:"Bon cadeau "+code,price:v,qty:1,remise:0,ci:0}],st:"done",met:pay,tkNum:tkN};
   if(_q){ // 2026-10-28 (v6.7.0) : ligne qualifiée (hors CA si BUM) + effet de gestion (bon annulé si la vente est annulée)
-    tk.items=[lxBonLigneVente(code, v, _q)];
+    tk.items=[lxBonLigneVente(code, v, _q)]; tk.items[0].bonExp=ng.exp; // 2026-10-28 (-8, 6.8.6) : date d'expiration scellée avec la vente
     tk.lxEffets={bonsVendus:[{id:ng.id,code:code,val:v}]};
     if(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR){ tk.operator_id=CURRENT_OPERATOR.id; tk.operator_name=CURRENT_OPERATOR.prenom+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:""); }
   }
   chainTicket(tk);AP.push(tk);
   ng.tkNum=tk.tkNum; // Store ticket ref on the bon
+  // 2026-10-28 (-8, 6.8.6) : le n° n'était gardé qu'en mémoire (le bon était enregistré AVANT la numérotation) -> enregistré sur le bon
+  try{ Promise.resolve(_pGi).then(function(){ if(typeof saveGiftCard==="function") saveGiftCard(ng); },function(){ if(typeof saveGiftCard==="function") saveGiftCard(ng); }); }catch(_eTkG){}
   if(typeof saveAppointment==="function")saveAppointment(tk);
   if(typeof saveTicketToDb==="function")saveTicketToDb(tk); // NF525: table tickets DB avec hash chaîné
   var isMultiU=(!scope||scope==="tout");
@@ -32743,13 +32816,13 @@ function doCreateBon(){
   var tvaRate=(typeof lxTauxTVA==="function"?lxTauxTVA():20)/100;
   var _q=lxBonsV2Actif()?lxBonQualifier(scope):null; // 2026-10-28 (v6.7.0) : BUU / BUM figé à la création
   if(_q){ tvaRate=(_q.usage==="BUM")?0:(Number(_q.tauxBon)||0)/100; }
-  var ht=montant/(1+tvaRate);var tva=montant-ht;
+  var ht=Math.round(montant/(1+tvaRate)*100)/100;var tva=Math.round((montant-ht)*100)/100; // 2026-10-28 (-8, 6.8.6) : arrondi au centime
   var ng={id:U(),code:code,val:montant,ht:ht,tva:tva,tvaRate:tvaRate,rem:montant,date:TD,from:from.trim(),to:to.trim(),msg:msg.trim(),cr:TD,exp:dS(expD),used:0,st:"active",gcNum:gcNum,scope:scope,history:[]};
   if(_q){ ng.usageTva=_q.usage; ng.qualifTva=_q; }
   GC.push(ng);
   if(typeof saveGiftCard==="function")saveGiftCard(ng);
   auditLog("VENTE_BON_CADEAU","Bon "+code+" N\u00b0"+gcNum+" - "+montant.toFixed(2)+"E TTC (HT:"+ht.toFixed(2)+"/TVA:"+tva.toFixed(2)+") - via ticket encaissement"+(_q?" - "+(_q.usage==="BUM"?"bon \u00e0 usage multiple : hors CA, TVA \u00e0 l'utilisation":"bon \u00e0 usage unique : TVA \u00e0 la vente ("+_lxTauxTxt(_q.tauxBon)+")"):""));
-  if(_q) _tk.items.push(lxBonLigneVente(code, montant, _q)); else
+  if(_q){ var _lvB=lxBonLigneVente(code, montant, _q); _lvB.bonExp=ng.exp; _tk.items.push(_lvB); } else // 2026-10-28 (-8, 6.8.6) : date d'expiration scellée avec la vente
   _tk.items.push({sId:null,name:"Bon cadeau "+code,price:montant,qty:1,remise:0,isBon:true});
   // Show mini confirmation then go back to ticket
   cM();
@@ -34112,6 +34185,10 @@ function _doFinalPayExecuteSync(method){
   // 2026-10-14 audit : relevé des effets de gestion de CE ticket (fidélité, bons, forfaits, cartes, stock) pour pouvoir
   // les inverser s'il est annulé. Données de gestion (raw_data / meta), jamais dans les données hachées.
   var _lxEff=null; try{ _lxEff=_lxEffetsReleve(_tk, tkN); }catch(_eEff){ _lxEff=null; }
+  // 2026-10-28 (-8, Luxyra 6.8.6, mineur de l'audit « bons vendus en caisse sans lien vers leur ticket de vente ») : n° du ticket
+  // de vente posé sur le bon vendu dans ce panier (cartes_cadeaux.tk_num : posé une fois, jamais changé — garde de la base).
+  try{ ((_lxEff&&_lxEff.bonsVendus)||[]).forEach(function(bv){ var g=null; for(var k=0;k<GC.length;k++){ if(GC[k]&&((bv.id&&GC[k].id===bv.id)||(!bv.id&&bv.code&&GC[k].code===bv.code))){ g=GC[k]; break; } }
+    if(g&&!g.tkNum){ g.tkNum=tkN; if(typeof saveGiftCard==="function") Promise.resolve(saveGiftCard(g)).catch(function(){}); } }); }catch(_eTkB){}
   // 2026-10-14 audit : bons cadeaux utilisés (vendus / offerts) recopiés sur le ticket (raw_data / meta, hors empreinte)
   // -> la Z (« dont bons cadeaux utilisés ») et le ticket imprimé les retrouvent ; avant ils restaient sur _tk seul.
   var _lxBonV=Math.round((Number(_tk.bonVenduRemise)||0)*100)/100, _lxBonO=Math.round((Number(_tk.offertRemise)||0)*100)/100;
@@ -34862,6 +34939,7 @@ function rTickets(){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="lxFactureOuvrir(\''+a.id+'\')">\ud83e\uddfe Facture d\u2019avoir</button>'; // 2026-10-28 (-8, 6.8.6)
       h+='<span style="font-size:11px;color:var(--text3);align-self:center">Contre-ticket d\u2019annulation (r\u00e9f. #'+(a.cancelRef||"--")+')</span>';
       h+='</div>';
     }
@@ -34869,6 +34947,7 @@ function rTickets(){
       h+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="reprintTicket(\''+a.id+'\')">\ud83d\udda8 Imprimer</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="emailTicket(\''+a.id+'\')">\u2709 Email</button>';
+      h+='<button class="btn bs" style="font-size:11px;padding:5px 10px" onclick="lxFactureOuvrir(\''+a.id+'\')">\ud83e\uddfe Facture</button>'; // 2026-10-28 (-8, 6.8.6) : facture à partir du ticket
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#a29bfe;border-color:rgba(108,92,231,.3)" onclick="corrigerCollabVente(\''+a.id+'\')">✏️ Modifier collaborateur</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:#e8c873;border-color:rgba(200,168,78,.3)" onclick="modifReglement(\''+a.id+'\')">💳 Modifier règlement</button>';
       h+='<button class="btn bs" style="font-size:11px;padding:5px 10px;color:var(--red);border-color:rgba(244,67,54,.2)" onclick="deleteTicket(\''+a.id+'\')">\u274c Avoir / Annuler</button>';
@@ -35062,7 +35141,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.8.5", LX_CAISSE="C01"; // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="6.8.6", LX_CAISSE="C01"; // 2026-10-28 (-8) : 6.8.6 = protections après enregistrement (lot 4 de l'audit indépendant : M4 colonnes figées des tickets, annulation = contre-ticket ; M10 bons cadeaux : solde dérivé des tickets, journal scellé ; M9 conditions des devis ; mineurs : FEC test, rapport / FEC, lien bon-ticket, Stripe, arrondis, factures clients). // 2026-10-28 : 6.8.5 = règle TVA UNIQUE dans tous les documents (lot 3 de l'audit indépendant, constats M1/M2/M3) : HT et TVA = somme, par taux, des montants enregistrés sur chaque ticket (Z, clôtures, rapport, Excel, ZIP, FEC, EBP / Quadratus, e-mail au comptable, statistiques) ; une ligne de TVA par taux sur le ticket imprimé et le duplicata ; ventilation figée dans le ticket (raw_data.lxTva, hors empreinte) ; documents d'une période passée calculés avec les valeurs ENREGISTRÉES (jamais au taux actuel). Formats d'empreinte, chaînage, signatures, numérotation et JET inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-6) : 6.8.4 = corrections du contre-audit 3 (6.8.0 à 6.8.3 jamais publiées) : forçage de clôture soumis à un délai serveur de 5 minutes entre deux contrôles (contrôle refait au moment du forçage, heure possible affichée), journées retenues de plus de 60 jours signalées sur la carte « Caisse » (déblocage par l'administrateur Luxyra). 2026-10-28 (-5) : 6.8.3 = corrections du contre-audit final (6.8.0 à 6.8.2 jamais publiées) : journée retenue (ventes encaissées non transmises) -> Z refusée avec cause et marche à suivre, forçage tracé par un administrateur (lx_z_forcer), clôtures dans l'ordre des dates, carte « Caisse » de l'accueil ; date réelle d'une vente reportée SCELLÉE dans le ticket (items[0].lxRep, champ couvert par l'empreinte, format inchangé) ; exports à la date du journal avec la liste des ventes reportées ; seuil de version du serveur 6.8.3 (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -39715,6 +39794,152 @@ function lxRetourOuvrir(id){
   go2();
 }
 window.lxRetourOuvrir=lxRetourOuvrir;
+// =====================================================================================================================
+// 2026-10-28 (-8, Luxyra 6.8.6) — FACTURE CLIENT ÉTABLIE À PARTIR D'UN TICKET (CGI art. 289 ; CGI ann. II art. 242 nonies A ;
+// arrêté n° 83-50/A du 03/10/1983 : note obligatoire pour une prestation de services d'au moins 25 € TTC ou à la demande du
+// client ; client professionnel : facture obligatoire). La facture REPREND le ticket scellé (montants, lignes, TVA par taux :
+// recopiés par la base, fonction public.lx_facture_emettre) : ce n'est pas une nouvelle recette (aucune écriture comptable, aucun
+// CA). Numérotation continue par établissement (une série F- / A-), inaltérable, conservée 10 ans (C. com. art. L123-22).
+// Facturation électronique (réforme : réception obligatoire depuis le 01/09/2026, émission pour les TPE / PME au 01/09/2027) :
+// les données structurées de la facture sont téléchargeables au format CII (Cross Industry Invoice, norme EN 16931 — syntaxe
+// Factur-X / ZUGFeRD) pour la plateforme agréée (PA) choisie par l'établissement ; le PDF/A-3 « Factur-X » complet sera produit
+// par cette plateforme (choix justifié au registre NF525, intervention -8).
+// =====================================================================================================================
+function _lxFcEsc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]; }); }
+function _lxFcEur(x){ return (Math.round((Number(x)||0)*100)/100).toFixed(2).replace(".",",")+" €"; }
+function _lxFcDate(d){ var p=String(d||"").slice(0,10).split("-"); return p.length===3?(p[2]+"/"+p[1]+"/"+p[0]):String(d||""); }
+async function _lxTicketBase(a){
+  if(!a) return null;
+  try{ var q=_sb.from("tickets").select("id,num,date_ticket,total_ttc,total_ht,total_tva,taux_tva,client_id,status,tk:raw_data->>tkNum").eq("salon_id",_salonId).eq("raw_data->>id",a.id).limit(1);
+    var r=(typeof _lxAvecDelai==="function")?await _lxAvecDelai(q,6000):await q; if(r&&!r.error&&r.data&&r.data[0]) return r.data[0]; }catch(_e){}
+  if(a.dbId){ try{ var r2=await _sb.from("tickets").select("id,num,date_ticket,total_ttc,total_ht,total_tva,taux_tva,client_id,status").eq("id",a.dbId).limit(1); if(r2&&!r2.error&&r2.data&&r2.data[0]) return r2.data[0]; }catch(_e2){} }
+  return null;
+}
+async function lxFactureOuvrir(apId){
+  var a=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===apId){ a=AP[i]; break; } }
+  if(!a){ toast("Ticket introuvable","error"); return; }
+  if(window._lxDemo){ showAlert("Démonstration : la facture n’est pas enregistrée.","info"); return; }
+  if(typeof _sb==="undefined"||!_sb||!_salonId){ showAlert("Connexion nécessaire pour établir une facture (numérotation par le serveur).","warning"); return; }
+  var t=await _lxTicketBase(a);
+  if(!t){ showAlert("Ce ticket n’est pas encore enregistré sur le serveur : réessayez dans un instant (la facture reprend le ticket enregistré).","warning"); return; }
+  var ex=await _sb.from("factures_clients").select("*").eq("salon_id",_salonId).eq("ticket_id",t.id).limit(1);
+  if(ex&&!ex.error&&ex.data&&ex.data[0]){ lxFactureAfficher(ex.data[0]); return; }
+  var cl=(typeof gC==="function"&&a.cId)?gC(a.cId):null, av=Number(t.total_ttc)<0;
+  var v=function(x){ return _lxFcEsc(x||""); };
+  var inp=function(id,lab,val,ph){ return '<label style="font-size:12px;color:var(--text3);display:block;margin:8px 0 3px">'+lab+'</label><input id="'+id+'" value="'+v(val)+'" placeholder="'+v(ph||"")+'" style="width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#fff;font-size:14px">'; };
+  var h='<div class="mbox" style="max-width:460px;max-height:90vh;overflow-y:auto"><h2>🧾 '+(av?"Facture d’avoir":"Facture")+' du ticket n°'+_lxFcEsc(a.tkNum||t.num)+'</h2>';
+  h+='<div style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:6px">La facture reprend le ticket <strong>'+_lxFcEur(t.total_ttc)+'</strong> du '+_lxFcDate(t.date_ticket)+' (lignes, TVA par taux). Elle ne crée aucune nouvelle recette. Une fois émise, elle est numérotée et ne peut plus être modifiée : vérifiez les coordonnées du client.</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:6px"><label style="flex:1;font-size:13px"><input type="radio" name="fcType" value="particulier" checked onchange="document.getElementById(\'fcPro\').style.display=\'none\'"> Particulier</label><label style="flex:1;font-size:13px"><input type="radio" name="fcType" value="professionnel" onchange="document.getElementById(\'fcPro\').style.display=\'block\'"> Professionnel</label></div>';
+  h+=inp("fcNom","Nom ou raison sociale *",cl?cl.nom:"")+inp("fcPrenom","Prénom",cl?cl.pre:"")+inp("fcAdr","Adresse *",cl?cl.adresse:"")+'<div style="display:flex;gap:8px"><div style="flex:1">'+inp("fcCp","Code postal *",cl?cl.cp:"")+'</div><div style="flex:2">'+inp("fcVille","Ville *",cl?cl.ville:"")+'</div></div>'+inp("fcEmail","E-mail",cl?cl.email:"");
+  h+='<div id="fcPro" style="display:none">'+inp("fcSiren","SIREN ou SIRET du client *","","9 ou 14 chiffres")+inp("fcTva","N° de TVA intracommunautaire du client","","FR…")+'</div>';
+  h+='<div style="display:flex;gap:8px;margin-top:14px"><button class="btn" style="flex:1;background:var(--bg)" onclick="cM()">Annuler</button><button class="btn bg" style="flex:2;font-weight:800" onclick="lxFactureEmettre(\''+a.id+'\',\''+t.id+'\')">Émettre la facture</button></div></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+window.lxFactureOuvrir=lxFactureOuvrir;
+async function lxFactureEmettre(apId, ticketId){
+  if(guardDoubleClick&&guardDoubleClick("facture")) return;
+  var g=function(id){ var e=document.getElementById(id); return e?String(e.value||"").trim():""; };
+  var typ=(document.querySelector('input[name="fcType"]:checked')||{}).value||"particulier";
+  var c={type:typ, nom:g("fcNom"), prenom:g("fcPrenom"), adresse:g("fcAdr"), cp:g("fcCp"), ville:g("fcVille"), email:g("fcEmail"), siren:g("fcSiren"), tva_intracom:g("fcTva")};
+  if(!c.nom||!c.adresse||!c.cp||!c.ville){ showAlert("Nom et adresse complète du client obligatoires sur une facture.","warning"); return; }
+  if(typ==="professionnel"&&!/^\d{9}(\d{5})?$/.test(c.siren.replace(/\s/g,""))){ showAlert("SIREN (9 chiffres) ou SIRET (14 chiffres) du client professionnel obligatoire.","warning"); return; }
+  if(typ==="professionnel"&&c.siren.replace(/\s/g,"").length===14){ c.siret=c.siren.replace(/\s/g,""); c.siren=c.siret.slice(0,9); }
+  var op=(typeof CURRENT_OPERATOR!=="undefined"&&CURRENT_OPERATOR)?((CURRENT_OPERATOR.prenom||"")+(CURRENT_OPERATOR.nom?" "+CURRENT_OPERATOR.nom:"")).trim():null;
+  var r=await _sb.rpc("lx_facture_emettre",{p_ticket:ticketId, p_client:c, p_operateur:op});
+  if(!r||r.error||!r.data||!r.data.ok){ showAlert("Facture non émise : "+String((r&&r.error&&r.error.message)||"erreur").replace(/^LX_\w+ : /,""),"warning"); return; }
+  try{ if(typeof auditLog==="function") auditLog(r.data.type==="avoir"?"FACTURE_AVOIR_EMISE":"FACTURE_EMISE", r.data.numero+" (ticket "+apId+")"); }catch(_eA){}
+  var f=await _sb.from("factures_clients").select("*").eq("id",r.data.id).limit(1);
+  cM(); toast("✓ Facture "+r.data.numero+" émise","success");
+  if(f&&f.data&&f.data[0]) lxFactureAfficher(f.data[0]);
+}
+window.lxFactureEmettre=lxFactureEmettre;
+// Lignes de la facture : HT de chaque ligne ajusté au centime pour que la somme par taux = HT ENREGISTRÉ du ticket (par_taux)
+function _lxFactureLignes(f){
+  var its=(Array.isArray(f.items)?f.items:[]).filter(function(it){ return it&&!it.isSep&&!it.isAcompteData; });
+  var tx=Number(f.taux_tva)||0, par=Array.isArray(f.par_taux)?f.par_taux:[], tp=(SALON_CONFIG&&SALON_CONFIG.tvaProduits!=null)?Number(SALON_CONFIG.tvaProduits):tx;
+  var L=its.map(function(it){ var ttc=(typeof _lxItemMontant==="function")?_lxItemMontant(it):(Number(it.price)||0)*(Number(it.qty)||1);
+    var bum=(typeof _lxEstBum==="function")&&_lxEstBum(it), t=bum?null:((typeof _lxTauxLigne==="function")?_lxTauxLigne(it,tx,tp):tx);
+    return {nom:String(it.name||""), qte:Number(it.qty)||1, ttc:Math.round(ttc*100)/100, taux:t, horsChamp:bum}; });
+  var G={}; L.forEach(function(l){ var k=l.horsChamp?"HC":String(l.taux); (G[k]=G[k]||[]).push(l); });
+  Object.keys(G).forEach(function(k){ var grp=G[k], p=null; par.forEach(function(x){ if((k==="HC"&&x.hors_champ)||(!x.hors_champ&&String(Number(x.taux))===String(Number(k)))) p=x; });
+    var gt=0; grp.forEach(function(l){ gt+=l.ttc; }); var cible=p?Number(p.ht):null, cum=0;
+    grp.forEach(function(l,i){ if(cible==null||Math.abs(gt)<0.005){ l.ht=l.horsChamp?l.ttc:Math.round(l.ttc/(1+(Number(l.taux)||0)/100)*100)/100; }
+      else if(i===grp.length-1){ l.ht=Math.round((cible-cum)*100)/100; } else { l.ht=Math.round(cible*l.ttc/gt*100)/100; cum=Math.round((cum+l.ht)*100)/100; } }); });
+  return L;
+}
+function lxFactureHtml(f){
+  var av=f.type==="avoir", M=f.mentions||{}, L=_lxFactureLignes(f), S=SALON_CONFIG||{};
+  var h='<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>'+_lxFcEsc(f.numero||("Facture "+f.num))+'</title><style>body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:28px;font-size:12px}h1{font-size:20px;margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border-bottom:1px solid #ddd;padding:6px 5px;text-align:left}th{background:#f3f3f3;font-size:11px}.r{text-align:right}.blk{display:flex;justify-content:space-between;gap:20px;margin-top:14px}.box{flex:1;border:1px solid #ccc;border-radius:6px;padding:10px;line-height:1.5}.m{font-size:11px;color:#333;margin-top:4px;line-height:1.45}.tot td{font-weight:700}@media print{.np{display:none}}</style></head><body>';
+  h+='<div class="np" style="margin-bottom:12px"><button onclick="window.print()">Imprimer / PDF</button></div>';
+  if(M.test) h+='<div style="border:2px dashed #000;padding:6px;margin-bottom:10px;font-weight:900;text-align:center">'+_lxFcEsc(M.test)+'</div>';
+  h+='<h1>'+(av?"FACTURE D’AVOIR":"FACTURE")+' n° '+_lxFcEsc(f.numero||f.num)+'</h1>';
+  h+='<div>Date d’émission : <strong>'+_lxFcDate(f.date_facture)+'</strong> — date de la '+(M.categorie==="Livraisons de biens"?"vente":"prestation")+' : '+_lxFcDate(f.date_operation||f.date_facture)+' — ticket de caisse n° '+_lxFcEsc(f.ticket_num||"")+'</div>';
+  if(M.rectifie) h+='<div class="m"><strong>'+_lxFcEsc(M.rectifie)+'</strong></div>';
+  h+='<div class="blk"><div class="box"><strong>'+_lxFcEsc(f.salon_nom)+'</strong>'+(f.salon_forme?' ('+_lxFcEsc(f.salon_forme)+')':'')+'<br>'+_lxFcEsc(f.salon_adresse||"")+'<br>SIRET '+_lxFcEsc(f.salon_siret||"")+(f.salon_tva_intracom?'<br>N° TVA '+_lxFcEsc(f.salon_tva_intracom):'')+(S.tel?'<br>'+_lxFcEsc(S.tel):'')+'</div>';
+  h+='<div class="box"><strong>Client</strong><br>'+_lxFcEsc([f.client_prenom,f.client_nom].filter(Boolean).join(" "))+'<br>'+_lxFcEsc(f.client_adresse||"")+'<br>'+_lxFcEsc((f.client_cp||"")+" "+(f.client_ville||""))+(f.client_siren?'<br>SIREN '+_lxFcEsc(f.client_siren):'')+(f.client_tva_intracom?'<br>N° TVA '+_lxFcEsc(f.client_tva_intracom):'')+'</div></div>';
+  h+='<table><tr><th>Désignation</th><th class="r">Qté</th><th class="r">Prix unitaire HT</th><th class="r">TVA</th><th class="r">Total HT</th><th class="r">Total TTC</th></tr>';
+  L.forEach(function(l){ h+='<tr><td>'+_lxFcEsc(l.nom)+'</td><td class="r">'+l.qte+'</td><td class="r">'+_lxFcEur(l.ht/(l.qte||1))+'</td><td class="r">'+(l.horsChamp?"hors champ":String(l.taux).replace(".",",")+" %")+'</td><td class="r">'+_lxFcEur(l.ht)+'</td><td class="r">'+_lxFcEur(l.ttc)+'</td></tr>'; });
+  h+='</table><table style="width:60%;margin-left:40%"><tr><th>Taux</th><th class="r">Base HT</th><th class="r">TVA</th><th class="r">TTC</th></tr>';
+  (Array.isArray(f.par_taux)?f.par_taux:[]).forEach(function(x){ h+='<tr><td>'+(x.hors_champ?"Hors champ (bon à usage multiple)":String(Number(x.taux)).replace(".",",")+" %")+'</td><td class="r">'+_lxFcEur(x.ht)+'</td><td class="r">'+_lxFcEur(x.tva)+'</td><td class="r">'+_lxFcEur(x.ttc)+'</td></tr>'; });
+  h+='<tr class="tot"><td>Total</td><td class="r">'+_lxFcEur(f.total_ht)+'</td><td class="r">'+_lxFcEur(f.total_tva)+'</td><td class="r">'+_lxFcEur(f.total_ttc)+'</td></tr></table>';
+  ["acquittee","tva","categorie","recette","escompte","penalites"].forEach(function(k){ if(M[k]) h+='<div class="m">'+(k==="categorie"?"Nature de l’opération : ":"")+_lxFcEsc(M[k])+'</div>'; });
+  h+='<div class="m" style="margin-top:14px;color:#666">Empreinte '+_lxFcEsc(f.hash||"")+' — facture numérotée et inaltérable, établie par Luxyra '+_lxFcEsc(typeof LX_VERSION!=="undefined"?LX_VERSION:"")+'.</div>';
+  return h+'</body></html>';
+}
+function _lxXml(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&apos;"}[c]; }); }
+function _lxN2(x){ return (Math.round((Number(x)||0)*100)/100).toFixed(2); }
+// Données structurées de la facture, syntaxe CII (UN/CEFACT Cross Industry Invoice D16B) au profil EN 16931 (Factur-X / ZUGFeRD)
+function lxFactureCII(f){
+  var av=f.type==="avoir", L=_lxFactureLignes(f), sg=av?-1:1, d=String(f.date_facture||"").slice(0,10).replace(/-/g,""), dop=String(f.date_operation||f.date_facture||"").slice(0,10).replace(/-/g,"");
+  var franchise=!!(f.mentions&&f.mentions.tva);
+  var cat=function(l){ return l.horsChamp?"O":(franchise||!(Number(l.taux)>0)?"E":"S"); };
+  var adr=function(ad,cp,ville){ return '<ram:PostalTradeAddress><ram:PostcodeCode>'+_lxXml(cp||"")+'</ram:PostcodeCode><ram:LineOne>'+_lxXml(ad||"")+'</ram:LineOne><ram:CityName>'+_lxXml(ville||"")+'</ram:CityName><ram:CountryID>FR</ram:CountryID></ram:PostalTradeAddress>'; };
+  var x='<?xml version="1.0" encoding="UTF-8"?>\n<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">\n';
+  x+='<rsm:ExchangedDocumentContext><ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>urn:cen.eu:en16931:2017</ram:ID></ram:GuidelineSpecifiedDocumentContextParameter></rsm:ExchangedDocumentContext>\n';
+  x+='<rsm:ExchangedDocument><ram:ID>'+_lxXml(f.numero||f.num)+'</ram:ID><ram:TypeCode>'+(av?"381":"380")+'</ram:TypeCode><ram:IssueDateTime><udt:DateTimeString format="102">'+d+'</udt:DateTimeString></ram:IssueDateTime>';
+  ["test","acquittee","tva","recette","escompte","penalites","rectifie"].forEach(function(k){ if(f.mentions&&f.mentions[k]) x+='<ram:IncludedNote><ram:Content>'+_lxXml(f.mentions[k])+'</ram:Content></ram:IncludedNote>'; });
+  x+='</rsm:ExchangedDocument>\n<rsm:SupplyChainTradeTransaction>\n';
+  L.forEach(function(l,i){ var ht=sg*l.ht;
+    x+='<ram:IncludedSupplyChainTradeLineItem><ram:AssociatedDocumentLineDocument><ram:LineID>'+(i+1)+'</ram:LineID></ram:AssociatedDocumentLineDocument><ram:SpecifiedTradeProduct><ram:Name>'+_lxXml(l.nom+(l.qte!==1?" (x"+l.qte+")":""))+'</ram:Name></ram:SpecifiedTradeProduct>';
+    x+='<ram:SpecifiedLineTradeAgreement><ram:NetPriceProductTradePrice><ram:ChargeAmount>'+_lxN2(ht)+'</ram:ChargeAmount></ram:NetPriceProductTradePrice></ram:SpecifiedLineTradeAgreement><ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">1</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>';
+    x+='<ram:SpecifiedLineTradeSettlement><ram:ApplicableTradeTax><ram:TypeCode>VAT</ram:TypeCode><ram:CategoryCode>'+cat(l)+'</ram:CategoryCode>'+(cat(l)==="S"?'<ram:RateApplicablePercent>'+Number(l.taux)+'</ram:RateApplicablePercent>':'')+'</ram:ApplicableTradeTax><ram:SpecifiedTradeSettlementLineMonetarySummation><ram:LineTotalAmount>'+_lxN2(ht)+'</ram:LineTotalAmount></ram:SpecifiedTradeSettlementLineMonetarySummation></ram:SpecifiedLineTradeSettlement></ram:IncludedSupplyChainTradeLineItem>\n'; });
+  x+='<ram:ApplicableHeaderTradeAgreement><ram:SellerTradeParty><ram:Name>'+_lxXml(f.salon_nom)+'</ram:Name><ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">'+_lxXml(String(f.salon_siret||"").replace(/\s/g,"").slice(0,9))+'</ram:ID></ram:SpecifiedLegalOrganization>'+adr(f.salon_adresse,"","")+(f.salon_tva_intracom?'<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">'+_lxXml(f.salon_tva_intracom)+'</ram:ID></ram:SpecifiedTaxRegistration>':'')+'</ram:SellerTradeParty>';
+  x+='<ram:BuyerTradeParty><ram:Name>'+_lxXml([f.client_prenom,f.client_nom].filter(Boolean).join(" "))+'</ram:Name>'+(f.client_siren?'<ram:SpecifiedLegalOrganization><ram:ID schemeID="0002">'+_lxXml(f.client_siren)+'</ram:ID></ram:SpecifiedLegalOrganization>':'')+adr(f.client_adresse,f.client_cp,f.client_ville)+(f.client_tva_intracom?'<ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">'+_lxXml(f.client_tva_intracom)+'</ram:ID></ram:SpecifiedTaxRegistration>':'')+'</ram:BuyerTradeParty></ram:ApplicableHeaderTradeAgreement>\n';
+  x+='<ram:ApplicableHeaderTradeDelivery><ram:ActualDeliverySupplyChainEvent><ram:OccurrenceDateTime><udt:DateTimeString format="102">'+dop+'</udt:DateTimeString></ram:OccurrenceDateTime></ram:ActualDeliverySupplyChainEvent></ram:ApplicableHeaderTradeDelivery>\n';
+  x+='<ram:ApplicableHeaderTradeSettlement><ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>';
+  (Array.isArray(f.par_taux)?f.par_taux:[]).forEach(function(p){ var c=p.hors_champ?"O":(franchise||!(Number(p.taux)>0)?"E":"S");
+    x+='<ram:ApplicableTradeTax><ram:CalculatedAmount>'+_lxN2(sg*Number(p.tva))+'</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode>'+(c==="E"?'<ram:ExemptionReason>TVA non applicable, art. 293 B du CGI</ram:ExemptionReason>':(c==="O"?'<ram:ExemptionReason>Bon a usage multiple : hors champ de la TVA (CGI art. 256 ter)</ram:ExemptionReason>':''))+'<ram:BasisAmount>'+_lxN2(sg*Number(p.ht))+'</ram:BasisAmount><ram:CategoryCode>'+c+'</ram:CategoryCode>'+(c==="S"?'<ram:RateApplicablePercent>'+Number(p.taux)+'</ram:RateApplicablePercent>':'')+'</ram:ApplicableTradeTax>'; });
+  x+='<ram:SpecifiedTradePaymentTerms><ram:Description>'+_lxXml((f.mentions&&f.mentions.acquittee)||"Facture acquittee")+'</ram:Description></ram:SpecifiedTradePaymentTerms>';
+  x+='<ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:LineTotalAmount>'+_lxN2(sg*Number(f.total_ht))+'</ram:LineTotalAmount><ram:TaxBasisTotalAmount>'+_lxN2(sg*Number(f.total_ht))+'</ram:TaxBasisTotalAmount><ram:TaxTotalAmount currencyID="EUR">'+_lxN2(sg*Number(f.total_tva))+'</ram:TaxTotalAmount><ram:GrandTotalAmount>'+_lxN2(sg*Number(f.total_ttc))+'</ram:GrandTotalAmount><ram:TotalPrepaidAmount>'+_lxN2(sg*Number(f.total_ttc))+'</ram:TotalPrepaidAmount><ram:DuePayableAmount>0.00</ram:DuePayableAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>';
+  if(f.facture_origine_id&&f.mentions&&f.mentions.rectifie){ var mR=/(F-\d{6})/.exec(f.mentions.rectifie); if(mR) x+='<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>'+mR[1]+'</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>'; }
+  x+='</ram:ApplicableHeaderTradeSettlement>\n</rsm:SupplyChainTradeTransaction>\n</rsm:CrossIndustryInvoice>\n';
+  return x;
+}
+function lxFactureAfficher(f){
+  window._lxFactureCourante=f;
+  var h='<div class="mbox" style="max-width:440px"><h2>🧾 '+(f.type==="avoir"?"Facture d’avoir":"Facture")+' '+_lxFcEsc(f.numero||f.num)+'</h2>';
+  h+='<div style="font-size:13px;color:var(--text2);line-height:1.6">'+_lxFcEsc([f.client_prenom,f.client_nom].filter(Boolean).join(" "))+'<br>'+_lxFcEur(f.total_ttc)+' TTC — émise le '+_lxFcDate(f.date_facture)+'<br><span style="font-size:11px;color:var(--text3)">Numérotée et inaltérable : pour la corriger, annulez le ticket (contre-ticket) puis émettez la facture d’avoir.</span></div>';
+  h+='<button class="btn bg" style="width:100%;margin-top:12px;font-weight:800" onclick="lxFactureImprimer()">🖨 Imprimer / PDF</button>';
+  h+='<button class="btn bs" style="width:100%;margin-top:8px" onclick="lxFactureTelechargerXml()">⬇️ Données de la facture (XML Factur-X / EN 16931)</button>';
+  h+='<button class="btn" style="width:100%;margin-top:8px;background:var(--bg)" onclick="cM()">Fermer</button></div>';
+  document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+h+'</div></div>';
+}
+window.lxFactureAfficher=lxFactureAfficher;
+function lxFactureImprimer(){ var f=window._lxFactureCourante; if(!f) return; var w=window.open("","_blank","width=820,height=960"); if(!w){ showAlert("Autorisez les fenêtres pour imprimer la facture.","warning"); return; } w.document.write(lxFactureHtml(f)); w.document.close(); setTimeout(function(){ try{ w.print(); }catch(_e){} },300); try{ if(typeof auditLog==="function") auditLog("FACTURE_IMPRIMEE", String(f.numero||f.num)); }catch(_eA){} }
+function lxFactureTelechargerXml(){ var f=window._lxFactureCourante; if(!f) return; var b=new Blob([lxFactureCII(f)],{type:"application/xml;charset=utf-8"}); var u=URL.createObjectURL(b), a=document.createElement("a"); a.href=u; a.download=String(f.numero||("facture-"+f.num))+".xml"; document.body.appendChild(a); a.click(); setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(u); },100); }
+window.lxFactureImprimer=lxFactureImprimer; window.lxFactureTelechargerXml=lxFactureTelechargerXml;
+// Registre des factures émises (CSV, mois affiché) — conservation / contrôle
+async function expFacturesClients(mois){
+  var accM=(typeof _lxMoisExport==="function")?_lxMoisExport(mois):mois, b=_lxMoisBornesSimple(accM);
+  var r=await _sb.from("factures_clients").select("numero,num,type,date_facture,date_operation,ticket_num,client_nom,client_prenom,client_siren,client_tva_intracom,total_ht,total_tva,total_ttc,mode_paiement,hash").eq("salon_id",_salonId).gte("date_facture",b.du).lte("date_facture",b.au).order("num");
+  var rows=[["N° facture","Type","Date d'émission","Date de l'opération","Ticket n°","Client","SIREN","N° TVA client","Total HT","TVA","Total TTC","Règlement","Empreinte"]];
+  ((r&&r.data)||[]).forEach(function(f){ rows.push([f.numero||f.num, f.type==="avoir"?"Avoir":"Facture", _lxFcDate(f.date_facture), _lxFcDate(f.date_operation), f.ticket_num||"", [f.client_prenom,f.client_nom].filter(Boolean).join(" "), f.client_siren||"", f.client_tva_intracom||"", csvNum(f.total_ht), csvNum(f.total_tva), csvNum(f.total_ttc), f.mode_paiement||"", f.hash||""]); });
+  var csv="﻿"+rows.map(function(l){ return l.map(function(c){ var s=String(c==null?"":c); return /[;"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }).join(";"); }).join("\r\n");
+  var blob=new Blob([csv],{type:"text/csv;charset=utf-8"}), u=URL.createObjectURL(blob), a=document.createElement("a"); a.href=u; a.download="factures_clients_"+accM+".csv"; document.body.appendChild(a); a.click(); setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(u); },100);
+  try{ if(typeof auditLog==="function") auditLog("EXPORT_FACTURES_CLIENTS", accM+" ("+(rows.length-1)+")"); }catch(_eA){}
+}
+window.expFacturesClients=expFacturesClients;
+
 async function _lxRetourModale(id){
   var orig=null; for(var i=0;i<AP.length;i++){ if(AP[i]&&AP[i].id===id){ orig=AP[i]; break; } }
   var rf=_lxRetourRefus(orig); if(rf){ showAlert(rf,"warning"); return; }
@@ -40461,7 +40686,10 @@ function cloturerJournee(opts){
   c.cumulMois=Math.round(cumulMois*100)/100;
   // 2026-10-28 (-2, v6.8.0) : cumul des tickets du mois / de l'année (cumul_mois_tickets / cumul_annee_tickets : 0 écrit jusqu'ici)
   // = tickets de cette Z + tickets des Z précédentes de la période (même règle que lx-cloture-auto v3). Hors empreinte.
-  var _cumTk=function(L){ var n=nbTicketsNum; L.forEach(function(x){ n+=(Number(x.nbTickets)||0); }); return n; };
+  // 2026-10-28 (-8, Luxyra 6.8.6) : une Z annotée (nombre de tickets corrigé, annotation signée) compte pour son nombre CORRIGÉ,
+  // comme pour le CA ; annotations non lues -> le serveur ajuste (déclencheur b_nf525_z_cumul_tickets ; marque lxAnnotTk)
+  var _zDeltaTk=function(x){ var an=(typeof _lxZAnnotation==="function")?_lxZAnnotation(x):null; return an?((Number(an.correct_nb_tickets)||0)-(Number(an.wrong_nb_tickets)||0)):0; };
+  var _cumTk=function(L){ var n=nbTicketsNum; L.forEach(function(x){ n+=(Number(x.nbTickets)||0)+_zDeltaTk(x); }); return n; };
   c.cumulMoisTk=_cumTk(clotMois);
   // Cumul annuel
   var anKey=TD.slice(0,4);
@@ -40469,7 +40697,7 @@ function cloturerJournee(opts){
   var cumulAn=totalCA;clotAn.forEach(function(x){cumulAn+=x.totalCA+_zDelta(x);});
   c.cumulAnnuel=Math.round(cumulAn*100)/100;
   c.cumulAnTk=_cumTk(clotAn);
-  if(window._lxZAnnotLues===true) c.lxAnnotOk=true; // cumuls déjà corrigés ici : le serveur ne les ajuste pas une 2e fois
+  if(window._lxZAnnotLues===true){ c.lxAnnotOk=true; c.lxAnnotTk=true; } // cumuls déjà corrigés ici : le serveur ne les ajuste pas une 2e fois (CA ; 6.8.6 : tickets)
   // Grand total perpetuel (NF525): valeur affichee best-effort; autorite = trigger serveur clotures_set_cumul_perpetuel.
   var _maxPerp=0, _maxPerpTs=""; window.CLOTURES.forEach(function(x){ if(typeof x.cumulPerpetuelCA==="number"&&x.cumulPerpetuelCA>_maxPerp){_maxPerp=x.cumulPerpetuelCA;_maxPerpTs=String(x.ts||"");} });
   var _dPerp=0; try{ (window.Z_ANNOTATIONS||[]).forEach(function(an){ if(an&&String(an.created_at||"")>_maxPerpTs) _dPerp+=Number(an.correct_total_ca)-Number(an.wrong_total_ca); }); }catch(_eP){}
@@ -41287,6 +41515,17 @@ async function exportFEC(){
 // <SIREN>FEC<date de clôture de l'exercice AAAAMMJJ>.txt pour l'exercice entier ; extrait d'une partie de l'exercice =
 // même nom + suffixe de période (_AAAAMM pour un mois civil entier, sinon _AAAAMMJJ-AAAAMMJJ). Avant : date de fin de la
 // période choisie (ex. 123456789FEC20260930.txt pour septembre, alors que l'exercice se clôt au 31/12).
+// 2026-10-28 (-8, Luxyra 6.8.6) : versements Stripe d'une période (table stripe_versements, écrite par le serveur à la réception de
+// payout.paid). Lecture seule ; [] si la table n'existe pas encore (SQL du lot 4 non appliqué) ou hors connexion.
+async function lxStripeVersementsCharger(du, au){
+  try{
+    if(typeof _sb==="undefined"||!_sb||typeof _salonId==="undefined"||!_salonId||window._lxDemo) return [];
+    var r=await _sb.from("stripe_versements").select("payout_id,date_versement,montant,brut,frais,autres,nb_operations,statut").eq("salon_id",_salonId).gte("date_versement",du).lte("date_versement",au).order("date_versement");
+    if(r&&!r.error&&Array.isArray(r.data)){ window.LX_STRIPE_VERS=r.data; return r.data; }
+  }catch(_e){}
+  return [];
+}
+window.lxStripeVersementsCharger=lxStripeVersementsCharger;
 function _lxFecNomFichier(siren, dateFrom, dateTo){
   var ex=(typeof lxExercicePeriode==="function")?lxExercicePeriode(dateTo):{debut:dateFrom, fin:dateTo};
   var c=function(d){ return String(d||"").slice(0,10).replace(/-/g,""); };
@@ -41332,6 +41571,7 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
   // FIX 2026-05-23 : les tickets ont le statut "paid" (encaisse), pas "done" (qui est le statut des RDV).
   // Sans "paid", l'export FEC ne trouvait jamais aucun ticket.
   var tickets=ticketsAll.filter(function(t){return t.status==="paid"||t.status==="done"||t.status==="cancelled";});
+  try{ await lxBonsEtatCharger(); }catch(_eBeX){} // 2026-10-28 (-8, 6.8.6) : soldes de bons à usage multiple dérivés des tickets
   if(!tickets.length){ return {ok:false, code:"vide", type:"info", msg:"Aucun ticket encaissé sur la période sélectionnée."}; }
 
   // Plan comptable simplifié
@@ -41416,14 +41656,10 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     var modeLab=String(t.mode_paiement||"Caisse").toUpperCase();
     var prestHT=_Rf.ph, prodHT=_Rf.qh;
 
-    if(t.status==="cancelled"){
-      if(_hc) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_BON_BUM,"Bons \u00e0 usage multiple","","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(_hc),fmtAmount(0),"","",dateE,"",""]); // 2026-10-28
-      _fecLegs(t,totalTTC,_isV2).forEach(function(lg){ _bc.r.push(["VTE","Ventes salon",0,dateE,lg.acc,lg.lib,"","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(0),fmtAmount(lg.amt),"","",dateE,"",""]); });
-      if(prestHT!==0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PREST,"Prestations de services","","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(prestHT),fmtAmount(0),"","",dateE,"",""]);
-      if(prodHT>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_VENTE_PROD,"Ventes de produits","","",pieceRef,pieceD,"ANNULATION "+escFEC(libBase),fmtAmount(prodHT),fmtAmount(0),"","",dateE,"",""]);
-      if(totalTVA>0) _bc.r.push(["VTE","Ventes salon",0,dateE,ACC_TVA,"TVA collectée","","",pieceRef,pieceD,"ANNULATION TVA "+escFEC(libBase),fmtAmount(totalTVA),fmtAmount(0),"","",dateE,"",""]);
-      return;
-    }
+    // 2026-10-28 (-8, Luxyra 6.8.6, mineur de l'audit « ticket annulé FEC ≠ Quadratus ») : un ticket marqué « cancelled » n'était
+    // repris QUE par une écriture d'annulation (sens inverse), sans sa vente — alors que son contre-ticket (négatif) est une pièce à
+    // part, et que l'export Quadratus / EBP le comptait comme une vente. Une annulation est TOUJOURS le contre-ticket : le ticket
+    // d'origine est une vente comme les autres (la base n'accepte plus de statut « cancelled », la production n'en a aucun).
 
     // 2026-10-11 : montants négatifs (contre-ticket d'annulation) -> sens inversé, montant positif, écriture équilibrée
     var _lib=(totalTTC<0?"ANNULATION ":"VENTE ")+escFEC(libBase);
@@ -41453,11 +41689,31 @@ async function _lxFecConstruire(dateFrom, dateTo, opts){
     (c.lignes||[]).forEach(function(l){ var v=Math.round((Number(l.montant)||0)*100)/100; if(Math.abs(v)<0.005) return; var ac=_accForBucket(String(l.mode||"").toLowerCase());
       _bc.r.push(["VTE","Ventes salon",0,dE,ac.acc,ac.lib,"","",pR,dE,lb,fmtAmount(v>0?v:0),fmtAmount(v<0?-v:0),"","",dE,"",""]); });
   }); }catch(_eCrF){}
+  // 2026-10-28 (-8, Luxyra 6.8.6) : VERSEMENTS STRIPE reçus sur le compte bancaire (payout.paid, relus chez Stripe par le serveur) :
+  // compte d'attente « paiements en ligne » (580100) soldé par la banque (net viré) et les frais Stripe (627800) — avant, les
+  // paiements en ligne restaient au débit du 580100 sans jamais en sortir et les frais n'apparaissaient nulle part.
+  // Journal BQ, pièce = n° du versement Stripe ; aucune donnée de caisse (aucun ticket) n'est concernée.
+  try{ var _vS=await lxStripeVersementsCharger(dateFrom, dateTo);
+    var ACC_FRAIS_STRIPE=_AS.fraisStripe||"627800", ACC_BANQUE_STRIPE=_AS.banque||ACC_BANQUE;
+    (_vS||[]).forEach(function(v){ var dV=fmtDate(v.date_versement); _bc={d:dV, r:[]}; blocs.push(_bc);
+      var pR="ST"+String(v.payout_id||"").replace(/^po_/,"").slice(-12), lb=escFEC("VERSEMENT STRIPE "+(v.payout_id||"")+" DU "+fmtDate(v.date_versement)+" ("+(v.nb_operations||0)+" OP.)");
+      var net=Math.round((Number(v.montant)||0)*100)/100, frais=Math.round((Number(v.frais)||0)*100)/100, att=Math.round((net+frais)*100)/100;
+      function _ls(acc,accLib,amt,sens){ var x=Math.round((Number(amt)||0)*100)/100; if(Math.abs(x)<0.005) return; if(x<0){ x=-x; sens=(sens==="D")?"C":"D"; }
+        _bc.r.push(["BQ","Banque",0,dV,acc,accLib,"","",pR,dV,lb,fmtAmount(sens==="D"?x:0),fmtAmount(sens==="C"?x:0),"","",dV,"",""]); }
+      _ls(ACC_BANQUE_STRIPE,"Banque",net,"D");
+      _ls(ACC_FRAIS_STRIPE,"Frais Stripe (commissions)",frais,"D");
+      _ls(ACC_ENLIGNE,"Paiements en ligne (Stripe)",att,"C");
+    }); }catch(_eVS){ console.warn("[FEC] versements Stripe", _eVS); }
   blocs.map(function(x,i){ return {x:x,i:i}; }).sort(function(p,q){ return p.x.d<q.x.d?-1:(p.x.d>q.x.d?1:p.i-q.i); }).forEach(function(o){
     if(!o.x.r.length) return; ecrNum++; o.x.r.forEach(function(row){ row[2]=String(ecrNum); lines.push(row.join("\t")); }); });
 
+  // 2026-10-28 (-8, Luxyra 6.8.6) : caisse en MODE TEST -> le fichier le dit (nom « …_TEST.txt », libellé du journal) : un FEC
+  // tiré d'une caisse de test n'a aucune valeur fiscale et ne doit pas pouvoir être confondu avec le FEC réel.
+  var _fecTest=(window.LX_MODE_CAISSE==="test");
+  if(_fecTest) lines=lines.map(function(l,ix){ if(!ix) return l; var c=l.split("\t"); c[1]=c[1]+" - MODE TEST SANS VALEUR FISCALE"; return c.join("\t"); });
   var content=lines.join("\r\n");
   var fileName=_lxFecNomFichier(siren, dateFrom, dateTo);
+  if(_fecTest) fileName=fileName.replace(/\.txt$/,"_TEST.txt");
   return {ok:true, fileName:fileName, content:content, nbTickets:tickets.length, nbLignes:lines.length-1};
 }
 
@@ -41767,7 +42023,8 @@ function _comptaAccounts(){
   var d = { services:"70612000", produits:"70712000", bonsCadeaux:"46700000", // 2026-10-17 audit réglages (#19) : ancien défaut 70730000 (compte de produits)
     bonsMultiples:"41910000", bonsExpires:"75800000", // 2026-10-28 (v6.7.0) : bons à usage multiple (dette) / soldes expirés (produit hors TVA)
     tva:"44571000", caisse:"53000000", especes:"58300000", cb:"58000000",
-    enligne:"58010000", cheque:"58200000", autres:"58040000", journal:"CS" };
+    enligne:"58010000", cheque:"58200000", autres:"58040000", journal:"CS",
+    banque:"51200000", fraisStripe:"62780000" }; // 2026-10-28 (-8, 6.8.6) : versements Stripe (banque) et frais Stripe
   try{
     var cfg = (window._SALON_CONFIG_JSON && window._SALON_CONFIG_JSON.comptaAccounts) || null;
     if(cfg && typeof cfg==="object"){ for(var k in d){ if(cfg[k]!=null && String(cfg[k]).trim()!=="") d[k]=String(cfg[k]).trim(); } }
@@ -41776,7 +42033,7 @@ function _comptaAccounts(){
 }
 function saveComptaAccounts(){
   if(typeof hasPermission==="function" && !hasPermission("compta")){ if(typeof toast==="function") toast("Acces non autorise : permission Comptabilite requise","warning"); return; }
-  var keys=["services","produits","bonsCadeaux","bonsMultiples","bonsExpires","tva","caisse","especes","cb","enligne","cheque","autres","journal"];
+  var keys=["services","produits","bonsCadeaux","bonsMultiples","bonsExpires","tva","caisse","especes","cb","enligne","cheque","autres","journal","banque","fraisStripe"];
   var acc={};
   for(var i=0;i<keys.length;i++){
     var el=document.getElementById("ca_"+keys[i]);
@@ -41820,6 +42077,7 @@ async function exportEBP(){
     }
   }catch(e){console.error("EBP fetch:",e); showAlert("Erreur de chargement des tickets : "+e.message,"error"); return;}
   var tickets=ticketsAll.filter(function(t){return t.status==="paid"||t.status==="done"||t.status==="cancelled";});
+  try{ await lxBonsEtatCharger(); }catch(_eBeX){} // 2026-10-28 (-8, 6.8.6) : soldes de bons à usage multiple dérivés des tickets
   if(!tickets.length){showAlert("Aucun ticket encaisse sur la periode selectionnee.","info");return;}
   var R=function(n){return Math.round((Number(n)||0)*100)/100;};
   var days={};
@@ -41882,6 +42140,9 @@ async function exportEBP(){
   });
   // 2026-10-28 (v6.7.0) : soldes de bons à usage multiple expirés (aucune TVA) -> produit hors TVA
   try{ lxBumExpires(dateFrom, dateTo).forEach(function(x){ L(x.effet, A.bonsMultiples, "BON "+x.code+" EXPIRE (HORS TVA)", x.restant, "D"); L(x.effet, A.bonsExpires, "BON "+x.code+" EXPIRE (HORS TVA)", x.restant, "C"); }); }catch(_eBxE){}
+  // 2026-10-28 (-8, Luxyra 6.8.6) : versements Stripe (banque = net viré, frais Stripe, paiements en ligne soldés) — même écriture que le FEC
+  try{ (await lxStripeVersementsCharger(dateFrom, dateTo)).forEach(function(v){ var d=String(v.date_versement).slice(0,10), net=R(v.montant), fr=R(v.frais);
+    L(d, A.banque, "VERSEMENT STRIPE "+v.payout_id, net, "D"); if(Math.abs(fr)>=0.005) L(d, A.fraisStripe, "FRAIS STRIPE "+v.payout_id, fr, "D"); L(d, A.enligne, "VERSEMENT STRIPE "+v.payout_id, R(net+fr), "C"); }); }catch(_eVsE){}
   var content=lines.join("\r\n");
   var fileName="Export_EBP_"+dateFrom.replace(/-/g,"")+"_"+dateTo.replace(/-/g,"")+".csv";
   var blob=new Blob([new Uint8Array([0xEF,0xBB,0xBF]), content], {type:"text/csv;charset=utf-8"});
@@ -42080,6 +42341,7 @@ async function exportQuadratus(){
     }
   }catch(e){console.error("Quadratus fetch:",e); showAlert("Erreur de chargement des tickets : "+e.message,"error"); return;}
   var tickets=ticketsAll.filter(function(t){return t.status==="paid"||t.status==="done"||t.status==="cancelled";});
+  try{ await lxBonsEtatCharger(); }catch(_eBeX){} // 2026-10-28 (-8, 6.8.6) : soldes de bons à usage multiple dérivés des tickets
   if(!tickets.length){showAlert("Aucun ticket encaisse sur la periode selectionnee.","info");return;}
   var R=function(n){return Math.round((Number(n)||0)*100)/100;};
   var days={};
@@ -42146,6 +42408,9 @@ async function exportQuadratus(){
   });
   // 2026-10-28 (v6.7.0) : soldes de bons à usage multiple expirés (aucune TVA) -> produit hors TVA
   try{ lxBumExpires(dateFrom, dateTo).forEach(function(x){ pieceNum++; var P=parts(x.effet); L(A.bonsMultiples,P,"D",x.restant,"BON "+x.code+" EXPIRE HORS TVA"); L(A.bonsExpires,P,"C",x.restant,"BON "+x.code+" EXPIRE HORS TVA"); }); }catch(_eBxQ){}
+  // 2026-10-28 (-8, Luxyra 6.8.6) : versements Stripe (banque = net viré, frais Stripe, paiements en ligne soldés) — même écriture que le FEC
+  try{ (await lxStripeVersementsCharger(dateFrom, dateTo)).forEach(function(v){ pieceNum++; var P=parts(String(v.date_versement).slice(0,10)), net=Math.round((Number(v.montant)||0)*100)/100, fr=Math.round((Number(v.frais)||0)*100)/100;
+    L(A.banque,P,"D",net,"VERSEMENT STRIPE "+v.payout_id); if(Math.abs(fr)>=0.005) L(A.fraisStripe,P,"D",fr,"FRAIS STRIPE "+v.payout_id); L(A.enligne,P,"C",Math.round((net+fr)*100)/100,"VERSEMENT STRIPE "+v.payout_id); }); }catch(_eVsQ){}
   var content=lines.join("\r\n")+"\r\n";
   var fileName="Export_Quadratus_"+dateFrom.replace(/-/g,"")+"_"+dateTo.replace(/-/g,"")+".txt";
   var blob=new Blob([content], {type:"text/plain;charset=utf-8"});

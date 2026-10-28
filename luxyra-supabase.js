@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261028-7"; // 2026-10-28 (Luxyra 6.8.5, règle TVA unique : saveTicketToDb reprend la ventilation TVA figée par l'application (lxTvaFiger -> raw_data.lxTva, total_ht / total_tva / taux_tva), copie dans appointments.meta.lxTva ; Z ancienne sans taux mémorisé : taux déduit de ses montants scellés, jamais le taux actuel ; refus LX_Z_ECART_TVA traité comme un refus de Z). 2026-10-28 (-6, Luxyra 6.8.4 : couche de données inchangée hormis ce n° — accompagne app.html 6.8.4 ; vente reportée : la base exige en plus une journée de vente clôturée, une heure valide et la marque sur la 1re ligne, ce que _lxTicketReporter produit déjà). 2026-10-28 (-5, Luxyra 6.8.3 : date réelle d'une vente reportée scellée dans le ticket — items[0].lxRep —, clôture Z refusée par la base si des ventes du jour manquent au journal ou si une journée antérieure est retenue : refus permanent, journée rouverte, cause affichée) // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
+window.LX_DATA_VERSION = "20261028-8"; // 2026-10-28 (-8, Luxyra 6.8.6, lot 4) : saveTicketToDb enregistre toujours « paid » (annulation = contre-ticket), cancelTicketDb retirée, montants de la Z arrondis au centime à l'écriture. // 2026-10-28 (Luxyra 6.8.5, règle TVA unique : saveTicketToDb reprend la ventilation TVA figée par l'application (lxTvaFiger -> raw_data.lxTva, total_ht / total_tva / taux_tva), copie dans appointments.meta.lxTva ; Z ancienne sans taux mémorisé : taux déduit de ses montants scellés, jamais le taux actuel ; refus LX_Z_ECART_TVA traité comme un refus de Z). 2026-10-28 (-6, Luxyra 6.8.4 : couche de données inchangée hormis ce n° — accompagne app.html 6.8.4 ; vente reportée : la base exige en plus une journée de vente clôturée, une heure valide et la marque sur la 1re ligne, ce que _lxTicketReporter produit déjà). 2026-10-28 (-5, Luxyra 6.8.3 : date réelle d'une vente reportée scellée dans le ticket — items[0].lxRep —, clôture Z refusée par la base si des ventes du jour manquent au journal ou si une journée antérieure est retenue : refus permanent, journée rouverte, cause affichée) // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -4004,7 +4004,11 @@ async function saveTicketToDb(tk) {
       taux_tva: _tauxCol,
       mode_paiement: pay.mode,
       detail_paiement: pay.detail,
-      status: tk.cancelled ? "cancelled" : "paid",
+      // 2026-10-28 (-8, Luxyra 6.8.6, constat M4 de l'audit) : un ticket entre TOUJOURS au journal comme ticket encaissé. Annulé
+      // hors connexion avant sa transmission, il reste une vente : son contre-ticket (négatif) est un ticket à part, et la paire
+      // s'annule dans la Z. Avant, « cancelled » le sortait du journal alors que le contre-ticket y était (Z refusée, FEC faux).
+      // La base normalise aussi (déclencheur a_lx_tickets_0_statut) et fige le statut après l'enregistrement.
+      status: "paid",
       notes: tk.comment || null,
       raw_data: tk  // backup complet pour réimpression fidèle
     };
@@ -4266,14 +4270,12 @@ async function _lxTicketReporter(tk, data, dateStr, timeStr, err, walId) {
 }
 if (typeof window !== "undefined") window._lxTicketReporter = _lxTicketReporter;
 
-// Marque un ticket comme annulé (status=cancelled) — alternative au DELETE interdit
+// 2026-10-28 (-8, Luxyra 6.8.6, constat M4) : RETIRÉE. Elle passait un ticket encaissé en status « cancelled » (il sortait du
+// journal de la Z et du FEC) ; elle n'avait aucun appel. Une annulation est TOUJOURS un contre-ticket (bouton « Annuler » :
+// _cancelSecureTicketDo) ; la base refuse désormais toute modification du statut d'un ticket enregistré
+// (LX_TICKET_COLONNES_FIGEES). Conservée sans effet pour les appels éventuels d'anciennes pages.
 async function cancelTicketDb(ticketDbId, reason) {
-  if (!_isOnline || !ticketDbId) return;
-  try {
-    await _sb.from("tickets")
-      .update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: reason || null })
-      .eq("id", ticketDbId);
-  } catch (e) { console.warn("[cancelTicketDb]", e); }
+  console.warn("[cancelTicketDb] sans effet depuis 6.8.6 : une annulation est un contre-ticket", ticketDbId, reason || "");
 }
 
 // Verrouille tous les tickets d'une clôture (post-clôture Z).
@@ -4492,14 +4494,19 @@ async function saveCloture(clot) {
   // dans clot.details (cb/esp/chq/bon/vir/aut). On lit clot.perPay en priorité
   // pour rétrocompatibilité, sinon fallback sur clot.details.
   var _detailPaiements = clot.perPay || clot.details || {};
+  // 2026-10-28 (-8, Luxyra 6.8.6) : montants arrondis au centime À L'ÉCRITURE (bruit de calcul flottant : 380.79999999999995,
+  // 59.400000000000006, cumuls 25728.09999…). Valeur = toFixed(2), exactement celle de l'empreinte de la Z (« Z|…|CA.toFixed(2)|… ») :
+  // aucune donnée ne change, seul le bruit disparaît. La base arrondit aussi (déclencheur a0_lx_clotures_arrondi).
+  var _r2z = function(x){ var n = Number(x); return isFinite(n) ? Number(n.toFixed(2)) : x; };
+  try { var _dp2 = {}; for (var _kd in _detailPaiements) { var _vd = _detailPaiements[_kd]; _dp2[_kd] = (typeof _vd === "number") ? _r2z(_vd) : _vd; } _detailPaiements = _dp2; } catch(_eDp) {}
   var data = {
     salon_id: _salonId,
     date_cloture: clot.date, num: clot.num,
-    total_ca: clot.totalCA, total_ht: clot.totalHT,
+    total_ca: _r2z(clot.totalCA), total_ht: _r2z(clot.totalHT),
     nb_tickets: clot.nbTickets, nb_annulations: clot.nbAnnul,
     detail_paiements: _detailPaiements, detail_collabs: clot.perSty || {},
-    cumul_mois_ca: clot.cumulMois || clot.cumulMoisCA || 0, cumul_mois_tickets: clot.cumulMoisTk || 0,
-    cumul_annee_ca: clot.cumulAnnuel || clot.cumulAnCA || 0, cumul_annee_tickets: clot.cumulAnTk || 0,
+    cumul_mois_ca: _r2z(clot.cumulMois || clot.cumulMoisCA || 0), cumul_mois_tickets: clot.cumulMoisTk || 0,
+    cumul_annee_ca: _r2z(clot.cumulAnnuel || clot.cumulAnCA || 0), cumul_annee_tickets: clot.cumulAnTk || 0,
     hash: clot.hash, hash_algo: clot.hashAlgo || "SHA-256",
     // FIX 2026-05-28 : comptage tiroir (non fiscal, immuable une fois cloture)
     solde_reel: (typeof clot.soldeReel === "number") ? clot.soldeReel : null,
