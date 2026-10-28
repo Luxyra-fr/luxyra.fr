@@ -1,14 +1,17 @@
 -- =====================================================================================================================
--- 2026-10-29 — RETOUR ARRIÈRE de docs/migrations_1029/tva_unique.sql (Luxyra 6.8.5). NON APPLIQUÉ.
--- Rétablit À L'IDENTIQUE les définitions de production relevées le 29/10/2026 (md5 de pg_get_functiondef : cloturer_mois
+-- 2026-10-28 — RETOUR ARRIÈRE de docs/migrations_1028_tva/tva_unique.sql (Luxyra 6.8.5). NON APPLIQUÉ.
+-- Rétablit À L'IDENTIQUE les définitions de production relevées le 28/10/2026 (md5 de pg_get_functiondef : cloturer_mois
 -- 10fb2481b3ece62961d0a014f26a9d92, cloturer_annee 76636cd247de920d3f696f6aa0ca0b00, cloturer_exercice
--- 9c30504431a8026729e6266b907bcd70) et retire le contrôle b_nf525_z_controle_tva. Aucune ligne n'est modifiée : les Z / clôtures
+-- 9c30504431a8026729e6266b907bcd70) et retire le contrôle b_nf525_z_controle_tva et le déclencheur a_lx_tickets_raw_data_fige. Aucune ligne n'est modifiée : les Z / clôtures
 -- créées pendant la période restent valables (même CA, mêmes empreintes). L'application 6.8.5 continue de fonctionner (Z marquées
 -- tvaRegle sans contrôle serveur du HT ; l'application calcule toujours le HT comme la somme des tickets).
--- À relancer ensuite, si souhaité : docs/migrations_1029/tva_unique.sql (rejouable).
+-- À relancer ensuite, si souhaité : docs/migrations_1028_tva/tva_unique.sql (rejouable).
 -- =====================================================================================================================
 drop trigger if exists b_nf525_z_controle_tva on public.clotures;
 drop function if exists lx_prive.clotures_controle_tva();
+-- §1 bis : raw_data des tickets de nouveau modifiable par le propriétaire (situation de production antérieure)
+drop trigger if exists a_lx_tickets_raw_data_fige on public.tickets;
+drop function if exists lx_prive.tickets_raw_data_fige();
 
 CREATE OR REPLACE FUNCTION public.cloturer_mois(p_salon_id uuid, p_annee integer, p_mois integer)
  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'extensions'
@@ -261,6 +264,11 @@ BEGIN
 END $function$;
 
 drop function if exists public.lx_tva_periode_controle(uuid, date, date);
+drop function if exists lx_prive.tva_periode(uuid, date, date, text);
 drop function if exists lx_prive.tva_periode(uuid, date, date);
+drop function if exists lx_prive.tva_ticket_lignes(jsonb, numeric, numeric, numeric, jsonb, numeric, jsonb);
 drop function if exists lx_prive.tva_ticket_lignes(jsonb, numeric, numeric, numeric, jsonb, numeric);
+drop function if exists lx_prive.tva_item_montant(jsonb);
+drop function if exists lx_prive.tva_vrai(jsonb);
+drop function if exists lx_prive.tva_num(jsonb);
 -- Contrôle : select md5(pg_get_functiondef('public.cloturer_mois(uuid,integer,integer)'::regprocedure)); -> 10fb2481b3ece62961d0a014f26a9d92

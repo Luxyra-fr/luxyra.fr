@@ -4,7 +4,7 @@
 // BUILD: 20260426-04 — fix CSS options dropdown lisibles
 window.__LUXYRA_BUILD = "20260426-04";
 // 2026-10-14 : version de la couche donnees, comparee par app.html (evite un melange ancienne/nouvelle version via le cache)
-window.LX_DATA_VERSION = "20261029-1"; // 2026-10-29 (Luxyra 6.8.5, règle TVA unique : saveTicketToDb reprend la ventilation TVA figée par l'application (lxTvaFiger -> raw_data.lxTva, total_ht / total_tva / taux_tva), copie dans appointments.meta.lxTva ; Z ancienne sans taux mémorisé : taux déduit de ses montants scellés, jamais le taux actuel ; refus LX_Z_ECART_TVA traité comme un refus de Z). 2026-10-28 (-6, Luxyra 6.8.4 : couche de données inchangée hormis ce n° — accompagne app.html 6.8.4 ; vente reportée : la base exige en plus une journée de vente clôturée, une heure valide et la marque sur la 1re ligne, ce que _lxTicketReporter produit déjà). 2026-10-28 (-5, Luxyra 6.8.3 : date réelle d'une vente reportée scellée dans le ticket — items[0].lxRep —, clôture Z refusée par la base si des ventes du jour manquent au journal ou si une journée antérieure est retenue : refus permanent, journée rouverte, cause affichée) // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
+window.LX_DATA_VERSION = "20261028-7"; // 2026-10-28 (Luxyra 6.8.5, règle TVA unique : saveTicketToDb reprend la ventilation TVA figée par l'application (lxTvaFiger -> raw_data.lxTva, total_ht / total_tva / taux_tva), copie dans appointments.meta.lxTva ; Z ancienne sans taux mémorisé : taux déduit de ses montants scellés, jamais le taux actuel ; refus LX_Z_ECART_TVA traité comme un refus de Z). 2026-10-28 (-6, Luxyra 6.8.4 : couche de données inchangée hormis ce n° — accompagne app.html 6.8.4 ; vente reportée : la base exige en plus une journée de vente clôturée, une heure valide et la marque sur la 1re ligne, ce que _lxTicketReporter produit déjà). 2026-10-28 (-5, Luxyra 6.8.3 : date réelle d'une vente reportée scellée dans le ticket — items[0].lxRep —, clôture Z refusée par la base si des ventes du jour manquent au journal ou si une journée antérieure est retenue : refus permanent, journée rouverte, cause affichée) // 2026-10-28 (-4, Luxyra 6.8.2 : un ticket encaissé n'est JAMAIS abandonné par la file de secours — refus « journée déjà clôturée » = enregistrement de REPORT sur la journée ouverte (date réelle de vente en mention, raw_data.dateVente) ; clôture forcée = ticket consigné ET gardé en file ; Z de l'appareil : tickets reportés comptés le jour de leur enregistrement)
 // (historique) "20261028-3"; // 2026-10-28 (-3, Luxyra 6.8.1 : version de l'application transmise dans chaque ticket (raw_data.lxVersion, contrôlée par le serveur), série de n° imprimés propre au serveur (meta.tkNumServeur), copies serveur jamais réécrites, refus LX_APP_OBSOLETE / LX_TKNUM_SERIE_SERVEUR / LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-2"; // 2026-10-28 (-2, Luxyra 6.8.0 : recettes en ligne enregistrées en caisse par le serveur — champs meta serveur / recetteKey…, refus définitif LX_CC_DEJA_EN_CAISSE)
 // (historique) "20261028-1"; // 2026-10-28 (-1 : bons cadeaux à usage unique / multiple — qualification TVA du bon (usage_tva, qualif_tva, repli historique), ticket v2 HT/TVA par ventilation de l'app, taux_tva 0 pour une vente de BUM seule, bonsUtil conservé dans appointments.meta) ; 2026-10-27 (-3 : rapport du mois en vrai PDF + correctifs d’exports comptables, app.html seulement ; -2 : envoi au comptable — FEC + pack Excel + rapport par défaut, ZIP en option, app.html seulement ; -1 : envoi automatique au comptable — changement dans app.html seulement, couche données inchangée) ; 2026-10-17 (-2 : audit réglages — taux TVA produits brut (tvaProduitsColonne), familles produit sans produit (pcats), ancien saveSalonConfig renommé ; -1 : retour / remboursement partiel — champs du ticket de retour conservés dans appointments.meta, refus définitif LX_RETOUR_REFUSE jamais rejoué, ticket de retour refusé au rejeu écarté de la caisse) ; 2026-10-16 (-1 : incident Z n°128 — 1 réservation en ligne = 1 entrée, Z refusée par la base si différente du journal, annotations correctives) ; 2026-10-15 (-3 : multi-appareils, champs modifiés seulement + lignes supprimées ailleurs jamais recréées ; -2 : plus aucun enregistrement muet, lxEcritureVerifiee ; -1 : « Prix à partir de » + sur devis sur les forfaits) ; 2026-10-14 (-8 : correctifs revue d intégration) intégration des audits (données, sécurité, planning, clients, caisse, site, réglages)
@@ -1308,7 +1308,7 @@ function _mapClotureRow(c) {
   var base = (c.raw_data && typeof c.raw_data === "object") ? c.raw_data : {};
   var totalCA = Number(c.total_ca) || 0;
   var totalHT = Number(c.total_ht) || 0;
-  // 2026-10-29 (6.8.5, constat M3) : Z ancienne sans taux mémorisé -> taux DÉDUIT de ses propres montants (CA / HT scellés), jamais
+  // 2026-10-28 (6.8.5, constat M3) : Z ancienne sans taux mémorisé -> taux DÉDUIT de ses propres montants (CA / HT scellés), jamais
   // le taux actuel de l'établissement (un changement de taux ne réécrit plus l'affichage des Z passées).
   var txTVA = (typeof base.txTVA === "number" && !isNaN(base.txTVA)) ? base.txTVA : (function(){
     var ca = Number(c.total_ca) || 0, ht = Number(c.total_ht) || 0;
@@ -3518,7 +3518,7 @@ var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClien
   "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour", // 2026-10-17 retour partiel
   "serveur","recetteKey","recetteType","ccCommandeId","ccNumero","bonCode","bonId","carteAboId","recetteRef","isRembEnLigne", "tkNumServeur",
   "reportJourClos","dateJournal","dateVente","heureVente","dateEnregistrement",
-  "lxTva"]; // 2026-10-29 (6.8.5) : ventilation TVA figée du ticket (par taux et nature), copie de raw_data.lxTva (lecture des documents hors connexion) // 2026-10-28 (-5, v6.8.3) : heure réelle de vente / date d'enregistrement d'un ticket reporté // 2026-10-28 (-4, v6.8.2) : ticket reporté sur la journée ouverte (journée de vente déjà close) // 2026-10-28 (-3, v6.8.1) : n° de la série serveur ; (-2, v6.8.0) : tickets créés par le serveur (paiements en ligne) — ticket de retour partiel ci-dessus : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
+  "lxTva"]; // 2026-10-28 (6.8.5) : ventilation TVA figée du ticket (par taux et nature), copie de raw_data.lxTva (lecture des documents hors connexion) // 2026-10-28 (-5, v6.8.3) : heure réelle de vente / date d'enregistrement d'un ticket reporté // 2026-10-28 (-4, v6.8.2) : ticket reporté sur la journée ouverte (journée de vente déjà close) // 2026-10-28 (-3, v6.8.1) : n° de la série serveur ; (-2, v6.8.0) : tickets créés par le serveur (paiements en ligne) — ticket de retour partiel ci-dessus : ticket de retour (référence du ticket d'origine, motif, effets de gestion)
 function _lxApptMetaDepuis(appt) {
   try {
     if (!appt || typeof appt !== "object") return null;
@@ -3928,9 +3928,10 @@ async function saveTicketToDb(tk) {
     // exports : la vente de BUM est HT = TTC, TVA 0. Ticket uniquement composé de ventes de BUM -> taux_tva 0 (« non soumis »).
     // Format de l'empreinte serveur inchangé. Tickets sans ligne BUM ni bonsUtil : calculs ci-dessous strictement inchangés.
     var _tauxCol = taux;
-    // 2026-10-29 (Luxyra 6.8.5, règle TVA unique) : la ventilation du ticket (par taux et par nature, HT arrondi au centime par
+    // 2026-10-28 (Luxyra 6.8.5, règle TVA unique) : la ventilation du ticket (par taux et par nature, HT arrondi au centime par
     // taux, TVA = TTC − HT) est calculée UNE fois par l'application (lxTvaFiger, la même que le ticket imprimé) et mémorisée
-    // dans raw_data.lxTva (hors empreinte, scellée avec la ligne) ; total_ht / total_tva = ses totaux ; taux_tva = taux des
+    // dans raw_data.lxTva (hors empreinte ; raw_data figé par la base dès l'enregistrement, déclencheur a_lx_tickets_raw_data_fige ;
+    // relue seulement après revalidation complète, _lxTvaValide) ; total_ht / total_tva = ses totaux ; taux_tva = taux des
     // prestations du ticket (0 si le ticket ne contient que des ventes de bons à usage multiple). Format de l'empreinte inchangé.
     // Application plus ancienne sans lxTvaFiger : calculs ci-dessous (inchangés).
     var _lxTvF = null;
@@ -4515,7 +4516,7 @@ async function saveCloture(clot) {
   // 2026-10-16 (incident Z n°128) : la base refuse une Z différente du journal des tickets (déclencheur
   // b_nf525_z_controle_journal). Refus définitif : jamais rejouée par la file de secours ; la journée est rouverte.
   // 2026-10-28 (-5, v6.8.3) : même traitement pour les refus « ventes encaissées non transmises » et « journée antérieure retenue »
-  // 2026-10-29 (6.8.5) : LX_Z_ECART_TVA (HT déclaré ≠ somme des HT enregistrés des tickets du jour) : même traitement
+  // 2026-10-28 (6.8.5) : LX_Z_ECART_TVA (HT déclaré ≠ somme des HT enregistrés des tickets du jour) : même traitement
   if (res.error && /LX_Z_ECART_JOURNAL|LX_Z_ECART_TVA|LX_Z_VENTES_NON_TRANSMISES|LX_Z_JOURNEE_ANTERIEURE_OUVERTE/.test(String(res.error.message || ""))) {
     console.error("[saveCloture] Z refusée : différente du journal des tickets", res.error.message);
     _walMarkSynced(_walId);

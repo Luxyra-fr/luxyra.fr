@@ -1,11 +1,11 @@
 // @ts-nocheck
-// lx-cloture-auto v3.5 — 2026-10-29 (Luxyra 6.8.5, RÈGLE TVA UNIQUE — constats M1 / M2 de l'audit indépendant, lot 3) : le HT et la
+// lx-cloture-auto v3.5 — 2026-10-28 (Luxyra 6.8.5, RÈGLE TVA UNIQUE — constats M1 / M2 de l'audit indépendant, lot 3) : le HT et la
 //    TVA de la Z = SOMME, PAR TAUX, des HT / TVA ENREGISTRÉS sur les tickets du journal de la journée (paires d'annulation du jour
 //    comprises, nulles), et non plus un recalcul sur le total du jour au taux de l'établissement ; ventilation par taux et
 //    prestations / produits = celle du ticket (raw_data.lxTva posé par l'application 6.8.5 ; tickets antérieurs : taux et HT scellés,
 //    répartition reconstituée et ajustée au centime) — module recopié À L'IDENTIQUE de app.html. La Z porte raw_data.tvaRegle =
 //    "tickets-v1", tvaParTaux, tvaSource = "journal" ; la base contrôle HT déclaré = somme du journal (b_nf525_z_controle_tva,
-//    docs/migrations_1029/tva_unique.sql). Mode verify : une Z SANS la marque (antérieure à 6.8.5) est recalculée avec l'ANCIENNE
+//    docs/migrations_1028_tva/tva_unique.sql). Mode verify : une Z SANS la marque (antérieure à 6.8.5) est recalculée avec l'ANCIENNE
 //    règle (HT sur le total du jour) — jamais réinterprétée ; une Z marquée est recalculée avec la nouvelle. Empreinte inchangée.
 // lx-cloture-auto v3.4 — 2026-10-28 (-6, Luxyra 6.8.4, contre-audit 3) : (a) « rendez-vous encaissé » = encaissement SCELLÉ par
 //    Luxyra (empreinte appointments.hash non vide), comme la base (lx_prive.journees_non_closes / z_rdv_hors_journal) :
@@ -116,7 +116,7 @@ function _lxTicketV2(a){
 }
 function _lxTauxLigne(it, txS, txP){ if(txS>0 && it && it.tvaTaux!=null && !isNaN(Number(it.tvaTaux))) return Number(it.tvaTaux); return (it&&it.isProd)?txP:txS; }
 function _lxVentilV2(a, tx){
-  // 2026-10-29 (6.8.5) : tx = {s, p} facultatif (taux ENREGISTRÉS du ticket ou en vigueur à sa date) ; absent = taux actuels (inchangé)
+  // 2026-10-28 (6.8.5) : tx = {s, p} facultatif (taux ENREGISTRÉS du ticket ou en vigueur à sa date) ; absent = taux actuels (inchangé)
   var pr=_lxR2(a&&a.pr), txS=(tx&&tx.s!=null)?Number(tx.s):_lxTxPrest(), txP=(tx&&tx.p!=null)?Number(tx.p):_lxTxProdDefaut();
   var S={}, ordre=[], hc=0;
   (a&&a.items||[]).forEach(function(it){
@@ -147,17 +147,17 @@ function _lxVentilV2(a, tx){
   ordreT.sort(function(p,q){ return Number(q)-Number(p); }).forEach(function(kt){ var r=R[kt]; r.ttc=_lxR2(r.ttc); if(Math.abs(r.ttc)<0.005) return; r.ht=_lxR2(r.ttc/(1+r.taux/100)); r.tva=_lxR2(r.ttc-r.ht); ht+=r.ht; tva+=r.tva; parTaux.push(r); });
   ht=_lxR2(ht); tva=_lxR2(tva);
   return {prest:_lxR2(prest), prod:_lxR2(prod), horsCa:hc, parTaux:parTaux, htCa:ht, ht:_lxR2(ht+hc), tva:tva, ttc:pr, ca:ca,
-    tn:ordre.map(function(k){ return {taux:S[k].taux, nat:S[k].nat, ttc:_lxR2(S[k].ttc)}; })}; // 2026-10-29 (6.8.5) : TTC par taux et nature (lxTvaCalculer)
+    tn:ordre.map(function(k){ return {taux:S[k].taux, nat:S[k].nat, ttc:_lxR2(S[k].ttc)}; })}; // 2026-10-28 (6.8.5) : TTC par taux et nature (lxTvaCalculer)
 }
 function _lxHorsCa(a){ return _lxTicketV2(a)?_lxVentilV2(a).horsCa:0; }
 function _lxCaTtc(a){ var p=Number(a&&a.pr)||0; var h=_lxHorsCa(a); return h?_lxR2(p-h):p; }
 function _lxBumPaye(a){ var s=0; ((a&&a.payments)||[]).forEach(function(p){ if(p&&p.bonUsage==="BUM") s+=Number(p.amount)||0; }); return _lxR2(s); }
-// ===== 2026-10-29 (v3.5, Luxyra 6.8.5) : RÈGLE TVA UNIQUE — module recopié À L'IDENTIQUE de app.html (lxTvaCalculer, _lxTvaDepuisScelle,
+// ===== 2026-10-28 (v3.5, Luxyra 6.8.5) : RÈGLE TVA UNIQUE — module recopié À L'IDENTIQUE de app.html (lxTvaCalculer, _lxTvaDepuisScelle,
 // lxTvaSomme…) : HT / TVA de la Z = somme, par taux, des montants ENREGISTRÉS sur les tickets du journal de la journée.
 var LX_TVA_REGLE="tickets-v1";
 function _lxDJ(a){ return (a&&a.dateJournal)?String(a.dateJournal).slice(0,10):String((a&&a.date)||""); }
 function lxTauxTvaAu(date){ var s=Number(__TAUX)||0, p=(SALON_CONFIG&&SALON_CONFIG.tvaProduits!=null&&!isNaN(Number(SALON_CONFIG.tvaProduits)))?Number(SALON_CONFIG.tvaProduits):s; if(!(s>0)){ s=0; p=0; } return {s:s,p:p}; }
-function lxTvaTk(a){ if(!a) return _lxTvaVide(); if(a._lxJr) return _lxTvaDepuisScelle(a, a._lxJr); if(_lxTvaValide(a.lxTva, a.pr)) return _lxTvaDepuisStock(a.lxTva, "ticket"); var R=lxTvaCalculer(a, null); R.src="calcul"; return R; }
+function lxTvaTk(a){ if(!a) return _lxTvaVide(); if(a._lxJr) return _lxTvaDepuisScelle(a, a._lxJr); var Va=a.lxTva?_lxTvaValide(a.lxTva, {ttc:a.pr, items:a.items, bons:a.bonsUtil, tx:lxTauxTvaAu(_lxDJ(a))}):null; if(Va){ Va.src="ticket"; return Va; } var R=lxTvaCalculer(a, null); R.src="calcul"; return R; }
 function _lxRc(x){ var v=Number(x)||0; return (v<0?-1:1)*Math.round(Math.abs(v)*100+1e-6)/100; }
 function _lxHtDe(ttc, t){
   t=Number(t)||0; var c=Math.round((Number(ttc)||0)*100); if(!(t>0)) return c/100;
@@ -216,16 +216,60 @@ function _lxTvaTotaux(R){
   return R;
 }
 function _lxTvaVide(){ return _lxTvaTotaux({v:1, regle:LX_TVA_REGLE, s:0, p:0, ttc:0, hc:0, l:[]}); }
-function _lxTvaValide(L, pr){
-  try{ if(!L||L.v!==1||!Array.isArray(L.l)) return false; var t=Number(L.hc)||0;
-    for(var i=0;i<L.l.length;i++){ var x=L.l[i]; if(!x||isNaN(Number(x.t))||isNaN(Number(x.ttc))||isNaN(Number(x.ht))) return false; t+=Number(x.ttc); }
-    return Math.abs(_lxRc(t)-_lxRc(pr))<0.005; }catch(_e){ return false; }
+// 2026-10-28 (contre-audit du lot 3) : une ventilation MÉMORISÉE (raw_data.lxTva du ticket ou sa copie appointments.meta.lxTva)
+// n'est JAMAIS reprise telle quelle. Elle n'est retenue que si elle est entièrement cohérente avec les données SCELLÉES du ticket
+// (c = {ttc, ht, items, bons, tx, prod}) : taux autorisés seulement (taux enregistré du ticket, taux propres de ses lignes, taux
+// des produits pour ses produits, taux des bons utilisés), chaque nature (prestations / produits) seulement si le ticket a des
+// lignes de cette nature à ce taux ; un taux par ligne ; HT de chaque ligne =
+// _lxHtDe(TTC, taux), écart d'au plus 0,01 sur UNE seule ligne (ajustement au centime sur le HT scellé) ; TVA = TTC − HT (la TVA
+// mémorisée est ignorée) ; hors CA = ventes de bons à usage multiple RECALCULÉES depuis les lignes scellées ; somme des TTC + hors CA
+// = TTC scellé ; somme des HT + hors CA = HT scellé (s'il est connu) ; HT produits / prestations recalculés. Retour : ventilation reconstruite à partir des seuls montants validés, sinon null (recalcul
+// depuis les données scellées).
+function _lxTvaNumOk(v){ return (typeof v==="number" && isFinite(v)) || (typeof v==="string" && /^-?[0-9]+(\.[0-9]+)?$/.test(v)); }
+// Taux et natures autorisés par les lignes SCELLÉES du ticket (même règle que lxTvaCalculer / _lxVentilV2) : {P:{taux}, N:{"taux|P|Q"}}
+function _lxTvaTauxPermis(c){
+  var tx=(c&&c.tx)||{}, s=Number(tx.s)||0, p=(s>0)?((tx.p!=null&&!isNaN(Number(tx.p)))?Number(tx.p):s):0, P={}, N={}, pr=!!(c&&c.prod);
+  var add=function(t,nat){ t=Number(t); if(!isFinite(t)) return; P[String(t)]=1; N[String(t)+"|"+nat]=1; };
+  if(!pr) add(s,"P"); else add(p,"Q"); // ticket sans ligne exploitable : tout au taux de l'établissement (prestations ; vente PS : produits)
+  ((c&&Array.isArray(c.items))?c.items:[]).forEach(function(it){ if(!it||it.isSep||(it.isBon===true&&it.bonUsage==="BUM")) return;
+    var nat=(pr||it.isProd)?"Q":"P"; add((s>0&&_lxTvaNumOk(it.tvaTaux))?Number(it.tvaTaux):(nat==="Q"?p:s), nat); });
+  ((c&&Array.isArray(c.bons))?c.bons:[]).forEach(function(b){ if(!b||b.usage==="BUM"||!b.lignes||typeof b.lignes!=="object") return;
+    Object.keys(b.lignes).forEach(function(k){ var q=String(k).split("|"); if(_lxTvaNumOk(q[0])) add(s>0?Number(q[0]):0, q[1]==="Q"?"Q":"P"); }); });
+  return {P:P, N:N};
 }
-function _lxTvaDepuisStock(L, src){
-  var R={v:1, regle:L.regle||LX_TVA_REGLE, s:Number(L.s)||0, p:Number(L.p)||0, ttc:_lxRc(L.ttc), hc:_lxRc(L.hc), src:src, l:[]};
-  L.l.forEach(function(x){ var ttc=_lxRc(x.ttc), ht=_lxRc(x.ht), pt=(x.pt!=null)?_lxRc(x.pt):ttc, qt=(x.qt!=null)?_lxRc(x.qt):0, qh=(x.qh!=null)?_lxRc(x.qh):0;
-    R.l.push({t:Number(x.t), ttc:ttc, ht:ht, tva:(x.tva!=null)?_lxRc(x.tva):_lxRc(ttc-ht), pt:pt, ph:(x.ph!=null)?_lxRc(x.ph):_lxRc(ht-qh), qt:qt, qh:qh}); });
-  return _lxTvaTotaux(R);
+function _lxTvaHcAttendu(c){
+  var h=0, pr=_lxRc(c&&c.ttc);
+  ((c&&Array.isArray(c.items))?c.items:[]).forEach(function(it){ if(it && !it.isSep && it.isBon===true && it.bonUsage==="BUM") h+=(Number(it.price)||0)*(Number(it.qty)||1)-(Number(it.remise)||0); });
+  h=Math.round(h*100)/100; if(pr>=0){ if(h>pr) h=pr; } else { if(h<pr) h=pr; }
+  return _lxRc(h);
+}
+function _lxTvaValide(L, c){
+  try{
+    if(typeof L==="string") L=JSON.parse(L);
+    if(!c || !L || typeof L!=="object" || Number(L.v)!==1 || !Array.isArray(L.l)) return null;
+    var ttc=_lxRc(c.ttc), hc=_lxTvaHcAttendu(c), TP=_lxTvaTauxPermis(c), vu={}, adj=0, st=hc, sh=hc;
+    if(L.hc!=null && !_lxTvaNumOk(L.hc)) return null;
+    if(Math.abs(_lxRc(Number(L.hc)||0)-hc)>=0.005) return null;
+    var tx=c.tx||{}, s=Number(tx.s)||0, p=(s>0)?((tx.p!=null&&!isNaN(Number(tx.p)))?Number(tx.p):s):0;
+    var R={v:1, regle:LX_TVA_REGLE, s:s, p:p, ttc:ttc, hc:hc, l:[]};
+    for(var i=0;i<L.l.length;i++){
+      var x=L.l[i]; if(!x || typeof x!=="object" || !_lxTvaNumOk(x.t) || !_lxTvaNumOk(x.ttc) || !_lxTvaNumOk(x.ht)) return null;
+      var t=Number(x.t), k=String(t); if(!TP.P[k] || vu[k]) return null; vu[k]=1;
+      var lt=_lxRc(x.ttc), lh=_lxRc(x.ht), e=Math.abs(lh-_lxHtDe(lt,t));
+      if(e>=0.005){ if(e>0.0105 || adj) return null; adj=1; }
+      if(x.qt!=null && !_lxTvaNumOk(x.qt)) return null;
+      var qt=(x.qt!=null)?_lxRc(x.qt):0, pt=_lxRc(lt-qt);
+      if(x.pt!=null && (!_lxTvaNumOk(x.pt) || Math.abs(_lxRc(x.pt)-pt)>=0.005)) return null;
+      if((Math.abs(pt)>0.004 && !TP.N[k+"|P"]) || (Math.abs(qt)>0.004 && !TP.N[k+"|Q"])) return null; // nature sans ligne de cette nature à ce taux
+      var qh=(Math.abs(qt)>0.004)?((Math.abs(pt)>0.004)?_lxHtDe(qt,t):lh):0;
+      R.l.push({t:t, ttc:lt, ht:lh, tva:_lxRc(lt-lh), pt:pt, ph:_lxRc(lh-qh), qt:qt, qh:qh});
+      st+=lt; sh+=lh;
+    }
+    if(Math.abs(_lxRc(st)-ttc)>=0.005) return null;
+    if(c.ht!=null && isFinite(Number(c.ht)) && Math.abs(_lxRc(sh)-_lxRc(Number(c.ht)))>=0.005) return null;
+    R.l.sort(function(a,b){ return b.t-a.t; });
+    return _lxTvaTotaux(R);
+  }catch(_e){ return null; }
 }
 function _lxTvaJNorm(r){
   var rd=(r&&r.raw_data&&typeof r.raw_data==="object")?r.raw_data:null; // ligne complète (démonstration, lecture sans alias)
@@ -237,13 +281,16 @@ function _lxTvaJNorm(r){
 }
 function _lxTvaDepuisScelle(a, j, opt){
   var ttc=_lxRc(j.ttc!=null&&!isNaN(j.ttc)?j.ttc:(a&&a.pr));
-  if(_lxTvaValide(j.lxTva, ttc)){ var Rs=_lxTvaDepuisStock(j.lxTva, "journal"); // ventilation mémorisée : retenue si elle redonne le HT SCELLÉ
-    if(j.ht==null || !isFinite(Number(j.ht)) || Math.abs(_lxRc(Number(j.ht))-Rs.ht)<0.005) return Rs; }
   var tx; var sj=Number(j.taux);
   if(j.taux==null||isNaN(sj)) tx=lxTauxTvaAu(j.date||_lxDJ(a||{}));
   else if(sj>0){ var tA=lxTauxTvaAu(j.date||_lxDJ(a||{})); tx={s:sj, p:(tA.s===sj?tA.p:sj)}; }
   else tx={s:0,p:0};
-  var R=lxTvaCalculer({pr:ttc, items:(a&&Array.isArray(a.items)&&a.items.length)?a.items:(j.items||[]), bonsUtil:a&&a.bonsUtil}, tx, opt);
+  var its=(a&&Array.isArray(a.items)&&a.items.length)?a.items:(j.items||[]);
+  // ventilation mémorisée : retenue seulement si elle est entièrement cohérente avec le ticket SCELLÉ (_lxTvaValide : taux, HT de
+  // chaque ligne, hors CA recalculé, TTC et HT scellés) ; sinon recalcul depuis les données scellées
+  var Rs=j.lxTva?_lxTvaValide(j.lxTva, {ttc:ttc, ht:(j.ht!=null&&isFinite(Number(j.ht)))?Number(j.ht):null, items:its, bons:a&&a.bonsUtil, tx:tx, prod:!!(opt&&opt.prod)}):null;
+  if(Rs){ Rs.src="journal"; return Rs; }
+  var R=lxTvaCalculer({pr:ttc, items:its, bonsUtil:a&&a.bonsUtil}, tx, opt);
   if(j.ht!=null && isFinite(Number(j.ht))){
     var d=_lxRc(Number(j.ht)-R.ht);
     if(Math.abs(d)>=0.005 && R.l.length){
