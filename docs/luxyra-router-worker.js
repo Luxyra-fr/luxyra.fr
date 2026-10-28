@@ -1,3 +1,6 @@
+// 2026-10-28 (-3) : générateur de QR codes (qrcode-generator, MIT — même fichier que l'application, lx-qrcode.js) pour
+// /api/qr (QR des e-mails de bons cadeaux, sans service tiers). wrangler regroupe ce module au déploiement.
+import lxQrcode from "../lx-qrcode.js";
 // ============================================================
 // LUXYRA WORKER — Cloudflare Worker
 // Gère : Stripe, Brevo Email/SMS, Clean URLs, Subdomains, SMS Native Link, Slugs salons
@@ -122,6 +125,7 @@ async function __wrappedApiHandler(request, url, env) {
       }
       // Endpoint /health (GET) — monitoring externe
       if (url.pathname === "/health" || url.pathname === "/api/health") return await handleHealth(request, env);
+      if (url.pathname === "/api/qr" && request.method === "GET") return handleQr(url); // 2026-10-28 (-3)
       if (url.pathname === "/api/stripe/create-checkout" && request.method === "POST") return await handleCreateCheckout(request, env);
       if (url.pathname === "/api/stripe/webhook" && request.method === "POST") return await handleWebhook(request, env);
       if (url.pathname === "/api/siret" && request.method === "GET") return await handleSiret(request, env);
@@ -753,7 +757,7 @@ async function handleWebhook(request, env) {
       }
       // 2026-10-08 : Click & Collect payé en ligne (filet si le client ferme l'onglet avant le retour)
       if (data.metadata?.type === "click_collect") {
-        try { await ccFinaliserPaiement(env, data.metadata.commande_id, data); } catch (e) { console.error("cc finalize webhook:", e); }
+        try { await ccFinaliserPaiement(env, data.metadata.commande_id, data, event && event.created); } catch (e) { console.error("cc finalize webhook:", e); }
         break;
       }
       // FAILLE CORRIGÉE 2026-10-08 : TOUT paiement Checkout portant un salon_id (acompte d'un client,
@@ -1322,6 +1326,23 @@ async function handleConnectPayment(request, env) {
     {
       const _type = metadata?.type || "acompte";
       if (_type === "click_collect") return jsonResponse({ error: "Utilisez /api/cc/commande (prix calculés côté serveur)" }, 400);
+      // 2026-10-28 (-3, constat MAJEUR 4) : carte d'abonnement -> montant = tarif ENREGISTRÉ sur la carte en attente de paiement
+      // (recopié de la configuration de l'établissement par la base à la création), jamais celui du navigateur.
+      if (_type === "carte_abo") {
+        const _cid = String(metadata?.carte_abo_id || metadata?.rdv_id || "");
+        if (!/^[0-9a-f-]{36}$/i.test(_cid)) return jsonResponse({ error: "carte_abo_id requis" }, 400);
+        const _r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/cartes_abo_clients?select=id,salon_id,status,tarif&id=eq.${encodeURIComponent(_cid)}&limit=1`, { headers: _sbHeaders(env) });
+        const _c = _r.ok ? await _r.json() : [];
+        if (!Array.isArray(_c) || !_c[0] || String(_c[0].salon_id) !== String(salon_id)) return jsonResponse({ error: "Carte introuvable pour ce salon" }, 400);
+        if (_c[0].status !== "pending_payment") return jsonResponse({ error: "Cette carte n'est plus en attente de paiement" }, 409);
+        const _mt = Math.round((Number(_c[0].tarif) || 0) * 100);
+        if (!(_mt > 0)) return jsonResponse({ error: "Tarif de la carte introuvable" }, 409);
+        if (Math.abs(Math.round(Number(amount) * 100) - _mt) > 1) {
+          await reportWorkerError(env, "worker:connect-payment", new Error("Carte d'abonnement : montant demandé différent du tarif enregistré"), { carte: _cid, demande: Math.round(Number(amount) * 100), enregistre: _mt }, "warning");
+          return jsonResponse({ error: "Montant incohérent avec la carte : rechargez la page." }, 409);
+        }
+        amount = _mt / 100;
+      }
       if (_type === "acompte" || _type === "empreinte" || capture_method === "manual") {
         const _rid = String(metadata?.rdv_id || "");
         if (!/^[0-9a-f-]{36}$/i.test(_rid)) return jsonResponse({ error: "rdv_id requis" }, 400);
@@ -1397,6 +1418,26 @@ async function handleConnectPayment(request, env) {
     }
     return jsonResponse({ url: session.url, session_id: session.id });
   } catch(e) { return jsonResponse({ error: "Connect payment error: " + e.message }, 500); }
+}
+
+// ============================================================
+// QR CODE (2026-10-28 -3) — GET /api/qr?d=<code>&s=<px> -> image GIF générée ici (qrcode-generator, MIT). Remplace
+// api.qrserver.com dans l'e-mail des bons cadeaux : le code du bon n'est plus transmis à un tiers. Texte court et sans
+// caractère spécial (codes de bon, n° de commande) ; mise en cache longue (le contenu ne dépend que de l'URL).
+// ============================================================
+function handleQr(url) {
+  const d = String(url.searchParams.get("d") || "");
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(d)) return new Response("QR : texte invalide", { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  const px = Math.max(80, Math.min(400, parseInt(url.searchParams.get("s") || "160", 10) || 160));
+  try {
+    const qr = lxQrcode(0, "M"); qr.addData(d); qr.make();
+    const n = qr.getModuleCount() + 8; // marge de 4 modules de chaque côté
+    const cell = Math.max(1, Math.floor(px / n));
+    const dataUrl = qr.createDataURL(cell, cell * 4);
+    const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    const bin = atob(b64); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return new Response(out, { status: 200, headers: { "Content-Type": "image/gif", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" } });
+  } catch (e) { return new Response("QR : erreur", { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8" } }); }
 }
 
 // ============================================================
@@ -1570,7 +1611,7 @@ async function handleCcCommande(request, env) {
 }
 
 // Vérifie le paiement Stripe et passe la commande « à préparer » (idempotent). Webhook + retour client.
-async function ccFinaliserPaiement(env, commandeId, sessionStripe) {
+async function ccFinaliserPaiement(env, commandeId, sessionStripe, payeSec) {
   if (!/^[0-9a-f-]{36}$/i.test(String(commandeId || ""))) return { erreur: "commande invalide", code: 400 };
   const s = sessionStripe;
   if (!s || s.payment_status !== "paid") return { erreur: "Paiement non confirmé", code: 402 };
@@ -1580,7 +1621,10 @@ async function ccFinaliserPaiement(env, commandeId, sessionStripe) {
   if (String(cmd.salon_id) !== String(s.metadata.salon_id)) return { erreur: "Paiement non lié à ce salon", code: 403 };
   if (cmd.paye === true) return { ok: true, deja: true, cmd };
   if (Number(s.amount_total || 0) + 1 < Math.round(Number(cmd.total) * 100)) return { erreur: "Montant payé insuffisant", code: 402 };
-  const maj = await ccMaj(env, cmd.id, { paye: true, stripe_payment_id: s.id, payment_intent_id: s.payment_intent || null, status: "a_preparer" }, ["pending_payment", "annulee"]);
+  // 2026-10-28 (-3) : webhook (reprise de secours) -> date de règlement = date de l'évènement Stripe (paye_at posé à now() par la base sinon)
+  const _pc = { paye: true, stripe_payment_id: s.id, payment_intent_id: s.payment_intent || null, status: "a_preparer" };
+  if (Number(payeSec) > 0) _pc.paye_at = new Date(Number(payeSec) * 1000).toISOString();
+  const maj = await ccMaj(env, cmd.id, _pc, ["pending_payment", "annulee"]);
   if (!maj) { const re = await ccLire(env, commandeId); return re && re.paye ? { ok: true, deja: true, cmd: re } : { erreur: "Mise à jour impossible", code: 409 }; }
   const salon = await supabaseGet(env, maj.salon_id);
   await ccMailsNouvelleCommande(env, maj, salon || {});
@@ -1632,6 +1676,8 @@ async function handleCcAction(request, env) {
       // 2026-10-09 (NF525) : toute remise est rattachée à un ticket de caisse scellé (payée en ligne ou au salon)
       // 2026-10-28 (-2, recettes en ligne) : commande payée en ligne DÉJÀ en caisse (ticket créé par le serveur au paiement,
       // recette_tk_num) -> la remise reprend ce ticket, aucun nouveau ticket ; un autre n° de ticket est refusé (double CA).
+      // 2026-10-28 (-3) : commande remboursée sur Stripe (ticket négatif déjà créé) -> plus remettable
+      if (cmd.recette_remb_tk_num) return jsonResponse({ error: `Cette commande a été remboursée (ticket d'annulation n°${cmd.recette_remb_tk_num}) : elle ne peut plus être remise.` }, 409);
       if (cmd.paye && cmd.recette_tk_num) {
         if (String(b.ticket_num || "").trim() && String(b.ticket_num).trim() !== String(cmd.recette_tk_num)) return jsonResponse({ error: `Cette commande est déjà en caisse (ticket n°${cmd.recette_tk_num}, créé au paiement en ligne) : la remise ne crée pas de nouveau ticket. Rechargez l'application.` }, 409);
         b.ticket_num = String(cmd.recette_tk_num);
@@ -1831,7 +1877,7 @@ async function handleWebhookConnect(request, env) {
   try {
     if ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && data.payment_status === "paid") {
       const t = data.metadata?.type;
-      if (t === "click_collect") await ccFinaliserPaiement(env, data.metadata.commande_id, data);
+      if (t === "click_collect") await ccFinaliserPaiement(env, data.metadata.commande_id, data, event.created);
       else if (t === "bon_cadeau") {
         // Traitement confié à la fonction des bons cadeaux (emails, notification), évènement déjà vérifié ici.
         await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/gc-stripe-webhook`, {
@@ -1847,7 +1893,7 @@ async function handleWebhookConnect(request, env) {
         const appel = (corps) => new Request("https://luxyra.fr/interne", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corps) });
         let rep = null;
         if (md.subtype === "empreinte" && md.rdv_id) rep = await handleEmpreinteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env);
-        else if ((!t || t === "acompte") && md.rdv_id) rep = await handleAcompteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env);
+        else if ((!t || t === "acompte") && md.rdv_id) rep = await handleAcompteFinalize(appel({ session_id: data.id, rdv_id: md.rdv_id }), env, { payeSec: event.created });
         else if (t === "rdv_demande_acompte" && md.proposal_token) rep = await handleRdvDemandeFinalize(appel({ token: md.proposal_token, session_id: data.id }), env);
         else if (t === "carte_abo" && (md.carte_abo_id || md.rdv_id)) {
           rep = await fetch(`${CONFIG.SUPABASE_URL}/functions/v1/carte-abo-confirm-payment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ carte_id: md.carte_abo_id || md.rdv_id, stripe_session_id: data.id }) });
@@ -1894,7 +1940,10 @@ async function lxRemboursementsExternes(env, compte, charge) {
   for (const rf of refunds) {
     if (!rf || !rf.id || ["failed", "canceled"].includes(String(rf.status || ""))) continue;
     const r = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/lx_recette_remboursement_externe`, { method: "POST", headers: _sbHeaders(env),
-      body: JSON.stringify({ p_pi: pi, p_refund_id: rf.id, p_cents: Number(rf.amount) || 0, p_at: new Date((Number(rf.created) || Math.floor(Date.now() / 1000)) * 1000).toISOString() }) });
+      // 2026-10-28 (-3) : métadonnées du remboursement (commande_id / rdv_id posés par Luxyra) -> rattachement direct, et clé
+      // partagée avec l'annulation Click & Collect (un seul ticket négatif, quel que soit l'ordre d'arrivée)
+      body: JSON.stringify({ p_pi: pi, p_refund_id: rf.id, p_cents: Number(rf.amount) || 0, p_at: new Date((Number(rf.created) || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+        p_meta: (rf.metadata && typeof rf.metadata === "object") ? { commande_id: rf.metadata.commande_id || null, rdv_id: rf.metadata.rdv_id || null, carte_abo_id: rf.metadata.carte_abo_id || null, motif: rf.metadata.motif || null } : {} }) });
     if (!r.ok) throw new Error("lx_recette_remboursement_externe " + r.status + " " + (await r.text().catch(() => "")).slice(0, 200));
     out.push(await r.json().catch(() => null));
   }
@@ -5290,7 +5339,7 @@ async function handleRdvAcompteInfo(request, env) {
 // acompte_paye_at est posé par trigger (= date de règlement). L'application PRO crée ensuite le ticket scellé « Acompte en ligne »
 // (lxAcomptesEnLigneSync). Le worker n'écrit volontairement AUCUNE de ces nouvelles colonnes : il reste fonctionnel même si le
 // script SQL n'est pas encore appliqué, et un acompte payé avant la mise en service garde acompte_modele NULL (ancien modèle).
-async function handleAcompteFinalize(request, env) {
+async function handleAcompteFinalize(request, env, opts) {
   try {
     const body = await request.json().catch(() => null);
     if (!body) return jsonResponse({ error: "body invalide" }, 400);
@@ -5376,6 +5425,9 @@ async function handleAcompteFinalize(request, env) {
     }
     const patch = { acompte_paye: true, status: wantStatus, stripe_account: _compteA || null };
     if (piId) { patch.payment_intent_id = piId; patch.stripe_payment_id = piId; }
+    // 2026-10-28 (-3) : reprise de secours par le webhook (page fermée avant le retour) -> date de règlement = date de
+    // l'évènement Stripe (acompte_paye_at n'est posé à now() par la base que s'il est vide). Jamais lue du corps public.
+    if (opts && Number(opts.payeSec) > 0) patch.acompte_paye_at = new Date(Number(opts.payeSec) * 1000).toISOString();
     const upRes = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rdv_online?id=eq.${encodeURIComponent(rdv_id)}`, {
       method: "PATCH", headers: _sbHeaders(env, { "Prefer": "return=minimal" }), body: JSON.stringify(patch)
     });
