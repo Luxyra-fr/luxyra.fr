@@ -4445,6 +4445,26 @@ function lxEcConfigPublic(c) {
     // 2026-10-27 (-2) : FEC + pack Excel + rapport par défaut ; pack ZIP en option (décoché par défaut)
     docs: { fec: c.doc_fec !== false, excel: c.doc_excel !== false, rapport: c.doc_rapport !== false, pack: c.doc_pack === true }, maj_le: c.maj_le || null };
 }
+// 2026-10-28 (-5, Luxyra 6.8.3) : VENTES REPORTÉES du mois, lues au JOURNAL (clé service) : tickets enregistrés dans le mois dont
+// la date réelle de vente (scellée : items[0].lxRep ; copie raw_data.dateVente) est antérieure (journée close lors de la
+// transmission, paiement en ligne reçu après la Z), et tickets enregistrés après le mois dont la vente est du mois. Signalées
+// dans l'e-mail : la TVA est exigible à la date réelle (régularisation sur la période d'origine si elle est déjà déclarée).
+async function lxEcVentesReportees(env, salonId, mois) {
+  try {
+    const d1 = mois + "-01", fin = new Date(Date.UTC(Number(mois.slice(0, 4)), Number(mois.slice(5, 7)), 0)).toISOString().slice(0, 10);
+    const sel = "num,date_ticket,total_ttc,total_tva,tk:raw_data->>tkNum,dv:raw_data->>dateVente,rep:items->0->lxRep";
+    const sid = encodeURIComponent(salonId);
+    const a = await lxEcGet(env, `tickets?salon_id=eq.${sid}&date_ticket=gte.${d1}&date_ticket=lte.${fin}&status=neq.cancelled&or=(raw_data->>reportJourClos.eq.true,items->0->lxRep.not.is.null)&select=${sel}&order=date_ticket&limit=200`);
+    const b = await lxEcGet(env, `tickets?salon_id=eq.${sid}&date_ticket=gt.${fin}&status=neq.cancelled&items->0->lxRep->>dateVente=gte.${d1}&items->0->lxRep->>dateVente=lte.${fin}&select=${sel}&order=date_ticket&limit=200`);
+    const out = [];
+    (Array.isArray(a) ? a : []).concat(Array.isArray(b) ? b : []).forEach((t) => {
+      const dv = String((t.rep && t.rep.dateVente) || t.dv || "").slice(0, 10), de = String(t.date_ticket || "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dv) || !(dv < de)) return;
+      out.push({ tk: t.tk || t.num, dateVente: dv, dateEnr: de, ttc: Number(t.total_ttc) || 0, tva: Number(t.total_tva) || 0, periode: dv.slice(0, 7), change: dv.slice(0, 7) !== de.slice(0, 7) });
+    });
+    return out;
+  } catch (_) { return []; }
+}
 async function lxEcCloture(env, salonId, mois) {
   const a = await lxEcGet(env, `clotures_mensuelles?salon_id=eq.${encodeURIComponent(salonId)}&annee=eq.${Number(mois.slice(0, 4))}&mois=eq.${Number(mois.slice(5, 7))}&select=*&limit=1`);
   return Array.isArray(a) && a[0] ? a[0] : null;
@@ -4560,6 +4580,12 @@ function lxEcCorpsMail(salon, cfg, mois, zm, fichiers, notes, opts) {
   if ((notes || []).includes("fec_vide")) N.push("FEC non joint : aucun ticket sur la période.");
   if ((notes || []).includes("test_sans_documents_ecart")) N.push("Documents non joints à ce test : les données de l'appareil ne correspondaient pas à la clôture du mois.");
   if (N.length) h += `<p style="margin:12px 0 0;font-size:12.5px;color:#666">${N.map(ccEsc).join("<br>")}</p>`;
+  // 2026-10-28 (-5, Luxyra 6.8.3) : ventes reportées (date réelle de vente ≠ date d'enregistrement au journal)
+  const VR = Array.isArray(opts.reportees) ? opts.reportees : [];
+  if (VR.length) {
+    const fr = (d) => String(d || "").slice(0, 10).split("-").reverse().join("/");
+    h += `<div style="background:#fff3f0;border:1px solid #f5b5a6;border-radius:12px;padding:12px 14px;font-size:13px;margin-top:14px"><b>Ventes reportées (${VR.length})</b> — enregistrées au journal de caisse (et dans les clôtures et le FEC) à leur date d'enregistrement, leur date réelle de vente étant antérieure (journée déjà clôturée lors de leur transmission, ou paiement en ligne reçu après la clôture) :<br>${VR.slice(0, 20).map((x) => `Ticket n°${ccEsc(String(x.tk))} : vente du ${fr(x.dateVente)}, enregistrée le ${fr(x.dateEnr)}, ${lxEcEur(x.ttc)} TTC dont ${lxEcEur(x.tva)} de TVA — période d'origine ${ccEsc(x.periode)}${x.change ? " <b>(changement de période)</b>" : ""}`).join("<br>")}${VR.length > 20 ? "<br>…" : ""}<br><span style="color:#666">La TVA est exigible à la date réelle de la vente (CGI art. 269-2-c pour une prestation, 269-2-a pour un bien). Si la période d'origine est déjà déclarée : régularisation selon le BOI-TVA-DECLA-20-20-20-10 § 240-250. La liste figure aussi dans le rapport, l'Excel (onglet « 10 — Ventes reportées ») et le pack ZIP.</span></div>`;
+  }
   if (fichiers.some((f) => /FEC/.test(f.nom))) h += `<p style="margin:16px 0 6px;font-size:13.5px">Le FEC s'importe directement dans votre logiciel (Pennylane, Cegid, EBP, ACD…).</p>`;
   h += `<p style="margin:12px 0 0;font-size:13.5px">Pour toute question sur ces chiffres, répondez à cet e-mail : la réponse arrive à l'établissement.</p>`;
   h += `<p style="margin:12px 0 0;font-size:11.5px;color:#888">Ces documents contiennent des données personnelles (noms des clients dans le journal de caisse) transmises par l'établissement à son expert-comptable pour la tenue de sa comptabilité : merci de les conserver de façon sécurisée.</p>`;
@@ -4683,7 +4709,8 @@ async function handleComptaEnvoi(request, env) {
     const ligne = res.ligne;
     const modeTest = modeCaisse !== "reel";
     const sujet = `${type === "test" ? "[Test] " : ""}${modeTest ? "[Données de test] " : ""}Documents comptables — ${String(salon.nom || "Établissement").replace(/[\r\n]/g, " ").slice(0, 80)} — ${lxEcMoisLib(mois, true)}`;
-    const corps = lxEcCorpsMail(salon, cfg, mois, zm, fichiers, b.notes, { test: type === "test", modeTest });
+    const reportees = zm ? await lxEcVentesReportees(env, salonId, mois) : []; // 2026-10-28 (-5)
+    const corps = lxEcCorpsMail(salon, cfg, mois, zm, fichiers, b.notes, { test: type === "test", modeTest, reportees });
     const html = lxMailLayout(corps, { titre: zm ? `Documents comptables de ${lxEcMoisLib(mois, false)}` : "Envoi au comptable configuré", salon: salon.nom || "" });
     let out = null, erreur = null;
     try {
