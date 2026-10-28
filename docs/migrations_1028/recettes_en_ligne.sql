@@ -1,11 +1,17 @@
 -- =====================================================================================================================
 -- 2026-10-28 (-2) — RECETTES ENCAISSÉES EN LIGNE = TICKET DE CAISSE SCELLÉ CRÉÉ PAR LE SERVEUR AU PAIEMENT CONFIRMÉ
--- Luxyra 6.8.1 (version MINEURE ; 6.8.0 jamais publiée) — NON APPLIQUÉ. À passer par Alexandre dans l'éditeur SQL (ordre en bas de fichier).
+-- Luxyra 6.8.2 (version MINEURE ; 6.8.0 et 6.8.1 jamais publiées) — NON APPLIQUÉ. À passer par Alexandre dans l'éditeur SQL (ordre en bas de fichier).
 -- 2026-10-28 (-3) : corrections de l'audit de la 6.8.0 (registre NF525, intervention -3) : série de n° imprimés propre au serveur
 -- (900001+), version minimale de l'application, déclencheurs réservés aux écritures du serveur + gardes des colonnes de paiement,
 -- remboursements vérifiés (re_…) et plafonnés, clé partagée d'annulation Click & Collect, filet sans date de départ (sources à
 -- clé partagée), carte d'abonnement recopiée de la configuration, remboursements d'empreinte / d'acompte conservé, rattrapage en
 -- une transaction par évènement, verrou de l'établissement dans le contrôle de la Z, retour arrière propre.
+-- 2026-10-28 (-4) : corrections du contre-audit (NO GO) — Luxyra 6.8.2 (registre NF525, intervention -4) : garde de tête par
+-- empreintes md5 COMPLÈTES des définitions relues en production ; garde des colonnes de paiement : ajout du n° « tk » par
+-- l'application accepté (lx_acompte_remb_ticketer), plus de fausse alerte à l'enregistrement d'une carte d'abonnement payée en
+-- ligne ; retour arrière : seules les recettes que l'application sait reprendre sont écartées, la file est traitée même
+-- interrupteur éteint (seul le filet de création s'éteint), annulation Click & Collect d'une commande déjà en caisse traitée
+-- même interrupteur éteint ; rattrapage : bail daté dans une table (plus de verrou de session) ; version minimale par défaut 6.8.2.
 -- Idempotent (create or replace / if not exists / drop trigger if exists). Ne crée AUCUN ticket tant que
 -- app_config.config.recettes_en_ligne_serveur <> true (interrupteur, posé en DERNIER, après publication des pages).
 --
@@ -16,8 +22,9 @@
 --
 -- Règles (sources : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 -2) :
 --  - toute recette encaissée par le système (paiement en ligne compris) est enregistrée et sécurisée : CGI art. 286-I-3° bis ;
---    BOI-TVA-DECLA-30-10-30 (version du 25/03/2026) § 30, § 35, § 37 (exemple 3 : commandes payées en ligne et retirées en
---    magasin), § 40, § 50 ;
+--    BOI-TVA-DECLA-30-10-30 (version du 25/03/2026) § 30, § 35 (aucune dispense dès qu'une partie
+--    des ventes est payée autrement que par un établissement de crédit), § 37 (exemple 3 : paiement en ligne proposé en boutique
+--    à côté d'autres modes — pas de dispense pour ces paiements ; citation corrigée le 28/10/2026 -4), § 40, § 50 ;
 --  - TVA des prestations de services exigible à l'encaissement, acomptes compris : CGI art. 269-2-c ; BOI-TVA-BASE-20-20 § 30, § 70 ;
 --  - acomptes sur livraisons de biens : TVA exigible à l'encaissement, à concurrence du montant encaissé, depuis le 1/1/2023
 --    (loi n° 2021-1900 du 30/12/2021, art. 30) : CGI art. 269-2-a ; BOI-TVA-BASE-20-10 (version du 21/12/2022) § 10, § 65 ;
@@ -72,20 +79,41 @@ begin;
 
 -- ===================================================================================================================== §0
 -- Garde : les fonctions de la chaîne de scellement doivent être celles relues le 28/10/2026 (sinon : relire avant d'appliquer)
-do $$ begin
-  if position('pg_advisory_xact_lock(hashtext(NEW.salon_id::text))' in pg_get_functiondef('public.ticket_nf525_insert()'::regprocedure)) = 0 then
-    raise exception 'ticket_nf525_insert : version en base différente de celle relue le 28/10/2026 — relire avant d''appliquer';
-  end if;
-  if to_regprocedure('public.tickets_block_post_cloture()') is null or to_regprocedure('public.nf525_marquer_mode()') is null then
-    raise exception 'chaîne de scellement incomplète (tickets_block_post_cloture / nf525_marquer_mode)';
-  end if;
-  -- 2026-10-28 (-3) : contrôle Z / journal relu en base le 28/10/2026 (version avec annotations, sans verrou) ou déjà remplacé ici
-  if to_regprocedure('lx_prive.clotures_controle_journal()') is null
-     or (position('LX_Z_ECART_JOURNAL' in pg_get_functiondef('lx_prive.clotures_controle_journal()'::regprocedure)) = 0)
-     or (position('nf525_z_annotation_delta' in pg_get_functiondef('lx_prive.clotures_controle_journal()'::regprocedure)) = 0
-         and position('LX_VERROU_Z_2026_10_28' in pg_get_functiondef('lx_prive.clotures_controle_journal()'::regprocedure)) = 0) then
-    raise exception 'lx_prive.clotures_controle_journal : version en base différente de celle relue le 28/10/2026 — relire avant d''appliquer';
-  end if;
+-- 2026-10-28 (-4, contre-audit constat 6) : comparaison des empreintes md5 COMPLÈTES des définitions relevées en production le
+-- 28/10/2026. Méthode (identique pour le relevé et pour ce contrôle) : md5(pg_get_functiondef(oid)) — texte complet rendu par
+-- PostgreSQL 17 (en-tête RETURNS / LANGUAGE / SECURITY / SET search_path + corps entre $function$), relu en lecture seule dans
+-- l'éditeur SQL du tableau de bord le 28/10/2026 (7 valeurs retrouvées à l'identique) et recalculé sur PostgreSQL 17.6 à partir
+-- des définitions recopiées (/tmp/pgreal/md5chk.cjs : 14/14 identiques). Toute différence (même un commentaire) arrête le script.
+-- lx_prive.clotures_controle_journal est remplacée plus bas (verrou de l'établissement) : sur une seconde exécution, sa définition
+-- est acceptée si, une fois retirées EXACTEMENT les deux lignes ajoutées ici (marque LX_VERROU_Z_2026_10_28), elle redonne
+-- l'empreinte de production.
+do $$
+declare
+  v_attendu constant jsonb := jsonb_build_object(
+    'public.ticket_nf525_insert()',            '3219a36f2892dfb5287aa258e7afb0fa',
+    'public.tickets_block_post_cloture()',     '59714d7eaadabdfab295f52e23376950',
+    'public.nf525_marquer_mode()',             '8b26e30b07f5957ad64126208a241eaa',
+    'public._nf525_seal_row()',                'd9a16f5a25ceda362a3bde86e8b22c84',
+    'public.appointments_nf525_protect()',     'ac1d644f6672a78c805845de2c386009',
+    'lx_prive.tickets_retour_controle()',      'e10116728f108070fb8dd710cd5f66eb',
+    'lx_prive.clotures_controle_journal()',    '3688061418cabdbaa209134689196361');
+  v_ajout constant text := E'  -- LX_VERROU_Z_2026_10_28 : même verrou que ticket_nf525_insert / recette_tk_inserer (réentrant dans la transaction)\n'
+                        || E'  perform pg_advisory_xact_lock(hashtext(NEW.salon_id::text));\n';
+  k text; v_def text; v_md5 text;
+begin
+  for k in select jsonb_object_keys(v_attendu) loop
+    if to_regprocedure(k) is null then
+      raise exception 'Garde 28/10/2026 : fonction % absente en base — relire avant d''appliquer', k;
+    end if;
+    v_def := pg_get_functiondef(to_regprocedure(k));
+    if k = 'lx_prive.clotures_controle_journal()' and position('LX_VERROU_Z_2026_10_28' in v_def) > 0 then
+      v_def := replace(v_def, v_ajout, '');
+    end if;
+    v_md5 := md5(v_def);
+    if v_md5 <> v_attendu->>k then
+      raise exception 'Garde 28/10/2026 : % différente de la version relue en production (md5 % au lieu de %) — relire avant d''appliquer', k, v_md5, v_attendu->>k;
+    end if;
+  end loop;
   if to_regprocedure('auth.role()') is null then raise exception 'auth.role() absente'; end if;
 end $$;
 
@@ -189,10 +217,13 @@ returns bigint language sql immutable as $$
     else 0 end
 $$;
 -- Version minimale de l'application acceptée pour enregistrer un ticket une fois l'interrupteur allumé
--- (app_config.config.recettes_en_ligne_version_min, défaut 6.8.1 : première version qui transmet raw_data.lxVersion).
+-- (app_config.config.recettes_en_ligne_version_min). 2026-10-28 (-4) : défaut 6.8.2 (première version qui ne laisse jamais
+-- un ticket encaissé sortir de sa file de secours : report sur la journée ouverte) si la clé est absente. MISE EN SERVICE :
+-- la clé est posée à '0' (neutre : version_num('0') = 0, aucun refus) à l'activation, puis relevée à '6.8.2' quand tous les
+-- postes actifs ont remonté 6.8.2 (requête de contrôle : registre NF525, intervention -4).
 create or replace function lx_prive.recettes_version_min()
 returns text language sql stable security definer set search_path = public, pg_temp as $$
-  select coalesce(nullif((select config->>'recettes_en_ligne_version_min' from public.app_config where id = 1), ''), '6.8.1')
+  select coalesce(nullif((select config->>'recettes_en_ligne_version_min' from public.app_config where id = 1), ''), '6.8.2')
 $$;
 -- Début de la série des n° imprimés du serveur (n° 900001, 900002, … par établissement)
 create or replace function lx_prive.recette_serie_base()
@@ -660,12 +691,16 @@ end $$;
 create or replace function lx_prive.zz_commandes_online_recettes()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare q public.recettes_en_ligne; r jsonb; v_q0 public.recettes_en_ligne; v_srv boolean := lx_prive.appel_serveur();
+  v_actif boolean := lx_prive.recettes_serveur_actif();
 begin
   if coalesce(current_setting('lx.recette_en_cours', true), '') = '1' then return NEW; end if;
-  if not lx_prive.recettes_serveur_actif() then return NEW; end if;
   if not v_srv then return NEW; end if; -- paiement et annulation remboursée : worker uniquement (2026-10-28 -3)
+  -- 2026-10-28 (-4, contre-audit constat 3) : interrupteur éteint = plus de NOUVELLE recette (paiement) ; l'annulation remboursée
+  -- d'une commande DÉJÀ en caisse par le serveur (ticket « cc: » créé) donne toujours son ticket négatif (sinon CA surévalué :
+  -- l'application ne connaît pas ce ticket et ne fait aucun avoir).
+  if not v_actif and NEW.recette_tk_num is null then return NEW; end if;
   begin
-    if coalesce(NEW.paye, false) and not coalesce(OLD.paye, false) and NEW.recette_tk_num is null and coalesce(NEW.total, 0) > 0
+    if v_actif and coalesce(NEW.paye, false) and not coalesce(OLD.paye, false) and NEW.recette_tk_num is null and coalesce(NEW.total, 0) > 0
        and coalesce(NEW.mode_paiement, 'en_ligne') = 'en_ligne' then
       q := lx_prive.recette_enfiler(NEW.salon_id, 'click_collect', NEW.id, 'cc:' || NEW.id, NEW.total, coalesce(NEW.paye_at, now()), NEW.payment_intent_id, null, '{}');
       r := lx_prive.recette_traiter(q, to_jsonb(NEW));
@@ -760,6 +795,37 @@ begin
   exception when others then null; end;
 end $$;
 
+-- 2026-10-28 (-4, contre-audit constat 2) : l'application enregistre le n° de SON ticket de remboursement d'acompte dans
+-- l'entrée de remboursement (clé « tk », fonction public.lx_acompte_remb_ticketer, SECURITY INVOKER, appelée avec le jeton de
+-- l'établissement — interrupteur éteint ou avant la mise en service). Cette écriture est LÉGITIME : seule différence acceptée
+-- sur remboursements = ajout de « tk » (entier > 0) à des entrées existantes qui n'en avaient pas, sans rien changer d'autre
+-- (même nombre d'entrées, même ordre, mêmes montants / refund_id / dates).
+create or replace function lx_prive.remb_ajout_tk_seul(p_old jsonb, p_new jsonb)
+returns boolean language sql immutable as $$
+  select case
+    when jsonb_typeof(coalesce(p_old, '[]'::jsonb)) <> 'array' or jsonb_typeof(coalesce(p_new, '[]'::jsonb)) <> 'array' then false
+    when jsonb_array_length(coalesce(p_old, '[]'::jsonb)) <> jsonb_array_length(coalesce(p_new, '[]'::jsonb)) then false
+    else not exists (
+      select 1 from jsonb_array_elements(coalesce(p_old, '[]'::jsonb)) with ordinality o(v, i)
+        join jsonb_array_elements(coalesce(p_new, '[]'::jsonb)) with ordinality n(v, i) using (i)
+       where not (n.v = o.v
+              or (jsonb_typeof(o.v) = 'object' and jsonb_typeof(n.v) = 'object' and not (o.v ? 'tk') and n.v ? 'tk'
+                  and (n.v - 'tk') = o.v and jsonb_typeof(n.v->'tk') = 'number' and (n.v->>'tk') ~ '^[0-9]{1,9}$' and (n.v->>'tk')::int > 0)))
+  end
+$$;
+-- … et chaque « tk » ajouté correspond à un ticket de remboursement RÉELLEMENT enregistré au journal (clé partagée
+-- application / serveur « rembacompte:<rdv>:<refund_id ou date> », index unique tickets_acompte_key_unique) : un n° inventé
+-- (qui ferait croire au serveur que le remboursement est déjà en caisse) est refusé comme toute écriture de paiement.
+create or replace function lx_prive.remb_tk_justifies(p_salon uuid, p_rdv uuid, p_old jsonb, p_new jsonb)
+returns boolean language sql stable security definer set search_path = public, pg_temp as $$
+  select lx_prive.remb_ajout_tk_seul(p_old, p_new) and not exists (
+    select 1 from jsonb_array_elements(coalesce(p_new, '[]'::jsonb)) n(v)
+     where n.v ? 'tk'
+       and not exists (select 1 from jsonb_array_elements(coalesce(p_old, '[]'::jsonb)) o(v) where o.v = n.v)
+       and not exists (select 1 from public.tickets t where t.salon_id = p_salon
+                         and t.raw_data->>'acompteKey' = 'rembacompte:' || p_rdv || ':' || coalesce(n.v->>'refund_id', n.v->>'at', '')))
+$$;
+
 create or replace function lx_prive.garde_paiements_rdv_online()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare v text[] := '{}';
@@ -777,7 +843,8 @@ begin
     if coalesce(OLD.acompte_paye, false) and NEW.acompte_montant is distinct from OLD.acompte_montant then v := v || 'acompte_montant'::text; NEW.acompte_montant := OLD.acompte_montant; end if;
     if NEW.payment_intent_id is distinct from OLD.payment_intent_id then v := v || 'payment_intent_id'::text; NEW.payment_intent_id := OLD.payment_intent_id; end if;
     if NEW.stripe_payment_id is distinct from OLD.stripe_payment_id then v := v || 'stripe_payment_id'::text; NEW.stripe_payment_id := OLD.stripe_payment_id; end if;
-    if NEW.remboursements is distinct from OLD.remboursements then v := v || 'remboursements'::text; NEW.remboursements := OLD.remboursements; end if;
+    if NEW.remboursements is distinct from OLD.remboursements and not lx_prive.remb_tk_justifies(NEW.salon_id, NEW.id, OLD.remboursements, NEW.remboursements) then
+      v := v || 'remboursements'::text; NEW.remboursements := OLD.remboursements; end if; -- 2026-10-28 (-4) : ajout de « tk » seul accepté
     if NEW.acompte_rembourse is distinct from OLD.acompte_rembourse then v := v || 'acompte_rembourse'::text; NEW.acompte_rembourse := OLD.acompte_rembourse; end if;
     if NEW.acompte_rembourse_montant is distinct from OLD.acompte_rembourse_montant then v := v || 'acompte_rembourse_montant'::text; NEW.acompte_rembourse_montant := OLD.acompte_rembourse_montant; end if;
     if NEW.refund_id is distinct from OLD.refund_id then v := v || 'refund_id'::text; NEW.refund_id := OLD.refund_id; end if;
@@ -863,9 +930,28 @@ end $$;
 
 create or replace function lx_prive.garde_paiements_cartes_abo()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
-declare v text[] := '{}'; e jsonb; v_t numeric; v_d int;
+declare v text[] := '{}'; e jsonb; v_t numeric; v_d int; x public.cartes_abo_clients;
 begin
   if lx_prive.appel_serveur() then return NEW; end if;
+  -- 2026-10-28 (-4, contre-audit constat 5) : l'application enregistre ses cartes par UPSERT (insert … on conflict (id) do
+  -- update). Pour une carte qui EXISTE déjà, la partie « insert » n'est jamais écrite : les colonnes de paiement sont reprises
+  -- de la ligne existante (aucune alerte), puis la garde « update » ci-dessous protège la ligne comme pour toute modification.
+  -- Seule une valeur ENVOYÉE et différente de la ligne existante est signalée (tentative réelle) ; une colonne absente de
+  -- l'envoi (valeur par défaut NULL) ne l'est pas. Avant : 2 fausses alertes à chaque enregistrement d'une carte payée en ligne.
+  if TG_OP = 'INSERT' and NEW.id is not null then
+    select * into x from public.cartes_abo_clients where id = NEW.id and salon_id is not distinct from NEW.salon_id;
+    if found then
+      if NEW.ticket_num is not null and NEW.ticket_num is distinct from x.ticket_num and (coalesce(NEW.ticket_num, '') like 'cs\_%' or coalesce(x.ticket_num, '') like 'cs\_%') then v := v || 'ticket_num'::text; end if;
+      if NEW.montant_paye is not null and NEW.montant_paye is distinct from x.montant_paye then v := v || 'montant_paye'::text; end if;
+      if NEW.payment_intent_id is not null and NEW.payment_intent_id is distinct from x.payment_intent_id then v := v || 'payment_intent_id'::text; end if;
+      if NEW.recette_tk_num is not null and NEW.recette_tk_num is distinct from x.recette_tk_num then v := v || 'recette_tk_num'::text; end if;
+      if NEW.paye_at is not null and NEW.paye_at is distinct from x.paye_at then v := v || 'paye_at'::text; end if;
+      if (coalesce(NEW.ticket_num, '') like 'cs\_%' or coalesce(x.ticket_num, '') like 'cs\_%') then NEW.ticket_num := x.ticket_num; end if;
+      NEW.montant_paye := x.montant_paye; NEW.payment_intent_id := x.payment_intent_id; NEW.recette_tk_num := x.recette_tk_num; NEW.paye_at := x.paye_at;
+      perform lx_prive.garde_signaler('cartes_abo_clients', NEW.id, v);
+      return NEW;
+    end if;
+  end if;
   if TG_OP = 'INSERT' then
     NEW.montant_paye := null; NEW.payment_intent_id := null; NEW.recette_tk_num := null; NEW.paye_at := null;
     if coalesce(NEW.ticket_num, '') like 'cs\_%' then v := v || 'ticket_num'::text; NEW.ticket_num := ''; end if;
@@ -919,8 +1005,8 @@ create trigger a0_lx_garde_paiements before insert or update on public.cartes_ab
 
 -- ===================================================================================================================== §6 ter
 -- 2026-10-28 (-3, constat BLOQUANT a) VERSION MINIMALE DE L'APPLICATION. Une fois l'interrupteur allumé, un ticket envoyé par
--- l'application (authenticated) doit porter raw_data.lxVersion >= recettes_en_ligne_version_min (défaut 6.8.1, première
--- version qui le transmet : luxyra-supabase.js saveTicketToDb). Une version plus ancienne (qui crée encore elle-même les
+-- l'application (authenticated) doit porter raw_data.lxVersion >= recettes_en_ligne_version_min (lxVersion transmis depuis 6.8.1 :
+-- luxyra-supabase.js saveTicketToDb ; seuil par défaut 6.8.2, posé à '0' à l'activation puis relevé — voir recettes_version_min). Une version plus ancienne (qui crée encore elle-même les
 -- tickets d'acompte, ne connaît pas la série serveur…) est refusée avec un message « mettez l'application à jour » ; le ticket
 -- reste dans la file de secours de l'appareil et sera transmis par la nouvelle version après rechargement (aucune vente perdue).
 -- Un ticket marqué « serveur » ne peut être inséré que par le serveur.
@@ -1128,43 +1214,98 @@ begin
   end if;
 end $$;
 
--- Exécution en UNE transaction (appel manuel, essais) : même ordre, mêmes sauts de lignes verrouillées.
+-- 2026-10-28 (-4, contre-audit constat 4) : BAIL DATÉ (table) au lieu d'un verrou de session (pg_try_advisory_lock). Le verrou
+-- de session survivait à l'échec de l'appel (« call » dans une transaction ou dans une exécution à plusieurs requêtes : erreur
+-- « invalid transaction termination ») : la connexion de l'éditeur gardait le verrou et la tâche planifiée (toutes les 5 min)
+-- comme l'alerte « 26 h » s'arrêtaient sans bruit. Le bail est une LIGNE : prise ET validée immédiatement (COMMIT) ; si l'appel
+-- échoue avant ce COMMIT, la prise est annulée avec la transaction (rien n'est laissé) ; si l'exécution s'interrompt après
+-- (connexion coupée, délai dépassé), le bail EXPIRE seul (10 min, prolongé pendant le traitement). Une seule exécution à la fois.
+create table if not exists lx_prive.recettes_bail (
+  nom text primary key,
+  jeton uuid not null,
+  pris_at timestamptz not null default now(),
+  expire_at timestamptz not null,
+  par text
+);
+comment on table lx_prive.recettes_bail is 'Bail daté de la tâche de rattrapage des recettes en ligne (une exécution à la fois ; expire seul). 2026-10-28 (-4).';
+revoke all on table lx_prive.recettes_bail from public, anon, authenticated;
+
+-- Prise du bail : renvoie le jeton si pris, NULL si une autre exécution le détient (bail non expiré).
+create or replace function lx_prive.recettes_bail_prendre(p_duree interval default interval '10 minutes')
+returns uuid language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_j uuid := gen_random_uuid(); v_n int;
+begin
+  insert into lx_prive.recettes_bail as b (nom, jeton, pris_at, expire_at, par)
+  values ('rattrapage', v_j, clock_timestamp(), clock_timestamp() + p_duree, coalesce(current_setting('application_name', true), '') || ' pid ' || pg_backend_pid())
+  on conflict (nom) do update set jeton = excluded.jeton, pris_at = excluded.pris_at, expire_at = excluded.expire_at, par = excluded.par
+   where b.expire_at < clock_timestamp();
+  get diagnostics v_n = row_count;
+  return case when v_n = 1 then v_j else null end;
+end $$;
+-- Prolongation (seulement par le détenteur) ; renvoie false si le bail a été perdu (expiré puis repris ailleurs).
+create or replace function lx_prive.recettes_bail_prolonger(p_jeton uuid, p_duree interval default interval '10 minutes')
+returns boolean language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_n int;
+begin
+  update lx_prive.recettes_bail set expire_at = clock_timestamp() + p_duree where nom = 'rattrapage' and jeton = p_jeton;
+  get diagnostics v_n = row_count; return v_n = 1;
+end $$;
+create or replace function lx_prive.recettes_bail_rendre(p_jeton uuid)
+returns void language sql security definer set search_path = public, pg_temp as $$
+  update lx_prive.recettes_bail set expire_at = clock_timestamp() where nom = 'rattrapage' and jeton = p_jeton
+$$;
+
+-- Exécution en UNE transaction (appel MANUEL, essais : utilisable partout, y compris dans une transaction ou avec d'autres
+-- requêtes : « select lx_prive.recettes_rattrapage(); »). Même ordre, mêmes sauts de lignes verrouillées. Ne s'exécute pas
+-- pendant que la tâche planifiée détient le bail.
+-- 2026-10-28 (-4, contre-audit constat 3) : interrupteur ÉTEINT -> seul le FILET (création de nouveaux évènements) s'arrête ;
+-- les évènements déjà en file (bons, cartes, Click & Collect, remboursements…, que l'application ne sait pas reprendre) sont
+-- toujours traités : une recette encaissée n'est jamais abandonnée.
 create or replace function lx_prive.recettes_rattrapage()
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_id uuid; r jsonb; v_ok int := 0; v_ko int := 0; v_f int;
+declare v_id uuid; r jsonb; v_ok int := 0; v_ko int := 0; v_f int := 0; v_actif boolean := lx_prive.recettes_serveur_actif();
 begin
-  if not lx_prive.recettes_serveur_actif() then return jsonb_build_object('actif', false); end if;
-  v_f := lx_prive.recettes_filet();
+  if exists (select 1 from lx_prive.recettes_bail where nom = 'rattrapage' and expire_at > clock_timestamp()) then
+    return jsonb_build_object('actif', v_actif, 'occupe', true);
+  end if;
+  if v_actif then v_f := lx_prive.recettes_filet(); end if;
   for v_id in select id from public.recettes_en_ligne where statut = 'a_ticketer' order by salon_id, created_at limit 200 loop
     r := lx_prive.recette_rattraper_un(v_id);
     if coalesce((r->>'ok')::boolean, false) then v_ok := v_ok + 1; else v_ko := v_ko + 1; end if;
   end loop;
   perform lx_prive.recettes_alerte_attente();
-  return jsonb_build_object('actif', true, 'filet', v_f, 'tickets', v_ok, 'en_attente', v_ko);
+  return jsonb_build_object('actif', v_actif, 'filet', v_f, 'tickets', v_ok, 'en_attente', v_ko);
 end $$;
 
 -- Tâche planifiée : UNE TRANSACTION PAR ÉVÈNEMENT (COMMIT). Procédure sans SECURITY DEFINER ni SET (obligatoire pour pouvoir
 -- valider en cours de route) : noms qualifiés, exécutée par pg_cron (rôle postgres, mode libpq : cron.use_background_workers
--- = off relevé le 28/10/2026, pg_cron 1.6.4 -> « call » au niveau supérieur, COMMIT autorisé).
+-- = off relevé le 28/10/2026, pg_cron 1.6.4 -> « call » seul au niveau supérieur, COMMIT autorisé).
+-- APPEL MANUEL : « call lx_prive.recettes_rattrapage_job(); » SEUL dans l'éditeur SQL (aucune autre requête dans la même
+-- exécution, pas de begin/commit autour) ; sinon PostgreSQL refuse le COMMIT (« invalid transaction termination ») : l'appel
+-- échoue SANS RIEN LAISSER (le bail pris dans la même transaction est annulé avec elle) et la tâche planifiée continue. Pour un
+-- appel dans une transaction ou avec d'autres requêtes : « select lx_prive.recettes_rattrapage(); ».
 create or replace procedure lx_prive.recettes_rattrapage_job()
 language plpgsql as $$
-declare v_ids uuid[]; v_id uuid;
+declare v_ids uuid[]; v_id uuid; v_j uuid; v_i int := 0;
 begin
-  if not lx_prive.recettes_serveur_actif() then return; end if;
-  if not pg_try_advisory_lock(hashtext('lx_recettes_rattrapage')) then return; end if; -- une seule exécution à la fois
-  perform lx_prive.recettes_filet();
+  v_j := lx_prive.recettes_bail_prendre(interval '10 minutes');
+  if v_j is null then return; end if; -- une autre exécution détient le bail (non expiré)
+  commit; -- bail validé immédiatement (visible des autres exécutions)
+  if lx_prive.recettes_serveur_actif() then perform lx_prive.recettes_filet(); end if; -- 2026-10-28 (-4) : filet seulement si allumé
   commit;
   select array_agg(id order by salon_id, created_at) into v_ids
     from (select id, salon_id, created_at from public.recettes_en_ligne where statut = 'a_ticketer' order by created_at limit 200) z;
   if v_ids is not null then
     foreach v_id in array v_ids loop
       perform lx_prive.recette_rattraper_un(v_id);
+      v_i := v_i + 1;
+      if v_i % 20 = 0 and not lx_prive.recettes_bail_prolonger(v_j) then commit; return; end if; -- bail perdu : on s'arrête
       commit;
     end loop;
   end if;
   perform lx_prive.recettes_alerte_attente();
+  perform lx_prive.recettes_bail_rendre(v_j);
   commit;
-  perform pg_advisory_unlock(hashtext('lx_recettes_rattrapage'));
 end $$;
 
 -- ===================================================================================================================== §8
@@ -1308,16 +1449,20 @@ returns integer language sql stable security definer set search_path = public, p
                   coalesce((select max(ticket_num) from public.appointments where salon_id = p_salon and ticket_num <= lx_prive.recette_serie_base()), 0)) else null end
 $$;
 
--- RETOUR ARRIÈRE propre (2026-10-28 -3, mineur) : éteint l'interrupteur, écarte les évènements encore en file et EFFACE les
--- verrous posés par le serveur sur les lignes concernées (acompte_tk_claim_at, retenue_claim_at, empreinte_claim_at sans
--- ticket) : l'application reprend alors elle-même ces enregistrements (ancien comportement). Les tickets déjà créés restent.
+-- RETOUR ARRIÈRE propre (2026-10-28 -3, mineur ; 2026-10-28 -4, contre-audit constat 3) : éteint l'interrupteur et rend à
+-- l'application UNIQUEMENT ce qu'elle sait reprendre elle-même (ancien circuit, clés partagées) : acomptes en ligne, leurs
+-- remboursements, acomptes conservés, empreintes capturées — évènements en file écartés (« ignore ») et verrous posés par le
+-- serveur effacés (acompte_tk_claim_at, retenue_claim_at, empreinte_claim_at sans ticket). Tout le RESTE de la file (bons
+-- cadeaux, cartes d'abonnement, Click & Collect et leurs annulations, remboursements faits sur Stripe) reste « à ticketer » et
+-- continue d'être traité par la tâche de rattrapage, interrupteur éteint (seul le filet de création s'arrête) : l'application
+-- ne les enregistre pas, les écarter ferait perdre la recette. Ils sont comptés dans le résultat et signalés (alerte). Les
+-- tickets déjà créés restent.
 create or replace function lx_prive.recettes_desactiver(p_motif text default 'retour arrière')
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
-declare n_q int := 0; n_a int := 0; n_r int := 0; n_e int := 0;
+declare n_q int := 0; n_a int := 0; n_r int := 0; n_e int := 0; n_g int := 0; v_garde jsonb;
+  c_reprenables constant text[] := array['acompte','acompte_remb','retenue','empreinte'];
 begin
   update public.app_config set config = config - 'recettes_en_ligne_serveur' where id = 1;
-  with f as (select * from public.recettes_en_ligne where statut = 'a_ticketer')
-  select count(*) into n_q from f;
   update public.rdv_online r set acompte_tk_claim_at = null from public.recettes_en_ligne q
    where q.statut = 'a_ticketer' and q.source = 'acompte' and q.objet_id = r.id and r.acompte_tk_num is null;
   get diagnostics n_a = row_count;
@@ -1327,10 +1472,21 @@ begin
   update public.rdv_online r set empreinte_claim_at = null from public.recettes_en_ligne q
    where q.statut = 'a_ticketer' and q.source = 'empreinte' and q.objet_id = r.id and r.empreinte_tk_num is null;
   get diagnostics n_e = row_count;
-  update public.recettes_en_ligne set statut = 'ignore', derniere_erreur = left('Désactivation : ' || coalesce(p_motif, ''), 500), traite_at = now() where statut = 'a_ticketer';
+  update public.recettes_en_ligne set statut = 'ignore', derniere_erreur = left('Désactivation (repris par l''application) : ' || coalesce(p_motif, ''), 500), traite_at = now()
+   where statut = 'a_ticketer' and source = any (c_reprenables);
+  get diagnostics n_q = row_count;
+  select coalesce(sum(n), 0)::int, coalesce(jsonb_object_agg(source, n), '{}'::jsonb) into n_g, v_garde
+    from (select source, count(*) n from public.recettes_en_ligne where statut = 'a_ticketer' group by source) z;
   insert into public.audit_log (salon_id, action, details, operator_name)
-  values (null, 'RECETTES_EN_LIGNE_DESACTIVEES', 'Interrupteur recettes_en_ligne_serveur éteint (' || coalesce(p_motif,'') || ') : ' || n_q || ' évènement(s) écarté(s), verrous effacés : acompte ' || n_a || ', retenue ' || n_r || ', empreinte ' || n_e, 'Serveur Luxyra');
-  return jsonb_build_object('file_ecartee', n_q, 'verrous_acompte', n_a, 'verrous_retenue', n_r, 'verrous_empreinte', n_e);
+  values (null, 'RECETTES_EN_LIGNE_DESACTIVEES', 'Interrupteur recettes_en_ligne_serveur éteint (' || coalesce(p_motif,'') || ') : ' || n_q
+    || ' évènement(s) rendu(s) à l''application (acomptes, remboursements d''acompte, acomptes conservés, empreintes), verrous effacés : acompte '
+    || n_a || ', retenue ' || n_r || ', empreinte ' || n_e || ' ; ' || n_g || ' évènement(s) toujours traité(s) par le serveur ' || v_garde::text, 'Serveur Luxyra');
+  if n_g > 0 then
+    begin perform public.report_server_error(p_source := 'sql:recettes_en_ligne', p_message := n_g || ' recette(s) en ligne en attente gardée(s) par le serveur après la désactivation (l''application ne les reprend pas) : toujours traitées par la tâche de rattrapage', p_severity := 'warning',
+      p_context := jsonb_build_object('par_source', v_garde, 'motif', p_motif)); exception when others then null; end;
+  end if;
+  return jsonb_build_object('rendus_application', n_q, 'verrous_acompte', n_a, 'verrous_retenue', n_r, 'verrous_empreinte', n_e,
+    'gardes_serveur', n_g, 'gardes_par_source', v_garde);
 end $$;
 
 -- ===================================================================================================================== §8 bis
@@ -1396,10 +1552,15 @@ revoke all on function lx_prive.recettes_filet() from public, anon, authenticate
 revoke all on function lx_prive.recette_rattraper_un(uuid) from public, anon, authenticated;
 revoke all on function lx_prive.recettes_alerte_attente() from public, anon, authenticated;
 revoke all on procedure lx_prive.recettes_rattrapage_job() from public, anon, authenticated;
+revoke all on function lx_prive.recettes_bail_prendre(interval) from public, anon, authenticated;
+revoke all on function lx_prive.recettes_bail_prolonger(uuid, interval) from public, anon, authenticated;
+revoke all on function lx_prive.recettes_bail_rendre(uuid) from public, anon, authenticated;
 revoke all on function lx_prive.recettes_desactiver(text) from public, anon, authenticated;
 revoke all on function lx_prive.recettes_version_min() from public, anon, authenticated;
 revoke all on function lx_prive.carte_abo_config(uuid, text) from public, anon, authenticated;
 revoke all on function lx_prive.garde_signaler(text, uuid, text[]) from public, anon, authenticated;
+revoke all on function lx_prive.remb_ajout_tk_seul(jsonb, jsonb) from public, anon, authenticated;
+revoke all on function lx_prive.remb_tk_justifies(uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function lx_prive.tickets_cc_doublon_controle() from public, anon, authenticated;
 revoke all on function lx_prive.appointments_cc_doublon_controle() from public, anon, authenticated;
 revoke all on function lx_prive.tickets_version_controle() from public, anon, authenticated;
@@ -1429,16 +1590,20 @@ end $$;
 commit;
 
 -- =====================================================================================================================
--- ORDRE DE MISE EN SERVICE : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 (-3) — ordre complet,
--- verify_jwt de chaque edge function, contrôles et RETOUR ARRIÈRE. Résumé :
+-- ORDRE DE MISE EN SERVICE : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 (-4) — ordre complet pas à
+-- pas, verify_jwt de chaque edge function, contrôles et RETOUR ARRIÈRE. Résumé :
 --  0. docs/migrations_1027/bons_cadeaux_tva.sql (conseillé)   1. CE FICHIER (interrupteur éteint : rien n'est créé)
---  2. edge functions docs/edge_1028/* (verify_jwt inchangés)   3. worker (+ cocher charge.refunded)   4. pages (6.8.1, données
---  20261028-3) et recharger tous les appareils   5. activation (heure au registre)   6. bot   7. CGV art. 12 ter   8. bons en ligne.
+--  2. edge functions docs/edge_1028/* (lx-cloture-auto v3.2)   3. worker (+ cocher charge.refunded)   4. pages (6.8.2, données
+--  20261028-4) et recharger les appareils   5. activation avec recettes_en_ligne_version_min = '0' (heure au registre)
+--  5 bis. relever recettes_en_ligne_version_min à '6.8.2' quand TOUS les postes actifs ont remonté 6.8.2 (requête de contrôle
+--  au registre)   6. bot   7. CGV art. 12 ter   8. bons en ligne.
 --
 -- RETOUR ARRIÈRE (les tickets déjà créés restent : ils sont scellés et exacts) :
 --  a) arrêt immédiat ET propre : select lx_prive.recettes_desactiver('motif');
---     (interrupteur éteint, file vidée, verrous posés par le serveur effacés : l'application reprend l'ancien comportement)
---  b) retrait complet (après a) :
+--     (interrupteur éteint ; acomptes / remboursements d'acompte / acomptes conservés / empreintes rendus à l'application,
+--     verrous du serveur effacés ; le reste de la file — bons, cartes, Click & Collect, remboursements Stripe — CONTINUE d'être
+--     traité par la tâche de rattrapage : NE PAS la retirer tant que « gardes_serveur » > 0)
+--  b) retrait complet (après a, et seulement quand select count(*) from recettes_en_ligne where statut = 'a_ticketer' = 0) :
 --     select cron.unschedule('recettes-en-ligne-rattrapage');
 --     drop trigger if exists zz_trg_rdv_online_recettes on public.rdv_online;
 --     drop trigger if exists zz_trg_commandes_online_recettes on public.commandes_online;

@@ -1,4 +1,10 @@
 // @ts-nocheck
+// lx-cloture-auto v3.2 — 2026-10-28 (-4, Luxyra 6.8.2, contre-audit constat BLOQUANT) : la clôture de nuit NE CLÔT PLUS une
+//    journée s'il existe des rendez-vous ENCAISSÉS de ce jour (status done, n° de ticket ; hors copies des tickets du serveur)
+//    dont le ticket est ABSENT du journal (tickets, recherche par identifiant sur toutes les dates) : la journée reste ouverte et
+//    une alerte CRITIQUE est levée (report_server_error, source lx-cloture-auto). Cas visé : appareil resté sur une ancienne
+//    version (ticket refusé LX_APP_OBSOLETE, rendez-vous enregistré), réseau coupé, file de secours non transmise. Une journée
+//    sans aucun ticket mais avec de tels rendez-vous (postérieure à la dernière Z) est aussi signalée. Le reste est inchangé.
 // lx-cloture-auto v3.1 — 2026-10-28 (-3, Luxyra 6.8.1) : mode verify — un écart d'EMPREINTE de Z est « expliqué » (et non
 //    plus compté en anomalie) quand l'empreinte enregistrée se retrouve en remplaçant le « dernier hash » de la chaîne locale de
 //    l'appareil (_lastTicketHash) par l'un des derniers hash connus (empreinte serveur d'un ticket au lieu de l'empreinte
@@ -474,7 +480,32 @@ async function journeesAClore(base, salonId){
   const mode = base.s.mode_caisse || null;
   const tks = await toutLire("tickets","date_ticket,status,mode_caisse",q=>q.eq("salon_id",salonId).neq("status","cancelled").lt("date_ticket",auj));
   const avecZ = new Set(base.clos.map(z=>z.date_cloture));
-  return [...new Set(tks.filter(t=>!t.mode_caisse || !mode || t.mode_caisse===mode).map(t=>t.date_ticket))].filter(d=>!avecZ.has(d)).sort();
+  // 2026-10-28 (-4) : + journées postérieures à la dernière Z ayant des rendez-vous encaissés (même sans ticket au journal)
+  const derniereZ = base.clos.reduce((m,z)=>(z.date_cloture>m?z.date_cloture:m), "");
+  const rdv = base.appts.filter(a=>rdvEncaisse(a) && a.date_rdv && a.date_rdv < auj && a.date_rdv > derniereZ).map(a=>a.date_rdv);
+  return [...new Set(tks.filter(t=>!t.mode_caisse || !mode || t.mode_caisse===mode).map(t=>t.date_ticket).concat(rdv))].filter(d=>!avecZ.has(d)).sort();
+}
+// 2026-10-28 (-4) : rendez-vous ENCAISSÉ par un appareil (status done + n° de ticket), hors copie d'un ticket du serveur
+function rdvEncaisse(a){
+  if (!a || a.status !== "done" || a.cancelled === true) return false;
+  const m = (a.meta && typeof a.meta === "object") ? a.meta : {};
+  if (m.serveur === true || m.serveur === "true") return false;
+  return a.ticket_num != null || m.tkNum != null || m.tkNumServeur != null;
+}
+// Rendez-vous encaissés du jour D dont le ticket est absent du journal (recherche par identifiant, toutes dates confondues :
+// un ticket reporté sur une journée ouverte par la 6.8.2 est retrouvé).
+async function rdvHorsJournal(base, D){
+  const cand = base.appts.filter(a=>rdvEncaisse(a) && a.date_rdv === D);
+  if (!cand.length) return [];
+  const ids = []; cand.forEach(a=>{ const id=String(a.id); ids.push(id, "online_"+id.replace(/^online_/,""), id.replace(/^online_/,"")); });
+  const vus = new Set(); const uniq = [...new Set(ids)];
+  for (let i=0;i<uniq.length;i+=100){
+    const part = uniq.slice(i,i+100);
+    const { data, error } = await sb.from("tickets").select("rid:raw_data->>id").eq("salon_id", base.s.id).in("raw_data->>id", part);
+    if (error) throw new Error("tickets (contrôle des rendez-vous) : "+error.message);
+    (data||[]).forEach(t=>{ if (t.rid) vus.add(String(t.rid).replace(/^online_/,"")); });
+  }
+  return cand.filter(a=>!vus.has(String(a.id).replace(/^online_/,"")));
 }
 
 Deno.serve(async (req) => {
@@ -504,7 +535,7 @@ Deno.serve(async (req) => {
         if(!cmp.diffs.length) ok++; if(cmp.hashOk) hashOk++;
         if(cmp.diffs.length || (!cmp.hashOk && !explique)) res.push({ num:z.num, date:z.date_cloture, hash: cmp.hashOk ? true : (explique ? "explique : "+explique : false), diffs: cmp.diffs.slice(0,8) });
       }
-      return J(200, { version: 3.1, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
+      return J(200, { version: 3.2, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
     }
     // simulate / run
     const { data: salons } = await sb.from("salons").select("id,nom,status").in("status",["active","trial"]);
@@ -514,7 +545,23 @@ Deno.serve(async (req) => {
       const base = await chargerSalon(s.id);
       const dates = await journeesAClore(base, s.id);
       for (const D of dates){
+        // 2026-10-28 (-4) : rendez-vous encaissés absents du journal -> journée laissée OUVERTE + alerte critique
+        const manquants = await rdvHorsJournal(base, D);
+        if (manquants.length){
+          const total = r2(manquants.reduce((t,a)=>t+(Number(a.prix)||0),0));
+          const ligneM = { salon: s.nom, date: D, ecrit: false, raison: "rendez-vous encaissés absents du journal des tickets : journée laissée ouverte", rdv_hors_journal: manquants.length, montant_rdv: total,
+            tickets: manquants.map(a=>a.ticket_num ?? (a.meta && a.meta.tkNum) ?? null).slice(0,20) };
+          if (mode === "run") {
+            try {
+              await sb.rpc("report_server_error", { p_source: "lx-cloture-auto", p_message: "Clôture automatique du "+D+" NON faite : "+manquants.length+" rendez-vous encaissé(s) ("+total.toFixed(2)+" EUR) sans ticket au journal (appareil non mis à jour ou non synchronisé). Faire transmettre les tickets (mise à jour / reconnexion de l'appareil) ; la journée sera clôturée ensuite.",
+                p_severity: "critical", p_context: { salon_id: s.id, date: D, rdv: manquants.map(a=>({ id: a.id, ticket_num: a.ticket_num ?? null, prix: Number(a.prix)||0 })).slice(0,50) }, p_salon_id: s.id });
+            } catch (_) {}
+            try { await sb.from("audit_log").insert({ salon_id: s.id, action: "CLOTURE_Z_REPORTEE", details: (D+" - clôture automatique non faite : "+manquants.length+" rendez-vous encaissé(s) sans ticket au journal ("+total.toFixed(2)+"E)").slice(0,1900), operator_name: "Clôture automatique" }); } catch (_) {}
+          }
+          rapport.push(ligneM); continue;
+        }
         const { c, journalTotal } = await calculerJour(base, D, base.clos);
+        if (journalTotal === 0 && !(await lireJournal(s.id, D, base.s.mode_caisse || null)).rows.length) { rapport.push({ salon: s.nom, date: D, ecrit: false, raison: "aucun ticket" }); continue; }
         c.hash = await sha256Hex(c.hashChaine); delete c.hashChaine;
         c.auto = true; c.operator_name = "Clôture automatique"; c.auto_motif = "Journée non clôturée manuellement"; c.source = "tickets"; c.lxCalcVersion = 3;
         const ligne = { salon: s.nom, date: D, num: c.num, total_ca: r2(c.totalCA), total_ht: r2(c.totalHT), nb_tickets: c.nbTickets, nb_annul: c.nbAnnul, hors_ca_bum: c.totalHorsCa || 0, hash: c.hash.slice(0,12)+"..." };
@@ -535,7 +582,7 @@ Deno.serve(async (req) => {
         rapport.push({ ...ligne, ecrit: true, tickets_verrouilles: (lk.data||[]).length, erreur_verrou: lk.error ? lk.error.message : null });
       }
     }
-    return J(200, { version: 3, mode, aujourdhui: aujourdHuiParis(), resultat: rapport });
+    return J(200, { version: 3.2, mode, aujourdhui: aujourdHuiParis(), resultat: rapport });
   } catch (e) {
     return J(500, { error: String(e?.message || e) });
   }

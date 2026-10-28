@@ -413,12 +413,12 @@ if(window._lxDemo && !window._lxDemoTables){
      app.html). Cache-busting via query param versionné : bump à chaque commit qui
      modifie ce fichier pour forcer le re-fetch par le browser (Cloudflare invalide
      son propre cache automatiquement sur deploy). -->
-<script src="luxyra-supabase.js?v=20261028-3"></script>
+<script src="luxyra-supabase.js?v=20261028-4"></script>
 <script>
 // 2026-10-14 : si le cache a servi une ancienne couche donnees avec ce nouvel ecran (ou l'inverse),
 // on recharge une fois en contournant le cache plutot que de travailler avec deux versions melangees.
 (function(){ try{
-  var attendu="20261028-3";
+  var attendu="20261028-4";
   if(window.LX_DATA_VERSION!==attendu){
     var k="lx_ver_reload_"+attendu;
     if(navigator.onLine!==false && !sessionStorage.getItem(k)){ // hors ligne : on ne recharge pas (le cache est alors la seule source)
@@ -30947,6 +30947,17 @@ function editCarteAbo(idx){
   document.getElementById("modal").innerHTML='<div class="mbg" onclick="cM()"><div onclick="event.stopPropagation()">'+htm+'</div></div>';
 }
 
+// 2026-10-28 (-4, contre-audit constat 8) : chaque carte d'abonnement configurée a un identifiant (la base recopie tarif / remises /
+// durée de la carte par son id à la souscription en ligne : une carte sans id serait refusée, LX_CARTE_INCONNUE). Id unique posé
+// à la création (et rattrapé au chargement pour une ancienne configuration). Renvoie true si au moins un id a été ajouté.
+function _lxCartesAboIds(){
+  var l=window.CARTES_ABO, n=0, vus={};
+  if(!Array.isArray(l)) return false;
+  l.forEach(function(ca,i){ if(!ca||typeof ca!=="object") return; var id=(ca.id===undefined||ca.id===null)?"":String(ca.id);
+    if(!id||vus[id]){ ca.id="ca_"+Date.now().toString(36)+"_"+i+"_"+Math.random().toString(36).slice(2,6); n++; } vus[String(ca.id)]=1; });
+  return n>0;
+}
+window._lxCartesAboIds=_lxCartesAboIds;
 function doSaveCarteAbo(idx){
   var nom=document.getElementById("caName").value.trim();
   var tarif=parseFloat(document.getElementById("caTarif").value)||0;
@@ -30962,6 +30973,7 @@ function doSaveCarteAbo(idx){
   }else{
     window.CARTES_ABO.push({id:"ca_"+Date.now(),nom:nom,tarif:tarif,duree:duree,remiseServices:remSvc,remiseForfaits:remForf});
   }
+  _lxCartesAboIds(); // 2026-10-28 (-4) : id garanti (carte modifiée d'une ancienne configuration, ou id en double)
   if(typeof saveSalonConfig==="function")saveSalonConfig();
   auditLog("CARTE_ABO_CONFIG",(idx>=0?"Modification":"Cr\u00e9ation")+" carte: "+nom+" ("+tarif+"\u20ac, "+duree+"m, -"+remSvc+"% svc, -"+remForf+"% forf)");
   cM();go("settings");
@@ -34543,7 +34555,7 @@ function exportTicketsCSV(){
 // (caractères 3, 7, 13 et 19 de la signature base64url), version du logiciel, nombre de lignes,
 // duplicatas numérotés. La signature est calculée côté serveur ; le ticket papier en reprend l'extrait.
 // =====================================================================
-var LX_VERSION="6.8.1", LX_CAISSE="C01"; // 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
+var LX_VERSION="6.8.2", LX_CAISSE="C01"; // 2026-10-28 (-4) : 6.8.2 = corrections du contre-audit (6.8.0 et 6.8.1 jamais publiées) : un ticket encaissé n'est plus jamais abandonné par la file de secours (vente d'une journée déjà close enregistrée sur la journée ouverte, date réelle de vente en mention ; clôture forcée = ticket gardé en file), seuil de version de référence du serveur ; formats de hash, chaînage, signatures et clôtures inchangés (BOI-TVA-DECLA-30-10-30 § 340 : version MINEURE). 2026-10-28 (-3) : 6.8.1 = corrections de l'audit de la 6.8.0 (jamais publiée) : version transmise dans chaque ticket (raw_data.lxVersion) et contrôlée par le serveur, série de n° imprimés propre au serveur (900001+) exclue du compteur des appareils ; formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340). 2026-10-28 (-2) : 6.8.0 = version MINEURE (recettes encaissées en ligne enregistrées par le serveur au paiement confirmé, avec la MÊME chaîne de numérotation, empreinte, sceau et signature ; BOI-TVA-DECLA-30-10-30 § 340 : aucune fonction d'inaltérabilité, de sécurisation, de conservation ou d'archivage modifiée). 6.7.0 = version MINEURE (bons cadeaux à usage unique / multiple, CGI art. 256 ter) : formats de hash, chaînage et signatures inchangés (BOI-TVA-DECLA-30-10-30 § 340)
 window.LX_SIG_CACHE=window.LX_SIG_CACHE||{};
 function _lxSigExtrait(sg){ sg=String(sg||""); return [3,7,13,19].map(function(i){ return sg.charAt(i-1)||""; }).join(""); }
 async function _lxSignerMaintenant(){
@@ -39652,7 +39664,9 @@ function _lxZAnnotationHtml(an, imprime){
 function _lxZDoneAP(jour){
   try{ if(typeof _lxDedupOnlineAP==="function") _lxDedupOnlineAP(); }catch(_eD){}
   var _sdcRefs=_lxSameDayCancelRefs();
-  var l=AP.filter(function(a){return a&&a.st==="done"&&a.date===jour&&!a.cancelled&&!_lxIsSameDayContra(a,_sdcRefs);});
+  // 2026-10-28 (-4, v6.8.2) : un ticket REPORTÉ (journée de vente déjà close lors de sa transmission) compte dans la Z du jour
+  // de son enregistrement au journal (a.dateJournal), comme dans le journal des tickets ; jamais dans celle de sa date de vente.
+  var l=AP.filter(function(a){return a&&a.st==="done"&&(a.dateJournal?a.dateJournal===jour:a.date===jour)&&!a.cancelled&&!_lxIsSameDayContra(a,_sdcRefs);});
   return _lxDedupTkNum(l);
 }
 function cloturerJournee(opts){
@@ -41678,7 +41692,7 @@ function initApp(){
           // FIX 2026-05-12 : DB source de vérité même si vide (avant : >0 → résurrection fantôme)
           if(Array.isArray(cfg.absences)){window.ABSENCES=cfg.absences;localStorage.setItem("_cp_absences",JSON.stringify(window.ABSENCES));}
           // Charge les modèles de cartes d'abonnement (templates) + le toggle activation
-          if(Array.isArray(cfg.cartes_abo))window.CARTES_ABO=cfg.cartes_abo;
+          if(Array.isArray(cfg.cartes_abo)){window.CARTES_ABO=cfg.cartes_abo; try{ if(_lxCartesAboIds()) setTimeout(function(){ try{ if(!(typeof _lxEcrituresBloquees==="function"&&_lxEcrituresBloquees())&&!window._lxDemo&&typeof saveSalonConfig==="function") saveSalonConfig(); }catch(_eS){} },1500); }catch(_eI){} }
           if(cfg.cartes_abo_config && typeof cfg.cartes_abo_config==="object") window.CARTES_ABO_CONFIG=cfg.cartes_abo_config;
           // 2026-10-14 : historique des campagnes : la base fait foi ; sinon reprise UNE fois de la copie locale
           if(Array.isArray(cfg.sms_campaigns)){
