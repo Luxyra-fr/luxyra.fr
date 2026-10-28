@@ -4851,8 +4851,11 @@ async function submitSouscrireCarte(idx){
       ticket_num:"",
       economies_totales:0
     }).select().single();
-    if(insertRes.error){throw new Error(insertRes.error.message);}
+    if(insertRes.error){throw new Error(String(insertRes.error.message||"").replace(/^.*LX_CARTE_INCONNUE\s*:?\s*/,""));} // 2026-10-28 (-3) : carte inconnue de la configuration -> message clair
     var carteId=insertRes.data.id;
+    // 2026-10-28 (-3, constat MAJEUR 4) : tarif, remises et durée sont RECOPIÉS par la base depuis la configuration de
+    // l'établissement (valeurs du navigateur ignorées) ; le paiement est demandé au tarif enregistré (contrôlé par le worker).
+    var tarifEnregistre=Number(insertRes.data.tarif)||Number(ca.tarif);
     // 2) Cr\u00e9ation de la session Stripe Checkout via le worker
     var slugOrId=SALON.slug||salonId;
     // Stripe remplace {CHECKOUT_SESSION_ID} par l'ID r\u00e9el au retour
@@ -4863,7 +4866,7 @@ async function submitSouscrireCarte(idx){
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         salon_id:salonId,
-        amount:Number(ca.tarif),
+        amount:tarifEnregistre,
         description:"Carte d'abonnement \u2014 "+ca.nom,
         customer_email:CLIENT.email,
         customer_name:clientNom,

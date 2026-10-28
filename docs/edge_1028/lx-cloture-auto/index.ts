@@ -1,4 +1,11 @@
 // @ts-nocheck
+// lx-cloture-auto v3.1 — 2026-10-28 (-3, Luxyra 6.8.1) : mode verify — un écart d'EMPREINTE de Z est « expliqué » (et non
+//    plus compté en anomalie) quand l'empreinte enregistrée se retrouve en remplaçant le « dernier hash » de la chaîne locale de
+//    l'appareil (_lastTicketHash) par l'un des derniers hash connus (empreinte serveur d'un ticket au lieu de l'empreinte
+//    locale, ticket créé par le serveur pour un paiement en ligne, chaîne vide). Les TOTAUX, nombres, cumuls, règlements et
+//    collaborateurs restent comparés strictement (aucun écart de montant n'est jamais expliqué). Les copies des tickets serveur
+//    (appointments.ticket_num vide, n° dans meta.tkNumServeur) ne sont jamais prises comme dernier ticket de l'appareil.
+//    verify_jwt = true (réservée au rôle service : tâche planifiée / appel manuel avec la clé service).
 // lx-cloture-auto v3 — 2026-10-28 (-2, Luxyra 6.8.0) — CLÔTURE Z AUTOMATIQUE (filet en cas d'oubli), réalignée sur l'application.
 // v3 : (constat C3 de l'audit indépendant du 27-28/10/2026)
 //  - la Z part du JOURNAL DES TICKETS (public.tickets du jour, mode de caisse de l'établissement, paires annulation du jour
@@ -197,7 +204,8 @@ var _LX_APPT_META_KEYS = ["operator_id","operator_name","poste","ts","extraClien
   "isAcompteEnLigne","acompteKey","acompteRdv","datePaiement","dateRemboursement","refundId",
   "lxEffets","lxEffetsAnnules","lxEffetsInverses","lxDoublonDe",
   "isRetour","retourRefId","retourRefTk","retourRefDate","retourMotif","lxEffetsRetour",
-  "serveur","recetteKey","recetteType","ccCommandeId","ccNumero","bonCode","bonId","carteAboId","recetteRef","isRembEnLigne"];
+  "serveur","recetteKey","recetteType","ccCommandeId","ccNumero","bonCode","bonId","carteAboId","recetteRef","isRembEnLigne",
+  "tkNumServeur"]; // 2026-10-28 (-3) : n° de la série serveur (appointments.ticket_num vide pour ces copies)
 function lxMapApptRow(a) {
   var _cId = a.client_id;
   if (!_cId && a.pass_type && ["H","F","E"].indexOf(a.pass_type) >= 0) { _cId = "passage-" + a.pass_type; }
@@ -248,6 +256,7 @@ function lxMapApptRow(a) {
       for (var _mk in a.meta) { if (Object.prototype.hasOwnProperty.call(a.meta, _mk) && _LX_APPT_META_KEYS.indexOf(_mk) >= 0) _ap[_mk] = a.meta[_mk]; }
     }
   } catch (_eM) {}
+  if ((_ap.tkNum === null || _ap.tkNum === undefined) && Number(_ap.tkNumServeur) > 0) _ap.tkNum = Number(_ap.tkNumServeur); // 2026-10-28 (-3) : même règle que l'application
   return _ap;
 }
 // Journal : lignes retenues par la Z (même règle que _lxZJournalCalc / lx_prive.z_journal_tickets) + total
@@ -309,7 +318,9 @@ function calculerZ(done){
   var totalHT=_dualTVA?Math.round((prestHT+prodHT)*100)/100:Math.round(totalCA/(1+txTVA/100)*100)/100;
   if(totalHorsCa) totalHT=Math.round(((_dualTVA?(prestHT+prodHT):Math.round((totalCA-totalHorsCa)/(1+txTVA/100)*100)/100)+totalHorsCa)*100)/100;
   var totalTVA=Math.round((totalCA-totalHT)*100)/100;
-  var tkNums=done.map(function(a){return a.tkNum||0;}).filter(function(n){return n>0;});
+  // 2026-10-28 (-3) : plage des n° de l'APPAREIL ; les tickets du serveur (série 900001+) ont leur propre plage (tkSrvMin / tkSrvMax)
+  var tkNums=done.filter(function(a){return !(a.serveur===true||Number(a.tkNum)>900000);}).map(function(a){return a.tkNum||0;}).filter(function(n){return n>0;});
+  var tkSrv=done.filter(function(a){return a.serveur===true||Number(a.tkNum)>900000;}).map(function(a){return Number(a.tkNum)||0;}).filter(function(n){return n>0;});
   var tkMin=tkNums.length?Math.min.apply(null,tkNums):0;
   var tkMax=tkNums.length?Math.max.apply(null,tkNums):0;
   var heures=done.map(function(a){
@@ -343,6 +354,7 @@ function calculerZ(done){
   var c={id:U(),date:TD,ts:new Date().toISOString(),num:_nextClotureNum,
     nbTickets:nbTicketsNum,nbAnnul:annul.length,totalAnnul:totalAnnul,
     tkMin:tkMin,tkMax:tkMax,hPremier:hPremier,hDernier:hDernier,
+    tkSrvMin:(tkSrv.length?Math.min.apply(null,tkSrv):0),tkSrvMax:(tkSrv.length?Math.max.apply(null,tkSrv):0),
     totalCA:totalCA,totalPrest:totalPrest,totalProd:totalProd,
     totalHT:totalHT,totalTVA:totalTVA,txTVA:txTVA,
     prestHT:prestHT,prestTVA:prestTVA,prodHT:prodHT,prodTVA:prodTVA,
@@ -417,9 +429,21 @@ function preparerContexte(base, D, cloturesAvant){
     return a;
   });
   TD = D;
-  const avecHash = AP.filter(a=>a.hash && a.date && a.date<=D).sort((a,b)=>(b.tkNum||0)-(a.tkNum||0));
+  const avecHash = AP.filter(a=>a.hash && a.date && a.date<=D && !a.serveur).sort((a,b)=>(b.tkNum||0)-(a.tkNum||0)); // 2026-10-28 (-3) : chaîne locale des appareils seulement
   _lastTicketHash = avecHash.length ? (avecHash[0].hash||"00000000") : "00000000";
   __CTX.CLOTURES = cloturesAvant.map(z=>({ num:z.num, date:z.date_cloture, totalCA:Number(z.total_ca), nbTickets:Number(z.nb_tickets)||0, cumulPerpetuelCA:Number(z.cumul_perpetuel_ca) }));
+}
+// 2026-10-28 (-3) : « derniers hash » possibles au moment de la Z (voir l'en-tête v3.1) — 5 derniers tickets de l'appareil
+// (empreinte locale ET empreinte du journal), dernier ticket du serveur, chaîne vide.
+async function hashesCandidats(base, D){
+  const out = [], vu = new Set(), add = (h, motif) => { if (h && !vu.has(h)) { vu.add(h); out.push({ hash: h, motif }); } };
+  AP.filter(a=>a.hash && a.date && a.date<=D && !a.serveur).sort((a,b)=>(b.tkNum||0)-(a.tkNum||0)).slice(0,5).forEach(a=>add(a.hash, "empreinte locale du ticket n°"+a.tkNum));
+  try {
+    const { data } = await sb.from("tickets").select("num,hash,raw_data->>tkNum,raw_data->>serveur").eq("salon_id", base.s.id).lte("date_ticket", D).order("num", { ascending: false }).limit(8);
+    (data||[]).forEach(t=>add(t.hash, (t.serveur==="true" ? "ticket serveur (paiement en ligne) n°" : "empreinte du journal pour le ticket n°")+(t.tkNum||t.num)));
+  } catch (_) {}
+  add("00000000", "chaîne locale vide (appareil réinitialisé)");
+  return out;
 }
 async function calculerJour(base, D, cloturesAvant){
   preparerContexte(base, D, cloturesAvant);
@@ -460,7 +484,7 @@ Deno.serve(async (req) => {
   try {
     if (mode === "verify") {
       const base = await chargerSalon(body.salon_id);
-      const res = []; let ok=0, hashOk=0, n=0;
+      const res = []; let ok=0, hashOk=0, n=0, hashExpl=0;
       for (let i=0;i<base.clos.length;i++){
         const z=base.clos[i]; if(body.depuis && z.date_cloture < body.depuis) continue;
         n++;
@@ -468,10 +492,19 @@ Deno.serve(async (req) => {
         c.num = z.num; // le numero reel (pour le hash)
         c.hash = await sha256Hex("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+_lastTicketHash+"|"+SALON_CONFIG.siret);
         const cmp = comparer(c, z);
+        // 2026-10-28 (-3) : empreinte différente -> recherche d'une explication par le « dernier hash » de la chaîne locale
+        let explique = null;
+        if (!cmp.hashOk) {
+          for (const h of await hashesCandidats(base, z.date_cloture)) {
+            const hh = await sha256Hex("Z|"+c.num+"|"+c.date+"|"+c.totalCA.toFixed(2)+"|"+c.totalHT.toFixed(2)+"|"+c.nbTickets+"|"+c.nbAnnul+"|"+h.hash+"|"+SALON_CONFIG.siret);
+            if (hh === z.hash) { explique = h.motif; break; }
+          }
+          if (explique) hashExpl++;
+        }
         if(!cmp.diffs.length) ok++; if(cmp.hashOk) hashOk++;
-        if(cmp.diffs.length || !cmp.hashOk) res.push({ num:z.num, date:z.date_cloture, hash: cmp.hashOk, diffs: cmp.diffs.slice(0,8) });
+        if(cmp.diffs.length || (!cmp.hashOk && !explique)) res.push({ num:z.num, date:z.date_cloture, hash: cmp.hashOk ? true : (explique ? "explique : "+explique : false), diffs: cmp.diffs.slice(0,8) });
       }
-      return J(200, { version: 3, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, ecarts: res.slice(0,60) });
+      return J(200, { version: 3.1, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
     }
     // simulate / run
     const { data: salons } = await sb.from("salons").select("id,nom,status").in("status",["active","trial"]);

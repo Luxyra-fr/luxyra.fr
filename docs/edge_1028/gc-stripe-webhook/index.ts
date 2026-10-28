@@ -1,3 +1,7 @@
+// gc-stripe-webhook v10 — 2026-10-28 (-3, Luxyra 6.8.1) : date de paiement = date de l'évènement Stripe (paye_at : la reprise
+//    de secours l'utilise au lieu de son heure) ; QR code de l'e-mail généré par Luxyra (https://luxyra.fr/api/qr, worker,
+//    bibliothèque lx-qrcode.js déjà utilisée par l'application) : le code du bon n'est plus envoyé à api.qrserver.com.
+//    verify_jwt = false (webhook Stripe et appel interne du worker).
 // gc-stripe-webhook v9 — 2026-10-28 (-2, Luxyra 6.8.0) : recettes en ligne en caisse.
 //  - Le passage du bon à payment_status = "paid" déclenche, DANS LA MÊME TRANSACTION, la création du ticket de caisse scellé
 //    de la vente (déclencheur zz_trg_cartes_cadeaux_recettes, docs/migrations_1028/recettes_en_ligne.sql, actif quand
@@ -138,7 +142,8 @@ const THEMES: Record<string,Theme> = {
   midnight:    { bg:"#0d1b2a", acc:"#90caf9", txt:"#b0bec5", soft:"rgba(100,181,246,.3)", bdr:"#64b5f6", bbg:"linear-gradient(135deg,#0d1b2a,#1b2838)",              fbg:"rgba(100,181,246,.05)", ftx:"rgba(100,181,246,.45)", lf:"'Cormorant Garamond',serif", mf:"'Cormorant Garamond',serif", dc:"✧", dcol:"rgba(100,181,246,.15)",            hl:"Carte Cadeau",         dark:true }
 };
 
-function qrUrl(code:string){ return `https://api.qrserver.com/v1/create-qr-code/?size=160x160&qzone=2&format=png&data=${encodeURIComponent(code)}`; }
+// 2026-10-28 (-3) : QR généré par Luxyra (worker /api/qr, image GIF, codes de bon uniquement), plus de service tiers
+function qrUrl(code:string){ return `https://luxyra.fr/api/qr?d=${encodeURIComponent(code)}&s=160`; }
 
 function buildBonHTML(opts: { themeId:string; salonNom:string; salonAddr:string; salonTel:string; logoUrl:string|null; valeur:number; code:string; de:string; pour:string; message:string; dateExp:string; siret?:string; mentionTva:string; perimetre:string; tkNum?:number|null }): string {
   const t = THEMES[opts.themeId] || THEMES.classique;
@@ -257,7 +262,7 @@ Deno.serve(async (req) => {
     const pi = session.payment_intent || null;
     // 2026-10-28 (-2) : cette mise à jour crée aussi le ticket de caisse scellé de la vente (déclencheur zz_trg_cartes_cadeaux_recettes)
     const upd = await sb.from("cartes_cadeaux")
-      .update({ payment_status: "paid", payment_intent_id: pi })
+      .update({ payment_status: "paid", payment_intent_id: pi, paye_at: new Date((Number(event.created) > 0 ? Number(event.created) : Math.floor(Date.now() / 1000)) * 1000).toISOString() }) // 2026-10-28 (-3) : date Stripe
       .eq("id", bc_id).select("*").single();
     if (upd.error) {
       console.error("UPDATE paid échec", upd.error);
