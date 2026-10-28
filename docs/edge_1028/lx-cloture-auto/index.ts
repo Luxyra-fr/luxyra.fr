@@ -1,4 +1,11 @@
 // @ts-nocheck
+// lx-cloture-auto v3.4 — 2026-10-28 (-6, Luxyra 6.8.4, contre-audit 3) : (a) « rendez-vous encaissé » = encaissement SCELLÉ par
+//    Luxyra (empreinte appointments.hash non vide), comme la base (lx_prive.journees_non_closes / z_rdv_hors_journal) :
+//    l'historique repris d'un ancien logiciel (import « LS Coiffure », sans empreinte, sans ticket ni Z) ne retient plus aucune
+//    journée ; (b) {"mode":"run"|"simulate","salon_id":…,"date":"AAAA-MM-JJ"} (clé service, sortie administrateur) : clôture
+//    d'UNE date précise, même au-delà de la fenêtre de 60 jours (journée retenue par des tickets sans Z ; ventes non transmises
+//    consignées au préalable par lx_z_forcer_admin) — mêmes calculs et mêmes contrôles de la base que la nuit ; refusée si une Z
+//    postérieure existe déjà (jamais de Z hors de l'ordre des dates).
 // lx-cloture-auto v3.3 — 2026-10-28 (-5, Luxyra 6.8.3, contre-audit final constat 2) : (a) journées à clore = TOUTE date des
 //    60 derniers jours sans Z ayant des tickets au journal OU des rendez-vous encaissés (avant : seulement les dates postérieures
 //    à la dernière Z — une journée retenue antérieure à une Z disparaissait de la liste, plus d'alerte) ; (b) traitement dans
@@ -512,6 +519,7 @@ function rdvEncaisse(a){
   if (!a || a.status !== "done" || a.cancelled === true) return false;
   const m = (a.meta && typeof a.meta === "object") ? a.meta : {};
   if (m.serveur === true || m.serveur === "true") return false;
+  if (!a.hash) return false; // 2026-10-28 (-6) : encaissement scellé par Luxyra seulement (historique importé exclu)
   return a.ticket_num != null || m.tkNum != null || m.tkNumServeur != null;
 }
 // Rendez-vous encaissés du jour D dont le ticket est absent du journal (recherche par identifiant, toutes dates confondues :
@@ -557,7 +565,7 @@ Deno.serve(async (req) => {
         if(!cmp.diffs.length) ok++; if(cmp.hashOk) hashOk++;
         if(cmp.diffs.length || (!cmp.hashOk && !explique)) res.push({ num:z.num, date:z.date_cloture, hash: cmp.hashOk ? true : (explique ? "explique : "+explique : false), diffs: cmp.diffs.slice(0,8) });
       }
-      return J(200, { version: 3.3, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
+      return J(200, { version: 3.4, salon: base.s.nom, z_verifiees: n, totaux_identiques: ok, hash_identiques: hashOk, hash_ecarts_expliques: hashExpl, ecarts: res.slice(0,60) });
     }
     // simulate / run
     const { data: salons } = await sb.from("salons").select("id,nom,status").in("status",["active","trial"]);
@@ -565,7 +573,12 @@ Deno.serve(async (req) => {
     const rapport = [];
     for (const s of cibles){
       const base = await chargerSalon(s.id);
-      const dates = await journeesAClore(base, s.id);
+      // 2026-10-28 (-6) : date précise (sortie administrateur, clé service), même au-delà de 60 jours
+      let dates;
+      if (body.date) {
+        if (!body.salon_id || !/^\d{4}-\d{2}-\d{2}$/.test(String(body.date)) || !(String(body.date) < aujourdHuiParis())) return J(400, { error: "date : AAAA-MM-JJ passée, avec salon_id" });
+        dates = base.clos.some(z=>z.date_cloture === body.date) ? [] : [String(body.date)];
+      } else dates = await journeesAClore(base, s.id);
       const forces = await forcages(s.id);
       let retenue = null; // 2026-10-28 (-5) : première journée retenue -> les journées suivantes attendent (ordre des Z)
       for (const D of dates){
@@ -587,6 +600,9 @@ Deno.serve(async (req) => {
           }
           rapport.push(ligneM); continue;
         }
+        // 2026-10-28 (-6) : date précise (sortie administrateur) : jamais de Z hors de l'ordre des dates (n° et cumuls) — si une Z
+        // postérieure existe déjà, rien n'est écrit (traitement à décider et consigner au registre NF525)
+        if (body.date && base.clos.some(z=>z.date_cloture > D)) { rapport.push({ salon: s.nom, date: D, ecrit: false, hors_ordre: true, raison: "Z postérieure(s) déjà enregistrée(s) : clôture hors de l'ordre des dates refusée (n° et cumuls) — à traiter au registre NF525" }); continue; }
         const { c, journalTotal } = await calculerJour(base, D, base.clos);
         if (journalTotal === 0 && !(await lireJournal(s.id, D, base.s.mode_caisse || null)).rows.length) { rapport.push({ salon: s.nom, date: D, ecrit: false, raison: "aucun ticket" }); continue; }
         c.hash = await sha256Hex(c.hashChaine); delete c.hashChaine;
@@ -609,7 +625,7 @@ Deno.serve(async (req) => {
         rapport.push({ ...ligne, ecrit: true, tickets_verrouilles: (lk.data||[]).length, erreur_verrou: lk.error ? lk.error.message : null });
       }
     }
-    return J(200, { version: 3.3, mode, aujourdhui: aujourdHuiParis(), resultat: rapport });
+    return J(200, { version: 3.4, mode, aujourdhui: aujourdHuiParis(), resultat: rapport });
   } catch (e) {
     return J(500, { error: String(e?.message || e) });
   }

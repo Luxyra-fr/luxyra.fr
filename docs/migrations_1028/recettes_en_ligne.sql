@@ -1,6 +1,6 @@
 -- =====================================================================================================================
 -- 2026-10-28 (-2) — RECETTES ENCAISSÉES EN LIGNE = TICKET DE CAISSE SCELLÉ CRÉÉ PAR LE SERVEUR AU PAIEMENT CONFIRMÉ
--- Luxyra 6.8.3 (version MINEURE ; 6.8.0, 6.8.1 et 6.8.2 jamais publiées) — NON APPLIQUÉ. À passer par Alexandre dans l'éditeur SQL (ordre en bas de fichier).
+-- Luxyra 6.8.4 (version MINEURE ; 6.8.0 à 6.8.3 jamais publiées) — NON APPLIQUÉ. À passer par Alexandre dans l'éditeur SQL (ordre en bas de fichier).
 -- 2026-10-28 (-3) : corrections de l'audit de la 6.8.0 (registre NF525, intervention -3) : série de n° imprimés propre au serveur
 -- (900001+), version minimale de l'application, déclencheurs réservés aux écritures du serveur + gardes des colonnes de paiement,
 -- remboursements vérifiés (re_…) et plafonnés, clé partagée d'annulation Click & Collect, filet sans date de départ (sources à
@@ -19,6 +19,12 @@
 -- ticket (items[0].lxRep, garde LX_REPORT_NON_SCELLE) ; remboursement fait sur Stripe avant la première activation : aucun
 -- ticket, consigné et ticketé à l'activation (attente_activation) ; alertes de caisse de l'établissement
 -- (lx_caisse_alertes) ; version minimale par défaut 6.8.3. PRÉREQUIS OBLIGATOIRE : docs/migrations_1027/bons_cadeaux_tva.sql.
+-- 2026-10-28 (-6) : corrections du contre-audit 3 — Luxyra 6.8.4 (registre NF525, intervention -6) : vente encaissée = rendez-vous
+-- SCELLÉ par Luxyra (empreinte non vide : l'historique importé d'un ancien logiciel ne retient plus aucune journée ni clôture
+-- périodique) ; sortie administrateur tracée sans fenêtre de 60 jours (lx_z_forcer_admin, JET 900) et journées retenues
+-- anciennes signalées à l'établissement ; garde LX_REPORT_NON_SCELLE complétée (date de vente plausible, journée de vente
+-- clôturée, heure valide, marque sur la 1re ligne seulement) ; lx_z_forcer : compte propriétaire seulement + 5 minutes entre les
+-- deux contrôles ; version minimale par défaut 6.8.4.
 -- Idempotent (create or replace / if not exists / drop trigger if exists). Ne crée AUCUN ticket tant que
 -- app_config.config.recettes_en_ligne_serveur <> true (interrupteur, posé en DERNIER, après publication des pages).
 --
@@ -251,9 +257,11 @@ $$;
 -- postes actifs ont remonté 6.8.2 (requête de contrôle : registre NF525, intervention -4).
 -- 2026-10-28 (-5) : défaut 6.8.3 (date réelle d'une vente reportée scellée dans le ticket, refus de clôture des journées
 -- retenues compris par l'application, forçage tracé) ; même procédure (activation à '0', relevé à '6.8.3').
+-- 2026-10-28 (-6) : défaut 6.8.4 (forçage avec délai serveur, journées retenues anciennes ; 6.8.3 jamais publiée) ; même
+-- procédure (activation à '0', relevé à '6.8.4').
 create or replace function lx_prive.recettes_version_min()
 returns text language sql stable security definer set search_path = public, pg_temp as $$
-  select coalesce(nullif((select config->>'recettes_en_ligne_version_min' from public.app_config where id = 1), ''), '6.8.3')
+  select coalesce(nullif((select config->>'recettes_en_ligne_version_min' from public.app_config where id = 1), ''), '6.8.4')
 $$;
 -- Début de la série des n° imprimés du serveur (n° 900001, 900002, … par établissement)
 create or replace function lx_prive.recette_serie_base()
@@ -1084,13 +1092,35 @@ create trigger a_lx_tickets_a_version before insert on public.tickets for each r
 create or replace function lx_prive.tickets_report_controle()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_r jsonb := case when jsonb_typeof(NEW.items) = 'array' and jsonb_array_length(NEW.items) > 0 then NEW.items->0->'lxRep' else null end;
+  v_dv date;
 begin
   if coalesce(NEW.raw_data->>'serveur', '') = 'true' then return NEW; end if; -- tickets du serveur : posée par recette_tk_inserer
+  -- 2026-10-28 (-6, contre-audit 3, constat 7) : marque lxRep admise sur la 1re ligne SEULEMENT
+  if jsonb_typeof(NEW.items) = 'array' and exists (select 1 from jsonb_array_elements(NEW.items) with ordinality e(x, i)
+                                                     where i > 1 and jsonb_typeof(e.x) = 'object' and e.x ? 'lxRep') then
+    raise exception 'LX_REPORT_NON_SCELLE : marque de report (lxRep) hors de la 1re ligne du ticket.' using errcode = 'P0001';
+  end if;
   if coalesce(NEW.raw_data->>'reportJourClos', '') = 'true' then
-    if v_r is null or coalesce(v_r->>'v', '') <> '1' or v_r->>'dateVente' is distinct from (NEW.raw_data->>'dateVente')
-       or v_r->>'dateEnr' is distinct from NEW.date_ticket::text or not (v_r->>'dateVente' ~ '^\d{4}-\d{2}-\d{2}$')
-       or (v_r->>'dateVente')::date >= NEW.date_ticket then
+    if v_r is null or jsonb_typeof(v_r) <> 'object' or coalesce(v_r->>'v', '') <> '1' or coalesce(v_r->>'type', '') <> 'vente'
+       or v_r->>'dateVente' is distinct from (NEW.raw_data->>'dateVente')
+       or v_r->>'dateEnr' is distinct from NEW.date_ticket::text or not (coalesce(v_r->>'dateVente', '') ~ '^\d{4}-\d{2}-\d{2}$') then
       raise exception 'LX_REPORT_NON_SCELLE : vente reportée sans date réelle de vente scellée dans le ticket (mettez l''application à jour).' using errcode = 'P0001';
+    end if;
+    -- 2026-10-28 (-6, contre-audit 3, constat 7) : date de vente plausible (sinon antidatage possible par un appareil) :
+    -- antérieure à la date d'enregistrement, jamais future, jamais avant la première activité Luxyra de l'établissement
+    -- (premier ticket / première Z) et journée de vente CLÔTURÉE (Z) — c'est la seule cause d'un report par l'application
+    -- (tickets_block_post_cloture : Z de la date même) ; heure de vente absente ou HH:MM[:SS] valide ; date d'enregistrement =
+    -- jour de Paris (± 1 jour : fuseau de l'appareil).
+    v_dv := (v_r->>'dateVente')::date;
+    if v_dv >= NEW.date_ticket or v_dv > lx_prive.jour_paris()
+       or NEW.date_ticket not between lx_prive.jour_paris() - 1 and lx_prive.jour_paris() + 1
+       or v_dv < coalesce(least((select min(t.date_ticket) from public.tickets t where t.salon_id = NEW.salon_id),
+                                (select min(c.date_cloture) from public.clotures c where c.salon_id = NEW.salon_id)), v_dv + 1)
+       or not exists (select 1 from public.clotures c where c.salon_id = NEW.salon_id and c.date_cloture = v_dv)
+       or (v_r ? 'heureVente' and v_r->'heureVente' <> 'null'::jsonb
+           and not (coalesce(v_r->>'heureVente', '') ~ '^([01]?[0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$')) then
+      raise exception 'LX_REPORT_NON_SCELLE : vente reportée refusée — date ou heure de vente invalide (date de vente % : doit être une journée clôturée de l''établissement, antérieure à la date d''enregistrement %, ni future ni antérieure à la première activité Luxyra).',
+        v_r->>'dateVente', NEW.date_ticket using errcode = 'P0001';
     end if;
   elsif v_r is not null then
     raise exception 'LX_REPORT_NON_SCELLE : marque de report (lxRep) sur un ticket qui n''est pas reporté.' using errcode = 'P0001';
@@ -1625,6 +1655,18 @@ create trigger clotures_forcages_inalterables before update or delete on public.
 create or replace function lx_prive.jour_paris()
 returns date language sql stable as $$ select (now() at time zone 'Europe/Paris')::date $$;
 
+-- 2026-10-28 (-6, contre-audit 3, constat BLOQUANT) : « rendez-vous ENCAISSÉ » = encaissement SCELLÉ par Luxyra, c'est-à-dire
+-- avec une empreinte (appointments.hash non vide). Raison : l'historique repris d'un ancien logiciel (import « LS Coiffure » :
+-- status done + n° de ticket de l'ancien logiciel, SANS empreinte, sans ticket ni Z Luxyra — relevé en base le 28/10/2026 :
+-- 1 370 lignes chez un établissement, du 26/06/2025 au 09/05/2026) était compté comme vente non transmise : clôture annuelle
+-- 2026 et clôture d'exercice refusées pour toujours. Critère retenu (et non le commentaire « Import LS ») : tout encaissement
+-- Luxyra est chaîné (chainTicket) AVANT son enregistrement — empreinte posée sur le rendez-vous et le ticket dans le même
+-- appel — et l'empreinte d'un rendez-vous encaissé est INALTÉRABLE (appointments_nf525_protect) ; le commentaire, lui, reste
+-- modifiable par l'établissement (le critère « Import LS » permettrait d'escamoter une vente scellée non transmise en éditant
+-- son commentaire). Relevé du 28/10/2026 : 817 encaissements avec empreinte (tous Luxyra : 0 commentaire d'import, 813 au
+-- journal, 4 du 11-12/05/2026 dont la journée a sa Z), 1 370 sans empreinte (tous « import LS », aucun au journal, tous
+-- antérieurs au 1er ticket du 11/05/2026), 0 copie serveur, 0 encaissement dans les autres établissements. Contrôle de
+-- déploiement : registre NF525, intervention -6, étape 1.
 -- Rendez-vous ENCAISSÉS du jour dont le ticket est absent du journal (p_hors_forces : hors ventes déjà consignées par un forçage)
 create or replace function lx_prive.z_rdv_hors_journal(p_salon uuid, p_date date, p_hors_forces boolean default true)
 returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
@@ -1634,6 +1676,7 @@ returns jsonb language sql stable security definer set search_path = public, pg_
    where a.salon_id = p_salon and a.date_rdv = p_date and a.status = 'done' and not coalesce(a.cancelled, false)
      and coalesce(a.meta->>'serveur', '') <> 'true'
      and (a.ticket_num is not null or a.meta->>'tkNum' is not null or a.meta->>'tkNumServeur' is not null)
+     and coalesce(a.hash, '') <> '' -- LX_HISTORIQUE_2026_10_28_6 : encaissement scellé par Luxyra (historique importé exclu)
      and not exists (select 1 from public.tickets t where t.salon_id = p_salon and t.raw_data->>'id' in (a.id::text, 'online_' || a.id::text))
      and (not p_hors_forces or not exists (select 1 from public.clotures_forcages f where f.salon_id = p_salon and f.date_journee = p_date
                                              and f.rdv @> jsonb_build_array(jsonb_build_object('id', a.id::text))))
@@ -1651,7 +1694,8 @@ returns jsonb language sql stable security definer set search_path = public, pg_
     select a.date_rdv from public.appointments a
      where a.salon_id = p_salon and a.date_rdv between p_debut and p_fin and a.status = 'done' and not coalesce(a.cancelled, false)
        and coalesce(a.meta->>'serveur', '') <> 'true'
-       and (a.ticket_num is not null or a.meta->>'tkNum' is not null or a.meta->>'tkNumServeur' is not null)),
+       and (a.ticket_num is not null or a.meta->>'tkNum' is not null or a.meta->>'tkNumServeur' is not null)
+       and coalesce(a.hash, '') <> ''), -- LX_HISTORIQUE_2026_10_28_6 : encaissement scellé par Luxyra (historique importé exclu)
   c as (
     select x.j, (select count(*) from public.tickets t, m where t.salon_id = p_salon and t.date_ticket = x.j and t.status <> 'cancelled'
                    and (t.mode_caisse is null or m.mode_caisse is null or t.mode_caisse = m.mode_caisse)) nb,
@@ -1756,12 +1800,19 @@ end $$;
 -- par l'application), motif obligatoire. Consigne la liste exacte des ventes concernées (inaltérable), le JET (code 900,
 -- opération exceptionnelle) et le journal des événements ; alerte l'administrateur Luxyra. Ne crée ni ne modifie aucun ticket :
 -- une vente transmise plus tard est enregistrée sur la journée ouverte (report, date réelle de vente scellée).
+-- 2026-10-28 (-6, contre-audit 3, constat 8) : (a) réservé au compte PROPRIÉTAIRE de l'établissement (salons.user_id) —
+-- l'administrateur Luxyra passe par lx_z_forcer_admin (ci-dessous, tracé comme tel) ; (b) DÉLAI MINIMAL : les deux contrôles
+-- tracés exigés doivent être espacés d'au moins 5 minutes (premier contrôle, puis contrôle refait au moment du forçage) : un
+-- forçage immédiat en trois appels n'est plus possible et les autres appareils ont le temps de transmettre leur file de secours.
+-- Limite inchangée : le serveur ne connaît pas les codes PIN des opérateurs (gérés par l'application) — il garantit le compte,
+-- le délai, le motif, la tentative de renvoi et la trace, pas l'identité de l'opérateur saisi.
 create or replace function public.lx_z_forcer(p_salon uuid, p_date date, p_motif text, p_operateur text, p_renvoi jsonb default '{}'::jsonb)
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_rdv jsonb; v_nb int; v_mt numeric; v_ctl int; v_id uuid; v_lib text; v_tks text;
+  v_c1 timestamptz; v_c2 timestamptz; v_delai constant interval := interval '5 minutes';
 begin
-  if not exists (select 1 from public.salons s where s.id = p_salon and (s.user_id = auth.uid() or public.is_admin())) then
-    return jsonb_build_object('ok', false, 'erreur', 'Accès refusé');
+  if auth.uid() is null or not exists (select 1 from public.salons s where s.id = p_salon and s.user_id = auth.uid()) then
+    return jsonb_build_object('ok', false, 'erreur', 'Accès refusé : forçage réservé au compte de l''établissement (administrateur Luxyra : lx_z_forcer_admin)', 'code', 'LX_FORCAGE_ACCES');
   end if;
   if p_date is null or p_date > lx_prive.jour_paris() or p_date < lx_prive.jour_paris() - 60 then
     return jsonb_build_object('ok', false, 'erreur', 'Date hors période (60 derniers jours)');
@@ -1775,12 +1826,17 @@ begin
   if length(trim(coalesce(p_operateur, ''))) < 2 then
     return jsonb_build_object('ok', false, 'erreur', 'Administrateur non identifié');
   end if;
-  select count(*) into v_ctl from public.audit_log where salon_id = p_salon and action = 'CLOTURE_Z_VENTES_NON_TRANSMISES'
+  select count(*), min(timestamp_action), max(timestamp_action) into v_ctl, v_c1, v_c2 from public.audit_log where salon_id = p_salon and action = 'CLOTURE_Z_VENTES_NON_TRANSMISES'
      and details like p_date::text || ' - %' and timestamp_action > now() - interval '2 hours';
   if v_ctl < 2 or coalesce(p_renvoi->>'tente_at', '') = '' then
-    return jsonb_build_object('ok', false, 'erreur', 'Tentative de renvoi des tickets en attente non constatée : relancez la transmission puis la clôture avant de forcer', 'controles', v_ctl);
+    return jsonb_build_object('ok', false, 'erreur', 'Tentative de renvoi des tickets en attente non constatée : relancez la transmission puis la clôture avant de forcer', 'controles', v_ctl, 'code', 'LX_FORCAGE_CONTROLES');
   end if;
-  v_rdv := lx_prive.z_rdv_hors_journal(p_salon, p_date, false);
+  if v_c2 - v_c1 < v_delai then -- LX_FORCAGE_DELAI_2026_10_28_6
+    return jsonb_build_object('ok', false, 'code', 'LX_FORCAGE_DELAI', 'controles', v_ctl,
+      'erreur', 'Forçage possible 5 minutes après le premier contrôle (laissez les autres appareils allumés et connectés pour qu''ils transmettent leurs tickets), puis refaites le contrôle',
+      'possible_a', v_c1 + v_delai, 'attendre_s', greatest(0, ceil(extract(epoch from (v_c1 + v_delai - now()))))::int);
+  end if;
+  v_rdv := lx_prive.z_rdv_hors_journal(p_salon, p_date, true); -- -6 : ventes pas encore consignées (un 2e forçage ne les recopie pas)
   v_nb := jsonb_array_length(v_rdv);
   if v_nb = 0 then return jsonb_build_object('ok', true, 'inutile', true); end if;
   select coalesce(sum((e->>'prix')::numeric), 0), string_agg(coalesce(e->>'ticket_num', '?'), ', ') into v_mt, v_tks from jsonb_array_elements(v_rdv) e;
@@ -1796,16 +1852,72 @@ begin
   return jsonb_build_object('ok', true, 'id', v_id, 'nb', v_nb, 'montant', lx_prive.r2(v_mt), 'rdv', v_rdv);
 end $$;
 
+-- 2026-10-28 (-6, contre-audit 3, constat 6) : SORTIE ADMINISTRATEUR (Luxyra) d'une journée retenue, SANS fenêtre de 60 jours.
+-- Cas : journée retenue depuis plus de 60 jours (vente encaissée jamais transmise : appareil perdu / détruit) — le forçage de
+-- l'établissement (60 jours) ne l'atteint plus et toutes les Z suivantes sont refusées (LX_Z_JOURNEE_ANTERIEURE_OUVERTE).
+-- Réservé à un administrateur Luxyra (public.is_admin()) ou à un appel serveur (éditeur SQL, clé service : lx_prive.appel_serveur()).
+-- Motif obligatoire (15 caractères au moins) ; consigne la liste EXACTE des ventes non transmises (n°, heure, montant) dans
+-- public.clotures_forcages (inaltérable, colonne admin = true), journal des événements CLOTURE_Z_FORCEE_ADMIN, JET code 900
+-- (« … FORCÉE par l'administrateur Luxyra … »), alerte critique ; ne crée ni ne modifie aucun ticket ni aucune Z. Une journée
+-- retenue par des TICKETS sans Z (et non par des ventes non transmises) n'est pas « forcée » : elle doit être clôturée (Z
+-- depuis le journal) — la fonction l'indique (tickets_sans_z) ; Z d'une date au-delà de 60 jours : lx-cloture-auto
+-- {"mode":"run","salon_id":…,"date":"AAAA-MM-JJ"} (clé service).
+alter table public.clotures_forcages add column if not exists admin boolean not null default false;
+create or replace function public.lx_z_forcer_admin(p_salon uuid, p_date date, p_motif text, p_operateur text default null)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_rdv jsonb; v_nb int; v_mt numeric; v_id uuid; v_lib text; v_tks text; v_op text; v_tk int; v_tkm numeric;
+begin
+  if not (lx_prive.appel_serveur() or coalesce(public.is_admin(), false)) then
+    return jsonb_build_object('ok', false, 'erreur', 'Accès refusé : administrateur Luxyra uniquement', 'code', 'LX_FORCAGE_ACCES');
+  end if;
+  if not exists (select 1 from public.salons where id = p_salon) then return jsonb_build_object('ok', false, 'erreur', 'Établissement inconnu'); end if;
+  if p_date is null or p_date >= lx_prive.jour_paris() then
+    return jsonb_build_object('ok', false, 'erreur', 'Date invalide (journée passée uniquement)');
+  end if;
+  if exists (select 1 from public.clotures where salon_id = p_salon and date_cloture = p_date) then
+    return jsonb_build_object('ok', false, 'erreur', 'Journée déjà clôturée');
+  end if;
+  if length(trim(coalesce(p_motif, ''))) < 15 then
+    return jsonb_build_object('ok', false, 'erreur', 'Motif obligatoire (15 caractères au moins)');
+  end if;
+  v_op := coalesce(nullif(trim(coalesce(p_operateur, '')), ''), 'Administrateur Luxyra') || ' (administrateur Luxyra)';
+  perform pg_advisory_xact_lock(hashtext(p_salon::text));
+  select count(*), coalesce(sum(t.total_ttc), 0) into v_tk, v_tkm from public.tickets t, public.salons s
+   where s.id = p_salon and t.salon_id = p_salon and t.date_ticket = p_date and t.status <> 'cancelled'
+     and (t.mode_caisse is null or s.mode_caisse is null or t.mode_caisse = s.mode_caisse);
+  v_rdv := lx_prive.z_rdv_hors_journal(p_salon, p_date, true);
+  v_nb := jsonb_array_length(v_rdv);
+  if v_nb = 0 then
+    return jsonb_build_object('ok', true, 'inutile', true, 'tickets_sans_z', v_tk, 'montant_tickets', lx_prive.r2(v_tkm),
+      'a_faire', case when v_tk > 0 then 'Journée retenue par ' || v_tk || ' ticket(s) au journal sans Z : la clôturer (lx-cloture-auto {"mode":"run","salon_id":"' || p_salon || '","date":"' || p_date || '"})' else null end);
+  end if;
+  select coalesce(sum((e->>'prix')::numeric), 0), string_agg(coalesce(e->>'ticket_num', '?'), ', ') into v_mt, v_tks from jsonb_array_elements(v_rdv) e;
+  insert into public.clotures_forcages (salon_id, date_journee, rdv, nb, montant, motif, operateur, renvoi, cree_par, admin)
+  values (p_salon, p_date, v_rdv, v_nb, lx_prive.r2(v_mt), trim(p_motif), v_op, jsonb_build_object('admin', true, 'role', coalesce(auth.role(), 'serveur'), 'at', now()), auth.uid(), true)
+  returning id into v_id;
+  v_lib := 'Clôture Z du ' || to_char(p_date, 'DD/MM/YYYY') || ' FORCÉE par ' || v_op || ' : ' || v_nb || ' vente(s) encaissée(s) non transmise(s) au journal (ticket(s) n° '
+           || coalesce(v_tks, '?') || ', ' || to_char(v_mt, 'FM999999990.00') || ' EUR) — motif : ' || trim(p_motif);
+  insert into public.audit_log (salon_id, action, details, operator_name) values (p_salon, 'CLOTURE_Z_FORCEE_ADMIN', left(v_lib || ' — forçage ' || v_id || ' ' || v_rdv::text, 1900), v_op);
+  begin perform public.nf525_jet_ajouter(p_salon, 900, left(v_lib, 900), v_op); exception when others then null; end;
+  begin perform public.report_server_error(p_source := 'sql:clotures', p_message := left(v_lib, 900), p_severity := 'critical',
+    p_context := jsonb_build_object('salon_id', p_salon, 'date', p_date, 'forcage', v_id, 'rdv', v_rdv, 'admin', true)); exception when others then null; end;
+  return jsonb_build_object('ok', true, 'id', v_id, 'nb', v_nb, 'montant', lx_prive.r2(v_mt), 'rdv', v_rdv, 'tickets_sans_z', v_tk,
+    'a_faire', case when v_tk > 0 then 'Journée encore retenue par ' || v_tk || ' ticket(s) au journal sans Z : la clôturer (lx-cloture-auto {"mode":"run","salon_id":"' || p_salon || '","date":"' || p_date || '"})' else null end);
+end $$;
+
 -- Alertes de caisse pour l'ÉTABLISSEMENT (carte de l'accueil de l'application) : journées retenues, mois non clôturés,
 -- remboursements faits sur Stripe reçus avant l'activation (ticket négatif créé automatiquement à l'activation : rien à saisir)
 create or replace function public.lx_caisse_alertes(p_salon uuid)
 returns jsonb language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare v_j jsonb; v_m jsonb; v_r jsonb; v_auj date := lx_prive.jour_paris();
+declare v_j jsonb; v_m jsonb; v_r jsonb; v_old jsonb; v_auj date := lx_prive.jour_paris();
 begin
   if not exists (select 1 from public.salons s where s.id = p_salon and (s.user_id = auth.uid() or public.is_admin())) then
     return jsonb_build_object('ok', false);
   end if;
   v_j := lx_prive.journees_non_closes(p_salon, v_auj - 60, v_auj - 1);
+  -- 2026-10-28 (-6, contre-audit 3, constats 1 et 6) : journées retenues de plus de 60 jours (13 mois) : l'établissement est
+  -- prévenu (déblocage par l'administrateur Luxyra, lx_z_forcer_admin) au lieu d'un blocage silencieux
+  v_old := lx_prive.journees_non_closes(p_salon, v_auj - 400, v_auj - 61);
   select coalesce(jsonb_agg(to_char(x.m, 'YYYY-MM') order by x.m), '[]'::jsonb) into v_m from (
     select distinct date_trunc('month', c.date_cloture)::date m from public.clotures c
      where c.salon_id = p_salon and c.date_cloture >= v_auj - 400 and c.date_cloture < date_trunc('month', v_auj)::date) x
@@ -1814,7 +1926,8 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object('le', q.paye_at, 'montant', q.montant, 'ticket_origine', q.details->>'tk_origine', 'refund', q.refund_id) order by q.created_at), '[]'::jsonb)
     into v_r from public.recettes_en_ligne q
    where q.salon_id = p_salon and q.source = 'remb_externe' and q.statut = 'attente_activation';
-  return jsonb_build_object('ok', true, 'journees_retenues', v_j, 'mois_non_clotures', v_m, 'remboursements_en_attente', v_r);
+  return jsonb_build_object('ok', true, 'journees_retenues', v_j, 'mois_non_clotures', v_m, 'remboursements_en_attente', v_r,
+    'journees_retenues_anciennes', v_old);
 end $$;
 
 -- « À réparer » (admin) : la série du serveur (900001+) n'est pas un « saut » de la numérotation imprimée des appareils
@@ -2233,6 +2346,8 @@ revoke all on function public.lx_z_controle_ventes(uuid, date) from public, anon
 grant execute on function public.lx_z_controle_ventes(uuid, date) to authenticated, service_role;
 revoke all on function public.lx_z_forcer(uuid, date, text, text, jsonb) from public, anon;
 grant execute on function public.lx_z_forcer(uuid, date, text, text, jsonb) to authenticated, service_role;
+revoke all on function public.lx_z_forcer_admin(uuid, date, text, text) from public, anon;
+grant execute on function public.lx_z_forcer_admin(uuid, date, text, text) to authenticated, service_role; -- contrôle is_admin() / appel serveur dans la fonction
 revoke all on function public.lx_caisse_alertes(uuid) from public, anon;
 grant execute on function public.lx_caisse_alertes(uuid) to authenticated, service_role;
 revoke all on function public.run_cloture_mensuelle_pour_tous() from public, anon, authenticated;
@@ -2264,12 +2379,12 @@ end $$;
 commit;
 
 -- =====================================================================================================================
--- ORDRE DE MISE EN SERVICE : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 (-5) — ordre complet pas à
+-- ORDRE DE MISE EN SERVICE : voir docs/registre-interventions-nf525.md, intervention du 28/10/2026 (-6) — ordre complet pas à
 -- pas, verify_jwt de chaque edge function, contrôles et RETOUR ARRIÈRE. Résumé :
 --  0. docs/migrations_1027/bons_cadeaux_tva.sql (OBLIGATOIRE, avant)   1. CE FICHIER (interrupteur éteint : rien n'est créé)
---  2. edge functions docs/edge_1028/* (lx-cloture-auto v3.3)   3. worker (+ cocher charge.refunded)   4. pages (6.8.2, données
---  20261028-5) et recharger les appareils   5. activation avec recettes_en_ligne_version_min = '0' (heure au registre)
---  5 bis. relever recettes_en_ligne_version_min à '6.8.3' quand TOUS les postes actifs ont remonté 6.8.3 (requête de contrôle
+--  2. edge functions docs/edge_1028/* (lx-cloture-auto v3.4)   3. worker (+ cocher charge.refunded)   4. pages (6.8.4, données
+--  20261028-6) et recharger les appareils   5. activation avec recettes_en_ligne_version_min = '0' (heure au registre)
+--  5 bis. relever recettes_en_ligne_version_min à '6.8.4' quand TOUS les postes actifs ont remonté 6.8.4 (requête de contrôle
 --  au registre)   6. bot   7. CGV art. 12 ter   8. bons en ligne.
 --
 -- RETOUR ARRIÈRE (les tickets déjà créés restent : ils sont scellés et exacts) :
