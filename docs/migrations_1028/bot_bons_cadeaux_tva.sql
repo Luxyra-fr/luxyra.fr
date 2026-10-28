@@ -1,4 +1,5 @@
--- Luxyra — 2026-10-28 (6.7.0) — Bot : TVA des bons cadeaux (usage unique / usage multiple). NON APPLIQUÉ.
+-- Luxyra — 2026-10-28 (6.7.0) — Bot : TVA des bons cadeaux (usage unique / usage multiple).
+-- APPLIQUÉ le 28/10/2026 après l'activation de bons_tva_v2 (05:23:18 UTC). Date de mise en service précisée dans le texte.
 -- À appliquer APRÈS la mise en service (docs/migrations_1027/bons_cadeaux_tva.sql, puis activation app_config.bons_tva_v2), puis vérifier
 -- avec lx-bot-eval (questions : « pourquoi mon bon cadeau n'est pas dans mon chiffre d'affaires ? », « bon limité aux prestations sur
 -- un ticket avec un produit », « bon cadeau expiré : je dois la TVA ? », « comment annuler la vente d'un bon cadeau ? »).
@@ -9,7 +10,7 @@ Bon à usage multiple : le bon peut payer des articles à des taux différents (
 Bon limité aux prestations (ou aux produits) : il ne paie QUE ces articles ; le reste du ticket se règle normalement.
 Solde d'un bon à usage multiple jamais utilisé : à l'expiration, aucune TVA ; il apparaît dans les documents comptables du mois (soldes expirés).
 Établissement en franchise de TVA : pas de TVA ; le bon compte dans les recettes le jour de la vente. Micro-entreprise : le bon compte dans les recettes encaissées le jour de sa vente ; ce qu'il paie ensuite n'est pas une nouvelle recette (livre des recettes, déclaration URSSAF).
-Bons vendus avant la mise en service de cette règle (Luxyra 6.7.0) : ils gardent leur traitement d'origine (comptés à la vente) jusqu'à épuisement ; seule nouveauté, un bon « Prestations » n'est plus réparti sur les produits du ticket. Les tickets déjà enregistrés ne sont jamais modifiés.
+Bons vendus avant la mise en service de cette règle (28/10/2026) : ils gardent leur traitement d'origine (comptés à la vente) jusqu'à épuisement ; seule nouveauté, un bon « Prestations » n'est plus réparti sur les produits du ticket. Les tickets déjà enregistrés ne sont jamais modifiés.
 Où voir : tuile « Bons cadeaux » (chaque bon indique « Usage unique : CA et TVA (…) à la vente » ou « Usage multiple : hors CA, TVA à l'utilisation ») ; Caisse › « Journal / Bande Z » › « Documents comptables » › « Bons cadeaux à usage multiple (CSV) » (ventes, utilisations, soldes expirés, bons en circulation) ; onglet « 9 — Bons usage multiple » de l'Excel ; section 6 du rapport ; clôture Z et bande Z : ligne « Bons à usage multiple vendus (hors chiffre d'affaires) ». Comptes : Paramètres › Conformité caisse › « Comptes comptables pour l'export » › « Bons à usage multiple (dette) » (4191 par défaut) et « Bons expirés (produit hors TVA) » (758 par défaut), à valider avec le comptable.
 Annuler la vente d'un bon : annuler le ticket de vente (Caisse › « Gestion des tickets » › le ticket › « Annuler ») ; le bon est désactivé s'il n'a jamais servi ; s'il a déjà servi, régularisation à faire à la main (message affiché).
 Le client conteste le traitement fiscal ou l'expert-comptable demande un autre traitement : Luxyra n'a pas de réglage pour changer la règle ; transmettre à un humain <ESCALATE/>.$kb$,true,now())
